@@ -38,7 +38,7 @@
     "suncalc": "^1.9.0"
   },
   "peerDependencies": {
-    "three": ">=0.160.0"
+    "three": ">=0.183.0"
   },
   "peerDependenciesMeta": {
     "three": { "optional": false }

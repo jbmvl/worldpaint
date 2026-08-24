@@ -8,6 +8,13 @@
  * `@takram/three-atmosphere`, exige React, `@react-three/fiber` et `drei` en
  * peer-dependencies : inutilisable dans une application Vue.
  *
+ * Les nuages (`cloudScale`, `cloudSpeed`, `cloudCoverage`, `cloudDensity`,
+ * `time`) sont ceux, natifs, du `Sky.js` de three — ce module se contente
+ * d'écrire dans les uniforms qu'il expose déjà, sans shader maison. Ils
+ * n'existent que depuis three 0.183.0 : c'est pourquoi `peerDependencies.three`
+ * l'exige au minimum dans `package.json`. Une application qui épingle une
+ * version antérieure verra `this.uniforms.cloudScale` valoir `undefined` ici.
+ *
  * Un dégradé peint à la main ne reproduit ni l'assombrissement du zénith, ni le
  * halo qui enfle autour d'un soleil rasant, ni le rougissement de l'horizon au
  * couchant — trois choses qu'un modèle physique donne gratuitement, et qui font
