@@ -49,7 +49,8 @@ export const CROP_MIN_CELLS = 3;
  */
 export const LABEL_EXACT = {
   buildings: 'bâtiment',
-  'building-windows': 'fenêtres',
+  'building-windows': 'fenêtres allumées',
+  gardens: 'jardin (clôture et buissons)',
   water: 'eau',
   'ground-cover': 'herbe',
   crops: 'cultures (semis)',

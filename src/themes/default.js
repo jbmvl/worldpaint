@@ -249,57 +249,78 @@ export const CROP_LOOK = {
 /**
  * Les palettes.
  *
- * Chacune porte deux ou trois tons de mur, deux tons de toit, et les **formes de
- * toit** admises. Deux ou trois formes par village, jamais plus : c'est le
- * nombre qui fait qu'un bourg est varié sans être un catalogue.
+ * Chacune porte deux ou trois tons de mur, deux tons de toit, deux tons de
+ * **volet**, et les **formes de toit** admises. Deux ou trois formes par
+ * village, jamais plus : c'est le nombre qui fait qu'un bourg est varié sans
+ * être un catalogue.
+ *
+ * ## Les volets
+ *
+ * Ils ne sont pas un détail parmi d'autres : c'est **la** couleur d'un village
+ * français. Le mur et le toit sont donnés par la carrière et la tuilerie du
+ * coin, donc ils varient peu et lentement ; le volet est peint, donc il est
+ * franc, et c'est le seul endroit du bâti où une vraie couleur est admise. Le
+ * bleu de Provence, le rouge d'Alsace, le vert sombre de Bretagne sont ce qu'on
+ * reconnaît d'une façade avant d'en lire la pierre.
+ *
+ * Deux tons par bourg, comme pour les toits : plus, et la rue devient un
+ * nuancier ; un seul, et c'est un lotissement.
  */
 export const TOWN_PALETTES = [
   {
     name: 'calcaire',
     walls: ['#e6ddc9', '#dcd2bb', '#efe8d8'],
     roofs: ['#b0654a', '#9c5a44'],
+    shutters: ['#93a6ab', '#c6bfab'],
     roofShapes: ['gable', 'hip'],
   },
   {
     name: 'ocre',
     walls: ['#e8cfa8', '#dcbe94', '#f0dcc0'],
     roofs: ['#c07b4c', '#ab6a45'],
+    shutters: ['#7d8fae', '#7c8a5c'],
     roofShapes: ['gable', 'hip', 'flat'],
   },
   {
     name: 'granit',
     walls: ['#cfcdc6', '#c0bfba', '#dcdad3'],
     roofs: ['#6a6f78', '#585d66'],
+    shutters: ['#3f5a78', '#3d5a4a'],
     roofShapes: ['gable', 'pyramid'],
   },
   {
     name: 'brique',
     walls: ['#d9a98e', '#c8977d', '#e4bda6'],
     roofs: ['#8d5f4c', '#7a5041'],
+    shutters: ['#415c48', '#d5cab2'],
     roofShapes: ['gable', 'hip'],
   },
   {
     name: 'colombage',
     walls: ['#efe6d4', '#e3d6c0', '#d8c8ae'],
     roofs: ['#8a5a49', '#6f4b3f'],
+    shutters: ['#8e4034', '#405c3f'],
     roofShapes: ['gable', 'gable', 'hip'],
   },
   {
     name: 'chaux',
     walls: ['#eeeae0', '#e3ded2', '#f4f1e9'],
     roofs: ['#a9713f', '#8f6039'],
+    shutters: ['#9fb2b6', '#93a37c'],
     roofShapes: ['gable', 'flat'],
   },
   {
     name: 'ardoise',
     walls: ['#dfe0dd', '#d0d2cf', '#eceded'],
     roofs: ['#5b626b', '#4c525a'],
+    shutters: ['#dbd8cf', '#6d7f92'],
     roofShapes: ['gable', 'pyramid', 'hip'],
   },
   {
     name: 'lauze',
     walls: ['#d5cbb8', '#c5bba7', '#e0d7c6'],
     roofs: ['#77726a', '#655f57'],
+    shutters: ['#6f5a42', '#4c5f4a'],
     roofShapes: ['gable', 'hip'],
   },
 ];

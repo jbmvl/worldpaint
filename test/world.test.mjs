@@ -114,6 +114,12 @@ import {
   outerRings,
   BUILDING_DEFAULT_HEIGHT,
   BUILDING_MAX_HEIGHT,
+  plinthTopFor,
+  pushPanel,
+  appendOpenings,
+  PLINTH_HEIGHT_M,
+  WINDOW_FRAME_M,
+  SHUTTER_WIDTH_RATIO,
 } from '../src/layers/buildingLayer.js';
 import {
   treesForScore,
@@ -134,7 +140,25 @@ import {
   CROP_FADE_FROM,
   CROP_COUNT,
 } from '../src/layers/cropLayer.js';
-import { townPaletteAt, buildingStyleAt, roofShapeFor, TOWN_PATCH_M } from '../src/layers/townStyle.js';
+import {
+  townPaletteAt,
+  buildingStyleAt,
+  roofShapeFor,
+  TOWN_PATCH_M,
+  isHouse,
+  SHUTTER_SHARE,
+  HOUSE_MAX_HEIGHT_M,
+  HOUSE_MAX_AREA_M2,
+} from '../src/layers/townStyle.js';
+import {
+  picketOffsets,
+  gardenCorners,
+  isDetached,
+  appendBush,
+  GATE_WIDTH_M,
+  GARDEN_CLEAR_M,
+  PICKET_SPACING_M,
+} from '../src/layers/gardenLayer.js';
 import { orientedBox, roofTriangles, ringArea } from '../src/layers/roofGeometry.js';
 import { trafficPhaseAt, TRAFFIC_CYCLE_S, SIGN_ITEMS } from '../src/layers/furnitureLayer.js';
 import { TREE_ATLAS_OFFSETS, GRASS_VARIANTS } from '../src/materials/proceduralTextures.js';
@@ -159,6 +183,7 @@ import {
   TOWN_PALETTES,
   TREE_VARIANTS,
   WINDOW_LIT_SHARE,
+  WINDOW_WIDTH_M,
 } from '../src/themes/default.js';
 
 const close = (actual, expected, tolerance, label = '') =>
@@ -1600,6 +1625,189 @@ test('les fenêtres allumées ne changent pas d’une reconstruction à l’autr
     if (windowDraw(i * 0.37, i * -0.73, (i % 4) + 1) <= WINDOW_LIT_SHARE) lit++;
   }
   close(lit / total, WINDOW_LIT_SHARE, 0.04, 'part de fenêtres allumées');
+});
+
+test('le soubassement est une bande, pas un dégradé', () => {
+  // Il ne se voyait pas : le point sombre était le bas du quadrilatère, soit
+  // 60 cm sous le sol. Sa cote est maintenant au-dessus de l’assise.
+  const base = 100;
+  assert.equal(plinthTopFor(base, 0, base + 8), base + PLINTH_HEIGHT_M, 'au-dessus de l’assise');
+
+  // Une partie en surplomb ne touche pas le sol : pas de plinthe en l’air.
+  assert.equal(plinthTopFor(base, 4, base + 12), null, 'passage couvert');
+  // Un mur trop bas serait entièrement en soubassement.
+  assert.equal(plinthTopFor(base, 0, base + 1.2), null, 'abri de jardin');
+});
+
+test('un panneau de mur regarde vers l’extérieur', () => {
+  const buffer = { positions: [], normals: [], colors: [] };
+  pushPanel(buffer, { x: 0, y: 0 }, { x: 4, y: 0 }, 10, 13, 0, -1, [0.1, 0.2, 0.3], [0.4, 0.5, 0.6]);
+
+  assert.equal(buffer.positions.length, 18, 'deux triangles');
+  // La normale est celle qu’on a donnée, sur les six sommets.
+  for (let i = 0; i < 6; i++) {
+    assert.equal(buffer.normals[i * 3 + 1], 0, 'panneau d’aplomb');
+    assert.equal(buffer.normals[i * 3 + 2], -1);
+  }
+  // Le bas prend la couleur du bas, le haut celle du haut.
+  const ys = [];
+  for (let i = 0; i < 6; i++) ys.push(buffer.positions[i * 3 + 1]);
+  for (let i = 0; i < 6; i++) {
+    assert.equal(buffer.colors[i * 3], ys[i] === 10 ? 0.1 : 0.4, 'couleur selon la cote');
+  }
+
+  // Enroulement : la face avant doit regarder du côté de la normale annoncée.
+  const at = (i) => [buffer.positions[i * 3], buffer.positions[i * 3 + 1], buffer.positions[i * 3 + 2]];
+  const [a, b, c] = [at(0), at(1), at(2)];
+  const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+  const cross = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  assert.ok(cross[2] < 0, 'face avant du bon côté');
+});
+
+test('une maison n’est ni un immeuble ni un hangar', () => {
+  assert.ok(isHouse({ area: 110, height: 7 }), 'pavillon');
+  assert.ok(!isHouse({ area: 110, height: HOUSE_MAX_HEIGHT_M + 1 }), 'barre d’immeubles');
+  assert.ok(!isHouse({ area: HOUSE_MAX_AREA_M2 + 1, height: 7 }), 'hangar');
+  // Les volets ne sont posés que sur des maisons, et pas sur toutes.
+  assert.ok(SHUTTER_SHARE > 0 && SHUTTER_SHARE < 1, 'ni toutes ni aucune');
+});
+
+test('une façade percée de jour : encadrement, verre, volets', () => {
+  const walls = { positions: [], normals: [], colors: [] };
+  const openings = { panes: 0, budget: 100, lit: null };
+  const style = {
+    wall: [0.8, 0.8, 0.75],
+    roof: [0.4, 0.2, 0.15],
+    shutter: [0.2, 0.3, 0.45],
+    shape: 'gable',
+    house: true,
+    shutters: true,
+    palette: 'test',
+  };
+  // Un pan de 20 m, 8 m sous l’égout : deux niveaux de baies.
+  appendOpenings(openings, walls, { x: 0, y: 0 }, { x: 20, y: 0 }, 0, -1, 100, 8, 0, style);
+
+  assert.ok(openings.panes > 0, 'des baies');
+  // Encadrement + verre + deux volets ; les volets fermés remplacent le verre,
+  // donc quatre quadrilatères au plus par baie et trois au moins.
+  const quads = walls.positions.length / 18;
+  assert.ok(quads >= openings.panes * 3 && quads <= openings.panes * 4, 'trois à quatre panneaux');
+
+  // Rien ne dépasse du mur qu’on perce : ni sous l’allège, ni au-delà des angles.
+  const reach = WINDOW_WIDTH_M / 2 + WINDOW_FRAME_M + WINDOW_WIDTH_M * SHUTTER_WIDTH_RATIO;
+  for (let i = 0; i < walls.positions.length; i += 3) {
+    assert.ok(walls.positions[i] > -reach, 'rien avant l’angle');
+    assert.ok(walls.positions[i] < 20 + reach, 'rien après l’angle');
+    assert.ok(walls.positions[i + 1] > 100, 'rien sous l’assise');
+    assert.ok(walls.positions[i + 1] < 108, 'rien au-dessus de l’égout');
+  }
+
+  // Un immeuble : mêmes baies, aucun volet — donc strictement moins de matière.
+  const bare = { positions: [], normals: [], colors: [] };
+  const bareBudget = { panes: 0, budget: 100, lit: null };
+  appendOpenings(bareBudget, bare, { x: 0, y: 0 }, { x: 20, y: 0 }, 0, -1, 100, 8, 0, {
+    ...style,
+    house: false,
+    shutters: false,
+  });
+  assert.equal(bareBudget.panes, openings.panes, 'autant de baies');
+  assert.ok(bare.positions.length < walls.positions.length, 'un immeuble n’a pas de volets');
+});
+
+test('le budget de baies borne ce qui est posé', () => {
+  const walls = { positions: [], normals: [], colors: [] };
+  const openings = { panes: 0, budget: 3, lit: null };
+  const style = { shutter: [0, 0, 0], house: true, shutters: false };
+  appendOpenings(openings, walls, { x: 0, y: 0 }, { x: 60, y: 0 }, 0, -1, 0, 12, 0, style);
+  assert.equal(openings.panes, 3, 'pas une baie de plus que le budget');
+});
+
+// --- Jardins ----------------------------------------------------------------
+
+test('les piquets se répartissent d’un angle à l’autre, portillon compris', () => {
+  const plain = picketOffsets(12, PICKET_SPACING_M, null);
+  assert.ok(plain.length > 2);
+  // Premier et dernier piquets exactement aux angles : c’est l’intervalle
+  // bâtard à l’angle qui trahit une clôture engendrée.
+  close(plain[0].along, 0, 1e-9, 'premier piquet');
+  close(plain[plain.length - 1].along, 12, 1e-9, 'dernier piquet');
+  assert.ok(
+    plain.every((p) => !p.gap),
+    'aucune trouée sans portillon'
+  );
+
+  // Portillon : une trouée, une seule, et de la bonne largeur.
+  const gated = picketOffsets(12, PICKET_SPACING_M, 6);
+  assert.ok(gated.length < plain.length, 'des piquets en moins');
+  const gaps = gated.filter((p) => p.gap);
+  assert.equal(gaps.length, 1, 'un seul portillon');
+  const after = gated[gated.indexOf(gaps[0]) + 1];
+  assert.ok(after.along - gaps[0].along >= GATE_WIDTH_M, 'trouée assez large');
+
+  // Un côté trop court n’a pas de clôture du tout plutôt qu’un piquet seul.
+  assert.equal(picketOffsets(0.5, PICKET_SPACING_M, null).length, 0);
+});
+
+test('le jardin est cadré sur la maison et tourne avec elle', () => {
+  const box = { cx: 10, cz: -4, angle: Math.PI / 2, long: 6, short: 4 };
+  const corners = gardenCorners(box, 3);
+  assert.equal(corners.length, 4);
+
+  // Le centre du jardin est celui de la maison.
+  const mid = corners.reduce((acc, p) => ({ x: acc.x + p.x / 4, z: acc.z + p.z / 4 }), { x: 0, z: 0 });
+  close(mid.x, box.cx, 1e-9, 'centre x');
+  close(mid.z, box.cz, 1e-9, 'centre z');
+
+  // À 90°, le grand côté du jardin est porté par z, pas par x.
+  const spanX = Math.max(...corners.map((p) => p.x)) - Math.min(...corners.map((p) => p.x));
+  const spanZ = Math.max(...corners.map((p) => p.z)) - Math.min(...corners.map((p) => p.z));
+  close(spanZ, 2 * (box.long + 3), 1e-6, 'grand côté tourné');
+  close(spanX, 2 * (box.short + 3), 1e-6, 'petit côté tourné');
+});
+
+test('une maison mitoyenne n’a pas de jardin clos', () => {
+  const box = { cx: 0, cz: 0, angle: 0, long: 6, short: 4 };
+  const house = { x: 0, z: 0, box };
+  const margin = 3;
+
+  assert.ok(isDetached(house, [house], margin), 'seule au monde');
+
+  // Une voisine dont le centre tombe dans l’enclos : la clôture lui passerait
+  // au travers.
+  const inside = { x: box.long + margin - 1, z: 0, box };
+  assert.ok(!isDetached(house, [house, inside], margin), 'voisine dans l’enclos');
+
+  // Assez loin, elle ne gêne plus.
+  const away = { x: box.long + margin + GARDEN_CLEAR_M + 1, z: 0, box };
+  assert.ok(isDetached(house, [house, away], margin), 'voisine à l’écart');
+});
+
+test('un buisson est fermé, posé au sol, et différent de son voisin', () => {
+  const buffer = { positions: [], normals: [], colors: [] };
+  appendBush(buffer, { x: 3, y: 50, z: -7, radius: 0.8, height: 1.1, seed: 11, sides: 7 });
+
+  // Deux couronnes et une pointe : trois triangles par secteur.
+  assert.equal(buffer.positions.length / 9, 7 * 3, 'trois triangles par secteur');
+
+  let lowest = Infinity;
+  let highest = -Infinity;
+  for (let i = 1; i < buffer.positions.length; i += 3) {
+    lowest = Math.min(lowest, buffer.positions[i]);
+    highest = Math.max(highest, buffer.positions[i]);
+  }
+  close(lowest, 50 + 1.1 * 0.22, 1e-9, 'couronne basse au sol');
+  close(highest, 50 + 1.1, 1e-9, 'pointe à la hauteur annoncée');
+
+  // Le bruitage par sommet : deux buissons de même taille n’ont pas la même
+  // silhouette, sinon un jardin est une rangée de clones.
+  const other = { positions: [], normals: [], colors: [] };
+  appendBush(other, { x: 9, y: 50, z: 2, radius: 0.8, height: 1.1, seed: 11, sides: 7 });
+  assert.notDeepEqual(
+    buffer.positions.slice(0, 3).map((v, i) => v - [3, 50, -7][i]),
+    other.positions.slice(0, 3).map((v, i) => v - [9, 50, 2][i]),
+    'silhouettes distinctes'
+  );
 });
 
 // --- Fusion des chaussées ---------------------------------------------------

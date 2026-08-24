@@ -18,7 +18,9 @@
  *
  *   1. **occupation du sol** — tout le monde la lit, personne ne la produit ;
  *   2. **chaussées** — elles entaillent le terrain et publient leur index ;
- *   3. **eau, bâti** — indépendants, ils ne lisent que les tuiles ;
+ *   3. **eau, bâti** — indépendants, ils ne lisent que les tuiles ; le bâti
+ *      publie au passage ses **maisons**, dont les **jardins** tirent leurs
+ *      clôtures et leurs buissons — eux ne lisent aucune tuile ;
  *   4. **mobilier** — il lui faut les tronçons *et* l'index des chaussées :
  *      murs et glissières se posent sur la plate-forme exacte sur laquelle
  *      roule l'observateur, et les feux n'ont de sens qu'aux carrefours ;
@@ -35,6 +37,7 @@ import { GroundClassMap } from './terrain/groundClassMap.js';
 import { RoadNetwork, createRoadMaterials } from './layers/roadNetwork.js';
 import { WaterLayer, createWaterMaterial } from './layers/waterLayer.js';
 import { BuildingLayer } from './layers/buildingLayer.js';
+import { GardenLayer } from './layers/gardenLayer.js';
 import { VegetationLayer } from './layers/vegetationLayer.js';
 import { GroundCover } from './layers/groundCover.js';
 import { CropLayer } from './layers/cropLayer.js';
@@ -121,6 +124,10 @@ export class WorldComposer {
       theme,
     });
     this.buildings = new BuildingLayer({ THREE, scene, bubble, theme });
+    // Les jardins ne lisent pas les tuiles : ils ne connaissent que les maisons
+    // que le bâti vient de publier. C'est pour ça qu'ils sont une couche à part
+    // et qu'ils passent par ici — voir l'ordre de génération plus haut.
+    this.gardens = new GardenLayer({ THREE, scene, bubble, theme });
 
     this.vegetation = new VegetationLayer({
       THREE,
@@ -238,6 +245,10 @@ export class WorldComposer {
       this.water.rebuild(this.vectorTiles, wanted, here);
       this.buildings.rebuild(this.vectorTiles, wanted, here);
 
+      // 3 bis. Jardins — après le bâti, dont ils reçoivent les maisons. Ils ne
+      //    lisent aucune tuile : sans cette liste, ils ne posent rien.
+      this.gardens.rebuild(this.buildings.houses, here);
+
       // 4. Mobilier — il lui faut les tronçons de chaussée et leur index.
       this.furniture.rebuild(this.vectorTiles, wanted, here, this.roads.roadSegments, this.roads.index);
 
@@ -332,6 +343,7 @@ export class WorldComposer {
     this.crops.dispose();
     this.grass.dispose();
     this.vegetation.dispose();
+    this.gardens.dispose();
     this.buildings.dispose();
     this.water.dispose();
     this.waterMaterial.dispose();

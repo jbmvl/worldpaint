@@ -55,6 +55,10 @@ function linearTowns(towns) {
       name: palette.name,
       walls: palette.walls.map(srgb),
       roofs: palette.roofs.map(srgb),
+      // Optionnels : un thème antérieur aux volets n'en porte pas. Repli sur
+      // les tons de mur plutôt qu'un plantage — un volet de la couleur du
+      // crépi ne se voit quasiment pas, ce qui est la moindre erreur possible.
+      shutters: (palette.shutters || palette.walls).map(srgb),
       roofShapes: palette.roofShapes,
     }));
     LINEAR_CACHE.set(towns, out);
@@ -76,7 +80,8 @@ export function townPaletteAt(x, z, towns = defaultTheme.towns) {
 }
 
 /**
- * Habillage d'un bâtiment : ton de mur, ton de toit, forme de toit.
+ * Habillage d'un bâtiment : ton de mur, ton de toit, ton de volet, forme de
+ * toit, et sa nature de maison.
  *
  * ## Le « léger pattern »
  *
@@ -94,21 +99,60 @@ export function townPaletteAt(x, z, towns = defaultTheme.towns) {
  * @param {Object} [context]
  * @param {number} [context.area]   Emprise au sol, en m².
  * @param {number} [context.height] Hauteur, en mètres.
- * @returns {{wall:number[], roof:number[], shape:string, palette:string}}
+ * @returns {{wall:number[], roof:number[], shutter:number[], shape:string,
+ *           house:boolean, shutters:boolean, palette:string}}
  */
 export function buildingStyleAt(x, z, { area = 100, height = 7 } = {}, towns = defaultTheme.towns) {
   const palette = townPaletteAt(x, z, towns);
   const seed = positionSeed(x, z, 151);
   const pickWall = palette.walls[seed % palette.walls.length];
   const pickRoof = palette.roofs[(seed >>> 3) % palette.roofs.length];
+  const pickShutter = palette.shutters[(seed >>> 6) % palette.shutters.length];
 
   // Modulation : ±6 %, tirée du lieu. Le crépi vieillit, l'exposition compte.
   const shade = 0.94 + randomAt(x, z, 157) * 0.12;
   const wall = pickWall.map((c) => Math.min(1, c * shade));
   const roof = pickRoof.map((c) => Math.min(1, c * (0.95 + randomAt(x, z, 163) * 0.1)));
+  // Le volet est peint, pas enduit : il vieillit moins vite que le crépi, donc
+  // il varie moins. ±3 %.
+  const shutter = pickShutter.map((c) => Math.min(1, c * (0.97 + randomAt(x, z, 167) * 0.06)));
 
-  return { wall, roof, shape: roofShapeFor(palette, { area, height, seed }), palette: palette.name };
+  const house = isHouse({ area, height });
+  return {
+    wall,
+    roof,
+    shutter,
+    shape: roofShapeFor(palette, { area, height, seed }),
+    house,
+    // Un volet n'est pas un standard : dans le même bourg, une maison sur quatre
+    // n'en a pas — façade refaite, fenêtre percée après coup, dépendance.
+    shutters: house && randomAt(x, z, 173) < SHUTTER_SHARE,
+    palette: palette.name,
+  };
 }
+
+/** Part des maisons qui portent des volets. */
+export const SHUTTER_SHARE = 0.76;
+
+/**
+ * Maison, par opposition à immeuble ou bâtiment d'activité.
+ *
+ * Ce que les tuiles disent d'un bâtiment se réduit à sa hauteur et à son
+ * emprise, et c'est heureusement assez : on ne met pas de volets à une barre
+ * d'immeubles ni à un hangar, et le seuil qui sépare les deux est le même dans
+ * toute la France — trois niveaux et une emprise de villa.
+ *
+ * Sert deux fois : les volets (`buildingStyleAt`) et le jardin (`gardenLayer`).
+ * Fonction pure.
+ */
+export function isHouse({ area = 100, height = 7 } = {}) {
+  return height <= HOUSE_MAX_HEIGHT_M && area <= HOUSE_MAX_AREA_M2;
+}
+
+/** Au-delà, c'est un immeuble : trois niveaux et des combles. */
+export const HOUSE_MAX_HEIGHT_M = 11.5;
+/** Au-delà, c'est une exploitation ou un équipement, pas une maison. */
+export const HOUSE_MAX_AREA_M2 = 320;
 
 /**
  * Forme du toit, d'après la palette du bourg et la taille du bâtiment.

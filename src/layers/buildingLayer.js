@@ -11,6 +11,7 @@
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
+import { srgb } from '../core/color.js';
 import { buildingStyleAt } from './townStyle.js';
 import { orientedBox, roofTriangles, roofRise, ringArea } from './roofGeometry.js';
 import { defaultTheme } from '../themes/default.js';
@@ -39,7 +40,7 @@ export const BUILDING_MAX_HEIGHT = 120;
  * dizaines de milliers de sommets, ce qui n'est rien — mais le temps de
  * reconstruction. Il s'applique **après tri par distance** : appliqué dans
  * l'ordre d'arrivée, c'est-à-dire dans l'ordre des tuiles, il dépensait tout le
- * budget sur le coin nord-ouest de la bulle et laissait un trou juste à côté 
+ * budget sur le coin nord-ouest de la bulle et laissait un trou juste à côté
  * de l'observateur.
  */
 export const BUILDING_MAX_COUNT = 1500;
@@ -58,6 +59,80 @@ export const BUILDING_MAX_COUNT = 1500;
  */
 export const WINDOW_RADIUS_M = 420;
 export const WINDOW_MAX_COUNT = 2600;
+
+/**
+ * Fenêtres **de jour** : portée, et plafond de baies.
+ *
+ * Elles sont une couche différente de celles de la nuit, et il faut le dire,
+ * parce que ça ne se devine pas : la nuit, une fenêtre est une *lumière*, donc
+ * un panneau additif, donc seulement celles qui sont allumées existent. Le
+ * jour, une fenêtre est un *trou sombre* dans le mur — et elles existent
+ * toutes. Un village de jour dont les murs sont lisses du sol à la gouttière
+ * n'est pas un village, c'est un empilement de cartons, et c'était exactement
+ * ce qu'on voyait.
+ *
+ * Ces baies-là vont donc dans la géométrie **opaque** du bâti, avec le mur
+ * qu'elles percent : elles sont éclairées par le soleil comme lui, elles
+ * s'assombrissent avec lui, et elles ne coûtent pas un appel de dessin de plus.
+ *
+ * La portée est plus courte que celle des fenêtres allumées : de jour, une baie
+ * n'est qu'un contraste, et un contraste d'un demi-pixel n'est rien — là où une
+ * fenêtre allumée dans la nuit se voit de loin.
+ */
+export const PANE_RADIUS_M = 300;
+export const PANE_MAX_COUNT = 4200;
+
+/** Débord de l'encadrement autour de la baie, en mètres. */
+export const WINDOW_FRAME_M = 0.08;
+
+/**
+ * Le vitrage vu de dehors, de jour.
+ *
+ * Une vitre n'est pas noire et n'est pas uniforme : elle est sombre en bas, où
+ * elle ne renvoie que l'intérieur de la pièce, et claire en haut, où elle
+ * renvoie le ciel. Ce dégradé-là ne coûte rien — deux couleurs de sommet sur le
+ * même quadrilatère — et c'est lui qui fait qu'une baie se lit comme du verre
+ * plutôt que comme un rectangle de peinture.
+ */
+export const GLASS_DEEP = srgb('#39424c');
+export const GLASS_SKY = srgb('#7f8d99');
+/** L'encadrement : toujours plus clair que le mur, quel que soit le mur. */
+export const WINDOW_FRAME_TINT = srgb('#f2eee4');
+
+/**
+ * Volets : largeur d'un battant en part de la baie, et part de fenêtres closes.
+ *
+ * Un battant ouvert vaut la moitié de la baie — c'est ce qu'il faut pour la
+ * couvrir une fois refermé, et c'est ce qui donne au groupe « volet, fenêtre,
+ * volet » sa proportion reconnaissable.
+ *
+ * Quelques fenêtres sont **fermées**, et elles comptent double : ce sont elles
+ * qui donnent l'heure et la saison à une façade. Elles ne s'allument évidemment
+ * pas la nuit.
+ */
+export const SHUTTER_WIDTH_RATIO = 0.5;
+export const SHUTTER_CLOSED_SHARE = 0.14;
+/**
+ * Décollement du mur : encadrement, vitrage, volets. En mètres.
+ *
+ * Les trois plans sont espacés de trois à quatre centimètres, ce qui est plus
+ * que ce qu'il faudrait pour l'œil et exactement ce qu'il faut pour le tampon
+ * de profondeur : à trois cents mètres — la portée des baies — sa résolution
+ * est de l'ordre du centimètre, et deux plans plus rapprochés que ça se
+ * disputeraient le pixel. Les cotes restent plausibles : un volet **est** en
+ * saillie sur une façade.
+ */
+export const WINDOW_LIFT_M = { frame: 0.04, glass: 0.075, shutter: 0.11 };
+
+/**
+ * Soubassement : hauteur de la plinthe, et sa part de la couleur du mur.
+ *
+ * Une vraie bande, avec une arête horizontale nette à sa cote — une arête ne
+ * s'obtient pas en interpolant deux couleurs, elle s'obtient en posant deux
+ * quadrilatères.
+ */
+export const PLINTH_HEIGHT_M = 0.62;
+export const PLINTH_SHADE = 0.72;
 
 /** Tirage déterministe dans [0, 1[ attaché à un lieu et à un rang. Pure. */
 export function windowDraw(x, z, salt) {
@@ -85,6 +160,65 @@ export function windowGrid(length, height, windows = defaultTheme.windows) {
   const columns = Math.floor((length - spacing) / spacing);
   const levels = Math.floor((height - windows.sillM - windows.heightM) / windows.levelM) + 1;
   return { columns: Math.max(0, columns), levels: Math.max(0, levels), spacing };
+}
+
+/**
+ * Pousse un panneau vertical entre deux points au sol, dans un accumulateur.
+ *
+ * Tout ce qui est vertical dans cette couche passe par ici : un pan de mur, une
+ * bande de soubassement, un encadrement, une vitre, un battant de volet, une
+ * fenêtre allumée. C'est le même quadrilatère à chaque fois, et l'enroulement
+ * est la seule chose délicate — notre plan (x, z) est de chiralité opposée au
+ * plan (x, y) usuel, donc l'ordre « naturel » donnerait des faces visibles
+ * seulement de l'intérieur du bâtiment.
+ *
+ * `a` et `b` portent leurs coordonnées au sol en `x` et `y` (l'axe `y` d'un
+ * `Vector2` d'empreinte, qui est le `z` de la scène).
+ *
+ * @param {{positions:number[], normals:number[], colors:number[]}} buffer
+ * @param {{x:number, y:number}} a
+ * @param {{x:number, y:number}} b
+ * @param {number} bottom Cote basse.
+ * @param {number} top    Cote haute.
+ * @param {number} nx     Normale, composante x.
+ * @param {number} nz     Normale, composante z.
+ * @param {number[]} low  Couleur du bas.
+ * @param {number[]} high Couleur du haut.
+ */
+export function pushPanel(buffer, a, b, bottom, top, nx, nz, low, high) {
+  const corners = [
+    [a.x, bottom, a.y, low],
+    [b.x, top, b.y, high],
+    [b.x, bottom, b.y, low],
+    [a.x, bottom, a.y, low],
+    [a.x, top, a.y, high],
+    [b.x, top, b.y, high],
+  ];
+  for (const [x, y, z, color] of corners) {
+    buffer.positions.push(x, y, z);
+    buffer.normals.push(nx, 0, nz);
+    buffer.colors.push(color[0], color[1], color[2]);
+  }
+}
+
+/**
+ * Cote du haut du soubassement, ou `null` s'il n'y a pas lieu d'en poser.
+ *
+ * Fonction pure. Deux cas l'écartent, et les deux se voient : une partie de
+ * bâtiment **en surplomb** (`min_height`, un porche, un passage couvert) n'a pas
+ * de plinthe parce qu'elle ne touche pas le sol, et un mur trop bas n'en a pas
+ * non plus parce que la bande mangerait tout le mur — un abri de jardin
+ * entièrement en soubassement ne ressemble à rien.
+ *
+ * @param {number} base      Assise du bâtiment, en mètres.
+ * @param {number} minHeight Hauteur du dessous, en mètres.
+ * @param {number} eaves     Cote de l'égout.
+ * @returns {number|null}
+ */
+export function plinthTopFor(base, minHeight, eaves) {
+  if (minHeight > 0.2) return null;
+  const top = base + PLINTH_HEIGHT_M;
+  return top < eaves - 1 ? top : null;
 }
 
 /**
@@ -152,6 +286,186 @@ export function outerRings(geometry) {
   return [];
 }
 
+/**
+ * Perce un pan de mur : encadrement, vitrage, volets — et, la nuit, la
+ * lumière de celles qui sont allumées.
+ *
+ * ## Pourquoi tout n'est pas dans le même maillage
+ *
+ * Ce qui est **matière** — l'encadrement, la vitre, les volets — va dans la
+ * géométrie opaque du bâti : c'est du mur, ça reçoit le soleil, ça
+ * s'assombrit quand il tombe. Ce qui est **lumière** — la fenêtre allumée —
+ * va dans le maillage additif, qui ne s'allume que la nuit. Mélanger les deux
+ * donnerait soit des vitres qui brillent en plein jour, soit un village qui
+ * ne s'allume jamais.
+ *
+ * ## Les décollements
+ *
+ * Les panneaux sont décollés du mur de quelques centimètres, en trois plans :
+ * coplanaires, ils se disputeraient le pixel avec le mur et entre eux, et
+ * clignoteraient. L'écart est trop petit pour se voir, et il est porté par la
+ * normale du mur, donc il reste correct quelle que soit son orientation.
+ *
+ * ## Le déterminisme
+ *
+ * Quelle fenêtre est allumée, laquelle a ses volets tirés, de quelle teinte
+ * est son ampoule : tout ne dépend **que de la position au sol et du rang**.
+ * Le village garde donc les mêmes fenêtres allumées et les mêmes volets clos
+ * d'une reconstruction à l'autre, là où un tirage libre les ferait clignoter
+ * tous les 200 mètres parcourus.
+ *
+ * Fonction pure : elle ne lit que ses arguments, ce qui la rend testable sous
+ * Node — et c'est le genre d'endroit où une erreur d'arithmétique produit une
+ * fenêtre à cheval sur l'angle d'un mur ou un volet posé à l'envers.
+ *
+ * @param {Object} openings Budget : `{panes, budget, lit}`.
+ * @param {Object} walls    Accumulateur de la géométrie opaque.
+ * @param {{x:number, y:number}} a Début du pan, au sol.
+ * @param {{x:number, y:number}} b Fin du pan, au sol.
+ * @param {number} nx Normale sortante du mur, composante x.
+ * @param {number} nz Normale sortante du mur, composante z.
+ * @param {number} base      Assise du bâtiment.
+ * @param {number} height    Hauteur du mur, de l'assise à l'égout.
+ * @param {number} minHeight Hauteur du dessous (surplomb).
+ * @param {Object} style    Habillage rendu par `buildingStyleAt`.
+ * @param {Object} [look]   Dimensions de fenêtre du thème (`theme.windows`).
+ */
+export function appendOpenings(
+  openings,
+  walls,
+  a,
+  b,
+  nx,
+  nz,
+  base,
+  height,
+  minHeight,
+  style,
+  look = defaultTheme.windows
+) {
+  const length = Math.hypot(b.x - a.x, b.y - a.y);
+  const storeys = height - minHeight;
+  if (length < 3 || storeys < look.sillM + look.heightM) return;
+
+  const grid = windowGrid(length, storeys, look);
+  if (grid.columns === 0 || grid.levels === 0) return;
+
+  // Vecteur unitaire le long du mur, et sa normale déjà fournie.
+  const ux = (b.x - a.x) / length;
+  const uz = (b.y - a.y) / length;
+  const half = look.widthM / 2;
+  const frameHalf = half + WINDOW_FRAME_M;
+  const shutterWidth = look.widthM * SHUTTER_WIDTH_RATIO;
+
+  // Un point du mur, décalé le long de lui et décollé de lui.
+  const at = (along, lift) => ({
+    x: a.x + ux * along + nx * lift,
+    z: a.y + uz * along + nz * lift,
+  });
+
+  for (let c = 0; c < grid.columns; c++) {
+    const along = grid.spacing * (c + 1);
+
+    for (let level = 0; level < grid.levels; level++) {
+      if (openings.panes >= openings.budget) return;
+
+      const anchor = at(along, 0);
+      const sill = base + minHeight + look.sillM + level * look.levelM;
+      const head = sill + look.heightM;
+      const closed = style.shutters && windowDraw(anchor.x, anchor.z, level + 71) < SHUTTER_CLOSED_SHARE;
+
+      // 1. L'encadrement : une bande claire tout autour de la baie. Sans lui,
+      //    une fenêtre est un rectangle sombre collé sur un mur ; avec lui,
+      //    c'est un percement. Il coûte un quadrilatère.
+      const frame = at(along, WINDOW_LIFT_M.frame);
+      pushPanel(
+        walls,
+        { x: frame.x - ux * frameHalf, y: frame.z - uz * frameHalf },
+        { x: frame.x + ux * frameHalf, y: frame.z + uz * frameHalf },
+        sill - WINDOW_FRAME_M,
+        head + WINDOW_FRAME_M,
+        nx,
+        nz,
+        WINDOW_FRAME_TINT,
+        WINDOW_FRAME_TINT
+      );
+
+      // 2. Le vitrage — sauf volets clos, où il n'y a rien à voir derrière.
+      if (!closed) {
+        const glass = at(along, WINDOW_LIFT_M.glass);
+        pushPanel(
+          walls,
+          { x: glass.x - ux * half, y: glass.z - uz * half },
+          { x: glass.x + ux * half, y: glass.z + uz * half },
+          sill,
+          head,
+          nx,
+          nz,
+          GLASS_DEEP,
+          GLASS_SKY
+        );
+      }
+
+      // 3. Les volets : deux battants, ouverts de part et d'autre de la baie,
+      //    ou rabattus dessus. Seules les maisons en portent — un immeuble ou
+      //    un hangar n'en a pas, et c'est ce qui les distingue de loin.
+      if (style.shutters) {
+        const leaf = at(along, WINDOW_LIFT_M.shutter);
+        // Ouverts, les battants sont contre l'encadrement, dehors ; fermés,
+        // ils se rejoignent au milieu de la baie.
+        const inner = closed ? 0 : frameHalf;
+        const outer = closed ? half : frameHalf + shutterWidth;
+        // Les deux bornes sont **toujours** passées dans l'ordre croissant le
+        // long du mur : l'enroulement de `pushPanel` en dépend, et un battant
+        // pris à l'envers a sa face avant tournée vers l'intérieur — donc
+        // supprimé par le tri des faces arrière, donc invisible.
+        for (const [from, to] of [
+          [-outer, -inner],
+          [inner, outer],
+        ]) {
+          pushPanel(
+            walls,
+            { x: leaf.x + ux * from, y: leaf.z + uz * from },
+            { x: leaf.x + ux * to, y: leaf.z + uz * to },
+            sill - WINDOW_FRAME_M,
+            head + WINDOW_FRAME_M,
+            nx,
+            nz,
+            style.shutter,
+            style.shutter
+          );
+        }
+      }
+
+      openings.panes++;
+
+      // 4. La lumière. Une fenêtre aux volets clos ne s'allume pas : c'est
+      //    précisément ce qu'on voit d'une rue de village la nuit.
+      const lit = openings.lit;
+      if (!lit || closed) continue;
+      if (lit.positions.length / 9 >= WINDOW_MAX_COUNT) continue;
+      const glow = at(along, WINDOW_LIFT_M.glass);
+      if (windowDraw(glow.x, glow.z, level + 1) > look.litShare) continue;
+
+      // Teinte de l'ampoule : du blanc froid au jaune franc, tirée par
+      // fenêtre. Toutes de la même couleur, un village ressemble à un écran.
+      const warmth = windowDraw(glow.x, glow.z, level + 41);
+      const color = [0.95, 0.78 + warmth * 0.16, 0.42 + warmth * 0.3];
+      pushPanel(
+        lit,
+        { x: glow.x - ux * half, y: glow.z - uz * half },
+        { x: glow.x + ux * half, y: glow.z + uz * half },
+        sill,
+        head,
+        nx,
+        nz,
+        color,
+        color
+      );
+    }
+  }
+}
+
 export class BuildingLayer {
   /**
    * @param {Object} options
@@ -171,6 +485,13 @@ export class BuildingLayer {
     this._frame = null;
     this.count = 0;
     this.windowCount = 0;
+    this.paneCount = 0;
+    /**
+     * Maisons de la dernière reconstruction, publiées pour `gardenLayer` :
+     * leur centre et le rectangle orienté qui porte déjà leur toit.
+     * @type {Array<{x:number,z:number,box:Object}>}
+     */
+    this.houses = [];
 
     this.material = new THREE.MeshLambertMaterial({ vertexColors: true });
 
@@ -219,10 +540,9 @@ export class BuildingLayer {
     const frame = bubble.frame;
     const { origin, scale, zoom } = frame;
 
-    const positions = [];
-    const normals = [];
-    const colors = [];
-    const windows = { positions: [], normals: [], colors: [] };
+    const walls = { positions: [], normals: [], colors: [] };
+    const lamps = { positions: [], normals: [], colors: [] };
+    const houses = [];
     // Les empreintes sont découpées par les tuiles : une même bâtisse revient
     // d'une tuile à l'autre. On dédoublonne sur un centre au demi-mètre, croisé
     // avec le nombre de sommets — deux bâtisses voisines peuvent partager un
@@ -260,36 +580,39 @@ export class BuildingLayer {
     }
 
     let built = 0;
+    let panes = 0;
     for (const candidate of candidates) {
-      // Les fenêtres ne sont posées que sur les bâtiments proches : au-delà,
-      // elles ne font plus un pixel et il en faudrait des dizaines de milliers.
-      const lit = candidate.distance <= WINDOW_RADIUS_M && windows.positions.length / 9 < WINDOW_MAX_COUNT;
-      if (
-        this._appendBuilding(
-          candidate.ring,
-          candidate.properties,
-          positions,
-          normals,
-          colors,
-          lit ? windows : null
-        )
-      ) {
-        built++;
-      }
+      // Deux portées, et elles ne sont pas les mêmes : de jour la baie n'est
+      // qu'un contraste dans un mur, de nuit c'est une lumière dans le noir. La
+      // seconde porte donc bien plus loin que la première.
+      const openings =
+        candidate.distance <= PANE_RADIUS_M && panes < PANE_MAX_COUNT
+          ? {
+              panes: 0,
+              lit: candidate.distance <= WINDOW_RADIUS_M && lamps.positions.length / 9 < WINDOW_MAX_COUNT
+                ? lamps
+                : null,
+              budget: PANE_MAX_COUNT - panes,
+            }
+          : null;
+      if (this._appendBuilding(candidate.ring, candidate.properties, walls, openings, houses)) built++;
+      if (openings) panes += openings.panes;
     }
 
     this.count = built;
-    this.windowCount = windows.positions.length / 9;
-    this._applyWindows(windows);
-    if (positions.length === 0) {
+    this.paneCount = panes;
+    this.windowCount = lamps.positions.length / 9;
+    this.houses = houses;
+    this._applyWindows(lamps);
+    if (walls.positions.length === 0) {
       this._clearMesh();
       return;
     }
 
     const geometryBuffer = new THREE.BufferGeometry();
-    geometryBuffer.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geometryBuffer.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
-    geometryBuffer.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometryBuffer.setAttribute('position', new THREE.Float32BufferAttribute(walls.positions, 3));
+    geometryBuffer.setAttribute('normal', new THREE.Float32BufferAttribute(walls.normals, 3));
+    geometryBuffer.setAttribute('color', new THREE.Float32BufferAttribute(walls.colors, 3));
     geometryBuffer.computeBoundingSphere();
 
     if (this.mesh) {
@@ -309,11 +632,14 @@ export class BuildingLayer {
   }
 
   /**
-   * @param {Object|null} windows Accumulateur des fenêtres allumées, ou `null`
-   *        pour un bâtiment trop lointain pour en mériter.
+   * @param {Object} walls Accumulateur de la géométrie opaque — murs, toits,
+   *        et les baies de jour, qui sont du mur percé et non de la lumière.
+   * @param {Object|null} openings Budget d'ouvertures, ou `null` pour un
+   *        bâtiment trop lointain pour en mériter.
+   * @param {Array} houses Maisons publiées pour la couche des jardins.
    * @returns {boolean} vrai si le bâtiment a produit de la géométrie.
    */
-  _appendBuilding(ring, properties, positions, normals, colors, windows = null) {
+  _appendBuilding(ring, properties, walls, openings = null, houses = null) {
     const { THREE, bubble } = this;
     const { origin, scale, zoom } = bubble.frame;
 
@@ -363,6 +689,15 @@ export class BuildingLayer {
     const wallColor = style.wall;
     const roofColor = style.roof;
 
+    // Publication des maisons : la couche des jardins en a besoin, et elle n'a
+    // aucun moyen de les retrouver seule — c'est ici, et seulement ici, que
+    // l'empreinte, l'assise et le rectangle orienté existent en même temps.
+    // Rien n'est branché : `worldComposer` passe la liste, comme il passe les
+    // cheminées du mobilier à `lifeLayer`.
+    if (houses && box && style.house) {
+      houses.push({ x: box.cx, z: box.cz, box });
+    }
+
     // Un toit pentu prend sa hauteur **sur** le bâtiment, pas au-dessus : sinon
     // toutes les maisons grandissent d'un étage et le village change d'échelle.
     // L'égout descend donc de la hauteur du comble, dans la limite du
@@ -370,6 +705,11 @@ export class BuildingLayer {
     const shape = box && box.fill >= 0.62 ? style.shape : 'flat';
     const rise = shape === 'flat' ? 0 : roofRise(box.short, this.theme.roofs);
     const eaves = Math.max(bottom + 2.4, top - rise);
+
+    // Soubassement : une bande sombre, arête franche, à sa cote. Voir
+    // `plinthTopFor` — il n'y en a ni sous un surplomb ni sur un mur trop bas.
+    const plinthTop = plinthTopFor(base, minHeight, eaves);
+    const plinthColor = wallColor.map((c) => c * PLINTH_SHADE);
 
     for (let i = 0; i < ordered.length; i++) {
       const a = ordered[i];
@@ -383,25 +723,16 @@ export class BuildingLayer {
       // Enroulement choisi pour que la face avant regarde vers l'extérieur :
       // notre plan (x, z) est de chiralité opposée au plan (x, y) usuel, donc
       // l'ordre « naturel » donnerait des murs visibles seulement de l'intérieur.
-      const quad = [
-        [a.x, bottom, a.y],
-        [b.x, eaves, b.y],
-        [b.x, bottom, b.y],
-        [a.x, bottom, a.y],
-        [a.x, eaves, a.y],
-        [b.x, eaves, b.y],
-      ];
-      // Soubassement plus sombre : c'est le seul « pattern » que porte le mur, et
-      // il suffit à ancrer la maison au sol. Un pan de crépi rigoureusement
-      // uniforme du trottoir à la gouttière n'existe pas.
-      const plinth = wallColor.map((c) => c * 0.82);
-      for (const [x, y, z] of quad) {
-        positions.push(x, y, z);
-        normals.push(nx, 0, nz);
-        colors.push(...(y <= bottom + 0.01 ? plinth : wallColor));
+      if (plinthTop !== null) {
+        pushPanel(walls, a, b, bottom, plinthTop, nx, nz, plinthColor, plinthColor);
+        pushPanel(walls, a, b, plinthTop, eaves, nx, nz, wallColor, wallColor);
+      } else {
+        pushPanel(walls, a, b, bottom, eaves, nx, nz, wallColor, wallColor);
       }
 
-      if (windows) this._appendWindows(windows, a, b, nx, nz, base, eaves - base, minHeight);
+      if (openings) {
+        appendOpenings(openings, walls, a, b, nx, nz, base, eaves - base, minHeight, style, this.theme.windows);
+      }
     }
 
     if (shape === 'flat') {
@@ -419,9 +750,9 @@ export class BuildingLayer {
       for (const [i0, i1, i2] of faces) {
         for (const index of [i0, i2, i1]) {
           const p = ordered[index];
-          positions.push(p.x, eaves, p.y);
-          normals.push(0, 1, 0);
-          colors.push(...roofColor);
+          walls.positions.push(p.x, eaves, p.y);
+          walls.normals.push(0, 1, 0);
+          walls.colors.push(...roofColor);
         }
       }
       return true;
@@ -431,75 +762,12 @@ export class BuildingLayer {
     // orienté de l'empreinte (voir `roofGeometry`).
     const roof = roofTriangles(box, eaves, shape, this.theme.roofs);
     for (let i = 0; i < roof.positions.length; i += 3) {
-      positions.push(roof.positions[i], roof.positions[i + 1], roof.positions[i + 2]);
-      normals.push(roof.normals[i], roof.normals[i + 1], roof.normals[i + 2]);
-      colors.push(...roofColor);
+      walls.positions.push(roof.positions[i], roof.positions[i + 1], roof.positions[i + 2]);
+      walls.normals.push(roof.normals[i], roof.normals[i + 1], roof.normals[i + 2]);
+      walls.colors.push(...roofColor);
     }
 
     return true;
-  }
-
-  /**
-   * Pose les fenêtres allumées d'un pan de mur.
-   *
-   * Les panneaux sont décollés du mur de deux centimètres : coplanaires, ils se
-   * disputeraient le pixel avec lui et clignoteraient. Le décalage est trop
-   * petit pour se voir, et il est porté par la normale du mur, donc il reste
-   * correct quelle que soit son orientation.
-   *
-   * Quelle fenêtre est allumée ne dépend **que de sa position au sol et de son
-   * rang** : le village garde donc les mêmes fenêtres allumées d'une
-   * reconstruction à l'autre, là où un tirage libre les ferait clignoter tous
-   * les 200 mètres parcourus.
-   */
-  _appendWindows(windows, a, b, nx, nz, base, height, minHeight) {
-    const length = Math.hypot(b.x - a.x, b.y - a.y);
-    const storeys = height - minHeight;
-    const look = this.theme.windows;
-    if (length < 3 || storeys < look.sillM + look.heightM) return;
-
-    const grid = windowGrid(length, storeys, look);
-    if (grid.columns === 0 || grid.levels === 0) return;
-
-    // Vecteur unitaire le long du mur, et sa normale déjà fournie.
-    const ux = (b.x - a.x) / length;
-    const uz = (b.y - a.y) / length;
-    const halfW = look.widthM / 2;
-    const lift = 0.02;
-
-    for (let c = 0; c < grid.columns; c++) {
-      const along = grid.spacing * (c + 1);
-      const cx = a.x + ux * along + nx * lift;
-      const cz = a.y + uz * along + nz * lift;
-
-      for (let level = 0; level < grid.levels; level++) {
-        if (windows.positions.length / 9 >= WINDOW_MAX_COUNT) return;
-        if (windowDraw(cx, cz, level + 1) > look.litShare) continue;
-
-        const bottom = base + minHeight + look.sillM + level * look.levelM;
-        const top = bottom + look.heightM;
-        // Teinte de l'ampoule : du blanc froid au jaune franc, tirée par
-        // fenêtre. Toutes de la même couleur, un village ressemble à un écran.
-        const warmth = windowDraw(cx, cz, level + 41);
-        const color = [0.95, 0.78 + warmth * 0.16, 0.42 + warmth * 0.3];
-
-        const left = { x: cx - ux * halfW, z: cz - uz * halfW };
-        const right = { x: cx + ux * halfW, z: cz + uz * halfW };
-        const quad = [
-          [left.x, bottom, left.z],
-          [right.x, top, right.z],
-          [right.x, bottom, right.z],
-          [left.x, bottom, left.z],
-          [left.x, top, left.z],
-          [right.x, top, right.z],
-        ];
-        for (const [x, y, z] of quad) {
-          windows.positions.push(x, y, z);
-          windows.normals.push(nx, 0, nz);
-          windows.colors.push(...color);
-        }
-      }
-    }
   }
 
   /** (Ré)alimente le maillage des fenêtres allumées. */
