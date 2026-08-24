@@ -206,8 +206,12 @@ canvas.addEventListener('pointermove', (e) => {
   const dy = e.clientY - downY;
   if (!dragged && Math.hypot(dx, dy) > CLICK_MAX_DRAG_PX) dragged = true;
   if (dragged) {
-    yaw -= e.movementX * LOOK_SENSITIVITY;
-    pitch -= e.movementY * LOOK_SENSITIVITY;
+    // Glisser-clic « attrape » la scène plutôt qu'il ne pilote un manche à
+    // balai : le point du monde sous le curseur doit suivre le curseur,
+    // comme sur une carte qu'on fait glisser. La caméra tourne donc dans le
+    // sens opposé au geste, pas dans le même sens qu'un mouse-look FPS.
+    yaw += e.movementX * LOOK_SENSITIVITY;
+    pitch += e.movementY * LOOK_SENSITIVITY;
     pitch = Math.max(-1.5, Math.min(1.5, pitch));
     applyLook();
   }
@@ -247,6 +251,11 @@ let labelAcc = LABEL_INTERVAL_MS; // premier tick immédiat
 function updateMovement(delta) {
   const speed = MOVE_SPEED * (keys.boost ? BOOST_FACTOR : 1);
   camera.getWorldDirection(forward3);
+  // Avancer/reculer glisse sur le sol, comme à pied : la composante
+  // verticale du regard ne doit pas s'ajouter au déplacement, sinon lever
+  // les yeux fait grimper et les baisser fait plonger dans le terrain.
+  forward3.y = 0;
+  if (forward3.lengthSq() > 1e-8) forward3.normalize();
   const right = new THREE.Vector3().crossVectors(forward3, camera.up).normalize();
 
   move.set(0, 0, 0);
