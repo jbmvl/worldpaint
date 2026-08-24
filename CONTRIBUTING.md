@@ -108,10 +108,6 @@ these needs a very good reason, stated in the PR description.
 
 Based on what exists today, not on a wishlist:
 
-- **A standalone demo.** There is currently no way to see WorldPaint run
-  without embedding it in an application. A minimal `demo/` (plain three.js,
-  no framework) that calls `createWorld` and drives the render loop would
-  make the project reviewable on its own.
 - **Forest edges / clearings.** `layers/vegetationLayer.js` currently plants
   a stand type per ground-class cell with a hard boundary; a softer
   transition where a wood meets a field is a named, unimplemented gap (see

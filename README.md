@@ -49,9 +49,16 @@ npm install
 npm test
 ```
 
-There is no standalone demo yet (see [Status](#status)) — the only way to see
-it running today is through an application that consumes it, such as the
-`createWorld` example below.
+```
+npm run demo
+```
+
+opens a standalone demo (plain three.js, no framework) at
+<http://localhost:4173/demo/> — free-fly keyboard navigation, click to
+teleport, an "show object names" checkbox and a place search field. See
+[`demo/README.md`](./demo/README.md) for details. Short of that, the other
+way to see WorldPaint running is through an application that consumes it,
+such as the `createWorld` example below.
 
 ## Architecture
 
@@ -182,7 +189,9 @@ need its own mapping in `layers/`.
   as its first, and so far only, real-world consumer.
 - The public API (`createWorld` and the five verbs) is recent and may still
   change before a 1.0.
-- A standalone demo is planned but does not exist yet.
+- A standalone demo exists (`npm run demo`, see `demo/README.md`) — free-fly
+  keyboard navigation, click-to-teleport, an object-name overlay and a place
+  search. It is a thin application, not a reference UI.
 - There is no published npm package yet.
 
 ## Philosophy / roadmap

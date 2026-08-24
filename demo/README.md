@@ -1,0 +1,60 @@
+# WorldPaint — démo
+
+Une démo autonome, en three.js pur (pas de framework, pas de build), qui
+monte `createWorld` et pilote une caméra volante à la main. C'est la
+démo évoquée par la section « Status » du README principal.
+
+## Lancer
+
+```
+npm install
+npm run demo
+```
+
+Puis ouvrir <http://localhost:4173/demo/>.
+
+Un serveur statique est nécessaire (les imports ES modules ne fonctionnent
+pas sous `file://`) ; `npm run demo` lance un petit serveur sans dépendance
+(`demo/server.mjs`). N'importe quel autre serveur statique servant la racine
+du dépôt convient aussi (`npx serve .`, `python3 -m http.server`, …).
+
+`three` est chargé depuis un CDN (jsDelivr) via un `<script type="importmap">`
+dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
+
+## Ce que ça montre
+
+- **Navigation clavier en vol libre** : flèches pour avancer/reculer et se
+  déplacer sur les côtés, <kbd>Espace</kbd>/<kbd>Maj</kbd> pour monter et
+  descendre, <kbd>Alt</kbd> pour accélérer. Glisser-clic pour regarder autour
+  de soi.
+- **Téléportation au clic** : un clic simple (sans glisser) sur le sol
+  raycaste contre la bulle de terrain et pose la caméra à cet endroit.
+- **Case « afficher le nom des objets »** : appelle
+  `collectSceneLabels` (`src/inspect/objectLabels.js`) à intervalle régulier
+  et projette chaque étiquette à l'écran.
+- **Champ de recherche** : géocode le texte tapé via Nominatim
+  (OpenStreetMap) et déplace la bulle (`setCenter` + `refresh`) sur le
+  résultat.
+
+## Sources de données
+
+- **Relief** : tuiles Terrarium (AWS Open Data), comme le reste du moteur —
+  aucune configuration nécessaire.
+- **Vectoriel** (routes, bâti, occupation du sol) : le TileJSON public
+  d'[OpenFreeMap](https://openfreemap.org/), lu au démarrage plutôt que codé
+  en dur, pour ne pas dépendre d'un gabarit d'URL qui peut changer. En cas
+  d'échec (réseau, service indisponible), la démo continue avec le relief nu
+  et l'indique dans son bandeau de statut.
+- **Recherche de lieu** : [Nominatim](https://nominatim.openstreetmap.org/),
+  le service de géocodage public d'OpenStreetMap — une requête par
+  validation, dans les limites de son
+  [usage policy](https://operations.osmfoundation.org/policies/nominatim/).
+  Une application qui déploie cette démo à grande échelle devrait pointer
+  vers sa propre instance ou un service commercial.
+
+## Ce que ça n'est pas
+
+Un client de production. Pas de réessai réseau élaboré, pas de gestion
+d'erreur exhaustive, pas d'optimisation mobile — juste assez de code
+applicatif pour que le moteur soit *reviewable on its own*, comme le demande
+le CONTRIBUTING.
