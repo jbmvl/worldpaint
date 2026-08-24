@@ -97,6 +97,14 @@ import {
   NODE_WELD_M,
 } from '../src/layers/roadGraph.js';
 import {
+  CORRIDOR_MARGIN_M,
+  CORRIDOR_PROBE_M,
+  inCorridor,
+  clipOutsideCorridor,
+  filterOutsideCorridor,
+} from '../src/layers/roadCorridor.js';
+import { fittedGardenMargin, gardenOutlineClear } from '../src/layers/gardenLayer.js';
+import {
   grassCellRing,
   grassEdgeFade,
   fillGrassCell,
@@ -154,6 +162,7 @@ import {
   picketOffsets,
   gardenCorners,
   isDetached,
+  GARDEN_MARGIN_M,
   appendBush,
   GATE_WIDTH_M,
   GARDEN_CLEAR_M,
@@ -2664,4 +2673,315 @@ test("une parcelle s'étiquette au-dessus du sol, avec sa surface", () => {
   assert.match(labels[0].text, /0\.4 ha/);
   assert.equal(labels[0].y, 103, "l'étiquette flotte au-dessus du sol");
   assert.ok(labels[0].x > 0 && labels[0].z > 0, 'elle est posée sur le champ');
+});
+
+// --- Emprise routière : la frontière partagée du décor -----------------------
+//
+// Tout ce qui suit vérifie une seule chose sous des angles différents : un
+// élément de décor ne doit jamais se retrouver sur la chaussée, et une haie que
+// la route traverse doit être **coupée**, pas supprimée.
+
+/** Une route droite d'ouest en est, axe z = 0. */
+function corridorIndex(halfWidth = 2.5, z = 0) {
+  const points = [];
+  for (let x = -200; x <= 200; x += 10) points.push({ x, z });
+  return new RoadIndex([fakeSegment(points, halfWidth, 10)], {
+    margin: ROAD_CUT_M + ROAD_CUT_BLEND_M,
+  });
+}
+
+/** Une polyligne nord-sud à l'abscisse `x`, échantillonnée tous les `step`. */
+function crossing(x = 0, from = -30, to = 30, step = 6) {
+  const points = [];
+  for (let z = from; z <= to; z += step) points.push({ x, z });
+  return points;
+}
+
+test('l’emprise est la chaussée plus son accotement excavé, et rien d’autre', () => {
+  // Elle n'a pas de valeur propre : c'est le fond plat du déblai. Les deux
+  // doivent bouger ensemble, sinon on terrasse plus large qu'on n'interdit.
+  assert.equal(CORRIDOR_MARGIN_M, ROAD_CUT_M, 'même largeur que le déblai');
+
+  const index = corridorIndex(2.5);
+  assert.ok(inCorridor(index, 0, 0), 'au milieu de la chaussée');
+  assert.ok(inCorridor(index, 0, 3.6), 'sur l’accotement excavé');
+  assert.ok(!inCorridor(index, 0, 3.8), 'au-delà, le sol redevient naturel');
+  assert.ok(!inCorridor(index, 0, 40), 'en pleine prairie');
+});
+
+test('sans réseau routier, rien n’est dans l’emprise', () => {
+  // On ne devine pas une route absente : une bulle sans chaussée n'interdit
+  // rien, et surtout pas au hasard.
+  assert.equal(inCorridor(null, 0, 0), false);
+  const runs = clipOutsideCorridor(crossing(), null);
+  assert.equal(runs.length, 1, 'la polyligne ressort entière');
+  assert.equal(runs[0].length, crossing().length, 'et avec tous ses sommets');
+});
+
+test('une haie perpendiculaire est coupée au bord exact de la chaussée', () => {
+  const index = corridorIndex(2.5);
+  const runs = clipOutsideCorridor(crossing(), index);
+
+  assert.equal(runs.length, 2, 'deux tronçons, un de chaque côté');
+  const edge = 2.5 + CORRIDOR_MARGIN_M;
+  // La tolérance est celle de la dichotomie : quelques millimètres.
+  close(runs[0][runs[0].length - 1].z, -edge, 0.02, 'bout amont au bord');
+  close(runs[1][0].z, edge, 0.02, 'reprise au bord opposé');
+  assert.ok(
+    runs.every((run) => run.every((p) => !inCorridor(index, p.x, p.z))),
+    'aucun sommet ne reste sur la voirie'
+  );
+});
+
+test('une haie parallèle hors emprise n’est pas touchée', () => {
+  const index = corridorIndex(2.5);
+  const along = [];
+  for (let x = -50; x <= 50; x += 6) along.push({ x, z: 4.2 });
+
+  const runs = clipOutsideCorridor(along, index);
+  assert.equal(runs.length, 1, 'un seul tronçon');
+  assert.equal(runs[0].length, along.length, 'aucun sommet ajouté ni perdu');
+  // Le sondage sert à détecter les traversées, pas à densifier le tracé : une
+  // haie ne doit pas gagner un sommet tous les mètres au passage.
+  close(runs[0][0].x, along[0].x, 1e-9, 'premier sommet inchangé');
+});
+
+test('une haie parallèle posée dans l’emprise disparaît entièrement', () => {
+  const index = corridorIndex(2.5);
+  const inside = [];
+  for (let x = -50; x <= 50; x += 6) inside.push({ x, z: 1 });
+  assert.equal(clipOutsideCorridor(inside, index).length, 0);
+});
+
+test('une clôture enjambe un sentier étroit sans que la découpe le rate', () => {
+  // Le cas qui condamne un test « sommet par sommet » : le contour est
+  // ré-échantillonné tous les six mètres, le sentier fait 1,4 m de large, donc
+  // aucun sommet ne tombe dedans. Seul un sondage plus fin le voit.
+  const path = corridorIndex(0.7);
+  // Décalé exprès : les sommets tombent à ±3 m, hors de l'emprise de 1,9 m.
+  const fence = crossing(0, -33, 33, 6);
+  assert.ok(
+    fence.every((p) => !inCorridor(path, p.x, p.z)),
+    'préalable : aucun sommet ne tombe dans l’emprise'
+  );
+  assert.equal(clipOutsideCorridor(fence, path).length, 2, 'la découpe le voit quand même');
+  assert.ok(CORRIDOR_PROBE_M < 0.7 * 2, 'le pas de sondage tient dans la plus étroite emprise');
+});
+
+test('deux routes proches découpent la même haie en trois', () => {
+  const north = [];
+  const south = [];
+  for (let x = -200; x <= 200; x += 10) {
+    south.push({ x, z: 0 });
+    north.push({ x, z: 20 });
+  }
+  const index = new RoadIndex(
+    [fakeSegment(south, 2.5, 10), fakeSegment(north, 2.5, 10)],
+    { margin: ROAD_CUT_M + ROAD_CUT_BLEND_M }
+  );
+
+  const runs = clipOutsideCorridor(crossing(0, -20, 40, 6), index);
+  assert.equal(runs.length, 3, 'avant, entre, après');
+  assert.ok(
+    runs.every((run) => run.every((p) => !inCorridor(index, p.x, p.z))),
+    'aucun tronçon ne mord sur l’une ou l’autre'
+  );
+});
+
+test('chaque tronçon découpé repart d’une distance nulle', () => {
+  // `spacedAlongPath` et `appendRibbon` comptent depuis le premier sommet du
+  // tracé qu'on leur donne : un tronçon qui garderait les distances d'origine
+  // décalerait tous ses piquets.
+  const runs = clipOutsideCorridor(crossing(), corridorIndex(2.5));
+  for (const run of runs) {
+    close(run[0].distance, 0, 1e-9, 'origine à zéro');
+    for (let i = 1; i < run.length; i++) {
+      assert.ok(run[i].distance > run[i - 1].distance, 'distances croissantes');
+      close(
+        run[i].distance - run[i - 1].distance,
+        Math.hypot(run[i].x - run[i - 1].x, run[i].z - run[i - 1].z),
+        1e-6,
+        'distance cumulée cohérente'
+      );
+    }
+  }
+});
+
+test('un tronçon trop court pour valoir une haie est écarté', () => {
+  const index = corridorIndex(2.5);
+  // Deux bouts de treize mètres de part et d'autre de la route.
+  const short = crossing(0, -17, 17, 3.4);
+  assert.equal(clipOutsideCorridor(short, index).length, 2, 'sans plancher, les deux passent');
+  assert.equal(
+    clipOutsideCorridor(short, index, undefined, { minLength: 30 }).length,
+    0,
+    'avec un plancher de trente mètres, aucun'
+  );
+});
+
+test('le décalage latéral sonde l’emprise là où l’objet sera posé', () => {
+  // Une haie de bas-côté longe la route à quatre mètres de son axe : elle est
+  // hors emprise, alors que l'axe qui la porte est en plein dedans.
+  const index = corridorIndex(2.5);
+  const along = [];
+  for (let x = -50; x <= 50; x += 6) along.push({ x, z: 0 });
+
+  assert.equal(clipOutsideCorridor(along, index, undefined, { offset: 0 }).length, 0, 'sur l’axe');
+  assert.equal(clipOutsideCorridor(along, index, undefined, { offset: 4 }).length, 1, 'à côté');
+  assert.equal(clipOutsideCorridor(along, index, undefined, { offset: -4 }).length, 1, 'de l’autre côté');
+});
+
+test('une polyligne dégénérée ne produit aucun tronçon', () => {
+  const index = corridorIndex(2.5);
+  assert.deepEqual(clipOutsideCorridor([], index), []);
+  assert.deepEqual(clipOutsideCorridor([{ x: 0, z: 40 }], index), []);
+  assert.deepEqual(clipOutsideCorridor(null, index), []);
+});
+
+test('la découpe est déterministe : deux appels rendent exactement la même chose', () => {
+  // C'est l'invariant que tout le décor engendré repose dessus : la même donnée
+  // doit rendre le même paysage, sinon les haies clignotent tous les 250 m.
+  const index = corridorIndex(2.5);
+  const first = clipOutsideCorridor(crossing(), index);
+  const second = clipOutsideCorridor(crossing(), index);
+  assert.deepEqual(first, second);
+});
+
+test('le semis par points ne perd que ce qui tombe sur la voirie', () => {
+  const index = corridorIndex(2.5);
+  const bales = [
+    { x: -20, z: -10 },
+    { x: 0, z: 0 }, // en plein milieu de la chaussée
+    { x: 10, z: 2 }, // sur l'accotement excavé
+    { x: 30, z: 12 },
+  ];
+  const kept = filterOutsideCorridor(bales, index);
+  assert.equal(kept.length, 2, 'deux bottes retirées');
+  // L'ordre et les valeurs sont conservés : on retire, on ne recompose pas.
+  assert.deepEqual(kept, [bales[0], bales[3]]);
+  assert.deepEqual(filterOutsideCorridor(bales, null), bales, 'sans réseau, rien ne bouge');
+});
+
+// --- Jardins : la clôture tient entre la maison et la rue, ou il n'y a pas de jardin
+
+/** Maison de six mètres sur quatre, alignée sur les axes. */
+const houseBox = (cx, cz) => ({ cx, cz, angle: 0, long: 6, short: 4 });
+
+/** Une route droite du nord au sud, axe x = 0 — elle coupe les côtés est-ouest. */
+function northSouthIndex(halfWidth = 2.5) {
+  const points = [];
+  for (let z = -200; z <= 200; z += 10) points.push({ x: 0, z });
+  return new RoadIndex([fakeSegment(points, halfWidth, 10)], {
+    margin: ROAD_CUT_M + ROAD_CUT_BLEND_M,
+  });
+}
+
+test('une clôture de jardin qui coupe la rue en son milieu est détectée', () => {
+  // Le piège du test « quatre angles » : une rue peut traverser un côté sans
+  // toucher aucun angle.
+  // La route file du nord au sud en plein milieu de la maison : elle traverse
+  // les côtés nord et sud de la clôture, loin de leurs angles.
+  const index = northSouthIndex(2.5);
+  const box = houseBox(0, 0);
+  const clear = (x, z) => !inCorridor(index, x, z);
+
+  const corners = gardenCorners(box, 6.5);
+  assert.ok(corners.every((c) => clear(c.x, c.z)), 'préalable : les angles sont au large');
+  assert.equal(gardenOutlineClear(box, 6.5, clear), false, 'les côtés, eux, mordent sur la route');
+});
+
+test('le jardin se resserre plutôt que de disparaître, puis renonce', () => {
+  const index = corridorIndex(2.5);
+  const clear = (x, z) => !inCorridor(index, x, z);
+
+  // Maison au large : le recul tiré passe tel quel.
+  const roomy = fittedGardenMargin(houseBox(0, -40), 6.5, clear);
+  close(roomy, 6.5, 1e-9, 'rien à resserrer');
+
+  // Maison proche de la route : le recul généreux ne passe pas, un plus serré si.
+  const tight = houseBox(0, -14);
+  assert.equal(gardenOutlineClear(tight, 6.5, clear), false, 'préalable : 6,5 m ne tient pas');
+  const fitted = fittedGardenMargin(tight, 6.5, clear);
+  assert.ok(fitted !== null && fitted < 6.5, 'un recul plus serré a été trouvé');
+  assert.ok(fitted >= GARDEN_MARGIN_M[0], 'jamais en deçà du minimum de la fourchette');
+  assert.ok(gardenOutlineClear(tight, fitted, clear), 'et il tient vraiment');
+
+  // Maison collée à la chaussée : même le minimum mord, donc pas de jardin.
+  assert.equal(fittedGardenMargin(houseBox(0, -5), 6.5, clear), null, 'aucun recul ne tient');
+});
+
+test('sans emprise à respecter, le jardin garde le recul tiré', () => {
+  close(fittedGardenMargin(houseBox(0, 0), 5.1, () => true), 5.1, 1e-9);
+});
+
+test('ce qui borde une route l’ignore, et s’arrête aux rues transversales', () => {
+  // Les décalages du bas-côté (fossé à 1,5 m de la rive, haie à 1,8 m) tombent
+  // aujourd'hui juste au-delà de l'accotement, donc hors de leur propre
+  // emprise. C'est une marge de trente centimètres, et personne ne l'a écrite
+  // nulle part : le prédicat dit la règle au lieu de compter dessus. On le
+  // vérifie donc sur un décalage volontairement plus serré — celui qu'aurait
+  // une bordure de trottoir.
+  const along = [];
+  for (let x = -100; x <= 100; x += 10) along.push({ x, z: 0 });
+  const own = fakeSegment(along, 2.5, 10);
+
+  const cross = [];
+  for (let z = -100; z <= 100; z += 10) cross.push({ x: 0, z });
+  const other = fakeSegment(cross, 2.5, 10);
+
+  const index = new RoadIndex([own, other], { margin: ROAD_CUT_M + ROAD_CUT_BLEND_M });
+  const ignoreOwn = (segment) => segment !== own;
+
+  const hugging = 2.5 + 0.6; // au ras de la rive : dans sa propre emprise
+
+  // Sans le prédicat, l'ouvrage s'efface lui-même sur toute sa longueur.
+  assert.equal(
+    clipOutsideCorridor(along, index, undefined, { offset: hugging }).length,
+    0,
+    'la route porteuse est comptée : il ne reste rien'
+  );
+
+  const runs = clipOutsideCorridor(along, index, undefined, {
+    offset: hugging,
+    accept: ignoreOwn,
+  });
+  assert.equal(runs.length, 2, 'il survit, coupé par la seule rue transversale');
+  assert.ok(
+    runs.every((run) => run.every((p) => !inCorridor(index, p.x, p.z, undefined, ignoreOwn))),
+    'et aucun tronçon ne traverse la rue'
+  );
+});
+
+test('un point posé au bord de sa propre route reste, un point sur une autre part', () => {
+  const along = [];
+  for (let x = -100; x <= 100; x += 10) along.push({ x, z: 0 });
+  const own = fakeSegment(along, 2.5, 10);
+  const index = new RoadIndex([own], { margin: ROAD_CUT_M + ROAD_CUT_BLEND_M });
+  const ignoreOwn = (segment) => segment !== own;
+
+  // Une glissière au ras de la rive : dans l'emprise, et c'est sa place.
+  assert.ok(inCorridor(index, 0, 3), 'sans prédicat, le point est sur la voirie');
+  assert.ok(!inCorridor(index, 0, 3, undefined, ignoreOwn), 'avec, sa route ne le gêne plus');
+});
+
+test('l’écart rapide de l’index ne se trompe que dans le sens sûr', () => {
+  // `mayCover` sert à écarter d'un coup un tronçon de haie loin de toute route.
+  // Il a le droit de dire « peut-être » là où rien ne couvre ; il n'a jamais le
+  // droit de dire « non » là où quelque chose couvre — sinon une haie
+  // traverserait la chaussée sans qu'on l'ait seulement sondée.
+  const index = corridorIndex(2.5);
+
+  assert.ok(index.mayCover(-5, -5, 5, 5), 'la boîte contient la route');
+  assert.ok(!index.mayCover(-5, 400, 5, 410), 'très loin, rien à sonder');
+
+  // L'invariant, vérifié point par point sur une grille qui coupe la route.
+  for (let x = -60; x <= 60; x += 3) {
+    for (let z = -30; z <= 30; z += 1.5) {
+      if (!inCorridor(index, x, z)) continue;
+      assert.ok(
+        index.mayCover(x, z, x, z),
+        `un point couvert doit toujours être annoncé (${x}, ${z})`
+      );
+    }
+  }
 });

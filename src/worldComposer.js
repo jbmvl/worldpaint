@@ -17,10 +17,16 @@
  * ## L'ordre de génération, et pourquoi il est celui-là
  *
  *   1. **occupation du sol** — tout le monde la lit, personne ne la produit ;
- *   2. **chaussées** — elles entaillent le terrain et publient leur index ;
+ *   2. **chaussées** — elles entaillent le terrain et publient leur index, qui
+ *      est aussi l'**emprise routière** (`roadCorridor`) : la frontière que ni
+ *      la haie, ni la clôture, ni le jardin, ni le champ, ni l'herbe n'ont le
+ *      droit de franchir. C'est la seule relation spatiale que toutes les
+ *      couches de décor partagent, et elle tient en une question — « ce point
+ *      est-il sur la voirie ? » ;
  *   3. **eau, bâti** — indépendants, ils ne lisent que les tuiles ; le bâti
  *      publie au passage ses **maisons**, dont les **jardins** tirent leurs
- *      clôtures et leurs buissons — eux ne lisent aucune tuile ;
+ *      clôtures et leurs buissons — eux ne lisent aucune tuile, mais ils
+ *      lisent l'emprise ;
  *   4. **mobilier** — il lui faut les tronçons *et* l'index des chaussées :
  *      murs et glissières se posent sur la plate-forme exacte sur laquelle
  *      roule l'observateur, et les feux n'ont de sens qu'aux carrefours ;
@@ -126,8 +132,10 @@ export class WorldComposer {
     this.buildings = new BuildingLayer({ THREE, scene, bubble, theme });
     // Les jardins ne lisent pas les tuiles : ils ne connaissent que les maisons
     // que le bâti vient de publier. C'est pour ça qu'ils sont une couche à part
-    // et qu'ils passent par ici — voir l'ordre de génération plus haut.
-    this.gardens = new GardenLayer({ THREE, scene, bubble, theme });
+    // et qu'ils passent par ici — voir l'ordre de génération plus haut. Ils
+    // reçoivent en revanche les chaussées, pour la même raison que l'herbe et
+    // les cultures : une clôture ne se plante pas sur la rue.
+    this.gardens = new GardenLayer({ THREE, scene, bubble, roads: this.roads, theme });
 
     this.vegetation = new VegetationLayer({
       THREE,

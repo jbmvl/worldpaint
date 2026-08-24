@@ -62,6 +62,7 @@ import {
 } from './ribbonGeometry.js';
 import { ROAD_SAMPLE_M, ROAD_LIFT_M } from './roadNetwork.js';
 import { ROAD_CUT_M } from '../terrain/roadCut.js';
+import { clipOutsideCorridor, filterOutsideCorridor, inCorridor } from './roadCorridor.js';
 import {
   createFurnitureGeometries,
   createFurnitureMaterial,
@@ -342,6 +343,12 @@ export class FurnitureLayer {
      * @type {Array<{x:number,y:number,z:number}>}
      */
     this.chimneys = [];
+    /**
+     * Emprise routière de la reconstruction en cours (`RoadIndex`), ou `null`.
+     * Elle ne vit que le temps d'un `rebuild` : hors de là, il n'y a pas de
+     * frontière à faire respecter, seulement un index périmé.
+     */
+    this._roadIndex = null;
     this._night = 0;
     this._matrix = new THREE.Matrix4();
     this._position = new THREE.Vector3();
@@ -366,12 +373,19 @@ export class FurnitureLayer {
    * @param {{x:number,z:number}} here Position locale de l'observateur.
    * @param {Array} roadSegments Tronçons produits par `collectRoadSegments`.
    * @param {Object|null} roadIndex Index spatial de ces mêmes tronçons
-   *        (`RoadIndex`). Il sert à trouver les carrefours, seul endroit où un
-   *        feu tricolore a un sens.
+   *        (`RoadIndex`). Il sert deux fois : à trouver les carrefours, seul
+   *        endroit où un feu tricolore a un sens, et à tenir l'**emprise
+   *        routière** — la frontière que rien du décor ne doit franchir
+   *        (`roadCorridor`).
    * @returns {boolean} vrai si quelque chose a été posé.
    */
   rebuild(source, tiles, here, roadSegments = [], roadIndex = null) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
+
+    // Gardé le temps de la reconstruction : haies, clôtures, bottes et
+    // troupeaux s'y heurtent. Il est remis à `null` en sortie pour qu'aucun
+    // appel tardif ne s'appuie sur un index périmé.
+    this._roadIndex = roadIndex;
 
     const sampleElevation = (x, z) =>
       this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale;
@@ -409,7 +423,38 @@ export class FurnitureLayer {
 
     this._anchor = { x: here.x, z: here.z };
     this._frame = this.bubble.frame;
+    this._roadIndex = null;
     return this.counts.points + this.counts.boundaries > 0;
+  }
+
+  // --- Emprise routière ----------------------------------------------------
+
+  /**
+   * Vrai si un point tombe sur la voirie — chaussée et accotement excavé.
+   *
+   * Le mobilier **de bord de route** ne passe pas par là, et c'est voulu :
+   * glissière, lampadaire, borne et feu sont posés au ras de la rive, donc
+   * dans l'emprise, et c'est exactement là qu'ils doivent être. Seul le décor
+   * qui n'a rien à faire sur la voirie s'y heurte.
+   */
+  _onRoad(x, z, own = null) {
+    const accept = own ? (other) => other !== own : null;
+    return inCorridor(this._roadIndex, x, z, undefined, accept);
+  }
+
+  /**
+   * Découpe une polyligne aux traversées de chaussée.
+   *
+   * `offset` est le décalage latéral auquel l'objet sera réellement posé : une
+   * haie de bas-côté longe la route à deux mètres de sa rive, et c'est là qu'il
+   * faut sonder l'emprise, pas sur l'axe de la route.
+   */
+  _clipOffRoad(path, { offset = 0, minLength = BOUNDARY_MIN_LENGTH_M, own = null } = {}) {
+    // `own` est la chaussée que l'objet borde délibérément : un fossé longe sa
+    // route à un mètre cinquante de la rive, donc dans son emprise, et c'est sa
+    // place. Il doit malgré tout s'arrêter à chaque rue transversale.
+    const accept = own ? (other) => other !== own : null;
+    return clipOutsideCorridor(path, this._roadIndex, undefined, { offset, minLength, accept });
   }
 
   // --- Zones bâties --------------------------------------------------------
@@ -937,6 +982,10 @@ export class FurnitureLayer {
           const row = p.index % 2 === 0 ? 1 : -1;
           this._placeBeside(placements, conifer ? 'treeConifer' : 'treeBroad', p, row * (halfWidth + 3.2), platform, {
             scale: 1.05 + randomAt(p.x, p.z, 3) * 0.5,
+            // Un platane pousse au bord de la route qu'il borde — donc celle-ci
+            // ne le gêne pas — mais pas au milieu de celle qui la croise.
+            offRoad: true,
+            own: segment,
           });
         }
       }
@@ -950,22 +999,29 @@ export class FurnitureLayer {
       const sides = verge.ditchSide === 0 ? [1, -1] : [verge.ditchSide];
       for (const s of sides) {
         const offset = s * (halfWidth + 1.5);
-        appendProfile(buffers.ditch, {
-          path,
-          profile: this.specs.profiles.ditch,
-          sampleElevation,
-          offset,
-          lift: -FURNITURE_SINK_M,
-        });
+        // Le fossé s'interrompt là où une rue transversale le coupe : un fossé
+        // qui traverse une chaussée est une saignée en travers de la route.
+        for (const run of this._clipOffRoad(path, { offset, minLength: 0, own: segment })) {
+          appendProfile(buffers.ditch, {
+            path: run,
+            profile: this.specs.profiles.ditch,
+            sampleElevation,
+            offset,
+            lift: -FURNITURE_SINK_M,
+          });
+        }
         // Fougères sur la berge amont du fossé : c'est ce qui y pousse, et une
         // saignée nue se lirait comme une tranchée de chantier. Une touffe tous
         // les cinq mètres, sautée une fois sur trois.
         for (const spot of spacedAlongPath(path, 5, spacing)) {
           if (randomAt(spot.x, spot.z, 173) > 0.66) continue;
           const away = offset + s * 1.1;
+          const fx = spot.x + spot.tz * away;
+          const fz = spot.z - spot.tx * away;
+          if (this._onRoad(fx, fz, segment)) continue;
           this._place(placements, 'fernClump', {
-            x: spot.x + spot.tz * away,
-            z: spot.z - spot.tx * away,
+            x: fx,
+            z: fz,
             yaw: randomAt(spot.x, spot.z, 179) * Math.PI * 2,
             scale: 0.8 + randomAt(spot.x, spot.z, 181) * 0.7,
           });
@@ -976,7 +1032,14 @@ export class FurnitureLayer {
     const openGround = this._openGround(mid.x, mid.z);
     if (verge.verge && openGround) {
       const vergeSide = verge.ditchSide || 1;
-      this._appendBoundary(buffers.lowHedge, 'lowHedge', path, sampleElevation, vergeSide * (halfWidth + 2.6));
+      this._appendBoundary(
+        buffers.lowHedge,
+        'lowHedge',
+        path,
+        sampleElevation,
+        vergeSide * (halfWidth + 2.6),
+        segment
+      );
     }
 
     // La haie de bocage le long de la route reste, mais elle n'est plus
@@ -984,7 +1047,14 @@ export class FurnitureLayer {
     // jamais du côté où court déjà le fossé.
     if (plan.hedge && openGround && randomAt(side.x, side.z, 29) < 0.5) {
       const hedgeSide = -(verge.ditchSide || (randomAt(side.x, side.z, 23) < 0.5 ? 1 : -1));
-      this._appendBoundary(buffers.hedge, 'hedge', path, sampleElevation, hedgeSide * (halfWidth + 1.8));
+      this._appendBoundary(
+        buffers.hedge,
+        'hedge',
+        path,
+        sampleElevation,
+        hedgeSide * (halfWidth + 1.8),
+        segment
+      );
     }
   }
 
@@ -1217,44 +1287,52 @@ export class FurnitureLayer {
         z: (latToTileY(lat, zoom) - origin.y) * scale,
       }));
 
-      const path = resamplePath(local, BOUNDARY_SAMPLE_M);
-      if (path.length < 3 || path[path.length - 1].distance < BOUNDARY_MIN_LENGTH_M) continue;
+      const sampled = resamplePath(local, BOUNDARY_SAMPLE_M);
+      if (sampled.length < 3) continue;
 
-      if (kind === 'hedge' || kind === 'lowHedge' || kind === 'dryStoneWall') {
-        appendProfile(buffers[kind], {
-          path,
-          profile: this.specs.profiles[kind],
-          sampleElevation,
-          lift: -FURNITURE_SINK_M,
-          closed: true,
-          // Un muret de pierre sèche est arasé de niveau, une haie non : elle
-          // seule respire le long du tracé.
-          scaleUp: kind === 'dryStoneWall' ? null : FurnitureLayer._hedgeRelief(path),
-        });
+      // Une route qui traverse la parcelle coupe sa limite en deux : le contour
+      // repart de l'autre côté de la chaussée au lieu de la franchir. C'est le
+      // seul endroit du bocage où une haie a le droit de s'interrompre, et
+      // c'est aussi le seul où elle le fait vraiment.
+      for (const path of this._clipOffRoad(sampled)) {
+        if (path.length < 3) continue;
+
+        if (kind === 'hedge' || kind === 'lowHedge' || kind === 'dryStoneWall') {
+          appendProfile(buffers[kind], {
+            path,
+            profile: this.specs.profiles[kind],
+            sampleElevation,
+            lift: -FURNITURE_SINK_M,
+            closed: true,
+            // Un muret de pierre sèche est arasé de niveau, une haie non : elle
+            // seule respire le long du tracé.
+            scaleUp: kind === 'dryStoneWall' ? null : FurnitureLayer._hedgeRelief(path),
+          });
+          placed++;
+          continue;
+        }
+
+        // Clôtures : des piquets instanciés, et — pour le barbelé — trois brins
+        // tendus. Un grillage plein serait un mur ; ici on doit voir au travers.
+        const wood = kind === 'woodFence';
+        for (const post of spacedAlongPath(path, wood ? 2.6 : 3.4, { margin: 0.5 })) {
+          this._place(placements, wood ? 'fencePostWood' : 'fencePostConcrete', {
+            x: post.x,
+            z: post.z,
+            yaw: Math.atan2(post.tx, post.tz),
+          });
+        }
+        for (const height of wood ? [0.5, 0.95] : BARBED_WIRE_HEIGHTS) {
+          appendProfile(buffers.wire, {
+            path,
+            profile: this.specs.profiles.wire,
+            sampleElevation,
+            lift: height,
+            closed: true,
+          });
+        }
         placed++;
-        continue;
       }
-
-      // Clôtures : des piquets instanciés, et — pour le barbelé — trois brins
-      // tendus. Un grillage plein serait un mur ; ici on doit voir au travers.
-      const wood = kind === 'woodFence';
-      for (const post of spacedAlongPath(path, wood ? 2.6 : 3.4, { margin: 0.5 })) {
-        this._place(placements, wood ? 'fencePostWood' : 'fencePostConcrete', {
-          x: post.x,
-          z: post.z,
-          yaw: Math.atan2(post.tx, post.tz),
-        });
-      }
-      for (const height of wood ? [0.5, 0.95] : BARBED_WIRE_HEIGHTS) {
-        appendProfile(buffers.wire, {
-          path,
-          profile: this.specs.profiles.wire,
-          sampleElevation,
-          lift: height,
-          closed: true,
-        });
-      }
-      placed++;
     }
 
     return placed;
@@ -1313,31 +1391,37 @@ export class FurnitureLayer {
       }
       for (const run of contiguousRuns(samples, (s) => pointInRing(ring, s.x, s.z), 3)) {
         const origin = run[0].distance;
-        const path = run.map((s) => ({ x: s.x, z: s.z, distance: s.distance - origin }));
-        if (crop === 'vineyard') {
-          appendProfile(buffers.vineRow, {
-            path,
-            profile: this.specs.profiles.vineRow,
-            sampleElevation,
-            lift: -FURNITURE_SINK_M,
-            closed: true,
-          });
-          for (const stock of spacedAlongPath(path, 1.2, { margin: 0.4 })) {
-            this._place(placements, 'vineStock', { x: stock.x, z: stock.z, yaw: angle });
-          }
-        } else {
-          for (const tree of spacedAlongPath(path, 6, { margin: 1 })) {
-            this._place(placements, 'treeBroad', {
-              x: tree.x,
-              z: tree.z,
-              yaw: randomAt(tree.x, tree.z, 67) * Math.PI * 2,
-              // Un verger est planté d'arbres taillés bas et de taille égale :
-              // c'est exactement ce qui le distingue d'un bois.
-              scale: 0.55 + randomAt(tree.x, tree.z, 68) * 0.12,
+        const rowPath = run.map((s) => ({ x: s.x, z: s.z, distance: s.distance - origin }));
+        // Un rang est déjà découpé aux limites du champ ; il lui reste à
+        // s'arrêter au bord de la route qui le traverse. Le pas des rangs (3 à
+        // 6 m) est trop lâche pour repérer une voie communale : c'est la
+        // découpe d'emprise, qui sonde au mètre, qui s'en charge.
+        for (const path of this._clipOffRoad(rowPath, { minLength: 0 })) {
+          if (crop === 'vineyard') {
+            appendProfile(buffers.vineRow, {
+              path,
+              profile: this.specs.profiles.vineRow,
+              sampleElevation,
+              lift: -FURNITURE_SINK_M,
+              closed: true,
             });
+            for (const stock of spacedAlongPath(path, 1.2, { margin: 0.4 })) {
+              this._place(placements, 'vineStock', { x: stock.x, z: stock.z, yaw: angle });
+            }
+          } else {
+            for (const tree of spacedAlongPath(path, 6, { margin: 1 })) {
+              this._place(placements, 'treeBroad', {
+                x: tree.x,
+                z: tree.z,
+                yaw: randomAt(tree.x, tree.z, 67) * Math.PI * 2,
+                // Un verger est planté d'arbres taillés bas et de taille égale :
+                // c'est exactement ce qui le distingue d'un bois.
+                scale: 0.55 + randomAt(tree.x, tree.z, 68) * 0.12,
+              });
+            }
           }
+          this.counts.rows++;
         }
-        this.counts.rows++;
       }
     }
   }
@@ -1385,7 +1469,11 @@ export class FurnitureLayer {
     // andains qu'elles suivent.
     const item = variant < 0.6 ? 'hayBaleRound' : 'hayBaleSquare';
     const heading = FurnitureLayer._principalAngle(ring);
-    for (const spot of scatterInRing(ring, count, seed)) {
+    // Une route qui traverse le champ n'y interdit pas la moisson : elle
+    // interdit d'en poser une botte sur la chaussée. Le semis n'est pas
+    // redistribué pour autant — on retire, on ne recompose pas, sinon la même
+    // parcelle changerait de bottes à chaque reconstruction.
+    for (const spot of filterOutsideCorridor(scatterInRing(ring, count, seed), this._roadIndex)) {
       this._place(placements, item, {
         x: spot.x,
         z: spot.z,
@@ -1415,7 +1503,11 @@ export class FurnitureLayer {
     const seed = positionSeed(centre.x, centre.z, 61);
     let placed = 0;
 
-    for (const spot of scatterInRing(ring, count, seed, { cluster: spread })) {
+    // Un troupeau ne paît pas sur le bitume.
+    for (const spot of filterOutsideCorridor(
+      scatterInRing(ring, count, seed, { cluster: spread }),
+      this._roadIndex
+    )) {
       this._place(placements, item, {
         x: spot.x,
         z: spot.z,
@@ -1623,6 +1715,9 @@ export class FurnitureLayer {
         const pz = z + (randomAt(x, z, 103) - 0.5) * step * 0.9;
         if (Math.hypot(px - here.x, pz - here.z) > ROCK_RADIUS_M) continue;
         if (FurnitureLayer._inAreas(builtUp, px, pz)) continue;
+        // Un bloc erratique au milieu de la chaussée est le plus visible de
+        // tous les défauts d'emprise : il est opaque et il est haut.
+        if (this._onRoad(px, pz)) continue;
 
         const sample = this.groundClass?.sampleAt?.(px, pz);
         // Sans carte de classes, on ne devine pas un éboulis : la pente seule
@@ -1746,17 +1841,28 @@ export class FurnitureLayer {
     return (this.groundClass?.woodAt?.(x, z) ?? 0) < 0.35;
   }
 
-  /** Ajoute une haie ou une clôture le long d'une chaussée. */
-  _appendBoundary(buffer, kind, path, sampleElevation, offset) {
-    appendProfile(buffer, {
-      path,
-      profile: this.specs.profiles[kind],
-      sampleElevation,
-      offset,
-      lift: -FURNITURE_SINK_M,
-      closed: true,
-      scaleUp: FurnitureLayer._hedgeRelief(path, offset),
-    });
+  /**
+   * Ajoute une haie ou une clôture le long d'une chaussée.
+   *
+   * Elle est posée à `offset` de l'axe, donc **hors** de l'emprise de sa propre
+   * route — c'est ce que garantissent les décalages choisis par l'appelant, qui
+   * dépassent tous l'accotement excavé. Restent les **autres** chaussées :
+   * à un carrefour, une haie de bas-côté file tout droit dans la rue
+   * transversale. C'est celles-là que la découpe retire, en sondant l'emprise
+   * là où la haie sera réellement posée.
+   */
+  _appendBoundary(buffer, kind, path, sampleElevation, offset, own = null) {
+    for (const run of this._clipOffRoad(path, { offset, minLength: BOUNDARY_MIN_LENGTH_M, own })) {
+      appendProfile(buffer, {
+        path: run,
+        profile: this.specs.profiles[kind],
+        sampleElevation,
+        offset,
+        lift: -FURNITURE_SINK_M,
+        closed: true,
+        scaleUp: FurnitureLayer._hedgeRelief(run, offset),
+      });
+    }
   }
 
   /**
@@ -1796,10 +1902,22 @@ export class FurnitureLayer {
    * @param {Float32Array} platform Altitudes de plate-forme, une par ligne.
    * @returns {{x:number,y:number,z:number}|null} l'objet posé, ou `null`.
    */
-  _placeBeside(placements, item, point, offset, platform, { facing = 'along', scale = 1, onPlatform = false } = {}) {
+  _placeBeside(
+    placements,
+    item,
+    point,
+    offset,
+    platform,
+    { facing = 'along', scale = 1, onPlatform = false, offRoad = false, own = null } = {}
+  ) {
     // Perpendiculaire à gauche de la marche, comme partout ailleurs.
     const x = point.x + point.tz * offset;
     const z = point.z - point.tx * offset;
+    // `offRoad` ne concerne que ce qui pousse — un alignement d'arbres. Le
+    // mobilier réglementaire, lui, est posé au ras de la rive, donc dans
+    // l'emprise, et c'est sa place : une glissière hors de l'emprise ne
+    // protège rien.
+    if (offRoad && this._onRoad(x, z, own)) return null;
     const yaw = roadsideYaw(point.tx, point.tz, offset, facing);
 
     let y = null;

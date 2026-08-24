@@ -78,6 +78,12 @@ these needs a very good reason, stated in the PR description.
   declares.** A layer reads what an earlier layer published (an index, a
   segment list); it never reaches back into another layer's live state or
   assumes something ran just because it usually does.
+- **The road corridor is the one shared spatial boundary.** Anything decorative
+  that could end up on a carriageway — hedges, fences, walls, gardens, crops,
+  grass, scatter — asks `roadCorridor` (`inCorridor` for a point,
+  `clipOutsideCorridor` for a polyline) rather than reading `roadSegments` or
+  inventing its own margin. Roadside furniture that belongs at the kerb
+  (guardrails, lamps, signs, traffic lights) deliberately does not.
 - **Layers don't mutate each other implicitly.** A layer publishes what it
   produces (on itself, or via an explicit return value) and nothing else
   writes into another layer's data uninvited.

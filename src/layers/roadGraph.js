@@ -568,6 +568,40 @@ export class RoadIndex {
     return this.query(x, z, margin) !== null;
   }
 
+  /**
+   * Vrai si une chaussée **pourrait** couvrir un point de cette boîte.
+   *
+   * C'est un test grossier, et volontairement : il ne lit que l'occupation des
+   * cellules, sans calculer la moindre distance. Une réponse fausse est
+   * possible dans un sens seulement — il peut rendre vrai là où rien ne
+   * couvre —, jamais dans l'autre : si toutes les cellules survolées sont
+   * vides, aucun point de la boîte n'est sur une chaussée, puisque `query` ne
+   * consulte jamais que la cellule du point demandé.
+   *
+   * Il existe pour une raison de coût. Découper une polyligne demande de la
+   * sonder au mètre (`roadCorridor`), et en rase campagne l'immense majorité
+   * de ces sondages porte sur du vide. Écarter d'un coup un tronçon entier
+   * évite de les payer un par un.
+   *
+   * @param {number} minX
+   * @param {number} minZ
+   * @param {number} maxX
+   * @param {number} maxZ
+   * @returns {boolean}
+   */
+  mayCover(minX, minZ, maxX, maxZ) {
+    const cx0 = Math.floor(minX / this.cell);
+    const cx1 = Math.floor(maxX / this.cell);
+    const cz0 = Math.floor(minZ / this.cell);
+    const cz1 = Math.floor(maxZ / this.cell);
+    for (let cx = cx0; cx <= cx1; cx++) {
+      for (let cz = cz0; cz <= cz1; cz++) {
+        if (this.buckets.has(cellKey(cx, cz))) return true;
+      }
+    }
+    return false;
+  }
+
   /** Altitude de plate-forme au point touché par `query`. */
   deckAt(hit) {
     if (!hit) return null;

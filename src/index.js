@@ -59,6 +59,17 @@ export { forestTypeAt } from './layers/vegetationLayer.js';
 export { ROAD_LIFT_M } from './layers/roadNetwork.js';
 
 /*
+ * L'emprise routière : chaussée plus accotement excavé. Publiée pour la même
+ * raison que `ROAD_LIFT_M` — une application qui pose ses propres objets dans
+ * le décor (un arbre, un panneau, un piéton) doit pouvoir demander la même
+ * frontière que celle que respectent l'herbe, les haies et les jardins, plutôt
+ * que d'en réinventer une qui ne tomberait pas au même endroit.
+ *
+ * `inCorridor(world.composer.roads.index, x, z)` est la question complète.
+ */
+export { CORRIDOR_MARGIN_M, inCorridor, clipOutsideCorridor } from './layers/roadCorridor.js';
+
+/*
  * Le halo des lampadaires. Publié parce qu'une application qui ajoute ses
  * propres sources lumineuses dans le décor doit pouvoir les faire de la même
  * matière : deux halos qui ne se ressemblent pas dans une même image se voient

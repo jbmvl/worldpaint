@@ -9,13 +9,15 @@
  * Trois choses demandées, trois sections plus bas :
  *   - navigation clavier en vol libre + téléportation au clic ;
  *   - case à cocher qui étiquette ce qu'on regarde (`inspect/objectLabels`) ;
+ *   - case à cocher qui peint l'emprise routière, pour vérifier d'un coup d'œil
+ *     que la frontière du décor tombe bien sur chaussée + accotement ;
  *   - champ de recherche qui géocode un lieu (Nominatim/OpenStreetMap) et
  *     y déplace la bulle.
  */
 
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
-import { createWorld, collectSceneLabels } from '../src/index.js';
+import { createWorld, collectSceneLabels, CORRIDOR_MARGIN_M } from '../src/index.js';
 
 // --- Réglages ---------------------------------------------------------------
 
@@ -40,6 +42,7 @@ const coordsEl = document.getElementById('coords');
 const searchInput = document.getElementById('search');
 const goButton = document.getElementById('go');
 const showLabelsCheckbox = document.getElementById('showLabels');
+const showCorridorCheckbox = document.getElementById('showCorridor');
 
 function setBusy(busy) {
   dot.classList.toggle('busy', busy);
@@ -352,6 +355,113 @@ showLabelsCheckbox.addEventListener('change', () => {
   if (!showLabelsCheckbox.checked) clearLabels();
 });
 
+// --- Emprise routière (mise au point) ------------------------------------------
+// Une nappe translucide posée sur chaussée + accotement, reconstruite à partir
+// des tronçons que `RoadNetwork` publie déjà. C'est exactement la frontière que
+// `roadCorridor` fait respecter aux haies, clôtures, jardins, champs et herbe :
+// si un élément de décor apparaît **sur** la nappe, c'est un défaut d'emprise ;
+// s'il apparaît juste au bord, c'est sa place.
+//
+// Rien de tout ceci n'appartient au moteur : c'est de la mise au point, et la
+// démo est l'endroit où elle vit.
+
+const CORRIDOR_LIFT_M = 0.05; // au-dessus de la chaussée, pour ne pas se battre avec elle
+let corridorMesh = null;
+let corridorSignature = '';
+
+const corridorMaterial = new THREE.MeshBasicMaterial({
+  color: 0xff3b6b,
+  transparent: true,
+  opacity: 0.28,
+  depthWrite: false,
+  side: THREE.DoubleSide,
+});
+
+function buildCorridorGeometry(segments) {
+  const positions = [];
+
+  for (const segment of segments) {
+    const { path, platform, halfWidth } = segment;
+    if (!path || path.length < 2) continue;
+    const reach = halfWidth + CORRIDOR_MARGIN_M;
+
+    // Bords gauche et droit, ligne par ligne. La perpendiculaire est prise sur
+    // la tangente centrée, comme dans `ribbonGeometry.pathFrames`.
+    const edge = [];
+    for (let r = 0; r < path.length; r++) {
+      const prev = path[Math.max(0, r - 1)];
+      const next = path[Math.min(path.length - 1, r + 1)];
+      let tx = next.x - prev.x;
+      let tz = next.z - prev.z;
+      const length = Math.hypot(tx, tz) || 1;
+      tx /= length;
+      tz /= length;
+      const y = (platform ? platform[r] : 0) + CORRIDOR_LIFT_M;
+      edge.push({
+        lx: path[r].x + tz * reach,
+        lz: path[r].z - tx * reach,
+        rx: path[r].x - tz * reach,
+        rz: path[r].z + tx * reach,
+        y,
+      });
+    }
+
+    for (let r = 0; r < edge.length - 1; r++) {
+      const a = edge[r];
+      const b = edge[r + 1];
+      positions.push(
+        a.lx, a.y, a.lz, a.rx, a.y, a.rz, b.lx, b.y, b.lz,
+        b.lx, b.y, b.lz, a.rx, a.y, a.rz, b.rx, b.y, b.rz
+      );
+    }
+  }
+
+  if (positions.length === 0) return null;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function clearCorridor() {
+  if (!corridorMesh) return;
+  scene.remove(corridorMesh);
+  corridorMesh.geometry.dispose();
+  corridorMesh = null;
+  corridorSignature = '';
+}
+
+function updateCorridor() {
+  if (!showCorridorCheckbox.checked || !world) {
+    clearCorridor();
+    return;
+  }
+
+  const segments = world.composer.roads?.roadSegments || [];
+  // Les tronçons ne changent que toutes les reconstructions du réseau : refaire
+  // la nappe à chaque image serait absurde. Une signature bon marché suffit.
+  const signature = `${segments.length}:${segments[0]?.path?.[0]?.x ?? 0}`;
+  if (corridorMesh && signature === corridorSignature) return;
+
+  clearCorridor();
+  const geometry = buildCorridorGeometry(segments);
+  if (!geometry) return;
+
+  corridorMesh = new THREE.Mesh(geometry, corridorMaterial);
+  corridorMesh.name = 'debug-corridor';
+  corridorMesh.matrixAutoUpdate = false;
+  corridorMesh.frustumCulled = false;
+  corridorMesh.renderOrder = 20;
+  corridorMesh.updateMatrix();
+  scene.add(corridorMesh);
+  corridorSignature = signature;
+}
+
+showCorridorCheckbox.addEventListener('change', () => {
+  if (!showCorridorCheckbox.checked) clearCorridor();
+  else updateCorridor();
+});
+
 // --- Recherche d'un lieu (géocodage OpenStreetMap / Nominatim) ---------------
 // Nominatim est un service public à usage raisonnable : une requête par
 // validation, pas d'appel en continu. Une application qui déploie cette démo
@@ -429,6 +539,7 @@ function loop() {
   if (labelAcc > LABEL_INTERVAL_MS) {
     labelAcc = 0;
     updateLabels();
+    updateCorridor();
   }
 
   coordsEl.textContent = `x ${camera.position.x.toFixed(0)}  z ${camera.position.z.toFixed(0)}  alt ${camera.position.y.toFixed(0)} m`;

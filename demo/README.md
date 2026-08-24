@@ -32,6 +32,12 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
 - **Case « afficher le nom des objets »** : appelle
   `collectSceneLabels` (`src/inspect/objectLabels.js`) à intervalle régulier
   et projette chaque étiquette à l'écran.
+- **Case « afficher l'emprise routière »** : peint en rouge translucide la
+  chaussée **plus son accotement** (`CORRIDOR_MARGIN_M`), reconstruite à partir
+  des tronçons que `RoadNetwork` publie. C'est la frontière que `roadCorridor`
+  fait respecter aux haies, clôtures, jardins, cultures et herbe : un élément de
+  décor posé *sur* la nappe est un défaut d'emprise, un élément posé au ras du
+  bord est à sa place.
 - **Champ de recherche** : géocode le texte tapé via Nominatim
   (OpenStreetMap) et déplace la bulle (`setCenter` + `refresh`) sur le
   résultat.
