@@ -9,7 +9,8 @@
   },
   "files": ["src", "README.md", "LICENSE"],
   "scripts": {
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "demo": "node demo/server.mjs"
   },
   "repository": {
     "type": "git",
