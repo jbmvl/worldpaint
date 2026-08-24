@@ -1,0 +1,133 @@
+/*
+ * townStyle — la couleur et la forme d'un village.
+ * -------------------------------------------------
+ * Tout le bâti sortait beige et cubique : un seul ton de mur, un seul ton de
+ * toit, un dessus plat. Traverser trois villages donnait donc trois fois le même
+ * village, et aucun ne ressemblait à rien de connu.
+ *
+ * ## Ce que les tuiles savent, et ce qu'elles ignorent
+ *
+ * Le schéma OpenMapTiles réduit la couche `building` à trois attributs :
+ * `render_height`, `render_min_height`, `hide_3d`. Ni le matériau, ni la couleur
+ * du toit, ni la forme, ni même la fonction du bâtiment n'y survivent — alors
+ * qu'OpenStreetMap les porte (`building:material`, `roof:shape`,
+ * `roof:colour`…). Aucun réglage côté client ne les fera revenir.
+ *
+ * On ne peut donc **pas** peindre chaque maison d'après sa vraie couleur. Mais
+ * on peut faire beaucoup mieux qu'un beige unique, parce que la vraie
+ * régularité du bâti français n'est pas à l'échelle de la maison : elle est à
+ * l'échelle du **pays**. Un village de Provence est ocre et tuile romaine, un
+ * village d'Alsace est colombage et tuile plate, un village de Bretagne est
+ * granit et ardoise. Toutes les maisons d'un même bourg partagent une gamme
+ * étroite, et c'est ce partage-là qui se lit quand on traverse.
+ *
+ * D'où ce module : une **palette par village**, tirée d'une maille de terrain,
+ * et à l'intérieur une variation par maison. Le tirage ne dépend que du lieu,
+ * donc un village garde sa couleur d'une reconstruction à l'autre — et deux
+ * villages voisins n'ont pas la même.
+ *
+ * Toutes les valeurs sont des couleurs **linéaires** prêtes pour les attributs
+ * de sommet, et volontairement pastel : peu saturées, claires. Une palette
+ * saturée est ce qui fait basculer un décor stylisé du côté du jouet.
+ */
+
+import { srgb } from '../core/color.js';
+import { positionSeed, randomAt } from './furniturePlacement.js';
+import { defaultTheme } from '../themes/default.js';
+
+/** Côté de la maille qui décide de la palette d'un bourg, en mètres. */
+export const TOWN_PATCH_M = 1400;
+
+/**
+ * Les palettes d'un thème, converties en couleurs linéaires.
+ *
+ * Mémorisées sur le tableau lui-même : la conversion coûte peu mais elle est
+ * appelée pour chaque bâtiment, et deux mondes de thèmes différents doivent
+ * pouvoir garder chacun les siennes. Un cache faible, indexé par la donnée
+ * d'entrée, fait les deux sans rien retenir de global.
+ */
+const LINEAR_CACHE = new WeakMap();
+
+function linearTowns(towns) {
+  let out = LINEAR_CACHE.get(towns);
+  if (!out) {
+    out = towns.map((palette) => ({
+      name: palette.name,
+      walls: palette.walls.map(srgb),
+      roofs: palette.roofs.map(srgb),
+      roofShapes: palette.roofShapes,
+    }));
+    LINEAR_CACHE.set(towns, out);
+  }
+  return out;
+}
+
+/**
+ * Palette du bourg qui contient un point. Fonction pure, et ancrée au lieu :
+ * c'est ce qui fait qu'un village ne change pas de couleur quand on le
+ * traverse.
+ */
+export function townPaletteAt(x, z, towns = defaultTheme.towns) {
+  const palettes = linearTowns(towns);
+  const gx = Math.floor(x / TOWN_PATCH_M) * TOWN_PATCH_M;
+  const gz = Math.floor(z / TOWN_PATCH_M) * TOWN_PATCH_M;
+  const draw = randomAt(gx, gz, 149);
+  return palettes[Math.min(palettes.length - 1, Math.floor(draw * palettes.length))];
+}
+
+/**
+ * Habillage d'un bâtiment : ton de mur, ton de toit, forme de toit.
+ *
+ * ## Le « léger pattern »
+ *
+ * Deux maisons voisines du même village ne sont pas exactement de la même
+ * couleur — le crépi n'a pas le même âge, l'exposition n'est pas la même. La
+ * variation est donc double : le **ton** est tiré parmi les deux ou trois de la
+ * palette, et une **modulation** de quelques pour cent s'y ajoute. Elle est
+ * volontairement faible : au-delà de dix pour cent, le village cesse d'être un
+ * village et devient une collection.
+ *
+ * Fonction pure. `x`, `z` sont les coordonnées locales du bâtiment.
+ *
+ * @param {number} x
+ * @param {number} z
+ * @param {Object} [context]
+ * @param {number} [context.area]   Emprise au sol, en m².
+ * @param {number} [context.height] Hauteur, en mètres.
+ * @returns {{wall:number[], roof:number[], shape:string, palette:string}}
+ */
+export function buildingStyleAt(x, z, { area = 100, height = 7 } = {}, towns = defaultTheme.towns) {
+  const palette = townPaletteAt(x, z, towns);
+  const seed = positionSeed(x, z, 151);
+  const pickWall = palette.walls[seed % palette.walls.length];
+  const pickRoof = palette.roofs[(seed >>> 3) % palette.roofs.length];
+
+  // Modulation : ±6 %, tirée du lieu. Le crépi vieillit, l'exposition compte.
+  const shade = 0.94 + randomAt(x, z, 157) * 0.12;
+  const wall = pickWall.map((c) => Math.min(1, c * shade));
+  const roof = pickRoof.map((c) => Math.min(1, c * (0.95 + randomAt(x, z, 163) * 0.1)));
+
+  return { wall, roof, shape: roofShapeFor(palette, { area, height, seed }), palette: palette.name };
+}
+
+/**
+ * Forme du toit, d'après la palette du bourg et la taille du bâtiment.
+ *
+ * La taille tranche avant le tirage, et c'est ce qui rend le résultat crédible :
+ * un hangar de mille mètres carrés n'a pas de toit à quatre pentes, il a un toit
+ * plat ou une longue faîtière ; une tour n'a pas de toit du tout ; une petite
+ * dépendance carrée porte souvent une pyramide.
+ *
+ * Fonction pure.
+ */
+export function roofShapeFor(palette, { area = 100, height = 7, seed = 0 } = {}) {
+  // Immeuble ou grand bâtiment d'activité : toit plat, sans discussion.
+  if (height > 16 || area > 900) return 'flat';
+
+  const shapes = palette.roofShapes;
+  const shape = shapes[seed % shapes.length];
+  // Une pyramide sur une emprise très allongée donnerait une tente de cirque :
+  // c'est la faîtière qui convient, et l'appelant sait déjà la construire.
+  if (shape === 'pyramid' && area > 240) return 'hip';
+  return shape;
+}

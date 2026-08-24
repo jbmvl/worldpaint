@@ -1,0 +1,48 @@
+{
+  "name": "worldpaint",
+  "version": "0.1.0",
+  "description": "Stylised 3D landscapes generated in real time from real geographic data, for three.js",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": ["src", "README.md", "LICENSE"],
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jbmvl/worldpaint.git"
+  },
+  "homepage": "https://github.com/jbmvl/worldpaint#readme",
+  "bugs": {
+    "url": "https://github.com/jbmvl/worldpaint/issues"
+  },
+  "keywords": [
+    "three",
+    "threejs",
+    "procedural",
+    "landscape",
+    "terrain",
+    "openstreetmap",
+    "vector-tiles",
+    "dem",
+    "webgl"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@mapbox/vector-tile": "^3.0.0",
+    "pbf": "^5.1.2",
+    "suncalc": "^1.9.0"
+  },
+  "peerDependencies": {
+    "three": ">=0.160.0"
+  },
+  "peerDependenciesMeta": {
+    "three": { "optional": false }
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
