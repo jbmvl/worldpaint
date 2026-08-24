@@ -156,8 +156,11 @@ export class SceneEnvironment {
     this.uniforms.uNightZenith = { value: new THREE.Color(palette.nightZenith) };
     this.uniforms.uNightHorizon = { value: new THREE.Color(palette.nightHorizon) };
     this.uniforms.uNightMix = { value: 0 };
-    this.uniforms.cloudScale.value = CLOUD_SCALE;
-    this.uniforms.cloudSpeed.value = CLOUD_SPEED;
+    this.uniforms.cloudScale = { value: CLOUD_SCALE };
+    this.uniforms.cloudSpeed = { value: CLOUD_SPEED };
+    this.uniforms.cloudCoverage = { value: cloudCoverage };
+    this.uniforms.cloudDensity = { value: cloudDensity };
+    this.uniforms.time = { value: 0 };
     this._sunPosition = new THREE.Vector3(0, 1, 0);
     /** Origine du temps des nuages : voir `CLOUD_SPEED`. */
     this._timeOrigin = null;
@@ -175,11 +178,63 @@ export class SceneEnvironment {
          uniform float uHorizonBlend;
          uniform vec3 uNightZenith;
          uniform vec3 uNightHorizon;
-         uniform float uNightMix;`
+         uniform float uNightMix;
+         uniform float cloudScale;
+         uniform float cloudSpeed;
+         uniform float cloudCoverage;
+         uniform float cloudDensity;
+         uniform float time;
+
+         // Bruit valeur 2D bon marché : un hash par coin de cellule, interpolé
+         // en Hermite. Suffisant pour des nuages vus de loin, sur un dôme.
+         float cloudHash(vec2 p) {
+           p = fract(p * vec2(123.34, 456.21));
+           p += dot(p, p + 45.32);
+           return fract(p.x * p.y);
+         }
+         float cloudNoise(vec2 p) {
+           vec2 i = floor(p);
+           vec2 f = fract(p);
+           float a = cloudHash(i);
+           float b = cloudHash(i + vec2(1.0, 0.0));
+           float c = cloudHash(i + vec2(0.0, 1.0));
+           float d = cloudHash(i + vec2(1.0, 1.0));
+           vec2 u = f * f * (3.0 - 2.0 * f);
+           return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+         }
+         // Somme de bruits à octaves décroissantes : donne aux nuages leurs
+         // volutes, là où une seule couche de bruit resterait uniformément molle.
+         float cloudFbm(vec2 p) {
+           float sum = 0.0;
+           float amp = 0.5;
+           for (int i = 0; i < 4; i++) {
+             sum += amp * cloudNoise(p);
+             p *= 2.0;
+             amp *= 0.5;
+           }
+           return sum;
+         }`
       )
       .replace(
         'gl_FragColor = vec4( texColor, 1.0 );',
-        `// Le modèle de Preetham n'a pas de nuit : sous l'horizon, il ne rend
+        `// Nuages procéduraux : échantillonnés sur le plan du dôme touché par le
+         // rayon, donc immobiles par rapport au terrain plutôt que vissés à la
+         // caméra. Sous l'horizon, \`vWorldPosition\` ne représente plus le ciel.
+         if (direction.y > 0.0) {
+           vec2 cloudUv = vWorldPosition.xz * cloudScale * 1000.0
+             + vec2(time * cloudSpeed * 1000.0, 0.0);
+           float density = cloudFbm(cloudUv);
+           // \`cloudCoverage\` déplace le seuil de déclenchement : à 0, rien ne
+           // passe la marche ; à 1, le bruit entier devient nuage.
+           float cloudMask = smoothstep(1.0 - cloudCoverage, 1.0, density) * cloudDensity;
+           // Fondu vers le zénith : sans lui, la voûte entière se couvre d'un
+           // même voile au lieu d'un ciel qui se dégage au-dessus de la tête.
+           cloudMask *= smoothstep(0.0, 0.2, direction.y);
+           vec3 cloudColor = mix(vec3(0.82, 0.85, 0.9), vec3(1.0), vSunfade);
+           texColor = mix(texColor, cloudColor, cloudMask);
+         }
+
+         // Le modèle de Preetham n'a pas de nuit : sous l'horizon, il ne rend
          // pratiquement rien. On bascule donc sur la palette nocturne fournie,
          // qui est sombre sans être noire — une nuit noire ne se distingue plus
          // d'un rendu en panne.
