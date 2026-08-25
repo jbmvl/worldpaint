@@ -16,11 +16,13 @@
  * analytiquement depuis le champ d'altitude : le gradient est continu d'une
  * tuile à l'autre, donc l'éclairage ne trahit pas les jointures.
  *
- * Une seule chose vient perturber ce relief naturel : le **déblai des
+ * Une seule chose vient perturber ce relief naturel : le **terrassement des
  * chaussées** (`setRoadCut`). Une route n'est pas posée sur le versant, elle y
  * est taillée ; sans entaille, la seule parade au terrain qui recouvre la rive
  * amont était de remonter toute la plate-forme, ce qui posait la route en
- * surplomb. L'entaille est une fonction pure de la position au sol, donc les
+ * surplomb. Le fossé en fait partie depuis qu'il est un creux du sol et non
+ * plus un objet posé dessus — voir l'en-tête de `roadCut`, qui dit pourquoi il
+ * est large. L'entaille est une fonction pure de la position au sol, donc les
  * tuiles voisines s'accordent toujours au bord.
  */
 
@@ -28,7 +30,7 @@ import { createLocalFrame, tilesAround, tileKey, lngLatToTile } from '../core/ti
 import { DEM_TILE_PIXELS } from '../core/elevationField.js';
 import { TerrainMaterialFactory } from './terrainMaterial.js';
 import { defaultTheme } from '../themes/default.js';
-import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M, ROAD_CUT_MAX_RING } from './roadCut.js';
+import { cutElevationAt, ROAD_CUT_REACH_M, ROAD_CUT_MAX_RING } from './roadCut.js';
 
 /** Un pixel DEM, en unités de tuile : pas d'échantillonnage du gradient. */
 const GRADIENT_STEP_TILES = 1 / DEM_TILE_PIXELS;
@@ -309,7 +311,7 @@ export class TerrainBubble {
     const index = this._roadCut;
     if (!index) return raw;
 
-    const hit = index.query(x, z, ROAD_CUT_M + ROAD_CUT_BLEND_M);
+    const hit = index.query(x, z, ROAD_CUT_REACH_M);
     if (!hit) return raw;
     const deck = index.deckAt(hit);
     if (deck == null) return raw;
@@ -317,7 +319,41 @@ export class TerrainBubble {
     // La plate-forme est en unités de scène (déjà multipliée par l'exagération
     // verticale) ; `raw` est en unités de MNT. On compare dans le même espace.
     const scale = this.verticalScale || 1;
-    return cutElevationAt(raw, deck / scale, hit.distance, hit.segment.halfWidth);
+    return cutElevationAt(
+      raw,
+      deck / scale,
+      hit.distance,
+      hit.segment.halfWidth,
+      TerrainBubble._onDitchSide(hit, x, z)
+    );
+  }
+
+  /**
+   * Vrai si le point interrogé tombe du côté où le tronçon porte son fossé.
+   *
+   * Le tronçon dit **de quel côté** il a un fossé (`ditchSide`, décidé une fois
+   * dans `collectRoadSegments`), mais l'index ne rend qu'une distance, sans
+   * signe. Il faut donc retrouver de quel bord de la chaussée on est, et avec
+   * la même convention que le mobilier — un décalage positif est du côté
+   * `(tz, -tx)` de la marche —, sans quoi le sol serait creusé d'un côté et les
+   * fougères plantées de l'autre.
+   */
+  static _onDitchSide(hit, x, z) {
+    const side = hit.segment.ditchSide;
+    if (!side) return false;
+    if (side === 2) return true;
+
+    const path = hit.segment.path;
+    const a = path[hit.row];
+    const b = path[Math.min(path.length - 1, hit.row + 1)];
+    const tx = b.x - a.x;
+    const tz = b.z - a.z;
+    const nx = a.x + tx * hit.t;
+    const nz = a.z + tz * hit.t;
+    // Produit en croix : positif du côté `(tz, -tx)`, exactement le sens dans
+    // lequel le mobilier compte ses décalages.
+    const cross = (x - nx) * tz - (z - nz) * tx;
+    return cross === 0 || cross > 0 === side > 0;
   }
 
   /** Position dans le repère local, posée sur la surface affichée. */

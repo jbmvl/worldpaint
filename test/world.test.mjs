@@ -181,7 +181,20 @@ import { waterwayStyleFor, isDrawableWater, waterPolygons, boundsIntersect } fro
 import { skyParameters, lightingFor, sunlightColor } from '../src/environment/skyModel.js';
 import { groundClassFor, classPolygons, CLASS_FILL } from '../src/terrain/groundClassMap.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
-import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
+import {
+  cutElevationAt,
+  ditchDropAt,
+  ROAD_CUT_M,
+  ROAD_CUT_BLEND_M,
+  ROAD_CUT_REACH_M,
+  DITCH_DEPTH_M,
+  DITCH_SLOPE_M,
+  DITCH_FLOOR_M,
+  DITCH_BLEND_M,
+} from '../src/terrain/roadCut.js';
+import { ditchSideFor } from '../src/layers/roadNetwork.js';
+import { TerrainBubble } from '../src/terrain/terrainBubble.js';
+import { inBuiltUpArea } from '../src/layers/builtUpAreas.js';
 import { birdAt, createBirdGeometry } from '../src/layers/lifeLayer.js';
 import { windowGrid, windowDraw } from '../src/layers/buildingLayer.js';
 import {
@@ -1115,6 +1128,164 @@ test('le déblai ne remblaie jamais : côté aval, le terrain ne bouge pas', () 
   close(cutElevationAt(95, 100, 0, 3), 95, 1e-9, 'sous la chaussée');
   close(cutElevationAt(95, 100, 4, 3), 95, 1e-9, 'au ras de la rive');
   close(cutElevationAt(100, 100, 1, 3), 100, 1e-9, 'à niveau, rien à creuser');
+});
+
+// --- Le fossé, creusé dans le terrain ----------------------------------------
+
+test('le fossé ne touche pas à la chaussée ni à son accotement', () => {
+  const hw = 2.5;
+  for (const d of [0, hw, hw + ROAD_CUT_M]) {
+    close(ditchDropAt(d, hw), 0, 1e-9, `rien creusé à ${d} m de l’axe`);
+  }
+});
+
+test('le fossé atteint sa pleine profondeur sur son fond, et la rend au terrain', () => {
+  const hw = 2.5;
+  const start = hw + ROAD_CUT_M;
+
+  close(ditchDropAt(start + DITCH_SLOPE_M, hw), DITCH_DEPTH_M, 1e-9, 'début du fond');
+  close(ditchDropAt(start + DITCH_SLOPE_M + DITCH_FLOOR_M, hw), DITCH_DEPTH_M, 1e-9, 'fin du fond');
+  close(
+    ditchDropAt(start + DITCH_SLOPE_M + DITCH_FLOOR_M + DITCH_BLEND_M, hw),
+    0,
+    1e-9,
+    'le terrain naturel est retrouvé'
+  );
+  close(ditchDropAt(500, hw), 0, 1e-9, 'et le reste au-delà');
+});
+
+test('le fossé descend et remonte sans arête vive', () => {
+  // Une interpolation linéaire laisserait une arête à chaque bout, et la maille
+  // de terrain les rendrait toutes les deux visibles — c'est le raisonnement
+  // qui a déjà donné son `smoothstep` au raccord du déblai.
+  const hw = 2.5;
+  const slope = (d) => (ditchDropAt(d + 0.01, hw) - ditchDropAt(d, hw)) / 0.01;
+  for (const d of [
+    hw + ROAD_CUT_M,
+    hw + ROAD_CUT_M + DITCH_SLOPE_M,
+    hw + ROAD_CUT_M + DITCH_SLOPE_M + DITCH_FLOOR_M,
+    hw + ROAD_CUT_M + DITCH_SLOPE_M + DITCH_FLOOR_M + DITCH_BLEND_M,
+  ]) {
+    assert.ok(Math.abs(slope(d)) < 0.05, `pente presque nulle au raccord (${d} m)`);
+  }
+});
+
+test('la portée de l’index couvre tout le terrassement, fossé compris', () => {
+  // Trop courte, la marge tronquerait le fossé : il se terminerait par une
+  // marche verticale au lieu de rejoindre le terrain.
+  const reach = ROAD_CUT_M + DITCH_SLOPE_M + DITCH_FLOOR_M + DITCH_BLEND_M;
+  close(ROAD_CUT_REACH_M, reach, 1e-9, 'la portée est celle du fossé');
+  assert.ok(ROAD_CUT_REACH_M >= ROAD_CUT_M + ROAD_CUT_BLEND_M, 'et elle couvre aussi le déblai');
+});
+
+test('le fossé se creuse aussi en terrain plat, où la route n’entaille rien', () => {
+  // C'est le cas le plus fréquent, et l'ancien fossé n'y existait pas du tout :
+  // sans entaille, `cutElevationAt` rendait le terrain naturel tel quel.
+  const hw = 2.5;
+  const floor = hw + ROAD_CUT_M + DITCH_SLOPE_M + 1;
+
+  close(cutElevationAt(100, 100, floor, hw, false), 100, 1e-9, 'sans fossé, rien ne bouge');
+  close(cutElevationAt(100, 100, floor, hw, true), 100 - DITCH_DEPTH_M, 1e-9, 'avec fossé, le sol descend');
+});
+
+test('le fossé se retranche du déblai, il ne le remplace pas', () => {
+  // En déblai, le fossé descend sous le talus qu'on vient de tailler. S'il
+  // s'était substitué au déblai, il aurait fait *remonter* le sol là où le
+  // versant était déjà plus bas que la profondeur du fossé.
+  const hw = 2.5;
+  const d = hw + ROAD_CUT_M + DITCH_SLOPE_M + 1;
+  const sansFosse = cutElevationAt(110, 100, d, hw, false);
+  const avecFosse = cutElevationAt(110, 100, d, hw, true);
+
+  close(avecFosse, sansFosse - DITCH_DEPTH_M, 1e-9, 'exactement la profondeur du fossé en moins');
+  assert.ok(avecFosse < sansFosse, 'et jamais au-dessus');
+});
+
+test('le fossé ne fait jamais monter le terrain', () => {
+  const hw = 3;
+  for (let d = 0; d <= 40; d += 0.25) {
+    for (const [raw, deck] of [[110, 100], [100, 100], [95, 100]]) {
+      assert.ok(
+        cutElevationAt(raw, deck, d, hw, true) <= cutElevationAt(raw, deck, d, hw, false) + 1e-9,
+        `creux ou rien à ${d} m (raw ${raw}, plate-forme ${deck})`
+      );
+    }
+  }
+});
+
+// --- Quel tronçon porte un fossé ----------------------------------------------
+
+test('un tronçon en agglomération ne porte pas de fossé', () => {
+  // Un fossé de bord de champ au milieu d'un bourg trahit une carte lue trop
+  // vite. La rue est dans l'emprise, donc elle n'en a pas.
+  const bourg = [[
+    { x: -50, z: -50 }, { x: 50, z: -50 }, { x: 50, z: 50 }, { x: -50, z: 50 },
+  ]];
+  assert.equal(ditchSideFor('minor', { x: 0, z: 0 }, bourg), 0);
+});
+
+test('le côté du fossé ne dépend que du nœud d’ancrage', () => {
+  // Deux tronçons d'une même chaîne partagent leur ancrage : ils rendent donc
+  // la même réponse, et le fossé ne s'interrompt pas au changement de tuile.
+  const anchor = { x: 123.5, z: -47.25 };
+  assert.equal(ditchSideFor('minor', anchor, []), ditchSideFor('minor', anchor, []));
+
+  // Et le tirage est bien attaché au lieu : deux ancrages différents ne
+  // rendent pas systématiquement la même chose.
+  const cotes = new Set();
+  for (let i = 0; i < 200; i++) cotes.add(ditchSideFor('minor', { x: i * 37.5, z: i * -11.25 }, []));
+  assert.ok(cotes.size > 1, 'toutes les routes n’ont pas le même fossé');
+});
+
+test('une voie rapide porte un fossé des deux côtés, un sentier aucun', () => {
+  const anchor = { x: 10, z: 10 };
+  assert.equal(ditchSideFor('express', anchor, []), 2, 'les deux côtés');
+  assert.equal(ditchSideFor('path', anchor, []), 0, 'aucun');
+  assert.equal(ditchSideFor('cycleway', anchor, []), 0, 'aucun');
+});
+
+test('un tronçon sans ancrage ne porte pas de fossé', () => {
+  assert.equal(ditchSideFor('minor', null, []), 0);
+});
+
+test('le terrain creuse du côté où le mobilier plante ses fougères', () => {
+  // L'invariant qui compte dans toute cette étape : l'index ne rend qu'une
+  // distance, sans signe, alors que le tronçon dit *de quel côté* il a son
+  // fossé. Si les deux conventions divergeaient, le sol serait creusé d'un
+  // côté et les fougères plantées de l'autre.
+  const segment = { path: [{ x: 0, z: 0 }, { x: 100, z: 0 }], halfWidth: 2.5, ditchSide: 1 };
+  const hit = { segment, row: 0, t: 0.5 };
+
+  // Le mobilier pose à `spot.x + tz * away, spot.z - tx * away` ; ici la
+  // tangente est (1, 0), donc un décalage positif descend en z.
+  const beside = (s) => ({ x: 50, z: 0 - s * (segment.halfWidth + 3) });
+
+  const onSide = (s) => {
+    const p = beside(s);
+    return TerrainBubble._onDitchSide(hit, p.x, p.z);
+  };
+
+  assert.equal(onSide(1), true, 'côté du fossé');
+  assert.equal(onSide(-1), false, 'côté opposé');
+
+  segment.ditchSide = -1;
+  assert.equal(onSide(-1), true, 'et symétriquement');
+
+  segment.ditchSide = 2;
+  assert.deepEqual([onSide(1), onSide(-1)], [true, true], 'une voie rapide creuse des deux côtés');
+
+  segment.ditchSide = 0;
+  assert.equal(TerrainBubble._onDitchSide(hit, 50, 5), false, 'sans fossé, nulle part');
+});
+
+test('l’appartenance à une emprise bâtie se lit par le même test partout', () => {
+  const ring = [[
+    { x: 0, z: 0 }, { x: 10, z: 0 }, { x: 10, z: 10 }, { x: 0, z: 10 },
+  ]];
+  assert.equal(inBuiltUpArea(ring, 5, 5), true, 'dedans');
+  assert.equal(inBuiltUpArea(ring, 15, 5), false, 'dehors');
+  assert.equal(inBuiltUpArea([], 5, 5), false, 'aucune emprise');
+  assert.equal(inBuiltUpArea(null, 5, 5), false, 'pas de relevé du tout');
 });
 
 // --- Sections balayées ------------------------------------------------------
@@ -2152,6 +2323,28 @@ function fakeSegment(points, halfWidth, deck = 0) {
     platform: new Float32Array(path.length).fill(deck),
   };
 }
+
+test('un tronçon ne répond jamais au-delà de la portée qu’il a fait inscrire', () => {
+  // La marge générale de l'index couvre le terrassement le plus large — le
+  // fossé. Une chaussée sans fossé ne s'inscrit pas si loin, et elle ne doit
+  // donc pas répondre si loin non plus : elle rendrait un résultat que les
+  // cellules voisines n'ont pas, donc une réponse qui dépend de la case d'où
+  // l'on interroge.
+  const sansFosse = fakeSegment(straight(0, 100, 20), 2.5);
+  sansFosse.cutReach = ROAD_CUT_M + ROAD_CUT_BLEND_M;
+  const avecFosse = fakeSegment(straight(0, 100, 20), 2.5);
+  avecFosse.cutReach = ROAD_CUT_REACH_M;
+
+  const proche = 2.5 + ROAD_CUT_M + ROAD_CUT_BLEND_M - 0.5;
+  const loin = 2.5 + ROAD_CUT_REACH_M - 0.5;
+
+  const court = new RoadIndex([sansFosse], { margin: ROAD_CUT_REACH_M });
+  const long = new RoadIndex([avecFosse], { margin: ROAD_CUT_REACH_M });
+
+  assert.ok(court.query(50, proche, ROAD_CUT_REACH_M), 'dans sa propre portée, il répond');
+  assert.equal(court.query(50, loin, ROAD_CUT_REACH_M), null, 'au-delà, non');
+  assert.ok(long.query(50, loin, ROAD_CUT_REACH_M), 'le tronçon à fossé, lui, porte jusque-là');
+});
 
 test('la distance à un segment est bien prise sur le segment, pas sur ses bouts', () => {
   close(distanceToSegment(50, 10, 0, 0, 100, 0).distance, 10, 1e-9, 'de côté');

@@ -762,7 +762,12 @@ export class RoadIndex {
       const segment = this.segments[s];
       const path = segment?.path;
       if (!Array.isArray(path) || path.length < 2) continue;
-      const reach = segment.halfWidth + margin;
+      // Un tronçon peut demander moins que la marge générale : celle-ci couvre
+      // le terrassement le plus large — le fossé —, et l'immense majorité des
+      // chaussées n'en ont pas. Les inscrire toutes dans le rayon du fossé
+      // triplerait le contenu de chaque cellule, donc le coût de *toutes* les
+      // requêtes, y compris celles de l'emprise et de l'herbe.
+      const reach = segment.halfWidth + Math.min(margin, segment.cutReach ?? margin);
 
       for (let r = 0; r < path.length - 1; r++) {
         const a = path[r];
@@ -795,7 +800,7 @@ export class RoadIndex {
    * @returns {{segment:Object, index:number, row:number, t:number, distance:number}|null}
    */
   query(x, z, margin = 0, accept = null) {
-    const reach = Math.min(margin, this.margin);
+    const cap = Math.min(margin, this.margin);
     const bucket = this.buckets.get(cellKey(Math.floor(x / this.cell), Math.floor(z / this.cell)));
     if (!bucket) return null;
 
@@ -809,6 +814,10 @@ export class RoadIndex {
       const a = segment.path[row];
       const b = segment.path[row + 1];
       const hit = distanceToSegment(x, z, a.x, a.z, b.x, b.z);
+      // Jamais au-delà de ce que le tronçon a fait inscrire dans les cellules :
+      // répondre plus loin que sa propre portée rendrait un résultat que les
+      // cellules voisines, elles, n'auraient pas.
+      const reach = Math.min(cap, segment.cutReach ?? this.margin);
       if (hit.distance > segment.halfWidth + reach) continue;
       if (best && hit.distance >= best.distance) continue;
       best = { segment, index, row, t: hit.t, distance: hit.distance };
