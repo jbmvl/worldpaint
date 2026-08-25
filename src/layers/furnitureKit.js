@@ -1383,7 +1383,11 @@ export function createGlowMaterial(THREE, { color = [1, 0.86, 0.6], perInstanceC
     vertexShader: `
       varying vec2 vUv;
       varying vec3 vTint;
-      ${perInstanceColor ? 'attribute vec3 instanceColor;' : ''}
+      // Pas de déclaration manuelle : dès que \`mesh.setColorAt\` a été appelé
+      // une fois, three.js définit USE_INSTANCING_COLOR et injecte lui-même
+      // cet attribut en tête de shader (WebGLProgram.js). Le redéclarer ici
+      // provoquait une double définition — le halo des feux ne compilait plus
+      // et disparaissait, avec toute la scène en erreur de programme WebGL.
       uniform vec3 uColor;
       void main() {
         vUv = uv;
