@@ -258,7 +258,14 @@ export class WorldComposer {
       this.gardens.rebuild(this.buildings.houses, here);
 
       // 4. Mobilier — il lui faut les tronçons de chaussée et leur index.
-      this.furniture.rebuild(this.vectorTiles, wanted, here, this.roads.roadSegments, this.roads.index);
+      this.furniture.rebuild(
+        this.vectorTiles,
+        wanted,
+        here,
+        this.roads.roadSegments,
+        this.roads.index,
+        this.roads.junctions
+      );
 
       // 5. Arbres — les tuiles déjà plantées le restent : à donnée égale, le
       //    semis est déterministe, les replanter ne ferait que clignoter. Seule

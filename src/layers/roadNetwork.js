@@ -15,7 +15,7 @@
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
-import { mergeRoadLines, RoadIndex, stitchPlatforms } from './roadGraph.js';
+import { mergeRoadLines, RoadIndex, stitchPlatforms, trimAtJunctions } from './roadGraph.js';
 import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
 import {
   resamplePath,
@@ -343,8 +343,12 @@ export function anchorDistances(points, anchors) {
  *        donc pas être lue sur un terrain déjà entaillé.
  * @param {number} [radius]
  * @param {Object} [roads] Tranche `theme.roads` (profils de chaussée).
- * @returns {Array<Object>} tronçons `{profile, halfWidth, path, startDistance,
- *          anchor, platform, edges}`.
+ * Les carrefours sortent d'ici avec les tronçons, et pour la même raison : ils
+ * viennent du graphe, et les recalculer ailleurs les ferait tomber ailleurs.
+ *
+ * @returns {{segments: Array<Object>, junctions: Array<Object>}} tronçons
+ *          `{profile, halfWidth, path, startDistance, anchor, platform, edges}`
+ *          et carrefours dans la portée demandée.
  */
 export function collectRoadSegments(
   source,
@@ -356,7 +360,11 @@ export function collectRoadSegments(
   roads = defaultTheme.roads
 ) {
   const out = [];
-  const chains = mergeRoadLines(collectRoadLines(source, tiles, frame, roads));
+  const { chains: merged, junctions } = mergeRoadLines(collectRoadLines(source, tiles, frame, roads));
+  // Rogner avant de ré-échantillonner : les distances d'ancrage et la
+  // plate-forme se comptent sur la chaîne telle qu'elle sera dessinée, pas sur
+  // celle qui traversait encore le carrefour.
+  const chains = trimAtJunctions(merged, junctions);
 
   for (const chain of chains) {
     const { distance: sinceAnchor, anchorIndex } = anchorDistances(chain.points, chain.anchors);
@@ -395,7 +403,10 @@ export function collectRoadSegments(
     }
   }
 
-  return out;
+  return {
+    segments: out,
+    junctions: junctions.filter((j) => Math.hypot(j.x - here.x, j.z - here.z) <= radius),
+  };
 }
 
 /**
@@ -445,6 +456,14 @@ export class RoadNetwork {
      * @type {RoadIndex|null}
      */
     this.index = null;
+    /**
+     * Carrefours de la dernière reconstruction, relevés sur le graphe routier.
+     * Publiés parce qu'un feu tricolore n'a de sens qu'à un carrefour, et que
+     * le mobilier n'a pas le graphe — il n'a que des tronçons déjà découpés,
+     * où un croisement ne se lit plus.
+     * @type {Array<Object>}
+     */
+    this.junctions = [];
   }
 
   /** Vrai si l'observateur s'est assez éloigné pour justifier une reconstruction. */
@@ -469,7 +488,7 @@ export class RoadNetwork {
     // ferait descendre la route un peu plus à chaque reconstruction.
     const sampleElevation = (x, z) => bubble.rawSurfaceElevationAtLocal(x, z, 0) * bubble.verticalScale;
 
-    const collected = collectRoadSegments(
+    const { segments: collected, junctions } = collectRoadSegments(
       source,
       tiles,
       here,
@@ -509,6 +528,7 @@ export class RoadNetwork {
     }
 
     this.roadSegments = collected;
+    this.junctions = junctions;
     this.index = index;
     this.segments = segments;
     // Le terrain doit maintenant être taillé le long de ces chaussées-là. La

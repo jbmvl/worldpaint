@@ -91,10 +91,13 @@ import {
 } from '../src/layers/roadNetwork.js';
 import {
   mergeRoadLines,
+  trimAtJunctions,
   distanceToSegment,
   stitchPlatforms,
   RoadIndex,
   NODE_WELD_M,
+  JUNCTION_OVERLAP_M,
+  JUNCTION_MIN_RUN_M,
 } from '../src/layers/roadGraph.js';
 import {
   CORRIDOR_MARGIN_M,
@@ -1823,6 +1826,9 @@ test('un buisson est fermé, posé au sol, et différent de son voisin', () => {
 
 // --- Fusion des chaussées ---------------------------------------------------
 
+/** Les seules chaînes : `mergeRoadLines` publie aussi les carrefours du graphe. */
+const mergedChains = (lines) => mergeRoadLines(lines).chains;
+
 /** Polyligne droite, de `from` à `to` en `steps` pas, sur l'axe des x. */
 function straight(from, to, steps = 4, z = 0) {
   const points = [];
@@ -1831,7 +1837,7 @@ function straight(from, to, steps = 4, z = 0) {
 }
 
 test('deux morceaux d’une même route bout à bout ne font qu’une chaîne', () => {
-  const merged = mergeRoadLines([
+  const merged = mergedChains([
     { profile: 'minor', halfWidth: 2.5, points: straight(0, 100) },
     { profile: 'minor', halfWidth: 2.5, points: straight(100, 200) },
   ]);
@@ -1845,7 +1851,7 @@ test('deux morceaux d’une même route bout à bout ne font qu’une chaîne', 
 test('le même morceau livré par deux tuiles ne se dessine qu’une fois', () => {
   // Sans dédoublonnage, deux rubans coplanaires se disputent le pixel dans
   // toute la bande de recouvrement des tuiles.
-  const merged = mergeRoadLines([
+  const merged = mergedChains([
     { profile: 'minor', halfWidth: 2.5, points: straight(0, 100) },
     { profile: 'minor', halfWidth: 2.5, points: straight(0, 100) },
   ]);
@@ -1858,7 +1864,7 @@ test('deux moitiés qui se chevauchent au bord d’une tuile sont recousues', ()
   // C'est le cas réel : le format laisse déborder chaque moitié de quelques
   // mètres au-delà de la frontière, donc les deux bouts se croisent au lieu de
   // se rejoindre — ils ne partagent aucun sommet.
-  const merged = mergeRoadLines([
+  const merged = mergedChains([
     { profile: 'major', halfWidth: 4.25, points: straight(0, 103) },
     { profile: 'major', halfWidth: 4.25, points: straight(97, 200) },
   ]);
@@ -1873,7 +1879,7 @@ test('deux moitiés qui se chevauchent au bord d’une tuile sont recousues', ()
 });
 
 test('à un carrefour en T, c’est la route qui va tout droit qui continue', () => {
-  const merged = mergeRoadLines([
+  const merged = mergedChains([
     { profile: 'minor', halfWidth: 2.5, points: straight(0, 100) },
     { profile: 'minor', halfWidth: 2.5, points: straight(100, 200) },
     // Branche perpendiculaire greffée au milieu.
@@ -1893,7 +1899,7 @@ test('à un carrefour en T, c’est la route qui va tout droit qui continue', ()
 });
 
 test('deux classes de route ne se fusionnent jamais', () => {
-  const merged = mergeRoadLines([
+  const merged = mergedChains([
     { profile: 'major', halfWidth: 4.25, points: straight(0, 100) },
     { profile: 'minor', halfWidth: 2.5, points: straight(100, 200) },
   ]);
@@ -1902,7 +1908,7 @@ test('deux classes de route ne se fusionnent jamais', () => {
 });
 
 test('un virage à angle droit n’est pas pris pour une continuation', () => {
-  const merged = mergeRoadLines([
+  const merged = mergedChains([
     { profile: 'minor', halfWidth: 2.5, points: straight(0, 100) },
     { profile: 'minor', halfWidth: 2.5, points: [{ x: 100, z: 0 }, { x: 100, z: 100 }] },
     { profile: 'minor', halfWidth: 2.5, points: [{ x: 100, z: 0 }, { x: 200, z: 0 }] },
@@ -1920,14 +1926,14 @@ test('une chaîne est orientée de la même façon quel que soit l’ordre des t
   const b = { profile: 'minor', halfWidth: 2.5, points: straight(100, 200) };
   // Sans orientation canonique, le côté de la haie ou de la ligne téléphonique
   // changerait de bord d'une reconstruction à l'autre.
-  const forward = mergeRoadLines([a, b])[0].points;
-  const backward = mergeRoadLines([b, a])[0].points;
+  const forward = mergedChains([a, b])[0].points;
+  const backward = mergedChains([b, a])[0].points;
   close(forward[0].x, backward[0].x, 1e-6, 'même départ');
   close(forward[forward.length - 1].x, backward[backward.length - 1].x, 1e-6, 'même arrivée');
 });
 
 test('deux sommets plus proches que la tolérance sont le même nœud', () => {
-  const merged = mergeRoadLines([
+  const merged = mergedChains([
     { profile: 'lane', halfWidth: 1.8, points: straight(0, 100) },
     // Décalé de moins que la tolérance : c'est la quantification du format,
     // pas une autre route.
@@ -1949,6 +1955,189 @@ test('la distance d’ancrage se compte depuis le dernier carrefour', () => {
   // changement de jeu de tuiles — ne change aucune distance après le carrefour.
   const truncated = anchorDistances(points.slice(2), anchors.slice(2));
   close(truncated.distance[4], distance[6], 1e-9, 'stable si la chaîne est tronquée');
+});
+
+// --- Carrefours relevés sur le graphe ----------------------------------------
+
+/** Une nationale d'est en ouest, et une petite route qui s'y greffe en `x`. */
+function teeLines(x = 100, minorHalfWidth = 2.5) {
+  return [
+    { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8) },
+    {
+      profile: 'minor',
+      halfWidth: minorHalfWidth,
+      points: [
+        { x, z: 0 },
+        { x, z: 60 },
+      ],
+    },
+  ];
+}
+
+test('un nœud de degré trois est publié comme carrefour', () => {
+  const { junctions } = mergeRoadLines(teeLines());
+
+  assert.equal(junctions.length, 1, 'un seul carrefour');
+  const [junction] = junctions;
+  close(junction.x, 100, 1e-6, 'au nœud');
+  close(junction.z, 0, 1e-6, 'au nœud');
+  assert.equal(junction.degree, 3, 'deux branches de nationale et une de desserte');
+  close(junction.halfWidth, 4.25, 1e-6, 'la dominante est la plus large');
+  assert.equal(junction.profile, 'major');
+  assert.equal(junction.branches.length, 3);
+});
+
+test('un changement de classe au milieu d’une route n’est pas un carrefour', () => {
+  // Deux profils bout à bout : le nœud est de degré deux. Y planter un feu
+  // reviendrait à en poser un partout où la donnée change d'attribut.
+  const { junctions } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: straight(0, 100) },
+    { profile: 'minor', halfWidth: 2.5, points: straight(100, 200) },
+  ]);
+
+  assert.equal(junctions.length, 0);
+});
+
+test('le relevé des carrefours ne dépend pas de l’ordre des tuiles', () => {
+  const lines = teeLines();
+  const forward = mergeRoadLines(lines).junctions;
+  const backward = mergeRoadLines([...lines].reverse()).junctions;
+
+  assert.deepEqual(
+    forward.map((j) => [j.x, j.z, j.degree, j.halfWidth]),
+    backward.map((j) => [j.x, j.z, j.degree, j.halfWidth])
+  );
+});
+
+// --- Rognage des voies secondaires au carrefour -------------------------------
+
+test('la voie secondaire s’arrête au bord de la chaussée dominante', () => {
+  const { chains, junctions } = mergeRoadLines(teeLines());
+  const trimmed = trimAtJunctions(chains, junctions);
+
+  const minor = trimmed.find((c) => c.profile === 'minor');
+  assert.ok(minor, 'la desserte survit au rognage');
+
+  // Elle partait du nœud ; elle doit maintenant partir de la rive, c'est-à-dire
+  // à la demi-largeur de la nationale, moins le recouvrement volontaire.
+  const start = minor.points.reduce((a, b) => (Math.abs(a.z) < Math.abs(b.z) ? a : b));
+  close(Math.abs(start.z), 4.25 - JUNCTION_OVERLAP_M, 1e-2, 'coupée sur la rive');
+  assert.ok(
+    minor.points.every((p) => Math.abs(p.z) >= 4.25 - JUNCTION_OVERLAP_M - 1e-2),
+    'plus rien de la desserte ne court sous la nationale'
+  );
+});
+
+test('la chaussée dominante n’est pas rognée par sa propre branche', () => {
+  const { chains, junctions } = mergeRoadLines(teeLines());
+  const trimmed = trimAtJunctions(chains, junctions);
+
+  const major = trimmed.filter((c) => c.profile === 'major');
+  assert.equal(major.length, 1, 'la nationale n’est pas coupée en deux');
+  close(major[0].points[0].x, 0, 1e-6, 'ni raccourcie au départ');
+  close(major[0].points[major[0].points.length - 1].x, 200, 1e-6, 'ni à l’arrivée');
+});
+
+test('deux routes de même largeur ne se rognent pas l’une l’autre', () => {
+  // Sans dominante, couper les deux ouvrirait un trou au milieu du croisement
+  // au lieu de recouvrir un chevauchement.
+  const lines = teeLines(100, 4.25);
+  lines[1].profile = 'major';
+  const { chains, junctions } = mergeRoadLines(lines);
+  const trimmed = trimAtJunctions(chains, junctions);
+
+  assert.deepEqual(
+    trimmed.map((c) => c.points.length),
+    chains.map((c) => c.points.length),
+    'rien n’est coupé'
+  );
+});
+
+test('une desserte qui traverse la nationale est coupée en deux, pas raccourcie', () => {
+  const { chains, junctions } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8) },
+    {
+      profile: 'minor',
+      halfWidth: 2.5,
+      points: [
+        { x: 100, z: -60 },
+        { x: 100, z: 0 },
+        { x: 100, z: 60 },
+      ],
+    },
+  ]);
+  const trimmed = trimAtJunctions(chains, junctions);
+
+  const minor = trimmed.filter((c) => c.profile === 'minor');
+  assert.equal(minor.length, 2, 'une amorce de chaque côté');
+  for (const run of minor) {
+    assert.ok(
+      run.points.every((p) => Math.abs(p.z) >= 4.25 - JUNCTION_OVERLAP_M - 1e-2),
+      'aucune des deux ne traverse la chaussée'
+    );
+  }
+});
+
+test('le sommet posé sur la rive est un point d’ancrage', () => {
+  // C'est de lui que se comptent lampadaires et bornes le long de la desserte,
+  // et il vient du nœud du carrefour : il ne bouge pas d'une reconstruction à
+  // l'autre, contrairement au bout de chaîne que le découpage en tuiles décide.
+  const { chains, junctions } = mergeRoadLines(teeLines());
+  const minor = trimAtJunctions(chains, junctions).find((c) => c.profile === 'minor');
+
+  const nearest = minor.points.reduce(
+    (best, p, i) => (Math.abs(p.z) < Math.abs(minor.points[best].z) ? i : best),
+    0
+  );
+  assert.equal(minor.anchors[nearest], true);
+});
+
+test('un moignon plus court que le seuil disparaît au lieu de dépasser', () => {
+  const { chains, junctions } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8) },
+    // Une amorce de six mètres : il n'en resterait que deux une fois la rive
+    // atteinte, moins que `JUNCTION_MIN_RUN_M`.
+    {
+      profile: 'minor',
+      halfWidth: 2.5,
+      points: [
+        { x: 100, z: 0 },
+        { x: 100, z: 6 },
+      ],
+    },
+  ]);
+  const trimmed = trimAtJunctions(chains, junctions);
+
+  assert.ok(JUNCTION_MIN_RUN_M > 6 - (4.25 - JUNCTION_OVERLAP_M), 'le cas testé est bien un moignon');
+  assert.equal(trimmed.filter((c) => c.profile === 'minor').length, 0);
+});
+
+test('sans carrefour, le rognage rend les chaînes telles quelles', () => {
+  const { chains } = mergeRoadLines([
+    { profile: 'minor', halfWidth: 2.5, points: straight(0, 200, 8) },
+  ]);
+
+  assert.equal(trimAtJunctions(chains, []), chains, 'pas de recopie inutile');
+  assert.equal(trimAtJunctions(chains, null), chains);
+});
+
+test('le rognage ne touche pas à deux chaussées qui se croisent sans nœud', () => {
+  // Un pont : les deux rubans se recouvrent au sol mais ne partagent aucun
+  // sommet. Rogner y ouvrirait une brèche sous l'ouvrage.
+  const { chains, junctions } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8) },
+    {
+      profile: 'minor',
+      halfWidth: 2.5,
+      points: [
+        { x: 103, z: -60 },
+        { x: 103, z: 60 },
+      ],
+    },
+  ]);
+
+  assert.equal(junctions.length, 0, 'aucun nœud partagé');
+  assert.equal(trimAtJunctions(chains, junctions), chains);
 });
 
 // --- Index des chaussées et recouture des carrefours -------------------------

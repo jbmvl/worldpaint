@@ -92,6 +92,13 @@ these needs a very good reason, stated in the PR description.
   gets a second endpoint to restart from, and disappears whole. For that shape,
   `pushOutsideCorridor` displaces every point clear of the nearest road instead
   of cutting, keeping the line one continuous run.
+- **A junction is a graph node, not a picture.** `roadGraph` is the only place
+  where a crossroads exists as such — a node where more than two edges meet.
+  It publishes them (`mergeRoadLines` returns `{chains, junctions}`) and
+  everything that needs one reads that list. Rediscovering junctions later, by
+  looking for places where two ribbons overlap, invents different ones: they
+  land somewhere else, and there is one per overlapping row instead of one per
+  crossroads.
 - **Layers don't mutate each other implicitly.** A layer publishes what it
   produces (on itself, or via an explicit return value) and nothing else
   writes into another layer's data uninvited.

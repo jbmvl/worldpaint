@@ -159,6 +159,8 @@ export const LAMP_LIGHT_RANGE_M = 34;
 export const LAMP_LIGHT_CD = 620;
 /** Diamètre de la nappe de lumière au sol, en mètres. */
 export const LAMP_POOL_M = 17;
+/** Recul d'un feu tricolore en amont du nœud de carrefour, en mètres. */
+const TRAFFIC_LIGHT_SETBACK_M = 10;
 /** Durée d'un cycle de feu tricolore, en secondes. */
 export const TRAFFIC_CYCLE_S = 14;
 
@@ -378,13 +380,16 @@ export class FurnitureLayer {
    * @param {{x:number,z:number}} here Position locale de l'observateur.
    * @param {Array} roadSegments Tronçons produits par `collectRoadSegments`.
    * @param {Object|null} roadIndex Index spatial de ces mêmes tronçons
-   *        (`RoadIndex`). Il sert deux fois : à trouver les carrefours, seul
-   *        endroit où un feu tricolore a un sens, et à tenir l'**emprise
-   *        routière** — la frontière que rien du décor ne doit franchir
-   *        (`roadCorridor`).
+   *        (`RoadIndex`). Il tient l'**emprise routière** — la frontière que
+   *        rien du décor ne doit franchir (`roadCorridor`) — et donne
+   *        l'altitude de plate-forme sous un point quelconque.
+   * @param {Array} junctions Carrefours relevés sur le graphe routier
+   *        (`roadNetwork.junctions`). Seul endroit où un feu tricolore a un
+   *        sens : le mobilier ne peut pas les redécouvrir seul, un tronçon
+   *        découpé ne porte plus la trace du croisement qu'il traversait.
    * @returns {boolean} vrai si quelque chose a été posé.
    */
-  rebuild(source, tiles, here, roadSegments = [], roadIndex = null) {
+  rebuild(source, tiles, here, roadSegments = [], roadIndex = null, junctions = []) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
 
     // Gardé le temps de la reconstruction : haies, clôtures, bottes et
@@ -412,7 +417,7 @@ export class FurnitureLayer {
     try {
       const builtUp = this._collectBuiltUpAreas(source, tiles);
       this._buildRoadside(context, roadSegments, builtUp);
-      this._buildCrossings(context, roadSegments, roadIndex, builtUp);
+      this._buildCrossings(context, junctions, roadIndex, builtUp);
       this._buildParcels(context, builtUp);
       this._buildPointsOfInterest(context, roadSegments);
       this._buildRocks(context, builtUp);
@@ -1139,74 +1144,78 @@ export class FurnitureLayer {
    *
    * Le schéma OpenMapTiles ne porte pas `highway=traffic_signals` — comme il ne
    * porte ni lampadaire ni panneau. Mais il porte les chaussées, et un carrefour
-   * est une propriété **géométrique** du réseau : c'est un point où deux
-   * chaussées distinctes se recouvrent. L'index spatial le sait déjà, puisque
-   * c'est exactement la question que lui pose la recouture des plate-formes.
+   * est une propriété du **graphe** routier : un nœud où plus de deux arêtes se
+   * rejoignent. `roadGraph` le relève au moment où il recoud les chaussées, et
+   * le publie ; c'est cette liste-là qu'on lit ici.
    *
-   * Trois conditions, et elles éliminent l'essentiel : le carrefour doit être en
-   * zone bâtie (une croisée de départementales en pleine campagne porte un
-   * cédez-le-passage, pas un feu), la chaussée doit en mériter un (`plan`), et
-   * deux carrefours à moins de trente mètres n'en sont qu'un — les branches d'un
-   * même croisement se recoupent sur plusieurs lignes.
+   * Elle a remplacé une détection géométrique — chercher où deux rubans se
+   * recouvrent — qui trouvait le même croisement sur une dizaine de lignes de
+   * chaque branche, et obligeait à écarter tout ce qui se trouvait à moins de
+   * cent mètres pour n'en garder qu'un. Un nœud est un nœud : il n'y en a
+   * qu'un, et il tombe au centre du carrefour et pas sur la première ligne où
+   * les rubans commencent à se toucher.
+   *
+   * Deux conditions restent : le carrefour doit être en zone bâtie (une croisée
+   * de départementales en pleine campagne porte un cédez-le-passage, pas un
+   * feu), et sa chaussée dominante doit en mériter un (`plan`).
    */
-  _buildCrossings(context, roadSegments, roadIndex, builtUp) {
-    if (!roadIndex) return;
+  _buildCrossings(context, junctions, roadIndex, builtUp) {
+    if (!roadIndex || !Array.isArray(junctions)) return;
     const { placements, here } = context;
-    const seen = [];
     let placed = 0;
 
-    for (const segment of roadSegments) {
+    for (const junction of junctions) {
       if (placed >= FURNITURE_LIMITS.trafficLights) break;
-      if (!roadsideFurnitureFor(segment.profile, { builtUp: true }).trafficLight) continue;
+      if (Math.hypot(junction.x - here.x, junction.z - here.z) > FURNITURE_RADIUS_M) continue;
+      if (!FurnitureLayer._inAreas(builtUp, junction.x, junction.z)) continue;
+      if (!roadsideFurnitureFor(junction.profile, { builtUp: true }).trafficLight) continue;
 
-      const { path, platform, halfWidth } = segment;
-      for (let r = 2; r < path.length - 2 && placed < FURNITURE_LIMITS.trafficLights; r++) {
-        const p = path[r];
-        if (Math.hypot(p.x - here.x, p.z - here.z) > FURNITURE_RADIUS_M) continue;
-        if (!FurnitureLayer._inAreas(builtUp, p.x, p.z)) continue;
-
-        // Une autre chaussée passe ici, et assez large pour être une rue et non
-        // une entrée de garage.
-        const hit = roadIndex.query(p.x, p.z, 0, (other) => other !== segment && other.halfWidth >= 2.2);
-        if (!hit) continue;
-        // Cent mètres de séparation, et non trente. Un carrefour est détecté sur
-        // toutes les lignes où les deux rubans se recouvrent — donc sur une
-        // dizaine de lignes de chaque branche —, et trente mètres laissaient
-        // passer deux ou trois feux par croisement. C'est de là que venait leur
-        // nombre, pas du plafond.
-        if (seen.some((s) => Math.hypot(s.x - p.x, s.z - p.z) < 100)) continue;
-        seen.push({ x: p.x, z: p.z });
-
-        // Posé à droite, une dizaine de mètres avant le carrefour, face au
-        // trafic qu'il arrête — c'est la position française.
-        const before = path[Math.max(0, r - 2)];
-        const tx = p.x - before.x;
-        const tz = p.z - before.z;
-        const length = Math.hypot(tx, tz) || 1;
-        const offset = -(halfWidth + 1.2);
-        const yaw = roadsideYaw(tx / length, tz / length, offset, 'traffic');
-        const post = this._place(placements, 'trafficLight', {
-          x: before.x + (tz / length) * offset,
-          z: before.z - (tx / length) * offset,
-          y: platform?.[Math.max(0, r - 2)] ?? null,
-          yaw,
-          exactY: !!platform,
-        });
-        // Le feu publie son point d'allumage : `advanceSignals` y pose la
-        // lentille vive et son halo. La phase est tirée du **lieu**, donc deux
-        // carrefours voisins ne passent jamais au vert ensemble, et un même
-        // carrefour garde son rythme d'une reconstruction à l'autre.
-        if (post) {
-          this._signals.push({
-            x: post.x,
-            y: post.y,
-            z: post.z,
-            yaw,
-            phase: randomAt(post.x, post.z, 97) * TRAFFIC_CYCLE_S,
-          });
-        }
-        placed++;
+      // La branche la plus large : c'est celle dont le feu règle l'accès, et
+      // c'est sur elle que l'automobiliste le cherche.
+      let branch = null;
+      for (const candidate of junction.branches) {
+        if (!branch || candidate.halfWidth > branch.halfWidth) branch = candidate;
       }
+      if (!branch) continue;
+
+      // Une dizaine de mètres en amont du nœud, sur la branche, et à droite —
+      // c'est la position française. `branch` sort du carrefour, donc reculer
+      // le long de la branche veut dire avancer dans son sens.
+      const back = TRAFFIC_LIGHT_SETBACK_M;
+      const px = junction.x + branch.x * back;
+      const pz = junction.z + branch.z * back;
+      // Sens de la marche : celui du trafic qui arrive au feu, donc l'inverse
+      // de la direction sortante de la branche.
+      const tx = -branch.x;
+      const tz = -branch.z;
+      const offset = -(junction.halfWidth + 1.2);
+      const yaw = roadsideYaw(tx, tz, offset, 'traffic');
+
+      // Altitude prise sur la plate-forme de la branche, pas sur le terrain :
+      // le feu est au bord de la chaussée, qui est dressée de niveau.
+      const deck = roadIndex.deckAt(roadIndex.query(px, pz, 1));
+
+      const post = this._place(placements, 'trafficLight', {
+        x: px + tz * offset,
+        z: pz - tx * offset,
+        y: deck,
+        yaw,
+        exactY: deck != null,
+      });
+      // Le feu publie son point d'allumage : `advanceSignals` y pose la
+      // lentille vive et son halo. La phase est tirée du **lieu**, donc deux
+      // carrefours voisins ne passent jamais au vert ensemble, et un même
+      // carrefour garde son rythme d'une reconstruction à l'autre.
+      if (post) {
+        this._signals.push({
+          x: post.x,
+          y: post.y,
+          z: post.z,
+          yaw,
+          phase: randomAt(post.x, post.z, 97) * TRAFFIC_CYCLE_S,
+        });
+      }
+      placed++;
     }
   }
 
