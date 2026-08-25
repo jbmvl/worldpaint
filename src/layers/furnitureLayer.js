@@ -61,8 +61,7 @@ import {
   resamplePath,
 } from './ribbonGeometry.js';
 import { ROAD_SAMPLE_M, ROAD_LIFT_M } from './roadNetwork.js';
-import { ROAD_CUT_M, DITCH_SLOPE_M } from '../terrain/roadCut.js';
-import { collectBuiltUpAreas, inBuiltUpArea } from './builtUpAreas.js';
+import { ROAD_CUT_M } from '../terrain/roadCut.js';
 import {
   clipOutsideCorridor,
   filterOutsideCorridor,
@@ -103,6 +102,7 @@ import {
   pointInRing,
   randomAt,
   positionSeed,
+  BUILT_UP_CLASSES,
   FARMYARD_SUBCLASSES,
   ROW_CROPS,
   STEEP_CROSS_SLOPE,
@@ -159,14 +159,6 @@ export const LAMP_LIGHT_RANGE_M = 34;
 export const LAMP_LIGHT_CD = 620;
 /** Diamètre de la nappe de lumière au sol, en mètres. */
 export const LAMP_POOL_M = 17;
-/**
- * Décalage des fougères de berge par rapport à la rive, en mètres.
- *
- * À mi-pente de la cuvette du fossé : elles ne poussent ni sur l'accotement
- * excavé, qui est une surface roulable, ni au fond, où l'eau stagne. Dérivé des
- * cotes du terrassement pour qu'elles suivent le fossé si celui-ci change.
- */
-const DITCH_FERN_OFFSET_M = ROAD_CUT_M + DITCH_SLOPE_M / 2;
 /** Recul d'un feu tricolore en amont du nœud de carrefour, en mètres. */
 const TRAFFIC_LIGHT_SETBACK_M = 10;
 /** Durée d'un cycle de feu tricolore, en secondes. */
@@ -258,8 +250,7 @@ const POINT_ITEMS = [
 const LINEAR_KINDS = [
   'hedge',
   'lowHedge',
-  // Pas de `ditch` : le fossé est un creux du terrain (`roadCut`), plus une
-  // matière posée dessus. Le profil `ditch` du thème n'est plus lu.
+  'ditch',
   'vineRow',
   'dryStoneWall',
   'cutWall',
@@ -485,20 +476,44 @@ export class FurnitureLayer {
    * Emprises résidentielles et commerciales, en anneaux métriques.
    *
    * Elles servent d'interrupteur : à l'intérieur, une rue est éclairée et n'a
-   * ni poteau téléphonique ni haie ; à l'extérieur, c'est l'inverse.
-   *
-   * Le relevé lui-même est dans `builtUpAreas`, partagé avec `roadNetwork` :
-   * celui-ci en a besoin pour décider si un tronçon porte un fossé, et les deux
-   * couches doivent en donner la même réponse — le terrain creuse d'après cette
-   * décision-là.
+   * ni poteau téléphonique ni haie ; à l'extérieur, c'est l'inverse. C'est la
+   * seule information dont on dispose pour distinguer une rue d'une route, et
+   * elle est portée par la couche `landuse` du schéma OpenMapTiles.
    */
   _collectBuiltUpAreas(source, tiles) {
-    return collectBuiltUpAreas(source, tiles, this.bubble.frame);
+    const areas = [];
+    const { origin, scale, zoom } = this.bubble.frame;
+
+    const collect = (geometry, properties) => {
+      if (!BUILT_UP_CLASSES.has(properties.class)) return;
+      for (const ring of this._ringsOf(geometry)) {
+        const local = ring.map(([lng, lat]) => ({
+          x: (lngToTileX(lng, zoom) - origin.x) * scale,
+          z: (latToTileY(lat, zoom) - origin.y) * scale,
+        }));
+        if (local.length >= 3) areas.push(local);
+      }
+    };
+
+    source.forEachFeature('landuse', tiles, collect);
+    return areas;
   }
 
   /** Vrai si le point tombe dans l'une des emprises bâties. */
   static _inAreas(areas, x, z) {
-    return inBuiltUpArea(areas, x, z);
+    for (const ring of areas) {
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const zi = ring[i].z;
+        const zj = ring[j].z;
+        if (zi > z !== zj > z) {
+          const t = (z - zi) / (zj - zi || 1);
+          if (x < ring[i].x + t * (ring[j].x - ring[i].x)) inside = !inside;
+        }
+      }
+      if (inside) return true;
+    }
+    return false;
   }
 
   // --- Bord de route -------------------------------------------------------
@@ -995,37 +1010,43 @@ export class FurnitureLayer {
     // talus, limite végétale — n'est donné qu'à une portion sur trois : appliqué
     // partout, il transforme la campagne en circuit.
     const verge = roadsideVergeFor(profile, { builtUp: inTown, variant: randomAt(side.x, side.z, 83) });
-
-    // Le fossé lui-même n'est plus dessiné ici : c'est devenu un creux du
-    // terrain, décidé une fois par le tronçon (`segment.ditchSide`) et taillé
-    // par `roadCut`. Un ruban en V posé sur le sol ne pouvait pas se voir — la
-    // maille de terrain est opaque, et il passait dessous. Ce qui reste au
-    // mobilier, c'est ce qui pousse **sur** la berge.
-    const ditchSides = segment.ditchSide === 2 ? [1, -1] : segment.ditchSide ? [segment.ditchSide] : [];
-    for (const s of ditchSides) {
-      // Fougères sur la berge du fossé : c'est ce qui y pousse, et une cuvette
-      // nue se lirait comme un terrassement. Une touffe tous les cinq mètres,
-      // sautée une fois sur trois.
-      for (const spot of spacedAlongPath(path, 5, spacing)) {
-        if (randomAt(spot.x, spot.z, 173) > 0.66) continue;
-        const away = s * (halfWidth + DITCH_FERN_OFFSET_M);
-        const fx = spot.x + spot.tz * away;
-        const fz = spot.z - spot.tx * away;
-        if (this._onRoad(fx, fz, segment)) continue;
-        this._place(placements, 'fernClump', {
-          x: fx,
-          z: fz,
-          yaw: randomAt(spot.x, spot.z, 179) * Math.PI * 2,
-          scale: 0.8 + randomAt(spot.x, spot.z, 181) * 0.7,
-        });
+    if (verge.ditch) {
+      const sides = verge.ditchSide === 0 ? [1, -1] : [verge.ditchSide];
+      for (const s of sides) {
+        const offset = s * (halfWidth + 1.5);
+        // Le fossé s'interrompt là où une rue transversale le coupe : un fossé
+        // qui traverse une chaussée est une saignée en travers de la route.
+        for (const run of this._clipOffRoad(path, { offset, minLength: 0, own: segment })) {
+          appendProfile(buffers.ditch, {
+            path: run,
+            profile: this.specs.profiles.ditch,
+            sampleElevation,
+            offset,
+            lift: -FURNITURE_SINK_M,
+          });
+        }
+        // Fougères sur la berge amont du fossé : c'est ce qui y pousse, et une
+        // saignée nue se lirait comme une tranchée de chantier. Une touffe tous
+        // les cinq mètres, sautée une fois sur trois.
+        for (const spot of spacedAlongPath(path, 5, spacing)) {
+          if (randomAt(spot.x, spot.z, 173) > 0.66) continue;
+          const away = offset + s * 1.1;
+          const fx = spot.x + spot.tz * away;
+          const fz = spot.z - spot.tx * away;
+          if (this._onRoad(fx, fz, segment)) continue;
+          this._place(placements, 'fernClump', {
+            x: fx,
+            z: fz,
+            yaw: randomAt(spot.x, spot.z, 179) * Math.PI * 2,
+            scale: 0.8 + randomAt(spot.x, spot.z, 181) * 0.7,
+          });
+        }
       }
     }
 
     const openGround = this._openGround(mid.x, mid.z);
     if (verge.verge && openGround) {
-      // Le côté vient du tronçon, pas d'un second tirage : la haie basse borde
-      // le fossé, elle doit être du même côté que lui.
-      const vergeSide = segment.ditchSide === 2 ? 1 : segment.ditchSide || 1;
+      const vergeSide = verge.ditchSide || 1;
       this._appendBoundary(
         buffers.lowHedge,
         'lowHedge',
@@ -1040,8 +1061,7 @@ export class FurnitureLayer {
     // systématique : une petite route sur deux seulement en porte une, et
     // jamais du côté où court déjà le fossé.
     if (plan.hedge && openGround && randomAt(side.x, side.z, 29) < 0.5) {
-      const own = segment.ditchSide === 2 ? 1 : segment.ditchSide;
-      const hedgeSide = -(own || (randomAt(side.x, side.z, 23) < 0.5 ? 1 : -1));
+      const hedgeSide = -(verge.ditchSide || (randomAt(side.x, side.z, 23) < 0.5 ? 1 : -1));
       this._appendBoundary(
         buffers.hedge,
         'hedge',

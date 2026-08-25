@@ -99,21 +99,6 @@ these needs a very good reason, stated in the PR description.
   looking for places where two ribbons overlap, invents different ones: they
   land somewhere else, and there is one per overlapping row instead of one per
   crossroads.
-- **A road segment carries its own earthworks.** Whether a stretch of road has
-  a ditch, and on which side, is decided once in `collectRoadSegments` and
-  carried on the segment (`ditchSide`, `cutReach`). The terrain reads it to
-  carve the hollow; the furniture reads it to plant the bank and to put the
-  hedge on the other side. Recomputing it in either place makes the ground get
-  dug where nothing is planted. The same goes for anything else that both the
-  terrain and a layer must agree on about a road.
-- **Detail finer than the terrain mesh cannot be shown by digging.** The mesh is
-  4.42 m in the centre tile and 8.85 m in the ring around it, uniform — there is
-  no refinement near roads. Geometry laid below it is invisible, because the
-  mesh is opaque; and a hollow narrower than a few cells is rendered as a
-  scallop that changes with the mesh phase, not as a feature. Anything meant to
-  read as a depression in the ground has to be broad and shallow (see the header
-  of `terrain/roadCut.js` for the measurements). Anything meant to read up close
-  has to stand above the ground, not below it.
 - **Layers don't mutate each other implicitly.** A layer publishes what it
   produces (on itself, or via an explicit return value) and nothing else
   writes into another layer's data uninvited.

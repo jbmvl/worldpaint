@@ -16,9 +16,7 @@
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { mergeRoadLines, RoadIndex, stitchPlatforms, trimAtJunctions } from './roadGraph.js';
-import { ROAD_CUT_M, ROAD_CUT_BLEND_M, ROAD_CUT_REACH_M } from '../terrain/roadCut.js';
-import { collectBuiltUpAreas, inBuiltUpArea } from './builtUpAreas.js';
-import { roadsideVergeFor, randomAt } from './furniturePlacement.js';
+import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
 import {
   resamplePath,
   createRibbonBuffer,
@@ -321,31 +319,6 @@ export function anchorDistances(points, anchors) {
 }
 
 /**
- * Côté du fossé d'un tronçon : 0 aucun, ±1 un seul côté, 2 les deux.
- *
- * Le tirage se prend au **nœud d'ancrage** de la chaîne et non sur le tronçon
- * découpé : deux tronçons d'une même route rendent donc la même réponse, et un
- * fossé ne s'interrompt pas parce que le jeu de tuiles a changé sous lui.
- *
- * Le signe suit la convention de `roadsideYaw` et du mobilier : positif du côté
- * `(tz, -tx)` de la marche.
- *
- * Fonction pure.
- */
-export function ditchSideFor(profile, anchor, builtUp) {
-  if (!anchor) return 0;
-  const verge = roadsideVergeFor(profile, {
-    builtUp: inBuiltUpArea(builtUp, anchor.x, anchor.z),
-    variant: randomAt(anchor.x, anchor.z, 83),
-  });
-  if (!verge.ditch) return 0;
-  // `roadsideVergeFor` code « les deux côtés » par 0 ; ici 0 veut dire « aucun »,
-  // parce que c'est la réponse la plus fréquente et qu'un tronçon sans fossé ne
-  // doit rien coûter au terrain.
-  return verge.ditchSide === 0 ? 2 : verge.ditchSide;
-}
-
-/**
  * Extrait les tronçons de chaussée d'un jeu de tuiles, ré-échantillonnés et
  * dressés de niveau.
  *
@@ -368,21 +341,14 @@ export function ditchSideFor(profile, anchor, builtUp) {
  * @param {Function} sampleElevation `(x, z) => altitude en mètres`. Doit lire le
  *        terrain **naturel** : la plate-forme décide du déblai, elle ne peut
  *        donc pas être lue sur un terrain déjà entaillé.
- * `ditchSide` dit de quel côté le tronçon porte un fossé : 0 aucun, ±1 un seul
- * côté, 2 les deux. Il est décidé **ici**, une fois, et porté par le tronçon,
- * parce que deux choses très éloignées doivent en donner la même réponse — le
- * terrain, qui creuse la cuvette (`roadCut`), et le mobilier, qui pose les
- * fougères de berge et range la haie de l'autre côté. Chacun le recalculant de
- * son côté, le sol finirait creusé là où rien n'est planté.
- *
+ * @param {number} [radius]
+ * @param {Object} [roads] Tranche `theme.roads` (profils de chaussée).
  * Les carrefours sortent d'ici avec les tronçons, et pour la même raison : ils
  * viennent du graphe, et les recalculer ailleurs les ferait tomber ailleurs.
  *
- * @param {number} [radius]
- * @param {Object} [roads] Tranche `theme.roads` (profils de chaussée).
  * @returns {{segments: Array<Object>, junctions: Array<Object>}} tronçons
- *          `{profile, halfWidth, path, startDistance, anchor, platform, edges,
- *          ditchSide}` et carrefours dans la portée demandée.
+ *          `{profile, halfWidth, path, startDistance, anchor, platform, edges}`
+ *          et carrefours dans la portée demandée.
  */
 export function collectRoadSegments(
   source,
@@ -394,7 +360,6 @@ export function collectRoadSegments(
   roads = defaultTheme.roads
 ) {
   const out = [];
-  const builtUp = collectBuiltUpAreas(source, tiles, frame);
   const { chains: merged, junctions } = mergeRoadLines(collectRoadLines(source, tiles, frame, roads));
   // Rogner avant de ré-échantillonner : les distances d'ancrage et la
   // plate-forme se comptent sur la chaîne telle qu'elle sera dessinée, pas sur
@@ -424,23 +389,16 @@ export function collectRoadSegments(
       }
       smoothColumns(platform, rows, 1, 2);
 
-      const anchor = chain.points[anchorIndex[run.startIndex]];
-      const ditchSide = ditchSideFor(chain.profile, anchor, builtUp);
-
       out.push({
         profile: chain.profile,
         halfWidth: chain.halfWidth,
         path,
         frames,
         startDistance: sinceAnchor[run.startIndex],
-        anchor,
+        anchor: chain.points[anchorIndex[run.startIndex]],
         platform,
         edges,
         probeSpan: probe * 2,
-        ditchSide,
-        // Jusqu'où ce tronçon-ci remue le sol. Sans fossé c'est le seul déblai,
-        // et l'index n'a pas à l'inscrire dans deux fois plus de cellules.
-        cutReach: ditchSide ? ROAD_CUT_REACH_M : ROAD_CUT_M + ROAD_CUT_BLEND_M,
       });
     }
   }
@@ -543,13 +501,11 @@ export class RoadNetwork {
     // ensuite : c'est lui qui dit à l'herbe où est le bitume, et au terrain où
     // il doit être entaillé.
     //
-    // La marge doit couvrir toute la portée du terrassement, raccord compris.
-    // Laissée à sa valeur par défaut, elle tronquait le raccord à trois mètres
-    // de la rive : l'entaille se terminait alors par une marche verticale au
-    // tiers de sa profondeur, tout le long de la route. Depuis que le fossé est
-    // un creux du terrain, c'est lui qui porte le plus loin — douze mètres au
-    // lieu de six.
-    const index = new RoadIndex(collected, { margin: ROAD_CUT_REACH_M });
+    // La marge doit couvrir toute la portée du déblai, raccord compris. Laissée
+    // à sa valeur par défaut, elle tronquait le raccord à trois mètres de la
+    // rive : l'entaille se terminait alors par une marche verticale au tiers de
+    // sa profondeur, tout le long de la route.
+    const index = new RoadIndex(collected, { margin: ROAD_CUT_M + ROAD_CUT_BLEND_M });
     stitchPlatforms(collected, index);
 
     const buffers = {};
