@@ -413,7 +413,10 @@ export class FurnitureLayer {
       this._buildRocks(context, builtUp);
       this._buildLandmarks(context, builtUp);
     } catch (e) {
-      console.warn('[furniture] mobilier partiel', e?.message || e);
+      // La pile complète, pas le seul message : cette exception avale tout ce
+      // qui restait à construire (voir le commentaire au-dessus), et sans
+      // elle il n'y a aucun moyen de savoir laquelle des six étapes a jeté.
+      console.warn('[furniture] mobilier partiel', e?.stack || e?.message || e);
     }
 
     for (const kind of LINEAR_KINDS) this._applyLinear(kind, buffers[kind]);
