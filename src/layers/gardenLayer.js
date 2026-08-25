@@ -39,6 +39,7 @@ import { randomAt } from './furniturePlacement.js';
 import { pushPanel } from './buildingLayer.js';
 import { srgb } from '../core/color.js';
 import { defaultTheme } from '../themes/default.js';
+import { inCorridor } from './roadCorridor.js';
 
 /** Portée des jardins, en mètres. Au-delà, un piquet ne fait pas un pixel. */
 export const GARDEN_RADIUS_M = 170;

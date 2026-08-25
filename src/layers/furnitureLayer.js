@@ -817,6 +817,7 @@ export class FurnitureLayer {
         buffers,
         placements,
         sampleElevation,
+        segment,
       });
     }
   }
@@ -843,6 +844,7 @@ export class FurnitureLayer {
     buffers,
     placements,
     sampleElevation,
+    segment,
   }) {
     if (plan.lamp) {
       for (const p of spacedAlongPath(path, plan.lamp, spacing)) {
