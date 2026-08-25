@@ -62,7 +62,12 @@ import {
 } from './ribbonGeometry.js';
 import { ROAD_SAMPLE_M, ROAD_LIFT_M } from './roadNetwork.js';
 import { ROAD_CUT_M } from '../terrain/roadCut.js';
-import { clipOutsideCorridor, filterOutsideCorridor, inCorridor } from './roadCorridor.js';
+import {
+  clipOutsideCorridor,
+  filterOutsideCorridor,
+  inCorridor,
+  pushOutsideCorridor,
+} from './roadCorridor.js';
 import {
   createFurnitureGeometries,
   createFurnitureMaterial,
@@ -1294,50 +1299,52 @@ export class FurnitureLayer {
 
       const sampled = resamplePath(local, BOUNDARY_SAMPLE_M);
       if (sampled.length < 3) continue;
+      if (sampled[sampled.length - 1].distance < BOUNDARY_MIN_LENGTH_M) continue;
 
-      // Une route qui traverse la parcelle coupe sa limite en deux : le contour
-      // repart de l'autre côté de la chaussée au lieu de la franchir. C'est le
-      // seul endroit du bocage où une haie a le droit de s'interrompre, et
-      // c'est aussi le seul où elle le fait vraiment.
-      for (const path of this._clipOffRoad(sampled)) {
-        if (path.length < 3) continue;
+      // Un contour de parcelle suit très souvent le bord d'une route sur toute
+      // sa longueur — c'est la définition même du bocage. Le couper à chaque
+      // sondage qui tombe dans l'emprise ne laisserait aucun tronçon dehors :
+      // toute la haie disparaîtrait, faute d'un point réellement extérieur d'où
+      // repartir. On la repousse donc au ras de l'emprise plutôt qu'on ne
+      // l'interrompt — c'est elle qui trace le bocage, pas la route.
+      const path = pushOutsideCorridor(sampled, this._roadIndex);
+      if (path.length < 3) continue;
 
-        if (kind === 'hedge' || kind === 'lowHedge' || kind === 'dryStoneWall') {
-          appendProfile(buffers[kind], {
-            path,
-            profile: this.specs.profiles[kind],
-            sampleElevation,
-            lift: -FURNITURE_SINK_M,
-            closed: true,
-            // Un muret de pierre sèche est arasé de niveau, une haie non : elle
-            // seule respire le long du tracé.
-            scaleUp: kind === 'dryStoneWall' ? null : FurnitureLayer._hedgeRelief(path),
-          });
-          placed++;
-          continue;
-        }
-
-        // Clôtures : des piquets instanciés, et — pour le barbelé — trois brins
-        // tendus. Un grillage plein serait un mur ; ici on doit voir au travers.
-        const wood = kind === 'woodFence';
-        for (const post of spacedAlongPath(path, wood ? 2.6 : 3.4, { margin: 0.5 })) {
-          this._place(placements, wood ? 'fencePostWood' : 'fencePostConcrete', {
-            x: post.x,
-            z: post.z,
-            yaw: Math.atan2(post.tx, post.tz),
-          });
-        }
-        for (const height of wood ? [0.5, 0.95] : BARBED_WIRE_HEIGHTS) {
-          appendProfile(buffers.wire, {
-            path,
-            profile: this.specs.profiles.wire,
-            sampleElevation,
-            lift: height,
-            closed: true,
-          });
-        }
+      if (kind === 'hedge' || kind === 'lowHedge' || kind === 'dryStoneWall') {
+        appendProfile(buffers[kind], {
+          path,
+          profile: this.specs.profiles[kind],
+          sampleElevation,
+          lift: -FURNITURE_SINK_M,
+          closed: true,
+          // Un muret de pierre sèche est arasé de niveau, une haie non : elle
+          // seule respire le long du tracé.
+          scaleUp: kind === 'dryStoneWall' ? null : FurnitureLayer._hedgeRelief(path),
+        });
         placed++;
+        continue;
       }
+
+      // Clôtures : des piquets instanciés, et — pour le barbelé — trois brins
+      // tendus. Un grillage plein serait un mur ; ici on doit voir au travers.
+      const wood = kind === 'woodFence';
+      for (const post of spacedAlongPath(path, wood ? 2.6 : 3.4, { margin: 0.5 })) {
+        this._place(placements, wood ? 'fencePostWood' : 'fencePostConcrete', {
+          x: post.x,
+          z: post.z,
+          yaw: Math.atan2(post.tx, post.tz),
+        });
+      }
+      for (const height of wood ? [0.5, 0.95] : BARBED_WIRE_HEIGHTS) {
+        appendProfile(buffers.wire, {
+          path,
+          profile: this.specs.profiles.wire,
+          sampleElevation,
+          lift: height,
+          closed: true,
+        });
+      }
+      placed++;
     }
 
     return placed;

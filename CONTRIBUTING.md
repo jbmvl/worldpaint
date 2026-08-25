@@ -84,6 +84,14 @@ these needs a very good reason, stated in the PR description.
   `clipOutsideCorridor` for a polyline) rather than reading `roadSegments` or
   inventing its own margin. Roadside furniture that belongs at the kerb
   (guardrails, lamps, signs, traffic lights) deliberately does not.
+  `clipOutsideCorridor` **cuts**: it fits anything that genuinely has two ends
+  once a road crosses it (a ditch, a vine row, a roadside hedge offset from its
+  own carriageway). It is the wrong tool for a line that isn't attached to a
+  road but happens to run alongside one — a parcel boundary traced from raw
+  survey data, say — because a line that never truly leaves the corridor never
+  gets a second endpoint to restart from, and disappears whole. For that shape,
+  `pushOutsideCorridor` displaces every point clear of the nearest road instead
+  of cutting, keeping the line one continuous run.
 - **Layers don't mutate each other implicitly.** A layer publishes what it
   produces (on itself, or via an explicit return value) and nothing else
   writes into another layer's data uninvited.

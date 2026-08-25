@@ -67,7 +67,12 @@ export { ROAD_LIFT_M } from './layers/roadNetwork.js';
  *
  * `inCorridor(world.composer.roads.index, x, z)` est la question complète.
  */
-export { CORRIDOR_MARGIN_M, inCorridor, clipOutsideCorridor } from './layers/roadCorridor.js';
+export {
+  CORRIDOR_MARGIN_M,
+  inCorridor,
+  clipOutsideCorridor,
+  pushOutsideCorridor,
+} from './layers/roadCorridor.js';
 
 /*
  * Le halo des lampadaires. Publié parce qu'une application qui ajoute ses

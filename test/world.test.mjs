@@ -99,9 +99,11 @@ import {
 import {
   CORRIDOR_MARGIN_M,
   CORRIDOR_PROBE_M,
+  CORRIDOR_PUSH_CLEARANCE_M,
   inCorridor,
   clipOutsideCorridor,
   filterOutsideCorridor,
+  pushOutsideCorridor,
 } from '../src/layers/roadCorridor.js';
 import { fittedGardenMargin, gardenOutlineClear } from '../src/layers/gardenLayer.js';
 import {
@@ -2860,6 +2862,84 @@ test('le semis par points ne perd que ce qui tombe sur la voirie', () => {
   // L'ordre et les valeurs sont conservés : on retire, on ne recompose pas.
   assert.deepEqual(kept, [bales[0], bales[3]]);
   assert.deepEqual(filterOutsideCorridor(bales, null), bales, 'sans réseau, rien ne bouge');
+});
+
+test('un contour de parcelle qui longe la route est repoussé au bord, pas supprimé', () => {
+  // Le cas que la découpe rate structurellement : la limite ne sort jamais de
+  // l'emprise, donc `clipOutsideCorridor` n'a aucun point de reprise et efface
+  // toute la haie (voir le test « disparaît entièrement » plus haut). C'est
+  // précisément ce que `pushOutsideCorridor` ne fait pas.
+  const index = corridorIndex(2.5);
+  const along = [];
+  for (let x = -50; x <= 50; x += 6) along.push({ x, z: 3 }); // dans l'emprise (2.5 + 1.2 = 3.7)
+
+  const pushed = pushOutsideCorridor(along, index);
+  assert.equal(pushed.length, along.length, 'aucun point perdu');
+  assert.ok(
+    pushed.every((p) => !inCorridor(index, p.x, p.z)),
+    'tous les points ressortent hors emprise'
+  );
+  assert.ok(pushed.every((p) => p.z > 3), 'repoussés vers l’extérieur, pas vers la chaussée');
+  const edge = 2.5 + CORRIDOR_MARGIN_M + CORRIDOR_PUSH_CLEARANCE_M;
+  for (const p of pushed) close(p.z, edge, 1e-6, 'posés juste au bord, pas loin dans le champ');
+});
+
+test('un contour déjà hors emprise n’est pas touché par le rejet', () => {
+  const index = corridorIndex(2.5);
+  const outside = [];
+  for (let x = -50; x <= 50; x += 6) outside.push({ x, z: 6 });
+
+  const pushed = pushOutsideCorridor(outside, index);
+  for (let i = 0; i < outside.length; i++) {
+    close(pushed[i].x, outside[i].x, 1e-9, 'x inchangé');
+    close(pushed[i].z, outside[i].z, 1e-9, 'z inchangé');
+  }
+});
+
+test('un contour qui traverse vraiment la route reste continu, il ne se coupe plus', () => {
+  // Contrairement à `clipOutsideCorridor`, le rejet ne casse jamais la ligne :
+  // une limite qui coupe la chaussée en travers en ressort longée, pas coupée
+  // en deux tronçons.
+  const index = corridorIndex(2.5);
+  const pushed = pushOutsideCorridor(crossing(), index);
+  assert.equal(pushed.length, crossing().length, 'toujours un seul tronçon, aucun sommet perdu');
+  assert.ok(
+    pushed.every((p) => !inCorridor(index, p.x, p.z)),
+    'tous hors emprise'
+  );
+});
+
+test('un carrefour de deux routes ne laisse aucun point coincé entre les deux emprises', () => {
+  const south = [];
+  const east = [];
+  for (let x = -100; x <= 100; x += 10) south.push({ x, z: 0 });
+  for (let z = -100; z <= 100; z += 10) east.push({ x: 0, z });
+  const index = new RoadIndex([fakeSegment(south, 2.5, 10), fakeSegment(east, 2.5, 10)], {
+    margin: ROAD_CUT_M + ROAD_CUT_BLEND_M,
+  });
+
+  // Un cercle serré autour du carrefour : plusieurs points y sont à portée des
+  // deux chaussées à la fois.
+  const ring = [];
+  for (let a = 0; a < 360; a += 10) {
+    const r = 4;
+    ring.push({ x: Math.cos((a * Math.PI) / 180) * r, z: Math.sin((a * Math.PI) / 180) * r });
+  }
+  const pushed = pushOutsideCorridor(ring, index);
+  assert.ok(
+    pushed.every((p) => !inCorridor(index, p.x, p.z)),
+    'aucun point ne reste dans l’une ou l’autre emprise après plusieurs passes'
+  );
+});
+
+test('le rejet est déterministe et n’a pas besoin de réseau', () => {
+  const index = corridorIndex(2.5);
+  const along = [];
+  for (let x = -50; x <= 50; x += 6) along.push({ x, z: 1 });
+
+  assert.deepEqual(pushOutsideCorridor(along, index), pushOutsideCorridor(along, index));
+  assert.equal(pushOutsideCorridor(along, null), along, 'sans réseau, la référence ressort telle quelle');
+  assert.deepEqual(pushOutsideCorridor(null, index), []);
 });
 
 // --- Jardins : la clôture tient entre la maison et la rue, ou il n'y a pas de jardin

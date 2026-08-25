@@ -128,6 +128,98 @@ export function filterOutsideCorridor(points, index, margin = CORRIDOR_MARGIN_M)
   return points.filter((p) => p && !index.covers(p.x, p.z, margin));
 }
 
+/** Marge de sécurité au-delà de la rive stricte de l'emprise, pour `pushOutsideCorridor`. */
+export const CORRIDOR_PUSH_CLEARANCE_M = 0.15;
+
+/** Écarts au-delà desquels `pushOutsideCorridor` renonce à repousser un point (carrefours serrés). */
+const CORRIDOR_PUSH_ITERATIONS = 4;
+
+/**
+ * Écarte un point de l'emprise, sans le supprimer.
+ *
+ * `filterOutsideCorridor` retire, `clipOutsideCorridor` coupe : aucun des deux
+ * ne convient à un contour de parcelle. Une limite de champ suit très souvent
+ * le bord d'une route sur toute sa longueur — c'est la définition même du
+ * bocage —, et sa distance à l'axe est un hasard du tracé cadastral, pas une
+ * décision de composition. La couper à chaque sondage qui tombe dans l'emprise
+ * ne laisse **aucun** tronçon dehors : toute la haie disparaît, faute d'un
+ * seul point réellement extérieur d'où repartir. La repousser au ras de
+ * l'emprise, en revanche, garde la haie continue — c'est elle qui trace le
+ * bocage, pas la route.
+ *
+ * @param {number} x
+ * @param {number} z
+ * @param {Object|null} index Instance `RoadIndex`, ou `null`.
+ * @param {number} [margin]
+ * @param {number} [clearance] Débord au-delà de la rive stricte, pour ne pas
+ *        reposer le point exactement dessus.
+ * @returns {{x:number,z:number}} le point, inchangé s'il est déjà hors emprise.
+ */
+function pushPointOutsideCorridor(x, z, index, margin = CORRIDOR_MARGIN_M, clearance = CORRIDOR_PUSH_CLEARANCE_M) {
+  if (!index) return { x, z };
+  let px = x;
+  let pz = z;
+  // Plusieurs passes : un carrefour met deux chaussées à portée, et s'écarter
+  // de la première peut retomber dans l'emprise de la seconde.
+  for (let i = 0; i < CORRIDOR_PUSH_ITERATIONS; i++) {
+    const hit = index.query(px, pz, margin);
+    if (!hit) return { x: px, z: pz };
+
+    const a = hit.segment.path[hit.row];
+    const b = hit.segment.path[Math.min(hit.segment.path.length - 1, hit.row + 1)];
+    const nx = a.x + (b.x - a.x) * hit.t;
+    const nz = a.z + (b.z - a.z) * hit.t;
+
+    let dx = px - nx;
+    let dz = pz - nz;
+    let len = hit.distance;
+    if (len < 1e-6) {
+      // Le point tombe pile sur l'axe — un contour qui partage un nœud avec la
+      // route. Écarté perpendiculairement à la marche : arbitraire, mais
+      // déterministe pour ce point précis, ce qui suffit.
+      const tx = b.x - a.x;
+      const tz = b.z - a.z;
+      const tl = Math.hypot(tx, tz) || 1;
+      dx = tz / tl;
+      dz = -tx / tl;
+      len = 1;
+    }
+
+    const need = hit.segment.halfWidth + margin + clearance;
+    const scale = need / len;
+    px = nx + dx * scale;
+    pz = nz + dz * scale;
+  }
+  return { x: px, z: pz };
+}
+
+/**
+ * Écarte de l'emprise chaque point d'une polyligne, sans jamais l'interrompre.
+ *
+ * Pour les contours de parcelle : voir `pushPointOutsideCorridor`, dont c'est
+ * l'application point par point. Les distances sont recalculées sur la
+ * polyligne déplacée.
+ *
+ * Fonction pure.
+ *
+ * @param {Array<{x:number,z:number}>} points
+ * @param {Object|null} index Instance `RoadIndex`, ou `null`.
+ * @param {number} [margin]
+ * @param {number} [clearance]
+ * @returns {Array<{x:number,z:number,distance:number}>}
+ */
+export function pushOutsideCorridor(
+  points,
+  index,
+  margin = CORRIDOR_MARGIN_M,
+  clearance = CORRIDOR_PUSH_CLEARANCE_M
+) {
+  if (!Array.isArray(points)) return [];
+  if (!index) return points;
+  const moved = points.map((p) => pushPointOutsideCorridor(p.x, p.z, index, margin, clearance));
+  return withDistances(moved);
+}
+
 /** Perpendiculaire à gauche de la marche, ligne par ligne. Convention de `pathFrames`. */
 function perpendiculars(path) {
   const rows = path.length;
