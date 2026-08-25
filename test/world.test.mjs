@@ -2352,19 +2352,18 @@ test('le panneau posé dépend de ce qui se passe à cet endroit', () => {
   }
 });
 
-test('le bas-côté complet reste minoritaire', () => {
-  // Le motif fossé / talus / limite est très reconnaissable *parce qu'il n'est
-  // pas partout*. Appliqué à toutes les routes, il fait un décor de circuit.
-  let ditched = 0;
+test('la haie basse de bas-côté reste minoritaire', () => {
+  // Elle est reconnaissable *parce qu'elle n'est pas partout*. Appliquée à
+  // toutes les routes, elle fait un décor de circuit.
+  let verged = 0;
   for (let i = 0; i < 100; i++) {
-    if (roadsideVergeFor('minor', { variant: i / 100 }).ditch) ditched++;
+    if (roadsideVergeFor('minor', { variant: i / 100 }).verge) verged++;
   }
-  assert.ok(ditched > 20 && ditched < 60, `un tiers environ (${ditched} %)`);
-  // Une voie rapide, elle, en a des deux côtés.
-  assert.equal(roadsideVergeFor('express', { variant: 0.9 }).ditchSide, 0);
-  // Pas de fossé en agglomération, ni le long d'un sentier.
-  assert.equal(roadsideVergeFor('minor', { builtUp: true, variant: 0.1 }).ditch, false);
-  assert.equal(roadsideVergeFor('path', { variant: 0.1 }).ditch, false);
+  assert.ok(verged > 20 && verged < 45, `environ un tiers (${verged} %)`);
+  // Ni en agglomération, ni le long d'un sentier ou d'une voie rapide.
+  assert.equal(roadsideVergeFor('minor', { builtUp: true, variant: 0.1 }).verge, null);
+  assert.equal(roadsideVergeFor('path', { variant: 0.1 }).verge, null);
+  assert.equal(roadsideVergeFor('express', { variant: 0.1 }).verge, null);
 });
 
 test('un feu tricolore passe par les trois couleurs, et le vert dure', () => {

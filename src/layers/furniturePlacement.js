@@ -627,31 +627,25 @@ export function guardrailStyleFor({ profile = 'minor', slope = 0, curvature = 0,
 export const GUARDRAIL_MIN_DROP_M = 0.9;
 
 /**
- * Ce qui garnit le bas-côté d'une portion de route : le profil en travers
- * classique fossé / talus / limite, ou rien du tout.
+ * Ce qui garnit le bas-côté d'une portion de route : une haie basse d'un seul
+ * côté, ou rien du tout.
  *
- * « Rien du tout » est le cas le plus fréquent, et c'est voulu. Le motif
- * complet — bosquet, champ, fossé, chaussée — est très reconnaissable
- * *justement* parce qu'il n'est pas partout : appliqué à toutes les routes, il
- * devient un décor de circuit. Un tirage attaché au nœud d'ancrage de la chaîne
- * le donne à une portion sur trois, et cette portion garde le sien d'une
- * reconstruction à l'autre.
+ * « Rien du tout » est le cas le plus fréquent, et c'est voulu. La haie basse
+ * est reconnaissable *justement* parce qu'elle n'est pas partout : appliquée à
+ * toutes les routes, elle devient un décor de circuit. Un tirage attaché au
+ * nœud d'ancrage de la chaîne la donne à une portion sur trois environ, et
+ * cette portion garde la sienne d'une reconstruction à l'autre.
  *
  * Fonction pure.
  *
- * @returns {{ditch:boolean, ditchSide:number, verge:string|null}}
+ * @returns {{verge:string|null, vergeSide:number}}
  */
 export function roadsideVergeFor(profile, { builtUp = false, variant = 0 } = {}) {
-  const none = { ditch: false, ditchSide: -1, verge: null };
+  const none = { verge: null, vergeSide: 1 };
   if (builtUp) return none;
-  if (profile === 'cycleway' || profile === 'path') return none;
+  if (profile === 'cycleway' || profile === 'path' || profile === 'express') return none;
 
-  // Une voie rapide a un fossé des deux côtés, et c'est le seul cas où il est
-  // systématique.
-  if (profile === 'express') return { ditch: true, ditchSide: 0, verge: null };
-
-  if (variant < 0.34) return { ditch: true, ditchSide: variant < 0.17 ? 1 : -1, verge: 'lowHedge' };
-  if (variant < 0.5) return { ditch: true, ditchSide: variant < 0.42 ? 1 : -1, verge: null };
+  if (variant < 0.34) return { verge: 'lowHedge', vergeSide: variant < 0.17 ? 1 : -1 };
   return none;
 }
 

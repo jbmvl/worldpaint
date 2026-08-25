@@ -238,7 +238,6 @@ const POINT_ITEMS = [
   'bush',
   'treeBroad',
   'treeConifer',
-  'fernClump',
   'vineStock',
   'rockSmall',
   'rockBoulder',
@@ -250,7 +249,6 @@ const POINT_ITEMS = [
 const LINEAR_KINDS = [
   'hedge',
   'lowHedge',
-  'ditch',
   'vineRow',
   'dryStoneWall',
   'cutWall',
@@ -463,9 +461,10 @@ export class FurnitureLayer {
    * faut sonder l'emprise, pas sur l'axe de la route.
    */
   _clipOffRoad(path, { offset = 0, minLength = BOUNDARY_MIN_LENGTH_M, own = null } = {}) {
-    // `own` est la chaussée que l'objet borde délibérément : un fossé longe sa
-    // route à un mètre cinquante de la rive, donc dans son emprise, et c'est sa
-    // place. Il doit malgré tout s'arrêter à chaque rue transversale.
+    // `own` est la chaussée que l'objet borde délibérément : une haie de
+    // bas-côté longe sa route à quelques mètres de la rive, donc dans son
+    // emprise, et c'est sa place. Elle doit malgré tout s'arrêter à chaque rue
+    // transversale.
     const accept = own ? (other) => other !== own : null;
     return clipOutsideCorridor(path, this._roadIndex, undefined, { offset, minLength, accept });
   }
@@ -1006,62 +1005,29 @@ export class FurnitureLayer {
       }
     }
 
-    // Bas-côté : fossé, haie basse, haie de bocage. Le motif complet — fossé,
-    // talus, limite végétale — n'est donné qu'à une portion sur trois : appliqué
-    // partout, il transforme la campagne en circuit.
+    // Bas-côté : haie basse, haie de bocage. Le motif n'est donné qu'à une
+    // portion sur trois environ : appliqué partout, il transforme la
+    // campagne en circuit.
     const verge = roadsideVergeFor(profile, { builtUp: inTown, variant: randomAt(side.x, side.z, 83) });
-    if (verge.ditch) {
-      const sides = verge.ditchSide === 0 ? [1, -1] : [verge.ditchSide];
-      for (const s of sides) {
-        const offset = s * (halfWidth + 1.5);
-        // Le fossé s'interrompt là où une rue transversale le coupe : un fossé
-        // qui traverse une chaussée est une saignée en travers de la route.
-        for (const run of this._clipOffRoad(path, { offset, minLength: 0, own: segment })) {
-          appendProfile(buffers.ditch, {
-            path: run,
-            profile: this.specs.profiles.ditch,
-            sampleElevation,
-            offset,
-            lift: -FURNITURE_SINK_M,
-          });
-        }
-        // Fougères sur la berge amont du fossé : c'est ce qui y pousse, et une
-        // saignée nue se lirait comme une tranchée de chantier. Une touffe tous
-        // les cinq mètres, sautée une fois sur trois.
-        for (const spot of spacedAlongPath(path, 5, spacing)) {
-          if (randomAt(spot.x, spot.z, 173) > 0.66) continue;
-          const away = offset + s * 1.1;
-          const fx = spot.x + spot.tz * away;
-          const fz = spot.z - spot.tx * away;
-          if (this._onRoad(fx, fz, segment)) continue;
-          this._place(placements, 'fernClump', {
-            x: fx,
-            z: fz,
-            yaw: randomAt(spot.x, spot.z, 179) * Math.PI * 2,
-            scale: 0.8 + randomAt(spot.x, spot.z, 181) * 0.7,
-          });
-        }
-      }
-    }
-
     const openGround = this._openGround(mid.x, mid.z);
     if (verge.verge && openGround) {
-      const vergeSide = verge.ditchSide || 1;
       this._appendBoundary(
         buffers.lowHedge,
         'lowHedge',
         path,
         sampleElevation,
-        vergeSide * (halfWidth + 2.6),
+        verge.vergeSide * (halfWidth + 2.6),
         segment
       );
     }
 
     // La haie de bocage le long de la route reste, mais elle n'est plus
     // systématique : une petite route sur deux seulement en porte une, et
-    // jamais du côté où court déjà le fossé.
+    // jamais du côté où court déjà la haie basse du bas-côté.
     if (plan.hedge && openGround && randomAt(side.x, side.z, 29) < 0.5) {
-      const hedgeSide = -(verge.ditchSide || (randomAt(side.x, side.z, 23) < 0.5 ? 1 : -1));
+      const hedgeSide = verge.verge
+        ? -verge.vergeSide
+        : randomAt(side.x, side.z, 23) < 0.5 ? 1 : -1;
       this._appendBoundary(
         buffers.hedge,
         'hedge',

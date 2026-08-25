@@ -114,12 +114,10 @@ export const LABEL_FURNITURE = {
   rockSmall: 'caillou',
   rockBoulder: 'bloc rocheux',
   rockOutcrop: 'affleurement',
-  fernClump: 'fougères',
   vineStock: 'cep',
   // Balayé le long d'une polyligne
   hedge: 'haie',
   lowHedge: 'haie basse',
-  ditch: 'fossé',
   vineRow: 'rang de vigne',
   dryStoneWall: 'muret de pierre',
   cutWall: 'mur de tranchée',
