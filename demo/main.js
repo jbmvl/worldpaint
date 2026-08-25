@@ -6,13 +6,15 @@
  * repris par le moteur : c'est exactement ce qu'une application consommatrice
  * doit écrire elle-même (voir le README, section « Usage »).
  *
- * Trois choses demandées, trois sections plus bas :
+ * Ce qui est demandé, une section par item plus bas :
  *   - navigation clavier en vol libre + téléportation au clic ;
  *   - case à cocher qui étiquette ce qu'on regarde (`inspect/objectLabels`) ;
  *   - case à cocher qui peint l'emprise routière, pour vérifier d'un coup d'œil
  *     que la frontière du décor tombe bien sur chaussée + accotement ;
  *   - champ de recherche qui géocode un lieu (Nominatim/OpenStreetMap) et
- *     y déplace la bulle.
+ *     y déplace la bulle ;
+ *   - mini-carte façon Street View, centrée sur la caméra, qui affiche le
+ *     réseau routier local et téléporte au clic.
  */
 
 import * as THREE from 'three';
@@ -31,6 +33,8 @@ const CLICK_MAX_DRAG_PX = 6;
 const RECENTER_MARGIN = 0.35; // fraction du rayon de la bulle
 const LABEL_INTERVAL_MS = 160;
 const RECENTER_INTERVAL_MS = 400;
+const MINIMAP_RANGE_M = 220; // rayon affiché autour de la caméra
+const MINIMAP_FOV_RAD = Math.PI / 2.2; // largeur du cône de vision, purement indicatif
 
 // --- DOM ---------------------------------------------------------------------
 
@@ -43,6 +47,8 @@ const searchInput = document.getElementById('search');
 const goButton = document.getElementById('go');
 const showLabelsCheckbox = document.getElementById('showLabels');
 const showCorridorCheckbox = document.getElementById('showCorridor');
+const minimapCanvas = document.getElementById('minimap');
+const minimapCtx = minimapCanvas.getContext('2d');
 
 function setBusy(busy) {
   dot.classList.toggle('busy', busy);
@@ -240,6 +246,16 @@ function teleportToScreenPoint(clientX, clientY) {
   if (!hits.length) return;
   const p = hits[0].point;
   camera.position.set(p.x, p.y + EYE_HEIGHT_M, p.z);
+}
+
+// Téléportation vers un point (x, z) du repère local dont on ne connaît pas
+// l'altitude — cas de la mini-carte, qui raisonne en coordonnées planes.
+// Même sondage que `sampleGroundHeight` : pas de hauteur trouvée (hors bulle
+// chargée) veut dire qu'on ignore le clic plutôt que de plonger sous le sol.
+function teleportTo(x, z) {
+  const ground = sampleGroundHeight(x, z);
+  if (ground === null) return;
+  camera.position.set(x, ground + EYE_HEIGHT_M, z);
 }
 
 // --- Boucle de rendu -----------------------------------------------------------
@@ -462,6 +478,84 @@ showCorridorCheckbox.addEventListener('change', () => {
   else updateCorridor();
 });
 
+// --- Mini-carte façon Street View -----------------------------------------------
+// Toujours centrée sur la caméra, nord en haut : le repère local a x = est,
+// z = sud (`tileMath.makeLocalFrame`), donc un déplacement (x, z) se reporte
+// tel quel en (dx, dy) sur le canevas, sans rotation à calculer. Le réseau
+// routier vient de `world.composer.roads.roadSegments`, la même donnée que la
+// nappe d'emprise ci-dessus — pas de deuxième source à charger. Le clic
+// téléporte via `teleportTo`, identique au clic sur la scène 3D.
+
+const MINIMAP_PX = minimapCanvas.width; // résolution interne du canevas (net sur écran retina)
+const MINIMAP_SCALE = (MINIMAP_PX / 2) / MINIMAP_RANGE_M; // pixels par mètre
+const minimapForward = new THREE.Vector3();
+
+function worldToMinimap(x, z) {
+  return {
+    px: MINIMAP_PX / 2 + (x - camera.position.x) * MINIMAP_SCALE,
+    py: MINIMAP_PX / 2 + (z - camera.position.z) * MINIMAP_SCALE,
+  };
+}
+
+function updateMinimap() {
+  const ctx = minimapCtx;
+  ctx.clearRect(0, 0, MINIMAP_PX, MINIMAP_PX);
+  if (!world) return;
+
+  ctx.fillStyle = 'rgba(20, 24, 32, 0.92)';
+  ctx.fillRect(0, 0, MINIMAP_PX, MINIMAP_PX);
+
+  const segments = world.composer.roads?.roadSegments || [];
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  for (const segment of segments) {
+    const { path } = segment;
+    if (!path || path.length < 2) continue;
+    ctx.beginPath();
+    for (let r = 0; r < path.length; r++) {
+      const { px, py } = worldToMinimap(path[r].x, path[r].z);
+      if (r === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+
+  // Cône de vision : direction du regard aplatie au sol, sans conversion
+  // d'angle — même astuce que ci-dessus, (dir.x, dir.z) est déjà l'angle
+  // canevas puisque les deux repères partagent la même orientation.
+  camera.getWorldDirection(minimapForward);
+  minimapForward.y = 0;
+  if (minimapForward.lengthSq() < 1e-8) minimapForward.set(0, 0, -1);
+  else minimapForward.normalize();
+  const center = MINIMAP_PX / 2;
+  const heading = Math.atan2(minimapForward.z, minimapForward.x);
+  ctx.beginPath();
+  ctx.moveTo(center, center);
+  ctx.arc(center, center, MINIMAP_PX * 0.34, heading - MINIMAP_FOV_RAD / 2, heading + MINIMAP_FOV_RAD / 2);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(111, 168, 240, 0.32)';
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(center, center, 6, 0, Math.PI * 2);
+  ctx.fillStyle = '#6fa8f0';
+  ctx.fill();
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+minimapCanvas.addEventListener('click', (e) => {
+  if (!world) return;
+  const rect = minimapCanvas.getBoundingClientRect();
+  const px = (e.clientX - rect.left) * (MINIMAP_PX / rect.width);
+  const py = (e.clientY - rect.top) * (MINIMAP_PX / rect.height);
+  const x = camera.position.x + (px - MINIMAP_PX / 2) / MINIMAP_SCALE;
+  const z = camera.position.z + (py - MINIMAP_PX / 2) / MINIMAP_SCALE;
+  teleportTo(x, z);
+});
+
 // --- Recherche d'un lieu (géocodage OpenStreetMap / Nominatim) ---------------
 // Nominatim est un service public à usage raisonnable : une requête par
 // validation, pas d'appel en continu. Une application qui déploie cette démo
@@ -540,6 +634,7 @@ function loop() {
     labelAcc = 0;
     updateLabels();
     updateCorridor();
+    updateMinimap();
   }
 
   coordsEl.textContent = `x ${camera.position.x.toFixed(0)}  z ${camera.position.z.toFixed(0)}  alt ${camera.position.y.toFixed(0)} m`;

@@ -41,6 +41,11 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
 - **Champ de recherche** : géocode le texte tapé via Nominatim
   (OpenStreetMap) et déplace la bulle (`setCenter` + `refresh`) sur le
   résultat.
+- **Mini-carte** (bas droite, façon Street View) : toujours centrée sur la
+  caméra, nord en haut, elle trace le réseau routier local à partir de
+  `world.composer.roads.roadSegments` (la même donnée que l'emprise
+  ci-dessus) et affiche un cône indiquant la direction du regard. Un clic
+  dessus téléporte au point visé, comme le clic simple sur la scène 3D.
 
 ## Sources de données
 
