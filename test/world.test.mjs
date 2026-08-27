@@ -1258,7 +1258,7 @@ test('le champ proche d’une haie se fond au lieu de basculer', () => {
   assert.equal(hedgeNearness(0, 0, null, style), 0, 'pas d’observateur, pas de détail');
 });
 
-test('une haie respire en hauteur et en largeur, et se baisse sous ses arbustes', () => {
+test('une haie respire en hauteur et en largeur, et le balayage reste dominant de près', () => {
   const style = HEDGE_STYLES.hedge;
   const path = resamplePath([{ x: 0, z: 0 }, { x: 300, z: 0 }], 3);
 
@@ -1268,10 +1268,12 @@ test('une haie respire en hauteur et en largeur, et se baisse sous ses arbustes'
   assert.ok(upSpread > 0.25, 'la crête ondule assez pour ne pas lire comme un tube');
   assert.ok(acrossSpread > 0.15, 'les flancs ne sont pas parallèles');
 
-  // Le même tracé, vu du bout : la masse balayée s’efface là où les arbustes
-  // prennent le relais, et nulle part ailleurs.
+  // Le même tracé, vu du bout : le balayage reste l’essentiel de la lecture
+  // même de près — les arbustes ne sont que des accents, ils ne le remplacent
+  // pas. Il fléchit un peu, il ne s’efface pas.
   const near = hedgeModulation(path, { style, here: { x: 0, z: 0 } });
-  assert.ok(near.up[0] < far.up[0] * 0.7, 'le balayage se baisse au pied de l’observateur');
+  assert.ok(near.up[0] < far.up[0], 'le balayage fléchit un peu au pied de l’observateur');
+  assert.ok(near.up[0] > far.up[0] * 0.75, 'mais reste l’essentiel de la silhouette');
   close(near.up[path.length - 1], far.up[path.length - 1], 1e-6, 'au loin, rien n’a changé');
 
   // Ancré au sol : la même haie repousse identique d’une reconstruction à
@@ -1312,18 +1314,20 @@ test('les arbustes d’une haie sont irréguliers mais continus', () => {
 
 test('les arbustes ne glissent pas quand le tronçon est redécoupé', () => {
   const style = HEDGE_STYLES.hedge;
-  const here = { x: 60, z: 0 };
-  const whole = resamplePath([{ x: 0, z: 0 }, { x: 120, z: 0 }], 3);
+  // Un tracé assez long pour porter plusieurs arbustes malgré leur nouvel
+  // écartement — désormais espacés, ils sont bien moins nombreux au mètre.
+  const here = { x: 95, z: 0 };
+  const whole = resamplePath([{ x: 0, z: 0 }, { x: 190, z: 0 }], 3);
   // Le même tracé, repris quarante mètres plus loin : c’est ce que fait une
   // reconstruction quand la limite d’agglomération a bougé.
-  const tail = resamplePath([{ x: 40, z: 0 }, { x: 120, z: 0 }], 3);
+  const tail = resamplePath([{ x: 40, z: 0 }, { x: 190, z: 0 }], 3);
 
   const fromWhole = hedgeClumps(whole, { style, here });
   const fromTail = hedgeClumps(tail, { style, here, startDistance: 40 });
 
   // Les deux bouts sont hors comparaison : le ré-échantillonnage tronque le
   // reste d’un pas, donc le tout dernier arbuste peut manquer d’un côté.
-  const common = fromWhole.filter((c) => c.x >= 41 && c.x <= 115);
+  const common = fromWhole.filter((c) => c.x >= 41 && c.x <= 185);
   assert.ok(common.length > 10, 'la portion commune porte de quoi comparer');
   for (const clump of common) {
     const twin = fromTail.find((c) => Math.abs(c.x - clump.x) < 1e-6);

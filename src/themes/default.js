@@ -504,37 +504,43 @@ export const SKY_PALETTE = {
 /**
  * Ce qui fait la silhouette d'une haie, par famille.
  *
- * Une haie n'est pas une section balayée : c'est un **alignement d'arbustes**
- * qui, mis bout à bout, ferme une parcelle. Ces cotes décrivent l'arbuste et
- * son rang — sa taille, son écartement, sa part d'irrégularité. La géométrie
- * les exécute (`hedgeGeometry`) ; jusqu'où on la détaille est un budget de
- * moteur et vit là-bas.
+ * Une haie n'est pas une section balayée : c'est un **balayage modulé**, dont
+ * la crête et les flancs respirent le long du tracé, ponctué çà et là d'un
+ * arbuste qui dépasse. Le balayage modulé porte l'essentiel de la lecture, de
+ * loin comme de près — c'est lui qui fait l'irrégularité continue d'une haie.
+ * L'arbuste n'est qu'un **accent**, un baliveau ou une touffe plus fournie
+ * qu'on remarque en passant, pas un rang qui la recouvre. D'où `spacingM`
+ * nettement plus large que `alongM` : les arbustes sont **espacés**, pas
+ * jointifs — jointifs, ils redonnent le défaut qu'ils étaient censés corriger,
+ * une texture uniforme, mais faite de bosses au lieu d'être un tube.
  *
- * Régler `spacingM` plus serré que `alongM` n'est pas une erreur : les
- * arbustes **doivent** se chevaucher, sans quoi la haie devient une rangée de
- * plots et ne clôt plus rien.
+ * Ces cotes décrivent l'arbuste et son rang — sa taille, son écartement, sa
+ * part d'irrégularité. La géométrie les exécute (`hedgeGeometry`) ; jusqu'où
+ * on la détaille est un budget de moteur et vit là-bas.
  */
 export const HEDGE_SHAPES = {
   /** Haie de bocage : deux mètres, et un baliveau de loin en loin. */
   hedge: {
-    /** Hauteur résiduelle du balayage sous les arbustes. */
-    coreScale: 0.58,
-    /** Largeur résiduelle du balayage sous les arbustes. */
-    coreWidth: 0.8,
-    /** Écartement nominal des arbustes, en mètres. */
-    spacingM: 2.4,
+    /** Hauteur résiduelle du balayage entre deux arbustes. Reste haute : le
+     * balayage modulé porte la haie, l'arbuste ne fait que dépasser dessus. */
+    coreScale: 0.88,
+    /** Largeur résiduelle du balayage entre deux arbustes. */
+    coreWidth: 0.92,
+    /** Écartement nominal des arbustes, en mètres — un accent tous les six ou
+     * sept mètres, pas un rang continu. */
+    spacingM: 6.5,
     /** Débattement latéral d'un arbuste autour de l'axe, en mètres. */
-    lateralM: 0.34,
+    lateralM: 0.3,
     /** Hauteur d'un arbuste, en mètres. */
     heightM: [1.35, 2.45],
     /** Demi-longueur le long du tracé, en mètres. */
-    alongM: [1.5, 2.2],
+    alongM: [1.6, 2.4],
     /** Demi-largeur en travers, en mètres. */
-    acrossM: [0.62, 1],
+    acrossM: [0.65, 1.05],
     /** Facettes d'un arbuste. Six suffisent : ce sont les rayons qui varient. */
     sides: 6,
-    /** Part d'arbustes sautés — la haie s'éclaircit, elle ne s'ouvre pas. */
-    gapChance: 0.08,
+    /** Part d'arbustes sautés — de quoi laisser de vrais intervalles nus. */
+    gapChance: 0.15,
     /** Part d'arbustes échappés, plus hauts que la taille. */
     standardChance: 0.07,
     standardScale: 1.45,
@@ -544,15 +550,15 @@ export const HEDGE_SHAPES = {
 
   /** Haie basse de ronces et de fougères : le bord de fossé et de chemin. */
   lowHedge: {
-    coreScale: 0.62,
-    coreWidth: 0.82,
-    spacingM: 1.5,
-    lateralM: 0.26,
+    coreScale: 0.88,
+    coreWidth: 0.92,
+    spacingM: 4,
+    lateralM: 0.22,
     heightM: [0.5, 0.95],
-    alongM: [0.95, 1.4],
-    acrossM: [0.45, 0.72],
+    alongM: [1, 1.5],
+    acrossM: [0.48, 0.76],
     sides: 5,
-    gapChance: 0.12,
+    gapChance: 0.18,
     standardChance: 0.05,
     standardScale: 1.4,
     salt: 617,

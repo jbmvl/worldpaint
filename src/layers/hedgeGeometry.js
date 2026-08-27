@@ -1,6 +1,6 @@
 /*
- * hedgeGeometry — une haie lue comme un alignement d'arbustes.
- * ------------------------------------------------------------
+ * hedgeGeometry — une haie lue comme un balayage modulé, ponctué d'arbustes.
+ * ----------------------------------------------------------------------------
  * Une haie balayée le long de sa polyligne (`appendProfile`) tient très bien à
  * cent mètres : la masse est là, la limite de parcelle se lit, le bocage se
  * dessine. Elle tient beaucoup moins bien à dix mètres, et le défaut est
@@ -11,23 +11,30 @@
  *
  * ## Ce qu'est une haie
  *
- * Un **alignement d'arbustes** qui, mis bout à bout, ferme une parcelle. Ce qui
- * la fait lire de près, ce sont les arbustes : des masses de un à deux mètres,
- * de hauteurs inégales, de largeurs inégales, qui se chevauchent assez pour ne
- * pas laisser passer une vache et pas assez pour se confondre. Ce qui la fait
- * lire de loin, c'est la continuité : une ligne verte sans trou.
+ * Une masse continue et irrégulière — hauteur qui respire, flancs qui
+ * épaississent et s'amincissent, silhouette jamais lisse —, ponctuée çà et là
+ * d'un arbuste qui dépasse ou d'un baliveau qu'on n'a pas coupé. **L'essentiel
+ * de la lecture, de loin comme de près, vient de la première** : une haie
+ * n'est presque jamais un rang régulier d'individus qu'on distingue un à un,
+ * c'est une masse dont la crête et l'épaisseur varient sans arrêt. L'arbuste
+ * n'est qu'un accent, pas la matière de la haie.
  *
- * D'où les deux moitiés de ce module, qui répondent chacune à une distance :
+ * D'où les deux moitiés de ce module, qui répondent chacune à un rôle :
  *
  * - `hedgeModulation` module le **balayage** — hauteur et largeur, ligne par
- *   ligne. C'est ce qui porte la haie au loin, et c'est presque gratuit.
- * - `hedgeClumps` / `appendHedgeClump` posent les **arbustes**, mais seulement
- *   dans le champ proche. Ce sont eux qui portent la silhouette de près.
+ *   ligne, sur des périodes courtes autant que longues. C'est ce qui porte
+ *   la haie, de loin *et* de près, et c'est presque gratuit.
+ * - `hedgeClumps` / `appendHedgeClump` posent quelques **arbustes**, dans le
+ *   seul champ proche et **espacés** (`spacingM` très supérieur à `alongM`) :
+ *   ce sont des accents qu'on remarque en passant, pas un rang qui recouvre le
+ *   balayage. En poser trop, ou trop serrés, redonne le défaut qu'ils étaient
+ *   censés corriger — une texture uniforme, faite de bosses au lieu d'être un
+ *   tube.
  *
- * Le raccord entre les deux n'est pas un basculement : le balayage se **baisse**
- * progressivement à mesure qu'on s'en approche (`coreScale`), pendant que les
- * arbustes prennent le dessus. Sur toute la bande de transition, les deux
- * silhouettes se recouvrent, donc il n'y a rien à voir passer.
+ * Le raccord entre les deux n'est pas un basculement : le balayage reste
+ * dominant même dans le champ proche (`coreScale` proche de 1), et les
+ * arbustes ne font qu'y ajouter un relief occasionnel. Rien ne bascule d'une
+ * silhouette à l'autre en s'approchant.
  *
  * ## Ce qui est réemployé
  *
@@ -160,19 +167,24 @@ export function hedgeModulation(path, { offset = 0, here = null, style = HEDGE_S
 }
 
 /**
- * Les arbustes d'une haie, le long de son tracé.
+ * Les quelques arbustes qui accentuent une haie, le long de son tracé.
+ *
+ * Ce sont des **accents**, espacés (`spacingM`, très supérieur au diamètre
+ * d'un arbuste) : la haie n'en est pas recouverte, elle en est ponctuée. C'est
+ * ce qui les distingue d'un rang de plantation — un arbuste tous les six ou
+ * sept mètres se remarque en passant, un arbuste tous les deux mètres devient
+ * une texture, et c'est le défaut qu'on corrige en les espaçant.
  *
  * L'écartement nominal vient du style, mais aucun arbuste ne tombe dessus : il
- * glisse le long du tracé et de part et d'autre de l'axe. Un alignement
- * rigoureux se lit comme une plantation en pot, ce qu'une haie de bocage n'est
- * pas — et c'est la première chose qu'on voit si on l'oublie.
+ * glisse le long du tracé et de part et d'autre de l'axe — un alignement
+ * rigoureux se lit comme une plantation en pot.
  *
  * Trois irrégularités, en plus des tailles :
  *
- * - un arbuste sur douze est **sauté** — la haie s'éclaircit là, elle ne
- *   s'ouvre pas : le balayage continue dessous ;
- * - un arbuste sur quinze est **échappé**, une fois et demie plus haut que ses
- *   voisins : c'est le baliveau qu'on n'a pas coupé ;
+ * - une part d'arbustes est **sautée** (`gapChance`) — de vrais intervalles
+ *   nus, où seul le balayage modulé porte la haie ;
+ * - une part plus rare est **échappée** (`standardChance`), une fois et demie
+ *   plus haute que ses voisins : c'est le baliveau qu'on n'a pas coupé ;
  * - chacun est **tourné** sur lui-même, donc deux arbustes de même taille n'ont
  *   pas la même silhouette.
  *
