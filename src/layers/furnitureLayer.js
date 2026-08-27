@@ -60,6 +60,12 @@ import {
   toColoredGeometry,
   resamplePath,
 } from './ribbonGeometry.js';
+import {
+  HEDGE_SAMPLE_M,
+  hedgeStyleFor,
+  hedgeModulation,
+  appendHedgeClumps,
+} from './hedgeGeometry.js';
 import { ROAD_SAMPLE_M, ROAD_LIFT_M } from './roadNetwork.js';
 import { ROAD_CUT_M } from '../terrain/roadCut.js';
 import {
@@ -209,10 +215,15 @@ export const FURNITURE_LIMITS = {
   trafficLights: 8,
   rocks: 200,
   vineRows: 90,
+  // Arbustes de haie. Ils ne coûtent ni matière ni appel de dessin de plus —
+  // ils s'écrivent dans le maillage de la haie —, mais un bocage dense mis
+  // bout à bout fait des kilomètres de limite, et il n'y a aucune raison d'en
+  // détailler plus que ce que la caméra a sous les yeux.
+  hedgeClumps: 3600,
 };
 
 /** Formes ponctuelles du catalogue, dans l'ordre où on les instancie. */
-const POINT_ITEMS = [
+export const POINT_ITEMS = [
   'streetLamp',
   'utilityPole',
   'pylon',
@@ -246,7 +257,7 @@ const POINT_ITEMS = [
 ];
 
 /** Matières linéaires : une géométrie fusionnée par matière. */
-const LINEAR_KINDS = [
+export const LINEAR_KINDS = [
   'hedge',
   'lowHedge',
   'vineRow',
@@ -292,7 +303,7 @@ export class FurnitureLayer {
     /** @type {Map<string, Object>} maillage fusionné par matière linéaire. */
     this.linear = new Map();
     /** Compte des objets posés lors de la dernière reconstruction. */
-    this.counts = { points: 0, boundaries: 0, landmarks: 0, rocks: 0, rows: 0 };
+    this.counts = { points: 0, boundaries: 0, landmarks: 0, rocks: 0, rows: 0, hedgeClumps: 0 };
 
     // Halos des lampadaires : un panneau additif par tête, éteint le jour. Ils
     // vivent dans leur propre maillage parce que leur matériau n'a rien à voir
@@ -407,7 +418,7 @@ export class FurnitureLayer {
     for (const item of POINT_ITEMS) placements.set(item, []);
 
     const context = { source, tiles, here, sampleElevation, buffers, placements };
-    this.counts = { points: 0, boundaries: 0, landmarks: 0, rocks: 0, rows: 0 };
+    this.counts = { points: 0, boundaries: 0, landmarks: 0, rocks: 0, rows: 0, hedgeClumps: 0 };
     this._lampHeads = [];
     this._signals = [];
     this.chimneys = [];
@@ -793,7 +804,7 @@ export class FurnitureLayer {
    * traverser une limite d'agglomération ne décale rien.
    */
   _buildRoadsideContext(context, segment, rowsInfo, builtUp) {
-    const { buffers, placements, sampleElevation } = context;
+    const { buffers, placements, sampleElevation, here } = context;
     const { platform, halfWidth, profile, startDistance, anchor } = segment;
     // Le côté de la haie et de la ligne téléphonique se tire au nœud
     // d'ancrage : il ne dépend donc ni du découpage ni de la position de
@@ -827,6 +838,7 @@ export class FurnitureLayer {
         placements,
         sampleElevation,
         segment,
+        here,
       });
     }
   }
@@ -854,6 +866,7 @@ export class FurnitureLayer {
     placements,
     sampleElevation,
     segment,
+    here = null,
   }) {
     if (plan.lamp) {
       for (const p of spacedAlongPath(path, plan.lamp, spacing)) {
@@ -1011,14 +1024,12 @@ export class FurnitureLayer {
     const verge = roadsideVergeFor(profile, { builtUp: inTown, variant: randomAt(side.x, side.z, 83) });
     const openGround = this._openGround(mid.x, mid.z);
     if (verge.verge && openGround) {
-      this._appendBoundary(
-        buffers.lowHedge,
-        'lowHedge',
-        path,
-        sampleElevation,
-        verge.vergeSide * (halfWidth + 2.6),
-        segment
-      );
+      this._appendHedgerow(buffers.lowHedge, 'lowHedge', path, sampleElevation, {
+        offset: verge.vergeSide * (halfWidth + 2.6),
+        here,
+        startDistance: spacing.startDistance,
+        own: segment,
+      });
     }
 
     // La haie de bocage le long de la route reste, mais elle n'est plus
@@ -1028,14 +1039,12 @@ export class FurnitureLayer {
       const hedgeSide = verge.verge
         ? -verge.vergeSide
         : randomAt(side.x, side.z, 23) < 0.5 ? 1 : -1;
-      this._appendBoundary(
-        buffers.hedge,
-        'hedge',
-        path,
-        sampleElevation,
-        hedgeSide * (halfWidth + 1.8),
-        segment
-      );
+      this._appendHedgerow(buffers.hedge, 'hedge', path, sampleElevation, {
+        offset: hedgeSide * (halfWidth + 1.8),
+        here,
+        startDistance: spacing.startDistance,
+        own: segment,
+      });
     }
   }
 
@@ -1244,7 +1253,7 @@ export class FurnitureLayer {
             ? boundaryFurnitureFor(properties, { steepness, variant, crop })
             : null;
         if (kind) {
-          boundaries += this._appendParcelBoundary(buffers, placements, kind, ring, bounds, sampleElevation);
+          boundaries += this._appendParcelBoundary(buffers, placements, kind, ring, bounds, sampleElevation, here);
         }
 
         if (scattered < FURNITURE_LIMITS.scatter) {
@@ -1262,7 +1271,7 @@ export class FurnitureLayer {
    * Pose un contour de parcelle, en n'en gardant que les tronçons réels.
    * @returns {number} nombre de tronçons posés.
    */
-  _appendParcelBoundary(buffers, placements, kind, ring, bounds, sampleElevation) {
+  _appendParcelBoundary(buffers, placements, kind, ring, bounds, sampleElevation, here = null) {
     let placed = 0;
 
     for (const run of realBoundaryRuns(ring, bounds)) {
@@ -1285,16 +1294,21 @@ export class FurnitureLayer {
       const path = pushOutsideCorridor(sampled, this._roadIndex);
       if (path.length < 3) continue;
 
-      if (kind === 'hedge' || kind === 'lowHedge' || kind === 'dryStoneWall') {
+      // Un muret de pierre sèche est arasé de niveau et reste un balayage nu ;
+      // une haie est un alignement d'arbustes, et se bâtit comme tel.
+      if (kind === 'hedge' || kind === 'lowHedge') {
+        this._appendHedgerow(buffers[kind], kind, path, sampleElevation, { here });
+        placed++;
+        continue;
+      }
+
+      if (kind === 'dryStoneWall') {
         appendProfile(buffers[kind], {
           path,
           profile: this.specs.profiles[kind],
           sampleElevation,
           lift: -FURNITURE_SINK_M,
           closed: true,
-          // Un muret de pierre sèche est arasé de niveau, une haie non : elle
-          // seule respire le long du tracé.
-          scaleUp: kind === 'dryStoneWall' ? null : FurnitureLayer._hedgeRelief(path),
         });
         placed++;
         continue;
@@ -1829,49 +1843,107 @@ export class FurnitureLayer {
   }
 
   /**
-   * Ajoute une haie ou une clôture le long d'une chaussée.
+   * Pose une haie : sa masse continue, et ses arbustes.
    *
-   * Elle est posée à `offset` de l'axe, donc **hors** de l'emprise de sa propre
-   * route — c'est ce que garantissent les décalages choisis par l'appelant, qui
-   * dépassent tous l'accotement excavé. Restent les **autres** chaussées :
-   * à un carrefour, une haie de bas-côté file tout droit dans la rue
-   * transversale. C'est celles-là que la découpe retire, en sondant l'emprise
-   * là où la haie sera réellement posée.
+   * Une haie n'est pas une section balayée — c'est un **alignement d'arbustes**
+   * qui, mis bout à bout, ferme une parcelle. Le balayage seul tient très bien
+   * à cent mètres et se trahit à dix : sa crête est une ligne, sa section est
+   * constante, c'est un tube. Deux moitiés, donc, chacune pour sa distance
+   * (voir `hedgeGeometry`) :
+   *
+   * - le **balayage**, modulé en hauteur et en largeur, porte la haie au loin ;
+   * - les **arbustes**, posés dans le seul champ proche, portent sa silhouette
+   *   de près — et le balayage se baisse d'autant sous eux, de sorte que le
+   *   passage de l'un à l'autre ne se voit pas.
+   *
+   * Ils s'écrivent dans le même accumulateur : une haie reste une géométrie,
+   * une matière, un appel de dessin.
+   *
+   * Le tracé est ré-échantillonné plus fin que les contours dont il vient : à
+   * six mètres, aucune modulation à l'échelle de l'arbuste ne passe.
+   *
+   * `startDistance` ancre les arbustes sur le **nœud amont** de la voie et non
+   * sur le début du tronçon rendu : un tronçon redécoupé ailleurs les ferait
+   * sinon tous glisser, et la haie se replanterait à chaque reconstruction.
+   *
+   * `own` est la chaussée que la haie borde délibérément : posée à `offset` de
+   * l'axe, elle est hors de l'emprise de sa propre route, mais file tout droit
+   * dans les rues transversales. La découpe la coupe à chacune ; chaque tronçon
+   * garde alors sa part de la distance parcourue, faute de quoi la coupe
+   * replanterait tout ce qui la suit.
    */
-  _appendBoundary(buffer, kind, path, sampleElevation, offset, own = null) {
+  _appendHedgerow(buffer, kind, path, sampleElevation, options = {}) {
+    const { offset = 0, own = null, startDistance = 0 } = options;
+    if (!own) {
+      this._appendHedgerowRun(buffer, kind, path, sampleElevation, options);
+      return;
+    }
     for (const run of this._clipOffRoad(path, { offset, minLength: BOUNDARY_MIN_LENGTH_M, own })) {
-      appendProfile(buffer, {
-        path: run,
-        profile: this.specs.profiles[kind],
-        sampleElevation,
-        offset,
-        lift: -FURNITURE_SINK_M,
-        closed: true,
-        scaleUp: FurnitureLayer._hedgeRelief(run, offset),
+      this._appendHedgerowRun(buffer, kind, run, sampleElevation, {
+        ...options,
+        startDistance: startDistance + FurnitureLayer._distanceAlong(path, run[0]),
       });
     }
   }
 
   /**
-   * Hauteur relative d'une haie le long de son tracé.
+   * Distance parcourue sur `path` jusqu'à un point qui s'y trouve.
    *
-   * Une haie n'a pas la même hauteur sur deux cents mètres : elle est taillée
-   * par bouts, trouée par un passage, plus haute là où un arbre s'y est
-   * installé. Sans cette variation, la section balayée se lit exactement pour ce
-   * qu'elle est — un tube extrudé —, et c'est le défaut qu'on remarque en
-   * premier sur tout le mobilier linéaire.
-   *
-   * Deux ondes de périodes incommensurables, tirées de la **position au sol** :
-   * la même haie garde donc son relief d'une reconstruction à l'autre.
+   * Les tronçons rendus par la découpe repartent tous de zéro : sans ce report,
+   * l'ancrage des arbustes se perdrait à chaque traversée.
    */
-  static _hedgeRelief(path, offset = 0) {
-    const out = new Float32Array(path.length);
-    for (let r = 0; r < path.length; r++) {
-      const s = path[r].x * 0.21 + path[r].z * 0.13 + offset;
-      const wave = Math.sin(s * 0.9) * 0.55 + Math.sin(s * 0.31 + 1.7) * 0.45;
-      out[r] = 0.78 + (wave * 0.5 + 0.5) * 0.44;
+  static _distanceAlong(path, point) {
+    let travelled = 0;
+    let best = 0;
+    let bestGap = Infinity;
+    for (let i = 1; i < path.length; i++) {
+      const a = path[i - 1];
+      const b = path[i];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const span = Math.hypot(dx, dz);
+      if (span > 1e-6) {
+        const t = Math.min(1, Math.max(0, ((point.x - a.x) * dx + (point.z - a.z) * dz) / (span * span)));
+        const gap = Math.hypot(a.x + dx * t - point.x, a.z + dz * t - point.z);
+        if (gap < bestGap) {
+          bestGap = gap;
+          best = travelled + span * t;
+        }
+      }
+      travelled += span;
     }
-    return out;
+    return best;
+  }
+
+  /** Une haie d'un seul tenant : sa masse balayée, puis ses arbustes. */
+  _appendHedgerowRun(buffer, kind, path, sampleElevation, { offset = 0, here = null, startDistance = 0 } = {}) {
+    const style = hedgeStyleFor(kind, this.theme.furniture.hedges);
+    const fine = resamplePath(path, HEDGE_SAMPLE_M);
+    const dense = fine.length >= 2 ? fine : path;
+
+    const modulation = hedgeModulation(dense, { offset, here, style });
+    appendProfile(buffer, {
+      path: dense,
+      profile: this.specs.profiles[kind],
+      sampleElevation,
+      offset,
+      lift: -FURNITURE_SINK_M,
+      closed: true,
+      scaleUp: modulation.up,
+      scaleAcross: modulation.across,
+    });
+
+    this.counts.hedgeClumps += appendHedgeClumps(buffer, {
+      path: dense,
+      offset,
+      here,
+      style,
+      sampleElevation,
+      lift: -FURNITURE_SINK_M,
+      colors: this.theme.furniture.colors,
+      startDistance,
+      limit: FURNITURE_LIMITS.hedgeClumps - this.counts.hedgeClumps,
+    });
   }
 
   /**

@@ -343,6 +343,11 @@ export function appendRibbon(
  *        deux cents mètres est ce qui la fait lire comme un tube extrudé, et
  *        aucune variation de couleur ne rattrape ça. La section garde sa forme,
  *        seule son échelle verticale bouge.
+ * @param {Float32Array|number[]} [options.scaleAcross] Facteur appliqué à
+ *        `across`, une valeur par ligne. Le pendant en travers du précédent :
+ *        une haie épaissit et s'amincit le long de son tracé, et deux flancs
+ *        rigoureusement parallèles sont l'autre moitié de la lecture « ruban ».
+ *        Il ne déplace pas l'axe, il dilate la section autour de lui.
  * @returns {boolean} vrai si de la géométrie a été produite.
  */
 export function appendProfile(
@@ -357,6 +362,7 @@ export function appendProfile(
     closed = false,
     smoothRadius = 2,
     scaleUp = null,
+    scaleAcross = null,
   }
 ) {
   const rows = path?.length ?? 0;
@@ -387,9 +393,11 @@ export function appendProfile(
     const az = path[r].z + pz * offset;
 
     const rise = scaleUp ? scaleUp[r] : 1;
+    const spread = scaleAcross ? scaleAcross[r] : 1;
     for (let c = 0; c < cols; c++) {
       const p = profile[c];
-      buffer.positions.push(ax + px * p.across, ground[r] + p.up * rise, az + pz * p.across);
+      const wide = p.across * spread;
+      buffer.positions.push(ax + px * wide, ground[r] + p.up * rise, az + pz * wide);
       buffer.colors.push(p.color[0], p.color[1], p.color[2]);
     }
   }

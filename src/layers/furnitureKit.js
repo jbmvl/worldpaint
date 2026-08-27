@@ -1090,9 +1090,12 @@ const profilesFor = (C) => ({
    *
    * La section n'est plus symétrique : une haie taillée des deux côtés à
    * l'identique se lit comme un tube extrudé, ce qu'elle est. Un flanc plus
-   * ouvert que l'autre et une crête décalée suffisent à casser la lecture — et
-   * `hedgeJitter` (voir `furnitureLayer`) fait varier sa hauteur le long du
-   * tracé, ce qu'aucune section fixe ne saurait faire.
+   * ouvert que l'autre et une crête décalée cassent la lecture, mais aucune
+   * section fixe ne suffit à la défaire — c'est `hedgeGeometry` qui s'en
+   * charge : il module cette section en hauteur et en largeur le long du tracé,
+   * et lui pose des arbustes dessus dès qu'on s'en approche. Cette section-ci
+   * n'est donc plus la haie ; elle en est la masse continue, celle qui la ferme
+   * et qu'on voit de loin.
    */
   hedge: [
     { across: -0.5, up: 0, color: C.leafDeep },
@@ -1105,7 +1108,8 @@ const profilesFor = (C) => ({
   ],
 
   /**
-   * Haie basse de ronces et de fougères : 0,7 m, très ouverte.
+   * Haie basse de ronces et de fougères : 0,7 m, très ouverte. Comme la haie de
+   * bocage, elle reçoit ses arbustes de `hedgeGeometry` dans le champ proche.
    *
    * C'est ce qui borde la plupart des chemins et des fossés en vrai, et sa
    * seule existence corrige le défaut le plus visible du bocage procédural :
