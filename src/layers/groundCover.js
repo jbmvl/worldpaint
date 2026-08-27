@@ -31,6 +31,7 @@ import {
 } from '../materials/proceduralTextures.js';
 import { createFoliageMaterial, createCrossedQuads, ATLAS_ATTRIBUTE } from '../materials/foliageMaterial.js';
 import { makeRandom } from '../materials/proceduralTextures.js';
+import { CORRIDOR_MARGIN_M, inCorridor } from './roadCorridor.js';
 import { defaultTheme } from '../themes/default.js';
 
 /** Rayon du disque d'herbe autour de l'observateur, en mètres. */
@@ -53,8 +54,15 @@ export const GRASS_CELL_M = 1.6;
 export const GRASS_PER_CELL = 10;
 /** Part de végétal en deçà de laquelle rien ne pousse (bitume, roche, eau). */
 export const GRASS_GREEN_MIN = 0.25;
-/** Débord toléré au-delà de la chaussée, en mètres : l'accotement reste nu. */
-export const GRASS_ROAD_MARGIN_M = 0.5;
+/**
+ * Débord toléré au-delà de la chaussée, en mètres : l'accotement reste nu.
+ *
+ * Ce n'est plus une valeur propre à l'herbe. C'est **l'emprise routière**
+ * (`roadCorridor`), la même frontière que respectent les haies, les clôtures,
+ * les jardins et les cultures : le terrain est terrassé jusque-là, donc rien
+ * n'y pousse. Conservée sous son ancien nom parce qu'elle est publique.
+ */
+export const GRASS_ROAD_MARGIN_M = CORRIDOR_MARGIN_M;
 /** Part du rayon à partir de laquelle les touffes rapetissent. */
 export const GRASS_FADE_FROM = 0.6;
 
@@ -319,7 +327,7 @@ export class GroundCover {
 
         const x = tufts[at];
         const z = tufts[at + 1];
-        if (index?.covers(x, z, GRASS_ROAD_MARGIN_M)) continue;
+        if (inCorridor(index, x, z, GRASS_ROAD_MARGIN_M)) continue;
 
         const tint = tufts[at + 5];
         const height =

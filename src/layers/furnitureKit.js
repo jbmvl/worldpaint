@@ -1047,29 +1047,6 @@ export const FURNITURE_BUILDERS = {
   },
 
   /**
-   * Touffe de fougères : trois frondes en éventail, hautes d'un demi-mètre.
-   * C'est le remplissage de fossé et de pied de haie, là où la haie de bocage
-   * serait un mur de deux mètres.
-   */
-  fernClump(C = DEFAULT_COLORS) {
-    const k = new Kit(C);
-    for (let i = 0; i < 5; i++) {
-      const yaw = (i / 5) * Math.PI * 2;
-      k.box({
-        width: 0.5,
-        height: 0.06,
-        depth: 0.12,
-        y: 0.34,
-        yaw,
-        roll: 0.9,
-        color: i % 2 === 0 ? C.fern : C.leafOlive,
-      });
-    }
-    k.cylinder({ radiusBottom: 0.16, radiusTop: 0.05, height: 0.3, radial: 5, color: C.leafDeep });
-    return k;
-  },
-
-  /**
    * Pied de vigne : un cep tordu et sa frondaison, à poser en rang.
    *
    * Un vignoble ne se reconnaît pas à ses ceps mais à ses **rangs** — d'où le
@@ -1141,22 +1118,6 @@ const profilesFor = (C) => ({
     { across: -0.1, up: 0.72, color: C.fern },
     { across: 0.34, up: 0.5, color: C.bramble },
     { across: 0.55, up: 0, color: C.leafDeep },
-  ],
-
-  /**
-   * Fossé : une saignée en V asymétrique, l'aval plus court que l'amont.
-   *
-   * Il n'ajoute rien au-dessus du sol, il en **retire** — d'où des cotes
-   * négatives. C'est la seule pièce du catalogue à descendre sous le terrain, et
-   * la raison pour laquelle elle en vaut la peine : le motif fossé / bas-côté /
-   * chaussée est ce qui fait lire une route départementale, bien plus qu'un
-   * panneau de plus.
-   */
-  ditch: [
-    { across: -1.15, up: 0.05, color: C.leafOlive },
-    { across: -0.5, up: -0.42, color: C.stoneDark },
-    { across: 0.2, up: -0.5, color: C.stoneDark },
-    { across: 0.85, up: 0.02, color: C.leafOlive },
   ],
 
   /** Rang de vigne : le feuillage tendu entre deux ceps, sur son fil. */
@@ -1383,7 +1344,11 @@ export function createGlowMaterial(THREE, { color = [1, 0.86, 0.6], perInstanceC
     vertexShader: `
       varying vec2 vUv;
       varying vec3 vTint;
-      ${perInstanceColor ? 'attribute vec3 instanceColor;' : ''}
+      // Pas de déclaration manuelle : dès que \`mesh.setColorAt\` a été appelé
+      // une fois, three.js définit USE_INSTANCING_COLOR et injecte lui-même
+      // cet attribut en tête de shader (WebGLProgram.js). Le redéclarer ici
+      // provoquait une double définition — le halo des feux ne compilait plus
+      // et disparaissait, avec toute la scène en erreur de programme WebGL.
       uniform vec3 uColor;
       void main() {
         vUv = uv;

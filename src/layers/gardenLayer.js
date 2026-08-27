@@ -39,6 +39,7 @@ import { randomAt } from './furniturePlacement.js';
 import { pushPanel } from './buildingLayer.js';
 import { srgb } from '../core/color.js';
 import { defaultTheme } from '../themes/default.js';
+import { inCorridor } from './roadCorridor.js';
 
 /** Portée des jardins, en mètres. Au-delà, un piquet ne fait pas un pixel. */
 export const GARDEN_RADIUS_M = 170;
@@ -156,6 +157,61 @@ export function picketOffsets(length, spacing = PICKET_SPACING_M, gate = null) {
   return out;
 }
 
+/** Pas de sondage de la clôture, en mètres, quand on cherche si elle tient. */
+export const GARDEN_PROBE_M = 0.5;
+/** Reculs essayés, du plus généreux au plus serré, avant de renoncer. */
+export const GARDEN_MARGIN_TRIES = 4;
+
+/**
+ * Le plus grand recul de clôture qui tienne hors d'un obstacle, ou `null`.
+ *
+ * Une maison de centre-bourg est parfois à moins de deux mètres du trottoir :
+ * son jardin, dessiné au recul tiré, poserait sa clôture au milieu de la
+ * chaussée. Plutôt que de la supprimer d'emblée — un village entier sans
+ * clôture est un village plus pauvre, pas un village plus juste — on resserre :
+ * le recul est essayé de sa valeur tirée jusqu'au minimum de la fourchette, et
+ * ce n'est que si même le plus serré ne passe pas qu'il n'y a pas de jardin.
+ *
+ * `clear(x, z)` dit si un point est libre. La fonction reste donc **pure** et
+ * ne connaît pas les routes : c'est l'appelant qui branche l'emprise.
+ *
+ * @param {Object} box Rectangle orienté de la maison.
+ * @param {number} margin Recul tiré, en mètres.
+ * @param {Function} clear `(x, z) => boolean`.
+ * @param {number} [floor] Recul minimal acceptable, en mètres.
+ * @returns {number|null} le recul retenu, ou `null` si aucun ne tient.
+ */
+export function fittedGardenMargin(box, margin, clear, floor = GARDEN_MARGIN_M[0]) {
+  if (typeof clear !== 'function') return margin;
+
+  for (let i = 0; i < GARDEN_MARGIN_TRIES; i++) {
+    const tried = margin + ((floor - margin) * i) / (GARDEN_MARGIN_TRIES - 1);
+    if (gardenOutlineClear(box, tried, clear)) return tried;
+  }
+  return null;
+}
+
+/**
+ * Vrai si toute la clôture d'un jardin tombe sur du terrain libre.
+ *
+ * Le tracé est sondé, pas seulement ses quatre angles : une rue qui coupe un
+ * côté en son milieu laisse les quatre angles au large. Fonction pure.
+ */
+export function gardenOutlineClear(box, margin, clear, step = GARDEN_PROBE_M) {
+  const corners = gardenCorners(box, margin);
+  for (let side = 0; side < 4; side++) {
+    const a = corners[side];
+    const b = corners[(side + 1) % 4];
+    const length = Math.hypot(b.x - a.x, b.z - a.z);
+    const count = Math.max(1, Math.ceil(length / Math.max(step, 0.05)));
+    for (let i = 0; i <= count; i++) {
+      const t = i / count;
+      if (!clear(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t)) return false;
+    }
+  }
+  return true;
+}
+
 /** Les quatre angles du jardin, dans l'ordre du parcours. Fonction pure. */
 export function gardenCorners(box, margin) {
   const cos = Math.cos(box.angle);
@@ -270,13 +326,17 @@ export class GardenLayer {
    * @param {Object} options.THREE
    * @param {Object} options.scene
    * @param {Object} options.bubble Instance `TerrainBubble`.
+   * @param {Object} [options.roads] Instance `RoadNetwork`. Un jardin ne
+   *        déborde pas sur la rue : sa clôture doit tenir entre la maison et
+   *        l'emprise routière, faute de quoi il n'y a pas de jardin.
    * @param {Object} [options.theme] Direction artistique.
    */
-  constructor({ THREE, scene, bubble, theme = defaultTheme }) {
+  constructor({ THREE, scene, bubble, roads = null, theme = defaultTheme }) {
     this.THREE = THREE;
     this.theme = theme;
     this.scene = scene;
     this.bubble = bubble;
+    this.roads = roads;
     this.disposed = false;
     this.mesh = null;
     this.geometry = null;
@@ -313,12 +373,23 @@ export class GardenLayer {
       .sort((a, b) => a.distance - b.distance);
 
     const neighbours = houses || [];
+    // L'emprise routière, posée une fois pour toute la reconstruction. Les
+    // jardins ne lisent pas le réseau : ils ne posent qu'une question, « ce
+    // point est-il libre ».
+    const index = this.roads?.index || null;
+    const clear = (x, z) => !inCorridor(index, x, z);
+
     for (const { house } of near) {
       if (built >= GARDEN_MAX) break;
       if (randomAt(house.x, house.z, 211) >= GARDEN_SHARE) continue;
 
-      const margin =
+      const drawn =
         GARDEN_MARGIN_M[0] + randomAt(house.x, house.z, 217) * (GARDEN_MARGIN_M[1] - GARDEN_MARGIN_M[0]);
+      // La clôture doit tenir entre la maison et la rue. Resserrée si besoin,
+      // abandonnée si même le recul minimal mord sur la chaussée : un jardin
+      // qui déborde sur la voirie est pire que pas de jardin du tout.
+      const margin = fittedGardenMargin(house.box, drawn, clear);
+      if (margin == null) continue;
       if (!isDetached(house, neighbours, margin)) continue;
 
       this._appendGarden(buffer, house, margin);
@@ -449,6 +520,10 @@ export class GardenLayer {
       const x = box.cx + u * cos - v * sin;
       const z = box.cz + u * sin + v * cos;
       if (randomAt(x, z, 241) < 0.25) continue;
+      // La clôture, elle, a déjà été ajustée à l'emprise ; le buisson est en
+      // retrait d'un mètre, mais un angle de jardin peut encore mordre sur un
+      // trottoir en biais. Le test coûte une lecture d'index.
+      if (inCorridor(this.roads?.index || null, x, z)) continue;
 
       const radius =
         BUSH_RADIUS_M[0] + randomAt(x, z, 251) * (BUSH_RADIUS_M[1] - BUSH_RADIUS_M[0]);

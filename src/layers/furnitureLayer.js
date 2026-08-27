@@ -63,6 +63,12 @@ import {
 import { ROAD_SAMPLE_M, ROAD_LIFT_M } from './roadNetwork.js';
 import { ROAD_CUT_M } from '../terrain/roadCut.js';
 import {
+  clipOutsideCorridor,
+  filterOutsideCorridor,
+  inCorridor,
+  pushOutsideCorridor,
+} from './roadCorridor.js';
+import {
   createFurnitureGeometries,
   createFurnitureMaterial,
   createGlowMaterial,
@@ -153,6 +159,8 @@ export const LAMP_LIGHT_RANGE_M = 34;
 export const LAMP_LIGHT_CD = 620;
 /** Diamètre de la nappe de lumière au sol, en mètres. */
 export const LAMP_POOL_M = 17;
+/** Recul d'un feu tricolore en amont du nœud de carrefour, en mètres. */
+const TRAFFIC_LIGHT_SETBACK_M = 10;
 /** Durée d'un cycle de feu tricolore, en secondes. */
 export const TRAFFIC_CYCLE_S = 14;
 
@@ -230,7 +238,6 @@ const POINT_ITEMS = [
   'bush',
   'treeBroad',
   'treeConifer',
-  'fernClump',
   'vineStock',
   'rockSmall',
   'rockBoulder',
@@ -242,7 +249,6 @@ const POINT_ITEMS = [
 const LINEAR_KINDS = [
   'hedge',
   'lowHedge',
-  'ditch',
   'vineRow',
   'dryStoneWall',
   'cutWall',
@@ -342,6 +348,12 @@ export class FurnitureLayer {
      * @type {Array<{x:number,y:number,z:number}>}
      */
     this.chimneys = [];
+    /**
+     * Emprise routière de la reconstruction en cours (`RoadIndex`), ou `null`.
+     * Elle ne vit que le temps d'un `rebuild` : hors de là, il n'y a pas de
+     * frontière à faire respecter, seulement un index périmé.
+     */
+    this._roadIndex = null;
     this._night = 0;
     this._matrix = new THREE.Matrix4();
     this._position = new THREE.Vector3();
@@ -366,12 +378,22 @@ export class FurnitureLayer {
    * @param {{x:number,z:number}} here Position locale de l'observateur.
    * @param {Array} roadSegments Tronçons produits par `collectRoadSegments`.
    * @param {Object|null} roadIndex Index spatial de ces mêmes tronçons
-   *        (`RoadIndex`). Il sert à trouver les carrefours, seul endroit où un
-   *        feu tricolore a un sens.
+   *        (`RoadIndex`). Il tient l'**emprise routière** — la frontière que
+   *        rien du décor ne doit franchir (`roadCorridor`) — et donne
+   *        l'altitude de plate-forme sous un point quelconque.
+   * @param {Array} junctions Carrefours relevés sur le graphe routier
+   *        (`roadNetwork.junctions`). Seul endroit où un feu tricolore a un
+   *        sens : le mobilier ne peut pas les redécouvrir seul, un tronçon
+   *        découpé ne porte plus la trace du croisement qu'il traversait.
    * @returns {boolean} vrai si quelque chose a été posé.
    */
-  rebuild(source, tiles, here, roadSegments = [], roadIndex = null) {
+  rebuild(source, tiles, here, roadSegments = [], roadIndex = null, junctions = []) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
+
+    // Gardé le temps de la reconstruction : haies, clôtures, bottes et
+    // troupeaux s'y heurtent. Il est remis à `null` en sortie pour qu'aucun
+    // appel tardif ne s'appuie sur un index périmé.
+    this._roadIndex = roadIndex;
 
     const sampleElevation = (x, z) =>
       this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale;
@@ -393,13 +415,16 @@ export class FurnitureLayer {
     try {
       const builtUp = this._collectBuiltUpAreas(source, tiles);
       this._buildRoadside(context, roadSegments, builtUp);
-      this._buildCrossings(context, roadSegments, roadIndex, builtUp);
+      this._buildCrossings(context, junctions, roadIndex, builtUp);
       this._buildParcels(context, builtUp);
       this._buildPointsOfInterest(context, roadSegments);
       this._buildRocks(context, builtUp);
       this._buildLandmarks(context, builtUp);
     } catch (e) {
-      console.warn('[furniture] mobilier partiel', e?.message || e);
+      // La pile complète, pas le seul message : cette exception avale tout ce
+      // qui restait à construire (voir le commentaire au-dessus), et sans
+      // elle il n'y a aucun moyen de savoir laquelle des six étapes a jeté.
+      console.warn('[furniture] mobilier partiel', e?.stack || e?.message || e);
     }
 
     for (const kind of LINEAR_KINDS) this._applyLinear(kind, buffers[kind]);
@@ -409,7 +434,39 @@ export class FurnitureLayer {
 
     this._anchor = { x: here.x, z: here.z };
     this._frame = this.bubble.frame;
+    this._roadIndex = null;
     return this.counts.points + this.counts.boundaries > 0;
+  }
+
+  // --- Emprise routière ----------------------------------------------------
+
+  /**
+   * Vrai si un point tombe sur la voirie — chaussée et accotement excavé.
+   *
+   * Le mobilier **de bord de route** ne passe pas par là, et c'est voulu :
+   * glissière, lampadaire, borne et feu sont posés au ras de la rive, donc
+   * dans l'emprise, et c'est exactement là qu'ils doivent être. Seul le décor
+   * qui n'a rien à faire sur la voirie s'y heurte.
+   */
+  _onRoad(x, z, own = null) {
+    const accept = own ? (other) => other !== own : null;
+    return inCorridor(this._roadIndex, x, z, undefined, accept);
+  }
+
+  /**
+   * Découpe une polyligne aux traversées de chaussée.
+   *
+   * `offset` est le décalage latéral auquel l'objet sera réellement posé : une
+   * haie de bas-côté longe la route à deux mètres de sa rive, et c'est là qu'il
+   * faut sonder l'emprise, pas sur l'axe de la route.
+   */
+  _clipOffRoad(path, { offset = 0, minLength = BOUNDARY_MIN_LENGTH_M, own = null } = {}) {
+    // `own` est la chaussée que l'objet borde délibérément : une haie de
+    // bas-côté longe sa route à quelques mètres de la rive, donc dans son
+    // emprise, et c'est sa place. Elle doit malgré tout s'arrêter à chaque rue
+    // transversale.
+    const accept = own ? (other) => other !== own : null;
+    return clipOutsideCorridor(path, this._roadIndex, undefined, { offset, minLength, accept });
   }
 
   // --- Zones bâties --------------------------------------------------------
@@ -769,6 +826,7 @@ export class FurnitureLayer {
         buffers,
         placements,
         sampleElevation,
+        segment,
       });
     }
   }
@@ -795,6 +853,7 @@ export class FurnitureLayer {
     buffers,
     placements,
     sampleElevation,
+    segment,
   }) {
     if (plan.lamp) {
       for (const p of spacedAlongPath(path, plan.lamp, spacing)) {
@@ -937,54 +996,46 @@ export class FurnitureLayer {
           const row = p.index % 2 === 0 ? 1 : -1;
           this._placeBeside(placements, conifer ? 'treeConifer' : 'treeBroad', p, row * (halfWidth + 3.2), platform, {
             scale: 1.05 + randomAt(p.x, p.z, 3) * 0.5,
+            // Un platane pousse au bord de la route qu'il borde — donc celle-ci
+            // ne le gêne pas — mais pas au milieu de celle qui la croise.
+            offRoad: true,
+            own: segment,
           });
         }
       }
     }
 
-    // Bas-côté : fossé, haie basse, haie de bocage. Le motif complet — fossé,
-    // talus, limite végétale — n'est donné qu'à une portion sur trois : appliqué
-    // partout, il transforme la campagne en circuit.
+    // Bas-côté : haie basse, haie de bocage. Le motif n'est donné qu'à une
+    // portion sur trois environ : appliqué partout, il transforme la
+    // campagne en circuit.
     const verge = roadsideVergeFor(profile, { builtUp: inTown, variant: randomAt(side.x, side.z, 83) });
-    if (verge.ditch) {
-      const sides = verge.ditchSide === 0 ? [1, -1] : [verge.ditchSide];
-      for (const s of sides) {
-        const offset = s * (halfWidth + 1.5);
-        appendProfile(buffers.ditch, {
-          path,
-          profile: this.specs.profiles.ditch,
-          sampleElevation,
-          offset,
-          lift: -FURNITURE_SINK_M,
-        });
-        // Fougères sur la berge amont du fossé : c'est ce qui y pousse, et une
-        // saignée nue se lirait comme une tranchée de chantier. Une touffe tous
-        // les cinq mètres, sautée une fois sur trois.
-        for (const spot of spacedAlongPath(path, 5, spacing)) {
-          if (randomAt(spot.x, spot.z, 173) > 0.66) continue;
-          const away = offset + s * 1.1;
-          this._place(placements, 'fernClump', {
-            x: spot.x + spot.tz * away,
-            z: spot.z - spot.tx * away,
-            yaw: randomAt(spot.x, spot.z, 179) * Math.PI * 2,
-            scale: 0.8 + randomAt(spot.x, spot.z, 181) * 0.7,
-          });
-        }
-      }
-    }
-
     const openGround = this._openGround(mid.x, mid.z);
     if (verge.verge && openGround) {
-      const vergeSide = verge.ditchSide || 1;
-      this._appendBoundary(buffers.lowHedge, 'lowHedge', path, sampleElevation, vergeSide * (halfWidth + 2.6));
+      this._appendBoundary(
+        buffers.lowHedge,
+        'lowHedge',
+        path,
+        sampleElevation,
+        verge.vergeSide * (halfWidth + 2.6),
+        segment
+      );
     }
 
     // La haie de bocage le long de la route reste, mais elle n'est plus
     // systématique : une petite route sur deux seulement en porte une, et
-    // jamais du côté où court déjà le fossé.
+    // jamais du côté où court déjà la haie basse du bas-côté.
     if (plan.hedge && openGround && randomAt(side.x, side.z, 29) < 0.5) {
-      const hedgeSide = -(verge.ditchSide || (randomAt(side.x, side.z, 23) < 0.5 ? 1 : -1));
-      this._appendBoundary(buffers.hedge, 'hedge', path, sampleElevation, hedgeSide * (halfWidth + 1.8));
+      const hedgeSide = verge.verge
+        ? -verge.vergeSide
+        : randomAt(side.x, side.z, 23) < 0.5 ? 1 : -1;
+      this._appendBoundary(
+        buffers.hedge,
+        'hedge',
+        path,
+        sampleElevation,
+        hedgeSide * (halfWidth + 1.8),
+        segment
+      );
     }
   }
 
@@ -1059,74 +1110,78 @@ export class FurnitureLayer {
    *
    * Le schéma OpenMapTiles ne porte pas `highway=traffic_signals` — comme il ne
    * porte ni lampadaire ni panneau. Mais il porte les chaussées, et un carrefour
-   * est une propriété **géométrique** du réseau : c'est un point où deux
-   * chaussées distinctes se recouvrent. L'index spatial le sait déjà, puisque
-   * c'est exactement la question que lui pose la recouture des plate-formes.
+   * est une propriété du **graphe** routier : un nœud où plus de deux arêtes se
+   * rejoignent. `roadGraph` le relève au moment où il recoud les chaussées, et
+   * le publie ; c'est cette liste-là qu'on lit ici.
    *
-   * Trois conditions, et elles éliminent l'essentiel : le carrefour doit être en
-   * zone bâtie (une croisée de départementales en pleine campagne porte un
-   * cédez-le-passage, pas un feu), la chaussée doit en mériter un (`plan`), et
-   * deux carrefours à moins de trente mètres n'en sont qu'un — les branches d'un
-   * même croisement se recoupent sur plusieurs lignes.
+   * Elle a remplacé une détection géométrique — chercher où deux rubans se
+   * recouvrent — qui trouvait le même croisement sur une dizaine de lignes de
+   * chaque branche, et obligeait à écarter tout ce qui se trouvait à moins de
+   * cent mètres pour n'en garder qu'un. Un nœud est un nœud : il n'y en a
+   * qu'un, et il tombe au centre du carrefour et pas sur la première ligne où
+   * les rubans commencent à se toucher.
+   *
+   * Deux conditions restent : le carrefour doit être en zone bâtie (une croisée
+   * de départementales en pleine campagne porte un cédez-le-passage, pas un
+   * feu), et sa chaussée dominante doit en mériter un (`plan`).
    */
-  _buildCrossings(context, roadSegments, roadIndex, builtUp) {
-    if (!roadIndex) return;
+  _buildCrossings(context, junctions, roadIndex, builtUp) {
+    if (!roadIndex || !Array.isArray(junctions)) return;
     const { placements, here } = context;
-    const seen = [];
     let placed = 0;
 
-    for (const segment of roadSegments) {
+    for (const junction of junctions) {
       if (placed >= FURNITURE_LIMITS.trafficLights) break;
-      if (!roadsideFurnitureFor(segment.profile, { builtUp: true }).trafficLight) continue;
+      if (Math.hypot(junction.x - here.x, junction.z - here.z) > FURNITURE_RADIUS_M) continue;
+      if (!FurnitureLayer._inAreas(builtUp, junction.x, junction.z)) continue;
+      if (!roadsideFurnitureFor(junction.profile, { builtUp: true }).trafficLight) continue;
 
-      const { path, platform, halfWidth } = segment;
-      for (let r = 2; r < path.length - 2 && placed < FURNITURE_LIMITS.trafficLights; r++) {
-        const p = path[r];
-        if (Math.hypot(p.x - here.x, p.z - here.z) > FURNITURE_RADIUS_M) continue;
-        if (!FurnitureLayer._inAreas(builtUp, p.x, p.z)) continue;
-
-        // Une autre chaussée passe ici, et assez large pour être une rue et non
-        // une entrée de garage.
-        const hit = roadIndex.query(p.x, p.z, 0, (other) => other !== segment && other.halfWidth >= 2.2);
-        if (!hit) continue;
-        // Cent mètres de séparation, et non trente. Un carrefour est détecté sur
-        // toutes les lignes où les deux rubans se recouvrent — donc sur une
-        // dizaine de lignes de chaque branche —, et trente mètres laissaient
-        // passer deux ou trois feux par croisement. C'est de là que venait leur
-        // nombre, pas du plafond.
-        if (seen.some((s) => Math.hypot(s.x - p.x, s.z - p.z) < 100)) continue;
-        seen.push({ x: p.x, z: p.z });
-
-        // Posé à droite, une dizaine de mètres avant le carrefour, face au
-        // trafic qu'il arrête — c'est la position française.
-        const before = path[Math.max(0, r - 2)];
-        const tx = p.x - before.x;
-        const tz = p.z - before.z;
-        const length = Math.hypot(tx, tz) || 1;
-        const offset = -(halfWidth + 1.2);
-        const yaw = roadsideYaw(tx / length, tz / length, offset, 'traffic');
-        const post = this._place(placements, 'trafficLight', {
-          x: before.x + (tz / length) * offset,
-          z: before.z - (tx / length) * offset,
-          y: platform?.[Math.max(0, r - 2)] ?? null,
-          yaw,
-          exactY: !!platform,
-        });
-        // Le feu publie son point d'allumage : `advanceSignals` y pose la
-        // lentille vive et son halo. La phase est tirée du **lieu**, donc deux
-        // carrefours voisins ne passent jamais au vert ensemble, et un même
-        // carrefour garde son rythme d'une reconstruction à l'autre.
-        if (post) {
-          this._signals.push({
-            x: post.x,
-            y: post.y,
-            z: post.z,
-            yaw,
-            phase: randomAt(post.x, post.z, 97) * TRAFFIC_CYCLE_S,
-          });
-        }
-        placed++;
+      // La branche la plus large : c'est celle dont le feu règle l'accès, et
+      // c'est sur elle que l'automobiliste le cherche.
+      let branch = null;
+      for (const candidate of junction.branches) {
+        if (!branch || candidate.halfWidth > branch.halfWidth) branch = candidate;
       }
+      if (!branch) continue;
+
+      // Une dizaine de mètres en amont du nœud, sur la branche, et à droite —
+      // c'est la position française. `branch` sort du carrefour, donc reculer
+      // le long de la branche veut dire avancer dans son sens.
+      const back = TRAFFIC_LIGHT_SETBACK_M;
+      const px = junction.x + branch.x * back;
+      const pz = junction.z + branch.z * back;
+      // Sens de la marche : celui du trafic qui arrive au feu, donc l'inverse
+      // de la direction sortante de la branche.
+      const tx = -branch.x;
+      const tz = -branch.z;
+      const offset = -(junction.halfWidth + 1.2);
+      const yaw = roadsideYaw(tx, tz, offset, 'traffic');
+
+      // Altitude prise sur la plate-forme de la branche, pas sur le terrain :
+      // le feu est au bord de la chaussée, qui est dressée de niveau.
+      const deck = roadIndex.deckAt(roadIndex.query(px, pz, 1));
+
+      const post = this._place(placements, 'trafficLight', {
+        x: px + tz * offset,
+        z: pz - tx * offset,
+        y: deck,
+        yaw,
+        exactY: deck != null,
+      });
+      // Le feu publie son point d'allumage : `advanceSignals` y pose la
+      // lentille vive et son halo. La phase est tirée du **lieu**, donc deux
+      // carrefours voisins ne passent jamais au vert ensemble, et un même
+      // carrefour garde son rythme d'une reconstruction à l'autre.
+      if (post) {
+        this._signals.push({
+          x: post.x,
+          y: post.y,
+          z: post.z,
+          yaw,
+          phase: randomAt(post.x, post.z, 97) * TRAFFIC_CYCLE_S,
+        });
+      }
+      placed++;
     }
   }
 
@@ -1217,8 +1272,18 @@ export class FurnitureLayer {
         z: (latToTileY(lat, zoom) - origin.y) * scale,
       }));
 
-      const path = resamplePath(local, BOUNDARY_SAMPLE_M);
-      if (path.length < 3 || path[path.length - 1].distance < BOUNDARY_MIN_LENGTH_M) continue;
+      const sampled = resamplePath(local, BOUNDARY_SAMPLE_M);
+      if (sampled.length < 3) continue;
+      if (sampled[sampled.length - 1].distance < BOUNDARY_MIN_LENGTH_M) continue;
+
+      // Un contour de parcelle suit très souvent le bord d'une route sur toute
+      // sa longueur — c'est la définition même du bocage. Le couper à chaque
+      // sondage qui tombe dans l'emprise ne laisserait aucun tronçon dehors :
+      // toute la haie disparaîtrait, faute d'un point réellement extérieur d'où
+      // repartir. On la repousse donc au ras de l'emprise plutôt qu'on ne
+      // l'interrompt — c'est elle qui trace le bocage, pas la route.
+      const path = pushOutsideCorridor(sampled, this._roadIndex);
+      if (path.length < 3) continue;
 
       if (kind === 'hedge' || kind === 'lowHedge' || kind === 'dryStoneWall') {
         appendProfile(buffers[kind], {
@@ -1313,31 +1378,37 @@ export class FurnitureLayer {
       }
       for (const run of contiguousRuns(samples, (s) => pointInRing(ring, s.x, s.z), 3)) {
         const origin = run[0].distance;
-        const path = run.map((s) => ({ x: s.x, z: s.z, distance: s.distance - origin }));
-        if (crop === 'vineyard') {
-          appendProfile(buffers.vineRow, {
-            path,
-            profile: this.specs.profiles.vineRow,
-            sampleElevation,
-            lift: -FURNITURE_SINK_M,
-            closed: true,
-          });
-          for (const stock of spacedAlongPath(path, 1.2, { margin: 0.4 })) {
-            this._place(placements, 'vineStock', { x: stock.x, z: stock.z, yaw: angle });
-          }
-        } else {
-          for (const tree of spacedAlongPath(path, 6, { margin: 1 })) {
-            this._place(placements, 'treeBroad', {
-              x: tree.x,
-              z: tree.z,
-              yaw: randomAt(tree.x, tree.z, 67) * Math.PI * 2,
-              // Un verger est planté d'arbres taillés bas et de taille égale :
-              // c'est exactement ce qui le distingue d'un bois.
-              scale: 0.55 + randomAt(tree.x, tree.z, 68) * 0.12,
+        const rowPath = run.map((s) => ({ x: s.x, z: s.z, distance: s.distance - origin }));
+        // Un rang est déjà découpé aux limites du champ ; il lui reste à
+        // s'arrêter au bord de la route qui le traverse. Le pas des rangs (3 à
+        // 6 m) est trop lâche pour repérer une voie communale : c'est la
+        // découpe d'emprise, qui sonde au mètre, qui s'en charge.
+        for (const path of this._clipOffRoad(rowPath, { minLength: 0 })) {
+          if (crop === 'vineyard') {
+            appendProfile(buffers.vineRow, {
+              path,
+              profile: this.specs.profiles.vineRow,
+              sampleElevation,
+              lift: -FURNITURE_SINK_M,
+              closed: true,
             });
+            for (const stock of spacedAlongPath(path, 1.2, { margin: 0.4 })) {
+              this._place(placements, 'vineStock', { x: stock.x, z: stock.z, yaw: angle });
+            }
+          } else {
+            for (const tree of spacedAlongPath(path, 6, { margin: 1 })) {
+              this._place(placements, 'treeBroad', {
+                x: tree.x,
+                z: tree.z,
+                yaw: randomAt(tree.x, tree.z, 67) * Math.PI * 2,
+                // Un verger est planté d'arbres taillés bas et de taille égale :
+                // c'est exactement ce qui le distingue d'un bois.
+                scale: 0.55 + randomAt(tree.x, tree.z, 68) * 0.12,
+              });
+            }
           }
+          this.counts.rows++;
         }
-        this.counts.rows++;
       }
     }
   }
@@ -1385,7 +1456,11 @@ export class FurnitureLayer {
     // andains qu'elles suivent.
     const item = variant < 0.6 ? 'hayBaleRound' : 'hayBaleSquare';
     const heading = FurnitureLayer._principalAngle(ring);
-    for (const spot of scatterInRing(ring, count, seed)) {
+    // Une route qui traverse le champ n'y interdit pas la moisson : elle
+    // interdit d'en poser une botte sur la chaussée. Le semis n'est pas
+    // redistribué pour autant — on retire, on ne recompose pas, sinon la même
+    // parcelle changerait de bottes à chaque reconstruction.
+    for (const spot of filterOutsideCorridor(scatterInRing(ring, count, seed), this._roadIndex)) {
       this._place(placements, item, {
         x: spot.x,
         z: spot.z,
@@ -1415,7 +1490,11 @@ export class FurnitureLayer {
     const seed = positionSeed(centre.x, centre.z, 61);
     let placed = 0;
 
-    for (const spot of scatterInRing(ring, count, seed, { cluster: spread })) {
+    // Un troupeau ne paît pas sur le bitume.
+    for (const spot of filterOutsideCorridor(
+      scatterInRing(ring, count, seed, { cluster: spread }),
+      this._roadIndex
+    )) {
       this._place(placements, item, {
         x: spot.x,
         z: spot.z,
@@ -1623,6 +1702,9 @@ export class FurnitureLayer {
         const pz = z + (randomAt(x, z, 103) - 0.5) * step * 0.9;
         if (Math.hypot(px - here.x, pz - here.z) > ROCK_RADIUS_M) continue;
         if (FurnitureLayer._inAreas(builtUp, px, pz)) continue;
+        // Un bloc erratique au milieu de la chaussée est le plus visible de
+        // tous les défauts d'emprise : il est opaque et il est haut.
+        if (this._onRoad(px, pz)) continue;
 
         const sample = this.groundClass?.sampleAt?.(px, pz);
         // Sans carte de classes, on ne devine pas un éboulis : la pente seule
@@ -1746,17 +1828,28 @@ export class FurnitureLayer {
     return (this.groundClass?.woodAt?.(x, z) ?? 0) < 0.35;
   }
 
-  /** Ajoute une haie ou une clôture le long d'une chaussée. */
-  _appendBoundary(buffer, kind, path, sampleElevation, offset) {
-    appendProfile(buffer, {
-      path,
-      profile: this.specs.profiles[kind],
-      sampleElevation,
-      offset,
-      lift: -FURNITURE_SINK_M,
-      closed: true,
-      scaleUp: FurnitureLayer._hedgeRelief(path, offset),
-    });
+  /**
+   * Ajoute une haie ou une clôture le long d'une chaussée.
+   *
+   * Elle est posée à `offset` de l'axe, donc **hors** de l'emprise de sa propre
+   * route — c'est ce que garantissent les décalages choisis par l'appelant, qui
+   * dépassent tous l'accotement excavé. Restent les **autres** chaussées :
+   * à un carrefour, une haie de bas-côté file tout droit dans la rue
+   * transversale. C'est celles-là que la découpe retire, en sondant l'emprise
+   * là où la haie sera réellement posée.
+   */
+  _appendBoundary(buffer, kind, path, sampleElevation, offset, own = null) {
+    for (const run of this._clipOffRoad(path, { offset, minLength: BOUNDARY_MIN_LENGTH_M, own })) {
+      appendProfile(buffer, {
+        path: run,
+        profile: this.specs.profiles[kind],
+        sampleElevation,
+        offset,
+        lift: -FURNITURE_SINK_M,
+        closed: true,
+        scaleUp: FurnitureLayer._hedgeRelief(run, offset),
+      });
+    }
   }
 
   /**
@@ -1796,10 +1889,22 @@ export class FurnitureLayer {
    * @param {Float32Array} platform Altitudes de plate-forme, une par ligne.
    * @returns {{x:number,y:number,z:number}|null} l'objet posé, ou `null`.
    */
-  _placeBeside(placements, item, point, offset, platform, { facing = 'along', scale = 1, onPlatform = false } = {}) {
+  _placeBeside(
+    placements,
+    item,
+    point,
+    offset,
+    platform,
+    { facing = 'along', scale = 1, onPlatform = false, offRoad = false, own = null } = {}
+  ) {
     // Perpendiculaire à gauche de la marche, comme partout ailleurs.
     const x = point.x + point.tz * offset;
     const z = point.z - point.tx * offset;
+    // `offRoad` ne concerne que ce qui pousse — un alignement d'arbres. Le
+    // mobilier réglementaire, lui, est posé au ras de la rive, donc dans
+    // l'emprise, et c'est sa place : une glissière hors de l'emprise ne
+    // protège rien.
+    if (offRoad && this._onRoad(x, z, own)) return null;
     const yaw = roadsideYaw(point.tx, point.tz, offset, facing);
 
     let y = null;

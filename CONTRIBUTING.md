@@ -78,6 +78,27 @@ these needs a very good reason, stated in the PR description.
   declares.** A layer reads what an earlier layer published (an index, a
   segment list); it never reaches back into another layer's live state or
   assumes something ran just because it usually does.
+- **The road corridor is the one shared spatial boundary.** Anything decorative
+  that could end up on a carriageway — hedges, fences, walls, gardens, crops,
+  grass, scatter — asks `roadCorridor` (`inCorridor` for a point,
+  `clipOutsideCorridor` for a polyline) rather than reading `roadSegments` or
+  inventing its own margin. Roadside furniture that belongs at the kerb
+  (guardrails, lamps, signs, traffic lights) deliberately does not.
+  `clipOutsideCorridor` **cuts**: it fits anything that genuinely has two ends
+  once a road crosses it (a ditch, a vine row, a roadside hedge offset from its
+  own carriageway). It is the wrong tool for a line that isn't attached to a
+  road but happens to run alongside one — a parcel boundary traced from raw
+  survey data, say — because a line that never truly leaves the corridor never
+  gets a second endpoint to restart from, and disappears whole. For that shape,
+  `pushOutsideCorridor` displaces every point clear of the nearest road instead
+  of cutting, keeping the line one continuous run.
+- **A junction is a graph node, not a picture.** `roadGraph` is the only place
+  where a crossroads exists as such — a node where more than two edges meet.
+  It publishes them (`mergeRoadLines` returns `{chains, junctions}`) and
+  everything that needs one reads that list. Rediscovering junctions later, by
+  looking for places where two ribbons overlap, invents different ones: they
+  land somewhere else, and there is one per overlapping row instead of one per
+  crossroads.
 - **Layers don't mutate each other implicitly.** A layer publishes what it
   produces (on itself, or via an explicit return value) and nothing else
   writes into another layer's data uninvited.

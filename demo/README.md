@@ -32,9 +32,20 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
 - **Case « afficher le nom des objets »** : appelle
   `collectSceneLabels` (`src/inspect/objectLabels.js`) à intervalle régulier
   et projette chaque étiquette à l'écran.
+- **Case « afficher l'emprise routière »** : peint en rouge translucide la
+  chaussée **plus son accotement** (`CORRIDOR_MARGIN_M`), reconstruite à partir
+  des tronçons que `RoadNetwork` publie. C'est la frontière que `roadCorridor`
+  fait respecter aux haies, clôtures, jardins, cultures et herbe : un élément de
+  décor posé *sur* la nappe est un défaut d'emprise, un élément posé au ras du
+  bord est à sa place.
 - **Champ de recherche** : géocode le texte tapé via Nominatim
   (OpenStreetMap) et déplace la bulle (`setCenter` + `refresh`) sur le
   résultat.
+- **Mini-carte** (bas droite, façon Street View) : toujours centrée sur la
+  caméra, nord en haut, elle trace le réseau routier local à partir de
+  `world.composer.roads.roadSegments` (la même donnée que l'emprise
+  ci-dessus) et affiche un cône indiquant la direction du regard. Un clic
+  dessus téléporte au point visé, comme le clic simple sur la scène 3D.
 
 ## Sources de données
 

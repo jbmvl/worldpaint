@@ -37,6 +37,7 @@ import {
 import {
   resamplePath,
   smoothColumns,
+  monotoneDownstream,
   createRibbonBuffer,
   appendRibbon,
   pathFrames,
@@ -91,11 +92,24 @@ import {
 } from '../src/layers/roadNetwork.js';
 import {
   mergeRoadLines,
+  trimAtJunctions,
   distanceToSegment,
   stitchPlatforms,
   RoadIndex,
   NODE_WELD_M,
+  JUNCTION_OVERLAP_M,
+  JUNCTION_MIN_RUN_M,
 } from '../src/layers/roadGraph.js';
+import {
+  CORRIDOR_MARGIN_M,
+  CORRIDOR_PROBE_M,
+  CORRIDOR_PUSH_CLEARANCE_M,
+  inCorridor,
+  clipOutsideCorridor,
+  filterOutsideCorridor,
+  pushOutsideCorridor,
+} from '../src/layers/roadCorridor.js';
+import { fittedGardenMargin, gardenOutlineClear } from '../src/layers/gardenLayer.js';
 import {
   grassCellRing,
   grassEdgeFade,
@@ -125,10 +139,17 @@ import {
   treesForScore,
   forestTypeAt,
   variantsFor,
+  understoryVariants,
+  treeHeight,
+  foliageTint,
+  thinPlacements,
   FOREST_PATCH_M,
   WOOD_SCORE_MIN,
   WOOD_DENSITY_CURVE,
+  EMERGENT_SHARE,
+  CLUMP_TINT_M,
 } from '../src/layers/vegetationLayer.js';
+import { TREE_ESSENCES } from '../src/themes/default.js';
 import { grassVariantFor, GRASS_RADIUS_M, GRASS_COUNT, GRASS_FADE_FROM } from '../src/layers/groundCover.js';
 import {
   cropCellRing,
@@ -154,6 +175,7 @@ import {
   picketOffsets,
   gardenCorners,
   isDetached,
+  GARDEN_MARGIN_M,
   appendBush,
   GATE_WIDTH_M,
   GARDEN_CLEAR_M,
@@ -163,9 +185,31 @@ import { orientedBox, roofTriangles, ringArea } from '../src/layers/roofGeometry
 import { trafficPhaseAt, TRAFFIC_CYCLE_S, SIGN_ITEMS } from '../src/layers/furnitureLayer.js';
 import { TREE_ATLAS_OFFSETS, GRASS_VARIANTS } from '../src/materials/proceduralTextures.js';
 import { snapToShadowTexels, sunDirection, SHADOW_RADIUS_M } from '../src/environment/shadowFrame.js';
-import { waterwayStyleFor, isDrawableWater, waterPolygons, boundsIntersect } from '../src/layers/waterLayer.js';
+import {
+  waterwayStyleFor,
+  isDrawableWater,
+  waterPolygons,
+  boundsIntersect,
+  pointInPolygon,
+  interiorSamples,
+  lowQuantile,
+  waterSurfaceLevel,
+  waterwayProfile,
+} from '../src/layers/waterLayer.js';
+import { WaterIndex, ringCrossings } from '../src/layers/waterIndex.js';
+import {
+  cutWaterElevationAt,
+  WATER_BED_M,
+  WATER_CUT_BLEND_M,
+} from '../src/terrain/waterCut.js';
 import { skyParameters, lightingFor, sunlightColor } from '../src/environment/skyModel.js';
-import { groundClassFor, classPolygons, CLASS_FILL } from '../src/terrain/groundClassMap.js';
+import {
+  groundClassFor,
+  classPolygons,
+  CLASS_FILL,
+  GroundClassMap,
+  CLASS_AREA_M,
+} from '../src/terrain/groundClassMap.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
 import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
 import { birdAt, createBirdGeometry } from '../src/layers/lifeLayer.js';
@@ -443,6 +487,71 @@ test('l’arrondi stochastique évite l’effet de verger', () => {
   const normalized = (score - WOOD_SCORE_MIN) / (1 - WOOD_SCORE_MIN);
   const expected = Math.pow(normalized, WOOD_DENSITY_CURVE) * 9;
   close(total / draws, expected, 0.02, 'espérance du tirage');
+});
+
+test('les hauteurs se répartissent en strates, avec quelques dominants', () => {
+  const type = { minHeight: 8, maxHeight: 16 };
+  assert.equal(treeHeight(type, 0, 1), 8, 'le tirage nul donne la hauteur minimale');
+  close(treeHeight(type, 1, 1), 16, 1e-9, 'le tirage plein donne la maximale');
+
+  // La loi penche vers le bas : sans cela, un massif est une haie taillée.
+  const draws = 400;
+  let total = 0;
+  for (let i = 0; i < draws; i++) total += treeHeight(type, (i + 0.5) / draws, 1);
+  assert.ok(total / draws < 12, `moyenne ${total / draws} sous le milieu de la fourchette`);
+
+  // Et quelques-uns dépassent la strate : ce sont eux qui donnent le relief.
+  assert.ok(treeHeight(type, 1, 0) > 16, 'un dominant dépasse la hauteur du peuplement');
+  assert.ok(EMERGENT_SHARE > 0 && EMERGENT_SHARE < 0.25, 'un dominant reste une exception');
+});
+
+test('le sous-bois tire dans les buissons, quel que soit le peuplement', () => {
+  const variants = understoryVariants();
+  assert.ok(variants.length > 0);
+  // Ce sont bien les silhouettes basses, pas celles de la futaie au-dessus.
+  assert.deepEqual(variants, TREE_ESSENCES.bushy);
+  // Et sans essence buissonnante, on rend quand même une case d’atlas valide.
+  assert.deepEqual(understoryVariants({}), [0]);
+});
+
+test('la teinte d’un feuillage dérive par bosquet, et reste ancrée au lieu', () => {
+  const hue = [0.92, 1, 0.86];
+  const a = foliageTint(hue, 1200, -800, 1, 0.5);
+  const b = foliageTint(hue, 1200 + 3, -800 - 4, 1, 0.5);
+  assert.deepEqual(a, b, 'deux arbres du même bosquet portent le même vert de fond');
+
+  // Deux bosquets éloignés ne portent pas le même : c’est tout l’objet.
+  const greens = new Set();
+  for (let i = 0; i < 30; i++) {
+    greens.add(foliageTint(hue, i * CLUMP_TINT_M, 0, 1, 0.5).join(','));
+  }
+  assert.ok(greens.size > 20, `${greens.size} teintes de bosquet sur 30`);
+
+  // La dérive est chaude-froide : rouge et bleu partent en sens contraires,
+  // sinon on ne fait que monter et descendre la clarté.
+  for (let i = 0; i < 30; i++) {
+    const [r, , bl] = foliageTint([1, 1, 1], i * CLUMP_TINT_M, 500, 1, 0.5);
+    close(r + bl, 2, 1e-9, 'la dérive ne déplace pas la moyenne');
+  }
+
+  // Les canaux restent dans une plage utilisable.
+  const extreme = foliageTint([1.2, 1.2, 1.2], 400, 400, 1.12, 0.999);
+  assert.ok(extreme.every((v) => v >= 0 && v <= 1.25), 'canaux bornés');
+});
+
+test('le plafond d’une tuile éclaircit le semis au lieu de le rogner', () => {
+  const list = Array.from({ length: 1000 }, (_, i) => i);
+  assert.equal(thinPlacements(list, 2000), list, 'sous le plafond, on ne touche à rien');
+
+  const thinned = thinPlacements(list, 250);
+  assert.equal(thinned.length, 250, 'le plafond est tenu exactement');
+  // L’éclaircie est répartie : chaque quart du semis garde un quart de ce qui
+  // reste. C’est ce qui manquait quand on s’arrêtait de planter en route — le
+  // sud d’une tuile restait nu au milieu d’un massif.
+  for (let q = 0; q < 4; q++) {
+    const kept = thinned.filter((v) => v >= q * 250 && v < (q + 1) * 250).length;
+    assert.ok(Math.abs(kept - 62.5) <= 2, `quart ${q} : ${kept} points gardés`);
+  }
 });
 
 // --- Bâti ------------------------------------------------------------------
@@ -809,33 +918,182 @@ test('un lac qui entoure l’observateur n’est pas écarté', () => {
   assert.equal(boundsIntersect([], 0, 0, 900), false);
 });
 
-test('une section d’eau est horizontale, à l’altitude la plus basse', () => {
+test('point dans un polygone à trou', () => {
+  const square = [{ x: 0, z: 0 }, { x: 10, z: 0 }, { x: 10, z: 10 }, { x: 0, z: 10 }];
+  const hole = [{ x: 4, z: 4 }, { x: 6, z: 4 }, { x: 6, z: 6 }, { x: 4, z: 6 }];
+  assert.equal(pointInPolygon(5, 5, square, [hole]), false, 'dans le trou');
+  assert.equal(pointInPolygon(1, 1, square, [hole]), true, 'dans l’anneau, hors du trou');
+  assert.equal(pointInPolygon(20, 20, square, [hole]), false, 'hors de tout');
+});
+
+test('la grille intérieure reste dans le polygone et sous le plafond d’échantillons', () => {
+  const square = [{ x: 0, z: 0 }, { x: 100, z: 0 }, { x: 100, z: 100 }, { x: 0, z: 100 }];
+  const points = interiorSamples(square, [], 64);
+  assert.ok(points.length > 0, 'un grand polygone produit des échantillons');
+  assert.ok(points.length <= 64 * 1.5, 'le pas de grille respecte le plafond, à la maille près');
+  for (const p of points) assert.equal(pointInPolygon(p.x, p.z, square, []), true);
+
+  assert.deepEqual(interiorSamples([{ x: 0, z: 0 }, { x: 1, z: 0 }], [], 64), [], 'contour dégénéré');
+});
+
+test('le quantile bas écarte l’aberration isolée, dans les deux sens', () => {
+  // Une série constante : le quantile la rend telle quelle.
+  close(lowQuantile(new Array(100).fill(50), 0.05), 50, 1e-9, 'série constante');
+
+  // Un seul creux aberrant sur cent points — c'est le MNT au-dessus de l'eau.
+  // Le minimum tomberait à -30 et enterrerait la nappe ; le quantile tient.
+  const oneDip = new Array(100).fill(50);
+  oneDip[7] = -30;
+  close(lowQuantile(oneDip, 0.05), 50, 1e-9, 'un creux isolé ne compte pas');
+
+  // Symétriquement, une berge minoritaire ne doit pas remonter le niveau.
+  const mostlyLow = new Array(100).fill(10);
+  for (let i = 0; i < 20; i++) mostlyLow[i] = 90;
+  close(lowQuantile(mostlyLow, 0.05), 10, 1e-9, 'la berge minoritaire ne compte pas');
+
+  assert.equal(lowQuantile([], 0.05), Infinity, 'série vide');
+});
+
+test('l’altitude d’une nappe ignore les points sans donnée plutôt que de les compter pour zéro', () => {
+  // Le contour dit tous 100 m ; un pixel de MNT sans tuile chargée à
+  // l’intérieur ne doit pas faire chuter la nappe à zéro.
+  const square = [{ x: 0, z: 0 }, { x: 100, z: 0 }, { x: 100, z: 100 }, { x: 0, z: 100 }];
+  const sampleWithHole = (x, z) => (x > 40 && x < 60 && z > 40 && z < 60 ? NaN : 100);
+  close(waterSurfaceLevel(square, [], sampleWithHole), 100, 1e-9, 'la lacune du milieu est ignorée');
+
+  // Un creux **large** au milieu du lac — invisible depuis le seul contour —
+  // doit tirer le niveau vers le bas : c'est du relief, pas du bruit.
+  const sampleWithBasin = (x, z) => (x > 20 && x < 80 && z > 20 && z < 80 ? 90 : 100);
+  close(waterSurfaceLevel(square, [], sampleWithBasin), 90, 1e-9, 'la cuvette intérieure est vue');
+
+  // Un creux **ponctuel** au même endroit ne doit pas, lui, couler la nappe :
+  // c'est la différence entre l'ancien minimum et le quantile.
+  const sampleWithSpeck = (x, z) => (x > 49 && x < 51 && z > 49 && z < 51 ? -50 : 100);
+  close(waterSurfaceLevel(square, [], sampleWithSpeck), 100, 1e-9, 'le point aberrant est écarté');
+
+  // Aucune donnée nulle part : le niveau reste indéfini (Infinity), à charge
+  // de l’appelant d’écarter le polygone.
+  assert.equal(waterSurfaceLevel(square, [], () => NaN), Infinity);
+});
+
+test('un profil de cours d’eau ne remonte jamais vers l’aval', () => {
+  // Descente franche, mais bosselée : le bruit ne doit pas produire de contre-pente.
+  const noisy = [100, 103, 96, 98, 92, 95, 88];
+  const out = Array.from(monotoneDownstream(noisy));
+  for (let r = 1; r < out.length; r++) {
+    assert.ok(out[r] <= out[r - 1] + 1e-6, `pas de remontée en ${r}`);
+  }
+  assert.deepEqual(out, [100, 100, 96, 96, 92, 92, 88]);
+
+  // Le sens vient des altitudes, pas de l’ordre du tableau : le même cours
+  // numérisé à l’envers donne le même relief, lu dans l’autre sens.
+  const reversed = Array.from(monotoneDownstream(noisy.slice().reverse()));
+  assert.deepEqual(reversed, out.slice().reverse(), 'sens de numérisation indifférent');
+
+  // Un profil déjà descendant passe intact.
+  assert.deepEqual(Array.from(monotoneDownstream([50, 40, 30])), [50, 40, 30]);
+  assert.equal(monotoneDownstream([]).length, 0);
+});
+
+test('une section d’eau est horizontale, au niveau du lit, et suit la pente', () => {
   // Vallée en V : le lit descend vers l’est, les berges remontent en travers.
   const path = resamplePath([{ x: 0, z: 0 }, { x: 100, z: 0 }], 10);
   const sampleElevation = (x, z) => 200 - x * 0.02 + Math.abs(z) * 0.5;
 
-  const buffer = createRibbonBuffer();
-  assert.ok(
-    appendRibbon(buffer, {
-      path,
-      halfWidth: 5,
-      sampleElevation,
-      flatCrossSection: true,
-      level: false,
-      smoothRadius: 0,
-    })
-  );
+  const platform = waterwayProfile(path, 5, sampleElevation);
+  assert.ok(platform, 'un tracé couvert par le MNT produit un profil');
+  for (let r = 0; r < path.length; r++) {
+    // Le plus bas de la section, pas sa moyenne : sinon la nappe noierait les
+    // berges. Ici le plus bas est l'axe, les rives remontent de 2,50 m.
+    close(platform[r], 200 - path[r].x * 0.02, 1e-3, `section ${r} au niveau du lit`);
+  }
 
+  // Et la section est bien posée à plat en travers, une fois le ruban construit.
+  const buffer = createRibbonBuffer();
+  assert.ok(appendRibbon(buffer, { path, halfWidth: 5, sampleElevation, platform, smoothRadius: 0 }));
   const columns = 5;
   const rows = buffer.positions.length / 3 / columns;
   for (let r = 0; r < rows; r++) {
-    const heights = [];
-    for (let c = 0; c < columns; c++) heights.push(buffer.positions[(r * columns + c) * 3 + 1]);
-    for (const h of heights) close(h, heights[0], 1e-6, `section ${r} plate`);
-    // Le minimum de la section, pas sa moyenne : sinon la nappe noierait les
-    // berges. Tolérance à la hauteur du tampon d'altitudes, qui est en float32.
-    close(heights[0], 200 - path[r].x * 0.02, 1e-3, `section ${r} au niveau du lit`);
+    const first = buffer.positions[r * columns * 3 + 1];
+    for (let c = 1; c < columns; c++) {
+      close(buffer.positions[(r * columns + c) * 3 + 1], first, 1e-6, `section ${r} plate`);
+    }
   }
+});
+
+test('la cuvette d’eau creuse le lit, raccorde la rive et ne remonte jamais le terrain', () => {
+  const level = 100;
+  const bed = level - WATER_BED_M;
+
+  // Sous la nappe : le terrain **est** le lit.
+  close(cutWaterElevationAt(120, level, 0), bed, 1e-9, 'sous la nappe');
+
+  // Au-delà du raccord : intact, quoi qu'il arrive.
+  close(cutWaterElevationAt(120, level, WATER_CUT_BLEND_M), 120, 1e-9, 'hors du raccord');
+  close(cutWaterElevationAt(120, level, WATER_CUT_BLEND_M + 50), 120, 1e-9, 'bien au-delà');
+
+  // Entre les deux : monotone, et strictement encadré.
+  let previous = bed;
+  for (let d = 0; d <= WATER_CUT_BLEND_M; d += 0.5) {
+    const h = cutWaterElevationAt(120, level, d);
+    assert.ok(h >= previous - 1e-9, `le raccord ne redescend pas en ${d} m`);
+    assert.ok(h >= bed - 1e-9 && h <= 120 + 1e-9, `le raccord reste borné en ${d} m`);
+    previous = h;
+  }
+
+  // Jamais une bosse : un fond déjà plus bas que le lit reste tel quel. On
+  // garantit que l'eau se voit, on ne prétend pas corriger le relief.
+  close(cutWaterElevationAt(50, level, 0), 50, 1e-9, 'fond déjà creux');
+  close(cutWaterElevationAt(50, level, 3), 50, 1e-9, 'fond déjà creux, dans le raccord');
+});
+
+test('la cuvette sait où est l’eau, jusqu’où porte la rive, et à quelle hauteur', () => {
+  // Un carré de 200 m, avec un îlot au milieu — le trou doit rester sec.
+  const outer = [{ x: 0, z: 0 }, { x: 200, z: 0 }, { x: 200, z: 200 }, { x: 0, z: 200 }];
+  const hole = [{ x: 90, z: 90 }, { x: 110, z: 90 }, { x: 110, z: 110 }, { x: 90, z: 110 }];
+  const index = new WaterIndex([{ rings: [outer, hole], level: 42 }]);
+  assert.ok(index.ready, 'la cuvette est construite');
+
+  const inside = index.query(50, 50);
+  assert.ok(inside, 'un point du lac est couvert');
+  close(inside.level, 42, 1e-6, 'altitude de la nappe');
+  close(inside.distance, 0, 1e-9, 'sous la nappe, la rive est à zéro');
+
+  // L'îlot n'est jamais sous la nappe. Son centre est même hors de portée du
+  // raccord (12 m de rive pour 11 m de portée) : son terrain reste intact.
+  const islet = index.query(100, 100);
+  assert.ok(!islet || islet.distance > 0, 'l’îlot n’est pas sous l’eau');
+
+  // Juste dehors : dans le raccord, avec l'altitude de la nappe voisine.
+  const near = index.query(-4, 100);
+  assert.ok(near, 'un point de berge est encore couvert');
+  close(near.level, 42, 1e-6, 'la berge connaît la nappe dont elle est la rive');
+  assert.ok(near.distance > 0 && near.distance <= WATER_CUT_BLEND_M, 'dans le raccord');
+
+  // Au-delà du raccord : plus rien, le terrain est libre.
+  assert.equal(index.query(-100, 100), null, 'hors de portée du raccord');
+  assert.equal(new WaterIndex([]).ready, false, 'aucune nappe, aucune cuvette');
+});
+
+test('les traversées d’un anneau comptent un sommet une seule fois', () => {
+  const square = [{ x: 0, z: 0 }, { x: 10, z: 0 }, { x: 10, z: 10 }, { x: 0, z: 10 }];
+  assert.deepEqual(ringCrossings(square, 5), [0, 10], 'ligne franche');
+
+  // Une ligne passant exactement par deux sommets : sans la convention de
+  // demi-ouverture, la parité s'inverserait et la moitié du lac disparaîtrait.
+  const crossings = ringCrossings(square, 0);
+  assert.equal(crossings.length % 2, 0, 'parité préservée à hauteur d’un sommet');
+});
+
+test('un cours d’eau sans aucune donnée d’altitude n’est pas dessiné', () => {
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 100, z: 0 }], 10);
+  assert.equal(waterwayProfile(path, 5, () => NaN), null, 'tracé entièrement hors tuiles');
+
+  // Une lacune partielle, elle, est comblée en plateau plutôt que comptée
+  // pour zéro — un zéro se propagerait à tout l'aval par le minimum courant.
+  const partial = waterwayProfile(path, 5, (x) => (x > 40 ? NaN : 100 - x * 0.1));
+  assert.ok(partial, 'une lacune partielle ne fait pas disparaître le cours d’eau');
+  for (const h of partial) assert.ok(Number.isFinite(h) && h > 50, 'aucune altitude de zéro');
 });
 
 // --- Ciel -------------------------------------------------------------------
@@ -904,6 +1162,33 @@ test('les couches vectorielles décrivent la matière du sol', () => {
   assert.equal(groundClassFor('landcover', { class: 'unknown' }), null);
   assert.equal(groundClassFor('transportation', { class: 'motorway' }), null);
   assert.equal(groundClassFor('landcover', {}), null);
+});
+
+test('la carte de classes sait dire ce qu’elle ne couvre pas', () => {
+  // Le carré rasterisé est monté à la main : le constructeur veut un canevas,
+  // et ce qu’on teste ici n’est que du cadrage.
+  const frame = {};
+  const map = Object.assign(Object.create(GroundClassMap.prototype), {
+    _data: new Uint8ClampedArray(4),
+    _frame: frame,
+    origin: { x: 0, y: 0 },
+    size: CLASS_AREA_M,
+  });
+  const coverage = (a, b, c, d, f) => map.coverageOf(a, b, c, d, f);
+
+  close(coverage(100, 100, 1100, 1100, frame), 1, 1e-9, 'tuile entièrement dedans');
+  assert.equal(coverage(-3000, 0, -2000, 1000, frame), 0, 'tuile entièrement dehors');
+  // Débordement d’un côté : c’est le cas des tuiles de coin de la bulle, dont
+  // l’emprise sort régulièrement du carré. La moitié semée l’est à l’aveugle.
+  close(coverage(-500, 0, 500, 1000, frame), 0.5, 1e-9, 'tuile à cheval sur le bord');
+
+  // Une carte d’un autre repère ne dit rien d’utilisable : ses mètres ne sont
+  // pas ceux de la tuile qu’on interroge.
+  assert.equal(coverage(100, 100, 1100, 1100, {}), 0, 'repère différent');
+
+  // Et sans rasterisation relue, elle ne dit rien du tout.
+  map._data = null;
+  assert.equal(coverage(100, 100, 1100, 1100, frame), 0, 'carte pas encore peinte');
 });
 
 test('chaque matière a un canal distinct, et l’alpha porte la couverture', () => {
@@ -1812,6 +2097,9 @@ test('un buisson est fermé, posé au sol, et différent de son voisin', () => {
 
 // --- Fusion des chaussées ---------------------------------------------------
 
+/** Les seules chaînes : `mergeRoadLines` publie aussi les carrefours du graphe. */
+const mergedChains = (lines) => mergeRoadLines(lines).chains;
+
 /** Polyligne droite, de `from` à `to` en `steps` pas, sur l'axe des x. */
 function straight(from, to, steps = 4, z = 0) {
   const points = [];
@@ -1820,7 +2108,7 @@ function straight(from, to, steps = 4, z = 0) {
 }
 
 test('deux morceaux d’une même route bout à bout ne font qu’une chaîne', () => {
-  const merged = mergeRoadLines([
+  const merged = mergedChains([
     { profile: 'minor', halfWidth: 2.5, points: straight(0, 100) },
     { profile: 'minor', halfWidth: 2.5, points: straight(100, 200) },
   ]);
@@ -1834,7 +2122,7 @@ test('deux morceaux d’une même route bout à bout ne font qu’une chaîne', 
 test('le même morceau livré par deux tuiles ne se dessine qu’une fois', () => {
   // Sans dédoublonnage, deux rubans coplanaires se disputent le pixel dans
   // toute la bande de recouvrement des tuiles.
-  const merged = mergeRoadLines([
+  const merged = mergedChains([
     { profile: 'minor', halfWidth: 2.5, points: straight(0, 100) },
     { profile: 'minor', halfWidth: 2.5, points: straight(0, 100) },
   ]);
@@ -1847,7 +2135,7 @@ test('deux moitiés qui se chevauchent au bord d’une tuile sont recousues', ()
   // C'est le cas réel : le format laisse déborder chaque moitié de quelques
   // mètres au-delà de la frontière, donc les deux bouts se croisent au lieu de
   // se rejoindre — ils ne partagent aucun sommet.
-  const merged = mergeRoadLines([
+  const merged = mergedChains([
     { profile: 'major', halfWidth: 4.25, points: straight(0, 103) },
     { profile: 'major', halfWidth: 4.25, points: straight(97, 200) },
   ]);
@@ -1862,7 +2150,7 @@ test('deux moitiés qui se chevauchent au bord d’une tuile sont recousues', ()
 });
 
 test('à un carrefour en T, c’est la route qui va tout droit qui continue', () => {
-  const merged = mergeRoadLines([
+  const merged = mergedChains([
     { profile: 'minor', halfWidth: 2.5, points: straight(0, 100) },
     { profile: 'minor', halfWidth: 2.5, points: straight(100, 200) },
     // Branche perpendiculaire greffée au milieu.
@@ -1882,7 +2170,7 @@ test('à un carrefour en T, c’est la route qui va tout droit qui continue', ()
 });
 
 test('deux classes de route ne se fusionnent jamais', () => {
-  const merged = mergeRoadLines([
+  const merged = mergedChains([
     { profile: 'major', halfWidth: 4.25, points: straight(0, 100) },
     { profile: 'minor', halfWidth: 2.5, points: straight(100, 200) },
   ]);
@@ -1891,7 +2179,7 @@ test('deux classes de route ne se fusionnent jamais', () => {
 });
 
 test('un virage à angle droit n’est pas pris pour une continuation', () => {
-  const merged = mergeRoadLines([
+  const merged = mergedChains([
     { profile: 'minor', halfWidth: 2.5, points: straight(0, 100) },
     { profile: 'minor', halfWidth: 2.5, points: [{ x: 100, z: 0 }, { x: 100, z: 100 }] },
     { profile: 'minor', halfWidth: 2.5, points: [{ x: 100, z: 0 }, { x: 200, z: 0 }] },
@@ -1909,14 +2197,14 @@ test('une chaîne est orientée de la même façon quel que soit l’ordre des t
   const b = { profile: 'minor', halfWidth: 2.5, points: straight(100, 200) };
   // Sans orientation canonique, le côté de la haie ou de la ligne téléphonique
   // changerait de bord d'une reconstruction à l'autre.
-  const forward = mergeRoadLines([a, b])[0].points;
-  const backward = mergeRoadLines([b, a])[0].points;
+  const forward = mergedChains([a, b])[0].points;
+  const backward = mergedChains([b, a])[0].points;
   close(forward[0].x, backward[0].x, 1e-6, 'même départ');
   close(forward[forward.length - 1].x, backward[backward.length - 1].x, 1e-6, 'même arrivée');
 });
 
 test('deux sommets plus proches que la tolérance sont le même nœud', () => {
-  const merged = mergeRoadLines([
+  const merged = mergedChains([
     { profile: 'lane', halfWidth: 1.8, points: straight(0, 100) },
     // Décalé de moins que la tolérance : c'est la quantification du format,
     // pas une autre route.
@@ -1938,6 +2226,189 @@ test('la distance d’ancrage se compte depuis le dernier carrefour', () => {
   // changement de jeu de tuiles — ne change aucune distance après le carrefour.
   const truncated = anchorDistances(points.slice(2), anchors.slice(2));
   close(truncated.distance[4], distance[6], 1e-9, 'stable si la chaîne est tronquée');
+});
+
+// --- Carrefours relevés sur le graphe ----------------------------------------
+
+/** Une nationale d'est en ouest, et une petite route qui s'y greffe en `x`. */
+function teeLines(x = 100, minorHalfWidth = 2.5) {
+  return [
+    { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8) },
+    {
+      profile: 'minor',
+      halfWidth: minorHalfWidth,
+      points: [
+        { x, z: 0 },
+        { x, z: 60 },
+      ],
+    },
+  ];
+}
+
+test('un nœud de degré trois est publié comme carrefour', () => {
+  const { junctions } = mergeRoadLines(teeLines());
+
+  assert.equal(junctions.length, 1, 'un seul carrefour');
+  const [junction] = junctions;
+  close(junction.x, 100, 1e-6, 'au nœud');
+  close(junction.z, 0, 1e-6, 'au nœud');
+  assert.equal(junction.degree, 3, 'deux branches de nationale et une de desserte');
+  close(junction.halfWidth, 4.25, 1e-6, 'la dominante est la plus large');
+  assert.equal(junction.profile, 'major');
+  assert.equal(junction.branches.length, 3);
+});
+
+test('un changement de classe au milieu d’une route n’est pas un carrefour', () => {
+  // Deux profils bout à bout : le nœud est de degré deux. Y planter un feu
+  // reviendrait à en poser un partout où la donnée change d'attribut.
+  const { junctions } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: straight(0, 100) },
+    { profile: 'minor', halfWidth: 2.5, points: straight(100, 200) },
+  ]);
+
+  assert.equal(junctions.length, 0);
+});
+
+test('le relevé des carrefours ne dépend pas de l’ordre des tuiles', () => {
+  const lines = teeLines();
+  const forward = mergeRoadLines(lines).junctions;
+  const backward = mergeRoadLines([...lines].reverse()).junctions;
+
+  assert.deepEqual(
+    forward.map((j) => [j.x, j.z, j.degree, j.halfWidth]),
+    backward.map((j) => [j.x, j.z, j.degree, j.halfWidth])
+  );
+});
+
+// --- Rognage des voies secondaires au carrefour -------------------------------
+
+test('la voie secondaire s’arrête au bord de la chaussée dominante', () => {
+  const { chains, junctions } = mergeRoadLines(teeLines());
+  const trimmed = trimAtJunctions(chains, junctions);
+
+  const minor = trimmed.find((c) => c.profile === 'minor');
+  assert.ok(minor, 'la desserte survit au rognage');
+
+  // Elle partait du nœud ; elle doit maintenant partir de la rive, c'est-à-dire
+  // à la demi-largeur de la nationale, moins le recouvrement volontaire.
+  const start = minor.points.reduce((a, b) => (Math.abs(a.z) < Math.abs(b.z) ? a : b));
+  close(Math.abs(start.z), 4.25 - JUNCTION_OVERLAP_M, 1e-2, 'coupée sur la rive');
+  assert.ok(
+    minor.points.every((p) => Math.abs(p.z) >= 4.25 - JUNCTION_OVERLAP_M - 1e-2),
+    'plus rien de la desserte ne court sous la nationale'
+  );
+});
+
+test('la chaussée dominante n’est pas rognée par sa propre branche', () => {
+  const { chains, junctions } = mergeRoadLines(teeLines());
+  const trimmed = trimAtJunctions(chains, junctions);
+
+  const major = trimmed.filter((c) => c.profile === 'major');
+  assert.equal(major.length, 1, 'la nationale n’est pas coupée en deux');
+  close(major[0].points[0].x, 0, 1e-6, 'ni raccourcie au départ');
+  close(major[0].points[major[0].points.length - 1].x, 200, 1e-6, 'ni à l’arrivée');
+});
+
+test('deux routes de même largeur ne se rognent pas l’une l’autre', () => {
+  // Sans dominante, couper les deux ouvrirait un trou au milieu du croisement
+  // au lieu de recouvrir un chevauchement.
+  const lines = teeLines(100, 4.25);
+  lines[1].profile = 'major';
+  const { chains, junctions } = mergeRoadLines(lines);
+  const trimmed = trimAtJunctions(chains, junctions);
+
+  assert.deepEqual(
+    trimmed.map((c) => c.points.length),
+    chains.map((c) => c.points.length),
+    'rien n’est coupé'
+  );
+});
+
+test('une desserte qui traverse la nationale est coupée en deux, pas raccourcie', () => {
+  const { chains, junctions } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8) },
+    {
+      profile: 'minor',
+      halfWidth: 2.5,
+      points: [
+        { x: 100, z: -60 },
+        { x: 100, z: 0 },
+        { x: 100, z: 60 },
+      ],
+    },
+  ]);
+  const trimmed = trimAtJunctions(chains, junctions);
+
+  const minor = trimmed.filter((c) => c.profile === 'minor');
+  assert.equal(minor.length, 2, 'une amorce de chaque côté');
+  for (const run of minor) {
+    assert.ok(
+      run.points.every((p) => Math.abs(p.z) >= 4.25 - JUNCTION_OVERLAP_M - 1e-2),
+      'aucune des deux ne traverse la chaussée'
+    );
+  }
+});
+
+test('le sommet posé sur la rive est un point d’ancrage', () => {
+  // C'est de lui que se comptent lampadaires et bornes le long de la desserte,
+  // et il vient du nœud du carrefour : il ne bouge pas d'une reconstruction à
+  // l'autre, contrairement au bout de chaîne que le découpage en tuiles décide.
+  const { chains, junctions } = mergeRoadLines(teeLines());
+  const minor = trimAtJunctions(chains, junctions).find((c) => c.profile === 'minor');
+
+  const nearest = minor.points.reduce(
+    (best, p, i) => (Math.abs(p.z) < Math.abs(minor.points[best].z) ? i : best),
+    0
+  );
+  assert.equal(minor.anchors[nearest], true);
+});
+
+test('un moignon plus court que le seuil disparaît au lieu de dépasser', () => {
+  const { chains, junctions } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8) },
+    // Une amorce de six mètres : il n'en resterait que deux une fois la rive
+    // atteinte, moins que `JUNCTION_MIN_RUN_M`.
+    {
+      profile: 'minor',
+      halfWidth: 2.5,
+      points: [
+        { x: 100, z: 0 },
+        { x: 100, z: 6 },
+      ],
+    },
+  ]);
+  const trimmed = trimAtJunctions(chains, junctions);
+
+  assert.ok(JUNCTION_MIN_RUN_M > 6 - (4.25 - JUNCTION_OVERLAP_M), 'le cas testé est bien un moignon');
+  assert.equal(trimmed.filter((c) => c.profile === 'minor').length, 0);
+});
+
+test('sans carrefour, le rognage rend les chaînes telles quelles', () => {
+  const { chains } = mergeRoadLines([
+    { profile: 'minor', halfWidth: 2.5, points: straight(0, 200, 8) },
+  ]);
+
+  assert.equal(trimAtJunctions(chains, []), chains, 'pas de recopie inutile');
+  assert.equal(trimAtJunctions(chains, null), chains);
+});
+
+test('le rognage ne touche pas à deux chaussées qui se croisent sans nœud', () => {
+  // Un pont : les deux rubans se recouvrent au sol mais ne partagent aucun
+  // sommet. Rogner y ouvrirait une brèche sous l'ouvrage.
+  const { chains, junctions } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8) },
+    {
+      profile: 'minor',
+      halfWidth: 2.5,
+      points: [
+        { x: 103, z: -60 },
+        { x: 103, z: 60 },
+      ],
+    },
+  ]);
+
+  assert.equal(junctions.length, 0, 'aucun nœud partagé');
+  assert.equal(trimAtJunctions(chains, junctions), chains);
 });
 
 // --- Index des chaussées et recouture des carrefours -------------------------
@@ -2152,19 +2623,18 @@ test('le panneau posé dépend de ce qui se passe à cet endroit', () => {
   }
 });
 
-test('le bas-côté complet reste minoritaire', () => {
-  // Le motif fossé / talus / limite est très reconnaissable *parce qu'il n'est
-  // pas partout*. Appliqué à toutes les routes, il fait un décor de circuit.
-  let ditched = 0;
+test('la haie basse de bas-côté reste minoritaire', () => {
+  // Elle est reconnaissable *parce qu'elle n'est pas partout*. Appliquée à
+  // toutes les routes, elle fait un décor de circuit.
+  let verged = 0;
   for (let i = 0; i < 100; i++) {
-    if (roadsideVergeFor('minor', { variant: i / 100 }).ditch) ditched++;
+    if (roadsideVergeFor('minor', { variant: i / 100 }).verge) verged++;
   }
-  assert.ok(ditched > 20 && ditched < 60, `un tiers environ (${ditched} %)`);
-  // Une voie rapide, elle, en a des deux côtés.
-  assert.equal(roadsideVergeFor('express', { variant: 0.9 }).ditchSide, 0);
-  // Pas de fossé en agglomération, ni le long d'un sentier.
-  assert.equal(roadsideVergeFor('minor', { builtUp: true, variant: 0.1 }).ditch, false);
-  assert.equal(roadsideVergeFor('path', { variant: 0.1 }).ditch, false);
+  assert.ok(verged > 20 && verged < 45, `environ un tiers (${verged} %)`);
+  // Ni en agglomération, ni le long d'un sentier ou d'une voie rapide.
+  assert.equal(roadsideVergeFor('minor', { builtUp: true, variant: 0.1 }).verge, null);
+  assert.equal(roadsideVergeFor('path', { variant: 0.1 }).verge, null);
+  assert.equal(roadsideVergeFor('express', { variant: 0.1 }).verge, null);
 });
 
 test('un feu tricolore passe par les trois couleurs, et le vert dure', () => {
@@ -2664,4 +3134,393 @@ test("une parcelle s'étiquette au-dessus du sol, avec sa surface", () => {
   assert.match(labels[0].text, /0\.4 ha/);
   assert.equal(labels[0].y, 103, "l'étiquette flotte au-dessus du sol");
   assert.ok(labels[0].x > 0 && labels[0].z > 0, 'elle est posée sur le champ');
+});
+
+// --- Emprise routière : la frontière partagée du décor -----------------------
+//
+// Tout ce qui suit vérifie une seule chose sous des angles différents : un
+// élément de décor ne doit jamais se retrouver sur la chaussée, et une haie que
+// la route traverse doit être **coupée**, pas supprimée.
+
+/** Une route droite d'ouest en est, axe z = 0. */
+function corridorIndex(halfWidth = 2.5, z = 0) {
+  const points = [];
+  for (let x = -200; x <= 200; x += 10) points.push({ x, z });
+  return new RoadIndex([fakeSegment(points, halfWidth, 10)], {
+    margin: ROAD_CUT_M + ROAD_CUT_BLEND_M,
+  });
+}
+
+/** Une polyligne nord-sud à l'abscisse `x`, échantillonnée tous les `step`. */
+function crossing(x = 0, from = -30, to = 30, step = 6) {
+  const points = [];
+  for (let z = from; z <= to; z += step) points.push({ x, z });
+  return points;
+}
+
+test('l’emprise est la chaussée plus son accotement excavé, et rien d’autre', () => {
+  // Elle n'a pas de valeur propre : c'est le fond plat du déblai. Les deux
+  // doivent bouger ensemble, sinon on terrasse plus large qu'on n'interdit.
+  assert.equal(CORRIDOR_MARGIN_M, ROAD_CUT_M, 'même largeur que le déblai');
+
+  const index = corridorIndex(2.5);
+  assert.ok(inCorridor(index, 0, 0), 'au milieu de la chaussée');
+  assert.ok(inCorridor(index, 0, 3.6), 'sur l’accotement excavé');
+  assert.ok(!inCorridor(index, 0, 3.8), 'au-delà, le sol redevient naturel');
+  assert.ok(!inCorridor(index, 0, 40), 'en pleine prairie');
+});
+
+test('sans réseau routier, rien n’est dans l’emprise', () => {
+  // On ne devine pas une route absente : une bulle sans chaussée n'interdit
+  // rien, et surtout pas au hasard.
+  assert.equal(inCorridor(null, 0, 0), false);
+  const runs = clipOutsideCorridor(crossing(), null);
+  assert.equal(runs.length, 1, 'la polyligne ressort entière');
+  assert.equal(runs[0].length, crossing().length, 'et avec tous ses sommets');
+});
+
+test('une haie perpendiculaire est coupée au bord exact de la chaussée', () => {
+  const index = corridorIndex(2.5);
+  const runs = clipOutsideCorridor(crossing(), index);
+
+  assert.equal(runs.length, 2, 'deux tronçons, un de chaque côté');
+  const edge = 2.5 + CORRIDOR_MARGIN_M;
+  // La tolérance est celle de la dichotomie : quelques millimètres.
+  close(runs[0][runs[0].length - 1].z, -edge, 0.02, 'bout amont au bord');
+  close(runs[1][0].z, edge, 0.02, 'reprise au bord opposé');
+  assert.ok(
+    runs.every((run) => run.every((p) => !inCorridor(index, p.x, p.z))),
+    'aucun sommet ne reste sur la voirie'
+  );
+});
+
+test('une haie parallèle hors emprise n’est pas touchée', () => {
+  const index = corridorIndex(2.5);
+  const along = [];
+  for (let x = -50; x <= 50; x += 6) along.push({ x, z: 4.2 });
+
+  const runs = clipOutsideCorridor(along, index);
+  assert.equal(runs.length, 1, 'un seul tronçon');
+  assert.equal(runs[0].length, along.length, 'aucun sommet ajouté ni perdu');
+  // Le sondage sert à détecter les traversées, pas à densifier le tracé : une
+  // haie ne doit pas gagner un sommet tous les mètres au passage.
+  close(runs[0][0].x, along[0].x, 1e-9, 'premier sommet inchangé');
+});
+
+test('une haie parallèle posée dans l’emprise disparaît entièrement', () => {
+  const index = corridorIndex(2.5);
+  const inside = [];
+  for (let x = -50; x <= 50; x += 6) inside.push({ x, z: 1 });
+  assert.equal(clipOutsideCorridor(inside, index).length, 0);
+});
+
+test('une clôture enjambe un sentier étroit sans que la découpe le rate', () => {
+  // Le cas qui condamne un test « sommet par sommet » : le contour est
+  // ré-échantillonné tous les six mètres, le sentier fait 1,4 m de large, donc
+  // aucun sommet ne tombe dedans. Seul un sondage plus fin le voit.
+  const path = corridorIndex(0.7);
+  // Décalé exprès : les sommets tombent à ±3 m, hors de l'emprise de 1,9 m.
+  const fence = crossing(0, -33, 33, 6);
+  assert.ok(
+    fence.every((p) => !inCorridor(path, p.x, p.z)),
+    'préalable : aucun sommet ne tombe dans l’emprise'
+  );
+  assert.equal(clipOutsideCorridor(fence, path).length, 2, 'la découpe le voit quand même');
+  assert.ok(CORRIDOR_PROBE_M < 0.7 * 2, 'le pas de sondage tient dans la plus étroite emprise');
+});
+
+test('deux routes proches découpent la même haie en trois', () => {
+  const north = [];
+  const south = [];
+  for (let x = -200; x <= 200; x += 10) {
+    south.push({ x, z: 0 });
+    north.push({ x, z: 20 });
+  }
+  const index = new RoadIndex(
+    [fakeSegment(south, 2.5, 10), fakeSegment(north, 2.5, 10)],
+    { margin: ROAD_CUT_M + ROAD_CUT_BLEND_M }
+  );
+
+  const runs = clipOutsideCorridor(crossing(0, -20, 40, 6), index);
+  assert.equal(runs.length, 3, 'avant, entre, après');
+  assert.ok(
+    runs.every((run) => run.every((p) => !inCorridor(index, p.x, p.z))),
+    'aucun tronçon ne mord sur l’une ou l’autre'
+  );
+});
+
+test('chaque tronçon découpé repart d’une distance nulle', () => {
+  // `spacedAlongPath` et `appendRibbon` comptent depuis le premier sommet du
+  // tracé qu'on leur donne : un tronçon qui garderait les distances d'origine
+  // décalerait tous ses piquets.
+  const runs = clipOutsideCorridor(crossing(), corridorIndex(2.5));
+  for (const run of runs) {
+    close(run[0].distance, 0, 1e-9, 'origine à zéro');
+    for (let i = 1; i < run.length; i++) {
+      assert.ok(run[i].distance > run[i - 1].distance, 'distances croissantes');
+      close(
+        run[i].distance - run[i - 1].distance,
+        Math.hypot(run[i].x - run[i - 1].x, run[i].z - run[i - 1].z),
+        1e-6,
+        'distance cumulée cohérente'
+      );
+    }
+  }
+});
+
+test('un tronçon trop court pour valoir une haie est écarté', () => {
+  const index = corridorIndex(2.5);
+  // Deux bouts de treize mètres de part et d'autre de la route.
+  const short = crossing(0, -17, 17, 3.4);
+  assert.equal(clipOutsideCorridor(short, index).length, 2, 'sans plancher, les deux passent');
+  assert.equal(
+    clipOutsideCorridor(short, index, undefined, { minLength: 30 }).length,
+    0,
+    'avec un plancher de trente mètres, aucun'
+  );
+});
+
+test('le décalage latéral sonde l’emprise là où l’objet sera posé', () => {
+  // Une haie de bas-côté longe la route à quatre mètres de son axe : elle est
+  // hors emprise, alors que l'axe qui la porte est en plein dedans.
+  const index = corridorIndex(2.5);
+  const along = [];
+  for (let x = -50; x <= 50; x += 6) along.push({ x, z: 0 });
+
+  assert.equal(clipOutsideCorridor(along, index, undefined, { offset: 0 }).length, 0, 'sur l’axe');
+  assert.equal(clipOutsideCorridor(along, index, undefined, { offset: 4 }).length, 1, 'à côté');
+  assert.equal(clipOutsideCorridor(along, index, undefined, { offset: -4 }).length, 1, 'de l’autre côté');
+});
+
+test('une polyligne dégénérée ne produit aucun tronçon', () => {
+  const index = corridorIndex(2.5);
+  assert.deepEqual(clipOutsideCorridor([], index), []);
+  assert.deepEqual(clipOutsideCorridor([{ x: 0, z: 40 }], index), []);
+  assert.deepEqual(clipOutsideCorridor(null, index), []);
+});
+
+test('la découpe est déterministe : deux appels rendent exactement la même chose', () => {
+  // C'est l'invariant que tout le décor engendré repose dessus : la même donnée
+  // doit rendre le même paysage, sinon les haies clignotent tous les 250 m.
+  const index = corridorIndex(2.5);
+  const first = clipOutsideCorridor(crossing(), index);
+  const second = clipOutsideCorridor(crossing(), index);
+  assert.deepEqual(first, second);
+});
+
+test('le semis par points ne perd que ce qui tombe sur la voirie', () => {
+  const index = corridorIndex(2.5);
+  const bales = [
+    { x: -20, z: -10 },
+    { x: 0, z: 0 }, // en plein milieu de la chaussée
+    { x: 10, z: 2 }, // sur l'accotement excavé
+    { x: 30, z: 12 },
+  ];
+  const kept = filterOutsideCorridor(bales, index);
+  assert.equal(kept.length, 2, 'deux bottes retirées');
+  // L'ordre et les valeurs sont conservés : on retire, on ne recompose pas.
+  assert.deepEqual(kept, [bales[0], bales[3]]);
+  assert.deepEqual(filterOutsideCorridor(bales, null), bales, 'sans réseau, rien ne bouge');
+});
+
+test('un contour de parcelle qui longe la route est repoussé au bord, pas supprimé', () => {
+  // Le cas que la découpe rate structurellement : la limite ne sort jamais de
+  // l'emprise, donc `clipOutsideCorridor` n'a aucun point de reprise et efface
+  // toute la haie (voir le test « disparaît entièrement » plus haut). C'est
+  // précisément ce que `pushOutsideCorridor` ne fait pas.
+  const index = corridorIndex(2.5);
+  const along = [];
+  for (let x = -50; x <= 50; x += 6) along.push({ x, z: 3 }); // dans l'emprise (2.5 + 1.2 = 3.7)
+
+  const pushed = pushOutsideCorridor(along, index);
+  assert.equal(pushed.length, along.length, 'aucun point perdu');
+  assert.ok(
+    pushed.every((p) => !inCorridor(index, p.x, p.z)),
+    'tous les points ressortent hors emprise'
+  );
+  assert.ok(pushed.every((p) => p.z > 3), 'repoussés vers l’extérieur, pas vers la chaussée');
+  const edge = 2.5 + CORRIDOR_MARGIN_M + CORRIDOR_PUSH_CLEARANCE_M;
+  for (const p of pushed) close(p.z, edge, 1e-6, 'posés juste au bord, pas loin dans le champ');
+});
+
+test('un contour déjà hors emprise n’est pas touché par le rejet', () => {
+  const index = corridorIndex(2.5);
+  const outside = [];
+  for (let x = -50; x <= 50; x += 6) outside.push({ x, z: 6 });
+
+  const pushed = pushOutsideCorridor(outside, index);
+  for (let i = 0; i < outside.length; i++) {
+    close(pushed[i].x, outside[i].x, 1e-9, 'x inchangé');
+    close(pushed[i].z, outside[i].z, 1e-9, 'z inchangé');
+  }
+});
+
+test('un contour qui traverse vraiment la route reste continu, il ne se coupe plus', () => {
+  // Contrairement à `clipOutsideCorridor`, le rejet ne casse jamais la ligne :
+  // une limite qui coupe la chaussée en travers en ressort longée, pas coupée
+  // en deux tronçons.
+  const index = corridorIndex(2.5);
+  const pushed = pushOutsideCorridor(crossing(), index);
+  assert.equal(pushed.length, crossing().length, 'toujours un seul tronçon, aucun sommet perdu');
+  assert.ok(
+    pushed.every((p) => !inCorridor(index, p.x, p.z)),
+    'tous hors emprise'
+  );
+});
+
+test('un carrefour de deux routes ne laisse aucun point coincé entre les deux emprises', () => {
+  const south = [];
+  const east = [];
+  for (let x = -100; x <= 100; x += 10) south.push({ x, z: 0 });
+  for (let z = -100; z <= 100; z += 10) east.push({ x: 0, z });
+  const index = new RoadIndex([fakeSegment(south, 2.5, 10), fakeSegment(east, 2.5, 10)], {
+    margin: ROAD_CUT_M + ROAD_CUT_BLEND_M,
+  });
+
+  // Un cercle serré autour du carrefour : plusieurs points y sont à portée des
+  // deux chaussées à la fois.
+  const ring = [];
+  for (let a = 0; a < 360; a += 10) {
+    const r = 4;
+    ring.push({ x: Math.cos((a * Math.PI) / 180) * r, z: Math.sin((a * Math.PI) / 180) * r });
+  }
+  const pushed = pushOutsideCorridor(ring, index);
+  assert.ok(
+    pushed.every((p) => !inCorridor(index, p.x, p.z)),
+    'aucun point ne reste dans l’une ou l’autre emprise après plusieurs passes'
+  );
+});
+
+test('le rejet est déterministe et n’a pas besoin de réseau', () => {
+  const index = corridorIndex(2.5);
+  const along = [];
+  for (let x = -50; x <= 50; x += 6) along.push({ x, z: 1 });
+
+  assert.deepEqual(pushOutsideCorridor(along, index), pushOutsideCorridor(along, index));
+  assert.equal(pushOutsideCorridor(along, null), along, 'sans réseau, la référence ressort telle quelle');
+  assert.deepEqual(pushOutsideCorridor(null, index), []);
+});
+
+// --- Jardins : la clôture tient entre la maison et la rue, ou il n'y a pas de jardin
+
+/** Maison de six mètres sur quatre, alignée sur les axes. */
+const houseBox = (cx, cz) => ({ cx, cz, angle: 0, long: 6, short: 4 });
+
+/** Une route droite du nord au sud, axe x = 0 — elle coupe les côtés est-ouest. */
+function northSouthIndex(halfWidth = 2.5) {
+  const points = [];
+  for (let z = -200; z <= 200; z += 10) points.push({ x: 0, z });
+  return new RoadIndex([fakeSegment(points, halfWidth, 10)], {
+    margin: ROAD_CUT_M + ROAD_CUT_BLEND_M,
+  });
+}
+
+test('une clôture de jardin qui coupe la rue en son milieu est détectée', () => {
+  // Le piège du test « quatre angles » : une rue peut traverser un côté sans
+  // toucher aucun angle.
+  // La route file du nord au sud en plein milieu de la maison : elle traverse
+  // les côtés nord et sud de la clôture, loin de leurs angles.
+  const index = northSouthIndex(2.5);
+  const box = houseBox(0, 0);
+  const clear = (x, z) => !inCorridor(index, x, z);
+
+  const corners = gardenCorners(box, 6.5);
+  assert.ok(corners.every((c) => clear(c.x, c.z)), 'préalable : les angles sont au large');
+  assert.equal(gardenOutlineClear(box, 6.5, clear), false, 'les côtés, eux, mordent sur la route');
+});
+
+test('le jardin se resserre plutôt que de disparaître, puis renonce', () => {
+  const index = corridorIndex(2.5);
+  const clear = (x, z) => !inCorridor(index, x, z);
+
+  // Maison au large : le recul tiré passe tel quel.
+  const roomy = fittedGardenMargin(houseBox(0, -40), 6.5, clear);
+  close(roomy, 6.5, 1e-9, 'rien à resserrer');
+
+  // Maison proche de la route : le recul généreux ne passe pas, un plus serré si.
+  const tight = houseBox(0, -14);
+  assert.equal(gardenOutlineClear(tight, 6.5, clear), false, 'préalable : 6,5 m ne tient pas');
+  const fitted = fittedGardenMargin(tight, 6.5, clear);
+  assert.ok(fitted !== null && fitted < 6.5, 'un recul plus serré a été trouvé');
+  assert.ok(fitted >= GARDEN_MARGIN_M[0], 'jamais en deçà du minimum de la fourchette');
+  assert.ok(gardenOutlineClear(tight, fitted, clear), 'et il tient vraiment');
+
+  // Maison collée à la chaussée : même le minimum mord, donc pas de jardin.
+  assert.equal(fittedGardenMargin(houseBox(0, -5), 6.5, clear), null, 'aucun recul ne tient');
+});
+
+test('sans emprise à respecter, le jardin garde le recul tiré', () => {
+  close(fittedGardenMargin(houseBox(0, 0), 5.1, () => true), 5.1, 1e-9);
+});
+
+test('ce qui borde une route l’ignore, et s’arrête aux rues transversales', () => {
+  // Les décalages du bas-côté (fossé à 1,5 m de la rive, haie à 1,8 m) tombent
+  // aujourd'hui juste au-delà de l'accotement, donc hors de leur propre
+  // emprise. C'est une marge de trente centimètres, et personne ne l'a écrite
+  // nulle part : le prédicat dit la règle au lieu de compter dessus. On le
+  // vérifie donc sur un décalage volontairement plus serré — celui qu'aurait
+  // une bordure de trottoir.
+  const along = [];
+  for (let x = -100; x <= 100; x += 10) along.push({ x, z: 0 });
+  const own = fakeSegment(along, 2.5, 10);
+
+  const cross = [];
+  for (let z = -100; z <= 100; z += 10) cross.push({ x: 0, z });
+  const other = fakeSegment(cross, 2.5, 10);
+
+  const index = new RoadIndex([own, other], { margin: ROAD_CUT_M + ROAD_CUT_BLEND_M });
+  const ignoreOwn = (segment) => segment !== own;
+
+  const hugging = 2.5 + 0.6; // au ras de la rive : dans sa propre emprise
+
+  // Sans le prédicat, l'ouvrage s'efface lui-même sur toute sa longueur.
+  assert.equal(
+    clipOutsideCorridor(along, index, undefined, { offset: hugging }).length,
+    0,
+    'la route porteuse est comptée : il ne reste rien'
+  );
+
+  const runs = clipOutsideCorridor(along, index, undefined, {
+    offset: hugging,
+    accept: ignoreOwn,
+  });
+  assert.equal(runs.length, 2, 'il survit, coupé par la seule rue transversale');
+  assert.ok(
+    runs.every((run) => run.every((p) => !inCorridor(index, p.x, p.z, undefined, ignoreOwn))),
+    'et aucun tronçon ne traverse la rue'
+  );
+});
+
+test('un point posé au bord de sa propre route reste, un point sur une autre part', () => {
+  const along = [];
+  for (let x = -100; x <= 100; x += 10) along.push({ x, z: 0 });
+  const own = fakeSegment(along, 2.5, 10);
+  const index = new RoadIndex([own], { margin: ROAD_CUT_M + ROAD_CUT_BLEND_M });
+  const ignoreOwn = (segment) => segment !== own;
+
+  // Une glissière au ras de la rive : dans l'emprise, et c'est sa place.
+  assert.ok(inCorridor(index, 0, 3), 'sans prédicat, le point est sur la voirie');
+  assert.ok(!inCorridor(index, 0, 3, undefined, ignoreOwn), 'avec, sa route ne le gêne plus');
+});
+
+test('l’écart rapide de l’index ne se trompe que dans le sens sûr', () => {
+  // `mayCover` sert à écarter d'un coup un tronçon de haie loin de toute route.
+  // Il a le droit de dire « peut-être » là où rien ne couvre ; il n'a jamais le
+  // droit de dire « non » là où quelque chose couvre — sinon une haie
+  // traverserait la chaussée sans qu'on l'ait seulement sondée.
+  const index = corridorIndex(2.5);
+
+  assert.ok(index.mayCover(-5, -5, 5, 5), 'la boîte contient la route');
+  assert.ok(!index.mayCover(-5, 400, 5, 410), 'très loin, rien à sonder');
+
+  // L'invariant, vérifié point par point sur une grille qui coupe la route.
+  for (let x = -60; x <= 60; x += 3) {
+    for (let z = -30; z <= 30; z += 1.5) {
+      if (!inCorridor(index, x, z)) continue;
+      assert.ok(
+        index.mayCover(x, z, x, z),
+        `un point couvert doit toujours être annoncé (${x}, ${z})`
+      );
+    }
+  }
 });

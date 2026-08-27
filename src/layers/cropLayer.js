@@ -41,6 +41,7 @@ import {
 } from '../materials/proceduralTextures.js';
 import { createFoliageMaterial, createCrossedQuads, ATLAS_ATTRIBUTE } from '../materials/foliageMaterial.js';
 import { defaultTheme } from '../themes/default.js';
+import { inCorridor } from './roadCorridor.js';
 
 /**
  * Rayon semé autour de l'observateur, en mètres.
@@ -252,9 +253,10 @@ export class CropLayer {
 
         const x = tufts[at];
         const z = tufts[at + 1];
-        // Un mètre de marge : un champ borde la route, il ne la recouvre pas, et
-        // l'accotement reste nu.
-        if (index?.covers(x, z, 1)) continue;
+        // Un champ borde la route, il ne la recouvre pas. La marge n'est plus
+        // choisie ici : c'est l'emprise routière (`roadCorridor`), commune à
+        // l'herbe, aux haies, aux clôtures et aux jardins.
+        if (inCorridor(index, x, z)) continue;
 
         const height = look.height * (0.82 + tufts[at + 3] * 0.36) * fade;
         const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;

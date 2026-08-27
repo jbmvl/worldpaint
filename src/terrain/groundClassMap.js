@@ -164,6 +164,14 @@ export class GroundClassMap {
     this.origin = new THREE.Vector2(0, 0);
     this.size = CLASS_AREA_M;
     this.count = 0;
+    /**
+     * Numéro de rasterisation, incrémenté à chaque repeinte.
+     *
+     * Il sert à ceux qui **gardent** ce qu'ils ont lu ici : la végétation plante
+     * une tuile une fois pour toutes, et doit pouvoir savoir que la carte sur
+     * laquelle elle s'est appuyée n'est plus celle-ci.
+     */
+    this.revision = 0;
 
     /** Copie CPU, relue par la végétation. `null` tant que rien n'a été peint. */
     this._data = null;
@@ -255,6 +263,30 @@ export class GroundClassMap {
   /** Vrai dès qu'une rasterisation a été relue : avant, personne ne sait rien. */
   get ready() {
     return this._data !== null;
+  }
+
+  /**
+   * Part d'un rectangle, en mètres locaux, sur laquelle la carte a quelque chose
+   * à dire : de 0 (rien, hors carte, ou carte d'un autre repère) à 1 (tout).
+   *
+   * Ce n'est pas une question oiseuse. Le carré couvert fait 4 km de côté et
+   * suit l'observateur par sauts de 400 m ; la bulle, elle, monte des tuiles de
+   * plus d'un kilomètre en anneau. Une tuile de coin déborde donc régulièrement,
+   * et ce qu'on y sème est semé sur une carte muette. Sans cette mesure, une
+   * forêt dont l'emprise tombait juste après le bord au moment où sa tuile a été
+   * plantée ne poussait **jamais** — et une autre fois, au même endroit, si.
+   *
+   * Fonction pure vis-à-vis de la carte : elle ne lit que son cadrage.
+   */
+  coverageOf(minX, minZ, maxX, maxZ, frame = null) {
+    if (!this.ready) return 0;
+    if (frame && this._frame !== frame) return 0;
+    const area = (maxX - minX) * (maxZ - minZ);
+    if (!(area > 0)) return 0;
+    const overlapX = Math.min(maxX, this.origin.x + this.size) - Math.max(minX, this.origin.x);
+    const overlapZ = Math.min(maxZ, this.origin.y + this.size) - Math.max(minZ, this.origin.y);
+    if (overlapX <= 0 || overlapZ <= 0) return 0;
+    return Math.min(1, (overlapX * overlapZ) / area);
   }
 
   needsRebuild(x, z, frame) {
@@ -366,6 +398,7 @@ export class GroundClassMap {
     }
 
     this.count = painted;
+    this.revision++;
     this.origin.set(originX, originZ);
     this.texture.needsUpdate = true;
     this.cropTexture.needsUpdate = true;

@@ -95,6 +95,16 @@
     font-variant-numeric: tabular-nums;
   }
 
+  #minimap {
+    position: fixed; bottom: 12px; right: 12px; z-index: 10;
+    width: 160px; height: 160px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.22);
+    background: rgba(16, 19, 26, 0.82);
+    cursor: crosshair;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.35);
+  }
+
   #crosshair {
     position: fixed; top: 50%; left: 50%; z-index: 4; pointer-events: none;
     width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%;
@@ -123,6 +133,11 @@
     Afficher le nom des objets
   </label>
 
+  <label class="check">
+    <input type="checkbox" id="showCorridor" />
+    Afficher l’emprise routière
+  </label>
+
   <hr />
 
   <div class="help">
@@ -136,6 +151,7 @@
 </div>
 
 <div id="coords">—</div>
+<canvas id="minimap" width="320" height="320" title="Cliquer pour s’y déplacer"></canvas>
 
 <script type="importmap">
 {

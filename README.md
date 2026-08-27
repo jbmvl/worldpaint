@@ -72,8 +72,9 @@ src/
   terrain/      the ground mesh: the terrain bubble, its material, the
                 ground-class map, cutting roads into it
   layers/       everything built on top of the terrain — roads, water,
-                buildings, vegetation, crops, road furniture, and the
-                geometry helpers they share
+                buildings, vegetation, crops, road furniture, the road
+                corridor every other layer stops at, and the geometry
+                helpers they share
   materials/    procedural textures and shared materials
   environment/  sky, sun, shadows, fog — the optional lighting rig
   inspect/      debug helpers for labelling what's on screen
