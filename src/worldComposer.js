@@ -282,7 +282,11 @@ export class WorldComposer {
       //    question au même moment, et deux lectures pourraient diverger.
       const builtUp = collectBuiltUpAreas(this.vectorTiles, wanted, this.bubble.frame);
       const fabric = new FabricIndex(this.buildings.footprints);
-      this.streets.rebuild(this.roads.roadSegments, here, { builtUp, fabric });
+      this.streets.rebuild(this.roads.roadSegments, here, {
+        builtUp,
+        fabric,
+        roadIndex: this.roads.index,
+      });
 
       // 4 ter. Jardins — après le bâti, dont ils reçoivent les maisons, et après
       //    la voirie, dont ils reçoivent la bande revêtue : une clôture ne

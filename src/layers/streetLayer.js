@@ -37,6 +37,13 @@
  * marqué. Une bordure y serait un mur de soutènement, et le mobilier en pose
  * déjà un — voir `furnitureLayer._buildRoadsideRelief`.
  *
+ * Et une cinquième, tirée des **autres** chaussées : un trottoir se pose à deux
+ * ou trois mètres de la rive de sa rue, ce qui le met en plein sur la chaussée
+ * voisine dès que deux rues se longent ou se rejoignent en Y. Chaque ligne
+ * sonde donc l'emprise à l'endroit où le trottoir irait réellement, sa propre
+ * chaussée exceptée — la même règle, et le même mécanisme, que la haie de
+ * bas-côté du mobilier.
+ *
  * ## Le côté est décidé par le lieu, pas par le découpage
  *
  * Chaque côté est jugé **séparément**, et sur un disque de bâti centré à
@@ -67,6 +74,7 @@ import { roadLiftFor } from './roadNetwork.js';
 import { RoadIndex } from './roadGraph.js';
 import { contiguousRuns, crossSlope, randomAt, STEEP_CROSS_SLOPE } from './furniturePlacement.js';
 import { pointInAreas } from './settlement.js';
+import { inCorridor } from './roadCorridor.js';
 import { streetSurfaceAt } from './townStyle.js';
 import { defaultTheme } from '../themes/default.js';
 
@@ -208,6 +216,49 @@ export function pavementBand({ halfWidth, walkWidth, side }, streets = defaultTh
   return { offset: side * ((inner + outer) / 2), halfWidth: (outer - inner) / 2 };
 }
 
+/**
+ * Vrai si le trottoir de ce côté-ci empiéterait sur une **autre** chaussée.
+ *
+ * Un trottoir se pose à deux ou trois mètres de la rive de sa rue. Dès que deux
+ * rues se longent ou se rejoignent en Y, c'est en plein sur la chaussée voisine
+ * qu'il atterrit — et ça se voit d'autant plus qu'il est clair et qu'il porte
+ * une bordure. La question est donc posée là où le trottoir irait réellement,
+ * sa propre chaussée exceptée : celle-là, il la borde, c'est sa place.
+ *
+ * La bande sondée est la **plus large** que ce côté puisse porter. La largeur
+ * réellement tirée dépend de la portion, qui n'existe pas encore quand on juge
+ * ligne par ligne ; refuser un trottoir un peu trop souvent est le seul sens
+ * dans lequel se tromper ne se voit pas.
+ *
+ * C'est la chaussée stricte qui est interrogée, pas l'emprise : un trottoir
+ * dont la jupe mord l'accotement d'à côté est enterré, il ne se voit pas.
+ *
+ * Fonction pure.
+ *
+ * @param {Object} at Point de l'axe (`x`, `z`), sa perpendiculaire (`px`, `pz`),
+ *        la demi-largeur de la chaussée, le côté, et le tronçon qui la porte.
+ * @param {Object|null} roadIndex `RoadIndex` des chaussées.
+ * @param {Object} [streets] Section `streets` du thème.
+ * @returns {boolean}
+ */
+export function pavementOnOtherRoad(
+  { x, z, px, pz, halfWidth, side, segment = null },
+  roadIndex,
+  streets = defaultTheme.streets
+) {
+  if (!roadIndex) return false;
+  const band = pavementBand({ halfWidth, walkWidth: streets.walkWidth[1], side }, streets);
+  const others = segment ? (other) => other !== segment : null;
+  // Les deux rives de la bande et son milieu : une chaussée qui la coupe le
+  // fait par un bord ou par le travers, jamais autrement.
+  const inner = band.offset - side * band.halfWidth;
+  const outer = band.offset + side * band.halfWidth;
+  for (const offset of [inner, band.offset, outer]) {
+    if (inCorridor(roadIndex, x + px * offset, z + pz * offset, 0, others)) return true;
+  }
+  return false;
+}
+
 export class StreetLayer {
   /**
    * @param {Object} options
@@ -257,9 +308,15 @@ export class StreetLayer {
    * @param {Object} [context]
    * @param {Array} [context.builtUp] Emprises habitées (`collectBuiltUpAreas`).
    * @param {Object} [context.fabric] `FabricIndex` du bâti publié.
+   * @param {Object} [context.roadIndex] `RoadIndex` des chaussées : un trottoir
+   *        ne se pose pas sur la rue d'à côté.
    * @returns {boolean} vrai si de la voirie a été posée.
    */
-  rebuild(roadSegments = [], here = { x: 0, z: 0 }, { builtUp = [], fabric = null } = {}) {
+  rebuild(
+    roadSegments = [],
+    here = { x: 0, z: 0 },
+    { builtUp = [], fabric = null, roadIndex = null } = {}
+  ) {
     if (this.disposed || !this.bubble?.frame) return false;
 
     const buffer = createProfileBuffer();
@@ -271,7 +328,7 @@ export class StreetLayer {
     if (builtUp.length > 0 && fabric && fabric.count > 0) {
       for (const segment of roadSegments) {
         if (!STREET_PROFILES.has(segment.profile)) continue;
-        built += this._buildSegment(buffer, bands, segment, here, builtUp, fabric);
+        built += this._buildSegment(buffer, bands, segment, here, builtUp, fabric, roadIndex);
       }
     }
 
@@ -282,7 +339,7 @@ export class StreetLayer {
   }
 
   /** Les deux côtés d'un tronçon. @returns {number} portions posées. */
-  _buildSegment(buffer, bands, segment, here, builtUp, fabric) {
+  _buildSegment(buffer, bands, segment, here, builtUp, fabric, roadIndex = null) {
     const { path, platform, edges, probeSpan, halfWidth, profile } = segment;
     const rows = path.length;
     if (rows < STREET_MIN_RUN || !platform || !edges) return 0;
@@ -318,6 +375,15 @@ export class StreetLayer {
         if (!row.inReach || !row.builtUp) return false;
         const px = frames[row.r * 4 + 2];
         const pz = frames[row.r * 4 + 3];
+
+        // Pas de trottoir sur la rue d'à côté — voir `pavementOnOtherRoad`.
+        const onRoad = pavementOnOtherRoad(
+          { x: row.x, z: row.z, px, pz, halfWidth, side, segment },
+          roadIndex,
+          streets
+        );
+        if (onRoad) return false;
+
         // Disque de lecture du bâti, posé du côté examiné : c'est ce qui fait
         // qu'une rue bâtie d'un seul côté n'est bordée que de ce côté-là.
         const reach = side * (halfWidth + STREET_PROBE_M);

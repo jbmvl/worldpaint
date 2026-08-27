@@ -239,6 +239,7 @@ import {
   STREET_FABRIC_RADIUS_M,
   STREET_MAX_CROSS_SLOPE,
   STREET_MIN_RUN,
+  pavementOnOtherRoad,
 } from '../src/layers/streetLayer.js';
 import { streetSurfaceAt } from '../src/layers/townStyle.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
@@ -3639,6 +3640,44 @@ test('un carrefour de deux routes ne laisse aucun point coincé entre les deux e
   );
 });
 
+test('deux chaussées qui se rejoignent en Y ne laissent pas la haie sur le bitume', () => {
+  // Le cas que le refoulement seul ne sait pas traiter : les deux emprises se
+  // recouvrent, il n'existe aucune position libre entre elles, et le point
+  // ressort donc **tel quel** — c'est-à-dire sur la chaussée.
+  const straight = [];
+  for (let x = -200; x <= 200; x += 10) straight.push({ x, z: 0 });
+  const arm = [];
+  for (let x = -200; x <= 0; x += 10) arm.push({ x, z: -x * 0.06 });
+  const index = new RoadIndex([fakeSegment(straight, 3, 10), fakeSegment(arm, 3, 10)]);
+
+  // Un contour de parcelle qui court dans la gorge du Y, à mi-distance.
+  const ring = [];
+  for (let x = -200; x <= 0; x += 6) ring.push({ x, z: (-x * 0.06) / 2 });
+
+  const pushed = pushOutsideCorridor(ring, index);
+  assert.ok(
+    pushed.some((p) => inCorridor(index, p.x, p.z, 0)),
+    'le refoulement seul laisse des points sur la chaussée : c’est le défaut à couvrir'
+  );
+
+  // La découpe retire ces tronçons-là, et seulement eux : le reste du contour,
+  // qui court en terrain libre, doit survivre.
+  const runs = clipOutsideCorridor(pushed, index, 0, { minLength: 30 });
+  assert.ok(runs.length > 0, 'le contour n’est pas effacé en entier');
+  for (const run of runs) {
+    for (const p of run) {
+      const hit = index.query(p.x, p.z, 0);
+      // Les points de traversée tombent pile sur la rive : c'est leur
+      // définition, et un dixième de millimètre n'est pas un empiètement.
+      const depth = hit ? hit.segment.halfWidth - hit.distance : 0;
+      assert.ok(depth < 0.01, `plus rien sur la chaussée (${p.x.toFixed(1)}, ${p.z.toFixed(1)})`);
+    }
+  }
+
+  const kept = runs.reduce((m, run) => m + run[run.length - 1].distance, 0);
+  assert.ok(kept > 100, `le bocage garde ses tronçons libres (${kept.toFixed(0)} m)`);
+});
+
 test('le rejet est déterministe et n’a pas besoin de réseau', () => {
   const index = corridorIndex(2.5);
   const along = [];
@@ -4002,6 +4041,49 @@ test('une clôture de jardin ne traverse pas un trottoir', () => {
 
   // Une maison dont même le recul minimal empiète n’a pas de jardin devant.
   assert.equal(fittedGardenMargin(box, 6.5, () => false), null);
+});
+
+test('un trottoir ne se pose pas sur la chaussée d’à côté', () => {
+  // Deux rues parallèles à sept mètres d'axe en axe — le cas d'une venelle qui
+  // double une rue, ou des deux branches d'un Y juste avant qu'elles se
+  // touchent : entre les deux il y a la place d'un bas-côté, pas d'un trottoir.
+  const north = [];
+  const south = [];
+  for (let x = -100; x <= 100; x += 10) north.push({ x, z: 0 });
+  for (let x = -100; x <= 100; x += 10) south.push({ x, z: 7 });
+  const segments = [fakeSegment(north, 2.5, 10), fakeSegment(south, 2.5, 10)];
+  const index = new RoadIndex(segments);
+
+  // Perpendiculaire de la marche : la rue court d'ouest en est, donc +z est le
+  // côté -1 dans la convention d'`appendProfile` (px = tz, pz = -tx).
+  const at = { x: 0, z: 0, px: 0, pz: -1, halfWidth: 2.5, segment: segments[0] };
+
+  assert.equal(
+    pavementOnOtherRoad({ ...at, side: -1 }, index),
+    true,
+    'du côté de l’autre rue, le trottoir tomberait sur son bitume'
+  );
+  assert.equal(
+    pavementOnOtherRoad({ ...at, side: 1 }, index),
+    false,
+    'de l’autre côté, rien ne gêne'
+  );
+
+  // Sa propre chaussée ne compte pas : sans l'exception, aucun trottoir ne se
+  // poserait jamais, puisqu'il borde la rue par définition.
+  assert.equal(
+    pavementOnOtherRoad({ ...at, side: 1, segment: null }, new RoadIndex([segments[0]])),
+    true,
+    'sans exception, sa propre rive le refuse'
+  );
+  assert.equal(
+    pavementOnOtherRoad({ ...at, side: 1 }, new RoadIndex([segments[0]])),
+    false,
+    'avec elle, il la borde tranquillement'
+  );
+
+  // Sans réseau connu, la couche ne devine pas : elle ne refuse rien.
+  assert.equal(pavementOnOtherRoad({ ...at, side: -1 }, null), false);
 });
 
 test('une portion de trottoir trop courte est un artefact du découpage', () => {

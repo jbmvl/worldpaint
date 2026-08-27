@@ -1264,49 +1264,60 @@ export class FurnitureLayer {
       // toute la haie disparaîtrait, faute d'un point réellement extérieur d'où
       // repartir. On la repousse donc au ras de l'emprise plutôt qu'on ne
       // l'interrompt — c'est elle qui trace le bocage, pas la route.
-      const path = pushOutsideCorridor(sampled, this._roadIndex);
-      if (path.length < 3) continue;
+      const pushed = pushOutsideCorridor(sampled, this._roadIndex);
+      if (pushed.length < 3) continue;
 
-      // Un muret de pierre sèche est arasé de niveau et reste un balayage nu ;
-      // une haie est un alignement d'arbustes, et se bâtit comme tel.
-      if (kind === 'hedge' || kind === 'lowHedge') {
-        this._appendHedgerow(buffers[kind], kind, path, sampleElevation, { here });
+      // Le refoulement ne peut pas tout : là où deux chaussées se longent ou
+      // se rejoignent en Y, les emprises se recouvrent et **aucune** position
+      // libre n'existe. `pushOutsideCorridor` rend alors le point tel quel,
+      // c'est-à-dire sur le bitume. Ce qui y reste est donc coupé — sur la
+      // chaussée stricte, pas sur l'emprise : le refoulement s'occupe déjà de
+      // l'accotement, et couper à l'emprise hacherait le bocage à chaque
+      // courbe, faute des quinze centimètres de garde que le refoulement laisse.
+      for (const path of clipOutsideCorridor(pushed, this._roadIndex, 0, {
+        minLength: BOUNDARY_MIN_LENGTH_M,
+      })) {
+        // Un muret de pierre sèche est arasé de niveau et reste un balayage nu ;
+        // une haie est un alignement d'arbustes, et se bâtit comme tel.
+        if (kind === 'hedge' || kind === 'lowHedge') {
+          this._appendHedgerow(buffers[kind], kind, path, sampleElevation, { here });
+          placed++;
+          continue;
+        }
+
+        if (kind === 'dryStoneWall') {
+          appendProfile(buffers[kind], {
+            path,
+            profile: this.specs.profiles[kind],
+            sampleElevation,
+            lift: -FURNITURE_SINK_M,
+            closed: true,
+          });
+          placed++;
+          continue;
+        }
+
+        // Clôtures : des piquets instanciés, et — pour le barbelé — trois brins
+        // tendus. Un grillage plein serait un mur ; ici on doit voir au travers.
+        const wood = kind === 'woodFence';
+        for (const post of spacedAlongPath(path, wood ? 2.6 : 3.4, { margin: 0.5 })) {
+          this._place(placements, wood ? 'fencePostWood' : 'fencePostConcrete', {
+            x: post.x,
+            z: post.z,
+            yaw: Math.atan2(post.tx, post.tz),
+          });
+        }
+        for (const height of wood ? [0.5, 0.95] : BARBED_WIRE_HEIGHTS) {
+          appendProfile(buffers.wire, {
+            path,
+            profile: this.specs.profiles.wire,
+            sampleElevation,
+            lift: height,
+            closed: true,
+          });
+        }
         placed++;
-        continue;
       }
-
-      if (kind === 'dryStoneWall') {
-        appendProfile(buffers[kind], {
-          path,
-          profile: this.specs.profiles[kind],
-          sampleElevation,
-          lift: -FURNITURE_SINK_M,
-          closed: true,
-        });
-        placed++;
-        continue;
-      }
-
-      // Clôtures : des piquets instanciés, et — pour le barbelé — trois brins
-      // tendus. Un grillage plein serait un mur ; ici on doit voir au travers.
-      const wood = kind === 'woodFence';
-      for (const post of spacedAlongPath(path, wood ? 2.6 : 3.4, { margin: 0.5 })) {
-        this._place(placements, wood ? 'fencePostWood' : 'fencePostConcrete', {
-          x: post.x,
-          z: post.z,
-          yaw: Math.atan2(post.tx, post.tz),
-        });
-      }
-      for (const height of wood ? [0.5, 0.95] : BARBED_WIRE_HEIGHTS) {
-        appendProfile(buffers.wire, {
-          path,
-          profile: this.specs.profiles.wire,
-          sampleElevation,
-          lift: height,
-          closed: true,
-        });
-      }
-      placed++;
     }
 
     return placed;
