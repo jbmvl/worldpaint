@@ -33,6 +33,8 @@ import { windowGrid } from '../src/layers/buildingLayer.js';
 import { forestTypeAt, variantsFor } from '../src/layers/vegetationLayer.js';
 import { roadStyleFor } from '../src/layers/roadNetwork.js';
 import { furnitureSpecsFor, FURNITURE_BUILDERS } from '../src/layers/furnitureKit.js';
+import { hedgeStyleFor, hedgeClumps } from '../src/layers/hedgeGeometry.js';
+import { resamplePath } from '../src/layers/ribbonGeometry.js';
 import { DEFAULT_SKY_PALETTE } from '../src/environment/sceneEnvironment.js';
 
 /** Un thème contraire au défaut sur chaque tranche qu'on sait lire. */
@@ -53,6 +55,10 @@ const OTHER = resolveTheme({
   },
   furniture: {
     colors: { ...defaultTheme.furniture.colors, stone: [1, 0, 0], stoneDark: [0, 1, 0], white: [0, 0, 1] },
+    hedges: {
+      ...defaultTheme.furniture.hedges,
+      hedge: { ...defaultTheme.furniture.hedges.hedge, heightM: [6, 6], spacingM: 8, gapChance: 0 },
+    },
   },
   sky: { fog: '#000000', nightZenith: '#000000', nightHorizon: '#000000' },
 });
@@ -319,4 +325,26 @@ test('les feux tricolores éteints sortent du nuancier', () => {
   assert.equal(a.length, 3);
   a.forEach((dark, i) => assert.deepEqual(dark, b[i], 'le nuancier de test ne change pas ces trois-là'));
   a.forEach((dark) => assert.ok(dark.every((c) => c >= 0 && c < 0.2), 'un feu au repos reste sombre'));
+});
+
+test('la haie prend ses arbustes du thème, et son budget du moteur', () => {
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 80, z: 0 }], 3);
+  const here = { x: 0, z: 0 };
+  const [a, b] = interleaved(
+    () => hedgeClumps(path, { style: hedgeStyleFor('hedge', DEFAULT.furniture.hedges), here }).length,
+    () => hedgeClumps(path, { style: hedgeStyleFor('hedge', OTHER.furniture.hedges), here }).length
+  );
+  assert.ok(a > b, 'un écartement plus large donne moins d’arbustes');
+  const length = path[path.length - 1].distance;
+  assert.equal(b, Math.floor(length / 8) + 1, 'l’écartement du thème est celui qui s’applique');
+
+  // La portée de détail est un budget de moteur : elle ne bouge pas d’un thème
+  // à l’autre, quand bien même le reste des cotes change du tout au tout.
+  assert.equal(
+    hedgeStyleFor('hedge', OTHER.furniture.hedges).detailRadiusM,
+    hedgeStyleFor('hedge', DEFAULT.furniture.hedges).detailRadiusM,
+    'le thème ne décide pas jusqu’où on détaille'
+  );
+  const [tall] = hedgeClumps(path, { style: hedgeStyleFor('hedge', OTHER.furniture.hedges), here });
+  assert.equal(tall.height, 6, 'l’arbuste fait la taille que le thème lui donne');
 });

@@ -502,6 +502,64 @@ export const SKY_PALETTE = {
 };
 
 /**
+ * Ce qui fait la silhouette d'une haie, par famille.
+ *
+ * Une haie n'est pas une section balayée : c'est un **alignement d'arbustes**
+ * qui, mis bout à bout, ferme une parcelle. Ces cotes décrivent l'arbuste et
+ * son rang — sa taille, son écartement, sa part d'irrégularité. La géométrie
+ * les exécute (`hedgeGeometry`) ; jusqu'où on la détaille est un budget de
+ * moteur et vit là-bas.
+ *
+ * Régler `spacingM` plus serré que `alongM` n'est pas une erreur : les
+ * arbustes **doivent** se chevaucher, sans quoi la haie devient une rangée de
+ * plots et ne clôt plus rien.
+ */
+export const HEDGE_SHAPES = {
+  /** Haie de bocage : deux mètres, et un baliveau de loin en loin. */
+  hedge: {
+    /** Hauteur résiduelle du balayage sous les arbustes. */
+    coreScale: 0.58,
+    /** Largeur résiduelle du balayage sous les arbustes. */
+    coreWidth: 0.8,
+    /** Écartement nominal des arbustes, en mètres. */
+    spacingM: 2.4,
+    /** Débattement latéral d'un arbuste autour de l'axe, en mètres. */
+    lateralM: 0.34,
+    /** Hauteur d'un arbuste, en mètres. */
+    heightM: [1.35, 2.45],
+    /** Demi-longueur le long du tracé, en mètres. */
+    alongM: [1.5, 2.2],
+    /** Demi-largeur en travers, en mètres. */
+    acrossM: [0.62, 1],
+    /** Facettes d'un arbuste. Six suffisent : ce sont les rayons qui varient. */
+    sides: 6,
+    /** Part d'arbustes sautés — la haie s'éclaircit, elle ne s'ouvre pas. */
+    gapChance: 0.08,
+    /** Part d'arbustes échappés, plus hauts que la taille. */
+    standardChance: 0.07,
+    standardScale: 1.45,
+    /** Sel des tirages : deux familles ne doivent pas tirer la même chose. */
+    salt: 601,
+  },
+
+  /** Haie basse de ronces et de fougères : le bord de fossé et de chemin. */
+  lowHedge: {
+    coreScale: 0.62,
+    coreWidth: 0.82,
+    spacingM: 1.5,
+    lateralM: 0.26,
+    heightM: [0.5, 0.95],
+    alongM: [0.95, 1.4],
+    acrossM: [0.45, 0.72],
+    sides: 5,
+    gapChance: 0.12,
+    standardChance: 0.05,
+    standardScale: 1.4,
+    salt: 617,
+  },
+};
+
+/**
  * Le thème, groupé. Les constantes ci-dessus sont le câblage interne ; cet
  * objet est la vue qu'on donne à qui veut changer le décor. Les deux désignent
  * exactement les mêmes valeurs — il n'y a pas de copie.
@@ -529,7 +587,7 @@ export const defaultTheme = Object.freeze({
   },
   roads: { profiles: ROAD_PROFILES, surfaces: ROAD_SURFACES, shoulderColor: ROAD_SHOULDER_COLOR },
   water: { waterways: WATERWAY_CLASSES },
-  furniture: { colors: FURNITURE_COLORS },
+  furniture: { colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES },
   life: LIFE_COLORS,
   sky: SKY_PALETTE,
 });

@@ -161,6 +161,13 @@ import {
 } from '../src/layers/gardenLayer.js';
 import { orientedBox, roofTriangles, ringArea } from '../src/layers/roofGeometry.js';
 import { trafficPhaseAt, TRAFFIC_CYCLE_S, SIGN_ITEMS } from '../src/layers/furnitureLayer.js';
+import {
+  HEDGE_STYLES,
+  hedgeNearness,
+  hedgeModulation,
+  hedgeClumps,
+  appendHedgeClump,
+} from '../src/layers/hedgeGeometry.js';
 import { TREE_ATLAS_OFFSETS, GRASS_VARIANTS } from '../src/materials/proceduralTextures.js';
 import { snapToShadowTexels, sunDirection, SHADOW_RADIUS_M } from '../src/environment/shadowFrame.js';
 import { waterwayStyleFor, isDrawableWater, waterPolygons, boundsIntersect } from '../src/layers/waterLayer.js';
@@ -1140,6 +1147,148 @@ test('une section ouverte ne referme rien', () => {
   ];
   appendProfile(buffer, { path, profile, sampleElevation: () => 0 });
   assert.equal(buffer.indices.length, (path.length - 1) * 1 * 6, 'une seule bande, aucun bouchon');
+});
+
+test('la section se dilate en travers sans quitter son axe', () => {
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 20, z: 0 }], 10);
+  const profile = [
+    { across: -1, up: 0, color: [0, 0, 0] },
+    { across: 0, up: 2, color: [1, 1, 1] },
+    { across: 1, up: 0, color: [0, 0, 0] },
+  ];
+  const buffer = createProfileBuffer();
+  const wide = new Float32Array(path.length).fill(2);
+  appendProfile(buffer, { path, profile, sampleElevation: () => 0, scaleAcross: wide });
+
+  // Les deux flancs s’écartent du double, la crête — `across` nul — ne bouge
+  // pas d’un pouce : la section se dilate, elle ne glisse pas.
+  close(buffer.positions[2], 2, 1e-6, 'flanc droit doublé');
+  close(buffer.positions[3 * 2 + 2], -2, 1e-6, 'flanc gauche doublé');
+  close(buffer.positions[3 * 1 + 2], 0, 1e-6, 'crête restée sur l’axe');
+  close(buffer.positions[3 * 1 + 1], 2, 1e-6, 'hauteur inchangée');
+});
+
+// --- Haies ------------------------------------------------------------------
+
+test('le champ proche d’une haie se fond au lieu de basculer', () => {
+  const style = HEDGE_STYLES.hedge;
+  const here = { x: 0, z: 0 };
+  const outer = style.detailRadiusM;
+  const inner = outer - style.fadeM;
+
+  assert.equal(hedgeNearness(0, 0, here, style), 1, 'sous le nez, tout est détaillé');
+  assert.equal(hedgeNearness(inner - 1, 0, here, style), 1, 'dedans, encore plein détail');
+  assert.equal(hedgeNearness(outer + 1, 0, here, style), 0, 'au-delà, plus rien');
+  const middle = hedgeNearness((inner + outer) / 2, 0, here, style);
+  assert.ok(middle > 0.4 && middle < 0.6, 'la bande de transition est linéaire');
+
+  // Sans observateur, la haie est traitée comme lointaine : c’est le repli qui
+  // garantit qu’une haie hors contexte reste une haie, et non un tronçon nu.
+  assert.equal(hedgeNearness(0, 0, null, style), 0, 'pas d’observateur, pas de détail');
+});
+
+test('une haie respire en hauteur et en largeur, et se baisse sous ses arbustes', () => {
+  const style = HEDGE_STYLES.hedge;
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 300, z: 0 }], 3);
+
+  const far = hedgeModulation(path, { style });
+  const upSpread = Math.max(...far.up) - Math.min(...far.up);
+  const acrossSpread = Math.max(...far.across) - Math.min(...far.across);
+  assert.ok(upSpread > 0.25, 'la crête ondule assez pour ne pas lire comme un tube');
+  assert.ok(acrossSpread > 0.15, 'les flancs ne sont pas parallèles');
+
+  // Le même tracé, vu du bout : la masse balayée s’efface là où les arbustes
+  // prennent le relais, et nulle part ailleurs.
+  const near = hedgeModulation(path, { style, here: { x: 0, z: 0 } });
+  assert.ok(near.up[0] < far.up[0] * 0.7, 'le balayage se baisse au pied de l’observateur');
+  close(near.up[path.length - 1], far.up[path.length - 1], 1e-6, 'au loin, rien n’a changé');
+
+  // Ancré au sol : la même haie repousse identique d’une reconstruction à
+  // l’autre, comme tout le reste du décor.
+  const again = hedgeModulation(path, { style });
+  assert.deepEqual([...again.up], [...far.up], 'le relief ne dépend que du lieu');
+});
+
+test('les arbustes d’une haie sont irréguliers mais continus', () => {
+  const style = HEDGE_STYLES.hedge;
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 120, z: 0 }], 3);
+  const clumps = hedgeClumps(path, { style, here: { x: 0, z: 0 } });
+
+  // Assez d’arbustes pour fermer la haie — quelques-uns sont sautés, la haie
+  // s’éclaircit là, elle ne s’ouvre pas.
+  const nominal = 120 / style.spacingM;
+  assert.ok(clumps.length > nominal * 0.75, 'la haie reste continue');
+  assert.ok(clumps.length <= nominal, 'quelques arbustes manquent à l’appel');
+
+  const heights = clumps.map((c) => c.height);
+  const widths = clumps.map((c) => c.across);
+  assert.ok(Math.max(...heights) - Math.min(...heights) > 0.6, 'les hauteurs sont inégales');
+  assert.ok(Math.max(...widths) - Math.min(...widths) > 0.2, 'les largeurs aussi');
+
+  // Aucun ne tombe sur le pas nominal, et aucun ne s’éloigne de l’axe plus que
+  // le débattement permis : c’est ce qui distingue une haie d’une plantation.
+  for (const clump of clumps) {
+    assert.ok(Math.abs(clump.z) <= style.lateralM + 1e-6, 'l’arbuste reste sur la ligne');
+  }
+  const onGrid = clumps.filter((c) => Math.abs(c.x % style.spacingM) < 1e-6);
+  assert.equal(onGrid.length, 0, 'aucun arbuste sur le pas nominal');
+
+  // Sans observateur, aucun arbuste : le balayage seul, comme au loin.
+  assert.equal(hedgeClumps(path, { style }).length, 0, 'pas d’observateur, pas d’arbuste');
+  // Le plafond est un plafond.
+  assert.equal(hedgeClumps(path, { style, here: { x: 0, z: 0 }, limit: 5 }).length, 5, 'plafond tenu');
+});
+
+test('les arbustes ne glissent pas quand le tronçon est redécoupé', () => {
+  const style = HEDGE_STYLES.hedge;
+  const here = { x: 60, z: 0 };
+  const whole = resamplePath([{ x: 0, z: 0 }, { x: 120, z: 0 }], 3);
+  // Le même tracé, repris quarante mètres plus loin : c’est ce que fait une
+  // reconstruction quand la limite d’agglomération a bougé.
+  const tail = resamplePath([{ x: 40, z: 0 }, { x: 120, z: 0 }], 3);
+
+  const fromWhole = hedgeClumps(whole, { style, here });
+  const fromTail = hedgeClumps(tail, { style, here, startDistance: 40 });
+
+  // Les deux bouts sont hors comparaison : le ré-échantillonnage tronque le
+  // reste d’un pas, donc le tout dernier arbuste peut manquer d’un côté.
+  const common = fromWhole.filter((c) => c.x >= 41 && c.x <= 115);
+  assert.ok(common.length > 10, 'la portion commune porte de quoi comparer');
+  for (const clump of common) {
+    const twin = fromTail.find((c) => Math.abs(c.x - clump.x) < 1e-6);
+    assert.ok(twin, `l’arbuste de ${clump.x.toFixed(2)} m est resté à sa place`);
+    close(twin.height, clump.height, 1e-6, 'et il a gardé sa taille');
+  }
+});
+
+test('un arbuste de haie est un volume fermé, plus long que large', () => {
+  const style = HEDGE_STYLES.hedge;
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 60, z: 0 }], 3);
+  const [clump] = hedgeClumps(path, { style, here: { x: 0, z: 0 } });
+  const buffer = createProfileBuffer();
+
+  assert.ok(appendHedgeClump(buffer, clump, { ground: 100 }));
+  const vertices = buffer.positions.length / 3;
+  assert.equal(vertices, clump.sides * 3 + 1, 'trois couronnes et une pointe');
+  assert.equal(buffer.colors.length, buffer.positions.length, 'une couleur par sommet');
+  assert.equal(buffer.indices.length / 3, clump.sides * 5, 'deux bandes et un éventail');
+  assert.ok(Math.max(...buffer.indices) < vertices, 'aucun indice ne sort du volume');
+
+  let low = Infinity;
+  let high = -Infinity;
+  let spanAlong = 0;
+  let spanAcross = 0;
+  for (let i = 0; i < vertices; i++) {
+    low = Math.min(low, buffer.positions[i * 3 + 1]);
+    high = Math.max(high, buffer.positions[i * 3 + 1]);
+    spanAlong = Math.max(spanAlong, Math.abs(buffer.positions[i * 3] - clump.x));
+    spanAcross = Math.max(spanAcross, Math.abs(buffer.positions[i * 3 + 2] - clump.z));
+  }
+  assert.ok(low >= 100 && low < 100 + clump.height * 0.05, 'le pied est au ras du sol');
+  close(high, 100 + clump.height, 1e-6, 'la pointe fait la hauteur annoncée');
+  // La haie court vers +x : l’arbuste est étiré le long du tracé et mince en
+  // travers, ce qui est la moitié de ce qui la fait lire comme une haie.
+  assert.ok(spanAlong > spanAcross, 'plus long le long du tracé qu’en travers');
 });
 
 test('les altitudes imposées priment sur le terrain', () => {
