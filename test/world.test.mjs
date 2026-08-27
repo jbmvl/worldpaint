@@ -160,7 +160,14 @@ import {
   PICKET_SPACING_M,
 } from '../src/layers/gardenLayer.js';
 import { orientedBox, roofTriangles, ringArea } from '../src/layers/roofGeometry.js';
-import { trafficPhaseAt, TRAFFIC_CYCLE_S, SIGN_ITEMS } from '../src/layers/furnitureLayer.js';
+import {
+  trafficPhaseAt,
+  TRAFFIC_CYCLE_S,
+  SIGN_ITEMS,
+  FurnitureLayer,
+  LINEAR_KINDS,
+  POINT_ITEMS,
+} from '../src/layers/furnitureLayer.js';
 import {
   HEDGE_STYLES,
   hedgeNearness,
@@ -191,6 +198,7 @@ import {
   TREE_VARIANTS,
   WINDOW_LIT_SHARE,
   WINDOW_WIDTH_M,
+  defaultTheme,
 } from '../src/themes/default.js';
 
 const close = (actual, expected, tolerance, label = '') =>
@@ -1169,6 +1177,69 @@ test('la section se dilate en travers sans quitter son axe', () => {
 });
 
 // --- Haies ------------------------------------------------------------------
+
+/**
+ * Un bord de route complet, sans three.js ni tuiles : une chaussée droite, un
+ * terrain plat, et les seules dépendances que la chaîne de bord de route lit
+ * réellement. Ce n’est pas un test de rendu — c’est le seul moyen de faire
+ * *exécuter* `_buildRoadsideContext`, dont une variable libre passerait
+ * autrement toutes les vérifications jusqu’à l’écran.
+ */
+function roadsideHarness({ profile = 'minor', here = { x: 200, z: 0 } } = {}) {
+  const layer = Object.create(FurnitureLayer.prototype);
+  layer.theme = defaultTheme;
+  layer.specs = furnitureSpecsFor(defaultTheme.furniture.colors);
+  layer.counts = { points: 0, boundaries: 0, landmarks: 0, rocks: 0, rows: 0, hedgeClumps: 0 };
+  layer.bubble = { surfaceElevationAtLocal: () => 100, verticalScale: 1 };
+  layer.groundClass = { woodAt: () => 0, cropAt: () => null };
+  layer._signals = [];
+  layer._lampHeads = [];
+
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 400, z: 0 }], 5);
+  const platform = new Float32Array(path.length).fill(100);
+  const edges = new Float32Array(path.length * 2).fill(100);
+  const rowsInfo = path.map((p, r) => ({
+    r, x: p.x, z: p.z, distance: p.distance,
+    slope: 0, uphill: 1, curvature: Math.abs(pathTurn(path, r)), turn: 0, drop: 0, rise: 0,
+  }));
+
+  const buffers = {};
+  for (const kind of LINEAR_KINDS) buffers[kind] = createProfileBuffer();
+  const placements = new Map();
+  for (const item of POINT_ITEMS) placements.set(item, []);
+
+  const context = { buffers, placements, sampleElevation: () => 100, here };
+  const segment = { path, platform, edges, probeSpan: 4, halfWidth: 2.5, profile, startDistance: 0, anchor: path[0] };
+  return { layer, context, segment, rowsInfo, buffers, placements };
+}
+
+test('le mobilier de bord de route se pose sans variable libre', () => {
+  // Le mobilier entier est bâti dans un seul `try` : une variable libre dans la
+  // chaîne de bord de route n’explose pas la haie, elle **avale tout ce qui
+  // vient après** — les éoliennes, les pylônes, les parcelles. Rien n’est plus
+  // silencieux, et rien ne se voit plus vite à l’écran.
+  let clumps = 0;
+  let hedgeTriangles = 0;
+  let points = 0;
+
+  // Plusieurs positions : le côté de la haie, le fossé et le bas-côté se
+  // tirent au lieu, donc une seule portion n’en rencontre pas la moitié.
+  for (const z of [0, 37, 91, 150, 233, 310, 404, 512]) {
+    const { layer, context, segment, rowsInfo, buffers, placements } = roadsideHarness({ here: { x: 200, z } });
+    const moved = rowsInfo.map((row) => ({ ...row, z: row.z + z }));
+    const shifted = { ...segment, path: segment.path.map((p) => ({ ...p, z: p.z + z })), anchor: { x: 0, z } };
+
+    layer._buildRoadsideContext({ ...context, here: { x: 200, z } }, shifted, moved, []);
+
+    clumps += layer.counts.hedgeClumps;
+    hedgeTriangles += buffers.hedge.indices.length / 3 + buffers.lowHedge.indices.length / 3;
+    for (const list of placements.values()) points += list.length;
+  }
+
+  assert.ok(points > 0, 'la chaîne pose bien du mobilier ponctuel');
+  assert.ok(hedgeTriangles > 0, 'et au moins une haie sur les huit portions');
+  assert.ok(clumps > 0, 'avec ses arbustes, l’observateur étant au ras du tracé');
+});
 
 test('le champ proche d’une haie se fond au lieu de basculer', () => {
   const style = HEDGE_STYLES.hedge;

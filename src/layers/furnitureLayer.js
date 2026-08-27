@@ -215,7 +215,7 @@ export const FURNITURE_LIMITS = {
 };
 
 /** Formes ponctuelles du catalogue, dans l'ordre où on les instancie. */
-const POINT_ITEMS = [
+export const POINT_ITEMS = [
   'streetLamp',
   'utilityPole',
   'pylon',
@@ -250,7 +250,7 @@ const POINT_ITEMS = [
 ];
 
 /** Matières linéaires : une géométrie fusionnée par matière. */
-const LINEAR_KINDS = [
+export const LINEAR_KINDS = [
   'hedge',
   'lowHedge',
   'ditch',
@@ -747,7 +747,7 @@ export class FurnitureLayer {
    * traverser une limite d'agglomération ne décale rien.
    */
   _buildRoadsideContext(context, segment, rowsInfo, builtUp) {
-    const { buffers, placements, sampleElevation } = context;
+    const { buffers, placements, sampleElevation, here } = context;
     const { platform, halfWidth, profile, startDistance, anchor } = segment;
     // Le côté de la haie et de la ligne téléphonique se tire au nœud
     // d'ancrage : il ne dépend donc ni du découpage ni de la position de
