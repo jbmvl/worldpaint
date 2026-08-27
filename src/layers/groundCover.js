@@ -188,6 +188,10 @@ export class GroundCover {
    *        qui dit où il y a du végétal.
    * @param {Object} [options.roads]    Instance `RoadNetwork` — l'herbe ne pousse
    *        pas sur ses chaussées.
+   * @param {Object} [options.streets]  Instance `StreetLayer` — ni sur ses
+   *        trottoirs. Depuis qu'un quartier d'habitation porte une part
+   *        d'herbe (voir `groundClassFor`), le semis atteint la voirie : sans
+   *        cette seconde exclusion, les touffes traverseraient la bordure.
    */
   constructor({
     THREE,
@@ -195,6 +199,7 @@ export class GroundCover {
     bubble,
     groundClass,
     roads = null,
+    streets = null,
     count = GRASS_COUNT,
     theme = defaultTheme,
   }) {
@@ -204,6 +209,7 @@ export class GroundCover {
     this.bubble = bubble;
     this.groundClass = groundClass;
     this.roads = roads;
+    this.streets = streets;
     this.disposed = false;
     this._anchor = null;
     this._frame = null;
@@ -287,9 +293,10 @@ export class GroundCover {
 
   /** Sème le disque, maille par maille. */
   _scatter(centerX, centerZ) {
-    const { bubble, groundClass, roads, mesh } = this;
+    const { bubble, groundClass, roads, streets, mesh } = this;
     const capacity = mesh.instanceMatrix.count;
     const index = roads?.index || null;
+    const pavement = streets?.index || null;
     // Le centre est arrondi à la maille : le disque semé se déplace par pas de
     // deux mètres, donc l'ensemble des mailles retenues ne dépend que du sol.
     const baseX = Math.round(centerX / GRASS_CELL_M);
@@ -328,6 +335,7 @@ export class GroundCover {
         const x = tufts[at];
         const z = tufts[at + 1];
         if (inCorridor(index, x, z, GRASS_ROAD_MARGIN_M)) continue;
+        if (pavement?.covers(x, z, 0)) continue;
 
         const tint = tufts[at + 5];
         const height =

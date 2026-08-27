@@ -80,6 +80,50 @@ export function townPaletteAt(x, z, towns = defaultTheme.towns) {
 }
 
 /**
+ * Revêtement de voirie du bourg qui contient un point.
+ *
+ * Tiré sur la **même maille** que la palette du bâti, et pour la même raison :
+ * une commune refait sa voirie d'un coup. Toutes les rues d'un bourg partagent
+ * donc leur bordure et leur trottoir, et le bourg d'à côté a les siens — c'est
+ * ce partage qui fait qu'une traversée se lit comme un lieu et non comme une
+ * suite de tronçons. Une graine distincte de celle des murs : le béton d'un
+ * trottoir ne dit rien du granit des façades.
+ *
+ * Les couleurs sont rendues en **linéaire**, prêtes pour les attributs de
+ * sommet. Fonction pure.
+ *
+ * @param {number} x
+ * @param {number} z
+ * @param {Object} [streets] Tranche `theme.streets`.
+ * @returns {{name:string, walk:number[], kerb:number[], joint:number[], gutter:number[]}}
+ */
+export function streetSurfaceAt(x, z, streets = defaultTheme.streets) {
+  const surfaces = linearStreets(streets);
+  const gx = Math.floor(x / TOWN_PATCH_M) * TOWN_PATCH_M;
+  const gz = Math.floor(z / TOWN_PATCH_M) * TOWN_PATCH_M;
+  const draw = randomAt(gx, gz, 191);
+  return surfaces[Math.min(surfaces.length - 1, Math.floor(draw * surfaces.length))];
+}
+
+const LINEAR_STREETS = new WeakMap();
+
+function linearStreets(streets) {
+  let out = LINEAR_STREETS.get(streets);
+  if (!out) {
+    const gutter = srgb(streets.gutter);
+    out = streets.surfaces.map((surface) => ({
+      name: surface.name,
+      walk: srgb(surface.walk),
+      kerb: srgb(surface.kerb),
+      joint: srgb(surface.joint),
+      gutter,
+    }));
+    LINEAR_STREETS.set(streets, out);
+  }
+  return out;
+}
+
+/**
  * Habillage d'un bâtiment : ton de mur, ton de toit, ton de volet, forme de
  * toit, et sa nature de maison.
  *

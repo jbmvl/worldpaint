@@ -30,8 +30,14 @@
  *      couches de décor partagent, et elle tient en une question — « ce point
  *      est-il sur la voirie ? » ;
  *   4. **bâti** — il ne lit que les tuiles ; il publie au passage ses
- *      **maisons**, dont les **jardins** tirent leurs clôtures et leurs
- *      buissons — eux ne lisent aucune tuile, mais ils lisent l'emprise ;
+ *      **maisons** et l'ensemble de ses **empreintes** ;
+ *   4 bis. **voirie** — après les chaussées *et* le bâti, parce qu'un trottoir
+ *      demande les deux : la plate-forme sur laquelle il se pose, et les
+ *      maisons qui prouvent que c'est une rue. Elle publie sa bande revêtue,
+ *      que l'herbe et les jardins lisent pour ne pas la traverser ;
+ *   4 ter. **jardins** — ils tirent leurs clôtures et leurs buissons des
+ *      maisons ; eux ne lisent aucune tuile, mais ils lisent l'emprise
+ *      routière et la bande revêtue ;
  *   5. **mobilier** — il lui faut les tronçons *et* l'index des chaussées :
  *      murs et glissières se posent sur la plate-forme exacte sur laquelle
  *      roule l'observateur, et les feux n'ont de sens qu'aux carrefours ;
@@ -49,6 +55,8 @@ import { RoadNetwork, createRoadMaterials } from './layers/roadNetwork.js';
 import { WaterLayer, createWaterMaterial } from './layers/waterLayer.js';
 import { BuildingLayer } from './layers/buildingLayer.js';
 import { GardenLayer } from './layers/gardenLayer.js';
+import { StreetLayer } from './layers/streetLayer.js';
+import { collectBuiltUpAreas, FabricIndex } from './layers/settlement.js';
 import { VegetationLayer } from './layers/vegetationLayer.js';
 import { GroundCover } from './layers/groundCover.js';
 import { CropLayer } from './layers/cropLayer.js';
@@ -141,6 +149,10 @@ export class WorldComposer {
     // reçoivent en revanche les chaussées, pour la même raison que l'herbe et
     // les cultures : une clôture ne se plante pas sur la rue.
     this.gardens = new GardenLayer({ THREE, scene, bubble, roads: this.roads, theme });
+    // La voirie ne lit aucune tuile non plus : elle reçoit les tronçons de
+    // chaussée, les emprises habitées et les empreintes du bâti. C'est pour ça
+    // qu'elle passe par ici — voir l'ordre de génération plus haut.
+    this.streets = new StreetLayer({ THREE, scene, bubble, theme });
 
     this.vegetation = new VegetationLayer({
       THREE,
@@ -156,6 +168,7 @@ export class WorldComposer {
       bubble,
       groundClass: this.groundClass,
       roads: this.roads,
+      streets: this.streets,
       theme,
     });
     this.grass.setMaxAnisotropy(maxAnisotropy);
@@ -264,9 +277,17 @@ export class WorldComposer {
       // 4. Bâti.
       this.buildings.rebuild(this.vectorTiles, wanted, here);
 
-      // 4 bis. Jardins — après le bâti, dont ils reçoivent les maisons. Ils ne
-      //    lisent aucune tuile : sans cette liste, ils ne posent rien.
-      this.gardens.rebuild(this.buildings.houses, here);
+      // 4 bis. Voirie — après les chaussées et le bâti. Les emprises habitées
+      //    sont lues **une fois** ici : la voirie et le mobilier posent la même
+      //    question au même moment, et deux lectures pourraient diverger.
+      const builtUp = collectBuiltUpAreas(this.vectorTiles, wanted, this.bubble.frame);
+      const fabric = new FabricIndex(this.buildings.footprints);
+      this.streets.rebuild(this.roads.roadSegments, here, { builtUp, fabric });
+
+      // 4 ter. Jardins — après le bâti, dont ils reçoivent les maisons, et après
+      //    la voirie, dont ils reçoivent la bande revêtue : une clôture ne
+      //    traverse pas un trottoir. Ils ne lisent aucune tuile.
+      this.gardens.rebuild(this.buildings.houses, here, this.streets.index);
 
       // 5. Mobilier — il lui faut les tronçons de chaussée et leur index.
       this.furniture.rebuild(
@@ -275,7 +296,8 @@ export class WorldComposer {
         here,
         this.roads.roadSegments,
         this.roads.index,
-        this.roads.junctions
+        this.roads.junctions,
+        builtUp
       );
 
       // 6. Arbres — les tuiles déjà plantées le restent : à donnée égale, le
@@ -370,6 +392,7 @@ export class WorldComposer {
     this.grass.dispose();
     this.vegetation.dispose();
     this.gardens.dispose();
+    this.streets.dispose();
     this.buildings.dispose();
     this.water.dispose();
     this.waterMaterial.dispose();

@@ -20,6 +20,11 @@
  *   alpha nul → non classé (l'appelant décide de son repli)
  *   alpha plein, R = G = B = 0 → sol nu, minéral ou bâti
  *
+ * Les poids sont des **parts**, pas des étiquettes : une entité peut en peindre
+ * plusieurs à la fois, et c'est ce qui permet de décrire un sol mêlé sans
+ * inventer une matière pour chaque mélange. Le lotissement en est le cas type —
+ * voir `groundClassFor`.
+ *
  * Le filtrage linéaire de la texture fait le reste : les lisières se fondent sur
  * quelques mètres au lieu de se découper au couteau, ce qui est plus juste que
  * la donnée elle-même — une lisière de bois n'est pas une ligne.
@@ -50,6 +55,28 @@ export const CLASS_SOURCE_LAYERS = ['landuse', 'landcover', 'park'];
  * `landuse` porte cemetery, railway, residential et le reste du bâti ; `park`
  * est une couche à part.
  *
+ * ## Pourquoi `residential` n'est pas du sol nu
+ *
+ * Toutes les emprises bâties partageaient la matière `bare`, et c'est **faux**
+ * pour la moitié d'entre elles. `landuse=residential` ne décrit pas une surface
+ * minérale : il décrit un périmètre administratif dans lequel le sol réel est,
+ * en France, majoritairement **de l'herbe** — pelouses, jardins de devant,
+ * bandes entre les maisons. Le minéral d'un lotissement ne couvre que la
+ * chaussée, ses abords et les cours, c'est-à-dire quelques mètres de part et
+ * d'autre d'un tracé que le vectoriel donne par ailleurs, en clair, dans la
+ * couche `transportation`. Peindre tout le périmètre en gris, c'était donc
+ * répondre à la question « qu'y a-t-il au sol ? » avec la réponse à « qui
+ * habite ici ? » — d'où l'aplat.
+ *
+ * Un quartier prend donc `settled` : une part d'herbe dominante et une part de
+ * minéral, et le minéral vraiment visible est **composé** par `streetLayer` le
+ * long des chaussées, là où il est.
+ *
+ * Une zone d'activité, elle, reste `bare` : un parking de zone commerciale, une
+ * plate-forme industrielle, une emprise ferroviaire, une carrière sont
+ * réellement minéraux sur toute leur surface. C'est la même donnée, mais elle
+ * ne dit pas la même chose selon la classe, et les confondre était le défaut.
+ *
  * Fonction pure.
  */
 export function groundClassFor(sourceLayer, properties = {}) {
@@ -71,17 +98,10 @@ export function groundClassFor(sourceLayer, properties = {}) {
     if (klass === 'cemetery' || klass === 'pitch' || klass === 'playground' || klass === 'stadium') {
       return 'grass';
     }
-    if (
-      klass === 'residential' ||
-      klass === 'suburb' ||
-      klass === 'neighbourhood' ||
-      klass === 'quarter' ||
-      klass === 'industrial' ||
-      klass === 'commercial' ||
-      klass === 'retail' ||
-      klass === 'railway' ||
-      klass === 'quarry'
-    ) {
+    if (klass === 'residential' || klass === 'suburb' || klass === 'neighbourhood' || klass === 'quarter') {
+      return 'settled';
+    }
+    if (klass === 'industrial' || klass === 'commercial' || klass === 'retail' || klass === 'railway' || klass === 'quarry') {
       return 'bare';
     }
     return null;
@@ -91,14 +111,30 @@ export function groundClassFor(sourceLayer, properties = {}) {
 }
 
 /**
+ * Part d'herbe d'un quartier d'habitation.
+ *
+ * Deux tiers : c'est l'ordre de grandeur du non-bâti et non-revêtu dans un
+ * lotissement français, jardins compris. Le tiers restant reste minéral, ce qui
+ * garde au sol une teinte plus sourde que la prairie voisine — un quartier n'est
+ * pas un pré, il est seulement beaucoup plus vert que ne le disait le gris.
+ */
+export const SETTLED_GRASS = 0.66;
+
+/**
  * Couleur de remplissage d'une matière. L'alpha vaut toujours 255 : c'est lui
  * qui distingue « classé sol nu » de « pas classé du tout », deux situations
  * que le shader ne traite pas pareil.
+ *
+ * `settled` est le seul remplissage **partiel** : ce n'est pas une matière de
+ * plus dans le shader, c'est un mélange d'herbe et de minéral écrit dans le
+ * canal rouge. Rien à ajouter en aval — le complément à 1 y est déjà lu comme
+ * du sol nu, et l'herbe et le mobilier y lisent leur part de vert.
  */
 export const CLASS_FILL = {
   grass: 'rgba(255, 0, 0, 1)',
   wood: 'rgba(0, 255, 0, 1)',
   farmland: 'rgba(0, 0, 255, 1)',
+  settled: `rgba(${Math.round(SETTLED_GRASS * 255)}, 0, 0, 1)`,
   bare: 'rgba(0, 0, 0, 1)',
 };
 

@@ -390,6 +390,55 @@ export const ROAD_SURFACES = {
 /** Terre claire de l'accotement. */
 export const ROAD_SHOULDER_COLOR = '#8c8168';
 
+// --- La voirie -----------------------------------------------------------------
+/**
+ * La section d'une rue, côté trottoir.
+ *
+ * Une rue de village n'est pas une route posée sur du gris : c'est une chaussée
+ * **bordée**. De la chaussée vers les maisons, on rencontre toujours les mêmes
+ * quatre choses, et dans cet ordre : le caniveau qui recueille l'eau, la
+ * bordure qui tient la terre, le trottoir légèrement surélevé, puis ce qui
+ * commence derrière — un mur, une haie, un jardin.
+ *
+ * Les cotes sont celles du terrain : une bordure de béton fait quatorze
+ * centimètres de vue, un caniveau trente centimètres de large, un trottoir de
+ * village entre 1,2 et 2,3 mètres. Elles sont **volontairement basses** : le
+ * trottoir doit se lire comme une marche, pas comme un quai.
+ *
+ * `surfaces` porte la variation de matériau. Elle n'est pas tirée par trottoir
+ * mais **par bourg** (voir `streetSurfaceAt`) : une commune refait sa voirie
+ * d'un coup, donc toutes ses rues partagent le même revêtement, et c'est ce
+ * partage-là qui se lit en traversant.
+ */
+export const STREET_LOOK = {
+  /** Largeur du caniveau, en mètres, et sa profondeur sous la chaussée. */
+  gutterWidth: 0.32,
+  gutterDepth: 0.035,
+  /** Vue de la bordure, en mètres, et le chanfrein de son nez. */
+  kerbHeight: 0.14,
+  kerbNose: 0.055,
+  /** Largeur du trottoir : tirée dans cet écart, par portion. */
+  walkWidth: [1.2, 2.3],
+  /** Contre-pente du trottoir vers le caniveau, en mètres sur sa largeur. */
+  walkFall: 0.025,
+  /** Jupe arrière : de quoi enterrer le bord au lieu de le laisser en l'air. */
+  skirtWidth: 0.35,
+  skirtDepth: 0.3,
+  /** Fond de caniveau : plus sombre que la chaussée, l'eau y stagne. */
+  gutter: '#403e3b',
+  /**
+   * Revêtements, un par bourg. `walk` est le dessus, `kerb` la bordure, `joint`
+   * le bord arrière — toujours plus sombre, parce qu'il est à l'ombre du mur ou
+   * de la haie qui le suit.
+   */
+  surfaces: [
+    { name: 'béton balayé', walk: '#bab4a6', kerb: '#c0bbaf', joint: '#948d80' },
+    { name: 'enrobé clair', walk: '#98948c', kerb: '#b3aea3', joint: '#797570' },
+    { name: 'pavé de grès', walk: '#a89f8e', kerb: '#b5ac9a', joint: '#847b6c' },
+    { name: 'béton désactivé', walk: '#b0a897', kerb: '#b8b1a2', joint: '#8b8374' },
+  ],
+};
+
 // --- L’eau ---------------------------------------------------------------------
 /**
  * Largeur des cours d'eau linéaires, en mètres, par `class` OpenMapTiles.
@@ -603,6 +652,7 @@ export const defaultTheme = Object.freeze({
     litShare: WINDOW_LIT_SHARE,
   },
   roads: { profiles: ROAD_PROFILES, surfaces: ROAD_SURFACES, shoulderColor: ROAD_SHOULDER_COLOR },
+  streets: STREET_LOOK,
   water: { waterways: WATERWAY_CLASSES },
   furniture: { colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES },
   life: LIFE_COLORS,

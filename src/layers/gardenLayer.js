@@ -357,9 +357,11 @@ export class GardenLayer {
    *
    * @param {Array} houses Maisons, avec leur rectangle orienté et leur assise.
    * @param {{x:number, z:number}} here Position locale du coureur.
+   * @param {Object|null} [pavement] Bande revêtue publiée par `streetLayer` :
+   *        une clôture ne traverse pas un trottoir.
    * @returns {boolean} vrai si des jardins ont été posés.
    */
-  rebuild(houses, here) {
+  rebuild(houses, here, pavement = null) {
     if (this.disposed || !this.bubble?.frame) return false;
 
     const buffer = { positions: [], normals: [], colors: [] };
@@ -377,7 +379,9 @@ export class GardenLayer {
     // jardins ne lisent pas le réseau : ils ne posent qu'une question, « ce
     // point est-il libre ».
     const index = this.roads?.index || null;
-    const clear = (x, z) => !inCorridor(index, x, z);
+    // Le trottoir compte autant que la chaussée : une clôture qui traverse le
+    // passage est le même défaut, et c'est la clôture qui cède, jamais la rue.
+    const clear = (x, z) => !inCorridor(index, x, z) && !pavement?.covers(x, z, 0);
 
     for (const { house } of near) {
       if (built >= GARDEN_MAX) break;
@@ -386,8 +390,10 @@ export class GardenLayer {
       const drawn =
         GARDEN_MARGIN_M[0] + randomAt(house.x, house.z, 217) * (GARDEN_MARGIN_M[1] - GARDEN_MARGIN_M[0]);
       // La clôture doit tenir entre la maison et la rue. Resserrée si besoin,
-      // abandonnée si même le recul minimal mord sur la chaussée : un jardin
-      // qui déborde sur la voirie est pire que pas de jardin du tout.
+      // abandonnée si même le recul minimal mord sur la voirie : un jardin qui
+      // déborde sur la rue est pire que pas de jardin du tout. Le rabattement
+      // passe **avant** le test de voisinage : c'est le recul réellement posé
+      // qui doit tenir libre, pas celui qu'on avait tiré.
       const margin = fittedGardenMargin(house.box, drawn, clear);
       if (margin == null) continue;
       if (!isDetached(house, neighbours, margin)) continue;

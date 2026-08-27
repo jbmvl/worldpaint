@@ -25,7 +25,8 @@ import { join } from 'node:path';
 
 import { defaultTheme } from '../src/themes/default.js';
 import { resolveTheme } from '../src/themes/theme.js';
-import { townPaletteAt, buildingStyleAt } from '../src/layers/townStyle.js';
+import { townPaletteAt, buildingStyleAt, streetSurfaceAt } from '../src/layers/townStyle.js';
+import { kerbProfile } from '../src/layers/streetLayer.js';
 import { roofRise, roofTriangles, orientedBox } from '../src/layers/roofGeometry.js';
 import { waterwayStyleFor } from '../src/layers/waterLayer.js';
 import { grassVariantFor } from '../src/layers/groundCover.js';
@@ -61,6 +62,18 @@ const OTHER = resolveTheme({
     },
   },
   sky: { fog: '#000000', nightZenith: '#000000', nightHorizon: '#000000' },
+  streets: {
+    gutterWidth: 1,
+    gutterDepth: 0.5,
+    kerbHeight: 0.9,
+    kerbNose: 0.2,
+    walkWidth: [4, 4],
+    walkFall: 0,
+    skirtWidth: 1,
+    skirtDepth: 1,
+    gutter: '#000000',
+    surfaces: [{ name: 'quai', walk: '#ffffff', kerb: '#ffffff', joint: '#ffffff' }],
+  },
 });
 
 const DEFAULT = resolveTheme();
@@ -306,6 +319,29 @@ test('aucun module ne garde d’état mutable non déclaré', () => {
       );
     }
   }
+});
+
+test('la voirie ne mélange pas les revêtements de deux thèmes', () => {
+  // Même point, deux thèmes : la conversion en linéaire est mémorisée par
+  // tranche, donc une mémoire mal indexée peindrait le second bourg avec le
+  // béton du premier.
+  const [a, b] = interleaved(
+    () => streetSurfaceAt(1200, 3400, DEFAULT.streets).name,
+    () => streetSurfaceAt(1200, 3400, OTHER.streets).name
+  );
+  assert.notEqual(a, b);
+  assert.equal(b, 'quai');
+});
+
+test('la section d’une rue est celle du thème qu’on lui donne', () => {
+  const tones = streetSurfaceAt(0, 0, OTHER.streets);
+  const [a, b] = interleaved(
+    () => kerbProfile({ halfWidth: 3, walkWidth: 2, side: 1, tones: streetSurfaceAt(0, 0, DEFAULT.streets) }, DEFAULT.streets).map((v) => v.up),
+    () => kerbProfile({ halfWidth: 3, walkWidth: 2, side: 1, tones }, OTHER.streets).map((v) => v.up)
+  );
+  assert.notDeepEqual(a, b);
+  assert.ok(Math.max(...b) >= OTHER.streets.kerbHeight, 'la bordure du second thème est un quai');
+  assert.ok(Math.max(...a) < 0.3, 'celle du défaut reste une marche');
 });
 
 test('le ciel est une tranche du thème', () => {

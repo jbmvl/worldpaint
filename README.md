@@ -71,10 +71,16 @@ src/
                 conversion, elevation field, vector-tile fetching, colour
   terrain/      the ground mesh: the terrain bubble, its material, the
                 ground-class map, cutting roads into it
+<<<<<<< HEAD
   layers/       everything built on top of the terrain — roads, water,
                 buildings, vegetation, crops, road furniture, the road
                 corridor every other layer stops at, and the geometry
                 helpers they share
+=======
+  layers/       everything built on top of the terrain — roads, street
+                kerbing, water, buildings, gardens, vegetation, crops, road
+                furniture, and the geometry helpers they share
+>>>>>>> claude/urban-street-logic-2r00se
   materials/    procedural textures and shared materials
   environment/  sky, sun, shadows, fog — the optional lighting rig
   inspect/      debug helpers for labelling what's on screen

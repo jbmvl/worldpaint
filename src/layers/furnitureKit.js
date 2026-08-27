@@ -1327,8 +1327,22 @@ export function createGlowGeometry(THREE) {
  * Le panneau est orienté face caméra dans le **vertex shader**, à partir des
  * matrices déjà présentes : c'est ce qui permet de garder l'instanciation, là où
  * des `Sprite` imposeraient un objet par lampadaire.
+ *
+ * ## La teinte par instance ne se demande pas, elle se constate
+ *
+ * Un feu tricolore a besoin d'un halo par couleur, un lampadaire d'un seul ton
+ * pour tous. La distinction ne passe **pas** par un paramètre : elle est déjà
+ * portée par la scène. Dès qu'un `InstancedMesh` reçoit un `instanceColor`,
+ * three définit `USE_INSTANCING_COLOR` **et déclare lui-même l'attribut** dans
+ * le préambule qu'il ajoute à tout `ShaderMaterial`. Le déclarer une seconde
+ * fois ici faisait échouer la compilation du programme (`'instanceColor' :
+ * redefinition`), et donc disparaître tous les halos.
+ *
+ * On lit donc le define de three plutôt que de dupliquer la question. Un
+ * maillage sans `instanceColor` retombe sur `uColor`, ce qui est la bonne
+ * valeur et non un repli : c'est le cas du lampadaire.
  */
-export function createGlowMaterial(THREE, { color = [1, 0.86, 0.6], perInstanceColor = false } = {}) {
+export function createGlowMaterial(THREE, { color = [1, 0.86, 0.6] } = {}) {
   const material = new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
@@ -1356,7 +1370,11 @@ export function createGlowMaterial(THREE, { color = [1, 0.86, 0.6], perInstanceC
       uniform vec3 uColor;
       void main() {
         vUv = uv;
-        vTint = ${perInstanceColor ? 'instanceColor' : 'uColor'};
+        // instanceColor est déclaré par three, jamais ici : voir plus haut.
+        vTint = uColor;
+        #ifdef USE_INSTANCING_COLOR
+          vTint = instanceColor;
+        #endif
         // Position de l'instance dans l'espace de la vue, puis panneau dressé
         // dans le plan de l'écran : le halo garde sa taille et sa forme quel
         // que soit l'angle.

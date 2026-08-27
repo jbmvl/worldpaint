@@ -5,6 +5,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 import {
   EARTH_CIRCUMFERENCE,
@@ -72,6 +74,7 @@ import {
 } from '../src/layers/furniturePlacement.js';
 import {
   Kit,
+  createGlowMaterial,
   FURNITURE_BUILDERS,
   furnitureSpecsFor,
   lampArcAt,
@@ -223,7 +226,21 @@ import {
   CLASS_FILL,
   GroundClassMap,
   CLASS_AREA_M,
+  SETTLED_GRASS,
 } from '../src/terrain/groundClassMap.js';
+import { collectBuiltUpAreas, pointInAreas, ringsOf, FabricIndex } from '../src/layers/settlement.js';
+import {
+  kerbQualifies,
+  kerbProfile,
+  pavementBand,
+  walkWidthAt,
+  STREET_PROFILES,
+  STREET_FABRIC_MIN,
+  STREET_FABRIC_RADIUS_M,
+  STREET_MAX_CROSS_SLOPE,
+  STREET_MIN_RUN,
+} from '../src/layers/streetLayer.js';
+import { streetSurfaceAt } from '../src/layers/townStyle.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
 import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
 import { birdAt, createBirdGeometry } from '../src/layers/lifeLayer.js';
@@ -1167,7 +1184,14 @@ test('les couches vectorielles décrivent la matière du sol', () => {
   assert.equal(groundClassFor('landcover', { class: 'rock' }), 'bare');
   assert.equal(groundClassFor('landcover', { subclass: 'glacier' }), 'bare');
 
-  assert.equal(groundClassFor('landuse', { class: 'residential' }), 'bare');
+  // Un quartier d’habitation n’est pas une surface minérale : c’est un
+  // périmètre, majoritairement vert, dont le minéral se compose le long des
+  // rues. Une zone d’activité, elle, l’est réellement.
+  assert.equal(groundClassFor('landuse', { class: 'residential' }), 'settled');
+  assert.equal(groundClassFor('landuse', { class: 'suburb' }), 'settled');
+  assert.equal(groundClassFor('landuse', { class: 'industrial' }), 'bare');
+  assert.equal(groundClassFor('landuse', { class: 'retail' }), 'bare');
+  assert.equal(groundClassFor('landuse', { class: 'quarry' }), 'bare');
   assert.equal(groundClassFor('landuse', { class: 'cemetery' }), 'grass');
   // Un parc est un parc, quelle que soit la zone qui l’entoure.
   assert.equal(groundClassFor('park', { class: 'public_park' }), 'grass');
@@ -3747,4 +3771,325 @@ test('l’écart rapide de l’index ne se trompe que dans le sens sûr', () => 
       );
     }
   }
+});
+
+// --- La voirie urbaine -------------------------------------------------------
+
+test('un quartier d’habitation porte de l’herbe, une zone d’activité non', () => {
+  // Le fond du problème : `residential` décrit un périmètre, pas un revêtement.
+  // Son remplissage est donc **partiel** — la seule matière qui le soit.
+  const settled = CLASS_FILL.settled.match(/rgba\((\d+), (\d+), (\d+), 1\)/);
+  assert.equal(Number(settled[1]), Math.round(SETTLED_GRASS * 255), 'part d’herbe dans le rouge');
+  assert.equal(Number(settled[2]), 0, 'pas de bois dans un lotissement');
+  assert.equal(Number(settled[3]), 0, 'ni de culture');
+  assert.ok(SETTLED_GRASS > 0.5 && SETTLED_GRASS < 1, 'majoritairement vert, jamais un pré');
+
+  // Le sol nu reste le complément exact : c’est le contrat avec le shader.
+  assert.equal(CLASS_FILL.bare, 'rgba(0, 0, 0, 1)');
+});
+
+test('un périmètre habité ne suffit pas à faire une rue', () => {
+  const slope = 0;
+
+  // Les trois conditions, une par une. Aucune ne se rattrape.
+  assert.equal(kerbQualifies({ builtUp: true, buildings: STREET_FABRIC_MIN, crossSlope: slope }), true);
+  assert.equal(
+    kerbQualifies({ builtUp: false, buildings: 12, crossSlope: slope }),
+    false,
+    'hors agglomération, pas de trottoir même sous les maisons'
+  );
+  assert.equal(
+    kerbQualifies({ builtUp: true, buildings: STREET_FABRIC_MIN - 1, crossSlope: slope }),
+    false,
+    'un périmètre résidentiel sans maisons est un pré, pas une rue'
+  );
+  assert.equal(
+    kerbQualifies({ builtUp: true, buildings: 8, crossSlope: STREET_MAX_CROSS_SLOPE + 0.01 }),
+    false,
+    'sur un devers, la rive appelle un mur, pas une bordure'
+  );
+  // Le devers est jugé en valeur absolue : la rive amont vaut la rive aval.
+  assert.equal(kerbQualifies({ builtUp: true, buildings: 8, crossSlope: -0.02 }), true);
+});
+
+test('seules les chaussées qui desservent des maisons peuvent être bordées', () => {
+  for (const profile of ['major', 'minor', 'lane']) {
+    assert.ok(STREET_PROFILES.has(profile), `${profile} peut porter un trottoir`);
+  }
+  for (const profile of ['express', 'track', 'path', 'cycleway']) {
+    assert.ok(!STREET_PROFILES.has(profile), `${profile} n’en porte pas`);
+  }
+});
+
+test('l’index du bâti compte ce qui est là, et s’arrête au plafond', () => {
+  const fabric = new FabricIndex([
+    { x: 0, z: 0 },
+    { x: 10, z: 5 },
+    { x: 20, z: 0 },
+    { x: 400, z: 400 },
+  ]);
+  assert.equal(fabric.count, 4);
+  assert.equal(fabric.countWithin(0, 0, 25), 3, 'trois maisons dans le disque');
+  assert.equal(fabric.countWithin(0, 0, 25, 2), 2, 'le plafond arrête le comptage');
+  assert.equal(fabric.countWithin(0, 0, 5), 1, 'seulement celle qui est dessous');
+  assert.equal(fabric.countWithin(-2000, 0, 30), 0, 'ailleurs, rien');
+
+  // Une liste vide répond zéro partout, ce qui est la bonne réponse.
+  assert.equal(new FabricIndex([]).countWithin(0, 0, 500), 0);
+  assert.equal(new FabricIndex().count, 0);
+});
+
+test('le côté examiné change la réponse, pas le découpage', () => {
+  // Un front bâti au nord d’une rue est-ouest : le disque posé au nord compte
+  // des maisons, celui posé au sud n’en compte aucune.
+  const fabric = new FabricIndex([
+    { x: -10, z: -18 },
+    { x: 0, z: -20 },
+    { x: 12, z: -19 },
+  ]);
+  const north = fabric.countWithin(0, -18, STREET_FABRIC_RADIUS_M, STREET_FABRIC_MIN);
+  const south = fabric.countWithin(0, 18, STREET_FABRIC_RADIUS_M, STREET_FABRIC_MIN);
+  assert.ok(north >= STREET_FABRIC_MIN, 'le côté bâti est bordé');
+  assert.equal(south, 0, 'le côté sur champs ne l’est pas');
+  assert.equal(kerbQualifies({ builtUp: true, buildings: south }), false);
+});
+
+test('une emprise habitée se lit par lancer de rayon', () => {
+  const square = [
+    { x: 0, z: 0 },
+    { x: 100, z: 0 },
+    { x: 100, z: 100 },
+    { x: 0, z: 100 },
+  ];
+  assert.equal(pointInAreas([square], 50, 50), true);
+  assert.equal(pointInAreas([square], 150, 50), false);
+  assert.equal(pointInAreas([], 50, 50), false, 'sans emprise, personne n’est en ville');
+  assert.equal(pointInAreas(null, 50, 50), false);
+});
+
+test('la voirie ne lit que les anneaux extérieurs', () => {
+  const ring = [[0, 0], [1, 0], [1, 1], [0, 0]];
+  const hole = [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.2]];
+  assert.deepEqual(ringsOf({ type: 'Polygon', coordinates: [ring, hole] }), [ring]);
+  assert.deepEqual(ringsOf({ type: 'MultiPolygon', coordinates: [[ring, hole], [ring]] }), [ring, ring]);
+  assert.deepEqual(ringsOf({ type: 'LineString', coordinates: ring }), []);
+  assert.deepEqual(ringsOf(null), []);
+  assert.deepEqual(collectBuiltUpAreas(null, [], null), [], 'sans source, aucune emprise');
+});
+
+test('la section d’une rue va du caniveau au trottoir, dans cet ordre', () => {
+  const streets = defaultTheme.streets;
+  const tones = streetSurfaceAt(0, 0, streets);
+  const section = kerbProfile({ halfWidth: 2.5, walkWidth: 1.8, side: 1, tones }, streets);
+
+  // Les cotes se comptent depuis la chaussée : le caniveau creuse, la bordure
+  // monte, et la jupe arrière s’enterre.
+  const ups = section.map((v) => v.up);
+  assert.ok(Math.min(...ups) < 0, 'le caniveau est un creux');
+  assert.ok(Math.max(...ups) >= streets.kerbHeight, 'la bordure fait sa marche');
+  assert.equal(ups[ups.length - 1], -streets.skirtDepth, 'la jupe arrière est enterrée');
+
+  // Le trottoir est **légèrement** surélevé : c’est une marche, pas un quai.
+  assert.ok(streets.kerbHeight <= 0.2, 'une bordure de quatorze centimètres');
+
+  // La face de bordure est verticale : deux sommets au même travers.
+  const faces = section.filter((v) => Math.abs(v.across - (2.5 + streets.gutterWidth)) < 1e-9);
+  assert.equal(faces.length, 2, 'la bordure présente une face franche');
+
+  // De la chaussée vers l’extérieur, sans retour en arrière.
+  for (let i = 1; i < section.length; i++) {
+    assert.ok(section[i].across >= section[i - 1].across - 1e-9, 'la section ne revient pas sur elle-même');
+  }
+
+  // Le côté droit est le miroir du gauche, parcouru dans le même sens de
+  // rotation — sinon ses normales sortiraient par-dessous.
+  const right = kerbProfile({ halfWidth: 2.5, walkWidth: 1.8, side: -1, tones }, streets);
+  assert.equal(right.length, section.length);
+  assert.deepEqual(
+    right.map((v) => v.across),
+    section.map((v) => -v.across).reverse()
+  );
+});
+
+test('la section d’une rue se balaie le long de la plate-forme', () => {
+  const streets = defaultTheme.streets;
+  const tones = streetSurfaceAt(0, 0, streets);
+  const path = [];
+  for (let i = 0; i < 8; i++) path.push({ x: i * 5, z: 0 });
+  // Plate-forme en pente douce : le trottoir doit la suivre, pas le terrain.
+  const platform = new Float32Array(path.map((_, i) => 100 + i * 0.3));
+
+  const buffer = createProfileBuffer();
+  const built = appendProfile(buffer, {
+    path,
+    profile: kerbProfile({ halfWidth: 2.5, walkWidth: 1.8, side: 1, tones }, streets),
+    sampleElevation: () => 0,
+    baseHeights: platform,
+    lift: 0.14,
+    smoothRadius: 0,
+  });
+
+  assert.equal(built, true);
+  assert.equal(buffer.positions.length / 3, path.length * 7, 'sept sommets par ligne');
+
+  // Le dessus du trottoir de la dernière ligne suit la plate-forme, décollement
+  // compris : c’est ce qui rend la bordure solidaire de la chaussée.
+  const walkIndex = ((path.length - 1) * 7 + 5) * 3;
+  const expected = platform[path.length - 1] + 0.14 + streets.kerbHeight + 0.004 + streets.walkFall;
+  assert.ok(Math.abs(buffer.positions[walkIndex + 1] - expected) < 1e-4);
+  // Et il est bien au-dessus de la chaussée de la même ligne.
+  assert.ok(buffer.positions[walkIndex + 1] > platform[path.length - 1] + 0.14);
+});
+
+test('la bande revêtue publiée couvre le caniveau et le trottoir', () => {
+  const streets = defaultTheme.streets;
+  const band = pavementBand({ halfWidth: 2.5, walkWidth: 1.8, side: 1 }, streets);
+  const inner = band.offset - band.halfWidth;
+  const outer = band.offset + band.halfWidth;
+
+  assert.ok(Math.abs(inner - 2.5) < 1e-9, 'elle commence à la rive de la chaussée');
+  assert.ok(
+    Math.abs(outer - (2.5 + streets.gutterWidth + streets.kerbNose + 1.8)) < 1e-9,
+    'et finit au fond du trottoir'
+  );
+  // À droite, la bande est du côté des décalages négatifs.
+  assert.ok(pavementBand({ halfWidth: 2.5, walkWidth: 1.8, side: -1 }, streets).offset < 0);
+});
+
+test('largeur et revêtement d’une rue sont tirés du lieu', () => {
+  const [min, max] = defaultTheme.streets.walkWidth;
+  for (const [x, z] of [[0, 0], [123, -456], [-2000, 3000]]) {
+    const width = walkWidthAt(x, z);
+    assert.ok(width >= min && width <= max, 'la largeur reste dans le gabarit');
+    assert.equal(width, walkWidthAt(x, z), 'et ne dépend que du lieu');
+  }
+
+  // Le revêtement est celui du **bourg** : deux points de la même maille le
+  // partagent, ce qui est ce qui fait qu’une traversée se lit comme un lieu.
+  const here = streetSurfaceAt(10, 10);
+  assert.equal(streetSurfaceAt(TOWN_PATCH_M * 0.4, TOWN_PATCH_M * 0.3).name, here.name);
+  assert.ok(Array.isArray(here.walk) && here.walk.length === 3, 'couleurs linéaires');
+  for (const key of ['walk', 'kerb', 'joint', 'gutter']) {
+    assert.ok(here[key].every((c) => c >= 0 && c <= 1), `${key} : composantes valides`);
+  }
+
+  // Et les quatre revêtements du thème sortent bien tous, sur assez de mailles.
+  const seen = new Set();
+  for (let i = 0; i < 200; i++) seen.add(streetSurfaceAt(i * TOWN_PATCH_M, 0).name);
+  assert.equal(seen.size, defaultTheme.streets.surfaces.length);
+});
+
+test('une clôture de jardin ne traverse pas un trottoir', () => {
+  const box = { cx: 0, cz: 0, angle: 0, long: 6, short: 5 };
+  // Bande revêtue au nord de la maison, à douze mètres du centre. C'est le
+  // prédicat de liberté que le jardin interroge — la couche y branche à la fois
+  // l'emprise routière et le trottoir.
+  const pavement = {
+    covers: (x, z) => z < -11 && z > -14 && Math.abs(x) < 40,
+  };
+  const clear = (x, z) => !pavement.covers(x, z);
+
+  // Sans prédicat, le recul tiré est rendu tel quel.
+  assert.equal(fittedGardenMargin(box, 6.5, null), 6.5);
+
+  // Un recul de 6,5 m pousserait la clôture à 11,5 m : elle mord le trottoir,
+  // donc elle est rabattue.
+  const fitted = fittedGardenMargin(box, 6.5, clear);
+  assert.ok(fitted !== null && fitted < 6.5, 'le recul est rabattu');
+  for (const corner of gardenCorners(box, fitted)) {
+    assert.equal(pavement.covers(corner.x, corner.z), false, 'la clôture tient derrière la bordure');
+  }
+
+  // Une maison dont même le recul minimal empiète n’a pas de jardin devant.
+  assert.equal(fittedGardenMargin(box, 6.5, () => false), null);
+});
+
+test('une portion de trottoir trop courte est un artefact du découpage', () => {
+  // Cinq lignes de cinq mètres : vingt-cinq mètres, la longueur en deçà de
+  // laquelle un bout de bordure se lit comme un bug et non comme une rue.
+  assert.ok(STREET_MIN_RUN >= 4, 'assez long pour être une rue');
+  const rows = [1, 1, 1, 0, 1, 1, 1, 1, 1, 1].map((ok, r) => ({ r, ok: ok === 1 }));
+  const runs = contiguousRuns(rows, (row) => row.ok, STREET_MIN_RUN);
+  assert.equal(runs.length, 1, 'seule la portion assez longue est retenue');
+  assert.equal(runs[0].length, 6);
+});
+
+// --- Les attributs que three déclare déjà -----------------------------------
+
+/*
+ * three ajoute un préambule à tout `ShaderMaterial`, et ce préambule **déclare
+ * les attributs intégrés** — `position`, `uv`, et, dès qu'un `InstancedMesh`
+ * porte un `instanceColor`, `instanceColor`. Les redéclarer côté worldpaint ne
+ * produit pas un avertissement mais une erreur de compilation du programme, et
+ * donc un matériau entièrement noir ou absent. La panne est d'autant plus
+ * traître qu'elle ne se déclenche qu'au premier rendu d'une instance colorée.
+ */
+const THREE_BUILTIN_ATTRIBUTES = [
+  'position',
+  'normal',
+  'tangent',
+  'uv',
+  'uv1',
+  'uv2',
+  'uv3',
+  'color',
+  'instanceMatrix',
+  'instanceColor',
+  'batchId',
+  'skinIndex',
+  'skinWeight',
+];
+
+function sourceFilesUnder(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) out.push(...sourceFilesUnder(full));
+    else if (entry.endsWith('.js')) out.push(full);
+  }
+  return out;
+}
+
+test('aucun shader ne redéclare un attribut que three déclare déjà', () => {
+  const declaration = /\battribute\s+\w+\s+(\w+)\s*;/g;
+  for (const path of sourceFilesUnder('src')) {
+    const source = readFileSync(path, 'utf8');
+    for (const [, name] of source.matchAll(declaration)) {
+      assert.ok(
+        !THREE_BUILTIN_ATTRIBUTES.includes(name),
+        `${path} redéclare l’attribut intégré « ${name} » — three le déclare déjà`
+      );
+    }
+  }
+});
+
+test('le halo lit la couleur d’instance sans la redéclarer', () => {
+  // Un stub : le matériau n’a besoin que de retenir ce qu’on lui passe, et
+  // c’est la **source du shader** qu’on vérifie, pas son exécution.
+  const THREE = {
+    DoubleSide: 2,
+    AdditiveBlending: 2,
+    Vector3: class {
+      constructor(x, y, z) {
+        Object.assign(this, { x, y, z });
+      }
+    },
+    ShaderMaterial: class {
+      constructor(options) {
+        Object.assign(this, options);
+      }
+    },
+  };
+
+  const material = createGlowMaterial(THREE);
+  assert.ok(!/attribute\s+vec3\s+instanceColor/.test(material.vertexShader), 'jamais déclaré ici');
+  // La question « y a-t-il une couleur par instance ? » est posée à three, qui
+  // la connaît déjà, et non à un paramètre que l’appelant devrait tenir juste.
+  assert.match(material.vertexShader, /#ifdef USE_INSTANCING_COLOR/);
+  assert.match(material.vertexShader, /vTint = instanceColor;/);
+  // Sans couleur d’instance, le halo garde son ton : c’est le lampadaire.
+  assert.match(material.vertexShader, /vTint = uColor;/);
+  assert.equal(material.uniforms.uColor.value.x, 1);
+  // Le halo s’allume la nuit : il naît éteint.
+  assert.equal(material.uniforms.uOpacity.value, 0);
 });

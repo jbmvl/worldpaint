@@ -51,6 +51,7 @@ export const LABEL_EXACT = {
   buildings: 'bâtiment',
   'building-windows': 'fenêtres allumées',
   gardens: 'jardin (clôture et buissons)',
+  streets: 'voirie (caniveau, bordure, trottoir)',
   water: 'eau',
   'ground-cover': 'herbe',
   crops: 'cultures (semis)',
