@@ -5,6 +5,8 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
 import {
   EARTH_CIRCUMFERENCE,
@@ -71,6 +73,7 @@ import {
 } from '../src/layers/furniturePlacement.js';
 import {
   Kit,
+  createGlowMaterial,
   FURNITURE_BUILDERS,
   furnitureSpecsFor,
   lampArcAt,
@@ -2926,4 +2929,84 @@ test('une portion de trottoir trop courte est un artefact du découpage', () => 
   const runs = contiguousRuns(rows, (row) => row.ok, STREET_MIN_RUN);
   assert.equal(runs.length, 1, 'seule la portion assez longue est retenue');
   assert.equal(runs[0].length, 6);
+});
+
+// --- Les attributs que three déclare déjà -----------------------------------
+
+/*
+ * three ajoute un préambule à tout `ShaderMaterial`, et ce préambule **déclare
+ * les attributs intégrés** — `position`, `uv`, et, dès qu'un `InstancedMesh`
+ * porte un `instanceColor`, `instanceColor`. Les redéclarer côté worldpaint ne
+ * produit pas un avertissement mais une erreur de compilation du programme, et
+ * donc un matériau entièrement noir ou absent. La panne est d'autant plus
+ * traître qu'elle ne se déclenche qu'au premier rendu d'une instance colorée.
+ */
+const THREE_BUILTIN_ATTRIBUTES = [
+  'position',
+  'normal',
+  'tangent',
+  'uv',
+  'uv1',
+  'uv2',
+  'uv3',
+  'color',
+  'instanceMatrix',
+  'instanceColor',
+  'batchId',
+  'skinIndex',
+  'skinWeight',
+];
+
+function sourceFilesUnder(dir) {
+  const out = [];
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    if (statSync(full).isDirectory()) out.push(...sourceFilesUnder(full));
+    else if (entry.endsWith('.js')) out.push(full);
+  }
+  return out;
+}
+
+test('aucun shader ne redéclare un attribut que three déclare déjà', () => {
+  const declaration = /\battribute\s+\w+\s+(\w+)\s*;/g;
+  for (const path of sourceFilesUnder('src')) {
+    const source = readFileSync(path, 'utf8');
+    for (const [, name] of source.matchAll(declaration)) {
+      assert.ok(
+        !THREE_BUILTIN_ATTRIBUTES.includes(name),
+        `${path} redéclare l’attribut intégré « ${name} » — three le déclare déjà`
+      );
+    }
+  }
+});
+
+test('le halo lit la couleur d’instance sans la redéclarer', () => {
+  // Un stub : le matériau n’a besoin que de retenir ce qu’on lui passe, et
+  // c’est la **source du shader** qu’on vérifie, pas son exécution.
+  const THREE = {
+    DoubleSide: 2,
+    AdditiveBlending: 2,
+    Vector3: class {
+      constructor(x, y, z) {
+        Object.assign(this, { x, y, z });
+      }
+    },
+    ShaderMaterial: class {
+      constructor(options) {
+        Object.assign(this, options);
+      }
+    },
+  };
+
+  const material = createGlowMaterial(THREE);
+  assert.ok(!/attribute\s+vec3\s+instanceColor/.test(material.vertexShader), 'jamais déclaré ici');
+  // La question « y a-t-il une couleur par instance ? » est posée à three, qui
+  // la connaît déjà, et non à un paramètre que l’appelant devrait tenir juste.
+  assert.match(material.vertexShader, /#ifdef USE_INSTANCING_COLOR/);
+  assert.match(material.vertexShader, /vTint = instanceColor;/);
+  // Sans couleur d’instance, le halo garde son ton : c’est le lampadaire.
+  assert.match(material.vertexShader, /vTint = uColor;/);
+  assert.equal(material.uniforms.uColor.value.x, 1);
+  // Le halo s’allume la nuit : il naît éteint.
+  assert.equal(material.uniforms.uOpacity.value, 0);
 });

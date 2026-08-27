@@ -330,7 +330,9 @@ export class FurnitureLayer {
     this.signalMaterial = new THREE.MeshBasicMaterial({ vertexColors: true, fog: true, toneMapped: false });
     this.signalMaterial.name = 'traffic-lens';
     this.signalMesh = null;
-    this.signalGlowMaterial = createGlowMaterial(THREE, { perInstanceColor: true });
+    // Pas de réglage à passer : le halo prend la couleur de l'instance dès que
+    // le maillage en porte une, et c'est le cas du feu — voir `createGlowMaterial`.
+    this.signalGlowMaterial = createGlowMaterial(THREE);
     this.signalGlowMesh = null;
     /** @type {Array<{x:number,y:number,z:number,yaw:number,phase:number}>} */
     this._signals = [];
