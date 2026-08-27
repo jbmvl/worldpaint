@@ -438,6 +438,7 @@ export class RoadNetwork {
     this.segments = 0;
     this._anchor = null;
     this._frame = null;
+    this._surface = -1;
 
     this.materials = materials;
     /** @type {Record<string, Object|null>} un maillage par profil rencontré. */
@@ -469,6 +470,10 @@ export class RoadNetwork {
   /** Vrai si l'observateur s'est assez éloigné pour justifier une reconstruction. */
   needsRebuild(x, z) {
     if (this._frame !== this.bubble?.frame) return true;
+    // Même raison que pour l'eau : une maille de terrain qui s'affine remonte
+    // sous une plate-forme dressée à l'ancienne résolution, et le versant
+    // amont finit par recouvrir la chaussée.
+    if (this._surface !== this.bubble?.surfaceGeneration) return true;
     if (!this._anchor) return true;
     return Math.hypot(x - this._anchor.x, z - this._anchor.z) >= ROAD_REBUILD_M;
   }
@@ -541,6 +546,7 @@ export class RoadNetwork {
     }
     this._anchor = { x: here.x, z: here.z };
     this._frame = this.bubble.frame;
+    this._surface = this.bubble.surfaceGeneration;
     return segments > 0;
   }
 

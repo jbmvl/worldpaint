@@ -17,23 +17,28 @@
  * ## L'ordre de génération, et pourquoi il est celui-là
  *
  *   1. **occupation du sol** — tout le monde la lit, personne ne la produit ;
- *   2. **chaussées** — elles entaillent le terrain et publient leur index, qui
+ *   2. **eau** — elle passe avant tout ce qui touche au relief, parce qu'elle
+ *      publie sa **cuvette** (`WaterIndex`) : le terrain se creuse sous chaque
+ *      nappe, comme il se creuse sous une chaussée. Sans ça le terrain, maillé
+ *      sur un MNT qui ignore l'eau, traverse les lacs — et aucun décalage ne
+ *      rattrape une intersection. Elle ne lit toujours que les tuiles : elle
+ *      publie, elle ne consomme rien ;
+ *   3. **chaussées** — elles entaillent le terrain et publient leur index, qui
  *      est aussi l'**emprise routière** (`roadCorridor`) : la frontière que ni
  *      la haie, ni la clôture, ni le jardin, ni le champ, ni l'herbe n'ont le
  *      droit de franchir. C'est la seule relation spatiale que toutes les
  *      couches de décor partagent, et elle tient en une question — « ce point
  *      est-il sur la voirie ? » ;
- *   3. **eau, bâti** — indépendants, ils ne lisent que les tuiles ; le bâti
- *      publie au passage ses **maisons**, dont les **jardins** tirent leurs
- *      clôtures et leurs buissons — eux ne lisent aucune tuile, mais ils
- *      lisent l'emprise ;
- *   4. **mobilier** — il lui faut les tronçons *et* l'index des chaussées :
+ *   4. **bâti** — il ne lit que les tuiles ; il publie au passage ses
+ *      **maisons**, dont les **jardins** tirent leurs clôtures et leurs
+ *      buissons — eux ne lisent aucune tuile, mais ils lisent l'emprise ;
+ *   5. **mobilier** — il lui faut les tronçons *et* l'index des chaussées :
  *      murs et glissières se posent sur la plate-forme exacte sur laquelle
  *      roule l'observateur, et les feux n'ont de sens qu'aux carrefours ;
- *   5. **arbres** — après la carte de classes, qui décide où est le bois ;
- *   6. **herbe** — après l'index des chaussées, pour ne pas pousser sur le
+ *   6. **arbres** — après la carte de classes, qui décide où est le bois ;
+ *   7. **herbe** — après l'index des chaussées, pour ne pas pousser sur le
  *      bitume ;
- *   7. **cheminées** — publiées par le mobilier, animées par `lifeLayer`.
+ *   8. **cheminées** — publiées par le mobilier, animées par `lifeLayer`.
  *
  * Une couche qui manque ne casse rien : chacune se contente de ne rien poser.
  */
@@ -246,18 +251,24 @@ export class WorldComposer {
       // Premier remplissage : ce qui a été planté avant elle l'a été à l'aveugle.
       const classArrived = !wasReady && this.groundClass.ready;
 
-      // 2. Chaussées — elles publient l'index et déclenchent le déblai du terrain.
+      // 2. Eau — elle publie sa cuvette et déclenche le creusement du terrain.
+      //    Avant les chaussées : la nappe est calculée sur le terrain **brut**,
+      //    donc elle ne dépend d'aucun terrassement, mais le terrain, lui, doit
+      //    connaître les deux avant de se mailler.
+      this.water.rebuild(this.vectorTiles, wanted, here);
+      this.bubble.setWaterCut(this.water.index);
+
+      // 3. Chaussées — elles publient l'index et déclenchent le déblai du terrain.
       const hasRoads = this.roads.rebuild(this.vectorTiles, wanted, here);
 
-      // 3. Eau et bâti — indépendants.
-      this.water.rebuild(this.vectorTiles, wanted, here);
+      // 4. Bâti.
       this.buildings.rebuild(this.vectorTiles, wanted, here);
 
-      // 3 bis. Jardins — après le bâti, dont ils reçoivent les maisons. Ils ne
+      // 4 bis. Jardins — après le bâti, dont ils reçoivent les maisons. Ils ne
       //    lisent aucune tuile : sans cette liste, ils ne posent rien.
       this.gardens.rebuild(this.buildings.houses, here);
 
-      // 4. Mobilier — il lui faut les tronçons de chaussée et leur index.
+      // 5. Mobilier — il lui faut les tronçons de chaussée et leur index.
       this.furniture.rebuild(
         this.vectorTiles,
         wanted,
@@ -267,21 +278,21 @@ export class WorldComposer {
         this.roads.junctions
       );
 
-      // 5. Arbres — les tuiles déjà plantées le restent : à donnée égale, le
+      // 6. Arbres — les tuiles déjà plantées le restent : à donnée égale, le
       //    semis est déterministe, les replanter ne ferait que clignoter. Seule
       //    l'arrivée de la carte de classes justifie de tout reprendre.
       if (classArrived) this.vegetation.sync({ replant: true });
 
-      // 6. Herbe — l'index des chaussées vient de changer, ce qui est semé
+      // 7. Herbe — l'index des chaussées vient de changer, ce qui est semé
       //    peut se trouver sur une route qu'on ne connaissait pas encore.
       if (hasRoads || classStale || force) this.grass.update(here.x, here.z, { force: true });
 
-      // 7. Cultures — même carte que le sol : il suffit de resemer quand elle a
+      // 8. Cultures — même carte que le sol : il suffit de resemer quand elle a
       //    été repeinte, ou quand l'index des chaussées a bougé sous le semis.
       if (classStale || force) this.crops.invalidate();
       this.crops.update(here.x, here.z, { force: hasRoads || classStale || force });
 
-      // 8. Cheminées à faire fumer : le mobilier sait où sont les fermes, mais
+      // 9. Cheminées à faire fumer : le mobilier sait où sont les fermes, mais
       //    la fumée est animée par image.
       this.life.setChimneys(this.furniture.chimneys, here);
 

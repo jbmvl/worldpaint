@@ -94,6 +94,45 @@ export function smoothColumns(heights, rows, cols, radius = 2) {
 }
 
 /**
+ * Rend un profil d'altitude **monotone vers l'aval** : minimum courant, dans le
+ * sens de la descente. Le tableau reçu n'est pas modifié.
+ *
+ * C'est la contrainte physique d'un cours d'eau, et elle vaut mieux que le
+ * lissage qu'elle remplace. Une moyenne glissante (`smoothColumns`) tire chaque
+ * section vers ses voisines, **y compris vers le haut** : un passage encaissé
+ * s'en trouve relevé au-dessus de ses propres berges, ce qui est exactement le
+ * défaut qu'on cherche à ne plus voir. Le minimum courant, lui, ne remonte
+ * jamais.
+ *
+ * Le sens de parcours n'est pas pris du sens de numérisation OSM, qui n'est pas
+ * fiable, mais des altitudes des deux extrémités : on descend depuis la plus
+ * haute. À égalité on garde l'ordre du tableau, pour que le résultat ne dépende
+ * de rien d'autre que des altitudes.
+ *
+ * Fonction pure.
+ *
+ * @param {Float32Array|number[]} heights Une altitude par ligne du ruban.
+ * @returns {Float32Array} profil descendant, même longueur.
+ */
+export function monotoneDownstream(heights) {
+  const n = heights.length;
+  const out = new Float32Array(n);
+  if (n === 0) return out;
+
+  // On descend depuis l'extrémité la plus haute.
+  const forward = heights[0] >= heights[n - 1];
+  let running = Infinity;
+  for (let k = 0; k < n; k++) {
+    const r = forward ? k : n - 1 - k;
+    const h = heights[r];
+    // Un trou de données ne doit pas fixer le minimum courant pour tout l'aval.
+    if (Number.isFinite(h) && h < running) running = h;
+    out[r] = Number.isFinite(running) ? running : h;
+  }
+  return out;
+}
+
+/**
  * Repères de balayage le long d'une polyligne : tangente unitaire et
  * perpendiculaire **à gauche de la marche**, dans le plan horizontal.
  *
@@ -196,9 +235,6 @@ export function createProfileBuffer() {
  * @param {number} [options.textureLength] Mètres couverts par un cycle vertical.
  * @param {number} [options.columns]
  * @param {number} [options.smoothRadius]
- * @param {boolean} [options.flatCrossSection] Met toute une section transversale
- *        à l'altitude la plus basse qu'elle rencontre. C'est ce qu'il faut pour
- *        l'eau : une rivière descend le long de son cours, jamais en travers.
  * @param {boolean} [options.level] Dresse la section de niveau en travers
  *        (`levelRow`). Vrai par défaut : c'est le comportement d'une chaussée.
  * @param {Float32Array} [options.platform] Altitudes de plate-forme déjà
@@ -216,7 +252,6 @@ export function appendRibbon(
     textureLength = 12,
     columns = 5,
     smoothRadius = 2,
-    flatCrossSection = false,
     level = true,
     platform = null,
   }
@@ -250,16 +285,6 @@ export function appendRibbon(
       points[index * 2] = x;
       points[index * 2 + 1] = z;
       heights[index] = (level ? deck : sampleElevation(x, z)) + lift;
-    }
-  }
-
-  if (flatCrossSection) {
-    // Le minimum, pas la moyenne : une surface d'eau posée à la hauteur moyenne
-    // de ses berges les recouvrirait.
-    for (let r = 0; r < rows; r++) {
-      let lowest = Infinity;
-      for (let c = 0; c < columns; c++) lowest = Math.min(lowest, heights[r * columns + c]);
-      for (let c = 0; c < columns; c++) heights[r * columns + c] = lowest;
     }
   }
 
