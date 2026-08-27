@@ -138,10 +138,17 @@ import {
   treesForScore,
   forestTypeAt,
   variantsFor,
+  understoryVariants,
+  treeHeight,
+  foliageTint,
+  thinPlacements,
   FOREST_PATCH_M,
   WOOD_SCORE_MIN,
   WOOD_DENSITY_CURVE,
+  EMERGENT_SHARE,
+  CLUMP_TINT_M,
 } from '../src/layers/vegetationLayer.js';
+import { TREE_ESSENCES } from '../src/themes/default.js';
 import { grassVariantFor, GRASS_RADIUS_M, GRASS_COUNT, GRASS_FADE_FROM } from '../src/layers/groundCover.js';
 import {
   cropCellRing,
@@ -177,9 +184,23 @@ import { orientedBox, roofTriangles, ringArea } from '../src/layers/roofGeometry
 import { trafficPhaseAt, TRAFFIC_CYCLE_S, SIGN_ITEMS } from '../src/layers/furnitureLayer.js';
 import { TREE_ATLAS_OFFSETS, GRASS_VARIANTS } from '../src/materials/proceduralTextures.js';
 import { snapToShadowTexels, sunDirection, SHADOW_RADIUS_M } from '../src/environment/shadowFrame.js';
-import { waterwayStyleFor, isDrawableWater, waterPolygons, boundsIntersect } from '../src/layers/waterLayer.js';
+import {
+  waterwayStyleFor,
+  isDrawableWater,
+  waterPolygons,
+  boundsIntersect,
+  pointInPolygon,
+  interiorSamples,
+  waterSurfaceLevel,
+} from '../src/layers/waterLayer.js';
 import { skyParameters, lightingFor, sunlightColor } from '../src/environment/skyModel.js';
-import { groundClassFor, classPolygons, CLASS_FILL } from '../src/terrain/groundClassMap.js';
+import {
+  groundClassFor,
+  classPolygons,
+  CLASS_FILL,
+  GroundClassMap,
+  CLASS_AREA_M,
+} from '../src/terrain/groundClassMap.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
 import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
 import { birdAt, createBirdGeometry } from '../src/layers/lifeLayer.js';
@@ -457,6 +478,71 @@ test('l’arrondi stochastique évite l’effet de verger', () => {
   const normalized = (score - WOOD_SCORE_MIN) / (1 - WOOD_SCORE_MIN);
   const expected = Math.pow(normalized, WOOD_DENSITY_CURVE) * 9;
   close(total / draws, expected, 0.02, 'espérance du tirage');
+});
+
+test('les hauteurs se répartissent en strates, avec quelques dominants', () => {
+  const type = { minHeight: 8, maxHeight: 16 };
+  assert.equal(treeHeight(type, 0, 1), 8, 'le tirage nul donne la hauteur minimale');
+  close(treeHeight(type, 1, 1), 16, 1e-9, 'le tirage plein donne la maximale');
+
+  // La loi penche vers le bas : sans cela, un massif est une haie taillée.
+  const draws = 400;
+  let total = 0;
+  for (let i = 0; i < draws; i++) total += treeHeight(type, (i + 0.5) / draws, 1);
+  assert.ok(total / draws < 12, `moyenne ${total / draws} sous le milieu de la fourchette`);
+
+  // Et quelques-uns dépassent la strate : ce sont eux qui donnent le relief.
+  assert.ok(treeHeight(type, 1, 0) > 16, 'un dominant dépasse la hauteur du peuplement');
+  assert.ok(EMERGENT_SHARE > 0 && EMERGENT_SHARE < 0.25, 'un dominant reste une exception');
+});
+
+test('le sous-bois tire dans les buissons, quel que soit le peuplement', () => {
+  const variants = understoryVariants();
+  assert.ok(variants.length > 0);
+  // Ce sont bien les silhouettes basses, pas celles de la futaie au-dessus.
+  assert.deepEqual(variants, TREE_ESSENCES.bushy);
+  // Et sans essence buissonnante, on rend quand même une case d’atlas valide.
+  assert.deepEqual(understoryVariants({}), [0]);
+});
+
+test('la teinte d’un feuillage dérive par bosquet, et reste ancrée au lieu', () => {
+  const hue = [0.92, 1, 0.86];
+  const a = foliageTint(hue, 1200, -800, 1, 0.5);
+  const b = foliageTint(hue, 1200 + 3, -800 - 4, 1, 0.5);
+  assert.deepEqual(a, b, 'deux arbres du même bosquet portent le même vert de fond');
+
+  // Deux bosquets éloignés ne portent pas le même : c’est tout l’objet.
+  const greens = new Set();
+  for (let i = 0; i < 30; i++) {
+    greens.add(foliageTint(hue, i * CLUMP_TINT_M, 0, 1, 0.5).join(','));
+  }
+  assert.ok(greens.size > 20, `${greens.size} teintes de bosquet sur 30`);
+
+  // La dérive est chaude-froide : rouge et bleu partent en sens contraires,
+  // sinon on ne fait que monter et descendre la clarté.
+  for (let i = 0; i < 30; i++) {
+    const [r, , bl] = foliageTint([1, 1, 1], i * CLUMP_TINT_M, 500, 1, 0.5);
+    close(r + bl, 2, 1e-9, 'la dérive ne déplace pas la moyenne');
+  }
+
+  // Les canaux restent dans une plage utilisable.
+  const extreme = foliageTint([1.2, 1.2, 1.2], 400, 400, 1.12, 0.999);
+  assert.ok(extreme.every((v) => v >= 0 && v <= 1.25), 'canaux bornés');
+});
+
+test('le plafond d’une tuile éclaircit le semis au lieu de le rogner', () => {
+  const list = Array.from({ length: 1000 }, (_, i) => i);
+  assert.equal(thinPlacements(list, 2000), list, 'sous le plafond, on ne touche à rien');
+
+  const thinned = thinPlacements(list, 250);
+  assert.equal(thinned.length, 250, 'le plafond est tenu exactement');
+  // L’éclaircie est répartie : chaque quart du semis garde un quart de ce qui
+  // reste. C’est ce qui manquait quand on s’arrêtait de planter en route — le
+  // sud d’une tuile restait nu au milieu d’un massif.
+  for (let q = 0; q < 4; q++) {
+    const kept = thinned.filter((v) => v >= q * 250 && v < (q + 1) * 250).length;
+    assert.ok(Math.abs(kept - 62.5) <= 2, `quart ${q} : ${kept} points gardés`);
+  }
 });
 
 // --- Bâti ------------------------------------------------------------------
@@ -823,6 +909,41 @@ test('un lac qui entoure l’observateur n’est pas écarté', () => {
   assert.equal(boundsIntersect([], 0, 0, 900), false);
 });
 
+test('point dans un polygone à trou', () => {
+  const square = [{ x: 0, z: 0 }, { x: 10, z: 0 }, { x: 10, z: 10 }, { x: 0, z: 10 }];
+  const hole = [{ x: 4, z: 4 }, { x: 6, z: 4 }, { x: 6, z: 6 }, { x: 4, z: 6 }];
+  assert.equal(pointInPolygon(5, 5, square, [hole]), false, 'dans le trou');
+  assert.equal(pointInPolygon(1, 1, square, [hole]), true, 'dans l’anneau, hors du trou');
+  assert.equal(pointInPolygon(20, 20, square, [hole]), false, 'hors de tout');
+});
+
+test('la grille intérieure reste dans le polygone et sous le plafond d’échantillons', () => {
+  const square = [{ x: 0, z: 0 }, { x: 100, z: 0 }, { x: 100, z: 100 }, { x: 0, z: 100 }];
+  const points = interiorSamples(square, [], 64);
+  assert.ok(points.length > 0, 'un grand polygone produit des échantillons');
+  assert.ok(points.length <= 64 * 1.5, 'le pas de grille respecte le plafond, à la maille près');
+  for (const p of points) assert.equal(pointInPolygon(p.x, p.z, square, []), true);
+
+  assert.deepEqual(interiorSamples([{ x: 0, z: 0 }, { x: 1, z: 0 }], [], 64), [], 'contour dégénéré');
+});
+
+test('l’altitude d’une nappe ignore les points sans donnée plutôt que de les compter pour zéro', () => {
+  // Le contour dit tous 100 m ; un pixel de MNT sans tuile chargée à
+  // l’intérieur ne doit pas faire chuter la nappe à zéro.
+  const square = [{ x: 0, z: 0 }, { x: 100, z: 0 }, { x: 100, z: 100 }, { x: 0, z: 100 }];
+  const sampleWithHole = (x, z) => (x > 40 && x < 60 && z > 40 && z < 60 ? NaN : 100);
+  close(waterSurfaceLevel(square, [], sampleWithHole), 100, 1e-9, 'la lacune du milieu est ignorée');
+
+  // Une bosse fautive au milieu du lac — invisible depuis le seul contour —
+  // doit malgré tout tirer le niveau vers le bas.
+  const sampleWithSpike = (x, z) => (x > 45 && x < 55 && z > 45 && z < 55 ? 90 : 100);
+  close(waterSurfaceLevel(square, [], sampleWithSpike), 90, 1e-9, 'la bosse intérieure est vue');
+
+  // Aucune donnée nulle part : le niveau reste indéfini (Infinity), à charge
+  // de l’appelant d’écarter le polygone.
+  assert.equal(waterSurfaceLevel(square, [], () => NaN), Infinity);
+});
+
 test('une section d’eau est horizontale, à l’altitude la plus basse', () => {
   // Vallée en V : le lit descend vers l’est, les berges remontent en travers.
   const path = resamplePath([{ x: 0, z: 0 }, { x: 100, z: 0 }], 10);
@@ -918,6 +1039,33 @@ test('les couches vectorielles décrivent la matière du sol', () => {
   assert.equal(groundClassFor('landcover', { class: 'unknown' }), null);
   assert.equal(groundClassFor('transportation', { class: 'motorway' }), null);
   assert.equal(groundClassFor('landcover', {}), null);
+});
+
+test('la carte de classes sait dire ce qu’elle ne couvre pas', () => {
+  // Le carré rasterisé est monté à la main : le constructeur veut un canevas,
+  // et ce qu’on teste ici n’est que du cadrage.
+  const frame = {};
+  const map = Object.assign(Object.create(GroundClassMap.prototype), {
+    _data: new Uint8ClampedArray(4),
+    _frame: frame,
+    origin: { x: 0, y: 0 },
+    size: CLASS_AREA_M,
+  });
+  const coverage = (a, b, c, d, f) => map.coverageOf(a, b, c, d, f);
+
+  close(coverage(100, 100, 1100, 1100, frame), 1, 1e-9, 'tuile entièrement dedans');
+  assert.equal(coverage(-3000, 0, -2000, 1000, frame), 0, 'tuile entièrement dehors');
+  // Débordement d’un côté : c’est le cas des tuiles de coin de la bulle, dont
+  // l’emprise sort régulièrement du carré. La moitié semée l’est à l’aveugle.
+  close(coverage(-500, 0, 500, 1000, frame), 0.5, 1e-9, 'tuile à cheval sur le bord');
+
+  // Une carte d’un autre repère ne dit rien d’utilisable : ses mètres ne sont
+  // pas ceux de la tuile qu’on interroge.
+  assert.equal(coverage(100, 100, 1100, 1100, {}), 0, 'repère différent');
+
+  // Et sans rasterisation relue, elle ne dit rien du tout.
+  map._data = null;
+  assert.equal(coverage(100, 100, 1100, 1100, frame), 0, 'carte pas encore peinte');
 });
 
 test('chaque matière a un canal distinct, et l’alpha porte la couverture', () => {

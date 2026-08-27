@@ -13,19 +13,32 @@
  * de son cours, jamais en travers.
  *
  * L'altitude retenue est le **minimum** rencontré, jamais la moyenne : une
- * nappe posée à la hauteur moyenne de ses berges les recouvrirait.
+ * nappe posée à la hauteur moyenne de ses berges les recouvrirait. Pour une
+ * surface, ce minimum ne se cherche pas seulement sur le contour du polygone
+ * mais aussi sur une grille intérieure (`waterSurfaceLevel`) : le MNT reste
+ * bruité par endroits au-dessus de l'eau, et rien ne garantit qu'une bosse
+ * fautive au milieu d'un grand lac reste sous le niveau lu sur sa seule rive.
+ * Un point sans donnée (hors des tuiles de terrain actuellement chargées) est
+ * ignoré plutôt que traité comme une altitude de zéro, qui écraserait la
+ * nappe entière au niveau de la mer.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { resamplePath, createRibbonBuffer, appendRibbon } from './ribbonGeometry.js';
 import { createWaterNormalCanvas } from '../materials/proceduralTextures.js';
+import { pointInRing } from './furniturePlacement.js';
 import { defaultTheme } from '../themes/default.js';
 
 /** Couches source des tuiles vectorielles. */
 export const WATER_SOURCE_LAYER = 'water';
 export const WATERWAY_SOURCE_LAYER = 'waterway';
 
-/** Portée autour de l'observateur, en mètres. */
+/**
+ * Portée maximale autour de l'observateur, en mètres. C'est un plafond, pas
+ * la portée effective : `rebuild` le resserre sur le rayon réel de la bulle
+ * de terrain quand celui-ci est plus petit (latitudes élevées), pour ne
+ * jamais construire de l'eau au-delà du relief chargé.
+ */
 export const WATER_RADIUS_M = 900;
 /** Déplacement de l'observateur avant reconstruction, en mètres. */
 export const WATER_REBUILD_M = 250;
@@ -39,6 +52,15 @@ export const WATER_SAMPLE_M = 8;
 export const WATER_SINK_M = 0.15;
 /** Nombre maximal de surfaces retenues par reconstruction. */
 export const WATER_MAX_POLYGONS = 300;
+/**
+ * Nombre maximal de points échantillonnés à l'intérieur d'un polygone pour en
+ * tirer l'altitude. Le contour seul peut être percé : le MNT reste bruité par
+ * endroits au-dessus de l'eau (radar, végétation de rive), et rien ne borne le
+ * milieu d'un grand lac si on ne regarde que sa rive. Le pas de grille dérive
+ * de ce plafond et de la surface du polygone (voir `interiorSamples`), donc le
+ * coût reste borné même pour un grand lac.
+ */
+export const WATER_LEVEL_MAX_SAMPLES = 200;
 /**
  * Mètres couverts par un cycle de la carte de rides. Les coordonnées de texture
  * sont prises dans le **monde** et non sur la surface : une nappe triangulée
@@ -107,6 +129,86 @@ export function boundsIntersect(points, centerX, centerZ, radius) {
   );
 }
 
+/**
+ * Vrai si un point est dans le contour et hors de tous les trous. S'appuie
+ * sur `pointInRing` (`furniturePlacement.js`) plutôt que d'en refaire une
+ * copie. Fonction pure.
+ */
+export function pointInPolygon(x, z, outer, holes) {
+  if (!pointInRing(outer, x, z)) return false;
+  for (const hole of holes) {
+    if (pointInRing(hole, x, z)) return false;
+  }
+  return true;
+}
+
+/**
+ * Grille de points strictement intérieurs à un polygone (contour et trous en
+ * coordonnées locales). Le pas s'ajuste à la surface de la boîte englobante
+ * pour tenir sous `maxSamples` : un grand lac n'est pas sondé plus finement
+ * qu'une mare, seulement sur davantage de points.
+ *
+ * La grille est ancrée sur l'origine du repère local, pas sur la boîte
+ * englobante du polygone : deux lacs voisins tirent leurs échantillons des
+ * mêmes lignes de grille, et le résultat ne dépend ni de l'ordre des sommets
+ * ni de la position de l'observateur — l'invariant de déterminisme spatial du
+ * projet. Fonction pure.
+ */
+export function interiorSamples(outer, holes, maxSamples = WATER_LEVEL_MAX_SAMPLES) {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minZ = Infinity;
+  let maxZ = -Infinity;
+  for (const p of outer) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.z < minZ) minZ = p.z;
+    if (p.z > maxZ) maxZ = p.z;
+  }
+  const width = maxX - minX;
+  const depth = maxZ - minZ;
+  if (!(width > 0) || !(depth > 0)) return [];
+
+  const step = Math.sqrt((width * depth) / maxSamples) || 1;
+  const startX = Math.ceil(minX / step) * step;
+  const startZ = Math.ceil(minZ / step) * step;
+
+  const points = [];
+  for (let z = startZ; z <= maxZ; z += step) {
+    for (let x = startX; x <= maxX; x += step) {
+      if (pointInPolygon(x, z, outer, holes)) points.push({ x, z });
+    }
+  }
+  return points;
+}
+
+/**
+ * Altitude retenue pour une nappe d'eau : le minimum du terrain affiché, sur
+ * le contour, les trous et une grille intérieure — pas le contour seul, qui
+ * ne dit rien du milieu d'un grand lac. `sampleGround` peut rendre `NaN` pour
+ * un point sans donnée (hors tuiles chargées) : ces points sont ignorés
+ * plutôt que de compter pour une altitude de zéro, qui écraserait la nappe
+ * entière au niveau de la mer. Fonction pure.
+ *
+ * @param {Array<{x:number,z:number}>} outer
+ * @param {Array<Array<{x:number,z:number}>>} holes
+ * @param {(x:number, z:number) => number} sampleGround
+ * @returns {number} `Infinity` si aucun échantillon n'a de donnée.
+ */
+export function waterSurfaceLevel(outer, holes, sampleGround, maxInteriorSamples = WATER_LEVEL_MAX_SAMPLES) {
+  let level = Infinity;
+  const consider = (p) => {
+    const h = sampleGround(p.x, p.z);
+    if (Number.isFinite(h) && h < level) level = h;
+  };
+
+  for (const p of outer) consider(p);
+  for (const hole of holes) for (const p of hole) consider(p);
+  for (const p of interiorSamples(outer, holes, maxInteriorSamples)) consider(p);
+
+  return level;
+}
+
 /** Matériau d'eau, avec ses rides animées. */
 export function createWaterMaterial(THREE) {
   const normalMap = new THREE.CanvasTexture(createWaterNormalCanvas());
@@ -130,6 +232,16 @@ export function createWaterMaterial(THREE) {
     // L'eau reste une surface : elle doit s'écrire dans la profondeur, sinon
     // les arbres de la rive lui passeraient au travers.
     depthWrite: true,
+    // L'enfoncement géométrique sous la berge (`WATER_SINK_M`) reste minime
+    // par construction — quelques centimètres à quelques dizaines de mètres
+    // de distance. Le tampon de profondeur, lui, perd cette précision bien
+    // avant, et les deux surfaces scintillent alors qu'elles ne se touchent
+    // pas réellement. Le décalage de polygone est le bon outil pour ça : il
+    // biaise la profondeur *écrite à l'écran*, pas l'altitude réelle, donc
+    // il ne change rien à la hauteur de la nappe ni à l'émersion des berges.
+    polygonOffset: true,
+    polygonOffsetFactor: -4,
+    polygonOffsetUnits: -4,
   });
   material.name = 'water';
 
@@ -183,10 +295,16 @@ export class WaterLayer {
   rebuild(source, tiles, here) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
 
+    // La bulle de terrain rétrécit avec la latitude (`scale` dépend de
+    // cos(lat)) : au-delà d'environ 65°, son rayon passe sous 900 m. Sans ce
+    // plafond, une surface d'eau pourrait se construire là où le terrain n'a
+    // pas encore chargé — de l'eau flottant au-delà du relief affiché.
+    const radius = Math.min(WATER_RADIUS_M, this.bubble.radiusMeters || WATER_RADIUS_M);
+
     const mesh = { positions: [], normals: [], uvs: [] };
 
-    this._appendPolygons(source, tiles, here, mesh);
-    this._appendWaterways(source, tiles, here, mesh);
+    this._appendPolygons(source, tiles, here, radius, mesh);
+    this._appendWaterways(source, tiles, here, radius, mesh);
 
     this.count = mesh.positions.length / 9;
     this._apply(mesh);
@@ -216,7 +334,7 @@ export class WaterLayer {
     mesh.uvs.push(x / WATER_UV_SCALE_M, z / WATER_UV_SCALE_M);
   }
 
-  _appendPolygons(source, tiles, here, mesh) {
+  _appendPolygons(source, tiles, here, radius, mesh) {
     const { THREE, bubble } = this;
     let built = 0;
 
@@ -230,29 +348,36 @@ export class WaterLayer {
 
         const outer = this._toLocal(rings[0]);
         if (outer.length < 3) continue;
-        if (!boundsIntersect(outer, here.x, here.z, WATER_RADIUS_M)) continue;
+        if (!boundsIntersect(outer, here.x, here.z, radius)) continue;
+
+        const holeRings = [];
+        for (let i = 1; i < rings.length; i++) {
+          const hole = this._toLocal(rings[i]);
+          if (hole.length >= 3) holeRings.push(hole);
+        }
 
         // La mer est à zéro par définition : lui chercher un minimum sur un
-        // polygone qui couvre plusieurs tuiles n'aurait aucun sens.
+        // polygone qui couvre plusieurs tuiles n'aurait aucun sens. Le même
+        // enfoncement que les lacs s'applique quand même : sans lui, un
+        // littoral dont le MNT lit une altitude proche de zéro se dispute le
+        // pixel avec la nappe (scintillement).
         let level;
         if (properties.class === 'ocean') {
-          level = 0;
+          level = -WATER_SINK_M;
         } else {
-          level = Infinity;
-          for (const p of outer) {
-            const ground = bubble.surfaceElevationAtLocal(p.x, p.z) * bubble.verticalScale;
-            if (ground < level) level = ground;
-          }
+          // `NaN` en cas de tuile non chargée, jamais 0 : un sommet hors bulle
+          // ne doit pas prétendre que le lac est au niveau de la mer.
+          const sampleGround = (x, z) => {
+            const h = bubble.surfaceElevationAtLocal(x, z, NaN);
+            return Number.isFinite(h) ? h * bubble.verticalScale : NaN;
+          };
+          level = waterSurfaceLevel(outer, holeRings, sampleGround);
           if (!Number.isFinite(level)) continue;
           level -= WATER_SINK_M;
         }
 
         const contour = outer.map((p) => new THREE.Vector2(p.x, p.z));
-        const holes = [];
-        for (let i = 1; i < rings.length; i++) {
-          const hole = this._toLocal(rings[i]);
-          if (hole.length >= 3) holes.push(hole.map((p) => new THREE.Vector2(p.x, p.z)));
-        }
+        const holes = holeRings.map((hole) => hole.map((p) => new THREE.Vector2(p.x, p.z)));
 
         // Triangulation par oreilles : une géométrie dégénérée la fait échouer,
         // et un lac manquant vaut mieux qu'une scène sans eau.
@@ -281,7 +406,7 @@ export class WaterLayer {
     });
   }
 
-  _appendWaterways(source, tiles, here, mesh) {
+  _appendWaterways(source, tiles, here, radius, mesh) {
     const { bubble } = this;
     const buffer = createRibbonBuffer();
     const sampleElevation = (x, z) => bubble.surfaceElevationAtLocal(x, z, 0) * bubble.verticalScale;
@@ -301,7 +426,7 @@ export class WaterLayer {
         if (!Array.isArray(line) || line.length < 2) continue;
         const local = this._toLocal(line);
         if (local.length < 2) continue;
-        if (!boundsIntersect(local, here.x, here.z, WATER_RADIUS_M)) continue;
+        if (!boundsIntersect(local, here.x, here.z, radius)) continue;
 
         const path = resamplePath(local, WATER_SAMPLE_M);
         if (path.length < 2) continue;

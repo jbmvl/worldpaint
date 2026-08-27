@@ -146,9 +146,12 @@ export const TREE_ESSENCES = {
  * taillis est bas et serré là où une futaie est haute et clairsemée. C'est ce
  * contraste-là qui se lit de loin, pas le détail d'une houppe.
  *
- * Chaque peuplement fixe donc trois choses : les **essences** qui le composent
- * (indices de l'atlas), la **hauteur** de ses arbres, et un **facteur de
- * densité**. Le type est tiré d'une maille de `FOREST_PATCH_M`, donc il change
+ * Chaque peuplement fixe donc quatre choses : les **essences** qui le composent
+ * (indices de l'atlas), la **hauteur** de ses arbres, un **facteur de densité**,
+ * et la part de **sous-bois** — les buissons de la strate basse, qui se comptent
+ * en plus des arbres et non à leur place. Un bois sans strate basse se lit comme
+ * une colonnade : on voit sous les houppes jusqu'au bout du massif.
+ * Le type est tiré d'une maille de `FOREST_PATCH_M`, donc il change
  * de proche en proche mais reste le même sur toute une masse boisée — et il ne
  * dépend que du lieu, donc il ne change pas d'une reconstruction à l'autre.
  */
@@ -159,7 +162,9 @@ export const FOREST_TYPES = [
     essences: ['broadleaf', 'broadleaf', 'column'],
     minHeight: 12,
     maxHeight: 22,
-    density: 0.72,
+    density: 0.95,
+    // Une futaie entretenue est dégagée au sol : c'est même ce qui la définit.
+    understory: 0.12,
     tint: [0.95, 1, 0.86],
   },
   {
@@ -168,7 +173,9 @@ export const FOREST_TYPES = [
     essences: ['conifer', 'conifer', 'conifer', 'column'],
     minHeight: 11,
     maxHeight: 19,
-    density: 1.15,
+    density: 1.45,
+    // Sous les résineux, l'aiguille étouffe presque tout.
+    understory: 0.08,
     tint: [0.84, 1, 0.92],
   },
   {
@@ -177,7 +184,9 @@ export const FOREST_TYPES = [
     essences: ['bushy', 'bushy', 'broadleaf'],
     minHeight: 3.5,
     maxHeight: 7,
-    density: 1.35,
+    density: 1.75,
+    // Un taillis *est* son sous-bois : la strate basse y pèse autant que la haute.
+    understory: 0.55,
     tint: [1, 1, 0.8],
   },
   {
@@ -186,7 +195,9 @@ export const FOREST_TYPES = [
     essences: ['broadleaf', 'conifer', 'bushy', 'column'],
     minHeight: 7,
     maxHeight: 16,
-    density: 1,
+    density: 1.3,
+    // Le bois où l'on ne passe pas en ligne droite : ronces et jeunes pousses.
+    understory: 0.34,
     tint: [0.92, 1, 0.86],
   },
 ];
