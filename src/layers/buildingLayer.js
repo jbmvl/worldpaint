@@ -492,6 +492,16 @@ export class BuildingLayer {
      * @type {Array<{x:number,z:number,box:Object}>}
      */
     this.houses = [];
+    /**
+     * Centres de **tous** les bâtiments élevés, publiés pour `streetLayer`.
+     *
+     * Distinct de `houses`, et volontairement : la question posée par la voirie
+     * n'est pas « où sont les maisons ? » mais « est-ce bâti ici ? », et une
+     * grange, un atelier ou un immeuble y répondent aussi bien qu'un pavillon.
+     * Un centre suffit — ni forme ni taille ne servent à cette question.
+     * @type {Array<{x:number,z:number}>}
+     */
+    this.footprints = [];
 
     this.material = new THREE.MeshLambertMaterial({ vertexColors: true });
 
@@ -564,7 +574,7 @@ export class BuildingLayer {
         if (seen.has(key)) continue;
         seen.add(key);
 
-        candidates.push({ ring, properties, distance });
+        candidates.push({ ring, properties, distance, x, z });
       }
     });
 
@@ -581,6 +591,7 @@ export class BuildingLayer {
 
     let built = 0;
     let panes = 0;
+    const footprints = [];
     for (const candidate of candidates) {
       // Deux portées, et elles ne sont pas les mêmes : de jour la baie n'est
       // qu'un contraste dans un mur, de nuit c'est une lumière dans le noir. La
@@ -595,7 +606,10 @@ export class BuildingLayer {
               budget: PANE_MAX_COUNT - panes,
             }
           : null;
-      if (this._appendBuilding(candidate.ring, candidate.properties, walls, openings, houses)) built++;
+      if (this._appendBuilding(candidate.ring, candidate.properties, walls, openings, houses)) {
+        built++;
+        footprints.push({ x: candidate.x, z: candidate.z });
+      }
       if (openings) panes += openings.panes;
     }
 
@@ -603,6 +617,7 @@ export class BuildingLayer {
     this.paneCount = panes;
     this.windowCount = lamps.positions.length / 9;
     this.houses = houses;
+    this.footprints = footprints;
     this._applyWindows(lamps);
     if (walls.positions.length === 0) {
       this._clearMesh();

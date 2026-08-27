@@ -23,8 +23,9 @@ standalone demo yet — see the README's Status section).
 src/
   core/         geography and low-level primitives
   terrain/      the ground mesh: bubble, material, ground-class map, road cut
-  layers/       everything built on top of the terrain (roads, water,
-                buildings, vegetation, crops, furniture)
+  layers/       everything built on top of the terrain (roads, street
+                kerbing, water, buildings, gardens, vegetation, crops,
+                furniture)
   materials/    procedural textures and shared materials
   environment/  sky, sun, shadows, fog
   inspect/      debug helpers for labelling what's on screen

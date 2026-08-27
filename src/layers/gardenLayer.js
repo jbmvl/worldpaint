@@ -166,6 +166,59 @@ export function gardenCorners(box, margin) {
   return [at(-long, -short), at(long, -short), at(long, short), at(-long, short)];
 }
 
+/** Recul minimal accepté : en deçà, la clôture longerait le mur. */
+export const GARDEN_MIN_MARGIN_M = 1.4;
+/** Nombre de reculs essayés avant de renoncer au jardin. */
+export const GARDEN_MARGIN_STEPS = 4;
+
+/**
+ * Recul retenu pour qu'une clôture ne traverse pas le trottoir, ou `null`.
+ *
+ * Le décor gagnait ses trottoirs sans que les jardins le sachent : une maison
+ * plantée en bordure de rue tirait un recul de six mètres et posait ses piquets
+ * au milieu du passage. Or c'est exactement l'inverse qui se voit en vrai —
+ * c'est la clôture qui s'arrête à la limite, jamais la rue qui s'écarte.
+ *
+ * Le recul est donc **rabattu**, par paliers, jusqu'à ce que la clôture tienne
+ * derrière la bordure ; si même le recul minimal ne passe pas, la maison n'a
+ * pas de jardin devant, ce qui est la réponse juste pour une façade sur rue.
+ *
+ * Sans index de voirie, le recul tiré est rendu tel quel : une couche qui ne
+ * sait rien ne doit rien changer. La portée des jardins (`GARDEN_RADIUS_M`)
+ * tient largement dans celle de la voirie (`STREET_RADIUS_M`) : là où un jardin
+ * se pose, le trottoir est toujours connu, donc le rabattement ne dépend jamais
+ * de l'endroit où la voirie a été coupée.
+ *
+ * Fonction pure.
+ *
+ * @param {Object} box    Rectangle orienté de la maison.
+ * @param {number} margin Recul tiré au sort.
+ * @param {Object|null} pavement Index de la bande revêtue (`streetLayer.index`).
+ * @returns {number|null} recul retenu, ou `null` si aucun ne convient.
+ */
+export function fitGardenMargin(box, margin, pavement) {
+  if (!pavement) return margin;
+
+  const clear = (candidate) => {
+    const corners = gardenCorners(box, candidate);
+    for (let i = 0; i < corners.length; i++) {
+      const a = corners[i];
+      const b = corners[(i + 1) % corners.length];
+      // Les angles et le milieu de chaque côté : une clôture qui empiète le
+      // fait par un angle ou par le travers d'un côté, jamais autrement.
+      if (pavement.covers(a.x, a.z, 0)) return false;
+      if (pavement.covers((a.x + b.x) / 2, (a.z + b.z) / 2, 0)) return false;
+    }
+    return true;
+  };
+
+  for (let step = 0; step < GARDEN_MARGIN_STEPS; step++) {
+    const candidate = margin + ((GARDEN_MIN_MARGIN_M - margin) * step) / (GARDEN_MARGIN_STEPS - 1);
+    if (clear(candidate)) return candidate;
+  }
+  return null;
+}
+
 /** Interpolation de deux couleurs linéaires. Fonction pure. */
 function blend(a, b, t) {
   return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
@@ -297,9 +350,11 @@ export class GardenLayer {
    *
    * @param {Array} houses Maisons, avec leur rectangle orienté et leur assise.
    * @param {{x:number, z:number}} here Position locale du coureur.
+   * @param {Object|null} [pavement] Bande revêtue publiée par `streetLayer` :
+   *        une clôture ne traverse pas un trottoir.
    * @returns {boolean} vrai si des jardins ont été posés.
    */
-  rebuild(houses, here) {
+  rebuild(houses, here, pavement = null) {
     if (this.disposed || !this.bubble?.frame) return false;
 
     const buffer = { positions: [], normals: [], colors: [] };
@@ -317,8 +372,12 @@ export class GardenLayer {
       if (built >= GARDEN_MAX) break;
       if (randomAt(house.x, house.z, 211) >= GARDEN_SHARE) continue;
 
-      const margin =
+      const drawn =
         GARDEN_MARGIN_M[0] + randomAt(house.x, house.z, 217) * (GARDEN_MARGIN_M[1] - GARDEN_MARGIN_M[0]);
+      // Le rabattement passe **avant** le test de voisinage : c'est le recul
+      // réellement posé qui doit tenir libre, pas celui qu'on avait tiré.
+      const margin = fitGardenMargin(house.box, drawn, pavement);
+      if (margin === null) continue;
       if (!isDetached(house, neighbours, margin)) continue;
 
       this._appendGarden(buffer, house, margin);

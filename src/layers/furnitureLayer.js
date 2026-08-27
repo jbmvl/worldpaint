@@ -62,6 +62,7 @@ import {
 } from './ribbonGeometry.js';
 import { ROAD_SAMPLE_M, ROAD_LIFT_M } from './roadNetwork.js';
 import { ROAD_CUT_M } from '../terrain/roadCut.js';
+import { collectBuiltUpAreas, pointInAreas, ringsOf } from './settlement.js';
 import {
   createFurnitureGeometries,
   createFurnitureMaterial,
@@ -96,7 +97,6 @@ import {
   pointInRing,
   randomAt,
   positionSeed,
-  BUILT_UP_CLASSES,
   FARMYARD_SUBCLASSES,
   ROW_CROPS,
   STEEP_CROSS_SLOPE,
@@ -370,7 +370,7 @@ export class FurnitureLayer {
    *        feu tricolore a un sens.
    * @returns {boolean} vrai si quelque chose a été posé.
    */
-  rebuild(source, tiles, here, roadSegments = [], roadIndex = null) {
+  rebuild(source, tiles, here, roadSegments = [], roadIndex = null, builtUpAreas = null) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
 
     const sampleElevation = (x, z) =>
@@ -391,7 +391,10 @@ export class FurnitureLayer {
     this.chimneys = [];
 
     try {
-      const builtUp = this._collectBuiltUpAreas(source, tiles);
+      // Les emprises habitées viennent de `worldComposer` quand il les a déjà
+      // lues pour la voirie : c'est la même question posée une seule fois. En
+      // leur absence, la couche les relit — elle ne dépend de personne.
+      const builtUp = builtUpAreas || collectBuiltUpAreas(source, tiles, this.bubble.frame);
       this._buildRoadside(context, roadSegments, builtUp);
       this._buildCrossings(context, roadSegments, roadIndex, builtUp);
       this._buildParcels(context, builtUp);
@@ -412,53 +415,13 @@ export class FurnitureLayer {
     return this.counts.points + this.counts.boundaries > 0;
   }
 
-  // --- Zones bâties --------------------------------------------------------
-
-  /**
-   * Emprises résidentielles et commerciales, en anneaux métriques.
-   *
-   * Elles servent d'interrupteur : à l'intérieur, une rue est éclairée et n'a
-   * ni poteau téléphonique ni haie ; à l'extérieur, c'est l'inverse. C'est la
-   * seule information dont on dispose pour distinguer une rue d'une route, et
-   * elle est portée par la couche `landuse` du schéma OpenMapTiles.
-   */
-  _collectBuiltUpAreas(source, tiles) {
-    const areas = [];
-    const { origin, scale, zoom } = this.bubble.frame;
-
-    const collect = (geometry, properties) => {
-      if (!BUILT_UP_CLASSES.has(properties.class)) return;
-      for (const ring of this._ringsOf(geometry)) {
-        const local = ring.map(([lng, lat]) => ({
-          x: (lngToTileX(lng, zoom) - origin.x) * scale,
-          z: (latToTileY(lat, zoom) - origin.y) * scale,
-        }));
-        if (local.length >= 3) areas.push(local);
-      }
-    };
-
-    source.forEachFeature('landuse', tiles, collect);
-    return areas;
-  }
-
-  /** Vrai si le point tombe dans l'une des emprises bâties. */
-  static _inAreas(areas, x, z) {
-    for (const ring of areas) {
-      let inside = false;
-      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-        const zi = ring[i].z;
-        const zj = ring[j].z;
-        if (zi > z !== zj > z) {
-          const t = (z - zi) / (zj - zi || 1);
-          if (x < ring[i].x + t * (ring[j].x - ring[i].x)) inside = !inside;
-        }
-      }
-      if (inside) return true;
-    }
-    return false;
-  }
-
   // --- Bord de route -------------------------------------------------------
+  //
+  // Les emprises habitées (`settlement.js`) servent d'interrupteur : à
+  // l'intérieur, une rue est éclairée et n'a ni poteau téléphonique ni haie ; à
+  // l'extérieur, c'est l'inverse. La même lecture sert à `streetLayer`, qui la
+  // complète du bâti réellement présent — un périmètre habité n'est pas encore
+  // une rue, et c'est ce qui décide de son trottoir.
 
   /**
    * Le mobilier qui accompagne la chaussée.
@@ -743,7 +706,7 @@ export class FurnitureLayer {
     // l'observateur, et ne change plus de bord d'une reconstruction à l'autre.
     const side = anchor || segment.path[0];
 
-    for (const run of runsByValue(rowsInfo, (row) => FurnitureLayer._inAreas(builtUp, row.x, row.z), 8)) {
+    for (const run of runsByValue(rowsInfo, (row) => pointInAreas(builtUp, row.x, row.z), 8)) {
       const rows = run.rows;
       if (rows.length < 3) continue;
       const origin = rows[0].distance;
@@ -1083,7 +1046,7 @@ export class FurnitureLayer {
       for (let r = 2; r < path.length - 2 && placed < FURNITURE_LIMITS.trafficLights; r++) {
         const p = path[r];
         if (Math.hypot(p.x - here.x, p.z - here.z) > FURNITURE_RADIUS_M) continue;
-        if (!FurnitureLayer._inAreas(builtUp, p.x, p.z)) continue;
+        if (!pointInAreas(builtUp, p.x, p.z)) continue;
 
         // Une autre chaussée passe ici, et assez large pour être une rue et non
         // une entrée de garage.
@@ -1144,7 +1107,7 @@ export class FurnitureLayer {
     let farmBuildings = 0;
 
     const handle = (geometry, properties, bounds) => {
-      for (const ring of this._ringsOf(geometry)) {
+      for (const ring of ringsOf(geometry)) {
         const local = ring.map(([lng, lat]) => ({
           x: (lngToTileX(lng, zoom) - origin.x) * scale,
           z: (latToTileY(lat, zoom) - origin.y) * scale,
@@ -1158,7 +1121,7 @@ export class FurnitureLayer {
         // ne connaît pas cette limite.
         const centre = FurnitureLayer._centroid(local);
         if (Math.hypot(centre.x - here.x, centre.z - here.z) > FURNITURE_RADIUS_M) continue;
-        if (FurnitureLayer._inAreas(builtUp, centre.x, centre.z)) continue;
+        if (pointInAreas(builtUp, centre.x, centre.z)) continue;
 
         const steepness = this._steepnessAt(centre.x, centre.z);
         const variant = randomAt(centre.x, centre.z, 7);
@@ -1622,7 +1585,7 @@ export class FurnitureLayer {
         const px = x + (randomAt(x, z, 101) - 0.5) * step * 0.9;
         const pz = z + (randomAt(x, z, 103) - 0.5) * step * 0.9;
         if (Math.hypot(px - here.x, pz - here.z) > ROCK_RADIUS_M) continue;
-        if (FurnitureLayer._inAreas(builtUp, px, pz)) continue;
+        if (pointInAreas(builtUp, px, pz)) continue;
 
         const sample = this.groundClass?.sampleAt?.(px, pz);
         // Sans carte de classes, on ne devine pas un éboulis : la pente seule
@@ -1684,7 +1647,7 @@ export class FurnitureLayer {
         const pz = z + (randomAt(x, z, 93) - 0.5) * step * 0.8;
         const distance = Math.hypot(px - here.x, pz - here.z);
         if (distance < 420 || distance > radius) continue;
-        if (FurnitureLayer._inAreas(builtUp, px, pz)) continue;
+        if (pointInAreas(builtUp, px, pz)) continue;
         if (!this._isHighPoint(px, pz)) continue;
 
         const item = draw < 0.08 ? 'windTurbine' : 'pylon';
@@ -1707,13 +1670,6 @@ export class FurnitureLayer {
   }
 
   // --- Utilitaires géométriques -------------------------------------------
-
-  _ringsOf(geometry) {
-    if (!geometry) return [];
-    if (geometry.type === 'Polygon') return geometry.coordinates.slice(0, 1);
-    if (geometry.type === 'MultiPolygon') return geometry.coordinates.map((p) => p[0]).filter(Boolean);
-    return [];
-  }
 
   static _centroid(ring) {
     let x = 0;
