@@ -345,7 +345,7 @@ export class SceneEnvironment {
          float starSeed = hash(starId);
          vec2 starJitter = vec2(hash(starId + 11.7), hash(starId + 53.9)) - 0.5;
          float starDist = length(starLocal - starJitter * 0.6);
-         float starSize = mix(0.03, 0.09, fract(starSeed * 71.3));
+         float starSize = mix(0.1, 0.2, fract(starSeed * 71.3));
          float starPoint = smoothstep(starSize, 0.0, starDist);
          float starPresence = step(0.9935, starSeed);
          float starTwinkle = 0.6 + 0.4 * sin(time * 4.0 + starSeed * 62.0);
@@ -354,7 +354,7 @@ export class SceneEnvironment {
          // Légèrement plus lumineuses que le premier passage (demande
          // explicite) — un facteur constant sur le point déjà dessiné, pas un
          // changement de forme ni de densité.
-         night += vec3(starPresence * starPoint * starTwinkle * starVeil * starMask) * 1.3;
+         night += vec3(starPresence * starPoint * starTwinkle * starVeil * starMask);
 
          // Étoile filante : un point net en tête, une traînée qui s'amincit
          // et s'éteint vers la queue — pas une bande de largeur uniforme, qui
