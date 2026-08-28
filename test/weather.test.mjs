@@ -34,6 +34,7 @@ import {
 } from '../src/environment/weather.js';
 import { lightingFor, skyParameters } from '../src/environment/skyModel.js';
 import { Precipitation } from '../src/environment/precipitation.js';
+import { Debris } from '../src/environment/debris.js';
 
 const ORDINARY = resolveWeather();
 const OVERCAST = resolveWeather({ cloudCover: 1, cloudDensity: 1 });
@@ -282,6 +283,14 @@ function fakeTHREE() {
       constructor(options) { Object.assign(this, options); }
       dispose() {}
     },
+    MathUtils: {
+      smoothstep(x, min, max) {
+        if (x <= min) return 0;
+        if (x >= max) return 1;
+        const t = (x - min) / (max - min);
+        return t * t * (3 - 2 * t);
+      },
+    },
   };
 }
 
@@ -361,6 +370,64 @@ test('le vent penche la pluie et emporte la neige', () => {
 
 test('la libération retire la boîte de la scène', () => {
   const { field, scene } = mountPrecipitation();
+  assert.equal(scene.children.length, 1);
+  field.dispose();
+  assert.equal(scene.children.length, 0);
+});
+
+// --- Les débris (feuilles et graminées) --------------------------------------
+
+function mountDebris(options = {}) {
+  const THREE = fakeTHREE();
+  const scene = { children: [], add(o) { this.children.push(o); }, remove(o) { this.children = this.children.filter((c) => c !== o); } };
+  return { field: new Debris({ THREE, scene, ...options }), scene };
+}
+
+test('sans vent ou sous la pluie, rien ne vole', () => {
+  const { field } = mountDebris();
+
+  field.setWeather(resolveWeather({ wind: 0 }));
+  assert.equal(field.points.visible, false, 'air immobile : rien à faire bouger');
+
+  field.setWeather(resolveWeather({ wind: 0.6, precipitation: 0.4 }));
+  assert.equal(field.points.visible, false, 'la pluie porte déjà l’eau, pas les feuilles');
+});
+
+test('un vent plus fort tire plus de particules du même tampon', () => {
+  const { field } = mountDebris();
+  const allocated = field.points.geometry.attributes.aBase.array.length;
+
+  field.setWeather(resolveWeather({ wind: 0.2 }));
+  const breeze = field.points.geometry.drawRange.count;
+  field.setWeather(resolveWeather({ wind: 1 }));
+  const gale = field.points.geometry.drawRange.count;
+
+  assert.ok(gale > breeze, 'une bourrasque en tire davantage qu’une brise');
+  assert.equal(
+    field.points.geometry.attributes.aBase.array.length,
+    allocated,
+    'sans jamais réallouer le tampon GPU'
+  );
+});
+
+test('le vent décide si les particules traînent au sol ou s’envolent', () => {
+  const { field } = mountDebris();
+
+  field.setWeather(resolveWeather({ wind: 0.05 }));
+  assert.equal(field.uniforms.uLift.value, 0, 'brise à peine sensible : ça traîne au sol');
+
+  field.setWeather(resolveWeather({ wind: 1 }));
+  assert.equal(field.uniforms.uLift.value, 1, 'bourrasque : pleinement emporté');
+});
+
+test('la teinte de départ est celle donnée par l’appelant, pas inventée ici', () => {
+  const { field } = mountDebris({ tint: [0.1, 0.9, 0.2] });
+  const { r, g, b } = field.uniforms.uTint.value;
+  assert.deepEqual({ r, g, b }, { r: 0.1, g: 0.9, b: 0.2 });
+});
+
+test('la libération des débris retire les particules de la scène', () => {
+  const { field, scene } = mountDebris();
   assert.equal(scene.children.length, 1);
   field.dispose();
   assert.equal(scene.children.length, 0);

@@ -180,12 +180,22 @@ export function castsShadow(weather) {
  * brume est une variable à part — c'est elle qui fait le petit matin, sans un
  * nuage au ciel.
  *
+ * `FogExp2` est un seul et même paramètre pour le proche et le lointain : il
+ * n'y a pas de « brouillard qui commence à telle distance », juste une densité
+ * plus ou moins forte. Une brume à fond doit donc se voir dès quelques dizaines
+ * de mètres, pas seulement noyer l'horizon — sinon la réglette au maximum ne
+ * lit que comme un ciel plus bas, pas comme un vrai brouillard où on peine à
+ * voir devant soi. Le coefficient de la brume est calé pour ça : à `haze = 1`,
+ * la densité résultante met la distance caractéristique du brouillard
+ * (`1/density`, le rayon où `FogExp2` a mangé l'essentiel du contraste) autour
+ * de 70-80 m.
+ *
  * @param {Object} weather État résolu.
  * @returns {number} 1 par temps ordinaire, davantage ensuite.
  */
 export function fogScale(weather) {
   const overcast = overcastOf(weather);
-  return 1 + overcast * 0.4 + weather.precipitation * 1.3 + weather.haze * 5.5;
+  return 1 + overcast * 0.4 + weather.precipitation * 1.3 + weather.haze * 18;
 }
 
 /**

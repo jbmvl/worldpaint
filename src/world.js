@@ -147,6 +147,9 @@ export function createWorld({
       cloudDensity: sky.cloudDensity,
       weather: sky.weather,
       palette: sky.palette || resolved.sky,
+      // Les feuilles emportées par le vent prennent la teinte de feuillage du
+      // thème courant : ce n'est pas une couleur que l'environnement invente.
+      debrisTint: resolved.furniture.colors.leaf,
     });
   }
 

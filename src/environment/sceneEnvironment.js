@@ -65,6 +65,7 @@ import {
   windField,
 } from './weather.js';
 import { Precipitation } from './precipitation.js';
+import { Debris } from './debris.js';
 import {
   sunDirection,
   snapToShadowTexels,
@@ -165,6 +166,10 @@ export class SceneEnvironment {
    * @param {SkyPalette} [options.palette] Palette d'ambiance de départ. Elle
    *        fixe la couleur de fond avant le premier `update()` — un montage
    *        sur une palette nocturne ne doit pas flasher en blanc.
+   * @param {[number,number,number]} [options.debrisTint] Couleur linéaire des
+   *        feuilles/graminées emportées par le vent. Par défaut la teinte de
+   *        feuillage du thème livré — ce module ne choisit pas une couleur à
+   *        lui, il reprend celle de la direction artistique.
    */
   constructor({
     THREE,
@@ -176,6 +181,7 @@ export class SceneEnvironment {
     cloudDensity = undefined,
     weather = null,
     palette = DEFAULT_SKY_PALETTE,
+    debrisTint = defaultTheme.furniture.colors.leaf,
   }) {
     this.THREE = THREE;
     this.scene = scene;
@@ -349,6 +355,15 @@ export class SceneEnvironment {
      */
     this.precipitation = new Precipitation({ THREE, scene });
     this.precipitation.setWeather(this.weather);
+
+    /**
+     * Feuilles et graminées portées par le vent. Même raison de la monter
+     * tout de suite que la pluie : rien n'est alloué au moment où le vent se
+     * lève.
+     */
+    this._debrisBaseTint = debrisTint;
+    this.debris = new Debris({ THREE, scene, tint: debrisTint });
+    this.debris.setWeather(this.weather);
   }
 
   /**
@@ -363,6 +378,7 @@ export class SceneEnvironment {
     this.wind = windField(this.weather);
     this.wetness = this.weather.wetness;
     this.precipitation.setWeather(this.weather);
+    this.debris.setWeather(this.weather);
   }
 
   /**
@@ -376,6 +392,8 @@ export class SceneEnvironment {
   advance(delta, at) {
     this.precipitation.advance(delta);
     if (at) this.precipitation.follow(at);
+    this.debris.advance(delta);
+    if (at) this.debris.follow(at);
   }
 
   /** Garde le dôme centré sur la caméra : il ne doit jamais être « atteint ». */
@@ -533,6 +551,15 @@ export class SceneEnvironment {
       b: Math.min(1, fogColor[2] + 0.2) * glow,
     });
 
+    // Même assombrissement nocturne, mais sans le rapprochement vers la
+    // couleur du brouillard : une feuille n'est pas de l'eau, sa teinte reste
+    // celle du feuillage du thème, seulement plus sombre la nuit.
+    this.debris.setTint({
+      r: this._debrisBaseTint[0] * glow,
+      g: this._debrisBaseTint[1] * glow,
+      b: this._debrisBaseTint[2] * glow,
+    });
+
     this._placeSun();
   }
 
@@ -543,6 +570,7 @@ export class SceneEnvironment {
 
   dispose() {
     this.precipitation.dispose();
+    this.debris.dispose();
     this.scene.remove(this.sky);
     this.scene.remove(this.sun);
     this.scene.remove(this.sun.target);
