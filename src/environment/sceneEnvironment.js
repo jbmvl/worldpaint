@@ -227,6 +227,23 @@ export class SceneEnvironment {
          uniform float uNightMix;`
       )
       .replace(
+        'cloudColor *= vSunE * 0.00002;',
+        `// Correctif du calcul d'origine (three <= 0.185.1, dernière publiée à
+         // ce jour) : ce facteur écrase cloudColor à environ 1/100e de la
+         // luminance de texColor — un nuage rend alors bleu marine sombre au
+         // lieu de gris clair, et plus la couverture ou la densité montent,
+         // plus l'écran vire à ce bleu au lieu de blanchir. C'est corrigé en
+         // amont (mrdoob/three.js#33942, « More realistic clouds »), mais pas
+         // encore publié dans aucune version au moment où ce fichier est
+         // écrit — voir CHANGELOG.md pour la date à laquelle relever ce
+         // correctif une fois que ça l'est. En attendant, on reconstruit la
+         // même idée avec ce que ce shader calcule déjà : Lin et Fex sont
+         // l'ambiance et l'atténuation du ciel lui-même, donc un nuage reste
+         // dans la même gamme de luminance que le ciel qui l'entoure, plutôt
+         // que dans une échelle inventée qui n'avait plus de rapport avec lui.
+         cloudColor = Lin * 0.04 + vec3( 0.0, 0.0003, 0.00075 ) + vSunE * Fex * 0.0088 * sunInfluence;`
+      )
+      .replace(
         'gl_FragColor = vec4( texColor, 1.0 );',
         `// Le modèle de Preetham n'a pas de nuit : sous l'horizon, il ne rend
          // pratiquement rien. On bascule donc sur la palette nocturne fournie,

@@ -91,7 +91,10 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 // qui donnait l'impression de « deux fois le soleil ». C'est à l'application
 // de le dompter, comme tout ce qui touche au renderer (voir le README).
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1;
+// 0,5, pas 1 : c'est l'exposition que l'exemple officiel de three pour ce
+// même `Sky.js` utilise (examples/webgl_shaders_sky.html) — pas une valeur
+// inventée, celle avec laquelle ce shader précis a été calé.
+renderer.toneMappingExposure = 0.5;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.5, 9000);
