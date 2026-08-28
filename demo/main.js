@@ -83,6 +83,15 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+// Le rig de lumière du moteur monte volontairement au-dessus de 1 (soleil
+// jusqu'à 1,75, ambiance jusqu'à 1,2 — voir `environment/skyModel.js`), pour
+// qu'une scène de nuit reste lisible. Sans tone mapping, `NoToneMapping` par
+// défaut de three écrête tout ça à blanc plat au lieu d'amorcer un dégradé :
+// le ciel et les surfaces claires se lisent alors comme cramés — c'est ce rig
+// qui donnait l'impression de « deux fois le soleil ». C'est à l'application
+// de le dompter, comme tout ce qui touche au renderer (voir le README).
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.5, 9000);

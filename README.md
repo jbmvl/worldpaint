@@ -134,7 +134,12 @@ function frame(delta, camera) {
 ```
 
 The application owns the renderer, the scene, the camera, the clock and the
-position. The generator only dresses the point it is shown.
+position. The generator only dresses the point it is shown — including tone
+mapping: the light rig intentionally goes above 1 (a night that reads as
+truly black is illegible), and `NoToneMapping` — three's default — clips
+that to flat white instead of rolling it off. Set
+`renderer.toneMapping = THREE.ACESFilmicToneMapping` (or whatever curve the
+application already uses) rather than leaving it at the default.
 
 ### The five verbs
 
