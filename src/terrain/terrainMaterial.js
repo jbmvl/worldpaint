@@ -176,7 +176,8 @@ export class TerrainMaterialFactory {
            uniform vec3 uCropAlbedo[${CROP_KINDS.length}];
            uniform vec3 uRockColor;
            uniform vec2 uSlopeRange;
-           uniform float uRockStrength;`
+           uniform float uRockStrength;
+           uniform float uWetness;`
         )
         .replace(
           '#include <map_fragment>',
