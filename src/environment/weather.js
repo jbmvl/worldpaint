@@ -185,7 +185,7 @@ export function castsShadow(weather) {
  */
 export function fogScale(weather) {
   const overcast = overcastOf(weather);
-  return 1 + overcast * 0.4 + weather.precipitation * 1.3 + weather.haze * 3.5;
+  return 1 + overcast * 0.4 + weather.precipitation * 1.3 + weather.haze * 5.5;
 }
 
 /**
@@ -204,16 +204,24 @@ export function fogScale(weather) {
  */
 export function fogColorFor(rgb, weather) {
   const overcast = overcastOf(weather);
-  if (overcast <= 0) return [rgb[0], rgb[1], rgb[2]];
+  // La brume désature à elle seule : un ciel bleu bien dégagé au-dessus d'une
+  // brume matinale n'empêche pas le brouillard d'être gris — la brume n'a pas
+  // besoin d'un ciel couvert pour désaturer, contrairement à l'assombrissement
+  // plus bas. Les deux causes sont prises au maximum plutôt qu'additionnées :
+  // sous un ciel bas *et* brumeux, on lit un seul brouillard, pas deux qui
+  // s'empilent en un gris plus profond qu'aucune des deux ne produirait seule.
+  const grey = Math.max(overcast * 0.75, weather.haze * 0.85);
+  if (grey <= 0) return [rgb[0], rgb[1], rgb[2]];
 
   const luma = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
-  // Assombrissement léger : un ciel couvert est gris, pas noir, et le
-  // brouillard reste la partie claire de l'image même sous l'orage.
+  // Assombrissement léger, et seulement depuis le couvert : un ciel couvert
+  // est gris, pas noir, et une brume au sol sous un ciel dégagé est souvent
+  // aussi claire que le ciel qu'elle voile, pas plus sombre.
   const shade = mix(1, 0.72, overcast * clamp01(0.4 + weather.precipitation * 0.6));
   return [
-    mix(rgb[0], luma, overcast * 0.75) * shade,
-    mix(rgb[1], luma, overcast * 0.75) * shade,
-    mix(rgb[2], luma, overcast * 0.75) * shade,
+    mix(rgb[0], luma, grey) * shade,
+    mix(rgb[1], luma, grey) * shade,
+    mix(rgb[2], luma, grey) * shade,
   ];
 }
 

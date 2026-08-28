@@ -170,6 +170,26 @@ test('le couvert éteint la teinte du brouillard sans la remplacer', () => {
   assert.ok(g < palette[1], 'et l’ensemble s’assombrit');
 });
 
+test('la brume désature le brouillard même sous un ciel dégagé', () => {
+  const palette = [0.2, 0.5, 0.95]; // un bleu franc
+  const hazy = resolveWeather({ haze: 1 });
+  assert.equal(overcastOf(hazy), 0, 'pas de nuages : la seule cause ici est la brume');
+
+  const [r, g, b] = fogColorFor(palette, hazy);
+  const spreadBefore = Math.max(...palette) - Math.min(...palette);
+  const spreadAfter = Math.max(r, g, b) - Math.min(r, g, b);
+  assert.ok(spreadAfter < spreadBefore, 'la brume seule désature déjà le brouillard');
+
+  // Contrairement au couvert, la brume n'assombrit pas : désaturer vers la
+  // propre luminance de la couleur la conserve exactement, à `shade` près —
+  // et `shade` ne dépend que du couvert, ici nul.
+  const lumaOf = ([cr, cg, cb]) => cr * 0.2126 + cg * 0.7152 + cb * 0.0722;
+  assert.ok(
+    Math.abs(lumaOf([r, g, b]) - lumaOf(palette)) < 1e-9,
+    'la brume seule n’assombrit ni n’éclaircit le brouillard'
+  );
+});
+
 test('la brume charge l’atmosphère, les nuages non', () => {
   const sky = skyParameters(0.5);
   const hazy = weatherSkyParameters(sky, resolveWeather({ haze: 1 }));
