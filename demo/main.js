@@ -658,6 +658,57 @@ for (const key of SLIDER_KEYS) {
 const precipitationTypeSelect = document.getElementById('precipitationType');
 
 /**
+ * Calibration de la réglette « couverture nuageuse ».
+ * -----------------------------------------------------
+ * Le masque de nuage du `Sky.js` natif de three (celui que `weather.cloudCover`
+ * pilote directement, voir `environment/weather.js`) **sature vers 0,5** : au
+ * bruit près, la moitié haute de la plage 0–1 ne change quasiment plus rien à
+ * l'étendue de nuage visible, et la moitié basse fait tout le travail. Une
+ * réglette 0–100 % branchée telle quelle dessus paraît donc à moitié morte —
+ * ce que ce fichier documentait comme « inversée » avant d'avoir compris
+ * pourquoi.
+ *
+ * Cette table est la **mesure empirique** de ce masque (bruit de Sky.js
+ * rejoué hors navigateur, cent d'échantillons par point de couverture) :
+ * `CLOUD_COVER_CURVE[i]` est la valeur brute de `weather.cloudCover` à passer
+ * au moteur pour obtenir un masque moyen d'environ `i / 10`. `uiToCloudCover`
+ * l'interpole pour retrouver une réglette qui répond sur toute sa course ;
+ * `cloudCoverToUi` fait le trajet inverse, pour que les temps prêts à l'emploi
+ * (qui donnent une valeur brute) posent le curseur au bon endroit.
+ *
+ * C'est un calibrage de **présentation**, propre à cette démo : il ne change
+ * ni la sémantique de `weather.cloudCover` (toujours 0–1, toujours ce que
+ * `overcastOf` et le reste du moteur lisent), ni aucune valeur d'art du thème.
+ */
+const CLOUD_COVER_CURVE = [0, 0.16, 0.2, 0.23, 0.26, 0.29, 0.31, 0.34, 0.37, 0.41, 0.55];
+
+function interpolateCurve(curve, x) {
+  const scaled = Math.min(1, Math.max(0, x)) * (curve.length - 1);
+  const i = Math.min(curve.length - 2, Math.floor(scaled));
+  const t = scaled - i;
+  return curve[i] + (curve[i + 1] - curve[i]) * t;
+}
+
+/** Position de réglette (0–1) → `weather.cloudCover` (0–1). */
+function uiToCloudCover(ui) {
+  return interpolateCurve(CLOUD_COVER_CURVE, ui);
+}
+
+/** `weather.cloudCover` (0–1) → position de réglette (0–1). Inverse de la table. */
+function cloudCoverToUi(raw) {
+  const value = Math.min(1, Math.max(0, raw));
+  for (let i = 1; i < CLOUD_COVER_CURVE.length; i++) {
+    if (CLOUD_COVER_CURVE[i] >= value) {
+      const lo = CLOUD_COVER_CURVE[i - 1];
+      const hi = CLOUD_COVER_CURVE[i];
+      const t = hi === lo ? 0 : (value - lo) / (hi - lo);
+      return (i - 1 + t) / (CLOUD_COVER_CURVE.length - 1);
+    }
+  }
+  return 1;
+}
+
+/**
  * Le mouillé suit l'averse **jusqu'à ce qu'on y touche**. C'est la seule façon
  * de regarder un sol trempé sans avoir la pluie devant les yeux — et de vérifier
  * qu'un sol sèche sans que le ciel change, ce qu'une application réelle ferait
@@ -671,6 +722,9 @@ let weatherDirty = true;
 function readWeather() {
   const weather = { precipitationType: precipitationTypeSelect.value };
   for (const key of SLIDER_KEYS) weather[key] = Number(sliders[key].input.value) / 100;
+  // Voir `CLOUD_COVER_CURVE` : la position de la réglette est calibrée pour
+  // répondre sur toute sa course, pas la valeur brute envoyée au moteur.
+  weather.cloudCover = uiToCloudCover(weather.cloudCover);
   return weather;
 }
 
@@ -679,7 +733,8 @@ function writeWeather(weather) {
   const full = { ...DEFAULT_WEATHER, ...weather };
   for (const key of SLIDER_KEYS) {
     if (key === 'wetness') continue;
-    sliders[key].input.value = Math.round(full[key] * 100);
+    const ui = key === 'cloudCover' ? cloudCoverToUi(full[key]) : full[key];
+    sliders[key].input.value = Math.round(ui * 100);
   }
   precipitationTypeSelect.value = full.precipitationType;
   wetnessManual = false;
@@ -744,6 +799,10 @@ for (const preset of PRESETS) {
   });
   presetsRoot.appendChild(button);
 }
+// L'état de départ vient de `writeWeather`, pas des attributs `value` du HTML :
+// la position de la réglette de couverture est calibrée (`cloudCoverToUi`), un
+// « 42 » écrit en dur dans le markup ne représenterait pas la bonne position.
+writeWeather(DEFAULT_WEATHER);
 presetsRoot.children[1].classList.add('on'); // « Ordinaire », qui est l'état de départ
 
 hourInput.addEventListener('input', refreshWeatherLabels);
