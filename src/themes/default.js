@@ -557,8 +557,11 @@ export const FURNITURE_COLORS = {
  */
 export const SKY_PALETTE = {
   fog: '#e8eef3',
-  nightZenith: '#070c16',
-  nightHorizon: '#16223a',
+  // Un ciel nocturne franchement noir ne se distingue plus d'un rendu en
+  // panne — voir sceneEnvironment.js. Ces deux teintes restent une nuit
+  // sombre, seulement plus loin du noir pur qu'avant.
+  nightZenith: '#0d1428',
+  nightHorizon: '#1c2c4c',
 };
 
 /**

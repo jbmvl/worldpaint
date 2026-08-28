@@ -60,7 +60,13 @@ import {
   GRASS_ATLAS_OFFSETS,
   GRASS_VARIANTS,
 } from '../materials/proceduralTextures.js';
-import { createFoliageMaterial, createCrossedQuads, ATLAS_ATTRIBUTE } from '../materials/foliageMaterial.js';
+import {
+  createFoliageMaterial,
+  createCrossedQuads,
+  advanceFoliageWind,
+  setFoliageWind,
+  ATLAS_ATTRIBUTE,
+} from '../materials/foliageMaterial.js';
 import { makeRandom } from '../materials/proceduralTextures.js';
 import { CORRIDOR_MARGIN_M, inCorridor } from './roadCorridor.js';
 import {
@@ -459,11 +465,16 @@ export class GroundCover {
 
   /** Fait avancer le vent. À appeler une fois par image, avec le delta en secondes. */
   advance(delta) {
-    const wind = this.material?.userData?.wind;
-    if (!wind || !Number.isFinite(delta)) return;
-    // Remis dans [0, 1000[ : un temps qui croît indéfiniment finit par perdre
-    // sa précision en flottant simple, et le vent se met à saccader.
-    wind.uWindTime.value = (wind.uWindTime.value + delta) % 1000;
+    advanceFoliageWind(this.material, delta);
+  }
+
+  /**
+   * Accorde le vent sur la météo. L'herbe est la plante qui le montre le plus :
+   * c'est sur elle que se lit d'abord qu'il s'est levé.
+   * @param {{amplitude:number, speed:number}} field
+   */
+  setWind(field) {
+    setFoliageWind(this.material, field);
   }
 
   /**

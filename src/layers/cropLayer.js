@@ -61,7 +61,13 @@ import {
   CROP_ATLAS_OFFSETS,
   CROP_VARIANTS,
 } from '../materials/proceduralTextures.js';
-import { createFoliageMaterial, createCrossedQuads, ATLAS_ATTRIBUTE } from '../materials/foliageMaterial.js';
+import {
+  createFoliageMaterial,
+  createCrossedQuads,
+  advanceFoliageWind,
+  setFoliageWind,
+  ATLAS_ATTRIBUTE,
+} from '../materials/foliageMaterial.js';
 import { defaultTheme } from '../themes/default.js';
 import { inCorridor } from './roadCorridor.js';
 import {
@@ -296,9 +302,16 @@ export class CropLayer {
 
   /** Fait avancer le vent. À appeler une fois par image. */
   advance(delta) {
-    const wind = this.material?.userData?.wind;
-    if (!wind || !Number.isFinite(delta)) return;
-    wind.uWindTime.value = (wind.uWindTime.value + delta) % 1000;
+    advanceFoliageWind(this.material, delta);
+  }
+
+  /**
+   * Accorde le vent sur la météo. Un champ est ce qui rend le vent le plus
+   * lisible de loin : la vague y court sur cent mètres.
+   * @param {{amplitude:number, speed:number}} field
+   */
+  setWind(field) {
+    setFoliageWind(this.material, field);
   }
 
   /**

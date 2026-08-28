@@ -76,6 +76,8 @@ function fakeComposer() {
     refresh: (...a) => (calls.push(['refresh', ...a]), true),
     advance: (...a) => calls.push(['advance', ...a]),
     setNight: (...a) => calls.push(['setNight', ...a]),
+    setWind: (...a) => calls.push(['setWind', ...a]),
+    setWetness: (...a) => calls.push(['setWetness', ...a]),
     dispose: () => calls.push(['dispose']),
   };
 }
@@ -112,6 +114,9 @@ test('avec un ciel, updateSky recale le dôme avant de propager la nuit', () => 
   const order = [];
   const environment = {
     nightMix: 0.4,
+    wetness: 0.25,
+    wind: { amplitude: 1, speed: 1 },
+    weather: 'météo',
     clearColor: 'bleu',
     followCamera: () => order.push('followCamera'),
     update: (o) => order.push(['update', o.lat, o.lng]),
@@ -128,13 +133,24 @@ test('avec un ciel, updateSky recale le dôme avant de propager la nuit', () => 
     shadowAt: { x: 1, y: 0, z: 2 },
   });
 
-  assert.deepEqual(out, { nightMix: 0.4, clearColor: 'bleu' });
+  assert.deepEqual(out, {
+    nightMix: 0.4,
+    wetness: 0.25,
+    weather: 'météo',
+    clearColor: 'bleu',
+  });
   assert.deepEqual(order, [
     'followCamera',
     ['update', 48, 2],
     ['followShadow', { x: 1, y: 0, z: 2 }],
   ]);
-  assert.deepEqual(composer.calls, [['setNight', 0.4]]);
+  // La boîte d'ombre se pose **après** que le décor a reçu l'ambiance : une
+  // image où la route est trempée et le ciel encore dégagé n'existe jamais.
+  assert.deepEqual(composer.calls, [
+    ['setNight', 0.4],
+    ['setWind', { amplitude: 1, speed: 1 }],
+    ['setWetness', 0.25],
+  ]);
 });
 
 test('sans point d’ombre, la boîte se pose sur la caméra', () => {
@@ -142,6 +158,9 @@ test('sans point d’ombre, la boîte se pose sur la caméra', () => {
   let shadow = null;
   const environment = {
     nightMix: 0,
+    wetness: 0,
+    wind: { amplitude: 1, speed: 1 },
+    weather: null,
     clearColor: 'gris',
     followCamera: () => {},
     update: () => {},
