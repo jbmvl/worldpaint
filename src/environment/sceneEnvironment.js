@@ -184,7 +184,9 @@ export class SceneEnvironment {
    * @param {[number,number,number]} [options.debrisTint] Couleur linéaire des
    *        feuilles/graminées emportées par le vent. Par défaut la teinte de
    *        feuillage du thème livré — ce module ne choisit pas une couleur à
-   *        lui, il reprend celle de la direction artistique.
+   *        lui, il reprend celle de la direction artistique. Éclaircie avant
+   *        usage, voir plus bas : la teinte brute du thème est trop sombre
+   *        pour se détacher du décor à la taille d'un point.
    */
   constructor({
     THREE,
@@ -349,7 +351,10 @@ export class SceneEnvironment {
          float starTwinkle = 0.6 + 0.4 * sin(time * 4.0 + starSeed * 62.0);
          float starVeil = 1.0 - cloudCoverage * cloudDensity * 0.85;
          float starMask = smoothstep(0.05, 0.35, direction.y);
-         night += vec3(starPresence * starPoint * starTwinkle * starVeil * starMask);
+         // Légèrement plus lumineuses que le premier passage (demande
+         // explicite) — un facteur constant sur le point déjà dessiné, pas un
+         // changement de forme ni de densité.
+         night += vec3(starPresence * starPoint * starTwinkle * starVeil * starMask) * 1.3;
 
          // Étoile filante : un point net en tête, une traînée qui s'amincit
          // et s'éteint vers la queue — pas une bande de largeur uniforme, qui
@@ -444,8 +449,21 @@ export class SceneEnvironment {
      * tout de suite que la pluie : rien n'est alloué au moment où le vent se
      * lève.
      */
-    this._debrisBaseTint = debrisTint;
-    this.debris = new Debris({ THREE, scene, tint: debrisTint });
+    // La teinte de feuillage du thème (`#4a6b34` par défaut) est faite pour
+    // couvrir de grandes surfaces d'arbres, pas pour un point de quelques
+    // pixels sur fond d'herbe ou de ciel : à cette taille elle s'y confondait
+    // et les feuilles devenaient invisibles. Mélangée avec un gris moyen —
+    // 45% en sRGB, soit ~0,17 linéaire, la valeur demandée — plutôt que
+    // remplacée : la teinte reste liée à la palette du thème (elle garde son
+    // dominante verte), seulement assez éclaircie pour se détacher.
+    const DEBRIS_GRAY_LINEAR = 0.1703;
+    const lightenedDebrisTint = [
+      mix(debrisTint[0], DEBRIS_GRAY_LINEAR, 0.75),
+      mix(debrisTint[1], DEBRIS_GRAY_LINEAR, 0.75),
+      mix(debrisTint[2], DEBRIS_GRAY_LINEAR, 0.75),
+    ];
+    this._debrisBaseTint = lightenedDebrisTint;
+    this.debris = new Debris({ THREE, scene, tint: lightenedDebrisTint });
     this.debris.setWeather(this.weather);
   }
 
