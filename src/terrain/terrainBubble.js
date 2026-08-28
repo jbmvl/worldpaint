@@ -107,7 +107,12 @@ export class TerrainBubble {
     /** Vrai dès qu'une maille a changé de finesse, tant que la file n'est pas vide. */
     this._surfaceDirty = false;
 
-    this.materials = new TerrainMaterialFactory({ THREE, groundClass, look: theme.terrain });
+    this.materials = new TerrainMaterialFactory({
+      THREE,
+      groundClass,
+      look: theme.terrain,
+      air: theme.air,
+    });
 
     /**
      * Index des chaussées construites (`RoadIndex`), ou `null`. C'est lui qui

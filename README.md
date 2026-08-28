@@ -154,6 +154,25 @@ application already uses) rather than leaving it at the default.
 `updateSky` only exists if a sky was requested. Without one, the generator
 poses no light: the application lights the scene as it sees fit.
 
+### Air light
+
+When the sun is low, a forest does not simply get darker — the haze between the
+trunks starts giving light back. WorldPaint models that as the second half of
+its fog rather than as geometry: the ground shader adds an inscattering term on
+top of the fog it has just applied, using the same `fogColor` and `fogDensity`,
+weighted by a Henyey-Greenstein phase term (so it only shows when you look
+*towards* the sun), by the wood channel of the ground-class map (so it belongs
+to the forest and not to the open field), and by a noise pattern drawn in the
+plane perpendicular to the sun — which makes it constant along the sun ray, and
+therefore column-shaped, without marching a volume.
+
+It is one theme slice, `air`, and `strength: 0` restores exactly the previous
+render, which is the intended way to compare:
+
+```js
+createWorld({ THREE, scene, theme: { air: { ...defaultTheme.air, strength: 0 } } });
+```
+
 ### Weather
 
 Weather is **state, not art direction**: it changes as you go, so it travels

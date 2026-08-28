@@ -565,6 +565,35 @@ export const SKY_PALETTE = {
 };
 
 /**
+ * L'air lui-même : ce que le brouillard renvoie vers l'œil au lieu de
+ * seulement voiler. Une valeur d'art, pas un réglage moteur — c'est elle qui
+ * décide si une forêt au soleil rasant a des faisceaux discrets ou pas du tout.
+ *
+ * `strength` à 0 rend **exactement** le décor d'avant l'existence de cette
+ * tranche : c'est la façon prévue de comparer avec et sans.
+ *
+ * - `strength`  intensité de la lumière rendue par l'air, au plus fort du
+ *               rasant. Volontairement basse : quelques faisceaux valent mieux
+ *               qu'une scène entièrement lavée.
+ * - `scaleM`    largeur du motif dans le plan perpendiculaire au soleil, en
+ *               mètres. C'est la taille d'une trouée de canopée, pas celle
+ *               d'un arbre : trop petite, les faisceaux se réduisent à un
+ *               grain ; trop grande, il n'en reste qu'un seul, énorme.
+ * - `rarity`    seuil au-dessus duquel le motif s'allume, de 0 à 1. Plus il
+ *               est haut, plus les faisceaux sont rares — c'est le réglage à
+ *               tourner en premier si l'effet se voit trop.
+ * - `phaseG`    anisotropie de la diffusion, de 0 (également dans toutes les
+ *               directions) à ~0,9 (concentrée vers l'avant). C'est elle qui
+ *               fait que l'effet n'existe qu'en regardant vers le soleil.
+ */
+export const AIR_LOOK = {
+  strength: 0.55,
+  scaleM: 34,
+  rarity: 0.62,
+  phaseG: 0.76,
+};
+
+/**
  * Ce qui fait la silhouette d'une haie, par famille.
  *
  * Une haie n'est pas une section balayée : c'est un **balayage modulé**, dont
@@ -660,4 +689,5 @@ export const defaultTheme = Object.freeze({
   furniture: { colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES },
   life: LIFE_COLORS,
   sky: SKY_PALETTE,
+  air: AIR_LOOK,
 });

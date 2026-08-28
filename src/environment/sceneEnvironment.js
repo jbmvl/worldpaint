@@ -59,6 +59,13 @@
  * raccord d'horizon du ciel, qui lisent la même couleur — reste éclairé de
  * jour. C'est ce qui faisait un ciel nocturne dont l'horizon restait blanc.
  *
+ * **Ce que l'air renvoie** (`aerialLight`) est publié comme `nightMix` et
+ * `wind` : une seule mesure du soleil pour toute la scène, et c'est le décor
+ * qui l'applique. Ce module dit *combien* et *dans quel repère* ; il ne dit pas
+ * à quoi ça ressemble — l'intensité de référence est une valeur d'art, elle vit
+ * dans le thème (`theme.air`), et le terme lui-même est dans le shader du sol.
+ * Voir `aerialLight.js` pour le raisonnement.
+ *
  * **La météo arrive par le même chemin que l'heure**, et pour la même raison :
  * c'est un état, pas une direction artistique, et l'application seule sait d'où
  * il vient (un relevé, une simulation, un curseur). Ce module l'applique — au
@@ -79,6 +86,7 @@ import {
   fogColorFor,
   windField,
 } from './weather.js';
+import { aerialLightIntensity, sunBasis } from './aerialLight.js';
 import { Precipitation } from './precipitation.js';
 import { Debris } from './debris.js';
 import {
@@ -230,6 +238,20 @@ export class SceneEnvironment {
     this.wind = windField(this.weather);
     /** Part de sol mouillé, de 0 à 1. Lue par le terrain, la chaussée, la voirie. */
     this.wetness = this.weather.wetness;
+    /**
+     * Ce que l'air renvoie vers l'œil, publié pour la même raison que
+     * `nightMix` et `wind` : une seule mesure du soleil pour toute la scène.
+     * `intensity` est une **part** (0 à 1), pas une couleur — l'intensité de
+     * référence est une valeur d'art, elle vit dans le thème.
+     * @type {{intensity:number, sun:number[], right:number[], up:number[], tint:number[]}}
+     */
+    this.aerialLight = {
+      intensity: 0,
+      sun: [0, 1, 0],
+      right: [1, 0, 0],
+      up: [0, 0, 1],
+      tint: [1, 1, 1],
+    };
 
     this.sky = new Sky();
     this.sky.name = 'sky-dome';
@@ -628,6 +650,18 @@ export class SceneEnvironment {
     const [r, g, b] = sunlightColor(light.warmth, light.night);
     this.sun.color.setRGB(r, g, b);
     this.sun.intensity = light.sun;
+
+    // La lumière restée dans l'air prend la couleur de celle qui la traverse :
+    // c'est le même rayon, seulement dévié une fois de plus avant d'arriver.
+    const basis = sunBasis(dir);
+    this.aerialLight = {
+      intensity: aerialLightIntensity({ sunY: dir.y, cloudCover: this.weather.cloudCover }),
+      sun: [dir.x, dir.y, dir.z],
+      right: basis.right,
+      up: basis.up,
+      tint: [r, g, b],
+    };
+
     this.ambient.intensity = light.ambient;
     // L'ombre s'efface **en opacité** avant de s'éteindre en tout ou rien : sans
     // ça, le passage d'un nuage ferait disparaître d'un coup toutes les ombres

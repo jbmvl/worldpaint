@@ -59,6 +59,14 @@ const coordsEl = document.getElementById('coords');
 const searchInput = document.getElementById('search');
 const goButton = document.getElementById('go');
 const showLabelsCheckbox = document.getElementById('showLabels');
+/*
+ * L'interrupteur de comparaison. Le terme de lumière dans l'air est repoussé
+ * dans le décor à chaque image par `updateSky` ; le couper une fois ne suffit
+ * donc pas, il faut le recouvrir juste après. C'est aussi pour ça que le réglage
+ * est ici et non dans le thème : changer une tranche de thème demande de
+ * remonter le monde, ce qui interdit de comparer d'un clic.
+ */
+const airLightCheckbox = document.getElementById('airLight');
 const showCorridorCheckbox = document.getElementById('showCorridor');
 const minimapCanvas = document.getElementById('minimap');
 const minimapCtx = minimapCanvas.getContext('2d');
@@ -868,6 +876,7 @@ function loop() {
       weather: weatherDirty ? readWeather() : undefined,
     });
     weatherDirty = false;
+    if (!airLightCheckbox.checked) world.composer.setAerialLight(null);
     if (paint) renderer.setClearColor(paint.clearColor, 1);
   }
 

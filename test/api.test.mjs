@@ -78,6 +78,7 @@ function fakeComposer() {
     setNight: (...a) => calls.push(['setNight', ...a]),
     setWind: (...a) => calls.push(['setWind', ...a]),
     setWetness: (...a) => calls.push(['setWetness', ...a]),
+    setAerialLight: (...a) => calls.push(['setAerialLight', ...a]),
     dispose: () => calls.push(['dispose']),
   };
 }
@@ -116,6 +117,7 @@ test('avec un ciel, updateSky recale le dôme avant de propager la nuit', () => 
     nightMix: 0.4,
     wetness: 0.25,
     wind: { amplitude: 1, speed: 1 },
+    aerialLight: { intensity: 0.5 },
     weather: 'météo',
     clearColor: 'bleu',
     followCamera: () => order.push('followCamera'),
@@ -150,6 +152,7 @@ test('avec un ciel, updateSky recale le dôme avant de propager la nuit', () => 
     ['setNight', 0.4],
     ['setWind', { amplitude: 1, speed: 1 }],
     ['setWetness', 0.25],
+    ['setAerialLight', { intensity: 0.5 }],
   ]);
 });
 

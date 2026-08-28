@@ -250,6 +250,7 @@ export class World {
     this.composer.setNight(env.nightMix);
     this.composer.setWind(env.wind);
     this.composer.setWetness(env.wetness);
+    this.composer.setAerialLight(env.aerialLight);
     env.followShadow(shadowAt || camera.position);
     return {
       nightMix: env.nightMix,

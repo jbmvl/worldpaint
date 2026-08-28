@@ -431,6 +431,21 @@ export class WorldComposer {
     this.streets.setWetness(value);
   }
 
+  /**
+   * Accorde la lumière rendue par l'air sur le soleil du moment.
+   *
+   * Un seul consommateur pour l'instant — le sol —, et c'est voulu : c'est la
+   * plus grande surface d'une vue de forêt, donc celle qui montre le mieux si
+   * la direction tient. Étendre aux autres matières est l'étape d'après, pas
+   * une généralisation à faire d'avance.
+   *
+   * @param {Object|null} state Voir `SceneEnvironment.aerialLight`.
+   */
+  setAerialLight(state) {
+    if (this.disposed) return;
+    this.bubble.materials.setAerialLight(state);
+  }
+
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
