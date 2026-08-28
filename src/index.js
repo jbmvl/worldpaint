@@ -27,6 +27,15 @@ export { ElevationField, TERRARIUM_URL, DEM_TILE_PIXELS } from './core/elevation
 export { VectorTileSource, coveringTiles, VECTOR_ZOOM } from './core/vectorTileSource.js';
 export { SceneEnvironment, DEFAULT_SKY_PALETTE, SKY_RADIUS, SHADOW_LEAD_M, SHADOW_RADIUS_M, sunDirection } from './environment/sceneEnvironment.js';
 
+// --- La météo ---------------------------------------------------------------
+/*
+ * Un **état**, pas une direction artistique : il change en cours de route et
+ * arrive par `updateSky`, comme l'heure. Le moteur ne va jamais le chercher —
+ * `src/` ne fait aucune requête réseau, et brancher un service météo est le
+ * travail de l'application.
+ */
+export { DEFAULT_WEATHER, PRECIPITATION_TYPES, resolveWeather } from './environment/weather.js';
+
 // --- Géographie : passer de lng/lat aux mètres de la scène ------------------
 export {
   lngLatToTile,

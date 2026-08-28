@@ -23,12 +23,18 @@
  * Le découpage passe par `alphaTest`, jamais par la transparence : pas de tri
  * par profondeur, donc pas de végétation qui clignote l'une derrière l'autre.
  *
- * **Le vent**, enfin, pour l'herbe seulement. Une touffe immobile n'est pas une
- * touffe d'herbe : c'est un décalque. Le mouvement se fait dans le sommet, à
- * partir de la position de l'instance — deux ondes de périodes différentes, une
- * phase tirée du sol, et une amplitude qui croît en carré de la hauteur pour
- * que le pied reste planté. Rien à réécrire par image : un seul uniforme
- * avance.
+ * **Le vent**, enfin. Une touffe immobile n'est pas une touffe d'herbe : c'est
+ * un décalque. Le mouvement se fait dans le sommet, à partir de la position de
+ * l'instance — deux ondes de périodes différentes, une phase tirée du sol, et
+ * une amplitude qui croît en carré de la hauteur pour que le pied reste planté.
+ * Rien à réécrire par image : un seul uniforme avance.
+ *
+ * L'amplitude réglée à la construction (`windStrength`) est celle du **temps
+ * ordinaire** — c'est une valeur d'art, propre à chaque famille de plante :
+ * l'herbe se couche, le blé ondule, un arbre bouge à peine. La météo ne la
+ * remplace pas, elle la **multiplie** (`setFoliageWind`), et la valeur de
+ * référence est gardée à part pour qu'une bourrasque qui va et vient ne la
+ * grignote pas à chaque passage.
  */
 
 /** Nom de l'attribut d'instance portant le décalage d'atlas. */
@@ -127,7 +133,14 @@ export function createFoliageMaterial({
   });
 
   const windUniforms = wind
-    ? { uWindTime: { value: 0 }, uWindStrength: { value: windStrength } }
+    ? {
+        uWindTime: { value: 0 },
+        uWindStrength: { value: windStrength },
+        /** Amplitude du temps ordinaire. Ne bouge jamais : voir l'en-tête. */
+        base: windStrength,
+        /** Facteur de vitesse, appliqué par `advanceFoliageWind`. */
+        speed: 1,
+      }
     : null;
   material.userData.wind = windUniforms;
 
@@ -185,6 +198,39 @@ export function createFoliageMaterial({
 
   material.customProgramCacheKey = () => cacheKey;
   return material;
+}
+
+/**
+ * Fait avancer le vent d'un matériau de feuillage. Trois couches — l'herbe, les
+ * arbres, les cultures — en avaient chacune leur copie mot pour mot ; c'est
+ * assez de sites d'appel réels pour que la fonction existe, et le repli de la
+ * phase est précisément le genre de détail qu'on ne veut corriger qu'une fois.
+ *
+ * @param {Object} material Matériau rendu par `createFoliageMaterial`.
+ * @param {number} delta Secondes écoulées.
+ */
+export function advanceFoliageWind(material, delta) {
+  const wind = material?.userData?.wind;
+  if (!wind || !Number.isFinite(delta)) return;
+  // Remis dans [0, 1000[ : un temps qui croît indéfiniment finit par perdre sa
+  // précision en flottant simple, et le vent se met à saccader.
+  wind.uWindTime.value = (wind.uWindTime.value + delta * wind.speed) % 1000;
+}
+
+/**
+ * Accorde le vent d'un matériau sur la météo.
+ *
+ * L'amplitude et la vitesse sont pilotées séparément parce qu'elles ne disent
+ * pas la même chose — voir `windField` dans `environment/weather.js`.
+ *
+ * @param {Object} material Matériau rendu par `createFoliageMaterial`.
+ * @param {{amplitude:number, speed:number}} field
+ */
+export function setFoliageWind(material, field) {
+  const wind = material?.userData?.wind;
+  if (!wind || !field) return;
+  wind.uWindStrength.value = wind.base * field.amplitude;
+  wind.speed = field.speed;
 }
 
 /**

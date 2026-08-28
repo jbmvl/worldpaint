@@ -14,12 +14,25 @@
  *   - champ de recherche qui géocode un lieu (Nominatim/OpenStreetMap) et
  *     y déplace la bulle ;
  *   - mini-carte façon Street View, centrée sur la caméra, qui affiche le
- *     réseau routier local et téléporte au clic.
+ *     réseau routier local et téléporte au clic ;
+ *   - panneau météo et heure, qui pilote l'ambiance.
+ *
+ * Le panneau météo mérite un mot, parce qu'il montre exactement où passe la
+ * frontière moteur/application : **c'est la démo qui décide du temps qu'il
+ * fait**, et le moteur ne fait que l'appliquer. Une application réelle
+ * brancherait ici un relevé (Open-Meteo, par exemple, qui est gratuit et sans
+ * clé) ou une simulation ; ce sont des curseurs parce qu'on veut pouvoir passer
+ * de l'orage au grand beau en une seconde pour regarder ce que ça change. Le
+ * moteur, lui, ne fait aucune requête et ne connaît aucun service.
+ *
+ * L'heure est là pour la même raison : la moitié de la lecture d'un éclairage
+ * est l'inclinaison du soleil, et attendre le coucher pour la vérifier n'est
+ * pas une méthode.
  */
 
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
-import { createWorld, collectSceneLabels, CORRIDOR_MARGIN_M } from '../src/index.js';
+import { createWorld, collectSceneLabels, CORRIDOR_MARGIN_M, DEFAULT_WEATHER } from '../src/index.js';
 
 // --- Réglages ---------------------------------------------------------------
 
@@ -49,6 +62,10 @@ const showLabelsCheckbox = document.getElementById('showLabels');
 const showCorridorCheckbox = document.getElementById('showCorridor');
 const minimapCanvas = document.getElementById('minimap');
 const minimapCtx = minimapCanvas.getContext('2d');
+const realTimeCheckbox = document.getElementById('realTime');
+const hourInput = document.getElementById('hour');
+const hourVal = document.getElementById('hourVal');
+const presetsRoot = document.getElementById('presets');
 
 function setBusy(busy) {
   dot.classList.toggle('busy', busy);
@@ -66,6 +83,18 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+// Le rig de lumière du moteur monte volontairement au-dessus de 1 (soleil
+// jusqu'à 1,75, ambiance jusqu'à 1,2 — voir `environment/skyModel.js`), pour
+// qu'une scène de nuit reste lisible. Sans tone mapping, `NoToneMapping` par
+// défaut de three écrête tout ça à blanc plat au lieu d'amorcer un dégradé :
+// le ciel et les surfaces claires se lisent alors comme cramés — c'est ce rig
+// qui donnait l'impression de « deux fois le soleil ». C'est à l'application
+// de le dompter, comme tout ce qui touche au renderer (voir le README).
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+// 0,5, pas 1 : c'est l'exposition que l'exemple officiel de three pour ce
+// même `Sky.js` utilise (examples/webgl_shaders_sky.html) — pas une valeur
+// inventée, celle avec laquelle ce shader précis a été calé.
+renderer.toneMappingExposure = 0.5;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.5, 9000);
@@ -609,6 +638,206 @@ searchInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') goToSearch();
 });
 
+// --- Météo et heure ------------------------------------------------------------
+// Tout ce qui suit est du ressort de l'application : le moteur reçoit un état
+// météo et une date, il ne les fabrique pas. Voir l'en-tête du fichier.
+
+/**
+ * Les temps prêts à l'emploi. Ils ne sont pas dans le moteur : ce sont des
+ * réglages de démonstration, faits pour montrer vite l'étendue de ce que la
+ * météo change — pas une nomenclature météorologique.
+ *
+ * « Ordinaire » est repris de `DEFAULT_WEATHER` plutôt que recopié : c'est le
+ * temps sur lequel toutes les modulations du moteur valent identité, et une
+ * copie qui dériverait ferait mentir le bouton.
+ */
+const PRESETS = [
+  { label: '☀️ Grand beau', weather: { cloudCover: 0.06, cloudDensity: 0.35, precipitation: 0, wind: 0.12, haze: 0 } },
+  { label: '⛅ Ordinaire', weather: DEFAULT_WEATHER },
+  { label: '☁️ Couvert', weather: { cloudCover: 0.95, cloudDensity: 0.8, precipitation: 0, wind: 0.35, haze: 0.05 } },
+  { label: '🌧️ Pluie', weather: { cloudCover: 0.9, cloudDensity: 0.85, precipitation: 0.55, precipitationType: 'rain', wind: 0.4, haze: 0.05 } },
+  { label: '⛈️ Orage', weather: { cloudCover: 1, cloudDensity: 1, precipitation: 1, precipitationType: 'rain', wind: 0.85, haze: 0.1 } },
+  { label: '❄️ Neige', weather: { cloudCover: 0.85, cloudDensity: 0.7, precipitation: 0.6, precipitationType: 'snow', wind: 0.3, haze: 0.15 } },
+  { label: '🌫️ Brume', weather: { cloudCover: 0.3, cloudDensity: 0.4, precipitation: 0, wind: 0.05, haze: 0.65 } },
+];
+
+/** Les six curseurs, tous exprimés de 0 à 100 dans le DOM et de 0 à 1 côté moteur. */
+const SLIDER_KEYS = ['cloudCover', 'cloudDensity', 'precipitation', 'wind', 'haze', 'wetness'];
+const sliders = {};
+for (const key of SLIDER_KEYS) {
+  sliders[key] = { input: document.getElementById(key), val: document.getElementById(`${key}Val`) };
+}
+const precipitationTypeSelect = document.getElementById('precipitationType');
+
+/**
+ * Calibration de la réglette « couverture nuageuse ».
+ * -----------------------------------------------------
+ * Le masque de nuage du `Sky.js` natif de three (celui que `weather.cloudCover`
+ * pilote directement, voir `environment/weather.js`) **sature vers 0,5** : au
+ * bruit près, la moitié haute de la plage 0–1 ne change quasiment plus rien à
+ * l'étendue de nuage visible, et la moitié basse fait tout le travail. Une
+ * réglette 0–100 % branchée telle quelle dessus paraît donc à moitié morte —
+ * ce que ce fichier documentait comme « inversée » avant d'avoir compris
+ * pourquoi.
+ *
+ * Cette table est la **mesure empirique** de ce masque (bruit de Sky.js
+ * rejoué hors navigateur, cent d'échantillons par point de couverture) :
+ * `CLOUD_COVER_CURVE[i]` est la valeur brute de `weather.cloudCover` à passer
+ * au moteur pour obtenir un masque moyen d'environ `i / 10`. `uiToCloudCover`
+ * l'interpole pour retrouver une réglette qui répond sur toute sa course ;
+ * `cloudCoverToUi` fait le trajet inverse, pour que les temps prêts à l'emploi
+ * (qui donnent une valeur brute) posent le curseur au bon endroit.
+ *
+ * C'est un calibrage de **présentation**, propre à cette démo : il ne change
+ * ni la sémantique de `weather.cloudCover` (toujours 0–1, toujours ce que
+ * `overcastOf` et le reste du moteur lisent), ni aucune valeur d'art du thème.
+ */
+const CLOUD_COVER_CURVE = [0, 0.16, 0.2, 0.23, 0.26, 0.29, 0.31, 0.34, 0.37, 0.41, 0.55];
+
+function interpolateCurve(curve, x) {
+  const scaled = Math.min(1, Math.max(0, x)) * (curve.length - 1);
+  const i = Math.min(curve.length - 2, Math.floor(scaled));
+  const t = scaled - i;
+  return curve[i] + (curve[i + 1] - curve[i]) * t;
+}
+
+/** Position de réglette (0–1) → `weather.cloudCover` (0–1). */
+function uiToCloudCover(ui) {
+  return interpolateCurve(CLOUD_COVER_CURVE, ui);
+}
+
+/** `weather.cloudCover` (0–1) → position de réglette (0–1). Inverse de la table. */
+function cloudCoverToUi(raw) {
+  const value = Math.min(1, Math.max(0, raw));
+  for (let i = 1; i < CLOUD_COVER_CURVE.length; i++) {
+    if (CLOUD_COVER_CURVE[i] >= value) {
+      const lo = CLOUD_COVER_CURVE[i - 1];
+      const hi = CLOUD_COVER_CURVE[i];
+      const t = hi === lo ? 0 : (value - lo) / (hi - lo);
+      return (i - 1 + t) / (CLOUD_COVER_CURVE.length - 1);
+    }
+  }
+  return 1;
+}
+
+/**
+ * Le mouillé suit l'averse **jusqu'à ce qu'on y touche**. C'est la seule façon
+ * de regarder un sol trempé sans avoir la pluie devant les yeux — et de vérifier
+ * qu'un sol sèche sans que le ciel change, ce qu'une application réelle ferait
+ * avec sa propre constante de temps (le moteur, lui, ne garde aucun état entre
+ * deux images : voir `DEFAULT_WEATHER.wetness`).
+ */
+let wetnessManual = false;
+/** Ne repasse la météo au moteur que lorsqu'elle a bougé : omise, il la reconduit. */
+let weatherDirty = true;
+
+function readWeather() {
+  const weather = { precipitationType: precipitationTypeSelect.value };
+  for (const key of SLIDER_KEYS) weather[key] = Number(sliders[key].input.value) / 100;
+  // Voir `CLOUD_COVER_CURVE` : la position de la réglette est calibrée pour
+  // répondre sur toute sa course, pas la valeur brute envoyée au moteur.
+  weather.cloudCover = uiToCloudCover(weather.cloudCover);
+  return weather;
+}
+
+/** Recopie un état météo dans les curseurs, sans déclencher leurs écouteurs. */
+function writeWeather(weather) {
+  const full = { ...DEFAULT_WEATHER, ...weather };
+  for (const key of SLIDER_KEYS) {
+    if (key === 'wetness') continue;
+    const ui = key === 'cloudCover' ? cloudCoverToUi(full[key]) : full[key];
+    sliders[key].input.value = Math.round(ui * 100);
+  }
+  precipitationTypeSelect.value = full.precipitationType;
+  wetnessManual = false;
+  syncWetness();
+  refreshWeatherLabels();
+  weatherDirty = true;
+}
+
+/** Accorde le mouillé sur l'averse, tant que personne ne l'a pris en main. */
+function syncWetness() {
+  if (wetnessManual) return;
+  const snowing = precipitationTypeSelect.value === 'snow';
+  // Même règle que le moteur : la neige blanchit le sol, elle ne le noircit pas.
+  sliders.wetness.input.value = snowing ? 0 : sliders.precipitation.input.value;
+}
+
+function refreshWeatherLabels() {
+  for (const key of SLIDER_KEYS) {
+    const percent = `${sliders[key].input.value} %`;
+    sliders[key].val.textContent =
+      key === 'wetness' && !wetnessManual ? `${percent} · auto` : percent;
+  }
+  hourVal.textContent = realTimeCheckbox.checked
+    ? new Date().toTimeString().slice(0, 5)
+    : formatHour(Number(hourInput.value));
+}
+
+function formatHour(hour) {
+  const h = Math.floor(hour) % 24;
+  const m = Math.round((hour - Math.floor(hour)) * 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+for (const key of SLIDER_KEYS) {
+  sliders[key].input.addEventListener('input', () => {
+    if (key === 'wetness') wetnessManual = true;
+    if (key === 'precipitation') syncWetness();
+    refreshWeatherLabels();
+    clearPresetHighlight();
+    weatherDirty = true;
+  });
+}
+precipitationTypeSelect.addEventListener('change', () => {
+  syncWetness();
+  refreshWeatherLabels();
+  clearPresetHighlight();
+  weatherDirty = true;
+});
+
+function clearPresetHighlight() {
+  for (const button of presetsRoot.children) button.classList.remove('on');
+}
+
+for (const preset of PRESETS) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = preset.label;
+  button.addEventListener('click', () => {
+    writeWeather(preset.weather);
+    clearPresetHighlight();
+    button.classList.add('on');
+  });
+  presetsRoot.appendChild(button);
+}
+// L'état de départ vient de `writeWeather`, pas des attributs `value` du HTML :
+// la position de la réglette de couverture est calibrée (`cloudCoverToUi`), un
+// « 42 » écrit en dur dans le markup ne représenterait pas la bonne position.
+writeWeather(DEFAULT_WEATHER);
+presetsRoot.children[1].classList.add('on'); // « Ordinaire », qui est l'état de départ
+
+hourInput.addEventListener('input', refreshWeatherLabels);
+realTimeCheckbox.addEventListener('change', () => {
+  hourInput.disabled = realTimeCheckbox.checked;
+  refreshWeatherLabels();
+});
+hourInput.disabled = realTimeCheckbox.checked;
+refreshWeatherLabels();
+
+/**
+ * L'heure à simuler. Le curseur pose une heure locale du jour même — c'est
+ * suffisant pour parcourir une journée, et ça évite d'avoir à expliquer un
+ * fuseau dans une démo.
+ */
+function currentDate() {
+  if (realTimeCheckbox.checked) return new Date();
+  const hour = Number(hourInput.value);
+  const date = new Date();
+  date.setHours(Math.floor(hour), Math.round((hour - Math.floor(hour)) * 60), 0, 0);
+  return date;
+}
+
 // --- Boucle principale ----------------------------------------------------------
 
 function loop() {
@@ -618,8 +847,27 @@ function loop() {
   updateMovement(delta);
 
   if (world) {
-    world.advance(delta, camera.position);
-    const paint = world.updateSky({ camera, date: new Date(), lng: START.lng, lat: START.lat });
+    // `advance` situe la pluie et les feuilles au sol au point observé, pas à
+    // la hauteur des yeux : lui passer `camera.position` tel quel les aurait
+    // fait flotter en l'air, à hauteur de caméra plutôt que par terre. Le
+    // même sondage que `sampleGroundHeight` ailleurs dans ce fichier ; `null`
+    // hors de la bulle chargée retombe sur la caméra, comme avant ce correctif.
+    const ground = sampleGroundHeight(camera.position.x, camera.position.z);
+    world.advance(delta, {
+      x: camera.position.x,
+      y: ground ?? camera.position.y,
+      z: camera.position.z,
+    });
+    const paint = world.updateSky({
+      camera,
+      date: currentDate(),
+      lng: START.lng,
+      lat: START.lat,
+      // Omise, la météo est reconduite : inutile de refaire l'objet et de
+      // reprogrammer les particules à chaque image quand rien n'a bougé.
+      weather: weatherDirty ? readWeather() : undefined,
+    });
+    weatherDirty = false;
     if (paint) renderer.setClearColor(paint.clearColor, 1);
   }
 
@@ -635,6 +883,9 @@ function loop() {
     updateLabels();
     updateCorridor();
     updateMinimap();
+    // L'horloge n'avance que si c'est elle qu'on suit : le curseur, lui, ne
+    // bouge que quand on le pousse.
+    if (realTimeCheckbox.checked) hourVal.textContent = new Date().toTimeString().slice(0, 5);
   }
 
   coordsEl.textContent = `x ${camera.position.x.toFixed(0)}  z ${camera.position.z.toFixed(0)}  alt ${camera.position.y.toFixed(0)} m`;
