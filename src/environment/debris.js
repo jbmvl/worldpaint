@@ -184,8 +184,12 @@ export class Debris {
     const count = Math.round(MAX_DEBRIS * Math.sqrt(weather.wind));
     this.points.geometry.setDrawRange(0, count);
 
-    // Transition douce entre « au sol » et « emporté » — voir l'en-tête.
-    this.uniforms.uLift.value = this.THREE.MathUtils.smoothstep(weather.wind, 0.15, 0.75);
+    // Transition douce entre « au sol » et « emporté » — voir l'en-tête. Le
+    // seuil bas (0.3) est volontairement au-dessus de la brise ordinaire du
+    // temps par défaut (0.25) : à vent faible ou ordinaire, `lift` doit valoir
+    // exactement 0, sinon une particule reste visiblement soulevée en l'air
+    // sans qu'aucun vent notable ne le justifie à l'œil.
+    this.uniforms.uLift.value = this.THREE.MathUtils.smoothstep(weather.wind, 0.3, 0.8);
     // Même diagonale fixe que la pluie et la neige : voir `precipitation.js`
     // sur pourquoi il n'y a — encore — qu'une seule direction de vent.
     this.uniforms.uWind.value.set(weather.wind * 2.6, weather.wind * 1.1);
@@ -203,7 +207,18 @@ export class Debris {
     this.uniforms.uTime.value = (this.uniforms.uTime.value + delta) % 3600;
   }
 
-  /** Recentre la boîte sur l'observateur. */
+  /**
+   * Recentre la boîte au sol, sous l'observateur.
+   *
+   * @param {{x:number,y:number,z:number}} position Un point **au niveau du
+   *        sol**, pas la position de la caméra elle-même : ce module ajoute
+   *        au plus `HEIGHT_M` par-dessus `position.y`, donc lui passer la
+   *        hauteur des yeux ferait flotter les feuilles en l'air, à hauteur
+   *        de caméra — vu une fois, ça ne se voit pas comme une brise, ça se
+   *        voit comme un bug. Trouver ce niveau de sol (par exemple en
+   *        lançant un rayon vers le bas sur le terrain) est à
+   *        l'application : ce module n'a pas connaissance du relief.
+   */
   follow(position) {
     this.points.position.set(position.x, position.y, position.z);
   }
