@@ -104,6 +104,14 @@ function foliageLightsChunk(THREE) {
  * @param {number} [options.tiles]  Nombre de cases par côté de l'atlas.
  * @param {boolean} [options.wind]  Anime le sommet des panneaux.
  * @param {number} [options.windStrength] Amplitude, en part de la largeur.
+ * @param {boolean} [options.coverage] Compense l'érosion de l'alpha à distance
+ *        (voir plus haut). Éteint par défaut : les arbres n'y gagnent rien et
+ *        leur programme reste inchangé au bit près.
+ * @param {number[]} [options.coverageRange] Distances, en mètres, sur
+ *        lesquelles la compensation monte de zéro à `coverageGain`.
+ * @param {number} [options.coverageGain] Facteur appliqué à l'alpha à pleine
+ *        distance. 1 ne change rien ; 2 fait passer le seuil à un fragment deux
+ *        fois moins couvrant.
  * @param {string} options.cacheKey Clé de programme (une par variante de shader).
  * @returns {Object} matériau. `userData.wind` porte l'uniforme de temps quand
  *          le vent est actif — c'est le seul point d'entrée de l'animation.
@@ -115,6 +123,9 @@ export function createFoliageMaterial({
   tiles = 2,
   wind = false,
   windStrength = 0.35,
+  coverage = false,
+  coverageRange = [30, 120],
+  coverageGain = 2.2,
   cacheKey,
 }) {
   const material = new THREE.MeshLambertMaterial({
@@ -181,6 +192,35 @@ export function createFoliageMaterial({
            #ifdef USE_MAP
              vMapUv = vMapUv * ${(1 / tiles).toFixed(4)} + ${ATLAS_ATTRIBUTE};
            #endif`
+        );
+    }
+
+    if (coverage) {
+      // La distance est calculée au sommet : un varying de plus coûte moins que
+      // de reconstruire la position monde dans le fragment, et la précision au
+      // sommet suffit largement pour piloter un seuil.
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', `#include <common>\n varying float vCoverDist;`)
+        .replace(
+          '#include <project_vertex>',
+          `#include <project_vertex>
+           vCoverDist = -mvPosition.z;`
+        );
+
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>\n varying float vCoverDist;`)
+        .replace(
+          '#include <alphatest_fragment>',
+          `{
+             // Compense l'érosion du découpage à distance. Le mip moyenne
+             // l'alpha d'une silhouette avec le vide qui l'entoure : une touffe
+             // minifiée voit son alpha passer sous le seuil et **disparaît**,
+             // au lieu de simplement rapetisser. On remonte donc l'alpha à
+             // mesure qu'on s'éloigne, ce qui revient à baisser le seuil.
+             float cover = smoothstep(${coverageRange[0].toFixed(1)}, ${coverageRange[1].toFixed(1)}, vCoverDist);
+             diffuseColor.a = min(1.0, diffuseColor.a * mix(1.0, ${coverageGain.toFixed(2)}, cover));
+           }
+           #include <alphatest_fragment>`
         );
     }
 
