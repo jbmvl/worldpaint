@@ -31,18 +31,26 @@
  * module ne connaît que la forme `{ fog, nightZenith, nightHorizon }`.
  *
  * La nuit porte une lune, des étoiles et, de loin en loin, une étoile
- * filante, mais rien de tout ça ne vise le réalisme : la lune est un disque
- * posé à l'opposé du soleil (pas sa vraie position, qui dépend de sa phase),
- * les étoiles un semis fixe tiré d'un hachage de la position sur la voûte, et
- * l'étoile filante un tirage par tranche de temps, sans notion de
- * constellation, de rotation du ciel ni de météore réel. Le but est un repère
- * de nuit qui n'est pas un noir uni, pas un planétarium.
+ * filante, mais rien de tout ça ne vise le réalisme : la lune est un
+ * croissant (deux cercles en espace local, l'un mordant l'autre — une phase
+ * stylisée, pas calculée depuis la date) posé à l'opposé du soleil, les
+ * étoiles un semis fixe de points ronds, et l'étoile filante un tirage par
+ * tranche de temps, sans notion de constellation, de rotation du ciel ni de
+ * météore réel. Le but est un repère de nuit qui n'est pas un noir uni, pas
+ * un planétarium.
  *
- * Le hachage des étoiles se fait dans la projection équirectangulaire `uv`
- * que ce shader calcule déjà (`phi`/`theta` normalisés), pas directement sur
- * `direction.xz` : cette dernière s'effondre vers zéro près du zénith quel
- * que soit l'azimut, ce qui écrase les cellules de hachage et les étire en
- * traits — un bug qu'on a eu, pas une hypothèse.
+ * Deux pièges déjà tombés dedans, pour ne pas y retomber :
+ * - le hachage des étoiles se fait dans la projection équirectangulaire `uv`
+ *   que ce shader calcule déjà (`phi`/`theta` normalisés), pas directement
+ *   sur `direction.xz` : cette dernière s'effondre vers zéro près du zénith
+ *   quel que soit l'azimut, ce qui écrasait les cellules de hachage et les
+ *   étirait en traits ;
+ * - chaque étoile est un **point** (distance à un décalage aléatoire dans sa
+ *   cellule), pas la cellule entière allumée par un simple seuil : un seuil
+ *   sans forme dessine des carrés, pas des étoiles. Même règle pour l'étoile
+ *   filante, dont la traînée s'amincit vers la queue plutôt que de garder une
+ *   largeur uniforme — sans quoi elle se lit comme un rectangle qui glisse,
+ *   pas comme un trait.
  *
  * **Le brouillard converge vers la nuit**, exactement comme il converge déjà
  * vers la palette de jour à l'horizon : `update()` calcule `nightMix` avant la
@@ -285,39 +293,71 @@ export class SceneEnvironment {
          // d'un rendu en panne.
          vec3 night = mix(uNightHorizon, uNightZenith, pow(clamp(direction.y, 0.0, 1.0), 0.45));
 
-         // Lune : un disque doux à l'opposé du soleil, sans souci de phase ou
-         // de position réelle — un repère de nuit, pas un almanach. Le halo
-         // (moonGlow) est pondéré à part du disque (moonDisc) : c'est lui
-         // seul qu'on nous a demandé d'affaiblir de moitié, pas l'astre.
-         float moonDot = dot(direction, normalize(uMoonDirection));
-         float moonDisc = smoothstep(0.9994, 0.9998, moonDot);
-         float moonGlow = pow(clamp(moonDot, 0.0, 1.0), 300.0) * 0.6;
-         night += vec3(0.85, 0.9, 1.0) * (moonDisc * 2.2 + moonGlow * 1.1);
+         // Lune : un croissant, pas un disque plein — deux cercles en espace
+         // local (technique standard : soustraire un cercle décalé d'un
+         // cercle plein, voir par ex. les rendus de phase lunaire sur
+         // Shadertoy), pas une vraie phase calculée depuis la date. right/up
+         // forment un repère local perpendiculaire à la direction de la
+         // lune, dans lequel direction se projette en coordonnées 2D
+         // exploitables par une SDF — la seule façon d'y dessiner une forme
+         // qui ne soit pas un disque de révolution.
+         vec3 moonDir = normalize(uMoonDirection);
+         vec3 moonUpHint = abs(moonDir.y) > 0.99 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+         vec3 moonRight = normalize(cross(moonUpHint, moonDir));
+         vec3 moonUp = cross(moonDir, moonRight);
+         vec3 moonRel = direction - moonDir * dot(direction, moonDir);
+         // Rayon angulaire choisi pour se voir sans viser le réalisme (le
+         // vrai fait ~0,25°) — assez gros pour lire un croissant, pas assez
+         // pour dominer le ciel.
+         vec2 moonLocal = vec2(dot(moonRel, moonRight), dot(moonRel, moonUp)) / 0.02;
+         float moonDisc = smoothstep(0.05, -0.05, length(moonLocal) - 1.0);
+         // Le second cercle mord le premier pour ne laisser qu'un croissant :
+         // décalage fixe, pas une vraie phase.
+         float moonBite = smoothstep(-0.05, 0.05, length(moonLocal - vec2(0.6, 0.15)) - 1.05);
+         float moonShape = moonDisc * moonBite;
+         // Halo large et faible, sur l'astre entier (pas seulement le
+         // croissant) — une lueur autour d'une lune, pas juste l'astre
+         // lui-même. Affaibli deux fois sur demande : d'abord de moitié, puis
+         // encore, l'astre restant trop lumineux au premier passage.
+         float moonGlow = pow(clamp(dot(direction, moonDir), 0.0, 1.0), 60.0);
+         night += vec3(0.85, 0.9, 1.0) * (moonShape * 0.9 + moonGlow * 0.18);
 
-         // Étoiles : un semis fixe tiré du hachage de la position sur la
-         // voûte, pas un tampon de points à monter pour un détail qui ne sert
-         // qu'à casser le noir uni du zénith. uv (déjà calculée par ce
-         // shader, pour un usage que cette version de three n'exploite pas
-         // elle-même) est la projection équirectangulaire de la direction
-         // regardée — indispensable ici : hacher directement direction.xz
-         // (essayé d'abord) écrase les cellules près du zénith et les étire
-         // en traits, puisque direction.xz s'effondre vers zéro quand
-         // direction.y approche 1 quel que soit l'azimut.
-         vec2 starGrid = uv * vec2(900.0, 450.0);
-         float starCell = hash(floor(starGrid));
-         float starTwinkle = 0.6 + 0.4 * sin(time * 4.0 + starCell * 62.0);
-         float starPresence = step(0.9935, starCell) * smoothstep(0.05, 0.35, direction.y);
+         // Étoiles : un point rond par cellule d'une grille fine, pas la
+         // cellule entière allumée — la première version hachait juste
+         // « cellule au-dessus du seuil = pleine cellule éclairée », ce qui se
+         // voit comme des carrés puisque step() ne dessine aucune forme,
+         // seulement une appartenance. Ici chaque cellule porte un point
+         // décalé aléatoirement en son sein (sans quoi les étoiles
+         // s'aligneraient pile sur la grille) et n'éclaire qu'un petit disque
+         // autour de lui — la technique usuelle pour un semis d'étoiles en
+         // shader. uv (déjà calculée par ce shader, pour un usage que cette
+         // version de three n'exploite pas elle-même) est la projection
+         // équirectangulaire de la direction regardée — indispensable :
+         // hacher directement direction.xz (essayé d'abord) écrase les
+         // cellules près du zénith et les étire en traits, puisque
+         // direction.xz s'effondre vers zéro quand direction.y approche 1
+         // quel que soit l'azimut.
+         vec2 starUv = uv * vec2(900.0, 450.0);
+         vec2 starId = floor(starUv);
+         vec2 starLocal = fract(starUv) - 0.5;
+         float starSeed = hash(starId);
+         vec2 starJitter = vec2(hash(starId + 11.7), hash(starId + 53.9)) - 0.5;
+         float starDist = length(starLocal - starJitter * 0.6);
+         float starSize = mix(0.03, 0.09, fract(starSeed * 71.3));
+         float starPoint = smoothstep(starSize, 0.0, starDist);
+         float starPresence = step(0.9935, starSeed);
+         float starTwinkle = 0.6 + 0.4 * sin(time * 4.0 + starSeed * 62.0);
          float starVeil = 1.0 - cloudCoverage * cloudDensity * 0.85;
-         night += vec3(starPresence * starTwinkle * starVeil);
+         float starMask = smoothstep(0.05, 0.35, direction.y);
+         night += vec3(starPresence * starPoint * starTwinkle * starVeil * starMask);
 
-         // Étoile filante : un tirage par tranche de temps plutôt qu'une
-         // horloge fixe, sinon toutes les nuits filent une étoile à la même
-         // seconde. Une tranche sur un peu moins de la moitié en produit une,
-         // avec un départ, une direction et un instant d'apparition tous
-         // tirés du hachage de son propre numéro de tranche — sans aucune
-         // réalité astronomique, juste un éclair bref et rare. Distance au
-         // segment tête-queue calculée dans le même espace uv que les
-         // étoiles fixes, pour la même raison.
+         // Étoile filante : un point net en tête, une traînée qui s'amincit
+         // et s'éteint vers la queue — pas une bande de largeur uniforme, qui
+         // se lit comme un rectangle plutôt qu'un trait. Un tirage par
+         // tranche de temps plutôt qu'une horloge fixe, sinon toutes les
+         // nuits filent une étoile à la même seconde. Départ, direction et
+         // instant d'apparition tous tirés du hachage du numéro de tranche —
+         // sans aucune réalité astronomique, juste un éclair bref et rare.
          float meteorSlot = floor(time / 9.0);
          float meteorRoll = hash(vec2(meteorSlot, 4.7));
          float meteorProgress = fract(time / 9.0);
@@ -327,13 +367,19 @@ export class SceneEnvironment {
            float t = meteorProgress / 0.22;
            vec2 meteorHead = meteorStart + meteorDir * 0.12 * t;
            vec2 meteorTail = meteorHead - meteorDir * 0.045;
-           vec2 toFrag = uv - meteorTail;
            vec2 seg = meteorHead - meteorTail;
-           float along = clamp(dot(toFrag, seg) / max(dot(seg, seg), 1e-5), 0.0, 1.0);
-           float meteorDist = length(uv - (meteorTail + seg * along));
-           float meteorStreak = smoothstep(0.005, 0.0, meteorDist) * along;
+           float segLen = max(length(seg), 1e-5);
+           vec2 segDir = seg / segLen;
+           float along = clamp(dot(uv - meteorTail, segDir), 0.0, segLen) / segLen;
+           vec2 closest = meteorTail + segDir * along * segLen;
+           float meteorDist = length(uv - closest);
+           // La largeur et l'intensité décroissent vers la queue (along → 0) :
+           // c'est ce dégradé, pas une largeur fixe, qui donne un trait plutôt
+           // qu'un rectangle.
+           float meteorWidth = mix(0.0015, 0.006, along);
+           float meteorStreak = smoothstep(meteorWidth, 0.0, meteorDist) * mix(0.15, 1.0, along);
            float meteorFade = smoothstep(0.0, 0.15, t) * smoothstep(1.0, 0.6, t);
-           night += vec3(1.0, 0.97, 0.92) * meteorStreak * meteorFade * 3.0;
+           night += vec3(1.0, 0.97, 0.92) * meteorStreak * meteorFade * 2.0;
          }
 
          texColor = mix( texColor, night, uNightMix );
