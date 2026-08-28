@@ -348,13 +348,12 @@ export class SceneEnvironment {
          float starSize = mix(0.1, 0.2, fract(starSeed * 71.3));
          float starPoint = smoothstep(starSize, 0.0, starDist);
          float starPresence = step(0.9935, starSeed);
-         float starTwinkle = 0.6 + 0.4 * sin(time * 4.0 + starSeed * 62.0);
          float starVeil = 1.0 - cloudCoverage * cloudDensity * 0.85;
          float starMask = smoothstep(0.05, 0.35, direction.y);
-         // Légèrement plus lumineuses que le premier passage (demande
-         // explicite) — un facteur constant sur le point déjà dessiné, pas un
-         // changement de forme ni de densité.
-         night += vec3(starPresence * starPoint * starTwinkle * starVeil * starMask);
+         // Pas de scintillement : une oscillation par étoile sur uTime la
+         // faisait clignoter à chaque image — demande explicite de le
+         // retirer, l'éclat de chaque étoile est donc fixe.
+         night += vec3(starPresence * starPoint * starVeil * starMask);
 
          // Étoile filante : un point net en tête, une traînée qui s'amincit
          // et s'éteint vers la queue — pas une bande de largeur uniforme, qui
