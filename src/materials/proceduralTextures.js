@@ -573,7 +573,56 @@ function drawGrassTuft(ctx, size, random) {
 }
 
 /**
- * Atlas des touffes : herbe nue, et trois fleurissements.
+ * Décalages UV d'un atlas carré, dans l'ordre de dessin des cases : case 0 en
+ * haut à gauche, puis vers la droite, puis vers le bas.
+ *
+ * Dérivé plutôt qu'écrit à la main : un atlas qui change de taille et une table
+ * de décalages restée figée donnent une végétation qui échantillonne la case du
+ * voisin, ce qui ne se voit qu'en roulant. Fonction pure.
+ */
+export function atlasOffsets(cols, rows) {
+  const out = [];
+  for (let i = 0; i < cols * rows; i++) {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    out.push([col / cols, 1 - (row + 1) / rows]);
+  }
+  return out;
+}
+
+/**
+ * Répète un peintre de silhouette pour en faire une **masse**.
+ *
+ * C'est la réponse au trou de moyenne distance : au-delà de trente mètres, on
+ * ne sème plus une touffe par plante mais une touffe pour plusieurs mètres
+ * carrés, et il faut donc une silhouette qui se lise comme un groupe et non
+ * comme un brin géant. Plutôt qu'un second jeu de peintres à garder d'accord
+ * avec le premier, on rejoue **le même** quatre ou cinq fois côte à côte, à des
+ * échelles voisines : la masse est faite exactement de la végétation qu'elle
+ * représente, et une retouche du brin se propage toute seule à la masse.
+ *
+ * Les sous-touffes se recouvrent largement (chacune fait plus de la moitié de
+ * la case) : c'est le recouvrement qui donne un contour plein plutôt qu'un
+ * peigne.
+ */
+function drawMass(ctx, size, random, paint, passes = 5) {
+  for (let i = 0; i < passes; i++) {
+    const spreadX = 0.52 + random() * 0.42;
+    const spreadY = 0.72 + random() * 0.34;
+    // Les sous-touffes sont réparties sur la largeur, avec un flottement : un
+    // pas régulier se lirait comme une clôture.
+    const center = ((i + 0.5) / passes) * size + (random() - 0.5) * size * 0.14;
+    ctx.save();
+    // La base reste posée sur y = size après l'échelle, sinon la masse flotte.
+    ctx.translate(center - (size * spreadX) / 2, size * (1 - spreadY));
+    ctx.scale(spreadX, spreadY);
+    paint(ctx, size, random);
+    ctx.restore();
+  }
+}
+
+/**
+ * Atlas des touffes : herbe nue, trois fleurissements, et leurs masses.
  *
  * ## Pourquoi un atlas plutôt qu'une seconde couche
  *
@@ -586,20 +635,39 @@ function drawGrassTuft(ctx, size, random) {
  * Le partage entre les quatre n'est pas uniforme et ne doit pas l'être : c'est
  * `groundCover` qui choisit, d'après ce que dit la carte de classes — le
  * coquelicot en lisière de culture, la marguerite et le bouton d'or en prairie.
+ *
+ * ## Les masses
+ *
+ * Les cinq dernières cases sont les mêmes touffes **agrégées** (`drawMass`),
+ * pour les bandes de distance où une instance ne représente plus une plante
+ * mais quelques mètres carrés de prairie. Chaque fleurissement garde la sienne :
+ * un pré de marguerites reste un pré de marguerites à quatre-vingts mètres, ce
+ * qu'une masse unique et neutre aurait effacé. `clumpAlt` est une seconde masse
+ * d'herbe nue, de graine différente — c'est le cas de loin le plus fréquent, et
+ * une silhouette unique répétée sur des hectares se voit comme un motif.
  */
-export const GRASS_ATLAS_COLS = 2;
-export const GRASS_ATLAS_ROWS = 2;
+export const GRASS_ATLAS_COLS = 3;
+export const GRASS_ATLAS_ROWS = 3;
 
-/** Les quatre variantes, dans l'ordre des cases de l'atlas. */
-export const GRASS_VARIANTS = ['plain', 'white', 'yellow', 'poppy'];
-
-/** Décalages UV des quatre cases. */
-export const GRASS_ATLAS_OFFSETS = [
-  [0, 0.5],
-  [0.5, 0.5],
-  [0, 0],
-  [0.5, 0],
+/**
+ * Les neuf variantes, dans l'ordre des cases de l'atlas. Les quatre premières
+ * sont les touffes de détail, les cinq suivantes leurs masses — `groundCover`
+ * passe des unes aux autres par `grassMassVariant`.
+ */
+export const GRASS_VARIANTS = [
+  'plain',
+  'white',
+  'yellow',
+  'poppy',
+  'clump',
+  'clumpAlt',
+  'clumpWhite',
+  'clumpYellow',
+  'clumpPoppy',
 ];
+
+/** Décalages UV des neuf cases. */
+export const GRASS_ATLAS_OFFSETS = atlasOffsets(GRASS_ATLAS_COLS, GRASS_ATLAS_ROWS);
 
 /** Fleurs par variante : couleur, cœur, nombre, hauteur relative. */
 const FLOWER_KINDS = {
@@ -643,7 +711,18 @@ function drawFlowers(ctx, size, random, kind) {
   }
 }
 
-/** Atlas 2 × 2 des touffes, fond transparent. */
+/**
+ * Fleurissement porté par une case, ou `null` — le suffixe des masses est
+ * retiré, une masse de marguerites reste faite de marguerites.
+ */
+function grassFlowerKind(variant) {
+  if (variant === 'white' || variant === 'clumpWhite') return 'white';
+  if (variant === 'yellow' || variant === 'clumpYellow') return 'yellow';
+  if (variant === 'poppy' || variant === 'clumpPoppy') return 'poppy';
+  return null;
+}
+
+/** Atlas 3 × 3 des touffes et de leurs masses, fond transparent. */
 export function createGrassAtlasCanvas(cell = 128, seed = 3313) {
   const canvas = createCanvas(cell * GRASS_ATLAS_COLS, cell * GRASS_ATLAS_ROWS);
   const ctx = canvas.getContext('2d');
@@ -656,8 +735,18 @@ export function createGrassAtlasCanvas(cell = 128, seed = 3313) {
     // Une graine par case : deux touffes voisines de variantes différentes ne
     // doivent pas être la même touffe repeinte.
     const random = makeRandom(seed + index * 977);
-    drawGrassTuft(ctx, cell, random);
-    if (variant !== 'plain') drawFlowers(ctx, cell, random, variant);
+    const flowers = grassFlowerKind(variant);
+
+    if (variant.startsWith('clump')) {
+      drawMass(ctx, cell, random, drawGrassTuft);
+      // Les fleurs sont posées **après** la masse, à l'échelle de la case : à
+      // l'intérieur de chaque sous-touffe elles seraient rétrécies au point de
+      // ne plus être qu'un grain de couleur.
+      if (flowers) drawFlowers(ctx, cell, random, flowers);
+    } else {
+      drawGrassTuft(ctx, cell, random);
+      if (flowers) drawFlowers(ctx, cell, random, flowers);
+    }
     ctx.restore();
   });
 
@@ -672,18 +761,31 @@ export function createGrassAtlasCanvas(cell = 128, seed = 3313) {
  * un blé un mètre, un chaume vingt centimètres. C'est `cropLayer` qui applique
  * la hauteur ; ici on ne dessine que la silhouette.
  */
-export const CROP_ATLAS_COLS = 2;
-export const CROP_ATLAS_ROWS = 2;
+export const CROP_ATLAS_COLS = 3;
+export const CROP_ATLAS_ROWS = 3;
 
-/** Les quatre cultures dessinées, dans l'ordre des cases. */
-export const CROP_VARIANTS = ['wheat', 'maize', 'sunflower', 'stubble'];
-
-export const CROP_ATLAS_OFFSETS = [
-  [0, 0.5],
-  [0.5, 0.5],
-  [0, 0],
-  [0.5, 0],
+/**
+ * Les quatre cultures dessinées, puis leurs **masses** — mêmes plantes, mais
+ * agrégées pour les bandes de distance où une instance ne représente plus un
+ * pied (voir `drawMass` et `cropLayer`). Un champ de maïs reste identifiable
+ * comme du maïs à cent mètres : c'est ce qui distingue cette approche d'une
+ * silhouette de masse unique et neutre.
+ *
+ * Huit cases pour une grille 3 × 3 : la neuvième reste vide, et rien ne
+ * l'indexe — le décalage d'atlas se lit par `CROP_VARIANTS.indexOf`.
+ */
+export const CROP_VARIANTS = [
+  'wheat',
+  'maize',
+  'sunflower',
+  'stubble',
+  'wheatMass',
+  'maizeMass',
+  'sunflowerMass',
+  'stubbleMass',
 ];
+
+export const CROP_ATLAS_OFFSETS = atlasOffsets(CROP_ATLAS_COLS, CROP_ATLAS_ROWS);
 
 /** Blé : des tiges droites serrées, chacune coiffée de son épi. */
 function drawWheat(ctx, size, random) {
@@ -788,7 +890,18 @@ function drawStubble(ctx, size, random) {
 
 const CROP_PAINTERS = { wheat: drawWheat, maize: drawMaize, sunflower: drawSunflower, stubble: drawStubble };
 
-/** Atlas 2 × 2 des cultures, fond transparent. */
+/**
+ * Nombre de sous-touffes d'une masse, par culture.
+ *
+ * Il n'est pas commun parce qu'une case ne contient pas le même nombre de
+ * plantes selon la culture : l'atlas dessine vingt-six tiges de blé mais quatre
+ * pieds de maïs. Répéter cinq fois un blé donne un mur opaque et coûteux à
+ * dessiner ; répéter cinq fois un maïs donne à peine de quoi fermer la
+ * silhouette. C'est la même raison qui fait varier `density` dans le thème.
+ */
+const CROP_MASS_PASSES = { wheat: 3, maize: 6, sunflower: 6, stubble: 3 };
+
+/** Atlas 3 × 3 des cultures et de leurs masses, fond transparent. */
 export function createCropAtlasCanvas(cell = 128, seed = 6607) {
   const canvas = createCanvas(cell * CROP_ATLAS_COLS, cell * CROP_ATLAS_ROWS);
   const ctx = canvas.getContext('2d');
@@ -797,9 +910,15 @@ export function createCropAtlasCanvas(cell = 128, seed = 6607) {
   CROP_VARIANTS.forEach((variant, index) => {
     const col = index % CROP_ATLAS_COLS;
     const row = Math.floor(index / CROP_ATLAS_COLS);
+    const base = variant.endsWith('Mass') ? variant.slice(0, -4) : variant;
     ctx.save();
     ctx.translate(col * cell, row * cell);
-    CROP_PAINTERS[variant](ctx, cell, makeRandom(seed + index * 1289));
+    const random = makeRandom(seed + index * 1289);
+    if (variant.endsWith('Mass')) {
+      drawMass(ctx, cell, random, CROP_PAINTERS[base], CROP_MASS_PASSES[base]);
+    } else {
+      CROP_PAINTERS[base](ctx, cell, random);
+    }
     ctx.restore();
   });
 

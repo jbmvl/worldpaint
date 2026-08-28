@@ -153,17 +153,46 @@ import {
   CLUMP_TINT_M,
 } from '../src/layers/vegetationLayer.js';
 import { TREE_ESSENCES } from '../src/themes/default.js';
-import { grassVariantFor, GRASS_RADIUS_M, GRASS_COUNT, GRASS_FADE_FROM } from '../src/layers/groundCover.js';
+import {
+  grassVariantFor,
+  grassSampleFallback,
+  grassBlockedByCrop,
+  grassHeightFade,
+  grassMassVariant,
+  GRASS_BANDS,
+  GRASS_RADIUS_M,
+  GRASS_COUNT,
+  GRASS_FADE_FROM,
+  GRASS_HEIGHT_FADE_FLOOR,
+} from '../src/layers/groundCover.js';
 import {
   cropCellRing,
   fillCropCell,
+  cropEdgeFade,
+  cropHeightFade,
+  CROP_BANDS,
   CROP_PER_CELL,
   CROP_TUFT_STRIDE,
   CROP_CELL_M,
   CROP_RADIUS_M,
   CROP_FADE_FROM,
+  CROP_HEIGHT_FADE_FLOOR,
   CROP_COUNT,
 } from '../src/layers/cropLayer.js';
+import { coverBandRing, coverBandFade, coverMassDensity } from '../src/layers/coverBands.js';
+import { createFoliageMaterial } from '../src/materials/foliageMaterial.js';
+import {
+  atlasOffsets,
+  createGrassAtlasCanvas,
+  createCropAtlasCanvas,
+  GRASS_ATLAS_COLS,
+  GRASS_ATLAS_ROWS,
+  GRASS_ATLAS_OFFSETS,
+  CROP_ATLAS_COLS,
+  CROP_ATLAS_ROWS,
+  CROP_ATLAS_OFFSETS,
+  CROP_VARIANTS,
+} from '../src/materials/proceduralTextures.js';
 import {
   townPaletteAt,
   buildingStyleAt,
@@ -2745,6 +2774,86 @@ test('le disque d’herbe se termine en fondu, pas au couteau', () => {
   close(grassEdgeFade(60, 40, 0.6), 0, 1e-9, 'au-delà');
 });
 
+test('la hauteur de l’herbe ne suit plus le fondu jusqu’à zéro', () => {
+  // Le plancher garde une touffe perceptible même là où plus aucune ne sera
+  // retenue par `grassEdgeFade` — c'est tout l'objet du correctif.
+  close(grassHeightFade(0, 40, 0.6), 1, 1e-9, 'au centre : pleine hauteur');
+  close(
+    grassHeightFade(40, 40, 0.6),
+    GRASS_HEIGHT_FADE_FLOOR,
+    1e-9,
+    'au bord : plancher, pas zéro'
+  );
+  close(
+    grassHeightFade(60, 40, 0.6),
+    GRASS_HEIGHT_FADE_FLOOR,
+    1e-9,
+    'au-delà : toujours le plancher'
+  );
+  assert.ok(
+    grassHeightFade(40, 40, 0.6) > grassEdgeFade(40, 40, 0.6),
+    'la hauteur rapetisse moins vite que la présence en bord de disque'
+  );
+});
+
+test('les cultures ont le même plancher de hauteur que l’herbe', () => {
+  close(cropHeightFade(0, CROP_RADIUS_M, CROP_FADE_FROM), 1, 1e-9, 'au centre');
+  close(
+    cropHeightFade(CROP_RADIUS_M, CROP_RADIUS_M, CROP_FADE_FROM),
+    CROP_HEIGHT_FADE_FLOOR,
+    1e-9,
+    'au bord : plancher'
+  );
+  // La présence, elle, continue de tomber à zéro : seule la hauteur est
+  // planchée, la densité par distance n'est pas touchée.
+  close(cropEdgeFade(CROP_RADIUS_M, CROP_RADIUS_M, CROP_FADE_FROM), 0, 1e-9, 'présence : zéro au bord');
+});
+
+test('une zone non classée reçoit le même repli que le terrain : de l’herbe', () => {
+  // Le shader de terrain peint le non-classé avec `unclassifiedWeights` — par
+  // défaut tout herbe. Avant ce correctif, `groundCover` recevait `null` de
+  // `sampleAt` et ne semait rien : sol vert, aucune touffe.
+  const allGrass = grassSampleFallback(null, [1, 0, 0, 0]);
+  assert.equal(allGrass.grass, 1);
+  assert.equal(allGrass.farmland, 0);
+
+  // Un thème qui déciderait un repli différent (davantage de bois, par
+  // exemple) doit se refléter ici aussi : ce n'est pas une constante figée.
+  const mixed = grassSampleFallback(null, [0.4, 0.3, 0.2, 0.1]);
+  assert.equal(mixed.grass, 0.4);
+  assert.equal(mixed.wood, 0.3);
+  assert.equal(mixed.farmland, 0.2);
+  assert.equal(mixed.bare, 0.1);
+
+  // Un échantillon réel n'est jamais remplacé par le repli.
+  const real = { grass: 0.9, wood: 0, farmland: 0, bare: 0.1 };
+  assert.equal(grassSampleFallback(real, [1, 0, 0, 0]), real);
+});
+
+test('une vraie culture efface l’herbe générique, mais pas la lisière', () => {
+  // Champ en culture reconnue : pas d'herbe générique dessus.
+  const inField = { grass: 0, farmland: 1 };
+  assert.equal(grassBlockedByCrop(inField, 'wheat'), true);
+
+  // Champ labouré : `cropAt` rend aussi une culture (`plough`) — même règle.
+  assert.equal(grassBlockedByCrop(inField, 'plough'), true);
+
+  // Pas de culture ici : l'herbe générique reste.
+  assert.equal(grassBlockedByCrop(inField, null), false);
+
+  // Bord de champ : herbe et culture mêlées dans la carte de classes. C'est
+  // là, et seulement là, que la lisière (coquelicot compris, voir
+  // `grassVariantFor`) doit continuer à pousser malgré une culture reconnue.
+  const edge = { grass: 0.5, farmland: 0.5 };
+  assert.equal(grassBlockedByCrop(edge, 'wheat'), false);
+
+  // Prairie pure à côté d'un champ nommé par erreur (ne devrait pas arriver,
+  // mais la fonction ne regarde que `crop` et `sample`, pas la cohérence des
+  // deux) : sans mélange, pas de lisière, donc bloqué.
+  const meadow = { grass: 1, farmland: 0 };
+  assert.equal(grassBlockedByCrop(meadow, 'wheat'), true);
+});
+
 test('une maille d’herbe rend toujours les mêmes touffes', () => {
   // C'est l'invariant qui empêche l'herbe de se redistribuer entièrement tous
   // les quelques mètres : la graine ne dépend que de la maille, et le nombre de
@@ -3157,51 +3266,310 @@ test('le semis des cultures a la densité de celui de l’herbe', () => {
 
 });
 
-test('le plafond de touffes couvre le pire cas, sinon le disque rétrécit en douce', () => {
-  // Un plafond atteint ne casse rien — les mailles sont semées de la plus
-  // proche à la plus lointaine — mais il raccourcit le disque sans le dire, et
-  // d'une quantité qui dépend de la culture. On préfère le savoir ici.
-  const compte = (cells, buffer, stride, perCell, densite, radius, fadeFrom) => {
-    let n = 0;
-    for (const cell of cells) {
-      const start = radius * fadeFrom;
-      const fade =
-        cell.distance <= start ? 1 : Math.max(0, 1 - (cell.distance - start) / (radius - start));
-      if (fade <= 0.05) continue;
-      buffer.fill(cell);
-      for (let i = 0; i < perCell; i++) if (buffer.data[i * stride + 2] <= densite * fade) n++;
+/**
+ * Rejoue le semis d'une couverture — toutes bandes confondues — et rend le
+ * nombre d'instances posées, ainsi que le détail par bande. C'est la boucle de
+ * `_scatter`, moins ce qui demande une scène : la couverture y est pleine et
+ * rien n'est écarté par la route.
+ */
+function semisComplet(bands, fill, stride, densite) {
+  const largest = Math.max(...bands.map((band) => band.perCell));
+  const buffer = new Float32Array(largest * stride);
+  const parBande = bands.map(() => 0);
+  let total = 0;
+
+  for (const cell of coverBandRing(bands)) {
+    const band = bands[cell.band];
+    const fade = coverBandFade(cell.distance, band);
+    if (fade <= 0.02) continue;
+    const seuil = coverMassDensity(densite, band) * fade;
+    fill(buffer, cell.gx, cell.gz, band.cell, band.perCell, band.salt);
+    for (let i = 0; i < band.perCell; i++) {
+      if (buffer[i * stride + 2] <= seuil) {
+        total++;
+        parBande[cell.band]++;
+      }
     }
-    return n;
-  };
-
-  const grassBuffer = {
-    data: new Float32Array(GRASS_PER_CELL * GRASS_TUFT_STRIDE),
-    fill(cell) {
-      fillGrassCell(this.data, cell.gx, cell.gz);
-    },
-  };
-  const pires = compte(
-    grassCellRing(GRASS_RADIUS_M, GRASS_CELL_M),
-    grassBuffer,
-    GRASS_TUFT_STRIDE,
-    GRASS_PER_CELL,
-    1,
-    GRASS_RADIUS_M,
-    GRASS_FADE_FROM
-  );
-  assert.ok(pires <= GRASS_COUNT, `prairie pleine : ${pires} touffes pour ${GRASS_COUNT}`);
-
-  const cropBuffer = {
-    data: new Float32Array(CROP_PER_CELL * CROP_TUFT_STRIDE),
-    fill(cell) {
-      fillCropCell(this.data, cell.gx, cell.gz);
-    },
-  };
-  const cells = cropCellRing(CROP_RADIUS_M, CROP_CELL_M);
-  for (const [nom, look] of Object.entries(CROP_LOOK)) {
-    const n = compte(cells, cropBuffer, CROP_TUFT_STRIDE, CROP_PER_CELL, look.density, CROP_RADIUS_M, CROP_FADE_FROM);
-    assert.ok(n <= CROP_COUNT, `${nom} : ${n} touffes pour ${CROP_COUNT}`);
   }
+  return { total, parBande };
+}
+
+test('le plafond de touffes couvre le pire cas, sinon la couverture rétrécit en douce', () => {
+  // Un plafond atteint ne casse rien — les mailles sont semées de la plus
+  // proche à la plus lointaine — mais il raccourcit la couverture sans le dire,
+  // et d'une quantité qui dépend de la culture. On préfère le savoir ici.
+  const prairie = semisComplet(GRASS_BANDS, fillGrassCell, GRASS_TUFT_STRIDE, 1);
+  assert.ok(
+    prairie.total <= GRASS_COUNT,
+    `prairie pleine : ${prairie.total} touffes pour ${GRASS_COUNT}`
+  );
+
+  for (const [nom, look] of Object.entries(CROP_LOOK)) {
+    const champ = semisComplet(CROP_BANDS, fillCropCell, CROP_TUFT_STRIDE, look.density);
+    assert.ok(champ.total <= CROP_COUNT, `${nom} : ${champ.total} touffes pour ${CROP_COUNT}`);
+  }
+});
+
+test('l’agrégation tient sa promesse : plus loin, sans exploser le nombre d’instances', () => {
+  // Le pari des bandes est celui-ci et pas un autre : si une bande lointaine
+  // coûtait autant qu'une bande proche, autant garder un disque uniforme et
+  // l'agrandir. Chaque bande doit donc poser **moins** d'instances que la
+  // précédente, alors qu'elle couvre une surface bien plus grande.
+  for (const [nom, bands, fill, stride, densite] of [
+    ['herbe', GRASS_BANDS, fillGrassCell, GRASS_TUFT_STRIDE, 1],
+    ['blé', CROP_BANDS, fillCropCell, CROP_TUFT_STRIDE, 1],
+  ]) {
+    const { parBande } = semisComplet(bands, fill, stride, densite);
+    for (let i = 1; i < parBande.length; i++) {
+      const surface = Math.PI * (bands[i].to ** 2 - bands[i].from ** 2);
+      const precedente = Math.PI * (bands[i - 1].to ** 2 - bands[i - 1].from ** 2);
+      assert.ok(
+        surface > precedente,
+        `${nom} : la bande ${i} doit couvrir plus de surface que la ${i - 1}`
+      );
+      assert.ok(
+        parBande[i] < parBande[i - 1],
+        `${nom} : bande ${i} pose ${parBande[i]} instances contre ${parBande[i - 1]} pour la ${i - 1}`
+      );
+    }
+  }
+});
+
+test('les bandes se relaient sans creuser la couverture', () => {
+  // Le passage d'une échelle à l'autre est un fondu de **densité** : dans la
+  // zone commune, la bande intérieure perd ses instances pendant que
+  // l'extérieure gagne les siennes. Si les deux fondus ne se compensaient pas,
+  // il resterait un anneau clairsemé autour de l'observateur — le défaut que
+  // les bandes sont censées corriger, réintroduit à une autre distance.
+  for (const [nom, bands] of [
+    ['herbe', GRASS_BANDS],
+    ['cultures', CROP_BANDS],
+  ]) {
+    for (let i = 1; i < bands.length; i++) {
+      const dedans = bands[i - 1];
+      const dehors = bands[i];
+      assert.ok(
+        dehors.from < dedans.to,
+        `${nom} : les bandes ${i - 1} et ${i} doivent se recouvrir`
+      );
+      // Sur toute la zone commune, la somme des deux parts reste proche de 1.
+      for (let d = dehors.from; d <= dedans.to; d += 0.25) {
+        const somme = coverBandFade(d, dedans) + coverBandFade(d, dehors);
+        assert.ok(
+          somme > 0.9 && somme < 1.1,
+          `${nom} : à ${d.toFixed(2)} m les bandes ${i - 1} et ${i} totalisent ${somme.toFixed(3)}`
+        );
+      }
+    }
+    // Et la couverture ne s'arrête jamais au couteau : la dernière bande sort
+    // en fondu.
+    const derniere = bands[bands.length - 1];
+    assert.ok(derniere.fadeOut > 0, `${nom} : la dernière bande doit sortir en fondu`);
+    close(coverBandFade(derniere.to, derniere), 0, 1e-9, `${nom} : nulle au bord`);
+  }
+});
+
+test('deux bandes ne sèment pas les mêmes touffes à la même maille', () => {
+  // Chaque bande a sa propre grille, mais rien n'empêche deux grilles d'avoir
+  // une maille de mêmes indices. Sans le sel, les deux échelles tireraient
+  // alors exactement les mêmes touffes au même endroit : elles se
+  // superposeraient au lieu de se relayer.
+  const sels = GRASS_BANDS.map((band) => band.salt);
+  assert.equal(new Set(sels).size, sels.length, 'les sels des bandes sont distincts');
+  assert.equal(
+    new Set(CROP_BANDS.map((band) => band.salt)).size,
+    CROP_BANDS.length,
+    'idem pour les cultures'
+  );
+
+  const taille = 10 * GRASS_TUFT_STRIDE;
+  const bande0 = [...fillGrassCell(new Float32Array(taille), 5, -3, 1.6, 10, 0)];
+  const bande1 = [...fillGrassCell(new Float32Array(taille), 5, -3, 1.6, 10, 1)];
+  assert.notDeepEqual(bande0, bande1, 'un sel différent donne des touffes différentes');
+
+  // Le sel par défaut ne change rien : la bande de détail sème exactement ce
+  // qu'elle semait avant les bandes.
+  assert.deepEqual(
+    [...fillGrassCell(new Float32Array(taille), 5, -3)],
+    bande0,
+    'sans sel, le semis d’origine'
+  );
+});
+
+test('une maille de bande lointaine reste ancrée au sol', () => {
+  // Le déterminisme spatial vaut pour toutes les bandes, pas seulement la
+  // première : une masse doit rester à sa place quand l'observateur avance,
+  // sinon la moyenne distance se met à grouiller.
+  const band = GRASS_BANDS[GRASS_BANDS.length - 1];
+  const taille = band.perCell * GRASS_TUFT_STRIDE;
+  const a = fillGrassCell(new Float32Array(taille), 7, 11, band.cell, band.perCell, band.salt);
+  // Des mailles voisines tirées entre les deux appels : l'état du générateur ne
+  // doit pas fuir d'une maille à l'autre.
+  fillGrassCell(new Float32Array(taille), 8, 11, band.cell, band.perCell, band.salt);
+  const b = fillGrassCell(new Float32Array(taille), 7, 11, band.cell, band.perCell, band.salt);
+  assert.deepEqual([...a], [...b], 'même maille, même masse');
+
+  // Et les positions tombent bien dans la maille de **cette** bande.
+  for (let i = 0; i < band.perCell; i++) {
+    const at = i * GRASS_TUFT_STRIDE;
+    assert.ok(a[at] >= 7 * band.cell && a[at] < 8 * band.cell, 'x dans la maille');
+    assert.ok(a[at + 1] >= 11 * band.cell && a[at + 1] < 12 * band.cell, 'z dans la maille');
+  }
+});
+
+test('une masse garde le fleurissement et la culture qu’elle représente', () => {
+  // C'est ce qui distingue cette agrégation d'une silhouette de masse unique :
+  // un pré de coquelicots reste un pré de coquelicots à quatre-vingts mètres,
+  // et un champ de maïs reste identifiable comme du maïs.
+  for (const nom of ['white', 'yellow', 'poppy']) {
+    const detail = GRASS_VARIANTS.indexOf(nom);
+    const masse = grassMassVariant(detail, 0.5);
+    assert.notEqual(masse, detail, `${nom} : la masse est une autre case`);
+    assert.ok(
+      GRASS_VARIANTS[masse].toLowerCase().includes(nom),
+      `${nom} : la masse porte le même fleurissement (${GRASS_VARIANTS[masse]})`
+    );
+  }
+
+  // L'herbe nue, cas de loin le plus fréquent, dispose de deux silhouettes :
+  // une seule répétée sur des hectares se lirait comme un motif.
+  const plain = GRASS_VARIANTS.indexOf('plain');
+  const masses = new Set([grassMassVariant(plain, 0.1), grassMassVariant(plain, 0.9)]);
+  assert.equal(masses.size, 2, 'deux masses d’herbe nue');
+  for (const masse of masses) assert.ok(GRASS_VARIANTS[masse].startsWith('clump'));
+
+  // Toute case de masse existe réellement dans l'atlas, et son décalage aussi.
+  for (let i = 0; i < GRASS_VARIANTS.length; i++) {
+    assert.ok(GRASS_ATLAS_OFFSETS[i], `case ${GRASS_VARIANTS[i]} sans décalage`);
+  }
+  for (const look of Object.values(CROP_LOOK)) {
+    const masse = `${look.atlas}Mass`;
+    const at = CROP_VARIANTS.indexOf(masse);
+    assert.ok(at >= 0, `${masse} manque à l’atlas des cultures`);
+    assert.ok(CROP_ATLAS_OFFSETS[at], `${masse} sans décalage`);
+  }
+});
+
+/**
+ * Contexte 2D bouchonné : il ne dessine rien, il **note** dans quelle case de
+ * l'atlas chaque tracé est tombé.
+ *
+ * Le rendu des atlas n'existe qu'en navigateur, donc aucun test ne l'exécute —
+ * et c'est précisément le genre de code où une case oubliée ou un peintre qui
+ * lève ne se voit qu'à l'écran, tard. On ne juge pas ici du dessin : on vérifie
+ * qu'il a lieu, partout où il doit.
+ */
+function atlasProbe(cell, cols, rows) {
+  const touched = new Set();
+  let x = 0;
+  let y = 0;
+  let sx = 1;
+  let sy = 1;
+  let current = null;
+  const stack = [];
+  // La case créditée est celle que la **boucle d'atlas** a cadrée, et non celle
+  // où le point tombe : une masse déborde largement sur ses voisines (c'est même
+  // ce qui la rend continue), et créditer le point ferait tenir une case vide
+  // pour peinte par le débordement de la précédente.
+  const mark = () => {
+    if (current !== null) touched.add(current);
+  };
+  const ctx = {
+    set fillStyle(v) {},
+    set strokeStyle(v) {},
+    set lineWidth(v) {},
+    set lineCap(v) {},
+    save() {
+      stack.push([x, y, sx, sy, current]);
+    },
+    restore() {
+      [x, y, sx, sy, current] = stack.pop();
+    },
+    translate(dx, dy) {
+      x += dx * sx;
+      y += dy * sy;
+      // Seule la translation faite juste sous le `save` de la boucle d'atlas
+      // cadre une case ; celles des sous-touffes d'une masse sont plus profondes.
+      if (stack.length !== 1) return;
+      const col = Math.round(x / cell);
+      const row = Math.round(y / cell);
+      current = col >= 0 && col < cols && row >= 0 && row < rows ? row * cols + col : null;
+    },
+    scale(kx, ky) {
+      sx *= kx;
+      sy *= ky;
+    },
+    beginPath() {},
+    closePath() {},
+    fill: mark,
+    stroke: mark,
+    moveTo() {},
+    lineTo() {},
+    quadraticCurveTo() {},
+    ellipse() {},
+    arc() {},
+    createLinearGradient: () => ({ addColorStop() {} }),
+  };
+  return { ctx, touched };
+}
+
+test('chaque case des atlas de couverture reçoit un dessin', () => {
+  const CELL = 16;
+  for (const [nom, cols, rows, variants, paint] of [
+    ['herbe', GRASS_ATLAS_COLS, GRASS_ATLAS_ROWS, GRASS_VARIANTS, createGrassAtlasCanvas],
+    ['cultures', CROP_ATLAS_COLS, CROP_ATLAS_ROWS, CROP_VARIANTS, createCropAtlasCanvas],
+  ]) {
+    const probe = atlasProbe(CELL, cols, rows);
+    // `createCanvas` n'est appelé qu'ici, jamais au chargement du module : un
+    // `OffscreenCanvas` bouchonné le temps de l'appel suffit.
+    const previous = globalThis.OffscreenCanvas;
+    globalThis.OffscreenCanvas = class {
+      constructor(width, height) {
+        Object.assign(this, { width, height });
+      }
+      getContext() {
+        return probe.ctx;
+      }
+    };
+    try {
+      // Ne doit pas lever : un peintre de masse qui casse rend la couche
+      // entière inconstructible.
+      paint(CELL, 1234);
+    } finally {
+      globalThis.OffscreenCanvas = previous;
+    }
+
+    for (let i = 0; i < variants.length; i++) {
+      assert.ok(probe.touched.has(i), `${nom} : la case ${i} (${variants[i]}) reste vide`);
+    }
+  }
+});
+
+test('les décalages d’atlas suivent la taille de la grille', () => {
+  // Une table écrite à la main et une grille agrandie donnent une végétation
+  // qui échantillonne la case du voisin — un défaut qu'on ne voit qu'en
+  // roulant. Les deux atlas de couverture sont carrés : le shader ne divise
+  // l'UV que par un seul scalaire.
+  assert.equal(GRASS_ATLAS_COLS, GRASS_ATLAS_ROWS, 'atlas d’herbe carré');
+  assert.equal(CROP_ATLAS_COLS, CROP_ATLAS_ROWS, 'atlas de cultures carré');
+  assert.ok(GRASS_VARIANTS.length <= GRASS_ATLAS_COLS * GRASS_ATLAS_ROWS);
+  assert.ok(CROP_VARIANTS.length <= CROP_ATLAS_COLS * CROP_ATLAS_ROWS);
+
+  // La convention de cases n'a pas bougé : sur une grille 2 × 2, la table
+  // dérivée est exactement celle qui était écrite à la main.
+  assert.deepEqual(atlasOffsets(2, 2), [
+    [0, 0.5],
+    [0.5, 0.5],
+    [0, 0],
+    [0.5, 0],
+  ]);
+  // Aucune case ne tombe hors de [0, 1[, et aucune ne se répète.
+  const vues = new Set();
+  for (const [u, v] of atlasOffsets(3, 3)) {
+    assert.ok(u >= 0 && u < 1 && v >= 0 && v < 1, 'décalage dans la texture');
+    vues.add(`${u.toFixed(6)},${v.toFixed(6)}`);
+  }
+  assert.equal(vues.size, 9, 'neuf cases distinctes');
 });
 
 test('l’identifiant de culture fait l’aller-retour par le canal rouge', () => {
@@ -4143,6 +4511,76 @@ test('aucun shader ne redéclare un attribut que three déclare déjà', () => {
       );
     }
   }
+});
+
+test('la compensation d’alpha atteint sa cible, et n’atteint que les couvertures', () => {
+  // Une greffe par `replace` qui ne trouve pas son point d'ancrage ne casse
+  // rien : elle ne fait simplement **rien**, silencieusement. C'est le pire cas
+  // pour un correctif visuel — on chercherait le défaut ailleurs pendant
+  // longtemps. On vérifie donc que chaque morceau est bien arrivé.
+  // Un stub, comme pour le halo : la suite tourne sans three (peer dependency),
+  // et c'est la **source du shader** qu'on vérifie, pas son exécution. Les noms
+  // d'inclusion sont ceux de three, et ce sont eux les points d'ancrage.
+  const THREE = {
+    DoubleSide: 2,
+    MeshLambertMaterial: class {
+      constructor(options) {
+        Object.assign(this, options, { userData: {} });
+      }
+    },
+    ShaderChunk: { lights_fragment_begin: 'IncidentLight directLight;\n#if ( NUM_DIR_LIGHTS > 0 ) && defined( RE_Direct )' },
+  };
+  const compile = (material) => {
+    const shader = {
+      uniforms: {},
+      vertexShader: [
+        '#include <common>',
+        '#include <uv_vertex>',
+        '#include <begin_vertex>',
+        '#include <project_vertex>',
+      ].join('\n'),
+      fragmentShader: [
+        '#include <common>',
+        '#include <map_fragment>',
+        '#include <alphatest_fragment>',
+        '#include <normal_fragment_begin>',
+        '#include <lights_fragment_begin>',
+      ].join('\n'),
+    };
+    material.onBeforeCompile(shader);
+    return shader;
+  };
+
+  const couverture = compile(
+    createFoliageMaterial({
+      THREE,
+      map: null,
+      atlas: true,
+      tiles: 3,
+      wind: true,
+      coverage: true,
+      coverageRange: [28, 110],
+      coverageGain: 2.2,
+      cacheKey: 'test-coverage',
+    })
+  );
+  assert.match(couverture.vertexShader, /varying float vCoverDist;/);
+  assert.match(couverture.fragmentShader, /varying float vCoverDist;/);
+  assert.match(couverture.vertexShader, /vCoverDist = -mvPosition\.z;/);
+  assert.match(couverture.fragmentShader, /smoothstep\(28\.0, 110\.0, vCoverDist\)/);
+  // Le découpage lui-même reste celui de three : on remonte l'alpha **avant**,
+  // on ne réécrit pas le test.
+  assert.ok(couverture.fragmentShader.includes('#include <alphatest_fragment>'));
+
+  // Les arbres n'y gagnent rien — leurs panneaux restent grands à l'écran — et
+  // leur programme doit rester exactement celui d'avant.
+  const arbres = compile(
+    createFoliageMaterial({ THREE, map: null, atlas: true, tiles: 3, cacheKey: 'test-nu' })
+  );
+  assert.ok(
+    !/vCoverDist/.test(arbres.vertexShader + arbres.fragmentShader),
+    'sans `coverage`, aucune trace de la compensation'
+  );
 });
 
 test('le halo lit la couleur d’instance sans la redéclarer', () => {
