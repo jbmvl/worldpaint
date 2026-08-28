@@ -477,6 +477,23 @@ export class StreetLayer {
     this.geometry = geometry;
   }
 
+  /**
+   * Mouille trottoirs et caniveaux.
+   *
+   * La voirie est peinte par couleurs de sommet : `material.color` les
+   * multiplie toutes d'un coup, donc le contraste entre la bordure et le
+   * caniveau — ce qui fait lire l'ouvrage — survit intact. Un peu moins sombre
+   * que la chaussée : une dalle de trottoir boit l'eau, le bitume la garde en
+   * surface.
+   *
+   * @param {number} value De 0 (sec) à 1 (trempé).
+   */
+  setWetness(value) {
+    const wet = Math.min(1, Math.max(0, value || 0));
+    const shade = 1 - wet * 0.3;
+    this.material.color.setRGB(shade, shade, shade + wet * 0.04);
+  }
+
   dispose() {
     if (this.disposed) return;
     this.disposed = true;

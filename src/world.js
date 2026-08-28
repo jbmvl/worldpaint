@@ -83,8 +83,14 @@ export const DEFAULT_VIEW = {
  * @param {{fog: string, nightZenith: string, nightHorizon: string}} [options.sky.palette]
  * @param {number} [options.sky.fogRadius] Défaut : le demi-côté de la bulle.
  * @param {number} [options.sky.shadowMapSize]
- * @param {number} [options.sky.cloudCoverage]
- * @param {number} [options.sky.cloudDensity]
+ * @param {Object} [options.sky.weather] Temps qu'il fait au montage (voir
+ *        `environment/weather.js`). C'est un **état**, pas une direction
+ *        artistique : il n'a rien à faire dans `theme`, il change en cours de
+ *        route et se repasse à `updateSky`. Le moteur ne va jamais le chercher
+ *        lui-même — d'où il vient (un relevé, une simulation, un curseur) ne
+ *        regarde que l'application.
+ * @param {number} [options.sky.cloudCoverage] Raccourci sur `weather.cloudCover`.
+ * @param {number} [options.sky.cloudDensity] Raccourci sur `weather.cloudDensity`.
  * @param {number} [options.sky.latitude] Latitude servant à calculer le rayon
  *        de brouillard par défaut (une tuile n'a pas la même taille au sol à
  *        Oslo et à Lagos). Défaut : 45.
@@ -139,6 +145,7 @@ export function createWorld({
       shadowMapSize: sky.shadowMapSize,
       cloudCoverage: sky.cloudCoverage,
       cloudDensity: sky.cloudDensity,
+      weather: sky.weather,
       palette: sky.palette || resolved.sky,
     });
   }
@@ -200,15 +207,21 @@ export class World {
    */
   advance(delta, at) {
     this.composer.advance(delta, at);
+    // La chute d'eau avance en temps **réel écoulé**, alors que l'heure du ciel
+    // peut être simulée, figée ou accélérée : elle est donc animée ici et pas
+    // dans `updateSky`, qui ne connaît qu'une date.
+    this.environment?.advance(delta, at);
   }
 
   /**
    * Avance l'heure du ciel et rend de quoi peindre le reste de l'image.
    *
-   * Les quatre gestes vont ensemble et dans cet ordre : le dôme se recale sur
-   * la caméra, le soleil se replace, la nuit se propage aux fenêtres et aux
-   * lampadaires, puis la boîte d'ombre se pose devant l'observateur. Les
-   * séparer, c'est se garantir une image où le décor est allumé et le ciel non.
+   * Les gestes vont ensemble et dans cet ordre : le dôme se recale sur la
+   * caméra, le soleil se replace, la nuit se propage aux fenêtres et aux
+   * lampadaires, le vent et le mouillé se propagent au décor, puis la boîte
+   * d'ombre se pose devant l'observateur. Les séparer, c'est se garantir une
+   * image où le décor est allumé et le ciel non, ou une route trempée sous un
+   * ciel dégagé.
    *
    * @param {Object} options
    * @param {Object} options.camera  Caméra de l'application (le dôme la suit).
@@ -218,18 +231,29 @@ export class World {
    * @param {{x:number,y:number,z:number}} [options.shadowAt] Centre de la boîte
    *        d'ombre. Défaut : la position de la caméra.
    * @param {Object} [options.palette] Change la direction artistique en vol.
-   * @returns {{nightMix: number, clearColor: Object}|null} `null` sans ciel. La
-   *        part de nuit est rendue pour que l'application l'applique à ses
-   *        propres objets (des phares, une enseigne) au même instant que nous.
+   * @param {Object} [options.weather] Change le temps qu'il fait en vol. Omis,
+   *        le dernier reçu est reconduit.
+   * @returns {{nightMix: number, wetness: number, weather: Object, clearColor: Object}|null}
+   *        `null` sans ciel. La part de nuit et le mouillé sont rendus pour que
+   *        l'application les applique à ses propres objets (des phares, un
+   *        véhicule, une enseigne) au même instant que nous — c'est tout
+   *        l'intérêt d'une mesure unique.
    */
-  updateSky({ camera, date, lng, lat, shadowAt = null, palette = undefined }) {
+  updateSky({ camera, date, lng, lat, shadowAt = null, palette = undefined, weather = undefined }) {
     const env = this.environment;
     if (!env) return null;
     env.followCamera(camera);
-    env.update({ palette, date, lat, lng });
+    env.update({ palette, date, lat, lng, weather });
     this.composer.setNight(env.nightMix);
+    this.composer.setWind(env.wind);
+    this.composer.setWetness(env.wetness);
     env.followShadow(shadowAt || camera.position);
-    return { nightMix: env.nightMix, clearColor: env.clearColor };
+    return {
+      nightMix: env.nightMix,
+      wetness: env.wetness,
+      weather: env.weather,
+      clearColor: env.clearColor,
+    };
   }
 
   dispose() {

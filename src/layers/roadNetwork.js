@@ -69,6 +69,28 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
   return {
     /** @type {Record<string, Object>} matériau par clé de profil. */
     byProfile: Object.fromEntries(Object.entries(entries).map(([k, e]) => [k, e.material])),
+    /**
+     * Mouille la chaussée.
+     *
+     * Le bitume est ce qui change le plus visiblement sous la pluie, et le
+     * changement est presque entièrement un assombrissement : le film d'eau
+     * emprisonne la lumière au lieu de la renvoyer. On passe par `material.color`,
+     * qui multiplie la texture de chaussée, plutôt que par la texture elle-même
+     * — le marquage au sol reste net et rien n'est à redessiner. La teinte
+     * dessinée dans `createRoadCanvas`, elle, n'est pas touchée : c'est le
+     * thème, et la météo ne fait que la moduler.
+     *
+     * @param {number} value De 0 (sec) à 1 (trempé).
+     */
+    setWetness(value) {
+      const wet = Math.min(1, Math.max(0, value || 0));
+      // Légèrement moins sombre dans le bleu : une chaussée mouillée renvoie le
+      // ciel, elle ne vire pas au brun.
+      const shade = 1 - wet * 0.42;
+      for (const entry of Object.values(entries)) {
+        entry.material.color.setRGB(shade, shade, shade + wet * 0.06);
+      }
+    },
     setMaxAnisotropy(value) {
       for (const entry of Object.values(entries)) {
         entry.texture.anisotropy = Math.min(value || 8, 16);

@@ -41,6 +41,23 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
 - **Champ de recherche** : géocode le texte tapé via Nominatim
   (OpenStreetMap) et déplace la bulle (`setCenter` + `refresh`) sur le
   résultat.
+- **Panneau météo et heure** : sept temps prêts à l'emploi (grand beau,
+  ordinaire, couvert, pluie, orage, neige, brume) et les curseurs qui les
+  composent — couverture nuageuse, densité, précipitation et son type, vent,
+  brume, sol mouillé. Un curseur d'heure du jour double l'horloge réelle,
+  parce que la moitié de la lecture d'un éclairage est l'inclinaison du soleil
+  et qu'attendre le coucher n'est pas une méthode de vérification.
+
+  C'est **la démo** qui décide du temps qu'il fait, pas le moteur : `src/` ne
+  fait aucune requête réseau et ne connaît aucun service météo. Une application
+  réelle brancherait ici un relevé (Open-Meteo, gratuit et sans clé, fait
+  l'affaire) ou une simulation, et passerait le même objet à `updateSky`. Ce
+  sont des curseurs ici parce qu'on veut passer de l'orage au grand beau en une
+  seconde pour regarder ce que ça change.
+
+  Le curseur « sol mouillé » suit l'averse tant qu'on n'y touche pas, puis se
+  détache — c'est ce qui permet de regarder une chaussée trempée sans avoir la
+  pluie devant les yeux, et de simuler un sol qui sèche après l'averse.
 - **Mini-carte** (bas droite, façon Street View) : toujours centrée sur la
   caméra, nord en haut, elle trace le réseau routier local à partir de
   `world.composer.roads.roadSegments` (la même donnée que l'emprise

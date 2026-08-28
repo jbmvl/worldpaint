@@ -34,6 +34,8 @@
   #panel {
     position: fixed; top: 12px; left: 12px; z-index: 10;
     width: 268px;
+    max-height: calc(100vh - 24px);
+    overflow-y: auto;
     background: rgba(16, 19, 26, 0.82);
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 10px;
@@ -79,6 +81,38 @@
   label.check input { accent-color: #3a6fd8; width: 14px; height: 14px; }
 
   hr { border: none; border-top: 1px solid rgba(255,255,255,0.1); margin: 10px 0; }
+
+  /* --- Météo et heure ----------------------------------------------------- */
+  .section {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: #7f8899; margin: 0 0 7px; font-weight: 600;
+  }
+  .presets { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 9px; }
+  .presets button {
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 5px; color: #dfe4ea;
+    font: inherit; font-size: 11px; padding: 3px 7px; cursor: pointer;
+  }
+  .presets button:hover { background: rgba(255,255,255,0.15); }
+  .presets button.on { background: #3a6fd8; border-color: #3a6fd8; color: #fff; }
+
+  .slider { margin-bottom: 6px; }
+  .slider .row {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 11.5px; color: #c3cad4; margin-bottom: 1px;
+  }
+  .slider .row .val { color: #8a93a3; font-variant-numeric: tabular-nums; font-size: 11px; }
+  .slider input[type=range] {
+    width: 100%; accent-color: #3a6fd8; height: 15px; margin: 0; cursor: pointer;
+  }
+
+  select {
+    width: 100%; background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.16); border-radius: 6px;
+    color: #fff; padding: 4px 6px; font: inherit; font-size: 12px;
+  }
+  select:focus { outline: none; border-color: #6fa8f0; }
 
   .help { font-size: 11px; color: #8a93a3; }
   .help .row { display: flex; justify-content: space-between; gap: 10px; margin: 2px 0; }
@@ -137,6 +171,54 @@
     <input type="checkbox" id="showCorridor" />
     Afficher l’emprise routière
   </label>
+
+  <hr />
+
+  <div class="section">Heure</div>
+  <label class="check" style="margin-bottom: 6px">
+    <input type="checkbox" id="realTime" checked />
+    Heure réelle
+  </label>
+  <div class="slider">
+    <div class="row"><span>Heure du jour</span><span class="val" id="hourVal">—</span></div>
+    <input type="range" id="hour" min="0" max="24" step="0.25" value="13" />
+  </div>
+
+  <hr />
+
+  <div class="section">Météo</div>
+  <div class="presets" id="presets"></div>
+
+  <div class="slider">
+    <div class="row"><span>Couverture nuageuse</span><span class="val" id="cloudCoverVal"></span></div>
+    <input type="range" id="cloudCover" min="0" max="100" value="42" />
+  </div>
+  <div class="slider">
+    <div class="row"><span>Densité des nuages</span><span class="val" id="cloudDensityVal"></span></div>
+    <input type="range" id="cloudDensity" min="0" max="100" value="55" />
+  </div>
+  <div class="slider">
+    <div class="row"><span>Précipitation</span><span class="val" id="precipitationVal"></span></div>
+    <input type="range" id="precipitation" min="0" max="100" value="0" />
+  </div>
+  <div class="field">
+    <select id="precipitationType">
+      <option value="rain">Pluie</option>
+      <option value="snow">Neige</option>
+    </select>
+  </div>
+  <div class="slider">
+    <div class="row"><span>Vent</span><span class="val" id="windVal"></span></div>
+    <input type="range" id="wind" min="0" max="100" value="25" />
+  </div>
+  <div class="slider">
+    <div class="row"><span>Brume</span><span class="val" id="hazeVal"></span></div>
+    <input type="range" id="haze" min="0" max="100" value="0" />
+  </div>
+  <div class="slider">
+    <div class="row"><span>Sol mouillé</span><span class="val" id="wetnessVal"></span></div>
+    <input type="range" id="wetness" min="0" max="100" value="0" />
+  </div>
 
   <hr />
 

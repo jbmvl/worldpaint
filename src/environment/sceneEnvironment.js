@@ -29,9 +29,28 @@
  * L'application donne l'heure et la palette ; elle seule sait d'où vient sa
  * direction artistique (un thème, un style de carte 2D, un réglage joueur). Ce
  * module ne connaît que la forme `{ fog, nightZenith, nightHorizon }`.
+ *
+ * **La météo arrive par le même chemin que l'heure**, et pour la même raison :
+ * c'est un état, pas une direction artistique, et l'application seule sait d'où
+ * il vient (un relevé, une simulation, un curseur). Ce module l'applique — au
+ * ciel, au soleil, au brouillard, à la chute d'eau — mais ne va jamais la
+ * chercher : `src/` ne fait aucune requête réseau, et une dépendance à un
+ * service météo serait exactement la frontière moteur/application que le
+ * CONTRIBUTING interdit de franchir. Voir `weather.js` pour ce que chaque
+ * coefficient fait.
  */
 
 import { skyParameters, lightingFor, sunlightColor } from './skyModel.js';
+import {
+  resolveWeather,
+  weatherLighting,
+  weatherSkyParameters,
+  castsShadow,
+  fogScale,
+  fogColorFor,
+  windField,
+} from './weather.js';
+import { Precipitation } from './precipitation.js';
 import {
   sunDirection,
   snapToShadowTexels,
@@ -43,6 +62,7 @@ import { defaultTheme } from '../themes/default.js';
 
 // Ré-exportés pour que la scène n'ait qu'un seul point d'entrée sur l'ambiance.
 export { sunDirection, SHADOW_RADIUS_M, SHADOW_LEAD_M } from './shadowFrame.js';
+export { DEFAULT_WEATHER, resolveWeather, PRECIPITATION_TYPES } from './weather.js';
 
 /**
  * Rayon du dôme. Volontairement modeste : le dôme suit la caméra, il est donc
@@ -119,11 +139,13 @@ export class SceneEnvironment {
    * @param {Object} options.scene
    * @param {number} [options.fogRadius] Distance de disparition, en mètres.
    * @param {number} [options.shadowMapSize] Côté de la carte d'ombres, en texels.
-   * @param {number} [options.cloudCoverage] Couverture nuageuse, de 0 à 1. Rien
-   *        ne la fait varier pour l'instant : une application qui connaît la
-   *        météo du lieu la fixe au montage, la valeur par défaut tient lieu de
-   *        ciel ordinaire.
-   * @param {number} [options.cloudDensity] Opacité des nuages, de 0 à 1.
+   * @param {Object} [options.weather] État météo de départ (voir `weather.js`).
+   *        Omis, c'est le temps ordinaire — celui qui reproduit exactement le
+   *        rendu d'avant l'existence de ce réglage.
+   * @param {number} [options.cloudCoverage] Couverture nuageuse, de 0 à 1.
+   *        Raccourci historique sur `weather.cloudCover`, gardé parce qu'il est
+   *        déjà documenté dans l'API publique. `weather` prime s'il donne la clé.
+   * @param {number} [options.cloudDensity] Idem, sur `weather.cloudDensity`.
    * @param {SkyPalette} [options.palette] Palette d'ambiance de départ. Elle
    *        fixe la couleur de fond avant le premier `update()` — un montage
    *        sur une palette nocturne ne doit pas flasher en blanc.
@@ -134,8 +156,9 @@ export class SceneEnvironment {
     scene,
     fogRadius = 2200,
     shadowMapSize = 2048,
-    cloudCoverage = 0.42,
-    cloudDensity = 0.55,
+    cloudCoverage = undefined,
+    cloudDensity = undefined,
+    weather = null,
     palette = DEFAULT_SKY_PALETTE,
   }) {
     this.THREE = THREE;
@@ -144,11 +167,30 @@ export class SceneEnvironment {
     this.palette = palette;
     this.fogRadius = fogRadius;
     this.shadowMapSize = shadowMapSize;
-    this.cloudCoverage = cloudCoverage;
-    this.cloudDensity = cloudDensity;
+    /**
+     * Densité de brouillard par temps ordinaire. La météo la **multiplie** :
+     * garder la valeur de référence évite qu'une averse qui va et vient
+     * n'épaississe l'air un peu plus à chaque passage.
+     */
+    this.baseFogDensity = 1.7 / fogRadius;
+    /** @type {Object} état météo résolu et gelé. Voir `weather.js`. */
+    this.weather = resolveWeather({
+      cloudCover: cloudCoverage,
+      cloudDensity,
+      ...(weather || {}),
+    });
     this._shadowCenter = { x: 0, y: 0, z: 0 };
     /** Part de nuit, de 0 (plein jour) à 1. Lue par tout l'éclairage artificiel. */
     this.nightMix = 0;
+    /**
+     * Ce que le vent fait au feuillage, publié pour que les couches végétales
+     * l'appliquent — même raison que `nightMix` : une seule mesure, donc pas
+     * d'herbe qui se couche pendant que les arbres sont au calme.
+     * @type {{amplitude:number, speed:number}}
+     */
+    this.wind = windField(this.weather);
+    /** Part de sol mouillé, de 0 à 1. Lue par le terrain, la chaussée, la voirie. */
+    this.wetness = this.weather.wetness;
 
     this.sky = new Sky();
     this.sky.name = 'sky-dome';
@@ -236,8 +278,44 @@ export class SceneEnvironment {
     this.ambient = new THREE.HemisphereLight(0xcfe4ff, 0x4a4433, 1.1);
     scene.add(this.ambient);
 
-    this.fog = new THREE.FogExp2(new THREE.Color(palette.fog), 1.7 / fogRadius);
+    this.fog = new THREE.FogExp2(new THREE.Color(palette.fog), this.baseFogDensity);
     scene.fog = this.fog;
+
+    /**
+     * La chute d'eau. Montée même sans précipitation : ses tampons sont alloués
+     * une fois pour toutes et ne coûtent rien tant qu'aucune goutte n'est tirée,
+     * alors que la monter au premier orage ferait une saccade au moment précis
+     * où l'on regarde le ciel.
+     */
+    this.precipitation = new Precipitation({ THREE, scene });
+    this.precipitation.setWeather(this.weather);
+  }
+
+  /**
+   * Change le temps qu'il fait. Idempotent, et sans effet de bord sur la
+   * palette : la météo module ce que la direction artistique a décidé, elle ne
+   * le remplace jamais.
+   *
+   * @param {Object|null} weather Clés à substituer au temps ordinaire.
+   */
+  setWeather(weather) {
+    this.weather = resolveWeather(weather);
+    this.wind = windField(this.weather);
+    this.wetness = this.weather.wetness;
+    this.precipitation.setWeather(this.weather);
+  }
+
+  /**
+   * Fait tomber la pluie et recentre sa boîte. À appeler une fois par image.
+   * Séparé d'`update()` parce que la chute avance en temps réel écoulé, quand
+   * l'heure du ciel peut, elle, être simulée, figée ou accélérée.
+   *
+   * @param {number} delta Secondes écoulées.
+   * @param {{x:number,y:number,z:number}} at Position de l'observateur.
+   */
+  advance(delta, at) {
+    this.precipitation.advance(delta);
+    if (at) this.precipitation.follow(at);
   }
 
   /** Garde le dôme centré sur la caméra : il ne doit jamais être « atteint ». */
@@ -288,14 +366,24 @@ export class SceneEnvironment {
    * @param {Date}   options.date Heure à simuler.
    * @param {number} options.lat
    * @param {number} options.lng
+   * @param {Object} [options.weather] Change le temps qu'il fait en vol. Omis,
+   *        le dernier reçu est reconduit — une application dont la météo ne
+   *        bouge pas n'a rien à repasser à chaque image.
    */
-  update({ palette, date, lat, lng }) {
+  update({ palette, date, lat, lng, weather = undefined }) {
     if (palette) this.palette = palette;
-    const fogColor = hexToLinear(this.palette.fog);
+    if (weather !== undefined) this.setWeather(weather);
+
+    // La palette dit de quelle couleur est l'air de ce monde, la météo à quel
+    // point il est gris. Le brouillard, le fond du renderer et le raccord
+    // d'horizon du ciel lisent tous les trois **cette** couleur corrigée : elle
+    // ne peut donc pas diverger d'une surface à l'autre.
+    const fogColor = fogColorFor(hexToLinear(this.palette.fog), this.weather);
     const nightZenith = hexToLinear(this.palette.nightZenith);
     const nightHorizon = hexToLinear(this.palette.nightHorizon);
 
     this.fog.color.setRGB(fogColor[0], fogColor[1], fogColor[2]);
+    this.fog.density = this.baseFogDensity * fogScale(this.weather);
     this.uniforms.uHorizonColor.value.setRGB(fogColor[0], fogColor[1], fogColor[2]);
     this.uniforms.uNightZenith.value.setRGB(nightZenith[0], nightZenith[1], nightZenith[2]);
     this.uniforms.uNightHorizon.value.setRGB(nightHorizon[0], nightHorizon[1], nightHorizon[2]);
@@ -308,13 +396,13 @@ export class SceneEnvironment {
     this._sunPosition.set(dir.x, dir.y, dir.z).multiplyScalar(SUN_DISTANCE);
     this.uniforms.sunPosition.value.copy(this._sunPosition);
 
-    const sky = skyParameters(dir.y);
+    const sky = weatherSkyParameters(skyParameters(dir.y), this.weather);
     this.uniforms.turbidity.value = sky.turbidity;
     this.uniforms.rayleigh.value = sky.rayleigh;
     this.uniforms.mieCoefficient.value = sky.mieCoefficient;
     this.uniforms.mieDirectionalG.value = sky.mieDirectionalG;
-    this.uniforms.cloudCoverage.value = this.cloudCoverage;
-    this.uniforms.cloudDensity.value = this.cloudDensity;
+    this.uniforms.cloudCoverage.value = this.weather.cloudCover;
+    this.uniforms.cloudDensity.value = this.weather.cloudDensity;
 
     // Les nuages dérivent en fonction du temps **en jeu** — un replay accéléré
     // les fait filer —, mais compté depuis le montage de la scène. Une date
@@ -335,14 +423,36 @@ export class SceneEnvironment {
 
     // Soleil rasant : l'ombre d'un arbre dépasse la boîte et se coupe net, ce
     // qui se voit bien plus que son absence. Sous l'horizon, il n'y a rien à
-    // projeter du tout.
-    this.sun.castShadow = dir.y > SHADOW_MIN_SUN_Y;
+    // projeter du tout. Sous un ciel entièrement bouché non plus : il n'y a
+    // plus de disque solaire pour dessiner un contour net.
+    this.sun.castShadow = dir.y > SHADOW_MIN_SUN_Y && castsShadow(this.weather);
 
-    const light = lightingFor(dir.y);
+    const light = weatherLighting(lightingFor(dir.y), this.weather);
     const [r, g, b] = sunlightColor(light.warmth, light.night);
     this.sun.color.setRGB(r, g, b);
     this.sun.intensity = light.sun;
     this.ambient.intensity = light.ambient;
+    // L'ombre s'efface **en opacité** avant de s'éteindre en tout ou rien : sans
+    // ça, le passage d'un nuage ferait disparaître d'un coup toutes les ombres
+    // de la scène. `shadow.intensity` existe depuis three r165 ; on ne s'y fie
+    // pas aveuglément, le `peerDependency` n'en garantit pas le détail.
+    if (this.sun.shadow && 'intensity' in this.sun.shadow) {
+      this.sun.shadow.intensity = light.shadow;
+    }
+
+    // La pluie prend la couleur de la lumière qui la traverse : grise sous
+    // l'orage, presque éteinte de nuit. Le brouillard est la meilleure mesure
+    // disponible de cette lumière de jour — c'est déjà lui qui donne le fond de
+    // l'image — mais il ne sait rien de la nuit : la palette de brouillard ne
+    // s'assombrit pas au coucher, c'est le ciel qui bascule sur sa palette
+    // nocturne. Sans le second facteur, une averse de minuit tombait en blanc
+    // vif sur une scène noire.
+    const glow = 1 - this.nightMix * 0.72;
+    this.precipitation.setTint({
+      r: Math.min(1, fogColor[0] + 0.18) * glow,
+      g: Math.min(1, fogColor[1] + 0.18) * glow,
+      b: Math.min(1, fogColor[2] + 0.2) * glow,
+    });
 
     this._placeSun();
   }
@@ -353,6 +463,7 @@ export class SceneEnvironment {
   }
 
   dispose() {
+    this.precipitation.dispose();
     this.scene.remove(this.sky);
     this.scene.remove(this.sun);
     this.scene.remove(this.sun.target);

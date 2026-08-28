@@ -105,6 +105,13 @@ export class WorldComposer {
     this.theme = theme;
     this.disposed = false;
     this._refreshing = false;
+    /** Dernière part de nuit appliquée. `null` force la prochaine à passer. */
+    this._night = null;
+    /** Dernier vent appliqué, pour ne pas réécrire des uniformes inchangés. */
+    this._wind = null;
+    /** Dernier mouillé appliqué. Survit à une reconstruction : les matériaux
+     * de sol, de chaussée et de voirie sont montés une fois pour toutes. */
+    this._wetness = null;
 
     // La carte de classes précède la bulle : les matériaux de terrain la
     // reçoivent à leur construction, et le même objet d'uniformes est partagé
@@ -385,6 +392,43 @@ export class WorldComposer {
     this.buildings.setNight(mix);
     this.furniture.setNight(mix);
     this.life.setNight(mix);
+  }
+
+  /**
+   * Accorde le vent de toute la végétation. Idempotent, et pour la même raison
+   * que `setNight` : une seule mesure, celle du ciel, sinon l'herbe se
+   * coucherait pendant que le blé serait au calme.
+   *
+   * @param {{amplitude:number, speed:number}} field Voir `windField`.
+   */
+  setWind(field) {
+    if (this.disposed || !field) return;
+    if (this._wind && field.amplitude === this._wind.amplitude && field.speed === this._wind.speed) {
+      return;
+    }
+    this._wind = { amplitude: field.amplitude, speed: field.speed };
+    this.grass.setWind(field);
+    this.vegetation.setWind(field);
+    this.crops.setWind(field);
+  }
+
+  /**
+   * Mouille le sol : le terrain, la chaussée et la voirie. Les trois ensemble
+   * — une route trempée au milieu d'un pré sec est la seule chose que l'œil
+   * relèverait ici.
+   *
+   * Les bâtiments et le mobilier restent secs : une façade prend la pluie sur
+   * une seule face, et l'assombrir entièrement serait plus faux que de ne rien
+   * faire.
+   *
+   * @param {number} value De 0 (sec) à 1 (détrempé).
+   */
+  setWetness(value) {
+    if (this.disposed || value === this._wetness) return;
+    this._wetness = value;
+    this.bubble.materials.setWetness(value);
+    this.roadMaterials.setWetness(value);
+    this.streets.setWetness(value);
   }
 
   dispose() {

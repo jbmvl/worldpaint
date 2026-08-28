@@ -85,6 +85,16 @@ export class TerrainMaterialFactory {
     }
   }
 
+  /**
+   * Mouille le sol. Un seul uniforme pour toute la bulle : il n'y a qu'un
+   * matériau de terrain, donc pas de tuile qui pourrait rester sèche.
+   * @param {number} value De 0 (sec) à 1 (détrempé).
+   */
+  setWetness(value) {
+    if (!this._uniforms) return;
+    this._uniforms.uWetness.value = Math.min(1, Math.max(0, value || 0));
+  }
+
   _create() {
     const { THREE, look } = this;
     const material = new THREE.MeshLambertMaterial({ color: 0xffffff });
@@ -118,6 +128,8 @@ export class TerrainMaterialFactory {
       uRockColor: { value: new THREE.Vector3(...look.rockColor) },
       uSlopeRange: { value: new THREE.Vector2(look.slopeStart, look.slopeEnd) },
       uRockStrength: { value: look.rockStrength },
+      /** Sol mouillé, de 0 à 1. Piloté par la météo, jamais par le thème. */
+      uWetness: { value: 0 },
     };
     this._uniforms = uniforms;
 
@@ -235,6 +247,19 @@ export class TerrainMaterialFactory {
              float rock = smoothstep(uSlopeRange.x, uSlopeRange.y, slope) * uRockStrength;
              base = mix(base, base * uRockColor, rock);
 
+             // Sol mouillé. Un film d'eau **assombrit et sature** : la lumière
+             // qui entre dans le sol s'y réfléchit plusieurs fois au lieu d'en
+             // ressortir du premier coup, donc il en revient moins, et ce qui en
+             // revient est plus coloré. C'est pour ça qu'une terre mouillée est
+             // brune profonde et une terre sèche beige pâle — le même effet, et
+             // pas un choix de teinte : on ne remplace aucune couleur du thème,
+             // on ne fait que jouer sur le chemin de la lumière dedans.
+             if (uWetness > 0.0) {
+               float wetLuma = dot(base, vec3(0.2126, 0.7152, 0.0722));
+               vec3 saturated = wetLuma + (base - wetLuma) * 1.35;
+               base = mix(base, saturated * 0.62, uWetness);
+             }
+
              diffuseColor.rgb = max(base, vec3(0.0));
            }`
         );
@@ -242,7 +267,7 @@ export class TerrainMaterialFactory {
 
     // Clé constante : sans elle, three recompilerait le programme à chaque
     // matériau qui le demande.
-    material.customProgramCacheKey = () => 'terrain-bubble-v7';
+    material.customProgramCacheKey = () => 'terrain-bubble-v8';
     return material;
   }
 

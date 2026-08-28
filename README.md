@@ -82,7 +82,7 @@ src/
                 furniture, and the geometry helpers they share
 >>>>>>> claude/urban-street-logic-2r00se
   materials/    procedural textures and shared materials
-  environment/  sky, sun, shadows, fog — the optional lighting rig
+  environment/  sky, sun, shadows, fog, weather — the optional lighting rig
   inspect/      debug helpers for labelling what's on screen
   themes/       the art direction: palettes, silhouettes, profiles — the one
                 file a fork changes to look different
@@ -119,7 +119,15 @@ await world.refresh(2.3522, 48.8566, { force: true });
 function frame(delta, camera) {
   const at = { x: camera.position.x, y: 0, z: camera.position.z };
   world.advance(delta, at);
-  const paint = world.updateSky({ camera, date: new Date(), lng: 2.3522, lat: 48.8566 });
+  const paint = world.updateSky({
+    camera,
+    date: new Date(),
+    lng: 2.3522,
+    lat: 48.8566,
+    // Optional. Omitted, the last one is carried over; never set, it is an
+    // ordinary sky — exactly the render you get without ever mentioning weather.
+    weather: { cloudCover: 0.9, cloudDensity: 0.85, precipitation: 0.5, wind: 0.4 },
+  });
   renderer.setClearColor(paint.clearColor, 1);
   renderer.render(scene, camera);
 }
@@ -135,11 +143,32 @@ position. The generator only dresses the point it is shown.
 | `setCenter(lng, lat)` | move the terrain bubble |
 | `refresh(lng, lat, {force})` | rebuild everything that comes from vector data |
 | `advance(delta, at)` | one frame of work: planting queues, grass, animation |
-| `updateSky({camera, date, lng, lat})` | advance the hour; returns the night mix and the clear colour |
+| `updateSky({camera, date, lng, lat, weather})` | advance the hour and the weather; returns the night mix, the wetness and the clear colour |
 | `dispose()` | release everything that was allocated |
 
 `updateSky` only exists if a sky was requested. Without one, the generator
 poses no light: the application lights the scene as it sees fit.
+
+### Weather
+
+Weather is **state, not art direction**: it changes as you go, so it travels
+with the hour through `updateSky` rather than living in the theme. Cloud cover
+and density, precipitation (rain or snow) and its intensity, wind and haze each
+drive the whole rig at once — the sun dims and loses its warmth under cloud,
+shadows fade out rather than snapping off, fog thickens and greys, foliage
+sways harder and faster, roads and ground darken when wet, and rain or snow
+falls in a box that follows the viewpoint. See `src/environment/weather.js` for
+what each coefficient does and why.
+
+The engine never *fetches* the weather: `src/` makes no network request and
+knows no service. Where the state comes from — a real forecast, a simulation, a
+player setting — is the application's business. The demo drives it from
+sliders; a real application might use a free, keyless source such as
+Open-Meteo.
+
+The default (`DEFAULT_WEATHER`) is an ordinary sky, and every modulation is
+written to be the identity on it: an application that never mentions weather
+sees exactly the landscape it saw before the feature existed.
 
 `three` is a peer dependency and is **injected**, never imported: two copies
 of three in one page share neither their constants nor their prototypes.
@@ -228,7 +257,7 @@ feature list.
 npm test
 ```
 
-178 tests, plain `node --test`, no browser, no build.
+283 tests, plain `node --test`, no browser, no build.
 
 ## Contributing
 

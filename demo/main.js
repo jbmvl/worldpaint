@@ -14,12 +14,25 @@
  *   - champ de recherche qui géocode un lieu (Nominatim/OpenStreetMap) et
  *     y déplace la bulle ;
  *   - mini-carte façon Street View, centrée sur la caméra, qui affiche le
- *     réseau routier local et téléporte au clic.
+ *     réseau routier local et téléporte au clic ;
+ *   - panneau météo et heure, qui pilote l'ambiance.
+ *
+ * Le panneau météo mérite un mot, parce qu'il montre exactement où passe la
+ * frontière moteur/application : **c'est la démo qui décide du temps qu'il
+ * fait**, et le moteur ne fait que l'appliquer. Une application réelle
+ * brancherait ici un relevé (Open-Meteo, par exemple, qui est gratuit et sans
+ * clé) ou une simulation ; ce sont des curseurs parce qu'on veut pouvoir passer
+ * de l'orage au grand beau en une seconde pour regarder ce que ça change. Le
+ * moteur, lui, ne fait aucune requête et ne connaît aucun service.
+ *
+ * L'heure est là pour la même raison : la moitié de la lecture d'un éclairage
+ * est l'inclinaison du soleil, et attendre le coucher pour la vérifier n'est
+ * pas une méthode.
  */
 
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
-import { createWorld, collectSceneLabels, CORRIDOR_MARGIN_M } from '../src/index.js';
+import { createWorld, collectSceneLabels, CORRIDOR_MARGIN_M, DEFAULT_WEATHER } from '../src/index.js';
 
 // --- Réglages ---------------------------------------------------------------
 
@@ -49,6 +62,10 @@ const showLabelsCheckbox = document.getElementById('showLabels');
 const showCorridorCheckbox = document.getElementById('showCorridor');
 const minimapCanvas = document.getElementById('minimap');
 const minimapCtx = minimapCanvas.getContext('2d');
+const realTimeCheckbox = document.getElementById('realTime');
+const hourInput = document.getElementById('hour');
+const hourVal = document.getElementById('hourVal');
+const presetsRoot = document.getElementById('presets');
 
 function setBusy(busy) {
   dot.classList.toggle('busy', busy);
@@ -609,6 +626,147 @@ searchInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') goToSearch();
 });
 
+// --- Météo et heure ------------------------------------------------------------
+// Tout ce qui suit est du ressort de l'application : le moteur reçoit un état
+// météo et une date, il ne les fabrique pas. Voir l'en-tête du fichier.
+
+/**
+ * Les temps prêts à l'emploi. Ils ne sont pas dans le moteur : ce sont des
+ * réglages de démonstration, faits pour montrer vite l'étendue de ce que la
+ * météo change — pas une nomenclature météorologique.
+ *
+ * « Ordinaire » est repris de `DEFAULT_WEATHER` plutôt que recopié : c'est le
+ * temps sur lequel toutes les modulations du moteur valent identité, et une
+ * copie qui dériverait ferait mentir le bouton.
+ */
+const PRESETS = [
+  { label: '☀️ Grand beau', weather: { cloudCover: 0.06, cloudDensity: 0.35, precipitation: 0, wind: 0.12, haze: 0 } },
+  { label: '⛅ Ordinaire', weather: DEFAULT_WEATHER },
+  { label: '☁️ Couvert', weather: { cloudCover: 0.95, cloudDensity: 0.8, precipitation: 0, wind: 0.35, haze: 0.05 } },
+  { label: '🌧️ Pluie', weather: { cloudCover: 0.9, cloudDensity: 0.85, precipitation: 0.55, precipitationType: 'rain', wind: 0.4, haze: 0.05 } },
+  { label: '⛈️ Orage', weather: { cloudCover: 1, cloudDensity: 1, precipitation: 1, precipitationType: 'rain', wind: 0.85, haze: 0.1 } },
+  { label: '❄️ Neige', weather: { cloudCover: 0.85, cloudDensity: 0.7, precipitation: 0.6, precipitationType: 'snow', wind: 0.3, haze: 0.15 } },
+  { label: '🌫️ Brume', weather: { cloudCover: 0.3, cloudDensity: 0.4, precipitation: 0, wind: 0.05, haze: 0.65 } },
+];
+
+/** Les six curseurs, tous exprimés de 0 à 100 dans le DOM et de 0 à 1 côté moteur. */
+const SLIDER_KEYS = ['cloudCover', 'cloudDensity', 'precipitation', 'wind', 'haze', 'wetness'];
+const sliders = {};
+for (const key of SLIDER_KEYS) {
+  sliders[key] = { input: document.getElementById(key), val: document.getElementById(`${key}Val`) };
+}
+const precipitationTypeSelect = document.getElementById('precipitationType');
+
+/**
+ * Le mouillé suit l'averse **jusqu'à ce qu'on y touche**. C'est la seule façon
+ * de regarder un sol trempé sans avoir la pluie devant les yeux — et de vérifier
+ * qu'un sol sèche sans que le ciel change, ce qu'une application réelle ferait
+ * avec sa propre constante de temps (le moteur, lui, ne garde aucun état entre
+ * deux images : voir `DEFAULT_WEATHER.wetness`).
+ */
+let wetnessManual = false;
+/** Ne repasse la météo au moteur que lorsqu'elle a bougé : omise, il la reconduit. */
+let weatherDirty = true;
+
+function readWeather() {
+  const weather = { precipitationType: precipitationTypeSelect.value };
+  for (const key of SLIDER_KEYS) weather[key] = Number(sliders[key].input.value) / 100;
+  return weather;
+}
+
+/** Recopie un état météo dans les curseurs, sans déclencher leurs écouteurs. */
+function writeWeather(weather) {
+  const full = { ...DEFAULT_WEATHER, ...weather };
+  for (const key of SLIDER_KEYS) {
+    if (key === 'wetness') continue;
+    sliders[key].input.value = Math.round(full[key] * 100);
+  }
+  precipitationTypeSelect.value = full.precipitationType;
+  wetnessManual = false;
+  syncWetness();
+  refreshWeatherLabels();
+  weatherDirty = true;
+}
+
+/** Accorde le mouillé sur l'averse, tant que personne ne l'a pris en main. */
+function syncWetness() {
+  if (wetnessManual) return;
+  const snowing = precipitationTypeSelect.value === 'snow';
+  // Même règle que le moteur : la neige blanchit le sol, elle ne le noircit pas.
+  sliders.wetness.input.value = snowing ? 0 : sliders.precipitation.input.value;
+}
+
+function refreshWeatherLabels() {
+  for (const key of SLIDER_KEYS) {
+    const percent = `${sliders[key].input.value} %`;
+    sliders[key].val.textContent =
+      key === 'wetness' && !wetnessManual ? `${percent} · auto` : percent;
+  }
+  hourVal.textContent = realTimeCheckbox.checked
+    ? new Date().toTimeString().slice(0, 5)
+    : formatHour(Number(hourInput.value));
+}
+
+function formatHour(hour) {
+  const h = Math.floor(hour) % 24;
+  const m = Math.round((hour - Math.floor(hour)) * 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+for (const key of SLIDER_KEYS) {
+  sliders[key].input.addEventListener('input', () => {
+    if (key === 'wetness') wetnessManual = true;
+    if (key === 'precipitation') syncWetness();
+    refreshWeatherLabels();
+    clearPresetHighlight();
+    weatherDirty = true;
+  });
+}
+precipitationTypeSelect.addEventListener('change', () => {
+  syncWetness();
+  refreshWeatherLabels();
+  clearPresetHighlight();
+  weatherDirty = true;
+});
+
+function clearPresetHighlight() {
+  for (const button of presetsRoot.children) button.classList.remove('on');
+}
+
+for (const preset of PRESETS) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = preset.label;
+  button.addEventListener('click', () => {
+    writeWeather(preset.weather);
+    clearPresetHighlight();
+    button.classList.add('on');
+  });
+  presetsRoot.appendChild(button);
+}
+presetsRoot.children[1].classList.add('on'); // « Ordinaire », qui est l'état de départ
+
+hourInput.addEventListener('input', refreshWeatherLabels);
+realTimeCheckbox.addEventListener('change', () => {
+  hourInput.disabled = realTimeCheckbox.checked;
+  refreshWeatherLabels();
+});
+hourInput.disabled = realTimeCheckbox.checked;
+refreshWeatherLabels();
+
+/**
+ * L'heure à simuler. Le curseur pose une heure locale du jour même — c'est
+ * suffisant pour parcourir une journée, et ça évite d'avoir à expliquer un
+ * fuseau dans une démo.
+ */
+function currentDate() {
+  if (realTimeCheckbox.checked) return new Date();
+  const hour = Number(hourInput.value);
+  const date = new Date();
+  date.setHours(Math.floor(hour), Math.round((hour - Math.floor(hour)) * 60), 0, 0);
+  return date;
+}
+
 // --- Boucle principale ----------------------------------------------------------
 
 function loop() {
@@ -619,7 +777,16 @@ function loop() {
 
   if (world) {
     world.advance(delta, camera.position);
-    const paint = world.updateSky({ camera, date: new Date(), lng: START.lng, lat: START.lat });
+    const paint = world.updateSky({
+      camera,
+      date: currentDate(),
+      lng: START.lng,
+      lat: START.lat,
+      // Omise, la météo est reconduite : inutile de refaire l'objet et de
+      // reprogrammer les particules à chaque image quand rien n'a bougé.
+      weather: weatherDirty ? readWeather() : undefined,
+    });
+    weatherDirty = false;
     if (paint) renderer.setClearColor(paint.clearColor, 1);
   }
 
@@ -635,6 +802,9 @@ function loop() {
     updateLabels();
     updateCorridor();
     updateMinimap();
+    // L'horloge n'avance que si c'est elle qu'on suit : le curseur, lui, ne
+    // bouge que quand on le pousse.
+    if (realTimeCheckbox.checked) hourVal.textContent = new Date().toTimeString().slice(0, 5);
   }
 
   coordsEl.textContent = `x ${camera.position.x.toFixed(0)}  z ${camera.position.z.toFixed(0)}  alt ${camera.position.y.toFixed(0)} m`;

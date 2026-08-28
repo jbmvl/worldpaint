@@ -50,6 +50,8 @@ import {
   createFoliageMaterial,
   createFoliageDepthMaterial,
   createCrossedQuads,
+  advanceFoliageWind,
+  setFoliageWind,
   ATLAS_ATTRIBUTE,
 } from '../materials/foliageMaterial.js';
 import { defaultTheme } from '../themes/default.js';
@@ -359,9 +361,17 @@ export class VegetationLayer {
    * seconde injection de shader dans la passe d'ombres.
    */
   advance(delta) {
-    const wind = this.material?.userData?.wind;
-    if (!wind || !Number.isFinite(delta)) return;
-    wind.uWindTime.value = (wind.uWindTime.value + delta) % 1000;
+    advanceFoliageWind(this.material, delta);
+  }
+
+  /**
+   * Accorde le vent sur la météo. La houppe reste la partie la plus discrète du
+   * décor à bouger : c'est le facteur qui change, jamais le fait qu'un arbre
+   * balance dix fois moins qu'une touffe d'herbe.
+   * @param {{amplitude:number, speed:number}} field
+   */
+  setWind(field) {
+    setFoliageWind(this.material, field);
   }
 
   /**
