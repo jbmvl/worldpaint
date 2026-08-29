@@ -26,6 +26,15 @@
  * vers elle** au ras de l'horizon, sinon la ligne de contact entre le terrain
  * lointain et le ciel se verrait comme une couture.
  *
+ * Cette couleur de palette est celle de l'air **à l'horizontale**, et rien de
+ * plus : `aerialFog.js` en dérive celle du haut de la voûte et celle de l'axe
+ * du soleil, et fait dépendre la cible du mélange de la direction regardée. Un
+ * `FogExp2` nu n'a qu'une couleur pour toutes les directions — le lointain
+ * converge alors vers un seul aplat, quasi blanc avec une palette claire, et
+ * c'est le défaut que cette dérivation corrige. Ce module reste le seul à
+ * décider *quelles* couleurs y entrent ; le module voisin dit *comment* elles
+ * se répartissent dans le ciel.
+ *
  * L'application donne l'heure et la palette ; elle seule sait d'où vient sa
  * direction artistique (un thème, un style de carte 2D, un réglage joueur). Ce
  * module ne connaît que la forme `{ fog, nightZenith, nightHorizon }`.
@@ -77,8 +86,10 @@ import {
   castsShadow,
   fogScale,
   fogColorFor,
+  overcastOf,
   windField,
 } from './weather.js';
+import { AerialFog, aerialSkyColor, aerialSunColor, sunTintAmount } from './aerialFog.js';
 import { Precipitation } from './precipitation.js';
 import { Debris } from './debris.js';
 import {
@@ -433,6 +444,19 @@ export class SceneEnvironment {
 
     this.fog = new THREE.FogExp2(new THREE.Color(palette.fog), this.baseFogDensity);
     scene.fog = this.fog;
+    /**
+     * Le brouillard n'est pas un aplat : sa cible dépend de la direction
+     * regardée et son extinction se calcule par canal. Monté ici, avant la
+     * première image, pour que les matières du décor emportent ses uniforms
+     * quand leur programme sera construit. Voir `aerialFog.js`.
+     */
+    this.aerialFog = new AerialFog(THREE);
+    this._publishAerialFog(
+      fogColorFor(hexToLinear(palette.fog), this.weather),
+      [1, 1, 1],
+      { x: 0, y: 1, z: 0 },
+      0
+    );
 
     /**
      * La chute d'eau. Montée même sans précipitation : ses tampons sont alloués
@@ -629,6 +653,13 @@ export class SceneEnvironment {
     this.sun.color.setRGB(r, g, b);
     this.sun.intensity = light.sun;
     this.ambient.intensity = light.ambient;
+
+    // La perspective aérienne lit **la couleur de jour**, pas la couleur déjà
+    // mélangée à la nuit : c'est elle qui porte la teinte de l'air, et la part
+    // de nuit est appliquée ensuite, sur chaque couleur dérivée, exactement
+    // comme la voûte le fait de son côté.
+    this._publishAerialFog(dayFogColor, [r, g, b], dir, nightMix);
+
     // L'ombre s'efface **en opacité** avant de s'éteindre en tout ou rien : sans
     // ça, le passage d'un nuage ferait disparaître d'un coup toutes les ombres
     // de la scène. `shadow.intensity` existe depuis three r165 ; on ne s'y fie
@@ -661,6 +692,37 @@ export class SceneEnvironment {
     });
 
     this._placeSun();
+  }
+
+  /**
+   * Repasse à la perspective aérienne les trois couleurs qu'elle ne sait pas
+   * dériver seule : l'air vers le haut, l'air dans l'axe du soleil, et la part
+   * de nuit qui les éteint tous les deux.
+   *
+   * Vers le haut, la nuit vise `nightZenith` — pas `nightHorizon`, qui est déjà
+   * la couleur d'horizon du brouillard. Les deux extrémités du dégradé de
+   * brouillard sont donc exactement celles de la voûte nocturne : c'est la même
+   * règle qu'au raccord d'horizon, appliquée à la seconde dimension que ce
+   * brouillard vient de gagner.
+   *
+   * @param {[number,number,number]} dayFog Couleur d'horizon de jour, linéaire.
+   * @param {[number,number,number]} sunRgb Couleur de la lumière directe, linéaire.
+   * @param {{x:number,y:number,z:number}} sunDir Direction du soleil.
+   * @param {number} nightMix Part de nuit, de 0 à 1.
+   */
+  _publishAerialFog(dayFog, sunRgb, sunDir, nightMix) {
+    const nightZenith = hexToLinear(this.palette.nightZenith);
+    const sky = aerialSkyColor(dayFog);
+    this.aerialFog.update({
+      skyColor: [
+        mix(sky[0], nightZenith[0], nightMix),
+        mix(sky[1], nightZenith[1], nightMix),
+        mix(sky[2], nightZenith[2], nightMix),
+      ],
+      sunColor: aerialSunColor(dayFog, sunRgb),
+      sunDir,
+      sunAmount: sunTintAmount(overcastOf(this.weather), nightMix),
+    });
   }
 
   /** Couleur de fond à donner au renderer (évite un flash noir au montage). */
