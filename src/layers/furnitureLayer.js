@@ -58,6 +58,7 @@ import {
   smoothColumns,
   pathFrames,
   toColoredGeometry,
+  toFlatColoredGeometry,
   resamplePath,
 } from './ribbonGeometry.js';
 import {
@@ -255,6 +256,16 @@ export const POINT_ITEMS = [
   'rockOutcrop',
   ...SIGN_ITEMS,
 ];
+
+/**
+ * Matières linéaires rendues **facettées** plutôt que lissées
+ * (`toFlatColoredGeometry`) : une haie est une masse végétale volontairement
+ * anguleuse (`hedgeGeometry`), pas un tube, et moyenner ses normales
+ * effacerait exactement le relief que sa section dessine. Les autres
+ * matières linéaires (murets, glissières, remblai…) restent lissées : ce
+ * sont des ouvrages construits, pas de la végétation.
+ */
+export const FLAT_LINEAR_KINDS = new Set(['hedge', 'lowHedge']);
 
 /** Matières linéaires : une géométrie fusionnée par matière. */
 export const LINEAR_KINDS = [
@@ -1991,7 +2002,9 @@ export class FurnitureLayer {
 
   _applyLinear(kind, buffer) {
     const { THREE } = this;
-    const geometry = toColoredGeometry(THREE, buffer);
+    const geometry = FLAT_LINEAR_KINDS.has(kind)
+      ? toFlatColoredGeometry(THREE, buffer)
+      : toColoredGeometry(THREE, buffer);
     const existing = this.linear.get(kind);
 
     if (!geometry) {

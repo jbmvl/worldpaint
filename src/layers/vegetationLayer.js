@@ -1,17 +1,24 @@
 /*
- * vegetationLayer — les arbres, en instances.
- * -------------------------------------------
+ * vegetationLayer — les arbres, en volumes low poly instanciés.
+ * ----------------------------------------------------------------
  * Les arbres poussent là où la carte d'occupation du sol dit « bois »
  * (`groundClassMap`) : un polygone de bois vaut 1, une prairie 0, donc les
  * lisières sont nettes. C'est la même donnée que celle lue par le shader du
  * terrain, au même endroit — la texture du sol et ce qui y pousse ne peuvent
  * pas se contredire.
  *
- * Chaque arbre est une paire de quadrilatères croisés — pas un modèle. À la
- * distance où on les voit, une silhouette bien découpée vaut un tronc modélisé
- * et coûte quatre triangles au lieu de plusieurs centaines. Neuf silhouettes
- * tirées dans un atlas, plus une rotation, une échelle et une teinte propres à
- * chaque instance : un bois cesse alors de ressembler à un clonage.
+ * Chaque arbre est un petit volume facetté (`lowPolyForest.js`) — tronc balayé,
+ * houppe en masse irrégulière —, dans le même style que les arbres de bord de
+ * route et les buissons de jardin (`furnitureKit.Kit.rock`). Un panneau croisé
+ * texturé se lit bien de face et se trahit dès qu'on le longe ; un volume ne
+ * ment jamais sous aucun angle. Neuf essences (`theme.trees.variants`), plus
+ * une rotation, une échelle et une teinte propres à chaque instance : un bois
+ * cesse ainsi de ressembler à un clonage.
+ *
+ * Le prix, c'est le triangle : une trentaine par arbre contre quatre pour un
+ * panneau croisé. `MAX_TREES_PER_TILE` a donc été redescendu d'autant à la
+ * bascule vers le volume — voir sa note — pour garder le même budget de rendu
+ * par tuile qu'avant, pas pour faire une forêt plus rare par goût.
  *
  * Elles ne sont pas tirées uniformément : une maille de terrain fixe un
  * **peuplement** (`FOREST_TYPES`), et c'est lui qui décide des essences, de la
@@ -23,9 +30,15 @@
  * de buissons compté en plus des arbres — trois échelles au lieu d'une. Sa
  * couleur, elle, dérive par **bosquets** de quelques dizaines de mètres
  * (`foliageTint`) : c'est ce qui fait un massif peint plutôt qu'un aplat vert.
+ * Elle se superpose à la teinte propre de chaque essence, déjà portée par son
+ * volume (`lowPolyForest.essenceCrownTone`) — les deux se multiplient, comme le
+ * faisaient avant elles la couleur d'instance et l'atlas peint.
  *
  * La plantation est mise en file et étalée sur plusieurs images : composer deux
- * mille matrices dans la même image se verrait comme un à-coup.
+ * mille matrices dans la même image se verrait comme un à-coup. Une tuile peut
+ * planter jusqu'à neuf maillages instanciés — un par essence présente —, là où
+ * un seul suffisait aux panneaux croisés : c'est le coût d'avoir une couleur de
+ * volume propre à chaque essence plutôt qu'un décalage d'atlas par instance.
  *
  * Deux décisions à ne pas défaire :
  *
@@ -39,21 +52,10 @@
  *   une fois non, selon l'ordre d'arrivée.
  */
 
-import {
-  makeRandom,
-  createTreeAtlasCanvas,
-  TREE_ATLAS_OFFSETS,
-  TREE_ATLAS_COLS,
-} from '../materials/proceduralTextures.js';
+import { makeRandom } from '../materials/proceduralTextures.js';
 import { randomAt } from './furniturePlacement.js';
-import {
-  createFoliageMaterial,
-  createFoliageDepthMaterial,
-  createCrossedQuads,
-  advanceFoliageWind,
-  setFoliageWind,
-  ATLAS_ATTRIBUTE,
-} from '../materials/foliageMaterial.js';
+import { createFurnitureMaterial } from './furnitureKit.js';
+import { buildEssenceGeometries } from './lowPolyForest.js';
 import { defaultTheme } from '../themes/default.js';
 
 /** Côté de la grille de plantation, par tuile (~36 m par cellule au zoom 15). */
@@ -68,8 +70,14 @@ export const TREES_PER_CELL = 14;
  * atteint au milieu du parcours des mailles laissait le sud d'une tuile
  * entièrement nu alors que son nord était en forêt. C'est `thinPlacements` qui
  * s'en charge, en éclaircissant partout au lieu de couper quelque part.
+ *
+ * Recalé à la bascule du panneau croisé (quatre triangles) vers le volume low
+ * poly (`lowPolyForest.js`, une trentaine de triangles) : sept mille panneaux
+ * pesaient environ 28 000 triangles, et c'est ce budget-là — pas un autre —
+ * que mille volumes reconduisent. Ce n'est donc pas la forêt qui a été
+ * éclaircie par goût ; c'est son unité de compte qui a changé.
  */
-export const MAX_TREES_PER_TILE = 7000;
+export const MAX_TREES_PER_TILE = 1000;
 /**
  * Garde-fou de collecte : on ne construit jamais plus que cela d'objets
  * intermédiaires, même si la carte de classes annonçait un continent boisé.
@@ -285,36 +293,18 @@ export class VegetationLayer {
     this.group.name = 'vegetation';
     scene.add(this.group);
 
-    this.texture = new THREE.CanvasTexture(
-      createTreeAtlasCanvas(undefined, undefined, theme.trees.variants)
-    );
-    this.texture.colorSpace = THREE.SRGBColorSpace;
-    this.texture.anisotropy = 4;
+    // Un volume par essence, construit une fois pour toutes et partagé par
+    // toutes les tuiles — exactement comme `furnitureLayer` partage son
+    // catalogue de mobilier entre tous ses maillages instanciés.
+    this.geometries = buildEssenceGeometries(THREE, theme.trees.variants);
+    // Même matériau que le mobilier : couleurs de sommet, éclairage
+    // lambertien, `DoubleSide` pour les quelques facettes qu'un contour
+    // irrégulier peut laisser mal orientées. Un volume n'a pas besoin des
+    // artifices du feuillage en panneau (normale forcée, alpha test, vent) :
+    // il a de vraies normales de face.
+    this.material = createFurnitureMaterial(THREE);
 
-    this.baseGeometry = createCrossedQuads(THREE);
-    this.material = createFoliageMaterial({
-      THREE,
-      map: this.texture,
-      atlas: true,
-      tiles: TREE_ATLAS_COLS,
-      // Le vent, aussi, dans les arbres — mais dix fois plus discret que dans
-      // l'herbe. Une houppe qui balance de trente centimètres à quinze mètres du
-      // sol est ce qui distingue un décor vivant d'une maquette ; au-delà, un
-      // arbre se met à onduler comme une algue.
-      wind: true,
-      windStrength: 0.05,
-      cacheKey: 'foliage-atlas-wind-v2',
-    });
-    // Sans lui, chaque panneau projetterait l'atlas entier : quatre arbres
-    // écrasés dans l'ombre d'un seul.
-    this.depthMaterial = createFoliageDepthMaterial({
-      THREE,
-      map: this.texture,
-      tiles: TREE_ATLAS_COLS,
-      cacheKey: 'foliage-atlas-depth-v1',
-    });
-
-    /** @type {Map<string, Object>} maillages instanciés, par clé de tuile */
+    /** @type {Map<string, Object>} groupe de maillages instanciés, par clé de tuile */
     this.meshes = new Map();
     /**
      * Tuiles déjà traitées, **y compris celles où rien n'a poussé**. Sans elle,
@@ -346,33 +336,20 @@ export class VegetationLayer {
     this._color = new THREE.Color();
   }
 
-  setMaxAnisotropy(value) {
-    this.texture.anisotropy = Math.min(value || 4, 8);
-    this.texture.needsUpdate = true;
-  }
+  /** Sans texture, plus rien à filtrer — méthode gardée en repli inerte : */
+  setMaxAnisotropy() {}
 
   /**
-   * Fait avancer le vent dans les houppes. À appeler une fois par image.
-   *
-   * L'ombre portée, elle, ne balance pas : le matériau de profondeur ne rejoue
-   * pas le déplacement du sommet. À cette amplitude — quelques dizaines de
-   * centimètres au sommet d'un arbre de quinze mètres — l'écart entre l'arbre et
-   * son ombre n'est pas perceptible, et lui faire suivre le vent coûterait une
-   * seconde injection de shader dans la passe d'ombres.
+   * Un volume ne balance pas : contrairement au panneau qu'il remplace, il a
+   * un vrai tronc pour ancre, et l'amplitude qui faisait onduler une houppe de
+   * quinze mètres se lisait surtout comme un artefact de loin. Méthodes
+   * gardées en repli inerte : `worldComposer` continue de les appeler à
+   * chaque image sans avoir à savoir que cette couche n'anime plus rien.
    */
-  advance(delta) {
-    advanceFoliageWind(this.material, delta);
-  }
+  advance() {}
 
-  /**
-   * Accorde le vent sur la météo. La houppe reste la partie la plus discrète du
-   * décor à bouger : c'est le facteur qui change, jamais le fait qu'un arbre
-   * balance dix fois moins qu'une touffe d'herbe.
-   * @param {{amplitude:number, speed:number}} field
-   */
-  setWind(field) {
-    setFoliageWind(this.material, field);
-  }
+  /** @param {{amplitude:number, speed:number}} field */
+  setWind() {}
 
   /**
    * Accorde la couche sur l'état de la bulle : met en file les tuiles proches
@@ -429,11 +406,13 @@ export class VegetationLayer {
   remove(key) {
     this._planted.delete(key);
     this._blind.delete(key);
-    const mesh = this.meshes.get(key);
-    if (!mesh) return;
-    this.group.remove(mesh);
-    mesh.geometry.dispose();
-    mesh.dispose?.();
+    const group = this.meshes.get(key);
+    if (!group) return;
+    this.group.remove(group);
+    // Les géométries d'essence sont partagées entre toutes les tuiles
+    // (`this.geometries`, construites une seule fois) : seul le maillage
+    // instancié de cette tuile-ci lui appartient en propre.
+    for (const mesh of group.children) mesh.dispose?.();
     this.meshes.delete(key);
   }
 
@@ -531,46 +510,55 @@ export class VegetationLayer {
     if (collected.length === 0) return;
     const placements = thinPlacements(collected, MAX_TREES_PER_TILE);
 
-    // Géométrie clonée par tuile : l'attribut d'atlas est une donnée d'instance,
-    // il ne peut pas vivre sur une géométrie partagée.
-    const geometry = this.baseGeometry.clone();
-    const offsets = new Float32Array(placements.length * 2);
-    placements.forEach((tree, index) => {
-      const [u, v] = TREE_ATLAS_OFFSETS[tree.variant];
-      offsets[index * 2] = u;
-      offsets[index * 2 + 1] = v;
-    });
-    geometry.setAttribute(ATLAS_ATTRIBUTE, new THREE.InstancedBufferAttribute(offsets, 2));
+    // Un `InstancedMesh` ne porte qu'une seule géométrie : les arbres de la
+    // tuile sont donc groupés par essence, chacune vers son propre maillage.
+    // Une tuile en bois mêlé peut ainsi en poser jusqu'à neuf, une tuile en
+    // futaie pure n'en pose que deux ou trois — c'est le nombre d'essences
+    // réellement tirées qui décide, jamais un maximum fixe.
+    const byVariant = new Map();
+    for (const tree of placements) {
+      const bucket = byVariant.get(tree.variant);
+      if (bucket) bucket.push(tree);
+      else byVariant.set(tree.variant, [tree]);
+    }
 
-    const mesh = new THREE.InstancedMesh(geometry, this.material, placements.length);
-    mesh.name = `vegetation-${tile.key}`;
-    mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-    mesh.castShadow = true;
-    // Un bois s'ombre lui-même : sans réception, tous les troncs seraient
-    // également éclairés et le volume disparaîtrait.
-    mesh.receiveShadow = true;
-    mesh.customDepthMaterial = this.depthMaterial;
+    const tileGroup = new THREE.Group();
+    tileGroup.name = `vegetation-${tile.key}`;
 
-    placements.forEach((tree, index) => {
-      this._position.set(tree.x, tree.y, tree.z);
-      this._quaternion.setFromAxisAngle(this._axis, tree.rotation);
-      // Largeur proportionnelle à la hauteur : un arbre haut est aussi large.
-      // Le rapport varie d'un arbre à l'autre, sans quoi deux arbres de même
-      // hauteur sont exactement la même image à deux échelles près.
-      this._scale.set(tree.height * tree.aspect, tree.height, tree.height * tree.aspect);
-      this._matrix.compose(this._position, this._quaternion, this._scale);
-      mesh.setMatrixAt(index, this._matrix);
-      const [r, g, b] = foliageTint(tree.hue, tree.x, tree.z, tree.tint, tree.jitter);
-      this._color.setRGB(r, g, b);
-      mesh.setColorAt(index, this._color);
-    });
+    for (const [variant, trees] of byVariant) {
+      const geometry = this.geometries[variant];
+      if (!geometry) continue;
 
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.computeBoundingSphere();
+      const mesh = new THREE.InstancedMesh(geometry, this.material, trees.length);
+      mesh.name = `vegetation-${tile.key}-${variant}`;
+      mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+      mesh.castShadow = true;
+      // Un bois s'ombre lui-même : sans réception, tous les troncs seraient
+      // également éclairés et le volume disparaîtrait.
+      mesh.receiveShadow = true;
 
-    this.group.add(mesh);
-    this.meshes.set(tile.key, mesh);
+      trees.forEach((tree, index) => {
+        this._position.set(tree.x, tree.y, tree.z);
+        this._quaternion.setFromAxisAngle(this._axis, tree.rotation);
+        // Largeur proportionnelle à la hauteur : un arbre haut est aussi large.
+        // Le rapport varie d'un arbre à l'autre, sans quoi deux arbres de même
+        // hauteur sont exactement le même volume à deux échelles près.
+        this._scale.set(tree.height * tree.aspect, tree.height, tree.height * tree.aspect);
+        this._matrix.compose(this._position, this._quaternion, this._scale);
+        mesh.setMatrixAt(index, this._matrix);
+        const [r, g, b] = foliageTint(tree.hue, tree.x, tree.z, tree.tint, tree.jitter);
+        this._color.setRGB(r, g, b);
+        mesh.setColorAt(index, this._color);
+      });
+
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      mesh.computeBoundingSphere();
+      tileGroup.add(mesh);
+    }
+
+    this.group.add(tileGroup);
+    this.meshes.set(tile.key, tileGroup);
   }
 
   dispose() {
@@ -579,16 +567,13 @@ export class VegetationLayer {
     this.queue.length = 0;
     this._planted.clear();
     this._blind.clear();
-    for (const mesh of this.meshes.values()) {
-      this.group.remove(mesh);
-      mesh.geometry.dispose();
-      mesh.dispose?.();
+    for (const group of this.meshes.values()) {
+      this.group.remove(group);
+      for (const mesh of group.children) mesh.dispose?.();
     }
     this.meshes.clear();
     this.scene.remove(this.group);
-    this.baseGeometry.dispose();
+    for (const geometry of this.geometries) geometry.dispose();
     this.material.dispose();
-    this.depthMaterial.dispose();
-    this.texture.dispose();
   }
 }

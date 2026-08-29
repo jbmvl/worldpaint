@@ -542,6 +542,80 @@ export function toColoredGeometry(THREE, buffer) {
 }
 
 /**
+ * Convertit un accumulateur de sections en `BufferGeometry` colorée,
+ * **facettée** : chaque triangle porte sa propre normale plutôt qu'une
+ * normale moyennée avec ses voisins.
+ *
+ * `toColoredGeometry` partage les sommets entre triangles adjacents
+ * (`setIndex` + `computeVertexNormals`), donc leurs normales se moyennent —
+ * c'est ce qui arrondit un contour anguleux en tube lisse. Une haie
+ * balayée dessine pourtant une section volontairement irrégulière
+ * (`profilesFor`, `hedgeGeometry`) : moyenner ses normales efface exactement
+ * le relief que la section dessine, et redonne le défaut du « tube extrudé »
+ * que ces sections existent pour corriger. Ce convertisseur duplique donc
+ * chaque sommet par triangle et calcule sa normale de face — le même calcul
+ * que `Kit.tri` (`furnitureKit.js`), qui donne déjà aux rochers et aux arbres
+ * du mobilier leur aspect facetté « low poly ». Coûte trois fois plus de
+ * sommets qu'une géométrie indexée ; sans conséquence pour une haie, dont le
+ * nombre de triangles reste petit à côté d'un semis d'herbe ou de culture.
+ *
+ * @returns {Object|null} `null` si rien n'a été accumulé.
+ */
+export function toFlatColoredGeometry(THREE, buffer) {
+  if (buffer.positions.length === 0) return null;
+  const { positions, colors, indices } = buffer;
+  const triCount = indices.length / 3;
+  const outPositions = new Float32Array(triCount * 9);
+  const outNormals = new Float32Array(triCount * 9);
+  const outColors = new Float32Array(triCount * 9);
+
+  for (let t = 0; t < triCount; t++) {
+    const ia = indices[t * 3];
+    const ib = indices[t * 3 + 1];
+    const ic = indices[t * 3 + 2];
+    const pa = ia * 3;
+    const pb = ib * 3;
+    const pc = ic * 3;
+    const ux = positions[pb] - positions[pa];
+    const uy = positions[pb + 1] - positions[pa + 1];
+    const uz = positions[pb + 2] - positions[pa + 2];
+    const vx = positions[pc] - positions[pa];
+    const vy = positions[pc + 1] - positions[pa + 1];
+    const vz = positions[pc + 2] - positions[pa + 2];
+    let nx = uy * vz - uz * vy;
+    let ny = uz * vx - ux * vz;
+    let nz = ux * vy - uy * vx;
+    const length = Math.hypot(nx, ny, nz) || 1;
+    nx /= length;
+    ny /= length;
+    nz /= length;
+
+    const base = t * 9;
+    const verts = [ia, ib, ic];
+    for (let k = 0; k < 3; k++) {
+      const src = verts[k] * 3;
+      const dst = base + k * 3;
+      outPositions[dst] = positions[src];
+      outPositions[dst + 1] = positions[src + 1];
+      outPositions[dst + 2] = positions[src + 2];
+      outNormals[dst] = nx;
+      outNormals[dst + 1] = ny;
+      outNormals[dst + 2] = nz;
+      outColors[dst] = colors[src];
+      outColors[dst + 1] = colors[src + 1];
+      outColors[dst + 2] = colors[src + 2];
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(outPositions, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(outNormals, 3));
+  geometry.setAttribute('color', new THREE.BufferAttribute(outColors, 3));
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+/**
  * Convertit l'accumulateur en `BufferGeometry`.
  * @returns {Object|null} `null` si rien n'a été accumulé.
  */

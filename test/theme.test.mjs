@@ -35,7 +35,15 @@ import { forestTypeAt, variantsFor } from '../src/layers/vegetationLayer.js';
 import { roadStyleFor } from '../src/layers/roadNetwork.js';
 import { furnitureSpecsFor, FURNITURE_BUILDERS } from '../src/layers/furnitureKit.js';
 import { hedgeStyleFor, hedgeClumps } from '../src/layers/hedgeGeometry.js';
-import { resamplePath } from '../src/layers/ribbonGeometry.js';
+import {
+  resamplePath,
+  createProfileBuffer,
+  appendProfile,
+  toColoredGeometry,
+  toFlatColoredGeometry,
+} from '../src/layers/ribbonGeometry.js';
+import { FLAT_LINEAR_KINDS, LINEAR_KINDS } from '../src/layers/furnitureLayer.js';
+import * as THREE from 'three';
 import { DEFAULT_SKY_PALETTE } from '../src/environment/sceneEnvironment.js';
 
 /** Un thème contraire au défaut sur chaque tranche qu'on sait lire. */
@@ -383,4 +391,66 @@ test('la haie prend ses arbustes du thème, et son budget du moteur', () => {
   );
   const [tall] = hedgeClumps(path, { style: hedgeStyleFor('hedge', OTHER.furniture.hedges), here });
   assert.equal(tall.height, 6, 'l’arbuste fait la taille que le thème lui donne');
+});
+
+test('la haie et la haie basse sont rendues facettées, le reste du mobilier linéaire reste lissé', () => {
+  assert.ok(FLAT_LINEAR_KINDS.has('hedge'));
+  assert.ok(FLAT_LINEAR_KINDS.has('lowHedge'));
+  for (const kind of LINEAR_KINDS) {
+    if (kind === 'hedge' || kind === 'lowHedge') continue;
+    assert.ok(!FLAT_LINEAR_KINDS.has(kind), `${kind} n’est pas de la végétation, il doit rester lissé`);
+  }
+});
+
+test('la géométrie facettée d’une haie ne moyenne pas ses normales à l’arête', () => {
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 20, z: 0 }], 4);
+  const sampleElevation = () => 0;
+  // Une section en V, franchement anguleuse : deux flancs qui ne sont pas
+  // dans le même plan — exactement ce qu'une section de haie dessine.
+  const profile = [
+    { across: -1, up: 0, color: [0, 0, 0] },
+    { across: 0, up: 2, color: [1, 1, 1] },
+    { across: 1, up: 0, color: [0, 0, 0] },
+  ];
+
+  const buffer = createProfileBuffer();
+  appendProfile(buffer, { path, profile, sampleElevation, closed: false });
+
+  const smooth = toColoredGeometry(THREE, buffer);
+  const flat = toFlatColoredGeometry(THREE, buffer);
+
+  // Un sommet par triangle, jamais partagé : trois fois plus de sommets que
+  // de triangles, là où la version indexée en garde un par coin de section.
+  const triCount = buffer.indices.length / 3;
+  assert.equal(flat.attributes.position.count, triCount * 3);
+
+  // Le sommet de l'arête (across = 0, up = 2, en tête de la première ligne)
+  // est partagé par les deux flancs dans la géométrie lissée : sa normale y
+  // est donc la moyenne des deux, qui n'est celle d'aucun des deux flancs.
+  const smoothNormal = [smooth.attributes.normal.array[3], smooth.attributes.normal.array[4], smooth.attributes.normal.array[5]];
+
+  // Dans la géométrie facettée, ce même point physique est dupliqué une fois
+  // par triangle qui le touche : on y retrouve donc les deux normales de
+  // flanc, non moyennées, et ni l'une ni l'autre n'égale la moyenne lissée.
+  const positions = flat.attributes.position.array;
+  const normals = flat.attributes.normal.array;
+  const atRidge = [];
+  for (let i = 0; i < positions.length / 3; i++) {
+    const x = positions[i * 3];
+    const y = positions[i * 3 + 1];
+    const z = positions[i * 3 + 2];
+    if (Math.abs(x) < 1e-6 && Math.abs(y - 2) < 1e-6 && Math.abs(z) < 1e-6) {
+      atRidge.push([normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]]);
+    }
+  }
+
+  const close = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 1e-4;
+  assert.ok(atRidge.length >= 2, 'l’arête est portée par au moins deux triangles');
+  assert.ok(
+    atRidge.some((n) => !close(n, atRidge[0])),
+    'les deux flancs de l’arête gardent chacun leur propre normale de face'
+  );
+  for (const n of atRidge) {
+    assert.ok(!close(n, smoothNormal), 'aucune des deux ne retombe sur la moyenne lissée');
+  }
 });
