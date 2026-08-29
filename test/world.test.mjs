@@ -142,7 +142,6 @@ import {
   treesForScore,
   forestTypeAt,
   variantsFor,
-  understoryVariants,
   treeHeight,
   foliageTint,
   thinPlacements,
@@ -152,7 +151,6 @@ import {
   EMERGENT_SHARE,
   CLUMP_TINT_M,
 } from '../src/layers/vegetationLayer.js';
-import { TREE_ESSENCES } from '../src/themes/default.js';
 import {
   grassVariantFor,
   grassSampleFallback,
@@ -229,7 +227,7 @@ import {
   hedgeClumps,
   appendHedgeClump,
 } from '../src/layers/hedgeGeometry.js';
-import { TREE_ATLAS_OFFSETS, GRASS_VARIANTS } from '../src/materials/proceduralTextures.js';
+import { GRASS_VARIANTS } from '../src/materials/proceduralTextures.js';
 import { snapToShadowTexels, sunDirection, SHADOW_RADIUS_M } from '../src/environment/shadowFrame.js';
 import {
   waterwayStyleFor,
@@ -565,15 +563,6 @@ test('les hauteurs se répartissent en strates, avec quelques dominants', () => 
   // Et quelques-uns dépassent la strate : ce sont eux qui donnent le relief.
   assert.ok(treeHeight(type, 1, 0) > 16, 'un dominant dépasse la hauteur du peuplement');
   assert.ok(EMERGENT_SHARE > 0 && EMERGENT_SHARE < 0.25, 'un dominant reste une exception');
-});
-
-test('le sous-bois tire dans les buissons, quel que soit le peuplement', () => {
-  const variants = understoryVariants();
-  assert.ok(variants.length > 0);
-  // Ce sont bien les silhouettes basses, pas celles de la futaie au-dessus.
-  assert.deepEqual(variants, TREE_ESSENCES.bushy);
-  // Et sans essence buissonnante, on rend quand même une case d’atlas valide.
-  assert.deepEqual(understoryVariants({}), [0]);
 });
 
 test('la teinte d’un feuillage dérive par bosquet, et reste ancrée au lieu', () => {
@@ -3049,7 +3038,6 @@ test('chaque peuplement tire dans des silhouettes qui existent', () => {
     const variants = variantsFor(type);
     assert.ok(variants.length >= 2, `${type.name} : plusieurs silhouettes`);
     for (const index of variants) {
-      assert.ok(TREE_ATLAS_OFFSETS[index], `${type.name} : case ${index} présente`);
       assert.ok(TREE_VARIANTS[index], `${type.name} : variante ${index} décrite`);
     }
     assert.ok(type.maxHeight > type.minHeight, `${type.name} : hauteurs cohérentes`);
@@ -3058,15 +3046,6 @@ test('chaque peuplement tire dans des silhouettes qui existent', () => {
   const taillis = FOREST_TYPES.find((t) => t.name === 'taillis');
   const futaie = FOREST_TYPES.find((t) => t.name === 'futaie');
   assert.ok(taillis.maxHeight < futaie.minHeight, 'un taillis ne dépasse pas une futaie');
-});
-
-test('les décalages d’atlas couvrent la grille sans se répéter', () => {
-  const keys = new Set(TREE_ATLAS_OFFSETS.map(([u, v]) => `${u.toFixed(4)},${v.toFixed(4)}`));
-  assert.equal(keys.size, TREE_ATLAS_OFFSETS.length, 'aucune case en double');
-  assert.equal(TREE_ATLAS_OFFSETS.length, TREE_VARIANTS.length, 'une case par silhouette');
-  for (const [u, v] of TREE_ATLAS_OFFSETS) {
-    assert.ok(u >= 0 && u < 1 && v >= 0 && v < 1, 'décalage dans la texture');
-  }
 });
 
 // --- Fleurs et cultures -----------------------------------------------------

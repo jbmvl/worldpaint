@@ -97,6 +97,99 @@ function foliageLightsChunk(THREE) {
 }
 
 /**
+ * Uniformes du vent, ou `null` si le matériau n'en porte pas — la forme que
+ * `material.userData.wind` doit prendre pour que `advanceFoliageWind` et
+ * `setFoliageWind` puissent s'en saisir, quel que soit le matériau qui les
+ * porte (panneau croisé ou volume).
+ */
+function createFoliageWindUniforms(wind, windStrength) {
+  if (!wind) return null;
+  return {
+    uWindTime: { value: 0 },
+    uWindStrength: { value: windStrength },
+    /** Amplitude du temps ordinaire. Ne bouge jamais : voir l'en-tête. */
+    base: windStrength,
+    /** Facteur de vitesse, appliqué par `advanceFoliageWind`. */
+    speed: 1,
+  };
+}
+
+/**
+ * Injecte le balancement du vent dans un shader compilé, si `windUniforms`
+ * en porte. Partagé par `createFoliageMaterial` (panneaux croisés) et
+ * `createFoliageVolumeMaterial` (arbres en volume) : le calcul — hauteur
+ * locale au carré, phase tirée de la position d'instance — ne dépend de rien
+ * de propre au panneau, un sommet de maillage plein s'y prête tout autant.
+ */
+function injectFoliageWind(shader, windUniforms) {
+  if (!windUniforms) return;
+  shader.uniforms.uWindTime = windUniforms.uWindTime;
+  shader.uniforms.uWindStrength = windUniforms.uWindStrength;
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', `#include <common>\n uniform float uWindTime;\n uniform float uWindStrength;`)
+    .replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+       {
+         // Position de l'instance : la phase est tirée du sol, donc deux
+         // instances voisines ne penchent pas exactement ensemble, et une
+         // instance donnée penche toujours de la même façon.
+         #ifdef USE_INSTANCING
+           vec2 anchor = vec2(instanceMatrix[3][0], instanceMatrix[3][2]);
+         #else
+           vec2 anchor = vec2(0.0);
+         #endif
+         float phase = anchor.x * 0.42 + anchor.y * 0.31;
+         float sway = sin(uWindTime * 1.7 + phase) * 0.62 + sin(uWindTime * 3.1 + phase * 1.9) * 0.38;
+         // En carré de la hauteur locale : le pied ne bouge pas, la pointe
+         // fouette — vrai d'un panneau (hauteur portée par l'UV) comme d'un
+         // volume (hauteur portée par la position, le tronc étant à y = 0).
+         float bend = transformed.y * transformed.y * uWindStrength;
+         transformed.x += sway * bend;
+         transformed.z += sway * bend * 0.45;
+       }`
+    );
+}
+
+/**
+ * Matériau d'un feuillage en **volume** : arbres de forêt en low poly
+ * (`lowPolyForest.js`). À la différence de `createFoliageMaterial`, la
+ * géométrie a de vraies faces et de vraies normales — pas de normale forcée
+ * à la verticale, pas d'atlas, pas de découpe alpha. Seul le vent est
+ * repris, avec le même calcul que le feuillage en panneau (voir
+ * `injectFoliageWind`) : c'est ce qui manquait pour qu'une masse verte en
+ * volume ne soit pas plus figée qu'une touffe d'herbe.
+ *
+ * @param {Object} options
+ * @param {Object} options.THREE
+ * @param {boolean} [options.wind] Anime le sommet des houppes.
+ * @param {number} [options.windStrength] Amplitude, en part de la hauteur.
+ * @param {string} options.cacheKey Clé de programme.
+ * @returns {Object} matériau. `userData.wind` porte l'uniforme de temps quand
+ *          le vent est actif.
+ */
+export function createFoliageVolumeMaterial({ THREE, wind = true, windStrength = 0.012, cacheKey }) {
+  const material = new THREE.MeshLambertMaterial({
+    vertexColors: true,
+    // Un contour irrégulier peut laisser une facette mal orientée ; une haie
+    // ou un tronc balayé n'a pas d'intérieur, et une face manquante s'y
+    // verrait comme un trou. Même choix que `furnitureKit.createFurnitureMaterial`.
+    side: THREE.DoubleSide,
+  });
+  material.name = 'foliage-volume';
+
+  const windUniforms = createFoliageWindUniforms(wind, windStrength);
+  material.userData.wind = windUniforms;
+
+  material.onBeforeCompile = (shader) => {
+    injectFoliageWind(shader, windUniforms);
+  };
+
+  material.customProgramCacheKey = () => cacheKey;
+  return material;
+}
+
+/**
  * @param {Object} options
  * @param {Object} options.THREE
  * @param {Object} options.map      Texture de feuillage.
@@ -143,45 +236,11 @@ export function createFoliageMaterial({
     vertexColors: true,
   });
 
-  const windUniforms = wind
-    ? {
-        uWindTime: { value: 0 },
-        uWindStrength: { value: windStrength },
-        /** Amplitude du temps ordinaire. Ne bouge jamais : voir l'en-tête. */
-        base: windStrength,
-        /** Facteur de vitesse, appliqué par `advanceFoliageWind`. */
-        speed: 1,
-      }
-    : null;
+  const windUniforms = createFoliageWindUniforms(wind, windStrength);
   material.userData.wind = windUniforms;
 
   material.onBeforeCompile = (shader) => {
-    if (windUniforms) {
-      shader.uniforms.uWindTime = windUniforms.uWindTime;
-      shader.uniforms.uWindStrength = windUniforms.uWindStrength;
-      shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', `#include <common>\n uniform float uWindTime;\n uniform float uWindStrength;`)
-        .replace(
-          '#include <begin_vertex>',
-          `#include <begin_vertex>
-           {
-             // Position de l'instance : la phase est tirée du sol, donc deux
-             // touffes voisines ne penchent pas exactement ensemble, et une
-             // touffe donnée penche toujours de la même façon.
-             #ifdef USE_INSTANCING
-               vec2 anchor = vec2(instanceMatrix[3][0], instanceMatrix[3][2]);
-             #else
-               vec2 anchor = vec2(0.0);
-             #endif
-             float phase = anchor.x * 0.42 + anchor.y * 0.31;
-             float sway = sin(uWindTime * 1.7 + phase) * 0.62 + sin(uWindTime * 3.1 + phase * 1.9) * 0.38;
-             // En carré de la hauteur : le pied ne bouge pas, la pointe fouette.
-             float bend = transformed.y * transformed.y * uWindStrength;
-             transformed.x += sway * bend;
-             transformed.z += sway * bend * 0.45;
-           }`
-        );
-    }
+    injectFoliageWind(shader, windUniforms);
 
     if (atlas) {
       shader.vertexShader = shader.vertexShader
@@ -271,44 +330,6 @@ export function setFoliageWind(material, field) {
   if (!wind || !field) return;
   wind.uWindStrength.value = wind.base * field.amplitude;
   wind.speed = field.speed;
-}
-
-/**
- * Matériau de profondeur assorti, pour que le feuillage projette une ombre
- * **découpée**.
- *
- * three dérive automatiquement un matériau de profondeur des matériaux ordinaires
- * et y reporte `map` et `alphaTest` — la découpe serait donc correcte pour un
- * feuillage sans atlas. Mais le décalage UV par instance vit dans un
- * `onBeforeCompile`, que cette dérivation ne connaît pas : chaque panneau
- * projetterait l'atlas entier, soit quatre arbres écrasés dans l'ombre d'un
- * seul. Il faut donc rejouer l'injection ici.
- *
- * Le shader de profondeur de three inclut `<uv_vertex>` et `<map_fragment>` :
- * `vMapUv` y existe, et l'injection est la même mot pour mot.
- */
-export function createFoliageDepthMaterial({ THREE, map, tiles = 2, cacheKey }) {
-  const material = new THREE.MeshDepthMaterial({
-    depthPacking: THREE.RGBADepthPacking,
-    map,
-    alphaTest: 0.5,
-    side: THREE.DoubleSide,
-  });
-
-  material.onBeforeCompile = (shader) => {
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>\n attribute vec2 ${ATLAS_ATTRIBUTE};`)
-      .replace(
-        '#include <uv_vertex>',
-        `#include <uv_vertex>
-         #ifdef USE_MAP
-           vMapUv = vMapUv * ${(1 / tiles).toFixed(4)} + ${ATLAS_ATTRIBUTE};
-         #endif`
-      );
-  };
-
-  material.customProgramCacheKey = () => cacheKey;
-  return material;
 }
 
 /**

@@ -15,10 +15,14 @@
  * une rotation, une échelle et une teinte propres à chaque instance : un bois
  * cesse ainsi de ressembler à un clonage.
  *
- * Le prix, c'est le triangle : une trentaine par arbre contre quatre pour un
- * panneau croisé. `MAX_TREES_PER_TILE` a donc été redescendu d'autant à la
- * bascule vers le volume — voir sa note — pour garder le même budget de rendu
- * par tuile qu'avant, pas pour faire une forêt plus rare par goût.
+ * Le prix, c'est le triangle : une quarantaine par arbre contre quatre pour un
+ * panneau croisé — deux masses décentrées par houppe (voir
+ * `lowPolyForest.buildEssenceGeometry`), pas une boule facettée unique, sans
+ * quoi la houppe manque de la masse verte qu'un vrai feuillu porte.
+ * `MAX_TREES_PER_TILE` a donc été redescendu à la bascule vers le volume —
+ * voir sa note — pour garder un budget de rendu comparable par tuile ; le
+ * semis de sous-bois, bien moins cher, reprend ce que les arbres perdent en
+ * effectif (voir `MAX_UNDERSTORY_PER_TILE`).
  *
  * Elles ne sont pas tirées uniformément : une maille de terrain fixe un
  * **peuplement** (`FOREST_TYPES`), et c'est lui qui décide des essences, de la
@@ -26,19 +30,28 @@
  * qu'on ne voit jamais dehors.
  *
  * Un peuplement se plante en **strates**, et c'est ce qui lui donne du volume :
- * beaucoup de tiges moyennes, quelques dominants qui dépassent, et un sous-bois
- * de buissons compté en plus des arbres — trois échelles au lieu d'une. Sa
- * couleur, elle, dérive par **bosquets** de quelques dizaines de mètres
+ * beaucoup de tiges moyennes, quelques dominants qui dépassent, et un **semis
+ * de sous-bois** compté en plus des arbres — trois échelles au lieu d'une. Ce
+ * semis n'est plus une essence à part entière : c'est un rocher facetté bon
+ * marché (`lowPolyForest.buildScatterGeometry`, une quinzaine de triangles),
+ * posé en nombre pour qu'un massif se lise plein au ras du sol et pas seulement
+ * par ses houppes — c'est ce qui manque le plus **de près**, où l'œil est au
+ * niveau du sous-bois et non de la canopée. Sa densité a son propre plafond
+ * (`MAX_UNDERSTORY_PER_TILE`), séparé de celui des arbres : un semis bon marché
+ * ne doit pas être rationné par le budget d'une essence qui coûte le triple.
+ *
+ * La couleur d'un arbre dérive par **bosquets** de quelques dizaines de mètres
  * (`foliageTint`) : c'est ce qui fait un massif peint plutôt qu'un aplat vert.
- * Elle se superpose à la teinte propre de chaque essence, déjà portée par son
- * volume (`lowPolyForest.essenceCrownTone`) — les deux se multiplient, comme le
- * faisaient avant elles la couleur d'instance et l'atlas peint.
+ * Elle se superpose à la teinte propre de l'essence, déjà portée par son volume
+ * (`lowPolyForest.buildEssenceGeometry`, puisée dans le même nuancier que les
+ * arbres de bord de route) — les deux se multiplient, jamais un aplat unique.
  *
  * La plantation est mise en file et étalée sur plusieurs images : composer deux
  * mille matrices dans la même image se verrait comme un à-coup. Une tuile peut
- * planter jusqu'à neuf maillages instanciés — un par essence présente —, là où
- * un seul suffisait aux panneaux croisés : c'est le coût d'avoir une couleur de
- * volume propre à chaque essence plutôt qu'un décalage d'atlas par instance.
+ * planter jusqu'à neuf maillages d'arbres — un par essence présente — plus
+ * quelques-uns de semis, là où un seul suffisait aux panneaux croisés : c'est
+ * le coût d'avoir une couleur de volume propre à chaque essence plutôt qu'un
+ * décalage d'atlas par instance.
  *
  * Deux décisions à ne pas défaire :
  *
@@ -54,8 +67,8 @@
 
 import { makeRandom } from '../materials/proceduralTextures.js';
 import { randomAt } from './furniturePlacement.js';
-import { createFurnitureMaterial } from './furnitureKit.js';
-import { buildEssenceGeometries } from './lowPolyForest.js';
+import { buildEssenceGeometries, buildScatterGeometries } from './lowPolyForest.js';
+import { createFoliageVolumeMaterial, advanceFoliageWind, setFoliageWind } from '../materials/foliageMaterial.js';
 import { defaultTheme } from '../themes/default.js';
 
 /** Côté de la grille de plantation, par tuile (~36 m par cellule au zoom 15). */
@@ -72,22 +85,28 @@ export const TREES_PER_CELL = 14;
  * s'en charge, en éclaircissant partout au lieu de couper quelque part.
  *
  * Recalé à la bascule du panneau croisé (quatre triangles) vers le volume low
- * poly (`lowPolyForest.js`, une trentaine de triangles) : sept mille panneaux
- * pesaient environ 28 000 triangles, et c'est ce budget-là — pas un autre —
- * que mille volumes reconduisent. Ce n'est donc pas la forêt qui a été
- * éclaircie par goût ; c'est son unité de compte qui a changé.
+ * poly (`lowPolyForest.js`, autour de quarante triangles avec ses deux masses
+ * décentrées par houppe) : c'est le même ordre de grandeur de triangles par
+ * tuile qu'avant, pas la forêt éclaircie par goût — voir `MAX_UNDERSTORY_PER_TILE`
+ * pour le semis de sous-bois, qui compense en nombre ce que les arbres perdent
+ * en effectif.
  */
-export const MAX_TREES_PER_TILE = 1000;
+export const MAX_TREES_PER_TILE = 900;
+/**
+ * Plafond de semis de sous-bois par tuile — séparé de `MAX_TREES_PER_TILE`
+ * parce qu'un rocher de semis coûte le tiers d'un arbre (`buildScatterGeometry`) :
+ * le rationner avec le même budget que les arbres viderait le sous-bois avant
+ * que le sol n'en soit couvert. C'est ce plafond-ci qui porte le remplissage
+ * « de près » qu'un simple compte d'arbres ne donne jamais.
+ */
+export const MAX_UNDERSTORY_PER_TILE = 3000;
 /**
  * Garde-fou de collecte : on ne construit jamais plus que cela d'objets
  * intermédiaires, même si la carte de classes annonçait un continent boisé.
  */
-export const PLACEMENT_HARD_CAP = MAX_TREES_PER_TILE * 4;
+export const PLACEMENT_HARD_CAP = (MAX_TREES_PER_TILE + MAX_UNDERSTORY_PER_TILE) * 4;
 /** Anneau au-delà duquel on ne plante plus (le brouillard s'en charge). */
 export const VEGETATION_MAX_RING = 1;
-/** Hauteur des arbres, en mètres. */
-export const TREE_MIN_HEIGHT = 6;
-export const TREE_MAX_HEIGHT = 15;
 /** En deçà de cette part de boisé, la cellule ne reçoit aucun arbre. */
 export const WOOD_SCORE_MIN = 0.22;
 /**
@@ -134,11 +153,19 @@ export const HEIGHT_CURVE = 1.35;
 export const EMERGENT_SHARE = 0.11;
 /** Ce qu'un dominant ajoute à la hauteur du peuplement. */
 export const EMERGENT_GAIN = 1.3;
-/** Hauteur des buissons de sous-bois, en mètres. */
+/** Hauteur du semis de sous-bois, en mètres. */
 export const BUSH_MIN_HEIGHT = 1.1;
 export const BUSH_MAX_HEIGHT = 3.2;
-/** Largeur d'un buisson, en part de sa hauteur : il est plus large que haut. */
+/** Largeur d'un rocher de semis, en part de sa hauteur : plus large que haut. */
 export const BUSH_ASPECT = 1.15;
+/**
+ * Facteur appliqué à `type.understory` (`FOREST_TYPES`) pour compter le semis
+ * de sous-bois. Au-delà de 1 parce que ce semis n'est plus une essence à part
+ * — juste un rocher bon marché (`lowPolyForest.buildScatterGeometry`) — et
+ * peut donc se permettre d'être nettement plus nombreux que ne le voudrait la
+ * part d'arbustes d'un peuplement, pour remplir un massif au ras du sol.
+ */
+export const UNDERSTORY_BOOST = 2.4;
 /** Largeur d'un arbre, en part de sa hauteur, et l'écart d'un arbre à l'autre. */
 export const TREE_ASPECT = 0.72;
 export const TREE_ASPECT_JITTER = 0.18;
@@ -167,10 +194,20 @@ export function treeHeight(type, draw, pick) {
  * redevient uni.
  */
 export const CLUMP_TINT_M = 55;
-/** Amplitude de la dérive d'un bosquet à l'autre, sur l'axe chaud-froid. */
-export const CLUMP_TINT_SPREAD = 0.2;
-/** Écart de teinte d'un arbre à l'autre, dans un même bosquet. */
-export const TREE_TINT_SPREAD = 0.13;
+/**
+ * Amplitude de la dérive d'un bosquet à l'autre, sur l'axe chaud-froid.
+ *
+ * Relevée de 0,2 à 0,25 au passage au volume : l'atlas peint portait déjà une
+ * bonne part de la variété d'un arbre à l'autre dans sa silhouette même, ce
+ * qu'un volume aux essences moins nombreuses par tuile ne fait plus autant —
+ * sans quoi un bois entier se lit comme une seule teinte. Plafonnée à 0,25 et
+ * pas plus haut : au-delà, `clampChannel` écrête le canal chaud avant que le
+ * froid n'ait fini de descendre, et la dérive cesse d'être symétrique autour
+ * de la teinte moyenne.
+ */
+export const CLUMP_TINT_SPREAD = 0.25;
+/** Écart de teinte d'un arbre à l'autre, dans un même bosquet. Même note que `CLUMP_TINT_SPREAD`. */
+export const TREE_TINT_SPREAD = 0.22;
 
 /**
  * Teinte d'un feuillage : celle du peuplement, dérivée par bosquet puis par
@@ -247,21 +284,11 @@ export function forestTypeAt(x, z, forests = defaultTheme.forests) {
   return forests[Math.min(forests.length - 1, Math.floor(draw * forests.length))];
 }
 
-/** Variantes d'atlas ouvertes à un peuplement, dans l'ordre de ses essences. */
+/** Variantes ouvertes à un peuplement, dans l'ordre de ses essences. */
 export function variantsFor(type, essences = defaultTheme.trees.essences) {
   const out = [];
   for (const essence of type.essences) out.push(...(essences[essence] || []));
   return out.length > 0 ? out : [0];
-}
-
-/**
- * Silhouettes de la strate basse. Ce sont les buissons de l'atlas, quel que
- * soit le peuplement : un sous-bois n'est pas une miniature de sa futaie, c'est
- * une autre plante — noisetier, ronce, houx.
- */
-export function understoryVariants(essences = defaultTheme.trees.essences) {
-  const bushy = essences.bushy || [];
-  return bushy.length > 0 ? bushy : [0];
 }
 
 export class VegetationLayer {
@@ -293,16 +320,17 @@ export class VegetationLayer {
     this.group.name = 'vegetation';
     scene.add(this.group);
 
-    // Un volume par essence, construit une fois pour toutes et partagé par
-    // toutes les tuiles — exactement comme `furnitureLayer` partage son
-    // catalogue de mobilier entre tous ses maillages instanciés.
+    // Un volume par essence, plus quelques contours de semis bon marché,
+    // construits une fois pour toutes et partagés par toutes les tuiles —
+    // exactement comme `furnitureLayer` partage son catalogue de mobilier
+    // entre tous ses maillages instanciés.
     this.geometries = buildEssenceGeometries(THREE, theme.trees.variants);
-    // Même matériau que le mobilier : couleurs de sommet, éclairage
-    // lambertien, `DoubleSide` pour les quelques facettes qu'un contour
-    // irrégulier peut laisser mal orientées. Un volume n'a pas besoin des
-    // artifices du feuillage en panneau (normale forcée, alpha test, vent) :
-    // il a de vraies normales de face.
-    this.material = createFurnitureMaterial(THREE);
+    this.scatterGeometries = buildScatterGeometries(THREE, theme.furniture.colors);
+    // Couleurs de sommet, éclairage lambertien, `DoubleSide` pour les
+    // quelques facettes qu'un contour irrégulier peut laisser mal orientées —
+    // et le vent d'`injectFoliageWind`, seul artifice de feuillage qu'un
+    // volume à vraies normales garde du panneau qu'il remplace.
+    this.material = createFoliageVolumeMaterial({ THREE, wind: true, cacheKey: 'foliage-volume-forest-v1' });
 
     /** @type {Map<string, Object>} groupe de maillages instanciés, par clé de tuile */
     this.meshes = new Map();
@@ -340,16 +368,24 @@ export class VegetationLayer {
   setMaxAnisotropy() {}
 
   /**
-   * Un volume ne balance pas : contrairement au panneau qu'il remplace, il a
-   * un vrai tronc pour ancre, et l'amplitude qui faisait onduler une houppe de
-   * quinze mètres se lisait surtout comme un artefact de loin. Méthodes
-   * gardées en repli inerte : `worldComposer` continue de les appeler à
-   * chaque image sans avoir à savoir que cette couche n'anime plus rien.
+   * Fait avancer le vent dans les houppes. À appeler une fois par image.
+   * Même fonction que le feuillage en panneau (`injectFoliageWind` porte le
+   * même calcul) : un volume au tronc ancré à `y = 0` balance sa cime pour la
+   * même raison qu'un panneau balance sa pointe.
    */
-  advance() {}
+  advance(delta) {
+    advanceFoliageWind(this.material, delta);
+  }
 
-  /** @param {{amplitude:number, speed:number}} field */
-  setWind() {}
+  /**
+   * Accorde le vent sur la météo. Voir `createFoliageMaterial` : l'amplitude
+   * de référence est un réglage d'art propre à cette couche, la météo ne fait
+   * que la multiplier.
+   * @param {{amplitude:number, speed:number}} field
+   */
+  setWind(field) {
+    setFoliageWind(this.material, field);
+  }
 
   /**
    * Accorde la couche sur l'état de la bulle : met en file les tuiles proches
@@ -455,11 +491,11 @@ export class VegetationLayer {
     const covered = this._coverageOf(tile);
     if (covered < 1) this._blind.set(tile.key, covered);
 
-    const bushes = understoryVariants(this.theme.trees.essences);
-
-    const collected = [];
-    for (let cy = 0; cy < VEGETATION_CELLS && collected.length < PLACEMENT_HARD_CAP; cy++) {
-      for (let cx = 0; cx < VEGETATION_CELLS && collected.length < PLACEMENT_HARD_CAP; cx++) {
+    const collectedTrees = [];
+    const collectedScatter = [];
+    const cap = PLACEMENT_HARD_CAP;
+    for (let cy = 0; cy < VEGETATION_CELLS && collectedTrees.length + collectedScatter.length < cap; cy++) {
+      for (let cx = 0; cx < VEGETATION_CELLS && collectedTrees.length + collectedScatter.length < cap; cx++) {
         const centreX = originX + (cx + 0.5) * cellSize;
         const centreZ = originZ + (cy + 0.5) * cellSize;
         const score = groundClass.woodAt(centreX, centreZ);
@@ -470,83 +506,107 @@ export class VegetationLayer {
         const count = treesForScore(score, TREES_PER_CELL * type.density, random());
         if (count === 0) continue;
         const variants = variantsFor(type, this.theme.trees.essences);
-        // Le sous-bois se compte **en plus** des arbres : il épaissit le pied du
-        // massif au lieu de prendre la place d'une houppe. Arrondi stochastique,
-        // pour la même raison qu'au-dessus — sans lui, une part de 0,12 ne
-        // donnerait jamais aucun buisson.
-        const understory = Math.floor(count * (type.understory || 0) + random());
 
-        for (let i = 0; i < count + understory; i++) {
-          const bush = i >= count;
+        for (let i = 0; i < count; i++) {
           const x = originX + (cx + random()) * cellSize;
           const z = originZ + (cy + random()) * cellSize;
           const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
-          const height = bush
-            ? BUSH_MIN_HEIGHT + random() * (BUSH_MAX_HEIGHT - BUSH_MIN_HEIGHT)
-            : treeHeight(type, random(), random());
-          const pool = bush ? bushes : variants;
-          collected.push({
+          collectedTrees.push({
             x,
             y,
             z,
-            height,
-            aspect: bush
-              ? BUSH_ASPECT
-              : TREE_ASPECT + (random() - 0.5) * 2 * TREE_ASPECT_JITTER,
+            height: treeHeight(type, random(), random()),
+            aspect: TREE_ASPECT + (random() - 0.5) * 2 * TREE_ASPECT_JITTER,
             rotation: random() * Math.PI,
             // Teinte : celle du peuplement, dérivée par bosquet puis par arbre.
             // Un bois dont tous les arbres ont exactement le même vert se lit
-            // comme un aplat, quelle que soit la finesse des silhouettes. Le
-            // sous-bois, lui, est plus sombre : il est à l'ombre des houppes.
-            tint: (bush ? 0.66 : 0.84) + random() * 0.28,
+            // comme un aplat, quelle que soit la finesse des silhouettes.
+            tint: 0.78 + random() * 0.46,
             hue: type.tint,
             jitter: random(),
-            variant: pool[Math.floor(random() * pool.length) % pool.length],
+            variant: variants[Math.floor(random() * variants.length) % variants.length],
+          });
+        }
+
+        // Le semis de sous-bois se compte **en plus** des arbres, et sans
+        // rapport avec leurs essences : c'est un remplissage au sol, pas une
+        // strate d'arbustes identifiée. Multiplié par rapport à
+        // `type.understory` (voir `FOREST_TYPES`) parce qu'un rocher de semis
+        // coûte le tiers d'un arbre — voir `MAX_UNDERSTORY_PER_TILE`.
+        const scatterCount = Math.floor(count * (type.understory || 0) * UNDERSTORY_BOOST + random());
+        for (let i = 0; i < scatterCount; i++) {
+          const x = originX + (cx + random()) * cellSize;
+          const z = originZ + (cy + random()) * cellSize;
+          const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
+          collectedScatter.push({
+            x,
+            y,
+            z,
+            height: BUSH_MIN_HEIGHT + random() * (BUSH_MAX_HEIGHT - BUSH_MIN_HEIGHT),
+            aspect: BUSH_ASPECT,
+            rotation: random() * Math.PI,
+            // Plus sombre que la houppe : le sous-bois est à son ombre.
+            tint: 0.6 + random() * 0.4,
+            hue: type.tint,
+            jitter: random(),
+            variant: Math.floor(random() * this.scatterGeometries.length) % this.scatterGeometries.length,
           });
         }
       }
     }
 
-    if (collected.length === 0) return;
-    const placements = thinPlacements(collected, MAX_TREES_PER_TILE);
-
-    // Un `InstancedMesh` ne porte qu'une seule géométrie : les arbres de la
-    // tuile sont donc groupés par essence, chacune vers son propre maillage.
-    // Une tuile en bois mêlé peut ainsi en poser jusqu'à neuf, une tuile en
-    // futaie pure n'en pose que deux ou trois — c'est le nombre d'essences
-    // réellement tirées qui décide, jamais un maximum fixe.
-    const byVariant = new Map();
-    for (const tree of placements) {
-      const bucket = byVariant.get(tree.variant);
-      if (bucket) bucket.push(tree);
-      else byVariant.set(tree.variant, [tree]);
-    }
+    const trees = thinPlacements(collectedTrees, MAX_TREES_PER_TILE);
+    const scatter = thinPlacements(collectedScatter, MAX_UNDERSTORY_PER_TILE);
+    if (trees.length === 0 && scatter.length === 0) return;
 
     const tileGroup = new THREE.Group();
     tileGroup.name = `vegetation-${tile.key}`;
 
-    for (const [variant, trees] of byVariant) {
-      const geometry = this.geometries[variant];
+    // Un `InstancedMesh` ne porte qu'une seule géométrie : les arbres et le
+    // semis sont donc groupés par variante, chacune vers son propre maillage.
+    // Une tuile en bois mêlé peut ainsi poser jusqu'à neuf maillages d'arbres,
+    // une tuile en futaie pure n'en pose que deux ou trois — c'est le nombre
+    // de variantes réellement tirées qui décide, jamais un maximum fixe.
+    this._addGrouped(tileGroup, tile.key, trees, this.geometries, 'tree');
+    this._addGrouped(tileGroup, tile.key, scatter, this.scatterGeometries, 'scatter');
+
+    this.group.add(tileGroup);
+    this.meshes.set(tile.key, tileGroup);
+  }
+
+  /** Groupe des placements par variante et pose un `InstancedMesh` par groupe. */
+  _addGrouped(tileGroup, tileKey, placements, geometries, label) {
+    if (placements.length === 0) return;
+    const { THREE } = this;
+    const byVariant = new Map();
+    for (const item of placements) {
+      const bucket = byVariant.get(item.variant);
+      if (bucket) bucket.push(item);
+      else byVariant.set(item.variant, [item]);
+    }
+
+    for (const [variant, items] of byVariant) {
+      const geometry = geometries[variant];
       if (!geometry) continue;
 
-      const mesh = new THREE.InstancedMesh(geometry, this.material, trees.length);
-      mesh.name = `vegetation-${tile.key}-${variant}`;
+      const mesh = new THREE.InstancedMesh(geometry, this.material, items.length);
+      mesh.name = `vegetation-${tileKey}-${label}-${variant}`;
       mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
       mesh.castShadow = true;
       // Un bois s'ombre lui-même : sans réception, tous les troncs seraient
       // également éclairés et le volume disparaîtrait.
       mesh.receiveShadow = true;
 
-      trees.forEach((tree, index) => {
-        this._position.set(tree.x, tree.y, tree.z);
-        this._quaternion.setFromAxisAngle(this._axis, tree.rotation);
+      items.forEach((item, index) => {
+        this._position.set(item.x, item.y, item.z);
+        this._quaternion.setFromAxisAngle(this._axis, item.rotation);
         // Largeur proportionnelle à la hauteur : un arbre haut est aussi large.
-        // Le rapport varie d'un arbre à l'autre, sans quoi deux arbres de même
-        // hauteur sont exactement le même volume à deux échelles près.
-        this._scale.set(tree.height * tree.aspect, tree.height, tree.height * tree.aspect);
+        // Le rapport varie d'un individu à l'autre, sans quoi deux arbres de
+        // même hauteur sont exactement le même volume à deux échelles près.
+        this._scale.set(item.height * item.aspect, item.height, item.height * item.aspect);
         this._matrix.compose(this._position, this._quaternion, this._scale);
         mesh.setMatrixAt(index, this._matrix);
-        const [r, g, b] = foliageTint(tree.hue, tree.x, tree.z, tree.tint, tree.jitter);
+        const [r, g, b] = foliageTint(item.hue, item.x, item.z, item.tint, item.jitter);
         this._color.setRGB(r, g, b);
         mesh.setColorAt(index, this._color);
       });
@@ -556,9 +616,6 @@ export class VegetationLayer {
       mesh.computeBoundingSphere();
       tileGroup.add(mesh);
     }
-
-    this.group.add(tileGroup);
-    this.meshes.set(tile.key, tileGroup);
   }
 
   dispose() {
@@ -574,6 +631,7 @@ export class VegetationLayer {
     this.meshes.clear();
     this.scene.remove(this.group);
     for (const geometry of this.geometries) geometry.dispose();
+    for (const geometry of this.scatterGeometries) geometry.dispose();
     this.material.dispose();
   }
 }
