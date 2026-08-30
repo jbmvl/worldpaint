@@ -66,12 +66,25 @@ export const TERRAIN_LOOK = {
    */
   unclassifiedWeights: [1, 0, 0, 0],
   /**
-   * Albédos, en espace **linéaire** : autour de 0,10 à 0,25 pour de la
-   * végétation ou de la terre, ce qui est la plage réelle de ces matières.
+   * Albédos, en espace **linéaire**.
+   *
+   * `grassAlbedo` et `cropAlbedo` ne sont pas choisis à l'œil : ils sont
+   * calés sur la couleur que rend réellement le motif instancié qui pousse
+   * dessus (`groundCover`, `cropLayer`) — moyenne des pixels opaques de la
+   * case d'atlas concernée (herbe : `clump` ; culture : la variante `*Mass`,
+   * celle qui porte la bande de transition), passée en linéaire par la même
+   * formule que `srgb()` (`core/color.js`), puis multipliée par la teinte
+   * moyenne d'instance (`GRASS_LOOK`/`CROP_LOOK`, tirages à mi-plage). Sans
+   * ce calage, le sol et ce qui y pousse divergent forcément : ils sont peints
+   * par deux chemins qui ne se consultent pas, et l'écart se voit à la
+   * jointure entre les tiges du premier plan et la teinte lointaine. Une
+   * culture en plein soleil rend donc un albédo plus haut que ne le
+   * laisserait supposer un repère « terre nue » — c'est la teinte de l'épi ou
+   * de la fleur qui porte le champ, pas celle du sol qu'elle couvre.
    */
-  grassAlbedo: [0.115, 0.185, 0.048],
+  grassAlbedo: [0.051, 0.135, 0.017],
   woodAlbedo: [0.042, 0.056, 0.02],
-  farmlandAlbedo: [0.235, 0.152, 0.07],
+  farmlandAlbedo: [0.431, 0.331, 0.08],
   bareAlbedo: [0.27, 0.255, 0.225],
   /**
    * Albédo par culture, dans l'ordre de `CROP_KINDS`.
@@ -82,18 +95,22 @@ export const TERRAIN_LOOK = {
    * il n'y avait tout simplement rien à voir. Les tiges instanciées ne portent
    * que les cinquante premiers mètres ; au-delà, c'est cette ligne-ci qui
    * travaille, et elle porte jusqu'à deux kilomètres pour une lecture de
-   * texture.
+   * texture. `vineyard` et `orchard` n'ont pas de motif instancié propre à
+   * `cropLayer` (ils passent par `furnitureLayer` — rang de vigne, alignement
+   * d'arbres) : leur albédo est calé sur les mêmes couleurs de feuillage que
+   * ce motif-là (`FURNITURE_COLORS.vineLeaf`, `.leafOlive`), pour la même
+   * raison.
    *
    * Le labour garde `farmlandAlbedo`, qui reste le repli de tout champ dont on
    * ignore la culture.
    */
   cropAlbedo: {
-    wheat: [0.3, 0.235, 0.095],
-    maize: [0.075, 0.125, 0.035],
-    sunflower: [0.195, 0.195, 0.055],
-    plough: [0.235, 0.152, 0.07],
-    vineyard: [0.13, 0.135, 0.055],
-    orchard: [0.115, 0.16, 0.05],
+    wheat: [0.566, 0.439, 0.092],
+    maize: [0.123, 0.251, 0.027],
+    sunflower: [0.258, 0.243, 0.022],
+    plough: [0.431, 0.331, 0.08],
+    vineyard: [0.168, 0.246, 0.069],
+    orchard: [0.153, 0.219, 0.061],
   },
   /** Teinte de roche sur les fortes pentes. */
   rockColor: [0.72, 0.68, 0.62],
