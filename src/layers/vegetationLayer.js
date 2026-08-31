@@ -7,6 +7,12 @@
  * terrain, au même endroit — la texture du sol et ce qui y pousse ne peuvent
  * pas se contredire.
  *
+ * `groundClassMap` ignore la voirie : un bois traverse une route sans que le
+ * polygone qui le décrit s'interrompe, exactement comme sur le terrain. C'est
+ * donc cette couche, et pas la carte de classes, qui doit refuser de planter
+ * dans l'emprise (`roadCorridor`) — la même frontière que respectent l'herbe,
+ * les cultures et les haies.
+ *
  * Chaque arbre est une paire de quadrilatères croisés — pas un modèle. À la
  * distance où on les voit, une silhouette bien découpée vaut un tronc modélisé
  * et coûte quatre triangles au lieu de plusieurs centaines. Neuf silhouettes
@@ -46,6 +52,7 @@ import {
   TREE_ATLAS_COLS,
 } from '../materials/proceduralTextures.js';
 import { randomAt } from './furniturePlacement.js';
+import { inCorridor } from './roadCorridor.js';
 import {
   createFoliageMaterial,
   createFoliageDepthMaterial,
@@ -264,12 +271,16 @@ export class VegetationLayer {
    * @param {Object} options.bubble Instance `TerrainBubble`.
    * @param {Object} options.groundClass Instance `GroundClassMap` — sans elle,
    *        rien ne pousse : on ne devine pas un bois.
+   * @param {Object} [options.roads] Instance `RoadNetwork` — un arbre ne se
+   *        plante pas sur la chaussée, même quand le polygone de bois la
+   *        traverse.
    */
   constructor({
     THREE,
     scene,
     bubble,
     groundClass = null,
+    roads = null,
     maxRing = VEGETATION_MAX_RING,
     theme = defaultTheme,
   }) {
@@ -278,6 +289,7 @@ export class VegetationLayer {
     this.scene = scene;
     this.bubble = bubble;
     this.groundClass = groundClass;
+    this.roads = roads;
     this.maxRing = maxRing;
     this.disposed = false;
 
@@ -461,6 +473,7 @@ export class VegetationLayer {
     const { THREE, bubble, groundClass } = this;
     const frame = bubble.frame;
     if (!frame || !groundClass) return;
+    const roadIndex = this.roads?.index || null;
 
     // Graine dérivée des coordonnées de la tuile : les mêmes arbres repoussent
     // au même endroit si la tuile est rechargée.
@@ -501,6 +514,9 @@ export class VegetationLayer {
           const bush = i >= count;
           const x = originX + (cx + random()) * cellSize;
           const z = originZ + (cy + random()) * cellSize;
+          // Le bois ne s'arrête pas au bord de la route : c'est à la plantation,
+          // pas à la carte de classes, de refuser l'emprise (voir l'en-tête).
+          if (inCorridor(roadIndex, x, z)) continue;
           const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
           const height = bush
             ? BUSH_MIN_HEIGHT + random() * (BUSH_MAX_HEIGHT - BUSH_MIN_HEIGHT)

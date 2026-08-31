@@ -25,10 +25,10 @@
  *      publie, elle ne consomme rien ;
  *   3. **chaussées** — elles entaillent le terrain et publient leur index, qui
  *      est aussi l'**emprise routière** (`roadCorridor`) : la frontière que ni
- *      la haie, ni la clôture, ni le jardin, ni le champ, ni l'herbe n'ont le
- *      droit de franchir. C'est la seule relation spatiale que toutes les
- *      couches de décor partagent, et elle tient en une question — « ce point
- *      est-il sur la voirie ? » ;
+ *      la haie, ni la clôture, ni le jardin, ni le champ, ni l'herbe, ni
+ *      l'arbre n'ont le droit de franchir. C'est la seule relation spatiale
+ *      que toutes les couches de décor partagent, et elle tient en une
+ *      question — « ce point est-il sur la voirie ? » ;
  *   4. **bâti** — il ne lit que les tuiles ; il publie au passage ses
  *      **maisons** et l'ensemble de ses **empreintes** ;
  *   4 bis. **voirie** — après les chaussées *et* le bâti, parce qu'un trottoir
@@ -41,7 +41,9 @@
  *   5. **mobilier** — il lui faut les tronçons *et* l'index des chaussées :
  *      murs et glissières se posent sur la plate-forme exacte sur laquelle
  *      roule l'observateur, et les feux n'ont de sens qu'aux carrefours ;
- *   6. **arbres** — après la carte de classes, qui décide où est le bois ;
+ *   6. **arbres** — après la carte de classes, qui décide où est le bois, et
+ *      après les chaussées, dont le polygone de bois ne tient pas compte : un
+ *      bois qu'une route traverse ne plante rien sur son emprise ;
  *   7. **herbe** — après l'index des chaussées, pour ne pas pousser sur le
  *      bitume ;
  *   8. **cheminées** — publiées par le mobilier, animées par `lifeLayer`.
@@ -166,6 +168,7 @@ export class WorldComposer {
       scene,
       bubble,
       groundClass: this.groundClass,
+      roads: this.roads,
       theme,
     });
     this.vegetation.setMaxAnisotropy(maxAnisotropy);
