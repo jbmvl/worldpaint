@@ -372,6 +372,35 @@ export function grassBlockedByCrop(sample, crop) {
   return !edge;
 }
 
+/** Ce qu'une couverture ordinaire — une prairie — fait à l'herbe : rien. */
+export const COVER_GRASS_NEUTRAL = Object.freeze({ height: 1, density: 1, tint: [1, 1, 1] });
+
+/**
+ * Ce que la couverture du sol fait aux touffes : leur taille, leur nombre,
+ * leur teinte.
+ *
+ * Une lande n'est pas une prairie plus terne, c'est une prairie **rase** ; un
+ * maquis est surtout fait de vide entre les arbustes ; une roselière monte plus
+ * haut qu'un pré. Ces trois écarts se lisent à hauteur d'homme, et aucun ne se
+ * rend par la seule couleur du sol (voir `TERRAIN_LOOK.coverAlbedo`, qui la
+ * porte, elle).
+ *
+ * Fonction pure. Une couverture absente de la table pousse comme une prairie —
+ * c'est-à-dire exactement comme avant que les couvertures existent.
+ *
+ * @param {string|null} cover Retour de `groundClass.coverAt`.
+ * @param {Object} [covers] Tranche `theme.covers`.
+ */
+export function coverGrassFor(cover, covers = defaultTheme.covers) {
+  const look = cover ? covers?.[cover] : null;
+  if (!look) return COVER_GRASS_NEUTRAL;
+  return {
+    height: look.grassHeight ?? 1,
+    density: look.grassDensity ?? 1,
+    tint: look.grassTint || COVER_GRASS_NEUTRAL.tint,
+  };
+}
+
 /** Voisinage sondé par `widenFieldEdge`, en mètres depuis le point d'origine. */
 const FIELD_EDGE_OFFSETS_M = [
   [5, 0], [-5, 0], [0, 5], [0, -5],
@@ -589,6 +618,14 @@ export class GroundCover {
       const crop = groundClass?.cropAt?.(cellX, cellZ) ?? null;
       if (grassBlockedByCrop(edgeSample, crop)) continue;
 
+      // Couverture du sol : lande, maquis, marais… Elle ne décide pas *si* de
+      // l'herbe pousse — c'est la part de végétal qui le dit — mais de quelle
+      // taille, en quelle quantité et de quelle couleur.
+      const coverLook = coverGrassFor(
+        groundClass?.coverAt?.(cellX, cellZ) ?? null,
+        this.theme.covers
+      );
+
       const fade = coverBandFade(cell.distance, band);
       if (fade <= 0.02) continue;
       // La hauteur ne suit pas le fondu jusqu'à zéro : c'est la densité qui
@@ -597,7 +634,7 @@ export class GroundCover {
       // À distance, une instance représente plusieurs mètres carrés : une
       // prairie à demi verte y est une masse un peu clairsemée, pas une maille
       // sur deux vide.
-      const density = coverMassDensity(green, band);
+      const density = coverMassDensity(green, band) * coverLook.density;
 
       fillGrassCell(tufts, gx, gz, band.cell, band.perCell, band.salt);
 
@@ -618,6 +655,7 @@ export class GroundCover {
           // Plus l'herbe est dense, plus elle est haute : une pelouse rase et
           // une friche ne se distinguent pas autrement.
           (0.72 + green * 0.28) *
+          coverLook.height *
           heightFade *
           band.rise;
         const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
@@ -638,7 +676,11 @@ export class GroundCover {
         // réglées à l'aveugle sur un canal qui n'arrivait pas au fragment, et
         // telles quelles elles viraient au jaune paille.
         const dry = (1 - green) * 0.5 + tint * 0.35;
-        this._color.setRGB(0.82 + dry * 0.26, 0.96 + tint * 0.09, 0.74 - dry * 0.2);
+        this._color.setRGB(
+          (0.82 + dry * 0.26) * coverLook.tint[0],
+          (0.96 + tint * 0.09) * coverLook.tint[1],
+          (0.74 - dry * 0.2) * coverLook.tint[2]
+        );
         mesh.setColorAt(placed, this._color);
 
         // Fleurissement : la variante d'atlas est décidée par le sol, pas par un

@@ -26,6 +26,7 @@
 
 import { createDetailCanvas, createGroundDetailCanvas } from '../materials/proceduralTextures.js';
 import { CROP_KINDS, CROP_ID_STEP } from '../layers/furniturePlacement.js';
+import { COVER_KINDS, COVER_ID_STEP } from './groundClassMap.js';
 import { defaultTheme } from '../themes/default.js';
 
 /**
@@ -125,6 +126,15 @@ export class TerrainMaterialFactory {
       uCropAlbedo: {
         value: CROP_KINDS.map((kind) => new THREE.Vector3(...(look.cropAlbedo[kind] || look.farmlandAlbedo))),
       },
+      // Couvertures — même mécanique que les cultures, dans l'autre canal de la
+      // même carte. Le repli est l'albédo d'herbe : une couverture qu'un thème
+      // ne décrit pas se peint comme une prairie, ce qui est le comportement
+      // d'avant qu'elles existent.
+      uCoverAlbedo: {
+        value: COVER_KINDS.map(
+          (kind) => new THREE.Vector3(...((look.coverAlbedo || {})[kind] || look.grassAlbedo))
+        ),
+      },
       uRockColor: { value: new THREE.Vector3(...look.rockColor) },
       uSlopeRange: { value: new THREE.Vector2(look.slopeStart, look.slopeEnd) },
       uRockStrength: { value: look.rockStrength },
@@ -174,6 +184,7 @@ export class TerrainMaterialFactory {
            uniform float uClassEnabled;
            uniform sampler2D uCropMap;
            uniform vec3 uCropAlbedo[${CROP_KINDS.length}];
+           uniform vec3 uCoverAlbedo[${COVER_KINDS.length}];
            uniform vec3 uRockColor;
            uniform vec2 uSlopeRange;
            uniform float uRockStrength;
@@ -188,9 +199,12 @@ export class TerrainMaterialFactory {
              // « la donnée ne dit rien », et non « sol nu ».
              vec2 classUv = (vScenePos.xz - uClassOrigin) / uClassSize;
              vec4 cls = vec4(0.0);
-             if (uClassEnabled > 0.5 &&
+             // Hors du carré couvert, la texture est bornée au bord : lire quand
+             // même y étalerait la lisière sur des kilomètres.
+             float inClass = uClassEnabled > 0.5 &&
                  classUv.x > 0.0 && classUv.x < 1.0 &&
-                 classUv.y > 0.0 && classUv.y < 1.0) {
+                 classUv.y > 0.0 && classUv.y < 1.0 ? 1.0 : 0.0;
+             if (inClass > 0.5) {
                cls = texture2D(uClassMap, classUv);
              }
              // (herbe, bois, culture, sol nu). Le sol nu est le complément :
@@ -227,19 +241,35 @@ export class TerrainMaterialFactory {
              // boucle à bornes constantes, seule forme d'accès à un tableau
              // d'uniformes que toutes les versions de GLSL acceptent.
              vec3 farmAlbedo = uFarmlandAlbedo;
-             if (uClassEnabled > 0.5 && w.z > 0.001) {
-               float red = texture2D(uCropMap, classUv).r;
-               int crop = int(floor(red * 255.0 / ${CROP_ID_STEP}.0 + 0.5)) - 1;
-               for (int i = 0; i < ${CROP_KINDS.length}; i++) {
-                 if (i == crop) farmAlbedo = uCropAlbedo[i];
+             vec3 grassAlbedo = uGrassAlbedo;
+             vec3 bareAlbedo = uBareAlbedo;
+             if (inClass > 0.5) {
+               vec4 fine = texture2D(uCropMap, classUv);
+               if (w.z > 0.001) {
+                 int crop = int(floor(fine.r * 255.0 / ${CROP_ID_STEP}.0 + 0.5)) - 1;
+                 for (int i = 0; i < ${CROP_KINDS.length}; i++) {
+                   if (i == crop) farmAlbedo = uCropAlbedo[i];
+                 }
+               }
+               // Couverture. Elle remplace l'herbe **et** le minéral, et non
+               // l'un des deux : une lande, un maquis ou un éboulis ne sont pas
+               // une prairie un peu terne ni un parking, ce sont d'autres
+               // matières. Chacune n'est peinte que sur l'une des deux, donc
+               // remplacer les deux ne mélange rien.
+               int cover = int(floor(fine.g * 255.0 / ${COVER_ID_STEP}.0 + 0.5)) - 1;
+               for (int i = 0; i < ${COVER_KINDS.length}; i++) {
+                 if (i == cover) {
+                   grassAlbedo = uCoverAlbedo[i];
+                   bareAlbedo = uCoverAlbedo[i];
+                 }
                }
              }
 
              vec3 albedo =
-               uGrassAlbedo * w.x +
+               grassAlbedo * w.x +
                uWoodAlbedo * w.y +
                farmAlbedo * w.z +
-               uBareAlbedo * w.w;
+               bareAlbedo * w.w;
 
              vec3 base = albedo * modulation;
 
@@ -268,7 +298,7 @@ export class TerrainMaterialFactory {
 
     // Clé constante : sans elle, three recompilerait le programme à chaque
     // matériau qui le demande.
-    material.customProgramCacheKey = () => 'terrain-bubble-v8';
+    material.customProgramCacheKey = () => 'terrain-bubble-v9';
     return material;
   }
 

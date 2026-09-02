@@ -112,6 +112,37 @@ export const TERRAIN_LOOK = {
     vineyard: [0.168, 0.246, 0.069],
     orchard: [0.153, 0.219, 0.061],
   },
+  /**
+   * Albédo par **couverture**, dans l'ordre de `COVER_KINDS`.
+   *
+   * Même rôle que `cropAlbedo`, et pour la même raison : c'est ce qui rend une
+   * lande, un maquis ou un marais reconnaissables au-delà de la portée des
+   * touffes instanciées. Sans ça, les quatre matières du sol (herbe, bois,
+   * culture, minéral) peignent de la même teinte une prairie normande et une
+   * lande écossaise, alors que les tuiles savaient déjà les distinguer — la
+   * `subclass` d'OpenMapTiles porte `heath`, `scrub`, `wetland`, `scree`.
+   *
+   * La couverture **remplace** l'albédo d'herbe et celui de sol nu là où elle
+   * est peinte : une lande n'est pas de l'herbe un peu brune, c'est une autre
+   * matière. Les trois premières sont végétales (elles se peignent sur du
+   * `grass`), les quatre suivantes minérales (sur du `bare`).
+   */
+  coverAlbedo: {
+    // Bruyère et molinie sèche : brun-pourpre, la couleur d'un moor.
+    heath: [0.159, 0.122, 0.08],
+    // Maquis et garrigue : olive poussiéreux, jamais le vert d'un pré.
+    scrub: [0.147, 0.171, 0.08],
+    // Marais, tourbière, roselière : le vert le plus profond du décor.
+    wetland: [0.072, 0.107, 0.048],
+    // Éboulis : pierre cassée, plus claire et plus froide que la terre.
+    scree: [0.323, 0.292, 0.254],
+    // Dalle nue, causse, lapiaz.
+    rock: [0.371, 0.332, 0.27],
+    // Dune, plage, sable sec.
+    sand: [0.624, 0.539, 0.361],
+    // Pelouse d'altitude et toundra : vert jaune, ras.
+    alpine: [0.205, 0.254, 0.107],
+  },
   /** Teinte de roche sur les fortes pentes. */
   rockColor: [0.72, 0.68, 0.62],
   slopeStart: 0.22,
@@ -271,6 +302,43 @@ export const CROP_LOOK = {
   maize: { atlas: 'maize', height: 2.4, spread: 0.15, density: 0.22, tint: [0.82, 1, 0.62] },
   sunflower: { atlas: 'sunflower', height: 1.7, spread: 0.2, density: 0.3, tint: [0.96, 0.98, 0.6] },
   plough: { atlas: 'stubble', height: 0.3, spread: 0.22, density: 0.72, tint: [1, 0.94, 0.74] },
+};
+
+// --- Les couvertures ----------------------------------------------------------
+/**
+ * Ce qu'une couverture fait pousser, et de quelle taille.
+ *
+ * `coverAlbedo` (plus haut) donne sa couleur au sol ; ceci donne sa **strate
+ * basse**. Les deux sont indispensables : une lande peinte de la bonne couleur
+ * mais couverte d'une prairie de quatre-vingts centimètres reste une prairie.
+ *
+ * - `grassHeight` et `grassDensity` multiplient la hauteur et la densité des
+ *   touffes (`groundCover`) ;
+ * - `grassTint` multiplie leur teinte, canal par canal ;
+ * - `bushes` est une densité d'arbustes semés par `vegetationLayer` **hors des
+ *   bois** — c'est ce qui fait exister un maquis, qui n'est ni une prairie ni
+ *   une forêt mais un fourré bas et discontinu.
+ *
+ * Une couverture absente d'ici pousse comme n'importe quelle prairie : la table
+ * ne décrit que les écarts.
+ */
+export const COVER_LOOK = {
+  // Lande : rase, dense, brune. C'est la couverture d'une côte écossaise ou
+  // d'un plateau granitique, et elle ne porte quasiment pas d'arbre.
+  heath: { grassHeight: 0.45, grassDensity: 0.95, grassTint: [1.02, 0.84, 0.76], bushes: 0.3 },
+  // Maquis et garrigue : peu d'herbe, beaucoup d'arbustes. L'inverse exact
+  // d'une prairie, et c'est ce contraste qui doit se lire.
+  scrub: { grassHeight: 0.55, grassDensity: 0.4, grassTint: [1.04, 0.94, 0.7], bushes: 0.9 },
+  // Marais et roselière : la seule couverture plus haute qu'une prairie.
+  wetland: { grassHeight: 1.4, grassDensity: 1, grassTint: [0.86, 1.04, 0.82], bushes: 0.08 },
+  // Pelouse d'altitude : rase et continue, comme une lande mais verte.
+  alpine: { grassHeight: 0.4, grassDensity: 0.9, grassTint: [0.94, 1.02, 0.78], bushes: 0.04 },
+  // Minéral : rien n'y pousse, ou presque. Ces trois-là sont peintes sur du
+  // sol nu, où l'herbe ne se sème déjà pas — les valeurs sont là pour le jour
+  // où une donnée les mêlerait à du végétal.
+  scree: { grassHeight: 0.3, grassDensity: 0.06, grassTint: [1, 0.96, 0.88], bushes: 0 },
+  rock: { grassHeight: 0.35, grassDensity: 0.1, grassTint: [1, 0.96, 0.88], bushes: 0.02 },
+  sand: { grassHeight: 0.6, grassDensity: 0.08, grassTint: [1.06, 0.98, 0.72], bushes: 0.05 },
 };
 
 // --- Les bourgs ----------------------------------------------------------------
@@ -729,6 +797,7 @@ export const defaultTheme = Object.freeze({
     poppyShare: POPPY_SHARE,
   },
   crops: CROP_LOOK,
+  covers: COVER_LOOK,
   towns: TOWN_PALETTES,
   personalities: BUILDING_PERSONALITIES,
   roofs: { pitch: ROOF_PITCH, maxRiseM: ROOF_MAX_RISE_M, overhangM: ROOF_OVERHANG_M },

@@ -170,6 +170,7 @@ import {
   WOOD_DENSITY_CURVE,
   EMERGENT_SHARE,
   CLUMP_TINT_M,
+  coverBushesFor,
 } from '../src/layers/vegetationLayer.js';
 import { TREE_ESSENCES } from '../src/themes/default.js';
 import {
@@ -183,6 +184,7 @@ import {
   GRASS_COUNT,
   GRASS_FADE_FROM,
   GRASS_HEIGHT_FADE_FLOOR,
+  coverGrassFor,
 } from '../src/layers/groundCover.js';
 import {
   cropCellRing,
@@ -280,6 +282,11 @@ import {
   GroundClassMap,
   CLASS_AREA_M,
   SETTLED_GRASS,
+  coverFor,
+  coverId,
+  coverFromId,
+  COVER_KINDS,
+  COVER_ID_STEP,
 } from '../src/terrain/groundClassMap.js';
 import { collectBuiltUpAreas, pointInAreas, ringsOf, FabricIndex } from '../src/layers/settlement.js';
 import {
@@ -1376,6 +1383,62 @@ test('les couches vectorielles décrivent la matière du sol', () => {
   assert.equal(groundClassFor('landcover', { class: 'unknown' }), null);
   assert.equal(groundClassFor('transportation', { class: 'motorway' }), null);
   assert.equal(groundClassFor('landcover', {}), null);
+});
+
+test('la sous-classe dit la sorte de sol, pas seulement sa matière', () => {
+  // Ce que les tuiles portent déjà et qui était jeté : une lande, un maquis et
+  // une prairie sont trois `class: grass`, et c’est la sous-classe qui les
+  // sépare.
+  assert.equal(coverFor('landcover', { class: 'grass', subclass: 'heath' }), 'heath');
+  assert.equal(coverFor('landcover', { class: 'grass', subclass: 'scrub' }), 'scrub');
+  assert.equal(coverFor('landcover', { class: 'grass', subclass: 'fell' }), 'alpine');
+  assert.equal(coverFor('landcover', { class: 'wetland', subclass: 'bog' }), 'wetland');
+  assert.equal(coverFor('landcover', { class: 'sand', subclass: 'dune' }), 'sand');
+  // Un éboulis n’est pas une dalle : l’un est une pente qui bouge, l’autre un
+  // plateau.
+  assert.equal(coverFor('landcover', { class: 'rock', subclass: 'scree' }), 'scree');
+  assert.equal(coverFor('landcover', { class: 'rock', subclass: 'bare_rock' }), 'rock');
+
+  // Une prairie ordinaire n’est pas une couverture : c’est le cas par défaut,
+  // et rien ne doit être peint pour elle.
+  assert.equal(coverFor('landcover', { class: 'grass', subclass: 'meadow' }), null);
+  assert.equal(coverFor('landcover', { class: 'farmland' }), null);
+  // Ni `landuse` ni `park` ne décrivent une matière : ils disent l’usage.
+  assert.equal(coverFor('landuse', { class: 'residential' }), null);
+  assert.equal(coverFor('park', { class: 'public_park' }), null);
+});
+
+test('l’identifiant de couverture survit à l’aller-retour dans le canal vert', () => {
+  // Même contrat que les cultures : l’identifiant est peint dans une image et
+  // relu par le shader comme par les couches. Un décalage repeint une lande en
+  // éboulis, en silence.
+  for (const kind of COVER_KINDS) {
+    assert.equal(coverFromId(coverId(kind) * COVER_ID_STEP), kind, kind);
+  }
+  assert.equal(coverId(null), 0, 'zéro reste « aucune couverture »');
+  assert.equal(coverFromId(0), null);
+  // Le pas doit tenir toutes les couvertures dans un octet, sinon la dernière
+  // déborde et se relit comme rien du tout.
+  assert.ok(COVER_KINDS.length * COVER_ID_STEP <= 255, 'les identifiants tiennent dans le canal');
+});
+
+test('la couverture règle l’herbe et le fourré, jamais leur présence', () => {
+  // Le cas par défaut est l’identité : une prairie pousse exactement comme
+  // avant que les couvertures existent.
+  const prairie = coverGrassFor(null);
+  assert.deepEqual(prairie, { height: 1, density: 1, tint: [1, 1, 1] });
+  assert.deepEqual(coverGrassFor('couverture-inconnue'), prairie);
+  assert.equal(coverBushesFor(null), 0);
+
+  // Une lande est rase, un marais est haut : c’est ce qui les distingue à
+  // hauteur d’homme, la couleur du sol ne le dit pas.
+  assert.ok(coverGrassFor('heath').height < 1, 'la lande est rase');
+  assert.ok(coverGrassFor('wetland').height > 1, 'la roselière monte');
+  // Un maquis est surtout du vide entre des arbustes : peu d’herbe, beaucoup
+  // de buissons — l’inverse exact d’un pré.
+  assert.ok(coverGrassFor('scrub').density < coverGrassFor('heath').density);
+  assert.ok(coverBushesFor('scrub') > coverBushesFor('heath'));
+  assert.equal(coverBushesFor('scree'), 0, 'rien ne pousse dans un éboulis');
 });
 
 test('la carte de classes sait dire ce qu’elle ne couvre pas', () => {

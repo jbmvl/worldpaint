@@ -33,6 +33,15 @@
  * La plantation est mise en file et étalée sur plusieurs images : composer deux
  * mille matrices dans la même image se verrait comme un à-coup.
  *
+ * ## Le fourré qui n'est pas un bois
+ *
+ * Un maquis, une garrigue, une lande ne sont pas des forêts clairsemées : ce
+ * sont des tapis d'arbustes **sans strate haute**, et la carte de classes les
+ * peint en herbe, donc `woodAt` y répond zéro et rien n'y poussait. La
+ * couverture (`groundClass.coverAt`, canal vert de la carte des cultures) le
+ * dit, et c'est elle qui sème ici les buissons hors des bois — les mêmes
+ * silhouettes basses que le sous-bois, comptées en plus des arbres.
+ *
  * Deux décisions à ne pas défaire :
  *
  * - le plafond d'une tuile **éclaircit** (`thinPlacements`), il ne rogne pas.
@@ -231,6 +240,21 @@ export function thinPlacements(list, max) {
  * l'aveugle : un carré qui glisse de quelques mètres n'apprend rien de neuf.
  */
 export const BLIND_EPSILON = 0.02;
+
+/**
+ * Densité d'arbustes semés par une couverture **hors des bois**, de 0 (rien) à
+ * 1 (fourré plein). Fonction pure.
+ *
+ * C'est ce qui distingue un maquis d'un pré : ni l'un ni l'autre n'est un bois
+ * pour la carte de classes, mais l'un est couvert d'arbustes et l'autre non.
+ *
+ * @param {string|null} cover Retour de `groundClass.coverAt`.
+ * @param {Object} [covers] Tranche `theme.covers`.
+ */
+export function coverBushesFor(cover, covers = defaultTheme.covers) {
+  const look = cover ? covers?.[cover] : null;
+  return look?.bushes ?? 0;
+}
 
 /** Côté de la maille qui décide du peuplement, en mètres. */
 export const FOREST_PATCH_M = 420;
@@ -502,13 +526,22 @@ export class VegetationLayer {
         // lit de loin.
         const type = forestTypeAt(centreX, centreZ, this.theme.forests);
         const count = treesForScore(score, TREES_PER_CELL * type.density, random());
-        if (count === 0) continue;
+        // Fourré de couverture — voir `coverBushesFor`. Il se sème là où il n'y
+        // a pas de bois, donc il ne peut pas être conditionné à `count`.
+        const bushDensity = coverBushesFor(
+          groundClass.coverAt?.(centreX, centreZ) ?? null,
+          this.theme.covers
+        );
+        const thicket = bushDensity > 0 ? Math.floor(TREES_PER_CELL * bushDensity + random()) : 0;
+        if (count === 0 && thicket === 0) continue;
         const variants = variantsFor(type, this.theme.trees.essences);
         // Le sous-bois se compte **en plus** des arbres : il épaissit le pied du
         // massif au lieu de prendre la place d'une houppe. Arrondi stochastique,
         // pour la même raison qu'au-dessus — sans lui, une part de 0,12 ne
-        // donnerait jamais aucun buisson.
-        const understory = Math.floor(count * (type.understory || 0) + random());
+        // donnerait jamais aucun buisson. Le fourré de couverture s'y ajoute :
+        // les deux sont la même strate basse, semée pour deux raisons
+        // différentes.
+        const understory = Math.floor(count * (type.understory || 0) + random()) + thicket;
 
         for (let i = 0; i < count + understory; i++) {
           const bush = i >= count;
