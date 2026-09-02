@@ -8,16 +8,210 @@
  * chargées par `vectorTileSource` **pour la bulle** — et non par interrogation
  * d'une carte 2D voisine, qui ne rendrait que ce que sa propre fenêtre a
  * chargé. La portée du décor ne dépend ainsi que du décor.
+ *
+ * ## La fonction du bâtiment
+ *
+ * La couche `building` ne porte que des hauteurs : ni matériau, ni forme de
+ * toit, ni fonction. La fonction vient donc d'ailleurs — de la couche `poi`,
+ * dont chaque point désigne un bâtiment existant. Elle n'ajoute jamais de
+ * volume **à côté** de l'empreinte : elle transforme celle qui contient le
+ * point (couleur, forme de toit, devanture) et lui greffe au besoin un clocher
+ * ou un minaret. Voir `buildingPersonalityFor` pour le classement,
+ * `sortPersonalities` pour la raison du tri, et `theme.personalities` pour ce
+ * que chaque fonction donne à voir.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { srgb } from '../core/color.js';
 import { buildingStyleAt } from './townStyle.js';
 import { orientedBox, roofTriangles, roofRise, ringArea } from './roofGeometry.js';
+import { pointInRing } from './furniturePlacement.js';
+import { Kit } from './furnitureKit.js';
 import { defaultTheme } from '../themes/default.js';
 
 /** Couche vectorielle portant les empreintes. */
 export const BUILDING_SOURCE_LAYER = 'building';
+/** Couche vectorielle des points d'intérêt — voir `buildingPersonalityFor`. */
+export const BUILDING_POI_SOURCE_LAYER = 'poi';
+
+/**
+ * Points d'intérêt classés retenus par reconstruction.
+ *
+ * Le plafond ne protège pas le rendu mais le temps de reconstruction : chaque
+ * empreinte relit la liste entière. Il ne se voit que là où la donnée est
+ * dense — au centre de Lyon, les neuf tuiles de la bulle portent plus de huit
+ * mille points classés, presque tous des commerces. C'est précisément pour ces
+ * endroits-là que `sortPersonalities` existe : le plafond doit tomber sur le
+ * commerce du bout de la bulle, jamais sur l'église d'à côté.
+ */
+export const BUILDING_POI_MAX_COUNT = 600;
+
+/**
+ * Sous-classes `poi` qui font d'un bâtiment une grande surface.
+ *
+ * `department_store` est rangé sous `grocery` et `mall` sous `shop` : ce sont
+ * deux classes différentes pour la même silhouette — une boîte en bardage au
+ * milieu d'un parking.
+ */
+const RETAIL_SUBCLASSES = new Set(['mall', 'department_store', 'supermarket']);
+
+/**
+ * Classes `poi` qui posent une devanture au rez-de-chaussée.
+ *
+ * Le critère n'est pas « commerce » au sens du cadastre mais **façade sur
+ * rue** : ce qui, au rez-de-chaussée d'un immeuble ordinaire, remplace le mur
+ * par une vitrine et une enseigne. Un cabinet médical, un bureau ou une
+ * bibliothèque n'en ont pas ; un café, une banque et un coiffeur en ont une.
+ */
+const SHOPFRONT_CLASSES = new Set([
+  'alcohol_shop',
+  'bank',
+  'bar',
+  'beer',
+  'bicycle',
+  'butcher',
+  'cafe',
+  'clothing_store',
+  'fast_food',
+  'grocery',
+  'hairdresser',
+  'ice_cream',
+  'laundry',
+  'music',
+  'pharmacy',
+  'post',
+  'restaurant',
+  'shop',
+]);
+
+/**
+ * Ce qu'un point d'intérêt fait du bâtiment qui le contient, ou `null`.
+ *
+ * ## Pourquoi ici, et pas un objet posé par-dessus
+ *
+ * Un point d'intérêt désigne un vrai bâtiment ; poser un modèle séparé à ses
+ * coordonnées revient à planter un décor **à côté** de ce bâtiment, que
+ * l'empreinte réelle — plus grande, plus haute, ou juste mal centrée — finit
+ * presque toujours par recouvrir. La bonne réponse est de donner au bâtiment
+ * **qui existe déjà à cet endroit** une silhouette différente, pas d'en
+ * ajouter un autre : c'est ce que fait `_appendBuilding`, qui lit ce classement
+ * pour choisir la couleur, la forme du toit, la devanture, et — pour un lieu de
+ * culte — un volume ajouté à la vraie empreinte plutôt qu'à côté.
+ *
+ * ## Le schéma, cette fois relevé et non supposé
+ *
+ * La version précédente cherchait la boulangerie sous `class: 'shop'` +
+ * `subclass: 'bakery'`, et le grand magasin sous `class: 'shop'` : aucune des
+ * deux n'existe, donc aucune des deux ne s'est jamais déclenchée. Les valeurs
+ * ci-dessous sont **relevées** sur les tuiles réellement servies (OpenFreeMap,
+ * schéma OpenMapTiles, z14), sur trois villes et un canton rural :
+ *
+ *     place_of_worship | christian, muslim, jewish
+ *     hospital         | hospital, clinic
+ *     bakery           | bakery
+ *     grocery          | supermarket, department_store, deli, greengrocer…
+ *     shop             | mall, clothes, optician… (une cinquantaine)
+ *
+ * Autrement dit `class` **est déjà** l'agrégat : la boulangerie y a sa propre
+ * classe, le grand magasin est rangé sous l'épicerie, et `subclass` ne sert
+ * qu'à distinguer la religion et la grande surface.
+ *
+ * Neuf points classés sur dix tombent dans une empreinte de la couche
+ * `building`, relevé sur les mêmes tuiles. Le dixième est posé au centre d'une
+ * parcelle, ou désigne un bâtiment absent de la donnée : il n'y a rien à
+ * rattraper là, un bâtiment sans personnalité reste un bâtiment.
+ *
+ * Château, monument, tour, moulin, château d'eau, cheminée d'usine, grande
+ * roue et stade restent du mobilier posé à part (`furnitureLayer`) : ce sont
+ * de grandes structures visibles de loin, pas des bâtiments qu'une empreinte
+ * ordinaire recouvrirait.
+ *
+ * Fonction pure.
+ */
+export function buildingPersonalityFor(properties = {}) {
+  const klass = properties.class;
+  const subclass = properties.subclass;
+  if (klass === 'place_of_worship') return subclass === 'muslim' ? 'mosque' : 'church';
+  if (klass === 'hospital') return 'hospital';
+  if (RETAIL_SUBCLASSES.has(subclass)) return 'retail';
+  if (klass === 'bakery') return 'bakery';
+  if (SHOPFRONT_CLASSES.has(klass)) return 'shop';
+  return null;
+}
+
+/**
+ * Rang d'une personnalité quand il faut en écarter — petit d'abord.
+ *
+ * Un clocher se voit d'un kilomètre et il y en a un par village ; une devanture
+ * se voit de la rue et il y en a deux mille par ville. Les traiter dans le même
+ * ordre, c'est laisser les secondes manger le budget des premiers.
+ */
+export const BUILDING_PERSONALITY_RANK = {
+  mosque: 0,
+  church: 0,
+  hospital: 1,
+  retail: 2,
+  bakery: 3,
+  shop: 4,
+};
+
+/**
+ * Trie les points d'intérêt classés et coupe au plafond : par rang d'abord,
+ * par distance à l'observateur ensuite.
+ *
+ * C'est le pendant exact du tri des empreintes (voir `BUILDING_MAX_COUNT`), et
+ * il manquait : les points étaient coupés **dans l'ordre des tuiles**, donc le
+ * budget partait entier dans le coin nord-ouest de la bulle. En ville, il était
+ * épuisé par les commerces de la première tuile avant d'avoir vu une seule
+ * église — la fonctionnalité ne se déclenchait nulle part où l'on regardait.
+ *
+ * Fonction pure ; `list` n'est pas modifiée.
+ *
+ * @param {Array<{kind:string, distance:number}>} list
+ * @param {number} [limit]
+ */
+export function sortPersonalities(list, limit = BUILDING_POI_MAX_COUNT) {
+  const sorted = list.slice().sort((a, b) => {
+    const ra = BUILDING_PERSONALITY_RANK[a.kind] ?? 99;
+    const rb = BUILDING_PERSONALITY_RANK[b.kind] ?? 99;
+    return ra === rb ? a.distance - b.distance : ra - rb;
+  });
+  if (sorted.length > limit) sorted.length = limit;
+  return sorted;
+}
+
+/**
+ * Habillage d'une personnalité, en couleurs **linéaires**, ou `null`.
+ *
+ * Les couleurs viennent du thème (`theme.personalities`) et non du nuancier du
+ * mobilier : une devanture de boulangerie n'a rien à voir avec le bois d'un
+ * banc, et les faire partager une valeur les ferait bouger ensemble.
+ *
+ * Mémorisé sur la tranche de thème elle-même, comme `townStyle` le fait pour
+ * les palettes : la conversion coûte peu mais elle est appelée par bâtiment.
+ */
+const LINEAR_PERSONALITIES = new WeakMap();
+
+export function personalityLookFor(kind, personalities = defaultTheme.personalities) {
+  if (!kind || !personalities) return null;
+  let table = LINEAR_PERSONALITIES.get(personalities);
+  if (!table) {
+    table = {};
+    for (const [name, look] of Object.entries(personalities)) {
+      table[name] = {
+        wall: look.wall ? srgb(look.wall) : null,
+        roof: look.roof ? srgb(look.roof) : null,
+        shape: look.shape || null,
+        front: look.front ? srgb(look.front) : null,
+        spire: look.spire ? { wall: srgb(look.spire.wall), roof: srgb(look.spire.roof) } : null,
+        dome: look.dome ? srgb(look.dome) : null,
+        minaret: look.minaret ? srgb(look.minaret) : null,
+      };
+    }
+    LINEAR_PERSONALITIES.set(personalities, table);
+  }
+  return table[kind] || null;
+}
 
 /**
  * Rayon autour de l'observateur au-delà duquel on ignore un bâtiment, en mètres.
@@ -219,6 +413,66 @@ export function plinthTopFor(base, minHeight, eaves) {
   if (minHeight > 0.2) return null;
   const top = base + PLINTH_HEIGHT_M;
   return top < eaves - 1 ? top : null;
+}
+
+/**
+ * Devanture : hauteur du bandeau de rez-de-chaussée d'un commerce.
+ *
+ * Un niveau, et pas moins : c'est ce qui distingue une vitrine d'un
+ * soubassement, et c'est la seule échelle à laquelle un commerce se lise sans
+ * repeindre l'immeuble entier.
+ */
+export const SHOPFRONT_HEIGHT_M = 3.05;
+
+/**
+ * Cote haute de la devanture, ou `null` s'il n'y a pas de rez-de-chaussée à
+ * habiller. Même garde que le soubassement, en un peu plus large : un bandeau
+ * de trois mètres sur un mur de trois mètres cinquante n'est plus un bandeau,
+ * c'est le mur. Fonction pure.
+ */
+export function shopfrontTopFor(base, minHeight, eaves) {
+  if (minHeight > 0.2) return null;
+  const top = base + SHOPFRONT_HEIGHT_M;
+  return top < eaves - 1.2 ? top : null;
+}
+
+/**
+ * Proportions d'un clocher ou d'un minaret, en part du rectangle englobant du
+ * bâtiment. Attention : `orientedBox` publie des **demi**-côtés, donc `short`
+ * vaut la moitié de la largeur et `long` la moitié de la longueur.
+ *
+ * Ce sont des proportions et non des cotes parce qu'une cote fixe ne peut pas
+ * être juste deux fois : la même tour est un mât sur une chapelle de campagne
+ * et une allumette sur une collégiale.
+ */
+export const TOWER_SIDE_SHARE = 0.7;
+export const TOWER_SIDE_MIN_M = 2.4;
+export const TOWER_SIDE_MAX_M = 9;
+export const TOWER_RISE_SHARE = 0.9;
+export const TOWER_RISE_MIN_M = 6;
+export const TOWER_RISE_MAX_M = 20;
+
+/** Côté de la tour, jamais plus large que le bâtiment qui la porte. Pure. */
+export function towerSide(box) {
+  const side = Math.min(Math.max(box.short * TOWER_SIDE_SHARE, TOWER_SIDE_MIN_M), TOWER_SIDE_MAX_M);
+  return Math.min(side, box.short * 1.8);
+}
+
+/** Ce que la tour dépasse le faîtage, en mètres. Pure. */
+export function towerRise(box) {
+  return Math.min(Math.max(box.long * TOWER_RISE_SHARE, TOWER_RISE_MIN_M), TOWER_RISE_MAX_M);
+}
+
+/**
+ * Pied de la tour : vers un bout du grand axe, reculé d'assez pour que la tour
+ * reste **dans** l'empreinte. Une tour qui déborde au bout de la nef est
+ * exactement l'objet posé à côté que cette couche cherche à éviter.
+ *
+ * Fonction pure.
+ */
+export function towerFoot(box, side) {
+  const reach = Math.max(0, box.long - side * 0.75);
+  return { x: box.cx + Math.cos(box.angle) * reach, z: box.cz + Math.sin(box.angle) * reach };
 }
 
 /**
@@ -502,6 +756,17 @@ export class BuildingLayer {
      * @type {Array<{x:number,z:number}>}
      */
     this.footprints = [];
+    /**
+     * Points d'intérêt classés de la dernière reconstruction — voir
+     * `buildingPersonalityFor` — publiés pour l'étiquetage de mise au point
+     * (`inspect/objectLabels`). Une église, une mosquée ou une boulangerie ne
+     * sont **pas** un maillage à part (voir l'en-tête du fichier : la
+     * personnalité redécore l'empreinte qui la contient, elle ne pose rien à
+     * côté), donc rien dans la scène ne porte leur nom — seul ce tableau le
+     * sait encore après coup.
+     * @type {Array<{x:number,z:number,kind:string,distance:number}>}
+     */
+    this.personalities = [];
 
     this.material = new THREE.MeshLambertMaterial({ vertexColors: true });
 
@@ -578,6 +843,28 @@ export class BuildingLayer {
       }
     });
 
+    // Points d'intérêt classés : voir `buildingPersonalityFor`. Collectés une
+    // fois pour toute la reconstruction — chaque empreinte les relit ensuite
+    // pour savoir si l'un d'eux tombe dedans (voir `_appendBuilding`).
+    //
+    // Tous les points à portée sont ramassés, puis triés et coupés : c'est le
+    // tri qui décide de ce qui saute, jamais l'ordre des tuiles. Voir
+    // `sortPersonalities`.
+    const collected = [];
+    source.forEachFeature(BUILDING_POI_SOURCE_LAYER, tiles, (geometry, properties) => {
+      if (geometry.type !== 'Point') return;
+      const kind = buildingPersonalityFor(properties);
+      if (!kind) return;
+      const [lng, lat] = geometry.coordinates;
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+      const x = (lngToTileX(lng, zoom) - origin.x) * scale;
+      const z = (latToTileY(lat, zoom) - origin.y) * scale;
+      const distance = Math.hypot(x - here.x, z - here.z);
+      if (distance > BUILDING_RADIUS_M) return;
+      collected.push({ x, z, kind, distance });
+    });
+    const personalities = sortPersonalities(collected);
+
     // Le tri est ce qui rend le plafond acceptable : ce qui saute est toujours
     // le plus lointain, jamais ce qui est sous les yeux.
     candidates.sort((a, b) => a.distance - b.distance);
@@ -606,7 +893,7 @@ export class BuildingLayer {
               budget: PANE_MAX_COUNT - panes,
             }
           : null;
-      if (this._appendBuilding(candidate.ring, candidate.properties, walls, openings, houses)) {
+      if (this._appendBuilding(candidate.ring, candidate.properties, walls, openings, houses, personalities)) {
         built++;
         footprints.push({ x: candidate.x, z: candidate.z });
       }
@@ -618,6 +905,7 @@ export class BuildingLayer {
     this.windowCount = lamps.positions.length / 9;
     this.houses = houses;
     this.footprints = footprints;
+    this.personalities = personalities;
     this._applyWindows(lamps);
     if (walls.positions.length === 0) {
       this._clearMesh();
@@ -652,9 +940,12 @@ export class BuildingLayer {
    * @param {Object|null} openings Budget d'ouvertures, ou `null` pour un
    *        bâtiment trop lointain pour en mériter.
    * @param {Array} houses Maisons publiées pour la couche des jardins.
+   * @param {Array|null} personalities Points d'intérêt classés
+   *        (`buildingPersonalityFor`), pour donner sa personnalité au
+   *        bâtiment dont l'empreinte les contient — voir plus bas.
    * @returns {boolean} vrai si le bâtiment a produit de la géométrie.
    */
-  _appendBuilding(ring, properties, walls, openings = null, houses = null) {
+  _appendBuilding(ring, properties, walls, openings = null, houses = null, personalities = null) {
     const { THREE, bubble } = this;
     const { origin, scale, zoom } = bubble.frame;
 
@@ -701,8 +992,37 @@ export class BuildingLayer {
       { area: ground, height },
       this.theme.towns
     );
-    const wallColor = style.wall;
-    const roofColor = style.roof;
+
+    // Personnalité : le premier point d'intérêt qui tombe dans l'empreinte
+    // l'emporte — voir `buildingPersonalityFor`. La liste est déjà triée par
+    // rang, donc « le premier » veut dire le plus marquant : dans un bâtiment
+    // qui porte à la fois une église et une boutique de souvenirs, c'est
+    // l'église. Un bâtiment n'a qu'une personnalité.
+    let personality = null;
+    if (personalities && box) {
+      // Rejet grossier avant le test d'anneau : le rectangle englobant est déjà
+      // calculé, et il écarte d'un coup la quasi-totalité des points. Sans lui,
+      // le coût est le produit des deux plafonds — quinze cents empreintes par
+      // six cents points, à chaque reconstruction.
+      //
+      // La somme des deux demi-côtés, et non le seul demi-grand-côté : un
+      // rectangle en biais s'étend en x de `long·|cos θ| + short·|sin θ|`, donc
+      // au plus de leur somme. Plus serré, le garde écarterait des points qui
+      // sont réellement dedans.
+      const reach = box.long + box.short;
+      for (const p of personalities) {
+        if (Math.abs(p.x - box.cx) > reach || Math.abs(p.z - box.cz) > reach) continue;
+        if (pointInRing(footprint, p.x, p.z)) {
+          personality = p.kind;
+          break;
+        }
+      }
+    }
+    const look = personalityLookFor(personality, this.theme.personalities);
+    // Un habillage de fonction ne remplace que ce qu'il nomme : une église
+    // garde les murs de son bourg, seul le clocher la désigne.
+    const wallColor = look?.wall || style.wall;
+    const roofColor = look?.roof || style.roof;
 
     // Publication des maisons : la couche des jardins en a besoin, et elle n'a
     // aucun moyen de les retrouver seule — c'est ici, et seulement ici, que
@@ -717,14 +1037,18 @@ export class BuildingLayer {
     // toutes les maisons grandissent d'un étage et le village change d'échelle.
     // L'égout descend donc de la hauteur du comble, dans la limite du
     // raisonnable — un bâtiment d'un seul niveau n'a pas de murs négatifs.
-    const shape = box && box.fill >= 0.62 ? style.shape : 'flat';
+    const shape = look?.shape || (box && box.fill >= 0.62 ? style.shape : 'flat');
     const rise = shape === 'flat' ? 0 : roofRise(box.short, this.theme.roofs);
     const eaves = Math.max(bottom + 2.4, top - rise);
 
-    // Soubassement : une bande sombre, arête franche, à sa cote. Voir
-    // `plinthTopFor` — il n'y en a ni sous un surplomb ni sur un mur trop bas.
-    const plinthTop = plinthTopFor(base, minHeight, eaves);
-    const plinthColor = wallColor.map((c) => c * PLINTH_SHADE);
+    // Bandeau bas : soubassement d'ordinaire, **devanture** pour un commerce.
+    // Les deux occupent la même place et ne se cumulent donc pas — une vitrine
+    // descend jusqu'au trottoir, elle ne repose pas sur une plinthe. Voir
+    // `plinthTopFor` et `shopfrontTopFor` : il n'y en a ni sous un surplomb ni
+    // sur un mur trop bas.
+    const shopfrontTop = look?.front ? shopfrontTopFor(base, minHeight, eaves) : null;
+    const plinthTop = shopfrontTop ?? plinthTopFor(base, minHeight, eaves);
+    const plinthColor = shopfrontTop === null ? wallColor.map((c) => c * PLINTH_SHADE) : look.front;
 
     for (let i = 0; i < ordered.length; i++) {
       const a = ordered[i];
@@ -770,19 +1094,135 @@ export class BuildingLayer {
           walls.colors.push(...roofColor);
         }
       }
-      return true;
+    } else {
+      // Comble : faîtière, croupe ou pyramide, bâti sur le rectangle englobant
+      // orienté de l'empreinte (voir `roofGeometry`).
+      const roof = roofTriangles(box, eaves, shape, this.theme.roofs);
+      for (let i = 0; i < roof.positions.length; i += 3) {
+        walls.positions.push(roof.positions[i], roof.positions[i + 1], roof.positions[i + 2]);
+        walls.normals.push(roof.normals[i], roof.normals[i + 1], roof.normals[i + 2]);
+        walls.colors.push(...roofColor);
+      }
     }
 
-    // Comble : faîtière, croupe ou pyramide, bâti sur le rectangle englobant
-    // orienté de l'empreinte (voir `roofGeometry`).
-    const roof = roofTriangles(box, eaves, shape, this.theme.roofs);
-    for (let i = 0; i < roof.positions.length; i += 3) {
-      walls.positions.push(roof.positions[i], roof.positions[i + 1], roof.positions[i + 2]);
-      walls.normals.push(roof.normals[i], roof.normals[i + 1], roof.normals[i + 2]);
-      walls.colors.push(...roofColor);
+    // Clocher, coupole, minaret : des volumes ajoutés à la **vraie** empreinte
+    // plutôt que des objets posés à côté — voir `buildingPersonalityFor`.
+    if (box && look) {
+      if (look.spire) this._appendSteeple(walls, look.spire, box, base, top);
+      if (look.dome || look.minaret) this._appendDomeAndMinaret(walls, look, box, base, eaves);
     }
 
     return true;
+  }
+
+  /**
+   * Clocher : une tour carrée coiffée d'une flèche, greffée sur une empreinte
+   * déjà bâtie.
+   *
+   * Trois choses le font tenir, et la version précédente les ratait toutes :
+   *
+   * 1. **il est dimensionné sur le bâtiment.** Une tour de 3,2 m de côté et de
+   *    15 m de haut pour toutes les églises donnait un mât sur une chapelle et
+   *    une allumette sur une collégiale. Côté et hauteur se lisent donc sur le
+   *    rectangle englobant ;
+   * 2. **il est orienté comme le bâtiment.** Une boîte non tournée sur une nef
+   *    en biais se voit immédiatement, arêtes contre arêtes ;
+   * 3. **la flèche tourne sur son axe.** `roll` bascule la pyramide de 45° dans
+   *    le plan vertical — elle partait de travers. C'est `yaw` qu'il faut, et de
+   *    45° pour poser les arêtes de la pyramide sur les angles de la tour.
+   *
+   * Le lacet vaut `-box.angle` : `Kit.transform` envoie le `+x` local sur
+   * `(cos θ, −sin θ)` dans le plan `(x, z)`, et le grand axe du bâtiment est
+   * `(cos angle, sin angle)`.
+   *
+   * Décalé vers un bout du grand axe plutôt que posé au centre du toit, qui se
+   * lirait comme une cheminée. `Kit` (`furnitureKit.js`) est réutilisé plutôt
+   * que de réécrire des primitives boîte/cylindre déjà éprouvées.
+   */
+  _appendSteeple(walls, spire, box, base, top) {
+    const side = towerSide(box);
+    const height = Math.max(6, top - base) + towerRise(box);
+    const yaw = -box.angle;
+
+    const kit = new Kit();
+    kit.box({ width: side, height, depth: side, color: spire.wall, yaw });
+    kit.cylinder({
+      radiusBottom: side * 0.78,
+      radiusTop: 0,
+      height: side * 1.5,
+      radial: 4,
+      y: height,
+      yaw: yaw + Math.PI / 4,
+      color: spire.roof,
+    });
+
+    const { x, z } = towerFoot(box, side);
+    this._pushKitAt(walls, kit, x, base, z);
+  }
+
+  /**
+   * Coupole et minaret. La coupole est posée sur l'**égout** et non sur le
+   * faîtage : le thème force la terrasse (`shape: 'flat'`) pour cette raison,
+   * et les deux cotes sont alors confondues — mais s'appuyer sur le faîtage
+   * ferait flotter la coupole dès qu'un thème rendrait le rampant.
+   *
+   * Le fût est un cylindre : son lacet ne se voit pas, seule sa position est
+   * tournée avec le bâtiment (voir `towerFoot`).
+   */
+  _appendDomeAndMinaret(walls, look, box, base, eaves) {
+    if (look.dome) {
+      const radius = Math.max(1.5, Math.min(box.short * 0.75, 8));
+      const dome = new Kit();
+      // Deux tronçons plutôt qu'un cône tronqué : c'est le second, très
+      // écrasé, qui donne la courbe — un cône seul se lit comme un chapeau.
+      dome.cylinder({ radiusBottom: radius, radiusTop: radius * 0.72, height: radius * 0.5, radial: 14, color: look.dome });
+      dome.cylinder({
+        radiusBottom: radius * 0.72,
+        radiusTop: 0,
+        height: radius * 0.75,
+        radial: 14,
+        y: radius * 0.5,
+        color: look.dome,
+      });
+      this._pushKitAt(walls, dome, box.cx, eaves, box.cz);
+    }
+
+    if (look.minaret) {
+      const side = towerSide(box);
+      const radius = Math.max(0.7, side * 0.3);
+      const height = Math.max(8, eaves - base) + towerRise(box) * 1.4;
+      const kit = new Kit();
+      kit.cylinder({ radiusBottom: radius, radiusTop: radius * 0.8, height, radial: 10, color: look.minaret });
+      // La galerie : l'anneau qui fait qu'un minaret n'est pas un poteau.
+      kit.cylinder({
+        radiusBottom: radius * 1.5,
+        radiusTop: radius * 1.5,
+        height: radius * 0.4,
+        radial: 10,
+        y: height,
+        color: look.dome || look.minaret,
+      });
+      kit.cylinder({
+        radiusBottom: radius * 0.8,
+        radiusTop: 0,
+        height: radius * 3,
+        radial: 10,
+        y: height + radius * 0.4,
+        color: look.dome || look.minaret,
+      });
+
+      const { x, z } = towerFoot(box, side);
+      this._pushKitAt(walls, kit, x, base, z);
+    }
+  }
+
+  /** Ajoute les triangles d'un `Kit` à `walls`, translatés en un point du monde. */
+  _pushKitAt(walls, kit, x, y, z) {
+    for (let i = 0; i < kit.positions.length; i += 3) {
+      walls.positions.push(kit.positions[i] + x, kit.positions[i + 1] + y, kit.positions[i + 2] + z);
+    }
+    for (let i = 0; i < kit.normals.length; i++) walls.normals.push(kit.normals[i]);
+    for (let i = 0; i < kit.colors.length; i++) walls.colors.push(kit.colors[i]);
   }
 
   /** (Ré)alimente le maillage des fenêtres allumées. */

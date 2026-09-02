@@ -348,12 +348,28 @@ export function scatterFurnitureFor(properties = {}, { crop = null } = {}) {
  * @returns {{item:string, spread:number}}
  */
 export function herdFor({ steepness = 0, variant = 0 } = {}) {
+  // Estive ou parcellaire de montagne franc : la chèvre broute où le mouton
+  // ne monte plus. Le seuil est plus haut que celui qui fait déjà basculer
+  // vers l'ovin, pour ne pas déplacer les troupeaux qui existaient déjà sur
+  // les pentes seulement moyennement raides.
+  if (steepness > 0.34) {
+    return variant < 0.5
+      ? { item: 'goat', spread: 0.24 }
+      : { item: 'sheep', spread: 0.3 };
+  }
   const sheepOdds = steepness > 0.14 ? 0.75 : 0.34;
-  return variant < sheepOdds
-    ? // Un troupeau de moutons se tient serré, et c'est ce qui le fait
-      // reconnaître d'aussi loin qu'on le voit.
-      { item: 'sheep', spread: 0.3 }
-    : { item: 'cow', spread: 0.55 };
+  if (variant < sheepOdds) {
+    // Un troupeau de moutons se tient serré, et c'est ce qui le fait
+    // reconnaître d'aussi loin qu'on le voit.
+    return { item: 'sheep', spread: 0.3 };
+  }
+  // Un pré de plaine sur une douzaine porte des chevaux plutôt que des
+  // vaches — et jamais en troupeau serré : un cheval au pré ne grégarise pas
+  // comme un bovin, il se disperse sur toute la parcelle. L'âne, plus rare
+  // encore, suit la même dispersion.
+  if (variant > 0.92) return { item: 'horse', spread: 0.7 };
+  if (variant > 0.85) return { item: 'donkey', spread: 0.6 };
+  return { item: 'cow', spread: 0.55 };
 }
 
 /**

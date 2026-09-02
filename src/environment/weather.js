@@ -63,6 +63,14 @@ export const DEFAULT_WEATHER = Object.freeze({
   precipitationType: 'rain',
   /** Force du vent, de 0 (air immobile) à 1 (bourrasque). */
   wind: 0.25,
+  /**
+   * Direction du vent, en radians. Fait pivoter la diagonale de référence de
+   * chaque module (pluie, neige, débris) — voir `windAxis`. 0 reproduit
+   * exactement le vecteur que ces modules avaient avant que la direction
+   * existe : c'est ce qui garde le temps ordinaire identique au rendu
+   * d'aujourd'hui.
+   */
+  windDirection: 0,
   /** Brume au sol, indépendante de la pluie, de 0 à 1. */
   haze: 0,
   /**
@@ -111,6 +119,9 @@ export function resolveWeather(weather = null) {
     precipitation,
     precipitationType: type,
     wind: clamp01(finite(w.wind, DEFAULT_WEATHER.wind)),
+    // Un angle, pas une part : pas de clamp01, sin/cos absorbent n'importe
+    // quel réel. Seul le NaN retombe sur le défaut.
+    windDirection: finite(w.windDirection, DEFAULT_WEATHER.windDirection),
     haze: clamp01(finite(w.haze, DEFAULT_WEATHER.haze)),
     // La neige ne mouille pas la chaussée tant qu'elle tient : le sol blanchit,
     // il ne noircit pas. On ne dérive donc le mouillé que de la pluie.
@@ -280,4 +291,26 @@ export function windField(weather) {
     amplitude: mix(0.05, 1, Math.min(t, 1)) * (t > 1 ? mix(1, 2.6, t - 1) : 1),
     speed: mix(0.35, 1, Math.min(t, 1)) * (t > 1 ? mix(1, 2.2, t - 1) : 1),
   };
+}
+
+/**
+ * Fait pivoter la diagonale de référence d'un module par la direction du vent.
+ *
+ * La pluie, la neige et les débris n'ont pas la même dérive — une goutte
+ * penche peu, une feuille est projetée loin — donc chacun garde son propre
+ * vecteur de référence (`axis`), réglé à la main pour ce qu'il doit à l'œil.
+ * `windDirection` ne remplace pas ce réglage, il fait pivoter le plan tout
+ * entier : à `windDirection = 0`, ce module rend exactement `axis`, ce qui est
+ * le vecteur que la pluie et les débris avaient avant que la direction existe.
+ *
+ * @param {[number,number]} axis Diagonale de référence du module appelant,
+ *        déjà mise à l'échelle de son intensité (vent ou dérive).
+ * @param {Object} weather État résolu.
+ * @returns {[number,number]}
+ */
+export function windAxis(axis, weather) {
+  const theta = weather.windDirection;
+  const c = Math.cos(theta);
+  const s = Math.sin(theta);
+  return [axis[0] * c - axis[1] * s, axis[0] * s + axis[1] * c];
 }

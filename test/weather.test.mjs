@@ -31,6 +31,7 @@ import {
   fogScale,
   fogColorFor,
   windField,
+  windAxis,
 } from '../src/environment/weather.js';
 import { lightingFor, skyParameters } from '../src/environment/skyModel.js';
 import { Precipitation } from '../src/environment/precipitation.js';
@@ -46,6 +47,7 @@ test('sans rien, le temps résolu est le temps ordinaire', () => {
   assert.equal(ORDINARY.cloudDensity, DEFAULT_WEATHER.cloudDensity);
   assert.equal(ORDINARY.precipitation, 0);
   assert.equal(ORDINARY.wind, DEFAULT_WEATHER.wind);
+  assert.equal(ORDINARY.windDirection, 0);
   assert.equal(ORDINARY.haze, 0);
   assert.equal(ORDINARY.wetness, 0);
 });
@@ -215,6 +217,19 @@ test('le vent pilote l’amplitude et la vitesse ensemble mais séparément', ()
   assert.notEqual(gale.amplitude, gale.speed);
 });
 
+test('windAxis reproduit l’axe de référence à direction nulle', () => {
+  const axis = [0.85, 0.35];
+  assert.deepEqual(windAxis(axis, ORDINARY), axis, 'temps ordinaire : la diagonale d’avant, inchangée');
+});
+
+test('windAxis fait pivoter l’axe de référence sans changer sa longueur', () => {
+  const axis = [0.85, 0.35];
+  const length = Math.hypot(...axis);
+  const turned = windAxis(axis, resolveWeather({ windDirection: Math.PI / 2 }));
+  assert.ok(Math.abs(Math.hypot(...turned) - length) < 1e-9, 'une rotation ne change pas la force du vent');
+  assert.notDeepEqual(turned, axis, 'la direction, elle, a bougé');
+});
+
 // --- Les précipitations ------------------------------------------------------
 
 /*
@@ -375,6 +390,26 @@ test('la libération retire la boîte de la scène', () => {
   assert.equal(scene.children.length, 0);
 });
 
+test('la boîte se recentre sur une maille, pas en continu sur la caméra', () => {
+  const { field } = mountPrecipitation();
+
+  field.follow({ x: 0, y: 10, z: 0 });
+  const origin = { x: field.group.position.x, z: field.group.position.z };
+
+  // Un petit pas ne doit rien bouger : c'est ce qui donne le défilement plutôt
+  // qu'un rideau collé à l'écran.
+  field.follow({ x: 2, y: 10, z: 1 });
+  assert.deepEqual(
+    { x: field.group.position.x, z: field.group.position.z },
+    origin,
+    'sous le pas de maille, la boîte ne bouge pas'
+  );
+
+  // Un pas franc, lui, doit recentrer.
+  field.follow({ x: 40, y: 10, z: 0 });
+  assert.notEqual(field.group.position.x, origin.x, 'au-delà du pas de maille, la boîte suit');
+});
+
 // --- Les débris (feuilles et graminées) --------------------------------------
 
 function mountDebris(options = {}) {
@@ -431,4 +466,21 @@ test('la libération des débris retire les particules de la scène', () => {
   assert.equal(scene.children.length, 1);
   field.dispose();
   assert.equal(scene.children.length, 0);
+});
+
+test('les débris se recentrent aussi sur une maille, pas en continu', () => {
+  const { field } = mountDebris();
+
+  field.follow({ x: 0, y: 0, z: 0 });
+  const origin = { x: field.points.position.x, z: field.points.position.z };
+
+  field.follow({ x: 1, y: 0, z: 1 });
+  assert.deepEqual(
+    { x: field.points.position.x, z: field.points.position.z },
+    origin,
+    'sous le pas de maille, les débris ne bougent pas avec l’observateur'
+  );
+
+  field.follow({ x: 30, y: 0, z: 0 });
+  assert.notEqual(field.points.position.x, origin.x, 'au-delà du pas de maille, ils suivent');
 });

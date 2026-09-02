@@ -23,6 +23,8 @@
  * ajouter une seule géométrie.
  */
 
+import { windAxis } from './weather.js';
+
 const SPREAD_M = 20;
 /** Hauteur maximale atteinte pleinement emporté, en mètres. */
 const HEIGHT_M = 3.2;
@@ -190,9 +192,10 @@ export class Debris {
     // exactement 0, sinon une particule reste visiblement soulevée en l'air
     // sans qu'aucun vent notable ne le justifie à l'œil.
     this.uniforms.uLift.value = this.THREE.MathUtils.smoothstep(weather.wind, 0.3, 0.8);
-    // Même diagonale fixe que la pluie et la neige : voir `precipitation.js`
-    // sur pourquoi il n'y a — encore — qu'une seule direction de vent.
-    this.uniforms.uWind.value.set(weather.wind * 2.6, weather.wind * 1.1);
+    // Même diagonale de référence que la pluie et la neige, pivotée par la
+    // même direction — voir `windAxis` dans `weather.js`.
+    const [wx, wz] = windAxis([weather.wind * 2.6, weather.wind * 1.1], weather);
+    this.uniforms.uWind.value.set(wx, wz);
     this.uniforms.uOpacity.value = 0.35 + weather.wind * 0.35;
   }
 
@@ -218,9 +221,17 @@ export class Debris {
    *        voit comme un bug. Trouver ce niveau de sol (par exemple en
    *        lançant un rayon vers le bas sur le terrain) est à
    *        l'application : ce module n'a pas connaissance du relief.
+   *
+   *        `x` et `z` se recentrent sur une maille du monde, pas en continu —
+   *        même raison que `Precipitation.follow` : sans ça, les feuilles
+   *        collées à la caméra ne défilent jamais, et se lisent comme un
+   *        artefact d'écran plutôt que comme des objets de la scène.
    */
   follow(position) {
-    this.points.position.set(position.x, position.y, position.z);
+    const step = SPREAD_M / 3;
+    const x = Math.round(position.x / step) * step;
+    const z = Math.round(position.z / step) * step;
+    this.points.position.set(x, position.y, z);
   }
 
   dispose() {

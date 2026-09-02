@@ -31,6 +31,8 @@
  * `setTint`, que l'ambiance appelle pour qu'une averse de nuit soit sombre.
  */
 
+import { windAxis } from './weather.js';
+
 /** Demi-côté de la boîte, en mètres. Au-delà, une goutte fait moins d'un pixel. */
 const SPREAD_M = 26;
 /** Hauteur de la boîte, en mètres. C'est la période de la boucle de chute. */
@@ -277,11 +279,10 @@ export class Precipitation {
     const count = Math.round(max * Math.sqrt(intensity));
     mesh.geometry.setDrawRange(0, snowing ? count : count * 2);
 
-    // Le vent penche la pluie et emporte la neige. Une seule direction, fixée :
-    // un vent tournant demanderait une direction dans l'état météo, et personne
-    // ne l'a demandée.
+    // Le vent penche la pluie et emporte la neige, selon `weather.windDirection`.
     const drift = weather.wind * (snowing ? 2.2 : 1.1);
-    this.uniforms.uWind.value.set(drift * 0.85, drift * 0.35);
+    const [wx, wz] = windAxis([drift * 0.85, drift * 0.35], weather);
+    this.uniforms.uWind.value.set(wx, wz);
     // Une averse portée par le vent tombe plus vite : la composante horizontale
     // s'ajoute à la verticale.
     this.uniforms.uSpeed.value =
@@ -312,9 +313,26 @@ export class Precipitation {
     this.uniforms.uTime.value = (this.uniforms.uTime.value + delta) % 3600;
   }
 
-  /** Recentre la boîte sur l'observateur. */
+  /**
+   * Recentre la boîte à proximité de l'observateur — sans jamais la coller
+   * exactement dessus.
+   *
+   * Une boîte qui suit la position exacte de la caméra à chaque image se lit
+   * comme un rideau plaqué à l'écran : rien à l'intérieur ne défile jamais
+   * par rapport au regard, seule la chute verticale bouge. En la recentrant
+   * sur une maille du monde — même principe que la grille des repères
+   * d'horizon dans `furnitureLayer` — la boîte reste fixe entre deux pas, et
+   * l'observateur la traverse comme il traverserait un vrai volume de pluie :
+   * les gouttes proches défilent plus vite que les lointaines, ce qui est la
+   * parallaxe qui manquait. Le pas est un tiers du rayon de la boîte : assez
+   * fin pour que l'observateur n'en sorte jamais vraiment, assez grossier
+   * pour que le défilement se sente.
+   */
   follow(position) {
-    this.group.position.set(position.x, position.y, position.z);
+    const step = SPREAD_M / 3;
+    const x = Math.round(position.x / step) * step;
+    const z = Math.round(position.z / step) * step;
+    this.group.position.set(x, position.y, z);
   }
 
   dispose() {

@@ -148,7 +148,10 @@ test('avec un ciel, updateSky recale le dôme avant de propager la nuit', () => 
   // image où la route est trempée et le ciel encore dégagé n'existe jamais.
   assert.deepEqual(composer.calls, [
     ['setNight', 0.4],
-    ['setWind', { amplitude: 1, speed: 1 }],
+    // `setWind` reçoit aussi la météo résolue : c'est elle qui porte la
+    // direction du vent, dont le feuillage n'a pas besoin mais les éoliennes
+    // et les oiseaux si — voir `WorldComposer.setWind`.
+    ['setWind', { amplitude: 1, speed: 1 }, 'météo'],
     ['setWetness', 0.25],
   ]);
 });

@@ -353,6 +353,52 @@ export const TOWN_PALETTES = [
   },
 ];
 
+// --- Les bâtiments qui ont une fonction ----------------------------------------
+/**
+ * Ce qu'un bâtiment devient quand on sait à quoi il sert.
+ *
+ * La couche `building` ne dit rien de la fonction (voir l'en-tête de
+ * `townStyle`) : elle vient de la couche `poi`, et c'est
+ * `buildingLayer.buildingPersonalityFor` qui la nomme. Ce qu'on en fait à
+ * l'écran est ici, et nulle part ailleurs.
+ *
+ * Trois registres, et ils ne se mélangent pas :
+ *
+ * - `wall`, `roof`, `shape` **remplacent** la palette du bourg. Réservé à ce
+ *   qui, dans la réalité, n'est pas bâti dans le matériau du pays : un hôpital
+ *   et une grande surface sont en béton et en bardage d'un bout à l'autre de la
+ *   France, quelle que soit la carrière du coin.
+ * - `front` ne remplace rien : c'est le **bandeau de rez-de-chaussée**, la
+ *   devanture, posée sur des murs qui gardent la couleur du bourg. C'est la
+ *   bonne échelle pour un commerce — il occupe un niveau d'un immeuble, pas
+ *   l'immeuble. Repeindre la façade entière faisait virer tout un centre ancien
+ *   à la même couleur, ce qui se lisait comme une panne et non comme un
+ *   commerce.
+ * - `spire`, `dome`, `minaret` sont des **volumes ajoutés** à la vraie
+ *   empreinte : un clocher n'est pas une couleur, c'est une silhouette, et
+ *   c'est la seule chose qui se voie de l'autre bout du village.
+ *
+ * Une personnalité peut n'en porter qu'un : une église garde les murs de son
+ * bourg — une église romane *est* bâtie dans la pierre du pays — et ne se
+ * reconnaît qu'à son clocher.
+ */
+export const BUILDING_PERSONALITIES = {
+  // Pierre de taille et ardoise : le clocher est l'ouvrage soigné du village,
+  // pas son bâti courant, et il est presque partout d'un autre matériau que les
+  // maisons autour.
+  church: { spire: { wall: '#d3ccba', roof: '#4f555d' } },
+  // La coupole se pose sur une terrasse : sur un rampant elle flotterait.
+  mosque: { shape: 'flat', dome: '#4f8792', minaret: '#efe9db' },
+  hospital: { wall: '#eceff0', roof: '#c2c8ca', shape: 'flat' },
+  retail: { wall: '#d8d4cb', roof: '#71767b', shape: 'flat' },
+  // Bois verni foncé : la devanture de boulangerie est le seul commerce dont la
+  // façade soit un type reconnaissable en France.
+  bakery: { front: '#7d4a2a' },
+  // Peinture sombre, faiblement saturée : une devanture quelconque se lit à sa
+  // valeur — un bandeau plus sombre que le mur — pas à sa teinte.
+  shop: { front: '#3f5560' },
+};
+
 // --- Les toits -----------------------------------------------------------------
 /**
  * Pente d'un toit, en part de sa demi-largeur.
@@ -403,6 +449,9 @@ export const ROAD_PROFILES = {
 export const ROAD_SURFACES = {
   asphalt: { base: '#4a4a4e', grain: 26 },
   dirt: { base: '#8a7d63', grain: 34 },
+  // Ballast de voie ferrée : pierre concassée, le grain le plus fort des
+  // trois — c'est un empierrement, pas une chaussée damée.
+  ballast: { base: '#847d70', grain: 46 },
 };
 /** Terre claire de l'accotement. */
 export const ROAD_SHOULDER_COLOR = '#8c8168';
@@ -462,6 +511,17 @@ export const STREET_LOOK = {
  * Les grands fleuves sont déjà des polygones dans la couche `water` ; ce qui
  * reste ici est ce qui est trop étroit pour l'être.
  */
+/**
+ * Largeur de la ripisylve, en mètres, ajoutée de part et d'autre du lit
+ * (voir `WATERWAY_CLASSES`) dans la carte de classes (`groundClassMap`) : le
+ * cours d'eau y peint une bande de bois plutôt que le mobilier n'y plante des
+ * arbres isolés. C'est ce qui distingue un bosquet naturel — une fine ligne
+ * de forêt, plantée avec les mêmes silhouettes que n'importe quel autre bois
+ * (`vegetationLayer`) — d'un alignement planté (les platanes de bord de
+ * route, qui restent du mobilier).
+ */
+export const RIPARIAN_BUFFER_M = 7;
+
 export const WATERWAY_CLASSES = {
   river: 9,
   canal: 6,
@@ -514,6 +574,13 @@ export const FURNITURE_COLORS = {
   hideDark: srgb('#4a3a2f'),
   fleece: srgb('#ddd6c8'),
   muzzle: srgb('#c49a94'),
+  // Robe alezane du cheval : `hideDark` — pensé pour la tache sombre de la
+  // vache pie noire — l'engloutissait sur l'herbe, d'où le « cheval invisible,
+  // trop sombre ». Un brun chaud et clair se détache, comme un vrai alezan.
+  chestnut: srgb('#8a5a3a'),
+  // Robe grise de l'âne, plus claire et plus froide que le cheval : c'est ce
+  // qui les distingue en silhouette autant qu'en couleur.
+  donkeyGrey: srgb('#9a9488'),
   feather: srgb('#c9c2b4'),
   comb: srgb('#a3372f'),
   linen: srgb('#e6e2d8'),
@@ -663,6 +730,7 @@ export const defaultTheme = Object.freeze({
   },
   crops: CROP_LOOK,
   towns: TOWN_PALETTES,
+  personalities: BUILDING_PERSONALITIES,
   roofs: { pitch: ROOF_PITCH, maxRiseM: ROOF_MAX_RISE_M, overhangM: ROOF_OVERHANG_M },
   windows: {
     widthM: WINDOW_WIDTH_M,
@@ -673,7 +741,7 @@ export const defaultTheme = Object.freeze({
   },
   roads: { profiles: ROAD_PROFILES, surfaces: ROAD_SURFACES, shoulderColor: ROAD_SHOULDER_COLOR },
   streets: STREET_LOOK,
-  water: { waterways: WATERWAY_CLASSES },
+  water: { waterways: WATERWAY_CLASSES, riparianBufferM: RIPARIAN_BUFFER_M },
   furniture: { colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES },
   life: LIFE_COLORS,
   sky: SKY_PALETTE,

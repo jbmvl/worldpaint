@@ -48,13 +48,34 @@
  * Tous les tirages sont **ancrés au sol** (`randomAt`) : la même haie repousse
  * identique à elle-même d'une reconstruction à l'autre, comme tout le reste du
  * décor.
+ *
+ * ## Le grain low poly
+ *
+ * `hedgeModulation` module en continu : deux points voisins du balayage n'ont
+ * jamais tout à fait la même hauteur, mais l'un se déduit de l'autre par une
+ * courbe — donc lisse, aussi finement qu'on l'échantillonne. `facetJitter` fait
+ * l'inverse : un tirage **indépendant par ligne**, sans corrélation avec ses
+ * voisines. Associé à un maillage non lissé (`toColoredGeometry({ flat: true
+ * })`, décidé par l'appelant), c'est ce qui donne de vraies arêtes plutôt
+ * qu'une courbe adoucie — la matière qui manquait à la haie, au rang de vigne
+ * et à leurs arbustes, tous trois lus jusqu'ici comme des tubes ou des boules
+ * lisses. L'espacement des arêtes n'est pas un réglage de cette fonction : il
+ * vient du pas de ré-échantillonnage du tracé (`HEDGE_SAMPLE_M`).
  */
 
 import { randomAt, spacedAlongPath } from './furniturePlacement.js';
 import { defaultTheme } from '../themes/default.js';
 
-/** Pas de ré-échantillonnage d'une haie, en mètres. */
-export const HEDGE_SAMPLE_M = 3;
+/**
+ * Pas de ré-échantillonnage d'une haie, en mètres.
+ *
+ * Double emploi assumé : c'est le pas d'un simple ruban, mais c'est aussi
+ * l'espacement des arêtes facettées (`facetJitter`) — chaque ligne du balayage
+ * reçoit un tirage indépendant, donc une ligne tous les 75 cm est une arête
+ * tous les 75 cm. Le rang de vigne, qui n'a pas son propre pas, réemploie
+ * celui-ci pour la même raison.
+ */
+export const HEDGE_SAMPLE_M = 0.75;
 
 /**
  * Jusqu'où une haie est détaillée, par famille. C'est un **budget**, pas un
@@ -164,6 +185,52 @@ export function hedgeModulation(path, { offset = 0, here = null, style = HEDGE_S
   }
 
   return { up, across };
+}
+
+/**
+ * Sel réservé aux arêtes facettées : décalé de celui des arbustes
+ * (`hedgeClumps` va jusqu'à `salt + 18`) pour qu'aucun sommet ne tire deux
+ * fois la même valeur pour deux raisons différentes.
+ */
+const FACET_SALT_OFFSET = 30;
+
+/**
+ * Bruit indépendant par ligne du balayage, sans rapport avec ses voisines —
+ * contrairement aux ondes de `hedgeModulation`, qui restent une courbe quelle
+ * que soit la finesse d'échantillonnage. C'est ce bruit-là qui fait les
+ * arêtes : une échelle qui saute d'une ligne à l'autre, plutôt qu'une échelle
+ * qui varie en douceur.
+ *
+ * Reste modeste par construction (`upAmp`, `acrossAmp`, `lateralM`) : il
+ * casse le tube, il ne redessine pas la silhouette que porte déjà
+ * `hedgeModulation`.
+ *
+ * Fonction pure, ancrée au sol (`randomAt`) comme le reste du module.
+ *
+ * @param {Array<{x:number,z:number}>} path Polyligne ré-échantillonnée ; son
+ *        pas fixe l'espacement des arêtes (voir `HEDGE_SAMPLE_M`).
+ * @param {number} salt Sel de la haie ou du rang appelant (`style.salt`, ou un
+ *        sel dédié pour un mobilier qui n'a pas de style).
+ * @param {Object} [options]
+ * @param {number} [options.upAmp] Amplitude relative sur la hauteur (0.09 = ±9 %).
+ * @param {number} [options.acrossAmp] Amplitude relative sur la largeur.
+ * @param {number} [options.lateralM] Débattement latéral de l'axe, en mètres.
+ * @returns {{up: Float32Array, across: Float32Array, lateral: Float32Array}}
+ */
+export function facetJitter(path, salt, { upAmp = 0.09, acrossAmp = 0.09, lateralM = 0.05 } = {}) {
+  const rows = path?.length ?? 0;
+  const up = new Float32Array(rows);
+  const across = new Float32Array(rows);
+  const lateral = new Float32Array(rows);
+
+  for (let r = 0; r < rows; r++) {
+    const { x, z } = path[r];
+    up[r] = 1 + (randomAt(x, z, salt + FACET_SALT_OFFSET) - 0.5) * 2 * upAmp;
+    across[r] = 1 + (randomAt(x, z, salt + FACET_SALT_OFFSET + 1) - 0.5) * 2 * acrossAmp;
+    lateral[r] = (randomAt(x, z, salt + FACET_SALT_OFFSET + 2) - 0.5) * 2 * lateralM;
+  }
+
+  return { up, across, lateral };
 }
 
 /**

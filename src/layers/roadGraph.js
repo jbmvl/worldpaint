@@ -868,6 +868,48 @@ export class RoadIndex {
 }
 
 /**
+ * Plusieurs index d'emprise combinés, comme s'ils n'en faisaient qu'un.
+ *
+ * La route et la voie ferrée sont deux réseaux distincts (`RoadNetwork` et
+ * `RailwayLayer` — celle-ci publie son emprise avec ce même `RoadIndex`, voir
+ * son en-tête), mais tout ce qui ne pousse pas sur l'une ne pousse pas non
+ * plus sur l'autre : l'herbe, les cultures, les jardins et le mobilier n'ont
+ * qu'une question à poser — « suis-je dans une emprise, laquelle qu'elle
+ * soit ? » — pas une par réseau. Plutôt que chaque consommateur ne chaîne ses
+ * propres appels à `inCorridor`/`clipOutsideCorridor` pour chaque index, un
+ * `CombinedIndex` répond au même contrat (`covers`, `query`, `mayCover`) que
+ * `RoadIndex` et se pose exactement là où celui-ci se posait.
+ */
+export class CombinedIndex {
+  /** @param {Array<Object|null|undefined>} indexes */
+  constructor(indexes) {
+    this.indexes = (indexes || []).filter(Boolean);
+  }
+
+  /** Vrai si le point tombe dans l'une des emprises, marge comprise. */
+  covers(x, z, margin = 0) {
+    return this.indexes.some((index) => index.covers(x, z, margin));
+  }
+
+  /** Emprise la plus proche recouvrant le point, toutes confondues. */
+  query(x, z, margin = 0, accept = null) {
+    let best = null;
+    for (const index of this.indexes) {
+      const hit = index.query(x, z, margin, accept);
+      if (hit && (!best || hit.distance < best.distance)) best = hit;
+    }
+    return best;
+  }
+
+  /** Vrai si l'une des emprises pourrait couvrir un point de cette boîte. */
+  mayCover(minX, minZ, maxX, maxZ) {
+    return this.indexes.some((index) =>
+      typeof index.mayCover === 'function' ? index.mayCover(minX, minZ, maxX, maxZ) : true
+    );
+  }
+}
+
+/**
  * Écart d'altitude au-delà duquel deux chaussées qui se croisent ne se
  * rejoignent pas : c'est un pont ou un passage inférieur, pas un carrefour.
  */

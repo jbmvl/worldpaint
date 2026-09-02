@@ -248,7 +248,7 @@ export class World {
     env.followCamera(camera);
     env.update({ palette, date, lat, lng, weather });
     this.composer.setNight(env.nightMix);
-    this.composer.setWind(env.wind);
+    this.composer.setWind(env.wind, env.weather);
     this.composer.setWetness(env.wetness);
     env.followShadow(shadowAt || camera.position);
     return {

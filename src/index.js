@@ -54,8 +54,11 @@ export {
 export {
   collectSceneLabels,
   collectCropLabels,
+  collectPlaceLabels,
+  collectBuildingLabels,
   labelForForestType,
   labelForMeshName,
+  labelForPlace,
   LABEL_RADIUS_M,
 } from './inspect/objectLabels.js';
 export { forestTypeAt } from './layers/vegetationLayer.js';

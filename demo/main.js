@@ -32,7 +32,15 @@
 
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
-import { createWorld, collectSceneLabels, CORRIDOR_MARGIN_M, DEFAULT_WEATHER } from '../src/index.js';
+import {
+  createWorld,
+  collectSceneLabels,
+  collectCropLabels,
+  collectPlaceLabels,
+  collectBuildingLabels,
+  CORRIDOR_MARGIN_M,
+  DEFAULT_WEATHER,
+} from '../src/index.js';
 
 // --- Réglages ---------------------------------------------------------------
 
@@ -292,6 +300,8 @@ function teleportTo(x, z) {
 const clock = new THREE.Clock();
 const forward3 = new THREE.Vector3();
 const move = new THREE.Vector3();
+const cameraDirection = new THREE.Vector3(); // direction non aplatie, pour le cap et l'inclinaison du HUD
+const rad2deg = (rad) => (rad * 180) / Math.PI;
 let recenterAcc = 0;
 let recentering = false;
 let labelAcc = LABEL_INTERVAL_MS; // premier tick immédiat
@@ -347,8 +357,20 @@ async function recenterIfNeeded() {
 }
 
 // --- Étiquettes des objets -----------------------------------------------------
-
-const LABEL_SKIP = new Set(['terrain-bubble', 'sky-dome', 'sun', 'ground-cover']);
+//
+// Trois sources, superposées : les objets de la scène (`collectSceneLabels`),
+// les cultures — qui n'ont pas de maillage propre, seulement une plage de la
+// carte des cultures (`collectCropLabels`) — et les emprises `landuse` /
+// `landcover` — qui n'en ont pas non plus, seulement un classement de
+// parcelle (`collectPlaceLabels`). Ce sont les trois façons de répondre à
+// « qu'est-ce que je regarde », voir l'en-tête de `inspect/objectLabels.js`.
+//
+// `terrain-bubble`, `sky-dome` et `sun` restent tus : ce sont le maillage de
+// base et l'ambiance, pas un objet du décor — les étiqueter donnerait
+// « terrain 15/xxxxx/yyyyy » en boucle sans rien dire de plus que le sol qu'on
+// a déjà sous les pieds. `ground-cover` (l'herbe), en revanche, est une
+// **surface** au même titre qu'un champ ou une cour de ferme : elle s'affiche.
+const LABEL_SKIP = new Set(['terrain-bubble', 'sky-dome', 'sun']);
 const labelElements = new Map(); // id -> <span>
 const projected = new THREE.Vector3();
 
@@ -359,6 +381,53 @@ function updateLabels() {
   }
 
   const items = collectSceneLabels({ root: scene, eye: camera.position, skip: LABEL_SKIP });
+
+  // Les cultures, les emprises et les bâtiments spéciaux se lisent
+  // directement dans la donnée déjà chargée pour le décor — aucune requête de
+  // plus, seulement une lecture.
+  const groundAt = (x, z) => world.bubble.surfaceElevationAtLocal(x, z, 0) * world.bubble.verticalScale;
+
+  // Église, mosquée, hôpital, boulangerie, commerce : `buildingLayer` les
+  // fond dans le même maillage `buildings` que tout le reste (il redécore
+  // l'empreinte, il n'en pose pas à côté — voir son en-tête), donc rien dans
+  // la scène ne porte leur nom. `personalities` est ce qui le sait encore.
+  for (const item of collectBuildingLabels({
+    buildings: world.composer?.buildings?.personalities,
+    eye: camera.position,
+    groundAt,
+  })) {
+    items.push(item);
+  }
+
+  if (world.groundClass?.ready) {
+    for (const item of collectCropLabels({
+      center: camera.position,
+      cropAt: (x, z) => world.groundClass.cropAt(x, z),
+      groundAt,
+    })) {
+      item.area = true;
+      items.push(item);
+    }
+
+    const source = world.composer?.vectorTiles;
+    if (source) {
+      const tiles = [];
+      for (const entry of source.tiles.values()) {
+        if (entry) tiles.push({ x: entry.x, y: entry.y });
+      }
+      for (const item of collectPlaceLabels({
+        source,
+        tiles,
+        frame: world.frame,
+        eye: camera.position,
+        groundAt,
+      })) {
+        item.area = true;
+        items.push(item);
+      }
+    }
+  }
+
   const seen = new Set();
 
   for (const item of items) {
@@ -373,7 +442,7 @@ function updateLabels() {
     let el = labelElements.get(item.id);
     if (!el) {
       el = document.createElement('div');
-      el.className = 'label';
+      el.className = item.area ? 'label label-area' : 'label';
       labelsRoot.appendChild(el);
       labelElements.set(item.id, el);
     }
@@ -670,6 +739,16 @@ for (const key of SLIDER_KEYS) {
 const precipitationTypeSelect = document.getElementById('precipitationType');
 
 /**
+ * Direction du vent : un curseur à part, en degrés (0-359), pas dans
+ * `SLIDER_KEYS` — c'est le seul réglage de météo qui n'est pas une part de
+ * 0 à 1, mais un angle. `weather.windDirection` (radians) en dérive.
+ */
+const windDirectionSlider = {
+  input: document.getElementById('windDirection'),
+  val: document.getElementById('windDirectionVal'),
+};
+
+/**
  * Calibration de la réglette « couverture nuageuse ».
  * -----------------------------------------------------
  * Le masque de nuage du `Sky.js` natif de three (celui que `weather.cloudCover`
@@ -737,6 +816,7 @@ function readWeather() {
   // Voir `CLOUD_COVER_CURVE` : la position de la réglette est calibrée pour
   // répondre sur toute sa course, pas la valeur brute envoyée au moteur.
   weather.cloudCover = uiToCloudCover(weather.cloudCover);
+  weather.windDirection = (Number(windDirectionSlider.input.value) * Math.PI) / 180;
   return weather;
 }
 
@@ -749,6 +829,11 @@ function writeWeather(weather) {
     sliders[key].input.value = Math.round(ui * 100);
   }
   precipitationTypeSelect.value = full.precipitationType;
+  // En degrés positifs, dans le sens du curseur : un `windDirection` négatif
+  // ou au-delà d'un tour (un preset pourrait en fournir un) doit quand même
+  // retomber dans [0, 360[.
+  const degrees = (((full.windDirection * 180) / Math.PI) % 360 + 360) % 360;
+  windDirectionSlider.input.value = Math.round(degrees);
   wetnessManual = false;
   syncWetness();
   refreshWeatherLabels();
@@ -769,6 +854,7 @@ function refreshWeatherLabels() {
     sliders[key].val.textContent =
       key === 'wetness' && !wetnessManual ? `${percent} · auto` : percent;
   }
+  windDirectionSlider.val.textContent = `${windDirectionSlider.input.value}°`;
   hourVal.textContent = realTimeCheckbox.checked
     ? new Date().toTimeString().slice(0, 5)
     : formatHour(Number(hourInput.value));
@@ -791,6 +877,11 @@ for (const key of SLIDER_KEYS) {
 }
 precipitationTypeSelect.addEventListener('change', () => {
   syncWetness();
+  refreshWeatherLabels();
+  clearPresetHighlight();
+  weatherDirty = true;
+});
+windDirectionSlider.input.addEventListener('input', () => {
   refreshWeatherLabels();
   clearPresetHighlight();
   weatherDirty = true;
@@ -888,7 +979,17 @@ function loop() {
     if (realTimeCheckbox.checked) hourVal.textContent = new Date().toTimeString().slice(0, 5);
   }
 
-  coordsEl.textContent = `x ${camera.position.x.toFixed(0)}  z ${camera.position.z.toFixed(0)}  alt ${camera.position.y.toFixed(0)} m`;
+  // Cap et inclinaison à côté des coordonnées : une scène à rejouer, c'est
+  // un lieu ET un regard — sans le cap, deux personnes qui collent la même
+  // coordonnée peuvent regarder deux choses différentes.
+  camera.getWorldDirection(cameraDirection);
+  const bearingDeg = (rad2deg(Math.atan2(cameraDirection.x, -cameraDirection.z)) + 360) % 360;
+  const pitchDeg = rad2deg(Math.asin(THREE.MathUtils.clamp(cameraDirection.y, -1, 1)));
+  const here = world ? world.frame.toLngLat(camera.position.x, camera.position.z) : null;
+  const where = here
+    ? `lng ${here.lng.toFixed(5)}  lat ${here.lat.toFixed(5)}`
+    : `x ${camera.position.x.toFixed(0)}  z ${camera.position.z.toFixed(0)}`;
+  coordsEl.textContent = `${where}  alt ${camera.position.y.toFixed(0)} m  cap ${bearingDeg.toFixed(0)}°  incl ${pitchDeg.toFixed(0)}°`;
 
   renderer.render(scene, camera);
 }

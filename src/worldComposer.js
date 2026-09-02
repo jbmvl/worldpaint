@@ -29,6 +29,10 @@
  *      l'arbre n'ont le droit de franchir. C'est la seule relation spatiale
  *      que toutes les couches de décor partagent, et elle tient en une
  *      question — « ce point est-il sur la voirie ? » ;
+ *   3 bis. **voie ferrée** — ne dépend de rien et ne publie rien : elle relit
+ *      la même couche `transportation` que les chaussées, filtrée sur
+ *      `class: rail`, et suit le terrain sans l'entailler (voir
+ *      `railwayLayer.js` pour ce que cette simplification laisse de côté) ;
  *   4. **bâti** — il ne lit que les tuiles ; il publie au passage ses
  *      **maisons** et l'ensemble de ses **empreintes** ;
  *   4 bis. **voirie** — après les chaussées *et* le bâti, parce qu'un trottoir
@@ -55,6 +59,8 @@ import { TerrainBubble } from './terrain/terrainBubble.js';
 import { GroundClassMap } from './terrain/groundClassMap.js';
 import { RoadNetwork, createRoadMaterials } from './layers/roadNetwork.js';
 import { WaterLayer, createWaterMaterial } from './layers/waterLayer.js';
+import { RailwayLayer } from './layers/railwayLayer.js';
+import { CombinedIndex } from './layers/roadGraph.js';
 import { BuildingLayer } from './layers/buildingLayer.js';
 import { GardenLayer } from './layers/gardenLayer.js';
 import { StreetLayer } from './layers/streetLayer.js';
@@ -118,7 +124,7 @@ export class WorldComposer {
     // La carte de classes précède la bulle : les matériaux de terrain la
     // reçoivent à leur construction, et le même objet d'uniformes est partagé
     // par toutes les tuiles.
-    this.groundClass = new GroundClassMap({ THREE });
+    this.groundClass = new GroundClassMap({ THREE, theme });
 
     this.bubble = new TerrainBubble({
       THREE,
@@ -143,6 +149,24 @@ export class WorldComposer {
       theme,
     });
 
+    // La voie ferrée ne lit que les tuiles — comme l'eau — et ne dépend
+    // d'aucune autre couche : elle ne creuse rien, ne publie rien, et rien ne
+    // publie rien pour elle. Voir l'en-tête de `railwayLayer.js` pour ce que
+    // cette simplification laisse de côté.
+    this.railways = new RailwayLayer({ THREE, scene, bubble, theme });
+    // Façade d'emprise combinée : route et voie ferrée, comme si elles n'en
+    // formaient qu'une. Les consommateurs qui ne lisaient jusqu'ici que
+    // `roads.index` (jardins, végétation, herbe, cultures) reçoivent cet objet
+    // à la place de `this.roads` — ils ne touchent jamais à autre chose que
+    // `.index`, donc rien d'autre ne change pour eux. Un `get` plutôt qu'une
+    // valeur figée : les deux index sont réécrits à chaque reconstruction.
+    const composer = this;
+    this._infra = {
+      get index() {
+        return new CombinedIndex([composer.roads.index, composer.railways.index]);
+      },
+    };
+
     this.waterMaterial = createWaterMaterial(THREE);
     this.water = new WaterLayer({
       THREE,
@@ -157,7 +181,7 @@ export class WorldComposer {
     // et qu'ils passent par ici — voir l'ordre de génération plus haut. Ils
     // reçoivent en revanche les chaussées, pour la même raison que l'herbe et
     // les cultures : une clôture ne se plante pas sur la rue.
-    this.gardens = new GardenLayer({ THREE, scene, bubble, roads: this.roads, theme });
+    this.gardens = new GardenLayer({ THREE, scene, bubble, roads: this._infra, theme });
     // La voirie ne lit aucune tuile non plus : elle reçoit les tronçons de
     // chaussée, les emprises habitées et les empreintes du bâti. C'est pour ça
     // qu'elle passe par ici — voir l'ordre de génération plus haut.
@@ -168,7 +192,7 @@ export class WorldComposer {
       scene,
       bubble,
       groundClass: this.groundClass,
-      roads: this.roads,
+      roads: this._infra,
       theme,
     });
     this.vegetation.setMaxAnisotropy(maxAnisotropy);
@@ -177,7 +201,7 @@ export class WorldComposer {
       scene,
       bubble,
       groundClass: this.groundClass,
-      roads: this.roads,
+      roads: this._infra,
       streets: this.streets,
       theme,
     });
@@ -191,7 +215,7 @@ export class WorldComposer {
       scene,
       bubble,
       groundClass: this.groundClass,
-      roads: this.roads,
+      roads: this._infra,
       theme,
     });
     this.crops.setMaxAnisotropy(maxAnisotropy);
@@ -250,6 +274,7 @@ export class WorldComposer {
       this.roads.needsRebuild(here.x, here.z) ||
       this.buildings.needsRebuild(here.x, here.z) ||
       this.water.needsRebuild(here.x, here.z) ||
+      this.railways.needsRebuild(here.x, here.z) ||
       this.furniture.needsRebuild(here.x, here.z) ||
       // Une tuile absente du cache est une tuile qui a échoué : les erreurs
       // réseau ne s'y gravent plus, donc il faut réessayer. Sans ça, un
@@ -284,6 +309,10 @@ export class WorldComposer {
       // 3. Chaussées — elles publient l'index et déclenchent le déblai du terrain.
       const hasRoads = this.roads.rebuild(this.vectorTiles, wanted, here);
 
+      // 3 bis. Voie ferrée — ne dépend de rien, ne publie rien : elle ne lit
+      //    que les tuiles, comme l'eau.
+      this.railways.rebuild(this.vectorTiles, wanted, here);
+
       // 4. Bâti.
       this.buildings.rebuild(this.vectorTiles, wanted, here);
 
@@ -303,7 +332,10 @@ export class WorldComposer {
       //    traverse pas un trottoir. Ils ne lisent aucune tuile.
       this.gardens.rebuild(this.buildings.houses, here, this.streets.index);
 
-      // 5. Mobilier — il lui faut les tronçons de chaussée et leur index.
+      // 5. Mobilier — il lui faut les tronçons de chaussée et leur index, le
+      //    compte de bâtiments (`fabric`) pour distinguer un hameau d'un
+      //    bourg, et l'emprise ferroviaire — un corridor au même titre que
+      //    celui de la route (voir `railwayLayer.js`).
       this.furniture.rebuild(
         this.vectorTiles,
         wanted,
@@ -311,7 +343,9 @@ export class WorldComposer {
         this.roads.roadSegments,
         this.roads.index,
         this.roads.junctions,
-        builtUp
+        builtUp,
+        fabric,
+        this.railways.index
       );
 
       // 6. Arbres — les tuiles déjà plantées le restent : à donnée égale, le
@@ -382,6 +416,7 @@ export class WorldComposer {
     // reconstructions, et c'est ce qui la rend abordable.
     this.furniture.advanceSignals(delta);
     this.furniture.advanceLamps(at);
+    this.furniture.advanceRotor(delta);
   }
 
   /**
@@ -398,21 +433,34 @@ export class WorldComposer {
   }
 
   /**
-   * Accorde le vent de toute la végétation. Idempotent, et pour la même raison
-   * que `setNight` : une seule mesure, celle du ciel, sinon l'herbe se
-   * coucherait pendant que le blé serait au calme.
+   * Accorde le vent de toute la végétation, des éoliennes et des oiseaux.
+   * Idempotent, et pour la même raison que `setNight` : une seule mesure,
+   * celle du ciel, sinon l'herbe se coucherait pendant que le blé serait au
+   * calme.
    *
-   * @param {{amplitude:number, speed:number}} field Voir `windField`.
+   * @param {{amplitude:number, speed:number}} field Voir `windField` — le
+   *        feuillage n'a besoin que de ça, il ne connaît pas de direction.
+   * @param {Object} [weather] État météo résolu (`resolveWeather`) — sa force
+   *        (`wind`) et sa direction (`windDirection`) pilotent le rotor des
+   *        éoliennes et le cap des oiseaux, qui eux en ont besoin.
    */
-  setWind(field) {
+  setWind(field, weather = null) {
     if (this.disposed || !field) return;
-    if (this._wind && field.amplitude === this._wind.amplitude && field.speed === this._wind.speed) {
-      return;
-    }
-    this._wind = { amplitude: field.amplitude, speed: field.speed };
+    const direction = weather ? weather.windDirection : 0;
+    const force = weather ? weather.wind : 0;
+    const unchanged =
+      this._wind &&
+      field.amplitude === this._wind.amplitude &&
+      field.speed === this._wind.speed &&
+      direction === this._wind.direction &&
+      force === this._wind.force;
+    if (unchanged) return;
+    this._wind = { amplitude: field.amplitude, speed: field.speed, direction, force };
     this.grass.setWind(field);
     this.vegetation.setWind(field);
     this.crops.setWind(field);
+    this.furniture.setWindDirection(direction, force);
+    this.life.setWindDirection(direction);
   }
 
   /**
@@ -447,6 +495,7 @@ export class WorldComposer {
     this.buildings.dispose();
     this.water.dispose();
     this.waterMaterial.dispose();
+    this.railways.dispose();
     // Avant la bulle : la couche routière lui retire son déblai en partant.
     this.roads.dispose();
     this.roadMaterials.dispose();

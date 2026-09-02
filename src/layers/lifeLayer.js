@@ -9,7 +9,8 @@
  * Cette couche porte donc le peu qui doit être animé **par image**, et
  * uniquement lui :
  *
- * - des **oiseaux**, qui tournent haut au-dessus de l'observateur ;
+ * - des **oiseaux**, qui dérivent haut au-dessus de l'observateur, tous dans
+ *   le sens du vent (`setWindDirection`) ;
  * - la **fumée** des cheminées, publiée par `furnitureLayer.chimneys`.
  *
  * ## Pourquoi si peu d'objets
@@ -45,9 +46,16 @@ export const BIRD_COUNT = 22;
  */
 export const BIRD_HEIGHT_MIN = 16;
 export const BIRD_HEIGHT_MAX = 52;
-/** Rayon des orbites, en mètres. */
-export const BIRD_RADIUS_MIN = 22;
-export const BIRD_RADIUS_MAX = 95;
+/**
+ * Demi-côté de la boîte dans laquelle les oiseaux dérivent, en mètres — même
+ * principe que `precipitation.js` et `debris.js` : une boîte attachée à
+ * l'observateur, où chaque oiseau se replie en boucle plutôt que de s'éloigner
+ * indéfiniment dans le vent.
+ */
+export const BIRD_SPREAD_M = 95;
+/** Vitesse de dérive le long du vent, en mètres par seconde. */
+export const BIRD_SPEED_MIN = 3;
+export const BIRD_SPEED_MAX = 9;
 /** Envergure d'un oiseau, en mètres (la géométrie mesure 1 de large). */
 export const BIRD_SPAN_M = 1.15;
 /** Battement d'ailes : cycles par seconde. */
@@ -88,32 +96,45 @@ export function createBirdGeometry(THREE) {
   return geometry;
 }
 
+/** Repli en boucle dans `[-spread, spread]`, sans le saut que ferait `%` sur un négatif. */
+function wrap(v, spread) {
+  return (((v + spread) % (spread * 2)) + spread * 2) % (spread * 2) - spread;
+}
+
 /**
- * Position d'un oiseau sur son orbite, à un instant donné. Fonction pure.
+ * Position d'un oiseau à un instant donné. Fonction pure.
  *
- * Chaque oiseau a son rayon, sa hauteur, sa vitesse angulaire et sa phase, tirés
- * une fois pour toutes. Deux oiseaux ne sont donc jamais synchrones — la seule
+ * Ils ne tournent plus : ils dérivent le long du vent, tous dans le même cap —
+ * « un oiseau ne vole pas contre le vent pour le plaisir » —, et se replient en
+ * boucle dans une boîte centrée sur l'observateur quand ils en sortent, comme
+ * la pluie et les débris (voir `precipitation.js`). Chaque oiseau garde sa
+ * propre origine dans la boîte, sa propre vitesse et sa propre phase, tirées
+ * une fois pour toutes : deux oiseaux ne sont donc jamais synchrones — la seule
  * chose qui trahirait immédiatement un vol procédural.
  *
- * @param {Object} bird  Paramètres d'orbite.
+ * @param {Object} bird  Paramètres propres à l'oiseau (voir le constructeur).
  * @param {number} time  Secondes écoulées.
  * @param {{x:number,y:number,z:number}} centre Position de l'observateur.
+ * @param {number} windDirection Direction du vent, en radians
+ *        (`weather.windDirection`) — le cap de vol, commun à tout le vol.
  * @returns {{x:number,y:number,z:number,heading:number,flap:number}}
  */
-export function birdAt(bird, time, centre) {
-  const angle = bird.phase + time * bird.speed;
-  const x = centre.x + Math.cos(angle) * bird.radius;
-  const z = centre.z + Math.sin(angle) * bird.radius;
-  // Ondulation verticale : un oiseau qui tourne à altitude constante ressemble
-  // à un objet sur un rail.
-  const y = centre.y + bird.height + Math.sin(angle * 1.7 + bird.phase) * 6;
+export function birdAt(bird, time, centre, windDirection = 0) {
+  const dx = Math.cos(windDirection);
+  const dz = Math.sin(windDirection);
+  const travel = time * bird.speed;
+  const x = centre.x + wrap(bird.baseX + dx * travel, BIRD_SPREAD_M);
+  const z = centre.z + wrap(bird.baseZ + dz * travel, BIRD_SPREAD_M);
+  // Altitude fixe, sans ondulation : chaque oiseau vole à plat, à sa propre
+  // hauteur.
+  const y = centre.y + bird.height;
   return {
     x,
     y,
     z,
-    // Tangente à l'orbite, dans le sens du vol. `+Z` de la silhouette doit s'y
-    // aligner, d'où l'ordre des arguments.
-    heading: Math.atan2(-Math.sin(angle) * bird.speed, Math.cos(angle) * bird.speed),
+    // Le cap est celui du vent, le même pour tout le vol : `+Z` de la
+    // silhouette doit s'y aligner, d'où l'ordre des arguments.
+    heading: Math.atan2(dx, dz),
     // Battement : jamais symétrique, l'aile remonte plus vite qu'elle descend.
     flap: 0.35 + 0.65 * Math.abs(Math.sin(time * Math.PI * BIRD_FLAP_HZ * bird.beat + bird.phase)),
   };
@@ -140,6 +161,7 @@ export class LifeLayer {
     this.disposed = false;
     this.time = 0;
     this._night = 0;
+    this._windDirection = 0;
 
     this.group = new THREE.Group();
     this.group.name = 'life';
@@ -169,20 +191,20 @@ export class LifeLayer {
     this.birds.count = 0;
     this.group.add(this.birds);
 
-    this._orbits = [];
+    this._flock = [];
     for (let i = 0; i < BIRD_COUNT; i++) {
       const a = draw(i * 7 + 1);
       const b = draw(i * 13 + 2);
       const c = draw(i * 19 + 3);
-      const d = draw(i * 23 + 4);
-      this._orbits.push({
-        radius: BIRD_RADIUS_MIN + a * (BIRD_RADIUS_MAX - BIRD_RADIUS_MIN),
-        height: BIRD_HEIGHT_MIN + b * (BIRD_HEIGHT_MAX - BIRD_HEIGHT_MIN),
-        // Vitesse angulaire signée : la moitié du vol tourne dans l'autre sens.
-        speed: (0.045 + c * 0.075) * (d < 0.5 ? -1 : 1),
+      this._flock.push({
+        // Origine dans la boîte de dérive — voir `BIRD_SPREAD_M`.
+        baseX: (draw(i * 41 + 8) * 2 - 1) * BIRD_SPREAD_M,
+        baseZ: (draw(i * 43 + 9) * 2 - 1) * BIRD_SPREAD_M,
+        height: BIRD_HEIGHT_MIN + a * (BIRD_HEIGHT_MAX - BIRD_HEIGHT_MIN),
+        speed: BIRD_SPEED_MIN + b * (BIRD_SPEED_MAX - BIRD_SPEED_MIN),
         phase: draw(i * 29 + 5) * Math.PI * 2,
         beat: 0.75 + draw(i * 31 + 6) * 0.5,
-        scale: BIRD_SPAN_M * (0.85 + draw(i * 37 + 7) * 0.6),
+        scale: BIRD_SPAN_M * (0.85 + c * 0.6),
       });
     }
 
@@ -229,6 +251,14 @@ export class LifeLayer {
   }
 
   /**
+   * Règle le cap du vol : les oiseaux ne vont que dans le sens du vent.
+   * @param {number} direction Direction du vent, en radians (`weather.windDirection`).
+   */
+  setWindDirection(direction) {
+    this._windDirection = Number.isFinite(direction) ? direction : 0;
+  }
+
+  /**
    * Règle l'ambiance nocturne : les oiseaux se posent, la fumée s'assombrit.
    * @param {number} mix 0 en plein jour, 1 en pleine nuit.
    */
@@ -260,8 +290,8 @@ export class LifeLayer {
     if (!this.birds.visible) return;
     const centre = { x: at.x, y: at.y, z: at.z };
 
-    this._orbits.forEach((bird, index) => {
-      const at = birdAt(bird, this.time, centre);
+    this._flock.forEach((bird, index) => {
+      const at = birdAt(bird, this.time, centre, this._windDirection);
       this._position.set(at.x, at.y, at.z);
       this._euler.set(0, at.heading, 0);
       this._quaternion.setFromEuler(this._euler);
@@ -271,7 +301,7 @@ export class LifeLayer {
       this.birds.setMatrixAt(index, this._matrix);
     });
 
-    this.birds.count = this._orbits.length;
+    this.birds.count = this._flock.length;
     this.birds.instanceMatrix.needsUpdate = true;
   }
 

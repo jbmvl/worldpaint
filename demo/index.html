@@ -30,6 +30,14 @@
     width: 4px; height: 4px; margin-left: -2px; margin-top: -2px;
     background: rgba(255,255,255,0.6); border-radius: 50%;
   }
+  /* Étiquette de surface (culture, emprise landuse) plutôt que d'objet posé :
+     un accent de couleur suffit à les distinguer sans changer la lecture. */
+  .label-area {
+    border-color: rgba(151, 214, 137, 0.55);
+  }
+  .label-area::after {
+    background: rgba(151, 214, 137, 0.85);
+  }
 
   #panel {
     position: fixed; top: 12px; left: 12px; z-index: 10;
@@ -210,6 +218,10 @@
   <div class="slider">
     <div class="row"><span>Vent</span><span class="val" id="windVal"></span></div>
     <input type="range" id="wind" min="0" max="100" value="25" />
+  </div>
+  <div class="slider">
+    <div class="row"><span>Direction du vent</span><span class="val" id="windDirectionVal"></span></div>
+    <input type="range" id="windDirection" min="0" max="359" value="0" />
   </div>
   <div class="slider">
     <div class="row"><span>Brume</span><span class="val" id="hazeVal"></span></div>

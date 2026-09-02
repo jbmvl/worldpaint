@@ -348,6 +348,11 @@ export function appendRibbon(
  *        une haie épaissit et s'amincit le long de son tracé, et deux flancs
  *        rigoureusement parallèles sont l'autre moitié de la lecture « ruban ».
  *        Il ne déplace pas l'axe, il dilate la section autour de lui.
+ * @param {Float32Array|number[]} [options.lateralJitter] Décalage de `offset`,
+ *        une valeur par ligne, en mètres. `scaleUp`/`scaleAcross` dilatent la
+ *        section sans jamais déplacer son axe ; ceci déplace l'axe lui-même,
+ *        d'une ligne à l'autre — c'est ce qui fait onduler le tracé en plan,
+ *        et non plus seulement en coupe.
  * @returns {boolean} vrai si de la géométrie a été produite.
  */
 export function appendProfile(
@@ -363,6 +368,7 @@ export function appendProfile(
     smoothRadius = 2,
     scaleUp = null,
     scaleAcross = null,
+    lateralJitter = null,
   }
 ) {
   const rows = path?.length ?? 0;
@@ -382,15 +388,17 @@ export function appendProfile(
     }
     const px = frames[r * 4 + 2];
     const pz = frames[r * 4 + 3];
-    ground[r] = sampleElevation(path[r].x + px * offset, path[r].z + pz * offset) + lift;
+    const off = offset + (lateralJitter ? lateralJitter[r] : 0);
+    ground[r] = sampleElevation(path[r].x + px * off, path[r].z + pz * off) + lift;
   }
   smoothColumns(ground, rows, 1, smoothRadius);
 
   for (let r = 0; r < rows; r++) {
     const px = frames[r * 4 + 2];
     const pz = frames[r * 4 + 3];
-    const ax = path[r].x + px * offset;
-    const az = path[r].z + pz * offset;
+    const off = offset + (lateralJitter ? lateralJitter[r] : 0);
+    const ax = path[r].x + px * off;
+    const az = path[r].z + pz * off;
 
     const rise = scaleUp ? scaleUp[r] : 1;
     const spread = scaleAcross ? scaleAcross[r] : 1;
@@ -528,17 +536,30 @@ export function appendVariableWall(
 
 /**
  * Convertit un accumulateur de sections en `BufferGeometry` colorée.
+ *
+ * @param {boolean} [options.flat] Normales par face plutôt que moyennées entre
+ *        sommets partagés. Une haie ou un rang de vigne dont le tracé est
+ *        facetté (`hedgeGeometry.facetJitter`) a besoin de ceci pour que ses
+ *        arêtes se voient : moyenner les normales de part et d'autre d'une
+ *        arête est exactement ce qui la lisse à l'écran, quelle que soit la
+ *        géométrie en dessous. Le repli (`false`) garde l'ombrage lissé
+ *        qu'attendent muret, glissière, remblai et câble, qui partagent le
+ *        même buffer mais pas ce défaut.
  * @returns {Object|null} `null` si rien n'a été accumulé.
  */
-export function toColoredGeometry(THREE, buffer) {
+export function toColoredGeometry(THREE, buffer, { flat = false } = {}) {
   if (buffer.positions.length === 0) return null;
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(buffer.positions, 3));
   geometry.setAttribute('color', new THREE.Float32BufferAttribute(buffer.colors, 3));
   geometry.setIndex(buffer.indices);
-  geometry.computeVertexNormals();
-  geometry.computeBoundingSphere();
-  return geometry;
+  // `toNonIndexed` duplique un sommet par face qui le touche : plus aucun
+  // sommet n'étant partagé, `computeVertexNormals` n'a plus rien à moyenner et
+  // rend de fait une normale par face.
+  const flattened = flat ? geometry.toNonIndexed() : geometry;
+  flattened.computeVertexNormals();
+  flattened.computeBoundingSphere();
+  return flattened;
 }
 
 /**

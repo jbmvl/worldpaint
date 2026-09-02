@@ -164,6 +164,15 @@ function smoothstep(edge0, edge1, x) {
 
 const mix = (a, b, t) => a + (b - a) * t;
 
+/**
+ * Plancher de teinte de la pluie, linéaire — 45 % en sRGB, le même gris moyen
+ * que celui déjà utilisé pour détacher les débris de leur fond (voir plus
+ * bas). Une averse ne doit jamais tomber plus sombre que ça : sous un ciel
+ * bouché, le brouillard dont sa couleur part s'assombrit, et sans ce plancher
+ * la pluie se confondait avec une chaussée mouillée.
+ */
+const RAIN_GREY_LINEAR = [0.1703, 0.1703, 0.1703];
+
 /** #rrggbb → [r, g, b] linéaires approximés (sRGB → linéaire, gamma 2.2). */
 function hexToLinear(hex) {
   const clean = String(hex || '#000000').replace('#', '');
@@ -675,11 +684,17 @@ export class SceneEnvironment {
     // s'assombrit pas au coucher, c'est le ciel qui bascule sur sa palette
     // nocturne. Sans le second facteur, une averse de minuit tombait en blanc
     // vif sur une scène noire.
+    //
+    // `RAIN_GREY_LINEAR` est un plancher, pas une teinte fixe : par ciel clair,
+    // le brouillard éclairci reste au-dessus et le porte. C'est justement sous
+    // l'averse — un ciel bouché qui assombrit le brouillard dont ce ton part —
+    // que le plancher joue, pour que la pluie ne se confonde jamais avec une
+    // chaussée mouillée, plus sombre encore.
     const glow = 1 - this.nightMix * 0.72;
     this.precipitation.setTint({
-      r: Math.min(1, fogColor[0] + 0.18) * glow,
-      g: Math.min(1, fogColor[1] + 0.18) * glow,
-      b: Math.min(1, fogColor[2] + 0.2) * glow,
+      r: Math.max(RAIN_GREY_LINEAR[0], Math.min(1, fogColor[0] + 0.18)) * glow,
+      g: Math.max(RAIN_GREY_LINEAR[1], Math.min(1, fogColor[1] + 0.18)) * glow,
+      b: Math.max(RAIN_GREY_LINEAR[2], Math.min(1, fogColor[2] + 0.2)) * glow,
     });
 
     // Même assombrissement nocturne, mais sans le rapprochement vers la

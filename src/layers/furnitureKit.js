@@ -1,10 +1,13 @@
 /*
  * furnitureKit — le mobilier, modelé en code.
  * -------------------------------------------
- * Un catalogue de petits volumes : lampadaire, poteau, pylône, éolienne,
- * panneau, borne, abribus, botte de foin, tas de bois, fontaine, lavoir,
- * grange, silo, hangar, piquets de clôture, bosquet, feu tricolore — et ce qui
- * donne de la vie au décor : vaches, moutons, poules, fil à linge.
+ * Un catalogue de petits volumes : lampadaire, poteau, pylône, antenne relais,
+ * éolienne, phare, panneau, borne, abribus, botte de foin, tas de bois,
+ * fontaine, lavoir, grange, silo, hangar, serre, moulin à vent, moulin à eau,
+ * château d'eau, piquets de clôture, bosquet, feu tricolore — les édifices
+ * urbains (église, mosquée, hôpital, commerce, monument, château, tour,
+ * cimetière, cheminée d'usine, grande roue, stade) — et ce qui donne de la vie
+ * au décor : vaches, moutons, chèvres, chevaux, poules, fil à linge.
  *
  * **Pourquoi pas des modèles importés.** C'est la question qui se pose en
  * premier, et elle mérite une réponse écrite. Trois raisons, dans l'ordre où
@@ -41,6 +44,16 @@ import { defaultTheme } from '../themes/default.js';
 const DEFAULT_COLORS = defaultTheme.furniture.colors;
 
 /** Revers gris des panneaux de signalisation, quand rien n'est précisé. */
+
+/** Nom de l'attribut de sommet qui marque les pales d'éolienne. */
+export const ROTOR_SPIN_ATTRIBUTE = 'aSpin';
+
+/**
+ * Hauteur du moyeu de l'éolienne, en mètres — aussi le pivot de rotation des
+ * pales (voir `createFurnitureRotorMaterial`). Exportée pour que les deux
+ * restent d'accord sans qu'on recopie la valeur.
+ */
+export const WIND_TURBINE_HUB_M = 78;
 
 /**
  * Suite déterministe dans [0, 1[, pour les formes irrégulières du catalogue.
@@ -87,6 +100,11 @@ export class Kit {
     this.positions = [];
     this.normals = [];
     this.colors = [];
+    // Un flag par sommet, 1 pour ce qui doit tourner (les pales d'éolienne),
+    // 0 pour tout le reste. Nul pour la quasi-totalité du catalogue : porté
+    // dans `toGeometry` seulement quand une pièce s'en sert vraiment, pour ne
+    // pas alourdir chaque poteau d'un attribut qui ne lui sert à rien.
+    this.spins = [];
   }
 
   get vertexCount() {
@@ -119,8 +137,12 @@ export class Kit {
     return [x + tx, y + ty, z + tz];
   }
 
-  /** Triangle, normale déduite du sens de parcours. */
-  tri(a, b, c, color) {
+  /**
+   * Triangle, normale déduite du sens de parcours.
+   * @param {number} [spin] 1 si ce triangle doit tourner autour du moyeu
+   *        (voir `windTurbine`), 0 sinon.
+   */
+  tri(a, b, c, color, spin = 0) {
     const ux = b[0] - a[0];
     const uy = b[1] - a[1];
     const uz = b[2] - a[2];
@@ -139,19 +161,20 @@ export class Kit {
       this.positions.push(p[0], p[1], p[2]);
       this.normals.push(nx, ny, nz);
       this.colors.push(color[0], color[1], color[2]);
+      this.spins.push(spin);
     }
     return this;
   }
 
-  quad(a, b, c, d, color) {
-    return this.tri(a, b, c, color).tri(a, c, d, color);
+  quad(a, b, c, d, color, spin = 0) {
+    return this.tri(a, b, c, color, spin).tri(a, c, d, color, spin);
   }
 
   /**
    * Boîte centrée en (0, h/2, 0) avant transformation : une boîte posée à
    * `y = 0` repose donc sur le sol, ce qui est le cas usuel.
    */
-  box({ width, height, depth, color, ...t }) {
+  box({ width, height, depth, color, spin = 0, ...t }) {
     const hw = width / 2;
     const hd = depth / 2;
     const p = (x, y, z) => Kit.transform([x, y, z], t);
@@ -165,12 +188,12 @@ export class Kit {
     const g = p(hw, height, hd);
     const h = p(-hw, height, hd);
 
-    this.quad(d, c, g, h, color); // +z
-    this.quad(b, a, e, f, color); // -z
-    this.quad(c, b, f, g, color); // +x
-    this.quad(a, d, h, e, color); // -x
-    this.quad(h, g, f, e, color); // dessus
-    this.quad(a, b, c, d, color); // dessous
+    this.quad(d, c, g, h, color, spin); // +z
+    this.quad(b, a, e, f, color, spin); // -z
+    this.quad(c, b, f, g, color, spin); // +x
+    this.quad(a, d, h, e, color, spin); // -x
+    this.quad(h, g, f, e, color, spin); // dessus
+    this.quad(a, b, c, d, color, spin); // dessous
     return this;
   }
 
@@ -360,6 +383,11 @@ export class Kit {
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(this.positions, 3));
     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(this.normals, 3));
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(this.colors, 3));
+    // Seules les pièces qui en posent (l'éolienne, aujourd'hui) portent
+    // l'attribut : le reste du catalogue n'a rien à tourner.
+    if (this.spins.some((v) => v !== 0)) {
+      geometry.setAttribute(ROTOR_SPIN_ATTRIBUTE, new THREE.Float32BufferAttribute(this.spins, 1));
+    }
     geometry.computeBoundingSphere();
     geometry.name = name;
     return geometry;
@@ -505,10 +533,138 @@ export const FURNITURE_BUILDERS = {
     return k;
   },
 
-  /** Éolienne : tour effilée, nacelle, trois pales. */
+  /**
+   * Antenne relais : mât treillis à trois montants, deux paraboles, feu de
+   * balisage. Elle se distingue du pylône électrique (`pylon`) par sa
+   * silhouette — plus fin, plus haut, sans consoles porteuses — parce qu'elle
+   * ne porte pas de ligne : c'est un relais, posé au sommet pour l'antenne,
+   * pas pour ce qu'il transporte.
+   *
+   * Les traverses horizontales ne passent pas par `Kit.box` avec un couple
+   * roulis/tangage : ce sont des segments **horizontaux** entre deux montants
+   * disposés en cercle, une géométrie que ni `strutYZ` (plan (y, z) à x fixe)
+   * ni la diagonale du pylône (un seul axe) ne couvrent. `ring` ci-dessous
+   * calcule directement le cap qui pose l'axe « hauteur » de la boîte à
+   * l'horizontale, dans la direction voulue.
+   */
+  radioMast(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const height = 40;
+    const legs = 3;
+    const stages = 7;
+    const spread = (t) => 1.7 - t * 1.25; // rayon de la triangulation au fil de la montée
+
+    /** Barre horizontale entre deux points du plan (x, z), à `y` fixe. */
+    const ring = (x0, z0, x1, z1, y, color) => {
+      const dx = x1 - x0;
+      const dz = z1 - z0;
+      const run = Math.hypot(dx, dz);
+      if (run <= 1e-6) return;
+      k.box({
+        width: 0.08,
+        height: run,
+        depth: 0.08,
+        x: (x0 + x1) / 2,
+        y,
+        z: (z0 + z1) / 2,
+        tilt: Math.PI / 2,
+        yaw: Math.atan2(dx, dz),
+        color,
+      });
+    };
+
+    for (let s = 0; s < stages; s++) {
+      const t0 = s / stages;
+      const t1 = (s + 1) / stages;
+      const y0 = t0 * height;
+      const y1 = t1 * height;
+      const r0 = spread(t0);
+      const r1 = spread(t1);
+      const points0 = [];
+      const points1 = [];
+
+      for (let leg = 0; leg < legs; leg++) {
+        const angle = (leg / legs) * Math.PI * 2;
+        const x0 = Math.cos(angle) * r0;
+        const z0 = Math.sin(angle) * r0;
+        const x1 = Math.cos(angle) * r1;
+        const z1 = Math.sin(angle) * r1;
+        points0.push([x0, z0]);
+        points1.push([x1, z1]);
+        const dx = x1 - x0;
+        const dz = z1 - z0;
+        const run = Math.hypot(dx, y1 - y0, dz);
+        k.box({
+          width: 0.1,
+          height: run,
+          depth: 0.1,
+          x: x0 + dx / 2,
+          y: y0,
+          z: z0 + dz / 2,
+          tilt: Math.atan2(dz, y1 - y0),
+          roll: -Math.atan2(dx, y1 - y0),
+          color: C.galvanised,
+        });
+      }
+      // Un cerclage tous les deux étages : c'est lui qui lit « treillis »
+      // plutôt qu'un trépied posé là.
+      if (s % 2 === 1) {
+        for (let leg = 0; leg < legs; leg++) {
+          const [x0, z0] = points1[leg];
+          const [x1, z1] = points1[(leg + 1) % legs];
+          ring(x0, z0, x1, z1, y1, C.steelDark);
+        }
+      }
+    }
+
+    // Deux paraboles, à des hauteurs et des orientations différentes : deux
+    // relais qui pointent le même point du ciel est le genre de détail qui
+    // trahit un décor procédural une fois remarqué.
+    for (const [y, facing, r] of [[height * 0.55, 0.6, 0.55], [height * 0.72, 2.3, 0.4]]) {
+      k.cylinder({
+        radiusBottom: r,
+        radiusTop: r,
+        height: 0.16,
+        radial: 10,
+        y,
+        x: Math.sin(facing) * (spread(y / height) + 0.1),
+        z: Math.cos(facing) * (spread(y / height) + 0.1),
+        yaw: facing,
+        tilt: Math.PI / 2,
+        color: C.white,
+        colorTop: C.steelDark,
+      });
+    }
+
+    // Fouets d'antenne et feu de balisage, au sommet.
+    for (const angle of [0.4, 2.6]) {
+      k.cylinder({
+        radiusBottom: 0.025,
+        radiusTop: 0.01,
+        height: 2.4,
+        radial: 4,
+        x: Math.cos(angle) * 0.15,
+        y: height,
+        z: Math.sin(angle) * 0.15,
+        color: C.galvanised,
+      });
+    }
+    k.box({ width: 0.22, height: 0.22, depth: 0.22, y: height + 2.3, color: C.signRed });
+    return k;
+  },
+
+  /**
+   * Éolienne : tour effilée, nacelle, trois pales.
+   *
+   * Les pales portent `spin: 1` : c'est le flag que `createFurnitureRotorMaterial`
+   * lit pour les faire tourner autour du moyeu, en `(0, WIND_TURBINE_HUB_M)`
+   * dans le repère local — voir l'en-tête de ce module pour le pourquoi du
+   * pivot. Rien d'autre dans la pièce ne porte ce flag : le mât et la nacelle
+   * restent immobiles.
+   */
   windTurbine(C = DEFAULT_COLORS) {
     const k = new Kit(C);
-    const hub = 78;
+    const hub = WIND_TURBINE_HUB_M;
     k.cylinder({ radiusBottom: 2.2, radiusTop: 1.1, height: hub, radial: 12, color: C.white });
     k.box({ width: 3, height: 3, depth: 9, y: hub - 1.5, color: C.white });
     k.cylinder({ radiusBottom: 1.1, radiusTop: 0.6, height: 1.4, radial: 8, y: hub, z: -5.4, tilt: -Math.PI / 2, color: C.white });
@@ -525,8 +681,46 @@ export const FURNITURE_BUILDERS = {
         z: -6,
         roll,
         color: C.white,
+        spin: 1,
       });
     }
+    return k;
+  },
+
+  /**
+   * Phare : tour tronconique, bande rouge de repère diurne, galerie,
+   * chambre de la lanterne vitrée sous son dôme.
+   *
+   * La bande rouge n'est pas décorative — c'est elle qui distingue un phare
+   * d'un silo depuis le large, où la silhouette seule (un cylindre effilé)
+   * ne suffirait pas à trancher.
+   */
+  lighthouse(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const height = 20;
+    k.cylinder({ radiusBottom: 2.3, radiusTop: 1.7, height, radial: 10, color: C.white });
+    k.cylinder({
+      radiusBottom: 2.06,
+      radiusTop: 1.86,
+      height: height * 0.16,
+      radial: 10,
+      y: height * 0.42,
+      color: C.signRed,
+    });
+    // Galerie : le rebord qui porte la chambre de la lanterne.
+    k.cylinder({ radiusBottom: 2, radiusTop: 2, height: 0.35, radial: 10, y: height, color: C.steelDark });
+    // Chambre de la lanterne : verrière sombre, dôme, épi de faîtage.
+    k.cylinder({
+      radiusBottom: 1.3,
+      radiusTop: 1.3,
+      height: 2.4,
+      radial: 8,
+      y: height + 0.35,
+      color: C.black,
+      colorTop: C.slate,
+      cap: false,
+    });
+    k.cylinder({ radiusBottom: 1.3, radiusTop: 0.05, height: 1.1, radial: 8, y: height + 2.75, color: C.steelDark });
     return k;
   },
 
@@ -798,6 +992,100 @@ export const FURNITURE_BUILDERS = {
     return k;
   },
 
+  /**
+   * Moulin à vent : tour effilée en pierre, calotte, quatre ailes. Les ailes
+   * ne tournent pas — contrairement au rotor de l'éolienne moderne, dont le
+   * pivot est câblé une fois pour toutes dans le shader commun à la hauteur
+   * du moyeu de l'éolienne (`WIND_TURBINE_HUB_M`) ; un second pivot, à une
+   * autre hauteur, demanderait d'y toucher pour un seul objet. Un moulin à
+   * l'arrêt reste un moulin.
+   */
+  windmill(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const height = 8.5;
+    k.cylinder({ radiusBottom: 2.4, radiusTop: 1.7, height, radial: 8, color: C.stone });
+    k.cylinder({ radiusBottom: 1.9, radiusTop: 0.15, height: 2.3, radial: 8, y: height, color: C.slate });
+    const hubY = height + 0.5;
+    const hubZ = 1.75;
+    for (let i = 0; i < 4; i++) {
+      const roll = (i / 4) * Math.PI * 2 + Math.PI / 4;
+      k.box({ width: 0.18, height: 4.4, depth: 0.06, y: hubY, z: hubZ, roll, color: C.wood });
+    }
+    k.box({ width: 0.4, height: 0.4, depth: 0.3, y: hubY, z: hubZ - 0.1, color: C.woodPale });
+    return k;
+  },
+
+  /**
+   * Moulin à eau : bâtisse à toit à deux pentes, roue à aubes plaquée sur le
+   * pignon. La roue n'est pas non plus animée, pour la même raison que les
+   * ailes du moulin à vent.
+   */
+  watermill(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.box({ width: 6, height: 5.5, depth: 7, color: C.plaster });
+    k.gableRoof({ width: 6, depth: 7, height: 2.6, y: 5.5, color: C.tile, gableColor: C.brick });
+    const wheelY = 2.2;
+    const wheelZ = 4.3;
+    k.cylinder({
+      radiusBottom: 2.1,
+      radiusTop: 2.1,
+      height: 0.4,
+      radial: 12,
+      y: wheelY,
+      z: wheelZ,
+      tilt: Math.PI / 2,
+      color: C.woodPale,
+    });
+    for (let i = 0; i < 12; i++) {
+      const angle = (i / 12) * Math.PI * 2;
+      k.box({
+        width: 0.5,
+        height: 0.08,
+        depth: 0.5,
+        x: Math.cos(angle) * 2.1,
+        y: wheelY + Math.sin(angle) * 2.1,
+        z: wheelZ,
+        roll: angle,
+        color: C.wood,
+      });
+    }
+    return k;
+  },
+
+  /**
+   * Château d'eau, silhouette moderne « à la française » : un long fût
+   * cylindrique large, surmonté d'une cuve en pyramide ronde inversée qui
+   * s'évase vers le haut (le fût est son sommet, pas sa base), fermée par un
+   * toit plat. Teinte claire (plâtre) plutôt que béton brut ou ardoise — la
+   * lecture recherchée est celle des tours-réservoirs récentes, pas celle du
+   * modèle rural à chapeau conique qu'elle remplace.
+   */
+  waterTower(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const shaftRadius = 1.3;
+    const shaftHeight = 16;
+    const tankHeight = 6.5;
+    const tankRadius = 4.6;
+    k.cylinder({ radiusBottom: shaftRadius, radiusTop: shaftRadius, height: shaftHeight, radial: 16, color: C.plaster });
+    k.cylinder({
+      radiusBottom: shaftRadius,
+      radiusTop: tankRadius,
+      height: tankHeight,
+      radial: 16,
+      y: shaftHeight,
+      color: C.plaster,
+    });
+    k.cylinder({
+      radiusBottom: tankRadius,
+      radiusTop: tankRadius,
+      height: 0.3,
+      radial: 16,
+      y: shaftHeight + tankHeight,
+      color: C.plaster,
+    });
+    return k;
+  },
+
   /** Silo : cylindre cannelé et chapeau conique. */
   silo(C = DEFAULT_COLORS) {
     const k = new Kit(C);
@@ -820,6 +1108,153 @@ export const FURNITURE_BUILDERS = {
       k.box({ width: 0.2, height: 4.4, depth: 0.2, x, z: 5, color: C.steelDark });
     }
     k.barrelRoof({ width: 18.4, depth: 10.4, rise: 2.6, y: 4.2, color: C.corrugated });
+    return k;
+  },
+
+  /**
+   * Serre tunnel de maraîchage : une voûte pleine, deux longrines au sol.
+   *
+   * Le matériau commun du mobilier ne sait pas la transparence — c'est un seul
+   * programme GPU pour tout le catalogue (voir l'en-tête de ce module) — donc
+   * la bâche n'est pas vitrée, elle est **pâle**. À la distance où ce décor se
+   * regarde, une couleur claire et un peu bleutée suffit à lire « plastique »
+   * plutôt que « tôle », ce qui est tout ce qu'on demande à cette pièce.
+   */
+  greenhouse(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const width = 4.2;
+    const length = 14;
+    k.barrelRoof({ width, depth: length, rise: 2, color: C.water });
+    for (const x of [-width / 2, width / 2]) {
+      k.box({ width: 0.06, height: 0.06, depth: length, x, color: C.galvanised });
+    }
+    return k;
+  },
+
+  /**
+   * ## Édifices urbains
+   *
+   * Église, mosquée, hôpital, boulangerie, commerce et centre commercial ne
+   * sont **plus** ici : voir `buildingLayer.buildingPersonalityFor`, qui
+   * donne leur silhouette aux vrais bâtiments désignés par le point d'intérêt
+   * plutôt que de poser un modèle séparé à côté — un modèle que l'empreinte
+   * réelle finissait presque toujours par recouvrir.
+   *
+   * Ce qui reste ici sont de grandes structures **autonomes**, visibles de
+   * loin, qui ne sont pas elles-mêmes un bâtiment ordinaire qu'une empreinte
+   * recouvrirait.
+   */
+
+  /** Monument : plinthe et obélisque — un cône à quatre pans, effilé. */
+  monument(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.box({ width: 3, height: 0.6, depth: 3, color: C.stoneDark });
+    k.box({ width: 1.6, height: 0.5, depth: 1.6, y: 0.6, color: C.stone });
+    k.cylinder({ radiusBottom: 0.9, radiusTop: 0.08, height: 6, radial: 4, y: 1.1, color: C.stone });
+    return k;
+  },
+
+  /** Château : donjon crénelé, tourelle, courtine. */
+  castle(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const keepH = 15;
+    k.cylinder({ radiusBottom: 4.2, radiusTop: 3.9, height: keepH, radial: 10, color: C.stone });
+    for (let i = 0; i < 10; i += 2) {
+      const angle = (i / 10) * Math.PI * 2;
+      k.box({
+        width: 0.9,
+        height: 1,
+        depth: 0.9,
+        x: Math.cos(angle) * 3.9,
+        y: keepH,
+        z: Math.sin(angle) * 3.9,
+        color: C.stone,
+      });
+    }
+    k.box({ width: 6, height: 6, depth: 4, x: 8, y: 0, z: 0, color: C.stone });
+    k.cylinder({ radiusBottom: 2.4, radiusTop: 2.2, height: 9, radial: 8, x: 12, color: C.stone });
+    return k;
+  },
+
+  /** Tour générique : beffroi ou tour de guet, toit en pavillon. */
+  tower(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.box({ width: 4.4, height: 16, depth: 4.4, color: C.stone });
+    k.cylinder({ radiusBottom: 3.4, radiusTop: 0, height: 3.5, radial: 4, y: 16, roll: Math.PI / 4, color: C.slate });
+    return k;
+  },
+
+  /** Croix de cimetière : plinthe et croix, seul repère posé sur le site. */
+  cemeteryCross(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.box({ width: 0.7, height: 0.5, depth: 0.7, color: C.stoneDark });
+    k.box({ width: 0.14, height: 1.6, depth: 0.14, y: 0.5, color: C.stone });
+    k.box({ width: 0.7, height: 0.14, depth: 0.14, y: 1.5, color: C.stone });
+    return k;
+  },
+
+  /**
+   * Cheminée d'usine : fût effilé, bande de balisage. Publie un point de
+   * fumée comme celle de la ferme (`furnitureLayer._placeFarmstead`) — c'est
+   * la couche appelante qui pousse le point dans `chimneys`, cette pièce ne
+   * fait que porter la forme.
+   */
+  factoryChimney(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const height = 28;
+    k.cylinder({ radiusBottom: 1.3, radiusTop: 0.75, height, radial: 10, color: C.brick });
+    k.cylinder({ radiusBottom: 1.12, radiusTop: 0.95, height: 1.6, radial: 10, y: height * 0.8, color: C.signWhite });
+    return k;
+  },
+
+  /**
+   * Grande roue : portique, jante, rayons, nacelles. Un repère de foire ou de
+   * parc d'attractions — rien qui tourne, comme le moulin à vent, pour ne pas
+   * toucher au pivot du rotor commun (voir `windmill`).
+   */
+  ferrisWheel(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const radius = 9;
+    const hubY = radius + 2;
+    for (const x of [-4, 4]) {
+      k.box({ width: 0.35, height: hubY, depth: 0.35, x, color: C.steelDark });
+    }
+    k.box({ width: 8.3, height: 0.3, depth: 0.3, y: hubY, color: C.steelDark });
+    k.cylinder({
+      radiusBottom: radius,
+      radiusTop: radius,
+      height: 0.4,
+      radial: 16,
+      y: hubY,
+      tilt: Math.PI / 2,
+      cap: false,
+      color: C.white,
+    });
+    for (let i = 0; i < 8; i++) {
+      const roll = (i / 8) * Math.PI * 2;
+      k.box({ width: 0.12, height: radius, depth: 0.12, y: hubY, roll, color: C.galvanised });
+    }
+    for (let i = 0; i < 8; i++) {
+      const roll = (i / 8) * Math.PI * 2 + Math.PI / 8;
+      const nx = -radius * Math.sin(roll);
+      const ny = hubY + radius * Math.cos(roll);
+      k.box({ width: 0.9, height: 0.9, depth: 0.7, x: nx, y: ny - 0.45, color: i % 2 === 0 ? C.red : C.blue });
+    }
+    return k;
+  },
+
+  /** Stade : cuvette de gradins, quatre mâts d'éclairage. */
+  stadium(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const radius = 42;
+    k.cylinder({ radiusBottom: radius, radiusTop: radius, height: 12, radial: 20, cap: false, color: C.concrete });
+    k.cylinder({ radiusBottom: radius + 1.5, radiusTop: radius + 1.5, height: 1, radial: 20, y: 12, color: C.slate });
+    for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      const x = sx * radius * 0.78;
+      const z = sz * radius * 0.78;
+      k.cylinder({ radiusBottom: 0.5, radiusTop: 0.3, height: 22, radial: 6, x, z, color: C.galvanised });
+      k.box({ width: 2.4, height: 1.2, depth: 0.3, x, y: 22, z, color: C.steelDark });
+    }
     return k;
   },
 
@@ -883,6 +1318,68 @@ export const FURNITURE_BUILDERS = {
     return k;
   },
 
+  /**
+   * Arbre en boule : houppe unique, dense, ronde — le tilleul ou le platane
+   * taillé en rideau qu'on plante en ville et le long des départementales.
+   *
+   * `treeBroad` lit un arbre de plein champ, aux branches ouvertes ; celui-ci
+   * lit l'arbre **conduit**, dont on a fermé la silhouette à la taille. D'où
+   * une seule masse dominante — pas trois lobes décentrés — et pas de
+   * charpentière visible : une boule taillée cache son bois.
+   */
+  treeRound(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.cylinder({ radiusBottom: 0.3, radiusTop: 0.22, height: 2.6, radial: 6, color: C.bark });
+    k.rock({ radius: 2.1, height: 2.3, sides: 8, rings: 3, seed: 2301, y: 2.5, color: C.leafDeep, colorTop: C.leafOlive });
+    // Second lobe imbriqué, à peine décalé : de quoi rompre la symétrie de
+    // révolution sans rouvrir la silhouette en boule.
+    k.rock({ radius: 1.3, height: 1.5, sides: 7, rings: 2, seed: 2311, x: 0.5, z: -0.35, y: 3, color: C.leafOlive, colorTop: C.leafSpring });
+    return k;
+  },
+
+  /**
+   * Arbre en fuseau : houppe haute et étroite sur un tronc fin — le peuplier
+   * d'Italie des routes de plaine, planté en rang serré au bord des canaux
+   * comme des départementales.
+   *
+   * Trois lobes empilés et **imbriqués**, chacun plus étroit que haut :
+   * `treeConifer` tapisse la silhouette en étages nets, ce qui lit le sapin ;
+   * ici les lobes se chevauchent pour fondre en une seule flamme continue,
+   * ce qui lit le feuillu fastigié.
+   */
+  treeColumnar(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.cylinder({ radiusBottom: 0.22, radiusTop: 0.14, height: 3.6, radial: 6, color: C.bark });
+    const lobes = [
+      { y: 3.4, r: 1.05, h: 2.6, seed: 2401, color: C.leafDeep, top: C.leafOlive },
+      { y: 5.3, r: 0.92, h: 2.3, seed: 2411, color: C.leafOlive, top: C.leafSpring },
+      { y: 7, r: 0.72, h: 1.9, seed: 2423, color: C.leafBlue, top: C.leafOlive },
+    ];
+    for (const l of lobes) {
+      k.rock({ radius: l.r, height: l.h, sides: 7, rings: 2, seed: l.seed, y: l.y, color: l.color, colorTop: l.top });
+    }
+    return k;
+  },
+
+  /**
+   * Arbre en dôme : houppe large et basse, plus étalée que haute — le
+   * marronnier ou le chêne de plein champ, dont la ramure déborde largement
+   * le tronc plutôt que de monter en pointe.
+   *
+   * Même principe que `treeBroad` (charpentières visibles, lobes décentrés),
+   * mais des proportions inverses : le rayon dépasse la hauteur, là où
+   * `treeBroad` reste à peu près aussi haut que large.
+   */
+  treeOval(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.cylinder({ radiusBottom: 0.36, radiusTop: 0.22, height: 2.6, radial: 6, color: C.bark });
+    k.box({ width: 0.18, height: 1.2, depth: 0.18, y: 2.3, z: 0.25, tilt: 0.85, color: C.bark });
+    k.box({ width: 0.18, height: 1.1, depth: 0.18, y: 2.3, z: -0.25, tilt: -0.95, color: C.bark });
+    k.rock({ radius: 3, height: 2, sides: 9, rings: 3, seed: 2501, y: 2.9, color: C.leafDeep, colorTop: C.leafOlive });
+    k.rock({ radius: 1.9, height: 1.4, sides: 7, rings: 2, seed: 2513, x: 1.7, z: 1, y: 3.1, color: C.leafOlive, colorTop: C.leafSpring });
+    return k;
+  },
+
   /** Conifère isolé : fût droit, trois étages de plus en plus courts. */
   treeConifer(C = DEFAULT_COLORS) {
     const k = new Kit(C);
@@ -903,9 +1400,9 @@ export const FURNITURE_BUILDERS = {
    *
    * Ce qui fait lire « vache » à cinquante mètres, c'est la **silhouette de
    * profil** : un corps long et bas sur quatre pattes fines, plus la tache
-   * sombre du train arrière. Ni les cornes ni les oreilles n'y comptent, et
-   * elles doubleraient le nombre de triangles d'un objet dont on pose parfois
-   * une trentaine d'exemplaires.
+   * sombre du train arrière — mais à quinze mètres, ce que la selle voit
+   * vraiment, ce sont les oreilles, les sabots et un mufle qui dépasse : sans
+   * eux, la silhouette reste juste, mais l'objet se lit comme un bloc.
    */
   cow(C = DEFAULT_COLORS) {
     const k = new Kit(C);
@@ -916,22 +1413,122 @@ export const FURNITURE_BUILDERS = {
     // les trois quarts du temps.
     k.box({ width: 0.4, height: 0.5, depth: 0.55, y: 0.85, z: 1.02, tilt: 0.75, color: C.hide });
     k.box({ width: 0.3, height: 0.28, depth: 0.44, y: 0.5, z: 1.32, color: C.hideDark });
+    // Mufle : la tache claire au bout du museau, qui donne à la tête son avant.
+    k.box({ width: 0.22, height: 0.16, depth: 0.1, y: 0.42, z: 1.5, color: C.muzzle });
+    // Oreilles, en éventail de part et d'autre du crâne.
+    for (const x of [-0.16, 0.16]) {
+      k.box({ width: 0.14, height: 0.05, depth: 0.16, x, y: 0.62, z: 1.2, roll: x < 0 ? 0.5 : -0.5, color: C.hideDark });
+    }
     for (const [x, z] of [[-0.22, 0.68], [0.22, 0.68], [-0.22, -0.62], [0.22, -0.62]]) {
-      k.box({ width: 0.12, height: 0.74, depth: 0.13, x, z, color: C.hideDark });
+      k.box({ width: 0.12, height: 0.6, depth: 0.13, x, z, color: C.hideDark });
+      // Sabot : un talon sombre plus large, posé au sol — un trait de plus
+      // qui casse la jambe-tube.
+      k.box({ width: 0.14, height: 0.14, depth: 0.15, x, z, color: C.black });
     }
     // Queue : un trait, mais un trait qu'on cherche du regard.
     k.box({ width: 0.06, height: 0.62, depth: 0.06, y: 0.5, z: -0.92, color: C.hideDark });
     return k;
   },
 
-  /** Mouton : une masse laineuse, une tête sombre, quatre pattes courtes. */
+  /**
+   * Mouton : une masse laineuse, une tête sombre, quatre pattes courtes.
+   * Oreilles tombantes et sabots sombres, comme la vache — la même raison :
+   * une tête sans oreille se lit comme un cube, pas comme un animal.
+   */
   sheep(C = DEFAULT_COLORS) {
     const k = new Kit(C);
     k.box({ width: 0.42, height: 0.5, depth: 0.96, y: 0.42, color: C.fleece });
     k.box({ width: 0.26, height: 0.26, depth: 0.3, y: 0.36, z: 0.6, color: C.hideDark });
-    for (const [x, z] of [[-0.14, 0.32], [0.14, 0.32], [-0.14, -0.32], [0.14, -0.32]]) {
-      k.box({ width: 0.08, height: 0.44, depth: 0.08, x, z, color: C.hideDark });
+    for (const x of [-0.14, 0.14]) {
+      k.box({ width: 0.1, height: 0.05, depth: 0.14, x, y: 0.3, z: 0.55, tilt: 0.6, color: C.hideDark });
     }
+    for (const [x, z] of [[-0.14, 0.32], [0.14, 0.32], [-0.14, -0.32], [0.14, -0.32]]) {
+      k.box({ width: 0.08, height: 0.34, depth: 0.08, x, z, color: C.hideDark });
+      k.box({ width: 0.09, height: 0.1, depth: 0.1, x, z, color: C.black });
+    }
+    return k;
+  },
+
+  /**
+   * Chèvre : plus petite qu'un mouton, la tête levée au lieu de baissée — elle
+   * surveille, elle ne broute pas en continu — et deux cornes recourbées vers
+   * l'arrière, qui sont ce qui la distingue d'un mouton à cette distance.
+   */
+  goat(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.box({ width: 0.34, height: 0.5, depth: 0.85, y: 0.58, color: C.fleece });
+    k.box({ width: 0.22, height: 0.3, depth: 0.32, y: 0.78, z: 0.5, tilt: -0.3, color: C.fleece });
+    k.box({ width: 0.16, height: 0.18, depth: 0.24, y: 0.95, z: 0.68, color: C.hideDark });
+    // Oreilles, dressées de chaque côté — celles de la chèvre ne tombent pas
+    // comme celles du mouton, encore un repère qui les distingue.
+    for (const x of [-0.13, 0.13]) {
+      k.box({ width: 0.08, height: 0.04, depth: 0.14, x, y: 1, z: 0.66, tilt: -0.3, color: C.hideDark });
+    }
+    for (const [x, z] of [[-0.12, 0.32], [0.12, 0.32], [-0.12, -0.3], [0.12, -0.3]]) {
+      k.box({ width: 0.07, height: 0.42, depth: 0.07, x, z, color: C.hideDark });
+      k.box({ width: 0.08, height: 0.08, depth: 0.08, x, z, color: C.black });
+    }
+    for (const x of [-0.06, 0.06]) {
+      k.box({ width: 0.03, height: 0.22, depth: 0.03, x, y: 1.02, z: 0.62, tilt: 0.9, color: C.hideDark });
+    }
+    k.box({ width: 0.05, height: 0.14, depth: 0.05, y: 0.85, z: -0.44, tilt: -0.6, color: C.hideDark });
+    return k;
+  },
+
+  /**
+   * Cheval au pré : plus grand qu'une vache, l'encolure haute et la tête
+   * levée — un cheval ne broute pas en permanence, contrairement au bovin —
+   * et une crinière et une queue sombres, qui font sa silhouette avant même
+   * ses jambes plus longues et plus fines.
+   *
+   * Robe alezane (`chestnut`), pas la même que le train arrière de la vache
+   * (`hideDark`, réservé aux crins et aux sabots) : c'est elle qui manquait —
+   * un cheval tout en `hideDark` se fond dans l'ombre au pied d'une haie.
+   */
+  horse(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const coat = C.chestnut || C.hideDark;
+    k.box({ width: 0.58, height: 0.95, depth: 2.05, y: 1.05, color: coat });
+    k.box({ width: 0.32, height: 0.75, depth: 0.4, y: 1.35, z: 1.05, tilt: -0.35, color: coat });
+    k.box({ width: 0.24, height: 0.28, depth: 0.55, y: 1.62, z: 1.35, tilt: 0.15, color: coat });
+    // Oreilles, dressées au sommet du crâne.
+    for (const x of [-0.07, 0.07]) {
+      k.box({ width: 0.05, height: 0.14, depth: 0.05, x, y: 1.86, z: 1.5, tilt: 0.15, color: C.black });
+    }
+    // Crinière : une crête sombre sur l'encolure.
+    k.box({ width: 0.08, height: 0.5, depth: 0.36, y: 1.55, z: 0.95, tilt: -0.35, color: C.black });
+    for (const [x, z] of [[-0.24, 0.75], [0.24, 0.75], [-0.24, -0.75], [0.24, -0.75]]) {
+      k.box({ width: 0.13, height: 0.85, depth: 0.14, x, z, color: C.black });
+      k.box({ width: 0.15, height: 0.14, depth: 0.16, x, z, color: C.hideDark });
+    }
+    // Queue longue, tombante — celle d'une vache est un trait, celle d'un
+    // cheval balaie près du sol.
+    k.box({ width: 0.1, height: 0.85, depth: 0.1, y: 0.75, z: -1.05, tilt: 0.12, color: C.black });
+    return k;
+  },
+
+  /**
+   * Âne : plus petit et plus trapu qu'un cheval, robe grise, oreilles bien
+   * plus longues — c'est elles qui le distinguent du poney à cette échelle,
+   * pas la taille, difficile à juger sans repère à côté.
+   */
+  donkey(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const coat = C.donkeyGrey || C.hideDark;
+    k.box({ width: 0.46, height: 0.72, depth: 1.5, y: 0.8, color: coat });
+    k.box({ width: 0.26, height: 0.55, depth: 0.32, y: 1, z: 0.78, tilt: -0.3, color: coat });
+    k.box({ width: 0.2, height: 0.22, depth: 0.42, y: 1.32, z: 1.02, tilt: 0.1, color: coat });
+    // Oreilles longues, dressées — le trait qui fait « âne » avant tout le reste.
+    for (const x of [-0.09, 0.09]) {
+      k.box({ width: 0.06, height: 0.32, depth: 0.07, x, y: 1.5, z: 1.1, tilt: 0.1, roll: x < 0 ? -0.12 : 0.12, color: coat });
+    }
+    // Crinière et queue courtes, sombres — plus discrètes que chez le cheval.
+    k.box({ width: 0.07, height: 0.28, depth: 0.28, y: 1.24, z: 0.68, tilt: -0.3, color: C.hideDark });
+    for (const [x, z] of [[-0.18, 0.55], [0.18, 0.55], [-0.18, -0.55], [0.18, -0.55]]) {
+      k.box({ width: 0.1, height: 0.66, depth: 0.11, x, z, color: coat });
+      k.box({ width: 0.12, height: 0.1, depth: 0.13, x, z, color: C.black });
+    }
+    k.box({ width: 0.08, height: 0.5, depth: 0.08, y: 0.55, z: -0.78, tilt: 0.08, color: C.hideDark });
     return k;
   },
 
@@ -1293,6 +1890,142 @@ export function createFurnitureMaterial(THREE) {
   const material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
   material.name = 'furniture';
   return material;
+}
+
+/**
+ * Vitesse angulaire du rotor à son régime nominal, en radians/seconde. Une
+ * éolienne réelle tourne à dix-quinze tours par minute ; on prend le haut de
+ * la fourchette (~14 tr/min) pour qu'un rotor au régime se remarque bien une
+ * fois le vent monté.
+ */
+const ROTOR_MAX_ANGULAR_SPEED = (14 / 60) * Math.PI * 2;
+
+/**
+ * Vitesse du vent que représente `weather.wind = 1` (la bourrasque de
+ * référence du thème), en km/h. Le moteur ne connaît le vent que par ce
+ * scalaire 0-1 ; c'est cette échelle qui lui donne un sens physique pour le
+ * rotor. 90 km/h est une bourrasque forte, plausible en France métropolitaine
+ * — et c'est aussi, par construction, à peu près la vitesse à laquelle une
+ * éolienne réelle se met en drapeau par sécurité, ce qui borne la fourchette
+ * du bon côté sans qu'on ait à modéliser cet arrêt.
+ */
+const WIND_SPEED_MAX_KMH = 90;
+
+/**
+ * Sous ce seuil, le rotor ne tourne pas : le vent n'a pas la force de vaincre
+ * l'inertie des pales. Valeur demandée, pas mesurée — une éolienne réelle
+ * démarre plutôt vers 12-15 km/h, mais on suit le réglage voulu ici.
+ */
+const ROTOR_CUT_IN_KMH = 5;
+
+/**
+ * Au-delà de ce vent, le rotor tourne à `ROTOR_MAX_ANGULAR_SPEED` et n'accélère
+ * plus : une éolienne régule son régime au-delà de sa vitesse de vent nominale
+ * en orientant ses pales, elle ne s'emballe pas avec la tempête.
+ *
+ * Une éolienne réelle atteint plutôt son régime vers 45 km/h ; ici, la brise
+ * ordinaire du thème (22,5 km/h — `DEFAULT_WEATHER.wind`) doit déjà se voir
+ * tourner sans qu'on force le vent au maximum dans la démo, donc 25 km/h :
+ * la forme de la courbe (démarrage lent, montée en cube) reste celle d'une
+ * vraie éolienne, seule l'échelle est resserrée pour rester lisible depuis
+ * une caméra qui roule.
+ */
+const ROTOR_RATED_KMH = 25;
+
+/**
+ * Vitesse angulaire du rotor pour une force de vent donnée (`weather.wind`,
+ * 0-1). Nul sous le seuil de démarrage, puis une montée **cubique** — lente
+ * au débrayage, de plus en plus rapide ensuite — jusqu'au régime nominal :
+ * c'est la forme de la courbe de puissance d'une éolienne réelle entre son
+ * démarrage et son vent nominal, pas une rampe linéaire.
+ *
+ * @param {number} force `weather.wind`, de 0 à 1.
+ * @returns {number} radians/seconde.
+ */
+function rotorAngularSpeed(force) {
+  const f = Number.isFinite(force) ? Math.min(1, Math.max(0, force)) : 0;
+  const kmh = f * WIND_SPEED_MAX_KMH;
+  if (kmh <= ROTOR_CUT_IN_KMH) return 0;
+  const t = Math.min(1, (kmh - ROTOR_CUT_IN_KMH) / (ROTOR_RATED_KMH - ROTOR_CUT_IN_KMH));
+  return ROTOR_MAX_ANGULAR_SPEED * t * t * t;
+}
+
+/**
+ * Matériau du mobilier, avec un rotor qui tourne. C'est un matériau **séparé**
+ * de `createFurnitureMaterial`, pas une option de plus dessus : le shader
+ * commun est partagé par tout le catalogue justement pour n'avoir qu'un seul
+ * programme GPU, et l'attribut `aSpin` que celui-ci lit n'existe que sur la
+ * géométrie de l'éolienne (voir `Kit.toGeometry`) — le brancher sur le
+ * matériau commun ferait chercher un attribut absent sur chaque poteau et
+ * chaque banc.
+ *
+ * La rotation se fait au sommet, comme le vent du feuillage
+ * (`foliageMaterial`) : un seul uniforme avance par image, rien à réécrire
+ * par instance.
+ */
+export function createFurnitureRotorMaterial(THREE) {
+  const material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+  material.name = 'furniture-rotor';
+
+  const uniforms = { uRotorAngle: { value: 0 } };
+  material.userData.rotor = { uRotorAngle: uniforms.uRotorAngle, angle: 0 };
+
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uRotorAngle = uniforms.uRotorAngle;
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        `#include <common>\n attribute float ${ROTOR_SPIN_ATTRIBUTE};\n uniform float uRotorAngle;`
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+         if (${ROTOR_SPIN_ATTRIBUTE} > 0.5) {
+           // Rotation dans le plan (x, y), pivot au moyeu — voir
+           // WIND_TURBINE_HUB_M et la pose des pales dans windTurbine.
+           float c = cos(uRotorAngle);
+           float s = sin(uRotorAngle);
+           float rx = transformed.x;
+           float ry = transformed.y - ${WIND_TURBINE_HUB_M.toFixed(1)};
+           transformed.x = rx * c - ry * s;
+           transformed.y = rx * s + ry * c + ${WIND_TURBINE_HUB_M.toFixed(1)};
+         }`
+      )
+      .replace(
+        '#include <beginnormal_vertex>',
+        `#include <beginnormal_vertex>
+         if (${ROTOR_SPIN_ATTRIBUTE} > 0.5) {
+           float c = cos(uRotorAngle);
+           float s = sin(uRotorAngle);
+           float nx = objectNormal.x;
+           float ny = objectNormal.y;
+           objectNormal.x = nx * c - ny * s;
+           objectNormal.y = nx * s + ny * c;
+         }`
+      );
+  };
+  material.customProgramCacheKey = () => 'furniture-rotor';
+
+  return material;
+}
+
+/**
+ * Fait avancer le rotor d'un matériau créé par `createFurnitureRotorMaterial`.
+ *
+ * @param {Object} material
+ * @param {number} delta Secondes écoulées.
+ * @param {number} force Force du vent, de 0 à 1 (`weather.wind`) — c'est elle
+ *        qui pilote la vitesse, pas une constante : un rotor tourne à la
+ *        vitesse que lui donne le vent, immobile en dessous du seuil de
+ *        démarrage, plafonné à son régime nominal au-delà (voir
+ *        `rotorAngularSpeed`).
+ */
+export function advanceFurnitureRotor(material, delta, force) {
+  const rotor = material?.userData?.rotor;
+  if (!rotor || !Number.isFinite(delta)) return;
+  const speed = rotorAngularSpeed(force);
+  rotor.angle = (rotor.angle + delta * speed) % (Math.PI * 2);
+  rotor.uRotorAngle.value = rotor.angle;
 }
 
 /**

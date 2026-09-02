@@ -32,6 +32,10 @@ import {
   collectSceneLabels,
   clusterCropGrid,
   collectCropLabels,
+  labelForPlace,
+  collectPlaceLabels,
+  collectBuildingLabels,
+  LABEL_BUILDING_PERSONALITY,
   LABEL_FURNITURE,
   LABEL_ROADS,
   LABEL_CROPS,
@@ -75,6 +79,8 @@ import {
 import {
   Kit,
   createGlowMaterial,
+  createFurnitureRotorMaterial,
+  advanceFurnitureRotor,
   FURNITURE_BUILDERS,
   furnitureSpecsFor,
   lampArcAt,
@@ -99,6 +105,7 @@ import {
   distanceToSegment,
   stitchPlatforms,
   RoadIndex,
+  CombinedIndex,
   NODE_WELD_M,
   JUNCTION_OVERLAP_M,
   JUNCTION_MIN_RUN_M,
@@ -137,6 +144,18 @@ import {
   PLINTH_HEIGHT_M,
   WINDOW_FRAME_M,
   SHUTTER_WIDTH_RATIO,
+  buildingPersonalityFor,
+  sortPersonalities,
+  personalityLookFor,
+  shopfrontTopFor,
+  SHOPFRONT_HEIGHT_M,
+  towerSide,
+  towerRise,
+  towerFoot,
+  TOWER_SIDE_MIN_M,
+  TOWER_SIDE_MAX_M,
+  TOWER_RISE_MIN_M,
+  TOWER_RISE_MAX_M,
 } from '../src/layers/buildingLayer.js';
 import {
   treesForScore,
@@ -243,6 +262,11 @@ import {
   waterwayProfile,
 } from '../src/layers/waterLayer.js';
 import { WaterIndex, ringCrossings } from '../src/layers/waterIndex.js';
+import {
+  railProfileFor,
+  RAILWAY_GAUGE_HALF_M,
+  RAILWAY_BALLAST_HALF_M,
+} from '../src/layers/railwayLayer.js';
 import {
   cutWaterElevationAt,
   WATER_BED_M,
@@ -629,6 +653,127 @@ test('la hauteur d’un bâtiment suit les attributs disponibles, dans l’ordre
   close(buildingHeight({ height: 99999 }), BUILDING_MAX_HEIGHT, 1e-9, 'plafond');
   close(buildingHeight({ height: -5 }), BUILDING_DEFAULT_HEIGHT, 1e-9, 'hauteur négative ignorée');
   close(buildingHeight({ height: 'quatre' }), BUILDING_DEFAULT_HEIGHT, 1e-9, 'hauteur illisible ignorée');
+});
+
+// Les couples `class | subclass` de ce bloc sont **relevés** sur les tuiles
+// réellement servies (OpenFreeMap, schéma OpenMapTiles, z14), pas déduits du
+// schéma : c'est exactement là qu'était la panne, la version précédente
+// cherchant la boulangerie sous une classe qui n'existe pas.
+test('la personnalité d’un bâtiment suit le point d’intérêt qui tombe dedans', () => {
+  assert.equal(buildingPersonalityFor({ class: 'place_of_worship', subclass: 'christian' }), 'church');
+  assert.equal(buildingPersonalityFor({ class: 'place_of_worship', subclass: 'jewish' }), 'church');
+  assert.equal(buildingPersonalityFor({ class: 'place_of_worship', subclass: 'muslim' }), 'mosque');
+  assert.equal(buildingPersonalityFor({ class: 'hospital', subclass: 'hospital' }), 'hospital');
+  assert.equal(buildingPersonalityFor({ class: 'hospital', subclass: 'clinic' }), 'hospital');
+
+  // La grande surface arrive sous deux classes différentes pour la même
+  // silhouette : le centre commercial sous `shop`, le grand magasin et le
+  // supermarché sous `grocery`. C'est la sous-classe qui tranche, pas la classe.
+  assert.equal(buildingPersonalityFor({ class: 'shop', subclass: 'mall' }), 'retail');
+  assert.equal(buildingPersonalityFor({ class: 'grocery', subclass: 'department_store' }), 'retail');
+  assert.equal(buildingPersonalityFor({ class: 'grocery', subclass: 'supermarket' }), 'retail');
+
+  // La boulangerie a sa propre classe : `class: 'shop'` ne l'a jamais portée.
+  assert.equal(buildingPersonalityFor({ class: 'bakery', subclass: 'bakery' }), 'bakery');
+
+  // Devanture générique : commerce, café, banque, coiffeur.
+  assert.equal(buildingPersonalityFor({ class: 'shop', subclass: 'clothes' }), 'shop');
+  assert.equal(buildingPersonalityFor({ class: 'grocery', subclass: 'greengrocer' }), 'shop');
+  assert.equal(buildingPersonalityFor({ class: 'cafe', subclass: 'cafe' }), 'shop');
+  assert.equal(buildingPersonalityFor({ class: 'bank', subclass: 'bank' }), 'shop');
+
+  // Pas de façade sur rue : un cabinet, un bureau, une école n'en ont pas.
+  assert.equal(buildingPersonalityFor({ class: 'doctors', subclass: 'doctors' }), null);
+  assert.equal(buildingPersonalityFor({ class: 'office', subclass: 'lawyer' }), null);
+  assert.equal(buildingPersonalityFor({ class: 'school', subclass: 'school' }), null);
+
+  // Château, monument, tour : ce ne sont pas des personnalités de bâtiment —
+  // ils restent du mobilier autonome (`furnitureLayer._poiItem`).
+  assert.equal(buildingPersonalityFor({ class: 'castle', subclass: 'castle' }), null);
+  assert.equal(buildingPersonalityFor({ class: 'monument', subclass: 'monument' }), null);
+  assert.equal(buildingPersonalityFor({}), null);
+});
+
+test('le plafond des points d’intérêt tombe sur le lointain, pas sur le clocher', () => {
+  const list = [];
+  // Deux mille commerces tout près : dans l'ordre d'arrivée, ils mangeaient le
+  // budget entier avant qu'une seule église soit vue.
+  for (let i = 0; i < 2000; i++) list.push({ kind: 'shop', distance: 10 + i * 0.1 });
+  list.push({ kind: 'church', distance: 1400 });
+  list.push({ kind: 'hospital', distance: 900 });
+
+  const kept = sortPersonalities(list, 50);
+  assert.equal(kept.length, 50, 'le plafond est tenu');
+  assert.equal(kept[0].kind, 'church', 'le clocher passe avant tout, même au bout de la bulle');
+  assert.equal(kept[1].kind, 'hospital');
+  assert.ok(
+    kept.slice(2).every((p) => p.kind === 'shop'),
+    'le reste du budget va aux commerces les plus proches'
+  );
+  // À rang égal, c'est la distance qui décide — jamais l'ordre des tuiles.
+  assert.ok(kept[2].distance <= kept[3].distance);
+  assert.equal(list.length, 2002, 'la liste d’entrée n’est pas modifiée');
+});
+
+test('l’habillage d’une personnalité ne remplace que ce qu’il nomme', () => {
+  const church = personalityLookFor('church');
+  assert.ok(church.spire, 'l’église porte un clocher');
+  assert.equal(church.wall, null, 'et garde les murs de son bourg');
+  assert.equal(church.shape, null, 'et la forme de toit de son bourg');
+
+  const shop = personalityLookFor('shop');
+  assert.ok(Array.isArray(shop.front), 'le commerce ne porte qu’une devanture');
+  assert.equal(shop.wall, null, 'repeindre l’immeuble entier faisait virer tout un centre ancien');
+
+  const hospital = personalityLookFor('hospital');
+  assert.ok(Array.isArray(hospital.wall) && hospital.shape === 'flat');
+
+  // La coupole se pose sur une terrasse : sans cette forme, elle flotterait
+  // au-dessus d'un rampant.
+  assert.equal(personalityLookFor('mosque').shape, 'flat');
+
+  assert.equal(personalityLookFor(null), null);
+  assert.equal(personalityLookFor('inconnu'), null);
+  // Mémorisé sur la tranche de thème : deux lectures donnent le même objet.
+  assert.equal(personalityLookFor('church'), church);
+});
+
+test('la devanture occupe la place du soubassement, pas le mur entier', () => {
+  // Un immeuble ordinaire : le bandeau tient sur un niveau.
+  const top = shopfrontTopFor(100, 0, 112);
+  close(top - 100, SHOPFRONT_HEIGHT_M, 1e-9, 'un niveau');
+  // Une échoppe basse : pas de bandeau du tout, il mangerait le mur.
+  assert.equal(shopfrontTopFor(100, 0, 103.5), null, 'mur trop bas');
+  // Sous un passage couvert, il n'y a pas de rez-de-chaussée à habiller.
+  assert.equal(shopfrontTopFor(100, 4, 115), null, 'surplomb');
+});
+
+test('le clocher est dimensionné et posé sur le bâtiment qui le porte', () => {
+  // `orientedBox` publie des demi-côtés : cette nef fait 10 m sur 30 m.
+  const nef = { cx: 0, cz: 0, angle: 0, long: 15, short: 5, fill: 0.9 };
+  const side = towerSide(nef);
+  assert.ok(side > TOWER_SIDE_MIN_M && side < 2 * nef.short, 'plus étroit que la nef');
+  assert.ok(towerRise(nef) >= TOWER_RISE_MIN_M && towerRise(nef) <= TOWER_RISE_MAX_M);
+
+  // La chapelle et la collégiale n'ont pas la même tour : c'est tout l'objet
+  // des proportions.
+  const chapelle = { cx: 0, cz: 0, angle: 0, long: 4, short: 2.5, fill: 0.9 };
+  const collegiale = { cx: 0, cz: 0, angle: 0, long: 40, short: 18, fill: 0.9 };
+  assert.ok(towerSide(chapelle) < towerSide(collegiale), 'la tour suit l’empreinte');
+  assert.ok(towerRise(chapelle) < towerRise(collegiale));
+  // Bornée des deux côtés : ni mât ni allumette.
+  assert.ok(towerSide(collegiale) <= TOWER_SIDE_MAX_M);
+
+  // Le pied reste dans l'empreinte, décalé vers un bout du grand axe.
+  const foot = towerFoot(nef, side);
+  assert.ok(foot.x > 0 && foot.x + side / 2 <= nef.long, 'la tour ne déborde pas de la nef');
+  close(foot.z, 0, 1e-9, 'centrée en travers');
+
+  // Tournée avec le bâtiment : un quart de tour envoie le pied sur l'autre axe.
+  const biais = { ...nef, angle: Math.PI / 2 };
+  const tourne = towerFoot(biais, side);
+  close(tourne.x, 0, 1e-9);
+  assert.ok(tourne.z > 0, 'le pied suit le grand axe, pas l’axe du monde');
 });
 
 test('le dessous du bâtiment vaut zéro sauf mention contraire', () => {
@@ -2091,6 +2236,24 @@ test('les sections du catalogue sont décrites en mètres et colorées', () => {
   assert.ok(hedgeTop > 1.5 && hedgeTop < 2.5, `haie à hauteur d’homme (${hedgeTop})`);
 });
 
+test('le rail de voie ferrée est symétrique et tient dans le ballast', () => {
+  const profile = railProfileFor();
+  assert.ok(profile.length >= 4, 'assez de sommets pour un rail en relief');
+  for (const p of profile) assert.equal(p.color.length, 3, 'couleur RVB');
+
+  // Le rail — posé à `RAILWAY_GAUGE_HALF_M` de l'axe par `RailwayLayer.rebuild`
+  // — doit tenir dans la largeur du ballast qui le porte.
+  const across = profile.map((p) => p.across);
+  const halfRail = Math.max(...across);
+  assert.ok(RAILWAY_GAUGE_HALF_M + halfRail < RAILWAY_BALLAST_HALF_M, 'le rail tient dans le ballast');
+
+  // Symétrie : un rail n'a pas de côté privilégié.
+  const sorted = [...across].sort((a, b) => a - b);
+  for (let i = 0; i < sorted.length; i++) {
+    close(sorted[i], -sorted[sorted.length - 1 - i], 1e-9, `symétrie du sommet ${i}`);
+  }
+});
+
 test('le talus de remblai s’approfondit avec le surplomb', () => {
   const shallow = FURNITURE_SPECS.embankmentProfile(0.5);
   const deep = FURNITURE_SPECS.embankmentProfile(4);
@@ -2104,36 +2267,115 @@ test('le talus de remblai s’approfondit avec le surplomb', () => {
   assert.ok(depthOf(FURNITURE_SPECS.embankmentProfile(0)) > 0);
 });
 
+/** Le seul bout de `THREE` dont `createFurnitureRotorMaterial` a besoin. */
+function fakeRotorTHREE() {
+  return {
+    MeshLambertMaterial: class {
+      constructor(options) {
+        Object.assign(this, options, { userData: {} });
+      }
+    },
+  };
+}
+
+test('le rotor de l’éolienne est à l’arrêt sous le seuil de démarrage', () => {
+  const THREE = fakeRotorTHREE();
+  const material = createFurnitureRotorMaterial(THREE);
+  // 5 km/h sur 90 km/h de bourrasque de référence (voir `WIND_SPEED_MAX_KMH`) :
+  // pile sous le seuil demandé.
+  advanceFurnitureRotor(material, 5, 0.04);
+  assert.equal(material.userData.rotor.uRotorAngle.value, 0, 'rien sous le seuil de démarrage');
+});
+
+test('le rotor accélère de plus en plus vite, puis plafonne à un régime plausible', () => {
+  const angleAfter = (force) => {
+    const material = createFurnitureRotorMaterial(fakeRotorTHREE());
+    // Un pas assez fin pour ne pas boucler sur `% (2π)` en un seul appel.
+    for (let i = 0; i < 600; i++) advanceFurnitureRotor(material, 1 / 60, force);
+    return material.userData.rotor.uRotorAngle.value;
+  };
+
+  const light = angleAfter(0.12); // 10,8 km/h : juste au-dessus du seuil
+  const ordinary = angleAfter(0.25); // 22,5 km/h : la brise par défaut du thème
+  const gale = angleAfter(1); // 90 km/h : la bourrasque de référence
+
+  assert.ok(light > 0, 'au-dessus du seuil, ça tourne déjà un peu');
+  assert.ok(ordinary > light, 'plus de vent, plus vite');
+
+  // Le régime nominal doit rester du domaine du plausible pour une éolienne :
+  // dix à quinze tours par minute, jamais un mixeur ni un ventilateur figé.
+  const revsPerMinuteAt = (force) => {
+    const material = createFurnitureRotorMaterial(fakeRotorTHREE());
+    advanceFurnitureRotor(material, 1, force);
+    return (material.userData.rotor.uRotorAngle.value / (2 * Math.PI)) * 60;
+  };
+  const rpm = revsPerMinuteAt(1);
+  assert.ok(rpm >= 10 && rpm <= 15, `régime nominal plausible (${rpm.toFixed(1)} tr/min)`);
+
+  // Passé le régime nominal, le vent supplémentaire n'accélère plus le rotor —
+  // une éolienne réelle régule son régime, elle ne s'emballe pas.
+  assert.equal(gale, angleAfter(0.5), 'plafonné au-delà du vent nominal');
+});
+
 // --- Ce qui donne de la vie -------------------------------------------------
 
-test('un oiseau tourne sur son orbite en regardant où il va', () => {
-  const bird = { radius: 80, height: 60, speed: 0.06, phase: 0.4, beat: 1, scale: 1 };
+test('un oiseau dérive dans le sens du vent en regardant où il va', () => {
+  const bird = { baseX: 5, baseZ: -12, height: 60, speed: 4, phase: 0.4, beat: 1, scale: 1 };
   const centre = { x: 10, y: 200, z: -5 };
+  const windDirection = 0.7;
 
-  // Deux instants successifs : le cap rendu doit être celui du déplacement.
-  const a = birdAt(bird, 0, centre);
-  const b = birdAt(bird, 0.5, centre);
+  // Deux instants rapprochés (bien en deçà de la boîte de repli) : le cap
+  // rendu doit être celui du déplacement réel.
+  const a = birdAt(bird, 0, centre, windDirection);
+  const b = birdAt(bird, 0.1, centre, windDirection);
   const dx = b.x - a.x;
   const dz = b.z - a.z;
-  // Le +Z de la silhouette, tourné du cap rendu, doit suivre le déplacement.
   const norm = Math.hypot(dx, dz) || 1;
   close(Math.sin(a.heading), dx / norm, 0.02, 'composante x du vol');
   close(Math.cos(a.heading), dz / norm, 0.02, 'composante z du vol');
 
-  // L’orbite reste bien à son rayon, à l’ondulation verticale près.
-  const radius = Math.hypot(a.x - centre.x, a.z - centre.z);
-  close(radius, bird.radius, 1e-9, 'rayon d’orbite');
   assert.ok(a.y > centre.y, 'l’oiseau vole au-dessus de l’observateur');
   assert.ok(a.flap > 0 && a.flap <= 1, 'battement borné');
 });
 
-test('un vol qui tourne dans l’autre sens regarde aussi dans l’autre sens', () => {
-  // Une vitesse angulaire négative doit renverser le cap, pas seulement le
-  // déplacement : c’est le genre de signe qui fait voler les oiseaux à reculons.
+test('tout le vol partage le même cap, celui du vent, quels que soient les oiseaux', () => {
+  // C’est le point du changement : plus d’orbite propre à chaque oiseau, un
+  // seul cap pour tout le vol — sans quoi certains voleraient encore contre
+  // le vent.
   const centre = { x: 0, y: 0, z: 0 };
-  const clockwise = birdAt({ radius: 50, height: 40, speed: 0.05, phase: 0, beat: 1 }, 0, centre);
-  const other = birdAt({ radius: 50, height: 40, speed: -0.05, phase: 0, beat: 1 }, 0, centre);
-  close(Math.abs(clockwise.heading - other.heading), Math.PI, 1e-9, 'caps opposés');
+  const windDirection = -1.1;
+  const one = birdAt({ baseX: 3, baseZ: 40, height: 40, speed: 5, phase: 0, beat: 1 }, 2, centre, windDirection);
+  const other = birdAt({ baseX: -60, baseZ: -8, height: 22, speed: 8, phase: 1.4, beat: 1.2 }, 2, centre, windDirection);
+  assert.equal(one.heading, other.heading, 'même cap malgré des paramètres différents');
+  close(one.heading, Math.atan2(Math.cos(windDirection), Math.sin(windDirection)), 1e-9, 'le cap suit le vent');
+});
+
+test('un oiseau qui traverse la boîte de dérive y reste toujours, et finit par s’y replier', () => {
+  const centre = { x: 100, y: 30, z: -40 };
+  const bird = { baseX: 0, baseZ: 0, height: 30, speed: 6, phase: 0, beat: 1 };
+  const windDirection = 0.3;
+  let sawWrap = false;
+  let previous = null;
+  for (let t = 0; t <= 60; t += 0.25) {
+    const at = birdAt(bird, t, centre, windDirection);
+    assert.ok(Math.abs(at.x - centre.x) <= 95 + 1e-6, 'toujours dans la boîte, en x');
+    assert.ok(Math.abs(at.z - centre.z) <= 95 + 1e-6, 'toujours dans la boîte, en z');
+    // Même repli que la pluie et les débris (voir `precipitation.js`) : un
+    // oiseau qui sort d’un côté réapparaît de l’autre, d’un coup — attendu
+    // ici, pas un défaut : c’est ce qui garde le vol dans une boîte finie.
+    if (previous && Math.hypot(at.x - previous.x, at.z - previous.z) > 50) sawWrap = true;
+    previous = at;
+  }
+  assert.ok(sawWrap, 'le survol est assez long pour boucler au moins une fois');
+});
+
+test('un oiseau vole à altitude fixe, sans ondulation verticale', () => {
+  const bird = { baseX: 0, baseZ: 0, height: 40, speed: 5, phase: 1.7, beat: 1 };
+  const centre = { x: 0, y: 100, z: 0 };
+  const windDirection = 0.9;
+  for (let t = 0; t <= 20; t += 0.5) {
+    assert.equal(birdAt(bird, t, centre, windDirection).y, centre.y + bird.height, `plat à t=${t}`);
+  }
 });
 
 test('la silhouette d’oiseau est faite de deux ailes', () => {
@@ -3753,6 +3995,150 @@ test("une parcelle s'étiquette au-dessus du sol, avec sa surface", () => {
   assert.ok(labels[0].x > 0 && labels[0].z > 0, 'elle est posée sur le champ');
 });
 
+// --- Emprises `landuse`/`landcover` : le type de lieu, avant tout mobilier ---
+
+test('labelForPlace : le subclass précise, la class prend le relais', () => {
+  assert.equal(labelForPlace('farmland', 'farmyard'), 'cour de ferme');
+  assert.equal(labelForPlace('farmland', undefined), 'terres agricoles');
+  assert.equal(labelForPlace('residential', null), 'zone résidentielle');
+  assert.equal(labelForPlace('inconnu', 'inconnu'), null);
+});
+
+/** Fausse source de tuiles vectorielles : une seule couche, une seule entité. */
+function fakePlaceSource(features) {
+  return {
+    forEachFeature(layer, tiles, cb) {
+      for (const f of features.filter((f) => f.layer === layer)) {
+        cb(f.geometry, f.properties);
+      }
+    },
+  };
+}
+
+/** Repère local qui traite lng/lat comme des mètres — suffisant pour ce test. */
+const identityFrame = { toLocal: (lng, lat) => ({ x: lng, z: lat }) };
+
+test('collectPlaceLabels retrouve une cour de ferme, pas les prés autour', () => {
+  const source = fakePlaceSource([
+    {
+      layer: 'landuse',
+      properties: { class: 'farmland', subclass: 'farmyard' },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [-50, -50],
+            [50, -50],
+            [50, 50],
+            [-50, 50],
+            [-50, -50],
+          ],
+        ],
+      },
+    },
+    {
+      // Ni class ni subclass reconnus : ne doit produire aucune étiquette.
+      layer: 'landuse',
+      properties: { class: 'meadow_unknown', subclass: undefined },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [-50, -50],
+            [50, -50],
+            [50, 50],
+            [-50, 50],
+            [-50, -50],
+          ],
+        ],
+      },
+    },
+  ]);
+
+  const labels = collectPlaceLabels({
+    source,
+    tiles: [{ x: 0, y: 0 }],
+    frame: identityFrame,
+    eye: { x: 0, z: 0 },
+    groundAt: () => 50,
+  });
+
+  assert.equal(labels.length, 1, "seule l'emprise reconnue est étiquetée");
+  assert.match(labels[0].text, /^cour de ferme — /);
+  assert.equal(labels[0].y, 52, "l'étiquette flotte au-dessus du sol");
+});
+
+test('collectPlaceLabels écarte ce qui est hors de portée', () => {
+  const farAway = {
+    layer: 'landuse',
+    properties: { class: 'residential' },
+    geometry: {
+      type: 'Polygon',
+      coordinates: [
+        [
+          [995, 995],
+          [1005, 995],
+          [1005, 1005],
+          [995, 1005],
+          [995, 995],
+        ],
+      ],
+    },
+  };
+  const source = fakePlaceSource([farAway]);
+
+  const labels = collectPlaceLabels({
+    source,
+    tiles: [{ x: 0, y: 0 }],
+    frame: identityFrame,
+    eye: { x: 0, z: 0 },
+    groundAt: () => 0,
+    radius: 100,
+  });
+
+  assert.equal(labels.length, 0);
+});
+
+// --- Bâtiments spéciaux : église, mosquée, hôpital, boulangerie, commerce ---
+
+test('collectBuildingLabels traduit chaque personnalité connue, écarte les autres', () => {
+  const buildings = [
+    { x: 10, z: 0, kind: 'church' },
+    { x: 0, z: 20, kind: 'mosque' },
+    { x: -10, z: 0, kind: 'hospital' },
+    { x: 0, z: -10, kind: 'bakery' },
+    { x: 5, z: 5, kind: 'retail' },
+    { x: -5, z: -5, kind: 'shop' },
+    { x: 1, z: 1, kind: 'inconnu' }, // ni dans LABEL_BUILDING_PERSONALITY
+  ];
+
+  const labels = collectBuildingLabels({ buildings, eye: { x: 0, z: 0 }, groundAt: () => 100 });
+
+  assert.equal(labels.length, 6, "la personnalité non traduite n'a pas d'étiquette");
+  const byText = labels.map((l) => l.text).sort();
+  assert.deepEqual(byText, ['boulangerie', 'commerce', 'grande surface', 'hôpital', 'mosquée', 'église']);
+  assert.equal(labels[0].y, 103, "l'étiquette flotte au-dessus du sol");
+});
+
+test('collectBuildingLabels : retail et shop restent deux traductions distinctes', () => {
+  assert.equal(LABEL_BUILDING_PERSONALITY.retail, 'grande surface');
+  assert.equal(LABEL_BUILDING_PERSONALITY.shop, 'commerce');
+  assert.notEqual(LABEL_BUILDING_PERSONALITY.retail, LABEL_BUILDING_PERSONALITY.shop);
+});
+
+test('collectBuildingLabels écarte ce qui est hors de portée, tolère une liste vide', () => {
+  const labels = collectBuildingLabels({
+    buildings: [{ x: 1000, z: 0, kind: 'church' }],
+    eye: { x: 0, z: 0 },
+    groundAt: () => 0,
+    radius: 100,
+  });
+  assert.equal(labels.length, 0);
+
+  assert.deepEqual(collectBuildingLabels({ buildings: [], eye: { x: 0, z: 0 }, groundAt: () => 0 }), []);
+  assert.deepEqual(collectBuildingLabels({ buildings: undefined, eye: { x: 0, z: 0 }, groundAt: () => 0 }), []);
+});
+
 // --- Emprise routière : la frontière partagée du décor -----------------------
 //
 // Tout ce qui suit vérifie une seule chose sous des angles différents : un
@@ -3794,6 +4180,34 @@ test('sans réseau routier, rien n’est dans l’emprise', () => {
   const runs = clipOutsideCorridor(crossing(), null);
   assert.equal(runs.length, 1, 'la polyligne ressort entière');
   assert.equal(runs[0].length, crossing().length, 'et avec tous ses sommets');
+});
+
+test('un index combiné répond comme l’union de ses emprises', () => {
+  // Deux routes parallèles, l'une à z = 0 (la « chaussée »), l'autre à
+  // z = 100 (la « voie ferrée ») : c'est exactement la forme sous laquelle
+  // `worldComposer` combine route et rail (`CombinedIndex`).
+  const road = corridorIndex(2.5, 0);
+  const rail = corridorIndex(1.75, 100);
+  const combined = new CombinedIndex([road, rail]);
+
+  assert.ok(combined.covers(0, 0), 'sur la première emprise');
+  assert.ok(combined.covers(0, 100), 'sur la seconde');
+  assert.ok(!combined.covers(0, 50), 'entre les deux, rien');
+
+  // `query` doit rendre le tronçon réellement touché, pas un artefact du
+  // regroupement : à z = 100, c'est le rail qui répond, avec sa propre
+  // demi-largeur.
+  const hit = combined.query(0, 100, 5);
+  assert.ok(hit, 'un point sur le rail est bien trouvé');
+  close(hit.segment.halfWidth, 1.75, 1e-9, 'demi-largeur du rail, pas de la route');
+
+  // Une entrée absente (pas encore de voie ferrée construite) ne casse rien :
+  // c'est exactement `RoadIndex` seul.
+  const roadOnly = new CombinedIndex([road, null]);
+  assert.ok(roadOnly.covers(0, 0));
+  assert.ok(!roadOnly.covers(0, 100));
+
+  assert.deepEqual(new CombinedIndex([null, null]).indexes, [], 'aucune emprise absente ne subsiste');
 });
 
 test('une haie perpendiculaire est coupée au bord exact de la chaussée', () => {

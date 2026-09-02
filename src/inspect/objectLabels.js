@@ -6,7 +6,7 @@
  * regarde, au juste ». Une haie ratée et un muret raté se ressemblent beaucoup ;
  * un champ de blé trop clair et un chaume, encore plus.
  *
- * Deux façons de répondre, et elles ne se recouvrent pas :
+ * Trois façons de répondre, et elles ne se recouvrent pas :
  *
  * 1. **Les objets** portent déjà leur nom — chaque couche nomme ses maillages
  *    (`furniture-streetLamp`, `road-major`, `vegetation-15/16594/11269`). Il
@@ -18,13 +18,33 @@
  *    shader du sol autant que par les tiges. On l'étiquette donc en la
  *    retrouvant — échantillonnage régulier de `cropAt`, puis agglomération des
  *    cases voisines de même culture. C'est le « groupe d'objets » du champ.
+ * 3. **Les emprises `landuse`/`landcover`** n'ont pas non plus d'objet propre :
+ *    une cour de ferme, un cimetière, une zone industrielle sont des
+ *    **classements de parcelle**, pas des maillages — ce sont eux qui
+ *    conditionnent la pose (ou non) de tel ou tel mobilier, avant même que ce
+ *    mobilier existe. On les relit directement dans les tuiles vectorielles
+ *    (`landuse`, `landcover`) et on traduit `class`/`subclass`.
+ * 4. **Les bâtiments spéciaux** (église, mosquée, hôpital, boulangerie,
+ *    commerce…) n'ont pas de maillage propre non plus, et pour une raison
+ *    différente : `buildingLayer` ne pose jamais rien à côté d'une empreinte,
+ *    il redécore celle qui existe déjà (voir l'en-tête de ce module) — tout
+ *    finit dans le même maillage `buildings`. `BuildingLayer.personalities`
+ *    est donc la seule trace, après coup, de quel bâtiment est quoi ; on la
+ *    relit et on traduit `kind`.
  *
- * Tout ici est **pur** : aucune dépendance à three.js, seulement la lecture de
- * propriétés (`matrixWorld.elements`, `instanceMatrix.array`, `geometry`). Les
- * fonctions sont donc testables sous Node — voir `test/world.test.mjs`.
+ * Tout ici est **pur** : les objets et les cultures ne dépendent ni de
+ * three.js ni du réseau — seulement de la lecture de propriétés
+ * (`matrixWorld.elements`, `instanceMatrix.array`, `geometry`) ou de
+ * fermetures fournies par l'appelant. Les emprises `landuse`/`landcover`
+ * ajoutent une lecture de `VectorTileSource` (même donnée que celle déjà
+ * chargée pour le décor, aucune requête de plus) mais restent elles aussi
+ * indépendantes de three.js. Les fonctions sont donc testables sous Node —
+ * voir `test/world.test.mjs`.
  */
 
 import { defaultTheme } from '../themes/default.js';
+import { ringsOf } from '../layers/settlement.js';
+import { ringAreaMeters } from '../layers/furniturePlacement.js';
 
 /** Portée d'étiquetage, en mètres. Au-delà, l'étiquette ne désigne plus rien. */
 export const LABEL_RADIUS_M = 130;
@@ -53,6 +73,7 @@ export const LABEL_EXACT = {
   gardens: 'jardin (clôture et buissons)',
   streets: 'voirie (caniveau, bordure, trottoir)',
   water: 'eau',
+  railway: 'voie ferrée',
   'ground-cover': 'herbe',
   crops: 'cultures (semis)',
   birds: 'oiseaux',
@@ -79,7 +100,9 @@ export const LABEL_FURNITURE = {
   streetLamp: 'lampadaire',
   utilityPole: 'poteau électrique',
   pylon: 'pylône',
+  radioMast: 'antenne relais',
   windTurbine: 'éolienne',
+  lighthouse: 'phare',
   guardrailPost: 'poteau de glissière',
   signWarning: 'panneau danger',
   signStop: 'panneau stop',
@@ -102,13 +125,23 @@ export const LABEL_FURNITURE = {
   barn: 'grange',
   silo: 'silo',
   hangar: 'hangar',
+  greenhouse: 'serre',
+  windmill: 'moulin à vent',
+  watermill: 'moulin à eau',
+  waterTower: 'château d’eau',
   fencePostWood: 'piquet de bois',
   fencePostConcrete: 'piquet de béton',
   bush: 'buisson',
   treeBroad: 'arbre (feuillu)',
   treeConifer: 'arbre (résineux)',
+  treeRound: 'arbre (boule)',
+  treeColumnar: 'arbre (fuseau)',
+  treeOval: 'arbre (dôme)',
   cow: 'vache',
   sheep: 'mouton',
+  goat: 'chèvre',
+  horse: 'cheval',
+  donkey: 'âne',
   chicken: 'poule',
   laundryLine: 'étendage',
   trafficLight: 'feu tricolore',
@@ -116,6 +149,13 @@ export const LABEL_FURNITURE = {
   rockBoulder: 'bloc rocheux',
   rockOutcrop: 'affleurement',
   vineStock: 'cep',
+  monument: 'monument',
+  castle: 'château',
+  tower: 'tour',
+  cemeteryCross: 'cimetière',
+  factoryChimney: 'cheminée d’usine',
+  ferrisWheel: 'grande roue',
+  stadium: 'stade',
   // Balayé le long d'une polyligne
   hedge: 'haie',
   lowHedge: 'haie basse',
@@ -162,6 +202,63 @@ export function labelForMeshName(name) {
   return name;
 }
 
+/**
+ * Emprunté à la carte (🗺️) ou inventé par la procédure (🤖) — la question qui
+ * vient juste après « qu'est-ce que je regarde ». Un bâtiment, une route, une
+ * rivière existent dans la donnée ; une haie, un lampadaire, une vache
+ * n'existent que parce qu'un tirage a décidé d'en poser un là. Ce classement
+ * ne dit rien de la qualité du rendu — un bâtiment réel porte un toit inventé,
+ * une vache inventée peut être exactement où une vraie exploitation en
+ * porterait une — il dit seulement d'où vient le **fait**, pas la forme.
+ */
+export const LABEL_SOURCE_OSM = '🗺️';
+export const LABEL_SOURCE_GENERATED = '🤖';
+
+/** Maillages posés directement d'après une couche de la donnée — pas un tirage. */
+const OSM_MESH_EXACT = new Set(['buildings', 'water', 'railway', 'streets']);
+
+/**
+ * Formes du catalogue mobilier posées d'après un point d'intérêt ou une
+ * emprise `landuse` réels (voir `FurnitureLayer._poiItem` et
+ * `_urbanLanduseKind`) — jamais d'après un tirage de position ou de choix.
+ * Tout le reste du catalogue (lampadaires, haies, granges, bêtes, arbres…)
+ * est une population inventée, même quand la parcelle qui la porte est réelle.
+ */
+const OSM_FURNITURE_KINDS = new Set([
+  'busShelter',
+  'fountain',
+  'lavoir',
+  'monument',
+  'castle',
+  'tower',
+  'ferrisWheel',
+  'cemeteryCross',
+  'factoryChimney',
+  'stadium',
+]);
+
+/**
+ * Source d'un maillage — carte ou procédure. Fonction pure, même découpage
+ * que `labelForMeshName`, dont elle est le complément plutôt que la
+ * remplaçante : un nom se traduit toujours, sa source ne se répond que si on
+ * la demande.
+ *
+ * @param {string} name Nom du maillage, tel que posé par sa couche.
+ * @returns {string} `LABEL_SOURCE_OSM` ou `LABEL_SOURCE_GENERATED`.
+ */
+export function sourceForMeshName(name) {
+  if (!name) return LABEL_SOURCE_GENERATED;
+  if (OSM_MESH_EXACT.has(name)) return LABEL_SOURCE_OSM;
+  if (name.startsWith('road-')) return LABEL_SOURCE_OSM;
+  // Le relief vient du MNT (Terrarium) : une mesure, pas un tirage — même si
+  // la démo n'étiquette pas ce maillage aujourd'hui (voir `LABEL_SKIP`).
+  if (name.startsWith('terrain-')) return LABEL_SOURCE_OSM;
+  if (name.startsWith('furniture-')) {
+    return OSM_FURNITURE_KINDS.has(name.slice(10)) ? LABEL_SOURCE_OSM : LABEL_SOURCE_GENERATED;
+  }
+  return LABEL_SOURCE_GENERATED;
+}
+
 /** Nom lisible d'un peuplement forestier (`vegetationLayer.forestTypeAt`). */
 export function labelForForestType(type, forests = defaultTheme.forests) {
   const known = forests.find((t) => t.name === type?.name);
@@ -177,6 +274,63 @@ export const LABEL_CROPS = {
   vineyard: 'vigne',
   orchard: 'verger',
 };
+
+/**
+ * Traduction de la classe `landuse`/`landcover` (schéma OpenMapTiles) — le
+ * repli quand `subclass` ne précise rien.
+ */
+export const LABEL_PLACE_CLASS = {
+  residential: 'zone résidentielle',
+  commercial: 'zone commerciale',
+  retail: 'zone commerciale',
+  industrial: 'zone industrielle',
+  suburb: 'périmètre habité',
+  neighbourhood: 'périmètre habité',
+  quarter: 'périmètre habité',
+  farmland: 'terres agricoles',
+  wood: 'bois',
+  forest: 'forêt',
+  grass: 'prairie',
+  park: 'parc',
+  cemetery: 'cimetière',
+  military: 'zone militaire',
+  quarry: 'carrière',
+  wetland: 'zone humide',
+  glacier: 'glacier',
+  beach: 'plage',
+  sand: 'sable',
+  scrub: 'friche',
+};
+
+/**
+ * Traduction du `subclass` — plus précis que `class` quand il est renseigné,
+ * et c'est lui qui distingue par exemple une cour de ferme (`farmyard`,
+ * voir `FARMYARD_SUBCLASSES` dans `furniturePlacement`) d'un terrain agricole
+ * ordinaire, tous deux voisins de `class: 'farmland'`.
+ */
+export const LABEL_PLACE_SUBCLASS = {
+  farmyard: 'cour de ferme',
+  farm: 'cour de ferme',
+  allotments: 'jardins ouvriers',
+  meadow: 'prairie',
+  grassland: 'prairie',
+  vineyard: 'vigne',
+  orchard: 'verger',
+  plant_nursery: 'pépinière',
+  golf_course: 'golf',
+  theme_park: 'parc d’attractions',
+  stadium: 'stade',
+  glacier: 'glacier',
+  ice_shelf: 'banquise',
+};
+
+/**
+ * Nom lisible d'une emprise `landuse`/`landcover`, ou `null` si ni `class` ni
+ * `subclass` ne sont reconnus. Fonction pure.
+ */
+export function labelForPlace(klass, subclass) {
+  return LABEL_PLACE_SUBCLASS[subclass] || LABEL_PLACE_CLASS[klass] || null;
+}
 
 /**
  * Applique une matrice 4×4 en colonne-major (three.js) à un point.
@@ -456,4 +610,161 @@ export function collectCropLabels({
 
   labels.sort((a, b) => a.distance - b.distance);
   return labels;
+}
+
+/** Pas et portée de l'étiquetage des emprises `landuse`/`landcover`. */
+export const PLACE_RADIUS_M = 260;
+/** Étiquettes d'emprise affichées au plus, les plus proches d'abord. */
+export const PLACE_MAX = 10;
+
+/**
+ * Étiquettes des emprises `landuse`/`landcover` autour d'un point — le
+ * pendant, pour les types de lieux, de `collectCropLabels` pour les cultures.
+ *
+ * Utile en particulier pour ce qu'aucun mobilier ne rend visible avant d'être
+ * posé : une cour de ferme (`farmyard`) reste une cour de ferme même les jours
+ * où le tirage de `_placeFarmstead` n'y pose ni grange ni serre — c'est ce
+ * classement-là, et non l'absence de mobilier, qui dit si le terrain en
+ * portait la possibilité.
+ *
+ * @param {Object} options
+ * @param {{forEachFeature:Function}} options.source `VectorTileSource` de
+ *        l'application — déjà chargée pour le décor, aucune requête de plus.
+ * @param {Array<{x:number,y:number}>} options.tiles Tuiles à parcourir, au
+ *        zoom de `source`.
+ * @param {{toLocal(lng:number, lat:number):{x:number,z:number}}} options.frame
+ *        Repère local de la bulle (`world.frame`).
+ * @param {{x:number,z:number}} options.eye
+ * @param {Function} options.groundAt `(x, z) => number` altitude de scène.
+ * @param {number} [options.radius]
+ * @param {number} [options.max]
+ * @returns {Array<{id:string, text:string, x:number, y:number, z:number, distance:number}>}
+ */
+export function collectPlaceLabels({
+  source,
+  tiles,
+  frame,
+  eye,
+  groundAt,
+  radius = PLACE_RADIUS_M,
+  max = PLACE_MAX,
+}) {
+  const out = [];
+  if (!source || !tiles || !frame) return out;
+  const radius2 = radius * radius;
+
+  const handle = (geometry, properties) => {
+    const text = labelForPlace(properties.class, properties.subclass);
+    if (!text) return;
+
+    for (const ring of ringsOf(geometry)) {
+      const local = [];
+      for (const [lng, lat] of ring) {
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+        local.push(frame.toLocal(lng, lat));
+      }
+      if (local.length < 3) continue;
+
+      let x = 0;
+      let z = 0;
+      for (const p of local) {
+        x += p.x;
+        z += p.z;
+      }
+      x /= local.length;
+      z /= local.length;
+
+      const dx = x - eye.x;
+      const dz = z - eye.z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 > radius2) continue;
+
+      // Surface indicative : au-delà d'un dixième d'hectare, elle aide à
+      // distinguer une vraie parcelle d'un polygone mal découpé en bord de
+      // tuile.
+      const hectares = ringAreaMeters(local) / 10000;
+      out.push({
+        id: `place:${properties.class || ''}:${properties.subclass || ''}:${Math.round(x)}:${Math.round(z)}`,
+        text: hectares >= 0.1 ? `${text} — ${hectares.toFixed(1)} ha` : text,
+        x,
+        y: groundAt(x, z) + 2,
+        z,
+        distance: Math.sqrt(d2),
+      });
+    }
+  };
+
+  source.forEachFeature('landcover', tiles, handle);
+  source.forEachFeature('landuse', tiles, handle);
+
+  out.sort((a, b) => a.distance - b.distance);
+  return out.slice(0, max);
+}
+
+/**
+ * Nom lisible d'une personnalité de bâtiment (`buildingLayer.buildingPersonalityFor`).
+ *
+ * `retail` et `shop` restent deux entrées distinctes bien que proches : la
+ * première ne couvre que les grandes surfaces (`mall`, `department_store`,
+ * `supermarket`), la seconde toute devanture ordinaire (café, banque,
+ * coiffeur…) — les confondre effacerait exactement la distinction que
+ * `BUILDING_PERSONALITY_RANK` fait pour décider ce qui saute en premier.
+ */
+export const LABEL_BUILDING_PERSONALITY = {
+  church: 'église',
+  mosque: 'mosquée',
+  hospital: 'hôpital',
+  bakery: 'boulangerie',
+  retail: 'grande surface',
+  shop: 'commerce',
+};
+
+/** Portée et nombre d'étiquettes de bâtiments spéciaux, au-delà des mêmes défauts que les objets. */
+export const BUILDING_LABEL_RADIUS_M = 260;
+export const BUILDING_LABEL_MAX = 12;
+
+/**
+ * Étiquettes des bâtiments spéciaux autour d'un point.
+ *
+ * @param {Object} options
+ * @param {Array<{x:number,z:number,kind:string}>} options.buildings
+ *        `BuildingLayer.personalities`, publié après chaque reconstruction.
+ * @param {{x:number,z:number}} options.eye
+ * @param {Function} options.groundAt `(x, z) => number` altitude de scène.
+ * @param {number} [options.radius]
+ * @param {number} [options.max]
+ * @returns {Array<{id:string, text:string, x:number, y:number, z:number, distance:number}>}
+ */
+export function collectBuildingLabels({
+  buildings,
+  eye,
+  groundAt,
+  radius = BUILDING_LABEL_RADIUS_M,
+  max = BUILDING_LABEL_MAX,
+}) {
+  const out = [];
+  if (!buildings) return out;
+  const radius2 = radius * radius;
+
+  for (const building of buildings) {
+    const text = LABEL_BUILDING_PERSONALITY[building.kind];
+    if (!text) continue;
+
+    const dx = building.x - eye.x;
+    const dz = building.z - eye.z;
+    const d2 = dx * dx + dz * dz;
+    if (d2 > radius2) continue;
+
+    out.push({
+      id: `building:${building.kind}:${Math.round(building.x)}:${Math.round(building.z)}`,
+      text,
+      x: building.x,
+      y: groundAt(building.x, building.z) + 3,
+      z: building.z,
+      distance: Math.sqrt(d2),
+    });
+  }
+
+  out.sort((a, b) => a.distance - b.distance);
+  return out.slice(0, max);
 }

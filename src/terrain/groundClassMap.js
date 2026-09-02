@@ -2,9 +2,10 @@
  * groundClassMap — l'occupation du sol, rasterisée pour toute la scène.
  * ----------------------------------------------------------------------
  * C'est la **source unique** de ce dont le sol est fait. Les tuiles
- * vectorielles le disent en clair (`landcover`, `landuse`, `park`) ; on les
- * rasterise dans un carré centré sur l'observateur, et trois consommateurs y
- * lisent la même donnée au même endroit :
+ * vectorielles le disent en clair (`landcover`, `landuse`, `park` — et, pour
+ * la ripisylve, `waterway`, tracé et non rempli) ; on les rasterise dans un
+ * carré centré sur l'observateur, et trois consommateurs y lisent la même
+ * donnée au même endroit :
  *
  *   • le shader de terrain, qui compose la matière (`terrainMaterial`) ;
  *   • la végétation, qui plante ses arbres dans les bois (`vegetationLayer`) ;
@@ -32,6 +33,8 @@
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { cropFor, cropId, cropFromId, randomAt, CROP_ID_STEP } from '../layers/furniturePlacement.js';
+import { isDrawableWater } from '../layers/waterLayer.js';
+import { defaultTheme } from '../themes/default.js';
 
 /**
  * Côté du carré couvert, en mètres. Il doit dépasser la portée du sol de
@@ -155,9 +158,13 @@ export class GroundClassMap {
   /**
    * @param {Object} options
    * @param {Object} options.THREE
+   * @param {Object} [options.theme] Fournit `theme.water.waterways` (largeur
+   *        des cours d'eau) et `theme.water.riparianBufferM` (largeur de la
+   *        ripisylve) — voir `rebuild`.
    */
-  constructor({ THREE }) {
+  constructor({ THREE, theme = defaultTheme }) {
     this.THREE = THREE;
+    this.theme = theme;
     this.canvas = createCanvas(CLASS_PIXELS, CLASS_PIXELS);
     // La carte est relue par le CPU après chaque rasterisation — c'est elle qui
     // décide aussi où poussent les arbres et l'herbe.
@@ -432,6 +439,125 @@ export class GroundClassMap {
         }
       });
     }
+
+    // Ripisylve : une bande de bois tracée le long des cours d'eau linéaires
+    // (`waterway`) — pas un polygone du vectoriel, une **ligne**, peinte en
+    // trait épais. Elle vit dans la même carte que n'importe quel autre bois,
+    // donc elle est plantée par `vegetationLayer` avec les mêmes silhouettes
+    // qu'une vraie forêt : c'est ce qui la distingue d'un alignement planté
+    // (les platanes de bord de route, qui restent du mobilier ponctuel — voir
+    // `furnitureLayer._applyRoadsidePlan`, `plan.alignmentTree`).
+    //
+    // Après les polygones, volontairement : le lit d'un ruisseau qui traverse
+    // un champ de blé doit y remplacer la culture, pas l'inverse.
+    {
+      const waterways = this.theme.water.waterways;
+      const bufferM = this.theme.water.riparianBufferM ?? 0;
+      if (bufferM > 0) {
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = CLASS_FILL.wood;
+        this.cropCtx.save();
+        // `destination-out` : le lit efface la culture qui s'y trouvait, comme
+        // le fait déjà `park` plus haut pour la même raison — un champ de blé
+        // ne pousse pas sous un bosquet.
+        this.cropCtx.globalCompositeOperation = 'destination-out';
+        this.cropCtx.fillStyle = '#000';
+        this.cropCtx.lineCap = 'round';
+        this.cropCtx.lineJoin = 'round';
+
+        source.forEachFeature('waterway', tiles, (geometry, properties) => {
+          if (properties.brunnel === 'tunnel') return;
+          if (properties.intermittent === 1 || properties.intermittent === true) return;
+          // Un fossé n'a pas de ripisylve.
+          if (properties.class === 'ditch') return;
+          const width = waterways[properties.class];
+          if (!width) return;
+
+          const lines =
+            geometry.type === 'LineString'
+              ? [geometry.coordinates]
+              : geometry.type === 'MultiLineString'
+                ? geometry.coordinates
+                : [];
+          const lineWidthPx = (width + bufferM * 2) * perMeter;
+
+          for (const line of lines) {
+            if (!Array.isArray(line) || line.length < 2) continue;
+            const path = new Path2D();
+            let started = false;
+            for (const [lng, lat] of line) {
+              if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+              const localX = (lngToTileX(lng, zoom) - origin.x) * scale;
+              const localZ = (latToTileY(lat, zoom) - origin.y) * scale;
+              const px = (localX - originX) * perMeter;
+              const pz = (localZ - originZ) * perMeter;
+              if (!started) {
+                path.moveTo(px, pz);
+                started = true;
+              } else {
+                path.lineTo(px, pz);
+              }
+            }
+            if (!started) continue;
+
+            ctx.lineWidth = lineWidthPx;
+            ctx.stroke(path);
+            // Le trait ci-dessus est centré sur l'axe du cours d'eau, donc sa
+            // moitié intérieure recouvre le lit lui-même — sans quoi la
+            // ripisylve n'aurait pas sa largeur voulue sur chaque rive. Il
+            // faut donc reprendre le lit : sans ce second trait, un large
+            // cours d'eau se retrouve planté d'arbres jusqu'en son milieu,
+            // qui poussent alors sous l'eau plutôt que sur la berge.
+            ctx.save();
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.lineWidth = width * perMeter;
+            ctx.stroke(path);
+            ctx.restore();
+            this.cropCtx.lineWidth = lineWidthPx;
+            this.cropCtx.strokeStyle = '#000';
+            this.cropCtx.stroke(path);
+            painted++;
+          }
+        });
+
+        this.cropCtx.restore();
+      }
+    }
+
+    // Le lit d'un grand cours d'eau (la Loire, par exemple) est un **polygone**
+    // (`water`), pas seulement le trait `waterway` : la largeur de theme par
+    // classe (`WATERWAY_CLASSES`) décrit un ruisseau, pas un fleuve, et la
+    // ripisylve tracée ci-dessus autour de l'axe se retrouve alors plaquée à
+    // quelques mètres du centre — en pleine eau, à des centaines de mètres de
+    // la vraie berge. On efface donc, après coup, tout ce qui a été peint sous
+    // l'emprise réelle de l'eau, quelle qu'en soit l'origine (ligne ou
+    // polygone) : la vraie berge est ce contour-là, pas la largeur de theme.
+    source.forEachFeature('water', tiles, (geometry, properties) => {
+      if (!isDrawableWater(properties)) return;
+      for (const rings of classPolygons(geometry)) {
+        if (!Array.isArray(rings) || rings.length === 0) continue;
+
+        const path = new Path2D();
+        for (const ring of rings) {
+          if (!Array.isArray(ring) || ring.length < 3) continue;
+          for (let i = 0; i < ring.length; i++) {
+            const [lng, lat] = ring[i];
+            if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+            const localX = (lngToTileX(lng, zoom) - origin.x) * scale;
+            const localZ = (latToTileY(lat, zoom) - origin.y) * scale;
+            if (i === 0) path.moveTo((localX - originX) * perMeter, (localZ - originZ) * perMeter);
+            else path.lineTo((localX - originX) * perMeter, (localZ - originZ) * perMeter);
+          }
+          path.closePath();
+        }
+
+        ctx.save();
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.fill(path, 'evenodd');
+        ctx.restore();
+      }
+    });
 
     this.count = painted;
     this.revision++;

@@ -372,6 +372,49 @@ export function grassBlockedByCrop(sample, crop) {
   return !edge;
 }
 
+/** Voisinage sondé par `widenFieldEdge`, en mètres depuis le point d'origine. */
+const FIELD_EDGE_OFFSETS_M = [
+  [5, 0], [-5, 0], [0, 5], [0, -5],
+  [3.5, 3.5], [-3.5, -3.5], [3.5, -3.5], [-3.5, 3.5],
+];
+
+/**
+ * Échantillon élargi pour la détection de lisière de champ.
+ *
+ * `GroundClassMap.sampleAt` lit **un seul pixel**, de 2,7 m de côté, sans le
+ * moindre flou (voir son en-tête — le filtrage linéaire dont il parle est
+ * celui du GPU, pas de cette lecture-ci, purement CPU). Au bord d'un vrai
+ * polygone, un pixel est herbe ou il est culture : jamais un peu des deux à
+ * la fois, sauf hasard d'anticrénelage sur une largeur d'un pixel. La
+ * condition « lisière » de `grassVariantFor` et `grassBlockedByCrop` — herbe
+ * *et* culture au-dessus de 0,2 au même point — ne pouvait donc pratiquement
+ * jamais se déclencher : c'est ce que corrige cette fonction, en cherchant la
+ * culture à quelques mètres à la ronde plutôt que sur le seul pixel interrogé.
+ *
+ * Elle ne fait rien sur un point déjà en pleine culture, ni sur de la
+ * bare/du bois — sa réponse ne compte que pour un point déjà herbeux, seul
+ * cas où `grassVariantFor` et `grassBlockedByCrop` la consultent.
+ *
+ * Fonction pure, hormis la lecture de `groundClass`.
+ *
+ * @param {Object|null} groundClass Instance `GroundClassMap`.
+ * @param {number} x
+ * @param {number} z
+ * @param {{grass:number, farmland:number}|null} sample Échantillon au pixel
+ *        exact — voir `GroundClassMap.sampleAt`.
+ * @returns {Object|null} `sample`, ou une copie dont `farmland` est monté au
+ *          maximum trouvé dans le voisinage.
+ */
+export function widenFieldEdge(groundClass, x, z, sample) {
+  if (!sample || sample.grass <= 0.2 || sample.farmland > 0.2) return sample;
+  let farmland = sample.farmland;
+  for (const [dx, dz] of FIELD_EDGE_OFFSETS_M) {
+    const near = groundClass?.sampleAt?.(x + dx, z + dz);
+    if (near && near.farmland > farmland) farmland = near.farmland;
+  }
+  return farmland === sample.farmland ? sample : { ...sample, farmland };
+}
+
 export class GroundCover {
   /**
    * @param {Object} options
@@ -532,13 +575,19 @@ export class GroundCover {
       );
       // Même lecture que `greenAt`, mais on garde l'échantillon complet : c'est
       // la présence simultanée d'herbe et de culture qui signale un bord de
-      // champ, donc un coquelicot.
+      // champ, donc un coquelicot. C'est volontairement l'échantillon **brut**,
+      // pas l'échantillon élargi (`edgeSample` ci-dessous) : la verdure de la
+      // touffe ne doit rien à une culture qui pousse à cinq mètres de là.
       const green = Math.min(1, sample.grass + sample.farmland * 0.5);
       if (green < GRASS_GREEN_MIN) continue;
 
+      // Échantillon élargi : voir `widenFieldEdge` sur pourquoi le pixel seul
+      // ne suffit pas à détecter un bord de champ.
+      const edgeSample = widenFieldEdge(groundClass, cellX, cellZ, sample);
+
       // Une vraie culture efface l'herbe générique — voir `grassBlockedByCrop`.
       const crop = groundClass?.cropAt?.(cellX, cellZ) ?? null;
-      if (grassBlockedByCrop(sample, crop)) continue;
+      if (grassBlockedByCrop(edgeSample, crop)) continue;
 
       const fade = coverBandFade(cell.distance, band);
       if (fade <= 0.02) continue;
@@ -597,7 +646,7 @@ export class GroundCover {
         // boutons d'or en prairie. Passé la bande de détail, c'est la masse
         // correspondante qui est tirée : le fleurissement décidé ici survit au
         // changement d'échelle.
-        let variant = grassVariantFor(sample, tufts[at + 6], this.theme.grass);
+        let variant = grassVariantFor(edgeSample, tufts[at + 6], this.theme.grass);
         if (cell.band > 0) variant = grassMassVariant(variant, tufts[at + 5]);
         const [u, v] = GRASS_ATLAS_OFFSETS[variant];
         this._atlasOffsets[placed * 2] = u;
