@@ -329,6 +329,7 @@ import {
   CROP_LOOK,
   TOWN_PALETTES,
   TREE_VARIANTS,
+  ROOF_PITCH as DEFAULT_PITCH,
   WINDOW_LIT_SHARE,
   WINDOW_WIDTH_M,
   defaultTheme,
@@ -3560,6 +3561,54 @@ test('un village garde sa palette, et son voisin en a une autre', () => {
   const names = new Set();
   for (let i = 0; i < 60; i++) names.add(townPaletteAt(i * TOWN_PATCH_M, 0).name);
   assert.ok(names.size >= 4, `plusieurs pays (${[...names].join(', ')})`);
+});
+
+test('un village est bâti dans la pierre de son pays', () => {
+  // La palette d’un bourg est ce qu’on lit d’une traversée avant même de
+  // distinguer une maison : la même liste partout rendait la Baltique et
+  // l’Andalousie interchangeables.
+  const nordiques = new Set();
+  const arides = new Set();
+  for (let i = 0; i < 60; i++) {
+    nordiques.add(townPaletteAt(i * TOWN_PATCH_M, 0, TOWN_PALETTES, 'boreal').name);
+    arides.add(townPaletteAt(i * TOWN_PATCH_M, 0, TOWN_PALETTES, 'arid').name);
+  }
+  for (const name of nordiques) assert.ok(!arides.has(name), `${name} n’est pas des deux`);
+  assert.ok(nordiques.has('bois rouge'));
+  assert.ok(arides.has('badigeon'));
+
+  // La maille tient : le climat réduit la liste, il ne déplace pas le tirage.
+  assert.equal(
+    townPaletteAt(10, 10, TOWN_PALETTES, 'oceanic').name,
+    townPaletteAt(10 + TOWN_PATCH_M * 0.4, 10, TOWN_PALETTES, 'oceanic').name
+  );
+});
+
+test('la pente du toit vient du bourg quand il en impose une', () => {
+  // La silhouette d’un toit se lit de plus loin que sa couleur : un
+  // toit-terrasse andalou et un pignon balte ne sont pas deux teintes.
+  const plate = TOWN_PALETTES.find((p) => p.name === 'badigeon');
+  const raide = TOWN_PALETTES.find((p) => p.name === 'brique balte');
+  assert.ok(plate.pitch < DEFAULT_PITCH, 'le sud est plus plat que le défaut');
+  assert.ok(raide.pitch > DEFAULT_PITCH, 'le nord est plus raide');
+  // Un toit sans pente déclarée laisse celle du thème : `buildingStyleAt` rend
+  // alors `undefined`, et l’appelant n’alloue rien.
+  const calcaire = TOWN_PALETTES.find((p) => p.name === 'calcaire');
+  assert.equal(calcaire.pitch, undefined);
+});
+
+test('aucun mur de bourg ne tombe hors de la plage claire du nuancier', () => {
+  // La règle du nuancier (voir l’en-tête de `townStyle`) : pastel, jamais
+  // sombre. Elle n’était vérifiée que sur le bourg qui tombait sous la sonde ;
+  // une palette ajoutée pouvait donc l’enfreindre sans que rien ne le dise.
+  // La modulation par maison descend jusqu’à 0,94 : c’est ce cas-là qu’on
+  // mesure.
+  for (const palette of TOWN_PALETTES) {
+    for (const wall of palette.walls) {
+      const value = Math.max(...srgb(wall)) * 0.94;
+      assert.ok(value > 0.4, `${palette.name} ${wall} : mur trop sombre (${value.toFixed(3)})`);
+    }
+  }
 });
 
 test('deux maisons d’un même bourg se ressemblent sans être identiques', () => {

@@ -406,6 +406,8 @@ test('chaque famille climatique a du contenu dédié dans le thème par défaut'
   for (const family of CLIMATE_FAMILIES) {
     const forests = DEFAULT.forests.filter((type) => type.climates?.includes(family));
     assert.ok(forests.length >= 1, `${family} : aucun peuplement`);
+    const towns = DEFAULT.towns.filter((palette) => palette.climates?.includes(family));
+    assert.ok(towns.length >= 1, `${family} : aucune palette de bourg`);
   }
 });
 
@@ -414,4 +416,20 @@ test('un climat que le thème ne connaît pas ne vide pas le décor', () => {
   // paysage générique, pas un paysage nu.
   const pool = filterByClimate(DEFAULT.forests, 'climat-inventé');
   assert.equal(pool.length, DEFAULT.forests.length);
+});
+
+test('la mémoire des palettes est indexée par nuancier ET par climat', () => {
+  // Deux mémoires se superposent ici : la conversion en linéaire, et le
+  // filtrage par climat. Une seconde mal indexée peindrait un village
+  // andalou avec le bois d'un village finlandais, et seulement quand les deux
+  // sont demandés dans le même ordre.
+  const [nord, sud] = interleaved(
+    () => townPaletteAt(4200, 1400, DEFAULT.towns, 'boreal').name,
+    () => townPaletteAt(4200, 1400, DEFAULT.towns, 'arid').name
+  );
+  assert.notEqual(nord, sud);
+  assert.ok(DEFAULT.towns.find((p) => p.name === nord).climates.includes('boreal'));
+  assert.ok(DEFAULT.towns.find((p) => p.name === sud).climates.includes('arid'));
+  // Et sans climat, on retrouve exactement le tirage d'avant les climats.
+  assert.equal(townPaletteAt(4200, 1400, DEFAULT.towns).name, townPaletteAt(4200, 1400).name);
 });

@@ -34,6 +34,7 @@
 import { srgb } from '../core/color.js';
 import { positionSeed, randomAt } from './furniturePlacement.js';
 import { defaultTheme } from '../themes/default.js';
+import { filterByClimate } from '../core/climate.js';
 
 /** Côté de la maille qui décide de la palette d'un bourg, en mètres. */
 export const TOWN_PATCH_M = 1400;
@@ -60,6 +61,10 @@ function linearTowns(towns) {
       // crépi ne se voit quasiment pas, ce qui est la moindre erreur possible.
       shutters: (palette.shutters || palette.walls).map(srgb),
       roofShapes: palette.roofShapes,
+      // Recopiés tels quels : ce ne sont pas des couleurs, mais ils voyagent
+      // avec la palette jusqu'au bâtiment.
+      climates: palette.climates,
+      pitch: palette.pitch,
     }));
     LINEAR_CACHE.set(towns, out);
   }
@@ -67,12 +72,45 @@ function linearTowns(towns) {
 }
 
 /**
+ * Palettes converties **et** filtrées par climat, mémorisées par nuancier puis
+ * par famille.
+ *
+ * Le filtrage rend un tableau neuf à chaque appel, et `townPaletteAt` est
+ * appelée une fois par bâtiment : sans cette seconde mémoire, chaque maison
+ * d'un bourg reconstruirait la liste. Indexée par la donnée d'entrée, comme la
+ * première, donc deux mondes de thèmes différents ne peuvent pas se mélanger.
+ */
+const CLIMATE_CACHE = new WeakMap();
+
+function palettesFor(towns, climate) {
+  const all = linearTowns(towns);
+  if (!climate) return all;
+  let byFamily = CLIMATE_CACHE.get(towns);
+  if (!byFamily) {
+    byFamily = new Map();
+    CLIMATE_CACHE.set(towns, byFamily);
+  }
+  let pool = byFamily.get(climate);
+  if (!pool) {
+    pool = filterByClimate(all, climate);
+    byFamily.set(climate, pool);
+  }
+  return pool;
+}
+
+/**
  * Palette du bourg qui contient un point. Fonction pure, et ancrée au lieu :
  * c'est ce qui fait qu'un village ne change pas de couleur quand on le
  * traverse.
+ *
+ * Le climat réduit d'abord la liste à ce qui se bâtit ici : la pierre du pays
+ * n'est pas la même en Andalousie et en Baltique, et c'est ce qu'on lit en
+ * traversant un village avant même d'en distinguer une maison.
+ *
+ * @param {string|null} [climate] Famille climatique (`core/climate.js`).
  */
-export function townPaletteAt(x, z, towns = defaultTheme.towns) {
-  const palettes = linearTowns(towns);
+export function townPaletteAt(x, z, towns = defaultTheme.towns, climate = null) {
+  const palettes = palettesFor(towns, climate);
   const gx = Math.floor(x / TOWN_PATCH_M) * TOWN_PATCH_M;
   const gz = Math.floor(z / TOWN_PATCH_M) * TOWN_PATCH_M;
   const draw = randomAt(gx, gz, 149);
@@ -143,11 +181,19 @@ function linearStreets(streets) {
  * @param {Object} [context]
  * @param {number} [context.area]   Emprise au sol, en m².
  * @param {number} [context.height] Hauteur, en mètres.
+ * @param {string|null} [climate] Famille climatique.
  * @returns {{wall:number[], roof:number[], shutter:number[], shape:string,
- *           house:boolean, shutters:boolean, palette:string}}
+ *           pitch:number|undefined, house:boolean, shutters:boolean,
+ *           palette:string}}
  */
-export function buildingStyleAt(x, z, { area = 100, height = 7 } = {}, towns = defaultTheme.towns) {
-  const palette = townPaletteAt(x, z, towns);
+export function buildingStyleAt(
+  x,
+  z,
+  { area = 100, height = 7 } = {},
+  towns = defaultTheme.towns,
+  climate = null
+) {
+  const palette = townPaletteAt(x, z, towns, climate);
   const seed = positionSeed(x, z, 151);
   const pickWall = palette.walls[seed % palette.walls.length];
   const pickRoof = palette.roofs[(seed >>> 3) % palette.roofs.length];
@@ -167,6 +213,10 @@ export function buildingStyleAt(x, z, { area = 100, height = 7 } = {}, towns = d
     roof,
     shutter,
     shape: roofShapeFor(palette, { area, height, seed }),
+    // Pente propre au bourg, ou rien — auquel cas l'appelant garde celle du
+    // thème. La silhouette d'un toit se lit de plus loin que sa couleur : un
+    // toit-terrasse andalou et un pignon balte ne sont pas deux teintes.
+    pitch: palette.pitch,
     house,
     // Un volet n'est pas un standard : dans le même bourg, une maison sur quatre
     // n'en a pas — façade refaite, fenêtre percée après coup, dépendance.

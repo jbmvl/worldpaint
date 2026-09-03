@@ -732,6 +732,12 @@ export class BuildingLayer {
     this.theme = theme;
     this.scene = scene;
     this.bubble = bubble;
+    /**
+     * Famille climatique du lieu, ou `null`. Posée par le compositeur, comme
+     * pour la végétation : elle change en cours de route, donc elle n'a rien à
+     * faire dans le thème.
+     */
+    this.climate = null;
     this.disposed = false;
     this.mesh = null;
     this.geometry = null;
@@ -789,6 +795,17 @@ export class BuildingLayer {
   }
 
   /** Vrai si l'observateur s'est assez éloigné pour justifier une reconstruction. */
+  /**
+   * Pose la famille climatique du lieu. Le bâti se refait de toute façon quand
+   * elle change (le compositeur périme le décor), donc il n'y a rien à
+   * invalider ici.
+   *
+   * @param {string|null} family
+   */
+  setClimate(family) {
+    this.climate = family || null;
+  }
+
   needsRebuild(x, z) {
     if (this._frame !== this.bubble?.frame) return true;
     if (!this._anchor) return true;
@@ -990,8 +1007,13 @@ export class BuildingLayer {
       footprint[0].x,
       footprint[0].z,
       { area: ground, height },
-      this.theme.towns
+      this.theme.towns,
+      this.climate
     );
+    // Pente du bourg si sa palette en impose une, celle du thème sinon. L'objet
+    // n'est composé que dans le premier cas : une allocation par bâtiment pour
+    // rien serait payée sur toute une ville.
+    const roofs = style.pitch ? { ...this.theme.roofs, pitch: style.pitch } : this.theme.roofs;
 
     // Personnalité : le premier point d'intérêt qui tombe dans l'empreinte
     // l'emporte — voir `buildingPersonalityFor`. La liste est déjà triée par
@@ -1038,7 +1060,7 @@ export class BuildingLayer {
     // L'égout descend donc de la hauteur du comble, dans la limite du
     // raisonnable — un bâtiment d'un seul niveau n'a pas de murs négatifs.
     const shape = look?.shape || (box && box.fill >= 0.62 ? style.shape : 'flat');
-    const rise = shape === 'flat' ? 0 : roofRise(box.short, this.theme.roofs);
+    const rise = shape === 'flat' ? 0 : roofRise(box.short, roofs);
     const eaves = Math.max(bottom + 2.4, top - rise);
 
     // Bandeau bas : soubassement d'ordinaire, **devanture** pour un commerce.
@@ -1097,7 +1119,7 @@ export class BuildingLayer {
     } else {
       // Comble : faîtière, croupe ou pyramide, bâti sur le rectangle englobant
       // orienté de l'empreinte (voir `roofGeometry`).
-      const roof = roofTriangles(box, eaves, shape, this.theme.roofs);
+      const roof = roofTriangles(box, eaves, shape, roofs);
       for (let i = 0; i < roof.positions.length; i += 3) {
         walls.positions.push(roof.positions[i], roof.positions[i + 1], roof.positions[i + 2]);
         walls.normals.push(roof.normals[i], roof.normals[i + 1], roof.normals[i + 2]);

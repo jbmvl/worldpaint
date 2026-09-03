@@ -485,10 +485,25 @@ export const COVER_LOOK = {
  *
  * Deux tons par bourg, comme pour les toits : plus, et la rue devient un
  * nuancier ; un seul, et c'est un lotissement.
+ *
+ * ## `climates` et `pitch` : le pays, pas seulement le village
+ *
+ * Les huit premières palettes sont françaises, et c'était tout le problème : un
+ * village polonais et un village andalou y étaient tirés dans la même liste. La
+ * palette porte donc les familles climatiques (`core/climate.js`) où elle est
+ * plausible, et `townPaletteAt` ne tire que dans celles-là. Une palette sans
+ * `climates` reste tirée partout — un thème d'avant les climats se comporte
+ * comme avant.
+ *
+ * `pitch` remplace la pente de toit par défaut (`ROOF_PITCH`) pour ce bourg-là,
+ * et ce n'est pas un détail : la silhouette d'un toit se lit de plus loin que sa
+ * couleur. Un toit-terrasse andalou, une tuile canal presque plate et un pignon
+ * balte à quarante degrés ne sont pas trois teintes, ce sont trois pays.
  */
 export const TOWN_PALETTES = [
   {
     name: 'calcaire',
+    climates: ['oceanic', 'continental', 'mediterraneanCool'],
     walls: ['#e6ddc9', '#dcd2bb', '#efe8d8'],
     roofs: ['#b0654a', '#9c5a44'],
     shutters: ['#93a6ab', '#c6bfab'],
@@ -496,52 +511,143 @@ export const TOWN_PALETTES = [
   },
   {
     name: 'ocre',
+    climates: ['mediterranean', 'mediterraneanCool', 'semiArid', 'arid'],
     walls: ['#e8cfa8', '#dcbe94', '#f0dcc0'],
     roofs: ['#c07b4c', '#ab6a45'],
     shutters: ['#7d8fae', '#7c8a5c'],
     roofShapes: ['gable', 'hip', 'flat'],
+    // Tuile canal : la pente la plus faible qui tienne encore une tuile.
+    pitch: 0.42,
   },
   {
     name: 'granit',
+    climates: ['oceanic', 'oceanicUpland'],
     walls: ['#cfcdc6', '#c0bfba', '#dcdad3'],
     roofs: ['#6a6f78', '#585d66'],
     shutters: ['#3f5a78', '#3d5a4a'],
     roofShapes: ['gable', 'pyramid'],
+    // L'ardoise se pose raide : elle glisse, et il pleut.
+    pitch: 0.75,
   },
   {
     name: 'brique',
+    climates: ['oceanic', 'continental'],
     walls: ['#d9a98e', '#c8977d', '#e4bda6'],
     roofs: ['#8d5f4c', '#7a5041'],
     shutters: ['#415c48', '#d5cab2'],
     roofShapes: ['gable', 'hip'],
+    pitch: 0.7,
   },
   {
     name: 'colombage',
+    climates: ['oceanic', 'continental'],
     walls: ['#efe6d4', '#e3d6c0', '#d8c8ae'],
     roofs: ['#8a5a49', '#6f4b3f'],
     shutters: ['#8e4034', '#405c3f'],
     roofShapes: ['gable', 'gable', 'hip'],
+    pitch: 0.8,
   },
   {
     name: 'chaux',
+    climates: ['mediterranean', 'mediterraneanCool', 'semiArid'],
     walls: ['#eeeae0', '#e3ded2', '#f4f1e9'],
     roofs: ['#a9713f', '#8f6039'],
     shutters: ['#9fb2b6', '#93a37c'],
     roofShapes: ['gable', 'flat'],
+    pitch: 0.42,
   },
   {
     name: 'ardoise',
+    climates: ['oceanic', 'oceanicUpland', 'continental'],
     walls: ['#dfe0dd', '#d0d2cf', '#eceded'],
     roofs: ['#5b626b', '#4c525a'],
     shutters: ['#dbd8cf', '#6d7f92'],
     roofShapes: ['gable', 'pyramid', 'hip'],
+    pitch: 0.75,
   },
   {
     name: 'lauze',
+    climates: ['alpine', 'mediterraneanMontane', 'oceanicUpland'],
     walls: ['#d5cbb8', '#c5bba7', '#e0d7c6'],
     roofs: ['#77726a', '#655f57'],
     shutters: ['#6f5a42', '#4c5f4a'],
     roofShapes: ['gable', 'hip'],
+    // La lauze est lourde : la charpente ne la porte pas en pente forte.
+    pitch: 0.6,
+  },
+  {
+    // Bois rouge de Scandinavie : rouge de Falun, encadrements blancs, toit
+    // sombre et raide. C'est le village nordique en une couleur.
+    name: 'bois rouge',
+    climates: ['boreal', 'oceanicUpland', 'glacial'],
+    // Rouge de Falun **délavé**. Le vrai est bien plus sombre et plus saturé,
+    // mais la règle pastel de ce fichier (voir l'en-tête de `townStyle`) tient
+    // tout le nuancier ensemble, et un mur qui la casse fait basculer le décor
+    // du côté du jouet. C'est un arbitrage d'auteur, pas une approximation.
+    walls: ['#c07a63', '#b8705c', '#c98a70'],
+    roofs: ['#4a4f55', '#3f444a'],
+    shutters: ['#e8e4da', '#d8d2c4'],
+    roofShapes: ['gable', 'hip'],
+    // La neige doit glisser, sinon elle reste et le toit descend.
+    pitch: 0.85,
+  },
+  {
+    // Bois goudronné sombre : chalet d'altitude et ferme nordique. Le même
+    // matériau que le rouge de Falun, vieilli au lieu d'être peint.
+    name: 'bois vieilli',
+    climates: ['boreal', 'alpine'],
+    // Bois gris de vieillissement plutôt que bois goudronné : même raison que
+    // ci-dessus, le goudron sort de la plage claire du nuancier.
+    walls: ['#bb9d74', '#c7aa83', '#b39468'],
+    roofs: ['#5d5f5a', '#4c4e4a'],
+    shutters: ['#e0d8c6', '#8c5b3a'],
+    roofShapes: ['gable', 'hip'],
+    pitch: 0.75,
+  },
+  {
+    // Badigeon andalou : chaux vive, toit presque plat, volets francs. Le seul
+    // endroit d'Europe où le mur est plus clair que le ciel.
+    name: 'badigeon',
+    climates: ['arid', 'semiArid', 'mediterranean'],
+    walls: ['#f4f2ea', '#eae7dc', '#faf8f2'],
+    roofs: ['#c07a4e', '#a96a45'],
+    shutters: ['#3f6f8e', '#2f5a4a'],
+    roofShapes: ['flat', 'gable'],
+    // Il ne pleut pas : le toit n'a presque pas besoin de pente.
+    pitch: 0.25,
+  },
+  {
+    // Brique et pignon droit : Baltique, Pologne, Prusse. Le pignon sur rue est
+    // ce qui distingue une ville hanséatique d'un bourg français.
+    name: 'brique balte',
+    climates: ['continental', 'boreal'],
+    walls: ['#c08670', '#b87f66', '#cb9580'],
+    roofs: ['#6a4a3e', '#7b5747'],
+    shutters: ['#4a5f4a', '#d9d2c2'],
+    roofShapes: ['gable', 'hip'],
+    pitch: 0.85,
+  },
+  {
+    // Pierre grecque : moellon clair et tuile romaine, sur les montagnes du
+    // sud. Ni le blanc des Cyclades, ni l'ocre de Provence.
+    name: 'pierre grecque',
+    climates: ['mediterraneanMontane', 'mediterranean'],
+    walls: ['#ddd4c1', '#cfc5b0', '#e8e0d0'],
+    roofs: ['#b06a44', '#96593a'],
+    shutters: ['#3d6b86', '#7a6a4a'],
+    roofShapes: ['gable', 'hip'],
+    pitch: 0.45,
+  },
+  {
+    // Crépi alpin : mur clair, large débord, toit peu pentu chargé de pierres.
+    // Le contraire du chalet à pignon raide qu'on imagine.
+    name: 'crépi alpin',
+    climates: ['alpine'],
+    walls: ['#efe8d8', '#e2dac8', '#f5f0e4'],
+    roofs: ['#7a736a', '#66605a'],
+    shutters: ['#7d4a33', '#3f5a4a'],
+    roofShapes: ['gable', 'hip'],
+    pitch: 0.45,
   },
 ];
 

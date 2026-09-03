@@ -307,9 +307,11 @@ export class WorldComposer {
     // il ne coûte qu'une lecture de tableau et cinq altitudes, et ce qui le lit
     // le lit à la construction de son propre contenu.
     const climateChanged = this._updateLandscape(lng, lat, here);
-    // Les essences d'un bois dépendent du climat : la couche doit l'avoir en
-    // main avant de planter quoi que ce soit.
-    this.vegetation.setClimate(this.landscape?.climate?.family ?? null);
+    // Les essences d'un bois et la pierre d'un village dépendent du climat :
+    // les couches doivent l'avoir en main avant de poser quoi que ce soit.
+    const family = this.landscape?.climate?.family ?? null;
+    this.vegetation.setClimate(family);
+    this.buildings.setClimate(family);
     const wanted = this._wantedTiles(lng, lat);
 
     // La végétation suit les tuiles de la bulle et non le vectoriel : elle se
