@@ -221,6 +221,12 @@ paint anything convinces nobody.
   Data](https://registry.opendata.aws/terrain-tiles/) — free, no key.
 - **Vector tiles**: OpenMapTiles-schema tiles, which the application
   supplies — any provider, or your own.
+- **Climate**: a Köppen-Geiger grid for Europe, **embedded** in the package —
+  no request, no key, no failure mode. It decides which trees, village
+  palettes, crops, livestock and haze belong to a place. See
+  `src/core/climate.js` for the vocabulary, `docs/climats.md` for how to write
+  content for it, and `scripts/build-climate-grid.mjs` to rebuild the grid from
+  another source.
 
 Attribution for whatever you display is your responsibility;
 `world.attribution` gives the string for the defaults. WorldPaint expects
@@ -262,7 +268,7 @@ feature list.
 npm test
 ```
 
-283 tests, plain `node --test`, no browser, no build.
+354 tests, plain `node --test`, no browser, no build.
 
 ## Contributing
 
