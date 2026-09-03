@@ -24,6 +24,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { defaultTheme } from '../src/themes/default.js';
+import { CLIMATE_FAMILIES, filterByClimate } from '../src/core/climate.js';
 import { resolveTheme } from '../src/themes/theme.js';
 import { townPaletteAt, buildingStyleAt, streetSurfaceAt } from '../src/layers/townStyle.js';
 import { kerbProfile } from '../src/layers/streetLayer.js';
@@ -390,4 +391,27 @@ test('la haie prend ses arbustes du thème, et son budget du moteur', () => {
   );
   const [tall] = hedgeClumps(path, { style: hedgeStyleFor('hedge', OTHER.furniture.hedges), here });
   assert.equal(tall.height, 6, 'l’arbuste fait la taille que le thème lui donne');
+});
+
+/*
+ * Le garde-fou de couverture climatique.
+ *
+ * `filterByClimate` retombe volontairement sur la liste entière quand une
+ * famille n'a aucun contenu : lever à cet endroit-là aborterait `refresh` et
+ * emporterait toutes les couches suivantes. Le prix de cette prudence est
+ * qu'une famille oubliée ne se signale pas — elle rend un décor générique, en
+ * silence. C'est donc ici qu'elle doit se signaler, franchement.
+ */
+test('chaque famille climatique a du contenu dédié dans le thème par défaut', () => {
+  for (const family of CLIMATE_FAMILIES) {
+    const forests = DEFAULT.forests.filter((type) => type.climates?.includes(family));
+    assert.ok(forests.length >= 1, `${family} : aucun peuplement`);
+  }
+});
+
+test('un climat que le thème ne connaît pas ne vide pas le décor', () => {
+  // Le repli est la liste entière, jamais rien : un climat inconnu rend un
+  // paysage générique, pas un paysage nu.
+  const pool = filterByClimate(DEFAULT.forests, 'climat-inventé');
+  assert.equal(pool.length, DEFAULT.forests.length);
 });

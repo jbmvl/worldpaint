@@ -202,11 +202,25 @@ export const TREE_ESSENCES = {
  * Le type est tiré d'une maille de `FOREST_PATCH_M`, donc il change
  * de proche en proche mais reste le même sur toute une masse boisée — et il ne
  * dépend que du lieu, donc il ne change pas d'une reconstruction à l'autre.
+ *
+ * ## `climates` : où ce peuplement a le droit d'exister
+ *
+ * C'est la moitié qui manquait. Une forêt tirée dans la même liste partout rend
+ * la Laponie identique à la Provence, quelle que soit la finesse des
+ * silhouettes : le pin d'Alep ne pousse pas en Finlande, et l'épicéa ne descend
+ * pas en garrigue. Chaque peuplement porte donc les familles climatiques
+ * (`core/climate.js`) où il est plausible, et `forestTypeAt` ne tire que dans
+ * celles-là.
+ *
+ * Un peuplement **sans** `climates` pousse partout : c'est ce qui fait qu'un
+ * thème écrit avant les climats se comporte exactement comme avant.
  */
 export const FOREST_TYPES = [
   {
     // Futaie de feuillus : de grands arbres, largement espacés, sous-bois clair.
+    // Chêne, hêtre, frêne — le bois de plaine tempérée.
     name: 'futaie',
+    climates: ['oceanic', 'continental', 'mediterraneanCool'],
     essences: ['broadleaf', 'broadleaf', 'column'],
     minHeight: 12,
     maxHeight: 22,
@@ -216,8 +230,10 @@ export const FOREST_TYPES = [
     tint: [0.95, 1, 0.86],
   },
   {
-    // Pinède : haute, sombre, dense et serrée.
+    // Pinède : haute, sombre, dense et serrée. Les Landes, la Sologne — une
+    // plantation de pin maritime ou sylvestre, pas un bois spontané.
     name: 'pinede',
+    climates: ['oceanic', 'continental', 'mediterraneanCool'],
     essences: ['conifer', 'conifer', 'conifer', 'column'],
     minHeight: 11,
     maxHeight: 19,
@@ -229,6 +245,14 @@ export const FOREST_TYPES = [
   {
     // Taillis et bosquets : bas, très denses, c'est le fourré qu'on longe.
     name: 'taillis',
+    climates: [
+      'oceanic',
+      'oceanicUpland',
+      'mediterranean',
+      'mediterraneanCool',
+      'mediterraneanMontane',
+      'continental',
+    ],
     essences: ['bushy', 'bushy', 'broadleaf'],
     minHeight: 3.5,
     maxHeight: 7,
@@ -240,6 +264,7 @@ export const FOREST_TYPES = [
   {
     // Bois mêlé : le cas le plus courant, et le seul où le mélange est juste.
     name: 'mixte',
+    climates: ['oceanic', 'continental', 'mediterraneanCool'],
     essences: ['broadleaf', 'conifer', 'bushy', 'column'],
     minHeight: 7,
     maxHeight: 16,
@@ -247,6 +272,105 @@ export const FOREST_TYPES = [
     // Le bois où l'on ne passe pas en ligne droite : ronces et jeunes pousses.
     understory: 0.34,
     tint: [0.92, 1, 0.86],
+  },
+  {
+    // Pinède méditerranéenne : pin d'Alep et pin parasol, clairsemés, sur un
+    // sol de garrigue qu'on voit entre les troncs. C'est le contraire d'une
+    // pinède landaise — l'ombre y est trouée, pas continue.
+    name: 'pinède méditerranéenne',
+    climates: ['mediterranean', 'semiArid'],
+    essences: ['conifer', 'conifer', 'bushy'],
+    minHeight: 7,
+    maxHeight: 14,
+    density: 0.85,
+    // La garrigue pousse sous les pins : ciste, romarin, chêne kermès.
+    understory: 0.45,
+    tint: [1.02, 0.95, 0.72],
+  },
+  {
+    // Chênaie verte : basse, dense, sombre, feuillage persistant. Le bois
+    // méditerranéen qui n'est pas une pinède.
+    name: 'chênaie verte',
+    climates: ['mediterranean', 'mediterraneanCool'],
+    essences: ['broadleaf', 'bushy', 'broadleaf'],
+    minHeight: 6,
+    maxHeight: 11,
+    density: 1.25,
+    understory: 0.4,
+    tint: [0.95, 0.98, 0.74],
+  },
+  {
+    // Pin noir et sapin de montagne méditerranéenne : Olympe, Apennins,
+    // sierras. Haut, droit, sur un sol sec et caillouteux.
+    name: 'pinède de montagne',
+    climates: ['mediterraneanMontane'],
+    essences: ['conifer', 'conifer', 'column'],
+    minHeight: 11,
+    maxHeight: 20,
+    density: 1.05,
+    understory: 0.2,
+    tint: [0.88, 0.98, 0.8],
+  },
+  {
+    // Taïga : épicéas serrés, très hauts, presque rien au sol. C'est la forêt
+    // la plus uniforme d'Europe, et cette uniformité *est* son identité.
+    name: 'taïga',
+    climates: ['boreal'],
+    essences: ['conifer', 'conifer', 'conifer', 'column'],
+    minHeight: 9,
+    maxHeight: 18,
+    density: 1.5,
+    understory: 0.18,
+    tint: [0.8, 1, 0.94],
+  },
+  {
+    // Bétulaie : bouleaux clairs et bas, la forêt de la limite — celle du
+    // nord, celle de l'altitude, celle du vent.
+    name: 'bétulaie',
+    climates: ['boreal', 'oceanicUpland', 'alpine', 'glacial'],
+    essences: ['column', 'bushy', 'broadleaf'],
+    minHeight: 4,
+    maxHeight: 11,
+    density: 1.1,
+    understory: 0.35,
+    tint: [1.02, 1.02, 0.78],
+  },
+  {
+    // Pessière subalpine : épicéas et mélèzes en pente, de plus en plus espacés
+    // à mesure qu'on monte vers la limite forestière.
+    name: 'pessière subalpine',
+    climates: ['alpine'],
+    essences: ['conifer', 'conifer', 'column'],
+    minHeight: 8,
+    maxHeight: 16,
+    density: 1.2,
+    understory: 0.16,
+    tint: [0.82, 0.96, 0.88],
+  },
+  {
+    // Bosquet sec : ce qui tient debout en steppe et en désert espagnol — des
+    // pins rabougris et des buissons, très espacés. La densité basse n'est pas
+    // une économie, c'est le paysage.
+    name: 'bosquet sec',
+    climates: ['semiArid', 'arid'],
+    essences: ['bushy', 'bushy', 'conifer'],
+    minHeight: 3,
+    maxHeight: 8,
+    density: 0.55,
+    understory: 0.55,
+    tint: [1.06, 0.94, 0.66],
+  },
+  {
+    // Bois rabougri de côte venteuse : les arbres n'y montent pas, ils
+    // s'étalent. L'Écosse, les îles, les caps.
+    name: 'bois rabougri',
+    climates: ['oceanicUpland'],
+    essences: ['bushy', 'broadleaf', 'bushy'],
+    minHeight: 3,
+    maxHeight: 7,
+    density: 0.85,
+    understory: 0.5,
+    tint: [0.95, 1, 0.82],
   },
 ];
 

@@ -278,6 +278,7 @@ import { skyParameters, lightingFor, sunlightColor } from '../src/environment/sk
 import {
   climateAt,
   refineByRelief,
+  filterByClimate,
   CLIMATE_FAMILIES,
   FAMILY_OF_KOPPEN,
   KOPPEN_CODES,
@@ -3440,6 +3441,41 @@ test('un bois garde ses essences quand la bulle se déplace', () => {
   const names = new Set();
   for (let i = 0; i < 40; i++) names.add(forestTypeAt(i * FOREST_PATCH_M, 0).name);
   assert.ok(names.size >= 3, `plusieurs peuplements (${[...names].join(', ')})`);
+});
+
+test('un bois ne pousse que là où son essence pousse vraiment', () => {
+  // Le pin d’Alep en Finlande et l’épicéa en garrigue étaient possibles tant
+  // que la liste était tirée en entier partout.
+  const mediterranean = new Set();
+  const boreal = new Set();
+  for (let i = 0; i < 60; i++) {
+    mediterranean.add(forestTypeAt(i * FOREST_PATCH_M, 0, FOREST_TYPES, 'mediterranean').name);
+    boreal.add(forestTypeAt(i * FOREST_PATCH_M, 0, FOREST_TYPES, 'boreal').name);
+  }
+  assert.ok(mediterranean.size >= 2, `plusieurs peuplements (${[...mediterranean].join(', ')})`);
+  for (const name of mediterranean) assert.ok(!boreal.has(name), `${name} n’est pas des deux`);
+  assert.ok(boreal.has('taïga'));
+
+  // La maille tient toujours : le climat réduit la liste, il ne déplace pas le
+  // tirage.
+  assert.equal(
+    forestTypeAt(1234, -5678, FOREST_TYPES, 'oceanic').name,
+    forestTypeAt(1234 + 3, -5678 - 4, FOREST_TYPES, 'oceanic').name
+  );
+});
+
+test('un peuplement sans climat déclaré pousse partout', () => {
+  // C’est ce qui fait qu’un thème écrit avant l’existence des climats se
+  // comporte exactement comme avant.
+  const ancien = [{ name: 'sans-climat', essences: ['broadleaf'], minHeight: 5, maxHeight: 9, density: 1, understory: 0.2, tint: [1, 1, 1] }];
+  for (const family of CLIMATE_FAMILIES) {
+    assert.equal(forestTypeAt(500, 500, ancien, family).name, 'sans-climat', family);
+  }
+  // Et un climat sans aucun contenu retombe sur la liste entière plutôt que de
+  // rendre un décor vide : lever ici emporterait toutes les couches suivantes.
+  assert.equal(filterByClimate(ancien, 'boreal').length, 1);
+  const tagged = [{ name: 'a', climates: ['arid'] }];
+  assert.deepEqual(filterByClimate(tagged, 'boreal'), tagged, 'repli sur la liste entière');
 });
 
 test('chaque peuplement tire dans des silhouettes qui existent', () => {

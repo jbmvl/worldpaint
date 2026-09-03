@@ -294,3 +294,33 @@ export function climateAt(lng, lat) {
   if (!family) return null;
   return { family, koppen };
 }
+
+/**
+ * Réduit une liste de contenus à ce qui est plausible sous un climat donné.
+ *
+ * C'est la **seule** mécanique de filtrage du projet, et elle est délibérément
+ * pauvre : une entrée porte une liste de familles (`climates`), et elle est
+ * retenue si la famille courante y figure. Une entrée qui n'en porte pas est
+ * retenue partout — ce qui fait qu'un thème écrit avant l'existence des climats
+ * se comporte exactement comme avant.
+ *
+ * Pourquoi une réduction de liste et pas une cascade de conditions : c'est ce
+ * qui rendra la saisonnalité ajoutable en composant le même filtre sur un
+ * second critère, au lieu de le réécrire.
+ *
+ * **Le repli est la liste entière.** Un climat sans contenu dédié rend un décor
+ * générique, jamais un décor vide : lever ici aborterait `refresh` et
+ * emporterait toutes les couches suivantes (voir `CONTRIBUTING.md`). Le
+ * garde-fou est ailleurs, dans les tests, où une famille sans contenu est une
+ * erreur franche au lieu d'un paysage silencieusement générique.
+ *
+ * Fonction pure.
+ *
+ * @param {Array<{climates?: string[]}>} items
+ * @param {string|null} family
+ */
+export function filterByClimate(items, family) {
+  if (!family || !Array.isArray(items)) return items;
+  const matching = items.filter((item) => !item?.climates || item.climates.includes(family));
+  return matching.length > 0 ? matching : items;
+}

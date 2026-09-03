@@ -307,6 +307,9 @@ export class WorldComposer {
     // il ne coûte qu'une lecture de tableau et cinq altitudes, et ce qui le lit
     // le lit à la construction de son propre contenu.
     const climateChanged = this._updateLandscape(lng, lat, here);
+    // Les essences d'un bois dépendent du climat : la couche doit l'avoir en
+    // main avant de planter quoi que ce soit.
+    this.vegetation.setClimate(this.landscape?.climate?.family ?? null);
     const wanted = this._wantedTiles(lng, lat);
 
     // La végétation suit les tuiles de la bulle et non le vectoriel : elle se
@@ -399,9 +402,11 @@ export class WorldComposer {
       );
 
       // 6. Arbres — les tuiles déjà plantées le restent : à donnée égale, le
-      //    semis est déterministe, les replanter ne ferait que clignoter. Seule
-      //    l'arrivée de la carte de classes justifie de tout reprendre.
-      if (classArrived) this.vegetation.sync({ replant: true });
+      //    semis est déterministe, les replanter ne ferait que clignoter. Deux
+      //    choses seulement justifient de tout reprendre : l'arrivée de la
+      //    carte de classes, et un changement de climat — ce qui est planté
+      //    l'aurait alors été avec les essences d'une autre région.
+      if (classArrived || climateChanged) this.vegetation.sync({ replant: true });
 
       // 7. Herbe — l'index des chaussées vient de changer, ce qui est semé
       //    peut se trouver sur une route qu'on ne connaissait pas encore.

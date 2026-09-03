@@ -71,6 +71,7 @@ import {
   ATLAS_ATTRIBUTE,
 } from '../materials/foliageMaterial.js';
 import { defaultTheme } from '../themes/default.js';
+import { filterByClimate } from '../core/climate.js';
 
 /** Côté de la grille de plantation, par tuile (~36 m par cellule au zoom 15). */
 export const VEGETATION_CELLS = 24;
@@ -262,12 +263,19 @@ export const FOREST_PATCH_M = 420;
 /**
  * Peuplement d'un point du sol. Fonction pure, et **ancrée au lieu** : c'est ce
  * qui fait qu'une forêt garde ses essences quand la bulle se déplace.
+ *
+ * Le climat réduit d'abord la liste à ce qui pousse ici (`filterByClimate`), et
+ * le tirage se fait dans ce qui reste : c'est ce qui empêche un pin d'Alep en
+ * Finlande. Sans climat, la liste entière est ouverte — le comportement d'avant.
+ *
+ * @param {string|null} [climate] Famille climatique (`core/climate.js`).
  */
-export function forestTypeAt(x, z, forests = defaultTheme.forests) {
+export function forestTypeAt(x, z, forests = defaultTheme.forests, climate = null) {
+  const pool = filterByClimate(forests, climate);
   const gx = Math.floor(x / FOREST_PATCH_M) * FOREST_PATCH_M;
   const gz = Math.floor(z / FOREST_PATCH_M) * FOREST_PATCH_M;
   const draw = randomAt(gx, gz, 131);
-  return forests[Math.min(forests.length - 1, Math.floor(draw * forests.length))];
+  return pool[Math.min(pool.length - 1, Math.floor(draw * pool.length))];
 }
 
 /** Variantes d'atlas ouvertes à un peuplement, dans l'ordre de ses essences. */
@@ -315,6 +323,12 @@ export class VegetationLayer {
     this.groundClass = groundClass;
     this.roads = roads;
     this.maxRing = maxRing;
+    /**
+     * Famille climatique du lieu, ou `null` hors de la fenêtre couverte. Elle
+     * n'arrive pas par le thème : elle change en cours de route, comme l'heure
+     * et la météo, et c'est le compositeur qui la pose (`setClimate`).
+     */
+    this.climate = null;
     this.disposed = false;
 
     this.group = new THREE.Group();
@@ -408,6 +422,21 @@ export class VegetationLayer {
    */
   setWind(field) {
     setFoliageWind(this.material, field);
+  }
+
+  /**
+   * Pose la famille climatique du lieu.
+   *
+   * @param {string|null} family
+   * @returns {boolean} vrai si elle a changé — auquel cas ce qui est déjà
+   *          planté l'a été avec les mauvaises essences, et le compositeur
+   *          replante (voir `sync({replant: true})`).
+   */
+  setClimate(family) {
+    const next = family || null;
+    if (next === this.climate) return false;
+    this.climate = next;
+    return true;
   }
 
   /**
@@ -524,7 +553,7 @@ export class VegetationLayer {
         // Le peuplement décide de la densité autant que des essences : un
         // taillis est serré, une futaie clairsemée, et c'est ce contraste qui se
         // lit de loin.
-        const type = forestTypeAt(centreX, centreZ, this.theme.forests);
+        const type = forestTypeAt(centreX, centreZ, this.theme.forests, this.climate);
         const count = treesForScore(score, TREES_PER_CELL * type.density, random());
         // Fourré de couverture — voir `coverBushesFor`. Il se sème là où il n'y
         // a pas de bois, donc il ne peut pas être conditionné à `count`.
