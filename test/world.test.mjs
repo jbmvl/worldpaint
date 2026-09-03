@@ -1413,6 +1413,33 @@ test('une côte garde son climat même quand la cellule tombe à l’eau', () =>
   }
 });
 
+test('un saut d’un pays à l’autre repose la question du climat', async () => {
+  // Régression : le profil s'est longtemps mémorisé sur une ancre en mètres
+  // locaux. Le repère se ré-ancre au-delà de vingt kilomètres, si bien qu'après
+  // une téléportation l'observateur était de nouveau à l'origine — Paris et
+  // Athènes se lisaient à la même distance de zéro, la garde tenait, et le
+  // climat pris au premier décor ne bougeait plus. Toute mémoïsation ajoutée
+  // ici doit repasser ce test.
+  const { WorldComposer } = await import('../src/worldComposer.js');
+  const composer = {
+    bubble: { frame: { repere: 'Paris' }, surfaceElevationAtLocal: () => 40 },
+    landscape: null,
+    _reliefAt: WorldComposer.prototype._reliefAt,
+  };
+  const update = (...args) => WorldComposer.prototype._updateLandscape.apply(composer, args);
+
+  assert.equal(update(2.35, 48.85, { x: 0, z: 0 }), true, 'premier décor');
+  assert.equal(composer.landscape.climate.family, 'oceanic');
+
+  // Même point local, autre repère : c'est une téléportation.
+  composer.bubble.frame = { repere: 'Athènes' };
+  assert.equal(update(23.72, 37.98, { x: 0, z: 0 }), true, 'la famille a changé');
+  assert.equal(composer.landscape.climate.family, 'mediterranean');
+
+  // Et rester au même endroit ne périme rien : c'est ce que lit `refresh`.
+  assert.equal(update(23.72, 37.98, { x: 100, z: 0 }), false, 'même famille');
+});
+
 test('le relief corrige ce que Köppen ne peut pas dire', () => {
   // Innsbruck est classée comme Rennes : la classification dit vrai pour le
   // fond de vallée et faux pour tout ce qui le domine. Le MNT, lui, est au

@@ -949,11 +949,15 @@ function loop() {
       y: ground ?? camera.position.y,
       z: camera.position.z,
     });
+    // La position du soleil se calcule là où l'on est, pas là où l'on a
+    // commencé : à la même heure, il est bas sur la Laponie et haut sur la
+    // Crète, et c'est la première chose qui dit le pays.
+    const sunHere = world.frame ? world.frame.toLngLat(camera.position.x, camera.position.z) : START;
     const paint = world.updateSky({
       camera,
       date: currentDate(),
-      lng: START.lng,
-      lat: START.lat,
+      lng: sunHere.lng,
+      lat: sunHere.lat,
       // Omise, la météo est reconduite : inutile de refaire l'objet et de
       // reprogrammer les particules à chaque image quand rien n'a bougé.
       weather: weatherDirty ? readWeather() : undefined,
@@ -989,7 +993,13 @@ function loop() {
   const where = here
     ? `lng ${here.lng.toFixed(5)}  lat ${here.lat.toFixed(5)}`
     : `x ${camera.position.x.toFixed(0)}  z ${camera.position.z.toFixed(0)}`;
-  coordsEl.textContent = `${where}  alt ${camera.position.y.toFixed(0)} m  cap ${bearingDeg.toFixed(0)}°  incl ${pitchDeg.toFixed(0)}°`;
+  // Le climat courant s'affiche parce qu'il ne se lit pas au premier coup
+  // d'oeil : c'est lui qui décide des essences, des palettes de village et de
+  // l'assolement, et sans repère écrit on ne sait pas si le décor a changé de
+  // pays ou si l'on regarde deux fois le même bois.
+  const profile = world?.composer?.landscape;
+  const climat = profile ? `  ${profile.climate.family} (${profile.climate.koppen})` : '';
+  coordsEl.textContent = `${where}  alt ${camera.position.y.toFixed(0)} m  cap ${bearingDeg.toFixed(0)}°  incl ${pitchDeg.toFixed(0)}°${climat}`;
 
   renderer.render(scene, camera);
 }
