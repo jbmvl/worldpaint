@@ -35,10 +35,13 @@ import {
   labelForPlace,
   collectPlaceLabels,
   collectBuildingLabels,
+  sourceForMeshName,
   LABEL_BUILDING_PERSONALITY,
   LABEL_FURNITURE,
   LABEL_ROADS,
   LABEL_CROPS,
+  LABEL_SOURCE_OSM,
+  LABEL_SOURCE_GENERATED,
 } from '../src/inspect/objectLabels.js';
 import {
   resamplePath,
@@ -87,6 +90,7 @@ import {
   LAMP_ARC,
   LAMP_HEAD_HEIGHT_M,
   LAMP_HEAD_REACH_M,
+  GREENHOUSE_BASE_LENGTH_M,
 } from '../src/layers/furnitureKit.js';
 import { tileBounds } from '../src/core/vectorTileSource.js';
 import {
@@ -240,6 +244,14 @@ import {
   FurnitureLayer,
   LINEAR_KINDS,
   POINT_ITEMS,
+  FARMSTEAD_MAX_HECTARES,
+  FARMSTEAD_CLUSTER_RADIUS_M,
+  FARMSTEAD_CLUSTER_MIN_BUILDINGS,
+  GREENHOUSE_MIN_LENGTH_M,
+  GREENHOUSE_MAX_LENGTH_M,
+  GREENHOUSE_SPACING_M,
+  isSettlementEdgeRun,
+  SIGN_PLACE_NAME_MIN_GAP_M,
 } from '../src/layers/furnitureLayer.js';
 import {
   HEDGE_STYLES,
@@ -281,7 +293,15 @@ import {
   CLASS_AREA_M,
   SETTLED_GRASS,
 } from '../src/terrain/groundClassMap.js';
-import { collectBuiltUpAreas, pointInAreas, ringsOf, FabricIndex } from '../src/layers/settlement.js';
+import {
+  collectBuiltUpAreas,
+  pointInAreas,
+  ringsOf,
+  FabricIndex,
+  SETTLEMENT_PLACE_CLASSES,
+  collectPlaceNames,
+  nearestNamedPlace,
+} from '../src/layers/settlement.js';
 import {
   kerbQualifies,
   kerbProfile,
@@ -298,7 +318,21 @@ import { streetSurfaceAt } from '../src/layers/townStyle.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
 import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
 import { birdAt, createBirdGeometry } from '../src/layers/lifeLayer.js';
-import { windowGrid, windowDraw } from '../src/layers/buildingLayer.js';
+import {
+  windowGrid,
+  windowDraw,
+  shopfrontLayout,
+  appendShopfront,
+  appendShopSignBlade,
+  shopfrontEmojiFor,
+} from '../src/layers/buildingLayer.js';
+import {
+  fitLabelText,
+  pushLabelQuad,
+  labelFontPxForCellHeight,
+  LABEL_PADDING_PX,
+  LABEL_LINE_HEIGHT_RATIO,
+} from '../src/materials/labelAtlas.js';
 import {
   srgb,
 } from '../src/core/color.js';
@@ -313,6 +347,8 @@ import {
   TREE_VARIANTS,
   WINDOW_LIT_SHARE,
   WINDOW_WIDTH_M,
+  SHOPFRONT_EMOJI,
+  SHOPFRONT_EMOJI_DEFAULT,
   defaultTheme,
 } from '../src/themes/default.js';
 
@@ -3873,6 +3909,29 @@ test('un nom de maillage se traduit, et rien ne se perd en route', () => {
   assert.equal(labelForMeshName('quelque-chose-de-neuf'), 'quelque-chose-de-neuf');
 });
 
+test('sourceForMeshName : la carte pour ce qui existe dans la donnée, la procédure pour le reste', () => {
+  // Ce que la donnée porte réellement.
+  assert.equal(sourceForMeshName('buildings'), LABEL_SOURCE_OSM);
+  assert.equal(sourceForMeshName('water'), LABEL_SOURCE_OSM);
+  assert.equal(sourceForMeshName('railway'), LABEL_SOURCE_OSM);
+  assert.equal(sourceForMeshName('streets'), LABEL_SOURCE_OSM);
+  assert.equal(sourceForMeshName('road-major'), LABEL_SOURCE_OSM);
+  assert.equal(sourceForMeshName('furniture-monument'), LABEL_SOURCE_OSM);
+  assert.equal(sourceForMeshName('furniture-fountain'), LABEL_SOURCE_OSM);
+  assert.equal(sourceForMeshName('furniture-cemeteryCross'), LABEL_SOURCE_OSM);
+
+  // Une population tirée, même quand la parcelle qui la porte est réelle.
+  assert.equal(sourceForMeshName('furniture-streetLamp'), LABEL_SOURCE_GENERATED);
+  assert.equal(sourceForMeshName('furniture-hedge'), LABEL_SOURCE_GENERATED);
+  assert.equal(sourceForMeshName('furniture-barn'), LABEL_SOURCE_GENERATED);
+  assert.equal(sourceForMeshName('ground-cover'), LABEL_SOURCE_GENERATED);
+  assert.equal(sourceForMeshName('crops'), LABEL_SOURCE_GENERATED);
+  assert.equal(sourceForMeshName('gardens'), LABEL_SOURCE_GENERATED);
+  assert.equal(sourceForMeshName('vegetation-15/16594/11269'), LABEL_SOURCE_GENERATED);
+  assert.equal(sourceForMeshName(''), LABEL_SOURCE_GENERATED);
+  assert.equal(sourceForMeshName(null), LABEL_SOURCE_GENERATED);
+});
+
 test('toute forme de mobilier posée dans la scène a un nom lisible', () => {
   // Le catalogue est la source : une forme ajoutée sans nom sortirait en
   // « mobilier (xxx) », ce qui est exactement le genre de trou qu'on ne
@@ -3942,6 +4001,8 @@ test('la traversée du graphe étiquette ce qui est dans la portée, et le plus 
 
   const labels = collectSceneLabels({ root, eye: { x: 0, y: 0, z: 0 }, skip: new Set(['crops']) });
   assert.deepEqual(labels.map((l) => l.text), ['bâtiment', 'haie', 'lampadaire']);
+  // Le bâtiment vient de la donnée, la haie et le lampadaire d'un tirage.
+  assert.deepEqual(labels.map((l) => l.source), [LABEL_SOURCE_OSM, LABEL_SOURCE_GENERATED, LABEL_SOURCE_GENERATED]);
 
   // La portée se règle, et le nombre d'étiquettes aussi.
   const eye = { x: 0, y: 0, z: 0 };
@@ -3993,6 +4054,8 @@ test("une parcelle s'étiquette au-dessus du sol, avec sa surface", () => {
   assert.match(labels[0].text, /0\.4 ha/);
   assert.equal(labels[0].y, 103, "l'étiquette flotte au-dessus du sol");
   assert.ok(labels[0].x > 0 && labels[0].z > 0, 'elle est posée sur le champ');
+  // Le schéma ne dit quasiment jamais la culture : toujours inventé.
+  assert.equal(labels[0].source, LABEL_SOURCE_GENERATED);
 });
 
 // --- Emprises `landuse`/`landcover` : le type de lieu, avant tout mobilier ---
@@ -4066,6 +4129,8 @@ test('collectPlaceLabels retrouve une cour de ferme, pas les prés autour', () =
   assert.equal(labels.length, 1, "seule l'emprise reconnue est étiquetée");
   assert.match(labels[0].text, /^cour de ferme — /);
   assert.equal(labels[0].y, 52, "l'étiquette flotte au-dessus du sol");
+  // `class`/`subclass` viennent de la tuile : toujours la carte.
+  assert.equal(labels[0].source, LABEL_SOURCE_OSM);
 });
 
 test('collectPlaceLabels écarte ce qui est hors de portée', () => {
@@ -4118,6 +4183,8 @@ test('collectBuildingLabels traduit chaque personnalité connue, écarte les aut
   const byText = labels.map((l) => l.text).sort();
   assert.deepEqual(byText, ['boulangerie', 'commerce', 'grande surface', 'hôpital', 'mosquée', 'église']);
   assert.equal(labels[0].y, 103, "l'étiquette flotte au-dessus du sol");
+  // `buildingPersonalityFor` classe un vrai point d'intérêt : toujours la carte.
+  assert.ok(labels.every((l) => l.source === LABEL_SOURCE_OSM));
 });
 
 test('collectBuildingLabels : retail et shop restent deux traductions distinctes', () => {
@@ -4675,6 +4742,188 @@ test('le côté examiné change la réponse, pas le découpage', () => {
   assert.equal(kerbQualifies({ builtUp: true, buildings: south }), false);
 });
 
+// --- Cour de ferme : un indice indirect, faute de landuse=farmyard servi ---
+//
+// `landuse=farmyard` n'atteint pas les tuiles OpenFreeMap (vérifié contre une
+// vraie ferme d'OSM — voir le commentaire de `FARMSTEAD_MAX_HECTARES`).
+// `_looksLikeFarmstead` s'appuie donc sur `FabricIndex` : une petite parcelle
+// agricole ou une pâture, avec une vraie grappe de bâtiments à portée.
+
+/** Carré de `side` mètres de côté, coin sud-ouest à l'origine. */
+function squareRing(side) {
+  return [
+    { x: 0, z: 0 },
+    { x: side, z: 0 },
+    { x: side, z: side },
+    { x: 0, z: side },
+  ];
+}
+
+/** Instance minimale de `FurnitureLayer`, juste assez pour `_looksLikeFarmstead`. */
+function farmsteadHarness(fabric) {
+  const layer = Object.create(FurnitureLayer.prototype);
+  layer._fabric = fabric;
+  return layer;
+}
+
+test('_looksLikeFarmstead réclame une vraie grappe de bâtiments, pas un pavillon isolé', () => {
+  const centre = { x: 50, z: 50 };
+  const ring = squareRing(100); // 1 ha : sous FARMSTEAD_MAX_HECTARES
+
+  const lone = new FabricIndex([{ x: 50, z: 55 }]);
+  assert.equal(
+    farmsteadHarness(lone)._looksLikeFarmstead({ class: 'farmland' }, ring, centre),
+    false,
+    'une seule maison ne fait pas une ferme'
+  );
+
+  const cluster = new FabricIndex([
+    { x: 50, z: 55 },
+    { x: 60, z: 45 },
+  ]);
+  assert.equal(
+    farmsteadHarness(cluster)._looksLikeFarmstead({ class: 'farmland' }, ring, centre),
+    true,
+    'deux bâtiments groupés en font une'
+  );
+});
+
+test('_looksLikeFarmstead : pâture oui, jardin ou parc non', () => {
+  const centre = { x: 50, z: 50 };
+  const ring = squareRing(100);
+  const cluster = new FabricIndex([
+    { x: 50, z: 55 },
+    { x: 60, z: 45 },
+  ]);
+  const layer = farmsteadHarness(cluster);
+
+  assert.equal(layer._looksLikeFarmstead({ class: 'farmland' }, ring, centre), true);
+  assert.equal(layer._looksLikeFarmstead({ class: 'grass', subclass: 'meadow' }, ring, centre), true);
+  assert.equal(layer._looksLikeFarmstead({ class: 'grass', subclass: 'grassland' }, ring, centre), true);
+  // Une pelouse d'agrément n'est pas une terre agricole, même à côté de maisons.
+  assert.equal(layer._looksLikeFarmstead({ class: 'grass', subclass: 'garden' }, ring, centre), false);
+  assert.equal(layer._looksLikeFarmstead({ class: 'grass', subclass: 'park' }, ring, centre), false);
+  assert.equal(layer._looksLikeFarmstead({ class: 'wood' }, ring, centre), false);
+});
+
+test('_looksLikeFarmstead écarte le grand champ ouvert et exige FabricIndex', () => {
+  const cluster = new FabricIndex([
+    { x: 50, z: 55 },
+    { x: 60, z: 45 },
+  ]);
+  // Un openfield de cinquante hectares : le centroïde n'a plus de raison
+  // d'être près d'un bâtiment, même si `FabricIndex` en trouve un par hasard.
+  const bigRing = squareRing(1000); // 100 ha
+  assert.equal(
+    farmsteadHarness(cluster)._looksLikeFarmstead({ class: 'farmland' }, bigRing, { x: 500, z: 500 }),
+    false
+  );
+
+  const smallRing = squareRing(100);
+  assert.equal(
+    farmsteadHarness(null)._looksLikeFarmstead({ class: 'farmland' }, smallRing, { x: 50, z: 50 }),
+    false,
+    'sans FabricIndex, le repli est de ne rien poser'
+  );
+});
+
+test('les seuils de détection restent ceux documentés', () => {
+  assert.equal(FARMSTEAD_MAX_HECTARES, 3);
+  assert.equal(FARMSTEAD_CLUSTER_RADIUS_M, 80);
+  assert.equal(FARMSTEAD_CLUSTER_MIN_BUILDINGS, 2);
+});
+
+// --- Serres : un rang, dans le sens de la ferme, long de la parcelle -------
+
+test('_greenhouseLengthFor mesure la parcelle dans le sens de la ferme, et la borne', () => {
+  // Rectangle 20 m (largeur) × 40 m (longueur), aligné sur les axes du monde.
+  const ring = [
+    { x: 0, z: 0 },
+    { x: 20, z: 0 },
+    { x: 20, z: 40 },
+    { x: 0, z: 40 },
+  ];
+  const centre = { x: 10, z: 20 };
+
+  // yaw = π/2 : direction (cos, sin) = (0, 1), l'axe z — la longueur.
+  close(FurnitureLayer._greenhouseLengthFor(ring, centre, Math.PI / 2), 40, 1e-6);
+  // yaw = 0 : direction (1, 0), l'axe x — la largeur.
+  close(FurnitureLayer._greenhouseLengthFor(ring, centre, 0), 20, 1e-6);
+
+  // Bornée en dessous : une parcelle minuscule ne redescend pas sous le
+  // gabarit minimal.
+  const tiny = [
+    { x: 0, z: 0 },
+    { x: 1, z: 0 },
+    { x: 1, z: 1 },
+    { x: 0, z: 1 },
+  ];
+  assert.equal(FurnitureLayer._greenhouseLengthFor(tiny, { x: 0.5, z: 0.5 }, 0), GREENHOUSE_MIN_LENGTH_M);
+
+  // Bornée au-dessus : un openfield ne dépasse pas le gabarit maximal.
+  const huge = squareRing(500);
+  assert.equal(FurnitureLayer._greenhouseLengthFor(huge, { x: 250, z: 250 }, 0), GREENHOUSE_MAX_LENGTH_M);
+});
+
+/** Instance de `FurnitureLayer` juste assez armée pour poser du mobilier ponctuel. */
+function farmsteadPlacementHarness() {
+  const layer = Object.create(FurnitureLayer.prototype);
+  layer.bubble = { surfaceElevationAtLocal: () => 100, verticalScale: 1 };
+  layer.chimneys = [];
+  const placements = new Map();
+  for (const item of POINT_ITEMS) placements.set(item, []);
+  return { layer, placements };
+}
+
+test('_place propage scaleX/scaleZ, et retombe sur scale sans eux', () => {
+  const { layer, placements } = farmsteadPlacementHarness();
+
+  const stretched = layer._place(placements, 'greenhouse', { x: 0, z: 0, scaleZ: 2.5 });
+  assert.equal(stretched.scaleZ, 2.5);
+  assert.equal(stretched.scaleX, undefined, 'non fourni, scaleX ne se fabrique pas tout seul');
+
+  const plain = layer._place(placements, 'barn', { x: 0, z: 0 });
+  assert.equal(plain.scaleX, undefined);
+  assert.equal(plain.scaleZ, undefined);
+  assert.equal(plain.scale, 1);
+});
+
+test('_placeFarmstead aligne plusieurs serres, longues de la parcelle plutôt que du modèle', () => {
+  const { layer, placements } = farmsteadPlacementHarness();
+
+  // Un losange plutôt qu'un carré aligné sur les axes : la longueur mesurée
+  // ne doit rien à une coïncidence entre le tirage de `yaw` et l'orientation
+  // du test.
+  const centre = { x: 1000, z: 2000 };
+  const ring = [
+    { x: centre.x, z: centre.z - 60 },
+    { x: centre.x + 60, z: centre.z },
+    { x: centre.x, z: centre.z + 60 },
+    { x: centre.x - 60, z: centre.z },
+  ];
+
+  layer._placeFarmstead(placements, ring, centre);
+
+  const greenhouses = placements.get('greenhouse');
+  assert.ok([2, 3].includes(greenhouses.length), 'un rang de deux ou trois tunnels');
+
+  // Un seul tirage de longueur par ferme : toutes les serres du rang partagent
+  // la même échelle.
+  const scaleZs = new Set(greenhouses.map((g) => g.scaleZ));
+  assert.equal(scaleZs.size, 1, 'un seul tirage de longueur par ferme');
+  const length = greenhouses[0].scaleZ * GREENHOUSE_BASE_LENGTH_M;
+  // Le losange choisi mesure entre ~85 m et 120 m selon l'axe projeté, quel
+  // que soit le tirage de `yaw` : toujours au-delà du plafond, donc la
+  // longueur retenue est déterministe.
+  assert.equal(length, GREENHOUSE_MAX_LENGTH_M, 'plus longues que le modèle de catalogue (14 m), et plafonnées');
+
+  // Alignées : écartées d'une distance régulière, côte à côte.
+  for (let i = 1; i < greenhouses.length; i++) {
+    const d = Math.hypot(greenhouses[i].x - greenhouses[i - 1].x, greenhouses[i].z - greenhouses[i - 1].z);
+    close(d, GREENHOUSE_SPACING_M, 1e-6, 'écart régulier entre deux tunnels voisins');
+  }
+});
+
 test('une emprise habitée se lit par lancer de rayon', () => {
   const square = [
     { x: 0, z: 0 },
@@ -5026,4 +5275,420 @@ test('le halo lit la couleur d’instance sans la redéclarer', () => {
   assert.equal(material.uniforms.uColor.value.x, 1);
   // Le halo s’allume la nuit : il naît éteint.
   assert.equal(material.uniforms.uOpacity.value, 0);
+});
+
+// --- Les noms des lieux : entrée d'agglomération, enseigne de commerce ------
+
+test('collectPlaceNames retient les agglomérations nommées, écarte quartiers et lieux sans nom', () => {
+  const point = (lng, lat) => ({ type: 'Point', coordinates: [lng, lat] });
+  const source = fakePlaceSource([
+    { layer: 'place', properties: { class: 'city', name: 'Lyon' }, geometry: point(4.83, 45.76) },
+    { layer: 'place', properties: { class: 'suburb', name: 'Bellecour' }, geometry: point(4.83, 45.76) },
+    { layer: 'place', properties: { class: 'village', name: 'Dornas' }, geometry: point(4.35, 44.85) },
+    { layer: 'place', properties: { class: 'city' }, geometry: point(2.35, 48.85) }, // sans nom
+    { layer: 'place', properties: { class: 'island', name: 'Île des Lémuriens' }, geometry: point(0, 0) },
+  ]);
+  const frame = { origin: { x: 0, y: 0 }, scale: 1000, zoom: 0 };
+
+  const places = collectPlaceNames(source, [{ x: 0, y: 0 }], frame);
+
+  assert.deepEqual(
+    places.map((p) => p.name).sort(),
+    ['Dornas', 'Lyon'],
+    'ni le quartier, ni le lieu sans nom, ni l’île ne sont une agglomération'
+  );
+  assert.ok(places.every((p) => Number.isFinite(p.x) && Number.isFinite(p.z)));
+  assert.deepEqual(collectPlaceNames(null, [], null), [], 'sans source, aucun lieu');
+});
+
+test('SETTLEMENT_PLACE_CLASSES exclut les subdivisions internes d’une ville', () => {
+  assert.ok(SETTLEMENT_PLACE_CLASSES.has('city'));
+  assert.ok(SETTLEMENT_PLACE_CLASSES.has('town'));
+  assert.ok(SETTLEMENT_PLACE_CLASSES.has('village'));
+  assert.ok(SETTLEMENT_PLACE_CLASSES.has('hamlet'));
+  for (const excluded of ['suburb', 'quarter', 'neighbourhood', 'island']) {
+    assert.ok(!SETTLEMENT_PLACE_CLASSES.has(excluded), excluded);
+  }
+});
+
+test('nearestNamedPlace retient le plus proche, dans le rayon donné seulement', () => {
+  const places = [
+    { x: 0, z: 0, name: 'Loin' },
+    { x: 10, z: 0, name: 'Proche' },
+  ];
+  assert.equal(nearestNamedPlace(places, 12, 0, 50).name, 'Proche');
+  assert.equal(nearestNamedPlace(places, 12, 0, 1), null, 'hors de portée, personne');
+  assert.equal(nearestNamedPlace([], 0, 0, 100), null);
+  assert.equal(nearestNamedPlace(null, 0, 0, 100), null);
+});
+
+test('shopfrontLayout centre une large baie d’entrée, flanquée de baies symétriques', () => {
+  const theme = { windowWidthM: 1.1, doorWidthM: 1.7, marginM: 0.45, gapM: 0.3 };
+  const modules = shopfrontLayout(6, theme);
+  assert.ok(modules, 'assez de place pour une devanture');
+
+  const doors = modules.filter((m) => m.door);
+  assert.equal(doors.length, 1, 'une seule porte');
+  assert.equal(doors[0].offset, 0, 'centrée sur le pan');
+
+  const windows = modules.filter((m) => !m.door);
+  assert.equal(windows.length, 2, 'une baie de chaque côté');
+  const offsets = windows.map((m) => m.offset).sort((a, b) => a - b);
+  close(offsets[0], -offsets[1], 1e-9, 'symétrique de part et d’autre de la porte');
+});
+
+test('shopfrontLayout retombe sur des baies seules quand la porte ne tient pas', () => {
+  const theme = { windowWidthM: 1.1, doorWidthM: 1.7, marginM: 0.45, gapM: 0.3 };
+  const modules = shopfrontLayout(2, theme);
+  assert.ok(modules);
+  assert.ok(modules.every((m) => !m.door), 'pas de porte sur un pan trop étroit pour elle');
+});
+
+test('shopfrontLayout : un pan trop étroit ne tient même pas une baie', () => {
+  const theme = { windowWidthM: 1.1, doorWidthM: 1.7, marginM: 2, gapM: 0.3 };
+  assert.equal(shopfrontLayout(3, theme), null);
+});
+
+/** `theme.shopfront` minimal, pour les tests d'`appendShopfront`. */
+const SHOPFRONT_THEME = {
+  windowWidthM: 1.1,
+  doorWidthM: 1.7,
+  marginM: 0.45,
+  gapM: 0.3,
+  sillM: 0.15,
+  fasciaHeightM: 0.6,
+  fasciaGapM: 0.14,
+};
+
+test('appendShopfront perce une devanture et peint l’enseigne au-dessus', () => {
+  const walls = { positions: [], normals: [], colors: [] };
+  const labels = { positions: [], uvs: [] };
+  const openings = { panes: 0, budget: 10 };
+  const atlas = { place: (text) => (text ? { u0: 0, v0: 0, u1: 1, v1: 1, widthPx: 200, heightPx: 60 } : null) };
+
+  const drawn = appendShopfront(
+    openings,
+    walls,
+    labels,
+    atlas,
+    { x: 0, y: 0 },
+    { x: 6, y: 0 },
+    0,
+    -1,
+    100,
+    103.05,
+    0,
+    'Chez Julien',
+    SHOPFRONT_THEME
+  );
+
+  assert.equal(drawn, true, 'assez de place pour une devanture');
+  assert.ok(openings.panes > 0, 'des baies comptées dans le même budget que les fenêtres');
+  assert.ok(walls.positions.length > 0, 'de la géométrie de baie');
+  assert.equal(labels.positions.length / 3, 6, 'un quadrilatère peint, six sommets');
+
+  // Rien ne dépasse ni sous l'assise de la devanture, ni au-dessus d'elle.
+  for (let i = 1; i < walls.positions.length; i += 3) {
+    assert.ok(walls.positions[i] >= 100, 'rien sous l’assise');
+    assert.ok(walls.positions[i] <= 103.05, 'rien au-dessus de la devanture');
+  }
+});
+
+test('appendShopfront : sans nom, la devanture reste percée mais rien n’est peint', () => {
+  const walls = { positions: [], normals: [], colors: [] };
+  const labels = { positions: [], uvs: [] };
+  const openings = { panes: 0, budget: 10 };
+  const atlas = { place: (text) => (text ? { u0: 0, v0: 0, u1: 1, v1: 1, widthPx: 200, heightPx: 60 } : null) };
+
+  const drawn = appendShopfront(
+    openings,
+    walls,
+    labels,
+    atlas,
+    { x: 0, y: 0 },
+    { x: 6, y: 0 },
+    0,
+    -1,
+    100,
+    103.05,
+    0,
+    null,
+    SHOPFRONT_THEME
+  );
+
+  assert.equal(drawn, true);
+  assert.equal(labels.positions.length, 0, 'sans nom, rien à peindre');
+});
+
+test('appendShopfront : un pan trop étroit ne pose rien, le bandeau reste seul', () => {
+  const walls = { positions: [], normals: [], colors: [] };
+  const labels = { positions: [], uvs: [] };
+  const openings = { panes: 0, budget: 10 };
+  const theme = { ...SHOPFRONT_THEME, marginM: 2 };
+
+  const drawn = appendShopfront(
+    openings,
+    walls,
+    labels,
+    null,
+    { x: 0, y: 0 },
+    { x: 3, y: 0 },
+    0,
+    -1,
+    100,
+    103.05,
+    0,
+    'Test',
+    theme
+  );
+
+  assert.equal(drawn, false);
+  assert.equal(walls.positions.length, 0);
+  assert.equal(openings.panes, 0);
+});
+
+test('appendOpenings : skipGroundLevel laisse le rez-de-chaussée à la devanture', () => {
+  const walls = { positions: [], normals: [], colors: [] };
+  const openings = { panes: 0, budget: 100, lit: null };
+  const style = { shutter: [0.2, 0.3, 0.45], house: false, shutters: false };
+
+  appendOpenings(openings, walls, { x: 0, y: 0 }, { x: 20, y: 0 }, 0, -1, 100, 8, 0, style, undefined, {
+    skipGroundLevel: true,
+  });
+
+  assert.ok(openings.panes > 0, 'l’étage garde ses baies');
+  // Rez-de-chaussée : allège à 1,1 m, tête à 2,25 m — rien ne doit s’y trouver,
+  // seul l’étage au-dessus (allège à 4,3 m) a posé quelque chose.
+  for (let i = 1; i < walls.positions.length; i += 3) {
+    assert.ok(walls.positions[i] > 103, 'rien au rez-de-chaussée, seulement à l’étage');
+  }
+});
+
+test('fitLabelText réduit la fonte jusqu’à tenir dans la largeur, avec un interlettrage négatif', () => {
+  // Mesure simplifiée : chaque caractère vaut `fontPx * 0.6` de large.
+  const measure = (text, fontPx) => text.length * fontPx * 0.6;
+
+  const wide = fitLabelText({ text: 'LYON', maxWidthPx: 1000, maxFontPx: 40, measure });
+  assert.equal(wide.fontPx, 40, 'assez de place : la fonte nominale tient');
+  assert.ok(wide.letterSpacingPx < 0, 'interlettrage resserré');
+
+  const narrow = fitLabelText({
+    text: 'SAINT-JEAN-DE-BOURNAY',
+    maxWidthPx: 120,
+    maxFontPx: 40,
+    minFontPx: 8,
+    measure,
+  });
+  assert.ok(narrow.fontPx < 40, 'un nom long réduit la fonte');
+  assert.ok(narrow.fontPx >= 8, 'jamais sous le plancher');
+
+  assert.equal(fitLabelText({ text: '', maxWidthPx: 100, maxFontPx: 40, measure }), null);
+});
+
+test('pushLabelQuad pousse un quadrilatère texturé, UV compris', () => {
+  const buffer = { positions: [], uvs: [] };
+  pushLabelQuad(buffer, { x: 0, y: 0 }, { x: 2, y: 0 }, 10, 11, { u0: 0, v0: 0, u1: 1, v1: 1 });
+  assert.equal(buffer.positions.length, 18, 'six sommets, deux triangles');
+  assert.equal(buffer.uvs.length, 12);
+  for (let i = 1; i < buffer.positions.length; i += 3) {
+    assert.ok(buffer.positions[i] >= 10 && buffer.positions[i] <= 11, 'entre bas et haut');
+  }
+  // `a` porte la fin du texte (u1), `b` son début (u0) — voir la note de
+  // `pushLabelQuad` : un texte lu de droite à gauche ne casse rien à
+  // l'exécution, ce qui l'a longtemps laissé passer inaperçu.
+  assert.deepEqual(buffer.uvs.slice(0, 2), [1, 1], 'a porte u1');
+  assert.deepEqual(buffer.uvs.slice(2, 4), [0, 0], 'b porte u0');
+});
+
+test('pushLabelQuad regarde dans le même sens que pushPanel, pour les mêmes points', () => {
+  // Un pan de mur a → b, normale sortante à la `buildingLayer`.
+  const wallA = { x: 0, y: 0 };
+  const wallB = { x: 4, y: 0 };
+  const nx = wallB.y - wallA.y;
+  const nz = -(wallB.x - wallA.x);
+
+  const walls = { positions: [], normals: [], colors: [] };
+  pushPanel(walls, wallA, wallB, 1, 2, nx, nz, [1, 1, 1], [1, 1, 1]);
+
+  const labels = { positions: [], uvs: [] };
+  pushLabelQuad(labels, wallA, wallB, 1, 2, { u0: 0, v0: 0, u1: 1, v1: 1 });
+
+  // Même triangle de tête (mêmes trois premiers sommets côté position) :
+  // même enroulement, donc même face visible.
+  assert.deepEqual(labels.positions.slice(0, 9), walls.positions.slice(0, 9));
+});
+
+test('labelFontPxForCellHeight retrouve la fonte qui a produit une case de cette hauteur', () => {
+  const cellHeightPx = 51;
+  const fontPx = labelFontPxForCellHeight(cellHeightPx);
+  // Recomposé à la manière de `LabelAtlas.place` : `ceil(fontPx * ratio) + 2·padding`.
+  const rebuilt = Math.ceil(fontPx * LABEL_LINE_HEIGHT_RATIO) + LABEL_PADDING_PX * 2;
+  assert.ok(Math.abs(rebuilt - cellHeightPx) <= 1, 'la case reconstruite retombe sur la hauteur visée');
+  assert.ok(labelFontPxForCellHeight(0) > 0, 'jamais une fonte nulle ou négative');
+});
+
+// --- L'enseigne en drapeau : un pictogramme lisible depuis le trottoir -----
+
+test('shopfrontEmojiFor retrouve le pictogramme de la classe, ou le repli générique', () => {
+  assert.equal(shopfrontEmojiFor('bakery'), SHOPFRONT_EMOJI.bakery);
+  assert.equal(shopfrontEmojiFor('cafe'), SHOPFRONT_EMOJI.cafe);
+  assert.equal(shopfrontEmojiFor('inconnu'), SHOPFRONT_EMOJI_DEFAULT);
+  assert.equal(shopfrontEmojiFor(null), SHOPFRONT_EMOJI_DEFAULT);
+});
+
+test('la table des pictogrammes ne porte que des émojis à un seul point de code', () => {
+  // `LabelAtlas.place`/`drawSpacedText` (materials/labelAtlas.js) peignent
+  // glyphe par glyphe via `for (const glyph of text)` : une séquence à
+  // variateur (️, U+FE0F) ou à jointure (‍, U+200D) s'y couperait en
+  // plusieurs glyphes mal alignés au lieu d'un seul pictogramme.
+  for (const [klass, emoji] of Object.entries(SHOPFRONT_EMOJI)) {
+    assert.equal([...emoji].length, 1, `${klass} : "${emoji}"`);
+  }
+  assert.equal([...SHOPFRONT_EMOJI_DEFAULT].length, 1);
+});
+
+test('appendShopSignBlade pose un panneau des deux côtés, avec son pictogramme', () => {
+  const walls = { positions: [], normals: [], colors: [] };
+  const labels = { positions: [], uvs: [] };
+  const atlas = { place: (text) => (text ? { u0: 0, v0: 0, u1: 1, v1: 1, widthPx: 40, heightPx: 40 } : null) };
+
+  appendShopSignBlade(walls, labels, atlas, { x: 0, y: 0 }, { x: 6, y: 0 }, 0, -1, 100, 0, 'bakery');
+
+  // Panneau de fond (deux faces) + deux tiges (deux faces chacune), six
+  // sommets par face.
+  assert.equal(walls.positions.length / 3, 36, 'panneau et tiges, des deux côtés');
+  // Pictogramme : deux passes également.
+  assert.equal(labels.positions.length / 3, 12, 'deux faces peintes');
+
+  // Rien ne flotte au-dessus du toit ni sous le sol : tout reste autour de
+  // `BLADE_SIGN_HEIGHT_M` (2,55 m), à `BLADE_SIGN_SIZE_M` (0,5 m) près.
+  for (let i = 1; i < walls.positions.length; i += 3) {
+    assert.ok(walls.positions[i] > 102 && walls.positions[i] < 103.1, 'autour de la hauteur de pose');
+  }
+});
+
+test('appendShopSignBlade : sans atlas, seul le panneau de fond se pose', () => {
+  const walls = { positions: [], normals: [], colors: [] };
+  const labels = { positions: [], uvs: [] };
+
+  appendShopSignBlade(walls, labels, null, { x: 0, y: 0 }, { x: 6, y: 0 }, 0, -1, 100, 0, 'bakery');
+
+  assert.equal(walls.positions.length / 3, 36, 'le panneau et ses tiges ne dépendent pas de l’atlas');
+  assert.equal(labels.positions.length, 0, 'rien à peindre sans atlas');
+});
+
+test('appendShopSignBlade : pan trop court pour le décalage, rien ne se pose', () => {
+  const walls = { positions: [], normals: [], colors: [] };
+  const labels = { positions: [], uvs: [] };
+  appendShopSignBlade(walls, labels, null, { x: 0, y: 0 }, { x: 0, y: 0 }, 0, -1, 100, 0, 'bakery');
+  assert.equal(walls.positions.length, 0);
+});
+
+test('appendShopSignBlade a une vraie épaisseur et deux tiges qui le lient au mur', () => {
+  const walls = { positions: [], normals: [], colors: [] };
+  const labels = { positions: [], uvs: [] };
+  // Pan le long de x, mur au nord (nz = -1) : le panneau doit pousser vers
+  // z négatif depuis le mur (z = 0), à l'inset (0,9 m) du bord.
+  appendShopSignBlade(walls, labels, null, { x: 0, y: 0 }, { x: 6, y: 0 }, 0, -1, 100, 0, 'bakery');
+
+  // Deux faces réellement écartées : les six premiers sommets (face avant) et
+  // les six suivants (face arrière) ne partagent aucun x — l'épaisseur porte
+  // sur l'axe x ici (la tangente du mur), pas sur z (sa portée).
+  const xs = (from, to) => walls.positions.slice(from, to).filter((_, i) => i % 3 === 0);
+  const frontXs = xs(0, 18);
+  const backXs = xs(18, 36);
+  assert.notDeepEqual(frontXs, backXs, 'les deux faces ne sont pas coplanaires');
+  const thickness = Math.abs(frontXs[0] - backXs[0]);
+  close(thickness, 0.05, 1e-9, 'l’épaisseur du panneau');
+
+  // Deux tiges (quatre passes, deux par tige) après les deux faces du
+  // panneau : chacune touche le mur (z = 0, à l’inset près sur x) d’un côté,
+  // et la face intérieure du panneau (z ≈ -0,3 m) de l’autre.
+  const rodPositions = walls.positions.slice(36);
+  assert.equal(rodPositions.length / 18, 4, 'quatre passes de tige (deux tiges, deux faces chacune)');
+  const zs = rodPositions.filter((_, i) => i % 3 === 2);
+  assert.ok(zs.some((z) => Math.abs(z) < 0.03), 'une tige touche le mur');
+  assert.ok(zs.some((z) => z < -0.25), 'une tige atteint la face intérieure du panneau');
+});
+
+test('les deux faces du panneau et de son pictogramme se font face, pas dos à dos', () => {
+  // Reproduit la géométrie de deux commerces posés sur des pans d'orientations
+  // différentes, et vérifie que chaque face du pictogramme regarde exactement
+  // dans le même sens que sa face de fond correspondante — sans quoi les deux
+  // se disputeraient le pixel (voir la note d'`appendShopSignBlade`).
+  const cross = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  const sub = (p, q) => [p[0] - q[0], p[1] - q[1], p[2] - q[2]];
+  const normalOfFirstTri = (positions) => {
+    const p = (i) => [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]];
+    return cross(sub(p(1), p(0)), sub(p(2), p(0)));
+  };
+  const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const norm = (v) => Math.hypot(...v);
+  const cos = (a, b) => dot(a, b) / (norm(a) * norm(b));
+
+  for (const [a, b, nx, nz] of [
+    [{ x: 0, y: 0 }, { x: 6, y: 0 }, 0, -1],
+    [{ x: 3, y: -2 }, { x: 3, y: 5 }, 1, 0],
+    [{ x: 0, y: 0 }, { x: 4, y: 4 }, Math.SQRT1_2, -Math.SQRT1_2],
+  ]) {
+    const walls = { positions: [], normals: [], colors: [] };
+    const labels = { positions: [], uvs: [] };
+    const atlas = { place: (text) => (text ? { u0: 0, v0: 0, u1: 1, v1: 1, widthPx: 40, heightPx: 40 } : null) };
+    appendShopSignBlade(walls, labels, atlas, a, b, nx, nz, 100, 0, 'bakery');
+
+    const backing1 = normalOfFirstTri(walls.positions.slice(0, 18));
+    const backing2 = normalOfFirstTri(walls.positions.slice(18, 36));
+    const icon1 = normalOfFirstTri(labels.positions.slice(0, 18));
+    const icon2 = normalOfFirstTri(labels.positions.slice(18, 36));
+
+    close(cos(backing1, icon1), 1, 1e-9, 'première face');
+    close(cos(backing2, icon2), 1, 1e-9, 'seconde face');
+    // Les deux faces du fond se font dos à dos, jamais face à face.
+    close(cos(backing1, backing2), -1, 1e-9, 'les deux faces du fond');
+  }
+});
+
+// --- Entrée d'agglomération : une vraie coupure, pas un artefact de tuile --
+
+test('isSettlementEdgeRun : sans portion précédente, jamais une entrée', () => {
+  // C'est le cas dominant dès que l'observateur est en ville — voir la note
+  // de `SIGN_PLACE_NAME_MIN_GAP_M` : répondre "oui" par défaut ici revenait à
+  // répondre "oui" partout en ville.
+  assert.equal(isSettlementEdgeRun(null), false);
+});
+
+test('isSettlementEdgeRun : un écart trop court n’est pas une vraie campagne traversée', () => {
+  const rows = Array.from({ length: 10 }, (_, i) => ({ distance: i * 10 })); // 90 m
+  assert.equal(isSettlementEdgeRun({ value: false, rows }, 150), false);
+});
+
+test('isSettlementEdgeRun : un vrai passage hors ville marque une entrée', () => {
+  const rows = Array.from({ length: 20 }, (_, i) => ({ distance: i * 10 })); // 190 m
+  assert.equal(isSettlementEdgeRun({ value: false, rows }, 150), true);
+});
+
+test('isSettlementEdgeRun : le seuil est inclusif, et le plancher par défaut est celui du module', () => {
+  const rows = [{ distance: 0 }, { distance: SIGN_PLACE_NAME_MIN_GAP_M }];
+  assert.equal(isSettlementEdgeRun({ value: false, rows }), true);
+});
+
+test('isSettlementEdgeRun rejoué sur les deux terrains qui ont motivé ce garde-fou', () => {
+  // Reconstitué depuis de vraies tuiles OpenFreeMap (voir la note de
+  // `SIGN_PLACE_NAME_MIN_GAP_M` pour le protocole et les chiffres complets) :
+  //
+  // - Meyzieu (agglomération lyonnaise) : un observateur planté en plein
+  //   centre-ville voit sa fenêtre de bord de route (`FURNITURE_RADIUS_M`)
+  //   commencer déjà bâtie sur les 263 portions "ville" qu'elle contient —
+  //   aucune ne porte de portion précédente. Sans ce garde-fou, chacune
+  //   posait un panneau : 98 sur une seule reconstruction.
+  const cityRun = null; // aucune portion précédente, dans les 263 cas observés
+  assert.equal(isSettlementEdgeRun(cityRun), false);
+
+  // - Dornas (village isolé d'Ardèche) : quel que soit le point d'approche
+  //   autour du village, la portion précédente est un vrai passage de
+  //   campagne — de 175 à 1465 m selon la route empruntée.
+  for (const gapM of [175, 455, 595, 770, 920, 1250, 1465]) {
+    const approach = { value: false, rows: [{ distance: 0 }, { distance: gapM }] };
+    assert.equal(isSettlementEdgeRun(approach), true, `écart de ${gapM} m`);
+  }
 });

@@ -420,9 +420,6 @@ export const BUILT_UP_CLASSES = new Set([
   'quarter',
 ]);
 
-/** Classes `landcover`/`landuse` où l'on installe une exploitation agricole. */
-export const FARMYARD_SUBCLASSES = new Set(['farmyard', 'farm', 'allotments']);
-
 /**
  * Le mobilier qui accompagne une chaussée, par profil et par contexte.
  *

@@ -64,7 +64,7 @@ import { CombinedIndex } from './layers/roadGraph.js';
 import { BuildingLayer } from './layers/buildingLayer.js';
 import { GardenLayer } from './layers/gardenLayer.js';
 import { StreetLayer } from './layers/streetLayer.js';
-import { collectBuiltUpAreas, FabricIndex } from './layers/settlement.js';
+import { collectBuiltUpAreas, collectPlaceNames, FabricIndex } from './layers/settlement.js';
 import { VegetationLayer } from './layers/vegetationLayer.js';
 import { GroundCover } from './layers/groundCover.js';
 import { CropLayer } from './layers/cropLayer.js';
@@ -321,6 +321,11 @@ export class WorldComposer {
       //    question au même moment, et deux lectures pourraient diverger.
       const builtUp = collectBuiltUpAreas(this.vectorTiles, wanted, this.bubble.frame);
       const fabric = new FabricIndex(this.buildings.footprints);
+      // Lieux nommés : la même lecture unique que `builtUp` juste au-dessus —
+      // seul le mobilier s'en sert (le panneau d'entrée d'agglomération), mais
+      // la lire ici évite qu'une deuxième question posée ailleurs diverge de
+      // celle-ci.
+      const places = collectPlaceNames(this.vectorTiles, wanted, this.bubble.frame);
       this.streets.rebuild(this.roads.roadSegments, here, {
         builtUp,
         fabric,
@@ -334,8 +339,9 @@ export class WorldComposer {
 
       // 5. Mobilier — il lui faut les tronçons de chaussée et leur index, le
       //    compte de bâtiments (`fabric`) pour distinguer un hameau d'un
-      //    bourg, et l'emprise ferroviaire — un corridor au même titre que
-      //    celui de la route (voir `railwayLayer.js`).
+      //    bourg, l'emprise ferroviaire — un corridor au même titre que celui
+      //    de la route (voir `railwayLayer.js`) — et les lieux nommés
+      //    (`places`) pour savoir quel nom peindre sur un panneau d'entrée.
       this.furniture.rebuild(
         this.vectorTiles,
         wanted,
@@ -345,7 +351,8 @@ export class WorldComposer {
         this.roads.junctions,
         builtUp,
         fabric,
-        this.railways.index
+        this.railways.index,
+        places
       );
 
       // 6. Arbres — les tuiles déjà plantées le restent : à donnée égale, le

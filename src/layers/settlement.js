@@ -70,6 +70,84 @@ export function collectBuiltUpAreas(source, tiles, frame) {
   return areas;
 }
 
+/**
+ * Classes `place` retenues comme de vraies agglomérations nommées.
+ *
+ * Vérifié sur les tuiles réellement servies (OpenFreeMap, schéma
+ * OpenMapTiles, z14) : la couche `place` porte aussi `suburb`, `quarter`,
+ * `neighbourhood` et `island` — les arrondissements et quartiers d'une grande
+ * ville, pas des agglomérations séparées. Les retenir ferait fleurir un
+ * panneau « Bellecour » ou « Le Marais » au beau milieu de Lyon ou de Paris,
+ * là où il n'y a jamais eu d'entrée de ville.
+ */
+export const SETTLEMENT_PLACE_CLASSES = new Set(['city', 'town', 'village', 'hamlet']);
+
+/**
+ * Points nommés d'un jeu de tuiles — villes, bourgs, villages, hameaux.
+ *
+ * C'est la seule source qui associe un **nom** à une agglomération : la
+ * couche `landuse` (`collectBuiltUpAreas`) ne porte qu'un périmètre
+ * administratif, sans nom ni classe de taille — un `landuse=residential`
+ * isolé n'est pas forcément une ville, et n'en porte de toute façon jamais le
+ * nom. Un panneau d'entrée d'agglomération n'a de sens que là où les deux se
+ * recoupent — voir `nearestNamedPlace`.
+ *
+ * @param {Object} source Instance `VectorTileSource`.
+ * @param {Array} tiles   Tuiles à parcourir.
+ * @param {Object} frame  Repère local de la bulle.
+ * @returns {Array<{x:number,z:number,name:string,class:string}>}
+ */
+export function collectPlaceNames(source, tiles, frame) {
+  const places = [];
+  if (!source || !frame) return places;
+  const { origin, scale, zoom } = frame;
+
+  source.forEachFeature('place', tiles, (geometry, properties) => {
+    if (geometry?.type !== 'Point') return;
+    if (!SETTLEMENT_PLACE_CLASSES.has(properties.class)) return;
+    const name = properties.name;
+    if (!name) return;
+    const [lng, lat] = geometry.coordinates;
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+    places.push({
+      x: (lngToTileX(lng, zoom) - origin.x) * scale,
+      z: (latToTileY(lat, zoom) - origin.y) * scale,
+      name,
+      class: properties.class,
+    });
+  });
+
+  return places;
+}
+
+/**
+ * Le lieu nommé le plus proche d'un point, dans un rayon donné, ou `null`.
+ *
+ * Simple parcours linéaire : une bulle n'en porte jamais plus de quelques
+ * dizaines (voir `collectPlaceNames`), et la question ne se pose qu'une fois
+ * par entrée d'agglomération repérée sur la voirie — pas assez souvent pour
+ * justifier un index spatial. Fonction pure.
+ *
+ * @param {Array<{x:number,z:number,name:string}>} places
+ * @param {number} x
+ * @param {number} z
+ * @param {number} maxDistance En mètres.
+ * @returns {{name:string,distance:number}|null}
+ */
+export function nearestNamedPlace(places, x, z, maxDistance) {
+  if (!places) return null;
+  let best = null;
+  let bestDistance = maxDistance;
+  for (const place of places) {
+    const distance = Math.hypot(place.x - x, place.z - z);
+    if (distance <= bestDistance) {
+      best = place;
+      bestDistance = distance;
+    }
+  }
+  return best ? { name: best.name, distance: bestDistance } : null;
+}
+
 /** Anneaux extérieurs d'une géométrie surfacique GeoJSON. Fonction pure. */
 export function ringsOf(geometry) {
   if (!geometry) return [];

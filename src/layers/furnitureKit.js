@@ -56,6 +56,22 @@ export const ROTOR_SPIN_ATTRIBUTE = 'aSpin';
 export const WIND_TURBINE_HUB_M = 78;
 
 /**
+ * Gabarit authentique de la serre — la longueur que porte la géométrie avant
+ * mise à l'échelle. `furnitureLayer._placeFarmstead` étire l'instance jusqu'à
+ * la longueur réelle de la parcelle (`scaleZ = longueur voulue / cette cote`)
+ * : les deux doivent rester d'accord sur ce que vaut « 1 » sans qu'on
+ * recopie la valeur.
+ */
+export const GREENHOUSE_BASE_LENGTH_M = 14;
+
+/**
+ * Largeur libre du portail de cimetière, entre piliers, en mètres. Exportée
+ * pour que `cemeteryGate` (la forme) et `furnitureLayer` (la brèche qu'il
+ * perce dans le mur d'enceinte) s'accordent sans recopier la cote.
+ */
+export const CEMETERY_GATE_SPAN_M = 3;
+
+/**
  * Suite déterministe dans [0, 1[, pour les formes irrégulières du catalogue.
  *
  * Elle n'a rien à voir avec les tirages de placement (`furniturePlacement`) :
@@ -1114,16 +1130,21 @@ export const FURNITURE_BUILDERS = {
   /**
    * Serre tunnel de maraîchage : une voûte pleine, deux longrines au sol.
    *
-   * Le matériau commun du mobilier ne sait pas la transparence — c'est un seul
-   * programme GPU pour tout le catalogue (voir l'en-tête de ce module) — donc
-   * la bâche n'est pas vitrée, elle est **pâle**. À la distance où ce décor se
-   * regarde, une couleur claire et un peu bleutée suffit à lire « plastique »
-   * plutôt que « tôle », ce qui est tout ce qu'on demande à cette pièce.
+   * Posée avec `createFurnitureGreenhouseMaterial`, seul matériau du
+   * catalogue à porter `transparent: true` — voir son en-tête sur pourquoi ce
+   * n'est pas une option du matériau commun. La couleur reste néanmoins
+   * claire et un peu bleutée : la transparence donne l'épaisseur de la bâche,
+   * la couleur pâle en donne la matière, aucune des deux ne suffit seule à
+   * lire « plastique » plutôt que « tôle » ou « vitre ».
+   *
+   * `depth: length` porte toute la longueur du tunnel : c'est l'axe que
+   * `furnitureLayer._placeFarmstead` étire (`scaleZ`) jusqu'à la longueur
+   * réelle de la parcelle — voir `GREENHOUSE_BASE_LENGTH_M`.
    */
   greenhouse(C = DEFAULT_COLORS) {
     const k = new Kit(C);
     const width = 4.2;
-    const length = 14;
+    const length = GREENHOUSE_BASE_LENGTH_M;
     k.barrelRoof({ width, depth: length, rise: 2, color: C.water });
     for (const x of [-width / 2, width / 2]) {
       k.box({ width: 0.06, height: 0.06, depth: length, x, color: C.galvanised });
@@ -1190,6 +1211,97 @@ export const FURNITURE_BUILDERS = {
     k.box({ width: 0.7, height: 0.5, depth: 0.7, color: C.stoneDark });
     k.box({ width: 0.14, height: 1.6, depth: 0.14, y: 0.5, color: C.stone });
     k.box({ width: 0.7, height: 0.14, depth: 0.14, y: 1.5, color: C.stone });
+    return k;
+  },
+
+  /**
+   * Portail de cimetière : deux piliers de pierre chapeautés, la grille de
+   * fer forgé tendue entre eux. C'est la brèche que `furnitureLayer` perce
+   * dans le mur d'enceinte (`CEMETERY_GATE_SPAN_M`) qui appelle cette forme —
+   * un mur qui referme un site sans jamais l'ouvrir ne se lirait pas comme un
+   * cimetière, juste comme un enclos.
+   */
+  cemeteryGate(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const half = CEMETERY_GATE_SPAN_M / 2;
+    const pillarH = 1.9;
+    for (const side of [-1, 1]) {
+      const x = side * (half + 0.24);
+      k.box({ width: 0.46, height: pillarH, depth: 0.46, x, color: C.stone });
+      k.box({ width: 0.58, height: 0.12, depth: 0.58, x, y: pillarH, color: C.stoneDark });
+      k.cylinder({ radiusBottom: 0.18, radiusTop: 0.03, height: 0.4, radial: 4, x, y: pillarH + 0.12, color: C.stoneDark });
+    }
+    // Grille : barreaux verticaux et deux traverses, en fer noirci — un
+    // vantail à claire-voie, pas un mur plein, pour qu'on voie au travers
+    // comme au travers d'une vraie grille.
+    const bars = 9;
+    for (let i = 0; i < bars; i++) {
+      const x = -half + 0.2 + (i / (bars - 1)) * (half * 2 - 0.4);
+      k.box({ width: 0.035, height: 1.55, depth: 0.035, x, y: 0.05, color: C.black });
+    }
+    k.box({ width: half * 2, height: 0.05, depth: 0.05, y: 0.15, color: C.black });
+    k.box({ width: half * 2, height: 0.05, depth: 0.05, y: 1.5, color: C.black });
+    return k;
+  },
+
+  /**
+   * Tombe à stèle : dalle en gradin et croix dressée, en tête. Une des deux
+   * pierres du carré de tombes que `furnitureLayer._buildCemetery` aligne en
+   * grille — voir `cemeteryTombFlat` pour l'autre, sans le bloc dressé.
+   */
+  cemeteryTomb(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.box({ width: 0.95, height: 0.12, depth: 2.05, color: C.stoneDark });
+    k.box({ width: 0.78, height: 0.22, depth: 1.8, y: 0.12, color: C.stone });
+    k.box({ width: 0.55, height: 0.85, depth: 0.09, y: 0.34, z: -0.82, color: C.stone });
+    k.box({ width: 0.09, height: 0.34, depth: 0.09, x: 0, y: 1.19, z: -0.82, color: C.stoneDark });
+    k.box({ width: 0.32, height: 0.09, depth: 0.09, y: 1.36, z: -0.82, color: C.stoneDark });
+    return k;
+  },
+
+  /**
+   * Tombe plate : la même dalle en gradin que `cemeteryTomb`, mais sans stèle
+   * dressée — une simple plaque couchée en tête. Un carré de tombes identiques
+   * se répète et se voit comme un motif ; en alternant les deux, deux
+   * reconstructions du même rang restent identiques (le tirage est ancré au
+   * lieu) mais le rang lui-même ne se lit plus comme un copier-coller.
+   */
+  cemeteryTombFlat(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.box({ width: 0.95, height: 0.12, depth: 2.05, color: C.stoneDark });
+    k.box({ width: 0.78, height: 0.22, depth: 1.8, y: 0.12, color: C.stone });
+    k.box({ width: 0.5, height: 0.06, depth: 0.42, y: 0.34, z: -0.68, color: C.stoneDark });
+    return k;
+  },
+
+  /**
+   * Robinet de cimetière : colonne, vasque, et deux ou trois arrosoirs posés
+   * au pied — le point d'eau qu'un carré de tombes appelle toujours, pour
+   * l'entretien.
+   */
+  cemeteryTap(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.cylinder({ radiusBottom: 0.3, radiusTop: 0.26, height: 0.1, radial: 8, color: C.stone });
+    k.cylinder({ radiusBottom: 0.05, radiusTop: 0.045, height: 0.85, radial: 6, y: 0.1, color: C.galvanised });
+    k.box({ width: 0.22, height: 0.05, depth: 0.05, x: 0.12, y: 0.88, color: C.steelDark });
+    for (const [x, z] of [
+      [0.32, 0.24],
+      [-0.28, 0.32],
+      [0.06, -0.34],
+    ]) {
+      k.cylinder({ radiusBottom: 0.11, radiusTop: 0.085, height: 0.22, radial: 7, x, z, color: C.galvanised });
+      k.cylinder({
+        radiusBottom: 0.02,
+        radiusTop: 0.005,
+        height: 0.16,
+        radial: 5,
+        x: x + 0.12,
+        y: 0.16,
+        z,
+        tilt: -0.9,
+        color: C.galvanised,
+      });
+    }
     return k;
   },
 
@@ -1889,6 +2001,35 @@ export function createFurnitureGeometries(THREE, colors = defaultTheme.furniture
 export function createFurnitureMaterial(THREE) {
   const material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
   material.name = 'furniture';
+  return material;
+}
+
+/**
+ * Part d'opacité de la bâche de serre — voir `createFurnitureGreenhouseMaterial`.
+ * Demandée légèrement transparente : assez pour lire « plastique tendu sur une
+ * armature », pas assez pour perdre la silhouette de la voûte à distance.
+ */
+export const GREENHOUSE_OPACITY = 0.82;
+
+/**
+ * Matériau à part pour la serre, seule pièce du catalogue qui doit se voir au
+ * travers.
+ *
+ * Le matériau commun (`createFurnitureMaterial`) est un seul programme GPU
+ * partagé par tout le catalogue — voir l'en-tête de ce module — et il est
+ * opaque : y ajouter `transparent: true` rendrait translucide jusqu'au dernier
+ * lampadaire. Même geste que `createFurnitureRotorMaterial`, qui isole déjà
+ * l'attribut propre à l'éolienne : une pièce qui a besoin d'autre chose que le
+ * commun reçoit son propre matériau, pas une option de plus dessus.
+ */
+export function createFurnitureGreenhouseMaterial(THREE) {
+  const material = new THREE.MeshLambertMaterial({
+    vertexColors: true,
+    side: THREE.DoubleSide,
+    transparent: true,
+    opacity: GREENHOUSE_OPACITY,
+  });
+  material.name = 'furniture-greenhouse';
   return material;
 }
 

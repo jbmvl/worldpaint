@@ -399,6 +399,63 @@ export const BUILDING_PERSONALITIES = {
   shop: { front: '#3f5560' },
 };
 
+/**
+ * Devanture : proportions de la façade commerçante, sur le seul pan le plus
+ * long de l'empreinte — voir `buildingLayer._appendBuilding`, qui choisit ce
+ * pan comme façade sur rue. Les autres pans d'un même commerce gardent le
+ * bandeau plein, sans baie ni porte : une arrière-cour de commerce n'a pas de
+ * vitrine, et rien dans les tuiles ne dit quel pan donne réellement sur la
+ * rue.
+ *
+ * `doorWidthM` est délibérément large — « une large baie d'entrée » — plutôt
+ * qu'une porte étroite : c'est la vitrine elle-même qui sert d'entrée, comme
+ * sur une devanture moderne, pas un vantail percé dans un mur plein.
+ */
+export const SHOPFRONT_WINDOW_WIDTH_M = 1.1;
+export const SHOPFRONT_DOOR_WIDTH_M = 1.7;
+export const SHOPFRONT_MARGIN_M = 0.45;
+export const SHOPFRONT_GAP_M = 0.3;
+export const SHOPFRONT_SILL_M = 0.15;
+/** Hauteur réservée à l'enseigne, au sommet du bandeau — voir `SHOPFRONT_HEIGHT_M`. */
+export const SHOPFRONT_FASCIA_HEIGHT_M = 0.6;
+export const SHOPFRONT_FASCIA_GAP_M = 0.14;
+
+/**
+ * Pictogramme de l'enseigne perpendiculaire (`buildingLayer.appendShopSignBlade`),
+ * par classe **brute** de point d'intérêt (`properties.class`, le schéma
+ * OpenMapTiles — pas le `kind` déjà agrégé de `buildingPersonalityFor`, qui
+ * range boulangerie et bar sous la même case `shop`).
+ *
+ * Un émoji, pour l'instant — un repère de ce que vend le commerce, lisible de
+ * loin, en attendant un vrai jeu de pictogrammes dessinés. Choisis à dessein
+ * en un seul point de code Unicode chacun : le peintre du nom
+ * (`materials/labelAtlas.js`) ne sait pas recomposer une séquence à variateur
+ * ou à jointure (`️`, `‍`), il la couperait en plusieurs glyphes mal alignés.
+ */
+export const SHOPFRONT_EMOJI = {
+  bakery: '🥖',
+  alcohol_shop: '🍷',
+  bar: '🍺',
+  beer: '🍺',
+  butcher: '🥩',
+  cafe: '☕',
+  restaurant: '🍽',
+  fast_food: '🍔',
+  hairdresser: '💇',
+  pharmacy: '💊',
+  bank: '🏦',
+  bicycle: '🚲',
+  clothing_store: '👕',
+  ice_cream: '🍦',
+  laundry: '🧺',
+  music: '🎵',
+  post: '📮',
+  grocery: '🛒',
+};
+/** Repli d'une classe non répertoriée, ou d'un commerce sans point d'intérêt
+ *  matché (`class` absent) : la façade, sans autre indice. */
+export const SHOPFRONT_EMOJI_DEFAULT = '🏪';
+
 // --- Les toits -----------------------------------------------------------------
 /**
  * Pente d'un toit, en part de sa demi-largeur.
@@ -738,6 +795,17 @@ export const defaultTheme = Object.freeze({
     levelM: WINDOW_LEVEL_M,
     sillM: WINDOW_SILL_M,
     litShare: WINDOW_LIT_SHARE,
+  },
+  shopfront: {
+    windowWidthM: SHOPFRONT_WINDOW_WIDTH_M,
+    doorWidthM: SHOPFRONT_DOOR_WIDTH_M,
+    marginM: SHOPFRONT_MARGIN_M,
+    gapM: SHOPFRONT_GAP_M,
+    sillM: SHOPFRONT_SILL_M,
+    fasciaHeightM: SHOPFRONT_FASCIA_HEIGHT_M,
+    fasciaGapM: SHOPFRONT_FASCIA_GAP_M,
+    emoji: SHOPFRONT_EMOJI,
+    emojiDefault: SHOPFRONT_EMOJI_DEFAULT,
   },
   roads: { profiles: ROAD_PROFILES, surfaces: ROAD_SURFACES, shoulderColor: ROAD_SHOULDER_COLOR },
   streets: STREET_LOOK,

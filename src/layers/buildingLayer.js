@@ -28,6 +28,7 @@ import { orientedBox, roofTriangles, roofRise, ringArea } from './roofGeometry.j
 import { pointInRing } from './furniturePlacement.js';
 import { Kit } from './furnitureKit.js';
 import { defaultTheme } from '../themes/default.js';
+import { LabelAtlas, pushLabelQuad, labelFontPxForCellHeight, LABEL_PX_PER_M } from '../materials/labelAtlas.js';
 
 /** Couche vectorielle portant les empreintes. */
 export const BUILDING_SOURCE_LAYER = 'building';
@@ -291,7 +292,15 @@ export const WINDOW_FRAME_M = 0.08;
 export const GLASS_DEEP = srgb('#39424c');
 export const GLASS_SKY = srgb('#7f8d99');
 /** L'encadrement : toujours plus clair que le mur, quel que soit le mur. */
-export const WINDOW_FRAME_TINT = srgb('#f2eee4');
+export const WINDOW_FRAME_HEX = '#f2eee4';
+export const WINDOW_FRAME_TINT = srgb(WINDOW_FRAME_HEX);
+/**
+ * Encre de l'enseigne peinte (`appendShopfront`) : le même ton que
+ * l'encadrement des fenêtres, en CSS plutôt qu'en linéaire — c'est
+ * `LabelAtlas` qui peint, au format que `CanvasRenderingContext2D` attend, et
+ * `texture.colorSpace` qui reconvertit au moment de l'échantillonnage.
+ */
+export const SHOPFRONT_LABEL_INK = WINDOW_FRAME_HEX;
 
 /**
  * Volets : largeur d'un battant en part de la baie, et part de fenêtres closes.
@@ -583,6 +592,11 @@ export function outerRings(geometry) {
  * @param {number} minHeight Hauteur du dessous (surplomb).
  * @param {Object} style    Habillage rendu par `buildingStyleAt`.
  * @param {Object} [look]   Dimensions de fenêtre du thème (`theme.windows`).
+ * @param {Object} [options]
+ * @param {boolean} [options.skipGroundLevel] Vrai si le rez-de-chaussée a déjà
+ *        reçu sa propre devanture (`appendShopfront`) : le niveau 0 de la
+ *        grille générique ne se pose alors pas par-dessus, seuls les étages
+ *        au-dessus gardent leurs fenêtres ordinaires.
  */
 export function appendOpenings(
   openings,
@@ -595,14 +609,16 @@ export function appendOpenings(
   height,
   minHeight,
   style,
-  look = defaultTheme.windows
+  look = defaultTheme.windows,
+  { skipGroundLevel = false } = {}
 ) {
   const length = Math.hypot(b.x - a.x, b.y - a.y);
   const storeys = height - minHeight;
   if (length < 3 || storeys < look.sillM + look.heightM) return;
 
   const grid = windowGrid(length, storeys, look);
-  if (grid.columns === 0 || grid.levels === 0) return;
+  const startLevel = skipGroundLevel ? 1 : 0;
+  if (grid.columns === 0 || grid.levels <= startLevel) return;
 
   // Vecteur unitaire le long du mur, et sa normale déjà fournie.
   const ux = (b.x - a.x) / length;
@@ -620,7 +636,7 @@ export function appendOpenings(
   for (let c = 0; c < grid.columns; c++) {
     const along = grid.spacing * (c + 1);
 
-    for (let level = 0; level < grid.levels; level++) {
+    for (let level = startLevel; level < grid.levels; level++) {
       if (openings.panes >= openings.budget) return;
 
       const anchor = at(along, 0);
@@ -720,6 +736,343 @@ export function appendOpenings(
   }
 }
 
+/**
+ * Hauteur de case visée pour le nom peint sur une enseigne, en mètres — voir
+ * `appendShopfront`. Nettement moins que `SHOPFRONT_FASCIA_HEIGHT_M` du
+ * thème : de la marge reste au-dessus et en dessous du texte, sans quoi une
+ * lettre haute (« É », un jambage) toucherait le bord du bandeau. La largeur
+ * se réduit d'elle-même si le nom est trop long (`fitLabelText`), jamais la
+ * hauteur — cette case est un plafond, pas une cible qu'on grossirait pour
+ * l'atteindre.
+ */
+export const SHOPFRONT_LABEL_HEIGHT_M = 0.42;
+export const SHOPFRONT_LABEL_MIN_HEIGHT_M = 0.14;
+
+/**
+ * Découpe un pan de devanture en baies et, si la place le permet, une large
+ * baie d'entrée centrale — voir l'en-tête de `theme.shopfront` sur pourquoi
+ * une baie plutôt qu'une porte.
+ *
+ * Fonction pure : les décalages (`offset`) sont comptés depuis le **milieu**
+ * du pan, dans les deux sens, ce qui centre naturellement la composition sans
+ * qu'`appendShopfront` ait à s'en soucier.
+ *
+ * @param {number} length Longueur du pan, en mètres.
+ * @param {Object} [theme] `theme.shopfront`.
+ * @returns {Array<{offset:number, halfWidth:number, door:boolean}>|null}
+ *          `null` si même une seule baie ne tient pas sur ce pan.
+ */
+export function shopfrontLayout(length, theme = defaultTheme.shopfront) {
+  const { windowWidthM, doorWidthM, marginM, gapM } = theme;
+  const usable = length - marginM * 2;
+  if (usable < windowWidthM) return null;
+
+  const modules = [];
+  if (usable >= doorWidthM) {
+    modules.push({ offset: 0, halfWidth: doorWidthM / 2, door: true });
+    for (const dir of [-1, 1]) {
+      let edge = doorWidthM / 2 + gapM;
+      while (edge + windowWidthM <= usable / 2) {
+        modules.push({ offset: dir * (edge + windowWidthM / 2), halfWidth: windowWidthM / 2, door: false });
+        edge += windowWidthM + gapM;
+      }
+    }
+  } else {
+    // Trop étroit pour une porte : uniquement des baies, comme un mur
+    // ordinaire mais entièrement vitré.
+    const count = Math.floor((usable + gapM) / (windowWidthM + gapM));
+    if (count === 0) return null;
+    const used = count * windowWidthM + (count - 1) * gapM;
+    const start = -used / 2 + windowWidthM / 2;
+    for (let i = 0; i < count; i++) {
+      modules.push({ offset: start + i * (windowWidthM + gapM), halfWidth: windowWidthM / 2, door: false });
+    }
+  }
+  return modules.sort((m1, m2) => m1.offset - m2.offset);
+}
+
+/**
+ * Perce la devanture d'un commerce sur son pan de façade : des baies, une
+ * large baie d'entrée si la place le permet (`shopfrontLayout`), et
+ * l'enseigne peinte au-dessus — voir l'en-tête de `materials/labelAtlas.js`
+ * pour pourquoi un nom passe par une texture plutôt que par la géométrie.
+ *
+ * Le rez-de-chaussée générique (`appendOpenings`) ne se pose pas ici : c'est
+ * l'appelant qui décide, une fois qu'il sait si cette fonction a vraiment
+ * dessiné quelque chose (voir sa valeur de retour).
+ *
+ * @param {Object} openings Budget de baies — le même que celui que lirait
+ *        `appendOpenings` pour ce pan, partagé pour que la devanture compte
+ *        dans le même plafond que le reste des fenêtres.
+ * @param {Object} walls  Accumulateur de la géométrie opaque.
+ * @param {Object} labels Accumulateur `{positions, uvs}` du texte peint.
+ * @param {Object|null} atlas Instance `LabelAtlas`, ou `null` si les noms ne
+ *        sont pas tenus à jour (repli sûr : le bandeau reste peint, sans nom).
+ * @param {{x:number,y:number}} a Début du pan.
+ * @param {{x:number,y:number}} b Fin du pan.
+ * @param {number} nx Normale sortante, composante x.
+ * @param {number} nz Normale sortante, composante z.
+ * @param {number} base Assise du bâtiment.
+ * @param {number} shopfrontTop Cote haute de la devanture (`shopfrontTopFor`).
+ * @param {number} minHeight Hauteur du dessous (surplomb).
+ * @param {string|null} name Nom du commerce, ou `null`.
+ * @param {Object} [theme] `theme.shopfront`.
+ * @returns {boolean} vrai si une devanture articulée a été posée — l'appelant
+ *          s'en sert pour savoir si le rez-de-chaussée générique doit encore
+ *          se poser par-dessus.
+ */
+export function appendShopfront(
+  openings,
+  walls,
+  labels,
+  atlas,
+  a,
+  b,
+  nx,
+  nz,
+  base,
+  shopfrontTop,
+  minHeight,
+  name,
+  theme = defaultTheme.shopfront
+) {
+  const length = Math.hypot(b.x - a.x, b.y - a.y);
+  const modules = shopfrontLayout(length, theme);
+  if (!modules) return false;
+
+  const ux = (b.x - a.x) / length;
+  const uz = (b.y - a.y) / length;
+  // Même convention que le `at()` interne d'`appendOpenings` : un point du
+  // mur, décalé le long de lui et décollé de lui — `.z` porte le `y` du plan
+  // (x, y) de l'empreinte, qui est le `z` de la scène.
+  const at = (along, lift) => ({ x: a.x + ux * along + nx * lift, z: a.y + uz * along + nz * lift });
+
+  const sill = base + minHeight + theme.sillM;
+  const head = shopfrontTop - theme.fasciaHeightM - theme.fasciaGapM;
+  if (head <= sill) return false;
+
+  for (const module of modules) {
+    if (openings && openings.panes >= openings.budget) break;
+    const along = length / 2 + module.offset;
+    const frameHalf = module.halfWidth + WINDOW_FRAME_M;
+
+    const frame = at(along, WINDOW_LIFT_M.frame);
+    pushPanel(
+      walls,
+      { x: frame.x - ux * frameHalf, y: frame.z - uz * frameHalf },
+      { x: frame.x + ux * frameHalf, y: frame.z + uz * frameHalf },
+      sill - WINDOW_FRAME_M,
+      head + WINDOW_FRAME_M,
+      nx,
+      nz,
+      WINDOW_FRAME_TINT,
+      WINDOW_FRAME_TINT
+    );
+
+    const glass = at(along, WINDOW_LIFT_M.glass);
+    pushPanel(
+      walls,
+      { x: glass.x - ux * module.halfWidth, y: glass.z - uz * module.halfWidth },
+      { x: glass.x + ux * module.halfWidth, y: glass.z + uz * module.halfWidth },
+      sill,
+      head,
+      nx,
+      nz,
+      GLASS_DEEP,
+      GLASS_SKY
+    );
+
+    if (openings) openings.panes++;
+  }
+
+  // L'enseigne : peinte sur le bandeau déjà en place au-dessus des baies —
+  // voir l'en-tête de `theme.shopfront`, il n'y a pas de panneau séparé à
+  // ajouter, la couleur de la devanture couvre déjà toute la hauteur.
+  if (atlas && labels && name) {
+    const availableWidthM = length - theme.marginM * 2;
+    const maxWidthPx = Math.max(1, availableWidthM * LABEL_PX_PER_M);
+    const maxFontPx = labelFontPxForCellHeight(SHOPFRONT_LABEL_HEIGHT_M * LABEL_PX_PER_M);
+    const minFontPx = labelFontPxForCellHeight(SHOPFRONT_LABEL_MIN_HEIGHT_M * LABEL_PX_PER_M);
+    const uv = atlas.place(name, { maxWidthPx, maxFontPx, minFontPx, color: SHOPFRONT_LABEL_INK });
+    if (uv) {
+      const halfWidth = uv.widthPx / LABEL_PX_PER_M / 2;
+      const textHeight = uv.heightPx / LABEL_PX_PER_M;
+      const fasciaMid = shopfrontTop - theme.fasciaHeightM / 2;
+      const centre = at(length / 2, WINDOW_LIFT_M.glass);
+      pushLabelQuad(
+        labels,
+        { x: centre.x - ux * halfWidth, y: centre.z - uz * halfWidth },
+        { x: centre.x + ux * halfWidth, y: centre.z + uz * halfWidth },
+        fasciaMid - textHeight / 2,
+        fasciaMid + textHeight / 2,
+        uv
+      );
+    }
+  }
+
+  return true;
+}
+
+/** Pictogramme d'une classe `poi` brute, ou le repli générique. Fonction pure. */
+export function shopfrontEmojiFor(klass, theme = defaultTheme.shopfront) {
+  return theme.emoji[klass] || theme.emojiDefault;
+}
+
+/**
+ * Côté du panneau, en mètres — le petit carré collé au mur, et le pictogramme
+ * qui y est peint.
+ */
+export const BLADE_SIGN_SIZE_M = 0.9;
+/** Distance du mur au centre du panneau, en mètres — la longueur du bras. */
+export const BLADE_SIGN_REACH_M = 0.55;
+/** Hauteur du centre du panneau au-dessus du sol, en mètres — dégagement piéton. */
+export const BLADE_SIGN_HEIGHT_M = 2.55;
+/** Décalage du panneau depuis le bord du pan, en mètres. */
+export const BLADE_SIGN_INSET_M = 0.9;
+/** Hauteur de casse visée pour le pictogramme, en mètres. */
+export const BLADE_SIGN_ICON_HEIGHT_M = 0.8;
+/**
+ * Épaisseur du panneau, en mètres — deux faces réellement séparées, pas la
+ * même face doublée sans épaisseur : posé de champ, un panneau de papier ne
+ * se voit pas, un vrai panneau si, ne serait-ce que par l'arête qu'il montre
+ * de biais.
+ */
+export const BLADE_SIGN_THICKNESS_M = 0.1;
+/** Hauteur d'une tige de fixation, en mètres — un plat, pas une tringle ronde. */
+export const BLADE_SIGN_ROD_HEIGHT_M = 0.05;
+/** Retrait d'une tige depuis le bord haut ou bas du panneau, en mètres. */
+export const BLADE_SIGN_ROD_INSET_M = 0.08;
+/** Métal galvanisé des tiges — le même ton que le mobilier, voir
+ *  `theme.furniture.colors.galvanised`. */
+const BLADE_SIGN_ROD_COLOR = srgb('#b8bcc0');
+
+/**
+ * Enseigne en drapeau : un petit panneau planté perpendiculairement au mur,
+ * porté par deux tiges plutôt que collé au mur — sans elles, rien ne dit
+ * pourquoi il flotte là. Lisible par qui remonte le trottoir plutôt que par
+ * qui fait face à la devanture : c'est la seule enseigne, réelle, à
+ * s'adresser au piéton et non au client déjà arrêté devant la vitrine. Elle
+ * porte un pictogramme (`shopfrontEmojiFor`) plutôt que le nom : à cette
+ * distance et sous cet angle, une icône se lit, un nom ne se lirait pas.
+ *
+ * Posée près d'un bout du pan de façade plutôt qu'en son centre — une vraie
+ * enseigne en drapeau ne bloque jamais l'entrée qu'elle signale.
+ *
+ * Panneau, tiges et pictogramme sont tous doublés, enroulement inversé, pour
+ * se lire des deux sens de marche sur le trottoir : c'est `pushPanel` et
+ * `pushLabelQuad` échangés en `a`/`b` qui font l'un l'exact revers de
+ * l'autre — voir la note de `pushLabelQuad` sur ce que l'échange inverse.
+ *
+ * Ne dépend pas d'`appendShopfront` : une façade trop étroite pour une porte
+ * garde son enseigne en drapeau, seule la devanture au sol s'efface.
+ *
+ * @param {Object} walls  Accumulateur de la géométrie opaque.
+ * @param {Object} labels Accumulateur `{positions, uvs}` du texte peint.
+ * @param {Object|null} atlas Instance `LabelAtlas`, ou `null` pour ne rien peindre.
+ * @param {{x:number,y:number}} a Début du pan.
+ * @param {{x:number,y:number}} b Fin du pan.
+ * @param {number} nx Normale sortante, composante x.
+ * @param {number} nz Normale sortante, composante z.
+ * @param {number} base Assise du bâtiment.
+ * @param {number} minHeight Hauteur du dessous (surplomb).
+ * @param {string|null} klass Classe brute du point d'intérêt (`shopfrontEmojiFor`).
+ * @param {Object} [theme] `theme.shopfront` — sa table `emoji`/`emojiDefault`.
+ */
+export function appendShopSignBlade(walls, labels, atlas, a, b, nx, nz, base, minHeight, klass, theme = defaultTheme.shopfront) {
+  const length = Math.hypot(b.x - a.x, b.y - a.y);
+  const inset = Math.min(BLADE_SIGN_INSET_M, length / 2);
+  if (inset <= 0) return;
+
+  const ux = (b.x - a.x) / length;
+  const uz = (b.y - a.y) / length;
+  const mountX = a.x + ux * inset;
+  const mountZ = a.y + uz * inset;
+  const mountY = base + minHeight + BLADE_SIGN_HEIGHT_M;
+
+  const half = BLADE_SIGN_SIZE_M / 2;
+  const inner = { x: mountX + nx * (BLADE_SIGN_REACH_M - half), y: mountZ + nz * (BLADE_SIGN_REACH_M - half) };
+  const outer = { x: mountX + nx * (BLADE_SIGN_REACH_M + half), y: mountZ + nz * (BLADE_SIGN_REACH_M + half) };
+  const bottom = mountY - half;
+  const top = mountY + half;
+
+  // Le panneau de fond : deux vraies faces, décollées le long de la tangente
+  // du mur (`ux, uz`) — c'est cet axe-là que la normale géométrique de
+  // chaque face regarde (voir la note de `pushLabelQuad`), donc c'est lui
+  // qui donne l'épaisseur, pas la normale du mur (`nx, nz`), qui donne la
+  // portée du bras.
+  const halfThickness = BLADE_SIGN_THICKNESS_M / 2;
+  const offset = (p, sign) => ({ x: p.x + ux * sign * halfThickness, y: p.y + uz * sign * halfThickness });
+  const innerFront = offset(inner, -1);
+  const outerFront = offset(outer, -1);
+  const innerBack = offset(inner, 1);
+  const outerBack = offset(outer, 1);
+  pushPanel(walls, innerFront, outerFront, bottom, top, nx, nz, WINDOW_FRAME_TINT, WINDOW_FRAME_TINT);
+  pushPanel(walls, outerBack, innerBack, bottom, top, -nx, -nz, WINDOW_FRAME_TINT, WINDOW_FRAME_TINT);
+
+  // Deux tiges, du mur à la face intérieure du panneau, une près de chaque
+  // bord — un plat fin plutôt qu'un rond, pour rester une paire de
+  // `pushPanel` comme tout le reste de cette fonction.
+  const rodHalf = BLADE_SIGN_ROD_HEIGHT_M / 2;
+  const wallPoint = { x: mountX, y: mountZ };
+  for (const rodY of [bottom + BLADE_SIGN_ROD_INSET_M, top - BLADE_SIGN_ROD_INSET_M]) {
+    pushPanel(
+      walls,
+      wallPoint,
+      inner,
+      rodY - rodHalf,
+      rodY + rodHalf,
+      nx,
+      nz,
+      BLADE_SIGN_ROD_COLOR,
+      BLADE_SIGN_ROD_COLOR
+    );
+    pushPanel(
+      walls,
+      inner,
+      wallPoint,
+      rodY - rodHalf,
+      rodY + rodHalf,
+      -nx,
+      -nz,
+      BLADE_SIGN_ROD_COLOR,
+      BLADE_SIGN_ROD_COLOR
+    );
+  }
+
+  if (!atlas || !labels) return;
+
+  const emoji = shopfrontEmojiFor(klass, theme);
+  const maxFontPx = labelFontPxForCellHeight(BLADE_SIGN_ICON_HEIGHT_M * LABEL_PX_PER_M);
+  const uv = atlas.place(emoji, { maxWidthPx: maxFontPx * 2, maxFontPx, minFontPx: maxFontPx });
+  if (!uv) return;
+
+  // Centré sur la largeur du panneau (`BLADE_SIGN_REACH_M`), à sa propre
+  // taille mesurée — pas à celle du panneau : un pictogramme carré étiré sur
+  // un panneau plus large que haut se déformerait en ovale.
+  const iconHalf = uv.widthPx / LABEL_PX_PER_M / 2;
+  const iconHalfHeight = uv.heightPx / LABEL_PX_PER_M / 2;
+  const iconInner = {
+    x: mountX + nx * (BLADE_SIGN_REACH_M - iconHalf),
+    y: mountZ + nz * (BLADE_SIGN_REACH_M - iconHalf),
+  };
+  const iconOuter = {
+    x: mountX + nx * (BLADE_SIGN_REACH_M + iconHalf),
+    y: mountZ + nz * (BLADE_SIGN_REACH_M + iconHalf),
+  };
+
+  // Décollé de chaque face du panneau — plus loin que son épaisseur, sans
+  // quoi le pictogramme se disputerait le pixel avec la face qu'il recouvre,
+  // même raison que `WINDOW_LIFT_M` ailleurs.
+  const lift = halfThickness + 0.01;
+  const iconInnerFront = { x: iconInner.x - ux * lift, y: iconInner.y - uz * lift };
+  const iconOuterFront = { x: iconOuter.x - ux * lift, y: iconOuter.y - uz * lift };
+  const iconInnerBack = { x: iconInner.x + ux * lift, y: iconInner.y + uz * lift };
+  const iconOuterBack = { x: iconOuter.x + ux * lift, y: iconOuter.y + uz * lift };
+
+  pushLabelQuad(labels, iconInnerFront, iconOuterFront, mountY - iconHalfHeight, mountY + iconHalfHeight, uv);
+  pushLabelQuad(labels, iconOuterBack, iconInnerBack, mountY - iconHalfHeight, mountY + iconHalfHeight, uv);
+}
+
 export class BuildingLayer {
   /**
    * @param {Object} options
@@ -786,6 +1139,24 @@ export class BuildingLayer {
     this.windowMaterial.name = 'building-windows';
     this.windowMesh = null;
     this.windowGeometry = null;
+
+    // Enseignes : un nom peint est une texture, pas une couleur de sommet —
+    // voir l'en-tête de `materials/labelAtlas.js`. Éclairé comme le mur qui
+    // le porte serait plus juste au crépuscule, mais une enseigne réelle est
+    // presque toujours elle-même une source (vitrine éclairée, lettres
+    // rétroéclairées) : rester non éclairé, comme les fenêtres allumées,
+    // reste le plus honnête des deux raccourcis.
+    this.labelAtlas = new LabelAtlas({ THREE, width: 2048, height: 1024 });
+    this.labelMaterial = new THREE.MeshBasicMaterial({
+      map: this.labelAtlas.texture,
+      transparent: true,
+      depthWrite: false,
+      alphaTest: 0.02,
+      fog: true,
+    });
+    this.labelMaterial.name = 'building-labels';
+    this.labelMesh = null;
+    this.labelGeometry = null;
   }
 
   /** Vrai si l'observateur s'est assez éloigné pour justifier une reconstruction. */
@@ -817,7 +1188,12 @@ export class BuildingLayer {
 
     const walls = { positions: [], normals: [], colors: [] };
     const lamps = { positions: [], normals: [], colors: [] };
+    const labels = { positions: [], uvs: [] };
     const houses = [];
+    // Vidée avant d'être remplie : la géométrie qui référence ses cases
+    // (`labels`, ci-dessus) est de toute façon intégralement refaite dans
+    // cette même passe — voir l'en-tête de `LabelAtlas`.
+    this.labelAtlas.reset();
     // Les empreintes sont découpées par les tuiles : une même bâtisse revient
     // d'une tuile à l'autre. On dédoublonne sur un centre au demi-mètre, croisé
     // avec le nombre de sommets — deux bâtisses voisines peuvent partager un
@@ -861,7 +1237,7 @@ export class BuildingLayer {
       const z = (latToTileY(lat, zoom) - origin.y) * scale;
       const distance = Math.hypot(x - here.x, z - here.z);
       if (distance > BUILDING_RADIUS_M) return;
-      collected.push({ x, z, kind, distance });
+      collected.push({ x, z, kind, distance, name: properties.name || null, class: properties.class || null });
     });
     const personalities = sortPersonalities(collected);
 
@@ -893,7 +1269,9 @@ export class BuildingLayer {
               budget: PANE_MAX_COUNT - panes,
             }
           : null;
-      if (this._appendBuilding(candidate.ring, candidate.properties, walls, openings, houses, personalities)) {
+      if (
+        this._appendBuilding(candidate.ring, candidate.properties, walls, openings, houses, personalities, labels)
+      ) {
         built++;
         footprints.push({ x: candidate.x, z: candidate.z });
       }
@@ -907,6 +1285,7 @@ export class BuildingLayer {
     this.footprints = footprints;
     this.personalities = personalities;
     this._applyWindows(lamps);
+    this._applyLabels(labels);
     if (walls.positions.length === 0) {
       this._clearMesh();
       return;
@@ -943,9 +1322,11 @@ export class BuildingLayer {
    * @param {Array|null} personalities Points d'intérêt classés
    *        (`buildingPersonalityFor`), pour donner sa personnalité au
    *        bâtiment dont l'empreinte les contient — voir plus bas.
+   * @param {Object|null} labels Accumulateur `{positions, uvs}` des enseignes
+   *        peintes (`appendShopfront`), ou `null` pour ne pas en poser.
    * @returns {boolean} vrai si le bâtiment a produit de la géométrie.
    */
-  _appendBuilding(ring, properties, walls, openings = null, houses = null, personalities = null) {
+  _appendBuilding(ring, properties, walls, openings = null, houses = null, personalities = null, labels = null) {
     const { THREE, bubble } = this;
     const { origin, scale, zoom } = bubble.frame;
 
@@ -963,17 +1344,22 @@ export class BuildingLayer {
 
     // Assise : le point le plus bas de l'empreinte. Sur une pente, poser le
     // bâtiment à l'altitude de son centre le ferait flotter d'un côté.
+    // On retient aussi le point le plus haut : le toit doit le dépasser de
+    // `height`, sinon sur un terrain montant le bâtiment paraît enfoncé dans
+    // le sol du côté haut alors que ses murs, eux, partent bien de l'assise.
     let base = Infinity;
+    let crest = -Infinity;
     for (const p of points) {
       const ground = bubble.surfaceElevationAtLocal(p.x, p.y) * bubble.verticalScale;
       if (ground < base) base = ground;
+      if (ground > crest) crest = ground;
     }
     if (!Number.isFinite(base)) return false;
 
     const height = buildingHeight(properties);
     const minHeight = buildingMinHeight(properties);
     const bottom = base + minHeight - 0.6; // un peu enterré : pas de jour sous les murs
-    const top = base + height;
+    const top = crest + height;
 
     // Sens de parcours : il détermine de quel côté regardent les murs.
     const area = ringSignedArea(points.map((p) => [p.x, p.y]));
@@ -999,6 +1385,16 @@ export class BuildingLayer {
     // qui porte à la fois une église et une boutique de souvenirs, c'est
     // l'église. Un bâtiment n'a qu'une personnalité.
     let personality = null;
+    // Nom du point d'intérêt qui a donné sa personnalité au bâtiment — utile
+    // seulement pour un commerce (voir `appendShopfront`), mais capturé ici
+    // pour tous : c'est le même point, et le coût de garder son nom est nul.
+    let personalityName = null;
+    // Classe brute du point d'intérêt (`properties.class`, pas le `kind`
+    // agrégé de `buildingPersonalityFor`) — c'est elle qui choisit le
+    // pictogramme de l'enseigne perpendiculaire (`shopfrontEmojiFor`) : une
+    // boulangerie et un bar sont tous deux `kind: 'shop'`, mais pas la même
+    // enseigne.
+    let personalityClass = null;
     if (personalities && box) {
       // Rejet grossier avant le test d'anneau : le rectangle englobant est déjà
       // calculé, et il écarte d'un coup la quasi-totalité des points. Sans lui,
@@ -1014,6 +1410,8 @@ export class BuildingLayer {
         if (Math.abs(p.x - box.cx) > reach || Math.abs(p.z - box.cz) > reach) continue;
         if (pointInRing(footprint, p.x, p.z)) {
           personality = p.kind;
+          personalityName = p.name || null;
+          personalityClass = p.class || null;
           break;
         }
       }
@@ -1050,6 +1448,24 @@ export class BuildingLayer {
     const plinthTop = shopfrontTop ?? plinthTopFor(base, minHeight, eaves);
     const plinthColor = shopfrontTop === null ? wallColor.map((c) => c * PLINTH_SHADE) : look.front;
 
+    // Façade sur rue : le pan le plus long de l'empreinte, seul à recevoir la
+    // devanture articulée (`appendShopfront`) — rien dans les tuiles ne dit
+    // quel pan donne vraiment sur la rue, et le plus long est le choix le
+    // moins arbitraire. Les autres pans gardent le simple bandeau coloré.
+    let frontIndex = -1;
+    if (shopfrontTop !== null) {
+      let bestLength = -1;
+      for (let i = 0; i < ordered.length; i++) {
+        const pa = ordered[i];
+        const pb = ordered[(i + 1) % ordered.length];
+        const panLength = Math.hypot(pb.x - pa.x, pb.y - pa.y);
+        if (panLength > bestLength) {
+          bestLength = panLength;
+          frontIndex = i;
+        }
+      }
+    }
+
     for (let i = 0; i < ordered.length; i++) {
       const a = ordered[i];
       const b = ordered[(i + 1) % ordered.length];
@@ -1070,7 +1486,49 @@ export class BuildingLayer {
       }
 
       if (openings) {
-        appendOpenings(openings, walls, a, b, nx, nz, base, eaves - base, minHeight, style, this.theme.windows);
+        // Sur la façade : baies, large baie d'entrée et enseigne plutôt que la
+        // grille résidentielle générique — voir `appendShopfront`. Si le pan
+        // est trop étroit pour en tenir une seule, elle ne pose rien et le
+        // rez-de-chaussée générique reprend la main, comme partout ailleurs.
+        const devanture =
+          i === frontIndex &&
+          shopfrontTop !== null &&
+          appendShopfront(
+            openings,
+            walls,
+            labels,
+            this.labelAtlas,
+            a,
+            b,
+            nx,
+            nz,
+            base,
+            shopfrontTop,
+            minHeight,
+            personalityName,
+            this.theme.shopfront
+          );
+        appendOpenings(openings, walls, a, b, nx, nz, base, eaves - base, minHeight, style, this.theme.windows, {
+          skipGroundLevel: devanture,
+        });
+
+        // Enseigne en drapeau : indépendante de la devanture au sol — une
+        // façade trop étroite pour une porte garde son pictogramme.
+        if (i === frontIndex && shopfrontTop !== null) {
+          appendShopSignBlade(
+            walls,
+            labels,
+            this.labelAtlas,
+            a,
+            b,
+            nx,
+            nz,
+            base,
+            minHeight,
+            personalityClass,
+            this.theme.shopfront
+          );
+        }
       }
     }
 
@@ -1259,6 +1717,44 @@ export class BuildingLayer {
   }
 
   /**
+   * (Ré)alimente le maillage des enseignes peintes — voir l'en-tête de
+   * `materials/labelAtlas.js`. `labelAtlas.upload()` doit passer **après**
+   * toutes les cases posées par cette même reconstruction (`_appendBuilding`,
+   * via `appendShopfront`), donc après le remplissage de `labels` mais avant
+   * que le maillage ne s'en serve.
+   */
+  _applyLabels(labels) {
+    const { THREE } = this;
+    this.labelAtlas.upload();
+
+    if (labels.positions.length === 0) {
+      this._clearLabels();
+      return;
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(labels.positions, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(labels.uvs, 2));
+    geometry.computeBoundingSphere();
+
+    if (this.labelMesh) {
+      this.labelGeometry?.dispose();
+      this.labelMesh.geometry = geometry;
+    } else {
+      const mesh = new THREE.Mesh(geometry, this.labelMaterial);
+      mesh.name = 'building-labels';
+      mesh.matrixAutoUpdate = false;
+      mesh.updateMatrix();
+      // Après les murs, comme les fenêtres : un panneau sans écriture de
+      // profondeur doit être dessiné une fois le mur qui le porte en place.
+      mesh.renderOrder = 6;
+      this.scene.add(mesh);
+      this.labelMesh = mesh;
+    }
+    this.labelGeometry = geometry;
+  }
+
+  /**
    * Allume les fenêtres.
    * @param {number} mix 0 en plein jour, 1 en pleine nuit.
    */
@@ -1276,6 +1772,14 @@ export class BuildingLayer {
     this.windowGeometry = null;
   }
 
+  _clearLabels() {
+    if (!this.labelMesh) return;
+    this.scene.remove(this.labelMesh);
+    this.labelGeometry?.dispose();
+    this.labelMesh = null;
+    this.labelGeometry = null;
+  }
+
   _clearMesh() {
     if (!this.mesh) return;
     this.scene.remove(this.mesh);
@@ -1289,7 +1793,10 @@ export class BuildingLayer {
     this.disposed = true;
     this._clearMesh();
     this._clearWindows();
+    this._clearLabels();
     this.material.dispose();
     this.windowMaterial.dispose();
+    this.labelMaterial.dispose();
+    this.labelAtlas.dispose();
   }
 }

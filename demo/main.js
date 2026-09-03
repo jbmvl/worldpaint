@@ -446,7 +446,9 @@ function updateLabels() {
       labelsRoot.appendChild(el);
       labelElements.set(item.id, el);
     }
-    el.textContent = item.text;
+    // 🗺️ ce que la carte dit, 🤖 ce que la procédure a inventé — voir
+    // `sourceForMeshName` et les commentaires de source dans `objectLabels.js`.
+    el.textContent = item.source ? `${item.source} ${item.text}` : item.text;
     el.style.left = `${sx}px`;
     el.style.top = `${sy}px`;
   }

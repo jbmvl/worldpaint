@@ -152,7 +152,11 @@ export const LABEL_FURNITURE = {
   monument: 'monument',
   castle: 'château',
   tower: 'tour',
-  cemeteryCross: 'cimetière',
+  cemeteryCross: 'croix de cimetière',
+  cemeteryGate: 'portail de cimetière',
+  cemeteryTomb: 'tombe',
+  cemeteryTombFlat: 'tombe (dalle)',
+  cemeteryTap: 'robinet de cimetière',
   factoryChimney: 'cheminée d’usine',
   ferrisWheel: 'grande roue',
   stadium: 'stade',
@@ -303,10 +307,16 @@ export const LABEL_PLACE_CLASS = {
 };
 
 /**
- * Traduction du `subclass` — plus précis que `class` quand il est renseigné,
- * et c'est lui qui distingue par exemple une cour de ferme (`farmyard`,
- * voir `FARMYARD_SUBCLASSES` dans `furniturePlacement`) d'un terrain agricole
- * ordinaire, tous deux voisins de `class: 'farmland'`.
+ * Traduction du `subclass` — plus précis que `class` quand il est renseigné.
+ *
+ * `farmyard` et `farm` restent traduits ici par honnêteté de vocabulaire,
+ * mais ne t'attends pas à les voir s'afficher : vérifié contre une vraie
+ * ferme nommée d'OSM, `landuse=farmyard` n'atteint tout simplement pas les
+ * tuiles servies par OpenFreeMap (schéma OpenMapTiles) — ni en `subclass` ni
+ * ailleurs. C'est pour ça que `furnitureLayer._looksLikeFarmstead` ne s'y fie
+ * plus et détecte une exploitation par indice indirect (une grappe de
+ * bâtiments réels sur une petite parcelle agricole). `allotments`, lui,
+ * arrive bien dans la donnée (`landcover.subclass`).
  */
 export const LABEL_PLACE_SUBCLASS = {
   farmyard: 'cour de ferme',
@@ -473,6 +483,7 @@ export function collectSceneLabels({
             out.push({
               id: `mesh:${object.name}:${object.id ?? out.length}`,
               text: rename ? rename(object.name, point) || text : text,
+              source: sourceForMeshName(object.name),
               x: point.x,
               y: point.y,
               z: point.z,
@@ -601,6 +612,10 @@ export function collectCropLabels({
     return {
       id: `crop:${cluster.kind}:${index}`,
       text: `${LABEL_CROPS[cluster.kind] || cluster.kind} — ${hectares.toFixed(1)} ha`,
+      // Le schéma ne dit quasiment jamais la culture (voir `cropFor` dans
+      // `furniturePlacement`) : même quand le champ lui-même est réel, ce
+      // qu'on y a semé est déduit d'un tirage. Toujours généré, donc.
+      source: LABEL_SOURCE_GENERATED,
       x,
       y: groundAt(x, z) + 3,
       z,
@@ -686,6 +701,9 @@ export function collectPlaceLabels({
       out.push({
         id: `place:${properties.class || ''}:${properties.subclass || ''}:${Math.round(x)}:${Math.round(z)}`,
         text: hectares >= 0.1 ? `${text} — ${hectares.toFixed(1)} ha` : text,
+        // `class`/`subclass` viennent tels quels de la tuile : c'est la carte
+        // qui classe la parcelle, pas la procédure.
+        source: LABEL_SOURCE_OSM,
         x,
         y: groundAt(x, z) + 2,
         z,
@@ -758,6 +776,9 @@ export function collectBuildingLabels({
     out.push({
       id: `building:${building.kind}:${Math.round(building.x)}:${Math.round(building.z)}`,
       text,
+      // `buildingPersonalityFor` classe un vrai point d'intérêt : la carte
+      // dit que ce bâtiment est une église, pas un tirage.
+      source: LABEL_SOURCE_OSM,
       x: building.x,
       y: groundAt(building.x, building.z) + 3,
       z: building.z,

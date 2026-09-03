@@ -59,7 +59,10 @@ export {
   labelForForestType,
   labelForMeshName,
   labelForPlace,
+  sourceForMeshName,
   LABEL_RADIUS_M,
+  LABEL_SOURCE_OSM,
+  LABEL_SOURCE_GENERATED,
 } from './inspect/objectLabels.js';
 export { forestTypeAt } from './layers/vegetationLayer.js';
 
