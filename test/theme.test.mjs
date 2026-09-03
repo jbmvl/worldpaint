@@ -25,6 +25,7 @@ import { join } from 'node:path';
 
 import { defaultTheme } from '../src/themes/default.js';
 import { CLIMATE_FAMILIES, filterByClimate } from '../src/core/climate.js';
+import { skyPaletteFor } from '../src/environment/sceneEnvironment.js';
 import { resolveTheme } from '../src/themes/theme.js';
 import { townPaletteAt, buildingStyleAt, streetSurfaceAt } from '../src/layers/townStyle.js';
 import { kerbProfile } from '../src/layers/streetLayer.js';
@@ -353,9 +354,22 @@ test('la section d’une rue est celle du thème qu’on lui donne', () => {
 });
 
 test('le ciel est une tranche du thème', () => {
-  assert.deepEqual(Object.keys(DEFAULT.sky).sort(), ['fog', 'nightHorizon', 'nightZenith']);
+  assert.deepEqual(Object.keys(DEFAULT.sky).sort(), [
+    'fog',
+    'nightHorizon',
+    'nightZenith',
+    'variants',
+  ]);
   assert.equal(DEFAULT.sky.fog, '#e8eef3');
   assert.equal(OTHER.sky.fog, '#000000');
+  // Une tranche de ciel sans variantes est une tranche valide : c'est le cas
+  // d'un thème écrit avant qu'elles existent, et le climat n'y touche rien.
+  assert.equal(skyPaletteFor('arid', OTHER.sky), null);
+  assert.equal(skyPaletteFor(null, DEFAULT.sky), null, 'sans climat, rien à imposer');
+  // Une variante ne redit que ce qu'elle change : le reste vient de la base.
+  const sec = skyPaletteFor('arid', DEFAULT.sky);
+  assert.notEqual(sec.fog, DEFAULT.sky.fog, 'l’air d’un pays sec n’est pas celui d’une côte');
+  assert.equal(sec.nightZenith, DEFAULT.sky.nightZenith, 'ce qu’elle ne dit pas ne change pas');
   // Le brouillard et le raccord d'horizon lisent la même valeur : c'est cette
   // égalité qui empêche une couture entre le terrain lointain et le ciel.
   assert.equal(DEFAULT_SKY_PALETTE, defaultTheme.sky, 'l’alias public désigne la tranche, sans copie');

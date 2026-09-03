@@ -944,6 +944,63 @@ export const SKY_PALETTE = {
   // sombre, seulement plus loin du noir pur qu'avant.
   nightZenith: '#0d1428',
   nightHorizon: '#1c2c4c',
+
+  /**
+   * L'air d'un pays.
+   *
+   * Le brouillard est la couleur la plus déterminante du décor : il décide de
+   * la distance apparente et de l'heure qu'il fait. C'est aussi ce qui distingue
+   * le plus immédiatement deux régions à la même heure — l'air d'une côte
+   * atlantique est laiteux et bleu, celui d'une plaine castillane est chaud et
+   * poussiéreux, celui d'un col alpin est presque transparent.
+   *
+   * Ce n'est **pas** la météo, qui reste un état fourni par l'application
+   * (`environment/weather.js`) : la palette dit de quelle couleur est l'air de
+   * ce pays, la météo dit combien il y en a aujourd'hui.
+   *
+   * Une variante ne redit que ce qu'elle change ; le reste vient des valeurs
+   * ci-dessus. Une famille absente garde la palette de base, qui est celle
+   * d'avant que les variantes existent.
+   */
+  variants: [
+    {
+      name: 'atlantique',
+      climates: ['oceanicUpland'],
+      // Plus gris et plus dense : c'est un air chargé d'eau, pas une brume.
+      fog: '#dfe6ea',
+    },
+    {
+      name: 'midi',
+      climates: ['mediterranean', 'mediterraneanCool'],
+      fog: '#eeeadf',
+    },
+    {
+      name: 'poussière',
+      climates: ['semiArid', 'arid'],
+      fog: '#efe6d6',
+      // Une nuit de pays sec est plus chaude et plus claire : il n'y a pas de
+      // couche d'eau pour l'éteindre.
+      nightHorizon: '#2a2b40',
+    },
+    {
+      name: 'continental',
+      climates: ['continental'],
+      fog: '#e9eef1',
+    },
+    {
+      name: 'boréal',
+      climates: ['boreal', 'glacial'],
+      fog: '#e6edf2',
+      nightZenith: '#0b1226',
+    },
+    {
+      name: 'altitude',
+      climates: ['alpine', 'mediterraneanMontane'],
+      // L'air y est le plus clair d'Europe : le lointain reste lisible bien
+      // plus loin qu'ailleurs, et c'est ce qui fait la montagne.
+      fog: '#e2ecf4',
+    },
+  ],
 };
 
 /**

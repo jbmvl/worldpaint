@@ -32,7 +32,12 @@
 
 import { ElevationField } from './core/elevationField.js';
 import { WorldComposer, WORLD_ATTRIBUTION } from './worldComposer.js';
-import { SceneEnvironment, SKY_RADIUS, SHADOW_LEAD_M } from './environment/sceneEnvironment.js';
+import {
+  SceneEnvironment,
+  SKY_RADIUS,
+  SHADOW_LEAD_M,
+  skyPaletteFor,
+} from './environment/sceneEnvironment.js';
 import { tileSizeMeters } from './core/tileMath.js';
 import { resolveTheme } from './themes/theme.js';
 import { defaultTheme } from './themes/default.js';
@@ -153,7 +158,16 @@ export function createWorld({
     });
   }
 
-  return new World({ composer, environment, elevation: field, ownsElevation, theme: resolved });
+  return new World({
+    composer,
+    environment,
+    elevation: field,
+    ownsElevation,
+    theme: resolved,
+    // Le climat n'a le droit de teinter l'air que si l'application n'a pas
+    // choisi sa propre palette : entre le pays et l'auteur, c'est l'auteur.
+    skyFollowsClimate: !sky?.palette,
+  });
 }
 
 /**
@@ -162,8 +176,19 @@ export function createWorld({
  * `composer`, `bubble` ou `environment`, qui ne sont pas cachés.
  */
 export class World {
-  constructor({ composer, environment, elevation, ownsElevation, theme = defaultTheme }) {
+  constructor({
+    composer,
+    environment,
+    elevation,
+    ownsElevation,
+    theme = defaultTheme,
+    skyFollowsClimate = true,
+  }) {
     this.composer = composer;
+    this._skyFollowsClimate = skyFollowsClimate;
+    /** Famille pour laquelle `_skyPalette` a été composée. */
+    this._skyFamily = undefined;
+    this._skyPalette = null;
     /** Le thème résolu de ce monde. En lecture seule : il est gelé. */
     this.theme = theme;
     this.environment = environment;
@@ -246,7 +271,11 @@ export class World {
     const env = this.environment;
     if (!env) return null;
     env.followCamera(camera);
-    env.update({ palette, date, lat, lng, weather });
+    // L'air n'a pas la même couleur partout : laiteux et bleu sur une côte
+    // atlantique, chaud et poussiéreux en Castille, presque transparent en
+    // altitude. C'est la couleur la plus déterminante du décor, donc elle suit
+    // le pays — sauf si l'application en impose une, ici ou au montage.
+    env.update({ palette: palette ?? this._climateSky(), date, lat, lng, weather });
     this.composer.setNight(env.nightMix);
     this.composer.setWind(env.wind, env.weather);
     this.composer.setWetness(env.wetness);
@@ -257,6 +286,24 @@ export class World {
       weather: env.weather,
       clearColor: env.clearColor,
     };
+  }
+
+  /**
+   * Palette d'ambiance du climat courant, ou `undefined` — auquel cas
+   * l'environnement garde celle qu'il a déjà (voir `skyPaletteFor`).
+   *
+   * Mémorisée par famille : `updateSky` est appelée à chaque image, et composer
+   * un objet par image pour une valeur qui change tous les deux kilomètres
+   * serait du gaspillage pur.
+   */
+  _climateSky() {
+    if (!this._skyFollowsClimate) return undefined;
+    const family = this.composer.landscape?.climate?.family ?? null;
+    if (family !== this._skyFamily) {
+      this._skyFamily = family;
+      this._skyPalette = skyPaletteFor(family, this.theme.sky);
+    }
+    return this._skyPalette ?? undefined;
   }
 
   dispose() {

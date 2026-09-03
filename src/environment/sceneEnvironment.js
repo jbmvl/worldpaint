@@ -136,6 +136,32 @@ const HORIZON_BAND = 0.18;
 export const DEFAULT_SKY_PALETTE = defaultTheme.sky;
 
 /**
+ * Palette d'ambiance d'un climat, ou `null` si ce climat n'en a pas de propre.
+ *
+ * `null` compte : `update({ palette: undefined })` garde la dernière palette
+ * reçue, donc ne rien rendre laisse en place celle de l'application ou celle du
+ * thème. C'est ce qui fait qu'une application qui a choisi sa propre palette ne
+ * se la fait pas remplacer par le climat.
+ *
+ * Une variante ne redit que ce qu'elle change ; le reste vient de la palette de
+ * base. Fonction pure.
+ *
+ * @param {string|null} climate Famille climatique (`core/climate.js`).
+ * @param {SkyPalette & {variants?: Array}} [sky] Tranche `theme.sky`.
+ * @returns {SkyPalette|null}
+ */
+export function skyPaletteFor(climate, sky = DEFAULT_SKY_PALETTE) {
+  if (!climate || !Array.isArray(sky?.variants)) return null;
+  const variant = sky.variants.find((entry) => entry?.climates?.includes(climate));
+  if (!variant) return null;
+  return {
+    fog: variant.fog ?? sky.fog,
+    nightZenith: variant.nightZenith ?? sky.nightZenith,
+    nightHorizon: variant.nightHorizon ?? sky.nightHorizon,
+  };
+}
+
+/**
  * Échelle du bruit de nuages.
  *
  * La valeur par défaut de three (0,0002) produit un motif si vaste qu'il couvre
