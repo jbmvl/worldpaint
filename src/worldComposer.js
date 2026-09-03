@@ -66,9 +66,9 @@
  *
  * Ce n'est pas une couche et ça ne pose rien : c'est une **entrée**, lue par
  * celles qui choisissent un contenu dans une liste — les peuplements, les
- * palettes de bourg, les cultures, le bétail. Il se recalcule sur sa propre
- * cadence (`LANDSCAPE_REBUILD_M`), bien plus lente que celle du décor : un
- * climat ne change pas tous les quatre cents mètres.
+ * palettes de bourg, les cultures, le bétail. Il se relit à chaque `refresh`,
+ * comme le reste du profil : c'est une lecture de tableau, pas un calcul à
+ * économiser.
  */
 
 import { TerrainBubble } from './terrain/terrainBubble.js';
@@ -98,17 +98,6 @@ import { defaultTheme } from './themes/default.js';
  */
 export const WORLD_ATTRIBUTION =
   '© OpenStreetMap contributors — relief AWS Terrain Tiles — climat Köppen-Geiger (Rubel et al.)';
-
-/**
- * Déplacement de l'observateur avant de reposer la question du climat, en
- * mètres.
- *
- * Deux kilomètres : la grille climatique a des cellules d'une dizaine de
- * kilomètres, donc la recalculer à la cadence du décor (quatre cents mètres)
- * rendrait mille fois la même réponse. L'altitude, elle, change plus vite —
- * mais pas assez pour valoir une lecture par image.
- */
-export const LANDSCAPE_REBUILD_M = 2000;
 
 /** Demi-portée de la mesure de pente sous l'observateur, en mètres. */
 const RELIEF_SPAN_M = 60;
@@ -153,8 +142,6 @@ export class WorldComposer {
      * @type {{climate: {family: string, koppen: string}, relief: {elevation: number, slope: number}}|null}
      */
     this.landscape = null;
-    /** Position de la dernière lecture du profil, en mètres locaux. */
-    this._landscapeAnchor = null;
     /** Dernière part de nuit appliquée. `null` force la prochaine à passer. */
     this._night = null;
     /** Dernier vent appliqué, pour ne pas réécrire des uniformes inchangés. */
@@ -446,23 +433,21 @@ export class WorldComposer {
   }
 
   /**
-   * Repose la question du climat et du relief si l'observateur s'est assez
-   * éloigné.
+   * Repose la question du climat et du relief.
+   *
+   * Appelée à chaque `refresh`, donc à chaque fois que l'observateur a bougé
+   * assez pour justifier d'y regarder — jamais par image. Pas d'ancre ni de
+   * seuil de distance ici : `climateAt` n'est qu'une lecture de tableau et
+   * `_reliefAt` cinq altitudes déjà montées, moins cher que de maintenir un
+   * cache qui doit lui-même savoir se périmer (voir l'historique : un cache en
+   * mètres locaux, relatifs à un repère qui se recentre au loin, a longtemps
+   * laissé une ville cherchée dans la démo garder le climat de la précédente).
    *
    * @returns {boolean} vrai si la **famille** climatique a changé — c'est le
    *          seul changement qui périme du décor déjà posé, une altitude qui
    *          glisse de dix mètres n'en périmant aucun.
    */
   _updateLandscape(lng, lat, here) {
-    const anchor = this._landscapeAnchor;
-    if (
-      anchor &&
-      Math.hypot(here.x - anchor.x, here.z - anchor.z) < LANDSCAPE_REBUILD_M
-    ) {
-      return false;
-    }
-    this._landscapeAnchor = { x: here.x, z: here.z };
-
     const before = this.landscape?.climate?.family ?? null;
     const relief = this._reliefAt(here);
     const climate = climateAt(lng, lat);
