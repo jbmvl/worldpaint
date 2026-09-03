@@ -401,19 +401,53 @@ export function scatterFurnitureFor(properties = {}, { crop = null } = {}) {
 }
 
 /**
+ * Part d'ovins d'une pâture de plaine, par famille climatique.
+ *
+ * La pente disait déjà l'essentiel — le mouton broute où la vache ne monte
+ * plus —, mais elle ne dit rien du pays : une plaine herbagère irlandaise et
+ * une plaine sèche castillane ont la même pente et pas le même troupeau. Le
+ * climat déplace donc la bascule, sans toucher à la règle de pente qui la
+ * précède.
+ *
+ * Une famille absente garde `DEFAULT_SHEEP_ODDS`, c'est-à-dire le comportement
+ * d'avant.
+ */
+export const HERD_SHEEP_ODDS = {
+  // Prairie humide : le bovin, et c'est ce qui fait le paysage laitier.
+  oceanic: 0.28,
+  // Lande écossaise, fjells : le mouton, presque seul.
+  oceanicUpland: 0.72,
+  mediterranean: 0.68,
+  mediterraneanCool: 0.55,
+  mediterraneanMontane: 0.78,
+  semiArid: 0.8,
+  // En steppe sèche, la chèvre et le mouton tiennent seuls.
+  arid: 0.85,
+  continental: 0.3,
+  boreal: 0.25,
+  // Estive : la vache monte l'été, mais le mouton reste au-dessus d'elle.
+  alpine: 0.55,
+  glacial: 0.6,
+};
+
+/** Part d'ovins en l'absence de climat connu : la valeur d'avant. */
+export const DEFAULT_SHEEP_ODDS = 0.34;
+
+/**
  * Bétail d'une pâture : espèce et taille du troupeau. Fonction pure.
  *
  * Le partage suit ce qu'on voit dans un pré : les bovins dominent en plaine
  * herbagère, les ovins en terrain sec ou accidenté — ils y broutent ce que les
- * vaches laisseraient. La pente est donc l'entrée qui tranche, comme pour le
- * traitement des contours.
+ * vaches laisseraient. La pente tranche d'abord, le climat déplace ensuite la
+ * bascule (voir `HERD_SHEEP_ODDS`).
  *
  * @param {Object} [context]
  * @param {number} [context.steepness] Pente moyenne alentour.
  * @param {number} [context.variant]   Tirage dans [0, 1[ attaché à la parcelle.
+ * @param {string|null} [context.climate] Famille climatique.
  * @returns {{item:string, spread:number}}
  */
-export function herdFor({ steepness = 0, variant = 0 } = {}) {
+export function herdFor({ steepness = 0, variant = 0, climate = null } = {}) {
   // Estive ou parcellaire de montagne franc : la chèvre broute où le mouton
   // ne monte plus. Le seuil est plus haut que celui qui fait déjà basculer
   // vers l'ovin, pour ne pas déplacer les troupeaux qui existaient déjà sur
@@ -423,7 +457,10 @@ export function herdFor({ steepness = 0, variant = 0 } = {}) {
       ? { item: 'goat', spread: 0.24 }
       : { item: 'sheep', spread: 0.3 };
   }
-  const sheepOdds = steepness > 0.14 ? 0.75 : 0.34;
+  const base = (climate && HERD_SHEEP_ODDS[climate]) ?? DEFAULT_SHEEP_ODDS;
+  // Une pente moyenne fait déjà basculer vers l'ovin ; un pays à moutons ne
+  // peut pas y basculer *moins* qu'une plaine à vaches, d'où le maximum.
+  const sheepOdds = steepness > 0.14 ? Math.max(0.75, base) : base;
   if (variant < sheepOdds) {
     // Un troupeau de moutons se tient serré, et c'est ce qui le fait
     // reconnaître d'aussi loin qu'on le voit.

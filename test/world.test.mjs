@@ -59,6 +59,8 @@ import {
   boundaryFurnitureFor,
   scatterFurnitureFor,
   herdFor,
+  HERD_SHEEP_ODDS,
+  DEFAULT_SHEEP_ODDS,
   cropFor,
   pickCrop,
   CROP_MIXES,
@@ -2245,6 +2247,30 @@ test('le bétail suit le terrain : bovins en plaine, ovins sur les pentes', () =
   assert.equal(herdFor({ steepness: 0.3, variant: 0.5 }).item, 'sheep');
   // Un troupeau de moutons se tient plus serré qu’un troupeau de vaches.
   assert.ok(herdFor({ steepness: 0.3, variant: 0.1 }).spread < herdFor({ steepness: 0, variant: 0.9 }).spread);
+});
+
+test('le bétail d’une pâture est celui du pays', () => {
+  // Même pente, même tirage : seul le pays change. Une plaine irlandaise et un
+  // causse castillan portaient jusqu’ici le même troupeau.
+  const plaine = { steepness: 0.02, variant: 0.5 };
+  assert.equal(herdFor({ ...plaine, climate: 'oceanic' }).item, 'cow');
+  assert.equal(herdFor({ ...plaine, climate: 'arid' }).item, 'sheep');
+  assert.equal(herdFor({ ...plaine, climate: 'oceanicUpland' }).item, 'sheep');
+  assert.equal(herdFor({ ...plaine, climate: 'boreal' }).item, 'cow');
+
+  // Sans climat, exactement le comportement d’avant.
+  assert.equal(herdFor(plaine).item, herdFor({ ...plaine, climate: 'inconnu' }).item);
+  assert.equal(DEFAULT_SHEEP_ODDS, 0.34);
+
+  // La pente prime toujours : un pays à vaches en montagne reste un pays à
+  // moutons et à chèvres, sinon la règle de pente aurait été perdue en route.
+  assert.equal(herdFor({ steepness: 0.3, variant: 0.5, climate: 'oceanic' }).item, 'sheep');
+  assert.equal(herdFor({ steepness: 0.4, variant: 0.2, climate: 'oceanic' }).item, 'goat');
+
+  // Toutes les familles annoncées sont des parts valides.
+  for (const [family, odds] of Object.entries(HERD_SHEEP_ODDS)) {
+    assert.ok(odds > 0 && odds < 1, `${family} : part d’ovins plausible (${odds})`);
+  }
 });
 
 test('un troupeau se regroupe, un semis se répartit', () => {

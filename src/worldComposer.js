@@ -315,6 +315,8 @@ export class WorldComposer {
     // La carte des cultures est le seul endroit où une culture est tirée : le
     // climat doit y être avant la prochaine rasterisation.
     this.groundClass.setClimate(family);
+    // Le bétail non plus n'est pas le même partout.
+    this.furniture.setClimate(family);
     const wanted = this._wantedTiles(lng, lat);
 
     // La végétation suit les tuiles de la bulle et non le vectoriel : elle se

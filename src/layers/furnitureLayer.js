@@ -386,6 +386,12 @@ export class FurnitureLayer {
   constructor({ THREE, scene, bubble, groundClass = null, theme = defaultTheme }) {
     this.THREE = THREE;
     this.theme = theme;
+    /**
+     * Famille climatique du lieu, ou `null`. Posée par le compositeur : elle ne
+     * décide pour l'instant que du bétail, qui n'est pas le même dans une
+     * plaine irlandaise et sur un causse castillan.
+     */
+    this.climate = null;
     this.specs = furnitureSpecsFor(theme.furniture.colors);
     this.scene = scene;
     this.bubble = bubble;
@@ -495,6 +501,15 @@ export class FurnitureLayer {
   }
 
   /** Vrai si l'observateur s'est assez éloigné pour justifier une reconstruction. */
+  /**
+   * Pose la famille climatique du lieu. Le mobilier se refait quand elle change
+   * (le compositeur périme le décor), donc il n'y a rien à invalider ici.
+   * @param {string|null} family
+   */
+  setClimate(family) {
+    this.climate = family || null;
+  }
+
   needsRebuild(x, z) {
     if (this._frame !== this.bubble?.frame) return true;
     if (!this._anchor) return true;
@@ -1703,7 +1718,7 @@ export class FurnitureLayer {
   _placeHerd(placements, ring, centre, variant, steepness, count) {
     if (randomAt(centre.x, centre.z, 53) < 0.2) return 0;
 
-    const { item, spread } = herdFor({ steepness, variant });
+    const { item, spread } = herdFor({ steepness, variant, climate: this.climate });
     const heading = randomAt(centre.x, centre.z, 59) * Math.PI * 2;
     const seed = positionSeed(centre.x, centre.z, 61);
     let placed = 0;
