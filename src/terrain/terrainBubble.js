@@ -1,27 +1,17 @@
 /*
- * terrainBubble — la « bulle » de terrain qui suit l'observateur.
- * ------------------------------------------------------------
- * Objectif : ne jamais construire le monde, seulement le voisinage immédiat
- * de l'observateur ciblé (quelques kilomètres), et faire glisser ce voisinage avec
- * lui. C'est l'idée du geometry clipmap (Losasso & Hoppe, SIGGRAPH 2004),
- * exprimée ici dans l'espace des tuiles : un bloc carré de tuiles centré sur
- * l'observateur, rechargé tuile par tuile quand il franchit une frontière.
+ * terrainBubble — la « bulle » de terrain qui suit l'observateur. Bloc carré
+ * de tuiles centré sur l'observateur (geometry clipmap, Losasso & Hoppe,
+ * SIGGRAPH 2004), rechargé tuile par tuile au franchissement d'une frontière.
  *
- * La bulle ne porte que le **relief** : elle transforme le MNT en mailles et
- * répond aux questions d'altitude. Ce qui se pose dessus est décidé ailleurs
- * (`worldComposer`), et la matière du sol vient d'un seul matériau partagé
- * (`terrainMaterial`), piloté par l'occupation du sol vectorielle.
+ * Ne porte que le relief : transforme le MNT en mailles, répond aux
+ * questions d'altitude. Ce qui se pose dessus est décidé ailleurs
+ * (`worldComposer`). Normales calculées analytiquement depuis le champ
+ * d'altitude (pas `computeVertexNormals()`), pour un gradient continu d'une
+ * tuile à l'autre.
  *
- * Les normales ne sont **pas** calculées par `computeVertexNormals()` mais
- * analytiquement depuis le champ d'altitude : le gradient est continu d'une
- * tuile à l'autre, donc l'éclairage ne trahit pas les jointures.
- *
- * Une seule chose vient perturber ce relief naturel : le **déblai des
- * chaussées** (`setRoadCut`). Une route n'est pas posée sur le versant, elle y
- * est taillée ; sans entaille, la seule parade au terrain qui recouvre la rive
- * amont était de remonter toute la plate-forme, ce qui posait la route en
- * surplomb. L'entaille est une fonction pure de la position au sol, donc les
- * tuiles voisines s'accordent toujours au bord.
+ * Le déblai des chaussées (`setRoadCut`) perturbe ce relief naturel : une
+ * route est taillée dans le versant, pas posée dessus, et l'entaille est une
+ * fonction pure de la position au sol, donc les tuiles voisines s'accordent au bord.
  */
 
 import { createLocalFrame, tilesAround, tileKey, lngLatToTile } from '../core/tileMath.js';
@@ -47,8 +37,7 @@ export class TerrainBubble {
    * @param {number} options.zoom            Zoom des tuiles.
    * @param {number} [options.blockSize]     Côté du bloc, en tuiles (impair).
    * @param {number[]} [options.segmentsByRing] Mailles par tuile et par côté,
-   *        anneau par anneau. Rapport 2 d'un anneau au suivant : c'est ce qui
-   *        rend le raccord de bord exact (cf. `_buildMesh`).
+   *        anneau par anneau. Rapport 2 d'un anneau au suivant, pour un raccord de bord exact (cf. `_buildMesh`).
    * @param {number} [options.verticalScale] Exagération du relief (1 = réel).
    * @param {Object} [options.groundClass] Instance `GroundClassMap`, transmise
    *        au matériau : c'est elle qui décide la matière du sol.
@@ -88,20 +77,11 @@ export class TerrainBubble {
     this._rebuildQueue = [];
 
     /**
-     * Numéro de **surface**, incrémenté chaque fois que la maille de terrain a
-     * fini de changer de finesse. C'est le signal qu'attendent ceux qui posent
-     * quelque chose *sur* le sol et gardent le résultat : l'eau et les routes.
-     *
-     * Sans lui, le défaut est structurel et se voit en marchant. L'anneau 0
-     * maille à 4,4 m, l'anneau 1 à 8,8 m : une tuile qui se rapproche voit sa
-     * maille doubler de finesse et capter des pointes du MNT qu'elle sautait
-     * jusque-là. Le terrain **monte** alors localement, de l'ordre du mètre —
-     * et une nappe d'eau calculée sur l'ancienne résolution se retrouve
-     * recouverte. Or ni `WaterLayer` ni `RoadNetwork` ne pouvaient s'en
-     * apercevoir : ils ne surveillaient que le repère local, qui ne change que
-     * tous les vingt kilomètres, et une distance parcourue de quelques
-     * centaines de mètres qui n'a rien à voir avec le franchissement d'une
-     * frontière de tuile.
+     * Numéro de surface, incrémenté chaque fois que la maille de terrain a
+     * fini de changer de finesse — signal qu'attendent l'eau et les routes,
+     * qui posent quelque chose sur le sol et gardent le résultat. Sans lui,
+     * une tuile qui se rapproche voit sa maille s'affiner et le terrain
+     * monter localement, recouvrant une nappe calculée sur l'ancienne résolution.
      */
     this._surfaceGeneration = 0;
     /** Vrai dès qu'une maille a changé de finesse, tant que la file n'est pas vide. */
@@ -109,30 +89,18 @@ export class TerrainBubble {
 
     this.materials = new TerrainMaterialFactory({ THREE, groundClass, look: theme.terrain });
 
-    /**
-     * Index des chaussées construites (`RoadIndex`), ou `null`. C'est lui qui
-     * dit où le terrain doit être entaillé — voir `setRoadCut`.
-     */
+    /** Index des chaussées construites (`RoadIndex`), ou `null` — voir `setRoadCut`. */
     this._roadCut = null;
-    /**
-     * Cuvette des nappes d'eau (`WaterIndex`), ou `null`. Même rôle que
-     * `_roadCut` : elle dit où le terrain doit se creuser — voir `setWaterCut`.
-     */
+    /** Cuvette des nappes d'eau (`WaterIndex`), ou `null`, même rôle — voir `setWaterCut`. */
     this._waterCut = null;
     /** Incrémenté à chaque publication d'index : périme les mailles déjà creusées. */
     this._cutGeneration = 0;
   }
 
   /**
-   * Finesse de maille d'une tuile, d'après son anneau.
-   *
-   * Le MNT Terrarium fait 256 pixels par tuile, soit ~3,3 m au sol au zoom 15.
-   * Une maille uniforme à 48 segments n'en échantillonnait qu'un point sur cinq
-   * : le terrain sous l'observateur était plat parce qu'on jetait quatre
-   * cinquièmes de l'altitude qu'on avait déjà téléchargée. L'anneau central
-   * descend donc à ~4,4 m, au plus près de la résolution native, et les anneaux
-   * suivants relâchent — c'est le clipmap appliqué à la finesse, pas seulement
-   * au découpage.
+   * Finesse de maille d'une tuile, d'après son anneau. L'anneau central
+   * descend à ~4,4 m, au plus près de la résolution native du MNT
+   * (~3,3 m/pixel au zoom 15), les anneaux suivants relâchent.
    */
   segmentsForRing(ring) {
     const list = this.segmentsByRing;
@@ -150,11 +118,7 @@ export class TerrainBubble {
     return this.segmentsForRing(this.ringOf(x, y));
   }
 
-  /**
-   * Numéro de la surface affichée. Change quand la maille a fini de se
-   * réajuster, et seulement à ce moment-là : ce qui est posé dessus n'a aucune
-   * raison d'être refait pendant que la file se draine, tuile par tuile.
-   */
+  /** Numéro de la surface affichée. Change quand la maille a fini de se réajuster, pas pendant que la file se draine. */
   get surfaceGeneration() {
     return this._surfaceGeneration;
   }
@@ -221,16 +185,14 @@ export class TerrainBubble {
       this.tiles.set(key, { key, x: w.x, y: w.y, ring: w.ring, mesh: null, edgeIncomplete: true });
     }
 
-    // Le relief d'abord : une maille construite sans ses voisines aurait des
-    // bords faux. On charge tout le bloc, puis on construit.
+    // Le relief d'abord : une maille construite sans ses voisines aurait des bords faux.
     await Promise.all(
       wanted.map((w) => this.elevation.load(w.x, w.y, this._abort.signal))
     );
     if (this.disposed || generation !== this._generation) return true;
 
-    // Une tuile sans géométrie est construite tout de suite — il n'y a rien à
-    // afficher à sa place. Une tuile dont seule la finesse a changé garde la
-    // sienne et passe par la file : elle est déjà lisible.
+    // Une tuile sans géométrie est construite tout de suite ; une tuile dont
+    // seule la finesse a changé garde la sienne et passe par la file.
     this._rebuildQueue.length = 0;
     for (const tile of this.tiles.values()) {
       if (!tile.mesh) this._buildMesh(tile);
@@ -266,23 +228,17 @@ export class TerrainBubble {
   }
 
   /**
-   * Altitude de la **surface effectivement affichée**, et non du MNT continu.
-   *
-   * La différence compte : la maille de terrain n'échantillonne le MNT que tous
-   * les `1/segments` de tuile. Un objet posé sur le MNT continu — la route, 
-   * l'observateur — flotterait au-dessus des bosses et s'enfoncerait dans les creux.
-   * On interpole donc entre les mêmes sommets que ceux de la maille.
+   * Altitude de la surface effectivement affichée, et non du MNT continu (un
+   * objet posé sur le MNT continu flotterait au-dessus des bosses). Interpole
+   * entre les mêmes sommets que ceux de la maille.
    *
    * @param {number} tx Abscisse de tuile fractionnaire.
    * @param {number} ty Ordonnée de tuile fractionnaire.
    */
   surfaceElevationAtTile(tx, ty, fallback = 0) {
-    // La finesse dépend de la tuile : demander la surface avec la mauvaise
-    // résolution ferait flotter la route et l'observateur au-dessus des bosses,
-    // exactement le défaut que cette méthode existe pour éviter. Reste un écart
-    // résiduel dans la seule bande de mailles collée à une frontière d'anneau,
-    // où la géométrie est recousue sur la résolution du voisin (`_buildMesh`) :
-    // quelques centimètres, absorbés par le lissage longitudinal des rubans.
+    // Reste un écart résiduel dans la bande de mailles collée à une frontière
+    // d'anneau, recousue à la résolution du voisin (`_buildMesh`) : quelques
+    // centimètres, absorbés par le lissage longitudinal des rubans.
     const n = this.segmentsForTile(Math.floor(tx), Math.floor(ty));
     const gx = tx * n;
     const gy = ty * n;
@@ -303,12 +259,10 @@ export class TerrainBubble {
   }
 
   /**
-   * Idem, à partir de coordonnées métriques locales, **déblai compris**.
-   *
-   * C'est cette variante que tout le décor doit employer : elle rend la
-   * hauteur du sol tel qu'il est affiché. Le calcul des plate-formes de
-   * chaussée, lui, passe par `rawSurfaceElevationAtLocal` — le déblai dérive de
-   * la plate-forme, la plate-forme ne peut donc pas dériver du déblai.
+   * Idem, à partir de coordonnées métriques locales, déblai compris — c'est
+   * cette variante que tout le décor doit employer. Le calcul des
+   * plate-formes de chaussée passe par `rawSurfaceElevationAtLocal` : le
+   * déblai dérive de la plate-forme, pas l'inverse.
    */
   surfaceElevationAtLocal(x, z, fallback = 0) {
     if (!this.frame) return fallback;
@@ -323,12 +277,9 @@ export class TerrainBubble {
   }
 
   /**
-   * Publie l'index des chaussées et remet en file les tuiles à entailler.
-   *
-   * Appelé après chaque reconstruction du réseau routier. Les tuiles ne sont pas
-   * refaites sur place : elles passent par la file drainée une par image, sinon
-   * recreuser neuf mailles de trente-sept mille sommets d'un coup produirait un
-   * à-coup net tous les 250 mètres parcourus.
+   * Publie l'index des chaussées et remet en file les tuiles à entailler. Les
+   * tuiles passent par la file drainée une par image, sinon recreuser toutes
+   * les mailles d'un coup produirait un à-coup net.
    *
    * @param {Object|null} index Instance `RoadIndex`, ou `null` pour ne rien creuser.
    */
@@ -343,11 +294,10 @@ export class TerrainBubble {
   }
 
   /**
-   * Altitude entaillée en un point : le terrain descend jusqu'à la plate-forme
-   * de la chaussée qui passe là, et remonte progressivement ensuite.
-   *
-   * Ce niveau-ci ne fait que l'interrogation spatiale ; le profil de l'entaille
-   * lui-même est dans `cutElevationAt`, qui est pur et testé.
+   * Altitude entaillée en un point : le terrain descend jusqu'à la
+   * plate-forme de la chaussée qui passe là, remonte progressivement ensuite.
+   * Ce niveau-ci ne fait que l'interrogation spatiale ; le profil est dans
+   * `cutElevationAt`, pur et testé.
    *
    * @param {number} x Mètres locaux.
    * @param {number} z
@@ -358,14 +308,10 @@ export class TerrainBubble {
   }
 
   /**
-   * Creuse la cuvette d'une nappe d'eau. Le profil lui-même est dans
-   * `cutWaterElevationAt`, qui est pur et testé.
-   *
-   * L'eau passe **avant** la route, et l'ordre n'est pas indifférent : un pont
-   * franchit une rivière, il ne la bouche pas. `cutElevationAt` ne fait jamais
-   * monter le terrain, donc une plate-forme dressée au-dessus d'un lit creusé
-   * le laisse creusé — l'ordre inverse aurait rempli l'entaille routière avec
-   * le lit de la rivière qu'elle enjambe.
+   * Creuse la cuvette d'une nappe d'eau (profil dans `cutWaterElevationAt`,
+   * pur et testé). L'eau passe avant la route : un pont franchit une rivière,
+   * il ne la bouche pas — l'ordre inverse aurait rempli l'entaille routière
+   * avec le lit de la rivière qu'elle enjambe.
    */
   _waterCutAt(x, z, raw) {
     const index = this._waterCut;
@@ -397,10 +343,7 @@ export class TerrainBubble {
   }
 
   /**
-   * Publie la cuvette d'eau et remet en file les tuiles à creuser. Même
-   * mécanique que `setRoadCut`, et pour la même raison : creuser neuf mailles
-   * d'un coup ferait un à-coup net.
-   *
+   * Publie la cuvette d'eau et remet en file les tuiles à creuser. Même mécanique que `setRoadCut`.
    * @param {Object|null} index Instance `WaterIndex`, ou `null` pour ne rien creuser.
    */
   setWaterCut(index) {
@@ -424,17 +367,10 @@ export class TerrainBubble {
   }
 
   /**
-   * Altitude d'un point de bord, échantillonnée à la résolution `m`.
-   *
-   * C'est la couture entre deux anneaux de finesse différente. Sans elle, un
-   * bord à 192 sommets face à un bord à 96 s'écarterait de la droite que trace
-   * le voisin entre deux de ses sommets : une fente ouverte sur le ciel, tout
-   * le long de la frontière. En échantillonnant les deux côtés sur la
-   * résolution la plus grossière, les deux bords coïncident exactement — pas
-   * approximativement.
-   *
-   * Quand `m` vaut la finesse de la tuile, `t * m` est entier et l'appel rend
-   * l'échantillon direct : la fonction peut donc s'appliquer sans condition.
+   * Altitude d'un point de bord, échantillonnée à la résolution `m` — la
+   * couture entre deux anneaux de finesse différente. Sans elle, un bord à
+   * 192 sommets face à un bord à 96 s'écarterait, laissant une fente ouverte
+   * sur le ciel.
    */
   _edgeElevation(t, m, sampleAt) {
     const g = t * m;
@@ -444,10 +380,7 @@ export class TerrainBubble {
     return sampleAt(k / m) * (1 - f) + sampleAt((k + 1) / m) * f;
   }
 
-  /**
-   * Résolution retenue sur chaque bord : celle du voisin s'il est plus
-   * grossier, la nôtre sinon. C'est toujours le plus grossier qui commande.
-   */
+  /** Résolution retenue sur chaque bord : celle du voisin s'il est plus grossier, la nôtre sinon. */
   _edgeSegmentsFor(tile, n) {
     return {
       north: Math.min(n, this.segmentsForTile(tile.x, tile.y - 1)),
@@ -457,17 +390,12 @@ export class TerrainBubble {
     };
   }
 
-  /**
-   * Vrai si la géométrie d'une tuile ne correspond plus à ce qu'elle devrait
-   * être. Le déplacement de l'observateur change l'anneau des tuiles, donc leur
-   * finesse — et celle de leurs voisines, donc la couture des bords.
-   */
+  /** Vrai si la géométrie d'une tuile ne correspond plus à ce qu'elle devrait être (anneau, finesse, ou couture de bord). */
   _meshOutdated(tile) {
     if (!tile.mesh || !tile.edgeSegments) return true;
     const n = this.segmentsForTile(tile.x, tile.y);
     if (tile.segments !== n) return true;
-    // Un nouvel index — chaussées ou nappes — périme le terrassement déjà
-    // creusé dans la maille.
+    // Un nouvel index (chaussées ou nappes) périme le terrassement déjà creusé.
     if (
       tile.ring <= Math.max(ROAD_CUT_MAX_RING, WATER_CUT_MAX_RING) &&
       tile.cutGeneration !== this._cutGeneration
@@ -483,12 +411,7 @@ export class TerrainBubble {
     );
   }
 
-  /**
-   * Reconstruit au plus une tuile périmée. Appelé une fois par image : recoudre
-   * les vingt-cinq tuiles d'un coup au franchissement d'une frontière ferait
-   * un à-coup net, alors que l'étalement ne coûte que quelques images de
-   * géométrie transitoirement grossière.
-   */
+  /** Reconstruit au plus une tuile périmée, une fois par image (recoudre tout d'un coup ferait un à-coup net). */
   processRebuildQueue() {
     if (this.disposed || this._rebuildQueue.length === 0) return false;
     const key = this._rebuildQueue.shift();
@@ -505,22 +428,17 @@ export class TerrainBubble {
 
     const edge = this._edgeSegmentsFor(tile, n);
 
-    // Pas de coordonnées de texture : la matière du sol est projetée en
-    // coordonnées monde par le shader, elle n'a rien à faire d'un dépliage par
-    // tuile — et un attribut de moins, c'est 300 ko de moins par tuile fine.
+    // Pas de coordonnées de texture : la matière est projetée en coordonnées monde par le shader.
     const positions = new Float32Array(count * 3);
     const normals = new Float32Array(count * 3);
 
     const scale = this.frame.scale;
     const stepMeters = GRADIENT_STEP_TILES * scale;
-    // Les terrassements ne s'appliquent qu'aux tuiles proches : au-delà, ni
-    // chaussée ni nappe ne sont construites, et la requête d'index ne rendrait
-    // jamais rien.
+    // Les terrassements ne s'appliquent qu'aux tuiles proches (au-delà, la requête d'index ne rendrait rien).
     const carving =
       (!!this._roadCut && tile.ring <= ROAD_CUT_MAX_RING) ||
       (!!this._waterCut && tile.ring <= WATER_CUT_MAX_RING);
-    // Le gradient est pris sur le terrain **entaillé** : sans cela, l'éclairage
-    // du fond du déblai serait celui du versant qu'on vient d'y creuser.
+    // Gradient pris sur le terrain entaillé, sinon l'éclairage du fond du déblai serait celui du versant.
     const cut = carving ? (x, z, raw) => this.cutElevation(x, z, raw) : (x, z, raw) => raw;
 
     for (let j = 0; j <= n; j++) {
@@ -533,9 +451,7 @@ export class TerrainBubble {
 
         const local = this.frame.tileToLocal(tx, ty);
 
-        // Bords : recousus sur la résolution du voisin. Les coins tombent sur
-        // un sommet de grille dans les deux directions, ils sont donc
-        // insensibles à l'ordre des tests.
+        // Bords recousus sur la résolution du voisin.
         let raw;
         if (j === 0) raw = this._edgeElevation(u, edge.north, (a) => this.elevation.sampleTile(tile.x + a, tile.y));
         else if (j === n) raw = this._edgeElevation(u, edge.south, (a) => this.elevation.sampleTile(tile.x + a, tile.y + 1));
@@ -543,9 +459,7 @@ export class TerrainBubble {
         else if (i === n) raw = this._edgeElevation(v, edge.east, (a) => this.elevation.sampleTile(tile.x + 1, tile.y + a));
         else raw = this.elevation.sampleTile(tx, ty);
 
-        // Le déblai est une fonction du seul point du sol : deux tuiles voisines
-        // en tirent la même valeur au même endroit, donc la couture des bords
-        // reste exacte.
+        // Le déblai est une fonction du seul point du sol, donc la couture des bords reste exacte.
         const h = cut(local.x, local.z, raw) * this.verticalScale;
 
         positions[idx * 3] = local.x;
@@ -598,16 +512,13 @@ export class TerrainBubble {
       const mesh = new THREE.Mesh(geometry, this.materials.material);
       mesh.name = `terrain-${tile.key}`;
       mesh.matrixAutoUpdate = false;
-      // Le terrain reçoit les ombres mais n'en projette pas : ses mailles
-      // font 18 m, et une face aussi grande s'auto-ombre en rayures avant de
-      // produire quoi que ce soit d'utile.
+      // Reçoit les ombres mais n'en projette pas (des mailles de 18 m s'auto-ombreraient en rayures).
       mesh.receiveShadow = true;
       mesh.updateMatrix();
       tile.mesh = mesh;
       this.group.add(mesh);
     }
-    // Une maille qui change de finesse déplace la surface : ce qui est posé
-    // dessus devra se refaire, mais une fois la file drainée seulement.
+    // Une maille qui change de finesse déplace la surface.
     if (tile.segments !== n) this._surfaceDirty = true;
     tile.segments = n;
     tile.edgeSegments = edge;

@@ -1,16 +1,8 @@
 /*
- * vectorTileSource — les tuiles vectorielles, chargées pour la bulle.
- * -------------------------------------------------------------------
- * Le chargement est piloté par la **bulle** : c'est elle qui sait quelles
- * tuiles couvrent la scène, à sa portée et sous sa caméra à elle.
- *
- * L'application ne fournit qu'un gabarit d'URL (`{z}/{x}/{y}`) et un zoom
- * maximal. D'où elle les tient — un TileJSON, une carte 2D qui tourne à côté,
- * une constante — ne regarde pas ce module.
- *
- * Le décodage passe par `@mapbox/vector-tile`, l'implémentation de référence du
- * format. `VectorTileFeature.toGeoJSON(x, y, z)` rend la géométrie en
- * longitude/latitude, donc rien à reprojeter à la main.
+ * vectorTileSource — tuiles vectorielles chargées pour la bulle. Le chargement
+ * est piloté par la bulle ; l'application ne fournit qu'un gabarit d'URL et un
+ * zoom maximal. Décodage via `@mapbox/vector-tile`, dont `toGeoJSON` rend
+ * directement la géométrie en longitude/latitude.
  */
 
 // pbf 5 et @mapbox/vector-tile 3 sont des modules ESM à exports nommés : pas
@@ -23,13 +15,10 @@ import { tileKey, fillTileUrl, tileXToLng, tileYToLat } from './tileMath.js';
 export const VECTOR_ZOOM = 14;
 
 /**
- * Emprise géographique d'une tuile, en longitude/latitude.
- *
- * Elle sert à reconnaître les **bords de découpe** : les polygones d'occupation
- * du sol sont tranchés à la frontière de chaque tuile, et un contour suivi
- * naïvement dessinerait donc une haie le long d'une limite qui n'existe pas —
- * un quadrillage régulier en travers de la campagne, impossible à ne pas voir
- * une fois qu'on l'a remarqué. Fonction pure.
+ * Emprise géographique d'une tuile, en longitude/latitude. Sert à reconnaître
+ * les bords de découpe des polygones d'occupation du sol (tranchés à la
+ * frontière de chaque tuile), pour ne pas dessiner de haie le long d'une
+ * limite qui n'existe pas.
  *
  * @returns {{west:number, east:number, north:number, south:number}}
  */
@@ -44,8 +33,6 @@ export function tileBounds(x, y, z) {
 
 /**
  * Couvre un bloc de tuiles d'un zoom par les tuiles d'un zoom inférieur.
- * Fonction pure : c'est le genre de décalage de bits qu'on croit évident et
- * qu'on écrit à l'envers une fois sur deux.
  *
  * @param {number} x    Abscisse de tuile au zoom `fromZoom`.
  * @param {number} y
@@ -109,11 +96,8 @@ export class VectorTileSource {
           mode: 'cors',
           credentials: 'omit',
         });
-        // 404 sur une tuile sans donnée : c'est normal, pas une erreur, et le
-        // vide se met en cache. Tout autre code est un incident passager —
-        // le mettre en cache condamnerait cette tuile à rester vide jusqu'à son
-        // éviction, et un trou de bâti au milieu d'une ville n'a alors plus
-        // aucune explication visible.
+        // 404 = tuile sans donnée, normal, mis en cache ; tout autre code est
+        // un incident passager qu'on ne veut pas figer en cache.
         if (!res.ok) {
           if (res.status === 404) this._store(key, null);
           return null;
@@ -158,12 +142,11 @@ export class VectorTileSource {
   /**
    * Parcourt les entités d'une couche source, sur les tuiles données.
    * `callback(geometry, properties, bounds)` reçoit la géométrie en
-   * longitude/latitude, et l'emprise de la tuile dont elle provient.
+   * longitude/latitude et l'emprise de la tuile d'origine.
    *
-   * Les entités sont découpées par les tuiles : une même route ou une même
-   * bâtisse revient d'une tuile à l'autre. C'est à l'appelant de dédoublonner
-   * s'il en a besoin — et, pour les contours, d'écarter les bords de découpe à
-   * l'aide de `bounds`.
+   * Les entités sont découpées par tuile (une même route ou bâtisse revient
+   * d'une tuile à l'autre) : à l'appelant de dédoublonner et d'écarter les
+   * bords de découpe via `bounds` si besoin.
    */
   forEachFeature(sourceLayer, tiles, callback) {
     for (const { x, y } of tiles) {

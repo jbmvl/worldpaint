@@ -1,72 +1,29 @@
 /*
- * roadGraph — recoudre les chaussées entre elles avant de les dessiner.
- * ---------------------------------------------------------------------
- * Une tuile vectorielle ne livre pas des routes : elle livre des **morceaux**.
- * Le format découpe chaque entité à la frontière de la tuile, avec une marge de
- * recouvrement de quelques mètres ; OpenStreetMap découpe en plus les chemins à
- * chaque changement d'attribut ; et une même route revient donc trois ou quatre
- * fois, coupée à des endroits qui n'ont aucune réalité au sol.
+ * roadGraph — recoudre les chaussées entre elles avant de les dessiner. Une
+ * tuile vectorielle livre des morceaux (découpés à la frontière de tuile et à
+ * chaque changement d'attribut), et une même route revient plusieurs fois.
+ * Non recousus, ça se voit : rubans superposés, décroché d'altitude aux
+ * coutures, marquage à contretemps, mobilier espacé qui redémarre sa
+ * numérotation, haie qui change de côté, glissière interrompue.
  *
- * Dessiner ces morceaux tels quels se voit, et de six façons différentes :
+ * Ce module reconstitue le graphe routier (nœuds soudés, arêtes
+ * dédoublonnées), en extrait les plus longues chaînes continues (priorité à
+ * ce qui va tout droit), puis recoud les chaussées en altitude entre elles.
  *
- * 1. deux rubans coplanaires **superposés** dans la bande de recouvrement, qui
- *    se disputent le pixel ;
- * 2. un **décroché d'altitude** à chaque couture — chaque morceau dresse sa
- *    plate-forme et la lisse pour son compte, et les deux bouts ne tombent pas
- *    à la même hauteur ;
- * 3. le **marquage** qui repart de zéro, donc des pointillés à contretemps ;
- * 4. le mobilier espacé qui **redémarre** sa numérotation, donc deux lampadaires
- *    à trois mètres l'un de l'autre ;
- * 5. la haie ou la ligne téléphonique qui **change de côté** d'un morceau à
- *    l'autre, puisque le côté se tire au sort une fois par morceau ;
- * 6. une glissière **interrompue** au milieu d'un versant raide, parce que le
- *    tronçon suivant était trop court pour en mériter une.
+ * Le graphe est le seul endroit où un croisement existe comme tel (nœud de
+ * degré trois) : `mergeRoadLines` publie la liste des carrefours avec les
+ * chaînes, dont s'appuient le rognage des voies secondaires
+ * (`trimAtJunctions`) et les feux tricolores. Les redécouvrir après coup en
+ * cherchant où deux rubans se touchent en inventerait d'autres.
  *
- * D'où ce module, entièrement pur : il reconstitue le graphe routier — nœuds
- * soudés, arêtes dédoublonnées — puis en extrait les plus longues chaînes
- * continues possibles, celle qui va tout droit gardant la priorité à un
- * carrefour. Les chaussées sont ensuite recousues **en altitude** les unes aux
- * autres : une voie qui débouche sur une plus large vient épouser la hauteur de
- * celle-ci sur ses derniers mètres, au lieu de l'aborder en marche d'escalier.
- *
- * ## Le carrefour est un nœud, et il ne se redécouvre pas ailleurs
- *
- * Le graphe est le seul endroit du moteur où un croisement existe comme tel :
- * un nœud de degré trois. Une fois les chaînes découpées en tronçons, il n'en
- * reste plus rien — deux rubans qui se recouvrent, tout au plus. `mergeRoadLines`
- * publie donc la liste des carrefours en même temps que les chaînes, et deux
- * choses s'y appuient : le **rognage** des voies secondaires, qui les arrête au
- * bord de la chaussée dominante au lieu de les laisser la traverser
- * (`trimAtJunctions`), et les **feux tricolores**, qui n'ont de sens nulle part
- * ailleurs. Les redécouvrir après coup, en cherchant où deux rubans se
- * touchent, revient à en inventer d'autres : ils ne tombent pas aux mêmes
- * endroits, et il y en a un par ligne de recouvrement au lieu d'un par
- * croisement.
- *
- * ## Le point d'ancrage, et pourquoi il n'est pas le début de la chaîne
- *
- * Tout ce qui s'espace le long d'une route — bornes, lampadaires, poteaux — se
- * compte depuis une origine. Prendre le début de la chaîne serait le choix
- * naturel et le mauvais : une chaîne s'arrête là où s'arrêtent les tuiles
- * chargées, à deux kilomètres de là, et ce bout-là bouge à chaque fois que le
- * jeu de tuiles change. Toutes les bornes glisseraient alors d'un coup.
- *
- * L'origine est donc prise au dernier **nœud d'ancrage** rencontré : un
- * carrefour, un cul-de-sac, un changement de classe. Ces nœuds-là existent dans
- * la donnée, ils ne dépendent ni du découpage en tuiles ni de la position 
- * de l'observateur, et la distance qui les sépare d'un point donné ne change jamais.
+ * Le mobilier espacé (bornes, lampadaires) se compte depuis le dernier nœud
+ * d'ancrage rencontré (carrefour, cul-de-sac, changement de classe), pas
+ * depuis le début de la chaîne : ce bout-là bouge avec le jeu de tuiles chargées.
  */
 
 /** Distance en deçà de laquelle deux sommets sont le même nœud, en mètres. */
 export const NODE_WELD_M = 1.2;
-/**
- * Distance maximale d'un raccord entre deux bouts libres, en mètres.
- *
- * Elle couvre la marge de recouvrement des tuiles : le format laisse déborder
- * les lignes de quelques mètres de part et d'autre de la frontière, si bien que
- * les deux moitiés d'une route ne se touchent pas — elles se chevauchent, bout
- * contre bout, sans partager le moindre sommet.
- */
+/** Distance maximale d'un raccord entre deux bouts libres, en mètres (couvre la marge de recouvrement des tuiles). */
 export const LOOSE_JOIN_M = 8;
 /** Écart latéral toléré sur un raccord lâche, en mètres. */
 export const LOOSE_OFFSET_M = 2.5;
@@ -75,32 +32,11 @@ export const CONTINUE_COS = Math.cos((72 * Math.PI) / 180);
 /** Cosinus de l'angle toléré entre deux bouts libres qu'on recoud. */
 export const COLLINEAR_COS = Math.cos((40 * Math.PI) / 180);
 
-/**
- * De combien la voie secondaire s'arrête **en deçà** de la rive de la voie
- * dominante, en mètres.
- *
- * Elle ne s'arrête pas pile sur la rive : deux rubans bout à bout laissent voir
- * le sol entre eux dès que le raccord n'est pas perpendiculaire, parce que le
- * ruban secondaire finit au carré alors que la rive qu'il rejoint est oblique.
- * Il rentre donc d'un demi-mètre sous la chaussée dominante, qui se dessine
- * par-dessus (`renderOrder` dans `roadNetwork`).
- */
+/** De combien la voie secondaire s'arrête en deçà de la rive dominante, en mètres (rentre sous elle, `renderOrder` dans `roadNetwork`). */
 export const JUNCTION_OVERLAP_M = 0.5;
-/**
- * Longueur en deçà de laquelle ce qui reste d'une voie rognée est abandonné.
- *
- * Une amorce plus courte que la chaussée qu'elle rejoint n'est plus une route :
- * c'est un moignon qui dépasse d'un carrefour.
- */
+/** Longueur en deçà de laquelle ce qui reste d'une voie rognée est abandonné (un moignon qui dépasse d'un carrefour). */
 export const JUNCTION_MIN_RUN_M = 4;
-/**
- * Pas de dichotomie pour poser le sommet de coupe sur le cercle du carrefour.
- *
- * Plus nombreux que pour l'emprise (`roadCorridor`), parce que la coupe se
- * cherche ici sur une arête brute de la donnée, longue de plusieurs dizaines de
- * mètres, et non sur un pas d'échantillonnage d'un mètre : à huit pas, le
- * sommet tombait à un quart de mètre de la rive.
- */
+/** Pas de dichotomie pour poser le sommet de coupe sur le cercle du carrefour (plus nombreux que `roadCorridor` : arête brute, longue). */
 export const JUNCTION_BISECT_STEPS = 14;
 
 /** Décalage de cellule : les coordonnées locales sont signées. */
@@ -112,12 +48,10 @@ export function cellKey(cx, cz) {
 }
 
 /**
- * Index de nœuds soudés : deux sommets distants de moins que la tolérance sont
- * le même nœud, et le premier arrivé impose sa position.
- *
- * Une simple quantification ne suffirait pas — deux sommets à dix centimètres
- * l'un de l'autre peuvent tomber de part et d'autre d'une frontière de grille.
- * On regarde donc les neuf cellules voisines et on compare des distances.
+ * Index de nœuds soudés : deux sommets distants de moins que la tolérance
+ * sont le même nœud (le premier arrivé impose sa position). Une simple
+ * quantification ne suffirait pas (frontière de grille) : on regarde les
+ * neuf cellules voisines et on compare des distances.
  */
 class NodeIndex {
   constructor(tolerance = NODE_WELD_M) {
@@ -423,16 +357,9 @@ function assembleChains(chains, partner) {
 
 /**
  * Relève les carrefours du graphe : les nœuds où plus de deux arêtes se
- * rejoignent.
- *
- * Un nœud de degré deux n'est pas un carrefour, même quand les deux arêtes
- * n'ont pas le même profil : c'est un changement de classe au milieu d'une
- * route. À partir de trois, c'est un embranchement ou un croisement.
- *
- * Ce que le relevé **ne voit pas**, et c'est voulu : deux chaussées qui se
- * croisent sans partager de nœud. Un pont en fait partie — et il vaut mieux
- * ignorer un vrai carrefour que rogner une route sous un viaduc ou y planter
- * un feu tricolore.
+ * rejoignent (degré deux = simple changement de classe, pas un carrefour).
+ * Ne voit pas les chaussées qui se croisent sans partager de nœud (un pont) —
+ * volontaire : mieux vaut ignorer un vrai carrefour que rogner sous un viaduc.
  *
  * @returns {Array<{x:number, z:number, degree:number, halfWidth:number,
  *          profile:string, branches:Array<{x:number, z:number,
@@ -482,13 +409,8 @@ function collectJunctions({ edges, degree }, nodes) {
 
 /**
  * Fusionne des polylignes de chaussée en chaînes continues, et relève les
- * carrefours du graphe au passage.
- *
- * Les carrefours sortent d'ici et pas d'une analyse faite après coup, parce
- * qu'ils sont une propriété du **graphe** — des nœuds de degré trois — et que
- * le graphe n'existe qu'ici. Les redécouvrir plus tard en cherchant où deux
- * rubans se recouvrent revient à en inventer d'autres, qui ne tombent pas aux
- * mêmes endroits.
+ * carrefours du graphe au passage (une propriété du graphe — nœud de degré
+ * trois — qui n'existe qu'ici).
  *
  * @param {Array<{profile:string, halfWidth:number, points:Array<{x:number,z:number}>}>} lines
  *        Polylignes métriques, telles qu'elles sortent des tuiles.
@@ -572,25 +494,15 @@ export function mergeRoadLines(lines, options = {}) {
 }
 
 /**
- * Rogne les voies secondaires au bord de la chaussée dominante d'un carrefour.
+ * Rogne les voies secondaires au bord de la chaussée dominante d'un
+ * carrefour (sinon la petite route traverse le croisement au lieu de s'y
+ * arrêter). Coupée sur un cercle centré sur le nœud, de rayon la
+ * demi-largeur de la dominante. Deux voies de même largeur ne se rognent pas
+ * l'une l'autre (pas de dominante). Seuls les carrefours qui sont un sommet
+ * de la chaîne la coupent — un nœud simplement à portée est un pont ou deux
+ * tuiles mal recoupées.
  *
- * Sans ça, la petite route ne s'arrête pas au croisement : elle le traverse.
- * Son ruban court jusqu'au centre du carrefour, sous la nationale et au-delà,
- * et les deux chaussées se disputent le pixel sur toute la largeur — c'est
- * l'artefact le plus visible d'une intersection non cousue. La voie secondaire
- * est donc coupée sur un cercle centré sur le nœud, de rayon la demi-largeur de
- * la dominante ; ce qui reste s'arrête au bord de la chaussée qu'elle rejoint.
- *
- * Deux voies de **même** largeur ne se rognent pas l'une l'autre : il n'y a
- * alors pas de dominante, et couper les deux ouvrirait un trou au milieu du
- * croisement au lieu de recouvrir un chevauchement.
- *
- * Seuls les carrefours qui sont un **sommet** de la chaîne la coupent. Une
- * chaîne qui passe simplement à portée d'un nœud sans le partager n'y touche
- * pas au sol : c'est un pont, ou deux tuiles mal recoupées, et la rogner
- * ouvrirait une brèche sous un ouvrage d'art.
- *
- * Fonction pure. Une chaîne peut en ressortir coupée en plusieurs, ou disparaître.
+ * Une chaîne peut en ressortir coupée en plusieurs, ou disparaître.
  *
  * @param {Array<Object>} chains    Chaînes issues de `mergeRoadLines`.
  * @param {Array<Object>} junctions Carrefours issus de `mergeRoadLines`.
@@ -735,16 +647,11 @@ export function distanceToSegment(x, z, ax, az, bx, bz) {
 }
 
 /**
- * Index spatial des chaussées construites.
- *
- * Deux usages, une seule structure : savoir si un point tombe sur une chaussée
- * — c'est ce qui empêche l'herbe de pousser sur le bitume —, et retrouver
- * l'altitude de la chaussée qui passe là — c'est ce qui permet de recoudre une
- * voie sur une autre.
- *
- * Chaque arête est inscrite dans toutes les cellules que couvre sa boîte
- * élargie de sa demi-largeur **et** de la marge de requête. Une interrogation
- * n'a donc qu'une seule cellule à lire.
+ * Index spatial des chaussées construites. Deux usages : savoir si un point
+ * tombe sur une chaussée (herbe), et retrouver l'altitude qui y passe
+ * (recoudre une voie sur une autre). Chaque arête est inscrite dans toutes
+ * les cellules que couvre sa boîte élargie, pour qu'une interrogation n'ait
+ * qu'une seule cellule à lire.
  */
 export class RoadIndex {
   /**
@@ -822,19 +729,10 @@ export class RoadIndex {
   }
 
   /**
-   * Vrai si une chaussée **pourrait** couvrir un point de cette boîte.
-   *
-   * C'est un test grossier, et volontairement : il ne lit que l'occupation des
-   * cellules, sans calculer la moindre distance. Une réponse fausse est
-   * possible dans un sens seulement — il peut rendre vrai là où rien ne
-   * couvre —, jamais dans l'autre : si toutes les cellules survolées sont
-   * vides, aucun point de la boîte n'est sur une chaussée, puisque `query` ne
-   * consulte jamais que la cellule du point demandé.
-   *
-   * Il existe pour une raison de coût. Découper une polyligne demande de la
-   * sonder au mètre (`roadCorridor`), et en rase campagne l'immense majorité
-   * de ces sondages porte sur du vide. Écarter d'un coup un tronçon entier
-   * évite de les payer un par un.
+   * Vrai si une chaussée pourrait couvrir un point de cette boîte. Test
+   * grossier (occupation des cellules, sans distance) : peut rendre vrai à
+   * tort, jamais faux à tort. Évite de sonder au mètre (`roadCorridor`) un
+   * tronçon entier de rase campagne.
    *
    * @param {number} minX
    * @param {number} minZ
@@ -869,16 +767,10 @@ export class RoadIndex {
 
 /**
  * Plusieurs index d'emprise combinés, comme s'ils n'en faisaient qu'un.
- *
- * La route et la voie ferrée sont deux réseaux distincts (`RoadNetwork` et
- * `RailwayLayer` — celle-ci publie son emprise avec ce même `RoadIndex`, voir
- * son en-tête), mais tout ce qui ne pousse pas sur l'une ne pousse pas non
- * plus sur l'autre : l'herbe, les cultures, les jardins et le mobilier n'ont
- * qu'une question à poser — « suis-je dans une emprise, laquelle qu'elle
- * soit ? » — pas une par réseau. Plutôt que chaque consommateur ne chaîne ses
- * propres appels à `inCorridor`/`clipOutsideCorridor` pour chaque index, un
- * `CombinedIndex` répond au même contrat (`covers`, `query`, `mayCover`) que
- * `RoadIndex` et se pose exactement là où celui-ci se posait.
+ * Route et voie ferrée sont deux réseaux distincts, mais l'herbe, les
+ * cultures, les jardins et le mobilier n'ont qu'une question à poser : « suis-je
+ * dans une emprise, laquelle qu'elle soit ? ». `CombinedIndex` répond au même
+ * contrat (`covers`, `query`, `mayCover`) que `RoadIndex`.
  */
 export class CombinedIndex {
   /** @param {Array<Object|null|undefined>} indexes */
@@ -918,13 +810,10 @@ export const STITCH_MAX_STEP_M = 2.5;
 export const STITCH_RAMP_ROWS = 3;
 
 /**
- * Vrai si `a` l'emporte sur `b` à un carrefour : la plus large gagne.
- *
- * À largeur égale — deux départementales qui se croisent — il faut quand même
- * trancher, et trancher **de la même façon à chaque reconstruction**. L'ordre
- * des tronçons ne le permet pas : il change dès que le découpage change, et la
- * voie qui s'incline serait l'une puis l'autre, à un mètre près, tous les
- * 250 mètres. Le nœud d'ancrage, lui, ne bouge pas.
+ * Vrai si `a` l'emporte sur `b` à un carrefour : la plus large gagne. À
+ * largeur égale, il faut trancher de la même façon à chaque reconstruction —
+ * l'ordre des tronçons ne le permet pas (change avec le découpage), le nœud
+ * d'ancrage si.
  */
 function dominates(a, indexA, b, indexB) {
   if (a.halfWidth > b.halfWidth + 1e-6) return true;
@@ -939,21 +828,12 @@ function dominates(a, indexA, b, indexB) {
 }
 
 /**
- * Recoud les plate-formes entre elles aux carrefours.
- *
- * Chaque chaussée dresse sa plate-forme pour son compte, en retenant le point
- * haut de sa section. Deux voies qui se croisent n'aboutissent donc pas à la
- * même altitude au point de croisement — l'écart atteint la trentaine de
- * centimètres sur un versant, et la voie secondaire aborde la principale par
- * une marche.
- *
- * La règle est celle du terrain : **c'est la plus large qui commande**. Une
- * départementale qui débouche sur une nationale vient épouser le profil de la
- * nationale sur ses derniers mètres, jamais l'inverse. Le raccord se fait en
- * rampe sur quelques lignes, sinon on remplacerait la marche par un ressaut.
- *
- * Au-delà de `STITCH_MAX_STEP_M`, le croisement n'en est pas un : c'est un pont
- * ou un souterrain, et les deux chaussées se laissent tranquilles.
+ * Recoud les plate-formes entre elles aux carrefours. Chaque chaussée dresse
+ * sa plate-forme pour son compte, donc deux voies qui se croisent
+ * n'aboutissent pas à la même altitude sans ce raccord. La plus large
+ * commande : une départementale épouse le profil de la nationale sur ses
+ * derniers mètres, en rampe sur quelques lignes. Au-delà de
+ * `STITCH_MAX_STEP_M`, ce n'est pas un carrefour mais un pont ou un souterrain.
  *
  * @param {Array<Object>} segments Tronçons, dont les `platform` sont modifiées.
  * @param {RoadIndex} index        Index bâti sur ces mêmes tronçons.

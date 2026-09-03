@@ -1,32 +1,16 @@
 /*
  * labelAtlas — le nom d'un lieu, peint sur une texture plutôt que sculpté.
- * -------------------------------------------------------------------------
- * Deux endroits du décor portent désormais un vrai nom : le panneau d'entrée
- * d'agglomération (`furnitureLayer`) et l'enseigne d'une devanture de commerce
- * (`buildingLayer`). Aucun des deux ne peut le faire avec les outils
- * habituels du mobilier (`Kit`, en `src/layers/furnitureKit.js`) : un panneau
- * de signalisation est une géométrie **partagée** entre toutes ses instances
- * (voir l'en-tête de `furnitureKit.js`, §2 — c'est ce qui autorise
- * l'instanciation), et un texte, par nature, diffère d'une instance à
- * l'autre. Il faut donc un texte par **texture**, pas par sommet.
+ * Un panneau (`furnitureLayer`) et une enseigne de devanture (`buildingLayer`)
+ * portent un texte qui diffère par instance, alors que leur géométrie est
+ * partagée entre instances : il faut donc un texte par texture, pas par
+ * sommet. D'où cet atlas — un seul canvas réparti en étagères
+ * (`LabelAtlas.place`) — plutôt qu'un canvas par enseigne.
  *
- * D'où ce module : un atlas — un seul canvas, réparti en étagères au fur et à
- * mesure des demandes (`LabelAtlas.place`) — plutôt qu'une texture par nom.
- * Deux vrais sites d'appel le justifient (voir `CONTRIBUTING.md` sur
- * l'abstraction prématurée) ; un canvas par enseigne en ferait autant de
- * matériaux et autant d'appels de dessin qu'il y a de commerces à l'écran, ce
- * que le reste du moteur se refuse déjà (voir les plafonds `WINDOW_MAX_COUNT`,
- * `PANE_MAX_COUNT` de `buildingLayer.js`).
- *
- * Le fond de l'atlas reste transparent : seul l'encre du texte y est peinte.
- * La texture se pose donc **par-dessus** une géométrie déjà colorée (le
- * panneau blanc du signPlaceName, le bandeau de devanture), qui reste visible
- * tout autour — pas de fond à assortir, pas de bord à cacher.
+ * Le fond de l'atlas reste transparent : la texture se pose par-dessus une
+ * géométrie déjà colorée (panneau, bandeau), qui reste visible tout autour.
  */
 
-/** Police du texte peint : une chasse étroite aide à tenir un nom de ville
- *  large sur un panneau étroit ; le repli générique reste lisible partout où
- *  elle manque. */
+/** Police du texte peint (chasse étroite pour tenir un nom de ville large sur un panneau étroit). */
 export const LABEL_FONT_FAMILY = "'Arial Narrow', 'Helvetica Neue', Arial, sans-serif";
 /** Graisse du texte : gras partout, comme la lettre peinte d'une vraie enseigne. */
 export const LABEL_FONT_WEIGHT = 700;
@@ -39,27 +23,15 @@ export const LABEL_LINE_HEIGHT_RATIO = 1.3;
 /** Assise de la ligne de base dans sa case, en part de la taille de fonte. */
 export const LABEL_BASELINE_RATIO = 0.78;
 /**
- * Résolution interne de l'atlas, en pixels par mètre du monde.
- *
- * C'est la seule règle de conversion entre les deux univers de ce module —
- * les pixels du canvas, où `fitLabelText` choisit une taille de fonte, et les
- * mètres du monde, où le panneau final est posé. Elle est partagée entre les
- * deux sites d'appel (`furnitureLayer`, `buildingLayer`) : chacun choisit sa
- * largeur et sa fonte nominale en mètres, les convertit en pixels avec cette
- * même constante, et reconvertit la case obtenue dans l'autre sens — un seul
- * chiffre, aucun risque que les deux passes divergent.
+ * Résolution interne de l'atlas, en pixels par mètre du monde. Seule règle de
+ * conversion entre pixels de canvas et mètres du monde, partagée entre les
+ * deux sites d'appel (`furnitureLayer`, `buildingLayer`).
  */
 export const LABEL_PX_PER_M = 120;
 
 /**
  * Taille de fonte qui donne une case de cette hauteur, padding et hauteur de
- * ligne compris.
- *
- * L'inverse de ce que fait `LabelAtlas.place` en interne pour calculer
- * `cellH` — nécessaire parce qu'un appelant raisonne en hauteur disponible
- * (celle du panneau ou du bandeau qui porte le texte), jamais en taille de
- * fonte : lui faire refaire ce calcul à la main désynchroniserait tôt ou tard
- * les deux formules. Fonction pure.
+ * ligne compris. Inverse du calcul de `cellH` dans `LabelAtlas.place`.
  *
  * @param {number} cellHeightPx Hauteur de case visée, en pixels.
  * @returns {number} Taille de fonte, en pixels.
@@ -71,16 +43,8 @@ export function labelFontPxForCellHeight(cellHeightPx) {
 /**
  * Choisit la plus grande taille de fonte qui tient dans une largeur donnée,
  * avec un interlettrage négatif proportionnel à cette taille.
- *
- * Fonction pure : `measure(text, fontPx)` est injectée plutôt qu'appelée sur
- * un vrai canvas, ce qui la rend testable sous Node — voir `LabelAtlas.place`
- * pour l'appelant réel, qui branche `ctx.measureText`.
- *
- * La recherche descend pixel par pixel plutôt que par dichotomie : l'écart
- * entre `minFontPx` et `maxFontPx` reste toujours petit (quelques dizaines de
- * pixels, jamais un texte de studio de cinéma), et un nom ne se mesure
- * qu'une fois par reconstruction où il apparaît pour la première fois — voir
- * le cache de `LabelAtlas.place`.
+ * `measure(text, fontPx)` est injectée (testable sous Node) — voir
+ * `LabelAtlas.place` pour l'appelant réel, qui branche `ctx.measureText`.
  *
  * @param {Object} options
  * @param {string} options.text
@@ -125,13 +89,8 @@ function createCanvas(width, height) {
 }
 
 /**
- * Peint `text` avec un interlettrage donné, glyphe par glyphe.
- *
- * `CanvasRenderingContext2D.letterSpacing` existe dans les navigateurs
- * récents et suffirait seule, mais glyphe par glyphe fonctionne partout où
- * `fillText` et `measureText` existent — c'est aussi ce que `fitLabelText`
- * mesure déjà côté appelant, donc les deux passes restent cohérentes l'une
- * avec l'autre par construction.
+ * Peint `text` avec un interlettrage donné, glyphe par glyphe (plus portable
+ * que `CanvasRenderingContext2D.letterSpacing`, cohérent avec `fitLabelText`).
  */
 function drawSpacedText(ctx, text, x, y, letterSpacingPx) {
   let cursor = x;
@@ -143,28 +102,13 @@ function drawSpacedText(ctx, text, x, y, letterSpacingPx) {
 
 /**
  * Pousse un panneau texturé vertical entre deux points au sol, dans un
- * accumulateur `{positions, uvs}`.
+ * accumulateur `{positions, uvs}`. Équivalent de `pushPanel`
+ * (`buildingLayer.js`) mais sans normale (rien de peint n'est éclairé).
  *
- * C'est l'équivalent de `pushPanel` (`buildingLayer.js`) pour une géométrie
- * qui porte une texture au lieu d'une couleur de sommet — sans normale : rien
- * de ce qui porte un nom peint n'est éclairé (voir l'en-tête du fichier), et
- * un matériau non éclairé n'en lit aucune. `a` et `b` sont déjà au bon
- * endroit dans le monde — décollement du mur, décalage sur le panneau —,
- * l'appelant en décide, exactement comme pour `pushPanel`.
- *
- * L'enroulement est le même que celui de `pushPanel` : le plan (x, z) de la
- * scène est de chiralité opposée au plan (x, y) usuel, et cet ordre-là est
- * celui qui regarde vers l'extérieur.
- *
- * `a` est le côté **droit** du texte pour qui regarde le panneau de face, `b`
- * son côté **gauche** — inversé par rapport à l'intuition, mais c'est ce
- * qu'impose la même chiralité que `pushPanel` : dans les deux appelants
- * (`buildingLayer.appendShopfront`, `furnitureLayer._applyLabels`), le point
- * qui regarde vers la droite du lecteur est aussi celui dont l'enroulement
- * doit porter la fin du texte. Se tromper dans ce sens **inverse le texte**
- * (lu de droite à gauche) sans forcément le rendre invisible, ce qui l'a
- * longtemps laissé passer inaperçu — voir le commit qui a introduit cette
- * note pour le repère complet.
+ * Attention à la chiralité : `a` est le côté **droit** du texte pour qui
+ * regarde le panneau de face, `b` son côté **gauche** — inversé par rapport à
+ * l'intuition. Se tromper inverse le texte (lu de droite à gauche) sans le
+ * rendre invisible, ce qui peut passer inaperçu.
  *
  * @param {{positions:number[], uvs:number[]}} buffer
  * @param {{x:number, y:number}} a Coin bas, côté droit du texte.
@@ -175,8 +119,7 @@ function drawSpacedText(ctx, text, x, y, letterSpacingPx) {
  */
 export function pushLabelQuad(buffer, a, b, bottom, top, uv) {
   const { u0, v0, u1, v1 } = uv;
-  // u1 (fin du texte) sur `a` (droite), u0 (début) sur `b` (gauche) : voir la
-  // note ci-dessus.
+  // u1 (fin du texte) sur `a` (droite), u0 (début) sur `b` (gauche).
   const verts = [
     [a.x, bottom, a.y, u1, v1],
     [b.x, top, b.y, u0, v0],
@@ -193,17 +136,10 @@ export function pushLabelQuad(buffer, a, b, bottom, top, uv) {
 
 /**
  * Atlas de texte : un canvas, réparti en étagères au fil des demandes.
- *
- * `place(text, …)` rend un nom **une fois** (mémorisé par `text` + réglages)
- * et rend les coordonnées UV de sa case ; `reset()` vide les étagères en
- * début de reconstruction — la géométrie qui référence l'atlas est de toute
- * façon intégralement refaite au même moment (voir `buildingLayer._build` et
- * `furnitureLayer.rebuild`), donc les cases d'hier n'ont plus de lecteur.
- *
- * Rien ici n'est testable sous Node — `createCanvas` retombe sur
- * `document.createElement`, absent hors navigateur, exactement comme
- * `GroundClassMap` (`src/terrain/groundClassMap.js`). C'est `fitLabelText`,
- * pur, qui porte la couverture de test de la mise en page du texte.
+ * `place(text, …)` rend un nom une fois (mémorisé) et rend les UV de sa
+ * case ; `reset()` vide les étagères en début de reconstruction. Pas
+ * testable sous Node (`createCanvas` retombe sur `document.createElement`) —
+ * c'est `fitLabelText`, pur, qui porte la couverture de test.
  */
 export class LabelAtlas {
   /**
@@ -219,13 +155,9 @@ export class LabelAtlas {
     this.ctx = this.canvas.getContext('2d');
 
     this.texture = new THREE.CanvasTexture(this.canvas);
-    // Un nom peint est une couleur d'auteur, comme le gazon ou l'asphalte —
-    // voir `groundCover.js`, `roadNetwork.js` : même conversion sRGB.
+    // Couleur d'auteur (comme le gazon ou l'asphalte) : conversion sRGB.
     this.texture.colorSpace = THREE.SRGBColorSpace;
-    // Repère direct plutôt que celui, retourné, de three : voir
-    // `groundClassMap.js` sur la raison, ici sans conséquence géographique
-    // mais gardée pour que les deux passes de coordonnées (mesure, pose du
-    // panneau) s'accordent sans y repenser.
+    // Repère direct plutôt que celui, retourné, de three — voir `groundClassMap.js`.
     this.texture.flipY = false;
     this.texture.wrapS = THREE.ClampToEdgeWrapping;
     this.texture.wrapT = THREE.ClampToEdgeWrapping;
@@ -240,7 +172,7 @@ export class LabelAtlas {
     this._dirty = false;
   }
 
-  /** Vide les étagères avant une reconstruction — voir l'en-tête de la classe. */
+  /** Vide les étagères avant une reconstruction. */
   reset() {
     this._cache.clear();
     this._cursorX = 0;
@@ -262,9 +194,7 @@ export class LabelAtlas {
    * @param {number} [options.minFontPx]
    * @param {string} [options.color] Couleur CSS de l'encre.
    * @returns {{u0:number,v0:number,u1:number,v1:number,widthPx:number,heightPx:number}|null}
-   *          `null` si `text` est vide ou si l'atlas est plein — l'appelant
-   *          garde alors son support (panneau, bandeau) sans texte, plutôt
-   *          que d'échouer.
+   *          `null` si `text` est vide ou si l'atlas est plein.
    */
   place(text, { maxWidthPx, maxFontPx, minFontPx = 10, color = '#1c1c1c' } = {}) {
     if (!text) return null;

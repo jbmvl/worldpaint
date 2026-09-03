@@ -1,34 +1,19 @@
 /*
  * groundClassMap — l'occupation du sol, rasterisée pour toute la scène.
- * ----------------------------------------------------------------------
- * C'est la **source unique** de ce dont le sol est fait. Les tuiles
- * vectorielles le disent en clair (`landcover`, `landuse`, `park` — et, pour
- * la ripisylve, `waterway`, tracé et non rempli) ; on les rasterise dans un
- * carré centré sur l'observateur, et trois consommateurs y lisent la même
- * donnée au même endroit :
+ * Source unique de ce dont le sol est fait : le shader de terrain
+ * (`terrainMaterial`), la végétation (`vegetationLayer`) et l'herbe/le
+ * mobilier lisent tous la même carte au même endroit, donc jamais de contradiction.
  *
- *   • le shader de terrain, qui compose la matière (`terrainMaterial`) ;
- *   • la végétation, qui plante ses arbres dans les bois (`vegetationLayer`) ;
- *   • l'herbe et le mobilier, qui ne poussent que sur du végétal.
- *
- * Une seule lecture, donc aucune contradiction possible entre la texture du sol
- * et ce qui s'y trouve planté. Aucune donnée supplémentaire à télécharger : ce
- * sont les tuiles déjà chargées pour les routes et le bâti.
- *
- * Encodage — un canal par matière, l'alpha portant la **couverture** :
+ * Encodage — un canal par matière, l'alpha portant la couverture :
  *
  *   R = herbe      G = bois      B = culture      alpha = classé
  *   alpha nul → non classé (l'appelant décide de son repli)
  *   alpha plein, R = G = B = 0 → sol nu, minéral ou bâti
  *
- * Les poids sont des **parts**, pas des étiquettes : une entité peut en peindre
- * plusieurs à la fois, et c'est ce qui permet de décrire un sol mêlé sans
- * inventer une matière pour chaque mélange. Le lotissement en est le cas type —
- * voir `groundClassFor`.
- *
- * Le filtrage linéaire de la texture fait le reste : les lisières se fondent sur
- * quelques mètres au lieu de se découper au couteau, ce qui est plus juste que
- * la donnée elle-même — une lisière de bois n'est pas une ligne.
+ * Les poids sont des parts, pas des étiquettes : une entité peut en peindre
+ * plusieurs à la fois (le lotissement en est le cas type — voir `groundClassFor`).
+ * Filtrage linéaire : les lisières se fondent sur quelques mètres, ce qui est
+ * plus juste que la donnée elle-même.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
@@ -53,34 +38,12 @@ export const CLASS_SOURCE_LAYERS = ['landuse', 'landcover', 'park'];
 /**
  * Matière d'une entité surfacique, ou `null` si elle n'en décrit aucune.
  *
- * Les valeurs de `class` sont celles que filtrent les styles `outdoors-*.json`
- * du projet : `landcover` porte rock, sand, wetland, wood, grass, farmland ;
- * `landuse` porte cemetery, railway, residential et le reste du bâti ; `park`
- * est une couche à part.
- *
- * ## Pourquoi `residential` n'est pas du sol nu
- *
- * Toutes les emprises bâties partageaient la matière `bare`, et c'est **faux**
- * pour la moitié d'entre elles. `landuse=residential` ne décrit pas une surface
- * minérale : il décrit un périmètre administratif dans lequel le sol réel est,
- * en France, majoritairement **de l'herbe** — pelouses, jardins de devant,
- * bandes entre les maisons. Le minéral d'un lotissement ne couvre que la
- * chaussée, ses abords et les cours, c'est-à-dire quelques mètres de part et
- * d'autre d'un tracé que le vectoriel donne par ailleurs, en clair, dans la
- * couche `transportation`. Peindre tout le périmètre en gris, c'était donc
- * répondre à la question « qu'y a-t-il au sol ? » avec la réponse à « qui
- * habite ici ? » — d'où l'aplat.
- *
- * Un quartier prend donc `settled` : une part d'herbe dominante et une part de
- * minéral, et le minéral vraiment visible est **composé** par `streetLayer` le
- * long des chaussées, là où il est.
- *
- * Une zone d'activité, elle, reste `bare` : un parking de zone commerciale, une
- * plate-forme industrielle, une emprise ferroviaire, une carrière sont
- * réellement minéraux sur toute leur surface. C'est la même donnée, mais elle
- * ne dit pas la même chose selon la classe, et les confondre était le défaut.
- *
- * Fonction pure.
+ * `landuse=residential` ne prend pas `bare` : c'est un périmètre
+ * administratif où le sol réel est majoritairement de l'herbe (pelouses,
+ * jardins), le minéral ne couvrant que la chaussée et ses abords (composés
+ * séparément par `streetLayer`). D'où `settled` : part d'herbe dominante,
+ * part de minéral. Une zone d'activité (industrielle, commerciale, ferroviaire,
+ * carrière), elle, reste `bare` : réellement minérale sur toute sa surface.
  */
 export function groundClassFor(sourceLayer, properties = {}) {
   const klass = properties.class;
@@ -113,25 +76,13 @@ export function groundClassFor(sourceLayer, properties = {}) {
   return null;
 }
 
-/**
- * Part d'herbe d'un quartier d'habitation.
- *
- * Deux tiers : c'est l'ordre de grandeur du non-bâti et non-revêtu dans un
- * lotissement français, jardins compris. Le tiers restant reste minéral, ce qui
- * garde au sol une teinte plus sourde que la prairie voisine — un quartier n'est
- * pas un pré, il est seulement beaucoup plus vert que ne le disait le gris.
- */
+/** Part d'herbe d'un quartier d'habitation (ordre de grandeur du non-bâti/non-revêtu dans un lotissement français). */
 export const SETTLED_GRASS = 0.66;
 
 /**
- * Couleur de remplissage d'une matière. L'alpha vaut toujours 255 : c'est lui
- * qui distingue « classé sol nu » de « pas classé du tout », deux situations
- * que le shader ne traite pas pareil.
- *
- * `settled` est le seul remplissage **partiel** : ce n'est pas une matière de
- * plus dans le shader, c'est un mélange d'herbe et de minéral écrit dans le
- * canal rouge. Rien à ajouter en aval — le complément à 1 y est déjà lu comme
- * du sol nu, et l'herbe et le mobilier y lisent leur part de vert.
+ * Couleur de remplissage d'une matière. L'alpha vaut toujours 255 (distingue
+ * « classé sol nu » de « pas classé du tout »). `settled` est le seul
+ * remplissage partiel : un mélange d'herbe et de minéral écrit dans le canal rouge.
  */
 export const CLASS_FILL = {
   grass: 'rgba(255, 0, 0, 1)',
@@ -166,15 +117,11 @@ export class GroundClassMap {
     this.THREE = THREE;
     this.theme = theme;
     this.canvas = createCanvas(CLASS_PIXELS, CLASS_PIXELS);
-    // La carte est relue par le CPU après chaque rasterisation — c'est elle qui
-    // décide aussi où poussent les arbres et l'herbe.
     this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
 
     this.texture = new THREE.CanvasTexture(this.canvas);
-    // Les canaux portent des poids, pas une couleur : aucune conversion.
-    this.texture.colorSpace = THREE.NoColorSpace;
-    // Sans ce réglage, three retourne l'image et la carte serait en miroir sur
-    // l'axe nord-sud — une erreur qui ne se voit qu'aux lisières, donc tard.
+    this.texture.colorSpace = THREE.NoColorSpace; // les canaux portent des poids, pas une couleur
+    // Sans ce réglage, three retourne l'image et la carte serait en miroir nord-sud.
     this.texture.flipY = false;
     this.texture.wrapS = THREE.ClampToEdgeWrapping;
     this.texture.wrapT = THREE.ClampToEdgeWrapping;
@@ -182,10 +129,8 @@ export class GroundClassMap {
     this.texture.magFilter = THREE.LinearFilter;
     this.texture.generateMipmaps = false;
 
-    // Carte des **cultures** : même carré, même repère, mais un identifiant de
-    // culture dans le rouge au lieu de poids de matière. Elle partage donc
-    // `uClassOrigin` et `uClassSize` avec la carte de classes — un seul repère,
-    // aucun risque de décalage entre la matière du sol et ce qui y pousse.
+    // Carte des cultures : même carré, même repère, identifiant de culture
+    // dans le rouge au lieu de poids de matière.
     this.cropCanvas = createCanvas(CLASS_PIXELS, CLASS_PIXELS);
     this.cropCtx = this.cropCanvas.getContext('2d', { willReadFrequently: true });
 
@@ -194,11 +139,8 @@ export class GroundClassMap {
     this.cropTexture.flipY = false;
     this.cropTexture.wrapS = THREE.ClampToEdgeWrapping;
     this.cropTexture.wrapT = THREE.ClampToEdgeWrapping;
-    // **Au plus proche**, contrairement à la carte de classes. Le rouge y porte
-    // un identifiant, pas une quantité : interpoler entre « blé » et « maïs »
-    // donnerait « tournesol » sur toute la limite entre les deux champs. Et
-    // c'est d'ailleurs plus juste — une limite de parcelle est une ligne nette,
-    // là où une lisière de bois n'en est pas une.
+    // Au plus proche, contrairement à la carte de classes : le rouge porte un
+    // identifiant, pas une quantité (interpoler donnerait une culture inventée).
     this.cropTexture.minFilter = THREE.NearestFilter;
     this.cropTexture.magFilter = THREE.NearestFilter;
     this.cropTexture.generateMipmaps = false;
@@ -207,13 +149,7 @@ export class GroundClassMap {
     this.origin = new THREE.Vector2(0, 0);
     this.size = CLASS_AREA_M;
     this.count = 0;
-    /**
-     * Numéro de rasterisation, incrémenté à chaque repeinte.
-     *
-     * Il sert à ceux qui **gardent** ce qu'ils ont lu ici : la végétation plante
-     * une tuile une fois pour toutes, et doit pouvoir savoir que la carte sur
-     * laquelle elle s'est appuyée n'est plus celle-ci.
-     */
+    /** Numéro de rasterisation, incrémenté à chaque repeinte (sert à qui garde ce qu'il a lu ici, ex. la végétation). */
     this.revision = 0;
 
     /** Copie CPU, relue par la végétation. `null` tant que rien n'a été peint. */
@@ -226,10 +162,8 @@ export class GroundClassMap {
   }
 
   /**
-   * Matières présentes en un point, ou `null` hors carte ou non classé.
-   *
-   * C'est la même donnée que celle lue par le shader, au même endroit : la
-   * végétation plantée et la texture du sol ne peuvent donc pas se contredire.
+   * Matières présentes en un point, ou `null` hors carte ou non classé (même
+   * donnée que celle lue par le shader, au même endroit).
    *
    * @param {number} x Mètres locaux.
    * @param {number} z
@@ -244,9 +178,7 @@ export class GroundClassMap {
     if (px < 0 || pz < 0 || px >= CLASS_PIXELS || pz >= CLASS_PIXELS) return null;
 
     const i = (pz * CLASS_PIXELS + px) * 4;
-    // Alpha nul : la donnée ne dit rien ici, et l'appelant doit se rabattre sur
-    // ce qu'il sait faire sans elle.
-    if (data[i + 3] === 0) return null;
+    if (data[i + 3] === 0) return null; // la donnée ne dit rien ici
 
     const grass = data[i] / 255;
     const wood = data[i + 1] / 255;
@@ -255,11 +187,9 @@ export class GroundClassMap {
   }
 
   /**
-   * Part de végétal au sol, de 0 à 1, ou `null` si la donnée se tait. C'est
-   * l'entrée de l'herbe et des alignements d'arbres.
-   *
-   * Une culture porte de l'herbe une partie de l'année seulement : elle compte,
-   * mais pour moitié.
+   * Part de végétal au sol, de 0 à 1, ou `null` si la donnée se tait —
+   * l'entrée de l'herbe et des alignements d'arbres. Une culture ne compte
+   * que pour moitié (herbe une partie de l'année seulement).
    */
   greenAt(x, z) {
     const sample = this.sampleAt(x, z);
@@ -273,13 +203,9 @@ export class GroundClassMap {
   }
 
   /**
-   * Culture portée par un point, ou `null` — hors carte, hors champ, ou culture
-   * qu'on ne sait pas nommer.
-   *
-   * C'est la **seule** réponse à la question « qu'est-ce qui pousse ici ». Le
-   * shader de terrain lit la même carte au même endroit pour en tirer la
-   * couleur du champ, `cropLayer` pour y semer ses tiges, et le mobilier pour
-   * savoir qu'un champ en culture ne se clôt pas.
+   * Culture portée par un point, ou `null` (hors carte, hors champ, ou
+   * culture qu'on ne sait pas nommer). Seule réponse à « qu'est-ce qui pousse
+   * ici », lue aussi par le shader, `cropLayer`, et le mobilier.
    *
    * @param {number} x Mètres locaux.
    * @param {number} z
@@ -309,17 +235,11 @@ export class GroundClassMap {
   }
 
   /**
-   * Part d'un rectangle, en mètres locaux, sur laquelle la carte a quelque chose
-   * à dire : de 0 (rien, hors carte, ou carte d'un autre repère) à 1 (tout).
-   *
-   * Ce n'est pas une question oiseuse. Le carré couvert fait 4 km de côté et
-   * suit l'observateur par sauts de 400 m ; la bulle, elle, monte des tuiles de
-   * plus d'un kilomètre en anneau. Une tuile de coin déborde donc régulièrement,
-   * et ce qu'on y sème est semé sur une carte muette. Sans cette mesure, une
-   * forêt dont l'emprise tombait juste après le bord au moment où sa tuile a été
-   * plantée ne poussait **jamais** — et une autre fois, au même endroit, si.
-   *
-   * Fonction pure vis-à-vis de la carte : elle ne lit que son cadrage.
+   * Part d'un rectangle, en mètres locaux, sur laquelle la carte a quelque
+   * chose à dire : de 0 (rien, hors carte) à 1 (tout). Une tuile de coin
+   * déborde régulièrement du carré couvert (qui suit l'observateur par sauts
+   * de 400 m) ; sans cette mesure, une forêt tombant juste après le bord au
+   * moment de sa plantation ne poussait jamais.
    */
   coverageOf(minX, minZ, maxX, maxZ, frame = null) {
     if (!this.ready) return 0;
@@ -356,19 +276,14 @@ export class GroundClassMap {
     const perMeter = CLASS_PIXELS / CLASS_AREA_M;
     const { origin, scale, zoom } = frame;
 
-    // Transparent, donc « non classé » partout tant qu'une entité n'a pas
-    // peint : l'absence de donnée est une information, et elle doit se
-    // distinguer du sol nu.
+    // Transparent = non classé, distinct du sol nu.
     ctx.clearRect(0, 0, CLASS_PIXELS, CLASS_PIXELS);
-    // Idem pour les cultures : rien de peint signifie « pas un champ », et le
-    // shader se rabat alors sur le brun de labour.
     this.cropCtx.clearRect(0, 0, CLASS_PIXELS, CLASS_PIXELS);
 
     let painted = 0;
 
-    // L'ordre compte : `landuse` d'abord (les grandes emprises urbaines), puis
-    // `landcover` (bois et prairies s'y superposent), puis `park` en dernier —
-    // un parc dans une zone résidentielle doit rester un parc.
+    // L'ordre compte : landuse (grandes emprises) puis landcover (bois/prairies
+    // par-dessus) puis park en dernier (doit rester un parc en zone résidentielle).
     for (const sourceLayer of CLASS_SOURCE_LAYERS) {
       source.forEachFeature(sourceLayer, tiles, (geometry, properties) => {
         const kind = groundClassFor(sourceLayer, properties);
@@ -378,10 +293,7 @@ export class GroundClassMap {
         for (const rings of classPolygons(geometry)) {
           if (!Array.isArray(rings) || rings.length === 0) continue;
 
-          // Le tracé est construit une fois et rempli deux fois : la matière
-          // dans la carte de classes, la culture dans la sienne. Refaire le
-          // chemin coûterait un second parcours de tous les anneaux de toutes
-          // les entités des vingt-cinq tuiles.
+          // Tracé construit une fois, rempli deux fois (matière + culture).
           const path = new Path2D();
           let sumX = 0;
           let sumZ = 0;
@@ -396,8 +308,7 @@ export class GroundClassMap {
               const localZ = (latToTileY(lat, zoom) - origin.y) * scale;
               if (i === 0) path.moveTo((localX - originX) * perMeter, (localZ - originZ) * perMeter);
               else path.lineTo((localX - originX) * perMeter, (localZ - originZ) * perMeter);
-              // Le centre sert de graine à la culture, et seul l'anneau
-              // extérieur compte : un trou ne déplace pas le champ.
+              // Centre = graine de la culture ; seul l'anneau extérieur compte.
               if (ring === rings[0]) {
                 sumX += localX;
                 sumZ += localZ;
@@ -407,17 +318,12 @@ export class GroundClassMap {
             path.closePath();
           }
 
-          // Règle pair-impair : les anneaux intérieurs d'un polygone GeoJSON
-          // sont des trous, et c'est exactement ce qu'elle produit.
-          ctx.fill(path, 'evenodd');
+          ctx.fill(path, 'evenodd'); // anneaux intérieurs = trous
           painted++;
 
           if (kind !== 'farmland') {
-            // `park` est la seule couche peinte **après** `landcover` : elle
-            // seule peut recouvrir un champ. Sans cet effacement, un parc posé
-            // sur de la terre agricole garderait sa culture dans la carte, et
-            // `cropLayer` y sèmerait du blé — le shader, lui, ne s'y tromperait
-            // pas, puisque la teinte est pondérée par la part de culture.
+            // `park` est la seule couche peinte après `landcover` : sans cet
+            // effacement, un parc sur une terre agricole garderait sa culture.
             if (sourceLayer === 'park') {
               this.cropCtx.save();
               this.cropCtx.globalCompositeOperation = 'destination-out';
@@ -428,10 +334,7 @@ export class GroundClassMap {
             continue;
           }
           if (counted === 0) continue;
-          // La culture est tirée **ici et nulle part ailleurs**, à partir du
-          // centre de la parcelle : le tirage est ancré au sol, donc la même
-          // parcelle porte toujours la même chose, et la teinte au loin ne peut
-          // pas contredire les tiges de près.
+          // Tirée ici et nulle part ailleurs, ancrée au sol (centre de la parcelle).
           const id = cropId(cropFor(properties, randomAt(sumX / counted, sumZ / counted, 43)));
           if (!id) continue;
           this.cropCtx.fillStyle = `rgba(${id * CROP_ID_STEP}, 0, 0, 1)`;
@@ -441,15 +344,9 @@ export class GroundClassMap {
     }
 
     // Ripisylve : une bande de bois tracée le long des cours d'eau linéaires
-    // (`waterway`) — pas un polygone du vectoriel, une **ligne**, peinte en
-    // trait épais. Elle vit dans la même carte que n'importe quel autre bois,
-    // donc elle est plantée par `vegetationLayer` avec les mêmes silhouettes
-    // qu'une vraie forêt : c'est ce qui la distingue d'un alignement planté
-    // (les platanes de bord de route, qui restent du mobilier ponctuel — voir
-    // `furnitureLayer._applyRoadsidePlan`, `plan.alignmentTree`).
-    //
-    // Après les polygones, volontairement : le lit d'un ruisseau qui traverse
-    // un champ de blé doit y remplacer la culture, pas l'inverse.
+    // (`waterway`, pas un polygone), plantée par `vegetationLayer` avec les
+    // mêmes silhouettes qu'une vraie forêt. Après les polygones : le lit d'un
+    // ruisseau qui traverse un champ de blé doit y remplacer la culture.
     {
       const waterways = this.theme.water.waterways;
       const bufferM = this.theme.water.riparianBufferM ?? 0;
@@ -458,9 +355,7 @@ export class GroundClassMap {
         ctx.lineJoin = 'round';
         ctx.strokeStyle = CLASS_FILL.wood;
         this.cropCtx.save();
-        // `destination-out` : le lit efface la culture qui s'y trouvait, comme
-        // le fait déjà `park` plus haut pour la même raison — un champ de blé
-        // ne pousse pas sous un bosquet.
+        // Le lit efface la culture qui s'y trouvait (un champ ne pousse pas sous un bosquet).
         this.cropCtx.globalCompositeOperation = 'destination-out';
         this.cropCtx.fillStyle = '#000';
         this.cropCtx.lineCap = 'round';
@@ -470,7 +365,7 @@ export class GroundClassMap {
           if (properties.brunnel === 'tunnel') return;
           if (properties.intermittent === 1 || properties.intermittent === true) return;
           // Un fossé n'a pas de ripisylve.
-          if (properties.class === 'ditch') return;
+          if (properties.class === 'ditch') return; // un fossé n'a pas de ripisylve
           const width = waterways[properties.class];
           if (!width) return;
 
@@ -503,12 +398,8 @@ export class GroundClassMap {
 
             ctx.lineWidth = lineWidthPx;
             ctx.stroke(path);
-            // Le trait ci-dessus est centré sur l'axe du cours d'eau, donc sa
-            // moitié intérieure recouvre le lit lui-même — sans quoi la
-            // ripisylve n'aurait pas sa largeur voulue sur chaque rive. Il
-            // faut donc reprendre le lit : sans ce second trait, un large
-            // cours d'eau se retrouve planté d'arbres jusqu'en son milieu,
-            // qui poussent alors sous l'eau plutôt que sur la berge.
+            // Le trait est centré sur l'axe : il faut reprendre le lit, sinon
+            // un large cours d'eau se retrouve planté d'arbres en son milieu.
             ctx.save();
             ctx.globalCompositeOperation = 'destination-out';
             ctx.lineWidth = width * perMeter;
@@ -525,14 +416,10 @@ export class GroundClassMap {
       }
     }
 
-    // Le lit d'un grand cours d'eau (la Loire, par exemple) est un **polygone**
-    // (`water`), pas seulement le trait `waterway` : la largeur de theme par
-    // classe (`WATERWAY_CLASSES`) décrit un ruisseau, pas un fleuve, et la
-    // ripisylve tracée ci-dessus autour de l'axe se retrouve alors plaquée à
-    // quelques mètres du centre — en pleine eau, à des centaines de mètres de
-    // la vraie berge. On efface donc, après coup, tout ce qui a été peint sous
-    // l'emprise réelle de l'eau, quelle qu'en soit l'origine (ligne ou
-    // polygone) : la vraie berge est ce contour-là, pas la largeur de theme.
+    // Le lit d'un grand cours d'eau est un polygone (`water`), pas seulement
+    // le trait `waterway` (dont la largeur de thème décrit un ruisseau, pas
+    // un fleuve). On efface donc, après coup, tout ce qui a été peint sous
+    // l'emprise réelle de l'eau.
     source.forEachFeature('water', tiles, (geometry, properties) => {
       if (!isDrawableWater(properties)) return;
       for (const rings of classPolygons(geometry)) {
@@ -565,19 +452,14 @@ export class GroundClassMap {
     this.texture.needsUpdate = true;
     this.cropTexture.needsUpdate = true;
 
-    // Relecture unique, à la rasterisation : `sampleAt` est appelé des milliers
-    // de fois par tuile plantée, et un `getImageData` par appel serait ruineux.
+    // Relecture unique, à la rasterisation (un `getImageData` par appel serait ruineux).
     try {
       this._data = ctx.getImageData(0, 0, CLASS_PIXELS, CLASS_PIXELS).data;
     } catch (e) {
       this._data = null;
       console.warn('[groundClassMap] relecture impossible', e?.message || e);
     }
-    // La carte des cultures est relue en entier, comme celle des matières et
-    // pour la même raison : `cropAt` est interrogé des milliers de fois par
-    // redistribution du semis, et le mobilier l'interroge jusqu'à sept cents
-    // mètres. Les deux relectures partagent alors exactement la même
-    // indexation, ce qui est le principal intérêt de les garder jumelles.
+    // Relue en entier, comme celle des matières, pour la même indexation.
     try {
       this._cropData = this.cropCtx.getImageData(0, 0, CLASS_PIXELS, CLASS_PIXELS).data;
     } catch (e) {

@@ -1,45 +1,22 @@
 /*
- * objectLabels — nommer ce qu'on a sous les yeux dans la scène 3D.
- * -----------------------------------------------------------------
- * Outil de mise au point : le décor est engendré, personne ne l'a posé à la
- * main, et la seule question qu'on se pose devant lui est « qu'est-ce que je
- * regarde, au juste ». Une haie ratée et un muret raté se ressemblent beaucoup ;
- * un champ de blé trop clair et un chaume, encore plus.
+ * objectLabels — nommer ce qu'on a sous les yeux dans la scène 3D. Outil de
+ * mise au point : le décor est engendré, la question devant lui est
+ * « qu'est-ce que je regarde ».
  *
- * Trois façons de répondre, et elles ne se recouvrent pas :
+ * Quatre façons de répondre, sans recouvrement :
+ * 1. les objets portent déjà leur nom (chaque couche nomme ses maillages) —
+ *    on traverse le graphe et on traduit ; pour un `InstancedMesh`, on
+ *    étiquette l'exemplaire le plus proche de la caméra ;
+ * 2. les cultures n'ont pas d'objet : un champ est une plage de la carte des
+ *    cultures, retrouvée par échantillonnage de `cropAt` puis agglomération
+ *    des cases voisines ;
+ * 3. les emprises `landuse`/`landcover` sont des classements de parcelle, pas
+ *    des maillages — relues directement dans les tuiles vectorielles ;
+ * 4. les bâtiments spéciaux (église, commerce…) partagent tous le maillage
+ *    `buildings` (`buildingLayer` redécore, ne pose jamais à côté) :
+ *    `BuildingLayer.personalities` est la seule trace de quel bâtiment est quoi.
  *
- * 1. **Les objets** portent déjà leur nom — chaque couche nomme ses maillages
- *    (`furniture-streetLamp`, `road-major`, `vegetation-15/16594/11269`). Il
- *    suffit de traverser le graphe et de traduire. Pour un `InstancedMesh`, on
- *    étiquette **l'exemplaire le plus proche** de la caméra : une étiquette au
- *    centre de mille lampadaires ne désigne rien.
- * 2. **Les cultures** n'ont pas d'objet à nommer. Un champ n'est ni un maillage
- *    ni une instance : c'est une **plage de la carte des cultures**, lue par le
- *    shader du sol autant que par les tiges. On l'étiquette donc en la
- *    retrouvant — échantillonnage régulier de `cropAt`, puis agglomération des
- *    cases voisines de même culture. C'est le « groupe d'objets » du champ.
- * 3. **Les emprises `landuse`/`landcover`** n'ont pas non plus d'objet propre :
- *    une cour de ferme, un cimetière, une zone industrielle sont des
- *    **classements de parcelle**, pas des maillages — ce sont eux qui
- *    conditionnent la pose (ou non) de tel ou tel mobilier, avant même que ce
- *    mobilier existe. On les relit directement dans les tuiles vectorielles
- *    (`landuse`, `landcover`) et on traduit `class`/`subclass`.
- * 4. **Les bâtiments spéciaux** (église, mosquée, hôpital, boulangerie,
- *    commerce…) n'ont pas de maillage propre non plus, et pour une raison
- *    différente : `buildingLayer` ne pose jamais rien à côté d'une empreinte,
- *    il redécore celle qui existe déjà (voir l'en-tête de ce module) — tout
- *    finit dans le même maillage `buildings`. `BuildingLayer.personalities`
- *    est donc la seule trace, après coup, de quel bâtiment est quoi ; on la
- *    relit et on traduit `kind`.
- *
- * Tout ici est **pur** : les objets et les cultures ne dépendent ni de
- * three.js ni du réseau — seulement de la lecture de propriétés
- * (`matrixWorld.elements`, `instanceMatrix.array`, `geometry`) ou de
- * fermetures fournies par l'appelant. Les emprises `landuse`/`landcover`
- * ajoutent une lecture de `VectorTileSource` (même donnée que celle déjà
- * chargée pour le décor, aucune requête de plus) mais restent elles aussi
- * indépendantes de three.js. Les fonctions sont donc testables sous Node —
- * voir `test/world.test.mjs`.
+ * Tout ici est pur, testable sous Node — voir `test/world.test.mjs`.
  */
 
 import { defaultTheme } from '../themes/default.js';
@@ -206,15 +183,7 @@ export function labelForMeshName(name) {
   return name;
 }
 
-/**
- * Emprunté à la carte (🗺️) ou inventé par la procédure (🤖) — la question qui
- * vient juste après « qu'est-ce que je regarde ». Un bâtiment, une route, une
- * rivière existent dans la donnée ; une haie, un lampadaire, une vache
- * n'existent que parce qu'un tirage a décidé d'en poser un là. Ce classement
- * ne dit rien de la qualité du rendu — un bâtiment réel porte un toit inventé,
- * une vache inventée peut être exactement où une vraie exploitation en
- * porterait une — il dit seulement d'où vient le **fait**, pas la forme.
- */
+/** Emprunté à la carte (🗺️) ou inventé par la procédure (🤖) : d'où vient le fait, pas la forme. */
 export const LABEL_SOURCE_OSM = '🗺️';
 export const LABEL_SOURCE_GENERATED = '🤖';
 
@@ -224,9 +193,7 @@ const OSM_MESH_EXACT = new Set(['buildings', 'water', 'railway', 'streets']);
 /**
  * Formes du catalogue mobilier posées d'après un point d'intérêt ou une
  * emprise `landuse` réels (voir `FurnitureLayer._poiItem` et
- * `_urbanLanduseKind`) — jamais d'après un tirage de position ou de choix.
- * Tout le reste du catalogue (lampadaires, haies, granges, bêtes, arbres…)
- * est une population inventée, même quand la parcelle qui la porte est réelle.
+ * `_urbanLanduseKind`), jamais d'après un tirage.
  */
 const OSM_FURNITURE_KINDS = new Set([
   'busShelter',
@@ -242,11 +209,7 @@ const OSM_FURNITURE_KINDS = new Set([
 ]);
 
 /**
- * Source d'un maillage — carte ou procédure. Fonction pure, même découpage
- * que `labelForMeshName`, dont elle est le complément plutôt que la
- * remplaçante : un nom se traduit toujours, sa source ne se répond que si on
- * la demande.
- *
+ * Source d'un maillage — carte ou procédure. Complément de `labelForMeshName`, pas son remplaçant.
  * @param {string} name Nom du maillage, tel que posé par sa couche.
  * @returns {string} `LABEL_SOURCE_OSM` ou `LABEL_SOURCE_GENERATED`.
  */
@@ -254,9 +217,8 @@ export function sourceForMeshName(name) {
   if (!name) return LABEL_SOURCE_GENERATED;
   if (OSM_MESH_EXACT.has(name)) return LABEL_SOURCE_OSM;
   if (name.startsWith('road-')) return LABEL_SOURCE_OSM;
-  // Le relief vient du MNT (Terrarium) : une mesure, pas un tirage — même si
-  // la démo n'étiquette pas ce maillage aujourd'hui (voir `LABEL_SKIP`).
-  if (name.startsWith('terrain-')) return LABEL_SOURCE_OSM;
+  if (name.startsWith('terrain-')) return LABEL_SOURCE_OSM; // le relief vient du MNT, une mesure, pas un tirage
+
   if (name.startsWith('furniture-')) {
     return OSM_FURNITURE_KINDS.has(name.slice(10)) ? LABEL_SOURCE_OSM : LABEL_SOURCE_GENERATED;
   }
@@ -308,15 +270,9 @@ export const LABEL_PLACE_CLASS = {
 
 /**
  * Traduction du `subclass` — plus précis que `class` quand il est renseigné.
- *
- * `farmyard` et `farm` restent traduits ici par honnêteté de vocabulaire,
- * mais ne t'attends pas à les voir s'afficher : vérifié contre une vraie
- * ferme nommée d'OSM, `landuse=farmyard` n'atteint tout simplement pas les
- * tuiles servies par OpenFreeMap (schéma OpenMapTiles) — ni en `subclass` ni
- * ailleurs. C'est pour ça que `furnitureLayer._looksLikeFarmstead` ne s'y fie
- * plus et détecte une exploitation par indice indirect (une grappe de
- * bâtiments réels sur une petite parcelle agricole). `allotments`, lui,
- * arrive bien dans la donnée (`landcover.subclass`).
+ * `farmyard`/`farm` sont traduits par honnêteté de vocabulaire mais
+ * n'atteignent pas les tuiles OpenFreeMap en pratique (voir
+ * `furnitureLayer._looksLikeFarmstead`, qui détecte par indice indirect).
  */
 export const LABEL_PLACE_SUBCLASS = {
   farmyard: 'cour de ferme',
@@ -397,15 +353,8 @@ export function nearestInstance(mesh, eye, maxSamples = LABEL_SAMPLES_PER_MESH) 
 }
 
 /**
- * Point d'un maillage ordinaire le plus proche d'un observateur.
- *
- * Le centre de la sphère englobante ne convient pas : une chaussée fait neuf
- * cents mètres de long, son centre est n'importe où et l'étiquette se poserait
- * dans un champ. On cherche donc le **sommet** le plus proche, par
- * échantillonnage — c'est la seule réponse qui désigne bien la portion qu'on a
- * sous les yeux.
- *
- * Fonction pure.
+ * Point d'un maillage ordinaire le plus proche d'un observateur (le centre de
+ * la sphère englobante ne convient pas pour une chaussée de 900 m de long).
  */
 export function nearestVertex(mesh, eye, maxSamples = LABEL_SAMPLES_PER_MESH) {
   const position = mesh.geometry?.attributes?.position;
@@ -436,24 +385,18 @@ export function nearestVertex(mesh, eye, maxSamples = LABEL_SAMPLES_PER_MESH) {
 
 /**
  * Parcourt un graphe de scène et rend une étiquette par maillage visible dont
- * un point tombe dans la portée.
- *
- * Fonction pure : elle ne lit que des propriétés, n'en écrit aucune, et
- * n'appelle rien de three.js.
+ * un point tombe dans la portée. Fonction pure.
  *
  * @param {Object} options
  * @param {{children:Array}} options.root Racine du graphe (la scène).
  * @param {{x:number,y:number,z:number}} options.eye Position de la caméra.
  * @param {number} [options.radius]
  * @param {number} [options.max]
- * @param {Set<string>} [options.skip] Noms à ne pas traverser — la branche
- *        entière est écartée. Deux usages : ce qui s'étiquette autrement (les
- *        cultures, par plage plutôt que par touffe) et **ce que l'application a
- *        ajouté à la scène**. L'inspecteur ne connaît que le décor ; tout objet
- *        qui n'en vient pas se retire ici, et pas par une exception écrite dans
- *        le générateur.
- * @param {Function} [options.rename] `(name, point) => string` — dernier mot sur
- *        le texte, pour ce qui dépend du lieu (le peuplement d'un bois).
+ * @param {Set<string>} [options.skip] Noms à ne pas traverser (branche
+ *        entière écartée) : ce qui s'étiquette autrement, et ce que
+ *        l'application a ajouté à la scène.
+ * @param {Function} [options.rename] `(name, point) => string` — dernier mot
+ *        sur le texte, pour ce qui dépend du lieu (le peuplement d'un bois).
  * @returns {Array<{id:string, text:string, x:number, y:number, z:number, distance:number}>}
  */
 export function collectSceneLabels({
@@ -568,11 +511,9 @@ export function clusterCropGrid(kinds, cols, rows, minCells = CROP_MIN_CELLS) {
 }
 
 /**
- * Étiquettes des plages de culture autour d'un point.
- *
- * L'échantillonnage et la lecture d'altitude sont passés en fonctions : cette
- * couche ne connaît ni `groundClassMap` ni `terrainBubble`, et se teste donc
- * avec deux fermetures.
+ * Étiquettes des plages de culture autour d'un point. Échantillonnage et
+ * altitude passés en fonctions : cette couche ne connaît ni `groundClassMap`
+ * ni `terrainBubble`.
  *
  * @param {Object} options
  * @param {{x:number,z:number}} options.center Centre en mètres locaux.
@@ -612,10 +553,8 @@ export function collectCropLabels({
     return {
       id: `crop:${cluster.kind}:${index}`,
       text: `${LABEL_CROPS[cluster.kind] || cluster.kind} — ${hectares.toFixed(1)} ha`,
-      // Le schéma ne dit quasiment jamais la culture (voir `cropFor` dans
-      // `furniturePlacement`) : même quand le champ lui-même est réel, ce
-      // qu'on y a semé est déduit d'un tirage. Toujours généré, donc.
-      source: LABEL_SOURCE_GENERATED,
+      source: LABEL_SOURCE_GENERATED, // la culture elle-même est toujours déduite d'un tirage
+
       x,
       y: groundAt(x, z) + 3,
       z,
@@ -634,13 +573,9 @@ export const PLACE_MAX = 10;
 
 /**
  * Étiquettes des emprises `landuse`/`landcover` autour d'un point — le
- * pendant, pour les types de lieux, de `collectCropLabels` pour les cultures.
- *
- * Utile en particulier pour ce qu'aucun mobilier ne rend visible avant d'être
- * posé : une cour de ferme (`farmyard`) reste une cour de ferme même les jours
- * où le tirage de `_placeFarmstead` n'y pose ni grange ni serre — c'est ce
- * classement-là, et non l'absence de mobilier, qui dit si le terrain en
- * portait la possibilité.
+ * pendant, pour les types de lieux, de `collectCropLabels`. Utile pour ce
+ * qu'aucun mobilier ne rend visible avant d'être posé (une cour de ferme
+ * reste une cour de ferme même sans grange ni serre).
  *
  * @param {Object} options
  * @param {{forEachFeature:Function}} options.source `VectorTileSource` de
@@ -721,12 +656,8 @@ export function collectPlaceLabels({
 
 /**
  * Nom lisible d'une personnalité de bâtiment (`buildingLayer.buildingPersonalityFor`).
- *
- * `retail` et `shop` restent deux entrées distinctes bien que proches : la
- * première ne couvre que les grandes surfaces (`mall`, `department_store`,
- * `supermarket`), la seconde toute devanture ordinaire (café, banque,
- * coiffeur…) — les confondre effacerait exactement la distinction que
- * `BUILDING_PERSONALITY_RANK` fait pour décider ce qui saute en premier.
+ * `retail` (grandes surfaces) et `shop` (devanture ordinaire) restent
+ * distincts : `BUILDING_PERSONALITY_RANK` s'appuie sur cette différence.
  */
 export const LABEL_BUILDING_PERSONALITY = {
   church: 'église',

@@ -1,33 +1,17 @@
 /*
- * demo/main.js — la démo autonome de WorldPaint.
- * -----------------------------------------------------------------
- * Une application minimale, sans framework, qui monte `createWorld` dans une
- * scène three.js et pilote une caméra volante à la main. Rien ici n'est
- * repris par le moteur : c'est exactement ce qu'une application consommatrice
- * doit écrire elle-même (voir le README, section « Usage »).
+ * demo/main.js — la démo autonome de WorldPaint. Application minimale, sans
+ * framework, qui monte `createWorld` dans une scène three.js et pilote une
+ * caméra volante à la main — c'est ce qu'une application consommatrice doit
+ * écrire elle-même (voir le README, section « Usage »).
  *
- * Ce qui est demandé, une section par item plus bas :
- *   - navigation clavier en vol libre + téléportation au clic ;
- *   - case à cocher qui étiquette ce qu'on regarde (`inspect/objectLabels`) ;
- *   - case à cocher qui peint l'emprise routière, pour vérifier d'un coup d'œil
- *     que la frontière du décor tombe bien sur chaussée + accotement ;
- *   - champ de recherche qui géocode un lieu (Nominatim/OpenStreetMap) et
- *     y déplace la bulle ;
- *   - mini-carte façon Street View, centrée sur la caméra, qui affiche le
- *     réseau routier local et téléporte au clic ;
- *   - panneau météo et heure, qui pilote l'ambiance.
+ * Au programme : navigation clavier + téléportation au clic, étiquetage de
+ * ce qu'on regarde (`inspect/objectLabels`), affichage de l'emprise
+ * routière, recherche géocodée (Nominatim), mini-carte façon Street View,
+ * panneau météo et heure.
  *
- * Le panneau météo mérite un mot, parce qu'il montre exactement où passe la
- * frontière moteur/application : **c'est la démo qui décide du temps qu'il
- * fait**, et le moteur ne fait que l'appliquer. Une application réelle
- * brancherait ici un relevé (Open-Meteo, par exemple, qui est gratuit et sans
- * clé) ou une simulation ; ce sont des curseurs parce qu'on veut pouvoir passer
- * de l'orage au grand beau en une seconde pour regarder ce que ça change. Le
- * moteur, lui, ne fait aucune requête et ne connaît aucun service.
- *
- * L'heure est là pour la même raison : la moitié de la lecture d'un éclairage
- * est l'inclinaison du soleil, et attendre le coucher pour la vérifier n'est
- * pas une méthode.
+ * Le panneau météo montre où passe la frontière moteur/application : c'est
+ * la démo qui décide du temps qu'il fait (curseurs, pour comparer vite),
+ * le moteur ne fait que l'appliquer et ne connaît aucun service.
  */
 
 import * as THREE from 'three';
@@ -91,18 +75,11 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-// Le rig de lumière du moteur monte volontairement au-dessus de 1 (soleil
-// jusqu'à 1,75, ambiance jusqu'à 1,2 — voir `environment/skyModel.js`), pour
-// qu'une scène de nuit reste lisible. Sans tone mapping, `NoToneMapping` par
-// défaut de three écrête tout ça à blanc plat au lieu d'amorcer un dégradé :
-// le ciel et les surfaces claires se lisent alors comme cramés — c'est ce rig
-// qui donnait l'impression de « deux fois le soleil ». C'est à l'application
-// de le dompter, comme tout ce qui touche au renderer (voir le README).
+// Le rig de lumière du moteur monte volontairement au-dessus de 1 (voir
+// `environment/skyModel.js`) ; sans tone mapping ça écrête à blanc plat.
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-// 0,5, pas 1 : c'est l'exposition que l'exemple officiel de three pour ce
-// même `Sky.js` utilise (examples/webgl_shaders_sky.html) — pas une valeur
-// inventée, celle avec laquelle ce shader précis a été calé.
-renderer.toneMappingExposure = 0.5;
+renderer.toneMappingExposure = 0.5; // valeur de l'exemple officiel three pour ce Sky.js
+
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.5, 9000);
@@ -114,10 +91,8 @@ window.addEventListener('resize', () => {
 });
 
 // --- Tuiles vectorielles OpenStreetMap ----------------------------------------
-// WorldPaint ne fournit pas de serveur de tuiles : c'est à l'application de
-// pointer vers une source au schéma OpenMapTiles. OpenFreeMap en publie une,
-// gratuite et sans clé ; on lit son TileJSON plutôt que de coder en dur un
-// gabarit d'URL, pour ne pas dépendre d'un chemin qui peut changer.
+// WorldPaint ne fournit pas de serveur de tuiles : source OpenFreeMap (gratuite,
+// sans clé), lue via son TileJSON plutôt qu'un gabarit d'URL codé en dur.
 async function resolveVectorSource() {
   try {
     const res = await fetch('https://tiles.openfreemap.org/planet');
@@ -358,18 +333,10 @@ async function recenterIfNeeded() {
 
 // --- Étiquettes des objets -----------------------------------------------------
 //
-// Trois sources, superposées : les objets de la scène (`collectSceneLabels`),
-// les cultures — qui n'ont pas de maillage propre, seulement une plage de la
-// carte des cultures (`collectCropLabels`) — et les emprises `landuse` /
-// `landcover` — qui n'en ont pas non plus, seulement un classement de
-// parcelle (`collectPlaceLabels`). Ce sont les trois façons de répondre à
-// « qu'est-ce que je regarde », voir l'en-tête de `inspect/objectLabels.js`.
-//
-// `terrain-bubble`, `sky-dome` et `sun` restent tus : ce sont le maillage de
-// base et l'ambiance, pas un objet du décor — les étiqueter donnerait
-// « terrain 15/xxxxx/yyyyy » en boucle sans rien dire de plus que le sol qu'on
-// a déjà sous les pieds. `ground-cover` (l'herbe), en revanche, est une
-// **surface** au même titre qu'un champ ou une cour de ferme : elle s'affiche.
+// Trois sources superposées : les objets de la scène (`collectSceneLabels`),
+// les cultures (`collectCropLabels`) et les emprises `landuse`/`landcover`
+// (`collectPlaceLabels`) — voir l'en-tête de `inspect/objectLabels.js`.
+// `terrain-bubble`, `sky-dome` et `sun` restent tus (ambiance, pas un objet du décor).
 const LABEL_SKIP = new Set(['terrain-bubble', 'sky-dome', 'sun']);
 const labelElements = new Map(); // id -> <span>
 const projected = new THREE.Vector3();
@@ -472,14 +439,9 @@ showLabelsCheckbox.addEventListener('change', () => {
 });
 
 // --- Emprise routière (mise au point) ------------------------------------------
-// Une nappe translucide posée sur chaussée + accotement, reconstruite à partir
-// des tronçons que `RoadNetwork` publie déjà. C'est exactement la frontière que
-// `roadCorridor` fait respecter aux haies, clôtures, jardins, champs et herbe :
-// si un élément de décor apparaît **sur** la nappe, c'est un défaut d'emprise ;
-// s'il apparaît juste au bord, c'est sa place.
-//
-// Rien de tout ceci n'appartient au moteur : c'est de la mise au point, et la
-// démo est l'endroit où elle vit.
+// Une nappe translucide posée sur chaussée + accotement, la même frontière
+// que `roadCorridor` fait respecter au reste du décor : un élément visible
+// sur la nappe est un défaut d'emprise. Pure mise au point, hors du moteur.
 
 const CORRIDOR_LIFT_M = 0.05; // au-dessus de la chaussée, pour ne pas se battre avec elle
 let corridorMesh = null;
@@ -714,13 +676,9 @@ searchInput.addEventListener('keydown', (e) => {
 // météo et une date, il ne les fabrique pas. Voir l'en-tête du fichier.
 
 /**
- * Les temps prêts à l'emploi. Ils ne sont pas dans le moteur : ce sont des
- * réglages de démonstration, faits pour montrer vite l'étendue de ce que la
- * météo change — pas une nomenclature météorologique.
- *
- * « Ordinaire » est repris de `DEFAULT_WEATHER` plutôt que recopié : c'est le
- * temps sur lequel toutes les modulations du moteur valent identité, et une
- * copie qui dériverait ferait mentir le bouton.
+ * Les temps prêts à l'emploi — des réglages de démonstration, pas une
+ * nomenclature météorologique. « Ordinaire » est repris de `DEFAULT_WEATHER`
+ * plutôt que recopié, pour ne jamais diverger du bouton.
  */
 const PRESETS = [
   { label: '☀️ Grand beau', weather: { cloudCover: 0.06, cloudDensity: 0.35, precipitation: 0, wind: 0.12, haze: 0 } },
@@ -740,38 +698,19 @@ for (const key of SLIDER_KEYS) {
 }
 const precipitationTypeSelect = document.getElementById('precipitationType');
 
-/**
- * Direction du vent : un curseur à part, en degrés (0-359), pas dans
- * `SLIDER_KEYS` — c'est le seul réglage de météo qui n'est pas une part de
- * 0 à 1, mais un angle. `weather.windDirection` (radians) en dérive.
- */
+/** Direction du vent : un curseur à part, en degrés (0-359), pas une part de 0 à 1 comme les autres. */
 const windDirectionSlider = {
   input: document.getElementById('windDirection'),
   val: document.getElementById('windDirectionVal'),
 };
 
 /**
- * Calibration de la réglette « couverture nuageuse ».
- * -----------------------------------------------------
- * Le masque de nuage du `Sky.js` natif de three (celui que `weather.cloudCover`
- * pilote directement, voir `environment/weather.js`) **sature vers 0,5** : au
- * bruit près, la moitié haute de la plage 0–1 ne change quasiment plus rien à
- * l'étendue de nuage visible, et la moitié basse fait tout le travail. Une
- * réglette 0–100 % branchée telle quelle dessus paraît donc à moitié morte —
- * ce que ce fichier documentait comme « inversée » avant d'avoir compris
- * pourquoi.
- *
- * Cette table est la **mesure empirique** de ce masque (bruit de Sky.js
- * rejoué hors navigateur, cent d'échantillons par point de couverture) :
- * `CLOUD_COVER_CURVE[i]` est la valeur brute de `weather.cloudCover` à passer
- * au moteur pour obtenir un masque moyen d'environ `i / 10`. `uiToCloudCover`
- * l'interpole pour retrouver une réglette qui répond sur toute sa course ;
- * `cloudCoverToUi` fait le trajet inverse, pour que les temps prêts à l'emploi
- * (qui donnent une valeur brute) posent le curseur au bon endroit.
- *
- * C'est un calibrage de **présentation**, propre à cette démo : il ne change
- * ni la sémantique de `weather.cloudCover` (toujours 0–1, toujours ce que
- * `overcastOf` et le reste du moteur lisent), ni aucune valeur d'art du thème.
+ * Calibration de la réglette « couverture nuageuse ». Le masque de nuage du
+ * `Sky.js` natif de three sature vers 0,5 (la moitié haute de 0-1 ne change
+ * presque rien) : cette table, mesure empirique de ce masque, fait qu'une
+ * réglette 0-100 % répond sur toute sa course (`uiToCloudCover`,
+ * `cloudCoverToUi`). Calibrage de présentation propre à la démo : ne change
+ * pas la sémantique de `weather.cloudCover`.
  */
 const CLOUD_COVER_CURVE = [0, 0.16, 0.2, 0.23, 0.26, 0.29, 0.31, 0.34, 0.37, 0.41, 0.55];
 

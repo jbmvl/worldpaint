@@ -1,40 +1,23 @@
 /*
- * furnitureKit — le mobilier, modelé en code.
- * -------------------------------------------
- * Un catalogue de petits volumes : lampadaire, poteau, pylône, antenne relais,
- * éolienne, phare, panneau, borne, abribus, botte de foin, tas de bois,
- * fontaine, lavoir, grange, silo, hangar, serre, moulin à vent, moulin à eau,
- * château d'eau, piquets de clôture, bosquet, feu tricolore — les édifices
- * urbains (église, mosquée, hôpital, commerce, monument, château, tour,
- * cimetière, cheminée d'usine, grande roue, stade) — et ce qui donne de la vie
- * au décor : vaches, moutons, chèvres, chevaux, poules, fil à linge.
+ * furnitureKit — le mobilier, modelé en code. Un catalogue de petits
+ * volumes : lampadaire, poteau, pylône, antenne relais, éolienne, phare,
+ * panneau, borne, abribus, botte de foin, fontaine, lavoir, grange, silo,
+ * hangar, serre, moulin, château d'eau, bosquet, feu tricolore, les édifices
+ * urbains (église, commerce, monument, château, stade…), et ce qui donne de
+ * la vie au décor (bétail, volailles, fil à linge).
  *
- * **Pourquoi pas des modèles importés.** C'est la question qui se pose en
- * premier, et elle mérite une réponse écrite. Trois raisons, dans l'ordre où
- * elles pèsent :
+ * Pas de modèles importés : à seize mètres, en mouvement, la silhouette et
+ * la couleur font tout le travail (même raisonnement que les arbres,
+ * `vegetationLayer`) ; l'instanciation demande une géométrie unique
+ * partagée ; et un lot de modèles glTF doublerait le coût d'entrée pour un
+ * gain invisible à cette distance.
  *
- * 1. *L'échelle de la scène.* Ce décor est vu depuis une caméra de poursuite à
- *    seize mètres, en mouvement, sur un terrain photographique. À cette
- *    distance, la silhouette et la couleur font tout le travail ; les arêtes
- *    biseautées d'un modèle soigné ne se voient pas. Le même raisonnement a
- *    déjà décidé de la forme des arbres (`vegetationLayer`).
- * 2. *Le nombre.* Un kilomètre de départementale, ce sont des centaines de
- *    piquets et de bornes. Ce qui compte n'est pas le coût d'un objet mais
- *    celui de mille, donc l'instanciation — et une géométrie unique, partagée,
- *    est ce qui l'autorise.
- * 3. *Le poids.* three.js pèse déjà 190 Ko compressés qu'on prend soin de
- *    charger à la demande. Un lot de modèles glTF pour quinze objets, plus le
- *    `GLTFLoader`, doublerait le coût d'entrée du mode cinéma pour un gain
- *    invisible à seize mètres.
+ * Trois primitives (boîte, cylindre, plan) assemblées par `Kit`, en
+ * triangles non indexés à facettes franches — elles accrochent la lumière
+ * mieux qu'un lissage, à cette taille.
  *
- * Tout est donc bâti à partir de trois primitives — boîte, cylindre, plan —
- * assemblées par `Kit`, en triangles non indexés et à facettes franches. Les
- * facettes ne sont pas un pis-aller : sur des volumes de cette taille, elles
- * accrochent la lumière et donnent la lecture du volume mieux qu'un lissage.
- *
- * Repère de chaque objet : origine **au pied**, +Y vers le haut, +Z vers
- * l'avant, mètres réels. La couche de placement n'a donc qu'à poser et
- * pivoter.
+ * Repère de chaque objet : origine au pied, +Y vers le haut, +Z vers
+ * l'avant, mètres réels.
  */
 
 import { srgb } from '../core/color.js';
@@ -73,11 +56,8 @@ export const CEMETERY_GATE_SPAN_M = 3;
 
 /**
  * Suite déterministe dans [0, 1[, pour les formes irrégulières du catalogue.
- *
- * Elle n'a rien à voir avec les tirages de placement (`furniturePlacement`) :
- * ici la graine est **fixée par la pièce**, donc toutes les instances d'un même
- * rocher partagent exactement la même silhouette. C'est ce qui permet de garder
- * une géométrie unique et de ne varier que l'échelle et la rotation.
+ * Graine fixée par la pièce (pas par le placement) : toutes les instances
+ * d'un même rocher partagent la même silhouette, une géométrie unique.
  */
 function seededUnit(seed) {
   let a = (seed >>> 0) || 1;
@@ -1897,16 +1877,10 @@ const profilesFor = (C) => ({
 export const BARBED_WIRE_HEIGHTS = [0.55, 0.85, 1.15];
 
 /**
- * Les deux ouvrages qui tiennent une chaussée sur un versant.
- *
- * Ils ne sont pas décrits par une section, parce que leur **hauteur change** le
- * long du tracé : c'est le versant qui la fixe, mètre par mètre. Voir
- * `appendVariableWall`, qui les balaie, et `levelRow`, qui explique pourquoi la
- * plate-forme à mi-hauteur les appelle tous les deux à la fois.
- *
- * `cut` monte de la rive amont jusqu'au terrain qui la domine — c'est le mur qui
- * habille la tranchée, pas un muret posé dessus. `fill` descend de la rive aval
- * jusqu'au sol qu'elle surplombe, et porte la glissière.
+ * Les deux ouvrages qui tiennent une chaussée sur un versant. Pas décrits
+ * par une section fixe : leur hauteur change le long du tracé (voir
+ * `appendVariableWall`, `levelRow`). `cut` monte de la rive amont jusqu'au
+ * terrain qui la domine ; `fill` descend de la rive aval et porte la glissière.
  */
 const wallSpecsFor = (C) => ({
   cut: {
@@ -1930,11 +1904,9 @@ const wallSpecsFor = (C) => ({
 });
 
 /**
- * Section d'un talus de remblai, engendrée à la demande : sa profondeur dépend
- * de la hauteur dont la plate-forme surplombe le terrain à cet endroit.
- *
- * Le talus part sous la rive de la chaussée et rejoint le sol en biais, avec le
- * fruit d'un remblai courant (3 de base pour 2 de hauteur). Fonction pure.
+ * Section d'un talus de remblai, engendrée à la demande : sa profondeur
+ * dépend de la hauteur dont la plate-forme surplombe le terrain. Fruit d'un
+ * remblai courant (3 de base pour 2 de hauteur).
  *
  * @param {number} drop Hauteur à combler, en mètres.
  * @returns {Array<{across:number, up:number, color:number[]}>}
@@ -1948,14 +1920,7 @@ const embankmentFor = (C) => (drop) => {
   ];
 };
 
-/**
- * Tout ce que le mobilier tire de son nuancier : les sections balayées le long
- * des polylignes, les ouvrages de soutènement, les feux.
- *
- * Mémorisé sur le nuancier lui-même. Deux mondes de thèmes différents gardent
- * ainsi chacun ses sections, sans rien retenir de global, et un même monde ne
- * les recalcule pas à chaque haie.
- */
+/** Tout ce que le mobilier tire de son nuancier (sections balayées, ouvrages de soutènement, feux), mémorisé sur le nuancier lui-même. */
 const SPECS_CACHE = new WeakMap();
 
 export function furnitureSpecsFor(colors = defaultTheme.furniture.colors) {
@@ -1987,16 +1952,10 @@ export function createFurnitureGeometries(THREE, colors = defaultTheme.furniture
 }
 
 /**
- * Matériau unique du mobilier : couleurs de sommet, éclairage lambertien.
- *
- * Un seul matériau pour tout le catalogue, donc un seul programme GPU. Les
- * appels de rendu restent séparés — une instanciation par forme —, mais le
- * changement d'état entre eux est nul.
- *
- * `DoubleSide` n'est pas une facilité : les sections balayées ouvertes — talus,
- * brins de clôture, câbles — n'ont pas d'intérieur, et le sens de leur normale
- * dépend de celui du contour d'origine, qu'on ne contrôle pas. Une face
- * manquante s'y verrait comme un trou.
+ * Matériau unique du mobilier : couleurs de sommet, éclairage lambertien, un
+ * seul programme GPU pour tout le catalogue. `DoubleSide` : les sections
+ * balayées ouvertes (talus, câbles) n'ont pas d'intérieur, et le sens de
+ * leur normale dépend d'un contour qu'on ne contrôle pas.
  */
 export function createFurnitureMaterial(THREE) {
   const material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
@@ -2004,23 +1963,13 @@ export function createFurnitureMaterial(THREE) {
   return material;
 }
 
-/**
- * Part d'opacité de la bâche de serre — voir `createFurnitureGreenhouseMaterial`.
- * Demandée légèrement transparente : assez pour lire « plastique tendu sur une
- * armature », pas assez pour perdre la silhouette de la voûte à distance.
- */
+/** Part d'opacité de la bâche de serre : assez pour lire « plastique tendu », pas assez pour perdre la silhouette à distance. */
 export const GREENHOUSE_OPACITY = 0.82;
 
 /**
- * Matériau à part pour la serre, seule pièce du catalogue qui doit se voir au
- * travers.
- *
- * Le matériau commun (`createFurnitureMaterial`) est un seul programme GPU
- * partagé par tout le catalogue — voir l'en-tête de ce module — et il est
- * opaque : y ajouter `transparent: true` rendrait translucide jusqu'au dernier
- * lampadaire. Même geste que `createFurnitureRotorMaterial`, qui isole déjà
- * l'attribut propre à l'éolienne : une pièce qui a besoin d'autre chose que le
- * commun reçoit son propre matériau, pas une option de plus dessus.
+ * Matériau à part pour la serre, seule pièce du catalogue qui doit se voir
+ * au travers : le matériau commun est opaque et partagé, y ajouter
+ * `transparent: true` rendrait translucide jusqu'au dernier lampadaire.
  */
 export function createFurnitureGreenhouseMaterial(THREE) {
   const material = new THREE.MeshLambertMaterial({
@@ -2033,30 +1982,13 @@ export function createFurnitureGreenhouseMaterial(THREE) {
   return material;
 }
 
-/**
- * Vitesse angulaire du rotor à son régime nominal, en radians/seconde. Une
- * éolienne réelle tourne à dix-quinze tours par minute ; on prend le haut de
- * la fourchette (~14 tr/min) pour qu'un rotor au régime se remarque bien une
- * fois le vent monté.
- */
+/** Vitesse angulaire du rotor à son régime nominal, en radians/seconde (~14 tr/min, haut de la fourchette réelle). */
 const ROTOR_MAX_ANGULAR_SPEED = (14 / 60) * Math.PI * 2;
 
-/**
- * Vitesse du vent que représente `weather.wind = 1` (la bourrasque de
- * référence du thème), en km/h. Le moteur ne connaît le vent que par ce
- * scalaire 0-1 ; c'est cette échelle qui lui donne un sens physique pour le
- * rotor. 90 km/h est une bourrasque forte, plausible en France métropolitaine
- * — et c'est aussi, par construction, à peu près la vitesse à laquelle une
- * éolienne réelle se met en drapeau par sécurité, ce qui borne la fourchette
- * du bon côté sans qu'on ait à modéliser cet arrêt.
- */
+/** Vitesse du vent que représente `weather.wind = 1`, en km/h (~la vitesse de mise en drapeau d'une vraie éolienne). */
 const WIND_SPEED_MAX_KMH = 90;
 
-/**
- * Sous ce seuil, le rotor ne tourne pas : le vent n'a pas la force de vaincre
- * l'inertie des pales. Valeur demandée, pas mesurée — une éolienne réelle
- * démarre plutôt vers 12-15 km/h, mais on suit le réglage voulu ici.
- */
+/** Sous ce seuil, le rotor ne tourne pas (valeur demandée, plus basse que le démarrage réel d'une éolienne). */
 const ROTOR_CUT_IN_KMH = 5;
 
 /**
@@ -2092,17 +2024,11 @@ function rotorAngularSpeed(force) {
 }
 
 /**
- * Matériau du mobilier, avec un rotor qui tourne. C'est un matériau **séparé**
- * de `createFurnitureMaterial`, pas une option de plus dessus : le shader
- * commun est partagé par tout le catalogue justement pour n'avoir qu'un seul
- * programme GPU, et l'attribut `aSpin` que celui-ci lit n'existe que sur la
- * géométrie de l'éolienne (voir `Kit.toGeometry`) — le brancher sur le
- * matériau commun ferait chercher un attribut absent sur chaque poteau et
- * chaque banc.
- *
- * La rotation se fait au sommet, comme le vent du feuillage
- * (`foliageMaterial`) : un seul uniforme avance par image, rien à réécrire
- * par instance.
+ * Matériau du mobilier, avec un rotor qui tourne. Séparé de
+ * `createFurnitureMaterial` : l'attribut `aSpin` n'existe que sur la
+ * géométrie de l'éolienne, le brancher sur le matériau commun ferait
+ * chercher un attribut absent sur chaque poteau. Rotation au sommet, comme
+ * le vent du feuillage (`foliageMaterial`).
  */
 export function createFurnitureRotorMaterial(THREE) {
   const material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
@@ -2169,20 +2095,11 @@ export function advanceFurnitureRotor(material, delta, force) {
   rotor.uRotorAngle.value = rotor.angle;
 }
 
-/**
- * Hauteur et avancée de la lanterne, déduites de la crosse et non recopiées :
- * changer `LAMP_ARC` déplace du même coup le halo et la nappe de lumière.
- */
+/** Hauteur et avancée de la lanterne, déduites de la crosse (changer `LAMP_ARC` déplace du même coup le halo et la nappe). */
 export const LAMP_HEAD_HEIGHT_M = lampArcAt(1).y - 0.16;
 export const LAMP_HEAD_REACH_M = lampArcAt(1).z + LAMP_ARC.lantern;
 
-/**
- * Quadrilatère du halo d'un point lumineux, dans le plan (x, y), centré.
- *
- * Un panneau et non une sphère : un halo est un phénomène atmosphérique, il n'a
- * pas de volume. Le matériau le rend toujours face caméra, ce qui rend la forme
- * du panneau indifférente au point de vue.
- */
+/** Quadrilatère du halo d'un point lumineux (un panneau, pas une sphère : un halo est atmosphérique, sans volume, toujours face caméra). */
 export function createGlowGeometry(THREE) {
   const geometry = new THREE.PlaneGeometry(1, 1);
   geometry.name = 'furniture-glow';
@@ -2190,45 +2107,25 @@ export function createGlowGeometry(THREE) {
 }
 
 /**
- * Matériau des halos nocturnes : additif, sans écriture de profondeur.
+ * Matériau des halos nocturnes : additif (un halo ajoute de la lumière),
+ * sans écriture de profondeur (deux halos qui se recouvrent ne s'excluent
+ * pas). Dégradé radial calculé dans le shader, pas porté par une texture.
+ * Panneau orienté face caméra dans le vertex shader, pour garder
+ * l'instanciation (des `Sprite` imposeraient un objet par lampadaire).
  *
- * Additif parce qu'un halo **ajoute** de la lumière ; sans écriture de
- * profondeur parce que deux halos qui se recouvrent ne doivent pas s'exclure. Le
- * dégradé radial est calculé dans le shader plutôt que porté par une texture :
- * une texture de 64² pour un dégradé que trois lignes de GLSL rendent
- * exactement, et sans filtrage, ne se justifie pas.
- *
- * Le panneau est orienté face caméra dans le **vertex shader**, à partir des
- * matrices déjà présentes : c'est ce qui permet de garder l'instanciation, là où
- * des `Sprite` imposeraient un objet par lampadaire.
- *
- * ## La teinte par instance ne se demande pas, elle se constate
- *
- * Un feu tricolore a besoin d'un halo par couleur, un lampadaire d'un seul ton
- * pour tous. La distinction ne passe **pas** par un paramètre : elle est déjà
- * portée par la scène. Dès qu'un `InstancedMesh` reçoit un `instanceColor`,
- * three définit `USE_INSTANCING_COLOR` **et déclare lui-même l'attribut** dans
- * le préambule qu'il ajoute à tout `ShaderMaterial`. Le déclarer une seconde
- * fois ici faisait échouer la compilation du programme (`'instanceColor' :
- * redefinition`), et donc disparaître tous les halos.
- *
- * On lit donc le define de three plutôt que de dupliquer la question. Un
- * maillage sans `instanceColor` retombe sur `uColor`, ce qui est la bonne
- * valeur et non un repli : c'est le cas du lampadaire.
+ * La teinte par instance ne se demande pas, elle se constate : dès qu'un
+ * `InstancedMesh` reçoit un `instanceColor`, three définit
+ * `USE_INSTANCING_COLOR` et déclare lui-même l'attribut — le redéclarer ici
+ * fait échouer la compilation. Un maillage sans `instanceColor` retombe sur
+ * `uColor` (le cas du lampadaire), qui est la bonne valeur, pas un repli.
  */
 export function createGlowMaterial(THREE, { color = [1, 0.86, 0.6] } = {}) {
   const material = new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    // Le panneau est dressé dans l'espace de la vue : son enroulement dépend
-    // alors de la projection, et non de la géométrie. Deux faces coûtent zéro
-    // ici — pas de profondeur écrite, un mélange additif — et évitent qu'un halo
-    // disparaisse sous un angle particulier.
-    side: THREE.DoubleSide,
+    side: THREE.DoubleSide, // deux faces coûtent zéro ici, évite qu'un halo disparaisse sous un angle
     blending: THREE.AdditiveBlending,
-    // Un halo n'est pas fondu par le brouillard : c'est justement dans la brume
-    // qu'on le voit le mieux.
-    fog: false,
+    fog: false, // un halo se voit justement mieux dans la brume
     uniforms: {
       uColor: { value: new THREE.Vector3(...color) },
       uOpacity: { value: 0 },
@@ -2236,22 +2133,16 @@ export function createGlowMaterial(THREE, { color = [1, 0.86, 0.6] } = {}) {
     vertexShader: `
       varying vec2 vUv;
       varying vec3 vTint;
-      // Pas de déclaration manuelle : dès que \`mesh.setColorAt\` a été appelé
-      // une fois, three.js définit USE_INSTANCING_COLOR et injecte lui-même
-      // cet attribut en tête de shader (WebGLProgram.js). Le redéclarer ici
-      // provoquait une double définition — le halo des feux ne compilait plus
-      // et disparaissait, avec toute la scène en erreur de programme WebGL.
+      // Pas de déclaration manuelle : three définit USE_INSTANCING_COLOR et
+      // injecte cet attribut lui-même dès que setColorAt a été appelé une fois.
       uniform vec3 uColor;
       void main() {
         vUv = uv;
-        // instanceColor est déclaré par three, jamais ici : voir plus haut.
         vTint = uColor;
         #ifdef USE_INSTANCING_COLOR
           vTint = instanceColor;
         #endif
-        // Position de l'instance dans l'espace de la vue, puis panneau dressé
-        // dans le plan de l'écran : le halo garde sa taille et sa forme quel
-        // que soit l'angle.
+        // Position de l'instance en espace vue, panneau dressé dans le plan de l'écran.
         #ifdef USE_INSTANCING
           vec4 centre = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
           float scale = length(instanceMatrix[0].xyz);
@@ -2269,8 +2160,7 @@ export function createGlowMaterial(THREE, { color = [1, 0.86, 0.6] } = {}) {
       varying vec3 vTint;
       void main() {
         float r = length(vUv - 0.5) * 2.0;
-        // Décroissance en puissance et non linéaire : un halo a un cœur dense
-        // et une frange longue, l'inverse d'un dégradé droit.
+        // Décroissance en puissance : cœur dense, frange longue.
         float falloff = pow(max(0.0, 1.0 - r), 2.6);
         if (falloff <= 0.001 || uOpacity <= 0.001) discard;
         gl_FragColor = vec4(vTint * falloff, falloff * uOpacity);
@@ -2282,24 +2172,12 @@ export function createGlowMaterial(THREE, { color = [1, 0.86, 0.6] } = {}) {
 }
 
 /**
- * Nappe de lumière au sol, sous un lampadaire : un disque horizontal.
- *
- * ## Pourquoi une nappe plutôt qu'une lumière
- *
- * Le reproche fait aux lampadaires était juste : ils portaient un halo, donc on
- * voyait *la lampe*, mais rien n'était **éclairé**. La correction évidente —
- * une `PointLight` par mât — est impraticable : le nombre de lumières de la
- * scène entre dans la clé de programme de tous les matériaux, donc en ajouter
- * une par lampadaire recompilerait tout le décor à chaque reconstruction.
- *
- * La scène porte donc deux vraies lumières mobiles, accrochées aux deux
- * lampadaires les plus proches (`furnitureLayer.advanceLamps`) — nombre fixe,
- * clé de programme stable —, et **toutes** les têtes portent en plus cette
- * nappe additive posée à plat. C'est ce qui donne la flaque de lumière sur le
- * bitume, qui est ce qu'on regarde quand on roule de nuit.
- *
- * Le disque est dans le plan (x, z) et n'écrit pas la profondeur : deux flaques
- * qui se recouvrent s'additionnent, comme deux lampes.
+ * Nappe de lumière au sol, sous un lampadaire : un disque horizontal. Une
+ * `PointLight` par mât est impraticable (le nombre de lumières entre dans la
+ * clé de programme, tout recompilerait à chaque reconstruction) : la scène
+ * porte deux vraies lumières mobiles accrochées aux plus proches
+ * (`furnitureLayer.advanceLamps`), et toutes les têtes portent en plus cette
+ * nappe additive. N'écrit pas la profondeur : deux flaques qui se recouvrent s'additionnent.
  */
 export function createLightPoolGeometry(THREE) {
   const geometry = new THREE.PlaneGeometry(1, 1);
@@ -2315,9 +2193,8 @@ export function createLightPoolMaterial(THREE, { color = [1, 0.84, 0.56] } = {})
     depthWrite: false,
     side: THREE.DoubleSide,
     blending: THREE.AdditiveBlending,
-    // Comme le halo : c'est justement dans la brume qu'une flaque de lumière se
-    // voit le mieux, la fondre dans le brouillard reviendrait à l'éteindre.
-    fog: false,
+    fog: false, // comme le halo : la flaque se voit mieux dans la brume
+
     uniforms: {
       uColor: { value: new THREE.Vector3(...color) },
       uOpacity: { value: 0 },

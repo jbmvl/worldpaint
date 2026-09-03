@@ -1,24 +1,13 @@
 /*
  * tileMath — géométrie Web Mercator pour la bulle 3D de l'observateur.
- * ---------------------------------------------------------------
- * Aucune dépendance : que des fonctions pures, testables sous Node
- * (`npm test`).
+ * Fonctions pures, testables sous Node (`npm test`).
  *
- * Repère local de la scène 3D
- * ---------------------------
- * On ne projette pas le monde entier : la scène vit dans un repère métrique
- * local centré sur une origine ( l'observateur au moment où la bulle est posée).
- *
- *   x → est (mètres)
- *   y → altitude (mètres, échelle réelle)
- *   z → sud (mètres)  ← convention three.js, l'axe -z regarde le nord
- *
- * Mercator étant conforme, une tuile carrée en coordonnées Mercator reste
- * carrée au sol : il suffit donc de multiplier les coordonnées de tuile
+ * La scène vit dans un repère métrique local centré sur l'observateur :
+ *   x → est, y → altitude, z → sud (convention three.js, -z = nord)
+ * Mercator étant conforme, il suffit de multiplier les coordonnées de tuile
  * fractionnaires par le facteur d'échelle de la latitude d'origine pour
- * obtenir des mètres justes. L'erreur reste < 0,1 % sur quelques kilomètres,
- * et surtout deux tuiles voisines partagent exactement la même frontière —
- * donc aucune fissure entre les mailles.
+ * obtenir des mètres justes (erreur < 0,1 % sur quelques km), et deux tuiles
+ * voisines partagent exactement la même frontière.
  */
 
 export const EARTH_RADIUS = 6378137;

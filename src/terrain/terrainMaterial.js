@@ -1,39 +1,22 @@
 /*
- * terrainMaterial — la matière du sol.
- * ------------------------------------
- * Le sol n'est pas photographié : il est **décrit**. `groundClassMap` rasterise
- * l'occupation du sol des tuiles vectorielles autour de l'observateur ; ce shader y
- * lit, en chaque point, la part d'herbe, de bois, de culture et de sol nu, et
- * compose la matière correspondante.
+ * terrainMaterial — la matière du sol. `groundClassMap` rasterise l'occupation
+ * du sol autour de l'observateur ; ce shader y lit la part d'herbe, de bois,
+ * de culture et de sol nu, et compose la matière correspondante.
  *
- * Trois principes, et tout le reste en découle :
+ * Structure (grain, textures procédurales moyennées à 0,5) et couleur
+ * (albédos linéaires) sont séparées. Le grain change d'échelle avec la
+ * distance (période fine près, octave large loin). La pente au-delà de 30°
+ * vire à la roche.
  *
- *   • **structure et couleur sont séparées**. Les textures procédurales ne
- *     portent que le grain — leur moyenne est calée à 0,5 à la construction,
- *     donc doublées elles valent 1 et ne déplacent aucune luminosité. La
- *     couleur vient des albédos, en espace linéaire. Employer une texture de
- *     grain comme albédo donnait un albédo moyen de 1, c'est-à-dire de la neige.
- *   • **le grain change d'échelle avec la distance**. De près, une période de
- *     quelques mètres ; au loin, une octave large. Une seule période
- *     scintillerait à l'horizon et se répéterait sous les roues.
- *   • **la pente vire à la roche**. Un versant à plus de 30° ne porte pas de
- *     prairie, et c'est ce qui donne le relief de montagne.
- *
- * Tout ça est greffé sur `MeshLambertMaterial` par `onBeforeCompile` plutôt
- * qu'écrit en shader complet : l'éclairage, le brouillard et le tone mapping
- * restent gérés par three.
+ * Greffé sur `MeshLambertMaterial` via `onBeforeCompile` plutôt qu'écrit en
+ * shader complet, pour garder l'éclairage/brouillard/tone mapping de three.
  */
 
 import { createDetailCanvas, createGroundDetailCanvas } from '../materials/proceduralTextures.js';
 import { CROP_KINDS, CROP_ID_STEP } from '../layers/furniturePlacement.js';
 import { defaultTheme } from '../themes/default.js';
 
-/**
- * Fabrique du matériau de terrain. **Un seul matériau** pour toute la bulle :
- * les tuiles ne diffèrent plus par leur texture, donc rien ne justifie de les
- * distinguer — un programme GPU, un jeu d'uniformes, et déplacer la carte de
- * classes est une écriture.
- */
+/** Fabrique du matériau de terrain. Un seul matériau pour toute la bulle. */
 export class TerrainMaterialFactory {
   /**
    * @param {Object} options
@@ -47,8 +30,7 @@ export class TerrainMaterialFactory {
     this.look = { ...defaultTheme.terrain, ...look };
     this.groundClass = groundClass || null;
 
-    // Ces textures **modulent** : elles portent du grain, pas des couleurs, et
-    // doivent donc rester en espace linéaire.
+    // Textures de grain (pas de couleur) : espace linéaire.
     const repeated = (canvas) => {
       const texture = new THREE.CanvasTexture(canvas);
       texture.wrapS = THREE.RepeatWrapping;
@@ -86,8 +68,7 @@ export class TerrainMaterialFactory {
   }
 
   /**
-   * Mouille le sol. Un seul uniforme pour toute la bulle : il n'y a qu'un
-   * matériau de terrain, donc pas de tuile qui pourrait rester sèche.
+   * Mouille le sol.
    * @param {number} value De 0 (sec) à 1 (détrempé).
    */
   setWetness(value) {
@@ -118,9 +99,7 @@ export class TerrainMaterialFactory {
       uClassOrigin: { value: new THREE.Vector2(0, 0) },
       uClassSize: { value: 1 },
       uClassEnabled: { value: this.groundClass ? 1 : 0 },
-      // La carte des cultures partage le repère de la carte de classes : même
-      // origine, même côté, mêmes bornes. Un seul jeu d'uniformes de cadrage,
-      // donc aucune façon de les désynchroniser.
+      // Partage le repère de la carte de classes (même origine, même côté).
       uCropMap: { value: this.groundClass ? this.groundClass.cropTexture : null },
       uCropAlbedo: {
         value: CROP_KINDS.map((kind) => new THREE.Vector3(...(look.cropAlbedo[kind] || look.farmlandAlbedo))),
@@ -183,9 +162,8 @@ export class TerrainMaterialFactory {
           '#include <map_fragment>',
           `#include <map_fragment>
            {
-             // Matières présentes ici. La carte de classes porte un poids par
-             // canal et, dans son alpha, la couverture : alpha nul signifie
-             // « la donnée ne dit rien », et non « sol nu ».
+             // La carte de classes porte un poids par canal, et dans son
+             // alpha la couverture (alpha nul = donnée absente, pas sol nu).
              vec2 classUv = (vScenePos.xz - uClassOrigin) / uClassSize;
              vec4 cls = vec4(0.0);
              if (uClassEnabled > 0.5 &&
@@ -193,14 +171,12 @@ export class TerrainMaterialFactory {
                  classUv.y > 0.0 && classUv.y < 1.0) {
                cls = texture2D(uClassMap, classUv);
              }
-             // (herbe, bois, culture, sol nu). Le sol nu est le complément :
-             // classé, mais aucun des trois.
+             // (herbe, bois, culture, sol nu) : le sol nu est le complément.
              vec4 vectorWeights = vec4(cls.rgb, max(0.0, 1.0 - cls.r - cls.g - cls.b));
              vec4 w = mix(uUnclassified, vectorWeights, cls.a);
              w /= max(w.x + w.y + w.z + w.w, 1e-4);
 
-             // Grain, projeté en coordonnées monde : il ne suit ni les tuiles
-             // ni la pente, donc il ne trahit aucun découpage.
+             // Grain projeté en coordonnées monde (pas de découpage visible).
              float dist = distance(vScenePos, cameraPosition);
              float far = smoothstep(uDetailRange.x, uDetailRange.y, dist);
              float near = texture2D(uDetailMap, vScenePos.xz / uDetailScale.x).r;
@@ -211,21 +187,16 @@ export class TerrainMaterialFactory {
              vec3 soil = texture2D(uSoilMap, vScenePos.xz / uGroundScale.y).rgb;
              vec3 wood = texture2D(uWoodMap, vScenePos.xz / uGroundScale.z).rgb;
 
-             // Le grain de matière s'efface avec la distance, où il n'est plus
-             // qu'un scintillement : au loin il ne reste que l'octave large.
+             // Le grain s'efface avec la distance.
              vec3 structure = grass * w.x + wood * w.y + soil * (w.z + w.w);
              vec3 texMod = mix(structure * 2.0, vec3(1.0), far);
              float texLuma = max(dot(texMod, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
-             // On ne garde qu'une part de la teinte propre à la texture : le
-             // reste de la variation est neutre, sinon la teinte du grain
-             // s'ajouterait à celle de l'albédo au lieu de la nuancer.
+             // Part de teinte propre à la texture ; le reste reste neutre pour nuancer l'albédo sans s'y ajouter.
              vec3 modulation = mix(vec3(texLuma), texMod, 0.45) * (0.7 + noise * 0.6);
 
-             // Culture du champ. Le rouge porte un identifiant, lu au plus
-             // proche — d'où l'arrondi, et non un seuil : une valeur
-             // interpolée n'aurait aucun sens. L'indexation passe par une
-             // boucle à bornes constantes, seule forme d'accès à un tableau
-             // d'uniformes que toutes les versions de GLSL acceptent.
+             // Culture du champ : le rouge porte un identifiant lu au plus
+             // proche (arrondi). Boucle à bornes constantes : seule forme
+             // d'accès à un tableau d'uniformes portable en GLSL.
              vec3 farmAlbedo = uFarmlandAlbedo;
              if (uClassEnabled > 0.5 && w.z > 0.001) {
                float red = texture2D(uCropMap, classUv).r;
@@ -243,18 +214,11 @@ export class TerrainMaterialFactory {
 
              vec3 base = albedo * modulation;
 
-             // Pente : au-delà, ce n'est plus un sol mais un versant.
              float slope = 1.0 - clamp(vSceneNormal.y, 0.0, 1.0);
              float rock = smoothstep(uSlopeRange.x, uSlopeRange.y, slope) * uRockStrength;
              base = mix(base, base * uRockColor, rock);
 
-             // Sol mouillé. Un film d'eau **assombrit et sature** : la lumière
-             // qui entre dans le sol s'y réfléchit plusieurs fois au lieu d'en
-             // ressortir du premier coup, donc il en revient moins, et ce qui en
-             // revient est plus coloré. C'est pour ça qu'une terre mouillée est
-             // brune profonde et une terre sèche beige pâle — le même effet, et
-             // pas un choix de teinte : on ne remplace aucune couleur du thème,
-             // on ne fait que jouer sur le chemin de la lumière dedans.
+             // Sol mouillé : le film d'eau assombrit et sature (multi-réflexion interne).
              if (uWetness > 0.0) {
                float wetLuma = dot(base, vec3(0.2126, 0.7152, 0.0722));
                vec3 saturated = wetLuma + (base - wetLuma) * 1.35;
@@ -266,8 +230,7 @@ export class TerrainMaterialFactory {
         );
     };
 
-    // Clé constante : sans elle, three recompilerait le programme à chaque
-    // matériau qui le demande.
+    // Clé constante pour éviter une recompilation à chaque matériau.
     material.customProgramCacheKey = () => 'terrain-bubble-v8';
     return material;
   }

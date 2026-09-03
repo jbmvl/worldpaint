@@ -1,35 +1,12 @@
 /*
  * settlement — ce que la donnée sait d'une agglomération, et ce qu'elle ignore.
- * ---------------------------------------------------------------------------
- * Deux questions se posent partout dans le décor, et elles n'ont pas la même
- * réponse :
  *
- *   1. « suis-je dans un périmètre habité ? »  → les emprises `landuse` ;
- *   2. « y a-t-il des maisons ici ? »          → les empreintes de `building`.
- *
- * Les confondre est exactement ce qui produit un décor faux. Un
- * `landuse=residential` est un **périmètre administratif** : il englobe le
- * centre-bourg, mais aussi les prés qui l'entourent, les fonds de jardin, les
- * terrains à bâtir et les chemins qui n'ont jamais vu un trottoir. Décider quoi
- * que ce soit de physique sur ce seul critère revient à peindre une commune
- * entière de la couleur de sa mairie.
- *
- * D'où ce module, et sa séparation en deux :
- *
- *   • `collectBuiltUpAreas` / `pointInAreas` répondent à la question 1. C'est
- *     un **droit** : le trottoir, l'éclairage, les feux n'ont de sens que dans
- *     un périmètre habité, et rien de tout ça ne se pose hors de lui.
- *   • `FabricIndex` répond à la question 2. C'est un **fait** : elle compte les
- *     bâtiments réellement présents autour d'un point, à la distance qu'on lui
- *     demande. Le droit ouvre la possibilité, le fait la confirme.
- *
- * Une rue ne se compose donc que là où les deux concordent. C'est ce qui
- * distingue la traversée d'un village — bâtie des deux côtés, donc bordée — de
- * la route qui longe le terrain de foot du même village : même `landuse`, même
- * classe de chaussée, et pourtant pas la même rue.
- *
- * Rien ici n'est de la direction artistique : ce module ne décide d'aucune
- * couleur et d'aucune cote. Il ne dit que ce que la géographie porte.
+ * Deux questions distinctes : « suis-je dans un périmètre habité ? »
+ * (`landuse`, périmètre administratif — englobe aussi prés et chemins sans
+ * trottoir) et « y a-t-il des maisons ici ? » (empreintes `building`, un fait).
+ * `collectBuiltUpAreas`/`pointInAreas` répondent à la première (un droit :
+ * trottoir, éclairage, feux) ; `FabricIndex` à la seconde (un fait qui la
+ * confirme). Une rue ne se compose que là où les deux concordent.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
@@ -37,10 +14,8 @@ import { BUILT_UP_CLASSES } from './furniturePlacement.js';
 
 /**
  * Emprises habitées d'un jeu de tuiles, en anneaux métriques.
- *
- * `BUILT_UP_CLASSES` vit dans `furniturePlacement` parce que le mobilier s'en
- * servait le premier ; le tri est le même ici, et le dédoubler ferait diverger
- * deux définitions de « en ville » qui doivent rester une seule.
+ * `BUILT_UP_CLASSES` vit dans `furniturePlacement` (premier utilisateur) : une
+ * seule définition de « en ville » pour les deux modules.
  *
  * @param {Object} source Instance `VectorTileSource`.
  * @param {Array} tiles   Tuiles à parcourir.
@@ -71,26 +46,16 @@ export function collectBuiltUpAreas(source, tiles, frame) {
 }
 
 /**
- * Classes `place` retenues comme de vraies agglomérations nommées.
- *
- * Vérifié sur les tuiles réellement servies (OpenFreeMap, schéma
- * OpenMapTiles, z14) : la couche `place` porte aussi `suburb`, `quarter`,
- * `neighbourhood` et `island` — les arrondissements et quartiers d'une grande
- * ville, pas des agglomérations séparées. Les retenir ferait fleurir un
- * panneau « Bellecour » ou « Le Marais » au beau milieu de Lyon ou de Paris,
- * là où il n'y a jamais eu d'entrée de ville.
+ * Classes `place` retenues comme de vraies agglomérations nommées. Exclut
+ * `suburb`/`quarter`/`neighbourhood`/`island`, que la couche porte aussi mais
+ * qui sont des quartiers d'une grande ville, pas des agglomérations séparées.
  */
 export const SETTLEMENT_PLACE_CLASSES = new Set(['city', 'town', 'village', 'hamlet']);
 
 /**
- * Points nommés d'un jeu de tuiles — villes, bourgs, villages, hameaux.
- *
- * C'est la seule source qui associe un **nom** à une agglomération : la
- * couche `landuse` (`collectBuiltUpAreas`) ne porte qu'un périmètre
- * administratif, sans nom ni classe de taille — un `landuse=residential`
- * isolé n'est pas forcément une ville, et n'en porte de toute façon jamais le
- * nom. Un panneau d'entrée d'agglomération n'a de sens que là où les deux se
- * recoupent — voir `nearestNamedPlace`.
+ * Points nommés d'un jeu de tuiles — villes, bourgs, villages, hameaux. Seule
+ * source associant un nom à une agglomération (`landuse` n'en porte pas) —
+ * voir `nearestNamedPlace`.
  *
  * @param {Object} source Instance `VectorTileSource`.
  * @param {Array} tiles   Tuiles à parcourir.
@@ -122,11 +87,7 @@ export function collectPlaceNames(source, tiles, frame) {
 
 /**
  * Le lieu nommé le plus proche d'un point, dans un rayon donné, ou `null`.
- *
- * Simple parcours linéaire : une bulle n'en porte jamais plus de quelques
- * dizaines (voir `collectPlaceNames`), et la question ne se pose qu'une fois
- * par entrée d'agglomération repérée sur la voirie — pas assez souvent pour
- * justifier un index spatial. Fonction pure.
+ * Parcours linéaire : une bulle n'en porte jamais plus de quelques dizaines.
  *
  * @param {Array<{x:number,z:number,name:string}>} places
  * @param {number} x
@@ -157,8 +118,7 @@ export function ringsOf(geometry) {
 }
 
 /**
- * Vrai si le point tombe dans l'une des emprises. Lancer de rayon pair-impair,
- * anneau par anneau. Fonction pure.
+ * Vrai si le point tombe dans l'une des emprises (lancer de rayon pair-impair).
  *
  * @param {Array<Array<{x:number,z:number}>>} areas
  * @param {number} x
@@ -185,22 +145,13 @@ export function pointInAreas(areas, x, z) {
 export const FABRIC_CELL_M = 32;
 
 /**
- * Index spatial des empreintes bâties : combien de bâtiments autour d'un point.
- *
- * Une maille plutôt qu'un parcours linéaire parce que la question est posée
- * plusieurs milliers de fois par reconstruction — deux fois par ligne de
- * chaussée, une par côté —, et qu'un village en compte quelques centaines.
- *
- * L'index ne retient qu'un centre par bâtiment : ni sa forme, ni sa taille. Ce
- * qu'on lui demande n'est pas « qu'y a-t-il là » mais « est-ce bâti », et un
- * centre suffit à cette question-là.
+ * Index spatial des empreintes bâties : combien de bâtiments autour d'un
+ * point. Une maille plutôt qu'un parcours linéaire (la question est posée
+ * plusieurs milliers de fois par reconstruction). Ne retient qu'un centre par
+ * bâtiment — la question posée est « est-ce bâti », pas « qu'y a-t-il là ».
  */
 export class FabricIndex {
-  /**
-   * @param {Array<{x:number,z:number}>} footprints Centres publiés par
-   *        `buildingLayer`. Une liste vide donne un index qui répond zéro
-   *        partout, ce qui est la bonne réponse quand rien n'est bâti.
-   */
+  /** @param {Array<{x:number,z:number}>} footprints Centres publiés par `buildingLayer`. */
   constructor(footprints = []) {
     /** @type {Map<number, Array<{x:number,z:number}>>} */
     this.cells = new Map();
@@ -217,11 +168,8 @@ export class FabricIndex {
   }
 
   /**
-   * Nombre de bâtiments dans un disque, plafonné.
-   *
-   * Le plafond n'est pas une optimisation : les appelants ne demandent jamais
-   * « combien » mais « au moins deux ? », et compter les quarante bâtiments
-   * d'un centre-bourg pour répondre à ça serait du travail jeté.
+   * Nombre de bâtiments dans un disque, plafonné (les appelants ne demandent
+   * en général qu'un seuil, pas un compte exact).
    *
    * @param {number} x
    * @param {number} z

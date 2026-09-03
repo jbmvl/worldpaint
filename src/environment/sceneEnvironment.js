@@ -1,81 +1,36 @@
 /*
- * sceneEnvironment — ciel, soleil et brouillard de la bulle.
- * ----------------------------------------------------------
- * Le ciel suit le modèle de Preetham (« A Practical Analytic Model for
- * Daylight », SIGGRAPH 1999) : diffusion de Rayleigh et de Mie calculées pour
- * la direction regardée, disque solaire et nuages procéduraux compris. three le
- * livre — inutile d'ajouter une dépendance. La bibliothèque visée au départ,
- * `@takram/three-atmosphere`, exige React, `@react-three/fiber` et `drei` en
- * peer-dependencies : inutilisable dans une application Vue.
+ * sceneEnvironment — ciel, soleil et brouillard de la bulle. Le ciel suit le
+ * modèle de Preetham (SIGGRAPH 1999), livré par three : diffusion de Rayleigh
+ * et de Mie pour la direction regardée, disque solaire et nuages procéduraux
+ * compris — un dégradé peint à la main ne reproduit ni l'assombrissement du
+ * zénith, ni le halo au soleil rasant, ni le rougissement au couchant.
+ * Les nuages sont ceux, natifs, du `Sky.js` de three (uniforms écrits, pas de
+ * shader maison), disponibles depuis three 0.183.0.
  *
- * Les nuages (`cloudScale`, `cloudSpeed`, `cloudCoverage`, `cloudDensity`,
- * `time`) sont ceux, natifs, du `Sky.js` de three — ce module se contente
- * d'écrire dans les uniforms qu'il expose déjà, sans shader maison. Ils
- * n'existent que depuis three 0.183.0 : c'est pourquoi `peerDependencies.three`
- * l'exige au minimum dans `package.json`. Une application qui épingle une
- * version antérieure verra `this.uniforms.cloudScale` valoir `undefined` ici.
+ * Le brouillard fond la bordure du terrain dans l'horizon (sinon la bulle se
+ * voit), coloré par une palette fournie par l'application ; le ciel est forcé
+ * à converger vers cette même couleur au ras de l'horizon, sinon la couture
+ * se verrait. Cette couleur est celle de l'air à l'horizontale ; `aerialFog.js`
+ * en dérive celle du haut de la voûte et celle de l'axe du soleil.
  *
- * Un dégradé peint à la main ne reproduit ni l'assombrissement du zénith, ni le
- * halo qui enfle autour d'un soleil rasant, ni le rougissement de l'horizon au
- * couchant — trois choses qu'un modèle physique donne gratuitement, et qui font
- * la moitié de la lecture d'une heure de la journée.
+ * L'application donne l'heure et la palette (forme `{ fog, nightZenith,
+ * nightHorizon }`) ; elle seule sait d'où vient sa direction artistique.
  *
- * Le brouillard n'est pas un effet de style : c'est lui qui fond la bordure du
- * terrain dans l'horizon, sinon la bulle se voit. Sa couleur vient d'une
- * **palette fournie par l'application** — et le ciel est **forcé à converger
- * vers elle** au ras de l'horizon, sinon la ligne de contact entre le terrain
- * lointain et le ciel se verrait comme une couture.
+ * La nuit porte une lune (croissant stylisé, pas une vraie phase), des
+ * étoiles (semis fixe de points) et une étoile filante occasionnelle — aucun
+ * réalisme visé, juste un repère de nuit qui n'est ni un noir uni ni un
+ * planétarium. Le hachage des étoiles se fait dans la projection
+ * équirectangulaire `uv` (pas `direction.xz`, qui s'effondre près du zénith).
+ * Chaque étoile est un point rond, pas une cellule entière allumée par
+ * seuil ; l'étoile filante s'amincit vers la queue plutôt que de garder une
+ * largeur uniforme.
  *
- * Cette couleur de palette est celle de l'air **à l'horizontale**, et rien de
- * plus : `aerialFog.js` en dérive celle du haut de la voûte et celle de l'axe
- * du soleil, et fait dépendre la cible du mélange de la direction regardée. Un
- * `FogExp2` nu n'a qu'une couleur pour toutes les directions — le lointain
- * converge alors vers un seul aplat, quasi blanc avec une palette claire, et
- * c'est le défaut que cette dérivation corrige. Ce module reste le seul à
- * décider *quelles* couleurs y entrent ; le module voisin dit *comment* elles
- * se répartissent dans le ciel.
+ * `update()` calcule `nightMix` avant la couleur de brouillard et la mélange
+ * dedans, pour que la voûte et l'horizon basculent ensemble.
  *
- * L'application donne l'heure et la palette ; elle seule sait d'où vient sa
- * direction artistique (un thème, un style de carte 2D, un réglage joueur). Ce
- * module ne connaît que la forme `{ fog, nightZenith, nightHorizon }`.
- *
- * La nuit porte une lune, des étoiles et, de loin en loin, une étoile
- * filante, mais rien de tout ça ne vise le réalisme : la lune est un
- * croissant (deux cercles en espace local, l'un mordant l'autre — une phase
- * stylisée, pas calculée depuis la date) posé à l'opposé du soleil, les
- * étoiles un semis fixe de points ronds, et l'étoile filante un tirage par
- * tranche de temps, sans notion de constellation, de rotation du ciel ni de
- * météore réel. Le but est un repère de nuit qui n'est pas un noir uni, pas
- * un planétarium.
- *
- * Deux pièges déjà tombés dedans, pour ne pas y retomber :
- * - le hachage des étoiles se fait dans la projection équirectangulaire `uv`
- *   que ce shader calcule déjà (`phi`/`theta` normalisés), pas directement
- *   sur `direction.xz` : cette dernière s'effondre vers zéro près du zénith
- *   quel que soit l'azimut, ce qui écrasait les cellules de hachage et les
- *   étirait en traits ;
- * - chaque étoile est un **point** (distance à un décalage aléatoire dans sa
- *   cellule), pas la cellule entière allumée par un simple seuil : un seuil
- *   sans forme dessine des carrés, pas des étoiles. Même règle pour l'étoile
- *   filante, dont la traînée s'amincit vers la queue plutôt que de garder une
- *   largeur uniforme — sans quoi elle se lit comme un rectangle qui glisse,
- *   pas comme un trait.
- *
- * **Le brouillard converge vers la nuit**, exactement comme il converge déjà
- * vers la palette de jour à l'horizon : `update()` calcule `nightMix` avant la
- * couleur de brouillard et la mélange dedans, sinon la voûte bascule sur sa
- * palette nocturne pendant que le brouillard — donc le fond du renderer, et le
- * raccord d'horizon du ciel, qui lisent la même couleur — reste éclairé de
- * jour. C'est ce qui faisait un ciel nocturne dont l'horizon restait blanc.
- *
- * **La météo arrive par le même chemin que l'heure**, et pour la même raison :
- * c'est un état, pas une direction artistique, et l'application seule sait d'où
- * il vient (un relevé, une simulation, un curseur). Ce module l'applique — au
- * ciel, au soleil, au brouillard, à la chute d'eau — mais ne va jamais la
- * chercher : `src/` ne fait aucune requête réseau, et une dépendance à un
- * service météo serait exactement la frontière moteur/application que le
- * CONTRIBUTING interdit de franchir. Voir `weather.js` pour ce que chaque
- * coefficient fait.
+ * La météo arrive par le même chemin que l'heure : un état, pas une direction
+ * artistique. Ce module l'applique (ciel, soleil, brouillard, chute d'eau)
+ * sans jamais aller la chercher — voir `weather.js`.
  */
 
 import { skyParameters, lightingFor, sunlightColor } from './skyModel.js';
@@ -105,52 +60,29 @@ import { defaultTheme } from '../themes/default.js';
 export { sunDirection, SHADOW_RADIUS_M, SHADOW_LEAD_M } from './shadowFrame.js';
 export { DEFAULT_WEATHER, resolveWeather, PRECIPITATION_TYPES } from './weather.js';
 
-/**
- * Rayon du dôme. Volontairement modeste : le dôme suit la caméra, il est donc
- * toujours à cette distance exacte, et un far plane serré côté application
- * garde la précision du depth buffer confortable sans recourir au depth
- * logarithmique, capricieux sur certains GPU mobiles.
- */
+/** Rayon du dôme (le dôme suit la caméra, donc toujours à cette distance exacte). */
 export const SKY_RADIUS = 8000;
 
 /**
- * Le ciel de Preetham est physique : il ne connaît pas les palettes horaires de
- * l'application. On le force donc à rejoindre la couleur du brouillard au ras de
- * l'horizon, là où un désaccord se verrait, en laissant la physique gouverner
- * tout le reste de la voûte.
- *
- * La bande de raccord est étroite (~10° d'élévation) et le poids n'est pas
- * total : à 0,7, le halo du soleil couchant survit au mélange alors qu'il
- * serait effacé à 1.
+ * Le ciel de Preetham est forcé à rejoindre la couleur du brouillard au ras
+ * de l'horizon (bande étroite, ~10° d'élévation, poids non total à 0,7 pour
+ * laisser survivre le halo du soleil couchant).
  */
 const HORIZON_BLEND = 0.7;
 const HORIZON_BAND = 0.18;
 
 /**
  * Palette d'ambiance : les trois seules couleurs que ce module attend d'une
- * application. Elle vit dans le thème (`theme.sky`) ; ce nom en est l'alias
- * public, pour qui monte un `SceneEnvironment` sans passer par `createWorld`.
+ * application (`theme.sky`, alias public pour qui monte un
+ * `SceneEnvironment` sans `createWorld`).
  *
  * @typedef {{fog: string, nightZenith: string, nightHorizon: string}} SkyPalette
  */
 export const DEFAULT_SKY_PALETTE = defaultTheme.sky;
 
-/**
- * Échelle du bruit de nuages.
- *
- * La valeur par défaut de three (0,0002) produit un motif si vaste qu'il couvre
- * tout le ciel d'une seule valeur : le seuil de couverture ne mord alors nulle
- * part et **aucun nuage n'apparaît**. Le shader multiplie ce facteur par mille
- * avant d'échantillonner son bruit ; il faut donc que le produit couvre
- * plusieurs unités sur l'étendue de la voûte pour qu'un motif se forme.
- */
+/** Échelle du bruit de nuages (la valeur par défaut de three, 0,0002, couvre tout le ciel d'une seule valeur : aucun nuage n'apparaît). */
 const CLOUD_SCALE = 0.0015;
-/**
- * Vitesse de dérive. Volontairement lente, et surtout appliquée à un temps
- * **relatif** : le shader travaille en float32, et une date epoch (1,8 · 10⁹)
- * multipliée puis portée à mille détruisait toute la précision du bruit — les
- * nuages n'avaient alors plus de forme du tout.
- */
+/** Vitesse de dérive, appliquée à un temps relatif (une date epoch brute détruirait la précision du bruit en float32). */
 const CLOUD_SPEED = 0.00002;
 
 /** Distance à laquelle on pose le soleil : `vSunfade` lit son altitude. */
@@ -164,13 +96,7 @@ function smoothstep(edge0, edge1, x) {
 
 const mix = (a, b, t) => a + (b - a) * t;
 
-/**
- * Plancher de teinte de la pluie, linéaire — 45 % en sRGB, le même gris moyen
- * que celui déjà utilisé pour détacher les débris de leur fond (voir plus
- * bas). Une averse ne doit jamais tomber plus sombre que ça : sous un ciel
- * bouché, le brouillard dont sa couleur part s'assombrit, et sans ce plancher
- * la pluie se confondait avec une chaussée mouillée.
- */
+/** Plancher de teinte de la pluie, linéaire — 45 % en sRGB, sinon elle se confondait avec une chaussée mouillée sous ciel bouché. */
 const RAIN_GREY_LINEAR = [0.1703, 0.1703, 0.1703];
 
 /** #rrggbb → [r, g, b] linéaires approximés (sRGB → linéaire, gamma 2.2). */
@@ -195,18 +121,13 @@ export class SceneEnvironment {
    *        Omis, c'est le temps ordinaire — celui qui reproduit exactement le
    *        rendu d'avant l'existence de ce réglage.
    * @param {number} [options.cloudCoverage] Couverture nuageuse, de 0 à 1.
-   *        Raccourci historique sur `weather.cloudCover`, gardé parce qu'il est
-   *        déjà documenté dans l'API publique. `weather` prime s'il donne la clé.
+   *        Raccourci historique sur `weather.cloudCover` ; `weather` prime s'il donne la clé.
    * @param {number} [options.cloudDensity] Idem, sur `weather.cloudDensity`.
-   * @param {SkyPalette} [options.palette] Palette d'ambiance de départ. Elle
-   *        fixe la couleur de fond avant le premier `update()` — un montage
-   *        sur une palette nocturne ne doit pas flasher en blanc.
+   * @param {SkyPalette} [options.palette] Palette d'ambiance de départ (fixe
+   *        la couleur de fond avant le premier `update()`).
    * @param {[number,number,number]} [options.debrisTint] Couleur linéaire des
-   *        feuilles/graminées emportées par le vent. Par défaut la teinte de
-   *        feuillage du thème livré — ce module ne choisit pas une couleur à
-   *        lui, il reprend celle de la direction artistique. Éclaircie avant
-   *        usage, voir plus bas : la teinte brute du thème est trop sombre
-   *        pour se détacher du décor à la taille d'un point.
+   *        feuilles/graminées emportées par le vent, par défaut la teinte de
+   *        feuillage du thème (éclaircie avant usage, voir plus bas).
    */
   constructor({
     THREE,
@@ -226,11 +147,7 @@ export class SceneEnvironment {
     this.palette = palette;
     this.fogRadius = fogRadius;
     this.shadowMapSize = shadowMapSize;
-    /**
-     * Densité de brouillard par temps ordinaire. La météo la **multiplie** :
-     * garder la valeur de référence évite qu'une averse qui va et vient
-     * n'épaississe l'air un peu plus à chaque passage.
-     */
+    /** Densité de brouillard par temps ordinaire ; la météo la multiplie plutôt que la remplacer. */
     this.baseFogDensity = 1.7 / fogRadius;
     /** @type {Object} état météo résolu et gelé. Voir `weather.js`. */
     this.weather = resolveWeather({
@@ -241,12 +158,7 @@ export class SceneEnvironment {
     this._shadowCenter = { x: 0, y: 0, z: 0 };
     /** Part de nuit, de 0 (plein jour) à 1. Lue par tout l'éclairage artificiel. */
     this.nightMix = 0;
-    /**
-     * Ce que le vent fait au feuillage, publié pour que les couches végétales
-     * l'appliquent — même raison que `nightMix` : une seule mesure, donc pas
-     * d'herbe qui se couche pendant que les arbres sont au calme.
-     * @type {{amplitude:number, speed:number}}
-     */
+    /** Ce que le vent fait au feuillage, publié pour les couches végétales — même raison que `nightMix`. @type {{amplitude:number, speed:number}} */
     this.wind = windField(this.weather);
     /** Part de sol mouillé, de 0 à 1. Lue par le terrain, la chaussée, la voirie. */
     this.wetness = this.weather.wetness;
@@ -264,9 +176,7 @@ export class SceneEnvironment {
     this.uniforms.uNightZenith = { value: new THREE.Color(palette.nightZenith) };
     this.uniforms.uNightHorizon = { value: new THREE.Color(palette.nightHorizon) };
     this.uniforms.uNightMix = { value: 0 };
-    // À l'opposé du soleil : pas la vraie position de la lune (dont les
-    // phases ne dépendent pas que de l'heure), mais elle se lève quand le
-    // soleil se couche et inversement, ce qui suffit à ce qu'on lui demande.
+    // À l'opposé du soleil (pas la vraie position, mais elle se lève quand il se couche).
     this.uniforms.uMoonDirection = { value: new THREE.Vector3(0, 1, 0) };
     this.uniforms.cloudScale.value = CLOUD_SCALE;
     this.uniforms.cloudSpeed.value = CLOUD_SPEED;
@@ -274,10 +184,8 @@ export class SceneEnvironment {
     /** Origine du temps des nuages : voir `CLOUD_SPEED`. */
     this._timeOrigin = null;
 
-    // Greffe du raccord d'horizon, juste avant l'écriture du fragment — donc
-    // avant le tone mapping, que la couleur du brouillard traverse elle aussi
-    // en arrivant par le terrain. Les deux subissent la même courbe et se
-    // rejoignent donc vraiment, et pas seulement sur le papier.
+    // Greffe du raccord d'horizon, avant l'écriture du fragment (avant le tone
+    // mapping, que la couleur de brouillard traverse aussi en arrivant du terrain).
     const skyMaterial = this.sky.material;
     skyMaterial.fragmentShader = skyMaterial.fragmentShader
       .replace(
@@ -292,73 +200,43 @@ export class SceneEnvironment {
       )
       .replace(
         'cloudColor *= vSunE * 0.00002;',
-        `// Correctif du calcul d'origine (three <= 0.185.1, dernière publiée à
-         // ce jour) : ce facteur écrase cloudColor à environ 1/100e de la
-         // luminance de texColor — un nuage rend alors bleu marine sombre au
-         // lieu de gris clair, et plus la couverture ou la densité montent,
-         // plus l'écran vire à ce bleu au lieu de blanchir. C'est corrigé en
-         // amont (mrdoob/three.js#33942, « More realistic clouds »), mais pas
-         // encore publié dans aucune version au moment où ce fichier est
-         // écrit — voir CHANGELOG.md pour la date à laquelle relever ce
-         // correctif une fois que ça l'est. En attendant, on reconstruit la
-         // même idée avec ce que ce shader calcule déjà : Lin et Fex sont
-         // l'ambiance et l'atténuation du ciel lui-même, donc un nuage reste
-         // dans la même gamme de luminance que le ciel qui l'entoure, plutôt
-         // que dans une échelle inventée qui n'avait plus de rapport avec lui.
+        `// Correctif du calcul d'origine (three <= 0.185.1) : ce facteur
+         // écrasait cloudColor à ~1/100e de la luminance de texColor (nuage
+         // bleu marine sombre au lieu de gris clair). Corrigé en amont
+         // (mrdoob/three.js#33942) mais pas encore publié — voir CHANGELOG.md.
+         // On reconstruit avec Lin/Fex (ambiance et atténuation du ciel déjà
+         // calculées), pour qu'un nuage reste dans la gamme de luminance du ciel qui l'entoure.
          cloudColor = Lin * 0.04 + vec3( 0.0, 0.0003, 0.00075 ) + vSunE * Fex * 0.0088 * sunInfluence;`
       )
       .replace(
         'gl_FragColor = vec4( texColor, 1.0 );',
-        `// Le modèle de Preetham n'a pas de nuit : sous l'horizon, il ne rend
-         // pratiquement rien. On bascule donc sur la palette nocturne fournie,
-         // qui est sombre sans être noire — une nuit noire ne se distingue plus
-         // d'un rendu en panne.
+        `// Le modèle de Preetham n'a pas de nuit : sous l'horizon, on bascule
+         // sur la palette nocturne fournie, sombre sans être noire.
          vec3 night = mix(uNightHorizon, uNightZenith, pow(clamp(direction.y, 0.0, 1.0), 0.45));
 
-         // Lune : un croissant, pas un disque plein — deux cercles en espace
-         // local (technique standard : soustraire un cercle décalé d'un
-         // cercle plein, voir par ex. les rendus de phase lunaire sur
-         // Shadertoy), pas une vraie phase calculée depuis la date. right/up
-         // forment un repère local perpendiculaire à la direction de la
-         // lune, dans lequel direction se projette en coordonnées 2D
-         // exploitables par une SDF — la seule façon d'y dessiner une forme
-         // qui ne soit pas un disque de révolution.
+         // Lune : un croissant (deux cercles en espace local, l'un mordant
+         // l'autre), pas une vraie phase calculée depuis la date. right/up
+         // forment un repère local perpendiculaire à la lune, où direction se
+         // projette en 2D pour une SDF.
          vec3 moonDir = normalize(uMoonDirection);
          vec3 moonUpHint = abs(moonDir.y) > 0.99 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
          vec3 moonRight = normalize(cross(moonUpHint, moonDir));
          vec3 moonUp = cross(moonDir, moonRight);
          vec3 moonRel = direction - moonDir * dot(direction, moonDir);
-         // Rayon angulaire choisi pour se voir sans viser le réalisme (le
-         // vrai fait ~0,25°) — assez gros pour lire un croissant, pas assez
-         // pour dominer le ciel.
+         // Rayon angulaire choisi pour se voir, sans viser le réalisme (le vrai fait ~0,25°).
          vec2 moonLocal = vec2(dot(moonRel, moonRight), dot(moonRel, moonUp)) / 0.02;
          float moonDisc = smoothstep(0.05, -0.05, length(moonLocal) - 1.0);
-         // Le second cercle mord le premier pour ne laisser qu'un croissant :
-         // décalage fixe, pas une vraie phase.
+         // Le second cercle mord le premier pour ne laisser qu'un croissant (décalage fixe, pas une vraie phase).
          float moonBite = smoothstep(-0.05, 0.05, length(moonLocal - vec2(0.6, 0.15)) - 1.05);
          float moonShape = moonDisc * moonBite;
-         // Halo large et faible, sur l'astre entier (pas seulement le
-         // croissant) — une lueur autour d'une lune, pas juste l'astre
-         // lui-même. Affaibli deux fois sur demande : d'abord de moitié, puis
-         // encore, l'astre restant trop lumineux au premier passage.
+         // Halo large et faible sur l'astre entier, affaibli deux fois (trop lumineux au premier passage).
          float moonGlow = pow(clamp(dot(direction, moonDir), 0.0, 1.0), 60.0);
          night += vec3(0.85, 0.9, 1.0) * (moonShape * 0.9 + moonGlow * 0.18);
 
          // Étoiles : un point rond par cellule d'une grille fine, pas la
-         // cellule entière allumée — la première version hachait juste
-         // « cellule au-dessus du seuil = pleine cellule éclairée », ce qui se
-         // voit comme des carrés puisque step() ne dessine aucune forme,
-         // seulement une appartenance. Ici chaque cellule porte un point
-         // décalé aléatoirement en son sein (sans quoi les étoiles
-         // s'aligneraient pile sur la grille) et n'éclaire qu'un petit disque
-         // autour de lui — la technique usuelle pour un semis d'étoiles en
-         // shader. uv (déjà calculée par ce shader, pour un usage que cette
-         // version de three n'exploite pas elle-même) est la projection
-         // équirectangulaire de la direction regardée — indispensable :
-         // hacher directement direction.xz (essayé d'abord) écrase les
-         // cellules près du zénith et les étire en traits, puisque
-         // direction.xz s'effondre vers zéro quand direction.y approche 1
-         // quel que soit l'azimut.
+         // cellule entière allumée par seuil (ça dessinerait des carrés).
+         // uv est la projection équirectangulaire de la direction regardée —
+         // indispensable : direction.xz s'effondre vers zéro près du zénith et étire les cellules en traits.
          vec2 starUv = uv * vec2(900.0, 450.0);
          vec2 starId = floor(starUv);
          vec2 starLocal = fract(starUv) - 0.5;
@@ -370,18 +248,10 @@ export class SceneEnvironment {
          float starPresence = step(0.9935, starSeed);
          float starVeil = 1.0 - cloudCoverage * cloudDensity * 0.85;
          float starMask = smoothstep(0.05, 0.35, direction.y);
-         // Pas de scintillement : une oscillation par étoile sur uTime la
-         // faisait clignoter à chaque image — demande explicite de le
-         // retirer, l'éclat de chaque étoile est donc fixe.
-         night += vec3(starPresence * starPoint * starVeil * starMask);
+         night += vec3(starPresence * starPoint * starVeil * starMask); // éclat fixe, pas de scintillement
 
-         // Étoile filante : un point net en tête, une traînée qui s'amincit
-         // et s'éteint vers la queue — pas une bande de largeur uniforme, qui
-         // se lit comme un rectangle plutôt qu'un trait. Un tirage par
-         // tranche de temps plutôt qu'une horloge fixe, sinon toutes les
-         // nuits filent une étoile à la même seconde. Départ, direction et
-         // instant d'apparition tous tirés du hachage du numéro de tranche —
-         // sans aucune réalité astronomique, juste un éclair bref et rare.
+         // Étoile filante : point net en tête, traînée qui s'amincit vers la
+         // queue (pas une bande uniforme). Tirage par tranche de temps, sans réalité astronomique.
          float meteorSlot = floor(time / 9.0);
          float meteorRoll = hash(vec2(meteorSlot, 4.7));
          float meteorProgress = fract(time / 9.0);
@@ -397,9 +267,7 @@ export class SceneEnvironment {
            float along = clamp(dot(uv - meteorTail, segDir), 0.0, segLen) / segLen;
            vec2 closest = meteorTail + segDir * along * segLen;
            float meteorDist = length(uv - closest);
-           // La largeur et l'intensité décroissent vers la queue (along → 0) :
-           // c'est ce dégradé, pas une largeur fixe, qui donne un trait plutôt
-           // qu'un rectangle.
+           // Largeur et intensité décroissent vers la queue (along → 0).
            float meteorWidth = mix(0.0015, 0.006, along);
            float meteorStreak = smoothstep(meteorWidth, 0.0, meteorDist) * mix(0.15, 1.0, along);
            float meteorFade = smoothstep(0.0, 0.15, t) * smoothstep(1.0, 0.6, t);
@@ -408,9 +276,7 @@ export class SceneEnvironment {
 
          texColor = mix( texColor, night, uNightMix );
 
-         // Raccord au brouillard, appliqué en dernier : de jour comme de nuit,
-         // c'est lui qui garantit que l'horizon et le terrain lointain se
-         // rejoignent au lieu de se découper l'un sur l'autre.
+         // Raccord au brouillard, appliqué en dernier (garantit que l'horizon et le terrain lointain se rejoignent).
          float horizonWeight = uHorizonBlend * (1.0 - smoothstep(0.0, ${HORIZON_BAND.toFixed(2)}, direction.y));
          texColor = mix( texColor, uHorizonColor, horizonWeight );
          gl_FragColor = vec4( texColor, 1.0 );`
@@ -428,37 +294,23 @@ export class SceneEnvironment {
     shadowCamera.top = SHADOW_RADIUS_M;
     shadowCamera.bottom = -SHADOW_RADIUS_M;
     shadowCamera.near = 10;
-    // La boîte doit contenir la lumière **et** tout le relief sous elle : en
-    // montagne, le terrain de la boîte peut varier de plusieurs centaines de
-    // mètres. La profondeur d'une caméra orthographique étant linéaire, une
-    // marge large ne coûte pas de précision.
-    shadowCamera.far = SHADOW_DISTANCE_M * 2;
+    shadowCamera.far = SHADOW_DISTANCE_M * 2; // marge large, sans coût de précision (profondeur orthographique linéaire)
     shadowCamera.updateProjectionMatrix();
 
-    // Le terrain a des mailles de 18 m : un biais constant seul laisserait des
-    // rayures sur les pentes. Le biais porté par la normale décolle l'échantillon
-    // de la surface, ce qui traite les grandes faces obliques sans détacher les
-    // ombres de contact des petits objets.
+    // Biais porté par la normale : décolle l'échantillon des grandes faces obliques sans détacher les ombres de contact.
     this.sun.shadow.bias = -0.0004;
     this.sun.shadow.normalBias = 0.6;
 
     scene.add(this.sun);
     scene.add(this.sun.target);
 
-    // Ambiance hémisphérique généreuse plutôt qu'un second soleil dur : c'est
-    // elle qui porte le ciel bleu réfléchi par le sol et le rebond chaud du
-    // terrain, deux choses qu'une seule directionnelle ne sait pas donner.
+    // Ambiance hémisphérique généreuse plutôt qu'un second soleil dur (porte le ciel réfléchi et le rebond du terrain).
     this.ambient = new THREE.HemisphereLight(0xcfe4ff, 0x4a4433, 1.1);
     scene.add(this.ambient);
 
     this.fog = new THREE.FogExp2(new THREE.Color(palette.fog), this.baseFogDensity);
     scene.fog = this.fog;
-    /**
-     * Le brouillard n'est pas un aplat : sa cible dépend de la direction
-     * regardée et son extinction se calcule par canal. Monté ici, avant la
-     * première image, pour que les matières du décor emportent ses uniforms
-     * quand leur programme sera construit. Voir `aerialFog.js`.
-     */
+    /** Monté avant la première image, pour que les matières du décor emportent ses uniforms. Voir `aerialFog.js`. */
     this.aerialFog = new AerialFog(THREE);
     this._publishAerialFog(
       fogColorFor(hexToLinear(palette.fog), this.weather),
@@ -467,27 +319,12 @@ export class SceneEnvironment {
       0
     );
 
-    /**
-     * La chute d'eau. Montée même sans précipitation : ses tampons sont alloués
-     * une fois pour toutes et ne coûtent rien tant qu'aucune goutte n'est tirée,
-     * alors que la monter au premier orage ferait une saccade au moment précis
-     * où l'on regarde le ciel.
-     */
+    // Montée même sans précipitation : tampons alloués une fois pour toutes, pas de saccade au premier orage.
     this.precipitation = new Precipitation({ THREE, scene });
     this.precipitation.setWeather(this.weather);
 
-    /**
-     * Feuilles et graminées portées par le vent. Même raison de la monter
-     * tout de suite que la pluie : rien n'est alloué au moment où le vent se
-     * lève.
-     */
-    // La teinte de feuillage du thème (`#4a6b34` par défaut) est faite pour
-    // couvrir de grandes surfaces d'arbres, pas pour un point de quelques
-    // pixels sur fond d'herbe ou de ciel : à cette taille elle s'y confondait
-    // et les feuilles devenaient invisibles. Mélangée avec un gris moyen —
-    // 45% en sRGB, soit ~0,17 linéaire, la valeur demandée — plutôt que
-    // remplacée : la teinte reste liée à la palette du thème (elle garde son
-    // dominante verte), seulement assez éclaircie pour se détacher.
+    // Teinte de feuillage du thème mélangée à un gris moyen (45% sRGB) plutôt
+    // que remplacée : la teinte brute se confondait avec le décor à la taille d'un point.
     const DEBRIS_GRAY_LINEAR = 0.1703;
     const lightenedDebrisTint = [
       mix(debrisTint[0], DEBRIS_GRAY_LINEAR, 0.75),
@@ -500,10 +337,8 @@ export class SceneEnvironment {
   }
 
   /**
-   * Change le temps qu'il fait. Idempotent, et sans effet de bord sur la
-   * palette : la météo module ce que la direction artistique a décidé, elle ne
-   * le remplace jamais.
-   *
+   * Change le temps qu'il fait. Sans effet de bord sur la palette : la météo
+   * module ce que la direction artistique a décidé, elle ne le remplace jamais.
    * @param {Object|null} weather Clés à substituer au temps ordinaire.
    */
   setWeather(weather) {
@@ -515,10 +350,8 @@ export class SceneEnvironment {
   }
 
   /**
-   * Fait tomber la pluie et recentre sa boîte. À appeler une fois par image.
-   * Séparé d'`update()` parce que la chute avance en temps réel écoulé, quand
-   * l'heure du ciel peut, elle, être simulée, figée ou accélérée.
-   *
+   * Fait tomber la pluie et recentre sa boîte. Séparé d'`update()` : la chute
+   * avance en temps réel écoulé, l'heure du ciel peut être simulée ou figée.
    * @param {number} delta Secondes écoulées.
    * @param {{x:number,y:number,z:number}} at Position de l'observateur.
    */
@@ -571,15 +404,11 @@ export class SceneEnvironment {
    * Applique l'ambiance : palette de l'application + soleil réel.
    *
    * @param {Object} options
-   * @param {SkyPalette} [options.palette] Palette d'ambiance. Omise, la
-   *        dernière reçue est reconduite : une application dont la DA ne change
-   *        pas n'a rien à repasser à chaque image.
+   * @param {SkyPalette} [options.palette] Palette d'ambiance. Omise, la dernière reçue est reconduite.
    * @param {Date}   options.date Heure à simuler.
    * @param {number} options.lat
    * @param {number} options.lng
-   * @param {Object} [options.weather] Change le temps qu'il fait en vol. Omis,
-   *        le dernier reçu est reconduit — une application dont la météo ne
-   *        bouge pas n'a rien à repasser à chaque image.
+   * @param {Object} [options.weather] Change le temps qu'il fait en vol. Omis, le dernier reçu est reconduit.
    */
   update({ palette, date, lat, lng, weather = undefined }) {
     if (palette) this.palette = palette;
@@ -588,30 +417,18 @@ export class SceneEnvironment {
     const dir = sunDirection(date, lat, lng);
     this._sunDir = dir;
 
-    // Calculée avant la couleur de brouillard, précisément parce qu'elle doit
-    // la corriger : sans quoi la voûte bascule sur sa palette nocturne pendant
-    // que l'horizon — brouillard, fond du renderer, raccord du ciel, qui
-    // lisent tous la même couleur — reste éclairé de jour. Bien avant que le
-    // soleil soit très bas, sinon le ciel resterait noir pendant tout le
-    // crépuscule.
+    // Calculée avant la couleur de brouillard, pour la corriger (sinon la
+    // voûte bascule sur sa palette nocturne pendant que l'horizon reste
+    // éclairé de jour). Bien avant que le soleil soit très bas, sinon le ciel resterait noir au crépuscule.
     const nightMix = smoothstep(0.06, -0.12, dir.y);
     this.nightMix = nightMix;
     this.uniforms.uNightMix.value = nightMix;
-    // À l'opposé du soleil — voir l'en-tête du fichier sur ce que « lune »
-    // veut dire ici.
     this.uniforms.uMoonDirection.value.set(-dir.x, -dir.y, -dir.z);
 
-    // La palette dit de quelle couleur est l'air de ce monde, la météo à quel
-    // point il est gris, et `nightMix` s'il fait encore jour. Le brouillard, le
-    // fond du renderer et le raccord d'horizon du ciel lisent tous les trois
-    // **cette** couleur corrigée : elle ne peut donc pas diverger d'une surface
-    // à l'autre.
     const nightZenith = hexToLinear(this.palette.nightZenith);
     const nightHorizon = hexToLinear(this.palette.nightHorizon);
     const dayFogColor = fogColorFor(hexToLinear(this.palette.fog), this.weather);
-    // C'est nightHorizon, pas nightZenith, qui doit s'y rejoindre : le
-    // brouillard occupe la bande basse du ciel, là où la voûte nocturne
-    // converge elle-même vers sa couleur d'horizon (voir le raccord plus bas).
+    // nightHorizon, pas nightZenith : le brouillard occupe la bande basse du ciel.
     const fogColor = [
       mix(dayFogColor[0], nightHorizon[0], nightMix),
       mix(dayFogColor[1], nightHorizon[1], nightMix),
@@ -624,8 +441,7 @@ export class SceneEnvironment {
     this.uniforms.uNightZenith.value.setRGB(nightZenith[0], nightZenith[1], nightZenith[2]);
     this.uniforms.uNightHorizon.value.setRGB(nightHorizon[0], nightHorizon[1], nightHorizon[2]);
 
-    // Le modèle lit la **position** du soleil, pas seulement sa direction : son
-    // altitude sert au calcul du fondu diurne.
+    // Le modèle lit la position du soleil, pas seulement sa direction.
     this._sunPosition.set(dir.x, dir.y, dir.z).multiplyScalar(SUN_DISTANCE);
     this.uniforms.sunPosition.value.copy(this._sunPosition);
 
@@ -637,24 +453,14 @@ export class SceneEnvironment {
     this.uniforms.cloudCoverage.value = this.weather.cloudCover;
     this.uniforms.cloudDensity.value = this.weather.cloudDensity;
 
-    // Les nuages dérivent en fonction du temps **en jeu** — un replay accéléré
-    // les fait filer —, mais compté depuis le montage de la scène. Une date
-    // epoch passée telle quelle vaut 1,8 milliard : le shader travaille en
-    // float32, où un tel nombre n'a plus aucune décimale utile, et le bruit des
-    // nuages s'effondrait en une valeur constante.
+    // Temps compté depuis le montage de la scène : une date epoch brute (1,8
+    // milliard) détruirait la précision du bruit des nuages en float32.
     const seconds = date.getTime() / 1000;
     if (this._timeOrigin == null) this._timeOrigin = seconds;
     this.uniforms.time.value = seconds - this._timeOrigin;
 
-    // `nightMix` (calculé plus haut, avant le brouillard) est publiée : c'est
-    // elle qui allume les fenêtres, les lampadaires et les feux du vélo. Une
-    // seule mesure de la nuit pour toute la scène, sinon le ciel et
-    // l'éclairage basculeraient à des moments différents.
-
-    // Soleil rasant : l'ombre d'un arbre dépasse la boîte et se coupe net, ce
-    // qui se voit bien plus que son absence. Sous l'horizon, il n'y a rien à
-    // projeter du tout. Sous un ciel entièrement bouché non plus : il n'y a
-    // plus de disque solaire pour dessiner un contour net.
+    // Soleil rasant : l'ombre d'un arbre dépasserait la boîte et se coupe net.
+    // Ciel entièrement bouché : plus de disque solaire pour un contour net.
     this.sun.castShadow = dir.y > SHADOW_MIN_SUN_Y && castsShadow(this.weather);
 
     const light = weatherLighting(lightingFor(dir.y), this.weather);
@@ -663,33 +469,18 @@ export class SceneEnvironment {
     this.sun.intensity = light.sun;
     this.ambient.intensity = light.ambient;
 
-    // La perspective aérienne lit **la couleur de jour**, pas la couleur déjà
-    // mélangée à la nuit : c'est elle qui porte la teinte de l'air, et la part
-    // de nuit est appliquée ensuite, sur chaque couleur dérivée, exactement
-    // comme la voûte le fait de son côté.
+    // La perspective aérienne lit la couleur de jour, pas déjà mélangée à la
+    // nuit : la part de nuit est appliquée ensuite, comme le fait la voûte.
     this._publishAerialFog(dayFogColor, [r, g, b], dir, nightMix);
 
-    // L'ombre s'efface **en opacité** avant de s'éteindre en tout ou rien : sans
-    // ça, le passage d'un nuage ferait disparaître d'un coup toutes les ombres
-    // de la scène. `shadow.intensity` existe depuis three r165 ; on ne s'y fie
-    // pas aveuglément, le `peerDependency` n'en garantit pas le détail.
+    // L'ombre s'efface en opacité avant de s'éteindre en tout ou rien (sinon un nuage ferait tout disparaître d'un coup).
     if (this.sun.shadow && 'intensity' in this.sun.shadow) {
       this.sun.shadow.intensity = light.shadow;
     }
 
-    // La pluie prend la couleur de la lumière qui la traverse : grise sous
-    // l'orage, presque éteinte de nuit. Le brouillard est la meilleure mesure
-    // disponible de cette lumière de jour — c'est déjà lui qui donne le fond de
-    // l'image — mais il ne sait rien de la nuit : la palette de brouillard ne
-    // s'assombrit pas au coucher, c'est le ciel qui bascule sur sa palette
-    // nocturne. Sans le second facteur, une averse de minuit tombait en blanc
-    // vif sur une scène noire.
-    //
-    // `RAIN_GREY_LINEAR` est un plancher, pas une teinte fixe : par ciel clair,
-    // le brouillard éclairci reste au-dessus et le porte. C'est justement sous
-    // l'averse — un ciel bouché qui assombrit le brouillard dont ce ton part —
-    // que le plancher joue, pour que la pluie ne se confonde jamais avec une
-    // chaussée mouillée, plus sombre encore.
+    // La pluie prend la couleur de la lumière qui la traverse, avec un second
+    // facteur pour la nuit (le brouillard ne s'assombrit pas seul au coucher).
+    // `RAIN_GREY_LINEAR` est un plancher, pas une teinte fixe.
     const glow = 1 - this.nightMix * 0.72;
     this.precipitation.setTint({
       r: Math.max(RAIN_GREY_LINEAR[0], Math.min(1, fogColor[0] + 0.18)) * glow,
@@ -697,9 +488,7 @@ export class SceneEnvironment {
       b: Math.max(RAIN_GREY_LINEAR[2], Math.min(1, fogColor[2] + 0.2)) * glow,
     });
 
-    // Même assombrissement nocturne, mais sans le rapprochement vers la
-    // couleur du brouillard : une feuille n'est pas de l'eau, sa teinte reste
-    // celle du feuillage du thème, seulement plus sombre la nuit.
+    // Même assombrissement nocturne, sans le rapprochement vers le brouillard (une feuille n'est pas de l'eau).
     this.debris.setTint({
       r: this._debrisBaseTint[0] * glow,
       g: this._debrisBaseTint[1] * glow,
@@ -711,14 +500,9 @@ export class SceneEnvironment {
 
   /**
    * Repasse à la perspective aérienne les trois couleurs qu'elle ne sait pas
-   * dériver seule : l'air vers le haut, l'air dans l'axe du soleil, et la part
-   * de nuit qui les éteint tous les deux.
-   *
-   * Vers le haut, la nuit vise `nightZenith` — pas `nightHorizon`, qui est déjà
-   * la couleur d'horizon du brouillard. Les deux extrémités du dégradé de
-   * brouillard sont donc exactement celles de la voûte nocturne : c'est la même
-   * règle qu'au raccord d'horizon, appliquée à la seconde dimension que ce
-   * brouillard vient de gagner.
+   * dériver seule : l'air vers le haut, l'air dans l'axe du soleil, la part
+   * de nuit. Vers le haut, la nuit vise `nightZenith`, pas `nightHorizon`
+   * (déjà la couleur d'horizon du brouillard).
    *
    * @param {[number,number,number]} dayFog Couleur d'horizon de jour, linéaire.
    * @param {[number,number,number]} sunRgb Couleur de la lumière directe, linéaire.

@@ -1,21 +1,11 @@
 /*
  * theme — un thème complet à partir de ce qu'on donne.
- * -----------------------------------------------------
- * Une seule fonction, et une seule règle : **la surcharge se fait par tranche
- * entière**. Passer `{ towns: [...] }` remplace les palettes de bourg et ne
- * touche à rien d'autre ; passer `{ windows: { litShare: 0.6 } }` remplace
- * *toute* la tranche des fenêtres, et les quatre autres valeurs disparaissent.
  *
- * C'est volontaire. Une fusion profonde a l'air commode et coûte cher : elle
- * rend impossible de *retirer* une valeur, elle se comporte différemment sur
- * les tableaux et sur les objets, et elle transforme la lecture d'un thème en
- * enquête. La façon d'en changer une seule est déjà écrite en JavaScript :
- *
+ * La surcharge se fait par tranche entière (pas de fusion profonde) :
+ * `{ windows: { litShare: 0.6 } }` remplace toute la tranche `windows`, pas
+ * seulement `litShare`. Pour n'en changer qu'une valeur :
  *   resolveTheme({ windows: { ...defaultTheme.windows, litShare: 0.6 } })
- *
- * Le résultat est gelé. Un thème partagé par une dizaine de couches qu'une
- * seule d'entre elles pourrait modifier serait une source de bogues qu'on ne
- * reproduit jamais.
+ * Le résultat est gelé.
  */
 
 import { defaultTheme } from './default.js';
@@ -28,9 +18,7 @@ export function resolveTheme(theme = null) {
   if (!theme) return defaultTheme;
   const unknown = Object.keys(theme).filter((k) => !(k in defaultTheme));
   if (unknown.length) {
-    // Une tranche inconnue est presque toujours une faute de frappe, et elle
-    // serait autrement parfaitement silencieuse : le décor sortirait avec la
-    // direction artistique par défaut, sans que rien ne le signale.
+    // Sinon une faute de frappe passerait silencieusement au thème par défaut.
     throw new Error(`resolveTheme: tranche inconnue — ${unknown.join(', ')}`);
   }
   return Object.freeze({ ...defaultTheme, ...theme });

@@ -1,48 +1,22 @@
 /*
- * roofGeometry — donner un toit à une empreinte.
- * -----------------------------------------------
- * Le bâti était **cubique** : les murs montaient jusqu'à `render_height` et la
- * triangulation de l'empreinte fermait le dessus, à plat. C'est ce que fait
- * n'importe quel rendu 3D de tuiles vectorielles, et c'est exactement ce qui
- * fait qu'un village y ressemble à un tas de boîtes — la silhouette d'un toit,
- * son ombre portée, son arête faîtière sont ce qu'on reconnaît d'un village de
- * loin, bien avant sa couleur.
+ * roofGeometry — donner un toit à une empreinte OSM quelconque (pas d'axe ni
+ * de pans définis). Plutôt qu'un vrai « straight skeleton » — cher et instable
+ * sur les empreintes dégénérées — on construit le toit sur le rectangle
+ * englobant orienté de l'empreinte (`orientedBox`). Ça déborde dans l'angle
+ * rentrant d'une empreinte en L, accepté car le bâti rural est presque
+ * toujours rectangulaire ; les empreintes trop mal remplies (`fill < 0.62`)
+ * retombent sur le toit plat.
  *
- * ## Le problème
- *
- * Une empreinte OSM est un polygone quelconque : elle n'a ni axe, ni côtés
- * privilégiés, ni découpage en pans. Poser un vrai toit dessus — un « straight
- * skeleton », l'algorithme qui donne les vraies arêtes d'un comble — coûte cher
- * et échoue sur les empreintes dégénérées, qui sont légion.
- *
- * ## Ce qu'on fait à la place
- *
- * On calcule le **rectangle englobant orienté** de l'empreinte (`orientedBox`),
- * qui donne ce qui manque : une direction de faîtage et deux dimensions. Le toit
- * est ensuite construit sur ce rectangle, pas sur l'empreinte.
- *
- * L'approximation se voit dans un seul cas — une empreinte en L, dont le toit
- * dépasse dans l'angle rentrant. Elle est acceptée pour deux raisons : la
- * grande majorité du bâti rural est sensiblement rectangulaire, et un débord de
- * toit dans un angle est infiniment moins visible qu'un village entier à toits
- * plats. Les empreintes trop mal remplies (`fill < 0.62`) retombent d'ailleurs
- * sur le toit plat, qui ne ment jamais.
- *
- * Toutes les fonctions sont pures et rendent des sommets en mètres locaux.
+ * Fonctions pures, sommets en mètres locaux.
  */
 
 import { defaultTheme } from '../themes/default.js';
 
 /**
- * Rectangle englobant orienté d'un anneau, par rotation d'appui.
- *
- * On essaie chaque côté du polygone comme direction candidate et on garde celle
- * qui minimise l'aire — c'est le théorème classique : le rectangle englobant
- * minimal partage forcément un côté avec l'enveloppe convexe. On travaille ici
- * sur l'anneau brut plutôt que sur son enveloppe, ce qui est très légèrement
- * sous-optimal et bien plus court.
- *
- * Fonction pure.
+ * Rectangle englobant orienté d'un anneau, par rotation d'appui : chaque côté
+ * du polygone est essayé comme direction candidate, on garde celle qui
+ * minimise l'aire (approximation sur l'anneau brut plutôt que son enveloppe
+ * convexe).
  *
  * @param {Array<{x:number, z:number}>} ring
  * @returns {{cx:number, cz:number, angle:number, long:number, short:number,
@@ -89,8 +63,7 @@ export function orientedBox(ring) {
   const spanU = maxU - minU;
   const spanV = maxV - minV;
 
-  // Le grand côté porte le faîtage : c'est dans ce sens qu'une maison est
-  // couverte, jamais en travers.
+  // Le grand côté porte le faîtage.
   const alongU = spanU >= spanV;
   const angle = alongU ? Math.atan2(uz, ux) : Math.atan2(ux, -uz);
 
@@ -119,11 +92,8 @@ export function roofRise(short, roofs = defaultTheme.roofs) {
 }
 
 /**
- * Triangles d'un toit posé sur un rectangle orienté.
- *
- * Rend une liste plate de sommets `[x, y, z]` groupés par trois, prête à être
- * poussée dans un tampon — avec leur normale, parce qu'un pan de toit incliné
- * mal éclairé est le défaut qu'on voit en premier.
+ * Triangles d'un toit posé sur un rectangle orienté. Rend une liste plate de
+ * sommets `[x, y, z]` groupés par trois avec leurs normales.
  *
  * @param {Object} box    Résultat d'`orientedBox`.
  * @param {number} eaves  Altitude de l'égout (le haut des murs).
@@ -145,8 +115,7 @@ export function roofTriangles(box, eaves, shape, roofs = defaultTheme.roofs) {
   const at = (u, v, y) => [box.cx + u * cos - v * sin, y, box.cz + u * sin + v * cos];
 
   const top = eaves + rise;
-  // Longueur du faîtage : pleine pour une faîtière, raccourcie pour une croupe,
-  // nulle pour une pyramide.
+  // Faîtage : plein pour une faîtière, raccourci pour une croupe, nul pour une pyramide.
   const ridge = shape === 'pyramid' ? 0 : shape === 'hip' ? Math.max(0, long - short) : long;
 
   const eaveA = at(-long, -short, eaves);
@@ -156,10 +125,7 @@ export function roofTriangles(box, eaves, shape, roofs = defaultTheme.roofs) {
   const ridgeA = at(-ridge, 0, top);
   const ridgeB = at(ridge, 0, top);
 
-  // Enroulement : chaque face est parcourue de façon que sa normale sorte du
-  // comble. C'est la seule chose vraiment délicate ici — un pan de toit
-  // retourné n'a pas l'air troué, il a l'air *plat*, ce qui est bien pire parce
-  // qu'on ne cherche pas la cause au bon endroit.
+  // Enroulement choisi pour que chaque normale sorte du comble.
   const push = (a, b, c) => {
     const ux = b[0] - a[0];
     const uy = b[1] - a[1];
@@ -171,8 +137,7 @@ export function roofTriangles(box, eaves, shape, roofs = defaultTheme.roofs) {
     let ny = uz * vx - ux * vz;
     let nz = ux * vy - uy * vx;
     const length = Math.hypot(nx, ny, nz);
-    // Triangle dégénéré : c'est le cas des deux moitiés de faîtage d'une
-    // pyramide, dont le faîtage est réduit à un point.
+    // Triangle dégénéré (pyramide : faîtage réduit à un point).
     if (length < 1e-9) return;
     nx /= length;
     ny /= length;
@@ -187,8 +152,7 @@ export function roofTriangles(box, eaves, shape, roofs = defaultTheme.roofs) {
     push(a, c, d);
   };
 
-  // Les deux longs pans, puis les deux bouts — pignons verticaux sur une
-  // faîtière, croupes inclinées dès que le faîtage est raccourci.
+  // Les deux longs pans, puis les deux bouts (pignons ou croupes).
   quad(eaveA, ridgeA, ridgeB, eaveB);
   quad(eaveD, eaveC, ridgeB, ridgeA);
   push(eaveA, eaveD, ridgeA);

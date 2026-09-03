@@ -1,24 +1,13 @@
 /*
- * buildingLayer — le bâti, extrudé depuis les tuiles vectorielles.
- * ------------------------------------------------------------------
- * Traverser un village qui n'existe qu'en photo était le manque le plus
- * visible.
+ * buildingLayer — le bâti, extrudé depuis les tuiles vectorielles. Les
+ * empreintes viennent de la couche `building`, chargées pour la bulle (pas
+ * une carte 2D voisine) : la portée du décor ne dépend que du décor.
  *
- * Les empreintes viennent de la couche `building` des tuiles vectorielles,
- * chargées par `vectorTileSource` **pour la bulle** — et non par interrogation
- * d'une carte 2D voisine, qui ne rendrait que ce que sa propre fenêtre a
- * chargé. La portée du décor ne dépend ainsi que du décor.
- *
- * ## La fonction du bâtiment
- *
- * La couche `building` ne porte que des hauteurs : ni matériau, ni forme de
- * toit, ni fonction. La fonction vient donc d'ailleurs — de la couche `poi`,
- * dont chaque point désigne un bâtiment existant. Elle n'ajoute jamais de
- * volume **à côté** de l'empreinte : elle transforme celle qui contient le
- * point (couleur, forme de toit, devanture) et lui greffe au besoin un clocher
- * ou un minaret. Voir `buildingPersonalityFor` pour le classement,
- * `sortPersonalities` pour la raison du tri, et `theme.personalities` pour ce
- * que chaque fonction donne à voir.
+ * La couche `building` ne porte que des hauteurs, pas la fonction : elle
+ * vient de la couche `poi`. Un point d'intérêt ne pose jamais de volume à
+ * côté de l'empreinte : il transforme celle qui le contient (couleur, forme
+ * de toit, devanture) et lui greffe au besoin un clocher ou un minaret. Voir
+ * `buildingPersonalityFor`, `sortPersonalities`, `theme.personalities`.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
@@ -35,35 +24,13 @@ export const BUILDING_SOURCE_LAYER = 'building';
 /** Couche vectorielle des points d'intérêt — voir `buildingPersonalityFor`. */
 export const BUILDING_POI_SOURCE_LAYER = 'poi';
 
-/**
- * Points d'intérêt classés retenus par reconstruction.
- *
- * Le plafond ne protège pas le rendu mais le temps de reconstruction : chaque
- * empreinte relit la liste entière. Il ne se voit que là où la donnée est
- * dense — au centre de Lyon, les neuf tuiles de la bulle portent plus de huit
- * mille points classés, presque tous des commerces. C'est précisément pour ces
- * endroits-là que `sortPersonalities` existe : le plafond doit tomber sur le
- * commerce du bout de la bulle, jamais sur l'église d'à côté.
- */
+/** Points d'intérêt classés retenus par reconstruction — protège le temps de reconstruction, pas le rendu (voir `sortPersonalities`). */
 export const BUILDING_POI_MAX_COUNT = 600;
 
-/**
- * Sous-classes `poi` qui font d'un bâtiment une grande surface.
- *
- * `department_store` est rangé sous `grocery` et `mall` sous `shop` : ce sont
- * deux classes différentes pour la même silhouette — une boîte en bardage au
- * milieu d'un parking.
- */
+/** Sous-classes `poi` qui font d'un bâtiment une grande surface (deux classes différentes pour la même silhouette). */
 const RETAIL_SUBCLASSES = new Set(['mall', 'department_store', 'supermarket']);
 
-/**
- * Classes `poi` qui posent une devanture au rez-de-chaussée.
- *
- * Le critère n'est pas « commerce » au sens du cadastre mais **façade sur
- * rue** : ce qui, au rez-de-chaussée d'un immeuble ordinaire, remplace le mur
- * par une vitrine et une enseigne. Un cabinet médical, un bureau ou une
- * bibliothèque n'en ont pas ; un café, une banque et un coiffeur en ont une.
- */
+/** Classes `poi` qui posent une devanture au rez-de-chaussée (critère : façade sur rue, pas « commerce » au sens cadastral). */
 const SHOPFRONT_CLASSES = new Set([
   'alcohol_shop',
   'bank',
@@ -87,47 +54,14 @@ const SHOPFRONT_CLASSES = new Set([
 
 /**
  * Ce qu'un point d'intérêt fait du bâtiment qui le contient, ou `null`.
+ * Transforme le bâtiment qui existe déjà à cet endroit (couleur, toit,
+ * devanture) plutôt que de poser un modèle séparé à côté, que l'empreinte
+ * réelle finirait presque toujours par recouvrir.
  *
- * ## Pourquoi ici, et pas un objet posé par-dessus
- *
- * Un point d'intérêt désigne un vrai bâtiment ; poser un modèle séparé à ses
- * coordonnées revient à planter un décor **à côté** de ce bâtiment, que
- * l'empreinte réelle — plus grande, plus haute, ou juste mal centrée — finit
- * presque toujours par recouvrir. La bonne réponse est de donner au bâtiment
- * **qui existe déjà à cet endroit** une silhouette différente, pas d'en
- * ajouter un autre : c'est ce que fait `_appendBuilding`, qui lit ce classement
- * pour choisir la couleur, la forme du toit, la devanture, et — pour un lieu de
- * culte — un volume ajouté à la vraie empreinte plutôt qu'à côté.
- *
- * ## Le schéma, cette fois relevé et non supposé
- *
- * La version précédente cherchait la boulangerie sous `class: 'shop'` +
- * `subclass: 'bakery'`, et le grand magasin sous `class: 'shop'` : aucune des
- * deux n'existe, donc aucune des deux ne s'est jamais déclenchée. Les valeurs
- * ci-dessous sont **relevées** sur les tuiles réellement servies (OpenFreeMap,
- * schéma OpenMapTiles, z14), sur trois villes et un canton rural :
- *
- *     place_of_worship | christian, muslim, jewish
- *     hospital         | hospital, clinic
- *     bakery           | bakery
- *     grocery          | supermarket, department_store, deli, greengrocer…
- *     shop             | mall, clothes, optician… (une cinquantaine)
- *
- * Autrement dit `class` **est déjà** l'agrégat : la boulangerie y a sa propre
- * classe, le grand magasin est rangé sous l'épicerie, et `subclass` ne sert
- * qu'à distinguer la religion et la grande surface.
- *
- * Neuf points classés sur dix tombent dans une empreinte de la couche
- * `building`, relevé sur les mêmes tuiles. Le dixième est posé au centre d'une
- * parcelle, ou désigne un bâtiment absent de la donnée : il n'y a rien à
- * rattraper là, un bâtiment sans personnalité reste un bâtiment.
- *
- * Château, monument, tour, moulin, château d'eau, cheminée d'usine, grande
- * roue et stade restent du mobilier posé à part (`furnitureLayer`) : ce sont
- * de grandes structures visibles de loin, pas des bâtiments qu'une empreinte
- * ordinaire recouvrirait.
- *
- * Fonction pure.
+ * `class` est déjà l'agrégat relevé sur les tuiles réellement servies
+ * (OpenFreeMap, OpenMapTiles z14) : `subclass` ne sert qu'à distinguer la
+ * religion et la grande surface. Château, monument, tour, moulin, cheminée
+ * d'usine et stade restent du mobilier posé à part (`furnitureLayer`).
  */
 export function buildingPersonalityFor(properties = {}) {
   const klass = properties.class;
@@ -140,13 +74,7 @@ export function buildingPersonalityFor(properties = {}) {
   return null;
 }
 
-/**
- * Rang d'une personnalité quand il faut en écarter — petit d'abord.
- *
- * Un clocher se voit d'un kilomètre et il y en a un par village ; une devanture
- * se voit de la rue et il y en a deux mille par ville. Les traiter dans le même
- * ordre, c'est laisser les secondes manger le budget des premiers.
- */
+/** Rang d'une personnalité quand il faut en écarter, petit d'abord (un clocher se voit de loin, une devanture se compte par milliers). */
 export const BUILDING_PERSONALITY_RANK = {
   mosque: 0,
   church: 0,
@@ -158,15 +86,9 @@ export const BUILDING_PERSONALITY_RANK = {
 
 /**
  * Trie les points d'intérêt classés et coupe au plafond : par rang d'abord,
- * par distance à l'observateur ensuite.
+ * par distance ensuite (le pendant du tri des empreintes, `BUILDING_MAX_COUNT`).
  *
- * C'est le pendant exact du tri des empreintes (voir `BUILDING_MAX_COUNT`), et
- * il manquait : les points étaient coupés **dans l'ordre des tuiles**, donc le
- * budget partait entier dans le coin nord-ouest de la bulle. En ville, il était
- * épuisé par les commerces de la première tuile avant d'avoir vu une seule
- * église — la fonctionnalité ne se déclenchait nulle part où l'on regardait.
- *
- * Fonction pure ; `list` n'est pas modifiée.
+ * `list` n'est pas modifiée.
  *
  * @param {Array<{kind:string, distance:number}>} list
  * @param {number} [limit]
@@ -182,14 +104,9 @@ export function sortPersonalities(list, limit = BUILDING_POI_MAX_COUNT) {
 }
 
 /**
- * Habillage d'une personnalité, en couleurs **linéaires**, ou `null`.
- *
- * Les couleurs viennent du thème (`theme.personalities`) et non du nuancier du
- * mobilier : une devanture de boulangerie n'a rien à voir avec le bois d'un
- * banc, et les faire partager une valeur les ferait bouger ensemble.
- *
- * Mémorisé sur la tranche de thème elle-même, comme `townStyle` le fait pour
- * les palettes : la conversion coûte peu mais elle est appelée par bâtiment.
+ * Habillage d'une personnalité, en couleurs linéaires, ou `null`. Vient du
+ * thème (`theme.personalities`), pas du nuancier du mobilier. Mémorisé sur
+ * la tranche de thème, comme `townStyle` pour les palettes.
  */
 const LINEAR_PERSONALITIES = new WeakMap();
 
@@ -214,11 +131,7 @@ export function personalityLookFor(kind, personalities = defaultTheme.personalit
   return table[kind] || null;
 }
 
-/**
- * Rayon autour de l'observateur au-delà duquel on ignore un bâtiment, en mètres.
- * La bulle porte à ~2 km ; au-delà de ce rayon, le brouillard a déjà fondu le
- * décor dans l'horizon.
- */
+/** Rayon autour de l'observateur au-delà duquel on ignore un bâtiment, en mètres (le brouillard a déjà fondu le décor dans l'horizon). */
 export const BUILDING_RADIUS_M = 1500;
 /** Déplacement de l'observateur avant reconstruction, en mètres. */
 export const BUILDING_REBUILD_M = 200;
@@ -228,51 +141,19 @@ export const BUILDING_DEFAULT_HEIGHT = 7;
 export const BUILDING_LEVEL_HEIGHT = 3.2;
 /** Plafond de sécurité : au-delà, la donnée est suspecte. */
 export const BUILDING_MAX_HEIGHT = 120;
-/**
- * Nombre maximal de bâtiments retenus par reconstruction.
- *
- * Le plafond ne protège pas le rendu — quinze cents empreintes font quelques
- * dizaines de milliers de sommets, ce qui n'est rien — mais le temps de
- * reconstruction. Il s'applique **après tri par distance** : appliqué dans
- * l'ordre d'arrivée, c'est-à-dire dans l'ordre des tuiles, il dépensait tout le
- * budget sur le coin nord-ouest de la bulle et laissait un trou juste à côté
- * de l'observateur.
- */
+/** Nombre maximal de bâtiments retenus par reconstruction (protège le temps de reconstruction, appliqué après tri par distance). */
 export const BUILDING_MAX_COUNT = 1500;
 
-/**
- * Fenêtres allumées : portée, et plafond de panneaux.
- *
- * Une nuit sans fenêtre allumée est le moment où le décor cesse d'être crédible :
- * on traverse un village entier de blocs éteints. C'est aussi le seul éclairage
- * qui ne coûte rien — pas de lumière, pas d'ombre, juste des panneaux émissifs
- * qu'on n'allume que la nuit.
- *
- * La portée est bien plus courte que celle du bâti : à cinq cents mètres, une
- * fenêtre fait un quart de pixel, et il en faudrait des dizaines de milliers
- * pour couvrir toute la bulle.
- */
+/** Fenêtres allumées : portée, et plafond de panneaux émissifs (le seul éclairage qui ne coûte rien : pas de lumière, pas d'ombre). */
 export const WINDOW_RADIUS_M = 420;
 export const WINDOW_MAX_COUNT = 2600;
 
 /**
- * Fenêtres **de jour** : portée, et plafond de baies.
- *
- * Elles sont une couche différente de celles de la nuit, et il faut le dire,
- * parce que ça ne se devine pas : la nuit, une fenêtre est une *lumière*, donc
- * un panneau additif, donc seulement celles qui sont allumées existent. Le
- * jour, une fenêtre est un *trou sombre* dans le mur — et elles existent
- * toutes. Un village de jour dont les murs sont lisses du sol à la gouttière
- * n'est pas un village, c'est un empilement de cartons, et c'était exactement
- * ce qu'on voyait.
- *
- * Ces baies-là vont donc dans la géométrie **opaque** du bâti, avec le mur
- * qu'elles percent : elles sont éclairées par le soleil comme lui, elles
- * s'assombrissent avec lui, et elles ne coûtent pas un appel de dessin de plus.
- *
- * La portée est plus courte que celle des fenêtres allumées : de jour, une baie
- * n'est qu'un contraste, et un contraste d'un demi-pixel n'est rien — là où une
- * fenêtre allumée dans la nuit se voit de loin.
+ * Fenêtres de jour : portée, et plafond de baies. Couche différente de
+ * celles de la nuit (une lumière, un panneau additif) : de jour une fenêtre
+ * est un trou sombre dans le mur, et elles existent toutes. Vont dans la
+ * géométrie opaque du bâti (éclairées par le soleil comme le mur, sans appel
+ * de dessin de plus). Portée plus courte que la nuit : un contraste de jour compte moins qu'une lumière.
  */
 export const PANE_RADIUS_M = 300;
 export const PANE_MAX_COUNT = 4200;
@@ -280,60 +161,26 @@ export const PANE_MAX_COUNT = 4200;
 /** Débord de l'encadrement autour de la baie, en mètres. */
 export const WINDOW_FRAME_M = 0.08;
 
-/**
- * Le vitrage vu de dehors, de jour.
- *
- * Une vitre n'est pas noire et n'est pas uniforme : elle est sombre en bas, où
- * elle ne renvoie que l'intérieur de la pièce, et claire en haut, où elle
- * renvoie le ciel. Ce dégradé-là ne coûte rien — deux couleurs de sommet sur le
- * même quadrilatère — et c'est lui qui fait qu'une baie se lit comme du verre
- * plutôt que comme un rectangle de peinture.
- */
+/** Le vitrage vu de dehors, de jour : sombre en bas (intérieur), clair en haut (reflet du ciel), en dégradé de sommets. */
 export const GLASS_DEEP = srgb('#39424c');
 export const GLASS_SKY = srgb('#7f8d99');
 /** L'encadrement : toujours plus clair que le mur, quel que soit le mur. */
 export const WINDOW_FRAME_HEX = '#f2eee4';
 export const WINDOW_FRAME_TINT = srgb(WINDOW_FRAME_HEX);
-/**
- * Encre de l'enseigne peinte (`appendShopfront`) : le même ton que
- * l'encadrement des fenêtres, en CSS plutôt qu'en linéaire — c'est
- * `LabelAtlas` qui peint, au format que `CanvasRenderingContext2D` attend, et
- * `texture.colorSpace` qui reconvertit au moment de l'échantillonnage.
- */
+/** Encre de l'enseigne peinte (`appendShopfront`), même ton que l'encadrement, en CSS (c'est `LabelAtlas` qui peint). */
 export const SHOPFRONT_LABEL_INK = WINDOW_FRAME_HEX;
 
 /**
- * Volets : largeur d'un battant en part de la baie, et part de fenêtres closes.
- *
- * Un battant ouvert vaut la moitié de la baie — c'est ce qu'il faut pour la
- * couvrir une fois refermé, et c'est ce qui donne au groupe « volet, fenêtre,
- * volet » sa proportion reconnaissable.
- *
- * Quelques fenêtres sont **fermées**, et elles comptent double : ce sont elles
- * qui donnent l'heure et la saison à une façade. Elles ne s'allument évidemment
- * pas la nuit.
+ * Volets : largeur d'un battant en part de la baie (moitié, pour couvrir la
+ * baie une fois refermé), et part de fenêtres closes (comptent double, elles
+ * donnent l'heure et la saison à une façade, ne s'allument pas la nuit).
  */
 export const SHUTTER_WIDTH_RATIO = 0.5;
 export const SHUTTER_CLOSED_SHARE = 0.14;
-/**
- * Décollement du mur : encadrement, vitrage, volets. En mètres.
- *
- * Les trois plans sont espacés de trois à quatre centimètres, ce qui est plus
- * que ce qu'il faudrait pour l'œil et exactement ce qu'il faut pour le tampon
- * de profondeur : à trois cents mètres — la portée des baies — sa résolution
- * est de l'ordre du centimètre, et deux plans plus rapprochés que ça se
- * disputeraient le pixel. Les cotes restent plausibles : un volet **est** en
- * saillie sur une façade.
- */
+/** Décollement du mur (encadrement, vitrage, volets), en mètres — assez pour ne pas disputer le pixel du tampon de profondeur à 300 m. */
 export const WINDOW_LIFT_M = { frame: 0.04, glass: 0.075, shutter: 0.11 };
 
-/**
- * Soubassement : hauteur de la plinthe, et sa part de la couleur du mur.
- *
- * Une vraie bande, avec une arête horizontale nette à sa cote — une arête ne
- * s'obtient pas en interpolant deux couleurs, elle s'obtient en posant deux
- * quadrilatères.
- */
+/** Soubassement : hauteur de la plinthe, et sa part de la couleur du mur (arête nette, posée en deux quadrilatères, pas interpolée). */
 export const PLINTH_HEIGHT_M = 0.62;
 export const PLINTH_SHADE = 0.72;
 
@@ -346,11 +193,9 @@ export function windowDraw(x, z, salt) {
 }
 
 /**
- * Grille de fenêtres d'un pan de mur : rangs et niveaux effectivement posables.
- *
- * Fonction pure, et séparée parce que c'est le seul endroit où une erreur
- * d'arithmétique produirait des fenêtres à cheval sur l'arête d'un mur ou
- * flottant au-dessus de la gouttière.
+ * Grille de fenêtres d'un pan de mur : rangs et niveaux effectivement
+ * posables. Séparée pour que ce soit le seul endroit où une erreur
+ * d'arithmétique produirait des fenêtres à cheval sur l'arête d'un mur.
  *
  * @param {number} length Longueur du pan, en mètres.
  * @param {number} height Hauteur du bâtiment, en mètres.
@@ -358,8 +203,7 @@ export function windowDraw(x, z, salt) {
  */
 export function windowGrid(length, height, windows = defaultTheme.windows) {
   const spacing = windows.widthM * 2.6;
-  // Une marge d'un demi-entraxe à chaque bout : une fenêtre n'est jamais au ras
-  // de l'angle du mur.
+  // Marge d'un demi-entraxe à chaque bout : une fenêtre n'est jamais au ras de l'angle du mur.
   const columns = Math.floor((length - spacing) / spacing);
   const levels = Math.floor((height - windows.sillM - windows.heightM) / windows.levelM) + 1;
   return { columns: Math.max(0, columns), levels: Math.max(0, levels), spacing };
@@ -367,12 +211,8 @@ export function windowGrid(length, height, windows = defaultTheme.windows) {
 
 /**
  * Pousse un panneau vertical entre deux points au sol, dans un accumulateur.
- *
- * Tout ce qui est vertical dans cette couche passe par ici : un pan de mur, une
- * bande de soubassement, un encadrement, une vitre, un battant de volet, une
- * fenêtre allumée. C'est le même quadrilatère à chaque fois, et l'enroulement
- * est la seule chose délicate — notre plan (x, z) est de chiralité opposée au
- * plan (x, y) usuel, donc l'ordre « naturel » donnerait des faces visibles
+ * Tout ce qui est vertical dans cette couche passe par ici. Enroulement
+ * choisi pour la chiralité du plan (x, z), sinon les faces seraient visibles
  * seulement de l'intérieur du bâtiment.
  *
  * `a` et `b` portent leurs coordonnées au sol en `x` et `y` (l'axe `y` d'un
@@ -405,13 +245,9 @@ export function pushPanel(buffer, a, b, bottom, top, nx, nz, low, high) {
 }
 
 /**
- * Cote du haut du soubassement, ou `null` s'il n'y a pas lieu d'en poser.
- *
- * Fonction pure. Deux cas l'écartent, et les deux se voient : une partie de
- * bâtiment **en surplomb** (`min_height`, un porche, un passage couvert) n'a pas
- * de plinthe parce qu'elle ne touche pas le sol, et un mur trop bas n'en a pas
- * non plus parce que la bande mangerait tout le mur — un abri de jardin
- * entièrement en soubassement ne ressemble à rien.
+ * Cote du haut du soubassement, ou `null` s'il n'y a pas lieu d'en poser :
+ * une partie en surplomb (`min_height`) ne touche pas le sol, et un mur trop
+ * bas se ferait manger entièrement par la bande.
  *
  * @param {number} base      Assise du bâtiment, en mètres.
  * @param {number} minHeight Hauteur du dessous, en mètres.
@@ -424,21 +260,10 @@ export function plinthTopFor(base, minHeight, eaves) {
   return top < eaves - 1 ? top : null;
 }
 
-/**
- * Devanture : hauteur du bandeau de rez-de-chaussée d'un commerce.
- *
- * Un niveau, et pas moins : c'est ce qui distingue une vitrine d'un
- * soubassement, et c'est la seule échelle à laquelle un commerce se lise sans
- * repeindre l'immeuble entier.
- */
+/** Devanture : hauteur du bandeau de rez-de-chaussée d'un commerce (un niveau, ce qui distingue une vitrine d'un soubassement). */
 export const SHOPFRONT_HEIGHT_M = 3.05;
 
-/**
- * Cote haute de la devanture, ou `null` s'il n'y a pas de rez-de-chaussée à
- * habiller. Même garde que le soubassement, en un peu plus large : un bandeau
- * de trois mètres sur un mur de trois mètres cinquante n'est plus un bandeau,
- * c'est le mur. Fonction pure.
- */
+/** Cote haute de la devanture, ou `null` s'il n'y a pas de rez-de-chaussée à habiller (même garde que le soubassement, en plus large). */
 export function shopfrontTopFor(base, minHeight, eaves) {
   if (minHeight > 0.2) return null;
   const top = base + SHOPFRONT_HEIGHT_M;
@@ -553,33 +378,16 @@ export function outerRings(geometry) {
  * Perce un pan de mur : encadrement, vitrage, volets — et, la nuit, la
  * lumière de celles qui sont allumées.
  *
- * ## Pourquoi tout n'est pas dans le même maillage
+ * Ce qui est matière (encadrement, vitre, volets) va dans la géométrie
+ * opaque du bâti, éclairée par le soleil ; ce qui est lumière (fenêtre
+ * allumée) va dans le maillage additif, qui ne s'allume que la nuit —
+ * mélanger les deux donnerait des vitres qui brillent en plein jour.
+ * Panneaux décollés du mur de quelques centimètres, en trois plans (sinon ils
+ * se disputeraient le pixel).
  *
- * Ce qui est **matière** — l'encadrement, la vitre, les volets — va dans la
- * géométrie opaque du bâti : c'est du mur, ça reçoit le soleil, ça
- * s'assombrit quand il tombe. Ce qui est **lumière** — la fenêtre allumée —
- * va dans le maillage additif, qui ne s'allume que la nuit. Mélanger les deux
- * donnerait soit des vitres qui brillent en plein jour, soit un village qui
- * ne s'allume jamais.
- *
- * ## Les décollements
- *
- * Les panneaux sont décollés du mur de quelques centimètres, en trois plans :
- * coplanaires, ils se disputeraient le pixel avec le mur et entre eux, et
- * clignoteraient. L'écart est trop petit pour se voir, et il est porté par la
- * normale du mur, donc il reste correct quelle que soit son orientation.
- *
- * ## Le déterminisme
- *
- * Quelle fenêtre est allumée, laquelle a ses volets tirés, de quelle teinte
- * est son ampoule : tout ne dépend **que de la position au sol et du rang**.
- * Le village garde donc les mêmes fenêtres allumées et les mêmes volets clos
- * d'une reconstruction à l'autre, là où un tirage libre les ferait clignoter
- * tous les 200 mètres parcourus.
- *
- * Fonction pure : elle ne lit que ses arguments, ce qui la rend testable sous
- * Node — et c'est le genre d'endroit où une erreur d'arithmétique produit une
- * fenêtre à cheval sur l'angle d'un mur ou un volet posé à l'envers.
+ * Fenêtre allumée, volets tirés, teinte d'ampoule : tout dépend uniquement
+ * de la position au sol et du rang, pour rester stable d'une reconstruction
+ * à l'autre.
  *
  * @param {Object} openings Budget : `{panes, budget, lit}`.
  * @param {Object} walls    Accumulateur de la géométrie opaque.
@@ -738,24 +546,17 @@ export function appendOpenings(
 
 /**
  * Hauteur de case visée pour le nom peint sur une enseigne, en mètres — voir
- * `appendShopfront`. Nettement moins que `SHOPFRONT_FASCIA_HEIGHT_M` du
- * thème : de la marge reste au-dessus et en dessous du texte, sans quoi une
- * lettre haute (« É », un jambage) toucherait le bord du bandeau. La largeur
- * se réduit d'elle-même si le nom est trop long (`fitLabelText`), jamais la
- * hauteur — cette case est un plafond, pas une cible qu'on grossirait pour
- * l'atteindre.
+ * `appendShopfront`. Nettement moins que `SHOPFRONT_FASCIA_HEIGHT_M` (marge
+ * au-dessus/dessous du texte). Un plafond, pas une cible : la largeur se
+ * réduit d'elle-même si le nom est trop long (`fitLabelText`), jamais la hauteur.
  */
 export const SHOPFRONT_LABEL_HEIGHT_M = 0.42;
 export const SHOPFRONT_LABEL_MIN_HEIGHT_M = 0.14;
 
 /**
  * Découpe un pan de devanture en baies et, si la place le permet, une large
- * baie d'entrée centrale — voir l'en-tête de `theme.shopfront` sur pourquoi
- * une baie plutôt qu'une porte.
- *
- * Fonction pure : les décalages (`offset`) sont comptés depuis le **milieu**
- * du pan, dans les deux sens, ce qui centre naturellement la composition sans
- * qu'`appendShopfront` ait à s'en soucier.
+ * baie d'entrée centrale. `offset` compté depuis le milieu du pan, dans les
+ * deux sens, pour centrer la composition sans qu'`appendShopfront` s'en soucie.
  *
  * @param {number} length Longueur du pan, en mètres.
  * @param {Object} [theme] `theme.shopfront`.
@@ -778,8 +579,7 @@ export function shopfrontLayout(length, theme = defaultTheme.shopfront) {
       }
     }
   } else {
-    // Trop étroit pour une porte : uniquement des baies, comme un mur
-    // ordinaire mais entièrement vitré.
+    // Trop étroit pour une porte : uniquement des baies.
     const count = Math.floor((usable + gapM) / (windowWidthM + gapM));
     if (count === 0) return null;
     const used = count * windowWidthM + (count - 1) * gapM;
@@ -794,12 +594,9 @@ export function shopfrontLayout(length, theme = defaultTheme.shopfront) {
 /**
  * Perce la devanture d'un commerce sur son pan de façade : des baies, une
  * large baie d'entrée si la place le permet (`shopfrontLayout`), et
- * l'enseigne peinte au-dessus — voir l'en-tête de `materials/labelAtlas.js`
- * pour pourquoi un nom passe par une texture plutôt que par la géométrie.
- *
- * Le rez-de-chaussée générique (`appendOpenings`) ne se pose pas ici : c'est
- * l'appelant qui décide, une fois qu'il sait si cette fonction a vraiment
- * dessiné quelque chose (voir sa valeur de retour).
+ * l'enseigne peinte au-dessus (voir `materials/labelAtlas.js`). Le
+ * rez-de-chaussée générique (`appendOpenings`) ne se pose pas ici : c'est
+ * l'appelant qui décide, d'après la valeur de retour.
  *
  * @param {Object} openings Budget de baies — le même que celui que lirait
  *        `appendOpenings` pour ce pan, partagé pour que la devanture compte
@@ -931,12 +728,7 @@ export const BLADE_SIGN_HEIGHT_M = 2.55;
 export const BLADE_SIGN_INSET_M = 0.9;
 /** Hauteur de casse visée pour le pictogramme, en mètres. */
 export const BLADE_SIGN_ICON_HEIGHT_M = 0.8;
-/**
- * Épaisseur du panneau, en mètres — deux faces réellement séparées, pas la
- * même face doublée sans épaisseur : posé de champ, un panneau de papier ne
- * se voit pas, un vrai panneau si, ne serait-ce que par l'arête qu'il montre
- * de biais.
- */
+/** Épaisseur du panneau, en mètres (deux faces réellement séparées, pas doublées sans épaisseur — l'arête se voit de biais). */
 export const BLADE_SIGN_THICKNESS_M = 0.1;
 /** Hauteur d'une tige de fixation, en mètres — un plat, pas une tringle ronde. */
 export const BLADE_SIGN_ROD_HEIGHT_M = 0.05;
@@ -948,23 +740,14 @@ const BLADE_SIGN_ROD_COLOR = srgb('#b8bcc0');
 
 /**
  * Enseigne en drapeau : un petit panneau planté perpendiculairement au mur,
- * porté par deux tiges plutôt que collé au mur — sans elles, rien ne dit
- * pourquoi il flotte là. Lisible par qui remonte le trottoir plutôt que par
- * qui fait face à la devanture : c'est la seule enseigne, réelle, à
- * s'adresser au piéton et non au client déjà arrêté devant la vitrine. Elle
- * porte un pictogramme (`shopfrontEmojiFor`) plutôt que le nom : à cette
- * distance et sous cet angle, une icône se lit, un nom ne se lirait pas.
- *
- * Posée près d'un bout du pan de façade plutôt qu'en son centre — une vraie
- * enseigne en drapeau ne bloque jamais l'entrée qu'elle signale.
- *
- * Panneau, tiges et pictogramme sont tous doublés, enroulement inversé, pour
- * se lire des deux sens de marche sur le trottoir : c'est `pushPanel` et
- * `pushLabelQuad` échangés en `a`/`b` qui font l'un l'exact revers de
- * l'autre — voir la note de `pushLabelQuad` sur ce que l'échange inverse.
+ * porté par deux tiges. Lisible par qui remonte le trottoir, pas par qui
+ * fait face à la devanture ; porte un pictogramme (`shopfrontEmojiFor`)
+ * plutôt qu'un nom, illisible à cet angle. Posée près d'un bout du pan, pas
+ * en son centre, pour ne pas bloquer l'entrée. Panneau, tiges et pictogramme
+ * doublés (enroulement inversé) pour se lire des deux sens de marche.
  *
  * Ne dépend pas d'`appendShopfront` : une façade trop étroite pour une porte
- * garde son enseigne en drapeau, seule la devanture au sol s'efface.
+ * garde son enseigne en drapeau.
  *
  * @param {Object} walls  Accumulateur de la géométrie opaque.
  * @param {Object} labels Accumulateur `{positions, uvs}` du texte peint.

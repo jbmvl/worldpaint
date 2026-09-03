@@ -1,48 +1,25 @@
 /*
- * vegetationLayer — les arbres, en instances.
- * -------------------------------------------
- * Les arbres poussent là où la carte d'occupation du sol dit « bois »
- * (`groundClassMap`) : un polygone de bois vaut 1, une prairie 0, donc les
- * lisières sont nettes. C'est la même donnée que celle lue par le shader du
- * terrain, au même endroit — la texture du sol et ce qui y pousse ne peuvent
- * pas se contredire.
+ * vegetationLayer — les arbres, en instances. Poussent là où
+ * `groundClassMap` dit « bois » — même donnée que le shader du terrain,
+ * jamais de contradiction. `groundClassMap` ignore la voirie (un bois
+ * traverse une route sans s'interrompre) : c'est cette couche qui refuse de
+ * planter dans l'emprise (`roadCorridor`).
  *
- * `groundClassMap` ignore la voirie : un bois traverse une route sans que le
- * polygone qui le décrit s'interrompe, exactement comme sur le terrain. C'est
- * donc cette couche, et pas la carte de classes, qui doit refuser de planter
- * dans l'emprise (`roadCorridor`) — la même frontière que respectent l'herbe,
- * les cultures et les haies.
+ * Chaque arbre est une paire de quadrilatères croisés (pas un modèle),
+ * neuf silhouettes d'atlas, rotation/échelle/teinte propres à chaque
+ * instance. Le peuplement (`FOREST_TYPES`, ancré à une maille de terrain)
+ * décide des essences, hauteur, densité. Planté en strates (tiges moyennes,
+ * dominants, sous-bois compté en plus) ; couleur dérivée par bosquets de
+ * quelques dizaines de mètres (`foliageTint`).
  *
- * Chaque arbre est une paire de quadrilatères croisés — pas un modèle. À la
- * distance où on les voit, une silhouette bien découpée vaut un tronc modélisé
- * et coûte quatre triangles au lieu de plusieurs centaines. Neuf silhouettes
- * tirées dans un atlas, plus une rotation, une échelle et une teinte propres à
- * chaque instance : un bois cesse alors de ressembler à un clonage.
+ * Plantation mise en file, une tuile par image (composer deux mille matrices
+ * d'un coup se verrait comme un à-coup).
  *
- * Elles ne sont pas tirées uniformément : une maille de terrain fixe un
- * **peuplement** (`FOREST_TYPES`), et c'est lui qui décide des essences, de la
- * hauteur et de la densité. Un mélange uniforme d'essences est exactement ce
- * qu'on ne voit jamais dehors.
- *
- * Un peuplement se plante en **strates**, et c'est ce qui lui donne du volume :
- * beaucoup de tiges moyennes, quelques dominants qui dépassent, et un sous-bois
- * de buissons compté en plus des arbres — trois échelles au lieu d'une. Sa
- * couleur, elle, dérive par **bosquets** de quelques dizaines de mètres
- * (`foliageTint`) : c'est ce qui fait un massif peint plutôt qu'un aplat vert.
- *
- * La plantation est mise en file et étalée sur plusieurs images : composer deux
- * mille matrices dans la même image se verrait comme un à-coup.
- *
- * Deux décisions à ne pas défaire :
- *
- * - le plafond d'une tuile **éclaircit** (`thinPlacements`), il ne rogne pas.
- *   S'arrêter de planter au milieu du parcours des mailles laissait le sud
- *   d'une tuile nu au milieu d'un massif ;
- * - une tuile semée alors que la carte de classes ne couvrait pas toute son
- *   emprise est retenue comme telle (`_blind`), et resemée quand la carte en
- *   sait davantage. Sans cela, une forêt dont la tuile était plantée avant que
- *   la carte ne l'atteigne ne poussait jamais — au même endroit, une fois oui,
- *   une fois non, selon l'ordre d'arrivée.
+ * Deux décisions à ne pas défaire : le plafond d'une tuile éclaircit
+ * (`thinPlacements`), il ne rogne pas (sinon le sud d'une tuile resterait nu
+ * au milieu d'un massif) ; une tuile semée alors que la carte de classes ne
+ * couvrait pas toute son emprise est retenue comme telle (`_blind`) et
+ * resemée quand la carte en sait davantage.
  */
 
 import {
@@ -67,20 +44,9 @@ import { defaultTheme } from '../themes/default.js';
 export const VEGETATION_CELLS = 24;
 /** Arbres au maximum par cellule. */
 export const TREES_PER_CELL = 14;
-/**
- * Plafond global d'une tuile.
- *
- * Ce n'est pas un goût, c'est un budget : au-delà, la composition des matrices
- * se voit à l'image. Il ne **rogne** plus le semis pour autant — un plafond
- * atteint au milieu du parcours des mailles laissait le sud d'une tuile
- * entièrement nu alors que son nord était en forêt. C'est `thinPlacements` qui
- * s'en charge, en éclaircissant partout au lieu de couper quelque part.
- */
+/** Plafond global d'une tuile : un budget d'images, appliqué par éclaircissement (`thinPlacements`), pas par troncature. */
 export const MAX_TREES_PER_TILE = 7000;
-/**
- * Garde-fou de collecte : on ne construit jamais plus que cela d'objets
- * intermédiaires, même si la carte de classes annonçait un continent boisé.
- */
+/** Garde-fou de collecte : jamais plus d'objets intermédiaires que cela, même sur un continent boisé annoncé. */
 export const PLACEMENT_HARD_CAP = MAX_TREES_PER_TILE * 4;
 /** Anneau au-delà duquel on ne plante plus (le brouillard s'en charge). */
 export const VEGETATION_MAX_RING = 1;
@@ -89,28 +55,13 @@ export const TREE_MIN_HEIGHT = 6;
 export const TREE_MAX_HEIGHT = 15;
 /** En deçà de cette part de boisé, la cellule ne reçoit aucun arbre. */
 export const WOOD_SCORE_MIN = 0.22;
-/**
- * Exposant de la courbe de densité. Au-dessus de 1, les scores moyens donnent
- * peu d'arbres et les scores forts en donnent beaucoup : c'est ce qui creuse la
- * différence entre une lisière et un sous-bois.
- *
- * Il reste au-dessus de 1 pour cette raison, mais moins haut qu'avant : la
- * filtration linéaire de la carte de classes étale un score moyen sur toute la
- * périphérie d'un massif, et un exposant trop fort vidait ces bords-là — un
- * petit bois, qui n'est *que* de la périphérie, en ressortait squelettique.
- */
+/** Exposant de la courbe de densité (au-dessus de 1, creuse la différence entre lisière et sous-bois). */
 export const WOOD_DENSITY_CURVE = 1.25;
 
 /**
  * Nombre d'arbres à poser dans une cellule, d'après sa part de boisé.
- *
- * L'arrondi est **stochastique** : `jitter` est un tirage uniforme dans [0, 1[
- * fourni par l'appelant, et `floor(attendu + jitter)` a pour espérance
- * `attendu`. Une densité attendue de 0,4 arbre donne donc un arbre dans 40 %
- * des cellules — un semis irrégulier — au lieu d'un arbre partout ou nulle
- * part, qui est exactement ce qui produisait un effet de verger.
- *
- * Fonction pure, déterministe à `jitter` fixé.
+ * Arrondi stochastique : `floor(attendu + jitter)` a pour espérance
+ * `attendu`, ce qui donne un semis irrégulier plutôt qu'un effet de verger.
  */
 export function treesForScore(score, maxPerCell, jitter = 0) {
   if (score < WOOD_SCORE_MIN) return 0;
@@ -120,14 +71,7 @@ export function treesForScore(score, maxPerCell, jitter = 0) {
 }
 
 // --- Les strates ---------------------------------------------------------------
-/**
- * Exposant de la loi des hauteurs à l'intérieur d'un peuplement.
- *
- * Au-dessus de 1, le tirage se tasse vers la hauteur minimale : beaucoup de
- * jeunes tiges, quelques arbres faits. Un tirage uniforme entre `minHeight` et
- * `maxHeight` donne au contraire une houppe moyenne partout, et un massif qui
- * se lit comme une haie taillée vu de loin.
- */
+/** Exposant de la loi des hauteurs (au-dessus de 1, tasse le tirage vers la hauteur minimale : jeunes tiges + quelques arbres faits). */
 export const HEIGHT_CURVE = 1.35;
 /** Part d'arbres **dominants**, ceux qui dépassent la houppe commune. */
 export const EMERGENT_SHARE = 0.11;
@@ -156,15 +100,7 @@ export function treeHeight(type, draw, pick) {
 }
 
 // --- La teinte -----------------------------------------------------------------
-/**
- * Côté de la maille qui fait dériver la teinte, en mètres.
- *
- * Bien plus fin que le peuplement : à l'intérieur d'un même bois, on veut des
- * **paquets** de verts différents — un versant qui jaunit, un fond de vallon qui
- * bleuit. C'est ce qui distingue une peinture d'un aplat, et une teinte tirée
- * arbre par arbre ne le donne pas : elle se moyenne à distance et le massif
- * redevient uni.
- */
+/** Côté de la maille qui fait dériver la teinte, en mètres (plus fin que le peuplement, pour des paquets de verts différents). */
 export const CLUMP_TINT_M = 55;
 /** Amplitude de la dérive d'un bosquet à l'autre, sur l'axe chaud-froid. */
 export const CLUMP_TINT_SPREAD = 0.2;
@@ -173,12 +109,8 @@ export const TREE_TINT_SPREAD = 0.13;
 
 /**
  * Teinte d'un feuillage : celle du peuplement, dérivée par bosquet puis par
- * arbre. Fonction pure et **ancrée au lieu** — deux arbres voisins portent des
- * verts voisins, et les mêmes à chaque reconstruction.
- *
- * La dérive de bosquet joue sur l'axe chaud-froid : le rouge et le bleu partent
- * en sens contraires, ce qui parcourt le vert du jaune paille au vert-de-gris
- * sans jamais le désaturer. Monter les deux ensemble n'aurait fait que du gris.
+ * arbre, ancrée au lieu. La dérive de bosquet joue sur l'axe chaud-froid
+ * (rouge et bleu en sens contraires) pour parcourir le vert sans le désaturer.
  *
  * @param {number[]} hue Teinte du peuplement, trois canaux.
  * @param {number} x Mètres locaux.
@@ -205,15 +137,9 @@ function clampChannel(v) {
 }
 
 /**
- * Éclaircit un semis trop nombreux **sans le rogner**.
- *
- * Le plafond d'une tuile ne peut pas être appliqué en s'arrêtant de planter :
- * les mailles sont parcourues du nord au sud, et s'arrêter en route laisse une
- * moitié de tuile nue au milieu d'un massif. On garde donc un point sur *n*,
- * régulièrement dans l'ordre du parcours : la densité baisse partout de la même
- * façon, et la forêt reste une forêt sur toute son emprise.
- *
- * Fonction pure, déterministe, et qui rend exactement `max` éléments.
+ * Éclaircit un semis trop nombreux sans le rogner : garde un point sur `n`,
+ * régulièrement dans l'ordre du parcours, plutôt que de s'arrêter en route.
+ * Déterministe, rend exactement `max` éléments.
  */
 export function thinPlacements(list, max) {
   if (list.length <= max) return list;
@@ -235,10 +161,7 @@ export const BLIND_EPSILON = 0.02;
 /** Côté de la maille qui décide du peuplement, en mètres. */
 export const FOREST_PATCH_M = 420;
 
-/**
- * Peuplement d'un point du sol. Fonction pure, et **ancrée au lieu** : c'est ce
- * qui fait qu'une forêt garde ses essences quand la bulle se déplace.
- */
+/** Peuplement d'un point du sol, ancré au lieu (une forêt garde ses essences quand la bulle se déplace). */
 export function forestTypeAt(x, z, forests = defaultTheme.forests) {
   const gx = Math.floor(x / FOREST_PATCH_M) * FOREST_PATCH_M;
   const gz = Math.floor(z / FOREST_PATCH_M) * FOREST_PATCH_M;
@@ -253,11 +176,7 @@ export function variantsFor(type, essences = defaultTheme.trees.essences) {
   return out.length > 0 ? out : [0];
 }
 
-/**
- * Silhouettes de la strate basse. Ce sont les buissons de l'atlas, quel que
- * soit le peuplement : un sous-bois n'est pas une miniature de sa futaie, c'est
- * une autre plante — noisetier, ronce, houx.
- */
+/** Silhouettes de la strate basse (les buissons de l'atlas, une autre plante que sa futaie — noisetier, ronce, houx). */
 export function understoryVariants(essences = defaultTheme.trees.essences) {
   const bushy = essences.bushy || [];
   return bushy.length > 0 ? bushy : [0];
@@ -309,16 +228,10 @@ export class VegetationLayer {
       map: this.texture,
       atlas: true,
       tiles: TREE_ATLAS_COLS,
-      // Le vent, aussi, dans les arbres — mais dix fois plus discret que dans
-      // l'herbe. Une houppe qui balance de trente centimètres à quinze mètres du
-      // sol est ce qui distingue un décor vivant d'une maquette ; au-delà, un
-      // arbre se met à onduler comme une algue.
-      wind: true,
+      wind: true, // dix fois plus discret que dans l'herbe
       windStrength: 0.05,
       cacheKey: 'foliage-atlas-wind-v2',
     });
-    // Sans lui, chaque panneau projetterait l'atlas entier : quatre arbres
-    // écrasés dans l'ombre d'un seul.
     this.depthMaterial = createFoliageDepthMaterial({
       THREE,
       map: this.texture,
@@ -328,22 +241,12 @@ export class VegetationLayer {
 
     /** @type {Map<string, Object>} maillages instanciés, par clé de tuile */
     this.meshes = new Map();
-    /**
-     * Tuiles déjà traitées, **y compris celles où rien n'a poussé**. Sans elle,
-     * une tuile sans arbre serait remise en file à chaque synchronisation et
-     * re-classée à chaque image : en rase campagne, tout le temps.
-     * @type {Set<string>}
-     */
+    /** Tuiles déjà traitées, y compris celles où rien n'a poussé (sinon reclassée à chaque image en rase campagne). @type {Set<string>} */
     this._planted = new Set();
     /**
-     * Tuiles plantées **à l'aveugle** sur une part de leur emprise, avec la
-     * couverture dont elles disposaient alors — de 0 (aucune carte, ou une carte
-     * d'un autre repère) à moins de 1. Elles repartent en file dès que la carte
-     * en sait davantage sur elles.
-     *
-     * C'est la réponse au « parfois oui, parfois non » : rien ne garantit que la
-     * carte de classes couvre déjà une tuile au moment où la file l'atteint, et
-     * une tuile plantée sans elle restait nue pour toujours.
+     * Tuiles plantées à l'aveugle sur une part de leur emprise, avec la
+     * couverture dont elles disposaient alors ; repartent en file dès que la
+     * carte en sait davantage.
      * @type {Map<string, number>}
      */
     this._blind = new Map();
@@ -363,23 +266,13 @@ export class VegetationLayer {
     this.texture.needsUpdate = true;
   }
 
-  /**
-   * Fait avancer le vent dans les houppes. À appeler une fois par image.
-   *
-   * L'ombre portée, elle, ne balance pas : le matériau de profondeur ne rejoue
-   * pas le déplacement du sommet. À cette amplitude — quelques dizaines de
-   * centimètres au sommet d'un arbre de quinze mètres — l'écart entre l'arbre et
-   * son ombre n'est pas perceptible, et lui faire suivre le vent coûterait une
-   * seconde injection de shader dans la passe d'ombres.
-   */
+  /** Fait avancer le vent dans les houppes (l'ombre portée, elle, ne balance pas). */
   advance(delta) {
     advanceFoliageWind(this.material, delta);
   }
 
   /**
-   * Accorde le vent sur la météo. La houppe reste la partie la plus discrète du
-   * décor à bouger : c'est le facteur qui change, jamais le fait qu'un arbre
-   * balance dix fois moins qu'une touffe d'herbe.
+   * Accorde le vent sur la météo.
    * @param {{amplitude:number, speed:number}} field
    */
   setWind(field) {
@@ -404,12 +297,8 @@ export class VegetationLayer {
         this.remove(key);
         continue;
       }
-      // Semée à l'aveugle sur une part de son emprise, et la carte en sait
-      // maintenant plus qu'alors : on recommence. La condition est bien « plus
-      // qu'alors » et non « incomplète », sinon une tuile de coin, qui déborde
-      // structurellement du carré, serait replantée à chaque repeinte. Les
-      // tuiles semées en connaissance de cause, elles, ne bougent plus — le
-      // semis étant déterministe, les replanter ne ferait que clignoter.
+      // « Plus qu'alors », pas « incomplète » : sinon une tuile de coin, qui
+      // déborde structurellement du carré, serait replantée à chaque repeinte.
       const before = this._blind.get(key);
       if (before !== undefined && this._coverageOf(tile) > before + BLIND_EPSILON) {
         this.remove(key);
@@ -449,12 +338,7 @@ export class VegetationLayer {
     this.meshes.delete(key);
   }
 
-  /**
-   * Part de l'emprise d'une tuile dont la carte de classes peut parler, ici et
-   * maintenant. Zéro tant qu'il n'y a pas de carte, ou tant qu'elle appartient
-   * encore au repère précédent — dans ce dernier cas, ses coordonnées ne
-   * veulent rien dire pour cette tuile.
-   */
+  /** Part de l'emprise d'une tuile dont la carte de classes peut parler, ici et maintenant. */
   _coverageOf(tile) {
     const frame = this.bubble?.frame;
     if (!frame || !this.groundClass) return 0;
@@ -475,17 +359,14 @@ export class VegetationLayer {
     if (!frame || !groundClass) return;
     const roadIndex = this.roads?.index || null;
 
-    // Graine dérivée des coordonnées de la tuile : les mêmes arbres repoussent
-    // au même endroit si la tuile est rechargée.
+    // Graine dérivée des coordonnées de la tuile.
     const random = makeRandom((tile.x * 73856093) ^ (tile.y * 19349663));
 
     const cellSize = frame.scale / VEGETATION_CELLS;
     const originX = (tile.x - frame.origin.x) * frame.scale;
     const originZ = (tile.y - frame.origin.y) * frame.scale;
 
-    // Ce que la carte de classes sait de cette tuile est-il complet ? La réponse
-    // se prend **avant** de semer, et se retient : c'est elle qui décidera de
-    // recommencer, plus tard, quand la carte en saura davantage.
+    // Prise avant de semer, et retenue pour décider de recommencer plus tard.
     const covered = this._coverageOf(tile);
     if (covered < 1) this._blind.set(tile.key, covered);
 
@@ -497,25 +378,17 @@ export class VegetationLayer {
         const centreX = originX + (cx + 0.5) * cellSize;
         const centreZ = originZ + (cy + 0.5) * cellSize;
         const score = groundClass.woodAt(centreX, centreZ);
-        // Le peuplement décide de la densité autant que des essences : un
-        // taillis est serré, une futaie clairsemée, et c'est ce contraste qui se
-        // lit de loin.
         const type = forestTypeAt(centreX, centreZ, this.theme.forests);
         const count = treesForScore(score, TREES_PER_CELL * type.density, random());
         if (count === 0) continue;
         const variants = variantsFor(type, this.theme.trees.essences);
-        // Le sous-bois se compte **en plus** des arbres : il épaissit le pied du
-        // massif au lieu de prendre la place d'une houppe. Arrondi stochastique,
-        // pour la même raison qu'au-dessus — sans lui, une part de 0,12 ne
-        // donnerait jamais aucun buisson.
+        // Le sous-bois se compte en plus des arbres (épaissit le pied du massif).
         const understory = Math.floor(count * (type.understory || 0) + random());
 
         for (let i = 0; i < count + understory; i++) {
           const bush = i >= count;
           const x = originX + (cx + random()) * cellSize;
           const z = originZ + (cy + random()) * cellSize;
-          // Le bois ne s'arrête pas au bord de la route : c'est à la plantation,
-          // pas à la carte de classes, de refuser l'emprise (voir l'en-tête).
           if (inCorridor(roadIndex, x, z)) continue;
           const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
           const height = bush
@@ -531,11 +404,7 @@ export class VegetationLayer {
               ? BUSH_ASPECT
               : TREE_ASPECT + (random() - 0.5) * 2 * TREE_ASPECT_JITTER,
             rotation: random() * Math.PI,
-            // Teinte : celle du peuplement, dérivée par bosquet puis par arbre.
-            // Un bois dont tous les arbres ont exactement le même vert se lit
-            // comme un aplat, quelle que soit la finesse des silhouettes. Le
-            // sous-bois, lui, est plus sombre : il est à l'ombre des houppes.
-            tint: (bush ? 0.66 : 0.84) + random() * 0.28,
+            tint: (bush ? 0.66 : 0.84) + random() * 0.28, // sous-bois plus sombre : à l'ombre des houppes
             hue: type.tint,
             jitter: random(),
             variant: pool[Math.floor(random() * pool.length) % pool.length],
@@ -547,8 +416,7 @@ export class VegetationLayer {
     if (collected.length === 0) return;
     const placements = thinPlacements(collected, MAX_TREES_PER_TILE);
 
-    // Géométrie clonée par tuile : l'attribut d'atlas est une donnée d'instance,
-    // il ne peut pas vivre sur une géométrie partagée.
+    // Géométrie clonée par tuile : l'attribut d'atlas est une donnée d'instance.
     const geometry = this.baseGeometry.clone();
     const offsets = new Float32Array(placements.length * 2);
     placements.forEach((tree, index) => {
@@ -562,17 +430,14 @@ export class VegetationLayer {
     mesh.name = `vegetation-${tile.key}`;
     mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
     mesh.castShadow = true;
-    // Un bois s'ombre lui-même : sans réception, tous les troncs seraient
-    // également éclairés et le volume disparaîtrait.
-    mesh.receiveShadow = true;
+    mesh.receiveShadow = true; // un bois s'ombre lui-même
+
     mesh.customDepthMaterial = this.depthMaterial;
 
     placements.forEach((tree, index) => {
       this._position.set(tree.x, tree.y, tree.z);
       this._quaternion.setFromAxisAngle(this._axis, tree.rotation);
-      // Largeur proportionnelle à la hauteur : un arbre haut est aussi large.
-      // Le rapport varie d'un arbre à l'autre, sans quoi deux arbres de même
-      // hauteur sont exactement la même image à deux échelles près.
+      // Rapport largeur/hauteur variable, sinon deux arbres de même hauteur sont la même image à l'échelle près.
       this._scale.set(tree.height * tree.aspect, tree.height, tree.height * tree.aspect);
       this._matrix.compose(this._position, this._quaternion, this._scale);
       mesh.setMatrixAt(index, this._matrix);

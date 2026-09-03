@@ -1,57 +1,24 @@
 /*
- * groundCover — la couverture herbacée, à trois échelles.
- * -------------------------------------------------------
- * Un sol texturé reste plat : sous la caméra, il manque quelque chose qui ait
- * une hauteur et qui défile. C'était d'abord un disque de touffes semé sur
- * quarante mètres ; c'est maintenant une couverture semée sur cent trente, en
- * trois **bandes** (`coverBands.js`) — la plante, la touffe, la masse.
+ * groundCover — la couverture herbacée, à trois échelles (`coverBands.js`) :
+ * la plante, la touffe, la masse. Une instance ne représente plus une touffe
+ * au-delà de la première bande, mais quelques mètres carrés de prairie
+ * (`GRASS_VARIANTS`, cases `clump*`).
  *
- * Le disque unique n'échouait pas par manque d'objets : il échouait parce qu'à
- * cinquante mètres il dessinait encore des brins, c'est-à-dire quelque chose que
- * personne ne distingue et que le premier mip efface. Passé la première bande,
- * une instance ne représente donc plus une touffe mais quelques mètres carrés de
- * prairie, avec la silhouette qui va avec (`GRASS_VARIANTS`, cases `clump*`).
+ * Deux règles gouvernent le module : les touffes sont ancrées au sol (maille
+ * fixe, graine dérivée des seules coordonnées de maille — avancer ajoute des
+ * mailles devant sans redistribuer le reste) ; le bitume est écarté par
+ * l'index du réseau routier (`roadGraph.js`), pas par les polygones
+ * d'occupation du sol (qui ne découpent pas les chaussées).
  *
- * Deux règles gouvernent tout le module :
+ * Coût tenu par un seul maillage instancié jamais réalloué (matrices
+ * réécrites en place, `count` ajusté) et un vent qui vit dans le shader.
  *
- * - **Les touffes sont ancrées au sol, pas à l'observateur.** Une maille fixe de
- *   deux mètres, une graine dérivée des seules coordonnées de la maille : une
- *   touffe garde sa position, sa hauteur et sa teinte d'une redistribution à
- *   l'autre, et avancer ne fait qu'ajouter des mailles devant et retirer celles
- *   de derrière. Semer autour de l'observateur faisait au contraire sauter les neuf
- *   mille touffes à chaque changement de graine.
- * - **Le bitume est écarté par l'index du réseau routier** (`roadGraph.js`),
- *   c'est-à-dire par la géométrie même sur laquelle roule l'observateur. Les
- *   polygones d'occupation du sol, eux, ne découpent pas les chaussées : une
- *   prairie traversée par une départementale y est verte sur toute sa surface.
- *
- * Restent deux choix qui tiennent le coût : un **seul** maillage instancié
- * jamais réalloué — on réécrit les matrices en place et on ajuste `count` —, et
- * le vent qui vit entièrement dans le shader, un uniforme avancé par image.
- *
- * ## Expérimentation — cohérence avec le terrain et fondu de distance
- *
- * Trois correctifs locaux, sans nouveau système :
- *
- * - **le non-classé retombe sur le même repli que le shader de terrain**
- *   (`TERRAIN_LOOK.unclassifiedWeights`, voir `grassSampleFallback`). Avant,
- *   `sampleAt` rendait `null` et la maille restait nue alors que le terrain, au
- *   même endroit, se peignait en herbe — sol vert, aucune touffe ;
- * - **l'herbe générique s'efface devant une vraie culture** (`cropAt`,
- *   `grassBlockedByCrop`) : un champ de blé n'a plus de prairie superposée à
- *   ses tiges. La lisière (herbe et culture mêlées dans la carte de classes)
- *   garde son coquelicot, inchangé ;
- * - **la hauteur ne suit plus le même fondu que la présence** : la densité
- *   décide combien de touffes restent, mais `coverHeightFade` plancher la
- *   taille de celles qui restent, pour qu'elles ne s'éteignent pas juste avant
- *   de disparaître.
- *
- * ## Ce que les bandes n'ont pas changé
- *
- * La bande 0 est le semis d'origine, aux mêmes valeurs : même maille, même
- * nombre de tirages, mêmes hauteurs, mêmes fleurs, même vent, même emprise
- * routière. Ce qui a été ajouté l'a été **autour**, et le premier plan est au
- * pixel près celui d'avant.
+ * Trois correctifs de cohérence : le non-classé retombe sur le repli du
+ * shader de terrain (`grassSampleFallback`) ; l'herbe générique s'efface
+ * devant une vraie culture (`grassBlockedByCrop`, la lisière garde son
+ * coquelicot) ; la hauteur ne suit pas le même fondu que la présence
+ * (`coverHeightFade` plancher la taille pour qu'elle ne s'éteigne pas avant
+ * de disparaître).
  */
 
 import {
@@ -80,19 +47,13 @@ import {
 import { defaultTheme } from '../themes/default.js';
 
 /**
- * Les trois échelles de la couverture herbacée.
+ * Les trois échelles de la couverture herbacée. Les mailles doublent à
+ * chaque bande, les tirages s'effondrent (la bande 2 couvre quatre fois la
+ * surface de la bande 0 pour cinq fois moins d'instances). `spread` élargit
+ * sans élever, `rise` reste modeste pour éviter l'effet d'escalier au
+ * changement de bande.
  *
- * La bande 0 reprend exactement le disque d'origine — maille de 1,6 m, dix
- * tirages —, les deux suivantes agrègent. Les mailles doublent à chaque bande,
- * les tirages s'effondrent : la bande 2 couvre quatre fois la surface de la
- * bande 0 pour cinq fois moins d'instances.
- *
- * `spread` élargit sans élever : c'est la largeur qui ferme les trous entre
- * masses. `rise` reste modeste pour que le dessus de la prairie ne monte pas en
- * marches d'escalier quand on passe d'une bande à l'autre.
- *
- * Ce sont des budgets d'images par seconde et des règles de composition, donc
- * du moteur et non du thème (voir `CONTRIBUTING.md`).
+ * Budgets d'images par seconde et règles de composition, donc du moteur, pas du thème.
  */
 export const GRASS_BANDS = [
   coverBand({ from: 0, to: 32, cell: 1.6, perCell: 10, fadeOut: 6, salt: 0 }),
@@ -117,10 +78,7 @@ export const GRASS_BANDS = [
     rise: 1.7,
     massBias: 0.6,
     fadeIn: 10,
-    // Long fondu de sortie : la couverture s'éclaircit sur les cinquante
-    // derniers mètres au lieu de s'arrêter au couteau. C'est la portée que
-    // portait `GRASS_FADE_FROM` du temps du disque unique.
-    fadeOut: 52,
+    fadeOut: 52, // long fondu de sortie sur les 50 derniers mètres
     salt: 2,
   }),
 ];
@@ -128,19 +86,10 @@ export const GRASS_BANDS = [
 /** Portée de la couverture herbacée, en mètres — le bord de la dernière bande. */
 export const GRASS_RADIUS_M = coverBandsRadius(GRASS_BANDS);
 /**
- * Nombre maximal de touffes.
- *
- * Le plafond n'est pas la densité : la densité se règle par les bandes, et le
- * plafond n'est là que pour borner le pire cas (prairie pleine, sans route ni
- * bâti pour trouer le semis). S'il est atteint, ce qui se perd est au bord de
- * la couverture, où une instance de moins ne se voit pas — c'est tout l'intérêt
- * de semer de la plus proche maille à la plus lointaine.
- *
- * Mesuré à 14 501 sur prairie pleine, contre 11 514 du temps du disque de
- * trente-huit mètres : la portée est passée à cent trente mètres pour un quart
- * d'instances en plus, et c'est tout l'intérêt de l'agrégation. La marge
- * couvre les arrondis de maille sans réserver une mémoire qui ne servirait
- * jamais.
+ * Nombre maximal de touffes. Borne le pire cas (prairie pleine, sans route ni
+ * bâti pour trouer le semis) ; s'il est atteint, ce qui se perd est au bord
+ * de la couverture, où une instance de moins ne se voit pas. Mesuré à 14 501
+ * sur prairie pleine ; la marge couvre les arrondis de maille.
  */
 export const GRASS_COUNT = 17000;
 /** Déplacement de l'observateur avant redistribution, en mètres. */
@@ -151,36 +100,13 @@ export const GRASS_CELL_M = GRASS_BANDS[0].cell;
 export const GRASS_PER_CELL = GRASS_BANDS[0].perCell;
 /** Part de végétal en deçà de laquelle rien ne pousse (bitume, roche, eau). */
 export const GRASS_GREEN_MIN = 0.25;
-/**
- * Débord toléré au-delà de la chaussée, en mètres : l'accotement reste nu.
- *
- * Ce n'est plus une valeur propre à l'herbe. C'est **l'emprise routière**
- * (`roadCorridor`), la même frontière que respectent les haies, les clôtures,
- * les jardins et les cultures : le terrain est terrassé jusque-là, donc rien
- * n'y pousse. Conservée sous son ancien nom parce qu'elle est publique.
- */
+/** Débord toléré au-delà de la chaussée, en mètres — c'est l'emprise routière (`roadCorridor`), conservée sous son ancien nom (publique). */
 export const GRASS_ROAD_MARGIN_M = CORRIDOR_MARGIN_M;
-/**
- * Part de la portée à partir de laquelle la couverture s'éclaircit. C'est
- * aujourd'hui le fondu de sortie de la dernière bande, exprimé en part du
- * rayon : les deux disent la même chose, et `grassEdgeFade` reste la façon de
- * le lire d'un seul tenant.
- */
+/** Part de la portée à partir de laquelle la couverture s'éclaircit (le fondu de sortie de la dernière bande, en part du rayon). */
 export const GRASS_FADE_FROM = 1 - GRASS_BANDS[GRASS_BANDS.length - 1].fadeOut / GRASS_RADIUS_M;
-/**
- * Plancher de hauteur en bord de bande, en part de la hauteur nominale.
- *
- * Avant, la hauteur suivait le même fondu que la présence : les touffes
- * devenaient à la fois plus rares *et* plus petites, jusqu'à s'éteindre juste
- * avant de disparaître. Le plancher garde les dernières touffes visibles —
- * seule leur **présence** continue de se raréfier.
- */
+/** Plancher de hauteur en bord de bande, en part de la hauteur nominale (garde les dernières touffes visibles). */
 export const GRASS_HEIGHT_FADE_FLOOR = 0.55;
-/**
- * Distances entre lesquelles la compensation d'alpha monte, et son gain — voir
- * `createFoliageMaterial`. Sans elle, les masses des bandes lointaines
- * s'érodent au mip exactement comme les touffes qu'elles remplacent.
- */
+/** Distances entre lesquelles la compensation d'alpha monte, et son gain — voir `createFoliageMaterial`. */
 export const GRASS_COVERAGE_RANGE = [28, 110];
 export const GRASS_COVERAGE_GAIN = 2.2;
 
@@ -196,8 +122,7 @@ export const GRASS_COVERAGE_GAIN = 2.2;
 export function grassVariantFor(sample, draw, grass = defaultTheme.grass) {
   if (!sample) return 0;
 
-  // Bord de champ : herbe **et** culture au même endroit. C'est là et
-  // seulement là que le coquelicot pousse.
+  // Bord de champ : herbe et culture au même endroit, seul cas où le coquelicot pousse.
   const edge = sample.grass > 0.2 && sample.farmland > 0.2;
   if (edge) return draw < grass.poppyShare ? GRASS_VARIANTS.indexOf('poppy') : 0;
 
@@ -217,16 +142,11 @@ const GRASS_MASS_OF = {
 };
 
 /**
- * Silhouette de masse correspondant à une touffe de détail.
+ * Silhouette de masse correspondant à une touffe de détail. Le fleurissement
+ * est conservé (une prairie de marguerites le reste à 80 m). L'herbe nue
+ * dispose de deux silhouettes tirées par `draw`, pour ne pas se lire comme un motif.
  *
- * Le fleurissement est **conservé** : une prairie de marguerites reste une
- * prairie de marguerites à quatre-vingts mètres, là où une masse unique et
- * neutre aurait effacé ce que la carte de classes avait décidé. L'herbe nue,
- * de loin le cas le plus fréquent, dispose de deux silhouettes tirées par
- * `draw` — une seule, répétée sur des hectares, se lit comme un motif.
- *
- * Fonction pure. Rend un indice dans `GRASS_VARIANTS`.
- *
+
  * @param {number} variant Indice de la touffe de détail.
  * @param {number} draw    Tirage dans [0, 1[ propre à la touffe.
  */
@@ -239,12 +159,8 @@ export function grassMassVariant(variant, draw) {
 
 /**
  * Mailles d'un disque d'une seule échelle, de la plus proche à la plus
- * lointaine — le semis d'avant les bandes.
- *
- * `coverBandRing` en est la généralisation et c'est elle que sème la couche ;
- * celle-ci reste le raccourci pour raisonner sur une échelle isolée, et
- * délègue plutôt que de garder un second parcours à tenir d'accord avec le
- * premier. Fonction pure.
+ * lointaine. `coverBandRing` en est la généralisation, employée par la
+ * couche ; celle-ci délègue plutôt que garder un second parcours à tenir d'accord.
  *
  * @param {number} radius Rayon, en mètres.
  * @param {number} cell   Côté d'une maille, en mètres.
@@ -252,9 +168,7 @@ export function grassMassVariant(variant, draw) {
  *          absolus (à multiplier par `cell`) et distance au centre.
  */
 export function grassCellRing(radius, cell) {
-  // Borne haute exclusive : `coverBandRing` écarte `distance >= to`, là où le
-  // disque acceptait `distance <= radius`. Un epsilon relatif rend la maille
-  // qui tombait pile sur le rayon, sans dépendre de l'échelle.
+  // Epsilon relatif pour inclure la maille qui tombait pile sur le rayon (borne haute exclusive de `coverBandRing`).
   return coverBandRing([coverBand({ from: 0, to: radius * (1 + 1e-12), cell, perCell: 0 })]);
 }
 
@@ -265,20 +179,11 @@ export const GRASS_TUFT_STRIDE = 7;
  * Remplit le tampon des touffes d'une maille : position, présence, taille,
  * rotation, teinte.
  *
- * **Invariant** : le nombre de tirages consommés est constant, et la graine ne
- * dépend que des coordonnées de la maille. Une maille rend donc toujours
- * exactement les mêmes touffes, quels que soient l'ordre des appels et la
- * position de l'observateur — c'est ce qui fait qu'avancer ajoute des touffes devant
- * au lieu de redistribuer tout le disque. Si un filtre venait sauter un tirage,
- * toutes les touffes suivantes de la maille changeraient de place et l'herbe se
- * remettrait à sauter.
- *
- * Fonction pure, écrite dans un tampon fourni : neuf mille objets jetables par
- * redistribution ne coûteraient rien d'utile.
- *
- * Le **sel** distingue les bandes : sans lui, la maille (3, 4) de la bande de
- * détail et la maille (3, 4) de la bande de masse tireraient exactement les
- * mêmes touffes, et les deux échelles se superposeraient au lieu de se relayer.
+ * Invariant : le nombre de tirages consommés est constant, et la graine ne
+ * dépend que des coordonnées de la maille — une maille rend toujours
+ * exactement les mêmes touffes. Écrit dans un tampon fourni (pas d'objets
+ * jetables par redistribution). Le sel distingue les bandes, sinon deux
+ * échelles superposeraient les mêmes touffes à la même maille.
  *
  * @param {Float32Array} out Longueur `perCell × GRASS_TUFT_STRIDE`.
  * @param {number} gx Indice de maille (absolu, pas relatif à l'observateur).
@@ -308,12 +213,8 @@ export function fillGrassCell(out, gx, gz, cell = GRASS_CELL_M, perCell = GRASS_
 }
 
 /**
- * Rétrécissement d'une touffe selon sa distance à l'observateur.
- *
- * Le disque se termine en fondu plutôt que par une frontière nette d'herbe
- * coupée au couteau — et c'est aussi ce qui rend l'apparition d'une maille
- * invisible : une touffe qui entre dans le disque entre à taille nulle.
- * Fonction pure.
+ * Rétrécissement d'une touffe selon sa distance à l'observateur (fondu plutôt
+ * que frontière nette : une touffe qui entre dans le disque entre à taille nulle).
  */
 export function grassEdgeFade(distance, radius = GRASS_RADIUS_M, from = GRASS_FADE_FROM) {
   const start = radius * from;
@@ -322,14 +223,7 @@ export function grassEdgeFade(distance, radius = GRASS_RADIUS_M, from = GRASS_FA
   return fade < 0 ? 0 : fade;
 }
 
-/**
- * Rétrécissement de la **hauteur** seule, avec un plancher.
- *
- * `grassEdgeFade` pilote combien de touffes restent ; celle-ci pilote leur
- * taille, et ne descend jamais sous `floor` — une touffe qui survit au tri de
- * densité doit rester perceptible, pas s'éteindre en même temps. Fonction
- * pure.
- */
+/** Rétrécissement de la hauteur seule, avec un plancher (`grassEdgeFade` pilote combien de touffes restent, celle-ci leur taille). */
 export function grassHeightFade(
   distance,
   radius = GRASS_RADIUS_M,
@@ -340,11 +234,9 @@ export function grassHeightFade(
 }
 
 /**
- * Échantillon à utiliser quand `sampleAt` ne sait rien dire — alpha nul,
- * classé ou non, ou point hors de la carte. C'est exactement le repli que
- * fait le shader de terrain (`uUnclassified`, voir `terrainMaterial.js`) :
- * sans lui, un point que le terrain peint en herbe pouvait rester nu ici,
- * faute de donnée à cet endroit précis. Fonction pure.
+ * Échantillon à utiliser quand `sampleAt` ne sait rien dire (alpha nul, non
+ * classé, ou hors carte) — le même repli que le shader de terrain
+ * (`uUnclassified`, voir `terrainMaterial.js`).
  *
  * @param {{grass:number, wood:number, farmland:number, bare:number}|null} sample
  * @param {number[]} unclassifiedWeights [herbe, bois, culture, sol nu] —
@@ -358,10 +250,8 @@ export function grassSampleFallback(sample, unclassifiedWeights) {
 
 /**
  * Vrai si une vraie culture occupe ce point et doit effacer l'herbe
- * générique. La lisière — herbe et culture mêlées dans la carte de classes —
- * reste seule à fleurir en coquelicot (voir `grassVariantFor`), donc elle
- * n'est jamais bloquée ici : c'est la même condition `edge` que là-bas.
- * Fonction pure.
+ * générique. La lisière (herbe et culture mêlées) n'est jamais bloquée ici —
+ * même condition `edge` que `grassVariantFor`.
  *
  * @param {{grass:number, farmland:number}|null} sample
  * @param {string|null} crop Retour de `groundClass.cropAt`.
@@ -380,23 +270,13 @@ const FIELD_EDGE_OFFSETS_M = [
 
 /**
  * Échantillon élargi pour la détection de lisière de champ.
+ * `GroundClassMap.sampleAt` lit un seul pixel de 2,7 m, sans flou : au bord
+ * d'un vrai polygone, un pixel est herbe ou culture, jamais un peu des deux —
+ * la condition « lisière » de `grassVariantFor`/`grassBlockedByCrop` ne se
+ * déclenchait donc presque jamais. Cette fonction cherche la culture à
+ * quelques mètres à la ronde plutôt que sur le seul pixel interrogé.
  *
- * `GroundClassMap.sampleAt` lit **un seul pixel**, de 2,7 m de côté, sans le
- * moindre flou (voir son en-tête — le filtrage linéaire dont il parle est
- * celui du GPU, pas de cette lecture-ci, purement CPU). Au bord d'un vrai
- * polygone, un pixel est herbe ou il est culture : jamais un peu des deux à
- * la fois, sauf hasard d'anticrénelage sur une largeur d'un pixel. La
- * condition « lisière » de `grassVariantFor` et `grassBlockedByCrop` — herbe
- * *et* culture au-dessus de 0,2 au même point — ne pouvait donc pratiquement
- * jamais se déclencher : c'est ce que corrige cette fonction, en cherchant la
- * culture à quelques mètres à la ronde plutôt que sur le seul pixel interrogé.
- *
- * Elle ne fait rien sur un point déjà en pleine culture, ni sur de la
- * bare/du bois — sa réponse ne compte que pour un point déjà herbeux, seul
- * cas où `grassVariantFor` et `grassBlockedByCrop` la consultent.
- *
- * Fonction pure, hormis la lecture de `groundClass`.
- *
+
  * @param {Object|null} groundClass Instance `GroundClassMap`.
  * @param {number} x
  * @param {number} z
@@ -426,9 +306,7 @@ export class GroundCover {
    * @param {Object} [options.roads]    Instance `RoadNetwork` — l'herbe ne pousse
    *        pas sur ses chaussées.
    * @param {Object} [options.streets]  Instance `StreetLayer` — ni sur ses
-   *        trottoirs. Depuis qu'un quartier d'habitation porte une part
-   *        d'herbe (voir `groundClassFor`), le semis atteint la voirie : sans
-   *        cette seconde exclusion, les touffes traverseraient la bordure.
+   *        trottoirs (un quartier porte une part d'herbe, voir `groundClassFor`).
    */
   constructor({
     THREE,
@@ -452,8 +330,7 @@ export class GroundCover {
     this._frame = null;
     this._bands = GRASS_BANDS;
     this._cells = coverBandRing(this._bands);
-    // Une seule allocation, dimensionnée sur la bande la plus fournie : les
-    // bandes lointaines en utilisent le début et laissent le reste tranquille.
+    // Une seule allocation, dimensionnée sur la bande la plus fournie.
     const widest = Math.max(...this._bands.map((band) => band.perCell));
     this._tufts = new Float32Array(widest * GRASS_TUFT_STRIDE);
 
@@ -462,9 +339,7 @@ export class GroundCover {
     this.texture.anisotropy = 4;
 
     this.geometry = createCrossedQuads(THREE);
-    // Le décalage d'atlas est une donnée **d'instance** : il faut donc le tampon
-    // sur la géométrie, alloué une fois pour toutes comme les matrices — l'herbe
-    // est le seul maillage de la scène qui n'est jamais réalloué.
+    // Décalage d'atlas : donnée d'instance, alloué une fois pour toutes comme les matrices.
     this._atlasOffsets = new Float32Array(count * 2);
     this.geometry.setAttribute(
       ATLAS_ATTRIBUTE,
@@ -487,10 +362,7 @@ export class GroundCover {
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.count = 0;
     this.mesh.frustumCulled = false; // toujours autour de la caméra
-    // L'herbe reçoit l'ombre mais n'en projette pas : neuf mille touffes de
-    // trente centimètres coûteraient une passe d'ombres entière pour un gain
-    // qu'on ne verrait pas.
-    this.mesh.receiveShadow = true;
+    this.mesh.receiveShadow = true; // reçoit l'ombre, n'en projette pas
     scene.add(this.mesh);
 
     this._matrix = new THREE.Matrix4();
@@ -512,8 +384,7 @@ export class GroundCover {
   }
 
   /**
-   * Accorde le vent sur la météo. L'herbe est la plante qui le montre le plus :
-   * c'est sur elle que se lit d'abord qu'il s'est levé.
+   * Accorde le vent sur la météo.
    * @param {{amplitude:number, speed:number}} field
    */
   setWind(field) {
@@ -547,9 +418,7 @@ export class GroundCover {
     const index = roads?.index || null;
     const pavement = streets?.index || null;
     const bands = this._bands;
-    // Un centre arrondi **par bande** : chaque grille garde son propre pas, donc
-    // l'ensemble des mailles retenues ne dépend que du sol, jamais de la
-    // position exacte de l'observateur.
+    // Un centre arrondi par bande : les mailles retenues ne dépendent que du sol.
     const bases = bands.map((band) => ({
       x: Math.round(centerX / band.cell),
       z: Math.round(centerZ / band.cell),
@@ -568,43 +437,28 @@ export class GroundCover {
 
       const cellX = (gx + 0.5) * band.cell;
       const cellZ = (gz + 0.5) * band.cell;
-      // Repli sur le non-classé du terrain : voir `grassSampleFallback`.
       const sample = grassSampleFallback(
         groundClass?.sampleAt(cellX, cellZ) ?? null,
         this.theme.terrain.unclassifiedWeights
       );
-      // Même lecture que `greenAt`, mais on garde l'échantillon complet : c'est
-      // la présence simultanée d'herbe et de culture qui signale un bord de
-      // champ, donc un coquelicot. C'est volontairement l'échantillon **brut**,
-      // pas l'échantillon élargi (`edgeSample` ci-dessous) : la verdure de la
-      // touffe ne doit rien à une culture qui pousse à cinq mètres de là.
+      // Échantillon brut (pas élargi) : la verdure de la touffe ne doit rien à une culture à 5 m de là.
       const green = Math.min(1, sample.grass + sample.farmland * 0.5);
       if (green < GRASS_GREEN_MIN) continue;
 
-      // Échantillon élargi : voir `widenFieldEdge` sur pourquoi le pixel seul
-      // ne suffit pas à détecter un bord de champ.
       const edgeSample = widenFieldEdge(groundClass, cellX, cellZ, sample);
 
-      // Une vraie culture efface l'herbe générique — voir `grassBlockedByCrop`.
       const crop = groundClass?.cropAt?.(cellX, cellZ) ?? null;
       if (grassBlockedByCrop(edgeSample, crop)) continue;
 
       const fade = coverBandFade(cell.distance, band);
       if (fade <= 0.02) continue;
-      // La hauteur ne suit pas le fondu jusqu'à zéro : c'est la densité qui
-      // passe la main d'une bande à l'autre, pas la taille.
       const heightFade = coverHeightFade(fade, GRASS_HEIGHT_FADE_FLOOR);
-      // À distance, une instance représente plusieurs mètres carrés : une
-      // prairie à demi verte y est une masse un peu clairsemée, pas une maille
-      // sur deux vide.
       const density = coverMassDensity(green, band);
 
       fillGrassCell(tufts, gx, gz, band.cell, band.perCell, band.salt);
 
       for (let i = 0; i < band.perCell && placed < capacity; i++) {
         const at = i * GRASS_TUFT_STRIDE;
-        // La couverture décide de la densité, pas de la position : une prairie
-        // à demi verte donne une touffe sur deux, aux mêmes endroits.
         if (tufts[at + 2] > density * fade) continue;
 
         const x = tufts[at];
@@ -615,37 +469,23 @@ export class GroundCover {
         const tint = tufts[at + 5];
         const height =
           (grass.minHeight + tufts[at + 3] * (grass.maxHeight - grass.minHeight)) *
-          // Plus l'herbe est dense, plus elle est haute : une pelouse rase et
-          // une friche ne se distinguent pas autrement.
-          (0.72 + green * 0.28) *
+          (0.72 + green * 0.28) * // plus dense, plus haute
           heightFade *
           band.rise;
         const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
-        // Élargi, pas élevé : c'est la largeur qui ferme les trous entre masses,
-        // et une masse aussi haute que large ferait monter le dessus de la
-        // prairie en marches d'escalier d'une bande à l'autre.
-        const width = height * grass.aspect * band.spread;
+        const width = height * grass.aspect * band.spread; // élargi, pas élevé
 
         this._position.set(x, y, z);
         this._quaternion.setFromAxisAngle(this._axis, tufts[at + 4] * Math.PI);
         this._scale.set(width, height, width);
         this._matrix.compose(this._position, this._quaternion, this._scale);
         mesh.setMatrixAt(placed, this._matrix);
-        // Teinte par touffe : sans elle, un tapis de clones. Le jaune monte là
-        // où la couverture faiblit — bord de champ, herbe sèche, passage.
-        // Teintes resserrées depuis que la couleur d'instance est réellement
-        // appliquée (voir `foliageMaterial`) : les valeurs d'avant avaient été
-        // réglées à l'aveugle sur un canal qui n'arrivait pas au fragment, et
-        // telles quelles elles viraient au jaune paille.
+        // Teinte par touffe (le jaune monte là où la couverture faiblit).
         const dry = (1 - green) * 0.5 + tint * 0.35;
         this._color.setRGB(0.82 + dry * 0.26, 0.96 + tint * 0.09, 0.74 - dry * 0.2);
         mesh.setColorAt(placed, this._color);
 
-        // Fleurissement : la variante d'atlas est décidée par le sol, pas par un
-        // tirage libre — coquelicots en lisière de culture, marguerites et
-        // boutons d'or en prairie. Passé la bande de détail, c'est la masse
-        // correspondante qui est tirée : le fleurissement décidé ici survit au
-        // changement d'échelle.
+        // Fleurissement décidé par le sol, pas par un tirage libre ; survit au changement d'échelle.
         let variant = grassVariantFor(edgeSample, tufts[at + 6], this.theme.grass);
         if (cell.band > 0) variant = grassMassVariant(variant, tufts[at + 5]);
         const [u, v] = GRASS_ATLAS_OFFSETS[variant];

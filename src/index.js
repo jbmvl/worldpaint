@@ -1,12 +1,6 @@
 /*
- * index — la surface publique.
- * -----------------------------
- * Ce fichier est un contrat : ce qu'on y trouve, une application peut s'en
- * servir et compter dessus. Le reste de `src/` est de la cuisine interne, libre
- * de bouger d'une version à l'autre.
- *
- * Il est court volontairement. Une bibliothèque qui ré-exporte ses trois cents
- * symboles n'a plus d'intérieur, et ne peut plus rien changer.
+ * index — la surface publique. Ce qui est exporté ici est un contrat stable ;
+ * le reste de `src/` est cuisine interne, libre de bouger.
  */
 
 // --- Monter un paysage ------------------------------------------------------
@@ -14,11 +8,7 @@ export { createWorld, World, DEFAULT_VIEW } from './world.js';
 export { WorldComposer, WORLD_ATTRIBUTION } from './worldComposer.js';
 
 // --- La direction artistique ------------------------------------------------
-/*
- * Tout ce qui décide de l'apparence du décor, groupé. Une application en donne
- * ses propres tranches à `createWorld({ theme })` ; le thème résolu descend
- * jusqu'aux couches, et rien ne le retient ailleurs.
- */
+// Une application donne ses tranches à `createWorld({ theme })`.
 export { defaultTheme } from './themes/default.js';
 export { resolveTheme } from './themes/theme.js';
 
@@ -28,12 +18,8 @@ export { VectorTileSource, coveringTiles, VECTOR_ZOOM } from './core/vectorTileS
 export { SceneEnvironment, DEFAULT_SKY_PALETTE, SKY_RADIUS, SHADOW_LEAD_M, SHADOW_RADIUS_M, sunDirection } from './environment/sceneEnvironment.js';
 
 // --- La météo ---------------------------------------------------------------
-/*
- * Un **état**, pas une direction artistique : il change en cours de route et
- * arrive par `updateSky`, comme l'heure. Le moteur ne va jamais le chercher —
- * `src/` ne fait aucune requête réseau, et brancher un service météo est le
- * travail de l'application.
- */
+// Un état (change en cours de route), pas une direction artistique. `src/` ne
+// fait aucune requête réseau : brancher un service météo est à l'application.
 export { DEFAULT_WEATHER, PRECIPITATION_TYPES, resolveWeather } from './environment/weather.js';
 
 // --- Géographie : passer de lng/lat aux mètres de la scène ------------------
@@ -66,22 +52,13 @@ export {
 } from './inspect/objectLabels.js';
 export { forestTypeAt } from './layers/vegetationLayer.js';
 
-/*
- * Hauteur dont la chaussée est décollée du terrain. Publiée parce qu'une
- * application qui pose son propre objet sur la route (un véhicule, un piéton)
- * doit le lever d'autant, sans quoi il s'enfonce dans le bitume.
- */
+// Hauteur dont la chaussée est décollée du terrain — à appliquer à tout objet
+// posé sur la route par l'application, sous peine de s'enfoncer dans le bitume.
 export { ROAD_LIFT_M } from './layers/roadNetwork.js';
 
-/*
- * L'emprise routière : chaussée plus accotement excavé. Publiée pour la même
- * raison que `ROAD_LIFT_M` — une application qui pose ses propres objets dans
- * le décor (un arbre, un panneau, un piéton) doit pouvoir demander la même
- * frontière que celle que respectent l'herbe, les haies et les jardins, plutôt
- * que d'en réinventer une qui ne tomberait pas au même endroit.
- *
- * `inCorridor(world.composer.roads.index, x, z)` est la question complète.
- */
+// L'emprise routière (chaussée + accotement excavé), pour qu'une application
+// pose ses propres objets à la même frontière que l'herbe, les haies et les
+// jardins. `inCorridor(world.composer.roads.index, x, z)` est la question complète.
 export {
   CORRIDOR_MARGIN_M,
   inCorridor,
@@ -89,11 +66,7 @@ export {
   pushOutsideCorridor,
 } from './layers/roadCorridor.js';
 
-/*
- * Le halo des lampadaires. Publié parce qu'une application qui ajoute ses
- * propres sources lumineuses dans le décor doit pouvoir les faire de la même
- * matière : deux halos qui ne se ressemblent pas dans une même image se voient
- * plus qu'un halo imparfait.
- */
+// Le halo des lampadaires, pour qu'une application ajoutant ses propres
+// sources lumineuses les fasse de la même matière.
 export { createGlowGeometry, createGlowMaterial } from './layers/furnitureKit.js';
 export { srgb } from './core/color.js';

@@ -1,17 +1,9 @@
 /*
  * roadNetwork — le réseau routier, pas seulement la route de l'observateur.
- * -------------------------------------------------------------------
- * Les chaussées viennent de la couche `transportation` des tuiles
- * vectorielles, avec leurs attributs OpenMapTiles : `class` donne la largeur et
- * le revêtement, `brunnel` distingue tunnels et ponts. Le schéma n'est pas
- * deviné — il se lit dans les filtres des styles `outdoors-*.json`, que
- * l'application utilise déjà.
- *
- * Les tuiles ne livrent pas des routes mais des morceaux de routes, coupés à
- * chaque frontière et à chaque changement d'attribut. `roadGraph.js` les
- * recoud avant qu'on en fasse quoi que ce soit : c'est lui qui décide ce qui
- * est une seule et même chaussée, et à quelle altitude deux voies qui se
- * croisent doivent se rejoindre.
+ * Les chaussées viennent de la couche `transportation` (`class` pour la
+ * largeur et le revêtement, `brunnel` pour tunnels et ponts), livrées en
+ * morceaux coupés à chaque frontière de tuile. `roadGraph.js` les recoud
+ * avant qu'on en fasse quoi que ce soit.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
@@ -40,11 +32,7 @@ const ROAD_PROFILE_SEEDS = {
   path: 5623,
 };
 
-/**
- * Matériaux de chaussée, un par profil. Sept appels de rendu au lieu d'un
- * atlas : c'est le prix d'un marquage qui ne s'étire pas, et il est modeste
- * devant ce qu'il évite.
- */
+/** Matériaux de chaussée, un par profil (sept appels de rendu, prix d'un marquage qui ne s'étire pas). */
 export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
   const entries = {};
 
@@ -56,8 +44,7 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
     texture.anisotropy = 8;
     const material = new THREE.MeshLambertMaterial({
       map: texture,
-      // Chaussée et terrain sont quasi coplanaires : sans décalage de
-      // profondeur, ils se disputent le pixel et la route clignote.
+      // Chaussée et terrain quasi coplanaires : sans décalage de profondeur, la route clignote.
       polygonOffset: true,
       polygonOffsetFactor: -2,
       polygonOffsetUnits: -4,
@@ -70,22 +57,13 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
     /** @type {Record<string, Object>} matériau par clé de profil. */
     byProfile: Object.fromEntries(Object.entries(entries).map(([k, e]) => [k, e.material])),
     /**
-     * Mouille la chaussée.
-     *
-     * Le bitume est ce qui change le plus visiblement sous la pluie, et le
-     * changement est presque entièrement un assombrissement : le film d'eau
-     * emprisonne la lumière au lieu de la renvoyer. On passe par `material.color`,
-     * qui multiplie la texture de chaussée, plutôt que par la texture elle-même
-     * — le marquage au sol reste net et rien n'est à redessiner. La teinte
-     * dessinée dans `createRoadCanvas`, elle, n'est pas touchée : c'est le
-     * thème, et la météo ne fait que la moduler.
-     *
+     * Mouille la chaussée, par `material.color` (multiplie la texture, le
+     * marquage reste net et rien n'est à redessiner).
      * @param {number} value De 0 (sec) à 1 (trempé).
      */
     setWetness(value) {
       const wet = Math.min(1, Math.max(0, value || 0));
-      // Légèrement moins sombre dans le bleu : une chaussée mouillée renvoie le
-      // ciel, elle ne vire pas au brun.
+      // Légèrement moins sombre dans le bleu : une chaussée mouillée renvoie le ciel.
       const shade = 1 - wet * 0.42;
       for (const entry of Object.values(entries)) {
         entry.material.color.setRGB(shade, shade, shade + wet * 0.06);
@@ -115,30 +93,17 @@ export const ROAD_REBUILD_M = 250;
 /** Décollement au-dessus de la surface, en mètres. */
 export const ROAD_LIFT_M = 0.14;
 /**
- * Hiérarchie des profils, **par largeur décroissante**.
- *
- * Elle sert à départager les carrefours : deux rubans coplanaires se disputent
- * le pixel, et le décalage de profondeur ne tranche pas entre eux. Deux
- * centimètres d'écart par rang suffisent à donner la priorité à la voie la plus
- * large, sans se voir sous un angle rasant. Le premier rang reste à
- * `ROAD_LIFT_M`, hauteur à laquelle roule l'observateur.
- *
- * C'est bien la largeur qui ordonne, pas l'importance administrative : à un
- * croisement, c'est la chaussée la plus large qui doit passer par-dessus, quel
- * que soit son classement. Un chemin d'exploitation est plus large qu'une piste
- * cyclable et vient donc avant elle.
+ * Hiérarchie des profils, par largeur décroissante — départage les carrefours
+ * (deux centimètres d'écart par rang, le premier restant à `ROAD_LIFT_M`).
+ * C'est la largeur qui ordonne, pas l'importance administrative.
  */
 export const ROAD_PROFILE_ORDER = ['express', 'major', 'minor', 'lane', 'track', 'cycleway', 'path'];
 const ROAD_RANK_STEP_M = 0.02;
 
 /**
  * Décollement d'un profil : les voies secondaires passent sous les grandes.
- *
- * `tieBreak`, dans [0, 1[, départage deux chaussées **de même profil** qui se
- * croisent — deux départementales, par exemple. Sans lui, leurs rubans sont
- * exactement coplanaires au croisement et le pixel se met à clignoter. Le
- * décalage vaut au plus la moitié d'un rang, donc la hiérarchie des profils
- * reste intacte, et cinq millimètres ne se voient pas sous un angle rasant.
+ * `tieBreak`, dans [0, 1[, départage deux chaussées de même profil qui se
+ * croisent (au plus la moitié d'un rang, la hiérarchie reste intacte).
  */
 export function roadLiftFor(profile, tieBreak = 0) {
   const rank = ROAD_PROFILE_ORDER.indexOf(profile);
@@ -175,17 +140,10 @@ export const ROAD_CLASSES = {
 };
 
 /**
- * Style de chaussée d'une entité, ou `null` si elle ne doit pas être dessinée.
- *
- * Un tunnel est écarté : le MNT ne connaît pas le relief au-dessus, donc le
- * dessiner en surface poserait une route en travers d'une montagne. Rails,
- * transports guidés et lignes de ferry n'ont rien à faire dans un revêtement,
- * et un escalier encore moins dans un ruban continu.
- *
- * `subclass` affine `class` : le schéma range piste cyclable, sentier et
- * escalier sous la même classe `path`, et seule la sous-classe les sépare.
- *
- * Fonction pure.
+ * Style de chaussée d'une entité, ou `null` si elle ne doit pas être dessinée
+ * (tunnel écarté : le MNT ne connaît pas le relief au-dessus). `subclass`
+ * affine `class` : piste cyclable, sentier et escalier partagent la même
+ * classe `path`.
  */
 export function roadStyleFor(properties = {}, profiles = defaultTheme.roads.profiles) {
   if (properties.brunnel === 'tunnel') return null;
@@ -219,17 +177,10 @@ export function roadLines(geometry) {
 
 /**
  * Découpe une polyligne métrique en tronçons contigus tenant dans un rayon.
- *
- * Une chaussée qui traverse la bulle de part en part ne doit pas être écartée
- * parce que ses extrémités sont dehors, ni conservée entière parce qu'un point
- * est dedans : il faut la couper. Fonction pure.
- *
- * Chaque tronçon rapporte la distance parcourue **avant** son premier point,
- * dans la ligne d'origine, et l'indice de ce premier point. C'est ce qui permet
- * au mobilier espacé — bornes, lampadaires, poteaux — de rester à sa place
- * quand le découpage se déplace avec l'observateur : sans ça, chaque
- * reconstruction repartirait de zéro et tout glisserait de quelques mètres,
- * tous les 250 mètres.
+ * Chaque tronçon rapporte la distance parcourue avant son premier point (dans
+ * la ligne d'origine) et l'indice de ce premier point, pour que le mobilier
+ * espacé (bornes, lampadaires) reste à sa place quand le découpage se déplace
+ * avec l'observateur.
  *
  * @param {Array<{x:number,z:number}>} points
  * @param {number} centerX
@@ -250,8 +201,7 @@ export function clipToRadius(points, centerX, centerZ, radius) {
 
     if (inside) {
       if (!current) {
-        // On garde le point précédent, dehors : sans lui le tronçon
-        // commencerait pile sur la frontière du disque, bord franc à l'appui.
+        // On garde le point précédent, dehors, pour ne pas commencer pile sur la frontière du disque.
         const back = i > 0 ? 1 : 0;
         const step = back ? Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z) : 0;
         current = { points: [], startDistance: travelled - step, startIndex: i - back };
@@ -270,11 +220,7 @@ export function clipToRadius(points, centerX, centerZ, radius) {
 
 /**
  * Polylignes de chaussée d'un jeu de tuiles, projetées dans le repère local.
- *
- * Étape séparée parce qu'elle est incomplète en soi : ce qui en sort, ce sont
- * des morceaux — la même route revient d'une tuile à l'autre, coupée à des
- * endroits qui n'existent pas au sol. C'est `mergeRoadLines` qui en fait des
- * chaussées.
+ * Ce qui en sort sont des morceaux — c'est `mergeRoadLines` qui en fait des chaussées.
  *
  * @param {Object} [roads] Tranche `theme.roads` (profils de chaussée).
  * @returns {Array<{profile:string, halfWidth:number, points:Array}>}
@@ -307,13 +253,9 @@ export function collectRoadLines(source, tiles, frame, roads = defaultTheme.road
 }
 
 /**
- * Distance depuis le dernier nœud d'ancrage, sommet par sommet.
- *
- * Le mobilier espacé se compte depuis une origine, et cette origine ne peut pas
- * être le début de la chaîne : une chaîne s'arrête là où s'arrêtent les tuiles
- * chargées, et ce bout-là bouge. Elle est donc prise au dernier carrefour ou
- * cul-de-sac rencontré — un point que la donnée porte, que le découpage ignore,
- * et qui ne bouge jamais. Fonction pure.
+ * Distance depuis le dernier nœud d'ancrage, sommet par sommet. L'ancrage est
+ * pris au dernier carrefour ou cul-de-sac rencontré (un point stable, que le
+ * découpage ignore), pas au début de la chaîne qui bouge avec les tuiles chargées.
  *
  * @param {Array<{x:number,z:number}>} points
  * @param {Array<boolean>} anchors
@@ -342,19 +284,10 @@ export function anchorDistances(points, anchors) {
 
 /**
  * Extrait les tronçons de chaussée d'un jeu de tuiles, ré-échantillonnés et
- * dressés de niveau.
- *
- * Cette fonction est le **contrat** entre la chaussée et son mobilier. Les deux
- * ont besoin exactement des mêmes tronçons — le ruban pour les dessiner, le
- * mobilier pour border ceux qui surplombent le vide —, et les recalculer deux
- * fois ferait diverger l'un de l'autre au premier réglage modifié.
- *
- * `platform` porte l'altitude de la plate-forme ligne par ligne, déjà lissée :
- * c'est sur elle que se posent glissières et bornes, pas sur le terrain nu.
- *
- * `anchor` et `startDistance` se comptent depuis le dernier nœud d'ancrage, pas
- * depuis le début du tronçon découpé : c'est ce qui fixe les lampadaires au sol
- * et fixe le côté de la haie.
+ * dressés de niveau. Contrat entre la chaussée et son mobilier : les deux ont
+ * besoin exactement des mêmes tronçons. `platform` porte l'altitude de
+ * plate-forme, déjà lissée. `anchor`/`startDistance` se comptent depuis le
+ * dernier nœud d'ancrage, pas le début du tronçon découpé.
  *
  * @param {Object} source Instance `VectorTileSource`.
  * @param {Array} tiles   Tuiles à parcourir.
@@ -365,8 +298,7 @@ export function anchorDistances(points, anchors) {
  *        donc pas être lue sur un terrain déjà entaillé.
  * @param {number} [radius]
  * @param {Object} [roads] Tranche `theme.roads` (profils de chaussée).
- * Les carrefours sortent d'ici avec les tronçons, et pour la même raison : ils
- * viennent du graphe, et les recalculer ailleurs les ferait tomber ailleurs.
+ * Les carrefours sortent d'ici avec les tronçons (ils viennent du même graphe).
  *
  * @returns {{segments: Array<Object>, junctions: Array<Object>}} tronçons
  *          `{profile, halfWidth, path, startDistance, anchor, platform, edges}`
@@ -383,9 +315,7 @@ export function collectRoadSegments(
 ) {
   const out = [];
   const { chains: merged, junctions } = mergeRoadLines(collectRoadLines(source, tiles, frame, roads));
-  // Rogner avant de ré-échantillonner : les distances d'ancrage et la
-  // plate-forme se comptent sur la chaîne telle qu'elle sera dessinée, pas sur
-  // celle qui traversait encore le carrefour.
+  // Rogner avant de ré-échantillonner : les distances doivent se compter sur la chaîne telle qu'elle sera dessinée.
   const chains = trimAtJunctions(merged, junctions);
 
   for (const chain of chains) {
@@ -398,8 +328,7 @@ export function collectRoadSegments(
       const frames = pathFrames(path);
       const rows = path.length;
       const platform = new Float32Array(rows);
-      // Rives élargies : mesurée sur la seule largeur de la chaussée, la
-      // pente en travers serait dominée par le bruit métrique du MNT.
+      // Rives élargies : sur la seule largeur de la chaussée, le bruit du MNT dominerait la pente mesurée.
       const probe = chain.halfWidth + 4;
       const edges = new Float32Array(rows * 2);
 
@@ -465,36 +394,18 @@ export class RoadNetwork {
     this.materials = materials;
     /** @type {Record<string, Object|null>} un maillage par profil rencontré. */
     this.meshes = {};
-    /**
-     * Tronçons de la dernière reconstruction, tels que `collectRoadSegments`
-     * les a produits. Le mobilier de bord de route s'y branche : il lui faut
-     * exactement la même plate-forme que celle sur laquelle roule l'observateur.
-     * @type {Array<Object>}
-     */
+    /** Tronçons de la dernière reconstruction : le mobilier s'y branche pour la même plate-forme. @type {Array<Object>} */
     this.roadSegments = [];
-    /**
-     * Index spatial des chaussées construites. L'herbe s'en sert pour ne pas
-     * pousser sur le bitume, et la recouture des carrefours pour savoir quelle
-     * chaussée passe où.
-     * @type {RoadIndex|null}
-     */
+    /** Index spatial des chaussées construites (herbe, recouture des carrefours). @type {RoadIndex|null} */
     this.index = null;
-    /**
-     * Carrefours de la dernière reconstruction, relevés sur le graphe routier.
-     * Publiés parce qu'un feu tricolore n'a de sens qu'à un carrefour, et que
-     * le mobilier n'a pas le graphe — il n'a que des tronçons déjà découpés,
-     * où un croisement ne se lit plus.
-     * @type {Array<Object>}
-     */
+    /** Carrefours de la dernière reconstruction (un feu n'a de sens qu'à un carrefour). @type {Array<Object>} */
     this.junctions = [];
   }
 
   /** Vrai si l'observateur s'est assez éloigné pour justifier une reconstruction. */
   needsRebuild(x, z) {
     if (this._frame !== this.bubble?.frame) return true;
-    // Même raison que pour l'eau : une maille de terrain qui s'affine remonte
-    // sous une plate-forme dressée à l'ancienne résolution, et le versant
-    // amont finit par recouvrir la chaussée.
+    // Une maille de terrain qui s'affine remonte sous une plate-forme dressée à l'ancienne résolution.
     if (this._surface !== this.bubble?.surfaceGeneration) return true;
     if (!this._anchor) return true;
     return Math.hypot(x - this._anchor.x, z - this._anchor.z) >= ROAD_REBUILD_M;
@@ -510,9 +421,7 @@ export class RoadNetwork {
     if (this.disposed || !this.bubble?.frame || !source) return false;
 
     const { bubble } = this;
-    // Terrain **naturel**, déblai exclu : la plate-forme décide de l'entaille,
-    // elle ne peut donc pas en dépendre. La lire sur le terrain déjà entaillé
-    // ferait descendre la route un peu plus à chaque reconstruction.
+    // Terrain naturel, déblai exclu : la plate-forme décide de l'entaille, elle ne peut pas en dépendre.
     const sampleElevation = (x, z) => bubble.rawSurfaceElevationAtLocal(x, z, 0) * bubble.verticalScale;
 
     const { segments: collected, junctions } = collectRoadSegments(
@@ -524,14 +433,8 @@ export class RoadNetwork {
       ROAD_RADIUS_M,
       this.theme.roads
     );
-    // L'index vient avant la recouture, qui s'en sert, et reste disponible
-    // ensuite : c'est lui qui dit à l'herbe où est le bitume, et au terrain où
-    // il doit être entaillé.
-    //
-    // La marge doit couvrir toute la portée du déblai, raccord compris. Laissée
-    // à sa valeur par défaut, elle tronquait le raccord à trois mètres de la
-    // rive : l'entaille se terminait alors par une marche verticale au tiers de
-    // sa profondeur, tout le long de la route.
+    // La marge doit couvrir toute la portée du déblai, raccord compris ;
+    // laissée à sa valeur par défaut, l'entaille finissait en marche verticale.
     const index = new RoadIndex(collected, { margin: ROAD_CUT_M + ROAD_CUT_BLEND_M });
     stitchPlatforms(collected, index);
 
@@ -546,10 +449,7 @@ export class RoadNetwork {
         sampleElevation,
         platform: segment.platform,
         lift: roadLiftFor(segment.profile, tieBreakAt(segment.anchor)),
-        // Les marquages gardent leur pas au sol quelle que soit la largeur de
-        // la chaussée : sans ça, une nationale aurait des pointillés deux fois
-        // plus longs qu'un chemin.
-        textureLength: ROAD_TEXTURE_LENGTH,
+        textureLength: ROAD_TEXTURE_LENGTH, // pas au sol constant, quelle que soit la largeur
       });
       if (added) segments++;
     }
@@ -558,11 +458,8 @@ export class RoadNetwork {
     this.junctions = junctions;
     this.index = index;
     this.segments = segments;
-    // Le terrain doit maintenant être taillé le long de ces chaussées-là. La
-    // recreuse passe par la file de la bulle, une tuile par image.
     this.bubble.setRoadCut(segments > 0 ? index : null);
-    // Tous les profils sont visités, y compris ceux sans géométrie cette
-    // fois-ci : leur maillage précédent doit disparaître.
+    // Tous les profils sont visités, y compris ceux sans géométrie cette fois : leur ancien maillage doit disparaître.
     for (const profile of ROAD_PROFILE_ORDER) {
       this._applyBuffer(profile, buffers[profile] || createRibbonBuffer());
     }
@@ -597,8 +494,7 @@ export class RoadNetwork {
     mesh.matrixAutoUpdate = false;
     mesh.receiveShadow = true;
     mesh.updateMatrix();
-    // Après le terrain, et dans l'ordre de la hiérarchie : à un carrefour, la
-    // voie la plus importante se dessine par-dessus la plus modeste.
+    // Après le terrain, dans l'ordre de la hiérarchie : la voie la plus importante se dessine par-dessus.
     mesh.renderOrder = 1 + (ROAD_PROFILE_ORDER.length - ROAD_PROFILE_ORDER.indexOf(profile));
     this.scene.add(mesh);
     this.meshes[profile] = mesh;
@@ -609,9 +505,7 @@ export class RoadNetwork {
     this.disposed = true;
     this.roadSegments = [];
     this.index = null;
-    // Le terrain ne doit plus être entaillé par des chaussées qui n'existent
-    // plus : sans ça, un changement d'observateur laisserait des tranchées vides.
-    this.bubble?.setRoadCut?.(null);
+    this.bubble?.setRoadCut?.(null); // sinon un changement d'observateur laisse des tranchées vides
     for (const profile of Object.keys(this.meshes)) {
       const mesh = this.meshes[profile];
       if (!mesh) continue;

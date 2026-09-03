@@ -1,37 +1,17 @@
 /*
- * gardenLayer — le jardin autour d'une maison.
- * ---------------------------------------------
- * Le bâti sortait posé à même l'herbe : une maison, puis le pré, sans rien
- * entre les deux. C'est le défaut qu'on ne nomme pas mais qu'on voit — une
- * maison de village n'a pas de bord flou, elle a une **limite**, et cette
- * limite est presque toujours une clôture basse avec quelque chose qui pousse
- * derrière.
+ * gardenLayer — le jardin autour d'une maison : une clôture basse et
+ * quelques buissons, cadrés sur le rectangle orienté que `buildingLayer` a
+ * déjà calculé pour le toit (`townStyle.isHouse`).
  *
- * ## Ce que cette couche n'invente pas
+ * Une maison mitoyenne n'a pas de jardin devant (`isDetached` mesure le
+ * voisinage) : poser une clôture autour de chaque façade en centre-bourg
+ * donnerait une grille de barrières traversant les murs des voisines.
  *
- * Elle n'invente aucune maison : elle reçoit celles que `buildingLayer` a
- * classées comme telles (`townStyle.isHouse`), avec leur rectangle englobant
- * orienté — le même que celui qui porte leur toit. Le jardin est donc **cadré
- * sur la maison**, pas tiré au hasard à côté d'elle, et il tourne avec elle.
+ * Un piquet est un pentagone (quadrilatère + pointe, trois triangles), tout
+ * fusionné dans un seul maillage refait avec le bâti. Matériau `DoubleSide` :
+ * une planche n'a pas d'épaisseur modélisée mais se voit des deux côtés.
  *
- * ## Ce qu'elle refuse
- *
- * Une maison mitoyenne n'a pas de jardin devant : dans un centre-bourg, poser
- * une clôture autour de chaque façade donnerait une grille de barrières
- * traversant les murs des voisines. Le voisinage est donc mesuré (`isDetached`)
- * et seules les maisons **détachées** en reçoivent un — ce qui est exactement
- * la règle du réel, et ce qui fait qu'un centre ancien reste dense et qu'un
- * hameau s'aère.
- *
- * ## Le coût
- *
- * Un piquet est un pentagone : un quadrilatère et sa pointe, trois triangles.
- * Une clôture de quarante mètres en compte une centaine, et tout est fusionné
- * dans un seul maillage refait avec le bâti. Le matériau est `DoubleSide` :
- * une planche de treize centimètres n'a pas d'épaisseur qui vaille la peine
- * d'être modélisée, mais elle se voit des deux côtés.
- *
- * Tirages **ancrés au lieu** : un jardin garde sa clôture, sa porte et ses
+ * Tirages ancrés au lieu : un jardin garde sa clôture, sa porte et ses
  * buissons d'une reconstruction à l'autre.
  */
 
@@ -71,14 +51,8 @@ export const BUSH_MAX = 5;
 export const BUSH_RADIUS_M = [0.45, 0.95];
 
 /**
- * Tons de clôture.
- *
- * Le blanc domine, et c'est juste : une clôture de jardin est peinte, et la
- * peinture la moins chère est la blanche. Les autres tons existent, plus rares.
- *
- * Fixes plutôt que thématiques : contrairement au mur ou au volet, une planche
- * de clôture ne suit pas la région — la peinture bon marché est la même
- * partout.
+ * Tons de clôture, fixes plutôt que thématiques (la peinture bon marché est
+ * la même partout, contrairement au mur ou au volet). Le blanc domine.
  */
 export const FENCE_TONES = [
   srgb('#e9e5da'),
@@ -89,14 +63,9 @@ export const FENCE_TONES = [
 ];
 
 /**
- * Vrai si une maison est assez isolée pour mériter un jardin clos.
- *
- * Le test est fait sur le **rectangle de la clôture**, pas sur celui de la
- * maison : ce qui gêne n'est pas qu'une voisine soit proche du mur, c'est
- * qu'elle tombe dans le jardin. Un voisin dont le centre tombe dans le
- * rectangle élargi de la marge de dégagement disqualifie le jardin.
- *
- * Fonction pure.
+ * Vrai si une maison est assez isolée pour mériter un jardin clos. Le test se
+ * fait sur le rectangle de la clôture, pas celui de la maison : ce qui gêne
+ * est qu'une voisine tombe dans le jardin, pas qu'elle soit proche du mur.
  *
  * @param {{x:number, z:number, box:Object}} house
  * @param {Array<{x:number, z:number}>} neighbours Toutes les maisons, la
@@ -124,14 +93,9 @@ export function isDetached(house, neighbours, margin) {
 }
 
 /**
- * Positions des piquets le long d'un côté, portillon compris.
- *
- * Les piquets sont répartis **régulièrement** entre les deux angles plutôt que
- * posés à pas fixe depuis l'un d'eux : un dernier intervalle bâtard à l'angle
- * est ce qui trahit une clôture engendrée. Le pas réel s'écarte donc un peu du
- * pas demandé, et c'est voulu.
- *
- * Fonction pure.
+ * Positions des piquets le long d'un côté, portillon compris. Répartis
+ * régulièrement entre les deux angles (pas à pas fixe depuis l'un d'eux),
+ * pour éviter le dernier intervalle bâtard qui trahit une clôture engendrée.
  *
  * @param {number} length  Longueur du côté, en mètres.
  * @param {number} spacing Écartement souhaité, en mètres.
@@ -150,7 +114,7 @@ export function picketOffsets(length, spacing = PICKET_SPACING_M, gate = null) {
     if (gate !== null && Math.abs(along - gate) < GATE_WIDTH_M / 2) continue;
     out.push({ along, gap: false });
   }
-  // Marquer la trouée : le dernier piquet avant elle ne porte pas de lisse.
+  // Le dernier piquet avant la trouée ne porte pas de lisse.
   for (let i = 0; i < out.length - 1; i++) {
     if (out[i + 1].along - out[i].along > step * 1.5) out[i].gap = true;
   }
@@ -164,16 +128,10 @@ export const GARDEN_MARGIN_TRIES = 4;
 
 /**
  * Le plus grand recul de clôture qui tienne hors d'un obstacle, ou `null`.
- *
  * Une maison de centre-bourg est parfois à moins de deux mètres du trottoir :
- * son jardin, dessiné au recul tiré, poserait sa clôture au milieu de la
- * chaussée. Plutôt que de la supprimer d'emblée — un village entier sans
- * clôture est un village plus pauvre, pas un village plus juste — on resserre :
- * le recul est essayé de sa valeur tirée jusqu'au minimum de la fourchette, et
- * ce n'est que si même le plus serré ne passe pas qu'il n'y a pas de jardin.
- *
- * `clear(x, z)` dit si un point est libre. La fonction reste donc **pure** et
- * ne connaît pas les routes : c'est l'appelant qui branche l'emprise.
+ * plutôt que de supprimer le jardin d'emblée, on resserre le recul jusqu'au
+ * minimum de la fourchette avant de renoncer. `clear(x, z)` dit si un point
+ * est libre — la fonction ne connaît pas les routes elle-même.
  *
  * @param {Object} box Rectangle orienté de la maison.
  * @param {number} margin Recul tiré, en mètres.
@@ -191,12 +149,7 @@ export function fittedGardenMargin(box, margin, clear, floor = GARDEN_MARGIN_M[0
   return null;
 }
 
-/**
- * Vrai si toute la clôture d'un jardin tombe sur du terrain libre.
- *
- * Le tracé est sondé, pas seulement ses quatre angles : une rue qui coupe un
- * côté en son milieu laisse les quatre angles au large. Fonction pure.
- */
+/** Vrai si toute la clôture d'un jardin tombe sur du terrain libre (tracé sondé, pas seulement les angles). */
 export function gardenOutlineClear(box, margin, clear, step = GARDEN_PROBE_M) {
   const corners = gardenCorners(box, margin);
   for (let side = 0; side < 4; side++) {
@@ -228,12 +181,9 @@ function blend(a, b, t) {
 }
 
 /**
- * Pousse un panneau vertical dont les deux bouts ne sont pas à la même cote.
- *
- * `pushPanel` suppose un panneau d'aplomb, ce qui est le cas d'un mur et d'un
- * piquet ; ce n'est pas celui d'une lisse, qui relie deux piquets plantés sur
- * une pente et doit la suivre. À l'horizontale, elle sortirait du sol d'un bout
- * et s'y enfoncerait de l'autre au premier dénivelé.
+ * Pousse un panneau vertical dont les deux bouts ne sont pas à la même cote
+ * (contrairement à `pushPanel`) : pour une lisse qui relie deux piquets
+ * plantés sur une pente et doit la suivre.
  */
 function pushSlopedPanel(buffer, a, b, thickness, nx, nz, color) {
   const corners = [
@@ -280,12 +230,9 @@ function pushTriangle(buffer, a, b, c, color, normal = null) {
 }
 
 /**
- * Pousse un buisson : une masse facettée, irrégulière, posée au sol.
- *
- * Deux couronnes et une pointe suffisent — un buisson de jardin fait un mètre,
- * et personne n'en compte les facettes. Ce qui compte est qu'aucun ne soit
- * identique au voisin : les rayons sont bruités par sommet, donc deux buissons
- * de même taille n'ont pas la même silhouette.
+ * Pousse un buisson : une masse facettée et irrégulière, posée au sol. Deux
+ * couronnes et une pointe, rayons bruités par sommet pour qu'aucun ne
+ * ressemble à son voisin.
  *
  * @param {Object} options
  * @param {Object} [options.colors] Feuillage du thème (`theme.furniture.colors`).
@@ -311,9 +258,7 @@ export function appendBush(buffer, { x, y, z, radius, height, seed = 1, sides = 
 
   for (let i = 0; i < sides; i++) {
     const j = (i + 1) % sides;
-    // Le sens de parcours est choisi pour que la normale de face sorte du
-    // buisson ; le matériau est de toute façon `DoubleSide`, mais une normale
-    // rentrante donnerait un buisson éclairé à contre-jour.
+    // Sens de parcours choisi pour que la normale de face sorte du buisson.
     pushTriangle(buffer, low[i], mid[j], low[j], base);
     pushTriangle(buffer, low[i], mid[i], mid[j], midColor);
     pushTriangle(buffer, mid[i], apex, mid[j], crown);
@@ -342,9 +287,7 @@ export class GardenLayer {
     this.geometry = null;
     this.count = 0;
 
-    // `DoubleSide` : une planche de clôture n'a pas d'épaisseur, et un buisson
-    // dont on voit l'intérieur par une facette mal orientée est pire qu'un
-    // buisson à deux faces.
+    // `DoubleSide` : une planche n'a pas d'épaisseur, et une facette de buisson mal orientée doit rester visible.
     this.material = new THREE.MeshLambertMaterial({
       vertexColors: true,
       side: THREE.DoubleSide,
@@ -367,20 +310,15 @@ export class GardenLayer {
     const buffer = { positions: [], normals: [], colors: [] };
     let built = 0;
 
-    // Les plus proches d'abord : si le plafond mord, ce qui saute est au bord
-    // de la portée, là où une clôture ne fait déjà plus qu'un trait.
+    // Les plus proches d'abord : si le plafond mord, ce qui saute est au bord de la portée.
     const near = (houses || [])
       .map((house) => ({ house, distance: Math.hypot(house.x - here.x, house.z - here.z) }))
       .filter((entry) => entry.distance <= GARDEN_RADIUS_M)
       .sort((a, b) => a.distance - b.distance);
 
     const neighbours = houses || [];
-    // L'emprise routière, posée une fois pour toute la reconstruction. Les
-    // jardins ne lisent pas le réseau : ils ne posent qu'une question, « ce
-    // point est-il libre ».
     const index = this.roads?.index || null;
-    // Le trottoir compte autant que la chaussée : une clôture qui traverse le
-    // passage est le même défaut, et c'est la clôture qui cède, jamais la rue.
+    // Le trottoir compte autant que la chaussée : c'est la clôture qui cède, jamais la rue.
     const clear = (x, z) => !inCorridor(index, x, z) && !pavement?.covers(x, z, 0);
 
     for (const { house } of near) {
@@ -389,11 +327,7 @@ export class GardenLayer {
 
       const drawn =
         GARDEN_MARGIN_M[0] + randomAt(house.x, house.z, 217) * (GARDEN_MARGIN_M[1] - GARDEN_MARGIN_M[0]);
-      // La clôture doit tenir entre la maison et la rue. Resserrée si besoin,
-      // abandonnée si même le recul minimal mord sur la voirie : un jardin qui
-      // déborde sur la rue est pire que pas de jardin du tout. Le rabattement
-      // passe **avant** le test de voisinage : c'est le recul réellement posé
-      // qui doit tenir libre, pas celui qu'on avait tiré.
+      // Rabattement avant le test de voisinage : c'est le recul réellement posé qui doit tenir libre.
       const margin = fittedGardenMargin(house.box, drawn, clear);
       if (margin == null) continue;
       if (!isDetached(house, neighbours, margin)) continue;
@@ -412,12 +346,10 @@ export class GardenLayer {
     const { bubble } = this;
     const ground = (x, z) => bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
     const tone = FENCE_TONES[Math.floor(randomAt(house.x, house.z, 223) * FENCE_TONES.length)];
-    // La lisse est un peu plus sombre que les planches : elle est derrière.
-    const railTone = tone.map((c) => c * 0.88);
+    const railTone = tone.map((c) => c * 0.88); // la lisse est derrière, plus sombre
 
     const corners = gardenCorners(house.box, margin);
-    // Le portillon est sur **un** côté, tiré une fois pour tout le jardin : une
-    // clôture percée aux quatre côtés n'est plus une clôture.
+    // Portillon sur un seul côté, tiré une fois pour tout le jardin.
     const gateSide = Math.floor(randomAt(house.x, house.z, 229) * 4);
 
     for (let side = 0; side < 4; side++) {
@@ -430,8 +362,6 @@ export class GardenLayer {
 
       const ux = dx / length;
       const uz = dz / length;
-      // Normale du côté : elle sert à orienter la planche, qui est dans le plan
-      // de la clôture, donc sa normale est perpendiculaire au côté.
       const nx = uz;
       const nz = -ux;
 
@@ -448,9 +378,7 @@ export class GardenLayer {
         const foot = ground(px, pz) - PICKET_SINK_M;
         this._appendPicket(buffer, { px, pz, ux, uz, nx, nz, foot, tone });
 
-        // La lisse relie deux piquets voisins en suivant le sol : à l'horizontale
-        // elle flotterait dès la moindre pente, et une clôture qui flotte est
-        // exactement ce qui trahit un décor plaqué.
+        // La lisse suit le sol : à l'horizontale elle flotterait dès la moindre pente.
         if (previous && !previous.gap) {
           pushSlopedPanel(
             buffer,
@@ -486,13 +414,7 @@ export class GardenLayer {
     );
   }
 
-  /**
-   * Les buissons du jardin.
-   *
-   * Ils ne sont pas semés au hasard dans l'enclos : ils sont posés **le long de
-   * la clôture**, en retrait des angles, ce qui est là où on les plante. Semés
-   * en vrac, ils tomberaient au milieu de la pelouse et contre la maison.
-   */
+  /** Les buissons du jardin, posés le long de la clôture (pas semés au hasard dans l'enclos). */
   _appendBushes(buffer, house, margin) {
     const { bubble } = this;
     const ground = (x, z) => bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
@@ -520,15 +442,12 @@ export class GardenLayer {
     let placed = 0;
     for (let i = 0; i < spots.length && placed < wanted; i++) {
       const [u, v] = spots[i];
-      // Rien contre le mur : l'emplacement doit être hors de l'emprise bâtie.
-      if (Math.abs(u) < box.long + 0.9 && Math.abs(v) < box.short + 0.9) continue;
+      if (Math.abs(u) < box.long + 0.9 && Math.abs(v) < box.short + 0.9) continue; // rien contre le mur
 
       const x = box.cx + u * cos - v * sin;
       const z = box.cz + u * sin + v * cos;
       if (randomAt(x, z, 241) < 0.25) continue;
-      // La clôture, elle, a déjà été ajustée à l'emprise ; le buisson est en
-      // retrait d'un mètre, mais un angle de jardin peut encore mordre sur un
-      // trottoir en biais. Le test coûte une lecture d'index.
+      // Un angle de jardin peut encore mordre sur un trottoir en biais.
       if (inCorridor(this.roads?.index || null, x, z)) continue;
 
       const radius =

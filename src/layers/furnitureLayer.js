@@ -1,60 +1,28 @@
 /*
- * furnitureLayer — le mobilier, posé dans la bulle.
- * -------------------------------------------------
- * Le terrain, la route, le bâti et les arbres donnent une campagne juste mais
- * vide : rien n'y borde, rien n'y clôt, rien n'y marque la distance. Ce sont
- * ces objets-là qui font qu'on lit une route de campagne plutôt qu'un ruban
- * gris sur une photo aérienne.
+ * furnitureLayer — le mobilier, posé dans la bulle. Exécute les règles de
+ * `furniturePlacement` avec les formes de `furnitureKit`, reconstruit sur la
+ * même cadence que la chaussée et le bâti (tous les 250 m), à partir des
+ * mêmes tuiles déjà décodées.
  *
- * Cette couche exécute les règles de `furniturePlacement` avec les formes de
- * `furnitureKit`. Elle se reconstruit sur la même cadence que la chaussée et le
- * bâti — tous les 250 mètres parcourus —, à partir des mêmes tuiles déjà
- * décodées : aucune requête réseau supplémentaire.
+ * Deux familles : le linéaire (haies, murets, clôtures, glissières, talus,
+ * câbles) est balayé le long d'une polyligne (`appendProfile`), une seule
+ * géométrie fusionnée par matière ; le ponctuel (lampadaires, poteaux,
+ * panneaux, bornes, bâtiments agricoles) est instancié, un `InstancedMesh` par forme.
  *
- * ## Deux familles, deux traitements
+ * Rien ne se pose sur la chaussée ni la voie ferrée (`RailwayLayer` publie
+ * son propre `RoadIndex`, comme les routes) — `_onRoad` et
+ * `_clipOffRoad`/`_clipInfra` interrogent les deux indistinctement.
  *
- * - **Le linéaire** — haies, murets, clôtures, glissières, talus, câbles — est
- *   *balayé* : une section suivie le long d'une polyligne (`appendProfile`).
- *   Une seule géométrie fusionnée par matière, refaite à chaque reconstruction.
- * - **Le ponctuel** — lampadaires, poteaux, panneaux, bornes, bottes, bâtiments
- *   agricoles, éoliennes — est *instancié* : une géométrie partagée, une
- *   matrice par exemplaire. Un `InstancedMesh` par forme.
+ * Forte pente : la chaussée est dressée à mi-hauteur de sa section
+ * (`levelRow`), donc à la fois encaissée et portée sur un versant. En amont,
+ * un mur habille la tranchée entaillée (`terrainBubble.cutElevation`) ; en
+ * aval, un mur de soutènement porte la glissière ; hors versant raide, un
+ * simple talus suffit. Les deux murs et la glissière n'apparaissent que là
+ * où le relief, lu dans le MNT, les rend nécessaires.
  *
- * ## Deux emprises, une seule règle
- *
- * Rien de tout cela ne se pose sur la chaussée — ni sur la voie ferrée, qui en
- * est le même genre d'objet (`RailwayLayer` publie son propre `RoadIndex`,
- * exactement comme les routes). `_onRoad` et `_clipOffRoad`/`_clipInfra`
- * interrogent les deux indistinctement : le reste de la couche n'a jamais à
- * savoir laquelle des deux a refusé un point.
- *
- * ## Le cas de la forte pente
- *
- * La chaussée est dressée de niveau en travers, **à mi-hauteur** de sa section
- * (`levelRow`) : c'est là qu'un terrassier la met, le déblai d'un côté payant le
- * remblai de l'autre. Sur un versant, la route est donc à la fois encaissée et
- * portée, et chaque rive appelle son ouvrage :
- *
- * - en **amont**, le terrain est entaillé le long de la chaussée
- *   (`terrainBubble.cutElevation`) et un **mur habille la tranchée** — il part
- *   de la plate-forme et monte jusqu'au terrain naturel, donc sa hauteur suit le
- *   versant mètre par mètre ;
- * - en **aval**, un **mur de soutènement** descend de la rive jusqu'au sol
- *   qu'elle surplombe, et la **glissière** se pose dessus ;
- * - hors des versants raides, un simple **talus** de terre suffit là où la
- *   plate-forme surplombe légèrement le terrain.
- *
- * Ce n'est donc pas un décor plaqué au hasard sur les routes de montagne : les
- * deux murs et la glissière apparaissent là où le relief, lu dans le MNT, les
- * rend nécessaires — et nulle part ailleurs.
- *
- * ## Ce qui donne de la vie
- *
- * Un décor juste mais inerte se lit comme une maquette. S'y ajoutent donc du
- * bétail dans les pâtures, des poules et du linge dans les cours de ferme, des
- * feux aux carrefours d'agglomération, et le halo des lampadaires la nuit. Tout
- * cela est **immobile** : ce qui bouge — oiseaux, fumée — vit dans `lifeLayer`,
- * qui est animé par image là où cette couche est reconstruite tous les 250 m.
+ * Ce qui donne de la vie (bétail, poules et linge de ferme, feux aux
+ * carrefours, halo des lampadaires) reste immobile : ce qui bouge (oiseaux,
+ * fumée) vit dans `lifeLayer`, animé par image.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
@@ -181,68 +149,32 @@ export const SIGN_ITEMS = [
 ];
 
 /**
- * Panneau d'entrée d'agglomération : à quelle distance il va chercher son nom
- * (`settlement.nearestNamedPlace`), et à quelle distance il exige une vraie
- * grappe de bâtiments (`FabricIndex.countWithin`) avant de se planter.
- *
- * Les deux conditions sont nécessaires — voir le site d'appel dans
- * `_applyRoadsidePlan`. Sans elles, ce panneau se posait à l'entrée de
- * **n'importe quel** `landuse=residential` (voir `settlement.js` : un
- * périmètre administratif, pas une agglomération), y compris un lotissement
- * sans nom ni maison encore construite. `SIGN_PLACE_NAME_MAX_M` reste court :
- * au-delà, le point `place` le plus proche désigne le prochain hameau, pas
- * celui qu'on traverse.
+ * Panneau d'entrée d'agglomération : à quelle distance il va chercher son
+ * nom (`settlement.nearestNamedPlace`), et à quelle distance il exige une
+ * vraie grappe de bâtiments (`FabricIndex.countWithin`) avant de se
+ * planter — les deux conditions sont nécessaires, sinon ce panneau se posait
+ * à l'entrée de n'importe quel `landuse=residential` (un périmètre
+ * administratif, pas une agglomération).
  */
 export const SIGN_PLACE_NAME_MAX_M = 450;
 export const SIGN_PLACE_NAME_FABRIC_RADIUS_M = 80;
 /**
- * Longueur minimale, en mètres, du passage **hors** agglomération qui doit
+ * Longueur minimale, en mètres, du passage hors agglomération qui doit
  * précéder une portion bâtie pour que son début compte comme une vraie
- * entrée de ville — voir `isSettlementEdgeRun`.
- *
- * Sans ce garde-fou, le nom et la grappe de bâtiments suffisaient à eux
- * seuls — et à l'intérieur d'une vraie ville, ils sont presque toujours
- * vrais **partout** : la moindre coupure entre deux polygones `landuse`
- * adjacents (un carrefour, une place, un pâté sans étiquette dans la donnée)
- * redémarre une portion « bâtie », donc un panneau de plus, en plein centre.
- * `runsByValue` absorbe déjà les coupures les plus courtes (huit
- * échantillons), mais pas celles, plus larges, d'un vrai îlot urbain — d'où
- * ce second seuil, en mètres plutôt qu'en échantillons.
- *
- * Rejoué contre de vraies tuiles (OpenFreeMap) sur deux terrains opposés :
- *
- * - un village isolé (Dornas, Ardèche) — un seul panneau se pose, quel que
- *   soit le point d'approche autour du village, avec un écart mesuré de 175
- *   à 1465 m selon la route ;
- * - un centre-ville dense (Meyzieu, agglomération lyonnaise) — un observateur
- *   planté en plein centre déclenchait 98 panneaux avant ce garde-fou (une
- *   portion « bâtie » redémarre à chaque coupure de `landuse`, et il n'en
- *   manque pas en ville), 0 après.
- *
- * Voir le script qui a produit ces chiffres, décrit dans le commit qui a
- * introduit cette note.
+ * entrée de ville (voir `isSettlementEdgeRun`) : sans ce garde-fou, la
+ * moindre coupure entre deux polygones `landuse` adjacents en ville
+ * redémarrait une portion « bâtie », donc un panneau de plus, en plein centre.
  */
 export const SIGN_PLACE_NAME_MIN_GAP_M = 150;
 
 /**
- * Vrai si la portion **précédente** d'une chaîne (`runsByValue`) est un vrai
+ * Vrai si la portion précédente d'une chaîne (`runsByValue`) est un vrai
  * passage hors agglomération — la seule chose qui fasse du début de la
  * portion suivante une vraie entrée de ville plutôt qu'un artefact du
- * découpage des `landuse` (voir `SIGN_PLACE_NAME_MIN_GAP_M`).
+ * découpage des `landuse`. Sans portion précédente, le repli est négatif :
+ * une chaîne redécoupée autour de l'observateur commence très souvent déjà en ville.
  *
- * Sans portion précédente (`previous` nul), le repli est **négatif** : une
- * chaîne redécoupée à chaque reconstruction autour de l'observateur
- * (`clipToRadius`, dans `collectRoadSegments`) commence très souvent déjà en
- * ville dès que l'observateur y est — rejoué contre Meyzieu, une fenêtre de
- * 700 m plantée au centre-ville ne contient **jamais** de portion précédente,
- * pour aucune des 263 portions « bâties » qu'elle voit. Répondre "oui" par
- * défaut dans ce cas revient donc à répondre "oui" partout en ville ; répondre
- * "non" perd, au pire, l'entrée d'une ville dont le bord tombe pile au bord de
- * la bulle chargée — un défaut bien plus discret qu'un panneau au milieu d'un
- * pâté de maisons.
- *
- * Fonction pure.
- *
+
  * @param {{value:boolean, rows:Array<{distance:number}>}|null} previous
  * @param {number} [minGapM]
  */
@@ -254,14 +186,7 @@ export function isSettlementEdgeRun(previous, minGapM = SIGN_PLACE_NAME_MIN_GAP_
 /** Largeur de texte utilisable sur la lame blanche du panneau, en mètres —
  *  voir `signPlaceName` dans `furnitureKit.js` (face large de 1,64 m). */
 export const SIGN_PLACE_NAME_TEXT_WIDTH_M = 1.5;
-/**
- * Hauteur de case visée pour le nom peint, en mètres, et son plancher.
- *
- * La face blanche du panneau (`signPlaceName`) fait 0,4 m de haut ; cette
- * case en occupe l'essentiel en laissant une marge de part et d'autre, sans
- * quoi une lettre haute toucherait le bord de la lame. `fitLabelText` ne
- * réduit que la largeur, jamais cette hauteur.
- */
+/** Hauteur de case visée pour le nom peint, en mètres, et son plancher (marge de part et d'autre sur la lame de 0,4 m). */
 export const SIGN_PLACE_NAME_LABEL_HEIGHT_M = 0.32;
 export const SIGN_PLACE_NAME_LABEL_MIN_HEIGHT_M = 0.14;
 /** Repère local du texte sur la lame — voir `signPlaceName` (`y: 1.85`, face
@@ -274,13 +199,10 @@ export const SIGN_PLACE_NAME_LABEL_Z_M = 0.05;
 export const SIGN_PLACE_NAME_LABEL_INK = '#1c1c1c';
 
 /**
- * Vraies lumières de lampadaire présentes dans la scène.
- *
- * Deux, et pas une de plus : le nombre de lumières entre dans la clé de
- * programme de **tous** les matériaux, donc il doit rester constant sur toute la
- * vie de la scène. Elles se posent en permanence sur les deux têtes les plus
- * proches de l'observateur, avec un fondu d'entrée et de sortie qui évite qu'une rue
- * s'allume d'un bloc quand on y entre.
+ * Vraies lumières de lampadaire présentes dans la scène. Deux, pas une de
+ * plus : le nombre de lumières entre dans la clé de programme de tous les
+ * matériaux. Posées sur les deux têtes les plus proches, avec un fondu
+ * d'entrée et de sortie.
  */
 export const LAMP_LIGHT_COUNT = 2;
 /** Portée d'une de ces lumières, en mètres. */
@@ -296,13 +218,8 @@ export const TRAFFIC_CYCLE_S = 14;
 
 /**
  * État d'un feu tricolore à un instant donné : quelle lentille est allumée.
- *
- * Le cycle réel n'est pas symétrique — le vert dure, l'orange passe. Le rendre
- * symétrique donnerait un clignotement régulier, qui se lit comme une
- * décoration de Noël plutôt que comme un carrefour.
- *
- * Fonction pure. `phase` décale le cycle d'un feu à l'autre : deux feux voisins
- * synchrones sont la première chose qui trahit un décor procédural.
+ * Cycle asymétrique (le vert dure, l'orange passe). `phase` décale le cycle
+ * d'un feu à l'autre, sinon deux feux voisins synchrones trahissent le procédural.
  *
  * @param {number} time  Secondes écoulées.
  * @param {number} phase Décalage propre au feu, en secondes.
@@ -321,12 +238,7 @@ export const ROCK_RADIUS_M = 220;
 export const ROCK_CELL_M = 14;
 /** Portée des rangs de vigne et de verger, en mètres. */
 export const ROW_CROP_RADIUS_M = 320;
-/**
- * Sel du facettage du feuillage de vigne (`hedgeGeometry.facetJitter`). Le
- * rang de vigne n'a pas de `style` comme la haie — pas de `salt` tout fait —
- * d'où ce sel dédié, choisi loin de ceux du bocage (601, 617) et des tirages
- * voisins de `_buildRows`.
- */
+/** Sel du facettage du feuillage de vigne (`hedgeGeometry.facetJitter`) : pas de `style` comme la haie, donc un sel dédié. */
 const VINE_ROW_FACET_SALT = 733;
 
 /**
@@ -336,17 +248,9 @@ const VINE_ROW_FACET_SALT = 733;
  */
 /**
  * Seuils de détection d'une cour de ferme — voir `_looksLikeFarmstead`.
- *
- * `landuse=farmyard` existe bien dans OSM, mais **pas** dans les tuiles
- * servies par OpenFreeMap (schéma OpenMapTiles) : vérifié directement contre
- * une ferme réelle et nommée d'OSM — absente telle quelle des couches
- * `landuse` et `landcover` de la tuile qui la contient, qui ne portent que du
- * `farmland`/`grass` générique. L'indice qui reste est indirect : une petite
- * parcelle agricole ou une pâture qui porte, à elle seule, une vraie grappe de
- * bâtiments. Une seule maison isolée en pleine campagne n'en fait pas une
- * ferme ; plusieurs bâtiments groupés en dehors d'un périmètre habité en font
- * une — c'est `FabricIndex`, déjà utilisé pour distinguer un hameau d'un
- * bourg (`_buildVillageLandmarks`), qui répond à cette question-là.
+ * `landuse=farmyard` n'atteint pas les tuiles OpenFreeMap : l'indice qui
+ * reste est indirect, une petite parcelle agricole qui porte à elle seule
+ * une vraie grappe de bâtiments (`FabricIndex`).
  */
 export const FARMSTEAD_MAX_HECTARES = 3;
 /** Rayon dans lequel on cherche la grappe de bâtiments, en mètres. */
@@ -355,12 +259,10 @@ export const FARMSTEAD_CLUSTER_RADIUS_M = 80;
 export const FARMSTEAD_CLUSTER_MIN_BUILDINGS = 2;
 
 /**
- * Longueur des tunnels de serre — voir `_placeFarmstead` : entre ces deux
- * cotes, une valeur demandée (`FurnitureLayer._greenhouseLengthFor`), pas
- * mesurée. En dessous du minimum, le tunnel redevient le petit modèle de
- * catalogue (`GREENHOUSE_BASE_LENGTH_M`, 14 m) ; au-delà du maximum, une
- * voûte continue se lirait comme un hangar sans fin plutôt que comme une
- * serre.
+ * Longueur des tunnels de serre — voir `_placeFarmstead`. En dessous du
+ * minimum, le tunnel redevient le petit modèle de catalogue
+ * (`GREENHOUSE_BASE_LENGTH_M`) ; au-delà du maximum, une voûte continue se
+ * lirait comme un hangar sans fin.
  */
 export const GREENHOUSE_MIN_LENGTH_M = 12;
 export const GREENHOUSE_MAX_LENGTH_M = 60;

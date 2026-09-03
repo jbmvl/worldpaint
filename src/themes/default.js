@@ -1,42 +1,19 @@
 /*
- * defaultTheme — la direction artistique livrée avec le moteur.
- * -------------------------------------------------------------
- * Tout ce qui décide de **quoi** ressemble à quoi est ici. Le reste de `src/`
- * décide du **comment** : où poser un arbre, comment entailler un terrain,
- * quand replanter une tuile. Le partage se teste en une question — si on
- * supprime ceci, le moteur sait-il encore fabriquer un paysage, ou ne sait-il
- * plus que lequel ?
+ * defaultTheme — la direction artistique livrée avec le moteur. Décide du
+ * quoi (couleurs, formes) ; le reste de `src/` décide du comment (où poser
+ * un arbre, quand replanter une tuile).
  *
- *   TOWN_PALETTES supprimé → il fait toujours des villages, sans savoir de
- *                            quelle couleur.            → thème
- *   townPaletteAt supprimé → il ne sait plus qu'un village a une couleur
- *                            cohérente.                 → moteur
+ * N'y vont pas, malgré les apparences : les plafonds/portées (budgets
+ * d'images par seconde, pas des goûts), les règles de composition
+ * (`TOWN_PATCH_M`, `FOREST_PATCH_M`, lecture des lisières — des trouvailles
+ * du moteur), les encodages (`CROP_KINDS`, grille de l'atlas d'arbres — des
+ * contrats entre deux morceaux de code).
  *
- * Ce qui n'est donc **pas** ici, malgré les apparences :
+ * Seul thème existant aujourd'hui : une campagne européenne, plutôt
+ * française, vue depuis une route — assumé.
  *
- *   - les **plafonds** (`FURNITURE_LIMITS`, `GRASS_COUNT`, `BUILDING_MAX_COUNT`)
- *     et les **portées** (`*_RADIUS_M`, `*_REBUILD_M`) : ce sont des budgets
- *     d'images par seconde, pas des goûts. Un thème qui pourrait les changer
- *     pourrait faire tomber l'application à quatre images par seconde ;
- *   - les **règles de composition** (`TOWN_PATCH_M`, `FOREST_PATCH_M`,
- *     `GRASS_FADE_FROM`, la lecture des lisières dans la carte de classes) :
- *     ce sont les trouvailles du moteur, et elles doivent rester lisibles et
- *     améliorables par tout le monde ;
- *   - les **encodages** (`CROP_KINDS` et son identifiant peint dans le canal
- *     rouge, la grille 3×3 de l'atlas d'arbres) : ce sont des contrats entre
- *     deux morceaux de code, pas des choix d'apparence — même si la *liste*
- *     des cultures, elle, en est un. Ils attendent encore leur découplage.
- *
- * Ce thème est aussi le seul qui existe aujourd'hui. Il n'est pas un exemple
- * neutre : c'est une campagne européenne, plutôt française, vue depuis une
- * route, et c'est assumé — un moteur qui ne sait rien peindre n'intéresse
- * personne.
- *
- * **On n'a pas à le modifier pour en changer.** Une application donne ses
- * propres tranches à `createWorld({ theme })` ; le thème résolu descend
- * jusqu'aux couches, qui le gardent chacune sur leur instance. Ce qu'on lit ici
- * n'est que le point de départ, et le repli de toutes les fonctions publiques
- * appelées sans thème.
+ * On n'a pas à le modifier pour en changer : une application donne ses
+ * tranches à `createWorld({ theme })` (voir `resolveTheme`).
  */
 
 import { srgb } from '../core/color.js';
@@ -66,43 +43,22 @@ export const TERRAIN_LOOK = {
    */
   unclassifiedWeights: [1, 0, 0, 0],
   /**
-   * Albédos, en espace **linéaire**.
-   *
-   * `grassAlbedo` et `cropAlbedo` ne sont pas choisis à l'œil : ils sont
-   * calés sur la couleur que rend réellement le motif instancié qui pousse
-   * dessus (`groundCover`, `cropLayer`) — moyenne des pixels opaques de la
-   * case d'atlas concernée (herbe : `clump` ; culture : la variante `*Mass`,
-   * celle qui porte la bande de transition), passée en linéaire par la même
-   * formule que `srgb()` (`core/color.js`), puis multipliée par la teinte
-   * moyenne d'instance (`GRASS_LOOK`/`CROP_LOOK`, tirages à mi-plage). Sans
-   * ce calage, le sol et ce qui y pousse divergent forcément : ils sont peints
-   * par deux chemins qui ne se consultent pas, et l'écart se voit à la
-   * jointure entre les tiges du premier plan et la teinte lointaine. Une
-   * culture en plein soleil rend donc un albédo plus haut que ne le
-   * laisserait supposer un repère « terre nue » — c'est la teinte de l'épi ou
-   * de la fleur qui porte le champ, pas celle du sol qu'elle couvre.
+   * Albédos, en espace linéaire. `grassAlbedo`/`cropAlbedo` ne sont pas
+   * choisis à l'œil : calés sur la couleur que rend réellement le motif
+   * instancié qui pousse dessus (`groundCover`, `cropLayer`), sans quoi le
+   * sol et ce qui y pousse divergent à la jointure premier plan/lointain.
    */
   grassAlbedo: [0.051, 0.135, 0.017],
   woodAlbedo: [0.042, 0.056, 0.02],
   farmlandAlbedo: [0.431, 0.331, 0.08],
   bareAlbedo: [0.27, 0.255, 0.225],
   /**
-   * Albédo par culture, dans l'ordre de `CROP_KINDS`.
-   *
-   * C'est **ce qui rend un champ visible de loin**. Un champ de blé à huit
-   * cents mètres n'est pas une texture d'épis — on n'en distingue aucun —,
-   * c'est une couleur, et tant que toute culture était peinte du brun de labour
-   * il n'y avait tout simplement rien à voir. Les tiges instanciées ne portent
-   * que les cinquante premiers mètres ; au-delà, c'est cette ligne-ci qui
-   * travaille, et elle porte jusqu'à deux kilomètres pour une lecture de
-   * texture. `vineyard` et `orchard` n'ont pas de motif instancié propre à
-   * `cropLayer` (ils passent par `furnitureLayer` — rang de vigne, alignement
-   * d'arbres) : leur albédo est calé sur les mêmes couleurs de feuillage que
-   * ce motif-là (`FURNITURE_COLORS.vineLeaf`, `.leafOlive`), pour la même
-   * raison.
-   *
-   * Le labour garde `farmlandAlbedo`, qui reste le repli de tout champ dont on
-   * ignore la culture.
+   * Albédo par culture, dans l'ordre de `CROP_KINDS` — ce qui rend un champ
+   * visible de loin (les tiges instanciées ne portent que les 50 premiers
+   * mètres). `vineyard`/`orchard` n'ont pas de motif propre à `cropLayer`
+   * (rang de vigne et alignement d'arbres, via `furnitureLayer`) : leur
+   * albédo est calé sur les mêmes couleurs de feuillage. Le labour garde
+   * `farmlandAlbedo`, repli de toute culture inconnue.
    */
   cropAlbedo: {
     wheat: [0.566, 0.439, 0.092],
@@ -121,12 +77,10 @@ export const TERRAIN_LOOK = {
 
 // --- Les arbres ----------------------------------------------------------------
 /**
- * Les neuf silhouettes, décrites une fois.
- *
- * `hue` module la teinte de base ; elle reste volontairement peu saturée, la
- * variation finale venant de la couleur d'instance. `crownBase` fixe où
- * commence la houppe — c'est ce qui distingue un tronc de futaie, dégagé sur les
- * deux tiers de sa hauteur, d'un taillis qui part du sol.
+ * Les neuf silhouettes, décrites une fois. `hue` module la teinte de base
+ * (peu saturée, la variation finale venant de la couleur d'instance).
+ * `crownBase` fixe où commence la houppe (tronc dégagé d'une futaie vs
+ * taillis qui part du sol).
  */
 export const TREE_VARIANTS = [
   { kind: 'broadleaf', hue: { r: 0.62, g: 1, b: 0.46 }, trunk: 0.075, crownBase: 0.6, spread: 0.34 },
@@ -153,24 +107,13 @@ export const TREE_ESSENCES = {
 
 // --- Les peuplements -----------------------------------------------------------
 /**
- * Les peuplements.
- *
- * ## Pourquoi il en faut plusieurs
- *
- * Une forêt tirée uniformément dans neuf silhouettes n'est pas une forêt : c'est
- * un mélange, et le mélange est exactement ce qu'on ne voit jamais. Dans le
- * paysage réel, un versant est en résineux et le fond de vallon en feuillus ; un
- * taillis est bas et serré là où une futaie est haute et clairsemée. C'est ce
- * contraste-là qui se lit de loin, pas le détail d'une houppe.
- *
- * Chaque peuplement fixe donc quatre choses : les **essences** qui le composent
- * (indices de l'atlas), la **hauteur** de ses arbres, un **facteur de densité**,
- * et la part de **sous-bois** — les buissons de la strate basse, qui se comptent
- * en plus des arbres et non à leur place. Un bois sans strate basse se lit comme
- * une colonnade : on voit sous les houppes jusqu'au bout du massif.
- * Le type est tiré d'une maille de `FOREST_PATCH_M`, donc il change
- * de proche en proche mais reste le même sur toute une masse boisée — et il ne
- * dépend que du lieu, donc il ne change pas d'une reconstruction à l'autre.
+ * Les peuplements. Une forêt tirée uniformément dans neuf silhouettes n'est
+ * pas une forêt : le contraste entre un versant résineux et un fond de
+ * vallon feuillu se lit de loin, pas le détail d'une houppe. Chaque
+ * peuplement fixe les essences, la hauteur, un facteur de densité, et la
+ * part de sous-bois (comptée en plus des arbres, pas à leur place — un bois
+ * sans strate basse se lit comme une colonnade). Tiré d'une maille de
+ * `FOREST_PATCH_M`, donc ancré au lieu.
  */
 export const FOREST_TYPES = [
   {
@@ -220,51 +163,23 @@ export const FOREST_TYPES = [
 ];
 
 // --- L’herbe et les fleurs -----------------------------------------------------
-/**
- * Hauteur des touffes, en mètres.
- *
- * Une prairie non fauchée monte au genou : trente centimètres au plus court,
- * quatre-vingts pour ce qui a poussé. Plus bas, la caméra survole un gazon —
- * et c'est le tapis ras, plus que la densité, qui trahissait le décalque.
- */
+/** Hauteur des touffes, en mètres (une prairie non fauchée monte au genou). */
 export const GRASS_MIN_HEIGHT = 0.3;
 export const GRASS_MAX_HEIGHT = 0.8;
 /** Largeur d'une touffe, en part de sa hauteur. */
 export const GRASS_ASPECT = 0.62;
-/**
- * Part des touffes qui portent des fleurs, en pleine prairie.
- *
- * Volontairement basse. Un pré n'est pas un parterre : ce qui le fait exister,
- * c'est **quelques** taches de couleur dans un tapis vert, et une densité de
- * fleurs qui paraît juste sur une image fixe devient un tapis persan dès qu'on
- * roule dedans.
- */
+/** Part des touffes qui portent des fleurs, en pleine prairie (volontairement basse : un pré n'est pas un parterre). */
 export const FLOWER_SHARE = 0.16;
-/**
- * Part de fleurs en **lisière de culture**, où poussent les coquelicots.
- *
- * La lisière n'est pas cherchée : elle est **lue**. La carte de classes est
- * filtrée linéairement, donc un point exactement sur la limite d'un champ y
- * porte à la fois de l'herbe et de la culture. Un point qui porte les deux *est*
- * un bord de champ — il n'y a rien d'autre à calculer.
- */
+/** Part de fleurs en lisière de culture, où poussent les coquelicots (lue directement dans la carte de classes filtrée). */
 export const POPPY_SHARE = 0.42;
 
 // --- Les cultures --------------------------------------------------------------
 /**
- * Hauteur et silhouette de chaque culture.
- *
- * `atlas` désigne la case de l'atlas, `height` la hauteur en mètres, `density`
- * la part des tirages retenus. Le blé est serré, le tournesol espacé — c'est ce
- * qui les distingue d'aussi loin qu'on les voit.
- *
- * Les densités se lisent avec la maille : neuf tirages par maille de 1,6 m font
- * 3,5 touffes au mètre carré à `density: 1`. Elles ne sont pas égales parce
- * qu'une touffe ne représente pas la même chose selon la plante — l'atlas
- * dessine vingt-six tiges de blé dans sa case, mais seulement quatre pieds de
- * maïs et trois tournesols. Un pied de maïs vaut donc quatre fois un brin de
- * blé, et sa densité est baissée d'autant : sans quoi le champ devient un mur
- * opaque qui coûte cher et ne ressemble à rien.
+ * Hauteur et silhouette de chaque culture. `atlas` désigne la case de
+ * l'atlas, `height` la hauteur en mètres, `density` la part des tirages
+ * retenus — pas égale entre cultures : une touffe ne représente pas la même
+ * chose selon la plante (l'atlas dessine 26 tiges de blé par case, contre 4
+ * pieds de maïs), donc la densité est baissée d'autant.
  */
 export const CROP_LOOK = {
   wheat: { atlas: 'wheat', height: 0.95, spread: 0.22, density: 1, tint: [1.02, 0.94, 0.62] },
@@ -275,24 +190,11 @@ export const CROP_LOOK = {
 
 // --- Les bourgs ----------------------------------------------------------------
 /**
- * Les palettes.
- *
- * Chacune porte deux ou trois tons de mur, deux tons de toit, deux tons de
- * **volet**, et les **formes de toit** admises. Deux ou trois formes par
- * village, jamais plus : c'est le nombre qui fait qu'un bourg est varié sans
- * être un catalogue.
- *
- * ## Les volets
- *
- * Ils ne sont pas un détail parmi d'autres : c'est **la** couleur d'un village
- * français. Le mur et le toit sont donnés par la carrière et la tuilerie du
- * coin, donc ils varient peu et lentement ; le volet est peint, donc il est
- * franc, et c'est le seul endroit du bâti où une vraie couleur est admise. Le
- * bleu de Provence, le rouge d'Alsace, le vert sombre de Bretagne sont ce qu'on
- * reconnaît d'une façade avant d'en lire la pierre.
- *
- * Deux tons par bourg, comme pour les toits : plus, et la rue devient un
- * nuancier ; un seul, et c'est un lotissement.
+ * Les palettes. Chacune porte deux ou trois tons de mur, deux tons de toit,
+ * deux tons de volet, et les formes de toit admises (deux ou trois, jamais
+ * plus). Le volet est le seul endroit du bâti où une vraie couleur est
+ * admise (mur et toit varient peu, donnés par la carrière et la tuilerie du
+ * coin) : le bleu de Provence, le rouge d'Alsace, le vert de Bretagne.
  */
 export const TOWN_PALETTES = [
   {
@@ -355,61 +257,29 @@ export const TOWN_PALETTES = [
 
 // --- Les bâtiments qui ont une fonction ----------------------------------------
 /**
- * Ce qu'un bâtiment devient quand on sait à quoi il sert.
+ * Ce qu'un bâtiment devient quand on sait à quoi il sert (la fonction vient
+ * de la couche `poi`, nommée par `buildingLayer.buildingPersonalityFor`).
  *
- * La couche `building` ne dit rien de la fonction (voir l'en-tête de
- * `townStyle`) : elle vient de la couche `poi`, et c'est
- * `buildingLayer.buildingPersonalityFor` qui la nomme. Ce qu'on en fait à
- * l'écran est ici, et nulle part ailleurs.
- *
- * Trois registres, et ils ne se mélangent pas :
- *
- * - `wall`, `roof`, `shape` **remplacent** la palette du bourg. Réservé à ce
- *   qui, dans la réalité, n'est pas bâti dans le matériau du pays : un hôpital
- *   et une grande surface sont en béton et en bardage d'un bout à l'autre de la
- *   France, quelle que soit la carrière du coin.
- * - `front` ne remplace rien : c'est le **bandeau de rez-de-chaussée**, la
- *   devanture, posée sur des murs qui gardent la couleur du bourg. C'est la
- *   bonne échelle pour un commerce — il occupe un niveau d'un immeuble, pas
- *   l'immeuble. Repeindre la façade entière faisait virer tout un centre ancien
- *   à la même couleur, ce qui se lisait comme une panne et non comme un
- *   commerce.
- * - `spire`, `dome`, `minaret` sont des **volumes ajoutés** à la vraie
- *   empreinte : un clocher n'est pas une couleur, c'est une silhouette, et
- *   c'est la seule chose qui se voie de l'autre bout du village.
- *
- * Une personnalité peut n'en porter qu'un : une église garde les murs de son
- * bourg — une église romane *est* bâtie dans la pierre du pays — et ne se
- * reconnaît qu'à son clocher.
+ * Trois registres qui ne se mélangent pas : `wall`/`roof`/`shape`
+ * remplacent la palette du bourg (bâti hors matériau du pays — hôpital,
+ * grande surface) ; `front` ne remplace rien, c'est le bandeau de
+ * rez-de-chaussée d'un commerce ; `spire`/`dome`/`minaret` sont des volumes
+ * ajoutés à l'empreinte. Une personnalité peut n'en porter qu'un (une église
+ * garde les murs de son bourg, ne se reconnaît qu'à son clocher).
  */
 export const BUILDING_PERSONALITIES = {
-  // Pierre de taille et ardoise : le clocher est l'ouvrage soigné du village,
-  // pas son bâti courant, et il est presque partout d'un autre matériau que les
-  // maisons autour.
-  church: { spire: { wall: '#d3ccba', roof: '#4f555d' } },
-  // La coupole se pose sur une terrasse : sur un rampant elle flotterait.
-  mosque: { shape: 'flat', dome: '#4f8792', minaret: '#efe9db' },
+  church: { spire: { wall: '#d3ccba', roof: '#4f555d' } }, // pierre de taille et ardoise, autre matériau que les maisons autour
+  mosque: { shape: 'flat', dome: '#4f8792', minaret: '#efe9db' }, // coupole sur terrasse, flotterait sur un rampant
   hospital: { wall: '#eceff0', roof: '#c2c8ca', shape: 'flat' },
   retail: { wall: '#d8d4cb', roof: '#71767b', shape: 'flat' },
-  // Bois verni foncé : la devanture de boulangerie est le seul commerce dont la
-  // façade soit un type reconnaissable en France.
-  bakery: { front: '#7d4a2a' },
-  // Peinture sombre, faiblement saturée : une devanture quelconque se lit à sa
-  // valeur — un bandeau plus sombre que le mur — pas à sa teinte.
-  shop: { front: '#3f5560' },
+  bakery: { front: '#7d4a2a' }, // bois verni foncé
+  shop: { front: '#3f5560' }, // se lit à sa valeur, pas sa teinte
 };
 
 /**
  * Devanture : proportions de la façade commerçante, sur le seul pan le plus
- * long de l'empreinte — voir `buildingLayer._appendBuilding`, qui choisit ce
- * pan comme façade sur rue. Les autres pans d'un même commerce gardent le
- * bandeau plein, sans baie ni porte : une arrière-cour de commerce n'a pas de
- * vitrine, et rien dans les tuiles ne dit quel pan donne réellement sur la
- * rue.
- *
- * `doorWidthM` est délibérément large — « une large baie d'entrée » — plutôt
- * qu'une porte étroite : c'est la vitrine elle-même qui sert d'entrée, comme
- * sur une devanture moderne, pas un vantail percé dans un mur plein.
+ * long de l'empreinte (`buildingLayer._appendBuilding`) — les autres pans
+ * gardent le bandeau plein. `doorWidthM` reste large : la vitrine sert d'entrée.
  */
 export const SHOPFRONT_WINDOW_WIDTH_M = 1.1;
 export const SHOPFRONT_DOOR_WIDTH_M = 1.7;
@@ -422,15 +292,10 @@ export const SHOPFRONT_FASCIA_GAP_M = 0.14;
 
 /**
  * Pictogramme de l'enseigne perpendiculaire (`buildingLayer.appendShopSignBlade`),
- * par classe **brute** de point d'intérêt (`properties.class`, le schéma
- * OpenMapTiles — pas le `kind` déjà agrégé de `buildingPersonalityFor`, qui
- * range boulangerie et bar sous la même case `shop`).
- *
- * Un émoji, pour l'instant — un repère de ce que vend le commerce, lisible de
- * loin, en attendant un vrai jeu de pictogrammes dessinés. Choisis à dessein
- * en un seul point de code Unicode chacun : le peintre du nom
- * (`materials/labelAtlas.js`) ne sait pas recomposer une séquence à variateur
- * ou à jointure (`️`, `‍`), il la couperait en plusieurs glyphes mal alignés.
+ * par classe brute de point d'intérêt (`properties.class`, pas le `kind` déjà
+ * agrégé de `buildingPersonalityFor`). Un émoji en un seul point de code
+ * chacun : `materials/labelAtlas.js` ne sait pas recomposer une séquence à
+ * variateur ou à jointure.
  */
 export const SHOPFRONT_EMOJI = {
   bakery: '🥖',
@@ -482,16 +347,10 @@ export const WINDOW_LIT_SHARE = 0.34;
 
 // --- Les chaussées -------------------------------------------------------------
 /**
- * Profils de chaussée, du plus grand au plus petit.
- *
- * Le marquage n'est pas un décor : c'est ce qui donne l'échelle. Une
- * départementale de cinq mètres portant les pointillés d'une nationale se lit
- * comme une nationale rétrécie. L'échelle descend donc par retraits successifs
- * — l'accotement en terre, puis l'axe central, puis les rives — jusqu'aux
- * voies non revêtues, qui n'ont jamais eu de marquage.
- *
- * `width` sert deux fois : elle dessine la section **et** fixe la largeur du
- * ruban. Les deux ne peuvent donc pas diverger.
+ * Profils de chaussée, du plus grand au plus petit. Le marquage donne
+ * l'échelle : une départementale portant les pointillés d'une nationale se
+ * lirait comme une nationale rétrécie. `width` sert deux fois (section et
+ * largeur du ruban), donc les deux ne peuvent pas diverger.
  */
 export const ROAD_PROFILES = {
   express: { width: 12, shoulder: 1.2, edgeLines: true, centerDash: true, texture: 256 },
@@ -506,32 +365,18 @@ export const ROAD_PROFILES = {
 export const ROAD_SURFACES = {
   asphalt: { base: '#4a4a4e', grain: 26 },
   dirt: { base: '#8a7d63', grain: 34 },
-  // Ballast de voie ferrée : pierre concassée, le grain le plus fort des
-  // trois — c'est un empierrement, pas une chaussée damée.
-  ballast: { base: '#847d70', grain: 46 },
+  ballast: { base: '#847d70', grain: 46 }, // pierre concassée, grain le plus fort des trois
+
 };
 /** Terre claire de l'accotement. */
 export const ROAD_SHOULDER_COLOR = '#8c8168';
 
 // --- La voirie -----------------------------------------------------------------
 /**
- * La section d'une rue, côté trottoir.
- *
- * Une rue de village n'est pas une route posée sur du gris : c'est une chaussée
- * **bordée**. De la chaussée vers les maisons, on rencontre toujours les mêmes
- * quatre choses, et dans cet ordre : le caniveau qui recueille l'eau, la
- * bordure qui tient la terre, le trottoir légèrement surélevé, puis ce qui
- * commence derrière — un mur, une haie, un jardin.
- *
- * Les cotes sont celles du terrain : une bordure de béton fait quatorze
- * centimètres de vue, un caniveau trente centimètres de large, un trottoir de
- * village entre 1,2 et 2,3 mètres. Elles sont **volontairement basses** : le
- * trottoir doit se lire comme une marche, pas comme un quai.
- *
- * `surfaces` porte la variation de matériau. Elle n'est pas tirée par trottoir
- * mais **par bourg** (voir `streetSurfaceAt`) : une commune refait sa voirie
- * d'un coup, donc toutes ses rues partagent le même revêtement, et c'est ce
- * partage-là qui se lit en traversant.
+ * La section d'une rue, côté trottoir : caniveau, bordure, trottoir
+ * légèrement surélevé, dans cet ordre depuis la chaussée. Cotes du terrain,
+ * volontairement basses (le trottoir doit se lire comme une marche, pas un
+ * quai). `surfaces` varie par bourg (`streetSurfaceAt`), pas par trottoir.
  */
 export const STREET_LOOK = {
   /** Largeur du caniveau, en mètres, et sa profondeur sous la chaussée. */
@@ -563,22 +408,14 @@ export const STREET_LOOK = {
 };
 
 // --- L’eau ---------------------------------------------------------------------
+/** Largeur de la ripisylve, ajoutée de part et d'autre du lit dans la carte de classes (`groundClassMap`, voir `WATERWAY_CLASSES`). */
+export const RIPARIAN_BUFFER_M = 7;
+
 /**
  * Largeur des cours d'eau linéaires, en mètres, par `class` OpenMapTiles.
  * Les grands fleuves sont déjà des polygones dans la couche `water` ; ce qui
- * reste ici est ce qui est trop étroit pour l'être.
+ * reste ici est trop étroit pour l'être.
  */
-/**
- * Largeur de la ripisylve, en mètres, ajoutée de part et d'autre du lit
- * (voir `WATERWAY_CLASSES`) dans la carte de classes (`groundClassMap`) : le
- * cours d'eau y peint une bande de bois plutôt que le mobilier n'y plante des
- * arbres isolés. C'est ce qui distingue un bosquet naturel — une fine ligne
- * de forêt, plantée avec les mêmes silhouettes que n'importe quel autre bois
- * (`vegetationLayer`) — d'un alignement planté (les platanes de bord de
- * route, qui restent du mobilier).
- */
-export const RIPARIAN_BUFFER_M = 7;
-
 export const WATERWAY_CLASSES = {
   river: 9,
   canal: 6,
@@ -589,12 +426,9 @@ export const WATERWAY_CLASSES = {
 
 // --- Ce qui vit ----------------------------------------------------------------
 /**
- * Les deux seules couleurs de la couche vivante.
- *
- * L'oiseau est une **silhouette** : vu d'en dessous il est plus sombre que le
- * ciel à toute heure, et sa couleur ne dépend donc pas de l'éclairage. La fumée
- * est donnée telle qu'elle sort du shader, sans conversion — c'est une couleur
- * d'écran, pas un albédo.
+ * Les deux seules couleurs de la couche vivante. L'oiseau est une silhouette
+ * (indépendante de l'éclairage) ; la fumée est donnée telle qu'elle sort du
+ * shader, sans conversion.
  */
 export const LIFE_COLORS = {
   bird: '#2b2f36',
@@ -631,13 +465,8 @@ export const FURNITURE_COLORS = {
   hideDark: srgb('#4a3a2f'),
   fleece: srgb('#ddd6c8'),
   muzzle: srgb('#c49a94'),
-  // Robe alezane du cheval : `hideDark` — pensé pour la tache sombre de la
-  // vache pie noire — l'engloutissait sur l'herbe, d'où le « cheval invisible,
-  // trop sombre ». Un brun chaud et clair se détache, comme un vrai alezan.
-  chestnut: srgb('#8a5a3a'),
-  // Robe grise de l'âne, plus claire et plus froide que le cheval : c'est ce
-  // qui les distingue en silhouette autant qu'en couleur.
-  donkeyGrey: srgb('#9a9488'),
+  chestnut: srgb('#8a5a3a'), // robe alezane du cheval, se détache de l'herbe
+  donkeyGrey: srgb('#9a9488'), // robe grise de l'âne, plus claire et froide que le cheval
   feather: srgb('#c9c2b4'),
   comb: srgb('#a3372f'),
   linen: srgb('#e6e2d8'),
@@ -647,16 +476,13 @@ export const FURNITURE_COLORS = {
   signalAmber: srgb('#d09a2a'),
   black: srgb('#22262b'),
 
-  // Verres de feu tricolore au repos : un feu éteint n'est pas noir, c'est sa
-  // propre couleur assombrie derrière le verre.
+  // Verres de feu tricolore au repos (couleur assombrie derrière le verre, pas noir).
   redDark: srgb('#3a1f1e'),
   amberDark: srgb('#3a2f1a'),
   greenDark: srgb('#1c3226'),
 
   // --- Feuillages -----------------------------------------------------------
-  // Plusieurs verts plutôt qu'un seul, et volontairement peu saturés : c'est ce
-  // qui distingue un bosquet d'une masse verte. Les teintes se croisent avec la
-  // couleur d'instance, donc elles ne doivent pas déjà être poussées.
+  // Plusieurs verts peu saturés : se croisent avec la couleur d'instance, ne doivent pas déjà être poussés.
   leafSpring: srgb('#86a95c'),
   leafOlive: srgb('#6d8146'),
   leafBlue: srgb('#4f7458'),
@@ -685,42 +511,23 @@ export const FURNITURE_COLORS = {
 
 // --- Le ciel -------------------------------------------------------------------
 /**
- * Les trois couleurs d'ambiance.
- *
- * - `fog` teinte le brouillard **et** le raccord d'horizon du ciel : les deux
- *   doivent être la même couleur, faute de quoi la ligne de contact entre le
- *   terrain lointain et le ciel se lit comme une couture ;
- * - `nightZenith` / `nightHorizon` remplacent le modèle de Preetham une fois le
- *   soleil sous l'horizon, qu'il ne sait pas rendre.
- *
- * C'est la couleur la plus déterminante du décor : elle décide de la distance
- * apparente et de l'heure qu'il fait.
+ * Les trois couleurs d'ambiance. `fog` teinte le brouillard et le raccord
+ * d'horizon du ciel (doivent rester identiques, sinon couture visible).
+ * `nightZenith`/`nightHorizon` remplacent Preetham sous l'horizon.
  */
 export const SKY_PALETTE = {
   fog: '#e8eef3',
-  // Un ciel nocturne franchement noir ne se distingue plus d'un rendu en
-  // panne — voir sceneEnvironment.js. Ces deux teintes restent une nuit
-  // sombre, seulement plus loin du noir pur qu'avant.
-  nightZenith: '#0d1428',
+  nightZenith: '#0d1428', // une nuit sombre, pas noire (voir sceneEnvironment.js)
+
   nightHorizon: '#1c2c4c',
 };
 
 /**
- * Ce qui fait la silhouette d'une haie, par famille.
- *
- * Une haie n'est pas une section balayée : c'est un **balayage modulé**, dont
- * la crête et les flancs respirent le long du tracé, ponctué çà et là d'un
- * arbuste qui dépasse. Le balayage modulé porte l'essentiel de la lecture, de
- * loin comme de près — c'est lui qui fait l'irrégularité continue d'une haie.
- * L'arbuste n'est qu'un **accent**, un baliveau ou une touffe plus fournie
- * qu'on remarque en passant, pas un rang qui la recouvre. D'où `spacingM`
- * nettement plus large que `alongM` : les arbustes sont **espacés**, pas
- * jointifs — jointifs, ils redonnent le défaut qu'ils étaient censés corriger,
- * une texture uniforme, mais faite de bosses au lieu d'être un tube.
- *
- * Ces cotes décrivent l'arbuste et son rang — sa taille, son écartement, sa
- * part d'irrégularité. La géométrie les exécute (`hedgeGeometry`) ; jusqu'où
- * on la détaille est un budget de moteur et vit là-bas.
+ * Ce qui fait la silhouette d'une haie, par famille. Un balayage modulé porte
+ * l'essentiel de la lecture (crête et flancs qui respirent), ponctué
+ * d'arbustes en accent, espacés (`spacingM` >> `alongM`) pour ne pas
+ * redonner l'effet de tube qu'ils corrigent. La géométrie exécute ces cotes
+ * (`hedgeGeometry`) ; le budget de détail vit là-bas.
  */
 export const HEDGE_SHAPES = {
   /** Haie de bocage : deux mètres, et un baliveau de loin en loin. */

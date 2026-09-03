@@ -1,15 +1,10 @@
 /*
  * color — passer d'un nuancier à des intensités.
- * ----------------------------------------------
- * Un fichier pour une fonction, et c'est voulu : le thème et le mobilier en
- * ont tous les deux besoin, et les faire dépendre l'un de l'autre pour ça
- * créerait un cycle entre la direction artistique et le code qui la lit.
+ * Isolé ici pour éviter un cycle entre thème et mobilier.
  */
 
 /**
- * Convertit une couleur sRGB en espace linéaire, où three attend les couleurs
- * de sommet. Sans cette conversion, tout le décor sort délavé — les valeurs
- * d'un nuancier sont des valeurs sRGB, pas des intensités.
+ * Convertit une couleur sRGB (nuancier) en linéaire (attendu par three).
  * @param {string} hex `#rrggbb`
  * @returns {number[]} `[r, g, b]` linéaires.
  */

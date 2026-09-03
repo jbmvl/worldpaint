@@ -1,20 +1,12 @@
 /*
- * proceduralTextures — les textures qu'on ne télécharge pas.
- * ----------------------------------------------------------
- * Deux besoins que le réseau ne peut pas couvrir :
+ * proceduralTextures — les textures qu'on ne télécharge pas. Deux besoins que
+ * le réseau ne peut pas couvrir : le détail de proximité (une orthophoto vue
+ * de 5 m est grossie une trentaine de fois, il ne reste que des taches
+ * floues — la parade classique est de multiplier par une texture de détail
+ * haute fréquence) et la section de route (plus simple à dessiner qu'à
+ * télécharger).
  *
- * 1. Le **détail de proximité**. Une orthophoto à 1,7 m/px vue depuis 5 m du
- *    sol est grossie une trentaine de fois : il ne reste que des taches
- *    floues. Aucune source d'imagerie ne résoudra ça — la parade classique en
- *    rendu de terrain est de multiplier la photo par une texture de détail à
- *    haute fréquence, qui rend au premier plan un grain crédible sans
- *    prétendre décrire le réel.
- *
- * 2. La **section de route**. Un ruban d'asphalte avec ses bandes et ses
- *    accotements se dessine plus simplement qu'il ne se télécharge.
- *
- * Le bruit est déterministe et cyclique : même graine, même image, et les
- * bords se raccordent, donc la répétition ne montre pas de couture.
+ * Bruit déterministe et cyclique : même graine, même image, bords raccordés.
  */
 
 import { defaultTheme } from '../themes/default.js';
@@ -124,12 +116,9 @@ export function createDetailCanvas(size = 256, seed = 20260816) {
 }
 
 /**
- * Dessine un élément et ses huit copies décalées d'une période.
- *
- * C'est ce qui rend cyclable une texture faite de traits : un brin d'herbe qui
- * dépasse à droite doit réapparaître à gauche, sinon la répétition montre une
- * couture nette tous les deux mètres. Neuf appels au lieu d'un, sur une texture
- * construite une seule fois — le coût est nul et la correction est exacte.
+ * Dessine un élément et ses huit copies décalées d'une période — rend
+ * cyclable une texture faite de traits (un brin qui dépasse à droite doit
+ * réapparaître à gauche).
  */
 function drawWrapped(ctx, size, draw) {
   for (let dy = -1; dy <= 1; dy++) {
@@ -142,14 +131,7 @@ function drawWrapped(ctx, size, draw) {
   }
 }
 
-/**
- * Ramène la luminance moyenne d'une image à 0,5.
- *
- * Ces textures sont des **modulations**, pas des couleurs : le shader multiplie
- * la photo par leur double. Une moyenne qui ne vaut pas exactement 0,5
- * assombrirait ou éclaircirait tout le terrain, et le réglage se ferait alors
- * en tâtonnant sur la luminosité au lieu de porter sur la matière.
- */
+/** Ramène la luminance moyenne d'une image à 0,5 (ces textures sont des modulations, pas des couleurs). */
 function normalizeMean(ctx, width, height, target = 0.5) {
   const image = ctx.getImageData(0, 0, width, height);
   const { data } = image;
@@ -169,16 +151,10 @@ function normalizeMean(ctx, width, height, target = 0.5) {
 }
 
 /**
- * Texture de sol en couleur, cyclable : herbe ou terre.
- *
- * Le bruit fractal gris qui tenait ce rôle donnait du grain mais aucune
- * matière — à trois mètres, une orthophoto modulée par du gris ressemble à une
- * vitre sale. Ce qui manque de près, ce sont des **objets de taille connue** :
- * des brins, des cailloux. Ils ne prétendent pas décrire le sol réel, ils lui
- * rendent son échelle.
- *
- * Les valeurs sont des facteurs de modulation en espace linéaire, pas des
- * couleurs sRGB : seule compte leur variation relative.
+ * Texture de sol en couleur, cyclable : herbe ou terre. Le bruit fractal gris
+ * seul donnait du grain mais aucune matière ; ce qui manque de près, ce sont
+ * des objets de taille connue (brins, cailloux), qui rendent l'échelle sans
+ * prétendre décrire le sol réel. Valeurs en facteurs de modulation linéaire, pas en sRGB.
  *
  * @param {'grass'|'soil'} kind
  */
@@ -192,9 +168,7 @@ export function createGroundDetailCanvas(kind = 'grass', size = 256, seed = 9171
   const image = ctx.createImageData(size, size);
   const palette = {
     soil: { dark: [86, 68, 48], light: [156, 132, 100] },
-    // Sous-bois : plus sombre et plus rouge que la terre nue — de la feuille
-    // morte, pas du limon.
-    forest: { dark: [54, 42, 28], light: [104, 84, 54] },
+    forest: { dark: [54, 42, 28], light: [104, 84, 54] }, // feuille morte, pas du limon
     grass: { dark: [58, 84, 38], light: [126, 152, 74] },
   }[kind] || { dark: [58, 84, 38], light: [126, 152, 74] };
 
@@ -286,15 +260,10 @@ export function createGroundDetailCanvas(kind = 'grass', size = 256, seed = 9171
 }
 
 /**
- * Carte de normales de rides, cyclable.
- *
- * C'est le reflet qui fait lire une surface comme de l'eau, pas sa couleur : un
- * plan bleu uni ressemble à du plastique peint. Sans réflexion d'environnement,
- * la ride reste le seul moyen de faire accrocher le soleil — d'où une carte de
- * normales plutôt qu'une texture de couleur.
- *
- * Les normales sont dérivées du gradient d'un bruit fractal cyclique, encodées
- * dans la convention habituelle (0,5 = pente nulle, bleu = vers le haut).
+ * Carte de normales de rides, cyclable. C'est le reflet qui fait lire une
+ * surface comme de l'eau (sans réflexion d'environnement, la ride reste le
+ * seul moyen de faire accrocher le soleil). Normales dérivées du gradient
+ * d'un bruit fractal cyclique, convention habituelle.
  */
 export function createWaterNormalCanvas(size = 256, seed = 33107) {
   const height = fractalNoise(size, [8, 16, 32, 64], seed);
@@ -324,24 +293,10 @@ export function createWaterNormalCanvas(size = 256, seed = 33107) {
 }
 
 /**
- * Atlas d'arbres : 3 × 3 silhouettes dans une seule texture.
- *
- * ## Pourquoi neuf et pas quatre
- *
- * Quatre suffisaient à ce qu'un bois ne soit pas un clonage. Elles ne
- * suffisaient pas à ce qu'il y ait **plusieurs sortes de bois** : une pinède,
- * une chênaie, une ripisylve et un taillis ne se distinguent pas par leur
- * densité mais par l'essence qui les compose, et quatre silhouettes tirées au
- * hasard donnaient partout la même forêt mélangée.
- *
- * Les neuf cases sont donc regroupées par **essence** (`TREE_ESSENCES`), et
- * `vegetationLayer` tire d'abord un type de peuplement, puis une silhouette
- * dedans. C'est ce qui fait qu'un versant est en résineux et le fond de vallon
- * en feuillus, au lieu d'un mélange uniforme.
- *
- * L'atlas reste **carré** : le décalage UV est appliqué par le shader avec un
- * seul facteur d'échelle (`foliageMaterial`), et une grille non carrée
- * demanderait deux.
+ * Atlas d'arbres : 3 × 3 silhouettes dans une seule texture, regroupées par
+ * essence (`TREE_ESSENCES`) — quatre silhouettes suffisaient à casser le
+ * clonage, mais donnaient partout la même forêt mélangée. Carré, pour que le
+ * shader applique un seul facteur d'échelle (`foliageMaterial`).
  */
 export const TREE_ATLAS_COLS = 3;
 export const TREE_ATLAS_ROWS = 3;
@@ -352,26 +307,17 @@ export const TREE_ATLAS_OFFSETS = (() => {
   for (let index = 0; index < TREE_ATLAS_COLS * TREE_ATLAS_ROWS; index++) {
     const col = index % TREE_ATLAS_COLS;
     const row = Math.floor(index / TREE_ATLAS_COLS);
-    // L'origine des UV est en bas : la première case dessinée en haut du canevas
-    // porte donc le plus grand `v`.
+    // L'origine des UV est en bas.
     out.push([col / TREE_ATLAS_COLS, (TREE_ATLAS_ROWS - 1 - row) / TREE_ATLAS_ROWS]);
   }
   return out;
 })();
 
 /**
- * Houppe de feuillus : des amas de petits disques, pas une boule.
- *
- * Trois choses la font lire comme un arbre plutôt que comme un plot, et elles
- * se voient toutes les trois si on les rate :
- *
- * - la houppe est **découpée** — trois ou quatre masses distinctes qui se
- *   recouvrent partiellement, avec du ciel entre elles. Une houppe pleine est
- *   une boule verte ;
- * - la lumière vient **d'en haut à gauche**, toujours : c'est le gradient qui
- *   donne du volume à une silhouette qui n'en a pas ;
- * - quelques **branches** sortent du tronc dans la houppe. On ne les distingue
- *   pas, mais leur absence se remarque.
+ * Houppe de feuillus : des amas de petits disques, pas une boule. Trois
+ * choses la font lire comme un arbre : la houppe découpée en masses
+ * distinctes (pas une boule pleine), la lumière toujours d'en haut à gauche,
+ * et quelques branches visibles dans la houppe.
  */
 function drawBroadleaf(ctx, size, random, variant) {
   const { hue, spread } = variant;
@@ -524,21 +470,10 @@ function rgb(r, g, b) {
 }
 
 /**
- * Touffe d'herbe, pour le tout premier plan.
- *
- * Trois exigences, chacune visible si on la rate :
- *
- * - un brin n'a **pas une épaisseur constante** : il part large et finit en
- *   pointe. Tracé au trait, il se lit comme un fil de fer vert ;
- * - un brin est **plus clair à la pointe** qu'au pied, qui est à l'ombre de la
- *   touffe. Sans ce dégradé, la touffe est une tache plate ;
- * - il en faut **beaucoup** : `alphaTest` supprime tout ce qui est à moitié
- *   transparent, et quatorze brins ne laissent qu'un peigne clairsemé.
- *
- * Les brins sont donc des **surfaces** fuselées remplies d'un dégradé. Le vert
- * reste volontairement
- * moyen : la teinte définitive vient de la couleur d'instance, qui varie d'une
- * touffe à l'autre.
+ * Touffe d'herbe, pour le tout premier plan. Un brin n'a pas une épaisseur
+ * constante (part large, finit en pointe), est plus clair à la pointe qu'au
+ * pied, et il en faut beaucoup (`alphaTest` supprime les brins clairsemés).
+ * Vert moyen : la teinte définitive vient de la couleur d'instance.
  */
 function drawGrassTuft(ctx, size, random) {
   const blades = 34;
@@ -573,12 +508,9 @@ function drawGrassTuft(ctx, size, random) {
 }
 
 /**
- * Décalages UV d'un atlas carré, dans l'ordre de dessin des cases : case 0 en
- * haut à gauche, puis vers la droite, puis vers le bas.
- *
- * Dérivé plutôt qu'écrit à la main : un atlas qui change de taille et une table
- * de décalages restée figée donnent une végétation qui échantillonne la case du
- * voisin, ce qui ne se voit qu'en roulant. Fonction pure.
+ * Décalages UV d'un atlas carré, dans l'ordre de dessin des cases (0 en haut
+ * à gauche, puis vers la droite, puis vers le bas). Dérivé plutôt qu'écrit à
+ * la main, pour rester d'accord avec un atlas qui change de taille.
  */
 export function atlasOffsets(cols, rows) {
   const out = [];
@@ -591,19 +523,10 @@ export function atlasOffsets(cols, rows) {
 }
 
 /**
- * Répète un peintre de silhouette pour en faire une **masse**.
- *
- * C'est la réponse au trou de moyenne distance : au-delà de trente mètres, on
- * ne sème plus une touffe par plante mais une touffe pour plusieurs mètres
- * carrés, et il faut donc une silhouette qui se lise comme un groupe et non
- * comme un brin géant. Plutôt qu'un second jeu de peintres à garder d'accord
- * avec le premier, on rejoue **le même** quatre ou cinq fois côte à côte, à des
- * échelles voisines : la masse est faite exactement de la végétation qu'elle
- * représente, et une retouche du brin se propage toute seule à la masse.
- *
- * Les sous-touffes se recouvrent largement (chacune fait plus de la moitié de
- * la case) : c'est le recouvrement qui donne un contour plein plutôt qu'un
- * peigne.
+ * Répète un peintre de silhouette pour en faire une masse (au-delà de 30 m,
+ * une touffe représente plusieurs mètres carrés). Rejoue le même peintre
+ * plusieurs fois côte à côte plutôt qu'un second jeu à garder d'accord avec
+ * le premier ; les sous-touffes se recouvrent largement pour un contour plein.
  */
 function drawMass(ctx, size, random, paint, passes = 5) {
   for (let i = 0; i < passes; i++) {
@@ -622,29 +545,14 @@ function drawMass(ctx, size, random, paint, passes = 5) {
 }
 
 /**
- * Atlas des touffes : herbe nue, trois fleurissements, et leurs masses.
- *
- * ## Pourquoi un atlas plutôt qu'une seconde couche
- *
- * Une couche de fleurs séparée voudrait dire un second maillage instancié, un
- * second semis, un second parcours de mailles. Or une fleur ne pousse pas à côté
- * de l'herbe : elle pousse **dedans**. Quatre variantes d'une même touffe, tirées
- * dans un atlas par l'attribut d'instance déjà en place pour les arbres, coûtent
- * exactement zéro appel de rendu de plus.
- *
- * Le partage entre les quatre n'est pas uniforme et ne doit pas l'être : c'est
- * `groundCover` qui choisit, d'après ce que dit la carte de classes — le
- * coquelicot en lisière de culture, la marguerite et le bouton d'or en prairie.
- *
- * ## Les masses
- *
- * Les cinq dernières cases sont les mêmes touffes **agrégées** (`drawMass`),
- * pour les bandes de distance où une instance ne représente plus une plante
- * mais quelques mètres carrés de prairie. Chaque fleurissement garde la sienne :
- * un pré de marguerites reste un pré de marguerites à quatre-vingts mètres, ce
- * qu'une masse unique et neutre aurait effacé. `clumpAlt` est une seconde masse
- * d'herbe nue, de graine différente — c'est le cas de loin le plus fréquent, et
- * une silhouette unique répétée sur des hectares se voit comme un motif.
+ * Atlas des touffes : herbe nue, trois fleurissements, et leurs masses. Une
+ * fleur pousse dedans l'herbe, pas à côté : quatre variantes tirées dans un
+ * atlas par l'attribut d'instance déjà en place pour les arbres, sans appel
+ * de rendu supplémentaire (`groundCover` choisit d'après la carte de
+ * classes). Les cinq dernières cases sont les mêmes touffes agrégées
+ * (`drawMass`) pour les bandes de distance, chaque fleurissement gardant la
+ * sienne. `clumpAlt` est une seconde masse d'herbe nue, graine différente
+ * (le cas le plus fréquent, pour ne pas se répéter en motif).
  */
 export const GRASS_ATLAS_COLS = 3;
 export const GRASS_ATLAS_ROWS = 3;
@@ -754,25 +662,18 @@ export function createGrassAtlasCanvas(cell = 128, seed = 3313) {
 }
 
 /**
- * Atlas des cultures : blé, maïs, tournesol, chaume.
- *
- * Ce sont des touffes comme l'herbe — panneaux croisés, même matériau, même
- * vent —, mais à l'échelle de la plante : un maïs fait deux mètres cinquante,
- * un blé un mètre, un chaume vingt centimètres. C'est `cropLayer` qui applique
- * la hauteur ; ici on ne dessine que la silhouette.
+ * Atlas des cultures : blé, maïs, tournesol, chaume. Des touffes comme
+ * l'herbe (panneaux croisés, même matériau, même vent), à l'échelle de la
+ * plante — `cropLayer` applique la hauteur, ici on ne dessine que la silhouette.
  */
 export const CROP_ATLAS_COLS = 3;
 export const CROP_ATLAS_ROWS = 3;
 
 /**
- * Les quatre cultures dessinées, puis leurs **masses** — mêmes plantes, mais
- * agrégées pour les bandes de distance où une instance ne représente plus un
- * pied (voir `drawMass` et `cropLayer`). Un champ de maïs reste identifiable
- * comme du maïs à cent mètres : c'est ce qui distingue cette approche d'une
- * silhouette de masse unique et neutre.
- *
- * Huit cases pour une grille 3 × 3 : la neuvième reste vide, et rien ne
- * l'indexe — le décalage d'atlas se lit par `CROP_VARIANTS.indexOf`.
+ * Les quatre cultures dessinées, puis leurs masses agrégées (`drawMass`,
+ * `cropLayer`), pour rester identifiables à cent mètres. Huit cases pour une
+ * grille 3×3 (la neuvième reste vide) ; le décalage d'atlas se lit par
+ * `CROP_VARIANTS.indexOf`.
  */
 export const CROP_VARIANTS = [
   'wheat',
@@ -890,15 +791,7 @@ function drawStubble(ctx, size, random) {
 
 const CROP_PAINTERS = { wheat: drawWheat, maize: drawMaize, sunflower: drawSunflower, stubble: drawStubble };
 
-/**
- * Nombre de sous-touffes d'une masse, par culture.
- *
- * Il n'est pas commun parce qu'une case ne contient pas le même nombre de
- * plantes selon la culture : l'atlas dessine vingt-six tiges de blé mais quatre
- * pieds de maïs. Répéter cinq fois un blé donne un mur opaque et coûteux à
- * dessiner ; répéter cinq fois un maïs donne à peine de quoi fermer la
- * silhouette. C'est la même raison qui fait varier `density` dans le thème.
- */
+/** Nombre de sous-touffes d'une masse, par culture (une case ne contient pas le même nombre de plantes selon la culture). */
 const CROP_MASS_PASSES = { wheat: 3, maize: 6, sunflower: 6, stubble: 3 };
 
 /** Atlas 3 × 3 des cultures et de leurs masses, fond transparent. */
@@ -929,16 +822,10 @@ export function createCropAtlasCanvas(cell = 128, seed = 6607) {
 export const ROAD_TEXTURE_LENGTH = 12;
 
 /**
- * Section de chaussée, dessinée d'après une description en mètres.
- *
- * La description compte autant que le dessin : c'est **elle** qui fixe la
- * correspondance entre la texture et la largeur du ruban. Une section unique
- * étirée sur toutes les classes de route donnait des accotements de deux
- * mètres sur une autoroute et des pointillés minuscules sur un chemin. Ici la
- * largeur du profil est aussi celle du ruban, donc l'échelle est juste partout.
- *
- * L'axe horizontal traverse la chaussée, l'axe vertical la parcourt — répété
- * tous les `ROAD_TEXTURE_LENGTH` mètres, ce qui produit les pointillés.
+ * Section de chaussée, dessinée d'après une description en mètres — la
+ * largeur du profil est aussi celle du ruban, donc l'échelle est juste sur
+ * toutes les classes de route. Axe horizontal en travers, vertical le long
+ * (répété tous les `ROAD_TEXTURE_LENGTH` mètres pour les pointillés).
  *
  * @param {Object} profile
  * @param {number} profile.width       Largeur totale, accotements compris.
