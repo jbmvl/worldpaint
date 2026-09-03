@@ -243,6 +243,12 @@ export class GroundClassMap {
   constructor({ THREE, theme = defaultTheme }) {
     this.THREE = THREE;
     this.theme = theme;
+    /**
+     * Famille climatique du lieu, ou `null`. La carte des cultures est le seul
+     * endroit où une culture est tirée (voir `cropFor`), donc c'est ici que le
+     * climat doit arriver — pas dans `cropLayer`, qui ne fait que relire.
+     */
+    this.climate = null;
     this.canvas = createCanvas(CLASS_PIXELS, CLASS_PIXELS);
     // La carte est relue par le CPU après chaque rasterisation — c'est elle qui
     // décide aussi où poussent les arbres et l'herbe.
@@ -301,6 +307,15 @@ export class GroundClassMap {
     this._anchor = null;
     this._frame = null;
     this.disposed = false;
+  }
+
+  /**
+   * Pose la famille climatique du lieu. Le compositeur repeint la carte quand
+   * elle change : ce qui a été semé sous un autre climat n'est plus valable.
+   * @param {string|null} family
+   */
+  setClimate(family) {
+    this.climate = family || null;
   }
 
   /**
@@ -545,7 +560,9 @@ export class GroundClassMap {
           // centre de la parcelle : le tirage est ancré au sol, donc la même
           // parcelle porte toujours la même chose, et la teinte au loin ne peut
           // pas contredire les tiges de près.
-          const id = cropId(cropFor(properties, randomAt(sumX / counted, sumZ / counted, 43)));
+          const id = cropId(
+            cropFor(properties, randomAt(sumX / counted, sumZ / counted, 43), this.climate)
+          );
           if (!id && !cover) continue;
           this.cropCtx.fillStyle = `rgba(${id * CROP_ID_STEP}, ${cover * COVER_ID_STEP}, 0, 1)`;
           this.cropCtx.fill(path, 'evenodd');

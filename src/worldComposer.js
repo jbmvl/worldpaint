@@ -312,6 +312,9 @@ export class WorldComposer {
     const family = this.landscape?.climate?.family ?? null;
     this.vegetation.setClimate(family);
     this.buildings.setClimate(family);
+    // La carte des cultures est le seul endroit où une culture est tirée : le
+    // climat doit y être avant la prochaine rasterisation.
+    this.groundClass.setClimate(family);
     const wanted = this._wantedTiles(lng, lat);
 
     // La végétation suit les tuiles de la bulle et non le vectoriel : elle se
@@ -347,7 +350,9 @@ export class WorldComposer {
       //    lorsqu'elle a vraiment glissé : c'est une rasterisation de 1536²
       //    suivie d'une relecture CPU, hors de question à chaque tuile chargée.
       const wasReady = this.groundClass.ready;
-      if (classStale || force) {
+      // Le climat repeint la carte au même titre qu'un glissement : ce qui y
+      // était semé l'a été avec l'assolement d'une autre région.
+      if (classStale || climateChanged || force) {
         this.groundClass.rebuild(this.vectorTiles, wanted, here, this.bubble.frame);
         this.bubble.materials.syncGroundClass();
       }
@@ -412,12 +417,16 @@ export class WorldComposer {
 
       // 7. Herbe — l'index des chaussées vient de changer, ce qui est semé
       //    peut se trouver sur une route qu'on ne connaissait pas encore.
-      if (hasRoads || classStale || force) this.grass.update(here.x, here.z, { force: true });
+      if (hasRoads || classStale || climateChanged || force) {
+        this.grass.update(here.x, here.z, { force: true });
+      }
 
       // 8. Cultures — même carte que le sol : il suffit de resemer quand elle a
       //    été repeinte, ou quand l'index des chaussées a bougé sous le semis.
-      if (classStale || force) this.crops.invalidate();
-      this.crops.update(here.x, here.z, { force: hasRoads || classStale || force });
+      if (classStale || climateChanged || force) this.crops.invalidate();
+      this.crops.update(here.x, here.z, {
+        force: hasRoads || classStale || climateChanged || force,
+      });
 
       // 9. Cheminées à faire fumer : le mobilier sait où sont les fermes, mais
       //    la fumée est animée par image.

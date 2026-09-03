@@ -236,7 +236,76 @@ export function boundaryFurnitureFor(properties = {}, { steepness = 0, variant =
 }
 
 /**
- * Ce qui pousse dans un champ, d'après ses attributs et un tirage de parcelle.
+ * L'assolement par défaut : celui de la France, et le repli de tout climat
+ * qu'on ne connaît pas.
+ *
+ * Les parts sont cumulées dans l'ordre — céréales d'abord, prairie temporaire
+ * et labour ensuite, maïs et tournesol pour le reste. Ce sont **exactement** les
+ * seuils qui étaient écrits en dur dans `cropFor` : sans climat, rien ne change.
+ */
+export const DEFAULT_CROP_MIX = [
+  ['wheat', 0.34],
+  ['plough', 0.18],
+  ['maize', 0.16],
+  ['sunflower', 0.1],
+  ['vineyard', 0.08],
+  ['orchard', 0.06],
+  ['plough', 0.08],
+];
+
+/**
+ * L'assolement, par famille climatique.
+ *
+ * Ce n'est pas de la statistique agricole : c'est ce qu'il faut pour qu'un
+ * champ ne mente pas. Une vigne en Laponie et un tournesol dans les Bardenas se
+ * remarquent immédiatement, alors que personne ne peut vérifier la proportion
+ * exacte de blé dans un canton donné.
+ *
+ * Les cultures disponibles sont celles de `CROP_KINDS`, et rien d'autre : leur
+ * ordre est un encodage gravé (voir plus bas), donc ajouter une lavande ou un
+ * olivier n'est pas une ligne à écrire ici mais un atlas à dessiner et une
+ * carte à réencoder. `orchard` porte donc l'olivier du sud comme le pommier
+ * normand, et c'est la limite honnête de ce qu'on sait peindre aujourd'hui.
+ *
+ * Une famille absente retombe sur l'assolement par défaut.
+ */
+export const CROP_MIXES = {
+  oceanic: [['wheat', 0.34], ['plough', 0.22], ['maize', 0.24], ['orchard', 0.1], ['sunflower', 0.06], ['vineyard', 0.04]],
+  // Les hautes terres atlantiques : de l'orge, du fourrage, des prés retournés.
+  oceanicUpland: [['plough', 0.55], ['wheat', 0.3], ['maize', 0.1], ['orchard', 0.05]],
+  continental: [['wheat', 0.42], ['plough', 0.22], ['maize', 0.18], ['sunflower', 0.1], ['orchard', 0.06], ['vineyard', 0.02]],
+  // Au nord, ni maïs ni tournesol : la saison est trop courte.
+  boreal: [['plough', 0.55], ['wheat', 0.4], ['orchard', 0.05]],
+  mediterranean: [['vineyard', 0.26], ['orchard', 0.26], ['wheat', 0.2], ['plough', 0.18], ['sunflower', 0.1]],
+  mediterraneanCool: [['wheat', 0.26], ['vineyard', 0.22], ['plough', 0.2], ['orchard', 0.18], ['sunflower', 0.14]],
+  mediterraneanMontane: [['plough', 0.4], ['wheat', 0.25], ['orchard', 0.25], ['vineyard', 0.1]],
+  semiArid: [['plough', 0.4], ['wheat', 0.25], ['orchard', 0.25], ['vineyard', 0.1]],
+  // En désert, une parcelle cultivée est une exception, et elle est irriguée :
+  // du verger ou de la terre nue, jamais un champ de blé à perte de vue.
+  arid: [['plough', 0.7], ['orchard', 0.2], ['wheat', 0.1]],
+  // En altitude, la parcelle « agricole » est presque toujours du pré.
+  alpine: [['plough', 0.7], ['wheat', 0.25], ['orchard', 0.05]],
+  glacial: [['plough', 1]],
+};
+
+/**
+ * Tire une culture dans un assolement cumulé. Fonction pure.
+ *
+ * @param {Array<[string, number]>} mix
+ * @param {number} variant Tirage dans [0, 1[ attaché à la parcelle.
+ */
+export function pickCrop(mix, variant) {
+  let sum = 0;
+  for (const [crop, share] of mix) {
+    sum += share;
+    if (variant < sum) return crop;
+  }
+  return mix[mix.length - 1][0];
+}
+
+/**
+ * Ce qui pousse dans un champ, d'après ses attributs, un tirage de parcelle et
+ * le climat.
  *
  * Le schéma OpenMapTiles ne dit jamais quelle est la culture : `landcover` porte
  * `farmland` et rien de plus, et `landuse` ne distingue que le verger, la vigne
@@ -245,14 +314,17 @@ export function boundaryFurnitureFor(properties = {}, { steepness = 0, variant =
  * ce qu'il y avait dans ce champ-là ce jour-là, alors qu'un pays où tous les
  * champs sont labourés se remarque immédiatement.
  *
- * Le partage suit à peu près l'assolement français : céréales d'abord, prairie
- * temporaire et labour ensuite, maïs et tournesol pour le reste.
+ * Ce que dit la donnée passe avant le climat : une vigne cartographiée reste
+ * une vigne, où qu'elle soit. Le climat ne décide que de ce qu'on ignore.
  *
  * Fonction pure.
  *
+ * @param {Object} properties
+ * @param {number} variant Tirage dans [0, 1[ attaché à la parcelle.
+ * @param {string|null} [climate] Famille climatique (`core/climate.js`).
  * @returns {'wheat'|'maize'|'sunflower'|'vineyard'|'orchard'|'plough'|null}
  */
-export function cropFor(properties = {}, variant = 0) {
+export function cropFor(properties = {}, variant = 0, climate = null) {
   const klass = properties.class;
   const subclass = properties.subclass;
 
@@ -260,13 +332,7 @@ export function cropFor(properties = {}, variant = 0) {
   if (subclass === 'orchard' || subclass === 'plant_nursery') return 'orchard';
   if (klass !== 'farmland') return null;
 
-  if (variant < 0.34) return 'wheat';
-  if (variant < 0.52) return 'plough';
-  if (variant < 0.68) return 'maize';
-  if (variant < 0.78) return 'sunflower';
-  if (variant < 0.86) return 'vineyard';
-  if (variant < 0.92) return 'orchard';
-  return 'plough';
+  return pickCrop((climate && CROP_MIXES[climate]) || DEFAULT_CROP_MIX, variant);
 }
 
 /** Cultures semées en rangs visibles, donc balayées et non semées en vrac. */

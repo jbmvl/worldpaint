@@ -60,6 +60,9 @@ import {
   scatterFurnitureFor,
   herdFor,
   cropFor,
+  pickCrop,
+  CROP_MIXES,
+  DEFAULT_CROP_MIX,
   rockKindFor,
   signKindFor,
   pathCurvature,
@@ -2171,6 +2174,56 @@ test('la culture d’un champ est tirée une fois par parcelle', () => {
     assert.ok(seen.get(crop) > 0, `${crop} apparaît`);
     assert.ok(seen.get(crop) < 120, `${crop} ne domine pas (${seen.get(crop)})`);
   }
+});
+
+test('l’assolement suit le climat, et la donnée passe avant lui', () => {
+  const field = { class: 'farmland' };
+  const share = (climate) => {
+    const seen = new Map();
+    for (let i = 0; i < 500; i++) {
+      const crop = cropFor(field, i / 500, climate);
+      seen.set(crop, (seen.get(crop) || 0) + 1);
+    }
+    return seen;
+  };
+
+  // Ni maïs ni tournesol au nord : la saison est trop courte, et un champ de
+  // tournesol en Laponie se remarque immédiatement.
+  const boreal = share('boreal');
+  assert.equal(boreal.get('maize'), undefined);
+  assert.equal(boreal.get('sunflower'), undefined);
+  assert.equal(boreal.get('vineyard'), undefined);
+  // Au sud, la vigne et le verger portent le paysage agricole.
+  const midi = share('mediterranean');
+  assert.ok(midi.get('vineyard') + midi.get('orchard') > midi.get('wheat'));
+  // En désert, la terre nue domine et le blé est marginal.
+  const desert = share('arid');
+  assert.ok(desert.get('plough') > 300);
+
+  // Une vigne cartographiée reste une vigne, où qu’elle soit : le climat ne
+  // décide que de ce que la donnée ignore.
+  assert.equal(cropFor({ class: 'farmland', subclass: 'vineyard' }, 0.1, 'boreal'), 'vineyard');
+});
+
+test('sans climat, l’assolement est exactement celui d’avant', () => {
+  // Les seuils étaient écrits en dur ; ils sont maintenant une table. La
+  // promesse est que rien ne bouge tant qu’aucun climat n’est connu.
+  const parts = new Map();
+  for (const [crop, share] of DEFAULT_CROP_MIX) parts.set(crop, (parts.get(crop) || 0) + share);
+  assert.equal(parts.get('wheat'), 0.34);
+  close(parts.get('plough'), 0.26, 1e-9, 'labour');
+  close([...parts.values()].reduce((a, b) => a + b, 0), 1, 1e-9, 'les parts font un tout');
+
+  // Chaque assolement de climat est complet : une somme sous un rend la
+  // dernière culture plus fréquente qu’écrit, en silence.
+  for (const [family, mix] of Object.entries(CROP_MIXES)) {
+    const total = mix.reduce((sum, [, share]) => sum + share, 0);
+    close(total, 1, 1e-9, `${family} : les parts font un tout`);
+    for (const [crop] of mix) assert.ok(CROP_KINDS.includes(crop), `${family} : ${crop} existe`);
+  }
+  // Le tirage est déterministe et couvre les deux bords.
+  assert.equal(pickCrop([['wheat', 0.5], ['plough', 0.5]], 0), 'wheat');
+  assert.equal(pickCrop([['wheat', 0.5], ['plough', 0.5]], 0.999), 'plough');
 });
 
 test('ce qui se sème dans un champ dépend de sa culture', () => {
