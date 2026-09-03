@@ -63,6 +63,15 @@ export {
 } from './inspect/objectLabels.js';
 export { forestTypeAt } from './layers/vegetationLayer.js';
 
+// --- Le climat --------------------------------------------------------------
+/*
+ * De quoi une application peut poser la même question que le décor : quelle
+ * famille climatique à cette longitude et cette latitude. Utile pour accorder
+ * ce qu'elle pose elle-même — un véhicule, une interface, un texte — sur ce que
+ * le paysage est en train de peindre. Pure, synchrone, sans réseau.
+ */
+export { climateAt, refineByRelief, CLIMATE_FAMILIES, KOPPEN_CODES } from './core/climate.js';
+
 /*
  * Hauteur dont la chaussée est décollée du terrain. Publiée parce qu'une
  * application qui pose son propre objet sur la route (un véhicule, un piéton)

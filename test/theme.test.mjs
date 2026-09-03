@@ -295,6 +295,13 @@ test('le compositeur sert le thème à toutes les couches qu’il monte', () => 
  */
 const ALLOWED_MODULE_STATE = {
   'materials/foliageMaterial.js': ['leanWarned'],
+  // La grille climatique décodée. C'est la seule mémoire de module qui ne
+  // puisse pas fuir d'un monde à l'autre : elle ne dépend d'aucune entrée — ni
+  // thème, ni scène, ni observateur —, elle est en lecture seule une fois
+  // remplie, et sa valeur est la même pour tout le monde. La garder paresseuse
+  // évite de décoder 266 000 cellules dans une application qui ne demande
+  // jamais de climat.
+  'core/climate.js': ['cells'],
 };
 
 function sourceFiles(dir, base = dir) {

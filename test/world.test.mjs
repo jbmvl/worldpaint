@@ -276,6 +276,16 @@ import {
 } from '../src/terrain/waterCut.js';
 import { skyParameters, lightingFor, sunlightColor } from '../src/environment/skyModel.js';
 import {
+  climateAt,
+  refineByRelief,
+  CLIMATE_FAMILIES,
+  FAMILY_OF_KOPPEN,
+  KOPPEN_CODES,
+  GRID,
+  MONTANE_ELEVATION_M,
+  ALPINE_ELEVATION_M,
+} from '../src/core/climate.js';
+import {
   groundClassFor,
   classPolygons,
   CLASS_FILL,
@@ -1353,6 +1363,89 @@ test('la lumière directe rougit à l’horizon et blanchit au zénith', () => {
   const zenith = sunlightColor(haut.warmth, false);
   assert.ok(rasant[0] - rasant[2] > zenith[0] - zenith[2], 'écart rouge/bleu au couchant');
   close(zenith[0], zenith[1], 0.06, 'lumière presque neutre à midi');
+});
+
+// --- Climat -----------------------------------------------------------------
+
+test('le climat d’un lieu est celui qu’on y trouve', () => {
+  // Des points de contrôle plutôt qu’un échantillon : une erreur de projection
+  // dans la lecture de la grille décale l’Europe entière, et ne se voit
+  // autrement qu’à l’œil, sur un paysage qui a l’air « presque juste ».
+  assert.deepEqual(climateAt(5.37, 43.3), { family: 'mediterranean', koppen: 'Csa' }, 'Marseille');
+  assert.deepEqual(climateAt(-4.49, 48.39), { family: 'oceanic', koppen: 'Cfb' }, 'Brest');
+  assert.deepEqual(climateAt(25.72, 66.5), { family: 'boreal', koppen: 'Dfc' }, 'Rovaniemi');
+  assert.deepEqual(climateAt(-2.39, 37.05), { family: 'semiArid', koppen: 'BSk' }, 'Tabernas');
+  assert.deepEqual(climateAt(-21.94, 64.15), { family: 'oceanicUpland', koppen: 'Cfc' }, 'Reykjavik');
+  assert.equal(climateAt(27.56, 53.9).family, 'continental', 'Minsk');
+  assert.equal(climateAt(7.75, 46.02).family, 'alpine', 'Zermatt');
+});
+
+test('hors de la fenêtre couverte, le climat se tait', () => {
+  // `null` n’est pas une panne : c’est l’état dans lequel le décor se peint
+  // comme il se peignait avant qu’un climat existe. Tout ce qui le lit doit
+  // savoir s’en passer.
+  assert.equal(climateAt(-74, 40.7), null, 'New York, hors grille');
+  assert.equal(climateAt(2.35, 12), null, 'sous le bord sud');
+  assert.equal(climateAt(NaN, 48), null);
+  assert.equal(climateAt(2.35, undefined), null);
+  // En plein Atlantique, la recherche de proximité ne doit pas ramener une
+  // côte à cinq cents kilomètres.
+  assert.equal(climateAt(-18, 48), null, 'plein océan');
+});
+
+test('une côte garde son climat même quand la cellule tombe à l’eau', () => {
+  // La côte réelle passe au milieu d’une cellule de dix kilomètres : sans la
+  // recherche de proximité, le décor perdrait son climat par intermittence
+  // tout le long d’un littoral, c’est-à-dire là où l’on roule le plus.
+  for (const [nom, lng, lat] of [
+    ['pointe du Raz', -4.73, 48.04],
+    ['cap Corse', 9.36, 43.0],
+    ['Sagres', -8.94, 37.01],
+  ]) {
+    assert.ok(climateAt(lng, lat)?.family, nom);
+  }
+});
+
+test('le relief corrige ce que Köppen ne peut pas dire', () => {
+  // Innsbruck est classée comme Rennes : la classification dit vrai pour le
+  // fond de vallée et faux pour tout ce qui le domine. Le MNT, lui, est au
+  // mètre.
+  assert.equal(refineByRelief('oceanic', { elevation: 300 }), 'oceanic');
+  assert.equal(refineByRelief('oceanic', { elevation: ALPINE_ELEVATION_M }), 'alpine');
+  assert.equal(refineByRelief('continental', { elevation: 1800 }), 'alpine');
+  // Une montagne méditerranéenne n’est pas une montagne alpine : pin noir et
+  // karst sec contre épicéa et alpage.
+  assert.equal(
+    refineByRelief('mediterranean', { elevation: MONTANE_ELEVATION_M }),
+    'mediterraneanMontane'
+  );
+  assert.equal(refineByRelief('mediterraneanMontane', { elevation: 2500 }), 'mediterraneanMontane');
+  assert.equal(refineByRelief('glacial', { elevation: 3000 }), 'glacial', 'rien au-dessus');
+  // Sans relief connu, on ne corrige rien plutôt que de deviner.
+  assert.equal(refineByRelief('oceanic', null), 'oceanic');
+  assert.equal(refineByRelief('oceanic', { elevation: NaN }), 'oceanic');
+  assert.equal(refineByRelief(null, { elevation: 3000 }), null);
+});
+
+test('la grille climatique et son vocabulaire tiennent ensemble', () => {
+  // L’ordre de `KOPPEN_CODES` est l’encodage de la grille : le changer sans
+  // refabriquer la grille repeint l’Espagne en Finlande.
+  assert.equal(KOPPEN_CODES.length, 31);
+  assert.equal(new Set(KOPPEN_CODES).size, KOPPEN_CODES.length, 'aucun code en double');
+  assert.ok(KOPPEN_CODES.length <= 255, 'les codes tiennent dans un octet');
+  // Toute famille annoncée doit être atteignable, et toute famille atteinte
+  // doit être annoncée : une faute de frappe ici ne se verrait qu’au moment où
+  // une région entière se peindrait avec le contenu par défaut.
+  for (const [code, family] of Object.entries(FAMILY_OF_KOPPEN)) {
+    assert.ok(KOPPEN_CODES.includes(code), `${code} est un code connu`);
+    assert.ok(CLIMATE_FAMILIES.includes(family), `${family} est une famille connue`);
+  }
+  const reachable = new Set(Object.values(FAMILY_OF_KOPPEN));
+  for (const family of CLIMATE_FAMILIES) {
+    assert.ok(reachable.has(family), `${family} est atteignable depuis un code Köppen`);
+  }
+  assert.equal(GRID.cols * GRID.step, 70, 'la fenêtre couvre l’Europe en longitude');
+  assert.equal(GRID.rows * GRID.step, 38, 'et en latitude');
 });
 
 // --- Occupation du sol ------------------------------------------------------
