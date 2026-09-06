@@ -35,7 +35,7 @@ d'OpenStreetMap, et le climat ne fait que décider de *quelle sorte* : une forê
 existe parce que la donnée le dit, elle est une taïga ou une chênaie verte parce
 que le climat le dit.
 
-## Les quatre tranches à écrire
+## Les cinq tranches à écrire
 
 Chaque entrée porte une liste `climates` : les familles où elle est plausible.
 **Une entrée sans `climates` est retenue partout** — c'est le comportement d'un
@@ -109,6 +109,48 @@ Une variante ne redit que ce qu'elle change. C'est la couleur la plus
 déterminante du décor : elle décide de la distance apparente. À toucher en
 dernier, et par petites touches.
 
+### 5. Le sol — `SOIL_LOOK`
+
+C'est la tranche qui porte le plus, et la seule qui ne soit pas une palette.
+
+```js
+mediterranean: {
+  grass: [2.2, 1.35, 2.6],      // facteurs, espace linéaire
+  bare: [1.5, 1.25, 0.95],
+  farmland: [1.25, 1.1, 0.85],
+  grassDensity: 0.55,
+  grassHeight: 0.7,
+},
+```
+
+**Des facteurs, pas des couleurs, et c'est important.** Un sol est peint deux
+fois : par le shader de terrain pour le lointain, par les touffes et les tiges
+instanciées pour le premier plan. Les deux sont calés l'un sur l'autre (voir
+l'en-tête de `TERRAIN_LOOK.grassAlbedo`), et ce calage est ce qui empêche de
+voir un disque de couleur différente autour de l'observateur. Écrire deux
+palettes séparées le déferait. Un facteur appliqué aux deux le préserve, quelle
+que soit la couleur de base.
+
+Trois choses à savoir avant de toucher aux valeurs :
+
+- **au-dessus de 1, ce n'est pas « plus clair », c'est une autre matière.** Une
+  paille réfléchit trois fois plus qu'une herbe grasse. C'est pour ça que le
+  facteur méditerranéen dépasse 2 sans être une erreur ;
+- **le plafond est 3,5**, et il n'est pas décoratif : au-delà, la touffe du
+  premier plan sature au blanc pendant que le sol continue de foncer, donc les
+  deux divergent. Un test le vérifie ;
+- **`grassDensity` fait autant que la couleur.** Un sol jauni couvert d'une
+  prairie continue reste une prairie jaunie ; ce qui fait une steppe, c'est la
+  terre qu'on voit entre les touffes. Aucune famille ne descend à zéro : un sol
+  nu partout se lit comme un décor qui n'a pas fini de charger.
+
+Les couvertures ne sont pas touchées par ces facteurs — une lande ou un maquis
+disent déjà leur pays. Les fleurs non plus : un coquelicot d'Andalousie est
+rouge, pas rouge fois trois.
+
+`oceanic` n'a **pas** d'entrée, volontairement : c'est la référence sur
+laquelle tout le reste du thème a été réglé.
+
 ## Ce qui n'est **pas** de la direction artistique
 
 - les portées, les plafonds d'instances, les cadences de reconstruction : ce
@@ -117,9 +159,15 @@ dernier, et par petites touches.
   (`COVER_KINDS`) : leur ordre est un **encodage** peint dans une image et relu
   par le shader. Ajouter une lavande ou un olivier demande un motif d'atlas et
   un réencodage, pas une ligne de table ;
-- l'assolement par climat (`CROP_MIXES`, dans `layers/furniturePlacement.js`) et
-  le bétail (`HERD_SHEEP_ODDS`) : ce sont des règles de plausibilité, pas des
-  couleurs. Elles se discutent quand même.
+- l'assolement par climat (`CROP_MIXES`, dans `layers/furniturePlacement.js`),
+  le traitement des limites de parcelle (`BOUNDARY_MIXES`, même fichier),
+  l'essence des alignements de route (`ALIGNMENT_SPECIES_MIXES`, dans
+  `layers/furnitureLayer.js`) et le bétail (`HERD_SHEEP_ODDS`) : ce sont des
+  règles de plausibilité, pas des couleurs. Elles se discutent quand même — la
+  trame agraire, en particulier, se lit de bien plus loin qu'une teinte ;
+- les réglages de grain du sol (`macroScaleM`, `macroStrength`, `blendWidth`,
+  `grainRelief`, dans `TERRAIN_LOOK`) : ce sont des paramètres de matière, et
+  ils valent pour tous les climats à la fois.
 
 ## Vérifier
 
@@ -132,7 +180,9 @@ Deux garde-fous concernent directement ce fichier :
 - **chaque famille climatique doit avoir au moins un peuplement et une
   palette.** Sans ça, la région se peint avec un contenu générique, en silence :
   le test est le seul endroit où l'oubli se signale franchement ;
-- **aucun mur de bourg ne tombe hors de la plage claire.**
+- **aucun mur de bourg ne tombe hors de la plage claire** ;
+- **aucun facteur de sol ne dépasse 3,5**, et le sol, les touffes et les tiges
+  passent tous les trois par le même résolveur.
 
 Le reste ne se vérifie qu'à l'œil, dans la démo (`npm run demo`), en se
 téléportant d'une région à l'autre. Le moteur ne juge pas de son propre rendu.
