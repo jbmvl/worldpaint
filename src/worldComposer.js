@@ -304,6 +304,14 @@ export class WorldComposer {
     this.groundClass.setClimate(family);
     // Le bétail non plus n'est pas le même partout.
     this.furniture.setClimate(family);
+    // La couleur du sol, enfin — et elle se pose à trois endroits qui doivent
+    // recevoir le **même** facteur : l'albédo lointain dans le shader, les
+    // touffes d'herbe et les tiges de culture du premier plan. Les trois
+    // passent par `soilWashFor`, et la redistribution est déclenchée plus bas
+    // par `climateChanged`, la teinte étant écrite dans les instances.
+    this.bubble.materials.setClimate(family);
+    this.grass.setClimate(family);
+    this.crops.setClimate(family);
     const wanted = this._wantedTiles(lng, lat);
 
     // La végétation suit les tuiles de la bulle et non le vectoriel : elle se

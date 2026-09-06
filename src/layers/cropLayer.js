@@ -69,6 +69,7 @@ import {
   ATLAS_ATTRIBUTE,
 } from '../materials/foliageMaterial.js';
 import { defaultTheme } from '../themes/default.js';
+import { soilWashFor } from '../core/climate.js';
 import { inCorridor } from './roadCorridor.js';
 import {
   coverBand,
@@ -245,6 +246,13 @@ export class CropLayer {
     this.bubble = bubble;
     this.groundClass = groundClass;
     this.roads = roads;
+    /**
+     * Famille climatique du lieu, ou `null`. Elle ne décide pas *quelle*
+     * culture pousse — ça, c'est `cropFor`, dans la carte de classes — mais de
+     * quelle couleur elle est, du même facteur que le sol sous elle.
+     */
+    this.climate = null;
+    this._wash = soilWashFor(null, theme.soils);
     this.disposed = false;
     this._anchor = null;
     this._frame = null;
@@ -318,6 +326,21 @@ export class CropLayer {
    * Signale que la carte des cultures a changé : ce qui est semé dessus n'est
    * plus valable. Appelé après chaque re-rasterisation de `groundClassMap`.
    */
+  /**
+   * Pose la famille climatique du lieu.
+   *
+   * @param {string|null} family
+   * @returns {boolean} vrai si elle a changé — la teinte étant écrite dans les
+   *          instances, l'appelant doit alors redistribuer.
+   */
+  setClimate(family) {
+    const next = family || null;
+    if (next === this.climate) return false;
+    this.climate = next;
+    this._wash = soilWashFor(next, this.theme.soils);
+    return true;
+  }
+
   invalidate() {
     this._anchor = null;
   }
@@ -406,7 +429,15 @@ export class CropLayer {
         mesh.setMatrixAt(placed, this._matrix);
 
         const shade = 0.86 + tufts[at + 3] * 0.24;
-        this._color.setRGB(look.tint[0] * shade, look.tint[1] * shade, look.tint[2] * shade);
+        // Même facteur que celui appliqué à `cropAlbedo` par le shader de
+        // terrain : le champ lointain et les tiges du premier plan sont la
+        // même culture, ils ne peuvent pas prendre deux couleurs.
+        const wash = this._wash.farmland;
+        this._color.setRGB(
+          look.tint[0] * shade * wash[0],
+          look.tint[1] * shade * wash[1],
+          look.tint[2] * shade * wash[2]
+        );
         mesh.setColorAt(placed, this._color);
 
         this._atlasOffsets[placed * 2] = offset[0];

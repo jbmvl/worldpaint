@@ -132,6 +132,7 @@ import {
   GRASS_PER_CELL,
   GRASS_TUFT_STRIDE,
   GRASS_CELL_M,
+  isFloweringVariant,
 } from '../src/layers/groundCover.js';
 import { coveringTiles } from '../src/core/vectorTileSource.js';
 import {
@@ -294,6 +295,7 @@ import {
   GRID,
   MONTANE_ELEVATION_M,
   ALPINE_ELEVATION_M,
+  soilWashFor,
 } from '../src/core/climate.js';
 import {
   groundClassFor,
@@ -1485,6 +1487,76 @@ test('un saut d’un pays à l’autre repose la question du climat', async () =
 
   // Et rester au même endroit ne périme rien : c'est ce que lit `refresh`.
   assert.equal(update(23.72, 37.98, { x: 100, z: 0 }), false, 'même famille');
+});
+
+test('la correction de sol est toujours complète', () => {
+  // Trois facteurs, toujours les trois : le shader, les touffes et les tiges
+  // les lisent séparément, et une famille qui n'en décrirait que deux ferait
+  // diverger celui qui manque.
+  const complete = (wash) => {
+    for (const key of ['grass', 'bare', 'farmland']) {
+      assert.ok(Array.isArray(wash[key]) && wash[key].length === 3, key);
+    }
+  };
+
+  complete(soilWashFor(null, defaultTheme.soils));
+  complete(soilWashFor('climat-inconnu', defaultTheme.soils));
+  // `alpine` ne décrit pas ses champs — il n'en a guère : le facteur manquant
+  // doit valoir « pas de correction », pas `undefined`.
+  const alpine = soilWashFor('alpine', defaultTheme.soils);
+  complete(alpine);
+  assert.deepEqual(alpine.farmland, [1, 1, 1]);
+  assert.notDeepEqual(alpine.bare, [1, 1, 1], 'la roche claire, elle, est décrite');
+
+  // Sans tranche de thème, tout est neutre : un thème d'avant les sols se
+  // comporte comme avant.
+  assert.deepEqual(soilWashFor('mediterranean', null), {
+    grass: [1, 1, 1],
+    bare: [1, 1, 1],
+    farmland: [1, 1, 1],
+  });
+});
+
+test('un pays sec éclaircit et jaunit son herbe', () => {
+  // La seule propriété qu'on peut vérifier sans regarder : une herbe sèche
+  // réfléchit plus qu'une herbe grasse, et son rouge monte plus vite que son
+  // vert. C'est ce qui distingue « plus claire » de « plus jaune ».
+  const oceanique = soilWashFor('oceanic', defaultTheme.soils).grass;
+  assert.deepEqual(oceanique, [1, 1, 1], 'la référence n’est pas corrigée');
+
+  for (const family of ['mediterranean', 'semiArid', 'arid']) {
+    const { grass } = soilWashFor(family, defaultTheme.soils);
+    assert.ok(grass[1] > 1, `${family} : plus clair`);
+    assert.ok(grass[0] / grass[1] > 1.4, `${family} : plus jaune`);
+  }
+
+  // Et un pays froid va dans l'autre sens.
+  const boreal = soilWashFor('boreal', defaultTheme.soils);
+  assert.ok(boreal.grass[0] < 1 && boreal.bare[0] < 1, 'la taïga est sombre');
+});
+
+test('aucune correction de sol ne sature la touffe du premier plan', () => {
+  // La couleur d'instance multiplie une texture déjà éclairée : au-delà d'un
+  // facteur d'environ 3,5, le brin part au blanc alors que le sol, lui,
+  // continue de foncer — c'est-à-dire exactement la divergence que tout ce
+  // mécanisme existe pour éviter. Voir `SOIL_LOOK`.
+  for (const [family, look] of Object.entries(defaultTheme.soils)) {
+    for (const [key, factors] of Object.entries(look)) {
+      for (const value of factors) {
+        assert.ok(value > 0 && value <= 3.5, `${family}.${key} = ${value}`);
+      }
+    }
+  }
+});
+
+test('une fleur garde sa couleur, l’herbe autour prend celle du pays', () => {
+  const flowering = ['white', 'yellow', 'poppy', 'clumpWhite', 'clumpYellow', 'clumpPoppy'];
+  for (const name of flowering) {
+    assert.ok(isFloweringVariant(GRASS_VARIANTS.indexOf(name)), name);
+  }
+  for (const name of ['plain', 'clump', 'clumpAlt']) {
+    assert.equal(isFloweringVariant(GRASS_VARIANTS.indexOf(name)), false, name);
+  }
 });
 
 test('le relief corrige ce que Köppen ne peut pas dire', () => {

@@ -289,6 +289,34 @@ test('le compositeur sert le thème à toutes les couches qu’il monte', () => 
   }
 });
 
+test('le sol et ce qui y pousse lisent le même facteur', () => {
+  // Le sol lointain est peint par le shader, le premier plan par des touffes
+  // et des tiges instanciées, et les trois doivent bouger du même rapport
+  // quand on change de pays — sinon on voit un disque de couleur différente
+  // autour de l'observateur, ce qui est le défaut que le calage des albédos
+  // (`TERRAIN_LOOK.grassAlbedo`) existe pour éviter.
+  //
+  // On ne peut pas le vérifier en montant les trois (il faudrait WebGL et un
+  // canevas), mais on peut vérifier qu'il n'y a **qu'une** source : chacun
+  // passe par `soilWashFor`, et aucun ne va lire la tranche du thème
+  // lui-même.
+  for (const file of [
+    'src/terrain/terrainMaterial.js',
+    'src/layers/groundCover.js',
+    'src/layers/cropLayer.js',
+  ]) {
+    const source = readFileSync(file, 'utf8');
+    assert.match(source, /soilWashFor\(/, `${file} passe par le résolveur`);
+    // Le mot apparaît en commentaire et dans le passage de la tranche au
+    // résolveur ; ce qui est interdit, c'est d'aller y chercher une famille.
+    assert.equal(
+      /soils\s*(\[|\.[a-z])/i.test(source),
+      false,
+      `${file} lit la tranche directement`
+    );
+  }
+});
+
 /*
  * Le garde-fou structurel. Une variable de module qui garderait un thème, une
  * palette convertie ou un catalogue construit serait invisible dans les tests

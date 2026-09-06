@@ -55,6 +55,7 @@ import {
 import { CROP_KINDS, CROP_ID_STEP } from '../layers/furniturePlacement.js';
 import { COVER_KINDS, COVER_ID_STEP } from './groundClassMap.js';
 import { defaultTheme } from '../themes/default.js';
+import { soilWashFor } from '../core/climate.js';
 
 /**
  * Fabrique du matériau de terrain. **Un seul matériau** pour toute la bulle :
@@ -67,13 +68,17 @@ export class TerrainMaterialFactory {
    * @param {Object} options
    * @param {Object} options.THREE
    * @param {Object} [options.look] Tranche `terrain` du thème.
+   * @param {Object} [options.soils] Tranche `soils` du thème.
    * @param {Object} [options.groundClass] Instance `GroundClassMap`. Absente,
    *        tout le sol prend la matière de repli.
    */
-  constructor({ THREE, look = {}, groundClass = null }) {
+  constructor({ THREE, look = {}, soils = null, groundClass = null }) {
     this.THREE = THREE;
     this.look = { ...defaultTheme.terrain, ...look };
+    this.soils = soils || defaultTheme.soils;
     this.groundClass = groundClass || null;
+    /** Famille appliquée aux albédos. `null` = aucune correction. */
+    this._climate = null;
 
     // Ces textures **modulent** : elles portent du grain, pas des couleurs, et
     // doivent donc rester en espace linéaire.
@@ -118,6 +123,37 @@ export class TerrainMaterialFactory {
       texture.anisotropy = Math.min(value || 4, 8);
       texture.needsUpdate = true;
     }
+  }
+
+  /**
+   * Applique la correction de sol d'une famille climatique.
+   *
+   * Trois albédos et deux tableaux d'albédos réécrits d'un coup : c'est peu
+   * cher (une poignée de vecteurs, jamais par image) et surtout c'est **le
+   * seul endroit** où le sol lointain apprend le pays. Les touffes et les
+   * tiges du premier plan lisent le même facteur par `soilWashFor` — voir
+   * `themes/default.js`, `SOIL_LOOK`, sur pourquoi c'est un facteur et pas une
+   * palette.
+   *
+   * Les couvertures ne bougent pas : une lande ou un maquis disent déjà leur
+   * pays.
+   *
+   * @param {string|null} family
+   */
+  setClimate(family) {
+    if (!this._uniforms || family === this._climate) return;
+    this._climate = family || null;
+    const { look } = this;
+    const wash = soilWashFor(this._climate, this.soils);
+    const scale = (albedo, by) => albedo.map((v, i) => v * by[i]);
+
+    this._uniforms.uGrassAlbedo.value.set(...scale(look.grassAlbedo, wash.grass));
+    this._uniforms.uBareAlbedo.value.set(...scale(look.bareAlbedo, wash.bare));
+    this._uniforms.uFarmlandAlbedo.value.set(...scale(look.farmlandAlbedo, wash.farmland));
+    CROP_KINDS.forEach((kind, i) => {
+      const base = look.cropAlbedo[kind] || look.farmlandAlbedo;
+      this._uniforms.uCropAlbedo.value[i].set(...scale(base, wash.farmland));
+    });
   }
 
   /**

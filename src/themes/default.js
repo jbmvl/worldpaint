@@ -462,6 +462,117 @@ export const CROP_LOOK = {
   plough: { atlas: 'stubble', height: 0.3, spread: 0.22, density: 0.72, tint: [1, 0.94, 0.74] },
 };
 
+// --- Le sol d'un pays ---------------------------------------------------------
+/**
+ * Ce que le climat fait à la couleur du sol, par famille.
+ *
+ * ## Pourquoi des facteurs et pas des couleurs
+ *
+ * Un sol est peint **deux fois** : par le shader de terrain, qui en donne
+ * l'albédo lointain, et par les touffes et les tiges instanciées qui poussent
+ * dessus, qui en donnent le premier plan. Les deux sont déjà calés l'un sur
+ * l'autre (voir `TERRAIN_LOOK.grassAlbedo`), et ce calage est ce qui empêche
+ * de voir un disque de couleur différente autour de l'observateur.
+ *
+ * Deux palettes séparées — une pour le sol, une pour les plantes — le
+ * défairaient au premier climat. Un **facteur multiplicatif** appliqué aux
+ * deux, en espace linéaire, le préserve par construction : quoi que vaille
+ * l'albédo de base, le sol et ce qui y pousse bougent du même rapport.
+ *
+ * ## Comment les lire
+ *
+ * Trois facteurs, canal par canal, en espace linéaire :
+ *
+ * - `grass` — la prairie, sol **et** touffes. Une fleur, elle, garde sa
+ *   couleur : un coquelicot d'Andalousie est rouge, pas rouge fois trois ;
+ * - `bare` — la terre nue et le minéral non couvert ;
+ * - `farmland` — les champs, sol, albédo par culture **et** tiges.
+ *
+ * Les couvertures (`coverAlbedo`) ne sont pas touchées : une lande, un maquis
+ * ou un éboulis disent déjà leur pays, les teinter une seconde fois le dirait
+ * deux fois.
+ *
+ * ## Ce qui est vrai et ce qui est un choix
+ *
+ * Vrai : une herbe sèche est **plus claire** qu'une herbe verte — la
+ * réflectance d'une paille tourne autour de 0,25, celle d'une herbe grasse
+ * autour de 0,08. C'est pour ça que les facteurs méditerranéens dépassent
+ * largement 1 : ils n'éclaircissent pas une couleur, ils changent de matière.
+ * Vrai aussi : la terre noire d'Ukraine est sombre, le podzol nordique gris,
+ * le karst grec presque blanc.
+ *
+ * Choix : l'amplitude. Elle a été réglée sans jamais voir le rendu — c'est
+ * exactement le genre de valeur qu'un graphiste doit reprendre en regardant
+ * (voir `docs/climats.md`). Ce qui ne se reprend pas sans y penser, c'est le
+ * plafond : au-delà de 3,5 environ, la touffe du premier plan sature et vire
+ * au blanc, parce que sa couleur d'instance multiplie une texture déjà
+ * éclairée. Un test le vérifie.
+ *
+ * Une famille absente vaut « pas de correction » : c'est le comportement
+ * d'avant que ce tableau existe, et celui de l'océanique, sur lequel tout le
+ * reste du thème a été réglé.
+ */
+export const SOIL_LOOK = {
+  /** Highlands, Islande, côtes norvégiennes : tourbe, basalte, herbe rase. */
+  oceanicUpland: {
+    grass: [0.92, 0.95, 1.02],
+    bare: [0.78, 0.8, 0.86],
+    farmland: [0.95, 0.97, 1.0],
+  },
+  /** Plaine d'Europe centrale : terre noire, et l'herbe de l'océanique. */
+  continental: {
+    grass: [1.02, 1.0, 0.94],
+    bare: [0.8, 0.74, 0.66],
+    farmland: [0.95, 0.9, 0.82],
+  },
+  /** Taïga : podzol gris, granite, prairie froide. */
+  boreal: {
+    grass: [0.9, 0.96, 0.98],
+    bare: [0.85, 0.86, 0.9],
+    farmland: [0.92, 0.94, 0.95],
+  },
+  /** Provence, Grèce, Italie : le pré est jaune huit mois sur douze. */
+  mediterranean: {
+    grass: [2.2, 1.35, 2.6],
+    bare: [1.5, 1.25, 0.95],
+    farmland: [1.25, 1.1, 0.85],
+  },
+  /** Arrière-pays portugais, Galice : la même chose de moitié. */
+  mediterraneanCool: {
+    grass: [1.6, 1.2, 1.8],
+    bare: [1.3, 1.15, 0.95],
+    farmland: [1.12, 1.05, 0.92],
+  },
+  /** Montagnes sèches : karst pâle, pelouse brûlée. */
+  mediterraneanMontane: {
+    grass: [1.8, 1.25, 2.0],
+    bare: [1.45, 1.35, 1.2],
+    farmland: [1.15, 1.08, 0.95],
+  },
+  /** Èbre, Castille, Murcie : la steppe. */
+  semiArid: {
+    grass: [2.8, 1.5, 3.2],
+    bare: [1.7, 1.4, 1.0],
+    farmland: [1.35, 1.15, 0.8],
+  },
+  /** Tabernas, Bardenas : plus d'herbe verte du tout. */
+  arid: {
+    grass: [3.0, 1.55, 3.4],
+    bare: [1.85, 1.5, 1.05],
+    farmland: [1.4, 1.18, 0.8],
+  },
+  /** Au-dessus de la forêt : pelouse rase jaune-vert, roche claire. */
+  alpine: {
+    grass: [1.35, 1.1, 1.5],
+    bare: [1.3, 1.3, 1.35],
+  },
+  /** Névé et moraine. */
+  glacial: {
+    grass: [1.2, 1.15, 1.3],
+    bare: [2.2, 2.3, 2.5],
+  },
+};
+
 // --- Les couvertures ----------------------------------------------------------
 /**
  * Ce qu'une couverture fait pousser, et de quelle taille.
@@ -1119,6 +1230,7 @@ export const defaultTheme = Object.freeze({
   },
   crops: CROP_LOOK,
   covers: COVER_LOOK,
+  soils: SOIL_LOOK,
   towns: TOWN_PALETTES,
   personalities: BUILDING_PERSONALITIES,
   roofs: { pitch: ROOF_PITCH, maxRiseM: ROOF_MAX_RISE_M, overhangM: ROOF_OVERHANG_M },

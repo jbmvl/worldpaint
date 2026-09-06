@@ -324,3 +324,39 @@ export function filterByClimate(items, family) {
   const matching = items.filter((item) => !item?.climates || item.climates.includes(family));
   return matching.length > 0 ? matching : items;
 }
+
+/**
+ * Correction de sol neutre : celle d'un climat inconnu, et celle de
+ * l'océanique, sur lequel tout le reste du thème a été réglé.
+ */
+export const SOIL_WASH_NEUTRAL = Object.freeze({
+  grass: Object.freeze([1, 1, 1]),
+  bare: Object.freeze([1, 1, 1]),
+  farmland: Object.freeze([1, 1, 1]),
+});
+
+/**
+ * Les trois facteurs de sol d'une famille, toujours complets.
+ *
+ * Le shader de terrain, les touffes d'herbe et les tiges de culture lisent
+ * **cette** fonction et pas la tranche du thème directement : c'est ce qui
+ * garantit qu'ils appliquent le même facteur. Trois lectures indépendantes
+ * d'un tableau à trous divergeraient à la première famille qui n'en décrit que
+ * deux, et l'écart se verrait exactement là où il est le plus visible — à la
+ * jointure entre le premier plan instancié et la teinte lointaine.
+ *
+ * Fonction pure.
+ *
+ * @param {string|null} family
+ * @param {Object} [soils] Tranche `theme.soils`.
+ * @returns {{grass:number[], bare:number[], farmland:number[]}}
+ */
+export function soilWashFor(family, soils = null) {
+  const look = family && soils ? soils[family] : null;
+  if (!look) return SOIL_WASH_NEUTRAL;
+  return {
+    grass: look.grass || SOIL_WASH_NEUTRAL.grass,
+    bare: look.bare || SOIL_WASH_NEUTRAL.bare,
+    farmland: look.farmland || SOIL_WASH_NEUTRAL.farmland,
+  };
+}
