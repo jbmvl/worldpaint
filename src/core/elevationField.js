@@ -1,16 +1,9 @@
 /*
- * elevationField — champ d'altitude continu à partir de tuiles DEM.
- * -----------------------------------------------------------------
- * Charge des tuiles Terrarium (AWS elevation-tiles-prod) et expose un
- * échantillonnage bilinéaire **qui traverse les frontières de tuiles**.
- *
- * Pourquoi c'est important : si chaque maille du terrain n'échantillonnait que
- * sa propre tuile, les pixels de bord de deux tuiles voisines (qui couvrent des
- * surfaces différentes) donneraient deux altitudes légèrement différentes au
- * même endroit — une crevasse visible à chaque jointure. En raisonnant dans un
- * espace de pixels **global** au zoom courant, un point situé sur la frontière
- * lit exactement les mêmes pixels des deux côtés : la couture disparaît par
- * construction.
+ * elevationField — champ d'altitude continu à partir de tuiles DEM Terrarium
+ * (AWS elevation-tiles-prod). L'échantillonnage bilinéaire raisonne en espace
+ * de pixels global au zoom courant, pas par tuile, pour qu'un point à la
+ * frontière de deux tuiles lise les mêmes pixels des deux côtés (sinon
+ * crevasse visible à chaque jointure).
  */
 
 import { decodeTerrarium, decodeTerrainRgb, tileKey, fillTileUrl } from './tileMath.js';

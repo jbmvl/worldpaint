@@ -1,46 +1,25 @@
 /*
- * waterIndex — où l'eau est, et à quelle altitude, pour qui creuse.
- * ------------------------------------------------------------------
- * La couche d'eau sait dessiner ses nappes ; le terrain, lui, a besoin d'une
- * question beaucoup plus étroite, posée **par sommet de maille** : « à cet
- * endroit, y a-t-il de l'eau, à quelle hauteur, et à quelle distance de la
- * rive ? ». Il la pose des centaines de milliers de fois par tuile — cinq fois
- * par sommet, l'altitude et les quatre échantillons de gradient.
+ * waterIndex — où l'eau est, et à quelle altitude, pour qui creuse le terrain
+ * (question posée par sommet de maille : eau ? à quelle hauteur ? à quelle
+ * distance de la rive ?).
  *
- * ## Pourquoi une grille, et pas un index d'arêtes comme `RoadIndex`
+ * Une nappe est une surface, pas une ligne : contrairement à `RoadIndex`, la
+ * question « suis-je dedans ? » ne se répond pas localement. On paie donc une
+ * fois à la construction — rasterisation par balayage de lignes, puis une
+ * transformation de distance qui propage vers l'extérieur la distance à la
+ * rive et l'altitude de la nappe la plus proche — pour que la requête ne soit
+ * plus qu'une lecture de case.
  *
- * Une chaussée est une ligne : savoir si un point est dessus, c'est mesurer sa
- * distance à quelques segments, et un seau de grille en rend assez peu pour que
- * ce soit gratuit. Une nappe est une **surface** : la question « suis-je
- * dedans ? » ne se répond pas localement, elle demande de traverser tout le
- * contour. Au tarif de `RoadIndex`, un lac de cinq cents sommets coûterait
- * dix-huit millions d'opérations par tuile.
- *
- * On paie donc une fois, à la construction : les nappes sont rasterisées par
- * balayage de lignes dans une grille, puis une transformation de distance
- * propage vers l'extérieur la distance à la rive **et** l'altitude de la nappe
- * la plus proche. La requête n'est plus qu'une lecture de case.
- *
- * Le pas de la grille est de l'ordre de la maille de terrain, et c'est
- * volontaire : la maille fait 4,42 m au mieux, une cuvette décrite plus finement
- * qu'elle ne serait pas rendue. C'est la leçon du fossé (voir `waterCut`),
- * appliquée ici à l'étage d'en dessous.
+ * Pas de grille de l'ordre de la maille de terrain (4,42 m au mieux) : une
+ * cuvette décrite plus finement ne serait pas rendue (voir `waterCut`).
  */
 
 import { WATER_CUT_BLEND_M } from '../terrain/waterCut.js';
 
-/**
- * Côté d'une case, en mètres. Du même ordre que la maille de terrain la plus
- * fine (4,42 m) : plus fin ne se verrait pas, plus grossier ferait un escalier
- * dans le raccord de rive.
- */
+/** Côté d'une case, en mètres (ordre de la maille de terrain la plus fine, 4,42 m). */
 export const WATER_INDEX_CELL_M = 4;
 
-/**
- * Plafond du nombre de cases. Une garde, pas un réglage : si l'emprise demandée
- * est absurde, mieux vaut ne rien creuser que d'allouer des centaines de
- * mégaoctets au milieu d'une image.
- */
+/** Plafond du nombre de cases : garde contre une emprise absurde, pas un réglage. */
 export const WATER_INDEX_MAX_CELLS = 1 << 21;
 
 /** Coûts de la transformation de distance, en cases. */
@@ -49,11 +28,8 @@ const STEP_DIAGONAL = Math.SQRT2;
 
 /**
  * Abscisses où une ligne horizontale traverse un anneau, en ordre croissant.
- *
- * Convention de demi-ouverture sur `z` (`min <= z < max`) : un sommet situé
- * exactement sur la ligne n'est compté qu'une fois, sans quoi la parité
- * s'inverserait à tort et la moitié d'un lac disparaîtrait sur cette ligne.
- * Fonction pure.
+ * Demi-ouverture sur `z` (`min <= z < max`) pour qu'un sommet sur la ligne ne
+ * soit compté qu'une fois.
  */
 export function ringCrossings(ring, z) {
   const out = [];
@@ -92,8 +68,7 @@ export class WaterIndex {
     );
     if (usable.length === 0) return;
 
-    // Emprise : les nappes, élargies du raccord. Une petite mare ne fait pas
-    // allouer la grille d'un océan.
+    // Emprise : les nappes, élargies du raccord.
     let minX = Infinity;
     let maxX = -Infinity;
     let minZ = Infinity;
@@ -131,11 +106,7 @@ export class WaterIndex {
     return this.level !== null;
   }
 
-  /**
-   * Marque les cases couvertes par une nappe. Balayage de lignes en parité
-   * paire-impaire : les trous sont simplement des anneaux de plus, la parité
-   * s'en charge sans qu'on ait à les distinguer.
-   */
+  /** Marque les cases couvertes par une nappe (balayage de lignes, parité paire-impaire). */
   _rasterize(surface) {
     const { cell, nx, nz } = this;
 
@@ -155,8 +126,7 @@ export class WaterIndex {
         const to = Math.min(nx - 1, Math.floor((crossings[k + 1] - this.originX) / cell - 0.5));
         for (let i = from; i <= to; i++) {
           const index = j * nx + i;
-          // Deux nappes superposées : la plus basse commande, c'est elle qui
-          // décide de la profondeur qu'il faut atteindre pour que l'eau se voie.
+          // Deux nappes superposées : la plus basse commande.
           if (!(this.level[index] <= surface.level)) this.level[index] = surface.level;
           this.distance[index] = 0;
         }
@@ -165,10 +135,8 @@ export class WaterIndex {
   }
 
   /**
-   * Propage vers l'extérieur la distance à la rive **et** l'altitude de la
-   * nappe la plus proche, par une transformation de distance en deux passes
-   * (chanfrein). Deux passes suffisent : la distance euclidienne y est
-   * approchée à quelques pour cent, très en deçà de ce que la maille rend.
+   * Propage vers l'extérieur la distance à la rive et l'altitude de la nappe
+   * la plus proche, par transformation de distance en deux passes (chanfrein).
    */
   _spread() {
     const { nx, nz, cell, blend, level, distance } = this;
@@ -205,10 +173,7 @@ export class WaterIndex {
 
   /**
    * Nappe qui commande en un point, ou `null` s'il n'y en a aucune à portée.
-   *
-   * Lecture de la case la plus proche, sans interpolation : la grille est déjà
-   * au pas de la maille de terrain, interpoler mêlerait en prime l'altitude de
-   * deux nappes voisines sans que ça veuille rien dire.
+   * Lecture de la case la plus proche, sans interpolation.
    *
    * @returns {{level:number, distance:number}|null}
    */

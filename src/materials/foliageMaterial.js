@@ -1,40 +1,19 @@
 /*
- * foliageMaterial — matériau commun aux arbres et à l'herbe.
- * ----------------------------------------------------------
- * Deux corrections qu'un `MeshLambertMaterial` nu ne sait pas faire.
+ * foliageMaterial — matériau commun aux arbres et à l'herbe. Corrige trois
+ * choses qu'un `MeshLambertMaterial` nu ne sait pas faire :
  *
- * **La normale.** Un panneau de feuillage est vu des deux côtés, donc rendu en
- * `DoubleSide` — et three retourne alors la normale sur les faces arrière. Une
- * moitié des quadrilatères se retrouve éclairée par en dessous, c'est-à-dire
- * noire. C'est exactement ce qui donnait des arbres entièrement sombres et une
- * barre noire au milieu des autres. On force donc la normale vers le haut,
- * quelle que soit la face : un feuillage est éclairé par le ciel, pas par
- * l'orientation arbitraire de son panneau.
- *
- * Cette verticale est juste pour le soleil et fausse pour tout ce qui éclaire
- * d'à côté — un phare de vélo arrive à l'horizontale et ne touchait donc rien.
- * D'où **deux** normales, séparées par famille de lumière dans
- * `foliageLightsChunk` : penchée vers la caméra pour les lampes proches,
- * verticale pour le soleil et le ciel.
- *
- * **L'atlas.** Un décalage UV par instance permet de tirer une silhouette
- * différente dans une même texture, sans multiplier les appels de rendu.
- *
- * Le découpage passe par `alphaTest`, jamais par la transparence : pas de tri
- * par profondeur, donc pas de végétation qui clignote l'une derrière l'autre.
- *
- * **Le vent**, enfin. Une touffe immobile n'est pas une touffe d'herbe : c'est
- * un décalque. Le mouvement se fait dans le sommet, à partir de la position de
- * l'instance — deux ondes de périodes différentes, une phase tirée du sol, et
- * une amplitude qui croît en carré de la hauteur pour que le pied reste planté.
- * Rien à réécrire par image : un seul uniforme avance.
- *
- * L'amplitude réglée à la construction (`windStrength`) est celle du **temps
- * ordinaire** — c'est une valeur d'art, propre à chaque famille de plante :
- * l'herbe se couche, le blé ondule, un arbre bouge à peine. La météo ne la
- * remplace pas, elle la **multiplie** (`setFoliageWind`), et la valeur de
- * référence est gardée à part pour qu'une bourrasque qui va et vient ne la
- * grignote pas à chaque passage.
+ * - normale forcée vers le haut (un panneau `DoubleSide` a ses faces arrière
+ *   retournées par three, donc éclairées par en dessous, donc noires), avec
+ *   une inclinaison vers la caméra réservée aux lampes proches
+ *   (`foliageLightsChunk`) — un phare arrivant à l'horizontale ne touchait
+ *   sinon rien ;
+ * - décalage UV par instance (atlas), pour varier la silhouette sans
+ *   multiplier les appels de rendu ; découpage par `alphaTest`, pas par
+ *   transparence, pour éviter le tri par profondeur ;
+ * - vent animé au sommet (deux ondes, phase tirée du sol, amplitude en carré
+ *   de la hauteur pour garder le pied planté). L'amplitude construite
+ *   (`windStrength`) est le temps ordinaire ; la météo la multiplie
+ *   (`setFoliageWind`) sans l'écraser.
  */
 
 /** Nom de l'attribut d'instance portant le décalage d'atlas. */
@@ -49,24 +28,14 @@ const LAMP_LEAN = 0.85;
 let leanWarned = false;
 
 /**
- * Chunk d'éclairage modifié : une normale par famille de lumière.
+ * Chunk d'éclairage modifié : une normale par famille de lumière. La normale
+ * verticale du feuillage est juste pour le soleil et le ciel, mais fausse
+ * pour une lumière proche et rasante (un phare de vélo à 70 cm du sol la
+ * traversait sans la toucher) : on la penche vers la caméra le temps des
+ * boucles ponctuelle/projecteur, puis on la redresse pour le soleil.
  *
- * Le feuillage est éclairé avec une normale strictement verticale (voir plus
- * bas) — ce qui est juste pour le soleil et le ciel, et faux pour tout ce qui
- * éclaire d'à côté. Un phare de vélo est à 70 cm du sol : sa lumière arrive sur
- * un arbre presque à l'horizontale, `dot(vertical, direction)` vaut ~0, et le
- * faisceau traversait la végétation sans la toucher. C'est ce qui se voyait :
- * la route s'allumait, les arbres restaient dans le noir.
- *
- * On penche donc la normale vers la caméra — c'est-à-dire vers l'observateur, donc
- * vers ses feux, puisque la caméra le suit — le temps des boucles ponctuelle et
- * projecteur, puis on la redresse avant le soleil et l'ambiance hémisphérique.
- * Le rendu de jour est ainsi **inchangé**, au bit près.
- *
- * Le chunk est pris dans le three installé, jamais recopié : une mise à jour de
- * la bibliothèque le suit. Si l'un des deux points d'ancrage disparaît, on rend
- * l'inclusion d'origine — la végétation redevient insensible aux lampes, ce qui
- * est laid mais jamais cassé.
+ * Chunk pris dans le three installé, jamais recopié. Si l'un des deux points
+ * d'ancrage disparaît, on rend l'inclusion d'origine (laid mais pas cassé).
  */
 function foliageLightsChunk(THREE) {
   const chunk = THREE.ShaderChunk.lights_fragment_begin;
@@ -132,14 +101,10 @@ export function createFoliageMaterial({
     map,
     alphaTest: 0.5,
     side: THREE.DoubleSide,
-    // **Indispensable**, et ça n'a rien d'évident : `setColorAt` ne suffit pas.
-    // three ne définit `USE_COLOR` que d'après `material.vertexColors`, et c'est
-    // ce define — pas `USE_INSTANCING_COLOR` — qui conditionne l'application de
-    // `vColor` dans le fragment. Sans lui, la couleur d'instance est calculée,
-    // transmise… et jetée : tous les arbres d'un bois sortaient exactement du
-    // même vert, et toutes les touffes d'herbe aussi. `createCrossedQuads` porte
-    // pour cette raison un attribut de couleur blanc, qui ne fait que laisser
-    // passer la teinte d'instance.
+    // Indispensable : `setColorAt` seul ne suffit pas, c'est `vertexColors`
+    // qui définit `USE_COLOR` et fait passer `vColor` dans le fragment.
+    // `createCrossedQuads` porte pour cette raison un attribut blanc, qui ne
+    // fait que laisser passer la teinte d'instance.
     vertexColors: true,
   });
 
@@ -165,9 +130,7 @@ export function createFoliageMaterial({
           '#include <begin_vertex>',
           `#include <begin_vertex>
            {
-             // Position de l'instance : la phase est tirée du sol, donc deux
-             // touffes voisines ne penchent pas exactement ensemble, et une
-             // touffe donnée penche toujours de la même façon.
+             // Phase tirée de la position de l'instance : deux touffes voisines ne penchent pas ensemble.
              #ifdef USE_INSTANCING
                vec2 anchor = vec2(instanceMatrix[3][0], instanceMatrix[3][2]);
              #else
@@ -196,9 +159,7 @@ export function createFoliageMaterial({
     }
 
     if (coverage) {
-      // La distance est calculée au sommet : un varying de plus coûte moins que
-      // de reconstruire la position monde dans le fragment, et la précision au
-      // sommet suffit largement pour piloter un seuil.
+      // Distance calculée au sommet : moins cher qu'au fragment, précision suffisante pour un seuil.
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', `#include <common>\n varying float vCoverDist;`)
         .replace(
@@ -212,11 +173,8 @@ export function createFoliageMaterial({
         .replace(
           '#include <alphatest_fragment>',
           `{
-             // Compense l'érosion du découpage à distance. Le mip moyenne
-             // l'alpha d'une silhouette avec le vide qui l'entoure : une touffe
-             // minifiée voit son alpha passer sous le seuil et **disparaît**,
-             // au lieu de simplement rapetisser. On remonte donc l'alpha à
-             // mesure qu'on s'éloigne, ce qui revient à baisser le seuil.
+             // Compense l'érosion du découpage à distance (le mip moyenne
+             // l'alpha avec le vide autour, et la silhouette minifiée disparaît sous le seuil).
              float cover = smoothstep(${coverageRange[0].toFixed(1)}, ${coverageRange[1].toFixed(1)}, vCoverDist);
              diffuseColor.a = min(1.0, diffuseColor.a * mix(1.0, ${coverageGain.toFixed(2)}, cover));
            }
@@ -228,11 +186,8 @@ export function createFoliageMaterial({
       .replace(
         '#include <normal_fragment_begin>',
         `#include <normal_fragment_begin>
-         // Feuillage : éclairé par le ciel, jamais par l'orientation du panneau.
          normal = vec3(0.0, 1.0, 0.0);`
       )
-      // Les lampes proches, elles, ont besoin d'une normale penchée : sans quoi
-      // le phare du vélo passe au travers des arbres.
       .replace('#include <lights_fragment_begin>', foliageLightsChunk(THREE));
   };
 
@@ -241,10 +196,7 @@ export function createFoliageMaterial({
 }
 
 /**
- * Fait avancer le vent d'un matériau de feuillage. Trois couches — l'herbe, les
- * arbres, les cultures — en avaient chacune leur copie mot pour mot ; c'est
- * assez de sites d'appel réels pour que la fonction existe, et le repli de la
- * phase est précisément le genre de détail qu'on ne veut corriger qu'une fois.
+ * Fait avancer le vent d'un matériau de feuillage.
  *
  * @param {Object} material Matériau rendu par `createFoliageMaterial`.
  * @param {number} delta Secondes écoulées.
@@ -252,16 +204,12 @@ export function createFoliageMaterial({
 export function advanceFoliageWind(material, delta) {
   const wind = material?.userData?.wind;
   if (!wind || !Number.isFinite(delta)) return;
-  // Remis dans [0, 1000[ : un temps qui croît indéfiniment finit par perdre sa
-  // précision en flottant simple, et le vent se met à saccader.
+  // Remis dans [0, 1000[ pour ne pas perdre de précision en flottant simple.
   wind.uWindTime.value = (wind.uWindTime.value + delta * wind.speed) % 1000;
 }
 
 /**
- * Accorde le vent d'un matériau sur la météo.
- *
- * L'amplitude et la vitesse sont pilotées séparément parce qu'elles ne disent
- * pas la même chose — voir `windField` dans `environment/weather.js`.
+ * Accorde le vent d'un matériau sur la météo — voir `windField` dans `environment/weather.js`.
  *
  * @param {Object} material Matériau rendu par `createFoliageMaterial`.
  * @param {{amplitude:number, speed:number}} field
@@ -275,17 +223,9 @@ export function setFoliageWind(material, field) {
 
 /**
  * Matériau de profondeur assorti, pour que le feuillage projette une ombre
- * **découpée**.
- *
- * three dérive automatiquement un matériau de profondeur des matériaux ordinaires
- * et y reporte `map` et `alphaTest` — la découpe serait donc correcte pour un
- * feuillage sans atlas. Mais le décalage UV par instance vit dans un
- * `onBeforeCompile`, que cette dérivation ne connaît pas : chaque panneau
- * projetterait l'atlas entier, soit quatre arbres écrasés dans l'ombre d'un
- * seul. Il faut donc rejouer l'injection ici.
- *
- * Le shader de profondeur de three inclut `<uv_vertex>` et `<map_fragment>` :
- * `vMapUv` y existe, et l'injection est la même mot pour mot.
+ * découpée. Le décalage UV par instance vit dans un `onBeforeCompile` que la
+ * dérivation automatique de three ne connaît pas (l'ombre projetterait l'atlas
+ * entier) : on rejoue donc la même injection ici.
  */
 export function createFoliageDepthMaterial({ THREE, map, tiles = 2, cacheKey }) {
   const material = new THREE.MeshDepthMaterial({

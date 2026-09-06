@@ -1,34 +1,15 @@
 /*
- * precipitation — la pluie et la neige, dans une boîte qui suit l'observateur.
- * -----------------------------------------------------------------------------
- * Une averse n'a pas besoin d'exister ailleurs que devant les yeux. On ne
- * simule donc rien à l'échelle du paysage : une boîte de quelques dizaines de
- * mètres, attachée à la caméra, contient toutes les gouttes, et chacune y
- * retombe en boucle. C'est la façon de faire des jeux depuis toujours, pour la
- * raison qui la rend juste : au-delà de cette distance, une goutte fait moins
- * d'un pixel.
+ * precipitation — la pluie et la neige, dans une boîte qui suit l'observateur
+ * (quelques dizaines de mètres, attachée à la caméra, gouttes en boucle —
+ * au-delà, une goutte fait moins d'un pixel).
  *
- * **Tout le mouvement est dans le sommet.** Un seul uniforme de temps avance
- * par image ; aucune position n'est réécrite depuis le CPU. C'est ce qui permet
- * plusieurs milliers de gouttes sans budget d'animation, et c'est le même
- * principe que le vent du feuillage (`foliageMaterial`).
+ * Tout le mouvement est dans le sommet (un seul uniforme de temps, comme le
+ * vent du feuillage). L'intensité change `setDrawRange`, pas la taille du
+ * tampon (alloué une fois au maximum). Positions tirées d'un générateur
+ * graine plutôt que `Math.random`, pour un semis reproductible.
  *
- * **L'intensité ne change pas la taille du tampon, seulement ce qu'on en tire.**
- * Les positions sont allouées une fois pour le maximum, et `setDrawRange` décide
- * combien de gouttes tombent réellement. Faire varier la géométrie ferait
- * réallouer un buffer GPU chaque fois que la pluie forcit.
- *
- * **Les positions sont tirées d'un générateur graine, pas de `Math.random`.**
- * L'invariant de déterminisme du projet vise le paysage, pas l'atmosphère — une
- * goutte n'est pas un arbre, elle ne se retrouve pas au même endroit d'une
- * visite à l'autre et personne ne le remarquerait. Mais un semis reproductible
- * ne coûte rien ici et évite d'avoir à se demander, plus tard, si ce
- * `Math.random()` là est celui qui casse la règle.
- *
- * Ce que ça ne fait pas, délibérément : les gouttes ne sont pas éclairées, ne
- * reçoivent pas le brouillard de la scène (la boîte est cent fois plus courte
- * que sa portée) et ne rebondissent nulle part. Elles sont teintées par
- * `setTint`, que l'ambiance appelle pour qu'une averse de nuit soit sombre.
+ * Délibérément absent : éclairage, brouillard de scène, rebond. Teintées par
+ * `setTint` (l'ambiance) pour qu'une averse de nuit soit sombre.
  */
 
 import { windAxis } from './weather.js';
@@ -47,11 +28,7 @@ const STREAK_M = 0.75;
 const RAIN_SPEED = 26;
 const SNOW_SPEED = 1.6;
 
-/**
- * Générateur graine, façon mulberry32. Tiré d'une constante et non de l'horloge :
- * deux montages successifs sèment la même averse, ce qui rend un écart de rendu
- * reproductible.
- */
+/** Générateur graine, façon mulberry32 (constante, pas l'horloge, pour un rendu reproductible). */
 function seeded(seed) {
   let a = seed >>> 0;
   return () => {
@@ -62,12 +39,7 @@ function seeded(seed) {
   };
 }
 
-/**
- * Deux sommets par goutte : la tête et la queue du filet. Ils partagent la même
- * position de base — sans quoi la queue franchirait le haut de la boîte une
- * image avant la tête, et le filet se retournerait d'un bout à l'autre du ciel.
- * `aTail` dit lequel des deux on est.
- */
+/** Deux sommets par goutte (tête et queue du filet), même position de base. `aTail` dit lequel des deux on est. */
 function rainGeometry(THREE) {
   const random = seeded(0x9e3779b9);
   const base = new Float32Array(MAX_DROPS * 2 * 3);
@@ -87,8 +59,7 @@ function rainGeometry(THREE) {
   }
 
   const geometry = new THREE.BufferGeometry();
-  // `position` doit exister : three s'en sert pour la sphère englobante et pour
-  // le nombre de sommets. On la laisse nulle, le shader n'en lit rien.
+  // `position` doit exister (three s'en sert pour la sphère englobante), laissée nulle.
   geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(base.length), 3));
   geometry.setAttribute('aBase', new THREE.BufferAttribute(base, 3));
   geometry.setAttribute('aTail', new THREE.BufferAttribute(tail, 1));
@@ -127,11 +98,7 @@ function sharedUniforms(THREE) {
   };
 }
 
-/**
- * Chute en boucle, commune aux deux formes : la goutte descend de `uSpeed`
- * mètres par seconde et réapparaît en haut. Le modulo est pris sur la hauteur de
- * la boîte, donc la boucle est invisible tant que la boîte dépasse du champ.
- */
+/** Chute en boucle, commune aux deux formes : `uSpeed` m/s, modulo sur la hauteur de la boîte. */
 const FALL_CHUNK = `
   float fallHeight(vec3 base, float time, float speed, float height) {
     return mod(base.y - time * speed, height) - height * 0.35;
@@ -142,9 +109,7 @@ function rainMaterial(THREE, uniforms) {
   return new THREE.ShaderMaterial({
     uniforms,
     transparent: true,
-    // Une goutte ne cache pas ce qu'il y a derrière et n'a pas d'ordre entre
-    // gouttes : écrire la profondeur ferait clignoter le filet suivant.
-    depthWrite: false,
+    depthWrite: false, // pas d'ordre entre gouttes : écrire la profondeur ferait clignoter
     vertexShader: `
       attribute vec3 aBase;
       attribute float aTail;
@@ -155,10 +120,7 @@ function rainMaterial(THREE, uniforms) {
       ${FALL_CHUNK}
       void main() {
         vec3 p = vec3(aBase.x, fallHeight(aBase, uTime, uSpeed, uHeight), aBase.z);
-        // Le filet est tiré vers l'amont de la chute : c'est l'inclinaison, et
-        // elle seule, qui dit qu'il y a du vent. Les têtes, elles, ne dérivent
-        // pas — la boîte suit la caméra, et un déplacement horizontal d'ensemble
-        // ne se lit pas contre un décor qui défile.
+        // Le filet est tiré vers l'amont de la chute : c'est l'inclinaison qui dit qu'il y a du vent.
         vec3 dir = normalize(vec3(uWind.x, -1.0, uWind.y));
         p -= dir * ${STREAK_M.toFixed(2)} * aTail;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
@@ -189,8 +151,7 @@ function snowMaterial(THREE, uniforms) {
       ${FALL_CHUNK}
       void main() {
         float y = fallHeight(aBase, uTime, uSpeed, uHeight);
-        // Le flottement est ce qui distingue un flocon d'une goutte lente : deux
-        // ondes déphasées par flocon, d'amplitude croissante avec le vent.
+        // Flottement : deux ondes déphasées par flocon, amplitude croissante avec le vent.
         float flutter = 0.35 + length(uWind) * 0.9;
         vec3 p = vec3(
           aBase.x + sin(uTime * 0.7 + aPhase) * flutter + uWind.x * 2.0,
@@ -198,8 +159,7 @@ function snowMaterial(THREE, uniforms) {
           aBase.z + cos(uTime * 0.55 + aPhase * 1.7) * flutter + uWind.y * 2.0
         );
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
-        // Taille en perspective : un flocon proche est gros, un flocon lointain
-        // tient dans un pixel. Sans ça, la neige forme un voile uniforme.
+        // Taille en perspective, sinon la neige forme un voile uniforme.
         gl_PointSize = clamp(90.0 / max(-mv.z, 1.0), 1.0, 9.0);
         gl_Position = projectionMatrix * mv;
       }
@@ -208,8 +168,7 @@ function snowMaterial(THREE, uniforms) {
       uniform vec3 uTint;
       uniform float uOpacity;
       void main() {
-        // Disque adouci calculé dans le fragment : pas de texture à charger,
-        // et le bord ne crénelle pas comme le ferait un carré.
+        // Disque adouci calculé dans le fragment : pas de texture à charger.
         float d = length(gl_PointCoord - vec2(0.5));
         float alpha = smoothstep(0.5, 0.18, d);
         if (alpha <= 0.01) discard;
@@ -236,8 +195,7 @@ export class Precipitation {
 
     this.group = new THREE.Group();
     this.group.name = 'precipitation';
-    // La boîte est recentrée à chaque image sur la caméra : la culler sur une
-    // sphère calculée à l'origine la ferait disparaître dès qu'on s'en éloigne.
+    // Recentrée à chaque image sur la caméra : pas de culling frustum.
     this.group.frustumCulled = false;
 
     this.rain = new THREE.LineSegments(rainGeometry(THREE), rainMaterial(THREE, this.uniforms));
@@ -273,18 +231,13 @@ export class Precipitation {
 
     const mesh = snowing ? this.snow : this.rain;
     const max = snowing ? MAX_FLAKES : MAX_DROPS;
-    // Racine carrée : le compte de gouttes visibles croît beaucoup plus vite que
-    // l'impression de pluie. Linéaire, une averse à mi-course paraissait déjà
-    // maximale et le reste de la course ne se voyait plus.
+    // Racine carrée : le compte visible croît plus vite que l'impression de pluie.
     const count = Math.round(max * Math.sqrt(intensity));
     mesh.geometry.setDrawRange(0, snowing ? count : count * 2);
 
-    // Le vent penche la pluie et emporte la neige, selon `weather.windDirection`.
     const drift = weather.wind * (snowing ? 2.2 : 1.1);
     const [wx, wz] = windAxis([drift * 0.85, drift * 0.35], weather);
     this.uniforms.uWind.value.set(wx, wz);
-    // Une averse portée par le vent tombe plus vite : la composante horizontale
-    // s'ajoute à la verticale.
     this.uniforms.uSpeed.value =
       (snowing ? SNOW_SPEED : RAIN_SPEED) * (1 + weather.wind * (snowing ? 0.4 : 0.5));
     this.uniforms.uOpacity.value = snowing
@@ -293,10 +246,7 @@ export class Precipitation {
   }
 
   /**
-   * Teinte des gouttes. C'est l'ambiance qui la donne : sous un orage la pluie
-   * est grise, de nuit elle est presque éteinte, et une averse restée blanche
-   * dans une scène nocturne se lit comme un défaut d'affichage.
-   *
+   * Teinte des gouttes, donnée par l'ambiance (grise sous un orage, presque éteinte la nuit).
    * @param {{r:number,g:number,b:number}} color
    */
   setTint(color) {
@@ -306,27 +256,14 @@ export class Precipitation {
   /** Fait tomber. À appeler une fois par image, avec le delta en secondes. */
   advance(delta) {
     if (!Number.isFinite(delta)) return;
-    // Remis dans une plage courte : le shader travaille en float32, et un temps
-    // qui croît indéfiniment finit par faire saccader la chute. La période est
-    // choisie multiple de la hauteur de boîte sur la vitesse la plus lente pour
-    // que le repli ne se voie pas.
+    // Remis dans une plage courte (float32) pour éviter que la chute saccade.
     this.uniforms.uTime.value = (this.uniforms.uTime.value + delta) % 3600;
   }
 
   /**
-   * Recentre la boîte à proximité de l'observateur — sans jamais la coller
-   * exactement dessus.
-   *
-   * Une boîte qui suit la position exacte de la caméra à chaque image se lit
-   * comme un rideau plaqué à l'écran : rien à l'intérieur ne défile jamais
-   * par rapport au regard, seule la chute verticale bouge. En la recentrant
-   * sur une maille du monde — même principe que la grille des repères
-   * d'horizon dans `furnitureLayer` — la boîte reste fixe entre deux pas, et
-   * l'observateur la traverse comme il traverserait un vrai volume de pluie :
-   * les gouttes proches défilent plus vite que les lointaines, ce qui est la
-   * parallaxe qui manquait. Le pas est un tiers du rayon de la boîte : assez
-   * fin pour que l'observateur n'en sorte jamais vraiment, assez grossier
-   * pour que le défilement se sente.
+   * Recentre la boîte à proximité de l'observateur, sans la coller
+   * exactement dessus (recentrage sur une maille du monde, pour que la
+   * traversée donne de la parallaxe plutôt qu'un rideau plaqué à l'écran).
    */
   follow(position) {
     const step = SPREAD_M / 3;

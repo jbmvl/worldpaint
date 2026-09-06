@@ -1,31 +1,17 @@
 /*
  * ribbonGeometry — plaquer une bande sur le terrain, le long d'une polyligne.
- * ---------------------------------------------------------------------------
- * Chaussées, cours d'eau, haies, murs et glissières ont exactement le même
- * problème géométrique ; seules la section et la source des polylignes changent.
+ * Chaussées, cours d'eau, haies, murs et glissières ont le même problème
+ * géométrique ; seules la section et la source des polylignes changent.
  *
- * Trois exigences, dans l'ordre où elles se voient si on les rate :
+ * Trois exigences : plusieurs colonnes en travers (sinon un côté en l'air sur
+ * un devers), altitude prise sur la surface affichée (le MNT continu n'est
+ * échantillonné que tous les 18 m), lissage longitudinal (le MNT est bruité
+ * au mètre, pas une route). Une chaussée y ajoute une quatrième qui remplace
+ * la première : dressée de niveau en travers (voir `levelRow`).
  *
- * 1. **Plusieurs colonnes en travers.** Sur un devers, une bande à deux bords
- *    seulement aurait un côté en l'air et l'autre enterré.
- * 2. **L'altitude prise sur la surface affichée**, pas sur le MNT continu : la
- *    maille de terrain ne l'échantillonne que tous les dix-huit mètres.
- * 3. **Un lissage longitudinal.** Le MNT reste bruité à l'échelle du mètre ;
- *    une route ne l'est pas.
- *
- * S'y ajoute une quatrième exigence, qui contredit la première et la remplace :
- * une chaussée est **dressée de niveau en travers**. Un terrassier ne pose pas
- * l'asphalte en suivant le devers naturel du versant, il taille en amont et
- * remblaie en aval. Voir `levelRow` plus bas.
- *
- * `appendProfile` généralise le ruban : au lieu d'une bande plate, il balaie une
- * **section quelconque** le long de la même polyligne. Haie, muret, glissière,
- * remblai et caténaire ne sont que des sections différentes — un seul balayage,
- * une seule tangente, un seul lissage.
- *
- * `appendVariableWall` couvre le seul cas que `appendProfile` ne sait pas
- * traiter : un ouvrage dont la **hauteur change** le long du tracé, ce qu'est
- * tout mur de soutènement.
+ * `appendProfile` généralise le ruban à une section quelconque le long de la
+ * même polyligne (haie, muret, glissière, remblai, caténaire). `appendVariableWall`
+ * couvre le seul cas restant : une hauteur qui change le long du tracé.
  */
 
 /**
@@ -63,9 +49,7 @@ export function resamplePath(points, spacing) {
 }
 
 /**
- * Moyenne glissante sur l'altitude, colonne par colonne. Exportée pour être
- * testée : une erreur d'indice ici tord la route sans rien casser d'autre.
- *
+ * Moyenne glissante sur l'altitude, colonne par colonne.
  * @param {Float32Array|number[]} heights Altitudes, `rows × cols` en ligne d'abord.
  * @param {number} rows
  * @param {number} cols
@@ -94,22 +78,12 @@ export function smoothColumns(heights, rows, cols, radius = 2) {
 }
 
 /**
- * Rend un profil d'altitude **monotone vers l'aval** : minimum courant, dans le
- * sens de la descente. Le tableau reçu n'est pas modifié.
- *
- * C'est la contrainte physique d'un cours d'eau, et elle vaut mieux que le
- * lissage qu'elle remplace. Une moyenne glissante (`smoothColumns`) tire chaque
- * section vers ses voisines, **y compris vers le haut** : un passage encaissé
- * s'en trouve relevé au-dessus de ses propres berges, ce qui est exactement le
- * défaut qu'on cherche à ne plus voir. Le minimum courant, lui, ne remonte
- * jamais.
- *
- * Le sens de parcours n'est pas pris du sens de numérisation OSM, qui n'est pas
- * fiable, mais des altitudes des deux extrémités : on descend depuis la plus
- * haute. À égalité on garde l'ordre du tableau, pour que le résultat ne dépende
- * de rien d'autre que des altitudes.
- *
- * Fonction pure.
+ * Rend un profil d'altitude monotone vers l'aval (minimum courant dans le
+ * sens de la descente) — contrainte physique d'un cours d'eau, meilleure que
+ * `smoothColumns` qui peut relever un passage encaissé au-dessus de ses
+ * propres berges. Le sens de parcours vient des altitudes des deux
+ * extrémités (pas de la numérisation OSM, peu fiable) : on descend depuis la
+ * plus haute.
  *
  * @param {Float32Array|number[]} heights Une altitude par ligne du ruban.
  * @returns {Float32Array} profil descendant, même longueur.
@@ -119,13 +93,11 @@ export function monotoneDownstream(heights) {
   const out = new Float32Array(n);
   if (n === 0) return out;
 
-  // On descend depuis l'extrémité la plus haute.
   const forward = heights[0] >= heights[n - 1];
   let running = Infinity;
   for (let k = 0; k < n; k++) {
     const r = forward ? k : n - 1 - k;
     const h = heights[r];
-    // Un trou de données ne doit pas fixer le minimum courant pour tout l'aval.
     if (Number.isFinite(h) && h < running) running = h;
     out[r] = Number.isFinite(running) ? running : h;
   }
@@ -134,14 +106,11 @@ export function monotoneDownstream(heights) {
 
 /**
  * Repères de balayage le long d'une polyligne : tangente unitaire et
- * perpendiculaire **à gauche de la marche**, dans le plan horizontal.
+ * perpendiculaire à gauche de la marche, dans le plan horizontal. Tangente
+ * par différence centrée (une différence avant ferait vibrer la largeur du
+ * ruban dans les virages serrés).
  *
- * La tangente est prise par différence centrée et non par différence avant :
- * une différence avant ferait vibrer la largeur du ruban dans les virages
- * serrés, là où deux échantillons consécutifs ne sont plus alignés.
- *
- * Fonction pure. Retourne `{tx, tz, px, pz}` entrelacés, quatre nombres par
- * ligne, pour éviter d'allouer un objet par échantillon.
+ * Retourne `{tx, tz, px, pz}` entrelacés, quatre nombres par ligne.
  *
  * @param {Array<{x:number,z:number}>} path
  * @returns {Float64Array} longueur `4 × path.length`.
@@ -169,24 +138,13 @@ export function pathFrames(path) {
 /**
  * Altitude de la plate-forme d'une chaussée sur une section en travers.
  *
- * La plate-forme est dressée **à mi-hauteur** de la section (`deck`), et c'est
- * la seule position juste : un terrassier équilibre le déblai et le remblai. La
- * route est donc en partie encaissée du côté amont et en partie portée du côté
- * aval, ce qui appelle de chaque côté son ouvrage :
- *
- * - en **amont**, le terrain dépasse la chaussée : c'est le déblai, et il se
- *   tient par un **mur** qui monte de la rive jusqu'au terrain (`furnitureLayer`) ;
- * - en **aval**, la chaussée surplombe le terrain : c'est le remblai, et il se
- *   tient par un mur qui descend de la rive jusqu'au terrain, avec la glissière
- *   posée dessus.
- *
- * Retenir le point haut de la section éviterait au terrain de manger la rive
- * amont, mais poserait toute la chaussée en surplomb sur un remblai continu,
- * alors qu'une route de montagne est mi-taillée mi-portée. Le terrain qui
- * déborde en amont est donc traité pour ce qu'il est — un déblai — et
- * **entaillé** le long de la chaussée (`terrainBubble.setRoadCut`).
- *
- * Fonction pure.
+ * Dressée à mi-hauteur de la section (`deck`) : un terrassier équilibre
+ * déblai et remblai, donc la route est en partie encaissée en amont (mur qui
+ * monte jusqu'au terrain, `furnitureLayer`) et en partie portée en aval (mur
+ * qui descend, glissière dessus). Retenir le point haut éviterait le déblai
+ * mais mettrait toute la chaussée en surplomb continu — pas fidèle à une
+ * route de montagne mi-taillée mi-portée. Le terrain amont qui déborde est
+ * donc entaillé (`terrainBubble.setRoadCut`).
  *
  * @param {Array<{x:number,z:number}>} path
  * @param {number} r          Indice de ligne.
@@ -206,9 +164,7 @@ export function levelRow(path, r, frames, halfWidth, sampleElevation) {
   return {
     left,
     right,
-    // Moyenne des deux rives, et non l'axe : l'axe est un échantillon unique,
-    // donc porteur du bruit métrique du MNT, là où la moyenne des rives décrit
-    // la section entière.
+    // Moyenne des deux rives, pas l'axe (échantillon unique, bruit du MNT).
     deck: (left + right) * 0.5,
   };
 }
@@ -267,7 +223,6 @@ export function appendRibbon(
   for (let r = 0; r < rows; r++) {
     const px = frames[r * 4 + 2];
     const pz = frames[r * 4 + 3];
-    // Plate-forme dressée de niveau : une seule altitude pour toute la section.
     let deck = 0;
     if (level) {
       if (platform) deck = platform[r];
@@ -276,8 +231,6 @@ export function appendRibbon(
 
     for (let c = 0; c < columns; c++) {
       const u = c / (columns - 1);
-      // La première colonne porte l'offset négatif : u = 0 tombe donc à droite.
-      // La section de chaussée étant symétrique, le côté est sans conséquence.
       const offset = (u - 0.5) * 2 * halfWidth;
       const x = path[r].x + px * offset;
       const z = path[r].z + pz * offset;
@@ -313,16 +266,12 @@ export function appendRibbon(
 
 /**
  * Balaie une section quelconque le long d'une polyligne posée sur le terrain.
+ * Brique de tout le mobilier linéaire : haie, muret, glissière, mur de
+ * soutènement, talus, câble ne diffèrent que par leur section.
  *
- * C'est la brique de tout le mobilier linéaire. Une haie, un muret de pierre
- * sèche, une glissière, un mur de soutènement, un talus de remblai et un câble
- * de ligne haute tension ne diffèrent que par leur section — la tangente, la
- * perpendiculaire, le suivi du sol et le lissage sont les mêmes.
- *
- * La section est décrite en mètres dans un repère (travers, hauteur) attaché à
- * la polyligne : `across` compte positivement **à gauche de la marche**, `up`
- * part du sol. Chaque sommet porte sa couleur, ce qui donne un dégradé le long
- * de la section (pied sombre, crête éclairée) sans texture ni seconde passe.
+ * Section décrite en mètres dans un repère (travers, hauteur) : `across`
+ * compte positivement à gauche de la marche, `up` part du sol. Chaque sommet
+ * porte sa couleur (dégradé pied/crête sans texture).
  *
  * @param {Object} buffer  Résultat de `createProfileBuffer()`.
  * @param {Object} options
@@ -338,21 +287,13 @@ export function appendRibbon(
  *        dernier sommet sur le premier et on bouche les deux extrémités.
  * @param {number} [options.smoothRadius]
  * @param {Float32Array|number[]} [options.scaleUp] Facteur appliqué à `up`,
- *        **une valeur par ligne**. C'est ce qui donne à une haie une hauteur qui
- *        respire le long du tracé : une section rigoureusement constante sur
- *        deux cents mètres est ce qui la fait lire comme un tube extrudé, et
- *        aucune variation de couleur ne rattrape ça. La section garde sa forme,
- *        seule son échelle verticale bouge.
+ *        une valeur par ligne (hauteur qui respire le long du tracé, sans
+ *        quoi la section constante se lit comme un tube extrudé).
  * @param {Float32Array|number[]} [options.scaleAcross] Facteur appliqué à
- *        `across`, une valeur par ligne. Le pendant en travers du précédent :
- *        une haie épaissit et s'amincit le long de son tracé, et deux flancs
- *        rigoureusement parallèles sont l'autre moitié de la lecture « ruban ».
- *        Il ne déplace pas l'axe, il dilate la section autour de lui.
- * @param {Float32Array|number[]} [options.lateralJitter] Décalage de `offset`,
- *        une valeur par ligne, en mètres. `scaleUp`/`scaleAcross` dilatent la
- *        section sans jamais déplacer son axe ; ceci déplace l'axe lui-même,
- *        d'une ligne à l'autre — c'est ce qui fait onduler le tracé en plan,
- *        et non plus seulement en coupe.
+ *        `across`, une valeur par ligne (dilate la section sans déplacer l'axe).
+ * @param {Float32Array|number[]} [options.lateralJitter] Décalage de
+ *        `offset`, une valeur par ligne, en mètres — déplace l'axe lui-même
+ *        (ondule en plan, pas seulement en coupe).
  * @returns {boolean} vrai si de la géométrie a été produite.
  */
 export function appendProfile(
@@ -378,8 +319,7 @@ export function appendProfile(
   const frames = pathFrames(path);
   const base = buffer.positions.length / 3;
 
-  // Altitude du pied, ligne par ligne, lissée avant d'être utilisée : sans ça
-  // un muret suit le bruit métrique du MNT et ondule comme une chenille.
+  // Lissée avant usage, sinon le muret suit le bruit métrique du MNT.
   const ground = new Float32Array(rows);
   for (let r = 0; r < rows; r++) {
     if (baseHeights) {
@@ -422,8 +362,7 @@ export function appendProfile(
     }
   }
 
-  // Bouchons : une haie coupée net laisse voir son intérieur, ce qui trahit
-  // immédiatement le tube. Un éventail sur la section suffit à la fermer.
+  // Bouchons : une haie coupée net laisserait voir son intérieur.
   if (closed && cols >= 3) {
     const lastRow = base + (rows - 1) * cols;
     for (let c = 1; c < cols - 1; c++) {
@@ -436,19 +375,11 @@ export function appendProfile(
 }
 
 /**
- * Balaie un mur **de hauteur variable** le long d'une polyligne.
- *
- * `appendProfile` ne sait pas faire : sa section est la même sur toute la
- * longueur. Or c'est exactement ce dont un ouvrage de terrassement a besoin —
- * un mur de soutènement fait deux mètres là où le versant l'exige et vingt
- * centimètres cinquante mètres plus loin. Passer une section fixe donnait le
- * muret qui émerge du talus puis s'y enfonce, ce qui ne ressemble à rien.
- *
- * Le mur est un simple parallélépipède balayé : un pied, une arase, et une
- * arase légèrement débordante quand `coping` est donné — c'est ce couronnement
- * qui fait lire « ouvrage » plutôt que « boîte ».
- *
- * Fonction pure.
+ * Balaie un mur de hauteur variable le long d'une polyligne — ce
+ * qu'`appendProfile` (section fixe) ne sait pas faire, alors qu'un mur de
+ * soutènement fait deux mètres ici et vingt centimètres cinquante mètres
+ * plus loin. Parallélépipède balayé avec une arase débordante (`coping`) qui
+ * fait lire « ouvrage » plutôt que « boîte ».
  *
  * @param {Object} buffer  Résultat de `createProfileBuffer()`.
  * @param {Object} options
@@ -480,7 +411,6 @@ export function appendVariableWall(
   const rows = path?.length ?? 0;
   if (rows < 2 || !base || !top) return false;
 
-  // Un mur qui ne fait nulle part sa hauteur minimale n'a pas lieu d'être.
   let tallest = 0;
   for (let r = 0; r < rows; r++) tallest = Math.max(tallest, top[r] - base[r]);
   if (tallest < minHeight) return false;
@@ -488,10 +418,7 @@ export function appendVariableWall(
   const frames = pathFrames(path);
   const start = buffer.positions.length / 3;
   const half = thickness / 2;
-  // Six sommets par ligne, parcourus en anneau : pied extérieur, arase
-  // extérieure débordante, dessus, arase intérieure débordante, pied intérieur,
-  // et retour. Le débord est porté par deux sommets et non par un chanfrein :
-  // à cette taille, une arête franche accroche mieux la lumière.
+  // Six sommets par ligne en anneau : pied, arase débordante, dessus, retour.
   const across = [-half, -half - coping, -half - coping, half + coping, half + coping, half];
   const colors = [colorFoot, colorTop, colorTop, colorTop, colorTop, colorFoot];
   const cols = across.length;
@@ -501,8 +428,7 @@ export function appendVariableWall(
     const pz = frames[r * 4 + 3];
     const ax = path[r].x + px * offset;
     const az = path[r].z + pz * offset;
-    // Hauteur plancher : une ligne à hauteur nulle refermerait le mur sur
-    // lui-même et produirait des faces dégénérées au milieu du balayage.
+    // Hauteur plancher : évite les faces dégénérées au milieu du balayage.
     const foot = base[r];
     const crest = Math.max(top[r], foot + minHeight);
     const ups = [foot, crest - coping, crest, crest, crest - coping, foot];
@@ -524,7 +450,6 @@ export function appendVariableWall(
     }
   }
 
-  // Bouchons aux deux bouts : un mur coupé net laisse voir son intérieur.
   const lastRow = start + (rows - 1) * cols;
   for (let c = 1; c < cols - 1; c++) {
     buffer.indices.push(start, start + c + 1, start + c);
@@ -537,14 +462,10 @@ export function appendVariableWall(
 /**
  * Convertit un accumulateur de sections en `BufferGeometry` colorée.
  *
- * @param {boolean} [options.flat] Normales par face plutôt que moyennées entre
- *        sommets partagés. Une haie ou un rang de vigne dont le tracé est
- *        facetté (`hedgeGeometry.facetJitter`) a besoin de ceci pour que ses
- *        arêtes se voient : moyenner les normales de part et d'autre d'une
- *        arête est exactement ce qui la lisse à l'écran, quelle que soit la
- *        géométrie en dessous. Le repli (`false`) garde l'ombrage lissé
- *        qu'attendent muret, glissière, remblai et câble, qui partagent le
- *        même buffer mais pas ce défaut.
+ * @param {boolean} [options.flat] Normales par face plutôt que moyennées
+ *        (nécessaire pour qu'un tracé facetté, `hedgeGeometry.facetJitter`,
+ *        garde ses arêtes visibles ; `false` pour l'ombrage lissé attendu par
+ *        muret, glissière, remblai, câble).
  * @returns {Object|null} `null` si rien n'a été accumulé.
  */
 export function toColoredGeometry(THREE, buffer, { flat = false } = {}) {
@@ -553,9 +474,7 @@ export function toColoredGeometry(THREE, buffer, { flat = false } = {}) {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(buffer.positions, 3));
   geometry.setAttribute('color', new THREE.Float32BufferAttribute(buffer.colors, 3));
   geometry.setIndex(buffer.indices);
-  // `toNonIndexed` duplique un sommet par face qui le touche : plus aucun
-  // sommet n'étant partagé, `computeVertexNormals` n'a plus rien à moyenner et
-  // rend de fait une normale par face.
+  // `toNonIndexed` duplique les sommets : plus rien à moyenner, donc une normale par face.
   const flattened = flat ? geometry.toNonIndexed() : geometry;
   flattened.computeVertexNormals();
   flattened.computeBoundingSphere();

@@ -1,97 +1,42 @@
 /*
- * roadCorridor — l'emprise routière, frontière partagée du paysage.
- * ------------------------------------------------------------------
- * La chaussée n'est pas une couche de plus posée à côté des autres : c'est la
- * **structure dominante** du paysage, et donc une frontière que le reste du
- * décor n'a pas le droit de franchir. Une haie qui traverse une départementale,
- * une clôture plantée en travers d'une voie communale, une botte de paille au
- * milieu du bitume : trois défauts différents à première vue, une seule cause.
+ * roadCorridor — l'emprise routière, frontière partagée du paysage : rien
+ * (haie, clôture, botte de paille) n'a le droit de la franchir. Module pur,
+ * testable sous Node.
  *
- * Ce module donne un nom à cette frontière, et deux façons de l'interroger.
- * Il est **entièrement pur** — ni three.js, ni géométrie de rendu, ni état :
- * ce sont les règles, pas leur exécution, et elles se testent sous Node.
+ * L'emprise couvre la chaussée plus l'accotement excavé — la même largeur que
+ * `roadCut`, importée de là, plutôt que trois marges dispersées qui disaient
+ * chacune à peu près la même chose sans le dire.
  *
- * ## Ce que « l'emprise » recouvre exactement
+ * `clipOutsideCorridor` découpe (plutôt que rejette en bloc) une polyligne qui
+ * traverse une route, pour ne perdre que le segment réellement dans l'emprise.
  *
- * La chaussée, **plus l'accotement excavé** — le fond plat de l'entaille que
- * `roadCut` creuse dans le terrain. Ce n'est pas une valeur de plus à régler :
- * c'est la même largeur, importée du même endroit. Le terrain est terrassé
- * jusque-là, donc rien n'y pousse ; au-delà commence le raccord, où le sol
- * redevient naturel et où la haie, le fossé et l'alignement d'arbres ont leur
- * place — c'est d'ailleurs là que `furnitureLayer` les met déjà.
- *
- * Une seule définition, donc, là où trois marges dispersées disaient à peu près
- * la même chose sans le dire (`0.5` pour l'herbe, `1` pour les cultures, rien
- * du tout pour les haies et les jardins).
- *
- * ## Pourquoi une découpe, et pas un simple rejet
- *
- * Une haie est une **polyligne**, pas un point. Un contour de parcelle que la
- * route traverse mesure trois cents mètres et n'en a que huit de fautifs :
- * l'écarter en entier effacerait le bocage à chaque croisement, le garder
- * entier poserait un tube vert en travers de la chaussée. La bonne réponse est
- * de le **couper** — deux tronçons, interpolés au point exact de traversée.
- *
- * C'est `clipOutsideCorridor` qui fait ça, et c'est la seule pièce non triviale
- * du module.
- *
- * ## Ce que ce module n'est pas
- *
- * Il ne connaît ni les carrefours, ni la hiérarchie des routes, ni ce qui se
- * pose au bord. Il répond à une question et une seule — « suis-je dans
- * l'emprise ? » — pour que les couches végétales n'aient jamais à lire
- * `roadSegments`. Elles n'ont pas besoin du réseau, seulement de sa frontière.
+ * Ce module ne connaît ni les carrefours ni la hiérarchie des routes : il
+ * répond à « suis-je dans l'emprise ? », pour que les couches végétales
+ * n'aient jamais à lire le réseau lui-même.
  */
 
 import { ROAD_CUT_M } from '../terrain/roadCut.js';
 
-/**
- * Débord de l'emprise au-delà de la rive de la chaussée, en mètres.
- *
- * C'est **exactement** le fond plat du déblai (`ROAD_CUT_M`), et l'égalité
- * n'est pas une coïncidence qu'on entérine : le terrain est arasé au niveau de
- * la plate-forme sur toute cette largeur, donc un objet posé là serait posé sur
- * de la voirie. Les deux valeurs doivent bouger ensemble ; elles n'ont donc
- * qu'une seule définition, et c'est celle de `roadCut`.
- */
+/** Débord de l'emprise au-delà de la rive de la chaussée, en mètres — le fond plat du déblai (`ROAD_CUT_M`). */
 export const CORRIDOR_MARGIN_M = ROAD_CUT_M;
 
 /**
- * Pas de sondage le long d'une polyligne, en mètres.
- *
- * Il doit être plus court que la plus étroite des emprises, sinon une haie
- * perpendiculaire pourrait l'enjamber entre deux sondages sans qu'on s'en
- * aperçoive. La plus étroite est celle d'un sentier — 1,4 m de large, soit
- * 3,8 m d'emprise avec ses deux accotements — et les contours de parcelle sont
- * ré-échantillonnés tous les six mètres, donc le sondage ne peut pas se
- * contenter des sommets fournis : il lui faut son propre pas, plus fin.
+ * Pas de sondage le long d'une polyligne, en mètres. Doit rester plus court
+ * que la plus étroite des emprises (un sentier, 3,8 m), sinon une haie
+ * perpendiculaire pourrait l'enjamber entre deux sondages.
  */
 export const CORRIDOR_PROBE_M = 1;
 
-/**
- * Itérations de dichotomie pour situer une traversée.
- *
- * Huit passes ramènent l'incertitude à 1/256 du pas de sondage, soit quatre
- * millimètres. Chercher mieux n'aurait pas de sens : l'emprise elle-même est
- * une idée à dix centimètres près.
- */
+/** Itérations de dichotomie pour situer une traversée (huit passes ≈ 4 mm de précision). */
 export const CORRIDOR_BISECT_STEPS = 8;
 
 /**
- * Vrai si un point tombe dans l'emprise d'une chaussée.
- *
- * C'est la question que toutes les couches doivent poser — et la seule. Sans
- * index (pas encore de réseau construit, ou aucune route dans la bulle), la
+ * Vrai si un point tombe dans l'emprise d'une chaussée. Sans index, la
  * réponse est « non » : on ne devine pas une route absente.
  *
- * Fonction pure.
- *
- * `accept` permet d'ignorer certaines chaussées, et sert exactement une fois :
- * ce qui **borde** une route — son fossé, sa haie de bas-côté — est posé à un
- * ou deux mètres de sa rive et doit l'ignorer, tout en s'arrêtant net à chaque
- * rue transversale. Sans lui, la règle reposerait sur la seule promesse que
- * l'appelant se décale toujours d'un peu plus que l'accotement, ce qui n'est
- * pas une garantie mais une coïncidence entretenue à la main.
+ * `accept` permet d'ignorer certaines chaussées — ce qui borde une route (son
+ * fossé, sa haie de bas-côté) doit ignorer celle-là tout en s'arrêtant net
+ * aux rues transversales.
  *
  * @param {Object|null} index Instance `RoadIndex`, ou `null`.
  * @param {number} x Mètres locaux.
@@ -108,14 +53,8 @@ export function inCorridor(index, x, z, margin = CORRIDOR_MARGIN_M, accept = nul
 }
 
 /**
- * Ne garde que les points hors emprise.
- *
- * Pour tout ce qui se sème par points — bottes de paille, troupeaux, rochers,
- * touffes de fougère. L'ordre et les valeurs des points conservés ne changent
- * pas : le semis reste celui que le tirage ancré au sol a produit, on n'en
- * retire que ce qui tombait sur la voirie.
- *
- * Fonction pure.
+ * Ne garde que les points hors emprise (bottes de paille, troupeaux, rochers,
+ * touffes de fougère). Ne retire rien d'autre que ce qui tombait sur la voirie.
  *
  * @param {Array<{x:number,z:number}>} points
  * @param {Object|null} index Instance `RoadIndex`, ou `null`.
@@ -135,17 +74,10 @@ export const CORRIDOR_PUSH_CLEARANCE_M = 0.15;
 const CORRIDOR_PUSH_ITERATIONS = 4;
 
 /**
- * Écarte un point de l'emprise, sans le supprimer.
- *
- * `filterOutsideCorridor` retire, `clipOutsideCorridor` coupe : aucun des deux
- * ne convient à un contour de parcelle. Une limite de champ suit très souvent
- * le bord d'une route sur toute sa longueur — c'est la définition même du
- * bocage —, et sa distance à l'axe est un hasard du tracé cadastral, pas une
- * décision de composition. La couper à chaque sondage qui tombe dans l'emprise
- * ne laisse **aucun** tronçon dehors : toute la haie disparaît, faute d'un
- * seul point réellement extérieur d'où repartir. La repousser au ras de
- * l'emprise, en revanche, garde la haie continue — c'est elle qui trace le
- * bocage, pas la route.
+ * Écarte un point de l'emprise, sans le supprimer. Ni `filterOutsideCorridor`
+ * (retire) ni `clipOutsideCorridor` (coupe) ne conviennent à un contour de
+ * parcelle qui longe une route sur toute sa longueur (le bocage) : le couper
+ * ne laisserait aucun tronçon dehors, alors que le repousser garde la haie continue.
  *
  * @param {number} x
  * @param {number} z
@@ -159,8 +91,7 @@ function pushPointOutsideCorridor(x, z, index, margin = CORRIDOR_MARGIN_M, clear
   if (!index) return { x, z };
   let px = x;
   let pz = z;
-  // Plusieurs passes : un carrefour met deux chaussées à portée, et s'écarter
-  // de la première peut retomber dans l'emprise de la seconde.
+  // Plusieurs passes : s'écarter d'une chaussée peut retomber dans celle d'un carrefour voisin.
   for (let i = 0; i < CORRIDOR_PUSH_ITERATIONS; i++) {
     const hit = index.query(px, pz, margin);
     if (!hit) return { x: px, z: pz };
@@ -174,9 +105,7 @@ function pushPointOutsideCorridor(x, z, index, margin = CORRIDOR_MARGIN_M, clear
     let dz = pz - nz;
     let len = hit.distance;
     if (len < 1e-6) {
-      // Le point tombe pile sur l'axe — un contour qui partage un nœud avec la
-      // route. Écarté perpendiculairement à la marche : arbitraire, mais
-      // déterministe pour ce point précis, ce qui suffit.
+      // Point pile sur l'axe : écarté perpendiculairement à la marche (arbitraire mais déterministe).
       const tx = b.x - a.x;
       const tz = b.z - a.z;
       const tl = Math.hypot(tx, tz) || 1;
@@ -194,13 +123,8 @@ function pushPointOutsideCorridor(x, z, index, margin = CORRIDOR_MARGIN_M, clear
 }
 
 /**
- * Écarte de l'emprise chaque point d'une polyligne, sans jamais l'interrompre.
- *
- * Pour les contours de parcelle : voir `pushPointOutsideCorridor`, dont c'est
- * l'application point par point. Les distances sont recalculées sur la
- * polyligne déplacée.
- *
- * Fonction pure.
+ * Écarte de l'emprise chaque point d'une polyligne, sans jamais l'interrompre
+ * (application point par point de `pushPointOutsideCorridor`).
  *
  * @param {Array<{x:number,z:number}>} points
  * @param {Object|null} index Instance `RoadIndex`, ou `null`.
@@ -232,8 +156,7 @@ function perpendiculars(path) {
     const length = Math.hypot(tx, tz) || 1;
     tx /= length;
     tz /= length;
-    // px = tz, pz = -tx — le même repère que celui d'`appendProfile`, sans
-    // quoi on testerait l'emprise à un endroit et poserait la haie à un autre.
+    // px = tz, pz = -tx : même repère qu'`appendProfile`.
     out[r * 2] = tz;
     out[r * 2 + 1] = -tx;
   }
@@ -241,13 +164,8 @@ function perpendiculars(path) {
 }
 
 /**
- * Point de la polyligne **d'origine** à l'abscisse `(row, t)`.
- *
- * Le sondage, lui, se fait sur la ligne décalée de `offset` (voir `inside`).
- * Les deux partagent exactement la même paramétrisation, donc l'abscisse
- * trouvée sur l'une désigne le bon point sur l'autre : c'est ce qui permet de
- * sonder là où l'objet sera posé et de découper la ligne qu'on repassera à
- * `appendProfile`.
+ * Point de la polyligne d'origine à l'abscisse `(row, t)`. Le sondage, lui,
+ * se fait sur la ligne décalée de `offset` (voir `inside`) — même paramétrisation.
  */
 function pointAt(path, row, t) {
   const a = path[row];
@@ -262,8 +180,7 @@ function withDistances(points) {
   for (let i = 0; i < points.length; i++) {
     if (i > 0) {
       const step = Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z);
-      // Un sommet dupliqué — une traversée qui tombe pile sur un sommet —
-      // casserait `spacedAlongPath`, qui divise par l'écart entre deux lignes.
+      // Un sommet dupliqué casserait `spacedAlongPath` (division par l'écart entre deux lignes).
       if (step < 1e-6) continue;
       travelled += step;
     }
@@ -273,34 +190,14 @@ function withDistances(points) {
 }
 
 /**
- * Découpe une polyligne en tronçons **hors emprise routière**.
+ * Découpe une polyligne en tronçons hors emprise routière : sondage à pas fin
+ * (`CORRIDOR_PROBE_M`, pas seulement les sommets), et dichotomie pour situer
+ * chaque traversée au millimètre.
  *
- * C'est la pièce qui manquait : sans elle, une couche n'a le choix qu'entre
- * tout garder et tout jeter, et les deux se voient.
- *
- * ## Comment la traversée est trouvée
- *
- * La polyligne est sondée à pas fin (`CORRIDOR_PROBE_M`), pas seulement à ses
- * sommets : ré-échantillonnée tous les six mètres, une haie pourrait enjamber
- * un sentier sans qu'aucun de ses sommets ne tombe dedans. À chaque changement
- * d'état — dedans/dehors — une dichotomie situe le passage à quelques
- * millimètres, et ce point-là devient le bout du tronçon.
- *
- * Aucune formule fermée n'est cherchée : l'emprise est la réunion des capsules
- * de toutes les chaussées voisines, et intersecter une polyligne avec cette
- * réunion analytiquement coûterait beaucoup de code pour un résultat que la
- * dichotomie donne au millimètre.
- *
- * ## `offset`
- *
- * Ce qui longe une route n'est pas posé sur son axe mais à côté — une haie de
- * bas-côté à deux mètres de la rive, un fossé à un mètre cinquante. `offset`
- * dit de sonder l'emprise **là où l'objet sera réellement posé**, avec la même
- * convention qu'`appendProfile` (positif à gauche de la marche), tout en
- * rendant des tronçons exprimés sur la ligne d'origine — c'est elle qu'on
- * repassera à `appendProfile`, offset compris.
- *
- * Fonction pure.
+ * `offset` sonde l'emprise là où l'objet sera réellement posé (une haie de
+ * bas-côté à deux mètres de la rive, un fossé à un mètre cinquante), même
+ * convention qu'`appendProfile`, mais rend des tronçons exprimés sur la ligne
+ * d'origine.
  *
  * @param {Array<{x:number,z:number}>} path Polyligne, telle que la rend
  *        `resamplePath`. Les `distance` fournies sont ignorées et recalculées.
@@ -342,10 +239,7 @@ export function clipOutsideCorridor(
 
   const perp = perpendiculars(path);
   const step = Math.max(probe, 0.05);
-  // Sondage sans allocation : une polyligne de trois cents mètres se sonde au
-  // mètre, et trois cents objets jetables par contour de parcelle — pour cent
-  // quatre-vingts contours à chaque reconstruction — se paient en ramassage
-  // miettes, pas en calcul.
+  // Sondage sans allocation (coût dominé par le ramasse-miettes sinon, vu le nombre de contours).
   const inside = (row, t) => {
     const a = path[row];
     const b = path[Math.min(rows - 1, row + 1)];
@@ -359,11 +253,7 @@ export function clipOutsideCorridor(
     return inCorridor(index, x, z, margin, accept);
   };
 
-  /**
-   * Abscisse de la traversée entre deux sondages d'états opposés. La recherche
-   * se fait dans l'espace `(row, t)` de la ligne d'origine, donc le point rendu
-   * est directement utilisable — pas besoin de le reprojeter.
-   */
+  /** Abscisse de la traversée entre deux sondages d'états opposés, dans l'espace `(row, t)` de la ligne d'origine. */
   const crossing = (row, tA, tB) => {
     let low = tA;
     let high = tB;
@@ -387,10 +277,7 @@ export function clipOutsideCorridor(
     const span = Math.hypot(b.x - a.x, b.z - a.z);
     if (span < 1e-6) continue;
 
-    // Écart d'un coup les tronçons qui n'ont aucune chaussée dans leur
-    // voisinage : en rase campagne c'est le cas de presque tous, et les sonder
-    // au mètre coûterait cent fois le prix de ce test. La boîte est élargie du
-    // décalage latéral, puisque c'est là que le sondage irait vraiment lire.
+    // Écarte d'un coup les tronçons sans chaussée dans leur voisinage (la plupart, en rase campagne).
     if (!state && typeof index.mayCover === 'function') {
       const reach = Math.abs(offset) + margin;
       const clearOfRoads = !index.mayCover(
@@ -405,8 +292,7 @@ export function clipOutsideCorridor(
       }
     }
 
-    // Sondages intermédiaires **plus** le sommet d'arrivée : sans ce dernier,
-    // une traversée qui commence pile au sommet passerait à la ligne suivante.
+    // Sondages intermédiaires plus le sommet d'arrivée (sinon une traversée pile au sommet serait manquée).
     const steps = Math.max(1, Math.ceil(span / step));
     let previousT = 0;
 
@@ -435,9 +321,7 @@ export function clipOutsideCorridor(
       previousT = t;
     }
 
-    // Le sommet d'arrivée rejoint le tronçon en cours. Les sondages ne posent
-    // aucun sommet : ils ne servent qu'à détecter les traversées, et une haie
-    // ne doit pas gagner un sommet tous les mètres au passage.
+    // Le sommet d'arrivée rejoint le tronçon en cours (les sondages n'en posent pas).
     if (!state && current) current.push({ x: b.x, z: b.z });
   }
 

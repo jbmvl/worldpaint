@@ -8,33 +8,19 @@
 
 import SunCalc from 'suncalc';
 
-/**
- * Demi-côté de la boîte d'ombres, en mètres. Une lumière directionnelle éclaire
- * un monde entier ; sa carte d'ombres, elle, n'a que quelques mégapixels. Toute
- * la finesse vient donc du resserrement de la boîte autour de ce qu'on regarde.
- */
+/** Demi-côté de la boîte d'ombres, en mètres : resserrée autour de l'observateur. */
 export const SHADOW_RADIUS_M = 110;
-/**
- * Avance de la boîte devant l'observateur. La caméra regarde vers l'avant : centrer
- * la boîte sur l'observateur gâcherait la moitié de la carte derrière lui.
- */
+/** Avance de la boîte devant l'observateur (la caméra regarde vers l'avant). */
 export const SHADOW_LEAD_M = 45;
 /** Distance de la lumière à sa cible : au-delà, la boîte de profondeur clippe. */
 export const SHADOW_DISTANCE_M = 800;
-/**
- * Sous cette hauteur de soleil, plus d'ombres. Au ras de l'horizon elles
- * s'étirent au-delà de la boîte et se coupent net, ce qui se voit bien plus que
- * leur absence.
- */
+/** Sous cette hauteur de soleil, plus d'ombres (elles s'étirent hors boîte et se coupent net). */
 export const SHADOW_MIN_SUN_Y = 0.08;
 
 /**
  * Direction du soleil dans le repère de la scène (x est, y haut, z sud).
- *
- * SunCalc donne un azimut compté depuis le sud, positif vers l'ouest, et une
- * altitude en radians. Le cap depuis le nord vaut donc azimut + π ; en
- * projetant sur nos axes il reste :
- *   x = -cos(alt)·sin(az)   y = sin(alt)   z = cos(alt)·cos(az)
+ * SunCalc donne azimut (depuis le sud, positif vers l'ouest) et altitude en
+ * radians ; d'où x = -cos(alt)·sin(az), y = sin(alt), z = cos(alt)·cos(az).
  */
 export function sunDirection(date, lat, lng) {
   const { altitude, azimuth } = SunCalc.getPosition(date, lat, lng);
@@ -48,15 +34,8 @@ export function sunDirection(date, lat, lng) {
 }
 
 /**
- * Aligne le centre de la carte d'ombres sur sa grille de texels.
- *
- * Sans ça, un centre qui glisse continûment fait recalculer la carte sur une
- * grille légèrement différente à chaque image : les bords d'ombre grouillent.
- * C'est le défaut le plus visible d'une lumière qui suit une caméra mobile, et
- * il se corrige en ne déplaçant le centre que par multiples entiers de texel,
- * dans le plan de la lumière.
- *
- * Fonction pure.
+ * Aligne le centre de la carte d'ombres sur sa grille de texels, pour éviter
+ * le grouillement des bords d'ombre quand la lumière suit une caméra mobile.
  *
  * @param {{x:number,y:number,z:number}} center  Centre souhaité.
  * @param {{x:number,y:number,z:number}} sunDir  Direction *vers* le soleil.
@@ -68,9 +47,8 @@ export function snapToShadowTexels(center, sunDir, radius, mapSize) {
   const texel = (2 * radius) / mapSize;
   if (!(texel > 0)) return { ...center };
 
-  // Base orthonormée du repère de la lumière. L'axe de référence évite le cas
-  // dégénéré du soleil au zénith, où le produit vectoriel avec la verticale
-  // s'annule.
+  // Base orthonormée du repère de la lumière (référence alternative au zénith,
+  // où le produit vectoriel avec la verticale s'annulerait).
   const f = normalize(sunDir);
   const reference = Math.abs(f.y) > 0.99 ? { x: 0, y: 0, z: 1 } : { x: 0, y: 1, z: 0 };
   const right = normalize(cross(reference, f));

@@ -1,33 +1,17 @@
 /*
- * demo/main.js — la démo autonome de WorldPaint.
- * -----------------------------------------------------------------
- * Une application minimale, sans framework, qui monte `createWorld` dans une
- * scène three.js et pilote une caméra volante à la main. Rien ici n'est
- * repris par le moteur : c'est exactement ce qu'une application consommatrice
- * doit écrire elle-même (voir le README, section « Usage »).
+ * demo/main.js — la démo autonome de WorldPaint. Application minimale, sans
+ * framework, qui monte `createWorld` dans une scène three.js et pilote une
+ * caméra volante à la main — c'est ce qu'une application consommatrice doit
+ * écrire elle-même (voir le README, section « Usage »).
  *
- * Ce qui est demandé, une section par item plus bas :
- *   - navigation clavier en vol libre + téléportation au clic ;
- *   - case à cocher qui étiquette ce qu'on regarde (`inspect/objectLabels`) ;
- *   - case à cocher qui peint l'emprise routière, pour vérifier d'un coup d'œil
- *     que la frontière du décor tombe bien sur chaussée + accotement ;
- *   - champ de recherche qui géocode un lieu (Nominatim/OpenStreetMap) et
- *     y déplace la bulle ;
- *   - mini-carte façon Street View, centrée sur la caméra, qui affiche le
- *     réseau routier local et téléporte au clic ;
- *   - panneau météo et heure, qui pilote l'ambiance.
+ * Au programme : navigation clavier + téléportation au clic, étiquetage de
+ * ce qu'on regarde (`inspect/objectLabels`), affichage de l'emprise
+ * routière, recherche géocodée (Nominatim), mini-carte façon Street View,
+ * panneau météo et heure.
  *
- * Le panneau météo mérite un mot, parce qu'il montre exactement où passe la
- * frontière moteur/application : **c'est la démo qui décide du temps qu'il
- * fait**, et le moteur ne fait que l'appliquer. Une application réelle
- * brancherait ici un relevé (Open-Meteo, par exemple, qui est gratuit et sans
- * clé) ou une simulation ; ce sont des curseurs parce qu'on veut pouvoir passer
- * de l'orage au grand beau en une seconde pour regarder ce que ça change. Le
- * moteur, lui, ne fait aucune requête et ne connaît aucun service.
- *
- * L'heure est là pour la même raison : la moitié de la lecture d'un éclairage
- * est l'inclinaison du soleil, et attendre le coucher pour la vérifier n'est
- * pas une méthode.
+ * Le panneau météo montre où passe la frontière moteur/application : c'est
+ * la démo qui décide du temps qu'il fait (curseurs, pour comparer vite),
+ * le moteur ne fait que l'appliquer et ne connaît aucun service.
  */
 
 import * as THREE from 'three';
@@ -74,6 +58,15 @@ const realTimeCheckbox = document.getElementById('realTime');
 const hourInput = document.getElementById('hour');
 const hourVal = document.getElementById('hourVal');
 const presetsRoot = document.getElementById('presets');
+const menuToggle = document.getElementById('menuToggle');
+const panel = document.getElementById('panel');
+const climateBtn = document.getElementById('climateBtn');
+const streetViewBtn = document.getElementById('streetViewBtn');
+const mapOverlay = document.getElementById('mapOverlay');
+const mapOverlayClose = document.getElementById('mapOverlayClose');
+const mapOverlayLegend = document.getElementById('mapOverlayLegend');
+const bigMinimapCanvas = document.getElementById('minimapBig');
+const bigMinimapCtx = bigMinimapCanvas.getContext('2d');
 
 function setBusy(busy) {
   dot.classList.toggle('busy', busy);
@@ -83,6 +76,12 @@ function setStatus(text, isError = false) {
   statusEl.classList.toggle('error', isError);
 }
 
+// --- Panneau de réglages replié (mobile) --------------------------------------
+// Le panneau reste toujours dans le DOM ; seule sa visibilité change (voir la
+// media query dans index.html). Le bouton n'existe que pour ça, il ne pilote
+// rien d'autre.
+menuToggle.addEventListener('click', () => panel.classList.toggle('open'));
+
 // --- Scène three.js ----------------------------------------------------------
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -91,18 +90,11 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-// Le rig de lumière du moteur monte volontairement au-dessus de 1 (soleil
-// jusqu'à 1,75, ambiance jusqu'à 1,2 — voir `environment/skyModel.js`), pour
-// qu'une scène de nuit reste lisible. Sans tone mapping, `NoToneMapping` par
-// défaut de three écrête tout ça à blanc plat au lieu d'amorcer un dégradé :
-// le ciel et les surfaces claires se lisent alors comme cramés — c'est ce rig
-// qui donnait l'impression de « deux fois le soleil ». C'est à l'application
-// de le dompter, comme tout ce qui touche au renderer (voir le README).
+// Le rig de lumière du moteur monte volontairement au-dessus de 1 (voir
+// `environment/skyModel.js`) ; sans tone mapping ça écrête à blanc plat.
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-// 0,5, pas 1 : c'est l'exposition que l'exemple officiel de three pour ce
-// même `Sky.js` utilise (examples/webgl_shaders_sky.html) — pas une valeur
-// inventée, celle avec laquelle ce shader précis a été calé.
-renderer.toneMappingExposure = 0.5;
+renderer.toneMappingExposure = 0.5; // valeur de l'exemple officiel three pour ce Sky.js
+
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.5, 9000);
@@ -114,10 +106,8 @@ window.addEventListener('resize', () => {
 });
 
 // --- Tuiles vectorielles OpenStreetMap ----------------------------------------
-// WorldPaint ne fournit pas de serveur de tuiles : c'est à l'application de
-// pointer vers une source au schéma OpenMapTiles. OpenFreeMap en publie une,
-// gratuite et sans clé ; on lit son TileJSON plutôt que de coder en dur un
-// gabarit d'URL, pour ne pas dépendre d'un chemin qui peut changer.
+// WorldPaint ne fournit pas de serveur de tuiles : source OpenFreeMap (gratuite,
+// sans clé), lue via son TileJSON plutôt qu'un gabarit d'URL codé en dur.
 async function resolveVectorSource() {
   try {
     const res = await fetch('https://tiles.openfreemap.org/planet');
@@ -358,18 +348,10 @@ async function recenterIfNeeded() {
 
 // --- Étiquettes des objets -----------------------------------------------------
 //
-// Trois sources, superposées : les objets de la scène (`collectSceneLabels`),
-// les cultures — qui n'ont pas de maillage propre, seulement une plage de la
-// carte des cultures (`collectCropLabels`) — et les emprises `landuse` /
-// `landcover` — qui n'en ont pas non plus, seulement un classement de
-// parcelle (`collectPlaceLabels`). Ce sont les trois façons de répondre à
-// « qu'est-ce que je regarde », voir l'en-tête de `inspect/objectLabels.js`.
-//
-// `terrain-bubble`, `sky-dome` et `sun` restent tus : ce sont le maillage de
-// base et l'ambiance, pas un objet du décor — les étiqueter donnerait
-// « terrain 15/xxxxx/yyyyy » en boucle sans rien dire de plus que le sol qu'on
-// a déjà sous les pieds. `ground-cover` (l'herbe), en revanche, est une
-// **surface** au même titre qu'un champ ou une cour de ferme : elle s'affiche.
+// Trois sources superposées : les objets de la scène (`collectSceneLabels`),
+// les cultures (`collectCropLabels`) et les emprises `landuse`/`landcover`
+// (`collectPlaceLabels`) — voir l'en-tête de `inspect/objectLabels.js`.
+// `terrain-bubble`, `sky-dome` et `sun` restent tus (ambiance, pas un objet du décor).
 const LABEL_SKIP = new Set(['terrain-bubble', 'sky-dome', 'sun']);
 const labelElements = new Map(); // id -> <span>
 const projected = new THREE.Vector3();
@@ -446,7 +428,9 @@ function updateLabels() {
       labelsRoot.appendChild(el);
       labelElements.set(item.id, el);
     }
-    el.textContent = item.text;
+    // 🗺️ ce que la carte dit, 🤖 ce que la procédure a inventé — voir
+    // `sourceForMeshName` et les commentaires de source dans `objectLabels.js`.
+    el.textContent = item.source ? `${item.source} ${item.text}` : item.text;
     el.style.left = `${sx}px`;
     el.style.top = `${sy}px`;
   }
@@ -470,14 +454,9 @@ showLabelsCheckbox.addEventListener('change', () => {
 });
 
 // --- Emprise routière (mise au point) ------------------------------------------
-// Une nappe translucide posée sur chaussée + accotement, reconstruite à partir
-// des tronçons que `RoadNetwork` publie déjà. C'est exactement la frontière que
-// `roadCorridor` fait respecter aux haies, clôtures, jardins, champs et herbe :
-// si un élément de décor apparaît **sur** la nappe, c'est un défaut d'emprise ;
-// s'il apparaît juste au bord, c'est sa place.
-//
-// Rien de tout ceci n'appartient au moteur : c'est de la mise au point, et la
-// démo est l'endroit où elle vit.
+// Une nappe translucide posée sur chaussée + accotement, la même frontière
+// que `roadCorridor` fait respecter au reste du décor : un élément visible
+// sur la nappe est un défaut d'emprise. Pure mise au point, hors du moteur.
 
 const CORRIDOR_LIFT_M = 0.05; // au-dessus de la chaussée, pour ne pas se battre avec elle
 let corridorMesh = null;
@@ -588,55 +567,88 @@ const MINIMAP_PX = minimapCanvas.width; // résolution interne du canevas (net s
 const MINIMAP_SCALE = (MINIMAP_PX / 2) / MINIMAP_RANGE_M; // pixels par mètre
 const minimapForward = new THREE.Vector3();
 
-function worldToMinimap(x, z) {
-  return {
-    px: MINIMAP_PX / 2 + (x - camera.position.x) * MINIMAP_SCALE,
-    py: MINIMAP_PX / 2 + (z - camera.position.z) * MINIMAP_SCALE,
-  };
-}
+/**
+ * Dessine le radar (routes + cône de regard) sur un canevas donné, centré sur
+ * un point (`centerX`, `centerZ`) quelconque — la mini-carte ronde le prend
+ * toujours égal à `camera.position`, la carte plein écran peut le décaler
+ * (voir `bigPanX`/`bigPanZ` ci-dessous). `dotRadius`/`coneRadius` sont donnés
+ * en pixels canevas plutôt que déduits de `px` pour ne pas changer, même d'un
+ * pixel, l'aspect de la mini-carte ronde existante.
+ */
+function drawMinimapPanel(ctx, px, scale, centerX, centerZ, opts = {}) {
+  const {
+    emojis = false,
+    dotRadius = 6,
+    coneRadius = px * 0.34,
+    roadWidth = 2,
+  } = opts;
 
-function updateMinimap() {
-  const ctx = minimapCtx;
-  ctx.clearRect(0, 0, MINIMAP_PX, MINIMAP_PX);
+  ctx.clearRect(0, 0, px, px);
   if (!world) return;
 
   ctx.fillStyle = 'rgba(20, 24, 32, 0.92)';
-  ctx.fillRect(0, 0, MINIMAP_PX, MINIMAP_PX);
+  ctx.fillRect(0, 0, px, px);
+
+  const toPx = (x, z) => ({
+    px: px / 2 + (x - centerX) * scale,
+    py: px / 2 + (z - centerZ) * scale,
+  });
 
   const segments = world.composer.roads?.roadSegments || [];
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = roadWidth;
   ctx.lineJoin = 'round';
   for (const segment of segments) {
     const { path } = segment;
     if (!path || path.length < 2) continue;
     ctx.beginPath();
     for (let r = 0; r < path.length; r++) {
-      const { px, py } = worldToMinimap(path[r].x, path[r].z);
-      if (r === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
+      const { px: sx, py: sy } = toPx(path[r].x, path[r].z);
+      if (r === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
     }
     ctx.stroke();
   }
 
+  // Un émoji par bâtiment repéré (`BuildingLayer.personalities`, la même
+  // source que les étiquettes) : de quoi reconnaître une boulangerie ou une
+  // église sans avoir à s'en approcher en 3D — voir `BUILDING_EMOJI`.
+  if (emojis) {
+    const buildings = world.composer?.buildings?.personalities || [];
+    const range = px / 2 / scale; // demi-côté du canevas, en mètres
+    const range2 = range * range;
+    ctx.font = `${Math.round(px * 0.032)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const building of buildings) {
+      const emoji = BUILDING_EMOJI[building.kind];
+      if (!emoji) continue;
+      const dx = building.x - centerX;
+      const dz = building.z - centerZ;
+      if (dx * dx + dz * dz > range2) continue;
+      const { px: sx, py: sy } = toPx(building.x, building.z);
+      ctx.fillText(emoji, sx, sy);
+    }
+  }
+
   // Cône de vision : direction du regard aplatie au sol, sans conversion
-  // d'angle — même astuce que ci-dessus, (dir.x, dir.z) est déjà l'angle
-  // canevas puisque les deux repères partagent la même orientation.
+  // d'angle — (dir.x, dir.z) est déjà l'angle canevas puisque les deux
+  // repères partagent la même orientation (voir l'en-tête de section).
   camera.getWorldDirection(minimapForward);
   minimapForward.y = 0;
   if (minimapForward.lengthSq() < 1e-8) minimapForward.set(0, 0, -1);
   else minimapForward.normalize();
-  const center = MINIMAP_PX / 2;
   const heading = Math.atan2(minimapForward.z, minimapForward.x);
+  const cam = toPx(camera.position.x, camera.position.z);
   ctx.beginPath();
-  ctx.moveTo(center, center);
-  ctx.arc(center, center, MINIMAP_PX * 0.34, heading - MINIMAP_FOV_RAD / 2, heading + MINIMAP_FOV_RAD / 2);
+  ctx.moveTo(cam.px, cam.py);
+  ctx.arc(cam.px, cam.py, coneRadius, heading - MINIMAP_FOV_RAD / 2, heading + MINIMAP_FOV_RAD / 2);
   ctx.closePath();
   ctx.fillStyle = 'rgba(111, 168, 240, 0.32)';
   ctx.fill();
 
   ctx.beginPath();
-  ctx.arc(center, center, 6, 0, Math.PI * 2);
+  ctx.arc(cam.px, cam.py, dotRadius, 0, Math.PI * 2);
   ctx.fillStyle = '#6fa8f0';
   ctx.fill();
   ctx.strokeStyle = '#fff';
@@ -644,15 +656,14 @@ function updateMinimap() {
   ctx.stroke();
 }
 
-minimapCanvas.addEventListener('click', (e) => {
-  if (!world) return;
-  const rect = minimapCanvas.getBoundingClientRect();
-  const px = (e.clientX - rect.left) * (MINIMAP_PX / rect.width);
-  const py = (e.clientY - rect.top) * (MINIMAP_PX / rect.height);
-  const x = camera.position.x + (px - MINIMAP_PX / 2) / MINIMAP_SCALE;
-  const z = camera.position.z + (py - MINIMAP_PX / 2) / MINIMAP_SCALE;
-  teleportTo(x, z);
-});
+function updateMinimap() {
+  drawMinimapPanel(minimapCtx, MINIMAP_PX, MINIMAP_SCALE, camera.position.x, camera.position.z);
+}
+
+// Le clic sur la mini-carte ronde ne téléporte plus directement : il ouvre la
+// carte plein écran (voir plus bas), seule capable d'afficher assez de champ
+// et de détail pour viser un endroit précis.
+minimapCanvas.addEventListener('click', () => openMapOverlay());
 
 // --- Recherche d'un lieu (géocodage OpenStreetMap / Nominatim) ---------------
 // Nominatim est un service public à usage raisonnable : une requête par
@@ -707,18 +718,145 @@ searchInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') goToSearch();
 });
 
+// --- Carte plein écran ---------------------------------------------------------
+// Le radar rond suffit pour se repérer en marchant, pas pour viser un endroit
+// précis à distance : ouverte en grand, la carte peut se glisser librement
+// (un centre de rendu décalé, `bigPanX`/`bigPanZ`, indépendant de la caméra)
+// et montre un émoji par bâtiment repéré. Le clic y téléporte, comme le clic
+// simple sur la scène 3D ou l'ancien clic sur le radar rond.
+
+const BIG_MINIMAP_PX = bigMinimapCanvas.width;
+const BIG_MINIMAP_RANGE_M = 900; // rayon affiché : bien plus large que le radar rond
+const BIG_MINIMAP_SCALE = (BIG_MINIMAP_PX / 2) / BIG_MINIMAP_RANGE_M;
+
+/** Un émoji par personnalité de bâtiment (`LABEL_BUILDING_PERSONALITY`, mêmes clés). */
+const BUILDING_EMOJI = {
+  church: '⛪',
+  mosque: '🕌',
+  hospital: '🏥',
+  bakery: '🥖',
+  retail: '🏬',
+  shop: '🏪',
+};
+mapOverlayLegend.textContent = Object.values(BUILDING_EMOJI).join(' ');
+
+let bigPanX = 0;
+let bigPanZ = 0;
+let bigPointerId = null;
+let bigDragged = false;
+let bigDownX = 0;
+let bigDownY = 0;
+let bigDownAt = 0;
+let bigDownPanX = 0;
+let bigDownPanZ = 0;
+
+function bigCenter() {
+  return { cx: camera.position.x + bigPanX, cz: camera.position.z + bigPanZ };
+}
+
+function updateBigMinimap() {
+  const { cx, cz } = bigCenter();
+  drawMinimapPanel(bigMinimapCtx, BIG_MINIMAP_PX, BIG_MINIMAP_SCALE, cx, cz, {
+    emojis: true,
+    dotRadius: BIG_MINIMAP_PX * 0.012,
+    coneRadius: BIG_MINIMAP_PX * 0.34,
+    roadWidth: 4,
+  });
+}
+
+function openMapOverlay() {
+  if (!world) return;
+  bigPanX = 0;
+  bigPanZ = 0; // recentré sur la caméra à chaque ouverture
+  mapOverlay.hidden = false;
+  updateBigMinimap();
+}
+
+function closeMapOverlay() {
+  mapOverlay.hidden = true;
+}
+
+mapOverlayClose.addEventListener('click', closeMapOverlay);
+mapOverlay.addEventListener('click', (e) => {
+  if (e.target === mapOverlay) closeMapOverlay(); // clic hors carte : referme
+});
+
+bigMinimapCanvas.addEventListener('pointerdown', (e) => {
+  bigPointerId = e.pointerId;
+  bigDragged = false;
+  bigDownX = e.clientX;
+  bigDownY = e.clientY;
+  bigDownAt = performance.now();
+  bigDownPanX = bigPanX;
+  bigDownPanZ = bigPanZ;
+  bigMinimapCanvas.setPointerCapture(e.pointerId);
+});
+
+bigMinimapCanvas.addEventListener('pointermove', (e) => {
+  if (bigPointerId === null) return;
+  const dx = e.clientX - bigDownX;
+  const dy = e.clientY - bigDownY;
+  if (!bigDragged && Math.hypot(dx, dy) > CLICK_MAX_DRAG_PX) {
+    bigDragged = true;
+    bigMinimapCanvas.classList.add('dragging');
+  }
+  if (bigDragged) {
+    // Le canevas est affiché plus petit que sa résolution interne (`max-width:
+    // 100%`) : il faut le ratio résolution/affichage pour convertir un
+    // déplacement écran en mètres, sinon glisser va deux fois trop vite ou
+    // deux fois trop lentement selon l'écran.
+    const rect = bigMinimapCanvas.getBoundingClientRect();
+    const pxPerScreenPx = BIG_MINIMAP_PX / rect.width;
+    bigPanX = bigDownPanX - (dx * pxPerScreenPx) / BIG_MINIMAP_SCALE;
+    bigPanZ = bigDownPanZ - (dy * pxPerScreenPx) / BIG_MINIMAP_SCALE;
+  }
+});
+
+bigMinimapCanvas.addEventListener('pointerup', (e) => {
+  if (bigPointerId === null) return;
+  bigMinimapCanvas.releasePointerCapture(e.pointerId);
+  bigPointerId = null;
+  bigMinimapCanvas.classList.remove('dragging');
+  const wasClick = !bigDragged && performance.now() - bigDownAt < CLICK_MAX_MS;
+  if (wasClick) {
+    const rect = bigMinimapCanvas.getBoundingClientRect();
+    const px = (e.clientX - rect.left) * (BIG_MINIMAP_PX / rect.width);
+    const py = (e.clientY - rect.top) * (BIG_MINIMAP_PX / rect.height);
+    const { cx, cz } = bigCenter();
+    const x = cx + (px - BIG_MINIMAP_PX / 2) / BIG_MINIMAP_SCALE;
+    const z = cz + (py - BIG_MINIMAP_PX / 2) / BIG_MINIMAP_SCALE;
+    teleportTo(x, z);
+    closeMapOverlay();
+  }
+});
+
+// --- Google Street View ---------------------------------------------------------
+// Ouvre la vue Street View de Google Maps sur la position courante de la
+// caméra — un service tiers, jamais interrogé par le moteur : la démo se
+// contente de composer une URL, voir la documentation « Google Maps URLs ».
+
+streetViewBtn.addEventListener('click', () => {
+  if (!world) return;
+  const { lng, lat } = world.frame.toLngLat(camera.position.x, camera.position.z);
+  camera.getWorldDirection(cameraDirection);
+  const heading = (rad2deg(Math.atan2(cameraDirection.x, -cameraDirection.z)) + 360) % 360;
+  const url = new URL('https://www.google.com/maps/@');
+  url.searchParams.set('api', '1');
+  url.searchParams.set('map_action', 'pano');
+  url.searchParams.set('viewpoint', `${lat},${lng}`);
+  url.searchParams.set('heading', heading.toFixed(0));
+  url.searchParams.set('pitch', '0');
+  window.open(url.toString(), '_blank', 'noopener');
+});
+
 // --- Météo et heure ------------------------------------------------------------
 // Tout ce qui suit est du ressort de l'application : le moteur reçoit un état
 // météo et une date, il ne les fabrique pas. Voir l'en-tête du fichier.
 
 /**
- * Les temps prêts à l'emploi. Ils ne sont pas dans le moteur : ce sont des
- * réglages de démonstration, faits pour montrer vite l'étendue de ce que la
- * météo change — pas une nomenclature météorologique.
- *
- * « Ordinaire » est repris de `DEFAULT_WEATHER` plutôt que recopié : c'est le
- * temps sur lequel toutes les modulations du moteur valent identité, et une
- * copie qui dériverait ferait mentir le bouton.
+ * Les temps prêts à l'emploi — des réglages de démonstration, pas une
+ * nomenclature météorologique. « Ordinaire » est repris de `DEFAULT_WEATHER`
+ * plutôt que recopié, pour ne jamais diverger du bouton.
  */
 const PRESETS = [
   { label: '☀️ Grand beau', weather: { cloudCover: 0.06, cloudDensity: 0.35, precipitation: 0, wind: 0.12, haze: 0 } },
@@ -738,38 +876,19 @@ for (const key of SLIDER_KEYS) {
 }
 const precipitationTypeSelect = document.getElementById('precipitationType');
 
-/**
- * Direction du vent : un curseur à part, en degrés (0-359), pas dans
- * `SLIDER_KEYS` — c'est le seul réglage de météo qui n'est pas une part de
- * 0 à 1, mais un angle. `weather.windDirection` (radians) en dérive.
- */
+/** Direction du vent : un curseur à part, en degrés (0-359), pas une part de 0 à 1 comme les autres. */
 const windDirectionSlider = {
   input: document.getElementById('windDirection'),
   val: document.getElementById('windDirectionVal'),
 };
 
 /**
- * Calibration de la réglette « couverture nuageuse ».
- * -----------------------------------------------------
- * Le masque de nuage du `Sky.js` natif de three (celui que `weather.cloudCover`
- * pilote directement, voir `environment/weather.js`) **sature vers 0,5** : au
- * bruit près, la moitié haute de la plage 0–1 ne change quasiment plus rien à
- * l'étendue de nuage visible, et la moitié basse fait tout le travail. Une
- * réglette 0–100 % branchée telle quelle dessus paraît donc à moitié morte —
- * ce que ce fichier documentait comme « inversée » avant d'avoir compris
- * pourquoi.
- *
- * Cette table est la **mesure empirique** de ce masque (bruit de Sky.js
- * rejoué hors navigateur, cent d'échantillons par point de couverture) :
- * `CLOUD_COVER_CURVE[i]` est la valeur brute de `weather.cloudCover` à passer
- * au moteur pour obtenir un masque moyen d'environ `i / 10`. `uiToCloudCover`
- * l'interpole pour retrouver une réglette qui répond sur toute sa course ;
- * `cloudCoverToUi` fait le trajet inverse, pour que les temps prêts à l'emploi
- * (qui donnent une valeur brute) posent le curseur au bon endroit.
- *
- * C'est un calibrage de **présentation**, propre à cette démo : il ne change
- * ni la sémantique de `weather.cloudCover` (toujours 0–1, toujours ce que
- * `overcastOf` et le reste du moteur lisent), ni aucune valeur d'art du thème.
+ * Calibration de la réglette « couverture nuageuse ». Le masque de nuage du
+ * `Sky.js` natif de three sature vers 0,5 (la moitié haute de 0-1 ne change
+ * presque rien) : cette table, mesure empirique de ce masque, fait qu'une
+ * réglette 0-100 % répond sur toute sa course (`uiToCloudCover`,
+ * `cloudCoverToUi`). Calibrage de présentation propre à la démo : ne change
+ * pas la sémantique de `weather.cloudCover`.
  */
 const CLOUD_COVER_CURVE = [0, 0.16, 0.2, 0.23, 0.26, 0.29, 0.31, 0.34, 0.37, 0.41, 0.55];
 
@@ -907,6 +1026,17 @@ for (const preset of PRESETS) {
 // « 42 » écrit en dur dans le markup ne représenterait pas la bonne position.
 writeWeather(DEFAULT_WEATHER);
 presetsRoot.children[1].classList.add('on'); // « Ordinaire », qui est l'état de départ
+climateBtn.textContent = PRESETS[1].label.split(' ')[0];
+
+// Raccourci « climat suivant » : rejoue le même clic que le bouton de temps
+// prêt à l'emploi actif + 1, pour ne pas dupliquer la logique de sélection.
+climateBtn.addEventListener('click', () => {
+  const buttons = [...presetsRoot.children];
+  const current = buttons.findIndex((b) => b.classList.contains('on'));
+  const next = buttons[(current + 1) % buttons.length];
+  next.click();
+  climateBtn.textContent = PRESETS[buttons.indexOf(next)].label.split(' ')[0];
+});
 
 hourInput.addEventListener('input', refreshWeatherLabels);
 realTimeCheckbox.addEventListener('change', () => {
@@ -978,6 +1108,7 @@ function loop() {
     updateLabels();
     updateCorridor();
     updateMinimap();
+    if (!mapOverlay.hidden) updateBigMinimap();
     // L'horloge n'avance que si c'est elle qu'on suit : le curseur, lui, ne
     // bouge que quand on le pousse.
     if (realTimeCheckbox.checked) hourVal.textContent = new Date().toTimeString().slice(0, 5);

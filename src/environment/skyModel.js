@@ -1,13 +1,6 @@
 /*
- * skyModel — paramètres atmosphériques et éclairage, en fonction du soleil.
- * -------------------------------------------------------------------------
- * Le rendu du ciel utilise le modèle de Preetham (« A Practical Analytic Model
- * for Daylight », SIGGRAPH 1999), qui est livré avec three. Ce module ne
- * calcule pas le ciel : il décide des **quatre coefficients** que le modèle
- * attend, et l'éclairage assorti, en fonction de la seule hauteur du soleil.
- *
- * Séparé pour être pur, donc testable — une inversion entre l'aube et le
- * crépuscule ne se verrait autrement qu'à l'œil, et sur une scène de nuit.
+ * skyModel — coefficients du modèle de ciel de Preetham (three) et éclairage
+ * assorti, en fonction de la hauteur du soleil. Pur et testable.
  */
 
 const clamp01 = (v) => Math.min(1, Math.max(0, v));
@@ -19,12 +12,6 @@ const mix = (a, b, t) => a + (b - a) * t;
 
 /**
  * Coefficients de Preetham pour une hauteur de soleil donnée.
- *
- * Soleil haut : atmosphère claire, diffusion de Rayleigh modérée — le bleu
- * franc de midi. Soleil rasant : la lumière traverse bien plus d'air, le bleu
- * est diffusé hors du trajet et il ne reste que le rouge. C'est ce que
- * traduisent une turbidité et un coefficient de Mie plus élevés.
- *
  * @param {number} sunY Composante verticale de la direction du soleil, dans [-1, 1].
  */
 export function skyParameters(sunY) {
@@ -42,21 +29,14 @@ export function skyParameters(sunY) {
 
 /**
  * Éclairage assorti : intensités du soleil et de l'ambiance, et chaleur de la
- * lumière directe.
- *
- * La nuit n'est pas noire — elle est bleue et faible. Rendre le soleil à zéro
- * donnerait une scène plate et illisible ; on bascule donc sur une lueur froide
- * qui laisse deviner le relief.
+ * lumière directe. La nuit reste éclairée au-dessus du physiquement juste
+ * (lueur froide) pour garder le relief lisible.
  *
  * @param {number} sunY
  * @returns {{sun:number, ambient:number, warmth:number, night:boolean}}
  */
 export function lightingFor(sunY) {
   if (sunY <= -0.1) {
-    // Une nuit trop sombre n'a rien de réaliste : l'œil s'adapte, et une scène
-    // où l'on ne distingue plus le relief se lit comme un rendu en panne. On
-    // éclaire donc au-dessus du physiquement juste, comme le fait toute
-    // photographie de nuit.
     return { sun: 0.3, ambient: 0.62, warmth: 1, night: true };
   }
   const elevation = Math.max(sunY, 0);

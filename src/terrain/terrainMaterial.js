@@ -1,54 +1,31 @@
 /*
- * terrainMaterial — la matière du sol.
- * ------------------------------------
- * Le sol n'est pas photographié : il est **décrit**. `groundClassMap` rasterise
- * l'occupation du sol des tuiles vectorielles autour de l'observateur ; ce shader y
- * lit, en chaque point, la part d'herbe, de bois, de culture et de sol nu, et
- * compose la matière correspondante.
+ * terrainMaterial — la matière du sol. `groundClassMap` rasterise l'occupation
+ * du sol autour de l'observateur ; ce shader y lit la part d'herbe, de bois,
+ * de culture et de sol nu, et compose la matière correspondante.
  *
- * Six principes, et tout le reste en découle :
+ * Structure (grain, textures procédurales moyennées à 0,5) et couleur
+ * (albédos linéaires) sont séparées. Le grain change d'échelle avec la
+ * distance (période fine près, octave large loin). La pente au-delà de 30°
+ * vire à la roche.
  *
- *   • **structure et couleur sont séparées**. Les textures procédurales ne
- *     portent que le grain — leur moyenne est calée à 0,5 à la construction,
- *     donc doublées elles valent 1 et ne déplacent aucune luminosité. La
- *     couleur vient des albédos, en espace linéaire. Employer une texture de
- *     grain comme albédo donnait un albédo moyen de 1, c'est-à-dire de la neige.
- *   • **le grain change d'échelle avec la distance**. De près, une période de
- *     quelques mètres ; au loin, une octave large. Une seule période
- *     scintillerait à l'horizon et se répéterait sous les roues.
- *   • **le grain incline la normale**. Une texture qui ne fait qu'assombrir
- *     laisse un sol peint : c'est l'ombre portée d'un brin ou d'un caillou,
- *     donc la réponse à la lumière rasante, qui le fait lire comme une
- *     matière. La pente locale se tire des dérivées d'écran du grain déjà
- *     échantillonné — aucun relevé de plus, et l'effet s'éteint tout seul au
- *     loin, là où le mip a lissé le grain.
- *   • **aucune texture ne se répète à sa période**. Deux relevés décalés,
- *     choisis par un bruit cent fois plus large, se fondent l'un dans l'autre
- *     là où ils se ressemblent (technique d'Íñigo Quílez). Sans ça, une
- *     période de deux mètres soixante dessine une grille lisible jusqu'à
- *     l'horizon, et c'est le premier défaut qu'on voit d'un terrain.
- *   • **deux matières s'interpénètrent, elles ne se fondent pas**. Un mélange
- *     linéaire entre prairie et labour donne une bande dégradée de cinq
- *     mètres qui se lit comme une aquarelle. La transition est donc tranchée
- *     par le grain lui-même : la matière dominante déborde dans les creux de
- *     l'autre. C'est aussi ce qui fait qu'un champ apparaît avec un bord, et
- *     que les tiges instanciées qui s'y posent tombent sur la bonne couleur.
- *   • **la pente vire à la roche**. Un versant à plus de 30° ne porte pas de
- *     prairie, et c'est ce qui donne le relief de montagne.
+ * Quatre choses le sortent de l'aplat, et elles tiennent ensemble :
  *
- * S'y ajoute une **variation macro** : une modulation très basse fréquence,
- * de l'ordre de deux cents mètres, en luminosité et en chaleur. Une plaine
- * n'a pas la même couleur d'un bout à l'autre, et un albédo constant par
- * classe est ce qui donne l'aplat de carte routière — c'est le défaut que le
- * grain, qui travaille au mètre, ne peut pas corriger. Elle monte avec la
- * distance, sur la même rampe que le grain descend : les touffes et les
- * tiges instanciées ne la connaissent pas et portent jusqu'à cent quarante
- * mètres, donc le sol qu'elles couvrent doit rester la couleur sur laquelle
- * elles ont été calées. À la limite du semis il en reste un dixième.
+ * - le grain **incline la normale** (dérivées d'écran, Mikkelsen) : sans ça
+ *   un sol reste une peinture, c'est l'ombre d'un caillou qui fait la matière.
+ *   Aucun relevé de plus, et l'effet s'éteint au loin où le mip a lissé ;
+ * - **aucune texture ne se répète à sa période** : deux relevés décalés,
+ *   choisis par un bruit cent fois plus large, fondus là où ils se ressemblent
+ *   (technique d'Íñigo Quílez). Une période de 2,6 m dessine sinon une grille
+ *   lisible jusqu'à l'horizon ;
+ * - **deux matières s'interpénètrent** au lieu de se fondre : les poids sont
+ *   repondérés par la hauteur du grain puis seuillés (`blendWidth`). Un
+ *   mélange linéaire donne une bande dégradée de cinq mètres, une aquarelle ;
+ * - une **variation macro** de deux cents mètres en luminosité et en chaleur,
+ *   qui monte avec la distance — un albédo constant par classe est ce qui
+ *   donne l'aplat de carte routière, et le grain, au mètre, n'y peut rien.
  *
- * Tout ça est greffé sur `MeshLambertMaterial` par `onBeforeCompile` plutôt
- * qu'écrit en shader complet : l'éclairage, le brouillard et le tone mapping
- * restent gérés par three.
+ * Greffé sur `MeshLambertMaterial` via `onBeforeCompile` plutôt qu'écrit en
+ * shader complet, pour garder l'éclairage/brouillard/tone mapping de three.
  */
 
 import {
@@ -61,12 +38,7 @@ import { COVER_KINDS, COVER_ID_STEP } from './groundClassMap.js';
 import { defaultTheme } from '../themes/default.js';
 import { soilWashFor } from '../core/climate.js';
 
-/**
- * Fabrique du matériau de terrain. **Un seul matériau** pour toute la bulle :
- * les tuiles ne diffèrent plus par leur texture, donc rien ne justifie de les
- * distinguer — un programme GPU, un jeu d'uniformes, et déplacer la carte de
- * classes est une écriture.
- */
+/** Fabrique du matériau de terrain. Un seul matériau pour toute la bulle. */
 export class TerrainMaterialFactory {
   /**
    * @param {Object} options
@@ -84,8 +56,7 @@ export class TerrainMaterialFactory {
     /** Famille appliquée aux albédos. `null` = aucune correction. */
     this._climate = null;
 
-    // Ces textures **modulent** : elles portent du grain, pas des couleurs, et
-    // doivent donc rester en espace linéaire.
+    // Textures de grain (pas de couleur) : espace linéaire.
     const repeated = (canvas) => {
       const texture = new THREE.CanvasTexture(canvas);
       texture.wrapS = THREE.RepeatWrapping;
@@ -130,19 +101,11 @@ export class TerrainMaterialFactory {
   }
 
   /**
-   * Applique la correction de sol d'une famille climatique.
-   *
-   * Trois albédos et deux tableaux d'albédos réécrits d'un coup : c'est peu
-   * cher (une poignée de vecteurs, jamais par image) et surtout c'est **le
-   * seul endroit** où le sol lointain apprend le pays. Les touffes et les
-   * tiges du premier plan lisent le même facteur par `soilWashFor` — voir
-   * `themes/default.js`, `SOIL_LOOK`, sur pourquoi c'est un facteur et pas une
-   * palette.
-   *
-   * Les couvertures ne bougent pas : une lande ou un maquis disent déjà leur
-   * pays.
-   *
-   * @param {string|null} family
+   * Applique la correction de sol d'une famille climatique — le seul endroit
+   * où le sol lointain apprend le pays. Les touffes et les tiges du premier
+   * plan lisent le même facteur par `soilWashFor` : voir `SOIL_LOOK` sur
+   * pourquoi c'est un facteur et pas une palette. Les couvertures ne bougent
+   * pas, une lande dit déjà son pays.
    */
   setClimate(family) {
     if (!this._uniforms || family === this._climate) return;
@@ -161,8 +124,7 @@ export class TerrainMaterialFactory {
   }
 
   /**
-   * Mouille le sol. Un seul uniforme pour toute la bulle : il n'y a qu'un
-   * matériau de terrain, donc pas de tuile qui pourrait rester sèche.
+   * Mouille le sol.
    * @param {number} value De 0 (sec) à 1 (détrempé).
    */
   setWetness(value) {
@@ -200,9 +162,7 @@ export class TerrainMaterialFactory {
       uClassOrigin: { value: new THREE.Vector2(0, 0) },
       uClassSize: { value: 1 },
       uClassEnabled: { value: this.groundClass ? 1 : 0 },
-      // La carte des cultures partage le repère de la carte de classes : même
-      // origine, même côté, mêmes bornes. Un seul jeu d'uniformes de cadrage,
-      // donc aucune façon de les désynchroniser.
+      // Partage le repère de la carte de classes (même origine, même côté).
       uCropMap: { value: this.groundClass ? this.groundClass.cropTexture : null },
       uCropAlbedo: {
         value: CROP_KINDS.map((kind) => new THREE.Vector3(...(look.cropAlbedo[kind] || look.farmlandAlbedo))),
@@ -316,9 +276,8 @@ export class TerrainMaterialFactory {
            // coûterait autant que tout le reste du sol.
            float grainHeight = 0.5;
            {
-             // Matières présentes ici. La carte de classes porte un poids par
-             // canal et, dans son alpha, la couverture : alpha nul signifie
-             // « la donnée ne dit rien », et non « sol nu ».
+             // La carte de classes porte un poids par canal, et dans son
+             // alpha la couverture (alpha nul = donnée absente, pas sol nu).
              vec2 classUv = (vScenePos.xz - uClassOrigin) / uClassSize;
              vec4 cls = vec4(0.0);
              // Hors du carré couvert, la texture est bornée au bord : lire quand
@@ -329,14 +288,12 @@ export class TerrainMaterialFactory {
              if (inClass > 0.5) {
                cls = texture2D(uClassMap, classUv);
              }
-             // (herbe, bois, culture, sol nu). Le sol nu est le complément :
-             // classé, mais aucun des trois.
+             // (herbe, bois, culture, sol nu) : le sol nu est le complément.
              vec4 vectorWeights = vec4(cls.rgb, max(0.0, 1.0 - cls.r - cls.g - cls.b));
              vec4 w = mix(uUnclassified, vectorWeights, cls.a);
              w /= max(w.x + w.y + w.z + w.w, 1e-4);
 
-             // Grain, projeté en coordonnées monde : il ne suit ni les tuiles
-             // ni la pente, donc il ne trahit aucun découpage.
+             // Grain projeté en coordonnées monde (pas de découpage visible).
              float dist = distance(vScenePos, cameraPosition);
              float far = smoothstep(uDetailRange.x, uDetailRange.y, dist);
              float near = texture2D(uDetailMap, vScenePos.xz / uDetailScale.x).r;
@@ -373,32 +330,22 @@ export class TerrainMaterialFactory {
              // l'autre. On y revient donc au fondu doux.
              w = mix(lifted / max(lifted.x + lifted.y + lifted.z + lifted.w, 1e-4), w, far);
 
-             // Le grain de matière s'efface avec la distance, où il n'est plus
-             // qu'un scintillement : au loin il ne reste que l'octave large.
+             // Le grain s'efface avec la distance.
              vec3 structure = grass * w.x + wood * w.y + soil * (w.z + w.w);
              grainHeight = dot(structure, vec3(0.3333));
              vec3 texMod = mix(structure * 2.0, vec3(1.0), far);
              float texLuma = max(dot(texMod, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
-             // On ne garde qu'une part de la teinte propre à la texture : le
-             // reste de la variation est neutre, sinon la teinte du grain
-             // s'ajouterait à celle de l'albédo au lieu de la nuancer.
+             // Part de teinte propre à la texture ; le reste reste neutre pour nuancer l'albédo sans s'y ajouter.
              vec3 modulation = mix(vec3(texLuma), texMod, 0.45) * (0.7 + noise * 0.6);
 
-             // Variation macro. Centrée sur 1 : elle ne déplace aucune
-             // luminosité moyenne, elle l'étale. La dérive de teinte va vers
-             // le chaud dans les zones claires — un sol qui a pris le soleil
-             // est plus jaune, pas seulement plus lumineux.
-             //
-             // Elle monte **avec la distance**, et c'est une contrainte, pas
-             // un effet : les touffes et les tiges instanciées ne la
-             // connaissent pas, donc à portée de semis le sol qu'elles
-             // couvrent doit rester la couleur sur laquelle elles ont été
-             // calées. Sinon on retrouve exactement ce que le calage des
-             // albédos existe pour éviter — un premier plan qui ne raccorde
-             // pas avec le lointain, ici en tache lente au lieu d'un disque.
-             // Le partage est net : le grain porte le près, la nappe le loin,
-             // et les deux se croisent sur la même rampe.
-             float macroSigned = (macro - 0.5) * far;
+             // Variation macro. Centrée sur 1 : elle étale la luminosité sans
+             // la déplacer, et fait dériver la teinte vers le chaud dans les
+             // zones claires. Elle monte **avec la distance**, et c'est une
+             // contrainte : les touffes instanciées ne la connaissent pas,
+             // donc à portée de semis le sol doit rester la couleur sur
+             // laquelle elles sont calées. Le grain porte le près, la nappe
+             // le loin, sur la même rampe.
+float macroSigned = (macro - 0.5) * far;
              modulation *= (1.0 + macroSigned * uMacro.y) *
                vec3(1.0 + macroSigned * uMacro.z, 1.0, 1.0 - macroSigned * uMacro.z);
 
@@ -440,18 +387,11 @@ export class TerrainMaterialFactory {
 
              vec3 base = albedo * modulation;
 
-             // Pente : au-delà, ce n'est plus un sol mais un versant.
              float slope = 1.0 - clamp(vSceneNormal.y, 0.0, 1.0);
              float rock = smoothstep(uSlopeRange.x, uSlopeRange.y, slope) * uRockStrength;
              base = mix(base, base * uRockColor, rock);
 
-             // Sol mouillé. Un film d'eau **assombrit et sature** : la lumière
-             // qui entre dans le sol s'y réfléchit plusieurs fois au lieu d'en
-             // ressortir du premier coup, donc il en revient moins, et ce qui en
-             // revient est plus coloré. C'est pour ça qu'une terre mouillée est
-             // brune profonde et une terre sèche beige pâle — le même effet, et
-             // pas un choix de teinte : on ne remplace aucune couleur du thème,
-             // on ne fait que jouer sur le chemin de la lumière dedans.
+             // Sol mouillé : le film d'eau assombrit et sature (multi-réflexion interne).
              if (uWetness > 0.0) {
                float wetLuma = dot(base, vec3(0.2126, 0.7152, 0.0722));
                vec3 saturated = wetLuma + (base - wetLuma) * 1.35;
@@ -497,8 +437,7 @@ export class TerrainMaterialFactory {
         );
     };
 
-    // Clé constante : sans elle, three recompilerait le programme à chaque
-    // matériau qui le demande.
+    // Clé constante pour éviter une recompilation à chaque matériau.
     material.customProgramCacheKey = () => 'terrain-bubble-v10';
     return material;
   }

@@ -1,41 +1,20 @@
 /*
- * railwayLayer — les voies ferrées.
- * ----------------------------------
- * Un ballast et deux rails, balayés le long des tronçons de la couche
- * `transportation` dont `class` vaut `rail` — la même couche que lit
- * `roadNetwork`, qui les ignore déjà silencieusement (`ROAD_CLASSES` n'a pas
- * d'entrée `rail`) : les deux couches ne se marchent donc jamais dessus, sans
- * qu'aucune des deux ait besoin de le savoir.
+ * railwayLayer — les voies ferrées : ballast et deux rails, balayés le long
+ * des tronçons `transportation` dont `class === 'rail'` (`roadNetwork` les
+ * ignore déjà, `ROAD_CLASSES` n'a pas d'entrée `rail`).
  *
- * ## Le ballast est une chaussée comme une autre
+ * Le ballast est un ruban texturé (`appendRibbon` + `createRoadCanvas`,
+ * revêtement `ballast`), comme une chaussée — pas une section colorée, qui
+ * rendait une bande plate sans grain. Les rails, eux, restent une section
+ * colorée (fils d'acier fins, pas de surface à texturer).
  *
- * Il a d'abord été un balayage à section colorée (`appendProfile`), comme une
- * haie ou un muret. Résultat : une bande plate à quelques teintes de gris, sans
- * grain — exactement le défaut qu'a déjà résolu `createRoadCanvas` pour les
- * chaussées. Le ballast est donc maintenant un **ruban texturé** comme elles
- * (`appendRibbon` + la même fabrique de canevas, avec un revêtement `ballast`
- * ajouté au thème), et non une pièce à part réinventant son propre grain.
- * Les rails, eux, restent une section colorée : ce sont deux fils d'acier fins,
- * pas une surface, et une texture n'y ajouterait rien à cette échelle.
+ * Publie son propre `RoadIndex` (comme `streetLayer`), transmis au mobilier
+ * par `worldComposer` pour qu'aucun objet ne se pose sur la voie.
  *
- * ## L'emprise ferroviaire est un corridor, comme celle de la route
- *
- * `roadCorridor` documente l'emprise routière comme *la* frontière partagée du
- * paysage — mais elle n'était, jusqu'ici, construite que sur des chaussées.
- * Une voie ferrée est le même genre d'objet : rien n'a le droit d'y pousser ni
- * de s'y poser. Cette couche publie donc son propre index (`RoadIndex`,
- * réutilisée telle quelle — `streetLayer` le fait déjà pour sa bande revêtue),
- * que `worldComposer` transmet au mobilier au même titre que celui des routes.
- *
- * ## Ce qui manque encore, et pourquoi c'est assumé
- *
- * Contrairement à une chaussée, la voie **n'entaille pas le terrain** : pas de
- * plate-forme dressée de niveau (`levelRow`), pas de déblai ni de remblai, pas
- * de mur. Le ballast suit le MNT tel quel, échantillonné point par point comme
- * un cours d'eau linéaire (`waterLayer._appendWaterways`). C'est une
- * simplification, pas un oubli : lui donner les mêmes ouvrages que
- * `roadNetwork` — plate-forme, murs de soutènement, ponts, passages à niveau —
- * est un chantier à part entière, qui reste à faire.
+ * Simplification assumée : la voie n'entaille pas le terrain (pas de
+ * plate-forme, déblai/remblai, mur) — le ballast suit le MNT point par point,
+ * comme un cours d'eau linéaire. Lui donner les mêmes ouvrages que
+ * `roadNetwork` reste à faire.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
@@ -61,7 +40,7 @@ export const RAILWAY_RADIUS_M = 900;
 export const RAILWAY_REBUILD_M = 250;
 /** Pas de ré-échantillonnage le long d'une voie, en mètres. */
 export const RAILWAY_SAMPLE_M = 6;
-/** Graine du canevas de ballast — propre à cette pièce, comme chaque profil routier. */
+/** Graine du canevas de ballast, propre à cette pièce. */
 const RAILWAY_TEXTURE_SEED = 6203;
 
 /** Demi-écartement des rails, en mètres — proche de la voie normale (1,435 m). */
@@ -94,10 +73,7 @@ export class RailwayLayer {
     this.disposed = false;
     this.railProfile = railProfileFor(theme.furniture.colors);
 
-    // Ballast : texturé comme une chaussée, avec le même canevas de grain
-    // (`createRoadCanvas`) et un revêtement propre (`ballast`, dans
-    // `ROAD_SURFACES` du thème). Aucun accotement, aucune ligne peinte : ce ne
-    // sont pas des options de ce profil.
+    // Ballast texturé comme une chaussée (revêtement `ballast` du thème, sans accotement ni ligne peinte).
     const canvas = createRoadCanvas(
       { width: RAILWAY_BALLAST_HALF_M * 2, texture: 64, surface: 'ballast' },
       RAILWAY_TEXTURE_SEED,
@@ -131,13 +107,7 @@ export class RailwayLayer {
     this._anchor = null;
     this._frame = null;
 
-    /**
-     * Emprise ferroviaire, au même format que celle des routes
-     * (`RoadIndex`) : c'est elle que `worldComposer` transmet au mobilier
-     * pour qu'aucun objet ne se pose sur la voie, exactement comme il le fait
-     * déjà pour la chaussée.
-     * @type {Object|null}
-     */
+    /** Emprise ferroviaire, au même format que celle des routes (`RoadIndex`). @type {Object|null} */
     this.index = null;
   }
 
@@ -166,9 +136,8 @@ export class RailwayLayer {
 
     source.forEachFeature(RAILWAY_SOURCE_LAYER, tiles, (geometry, properties) => {
       if (properties.class !== 'rail') return;
-      // Un tunnel n'a rien à faire en surface ; un pont ferroviaire, en
-      // l'absence de tablier modélisé, se contente de suivre le terrain comme
-      // le reste de la voie — moins juste, mais jamais invisible.
+      // Un tunnel n'a rien à faire en surface (un pont, faute de tablier
+      // modélisé, suit simplement le terrain comme le reste de la voie).
       if (properties.brunnel === 'tunnel') return;
 
       const lines =
@@ -199,9 +168,7 @@ export class RailwayLayer {
           halfWidth: RAILWAY_BALLAST_HALF_M,
           sampleElevation,
           textureLength: ROAD_TEXTURE_LENGTH,
-          // Le ballast suit le terrain point par point : voir l'en-tête du
-          // fichier sur ce que cette simplification laisse de côté.
-          level: false,
+          level: false, // suit le terrain point par point, voir l'en-tête
         });
 
         const frames = pathFrames(path);
@@ -223,8 +190,7 @@ export class RailwayLayer {
     });
 
     this._apply(ballastBuffer, railBuffer);
-    // Marge généreuse à la construction : c'est un plafond, la marge réelle
-    // se choisit à chaque interrogation (voir `RoadIndex.query`).
+    // Plafond à la construction ; la marge réelle se choisit par requête (voir `RoadIndex.query`).
     this.index = segments.length > 0 ? new RoadIndex(segments, { margin: ROAD_INDEX_MARGIN_M }) : null;
     this._anchor = { x: here.x, z: here.z };
     this._frame = this.bubble.frame;

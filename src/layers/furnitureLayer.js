@@ -1,60 +1,28 @@
 /*
- * furnitureLayer — le mobilier, posé dans la bulle.
- * -------------------------------------------------
- * Le terrain, la route, le bâti et les arbres donnent une campagne juste mais
- * vide : rien n'y borde, rien n'y clôt, rien n'y marque la distance. Ce sont
- * ces objets-là qui font qu'on lit une route de campagne plutôt qu'un ruban
- * gris sur une photo aérienne.
+ * furnitureLayer — le mobilier, posé dans la bulle. Exécute les règles de
+ * `furniturePlacement` avec les formes de `furnitureKit`, reconstruit sur la
+ * même cadence que la chaussée et le bâti (tous les 250 m), à partir des
+ * mêmes tuiles déjà décodées.
  *
- * Cette couche exécute les règles de `furniturePlacement` avec les formes de
- * `furnitureKit`. Elle se reconstruit sur la même cadence que la chaussée et le
- * bâti — tous les 250 mètres parcourus —, à partir des mêmes tuiles déjà
- * décodées : aucune requête réseau supplémentaire.
+ * Deux familles : le linéaire (haies, murets, clôtures, glissières, talus,
+ * câbles) est balayé le long d'une polyligne (`appendProfile`), une seule
+ * géométrie fusionnée par matière ; le ponctuel (lampadaires, poteaux,
+ * panneaux, bornes, bâtiments agricoles) est instancié, un `InstancedMesh` par forme.
  *
- * ## Deux familles, deux traitements
+ * Rien ne se pose sur la chaussée ni la voie ferrée (`RailwayLayer` publie
+ * son propre `RoadIndex`, comme les routes) — `_onRoad` et
+ * `_clipOffRoad`/`_clipInfra` interrogent les deux indistinctement.
  *
- * - **Le linéaire** — haies, murets, clôtures, glissières, talus, câbles — est
- *   *balayé* : une section suivie le long d'une polyligne (`appendProfile`).
- *   Une seule géométrie fusionnée par matière, refaite à chaque reconstruction.
- * - **Le ponctuel** — lampadaires, poteaux, panneaux, bornes, bottes, bâtiments
- *   agricoles, éoliennes — est *instancié* : une géométrie partagée, une
- *   matrice par exemplaire. Un `InstancedMesh` par forme.
+ * Forte pente : la chaussée est dressée à mi-hauteur de sa section
+ * (`levelRow`), donc à la fois encaissée et portée sur un versant. En amont,
+ * un mur habille la tranchée entaillée (`terrainBubble.cutElevation`) ; en
+ * aval, un mur de soutènement porte la glissière ; hors versant raide, un
+ * simple talus suffit. Les deux murs et la glissière n'apparaissent que là
+ * où le relief, lu dans le MNT, les rend nécessaires.
  *
- * ## Deux emprises, une seule règle
- *
- * Rien de tout cela ne se pose sur la chaussée — ni sur la voie ferrée, qui en
- * est le même genre d'objet (`RailwayLayer` publie son propre `RoadIndex`,
- * exactement comme les routes). `_onRoad` et `_clipOffRoad`/`_clipInfra`
- * interrogent les deux indistinctement : le reste de la couche n'a jamais à
- * savoir laquelle des deux a refusé un point.
- *
- * ## Le cas de la forte pente
- *
- * La chaussée est dressée de niveau en travers, **à mi-hauteur** de sa section
- * (`levelRow`) : c'est là qu'un terrassier la met, le déblai d'un côté payant le
- * remblai de l'autre. Sur un versant, la route est donc à la fois encaissée et
- * portée, et chaque rive appelle son ouvrage :
- *
- * - en **amont**, le terrain est entaillé le long de la chaussée
- *   (`terrainBubble.cutElevation`) et un **mur habille la tranchée** — il part
- *   de la plate-forme et monte jusqu'au terrain naturel, donc sa hauteur suit le
- *   versant mètre par mètre ;
- * - en **aval**, un **mur de soutènement** descend de la rive jusqu'au sol
- *   qu'elle surplombe, et la **glissière** se pose dessus ;
- * - hors des versants raides, un simple **talus** de terre suffit là où la
- *   plate-forme surplombe légèrement le terrain.
- *
- * Ce n'est donc pas un décor plaqué au hasard sur les routes de montagne : les
- * deux murs et la glissière apparaissent là où le relief, lu dans le MNT, les
- * rend nécessaires — et nulle part ailleurs.
- *
- * ## Ce qui donne de la vie
- *
- * Un décor juste mais inerte se lit comme une maquette. S'y ajoutent donc du
- * bétail dans les pâtures, des poules et du linge dans les cours de ferme, des
- * feux aux carrefours d'agglomération, et le halo des lampadaires la nuit. Tout
- * cela est **immobile** : ce qui bouge — oiseaux, fumée — vit dans `lifeLayer`,
- * qui est animé par image là où cette couche est reconstruite tous les 250 m.
+ * Ce qui donne de la vie (bétail, poules et linge de ferme, feux aux
+ * carrefours, halo des lampadaires) reste immobile : ce qui bouge (oiseaux,
+ * fumée) vit dans `lifeLayer`, animé par image.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
@@ -78,7 +46,8 @@ import {
 import { ROAD_SAMPLE_M, ROAD_LIFT_M } from './roadNetwork.js';
 import { WATER_SOURCE_LAYER } from './waterLayer.js';
 import { ROAD_CUT_M } from '../terrain/roadCut.js';
-import { collectBuiltUpAreas, pointInAreas, ringsOf } from './settlement.js';
+import { collectBuiltUpAreas, collectPlaceNames, nearestNamedPlace, pointInAreas, ringsOf } from './settlement.js';
+import { LabelAtlas, pushLabelQuad, labelFontPxForCellHeight, LABEL_PX_PER_M } from '../materials/labelAtlas.js';
 import {
   clipOutsideCorridor,
   filterOutsideCorridor,
@@ -87,9 +56,11 @@ import {
 } from './roadCorridor.js';
 import { CombinedIndex } from './roadGraph.js';
 import {
+  Kit,
   createFurnitureGeometries,
   createFurnitureMaterial,
   createFurnitureRotorMaterial,
+  createFurnitureGreenhouseMaterial,
   advanceFurnitureRotor,
   createGlowMaterial,
   createGlowGeometry,
@@ -100,6 +71,8 @@ import {
   LAMP_HEAD_REACH_M,
   furnitureSpecsFor,
   TRAFFIC_LENS_REACH_M,
+  CEMETERY_GATE_SPAN_M,
+  GREENHOUSE_BASE_LENGTH_M,
 } from './furnitureKit.js';
 import {
   spacedAlongPath,
@@ -123,7 +96,6 @@ import {
   pointInRing,
   randomAt,
   positionSeed,
-  FARMYARD_SUBCLASSES,
   ROW_CROPS,
   STEEP_CROSS_SLOPE,
   EMBANKMENT_MIN_DROP_M,
@@ -146,6 +118,13 @@ export const FURNITURE_REBUILD_M = 250;
 export const BOUNDARY_SAMPLE_M = 6;
 /** Longueur minimale d'un contour retenu, en mètres. */
 export const BOUNDARY_MIN_LENGTH_M = 30;
+/**
+ * Pas de ré-échantillonnage du mur d'enceinte d'un cimetière, en mètres — plus
+ * fin que `BOUNDARY_SAMPLE_M` : c'est sur ce pas que se règle la largeur de la
+ * brèche laissée pour le portail (`CEMETERY_GATE_SPAN_M`), qui ne tolère pas
+ * l'à-peu-près d'un échantillonnage à six mètres.
+ */
+export const CEMETERY_WALL_SAMPLE_M = 2;
 /** Décollement du mobilier au-dessus du sol : il s'ancre, il ne flotte pas. */
 export const FURNITURE_SINK_M = 0.08;
 
@@ -171,13 +150,60 @@ export const SIGN_ITEMS = [
 ];
 
 /**
- * Vraies lumières de lampadaire présentes dans la scène.
+ * Panneau d'entrée d'agglomération : à quelle distance il va chercher son
+ * nom (`settlement.nearestNamedPlace`), et à quelle distance il exige une
+ * vraie grappe de bâtiments (`FabricIndex.countWithin`) avant de se
+ * planter — les deux conditions sont nécessaires, sinon ce panneau se posait
+ * à l'entrée de n'importe quel `landuse=residential` (un périmètre
+ * administratif, pas une agglomération).
+ */
+export const SIGN_PLACE_NAME_MAX_M = 450;
+export const SIGN_PLACE_NAME_FABRIC_RADIUS_M = 80;
+/**
+ * Longueur minimale, en mètres, du passage hors agglomération qui doit
+ * précéder une portion bâtie pour que son début compte comme une vraie
+ * entrée de ville (voir `isSettlementEdgeRun`) : sans ce garde-fou, la
+ * moindre coupure entre deux polygones `landuse` adjacents en ville
+ * redémarrait une portion « bâtie », donc un panneau de plus, en plein centre.
+ */
+export const SIGN_PLACE_NAME_MIN_GAP_M = 150;
+
+/**
+ * Vrai si la portion précédente d'une chaîne (`runsByValue`) est un vrai
+ * passage hors agglomération — la seule chose qui fasse du début de la
+ * portion suivante une vraie entrée de ville plutôt qu'un artefact du
+ * découpage des `landuse`. Sans portion précédente, le repli est négatif :
+ * une chaîne redécoupée autour de l'observateur commence très souvent déjà en ville.
  *
- * Deux, et pas une de plus : le nombre de lumières entre dans la clé de
- * programme de **tous** les matériaux, donc il doit rester constant sur toute la
- * vie de la scène. Elles se posent en permanence sur les deux têtes les plus
- * proches de l'observateur, avec un fondu d'entrée et de sortie qui évite qu'une rue
- * s'allume d'un bloc quand on y entre.
+
+ * @param {{value:boolean, rows:Array<{distance:number}>}|null} previous
+ * @param {number} [minGapM]
+ */
+export function isSettlementEdgeRun(previous, minGapM = SIGN_PLACE_NAME_MIN_GAP_M) {
+  if (!previous) return false;
+  const gap = previous.rows[previous.rows.length - 1].distance - previous.rows[0].distance;
+  return gap >= minGapM;
+}
+/** Largeur de texte utilisable sur la lame blanche du panneau, en mètres —
+ *  voir `signPlaceName` dans `furnitureKit.js` (face large de 1,64 m). */
+export const SIGN_PLACE_NAME_TEXT_WIDTH_M = 1.5;
+/** Hauteur de case visée pour le nom peint, en mètres, et son plancher (marge de part et d'autre sur la lame de 0,4 m). */
+export const SIGN_PLACE_NAME_LABEL_HEIGHT_M = 0.32;
+export const SIGN_PLACE_NAME_LABEL_MIN_HEIGHT_M = 0.14;
+/** Repère local du texte sur la lame — voir `signPlaceName` (`y: 1.85`, face
+ *  avant à `plane: 0.04`) : un centimètre devant elle, pour ne pas se
+ *  disputer le pixel avec le blanc peint qu'il recouvre. */
+export const SIGN_PLACE_NAME_LABEL_Y_M = 1.85;
+export const SIGN_PLACE_NAME_LABEL_Z_M = 0.05;
+/** Encre du nom peint : noir légèrement adouci, comme la lettre d'un vrai
+ *  panneau EB10 sur fond blanc. */
+export const SIGN_PLACE_NAME_LABEL_INK = '#1c1c1c';
+
+/**
+ * Vraies lumières de lampadaire présentes dans la scène. Deux, pas une de
+ * plus : le nombre de lumières entre dans la clé de programme de tous les
+ * matériaux. Posées sur les deux têtes les plus proches, avec un fondu
+ * d'entrée et de sortie.
  */
 export const LAMP_LIGHT_COUNT = 2;
 /** Portée d'une de ces lumières, en mètres. */
@@ -193,13 +219,8 @@ export const TRAFFIC_CYCLE_S = 14;
 
 /**
  * État d'un feu tricolore à un instant donné : quelle lentille est allumée.
- *
- * Le cycle réel n'est pas symétrique — le vert dure, l'orange passe. Le rendre
- * symétrique donnerait un clignotement régulier, qui se lit comme une
- * décoration de Noël plutôt que comme un carrefour.
- *
- * Fonction pure. `phase` décale le cycle d'un feu à l'autre : deux feux voisins
- * synchrones sont la première chose qui trahit un décor procédural.
+ * Cycle asymétrique (le vert dure, l'orange passe). `phase` décale le cycle
+ * d'un feu à l'autre, sinon deux feux voisins synchrones trahissent le procédural.
  *
  * @param {number} time  Secondes écoulées.
  * @param {number} phase Décalage propre au feu, en secondes.
@@ -218,12 +239,7 @@ export const ROCK_RADIUS_M = 220;
 export const ROCK_CELL_M = 14;
 /** Portée des rangs de vigne et de verger, en mètres. */
 export const ROW_CROP_RADIUS_M = 320;
-/**
- * Sel du facettage du feuillage de vigne (`hedgeGeometry.facetJitter`). Le
- * rang de vigne n'a pas de `style` comme la haie — pas de `salt` tout fait —
- * d'où ce sel dédié, choisi loin de ceux du bocage (601, 617) et des tirages
- * voisins de `_buildRows`.
- */
+/** Sel du facettage du feuillage de vigne (`hedgeGeometry.facetJitter`) : pas de `style` comme la haie, donc un sel dédié. */
 const VINE_ROW_FACET_SALT = 733;
 
 /**
@@ -231,6 +247,29 @@ const VINE_ROW_FACET_SALT = 733;
  * offrir plusieurs centaines de contours dans la bulle, et rien n'oblige à les
  * dessiner tous pour que le paysage se lise.
  */
+/**
+ * Seuils de détection d'une cour de ferme — voir `_looksLikeFarmstead`.
+ * `landuse=farmyard` n'atteint pas les tuiles OpenFreeMap : l'indice qui
+ * reste est indirect, une petite parcelle agricole qui porte à elle seule
+ * une vraie grappe de bâtiments (`FabricIndex`).
+ */
+export const FARMSTEAD_MAX_HECTARES = 3;
+/** Rayon dans lequel on cherche la grappe de bâtiments, en mètres. */
+export const FARMSTEAD_CLUSTER_RADIUS_M = 80;
+/** Bâtiments réels requis dans ce rayon — un seul ne fait pas une ferme. */
+export const FARMSTEAD_CLUSTER_MIN_BUILDINGS = 2;
+
+/**
+ * Longueur des tunnels de serre — voir `_placeFarmstead`. En dessous du
+ * minimum, le tunnel redevient le petit modèle de catalogue
+ * (`GREENHOUSE_BASE_LENGTH_M`) ; au-delà du maximum, une voûte continue se
+ * lirait comme un hangar sans fin.
+ */
+export const GREENHOUSE_MIN_LENGTH_M = 12;
+export const GREENHOUSE_MAX_LENGTH_M = 60;
+/** Écart centre à centre entre deux tunnels voisins, en mètres (largeur 4,2 m + une allée). */
+export const GREENHOUSE_SPACING_M = 6;
+
 export const FURNITURE_LIMITS = {
   boundaries: 180,
   // Un bocage dense peut offrir plusieurs centaines de prés et de champs dans
@@ -314,6 +353,10 @@ export const POINT_ITEMS = [
   'castle',
   'tower',
   'cemeteryCross',
+  'cemeteryGate',
+  'cemeteryTomb',
+  'cemeteryTombFlat',
+  'cemeteryTap',
   'factoryChimney',
   'ferrisWheel',
   'stadium',
@@ -441,6 +484,9 @@ export class FurnitureLayer {
     // Matériau à part pour la seule pièce qui tourne — voir son en-tête dans
     // `furnitureKit.js` sur pourquoi il n'est pas une option du précédent.
     this.rotorMaterial = createFurnitureRotorMaterial(THREE);
+    // Matériau à part pour la seule pièce qui doit se voir au travers —
+    // même raison, voir `createFurnitureGreenhouseMaterial`.
+    this.greenhouseMaterial = createFurnitureGreenhouseMaterial(THREE);
     this.geometries = createFurnitureGeometries(THREE, theme.furniture.colors);
 
     /** @type {Map<string, Object>} `InstancedMesh` par forme ponctuelle. */
@@ -528,6 +574,25 @@ export class FurnitureLayer {
     this._scale = new THREE.Vector3();
     this._axis = new THREE.Vector3(0, 1, 0);
     this._color = new THREE.Color();
+
+    // Noms peints sur les panneaux d'entrée d'agglomération — voir l'en-tête
+    // de `materials/labelAtlas.js` sur pourquoi un texte ne peut pas passer
+    // par la géométrie partagée de `signPlaceName`.
+    this.labelAtlas = new LabelAtlas({ THREE, width: 512, height: 256 });
+    this.labelMaterial = new THREE.MeshBasicMaterial({
+      map: this.labelAtlas.texture,
+      transparent: true,
+      depthWrite: false,
+      alphaTest: 0.02,
+      fog: true,
+    });
+    this.labelMaterial.name = 'furniture-labels';
+    this.labelMesh = null;
+    this.labelGeometry = null;
+    /** @type {Array<{x:number,y:number,z:number,yaw:number,name:string}>} */
+    this._labelQuads = [];
+    /** @type {Array<{x:number,z:number,name:string}>|null} */
+    this._places = null;
   }
 
   /** Vrai si l'observateur s'est assez éloigné pour justifier une reconstruction. */
@@ -571,6 +636,9 @@ export class FurnitureLayer {
    *        pose sur la voie, exactement comme rien ne se pose sur la
    *        chaussée — voir `_onRoad` et `_clipOffRoad`, qui interrogent les
    *        deux indistinctement.
+   * @param {Array|null} places Lieux nommés (`settlement.collectPlaceNames`)
+   *        — seule source qui associe un nom à une agglomération, pour le
+   *        panneau d'entrée (`nearestNamedPlace`, dans `_applyRoadsidePlan`).
    * @returns {boolean} vrai si quelque chose a été posé.
    */
   rebuild(
@@ -582,7 +650,8 @@ export class FurnitureLayer {
     junctions = [],
     builtUpAreas = null,
     fabric = null,
-    railIndex = null
+    railIndex = null,
+    places = null
   ) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
 
@@ -592,6 +661,11 @@ export class FurnitureLayer {
     this._fabric = fabric;
     this._railIndex = railIndex;
     this._infraIndex = new CombinedIndex([roadIndex, railIndex]);
+    // Même repli que `builtUp`, juste en dessous : `worldComposer` les lit
+    // déjà tous les deux au même moment pour la voirie, mais la couche reste
+    // capable de les relire seule.
+    this._places = places || collectPlaceNames(source, tiles, this.bubble.frame);
+    this._labelQuads = [];
 
     const sampleElevation = (x, z) =>
       this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale;
@@ -636,6 +710,7 @@ export class FurnitureLayer {
     for (const [item, list] of placements) this._applyInstances(item, list);
     this._applyGlow();
     this._applySignals();
+    this._applyLabels();
 
     this._anchor = { x: here.x, z: here.z };
     this._frame = this.bubble.frame;
@@ -643,6 +718,7 @@ export class FurnitureLayer {
     this._fabric = null;
     this._railIndex = null;
     this._infraIndex = null;
+    this._places = null;
     return this.counts.points + this.counts.boundaries > 0;
   }
 
@@ -984,7 +1060,13 @@ export class FurnitureLayer {
     // l'observateur, et ne change plus de bord d'une reconstruction à l'autre.
     const side = anchor || segment.path[0];
 
-    for (const run of runsByValue(rowsInfo, (row) => pointInAreas(builtUp, row.x, row.z), 8)) {
+    // Matérialisé plutôt que parcouru au fil de l'eau : `isSettlementEdge`
+    // (plus bas) a besoin de connaître la portion **précédente** — voir sa
+    // raison d'être au-dessus de `SIGN_PLACE_NAME_MIN_GAP_M`.
+    const runs = runsByValue(rowsInfo, (row) => pointInAreas(builtUp, row.x, row.z), 8);
+
+    for (let r = 0; r < runs.length; r++) {
+      const run = runs[r];
       const rows = run.rows;
       if (rows.length < 3) continue;
       const origin = rows[0].distance;
@@ -995,6 +1077,9 @@ export class FurnitureLayer {
       const inTown = run.value;
       const plan = roadsideFurnitureFor(profile, { builtUp: inTown });
       const spacing = { startDistance: startDistance + origin, margin: 4 };
+
+      const previous = r > 0 ? runs[r - 1] : null;
+      const isSettlementEdge = isSettlementEdgeRun(previous);
 
       this._applyRoadsidePlan({
         plan,
@@ -1007,6 +1092,7 @@ export class FurnitureLayer {
         spacing,
         profile,
         inTown,
+        isSettlementEdge,
         buffers,
         placements,
         sampleElevation,
@@ -1035,6 +1121,7 @@ export class FurnitureLayer {
     spacing,
     profile,
     inTown,
+    isSettlementEdge = true,
     buffers,
     placements,
     sampleElevation,
@@ -1154,20 +1241,35 @@ export class FurnitureLayer {
     }
 
     // Entrée d'agglomération : un seul panneau, au tout début de la portion
-    // bâtie. C'est le seul objet du décor qui dise « ici commence le village ».
-    if (inTown && path.length > 4 && plan.lamp) {
+    // bâtie — et seulement là où un vrai lieu nommé est à portée
+    // (`nearestNamedPlace`), où `FabricIndex` confirme que des bâtiments
+    // réels s'y trouvent déjà, et où `isSettlementEdge` dit que ce début est
+    // une vraie entrée et non un artefact du découpage des `landuse` (voir
+    // `SIGN_PLACE_NAME_MIN_GAP_M`). Un `landuse=residential` n'est qu'un
+    // périmètre administratif (voir l'en-tête de `settlement.js`) : sans les
+    // trois conditions, ce panneau se plantait à l'entrée de n'importe quel
+    // pâté de maisons, jamais forcément une ville — et sans nom à y peindre.
+    if (inTown && isSettlementEdge && path.length > 4 && plan.lamp) {
       const start = path[1];
-      const tx = path[2].x - path[0].x;
-      const tz = path[2].z - path[0].z;
-      const length = Math.hypot(tx, tz) || 1;
-      this._placeBeside(
-        placements,
-        'signPlaceName',
-        { x: start.x, z: start.z, tx: tx / length, tz: tz / length, distance: start.distance },
-        -(halfWidth + 1.4),
-        platform,
-        { facing: 'traffic', onPlatform: true }
-      );
+      const place = nearestNamedPlace(this._places, start.x, start.z, SIGN_PLACE_NAME_MAX_M);
+      const hasFabric =
+        place &&
+        this._fabric &&
+        this._fabric.countWithin(start.x, start.z, SIGN_PLACE_NAME_FABRIC_RADIUS_M, 1) > 0;
+      if (place && hasFabric) {
+        const tx = path[2].x - path[0].x;
+        const tz = path[2].z - path[0].z;
+        const length = Math.hypot(tx, tz) || 1;
+        const placed = this._placeBeside(
+          placements,
+          'signPlaceName',
+          { x: start.x, z: start.z, tx: tx / length, tz: tz / length, distance: start.distance },
+          -(halfWidth + 1.4),
+          platform,
+          { facing: 'traffic', onPlatform: true }
+        );
+        if (placed) this._labelQuads.push({ x: placed.x, y: placed.y, z: placed.z, yaw: placed.yaw, name: place.name });
+      }
     }
 
     if (plan.alignmentTree) {
@@ -1437,6 +1539,11 @@ export class FurnitureLayer {
             if (placed && urbanKind === 'factoryChimney') {
               this.chimneys.push({ x: placed.x, y: placed.y + 26, z: placed.z });
             }
+            // La croix posée plus haut ne marquait le site que d'un seul
+            // repère ; ce qui suit l'habille — mur, portail, tombes, robinet.
+            if (placed && urbanKind === 'cemeteryCross') {
+              this._buildCemetery(context, local, centre);
+            }
             urbanPlaced++;
           }
         }
@@ -1454,7 +1561,9 @@ export class FurnitureLayer {
         const crop = this.groundClass?.cropAt?.(centre.x, centre.z) ?? null;
 
         // Cour de ferme : les bâtiments d'exploitation, à la vraie place.
-        if (FARMYARD_SUBCLASSES.has(properties.subclass) && farmBuildings < FURNITURE_LIMITS.farmBuildings) {
+        // Voir `_looksLikeFarmstead` — `landuse=farmyard` n'existe pas dans
+        // cette donnée, l'indice est indirect.
+        if (farmBuildings < FURNITURE_LIMITS.farmBuildings && this._looksLikeFarmstead(properties, local, centre)) {
           farmBuildings += this._placeFarmstead(placements, local, centre);
         }
 
@@ -1769,6 +1878,45 @@ export class FurnitureLayer {
   }
 
   /**
+   * Vrai si une parcelle agricole a la forme d'une cour de ferme — voir
+   * `FARMSTEAD_MAX_HECTARES` pour pourquoi ce n'est qu'un indice indirect.
+   *
+   * Deux conditions, et les deux sont nécessaires :
+   *
+   * 1. **une petite parcelle**, agricole ou pâture — pas les cinquante
+   *    hectares d'openfield qu'elle borde. Au-delà du plafond, le centroïde
+   *    n'a plus de raison de tomber près d'un bâtiment : ce n'est plus la cour
+   *    de la ferme, c'est un de ses champs ;
+   * 2. **une vraie grappe de bâtiments** relevée par `FabricIndex`, à portée
+   *    du centroïde. Une maison isolée en pleine campagne est un pavillon, pas
+   *    une exploitation ; deux bâtiments groupés hors d'un périmètre habité en
+   *    sont une.
+   *
+   * Sans `FabricIndex` (`fabric` absent de `rebuild`), personne ne sait
+   * combien de bâtiments compte le voisinage : cette exploitation ne se pose
+   * pas, ce qui est le bon repli — même raison que `_buildVillageLandmarks`.
+   *
+   * Fonction pure à ceci près qu'elle lit `this._fabric`, posé par `rebuild`
+   * pour la durée de la reconstruction.
+   */
+  _looksLikeFarmstead(properties, local, centre) {
+    if (!this._fabric) return false;
+
+    const klass = properties.class;
+    const subclass = properties.subclass;
+    const isFarmland = klass === 'farmland';
+    const isPasture = klass === 'grass' && (subclass === 'meadow' || subclass === 'grassland');
+    if (!isFarmland && !isPasture) return false;
+
+    if (ringAreaMeters(local) / 10000 > FARMSTEAD_MAX_HECTARES) return false;
+
+    return (
+      this._fabric.countWithin(centre.x, centre.z, FARMSTEAD_CLUSTER_RADIUS_M, FARMSTEAD_CLUSTER_MIN_BUILDINGS) >=
+      FARMSTEAD_CLUSTER_MIN_BUILDINGS
+    );
+  }
+
+  /**
    * Pose une exploitation : grange, hangar, un ou deux silos — et ce qui la
    * rend habitée : une cheminée qui fume, du linge qui sèche, des poules.
    *
@@ -1798,19 +1946,31 @@ export class FurnitureLayer {
     // Serres : un maraîchage plutôt qu'une exploitation céréalière, sur un
     // tirage propre à la ferme — indépendant de celui des silos, pour qu'une
     // exploitation ne cumule pas systématiquement les deux. Le tirage est
-    // délibérément généreux : une ferme sur 0,12 restait pratiquement
-    // introuvable, la cour de ferme (`FARMYARD_SUBCLASSES`) étant déjà rare
-    // dans la donnée — les deux raretés se multipliaient.
+    // délibérément généreux : une exploitation elle-même reste rare
+    // (`_looksLikeFarmstead`), inutile d'empiler une seconde rareté dessus.
     // TEMPORAIRE (inspection visuelle) : seuil forcé à 1, toutes les
     // exploitations portent des serres. À remettre à 0.4.
     if (randomAt(centre.x, centre.z, 31) < 1) {
+      // Un rang, dans le sens de la ferme (même axe que la grange et le
+      // hangar) — pas un semis : un maraîchage réel aligne ses tunnels côte à
+      // côte, tous parallèles à l'allée qui les dessert. Chaque tunnel court
+      // sur la longueur réelle de la parcelle plutôt que sur la cote fixe du
+      // modèle : voir `_greenhouseLengthFor`.
+      const rowCount = randomAt(centre.x, centre.z, 37) < 0.55 ? 2 : 3;
+      const perpX = -Math.sin(yaw);
+      const perpZ = Math.cos(yaw);
       const gx = centre.x + offX * 1.6;
       const gz = centre.z + offZ * 1.6;
-      for (let i = 0; i < 2; i++) {
+      const length = FurnitureLayer._greenhouseLengthFor(ring, centre, yaw);
+      const scaleZ = length / GREENHOUSE_BASE_LENGTH_M;
+
+      for (let i = 0; i < rowCount; i++) {
+        const lateral = (i - (rowCount - 1) / 2) * GREENHOUSE_SPACING_M;
         this._place(placements, 'greenhouse', {
-          x: gx - offZ * (i - 0.5) * 5,
-          z: gz + offX * (i - 0.5) * 5,
+          x: gx + perpX * lateral,
+          z: gz + perpZ * lateral,
           yaw,
+          scaleZ,
         });
       }
     }
@@ -1843,6 +2003,183 @@ export class FurnitureLayer {
     }
 
     return 1;
+  }
+
+  /**
+   * Habille un site de cimetière reconnu (`landuse=cemetery`, voir
+   * `_urbanLanduseKind`) : le mur d'enceinte, le portail qui le perce, les
+   * tombes qu'il protège, et le robinet qu'on y trouve toujours pour
+   * l'entretien.
+   *
+   * La croix centrale reste posée par l'appelant, comme avant cette
+   * fonction : c'était le seul repère du site, il ne bouge pas. Ce qui suit
+   * est ce qui manquait pour qu'on y entre — un cimetière qu'on ne peut ni
+   * enjamber ni franchir ne se lit pas comme un lieu, seulement comme une
+   * étiquette posée sur de l'herbe.
+   *
+   * Tout est ancré au **centroïde du site** (`centre`), jamais à l'ordre des
+   * sommets de l'anneau ni à la position de l'observateur : la même parcelle
+   * doit rendre le même mur, le même portail au même endroit et le même
+   * carré de tombes, qu'on l'aborde par le nord ou par le sud, aujourd'hui ou
+   * dans une heure.
+   */
+  _buildCemetery(context, ring, centre) {
+    const { buffers, placements, sampleElevation } = context;
+
+    // L'anneau GeoJSON est déjà fermé (premier sommet répété en fin de
+    // liste) ; on ne le referme qu'au cas où un appelant futur en fournirait
+    // un qui ne le soit pas.
+    const first = ring[0];
+    const last = ring[ring.length - 1];
+    const closedRing = first.x === last.x && first.z === last.z ? ring : [...ring, first];
+    const wallPath = resamplePath(closedRing, CEMETERY_WALL_SAMPLE_M);
+    // Un site trop petit ou dégénéré ne porte ni mur ni portail : la croix
+    // déjà posée par l'appelant reste son seul repère.
+    if (wallPath.length < 12) return;
+
+    // Angle du portail dans la brèche : tiré une fois pour tout le site,
+    // jamais recalculé au passage — c'est l'invariant qui garantit que deux
+    // reconstructions percent le même mur au même endroit.
+    const gateAngle = randomAt(centre.x, centre.z, 211) * Math.PI * 2;
+    let gateIndex = 0;
+    let bestDiff = Infinity;
+    for (let i = 0; i < wallPath.length; i++) {
+      const p = wallPath[i];
+      let diff = Math.abs(Math.atan2(p.z - centre.z, p.x - centre.x) - gateAngle);
+      if (diff > Math.PI) diff = Math.PI * 2 - diff;
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        gateIndex = i;
+      }
+    }
+    const gatePoint = wallPath[gateIndex];
+
+    // Rotation du contour sur ce point : la brèche s'ouvre alors aux deux
+    // bouts du tableau plutôt qu'au milieu, et se découpe par simple recul
+    // depuis chaque extrémité — pas de modulo à chaque pas.
+    const rotated = wallPath.slice(gateIndex).concat(wallPath.slice(0, gateIndex));
+    const halfGate = CEMETERY_GATE_SPAN_M / 2 + 0.6;
+    let cut = 1;
+    while (cut < rotated.length && Math.hypot(rotated[cut].x - gatePoint.x, rotated[cut].z - gatePoint.z) < halfGate) {
+      cut++;
+    }
+    let cutEnd = rotated.length - 1;
+    while (
+      cutEnd > cut &&
+      Math.hypot(rotated[cutEnd].x - gatePoint.x, rotated[cutEnd].z - gatePoint.z) < halfGate
+    ) {
+      cutEnd--;
+    }
+    const wallArc = rotated.slice(cut, cutEnd + 1);
+    // La brèche mange tout le pourtour rééchantillonné : un site trop exigu
+    // pour porter à la fois un mur et un portail n'en porte aucun des deux,
+    // plutôt qu'un portail posé sans mur pour le percer.
+    if (wallArc.length < 2) return;
+
+    appendProfile(buffers.dryStoneWall, {
+      path: wallArc,
+      profile: this.specs.profiles.dryStoneWall,
+      sampleElevation,
+      lift: -FURNITURE_SINK_M,
+      closed: true,
+    });
+
+    // Portail : face tournée vers l'extérieur du site, donc vers qui arrive.
+    const before = wallPath[(gateIndex - 1 + wallPath.length) % wallPath.length];
+    const after = wallPath[(gateIndex + 1) % wallPath.length];
+    let tx = after.x - before.x;
+    let tz = after.z - before.z;
+    const tlen = Math.hypot(tx, tz) || 1;
+    tx /= tlen;
+    tz /= tlen;
+    let nx = tz;
+    let nz = -tx;
+    const outward = Math.hypot(gatePoint.x + nx - centre.x, gatePoint.z + nz - centre.z);
+    const inward = Math.hypot(gatePoint.x - nx - centre.x, gatePoint.z - nz - centre.z);
+    if (outward < inward) {
+      nx = -nx;
+      nz = -nz;
+    }
+    this._place(placements, 'cemeteryGate', { x: gatePoint.x, z: gatePoint.z, yaw: Math.atan2(nx, nz) });
+
+    // Tombes : une vraie grille, pas un semis — c'est l'alignement en carrés
+    // qui fait lire un cimetière, et un vrai cimetière est plein, pas semé au
+    // hasard sur son herbe. La grille suit un cap tiré une fois pour tout le
+    // site (`heading`) ; ses deux axes sont calés sur les cotes de la tombe
+    // elle-même (`cemeteryTomb`, 0,95 × 2,05 m), au pas près du plot voisin,
+    // pas au petit bonheur d'un rejet aléatoire dans la boîte englobante.
+    const heading = randomAt(centre.x, centre.z, 223) * Math.PI * 2;
+    const alongX = Math.cos(heading);
+    const alongZ = Math.sin(heading);
+    // Perpendiculaire à `heading`, direct : c'est l'axe de profondeur de la
+    // tombe (tête-pied), donc celui des rangs.
+    const acrossX = -alongZ;
+    const acrossZ = alongX;
+    const tombYaw = Math.atan2(acrossX, acrossZ);
+    const plotSpacing = 1.35; // largeur d'une tombe (0,95 m) + une allée étroite
+    const rowSpacing = 2.4; // profondeur d'une tombe (2,05 m) + une allée étroite
+    const wallMargin = 1.6; // dégagement au pied du mur, où rien ne tient
+    // Case vide, comme `HEDGE_SHAPES.hedge.gapChance` : une grille pleine se
+    // lit comme une grille, pas comme un cimetière — une concession vendue,
+    // une tombe qu'on a fini de relever. Le même tirage réduit d'autant le
+    // compte total, ce qui est aussi tout ce qu'on lui demande.
+    const tombGapChance = 0.5;
+    // Clairière au portail : sans elle, la grille recouvre l'entrée elle-même
+    // et referme d'une tombe ce que le mur venait d'ouvrir. Le robinet s'y
+    // pose aussi, juste à côté du passage plutôt que dessus.
+    const gateClearance = 3.6;
+
+    let minU = Infinity;
+    let maxU = -Infinity;
+    let minV = Infinity;
+    let maxV = -Infinity;
+    for (const p of ring) {
+      const u = (p.x - centre.x) * alongX + (p.z - centre.z) * alongZ;
+      const v = (p.x - centre.x) * acrossX + (p.z - centre.z) * acrossZ;
+      if (u < minU) minU = u;
+      if (u > maxU) maxU = u;
+      if (v < minV) minV = v;
+      if (v > maxV) maxV = v;
+    }
+
+    // Un site n'épuise pas à lui seul le budget partagé de l'espèce
+    // (`FURNITURE_LIMITS.points`) : au-delà, un cimetière hors norme cesse
+    // simplement de se remplir, il ne prive pas les autres sites du reste de
+    // la bulle.
+    const tombCap = 500;
+    let tombs = 0;
+    for (let v = minV + wallMargin; v <= maxV - wallMargin && tombs < tombCap; v += rowSpacing) {
+      for (let u = minU + wallMargin; u <= maxU - wallMargin && tombs < tombCap; u += plotSpacing) {
+        const x = centre.x + alongX * u + acrossX * v;
+        const z = centre.z + alongZ * u + acrossZ * v;
+        if (Math.hypot(x - gatePoint.x, z - gatePoint.z) < gateClearance) continue;
+        if (!pointInRing(ring, x, z)) continue;
+        if (this._onRoad(x, z)) continue;
+        if (randomAt(x, z, 239) < tombGapChance) continue;
+
+        // Deux pierres plutôt qu'une répétée à l'identique — voir
+        // `cemeteryTombFlat`. Le tirage est ancré à la position du plot, donc
+        // stable d'une reconstruction à l'autre.
+        const draw = randomAt(x, z, 227);
+        this._place(placements, draw < 0.65 ? 'cemeteryTomb' : 'cemeteryTombFlat', {
+          x,
+          z,
+          yaw: tombYaw,
+          scale: 0.94 + draw * 0.1,
+        });
+        tombs++;
+      }
+    }
+
+    // Robinet : posé près du portail, à l'écart du passage — jamais loin de
+    // l'entrée dans un vrai cimetière, et la clairière ci-dessus lui garantit
+    // une place libre.
+    const tapYaw = randomAt(centre.x, centre.z, 233) * Math.PI * 2;
+    const tapX = gatePoint.x - nx * 2.4 + tx * 2.6;
+    const tapZ = gatePoint.z - nz * 2.4 + tz * 2.6;
+    if (pointInRing(ring, tapX, tapZ) && !this._onRoad(tapX, tapZ)) {
+      this._place(placements, 'cemeteryTap', { x: tapX, z: tapZ, yaw: tapYaw });
+    }
   }
 
   /**
@@ -2344,6 +2681,33 @@ export class FurnitureLayer {
     return { x: x / ring.length, z: z / ring.length };
   }
 
+  /**
+   * Longueur de tunnel de serre qui tient dans la parcelle, dans le sens de
+   * la ferme (`yaw`, le même axe que la grange et le hangar) — voir
+   * `_placeFarmstead`.
+   *
+   * Projection des sommets de l'anneau sur cet axe : l'écart entre le plus
+   * loin en avant et le plus loin en arrière du centroïde est ce que la
+   * parcelle offre réellement comme longueur, quelle que soit sa forme.
+   * Bornée par `GREENHOUSE_MIN_LENGTH_M`/`GREENHOUSE_MAX_LENGTH_M` — voir
+   * leur commentaire pour pourquoi les deux bouts sont utiles.
+   *
+   * Fonction pure.
+   */
+  static _greenhouseLengthFor(ring, centre, yaw) {
+    const dirX = Math.cos(yaw);
+    const dirZ = Math.sin(yaw);
+    let min = Infinity;
+    let max = -Infinity;
+    for (const p of ring) {
+      const proj = (p.x - centre.x) * dirX + (p.z - centre.z) * dirZ;
+      if (proj < min) min = proj;
+      if (proj > max) max = proj;
+    }
+    if (!(max > min)) return GREENHOUSE_MIN_LENGTH_M;
+    return Math.min(GREENHOUSE_MAX_LENGTH_M, Math.max(GREENHOUSE_MIN_LENGTH_M, max - min));
+  }
+
   /** Pente moyenne alentour, mesurée sur cent mètres. */
   _steepnessAt(x, z) {
     const span = 100;
@@ -2535,7 +2899,7 @@ export class FurnitureLayer {
   }
 
   /** @returns {{x:number,y:number,z:number}|null} l'objet posé, ou `null`. */
-  _place(placements, item, { x, z, y = null, yaw = 0, scale = 1, exactY = false }) {
+  _place(placements, item, { x, z, y = null, yaw = 0, scale = 1, scaleX = null, scaleZ = null, exactY = false }) {
     const list = placements.get(item);
     if (!list || list.length >= FURNITURE_LIMITS.points) return null;
 
@@ -2546,6 +2910,12 @@ export class FurnitureLayer {
     if (!Number.isFinite(ground)) return null;
 
     const placed = { x, y: ground - FURNITURE_SINK_M, z, yaw, scale };
+    // Mise à l'échelle non uniforme, optionnelle : seule la serre en a besoin
+    // aujourd'hui — une longueur qui suit la parcelle, sans étirer sa largeur
+    // ni sa hauteur (voir `_placeFarmstead`). Absente, `_applyInstances`
+    // retombe sur `scale` seul.
+    if (scaleX != null) placed.scaleX = scaleX;
+    if (scaleZ != null) placed.scaleZ = scaleZ;
     list.push(placed);
     return placed;
   }
@@ -2609,9 +2979,11 @@ export class FurnitureLayer {
         mesh.dispose?.();
       }
       const capacity = Math.ceil(list.length * 1.25) + 8;
-      // Seule l'éolienne porte le matériau à rotor — voir sa raison d'être
-      // dans `createFurnitureRotorMaterial`.
-      const material = item === 'windTurbine' ? this.rotorMaterial : this.material;
+      // Seule l'éolienne porte le matériau à rotor (`createFurnitureRotorMaterial`),
+      // seule la serre porte le matériau translucide (`createFurnitureGreenhouseMaterial`)
+      // — sa bâche, contrairement à toute autre pièce du catalogue, doit se voir au travers.
+      const material =
+        item === 'windTurbine' ? this.rotorMaterial : item === 'greenhouse' ? this.greenhouseMaterial : this.material;
       mesh = new THREE.InstancedMesh(this.geometries[item], material, capacity);
       mesh.name = `furniture-${item}`;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -2624,7 +2996,10 @@ export class FurnitureLayer {
     list.forEach((p, index) => {
       this._position.set(p.x, p.y, p.z);
       this._quaternion.setFromAxisAngle(this._axis, p.yaw);
-      this._scale.setScalar(p.scale || 1);
+      // `scaleX`/`scaleZ` retombent sur `scale` quand ils sont absents : la
+      // même ligne sert le mobilier ordinaire (mise à l'échelle uniforme) et
+      // la serre (longueur seule étirée) sans se dédoubler.
+      this._scale.set(p.scaleX ?? p.scale ?? 1, p.scale || 1, p.scaleZ ?? p.scale ?? 1);
       this._matrix.compose(this._position, this._quaternion, this._scale);
       mesh.setMatrixAt(index, this._matrix);
     });
@@ -2722,6 +3097,79 @@ export class FurnitureLayer {
     mesh.count = heads.length;
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
+  }
+
+  /**
+   * (Ré)alimente le maillage des noms peints sur les panneaux d'entrée
+   * d'agglomération — voir l'en-tête de `materials/labelAtlas.js` sur
+   * pourquoi un texte par instance ne peut pas passer par la géométrie
+   * partagée de `signPlaceName` (`Kit`, instanciée par `_applyInstances`).
+   *
+   * Le repère local du texte sur la lame (`SIGN_PLACE_NAME_LABEL_Y_M`,
+   * `SIGN_PLACE_NAME_LABEL_Z_M`) est recopié de `signPlaceName`
+   * (`furnitureKit.js`) : les deux doivent rester d'accord, sans quoi le nom
+   * se peint à côté de la lame plutôt que dessus. Seuls x et z tournent avec
+   * le lacet de l'instance (`Kit.transform`) — y ne bouge pas sous un lacet.
+   */
+  _applyLabels() {
+    const { THREE } = this;
+    const labels = { positions: [], uvs: [] };
+
+    for (const quad of this._labelQuads) {
+      const uv = this.labelAtlas.place(quad.name, {
+        maxWidthPx: Math.max(1, SIGN_PLACE_NAME_TEXT_WIDTH_M * LABEL_PX_PER_M),
+        maxFontPx: labelFontPxForCellHeight(SIGN_PLACE_NAME_LABEL_HEIGHT_M * LABEL_PX_PER_M),
+        minFontPx: labelFontPxForCellHeight(SIGN_PLACE_NAME_LABEL_MIN_HEIGHT_M * LABEL_PX_PER_M),
+        color: SIGN_PLACE_NAME_LABEL_INK,
+      });
+      if (!uv) continue;
+
+      const halfWidth = uv.widthPx / LABEL_PX_PER_M / 2;
+      const halfHeight = uv.heightPx / LABEL_PX_PER_M / 2;
+      // Local +X est la droite de qui fait face au panneau (même lacet que
+      // `Kit.transform`), donc c'est lui qu'il faut passer en premier à
+      // `pushLabelQuad` — voir sa note : le premier point est le côté droit
+      // du texte. Les inverser laisse le texte lisible... à l'envers.
+      const left = Kit.transform([-halfWidth, 0, SIGN_PLACE_NAME_LABEL_Z_M], { yaw: quad.yaw });
+      const right = Kit.transform([halfWidth, 0, SIGN_PLACE_NAME_LABEL_Z_M], { yaw: quad.yaw });
+      const bottom = quad.y + SIGN_PLACE_NAME_LABEL_Y_M - halfHeight;
+      const top = quad.y + SIGN_PLACE_NAME_LABEL_Y_M + halfHeight;
+      pushLabelQuad(
+        labels,
+        { x: quad.x + right[0], y: quad.z + right[2] },
+        { x: quad.x + left[0], y: quad.z + left[2] },
+        bottom,
+        top,
+        uv
+      );
+    }
+
+    this.labelAtlas.upload();
+
+    if (labels.positions.length === 0) {
+      if (this.labelMesh) this.labelMesh.visible = false;
+      return;
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(labels.positions, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(labels.uvs, 2));
+    geometry.computeBoundingSphere();
+
+    if (this.labelMesh) {
+      this.labelGeometry?.dispose();
+      this.labelMesh.geometry = geometry;
+      this.labelMesh.visible = true;
+    } else {
+      const mesh = new THREE.Mesh(geometry, this.labelMaterial);
+      mesh.name = 'furniture-labels';
+      mesh.matrixAutoUpdate = false;
+      mesh.updateMatrix();
+      mesh.renderOrder = 6;
+      this.group.add(mesh);
+      this.labelMesh = mesh;
+    }
+    this.labelGeometry = geometry;
   }
 
   /** (Ré)alimente les lentilles allumées des feux tricolores. */
@@ -2913,7 +3361,7 @@ export class FurnitureLayer {
     }
     this.linear.clear();
 
-    for (const mesh of [this.glowMesh, this.poolMesh, this.signalMesh, this.signalGlowMesh]) {
+    for (const mesh of [this.glowMesh, this.poolMesh, this.signalMesh, this.signalGlowMesh, this.labelMesh]) {
       if (!mesh) continue;
       this.group.remove(mesh);
       mesh.dispose?.();
@@ -2922,6 +3370,12 @@ export class FurnitureLayer {
     this.poolMesh = null;
     this.signalMesh = null;
     this.signalGlowMesh = null;
+    this.labelMesh = null;
+    this.labelGeometry?.dispose();
+    this.labelGeometry = null;
+    this.labelMaterial.dispose();
+    this.labelAtlas.dispose();
+    this._labelQuads = [];
 
     this.glowGeometry.dispose();
     this.glowMaterial.dispose();
@@ -2942,6 +3396,7 @@ export class FurnitureLayer {
     this.geometries = {};
     this.material.dispose();
     this.rotorMaterial.dispose();
+    this.greenhouseMaterial.dispose();
     this._turbines = [];
     this.scene.remove(this.group);
   }
