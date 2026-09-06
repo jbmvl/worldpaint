@@ -58,6 +58,15 @@ const realTimeCheckbox = document.getElementById('realTime');
 const hourInput = document.getElementById('hour');
 const hourVal = document.getElementById('hourVal');
 const presetsRoot = document.getElementById('presets');
+const menuToggle = document.getElementById('menuToggle');
+const panel = document.getElementById('panel');
+const climateBtn = document.getElementById('climateBtn');
+const streetViewBtn = document.getElementById('streetViewBtn');
+const mapOverlay = document.getElementById('mapOverlay');
+const mapOverlayClose = document.getElementById('mapOverlayClose');
+const mapOverlayLegend = document.getElementById('mapOverlayLegend');
+const bigMinimapCanvas = document.getElementById('minimapBig');
+const bigMinimapCtx = bigMinimapCanvas.getContext('2d');
 
 function setBusy(busy) {
   dot.classList.toggle('busy', busy);
@@ -66,6 +75,12 @@ function setStatus(text, isError = false) {
   statusEl.textContent = text || '';
   statusEl.classList.toggle('error', isError);
 }
+
+// --- Panneau de réglages replié (mobile) --------------------------------------
+// Le panneau reste toujours dans le DOM ; seule sa visibilité change (voir la
+// media query dans index.html). Le bouton n'existe que pour ça, il ne pilote
+// rien d'autre.
+menuToggle.addEventListener('click', () => panel.classList.toggle('open'));
 
 // --- Scène three.js ----------------------------------------------------------
 
@@ -552,55 +567,88 @@ const MINIMAP_PX = minimapCanvas.width; // résolution interne du canevas (net s
 const MINIMAP_SCALE = (MINIMAP_PX / 2) / MINIMAP_RANGE_M; // pixels par mètre
 const minimapForward = new THREE.Vector3();
 
-function worldToMinimap(x, z) {
-  return {
-    px: MINIMAP_PX / 2 + (x - camera.position.x) * MINIMAP_SCALE,
-    py: MINIMAP_PX / 2 + (z - camera.position.z) * MINIMAP_SCALE,
-  };
-}
+/**
+ * Dessine le radar (routes + cône de regard) sur un canevas donné, centré sur
+ * un point (`centerX`, `centerZ`) quelconque — la mini-carte ronde le prend
+ * toujours égal à `camera.position`, la carte plein écran peut le décaler
+ * (voir `bigPanX`/`bigPanZ` ci-dessous). `dotRadius`/`coneRadius` sont donnés
+ * en pixels canevas plutôt que déduits de `px` pour ne pas changer, même d'un
+ * pixel, l'aspect de la mini-carte ronde existante.
+ */
+function drawMinimapPanel(ctx, px, scale, centerX, centerZ, opts = {}) {
+  const {
+    emojis = false,
+    dotRadius = 6,
+    coneRadius = px * 0.34,
+    roadWidth = 2,
+  } = opts;
 
-function updateMinimap() {
-  const ctx = minimapCtx;
-  ctx.clearRect(0, 0, MINIMAP_PX, MINIMAP_PX);
+  ctx.clearRect(0, 0, px, px);
   if (!world) return;
 
   ctx.fillStyle = 'rgba(20, 24, 32, 0.92)';
-  ctx.fillRect(0, 0, MINIMAP_PX, MINIMAP_PX);
+  ctx.fillRect(0, 0, px, px);
+
+  const toPx = (x, z) => ({
+    px: px / 2 + (x - centerX) * scale,
+    py: px / 2 + (z - centerZ) * scale,
+  });
 
   const segments = world.composer.roads?.roadSegments || [];
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = roadWidth;
   ctx.lineJoin = 'round';
   for (const segment of segments) {
     const { path } = segment;
     if (!path || path.length < 2) continue;
     ctx.beginPath();
     for (let r = 0; r < path.length; r++) {
-      const { px, py } = worldToMinimap(path[r].x, path[r].z);
-      if (r === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
+      const { px: sx, py: sy } = toPx(path[r].x, path[r].z);
+      if (r === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
     }
     ctx.stroke();
   }
 
+  // Un émoji par bâtiment repéré (`BuildingLayer.personalities`, la même
+  // source que les étiquettes) : de quoi reconnaître une boulangerie ou une
+  // église sans avoir à s'en approcher en 3D — voir `BUILDING_EMOJI`.
+  if (emojis) {
+    const buildings = world.composer?.buildings?.personalities || [];
+    const range = px / 2 / scale; // demi-côté du canevas, en mètres
+    const range2 = range * range;
+    ctx.font = `${Math.round(px * 0.032)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const building of buildings) {
+      const emoji = BUILDING_EMOJI[building.kind];
+      if (!emoji) continue;
+      const dx = building.x - centerX;
+      const dz = building.z - centerZ;
+      if (dx * dx + dz * dz > range2) continue;
+      const { px: sx, py: sy } = toPx(building.x, building.z);
+      ctx.fillText(emoji, sx, sy);
+    }
+  }
+
   // Cône de vision : direction du regard aplatie au sol, sans conversion
-  // d'angle — même astuce que ci-dessus, (dir.x, dir.z) est déjà l'angle
-  // canevas puisque les deux repères partagent la même orientation.
+  // d'angle — (dir.x, dir.z) est déjà l'angle canevas puisque les deux
+  // repères partagent la même orientation (voir l'en-tête de section).
   camera.getWorldDirection(minimapForward);
   minimapForward.y = 0;
   if (minimapForward.lengthSq() < 1e-8) minimapForward.set(0, 0, -1);
   else minimapForward.normalize();
-  const center = MINIMAP_PX / 2;
   const heading = Math.atan2(minimapForward.z, minimapForward.x);
+  const cam = toPx(camera.position.x, camera.position.z);
   ctx.beginPath();
-  ctx.moveTo(center, center);
-  ctx.arc(center, center, MINIMAP_PX * 0.34, heading - MINIMAP_FOV_RAD / 2, heading + MINIMAP_FOV_RAD / 2);
+  ctx.moveTo(cam.px, cam.py);
+  ctx.arc(cam.px, cam.py, coneRadius, heading - MINIMAP_FOV_RAD / 2, heading + MINIMAP_FOV_RAD / 2);
   ctx.closePath();
   ctx.fillStyle = 'rgba(111, 168, 240, 0.32)';
   ctx.fill();
 
   ctx.beginPath();
-  ctx.arc(center, center, 6, 0, Math.PI * 2);
+  ctx.arc(cam.px, cam.py, dotRadius, 0, Math.PI * 2);
   ctx.fillStyle = '#6fa8f0';
   ctx.fill();
   ctx.strokeStyle = '#fff';
@@ -608,15 +656,14 @@ function updateMinimap() {
   ctx.stroke();
 }
 
-minimapCanvas.addEventListener('click', (e) => {
-  if (!world) return;
-  const rect = minimapCanvas.getBoundingClientRect();
-  const px = (e.clientX - rect.left) * (MINIMAP_PX / rect.width);
-  const py = (e.clientY - rect.top) * (MINIMAP_PX / rect.height);
-  const x = camera.position.x + (px - MINIMAP_PX / 2) / MINIMAP_SCALE;
-  const z = camera.position.z + (py - MINIMAP_PX / 2) / MINIMAP_SCALE;
-  teleportTo(x, z);
-});
+function updateMinimap() {
+  drawMinimapPanel(minimapCtx, MINIMAP_PX, MINIMAP_SCALE, camera.position.x, camera.position.z);
+}
+
+// Le clic sur la mini-carte ronde ne téléporte plus directement : il ouvre la
+// carte plein écran (voir plus bas), seule capable d'afficher assez de champ
+// et de détail pour viser un endroit précis.
+minimapCanvas.addEventListener('click', () => openMapOverlay());
 
 // --- Recherche d'un lieu (géocodage OpenStreetMap / Nominatim) ---------------
 // Nominatim est un service public à usage raisonnable : une requête par
@@ -669,6 +716,137 @@ async function goToSearch() {
 goButton.addEventListener('click', goToSearch);
 searchInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') goToSearch();
+});
+
+// --- Carte plein écran ---------------------------------------------------------
+// Le radar rond suffit pour se repérer en marchant, pas pour viser un endroit
+// précis à distance : ouverte en grand, la carte peut se glisser librement
+// (un centre de rendu décalé, `bigPanX`/`bigPanZ`, indépendant de la caméra)
+// et montre un émoji par bâtiment repéré. Le clic y téléporte, comme le clic
+// simple sur la scène 3D ou l'ancien clic sur le radar rond.
+
+const BIG_MINIMAP_PX = bigMinimapCanvas.width;
+const BIG_MINIMAP_RANGE_M = 900; // rayon affiché : bien plus large que le radar rond
+const BIG_MINIMAP_SCALE = (BIG_MINIMAP_PX / 2) / BIG_MINIMAP_RANGE_M;
+
+/** Un émoji par personnalité de bâtiment (`LABEL_BUILDING_PERSONALITY`, mêmes clés). */
+const BUILDING_EMOJI = {
+  church: '⛪',
+  mosque: '🕌',
+  hospital: '🏥',
+  bakery: '🥖',
+  retail: '🏬',
+  shop: '🏪',
+};
+mapOverlayLegend.textContent = Object.values(BUILDING_EMOJI).join(' ');
+
+let bigPanX = 0;
+let bigPanZ = 0;
+let bigPointerId = null;
+let bigDragged = false;
+let bigDownX = 0;
+let bigDownY = 0;
+let bigDownAt = 0;
+let bigDownPanX = 0;
+let bigDownPanZ = 0;
+
+function bigCenter() {
+  return { cx: camera.position.x + bigPanX, cz: camera.position.z + bigPanZ };
+}
+
+function updateBigMinimap() {
+  const { cx, cz } = bigCenter();
+  drawMinimapPanel(bigMinimapCtx, BIG_MINIMAP_PX, BIG_MINIMAP_SCALE, cx, cz, {
+    emojis: true,
+    dotRadius: BIG_MINIMAP_PX * 0.012,
+    coneRadius: BIG_MINIMAP_PX * 0.34,
+    roadWidth: 4,
+  });
+}
+
+function openMapOverlay() {
+  if (!world) return;
+  bigPanX = 0;
+  bigPanZ = 0; // recentré sur la caméra à chaque ouverture
+  mapOverlay.hidden = false;
+  updateBigMinimap();
+}
+
+function closeMapOverlay() {
+  mapOverlay.hidden = true;
+}
+
+mapOverlayClose.addEventListener('click', closeMapOverlay);
+mapOverlay.addEventListener('click', (e) => {
+  if (e.target === mapOverlay) closeMapOverlay(); // clic hors carte : referme
+});
+
+bigMinimapCanvas.addEventListener('pointerdown', (e) => {
+  bigPointerId = e.pointerId;
+  bigDragged = false;
+  bigDownX = e.clientX;
+  bigDownY = e.clientY;
+  bigDownAt = performance.now();
+  bigDownPanX = bigPanX;
+  bigDownPanZ = bigPanZ;
+  bigMinimapCanvas.setPointerCapture(e.pointerId);
+});
+
+bigMinimapCanvas.addEventListener('pointermove', (e) => {
+  if (bigPointerId === null) return;
+  const dx = e.clientX - bigDownX;
+  const dy = e.clientY - bigDownY;
+  if (!bigDragged && Math.hypot(dx, dy) > CLICK_MAX_DRAG_PX) {
+    bigDragged = true;
+    bigMinimapCanvas.classList.add('dragging');
+  }
+  if (bigDragged) {
+    // Le canevas est affiché plus petit que sa résolution interne (`max-width:
+    // 100%`) : il faut le ratio résolution/affichage pour convertir un
+    // déplacement écran en mètres, sinon glisser va deux fois trop vite ou
+    // deux fois trop lentement selon l'écran.
+    const rect = bigMinimapCanvas.getBoundingClientRect();
+    const pxPerScreenPx = BIG_MINIMAP_PX / rect.width;
+    bigPanX = bigDownPanX - (dx * pxPerScreenPx) / BIG_MINIMAP_SCALE;
+    bigPanZ = bigDownPanZ - (dy * pxPerScreenPx) / BIG_MINIMAP_SCALE;
+  }
+});
+
+bigMinimapCanvas.addEventListener('pointerup', (e) => {
+  if (bigPointerId === null) return;
+  bigMinimapCanvas.releasePointerCapture(e.pointerId);
+  bigPointerId = null;
+  bigMinimapCanvas.classList.remove('dragging');
+  const wasClick = !bigDragged && performance.now() - bigDownAt < CLICK_MAX_MS;
+  if (wasClick) {
+    const rect = bigMinimapCanvas.getBoundingClientRect();
+    const px = (e.clientX - rect.left) * (BIG_MINIMAP_PX / rect.width);
+    const py = (e.clientY - rect.top) * (BIG_MINIMAP_PX / rect.height);
+    const { cx, cz } = bigCenter();
+    const x = cx + (px - BIG_MINIMAP_PX / 2) / BIG_MINIMAP_SCALE;
+    const z = cz + (py - BIG_MINIMAP_PX / 2) / BIG_MINIMAP_SCALE;
+    teleportTo(x, z);
+    closeMapOverlay();
+  }
+});
+
+// --- Google Street View ---------------------------------------------------------
+// Ouvre la vue Street View de Google Maps sur la position courante de la
+// caméra — un service tiers, jamais interrogé par le moteur : la démo se
+// contente de composer une URL, voir la documentation « Google Maps URLs ».
+
+streetViewBtn.addEventListener('click', () => {
+  if (!world) return;
+  const { lng, lat } = world.frame.toLngLat(camera.position.x, camera.position.z);
+  camera.getWorldDirection(cameraDirection);
+  const heading = (rad2deg(Math.atan2(cameraDirection.x, -cameraDirection.z)) + 360) % 360;
+  const url = new URL('https://www.google.com/maps/@');
+  url.searchParams.set('api', '1');
+  url.searchParams.set('map_action', 'pano');
+  url.searchParams.set('viewpoint', `${lat},${lng}`);
+  url.searchParams.set('heading', heading.toFixed(0));
+  url.searchParams.set('pitch', '0');
+  window.open(url.toString(), '_blank', 'noopener');
 });
 
 // --- Météo et heure ------------------------------------------------------------
@@ -848,6 +1026,17 @@ for (const preset of PRESETS) {
 // « 42 » écrit en dur dans le markup ne représenterait pas la bonne position.
 writeWeather(DEFAULT_WEATHER);
 presetsRoot.children[1].classList.add('on'); // « Ordinaire », qui est l'état de départ
+climateBtn.textContent = PRESETS[1].label.split(' ')[0];
+
+// Raccourci « climat suivant » : rejoue le même clic que le bouton de temps
+// prêt à l'emploi actif + 1, pour ne pas dupliquer la logique de sélection.
+climateBtn.addEventListener('click', () => {
+  const buttons = [...presetsRoot.children];
+  const current = buttons.findIndex((b) => b.classList.contains('on'));
+  const next = buttons[(current + 1) % buttons.length];
+  next.click();
+  climateBtn.textContent = PRESETS[buttons.indexOf(next)].label.split(' ')[0];
+});
 
 hourInput.addEventListener('input', refreshWeatherLabels);
 realTimeCheckbox.addEventListener('change', () => {
@@ -915,6 +1104,7 @@ function loop() {
     updateLabels();
     updateCorridor();
     updateMinimap();
+    if (!mapOverlay.hidden) updateBigMinimap();
     // L'horloge n'avance que si c'est elle qu'on suit : le curseur, lui, ne
     // bouge que quand on le pousse.
     if (realTimeCheckbox.checked) hourVal.textContent = new Date().toTimeString().slice(0, 5);

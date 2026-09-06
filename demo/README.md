@@ -62,7 +62,17 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
   caméra, nord en haut, elle trace le réseau routier local à partir de
   `world.composer.roads.roadSegments` (la même donnée que l'emprise
   ci-dessus) et affiche un cône indiquant la direction du regard. Un clic
-  dessus téléporte au point visé, comme le clic simple sur la scène 3D.
+  dessus l'ouvre en grand : la carte plein écran affiche un rayon bien plus
+  large, un émoji par bâtiment repéré (église, mosquée, hôpital, boulangerie,
+  grande surface, commerce — `BuildingLayer.personalities`), se glisse
+  librement (le centre affiché se décale, indépendamment de la caméra) et
+  téléporte au clic, comme le clic simple sur la scène 3D.
+- **Barre d'actions rapides** (⛅ / 🧭) : le premier bouton rejoue le clic sur
+  le temps prêt à l'emploi suivant, sans ouvrir le panneau météo ; le second
+  ouvre Google Street View sur la position et le cap courants (un service
+  tiers, composé côté démo — le moteur n'interroge jamais Google).
+- **Mobile** : la recherche et la mini-carte (réduite) restent seules
+  visibles ; le reste des réglages se replie derrière le bouton ⚙️.
 
 ## Sources de données
 
@@ -83,6 +93,5 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
 ## Ce que ça n'est pas
 
 Un client de production. Pas de réessai réseau élaboré, pas de gestion
-d'erreur exhaustive, pas d'optimisation mobile — juste assez de code
-applicatif pour que le moteur soit *reviewable on its own*, comme le demande
-le CONTRIBUTING.
+d'erreur exhaustive — juste assez de code applicatif pour que le moteur soit
+*reviewable on its own*, comme le demande le CONTRIBUTING.
