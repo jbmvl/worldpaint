@@ -14,7 +14,12 @@
  *     s'arrêtait net au pied de la colline). Il reste dans le graphe, garde la
  *     numérotation du mobilier, et c'est le **ruban** qui saute ses lignes ;
  *   - la plate-forme d'une travée est tendue entre ses appuis
- *     (`levelWorkSpans`) au lieu d'épouser le fond de vallée ;
+ *     (`levelWorkSpans`) au lieu d'épouser le fond de vallée. Elle passe après
+ *     l'aplanissement du profil en long (`flattenGrade`) et non avant : les
+ *     appuis d'un pont sont la route telle qu'elle sera vraiment, terrassement
+ *     compris. C'est tout ce qu'il faut pour que les deux systèmes s'entendent
+ *     — le terrassier tend la pente dans la bande qu'un ouvrage rattrape, le
+ *     tablier prend le relais là où plus rien ne tient au sol ;
  *   - ce que franchit un pont — terrain nu ou nappe d'eau — lui est donné de
  *     l'extérieur (`waterIndex`), parce que l'eau est construite avant les
  *     chaussées et que c'est elle qui décide de la hauteur libre.
@@ -31,7 +36,7 @@ import {
   toGeometry,
   pathFrames,
   levelRow,
-  smoothColumns,
+  flattenGrade,
 } from './ribbonGeometry.js';
 import { ROAD_TEXTURE_LENGTH, createRoadCanvas } from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
@@ -107,6 +112,46 @@ export const ROAD_RADIUS_M = 900;
 export const ROAD_REBUILD_M = 250;
 /** Décollement au-dessus de la surface, en mètres. */
 export const ROAD_LIFT_M = 0.14;
+
+/**
+ * Terrassement consenti pour aplanir le profil en long (`flattenGrade`), en
+ * mètres : ce dont la plate-forme s'autorise à s'écarter du terrain dressé
+ * section par section.
+ *
+ * En rase campagne, presque rien — la route colle au sol, et c'est ce qu'on y
+ * voit. Sur un versant, en revanche, elle ne le suit plus : le terrassier
+ * tend sa pente et l'ouvrage rattrape la différence (la falaise du déblai en
+ * amont, le mur de soutènement en aval). Sans cette bande, une route de
+ * corniche ondulerait au rythme du bruit du MNT, chaque section étant dressée
+ * pour elle-même.
+ *
+ * Le déblai est plus généreux que le remblai : entailler un versant coûte
+ * moins cher que le porter, et se voit moins.
+ */
+export const ROAD_GRADE_CUT_FLAT_M = 0.5;
+export const ROAD_GRADE_CUT_STEEP_M = 4;
+export const ROAD_GRADE_FILL_FLAT_M = 0.4;
+export const ROAD_GRADE_FILL_STEEP_M = 3;
+/** Devers entre lesquels on passe d'un régime à l'autre. */
+export const ROAD_GRADE_FLAT_SLOPE = 0.05;
+export const ROAD_GRADE_STEEP_SLOPE = 0.3;
+
+/**
+ * Terrassement consenti à un devers donné, en mètres. Fonction pure.
+ *
+ * @param {number} slope Pente en travers, en valeur absolue.
+ * @returns {{cut:number, fill:number}} enfoncement et exhaussement tolérés.
+ */
+export function gradeAllowance(slope) {
+  const span = ROAD_GRADE_STEEP_SLOPE - ROAD_GRADE_FLAT_SLOPE;
+  const t = Math.min(1, Math.max(0, ((slope || 0) - ROAD_GRADE_FLAT_SLOPE) / span));
+  const eased = t * t * (3 - 2 * t);
+  return {
+    cut: ROAD_GRADE_CUT_FLAT_M + (ROAD_GRADE_CUT_STEEP_M - ROAD_GRADE_CUT_FLAT_M) * eased,
+    fill: ROAD_GRADE_FILL_FLAT_M + (ROAD_GRADE_FILL_STEEP_M - ROAD_GRADE_FILL_FLAT_M) * eased,
+  };
+}
+
 /**
  * Hiérarchie des profils, par largeur décroissante — départage les carrefours
  * (deux centimètres d'écart par rang, le premier restant à `ROAD_LIFT_M`).
@@ -304,8 +349,11 @@ export function anchorDistances(points, anchors) {
  * Extrait les tronçons de chaussée d'un jeu de tuiles, ré-échantillonnés et
  * dressés de niveau. Contrat entre la chaussée et son mobilier : les deux ont
  * besoin exactement des mêmes tronçons. `platform` porte l'altitude de
- * plate-forme, déjà lissée. `anchor`/`startDistance` se comptent depuis le
- * dernier nœud d'ancrage, pas le début du tronçon découpé.
+ * plate-forme, déjà aplanie en long (`flattenGrade`) puis tendue sur les
+ * travées (`levelWorkSpans`) — c'est elle, et non le terrain, que suivent la
+ * falaise du déblai, le mur de soutènement et le tablier d'un pont.
+ * `anchor`/`startDistance` se comptent depuis le dernier nœud d'ancrage, pas
+ * le début du tronçon découpé.
  *
  * @param {Object} source Instance `VectorTileSource`.
  * @param {Array} tiles   Tuiles à parcourir.
@@ -371,9 +419,27 @@ export function collectRoadSegments(
         edges[r * 2] = wide.left;
         edges[r * 2 + 1] = wide.right;
       }
-      smoothColumns(platform, rows, 1, 2);
-      // Après le lissage, jamais avant : une corde tendue n'a pas à être
-      // relissée avec le terrain qu'elle vient justement de quitter.
+      // Aplanissement du profil en long, borné par ce que l'ouvrage tient à
+      // cet endroit : le devers dit s'il y a un versant, donc une falaise et
+      // un mur, pour rattraper l'écart au terrain.
+      const maxCut = new Float32Array(rows);
+      const maxFill = new Float32Array(rows);
+      for (let r = 0; r < rows; r++) {
+        const slope = Math.abs(edges[r * 2] - edges[r * 2 + 1]) / (probe * 2);
+        const allowance = gradeAllowance(slope);
+        maxCut[r] = allowance.cut;
+        maxFill[r] = allowance.fill;
+      }
+      flattenGrade(platform, { maxCut, maxFill });
+
+      // Puis les travées, et dans cet ordre-là : la corde d'un pont se tend
+      // entre ses appuis **tels qu'ils seront vraiment**, terrassement
+      // compris. Aplanir après reviendrait à rendre le tablier au terrain.
+      //
+      // Rien à retrancher à la bande de terrassement sur une ligne d'ouvrage,
+      // en revanche : ce que l'aplanissement y calcule est de toute façon
+      // réécrit ici, et chaque ligne étant bornée autour de son propre terrain,
+      // une ligne de pont n'entraîne pas ses voisines au fond de la vallée.
       levelWorkSpans(path, platform, works, { clearanceAt });
 
       out.push({
