@@ -40,7 +40,11 @@
  * de l'ordre de deux cents mètres, en luminosité et en chaleur. Une plaine
  * n'a pas la même couleur d'un bout à l'autre, et un albédo constant par
  * classe est ce qui donne l'aplat de carte routière — c'est le défaut que le
- * grain, qui travaille au mètre, ne peut pas corriger.
+ * grain, qui travaille au mètre, ne peut pas corriger. Elle monte avec la
+ * distance, sur la même rampe que le grain descend : les touffes et les
+ * tiges instanciées ne la connaissent pas et portent jusqu'à cent quarante
+ * mètres, donc le sol qu'elles couvrent doit rester la couleur sur laquelle
+ * elles ont été calées. À la limite du semis il en reste un dixième.
  *
  * Tout ça est greffé sur `MeshLambertMaterial` par `onBeforeCompile` plutôt
  * qu'écrit en shader complet : l'éclairage, le brouillard et le tone mapping
@@ -384,7 +388,17 @@ export class TerrainMaterialFactory {
              // luminosité moyenne, elle l'étale. La dérive de teinte va vers
              // le chaud dans les zones claires — un sol qui a pris le soleil
              // est plus jaune, pas seulement plus lumineux.
-             float macroSigned = macro - 0.5;
+             //
+             // Elle monte **avec la distance**, et c'est une contrainte, pas
+             // un effet : les touffes et les tiges instanciées ne la
+             // connaissent pas, donc à portée de semis le sol qu'elles
+             // couvrent doit rester la couleur sur laquelle elles ont été
+             // calées. Sinon on retrouve exactement ce que le calage des
+             // albédos existe pour éviter — un premier plan qui ne raccorde
+             // pas avec le lointain, ici en tache lente au lieu d'un disque.
+             // Le partage est net : le grain porte le près, la nappe le loin,
+             // et les deux se croisent sur la même rampe.
+             float macroSigned = (macro - 0.5) * far;
              modulation *= (1.0 + macroSigned * uMacro.y) *
                vec3(1.0 + macroSigned * uMacro.z, 1.0, 1.0 - macroSigned * uMacro.z);
 

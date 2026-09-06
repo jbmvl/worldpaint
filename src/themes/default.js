@@ -69,9 +69,14 @@ export const TERRAIN_LOOK = {
    * cents mètres est l'échelle à laquelle un sol change réellement : un
    * versant plus sec, un creux plus gras, une parcelle fauchée l'an dernier.
    *
-   * `macroStrength` porte la luminosité (0,3 = ±15 %), `macroWarmth` fait
-   * dériver la teinte vers le chaud dans les zones claires et vers le froid
-   * dans les sombres — c'est la moitié de l'effet, et la moins voyante.
+   * `macroStrength` porte la luminosité (0,3 = ±15 % au loin), `macroWarmth`
+   * fait dériver la teinte vers le chaud dans les zones claires et vers le
+   * froid dans les sombres — c'est la moitié de l'effet, et la moins voyante.
+   *
+   * « Au loin », parce que l'amplitude monte sur la rampe `detailNear` →
+   * `detailFar` : à portée des touffes instanciées, qui ne connaissent pas
+   * cette variation, le sol doit garder la couleur sur laquelle elles ont été
+   * calées.
    */
   macroScaleM: 190,
   macroStrength: 0.3,
