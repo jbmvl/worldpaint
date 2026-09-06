@@ -4,11 +4,26 @@
  * largeur et le revêtement, `brunnel` pour tunnels et ponts), livrées en
  * morceaux coupés à chaque frontière de tuile. `roadGraph.js` les recoud
  * avant qu'on en fasse quoi que ce soit.
+ *
+ * Un ouvrage d'art n'est pas une classe de route : c'est un état de la
+ * chaussée, ligne par ligne (`roadWorks.js`). Il traverse donc ce module comme
+ * un tableau parallèle au tracé — `segment.works` —, et non comme un profil de
+ * plus. Trois conséquences ici :
+ *
+ *   - le tunnel n'est plus jeté à la lecture des tuiles (il l'était : la route
+ *     s'arrêtait net au pied de la colline). Il reste dans le graphe, garde la
+ *     numérotation du mobilier, et c'est le **ruban** qui saute ses lignes ;
+ *   - la plate-forme d'une travée est tendue entre ses appuis
+ *     (`levelWorkSpans`) au lieu d'épouser le fond de vallée ;
+ *   - ce que franchit un pont — terrain nu ou nappe d'eau — lui est donné de
+ *     l'extérieur (`waterIndex`), parce que l'eau est construite avant les
+ *     chaussées et que c'est elle qui décide de la hauteur libre.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { mergeRoadLines, RoadIndex, stitchPlatforms, trimAtJunctions } from './roadGraph.js';
 import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
+import { workCodeFor, resampleWorks, levelWorkSpans, drawableRuns } from './roadWorks.js';
 import {
   resamplePath,
   createRibbonBuffer,
@@ -140,14 +155,16 @@ export const ROAD_CLASSES = {
 };
 
 /**
- * Style de chaussée d'une entité, ou `null` si elle ne doit pas être dessinée
- * (tunnel écarté : le MNT ne connaît pas le relief au-dessus). `subclass`
- * affine `class` : piste cyclable, sentier et escalier partagent la même
- * classe `path`.
+ * Style de chaussée d'une entité, ou `null` si elle ne doit pas être dessinée.
+ * `subclass` affine `class` : piste cyclable, sentier et escalier partagent la
+ * même classe `path`.
+ *
+ * Un tunnel n'est plus écarté ici : il porte son code d'ouvrage (`works`) et
+ * traverse le graphe comme le reste de sa route, pour que la chaîne, ses
+ * ancres et son mobilier ne se coupent pas au pied de la colline. C'est le
+ * ruban qui saute ses lignes, et `bridgeLayer` qui pose ses têtes.
  */
 export function roadStyleFor(properties = {}, profiles = defaultTheme.roads.profiles) {
-  if (properties.brunnel === 'tunnel') return null;
-
   let key = ROAD_CLASSES[properties.class];
 
   if (properties.class === 'path' || properties.class === 'cycleway') {
@@ -164,6 +181,7 @@ export function roadStyleFor(properties = {}, profiles = defaultTheme.roads.prof
     profile: key,
     halfWidth: profile.width / 2,
     paved: (profile.surface || 'asphalt') === 'asphalt',
+    works: workCodeFor(properties.brunnel),
   };
 }
 
@@ -245,7 +263,7 @@ export function collectRoadLines(source, tiles, frame, roads = defaultTheme.road
         });
       }
       if (points.length < 2) continue;
-      lines.push({ profile: style.profile, halfWidth: style.halfWidth, points });
+      lines.push({ profile: style.profile, halfWidth: style.halfWidth, points, works: style.works });
     }
   });
 
@@ -298,11 +316,17 @@ export function anchorDistances(points, anchors) {
  *        donc pas être lue sur un terrain déjà entaillé.
  * @param {number} [radius]
  * @param {Object} [roads] Tranche `theme.roads` (profils de chaussée).
+ * @param {Object} [options]
+ * @param {Function} [options.clearanceAt] `(x, z) => altitude à franchir`, en
+ *        mètres de scène — le terrain nu, ou la nappe d'eau si elle est plus
+ *        haute. C'est elle qui relève une travée trop basse ; absente, les
+ *        travées restent tendues entre leurs appuis sans gabarit imposé.
+ *
  * Les carrefours sortent d'ici avec les tronçons (ils viennent du même graphe).
  *
  * @returns {{segments: Array<Object>, junctions: Array<Object>}} tronçons
- *          `{profile, halfWidth, path, startDistance, anchor, platform, edges}`
- *          et carrefours dans la portée demandée.
+ *          `{profile, halfWidth, path, startDistance, anchor, platform, edges,
+ *          works}` et carrefours dans la portée demandée.
  */
 export function collectRoadSegments(
   source,
@@ -311,7 +335,8 @@ export function collectRoadSegments(
   frame,
   sampleElevation,
   radius = ROAD_RADIUS_M,
-  roads = defaultTheme.roads
+  roads = defaultTheme.roads,
+  { clearanceAt = null } = {}
 ) {
   const out = [];
   const { chains: merged, junctions } = mergeRoadLines(collectRoadLines(source, tiles, frame, roads));
@@ -324,6 +349,14 @@ export function collectRoadSegments(
     for (const run of clipToRadius(chain.points, here.x, here.z, radius)) {
       const path = resamplePath(run.points, ROAD_SAMPLE_M);
       if (path.length < 2) continue;
+
+      // Les drapeaux d'ouvrage suivent le découpage : `clipToRadius` rend une
+      // tranche contiguë de la chaîne, à partir de `startIndex`.
+      const works = resampleWorks(
+        run.points,
+        chain.works?.slice(run.startIndex, run.startIndex + run.points.length),
+        path
+      );
 
       const frames = pathFrames(path);
       const rows = path.length;
@@ -339,6 +372,9 @@ export function collectRoadSegments(
         edges[r * 2 + 1] = wide.right;
       }
       smoothColumns(platform, rows, 1, 2);
+      // Après le lissage, jamais avant : une corde tendue n'a pas à être
+      // relissée avec le terrain qu'elle vient justement de quitter.
+      levelWorkSpans(path, platform, works, { clearanceAt });
 
       out.push({
         profile: chain.profile,
@@ -349,6 +385,7 @@ export function collectRoadSegments(
         anchor: chain.points[anchorIndex[run.startIndex]],
         platform,
         edges,
+        works,
         probeSpan: probe * 2,
       });
     }
@@ -416,13 +453,24 @@ export class RoadNetwork {
    * @param {Object} source Instance `VectorTileSource`.
    * @param {Array} tiles   Tuiles à parcourir.
    * @param {{x:number,z:number}} here Position locale de l'observateur.
+   * @param {Object} [options]
+   * @param {Object|null} [options.waterIndex] Cuvette d'eau publiée par la
+   *        couche d'eau (`WaterIndex`), construite avant les chaussées. Un pont
+   *        doit dégager la **nappe**, pas le lit qu'elle recouvre.
    */
-  rebuild(source, tiles, here) {
+  rebuild(source, tiles, here, { waterIndex = null } = {}) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
 
     const { bubble } = this;
     // Terrain naturel, déblai exclu : la plate-forme décide de l'entaille, elle ne peut pas en dépendre.
     const sampleElevation = (x, z) => bubble.rawSurfaceElevationAtLocal(x, z, 0) * bubble.verticalScale;
+    // Ce qu'une travée doit dégager : le terrain, ou la nappe si elle est plus
+    // haute. `WaterIndex` rend une altitude déjà en unités de scène.
+    const clearanceAt = (x, z) => {
+      const ground = sampleElevation(x, z);
+      const water = waterIndex?.query(x, z);
+      return water && water.distance === 0 && water.level > ground ? water.level : ground;
+    };
 
     const { segments: collected, junctions } = collectRoadSegments(
       source,
@@ -431,7 +479,8 @@ export class RoadNetwork {
       bubble.frame,
       sampleElevation,
       ROAD_RADIUS_M,
-      this.theme.roads
+      this.theme.roads,
+      { clearanceAt }
     );
     // La marge doit couvrir toute la portée du déblai, raccord compris ;
     // laissée à sa valeur par défaut, l'entaille finissait en marche verticale.
@@ -443,15 +492,22 @@ export class RoadNetwork {
 
     for (const segment of collected) {
       if (!buffers[segment.profile]) buffers[segment.profile] = createRibbonBuffer();
-      const added = appendRibbon(buffers[segment.profile], {
-        path: segment.path,
-        halfWidth: segment.halfWidth,
-        sampleElevation,
-        platform: segment.platform,
-        lift: roadLiftFor(segment.profile, tieBreakAt(segment.anchor)),
-        textureLength: ROAD_TEXTURE_LENGTH, // pas au sol constant, quelle que soit la largeur
-      });
-      if (added) segments++;
+      const lift = roadLiftFor(segment.profile, tieBreakAt(segment.anchor));
+
+      // Un tunnel ne se dessine pas : le ruban se pose en plusieurs morceaux,
+      // un par plage à ciel ouvert. Les distances de texture sont celles du
+      // tracé entier, donc le marquage ne se décale pas au ressortir.
+      for (const run of drawableRuns(segment.works, segment.path.length)) {
+        const added = appendRibbon(buffers[segment.profile], {
+          path: segment.path.slice(run.from, run.to + 1),
+          halfWidth: segment.halfWidth,
+          sampleElevation,
+          platform: segment.platform.subarray(run.from, run.to + 1),
+          lift,
+          textureLength: ROAD_TEXTURE_LENGTH, // pas au sol constant, quelle que soit la largeur
+        });
+        if (added) segments++;
+      }
     }
 
     this.roadSegments = collected;

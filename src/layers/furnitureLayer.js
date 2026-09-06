@@ -780,10 +780,18 @@ export class FurnitureLayer {
           // Hauteur du terrain au-dessus de la plate-forme, côté amont : la
           // tranchée que le déblai a creusée, et que le mur doit habiller.
           rise: uphillGround - platform[r],
+          // Ouvrage d'art (`roadWorks.js`) : la plate-forme n'y est plus posée
+          // sur le terrain.
+          work: segment.works?.[r] || 0,
         });
       }
 
-      const inReach = (row) => Math.hypot(row.x - here.x, row.z - here.z) <= FURNITURE_RADIUS_M;
+      // Une ligne d'ouvrage ne porte aucun mobilier de bord de route : ni mur,
+      // ni talus (il n'y a pas de terrain à retenir sous un tablier), ni haie,
+      // ni poteau, ni alignement d'arbres à cinquante mètres du sol. Le pont a
+      // ses propres garde-corps, posés par `bridgeLayer` avec son tablier.
+      const inReach = (row) =>
+        !row.work && Math.hypot(row.x - here.x, row.z - here.z) <= FURNITURE_RADIUS_M;
       for (const near of contiguousRuns(rowsInfo, inReach, 4)) {
         const walled = this._buildRoadsideRelief(context, segment, near);
         this._buildRoadsideContext(context, segment, near, builtUp);

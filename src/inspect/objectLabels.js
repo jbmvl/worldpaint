@@ -51,6 +51,7 @@ export const LABEL_EXACT = {
   streets: 'voirie (caniveau, bordure, trottoir)',
   water: 'eau',
   railway: 'voie ferrée',
+  bridge: 'ouvrage d’art (tablier, piles, tête de tunnel)',
   'ground-cover': 'herbe',
   crops: 'cultures (semis)',
   birds: 'oiseaux',
@@ -188,7 +189,7 @@ export const LABEL_SOURCE_OSM = '🗺️';
 export const LABEL_SOURCE_GENERATED = '🤖';
 
 /** Maillages posés directement d'après une couche de la donnée — pas un tirage. */
-const OSM_MESH_EXACT = new Set(['buildings', 'water', 'railway', 'streets']);
+const OSM_MESH_EXACT = new Set(['buildings', 'water', 'railway', 'streets', 'bridge']);
 
 /**
  * Formes du catalogue mobilier posées d'après un point d'intérêt ou une

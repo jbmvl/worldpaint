@@ -23,9 +23,9 @@ standalone demo yet — see the README's Status section).
 src/
   core/         geography and low-level primitives
   terrain/      the ground mesh: bubble, material, ground-class map, road cut
-  layers/       everything built on top of the terrain (roads, street
-                kerbing, water, buildings, gardens, vegetation, crops,
-                furniture)
+  layers/       everything built on top of the terrain (roads, bridges and
+                tunnels, street kerbing, water, buildings, gardens,
+                vegetation, crops, furniture)
   materials/    procedural textures and shared materials
   environment/  sky, sun, shadows, fog
   inspect/      debug helpers for labelling what's on screen
@@ -100,6 +100,15 @@ these needs a very good reason, stated in the PR description.
   looking for places where two ribbons overlap, invents different ones: they
   land somewhere else, and there is one per overlapping row instead of one per
   crossroads.
+- **A bridge is a state of the carriageway, not a class of road.** `brunnel`
+  travels as a per-row flag alongside the path (`segment.works`, see
+  `layers/roadWorks.js`), never as an extra road profile. That is what keeps a
+  road one single chain across its bridge — so kerbing, spaced furniture and
+  hedge sides don't restart at every abutment — while still letting the deck
+  leave the ground. Anything that reads a platform height must go through
+  `RoadIndex.deckAt`, which returns `null` on a works row: the terrain must not
+  be carved down to a tunnel slab, and a road must not be stitched up to the
+  viaduct that flies over it.
 - **Layers don't mutate each other implicitly.** A layer publishes what it
   produces (on itself, or via an explicit return value) and nothing else
   writes into another layer's data uninvited.
