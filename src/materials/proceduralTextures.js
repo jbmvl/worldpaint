@@ -104,6 +104,7 @@ function createCanvas(width, height) {
 /**
  * Texture de détail : bruit fractal gris, centré sur 0,5, destinée à être
  * appliquée en multiplication douce sur la couleur du terrain.
+ *
  */
 export function createDetailCanvas(size = 256, seed = 20260816) {
   const noise = fractalNoise(size, [4, 8, 16, 32, 64], seed);
@@ -114,6 +115,64 @@ export function createDetailCanvas(size = 256, seed = 20260816) {
   for (let i = 0; i < noise.length; i++) {
     // Recentre autour de 0,5 et resserre : le détail module, il ne domine pas.
     const value = Math.round(255 * (0.5 + (noise[i] - 0.5) * 0.9));
+    image.data[i * 4] = value;
+    image.data[i * 4 + 1] = value;
+    image.data[i * 4 + 2] = value;
+    image.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(image, 0, 0);
+  return canvas;
+}
+
+/**
+ * Étire un champ sur tout l'intervalle [0, 1].
+ *
+ * Une somme d'octaves est une **moyenne** : plus il y en a, plus les valeurs
+ * se serrent autour de 0,5 (trois octaves n'occupent déjà qu'un quart de
+ * l'intervalle). Pour du grain c'est sans importance, le shader le
+ * redimensionne ; pour une nappe dont l'amplitude *est* le réglage, ça rend le
+ * réglage illisible — on ne saurait plus si 0,3 veut dire trois pour cent ou
+ * quinze.
+ *
+ * @param {Float32Array} field Modifié sur place, et rendu.
+ */
+export function stretchToUnit(field) {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const v of field) {
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+  const span = max - min;
+  // Un champ constant reste constant : l'étirer serait une division par zéro.
+  if (!(span > 1e-6)) return field;
+  for (let i = 0; i < field.length; i++) field[i] = (field[i] - min) / span;
+  return field;
+}
+
+/**
+ * Nappe très basse fréquence, cyclable, sur toute l'amplitude.
+ *
+ * Deux emplois dans le shader de terrain, et tous deux exigent qu'elle soit
+ * **lente** : faire dériver la couleur du sol d'un bout à l'autre d'une
+ * parcelle, et choisir la région des deux relevés qui cassent la répétition de
+ * texture. Y laisser les octaves fines casserait les deux — la couleur
+ * crépiterait au mètre, et les deux relevés changeraient de région à chaque
+ * pas, donc se mélangeraient partout, ce qui rend exactement le flou qu'on
+ * cherchait à éviter.
+ *
+ * Trois octaves seulement, et la plus fine tient encore un quart de la
+ * période : à cent quatre-vingt-dix mètres de côté, ça fait des taches de
+ * cinquante mètres. C'est l'échelle à laquelle un sol change vraiment.
+ */
+export function createMacroCanvas(size = 128, seed = 40213) {
+  const noise = stretchToUnit(fractalNoise(size, [1, 2, 4], seed));
+  const canvas = createCanvas(size, size);
+  const ctx = canvas.getContext('2d');
+  const image = ctx.createImageData(size, size);
+
+  for (let i = 0; i < noise.length; i++) {
+    const value = Math.round(255 * noise[i]);
     image.data[i * 4] = value;
     image.data[i * 4 + 1] = value;
     image.data[i * 4 + 2] = value;

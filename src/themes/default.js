@@ -60,6 +60,40 @@ export const TERRAIN_LOOK = {
   groundScaleSoil: 3.7,
   groundScaleWood: 3.1,
   /**
+   * Variation macro : période en mètres, amplitude en luminosité, dérive
+   * chaud/froid.
+   *
+   * C'est ce qui empêche une prairie d'être un aplat. Le grain travaille au
+   * mètre et ne se voit plus à cent ; passé cette distance, un albédo constant
+   * par classe donne une carte routière — un vert uni jusqu'à l'horizon. Deux
+   * cents mètres est l'échelle à laquelle un sol change réellement : un
+   * versant plus sec, un creux plus gras, une parcelle fauchée l'an dernier.
+   *
+   * `macroStrength` porte la luminosité (0,3 = ±15 %), `macroWarmth` fait
+   * dériver la teinte vers le chaud dans les zones claires et vers le froid
+   * dans les sombres — c'est la moitié de l'effet, et la moins voyante.
+   */
+  macroScaleM: 190,
+  macroStrength: 0.3,
+  macroWarmth: 0.07,
+  /**
+   * Largeur du raccord entre deux matières, en part de poids.
+   *
+   * Zéro donnerait une frontière au pixel de la carte de classes, un
+   * escalier ; un demi redonnerait le fondu linéaire d'avant. Autour de 0,15,
+   * la transition tient dans la largeur du grain : la prairie déborde dans les
+   * creux du labour et réciproquement, ce qui est ce que fait une lisière.
+   */
+  blendWidth: 0.15,
+  /**
+   * Force du relief tiré du grain, en pente apparente.
+   *
+   * Au-delà de 1, le sol se met à moutonner sous une lumière rasante : le
+   * grain n'est pas un relevé d'altitude, il n'a pas d'échelle verticale
+   * propre, et on ne peut donc que le doser à l'œil.
+   */
+  grainRelief: 0.45,
+  /**
    * Matière retenue là où le vectoriel ne dit rien — ordre (herbe, bois,
    * culture, sol nu). L'herbe est de loin le pari le plus souvent gagnant en
    * rase campagne : un accotement, une friche, une banquette en sont.

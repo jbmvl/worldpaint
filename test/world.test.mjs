@@ -134,7 +134,11 @@ import {
   GRASS_CELL_M,
 } from '../src/layers/groundCover.js';
 import { coveringTiles } from '../src/core/vectorTileSource.js';
-import { tileableValueNoise, fractalNoise } from '../src/materials/proceduralTextures.js';
+import {
+  tileableValueNoise,
+  fractalNoise,
+  stretchToUnit,
+} from '../src/materials/proceduralTextures.js';
 import {
   buildingHeight,
   buildingMinHeight,
@@ -568,6 +572,49 @@ test('le bruit fractal reste dans [0, 1] et ne dépend que de sa graine', () => 
   assert.ok(a.every((v) => v >= 0 && v <= 1), 'valeurs normalisées');
   // Et il varie vraiment : une image constante passerait les tests ci-dessus.
   assert.ok(Math.max(...a) - Math.min(...a) > 0.2, 'amplitude utile');
+});
+
+test('la nappe macro ne porte que des fréquences lentes', () => {
+  // La variation macro et le choix des régions du relevé sans répétition
+  // lisent la **même** texture, et les deux exigent qu'elle soit lente : une
+  // couleur qui crépite au mètre, et deux relevés qui changent de région à
+  // chaque pas, donc se mélangent partout et rendent le flou qu'on voulait
+  // éviter. C'est le choix des octaves qui le garantit, rien d'autre.
+  const size = 64;
+  const macro = stretchToUnit(fractalNoise(size, [1, 2, 4], 40213));
+  const grain = fractalNoise(size, [4, 8, 16, 32, 64], 40213);
+
+  // Rugosité : le plus grand écart d'un texel au suivant, rapporté à
+  // l'amplitude du champ. Le rapport à l'amplitude est ce qui rend les deux
+  // comparables — la nappe est étirée, le grain non.
+  const roughness = (field) => {
+    let step = 0;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const here = field[y * size + x];
+        step = Math.max(step, Math.abs(field[y * size + ((x + 1) % size)] - here));
+        step = Math.max(step, Math.abs(field[((y + 1) % size) * size + x] - here));
+      }
+    }
+    return step / (Math.max(...field) - Math.min(...field));
+  };
+
+  assert.ok(
+    roughness(macro) * 2 < roughness(grain),
+    `nappe ${roughness(macro).toFixed(4)} contre grain ${roughness(grain).toFixed(4)}`
+  );
+  // Et elle occupe toute l'amplitude : sans l'étirement, trois octaves
+  // moyennées n'en tiennent qu'un quart, et le réglage du thème ne voudrait
+  // plus dire ce qu'il annonce.
+  assert.equal(Math.min(...macro), 0);
+  assert.equal(Math.max(...macro), 1);
+});
+
+test('l’étirement laisse un champ constant tranquille', () => {
+  // Division par zéro, et surtout : une nappe plate est un cas légitime (une
+  // seule octave sur une graine malchanceuse), pas une erreur.
+  const flat = stretchToUnit(new Float32Array([0.4, 0.4, 0.4]));
+  assert.deepEqual(Array.from(flat), Array.from(new Float32Array([0.4, 0.4, 0.4])));
 });
 
 // --- Végétation ------------------------------------------------------------

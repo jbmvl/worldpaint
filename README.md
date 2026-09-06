@@ -268,7 +268,7 @@ feature list.
 npm test
 ```
 
-354 tests, plain `node --test`, no browser, no build.
+357 tests, plain `node --test`, no browser, no build.
 
 ## Contributing
 
