@@ -62,7 +62,7 @@ import {
   HERD_SHEEP_ODDS,
   DEFAULT_SHEEP_ODDS,
   cropFor,
-  pickCrop,
+  pickShare,
   CROP_MIXES,
   DEFAULT_CROP_MIX,
   rockKindFor,
@@ -2328,6 +2328,67 @@ test('un champ en culture ne se clôt pas', () => {
   assert.equal(boundaryFurnitureFor(farmland, { steepness: 0.02, variant: 0.8, crop: 'plough' }), null);
 });
 
+test('la trame agraire n’est pas la même d’un pays à l’autre', () => {
+  // C'est ce qui se lit de plus loin que la couleur d'un mur : un bocage
+  // compartimente l'horizon en chambres de deux cents mètres, un openfield le
+  // laisse filer, une terrasse méditerranéenne le raye de pierre. Tant que
+  // toutes les limites portaient la même haie, une plaine castillane était un
+  // bocage normand jauni.
+  const pature = { class: 'grass', subclass: 'meadow' };
+  const labour = { class: 'farmland', subclass: 'farmland' };
+  const plat = { steepness: 0.02 };
+
+  // Un tirage sur vingt : la part de haies vives, par pays.
+  const partDe = (cible, properties, climate) => {
+    let compte = 0;
+    for (let i = 0; i < 20; i++) {
+      const item = boundaryFurnitureFor(properties, { ...plat, variant: i / 20, climate });
+      if (cible.includes(item)) compte++;
+    }
+    return compte / 20;
+  };
+
+  const haies = ['hedge', 'lowHedge'];
+  assert.ok(partDe(haies, labour, 'oceanic') > 0.5, 'le bocage clôt ses labours');
+  assert.ok(partDe(haies, labour, 'continental') < 0.25, 'l’openfield, non');
+  assert.equal(partDe(haies, labour, 'arid'), 0, 'rien n’entretient une haie en désert');
+
+  const pierre = ['dryStoneWall'];
+  assert.equal(partDe(pierre, pature, 'oceanic'), 0, 'pas de muret en plaine humide');
+  assert.ok(partDe(pierre, pature, 'mediterraneanMontane') > 0.5, 'la terrasse est en pierre');
+  assert.ok(partDe(pierre, pature, 'oceanicUpland') > 0.4, 'les Highlands aussi');
+
+  // Et la pierre sort du premier pli de terrain là où le sol en donne, alors
+  // qu'il faut une vraie pente ailleurs.
+  const pente = { steepness: 0.1, variant: 0.9 };
+  assert.equal(boundaryFurnitureFor(pature, { ...pente, climate: 'mediterranean' }), 'dryStoneWall');
+  assert.notEqual(boundaryFurnitureFor(pature, { ...pente, climate: 'oceanic' }), 'dryStoneWall');
+});
+
+test('sans climat, la trame agraire est celle d’avant', () => {
+  // Le repli doit être **exactement** le bocage français d'origine : sinon
+  // toute la campagne change le jour où la grille climatique ne répond pas.
+  const pature = { class: 'grass', subclass: 'meadow' };
+  const labour = { class: 'farmland', subclass: 'farmland' };
+  //
+  // Les tirages sont décalés d'un demi-pas pour ne tomber sur aucun seuil
+  // exact : la somme cumulée de `pickShare` peut s'écarter d'un ulp de la
+  // constante écrite (0,2 + 0,38 ne vaut pas 0,58 en binaire), et un tirage
+  // réel n'atteint jamais une borne au bit près.
+  for (let i = 0; i < 50; i++) {
+    const variant = (i + 0.5) / 50;
+    const attenduLabour = variant < 0.4 ? 'hedge' : variant < 0.62 ? 'lowHedge' : null;
+    const attenduPature = variant < 0.2 ? 'hedge' : variant < 0.58 ? 'woodFence' : 'barbedWire';
+    assert.equal(boundaryFurnitureFor(labour, { steepness: 0.02, variant }), attenduLabour, `labour ${variant}`);
+    assert.equal(boundaryFurnitureFor(pature, { steepness: 0.02, variant }), attenduPature, `pâture ${variant}`);
+  }
+  // Et un climat que la table ne connaît pas retombe dessus.
+  assert.equal(
+    boundaryFurnitureFor(labour, { steepness: 0.02, variant: 0.1, climate: 'climat-inconnu' }),
+    'hedge'
+  );
+});
+
 test('la culture d’un champ est tirée une fois par parcelle', () => {
   // Les sous-classes que le schéma porte vraiment priment sur le tirage.
   assert.equal(cropFor({ class: 'farmland', subclass: 'vineyard' }, 0.1), 'vineyard');
@@ -2392,8 +2453,8 @@ test('sans climat, l’assolement est exactement celui d’avant', () => {
     for (const [crop] of mix) assert.ok(CROP_KINDS.includes(crop), `${family} : ${crop} existe`);
   }
   // Le tirage est déterministe et couvre les deux bords.
-  assert.equal(pickCrop([['wheat', 0.5], ['plough', 0.5]], 0), 'wheat');
-  assert.equal(pickCrop([['wheat', 0.5], ['plough', 0.5]], 0.999), 'plough');
+  assert.equal(pickShare([['wheat', 0.5], ['plough', 0.5]], 0), 'wheat');
+  assert.equal(pickShare([['wheat', 0.5], ['plough', 0.5]], 0.999), 'plough');
 });
 
 test('ce qui se sème dans un champ dépend de sa culture', () => {

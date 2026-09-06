@@ -181,6 +181,114 @@ export function realBoundaryRuns(ring, bounds, minPoints = 2) {
 }
 
 /**
+ * Le traitement de contour par défaut : le bocage français, et le repli de
+ * tout climat qu'on ne connaît pas.
+ *
+ * Ce sont **exactement** les seuils qui étaient écrits en dur dans
+ * `boundaryFurnitureFor` : sans climat, rien ne change.
+ *
+ * - `stoneSlope` — pente à partir de laquelle on bâtit un mur plutôt que de
+ *   clore. `stoneSlopeTilled` est la même pour une terre travaillée et pour la
+ *   roche affleurante, où la pierre est déjà là : elle sort plus tôt ;
+ * - `plough` et `pasture` — parts cumulées (voir `pickShare`), `null` valant
+ *   « rien du tout », qui est le cas le plus fréquent en openfield.
+ */
+export const DEFAULT_BOUNDARY_MIX = {
+  stoneSlope: 0.2,
+  stoneSlopeTilled: 0.12,
+  plough: [['hedge', 0.4], ['lowHedge', 0.22], [null, 0.38]],
+  pasture: [['hedge', 0.2], ['woodFence', 0.38], ['barbedWire', 0.42]],
+};
+
+/**
+ * Comment on borne un champ, par famille climatique.
+ *
+ * C'est la trame du paysage agraire, et elle se lit de plus loin que la
+ * couleur d'un mur : un bocage compartimente l'horizon en chambres de deux
+ * cents mètres, un openfield le laisse filer, une terrasse méditerranéenne le
+ * raye de lignes de pierre. Tant que toutes les limites portaient la même
+ * haie, une plaine castillane était un bocage normand jauni.
+ *
+ * Ce qui décide, dans l'ordre : la pierre est là où le sol en donne — pente,
+ * causse, karst —, la haie vive là où il pleut et où l'élevage est ancien, le
+ * bois là où la forêt est proche, et le rien partout où la terre est trop
+ * grande ou trop pauvre pour qu'on la clôture.
+ *
+ * Une famille absente retombe sur le bocage par défaut.
+ */
+export const BOUNDARY_MIXES = {
+  oceanic: DEFAULT_BOUNDARY_MIX,
+  // Highlands, Connemara, Islande : le mur de pierre sèche est le paysage.
+  oceanicUpland: {
+    stoneSlope: 0.06,
+    stoneSlopeTilled: 0.04,
+    plough: [['dryStoneWall', 0.45], ['hedge', 0.2], ['lowHedge', 0.1], [null, 0.25]],
+    pasture: [['dryStoneWall', 0.5], ['hedge', 0.12], ['woodFence', 0.18], ['barbedWire', 0.2]],
+  },
+  // Openfield : la plaine polonaise ou beauceronne ne se compartimente pas.
+  continental: {
+    stoneSlope: 0.24,
+    stoneSlopeTilled: 0.2,
+    plough: [[null, 0.82], ['hedge', 0.1], ['lowHedge', 0.08]],
+    pasture: [['barbedWire', 0.5], ['woodFence', 0.3], [null, 0.15], ['hedge', 0.05]],
+  },
+  // Là où le bois est la matière la moins chère, on clôt en bois.
+  boreal: {
+    stoneSlope: 0.28,
+    stoneSlopeTilled: 0.24,
+    plough: [[null, 0.75], ['lowHedge', 0.15], ['hedge', 0.1]],
+    pasture: [['woodFence', 0.6], ['barbedWire', 0.25], [null, 0.15]],
+  },
+  // Pas de haie vive : il n'y a pas assez d'eau pour l'entretenir.
+  mediterranean: {
+    stoneSlope: 0.08,
+    stoneSlopeTilled: 0.06,
+    plough: [[null, 0.6], ['dryStoneWall', 0.3], ['lowHedge', 0.1]],
+    pasture: [['dryStoneWall', 0.45], ['barbedWire', 0.3], [null, 0.25]],
+  },
+  mediterraneanCool: {
+    stoneSlope: 0.12,
+    stoneSlopeTilled: 0.1,
+    plough: [[null, 0.5], ['dryStoneWall', 0.22], ['hedge', 0.16], ['lowHedge', 0.12]],
+    pasture: [['dryStoneWall', 0.3], ['hedge', 0.15], ['woodFence', 0.2], ['barbedWire', 0.35]],
+  },
+  // Terrasses : la pierre sort du premier pli de terrain, et elle est partout.
+  mediterraneanMontane: {
+    stoneSlope: 0.05,
+    stoneSlopeTilled: 0.04,
+    plough: [['dryStoneWall', 0.5], [null, 0.4], ['lowHedge', 0.1]],
+    pasture: [['dryStoneWall', 0.6], ['barbedWire', 0.25], [null, 0.15]],
+  },
+  semiArid: {
+    stoneSlope: 0.1,
+    stoneSlopeTilled: 0.08,
+    plough: [[null, 0.75], ['dryStoneWall', 0.2], ['lowHedge', 0.05]],
+    pasture: [['barbedWire', 0.4], ['dryStoneWall', 0.3], [null, 0.3]],
+  },
+  // Une parcelle qu'on ne clôt pas, parce qu'il n'y a rien à retenir dedans.
+  arid: {
+    stoneSlope: 0.12,
+    stoneSlopeTilled: 0.1,
+    plough: [[null, 0.85], ['dryStoneWall', 0.15]],
+    pasture: [[null, 0.6], ['barbedWire', 0.25], ['dryStoneWall', 0.15]],
+  },
+  // Alpage : le muret de pierre et la barrière de mélèze, à parts égales.
+  alpine: {
+    stoneSlope: 0.06,
+    stoneSlopeTilled: 0.06,
+    plough: [['dryStoneWall', 0.4], ['woodFence', 0.2], [null, 0.4]],
+    pasture: [['woodFence', 0.45], ['dryStoneWall', 0.3], [null, 0.25]],
+  },
+  // Rien ne se clôt sur un glacier.
+  glacial: {
+    stoneSlope: 0.5,
+    stoneSlopeTilled: 0.5,
+    plough: [[null, 1]],
+    pasture: [[null, 1]],
+  },
+};
+
+/**
  * Traitement de contour d'une parcelle, d'après ses attributs OpenMapTiles.
  *
  * Le partage suit le paysage agraire réel : le bocage clôt les terres
@@ -189,50 +297,53 @@ export function realBoundaryRuns(ring, bounds, minPoints = 2) {
  * fournit, c'est-à-dire en terrain accidenté. D'où le paramètre `steepness` :
  * la même prairie donne une clôture en plaine et un muret sur un causse.
  *
+ * Et d'où `climate` : le partage lui-même n'est pas le même d'un pays à
+ * l'autre — voir `BOUNDARY_MIXES`. Sans climat, c'est le bocage français, à la
+ * valeur près.
+ *
  * Fonction pure.
  *
  * @param {Object} properties Attributs de l'entité.
  * @param {Object} [context]
  * @param {number} [context.steepness] Pente moyenne alentour, en pente relative.
  * @param {number} [context.variant]   Tirage dans [0, 1[ attaché au lieu.
+ * @param {string|null} [context.climate] Famille climatique.
  * @returns {string|null} clé de `FURNITURE_PROFILES`, ou `null`.
  */
-export function boundaryFurnitureFor(properties = {}, { steepness = 0, variant = 0, crop = null } = {}) {
+export function boundaryFurnitureFor(
+  properties = {},
+  { steepness = 0, variant = 0, crop = null, climate = null } = {}
+) {
   const klass = properties.class;
   const subclass = properties.subclass;
+  const mix = (climate && BOUNDARY_MIXES[climate]) || DEFAULT_BOUNDARY_MIX;
 
   // Rocher, éboulis, causse : rien à clore, mais de quoi bâtir.
-  if (klass === 'rock') return steepness > 0.12 ? 'dryStoneWall' : null;
+  if (klass === 'rock') return steepness > mix.stoneSlopeTilled ? 'dryStoneWall' : null;
   if (klass === 'wood' || klass === 'wetland' || klass === 'sand' || klass === 'ice') return null;
 
   const isFarmland = klass === 'farmland';
   const isGrass = klass === 'grass' || subclass === 'meadow' || subclass === 'grassland';
   if (!isFarmland && !isGrass) return null;
 
-  // Au-delà de 20 % de pente moyenne, la clôture cède la place au mur : c'est
-  // le paysage de terrasses et de parcellaire de montagne.
-  if (steepness > 0.2) return 'dryStoneWall';
+  // Passé cette pente, la clôture cède la place au mur : c'est le paysage de
+  // terrasses et de parcellaire de montagne. Où elle se situe est une affaire
+  // de pays — sur un causse ou dans les Cyclades, la pierre sort du premier
+  // pli de terrain.
+  if (steepness > mix.stoneSlope) return 'dryStoneWall';
 
   if (isFarmland) {
-    if (steepness > 0.12) return 'dryStoneWall';
+    if (steepness > mix.stoneSlopeTilled) return 'dryStoneWall';
     // Une parcelle **en culture** ne se clôt pas : ni le blé, ni le maïs, ni le
     // tournesol, ni la vigne ne s'échappent. Le bocage de haies vives clôt les
     // pâtures et les labours, pas les champs qui portent quelque chose — et
     // c'est ce qui manquait le plus : toutes les limites de champ portaient la
     // même haie, ce qui compartimentait la campagne entière à hauteur d'homme.
     if (crop && crop !== 'plough') return null;
-    // Reste le labour. Deux limites sur cinq seulement portent une haie : dans
-    // un openfield, la plupart n'ont rien du tout, et c'est le contraste qui
-    // fait exister celles qui restent.
-    if (variant < 0.4) return 'hedge';
-    if (variant < 0.62) return 'lowHedge';
-    return null;
+    return pickShare(mix.plough, variant);
   }
 
-  // Pâture : bois ou barbelé, tiré une fois pour toute la parcelle. Une pâture
-  // sur cinq garde une haie vive, qui est ce qui fait le bocage.
-  if (variant < 0.2) return 'hedge';
-  return variant < 0.58 ? 'woodFence' : 'barbedWire';
+  return pickShare(mix.pasture, variant);
 }
 
 /**
@@ -289,16 +400,21 @@ export const CROP_MIXES = {
 };
 
 /**
- * Tire une culture dans un assolement cumulé. Fonction pure.
+ * Tire une valeur dans une table de parts cumulées. Fonction pure.
  *
- * @param {Array<[string, number]>} mix
- * @param {number} variant Tirage dans [0, 1[ attaché à la parcelle.
+ * Deux tables l'utilisent — l'assolement d'un champ et le traitement de sa
+ * limite —, écrites de la même façon pour la même raison : ce sont des choix
+ * qu'on veut pouvoir relire d'un coup d'œil, pays par pays, sans démêler une
+ * cascade de conditions.
+ *
+ * @param {Array<[*, number]>} mix Parts cumulées, dans l'ordre.
+ * @param {number} variant Tirage dans [0, 1[ attaché au lieu.
  */
-export function pickCrop(mix, variant) {
+export function pickShare(mix, variant) {
   let sum = 0;
-  for (const [crop, share] of mix) {
+  for (const [value, share] of mix) {
     sum += share;
-    if (variant < sum) return crop;
+    if (variant < sum) return value;
   }
   return mix[mix.length - 1][0];
 }
@@ -332,7 +448,7 @@ export function cropFor(properties = {}, variant = 0, climate = null) {
   if (subclass === 'orchard' || subclass === 'plant_nursery') return 'orchard';
   if (klass !== 'farmland') return null;
 
-  return pickCrop((climate && CROP_MIXES[climate]) || DEFAULT_CROP_MIX, variant);
+  return pickShare((climate && CROP_MIXES[climate]) || DEFAULT_CROP_MIX, variant);
 }
 
 /** Cultures semées en rangs visibles, donc balayées et non semées en vrac. */
