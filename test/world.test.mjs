@@ -136,6 +136,7 @@ import {
   resampleWorks,
   levelWorkSpans,
   BRIDGE_CLEARANCE_M,
+  BRIDGE_FREEBOARD_M,
 } from '../src/layers/roadWorks.js';
 import { BridgeLayer, deckProfile, vaultProfile } from '../src/layers/bridgeLayer.js';
 import {
@@ -3964,6 +3965,37 @@ test('une travée trop basse se relève d’un bloc, et le remblai d’accès la
   close(segment.platform[0], 0, 1e-5, 'loin de l’ouvrage, le terrain reprend la main');
 });
 
+test('un pont de plaine reste à l’altitude de ses appuis', () => {
+  // Le défaut historique : le terrain servait de gabarit, donc n'importe quelle
+  // travée — au-dessus d'un pré, d'un fossé, d'une voie ferrée — se relevait de
+  // cinq mètres cinquante et repartait en remblai. Un plancher, lui, ne relève
+  // rien tant que la corde passe au-dessus.
+  const segment = worksSegment(21, Array.from({ length: 21 }, (_, r) => (r >= 8 && r <= 12 ? 1 : 0)));
+
+  levelWorkSpans(segment.path, segment.platform, segment.works, { floorAt: () => 0 });
+
+  for (const height of segment.platform) close(height, 0, 1e-6, 'la chaussée reste au sol');
+});
+
+test('le remblai d’accès d’une travée ne fait pas pencher sa voisine', () => {
+  // Deux ponts séparés de deux lignes — un échangeur en compte de pareils. Le
+  // remblai du second remonte vers le premier ; s'il ne s'arrêtait pas à la
+  // culée, il ajouterait à un tablier **déjà tendu** une part qui décroît le
+  // long de la travée, c'est-à-dire un tablier voilé.
+  const works = Array.from({ length: 24 }, (_, r) => ((r >= 4 && r <= 8) || (r >= 11 && r <= 15) ? 1 : 0));
+  const segment = worksSegment(24, works);
+  // Une nappe sous la seconde travée seulement : elle seule se relève.
+  const floorAt = (x) => (x >= 55 && x <= 75 ? 4 : -50);
+
+  levelWorkSpans(segment.path, segment.platform, segment.works, { floorAt });
+
+  close(segment.platform[13], 4, 1e-4, 'la seconde travée est relevée');
+  assert.ok(segment.platform[10] > 0.5, 'et son remblai remonte vers la première');
+  for (let r = 4; r <= 8; r++) {
+    close(segment.platform[r], 0, 1e-6, `la première reste posée et droite (ligne ${r})`);
+  }
+});
+
 test('un `brunnel` qui court sur des kilomètres ne lance pas un viaduc', () => {
   const rows = 120;
   const segment = worksSegment(rows, Array.from({ length: rows }, (_, r) => (r > 0 && r < rows - 1 ? 1 : 0)),
@@ -4052,7 +4084,7 @@ test('sur un versant, l’aplanissement et la travée se passent le relais', () 
     ground,
     900,
     undefined,
-    { clearanceAt: (x, z) => ground(x, z) }
+    { floorAt: (x, z) => ground(x, z) }
   );
 
   assert.equal(segments.length, 1);
@@ -4070,11 +4102,18 @@ test('sur un versant, l’aplanissement et la travée se passent le relais', () 
   }
 
   // 2. Elle est bien au-dessus du ravin qu'elle franchit — la bande de
-  //    terrassement ne l'a pas rattrapée vers le fond.
+  //    terrassement ne l'a pas rattrapée vers le fond. Ce qui la tient en l'air
+  //    est la corde de ses appuis, pas une garde imposée : au droit du fond,
+  //    elle domine donc le ravin de sa profondeur, à peu de chose près.
+  const middle = span[Math.floor(span.length / 2)];
   for (const r of span) {
     const below = ground(segment.path[r].x, segment.path[r].z);
-    assert.ok(segment.platform[r] - below >= BRIDGE_CLEARANCE_M - 1e-3, `dégagée (ligne ${r})`);
+    assert.ok(segment.platform[r] >= below - 1e-2, `jamais sous le terrain (ligne ${r})`);
   }
+  assert.ok(
+    segment.platform[middle] - ground(segment.path[middle].x, segment.path[middle].z) > 10,
+    'au milieu, la travée survole vraiment le ravin'
+  );
 
   // 3. Le raccord aux culées reste sans marche : d'une ligne à l'autre, la
   //    pente ne saute pas.
@@ -4115,7 +4154,8 @@ test('de la tuile au tablier : un pont sort de l’eau qu’il franchit', () => 
     () => water,
     900,
     undefined,
-    { clearanceAt: () => water }
+    // Le plancher que `RoadNetwork.rebuild` construit au-dessus d'une nappe.
+    { floorAt: () => water + BRIDGE_FREEBOARD_M }
   );
 
   assert.equal(segments.length, 1, 'les trois morceaux ne font qu’un tronçon');
@@ -4127,10 +4167,72 @@ test('de la tuile au tablier : un pont sort de l’eau qu’il franchit', () => 
 
   assert.ok(bridged.length > 3, `la travée est retrouvée (${bridged.length} lignes)`);
   for (const height of bridged) {
-    assert.ok(height >= water + BRIDGE_CLEARANCE_M - 1e-3, `le tablier passe au-dessus de l’eau (${height})`);
+    assert.ok(height >= water + BRIDGE_FREEBOARD_M - 1e-3, `le tablier passe au-dessus de l’eau (${height})`);
+    // Et pas plus haut : une revanche n'est pas un gabarit, le pont d'une
+    // rivière de campagne ne monte pas sur ses culées pour rien.
+    assert.ok(height <= water + BRIDGE_FREEBOARD_M + 0.5, `sans se percher (${height})`);
   }
   // Et la chaussée d'approche, elle, redescend au terrain.
   close(segment.platform[0], water, 1e-3, 'la route retrouve son sol');
+});
+
+test('un pont de pré ne se perche pas, mais un viaduc dégage la route qu’il enjambe', () => {
+  // Les deux moitiés d'une même question — qu'est-ce qu'une travée doit
+  // dégager ? — dans le seul endroit qui puisse y répondre : la passe qui voit
+  // tous les tronçons à la fois. Sur un terrain plat, la même route porte le
+  // même pont ; ce qui change d'un cas à l'autre, c'est ce qui passe dessous.
+  const frame = createLocalFrame(2.35, 48.85, 15);
+  const along = (dx) => [2.35 + dx * 0.0006, 48.85];
+  const across = (dz) => [2.35 + 7 * 0.0006, 48.85 + dz * 0.0004];
+
+  const bridged = (extra) => ({
+    forEachFeature(layer, tiles, callback) {
+      if (layer !== 'transportation') return;
+      callback({ type: 'LineString', coordinates: [along(0), along(5)] }, { class: 'primary' });
+      callback(
+        { type: 'LineString', coordinates: [along(5), along(9)] },
+        { class: 'primary', brunnel: 'bridge' }
+      );
+      callback({ type: 'LineString', coordinates: [along(9), along(14)] }, { class: 'primary' });
+      if (extra) callback(extra.geometry, extra.properties);
+    },
+  });
+
+  const collect = (source) =>
+    collectRoadSegments(source, [{ x: 0, y: 0 }], { x: 0, z: 0 }, frame, () => 0, 900, undefined, {
+      floorAt: () => 0,
+    }).segments;
+
+  /** Altitudes de la travée du tronçon qui en porte une. */
+  const spanOf = (segments) => {
+    const carrier = segments.find((segment) => segment.works.some((code) => code === WORK_BRIDGE));
+    assert.ok(carrier, 'la travée est retrouvée');
+    const out = [];
+    for (let r = 0; r < carrier.works.length; r++) {
+      if (carrier.works[r] === WORK_BRIDGE) out.push(carrier.platform[r]);
+    }
+    return out;
+  };
+
+  // 1. Au-dessus d'un pré, rien à dégager : la travée reste sur ses appuis.
+  for (const height of spanOf(collect(bridged(null)))) {
+    close(height, 0, 1e-3, 'le pont de pré reste au niveau du pré');
+  }
+
+  // 2. Une nationale passe dessous : le gabarit, lui, se prend.
+  const crossed = collect(
+    bridged({
+      geometry: { type: 'LineString', coordinates: [across(-1), across(1)] },
+      properties: { class: 'primary' },
+    })
+  );
+  for (const height of spanOf(crossed)) {
+    close(height, BRIDGE_CLEARANCE_M, 1e-3, 'le viaduc dégage le gabarit');
+  }
+  // Et la chaussée du dessous n'a pas bougé d'un pouce : c'est le pont qui
+  // monte, jamais la route qu'il enjambe.
+  const under = crossed.find((segment) => !segment.works.some((code) => code === WORK_BRIDGE));
+  for (const height of under.platform) close(height, 0, 1e-3, 'la route du dessous reste au sol');
 });
 
 /**
@@ -4242,6 +4344,40 @@ test('un ponceau de rase campagne ne se met pas sur pilotis', () => {
   layer.rebuild([segment], { x: 10, z: 0 });
   assert.equal(layer.counts.spans, 1, 'le tablier est là');
   assert.equal(layer.counts.piers, 0, 'aucune pile sous quarante centimètres');
+  layer.dispose();
+});
+
+test('sur un versant, un voile de pile se fonde sur son propre terrain', () => {
+  // Un voile est balayé en travers de l'ouvrage : ses deux bouts ne sont pas
+  // sur la même courbe de niveau. Fondés tous les deux au plus bas des deux,
+  // ils faisaient une plaque pleine qui descendait la montagne du côté haut —
+  // un pan de mur, pas une pile.
+  const scene = { add() {}, remove() {} };
+  const slope = (x, z) => z * 0.8;
+  const layer = new BridgeLayer({
+    THREE: stubWorksTHREE(),
+    scene,
+    bubble: { frame: {}, verticalScale: 1, rawSurfaceElevationAtLocal: slope },
+  });
+
+  const rows = 21;
+  const segment = {
+    profile: 'major',
+    halfWidth: 4.25,
+    path: Array.from({ length: rows }, (_, i) => ({ x: i * 5, z: 0, distance: i * 5 })),
+    platform: new Float32Array(rows).fill(20),
+    works: Uint8Array.from({ length: rows }, () => WORK_BRIDGE),
+  };
+
+  assert.ok(layer.rebuild([segment], { x: 50, z: 0 }));
+  assert.ok(layer.counts.piers >= 4, `des appuis (${layer.counts.piers})`);
+
+  const positions = layer.mesh.geometry.attributes.position.array;
+  for (let i = 0; i < positions.length; i += 3) {
+    const [x, y, z] = [positions[i], positions[i + 1], positions[i + 2]];
+    assert.ok(y >= slope(x, z) - 1e-3, `rien d’enterré sous son propre sol (${y} < ${slope(x, z)})`);
+  }
+
   layer.dispose();
 });
 

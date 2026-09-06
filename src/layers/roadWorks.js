@@ -15,7 +15,8 @@
  *   - `resampleWorks` reporte les drapeaux du tracé brut sur le tracé
  *     ré-échantillonné ;
  *   - `levelWorkSpans` remplace la plate-forme d'une travée par une corde
- *     tendue entre ses deux appuis, relevée si elle ne dégage pas le gabarit ;
+ *     tendue entre ses deux appuis, relevée si elle ne dégage pas ce qu'elle
+ *     franchit ;
  *   - `workRuns` découpe un tronçon en plages homogènes, pour tout le reste
  *     (le ruban qui saute un tunnel, le tablier qui suit un pont).
  *
@@ -30,6 +31,24 @@
  * sur la route d'approche — ce que ferait un simple maximum, en posant un
  * tablier sur cinquante mètres de remblai.
  *
+ * ## Ce qu'une travée dégage, et ce qu'elle ne dégage pas
+ *
+ * Une travée est portée par ses appuis : son altitude est celle de la corde,
+ * pas une hauteur au-dessus du sol. Le terrain qu'elle survole ne lui commande
+ * donc **rien** — un pont qui traverse un pré reste au niveau du pré. Ce qui
+ * la relève, ce sont les deux seules choses qui ne se contournent pas :
+ *
+ *   - un **obstacle à gabarit** (`clearanceAt`) : une chaussée croisée, sous
+ *     laquelle il faut laisser passer un camion. `clearance` mètres au-dessus ;
+ *   - un **plancher** (`floorAt`) : l'altitude sous laquelle la plate-forme
+ *     n'a pas le droit de descendre — le terrain naturel (un tablier enterré
+ *     n'est pas un tablier) et la nappe augmentée de sa revanche. Aucune garde
+ *     au-dessus : on s'y pose, on ne le survole pas.
+ *
+ * Confondre les deux — relever de cinq mètres au-dessus de tout ce qui passe
+ * sous la travée, terrain compris — jetait chaque pont de rase campagne en
+ * l'air, sur des culées de la hauteur d'une maison.
+ *
  * Module pur : aucun `three`, testable sous Node.
  */
 
@@ -41,11 +60,36 @@ export const WORK_BRIDGE = 1;
 export const WORK_TUNNEL = 2;
 
 /**
- * Garde libre sous une travée, en mètres, mesurée sous la **plate-forme** —
- * épaisseur du tablier comprise, donc plus généreuse que le gabarit routier
- * seul. Cote d'ingénieur, pas de goût : elle reste dans le moteur.
+ * Garde libre exigée au-dessus d'un **obstacle à gabarit** — une chaussée
+ * croisée —, en mètres, mesurée sous la **plate-forme** : épaisseur du tablier
+ * comprise, donc plus généreuse que le gabarit routier seul. Cote d'ingénieur,
+ * pas de goût : elle reste dans le moteur.
+ *
+ * Elle ne s'applique **pas** au terrain nu : un pont ne survole pas un pré de
+ * cinq mètres, il le franchit à l'altitude de ses appuis (voir l'en-tête).
  */
 export const BRIDGE_CLEARANCE_M = 5.5;
+
+/**
+ * Revanche au-dessus d'une nappe d'eau, en mètres, mesurée comme la garde :
+ * sous la plate-forme. Le tablier pend en dessous (de soixante-dix centimètres
+ * à un mètre trente selon la famille) : il reste donc à peu près un mètre d'air
+ * entre l'eau et la sous-face, ce qu'a n'importe quel pont de campagne.
+ *
+ * Ce n'est pas un gabarit — rien ne passe sous un pont de rivière — mais une
+ * revanche de crue : une travée posée sur l'eau à l'étiage y trempe à la
+ * première pluie.
+ */
+export const BRIDGE_FREEBOARD_M = 2;
+
+/**
+ * Cosinus au-delà duquel deux chaussées superposées ne se croisent pas : elles
+ * se suivent. Sert à distinguer le viaduc qui enjambe une nationale (à relever
+ * du gabarit) de la travée qui prolonge sa propre route d'approche (à laisser
+ * là où ses appuis la mettent). Trente degrés : une bretelle d'échangeur croise
+ * plus franchement que ça.
+ */
+export const BRIDGE_CROSSING_COS = 0.87;
 
 /**
  * Portée au-delà de laquelle on renonce à tendre une corde et on laisse la
@@ -198,10 +242,15 @@ export function resampleWorks(points, works, path) {
  * @param {Float32Array} platform Altitudes de plate-forme, modifiées sur place.
  * @param {Uint8Array|number[]|null} works Un code par ligne.
  * @param {Object} [options]
- * @param {Function} [options.clearanceAt] `(x, z) => altitude à franchir`,
- *        dans les mêmes unités que `platform` (terrain naturel, ou nappe
- *        d'eau si elle est plus haute). Absente, aucun relevage.
- * @param {number} [options.clearance]
+ * @param {Function} [options.clearanceAt] `(x, z, r) => altitude d'un obstacle
+ *        à gabarit`, dans les mêmes unités que `platform` — une chaussée
+ *        croisée. Rend une valeur non finie là où il n'y a rien à dégager, ce
+ *        qui est le cas courant : au-dessus d'un pré, d'un ravin ou d'un
+ *        village, une travée n'a rien à passer.
+ * @param {Function} [options.floorAt] `(x, z, r) => altitude plancher` : le
+ *        terrain naturel, ou la nappe augmentée de sa revanche. La plate-forme
+ *        s'y pose sans garde ; elle ne descend simplement pas dessous.
+ * @param {number} [options.clearance] Garde au-dessus d'un obstacle à gabarit.
  * @param {number} [options.maxSpan]
  * @param {number} [options.ramp]
  * @returns {number} nombre de travées reprises.
@@ -210,7 +259,13 @@ export function levelWorkSpans(
   path,
   platform,
   works,
-  { clearanceAt = null, clearance = BRIDGE_CLEARANCE_M, maxSpan = BRIDGE_MAX_SPAN_M, ramp = BRIDGE_RAMP_M } = {}
+  {
+    clearanceAt = null,
+    floorAt = null,
+    clearance = BRIDGE_CLEARANCE_M,
+    maxSpan = BRIDGE_MAX_SPAN_M,
+    ramp = BRIDGE_RAMP_M,
+  } = {}
 ) {
   const rows = path?.length ?? 0;
   if (!works || !platform || rows < 2) return 0;
@@ -239,21 +294,30 @@ export function levelWorkSpans(
       }
       levelled++;
 
-      if (code !== WORK_BRIDGE || !clearanceAt) continue;
+      if (code !== WORK_BRIDGE || (!clearanceAt && !floorAt)) continue;
 
+      // Relevage d'un bloc : le plus exigeant des deux, sur toute la travée.
       let lift = 0;
       for (let r = run.from; r <= run.to; r++) {
-        const below = clearanceAt(path[r].x, path[r].z);
-        if (!Number.isFinite(below)) continue;
-        lift = Math.max(lift, below + clearance - platform[r]);
+        if (clearanceAt) {
+          const gauge = clearanceAt(path[r].x, path[r].z, r);
+          if (Number.isFinite(gauge)) lift = Math.max(lift, gauge + clearance - platform[r]);
+        }
+        if (floorAt) {
+          const floor = floorAt(path[r].x, path[r].z, r);
+          if (Number.isFinite(floor)) lift = Math.max(lift, floor - platform[r]);
+        }
       }
       if (!(lift > 0)) continue;
 
       for (let r = run.from; r <= run.to; r++) platform[r] += lift;
       // Le remblai d'accès : la route retrouve son terrain sur `ramp` mètres,
       // en `smoothstep` (une rampe droite laisse une cassure à ses deux bouts).
+      // Il s'arrête net sur la travée suivante : deux ponts qui se suivent de
+      // près, le remblai de l'un ferait pencher le tablier de l'autre.
       for (const [start, step] of [[run.from - 1, -1], [run.to + 1, 1]]) {
         for (let r = start; r >= 0 && r < rows; r += step) {
+          if (works[r]) break;
           const d = Math.abs(path[r].distance - path[start - step].distance);
           if (d >= ramp) break;
           const f = 1 - d / ramp;

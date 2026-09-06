@@ -279,20 +279,25 @@ export class BridgeLayer {
         { x: path[i].x + px * reach, z: path[i].z + pz * reach },
         { x: path[i].x - px * reach, z: path[i].z - pz * reach },
       ];
-      // Le pied se prend sous les deux extrémités du voile : sur un versant, le
-      // prendre à l'axe enterrerait un bout et suspendrait l'autre.
-      const ground = Math.min(
-        sampleElevation(across[0].x, across[0].z),
-        sampleElevation(across[1].x, across[1].z)
-      );
       // Sous-face du tablier, prise dans le même repère que lui : `surface`,
       // pas la plate-forme (le tablier est arasé sur la chaussée).
       const crown = surface[i] - deck.thickness;
-      if (crown - ground < BRIDGE_MIN_RISE_M) return false;
+      // Chaque extrémité du voile se fonde sur **son** terrain : un pied unique
+      // pris au plus bas des deux fait, sur un versant, une plaque pleine du
+      // côté haut — un pan de mur qui descend la montagne au lieu d'une pile.
+      // Plafonné à la sous-face : un bout de voile enterré ne se voit pas, un
+      // bout qui la dépasse crève le tablier.
+      const foot = new Float32Array([
+        Math.min(sampleElevation(across[0].x, across[0].z), crown),
+        Math.min(sampleElevation(across[1].x, across[1].z), crown),
+      ]);
+      // Le voile se juge sur sa plus grande hauteur : une pile qui n'émerge que
+      // d'un côté reste une pile, et c'est précisément le cas sur un versant.
+      if (crown - Math.min(foot[0], foot[1]) < BRIDGE_MIN_RISE_M) return false;
 
       return appendVariableWall(buffer, {
         path: across,
-        base: new Float32Array([ground, ground]),
+        base: foot,
         top: new Float32Array([crown, crown]),
         thickness,
         coping: 0.08,

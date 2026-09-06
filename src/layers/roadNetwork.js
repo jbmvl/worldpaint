@@ -20,15 +20,26 @@
  *     compris. C'est tout ce qu'il faut pour que les deux systèmes s'entendent
  *     — le terrassier tend la pente dans la bande qu'un ouvrage rattrape, le
  *     tablier prend le relais là où plus rien ne tient au sol ;
- *   - ce que franchit un pont — terrain nu ou nappe d'eau — lui est donné de
- *     l'extérieur (`waterIndex`), parce que l'eau est construite avant les
- *     chaussées et que c'est elle qui décide de la hauteur libre.
+ *   - ce qu'un pont ne doit pas toucher lui vient de deux sources : le plancher
+ *     (terrain naturel, nappe d'eau majorée de sa revanche) est donné de
+ *     l'extérieur, parce que l'eau est construite avant les chaussées ; le
+ *     gabarit — la chaussée qu'il enjambe — se lit ici, et ne peut pas l'être
+ *     ailleurs, puisqu'il faut que **tous** les tronçons soient dressés pour
+ *     savoir lequel passe sous lequel. D'où les deux passes de
+ *     `collectRoadSegments`.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { mergeRoadLines, RoadIndex, stitchPlatforms, trimAtJunctions } from './roadGraph.js';
 import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
-import { workCodeFor, resampleWorks, levelWorkSpans, drawableRuns } from './roadWorks.js';
+import {
+  workCodeFor,
+  resampleWorks,
+  levelWorkSpans,
+  drawableRuns,
+  BRIDGE_FREEBOARD_M,
+  BRIDGE_CROSSING_COS,
+} from './roadWorks.js';
 import {
   resamplePath,
   createRibbonBuffer,
@@ -346,6 +357,46 @@ export function anchorDistances(points, anchors) {
 }
 
 /**
+ * Ce qu'une travée doit passer en gabarit à chacune de ses lignes : la
+ * chaussée qu'elle enjambe, ou rien.
+ *
+ * C'est la seule chose qui relève un tablier au-dessus de ses appuis, avec le
+ * plancher. Le terrain, lui, ne compte pas : un pont franchit un pré à
+ * l'altitude du pré, et le relever de cinq mètres parce qu'il y a de l'herbe
+ * dessous met la campagne sur pilotis.
+ *
+ * Deux garde-fous, sans quoi une travée se relèverait au-dessus d'elle-même :
+ * le tronçon qui la porte est exclu de la recherche (sa propre culée est
+ * inscrite dans l'index, à distance nulle de sa première ligne), et une
+ * chaussée qui suit la même direction n'est pas croisée — c'est la route
+ * d'approche, ou la même route à un autre découpage.
+ *
+ * @param {RoadIndex} index   Index bâti sur tous les tronçons dressés.
+ * @param {Object} segment    Le tronçon qui porte la travée.
+ * @param {number} si         Son rang dans les tronçons de l'index.
+ * @param {number} [cos]      Cosinus de non-croisement (`BRIDGE_CROSSING_COS`).
+ * @returns {Function} `(x, z, r) => altitude de la chaussée croisée`, `NaN`
+ *          s'il n'y en a pas.
+ */
+export function crossedDeckAt(index, segment, si, cos = BRIDGE_CROSSING_COS) {
+  return (x, z, r) => {
+    const hit = index.query(x, z, 0, (_, oi) => oi !== si);
+    if (!hit) return NaN;
+
+    const a = hit.segment.path[hit.row];
+    const b = hit.segment.path[hit.row + 1];
+    const length = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+    const dot =
+      ((b.x - a.x) / length) * segment.frames[r * 4] +
+      ((b.z - a.z) / length) * segment.frames[r * 4 + 1];
+    if (Math.abs(dot) > cos) return NaN;
+
+    const deck = index.deckAt(hit);
+    return deck == null ? NaN : deck;
+  };
+}
+
+/**
  * Extrait les tronçons de chaussée d'un jeu de tuiles, ré-échantillonnés et
  * dressés de niveau. Contrat entre la chaussée et son mobilier : les deux ont
  * besoin exactement des mêmes tronçons. `platform` porte l'altitude de
@@ -365,10 +416,11 @@ export function anchorDistances(points, anchors) {
  * @param {number} [radius]
  * @param {Object} [roads] Tranche `theme.roads` (profils de chaussée).
  * @param {Object} [options]
- * @param {Function} [options.clearanceAt] `(x, z) => altitude à franchir`, en
- *        mètres de scène — le terrain nu, ou la nappe d'eau si elle est plus
- *        haute. C'est elle qui relève une travée trop basse ; absente, les
- *        travées restent tendues entre leurs appuis sans gabarit imposé.
+ * @param {Function} [options.floorAt] `(x, z) => altitude plancher`, en mètres
+ *        de scène — le terrain naturel, ou la nappe d'eau majorée de sa
+ *        revanche. Une travée s'y pose sans garde : elle ne descend pas
+ *        dessous, mais rien ne la relève au-dessus. Absente, les travées
+ *        restent exactement tendues entre leurs appuis.
  *
  * Les carrefours sortent d'ici avec les tronçons (ils viennent du même graphe).
  *
@@ -384,9 +436,10 @@ export function collectRoadSegments(
   sampleElevation,
   radius = ROAD_RADIUS_M,
   roads = defaultTheme.roads,
-  { clearanceAt = null } = {}
+  { floorAt = null } = {}
 ) {
   const out = [];
+  let anyWorks = false; // vrai dès qu'un tronçon porte un ouvrage
   const { chains: merged, junctions } = mergeRoadLines(collectRoadLines(source, tiles, frame, roads));
   // Rogner avant de ré-échantillonner : les distances doivent se compter sur la chaîne telle qu'elle sera dessinée.
   const chains = trimAtJunctions(merged, junctions);
@@ -400,7 +453,7 @@ export function collectRoadSegments(
 
       // Les drapeaux d'ouvrage suivent le découpage : `clipToRadius` rend une
       // tranche contiguë de la chaîne, à partir de `startIndex`.
-      const works = resampleWorks(
+      const runWorks = resampleWorks(
         run.points,
         chain.works?.slice(run.startIndex, run.startIndex + run.points.length),
         path
@@ -430,17 +483,13 @@ export function collectRoadSegments(
         maxCut[r] = allowance.cut;
         maxFill[r] = allowance.fill;
       }
+      // Rien à retrancher à la bande de terrassement sur une ligne d'ouvrage :
+      // ce que l'aplanissement y calcule est de toute façon réécrit par la
+      // seconde passe, et chaque ligne étant bornée autour de son propre
+      // terrain, une ligne de pont n'entraîne pas ses voisines au fond de la
+      // vallée.
       flattenGrade(platform, { maxCut, maxFill });
-
-      // Puis les travées, et dans cet ordre-là : la corde d'un pont se tend
-      // entre ses appuis **tels qu'ils seront vraiment**, terrassement
-      // compris. Aplanir après reviendrait à rendre le tablier au terrain.
-      //
-      // Rien à retrancher à la bande de terrassement sur une ligne d'ouvrage,
-      // en revanche : ce que l'aplanissement y calcule est de toute façon
-      // réécrit ici, et chaque ligne étant bornée autour de son propre terrain,
-      // une ligne de pont n'entraîne pas ses voisines au fond de la vallée.
-      levelWorkSpans(path, platform, works, { clearanceAt });
+      if (!anyWorks && runWorks.some((code) => code !== 0)) anyWorks = true;
 
       out.push({
         profile: chain.profile,
@@ -451,8 +500,30 @@ export function collectRoadSegments(
         anchor: chain.points[anchorIndex[run.startIndex]],
         platform,
         edges,
-        works,
+        works: runWorks,
         probeSpan: probe * 2,
+      });
+    }
+  }
+
+  // Passe 2 : les travées, une fois tous les tronçons dressés.
+  //
+  // Dans cet ordre-là, et pas l'inverse : la corde d'un pont se tend entre ses
+  // appuis **tels qu'ils seront vraiment**, terrassement compris (aplanir après
+  // reviendrait à rendre le tablier au terrain). Et il faut le réseau entier
+  // pour savoir ce qu'une travée enjambe : la chaussée qui passe dessous est un
+  // tronçon comme un autre, construit par la même boucle.
+  if (anyWorks) {
+    // Marge nulle : n'est croisée que la chaussée réellement survolée, pas son
+    // accotement. L'index n'inscrit pas les lignes d'ouvrage, donc un pont ne
+    // se relève jamais au-dessus d'un autre pont — ni au-dessus du sien.
+    const grade = new RoadIndex(out, { margin: 0 });
+    for (let si = 0; si < out.length; si++) {
+      const segment = out[si];
+      if (!segment.works.some((code) => code !== 0)) continue;
+      levelWorkSpans(segment.path, segment.platform, segment.works, {
+        clearanceAt: crossedDeckAt(grade, segment, si),
+        floorAt,
       });
     }
   }
@@ -522,7 +593,7 @@ export class RoadNetwork {
    * @param {Object} [options]
    * @param {Object|null} [options.waterIndex] Cuvette d'eau publiée par la
    *        couche d'eau (`WaterIndex`), construite avant les chaussées. Un pont
-   *        doit dégager la **nappe**, pas le lit qu'elle recouvre.
+   *        se tient au-dessus de la **nappe**, pas du lit qu'elle recouvre.
    */
   rebuild(source, tiles, here, { waterIndex = null } = {}) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
@@ -530,12 +601,16 @@ export class RoadNetwork {
     const { bubble } = this;
     // Terrain naturel, déblai exclu : la plate-forme décide de l'entaille, elle ne peut pas en dépendre.
     const sampleElevation = (x, z) => bubble.rawSurfaceElevationAtLocal(x, z, 0) * bubble.verticalScale;
-    // Ce qu'une travée doit dégager : le terrain, ou la nappe si elle est plus
-    // haute. `WaterIndex` rend une altitude déjà en unités de scène.
-    const clearanceAt = (x, z) => {
+    // Le plancher d'une travée : le terrain naturel, ou la nappe majorée de sa
+    // revanche là où il y en a une. `WaterIndex` rend une altitude déjà en
+    // unités de scène. Ce n'est pas un gabarit — rien ne passe sous un pont de
+    // rivière — mais une cote sous laquelle le tablier n'a rien à faire.
+    const floorAt = (x, z) => {
       const ground = sampleElevation(x, z);
       const water = waterIndex?.query(x, z);
-      return water && water.distance === 0 && water.level > ground ? water.level : ground;
+      return water && water.distance === 0 && water.level > ground
+        ? water.level + BRIDGE_FREEBOARD_M
+        : ground;
     };
 
     const { segments: collected, junctions } = collectRoadSegments(
@@ -546,7 +621,7 @@ export class RoadNetwork {
       sampleElevation,
       ROAD_RADIUS_M,
       this.theme.roads,
-      { clearanceAt }
+      { floorAt }
     );
     // La marge doit couvrir toute la portée du déblai, raccord compris ;
     // laissée à sa valeur par défaut, l'entaille finissait en marche verticale.
