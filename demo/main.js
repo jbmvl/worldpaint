@@ -24,6 +24,7 @@ import {
   collectBuildingLabels,
   CORRIDOR_MARGIN_M,
   DEFAULT_WEATHER,
+  CLIMATE_FAMILIES,
 } from '../src/index.js';
 
 // --- Réglages ---------------------------------------------------------------
@@ -60,7 +61,11 @@ const hourVal = document.getElementById('hourVal');
 const presetsRoot = document.getElementById('presets');
 const menuToggle = document.getElementById('menuToggle');
 const panel = document.getElementById('panel');
-const climateBtn = document.getElementById('climateBtn');
+const weatherBtn = document.getElementById('weatherBtn');
+const upBtn = document.getElementById('upBtn');
+const downBtn = document.getElementById('downBtn');
+const climateSelect = document.getElementById('climate');
+const climateHint = document.getElementById('climateHint');
 const streetViewBtn = document.getElementById('streetViewBtn');
 const mapOverlay = document.getElementById('mapOverlay');
 const mapOverlayClose = document.getElementById('mapOverlayClose');
@@ -206,7 +211,46 @@ window.addEventListener('keyup', (e) => {
 // sans ça la caméra continuerait d'avancer toute seule.
 window.addEventListener('blur', () => {
   for (const k of Object.keys(keys)) keys[k] = false;
+  for (const button of [upBtn, downBtn]) button.classList.remove('held');
 });
+
+/*
+ * Monter et descendre au doigt. Un mobile n'a ni Espace ni Maj, et sans ces
+ * deux boutons on ne peut ni décoller ni redescendre au sol — c'est-à-dire
+ * ni voir le paysage de haut, ni revenir le voir à hauteur d'homme.
+ *
+ * Ils écrivent dans le **même** `keys` que le clavier : une seule boucle de
+ * déplacement à tenir, et maintenir le bouton en même temps que la touche ne
+ * fait pas monter deux fois.
+ *
+ * `setPointerCapture` est ce qui rend le maintien fiable : sans lui, un doigt
+ * qui glisse hors du bouton ne rend jamais son `pointerup`, et la caméra monte
+ * indéfiniment.
+ */
+function bindHold(button, flag) {
+  const release = (e) => {
+    if (e && button.hasPointerCapture?.(e.pointerId)) button.releasePointerCapture(e.pointerId);
+    keys[flag] = false;
+    button.classList.remove('held');
+  };
+  button.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    button.setPointerCapture?.(e.pointerId);
+    keys[flag] = true;
+    button.classList.add('held');
+  });
+  button.addEventListener('pointerup', release);
+  button.addEventListener('pointercancel', release);
+  // Le clavier reste utilisable sur ces boutons, qui sont focusables.
+  button.addEventListener('keydown', (e) => {
+    if (e.key === ' ' || e.key === 'Enter') keys[flag] = true;
+  });
+  button.addEventListener('keyup', () => release(null));
+  button.addEventListener('blur', () => release(null));
+}
+
+bindHold(upBtn, 'up');
+bindHold(downBtn, 'down');
 
 // --- Regarder autour (glisser-clic) + téléportation (clic simple) ------------
 
@@ -578,6 +622,7 @@ const minimapForward = new THREE.Vector3();
 function drawMinimapPanel(ctx, px, scale, centerX, centerZ, opts = {}) {
   const {
     emojis = false,
+    emojiSize = px * 0.032,
     dotRadius = 6,
     coneRadius = px * 0.34,
     roadWidth = 2,
@@ -610,24 +655,52 @@ function drawMinimapPanel(ctx, px, scale, centerX, centerZ, opts = {}) {
     ctx.stroke();
   }
 
-  // Un émoji par bâtiment repéré (`BuildingLayer.personalities`, la même
-  // source que les étiquettes) : de quoi reconnaître une boulangerie ou une
-  // église sans avoir à s'en approcher en 3D — voir `BUILDING_EMOJI`.
+  // Un émoji par repère : bâtiments à personnalité (`BuildingLayer.personalities`,
+  // la même source que les étiquettes) et mobilier remarquable
+  // (`FurnitureLayer.instanced`, les matrices déjà écrites pour le rendu). De
+  // quoi reconnaître une boulangerie, une église ou un château d'eau sans
+  // avoir à s'en approcher en 3D.
   if (emojis) {
-    const buildings = world.composer?.buildings?.personalities || [];
     const range = px / 2 / scale; // demi-côté du canevas, en mètres
     const range2 = range * range;
-    ctx.font = `${Math.round(px * 0.032)}px sans-serif`;
+    ctx.font = `${Math.round(emojiSize)}px sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    for (const building of buildings) {
-      const emoji = BUILDING_EMOJI[building.kind];
-      if (!emoji) continue;
-      const dx = building.x - centerX;
-      const dz = building.z - centerZ;
-      if (dx * dx + dz * dz > range2) continue;
-      const { px: sx, py: sy } = toPx(building.x, building.z);
+
+    // Un émoji par case : dans un bourg, une dizaine de commerces tombent sur
+    // le même pâté de maisons et se recouvriraient en bouillie illisible. Ce
+    // qui passe en premier gagne la case, d'où l'ordre ci-dessous — un
+    // bâtiment repéré vaut mieux qu'un abribus.
+    const taken = new Set();
+    const cell = Math.max(emojiSize * 1.1, 1);
+    const place = (x, z, emoji) => {
+      const dx = x - centerX;
+      const dz = z - centerZ;
+      if (dx * dx + dz * dz > range2) return;
+      const { px: sx, py: sy } = toPx(x, z);
+      const key = `${Math.round(sx / cell)},${Math.round(sy / cell)}`;
+      if (taken.has(key)) return;
+      taken.add(key);
       ctx.fillText(emoji, sx, sy);
+    };
+
+    for (const building of world.composer?.buildings?.personalities || []) {
+      const emoji = BUILDING_EMOJI[building.kind];
+      if (emoji) place(building.x, building.z, emoji);
+    }
+
+    // Les positions se lisent directement dans les matrices d'instance : les
+    // douzième et quatorzième réels de chaque matrice 4×4 en colonnes sont sa
+    // translation en x et en z. Pas de seconde liste à tenir d'accord avec ce
+    // qui est réellement posé.
+    const instanced = world.composer?.furniture?.instanced;
+    for (const [kind, mesh] of instanced || []) {
+      const emoji = FURNITURE_EMOJI[kind];
+      if (!emoji || !mesh?.count) continue;
+      const matrices = mesh.instanceMatrix.array;
+      for (let i = 0; i < mesh.count; i++) {
+        place(matrices[i * 16 + 12], matrices[i * 16 + 14], emoji);
+      }
     }
   }
 
@@ -657,7 +730,15 @@ function drawMinimapPanel(ctx, px, scale, centerX, centerZ, opts = {}) {
 }
 
 function updateMinimap() {
-  drawMinimapPanel(minimapCtx, MINIMAP_PX, MINIMAP_SCALE, camera.position.x, camera.position.z);
+  // Le radar rond porte les mêmes repères que la carte plein écran : c'est ce
+  // qu'on regarde en marchant, et un château d'eau à cent mètres est
+  // exactement l'information qui décide où aller. Les émojis y sont
+  // proportionnellement plus gros — le canevas fait 320 pixels internes pour
+  // 160 à l'écran, un émoji réglé comme sur la grande carte y serait un point.
+  drawMinimapPanel(minimapCtx, MINIMAP_PX, MINIMAP_SCALE, camera.position.x, camera.position.z, {
+    emojis: true,
+    emojiSize: MINIMAP_PX * 0.075,
+  });
 }
 
 // Le clic sur la mini-carte ronde ne téléporte plus directement : il ouvre la
@@ -738,7 +819,49 @@ const BUILDING_EMOJI = {
   retail: '🏬',
   shop: '🏪',
 };
-mapOverlayLegend.textContent = Object.values(BUILDING_EMOJI).join(' ');
+
+/*
+ * Un émoji par pièce de mobilier **remarquable**, par clé de
+ * `FURNITURE_PROFILES` (les mêmes que `LABEL_FURNITURE`).
+ *
+ * Le critère est la rareté, pas l'importance : une carte sert à s'orienter, et
+ * on s'oriente sur ce qui ne se répète pas. Un lampadaire, un piquet, un
+ * panneau, un arbre, une bête ou un cep se comptent par centaines dans la
+ * bulle — les marquer noierait la carte et n'apprendrait rien. Un château
+ * d'eau, un moulin, une grande roue s'y comptent sur les doigts d'une main, et
+ * c'est précisément ce qu'on cherche des yeux.
+ *
+ * Une clé absente ne se dessine pas, ce qui est le cas de l'écrasante
+ * majorité du catalogue.
+ */
+const FURNITURE_EMOJI = {
+  castle: '🏰',
+  tower: '🗼',
+  monument: '🗿',
+  lighthouse: '🔦',
+  windmill: '🌬️',
+  watermill: '💧',
+  waterTower: '🚰',
+  windTurbine: '💨',
+  radioMast: '📡',
+  factoryChimney: '🏭',
+  ferrisWheel: '🎡',
+  stadium: '🏟️',
+  silo: '🛢️',
+  barn: '🚜',
+  greenhouse: '🌱',
+  fountain: '⛲',
+  lavoir: '🧺',
+  cemeteryGate: '🪦',
+  busShelter: '🚏',
+};
+
+// La légende annonce les deux familles : sans elle, un 🚰 au milieu d'un champ
+// se lit comme une faute plutôt que comme un château d'eau.
+mapOverlayLegend.textContent = [
+  ...Object.values(BUILDING_EMOJI),
+  ...Object.values(FURNITURE_EMOJI),
+].join(' ');
 
 let bigPanX = 0;
 let bigPanZ = 0;
@@ -1026,17 +1149,84 @@ for (const preset of PRESETS) {
 // « 42 » écrit en dur dans le markup ne représenterait pas la bonne position.
 writeWeather(DEFAULT_WEATHER);
 presetsRoot.children[1].classList.add('on'); // « Ordinaire », qui est l'état de départ
-climateBtn.textContent = PRESETS[1].label.split(' ')[0];
+weatherBtn.textContent = PRESETS[1].label.split(' ')[0];
 
-// Raccourci « climat suivant » : rejoue le même clic que le bouton de temps
+// Raccourci « temps suivant » : rejoue le même clic que le bouton de temps
 // prêt à l'emploi actif + 1, pour ne pas dupliquer la logique de sélection.
-climateBtn.addEventListener('click', () => {
+// Il cycle la **météo**, pas le climat — celui-ci a son propre sélecteur, et
+// confondre les deux était le principal malentendu de l'ancien nom.
+weatherBtn.addEventListener('click', () => {
   const buttons = [...presetsRoot.children];
   const current = buttons.findIndex((b) => b.classList.contains('on'));
   const next = buttons[(current + 1) % buttons.length];
   next.click();
-  climateBtn.textContent = PRESETS[buttons.indexOf(next)].label.split(' ')[0];
+  weatherBtn.textContent = PRESETS[buttons.indexOf(next)].label.split(' ')[0];
 });
+
+/*
+ * --- Choix du climat ---------------------------------------------------------
+ *
+ * Le décor tire sa famille climatique du lieu (grille Köppen, `core/climate`).
+ * Ce sélecteur la **remplace** : le moteur cesse alors de suivre la
+ * géographie, ce qui est exactement ce qu'on veut pour juger le travail — même
+ * terrain, mêmes routes, mêmes parcelles, tout le reste changé. Se téléporter
+ * en Laponie change aussi le tracé, le bâti et la pente, et on ne sait plus ce
+ * qui vient du climat.
+ *
+ * Les noms viennent de `CLIMATE_FAMILIES`, qui est la liste que le moteur
+ * connaît : une famille ajoutée là apparaît ici sans rien écrire.
+ */
+const CLIMATE_LABELS = {
+  oceanic: 'Océanique — Bretagne, Irlande',
+  oceanicUpland: 'Océanique froid — Highlands, Islande',
+  mediterranean: 'Méditerranéen — Provence, Grèce',
+  mediterraneanCool: 'Méditerranéen tempéré — Galice',
+  semiArid: 'Steppe — Èbre, Castille',
+  arid: 'Désertique — Tabernas, Bardenas',
+  continental: 'Continental — Pologne, plaine du Pô',
+  boreal: 'Boréal — Scandinavie, taïga',
+  alpine: 'Alpin — au-dessus de la forêt',
+  mediterraneanMontane: 'Montagne sèche — Apennins, sierras',
+  glacial: 'Glaciaire — calottes',
+};
+
+climateSelect.append(new Option('Automatique (d’après le lieu)', ''));
+for (const family of CLIMATE_FAMILIES) {
+  climateSelect.append(new Option(CLIMATE_LABELS[family] || family, family));
+}
+
+/** Reconstruit le décor sur place, sans bouger la caméra. */
+async function rebuildHere(message) {
+  if (!world || !world.frame) return;
+  setBusy(true);
+  setStatus(message);
+  try {
+    const { lng, lat } = world.frame.toLngLat(camera.position.x, camera.position.z);
+    // Forcé : le climat décide de ce qu'il y a à poser, pas seulement d'où —
+    // rien ne serait périmé au sens du compositeur si on ne le lui disait pas.
+    await world.refresh(lng, lat, { force: true });
+    setStatus('');
+  } catch (err) {
+    setStatus(err.message || 'Reconstruction interrompue', true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+climateSelect.addEventListener('change', () => {
+  const family = climateSelect.value || null;
+  if (!world || !world.setClimate(family)) return;
+  writeClimateHint();
+  rebuildHere(family ? 'Changement de climat…' : 'Retour au climat du lieu…');
+});
+
+/** Rappelle ce que le sélecteur fait au décor, et ce qu'il ne fait pas. */
+function writeClimateHint() {
+  climateHint.textContent = climateSelect.value
+    ? 'Le décor ne suit plus le lieu : essences, villages, cultures et sol sont ceux de ce climat.'
+    : 'Le climat est lu dans la grille Köppen, à la position de la caméra.';
+}
+writeClimateHint();
 
 hourInput.addEventListener('input', refreshWeatherLabels);
 realTimeCheckbox.addEventListener('change', () => {
@@ -1129,7 +1319,11 @@ function loop() {
   // l'assolement, et sans repère écrit on ne sait pas si le décor a changé de
   // pays ou si l'on regarde deux fois le même bois.
   const profile = world?.composer?.landscape;
-  const climat = profile ? `  ${profile.climate.family} (${profile.climate.koppen})` : '';
+  // Sans code Köppen, la famille est imposée : le code décrivait le lieu,
+  // qu'on a justement cessé de suivre.
+  const climat = profile
+    ? `  ${profile.climate.family} (${profile.climate.koppen || 'imposé'})`
+    : '';
   coordsEl.textContent = `${where}  alt ${camera.position.y.toFixed(0)} m  cap ${bearingDeg.toFixed(0)}°  incl ${pitchDeg.toFixed(0)}°${climat}`;
 
   renderer.render(scene, camera);

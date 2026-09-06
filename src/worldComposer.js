@@ -105,6 +105,11 @@ export class WorldComposer {
      * @type {{climate: {family: string, koppen: string}, relief: {elevation: number, slope: number}}|null}
      */
     this.landscape = null;
+    /**
+     * Famille climatique imposée, ou `null` pour suivre la géographie. Ce
+     * n'est pas un réglage de décor mais un **outil** : voir `setClimate`.
+     */
+    this.climateOverride = null;
     /** Dernière part de nuit appliquée. `null` force la prochaine à passer. */
     this._night = null;
     /** Dernier vent appliqué, pour ne pas réécrire des uniformes inchangés. */
@@ -217,6 +222,28 @@ export class WorldComposer {
   /** Repère local de la bulle, ou `null` avant le premier centrage. */
   get frame() {
     return this.bubble.frame;
+  }
+
+  /**
+   * Impose une famille climatique, ou rend la main à la géographie (`null`).
+   *
+   * Le décor ne suit alors plus le lieu : c'est délibéré, et c'est le seul
+   * moyen de comparer deux pays sur le **même** terrain — mêmes routes, mêmes
+   * parcelles, même relief, tout le reste changé. Sans ça, comparer une
+   * Provence et une Laponie demande de se téléporter, donc de changer aussi
+   * de bâti, de tracé et de pente, et on ne sait plus ce qui vient du climat.
+   *
+   * L'appelant doit ensuite reconstruire le décor (`refresh(..., { force:
+   * true })`) : cette méthode ne fait que poser l'intention.
+   *
+   * @param {string|null} family Une des `CLIMATE_FAMILIES`, ou `null`.
+   * @returns {boolean} vrai si l'intention a changé.
+   */
+  setClimate(family) {
+    const next = family || null;
+    if (next === this.climateOverride) return false;
+    this.climateOverride = next;
+    return true;
   }
 
   /** Déplace la bulle de terrain. @returns {Promise<boolean>} vrai si elle a bougé. */
@@ -390,8 +417,14 @@ export class WorldComposer {
     const climate = climateAt(lng, lat);
     // Le relief corrige la famille, jamais le code Köppen : celui-ci reste ce
     // que dit la donnée, et sert à comprendre ce qu'on regarde.
-    const family = refineByRelief(climate?.family ?? null, relief);
-    this.landscape = family ? { climate: { family, koppen: climate.koppen }, relief } : null;
+    //
+    // Une famille forcée n'est corrigée par rien : elle ne décrit plus le
+    // lieu, elle le contredit exprès, et la raffiner en montagne ferait mentir
+    // le réglage qu'on vient d'imposer.
+    const forced = this.climateOverride;
+    const family = forced || refineByRelief(climate?.family ?? null, relief);
+    const koppen = forced ? null : climate?.koppen ?? null;
+    this.landscape = family ? { climate: { family, koppen }, relief } : null;
     return family !== before;
   }
 

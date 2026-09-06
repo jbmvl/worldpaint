@@ -26,7 +26,9 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
 - **Navigation clavier en vol libre** : flèches pour avancer/reculer et se
   déplacer sur les côtés, <kbd>Espace</kbd>/<kbd>Maj</kbd> pour monter et
   descendre, <kbd>Alt</kbd> pour accélérer. Glisser-clic pour regarder autour
-  de soi.
+  de soi. Sur mobile, les boutons ▲ et ▼ de la barre d'actions remplacent
+  <kbd>Espace</kbd>/<kbd>Maj</kbd> : ils se maintiennent enfoncés et écrivent
+  dans le même état de déplacement que le clavier.
 - **Téléportation au clic** : un clic simple (sans glisser) sur le sol
   raycaste contre la bulle de terrain et pose la caméra à cet endroit.
 - **Case « afficher le nom des objets »** : appelle
@@ -41,6 +43,15 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
 - **Champ de recherche** : géocode le texte tapé via Nominatim
   (OpenStreetMap) et déplace la bulle (`setCenter` + `refresh`) sur le
   résultat.
+- **Sélecteur de climat** : force la famille climatique du décor
+  (`world.setClimate`) au lieu de la lire dans la grille Köppen à la position
+  courante. C'est ce qui permet de juger le travail : **même terrain, mêmes
+  routes, mêmes parcelles, même relief, tout le reste changé**. Se téléporter
+  d'une Provence à une Laponie change aussi le tracé, le bâti et la pente, et
+  on ne sait plus ce qui vient du climat. Les onze familles sont celles que le
+  moteur connaît (`CLIMATE_FAMILIES`) ; « Automatique » rend la main à la
+  géographie. La famille en cours s'affiche à côté des coordonnées, suivie de
+  son code Köppen ou de « imposé ».
 - **Panneau météo et heure** : sept temps prêts à l'emploi (grand beau,
   ordinaire, couvert, pluie, orage, neige, brume) et les curseurs qui les
   composent — couverture nuageuse, densité, précipitation et son type, vent,
@@ -63,16 +74,30 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
   `world.composer.roads.roadSegments` (la même donnée que l'emprise
   ci-dessus) et affiche un cône indiquant la direction du regard. Un clic
   dessus l'ouvre en grand : la carte plein écran affiche un rayon bien plus
-  large, un émoji par bâtiment repéré (église, mosquée, hôpital, boulangerie,
-  grande surface, commerce — `BuildingLayer.personalities`), se glisse
-  librement (le centre affiché se décale, indépendamment de la caméra) et
-  téléporte au clic, comme le clic simple sur la scène 3D.
-- **Barre d'actions rapides** (⛅ / 🧭) : le premier bouton rejoue le clic sur
-  le temps prêt à l'emploi suivant, sans ouvrir le panneau météo ; le second
-  ouvre Google Street View sur la position et le cap courants (un service
-  tiers, composé côté démo — le moteur n'interroge jamais Google).
-- **Mobile** : la recherche et la mini-carte (réduite) restent seules
-  visibles ; le reste des réglages se replie derrière le bouton ⚙️.
+  large, se glisse librement (le centre affiché se décale, indépendamment de
+  la caméra) et téléporte au clic, comme le clic simple sur la scène 3D.
+
+  Les deux cartes portent un émoji par **repère** : les bâtiments à
+  personnalité (église, mosquée, hôpital, boulangerie, commerce —
+  `BuildingLayer.personalities`) et le mobilier remarquable lu directement
+  dans les matrices d'instance de `FurnitureLayer` — château, tour, monument,
+  phare, moulin à vent et à eau, château d'eau, éolienne, antenne, cheminée
+  d'usine, grande roue, stade, silo, grange, serre, fontaine, lavoir,
+  cimetière, abribus. Le critère est la **rareté**, pas l'importance : on
+  s'oriente sur ce qui ne se répète pas, et marquer les lampadaires noierait
+  la carte. Un seul émoji par case d'écran, le premier arrivé gagnant, sinon
+  un bourg entier se recouvre en bouillie.
+- **Barre d'actions rapides** (▲ / ▼ / ⛅ / 🧭) : monter et descendre au doigt,
+  le temps prêt à l'emploi suivant sans ouvrir le panneau météo, et Google
+  Street View sur la position et le cap courants (un service tiers, composé
+  côté démo — le moteur n'interroge jamais Google).
+- **Mobile** : la recherche, la mini-carte (réduite) et la barre d'actions
+  restent seules visibles ; le reste des réglages se replie derrière le
+  bouton ⚙️. Le panneau ouvert descend jusqu'au bas de l'écran et défile —
+  les hauteurs sont en `dvh` et non en `vh`, sans quoi son bas resterait
+  inatteignable tant que la barre d'adresse est déployée. Les barres fixes se
+  tiennent à l'écart de l'encoche et de la barre gestuelle
+  (`env(safe-area-inset-*)`, avec `viewport-fit=cover`).
 
 ## Sources de données
 

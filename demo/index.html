@@ -3,12 +3,33 @@
 <head>
 <meta charset="utf-8" />
 <title>WorldPaint — démo</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- `viewport-fit=cover` passe sous l'encoche ; les barres fixes se recalent
+     ensuite sur `env(safe-area-inset-*)`. `interactive-widget` empêche le
+     clavier logiciel de réduire la fenêtre sous la scène 3D, qui serait alors
+     redimensionnée à chaque frappe dans la recherche. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
 <style>
-  :root { color-scheme: dark; }
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #0a0d12; }
+  :root {
+    color-scheme: dark;
+    /* Marges de sécurité de l'appareil (encoche, barre gestuelle), reprises
+       par toutes les barres fixes. Zéro partout ailleurs. */
+    --safe-t: env(safe-area-inset-top, 0px);
+    --safe-b: env(safe-area-inset-bottom, 0px);
+    --safe-l: env(safe-area-inset-left, 0px);
+    --safe-r: env(safe-area-inset-right, 0px);
+  }
+  /* `dvh` et non `vh` : sur mobile, `vh` est figé sur la fenêtre **barre
+     d'adresse repliée**, donc un panneau haut de 100 vh déborde tant qu'elle
+     est déployée et son bas reste inatteignable. `dvh` suit la hauteur réelle. */
+  html, body { margin: 0; height: 100dvh; overflow: hidden; background: #0a0d12; }
+  /* Sans ça, un glissé qui ne trouve rien à faire déclenche le « tirer pour
+     recharger » de Chrome mobile au milieu d'un déplacement de caméra. */
+  html { overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
   body { font: 13px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
   canvas { display: block; touch-action: none; }
+  /* Les commandes tactiles ne doivent jamais sélectionner du texte ni ouvrir
+     un menu contextuel sur appui long. */
+  button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 
   #labels {
     position: fixed; inset: 0; pointer-events: none;
@@ -40,10 +61,14 @@
   }
 
   #panel {
-    position: fixed; top: 84px; left: 12px; z-index: 10;
+    position: fixed; top: calc(84px + var(--safe-t)); left: calc(12px + var(--safe-l)); z-index: 10;
     width: 268px;
-    max-height: calc(100vh - 96px);
+    max-height: calc(100dvh - 108px - var(--safe-t) - var(--safe-b));
     overflow-y: auto;
+    /* Le défilement s'arrête au bout du panneau au lieu d'entraîner la page
+       (qui, elle, ne défile pas — on perdrait simplement le geste). */
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
     background: rgba(16, 19, 26, 0.82);
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 10px;
@@ -131,14 +156,14 @@
   }
 
   #coords {
-    position: fixed; bottom: 10px; left: 12px; z-index: 10;
+    position: fixed; bottom: calc(10px + var(--safe-b)); left: calc(12px + var(--safe-l)); z-index: 10;
     background: rgba(16, 19, 26, 0.7); border: 1px solid rgba(255,255,255,0.1);
     border-radius: 6px; padding: 4px 9px; color: #9aa4b2; font-size: 11px;
     font-variant-numeric: tabular-nums;
   }
 
   #minimap {
-    position: fixed; bottom: 12px; right: 12px; z-index: 10;
+    position: fixed; bottom: calc(12px + var(--safe-b)); right: calc(12px + var(--safe-r)); z-index: 10;
     width: 160px; height: 160px;
     border-radius: 50%;
     border: 1px solid rgba(255,255,255,0.22);
@@ -156,7 +181,7 @@
   /* --- Barre de recherche : séparée du panneau pour rester visible même
      quand le panneau se replie en mobile (voir la media query plus bas). --- */
   #searchBar {
-    position: fixed; top: 12px; left: 12px; z-index: 11;
+    position: fixed; top: calc(12px + var(--safe-t)); left: calc(12px + var(--safe-l)); z-index: 11;
     width: 268px;
     background: rgba(16, 19, 26, 0.82);
     border: 1px solid rgba(255,255,255,0.12);
@@ -177,10 +202,13 @@
     align-items: center; justify-content: center;
   }
 
-  /* --- Barre d'actions rapides : climat suivant + Street View. Toujours
-     visible (pas seulement en mobile) : ce sont des raccourcis, pas un repli. --- */
+  /* --- Barre d'actions rapides : monter, descendre, temps suivant, Street
+     View. Toujours visible (pas seulement en mobile) : ce sont des raccourcis,
+     pas un repli. Monter et descendre y sont parce qu'un mobile n'a pas de
+     touche Espace, et que sans elles on ne peut ni décoller ni se poser. --- */
   #quickbar {
     position: fixed; z-index: 10;
+    bottom: calc(12px + var(--safe-b)); left: calc(12px + var(--safe-l));
     display: flex; gap: 8px;
   }
   #quickbar button {
@@ -192,6 +220,9 @@
   }
   #quickbar button:hover { background: rgba(255,255,255,0.12); }
   #quickbar button:active { transform: scale(0.94); }
+  /* Maintenu enfoncé : les deux boutons de vol restent allumés tant que le
+     doigt est dessus, sinon rien ne dit qu'on monte encore. */
+  #quickbar button.held { background: #3a6fd8; border-color: #3a6fd8; }
 
   /* --- Mini-carte plein écran : ouverte au clic sur la mini-carte ronde. --- */
   #mapOverlay {
@@ -202,9 +233,14 @@
   #mapOverlay[hidden] { display: none; }
   #mapOverlayHeader {
     flex: none; display: flex; align-items: center; justify-content: space-between;
+    gap: 10px;
     padding: 10px 14px; color: #dfe4ea; font-size: 12.5px;
     border-bottom: 1px solid rgba(255,255,255,0.1);
   }
+  /* La légende énumère une vingtaine d'émojis : sans quoi elle pousserait le
+     bouton de fermeture hors de l'écran sur un téléphone. */
+  #mapOverlayHeader > span:first-child { min-width: 0; }
+  #mapOverlayLegend { word-break: break-word; }
   #mapOverlayClose {
     background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2);
     color: #fff; border-radius: 6px; width: 30px; height: 30px; cursor: pointer; font-size: 15px;
@@ -221,17 +257,39 @@
 
   /* --- Mobile : on replie tout ce qui n'est pas recherche + mini-carte. --- */
   @media (max-width: 680px) {
-    #searchBar { width: auto; right: 56px; }
-    #menuToggle { display: flex; top: 12px; right: 12px; }
+    #searchBar { width: auto; right: calc(56px + var(--safe-r)); }
+    #menuToggle { display: flex; top: calc(12px + var(--safe-t)); right: calc(12px + var(--safe-r)); }
+    /* Le panneau descend jusqu'au bas de l'écran : c'est la seule façon d'y
+       faire tenir la météo entière, et il défile. La réserve du bas laisse
+       passer la barre d'actions, qui est par-dessus. */
     #panel {
       display: none;
-      top: 96px; left: 12px; right: 12px; width: auto;
-      max-height: calc(100vh - 108px);
+      top: calc(96px + var(--safe-t));
+      left: calc(10px + var(--safe-l));
+      right: calc(10px + var(--safe-r));
+      bottom: calc(10px + var(--safe-b));
+      width: auto;
+      max-height: none;
+      padding-bottom: 68px;
     }
     #panel.open { display: block; }
-    #minimap { width: 96px; height: 96px; bottom: 8px; right: 8px; }
-    #quickbar { bottom: 16px; left: 8px; }
-    #coords { display: none; }
+    #minimap { width: 96px; height: 96px; bottom: calc(8px + var(--safe-b)); right: calc(8px + var(--safe-r)); }
+    #quickbar { bottom: calc(12px + var(--safe-b)); left: calc(8px + var(--safe-l)); }
+    /* Le panneau ouvert passe devant la barre d'actions ; sans ce z-index,
+       les boutons ronds flottent au milieu des réglages. */
+    #panel.open ~ #quickbar { z-index: 9; }
+    #coords {
+      right: calc(112px + var(--safe-r)); left: calc(8px + var(--safe-l));
+      bottom: calc(64px + var(--safe-b));
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+  }
+
+  /* Écran bas et large (téléphone couché) : le panneau prendrait tout. */
+  @media (max-height: 460px) {
+    #panel { top: calc(58px + var(--safe-t)); padding-bottom: 56px; }
+    #searchBar { padding: 6px 12px; }
+    #quickbar button { width: 36px; height: 36px; font-size: 15px; }
   }
 </style>
 </head>
@@ -261,6 +319,14 @@
     <input type="checkbox" id="showCorridor" />
     Afficher l’emprise routière
   </label>
+
+  <hr />
+
+  <div class="section">Climat</div>
+  <div class="field">
+    <select id="climate"></select>
+  </div>
+  <div class="help" id="climateHint" style="margin-bottom: 2px"></div>
 
   <hr />
 
@@ -319,7 +385,7 @@
   <div class="help">
     <div class="row"><span>Avancer / reculer</span><span><kbd>↑</kbd> <kbd>↓</kbd></span></div>
     <div class="row"><span>Se déplacer sur les côtés</span><span><kbd>←</kbd> <kbd>→</kbd></span></div>
-    <div class="row"><span>Monter / descendre</span><span><kbd>Espace</kbd> <kbd>Maj</kbd></span></div>
+    <div class="row"><span>Monter / descendre</span><span><kbd>Espace</kbd> <kbd>Maj</kbd> ou ▲ ▼</span></div>
     <div class="row"><span>Regarder autour</span><span>glisser-clic</span></div>
     <div class="row"><span>Se téléporter</span><span>clic simple au sol</span></div>
     <div class="row"><span>Accélérer</span><span><kbd>Alt</kbd></span></div>
@@ -330,7 +396,9 @@
 <canvas id="minimap" width="320" height="320" title="Cliquer pour l’ouvrir en grand"></canvas>
 
 <div id="quickbar">
-  <button id="climateBtn" title="Climat suivant">⛅</button>
+  <button id="upBtn" title="Monter (maintenir)" aria-label="Monter">▲</button>
+  <button id="downBtn" title="Descendre (maintenir)" aria-label="Descendre">▼</button>
+  <button id="weatherBtn" title="Temps suivant">⛅</button>
   <button id="streetViewBtn" title="Ouvrir Google Street View ici">🧭</button>
 </div>
 

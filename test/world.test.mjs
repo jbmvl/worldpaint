@@ -1617,6 +1617,41 @@ test('une fleur garde sa couleur, l’herbe autour prend celle du pays', () => {
   }
 });
 
+test('un climat imposé ne suit plus le lieu, et rien ne le corrige', async () => {
+  // C'est le seul moyen de comparer deux pays sur le **même** terrain : mêmes
+  // routes, mêmes parcelles, même relief, tout le reste changé. Se téléporter
+  // change aussi le tracé et la pente, et on ne sait plus ce qui vient du
+  // climat.
+  const { WorldComposer } = await import('../src/worldComposer.js');
+  const composer = {
+    bubble: { frame: {}, surfaceElevationAtLocal: () => 1800 },
+    landscape: null,
+    climateOverride: null,
+    _reliefAt: WorldComposer.prototype._reliefAt,
+  };
+  const update = () => WorldComposer.prototype._updateLandscape.call(composer, 2.35, 48.85, { x: 0, z: 0 });
+  const setClimate = (f) => WorldComposer.prototype.setClimate.call(composer, f);
+
+  update();
+  // Paris à 1 800 m n'existe pas, mais le relief a le dernier mot : c'est ce
+  // que la famille imposée devra contredire.
+  assert.equal(composer.landscape.climate.family, 'alpine');
+
+  assert.equal(setClimate('mediterranean'), true);
+  assert.equal(setClimate('mediterranean'), false, 'idempotent');
+  assert.equal(update(), true, 'la famille a changé');
+  assert.equal(composer.landscape.climate.family, 'mediterranean');
+  // Le code Köppen n'est plus rendu : il décrivait le lieu, qu'on vient
+  // justement de cesser de suivre. Le donner quand même laisserait lire
+  // « mediterranean (Cfb) », qui n'est vrai ni d'un côté ni de l'autre.
+  assert.equal(composer.landscape.climate.koppen, null);
+
+  assert.equal(setClimate(null), true);
+  update();
+  assert.equal(composer.landscape.climate.family, 'alpine', 'la géographie reprend la main');
+  assert.equal(composer.landscape.climate.koppen, 'Cfb');
+});
+
 test('le relief corrige ce que Köppen ne peut pas dire', () => {
   // Innsbruck est classée comme Rennes : la classification dit vrai pour le
   // fond de vallée et faux pour tout ce qui le domine. Le MNT, lui, est au

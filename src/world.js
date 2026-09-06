@@ -185,6 +185,18 @@ export class World {
   }
 
   /** Refait le décor vectoriel autour d'un point. @returns {Promise<boolean>} */
+  /**
+   * Impose une famille climatique au décor, ou rend la main à la géographie
+   * (`null`). Voir `WorldComposer.setClimate` : le décor cesse alors de suivre
+   * le lieu, ce qui est le seul moyen de comparer deux pays sur le même
+   * terrain. Le prochain `refresh` doit être forcé.
+   *
+   * @returns {boolean} vrai si l'intention a changé.
+   */
+  setClimate(family) {
+    return this.composer.setClimate(family);
+  }
+
   refresh(lng, lat, options) {
     return this.composer.refresh(lng, lat, options);
   }
