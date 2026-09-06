@@ -138,9 +138,12 @@ export const FURNITURE_SINK_M = 0.08;
  * C'est le seul déclencheur de la falaise, et il ne parle pas de devers : une
  * route qui coupe une croupe est en déblai des deux côtés sans qu'aucune
  * section ne soit en travers d'un versant. Le seuil est bien au-dessus du
- * bruit du MNT, qui donne quelques décimètres partout.
+ * bruit du MNT, qui donne quelques décimètres partout ; il est aussi ce qui
+ * garde la roche pour les vraies entailles — le raccord du déblai fait cinq
+ * mètres de large quelle que soit sa profondeur, et une falaise d'un demi-mètre
+ * couvrirait donc de roche cinq mètres d'un versant qui n'a rien de rocheux.
  */
-export const ROCK_CUT_MIN_RISE_M = 1;
+export const ROCK_CUT_MIN_RISE_M = 1.5;
 /** Graine du fruit de la paroi : une falaise n'est pas une plaque extrudée. */
 const ROCK_CUT_SEED = 9137;
 
@@ -909,12 +912,11 @@ export class FurnitureLayer {
    *
    * Une route de corniche n'est pas bordée d'un parement maçonné du côté haut :
    * on n'a rien construit là, on a coupé le versant. Ce qui la borde est donc
-   * une paroi rocheuse — presque droite (`batter`), cassée à mi-hauteur, et
-   * coiffée d'une banquette qui rejoint le terrain naturel là où l'entaille l'a
-   * rejoint. Le mur, lui, reste en aval : c'est là qu'il y a quelque chose à
-   * porter.
+   * une paroi rocheuse, et ce qui la surmonte, la roche du talus jusqu'au
+   * terrain naturel. Le mur, lui, reste en aval : c'est là qu'il y a quelque
+   * chose à porter.
    *
-   * ## Ce qui la déclenche, et à quelle hauteur
+   * ## Ce qui la déclenche
    *
    * Le devers ne dit rien du déblai : une route qui coupe une croupe est en
    * tranchée des deux côtés sans qu'aucune section ne soit en travers d'un
@@ -922,15 +924,23 @@ export class FurnitureLayer {
    * qu'accentuer le cas. Le déclencheur est donc la seule hauteur dont le
    * terrain domine la plate-forme (`ROCK_CUT_MIN_RISE_M`).
    *
-   * L'arase se lit sur le terrain **naturel**, à l'aplomb du point où le déblai
-   * a fini de se raccorder (`ROAD_CUT_BLEND_M`), et pas à la rive : plus près,
-   * la banquette passerait sous le talus qu'elle doit couvrir, et on verrait la
-   * terre du raccord repasser par-dessus la roche.
+   * ## Les trois altitudes qu'elle lit, et pourquoi trois
+   *
+   * - **au pied** (`e`, le bord du fond plat de l'entaille), le terrain
+   *   *naturel* : c'est la hauteur de la paroi franche, celle qu'un
+   *   terrassier a réellement coupée. La lire plus loin la ferait dépasser du
+   *   versant comme une lame ;
+   * - **au raccord** (`ROAD_CUT_BLEND_M` plus loin), le terrain naturel encore :
+   *   c'est là que la roche rejoint le versant intact ;
+   * - **entre les deux**, la surface *affichée* — le talus que l'entaille a
+   *   laissé. La roche le couvre en s'y appuyant : ni table plate au-dessus de
+   *   lui, ni paroi qui le traverse.
    */
   _buildRockCut(context, segment, rowsInfo) {
-    const { buffers, rawElevation } = context;
+    const { buffers, rawElevation, sampleElevation } = context;
     const { platform, halfWidth } = segment;
     const spec = this.specs.rockCut;
+    const grain = spec.grain;
 
     // Un tronçon par côté, et non le côté du milieu retenu pour tout le
     // tronçon : le versant peut changer de main au passage d'un col, et la
@@ -938,49 +948,101 @@ export class FurnitureLayer {
     const uphill = (row, wanted) => row.uphill === wanted && row.rise >= ROCK_CUT_MIN_RISE_M;
     for (const side of [1, -1]) {
       for (const run of contiguousRuns(rowsInfo, (row) => uphill(row, side), 5)) {
+        const rows = run.length;
         const origin = run[0].distance;
         const runPath = run.map((row) => ({ x: row.x, z: row.z, distance: row.distance - origin }));
         const frames = pathFrames(runPath);
         const deck = new Float32Array(run.map((row) => platform[row.r]));
-        const crest = new Float32Array(run.length);
-        const reach = new Float32Array(run.length);
 
-        // Le pied se dresse au bord du **fond plat** de l'entaille, pas au ras de
-        // la chaussée : entre les deux, il y a l'accotement excavé.
+        const crest = new Float32Array(rows);
+        const shelf = new Float32Array(rows);
+        const cap = new Float32Array(rows);
+        const reach = new Float32Array(rows);
+        const capOut = new Float32Array(rows);
+        const breakUp = new Float32Array(rows);
+        const breakOut = new Float32Array(rows);
+        const footOut = new Float32Array(rows);
+
+        // Le pied se dresse au bord du **fond plat** de l'entaille, pas au ras
+        // de la chaussée : entre les deux, il y a l'accotement excavé.
         const offset = side * (halfWidth + ROAD_CUT_M);
         const capReach = ROAD_CUT_BLEND_M;
 
-        for (let i = 0; i < run.length; i++) {
-          const d = offset + side * capReach;
-          crest[i] = rawElevation(
-            runPath[i].x + frames[i * 4 + 2] * d,
-            runPath[i].z + frames[i * 4 + 3] * d
-          );
-        }
-        smoothColumns(crest, run.length, 1, 2);
+        // Toutes les cotes de la section sont tirées ligne par ligne, sans
+        // corrélation d'une ligne à l'autre : c'est ce qui donne les facettes
+        // (`hedgeGeometry.facetJitter`, même recette). Tirages ancrés au sol,
+        // donc stables quand le tronçon est redécoupé ailleurs.
+        const draw = (i, salt) => randomAt(runPath[i].x, runPath[i].z, ROCK_CUT_SEED + salt);
+        const around = (i, salt, amplitude) => 1 + (draw(i, salt) - 0.5) * 2 * amplitude;
+        const along = (i, distance) => ({
+          x: runPath[i].x + frames[i * 4 + 2] * (offset + side * distance),
+          z: runPath[i].z + frames[i * 4 + 3] * (offset + side * distance),
+        });
 
-        for (let i = 0; i < run.length; i++) {
-          // Arase un peu au-dessus du terrain retenu : la maille du terrain coupe
-          // le raccord en droites qui peuvent le dépasser, et une arase pile au
-          // niveau du versant laisserait la terre déborder par-dessus.
-          const height = Math.min(Math.max(crest[i] + spec.crown - deck[i], 0), spec.maxHeight);
-          crest[i] = deck[i] + height;
-          // Fruit tiré au lieu : sans lui, la paroi est un tube extrudé.
-          const varied = 0.7 + randomAt(runPath[i].x, runPath[i].z, ROCK_CUT_SEED) * 0.6;
+        // Les deux altitudes du terrain naturel, lissées avant usage : la
+        // silhouette de la falaise ne doit pas porter le bruit métrique du MNT,
+        // elle a son propre grain.
+        const face = new Float32Array(rows);
+        const rear = new Float32Array(rows);
+        for (let i = 0; i < rows; i++) {
+          capOut[i] = draw(i, 6) * grain.capOut;
+          const foot = along(i, 0);
+          // Altitude lue au raccord même, jamais à la rallonge : la rallonge
+          // n'est là que pour enfoncer l'arrière dans le versant, et lui donner
+          // son altitude à elle le ferait ressortir au lieu de s'y perdre.
+          const back = along(i, capReach);
+          face[i] = rawElevation(foot.x, foot.z);
+          rear[i] = rawElevation(back.x, back.z);
+        }
+        smoothColumns(face, rows, 1, 2);
+        smoothColumns(rear, rows, 1, 2);
+
+        for (let i = 0; i < rows; i++) {
+          const height = Math.min(Math.max(face[i] - deck[i], 0), spec.maxHeight);
+          // Arase dentelée, vers le haut seulement : vers le bas, la roche
+          // passerait sous le talus qu'elle est censée couvrir.
+          crest[i] = deck[i] + height + draw(i, 1) * grain.crest * height;
           reach[i] = Math.min(
-            Math.max(height * spec.batter * varied, spec.minReach),
+            Math.max(height * spec.batter * around(i, 2, grain.reach), spec.minReach),
             capReach * 0.7
           );
+          breakUp[i] = spec.breakUp * around(i, 3, grain.breakUp);
+          breakOut[i] = spec.breakOut * around(i, 4, grain.breakOut);
+          // Débord du pied vers le versant seulement : l'accotement excavé est
+          // étroit, et un pied tiré vers la chaussée mordrait dessus.
+          footOut[i] = draw(i, 5) * grain.foot;
+          // Le raccord au versant, rehaussé du débord : la maille du terrain
+          // coupe le raccord en droites qui peuvent le dépasser, et une arase
+          // pile au niveau du versant laisserait la terre déborder par-dessus.
+          cap[i] = deck[i] + Math.min(Math.max(rear[i] - deck[i], 0), spec.maxHeight) + spec.crown;
+
+          // Le dos de la falaise s'appuie sur le talus du raccord : on lit sa
+          // surface affichée à l'aplomb, et la roche se tient entre lui et la
+          // ligne du terrain naturel, qui joint le haut de la paroi au raccord.
+          const width = capReach + capOut[i];
+          const mid = reach[i] + (width - reach[i]) * spec.shelfAt;
+          const at = along(i, mid);
+          const ramp = sampleElevation(at.x, at.z);
+          const natural = deck[i] + height + (cap[i] - spec.crown - deck[i] - height) * (mid / width);
+          const bank = Math.min(1, Math.max(0, spec.bank * around(i, 7, grain.bank)));
+          shelf[i] = ramp + (Math.max(natural, ramp) - ramp) * bank;
         }
 
         appendRockCut(buffers.rockCut, {
           path: runPath,
           base: deck,
           crest,
+          shelf,
+          cap,
           offset,
           side,
           reach,
           capReach,
+          capOut,
+          shelfAt: spec.shelfAt,
+          breakUp,
+          breakOut,
+          footOut,
           colorFoot: spec.colorFoot,
           colorBreak: spec.colorBreak,
           colorTop: spec.colorTop,

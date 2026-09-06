@@ -537,30 +537,64 @@ export function appendVariableWall(
  *
  * Ce n'est pas un mur, et la différence est toute la raison d'être de cette
  * fonction : pas d'appareillage, pas de couronnement débordant, pas de
- * parement d'épaisseur constante. Une paroi presque verticale, cassée à
- * mi-hauteur, coiffée d'une banquette horizontale qui rejoint le versant là
- * où l'entaille du terrain l'a rejoint (`roadCut.ROAD_CUT_BLEND_M`).
+ * parement d'épaisseur constante. Une paroi franche, cassée à mi-hauteur
+ * (`crest`, `breakUp`), prolongée d'un dos rocheux (`shelf`) qui remonte
+ * jusqu'au versant intact (`cap`), là où le déblai a fini de se raccorder
+ * (`roadCut.ROAD_CUT_BLEND_M`).
  *
- * Cette banquette n'est pas décorative. Le terrain, lui, ne sait pas se tenir
- * vertical : la maille descend à quatre mètres et l'entaille remonte au
- * naturel sur cinq mètres de raccord. Sans la banquette, la paroi resterait
- * une lame plantée devant ce talus de terre, qu'on verrait passer par-dessus
- * dès qu'on prend un peu de hauteur.
+ * Ce dos n'est pas décoratif. Le terrain, lui, ne sait pas se tenir vertical :
+ * la maille descend à quatre mètres et l'entaille remonte au naturel sur cinq
+ * mètres de raccord, ce qui laisse un talus de terre là où un terrassier a
+ * coupé de la roche. Le dos le couvre en s'appuyant dessus — il se tient entre
+ * ce talus et la ligne du terrain naturel. Tendu jusqu'à cette ligne, il
+ * coifferait la falaise d'une table de plusieurs mètres de large ; posé sur le
+ * talus, il n'en serait qu'un placage. C'est l'appelant qui tranche, ligne par
+ * ligne.
  *
- * Section fermée (la face, la banquette, le dos enterré, la semelle) : ce qui
- * est enfoui ne se voit pas, mais un anneau ne laisse jamais voir l'intérieur
+ * Section fermée (la face, le dos, l'arrière enterré, la semelle) : ce qui est
+ * enfoui ne se voit pas, mais un anneau ne laisse jamais voir l'intérieur
  * d'une paroi coupée net.
+ *
+ * ## Le grain low poly
+ *
+ * Une section constante balayée reste un tube extrudé, quelle que soit sa
+ * forme — c'est le défaut que `hedgeGeometry` décrit pour la haie, et une
+ * paroi rocheuse y est encore plus sensible : la roche se lit à ses écailles.
+ * Toutes les cotes de la section sont donc données **par ligne**, tirées au
+ * sol par l'appelant, sans corrélation d'une ligne à la suivante
+ * (`hedgeGeometry.facetJitter`, même recette) : l'arase avance et recule, la
+ * cassure monte, descend et saille, le pied ondule. Associé à un maillage non
+ * lissé (`FLAT_SHADED_LINEAR_KINDS`), chaque quadrilatère devient deux
+ * facettes franches, et l'espacement des arêtes est celui du
+ * ré-échantillonnage du tracé — pas un réglage d'ici.
  *
  * @param {Object} buffer  Résultat de `createProfileBuffer()`.
  * @param {Object} options
  * @param {Array<{x:number,z:number}>} options.path
  * @param {Float32Array|number[]} options.base  Altitude du pied, par ligne.
  * @param {Float32Array|number[]} options.crest Altitude de l'arase, par ligne.
+ * @param {Float32Array|number[]} [options.shelf] Altitude du dos, par ligne,
+ *        lue à `shelfAt` — entre le talus qu'il couvre et le terrain naturel.
+ * @param {Float32Array|number[]} [options.cap] Altitude à laquelle le dos
+ *        rejoint le versant, par ligne. À défaut, celle de l'arase — mais le
+ *        versant continue de monter derrière la paroi, et l'arase est dentelée
+ *        quand lui ne l'est pas.
  * @param {number} [options.offset]   Décalage latéral du pied, signé.
  * @param {number} [options.side]     Côté du versant : `+1` à gauche de la marche.
  * @param {Float32Array|number[]} options.reach Fruit de la paroi, par ligne :
  *        recul horizontal du pied à l'arase, en mètres.
- * @param {number} [options.capReach] Recul de l'arrière de la banquette, en mètres.
+ * @param {number} [options.capReach] Recul du raccord au versant, en mètres.
+ * @param {Float32Array|number[]} [options.capOut] Rallonge de ce recul, par
+ *        ligne — vers le versant seulement : plus court, l'arrière flotterait
+ *        au-dessus du raccord au lieu de s'y enfoncer.
+ * @param {number} [options.shelfAt] Où se lit le dos, en part de sa largeur.
+ * @param {Float32Array|number[]} [options.breakUp] Hauteur de la cassure, par
+ *        ligne, en part de la paroi.
+ * @param {Float32Array|number[]} [options.breakOut] Saillie de la cassure, par
+ *        ligne, en part du fruit.
+ * @param {Float32Array|number[]} [options.footOut] Débord du pied, par ligne, en
+ *        mètres — vers le versant seulement : un pied tiré vers la chaussée
+ *        mordrait sur l'accotement.
  * @param {number[]} options.colorFoot  Couleur du pied, RVB linéaire.
  * @param {number[]} options.colorBreak Couleur de la cassure, à mi-hauteur.
  * @param {number[]} options.colorTop   Couleur de l'arase.
@@ -573,10 +607,17 @@ export function appendRockCut(
     path,
     base,
     crest,
+    shelf = null,
+    cap = null,
     offset = 0,
     side = 1,
     reach,
     capReach = 0,
+    capOut = null,
+    shelfAt = 0.45,
+    breakUp = null,
+    breakOut = null,
+    footOut = null,
     colorFoot,
     colorBreak,
     colorTop,
@@ -592,8 +633,10 @@ export function appendRockCut(
 
   const frames = pathFrames(path);
   const start = buffer.positions.length / 3;
-  const colors = [colorFoot, colorBreak, colorTop, colorTop, colorFoot];
+  const colors = [colorFoot, colorBreak, colorTop, colorTop, colorBreak, colorFoot];
   const cols = colors.length;
+
+  const at = (array, r, fallback) => (array ? array[r] : fallback);
 
   for (let r = 0; r < rows; r++) {
     const px = frames[r * 4 + 2];
@@ -605,11 +648,18 @@ export function appendRockCut(
     const height = top - foot;
     const run = Math.max(reach[r], 0.1);
     // La banquette ne peut pas être en deçà de l'arase qu'elle prolonge.
-    const back = Math.max(capReach, run);
-    const across = [0, run * 0.45, run, back, back];
-    // Cassure basse (0,58) : une falaise taillée s'évase du pied vers la
-    // crête, elle ne se plie pas au milieu.
-    const ups = [foot, foot + height * 0.58, top, top, foot];
+    const back = Math.max(capReach + Math.max(0, at(capOut, r, 0)), run + 0.1);
+    // Le raccord au versant : plus haut que l'arase dès que le versant
+    // continue de monter derrière la paroi, ce qui est le cas ordinaire.
+    const rear = Math.max(at(cap, r, top), foot + minHeight);
+    // Le dos, borné par ses deux bords : au-dessus, la roche coifferait le
+    // versant ; en dessous, elle plongerait sous le talus qu'elle couvre.
+    const sag = Math.max(Math.min(at(shelf, r, rear), Math.max(top, rear)), foot);
+    const lip = Math.max(0, at(footOut, r, 0));
+    const across = [lip, run * at(breakOut, r, 0.45), run, run + (back - run) * shelfAt, back, back];
+    // Cassure basse (0,58 par défaut) : une falaise taillée s'évase du pied
+    // vers la crête, elle ne se plie pas au milieu.
+    const ups = [foot, foot + height * at(breakUp, r, 0.58), top, sag, rear, foot];
 
     for (let c = 0; c < cols; c++) {
       const d = offset + side * across[c];

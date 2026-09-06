@@ -1654,7 +1654,11 @@ test('la falaise monte jusqu’au terrain et le couvre jusqu’au raccord', () =
   const path = resamplePath([{ x: 0, z: 0 }, { x: 30, z: 0 }], 10);
   const rows = path.length;
   const base = new Float32Array(rows).fill(100);
+  // Paroi franche de six mètres, puis le versant qui continue de monter
+  // derrière elle jusqu’au raccord du déblai.
   const crest = new Float32Array(rows).fill(106);
+  const shelf = new Float32Array(rows).fill(107.5);
+  const cap = new Float32Array(rows).fill(109);
   const reach = new Float32Array(rows).fill(1);
   const buffer = createProfileBuffer();
 
@@ -1663,22 +1667,25 @@ test('la falaise monte jusqu’au terrain et le couvre jusqu’au raccord', () =
       path,
       base,
       crest,
+      shelf,
+      cap,
       offset: 4,
       side: 1,
       reach,
       capReach: 5,
+      shelfAt: 0.5,
       colorFoot: [0, 0, 0],
       colorBreak: [0.5, 0.5, 0.5],
       colorTop: [1, 1, 1],
     })
   );
 
-  const cols = 5;
-  assert.equal(buffer.positions.length / 3, rows * cols, 'cinq sommets par ligne');
+  const cols = 6;
+  assert.equal(buffer.positions.length / 3, rows * cols, 'six sommets par ligne');
   assert.equal(buffer.colors.length, buffer.positions.length, 'une couleur par sommet');
 
   // La route va vers +x, la gauche de la marche est en -z : un décalage positif
-  // s’éloigne donc vers -z, et la banquette est ce qui va le plus loin.
+  // s’éloigne donc vers -z, et le raccord est ce qui va le plus loin.
   const z = (r, c) => buffer.positions[(r * cols + c) * 3 + 2];
   const y = (r, c) => buffer.positions[(r * cols + c) * 3 + 1];
 
@@ -1687,12 +1694,15 @@ test('la falaise monte jusqu’au terrain et le couvre jusqu’au raccord', () =
     close(y(r, 0), 100, 1e-4, `le pied est sur la plate-forme, ligne ${r}`);
     close(z(r, 2), -5, 1e-4, `arase reculée du fruit, ligne ${r}`);
     close(y(r, 2), 106, 1e-4, `arase au terrain naturel, ligne ${r}`);
-    // La banquette part de l’arase et rejoint le versant là où le déblai l’a
-    // rejoint : sans elle, la paroi serait une lame devant le talus de terre.
-    close(z(r, 3), -9, 1e-4, `banquette jusqu’au raccord, ligne ${r}`);
-    close(y(r, 3), 106, 1e-4, `banquette de niveau, ligne ${r}`);
-    // La cassure est entre les deux, plus près du pied que de l’arase.
+    // Le dos s’appuie sur le talus entre l’arase et le raccord : ni table
+    // plate posée sur la falaise, ni paroi qui traverse le talus.
+    close(z(r, 3), -7, 1e-4, `dos à mi-largeur, ligne ${r}`);
+    close(y(r, 3), 107.5, 1e-4, `dos appuyé sur le talus, ligne ${r}`);
+    close(z(r, 4), -9, 1e-4, `raccord au versant, ligne ${r}`);
+    close(y(r, 4), 109, 1e-4, `le raccord suit le versant, ligne ${r}`);
+    // La cassure est sur la face, entre le pied et l’arase.
     assert.ok(y(r, 1) > 100 && y(r, 1) < 106, `cassure à mi-hauteur, ligne ${r}`);
+    assert.ok(z(r, 1) > -5 && z(r, 1) < -4, `cassure sur la face, ligne ${r}`);
   }
 });
 
@@ -1912,8 +1922,12 @@ function rockCutHarness({ rise = 4, slope = 0.35 } = {}) {
   const rows = path.length;
   const deck = 100;
   const platform = new Float32Array(rows).fill(deck);
-  // Terrain naturel : le versant monte d’autant qu’on s’écarte vers -z.
+  // Terrain naturel : le versant monte d’autant qu’on s’écarte vers -z. La
+  // surface affichée, elle, est celle que le déblai a laissée — c’est le talus
+  // que la roche vient couvrir.
   const rawElevation = (x, z) => deck - z * slope;
+  const sampleElevation = (x, z) =>
+    cutElevationAt(rawElevation(x, z), deck, Math.abs(z), 2.5);
 
   const rowsInfo = path.map((p, r) => ({
     r, x: p.x, z: p.z, distance: p.distance,
@@ -1922,37 +1936,52 @@ function rockCutHarness({ rise = 4, slope = 0.35 } = {}) {
 
   const buffers = {};
   for (const kind of LINEAR_KINDS) buffers[kind] = createProfileBuffer();
-  const context = { buffers, sampleElevation: () => deck, rawElevation, here: { x: 100, z: 0 } };
+  const context = { buffers, sampleElevation, rawElevation, here: { x: 100, z: 0 } };
   const segment = { path, platform, halfWidth: 2.5, profile: 'minor' };
-  return { layer, context, segment, rowsInfo, buffers, deck, rawElevation };
+  return { layer, context, segment, rowsInfo, buffers, deck, rawElevation, sampleElevation };
 }
 
 test('un versant qui domine la chaussée est bordé de roche, pas d’un mur', () => {
-  const { layer, context, segment, rowsInfo, buffers, deck } = rockCutHarness();
+  const { layer, context, segment, rowsInfo, buffers, deck, rawElevation, sampleElevation } =
+    rockCutHarness();
   layer._buildRockCut(context, segment, rowsInfo);
 
   assert.ok(buffers.rockCut.indices.length > 0, 'la falaise est bien engendrée');
   assert.equal(buffers.fillWall.indices.length, 0, 'et rien n’est maçonné au passage');
 
   const positions = buffers.rockCut.positions;
-  let lowest = Infinity;
-  let highest = -Infinity;
-  let farthest = 0;
-  for (let i = 0; i < positions.length; i += 3) {
+  const cols = 6;
+  const rows = positions.length / 3 / cols;
+  const y = (r, c) => positions[(r * cols + c) * 3 + 1];
+  const z = (r, c) => positions[(r * cols + c) * 3 + 2];
+  const spec = FURNITURE_SPECS.rockCut;
+  const foot = 2.5 + ROAD_CUT_M;
+
+  for (let r = 0; r < rows; r++) {
     // Le versant monte vers -z : toute la falaise est de ce côté, au-delà de
     // l’accotement excavé.
-    assert.ok(positions[i + 2] <= -(2.5 + ROAD_CUT_M) + 1e-6, 'du côté amont');
-    lowest = Math.min(lowest, positions[i + 1]);
-    highest = Math.max(highest, positions[i + 1]);
-    farthest = Math.max(farthest, -positions[i + 2]);
-  }
+    for (let c = 0; c < cols; c++) assert.ok(z(r, c) <= -foot + 1e-6, `ligne ${r}, colonne ${c}`);
 
-  close(lowest, deck, 1e-4, 'le pied est sur la plate-forme');
-  // L’arase se lit sur le terrain naturel à l’aplomb du raccord du déblai,
-  // rehaussée du débord : plus bas, la terre du raccord passerait par-dessus.
-  const atBlend = (2.5 + ROAD_CUT_M + ROAD_CUT_BLEND_M) * 0.35;
-  close(highest, deck + atBlend + FURNITURE_SPECS.rockCut.crown, 1e-3, 'arase au terrain naturel');
-  close(farthest, 2.5 + ROAD_CUT_M + ROAD_CUT_BLEND_M, 1e-4, 'la banquette couvre le raccord');
+    close(y(r, 0), deck, 1e-4, `le pied est sur la plate-forme, ligne ${r}`);
+    // La paroi franche s’arrête au terrain naturel de son propre aplomb : plus
+    // haut, elle dépasserait du versant comme une lame.
+    const natural = rawElevation(0, z(r, 2));
+    assert.ok(y(r, 2) >= rawElevation(0, -foot) - 1e-3, `arase au moins au pied du versant, ligne ${r}`);
+    assert.ok(
+      y(r, 2) <= natural + spec.grain.crest * (natural - deck) + 0.1,
+      `arase sans lame au-dessus du versant, ligne ${r}`
+    );
+    // Le raccord, lui, va chercher le versant intact, cinq mètres plus loin —
+    // et sa rallonge l'enfonce dedans plutôt que de le faire ressortir.
+    close(y(r, 4), rawElevation(0, -(foot + ROAD_CUT_BLEND_M)) + spec.crown, 1e-3, `raccord au versant, ligne ${r}`);
+    assert.ok(y(r, 4) <= rawElevation(0, z(r, 4)) + spec.crown + 1e-6, `arrière enfoui, ligne ${r}`);
+    close(z(r, 4), z(r, 5), 1e-6, `semelle sous le raccord, ligne ${r}`);
+    // Et le dos se tient entre le talus qu’il couvre et le terrain naturel :
+    // en dessous, il plongerait dans le talus ; au-dessus, il coifferait le
+    // versant d’une table de roche.
+    assert.ok(y(r, 3) >= sampleElevation(0, z(r, 3)) - 1e-3, `dos au-dessus du talus, ligne ${r}`);
+    assert.ok(y(r, 3) <= rawElevation(0, z(r, 3)) + 1e-3, `dos sous le versant, ligne ${r}`);
+  }
 });
 
 test('un terrain qui ne domine pas la chaussée ne donne pas de falaise', () => {
@@ -1966,18 +1995,57 @@ test('un terrain qui ne domine pas la chaussée ne donne pas de falaise', () => 
   assert.equal(buffers.rockCut.indices.length, 0);
 });
 
-test('la falaise n’est pas un tube extrudé : son fruit varie le long du tracé', () => {
-  const { layer, context, segment, rowsInfo, buffers } = rockCutHarness();
+test('la falaise n’est pas un tube extrudé : sa section change à chaque ligne', () => {
+  // Versant franc : sous un mètre de paroi, le fruit tape son plancher partout
+  // et la section ne varie plus qu’en hauteur.
+  const { layer, context, segment, rowsInfo, buffers } = rockCutHarness({ rise: 6, slope: 0.9 });
   layer._buildRockCut(context, segment, rowsInfo);
 
-  // Troisième sommet de chaque section : l’arase, dont le recul est tiré au lieu.
-  const cols = 5;
-  const rows = buffers.rockCut.positions.length / 3 / cols;
-  const crestOffsets = new Set();
-  for (let r = 0; r < rows; r++) {
-    crestOffsets.add(buffers.rockCut.positions[(r * cols + 2) * 3 + 2].toFixed(3));
+  // Le grain low poly tient à ce qu’aucune ligne ne ressemble à sa voisine :
+  // sans quoi le maillage non lissé n’a aucune arête à montrer.
+  const cols = 6;
+  const positions = buffers.rockCut.positions;
+  const rows = positions.length / 3 / cols;
+  const section = (r) => {
+    const out = [];
+    for (let c = 0; c < cols; c++) {
+      out.push(positions[(r * cols + c) * 3 + 1].toFixed(3), positions[(r * cols + c) * 3 + 2].toFixed(3));
+    }
+    return out.join('|');
+  };
+
+  const shapes = new Set();
+  for (let r = 0; r < rows; r++) shapes.add(section(r));
+  assert.equal(shapes.size, rows, `${shapes.size} sections distinctes sur ${rows} lignes`);
+
+  // Et les trois cotes bruitées bougent chacune, pas seulement l’une d’elles.
+  // Le raccord fait exception en hauteur : il va chercher le versant intact, à
+  // distance fixe, et c'est le versant qui décide — sa rallonge ne bruite que
+  // son recul.
+  for (const [c, cote, varies] of [
+    [0, 'pied', false],
+    [1, 'cassure', true],
+    [2, 'arase', true],
+    [3, 'dos', true],
+    [4, 'raccord', false],
+  ]) {
+    const offsets = new Set();
+    const heights = new Set();
+    for (let r = 0; r < rows; r++) {
+      offsets.add(positions[(r * cols + c) * 3 + 2].toFixed(3));
+      heights.add(positions[(r * cols + c) * 3 + 1].toFixed(3));
+    }
+    assert.ok(offsets.size > rows / 3, `${cote} : ${offsets.size} reculs distincts`);
+    if (varies) assert.ok(heights.size > rows / 3, `${cote} : ${heights.size} hauteurs distinctes`);
   }
-  assert.ok(crestOffsets.size > rows / 3, `${crestOffsets.size} reculs distincts sur ${rows} lignes`);
+
+  // Le pied déborde vers le versant, jamais vers la chaussée.
+  for (let r = 0; r < rows; r++) {
+    assert.ok(
+      positions[(r * cols) * 3 + 2] <= -(2.5 + ROAD_CUT_M) + 1e-6,
+      `pied de la ligne ${r} au-delà de l’accotement`
+    );
+  }
 });
 
 test('le mobilier de bord de route se pose sans variable libre', () => {

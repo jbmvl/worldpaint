@@ -1902,18 +1902,47 @@ const wallSpecsFor = (C) => ({
  * versant entaillé. Pas un ouvrage maçonné — de la roche, donc ni épaisseur ni
  * couronnement, et un fruit léger au lieu d'un parement vertical.
  *
- * `batter` est ce fruit : le recul de l'arase par mètre de hauteur. À 0,16, une
- * paroi de six mètres recule d'un mètre — un rocher taillé se tient presque
- * droit, contrairement à un talus de terre (`embankmentFor`, 3 pour 2).
+ * `batter` est ce fruit : le recul de l'arase par mètre de hauteur. À 0,22, une
+ * paroi de quatre mètres recule de quatre-vingt-dix centimètres — un rocher
+ * taillé se tient presque droit, contrairement à un talus de terre
+ * (`embankmentFor`, 3 pour 2).
  */
 const rockCutFor = (C) => ({
-  batter: 0.16,
+  batter: 0.22,
   /** Recul minimal : sous cette valeur, la paroi se lirait comme une plaque. */
   minReach: 0.5,
-  /** Débord de l'arase au-dessus du terrain retenu, en mètres. */
+  /** Débord du raccord au-dessus du versant qu'il rejoint, en mètres. */
   crown: 0.3,
   /** Plafond : au-delà, ce n'est plus la route qui a taillé le versant. */
   maxHeight: 14,
+  /** Cassure de la face : hauteur en part de la paroi, saillie en part du fruit. */
+  breakUp: 0.58,
+  breakOut: 0.45,
+  /**
+   * Le dos de la falaise, qui couvre le talus du raccord : où il se lit (en
+   * part de sa largeur) et où il se tient entre ce talus et la ligne du
+   * terrain naturel (0 : posé sur le talus, 1 : tendu jusqu'au naturel).
+   * Tendu, la falaise est coiffée d'une table de plusieurs mètres de large ;
+   * posé, elle n'est plus qu'un placage sur le talus.
+   */
+  shelfAt: 0.45,
+  bank: 0.5,
+  /**
+   * Le grain low poly de la paroi : amplitude des tirages faits ligne par
+   * ligne, ancrés au sol (`furniturePlacement.randomAt`).
+   *
+   * Sans eux, la falaise est un tube extrudé — c'est le même défaut, et le
+   * même remède, que la haie (`hedgeGeometry.facetJitter`) : des tirages sans
+   * corrélation d'une ligne à l'autre, un maillage non lissé, et chaque
+   * quadrilatère devient deux facettes franches. Ce sont donc des valeurs de
+   * forme, pas des tolérances : les monter donne une roche plus déchiquetée,
+   * les descendre, une paroi sciée.
+   *
+   * `reach`, `breakUp`, `breakOut` et `bank` sont des parts de la cote qu'ils
+   * bruitent, `crest` une part de la hauteur de la paroi, `foot` et `capOut`
+   * des mètres.
+   */
+  grain: { reach: 0.6, breakUp: 0.2, breakOut: 0.35, crest: 0.22, foot: 0.35, bank: 0.45, capOut: 1 },
   colorFoot: C.rockDark,
   colorBreak: C.rock,
   colorTop: C.rockPale,
