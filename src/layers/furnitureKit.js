@@ -1877,22 +1877,16 @@ const profilesFor = (C) => ({
 export const BARBED_WIRE_HEIGHTS = [0.55, 0.85, 1.15];
 
 /**
- * Les deux ouvrages qui tiennent une chaussée sur un versant. Pas décrits
- * par une section fixe : leur hauteur change le long du tracé (voir
- * `appendVariableWall`, `levelRow`). `cut` monte de la rive amont jusqu'au
- * terrain qui la domine ; `fill` descend de la rive aval et porte la glissière.
+ * L'ouvrage qui porte une chaussée sur un versant : le mur de soutènement du
+ * remblai, en aval. Pas décrit par une section fixe — sa hauteur change le
+ * long du tracé (voir `appendVariableWall`, `levelRow`) : il descend de la
+ * rive aval jusqu'au sol et porte la glissière.
+ *
+ * Il n'a pas d'équivalent en amont, et c'est délibéré : une chaussée taillée
+ * dans un versant n'est pas bordée d'un mur du côté haut, elle est bordée de
+ * la roche qu'on a entaillée (`rockCutFor`).
  */
 const wallSpecsFor = (C) => ({
-  cut: {
-    thickness: 0.55,
-    coping: 0.09,
-    colorFoot: C.stoneDark,
-    colorTop: C.stone,
-    /** Débord de l'arase au-dessus du terrain retenu, en mètres. */
-    crown: 0.35,
-    /** Plafond : au-delà, ce n'est plus un mur, c'est une falaise. */
-    maxHeight: 9,
-  },
   fill: {
     thickness: 0.6,
     coping: 0.08,
@@ -1901,6 +1895,28 @@ const wallSpecsFor = (C) => ({
     crown: 0,
     maxHeight: 12,
   },
+});
+
+/**
+ * La falaise du déblai : ce que la chaussée longe du côté amont, une fois le
+ * versant entaillé. Pas un ouvrage maçonné — de la roche, donc ni épaisseur ni
+ * couronnement, et un fruit léger au lieu d'un parement vertical.
+ *
+ * `batter` est ce fruit : le recul de l'arase par mètre de hauteur. À 0,16, une
+ * paroi de six mètres recule d'un mètre — un rocher taillé se tient presque
+ * droit, contrairement à un talus de terre (`embankmentFor`, 3 pour 2).
+ */
+const rockCutFor = (C) => ({
+  batter: 0.16,
+  /** Recul minimal : sous cette valeur, la paroi se lirait comme une plaque. */
+  minReach: 0.5,
+  /** Débord de l'arase au-dessus du terrain retenu, en mètres. */
+  crown: 0.3,
+  /** Plafond : au-delà, ce n'est plus la route qui a taillé le versant. */
+  maxHeight: 14,
+  colorFoot: C.rockDark,
+  colorBreak: C.rock,
+  colorTop: C.rockPale,
 });
 
 /**
@@ -1929,6 +1945,7 @@ export function furnitureSpecsFor(colors = defaultTheme.furniture.colors) {
     specs = Object.freeze({
       profiles: profilesFor(colors),
       wallSpecs: wallSpecsFor(colors),
+      rockCut: rockCutFor(colors),
       trafficLenses: trafficLensesFor(colors),
       embankmentProfile: embankmentFor(colors),
     });

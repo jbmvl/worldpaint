@@ -142,7 +142,7 @@ export const LABEL_FURNITURE = {
   lowHedge: 'haie basse',
   vineRow: 'rang de vigne',
   dryStoneWall: 'muret de pierre',
-  cutWall: 'mur de tranchée',
+  rockCut: 'falaise de déblai',
   fillWall: 'mur de soutènement',
   guardrailBeam: 'glissière',
   woodRail: 'clôture de bois',

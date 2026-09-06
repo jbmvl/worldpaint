@@ -16,7 +16,7 @@ import {
   toGeometry,
   pathFrames,
   levelRow,
-  smoothColumns,
+  flattenGrade,
 } from './ribbonGeometry.js';
 import { ROAD_TEXTURE_LENGTH, createRoadCanvas } from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
@@ -92,6 +92,46 @@ export const ROAD_RADIUS_M = 900;
 export const ROAD_REBUILD_M = 250;
 /** Décollement au-dessus de la surface, en mètres. */
 export const ROAD_LIFT_M = 0.14;
+
+/**
+ * Terrassement consenti pour aplanir le profil en long (`flattenGrade`), en
+ * mètres : ce dont la plate-forme s'autorise à s'écarter du terrain dressé
+ * section par section.
+ *
+ * En rase campagne, presque rien — la route colle au sol, et c'est ce qu'on y
+ * voit. Sur un versant, en revanche, elle ne le suit plus : le terrassier
+ * tend sa pente et l'ouvrage rattrape la différence (la falaise du déblai en
+ * amont, le mur de soutènement en aval). Sans cette bande, une route de
+ * corniche ondulerait au rythme du bruit du MNT, chaque section étant dressée
+ * pour elle-même.
+ *
+ * Le déblai est plus généreux que le remblai : entailler un versant coûte
+ * moins cher que le porter, et se voit moins.
+ */
+export const ROAD_GRADE_CUT_FLAT_M = 0.5;
+export const ROAD_GRADE_CUT_STEEP_M = 4;
+export const ROAD_GRADE_FILL_FLAT_M = 0.4;
+export const ROAD_GRADE_FILL_STEEP_M = 3;
+/** Devers entre lesquels on passe d'un régime à l'autre. */
+export const ROAD_GRADE_FLAT_SLOPE = 0.05;
+export const ROAD_GRADE_STEEP_SLOPE = 0.3;
+
+/**
+ * Terrassement consenti à un devers donné, en mètres. Fonction pure.
+ *
+ * @param {number} slope Pente en travers, en valeur absolue.
+ * @returns {{cut:number, fill:number}} enfoncement et exhaussement tolérés.
+ */
+export function gradeAllowance(slope) {
+  const span = ROAD_GRADE_STEEP_SLOPE - ROAD_GRADE_FLAT_SLOPE;
+  const t = Math.min(1, Math.max(0, ((slope || 0) - ROAD_GRADE_FLAT_SLOPE) / span));
+  const eased = t * t * (3 - 2 * t);
+  return {
+    cut: ROAD_GRADE_CUT_FLAT_M + (ROAD_GRADE_CUT_STEEP_M - ROAD_GRADE_CUT_FLAT_M) * eased,
+    fill: ROAD_GRADE_FILL_FLAT_M + (ROAD_GRADE_FILL_STEEP_M - ROAD_GRADE_FILL_FLAT_M) * eased,
+  };
+}
+
 /**
  * Hiérarchie des profils, par largeur décroissante — départage les carrefours
  * (deux centimètres d'écart par rang, le premier restant à `ROAD_LIFT_M`).
@@ -286,7 +326,8 @@ export function anchorDistances(points, anchors) {
  * Extrait les tronçons de chaussée d'un jeu de tuiles, ré-échantillonnés et
  * dressés de niveau. Contrat entre la chaussée et son mobilier : les deux ont
  * besoin exactement des mêmes tronçons. `platform` porte l'altitude de
- * plate-forme, déjà lissée. `anchor`/`startDistance` se comptent depuis le
+ * plate-forme, déjà aplanie en long (`flattenGrade`) — c'est elle, et non le
+ * terrain, que suivent la falaise du déblai et le mur de soutènement. `anchor`/`startDistance` se comptent depuis le
  * dernier nœud d'ancrage, pas le début du tronçon découpé.
  *
  * @param {Object} source Instance `VectorTileSource`.
@@ -338,7 +379,18 @@ export function collectRoadSegments(
         edges[r * 2] = wide.left;
         edges[r * 2 + 1] = wide.right;
       }
-      smoothColumns(platform, rows, 1, 2);
+      // Aplanissement du profil en long, borné par ce que l'ouvrage tient à
+      // cet endroit : le devers dit s'il y a un versant, donc une falaise et
+      // un mur, pour rattraper l'écart au terrain.
+      const maxCut = new Float32Array(rows);
+      const maxFill = new Float32Array(rows);
+      for (let r = 0; r < rows; r++) {
+        const slope = Math.abs(edges[r * 2] - edges[r * 2 + 1]) / (probe * 2);
+        const allowance = gradeAllowance(slope);
+        maxCut[r] = allowance.cut;
+        maxFill[r] = allowance.fill;
+      }
+      flattenGrade(platform, { maxCut, maxFill });
 
       out.push({
         profile: chain.profile,

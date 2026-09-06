@@ -14,11 +14,14 @@
  * `_clipOffRoad`/`_clipInfra` interrogent les deux indistinctement.
  *
  * Forte pente : la chaussée est dressée à mi-hauteur de sa section
- * (`levelRow`), donc à la fois encaissée et portée sur un versant. En amont,
- * un mur habille la tranchée entaillée (`terrainBubble.cutElevation`) ; en
- * aval, un mur de soutènement porte la glissière ; hors versant raide, un
- * simple talus suffit. Les deux murs et la glissière n'apparaissent que là
- * où le relief, lu dans le MNT, les rend nécessaires.
+ * (`levelRow`) et son profil en long est aplani dans la limite du
+ * terrassement consenti (`flattenGrade`), donc à la fois encaissée et portée
+ * sur un versant. En amont, une falaise habille la tranchée entaillée
+ * (`terrainBubble.cutElevation`) — de la roche, pas un mur : une route de
+ * corniche n'est pas bordée d'un parement du côté haut ; en aval, un mur de
+ * soutènement porte la glissière ; hors versant raide, un simple talus
+ * suffit. Falaise, mur et glissière n'apparaissent que là où le relief, lu
+ * dans le MNT, les rend nécessaires.
  *
  * Ce qui donne de la vie (bétail, poules et linge de ferme, feux aux
  * carrefours, halo des lampadaires) reste immobile : ce qui bouge (oiseaux,
@@ -31,6 +34,7 @@ import {
   createProfileBuffer,
   appendProfile,
   appendVariableWall,
+  appendRockCut,
   smoothColumns,
   pathFrames,
   toColoredGeometry,
@@ -45,7 +49,7 @@ import {
 } from './hedgeGeometry.js';
 import { ROAD_SAMPLE_M, ROAD_LIFT_M } from './roadNetwork.js';
 import { WATER_SOURCE_LAYER } from './waterLayer.js';
-import { ROAD_CUT_M } from '../terrain/roadCut.js';
+import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
 import { collectBuiltUpAreas, collectPlaceNames, nearestNamedPlace, pointInAreas, ringsOf } from './settlement.js';
 import { LabelAtlas, pushLabelQuad, labelFontPxForCellHeight, LABEL_PX_PER_M } from '../materials/labelAtlas.js';
 import {
@@ -126,6 +130,19 @@ export const BOUNDARY_MIN_LENGTH_M = 30;
 export const CEMETERY_WALL_SAMPLE_M = 2;
 /** Décollement du mobilier au-dessus du sol : il s'ancre, il ne flotte pas. */
 export const FURNITURE_SINK_M = 0.08;
+
+/**
+ * Hauteur dont le versant doit dominer la plate-forme pour qu'on ait taillé
+ * dedans, en mètres.
+ *
+ * C'est le seul déclencheur de la falaise, et il ne parle pas de devers : une
+ * route qui coupe une croupe est en déblai des deux côtés sans qu'aucune
+ * section ne soit en travers d'un versant. Le seuil est bien au-dessus du
+ * bruit du MNT, qui donne quelques décimètres partout.
+ */
+export const ROCK_CUT_MIN_RISE_M = 1;
+/** Graine du fruit de la paroi : une falaise n'est pas une plaque extrudée. */
+const ROCK_CUT_SEED = 9137;
 
 /**
  * Toute la signalisation du catalogue, dans un seul endroit.
@@ -368,7 +385,7 @@ export const LINEAR_KINDS = [
   'lowHedge',
   'vineRow',
   'dryStoneWall',
-  'cutWall',
+  'rockCut',
   'fillWall',
   'guardrailBeam',
   'woodRail',
@@ -380,10 +397,12 @@ export const LINEAR_KINDS = [
 /**
  * Matières facettées (`hedgeGeometry.facetJitter`) : leur ombrage doit rester
  * plat, sinon les arêtes voulues sont moyennées et disparaissent à l'écran.
- * Tout le reste de `LINEAR_KINDS` garde l'ombrage lissé qu'attend un ouvrage
- * (muret, glissière, remblai, câble).
+ * La falaise du déblai en est, pour la même raison : une paroi rocheuse se lit
+ * à ses cassures, un ombrage lissé en ferait une bâche tendue. Tout le reste
+ * de `LINEAR_KINDS` garde l'ombrage lissé qu'attend un ouvrage (muret,
+ * glissière, remblai, câble).
  */
-const FLAT_SHADED_LINEAR_KINDS = new Set(['hedge', 'lowHedge', 'vineRow']);
+const FLAT_SHADED_LINEAR_KINDS = new Set(['hedge', 'lowHedge', 'vineRow', 'rockCut']);
 
 /**
  * Essences plantables en alignement de route, avec leur part du tirage.
@@ -624,6 +643,11 @@ export class FurnitureLayer {
 
     const sampleElevation = (x, z) =>
       this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale;
+    // Terrain naturel, déblai exclu : la falaise du déblai rejoint le versant
+    // tel qu'il était avant l'entaille, pas la surface déjà creusée — sur
+    // laquelle elle se poserait à mi-pente du raccord.
+    const rawElevation = (x, z) =>
+      this.bubble.rawSurfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale;
 
     // Accumulateurs remis à zéro : le mobilier est intégralement refait, il ne
     // se met pas à jour par différence. Sur quelques milliers d'objets, la
@@ -633,7 +657,7 @@ export class FurnitureLayer {
     const placements = new Map();
     for (const item of POINT_ITEMS) placements.set(item, []);
 
-    const context = { source, tiles, here, sampleElevation, buffers, placements };
+    const context = { source, tiles, here, sampleElevation, rawElevation, buffers, placements };
     this.counts = { points: 0, boundaries: 0, landmarks: 0, rocks: 0, rows: 0, hedgeClumps: 0 };
     this._lampHeads = [];
     this._signals = [];
@@ -795,26 +819,26 @@ export class FurnitureLayer {
   }
 
   /**
-   * Ce que le relief impose : les deux ouvrages qui tiennent la chaussée sur un
+   * Ce que le relief impose : les ouvrages qui tiennent la chaussée sur un
    * versant, plus la glissière qui borde le vide.
    *
-   * Rien de tout cela n'est décidé par le type de route — c'est la pente en
-   * travers, lue dans le MNT, qui le déclenche.
+   * Rien de tout cela n'est décidé par le type de route — c'est le relief, lu
+   * dans le MNT, qui le déclenche.
    *
-   * ## La géométrie, et pourquoi elle est symétrique
+   * ## La géométrie, et pourquoi les deux rives ne se ressemblent pas
    *
-   * La plate-forme est dressée **à mi-hauteur** de la section (`levelRow`),
-   * c'est-à-dire là où un terrassier la met : le déblai d'un côté paie le
-   * remblai de l'autre. La chaussée est donc à la fois encaissée et portée, et
-   * chaque rive appelle son mur — l'un qui monte, l'autre qui descend :
+   * La plate-forme est dressée **à mi-hauteur** de la section (`levelRow`) et
+   * aplanie en long (`flattenGrade`), c'est-à-dire là où un terrassier la met :
+   * le déblai d'un côté paie le remblai de l'autre, et la pente se tend au lieu
+   * de suivre le sol. La chaussée est donc à la fois encaissée et portée — mais
+   * les deux rives n'appellent pas le même ouvrage :
    *
    * - **en amont**, le terrain domine la rive. Le terrain lui-même est entaillé
-   *   le long de la chaussée (`terrainBubble.cutElevation`), et le mur habille
-   *   la tranchée : il part de la plate-forme et monte jusqu'au terrain naturel.
-   *   Ce n'est pas un muret posé sur l'accotement, c'est le parement du déblai —
-   *   d'où sa hauteur variable, qui suit le versant mètre par mètre.
-   * - **en aval**, la rive surplombe le vide. Le mur y descend de la plate-forme
-   *   jusqu'au sol, et la glissière se pose dessus.
+   *   le long de la chaussée (`terrainBubble.cutElevation`), et ce qui borde la
+   *   route est la roche de cette entaille : une falaise (`_buildRockCut`), pas
+   *   un parement maçonné. On ne construit rien du côté haut, on y taille.
+   * - **en aval**, la rive surplombe le vide. Là, il y a bien un ouvrage : le
+   *   mur descend de la plate-forme jusqu'au sol, et la glissière se pose dessus.
    *
    * @returns {Set<number>} lignes déjà tenues par un mur de remblai — le talus
    *          de rase campagne ne doit pas s'y ajouter.
@@ -824,11 +848,12 @@ export class FurnitureLayer {
     const { platform, halfWidth, profile } = segment;
     const walled = new Set();
 
-    // Murs et glissière ne concernent que les chaussées aménagées : un sentier
-    // de montagne n'a ni l'un ni l'autre, il passe.
+    // Ouvrages et glissière ne concernent que les chaussées aménagées : un
+    // sentier de montagne n'a ni l'un ni l'autre, il passe.
     if (!FurnitureLayer._profileTakesGuardrail(profile)) return walled;
 
     this._buildParapets(context, segment, rowsInfo);
+    this._buildRockCut(context, segment, rowsInfo);
 
     for (const run of contiguousRuns(rowsInfo, (row) => row.slope >= STEEP_CROSS_SLOPE, 5)) {
       const side = run[Math.floor(run.length / 2)].uphill;
@@ -837,30 +862,6 @@ export class FurnitureLayer {
       const origin = run[0].distance;
       const runPath = run.map((row) => ({ x: row.x, z: row.z, distance: row.distance - origin }));
       const deck = new Float32Array(run.map((row) => platform[row.r]));
-
-      // --- Amont : le parement du déblai ------------------------------------
-      const cut = this.specs.wallSpecs.cut;
-      // Le mur se dresse au bord du **fond plat** de l'entaille, pas au ras de
-      // la chaussée : entre les deux, il y a l'accotement excavé.
-      const cutOffset = side * (halfWidth + ROAD_CUT_M + cut.thickness / 2);
-      const cutTop = new Float32Array(run.length);
-      for (let i = 0; i < run.length; i++) {
-        // Arase un peu au-dessus du terrain retenu : une arase pile au niveau
-        // du versant laisserait la terre déborder par-dessus.
-        const rise = Math.min(run[i].rise + cut.crown, cut.maxHeight);
-        cutTop[i] = deck[i] + Math.max(0, rise);
-      }
-      smoothColumns(cutTop, run.length, 1, 2);
-      appendVariableWall(buffers.cutWall, {
-        path: runPath,
-        base: deck,
-        top: cutTop,
-        offset: cutOffset,
-        thickness: cut.thickness,
-        coping: cut.coping,
-        colorFoot: cut.colorFoot,
-        colorTop: cut.colorTop,
-      });
 
       // --- Aval : le parement du remblai, et la glissière dessus ------------
       const fill = this.specs.wallSpecs.fill;
@@ -899,6 +900,93 @@ export class FurnitureLayer {
     }
 
     return walled;
+  }
+
+  /**
+   * La falaise du déblai : la roche que la route a entaillée du côté amont.
+   *
+   * ## Pourquoi ce n'est pas un mur
+   *
+   * Une route de corniche n'est pas bordée d'un parement maçonné du côté haut :
+   * on n'a rien construit là, on a coupé le versant. Ce qui la borde est donc
+   * une paroi rocheuse — presque droite (`batter`), cassée à mi-hauteur, et
+   * coiffée d'une banquette qui rejoint le terrain naturel là où l'entaille l'a
+   * rejoint. Le mur, lui, reste en aval : c'est là qu'il y a quelque chose à
+   * porter.
+   *
+   * ## Ce qui la déclenche, et à quelle hauteur
+   *
+   * Le devers ne dit rien du déblai : une route qui coupe une croupe est en
+   * tranchée des deux côtés sans qu'aucune section ne soit en travers d'un
+   * versant, et l'aplanissement du profil en long (`flattenGrade`) ne fait
+   * qu'accentuer le cas. Le déclencheur est donc la seule hauteur dont le
+   * terrain domine la plate-forme (`ROCK_CUT_MIN_RISE_M`).
+   *
+   * L'arase se lit sur le terrain **naturel**, à l'aplomb du point où le déblai
+   * a fini de se raccorder (`ROAD_CUT_BLEND_M`), et pas à la rive : plus près,
+   * la banquette passerait sous le talus qu'elle doit couvrir, et on verrait la
+   * terre du raccord repasser par-dessus la roche.
+   */
+  _buildRockCut(context, segment, rowsInfo) {
+    const { buffers, rawElevation } = context;
+    const { platform, halfWidth } = segment;
+    const spec = this.specs.rockCut;
+
+    // Un tronçon par côté, et non le côté du milieu retenu pour tout le
+    // tronçon : le versant peut changer de main au passage d'un col, et la
+    // paroi se retrouverait alors à sonder le vide en aval.
+    const uphill = (row, wanted) => row.uphill === wanted && row.rise >= ROCK_CUT_MIN_RISE_M;
+    for (const side of [1, -1]) {
+      for (const run of contiguousRuns(rowsInfo, (row) => uphill(row, side), 5)) {
+        const origin = run[0].distance;
+        const runPath = run.map((row) => ({ x: row.x, z: row.z, distance: row.distance - origin }));
+        const frames = pathFrames(runPath);
+        const deck = new Float32Array(run.map((row) => platform[row.r]));
+        const crest = new Float32Array(run.length);
+        const reach = new Float32Array(run.length);
+
+        // Le pied se dresse au bord du **fond plat** de l'entaille, pas au ras de
+        // la chaussée : entre les deux, il y a l'accotement excavé.
+        const offset = side * (halfWidth + ROAD_CUT_M);
+        const capReach = ROAD_CUT_BLEND_M;
+
+        for (let i = 0; i < run.length; i++) {
+          const d = offset + side * capReach;
+          crest[i] = rawElevation(
+            runPath[i].x + frames[i * 4 + 2] * d,
+            runPath[i].z + frames[i * 4 + 3] * d
+          );
+        }
+        smoothColumns(crest, run.length, 1, 2);
+
+        for (let i = 0; i < run.length; i++) {
+          // Arase un peu au-dessus du terrain retenu : la maille du terrain coupe
+          // le raccord en droites qui peuvent le dépasser, et une arase pile au
+          // niveau du versant laisserait la terre déborder par-dessus.
+          const height = Math.min(Math.max(crest[i] + spec.crown - deck[i], 0), spec.maxHeight);
+          crest[i] = deck[i] + height;
+          // Fruit tiré au lieu : sans lui, la paroi est un tube extrudé.
+          const varied = 0.7 + randomAt(runPath[i].x, runPath[i].z, ROCK_CUT_SEED) * 0.6;
+          reach[i] = Math.min(
+            Math.max(height * spec.batter * varied, spec.minReach),
+            capReach * 0.7
+          );
+        }
+
+        appendRockCut(buffers.rockCut, {
+          path: runPath,
+          base: deck,
+          crest,
+          offset,
+          side,
+          reach,
+          capReach,
+          colorFoot: spec.colorFoot,
+          colorBreak: spec.colorBreak,
+          colorTop: spec.colorTop,
+        });
+      }
+    }
   }
 
   /**

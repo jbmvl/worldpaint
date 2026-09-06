@@ -54,6 +54,8 @@ import {
   createProfileBuffer,
   appendProfile,
   appendVariableWall,
+  appendRockCut,
+  flattenGrade,
 } from '../src/layers/ribbonGeometry.js';
 import {
   spacedAlongPath,
@@ -102,6 +104,10 @@ import {
   collectRoadLines,
   ROAD_PROFILE_ORDER,
   ROAD_LIFT_M,
+  gradeAllowance,
+  ROAD_GRADE_CUT_FLAT_M,
+  ROAD_GRADE_CUT_STEEP_M,
+  ROAD_GRADE_FILL_STEEP_M,
 } from '../src/layers/roadNetwork.js';
 import {
   mergeRoadLines,
@@ -252,6 +258,7 @@ import {
   GREENHOUSE_SPACING_M,
   isSettlementEdgeRun,
   SIGN_PLACE_NAME_MIN_GAP_M,
+  ROCK_CUT_MIN_RISE_M,
 } from '../src/layers/furnitureLayer.js';
 import {
   HEDGE_STYLES,
@@ -1575,6 +1582,165 @@ test('un mur sans hauteur nulle part n’est pas engendré', () => {
   assert.equal(buffer.positions.length, 0);
 });
 
+// --- Profil en long : l’aplanissement du terrassier -------------------------
+
+/** Profil ondulé : une pente régulière de 4 %, plus une vague de 40 m d’un mètre. */
+function wavyProfile(rows, spacing = 5) {
+  return Float32Array.from({ length: rows }, (_, r) =>
+    100 + r * spacing * 0.04 + Math.sin((2 * Math.PI * r * spacing) / 40)
+  );
+}
+
+test('l’aplanissement efface les vagues et garde la pente', () => {
+  const rows = 121;
+  const raw = wavyProfile(rows);
+  const graded = flattenGrade(Float32Array.from(raw), { maxCut: 3, maxFill: 3 });
+
+  // La vague, mesurée loin des extrémités : ce qui en reste doit être invisible
+  // à l’échelle d’une chaussée, là où elle valait un mètre de creux.
+  let ripple = 0;
+  for (let r = 30; r < rows - 30; r++) {
+    const trend = (graded[r - 1] + graded[r + 1]) * 0.5;
+    ripple = Math.max(ripple, Math.abs(graded[r] - trend));
+  }
+  assert.ok(ripple < 0.02, `vague résiduelle : ${ripple.toFixed(3)} m`);
+
+  // La pente d’ensemble, elle, ne se rabote pas : quatre pour cent d’un bout à
+  // l’autre, sinon la route ne monterait plus là où le terrain monte.
+  const climb = graded[rows - 1] - graded[0];
+  close(climb, raw[rows - 1] - raw[0], 0.35, 'dénivelé conservé');
+});
+
+test('l’aplanissement ne sort jamais de la bande de terrassement', () => {
+  const rows = 121;
+  const raw = wavyProfile(rows);
+  const graded = flattenGrade(Float32Array.from(raw), { maxCut: 0.4, maxFill: 0.25 });
+
+  for (let r = 0; r < rows; r++) {
+    const gap = graded[r] - raw[r];
+    assert.ok(gap <= 0.25 + 1e-4, `ligne ${r} : remblai de ${gap.toFixed(3)} m`);
+    assert.ok(gap >= -0.4 - 1e-4, `ligne ${r} : déblai de ${(-gap).toFixed(3)} m`);
+  }
+});
+
+test('sans terrassement consenti, le profil colle au terrain', () => {
+  // C’est le régime de la rase campagne : rien à tenir, donc rien à aplanir.
+  const raw = wavyProfile(41);
+  const graded = flattenGrade(Float32Array.from(raw), { maxCut: 0, maxFill: 0 });
+  for (let r = 0; r < raw.length; r++) close(graded[r], raw[r], 1e-6, `ligne ${r}`);
+});
+
+test('le terrassement consenti suit le devers', () => {
+  const flat = gradeAllowance(0);
+  const steep = gradeAllowance(0.6);
+
+  close(flat.cut, ROAD_GRADE_CUT_FLAT_M, 1e-6, 'en plaine, la route colle au sol');
+  close(steep.cut, ROAD_GRADE_CUT_STEEP_M, 1e-6, 'sur un versant, elle s’en détache');
+  close(steep.fill, ROAD_GRADE_FILL_STEEP_M, 1e-6, 'et le mur porte la différence');
+  // Le remblai reste le parent pauvre : porter coûte plus cher qu’entailler.
+  assert.ok(steep.fill < steep.cut, 'on entaille plus volontiers qu’on ne porte');
+  // Monotone : pas de marche entre les deux régimes.
+  let previous = -Infinity;
+  for (let slope = 0; slope <= 0.6; slope += 0.02) {
+    const { cut } = gradeAllowance(slope);
+    assert.ok(cut >= previous - 1e-9, `devers ${slope.toFixed(2)}`);
+    previous = cut;
+  }
+});
+
+// --- Falaise de déblai ------------------------------------------------------
+
+test('la falaise monte jusqu’au terrain et le couvre jusqu’au raccord', () => {
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 30, z: 0 }], 10);
+  const rows = path.length;
+  const base = new Float32Array(rows).fill(100);
+  const crest = new Float32Array(rows).fill(106);
+  const reach = new Float32Array(rows).fill(1);
+  const buffer = createProfileBuffer();
+
+  assert.ok(
+    appendRockCut(buffer, {
+      path,
+      base,
+      crest,
+      offset: 4,
+      side: 1,
+      reach,
+      capReach: 5,
+      colorFoot: [0, 0, 0],
+      colorBreak: [0.5, 0.5, 0.5],
+      colorTop: [1, 1, 1],
+    })
+  );
+
+  const cols = 5;
+  assert.equal(buffer.positions.length / 3, rows * cols, 'cinq sommets par ligne');
+  assert.equal(buffer.colors.length, buffer.positions.length, 'une couleur par sommet');
+
+  // La route va vers +x, la gauche de la marche est en -z : un décalage positif
+  // s’éloigne donc vers -z, et la banquette est ce qui va le plus loin.
+  const z = (r, c) => buffer.positions[(r * cols + c) * 3 + 2];
+  const y = (r, c) => buffer.positions[(r * cols + c) * 3 + 1];
+
+  for (let r = 0; r < rows; r++) {
+    close(z(r, 0), -4, 1e-4, `pied de la ligne ${r}`);
+    close(y(r, 0), 100, 1e-4, `le pied est sur la plate-forme, ligne ${r}`);
+    close(z(r, 2), -5, 1e-4, `arase reculée du fruit, ligne ${r}`);
+    close(y(r, 2), 106, 1e-4, `arase au terrain naturel, ligne ${r}`);
+    // La banquette part de l’arase et rejoint le versant là où le déblai l’a
+    // rejoint : sans elle, la paroi serait une lame devant le talus de terre.
+    close(z(r, 3), -9, 1e-4, `banquette jusqu’au raccord, ligne ${r}`);
+    close(y(r, 3), 106, 1e-4, `banquette de niveau, ligne ${r}`);
+    // La cassure est entre les deux, plus près du pied que de l’arase.
+    assert.ok(y(r, 1) > 100 && y(r, 1) < 106, `cassure à mi-hauteur, ligne ${r}`);
+  }
+});
+
+test('la falaise se dresse du côté du versant, pas de l’autre', () => {
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 30, z: 0 }], 10);
+  const rows = path.length;
+  const common = {
+    path,
+    base: new Float32Array(rows).fill(100),
+    crest: new Float32Array(rows).fill(104),
+    reach: new Float32Array(rows).fill(1),
+    capReach: 5,
+    colorFoot: [0, 0, 0],
+    colorBreak: [0.5, 0.5, 0.5],
+    colorTop: [1, 1, 1],
+  };
+
+  const left = createProfileBuffer();
+  appendRockCut(left, { ...common, offset: 4, side: 1 });
+  const right = createProfileBuffer();
+  appendRockCut(right, { ...common, offset: -4, side: -1 });
+
+  for (let i = 0; i < left.positions.length; i += 3) {
+    assert.ok(left.positions[i + 2] <= -4 + 1e-6, 'côté amont à gauche de la marche');
+    assert.ok(right.positions[i + 2] >= 4 - 1e-6, 'et rien ne déborde de l’autre côté');
+  }
+});
+
+test('un versant qui ne domine pas la route ne donne pas de falaise', () => {
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 20, z: 0 }], 10);
+  const flat = new Float32Array(path.length).fill(50);
+  const buffer = createProfileBuffer();
+
+  assert.equal(
+    appendRockCut(buffer, {
+      path,
+      base: flat,
+      crest: flat,
+      reach: new Float32Array(path.length).fill(1),
+      colorFoot: [0, 0, 0],
+      colorBreak: [0.5, 0.5, 0.5],
+      colorTop: [1, 1, 1],
+    }),
+    false
+  );
+  assert.equal(buffer.positions.length, 0);
+});
+
 test('le suivi du terrain reste disponible quand on le demande explicitement', () => {
   const path = resamplePath([{ x: 0, z: 0 }, { x: 40, z: 0 }], 5);
   const buffer = createRibbonBuffer();
@@ -1732,6 +1898,87 @@ function roadsideHarness({ profile = 'minor', here = { x: 200, z: 0 } } = {}) {
   const segment = { path, platform, edges, probeSpan: 4, halfWidth: 2.5, profile, startDistance: 0, anchor: path[0] };
   return { layer, context, segment, rowsInfo, buffers, placements };
 }
+
+/**
+ * Une chaussée taillée dans un versant régulier, réduite à ce que la falaise
+ * de déblai lit : la plate-forme, le terrain naturel et la hauteur dont il la
+ * domine. Le versant monte vers -z, donc en amont à gauche de la marche.
+ */
+function rockCutHarness({ rise = 4, slope = 0.35 } = {}) {
+  const layer = Object.create(FurnitureLayer.prototype);
+  layer.specs = furnitureSpecsFor(defaultTheme.furniture.colors);
+
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 200, z: 0 }], 5);
+  const rows = path.length;
+  const deck = 100;
+  const platform = new Float32Array(rows).fill(deck);
+  // Terrain naturel : le versant monte d’autant qu’on s’écarte vers -z.
+  const rawElevation = (x, z) => deck - z * slope;
+
+  const rowsInfo = path.map((p, r) => ({
+    r, x: p.x, z: p.z, distance: p.distance,
+    slope, uphill: 1, curvature: 0, turn: 0, drop: 0, rise,
+  }));
+
+  const buffers = {};
+  for (const kind of LINEAR_KINDS) buffers[kind] = createProfileBuffer();
+  const context = { buffers, sampleElevation: () => deck, rawElevation, here: { x: 100, z: 0 } };
+  const segment = { path, platform, halfWidth: 2.5, profile: 'minor' };
+  return { layer, context, segment, rowsInfo, buffers, deck, rawElevation };
+}
+
+test('un versant qui domine la chaussée est bordé de roche, pas d’un mur', () => {
+  const { layer, context, segment, rowsInfo, buffers, deck } = rockCutHarness();
+  layer._buildRockCut(context, segment, rowsInfo);
+
+  assert.ok(buffers.rockCut.indices.length > 0, 'la falaise est bien engendrée');
+  assert.equal(buffers.fillWall.indices.length, 0, 'et rien n’est maçonné au passage');
+
+  const positions = buffers.rockCut.positions;
+  let lowest = Infinity;
+  let highest = -Infinity;
+  let farthest = 0;
+  for (let i = 0; i < positions.length; i += 3) {
+    // Le versant monte vers -z : toute la falaise est de ce côté, au-delà de
+    // l’accotement excavé.
+    assert.ok(positions[i + 2] <= -(2.5 + ROAD_CUT_M) + 1e-6, 'du côté amont');
+    lowest = Math.min(lowest, positions[i + 1]);
+    highest = Math.max(highest, positions[i + 1]);
+    farthest = Math.max(farthest, -positions[i + 2]);
+  }
+
+  close(lowest, deck, 1e-4, 'le pied est sur la plate-forme');
+  // L’arase se lit sur le terrain naturel à l’aplomb du raccord du déblai,
+  // rehaussée du débord : plus bas, la terre du raccord passerait par-dessus.
+  const atBlend = (2.5 + ROAD_CUT_M + ROAD_CUT_BLEND_M) * 0.35;
+  close(highest, deck + atBlend + FURNITURE_SPECS.rockCut.crown, 1e-3, 'arase au terrain naturel');
+  close(farthest, 2.5 + ROAD_CUT_M + ROAD_CUT_BLEND_M, 1e-4, 'la banquette couvre le raccord');
+});
+
+test('un terrain qui ne domine pas la chaussée ne donne pas de falaise', () => {
+  // Le seuil ne parle pas de devers mais de hauteur : sous cette hauteur, ce
+  // qui borde la route est un accotement, pas une paroi.
+  const { layer, context, segment, rowsInfo, buffers } = rockCutHarness({
+    rise: ROCK_CUT_MIN_RISE_M - 0.1,
+    slope: 0.05,
+  });
+  layer._buildRockCut(context, segment, rowsInfo);
+  assert.equal(buffers.rockCut.indices.length, 0);
+});
+
+test('la falaise n’est pas un tube extrudé : son fruit varie le long du tracé', () => {
+  const { layer, context, segment, rowsInfo, buffers } = rockCutHarness();
+  layer._buildRockCut(context, segment, rowsInfo);
+
+  // Troisième sommet de chaque section : l’arase, dont le recul est tiré au lieu.
+  const cols = 5;
+  const rows = buffers.rockCut.positions.length / 3 / cols;
+  const crestOffsets = new Set();
+  for (let r = 0; r < rows; r++) {
+    crestOffsets.add(buffers.rockCut.positions[(r * cols + 2) * 3 + 2].toFixed(3));
+  }
+  assert.ok(crestOffsets.size > rows / 3, `${crestOffsets.size} reculs distincts sur ${rows} lignes`);
+});
 
 test('le mobilier de bord de route se pose sans variable libre', () => {
   // Le mobilier entier est bâti dans un seul `try` : une variable libre dans la

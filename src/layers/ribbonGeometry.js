@@ -11,7 +11,13 @@
  *
  * `appendProfile` généralise le ruban à une section quelconque le long de la
  * même polyligne (haie, muret, glissière, remblai, caténaire). `appendVariableWall`
- * couvre le seul cas restant : une hauteur qui change le long du tracé.
+ * couvre le seul cas restant : une hauteur qui change le long du tracé, et
+ * `appendRockCut` la falaise du déblai, qui n'est pas un mur et n'a donc ni
+ * appareillage ni couronnement.
+ *
+ * Le profil en long, lui, ne se lisse pas comme le reste : `flattenGrade`
+ * l'aplanit dans la limite du terrassement consenti, parce qu'une chaussée
+ * dressée section par section suit le bruit du MNT au lieu de tendre une pente.
  */
 
 /**
@@ -105,6 +111,72 @@ export function monotoneDownstream(heights) {
 }
 
 /**
+ * Aplanit le profil en long d'une plate-forme, dans la limite du terrassement
+ * consenti.
+ *
+ * Dressée section par section (`levelRow`), une chaussée épouse le bruit du
+ * MNT : le long d'une côte, d'une rive de lac ou d'une gorge, les deux rives
+ * sondées sautent d'un échantillon à l'autre et la plate-forme ondule. Un
+ * terrassier fait l'inverse — il tend une pente et laisse l'ouvrage rattraper
+ * la différence : l'entaille en amont, le mur en aval.
+ *
+ * Diffusion répétée (chaque ligne tirée vers la moyenne de ses voisines),
+ * chaque passe ramenée dans la bande autorisée autour du profil d'origine.
+ * C'est la bande qui décide de tout : nulle, la route colle au sol comme
+ * avant ; large, elle s'en détache et l'ouvrage suit. La diffusion efface les
+ * ondulations courtes sans toucher à la pente d'ensemble — mesuré à `strength`
+ * 0,5 et quarante passes, sur un pas de 5 m : il reste 0 % d'une vague de
+ * 40 m, 21 % d'une vague de 80 m, 94 % d'une pente de 400 m et 98 % d'une
+ * pente de 800 m.
+ *
+ * Les deux extrémités ne bougent pas d'un pouce. Un tronçon finit soit à un
+ * carrefour — où `stitchPlatforms` va le recoudre sur l'altitude de la voie
+ * qu'il rejoint —, soit au bord de la portée, dans le brouillard, contre un
+ * autre découpage du même tracé. Dans les deux cas il doit repartir de
+ * l'altitude que le terrain lui donne, et un bord libre les ferait dériver
+ * tous les deux vers l'horizontale.
+ *
+ * L'influence de ce bord s'éteint vite, mais pas instantanément : mesurée sur
+ * un profil bruité redécoupé ailleurs, elle vaut 0,53 m à dix mètres du bord,
+ * 0,11 m à trente, 0,01 m à cinquante et rien au-delà. Un redécoupage — qui
+ * n'arrive qu'à la limite de la portée du réseau, à neuf cents mètres — ne
+ * peut donc déplacer que cette frange, déjà noyée dans le brouillard.
+ *
+ * @param {Float32Array|number[]} heights Altitudes, une par ligne. Modifiées sur place.
+ * @param {Object} options
+ * @param {number|Float32Array|number[]} options.maxCut  Enfoncement toléré sous
+ *        le profil d'origine, en mètres — scalaire ou une valeur par ligne.
+ * @param {number|Float32Array|number[]} options.maxFill Exhaussement toléré au-dessus.
+ * @param {number} [options.iterations]
+ * @param {number} [options.strength] Part du chemin parcouru vers la moyenne, par passe.
+ * @returns {Float32Array|number[]} `heights`, aplani.
+ */
+export function flattenGrade(heights, { maxCut = 0, maxFill = 0, iterations = 40, strength = 0.5 } = {}) {
+  const rows = heights?.length ?? 0;
+  if (rows < 3 || iterations <= 0) return heights;
+
+  const raw = Float32Array.from(heights);
+  const next = new Float32Array(rows);
+  const bound = (v, r) => (typeof v === 'number' ? v : v?.[r] ?? 0);
+
+  for (let k = 0; k < iterations; k++) {
+    // Passe de Jacobi (toutes les lignes lues dans le même état) : en
+    // Gauss-Seidel, le profil dériverait dans le sens du parcours.
+    next[0] = heights[0];
+    next[rows - 1] = heights[rows - 1];
+    for (let r = 1; r < rows - 1; r++) {
+      const eased = heights[r] + strength * ((heights[r - 1] + heights[r + 1]) * 0.5 - heights[r]);
+      const floor = raw[r] - bound(maxCut, r);
+      const ceiling = raw[r] + bound(maxFill, r);
+      next[r] = Math.min(ceiling, Math.max(floor, eased));
+    }
+    for (let r = 0; r < rows; r++) heights[r] = next[r];
+  }
+
+  return heights;
+}
+
+/**
  * Repères de balayage le long d'une polyligne : tangente unitaire et
  * perpendiculaire à gauche de la marche, dans le plan horizontal. Tangente
  * par différence centrée (une différence avant ferait vibrer la largeur du
@@ -139,8 +211,8 @@ export function pathFrames(path) {
  * Altitude de la plate-forme d'une chaussée sur une section en travers.
  *
  * Dressée à mi-hauteur de la section (`deck`) : un terrassier équilibre
- * déblai et remblai, donc la route est en partie encaissée en amont (mur qui
- * monte jusqu'au terrain, `furnitureLayer`) et en partie portée en aval (mur
+ * déblai et remblai, donc la route est en partie encaissée en amont (falaise
+ * taillée jusqu'au terrain, `furnitureLayer`) et en partie portée en aval (mur
  * qui descend, glissière dessus). Retenir le point haut éviterait le déblai
  * mais mettrait toute la chaussée en surplomb continu — pas fidèle à une
  * route de montagne mi-taillée mi-portée. Le terrain amont qui déborde est
@@ -435,6 +507,113 @@ export function appendVariableWall(
 
     for (let c = 0; c < cols; c++) {
       buffer.positions.push(ax + px * across[c], ups[c], az + pz * across[c]);
+      buffer.colors.push(colors[c][0], colors[c][1], colors[c][2]);
+    }
+  }
+
+  for (let r = 0; r < rows - 1; r++) {
+    for (let c = 0; c < cols; c++) {
+      const c1 = (c + 1) % cols;
+      const a = start + r * cols + c;
+      const b = start + r * cols + c1;
+      const d = start + (r + 1) * cols + c;
+      const e = start + (r + 1) * cols + c1;
+      buffer.indices.push(a, d, b, b, d, e);
+    }
+  }
+
+  const lastRow = start + (rows - 1) * cols;
+  for (let c = 1; c < cols - 1; c++) {
+    buffer.indices.push(start, start + c + 1, start + c);
+    buffer.indices.push(lastRow, lastRow + c, lastRow + c + 1);
+  }
+
+  return true;
+}
+
+/**
+ * Balaie la falaise d'un déblai : la paroi qui tient le versant au-dessus
+ * d'une chaussée taillée dedans.
+ *
+ * Ce n'est pas un mur, et la différence est toute la raison d'être de cette
+ * fonction : pas d'appareillage, pas de couronnement débordant, pas de
+ * parement d'épaisseur constante. Une paroi presque verticale, cassée à
+ * mi-hauteur, coiffée d'une banquette horizontale qui rejoint le versant là
+ * où l'entaille du terrain l'a rejoint (`roadCut.ROAD_CUT_BLEND_M`).
+ *
+ * Cette banquette n'est pas décorative. Le terrain, lui, ne sait pas se tenir
+ * vertical : la maille descend à quatre mètres et l'entaille remonte au
+ * naturel sur cinq mètres de raccord. Sans la banquette, la paroi resterait
+ * une lame plantée devant ce talus de terre, qu'on verrait passer par-dessus
+ * dès qu'on prend un peu de hauteur.
+ *
+ * Section fermée (la face, la banquette, le dos enterré, la semelle) : ce qui
+ * est enfoui ne se voit pas, mais un anneau ne laisse jamais voir l'intérieur
+ * d'une paroi coupée net.
+ *
+ * @param {Object} buffer  Résultat de `createProfileBuffer()`.
+ * @param {Object} options
+ * @param {Array<{x:number,z:number}>} options.path
+ * @param {Float32Array|number[]} options.base  Altitude du pied, par ligne.
+ * @param {Float32Array|number[]} options.crest Altitude de l'arase, par ligne.
+ * @param {number} [options.offset]   Décalage latéral du pied, signé.
+ * @param {number} [options.side]     Côté du versant : `+1` à gauche de la marche.
+ * @param {Float32Array|number[]} options.reach Fruit de la paroi, par ligne :
+ *        recul horizontal du pied à l'arase, en mètres.
+ * @param {number} [options.capReach] Recul de l'arrière de la banquette, en mètres.
+ * @param {number[]} options.colorFoot  Couleur du pied, RVB linéaire.
+ * @param {number[]} options.colorBreak Couleur de la cassure, à mi-hauteur.
+ * @param {number[]} options.colorTop   Couleur de l'arase.
+ * @param {number} [options.minHeight]  En deçà, rien n'est engendré.
+ * @returns {boolean} vrai si de la géométrie a été produite.
+ */
+export function appendRockCut(
+  buffer,
+  {
+    path,
+    base,
+    crest,
+    offset = 0,
+    side = 1,
+    reach,
+    capReach = 0,
+    colorFoot,
+    colorBreak,
+    colorTop,
+    minHeight = 0.3,
+  }
+) {
+  const rows = path?.length ?? 0;
+  if (rows < 2 || !base || !crest || !reach) return false;
+
+  let tallest = 0;
+  for (let r = 0; r < rows; r++) tallest = Math.max(tallest, crest[r] - base[r]);
+  if (tallest < minHeight) return false;
+
+  const frames = pathFrames(path);
+  const start = buffer.positions.length / 3;
+  const colors = [colorFoot, colorBreak, colorTop, colorTop, colorFoot];
+  const cols = colors.length;
+
+  for (let r = 0; r < rows; r++) {
+    const px = frames[r * 4 + 2];
+    const pz = frames[r * 4 + 3];
+    const foot = base[r];
+    // Hauteur plancher : une ligne dégénérée au milieu du balayage replierait
+    // la banquette sur la semelle.
+    const top = Math.max(crest[r], foot + minHeight);
+    const height = top - foot;
+    const run = Math.max(reach[r], 0.1);
+    // La banquette ne peut pas être en deçà de l'arase qu'elle prolonge.
+    const back = Math.max(capReach, run);
+    const across = [0, run * 0.45, run, back, back];
+    // Cassure basse (0,58) : une falaise taillée s'évase du pied vers la
+    // crête, elle ne se plie pas au milieu.
+    const ups = [foot, foot + height * 0.58, top, top, foot];
+
+    for (let c = 0; c < cols; c++) {
+      const d = offset + side * across[c];
+      buffer.positions.push(path[r].x + px * d, ups[c], path[r].z + pz * d);
       buffer.colors.push(colors[c][0], colors[c][1], colors[c][2]);
     }
   }
