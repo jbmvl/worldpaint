@@ -371,6 +371,51 @@ export const ROAD_SURFACES = {
 /** Terre claire de l'accotement. */
 export const ROAD_SHOULDER_COLOR = '#8c8168';
 
+// --- Les ouvrages d'art ---------------------------------------------------------
+/**
+ * Les familles d'ouvrage : de quoi sont faits les ponts et les têtes de tunnel
+ * d'un pays. Même principe que `TOWN_PALETTES` — le bâti d'une région est
+ * régulier, et un pont l'est plus encore qu'une maison : les ouvrages d'une
+ * vallée sortent du même bureau d'études et de la même carrière. La famille se
+ * tire donc sur la même maille que la palette du bourg (`worksStyleAt`), pas
+ * par ouvrage.
+ *
+ * Trois registres, qui se lisent de loin à leur silhouette plus qu'à leur
+ * couleur : la maçonnerie porte épais sur des piles trapues, le béton porte
+ * mince sur des piles-voiles, l'acier porte mince sur des fûts fins.
+ *
+ * Cotes en mètres. `deck.overhang` est le débord de la corniche au-delà de la
+ * rive de la chaussée ; `pier.span` la part de la largeur du tablier que
+ * couvre la pile (1 = toute la largeur) ; `parapet.kind` ne change que la
+ * silhouette (`wall` plein, `rail` mince et haut).
+ */
+export const WORKS_STYLES = [
+  {
+    name: 'maçonnerie',
+    deck: { thickness: 1.3, overhang: 0.55, edgeDepth: 0.5, color: '#8f8879', edge: '#b3aa97' },
+    pier: { spacing: 26, thickness: 2.2, span: 0.55, colorFoot: '#7d766a', colorTop: '#9c9484' },
+    abutment: { thickness: 2.6, colorFoot: '#7d766a', colorTop: '#9c9484' },
+    parapet: { kind: 'wall', height: 0.95, thickness: 0.42, coping: 0.07, color: '#a49b89', colorTop: '#c0b6a1' },
+    portal: { face: '#8b8477', arch: '#2c2a27', crown: 1.6, jamb: 2.4 },
+  },
+  {
+    name: 'béton',
+    deck: { thickness: 0.95, overhang: 0.8, edgeDepth: 0.32, color: '#8d8d8a', edge: '#b8b7b2' },
+    pier: { spacing: 34, thickness: 1.5, span: 0.42, colorFoot: '#8a8a87', colorTop: '#a5a5a1' },
+    abutment: { thickness: 2, colorFoot: '#8a8a87', colorTop: '#a5a5a1' },
+    parapet: { kind: 'wall', height: 0.82, thickness: 0.3, coping: 0.05, color: '#adaca7', colorTop: '#c6c5bf' },
+    portal: { face: '#9a9a96', arch: '#2a2b2d', crown: 1.4, jamb: 2 },
+  },
+  {
+    name: 'acier',
+    deck: { thickness: 0.7, overhang: 0.6, edgeDepth: 0.55, color: '#5c625f', edge: '#7d837f' },
+    pier: { spacing: 30, thickness: 1.1, span: 0.3, colorFoot: '#6d6f6d', colorTop: '#8a8c89' },
+    abutment: { thickness: 1.8, colorFoot: '#82807a', colorTop: '#9d9b94' },
+    parapet: { kind: 'rail', height: 1.15, thickness: 0.11, coping: 0.05, color: '#7f8683', colorTop: '#9aa19d' },
+    portal: { face: '#8e8c86', arch: '#26282a', crown: 1.3, jamb: 2.1 },
+  },
+];
+
 // --- La voirie -----------------------------------------------------------------
 /**
  * La section d'une rue, côté trottoir : caniveau, bordure, trottoir
@@ -615,6 +660,7 @@ export const defaultTheme = Object.freeze({
     emojiDefault: SHOPFRONT_EMOJI_DEFAULT,
   },
   roads: { profiles: ROAD_PROFILES, surfaces: ROAD_SURFACES, shoulderColor: ROAD_SHOULDER_COLOR },
+  works: WORKS_STYLES,
   streets: STREET_LOOK,
   water: { waterways: WATERWAY_CLASSES, riparianBufferM: RIPARIAN_BUFFER_M },
   furniture: { colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES },

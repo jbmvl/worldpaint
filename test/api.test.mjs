@@ -217,6 +217,7 @@ import {
   FOREST_TYPES,
   CROP_LOOK,
   ROAD_PROFILES,
+  WORKS_STYLES,
   FURNITURE_COLORS,
 } from '../src/themes/default.js';
 
@@ -226,6 +227,7 @@ test('la vue groupée du thème ne recopie rien', () => {
   assert.equal(defaultTheme.forests, FOREST_TYPES);
   assert.equal(defaultTheme.crops, CROP_LOOK);
   assert.equal(defaultTheme.roads.profiles, ROAD_PROFILES);
+  assert.equal(defaultTheme.works, WORKS_STYLES);
   assert.equal(defaultTheme.furniture.colors, FURNITURE_COLORS);
 });
 
@@ -233,6 +235,20 @@ test('le thème ne porte ni plafond ni portée', () => {
   const flat = JSON.stringify(defaultTheme);
   for (const forbidden of ['MAX_COUNT', 'RADIUS_M', 'REBUILD_M', 'limits', 'maxCount']) {
     assert.ok(!flat.includes(forbidden), `budget dans le thème : ${forbidden}`);
+  }
+});
+
+test('chaque famille d’ouvrage sait bâtir un pont entier et une tête de tunnel', () => {
+  // Un thème incomplet ne se voit pas au premier coup d'œil : il se voit à un
+  // tablier sans corniche ou à une pile sans couleur, cent mètres plus loin.
+  for (const style of WORKS_STYLES) {
+    for (const key of ['deck', 'pier', 'abutment', 'parapet', 'portal']) {
+      assert.ok(style[key], `${style.name} : tranche ${key}`);
+    }
+    assert.ok(style.deck.thickness > 0 && style.deck.overhang > 0, style.name);
+    assert.ok(style.pier.spacing > 0 && style.pier.span > 0 && style.pier.span <= 1, style.name);
+    assert.ok(style.parapet.height > 0.7, `${style.name} : un parapet protège vraiment`);
+    assert.ok(['wall', 'rail'].includes(style.parapet.kind), style.name);
   }
 });
 

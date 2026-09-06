@@ -19,7 +19,16 @@
  * Le mobilier espacé (bornes, lampadaires) se compte depuis le dernier nœud
  * d'ancrage rencontré (carrefour, cul-de-sac, changement de classe), pas
  * depuis le début de la chaîne : ce bout-là bouge avec le jeu de tuiles chargées.
+ *
+ * Les ouvrages d'art (`roadWorks.js`) voyagent ici comme un troisième tableau
+ * parallèle aux sommets, à côté des points et des ancres. Ils ne sont pas dans
+ * la clé d'arête, et c'est délibéré : une route reste **une seule chaîne** à
+ * travers son pont, donc le mobilier ne recommence pas sa numérotation à
+ * chaque culée. Un sommet porte le maximum des arêtes qui s'y rejoignent —
+ * convention lue par `resampleWorks`, qui reprend le minimum par intervalle.
  */
+
+import { WORK_NONE } from './roadWorks.js';
 
 /** Distance en deçà de laquelle deux sommets sont le même nœud, en mètres. */
 export const NODE_WELD_M = 1.2;
@@ -180,20 +189,34 @@ function adjacencyKey(node, rank) {
   return node * 16 + rank;
 }
 
-/** Ajoute une arête au graphe, en écartant les doublons entre tuiles. */
-function addEdge(state, a, b, profile, halfWidth) {
-  if (a === b) return;
-  const rank = profileRank(state, profile);
+/** Clé d'une arête entre deux nœuds, pour un profil donné. */
+function edgeKey(a, b, rank) {
   const low = a < b ? a : b;
   const high = a < b ? b : a;
   // Un nœud tient sur 21 bits pour un million de sommets, donc la clé reste un
   // entier exact bien en deçà de 2^53.
-  const key = (low * 2097152 + high) * 16 + rank;
-  if (state.seen.has(key)) return;
-  state.seen.add(key);
+  return (low * 2097152 + high) * 16 + rank;
+}
+
+/**
+ * Ajoute une arête au graphe, en écartant les doublons entre tuiles. Le
+ * doublon garde l'ouvrage le plus fort : la même arête livrée deux fois par
+ * deux tuiles ne doit pas perdre son pont selon l'ordre de lecture.
+ */
+function addEdge(state, a, b, profile, halfWidth, works = WORK_NONE) {
+  if (a === b) return;
+  const rank = profileRank(state, profile);
+  const key = edgeKey(a, b, rank);
+  const seen = state.seen.get(key);
+  if (seen !== undefined) {
+    const edge = state.edges[seen];
+    if (works > edge.works) edge.works = works;
+    return;
+  }
 
   const index = state.edges.length;
-  state.edges.push({ a, b, profile, rank, halfWidth });
+  state.seen.set(key, index);
+  state.edges.push({ a, b, profile, rank, halfWidth, works });
   for (const node of [a, b]) {
     const listKey = adjacencyKey(node, rank);
     const list = state.adjacency.get(listKey);
@@ -286,10 +309,11 @@ function joinLooseEnds(chains, { join, offset, collinearCos }) {
  * arrière. Sans cette coupe, la bande de recouvrement des tuiles produirait un
  * crochet de quelques mètres au raccord — un repli visible sur le ruban.
  */
-function appendChain(out, anchorsOut, points, anchors) {
+function appendChain(out, anchorsOut, worksOut, points, anchors, works) {
   if (out.length === 0) {
     out.push(...points);
     anchorsOut.push(...anchors);
+    worksOut.push(...works);
     return;
   }
 
@@ -308,6 +332,7 @@ function appendChain(out, anchorsOut, points, anchors) {
   for (let i = start; i < points.length; i++) {
     out.push(points[i]);
     anchorsOut.push(anchors[i]);
+    worksOut.push(works[i]);
   }
 }
 
@@ -319,6 +344,7 @@ function assembleChains(chains, partner) {
   const walk = (startEnd) => {
     const points = [];
     const anchors = [];
+    const works = [];
     let end = startEnd;
 
     for (;;) {
@@ -330,7 +356,8 @@ function assembleChains(chains, partner) {
       // Entrer par le bout `at` revient à parcourir la chaîne dans ce sens-là.
       const ordered = at === 0 ? chain.points : chain.points.slice().reverse();
       const orderedAnchors = at === 0 ? chain.anchors : chain.anchors.slice().reverse();
-      appendChain(points, anchors, ordered, orderedAnchors);
+      const orderedWorks = at === 0 ? chain.works : chain.works.slice().reverse();
+      appendChain(points, anchors, works, ordered, orderedAnchors, orderedWorks);
 
       const exit = c * 2 + (1 - at);
       const next = partner[exit];
@@ -339,7 +366,13 @@ function assembleChains(chains, partner) {
     }
 
     if (points.length >= 2) {
-      merged.push({ profile: chains[startEnd >> 1].profile, halfWidth: chains[startEnd >> 1].halfWidth, points, anchors });
+      merged.push({
+        profile: chains[startEnd >> 1].profile,
+        halfWidth: chains[startEnd >> 1].halfWidth,
+        points,
+        anchors,
+        works,
+      });
     }
   };
 
@@ -432,7 +465,7 @@ export function mergeRoadLines(lines, options = {}) {
   const nodes = new NodeIndex(weld);
   const state = {
     edges: [],
-    seen: new Set(),
+    seen: new Map(),
     adjacency: new Map(),
     degree: new Map(),
     ranks: new Map(),
@@ -441,10 +474,11 @@ export function mergeRoadLines(lines, options = {}) {
   for (const line of lines || []) {
     const points = line?.points;
     if (!Array.isArray(points) || points.length < 2) continue;
+    const works = line.works || WORK_NONE;
     let previous = nodes.idFor(points[0].x, points[0].z);
     for (let i = 1; i < points.length; i++) {
       const id = nodes.idFor(points[i].x, points[i].z);
-      addEdge(state, previous, id, line.profile, line.halfWidth);
+      addEdge(state, previous, id, line.profile, line.halfWidth, works);
       previous = id;
     }
   }
@@ -464,9 +498,21 @@ export function mergeRoadLines(lines, options = {}) {
     extendChain(ids, context);
 
     const last = ids.length - 1;
+    // Un sommet porte le maximum des arêtes de la chaîne qui s'y rejoignent :
+    // les deux extrémités d'un pont sont marquées pont, et `resampleWorks`
+    // retrouve l'arête exacte en reprenant le minimum par intervalle.
+    const works = new Array(ids.length).fill(WORK_NONE);
+    for (let i = 1; i < ids.length; i++) {
+      const between = state.edges[state.seen.get(edgeKey(ids[i - 1], ids[i], edge.rank))];
+      const code = between ? between.works : WORK_NONE;
+      if (code > works[i - 1]) works[i - 1] = code;
+      if (code > works[i]) works[i] = code;
+    }
+
     chains.push({
       profile: edge.profile,
       halfWidth: edge.halfWidth,
+      works,
       points: ids.map((id) => ({ x: nodes.xs[id], z: nodes.zs[id] })),
       // Un nœud de degré deux est un simple sommet de la ligne ; tout le reste
       // — embranchement, croisement, cul-de-sac, changement de classe — est un
@@ -487,6 +533,7 @@ export function mergeRoadLines(lines, options = {}) {
     if (first.x > last.x || (first.x === last.x && first.z > last.z)) {
       chain.points.reverse();
       chain.anchors.reverse();
+      chain.works.reverse();
     }
   }
 
@@ -500,7 +547,9 @@ export function mergeRoadLines(lines, options = {}) {
  * demi-largeur de la dominante. Deux voies de même largeur ne se rognent pas
  * l'une l'autre (pas de dominante). Seuls les carrefours qui sont un sommet
  * de la chaîne la coupent — un nœud simplement à portée est un pont ou deux
- * tuiles mal recoupées.
+ * tuiles mal recoupées. Une ligne d'ouvrage n'est jamais rognée : une bretelle
+ * d'échangeur passe **au-dessus** de l'autoroute dont elle partage un nœud
+ * quelques dizaines de mètres plus loin, elle ne s'arrête pas à sa rive.
  *
  * Une chaîne peut en ressortir coupée en plusieurs, ou disparaître.
  *
@@ -579,10 +628,11 @@ export function trimAtJunctions(chains, junctions, options = {}) {
     const runs = [];
     let run = null;
     for (let i = 0; i < points.length; i++) {
-      const inside = covered(points[i].x, points[i].z);
+      // Un ouvrage ne se rogne pas : il ne touche pas la chaussée qu'il croise.
+      const inside = !chain.works?.[i] && covered(points[i].x, points[i].z);
       if (!inside) {
         if (!run) {
-          run = { points: [], anchors: [] };
+          run = { points: [], anchors: [], works: [] };
           // Entrée de plage : le sommet de coupe manquant est celui posé sur
           // la limite, entre le sommet écarté et celui-ci.
           if (i > 0) {
@@ -591,15 +641,18 @@ export function trimAtJunctions(chains, junctions, options = {}) {
             // Il vient du carrefour, donc d'un point que la donnée porte : il
             // fait une origine aussi stable que le nœud lui-même.
             run.anchors.push(true);
+            run.works.push(chain.works?.[i] || WORK_NONE);
           }
           runs.push(run);
         }
         run.points.push(points[i]);
         run.anchors.push(!!chain.anchors?.[i]);
+        run.works.push(chain.works?.[i] || WORK_NONE);
       } else if (run) {
         // Sortie de plage : la limite se cherche depuis le dernier sommet gardé.
         run.points.push(boundary(run.points[run.points.length - 1], points[i]));
         run.anchors.push(true);
+        run.works.push(run.works[run.works.length - 1] || WORK_NONE);
         run = null;
       }
     }
@@ -619,6 +672,7 @@ export function trimAtJunctions(chains, junctions, options = {}) {
         halfWidth: chain.halfWidth,
         points: candidate.points,
         anchors: candidate.anchors,
+        works: candidate.works,
       });
     }
   }
@@ -652,6 +706,13 @@ export function distanceToSegment(x, z, ax, az, bx, bz) {
  * (recoudre une voie sur une autre). Chaque arête est inscrite dans toutes
  * les cellules que couvre sa boîte élargie, pour qu'une interrogation n'ait
  * qu'une seule cellule à lire.
+ *
+ * **Un ouvrage d'art n'y entre pas.** L'emprise est une empreinte au sol, et
+ * là où la chaussée est portée ou enterrée, le sol appartient au paysage :
+ * l'herbe pousse sous un viaduc, les arbres poussent au-dessus d'un tunnel, et
+ * le terrain ne se creuse ni jusqu'à la dalle de l'un ni jusqu'au tablier de
+ * l'autre. Une seule arête reste inscrite à chaque culée — celle qui joint le
+ * sol à l'ouvrage —, pour que l'emprise ne s'interrompe pas avant le pont.
  */
 export class RoadIndex {
   /**
@@ -670,8 +731,10 @@ export class RoadIndex {
       const path = segment?.path;
       if (!Array.isArray(path) || path.length < 2) continue;
       const reach = segment.halfWidth + margin;
+      const works = segment.works;
 
       for (let r = 0; r < path.length - 1; r++) {
+        if (works?.[r] && works[r + 1]) continue;
         const a = path[r];
         const b = path[r + 1];
         const minX = Math.floor((Math.min(a.x, b.x) - reach) / cell);
@@ -753,7 +816,15 @@ export class RoadIndex {
     return false;
   }
 
-  /** Altitude de plate-forme au point touché par `query`. */
+  /**
+   * Altitude de plate-forme au point touché par `query`.
+   *
+   * Elle n'est jamais celle d'un ouvrage : l'index ne les inscrit pas (voir
+   * l'en-tête de la classe). C'est ce qui empêche le terrain de se creuser
+   * jusqu'à la dalle d'un tunnel, une voie de se recoudre sur le tablier qui
+   * l'enjambe, et un feu tricolore de se poser à l'altitude du viaduc qui
+   * survole son carrefour.
+   */
   deckAt(hit) {
     if (!hit) return null;
     const { segment, row, t } = hit;
@@ -835,6 +906,11 @@ function dominates(a, indexA, b, indexB) {
  * derniers mètres, en rampe sur quelques lignes. Au-delà de
  * `STITCH_MAX_STEP_M`, ce n'est pas un carrefour mais un pont ou un souterrain.
  *
+ * Une ligne d'ouvrage ne se recoud jamais, dans aucun des deux sens : ni la
+ * bretelle d'échangeur sur l'autoroute qu'elle survole (elle redescendrait s'y
+ * coller), ni l'inverse. C'est `deckAt` qui refuse de servir l'altitude d'un
+ * ouvrage ; ici on refuse d'y toucher.
+ *
  * @param {Array<Object>} segments Tronçons, dont les `platform` sont modifiées.
  * @param {RoadIndex} index        Index bâti sur ces mêmes tronçons.
  * @param {Object} [options]
@@ -864,7 +940,10 @@ export function stitchPlatforms(segments, index, { maxStep = STITCH_MAX_STEP_M, 
     const anchored = new Uint8Array(rows);
     let count = 0;
 
+    const works = segment.works;
+
     for (let r = 0; r < rows; r++) {
+      if (works?.[r]) continue;
       const hit = index.query(path[r].x, path[r].z, 0, (other, oi) =>
         oi !== si && dominates(other, oi, segment, si)
       );
@@ -901,6 +980,7 @@ export function stitchPlatforms(segments, index, { maxStep = STITCH_MAX_STEP_M, 
     }
 
     for (let r = 0; r < rows; r++) {
+      if (works?.[r]) continue;
       if (nearest[r] < 0 || distance[r] > rampRows) continue;
       const fade = 1 - distance[r] / (rampRows + 1);
       platform[r] += delta[nearest[r]] * fade;

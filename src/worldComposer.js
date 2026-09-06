@@ -11,10 +11,11 @@
  * Ordre de génération : occupation du sol (tout le monde la lit) → eau
  * (publie sa cuvette, le terrain se creuse dessous comme sous une chaussée)
  * → chaussées (entaillent le terrain, publient l'emprise routière que le
- * reste du décor ne franchit pas) → voie ferrée (indépendante, suit le
- * terrain sans l'entailler, voir `railwayLayer.js`) → bâti (publie maisons et
- * empreintes) → voirie (après chaussées et bâti, un trottoir a besoin des
- * deux ; publie sa bande revêtue) → jardins (tirent clôtures et buissons des
+ * reste du décor ne franchit pas) → ouvrages d'art (tabliers, piles, têtes de
+ * tunnel : ne lisent que les tronçons publiés par les chaussées) → voie ferrée
+ * (indépendante, suit le terrain sans l'entailler, voir `railwayLayer.js`) →
+ * bâti (publie maisons et empreintes) → voirie (après chaussées et bâti, un
+ * trottoir a besoin des deux ; publie sa bande revêtue) → jardins (tirent clôtures et buissons des
  * maisons, lisent emprise et bande revêtue) → mobilier (tronçons + index des
  * chaussées, compte de bâtiments, emprise ferroviaire, lieux nommés) →
  * arbres (après la carte de classes et les chaussées) → herbe (après l'index
@@ -28,6 +29,7 @@ import { GroundClassMap } from './terrain/groundClassMap.js';
 import { RoadNetwork, createRoadMaterials } from './layers/roadNetwork.js';
 import { WaterLayer, createWaterMaterial } from './layers/waterLayer.js';
 import { RailwayLayer } from './layers/railwayLayer.js';
+import { BridgeLayer } from './layers/bridgeLayer.js';
 import { CombinedIndex } from './layers/roadGraph.js';
 import { BuildingLayer } from './layers/buildingLayer.js';
 import { GardenLayer } from './layers/gardenLayer.js';
@@ -111,6 +113,10 @@ export class WorldComposer {
       materials: this.roadMaterials.byProfile,
       theme,
     });
+
+    // Les ouvrages d'art ne lisent aucune tuile : uniquement les tronçons
+    // publiés par les chaussées, dont la plate-forme porte déjà les travées.
+    this.bridges = new BridgeLayer({ THREE, scene, bubble, theme });
 
     // La voie ferrée ne lit que les tuiles, comme l'eau, et ne dépend
     // d'aucune autre couche — voir `railwayLayer.js`.
@@ -248,9 +254,17 @@ export class WorldComposer {
       this.bubble.setWaterCut(this.water.index);
 
       // 3. Chaussées — publient l'index et déclenchent le déblai du terrain.
-      const hasRoads = this.roads.rebuild(this.vectorTiles, wanted, here);
+      //    La cuvette d'eau leur est passée : un pont doit dégager la nappe,
+      //    pas le lit qu'elle recouvre (voir `roadWorks.levelWorkSpans`).
+      const hasRoads = this.roads.rebuild(this.vectorTiles, wanted, here, {
+        waterIndex: this.water.index,
+      });
 
-      // 3 bis. Voie ferrée — ne dépend de rien, ne publie rien.
+      // 3 bis. Ouvrages d'art — après les chaussées, dont ils habillent les
+      //    travées et les têtes de tunnel.
+      this.bridges.rebuild(this.roads.roadSegments, here);
+
+      // 3 ter. Voie ferrée — ne dépend de rien, ne publie rien.
       this.railways.rebuild(this.vectorTiles, wanted, here);
 
       // 4. Bâti.
@@ -413,6 +427,7 @@ export class WorldComposer {
     this.water.dispose();
     this.waterMaterial.dispose();
     this.railways.dispose();
+    this.bridges.dispose();
     this.roads.dispose(); // avant la bulle : retire son déblai en partant
     this.roadMaterials.dispose();
     this.vectorTiles?.dispose();
