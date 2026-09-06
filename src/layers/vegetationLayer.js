@@ -15,6 +15,12 @@
  * Plantation mise en file, une tuile par image (composer deux mille matrices
  * d'un coup se verrait comme un à-coup).
  *
+ * Un maquis, une garrigue, une lande ne sont pas des forêts clairsemées : ce
+ * sont des tapis d'arbustes sans strate haute, que la carte de classes peint
+ * en herbe — `woodAt` y répond zéro et rien n'y poussait. La couverture
+ * (`groundClass.coverAt`) le dit, et c'est elle qui sème ici les buissons hors
+ * des bois, les mêmes silhouettes que le sous-bois.
+ *
  * Deux décisions à ne pas défaire : le plafond d'une tuile éclaircit
  * (`thinPlacements`), il ne rogne pas (sinon le sud d'une tuile resterait nu
  * au milieu d'un massif) ; une tuile semée alors que la carte de classes ne
@@ -39,6 +45,7 @@ import {
   ATLAS_ATTRIBUTE,
 } from '../materials/foliageMaterial.js';
 import { defaultTheme } from '../themes/default.js';
+import { filterByClimate } from '../core/climate.js';
 
 /** Côté de la grille de plantation, par tuile (~36 m par cellule au zoom 15). */
 export const VEGETATION_CELLS = 24;
@@ -158,15 +165,36 @@ export function thinPlacements(list, max) {
  */
 export const BLIND_EPSILON = 0.02;
 
+/**
+ * Densité d'arbustes semés par une couverture **hors des bois**, de 0 (rien) à
+ * 1 (fourré plein). Fonction pure.
+ *
+ * C'est ce qui distingue un maquis d'un pré : ni l'un ni l'autre n'est un bois
+ * pour la carte de classes, mais l'un est couvert d'arbustes et l'autre non.
+ *
+ * @param {string|null} cover Retour de `groundClass.coverAt`.
+ * @param {Object} [covers] Tranche `theme.covers`.
+ */
+export function coverBushesFor(cover, covers = defaultTheme.covers) {
+  const look = cover ? covers?.[cover] : null;
+  return look?.bushes ?? 0;
+}
+
 /** Côté de la maille qui décide du peuplement, en mètres. */
 export const FOREST_PATCH_M = 420;
 
-/** Peuplement d'un point du sol, ancré au lieu (une forêt garde ses essences quand la bulle se déplace). */
-export function forestTypeAt(x, z, forests = defaultTheme.forests) {
+/**
+ * Peuplement d'un point du sol, ancré au lieu (une forêt garde ses essences
+ * quand la bulle se déplace). Le climat réduit d'abord la liste à ce qui
+ * pousse ici, ce qui empêche un pin d'Alep en Finlande ; sans climat, la liste
+ * entière est ouverte.
+ */
+export function forestTypeAt(x, z, forests = defaultTheme.forests, climate = null) {
+  const pool = filterByClimate(forests, climate);
   const gx = Math.floor(x / FOREST_PATCH_M) * FOREST_PATCH_M;
   const gz = Math.floor(z / FOREST_PATCH_M) * FOREST_PATCH_M;
   const draw = randomAt(gx, gz, 131);
-  return forests[Math.min(forests.length - 1, Math.floor(draw * forests.length))];
+  return pool[Math.min(pool.length - 1, Math.floor(draw * pool.length))];
 }
 
 /** Variantes d'atlas ouvertes à un peuplement, dans l'ordre de ses essences. */
@@ -210,6 +238,12 @@ export class VegetationLayer {
     this.groundClass = groundClass;
     this.roads = roads;
     this.maxRing = maxRing;
+    /**
+     * Famille climatique du lieu, ou `null` hors de la fenêtre couverte. Elle
+     * n'arrive pas par le thème : elle change en cours de route, comme l'heure
+     * et la météo, et c'est le compositeur qui la pose (`setClimate`).
+     */
+    this.climate = null;
     this.disposed = false;
 
     this.group = new THREE.Group();
@@ -277,6 +311,21 @@ export class VegetationLayer {
    */
   setWind(field) {
     setFoliageWind(this.material, field);
+  }
+
+  /**
+   * Pose la famille climatique du lieu.
+   *
+   * @param {string|null} family
+   * @returns {boolean} vrai si elle a changé — auquel cas ce qui est déjà
+   *          planté l'a été avec les mauvaises essences, et le compositeur
+   *          replante (voir `sync({replant: true})`).
+   */
+  setClimate(family) {
+    const next = family || null;
+    if (next === this.climate) return false;
+    this.climate = next;
+    return true;
   }
 
   /**
@@ -378,12 +427,21 @@ export class VegetationLayer {
         const centreX = originX + (cx + 0.5) * cellSize;
         const centreZ = originZ + (cy + 0.5) * cellSize;
         const score = groundClass.woodAt(centreX, centreZ);
-        const type = forestTypeAt(centreX, centreZ, this.theme.forests);
+        const type = forestTypeAt(centreX, centreZ, this.theme.forests, this.climate);
         const count = treesForScore(score, TREES_PER_CELL * type.density, random());
-        if (count === 0) continue;
+        // Fourré de couverture — voir `coverBushesFor`. Il se sème là où il n'y
+        // a pas de bois, donc il ne peut pas être conditionné à `count`.
+        const bushDensity = coverBushesFor(
+          groundClass.coverAt?.(centreX, centreZ) ?? null,
+          this.theme.covers
+        );
+        const thicket = bushDensity > 0 ? Math.floor(TREES_PER_CELL * bushDensity + random()) : 0;
+        if (count === 0 && thicket === 0) continue;
         const variants = variantsFor(type, this.theme.trees.essences);
-        // Le sous-bois se compte en plus des arbres (épaissit le pied du massif).
-        const understory = Math.floor(count * (type.understory || 0) + random());
+        // Le sous-bois se compte en plus des arbres (épaissit le pied du
+        // massif). Le fourré de couverture s'y ajoute : même strate basse,
+        // semée pour une autre raison.
+        const understory = Math.floor(count * (type.understory || 0) + random()) + thicket;
 
         for (let i = 0; i < count + understory; i++) {
           const bush = i >= count;

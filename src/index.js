@@ -52,6 +52,11 @@ export {
 } from './inspect/objectLabels.js';
 export { forestTypeAt } from './layers/vegetationLayer.js';
 
+// --- Le climat --------------------------------------------------------------
+// Même question que le décor se pose : quelle famille climatique à cette
+// longitude et cette latitude. Pure, synchrone, sans réseau.
+export { climateAt, refineByRelief, CLIMATE_FAMILIES, KOPPEN_CODES } from './core/climate.js';
+
 // Hauteur dont la chaussée est décollée du terrain — à appliquer à tout objet
 // posé sur la route par l'application, sous peine de s'enfoncer dans le bitume.
 export { ROAD_LIFT_M } from './layers/roadNetwork.js';

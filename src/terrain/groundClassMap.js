@@ -14,6 +14,22 @@
  * plusieurs à la fois (le lotissement en est le cas type — voir `groundClassFor`).
  * Filtrage linéaire : les lisières se fondent sur quelques mètres, ce qui est
  * plus juste que la donnée elle-même.
+ *
+ * ## La seconde carte : ce qui pousse, et de quelle sorte
+ *
+ * Quatre matières ne distinguent pas une lande écossaise d'une prairie
+ * normande — les deux sont de l'herbe, alors que les tuiles savent le dire
+ * (`landcover.subclass` vaut `heath`, `scrub`, `wetland`, `scree`, `dune`…).
+ * Cette information était lue puis jetée ; elle vit maintenant dans la carte
+ * des cultures, qui n'utilisait qu'un de ses canaux :
+ *
+ *   R = identifiant de culture    (`CROP_KINDS`)
+ *   G = identifiant de couverture (`COVER_KINDS`)
+ *   alpha = peint
+ *
+ * Deux identifiants indépendants, même repère, filtrés au plus proche : une
+ * parcelle porte une culture **ou** une couverture, jamais un mélange, et les
+ * deux se lisent d'un seul échantillonnage.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
@@ -92,6 +108,66 @@ export const CLASS_FILL = {
   bare: 'rgba(0, 0, 0, 1)',
 };
 
+/**
+ * Les couvertures, dans l'ordre de leur identifiant.
+ *
+ * Même contrat que `CROP_KINDS`, et les mêmes précautions : l'identifiant vaut
+ * `indice + 1`, il est **peint** dans le canal vert de la carte des cultures, et
+ * relu des deux côtés — par le shader de terrain, qui en tire la couleur du sol
+ * jusqu'à l'horizon, et par l'herbe et la végétation, qui décident de ce qui y
+ * pousse. L'ordre est donc gravé : le changer repeint une lande en éboulis.
+ *
+ * Les trois premières sont **végétales** (peintes sur de l'herbe), les quatre
+ * suivantes **minérales** (peintes sur du sol nu).
+ */
+export const COVER_KINDS = ['heath', 'scrub', 'wetland', 'alpine', 'scree', 'rock', 'sand'];
+
+/** Pas entre deux identifiants dans le canal vert. */
+export const COVER_ID_STEP = 30;
+
+/**
+ * Couverture décrite par une entité surfacique, ou `null`.
+ *
+ * Seule la couche `landcover` en porte : `landuse` décrit qui occupe le sol,
+ * pas de quoi il est fait, et `park` est un usage, pas une matière. Les valeurs
+ * de `subclass` sont celles du schéma OpenMapTiles, qui y recopie le tag OSM
+ * d'origine (`natural`, `landuse`, `leisure` ou `wetland`).
+ *
+ * Fonction pure.
+ */
+export function coverFor(sourceLayer, properties = {}) {
+  if (sourceLayer !== 'landcover') return null;
+  const klass = properties.class;
+  const subclass = properties.subclass;
+
+  if (klass === 'wetland') return 'wetland';
+  if (klass === 'sand') return 'sand';
+  // L'éboulis et la dalle sont deux paysages différents : l'un est une pente de
+  // cailloux qui bouge, l'autre un plateau de pierre. Les confondre était le
+  // défaut du gris unique.
+  if (klass === 'rock') return subclass === 'scree' ? 'scree' : 'rock';
+  if (klass === 'grass') {
+    if (subclass === 'heath') return 'heath';
+    if (subclass === 'scrub' || subclass === 'shrubbery') return 'scrub';
+    // `fell` est la pelouse d'altitude au-dessus de la limite forestière ;
+    // `tundra` en est l'équivalent boréal.
+    if (subclass === 'fell' || subclass === 'tundra') return 'alpine';
+  }
+  return null;
+}
+
+/** Identifiant d'une couverture dans la carte, ou 0. Fonction pure. */
+export function coverId(cover) {
+  const index = COVER_KINDS.indexOf(cover);
+  return index < 0 ? 0 : index + 1;
+}
+
+/** Couverture portée par une valeur du canal vert, ou `null`. Fonction pure. */
+export function coverFromId(green) {
+  const index = Math.round(green / COVER_ID_STEP) - 1;
+  return COVER_KINDS[index] || null;
+}
+
 /** Anneaux d'une géométrie surfacique. */
 export function classPolygons(geometry) {
   if (!geometry) return [];
@@ -116,6 +192,12 @@ export class GroundClassMap {
   constructor({ THREE, theme = defaultTheme }) {
     this.THREE = THREE;
     this.theme = theme;
+    /**
+     * Famille climatique du lieu, ou `null`. La carte des cultures est le seul
+     * endroit où une culture est tirée (voir `cropFor`), donc c'est ici que le
+     * climat doit arriver — pas dans `cropLayer`, qui ne fait que relire.
+     */
+    this.climate = null;
     this.canvas = createCanvas(CLASS_PIXELS, CLASS_PIXELS);
     this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
 
@@ -159,6 +241,14 @@ export class GroundClassMap {
     this._anchor = null;
     this._frame = null;
     this.disposed = false;
+  }
+
+  /**
+   * Pose la famille climatique du lieu. Le compositeur repeint la carte quand
+   * elle change : ce qui a été semé sous un autre climat n'est plus valable.
+   */
+  setClimate(family) {
+    this.climate = family || null;
   }
 
   /**
@@ -224,7 +314,33 @@ export class GroundClassMap {
     return cropFromId(data[i]);
   }
 
-  /** Vrai dès qu'une carte des cultures a été relue. */
+  /**
+   * Couverture portée par un point, ou `null` — hors carte, ou couverture
+   * ordinaire (une prairie n'en est pas une : c'est le cas par défaut).
+   *
+   * Lue dans le canal **vert** de la carte des cultures, au même repère et au
+   * même échantillonnage que la culture elle-même. C'est la seule réponse à la
+   * question « de quelle sorte est ce sol » : le shader de terrain y prend sa
+   * couleur, l'herbe sa hauteur, la végétation ses arbustes.
+   *
+   * @param {number} x Mètres locaux.
+   * @param {number} z
+   * @returns {string|null}
+   */
+  coverAt(x, z) {
+    const data = this._cropData;
+    if (!data) return null;
+
+    const px = Math.floor(((x - this.origin.x) / this.size) * CLASS_PIXELS);
+    const pz = Math.floor(((z - this.origin.y) / this.size) * CLASS_PIXELS);
+    if (px < 0 || pz < 0 || px >= CLASS_PIXELS || pz >= CLASS_PIXELS) return null;
+
+    const i = (pz * CLASS_PIXELS + px) * 4;
+    if (data[i + 3] === 0) return null;
+    return coverFromId(data[i + 1]);
+  }
+
+  /** Vrai dès qu'une carte des cultures **et des couvertures** a été relue. */
   get cropReady() {
     return this._cropData !== null;
   }
@@ -321,23 +437,34 @@ export class GroundClassMap {
           ctx.fill(path, 'evenodd'); // anneaux intérieurs = trous
           painted++;
 
+          // Couverture fine — lande, maquis, marais, éboulis. Elle vit dans le
+          // canal vert de la carte des cultures (voir l'en-tête).
+          const cover = coverId(coverFor(sourceLayer, properties));
+
           if (kind !== 'farmland') {
             // `park` est la seule couche peinte après `landcover` : sans cet
             // effacement, un parc sur une terre agricole garderait sa culture.
+            // Vaut aussi pour la couverture — un parc n'est pas une lande,
+            // même tracé sur une lande.
             if (sourceLayer === 'park') {
               this.cropCtx.save();
               this.cropCtx.globalCompositeOperation = 'destination-out';
               this.cropCtx.fillStyle = '#000';
               this.cropCtx.fill(path, 'evenodd');
               this.cropCtx.restore();
+            } else if (cover) {
+              this.cropCtx.fillStyle = `rgba(0, ${cover * COVER_ID_STEP}, 0, 1)`;
+              this.cropCtx.fill(path, 'evenodd');
             }
             continue;
           }
           if (counted === 0) continue;
           // Tirée ici et nulle part ailleurs, ancrée au sol (centre de la parcelle).
-          const id = cropId(cropFor(properties, randomAt(sumX / counted, sumZ / counted, 43)));
-          if (!id) continue;
-          this.cropCtx.fillStyle = `rgba(${id * CROP_ID_STEP}, 0, 0, 1)`;
+          const id = cropId(
+            cropFor(properties, randomAt(sumX / counted, sumZ / counted, 43), this.climate)
+          );
+          if (!id && !cover) continue;
+          this.cropCtx.fillStyle = `rgba(${id * CROP_ID_STEP}, ${cover * COVER_ID_STEP}, 0, 1)`;
           this.cropCtx.fill(path, 'evenodd');
         }
       });

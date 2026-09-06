@@ -22,6 +22,19 @@
  * des chaussées) → cheminées (publiées par le mobilier, animées par `lifeLayer`).
  *
  * Une couche qui manque ne casse rien : elle se contente de ne rien poser.
+ *
+ * ## Le profil de paysage
+ *
+ * Avant tout ça, le compositeur répond pour tout le monde à une question que
+ * personne ne se posait : **où sur la Terre sommes-nous ?** `refresh` recevait
+ * une longitude et une latitude depuis toujours et les jetait après en avoir
+ * tiré des mètres ; il en tire maintenant aussi un `landscape` — la famille
+ * climatique et son code Köppen (`core/climate.js`), l'altitude et la pente
+ * sous l'observateur.
+ *
+ * Ce n'est pas une couche et ça ne pose rien : c'est une **entrée**, lue par
+ * celles qui choisissent un contenu dans une liste — peuplements, palettes de
+ * bourg, cultures, bétail, couleur du sol.
  */
 
 import { TerrainBubble } from './terrain/terrainBubble.js';
@@ -42,13 +55,19 @@ import { FurnitureLayer } from './layers/furnitureLayer.js';
 import { LifeLayer } from './layers/lifeLayer.js';
 import { VectorTileSource, coveringTiles, VECTOR_ZOOM } from './core/vectorTileSource.js';
 import { lngLatToTile } from './core/tileMath.js';
+import { climateAt, refineByRelief } from './core/climate.js';
+import { crossSlope } from './layers/furniturePlacement.js';
 import { defaultTheme } from './themes/default.js';
 
 /**
  * Crédit des données affichées. Le décor vient d'OpenStreetMap via les tuiles
  * vectorielles de la carte, le relief des tuiles Terrarium.
  */
-export const WORLD_ATTRIBUTION = '© OpenStreetMap contributors — relief AWS Terrain Tiles';
+export const WORLD_ATTRIBUTION =
+  '© OpenStreetMap contributors — relief AWS Terrain Tiles — climat Köppen-Geiger (Rubel et al.)';
+
+/** Demi-portée de la mesure de pente sous l'observateur, en mètres. */
+const RELIEF_SPAN_M = 60;
 
 export class WorldComposer {
   /**
@@ -81,6 +100,18 @@ export class WorldComposer {
     this.theme = theme;
     this.disposed = false;
     this._refreshing = false;
+    /**
+     * Profil du lieu : climat et relief. `null` tant qu'aucun rafraîchissement
+     * n'a eu lieu, et hors de la fenêtre couverte par la grille climatique —
+     * auquel cas tout se peint comme avant qu'un climat existe.
+     * @type {{climate: {family: string, koppen: string}, relief: {elevation: number, slope: number}}|null}
+     */
+    this.landscape = null;
+    /**
+     * Famille climatique imposée, ou `null` pour suivre la géographie. Ce
+     * n'est pas un réglage de décor mais un **outil** : voir `setClimate`.
+     */
+    this.climateOverride = null;
     /** Dernière part de nuit appliquée. `null` force la prochaine à passer. */
     this._night = null;
     /** Dernier vent appliqué, pour ne pas réécrire des uniformes inchangés. */
@@ -199,6 +230,28 @@ export class WorldComposer {
     return this.bubble.frame;
   }
 
+  /**
+   * Impose une famille climatique, ou rend la main à la géographie (`null`).
+   *
+   * Le décor ne suit alors plus le lieu : c'est délibéré, et c'est le seul
+   * moyen de comparer deux pays sur le **même** terrain — mêmes routes, mêmes
+   * parcelles, même relief, tout le reste changé. Sans ça, comparer une
+   * Provence et une Laponie demande de se téléporter, donc de changer aussi
+   * de bâti, de tracé et de pente, et on ne sait plus ce qui vient du climat.
+   *
+   * L'appelant doit ensuite reconstruire le décor (`refresh(..., { force:
+   * true })`) : cette méthode ne fait que poser l'intention.
+   *
+   * @param {string|null} family Une des `CLIMATE_FAMILIES`, ou `null`.
+   * @returns {boolean} vrai si l'intention a changé.
+   */
+  setClimate(family) {
+    const next = family || null;
+    if (next === this.climateOverride) return false;
+    this.climateOverride = next;
+    return true;
+  }
+
   /** Déplace la bulle de terrain. @returns {Promise<boolean>} vrai si elle a bougé. */
   setCenter(lng, lat) {
     return this.bubble.setCenter(lng, lat);
@@ -218,6 +271,28 @@ export class WorldComposer {
     if (this.disposed || this._refreshing || !this.vectorTiles || !this.bubble.frame) return false;
 
     const here = this.bubble.frame.toLocal(lng, lat);
+    // Le profil se prend avant tout le reste, et même quand rien n'est périmé :
+    // il ne coûte qu'une lecture de tableau et cinq altitudes, et ce qui le lit
+    // le lit à la construction de son propre contenu.
+    const climateChanged = this._updateLandscape(lng, lat, here);
+    // Les essences d'un bois et la pierre d'un village dépendent du climat :
+    // les couches doivent l'avoir en main avant de poser quoi que ce soit.
+    const family = this.landscape?.climate?.family ?? null;
+    this.vegetation.setClimate(family);
+    this.buildings.setClimate(family);
+    // La carte des cultures est le seul endroit où une culture est tirée : le
+    // climat doit y être avant la prochaine rasterisation.
+    this.groundClass.setClimate(family);
+    // Le bétail non plus n'est pas le même partout.
+    this.furniture.setClimate(family);
+    // La couleur du sol, enfin — et elle se pose à trois endroits qui doivent
+    // recevoir le **même** facteur : l'albédo lointain dans le shader, les
+    // touffes d'herbe et les tiges de culture du premier plan. Les trois
+    // passent par `soilWashFor`, et la redistribution est déclenchée plus bas
+    // par `climateChanged`, la teinte étant écrite dans les instances.
+    this.bubble.materials.setClimate(family);
+    this.grass.setClimate(family);
+    this.crops.setClimate(family);
     const wanted = this._wantedTiles(lng, lat);
 
     // La végétation suit les tuiles de la bulle, pas le vectoriel : se resynchronise même sans autre changement.
@@ -226,6 +301,10 @@ export class WorldComposer {
     const classStale = this.groundClass.needsRebuild(here.x, here.z, this.bubble.frame);
     const stale =
       classStale ||
+      // Changer de climat change ce qu'il y a à poser, pas seulement où : le
+      // décor est aussi périmé que s'il avait glissé de deux cent cinquante
+      // mètres.
+      climateChanged ||
       this.roads.needsRebuild(here.x, here.z) ||
       this.buildings.needsRebuild(here.x, here.z) ||
       this.water.needsRebuild(here.x, here.z) ||
@@ -242,7 +321,9 @@ export class WorldComposer {
 
       // 1. Occupation du sol — tout le reste la lit. Rasterisation coûteuse : refaite seulement si elle a glissé.
       const wasReady = this.groundClass.ready;
-      if (classStale || force) {
+      // Le climat repeint la carte au même titre qu'un glissement : ce qui y
+      // était semé l'a été avec l'assolement d'une autre région.
+      if (classStale || climateChanged || force) {
         this.groundClass.rebuild(this.vectorTiles, wanted, here, this.bubble.frame);
         this.bubble.materials.syncGroundClass();
       }
@@ -299,15 +380,21 @@ export class WorldComposer {
         places
       );
 
-      // 6. Arbres — semis déterministe : seule l'arrivée de la carte de classes justifie de tout reprendre.
-      if (classArrived) this.vegetation.sync({ replant: true });
+      // 6. Arbres — semis déterministe : seuls l'arrivée de la carte de classes
+      //    et un changement de climat justifient de tout reprendre (ce qui est
+      //    planté l'aurait été avec les essences d'une autre région).
+      if (classArrived || climateChanged) this.vegetation.sync({ replant: true });
 
       // 7. Herbe — l'index des chaussées vient peut-être de changer.
-      if (hasRoads || classStale || force) this.grass.update(here.x, here.z, { force: true });
+      if (hasRoads || classStale || climateChanged || force) {
+        this.grass.update(here.x, here.z, { force: true });
+      }
 
       // 8. Cultures — même carte que le sol.
-      if (classStale || force) this.crops.invalidate();
-      this.crops.update(here.x, here.z, { force: hasRoads || classStale || force });
+      if (classStale || climateChanged || force) this.crops.invalidate();
+      this.crops.update(here.x, here.z, {
+        force: hasRoads || classStale || climateChanged || force,
+      });
 
       // 9. Cheminées à faire fumer.
       this.life.setChimneys(this.furniture.chimneys, here);
@@ -321,6 +408,54 @@ export class WorldComposer {
     } finally {
       this._refreshing = false;
     }
+  }
+
+  /**
+   * Repose la question du climat et du relief.
+   *
+   * Appelée à chaque `refresh`, donc à chaque fois que l'observateur a bougé
+   * assez pour justifier d'y regarder — jamais par image. Pas d'ancre ni de
+   * seuil de distance ici : `climateAt` n'est qu'une lecture de tableau et
+   * `_reliefAt` cinq altitudes déjà montées, moins cher que de maintenir un
+   * cache qui doit lui-même savoir se périmer (voir l'historique : un cache en
+   * mètres locaux, relatifs à un repère qui se recentre au loin, a longtemps
+   * laissé une ville cherchée dans la démo garder le climat de la précédente).
+   *
+   * @returns {boolean} vrai si la **famille** climatique a changé — c'est le
+   *          seul changement qui périme du décor déjà posé, une altitude qui
+   *          glisse de dix mètres n'en périmant aucun.
+   */
+  _updateLandscape(lng, lat, here) {
+    const before = this.landscape?.climate?.family ?? null;
+    const relief = this._reliefAt(here);
+    const climate = climateAt(lng, lat);
+    // Le relief corrige la famille, jamais le code Köppen : celui-ci reste ce
+    // que dit la donnée, et sert à comprendre ce qu'on regarde.
+    //
+    // Une famille forcée n'est corrigée par rien : elle ne décrit plus le
+    // lieu, elle le contredit exprès, et la raffiner en montagne ferait mentir
+    // le réglage qu'on vient d'imposer.
+    const forced = this.climateOverride;
+    const family = forced || refineByRelief(climate?.family ?? null, relief);
+    const koppen = forced ? null : climate?.koppen ?? null;
+    this.landscape = family ? { climate: { family, koppen }, relief } : null;
+    return family !== before;
+  }
+
+  /** Altitude et pente sous l'observateur, mesurées dans le MNT monté. */
+  _reliefAt(here) {
+    const bubble = this.bubble;
+    const at = (x, z) => bubble.surfaceElevationAtLocal(x, z);
+    const span = RELIEF_SPAN_M * 2;
+    // Mesurée sur cent vingt mètres et non sur la maille : un MNT à trente
+    // mètres bruite la pente de quelques pour cent partout, et c'est le versant
+    // qu'on veut, pas le grain (même raison que `crossSlope` côté chaussée).
+    const eastWest = crossSlope(at(here.x + RELIEF_SPAN_M, here.z), at(here.x - RELIEF_SPAN_M, here.z), span);
+    const northSouth = crossSlope(at(here.x, here.z - RELIEF_SPAN_M), at(here.x, here.z + RELIEF_SPAN_M), span);
+    return {
+      elevation: at(here.x, here.z),
+      slope: Math.hypot(eastWest.slope, northSouth.slope),
+    };
   }
 
   /** Tuiles vectorielles couvrant la bulle autour d'un point. */

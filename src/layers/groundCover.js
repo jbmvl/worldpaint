@@ -35,6 +35,7 @@ import {
   ATLAS_ATTRIBUTE,
 } from '../materials/foliageMaterial.js';
 import { makeRandom } from '../materials/proceduralTextures.js';
+import { soilWashFor } from '../core/climate.js';
 import { CORRIDOR_MARGIN_M, inCorridor } from './roadCorridor.js';
 import {
   coverBand,
@@ -262,6 +263,55 @@ export function grassBlockedByCrop(sample, crop) {
   return !edge;
 }
 
+/** Ce qu'une couverture ordinaire — une prairie — fait à l'herbe : rien. */
+export const COVER_GRASS_NEUTRAL = Object.freeze({ height: 1, density: 1, tint: [1, 1, 1] });
+
+/**
+ * Ce que la couverture du sol fait aux touffes : leur taille, leur nombre,
+ * leur teinte.
+ *
+ * Une lande n'est pas une prairie plus terne, c'est une prairie **rase** ; un
+ * maquis est surtout fait de vide entre les arbustes ; une roselière monte plus
+ * haut qu'un pré. Ces trois écarts se lisent à hauteur d'homme, et aucun ne se
+ * rend par la seule couleur du sol (voir `TERRAIN_LOOK.coverAlbedo`, qui la
+ * porte, elle).
+ *
+ * Fonction pure. Une couverture absente de la table pousse comme une prairie —
+ * c'est-à-dire exactement comme avant que les couvertures existent.
+ *
+ * @param {string|null} cover Retour de `groundClass.coverAt`.
+ * @param {Object} [covers] Tranche `theme.covers`.
+ */
+export function coverGrassFor(cover, covers = defaultTheme.covers) {
+  const look = cover ? covers?.[cover] : null;
+  if (!look) return COVER_GRASS_NEUTRAL;
+  return {
+    height: look.grassHeight ?? 1,
+    density: look.grassDensity ?? 1,
+    tint: look.grassTint || COVER_GRASS_NEUTRAL.tint,
+  };
+}
+
+/**
+ * Variantes d'atlas qui portent une fleur, par indice.
+ *
+ * La correction de sol d'un climat s'applique à l'herbe, pas à ce qui fleurit
+ * dedans : un coquelicot d'Andalousie est rouge, et le multiplier par le
+ * facteur d'une herbe sèche — qui triple le rouge — en ferait une lampe. La
+ * touffe qui le porte reste donc à sa teinte de prairie ; elle est minoritaire
+ * (`flowerShare`), donc ça ne défait pas le calage avec le sol.
+ */
+const FLOWERING_VARIANTS = new Set(
+  ['white', 'yellow', 'poppy', 'clumpWhite', 'clumpYellow', 'clumpPoppy'].map((name) =>
+    GRASS_VARIANTS.indexOf(name)
+  )
+);
+
+/** Vrai si la variante porte une fleur. Voir `FLOWERING_VARIANTS`. */
+export function isFloweringVariant(variant) {
+  return FLOWERING_VARIANTS.has(variant);
+}
+
 /** Voisinage sondé par `widenFieldEdge`, en mètres depuis le point d'origine. */
 const FIELD_EDGE_OFFSETS_M = [
   [5, 0], [-5, 0], [0, 5], [0, -5],
@@ -325,6 +375,14 @@ export class GroundCover {
     this.groundClass = groundClass;
     this.roads = roads;
     this.streets = streets;
+    /**
+     * Famille climatique du lieu, ou `null`. Posée par le compositeur ; elle
+     * décide de la teinte des touffes, et c'est **le même facteur** que le
+     * shader de terrain applique à l'albédo du sol — sans quoi le premier plan
+     * et le lointain divergeraient.
+     */
+    this.climate = null;
+    this._wash = soilWashFor(null, theme.soils);
     this.disposed = false;
     this._anchor = null;
     this._frame = null;
@@ -371,6 +429,21 @@ export class GroundCover {
     this._scale = new THREE.Vector3();
     this._axis = new THREE.Vector3(0, 1, 0);
     this._color = new THREE.Color();
+  }
+
+  /**
+   * Pose la famille climatique du lieu.
+   *
+   * @param {string|null} family
+   * @returns {boolean} vrai si elle a changé — l'appelant doit alors
+   *          redistribuer, la teinte étant écrite dans les instances.
+   */
+  setClimate(family) {
+    const next = family || null;
+    if (next === this.climate) return false;
+    this.climate = next;
+    this._wash = soilWashFor(next, this.theme.soils);
+    return true;
   }
 
   setMaxAnisotropy(value) {
@@ -450,10 +523,22 @@ export class GroundCover {
       const crop = groundClass?.cropAt?.(cellX, cellZ) ?? null;
       if (grassBlockedByCrop(edgeSample, crop)) continue;
 
+      // Couverture du sol : lande, maquis, marais… Elle ne décide pas *si* de
+      // l'herbe pousse — c'est la part de végétal qui le dit — mais de quelle
+      // taille, en quelle quantité et de quelle couleur.
+      const coverLook = coverGrassFor(
+        groundClass?.coverAt?.(cellX, cellZ) ?? null,
+        this.theme.covers
+      );
+
       const fade = coverBandFade(cell.distance, band);
       if (fade <= 0.02) continue;
       const heightFade = coverHeightFade(fade, GRASS_HEIGHT_FADE_FLOOR);
-      const density = coverMassDensity(green, band);
+      // À distance, une instance représente plusieurs mètres carrés. La
+      // couverture dit *ce que c'est*, le climat *dans quel pays* : une lande
+      // écossaise est rase parce que c'est une lande, et un peu plus rase
+      // encore parce qu'elle est en pays venté. Les deux se multiplient.
+      const density = coverMassDensity(green, band) * coverLook.density * this._wash.grassDensity;
 
       fillGrassCell(tufts, gx, gz, band.cell, band.perCell, band.salt);
 
@@ -470,6 +555,8 @@ export class GroundCover {
         const height =
           (grass.minHeight + tufts[at + 3] * (grass.maxHeight - grass.minHeight)) *
           (0.72 + green * 0.28) * // plus dense, plus haute
+          coverLook.height *
+          this._wash.grassHeight *
           heightFade *
           band.rise;
         const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
@@ -480,14 +567,21 @@ export class GroundCover {
         this._scale.set(width, height, width);
         this._matrix.compose(this._position, this._quaternion, this._scale);
         mesh.setMatrixAt(placed, this._matrix);
-        // Teinte par touffe (le jaune monte là où la couverture faiblit).
-        const dry = (1 - green) * 0.5 + tint * 0.35;
-        this._color.setRGB(0.82 + dry * 0.26, 0.96 + tint * 0.09, 0.74 - dry * 0.2);
-        mesh.setColorAt(placed, this._color);
-
-        // Fleurissement décidé par le sol, pas par un tirage libre ; survit au changement d'échelle.
+        // Fleurissement décidé par le sol, pas par un tirage libre ; survit au
+        // changement d'échelle. Tiré **avant** la teinte, qui en dépend : voir
+        // `FLOWERING_VARIANTS`.
         let variant = grassVariantFor(edgeSample, tufts[at + 6], this.theme.grass);
         if (cell.band > 0) variant = grassMassVariant(variant, tufts[at + 5]);
+
+        const dry = (1 - green) * 0.5 + tint * 0.35;
+        const wash = isFloweringVariant(variant) ? COVER_GRASS_NEUTRAL.tint : this._wash.grass;
+        this._color.setRGB(
+          (0.82 + dry * 0.26) * coverLook.tint[0] * wash[0],
+          (0.96 + tint * 0.09) * coverLook.tint[1] * wash[1],
+          (0.74 - dry * 0.2) * coverLook.tint[2] * wash[2]
+        );
+        mesh.setColorAt(placed, this._color);
+
         const [u, v] = GRASS_ATLAS_OFFSETS[variant];
         this._atlasOffsets[placed * 2] = u;
         this._atlasOffsets[placed * 2 + 1] = v;

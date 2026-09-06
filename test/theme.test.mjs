@@ -24,6 +24,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { defaultTheme } from '../src/themes/default.js';
+import { CLIMATE_FAMILIES, filterByClimate } from '../src/core/climate.js';
+import { skyPaletteFor } from '../src/environment/sceneEnvironment.js';
 import { resolveTheme } from '../src/themes/theme.js';
 import { townPaletteAt, buildingStyleAt, streetSurfaceAt } from '../src/layers/townStyle.js';
 import { kerbProfile } from '../src/layers/streetLayer.js';
@@ -287,6 +289,34 @@ test('le compositeur sert le thème à toutes les couches qu’il monte', () => 
   }
 });
 
+test('le sol et ce qui y pousse lisent le même facteur', () => {
+  // Le sol lointain est peint par le shader, le premier plan par des touffes
+  // et des tiges instanciées, et les trois doivent bouger du même rapport
+  // quand on change de pays — sinon on voit un disque de couleur différente
+  // autour de l'observateur, ce qui est le défaut que le calage des albédos
+  // (`TERRAIN_LOOK.grassAlbedo`) existe pour éviter.
+  //
+  // On ne peut pas le vérifier en montant les trois (il faudrait WebGL et un
+  // canevas), mais on peut vérifier qu'il n'y a **qu'une** source : chacun
+  // passe par `soilWashFor`, et aucun ne va lire la tranche du thème
+  // lui-même.
+  for (const file of [
+    'src/terrain/terrainMaterial.js',
+    'src/layers/groundCover.js',
+    'src/layers/cropLayer.js',
+  ]) {
+    const source = readFileSync(file, 'utf8');
+    assert.match(source, /soilWashFor\(/, `${file} passe par le résolveur`);
+    // Le mot apparaît en commentaire et dans le passage de la tranche au
+    // résolveur ; ce qui est interdit, c'est d'aller y chercher une famille.
+    assert.equal(
+      /soils\s*(\[|\.[a-z])/i.test(source),
+      false,
+      `${file} lit la tranche directement`
+    );
+  }
+});
+
 /*
  * Le garde-fou structurel. Une variable de module qui garderait un thème, une
  * palette convertie ou un catalogue construit serait invisible dans les tests
@@ -295,6 +325,13 @@ test('le compositeur sert le thème à toutes les couches qu’il monte', () => 
  */
 const ALLOWED_MODULE_STATE = {
   'materials/foliageMaterial.js': ['leanWarned'],
+  // La grille climatique décodée. C'est la seule mémoire de module qui ne
+  // puisse pas fuir d'un monde à l'autre : elle ne dépend d'aucune entrée — ni
+  // thème, ni scène, ni observateur —, elle est en lecture seule une fois
+  // remplie, et sa valeur est la même pour tout le monde. La garder paresseuse
+  // évite de décoder 266 000 cellules dans une application qui ne demande
+  // jamais de climat.
+  'core/climate.js': ['cells'],
 };
 
 function sourceFiles(dir, base = dir) {
@@ -345,9 +382,22 @@ test('la section d’une rue est celle du thème qu’on lui donne', () => {
 });
 
 test('le ciel est une tranche du thème', () => {
-  assert.deepEqual(Object.keys(DEFAULT.sky).sort(), ['fog', 'nightHorizon', 'nightZenith']);
+  assert.deepEqual(Object.keys(DEFAULT.sky).sort(), [
+    'fog',
+    'nightHorizon',
+    'nightZenith',
+    'variants',
+  ]);
   assert.equal(DEFAULT.sky.fog, '#e8eef3');
   assert.equal(OTHER.sky.fog, '#000000');
+  // Une tranche de ciel sans variantes est une tranche valide : c'est le cas
+  // d'un thème écrit avant qu'elles existent, et le climat n'y touche rien.
+  assert.equal(skyPaletteFor('arid', OTHER.sky), null);
+  assert.equal(skyPaletteFor(null, DEFAULT.sky), null, 'sans climat, rien à imposer');
+  // Une variante ne redit que ce qu'elle change : le reste vient de la base.
+  const sec = skyPaletteFor('arid', DEFAULT.sky);
+  assert.notEqual(sec.fog, DEFAULT.sky.fog, 'l’air d’un pays sec n’est pas celui d’une côte');
+  assert.equal(sec.nightZenith, DEFAULT.sky.nightZenith, 'ce qu’elle ne dit pas ne change pas');
   // Le brouillard et le raccord d'horizon lisent la même valeur : c'est cette
   // égalité qui empêche une couture entre le terrain lointain et le ciel.
   assert.equal(DEFAULT_SKY_PALETTE, defaultTheme.sky, 'l’alias public désigne la tranche, sans copie');
@@ -383,4 +433,45 @@ test('la haie prend ses arbustes du thème, et son budget du moteur', () => {
   );
   const [tall] = hedgeClumps(path, { style: hedgeStyleFor('hedge', OTHER.furniture.hedges), here });
   assert.equal(tall.height, 6, 'l’arbuste fait la taille que le thème lui donne');
+});
+
+/*
+ * Le garde-fou de couverture climatique.
+ *
+ * `filterByClimate` retombe volontairement sur la liste entière quand une
+ * famille n'a aucun contenu : lever à cet endroit-là aborterait `refresh` et
+ * emporterait toutes les couches suivantes. Le prix de cette prudence est
+ * qu'une famille oubliée ne se signale pas — elle rend un décor générique, en
+ * silence. C'est donc ici qu'elle doit se signaler, franchement.
+ */
+test('chaque famille climatique a du contenu dédié dans le thème par défaut', () => {
+  for (const family of CLIMATE_FAMILIES) {
+    const forests = DEFAULT.forests.filter((type) => type.climates?.includes(family));
+    assert.ok(forests.length >= 1, `${family} : aucun peuplement`);
+    const towns = DEFAULT.towns.filter((palette) => palette.climates?.includes(family));
+    assert.ok(towns.length >= 1, `${family} : aucune palette de bourg`);
+  }
+});
+
+test('un climat que le thème ne connaît pas ne vide pas le décor', () => {
+  // Le repli est la liste entière, jamais rien : un climat inconnu rend un
+  // paysage générique, pas un paysage nu.
+  const pool = filterByClimate(DEFAULT.forests, 'climat-inventé');
+  assert.equal(pool.length, DEFAULT.forests.length);
+});
+
+test('la mémoire des palettes est indexée par nuancier ET par climat', () => {
+  // Deux mémoires se superposent ici : la conversion en linéaire, et le
+  // filtrage par climat. Une seconde mal indexée peindrait un village
+  // andalou avec le bois d'un village finlandais, et seulement quand les deux
+  // sont demandés dans le même ordre.
+  const [nord, sud] = interleaved(
+    () => townPaletteAt(4200, 1400, DEFAULT.towns, 'boreal').name,
+    () => townPaletteAt(4200, 1400, DEFAULT.towns, 'arid').name
+  );
+  assert.notEqual(nord, sud);
+  assert.ok(DEFAULT.towns.find((p) => p.name === nord).climates.includes('boreal'));
+  assert.ok(DEFAULT.towns.find((p) => p.name === sud).climates.includes('arid'));
+  // Et sans climat, on retrouve exactement le tirage d'avant les climats.
+  assert.equal(townPaletteAt(4200, 1400, DEFAULT.towns).name, townPaletteAt(4200, 1400).name);
 });

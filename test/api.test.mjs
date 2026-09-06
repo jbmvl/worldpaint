@@ -14,6 +14,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import * as api from '../src/index.js';
+import { defaultTheme } from '../src/themes/default.js';
 import { World, createWorld, DEFAULT_VIEW } from '../src/world.js';
 
 /** Ce qu'une application a le droit d'attendre à la version 0.1. */
@@ -156,6 +157,58 @@ test('avec un ciel, updateSky recale le dôme avant de propager la nuit', () => 
   ]);
 });
 
+test('l’air prend la couleur du pays, sauf si l’application en a choisi une', () => {
+  // La palette d'ambiance est la couleur la plus déterminante du décor. Elle
+  // suit donc le climat — mais jamais contre le choix explicite d'une
+  // application, ici ou au montage.
+  const palettes = [];
+  const environment = {
+    nightMix: 0,
+    wetness: 0,
+    wind: { amplitude: 1, speed: 1 },
+    weather: null,
+    clearColor: null,
+    followCamera: () => {},
+    update: (o) => palettes.push(o.palette),
+    followShadow: () => {},
+    dispose: () => {},
+  };
+  const camera = { position: { x: 0, y: 0, z: 0 } };
+  const shot = { camera, date: new Date(0), lng: 2, lat: 48 };
+
+  const composer = fakeComposer();
+  composer.landscape = { climate: { family: 'arid', koppen: 'BWh' }, relief: { elevation: 300, slope: 0 } };
+  const world = new World({ composer, environment, elevation: null, ownsElevation: false });
+  world.updateSky(shot);
+  assert.equal(palettes[0].fog, defaultTheme.sky.variants.find((v) => v.name === 'poussière').fog);
+
+  // Deux images de suite au même endroit ne recomposent pas la palette : elle
+  // change tous les deux kilomètres, pas soixante fois par seconde.
+  world.updateSky(shot);
+  assert.equal(palettes[1], palettes[0], 'la palette est mémorisée par famille');
+
+  // Une palette passée à l'image l'emporte sur le climat.
+  world.updateSky({ ...shot, palette: 'la mienne' });
+  assert.equal(palettes[2], 'la mienne');
+
+  // Un monde monté avec sa propre palette n'en reçoit jamais d'autre : le
+  // climat ne rend rien, et l'environnement garde la sienne.
+  const fixe = new World({
+    composer,
+    environment,
+    elevation: null,
+    ownsElevation: false,
+    skyFollowsClimate: false,
+  });
+  fixe.updateSky(shot);
+  assert.equal(palettes[3], undefined);
+
+  // Hors de la fenêtre climatique, rien non plus.
+  composer.landscape = null;
+  world.updateSky(shot);
+  assert.equal(palettes[4], undefined);
+});
+
 test('sans point d’ombre, la boîte se pose sur la caméra', () => {
   const composer = fakeComposer();
   let shadow = null;
@@ -210,7 +263,6 @@ test('dispose ne libère le relief que s’il nous appartient', () => {
  * derrière (un thème n'a pas à pouvoir faire tomber la fréquence d'images).
  */
 
-import { defaultTheme } from '../src/themes/default.js';
 import {
   TERRAIN_LOOK,
   TOWN_PALETTES,

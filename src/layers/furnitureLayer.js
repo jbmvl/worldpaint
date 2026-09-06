@@ -82,6 +82,7 @@ import {
   spacedAlongPath,
   realBoundaryRuns,
   boundaryFurnitureFor,
+  pickShare,
   scatterFurnitureFor,
   herdFor,
   rockKindFor,
@@ -416,27 +417,54 @@ const FLAT_SHADED_LINEAR_KINDS = new Set(['hedge', 'lowHedge', 'vineRow', 'rockC
  * dominer ni disparaître : la variété tient à ce qu'une route sur cinq environ
  * choisisse chaque silhouette, pas à ce qu'une seule domine les autres.
  */
-const ALIGNMENT_TREE_SPECIES = [
-  { item: 'treeConifer', share: 0.22 },
-  { item: 'treeBroad', share: 0.195 },
-  { item: 'treeRound', share: 0.195 },
-  { item: 'treeColumnar', share: 0.195 },
-  { item: 'treeOval', share: 0.195 },
+const DEFAULT_ALIGNMENT_SPECIES = [
+  ['treeConifer', 0.22],
+  ['treeBroad', 0.195],
+  ['treeRound', 0.195],
+  ['treeColumnar', 0.195],
+  ['treeOval', 0.195],
 ];
+
+/**
+ * Essences d'alignement par famille climatique.
+ *
+ * Un alignement de bord de route est un objet **planté**, donc daté et situé :
+ * le platane de nationale, le cyprès de mas, le bouleau de chemin nordique. Il
+ * se voit de loin, il est répété sur des kilomètres, et c'est ce qui le rend
+ * cher à laisser générique — une route de Crète bordée de sapins se remarque
+ * plus vite qu'un bois mal composé.
+ *
+ * Les silhouettes disponibles sont celles du catalogue et rien d'autre :
+ * `treeColumnar` porte le cyprès et le peuplier, `treeRound` le pin parasol
+ * comme le tilleul, `treeOval` l'olivier comme le bouleau. C'est la limite
+ * honnête de ce qu'on sait dessiner — le reste se joue sur les proportions.
+ *
+ * Une famille absente retombe sur le mélange par défaut.
+ */
+const ALIGNMENT_SPECIES_MIXES = {
+  oceanic: DEFAULT_ALIGNMENT_SPECIES,
+  oceanicUpland: [['treeConifer', 0.35], ['treeRound', 0.25], ['treeOval', 0.25], ['treeBroad', 0.15]],
+  // Peupliers de bord de route, en rideau : la plaine d'Europe centrale.
+  continental: [['treeColumnar', 0.3], ['treeBroad', 0.3], ['treeOval', 0.25], ['treeConifer', 0.15]],
+  boreal: [['treeConifer', 0.6], ['treeColumnar', 0.2], ['treeOval', 0.2]],
+  // Cyprès, pin parasol, olivier. Le sapin de bord de route n'existe pas ici.
+  mediterranean: [['treeColumnar', 0.4], ['treeRound', 0.28], ['treeOval', 0.22], ['treeBroad', 0.1]],
+  mediterraneanCool: [['treeColumnar', 0.32], ['treeRound', 0.26], ['treeOval', 0.24], ['treeBroad', 0.18]],
+  mediterraneanMontane: [['treeConifer', 0.45], ['treeColumnar', 0.3], ['treeOval', 0.25]],
+  semiArid: [['treeColumnar', 0.45], ['treeOval', 0.3], ['treeRound', 0.25]],
+  arid: [['treeColumnar', 0.5], ['treeOval', 0.3], ['treeRound', 0.2]],
+  alpine: [['treeConifer', 0.7], ['treeColumnar', 0.2], ['treeOval', 0.1]],
+  glacial: [['treeConifer', 1]],
+};
 
 /**
  * Choisit l'essence d'un alignement, tirée une fois pour toute la chaîne
  * (voir l'appelant) — jamais arbre par arbre, ce qui replanterait une haie de
  * platanes en sapins au hasard de chaque pied.
  */
-function alignmentTreeSpeciesFor(x, z) {
-  const draw = randomAt(x, z, 37);
-  let acc = 0;
-  for (const { item, share } of ALIGNMENT_TREE_SPECIES) {
-    acc += share;
-    if (draw < acc) return item;
-  }
-  return ALIGNMENT_TREE_SPECIES[ALIGNMENT_TREE_SPECIES.length - 1].item;
+function alignmentTreeSpeciesFor(x, z, climate = null) {
+  const mix = (climate && ALIGNMENT_SPECIES_MIXES[climate]) || DEFAULT_ALIGNMENT_SPECIES;
+  return pickShare(mix, randomAt(x, z, 37));
 }
 
 export class FurnitureLayer {
@@ -451,6 +479,14 @@ export class FurnitureLayer {
   constructor({ THREE, scene, bubble, groundClass = null, theme = defaultTheme }) {
     this.THREE = THREE;
     this.theme = theme;
+    /**
+     * Famille climatique du lieu, ou `null`. Posée par le compositeur. Elle
+     * décide de trois choses ici : le bétail d'une pâture, le traitement de
+     * ses limites (`BOUNDARY_MIXES`) et l'essence d'un alignement de route
+     * (`ALIGNMENT_SPECIES_MIXES`) — les deux dernières dessinant la trame du
+     * paysage agraire, qui se lit de bien plus loin qu'une couleur.
+     */
+    this.climate = null;
     this.specs = furnitureSpecsFor(theme.furniture.colors);
     this.scene = scene;
     this.bubble = bubble;
@@ -582,6 +618,15 @@ export class FurnitureLayer {
   }
 
   /** Vrai si l'observateur s'est assez éloigné pour justifier une reconstruction. */
+  /**
+   * Pose la famille climatique du lieu. Le mobilier se refait quand elle change
+   * (le compositeur périme le décor), donc il n'y a rien à invalider ici.
+   * @param {string|null} family
+   */
+  setClimate(family) {
+    this.climate = family || null;
+  }
+
   needsRebuild(x, z) {
     if (this._frame !== this.bubble?.frame) return true;
     if (!this._anchor) return true;
@@ -1394,7 +1439,7 @@ export class FurnitureLayer {
         // L'essence est tirée **une fois pour la chaîne** : un alignement mêlant
         // platanes et sapins n'existe pas, c'est le propre d'un alignement d'être
         // planté le même jour.
-        const species = alignmentTreeSpeciesFor(side.x, side.z);
+        const species = alignmentTreeSpeciesFor(side.x, side.z, this.climate);
         for (const p of spacedAlongPath(path, plan.alignmentTree, spacing)) {
           const row = p.index % 2 === 0 ? 1 : -1;
           this._placeBeside(placements, species, p, row * (halfWidth + 3.2), platform, {
@@ -1693,7 +1738,7 @@ export class FurnitureLayer {
         // les roues de l'observateur.
         const kind =
           boundaries < FURNITURE_LIMITS.boundaries
-            ? boundaryFurnitureFor(properties, { steepness, variant, crop })
+            ? boundaryFurnitureFor(properties, { steepness, variant, crop, climate: this.climate })
             : null;
         if (kind) {
           boundaries += this._appendParcelBoundary(buffers, placements, kind, ring, bounds, sampleElevation, here);
@@ -1972,7 +2017,7 @@ export class FurnitureLayer {
   _placeHerd(placements, ring, centre, variant, steepness, count) {
     if (randomAt(centre.x, centre.z, 53) < 0.2) return 0;
 
-    const { item, spread } = herdFor({ steepness, variant });
+    const { item, spread } = herdFor({ steepness, variant, climate: this.climate });
     const heading = randomAt(centre.x, centre.z, 59) * Math.PI * 2;
     const seed = positionSeed(centre.x, centre.z, 61);
     let placed = 0;

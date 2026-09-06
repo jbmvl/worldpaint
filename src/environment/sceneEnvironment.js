@@ -80,6 +80,24 @@ const HORIZON_BAND = 0.18;
  */
 export const DEFAULT_SKY_PALETTE = defaultTheme.sky;
 
+/**
+ * Palette d'ambiance d'un climat, ou `null` s'il n'en a pas de propre.
+ *
+ * `null` compte : `update({ palette: undefined })` garde la dernière palette
+ * reçue, donc une application qui a choisi la sienne ne se la fait pas
+ * remplacer par le climat. Une variante ne redit que ce qu'elle change.
+ */
+export function skyPaletteFor(climate, sky = DEFAULT_SKY_PALETTE) {
+  if (!climate || !Array.isArray(sky?.variants)) return null;
+  const variant = sky.variants.find((entry) => entry?.climates?.includes(climate));
+  if (!variant) return null;
+  return {
+    fog: variant.fog ?? sky.fog,
+    nightZenith: variant.nightZenith ?? sky.nightZenith,
+    nightHorizon: variant.nightHorizon ?? sky.nightHorizon,
+  };
+}
+
 /** Échelle du bruit de nuages (la valeur par défaut de three, 0,0002, couvre tout le ciel d'une seule valeur : aucun nuage n'apparaît). */
 const CLOUD_SCALE = 0.0015;
 /** Vitesse de dérive, appliquée à un temps relatif (une date epoch brute détruirait la précision du bruit en float32). */
