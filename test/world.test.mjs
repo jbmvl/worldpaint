@@ -54,6 +54,8 @@ import {
   createProfileBuffer,
   appendProfile,
   appendVariableWall,
+  appendRockCut,
+  flattenGrade,
 } from '../src/layers/ribbonGeometry.js';
 import {
   spacedAlongPath,
@@ -107,6 +109,11 @@ import {
   collectRoadLines,
   ROAD_PROFILE_ORDER,
   ROAD_LIFT_M,
+  collectRoadSegments,
+  gradeAllowance,
+  ROAD_GRADE_CUT_FLAT_M,
+  ROAD_GRADE_CUT_STEEP_M,
+  ROAD_GRADE_FILL_STEEP_M,
 } from '../src/layers/roadNetwork.js';
 import {
   mergeRoadLines,
@@ -119,6 +126,18 @@ import {
   JUNCTION_OVERLAP_M,
   JUNCTION_MIN_RUN_M,
 } from '../src/layers/roadGraph.js';
+import {
+  WORK_NONE,
+  WORK_BRIDGE,
+  WORK_TUNNEL,
+  workCodeFor,
+  workRuns,
+  drawableRuns,
+  resampleWorks,
+  levelWorkSpans,
+  BRIDGE_CLEARANCE_M,
+} from '../src/layers/roadWorks.js';
+import { BridgeLayer, deckProfile, vaultProfile } from '../src/layers/bridgeLayer.js';
 import {
   CORRIDOR_MARGIN_M,
   CORRIDOR_PROBE_M,
@@ -230,6 +249,7 @@ import {
 } from '../src/materials/proceduralTextures.js';
 import {
   townPaletteAt,
+  worksStyleAt,
   buildingStyleAt,
   roofShapeFor,
   TOWN_PATCH_M,
@@ -264,6 +284,7 @@ import {
   GREENHOUSE_SPACING_M,
   isSettlementEdgeRun,
   SIGN_PLACE_NAME_MIN_GAP_M,
+  ROCK_CUT_MIN_RISE_M,
 } from '../src/layers/furnitureLayer.js';
 import {
   HEDGE_STYLES,
@@ -968,10 +989,12 @@ test('la classe OpenMapTiles choisit un profil de chaussée', () => {
   assert.equal(roadStyleFor({ class: 'service' }).profile, 'lane');
   assert.equal(roadStyleFor({ class: 'primary' }).paved, true);
   assert.equal(roadStyleFor({ class: 'track' }).paved, false, 'un chemin n’est pas revêtu');
-  // Un tunnel passe sous le relief : le dessiner en surface poserait une route
-  // en travers d’une montagne.
-  assert.equal(roadStyleFor({ class: 'primary', brunnel: 'tunnel' }), null, 'tunnel écarté');
-  assert.ok(roadStyleFor({ class: 'primary', brunnel: 'bridge' }), 'pont conservé');
+  // Un tunnel n’est plus écarté à la lecture : il reste dans le graphe (sinon
+  // la route s’arrête net au pied de la colline) et porte son code d’ouvrage.
+  // C’est le ruban qui saute ses lignes, voir `drawableRuns`.
+  assert.equal(roadStyleFor({ class: 'primary', brunnel: 'tunnel' }).works, WORK_TUNNEL, 'tunnel signalé');
+  assert.equal(roadStyleFor({ class: 'primary', brunnel: 'bridge' }).works, WORK_BRIDGE, 'pont signalé');
+  assert.equal(roadStyleFor({ class: 'primary' }).works, WORK_NONE, 'route ordinaire');
   // Rails, transports guidés et lignes de ferry n’ont pas de revêtement.
   assert.equal(roadStyleFor({ class: 'rail' }), null);
   assert.equal(roadStyleFor({ class: 'ferry' }), null);
@@ -1941,6 +1964,175 @@ test('un mur sans hauteur nulle part n’est pas engendré', () => {
   assert.equal(buffer.positions.length, 0);
 });
 
+// --- Profil en long : l’aplanissement du terrassier -------------------------
+
+/** Profil ondulé : une pente régulière de 4 %, plus une vague de 40 m d’un mètre. */
+function wavyProfile(rows, spacing = 5) {
+  return Float32Array.from({ length: rows }, (_, r) =>
+    100 + r * spacing * 0.04 + Math.sin((2 * Math.PI * r * spacing) / 40)
+  );
+}
+
+test('l’aplanissement efface les vagues et garde la pente', () => {
+  const rows = 121;
+  const raw = wavyProfile(rows);
+  const graded = flattenGrade(Float32Array.from(raw), { maxCut: 3, maxFill: 3 });
+
+  // La vague, mesurée loin des extrémités : ce qui en reste doit être invisible
+  // à l’échelle d’une chaussée, là où elle valait un mètre de creux.
+  let ripple = 0;
+  for (let r = 30; r < rows - 30; r++) {
+    const trend = (graded[r - 1] + graded[r + 1]) * 0.5;
+    ripple = Math.max(ripple, Math.abs(graded[r] - trend));
+  }
+  assert.ok(ripple < 0.02, `vague résiduelle : ${ripple.toFixed(3)} m`);
+
+  // La pente d’ensemble, elle, ne se rabote pas : quatre pour cent d’un bout à
+  // l’autre, sinon la route ne monterait plus là où le terrain monte.
+  const climb = graded[rows - 1] - graded[0];
+  close(climb, raw[rows - 1] - raw[0], 0.35, 'dénivelé conservé');
+});
+
+test('l’aplanissement ne sort jamais de la bande de terrassement', () => {
+  const rows = 121;
+  const raw = wavyProfile(rows);
+  const graded = flattenGrade(Float32Array.from(raw), { maxCut: 0.4, maxFill: 0.25 });
+
+  for (let r = 0; r < rows; r++) {
+    const gap = graded[r] - raw[r];
+    assert.ok(gap <= 0.25 + 1e-4, `ligne ${r} : remblai de ${gap.toFixed(3)} m`);
+    assert.ok(gap >= -0.4 - 1e-4, `ligne ${r} : déblai de ${(-gap).toFixed(3)} m`);
+  }
+});
+
+test('sans terrassement consenti, le profil colle au terrain', () => {
+  // C’est le régime de la rase campagne : rien à tenir, donc rien à aplanir.
+  const raw = wavyProfile(41);
+  const graded = flattenGrade(Float32Array.from(raw), { maxCut: 0, maxFill: 0 });
+  for (let r = 0; r < raw.length; r++) close(graded[r], raw[r], 1e-6, `ligne ${r}`);
+});
+
+test('le terrassement consenti suit le devers', () => {
+  const flat = gradeAllowance(0);
+  const steep = gradeAllowance(0.6);
+
+  close(flat.cut, ROAD_GRADE_CUT_FLAT_M, 1e-6, 'en plaine, la route colle au sol');
+  close(steep.cut, ROAD_GRADE_CUT_STEEP_M, 1e-6, 'sur un versant, elle s’en détache');
+  close(steep.fill, ROAD_GRADE_FILL_STEEP_M, 1e-6, 'et le mur porte la différence');
+  // Le remblai reste le parent pauvre : porter coûte plus cher qu’entailler.
+  assert.ok(steep.fill < steep.cut, 'on entaille plus volontiers qu’on ne porte');
+  // Monotone : pas de marche entre les deux régimes.
+  let previous = -Infinity;
+  for (let slope = 0; slope <= 0.6; slope += 0.02) {
+    const { cut } = gradeAllowance(slope);
+    assert.ok(cut >= previous - 1e-9, `devers ${slope.toFixed(2)}`);
+    previous = cut;
+  }
+});
+
+// --- Falaise de déblai ------------------------------------------------------
+
+test('la falaise monte jusqu’au terrain et le couvre jusqu’au raccord', () => {
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 30, z: 0 }], 10);
+  const rows = path.length;
+  const base = new Float32Array(rows).fill(100);
+  // Paroi franche de six mètres, puis le versant qui continue de monter
+  // derrière elle jusqu’au raccord du déblai.
+  const crest = new Float32Array(rows).fill(106);
+  const shelf = new Float32Array(rows).fill(107.5);
+  const cap = new Float32Array(rows).fill(109);
+  const reach = new Float32Array(rows).fill(1);
+  const buffer = createProfileBuffer();
+
+  assert.ok(
+    appendRockCut(buffer, {
+      path,
+      base,
+      crest,
+      shelf,
+      cap,
+      offset: 4,
+      side: 1,
+      reach,
+      capReach: 5,
+      shelfAt: 0.5,
+      colorFoot: [0, 0, 0],
+      colorBreak: [0.5, 0.5, 0.5],
+      colorTop: [1, 1, 1],
+    })
+  );
+
+  const cols = 6;
+  assert.equal(buffer.positions.length / 3, rows * cols, 'six sommets par ligne');
+  assert.equal(buffer.colors.length, buffer.positions.length, 'une couleur par sommet');
+
+  // La route va vers +x, la gauche de la marche est en -z : un décalage positif
+  // s’éloigne donc vers -z, et le raccord est ce qui va le plus loin.
+  const z = (r, c) => buffer.positions[(r * cols + c) * 3 + 2];
+  const y = (r, c) => buffer.positions[(r * cols + c) * 3 + 1];
+
+  for (let r = 0; r < rows; r++) {
+    close(z(r, 0), -4, 1e-4, `pied de la ligne ${r}`);
+    close(y(r, 0), 100, 1e-4, `le pied est sur la plate-forme, ligne ${r}`);
+    close(z(r, 2), -5, 1e-4, `arase reculée du fruit, ligne ${r}`);
+    close(y(r, 2), 106, 1e-4, `arase au terrain naturel, ligne ${r}`);
+    // Le dos s’appuie sur le talus entre l’arase et le raccord : ni table
+    // plate posée sur la falaise, ni paroi qui traverse le talus.
+    close(z(r, 3), -7, 1e-4, `dos à mi-largeur, ligne ${r}`);
+    close(y(r, 3), 107.5, 1e-4, `dos appuyé sur le talus, ligne ${r}`);
+    close(z(r, 4), -9, 1e-4, `raccord au versant, ligne ${r}`);
+    close(y(r, 4), 109, 1e-4, `le raccord suit le versant, ligne ${r}`);
+    // La cassure est sur la face, entre le pied et l’arase.
+    assert.ok(y(r, 1) > 100 && y(r, 1) < 106, `cassure à mi-hauteur, ligne ${r}`);
+    assert.ok(z(r, 1) > -5 && z(r, 1) < -4, `cassure sur la face, ligne ${r}`);
+  }
+});
+
+test('la falaise se dresse du côté du versant, pas de l’autre', () => {
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 30, z: 0 }], 10);
+  const rows = path.length;
+  const common = {
+    path,
+    base: new Float32Array(rows).fill(100),
+    crest: new Float32Array(rows).fill(104),
+    reach: new Float32Array(rows).fill(1),
+    capReach: 5,
+    colorFoot: [0, 0, 0],
+    colorBreak: [0.5, 0.5, 0.5],
+    colorTop: [1, 1, 1],
+  };
+
+  const left = createProfileBuffer();
+  appendRockCut(left, { ...common, offset: 4, side: 1 });
+  const right = createProfileBuffer();
+  appendRockCut(right, { ...common, offset: -4, side: -1 });
+
+  for (let i = 0; i < left.positions.length; i += 3) {
+    assert.ok(left.positions[i + 2] <= -4 + 1e-6, 'côté amont à gauche de la marche');
+    assert.ok(right.positions[i + 2] >= 4 - 1e-6, 'et rien ne déborde de l’autre côté');
+  }
+});
+
+test('un versant qui ne domine pas la route ne donne pas de falaise', () => {
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 20, z: 0 }], 10);
+  const flat = new Float32Array(path.length).fill(50);
+  const buffer = createProfileBuffer();
+
+  assert.equal(
+    appendRockCut(buffer, {
+      path,
+      base: flat,
+      crest: flat,
+      reach: new Float32Array(path.length).fill(1),
+      colorFoot: [0, 0, 0],
+      colorBreak: [0.5, 0.5, 0.5],
+      colorTop: [1, 1, 1],
+    }),
+    false
+  );
+  assert.equal(buffer.positions.length, 0);
+});
+
 test('le suivi du terrain reste disponible quand on le demande explicitement', () => {
   const path = resamplePath([{ x: 0, z: 0 }, { x: 40, z: 0 }], 5);
   const buffer = createRibbonBuffer();
@@ -2098,6 +2290,145 @@ function roadsideHarness({ profile = 'minor', here = { x: 200, z: 0 } } = {}) {
   const segment = { path, platform, edges, probeSpan: 4, halfWidth: 2.5, profile, startDistance: 0, anchor: path[0] };
   return { layer, context, segment, rowsInfo, buffers, placements };
 }
+
+/**
+ * Une chaussée taillée dans un versant régulier, réduite à ce que la falaise
+ * de déblai lit : la plate-forme, le terrain naturel et la hauteur dont il la
+ * domine. Le versant monte vers -z, donc en amont à gauche de la marche.
+ */
+function rockCutHarness({ rise = 4, slope = 0.35 } = {}) {
+  const layer = Object.create(FurnitureLayer.prototype);
+  layer.specs = furnitureSpecsFor(defaultTheme.furniture.colors);
+
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 200, z: 0 }], 5);
+  const rows = path.length;
+  const deck = 100;
+  const platform = new Float32Array(rows).fill(deck);
+  // Terrain naturel : le versant monte d’autant qu’on s’écarte vers -z. La
+  // surface affichée, elle, est celle que le déblai a laissée — c’est le talus
+  // que la roche vient couvrir.
+  const rawElevation = (x, z) => deck - z * slope;
+  const sampleElevation = (x, z) =>
+    cutElevationAt(rawElevation(x, z), deck, Math.abs(z), 2.5);
+
+  const rowsInfo = path.map((p, r) => ({
+    r, x: p.x, z: p.z, distance: p.distance,
+    slope, uphill: 1, curvature: 0, turn: 0, drop: 0, rise,
+  }));
+
+  const buffers = {};
+  for (const kind of LINEAR_KINDS) buffers[kind] = createProfileBuffer();
+  const context = { buffers, sampleElevation, rawElevation, here: { x: 100, z: 0 } };
+  const segment = { path, platform, halfWidth: 2.5, profile: 'minor' };
+  return { layer, context, segment, rowsInfo, buffers, deck, rawElevation, sampleElevation };
+}
+
+test('un versant qui domine la chaussée est bordé de roche, pas d’un mur', () => {
+  const { layer, context, segment, rowsInfo, buffers, deck, rawElevation, sampleElevation } =
+    rockCutHarness();
+  layer._buildRockCut(context, segment, rowsInfo);
+
+  assert.ok(buffers.rockCut.indices.length > 0, 'la falaise est bien engendrée');
+  assert.equal(buffers.fillWall.indices.length, 0, 'et rien n’est maçonné au passage');
+
+  const positions = buffers.rockCut.positions;
+  const cols = 6;
+  const rows = positions.length / 3 / cols;
+  const y = (r, c) => positions[(r * cols + c) * 3 + 1];
+  const z = (r, c) => positions[(r * cols + c) * 3 + 2];
+  const spec = FURNITURE_SPECS.rockCut;
+  const foot = 2.5 + ROAD_CUT_M;
+
+  for (let r = 0; r < rows; r++) {
+    // Le versant monte vers -z : toute la falaise est de ce côté, au-delà de
+    // l’accotement excavé.
+    for (let c = 0; c < cols; c++) assert.ok(z(r, c) <= -foot + 1e-6, `ligne ${r}, colonne ${c}`);
+
+    close(y(r, 0), deck, 1e-4, `le pied est sur la plate-forme, ligne ${r}`);
+    // La paroi franche s’arrête au terrain naturel de son propre aplomb : plus
+    // haut, elle dépasserait du versant comme une lame.
+    const natural = rawElevation(0, z(r, 2));
+    assert.ok(y(r, 2) >= rawElevation(0, -foot) - 1e-3, `arase au moins au pied du versant, ligne ${r}`);
+    assert.ok(
+      y(r, 2) <= natural + spec.grain.crest * (natural - deck) + 0.1,
+      `arase sans lame au-dessus du versant, ligne ${r}`
+    );
+    // Le raccord, lui, va chercher le versant intact, cinq mètres plus loin —
+    // et sa rallonge l'enfonce dedans plutôt que de le faire ressortir.
+    close(y(r, 4), rawElevation(0, -(foot + ROAD_CUT_BLEND_M)) + spec.crown, 1e-3, `raccord au versant, ligne ${r}`);
+    assert.ok(y(r, 4) <= rawElevation(0, z(r, 4)) + spec.crown + 1e-6, `arrière enfoui, ligne ${r}`);
+    close(z(r, 4), z(r, 5), 1e-6, `semelle sous le raccord, ligne ${r}`);
+    // Et le dos se tient entre le talus qu’il couvre et le terrain naturel :
+    // en dessous, il plongerait dans le talus ; au-dessus, il coifferait le
+    // versant d’une table de roche.
+    assert.ok(y(r, 3) >= sampleElevation(0, z(r, 3)) - 1e-3, `dos au-dessus du talus, ligne ${r}`);
+    assert.ok(y(r, 3) <= rawElevation(0, z(r, 3)) + 1e-3, `dos sous le versant, ligne ${r}`);
+  }
+});
+
+test('un terrain qui ne domine pas la chaussée ne donne pas de falaise', () => {
+  // Le seuil ne parle pas de devers mais de hauteur : sous cette hauteur, ce
+  // qui borde la route est un accotement, pas une paroi.
+  const { layer, context, segment, rowsInfo, buffers } = rockCutHarness({
+    rise: ROCK_CUT_MIN_RISE_M - 0.1,
+    slope: 0.05,
+  });
+  layer._buildRockCut(context, segment, rowsInfo);
+  assert.equal(buffers.rockCut.indices.length, 0);
+});
+
+test('la falaise n’est pas un tube extrudé : sa section change à chaque ligne', () => {
+  // Versant franc : sous un mètre de paroi, le fruit tape son plancher partout
+  // et la section ne varie plus qu’en hauteur.
+  const { layer, context, segment, rowsInfo, buffers } = rockCutHarness({ rise: 6, slope: 0.9 });
+  layer._buildRockCut(context, segment, rowsInfo);
+
+  // Le grain low poly tient à ce qu’aucune ligne ne ressemble à sa voisine :
+  // sans quoi le maillage non lissé n’a aucune arête à montrer.
+  const cols = 6;
+  const positions = buffers.rockCut.positions;
+  const rows = positions.length / 3 / cols;
+  const section = (r) => {
+    const out = [];
+    for (let c = 0; c < cols; c++) {
+      out.push(positions[(r * cols + c) * 3 + 1].toFixed(3), positions[(r * cols + c) * 3 + 2].toFixed(3));
+    }
+    return out.join('|');
+  };
+
+  const shapes = new Set();
+  for (let r = 0; r < rows; r++) shapes.add(section(r));
+  assert.equal(shapes.size, rows, `${shapes.size} sections distinctes sur ${rows} lignes`);
+
+  // Et les trois cotes bruitées bougent chacune, pas seulement l’une d’elles.
+  // Le raccord fait exception en hauteur : il va chercher le versant intact, à
+  // distance fixe, et c'est le versant qui décide — sa rallonge ne bruite que
+  // son recul.
+  for (const [c, cote, varies] of [
+    [0, 'pied', false],
+    [1, 'cassure', true],
+    [2, 'arase', true],
+    [3, 'dos', true],
+    [4, 'raccord', false],
+  ]) {
+    const offsets = new Set();
+    const heights = new Set();
+    for (let r = 0; r < rows; r++) {
+      offsets.add(positions[(r * cols + c) * 3 + 2].toFixed(3));
+      heights.add(positions[(r * cols + c) * 3 + 1].toFixed(3));
+    }
+    assert.ok(offsets.size > rows / 3, `${cote} : ${offsets.size} reculs distincts`);
+    if (varies) assert.ok(heights.size > rows / 3, `${cote} : ${heights.size} hauteurs distinctes`);
+  }
+
+  // Le pied déborde vers le versant, jamais vers la chaussée.
+  for (let r = 0; r < rows; r++) {
+    assert.ok(
+      positions[(r * cols) * 3 + 2] <= -(2.5 + ROAD_CUT_M) + 1e-6,
+      `pied de la ligne ${r} au-delà de l’accotement`
+    );
+  }
+});
 
 test('le mobilier de bord de route se pose sans variable libre', () => {
   // Le mobilier entier est bâti dans un seul `try` : une variable libre dans la
@@ -3531,6 +3862,429 @@ test('un pont n’est pas un carrefour : les deux chaussées se laissent tranqui
   close(over.platform[over.platform.length - 1], 18, 1e-6, 'le pont reste en l’air');
 });
 
+// --- Les ouvrages d'art : ponts et tunnels ----------------------------------
+
+/** Tronçon d'ouvrage : `works[r]` par ligne, plate-forme posée sur le terrain. */
+function worksSegment(rows, works, ground = () => 0) {
+  const path = Array.from({ length: rows }, (_, i) => ({ x: i * 5, z: 0, distance: i * 5 }));
+  const platform = new Float32Array(rows);
+  for (let r = 0; r < rows; r++) platform[r] = ground(path[r].x);
+  return { profile: 'major', halfWidth: 4.25, path, platform, works: Uint8Array.from(works) };
+}
+
+test('le code d’ouvrage vient de `brunnel`, et de lui seul', () => {
+  assert.equal(workCodeFor('bridge'), WORK_BRIDGE);
+  assert.equal(workCodeFor('tunnel'), WORK_TUNNEL);
+  assert.equal(workCodeFor('ford'), WORK_NONE, 'un gué se traverse au sol');
+  assert.equal(workCodeFor(undefined), WORK_NONE);
+});
+
+test('les plages d’ouvrage se relèvent une par une, bornes comprises', () => {
+  const works = [0, 0, 1, 1, 1, 0, 2, 2, 0];
+  assert.deepEqual(workRuns(works, WORK_BRIDGE), [{ from: 2, to: 4 }]);
+  assert.deepEqual(workRuns(works, WORK_TUNNEL), [{ from: 6, to: 7 }]);
+  assert.deepEqual(workRuns(works, WORK_NONE), [
+    { from: 0, to: 1 },
+    { from: 5, to: 5 },
+    { from: 8, to: 8 },
+  ]);
+  assert.deepEqual(workRuns(null, WORK_BRIDGE), [], 'sans drapeau, aucun ouvrage');
+});
+
+test('le ruban saute le tunnel et lui seul — un pont reste de la chaussée', () => {
+  // Deux morceaux à ciel ouvert, séparés par la colline. Chacun avance d'une
+  // ligne sous la tête de tunnel, sinon la chaussée s'arrête cinq mètres avant
+  // la bouche et laisse un trou.
+  assert.deepEqual(drawableRuns([0, 0, 2, 2, 2, 2, 0, 0], 8), [
+    { from: 0, to: 2 },
+    { from: 5, to: 7 },
+  ]);
+  // Un pont se dessine comme le reste : il est simplement porté.
+  assert.deepEqual(drawableRuns([0, 1, 1, 0], 4), [{ from: 0, to: 3 }]);
+  // Sans drapeau du tout, le tronçon entier.
+  assert.deepEqual(drawableRuns(null, 4), [{ from: 0, to: 3 }]);
+  // Un tunnel d'une seule ligne : personne n'y avance, les deux morceaux se
+  // disputeraient la même bande de bitume.
+  assert.deepEqual(drawableRuns([0, 0, 2, 0, 0], 5), [
+    { from: 0, to: 1 },
+    { from: 3, to: 4 },
+  ]);
+  // Une ligne isolée entre deux tunnels ne fait pas un ruban.
+  assert.deepEqual(drawableRuns([2, 0, 2], 3), []);
+});
+
+test('un ouvrage ne déborde pas d’un segment sur la route qui l’aborde', () => {
+  // La convention du graphe : le sommet porte le maximum de ses arêtes, donc
+  // les deux extrémités du pont sont marquées. En reprenant le minimum par
+  // intervalle, on retrouve exactement l’arête d’origine — sans quoi le
+  // tablier s’avancerait de vingt mètres sur le remblai d’accès.
+  const points = [
+    { x: 0, z: 0 },
+    { x: 20, z: 0 },
+    { x: 40, z: 0 },
+    { x: 60, z: 0 },
+  ];
+  const vertices = [WORK_NONE, WORK_BRIDGE, WORK_BRIDGE, WORK_NONE];
+  const path = Array.from({ length: 13 }, (_, i) => ({ distance: i * 5 }));
+
+  const works = resampleWorks(points, vertices, path);
+  assert.equal(works[3], WORK_NONE, 'à 15 m, encore sur le remblai');
+  assert.equal(works[4], WORK_BRIDGE, 'à 20 m, la travée commence');
+  assert.equal(works[8], WORK_BRIDGE, 'à 40 m, elle finit');
+  assert.equal(works[9], WORK_NONE, 'à 45 m, on est redescendu');
+});
+
+test('une travée est tendue entre ses appuis, pas posée dans le ravin', () => {
+  // Terrain : plateau à 20, gorge à 0 au milieu. Le pont couvre la gorge.
+  const ground = (x) => (x >= 20 && x <= 60 ? 0 : 20);
+  const segment = worksSegment(17, [0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0], ground);
+
+  assert.equal(levelWorkSpans(segment.path, segment.platform, segment.works), 1);
+  for (let r = 4; r <= 12; r++) {
+    close(segment.platform[r], 20, 1e-4, `la travée reste à l’altitude des appuis (ligne ${r})`);
+  }
+  close(segment.platform[3], 20, 1e-6, 'l’appui ne bouge pas');
+});
+
+test('une travée trop basse se relève d’un bloc, et le remblai d’accès la rattrape', () => {
+  // Rivière au niveau du terrain : la corde passerait à raser l’eau.
+  const segment = worksSegment(21, Array.from({ length: 21 }, (_, r) => (r >= 8 && r <= 12 ? 1 : 0)));
+  const clearanceAt = (x) => (x >= 40 && x <= 60 ? 0 : -50);
+
+  levelWorkSpans(segment.path, segment.platform, segment.works, { clearanceAt });
+
+  const deck = segment.platform[10];
+  close(deck, BRIDGE_CLEARANCE_M, 1e-4, 'le tablier dégage exactement le gabarit');
+  for (let r = 8; r <= 12; r++) {
+    close(segment.platform[r], deck, 1e-5, `le tablier est droit (ligne ${r})`);
+  }
+  // Le remblai : décroissant en s’éloignant, nul au-delà de la rampe.
+  assert.ok(segment.platform[7] > segment.platform[6], 'le remblai descend vers la route');
+  assert.ok(segment.platform[6] > 0, 'et il porte encore la chaussée à six lignes');
+  close(segment.platform[0], 0, 1e-5, 'loin de l’ouvrage, le terrain reprend la main');
+});
+
+test('un `brunnel` qui court sur des kilomètres ne lance pas un viaduc', () => {
+  const rows = 120;
+  const segment = worksSegment(rows, Array.from({ length: rows }, (_, r) => (r > 0 && r < rows - 1 ? 1 : 0)),
+    (x) => x * 0.1);
+
+  const before = Float32Array.from(segment.platform);
+  assert.equal(levelWorkSpans(segment.path, segment.platform, segment.works), 0, 'portée refusée');
+  assert.deepEqual(Array.from(segment.platform), Array.from(before), 'la chaussée suit le terrain');
+});
+
+test('la chaîne d’une route traverse son pont sans se couper', () => {
+  // Trois morceaux bout à bout : route, pont, route. Le mobilier espacé ne doit
+  // pas recommencer sa numérotation à chaque culée.
+  const { chains } = mergeRoadLines([
+    { profile: 'minor', halfWidth: 2.5, points: straight(0, 40, 2), works: WORK_NONE },
+    { profile: 'minor', halfWidth: 2.5, points: straight(40, 60, 1), works: WORK_BRIDGE },
+    { profile: 'minor', halfWidth: 2.5, points: straight(60, 100, 2), works: WORK_NONE },
+  ]);
+
+  assert.equal(chains.length, 1, 'une seule chaîne');
+  const chain = chains[0];
+  const bridged = chain.points.filter((_, i) => chain.works[i] === WORK_BRIDGE);
+  assert.equal(bridged.length, 2, 'les deux extrémités du pont sont marquées');
+  close(Math.min(...bridged.map((p) => p.x)), 40, 1e-6);
+  close(Math.max(...bridged.map((p) => p.x)), 60, 1e-6);
+});
+
+test('l’emprise s’arrête à la culée : l’herbe pousse au-dessus d’un tunnel', () => {
+  // L'emprise est une empreinte **au sol**. Là où la chaussée est enterrée, le
+  // sol appartient au paysage : sinon un tunnel de deux kilomètres interdirait
+  // l'herbe et les arbres sur toute la colline qu'il traverse. Même raison de
+  // l'autre côté : le terrain ne doit pas se creuser jusqu'à sa dalle.
+  const segment = fakeSegment(straight(0, 100, 20), 4.25, 12);
+  segment.works = new Uint8Array(segment.path.length);
+  segment.works.fill(WORK_TUNNEL, 5, 15);
+  const index = new RoadIndex([segment]);
+
+  assert.ok(index.covers(10, 0), 'au grand jour, la chaussée est une emprise');
+  close(index.deckAt(index.query(10, 0, 1)), 12, 1e-6, 'et son altitude est servie');
+  assert.ok(!index.covers(50, 0), 'sous la colline, plus rien n’est interdit');
+  assert.equal(index.deckAt(index.query(50, 0, 1)), null, 'ni altitude à y lire');
+  // La culée reste inscrite : l'emprise ne s'interrompt pas avant la tête.
+  assert.ok(index.covers(25, 0), 'la dernière arête au jour tient encore');
+});
+
+test('sur un versant, l’aplanissement et la travée se passent le relais', () => {
+  // Les deux systèmes se rencontrent exactement ici. Le terrassier aplanit le
+  // profil en long dans la bande qu'un ouvrage peut rattraper (`flattenGrade`),
+  // et la travée tend sa corde entre les appuis **ainsi obtenus**
+  // (`levelWorkSpans`). Une travée bridée par la bande de terrassement serait
+  // tirée vers le fond du ravin, et la diffusion entraînerait avec elle les
+  // lignes d'approche : d'où l'allocation infinie sur une ligne d'ouvrage.
+  const frame = createLocalFrame(2.35, 48.85, 15);
+  const at = (dx) => [2.35 + dx * 0.0006, 48.85];
+
+  const source = {
+    forEachFeature(layer, tiles, callback) {
+      if (layer !== 'transportation') return;
+      callback({ type: 'LineString', coordinates: [at(0), at(5)] }, { class: 'primary' });
+      callback(
+        { type: 'LineString', coordinates: [at(5), at(9)] },
+        { class: 'primary', brunnel: 'bridge' }
+      );
+      callback({ type: 'LineString', coordinates: [at(9), at(14)] }, { class: 'primary' });
+    },
+  };
+
+  // Un versant bruité — montée régulière plus une vague courte que
+  // l'aplanissement doit effacer — creusé d'un ravin sous la travée, qui court
+  // de x = 220 à x = 395. Le ravin est une vallée et non une falaise : aucun
+  // terrassement n'absorbe une marche verticale, et ce n'est pas ce qu'on teste.
+  const RAVINE_FROM = 210;
+  const RAVINE_TO = 405;
+  const ground = (x, z) => {
+    const slope = x * 0.12 + Math.sin(x * 0.5) * 0.6 + z * 0.25;
+    if (x <= RAVINE_FROM || x >= RAVINE_TO) return slope;
+    const t = (x - RAVINE_FROM) / (RAVINE_TO - RAVINE_FROM);
+    return slope - 16 * Math.sin(Math.PI * t) ** 2;
+  };
+
+  const { segments } = collectRoadSegments(
+    source,
+    [{ x: 0, y: 0 }],
+    { x: 0, z: 0 },
+    frame,
+    ground,
+    900,
+    undefined,
+    { clearanceAt: (x, z) => ground(x, z) }
+  );
+
+  assert.equal(segments.length, 1);
+  const [segment] = segments;
+  const span = [];
+  for (let r = 0; r < segment.works.length; r++) {
+    if (segment.works[r] === WORK_BRIDGE) span.push(r);
+  }
+  assert.ok(span.length > 4, `la travée est là (${span.length} lignes)`);
+
+  // 1. La travée est une droite : trois lignes consécutives sans courbure.
+  for (let i = 1; i < span.length - 1; i++) {
+    const [a, b, c] = [span[i - 1], span[i], span[i + 1]].map((r) => segment.platform[r]);
+    close(b, (a + c) / 2, 1e-3, `le tablier ne fléchit pas (ligne ${span[i]})`);
+  }
+
+  // 2. Elle est bien au-dessus du ravin qu'elle franchit — la bande de
+  //    terrassement ne l'a pas rattrapée vers le fond.
+  for (const r of span) {
+    const below = ground(segment.path[r].x, segment.path[r].z);
+    assert.ok(segment.platform[r] - below >= BRIDGE_CLEARANCE_M - 1e-3, `dégagée (ligne ${r})`);
+  }
+
+  // 3. Le raccord aux culées reste sans marche : d'une ligne à l'autre, la
+  //    pente ne saute pas.
+  const steps = [];
+  for (let r = 1; r < segment.platform.length; r++) {
+    steps.push(Math.abs(segment.platform[r] - segment.platform[r - 1]));
+  }
+  assert.ok(Math.max(...steps) < 3, `aucune marche dans le profil (${Math.max(...steps).toFixed(2)} m)`);
+});
+
+test('de la tuile au tablier : un pont sort de l’eau qu’il franchit', () => {
+  // Le chemin complet, tel qu'il tourne en scène : une route coupée en trois
+  // morceaux par la tuile (route, pont, route), une nappe d'eau sous la travée,
+  // et la plate-forme qui doit finir au-dessus de la nappe — pas dedans, ce
+  // qu'elle faisait avant, puisque `waterCut` creuse le lit sous la chaussée.
+  const frame = createLocalFrame(2.35, 48.85, 15);
+  const at = (dx) => [2.35 + dx * 0.0006, 48.85];
+
+  const source = {
+    forEachFeature(layer, tiles, callback) {
+      if (layer !== 'transportation') return;
+      callback({ type: 'LineString', coordinates: [at(0), at(4)] }, { class: 'primary' });
+      callback(
+        { type: 'LineString', coordinates: [at(4), at(8)] },
+        { class: 'primary', brunnel: 'bridge' }
+      );
+      callback({ type: 'LineString', coordinates: [at(8), at(12)] }, { class: 'primary' });
+    },
+  };
+
+  // Terrain plat au niveau de l'eau : sans relevage, le tablier serait dedans.
+  const water = 0;
+  const { segments } = collectRoadSegments(
+    source,
+    [{ x: 0, y: 0 }],
+    { x: 0, z: 0 },
+    frame,
+    () => water,
+    900,
+    undefined,
+    { clearanceAt: () => water }
+  );
+
+  assert.equal(segments.length, 1, 'les trois morceaux ne font qu’un tronçon');
+  const [segment] = segments;
+  const bridged = [];
+  for (let r = 0; r < segment.works.length; r++) {
+    if (segment.works[r] === WORK_BRIDGE) bridged.push(segment.platform[r]);
+  }
+
+  assert.ok(bridged.length > 3, `la travée est retrouvée (${bridged.length} lignes)`);
+  for (const height of bridged) {
+    assert.ok(height >= water + BRIDGE_CLEARANCE_M - 1e-3, `le tablier passe au-dessus de l’eau (${height})`);
+  }
+  // Et la chaussée d'approche, elle, redescend au terrain.
+  close(segment.platform[0], water, 1e-3, 'la route retrouve son sol');
+});
+
+/**
+ * Un `three` de fortune : la suite tourne sans lui (dépendance de pair). On ne
+ * vérifie pas un rendu — on vérifie que la couche produit bien de la
+ * géométrie, et à la bonne altitude. Une couche qui ne pose rien ne lève
+ * pourtant rien : c'est exactement ce qu'on veut attraper.
+ */
+function stubWorksTHREE() {
+  class BufferGeometry {
+    constructor() {
+      this.attributes = {};
+      this.index = null;
+    }
+    setAttribute(name, attribute) {
+      this.attributes[name] = attribute;
+    }
+    setIndex(index) {
+      this.index = index;
+    }
+    computeVertexNormals() {}
+    computeBoundingSphere() {}
+    dispose() {}
+  }
+  return {
+    DoubleSide: 2,
+    BufferGeometry,
+    Float32BufferAttribute: class {
+      constructor(array, itemSize) {
+        this.array = array;
+        this.itemSize = itemSize;
+        this.count = array.length / itemSize;
+      }
+    },
+    MeshLambertMaterial: class {
+      constructor(options) {
+        Object.assign(this, options);
+      }
+      dispose() {}
+    },
+    Mesh: class {
+      constructor(geometry, material) {
+        this.geometry = geometry;
+        this.material = material;
+      }
+      updateMatrix() {}
+    },
+  };
+}
+
+/** Bulle de fortune : un terrain plat à l'altitude demandée. */
+function stubBubble(elevation = 0) {
+  return {
+    frame: {},
+    verticalScale: 1,
+    rawSurfaceElevationAtLocal: () => elevation,
+  };
+}
+
+/** Hauteurs des sommets produits par une couche d'ouvrages. */
+function worksHeights(layer) {
+  const positions = layer.mesh?.geometry.attributes.position?.array || [];
+  const out = [];
+  for (let i = 1; i < positions.length; i += 3) out.push(positions[i]);
+  return out;
+}
+
+test('un pont pose un tablier, des piles et deux parapets au-dessus du vide', () => {
+  const scene = { add() {}, remove() {} };
+  const layer = new BridgeLayer({ THREE: stubWorksTHREE(), scene, bubble: stubBubble(0) });
+
+  // Cent mètres de travée à quinze mètres au-dessus d'un terrain plat à zéro.
+  const rows = 21;
+  const segment = {
+    profile: 'major',
+    halfWidth: 4.25,
+    path: Array.from({ length: rows }, (_, i) => ({ x: i * 5, z: 0, distance: i * 5 })),
+    platform: new Float32Array(rows).fill(15),
+    works: Uint8Array.from({ length: rows }, () => WORK_BRIDGE),
+  };
+
+  assert.ok(layer.rebuild([segment], { x: 50, z: 0 }), 'la couche a posé quelque chose');
+  assert.equal(layer.counts.spans, 1, 'une travée');
+  assert.ok(layer.counts.piers >= 4, `deux culées et des piles (${layer.counts.piers})`);
+
+  const heights = worksHeights(layer);
+  assert.ok(heights.length > 0, 'de la géométrie');
+  // Les piles descendent au terrain, les parapets dominent la chaussée.
+  close(Math.min(...heights), 0, 1e-4, 'les piles se fondent au sol');
+  assert.ok(Math.max(...heights) > 15.5, 'le parapet dépasse la chaussée');
+
+  layer.dispose();
+});
+
+test('un ponceau de rase campagne ne se met pas sur pilotis', () => {
+  const scene = { add() {}, remove() {} };
+  const layer = new BridgeLayer({ THREE: stubWorksTHREE(), scene, bubble: stubBubble(0) });
+
+  const rows = 6;
+  const segment = {
+    profile: 'minor',
+    halfWidth: 2.5,
+    // Quarante centimètres au-dessus du fossé : un tablier, pas un viaduc.
+    path: Array.from({ length: rows }, (_, i) => ({ x: i * 5, z: 0, distance: i * 5 })),
+    platform: new Float32Array(rows).fill(0.4),
+    works: Uint8Array.from({ length: rows }, () => WORK_BRIDGE),
+  };
+
+  layer.rebuild([segment], { x: 10, z: 0 });
+  assert.equal(layer.counts.spans, 1, 'le tablier est là');
+  assert.equal(layer.counts.piers, 0, 'aucune pile sous quarante centimètres');
+  layer.dispose();
+});
+
+test('un tunnel reçoit une tête à chaque bout, et rien entre les deux', () => {
+  const scene = { add() {}, remove() {} };
+  const layer = new BridgeLayer({ THREE: stubWorksTHREE(), scene, bubble: stubBubble(40) });
+
+  const rows = 41;
+  const segment = {
+    profile: 'major',
+    halfWidth: 4.25,
+    path: Array.from({ length: rows }, (_, i) => ({ x: i * 5, z: 0, distance: i * 5 })),
+    platform: new Float32Array(rows).fill(10),
+    works: Uint8Array.from({ length: rows }, (_, r) => (r >= 5 && r <= 35 ? WORK_TUNNEL : WORK_NONE)),
+  };
+
+  assert.ok(layer.rebuild([segment], { x: 100, z: 0 }));
+  assert.equal(layer.counts.spans, 0, 'un tunnel n’a pas de tablier');
+  assert.equal(layer.counts.portals, 2, 'une tête par bout');
+
+  const xs = [];
+  const positions = layer.mesh.geometry.attributes.position.array;
+  for (let i = 0; i < positions.length; i += 3) xs.push(positions[i]);
+  // Les têtes s'enfoncent de quelques mètres, elles ne courent pas tout le
+  // tunnel : rien au milieu de la colline.
+  assert.ok(!xs.some((x) => x > 105 && x < 145), 'rien au cœur de la montagne');
+  layer.dispose();
+});
+
+test('une bretelle d’échangeur ne redescend pas se coller à l’autoroute qu’elle survole', () => {
+  const under = fakeSegment(straight(-50, 50, 20), 6, 10);
+  const ramp = fakeSegment(
+    Array.from({ length: 11 }, (_, i) => ({ x: 0, z: 50 - i * 5 })),
+    4.25,
+    11.5 // moins de `STITCH_MAX_STEP_M` au-dessus : sans drapeau, elle serait recousue
+  );
+  ramp.works = new Uint8Array(ramp.path.length).fill(WORK_BRIDGE);
+
+  const segments = [under, ramp];
+  stitchPlatforms(segments, new RoadIndex(segments));
+  for (const height of ramp.platform) close(height, 11.5, 1e-6, 'la bretelle reste à sa hauteur');
+});
+
 // --- L'herbe du premier plan ------------------------------------------------
 
 test('les mailles d’herbe tiennent dans le disque, les plus proches d’abord', () => {
@@ -3931,6 +4685,57 @@ test('le disque de culture est trié du centre vers le bord', () => {
 });
 
 // --- Villages : couleur et toiture ------------------------------------------
+
+test('les ponts d’une vallée sortent du même bureau d’études', () => {
+  // Même maille que la palette du bourg : les deux culées d'un pont, et les
+  // deux ponts d'un village, tirent la même famille.
+  const a = worksStyleAt(10, 10);
+  const b = worksStyleAt(10 + TOWN_PATCH_M * 0.4, 10);
+  assert.equal(a.name, b.name, 'la maille tient sur toute la traversée');
+
+  const names = new Set();
+  for (let i = 0; i < 60; i++) names.add(worksStyleAt(i * TOWN_PATCH_M, 0).name);
+  assert.ok(names.size >= 2, `plusieurs matériaux (${[...names].join(', ')})`);
+  // Graine distincte de celle des murs : deux pays qui bâtissent pareil ne
+  // font pas forcément leurs ponts pareil. On le montre en trouvant deux
+  // mailles de même palette et d'ouvrage différent.
+  const seen = new Map();
+  let independent = false;
+  for (let i = 0; i < 200 && !independent; i++) {
+    const at = i * TOWN_PATCH_M;
+    const palette = townPaletteAt(at, 0).name;
+    const works = worksStyleAt(at, 0).name;
+    if (seen.has(palette) && seen.get(palette) !== works) independent = true;
+    seen.set(palette, works);
+  }
+  assert.ok(independent, 'la famille d’ouvrage ne suit pas la palette du bourg');
+});
+
+test('un tablier est plus large que sa chaussée, et sa sous-face rentrante', () => {
+  const style = worksStyleAt(10, 10);
+  const profile = deckProfile(4.25, style.deck);
+  const rim = Math.max(...profile.map((p) => p.across));
+
+  assert.ok(rim > 4.25, 'la corniche déborde de la rive');
+  close(rim, 4.25 + style.deck.overhang, 1e-9, 'du débord annoncé par le thème');
+  assert.equal(Math.max(...profile.map((p) => p.up)), 0, 'rien ne dépasse de la chaussée');
+  close(Math.min(...profile.map((p) => p.up)), -style.deck.thickness, 1e-9, 'épaisseur du tablier');
+
+  const soffit = profile.filter((p) => p.up === -style.deck.thickness);
+  assert.ok(Math.max(...soffit.map((p) => p.across)) < rim, 'la sous-face est rentrante');
+});
+
+test('une voûte de tunnel dégage la chaussée et se referme au sol', () => {
+  const style = worksStyleAt(10, 10);
+  const halfWidth = 4.25;
+  const vault = vaultProfile(halfWidth, style.portal);
+
+  const feet = vault.filter((p) => p.up === 0);
+  assert.equal(feet.length, 2, 'deux pieds, un par piédroit');
+  assert.ok(Math.min(...vault.map((p) => p.across)) <= -halfWidth, 'la voûte dépasse la rive gauche');
+  assert.ok(Math.max(...vault.map((p) => p.across)) >= halfWidth, 'et la rive droite');
+  assert.ok(Math.max(...vault.map((p) => p.up)) > 4, 'un camion passe dessous');
+});
 
 test('un village garde sa palette, et son voisin en a une autre', () => {
   const a = townPaletteAt(10, 10);

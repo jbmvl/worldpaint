@@ -71,10 +71,10 @@ src/
                 conversion, elevation field, vector-tile fetching, colour
   terrain/      the ground mesh: the terrain bubble, its material, the
                 ground-class map, cutting roads into it
-  layers/       everything built on top of the terrain — roads, street
-                kerbing, water, buildings, gardens, vegetation, crops, road
-                furniture, the road corridor every other layer stops at, and
-                the geometry helpers they share
+  layers/       everything built on top of the terrain — roads, bridges and
+                tunnels, street kerbing, water, buildings, gardens,
+                vegetation, crops, road furniture, the road corridor every
+                other layer stops at, and the geometry helpers they share
   materials/    procedural textures and shared materials
   environment/  sky, sun, shadows, fog, weather — the optional lighting rig
   inspect/      debug helpers for labelling what's on screen
@@ -262,7 +262,7 @@ feature list.
 npm test
 ```
 
-400 tests, plain `node --test`, no browser, no build.
+429 tests, plain `node --test`, no browser, no build.
 
 ## Contributing
 

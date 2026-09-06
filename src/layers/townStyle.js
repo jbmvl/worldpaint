@@ -1,5 +1,6 @@
 /*
- * townStyle — la couleur et la forme d'un village.
+ * townStyle — ce que le pays impose au bâti et aux ouvrages : couleur, forme,
+ * matériau, à l'échelle de la région et non de l'objet.
  *
  * Les tuiles OpenMapTiles ne portent que `render_height`/`render_min_height`/
  * `hide_3d` sur le bâti : ni matériau, ni couleur de toit, ni forme n'y
@@ -10,6 +11,11 @@
  * variation par maison à l'intérieur.
  *
  * Couleurs linéaires, prêtes pour les attributs de sommet, volontairement pastel.
+ *
+ * Le même geste sert trois fois — palette du bâti, revêtement de voirie,
+ * famille d'ouvrage d'art —, toujours sur la même maille (`TOWN_PATCH_M`) et
+ * avec une graine distincte : ce qui se ressemble se rassemble par lieu, sans
+ * que les trois tirages ne se copient l'un l'autre.
  */
 
 import { srgb } from '../core/color.js';
@@ -194,4 +200,56 @@ export function roofShapeFor(palette, { area = 100, height = 7, seed = 0 } = {})
   // Pyramide sur une emprise très allongée = tente de cirque : on préfère la faîtière.
   if (shape === 'pyramid' && area > 240) return 'hip';
   return shape;
+}
+
+const LINEAR_WORKS = new WeakMap();
+
+/** Une famille d'ouvrage, ses couleurs converties en linéaire (mémorisée par thème). */
+function linearWorks(works) {
+  let out = LINEAR_WORKS.get(works);
+  if (!out) {
+    out = works.map((style) => ({
+      ...style,
+      deck: { ...style.deck, color: srgb(style.deck.color), edge: srgb(style.deck.edge) },
+      pier: {
+        ...style.pier,
+        colorFoot: srgb(style.pier.colorFoot),
+        colorTop: srgb(style.pier.colorTop),
+      },
+      abutment: {
+        ...style.abutment,
+        colorFoot: srgb(style.abutment.colorFoot),
+        colorTop: srgb(style.abutment.colorTop),
+      },
+      parapet: {
+        ...style.parapet,
+        color: srgb(style.parapet.color),
+        colorTop: srgb(style.parapet.colorTop),
+      },
+      portal: { ...style.portal, face: srgb(style.portal.face), arch: srgb(style.portal.arch) },
+    }));
+    LINEAR_WORKS.set(works, out);
+  }
+  return out;
+}
+
+/**
+ * Famille d'ouvrage d'art du pays qui contient un point : de quoi sont faits
+ * ses ponts et ses têtes de tunnel.
+ *
+ * Ancrée au lieu, sur la maille du bourg : les deux culées d'un même pont
+ * tirent la même famille, et une reconstruction ne rebâtit pas l'ouvrage dans
+ * un autre matériau. Graine distincte de celle des murs et de la voirie.
+ *
+ * @param {number} x
+ * @param {number} z
+ * @param {Array<Object>} [works] Tranche `theme.works`.
+ * @returns {Object} La famille, couleurs en linéaire.
+ */
+export function worksStyleAt(x, z, works = defaultTheme.works) {
+  const styles = linearWorks(works);
+  const gx = Math.floor(x / TOWN_PATCH_M) * TOWN_PATCH_M;
+  const gz = Math.floor(z / TOWN_PATCH_M) * TOWN_PATCH_M;
+  const draw = randomAt(gx, gz, 233);
+  return styles[Math.min(styles.length - 1, Math.floor(draw * styles.length))];
 }
