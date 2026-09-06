@@ -333,10 +333,12 @@ export const SOIL_WASH_NEUTRAL = Object.freeze({
   grass: Object.freeze([1, 1, 1]),
   bare: Object.freeze([1, 1, 1]),
   farmland: Object.freeze([1, 1, 1]),
+  grassDensity: 1,
+  grassHeight: 1,
 });
 
 /**
- * Les trois facteurs de sol d'une famille, toujours complets.
+ * Ce que le climat fait au sol, toujours complet.
  *
  * Le shader de terrain, les touffes d'herbe et les tiges de culture lisent
  * **cette** fonction et pas la tranche du thème directement : c'est ce qui
@@ -349,7 +351,8 @@ export const SOIL_WASH_NEUTRAL = Object.freeze({
  *
  * @param {string|null} family
  * @param {Object} [soils] Tranche `theme.soils`.
- * @returns {{grass:number[], bare:number[], farmland:number[]}}
+ * @returns {{grass:number[], bare:number[], farmland:number[],
+ *            grassDensity:number, grassHeight:number}}
  */
 export function soilWashFor(family, soils = null) {
   const look = family && soils ? soils[family] : null;
@@ -358,5 +361,7 @@ export function soilWashFor(family, soils = null) {
     grass: look.grass || SOIL_WASH_NEUTRAL.grass,
     bare: look.bare || SOIL_WASH_NEUTRAL.bare,
     farmland: look.farmland || SOIL_WASH_NEUTRAL.farmland,
+    grassDensity: look.grassDensity ?? 1,
+    grassHeight: look.grassHeight ?? 1,
   };
 }

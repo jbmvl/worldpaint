@@ -1514,6 +1514,8 @@ test('la correction de sol est toujours complète', () => {
     grass: [1, 1, 1],
     bare: [1, 1, 1],
     farmland: [1, 1, 1],
+    grassDensity: 1,
+    grassHeight: 1,
   });
 });
 
@@ -1542,10 +1544,30 @@ test('aucune correction de sol ne sature la touffe du premier plan', () => {
   // mécanisme existe pour éviter. Voir `SOIL_LOOK`.
   for (const [family, look] of Object.entries(defaultTheme.soils)) {
     for (const [key, factors] of Object.entries(look)) {
+      if (!Array.isArray(factors)) continue;
       for (const value of factors) {
         assert.ok(value > 0 && value <= 3.5, `${family}.${key} = ${value}`);
       }
     }
+  }
+});
+
+test('un pays sec laisse voir sa terre entre les touffes', () => {
+  // C'est ce qui fait une steppe, et la couleur seule ne le fait pas : un sol
+  // jauni couvert d'une prairie continue reste une prairie jaunie. La densité
+  // doit donc décroître avec la sécheresse, et la hauteur avec elle.
+  const densite = (family) => soilWashFor(family, defaultTheme.soils).grassDensity;
+  assert.equal(densite('oceanic'), 1, 'la référence garde sa prairie');
+  assert.ok(densite('mediterranean') < densite('oceanic'));
+  assert.ok(densite('semiArid') < densite('mediterranean'));
+  assert.ok(densite('arid') < densite('semiArid'));
+
+  // Aucune famille ne va jusqu'à supprimer l'herbe : un sol nu partout se lit
+  // comme un décor qui n'a pas fini de charger.
+  for (const family of CLIMATE_FAMILIES) {
+    const { grassDensity, grassHeight } = soilWashFor(family, defaultTheme.soils);
+    assert.ok(grassDensity > 0 && grassDensity <= 1, `${family} densité`);
+    assert.ok(grassHeight > 0.3 && grassHeight <= 1, `${family} hauteur`);
   }
 });
 

@@ -678,7 +678,11 @@ export class GroundCover {
       // À distance, une instance représente plusieurs mètres carrés : une
       // prairie à demi verte y est une masse un peu clairsemée, pas une maille
       // sur deux vide.
-      const density = coverMassDensity(green, band) * coverLook.density;
+      // La couverture du sol dit *ce que c'est*, le climat dit *dans quel
+      // pays* : une lande écossaise est rase parce que c'est une lande, et un
+      // peu plus rase encore parce qu'elle est en pays venté. Les deux se
+      // multiplient, aucun ne remplace l'autre.
+      const density = coverMassDensity(green, band) * coverLook.density * this._wash.grassDensity;
 
       fillGrassCell(tufts, gx, gz, band.cell, band.perCell, band.salt);
 
@@ -700,6 +704,7 @@ export class GroundCover {
           // une friche ne se distinguent pas autrement.
           (0.72 + green * 0.28) *
           coverLook.height *
+          this._wash.grassHeight *
           heightFade *
           band.rise;
         const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;

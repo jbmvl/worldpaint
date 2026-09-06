@@ -488,6 +488,20 @@ export const CROP_LOOK = {
  * - `bare` — la terre nue et le minéral non couvert ;
  * - `farmland` — les champs, sol, albédo par culture **et** tiges.
  *
+ * Et deux nombres, qui ne sont pas des couleurs mais qui font autant :
+ *
+ * - `grassDensity` — combien de touffes restent. C'est **ce qui rend un pays
+ *   sec nu**. Un sol jauni couvert d'une prairie continue reste une prairie
+ *   jaunie ; ce qui fait une steppe, c'est la terre qu'on voit entre les
+ *   touffes, et rien d'autre ne la montre ;
+ * - `grassHeight` — leur taille. Une pelouse d'altitude et une friche
+ *   atlantique n'ont pas la même couleur, mais elles se distinguent d'abord à
+ *   la hauteur.
+ *
+ * Ces deux-là multiplient ce que la couverture du sol décide déjà
+ * (`COVER_LOOK`) : une lande écossaise est rase parce que c'est une lande,
+ * *et* un peu plus rase parce qu'elle est en pays venté.
+ *
  * Les couvertures (`coverAlbedo`) ne sont pas touchées : une lande, un maquis
  * ou un éboulis disent déjà leur pays, les teinter une seconde fois le dirait
  * deux fois.
@@ -518,58 +532,78 @@ export const SOIL_LOOK = {
     grass: [0.92, 0.95, 1.02],
     bare: [0.78, 0.8, 0.86],
     farmland: [0.95, 0.97, 1.0],
+    grassDensity: 0.85,
+    grassHeight: 0.7,
   },
   /** Plaine d'Europe centrale : terre noire, et l'herbe de l'océanique. */
   continental: {
     grass: [1.02, 1.0, 0.94],
     bare: [0.8, 0.74, 0.66],
     farmland: [0.95, 0.9, 0.82],
+    grassDensity: 1.0,
+    grassHeight: 1.0,
   },
   /** Taïga : podzol gris, granite, prairie froide. */
   boreal: {
     grass: [0.9, 0.96, 0.98],
     bare: [0.85, 0.86, 0.9],
     farmland: [0.92, 0.94, 0.95],
+    grassDensity: 0.8,
+    grassHeight: 0.8,
   },
   /** Provence, Grèce, Italie : le pré est jaune huit mois sur douze. */
   mediterranean: {
     grass: [2.2, 1.35, 2.6],
     bare: [1.5, 1.25, 0.95],
     farmland: [1.25, 1.1, 0.85],
+    grassDensity: 0.55,
+    grassHeight: 0.7,
   },
   /** Arrière-pays portugais, Galice : la même chose de moitié. */
   mediterraneanCool: {
     grass: [1.6, 1.2, 1.8],
     bare: [1.3, 1.15, 0.95],
     farmland: [1.12, 1.05, 0.92],
+    grassDensity: 0.75,
+    grassHeight: 0.85,
   },
   /** Montagnes sèches : karst pâle, pelouse brûlée. */
   mediterraneanMontane: {
     grass: [1.8, 1.25, 2.0],
     bare: [1.45, 1.35, 1.2],
     farmland: [1.15, 1.08, 0.95],
+    grassDensity: 0.6,
+    grassHeight: 0.65,
   },
   /** Èbre, Castille, Murcie : la steppe. */
   semiArid: {
     grass: [2.8, 1.5, 3.2],
     bare: [1.7, 1.4, 1.0],
     farmland: [1.35, 1.15, 0.8],
+    grassDensity: 0.3,
+    grassHeight: 0.55,
   },
   /** Tabernas, Bardenas : plus d'herbe verte du tout. */
   arid: {
     grass: [3.0, 1.55, 3.4],
     bare: [1.85, 1.5, 1.05],
     farmland: [1.4, 1.18, 0.8],
+    grassDensity: 0.15,
+    grassHeight: 0.45,
   },
   /** Au-dessus de la forêt : pelouse rase jaune-vert, roche claire. */
   alpine: {
     grass: [1.35, 1.1, 1.5],
     bare: [1.3, 1.3, 1.35],
+    grassDensity: 0.5,
+    grassHeight: 0.4,
   },
   /** Névé et moraine. */
   glacial: {
     grass: [1.2, 1.15, 1.3],
     bare: [2.2, 2.3, 2.5],
+    grassDensity: 0.1,
+    grassHeight: 0.35,
   },
 };
 
