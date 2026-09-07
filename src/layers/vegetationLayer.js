@@ -50,6 +50,10 @@
  *    liste : retirer les arbres tombés sur la chaussée ne doit pas rebattre le
  *    semis de toute la tuile.
  *
+ * La strate basse n'est pas une strate haute en réduction : elle tire dans ses
+ * propres silhouettes, et chaque plante y porte sa taille (`understoryStrata`).
+ * De loin ce sont les arbustes, de près le tapis du sol s'y ajoute.
+ *
  * Un maquis, une garrigue, une lande ne sont pas des forêts clairsemées : ce
  * sont des tapis d'arbustes sans strate haute, que la carte de classes peint
  * en herbe — `woodAt` y répond zéro et rien n'y pousserait. La couverture
@@ -267,11 +271,6 @@ export function saplingHeight(type, draw) {
   return SAPLING_MIN_HEIGHT + Math.pow(draw, HEIGHT_CURVE) * (top - SAPLING_MIN_HEIGHT);
 }
 
-/** Hauteur d'un buisson de strate basse. Fonction pure. */
-export function bushHeight(draw) {
-  return BUSH_MIN_HEIGHT + draw * (BUSH_MAX_HEIGHT - BUSH_MIN_HEIGHT);
-}
-
 // --- La teinte -----------------------------------------------------------------
 /** Côté de la maille qui fait dériver la teinte, en mètres (plus fin que le peuplement, pour des paquets de verts différents). */
 export const CLUMP_TINT_M = 55;
@@ -380,10 +379,44 @@ export function variantsFor(type, essences = defaultTheme.trees.essences) {
   return out.length > 0 ? out : [0];
 }
 
-/** Silhouettes de la strate basse (les buissons de l'atlas, une autre plante que sa futaie — noisetier, ronce, houx). */
-export function understoryVariants(essences = defaultTheme.trees.essences) {
-  const bushy = essences.bushy || [];
-  return bushy.length > 0 ? bushy : [0];
+/**
+ * La strate basse d'un semis : ses silhouettes **et leur taille réelle**.
+ *
+ * Une fougère ne fait pas trois mètres. Tant que la strate basse n'était qu'une
+ * liste de cases d'atlas, tout ce qu'elle portait tirait dans la même
+ * fourchette de buisson ; une plante qui déclare sa taille (`heightM`) et sa
+ * largeur (`aspect`) l'impose, les autres gardent la fourchette commune.
+ *
+ * `floor` ouvre le tapis du sol (fougère, ronce, buisson bas) en plus des
+ * arbustes. Il n'a de sens que dans le sous-étage : de loin, la strate basse
+ * reste faite d'arbustes, une fougère à un kilomètre coûtant une instance sans
+ * rien donner à voir.
+ *
+ * Fonction pure.
+ *
+ * @param {Object} [trees] Tranche `theme.trees`.
+ * @param {boolean} [floor] Vrai pour ouvrir le tapis du sol.
+ * @returns {Array<{variant:number, min:number, max:number, aspect:number}>}
+ */
+export function understoryStrata(trees = defaultTheme.trees, floor = false) {
+  const essences = trees.essences || {};
+  const pool = floor ? [...(essences.undergrowth || []), ...(essences.bushy || [])] : essences.bushy || [];
+  const out = [];
+  for (const variant of pool) {
+    const look = trees.variants?.[variant];
+    const range = look?.heightM;
+    out.push({
+      variant,
+      min: range ? range[0] : BUSH_MIN_HEIGHT,
+      max: range ? range[1] : BUSH_MAX_HEIGHT,
+      aspect: look?.aspect ?? BUSH_ASPECT,
+    });
+  }
+  // Un thème sans strate basse garde une case d'atlas valide plutôt que rien.
+  if (out.length === 0) {
+    out.push({ variant: 0, min: BUSH_MIN_HEIGHT, max: BUSH_MAX_HEIGHT, aspect: BUSH_ASPECT });
+  }
+  return out;
 }
 
 /**
@@ -392,8 +425,8 @@ export function understoryVariants(essences = defaultTheme.trees.essences) {
  * fois par tuile) et ne lit que des tirages attachés au candidat.
  *
  * `sapling` distingue les deux semis : le peuplement pose des arbres faits, le
- * sous-étage des tiges qui montent vers eux. La strate basse, elle, est la même
- * des deux côtés — un buisson n'a pas d'échelle de lecture.
+ * sous-étage des tiges qui montent vers eux. La strate basse, elle, ne tire ni
+ * l'un ni l'autre : sa taille est celle de la plante tirée (`understoryStrata`).
  *
  * @param {Object} out Objet de travail, rendu tel quel.
  * @param {number} seed Graine de la maille.
@@ -401,25 +434,28 @@ export function understoryVariants(essences = defaultTheme.trees.essences) {
  * @param {Object} type Peuplement.
  * @param {number} lowPart Part de strate basse dans la maille, de 0 à 1.
  * @param {Array<number>} variants Silhouettes du peuplement.
- * @param {Array<number>} bushes   Silhouettes de la strate basse.
+ * @param {Array<Object>} strata   Strate basse, telle que rendue par `understoryStrata`.
  * @param {boolean} [sapling] Vrai pour le sous-étage.
  */
-export function describeTree(out, seed, base, type, lowPart, variants, bushes, sapling = false) {
+export function describeTree(out, seed, base, type, lowPart, variants, strata, sapling = false) {
   const low = standDraw(seed, base + SLOT_STRATUM) < lowPart;
   const draw = standDraw(seed, base + SLOT_HEIGHT);
-  const pool = low ? bushes : variants;
+  const pick = standDraw(seed, base + SLOT_VARIANT);
 
   out.low = low;
-  out.height = low
-    ? bushHeight(draw)
-    : sapling
+  if (low) {
+    const plant = strata[Math.floor(pick * strata.length) % strata.length];
+    out.variant = plant.variant;
+    out.height = plant.min + draw * (plant.max - plant.min);
+    out.aspect = plant.aspect;
+  } else {
+    out.variant = variants[Math.floor(pick * variants.length) % variants.length];
+    out.height = sapling
       ? saplingHeight(type, draw)
       : treeHeight(type, draw, standDraw(seed, base + SLOT_EMERGENT));
-  out.aspect = low
-    ? BUSH_ASPECT
-    : TREE_ASPECT + (standDraw(seed, base + SLOT_ASPECT) - 0.5) * 2 * TREE_ASPECT_JITTER;
+    out.aspect = TREE_ASPECT + (standDraw(seed, base + SLOT_ASPECT) - 0.5) * 2 * TREE_ASPECT_JITTER;
+  }
   out.rotation = standDraw(seed, base + SLOT_ROTATION) * Math.PI;
-  out.variant = pool[Math.floor(standDraw(seed, base + SLOT_VARIANT) * pool.length) % pool.length];
   // Strate basse plus sombre : elle est à l'ombre des houppes.
   out.shade = (low ? 0.66 : 0.84) + standDraw(seed, base + SLOT_SHADE) * 0.28;
   out.jitter = standDraw(seed, base + SLOT_TINT);
@@ -481,13 +517,13 @@ export class VegetationLayer {
       tiles: TREE_ATLAS_COLS,
       wind: true, // dix fois plus discret que dans l'herbe
       windStrength: 0.05,
-      cacheKey: 'foliage-atlas-wind-v2',
+      cacheKey: 'foliage-atlas-wind-v3',
     });
     this.depthMaterial = createFoliageDepthMaterial({
       THREE,
       map: this.texture,
       tiles: TREE_ATLAS_COLS,
-      cacheKey: 'foliage-atlas-depth-v1',
+      cacheKey: 'foliage-atlas-depth-v2',
     });
 
     /** @type {Map<string, Object>} maillages du peuplement, par clé de tuile */
@@ -683,7 +719,8 @@ export class VegetationLayer {
     else this._partial.delete(tile.key);
 
     const pool = filterByClimate(this.theme.forests, this.climate);
-    const bushes = understoryVariants(this.theme.trees.essences);
+    // De loin, la strate basse reste faite d'arbustes (voir `understoryStrata`).
+    const strata = understoryStrata(this.theme.trees);
     const tree = this._tree;
 
     const collected = [];
@@ -720,7 +757,7 @@ export class VegetationLayer {
           // déplace aucun autre (voir l'en-tête, décision 1).
           if (inCorridor(index, x, z)) continue;
 
-          describeTree(tree, seed, base, type, lowPart, variants, bushes);
+          describeTree(tree, seed, base, type, lowPart, variants, strata);
           collected.push({
             x,
             z,
@@ -816,7 +853,8 @@ export class VegetationLayer {
     const capacity = thicket.instanceMatrix.count;
     const index = this.roads?.index || null;
     const pool = filterByClimate(this.theme.forests, this.climate);
-    const bushes = understoryVariants(this.theme.trees.essences);
+    // De près, le tapis du sol s'ouvre : fougère, ronce, buisson bas.
+    const strata = understoryStrata(this.theme.trees, true);
     const tree = this._tree;
     // Un centre arrondi par bande : les mailles retenues ne dépendent que du sol.
     const bases = THICKET_BANDS.map((band) => ({
@@ -866,7 +904,7 @@ export class VegetationLayer {
           const z = cellZ + standDraw(seed, slot + SLOT_Z) * band.cell;
           if (inCorridor(index, x, z)) continue;
 
-          describeTree(tree, seed, slot, type, lowPart, variants, bushes, true);
+          describeTree(tree, seed, slot, type, lowPart, variants, strata, true);
           const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
           const height = tree.height * heightFade * band.rise;
 

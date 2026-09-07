@@ -201,10 +201,9 @@ import {
   standTypeFrom,
   forestTypeAt,
   variantsFor,
-  understoryVariants,
+  understoryStrata,
   treeHeight,
   saplingHeight,
-  bushHeight,
   thicketPerCell,
   thicketDensityFor,
   UNDERSTORY_REF,
@@ -313,7 +312,11 @@ import {
   hedgeClumps,
   appendHedgeClump,
 } from '../src/layers/hedgeGeometry.js';
-import { TREE_ATLAS_OFFSETS, GRASS_VARIANTS } from '../src/materials/proceduralTextures.js';
+import {
+  TREE_ATLAS_OFFSETS,
+  GRASS_VARIANTS,
+  createTreeAtlasCanvas,
+} from '../src/materials/proceduralTextures.js';
 import { snapToShadowTexels, sunDirection, SHADOW_RADIUS_M } from '../src/environment/shadowFrame.js';
 import {
   waterwayStyleFor,
@@ -750,6 +753,7 @@ test('écarter un arbre de la chaussée n’en déplace aucun autre', () => {
   // route était connue ou non.
   const seed = 987654321;
   const type = { density: 1, understory: 0.2, minHeight: 8, maxHeight: 16, tint: [1, 1, 1] };
+  const strata = understoryStrata(defaultTheme.trees, true);
   const sow = (rejected) => {
     const out = [];
     for (let i = 0; i < STAND_CANDIDATES; i++) {
@@ -758,7 +762,7 @@ test('écarter un arbre de la chaussée n’en déplace aucun autre', () => {
       const x = standDraw(seed, base + 1);
       const z = standDraw(seed, base + 2);
       if (rejected(x, z)) continue; // « sur la chaussée »
-      out.push({ x, z, ...describeTree({}, seed, base, type, 0.2, [1, 2], [7, 8]) });
+      out.push({ x, z, ...describeTree({}, seed, base, type, 0.2, [1, 2], strata) });
     }
     return out;
   };
@@ -803,23 +807,25 @@ test('une tige de sous-étage monte vers le peuplement sans l’atteindre', () =
   const nain = { minHeight: 1, maxHeight: 2 };
   assert.ok(saplingHeight(nain, 1) > saplingHeight(nain, 0), 'fourchette non nulle');
 
-  assert.equal(bushHeight(0), BUSH_MIN_HEIGHT);
-  close(bushHeight(1), BUSH_MAX_HEIGHT, 1e-9, 'buisson au plafond');
 });
 
 test('un candidat retenu est décrit par ses seuls tirages', () => {
   const seed = 24680;
   const type = { minHeight: 6, maxHeight: 12, density: 1, understory: 0.3 };
-  const a = describeTree({}, seed, 0, type, 0.3, [3, 4], [7, 8]);
-  const b = describeTree({}, seed, 0, type, 0.3, [3, 4], [7, 8]);
+  const strata = understoryStrata(defaultTheme.trees, true);
+  const a = describeTree({}, seed, 0, type, 0.3, [3, 4], strata);
+  const b = describeTree({}, seed, 0, type, 0.3, [3, 4], strata);
   assert.deepEqual(a, b, 'même graine, même arbre');
-  // La strate basse prend les silhouettes basses, la haute celles du peuplement.
-  const bas = describeTree({}, seed, 0, type, 1, [3, 4], [7, 8]);
-  assert.ok(bas.low && [7, 8].includes(bas.variant), 'buisson buissonnant');
-  const haut = describeTree({}, seed, 0, type, 0, [3, 4], [7, 8]);
+  // La strate basse prend les plantes du tapis, la haute celles du peuplement.
+  const bas = describeTree({}, seed, 0, type, 1, [3, 4], strata);
+  const plante = strata.find((p) => p.variant === bas.variant);
+  assert.ok(bas.low && plante, 'plante de strate basse');
+  assert.ok(bas.height >= plante.min && bas.height <= plante.max, 'à sa taille à elle');
+  assert.equal(bas.aspect, plante.aspect, 'et à son port');
+  const haut = describeTree({}, seed, 0, type, 0, [3, 4], strata);
   assert.ok(!haut.low && [3, 4].includes(haut.variant), 'arbre du peuplement');
   // Le sous-étage tire dans la régénération, le peuplement dans les arbres faits.
-  const tige = describeTree({}, seed, 0, type, 0, [3, 4], [7, 8], true);
+  const tige = describeTree({}, seed, 0, type, 0, [3, 4], strata, true);
   assert.ok(tige.height <= type.minHeight, `tige de ${tige.height} m`);
   assert.ok(haut.height >= type.minHeight, `arbre fait de ${haut.height} m`);
 });
@@ -875,13 +881,39 @@ test('le sous-étage suit la part de sous-bois du peuplement, pas seulement sa d
   );
 });
 
-test('le sous-bois tire dans les buissons, quel que soit le peuplement', () => {
-  const variants = understoryVariants();
-  assert.ok(variants.length > 0);
-  // Ce sont bien les silhouettes basses, pas celles de la futaie au-dessus.
-  assert.deepEqual(variants, TREE_ESSENCES.bushy);
-  // Et sans essence buissonnante, on rend quand même une case d’atlas valide.
-  assert.deepEqual(understoryVariants({}), [0]);
+test('la strate basse porte sa taille, et le tapis du sol ne pousse que de près', () => {
+  // De loin : les arbustes, et eux seuls — une fougère de 80 cm à un kilomètre
+  // coûte une instance et ne se voit pas.
+  const loin = understoryStrata();
+  assert.deepEqual(loin.map((p) => p.variant), TREE_ESSENCES.bushy);
+  for (const plant of loin) {
+    assert.equal(plant.min, BUSH_MIN_HEIGHT, 'fourchette commune faute de taille déclarée');
+    assert.equal(plant.max, BUSH_MAX_HEIGHT);
+  }
+
+  // De près, le tapis s’y ajoute, et chaque plante impose sa taille : une
+  // fougère ne fait pas trois mètres.
+  const pres = understoryStrata(defaultTheme.trees, true);
+  assert.ok(pres.length > loin.length, 'le tapis vient en plus des arbustes');
+  const tapis = pres.filter((p) => TREE_ESSENCES.undergrowth.includes(p.variant));
+  assert.equal(tapis.length, TREE_ESSENCES.undergrowth.length);
+  for (const plant of tapis) {
+    const look = TREE_VARIANTS[plant.variant];
+    assert.deepEqual([plant.min, plant.max], look.heightM, 'la taille vient de la plante');
+    assert.ok(plant.max < BUSH_MAX_HEIGHT, `${look.kind} plus bas qu’un arbuste`);
+    assert.ok(plant.min > 0.3, `${look.kind} : une plante, pas de l’herbe`);
+    assert.ok(TREE_ATLAS_OFFSETS[plant.variant], `${look.kind} : case d’atlas présente`);
+  }
+  // Aucune de ces silhouettes n’est l’essence d’un peuplement : le tapis ne
+  // pousse jamais à hauteur de houppe.
+  for (const type of FOREST_TYPES) {
+    for (const variant of variantsFor(type)) {
+      assert.ok(!TREE_ESSENCES.undergrowth.includes(variant), `${type.name} tire dans le tapis`);
+    }
+  }
+
+  // Et un thème sans strate basse rend quand même une case d’atlas valide.
+  assert.equal(understoryStrata({}, true).length, 1);
 });
 
 test('la teinte d’un feuillage dérive par bosquet, et reste ancrée au lieu', () => {
@@ -4928,10 +4960,123 @@ test('chaque peuplement tire dans des silhouettes qui existent', () => {
 test('les décalages d’atlas couvrent la grille sans se répéter', () => {
   const keys = new Set(TREE_ATLAS_OFFSETS.map(([u, v]) => `${u.toFixed(4)},${v.toFixed(4)}`));
   assert.equal(keys.size, TREE_ATLAS_OFFSETS.length, 'aucune case en double');
-  assert.equal(TREE_ATLAS_OFFSETS.length, TREE_VARIANTS.length, 'une case par silhouette');
+  // Une case par silhouette au moins ; les cases en trop restent transparentes
+  // (l'atlas peut grandir avant que le thème le remplisse).
+  assert.ok(
+    TREE_ATLAS_OFFSETS.length >= TREE_VARIANTS.length,
+    `${TREE_ATLAS_OFFSETS.length} cases pour ${TREE_VARIANTS.length} silhouettes`
+  );
   for (const [u, v] of TREE_ATLAS_OFFSETS) {
     assert.ok(u >= 0 && u < 1 && v >= 0 && v < 1, 'décalage dans la texture');
   }
+});
+
+/**
+ * Contexte 2D d'inventaire : il ne dessine rien, il retient où on a dessiné.
+ * C'est la seule vérification automatique possible sur une texture — le rendu,
+ * lui, se regarde.
+ */
+function atlasRecorder() {
+  const marks = [];
+  const stack = [];
+  let tx = 0;
+  let ty = 0;
+  const mark = (x, y, pad = 0) => marks.push({ x, y, pad, cell: `${tx},${ty}` });
+  return {
+    marks,
+    lineWidth: 0,
+    fillStyle: '',
+    strokeStyle: '',
+    lineCap: '',
+    lineJoin: '',
+    save() {
+      stack.push([tx, ty]);
+    },
+    restore() {
+      [tx, ty] = stack.pop();
+    },
+    translate(x, y) {
+      tx += x;
+      ty += y;
+    },
+    beginPath() {},
+    closePath() {},
+    fill() {},
+    stroke() {},
+    moveTo(x, y) {
+      mark(x, y, this.lineWidth / 2);
+    },
+    lineTo(x, y) {
+      mark(x, y, this.lineWidth / 2);
+    },
+    fillRect(x, y, w, h) {
+      mark(x, y);
+      mark(x + w, y + h);
+    },
+    arc(x, y, r) {
+      mark(x, y, r);
+    },
+    ellipse(x, y, rx, ry) {
+      mark(x, y, Math.max(rx, ry));
+    },
+  };
+}
+
+test('chaque silhouette tient dans sa case, pose au sol et la remplit', () => {
+  const cell = 160;
+  const recorder = atlasRecorder();
+  const previous = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      this.width = width;
+      this.height = height;
+    }
+    getContext() {
+      return recorder;
+    }
+  };
+  try {
+    createTreeAtlasCanvas(cell);
+  } finally {
+    if (previous) globalThis.OffscreenCanvas = previous;
+    else delete globalThis.OffscreenCanvas;
+  }
+
+  const cells = new Map();
+  for (const m of recorder.marks) {
+    if (!cells.has(m.cell)) cells.set(m.cell, []);
+    cells.get(m.cell).push(m);
+  }
+  assert.equal(cells.size, TREE_VARIANTS.length, 'une case dessinée par silhouette');
+
+  const keys = [...cells.keys()];
+  cells.forEach((marks, key) => {
+    const look = TREE_VARIANTS[keys.indexOf(key)];
+    const kind = look.kind;
+    assert.ok(marks.length > 20, `${kind} : la case reçoit de l’encre`);
+
+    // Déborder, c’est mordre sur la silhouette voisine de l’atlas : une fougère
+    // gagnerait le pied d’un chêne. Le tapis du sol (celui qui déclare sa
+    // taille) n’en a pas le droit ; les arbres, eux, mordent d’assez peu pour
+    // que ça ne se soit jamais vu — la pointe d’un conifère sort de 7 % au
+    // sommet de sa case, depuis toujours.
+    const slack = look.heightM ? 0 : cell * 0.08;
+    const over = Math.max(
+      0,
+      ...marks.map((m) =>
+        Math.max(-(m.x - m.pad), m.x + m.pad - cell, -(m.y - m.pad), m.y + m.pad - cell)
+      )
+    );
+    assert.ok(over <= slack, `${kind} : déborde de ${((over / cell) * 100).toFixed(1)} % de sa case`);
+    // La plante pose au sol et occupe au moins les trois cinquièmes de sa case :
+    // le panneau porte la hauteur qu’on lui donne, donc une silhouette tassée
+    // en bas rendrait systématiquement plus petite qu’annoncé. L’arbuste de
+    // `drawBushy` est le plus juste à cette barre (64 %).
+    const low = Math.max(...marks.map((m) => m.y + m.pad));
+    const high = Math.min(...marks.map((m) => m.y - m.pad));
+    assert.ok(low >= cell * 0.9, `${kind} : posée au sol (${(low / cell).toFixed(2)})`);
+    assert.ok(high <= cell * 0.4, `${kind} : remplit sa case (${(high / cell).toFixed(2)})`);
+  });
 });
 
 // --- Fleurs et cultures -----------------------------------------------------

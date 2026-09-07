@@ -343,15 +343,23 @@ export function createWaterNormalCanvas(size = 256, seed = 33107) {
 }
 
 /**
- * Atlas d'arbres : 3 × 3 silhouettes dans une seule texture, regroupées par
+ * Atlas d'arbres : 4 × 4 silhouettes dans une seule texture, regroupées par
  * essence (`TREE_ESSENCES`) — quatre silhouettes suffisaient à casser le
  * clonage, mais donnaient partout la même forêt mélangée. Carré, pour que le
  * shader applique un seul facteur d'échelle (`foliageMaterial`).
+ *
+ * Les quatre dernières cases sont le **tapis** du sous-bois : fougère, ronce,
+ * buisson bas. Elles ne sont pas des arbres en réduction — c'est justement ce
+ * qui manquait au sol d'un bois, où les seules silhouettes basses disponibles
+ * étaient des arbustes, c'est-à-dire de petits arbres à tronc.
+ *
+ * Une case sans variante reste transparente : l'atlas peut grandir avant que
+ * le thème le remplisse.
  */
-export const TREE_ATLAS_COLS = 3;
-export const TREE_ATLAS_ROWS = 3;
+export const TREE_ATLAS_COLS = 4;
+export const TREE_ATLAS_ROWS = 4;
 
-/** Décalages UV des neuf cases, dans l'ordre des variantes. */
+/** Décalages UV des seize cases, dans l'ordre des variantes. */
 export const TREE_ATLAS_OFFSETS = (() => {
   const out = [];
   for (let index = 0; index < TREE_ATLAS_COLS * TREE_ATLAS_ROWS; index++) {
@@ -471,19 +479,165 @@ function drawBushy(ctx, size, random, variant) {
   }
 }
 
+/**
+ * Fougère : une touffe de frondes qui montent du sol en s'arquant, sans tige
+ * ligneuse. Les pennes s'allongent au milieu de la fronde et se resserrent à la
+ * pointe — c'est ce dessin-là, et pas la couleur, qui fait lire une fougère
+ * plutôt qu'un buisson vert.
+ */
+function drawFern(ctx, size, random, variant) {
+  const { hue, spread } = variant;
+  const fronds = 7 + Math.floor(random() * 3);
+
+  for (let f = 0; f < fronds; f++) {
+    const side = fronds > 1 ? f / (fronds - 1) - 0.5 : 0;
+    const lean = side * 1.5 * spread * (0.8 + random() * 0.4);
+    // Les frondes du milieu montent le plus haut : la touffe remplit sa case,
+    // sinon la plante rend plus petite que la hauteur qu'on lui donne.
+    const rise = (1 - Math.abs(side) * 0.45) * (0.86 + random() * 0.14);
+    const steps = 16;
+    const atX = (t) => 0.5 + lean * t * t;
+    const atY = (t) => 0.97 - rise * Math.sin(t * 1.28) * 0.98;
+
+    ctx.strokeStyle = 'rgba(72, 82, 44, 0.85)';
+    ctx.lineWidth = size * 0.012;
+    ctx.beginPath();
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      if (s === 0) ctx.moveTo(size * atX(t), size * atY(t));
+      else ctx.lineTo(size * atX(t), size * atY(t));
+    }
+    ctx.stroke();
+
+    for (let s = 2; s <= steps; s++) {
+      const t = s / steps;
+      const x = atX(t);
+      const y = atY(t);
+      const leaf = 0.09 * spread * Math.sin(Math.pow(t, 0.7) * Math.PI);
+      if (leaf <= 0.002) continue;
+      for (const dir of [-1, 1]) {
+        const lift = (1 - y) * 0.75 + (1 - x) * 0.25;
+        const value = 40 + lift * 78 + random() * 14;
+        ctx.fillStyle = `rgb(${Math.round(value * hue.r)}, ${Math.round(value * hue.g)}, ${Math.round(value * hue.b)})`;
+        ctx.beginPath();
+        ctx.ellipse(
+          size * (x + dir * leaf * 0.75),
+          size * (y + leaf * 0.3),
+          size * leaf * 0.85,
+          size * leaf * 0.36,
+          dir * 0.55,
+          0,
+          Math.PI * 2
+        );
+        ctx.fill();
+      }
+    }
+  }
+}
+
+/**
+ * Ronce : des cannes qui partent en arc et retombent, feuilles par trois. Elle
+ * s'étale plus qu'elle ne monte — c'est le fourré qu'on contourne, celui des
+ * lisières et des coupes.
+ */
+function drawBramble(ctx, size, random, variant) {
+  const { hue, spread } = variant;
+  const canes = 5 + Math.floor(random() * 3);
+
+  for (let c = 0; c < canes; c++) {
+    const dir = c % 2 === 0 ? 1 : -1;
+    const reach = spread * (0.9 + random() * 0.6) * dir;
+    // L'arc reste sous le bord de la case, feuilles comprises : ce qui dépasse
+    // se retrouve au pied de la silhouette voisine de l'atlas.
+    const rise = 0.66 + random() * 0.2;
+    const steps = 18;
+    const atX = (t) => 0.5 + reach * t;
+    const atY = (t) => 0.97 - rise * Math.sin(t * Math.PI * 0.86);
+
+    ctx.strokeStyle = 'rgba(88, 66, 50, 0.8)';
+    ctx.lineWidth = size * 0.011;
+    ctx.beginPath();
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      if (s === 0) ctx.moveTo(size * atX(t), size * atY(t));
+      else ctx.lineTo(size * atX(t), size * atY(t));
+    }
+    ctx.stroke();
+
+    for (let s = 3; s <= steps; s += 2) {
+      const t = s / steps;
+      const x = atX(t);
+      const y = atY(t);
+      const lift = (1 - y) * 0.7 + (1 - x) * 0.3;
+      const value = 38 + lift * 70 + random() * 16;
+      ctx.fillStyle = `rgb(${Math.round(value * hue.r)}, ${Math.round(value * hue.g)}, ${Math.round(value * hue.b)})`;
+      // Trois folioles autour du point d'attache.
+      for (const angle of [-0.9, 0, 0.9]) {
+        const leaf = 0.055 * (0.6 + spread);
+        ctx.beginPath();
+        ctx.ellipse(
+          size * (x + Math.sin(angle) * leaf * 1.2),
+          size * (y - Math.cos(angle) * leaf * 0.9),
+          size * leaf,
+          size * leaf * 0.7,
+          angle,
+          0,
+          Math.PI * 2
+        );
+        ctx.fill();
+      }
+    }
+  }
+}
+
+/**
+ * Buisson bas à petites feuilles — houx, buis, ciste : une masse dense et
+ * sombre, quelques tiges ligneuses visibles au pied. Il tient le milieu entre
+ * la fougère et l'arbuste de `drawBushy`, qui, lui, est un petit arbre.
+ */
+function drawLowShrub(ctx, size, random, variant) {
+  const { hue, spread } = variant;
+
+  ctx.strokeStyle = 'rgba(80, 62, 46, 0.85)';
+  ctx.lineWidth = size * 0.014;
+  for (let i = 0; i < 4; i++) {
+    ctx.beginPath();
+    ctx.moveTo(size * 0.5, size * 0.98);
+    ctx.lineTo(size * (0.5 + (random() - 0.5) * spread), size * (0.5 + random() * 0.3));
+    ctx.stroke();
+  }
+
+  for (let i = 0; i < 170; i++) {
+    const a = random() * Math.PI * 2;
+    const r = Math.sqrt(random());
+    const x = 0.5 + Math.cos(a) * spread * r;
+    const y = 0.6 + Math.sin(a) * 0.37 * r;
+    const lift = (1 - y) * 0.72 + (1 - x) * 0.28;
+    const value = 36 + lift * 74 + random() * 14;
+    ctx.fillStyle = `rgb(${Math.round(value * hue.r)}, ${Math.round(value * hue.g)}, ${Math.round(value * hue.b)})`;
+    ctx.beginPath();
+    // Feuille, pas disque : c'est le petit format qui fait la densité.
+    ctx.ellipse(size * x, size * y, size * 0.026, size * 0.016, a, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
 const TREE_PAINTERS = {
   broadleaf: drawBroadleaf,
   column: drawColumn,
   conifer: drawConifer,
   bushy: drawBushy,
+  fern: drawFern,
+  bramble: drawBramble,
+  lowShrub: drawLowShrub,
 };
 
 /**
- * Atlas de neuf silhouettes d'arbres, fond transparent.
+ * Atlas des silhouettes, fond transparent, une case par variante du thème.
  *
  * La case fait 160 px et non 128 : c'est ce qu'il faut pour qu'une houppe
- * découpée garde ses trous après le filtrage, et l'atlas entier tient encore
- * dans une texture de 480².
+ * découpée garde ses trous après le filtrage, et l'atlas entier tient dans une
+ * texture de 640².
  */
 export function createTreeAtlasCanvas(cell = 160, seed = 8821, variants = defaultTheme.trees.variants) {
   const width = cell * TREE_ATLAS_COLS;
