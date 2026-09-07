@@ -428,8 +428,22 @@ export function scatterFurnitureFor(properties = {}, { crop = null } = {}) {
   if (klass === 'grass' || subclass === 'meadow' || subclass === 'grassland') {
     return { item: 'herd', perHectare: 1.1 };
   }
+  // Bois : du bois de coupe, rangé en lisière. La densité se compte à
+  // l'hectare comme le reste, mais l'ourlet en écarte l'essentiel (voir
+  // `WOOD_PILE_EDGE_MIN`) — un massif compact en porte donc proportionnellement
+  // moins qu'un bosquet, ce qui est juste : le tas est au bord, pas au milieu.
+  if (klass === 'wood') {
+    return { item: 'woodPile', perHectare: 0.8 };
+  }
   return null;
 }
+
+/**
+ * Part de lisière (`groundClassMap.woodEdgeAt`) en deçà de laquelle on
+ * n'empile pas de bois. Un tas de bois se fait là où le tracteur passe — au
+ * bord du massif, jamais en son cœur.
+ */
+export const WOOD_PILE_EDGE_MIN = 0.35;
 
 /**
  * Part d'ovins d'une pâture de plaine, par famille climatique. La pente disait

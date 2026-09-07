@@ -63,6 +63,7 @@ import {
   realBoundaryRuns,
   boundaryFurnitureFor,
   scatterFurnitureFor,
+  WOOD_PILE_EDGE_MIN,
   herdFor,
   HERD_SHEEP_ODDS,
   DEFAULT_SHEEP_ODDS,
@@ -3164,7 +3165,38 @@ test('ce qui se sème dans un champ dépend de sa culture', () => {
   assert.equal(scatterFurnitureFor({ class: 'farmland' }, { crop: 'plough' }).item, 'hay');
   // Une pâture porte du bétail, pas des bosquets.
   assert.equal(scatterFurnitureFor({ class: 'grass', subclass: 'meadow' }).item, 'herd');
-  assert.equal(scatterFurnitureFor({ class: 'wood' }), null);
+  // Un bois porte du bois de coupe — mais c'est l'ourlet qui décide où, pas la
+  // règle : au milieu d'un massif, un tas de bois n'a rien à faire.
+  assert.equal(scatterFurnitureFor({ class: 'wood' }).item, 'woodPile');
+  assert.ok(WOOD_PILE_EDGE_MIN > 0 && WOOD_PILE_EDGE_MIN < 1, 'seuil de lisière plausible');
+  // Une classe qu'on ne sait pas lire ne sème rien.
+  assert.equal(scatterFurnitureFor({ class: 'quarry' }), null);
+});
+
+test('un tas de bois se range le long de la lisière', () => {
+  // Bois dans le demi-plan x < 0 : sa lisière court donc selon Z.
+  const layer = Object.create(FurnitureLayer.prototype);
+  layer.groundClass = { woodAt: (x) => (x < 0 ? 1 : 0) };
+  const yaw = layer._woodEdgeYaw(0, 0);
+
+  // Les rondins de `woodPile` sont couchés selon Z : après le lacet, ils
+  // doivent border le bois, pas y entrer.
+  const [dx, , dz] = Kit.transform([0, 0, 1], { yaw });
+  close(Math.abs(dz), 1, 1e-9, 'les rondins suivent la lisière');
+  close(dx, 0, 1e-9, 'et ne pointent pas vers le bois');
+
+  // Une lisière tournée d'un quart de tour tourne la pile d'autant.
+  const autre = Object.create(FurnitureLayer.prototype);
+  autre.groundClass = { woodAt: (x, z) => (z < 0 ? 1 : 0) };
+  const [ax, , az] = Kit.transform([0, 0, 1], { yaw: autre._woodEdgeYaw(0, 0) });
+  close(Math.abs(ax), 1, 1e-9, 'lisière est-ouest');
+  close(az, 0, 1e-9);
+
+  // Sans pente lisible, le cap est tiré au lieu : sinon toutes les piles d'une
+  // clairière ronde s'aligneraient sur le même axe.
+  const plat = Object.create(FurnitureLayer.prototype);
+  plat.groundClass = { woodAt: () => 1 };
+  assert.notEqual(plat._woodEdgeYaw(0, 0, 0.3), plat._woodEdgeYaw(0, 0, 0.7));
 });
 
 test('le bétail suit le terrain : bovins en plaine, ovins sur les pentes', () => {
