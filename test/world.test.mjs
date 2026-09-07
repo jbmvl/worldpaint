@@ -7071,6 +7071,31 @@ test('la compensation d’alpha atteint sa cible, et n’atteint que les couvert
   );
 });
 
+test('le contour de l’eau se fond, sans que les identifiants cessent d’être lus au plus proche', () => {
+  // Le shader de terrain ne se monte pas sous `node` (il fabrique des canevas
+  // de grain), donc c'est sa **source** qu'on lit — comme pour la
+  // compensation d'alpha plus haut, et pour la même raison : une greffe qui
+  // rate son ancrage ne casse rien, elle ne fait rien.
+  const source = readFileSync('src/terrain/terrainMaterial.js', 'utf8');
+
+  // La part d'eau vient de l'interpolation du test sur quatre carreaux, et
+  // plus du seul carreau le plus proche — c'est ce qui dessinait un escalier.
+  assert.match(source, /gWater = waterShareAt\(classUv\);/);
+  assert.match(source, /mix\(mix\(s00, s10, f\.x\), mix\(s01, s11, f\.x\), f\.y\)/);
+
+  // Ce qui est interpolé est le **booléen**, pas l'identifiant : chaque relevé
+  // vise un centre de carreau, là où le filtrage au plus proche rend la valeur
+  // peinte et rien d'autre.
+  assert.match(source, /texture2D\(uCropMap, \(texel \+ 0\.5\) \/ \$\{CLASS_PIXELS\}\.0\)/);
+
+  // Et la berge est un fondu, pas une substitution.
+  assert.match(source, /base = mix\(base, water, gWater\);/);
+
+  // L'eau ne doit pas être peinte deux fois : écartée de la boucle des
+  // couvertures, sans quoi le sol sous le fondu serait déjà de l'eau.
+  assert.match(source, /if \(i == cover && i != \$\{WATER_COVER_ID - 1\}\)/);
+});
+
 test('le halo lit la couleur d’instance sans la redéclarer', () => {
   // Un stub : le matériau n’a besoin que de retenir ce qu’on lui passe, et
   // c’est la **source du shader** qu’on vérifie, pas son exécution.
