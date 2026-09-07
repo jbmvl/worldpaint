@@ -161,8 +161,7 @@ export class BridgeLayer {
 
     const bubble = this.bubble;
     // Terrain naturel : une pile se fonde sur le sol, pas sur le déblai d'une
-    // chaussée voisine — et surtout pas sur la cuvette creusée sous la nappe
-    // qu'elle traverse, qui la ferait flotter.
+    // chaussée voisine, qui la ferait flotter.
     const sampleElevation = (x, z) => bubble.rawSurfaceElevationAtLocal(x, z, 0) * bubble.verticalScale;
 
     const buffer = createProfileBuffer();

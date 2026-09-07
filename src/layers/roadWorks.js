@@ -5,8 +5,7 @@
  * Jusqu'ici la chaussée n'en tirait qu'une chose : jeter les tunnels. Un pont
  * était donc une route ordinaire, dressée sur le MNT brut — c'est-à-dire
  * posée au fond de la vallée qu'elle est censée franchir, et sous la nappe
- * qu'elle est censée enjamber (`waterCut` creuse la cuvette, la chaussée
- * descend avec).
+ * qu'elle est censée enjamber.
  *
  * Ce module est le seul endroit où l'on sait ce qu'est un ouvrage :
  *

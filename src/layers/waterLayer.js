@@ -4,10 +4,31 @@
  *
  * L'eau est horizontale : chaque surface est plaquée à une altitude unique
  * (chaque section de rivière à la sienne), sinon elle remonterait les
- * collines. L'altitude retenue est un quantile bas du terrain — ni la
- * moyenne (poserait la nappe sous ses berges), ni le minimum (un seul point
- * aberrant enterrerait tout un lac) — lu sur le contour et une grille
- * intérieure (`waterSurfaceLevel`).
+ * collines.
+ *
+ * ## L'eau s'ajuste au terrain, jamais l'inverse
+ *
+ * Le terrain n'est plus creusé sous les nappes. Une cuvette rabattait tout un
+ * polygone sur une seule cote : sur une pente, c'était une gorge taillée dans
+ * le versant. La rive n'est donc plus le contour du polygone, c'est la courbe
+ * où le terrain croise le niveau de l'eau — et c'est le test de profondeur qui
+ * la dessine, au pixel près, en cachant la nappe partout où le sol lui passe
+ * devant. Rien à découper, rien à terrasser.
+ *
+ * Tout se joue alors sur le choix du niveau (`waterSurfaceLevel`), pris entre
+ * deux contraintes qui vont en sens inverse :
+ *
+ *   - **couvrir le fond** : sous un quantile haut des altitudes intérieures, le
+ *     MNT ressort en îlots et le lac se troue (c'est ce que la cuvette
+ *     masquait) ;
+ *   - **ne pas déborder** : au-dessus du point bas du contour — l'exutoire —
+ *     l'eau inonde les berges. Un lac ne monte pas plus haut que son exutoire.
+ *
+ * On retient le plus bas des deux. Quand le plancher passe au-dessus du
+ * plafond, c'est que le polygone descend une pente et qu'aucun plan horizontal
+ * ne lui convient : l'exutoire l'emporte, et l'eau ne se voit que dans la
+ * partie basse. Une flaque, pas une inondation ni un canyon — en attendant que
+ * ces polygones-là soient traités en biefs, comme les cours d'eau linéaires.
  *
  * Le long d'un cours d'eau linéaire, le profil est rendu monotone vers
  * l'aval (`monotoneDownstream`) : une rivière ne remonte pas, ce qui vaut
@@ -40,17 +61,28 @@ export const WATER_REBUILD_M = 250;
 export const WATER_SAMPLE_M = 8;
 /**
  * Enfoncement d'un cours d'eau linéaire sous l'altitude trouvée, en mètres.
- * Ne concerne plus les nappes (creusées dans une cuvette, `waterCut`) : un
- * cours d'eau linéaire (1,2 à 9 m de large) ne peut pas être creusé sans
- * refaire l'échec du fossé de route — cette marge reste sa seule protection.
+ * Ne concerne pas les nappes, qui se posent au niveau trouvé et se laissent
+ * cacher par le terrain. Un cours d'eau linéaire (1,2 à 9 m de large) est trop
+ * étroit pour que la maille rende son lit : cette marge reste sa seule
+ * protection.
  */
 export const WATER_SINK_M = 0.15;
 /** Nombre maximal de surfaces retenues par reconstruction. */
 export const WATER_MAX_POLYGONS = 300;
 /** Nombre maximal de points échantillonnés à l'intérieur d'un polygone pour en tirer l'altitude (voir `interiorSamples`). */
 export const WATER_LEVEL_MAX_SAMPLES = 200;
-/** Rang du quantile qui décide de l'altitude d'une nappe (voir `waterSurfaceLevel`). */
-export const WATER_LEVEL_QUANTILE = 0.05;
+/**
+ * Part du fond que la nappe doit couvrir : rang du quantile des altitudes
+ * intérieures qui donne le **plancher** du niveau. À 0,9, un dixième du fond
+ * émerge — le MNT le plus haut du polygone, ses îlots et ses berges internes.
+ */
+export const WATER_FILL_QUANTILE = 0.9;
+/**
+ * Rang du quantile des altitudes du **contour** qui donne le plafond du
+ * niveau : l'exutoire. Bas, mais pas le minimum, qu'un seul sommet aberrant
+ * suffirait à coucher.
+ */
+export const WATER_OUTLET_QUANTILE = 0.1;
 /** Mètres couverts par un cycle de la carte de rides (coordonnées de texture prises dans le monde, pas sur la surface). */
 export const WATER_UV_SCALE_M = 12;
 
@@ -151,14 +183,14 @@ export function interiorSamples(outer, holes, maxSamples = WATER_LEVEL_MAX_SAMPL
 }
 
 /**
- * Quantile bas d'une série, par interpolation linéaire entre les deux rangs
+ * Quantile d'une série, par interpolation linéaire entre les deux rangs
  * encadrants. Ne modifie pas le tableau reçu.
  *
  * @param {number[]} values Série quelconque, non triée.
  * @param {number} q        Rang visé, de 0 (minimum) à 1 (maximum).
  * @returns {number} `Infinity` si la série est vide.
  */
-export function lowQuantile(values, q = WATER_LEVEL_QUANTILE) {
+export function quantile(values, q) {
   if (!values.length) return Infinity;
   const sorted = values.slice().sort((a, b) => a - b);
   const rank = Math.min(Math.max(q, 0), 1) * (sorted.length - 1);
@@ -169,11 +201,15 @@ export function lowQuantile(values, q = WATER_LEVEL_QUANTILE) {
 }
 
 /**
- * Altitude retenue pour une nappe d'eau, lue sur le terrain affiché : contour,
- * trous et grille intérieure (pas le contour seul, qui ne dit rien du milieu
- * d'un grand lac). Un quantile bas, ni la moyenne ni le minimum : trop haut
- * perce la nappe par le fond (le défaut du contour seul), trop bas l'enterre
- * (le défaut du minimum dès qu'un point du MNT est bruité).
+ * Altitude retenue pour une nappe d'eau, lue sur le terrain affiché. Deux
+ * séries, deux rôles (voir l'en-tête du module) : la grille intérieure dit
+ * jusqu'où monter pour couvrir le fond, le contour dit jusqu'où on peut monter
+ * sans noyer les berges. Le plus bas des deux l'emporte.
+ *
+ * Un polygone trop étroit pour contenir un point de grille n'a pas de fond
+ * connu : son contour sert alors aux deux rôles, et c'est l'exutoire qui
+ * décide — le cas d'une rivière que le rendu ne saura de toute façon pas
+ * mettre à plat.
  *
  * `sampleGround` peut rendre `NaN` pour un point sans donnée : ignoré plutôt
  * que compté pour une altitude de zéro.
@@ -184,17 +220,23 @@ export function lowQuantile(values, q = WATER_LEVEL_QUANTILE) {
  * @returns {number} `Infinity` si aucun échantillon n'a de donnée.
  */
 export function waterSurfaceLevel(outer, holes, sampleGround, maxInteriorSamples = WATER_LEVEL_MAX_SAMPLES) {
-  const heights = [];
-  const consider = (p) => {
-    const h = sampleGround(p.x, p.z);
-    if (Number.isFinite(h)) heights.push(h);
+  const collect = (points, into) => {
+    for (const p of points) {
+      const h = sampleGround(p.x, p.z);
+      if (Number.isFinite(h)) into.push(h);
+    }
+    return into;
   };
 
-  for (const p of outer) consider(p);
-  for (const hole of holes) for (const p of hole) consider(p);
-  for (const p of interiorSamples(outer, holes, maxInteriorSamples)) consider(p);
+  // Le contour d'un trou est une rive comme une autre : il peut être l'exutoire.
+  const rim = collect(outer, []);
+  for (const hole of holes) collect(hole, rim);
 
-  return lowQuantile(heights);
+  const bottom = collect(interiorSamples(outer, holes, maxInteriorSamples), []);
+
+  const outlet = quantile(rim, WATER_OUTLET_QUANTILE);
+  const fill = quantile(bottom.length ? bottom : rim, WATER_FILL_QUANTILE);
+  return Math.min(fill, outlet);
 }
 
 /**
@@ -274,8 +316,12 @@ export function createWaterMaterial(THREE) {
     transparent: true, // légèrement translucide : on devine le fond près de la berge
     opacity: 0.88,
     depthWrite: true, // sinon les arbres de la rive lui passeraient au travers
-    // Pas de décalage de profondeur, contrairement à la chaussée : la nappe
-    // se tient 60 cm au-dessus d'un lit creusé pour elle (`waterCut`).
+    // Le terrain gagne les égalités : c'est lui qui découpe le trait de côte,
+    // et sur un fond que la nappe rase de quelques centimètres, sans ce
+    // décalage les deux surfaces se disputeraient le pixel.
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
   });
   material.name = 'water';
 
@@ -315,7 +361,7 @@ export class WaterLayer {
     this._anchor = null;
     this._frame = null;
     this._surface = -1;
-    /** Cuvette publiée à l'usage du terrain (`WaterIndex`), ou `null` avant la première construction. @type {WaterIndex|null} */
+    /** Nappes publiées à l'usage des ponts (`WaterIndex`), ou `null` avant la première construction. @type {WaterIndex|null} */
     this.index = null;
   }
 
@@ -338,13 +384,13 @@ export class WaterLayer {
     const radius = Math.min(WATER_RADIUS_M, this.bubble.radiusMeters || WATER_RADIUS_M);
 
     const mesh = { positions: [], normals: [], uvs: [] };
-    /** @type {Array<{rings: Array, level: number}>} nappes, pour la cuvette. */
+    /** @type {Array<{rings: Array, level: number}>} nappes retenues, pour l'index. */
     const surfaces = [];
 
     this._appendPolygons(source, tiles, here, radius, mesh, surfaces);
     this._appendWaterways(source, tiles, here, radius, mesh);
 
-    // Seules les nappes entrent dans la cuvette (voir `waterCut`).
+    // Ce que les ponts interrogeront pour dégager leur travée (`roadNetwork`).
     this.index = new WaterIndex(surfaces);
 
     this.count = mesh.positions.length / 9;
@@ -377,16 +423,16 @@ export class WaterLayer {
   }
 
   /**
-   * @param {Array} surfaces Accumulateur des nappes retenues, pour la cuvette
-   *        que le terrain viendra creuser (`WaterIndex`).
+   * @param {Array} surfaces Accumulateur des nappes retenues, pour l'index que
+   *        les ponts interrogeront (`WaterIndex`).
    */
   _appendPolygons(source, tiles, here, radius, mesh, surfaces) {
     const { THREE, bubble } = this;
     let built = 0;
 
-    // Altitude naturelle, terrassements exclus (même raison que la
-    // plate-forme d'une chaussée : la cuvette dérive du niveau de l'eau, pas
-    // l'inverse). `NaN`, jamais 0, sur une tuile non chargée.
+    // Altitude naturelle, terrassements exclus : une nappe se cale sur le
+    // relief, pas sur le déblai d'une route qui la longe. `NaN`, jamais 0, sur
+    // une tuile non chargée.
     const sampleGround = (x, z) => {
       const h = bubble.rawSurfaceElevationAtLocal(x, z, NaN);
       return Number.isFinite(h) ? h * bubble.verticalScale : NaN;
@@ -442,7 +488,7 @@ export class WaterLayer {
           }
         }
 
-        // Déclarée après la triangulation seulement (une nappe refusée ne creuse pas de trou nu).
+        // Déclarée après la triangulation seulement (une nappe refusée ne doit pas relever un tablier de pont).
         surfaces.push({ rings: [outer, ...holeRings], level });
         built++;
       }

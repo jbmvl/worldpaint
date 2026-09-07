@@ -1,30 +1,25 @@
 /*
- * waterIndex — où l'eau est, et à quelle altitude, pour qui creuse le terrain
- * (question posée par sommet de maille : eau ? à quelle hauteur ? à quelle
- * distance de la rive ?).
+ * waterIndex — où l'eau est, et à quelle altitude (question posée par point au
+ * sol : nappe ? à quelle hauteur ?).
  *
  * Une nappe est une surface, pas une ligne : contrairement à `RoadIndex`, la
  * question « suis-je dedans ? » ne se répond pas localement. On paie donc une
- * fois à la construction — rasterisation par balayage de lignes, puis une
- * transformation de distance qui propage vers l'extérieur la distance à la
- * rive et l'altitude de la nappe la plus proche — pour que la requête ne soit
- * plus qu'une lecture de case.
+ * fois à la construction — rasterisation par balayage de lignes — pour que la
+ * requête ne soit plus qu'une lecture de case.
  *
- * Pas de grille de l'ordre de la maille de terrain (4,42 m au mieux) : une
- * cuvette décrite plus finement ne serait pas rendue (voir `waterCut`).
+ * L'index ne sert plus à creuser le terrain (l'eau ne le touche plus, voir
+ * `waterLayer`) : il ne reste que le seul usage qui demande vraiment de savoir
+ * ce qu'il y a sous un point, la garde d'un tablier de pont au-dessus de la
+ * nappe qu'il franchit (`roadNetwork`). D'où la disparition de la
+ * transformation de distance qui propageait la rive vers l'extérieur : hors de
+ * l'eau, il n'y a plus rien à dire.
  */
-
-import { WATER_CUT_BLEND_M } from '../terrain/waterCut.js';
 
 /** Côté d'une case, en mètres (ordre de la maille de terrain la plus fine, 4,42 m). */
 export const WATER_INDEX_CELL_M = 4;
 
 /** Plafond du nombre de cases : garde contre une emprise absurde, pas un réglage. */
 export const WATER_INDEX_MAX_CELLS = 1 << 21;
-
-/** Coûts de la transformation de distance, en cases. */
-const STEP_ORTHOGONAL = 1;
-const STEP_DIAGONAL = Math.SQRT2;
 
 /**
  * Abscisses où une ligne horizontale traverse un anneau, en ordre croissant.
@@ -45,30 +40,26 @@ export function ringCrossings(ring, z) {
 }
 
 /**
- * La cuvette d'eau, rasterisée : altitude de nappe et distance à la rive.
+ * Les nappes d'eau, rasterisées : leur altitude, case par case.
  */
 export class WaterIndex {
   /**
    * @param {Array<{rings: Array<Array<{x:number,z:number}>>, level: number}>} surfaces
    *        Une entrée par nappe : le contour puis ses trous, et son altitude.
    * @param {Object} [options]
-   * @param {number} [options.cell]  Côté d'une case, en mètres.
-   * @param {number} [options.blend] Portée du raccord au-delà de la rive.
+   * @param {number} [options.cell] Côté d'une case, en mètres.
    */
-  constructor(surfaces, { cell = WATER_INDEX_CELL_M, blend = WATER_CUT_BLEND_M } = {}) {
+  constructor(surfaces, { cell = WATER_INDEX_CELL_M } = {}) {
     this.cell = cell;
-    this.blend = blend;
     this.nx = 0;
     this.nz = 0;
     this.level = null;
-    this.distance = null;
 
     const usable = (surfaces || []).filter(
       (s) => s && Number.isFinite(s.level) && Array.isArray(s.rings) && s.rings[0]?.length >= 3
     );
     if (usable.length === 0) return;
 
-    // Emprise : les nappes, élargies du raccord.
     let minX = Infinity;
     let maxX = -Infinity;
     let minZ = Infinity;
@@ -81,10 +72,6 @@ export class WaterIndex {
         if (p.z > maxZ) maxZ = p.z;
       }
     }
-    minX -= blend;
-    minZ -= blend;
-    maxX += blend;
-    maxZ += blend;
 
     const nx = Math.ceil((maxX - minX) / cell) + 1;
     const nz = Math.ceil((maxZ - minZ) / cell) + 1;
@@ -95,10 +82,8 @@ export class WaterIndex {
     this.nx = nx;
     this.nz = nz;
     this.level = new Float32Array(nx * nz).fill(NaN);
-    this.distance = new Float32Array(nx * nz).fill(Infinity);
 
     for (const surface of usable) this._rasterize(surface);
-    this._spread();
   }
 
   /** Vrai si l'index a quelque chose à dire. */
@@ -128,54 +113,16 @@ export class WaterIndex {
           const index = j * nx + i;
           // Deux nappes superposées : la plus basse commande.
           if (!(this.level[index] <= surface.level)) this.level[index] = surface.level;
-          this.distance[index] = 0;
         }
       }
     }
   }
 
   /**
-   * Propage vers l'extérieur la distance à la rive et l'altitude de la nappe
-   * la plus proche, par transformation de distance en deux passes (chanfrein).
-   */
-  _spread() {
-    const { nx, nz, cell, blend, level, distance } = this;
-    const reach = blend;
-
-    const relax = (index, from, step) => {
-      const d = distance[from] + step * cell;
-      if (d < distance[index] && d <= reach) {
-        distance[index] = d;
-        level[index] = level[from];
-      }
-    };
-
-    for (let j = 0; j < nz; j++) {
-      for (let i = 0; i < nx; i++) {
-        const index = j * nx + i;
-        if (i > 0) relax(index, index - 1, STEP_ORTHOGONAL);
-        if (j > 0) relax(index, index - nx, STEP_ORTHOGONAL);
-        if (i > 0 && j > 0) relax(index, index - nx - 1, STEP_DIAGONAL);
-        if (i + 1 < nx && j > 0) relax(index, index - nx + 1, STEP_DIAGONAL);
-      }
-    }
-
-    for (let j = nz - 1; j >= 0; j--) {
-      for (let i = nx - 1; i >= 0; i--) {
-        const index = j * nx + i;
-        if (i + 1 < nx) relax(index, index + 1, STEP_ORTHOGONAL);
-        if (j + 1 < nz) relax(index, index + nx, STEP_ORTHOGONAL);
-        if (i + 1 < nx && j + 1 < nz) relax(index, index + nx + 1, STEP_DIAGONAL);
-        if (i > 0 && j + 1 < nz) relax(index, index + nx - 1, STEP_DIAGONAL);
-      }
-    }
-  }
-
-  /**
-   * Nappe qui commande en un point, ou `null` s'il n'y en a aucune à portée.
+   * Nappe qui commande en un point, ou `null` s'il n'y en a aucune.
    * Lecture de la case la plus proche, sans interpolation.
    *
-   * @returns {{level:number, distance:number}|null}
+   * @returns {{level:number}|null}
    */
   query(x, z) {
     if (!this.ready) return null;
@@ -183,9 +130,8 @@ export class WaterIndex {
     const j = Math.round((z - this.originZ) / this.cell - 0.5);
     if (i < 0 || j < 0 || i >= this.nx || j >= this.nz) return null;
 
-    const index = j * this.nx + i;
-    const value = this.level[index];
+    const value = this.level[j * this.nx + i];
     if (!Number.isFinite(value)) return null;
-    return { level: value, distance: this.distance[index] };
+    return { level: value };
   }
 }
