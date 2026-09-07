@@ -18,8 +18,18 @@
  * - **marcher dans un pré** : six stations à quinze mètres, des haltes brèves ;
  * - **courir** : une grande boucle, aucune halte ;
  * - **traverser la route** : deux stations de part et d'autre, une longue
- *   attente sur le bas-côté, et le trajet qui passe sur la chaussée ;
+ *   attente sur le bas-côté, et le trajet — couru — qui passe sur la chaussée ;
  * - **guetter** : une station et rien d'autre.
+ *
+ * ## Un circuit peut ne pas se refermer
+ *
+ * Presque tous le font : une bête revient là où elle était, sans quoi elle
+ * finirait par sortir de sa parcelle. Une exception, et une seule : la
+ * traversée **déclenchée** par l'application (`dash`), qui est un événement et
+ * pas une conduite — la bête débouche d'un côté, franchit la chaussée, et
+ * s'arrête de l'autre. Un circuit ouvert porte donc `finish`, l'instant où il
+ * n'y a plus rien à jouer : au-delà, c'est à l'appelant de retirer la bête,
+ * sans quoi le repli en boucle la ramènerait d'un bond à son point de départ.
  *
  * ## Pourquoi tout est fonction pure du temps
  *
@@ -40,6 +50,19 @@
 
 import { randomAt } from './furniturePlacement.js';
 
+/** Demi-longueur du trajet de traversée, en mètres — de bas-côté à bas-côté. */
+export const CROSS_SPAN_M = 9;
+
+/**
+ * Demi-longueur d'une traversée déclenchée, en mètres.
+ *
+ * Plus longue que celle du décor, et pour une raison précise : une traversée
+ * demandée par l'application est vue de face et de loin, pas de profil et de
+ * près. La bête doit déboucher d'assez loin pour qu'on la voie arriver, et
+ * s'arrêter d'assez loin pour qu'on ne la voie pas s'évanouir.
+ */
+export const DASH_SPAN_M = 20;
+
 /**
  * Les conduites, et ce qui les distingue.
  *
@@ -49,7 +72,11 @@ import { randomAt } from './furniturePlacement.js';
  *   c'est plus sûr de la retenir court que de rattraper une fugue ;
  * - `dwellS`   : la halte, en secondes (fourchette) ;
  * - `feed`     : la part de la halte passée la tête baissée ;
- * - `run`      : le trajet se fait à l'allure vive et non au pas.
+ * - `run`      : le trajet se fait à l'allure vive et non au pas ;
+ * - `axial`    : les stations ne se referment pas autour du point de pose,
+ *   elles se placent de part et d'autre sur une direction imposée
+ *   (`crossAxis`) — voir `spanM` pour la demi-longueur ;
+ * - `closed`   : à `false`, le circuit ne revient pas à sa première station.
  */
 export const FAUNA_BEHAVIOURS = {
   /** Brouter sur place : le fond du décor, ce que fait un pré au repos. */
@@ -68,11 +95,33 @@ export const FAUNA_BEHAVIOURS = {
   peck: { stations: 5, radiusM: 3, dwellS: [2, 5], feed: 0.8, run: false, peck: true },
   /**
    * Traverser : deux stations de part et d'autre d'un obstacle, une longue
-   * attente sur chaque bas-côté. C'est la seule conduite dont le tracé est
-   * imposé de l'extérieur (voir `crossAxis`) — les autres se referment sur
-   * elles-mêmes autour du point de pose.
+   * attente sur chaque bas-côté. Le tracé est imposé de l'extérieur (voir
+   * `crossAxis`) — les autres conduites se referment sur elles-mêmes autour du
+   * point de pose.
+   *
+   * Le trajet se court : une bête qui s'engage sur une chaussée ne s'y attarde
+   * pas, et c'est justement sur la route qu'on la voit de plus près.
    */
-  cross: { stations: 2, radiusM: 0, dwellS: [9, 26], feed: 0.35, run: false },
+  cross: { stations: 2, radiusM: 0, dwellS: [9, 26], feed: 0.35, run: true, axial: true, spanM: CROSS_SPAN_M },
+  /**
+   * L'aller simple déclenché par l'application : la bête débouche d'un côté,
+   * franchit la chaussée et s'arrête de l'autre. Ce n'est **pas** une conduite
+   * tirée au sort — `behaviourFor` ne la rend jamais —, c'est un événement
+   * qu'une application demande (voir `WorldComposer.crossFauna`).
+   *
+   * Elle ne se referme pas : une traversée qui reviendrait sur ses pas serait
+   * un manège, pas un événement.
+   */
+  dash: {
+    stations: 2,
+    radiusM: 0,
+    dwellS: [0.6, 1.5],
+    feed: 0,
+    run: true,
+    axial: true,
+    spanM: DASH_SPAN_M,
+    closed: false,
+  },
 };
 
 /**
@@ -109,14 +158,19 @@ export const CROSS_ODDS = 0.18;
 /** Distance à une route en deçà de laquelle une traversée a du sens, en mètres. */
 export const CROSS_REACH_M = 22;
 
-/** Demi-longueur du trajet de traversée, en mètres — de bas-côté à bas-côté. */
-export const CROSS_SPAN_M = 9;
-
 /** Durée du virage vers la station suivante, en fin de halte, en secondes. */
 export const TURN_S = 1.6;
 
-/** Montée et descente de l'encolure au début et à la fin d'une halte, en secondes. */
-export const HEAD_RAMP_S = 1.1;
+/**
+ * Montée et descente de l'encolure au début et à la fin d'une halte, en
+ * secondes.
+ *
+ * Volontairement court : une bête ne pose pas la tête, elle la baisse. Une
+ * rampe d'une seconde se lit comme un ralenti, et c'est le mouvement qu'on
+ * regarde le plus longtemps de tout le décor — un pré au repos, c'est vingt
+ * têtes qui montent et descendent.
+ */
+export const HEAD_RAMP_S = 0.4;
 
 /** Battements par seconde de la tête d'une poule qui picore. */
 export const PECK_HZ = 1.7;
@@ -137,6 +191,8 @@ export const PECK_HZ = 1.7;
  * @returns {string} Une clé de `FAUNA_BEHAVIOURS`.
  */
 export function behaviourFor({ family, variant = 0, nearRoad = false, crossDraw = 1 }) {
+  // `dash` n'est jamais tirée ici : c'est un événement demandé par
+  // l'application, pas une conduite que se donne une bête du décor.
   if (nearRoad && crossDraw < CROSS_ODDS) return 'cross';
   const pool = FAUNA_REPERTOIRE[family] || DEFAULT_REPERTOIRE;
   return pool[Math.min(pool.length - 1, Math.floor(variant * pool.length))];
@@ -171,11 +227,27 @@ export function behaviourFor({ family, variant = 0, nearRoad = false, crossDraw 
  *        est rapprochée du point de pose jusqu'à être acceptée, ou abandonnée
  *        sur place.
  * @param {{x:number,z:number}} [options.crossAxis] Direction de la traversée,
- *        normalisée — la perpendiculaire à la route. Obligatoire pour
- *        `cross`, ignorée ailleurs.
- * @returns {Object|null} Le circuit, ou `null` si le sol est illisible.
+ *        normalisée — la perpendiculaire à la route. Obligatoire pour les
+ *        conduites axiales (`cross`, `dash`), ignorée ailleurs.
+ * @param {number} [options.spanM] Demi-longueur d'une conduite axiale, en
+ *        mètres, à la place de celle de la conduite. Une traversée déclenchée
+ *        par l'application est vue d'une autre distance que celle du décor.
+ * @returns {Object|null} Le circuit, ou `null` si le sol est illisible. Porte
+ *          `finish` — l'instant où il n'y a plus rien à jouer — quand il ne se
+ *          referme pas, et `null` quand il se referme.
  */
-export function buildCircuit({ behaviour, x, z, walkMS, runMS, roam = 1, sampleY, allow = null, crossAxis = null }) {
+export function buildCircuit({
+  behaviour,
+  x,
+  z,
+  walkMS,
+  runMS,
+  roam = 1,
+  sampleY,
+  allow = null,
+  crossAxis = null,
+  spanM = null,
+}) {
   const rule = FAUNA_BEHAVIOURS[behaviour] || FAUNA_BEHAVIOURS.graze;
   const speed = rule.run ? runMS : walkMS;
 
@@ -203,13 +275,14 @@ export function buildCircuit({ behaviour, x, z, walkMS, runMS, roam = 1, sampleY
   };
 
   const points = [];
-  if (behaviour === 'cross' && crossAxis) {
+  if (rule.axial && crossAxis) {
     // La traversée n'entoure pas le point de pose, elle le franchit : une
     // station de chaque côté, sur la perpendiculaire à la chaussée. `allow`
     // ne s'y applique pas — c'est tout l'objet de la manœuvre.
+    const span = spanM ?? rule.spanM ?? CROSS_SPAN_M;
     for (const side of [-1, 1]) {
-      const px = x + crossAxis.x * CROSS_SPAN_M * side;
-      const pz = z + crossAxis.z * CROSS_SPAN_M * side;
+      const px = x + crossAxis.x * span * side;
+      const pz = z + crossAxis.z * span * side;
       const y = sampleY(px, pz);
       if (!Number.isFinite(y)) return null;
       points.push({ x: px, y, z: pz });
@@ -233,12 +306,14 @@ export function buildCircuit({ behaviour, x, z, walkMS, runMS, roam = 1, sampleY
     heading: 0,
   }));
 
+  const closed = rule.closed !== false;
+
   // Points de passage intermédiaires : sans eux, l'altitude est interpolée en
   // ligne droite d'une station à l'autre et une bête qui traverse trente
   // mètres de pré vallonné passe sous la butte du milieu. Un point de passage
   // est une station dont la halte est nulle — le même mécanisme, sans cas
   // particulier à écrire.
-  const stations = densify(halts, sampleY, points.length > 1);
+  const stations = densify(halts, sampleY, closed && points.length > 1);
 
   // Trajets, et cap tenu pendant chaque halte : celui de l'arrivée. Une bête
   // ne pivote pas sur place en attendant ; elle tourne au moment de repartir,
@@ -246,21 +321,33 @@ export function buildCircuit({ behaviour, x, z, walkMS, runMS, roam = 1, sampleY
   const legs = [];
   let loopLength = 0;
   for (let i = 0; i < stations.length; i++) {
+    const next = i + 1;
+    // Un circuit ouvert n'a pas de trajet de retour : la dernière station est
+    // un cul-de-sac, et `faunaStateAt` y reste faute de trajet à suivre.
+    if (!closed && next >= stations.length) break;
     const from = stations[i];
-    const to = stations[(i + 1) % stations.length];
+    const to = stations[next % stations.length];
     const length = Math.hypot(to.x - from.x, to.z - from.z);
     const bearing = length > 1e-6 ? Math.atan2(to.x - from.x, to.z - from.z) : 0;
     legs.push({ length, duration: length / Math.max(0.05, speed), bearing });
     loopLength += length;
-    stations[(i + 1) % stations.length].heading = bearing;
+    stations[next % stations.length].heading = bearing;
   }
   // Circuit à une seule station : rien ne tourne, le cap est tiré au lieu.
   if (stations.length === 1) {
     stations[0].heading = randomAt(x, z, 219) * Math.PI * 2;
     legs.length = 0;
   }
+  // Circuit ouvert : la première station n'hérite d'aucun cap d'arrivée, elle
+  // regarde donc là où elle va. Sans ça une bête déboucherait de biais.
+  if (!closed && legs.length > 0) stations[0].heading = legs[0].bearing;
 
-  const period = stations.reduce((sum, s) => sum + s.dwell, 0) + legs.reduce((sum, l) => sum + l.duration, 0);
+  const dwells = stations.reduce((sum, s) => sum + s.dwell, 0);
+  const travel = legs.reduce((sum, l) => sum + l.duration, 0);
+  const period = dwells + travel;
+  // Ce qu'il reste à jouer d'un circuit ouvert : tout, moins la halte finale,
+  // qui n'a pas de fin — la bête y est arrivée, elle y reste.
+  const finish = closed ? null : period - stations[stations.length - 1].dwell;
 
   return {
     behaviour,
@@ -270,9 +357,12 @@ export function buildCircuit({ behaviour, x, z, walkMS, runMS, roam = 1, sampleY
     speed,
     feed: rule.feed,
     peck: rule.peck === true,
+    closed,
+    finish,
     // Décalage propre à la bête : deux vaches voisines qui lèvent la tête
-    // ensemble se repèrent instantanément.
-    offset: randomAt(x, z, 223) * Math.max(1, period),
+    // ensemble se repèrent instantanément. Un circuit ouvert n'en a pas : il
+    // est joué du début, à l'instant où on le demande.
+    offset: closed ? randomAt(x, z, 223) * Math.max(1, period) : 0,
     period: Math.max(0.1, period),
   };
 }

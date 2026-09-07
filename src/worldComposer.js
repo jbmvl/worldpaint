@@ -63,7 +63,9 @@ import { FaunaLayer } from './layers/faunaLayer.js';
 import { VectorTileSource, coveringTiles, VECTOR_ZOOM } from './core/vectorTileSource.js';
 import { lngLatToTile } from './core/tileMath.js';
 import { climateAt, refineByRelief } from './core/climate.js';
-import { crossSlope } from './layers/furniturePlacement.js';
+import { crossSlope, coatFor } from './layers/furniturePlacement.js';
+import { buildCircuit, DASH_SPAN_M } from './layers/faunaMotion.js';
+import { FAUNA_SPECIES } from './models/fauna/index.js';
 import { defaultTheme } from './themes/default.js';
 
 /**
@@ -75,6 +77,16 @@ export const WORLD_ATTRIBUTION =
 
 /** Demi-portée de la mesure de pente sous l'observateur, en mètres. */
 const RELIEF_SPAN_M = 60;
+
+/**
+ * Distance par défaut à laquelle une traversée déclenchée coupe la trajectoire
+ * de l'observateur, en mètres (`crossFauna`).
+ *
+ * Assez loin pour qu'on voie la bête arriver, assez près pour qu'on la voie
+ * tout court. C'est un défaut, pas une règle : une application qui roule vite
+ * la voudra plus loin, et c'est à elle de le dire.
+ */
+export const FAUNA_CROSS_AHEAD_M = 55;
 
 export class WorldComposer {
   /**
@@ -489,6 +501,80 @@ export class WorldComposer {
   }
 
   /**
+   * Déclenche la traversée d'une bête devant l'observateur.
+   *
+   * C'est le seul endroit du moteur où une application peut demander qu'il se
+   * passe **quelque chose**, à un instant qu'elle choisit. Tout le reste du
+   * décor est une fonction du lieu : la même donnée rend le même paysage, et
+   * ça ne change pas — cette bête-ci n'est pas posée dans le monde, elle est
+   * jouée par-dessus, et un passage ultérieur au même endroit ne la retrouvera
+   * pas. C'est la définition d'un événement.
+   *
+   * Le tracé se déduit du regard, pas de la route : la bête débouche d'un côté
+   * du champ de vision, franchit la trajectoire de l'observateur et repart de
+   * l'autre. C'est ce qui la rend utilisable partout — sur une route comme sur
+   * un chemin — et c'est aussi ce qui rend le résultat lisible : elle traverse
+   * ce qu'on regarde.
+   *
+   * @param {Object} options
+   * @param {string} options.kind Espèce (`FAUNA_SPECIES`).
+   * @param {{x:number,z:number}} options.at Position de l'observateur, en
+   *        unités de scène.
+   * @param {{x:number,z:number}} options.forward Direction du regard, à plat.
+   *        Pas besoin qu'elle soit normalisée.
+   * @param {number} [options.distanceM] À quelle distance devant l'observateur
+   *        la bête coupe sa trajectoire.
+   * @param {number} [options.side] De quel côté elle débouche : `1` ou `-1`,
+   *        les deux côtés du champ de vision.
+   * @param {number} [options.spanM] Demi-longueur de la traversée, en mètres —
+   *        de son point d'apparition au milieu du trajet.
+   * @param {number} [options.scale] Taille, `1` étant la taille du modèle.
+   * @returns {Object|null} La bête lancée (à repasser à
+   *          `fauna.cancelCrossing` pour l'interrompre), ou `null` si l'espèce
+   *          est inconnue, le regard nul, ou le sol illisible à cet endroit.
+   */
+  crossFauna({ kind, at, forward, distanceM = FAUNA_CROSS_AHEAD_M, side = 1, spanM = DASH_SPAN_M, scale = 1 } = {}) {
+    // Sans repère local, le sol se lit à zéro partout (`surfaceElevationAtLocal`
+    // retombe sur son défaut) : la bête traverserait à l'altitude de la mer.
+    if (this.disposed || !this.bubble.frame || !FAUNA_SPECIES[kind] || !at || !forward) return null;
+
+    const gaze = Math.hypot(forward.x, forward.z);
+    if (!(gaze > 1e-6)) return null;
+    const ahead = { x: forward.x / gaze, z: forward.z / gaze };
+
+    // Le milieu de la traversée est devant l'observateur, sur son axe de
+    // regard : c'est là qu'elle doit être vue, pas là où il se trouve.
+    const anchor = { x: at.x + ahead.x * distanceM, z: at.z + ahead.z * distanceM };
+    // La perpendiculaire au regard, dans le plan du sol. Le signe décide du
+    // côté d'où la bête débouche — les deux sont symétriques.
+    const axis = { x: -ahead.z * Math.sign(side || 1), z: ahead.x * Math.sign(side || 1) };
+
+    const spec = FAUNA_SPECIES[kind];
+    const circuit = buildCircuit({
+      behaviour: 'dash',
+      x: anchor.x,
+      z: anchor.z,
+      walkMS: spec.walkMS,
+      runMS: spec.runMS,
+      sampleY: (sx, sz) => this.bubble.surfaceElevationAtLocal(sx, sz, 0) * this.bubble.verticalScale,
+      crossAxis: axis,
+      // Aucune contrainte de terrain (`allow`) : une traversée déclenchée doit
+      // passer, c'est tout son objet — exactement comme celle du décor.
+      spanM,
+    });
+    if (!circuit) return null;
+
+    return this.fauna.addCrossing({
+      kind,
+      x: anchor.x,
+      z: anchor.z,
+      circuit,
+      tint: coatFor(this.theme.fauna?.coats, kind, anchor.x, anchor.z),
+      scale,
+    });
+  }
+
+  /**
    * Travail d'une image : les files étalées et ce qui bouge (une tuile
    * plantée, une tuile de terrain recousue par image au plus, pour éviter l'à-coup).
    *
@@ -508,7 +594,9 @@ export class WorldComposer {
     this.crops.advance(delta);
     this.crops.update(at.x, at.z);
     this.life.advance(delta, at);
-    this.fauna.advance(delta);
+    // La position sert à `faunaLayer` pour n'oublier une traversée déclenchée
+    // qu'une fois l'observateur passé au large.
+    this.fauna.advance(delta, at);
     // Ce que le mobilier a d'animé : les feux, et les deux lampes qui suivent l'observateur.
     this.furniture.advanceSignals(delta);
     this.furniture.advanceLamps(at);

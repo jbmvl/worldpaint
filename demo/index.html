@@ -85,6 +85,14 @@
   @keyframes pulse { 50% { opacity: 0.35; } }
 
   .field { margin-bottom: 10px; }
+  /* Un bouton d'action du panneau : même matière que les préréglages météo. */
+  .field button {
+    background: rgba(255,255,255,0.07);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 6px; color: #dfe4ea;
+    font: inherit; font-size: 12px; padding: 6px 8px; cursor: pointer;
+  }
+  .field button:hover { background: rgba(255,255,255,0.15); }
   .search-row { display: flex; gap: 6px; }
   #search {
     flex: 1; min-width: 0;
@@ -322,6 +330,25 @@
 
   <hr />
 
+  <div class="section">Faune</div>
+  <div class="help" style="margin-bottom: 6px">
+    Un événement, pas du décor : l’application demande au moteur qu’une bête
+    traverse devant la caméra (<code>world.crossFauna</code>). Elle ne sera pas
+    là au passage suivant.
+  </div>
+  <div class="field">
+    <select id="faunaKind"></select>
+  </div>
+  <div class="slider">
+    <div class="row"><span>Distance devant</span><span class="val" id="faunaDistanceVal"></span></div>
+    <input type="range" id="faunaDistance" min="15" max="140" step="5" value="55" />
+  </div>
+  <div class="field">
+    <button type="button" id="faunaCross" style="width: 100%">Faire traverser (C)</button>
+  </div>
+
+  <hr />
+
   <div class="section">Climat</div>
   <div class="field">
     <select id="climate"></select>
@@ -389,6 +416,7 @@
     <div class="row"><span>Regarder autour</span><span>glisser-clic</span></div>
     <div class="row"><span>Se téléporter</span><span>clic simple au sol</span></div>
     <div class="row"><span>Accélérer</span><span><kbd>Alt</kbd></span></div>
+    <div class="row"><span>Faire traverser une bête</span><span><kbd>C</kbd></span></div>
   </div>
 </div>
 

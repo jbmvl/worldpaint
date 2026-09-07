@@ -9,11 +9,13 @@
  * `WorldComposer` directement reste possible.
  *
  * Cinq verbes : setCenter, refresh, advance, updateSky (seulement si un ciel
- * a été demandé), dispose.
+ * a été demandé), dispose. Plus un sixième, à part : `crossFauna`, qui ne
+ * construit ni n'avance rien — il déclenche un événement (voir
+ * `WorldComposer.crossFauna`).
  */
 
 import { ElevationField } from './core/elevationField.js';
-import { WorldComposer, WORLD_ATTRIBUTION } from './worldComposer.js';
+import { WorldComposer, WORLD_ATTRIBUTION, FAUNA_CROSS_AHEAD_M } from './worldComposer.js';
 import {
   SceneEnvironment,
   SKY_RADIUS,
@@ -213,6 +215,20 @@ export class World {
   }
 
   /**
+   * Déclenche la traversée d'une bête devant l'observateur.
+   *
+   * Le seul geste du moteur qui ne soit pas une fonction du lieu : c'est un
+   * événement que l'application choisit, pas un décor qu'elle retrouvera au
+   * passage suivant. Voir `WorldComposer.crossFauna` pour les réglages.
+   *
+   * @param {Object} options `{ kind, at, forward, distanceM, side, spanM, scale }`.
+   * @returns {Object|null} La bête lancée, ou `null`.
+   */
+  crossFauna(options) {
+    return this.composer.crossFauna(options);
+  }
+
+  /**
    * Avance l'heure du ciel et rend de quoi peindre le reste de l'image. Les
    * gestes vont dans cet ordre : dôme recalé sur la caméra, soleil replacé,
    * nuit propagée aux fenêtres/lampadaires, vent et mouillé propagés au
@@ -280,4 +296,4 @@ export class World {
   }
 }
 
-export { SKY_RADIUS, SHADOW_LEAD_M, WORLD_ATTRIBUTION };
+export { SKY_RADIUS, SHADOW_LEAD_M, WORLD_ATTRIBUTION, FAUNA_CROSS_AHEAD_M };

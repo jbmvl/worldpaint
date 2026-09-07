@@ -29,8 +29,8 @@
  * et `models/fauna`), et cette couche n'écrit par bête et par image que :
  *
  * - une matrice — position au sol, cap, taille ;
- * - trois flottants — où en est la foulée, de combien elle ouvre, de combien
- *   l'encolure est rabattue.
+ * - quatre flottants — où en est la foulée, de combien elle ouvre, de combien
+ *   l'encolure est rabattue, et si la bête trotte ou bondit.
  *
  * Soit, au plafond (`FAUNA_ANIMATED_MAX`), l'ordre de grandeur du budget déjà
  * consenti à la fumée des cheminées. Ce qui coûte, dans une bête, ce n'est
@@ -45,11 +45,27 @@
  * sauter les pattes de toutes les bêtes en même temps. La précision d'un
  * flottant double reste très largement suffisante — à onze jours de marche
  * continue, l'erreur sur la phase est de l'ordre du milliardième de radian.
+ *
+ * ## Deux populations, et une seule mécanique de rendu
+ *
+ * Le décor pose des bêtes ; l'application, elle, peut en **déclencher** une
+ * (voir `WorldComposer.crossFauna`) : une traversée devant l'observateur, au
+ * moment où elle le décide. Cette bête-là n'est pas déterministe — c'est un
+ * événement, pas un lieu —, et c'est la seule chose qui la distingue :
+ *
+ * - elle porte son propre instant d'origine (`t0`), parce qu'elle commence
+ *   quand on la demande et non à l'origine des temps ;
+ * - son circuit ne se referme pas, donc elle se fige à l'arrivée (`finish`) au
+ *   lieu de revenir d'un bond à son point de départ ;
+ * - elle survit aux reconstructions du décor, et n'est oubliée qu'une fois sa
+ *   traversée jouée **et** l'observateur passé au large.
+ *
+ * Tout le reste — matrice, foulée, encolure — est écrit par le même code.
  */
 
 import { defaultTheme } from '../themes/default.js';
 import { createFaunaGeometries, createFaunaMaterial, FAUNA_SPECIES, FAUNA_KINDS } from '../models/fauna/index.js';
-import { MOTION_ATTRIBUTE } from '../models/animalKit.js';
+import { MOTION_ATTRIBUTE, MOTION_SIZE } from '../models/animalKit.js';
 import { faunaStateAt } from './faunaMotion.js';
 
 /**
@@ -77,6 +93,37 @@ export const GAIT_MAX = 1.9;
 
 /** Amplitude du balancement du corps au pas, en part de la foulée. */
 export const BODY_BOB = 0.012;
+
+/**
+ * Part de l'allure vive à laquelle le bond est entier.
+ *
+ * Le bond n'est pas une autre façon de marcher : c'est ce que fait une bête
+ * qui détale. En deçà, un cervidé va en diagonale comme tout le monde — et le
+ * fondu entre les deux évite qu'une bête change d'allure d'une image à
+ * l'autre en franchissant un seuil.
+ */
+export const BOUND_FULL = 0.6;
+
+/** Hauteur du bond, en part du balancement ordinaire. */
+export const BOUND_LIFT = 3.2;
+
+/**
+ * Traversées déclenchées vivantes au plus.
+ *
+ * Une application qui en demande à chaque événement de jeu ne doit pas pouvoir
+ * remplir le pré : au-delà, la plus ancienne cède la place.
+ */
+export const FAUNA_CROSSING_MAX = 8;
+
+/**
+ * Distance à laquelle une traversée déjà jouée est oubliée, en mètres.
+ *
+ * Une bête ne s'évapore pas sous les yeux de l'observateur : elle finit sa
+ * course, s'arrête, et n'est retirée que lorsqu'il est passé assez loin. C'est
+ * plus large que la portée d'animation, exprès — mieux vaut garder une bête
+ * immobile de trop que la faire disparaître dans le champ de vision.
+ */
+export const CROSSING_FORGET_M = 300;
 
 export class FaunaLayer {
   /**
@@ -108,6 +155,10 @@ export class FaunaLayer {
     this.animals = new Map();
     /** @type {Map<string, Float32Array>} le tampon d'animation, par espèce. */
     this.motions = new Map();
+    /** @type {Object[]} les bêtes du décor retenues, avant regroupement. */
+    this.decor = [];
+    /** @type {Object[]} les traversées déclenchées par l'application. */
+    this.crossings = [];
 
     /** Robes tirées une fois pour toutes, converties en linéaire. */
     this.coats = theme.fauna.coats;
@@ -147,20 +198,90 @@ export class FaunaLayer {
     this.counts.placed = kept.length;
     this.counts.dropped = all.length - kept.length;
 
+    this.decor = kept;
+    // Première pose immédiate : sans elle, les bêtes restent une image
+    // empilées à l'origine de la scène, comme le faisaient les oiseaux.
+    this._regroup();
+  }
+
+  /**
+   * Déclenche la traversée d'une bête devant l'observateur.
+   *
+   * L'appelant fournit une bête déjà tracée — espèce, circuit, robe, taille —
+   * exactement comme le mobilier en publie : cette couche ne connaît ni le
+   * terrain ni les routes, et ce n'est pas ici qu'on décide où passe la
+   * traversée (voir `WorldComposer.crossFauna`, qui a la bulle sous la main).
+   *
+   * La bête est jouée **depuis maintenant** : c'est la seule du décor dont
+   * l'origine des temps ne soit pas celle du monde.
+   *
+   * @param {Object} animal `{ kind, x, z, circuit, tint, scale }`.
+   * @returns {Object|null} La bête posée, ou `null` si l'espèce est inconnue.
+   */
+  addCrossing(animal) {
+    if (this.disposed || !animal || !FAUNA_SPECIES[animal.kind] || !animal.circuit) return null;
+
+    const crossing = { ...animal, t0: this.time };
+    this.crossings.push(crossing);
+    // La plus ancienne cède la place : une application qui en demande à chaque
+    // événement ne doit pas pouvoir remplir le pré.
+    while (this.crossings.length > FAUNA_CROSSING_MAX) this.crossings.shift();
+    this._regroup();
+    return crossing;
+  }
+
+  /** Retire une traversée avant son terme. @returns {boolean} vrai si retirée. */
+  cancelCrossing(crossing) {
+    const at = this.crossings.indexOf(crossing);
+    if (at < 0) return false;
+    this.crossings.splice(at, 1);
+    this._regroup();
+    return true;
+  }
+
+  /**
+   * Range décor et traversées par espèce, et remet les maillages d'accord.
+   *
+   * Les traversées passent **après** le décor : leur rang décide de l'index
+   * d'instance auquel `_sync` écrit la robe, et une bête déclenchée ne doit
+   * pas décaler les autres à chaque fois qu'on en ajoute une.
+   */
+  _regroup() {
     const byKind = new Map();
     for (const kind of FAUNA_KINDS) byKind.set(kind, []);
-    for (const animal of kept) {
+    for (const animal of this.decor) {
       const bucket = byKind.get(animal.kind);
       // Une espèce inconnue est ignorée en silence plutôt que de faire
       // tomber la reconstruction du décor pour une bête.
       if (bucket) bucket.push(animal);
     }
+    for (const crossing of this.crossings) byKind.get(crossing.kind)?.push(crossing);
 
     this.animals = byKind;
     for (const [kind, animals] of byKind) this._sync(kind, animals);
-    // Première pose immédiate : sans elle, les bêtes restent une image
-    // empilées à l'origine de la scène, comme le faisaient les oiseaux.
     this._writeFrame();
+  }
+
+  /**
+   * Oublie les traversées jouées, une fois l'observateur passé au large.
+   *
+   * Les deux conditions comptent : une bête qui disparaît pendant sa course
+   * est un raté visible, et une bête qui disparaît devant l'observateur l'est
+   * tout autant. Sans position connue, on garde — mieux vaut une bête de trop
+   * qu'une bête qui s'évapore.
+   *
+   * @returns {boolean} vrai si la population a changé.
+   */
+  _forgetCrossings(at) {
+    if (this.crossings.length === 0) return false;
+    const before = this.crossings.length;
+    this.crossings = this.crossings.filter((crossing) => {
+      const finish = crossing.circuit.finish;
+      if (finish == null || this.time - crossing.t0 <= finish) return true;
+      if (!at) return true;
+      return Math.hypot(crossing.x - at.x, crossing.z - at.z) < CROSSING_FORGET_M;
+    });
+    return this.crossings.length !== before;
   }
 
   /**
@@ -196,8 +317,8 @@ export class FaunaLayer {
 
       // Le tampon d'animation appartient à la géométrie, qui n'est portée que
       // par ce maillage-ci : le remplacer avec lui les garde d'accord.
-      const motion = new Float32Array(capacity * 3);
-      geometry.setAttribute(MOTION_ATTRIBUTE, new THREE.InstancedBufferAttribute(motion, 3));
+      const motion = new Float32Array(capacity * MOTION_SIZE);
+      geometry.setAttribute(MOTION_ATTRIBUTE, new THREE.InstancedBufferAttribute(motion, MOTION_SIZE));
       this.motions.set(kind, motion);
 
       this.group.add(mesh);
@@ -214,15 +335,22 @@ export class FaunaLayer {
 
   /**
    * Avance l'animation d'une image.
+   *
    * @param {number} delta Secondes écoulées.
+   * @param {{x:number,z:number}} [at] Position de l'observateur, qui ne sert
+   *        qu'à décider quand oublier une traversée déjà jouée. Omise, aucune
+   *        n'est oubliée : c'est le repli sûr.
    */
-  advance(delta) {
+  advance(delta, at = null) {
     if (this.disposed || !Number.isFinite(delta)) return;
     this.time += delta;
-    this._writeFrame();
+    // Une population qui change remet aussi les maillages d'accord, et
+    // `_regroup` écrit l'image : inutile de l'écrire deux fois.
+    if (this._forgetCrossings(at)) this._regroup();
+    else this._writeFrame();
   }
 
-  /** Écrit une image : une matrice et trois flottants par bête. */
+  /** Écrit une image : une matrice et quatre flottants par bête. */
   _writeFrame() {
     const time = this.time;
 
@@ -237,18 +365,29 @@ export class FaunaLayer {
 
       for (let i = 0; i < animals.length; i++) {
         const animal = animals[i];
-        const state = faunaStateAt(animal.circuit, time);
+        // Une traversée déclenchée commence quand on l'a demandée, et se fige
+        // à l'arrivée : son circuit ne se referme pas, et le laisser courir
+        // au-delà la ramènerait d'un bond à son point de départ.
+        const elapsed = time - (animal.t0 || 0);
+        const finish = animal.circuit.finish;
+        const state = faunaStateAt(animal.circuit, finish == null ? elapsed : Math.min(elapsed, finish));
 
         // Ouverture du balancier : nulle à l'arrêt, pleine au pas, un peu
         // plus au galop. C'est le même nombre qui dit « elle est immobile ».
         const gait = Math.min(GAIT_MAX, state.speed / Math.max(0.05, spec.walkMS));
         const swing = spec.swingRad * gait;
+        const bound = boundMix(state.speed, spec);
         // La foulée suit le chemin réellement parcouru, jamais le temps : une
         // bête qui ralentit ralentit ses pattes, et rien ne patine.
         const phase = (state.distance / spec.strideM) * Math.PI * 2;
         // Le corps monte et descend deux fois par foulée : c'est ce qui fait
-        // qu'un quadrupède marche au lieu de glisser.
-        const bob = gait > 0 ? BODY_BOB * spec.strideM * gait * Math.sin(phase * 2) : 0;
+        // qu'un quadrupède marche au lieu de glisser. Le bond, lui, n'est pas
+        // un balancement mais une envolée par foulée — et elle ne va que vers
+        // le haut, sinon la bête s'enfoncerait dans le sol à chaque battue.
+        const swayed = Math.sin(phase * 2);
+        const leapt = BOUND_LIFT * Math.max(0, Math.sin(phase));
+        const bob =
+          gait > 0 ? BODY_BOB * spec.strideM * gait * (swayed + (leapt - swayed) * bound) : 0;
 
         this._position.set(state.x, state.y + bob - FAUNA_SINK_M, state.z);
         this._euler.set(0, state.heading, 0);
@@ -257,10 +396,11 @@ export class FaunaLayer {
         this._matrix.compose(this._position, this._quaternion, this._scale);
         mesh.setMatrixAt(i, this._matrix);
 
-        const slot = i * 3;
+        const slot = i * MOTION_SIZE;
         motion[slot] = phase;
         motion[slot + 1] = swing;
         motion[slot + 2] = state.head * graze;
+        motion[slot + 3] = bound;
       }
 
       mesh.instanceMatrix.needsUpdate = true;
@@ -278,8 +418,30 @@ export class FaunaLayer {
     this.meshes.clear();
     this.animals.clear();
     this.motions.clear();
+    this.decor = [];
+    this.crossings = [];
     for (const geometry of Object.values(this.geometries)) geometry.dispose();
     this.material.dispose();
     this.scene.remove(this.group);
   }
+}
+
+/**
+ * Part de bond d'une bête à une vitesse donnée, de 0 (trot) à 1 (bond entier).
+ *
+ * Deux choses en sortent, et c'est voulu qu'elles sortent du même nombre :
+ * une espèce qui ne bondit pas ne bondit jamais, et une espèce qui bondit ne
+ * le fait qu'une fois lancée — au pas, tout quadrupède va en diagonale.
+ *
+ * Fonction pure.
+ *
+ * @param {number} speed Vitesse au sol, en mètres par seconde.
+ * @param {{bound?:boolean, walkMS:number, runMS:number}} spec Voir `FAUNA_SPECIES`.
+ * @returns {number} Dans [0, 1].
+ */
+export function boundMix(speed, spec) {
+  if (!spec?.bound) return 0;
+  const from = spec.walkMS;
+  const to = Math.max(from + 0.1, spec.runMS * BOUND_FULL);
+  return Math.max(0, Math.min(1, (speed - from) / (to - from)));
 }

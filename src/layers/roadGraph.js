@@ -792,6 +792,60 @@ export class RoadIndex {
   }
 
   /**
+   * Chaussée la plus proche d'un point **à distance**, et le point de son axe
+   * qui lui fait face.
+   *
+   * `query` répond à « suis-je dessus ? » et se borne donc à l'emprise. La
+   * question posée ici est l'autre : « où est la route la plus proche ? »,
+   * celle que se pose ce qui veut se **rapprocher** d'une chaussée sans y
+   * monter — un troupeau qu'on veut voir depuis la route, par exemple. D'où
+   * le balayage des cellules à portée plutôt que de la seule cellule du point.
+   *
+   * Le coût croît avec le carré de la portée : c'est une question qu'on pose
+   * une fois par parcelle, pas une fois par objet.
+   *
+   * @param {number} x
+   * @param {number} z
+   * @param {number} radius Portée de la recherche, en mètres.
+   * @returns {{segment:Object, index:number, row:number, t:number,
+   *           distance:number, x:number, z:number}|null}
+   */
+  nearestWithin(x, z, radius) {
+    if (!(radius > 0)) return null;
+    const span = Math.ceil(radius / this.cell);
+    const cx = Math.floor(x / this.cell);
+    const cz = Math.floor(z / this.cell);
+
+    let best = null;
+    for (let ix = cx - span; ix <= cx + span; ix++) {
+      for (let iz = cz - span; iz <= cz + span; iz++) {
+        const bucket = this.buckets.get(cellKey(ix, iz));
+        if (!bucket) continue;
+        for (let i = 0; i < bucket.length; i += 2) {
+          const index = bucket[i];
+          const row = bucket[i + 1];
+          const segment = this.segments[index];
+          const a = segment.path[row];
+          const b = segment.path[row + 1];
+          const hit = distanceToSegment(x, z, a.x, a.z, b.x, b.z);
+          if (hit.distance > radius) continue;
+          if (best && hit.distance >= best.distance) continue;
+          best = {
+            segment,
+            index,
+            row,
+            t: hit.t,
+            distance: hit.distance,
+            x: a.x + (b.x - a.x) * hit.t,
+            z: a.z + (b.z - a.z) * hit.t,
+          };
+        }
+      }
+    }
+    return best;
+  }
+
+  /**
    * Vrai si une chaussée pourrait couvrir un point de cette boîte. Test
    * grossier (occupation des cellules, sans distance) : peut rendre vrai à
    * tort, jamais faux à tort. Évite de sonder au mètre (`roadCorridor`) un
@@ -902,6 +956,16 @@ export class CombinedIndex {
     let best = null;
     for (const index of this.indexes) {
       const hit = index.query(x, z, margin, accept);
+      if (hit && (!best || hit.distance < best.distance)) best = hit;
+    }
+    return best;
+  }
+
+  /** Emprise la plus proche à distance, toutes confondues. */
+  nearestWithin(x, z, radius) {
+    let best = null;
+    for (const index of this.indexes) {
+      const hit = index.nearestWithin?.(x, z, radius);
       if (hit && (!best || hit.distance < best.distance)) best = hit;
     }
     return best;

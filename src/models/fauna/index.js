@@ -24,15 +24,18 @@
  * ## L'animation vit dans le shader
  *
  * Voir l'en-tête d'`animalKit` pour le pourquoi. Ici, le comment : chaque
- * instance porte `aMotion = (phase, swing, head)` —
+ * instance porte `aMotion = (phase, swing, head, bound)` —
  *
  * - `phase` : où en est la foulée, en radians, avancée par `faunaLayer` au
  *   prorata du chemin **réellement** parcouru (sinon les pattes patinent) ;
  * - `swing` : l'amplitude du balancier, en radians. Nulle, la bête est
  *   immobile ; c'est donc aussi le curseur marche/galop ;
- * - `head` : le tangage de l'encolure, en radians. Nul, la tête est haute.
+ * - `head` : le tangage de l'encolure, en radians. Nul, la tête est haute ;
+ * - `bound` : de 0 (les diagonales alternent — le trot) à 1 (les antérieures
+ *   ensemble, les postérieures ensemble — le bond). Voir `FAUNA_SPECIES.bound`
+ *   pour qui bondit, et `faunaLayer` pour le fondu entre les deux allures.
  *
- * Trois flottants par bête et par image, un seul appel de dessin par espèce.
+ * Quatre flottants par bête et par image, un seul appel de dessin par espèce.
  */
 
 import { defaultTheme } from '../../themes/default.js';
@@ -103,6 +106,12 @@ export function grazeAngleFor(model, target = GRAZE_TARGET_M) {
  *   trottine sur place ; trop longue, elle patine ;
  * - `swingRad` est l'ouverture du balancier au pas. Le galop la multiplie ;
  * - `walkMS` / `runMS` sont les allures, en mètres par seconde ;
+ * - `bound`   dit **comment** l'espèce court. Un quadrupède au pas va toujours
+ *   en diagonale ; à l'allure vive, deux familles se séparent nettement, et
+ *   c'est ce qu'on lit en premier chez une bête qui détale : le cervidé, la
+ *   chèvre et le renard **bondissent** — antérieures ensemble, postérieures
+ *   ensemble, le dos qui se creuse et se tend —, la vache, le cheval, le
+ *   sanglier ou le loup **trottinent**, la même diagonale en plus rapide ;
  * - `roam`    étire ou resserre le rayon des circuits (`faunaMotion`). Les
  *   conduites sont décrites en mètres absolus, ce qui va pour du bétail et
  *   pas du tout pour une poule : la même « marche » de vingt mètres emmène
@@ -113,26 +122,30 @@ export function grazeAngleFor(model, target = GRAZE_TARGET_M) {
  * patte, et une longueur de patte se lit dans le fichier d'à côté.
  */
 export const FAUNA_SPECIES = {
-  cow: { roam: 1, family: 'grazer', strideM: 1.5, swingRad: 0.4, walkMS: 1.0, runMS: 3.4 },
-  sheep: { roam: 0.85, family: 'grazer', strideM: 0.85, swingRad: 0.45, walkMS: 0.8, runMS: 3.0 },
-  goat: { roam: 0.85, family: 'grazer', strideM: 0.85, swingRad: 0.48, walkMS: 0.85, runMS: 3.2 },
-  horse: { roam: 1.25, family: 'grazer', strideM: 2.0, swingRad: 0.42, walkMS: 1.5, runMS: 6.5 },
-  donkey: { roam: 1, family: 'grazer', strideM: 1.4, swingRad: 0.42, walkMS: 1.2, runMS: 4.5 },
+  cow: { roam: 1, family: 'grazer', strideM: 1.5, swingRad: 0.4, walkMS: 1.0, runMS: 3.4, bound: false },
+  sheep: { roam: 0.85, family: 'grazer', strideM: 0.85, swingRad: 0.45, walkMS: 0.8, runMS: 3.0, bound: false },
+  // La chèvre bondit là où la brebis trottine : c'est ce qui les distingue de
+  // loin, plus sûrement que la silhouette.
+  goat: { roam: 0.85, family: 'grazer', strideM: 0.85, swingRad: 0.48, walkMS: 0.85, runMS: 3.2, bound: true },
+  horse: { roam: 1.25, family: 'grazer', strideM: 2.0, swingRad: 0.42, walkMS: 1.5, runMS: 6.5, bound: false },
+  donkey: { roam: 1, family: 'grazer', strideM: 1.4, swingRad: 0.42, walkMS: 1.2, runMS: 4.5, bound: false },
   // La poule n'a que deux pattes et picore au lieu de brouter : sa foulée est
   // courte et rapide, et elle ne quitte pas la cour — d'où le plus petit
   // rayon d'errance du catalogue, et de loin.
-  chicken: { roam: 0.18, family: 'fowl', strideM: 0.32, swingRad: 0.55, walkMS: 0.45, runMS: 1.6 },
+  chicken: { roam: 0.18, family: 'fowl', strideM: 0.32, swingRad: 0.55, walkMS: 0.45, runMS: 1.6, bound: false },
 
-  deer: { roam: 1.2, family: 'cervid', strideM: 1.6, swingRad: 0.46, walkMS: 1.2, runMS: 7.0 },
-  doe: { roam: 1.2, family: 'cervid', strideM: 1.45, swingRad: 0.46, walkMS: 1.2, runMS: 7.0 },
-  reindeer: { roam: 1.2, family: 'cervid', strideM: 1.7, swingRad: 0.44, walkMS: 1.2, runMS: 6.0 },
-  boar: { roam: 0.9, family: 'boar', strideM: 1.0, swingRad: 0.42, walkMS: 0.9, runMS: 5.5 },
+  // Les cervidés bondissent : une foulée longue, deux battues, et le dos qui
+  // travaille. C'est la seule allure à laquelle on les reconnaît en lisière.
+  deer: { roam: 1.2, family: 'cervid', strideM: 1.6, swingRad: 0.46, walkMS: 1.2, runMS: 7.0, bound: true },
+  doe: { roam: 1.2, family: 'cervid', strideM: 1.45, swingRad: 0.46, walkMS: 1.2, runMS: 7.0, bound: true },
+  reindeer: { roam: 1.2, family: 'cervid', strideM: 1.7, swingRad: 0.44, walkMS: 1.2, runMS: 6.0, bound: true },
+  boar: { roam: 0.9, family: 'boar', strideM: 1.0, swingRad: 0.42, walkMS: 0.9, runMS: 5.5, bound: false },
 
   // Les carnivores ne broutent pas : leur tête plonge pour flairer, moins bas
   // et bien moins longtemps. `faunaMotion` en tire des conduites différentes.
-  fox: { roam: 1.1, family: 'canid', strideM: 0.8, swingRad: 0.58, walkMS: 1.0, runMS: 6.0 },
-  wolf: { roam: 1.4, family: 'canid', strideM: 1.4, swingRad: 0.56, walkMS: 1.4, runMS: 8.0 },
-  bear: { roam: 1.2, family: 'bear', strideM: 1.5, swingRad: 0.34, walkMS: 1.1, runMS: 5.5 },
+  fox: { roam: 1.1, family: 'canid', strideM: 0.8, swingRad: 0.58, walkMS: 1.0, runMS: 6.0, bound: true },
+  wolf: { roam: 1.4, family: 'canid', strideM: 1.4, swingRad: 0.56, walkMS: 1.4, runMS: 8.0, bound: false },
+  bear: { roam: 1.2, family: 'bear', strideM: 1.5, swingRad: 0.34, walkMS: 1.1, runMS: 5.5, bound: false },
 };
 
 /**
@@ -190,7 +203,7 @@ export function createFaunaMaterial(THREE) {
          attribute float ${LIMB_ATTRIBUTE};
          attribute vec3 ${PIVOT_ATTRIBUTE};
          attribute float ${COAT_ATTRIBUTE};
-         attribute vec3 ${MOTION_ATTRIBUTE};
+         attribute vec4 ${MOTION_ATTRIBUTE};
 
          mat3 faunaRotX(float a) {
            float c = cos(a), s = sin(a);
@@ -205,6 +218,7 @@ export function createFaunaMaterial(THREE) {
            float phase = ${MOTION_ATTRIBUTE}.x;
            float swing = ${MOTION_ATTRIBUTE}.y;
            float head  = ${MOTION_ATTRIBUTE}.z;
+           float bound = ${MOTION_ATTRIBUTE}.w;
 
            // Le tronc ne tourne pas : c'est lui le repère de tous les autres.
            if (${LIMB_ATTRIBUTE} < 0.5) return mat3(1.0);
@@ -216,21 +230,37 @@ export function createFaunaMaterial(THREE) {
              // Les diagonales vont ensemble : antérieure gauche avec
              // postérieure droite. C'est l'allure de tout quadrupède au pas,
              // et la seule qui ne se lise pas comme un jouet mécanique.
-             float opposed = (${LIMB_ATTRIBUTE} < 1.5 || ${LIMB_ATTRIBUTE} > 3.5) ? 0.0 : PI;
-             // L'arrière-main pousse, l'avant-main porte : elle ouvre plus.
-             float gain = (${LIMB_ATTRIBUTE} > 2.5) ? 1.15 : 1.0;
+             float trot = (${LIMB_ATTRIBUTE} < 1.5 || ${LIMB_ATTRIBUTE} > 3.5) ? 0.0 : PI;
+             // Le bond, lui, apparie les trains et non les diagonales : les
+             // deux antérieures partent ensemble, les deux postérieures
+             // ensemble et à contretemps. C'est ce qui donne au chevreuil sa
+             // course par battues plutôt qu'un trot accéléré.
+             float leap = (${LIMB_ATTRIBUTE} > 2.5) ? PI : 0.0;
+             // Le fondu se fait sur le déphasage lui-même : une bête qui
+             // accélère passe continûment du trot au bond, elle ne saute pas
+             // d'une allure à l'autre au franchissement d'un seuil.
+             float opposed = mix(trot, leap, bound);
+             // L'arrière-main pousse, l'avant-main porte : elle ouvre plus. Au
+             // bond, la poussée du train arrière est franchement plus ample.
+             float gain = (${LIMB_ATTRIBUTE} > 2.5) ? mix(1.15, 1.4, bound) : 1.0;
              pitch = swing * gain * sin(phase + opposed);
            } else if (${LIMB_ATTRIBUTE} < 5.5) {
-             // L'encolure : le rabattement voulu, plus le hochement du pas.
-             pitch = head + swing * 0.1 * sin(phase * 2.0 + 0.6);
+             // L'encolure : le rabattement voulu, plus le hochement du pas. Au
+             // bond, l'encolure se redresse à chaque battue au lieu de hocher
+             // deux fois par foulée — un cervidé court la tête haute.
+             float nod = mix(0.1 * sin(phase * 2.0 + 0.6), -0.22 * sin(phase), bound);
+             pitch = head + swing * nod;
            } else if (${LIMB_ATTRIBUTE} < 6.5) {
              // La queue balaie même à l'arrêt — c'est ce qui distingue une
-             // bête au pré d'une statue de bête au pré.
-             roll = 0.16 * sin(phase * 0.8 + 1.7) + swing * 0.45 * sin(phase);
-             pitch = -swing * 0.3;
+             // bête au pré d'une statue de bête au pré. Au bond elle se lève
+             // et cesse de battre : un chevreuil qui détale montre son miroir.
+             roll = mix(0.16 * sin(phase * 0.8 + 1.7) + swing * 0.45 * sin(phase), 0.0, bound);
+             pitch = mix(-swing * 0.3, -swing * 0.9, bound);
            } else {
              // Les oreilles : le seul mouvement visible d'une bête qui broute.
-             roll = 0.26 * sin(phase * 2.7 + 0.4) * (0.35 + swing);
+             // Couchées quand elle bondit, elles ne battent plus.
+             roll = 0.26 * sin(phase * 2.7 + 0.4) * (0.35 + swing) * (1.0 - 0.8 * bound);
+             pitch = swing * 0.5 * bound;
            }
            return faunaRotZ(roll) * faunaRotX(pitch);
          }`

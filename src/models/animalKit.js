@@ -41,10 +41,10 @@
  * - `aCoat`  — 1 s'il est de la robe, 0 s'il est d'une partie dont la couleur
  *   ne varie pas d'une bête à l'autre (sabot, corne, mufle, bois).
  *
- * Et chaque **instance** porte `aMotion = (phase, gait, graze)`, écrit par
- * `faunaLayer` à chaque image. Le shader en déduit l'angle de chaque membre.
- * Coût par bête et par image : une matrice et trois flottants — l'ordre de
- * grandeur de la fumée de `lifeLayer`, pas celui d'un squelette.
+ * Et chaque **instance** porte `aMotion = (phase, gait, graze, bound)`, écrit
+ * par `faunaLayer` à chaque image. Le shader en déduit l'angle de chaque
+ * membre. Coût par bête et par image : une matrice et quatre flottants —
+ * l'ordre de grandeur de la fumée de `lifeLayer`, pas celui d'un squelette.
  *
  * Conséquence à ne pas défaire : **le pivot d'un membre doit être posé au
  * bon endroit**. Une patte dont le pivot est au sol tourne comme une aiguille
@@ -82,8 +82,15 @@ export const LEGS = [LIMB.LEG_FRONT_LEFT, LIMB.LEG_FRONT_RIGHT, LIMB.LEG_REAR_LE
 export const LIMB_ATTRIBUTE = 'aLimb';
 export const PIVOT_ATTRIBUTE = 'aPivot';
 export const COAT_ATTRIBUTE = 'aCoat';
-/** Nom de l'attribut d'instance : (phase de foulée, amplitude, tête baissée). */
+/**
+ * Nom de l'attribut d'instance : `vec4` (phase de foulée, amplitude, tête
+ * baissée, part de bond). La quatrième composante fond le trot — les
+ * diagonales alternent — vers le bond — les trains appariés ; voir
+ * `FAUNA_SPECIES.bound`.
+ */
 export const MOTION_ATTRIBUTE = 'aMotion';
+/** Composantes de `aMotion`, pour dimensionner le tampon d'instance. */
+export const MOTION_SIZE = 4;
 
 /**
  * Couleur de robe, teintable par instance.
