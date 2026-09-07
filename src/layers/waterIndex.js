@@ -44,8 +44,9 @@ export function ringCrossings(ring, z) {
  */
 export class WaterIndex {
   /**
-   * @param {Array<{rings: Array<Array<{x:number,z:number}>>, level: number}>} surfaces
-   *        Une entrée par nappe : le contour puis ses trous, et son altitude.
+   * @param {Array<{rings: Array<Array<{x:number,z:number}>>, levelAt: Function}>} surfaces
+   *        Une entrée par nappe : le contour puis ses trous, et son altitude en
+   *        un point — une fonction, car une rivière descend d'un bief à l'autre.
    * @param {Object} [options]
    * @param {number} [options.cell] Côté d'une case, en mètres.
    */
@@ -56,7 +57,7 @@ export class WaterIndex {
     this.level = null;
 
     const usable = (surfaces || []).filter(
-      (s) => s && Number.isFinite(s.level) && Array.isArray(s.rings) && s.rings[0]?.length >= 3
+      (s) => s && typeof s.levelAt === 'function' && Array.isArray(s.rings) && s.rings[0]?.length >= 3
     );
     if (usable.length === 0) return;
 
@@ -110,9 +111,11 @@ export class WaterIndex {
         const from = Math.max(0, Math.ceil((crossings[k] - this.originX) / cell - 0.5));
         const to = Math.min(nx - 1, Math.floor((crossings[k + 1] - this.originX) / cell - 0.5));
         for (let i = from; i <= to; i++) {
+          const value = surface.levelAt(this.originX + (i + 0.5) * cell, z);
+          if (!Number.isFinite(value)) continue;
           const index = j * nx + i;
           // Deux nappes superposées : la plus basse commande.
-          if (!(this.level[index] <= surface.level)) this.level[index] = surface.level;
+          if (!(this.level[index] <= value)) this.level[index] = value;
         }
       }
     }
