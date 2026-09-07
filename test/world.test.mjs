@@ -303,8 +303,13 @@ import {
   boundsIntersect,
   pointInPolygon,
   interiorSamples,
-  lowQuantile,
-  waterSurfaceLevel,
+  quantile,
+  principalAxis,
+  reachLevels,
+  waterLevelField,
+  WATER_REACH_M,
+  WATER_FILL_QUANTILE,
+  WATER_OUTLET_QUANTILE,
   waterwayProfile,
 } from '../src/layers/waterLayer.js';
 import { WaterIndex, ringCrossings } from '../src/layers/waterIndex.js';
@@ -313,11 +318,6 @@ import {
   RAILWAY_GAUGE_HALF_M,
   RAILWAY_BALLAST_HALF_M,
 } from '../src/layers/railwayLayer.js';
-import {
-  cutWaterElevationAt,
-  WATER_BED_M,
-  WATER_CUT_BLEND_M,
-} from '../src/terrain/waterCut.js';
 import { skyParameters, lightingFor, sunlightColor } from '../src/environment/skyModel.js';
 import {
   climateAt,
@@ -1276,44 +1276,154 @@ test('la grille intérieure reste dans le polygone et sous le plafond d’échan
   assert.deepEqual(interiorSamples([{ x: 0, z: 0 }, { x: 1, z: 0 }], [], 64), [], 'contour dégénéré');
 });
 
-test('le quantile bas écarte l’aberration isolée, dans les deux sens', () => {
-  // Une série constante : le quantile la rend telle quelle.
-  close(lowQuantile(new Array(100).fill(50), 0.05), 50, 1e-9, 'série constante');
+test('le quantile interpole entre les deux rangs qui encadrent', () => {
+  // Une série constante : le quantile la rend telle quelle, quel que soit le rang.
+  close(quantile(new Array(100).fill(50), 0.1), 50, 1e-9, 'série constante, rang bas');
+  close(quantile(new Array(100).fill(50), 0.9), 50, 1e-9, 'série constante, rang haut');
 
-  // Un seul creux aberrant sur cent points — c'est le MNT au-dessus de l'eau.
-  // Le minimum tomberait à -30 et enterrerait la nappe ; le quantile tient.
+  // Un seul creux aberrant sur cent points — c'est le MNT sous une berge.
+  // Le minimum tomberait à -30 ; le rang 0,1 tient.
   const oneDip = new Array(100).fill(50);
   oneDip[7] = -30;
-  close(lowQuantile(oneDip, 0.05), 50, 1e-9, 'un creux isolé ne compte pas');
+  close(quantile(oneDip, WATER_OUTLET_QUANTILE), 50, 1e-9, 'un creux isolé ne compte pas');
 
-  // Symétriquement, une berge minoritaire ne doit pas remonter le niveau.
-  const mostlyLow = new Array(100).fill(10);
-  for (let i = 0; i < 20; i++) mostlyLow[i] = 90;
-  close(lowQuantile(mostlyLow, 0.05), 10, 1e-9, 'la berge minoritaire ne compte pas');
+  // Symétriquement au sommet : un pic isolé ne remonte pas le rang 0,9.
+  const onePeak = new Array(100).fill(50);
+  onePeak[7] = 300;
+  close(quantile(onePeak, WATER_FILL_QUANTILE), 50, 1e-9, 'un pic isolé ne compte pas');
 
-  assert.equal(lowQuantile([], 0.05), Infinity, 'série vide');
+  // Les deux rangs sont bien de part et d'autre sur une série étalée.
+  const ramp = Array.from({ length: 101 }, (unused, i) => i);
+  close(quantile(ramp, WATER_OUTLET_QUANTILE), 10, 1e-9, 'rang bas');
+  close(quantile(ramp, WATER_FILL_QUANTILE), 90, 1e-9, 'rang haut');
+
+  assert.equal(quantile([], 0.1), Infinity, 'série vide');
 });
 
-test('l’altitude d’une nappe ignore les points sans donnée plutôt que de les compter pour zéro', () => {
-  // Le contour dit tous 100 m ; un pixel de MNT sans tuile chargée à
-  // l’intérieur ne doit pas faire chuter la nappe à zéro.
+test('l’altitude d’une nappe couvre son fond sans passer par-dessus l’exutoire', () => {
   const square = [{ x: 0, z: 0 }, { x: 100, z: 0 }, { x: 100, z: 100 }, { x: 0, z: 100 }];
+  const levelOf = (outer, sample) => waterLevelField(outer, [], sample).levelAt(50, 50);
+
+  // Un pixel de MNT sans tuile chargée ne doit pas faire chuter la nappe à zéro.
   const sampleWithHole = (x, z) => (x > 40 && x < 60 && z > 40 && z < 60 ? NaN : 100);
-  close(waterSurfaceLevel(square, [], sampleWithHole), 100, 1e-9, 'la lacune du milieu est ignorée');
+  close(levelOf(square, sampleWithHole), 100, 1e-9, 'la lacune du milieu est ignorée');
 
-  // Un creux **large** au milieu du lac — invisible depuis le seul contour —
-  // doit tirer le niveau vers le bas : c'est du relief, pas du bruit.
-  const sampleWithBasin = (x, z) => (x > 20 && x < 80 && z > 20 && z < 80 ? 90 : 100);
-  close(waterSurfaceLevel(square, [], sampleWithBasin), 90, 1e-9, 'la cuvette intérieure est vue');
+  // Le cas ordinaire : un fond bruité sous une rive nette. L'ancien quantile
+  // bas se calait sur le plancher du bruit et le fond ressortait partout ;
+  // c'est ce trou-là que la cuvette masquait. Le niveau doit maintenant
+  // couvrir la quasi-totalité du fond.
+  const noisyBottom = (x, z) => (Math.abs(x - 50) < 45 && Math.abs(z - 50) < 45 ? 90 + ((x * 7 + z * 13) % 5) : 100);
+  const level = levelOf(square, noisyBottom);
+  assert.ok(level >= 93, `le niveau couvre le bruit du fond (${level})`);
+  assert.ok(level <= 100, `sans dépasser la rive (${level})`);
 
-  // Un creux **ponctuel** au même endroit ne doit pas, lui, couler la nappe :
-  // c'est la différence entre l'ancien minimum et le quantile.
-  const sampleWithSpeck = (x, z) => (x > 49 && x < 51 && z > 49 && z < 51 ? -50 : 100);
-  close(waterSurfaceLevel(square, [], sampleWithSpeck), 100, 1e-9, 'le point aberrant est écarté');
+  // L'exutoire plafonne : une cuvette dont un seul côté est bas ne monte pas
+  // au-dessus de ce côté-là, même si le fond appelle plus haut.
+  const spillway = (x, z) => (z <= 0 ? 80 : 200);
+  assert.ok(levelOf(square, spillway) <= 80 + 1e-9, 'la nappe ne monte pas au-dessus de son point bas');
 
-  // Aucune donnée nulle part : le niveau reste indéfini (Infinity), à charge
-  // de l’appelant d’écarter le polygone.
-  assert.equal(waterSurfaceLevel(square, [], () => NaN), Infinity);
+  // Une nappe ramassée sur une pente : trop courte pour des biefs, et aucun
+  // plan horizontal ne lui convient. Elle se range sur l'exutoire — une flaque
+  // en bas — plutôt que d'inonder l'amont.
+  assert.ok(levelOf(square, (x) => x) <= 30, 'la pente donne une flaque, pas une inondation');
+
+  // Aucune donnée nulle part : pas de nappe, à charge de l’appelant de
+  // l’écarter.
+  assert.equal(waterLevelField(square, [], () => NaN), null);
+});
+
+test('l’axe principal suit l’étalement du nuage, et ne dépend pas de l’ordre des points', () => {
+  const along = (n, ux, uz) => Array.from({ length: n }, (unused, i) => ({ x: i * ux, z: i * uz }));
+
+  const east = principalAxis(along(20, 1, 0));
+  close(Math.abs(east.x), 1, 1e-6, 'nuage est-ouest : axe sur x');
+  close(east.z, 0, 1e-6, 'sans composante en z');
+
+  const north = principalAxis(along(20, 0, 1));
+  close(Math.abs(north.z), 1, 1e-6, 'nuage nord-sud : axe sur z');
+
+  const diagonal = principalAxis(along(20, 1, 1));
+  close(Math.abs(diagonal.x), Math.SQRT1_2, 1e-6, 'nuage en diagonale');
+  close(Math.abs(diagonal.z), Math.SQRT1_2, 1e-6, 'nuage en diagonale');
+
+  // Déterminisme : le même nuage, parcouru à l'envers, donne le même axe —
+  // sinon le même polygone changerait de profil d'une reconstruction à l'autre.
+  const points = along(20, 3, -1);
+  assert.deepEqual(principalAxis(points.slice().reverse()), principalAxis(points), 'axe stable');
+
+  // Un nuage trop pauvre pour avoir une direction : un axe par défaut, pas un NaN.
+  assert.deepEqual(principalAxis([{ x: 5, z: 5 }]), { x: 1, z: 0 }, 'un seul point');
+});
+
+test('un bief sans échantillon emprunte celui de son voisin, et le profil ne remonte pas', () => {
+  // Trois biefs, celui du milieu vide (polygone étranglé, ou lacune de MNT).
+  const bottom = [
+    { t: 5, h: 100 },
+    { t: 205, h: 80 },
+  ];
+  const levels = Array.from(reachLevels(bottom, [], 0, 300, 3));
+  assert.equal(levels.length, 3);
+  for (const value of levels) assert.ok(Number.isFinite(value), 'aucun bief laissé sans altitude');
+  for (let b = 1; b < levels.length; b++) {
+    assert.ok(levels[b] <= levels[b - 1] + 1e-6, `pas de remontée au bief ${b}`);
+  }
+
+  assert.equal(reachLevels([], [], 0, 300, 3), null, 'aucun échantillon : aucun profil');
+});
+
+test('une nappe ramassée reste plane, une rivière allongée descend avec le terrain', () => {
+  // 1. Un lac : aussi large que long, donc un seul bief — le plan horizontal.
+  const lake = [{ x: 0, z: 0 }, { x: 300, z: 0 }, { x: 300, z: 300 }, { x: 0, z: 300 }];
+  const flatBottom = () => 90;
+  const lakeField = waterLevelField(lake, [], flatBottom);
+  assert.equal(lakeField.reaches, 1, 'un lac n’a qu’un bief');
+  close(lakeField.levelAt(10, 10), lakeField.levelAt(290, 290), 1e-9, 'et une seule altitude');
+
+  // 2. Une rivière : 600 m de long, 40 m de large, sur une pente de 5 %.
+  //    C'est le cas qui donnait un canyon, puis une flaque.
+  const river = [{ x: 0, z: 0 }, { x: 600, z: 0 }, { x: 600, z: 40 }, { x: 0, z: 40 }];
+  const slope = (x) => 100 - 0.05 * x;
+  const field = waterLevelField(river, [], slope);
+  assert.ok(field.reaches > 1, `la rivière est découpée en biefs (${field.reaches})`);
+
+  let previous = Infinity;
+  for (let x = 0; x <= 600; x += 10) {
+    const level = field.levelAt(x, 20);
+    assert.ok(level <= previous + 1e-6, `le profil ne remonte pas en ${x} m`);
+    previous = level;
+
+    // Ni inondation de l'amont, ni flaque à l'aval : l'eau suit le terrain.
+    const ground = slope(x);
+    assert.ok(level >= ground - 1e-6, `l’eau couvre le lit en ${x} m (${level} / ${ground})`);
+    assert.ok(level - ground <= 3, `sans noyer le versant en ${x} m (${level - ground} m)`);
+  }
+
+  // La descente est bien celle du terrain, pas une pente inventée.
+  close(field.levelAt(0, 20) - field.levelAt(600, 20), 30, 3, 'la dénivelée du profil suit celle du sol');
+
+  // 3. La même rivière sur un terrain plat ne se met pas à pencher.
+  const level = waterLevelField(river, [], () => 42);
+  close(level.levelAt(0, 20), level.levelAt(600, 20), 1e-6, 'terrain plat, profil plat');
+
+  // 4. Déterminisme : le même contour, numérisé à l'envers, rend le même profil.
+  const reversed = waterLevelField(river.slice().reverse(), [], slope);
+  close(reversed.levelAt(300, 20), field.levelAt(300, 20), 1e-6, 'profil stable');
+
+  // 5. Un bief est plan d'une rive à l'autre : la règle du hydro-flattening.
+  close(field.levelAt(300, 0), field.levelAt(300, 40), 1e-6, 'plan en travers');
+
+  assert.equal(waterLevelField(river, [], () => NaN), null, 'aucune donnée : aucune nappe');
+});
+
+test('un polygone plus court que deux biefs reste plan', () => {
+  const short = [
+    { x: 0, z: 0 },
+    { x: WATER_REACH_M * 1.5, z: 0 },
+    { x: WATER_REACH_M * 1.5, z: 10 },
+    { x: 0, z: 10 },
+  ];
+  const field = waterLevelField(short, [], (x) => 100 - x);
+  assert.equal(field.reaches, 1, 'trop court pour descendre en marches');
 });
 
 test('un profil de cours d’eau ne remonte jamais vers l’aval', () => {
@@ -1361,58 +1471,24 @@ test('une section d’eau est horizontale, au niveau du lit, et suit la pente', 
   }
 });
 
-test('la cuvette d’eau creuse le lit, raccorde la rive et ne remonte jamais le terrain', () => {
-  const level = 100;
-  const bed = level - WATER_BED_M;
-
-  // Sous la nappe : le terrain **est** le lit.
-  close(cutWaterElevationAt(120, level, 0), bed, 1e-9, 'sous la nappe');
-
-  // Au-delà du raccord : intact, quoi qu'il arrive.
-  close(cutWaterElevationAt(120, level, WATER_CUT_BLEND_M), 120, 1e-9, 'hors du raccord');
-  close(cutWaterElevationAt(120, level, WATER_CUT_BLEND_M + 50), 120, 1e-9, 'bien au-delà');
-
-  // Entre les deux : monotone, et strictement encadré.
-  let previous = bed;
-  for (let d = 0; d <= WATER_CUT_BLEND_M; d += 0.5) {
-    const h = cutWaterElevationAt(120, level, d);
-    assert.ok(h >= previous - 1e-9, `le raccord ne redescend pas en ${d} m`);
-    assert.ok(h >= bed - 1e-9 && h <= 120 + 1e-9, `le raccord reste borné en ${d} m`);
-    previous = h;
-  }
-
-  // Jamais une bosse : un fond déjà plus bas que le lit reste tel quel. On
-  // garantit que l'eau se voit, on ne prétend pas corriger le relief.
-  close(cutWaterElevationAt(50, level, 0), 50, 1e-9, 'fond déjà creux');
-  close(cutWaterElevationAt(50, level, 3), 50, 1e-9, 'fond déjà creux, dans le raccord');
-});
-
-test('la cuvette sait où est l’eau, jusqu’où porte la rive, et à quelle hauteur', () => {
+test('l’index des nappes sait où est l’eau, et à quelle hauteur', () => {
   // Un carré de 200 m, avec un îlot au milieu — le trou doit rester sec.
   const outer = [{ x: 0, z: 0 }, { x: 200, z: 0 }, { x: 200, z: 200 }, { x: 0, z: 200 }];
   const hole = [{ x: 90, z: 90 }, { x: 110, z: 90 }, { x: 110, z: 110 }, { x: 90, z: 110 }];
-  const index = new WaterIndex([{ rings: [outer, hole], level: 42 }]);
-  assert.ok(index.ready, 'la cuvette est construite');
+  const index = new WaterIndex([{ rings: [outer, hole], levelAt: () => 42 }]);
+  assert.ok(index.ready, 'l’index est construit');
 
   const inside = index.query(50, 50);
   assert.ok(inside, 'un point du lac est couvert');
   close(inside.level, 42, 1e-6, 'altitude de la nappe');
-  close(inside.distance, 0, 1e-9, 'sous la nappe, la rive est à zéro');
 
-  // L'îlot n'est jamais sous la nappe. Son centre est même hors de portée du
-  // raccord (12 m de rive pour 11 m de portée) : son terrain reste intact.
-  const islet = index.query(100, 100);
-  assert.ok(!islet || islet.distance > 0, 'l’îlot n’est pas sous l’eau');
+  assert.equal(index.query(100, 100), null, 'l’îlot n’est pas sous l’eau');
 
-  // Juste dehors : dans le raccord, avec l'altitude de la nappe voisine.
-  const near = index.query(-4, 100);
-  assert.ok(near, 'un point de berge est encore couvert');
-  close(near.level, 42, 1e-6, 'la berge connaît la nappe dont elle est la rive');
-  assert.ok(near.distance > 0 && near.distance <= WATER_CUT_BLEND_M, 'dans le raccord');
-
-  // Au-delà du raccord : plus rien, le terrain est libre.
-  assert.equal(index.query(-100, 100), null, 'hors de portée du raccord');
-  assert.equal(new WaterIndex([]).ready, false, 'aucune nappe, aucune cuvette');
+  // Dehors, il n'y a plus rien à dire : le terrain n'est pas creusé, et un
+  // pont posé sur la berge n'a aucune nappe à dégager.
+  assert.equal(index.query(-4, 100), null, 'juste hors de la rive');
+  assert.equal(index.query(-100, 100), null, 'loin de la rive');
+  assert.equal(new WaterIndex([]).ready, false, 'aucune nappe, aucun index');
 });
 
 test('les traversées d’un anneau comptent un sommet une seule fois', () => {
@@ -4127,8 +4203,7 @@ test('sur un versant, l’aplanissement et la travée se passent le relais', () 
 test('de la tuile au tablier : un pont sort de l’eau qu’il franchit', () => {
   // Le chemin complet, tel qu'il tourne en scène : une route coupée en trois
   // morceaux par la tuile (route, pont, route), une nappe d'eau sous la travée,
-  // et la plate-forme qui doit finir au-dessus de la nappe — pas dedans, ce
-  // qu'elle faisait avant, puisque `waterCut` creuse le lit sous la chaussée.
+  // et la plate-forme qui doit finir au-dessus de la nappe, pas dedans.
   const frame = createLocalFrame(2.35, 48.85, 15);
   const at = (dx) => [2.35 + dx * 0.0006, 48.85];
 

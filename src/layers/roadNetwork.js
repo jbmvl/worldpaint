@@ -608,9 +608,7 @@ export class RoadNetwork {
     const floorAt = (x, z) => {
       const ground = sampleElevation(x, z);
       const water = waterIndex?.query(x, z);
-      return water && water.distance === 0 && water.level > ground
-        ? water.level + BRIDGE_FREEBOARD_M
-        : ground;
+      return water && water.level > ground ? water.level + BRIDGE_FREEBOARD_M : ground;
     };
 
     const { segments: collected, junctions } = collectRoadSegments(

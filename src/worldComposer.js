@@ -9,8 +9,8 @@
  *   advance(delta, at)    fait vivre l'image  (file de plantation, herbe, vie)
  *
  * Ordre de génération : occupation du sol (tout le monde la lit) → eau
- * (publie sa cuvette, le terrain se creuse dessous comme sous une chaussée)
- * → chaussées (entaillent le terrain, publient l'emprise routière que le
+ * (ne touche pas au terrain, mais publie ses nappes : un pont doit les
+ * dégager) → chaussées (entaillent le terrain, publient l'emprise routière que le
  * reste du décor ne franchit pas) → ouvrages d'art (tabliers, piles, têtes de
  * tunnel : ne lisent que les tronçons publiés par les chaussées) → voie ferrée
  * (indépendante, suit le terrain sans l'entailler, voir `railwayLayer.js`) →
@@ -329,14 +329,13 @@ export class WorldComposer {
       }
       const classArrived = !wasReady && this.groundClass.ready;
 
-      // 2. Eau — publie sa cuvette avant les chaussées (la nappe se calcule sur
-      //    le terrain brut, mais le terrain doit connaître les deux avant de se mailler).
+      // 2. Eau — avant les chaussées, qui lui demandent sous quelle cote un
+      //    tablier de pont n'a rien à faire. Elle ne touche pas au terrain.
       this.water.rebuild(this.vectorTiles, wanted, here);
-      this.bubble.setWaterCut(this.water.index);
 
       // 3. Chaussées — publient l'index et déclenchent le déblai du terrain.
-      //    La cuvette d'eau leur est passée : un pont doit dégager la nappe,
-      //    pas le lit qu'elle recouvre (voir `roadWorks.levelWorkSpans`).
+      //    Les nappes leur sont passées : une travée doit sortir de l'eau
+      //    qu'elle franchit (voir `roadWorks.levelWorkSpans`).
       const hasRoads = this.roads.rebuild(this.vectorTiles, wanted, here, {
         waterIndex: this.water.index,
       });

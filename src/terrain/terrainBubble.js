@@ -12,6 +12,12 @@
  * Le déblai des chaussées (`setRoadCut`) perturbe ce relief naturel : une
  * route est taillée dans le versant, pas posée dessus, et l'entaille est une
  * fonction pure de la position au sol, donc les tuiles voisines s'accordent au bord.
+ *
+ * L'eau, elle, ne touche plus au relief. Une cuvette était creusée sous chaque
+ * nappe ; elle rabattait tout un polygone sur une altitude unique, ce qui
+ * ouvrait une gorge là où le polygone descendait une pente. C'est désormais la
+ * nappe qui s'ajuste au terrain (`waterLayer`), et le test de profondeur qui
+ * décide du trait de côte.
  */
 
 import { createLocalFrame, tilesAround, tileKey, lngLatToTile } from '../core/tileMath.js';
@@ -19,7 +25,6 @@ import { DEM_TILE_PIXELS } from '../core/elevationField.js';
 import { TerrainMaterialFactory } from './terrainMaterial.js';
 import { defaultTheme } from '../themes/default.js';
 import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M, ROAD_CUT_MAX_RING } from './roadCut.js';
-import { cutWaterElevationAt, WATER_CUT_MAX_RING } from './waterCut.js';
 
 /** Un pixel DEM, en unités de tuile : pas d'échantillonnage du gradient. */
 const GRADIENT_STEP_TILES = 1 / DEM_TILE_PIXELS;
@@ -96,8 +101,6 @@ export class TerrainBubble {
 
     /** Index des chaussées construites (`RoadIndex`), ou `null` — voir `setRoadCut`. */
     this._roadCut = null;
-    /** Cuvette des nappes d'eau (`WaterIndex`), ou `null`, même rôle — voir `setWaterCut`. */
-    this._waterCut = null;
     /** Incrémenté à chaque publication d'index : périme les mailles déjà creusées. */
     this._cutGeneration = 0;
   }
@@ -309,26 +312,7 @@ export class TerrainBubble {
    * @param {number} raw Altitude naturelle, en mètres (échelle du MNT).
    */
   cutElevation(x, z, raw) {
-    return this._roadCutAt(x, z, this._waterCutAt(x, z, raw));
-  }
-
-  /**
-   * Creuse la cuvette d'une nappe d'eau (profil dans `cutWaterElevationAt`,
-   * pur et testé). L'eau passe avant la route : un pont franchit une rivière,
-   * il ne la bouche pas — l'ordre inverse aurait rempli l'entaille routière
-   * avec le lit de la rivière qu'elle enjambe.
-   */
-  _waterCutAt(x, z, raw) {
-    const index = this._waterCut;
-    if (!index) return raw;
-
-    const hit = index.query(x, z);
-    if (!hit) return raw;
-
-    // L'altitude de nappe est en unités de scène (exagération verticale
-    // comprise) ; `raw` est en unités de MNT. On compare dans le même espace.
-    const scale = this.verticalScale || 1;
-    return cutWaterElevationAt(raw, hit.level / scale, hit.distance);
+    return this._roadCutAt(x, z, raw);
   }
 
   /** Creuse le déblai d'une chaussée. Profil dans `cutElevationAt`, pur et testé. */
@@ -345,20 +329,6 @@ export class TerrainBubble {
     // verticale) ; `raw` est en unités de MNT. On compare dans le même espace.
     const scale = this.verticalScale || 1;
     return cutElevationAt(raw, deck / scale, hit.distance, hit.segment.halfWidth);
-  }
-
-  /**
-   * Publie la cuvette d'eau et remet en file les tuiles à creuser. Même mécanique que `setRoadCut`.
-   * @param {Object|null} index Instance `WaterIndex`, ou `null` pour ne rien creuser.
-   */
-  setWaterCut(index) {
-    if (this.disposed) return;
-    this._waterCut = index && index.ready ? index : null;
-    this._cutGeneration++;
-    for (const tile of this.tiles.values()) {
-      if (tile.ring > Math.max(ROAD_CUT_MAX_RING, WATER_CUT_MAX_RING)) continue;
-      if (!this._rebuildQueue.includes(tile.key)) this._rebuildQueue.push(tile.key);
-    }
   }
 
   /** Position dans le repère local, posée sur la surface affichée. */
@@ -400,13 +370,8 @@ export class TerrainBubble {
     if (!tile.mesh || !tile.edgeSegments) return true;
     const n = this.segmentsForTile(tile.x, tile.y);
     if (tile.segments !== n) return true;
-    // Un nouvel index (chaussées ou nappes) périme le terrassement déjà creusé.
-    if (
-      tile.ring <= Math.max(ROAD_CUT_MAX_RING, WATER_CUT_MAX_RING) &&
-      tile.cutGeneration !== this._cutGeneration
-    ) {
-      return true;
-    }
+    // Un nouvel index de chaussées périme le terrassement déjà creusé.
+    if (tile.ring <= ROAD_CUT_MAX_RING && tile.cutGeneration !== this._cutGeneration) return true;
     const wanted = this._edgeSegmentsFor(tile, n);
     return (
       wanted.north !== tile.edgeSegments.north ||
@@ -440,9 +405,7 @@ export class TerrainBubble {
     const scale = this.frame.scale;
     const stepMeters = GRADIENT_STEP_TILES * scale;
     // Les terrassements ne s'appliquent qu'aux tuiles proches (au-delà, la requête d'index ne rendrait rien).
-    const carving =
-      (!!this._roadCut && tile.ring <= ROAD_CUT_MAX_RING) ||
-      (!!this._waterCut && tile.ring <= WATER_CUT_MAX_RING);
+    const carving = !!this._roadCut && tile.ring <= ROAD_CUT_MAX_RING;
     // Gradient pris sur le terrain entaillé, sinon l'éclairage du fond du déblai serait celui du versant.
     const cut = carving ? (x, z, raw) => this.cutElevation(x, z, raw) : (x, z, raw) => raw;
 
@@ -553,7 +516,6 @@ export class TerrainBubble {
     this.disposed = true;
     this._abort.abort();
     this._roadCut = null;
-    this._waterCut = null;
     this._rebuildQueue.length = 0;
     this._clearTiles();
     this.materials.dispose();
