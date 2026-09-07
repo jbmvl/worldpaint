@@ -655,11 +655,12 @@ function drawMinimapPanel(ctx, px, scale, centerX, centerZ, opts = {}) {
     ctx.stroke();
   }
 
-  // Un émoji par repère : bâtiments à personnalité (`BuildingLayer.personalities`,
-  // la même source que les étiquettes) et mobilier remarquable
-  // (`FurnitureLayer.instanced`, les matrices déjà écrites pour le rendu). De
-  // quoi reconnaître une boulangerie, une église ou un château d'eau sans
-  // avoir à s'en approcher en 3D.
+  // Un émoji par repère, tiré de trois sources : les bâtiments à personnalité
+  // (`BuildingLayer.personalities`, la même que les étiquettes), le mobilier
+  // remarquable (`FurnitureLayer.instanced`) et les bêtes
+  // (`FaunaLayer.meshes`) — dans les trois cas, les matrices déjà écrites
+  // pour le rendu. De quoi reconnaître une boulangerie, un château d'eau ou
+  // un pré occupé sans avoir à s'en approcher en 3D.
   if (emojis) {
     const range = px / 2 / scale; // demi-côté du canevas, en mètres
     const range2 = range * range;
@@ -697,6 +698,29 @@ function drawMinimapPanel(ctx, px, scale, centerX, centerZ, opts = {}) {
     for (const [kind, mesh] of instanced || []) {
       const emoji = FURNITURE_EMOJI[kind];
       if (!emoji || !mesh?.count) continue;
+      const matrices = mesh.instanceMatrix.array;
+      for (let i = 0; i < mesh.count; i++) {
+        place(matrices[i * 16 + 12], matrices[i * 16 + 14], emoji);
+      }
+    }
+
+    // Les bêtes en dernier, et l'ordre est le fond de l'affaire : elles se
+    // comptent par centaines dans la bulle là où un château d'eau s'y compte
+    // sur les doigts. Passées avant, elles rafleraient les cases des repères
+    // qui servent réellement à s'orienter.
+    //
+    // Elles ne noient pas la carte pour autant, parce que le filtre par case
+    // les regroupe : un troupeau tient dans quelques mètres, une case en fait
+    // trente-six sur le radar rond et soixante sur la grande carte — un pré
+    // occupé donne donc **un** émoji, pas douze. C'est même la bonne lecture :
+    // ce qu'on veut savoir d'un pré, c'est qu'il y a des vaches dedans.
+    //
+    // Leurs matrices sont réécrites à chaque image (`faunaLayer.advance`) :
+    // les émojis se déplacent donc réellement sur la carte, contrairement à
+    // tout le reste.
+    for (const [kind, mesh] of world.composer?.fauna?.meshes || []) {
+      if (!mesh?.count) continue;
+      const emoji = FAUNA_EMOJI[kind] || FAUNA_FALLBACK_EMOJI;
       const matrices = mesh.instanceMatrix.array;
       for (let i = 0; i < mesh.count; i++) {
         place(matrices[i * 16 + 12], matrices[i * 16 + 14], emoji);
@@ -826,10 +850,10 @@ const BUILDING_EMOJI = {
  *
  * Le critère est la rareté, pas l'importance : une carte sert à s'orienter, et
  * on s'oriente sur ce qui ne se répète pas. Un lampadaire, un piquet, un
- * panneau, un arbre, une bête ou un cep se comptent par centaines dans la
- * bulle — les marquer noierait la carte et n'apprendrait rien. Un château
- * d'eau, un moulin, une grande roue s'y comptent sur les doigts d'une main, et
- * c'est précisément ce qu'on cherche des yeux.
+ * panneau, un arbre ou un cep se comptent par centaines dans la bulle — les
+ * marquer noierait la carte et n'apprendrait rien. Un château d'eau, un
+ * moulin, une grande roue s'y comptent sur les doigts d'une main, et c'est
+ * précisément ce qu'on cherche des yeux.
  *
  * Une clé absente ne se dessine pas, ce qui est le cas de l'écrasante
  * majorité du catalogue.
@@ -856,11 +880,57 @@ const FURNITURE_EMOJI = {
   busShelter: '🚏',
 };
 
-// La légende annonce les deux familles : sans elle, un 🚰 au milieu d'un champ
-// se lit comme une faute plutôt que comme un château d'eau.
+/*
+ * Un émoji par espèce, par clé de `FAUNA_SPECIES` (les mêmes que
+ * `LABEL_FAUNA`).
+ *
+ * Elles échappent au critère de rareté qui gouverne le mobilier, pour deux
+ * raisons distinctes. Le bétail est nombreux mais **groupé** : le filtre par
+ * case le réduit à un émoji par pré, ce qui est exactement l'information
+ * qu'on veut d'un pré. Le gibier et les carnassiers, eux, sont rares par
+ * construction — un massif sur sept abrite un renard ou un loup — et rentrent
+ * donc dans le critère d'origine sans le moindre aménagement : un 🐺 sur la
+ * carte est très précisément ce qu'on cherche des yeux.
+ *
+ * Trois cervidés pour un seul émoji : le jeu n'en a pas pour la biche ni pour
+ * le renne, et inventer une approximation (un 🐴 pour un renne) tromperait
+ * plus qu'un 🦌 honnêtement générique.
+ */
+const FAUNA_EMOJI = {
+  cow: '🐄',
+  sheep: '🐑',
+  goat: '🐐',
+  horse: '🐎',
+  donkey: '🫏',
+  chicken: '🐔',
+  deer: '🦌',
+  doe: '🦌',
+  reindeer: '🦌',
+  boar: '🐗',
+  fox: '🦊',
+  wolf: '🐺',
+  bear: '🐻',
+};
+
+/**
+ * Ce qui marque une bête dont l'espèce n'a pas encore son émoji. Une patte
+ * plutôt que rien : le catalogue du vivant grossira, et une espèce ajoutée
+ * sans passer par la table ci-dessus doit se voir sur la carte, pas en
+ * disparaître en silence.
+ */
+const FAUNA_FALLBACK_EMOJI = '🐾';
+
+// La légende annonce les trois familles : sans elle, un 🚰 au milieu d'un
+// champ se lit comme une faute plutôt que comme un château d'eau. Dédoublonnée
+// — les trois cervidés partagent un émoji, et l'annoncer trois fois donnerait
+// à croire qu'il veut dire trois choses.
 mapOverlayLegend.textContent = [
-  ...Object.values(BUILDING_EMOJI),
-  ...Object.values(FURNITURE_EMOJI),
+  ...new Set([
+    ...Object.values(BUILDING_EMOJI),
+    ...Object.values(FURNITURE_EMOJI),
+    ...Object.values(FAUNA_EMOJI),
+    FAUNA_FALLBACK_EMOJI,
+  ]),
 ].join(' ');
 
 let bigPanX = 0;
