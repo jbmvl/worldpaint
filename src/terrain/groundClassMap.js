@@ -31,19 +31,13 @@
  * parcelle porte une culture **ou** une couverture, jamais un mélange, et les
  * deux se lisent d'un seul échantillonnage.
  *
- * ## L'eau est une couverture, pas une surface
- *
- * Les nappes et les lits de cours d'eau y sont peints comme n'importe quelle
- * autre matière (`water`). C'est **la seule** description de l'eau dans la
- * scène : il n'existe pas de plan d'eau posé sur le terrain, le sol *est*
- * l'eau là où la carte le dit. La raison tient en une phrase — le MNT donne
- * déjà la surface de l'eau comme altitude du sol, deux surfaces à la même cote
- * ne peuvent que se disputer le pixel (voir l'en-tête de `waterLayer`).
+ * L'eau est une couverture comme les autres (`water`), et c'est la seule
+ * description de l'eau dans la scène : il n'y a pas de plan d'eau posé sur le
+ * terrain, le sol *est* l'eau là où la carte le dit.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { cropFor, cropId, cropFromId, randomAt, CROP_ID_STEP } from '../layers/furniturePlacement.js';
-import { isDrawableWater } from '../layers/waterLayer.js';
 import { defaultTheme } from '../themes/default.js';
 
 /**
@@ -59,6 +53,28 @@ export const CLASS_REBUILD_M = 400;
 
 /** Couches source lues, dans l'ordre de dessin (les dernières recouvrent). */
 export const CLASS_SOURCE_LAYERS = ['landuse', 'landcover', 'park'];
+
+/** Couches source de l'eau, dans les tuiles vectorielles. */
+export const WATER_SOURCE_LAYER = 'water';
+export const WATERWAY_SOURCE_LAYER = 'waterway';
+
+/** Vrai si une surface d'eau compte (les piscines produisent des confettis bleus à cette échelle). */
+export function isDrawableWater(properties = {}) {
+  if (properties.brunnel === 'tunnel') return false;
+  return properties.class !== 'swimming_pool';
+}
+
+/**
+ * Demi-largeur d'un cours d'eau linéaire, ou `null` s'il n'a pas de surface
+ * d'eau visible. Un cours d'eau souterrain n'en a pas ; un cours d'eau
+ * intermittent, la plupart du temps, non plus. Fonction pure.
+ */
+export function waterwayStyleFor(properties = {}, waterways = defaultTheme.water.waterways) {
+  if (properties.brunnel === 'tunnel') return null;
+  if (properties.intermittent === 1 || properties.intermittent === true) return null;
+  const width = waterways[properties.class];
+  return width ? { halfWidth: width / 2 } : null;
+}
 
 /**
  * Matière d'une entité surfacique, ou `null` si elle n'en décrit aucune.
@@ -504,13 +520,12 @@ export class GroundClassMap {
         this.cropCtx.lineCap = 'round';
         this.cropCtx.lineJoin = 'round';
 
-        source.forEachFeature('waterway', tiles, (geometry, properties) => {
-          if (properties.brunnel === 'tunnel') return;
-          if (properties.intermittent === 1 || properties.intermittent === true) return;
+        source.forEachFeature(WATERWAY_SOURCE_LAYER, tiles, (geometry, properties) => {
           // Un fossé n'a pas de ripisylve.
-          if (properties.class === 'ditch') return; // un fossé n'a pas de ripisylve
-          const width = waterways[properties.class];
-          if (!width) return;
+          if (properties.class === 'ditch') return;
+          const style = waterwayStyleFor(properties, waterways);
+          if (!style) return;
+          const width = style.halfWidth * 2;
 
           const lines =
             geometry.type === 'LineString'
@@ -568,16 +583,11 @@ export class GroundClassMap {
     }
 
     // Le lit d'un grand cours d'eau est un polygone (`water`), pas seulement
-    // le trait `waterway` (dont la largeur de thème décrit un ruisseau, pas
-    // un fleuve). On reprend donc, après coup, tout ce qui a été peint sous
-    // l'emprise réelle de l'eau.
-    //
-    // En sol nu, pas en effaçant : effacer laisse la carte « non classée », et
-    // le repli du non-classé est l'herbe pleine (`unclassifiedWeights`) — d'où
-    // des touffes et des arbres qui poussaient dans les lacs. Sol nu est le
-    // moins faux des quatre : rien n'y pousse, et ce qu'on en voit est le
-    // fond, là où l'eau ne le cache pas.
-    source.forEachFeature('water', tiles, (geometry, properties) => {
+    // le trait `waterway` (dont la largeur de thème décrit un ruisseau, pas un
+    // fleuve). On reprend donc, après coup, tout ce qui a été peint sous
+    // l'emprise réelle de l'eau — en sol nu, et non en effaçant : une case
+    // effacée est « non classée », dont le repli est l'herbe pleine.
+    source.forEachFeature(WATER_SOURCE_LAYER, tiles, (geometry, properties) => {
       if (!isDrawableWater(properties)) return;
       for (const rings of classPolygons(geometry)) {
         if (!Array.isArray(rings) || rings.length === 0) continue;
@@ -602,8 +612,7 @@ export class GroundClassMap {
         ctx.restore();
 
         // Et la matière : de l'eau. C'est de là que le shader de terrain tire
-        // le plan d'eau lui-même — il n'y a pas d'autre surface d'eau que le
-        // sol (voir l'en-tête de `waterLayer`).
+        // le plan d'eau lui-même.
         this.cropCtx.save();
         this.cropCtx.fillStyle = `rgba(0, ${WATER_COVER_ID * COVER_ID_STEP}, 0, 1)`;
         this.cropCtx.fill(path, 'evenodd');

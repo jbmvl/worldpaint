@@ -48,7 +48,7 @@ import {
   facetJitter,
 } from './hedgeGeometry.js';
 import { ROAD_SAMPLE_M, ROAD_LIFT_M } from './roadNetwork.js';
-import { WATER_SOURCE_LAYER } from './waterLayer.js';
+import { WATER_SOURCE_LAYER } from '../terrain/groundClassMap.js';
 import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
 import { collectBuiltUpAreas, collectPlaceNames, nearestNamedPlace, pointInAreas, ringsOf } from './settlement.js';
 import { LabelAtlas, pushLabelQuad, labelFontPxForCellHeight, LABEL_PX_PER_M } from '../materials/labelAtlas.js';

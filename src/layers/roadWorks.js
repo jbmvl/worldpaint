@@ -4,8 +4,7 @@
  * Une tuile vectorielle dit `brunnel` sur chaque tronçon `transportation`.
  * Jusqu'ici la chaussée n'en tirait qu'une chose : jeter les tunnels. Un pont
  * était donc une route ordinaire, dressée sur le MNT brut — c'est-à-dire
- * posée au fond de la vallée qu'elle est censée franchir, et sous la nappe
- * qu'elle est censée enjamber.
+ * posée au fond de la vallée qu'elle est censée franchir.
  *
  * Ce module est le seul endroit où l'on sait ce qu'est un ouvrage :
  *
@@ -41,7 +40,7 @@
  *     laquelle il faut laisser passer un camion. `clearance` mètres au-dessus ;
  *   - un **plancher** (`floorAt`) : l'altitude sous laquelle la plate-forme
  *     n'a pas le droit de descendre — le terrain naturel (un tablier enterré
- *     n'est pas un tablier) et la nappe augmentée de sa revanche. Aucune garde
+ *     n'est pas un tablier) et l'eau augmentée de sa revanche. Aucune garde
  *     au-dessus : on s'y pose, on ne le survole pas.
  *
  * Confondre les deux — relever de cinq mètres au-dessus de tout ce qui passe
@@ -70,7 +69,7 @@ export const WORK_TUNNEL = 2;
 export const BRIDGE_CLEARANCE_M = 5.5;
 
 /**
- * Revanche au-dessus d'une nappe d'eau, en mètres, mesurée comme la garde :
+ * Revanche au-dessus de l'eau, en mètres, mesurée comme la garde :
  * sous la plate-forme. Le tablier pend en dessous (de soixante-dix centimètres
  * à un mètre trente selon la famille) : il reste donc à peu près un mètre d'air
  * entre l'eau et la sous-face, ce qu'a n'importe quel pont de campagne.

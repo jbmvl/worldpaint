@@ -46,7 +46,6 @@ import {
 import {
   resamplePath,
   smoothColumns,
-  monotoneDownstream,
   createRibbonBuffer,
   appendRibbon,
   pathFrames,
@@ -297,13 +296,6 @@ import {
 import { TREE_ATLAS_OFFSETS, GRASS_VARIANTS } from '../src/materials/proceduralTextures.js';
 import { snapToShadowTexels, sunDirection, SHADOW_RADIUS_M } from '../src/environment/shadowFrame.js';
 import {
-  waterwayStyleFor,
-  isDrawableWater,
-  waterPolygons,
-  boundsIntersect,
-} from '../src/layers/waterLayer.js';
-import { WaterIndex, ringCrossings } from '../src/layers/waterIndex.js';
-import {
   railProfileFor,
   RAILWAY_GAUGE_HALF_M,
   RAILWAY_BALLAST_HALF_M,
@@ -326,6 +318,8 @@ import {
   classPolygons,
   CLASS_FILL,
   WATER_COVER_ID,
+  waterwayStyleFor,
+  isDrawableWater,
   GroundClassMap,
   CLASS_AREA_M,
   SETTLED_GRASS,
@@ -1222,52 +1216,6 @@ test('les cours d’eau souterrains et intermittents ne sont pas dessinés', () 
   assert.equal(isDrawableWater({ class: 'lake', brunnel: 'tunnel' }), false);
 });
 
-test('les deux formes de géométrie surfacique sont acceptées', () => {
-  const ring = [[0, 0], [1, 0], [1, 1], [0, 0]];
-  assert.deepEqual(waterPolygons({ type: 'Polygon', coordinates: [ring] }), [[ring]]);
-  assert.deepEqual(waterPolygons({ type: 'MultiPolygon', coordinates: [[ring], [ring]] }), [[ring], [ring]]);
-  assert.deepEqual(waterPolygons({ type: 'LineString', coordinates: ring }), []);
-  assert.deepEqual(waterPolygons(null), []);
-});
-
-test('un lac qui entoure l’observateur n’est pas écarté', () => {
-  // Le cas qui compte : tous les sommets sont hors de portée, et pourtant la
-  // rive passe sous les roues. Un test sommet par sommet le raterait.
-  const huge = [
-    { x: -5000, z: -5000 },
-    { x: 5000, z: -5000 },
-    { x: 5000, z: 5000 },
-    { x: -5000, z: 5000 },
-  ];
-  assert.equal(boundsIntersect(huge, 0, 0, 900), true, 'englobant');
-
-  const far = [{ x: 4000, z: 4000 }, { x: 4100, z: 4100 }];
-  assert.equal(boundsIntersect(far, 0, 0, 900), false, 'hors de portée');
-
-  const straddling = [{ x: 800, z: 0 }, { x: 3000, z: 0 }];
-  assert.equal(boundsIntersect(straddling, 0, 0, 900), true, 'à cheval sur la frontière');
-  assert.equal(boundsIntersect([], 0, 0, 900), false);
-});
-
-test('un profil de cours d’eau ne remonte jamais vers l’aval', () => {
-  // Descente franche, mais bosselée : le bruit ne doit pas produire de contre-pente.
-  const noisy = [100, 103, 96, 98, 92, 95, 88];
-  const out = Array.from(monotoneDownstream(noisy));
-  for (let r = 1; r < out.length; r++) {
-    assert.ok(out[r] <= out[r - 1] + 1e-6, `pas de remontée en ${r}`);
-  }
-  assert.deepEqual(out, [100, 100, 96, 96, 92, 92, 88]);
-
-  // Le sens vient des altitudes, pas de l’ordre du tableau : le même cours
-  // numérisé à l’envers donne le même relief, lu dans l’autre sens.
-  const reversed = Array.from(monotoneDownstream(noisy.slice().reverse()));
-  assert.deepEqual(reversed, out.slice().reverse(), 'sens de numérisation indifférent');
-
-  // Un profil déjà descendant passe intact.
-  assert.deepEqual(Array.from(monotoneDownstream([50, 40, 30])), [50, 40, 30]);
-  assert.equal(monotoneDownstream([]).length, 0);
-});
-
 test('l’eau est une couverture du sol, et la dernière de la liste', () => {
   // L'ordre de `COVER_KINDS` est gravé : il est peint dans un canal et relu
   // par le shader. L'eau y a été ajoutée en fin de liste pour cette raison.
@@ -1280,36 +1228,6 @@ test('l’eau est une couverture du sol, et la dernière de la liste', () => {
 
   // Et rien ne pousse dans l'eau.
   assert.equal(coverBushesFor('water'), 0, 'aucun buisson dans l’eau');
-});
-
-test('l’index des nappes sait où est l’eau, et à quelle hauteur', () => {
-  // Un carré de 200 m, avec un îlot au milieu — le trou doit rester sec.
-  const outer = [{ x: 0, z: 0 }, { x: 200, z: 0 }, { x: 200, z: 200 }, { x: 0, z: 200 }];
-  const hole = [{ x: 90, z: 90 }, { x: 110, z: 90 }, { x: 110, z: 110 }, { x: 90, z: 110 }];
-  const index = new WaterIndex([{ rings: [outer, hole], levelAt: () => 42 }]);
-  assert.ok(index.ready, 'l’index est construit');
-
-  const inside = index.query(50, 50);
-  assert.ok(inside, 'un point du lac est couvert');
-  close(inside.level, 42, 1e-6, 'altitude de la nappe');
-
-  assert.equal(index.query(100, 100), null, 'l’îlot n’est pas sous l’eau');
-
-  // Dehors, il n'y a plus rien à dire : le terrain n'est pas creusé, et un
-  // pont posé sur la berge n'a aucune nappe à dégager.
-  assert.equal(index.query(-4, 100), null, 'juste hors de la rive');
-  assert.equal(index.query(-100, 100), null, 'loin de la rive');
-  assert.equal(new WaterIndex([]).ready, false, 'aucune nappe, aucun index');
-});
-
-test('les traversées d’un anneau comptent un sommet une seule fois', () => {
-  const square = [{ x: 0, z: 0 }, { x: 10, z: 0 }, { x: 10, z: 10 }, { x: 0, z: 10 }];
-  assert.deepEqual(ringCrossings(square, 5), [0, 10], 'ligne franche');
-
-  // Une ligne passant exactement par deux sommets : sans la convention de
-  // demi-ouverture, la parité s'inverserait et la moitié du lac disparaîtrait.
-  const crossings = ringCrossings(square, 0);
-  assert.equal(crossings.length % 2, 0, 'parité préservée à hauteur d’un sommet');
 });
 
 // --- Ciel -------------------------------------------------------------------

@@ -83,32 +83,6 @@ export function smoothColumns(heights, rows, cols, radius = 2) {
   return heights;
 }
 
-/**
- * Rend un profil d'altitude monotone vers l'aval (minimum courant dans le
- * sens de la descente) — contrainte physique d'un cours d'eau, meilleure que
- * `smoothColumns` qui peut relever un passage encaissé au-dessus de ses
- * propres berges. Le sens de parcours vient des altitudes des deux
- * extrémités (pas de la numérisation OSM, peu fiable) : on descend depuis la
- * plus haute.
- *
- * @param {Float32Array|number[]} heights Une altitude par ligne du ruban.
- * @returns {Float32Array} profil descendant, même longueur.
- */
-export function monotoneDownstream(heights) {
-  const n = heights.length;
-  const out = new Float32Array(n);
-  if (n === 0) return out;
-
-  const forward = heights[0] >= heights[n - 1];
-  let running = Infinity;
-  for (let k = 0; k < n; k++) {
-    const r = forward ? k : n - 1 - k;
-    const h = heights[r];
-    if (Number.isFinite(h) && h < running) running = h;
-    out[r] = Number.isFinite(running) ? running : h;
-  }
-  return out;
-}
 
 /**
  * Aplanit le profil en long d'une plate-forme, dans la limite du terrassement

@@ -8,10 +8,9 @@
  *   refresh(lng, lat)     refait le décor     (tout ce qui vient du vectoriel)
  *   advance(delta, at)    fait vivre l'image  (file de plantation, herbe, vie)
  *
- * Ordre de génération : occupation du sol (tout le monde la lit) → eau
- * (ne touche pas au terrain, mais publie ses nappes : un pont doit les
- * dégager) → chaussées (entaillent le terrain, publient l'emprise routière que le
- * reste du décor ne franchit pas) → ouvrages d'art (tabliers, piles, têtes de
+ * Ordre de génération : occupation du sol (tout le monde la lit — l'eau en
+ * fait partie, c'est une matière du sol) → chaussées (entaillent le terrain,
+ * publient l'emprise routière que le reste du décor ne franchit pas) → ouvrages d'art (tabliers, piles, têtes de
  * tunnel : ne lisent que les tronçons publiés par les chaussées) → voie ferrée
  * (indépendante, suit le terrain sans l'entailler, voir `railwayLayer.js`) →
  * bâti (publie maisons et empreintes) → voirie (après chaussées et bâti, un
@@ -40,7 +39,6 @@
 import { TerrainBubble } from './terrain/terrainBubble.js';
 import { GroundClassMap } from './terrain/groundClassMap.js';
 import { RoadNetwork, createRoadMaterials } from './layers/roadNetwork.js';
-import { WaterLayer } from './layers/waterLayer.js';
 import { RailwayLayer } from './layers/railwayLayer.js';
 import { BridgeLayer } from './layers/bridgeLayer.js';
 import { CombinedIndex } from './layers/roadGraph.js';
@@ -162,10 +160,6 @@ export class WorldComposer {
       },
     };
 
-    // L'eau ne pose rien dans la scène : elle est une matière du terrain
-    // (`groundClassMap` la peint, `terrainMaterial` la rend). Cette couche-ci
-    // ne sert qu'à dire aux ponts sous quelle cote ils n'ont rien à faire.
-    this.water = new WaterLayer({ bubble, theme });
     this.buildings = new BuildingLayer({ THREE, scene, bubble, theme });
     // Les jardins ne lisent pas les tuiles, seulement les maisons publiées par
     // le bâti, et les chaussées (une clôture ne se plante pas sur la rue).
@@ -303,7 +297,6 @@ export class WorldComposer {
       climateChanged ||
       this.roads.needsRebuild(here.x, here.z) ||
       this.buildings.needsRebuild(here.x, here.z) ||
-      this.water.needsRebuild(here.x, here.z) ||
       this.railways.needsRebuild(here.x, here.z) ||
       this.furniture.needsRebuild(here.x, here.z) ||
       // Une tuile absente du cache a échoué : il faut réessayer, sinon un incident réseau laisse un trou de décor.
@@ -325,22 +318,18 @@ export class WorldComposer {
       }
       const classArrived = !wasReady && this.groundClass.ready;
 
-      // 2. Eau — avant les chaussées, qui lui demandent sous quelle cote un
-      //    tablier de pont n'a rien à faire. Elle ne touche pas au terrain.
-      this.water.rebuild(this.vectorTiles, wanted, here);
-
-      // 3. Chaussées — publient l'index et déclenchent le déblai du terrain.
-      //    Les nappes leur sont passées : une travée doit sortir de l'eau
-      //    qu'elle franchit (voir `roadWorks.levelWorkSpans`).
+      // 2. Chaussées — publient l'index et déclenchent le déblai du terrain.
+      //    L'occupation du sol leur est passée : une travée doit sortir de
+      //    l'eau qu'elle franchit (voir `roadWorks.levelWorkSpans`).
       const hasRoads = this.roads.rebuild(this.vectorTiles, wanted, here, {
-        waterIndex: this.water.index,
+        groundClass: this.groundClass,
       });
 
-      // 3 bis. Ouvrages d'art — après les chaussées, dont ils habillent les
+      // 2 bis. Ouvrages d'art — après les chaussées, dont ils habillent les
       //    travées et les têtes de tunnel.
       this.bridges.rebuild(this.roads.roadSegments, here);
 
-      // 3 ter. Voie ferrée — ne dépend de rien, ne publie rien.
+      // 2 ter. Voie ferrée — ne dépend de rien, ne publie rien.
       this.railways.rebuild(this.vectorTiles, wanted, here);
 
       // 4. Bâti.
@@ -555,7 +544,6 @@ export class WorldComposer {
     this.gardens.dispose();
     this.streets.dispose();
     this.buildings.dispose();
-    this.water.dispose();
     this.railways.dispose();
     this.bridges.dispose();
     this.roads.dispose(); // avant la bulle : retire son déblai en partant

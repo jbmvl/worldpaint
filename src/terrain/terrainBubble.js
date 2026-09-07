@@ -13,11 +13,8 @@
  * route est taillée dans le versant, pas posée dessus, et l'entaille est une
  * fonction pure de la position au sol, donc les tuiles voisines s'accordent au bord.
  *
- * L'eau, elle, ne touche plus au relief. Une cuvette était creusée sous chaque
- * nappe ; elle rabattait tout un polygone sur une altitude unique, ce qui
- * ouvrait une gorge là où le polygone descendait une pente. C'est désormais la
- * nappe qui s'ajuste au terrain (`waterLayer`), et le test de profondeur qui
- * décide du trait de côte.
+ * L'eau, elle, ne touche pas au relief : c'est une matière du sol, pas une
+ * surface (`groundClassMap`).
  */
 
 import { createLocalFrame, tilesAround, tileKey, lngLatToTile } from '../core/tileMath.js';

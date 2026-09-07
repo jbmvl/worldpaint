@@ -24,8 +24,8 @@ src/
   core/         geography and low-level primitives
   terrain/      the ground mesh: bubble, material, ground-class map, road cut
   layers/       everything built on top of the terrain (roads, bridges and
-                tunnels, street kerbing, water, buildings, gardens,
-                vegetation, crops, furniture)
+                tunnels, street kerbing, buildings, gardens, vegetation,
+                crops, furniture)
   materials/    procedural textures and shared materials
   environment/  sky, sun, shadows, fog
   inspect/      debug helpers for labelling what's on screen
@@ -123,6 +123,13 @@ these needs a very good reason, stated in the PR description.
   point needs at least two real call sites before it's worth adding. One
   concrete layer beats a generic system built for a second one that may
   never arrive.
+- **Water is a ground material, not a surface.** There used to be a real water
+  system — carved lake beds, chosen water levels, draped sheets. It never
+  worked reliably, because the elevation data already gives a lake's surface
+  as the ground height: two surfaces at the same altitude can only fight for
+  the pixel. Water is now painted into the ground-class map like heath or
+  scree, and shaded by the terrain material. Much lighter, and it cannot
+  fail — at the cost of a flat-shaded look that a later pass may improve.
 
 ## Submitting a PR
 

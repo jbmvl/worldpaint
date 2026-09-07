@@ -21,8 +21,8 @@
  *     — le terrassier tend la pente dans la bande qu'un ouvrage rattrape, le
  *     tablier prend le relais là où plus rien ne tient au sol ;
  *   - ce qu'un pont ne doit pas toucher lui vient de deux sources : le plancher
- *     (terrain naturel, nappe d'eau majorée de sa revanche) est donné de
- *     l'extérieur, parce que l'eau est construite avant les chaussées ; le
+ *     (le terrain, majoré d'une revanche là où le sol est de l'eau) est donné
+ *     de l'extérieur, par la carte d'occupation du sol ; le
  *     gabarit — la chaussée qu'il enjambe — se lit ici, et ne peut pas l'être
  *     ailleurs, puisqu'il faut que **tous** les tronçons soient dressés pour
  *     savoir lequel passe sous lequel. D'où les deux passes de
@@ -417,8 +417,8 @@ export function crossedDeckAt(index, segment, si, cos = BRIDGE_CROSSING_COS) {
  * @param {Object} [roads] Tranche `theme.roads` (profils de chaussée).
  * @param {Object} [options]
  * @param {Function} [options.floorAt] `(x, z) => altitude plancher`, en mètres
- *        de scène — le terrain naturel, ou la nappe d'eau majorée de sa
- *        revanche. Une travée s'y pose sans garde : elle ne descend pas
+ *        de scène — le terrain, majoré d'une revanche au-dessus de l'eau.
+ *        Une travée s'y pose sans garde : elle ne descend pas
  *        dessous, mais rien ne la relève au-dessus. Absente, les travées
  *        restent exactement tendues entre leurs appuis.
  *
@@ -591,24 +591,22 @@ export class RoadNetwork {
    * @param {Array} tiles   Tuiles à parcourir.
    * @param {{x:number,z:number}} here Position locale de l'observateur.
    * @param {Object} [options]
-   * @param {Object|null} [options.waterIndex] Cuvette d'eau publiée par la
-   *        couche d'eau (`WaterIndex`), construite avant les chaussées. Un pont
-   *        se tient au-dessus de la **nappe**, pas du lit qu'elle recouvre.
+   * @param {Object|null} [options.groundClass] Instance `GroundClassMap`, seule
+   *        à savoir où est l'eau (elle en est la matière du sol) : un pont doit
+   *        s'en dégager.
    */
-  rebuild(source, tiles, here, { waterIndex = null } = {}) {
+  rebuild(source, tiles, here, { groundClass = null } = {}) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
 
     const { bubble } = this;
     // Terrain naturel, déblai exclu : la plate-forme décide de l'entaille, elle ne peut pas en dépendre.
     const sampleElevation = (x, z) => bubble.rawSurfaceElevationAtLocal(x, z, 0) * bubble.verticalScale;
-    // Le plancher d'une travée : le terrain naturel, ou la nappe majorée de sa
-    // revanche là où il y en a une. `WaterIndex` rend une altitude déjà en
-    // unités de scène. Ce n'est pas un gabarit — rien ne passe sous un pont de
+    // Le plancher d'une travée : le terrain, majoré d'une revanche au-dessus
+    // de l'eau. Ce n'est pas un gabarit — rien ne passe sous un pont de
     // rivière — mais une cote sous laquelle le tablier n'a rien à faire.
     const floorAt = (x, z) => {
       const ground = sampleElevation(x, z);
-      const water = waterIndex?.query(x, z);
-      return water && water.level > ground ? water.level + BRIDGE_FREEBOARD_M : ground;
+      return groundClass?.coverAt(x, z) === 'water' ? ground + BRIDGE_FREEBOARD_M : ground;
     };
 
     const { segments: collected, junctions } = collectRoadSegments(

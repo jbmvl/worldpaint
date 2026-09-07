@@ -30,7 +30,7 @@ import { resolveTheme } from '../src/themes/theme.js';
 import { townPaletteAt, buildingStyleAt, streetSurfaceAt } from '../src/layers/townStyle.js';
 import { kerbProfile } from '../src/layers/streetLayer.js';
 import { roofRise, roofTriangles, orientedBox } from '../src/layers/roofGeometry.js';
-import { waterwayStyleFor } from '../src/layers/waterLayer.js';
+import { waterwayStyleFor } from '../src/terrain/groundClassMap.js';
 import { grassVariantFor } from '../src/layers/groundCover.js';
 import { windowGrid } from '../src/layers/buildingLayer.js';
 import { forestTypeAt, variantsFor } from '../src/layers/vegetationLayer.js';
