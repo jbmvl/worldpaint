@@ -24,6 +24,22 @@
  *   qui monte avec la distance — un albédo constant par classe est ce qui
  *   donne l'aplat de carte routière, et le grain, au mètre, n'y peut rien.
  *
+ * Et trois choses tiennent les **limites** entre surfaces, dont le défaut
+ * commun était le carreau de 2,7 m des cartes du sol, lisible en marches
+ * d'escalier dès que deux matières contrastent :
+ *
+ * - la **frange** (`edgeWarp`) : le sol est lu quelques mètres à côté, d'un
+ *   déplacement continu tiré du grain. La limite reste où elle est, au mètre
+ *   près, mais perd l'angle droit du carreau ;
+ * - les **couvertures s'interpolent** (`surfaceAt`) : un identifiant ne se
+ *   mélange pas, mais l'appartenance à une couverture, si. Les quatre
+ *   carreaux voisins sont lus au plus proche et ce sont leurs appartenances
+ *   qu'on mélange — le sable rejoint l'herbe par une rampe, comme les
+ *   matières le font déjà par le filtrage linéaire de leur carte ;
+ * - la **rive** : le sol au contact de l'eau est mouillé, du même film d'eau
+ *   que la pluie y met (`wetGround`). C'est ce qui fait une berge plutôt
+ *   qu'une découpe.
+ *
  * Greffé sur `MeshLambertMaterial` via `onBeforeCompile` plutôt qu'écrit en
  * shader complet, pour garder l'éclairage/brouillard/tone mapping de three.
  */
@@ -202,6 +218,10 @@ export class TerrainMaterialFactory {
       uWaterSheen: { value: look.waterSheen },
       uWaterRipples: { value: this.waterRippleTexture },
       uWaterRipple: { value: new THREE.Vector2(look.waterRippleM, look.waterRippleRelief) },
+      /** La rive : part de sol mouillé au contact de l'eau. */
+      uShoreWet: { value: look.shoreWet },
+      /** La frange : (amplitude du déplacement, période du bruit), en mètres. */
+      uEdgeWarp: { value: new THREE.Vector2(look.edgeWarpM, look.edgeWarpScaleM) },
       /** Dérive des rides, en cycles. Deux vitesses inégales : sinon on lit un glissement. */
       uWaterFlow: { value: new THREE.Vector2(0, 0) },
       uRockColor: { value: new THREE.Vector3(...look.rockColor) },
@@ -268,6 +288,8 @@ export class TerrainMaterialFactory {
            uniform sampler2D uWaterRipples;
            uniform vec2 uWaterRipple;
            uniform vec2 uWaterFlow;
+           uniform float uShoreWet;
+           uniform vec2 uEdgeWarp;
 
            /*
             * Relevé d'une texture cyclique **sans que sa période se voie**.
@@ -302,45 +324,108 @@ export class TerrainMaterialFactory {
              return mix(a, b, smoothstep(0.2, 0.8, f - 0.1 * d));
            }
 
-           /* Vrai (1.0) si le carreau donné de la carte des cultures porte de l'eau. */
-           float waterAtTexel(vec2 texel) {
-             vec4 fine = texture2D(uCropMap, (texel + 0.5) / ${CLASS_PIXELS}.0);
-             int cover = int(floor(fine.g * 255.0 / ${COVER_ID_STEP}.0 + 0.5)) - 1;
-             return cover == ${WATER_COVER_ID - 1} ? 1.0 : 0.0;
+           /*
+            * Sol mouillé : le film d'eau assombrit et sature (réflexions
+            * internes dans la pellicule). Deux causes, une seule matière —
+            * la pluie (uWetness) et la rive.
+            */
+           vec3 wetGround(vec3 base, float amount) {
+             float luma = dot(base, vec3(0.2126, 0.7152, 0.0722));
+             vec3 saturated = luma + (base - luma) * 1.35;
+             return mix(base, saturated * 0.62, clamp(amount, 0.0, 1.0));
            }
 
            /*
-            * Part d'eau en un point, de 0 à 1.
+            * Déplacement du point de lecture du sol, en mètres — la frange.
             *
-            * La couverture est un **identifiant** peint dans un canal : il se
+            * Les deux cartes du sol ont un pas de 2,7 m, et une limite lue à
+            * l'endroit exact est donc celle du carreau : l'escalier à 45°
+            * qu'on voit entre le sable et l'herbe, ou au bord de l'eau. Lire
+            * quelques mètres à côté, d'un déplacement continu tiré du grain à
+            * une période bien plus large, garde la limite à sa place au mètre
+            * près et lui retire son angle droit.
+            *
+            * Deux relevés du même bruit, décalés l'un de l'autre, faute d'un
+            * bruit à deux canaux : le grain est en niveaux de gris.
+            *
+            * Conséquence assumée : ce qui lit ces cartes au sol (l'herbe, la
+            * végétation) ne connaît pas ce déplacement. La peinture et les
+            * touffes ne suivent donc pas la même limite au mètre près — elles
+            * la brouillent chacune de leur côté, sur la même largeur.
+            */
+           vec2 edgeWarp(vec2 world) {
+             vec2 p = world / uEdgeWarp.y;
+             float wx = texture2D(uDetailMap, p).r;
+             float wz = texture2D(uDetailMap, p + vec2(0.37, 0.61)).r;
+             return (vec2(wx, wz) - 0.5) * 2.0 * uEdgeWarp.x;
+           }
+
+           /* Identifiant de couverture porté par un carreau (0 = aucune). */
+           float coverIdAt(vec2 texel) {
+             vec4 fine = texture2D(uCropMap, (texel + 0.5) / ${CLASS_PIXELS}.0);
+             return floor(fine.g * 255.0 / ${COVER_ID_STEP}.0 + 0.5);
+           }
+
+           /*
+            * Ce que la carte des couvertures dit en un point : la couleur de
+            * couverture, la part de sol qu'elle couvre, et la part d'eau.
+            *
+            * Une couverture est un **identifiant** peint dans un canal : il se
             * relit au plus proche, sans quoi l'interpolation inventerait une
             * matière entre deux (entre le sable et l'eau, il n'y a rien).
-            * D'où le défaut : le contour de l'eau suivait le carreau de la
-            * carte — deux mètres et demi de côté — et se lisait comme un
+            * D'où le défaut : le contour d'une couverture suivait le carreau
+            * de la carte — deux mètres et demi de côté — et se lisait comme un
             * escalier, alors que les lisières des matières, elles, sont
             * filtrées linéairement et se fondent.
             *
             * On interpole donc le **résultat du test**, pas l'identifiant :
             * les quatre carreaux voisins sont lus au plus proche, chacun est
-            * eau ou ne l'est pas, et c'est ce booléen qu'on mélange. La berge
-            * devient une rampe d'un carreau, de la largeur du fondu que la
-            * carte des matières a déjà.
+            * d'une couverture ou d'une autre, et ce sont ces appartenances
+            * qu'on mélange. Le sable arrive alors sur l'herbe par une rampe
+            * d'un carreau, de la largeur du fondu que la carte des matières a
+            * déjà — et la berge de même.
+            *
+            * L'eau est tenue à part de la part de couverture, et la part de
+            * couverture est rapportée à ce qui n'est **pas** de l'eau : sinon
+            * une plage se dénaturerait en gravier à l'approche de la mer,
+            * faute de sable dans les carreaux mouillés.
             *
             * Limite assumée : le contour passe par les centres des carreaux.
             * Il ne retrouve pas la position du polygone **dans** un carreau —
-            * il faudrait pour cela une carte de couverture d'eau à part,
-            * peinte avec son antialiasing. Ce qui disparaît ici est la marche
-            * d'escalier, pas le pas de la carte.
+            * il faudrait pour cela une carte peinte avec son antialiasing. Ce
+            * qui disparaît ici est la marche d'escalier, pas le pas de la carte.
             */
-           float waterShareAt(vec2 uv) {
+           void surfaceAt(vec2 uv, out vec3 coverAlbedo, out float coverShare, out float water) {
              vec2 grid = uv * ${CLASS_PIXELS}.0 - 0.5;
              vec2 corner = floor(grid);
              vec2 f = grid - corner;
-             float s00 = waterAtTexel(corner);
-             float s10 = waterAtTexel(corner + vec2(1.0, 0.0));
-             float s01 = waterAtTexel(corner + vec2(0.0, 1.0));
-             float s11 = waterAtTexel(corner + vec2(1.0, 1.0));
-             return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
+             vec4 weight = vec4(
+               (1.0 - f.x) * (1.0 - f.y),
+               f.x * (1.0 - f.y),
+               (1.0 - f.x) * f.y,
+               f.x * f.y
+             );
+             vec4 ids = vec4(
+               coverIdAt(corner),
+               coverIdAt(corner + vec2(1.0, 0.0)),
+               coverIdAt(corner + vec2(0.0, 1.0)),
+               coverIdAt(corner + vec2(1.0, 1.0))
+             );
+
+             vec4 wet = step(abs(ids - ${WATER_COVER_ID}.0), vec4(0.5));
+             water = dot(wet, weight);
+             float land = max(1.0 - water, 1e-4);
+
+             coverAlbedo = vec3(0.0);
+             coverShare = 0.0;
+             for (int i = 1; i <= ${COVER_KINDS.length}; i++) {
+               if (i != ${WATER_COVER_ID}) {
+                 vec4 hit = step(abs(ids - float(i)), vec4(0.5)) * weight;
+                 float share = (hit.x + hit.y + hit.z + hit.w) / land;
+                 coverShare += share;
+                 coverAlbedo += uCoverAlbedo[i - 1] * share;
+               }
+             }
            }`
         )
         .replace(
@@ -355,7 +440,10 @@ export class TerrainMaterialFactory {
            {
              // La carte de classes porte un poids par canal, et dans son
              // alpha la couverture (alpha nul = donnée absente, pas sol nu).
-             vec2 classUv = (vScenePos.xz - uClassOrigin) / uClassSize;
+             // Lue à la frange (voir edgeWarp) : le déplacement vaut pour
+             // les deux cartes, sans quoi la matière et la couverture d'un
+             // même point ne parleraient plus du même endroit.
+             vec2 classUv = (vScenePos.xz + edgeWarp(vScenePos.xz) - uClassOrigin) / uClassSize;
              vec4 cls = vec4(0.0);
              // Hors du carré couvert, la texture est bornée au bord : lire quand
              // même y étalerait la lisière sur des kilomètres.
@@ -448,25 +536,23 @@ float macroSigned = (macro - 0.5) * far;
                // matières. Chacune n'est peinte que sur l'une des deux, donc
                // remplacer les deux ne mélange rien.
                //
-               // L'eau est écartée de la boucle : elle n'est pas une matière
-               // de plus à mélanger mais une surface qui remplace le sol, et
-               // elle est reprise plus bas avec son propre fondu. La laisser
-               // ici peindrait le sol en couleur d'eau **avant** ce fondu, et
-               // la berge se fondrait d'une eau grainée vers une eau lisse au
-               // lieu d'aller de la terre à l'eau.
-               int cover = int(floor(fine.g * 255.0 / ${COVER_ID_STEP}.0 + 0.5)) - 1;
-               for (int i = 0; i < ${COVER_KINDS.length}; i++) {
-                 if (i == cover && i != ${WATER_COVER_ID - 1}) {
-                   grassAlbedo = uCoverAlbedo[i];
-                   bareAlbedo = uCoverAlbedo[i];
-                 }
-               }
-               // L'eau n'est pas une matière de plus à mélanger : c'est une
-               // surface qui remplace le sol. Elle est donc retenue à part,
-               // pour court-circuiter grain, roche et sol mouillé — et lue
-               // par interpolation du test (voir waterShareAt), sinon son
-               // contour est celui du carreau de la carte.
-               gWater = waterShareAt(classUv);
+               // Sa part est **interpolée** (voir surfaceAt) : deux
+               // couvertures voisines, ou une couverture et le sol ordinaire,
+               // se rejoignent sur une rampe d'un carreau au lieu de se
+               // couper au carreau. C'est la limite herbe/sable qui se lisait
+               // en marches d'escalier.
+               //
+               // L'eau est écartée de ce mélange : elle n'est pas une matière
+               // de plus mais une surface qui remplace le sol, et elle est
+               // reprise plus bas avec sa rive. La laisser ici peindrait le
+               // sol en couleur d'eau **avant** ce fondu, et la berge irait
+               // d'une eau grainée vers une eau lisse au lieu d'aller de la
+               // terre à l'eau.
+               vec3 coverAlbedo;
+               float coverShare;
+               surfaceAt(classUv, coverAlbedo, coverShare, gWater);
+               grassAlbedo = mix(grassAlbedo, coverAlbedo, coverShare);
+               bareAlbedo = mix(bareAlbedo, coverAlbedo, coverShare);
              }
 
              vec3 albedo =
@@ -481,13 +567,24 @@ float macroSigned = (macro - 0.5) * far;
              float rock = smoothstep(uSlopeRange.x, uSlopeRange.y, slope) * uRockStrength * (1.0 - gWater);
              base = mix(base, base * uRockColor, rock);
 
-             // Sol mouillé : le film d'eau assombrit et sature (multi-réflexion
-             // interne). Sans objet sur l'eau elle-même.
-             if (uWetness > 0.0) {
-               float wetLuma = dot(base, vec3(0.2126, 0.7152, 0.0722));
-               vec3 saturated = wetLuma + (base - wetLuma) * 1.35;
-               base = mix(base, saturated * 0.62, uWetness * (1.0 - gWater));
-             }
+             // Pluie : le sol se mouille. Sans objet sur l'eau elle-même.
+             if (uWetness > 0.0) base = wetGround(base, uWetness * (1.0 - gWater));
+
+             // La rive. Le sol au contact de l'eau est trempé, et c'est ce
+             // qui fait une berge plutôt qu'une découpe : l'eau n'arrive pas
+             // sur du sable sec ou de l'herbe sèche, elle arrive sur ce
+             // qu'elle vient de quitter. Aucune couleur de plus, donc — la
+             // même matière, mouillée d'autant plus que le bord approche.
+             //
+             // La bande vit dans la rampe de gWater : elle monte à
+             // l'approche de l'eau et s'éteint sous elle, là où il ne reste
+             // plus de sol à voir. Elle ne tient donc qu'un carreau — la
+             // laisse de mer d'une grande plage, qui court sur des dizaines
+             // de mètres, demanderait une distance à l'eau que la carte ne
+             // porte pas.
+             float shore =
+               smoothstep(0.0, 0.35, gWater) * (1.0 - smoothstep(0.4, 0.9, gWater)) * uShoreWet;
+             if (shore > 0.0) base = wetGround(base, shore);
 
              if (gWater > 0.001) {
                // Ce qui fait lire un plan d'eau, ce n'est pas sa couleur

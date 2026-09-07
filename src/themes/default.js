@@ -160,6 +160,35 @@ export const TERRAIN_LOOK = {
   waterRippleM: 9,
   /** Amplitude du relief de rides — c'est elle qui fait scintiller. */
   waterRippleRelief: 0.35,
+  /**
+   * La rive : part de sol mouillé au contact de l'eau, de 0 (rien) à 1.
+   *
+   * Une berge n'est pas une ligne où le sol s'arrête et l'eau commence : c'est
+   * une bande de sol trempé, plus sombre et plus saturée, que l'eau recouvre
+   * de moins en moins. Le film d'eau agit ici comme la pluie
+   * (`setWetness`) — même formule, une autre cause.
+   */
+  shoreWet: 0.8,
+  /**
+   * Déplacement du point où le sol est lu, en mètres — la « frange ».
+   *
+   * Les cartes du sol ont un pas de 2,7 m. Lues à l'endroit exact, leurs
+   * limites sont celles du carreau : un escalier à 45°, lisible comme tel dès
+   * que deux matières contrastent (le sable et l'herbe, l'eau et n'importe
+   * quoi). On lit donc le sol quelques mètres à côté, d'un déplacement tiré
+   * d'un bruit à l'échelle de `edgeWarpScaleM` : la limite garde sa place au
+   * mètre près mais perd son angle droit.
+   *
+   * Ce n'est pas un flou : rien n'est fondu, c'est la même limite, déplacée
+   * point par point. Ce qui la fond, c'est le filtrage de la carte des
+   * matières et l'interpolation des couvertures.
+   *
+   * Au-delà de trois mètres environ, la déformation se voit pour elle-même :
+   * un bord droit (un mur de champ, un quai) se met à onduler.
+   */
+  edgeWarpM: 2.4,
+  /** Période du bruit de frange, en mètres. Trop courte, la limite frise ; trop longue, elle se contente de glisser. */
+  edgeWarpScaleM: 17,
 };
 
 // --- Les arbres ----------------------------------------------------------------
