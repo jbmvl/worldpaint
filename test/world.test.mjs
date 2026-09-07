@@ -207,6 +207,9 @@ import {
   thicketPerCell,
   thicketDensityFor,
   UNDERSTORY_REF,
+  edgeLowPart,
+  edgeCanopy,
+  EDGE_CANOPY_DROP,
   foliageTint,
   thinPlacements,
   FOREST_PATCH_M,
@@ -369,6 +372,7 @@ import {
   coverFromId,
   COVER_KINDS,
   COVER_ID_STEP,
+  WOOD_EDGE_REACH_M,
 } from '../src/terrain/groundClassMap.js';
 import {
   collectBuiltUpAreas,
@@ -883,6 +887,26 @@ test('le sous-étage suit la part de sous-bois du peuplement, pas seulement sa d
     thicketDensityFor(pinede) < thicketDensityFor(taillis) * 0.5,
     'et pourtant dégagée au sol'
   );
+});
+
+test('le bord d’un bois est un ourlet : houppe basse, fourré épais', () => {
+  // En plein bois, la lisière ne change rien du tout — c’est la condition pour
+  // qu’elle ne soit pas un effet de bord déguisé en style.
+  assert.equal(edgeLowPart(0.2, 0), 0.2);
+  assert.equal(edgeCanopy(0), 1);
+
+  // Au bord, la strate basse monte sans jamais dépasser un fourré plein, et la
+  // houppe descend sans s’effondrer.
+  const ourlet = edgeLowPart(0.2, 1);
+  assert.ok(ourlet > 0.2 && ourlet < 1, `part de strate basse en lisière : ${ourlet}`);
+  close(edgeCanopy(1), 1 - EDGE_CANOPY_DROP, 1e-9, 'hauteur en lisière');
+  assert.ok(EDGE_CANOPY_DROP > 0 && EDGE_CANOPY_DROP < 0.5, 'un ourlet penche, il ne rampe pas');
+
+  // Un taillis, déjà tout en strate basse, ne peut pas le devenir davantage.
+  assert.equal(edgeLowPart(1, 1), 1);
+  // Et l’effet est continu : à mi-lisière, à mi-chemin.
+  close(edgeLowPart(0.2, 0.5), (0.2 + edgeLowPart(0.2, 1)) / 2, 1e-9, 'fondu de fourré');
+  close(edgeCanopy(0.5), (1 + edgeCanopy(1)) / 2, 1e-9, 'fondu de houppe');
 });
 
 test('la strate basse porte sa taille, et le tapis du sol ne pousse que de près', () => {
@@ -2038,6 +2062,41 @@ test('le sol d’un bois porte une litière, pas une prairie à l’ombre', () =
   // fleurs de plein soleil.
   assert.ok(WOODLAND_FLOWER_MAX > 0 && WOODLAND_FLOWER_MAX < 1);
   assert.ok(sousBois.shade > WOODLAND_FLOWER_MAX, 'un vrai bois passe le seuil');
+});
+
+test('la carte de classes sait où s’arrête un bois', () => {
+  // `woodEdgeAt` ne lit que `sampleAt` : on lui donne une carte de poche, un
+  // bois qui occupe le demi-plan x < 0.
+  const carte = {
+    sampleAt(x) {
+      if (x < -400 || x > 400) return null; // hors carte : la donnée se tait
+      return { grass: 0, wood: x < 0 ? 1 : 0, farmland: 0, bare: 0 };
+    },
+  };
+  const edgeAt = (x, z) => GroundClassMap.prototype.woodEdgeAt.call(carte, x, z);
+
+  // Hors du bois, il n’y a pas de lisière : l’ourlet appartient au bois.
+  assert.equal(edgeAt(20, 0), 0);
+  // Juste au bord, en revanche, elle est franche.
+  assert.equal(edgeAt(-1, 0), 1, 'le bord est une lisière pleine');
+  // Et en plein bois, il n’y en a plus.
+  assert.equal(edgeAt(-WOOD_EDGE_REACH_M * 3, 0), 0, 'le cœur du massif n’est pas un ourlet');
+
+  // Un voisin dont la carte ne dit rien ne fait pas une lisière — sans quoi
+  // tout le pourtour du carré couvert en serait une.
+  const bord = {
+    sampleAt(x) {
+      if (x > 100) return null;
+      return { grass: 0, wood: 1, farmland: 0, bare: 0 };
+    },
+  };
+  assert.equal(GroundClassMap.prototype.woodEdgeAt.call(bord, 95, 0), 0, 'le bord de carte n’est pas une lisière');
+
+  // Une lisière molle (le bois s’éclaircit au lieu de s’arrêter) donne un
+  // ourlet partiel, pas un tout ou rien.
+  const fondu = { sampleAt: (x) => ({ grass: 0, wood: Math.max(0, Math.min(1, 0.5 - x / 200)), farmland: 0, bare: 0 }) };
+  const doux = GroundClassMap.prototype.woodEdgeAt.call(fondu, 0, 0);
+  assert.ok(doux > 0 && doux < 1, `lisière progressive : ${doux}`);
 });
 
 test('la carte de classes sait dire ce qu’elle ne couvre pas', () => {
