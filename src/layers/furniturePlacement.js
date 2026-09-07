@@ -425,8 +425,15 @@ export function scatterFurnitureFor(properties = {}, { crop = null } = {}) {
     return { item: 'hay', perHectare: 0.4 };
   }
   // Pâture : c'est du bétail qu'on y attend, pas des bosquets.
+  //
+  // La densité a été relevée de 1,1 à 2,4 bêtes à l'hectare — au-dessus du
+  // chargement réel d'une prairie laitière, et c'est voulu : les bêtes sont
+  // groupées (`clusterInRing`), donc un pré n'en montre qu'une poignée au
+  // même endroit, et la bulle n'en offre que 700 mètres. À 1,1, un bocage
+  // entier ne portait qu'une trentaine de bêtes réparties sur une centaine de
+  // parcelles : la moitié des prés étaient vides.
   if (klass === 'grass' || subclass === 'meadow' || subclass === 'grassland') {
-    return { item: 'herd', perHectare: 1.1 };
+    return { item: 'herd', perHectare: 2.4 };
   }
   // Bois : du bois de coupe, rangé en lisière. La densité se compte à
   // l'hectare comme le reste, mais l'ourlet en écarte l'essentiel (voir
@@ -517,49 +524,112 @@ export function herdFor({ steepness = 0, variant = 0, climate = null } = {}) {
  * en est pleine, et le cerf y est rare).
  */
 export const FOREST_GAME = {
-  oceanic: ['deer', 'deer', 'boar'],
-  oceanicUpland: ['deer'],
-  mediterranean: ['boar', 'boar', 'deer'],
-  mediterraneanCool: ['boar', 'deer'],
-  mediterraneanMontane: ['boar', 'deer'],
+  oceanic: ['deer', 'doe', 'doe', 'boar'],
+  oceanicUpland: ['deer', 'doe'],
+  mediterranean: ['boar', 'boar', 'doe', 'deer'],
+  mediterraneanCool: ['boar', 'doe', 'deer'],
+  mediterraneanMontane: ['boar', 'deer', 'doe'],
   semiArid: ['boar'],
   arid: [],
-  continental: ['deer', 'boar', 'boar'],
-  boreal: ['reindeer', 'reindeer', 'deer'],
-  alpine: ['deer'],
+  continental: ['deer', 'doe', 'boar', 'boar'],
+  boreal: ['reindeer', 'reindeer', 'doe', 'deer'],
+  alpine: ['deer', 'doe'],
   glacial: [],
 };
 
 /** Le gibier d'un pays inconnu : celui d'avant les climats, un bois tempéré. */
-export const DEFAULT_FOREST_GAME = ['deer', 'boar'];
+export const DEFAULT_FOREST_GAME = ['deer', 'doe', 'boar'];
 
 /**
- * Ce qu'un bois abrite : l'espèce, et de combien elle se tient groupée. Le
- * sanglier va en compagnie serrée, le cervidé en hardes lâches.
+ * Les carnassiers, par famille climatique.
+ *
+ * Ils sont tirés **à part** du gibier, et c'est le point. Mis dans la même
+ * liste, un loup listé une fois sur six sortirait dans un bois sur six : on
+ * en croiserait plusieurs par sortie, et il cesserait d'être un loup pour
+ * devenir un décor. Ici, un massif tire d'abord s'il abrite un carnassier
+ * (`PREDATOR_ODDS`), et seulement ensuite lequel.
+ *
+ * Le renard est partout ; le loup et l'ours sont là où ils sont revenus —
+ * montagne, forêt continentale, taïga.
+ */
+export const FOREST_PREDATORS = {
+  oceanic: ['fox'],
+  oceanicUpland: ['fox'],
+  mediterranean: ['fox'],
+  mediterraneanCool: ['fox'],
+  mediterraneanMontane: ['fox', 'fox', 'wolf'],
+  semiArid: ['fox'],
+  arid: ['fox'],
+  continental: ['fox', 'fox', 'wolf'],
+  boreal: ['fox', 'wolf', 'bear', 'bear'],
+  alpine: ['fox', 'wolf', 'bear'],
+  glacial: [],
+};
+
+/** Le carnassier d'un pays inconnu : le renard, le seul qui soit partout. */
+export const DEFAULT_FOREST_PREDATORS = ['fox'];
+
+/**
+ * Part des massifs habités qui abritent un carnassier plutôt que du gibier.
+ *
+ * Basse, et à garder basse. Un renard qu'on aperçoit une fois par sortie est
+ * un renard ; un renard par bois est un parc animalier.
+ */
+export const PREDATOR_ODDS = 0.14;
+
+/**
+ * Ce qu'un bois abrite : l'espèce, de combien elle se tient groupée, et si
+ * elle va seule. Le sanglier va en compagnie serrée, le cervidé en hardes
+ * lâches, le carnassier seul ou à deux.
  *
  * Fonction pure. Rend `null` là où il n'y a rien à poser.
  *
  * @param {Object} [context]
  * @param {number} [context.variant] Tirage dans [0, 1[ attaché au massif.
+ * @param {number} [context.predatorDraw] Second tirage, indépendant : sans
+ *        lui, « c'est un carnassier » et « lequel » seraient le même nombre,
+ *        et un massif ne pourrait jamais abriter qu'un seul des deux.
  * @param {string|null} [context.climate] Famille climatique.
- * @returns {{item:string, spread:number}|null}
+ * @returns {{item:string, spread:number, solitary:boolean}|null}
  */
-export function forestGameFor({ variant = 0, climate = null } = {}) {
+export function forestGameFor({ variant = 0, predatorDraw = 1, climate = null } = {}) {
+  if (predatorDraw < PREDATOR_ODDS) {
+    const hunters = (climate && FOREST_PREDATORS[climate]) || DEFAULT_FOREST_PREDATORS;
+    if (hunters.length > 0) {
+      const item = hunters[Math.min(hunters.length - 1, Math.floor(variant * hunters.length))];
+      return { item, spread: 0.5, solitary: true };
+    }
+  }
   const pool = (climate && FOREST_GAME[climate]) || DEFAULT_FOREST_GAME;
   if (pool.length === 0) return null;
   const item = pool[Math.min(pool.length - 1, Math.floor(variant * pool.length))];
-  return { item, spread: item === 'boar' ? 0.2 : 0.34 };
+  return { item, spread: item === 'boar' ? 0.2 : 0.34, solitary: false };
 }
 
-/** Bêtes à l'hectare dans un bois : de quoi en croiser, pas de quoi en compter. */
-export const FOREST_GAME_PER_HECTARE = 0.12;
+/**
+ * Bêtes à l'hectare dans un bois. Relevée de 0,12 à 0,3 : à l'ancienne
+ * valeur, il fallait un massif de huit hectares pour espérer une seule bête,
+ * et deux massifs sur trois n'en portaient aucune — on pouvait traverser une
+ * forêt entière sans rien voir, ce qui était le comportement décrit mais pas
+ * celui qu'on veut.
+ */
+export const FOREST_GAME_PER_HECTARE = 0.3;
+
+/** Bêtes au plus dans une compagnie de carnassiers : ils ne vont pas en horde. */
+export const PREDATOR_MAX = 2;
 
 /**
  * Part des bois où l'on ne voit rien du tout. Le gibier est ce qu'on aperçoit
  * une fois de temps en temps : en mettre dans tous les massifs en ferait un
  * parc animalier.
+ *
+ * Descendue de 0,65 à 0,42 en même temps que la densité montait : à deux
+ * massifs vides sur trois **et** une bête pour huit hectares, un bois n'était
+ * pratiquement jamais habité. Un massif sur deux qui l'est reste très
+ * en-dessous de la réalité — un chevreuil ne se laisse pas voir — mais
+ * au-dessus du seuil où l'on finit par croire que le décor n'en pose pas.
  */
-export const FOREST_GAME_EMPTY_ODDS = 0.65;
+export const FOREST_GAME_EMPTY_ODDS = 0.42;
 
 /**
  * La pierre qui affleure, d'après la matière du sol et la pente — le seul

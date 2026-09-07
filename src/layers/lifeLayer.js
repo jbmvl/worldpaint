@@ -1,17 +1,21 @@
 /*
- * lifeLayer — ce qui bouge.
- * -------------------------
+ * lifeLayer — ce qui bouge dans le ciel.
+ * --------------------------------------
  * Tout le reste du décor est reconstruit tous les 250 mètres parcourus et
  * immobile entre deux reconstructions : c'est ce qui le rend abordable, et c'est
  * aussi ce qui lui donne son aspect de maquette. Une campagne juste mais
  * parfaitement figée se lit comme une photographie en volume.
  *
- * Cette couche porte donc le peu qui doit être animé **par image**, et
- * uniquement lui :
+ * Cette couche porte ce qui doit être animé **par image** et qui n'a pas de
+ * place au sol :
  *
  * - des **oiseaux**, qui dérivent haut au-dessus de l'observateur, tous dans
  *   le sens du vent (`setWindDirection`) ;
  * - la **fumée** des cheminées, publiée par `furnitureLayer.chimneys`.
+ *
+ * Les bêtes ont leur propre couche (`faunaLayer`), et pas par commodité : un
+ * oiseau suit l'observateur et personne ne peut le vérifier, une vache est
+ * dans un pré et tout le monde peut le vérifier. Voir plus bas.
  *
  * ## Pourquoi si peu d'objets
  *
