@@ -85,6 +85,9 @@ import {
   pickShare,
   scatterFurnitureFor,
   herdFor,
+  forestGameFor,
+  FOREST_GAME_PER_HECTARE,
+  FOREST_GAME_EMPTY_ODDS,
   rockKindFor,
   signKindFor,
   pathTurn,
@@ -360,6 +363,9 @@ export const POINT_ITEMS = [
   'goat',
   'horse',
   'donkey',
+  'deer',
+  'boar',
+  'reindeer',
   'chicken',
   'bush',
   'treeBroad',
@@ -1983,7 +1989,12 @@ export class FurnitureLayer {
     let placed = 0;
 
     if (rule.item === 'herd') return this._placeHerd(placements, ring, centre, variant, steepness, count);
-    if (rule.item === 'woodPile') return this._placeWoodPiles(placements, ring, centre, count);
+    if (rule.item === 'woodland') {
+      return (
+        this._placeWoodPiles(placements, ring, centre, count) +
+        this._placeForestGame(placements, ring, centre, variant, hectares)
+      );
+    }
 
     // Rondes ou parallélépipédiques, mais pas les deux dans le même champ : une
     // moissonneuse ne change pas de presse au milieu d'une parcelle. Les bottes
@@ -2064,6 +2075,46 @@ export class FurnitureLayer {
         x: spot.x,
         z: spot.z,
         yaw: this._woodEdgeYaw(spot.x, spot.z, spot.variant),
+      });
+      placed++;
+    }
+    return placed;
+  }
+
+  /**
+   * Met du gibier dans un bois.
+   *
+   * Trois choses le distinguent d'un troupeau au pré, et les trois comptent :
+   * il est rare (deux massifs sur trois n'en portent aucun), il est groupé
+   * (compagnie de sangliers, harde de cervidés), et il dépend du pays — le
+   * renne remplace le cervidé au nord, le sanglier domine au sud.
+   *
+   * Il n'est pas cantonné à l'ourlet, contrairement au bois de coupe : une bête
+   * se tient où elle veut, et c'est en lisière qu'on la voit le mieux de toute
+   * façon.
+   */
+  _placeForestGame(placements, ring, centre, variant, hectares) {
+    if (randomAt(centre.x, centre.z, 83) < FOREST_GAME_EMPTY_ODDS) return 0;
+
+    const game = forestGameFor({ variant, climate: this.climate });
+    if (!game) return 0;
+
+    const jitter = randomAt(centre.x, centre.z, 87);
+    const count = Math.min(6, Math.floor(hectares * FOREST_GAME_PER_HECTARE + jitter));
+    if (count <= 0) return 0;
+
+    const heading = randomAt(centre.x, centre.z, 89) * Math.PI * 2;
+    const seed = positionSeed(centre.x, centre.z, 91);
+    let placed = 0;
+
+    for (const spot of this._filterOffInfra(scatterInRing(ring, count, seed, { cluster: game.spread }))) {
+      this._place(placements, game.item, {
+        x: spot.x,
+        z: spot.z,
+        // Une harde regarde à peu près dans la même direction, comme un
+        // troupeau — mais elle est plus dispersée, elle n'est pas parquée.
+        yaw: heading + (spot.variant - 0.5) * 1.8,
+        scale: 0.9 + spot.variant * 0.2,
       });
       placed++;
     }

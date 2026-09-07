@@ -1025,6 +1025,11 @@ export const FURNITURE_COLORS = {
   muzzle: srgb('#c49a94'),
   chestnut: srgb('#8a5a3a'), // robe alezane du cheval, se détache de l'herbe
   donkeyGrey: srgb('#9a9488'), // robe grise de l'âne, plus claire et froide que le cheval
+  // Le gibier : trois robes qui doivent se détacher d'un sous-bois sombre sans
+  // être des taches — un chevreuil fluo dans un bois se voit de trop loin.
+  fawn: srgb('#a5714a'), // robe fauve du cervidé
+  bristle: srgb('#3d3630'), // soies du sanglier, plus froides et plus sombres qu'un cuir
+  antler: srgb('#8f8067'), // bois et andouillers, gris-beige
   feather: srgb('#c9c2b4'),
   comb: srgb('#a3372f'),
   linen: srgb('#e6e2d8'),

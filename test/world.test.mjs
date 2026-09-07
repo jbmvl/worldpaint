@@ -64,6 +64,11 @@ import {
   boundaryFurnitureFor,
   scatterFurnitureFor,
   WOOD_PILE_EDGE_MIN,
+  forestGameFor,
+  FOREST_GAME,
+  DEFAULT_FOREST_GAME,
+  FOREST_GAME_EMPTY_ODDS,
+  FOREST_GAME_PER_HECTARE,
   herdFor,
   HERD_SHEEP_ODDS,
   DEFAULT_SHEEP_ODDS,
@@ -3167,10 +3172,48 @@ test('ce qui se sème dans un champ dépend de sa culture', () => {
   assert.equal(scatterFurnitureFor({ class: 'grass', subclass: 'meadow' }).item, 'herd');
   // Un bois porte du bois de coupe — mais c'est l'ourlet qui décide où, pas la
   // règle : au milieu d'un massif, un tas de bois n'a rien à faire.
-  assert.equal(scatterFurnitureFor({ class: 'wood' }).item, 'woodPile');
+  assert.equal(scatterFurnitureFor({ class: 'wood' }).item, 'woodland');
   assert.ok(WOOD_PILE_EDGE_MIN > 0 && WOOD_PILE_EDGE_MIN < 1, 'seuil de lisière plausible');
   // Une classe qu'on ne sait pas lire ne sème rien.
   assert.equal(scatterFurnitureFor({ class: 'quarry' }), null);
+});
+
+test('le gibier d’un bois est celui du pays', () => {
+  // Même massif, même tirage : seul le pays change. Le renne remplace le
+  // cervidé au nord, le sanglier domine au sud.
+  assert.equal(forestGameFor({ variant: 0.5, climate: 'boreal' }).item, 'reindeer');
+  assert.equal(forestGameFor({ variant: 0.5, climate: 'mediterranean' }).item, 'boar');
+  assert.equal(forestGameFor({ variant: 0.1, climate: 'oceanic' }).item, 'deer');
+  // Là où il n’y a pas de forêt, il n’y a rien à voir — et surtout pas un
+  // chevreuil au milieu des Bardenas.
+  assert.equal(forestGameFor({ variant: 0.5, climate: 'arid' }), null);
+  assert.equal(forestGameFor({ variant: 0.5, climate: 'glacial' }), null);
+  // Sans climat connu, un bois tempéré.
+  assert.deepEqual(
+    forestGameFor({ variant: 0.5 }),
+    forestGameFor({ variant: 0.5, climate: 'pays-inconnu' })
+  );
+
+  // Le sanglier va en compagnie serrée, le cervidé en harde lâche.
+  assert.ok(
+    forestGameFor({ variant: 0.5, climate: 'mediterranean' }).spread <
+      forestGameFor({ variant: 0.5, climate: 'boreal' }).spread
+  );
+
+  // Toute la table tire dans des silhouettes qui existent, et couvre toutes
+  // les familles : une famille oubliée retomberait silencieusement sur le
+  // gibier tempéré, ce qui se verrait en Laponie.
+  for (const family of CLIMATE_FAMILIES) {
+    assert.ok(FOREST_GAME[family], `${family} : gibier décrit`);
+    for (const item of FOREST_GAME[family]) {
+      assert.ok(FURNITURE_BUILDERS[item], `${family} : ${item} au catalogue`);
+    }
+  }
+  for (const item of DEFAULT_FOREST_GAME) assert.ok(FURNITURE_BUILDERS[item], item);
+
+  // Le gibier reste rare : sans ça, un bois sur deux est un parc animalier.
+  assert.ok(FOREST_GAME_EMPTY_ODDS > 0.5, 'la plupart des bois ne montrent rien');
+  assert.ok(FOREST_GAME_PER_HECTARE < 0.5, 'de quoi en croiser, pas de quoi en compter');
 });
 
 test('un tas de bois se range le long de la lisière', () => {

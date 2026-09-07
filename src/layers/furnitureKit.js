@@ -979,6 +979,98 @@ export const FURNITURE_BUILDERS = {
     return k;
   },
 
+  /**
+   * Cervidé, la tête levée : chevreuil ou cerf selon la région, mais la même
+   * silhouette — un corps court et haut sur pattes, l'encolure dressée, la
+   * croupe claire.
+   *
+   * Ce qui le distingue du bétail à cinquante mètres n'est pas sa taille, qu'on
+   * ne peut pas juger sans repère : c'est qu'il **regarde**. Une bête au pré a
+   * la tête dans l'herbe, un cervidé l'a en l'air, et il porte des bois.
+   */
+  deer(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const coat = C.fawn || C.chestnut;
+    k.box({ width: 0.4, height: 0.62, depth: 1.25, y: 0.78, color: coat });
+    // Croupe claire : le miroir, la tache qu'on voit fuir dans un sous-bois.
+    k.box({ width: 0.34, height: 0.34, depth: 0.16, y: 0.92, z: -0.66, color: C.fleece });
+    // Encolure dressée et tête, portées haut.
+    k.box({ width: 0.22, height: 0.62, depth: 0.26, y: 1.2, z: 0.55, tilt: -0.25, color: coat });
+    k.box({ width: 0.17, height: 0.2, depth: 0.36, y: 1.56, z: 0.74, tilt: 0.12, color: coat });
+    k.box({ width: 0.12, height: 0.1, depth: 0.09, y: 1.5, z: 0.93, color: C.hideDark });
+    // Oreilles larges, dressées de part et d'autre.
+    for (const x of [-0.11, 0.11]) {
+      k.box({ width: 0.05, height: 0.16, depth: 0.11, x, y: 1.66, z: 0.66, roll: x < 0 ? -0.4 : 0.4, color: coat });
+    }
+    // Bois : deux merrains qui montent en s'écartant, deux andouillers.
+    for (const x of [-0.08, 0.08]) {
+      k.box({ width: 0.04, height: 0.34, depth: 0.04, x, y: 1.7, z: 0.66, roll: x < 0 ? -0.28 : 0.28, color: C.antler || C.wood });
+      k.box({ width: 0.04, height: 0.2, depth: 0.04, x: x * 2.1, y: 1.92, z: 0.66, roll: x < 0 ? -0.5 : 0.5, color: C.antler || C.wood });
+    }
+    for (const [x, z] of [[-0.15, 0.45], [0.15, 0.45], [-0.15, -0.45], [0.15, -0.45]]) {
+      k.box({ width: 0.07, height: 0.68, depth: 0.08, x, z, color: coat });
+      k.box({ width: 0.08, height: 0.09, depth: 0.09, x, z, color: C.black });
+    }
+    // Queue courte, claire dessous — relevée, elle prolonge le miroir.
+    k.box({ width: 0.07, height: 0.16, depth: 0.06, y: 1.02, z: -0.68, tilt: -0.4, color: C.fleece });
+    return k;
+  },
+
+  /**
+   * Sanglier : une masse basse et sombre, l'avant plus haut que l'arrière et le
+   * groin au sol. Le profil en coin — épaules hautes, croupe fuyante — est ce
+   * qui le distingue d'un mouton sombre, bien plus que ses défenses.
+   */
+  boar(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const coat = C.bristle || C.hideDark;
+    k.box({ width: 0.42, height: 0.56, depth: 1.15, y: 0.5, color: coat });
+    // Garrot : la bosse d'épaules qui fait le coin.
+    k.box({ width: 0.44, height: 0.3, depth: 0.5, y: 0.76, z: 0.3, color: coat });
+    // Tête basse et groin, en avant du corps.
+    k.box({ width: 0.26, height: 0.3, depth: 0.46, y: 0.56, z: 0.82, tilt: 0.4, color: coat });
+    k.box({ width: 0.16, height: 0.13, depth: 0.14, y: 0.36, z: 1.06, color: C.hideDark });
+    for (const x of [-0.1, 0.1]) {
+      k.box({ width: 0.05, height: 0.12, depth: 0.06, x, y: 0.74, z: 0.72, color: coat });
+      // Défenses : deux traits clairs, courts, relevés.
+      k.box({ width: 0.03, height: 0.11, depth: 0.03, x, y: 0.38, z: 1.04, tilt: -0.5, color: C.fleece });
+    }
+    for (const [x, z] of [[-0.16, 0.36], [0.16, 0.36], [-0.16, -0.38], [0.16, -0.38]]) {
+      k.box({ width: 0.09, height: 0.42, depth: 0.09, x, z, color: C.hideDark });
+      k.box({ width: 0.1, height: 0.08, depth: 0.1, x, z, color: C.black });
+    }
+    return k;
+  },
+
+  /**
+   * Renne : le cervidé du Nord. Plus lourd et plus bas qu'un cerf, robe grise,
+   * encolure claire, et surtout des bois immenses et recourbés vers l'avant —
+   * c'est eux qu'on lit avant tout le reste, et eux qui le distinguent du
+   * chevreuil dans une taïga.
+   */
+  reindeer(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const coat = C.donkeyGrey || C.hideDark;
+    k.box({ width: 0.46, height: 0.66, depth: 1.4, y: 0.8, color: coat });
+    k.box({ width: 0.3, height: 0.6, depth: 0.32, y: 1.18, z: 0.62, tilt: -0.3, color: C.fleece });
+    k.box({ width: 0.2, height: 0.22, depth: 0.42, y: 1.5, z: 0.86, tilt: 0.16, color: coat });
+    k.box({ width: 0.14, height: 0.11, depth: 0.1, y: 1.44, z: 1.07, color: C.hideDark });
+    for (const x of [-0.12, 0.12]) {
+      k.box({ width: 0.05, height: 0.14, depth: 0.1, x, y: 1.6, z: 0.78, roll: x < 0 ? -0.4 : 0.4, color: coat });
+    }
+    // Bois : deux merrains hauts, chacun rabattu vers l'avant en fourche.
+    for (const x of [-0.09, 0.09]) {
+      k.box({ width: 0.05, height: 0.46, depth: 0.05, x, y: 1.64, z: 0.78, roll: x < 0 ? -0.22 : 0.22, color: C.antler || C.wood });
+      k.box({ width: 0.05, height: 0.34, depth: 0.05, x: x * 1.8, y: 2.06, z: 0.86, tilt: 0.7, color: C.antler || C.wood });
+      k.box({ width: 0.04, height: 0.24, depth: 0.04, x: x * 1.4, y: 1.78, z: 0.96, tilt: 1.1, color: C.antler || C.wood });
+    }
+    for (const [x, z] of [[-0.17, 0.5], [0.17, 0.5], [-0.17, -0.5], [0.17, -0.5]]) {
+      k.box({ width: 0.09, height: 0.7, depth: 0.1, x, z, color: coat });
+      k.box({ width: 0.11, height: 0.1, depth: 0.12, x, z, color: C.black });
+    }
+    return k;
+  },
+
   /** Grange : long volume maçonné, toit à deux pentes, grande porte. */
   barn(C = DEFAULT_COLORS) {
     const k = new Kit(C);
