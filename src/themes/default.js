@@ -381,6 +381,27 @@ export const FLOWER_SHARE = 0.16;
 /** Part de fleurs en lisière de culture, où poussent les coquelicots (lue directement dans la carte de classes filtrée). */
 export const POPPY_SHARE = 0.42;
 
+/**
+ * Ce que devient l'herbe **sous les arbres**. Un sol de forêt n'est pas une
+ * prairie plus sombre : c'est une litière où pousse une herbe rase, clairsemée
+ * et sans éclat, parce que la lumière ne descend pas jusque-là.
+ *
+ * - `green` : ce qu'un bois plein vaut de végétal pour `groundCover`. Sans lui,
+ *   la part de bois ne comptait pour rien et le sol d'un bois restait la seule
+ *   texture du terrain, jusque sous le nez de l'observateur ;
+ * - `height` et `density` multiplient la taille et le nombre des touffes ;
+ * - `tint` multiplie leur couleur, canal par canal — assombrie et réchauffée
+ *   vers la litière. C'est le raccord avec `woodAlbedo`, qui peint le même sol
+ *   au loin, qui décide de ces trois nombres : ils se règlent à l'œil, sur
+ *   place, en regardant le sol entre les troncs.
+ */
+export const WOODLAND_FLOOR = {
+  green: 0.55,
+  height: 0.5,
+  density: 0.7,
+  tint: [0.98, 0.82, 0.74],
+};
+
 // --- Les cultures --------------------------------------------------------------
 /**
  * Hauteur et silhouette de chaque culture. `atlas` désigne la case de
@@ -1185,6 +1206,7 @@ export const defaultTheme = Object.freeze({
     aspect: GRASS_ASPECT,
     flowerShare: FLOWER_SHARE,
     poppyShare: POPPY_SHARE,
+    woodFloor: WOODLAND_FLOOR,
   },
   crops: CROP_LOOK,
   covers: COVER_LOOK,

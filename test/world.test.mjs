@@ -236,7 +236,11 @@ import {
   GRASS_COUNT,
   GRASS_FADE_FROM,
   GRASS_HEIGHT_FADE_FLOOR,
+  GRASS_GREEN_MIN,
   coverGrassFor,
+  grassGreenFor,
+  woodFloorFor,
+  WOODLAND_FLOWER_MAX,
 } from '../src/layers/groundCover.js';
 import {
   cropCellRing,
@@ -1995,6 +1999,45 @@ test('la couverture règle l’herbe et le fourré, jamais leur présence', () =
   assert.ok(coverGrassFor('scrub').density < coverGrassFor('heath').density);
   assert.ok(coverBushesFor('scrub') > coverBushesFor('heath'));
   assert.equal(coverBushesFor('scree'), 0, 'rien ne pousse dans un éboulis');
+});
+
+test('le sol d’un bois porte une litière, pas une prairie à l’ombre', () => {
+  const bois = { grass: 0, wood: 1, farmland: 0, bare: 0 };
+  const pre = { grass: 1, wood: 0, farmland: 0, bare: 0 };
+  const nu = { grass: 0, wood: 0, farmland: 0, bare: 1 };
+
+  // Le défaut : la part de bois ne comptait pour rien, donc une forêt n’avait
+  // pas une touffe — `grass` vaut zéro sous un couvert d’arbres.
+  const sousBois = grassGreenFor(bois);
+  assert.ok(sousBois.green > GRASS_GREEN_MIN, `un bois est du végétal (${sousBois.green})`);
+  assert.equal(sousBois.shade, 1, 'et tout ce vert-là est du sous-bois');
+  // Mais moins qu’un pré : c’est ce qui garde le pire cas d’instances sur la
+  // prairie pleine, celle sur laquelle `GRASS_COUNT` est mesuré.
+  assert.ok(sousBois.green < grassGreenFor(pre).green, 'un bois vaut moins qu’un pré');
+  assert.equal(grassGreenFor(pre).shade, 0, 'un pré n’est l’ombre de personne');
+  assert.equal(grassGreenFor(nu).green, 0, 'un sol nu reste nu');
+
+  // Une lisière mêle les deux, et la part d’ombre suit.
+  const lisiere = grassGreenFor({ grass: 0.5, wood: 0.5, farmland: 0 });
+  assert.ok(lisiere.shade > 0 && lisiere.shade < 1, `part d’ombre en lisière : ${lisiere.shade}`);
+  assert.ok(lisiere.green > sousBois.green, 'la lisière est plus verte que le sous-bois');
+
+  // Ce qui y pousse : rase, clairsemée, assombrie — et le neutre exact hors
+  // des bois, sinon toute prairie du monde changerait de couleur.
+  assert.deepEqual(woodFloorFor(0), { height: 1, density: 1, tint: [1, 1, 1] });
+  const litiere = woodFloorFor(1);
+  assert.ok(litiere.height < 0.7, `herbe rase (${litiere.height})`);
+  assert.ok(litiere.density < 1, 'clairsemée');
+  assert.ok(litiere.tint[1] < 1 && litiere.tint[2] < litiere.tint[1], 'assombrie et réchauffée');
+  // Et la transition est continue : à mi-ombre, on est à mi-chemin.
+  const demi = woodFloorFor(0.5);
+  close(demi.height, (1 + litiere.height) / 2, 1e-9, 'fondu de hauteur');
+  close(demi.tint[2], (1 + litiere.tint[2]) / 2, 1e-9, 'fondu de teinte');
+
+  // Sous un couvert fermé, rien ne fleurit : les fleurs de l’atlas sont des
+  // fleurs de plein soleil.
+  assert.ok(WOODLAND_FLOWER_MAX > 0 && WOODLAND_FLOWER_MAX < 1);
+  assert.ok(sousBois.shade > WOODLAND_FLOWER_MAX, 'un vrai bois passe le seuil');
 });
 
 test('la carte de classes sait dire ce qu’elle ne couvre pas', () => {
