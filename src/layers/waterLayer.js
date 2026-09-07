@@ -2,63 +2,51 @@
  * waterLayer — lacs, rivières et bras de mer, tirés des couches `water`
  * (polygones) et `waterway` (lignes trop étroites pour un polygone).
  *
- * L'eau est plane en travers : d'une rive à l'autre, une nappe est à une
- * altitude unique, sinon elle remonterait les collines.
+ * ## Pourquoi l'altitude de l'eau ne se calcule pas
  *
- * ## L'eau s'ajuste au terrain, jamais l'inverse
+ * Deux tentatives ont échoué, et elles échouaient pour la même raison.
+ * Creuser une cuvette sous chaque nappe ouvrait une gorge dès que le polygone
+ * descendait une pente. Poser une nappe plane à un niveau tiré du MNT la
+ * laissait quelques centimètres sous le sol — et une marge pour l'en sortir
+ * n'aurait fait que la faire flotter ailleurs.
  *
- * Le terrain n'est plus creusé sous les nappes. Une cuvette rabattait tout un
- * polygone sur une seule cote : sur une pente, c'était une gorge taillée dans
- * le versant. La rive n'est donc plus le contour du polygone, c'est la courbe
- * où le terrain croise le niveau de l'eau — et c'est le test de profondeur qui
- * la dessine, au pixel près, en cachant la nappe partout où le sol lui passe
- * devant. Rien à découper, rien à terrasser.
+ * La cause est dans la donnée : **le MNT ne décrit pas le fond d'un lac**.
+ * Sous une nappe, l'altitude qu'il donne *est* la surface de l'eau. Terrain et
+ * eau sont donc la même altitude, au bruit près, et aucune comparaison de
+ * hauteurs ne peut dire lequel des deux l'emporte en un point : le résultat
+ * n'est qu'un tirage au sort à l'échelle du pixel.
  *
- * Tout se joue alors sur le choix du niveau (`reachLevels`), pris entre deux
- * contraintes qui vont en sens inverse :
+ * ## Ce qui fonctionne : deux sources, deux questions
  *
- *   - **couvrir le fond** : sous un quantile haut des altitudes intérieures, le
- *     MNT ressort en îlots et le lac se troue (c'est ce que la cuvette
- *     masquait) ;
- *   - **ne pas déborder** : au-dessus du point bas du contour — l'exutoire —
- *     l'eau inonde les berges. Un lac ne monte pas plus haut que son exutoire.
+ * L'étendue de l'eau ne se déduit pas du relief, elle est **dans la carte** —
+ * c'est le polygone. Son altitude, elle, est **dans le MNT**. Chacun répond à
+ * la question qu'il sait traiter :
  *
- * On retient le plus bas des deux.
+ *   - où y a-t-il de l'eau ? le polygone, et rien d'autre ;
+ *   - à quelle hauteur ? le terrain, point par point.
  *
- * ## Le long, ça descend : les biefs
+ * La nappe est donc **plaquée sur le terrain** : chaque sommet prend
+ * l'altitude du sol sous lui, et un décalage de profondeur négatif lui donne
+ * la victoire sur le terrain qu'elle recouvre — le même geste qu'une chaussée
+ * (`roadNetwork`), pour la même raison. Il n'y a plus d'intersection à
+ * trouver, plus de niveau à choisir, plus de marge : l'eau ne peut ni
+ * s'enterrer ni flotter, puisqu'elle *est* la surface du sol, peinte en eau.
  *
- * Un seul plan horizontal ne convient qu'à une nappe ramassée. Une rivière
- * portée par un polygone descend une pente : à plat, ou bien elle inonde
- * l'amont, ou bien elle se réduit à une flaque à l'aval. On découpe donc les
- * polygones allongés en **biefs** le long de leur axe principal, un niveau par
- * bief selon la règle ci-dessus, et le profil est rendu monotone vers l'aval
- * (`monotoneDownstream`) : plane d'une rive à l'autre, jamais remontante — la
- * règle même du hydro-flattening des MNT. Entre deux biefs, le niveau est
- * interpolé, sans marche.
+ * Le prix, assumé : une nappe n'est plus rigoureusement horizontale, elle
+ * épouse le bruit du MNT. Un lac que la donnée d'altitude rend bosselé sera
+ * bosselé. C'est le seul défaut qui reste, et il ne fait jamais disparaître
+ * l'eau ni apparaître de falaise.
  *
- * Un polygone ramassé n'a qu'un bief, et retrouve exactement le plan
- * horizontal d'un lac : c'est le même mécanisme, pas un cas particulier.
- *
- * Les cours d'eau linéaires suivent la même règle de monotonie, sur leur
- * tracé plutôt que sur un axe reconstruit (`waterwayProfile`), et la même
- * marge au-dessus du sol (`WATER_SURFACE_MARGIN_M`).
- *
- * Une limite assumée : le niveau n'est évalué qu'aux sommets du polygone, et
- * la carte graphique interpole entre eux. Un très long côté sans sommet
- * intermédiaire rend donc le profil en corde, pas en courbe.
+ * Les triangles du polygone sont redécoupés avant d'être plaqués
+ * (`subdivideTriangle`) : un triangle de cent mètres ne suivrait pas le sol,
+ * il le traverserait.
  */
 
+
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
-import {
-  resamplePath,
-  createRibbonBuffer,
-  appendRibbon,
-  pathFrames,
-  monotoneDownstream,
-} from './ribbonGeometry.js';
+import { resamplePath, createRibbonBuffer, appendRibbon } from './ribbonGeometry.js';
 import { createWaterNormalCanvas } from '../materials/proceduralTextures.js';
 import { WaterIndex } from './waterIndex.js';
-import { pointInRing } from './furniturePlacement.js';
 import { defaultTheme } from '../themes/default.js';
 
 /** Couches source des tuiles vectorielles. */
@@ -71,42 +59,20 @@ export const WATER_RADIUS_M = 900;
 export const WATER_REBUILD_M = 250;
 /** Pas de ré-échantillonnage le long d'un cours d'eau, en mètres. */
 export const WATER_SAMPLE_M = 8;
-/**
- * Hauteur d'eau au-dessus du sol que le MNT donne, en mètres.
- *
- * Le MNT ne décrit pas le fond d'un lac : sous une nappe, le sol qu'il donne
- * **est** la surface de l'eau. Posée exactement dessus, la nappe se retrouve
- * coplanaire au terrain qui la cache — et le terrain gagne les égalités (voir
- * `createWaterMaterial`) : il ne reste qu'un liseré d'eau au fond du bruit du
- * MNT, quelques centimètres sous le sol.
- *
- * Cette marge l'en fait sortir. Elle ne noie rien : n'est inondé que ce qui
- * était déjà à quelques centimètres du niveau, c'est-à-dire la nappe
- * elle-même. Les berges, qui montent, cachent toujours ce qui passe derrière.
- */
-export const WATER_SURFACE_MARGIN_M = 0.2;
 /** Nombre maximal de surfaces retenues par reconstruction. */
 export const WATER_MAX_POLYGONS = 300;
-/** Nombre maximal de points échantillonnés à l'intérieur d'un polygone pour en tirer l'altitude (voir `interiorSamples`). */
-export const WATER_LEVEL_MAX_SAMPLES = 200;
 /**
- * Part du fond que la nappe doit couvrir : rang du quantile des altitudes
- * intérieures qui donne le **plancher** du niveau. À 0,9, un dixième du fond
- * émerge — le MNT le plus haut du polygone, ses îlots et ses berges internes.
+ * Longueur d'arête au-delà de laquelle un triangle de nappe est recoupé, en
+ * mètres. De l'ordre de la maille de terrain la plus fine (4,42 m) : plus
+ * grossier, la nappe coupe à travers les bosses au lieu de les épouser.
  */
-export const WATER_FILL_QUANTILE = 0.9;
+export const WATER_DRAPE_EDGE_M = 8;
 /**
- * Rang du quantile des altitudes du **contour** qui donne le plafond du
- * niveau : l'exutoire. Bas, mais pas le minimum, qu'un seul sommet aberrant
- * suffirait à coucher.
+ * Plafond du nombre de triangles produits par le placage, pour une
+ * reconstruction entière. Une garde contre un lac démesuré, pas un réglage :
+ * au-delà, les triangles restent grossiers plutôt que de disparaître.
  */
-export const WATER_OUTLET_QUANTILE = 0.1;
-/** Longueur d'un bief, en mètres : le pas auquel une rivière a le droit de descendre. */
-export const WATER_REACH_M = 60;
-/** Allongement (longueur ÷ largeur) à partir duquel une nappe descend en biefs plutôt que de rester plane. */
-export const WATER_REACH_RATIO = 3;
-/** Plafond du nombre de biefs : garde contre un polygone démesuré, pas un réglage. */
-export const WATER_MAX_REACHES = 64;
+export const WATER_DRAPE_MAX_TRIANGLES = 30000;
 /** Mètres couverts par un cycle de la carte de rides (coordonnées de texture prises dans le monde, pas sur la surface). */
 export const WATER_UV_SCALE_M = 12;
 
@@ -163,303 +129,50 @@ export function boundsIntersect(points, centerX, centerZ, radius) {
   );
 }
 
-/** Vrai si un point est dans le contour et hors de tous les trous (s'appuie sur `pointInRing`). */
-export function pointInPolygon(x, z, outer, holes) {
-  if (!pointInRing(outer, x, z)) return false;
-  for (const hole of holes) {
-    if (pointInRing(hole, x, z)) return false;
-  }
-  return true;
-}
-
 /**
- * Grille de points strictement intérieurs à un polygone. Le pas s'ajuste à la
- * surface de la boîte englobante pour tenir sous `maxSamples`. Ancrée sur
- * l'origine du repère local, pas sur la boîte englobante du polygone : deux
- * lacs voisins tirent leurs échantillons des mêmes lignes de grille.
+ * Recoupe un triangle jusqu'à ce qu'aucune arête ne dépasse `maxEdge`, en
+ * partageant à chaque fois la plus longue en son milieu. L'orientation est
+ * conservée, donc la nappe continue de regarder vers le haut.
+ *
+ * Le budget est une garde, pas un réglage : épuisé, on rend le triangle tel
+ * quel — une nappe un peu raide vaut mieux qu'une nappe absente.
+ *
+ * @param {{x:number,z:number}} a
+ * @param {{x:number,z:number}} b
+ * @param {{x:number,z:number}} c
+ * @param {number} maxEdge Longueur d'arête visée, en mètres.
+ * @param {{left:number}} budget Nombre de triangles encore autorisés, décrémenté sur place.
+ * @returns {Array<Array<{x:number,z:number}>>} triangles, dans l'ordre de parcours d'origine.
  */
-export function interiorSamples(outer, holes, maxSamples = WATER_LEVEL_MAX_SAMPLES) {
-  let minX = Infinity;
-  let maxX = -Infinity;
-  let minZ = Infinity;
-  let maxZ = -Infinity;
-  for (const p of outer) {
-    if (p.x < minX) minX = p.x;
-    if (p.x > maxX) maxX = p.x;
-    if (p.z < minZ) minZ = p.z;
-    if (p.z > maxZ) maxZ = p.z;
-  }
-  const width = maxX - minX;
-  const depth = maxZ - minZ;
-  if (!(width > 0) || !(depth > 0)) return [];
+export function subdivideTriangle(a, b, c, maxEdge = WATER_DRAPE_EDGE_M, budget = { left: Infinity }) {
+  const ab = Math.hypot(b.x - a.x, b.z - a.z);
+  const bc = Math.hypot(c.x - b.x, c.z - b.z);
+  const ca = Math.hypot(a.x - c.x, a.z - c.z);
+  const longest = Math.max(ab, bc, ca);
 
-  const step = Math.sqrt((width * depth) / maxSamples) || 1;
-  const startX = Math.ceil(minX / step) * step;
-  const startZ = Math.ceil(minZ / step) * step;
+  if (!(longest > maxEdge) || budget.left <= 1) return [[a, b, c]];
+  budget.left -= 1;
 
-  const points = [];
-  for (let z = startZ; z <= maxZ; z += step) {
-    for (let x = startX; x <= maxX; x += step) {
-      if (pointInPolygon(x, z, outer, holes)) points.push({ x, z });
-    }
-  }
-  return points;
-}
-
-/**
- * Quantile d'une série, par interpolation linéaire entre les deux rangs
- * encadrants. Ne modifie pas le tableau reçu.
- *
- * @param {number[]} values Série quelconque, non triée.
- * @param {number} q        Rang visé, de 0 (minimum) à 1 (maximum).
- * @returns {number} `Infinity` si la série est vide.
- */
-export function quantile(values, q) {
-  if (!values.length) return Infinity;
-  const sorted = values.slice().sort((a, b) => a - b);
-  const rank = Math.min(Math.max(q, 0), 1) * (sorted.length - 1);
-  const low = Math.floor(rank);
-  const high = Math.ceil(rank);
-  if (low === high) return sorted[low];
-  return sorted[low] + (sorted[high] - sorted[low]) * (rank - low);
-}
-
-/**
- * Direction du plus grand étalement d'un nuage de points (vecteur propre
- * dominant de sa matrice de covariance) : l'axe d'une rivière, le long duquel
- * elle descend.
- *
- * Le signe est fixé, pas laissé au hasard du calcul : le même polygone doit
- * rendre le même axe d'une reconstruction à l'autre, sous peine de faire
- * changer le paysage sans que rien n'ait bougé.
- *
- * @param {Array<{x:number,z:number}>} points
- * @returns {{x:number, z:number}} vecteur unitaire.
- */
-export function principalAxis(points) {
-  const n = points.length;
-  if (n < 2) return { x: 1, z: 0 };
-
-  let mx = 0;
-  let mz = 0;
-  for (const p of points) {
-    mx += p.x;
-    mz += p.z;
-  }
-  mx /= n;
-  mz /= n;
-
-  let sxx = 0;
-  let sxz = 0;
-  let szz = 0;
-  for (const p of points) {
-    const dx = p.x - mx;
-    const dz = p.z - mz;
-    sxx += dx * dx;
-    sxz += dx * dz;
-    szz += dz * dz;
+  // Sommets renommés pour que (p, q) soit la plus longue arête : couper
+  // (p, q, r) en (p, m, r) et (m, q, r) garde le sens de parcours.
+  let p = a;
+  let q = b;
+  let r = c;
+  if (bc === longest) {
+    p = b;
+    q = c;
+    r = a;
+  } else if (ca === longest) {
+    p = c;
+    q = a;
+    r = b;
   }
 
-  // Valeur propre dominante d'une 2x2 symétrique, forme fermée.
-  const half = (sxx + szz) / 2;
-  const gap = Math.sqrt(Math.max(0, half * half - (sxx * szz - sxz * sxz)));
-  const lambda = half + gap;
-
-  // Deux expressions du même vecteur propre : la seconde rattrape le cas où la
-  // première s'annule (nuage aligné sur un axe du repère).
-  let vx = lambda - szz;
-  let vz = sxz;
-  if (Math.abs(vx) + Math.abs(vz) < 1e-12) {
-    vx = sxz;
-    vz = lambda - sxx;
-  }
-  const length = Math.hypot(vx, vz);
-  if (!(length > 0)) return { x: 1, z: 0 };
-
-  const sign = vx !== 0 ? Math.sign(vx) : Math.sign(vz) || 1;
-  return { x: (vx / length) * sign, z: (vz / length) * sign };
-}
-
-/**
- * Altitude de chaque bief, de l'amont à l'aval, par la règle plancher/plafond
- * appliquée aux seuls échantillons du bief.
- *
- * Un bief sans échantillon — un polygone étranglé, une lacune de MNT — est
- * comblé par son voisin connu plutôt que laissé à zéro. Le profil obtenu est
- * ensuite rendu monotone : une rivière ne remonte pas.
- *
- * @param {Array<{t:number,h:number}>} bottom Échantillons intérieurs, abscisse le long de l'axe et altitude.
- * @param {Array<{t:number,h:number}>} rim    Idem, sur le contour.
- * @param {number} tMin  Abscisse du début du premier bief.
- * @param {number} span  Longueur totale couverte par les biefs.
- * @param {number} count Nombre de biefs.
- * @returns {Float32Array|null} `null` si aucun bief n'a d'altitude.
- */
-export function reachLevels(bottom, rim, tMin, span, count) {
-  const bottoms = Array.from({ length: count }, () => []);
-  const rims = Array.from({ length: count }, () => []);
-  const bin = (t) => Math.min(count - 1, Math.max(0, Math.floor(((t - tMin) / span) * count)));
-
-  for (const p of bottom) bottoms[bin(p.t)].push(p.h);
-  for (const p of rim) rims[bin(p.t)].push(p.h);
-
-  const levels = new Float32Array(count);
-  for (let b = 0; b < count; b++) {
-    const fill = quantile(bottoms[b].length ? bottoms[b] : rims[b], WATER_FILL_QUANTILE);
-    const outlet = quantile(rims[b], WATER_OUTLET_QUANTILE);
-    // `Infinity` quand le bief est vide : une lacune, que `fillGaps` comblera.
-    levels[b] = Math.min(fill, outlet);
-  }
-
-  if (!fillGaps(levels)) return null;
-  return monotoneDownstream(levels);
-}
-
-/**
- * Altitude de l'eau en tout point d'une nappe : un plan horizontal pour une
- * nappe ramassée, un profil descendant le long de l'axe pour une nappe
- * allongée (voir l'en-tête du module).
- *
- * `sampleGround` peut rendre `NaN` pour un point sans donnée : ignoré plutôt
- * que compté pour une altitude de zéro.
- *
- * @param {Array<{x:number,z:number}>} outer
- * @param {Array<Array<{x:number,z:number}>>} holes
- * @param {(x:number, z:number) => number} sampleGround
- * @returns {{levelAt:(x:number,z:number)=>number, reaches:number}|null}
- *          `null` si aucun échantillon n'a de donnée.
- */
-export function waterLevelField(outer, holes, sampleGround, maxInteriorSamples = WATER_LEVEL_MAX_SAMPLES) {
-  const collect = (points, into) => {
-    for (const p of points) {
-      const h = sampleGround(p.x, p.z);
-      if (Number.isFinite(h)) into.push({ x: p.x, z: p.z, h });
-    }
-    return into;
-  };
-
-  // Le contour d'un trou est une rive comme une autre : il peut être l'exutoire.
-  const rim = collect(outer, []);
-  for (const hole of holes) collect(hole, rim);
-  const bottom = collect(interiorSamples(outer, holes, maxInteriorSamples), []);
-  if (!rim.length && !bottom.length) return null;
-
-  // L'axe se lit sur la grille intérieure, régulière, plutôt que sur un
-  // contour dont les sommets se pressent dans les méandres.
-  const axis = principalAxis(bottom.length >= 4 ? bottom : outer);
-
-  // Emprise du polygone dans le repère de l'axe : longueur et largeur.
-  let tMin = Infinity;
-  let tMax = -Infinity;
-  let sMin = Infinity;
-  let sMax = -Infinity;
-  for (const p of outer) {
-    const t = p.x * axis.x + p.z * axis.z;
-    const s = p.x * -axis.z + p.z * axis.x;
-    if (t < tMin) tMin = t;
-    if (t > tMax) tMax = t;
-    if (s < sMin) sMin = s;
-    if (s > sMax) sMax = s;
-  }
-  const span = tMax - tMin;
-  const width = sMax - sMin;
-
-  const elongated = span >= 2 * WATER_REACH_M && span >= WATER_REACH_RATIO * width;
-  const count = elongated
-    ? Math.min(WATER_MAX_REACHES, Math.max(2, Math.round(span / WATER_REACH_M)))
-    : 1;
-
-  const project = (points) => points.map((p) => ({ t: p.x * axis.x + p.z * axis.z, h: p.h }));
-
-  // Les deux bouts d'un polygone allongé sont des coupes en travers du cours
-  // d'eau — là où la tuile ou l'entité s'arrête —, pas des berges : leur
-  // contour est au niveau de l'eau, pas au-dessus. Les compter comme exutoire
-  // coucherait le premier et le dernier bief sur le fond, et l'eau y
-  // disparaîtrait sous le terrain. Une nappe d'un seul bief, elle, est bordée
-  // de rives sur tout son tour : rien à écarter.
-  const margin = count > 1 ? span / count / 2 : 0;
-  const banks = project(rim).filter((p) => p.t >= tMin + margin && p.t <= tMax - margin);
-
-  const levels = reachLevels(project(bottom), banks, tMin, span || 1, count);
-  if (!levels) return null;
-  // Le MNT donne la surface de l'eau, pas son fond : il faut en sortir.
-  for (let b = 0; b < levels.length; b++) levels[b] += WATER_SURFACE_MARGIN_M;
-
-  if (count === 1) {
-    const level = levels[0];
-    return { levelAt: () => level, reaches: 1 };
-  }
-
-  // Interpolation entre centres de biefs : le profil descend sans marche, et
-  // reste monotone puisqu'il interpole une suite monotone.
-  const levelAt = (x, z) => {
-    const u = (((x * axis.x + z * axis.z) - tMin) / span) * count - 0.5;
-    if (u <= 0) return levels[0];
-    if (u >= count - 1) return levels[count - 1];
-    const i = Math.floor(u);
-    return levels[i] + (levels[i + 1] - levels[i]) * (u - i);
-  };
-  return { levelAt, reaches: count };
-}
-
-/**
- * Profil d'altitude d'un cours d'eau linéaire, une valeur par ligne du ruban.
- * En travers, la section prend le plus bas de ce qu'elle rencontre (axe et
- * deux rives). Le long du cours, le profil est rendu monotone vers l'aval
- * (`monotoneDownstream`). `sampleElevation` peut rendre `NaN` hors des tuiles
- * chargées : une lacune est comblée par le dernier point connu (un plateau),
- * jamais par zéro (coucherait tout l'aval au niveau de la mer).
- *
-
- * @param {Array<{x:number,z:number}>} path Tracé déjà ré-échantillonné.
- * @param {number} halfWidth
- * @param {(x:number, z:number) => number} sampleElevation
- * @returns {Float32Array|null} une altitude par point, ou `null` si le tracé
- *          entier est sans donnée — auquel cas il n'y a rien à dessiner.
- */
-export function waterwayProfile(path, halfWidth, sampleElevation) {
-  const frames = pathFrames(path);
-  const n = path.length;
-  const raw = new Float32Array(n);
-
-  for (let r = 0; r < n; r++) {
-    const px = frames[r * 4 + 2];
-    const pz = frames[r * 4 + 3];
-    const { x, z } = path[r];
-    let lowest = Infinity;
-    for (const [sx, sz] of [
-      [x, z],
-      [x + px * halfWidth, z + pz * halfWidth],
-      [x - px * halfWidth, z - pz * halfWidth],
-    ]) {
-      const h = sampleElevation(sx, sz);
-      if (Number.isFinite(h) && h < lowest) lowest = h;
-    }
-    raw[r] = lowest;
-  }
-
-  if (!fillGaps(raw)) return null;
-  return monotoneDownstream(raw);
-}
-
-/**
- * Comble sur place les valeurs non finies par le dernier voisin connu, dans
- * les deux sens. Rend faux si la série n'a aucune valeur exploitable.
- */
-function fillGaps(values) {
-  let known = null;
-  for (let r = 0; r < values.length; r++) {
-    if (Number.isFinite(values[r])) known = values[r];
-    else if (known !== null) values[r] = known;
-  }
-  if (known === null) return false;
-
-  known = null;
-  for (let r = values.length - 1; r >= 0; r--) {
-    if (Number.isFinite(values[r])) known = values[r];
-    else values[r] = known;
-  }
-  return true;
+  const m = { x: (p.x + q.x) / 2, z: (p.z + q.z) / 2 };
+  return [
+    ...subdivideTriangle(p, m, r, maxEdge, budget),
+    ...subdivideTriangle(m, q, r, maxEdge, budget),
+  ];
 }
 
 /** Matériau d'eau, avec ses rides animées. */
@@ -479,12 +192,12 @@ export function createWaterMaterial(THREE) {
     transparent: true, // légèrement translucide : on devine le fond près de la berge
     opacity: 0.88,
     depthWrite: true, // sinon les arbres de la rive lui passeraient au travers
-    // Le terrain gagne les égalités : c'est lui qui découpe le trait de côte,
-    // et sur un fond que la nappe rase de quelques centimètres, sans ce
-    // décalage les deux surfaces se disputeraient le pixel.
+    // La nappe gagne les égalités, comme une chaussée : elle est plaquée sur
+    // le terrain, exactement à son altitude, et c'est le polygone — pas une
+    // comparaison de hauteurs — qui dit jusqu'où elle va.
     polygonOffset: true,
-    polygonOffsetFactor: 1,
-    polygonOffsetUnits: 1,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -4,
   });
   material.name = 'water';
 
@@ -592,10 +305,11 @@ export class WaterLayer {
   _appendPolygons(source, tiles, here, radius, mesh, surfaces) {
     const { THREE, bubble } = this;
     let built = 0;
+    const budget = { left: WATER_DRAPE_MAX_TRIANGLES };
 
-    // Altitude naturelle, terrassements exclus : une nappe se cale sur le
+    // Altitude naturelle, terrassements exclus : une nappe se plaque sur le
     // relief, pas sur le déblai d'une route qui la longe. `NaN`, jamais 0, sur
-    // une tuile non chargée.
+    // une tuile non chargée — un sommet sans sol n'a pas d'altitude à prendre.
     const sampleGround = (x, z) => {
       const h = bubble.rawSurfaceElevationAtLocal(x, z, NaN);
       return Number.isFinite(h) ? h * bubble.verticalScale : NaN;
@@ -619,17 +333,6 @@ export class WaterLayer {
           if (hole.length >= 3) holeRings.push(hole);
         }
 
-        // La mer est à zéro par définition (chercher un niveau sur un polygone multi-tuiles n'aurait pas de sens).
-        let field;
-        if (properties.class === 'ocean') {
-          // Le zéro marin, remonté de la même marge : le MNT met la mer à zéro
-          // lui aussi, et une mer coplanaire au rivage ne se verrait pas.
-          field = { levelAt: () => WATER_SURFACE_MARGIN_M };
-        } else {
-          field = waterLevelField(outer, holeRings, sampleGround);
-          if (!field) continue;
-        }
-
         const contour = outer.map((p) => new THREE.Vector2(p.x, p.z));
         const holes = holeRings.map((hole) => hole.map((p) => new THREE.Vector2(p.x, p.z)));
 
@@ -643,19 +346,36 @@ export class WaterLayer {
         if (faces.length === 0) continue;
 
         // `triangulateShape` indexe le contour puis les trous, bout à bout.
+        // Ordre inversé : chiralité opposée du plan (x, z), sinon la nappe
+        // regarderait vers le bas. Les `Vector2` sont du plan (x, z) : leur
+        // `y` est notre `z`.
         const all = contour.concat(...holes);
-        // Ordre inversé : chiralité opposée du plan (x, z), sinon la nappe regarderait vers le bas.
         for (const [i0, i1, i2] of faces) {
+          const corners = [];
           for (const index of [i0, i2, i1]) {
             const p = all[index];
-            if (!p) continue;
-            // `Vector2` du plan (x, z) : son `y` est notre `z`.
-            this._vertex(mesh, p.x, field.levelAt(p.x, p.y), p.y);
+            if (p) corners.push({ x: p.x, z: p.y });
+          }
+          if (corners.length < 3) continue;
+
+          // Recoupé avant d'être plaqué : un grand triangle traverserait le sol.
+          for (const [a, b, c] of subdivideTriangle(...corners, WATER_DRAPE_EDGE_M, budget)) {
+            const ya = sampleGround(a.x, a.z);
+            const yb = sampleGround(b.x, b.z);
+            const yc = sampleGround(c.x, c.z);
+            // Un triangle dont un sommet n'a pas de sol est sauté : il serait
+            // rendu à l'altitude zéro, c'est-à-dire au niveau de la mer.
+            if (!Number.isFinite(ya) || !Number.isFinite(yb) || !Number.isFinite(yc)) continue;
+            this._vertex(mesh, a.x, ya, a.z);
+            this._vertex(mesh, b.x, yb, b.z);
+            this._vertex(mesh, c.x, yc, c.z);
           }
         }
 
-        // Déclarée après la triangulation seulement (une nappe refusée ne doit pas relever un tablier de pont).
-        surfaces.push({ rings: [outer, ...holeRings], levelAt: field.levelAt });
+        // Déclarée après la triangulation seulement (une nappe refusée ne doit
+        // pas relever un tablier de pont). L'altitude de l'eau sous un point
+        // est celle du sol : c'est tout l'objet de ce module.
+        surfaces.push({ rings: [outer, ...holeRings], levelAt: sampleGround });
         built++;
       }
     });
@@ -664,8 +384,10 @@ export class WaterLayer {
   _appendWaterways(source, tiles, here, radius, mesh) {
     const { bubble } = this;
     const buffer = createRibbonBuffer();
-    // `NaN`, pas zéro : une lacune que `waterwayProfile` comble, pas une altitude propagée jusqu'à l'embouchure.
-    const sampleElevation = (x, z) => bubble.surfaceElevationAtLocal(x, z, NaN) * bubble.verticalScale;
+    // Le sol tel qu'il est affiché, déblai compris : un ruisseau qui longe une
+    // route entaillée descend avec elle. Zéro en dernier recours — un ruban de
+    // huit mètres de large ne peut pas sauter un sommet sans se déchirer.
+    const sampleElevation = (x, z) => bubble.surfaceElevationAtLocal(x, z, 0) * bubble.verticalScale;
 
     source.forEachFeature(WATERWAY_SOURCE_LAYER, tiles, (geometry, properties) => {
       const style = waterwayStyleFor(properties, this.theme.water.waterways);
@@ -687,17 +409,16 @@ export class WaterLayer {
         const path = resamplePath(local, WATER_SAMPLE_M);
         if (path.length < 2) continue;
 
-        const platform = waterwayProfile(path, style.halfWidth, sampleElevation);
-        if (!platform) continue; // tracé entièrement hors des tuiles chargées
-
+        // Plaqué sur le sol, comme les nappes et pour la même raison : un
+        // profil calculé — fût-il monotone vers l'aval — enterre le ruban dès
+        // que le MNT remonte, et le fait flotter dès qu'il redescend.
         appendRibbon(buffer, {
           path,
           halfWidth: style.halfWidth,
           sampleElevation,
-          lift: WATER_SURFACE_MARGIN_M,
-          platform, // profil calculé puis imposé, comme la plate-forme de chaussée
-          level: true,
-          smoothRadius: 0, // sinon le lissage par défaut annulerait la monotonie imposée
+          lift: 0,
+          level: false,
+          smoothRadius: 0,
         });
       }
     });
