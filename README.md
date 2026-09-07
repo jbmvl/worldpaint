@@ -148,6 +148,31 @@ application already uses) rather than leaving it at the default.
 `updateSky` only exists if a sky was requested. Without one, the generator
 poses no light: the application lights the scene as it sees fit.
 
+### Triggering an animal crossing
+
+Everything above is a function of place: the same data renders the same
+landscape. One verb is not, and it is deliberately apart:
+
+```js
+world.crossFauna({
+  kind: 'deer',                                   // any of FAUNA_KINDS
+  at: { x: camera.position.x, z: camera.position.z },
+  forward: { x: dir.x, z: dir.z },                // where the camera looks, flat
+  distanceM: 55,                                  // how far ahead it cuts across
+  side: 1,                                        // which side it comes from (1 or -1)
+});
+```
+
+An animal walks out of one side of the view, **runs** across the observer's
+path, and stops on the other side. It is an event, not scenery: the
+application picks the species and the moment, the animal is not placed in the
+world, and coming back later will not find it. Use it for the random events of
+a game — something crossing the road in front of you.
+
+Deer, goats and foxes bound; everything else trots. That is decided per species
+(`FAUNA_SPECIES[kind].bound`) and blended in with speed, so a walking deer
+still moves diagonally.
+
 ### Weather
 
 Weather is **state, not art direction**: it changes as you go, so it travels

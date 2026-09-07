@@ -25,7 +25,8 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
 
 - **Navigation clavier en vol libre** : flèches pour avancer/reculer et se
   déplacer sur les côtés, <kbd>Espace</kbd>/<kbd>Maj</kbd> pour monter et
-  descendre, <kbd>Alt</kbd> pour accélérer. Glisser-clic pour regarder autour
+  descendre, <kbd>Alt</kbd> pour accélérer, <kbd>C</kbd> pour faire traverser
+  une bête. Glisser-clic pour regarder autour
   de soi. Sur mobile, les boutons ▲ et ▼ de la barre d'actions remplacent
   <kbd>Espace</kbd>/<kbd>Maj</kbd> : ils se maintiennent enfoncés et écrivent
   dans le même état de déplacement que le clavier.
@@ -40,6 +41,14 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
   fait respecter aux haies, clôtures, jardins, cultures et herbe : un élément de
   décor posé *sur* la nappe est un défaut d'emprise, un élément posé au ras du
   bord est à sa place.
+- **Panneau « Faune »** : déclenche la traversée d'une bête devant la caméra
+  (<kbd>C</kbd>, ou le bouton). C'est le seul geste du moteur qui ne soit pas
+  une fonction du lieu : `world.crossFauna({ kind, at, forward, distanceM })`
+  joue un **événement** — l'espèce et l'instant sont choisis par l'application,
+  la bête n'est pas posée dans le monde et un second passage ne la retrouvera
+  pas. Elle débouche alternativement d'un côté puis de l'autre du champ de
+  vision, court, et s'arrête de l'autre côté. C'est la brique d'un événement
+  aléatoire de jeu, montée ici sur un bouton pour qu'on puisse la regarder.
 - **Champ de recherche** : géocode le texte tapé via Nominatim
   (OpenStreetMap) et déplace la bulle (`setCenter` + `refresh`) sur le
   résultat.

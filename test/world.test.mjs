@@ -93,6 +93,7 @@ import {
   ringAreaMeters,
   pointInRing,
   scatterInRing,
+  coatFor,
   positionSeed,
   randomAt,
 } from '../src/layers/furniturePlacement.js';
@@ -414,6 +415,7 @@ import {
   LEGS,
   LIMB_ATTRIBUTE,
   MOTION_ATTRIBUTE,
+  MOTION_SIZE,
 } from '../src/models/animalKit.js';
 import {
   behaviourFor,
@@ -423,9 +425,18 @@ import {
   FAUNA_REPERTOIRE,
   DEFAULT_REPERTOIRE,
   CROSS_ODDS,
+  CROSS_SPAN_M,
+  DASH_SPAN_M,
+  HEAD_RAMP_S,
   TERRAIN_SAMPLE_M,
   CIRCUIT_MAX_STATIONS,
 } from '../src/layers/faunaMotion.js';
+import {
+  FaunaLayer,
+  boundMix,
+  FAUNA_CROSSING_MAX,
+  CROSSING_FORGET_M,
+} from '../src/layers/faunaLayer.js';
 import {
   windowGrid,
   windowDraw,
@@ -3446,6 +3457,76 @@ function fakeFaunaTHREE() {
   };
 }
 
+/**
+ * Un three de service, suffisant pour instancier `FaunaLayer` : les mêmes
+ * primitives que `fakeFaunaTHREE`, plus ce qu'il faut pour composer une
+ * matrice et porter des instances. Rien n'y dessine — on vérifie ce que la
+ * couche décide, pas ce qu'elle rend.
+ */
+function fakeSceneTHREE() {
+  const base = fakeFaunaTHREE();
+  return {
+    ...base,
+    DynamicDrawUsage: 0,
+    Group: class {
+      constructor() {
+        this.children = [];
+      }
+      add(child) {
+        this.children.push(child);
+      }
+      remove(child) {
+        this.children = this.children.filter((c) => c !== child);
+      }
+    },
+    Matrix4: class {
+      compose() {
+        return this;
+      }
+    },
+    Vector3: class {
+      set() {
+        return this;
+      }
+      setScalar() {
+        return this;
+      }
+    },
+    Quaternion: class {
+      setFromEuler() {
+        return this;
+      }
+    },
+    Euler: class {
+      set() {
+        return this;
+      }
+    },
+    Color: class {
+      setRGB() {
+        return this;
+      }
+    },
+    InstancedMesh: class {
+      constructor(geometry, material, capacity) {
+        this.geometry = geometry;
+        this.material = material;
+        this.count = capacity;
+        this.instanceMatrix = { count: capacity, setUsage() {}, needsUpdate: false };
+        this.instanceColor = { needsUpdate: false };
+      }
+      setColorAt() {}
+      setMatrixAt() {}
+      dispose() {}
+    },
+  };
+}
+
+/** Une scène de service : elle ne fait qu'accueillir et rendre un groupe. */
+function fakeScene() {
+  return { children: [], add(child) { this.children.push(child); }, remove() {} };
+}
+
 /** Les sommets d'un membre donné, dans un assembleur déjà bâti. */
 function limbVertices(kit, limb) {
   const out = [];
@@ -3971,6 +4052,345 @@ test('deux bêtes voisines ne sont pas synchrones', () => {
     offsets.add(circuit.offset.toFixed(4));
   }
   assert.equal(offsets.size, 12, 'chaque bête a son propre décalage');
+});
+
+// --- Courir : le trot et le bond ---------------------------------------------
+
+test('le bond ne concerne que les espèces qui bondissent, et seulement lancées', () => {
+  // C'est le nombre qui décide de tout : une espèce qui trotte ne bondit
+  // jamais, une espèce qui bondit ne le fait qu'une fois lancée.
+  const bondissent = ['goat', 'deer', 'doe', 'reindeer', 'fox'];
+  const trottinent = ['cow', 'sheep', 'horse', 'donkey', 'chicken', 'boar', 'wolf', 'bear'];
+  assert.equal(bondissent.length + trottinent.length, FAUNA_KINDS.length, 'le catalogue est couvert');
+
+  for (const kind of bondissent) {
+    const spec = FAUNA_SPECIES[kind];
+    assert.equal(spec.bound, true, `${kind} bondit`);
+    assert.equal(boundMix(0, spec), 0, `${kind} : à l'arrêt, rien ne bondit`);
+    assert.equal(boundMix(spec.walkMS, spec), 0, `${kind} : au pas, la diagonale`);
+    assert.equal(boundMix(spec.runMS, spec), 1, `${kind} : lancée, le bond entier`);
+    // Et le passage de l'un à l'autre est continu : une bête ne change pas
+    // d'allure d'une image à l'autre en franchissant un seuil.
+    const middle = boundMix((spec.walkMS + spec.runMS) / 2, spec);
+    assert.ok(middle > 0 && middle <= 1, `${kind} : fondu entre les deux (${middle.toFixed(2)})`);
+  }
+
+  for (const kind of trottinent) {
+    const spec = FAUNA_SPECIES[kind];
+    assert.ok(!spec.bound, `${kind} trottine`);
+    assert.equal(boundMix(spec.runMS, spec), 0, `${kind} : même lancée, la diagonale`);
+  }
+});
+
+test('le shader apparie les trains au bond et les diagonales au trot', () => {
+  const material = createFaunaMaterial(fakeFaunaTHREE());
+  const shader = {
+    vertexShader: [
+      '#include <common>',
+      'void main() {',
+      '#include <color_vertex>',
+      '#include <beginnormal_vertex>',
+      '#include <begin_vertex>',
+      '}',
+    ].join('\n'),
+  };
+  material.onBeforeCompile(shader);
+
+  // La quatrième composante de `aMotion` est le curseur trot/bond : sans elle
+  // lue, le bond n'existe pas et rien ne le signalerait.
+  assert.ok(shader.vertexShader.includes(`${MOTION_ATTRIBUTE}.w`), 'le shader lit la part de bond');
+  assert.ok(shader.vertexShader.includes('attribute vec4 aMotion'), 'aMotion est un vec4');
+  // Le fondu porte sur le déphasage lui-même, pas sur deux poses mélangées :
+  // c'est ce qui rend l'accélération continue.
+  assert.ok(shader.vertexShader.includes('mix(trot, leap, bound)'), 'le déphasage se fond');
+});
+
+test('le tampon d’animation porte quatre flottants par bête', () => {
+  // Il en portait trois. Un tampon dimensionné pour trois et déclaré pour
+  // quatre ne lèverait aucune erreur : il lirait la bête suivante.
+  assert.equal(MOTION_SIZE, 4);
+});
+
+// --- La traversée déclenchée -------------------------------------------------
+
+test('une traversée déclenchée va d’un bord à l’autre, une fois, et s’arrête', () => {
+  const circuit = buildCircuit({
+    behaviour: 'dash',
+    x: 0,
+    z: 0,
+    walkMS: 1.2,
+    runMS: 7,
+    sampleY: flatGround,
+    crossAxis: { x: 1, z: 0 },
+  });
+  assert.ok(circuit, 'un circuit est tracé');
+  assert.equal(circuit.closed, false, 'il ne se referme pas');
+  assert.ok(circuit.finish > 0, 'et il a une fin');
+  assert.equal(circuit.offset, 0, 'joué depuis le début : il commence quand on le demande');
+
+  const halts = circuit.stations.filter((s) => s.dwell > 0);
+  assert.equal(halts.length, 2, 'un bord de chaque côté');
+  close(Math.hypot(halts[0].x - halts[1].x, halts[0].z - halts[1].z), 2 * DASH_SPAN_M, 1e-9);
+
+  // Elle part du bon côté et arrive à l'autre — et n'en revient pas : au-delà
+  // de `finish`, c'est à l'appelant de la retirer, pas au circuit de boucler.
+  const start = faunaStateAt(circuit, 0);
+  const end = faunaStateAt(circuit, circuit.finish);
+  close(start.x, -DASH_SPAN_M, 1e-9, 'elle débouche d’un côté');
+  close(end.x, DASH_SPAN_M, 1e-9, 'elle arrive de l’autre');
+  assert.equal(end.speed, 0, 'et elle s’y arrête');
+
+  // Elle court, elle ne marche pas : c'est le point de toute la manœuvre.
+  assert.equal(circuit.speed, 7);
+  let couru = false;
+  for (let step = 0; step < 200; step++) {
+    const state = faunaStateAt(circuit, (step / 200) * circuit.finish);
+    if (state.speed > 0) {
+      assert.equal(state.speed, 7, 'à l’allure vive tout du long');
+      couru = true;
+    }
+  }
+  assert.ok(couru, 'elle traverse pour de bon');
+});
+
+test('une traversée déclenchée regarde là où elle va dès son apparition', () => {
+  // Le cap d'une halte est celui de l'arrivée : sur un circuit ouvert, la
+  // première station n'en a pas, et une bête déboucherait de biais.
+  const circuit = buildCircuit({
+    behaviour: 'dash',
+    x: 10,
+    z: -5,
+    walkMS: 1,
+    runMS: 6,
+    sampleY: flatGround,
+    crossAxis: { x: 0, z: 1 },
+  });
+  const start = faunaStateAt(circuit, 0);
+  const running = faunaStateAt(circuit, circuit.finish * 0.5);
+  close(start.heading, running.heading, 1e-9, 'même cap à l’arrêt et en course');
+});
+
+test('la demi-longueur d’une traversée se règle depuis l’extérieur', () => {
+  // Une traversée du décor est vue de profil et de près, une traversée
+  // déclenchée de face et de loin : elles n'ont pas la même longueur.
+  const circuit = buildCircuit({
+    behaviour: 'dash',
+    x: 0,
+    z: 0,
+    walkMS: 1,
+    runMS: 6,
+    sampleY: flatGround,
+    crossAxis: { x: 1, z: 0 },
+    spanM: 40,
+  });
+  const halts = circuit.stations.filter((s) => s.dwell > 0);
+  close(Math.hypot(halts[0].x - halts[1].x, halts[0].z - halts[1].z), 80, 1e-9);
+  assert.ok(DASH_SPAN_M > CROSS_SPAN_M, 'et le défaut déclenché est le plus long');
+});
+
+test('la traversée du décor se court, et n’est jamais tirée pour une bête déclenchée', () => {
+  assert.equal(FAUNA_BEHAVIOURS.cross.run, true, 'on ne s’attarde pas sur une chaussée');
+  assert.equal(FAUNA_BEHAVIOURS.dash.run, true);
+  // `dash` est un événement demandé, pas une conduite : aucun répertoire ne
+  // doit la contenir, sinon une bête du décor la tirerait au sort.
+  for (const pool of [...Object.values(FAUNA_REPERTOIRE), DEFAULT_REPERTOIRE]) {
+    assert.ok(!pool.includes('dash'), 'aucune bête ne se donne une traversée déclenchée');
+  }
+  for (const draw of [0, 0.01, 0.5, 0.99]) {
+    for (const family of Object.keys(FAUNA_REPERTOIRE)) {
+      assert.notEqual(
+        behaviourFor({ family, variant: draw, nearRoad: true, crossDraw: draw }),
+        'dash'
+      );
+    }
+  }
+});
+
+test('la couche du vivant joue une traversée déclenchée, puis l’oublie', () => {
+  const layer = new FaunaLayer({ THREE: fakeSceneTHREE(), scene: fakeScene(), theme: defaultTheme });
+  const circuit = buildCircuit({
+    behaviour: 'dash',
+    x: 0,
+    z: 0,
+    walkMS: 1.2,
+    runMS: 7,
+    sampleY: flatGround,
+    crossAxis: { x: 1, z: 0 },
+  });
+
+  // Le décor d'abord : la traversée doit s'y ajouter, pas s'y substituer.
+  layer.setAnimals(
+    [{ kind: 'cow', x: 3, z: 3, circuit: buildCircuit({ behaviour: 'graze', x: 3, z: 3, walkMS: 1, runMS: 3, sampleY: flatGround }), tint: [1, 1, 1], scale: 1 }],
+    { x: 0, z: 0 }
+  );
+  assert.equal(layer.animals.get('cow').length, 1);
+
+  const crossing = layer.addCrossing({ kind: 'deer', x: 0, z: 0, circuit, tint: [1, 1, 1], scale: 1 });
+  assert.ok(crossing, 'la bête est lancée');
+  assert.equal(layer.animals.get('deer').length, 1, 'elle est jouée');
+  assert.equal(layer.animals.get('cow').length, 1, 'et le décor est intact');
+
+  // Tant qu'elle traverse, elle reste — même loin de l'observateur.
+  layer.advance(circuit.finish * 0.5, { x: 4000, z: 4000 });
+  assert.equal(layer.crossings.length, 1, 'on ne l’efface pas en pleine course');
+
+  // Arrivée mais l'observateur est resté à portée : elle attend sur place.
+  layer.advance(circuit.finish, { x: 0, z: 0 });
+  assert.equal(layer.crossings.length, 1, 'elle ne s’évapore pas devant l’observateur');
+
+  // L'observateur est passé au large : elle est oubliée.
+  layer.advance(1, { x: CROSSING_FORGET_M + 50, z: 0 });
+  assert.equal(layer.crossings.length, 0, 'oubliée une fois loin derrière');
+  assert.equal(layer.animals.get('deer').length, 0);
+  assert.equal(layer.animals.get('cow').length, 1, 'et le décor est toujours là');
+});
+
+test('une reconstruction du décor n’efface pas une traversée en cours', () => {
+  // Le décor se refait tous les 250 mètres ; un événement déclenché par
+  // l'application n'a aucune raison d'en dépendre.
+  const layer = new FaunaLayer({ THREE: fakeSceneTHREE(), scene: fakeScene(), theme: defaultTheme });
+  const circuit = buildCircuit({
+    behaviour: 'dash',
+    x: 0,
+    z: 0,
+    walkMS: 1.2,
+    runMS: 7,
+    sampleY: flatGround,
+    crossAxis: { x: 1, z: 0 },
+  });
+  layer.addCrossing({ kind: 'fox', x: 0, z: 0, circuit, tint: [1, 1, 1], scale: 1 });
+  layer.setAnimals([], { x: 0, z: 0 });
+  assert.equal(layer.animals.get('fox').length, 1, 'toujours là après reconstruction');
+
+  assert.ok(layer.cancelCrossing(layer.crossings[0]), 'et l’application peut l’interrompre');
+  assert.equal(layer.animals.get('fox').length, 0);
+});
+
+test('les traversées déclenchées sont plafonnées', () => {
+  const layer = new FaunaLayer({ THREE: fakeSceneTHREE(), scene: fakeScene(), theme: defaultTheme });
+  const circuit = buildCircuit({
+    behaviour: 'dash',
+    x: 0,
+    z: 0,
+    walkMS: 1,
+    runMS: 6,
+    sampleY: flatGround,
+    crossAxis: { x: 1, z: 0 },
+  });
+  for (let i = 0; i < FAUNA_CROSSING_MAX + 5; i++) {
+    layer.addCrossing({ kind: 'doe', x: i, z: 0, circuit, tint: [1, 1, 1], scale: 1 });
+  }
+  assert.equal(layer.crossings.length, FAUNA_CROSSING_MAX, 'une application ne remplit pas le pré');
+  // Une espèce inconnue ne fait rien tomber : elle est refusée, c'est tout.
+  assert.equal(layer.addCrossing({ kind: 'licorne', x: 0, z: 0, circuit }), null);
+});
+
+// --- Près de la route ---------------------------------------------------------
+
+test('l’encolure se baisse et se relève vite', () => {
+  // Le mouvement qu'on regarde le plus longtemps de tout le décor : un pré au
+  // repos, c'est vingt têtes qui montent et descendent.
+  assert.ok(HEAD_RAMP_S <= 0.5, `montée d’encolure vive (${HEAD_RAMP_S} s)`);
+
+  const circuit = buildCircuit({
+    behaviour: 'graze',
+    x: 12,
+    z: 34,
+    walkMS: 1,
+    runMS: 3,
+    sampleY: flatGround,
+  });
+
+  // On mesure la descente sur le circuit lui-même : le temps qui sépare la
+  // dernière tête haute de la première tête entièrement basse. Sans cette
+  // mesure, la constante pourrait cesser d'être respectée sans que rien ne
+  // le dise.
+  const step = 0.01;
+  let lastHigh = null;
+  let firstLow = null;
+  for (let i = 0; i * step < circuit.period; i++) {
+    const t = i * step;
+    const head = faunaStateAt(circuit, t).head;
+    if (head === 0) lastHigh = t;
+    if (head > 0.99 && firstLow === null && lastHigh !== null) {
+      firstLow = t;
+      break;
+    }
+  }
+  assert.ok(firstLow !== null, 'la tête descend bel et bien pendant la période');
+  assert.ok(
+    firstLow - lastHigh <= HEAD_RAMP_S + 2 * step,
+    `descente en ${(firstLow - lastHigh).toFixed(2)} s, au plus ${HEAD_RAMP_S} s`
+  );
+});
+
+test('un semis peut être adossé à un point imposé, et le tirage reste le même', () => {
+  const ring = [
+    { x: -200, z: -200 },
+    { x: 200, z: -200 },
+    { x: 200, z: 200 },
+    { x: -200, z: 200 },
+  ];
+  const focus = { x: 170, z: 0 };
+  const near = scatterInRing(ring, 12, 4242, { cluster: 0.4, focus, reachM: 20 });
+  assert.ok(near.length > 0, 'des bêtes sont posées');
+  for (const spot of near) {
+    assert.ok(Math.abs(spot.x - focus.x) <= 20 + 1e-9, 'le semis tient dans la boîte imposée');
+    assert.ok(Math.abs(spot.z - focus.z) <= 20 + 1e-9);
+  }
+
+  // Sans point imposé, le semis est celui d'avant : le tirage du point libre a
+  // lieu de toute façon, pour qu'une parcelle ne change pas de semis selon
+  // qu'une route passe à côté.
+  const libre = scatterInRing(ring, 12, 4242, { cluster: 0.4 });
+  const memeGraine = scatterInRing(ring, 12, 4242, { cluster: 0.4 });
+  assert.deepEqual(libre, memeGraine, 'et il reste déterministe');
+});
+
+test('l’index des chaussées sait dire où est la route la plus proche', () => {
+  // `query` répond à « suis-je dessus ». La question posée par un troupeau
+  // qu'on veut voir depuis la route est l'autre : « où est-elle ».
+  const index = new RoadIndex([
+    {
+      halfWidth: 3,
+      path: [
+        { x: 0, y: 0, z: -50 },
+        { x: 0, y: 0, z: 50 },
+      ],
+    },
+  ]);
+
+  assert.equal(index.query(40, 0), null, 'à quarante mètres, on n’est pas dessus');
+  const hit = index.nearestWithin(40, 0, 55);
+  assert.ok(hit, 'mais la route est bien trouvée');
+  close(hit.distance, 40, 1e-9);
+  close(hit.x, 0, 1e-9, 'et le point de l’axe qui fait face');
+  close(hit.z, 0, 1e-9);
+  assert.equal(hit.segment.halfWidth, 3);
+
+  // Hors de portée, rien — et le semis reprend son tirage libre.
+  assert.equal(index.nearestWithin(40, 0, 20), null);
+  assert.equal(index.nearestWithin(40, 0, 0), null, 'une portée nulle ne cherche rien');
+
+  // La plus proche l'emporte, pas la première rencontrée.
+  const deux = new RoadIndex([
+    { halfWidth: 3, path: [{ x: 0, y: 0, z: -50 }, { x: 0, y: 0, z: 50 }] },
+    { halfWidth: 3, path: [{ x: 25, y: 0, z: -50 }, { x: 25, y: 0, z: 50 }] },
+  ]);
+  close(deux.nearestWithin(40, 0, 55).x, 25, 1e-9);
+});
+
+test('la robe d’une bête est tirée du lieu, et jamais absente', () => {
+  const coats = defaultTheme.fauna.coats;
+  for (const kind of FAUNA_KINDS) {
+    const tint = coatFor(coats, kind, 111, -222);
+    assert.deepEqual(tint, coatFor(coats, kind, 111, -222), `${kind} : même lieu, même robe`);
+    assert.ok(coats[kind].includes(tint), `${kind} : tirée dans son nuancier`);
+  }
+  // Une espèce sans nuancier rend un blanc neutre : le matériau multiplie la
+  // teinte d'instance dans la robe, et une bête sans teinte serait en plâtre.
+  assert.deepEqual(coatFor(coats, 'licorne', 0, 0), [1, 1, 1]);
+  assert.deepEqual(coatFor(null, 'cow', 0, 0), [1, 1, 1]);
 });
 
 test('chaque bête a un nom lisible et un nuancier de robes', () => {

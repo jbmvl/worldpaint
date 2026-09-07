@@ -104,6 +104,7 @@ import {
   ringAreaMeters,
   scatterInRing,
   pointInRing,
+  coatFor,
   randomAt,
   positionSeed,
   ROW_CROPS,
@@ -129,6 +130,38 @@ export const FURNITURE_RADIUS_M = 700;
  * bocage qu'on traverse en dix minutes.
  */
 export const HERD_EMPTY_ODDS = 0.12;
+
+/**
+ * Portée de la recherche d'une route à laquelle adosser un groupe de bêtes,
+ * en mètres.
+ *
+ * Le décor n'est pas regardé de partout : il est regardé depuis la route. Une
+ * bête au fond d'un champ de quarante hectares est aussi coûteuse qu'une bête
+ * au bord de la chaussée et ne sera jamais vue. On regroupe donc les troupeaux
+ * et le gibier du côté de la route la plus proche, quand il y en a une à
+ * portée — et on assume que c'est un peu arrangé : personne ne compare le
+ * paysage à la parcelle réelle, tout le monde regarde ce qui passe.
+ *
+ * Le semis reste déterministe : la route la plus proche du centroïde d'une
+ * parcelle ne dépend ni de l'ordre de parcours ni de l'observateur.
+ */
+export const ROADWARD_REACH_M = 55;
+
+/**
+ * Distance à laquelle un groupe adossé à une route se tient de sa rive, en
+ * mètres. Assez pour ne pas paître sur l'accotement, assez peu pour être vu.
+ */
+export const ROADWARD_STANDOFF_M = 11;
+
+/**
+ * Demi-côté de la boîte où se sème un groupe adossé à une route, en mètres.
+ *
+ * Sans elle, le resserrement reste proportionnel à la parcelle et un troupeau
+ * « près de la route » d'un openfield de six cents mètres de large s'étale
+ * encore sur deux cents. C'est ce nombre-là qui fait que le regroupement veut
+ * dire quelque chose.
+ */
+export const ROADWARD_SPREAD_M = 26;
 
 /** Rayons du balayage grossier qui cherche une route à traverser (`_crossingAt`). */
 export const CROSS_PROBE_RAYS = 8;
@@ -2071,6 +2104,7 @@ export class FurnitureLayer {
 
     const { item, spread } = herdFor({ steepness, variant, climate: this.climate });
     const seed = positionSeed(centre.x, centre.z, 61);
+    const focus = this._roadwardFocus(ring, centre);
     let placed = 0;
 
     // Un troupeau ne paît pas sur le bitume, ni sur le ballast. Le cap commun
@@ -2078,7 +2112,12 @@ export class FurnitureLayer {
     // tient le cap de son circuit, et deux bêtes voisines qui broutent en
     // regardant exactement dans la même direction ne se voyaient acceptables
     // que parce qu'elles ne bougeaient pas.
-    for (const spot of this._filterOffInfra(scatterInRing(ring, count, seed, { cluster: spread }))) {
+    const semis = scatterInRing(ring, count, seed, {
+      cluster: spread,
+      focus,
+      reachM: focus ? ROADWARD_SPREAD_M : 0,
+    });
+    for (const spot of this._filterOffInfra(semis)) {
       placed += this._placeFauna(item, { x: spot.x, z: spot.z, ring, scale: 0.9 + spot.variant * 0.22 });
     }
     return placed;
@@ -2152,12 +2191,59 @@ export class FurnitureLayer {
     if (count <= 0) return 0;
 
     const seed = positionSeed(centre.x, centre.z, 91);
+    // Le gibier aussi se tient du côté de la route : c'est en lisière qu'on le
+    // voit, et la lisière qui compte est celle qu'on longe.
+    const focus = this._roadwardFocus(ring, centre);
     let placed = 0;
 
-    for (const spot of this._filterOffInfra(scatterInRing(ring, count, seed, { cluster: game.spread }))) {
+    const semis = scatterInRing(ring, count, seed, {
+      cluster: game.spread,
+      focus,
+      reachM: focus ? ROADWARD_SPREAD_M : 0,
+    });
+    for (const spot of this._filterOffInfra(semis)) {
       placed += this._placeFauna(game.item, { x: spot.x, z: spot.z, ring, scale: 0.9 + spot.variant * 0.2 });
     }
     return placed;
+  }
+
+  /**
+   * Point d'une parcelle où adosser un groupe de bêtes : à portée de vue de la
+   * route la plus proche, du côté où la parcelle s'étend.
+   *
+   * Le calcul part du centroïde et non d'un tirage : c'est ce qui garantit que
+   * la même parcelle rend le même point d'ancrage à chaque reconstruction. Il
+   * s'écarte de la rive de `ROADWARD_STANDOFF_M` **vers le centroïde**, parce
+   * qu'une route qui longe une parcelle la borde par un côté : le point qui
+   * lui fait face, décalé vers l'intérieur, est dans la parcelle.
+   *
+   * Rend `null` — et le semis reprend son tirage libre — dans les trois cas où
+   * l'ancrage n'aurait pas de sens : aucune route à portée, une route qui
+   * passe pile sur le centroïde (aucune direction à suivre), un point qui
+   * retombe hors de la parcelle (une parcelle en croissant, une route qui la
+   * coupe en biais).
+   *
+   * Comme `_crossingAt`, la réponse dépend de ce que l'index des chaussées
+   * couvre : une parcelle collée au bord du bloc de tuiles pourrait ne pas
+   * voir une route qui est juste au-delà. Routes et parcelles viennent des
+   * mêmes tuiles, donc le cas est marginal — mais c'est bien là, et nulle part
+   * ailleurs, qu'un troupeau pourrait se replacer d'une reconstruction à
+   * l'autre.
+   *
+   * @returns {{x:number,z:number}|null}
+   */
+  _roadwardFocus(ring, centre) {
+    const hit = this._roadIndex?.nearestWithin?.(centre.x, centre.z, ROADWARD_REACH_M);
+    if (!hit) return null;
+
+    const dx = centre.x - hit.x;
+    const dz = centre.z - hit.z;
+    const away = Math.hypot(dx, dz);
+    if (away < 1e-3) return null;
+
+    const standoff = hit.segment.halfWidth + ROADWARD_STANDOFF_M;
+    const focus = { x: hit.x + (dx / away) * standoff, z: hit.z + (dz / away) * standoff };
+    return pointInRing(ring, focus.x, focus.z) ? focus : null;
   }
 
   /**
@@ -2218,9 +2304,7 @@ export class FurnitureLayer {
 
   /** Robe d'une bête, tirée dans le nuancier de son espèce. Ancrée au lieu. */
   _coatFor(kind, x, z) {
-    const list = this._coats?.[kind];
-    if (!list || list.length === 0) return [1, 1, 1];
-    return list[Math.min(list.length - 1, Math.floor(randomAt(x, z, 233) * list.length))];
+    return coatFor(this._coats, kind, x, z);
   }
 
   /**

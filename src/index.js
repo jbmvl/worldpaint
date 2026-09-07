@@ -5,7 +5,14 @@
 
 // --- Monter un paysage ------------------------------------------------------
 export { createWorld, World, DEFAULT_VIEW } from './world.js';
-export { WorldComposer, WORLD_ATTRIBUTION } from './worldComposer.js';
+export { WorldComposer, WORLD_ATTRIBUTION, FAUNA_CROSS_AHEAD_M } from './worldComposer.js';
+
+// --- Le vivant : déclencher un événement -------------------------------------
+// `world.crossFauna({ kind, at, forward })` fait traverser une bête devant
+// l'observateur. Le catalogue dit quelles espèces existent, et ce qu'elles
+// savent faire (allures, famille, foulée).
+export { FAUNA_KINDS, FAUNA_SPECIES } from './models/fauna/index.js';
+export { DASH_SPAN_M } from './layers/faunaMotion.js';
 
 // --- La direction artistique ------------------------------------------------
 // Une application donne ses tranches à `createWorld({ theme })`.
@@ -44,6 +51,7 @@ export {
   collectBuildingLabels,
   labelForForestType,
   labelForMeshName,
+  LABEL_FAUNA,
   labelForPlace,
   sourceForMeshName,
   LABEL_RADIUS_M,

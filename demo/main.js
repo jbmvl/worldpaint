@@ -7,7 +7,8 @@
  * Au programme : navigation clavier + téléportation au clic, étiquetage de
  * ce qu'on regarde (`inspect/objectLabels`), affichage de l'emprise
  * routière, recherche géocodée (Nominatim), mini-carte façon Street View,
- * panneau météo et heure.
+ * panneau météo et heure, et le déclenchement d'une traversée d'animal —
+ * le seul geste du moteur qui soit un événement et non une fonction du lieu.
  *
  * Le panneau météo montre où passe la frontière moteur/application : c'est
  * la démo qui décide du temps qu'il fait (curseurs, pour comparer vite),
@@ -25,6 +26,8 @@ import {
   CORRIDOR_MARGIN_M,
   DEFAULT_WEATHER,
   CLIMATE_FAMILIES,
+  FAUNA_KINDS,
+  LABEL_FAUNA,
 } from '../src/index.js';
 
 // --- Réglages ---------------------------------------------------------------
@@ -64,6 +67,10 @@ const panel = document.getElementById('panel');
 const weatherBtn = document.getElementById('weatherBtn');
 const upBtn = document.getElementById('upBtn');
 const downBtn = document.getElementById('downBtn');
+const faunaKindSelect = document.getElementById('faunaKind');
+const faunaDistanceInput = document.getElementById('faunaDistance');
+const faunaDistanceVal = document.getElementById('faunaDistanceVal');
+const faunaCrossBtn = document.getElementById('faunaCross');
 const climateSelect = document.getElementById('climate');
 const climateHint = document.getElementById('climateHint');
 const streetViewBtn = document.getElementById('streetViewBtn');
@@ -1264,6 +1271,61 @@ climateSelect.append(new Option('Automatique (d’après le lieu)', ''));
 for (const family of CLIMATE_FAMILIES) {
   climateSelect.append(new Option(CLIMATE_LABELS[family] || family, family));
 }
+
+// --- Faune : déclencher une traversée -----------------------------------------
+//
+// C'est ici que passe la frontière moteur/application pour le vivant, et elle
+// est nette : le moteur pose des bêtes en fonction du lieu, et il ne décide
+// jamais qu'il se passe quelque chose. Une traversée, elle, est un événement —
+// c'est l'application qui en choisit l'instant, l'espèce et la distance, comme
+// le ferait un jeu à ses événements aléatoires. La bête n'est pas ajoutée au
+// monde : elle est jouée par-dessus, et un second passage ne la retrouvera pas.
+
+for (const kind of FAUNA_KINDS) {
+  faunaKindSelect.append(new Option(LABEL_FAUNA[kind] || kind, kind));
+}
+faunaKindSelect.value = 'deer';
+
+/** De quel côté débouche la prochaine bête : on alterne, pour voir les deux. */
+let faunaSide = 1;
+
+function writeFaunaDistance() {
+  faunaDistanceVal.textContent = `${faunaDistanceInput.value} m`;
+}
+faunaDistanceInput.addEventListener('input', writeFaunaDistance);
+writeFaunaDistance();
+
+/** Lance une bête en travers du regard de la caméra. */
+function crossFaunaAhead() {
+  if (!world) return;
+  camera.getWorldDirection(cameraDirection);
+  const crossing = world.crossFauna({
+    kind: faunaKindSelect.value,
+    at: { x: camera.position.x, z: camera.position.z },
+    // Le regard à plat : une caméra qui pique du nez ne doit pas raccourcir la
+    // traversée, elle vise toujours le même point au sol devant elle.
+    forward: { x: cameraDirection.x, z: cameraDirection.z },
+    distanceM: Number(faunaDistanceInput.value),
+    side: faunaSide,
+  });
+  faunaSide = -faunaSide;
+  setStatus(
+    crossing
+      ? `${LABEL_FAUNA[faunaKindSelect.value] || faunaKindSelect.value} : traversée lancée`
+      : 'Traversée impossible ici (sol non chargé ?)',
+    !crossing
+  );
+}
+
+faunaCrossBtn.addEventListener('click', crossFaunaAhead);
+
+// Au clavier aussi : une traversée se déclenche en roulant, pas en fouillant
+// un panneau replié.
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyC' || isTypingTarget(document.activeElement)) return;
+  e.preventDefault();
+  crossFaunaAhead();
+});
 
 /** Reconstruit le décor sur place, sans bouger la caméra. */
 async function rebuildHere(message) {

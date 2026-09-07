@@ -513,6 +513,28 @@ export function herdFor({ steepness = 0, variant = 0, climate = null } = {}) {
 }
 
 /**
+ * Robe d'une bête, tirée dans le nuancier de son espèce (`theme.fauna.coats`).
+ *
+ * Ancrée au lieu, comme tout le reste : la même bête, au même endroit, a la
+ * même robe au passage suivant. Rend un blanc neutre plutôt que rien pour une
+ * espèce sans nuancier — le matériau du vivant **multiplie** la teinte
+ * d'instance dans la robe, et une bête sans teinte serait en plâtre.
+ *
+ * Fonction pure.
+ *
+ * @param {Object} coats Nuanciers par espèce.
+ * @param {string} kind Espèce.
+ * @param {number} x
+ * @param {number} z
+ * @returns {number[]} Triplet linéaire.
+ */
+export function coatFor(coats, kind, x, z) {
+  const list = coats?.[kind];
+  if (!Array.isArray(list) || list.length === 0) return [1, 1, 1];
+  return list[Math.min(list.length - 1, Math.floor(randomAt(x, z, 233) * list.length))];
+}
+
+/**
  * Le gibier d'un bois, par famille climatique — la liste dans laquelle un
  * massif tire ce qu'il abrite. Un item répété pèse d'autant plus lourd (même
  * convention que les essences d'un peuplement) ; une liste vide veut dire qu'il
@@ -1006,9 +1028,22 @@ export function pointInRing(ring, x, z) {
  * @param {Array<{x:number,z:number}>} ring
  * @param {number} count
  * @param {number} seed
+ * @param {number} [options.cluster] Resserrement : les tirages se regroupent
+ *        autour d'un point au lieu de couvrir la boîte (un troupeau se tient
+ *        ensemble).
+ * @param {{x:number,z:number}|null} [options.focus] Point de regroupement
+ *        imposé, au lieu du tirage. Sert à adosser un groupe à quelque chose
+ *        — une route, en pratique (voir `FurnitureLayer._roadwardFocus`).
+ *        Le tirage du point libre a lieu de toute façon, pour que la suite du
+ *        semis soit la même avec et sans : une parcelle ne doit pas changer de
+ *        semis selon qu'une route passe à côté.
+ * @param {number} [options.reachM] Demi-côté de la boîte de tirage autour du
+ *        point de regroupement, en mètres. Sans lui, le resserrement reste
+ *        proportionnel à la parcelle — ce qui ne veut plus rien dire quand on
+ *        veut se tenir à portée de vue d'un point précis.
  * @returns {Array<{x:number,z:number,rotation:number,variant:number}>}
  */
-export function scatterInRing(ring, count, seed, { cluster = 0 } = {}) {
+export function scatterInRing(ring, count, seed, { cluster = 0, focus = null, reachM = 0 } = {}) {
   const out = [];
   if (!Array.isArray(ring) || ring.length < 3 || count <= 0) return out;
 
@@ -1026,15 +1061,18 @@ export function scatterInRing(ring, count, seed, { cluster = 0 } = {}) {
   const random = makeRandom(seed);
   const attempts = count * 8;
   // Regroupement : les tirages se resserrent autour d'un point plutôt que couvrir toute la boîte (un troupeau se tient ensemble).
-  const focus = cluster > 0 ? { x: minX + random() * (maxX - minX), z: minZ + random() * (maxZ - minZ) } : null;
+  const wandering = cluster > 0 ? { x: minX + random() * (maxX - minX), z: minZ + random() * (maxZ - minZ) } : null;
+  const anchor = focus || wandering;
   const keep = cluster > 0 ? Math.min(1, Math.max(0.05, cluster)) : 1;
+  const spanX = reachM > 0 ? reachM * 2 : (maxX - minX) * keep;
+  const spanZ = reachM > 0 ? reachM * 2 : (maxZ - minZ) * keep;
 
   for (let i = 0; i < attempts && out.length < count; i++) {
     let x;
     let z;
-    if (focus) {
-      x = focus.x + (random() - 0.5) * (maxX - minX) * keep;
-      z = focus.z + (random() - 0.5) * (maxZ - minZ) * keep;
+    if (anchor) {
+      x = anchor.x + (random() - 0.5) * spanX;
+      z = anchor.z + (random() - 0.5) * spanZ;
     } else {
       x = minX + random() * (maxX - minX);
       z = minZ + random() * (maxZ - minZ);
