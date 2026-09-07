@@ -352,6 +352,7 @@ import {
   groundClassFor,
   classPolygons,
   CLASS_FILL,
+  CLASS_SOURCE_LAYERS,
   WATER_COVER_ID,
   waterwayStyleFor,
   isDrawableWater,
@@ -1759,8 +1760,18 @@ test('les couches vectorielles décrivent la matière du sol', () => {
   assert.equal(groundClassFor('landuse', { class: 'retail' }), 'bare');
   assert.equal(groundClassFor('landuse', { class: 'quarry' }), 'bare');
   assert.equal(groundClassFor('landuse', { class: 'cemetery' }), 'grass');
-  // Un parc est un parc, quelle que soit la zone qui l’entoure.
-  assert.equal(groundClassFor('park', { class: 'public_park' }), 'grass');
+  // La couche `park` ne peint plus rien, et le nom est le piège : au schéma
+  // OpenMapTiles elle ne porte aucun parc de ville mais des **périmètres de
+  // protection** — `boundary=protected_area`, `national_park`,
+  // `leisure=nature_reserve`. Elle était peinte en herbe, en dernier, par-dessus
+  // tout le reste : un cordon dunaire classé, un marais protégé, une forêt de
+  // parc régional finissaient en prairie, leur couverture effacée avec. Le parc
+  // de ville, lui, arrive par `landcover` en classe `grass`.
+  assert.equal(groundClassFor('park', { class: 'national_park' }), null);
+  assert.equal(groundClassFor('park', { class: 'protected_area' }), null);
+  assert.equal(groundClassFor('park', { class: 'nature_reserve' }), null);
+  assert.equal(groundClassFor('landcover', { class: 'grass', subclass: 'park' }), 'grass');
+  assert.ok(!CLASS_SOURCE_LAYERS.includes('park'), 'la couche n’est plus parcourue du tout');
 
   // Ce qui ne décrit pas une surface ne doit rien peindre du tout.
   assert.equal(groundClassFor('landuse', { class: 'school' }), null);
@@ -1924,6 +1935,140 @@ test('la carte de classes sait dire ce qu’elle ne couvre pas', () => {
   // Et sans rasterisation relue, elle ne dit rien du tout.
   map._data = null;
   assert.equal(coverage(100, 100, 1100, 1100, frame), 0, 'carte pas encore peinte');
+});
+
+/*
+ * Un canevas 2D qui n'encre rien mais retient tout : chaque `fill`/`stroke`
+ * est consigné avec l'état de dessin en vigueur. C'est le seul moyen de
+ * vérifier un ordre de composition sous `node`, où il n'y a ni canevas ni
+ * pixels — et l'ordre de composition est exactement ce qui s'était perdu dans
+ * la passe des cours d'eau.
+ */
+function recordingCanvas() {
+  const ops = [];
+  const state = {
+    globalCompositeOperation: 'source-over',
+    strokeStyle: '#000',
+    fillStyle: '#000',
+    lineWidth: 1,
+  };
+  const stack = [];
+  const ctx = {
+    ...state,
+    ops,
+    save() {
+      stack.push({
+        globalCompositeOperation: ctx.globalCompositeOperation,
+        strokeStyle: ctx.strokeStyle,
+        fillStyle: ctx.fillStyle,
+        lineWidth: ctx.lineWidth,
+      });
+    },
+    restore() {
+      Object.assign(ctx, stack.pop() || state);
+    },
+    clearRect() {},
+    fill() {
+      ops.push({ op: 'fill', style: ctx.fillStyle, mode: ctx.globalCompositeOperation });
+    },
+    stroke() {
+      ops.push({
+        op: 'stroke',
+        style: ctx.strokeStyle,
+        mode: ctx.globalCompositeOperation,
+        width: ctx.lineWidth,
+      });
+    },
+    getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+  };
+  return ctx;
+}
+
+test('un cours d’eau linéaire porte de l’eau, et son ourlet ne l’efface pas', () => {
+  // Bouchons : la carte veut un canevas et une fabrique de textures, et le
+  // test ne regarde ni l'un ni l'autre — seulement l'ordre des opérations.
+  const canvases = [];
+  const previousCanvas = globalThis.OffscreenCanvas;
+  const previousPath = globalThis.Path2D;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      this.width = width;
+      this.height = height;
+      this._ctx = recordingCanvas();
+      canvases.push(this._ctx);
+    }
+    getContext() {
+      return this._ctx;
+    }
+  };
+  globalThis.Path2D = class {
+    moveTo() {}
+    lineTo() {}
+    closePath() {}
+  };
+
+  const THREE = {
+    ClampToEdgeWrapping: 1,
+    LinearFilter: 2,
+    NearestFilter: 3,
+    NoColorSpace: '',
+    CanvasTexture: class {
+      constructor(canvas) {
+        this.image = canvas;
+      }
+    },
+    Vector2: class {
+      constructor(x = 0, y = 0) {
+        this.x = x;
+        this.y = y;
+      }
+      set(x, y) {
+        this.x = x;
+        this.y = y;
+        return this;
+      }
+    },
+  };
+
+  // Une seule entité : un ruisseau, qui n'existe dans les tuiles que comme
+  // trait — c'est tout l'objet de cette passe.
+  const source = {
+    forEachFeature(layer, tiles, callback) {
+      if (layer !== 'waterway') return;
+      callback(
+        { type: 'LineString', coordinates: [[0, 0], [0.001, 0.001]] },
+        { class: 'stream' }
+      );
+    },
+  };
+
+  let map;
+  try {
+    map = new GroundClassMap({ THREE });
+    map.rebuild(source, [{ x: 0, y: 0 }], { x: 0, z: 0 }, { origin: { x: 0, y: 0 }, scale: 1, zoom: 14 });
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+    if (previousPath) globalThis.Path2D = previousPath;
+    else delete globalThis.Path2D;
+  }
+
+  // Le second canevas est celui des cultures et des couvertures.
+  const crop = canvases[1].ops;
+  const water = `rgba(0, ${WATER_COVER_ID * COVER_ID_STEP}, 0, 1)`;
+
+  const bed = crop.findIndex((o) => o.op === 'stroke' && o.style === water);
+  assert.ok(bed >= 0, 'le lit est peint en eau dans la carte des couvertures');
+  // Le fond du défaut : sous `destination-out`, la couleur de la source n'est
+  // pas lue — le trait effaçait au lieu de peindre, et aucun ruisseau, aucune
+  // rivière trop étroite pour être un polygone ne portait d'eau.
+  assert.equal(crop[bed].mode, 'source-over', 'le lit peint, il n’efface pas');
+
+  const hem = crop.findIndex((o) => o.op === 'stroke' && o.mode === 'destination-out');
+  assert.ok(hem >= 0, 'l’ourlet efface bien ce qui poussait sur le passage');
+  // L'ourlet est plus large que le lit : peint après, il reprendrait l'eau.
+  assert.ok(crop[hem].width > crop[bed].width, 'l’ourlet déborde le lit');
+  assert.ok(hem < bed, 'l’ourlet passe avant le lit, sans quoi il le rongerait');
 });
 
 test('chaque matière a un canal distinct, et l’alpha porte la couverture', () => {
@@ -7069,6 +7214,31 @@ test('la compensation d’alpha atteint sa cible, et n’atteint que les couvert
     !/vCoverDist/.test(arbres.vertexShader + arbres.fragmentShader),
     'sans `coverage`, aucune trace de la compensation'
   );
+});
+
+test('le contour de l’eau se fond, sans que les identifiants cessent d’être lus au plus proche', () => {
+  // Le shader de terrain ne se monte pas sous `node` (il fabrique des canevas
+  // de grain), donc c'est sa **source** qu'on lit — comme pour la
+  // compensation d'alpha plus haut, et pour la même raison : une greffe qui
+  // rate son ancrage ne casse rien, elle ne fait rien.
+  const source = readFileSync('src/terrain/terrainMaterial.js', 'utf8');
+
+  // La part d'eau vient de l'interpolation du test sur quatre carreaux, et
+  // plus du seul carreau le plus proche — c'est ce qui dessinait un escalier.
+  assert.match(source, /gWater = waterShareAt\(classUv\);/);
+  assert.match(source, /mix\(mix\(s00, s10, f\.x\), mix\(s01, s11, f\.x\), f\.y\)/);
+
+  // Ce qui est interpolé est le **booléen**, pas l'identifiant : chaque relevé
+  // vise un centre de carreau, là où le filtrage au plus proche rend la valeur
+  // peinte et rien d'autre.
+  assert.match(source, /texture2D\(uCropMap, \(texel \+ 0\.5\) \/ \$\{CLASS_PIXELS\}\.0\)/);
+
+  // Et la berge est un fondu, pas une substitution.
+  assert.match(source, /base = mix\(base, water, gWater\);/);
+
+  // L'eau ne doit pas être peinte deux fois : écartée de la boucle des
+  // couvertures, sans quoi le sol sous le fondu serait déjà de l'eau.
+  assert.match(source, /if \(i == cover && i != \$\{WATER_COVER_ID - 1\}\)/);
 });
 
 test('le halo lit la couleur d’instance sans la redéclarer', () => {

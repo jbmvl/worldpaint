@@ -34,7 +34,7 @@ import {
   createMacroCanvas,
 } from '../materials/proceduralTextures.js';
 import { CROP_KINDS, CROP_ID_STEP } from '../layers/furniturePlacement.js';
-import { COVER_KINDS, COVER_ID_STEP, WATER_COVER_ID } from './groundClassMap.js';
+import { COVER_KINDS, COVER_ID_STEP, WATER_COVER_ID, CLASS_PIXELS } from './groundClassMap.js';
 import { createWaterNormalCanvas } from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
 import { soilWashFor } from '../core/climate.js';
@@ -300,6 +300,47 @@ export class TerrainMaterialFactory {
              vec3 b = texture2D(tex, uv + offB).rgb;
              float d = dot(a - b, vec3(0.3333));
              return mix(a, b, smoothstep(0.2, 0.8, f - 0.1 * d));
+           }
+
+           /* Vrai (1.0) si le carreau donné de la carte des cultures porte de l'eau. */
+           float waterAtTexel(vec2 texel) {
+             vec4 fine = texture2D(uCropMap, (texel + 0.5) / ${CLASS_PIXELS}.0);
+             int cover = int(floor(fine.g * 255.0 / ${COVER_ID_STEP}.0 + 0.5)) - 1;
+             return cover == ${WATER_COVER_ID - 1} ? 1.0 : 0.0;
+           }
+
+           /*
+            * Part d'eau en un point, de 0 à 1.
+            *
+            * La couverture est un **identifiant** peint dans un canal : il se
+            * relit au plus proche, sans quoi l'interpolation inventerait une
+            * matière entre deux (entre le sable et l'eau, il n'y a rien).
+            * D'où le défaut : le contour de l'eau suivait le carreau de la
+            * carte — deux mètres et demi de côté — et se lisait comme un
+            * escalier, alors que les lisières des matières, elles, sont
+            * filtrées linéairement et se fondent.
+            *
+            * On interpole donc le **résultat du test**, pas l'identifiant :
+            * les quatre carreaux voisins sont lus au plus proche, chacun est
+            * eau ou ne l'est pas, et c'est ce booléen qu'on mélange. La berge
+            * devient une rampe d'un carreau, de la largeur du fondu que la
+            * carte des matières a déjà.
+            *
+            * Limite assumée : le contour passe par les centres des carreaux.
+            * Il ne retrouve pas la position du polygone **dans** un carreau —
+            * il faudrait pour cela une carte de couverture d'eau à part,
+            * peinte avec son antialiasing. Ce qui disparaît ici est la marche
+            * d'escalier, pas le pas de la carte.
+            */
+           float waterShareAt(vec2 uv) {
+             vec2 grid = uv * ${CLASS_PIXELS}.0 - 0.5;
+             vec2 corner = floor(grid);
+             vec2 f = grid - corner;
+             float s00 = waterAtTexel(corner);
+             float s10 = waterAtTexel(corner + vec2(1.0, 0.0));
+             float s01 = waterAtTexel(corner + vec2(0.0, 1.0));
+             float s11 = waterAtTexel(corner + vec2(1.0, 1.0));
+             return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
            }`
         )
         .replace(
@@ -406,17 +447,26 @@ float macroSigned = (macro - 0.5) * far;
                // une prairie un peu terne ni un parking, ce sont d'autres
                // matières. Chacune n'est peinte que sur l'une des deux, donc
                // remplacer les deux ne mélange rien.
+               //
+               // L'eau est écartée de la boucle : elle n'est pas une matière
+               // de plus à mélanger mais une surface qui remplace le sol, et
+               // elle est reprise plus bas avec son propre fondu. La laisser
+               // ici peindrait le sol en couleur d'eau **avant** ce fondu, et
+               // la berge se fondrait d'une eau grainée vers une eau lisse au
+               // lieu d'aller de la terre à l'eau.
                int cover = int(floor(fine.g * 255.0 / ${COVER_ID_STEP}.0 + 0.5)) - 1;
                for (int i = 0; i < ${COVER_KINDS.length}; i++) {
-                 if (i == cover) {
+                 if (i == cover && i != ${WATER_COVER_ID - 1}) {
                    grassAlbedo = uCoverAlbedo[i];
                    bareAlbedo = uCoverAlbedo[i];
                  }
                }
                // L'eau n'est pas une matière de plus à mélanger : c'est une
                // surface qui remplace le sol. Elle est donc retenue à part,
-               // pour court-circuiter grain, roche et sol mouillé.
-               gWater = cover == ${WATER_COVER_ID - 1} ? 1.0 : 0.0;
+               // pour court-circuiter grain, roche et sol mouillé — et lue
+               // par interpolation du test (voir waterShareAt), sinon son
+               // contour est celui du carreau de la carte.
+               gWater = waterShareAt(classUv);
              }
 
              vec3 albedo =
@@ -439,7 +489,7 @@ float macroSigned = (macro - 0.5) * far;
                base = mix(base, saturated * 0.62, uWetness * (1.0 - gWater));
              }
 
-             if (gWater > 0.5) {
+             if (gWater > 0.001) {
                // Ce qui fait lire un plan d'eau, ce n'est pas sa couleur
                // propre — elle est presque noire — c'est qu'il **renvoie le
                // ciel d'autant plus qu'on le regarde de biais**. D'où un
@@ -451,7 +501,11 @@ float macroSigned = (macro - 0.5) * far;
                vec3 wavy = normalize(vSceneNormal + vec3(ripple.x, 0.0, ripple.z) * uWaterRipple.y);
                float grazing = 1.0 - clamp(dot(wavy, toEye), 0.0, 1.0);
                float sheen = pow(grazing, 3.0) * uWaterSheen;
-               base = mix(uWaterAlbedo, uWaterSheenColor, clamp(sheen, 0.0, 1.0));
+               vec3 water = mix(uWaterAlbedo, uWaterSheenColor, clamp(sheen, 0.0, 1.0));
+               // Fondu et non remplacement : c'est la berge. gWater vaut 1
+               // dès le second carreau, donc le plan d'eau lui-même n'est pas
+               // mélangé — seule sa bordure l'est.
+               base = mix(base, water, gWater);
              }
 
              diffuseColor.rgb = max(base, vec3(0.0));
@@ -511,7 +565,7 @@ float macroSigned = (macro - 0.5) * far;
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v11';
+    material.customProgramCacheKey = () => 'terrain-bubble-v12';
     return material;
   }
 
