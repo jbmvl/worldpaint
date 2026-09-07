@@ -562,9 +562,6 @@ export class GroundClassMap {
         ctx.lineJoin = 'round';
         ctx.strokeStyle = CLASS_FILL.wood;
         this.cropCtx.save();
-        // Le lit efface la culture qui s'y trouvait (un champ ne pousse pas sous un bosquet).
-        this.cropCtx.globalCompositeOperation = 'destination-out';
-        this.cropCtx.fillStyle = '#000';
         this.cropCtx.lineCap = 'round';
         this.cropCtx.lineJoin = 'round';
 
@@ -613,15 +610,25 @@ export class GroundClassMap {
             ctx.lineWidth = width * perMeter;
             ctx.stroke(path);
             ctx.restore();
-            // Et la matière du lit, dans l'autre carte : de l'eau.
+            // Dans l'autre carte, deux traits, et l'ordre n'est pas
+            // indifférent. D'abord l'ourlet entier efface ce qui poussait là
+            // (un champ ne pousse pas sous un bosquet)…
+            this.cropCtx.save();
+            this.cropCtx.globalCompositeOperation = 'destination-out';
+            this.cropCtx.strokeStyle = '#000';
+            this.cropCtx.lineWidth = lineWidthPx;
+            this.cropCtx.stroke(path);
+            this.cropCtx.restore();
+            // …puis le lit reprend par-dessus, en eau. Peint avant, il serait
+            // effacé par l'ourlet qui est plus large ; peint sous
+            // `destination-out`, il effacerait au lieu de peindre — la couleur
+            // d'une source n'est pas lue dans ce mode. Les deux à la fois, et
+            // c'était le défaut : aucun cours d'eau linéaire ne portait d'eau.
             this.cropCtx.save();
             this.cropCtx.strokeStyle = `rgba(0, ${WATER_COVER_ID * COVER_ID_STEP}, 0, 1)`;
             this.cropCtx.lineWidth = width * perMeter;
             this.cropCtx.stroke(path);
             this.cropCtx.restore();
-            this.cropCtx.lineWidth = lineWidthPx;
-            this.cropCtx.strokeStyle = '#000';
-            this.cropCtx.stroke(path);
             painted++;
           }
         });

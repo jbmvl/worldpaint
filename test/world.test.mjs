@@ -1926,6 +1926,140 @@ test('la carte de classes sait dire ce qu’elle ne couvre pas', () => {
   assert.equal(coverage(100, 100, 1100, 1100, frame), 0, 'carte pas encore peinte');
 });
 
+/*
+ * Un canevas 2D qui n'encre rien mais retient tout : chaque `fill`/`stroke`
+ * est consigné avec l'état de dessin en vigueur. C'est le seul moyen de
+ * vérifier un ordre de composition sous `node`, où il n'y a ni canevas ni
+ * pixels — et l'ordre de composition est exactement ce qui s'était perdu dans
+ * la passe des cours d'eau.
+ */
+function recordingCanvas() {
+  const ops = [];
+  const state = {
+    globalCompositeOperation: 'source-over',
+    strokeStyle: '#000',
+    fillStyle: '#000',
+    lineWidth: 1,
+  };
+  const stack = [];
+  const ctx = {
+    ...state,
+    ops,
+    save() {
+      stack.push({
+        globalCompositeOperation: ctx.globalCompositeOperation,
+        strokeStyle: ctx.strokeStyle,
+        fillStyle: ctx.fillStyle,
+        lineWidth: ctx.lineWidth,
+      });
+    },
+    restore() {
+      Object.assign(ctx, stack.pop() || state);
+    },
+    clearRect() {},
+    fill() {
+      ops.push({ op: 'fill', style: ctx.fillStyle, mode: ctx.globalCompositeOperation });
+    },
+    stroke() {
+      ops.push({
+        op: 'stroke',
+        style: ctx.strokeStyle,
+        mode: ctx.globalCompositeOperation,
+        width: ctx.lineWidth,
+      });
+    },
+    getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+  };
+  return ctx;
+}
+
+test('un cours d’eau linéaire porte de l’eau, et son ourlet ne l’efface pas', () => {
+  // Bouchons : la carte veut un canevas et une fabrique de textures, et le
+  // test ne regarde ni l'un ni l'autre — seulement l'ordre des opérations.
+  const canvases = [];
+  const previousCanvas = globalThis.OffscreenCanvas;
+  const previousPath = globalThis.Path2D;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      this.width = width;
+      this.height = height;
+      this._ctx = recordingCanvas();
+      canvases.push(this._ctx);
+    }
+    getContext() {
+      return this._ctx;
+    }
+  };
+  globalThis.Path2D = class {
+    moveTo() {}
+    lineTo() {}
+    closePath() {}
+  };
+
+  const THREE = {
+    ClampToEdgeWrapping: 1,
+    LinearFilter: 2,
+    NearestFilter: 3,
+    NoColorSpace: '',
+    CanvasTexture: class {
+      constructor(canvas) {
+        this.image = canvas;
+      }
+    },
+    Vector2: class {
+      constructor(x = 0, y = 0) {
+        this.x = x;
+        this.y = y;
+      }
+      set(x, y) {
+        this.x = x;
+        this.y = y;
+        return this;
+      }
+    },
+  };
+
+  // Une seule entité : un ruisseau, qui n'existe dans les tuiles que comme
+  // trait — c'est tout l'objet de cette passe.
+  const source = {
+    forEachFeature(layer, tiles, callback) {
+      if (layer !== 'waterway') return;
+      callback(
+        { type: 'LineString', coordinates: [[0, 0], [0.001, 0.001]] },
+        { class: 'stream' }
+      );
+    },
+  };
+
+  let map;
+  try {
+    map = new GroundClassMap({ THREE });
+    map.rebuild(source, [{ x: 0, y: 0 }], { x: 0, z: 0 }, { origin: { x: 0, y: 0 }, scale: 1, zoom: 14 });
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+    if (previousPath) globalThis.Path2D = previousPath;
+    else delete globalThis.Path2D;
+  }
+
+  // Le second canevas est celui des cultures et des couvertures.
+  const crop = canvases[1].ops;
+  const water = `rgba(0, ${WATER_COVER_ID * COVER_ID_STEP}, 0, 1)`;
+
+  const bed = crop.findIndex((o) => o.op === 'stroke' && o.style === water);
+  assert.ok(bed >= 0, 'le lit est peint en eau dans la carte des couvertures');
+  // Le fond du défaut : sous `destination-out`, la couleur de la source n'est
+  // pas lue — le trait effaçait au lieu de peindre, et aucun ruisseau, aucune
+  // rivière trop étroite pour être un polygone ne portait d'eau.
+  assert.equal(crop[bed].mode, 'source-over', 'le lit peint, il n’efface pas');
+
+  const hem = crop.findIndex((o) => o.op === 'stroke' && o.mode === 'destination-out');
+  assert.ok(hem >= 0, 'l’ourlet efface bien ce qui poussait sur le passage');
+  // L'ourlet est plus large que le lit : peint après, il reprendrait l'eau.
+  assert.ok(crop[hem].width > crop[bed].width, 'l’ourlet déborde le lit');
+  assert.ok(hem < bed, 'l’ourlet passe avant le lit, sans quoi il le rongerait');
+});
+
 test('chaque matière a un canal distinct, et l’alpha porte la couverture', () => {
   // L’encodage est le contrat entre ce module et le shader : R herbe, G bois,
   // B culture, et « classé sol nu » = alpha plein avec les trois canaux à zéro.

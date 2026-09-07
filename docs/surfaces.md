@@ -35,7 +35,7 @@ Une parcelle porte donc une part de chaque matière, et *une* culture **ou**
 | `wetland` | herbe | `wetland` | **la plus haute du décor** (×1,4), roselière |
 | `rock` + `scree` | sol nu | `scree` | quasi rien |
 | `rock` (autre) | sol nu | `rock` | quasi rien |
-| `sand` (plage, dune, sable) | sol nu | `sand` | quasi rien (0,08) |
+| `sand` | sol nu | `sand` | quasi rien (0,08) |
 | `ice`, `subclass` `glacier`/`ice_shelf` | sol nu | **aucune** | — |
 
 ### `landuse` — qui occupe le sol
@@ -49,6 +49,26 @@ Une parcelle porte donc une part de chaque matière, et *une* culture **ou**
 
 `landuse` ne pose jamais de couverture : il dit qui occupe le sol, pas de quoi
 il est fait.
+
+### Ce que `landcover` ne contient pas
+
+Notre `class` vient de la tuile, pas d'OSM : c'est OpenMapTiles qui range le
+tag d'origine dans une des sept classes, et **son tableau de correspondance est
+fermé**. Sur la clé `natural`, il ne retient que `wood`, `wetland`, `fell`,
+`grassland`, `heath`, `scrub`, `shrubbery`, `tundra`, `glacier`, `bare_rock`,
+`scree`, `beach`, `sand`, `dune`.
+
+Conséquence directe, et elle explique le plus souvent une surface manquante :
+`natural=shingle` (une plage de **galets**), `natural=mud`, `natural=rock`,
+`natural=cliff` **n'arrivent jamais jusqu'à nous** — pas de feature du tout,
+donc repli en herbe. Une plage n'est du sable pour nous que si elle est taguée
+`natural=beach`, `natural=sand` ou `natural=dune`.
+
+Sources : [schéma `landcover`](https://github.com/openmaptiles/openmaptiles/blob/master/layers/landcover/landcover.yaml),
+[correspondance des tags](https://github.com/openmaptiles/openmaptiles/blob/master/layers/landcover/mapping.yaml),
+[portage Planetiler](https://github.com/openmaptiles/planetiler-openmaptiles/blob/main/src/main/java/org/openmaptiles/layers/Landcover.java)
+(c'est celui qu'OpenFreeMap fait tourner ; le sable y est servi jusqu'au z14
+sans autre filtre qu'une taille minimale au-dessous du z13).
 
 ### `park`
 
@@ -97,6 +117,15 @@ Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
    repli — ce qui est plausible pour une école, moins pour un barrage.
 6. **Aucune couverture ne vient de `landuse`.** Une saline (`salt_pond`), une
    tourbière exploitée ou une piste ne peuvent pas être décrites aujourd'hui.
+
+## Comment vérifier ce que la donnée dit, sans deviner
+
+Dans la démo, cocher **« étiquettes »**. `collectPlaceLabels` parcourt les
+emprises `landcover` et `landuse` dans un rayon de 260 m et les nomme telles
+qu'elles arrivent : une étiquette « sable » signifie qu'une entité de classe
+`sand` est bien là, et donc que si le sol n'a pas la couleur du sable, le
+défaut est chez nous. Pas d'étiquette : la donnée ne dit rien à cet endroit, et
+c'est le repli en herbe qu'on voit.
 
 ## Le pas de la carte
 
