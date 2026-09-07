@@ -137,12 +137,29 @@ export const TERRAIN_LOOK = {
     sand: [0.624, 0.539, 0.361],
     // Pelouse d'altitude et toundra : vert jaune, ras.
     alpine: [0.205, 0.254, 0.107],
+    // Eau : ce qu'on voit d'un lac par temps couvert, avant tout reflet — le
+    // ciel qu'il renvoie est ajouté par le shader (`waterSheen`), pas ici.
+    water: [0.021, 0.045, 0.06],
   },
   /** Teinte de roche sur les fortes pentes. */
   rockColor: [0.72, 0.68, 0.62],
   slopeStart: 0.22,
   slopeEnd: 0.62,
   rockStrength: 0.75,
+
+  /**
+   * L'eau, quand le sol en est fait (couverture `water`). Trois réglages, et
+   * c'est le second qui fait qu'on lit de l'eau : un plan d'eau est sombre vu
+   * du dessus et clair vu de biais, parce qu'il renvoie le ciel d'autant plus
+   * qu'on le regarde rasant.
+   */
+  waterSheenColor: [0.42, 0.52, 0.6],
+  /** Force du ciel renvoyé au ras (Fresnel). */
+  waterSheen: 1.0,
+  /** Mètres couverts par un cycle de rides. */
+  waterRippleM: 9,
+  /** Amplitude du relief de rides — c'est elle qui fait scintiller. */
+  waterRippleRelief: 0.35,
 };
 
 // --- Les arbres ----------------------------------------------------------------
@@ -555,6 +572,10 @@ export const COVER_LOOK = {
   scree: { grassHeight: 0.3, grassDensity: 0.06, grassTint: [1, 0.96, 0.88], bushes: 0 },
   rock: { grassHeight: 0.35, grassDensity: 0.1, grassTint: [1, 0.96, 0.88], bushes: 0.02 },
   sand: { grassHeight: 0.6, grassDensity: 0.08, grassTint: [1.06, 0.98, 0.72], bushes: 0.05 },
+  // L'eau. Rien n'y pousse, et il ne s'agit pas d'un réglage d'aspect : une
+  // touffe qui sortirait de la Seine se verrait de loin. Sa couleur et ses
+  // rides sont dans `TERRAIN_LOOK`, pas ici — ce n'est pas de la végétation.
+  water: { grassHeight: 0, grassDensity: 0, grassTint: [1, 1, 1], bushes: 0 },
 };
 
 // --- Les bourgs ----------------------------------------------------------------

@@ -40,7 +40,7 @@
 import { TerrainBubble } from './terrain/terrainBubble.js';
 import { GroundClassMap } from './terrain/groundClassMap.js';
 import { RoadNetwork, createRoadMaterials } from './layers/roadNetwork.js';
-import { WaterLayer, createWaterMaterial } from './layers/waterLayer.js';
+import { WaterLayer } from './layers/waterLayer.js';
 import { RailwayLayer } from './layers/railwayLayer.js';
 import { BridgeLayer } from './layers/bridgeLayer.js';
 import { CombinedIndex } from './layers/roadGraph.js';
@@ -162,14 +162,10 @@ export class WorldComposer {
       },
     };
 
-    this.waterMaterial = createWaterMaterial(THREE);
-    this.water = new WaterLayer({
-      THREE,
-      scene,
-      bubble,
-      material: this.waterMaterial.material,
-      theme,
-    });
+    // L'eau ne pose rien dans la scène : elle est une matière du terrain
+    // (`groundClassMap` la peint, `terrainMaterial` la rend). Cette couche-ci
+    // ne sert qu'à dire aux ponts sous quelle cote ils n'ont rien à faire.
+    this.water = new WaterLayer({ bubble, theme });
     this.buildings = new BuildingLayer({ THREE, scene, bubble, theme });
     // Les jardins ne lisent pas les tuiles, seulement les maisons publiées par
     // le bâti, et les chaussées (une clôture ne se plante pas sur la rue).
@@ -481,7 +477,8 @@ export class WorldComposer {
     if (this.disposed) return;
     this.vegetation.processQueue();
     this.bubble.processRebuildQueue();
-    this.waterMaterial.advance(delta);
+    // Les rides de l'eau vivent dans le shader de terrain, avec elle.
+    this.bubble.materials.advanceWater(delta);
     this.grass.advance(delta);
     this.grass.update(at.x, at.z);
     this.vegetation.advance(delta);
@@ -559,7 +556,6 @@ export class WorldComposer {
     this.streets.dispose();
     this.buildings.dispose();
     this.water.dispose();
-    this.waterMaterial.dispose();
     this.railways.dispose();
     this.bridges.dispose();
     this.roads.dispose(); // avant la bulle : retire son déblai en partant

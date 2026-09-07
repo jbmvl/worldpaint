@@ -301,8 +301,6 @@ import {
   isDrawableWater,
   waterPolygons,
   boundsIntersect,
-  subdivideTriangle,
-  WATER_DRAPE_EDGE_M,
 } from '../src/layers/waterLayer.js';
 import { WaterIndex, ringCrossings } from '../src/layers/waterIndex.js';
 import {
@@ -327,6 +325,7 @@ import {
   groundClassFor,
   classPolygons,
   CLASS_FILL,
+  WATER_COVER_ID,
   GroundClassMap,
   CLASS_AREA_M,
   SETTLED_GRASS,
@@ -1269,42 +1268,18 @@ test('un profil de cours d’eau ne remonte jamais vers l’aval', () => {
   assert.equal(monotoneDownstream([]).length, 0);
 });
 
-test('un triangle de nappe est recoupé jusqu’à suivre le sol, sans se retourner', () => {
-  const a = { x: 0, z: 0 };
-  const b = { x: 120, z: 0 };
-  const c = { x: 0, z: 90 };
+test('l’eau est une couverture du sol, et la dernière de la liste', () => {
+  // L'ordre de `COVER_KINDS` est gravé : il est peint dans un canal et relu
+  // par le shader. L'eau y a été ajoutée en fin de liste pour cette raison.
+  assert.equal(COVER_KINDS[WATER_COVER_ID - 1], 'water', 'l’identifiant désigne bien l’eau');
+  assert.equal(WATER_COVER_ID, COVER_KINDS.length, 'ajoutée en fin de liste, sans décaler les autres');
 
-  const pieces = subdivideTriangle(a, b, c, WATER_DRAPE_EDGE_M, { left: 100000 });
-  assert.ok(pieces.length > 1, `le grand triangle est recoupé (${pieces.length} morceaux)`);
+  // L'identifiant doit tenir dans un octet une fois multiplié par son pas,
+  // sinon le canal saturerait et l'eau se relirait comme une autre matière.
+  assert.ok(WATER_COVER_ID * COVER_ID_STEP <= 255, 'l’identifiant tient dans le canal');
 
-  const area = (t) =>
-    ((t[1].x - t[0].x) * (t[2].z - t[0].z) - (t[2].x - t[0].x) * (t[1].z - t[0].z)) / 2;
-  const whole = area([a, b, c]);
-
-  let sum = 0;
-  for (const piece of pieces) {
-    for (let i = 0; i < 3; i++) {
-      const p = piece[i];
-      const q = piece[(i + 1) % 3];
-      assert.ok(
-        Math.hypot(q.x - p.x, q.z - p.z) <= WATER_DRAPE_EDGE_M + 1e-6,
-        'aucune arête ne dépasse la maille'
-      );
-    }
-    // Même signe que l'original : un morceau retourné regarderait vers le bas
-    // et la nappe se percerait de trous noirs.
-    assert.ok(area(piece) * whole > 0, 'le sens de parcours est conservé');
-    sum += area(piece);
-  }
-  close(sum, whole, Math.abs(whole) * 1e-6, 'les morceaux recouvrent exactement le triangle');
-
-  // Un triangle déjà assez fin n'est pas touché.
-  const small = [{ x: 0, z: 0 }, { x: 1, z: 0 }, { x: 0, z: 1 }];
-  assert.deepEqual(subdivideTriangle(...small, WATER_DRAPE_EDGE_M, { left: 100 }), [small]);
-
-  // Budget épuisé : on rend le triangle tel quel plutôt que rien.
-  const starved = subdivideTriangle(a, b, c, WATER_DRAPE_EDGE_M, { left: 1 });
-  assert.deepEqual(starved, [[a, b, c]], 'sans budget, le triangle passe entier');
+  // Et rien ne pousse dans l'eau.
+  assert.equal(coverBushesFor('water'), 0, 'aucun buisson dans l’eau');
 });
 
 test('l’index des nappes sait où est l’eau, et à quelle hauteur', () => {

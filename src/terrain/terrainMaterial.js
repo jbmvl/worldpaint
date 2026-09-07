@@ -34,7 +34,8 @@ import {
   createMacroCanvas,
 } from '../materials/proceduralTextures.js';
 import { CROP_KINDS, CROP_ID_STEP } from '../layers/furniturePlacement.js';
-import { COVER_KINDS, COVER_ID_STEP } from './groundClassMap.js';
+import { COVER_KINDS, COVER_ID_STEP, WATER_COVER_ID } from './groundClassMap.js';
+import { createWaterNormalCanvas } from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
 import { soilWashFor } from '../core/climate.js';
 
@@ -71,6 +72,9 @@ export class TerrainMaterialFactory {
     this.grassTexture = repeated(createGroundDetailCanvas('grass', 256, 91711));
     this.soilTexture = repeated(createGroundDetailCanvas('soil', 256, 60413));
     this.woodTexture = repeated(createGroundDetailCanvas('forest', 256, 77201));
+    // Rides : la même carte que celle qui servait la nappe d'eau, du temps où
+    // l'eau était une surface posée sur le terrain.
+    this.waterRippleTexture = repeated(createWaterNormalCanvas());
 
     this.material = this._create();
   }
@@ -82,7 +86,20 @@ export class TerrainMaterialFactory {
       this.grassTexture,
       this.soilTexture,
       this.woodTexture,
+      this.waterRippleTexture,
     ];
+  }
+
+  /**
+   * Fait dériver les rides de l'eau. Deux vitesses inégales : à vitesses
+   * égales on lit une image qui glisse, pas une surface qui bouge.
+   * @param {number} seconds Temps écoulé.
+   */
+  advanceWater(seconds) {
+    const flow = this._uniforms?.uWaterFlow?.value;
+    if (!flow) return;
+    flow.x = (flow.x + seconds * 0.013) % 1;
+    flow.y = (flow.y + seconds * 0.021) % 1;
   }
 
   /** Recale les uniformes sur la carte de classes après une re-rasterisation. */
@@ -176,6 +193,17 @@ export class TerrainMaterialFactory {
           (kind) => new THREE.Vector3(...((look.coverAlbedo || {})[kind] || look.grassAlbedo))
         ),
       },
+      // L'eau. Elle ne se mélange pas aux autres matières : là où la
+      // couverture le dit, elle remplace tout — couleur, grain, relief.
+      uWaterAlbedo: {
+        value: new THREE.Vector3(...((look.coverAlbedo || {}).water || [0.02, 0.045, 0.06])),
+      },
+      uWaterSheenColor: { value: new THREE.Vector3(...look.waterSheenColor) },
+      uWaterSheen: { value: look.waterSheen },
+      uWaterRipples: { value: this.waterRippleTexture },
+      uWaterRipple: { value: new THREE.Vector2(look.waterRippleM, look.waterRippleRelief) },
+      /** Dérive des rides, en cycles. Deux vitesses inégales : sinon on lit un glissement. */
+      uWaterFlow: { value: new THREE.Vector2(0, 0) },
       uRockColor: { value: new THREE.Vector3(...look.rockColor) },
       uSlopeRange: { value: new THREE.Vector2(look.slopeStart, look.slopeEnd) },
       uRockStrength: { value: look.rockStrength },
@@ -234,6 +262,12 @@ export class TerrainMaterialFactory {
            uniform vec2 uSlopeRange;
            uniform float uRockStrength;
            uniform float uWetness;
+           uniform vec3 uWaterAlbedo;
+           uniform vec3 uWaterSheenColor;
+           uniform float uWaterSheen;
+           uniform sampler2D uWaterRipples;
+           uniform vec2 uWaterRipple;
+           uniform vec2 uWaterFlow;
 
            /*
             * Relevé d'une texture cyclique **sans que sa période se voie**.
@@ -273,8 +307,10 @@ export class TerrainMaterialFactory {
           `#include <map_fragment>
            // Hors du bloc : la perturbation de normale, plus bas dans le
            // shader de three, lit ce grain-là — le relever une seconde fois
-           // coûterait autant que tout le reste du sol.
+           // coûterait autant que tout le reste du sol. Même raison pour la
+           // part d'eau : décidée ici, relue là-bas.
            float grainHeight = 0.5;
+           float gWater = 0.0;
            {
              // La carte de classes porte un poids par canal, et dans son
              // alpha la couverture (alpha nul = donnée absente, pas sol nu).
@@ -377,6 +413,10 @@ float macroSigned = (macro - 0.5) * far;
                    bareAlbedo = uCoverAlbedo[i];
                  }
                }
+               // L'eau n'est pas une matière de plus à mélanger : c'est une
+               // surface qui remplace le sol. Elle est donc retenue à part,
+               // pour court-circuiter grain, roche et sol mouillé.
+               gWater = cover == ${WATER_COVER_ID - 1} ? 1.0 : 0.0;
              }
 
              vec3 albedo =
@@ -388,14 +428,30 @@ float macroSigned = (macro - 0.5) * far;
              vec3 base = albedo * modulation;
 
              float slope = 1.0 - clamp(vSceneNormal.y, 0.0, 1.0);
-             float rock = smoothstep(uSlopeRange.x, uSlopeRange.y, slope) * uRockStrength;
+             float rock = smoothstep(uSlopeRange.x, uSlopeRange.y, slope) * uRockStrength * (1.0 - gWater);
              base = mix(base, base * uRockColor, rock);
 
-             // Sol mouillé : le film d'eau assombrit et sature (multi-réflexion interne).
+             // Sol mouillé : le film d'eau assombrit et sature (multi-réflexion
+             // interne). Sans objet sur l'eau elle-même.
              if (uWetness > 0.0) {
                float wetLuma = dot(base, vec3(0.2126, 0.7152, 0.0722));
                vec3 saturated = wetLuma + (base - wetLuma) * 1.35;
-               base = mix(base, saturated * 0.62, uWetness);
+               base = mix(base, saturated * 0.62, uWetness * (1.0 - gWater));
+             }
+
+             if (gWater > 0.5) {
+               // Ce qui fait lire un plan d'eau, ce n'est pas sa couleur
+               // propre — elle est presque noire — c'est qu'il **renvoie le
+               // ciel d'autant plus qu'on le regarde de biais**. D'où un
+               // Fresnel sur la normale ridée : sombre à l'aplomb, clair au
+               // ras, et scintillant entre les deux parce que chaque ride
+               // change l'angle.
+               vec3 toEye = normalize(cameraPosition - vScenePos);
+               vec3 ripple = texture2D(uWaterRipples, vScenePos.xz / uWaterRipple.x + uWaterFlow).xyz * 2.0 - 1.0;
+               vec3 wavy = normalize(vSceneNormal + vec3(ripple.x, 0.0, ripple.z) * uWaterRipple.y);
+               float grazing = 1.0 - clamp(dot(wavy, toEye), 0.0, 1.0);
+               float sheen = pow(grazing, 3.0) * uWaterSheen;
+               base = mix(uWaterAlbedo, uWaterSheenColor, clamp(sheen, 0.0, 1.0));
              }
 
              diffuseColor.rgb = max(base, vec3(0.0));
@@ -422,23 +478,40 @@ float macroSigned = (macro - 0.5) * far;
              // que vit le grain ; la normale de three, elle, est en espace
              // vue. D'où le passage par viewMatrix — mélanger les deux repères
              // donnerait un relief qui tourne avec la caméra.
+             //
+             // Les dérivées se prennent **hors de toute branche** : sur l'eau
+             // comme sur le sol. Une dérivée d'écran prise dans une condition
+             // que les pixels voisins ne suivent pas ensemble n'a pas de
+             // valeur définie, et la frontière d'une berge est exactement
+             // l'endroit où ils divergent.
              vec3 worldNormal = normalize(vSceneNormal);
              vec3 dpdx = dFdx(vScenePos);
              vec3 dpdy = dFdy(vScenePos);
+             float dhdx = dFdx(grainHeight);
+             float dhdy = dFdy(grainHeight);
+
              vec3 across = cross(dpdy, worldNormal);
              vec3 along = cross(worldNormal, dpdx);
              float det = dot(dpdx, across);
+             vec3 bumped = worldNormal;
              if (abs(det) > 1e-6) {
-               vec3 gradient = (across * dFdx(grainHeight) + along * dFdy(grainHeight)) / det;
-               vec3 bumped = normalize(worldNormal - uGrainRelief * gradient);
-               normal = normalize((viewMatrix * vec4(bumped, 0.0)).xyz);
+               bumped = normalize(worldNormal - uGrainRelief * (across * dhdx + along * dhdy) / det);
              }
+
+             // Sur l'eau, le relief n'est pas le grain du sol mais la ride.
+             // Deux relevés à des vitesses inégales : un seul se lirait comme
+             // une image qui glisse.
+             vec3 a = texture2D(uWaterRipples, vScenePos.xz / uWaterRipple.x + uWaterFlow).xyz * 2.0 - 1.0;
+             vec3 b = texture2D(uWaterRipples, vScenePos.zx / (uWaterRipple.x * 0.6) - uWaterFlow * 1.7).xyz * 2.0 - 1.0;
+             vec3 wavy = normalize(worldNormal + vec3(a.x + b.x, 0.0, a.z + b.z) * uWaterRipple.y);
+
+             normal = normalize((viewMatrix * vec4(mix(bumped, wavy, gWater), 0.0)).xyz);
            }`
         );
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v10';
+    material.customProgramCacheKey = () => 'terrain-bubble-v11';
     return material;
   }
 

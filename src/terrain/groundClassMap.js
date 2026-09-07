@@ -30,6 +30,15 @@
  * Deux identifiants indépendants, même repère, filtrés au plus proche : une
  * parcelle porte une culture **ou** une couverture, jamais un mélange, et les
  * deux se lisent d'un seul échantillonnage.
+ *
+ * ## L'eau est une couverture, pas une surface
+ *
+ * Les nappes et les lits de cours d'eau y sont peints comme n'importe quelle
+ * autre matière (`water`). C'est **la seule** description de l'eau dans la
+ * scène : il n'existe pas de plan d'eau posé sur le terrain, le sol *est*
+ * l'eau là où la carte le dit. La raison tient en une phrase — le MNT donne
+ * déjà la surface de l'eau comme altitude du sol, deux surfaces à la même cote
+ * ne peuvent que se disputer le pixel (voir l'en-tête de `waterLayer`).
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
@@ -120,7 +129,14 @@ export const CLASS_FILL = {
  * Les trois premières sont **végétales** (peintes sur de l'herbe), les quatre
  * suivantes **minérales** (peintes sur du sol nu).
  */
-export const COVER_KINDS = ['heath', 'scrub', 'wetland', 'alpine', 'scree', 'rock', 'sand'];
+export const COVER_KINDS = ['heath', 'scrub', 'wetland', 'alpine', 'scree', 'rock', 'sand', 'water'];
+
+/**
+ * Rang de l'eau dans `COVER_KINDS`, à partir de 1 comme tous les
+ * identifiants peints. Le shader de terrain en a besoin nommément : l'eau
+ * n'est pas une matière de plus, elle remplace tout ce qui la précède.
+ */
+export const WATER_COVER_ID = COVER_KINDS.indexOf('water') + 1;
 
 /** Pas entre deux identifiants dans le canal vert. */
 export const COVER_ID_STEP = 30;
@@ -534,6 +550,12 @@ export class GroundClassMap {
             ctx.lineWidth = width * perMeter;
             ctx.stroke(path);
             ctx.restore();
+            // Et la matière du lit, dans l'autre carte : de l'eau.
+            this.cropCtx.save();
+            this.cropCtx.strokeStyle = `rgba(0, ${WATER_COVER_ID * COVER_ID_STEP}, 0, 1)`;
+            this.cropCtx.lineWidth = width * perMeter;
+            this.cropCtx.stroke(path);
+            this.cropCtx.restore();
             this.cropCtx.lineWidth = lineWidthPx;
             this.cropCtx.strokeStyle = '#000';
             this.cropCtx.stroke(path);
@@ -579,10 +601,11 @@ export class GroundClassMap {
         ctx.fill(path, 'evenodd');
         ctx.restore();
 
-        // La carte des cultures, elle, s'efface bel et bien : sous l'eau il n'y
-        // a ni culture ni couverture à décrire.
+        // Et la matière : de l'eau. C'est de là que le shader de terrain tire
+        // le plan d'eau lui-même — il n'y a pas d'autre surface d'eau que le
+        // sol (voir l'en-tête de `waterLayer`).
         this.cropCtx.save();
-        this.cropCtx.globalCompositeOperation = 'destination-out';
+        this.cropCtx.fillStyle = `rgba(0, ${WATER_COVER_ID * COVER_ID_STEP}, 0, 1)`;
         this.cropCtx.fill(path, 'evenodd');
         this.cropCtx.restore();
       }
