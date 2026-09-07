@@ -159,6 +159,7 @@ import {
   grassCellRing,
   grassEdgeFade,
   fillGrassCell,
+  fringeOffset,
   GRASS_PER_CELL,
   GRASS_TUFT_STRIDE,
   GRASS_CELL_M,
@@ -390,6 +391,7 @@ import {
 import { streetSurfaceAt } from '../src/layers/townStyle.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
 import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
+import { TerrainMaterialFactory } from '../src/terrain/terrainMaterial.js';
 import { birdAt, createBirdGeometry } from '../src/layers/lifeLayer.js';
 import {
   windowGrid,
@@ -7225,20 +7227,26 @@ test('le contour de l’eau se fond, sans que les identifiants cessent d’être
 
   // La part d'eau vient de l'interpolation du test sur quatre carreaux, et
   // plus du seul carreau le plus proche — c'est ce qui dessinait un escalier.
-  assert.match(source, /gWater = waterShareAt\(classUv\);/);
-  assert.match(source, /mix\(mix\(s00, s10, f\.x\), mix\(s01, s11, f\.x\), f\.y\)/);
+  // Elle est rendue par la lecture qui sert aussi les couvertures : les mêmes
+  // quatre relevés répondent aux deux questions.
+  assert.match(source, /surfaceAt\(classUv, coverAlbedo, coverShare, gWater\);/);
+  assert.match(source, /water = dot\(wet, weight\);/);
 
-  // Ce qui est interpolé est le **booléen**, pas l'identifiant : chaque relevé
-  // vise un centre de carreau, là où le filtrage au plus proche rend la valeur
-  // peinte et rien d'autre.
+  // Ce qui est interpolé est l'**appartenance**, pas l'identifiant : chaque
+  // relevé vise un centre de carreau, là où le filtrage au plus proche rend la
+  // valeur peinte et rien d'autre.
   assert.match(source, /texture2D\(uCropMap, \(texel \+ 0\.5\) \/ \$\{CLASS_PIXELS\}\.0\)/);
+  assert.match(source, /floor\(fine\.g \* 255\.0 \/ \$\{COVER_ID_STEP\}\.0 \+ 0\.5\)/);
 
   // Et la berge est un fondu, pas une substitution.
   assert.match(source, /base = mix\(base, water, gWater\);/);
 
-  // L'eau ne doit pas être peinte deux fois : écartée de la boucle des
+  // L'eau ne doit pas être peinte deux fois : écartée du mélange des
   // couvertures, sans quoi le sol sous le fondu serait déjà de l'eau.
-  assert.match(source, /if \(i == cover && i != \$\{WATER_COVER_ID - 1\}\)/);
+  assert.match(source, /if \(i != \$\{WATER_COVER_ID\}\)/);
+  // Et la part de couverture est rapportée à ce qui n'est pas de l'eau, sans
+  // quoi une plage tournerait au gravier à l'approche de la mer.
+  assert.match(source, /float land = max\(1\.0 - water, 1e-4\);/);
 });
 
 test('le halo lit la couleur d’instance sans la redéclarer', () => {
@@ -7686,4 +7694,177 @@ test('isSettlementEdgeRun rejoué sur les deux terrains qui ont motivé ce garde
     const approach = { value: false, rows: [{ distance: 0 }, { distance: gapM }] };
     assert.equal(isSettlementEdgeRun(approach), true, `écart de ${gapM} m`);
   }
+});
+
+/**
+ * Canevas bouchonné, assez complet pour les peintres de `proceduralTextures` :
+ * le matériau de terrain en fabrique six à sa construction, et le test ne
+ * regarde que la source du shader.
+ */
+function paintingCanvasContext() {
+  return {
+    fillStyle: '#000',
+    strokeStyle: '#000',
+    lineWidth: 1,
+    lineCap: 'butt',
+    save() {},
+    restore() {},
+    scale() {},
+    translate() {},
+    rotate() {},
+    beginPath() {},
+    closePath() {},
+    moveTo() {},
+    lineTo() {},
+    quadraticCurveTo() {},
+    arc() {},
+    ellipse() {},
+    fill() {},
+    stroke() {},
+    fillRect() {},
+    putImageData() {},
+    createLinearGradient: () => ({ addColorStop() {} }),
+    createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+    getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+  };
+}
+
+/** Le strict nécessaire de three pour construire le matériau de terrain. */
+function terrainThreeStub() {
+  const vector = (n) =>
+    class {
+      constructor(...values) {
+        for (let i = 0; i < n; i++) this[['x', 'y', 'z', 'w'][i]] = values[i] ?? 0;
+      }
+      set(...values) {
+        for (let i = 0; i < n; i++) this[['x', 'y', 'z', 'w'][i]] = values[i] ?? 0;
+        return this;
+      }
+      copy(other) {
+        return this.set(other.x, other.y, other.z, other.w);
+      }
+    };
+  return {
+    RepeatWrapping: 1,
+    NoColorSpace: '',
+    CanvasTexture: class {
+      constructor(canvas) {
+        this.image = canvas;
+      }
+    },
+    Vector2: vector(2),
+    Vector3: vector(3),
+    Vector4: vector(4),
+    MeshLambertMaterial: class {
+      constructor(options) {
+        Object.assign(this, options);
+      }
+    },
+  };
+}
+
+test('les limites de surfaces : la frange, les couvertures interpolées et la rive arrivent dans le shader', () => {
+  // Une greffe par `replace` qui rate son ancrage ne casse rien : elle ne fait
+  // simplement rien, en silence. Ce test ne juge pas du rendu — il vérifie que
+  // les trois morceaux sont bien dans la source, et que les réglages du thème
+  // arrivent aux uniformes.
+  const previousCanvas = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      Object.assign(this, { width, height });
+    }
+    getContext() {
+      return paintingCanvasContext();
+    }
+  };
+
+  let factory;
+  try {
+    factory = new TerrainMaterialFactory({ THREE: terrainThreeStub() });
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+  }
+
+  const shader = {
+    uniforms: {},
+    vertexShader: ['#include <common>', '#include <begin_vertex>'].join('\n'),
+    fragmentShader: [
+      '#include <common>',
+      '#include <map_fragment>',
+      '#include <normal_fragment_begin>',
+    ].join('\n'),
+  };
+  factory.material.onBeforeCompile(shader);
+  const source = shader.fragmentShader;
+
+  // La frange : déclarée, et appliquée au point de lecture des deux cartes.
+  assert.match(source, /vec2 edgeWarp\(vec2 world\)/);
+  assert.match(source, /classUv = \(vScenePos\.xz \+ edgeWarp\(vScenePos\.xz\) - uClassOrigin\)/);
+
+  // Les couvertures : lues aux quatre carreaux voisins, mélangées par leur
+  // appartenance, l'eau tenue à part.
+  assert.match(source, /void surfaceAt\(vec2 uv, out vec3 coverAlbedo, out float coverShare, out float water\)/);
+  assert.match(source, /surfaceAt\(classUv, coverAlbedo, coverShare, gWater\);/);
+  assert.equal(
+    (source.match(/coverIdAt\(corner/g) || []).length,
+    4,
+    'les quatre carreaux voisins, pas un seul'
+  );
+  assert.ok(
+    !/waterShareAt/.test(source),
+    'la lecture d’eau isolée a été reprise par surfaceAt'
+  );
+
+  // La rive : le même sol mouillé que la pluie, deux appels pour une formule.
+  assert.match(source, /vec3 wetGround\(vec3 base, float amount\)/);
+  assert.equal(
+    (source.match(/wetGround\(/g) || []).length,
+    3,
+    'une déclaration et deux appels : la pluie et la rive'
+  );
+  assert.match(source, /float shore =\s*\n?\s*smoothstep\(0\.0, 0\.35, gWater\)/);
+
+  // Les réglages viennent du thème, pas du shader.
+  assert.equal(shader.uniforms.uShoreWet.value, defaultTheme.terrain.shoreWet);
+  assert.equal(shader.uniforms.uEdgeWarp.value.x, defaultTheme.terrain.edgeWarpM);
+  assert.equal(shader.uniforms.uEdgeWarp.value.y, defaultTheme.terrain.edgeWarpScaleM);
+});
+
+test('la frange déplace la lecture du sol, sans dépendre du parcours ni sortir de sa portée', () => {
+  const reach = defaultTheme.terrain.edgeWarpM;
+  assert.ok(reach > 0 && reach <= 3, 'au-delà de trois mètres, un bord droit ondule');
+
+  // Déterminisme spatial : la même maille lit toujours le même point, quel que
+  // soit l'ordre dans lequel on la rencontre.
+  const first = fringeOffset(12, -7, 0, reach);
+  assert.deepEqual(fringeOffset(12, -7, 0, reach), first);
+
+  // Bornée : une touffe ne peut pas emprunter le sol d'une parcelle lointaine.
+  let outside = 0;
+  let sumRadius = 0;
+  const samples = 400;
+  for (let i = 0; i < samples; i++) {
+    const offset = fringeOffset(i, i * 3 - 11, i % 3, reach);
+    const radius = Math.hypot(offset.x, offset.z);
+    if (radius > reach + 1e-9) outside++;
+    sumRadius += radius;
+  }
+  assert.equal(outside, 0, 'aucun décalage au-delà de la portée');
+  // Tirage en surface (racine du rayon) : la moyenne d'un disque uniforme vaut
+  // deux tiers du rayon. Sans la racine, elle vaudrait la moitié — la frange
+  // serait plus étroite qu'annoncée.
+  assert.ok(
+    Math.abs(sumRadius / samples - (2 / 3) * reach) < 0.15 * reach,
+    `rayon moyen ${(sumRadius / samples).toFixed(2)} m, attendu ~${((2 / 3) * reach).toFixed(2)} m`
+  );
+
+  // Deux mailles voisines ne lisent pas le même point : c'est ce qui brouille
+  // la limite au lieu de la déplacer en bloc.
+  const a = fringeOffset(4, 4, 0, reach);
+  const b = fringeOffset(5, 4, 0, reach);
+  assert.ok(Math.hypot(a.x - b.x, a.z - b.z) > 0.2, 'des voisines tirent des décalages distincts');
+
+  // Portée nulle : aucun décalage (un thème peut éteindre la frange).
+  assert.deepEqual(fringeOffset(3, 9, 1, 0), { x: 0, z: 0 });
 });

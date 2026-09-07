@@ -15,7 +15,7 @@ hauteur et sa densité (`groundCover`), la végétation ses arbustes
 | Carte | Canaux | Filtrage | Sens |
 | --- | --- | --- | --- |
 | matières | R herbe, G bois, B culture, A classé | linéaire | des **parts**, qui se mélangent ; les lisières se fondent sur quelques mètres |
-| cultures/couvertures | R culture, G couverture, A peint | au plus proche | des **identifiants**, qui ne se mélangent pas |
+| cultures/couvertures | R culture, G couverture, A peint | au plus proche | des **identifiants**, qui ne se mélangent pas — mais l'**appartenance** à une couverture, si (voir « le pas de la carte ») |
 
 Une parcelle porte donc une part de chaque matière, et *une* culture **ou**
 *une* couverture, jamais un mélange des deux.
@@ -126,9 +126,11 @@ Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
    Toutes les sous-classes (`bog`, `marsh`, `swamp`, `saltmarsh`, `fen`…) sont
    confondues, alors que le `swamp` est un marais **boisé**.
 4. **Une plage n'a pas de laisse de mer.** Le sable est géré de bout en bout
-   (matière, couleur, quasi-absence d'herbe) mais il est le même partout :
-   ni bande de sable mouillé au contact de l'eau, ni distinction entre plage,
-   dune et sable de désert.
+   (matière, couleur, quasi-absence d'herbe), et il est mouillé au contact de
+   l'eau (voir « la rive »), mais cette bande ne tient qu'un carreau : elle ne
+   rend pas l'estran d'une grande plage, qui court sur des dizaines de mètres
+   — il y faudrait une distance à l'eau que la carte ne porte pas. Rien ne
+   distingue non plus la plage, la dune et le sable de désert.
 5. **`landuse` ignoré** : `military`, `school`, `university`, `college`,
    `kindergarten`, `hospital`, `track`, `dam`. Ils retombent donc sur l'herbe de
    repli — ce qui est plausible pour une école, moins pour un barrage.
@@ -146,14 +148,31 @@ c'est le repli en herbe qu'on voit.
 
 ## Le pas de la carte
 
-2,7 m par pixel. C'est la limite dure de tout contour : les matières la
-masquent par leur filtrage linéaire, les identifiants (culture, couverture) ne
-le peuvent pas, puisqu'interpoler un identifiant inventerait une matière.
+2,7 m par pixel. C'est la limite dure de tout contour, et sans précaution elle
+se lit à l'écran comme un escalier à 45° — la marche du carreau — dès que deux
+surfaces contrastent : le sable et l'herbe, l'eau et n'importe quoi. Les
+matières la masquent par le filtrage linéaire de leur carte ; les identifiants
+(culture, couverture) ne le peuvent pas, puisqu'interpoler un identifiant
+inventerait une matière entre deux.
 
-Pour l'eau, dont le bord est le contraste le plus fort du décor, le shader
-interpole le **résultat du test** « ce carreau est-il de l'eau » sur les quatre
-carreaux voisins (`waterShareAt`, dans `terrainMaterial.js`) : la berge est une
-rampe d'un carreau au lieu d'une marche. Ce qui reste, et qui demanderait une
-carte de couverture d'eau à part, peinte avec son antialiasing : le contour
-passe par les centres des carreaux, il ne retrouve pas la position exacte du
-polygone à l'intérieur de l'un d'eux.
+Trois choses la traitent, toutes dans `terrainMaterial.js` :
+
+1. **L'appartenance s'interpole, l'identifiant non** (`surfaceAt`). Les quatre
+   carreaux voisins sont lus au plus proche — chacun rend donc la couverture
+   peinte et rien d'autre — et ce sont ces appartenances qu'on mélange. Le
+   sable rejoint l'herbe par une rampe d'un carreau, comme les matières le font
+   déjà ; l'eau suit la même mécanique, sa part étant tenue à part du mélange.
+2. **La frange** (`edgeWarp`, thème `edgeWarpM`). Le sol est lu quelques mètres
+   à côté du point demandé, d'un déplacement continu tiré du grain. La limite
+   reste où elle est, au mètre près, mais perd l'angle droit du carreau. Ce
+   n'est pas un flou : c'est la même limite, déformée. L'herbe instanciée fait
+   de même de son côté (`fringeOffset`, dans `groundCover.js`), avec son propre
+   tirage : les deux ne suivent pas la même limite, elles la brouillent sur la
+   même largeur.
+3. **La rive** (thème `shoreWet`). Le sol au contact de l'eau est mouillé — plus
+   sombre, plus saturé, du même film d'eau que la pluie y met. Une berge cesse
+   d'être une découpe entre deux couleurs.
+
+Ce qui reste, et qui demanderait une carte peinte avec son antialiasing : le
+contour passe par les centres des carreaux, il ne retrouve pas la position
+exacte du polygone à l'intérieur de l'un d'eux.

@@ -20,6 +20,13 @@
  * (`coverHeightFade` plancher la taille pour qu'elle ne s'éteigne pas avant
  * de disparaître).
  *
+ * La limite d'une surface, elle, n'est pas celle du carreau de la carte : le
+ * sol est lu quelques mètres à côté de la maille (`fringeOffset`), d'un
+ * décalage tiré de la maille elle-même. Sans quoi l'herbe s'arrête au carreau
+ * de 2,7 m, en marches d'escalier, là où une prairie s'épuise dans le sable
+ * sur quelques mètres. Le shader de terrain fait de même de son côté, à la
+ * même amplitude (`edgeWarpM`).
+ *
  * Le sol d'un bois, enfin, n'est plus nu : la part de bois ne comptait pour
  * rien dans le végétal (`grass` vaut zéro sous les arbres), donc une forêt
  * n'avait pas une touffe, jusque sous le nez de l'observateur. Elle compte
@@ -371,6 +378,44 @@ export function isFloweringVariant(variant) {
   return FLOWERING_VARIANTS.has(variant);
 }
 
+/** Sel de la frange : la maille ne doit pas tirer son décalage sur la même graine que ses touffes. */
+const FRINGE_SALT = 0x5eed;
+
+/**
+ * Décalage de lecture du sol pour une maille — la « frange ».
+ *
+ * Les cartes du sol ont un pas de 2,7 m, et `sampleAt` lit un carreau, sans
+ * flou : la limite entre deux surfaces est donc celle du carreau, et l'herbe
+ * s'arrête net sur une ligne en escalier. On lit le sol à quelques mètres de
+ * la maille plutôt qu'en son centre : au bord, une maille sur deux lit l'autre
+ * surface. L'herbe déborde alors sur le sable, le sable mord dans l'herbe, et
+ * la frontière cesse d'être un trait.
+ *
+ * Le décalage ne dépend que de la maille (déterminisme spatial : la même
+ * maille lit toujours le même point) et il est **borné** par `reach` : une
+ * touffe ne peut pas emprunter le sol d'une parcelle lointaine.
+ *
+ * Le shader de terrain déplace sa lecture de la même façon et de la même
+ * amplitude (`edgeWarpM`), mais avec son propre bruit : la peinture et les
+ * touffes ne suivent pas la même limite au mètre près, elles la brouillent
+ * chacune de son côté, sur la même largeur.
+ *
+ * @param {number} gx Indice de maille.
+ * @param {number} gz
+ * @param {number} salt Sel de la bande (les bandes n'ont pas la même maille).
+ * @param {number} reach Amplitude, en mètres.
+ * @returns {{x:number, z:number}} Décalage à ajouter au point lu.
+ */
+export function fringeOffset(gx, gz, salt, reach) {
+  if (!(reach > 0)) return { x: 0, z: 0 };
+  const random = makeRandom((gx * 73856093) ^ (gz * 19349663) ^ ((salt + FRINGE_SALT) * 2654435761));
+  const angle = random() * Math.PI * 2;
+  // Racine du tirage : sans elle le décalage se masse au centre du disque, et
+  // la frange serait plus étroite que son amplitude ne l'annonce.
+  const radius = Math.sqrt(random()) * reach;
+  return { x: Math.cos(angle) * radius, z: Math.sin(angle) * radius };
+}
+
 /** Voisinage sondé par `widenFieldEdge`, en mètres depuis le point d'origine. */
 const FIELD_EDGE_OFFSETS_M = [
   [5, 0], [-5, 0], [0, 5], [0, -5],
@@ -557,6 +602,9 @@ export class GroundCover {
     }));
     const tufts = this._tufts;
     const grass = this.theme.grass;
+    // Amplitude de la frange : la même valeur que le shader de terrain, pour
+    // que les deux brouillent la limite sur la même largeur.
+    const fringeM = this.theme.terrain.edgeWarpM ?? 0;
     let placed = 0;
 
     for (const cell of this._cells) {
@@ -569,24 +617,32 @@ export class GroundCover {
 
       const cellX = (gx + 0.5) * band.cell;
       const cellZ = (gz + 0.5) * band.cell;
+      // Le sol se lit à la frange, pas au centre de la maille : c'est ce qui
+      // fait déborder l'herbe sur la surface voisine (voir `fringeOffset`).
+      // Les trois lectures — matière, culture, couverture — partagent le même
+      // point, sinon une touffe pousserait sur une matière et prendrait la
+      // taille d'une autre.
+      const fringe = fringeOffset(gx, gz, band.salt, fringeM);
+      const readX = cellX + fringe.x;
+      const readZ = cellZ + fringe.z;
       const sample = grassSampleFallback(
-        groundClass?.sampleAt(cellX, cellZ) ?? null,
+        groundClass?.sampleAt(readX, readZ) ?? null,
         this.theme.terrain.unclassifiedWeights
       );
       // Échantillon brut (pas élargi) : la verdure de la touffe ne doit rien à une culture à 5 m de là.
       const { green, shade } = grassGreenFor(sample, this.theme.grass.woodFloor);
       if (green < GRASS_GREEN_MIN) continue;
 
-      const edgeSample = widenFieldEdge(groundClass, cellX, cellZ, sample);
+      const edgeSample = widenFieldEdge(groundClass, readX, readZ, sample);
 
-      const crop = groundClass?.cropAt?.(cellX, cellZ) ?? null;
+      const crop = groundClass?.cropAt?.(readX, readZ) ?? null;
       if (grassBlockedByCrop(edgeSample, crop)) continue;
 
       // Couverture du sol : lande, maquis, marais… Elle ne décide pas *si* de
       // l'herbe pousse — c'est la part de végétal qui le dit — mais de quelle
       // taille, en quelle quantité et de quelle couleur.
       const coverLook = coverGrassFor(
-        groundClass?.coverAt?.(cellX, cellZ) ?? null,
+        groundClass?.coverAt?.(readX, readZ) ?? null,
         this.theme.covers
       );
 
