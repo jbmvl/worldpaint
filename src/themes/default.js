@@ -1043,6 +1043,73 @@ export const LIFE_COLORS = {
   smoke: [0.86, 0.85, 0.83],
 };
 
+// --- Les bêtes -----------------------------------------------------------------
+/** Convertit un nuancier de robes `{espèce: ['#rrggbb', …]}` en linéaire. */
+function mapCoats(table) {
+  const out = {};
+  for (const [kind, list] of Object.entries(table)) out[kind] = list.map(srgb);
+  return out;
+}
+
+/**
+ * Ce qui, sur une bête, ne change pas d'un individu à l'autre.
+ *
+ * La robe, elle, est teintée par instance (voir `FAUNA_COATS`) : ces
+ * couleurs-ci sont celles qui doivent **résister** à la teinte, faute de quoi
+ * on obtient des vaches à sabots bruns et des cerfs à bois fauves.
+ */
+export const FAUNA_COLORS = {
+  hoof: srgb('#2e2a24'),
+  claw: srgb('#3a342c'),
+  muzzle: srgb('#c2938c'), // mufle rose-gris du bovin
+  nose: srgb('#2a2724'),
+  horn: srgb('#b6aa8e'),
+  antler: srgb('#8f8067'),
+  eye: srgb('#141312'),
+  tusk: srgb('#ded6c4'),
+  comb: srgb('#a3372f'), // crête et caroncule de la poule
+  beak: srgb('#c9a13f'), // bec et pattes, la même corne jaune
+  udder: srgb('#d3a49d'),
+  mane: srgb('#3a322a'), // crins : crinière et queue du cheval
+};
+
+/**
+ * Les robes, par espèce — une liste dans laquelle chaque bête tire la sienne.
+ *
+ * Une seule robe par espèce était le plus visible des défauts d'un troupeau
+ * engendré : dix vaches rigoureusement identiques ne se lisent pas comme dix
+ * vaches. Les listes restent courtes et **plausibles pour l'espèce** : ce sont
+ * les robes qu'on rencontre, pas un nuancier. Un item répété pèse d'autant
+ * plus lourd dans le tirage (même convention que les essences d'arbre).
+ *
+ * Ces couleurs multiplient le modelé du modèle (voir `robe`) : donner ici la
+ * couleur du flanc en pleine lumière suffit, les ombres suivent.
+ *
+ * Converties en linéaire à la définition, comme tout le reste du nuancier :
+ * elles partent telles quelles dans `setColorAt`, qui n'applique aucune
+ * conversion.
+ */
+export const FAUNA_COATS = mapCoats({
+  // Pie noire, froment, brune des Alpes, et la blanche du Charolais.
+  cow: ['#ded7cb', '#ded7cb', '#a5714a', '#8d6a52', '#e6e0d2'],
+  // La toison va du blanc sale au gris ; le brun est celui des races de lande.
+  sheep: ['#ddd6c8', '#ddd6c8', '#cfc6b4', '#a8977f', '#7d6f5e'],
+  goat: ['#cbbfa8', '#8a6f52', '#5d534a', '#ddd6c8'],
+  // Alezan d'abord, puis bai, puis gris et noir — l'ordre des prés.
+  horse: ['#8a5a3a', '#8a5a3a', '#6b4630', '#9a958c', '#4a423c'],
+  donkey: ['#9a9488', '#9a9488', '#7d766c', '#b3ab9c'],
+  chicken: ['#c9c2b4', '#a5714a', '#8d5a45', '#d8d2c4', '#4a423a'],
+
+  // Le fauve du cervidé change avec la saison : roux l'été, gris l'hiver.
+  deer: ['#a5714a', '#a5714a', '#8f6a4c', '#7f6e5c'],
+  doe: ['#a5714a', '#9c7052', '#8f6a4c'],
+  reindeer: ['#9a9082', '#8a7f70', '#b0a798'],
+  boar: ['#3d3630', '#3d3630', '#4a423a', '#5a4f42'],
+  fox: ['#b4602c', '#b4602c', '#a55a30', '#c47038'],
+  wolf: ['#8a8378', '#6f685e', '#9c9488', '#5a544c'],
+  bear: ['#5a4432', '#5a4432', '#4a3728', '#7a5c42'],
+});
+
 // --- Le mobilier ---------------------------------------------------------------
 /** Nuancier du mobilier. Un seul endroit à toucher pour changer une matière. */
 export const FURNITURE_COLORS = {
@@ -1293,5 +1360,6 @@ export const defaultTheme = Object.freeze({
   water: { waterways: WATERWAY_CLASSES, riparianBufferM: RIPARIAN_BUFFER_M },
   furniture: { colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES },
   life: LIFE_COLORS,
+  fauna: { colors: FAUNA_COLORS, coats: FAUNA_COATS },
   sky: SKY_PALETTE,
 });

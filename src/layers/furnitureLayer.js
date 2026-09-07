@@ -78,6 +78,8 @@ import {
   CEMETERY_GATE_SPAN_M,
   GREENHOUSE_BASE_LENGTH_M,
 } from './furnitureKit.js';
+import { FAUNA_SPECIES } from '../models/fauna/index.js';
+import { behaviourFor, buildCircuit, CROSS_REACH_M } from './faunaMotion.js';
 import {
   spacedAlongPath,
   realBoundaryRuns,
@@ -88,6 +90,7 @@ import {
   forestGameFor,
   FOREST_GAME_PER_HECTARE,
   FOREST_GAME_EMPTY_ODDS,
+  PREDATOR_MAX,
   rockKindFor,
   signKindFor,
   pathTurn,
@@ -119,6 +122,20 @@ export const VILLAGE_TOWN_MAX_BUILDINGS = 150;
 
 /** Portée du mobilier autour de l'observateur, en mètres. */
 export const FURNITURE_RADIUS_M = 700;
+
+/**
+ * Part des pâtures qu'on laisse vides. Descendue de 0,2 à 0,12 : les prés ne
+ * sont pas tous occupés le même jour, mais un sur cinq était beaucoup pour un
+ * bocage qu'on traverse en dix minutes.
+ */
+export const HERD_EMPTY_ODDS = 0.12;
+
+/** Rayons du balayage grossier qui cherche une route à traverser (`_crossingAt`). */
+export const CROSS_PROBE_RAYS = 8;
+/** Distance du balayage grossier, en mètres — au milieu de la portée de traversée. */
+export const CROSS_PROBE_M = 13;
+/** Sondages du balayage fin, une fois une route touchée. */
+export const CROSS_PROBE_STEPS = 8;
 /** Portée des seuls repères d'horizon — ils n'existent que pour la profondeur. */
 export const LANDMARK_RADIUS_M = 2400;
 /** Déplacement de l'observateur avant reconstruction, en mètres. */
@@ -311,6 +328,14 @@ export const FURNITURE_LIMITS = {
   trafficLights: 8,
   rocks: 200,
   vineRows: 90,
+  /**
+   * Bêtes posées sur toute la bulle. Plus haut que ce que `faunaLayer` anime
+   * (`FAUNA_ANIMATED_MAX`), et c'est voulu : la couche garde les plus proches
+   * de l'observateur, et elle ne peut le faire que si on lui en propose plus
+   * qu'elle n'en retient. Chaque bête coûte ici son circuit — quelques
+   * sondages de relief —, pas une matrice par image.
+   */
+  fauna: 420,
   // Antennes de sommet : posées sur les vrais sommets relevés dans les
   // tuiles (`mountain_peak`), donc bornées par leur rareté propre — la bulle
   // n'en contient jamais des dizaines.
@@ -358,15 +383,9 @@ export const POINT_ITEMS = [
   'watermill',
   'waterTower',
   'laundryLine',
-  'cow',
-  'sheep',
-  'goat',
-  'horse',
-  'donkey',
-  'deer',
-  'boar',
-  'reindeer',
-  'chicken',
+  // Les animaux ne sont plus ici : ils bougent, donc ils sont publiés pour
+  // `faunaLayer` (voir `this.fauna`) au lieu d'être instanciés comme du
+  // mobilier immobile.
   'bush',
   'treeBroad',
   'treeConifer',
@@ -592,6 +611,20 @@ export class FurnitureLayer {
      */
     this.chimneys = [];
     /**
+     * Bêtes posées, publiées pour `faunaLayer`. Même raison que les cheminées :
+     * ce qui est animé par image n'a rien à faire dans une couche reconstruite
+     * tous les 250 mètres.
+     *
+     * Ce que la couche de mobilier garde, c'est le seul travail qui demande
+     * les tuiles : **où** est un pré, **qui** y paît, et quel circuit y tient
+     * sans mordre sur la chaussée. Ce qu'elle publie est déjà complet — une
+     * espèce, un circuit avec ses altitudes, une robe.
+     * @type {Array<Object>}
+     */
+    this.fauna = [];
+    /** Nuancier des robes, une liste par espèce (voir `theme.fauna.coats`). */
+    this._coats = theme.fauna?.coats || {};
+    /**
      * Emprise routière de la reconstruction en cours (`RoadIndex`), ou `null`.
      * Elle ne vit que le temps d'un `rebuild` : hors de là, il n'y a pas de
      * frontière à faire respecter, seulement un index périmé.
@@ -718,6 +751,7 @@ export class FurnitureLayer {
     this._lampHeads = [];
     this._signals = [];
     this.chimneys = [];
+    this.fauna = [];
 
     try {
       // Les emprises habitées viennent de `worldComposer` quand il les a déjà
@@ -1988,11 +2022,11 @@ export class FurnitureLayer {
     const seed = positionSeed(centre.x, centre.z, 41);
     let placed = 0;
 
-    if (rule.item === 'herd') return this._placeHerd(placements, ring, centre, variant, steepness, count);
+    if (rule.item === 'herd') return this._placeHerd(ring, centre, variant, steepness, count);
     if (rule.item === 'woodland') {
       return (
         this._placeWoodPiles(placements, ring, centre, count) +
-        this._placeForestGame(placements, ring, centre, variant, hectares)
+        this._placeForestGame(ring, centre, variant, hectares)
       );
     }
 
@@ -2020,33 +2054,32 @@ export class FurnitureLayer {
   /**
    * Met du bétail dans une pâture.
    *
-   * Deux choses font qu'un troupeau se lit comme un troupeau, et pas comme un
-   * semis d'objets : il est **groupé** (`scatterInRing({ cluster })`), et les
-   * bêtes regardent à peu près dans la même direction — un troupeau au pré
-   * s'aligne sur le vent et sur la pente, il ne se disperse pas en étoile.
+   * Ce qui fait qu'un troupeau se lit comme un troupeau et pas comme un semis
+   * d'objets, c'est qu'il est **groupé** (`scatterInRing({ cluster })`).
    *
-   * Une parcelle sur cinq reste vide : les prés ne sont pas tous occupés le même
-   * jour, et le décor y gagne en respiration.
+   * Il avait aussi, du temps où il était immobile, un cap commun : toutes les
+   * bêtes regardaient à peu près dans la même direction. Ce n'est plus vrai et
+   * ça ne doit pas revenir — chaque bête tient maintenant le cap de son propre
+   * circuit, et un troupeau qui broute en regardant tout entier du même côté
+   * n'était acceptable que parce que rien ne bougeait.
+   *
+   * Une parcelle sur huit reste vide (`HERD_EMPTY_ODDS`) : les prés ne sont
+   * pas tous occupés le même jour, et le décor y gagne en respiration.
    */
-  _placeHerd(placements, ring, centre, variant, steepness, count) {
-    if (randomAt(centre.x, centre.z, 53) < 0.2) return 0;
+  _placeHerd(ring, centre, variant, steepness, count) {
+    if (randomAt(centre.x, centre.z, 53) < HERD_EMPTY_ODDS) return 0;
 
     const { item, spread } = herdFor({ steepness, variant, climate: this.climate });
-    const heading = randomAt(centre.x, centre.z, 59) * Math.PI * 2;
     const seed = positionSeed(centre.x, centre.z, 61);
     let placed = 0;
 
-    // Un troupeau ne paît pas sur le bitume, ni sur le ballast.
+    // Un troupeau ne paît pas sur le bitume, ni sur le ballast. Le cap commun
+    // qu'avait le troupeau immobile a disparu avec lui : une bête qui bouge
+    // tient le cap de son circuit, et deux bêtes voisines qui broutent en
+    // regardant exactement dans la même direction ne se voyaient acceptables
+    // que parce qu'elles ne bougeaient pas.
     for (const spot of this._filterOffInfra(scatterInRing(ring, count, seed, { cluster: spread }))) {
-      this._place(placements, item, {
-        x: spot.x,
-        z: spot.z,
-        // Cap commun, plus un écart d'une trentaine de degrés : assez pour que
-        // ce ne soit pas un rang, pas assez pour que ce soit une rosace.
-        yaw: heading + (spot.variant - 0.5) * 1.1,
-        scale: 0.9 + spot.variant * 0.22,
-      });
-      placed++;
+      placed += this._placeFauna(item, { x: spot.x, z: spot.z, ring, scale: 0.9 + spot.variant * 0.22 });
     }
     return placed;
   }
@@ -2082,43 +2115,148 @@ export class FurnitureLayer {
   }
 
   /**
-   * Met du gibier dans un bois.
+   * Met du gibier — ou un carnassier — dans un bois.
    *
    * Trois choses le distinguent d'un troupeau au pré, et les trois comptent :
-   * il est rare (deux massifs sur trois n'en portent aucun), il est groupé
-   * (compagnie de sangliers, harde de cervidés), et il dépend du pays — le
-   * renne remplace le cervidé au nord, le sanglier domine au sud.
+   * il est rare (deux massifs sur cinq n'en portent aucun,
+   * `FOREST_GAME_EMPTY_ODDS`), il est groupé (compagnie de sangliers, harde de
+   * cervidés), et il dépend du pays — le renne remplace le cervidé au nord, le
+   * sanglier domine au sud.
+   *
+   * Un massif sur sept environ abrite un carnassier au lieu du gibier
+   * (`PREDATOR_ODDS`). Il n'est alors ni compté à l'hectare ni groupé en
+   * harde : un renard va seul, un loup à deux. C'est la raison du second
+   * tirage — mêlé au premier, un loup listé une fois dans un répertoire de six
+   * sortirait dans un bois sur six, et cesserait d'être un loup.
    *
    * Il n'est pas cantonné à l'ourlet, contrairement au bois de coupe : une bête
    * se tient où elle veut, et c'est en lisière qu'on la voit le mieux de toute
    * façon.
    */
-  _placeForestGame(placements, ring, centre, variant, hectares) {
+  _placeForestGame(ring, centre, variant, hectares) {
     if (randomAt(centre.x, centre.z, 83) < FOREST_GAME_EMPTY_ODDS) return 0;
 
-    const game = forestGameFor({ variant, climate: this.climate });
+    const game = forestGameFor({
+      variant,
+      predatorDraw: randomAt(centre.x, centre.z, 97),
+      climate: this.climate,
+    });
     if (!game) return 0;
 
     const jitter = randomAt(centre.x, centre.z, 87);
-    const count = Math.min(6, Math.floor(hectares * FOREST_GAME_PER_HECTARE + jitter));
+    // Un carnassier ne se compte pas à l'hectare : il y en a un, ou deux.
+    const ceiling = game.solitary ? PREDATOR_MAX : 6;
+    const count = game.solitary
+      ? 1 + (jitter < 0.35 ? 1 : 0)
+      : Math.min(ceiling, Math.floor(hectares * FOREST_GAME_PER_HECTARE + jitter));
     if (count <= 0) return 0;
 
-    const heading = randomAt(centre.x, centre.z, 89) * Math.PI * 2;
     const seed = positionSeed(centre.x, centre.z, 91);
     let placed = 0;
 
     for (const spot of this._filterOffInfra(scatterInRing(ring, count, seed, { cluster: game.spread }))) {
-      this._place(placements, game.item, {
-        x: spot.x,
-        z: spot.z,
-        // Une harde regarde à peu près dans la même direction, comme un
-        // troupeau — mais elle est plus dispersée, elle n'est pas parquée.
-        yaw: heading + (spot.variant - 0.5) * 1.8,
-        scale: 0.9 + spot.variant * 0.2,
-      });
-      placed++;
+      placed += this._placeFauna(game.item, { x: spot.x, z: spot.z, ring, scale: 0.9 + spot.variant * 0.2 });
     }
     return placed;
+  }
+
+  /**
+   * Pose une bête : tire sa conduite, trace son circuit, choisit sa robe.
+   *
+   * C'est le seul point du projet où le mobilier et le vivant se touchent, et
+   * la frontière y est nette : ici on décide de **ce qui existe** — cette
+   * espèce, à cet endroit, faisant cela, de cette couleur —, et `faunaLayer`
+   * ne fait plus que le jouer. Aucun état de la scène n'est lu ni écrit.
+   *
+   * Le circuit interroge le relief une fois par station et plus jamais
+   * ensuite : c'est la raison pour laquelle cette fonction vit dans une
+   * couche qui a déjà la bulle sous la main.
+   *
+   * @returns {number} 1 si la bête est posée, 0 sinon.
+   */
+  _placeFauna(kind, { x, z, ring = null, scale = 1 }) {
+    if (this.fauna.length >= FURNITURE_LIMITS.fauna) return 0;
+    const spec = FAUNA_SPECIES[kind];
+    if (!spec) return 0;
+
+    const crossing = this._crossingAt(x, z);
+    const behaviour = behaviourFor({
+      family: spec.family,
+      variant: randomAt(x, z, 227),
+      nearRoad: crossing !== null,
+      // Tirage distinct : sinon une bête proche d'une route traverserait ou
+      // brouterait selon le même nombre, et les deux seraient corrélés.
+      crossDraw: randomAt(x, z, 229),
+    });
+
+    const anchor = behaviour === 'cross' && crossing ? crossing.centre : { x, z };
+    const circuit = buildCircuit({
+      behaviour,
+      x: anchor.x,
+      z: anchor.z,
+      walkMS: spec.walkMS,
+      runMS: spec.runMS,
+      roam: spec.roam,
+      sampleY: (sx, sz) => this.bubble.surfaceElevationAtLocal(sx, sz, 0) * this.bubble.verticalScale,
+      // La bête reste dans sa parcelle et hors de la chaussée. La traversée
+      // est la seule exception, et elle passe par `crossAxis`, pas par ici.
+      allow: (sx, sz) => !this._onRoad(sx, sz) && (!ring || pointInRing(ring, sx, sz)),
+      crossAxis: crossing?.axis || null,
+    });
+    if (!circuit) return 0;
+
+    this.fauna.push({
+      kind,
+      x: anchor.x,
+      z: anchor.z,
+      circuit,
+      tint: this._coatFor(kind, x, z),
+      scale,
+    });
+    return 1;
+  }
+
+  /** Robe d'une bête, tirée dans le nuancier de son espèce. Ancrée au lieu. */
+  _coatFor(kind, x, z) {
+    const list = this._coats?.[kind];
+    if (!list || list.length === 0) return [1, 1, 1];
+    return list[Math.min(list.length - 1, Math.floor(randomAt(x, z, 233) * list.length))];
+  }
+
+  /**
+   * Cherche une chaussée à traverser depuis un point, et rend de quoi la
+   * franchir : le milieu du trajet (sur la route) et sa direction.
+   *
+   * Deux temps, et le premier existe pour le prix : un balayage grossier de
+   * huit directions écarte en huit sondages la quasi-totalité des bêtes, qui
+   * sont au milieu d'un champ. Seules celles qui ont touché quelque chose
+   * paient le balayage fin. Sans ce filtre, une reconstruction dense
+   * dépenserait des dizaines de milliers d'interrogations d'index pour
+   * n'autoriser que quelques traversées.
+   *
+   * @returns {{centre:{x:number,z:number}, axis:{x:number,z:number}}|null}
+   */
+  _crossingAt(x, z) {
+    if (!this._infraIndex) return null;
+
+    for (let i = 0; i < CROSS_PROBE_RAYS; i++) {
+      const angle = (i / CROSS_PROBE_RAYS) * Math.PI * 2;
+      const ax = Math.cos(angle);
+      const az = Math.sin(angle);
+      if (!this._onRoad(x + ax * CROSS_PROBE_M, z + az * CROSS_PROBE_M)) continue;
+
+      // Touché : on remonte le rayon pour trouver l'entrée de l'emprise, et
+      // on vise son milieu — une traversée qui commence sur la chaussée n'en
+      // est pas une.
+      for (let step = 1; step <= CROSS_PROBE_STEPS; step++) {
+        const reach = (step / CROSS_PROBE_STEPS) * CROSS_REACH_M;
+        const px = x + ax * reach;
+        const pz = z + az * reach;
+        if (this._onRoad(px, pz)) return { centre: { x: px, z: pz }, axis: { x: ax, z: az } };
+      }
+      return { centre: { x: x + ax * CROSS_PROBE_M, z: z + az * CROSS_PROBE_M }, axis: { x: ax, z: az } };
+    }
+    return null;
   }
 
   /**
@@ -2256,14 +2394,14 @@ export class FurnitureLayer {
     this._place(placements, 'laundryLine', { x: lineX, z: lineZ, yaw: yaw + Math.PI / 2 });
 
     // Poules dans la cour : elles ne s'éloignent jamais beaucoup du bâtiment.
-    const hens = 3 + Math.floor(randomAt(centre.x, centre.z, 19) * 4);
+    const hens = 4 + Math.floor(randomAt(centre.x, centre.z, 19) * 5);
     for (let i = 0; i < hens; i++) {
       const angle = randomAt(centre.x + i * 3.1, centre.z, 23) * Math.PI * 2;
       const radius = 6 + randomAt(centre.x, centre.z + i * 3.1, 29) * 7;
-      this._place(placements, 'chicken', {
+      this._placeFauna('chicken', {
         x: centre.x + Math.cos(angle) * radius,
         z: centre.z + Math.sin(angle) * radius,
-        yaw: angle,
+        scale: 0.9 + randomAt(centre.x, centre.z + i * 5.3, 31) * 0.25,
       });
     }
 
@@ -3656,6 +3794,7 @@ export class FurnitureLayer {
     this._lampHeads = [];
     this._signals = [];
     this.chimneys = [];
+    this.fauna = [];
 
     for (const geometry of Object.values(this.geometries)) geometry.dispose();
     this.geometries = {};

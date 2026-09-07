@@ -100,9 +100,6 @@ export const LABEL_FURNITURE = {
   hayBaleRound: 'botte ronde',
   hayBaleSquare: 'botte carrée',
   woodPile: 'tas de bois',
-  deer: 'cervidé',
-  boar: 'sanglier',
-  reindeer: 'renne',
   barn: 'grange',
   silo: 'silo',
   hangar: 'hangar',
@@ -118,12 +115,6 @@ export const LABEL_FURNITURE = {
   treeRound: 'arbre (boule)',
   treeColumnar: 'arbre (fuseau)',
   treeOval: 'arbre (dôme)',
-  cow: 'vache',
-  sheep: 'mouton',
-  goat: 'chèvre',
-  horse: 'cheval',
-  donkey: 'âne',
-  chicken: 'poule',
   laundryLine: 'étendage',
   trafficLight: 'feu tricolore',
   rockSmall: 'caillou',
@@ -155,6 +146,28 @@ export const LABEL_FURNITURE = {
   wire: 'câble',
 };
 
+/**
+ * Noms lisibles des bêtes. Elles ont quitté `LABEL_FURNITURE` en même temps
+ * que le catalogue du mobilier : ce ne sont plus des objets posés, ce sont des
+ * maillages animés (`faunaLayer`), et leur nom de maillage est préfixé
+ * autrement.
+ */
+export const LABEL_FAUNA = {
+  cow: 'vache',
+  sheep: 'mouton',
+  goat: 'chèvre',
+  horse: 'cheval',
+  donkey: 'âne',
+  chicken: 'poule',
+  deer: 'cerf',
+  doe: 'biche',
+  reindeer: 'renne',
+  boar: 'sanglier',
+  fox: 'renard',
+  wolf: 'loup',
+  bear: 'ours',
+};
+
 /** Objets qu'on ne nomme pas : ils sont l'ambiance, pas le décor. */
 export const LABEL_IGNORED = new Set(['sky-dome', 'sun']);
 
@@ -178,6 +191,10 @@ export function labelForMeshName(name) {
   if (name.startsWith('furniture-')) {
     const kind = name.slice(10);
     return LABEL_FURNITURE[kind] || `mobilier (${kind})`;
+  }
+  if (name.startsWith('fauna-')) {
+    const kind = name.slice(6);
+    return LABEL_FAUNA[kind] || `bête (${kind})`;
   }
   // Arbres : le peuplement est plus parlant que la tuile, et il est déduit du
   // lieu — c'est `labelForObject` qui le complète, faute de position ici.

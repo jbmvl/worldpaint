@@ -25,7 +25,10 @@ src/
   terrain/      the ground mesh: bubble, material, ground-class map, road cut
   layers/       everything built on top of the terrain (roads, bridges and
                 tunnels, street kerbing, buildings, gardens, vegetation,
-                crops, furniture)
+                crops, furniture, animals)
+  models/       geometry catalogues, kept apart from the layers that place
+                them: `kit.js` is the volume assembler, `animalKit.js` adds
+                articulation, `fauna/` holds one file per family of animal
   materials/    procedural textures and shared materials
   environment/  sky, sun, shadows, fog
   inspect/      debug helpers for labelling what's on screen

@@ -38,6 +38,7 @@ import {
   sourceForMeshName,
   LABEL_BUILDING_PERSONALITY,
   LABEL_FURNITURE,
+  LABEL_FAUNA,
   LABEL_ROADS,
   LABEL_CROPS,
   LABEL_SOURCE_OSM,
@@ -66,6 +67,10 @@ import {
   forestGameFor,
   FOREST_GAME,
   DEFAULT_FOREST_GAME,
+  FOREST_PREDATORS,
+  DEFAULT_FOREST_PREDATORS,
+  PREDATOR_ODDS,
+  PREDATOR_MAX,
   FOREST_GAME_EMPTY_ODDS,
   FOREST_GAME_PER_HECTARE,
   herdFor,
@@ -308,6 +313,7 @@ import {
   FurnitureLayer,
   LINEAR_KINDS,
   POINT_ITEMS,
+  FURNITURE_LIMITS,
   FARMSTEAD_MAX_HECTARES,
   FARMSTEAD_CLUSTER_RADIUS_M,
   FARMSTEAD_CLUSTER_MIN_BUILDINGS,
@@ -393,6 +399,33 @@ import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furn
 import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
 import { TerrainMaterialFactory } from '../src/terrain/terrainMaterial.js';
 import { birdAt, createBirdGeometry } from '../src/layers/lifeLayer.js';
+import {
+  FAUNA_BUILDERS,
+  FAUNA_KINDS,
+  FAUNA_SPECIES,
+  grazeAngleFor,
+  createFaunaGeometries,
+  createFaunaMaterial,
+  GRAZE_TARGET_M,
+  GRAZE_MAX_RAD,
+} from '../src/models/fauna/index.js';
+import {
+  LIMB,
+  LEGS,
+  LIMB_ATTRIBUTE,
+  MOTION_ATTRIBUTE,
+} from '../src/models/animalKit.js';
+import {
+  behaviourFor,
+  buildCircuit,
+  faunaStateAt,
+  FAUNA_BEHAVIOURS,
+  FAUNA_REPERTOIRE,
+  DEFAULT_REPERTOIRE,
+  CROSS_ODDS,
+  TERRAIN_SAMPLE_M,
+  CIRCUIT_MAX_STATIONS,
+} from '../src/layers/faunaMotion.js';
 import {
   windowGrid,
   windowDraw,
@@ -3122,8 +3155,15 @@ test('ce qui se sème dans un champ dépend de sa culture', () => {
 test('le gibier d’un bois est celui du pays', () => {
   // Même massif, même tirage : seul le pays change. Le renne remplace le
   // cervidé au nord, le sanglier domine au sud.
-  assert.equal(forestGameFor({ variant: 0.5, climate: 'boreal' }).item, 'reindeer');
-  assert.equal(forestGameFor({ variant: 0.5, climate: 'mediterranean' }).item, 'boar');
+  //
+  // La domination se mesure sur la table entière et non sur un tirage précis :
+  // écrite sur un `variant` choisi, l'assertion cassait au premier ajout
+  // d'espèce sans que rien du sens n'ait bougé.
+  const share = (pool, item) => pool.filter((k) => k === item).length / pool.length;
+  assert.ok(share(FOREST_GAME.boreal, 'reindeer') >= 0.5, 'le renne domine la taïga');
+  assert.ok(share(FOREST_GAME.mediterranean, 'boar') >= 0.5, 'le sanglier domine la chênaie');
+  assert.ok(!FOREST_GAME.mediterranean.includes('reindeer'), 'pas de renne en Provence');
+  assert.ok(!FOREST_GAME.boreal.includes('boar'), 'pas de sanglier en Laponie');
   assert.equal(forestGameFor({ variant: 0.1, climate: 'oceanic' }).item, 'deer');
   // Là où il n’y a pas de forêt, il n’y a rien à voir — et surtout pas un
   // chevreuil au milieu des Bardenas.
@@ -3137,24 +3177,56 @@ test('le gibier d’un bois est celui du pays', () => {
 
   // Le sanglier va en compagnie serrée, le cervidé en harde lâche.
   assert.ok(
-    forestGameFor({ variant: 0.5, climate: 'mediterranean' }).spread <
-      forestGameFor({ variant: 0.5, climate: 'boreal' }).spread
+    forestGameFor({ variant: 0, climate: 'mediterranean' }).spread <
+      forestGameFor({ variant: 0, climate: 'boreal' }).spread
   );
 
   // Toute la table tire dans des silhouettes qui existent, et couvre toutes
   // les familles : une famille oubliée retomberait silencieusement sur le
-  // gibier tempéré, ce qui se verrait en Laponie.
+  // gibier tempéré, ce qui se verrait en Laponie. Les bêtes ne sont plus au
+  // catalogue du mobilier : elles bougent, donc elles sont dans `models/fauna`.
   for (const family of CLIMATE_FAMILIES) {
     assert.ok(FOREST_GAME[family], `${family} : gibier décrit`);
+    assert.ok(FOREST_PREDATORS[family], `${family} : carnassiers décrits`);
     for (const item of FOREST_GAME[family]) {
-      assert.ok(FURNITURE_BUILDERS[item], `${family} : ${item} au catalogue`);
+      assert.ok(FAUNA_BUILDERS[item], `${family} : ${item} au catalogue`);
+    }
+    for (const item of FOREST_PREDATORS[family]) {
+      assert.ok(FAUNA_BUILDERS[item], `${family} : ${item} au catalogue`);
     }
   }
-  for (const item of DEFAULT_FOREST_GAME) assert.ok(FURNITURE_BUILDERS[item], item);
+  for (const item of DEFAULT_FOREST_GAME) assert.ok(FAUNA_BUILDERS[item], item);
+  for (const item of DEFAULT_FOREST_PREDATORS) assert.ok(FAUNA_BUILDERS[item], item);
 
-  // Le gibier reste rare : sans ça, un bois sur deux est un parc animalier.
-  assert.ok(FOREST_GAME_EMPTY_ODDS > 0.5, 'la plupart des bois ne montrent rien');
+  // Le gibier reste rare : un bois sur deux ne montre rien, et on en croise
+  // sans jamais en compter. Les seuils ont été desserrés en même temps que
+  // les bêtes sont devenues animées — voir `FOREST_GAME_EMPTY_ODDS`.
+  assert.ok(FOREST_GAME_EMPTY_ODDS > 0.35, 'beaucoup de bois ne montrent rien');
   assert.ok(FOREST_GAME_PER_HECTARE < 0.5, 'de quoi en croiser, pas de quoi en compter');
+});
+
+test('les carnassiers se tirent à part du gibier, et restent rares', () => {
+  // Le second tirage décide seul de la famille : au-dessus du seuil c'est du
+  // gibier, en dessous c'est un carnassier — quel que soit `variant`.
+  const game = forestGameFor({ variant: 0.5, predatorDraw: 0.9, climate: 'continental' });
+  assert.equal(game.solitary, false);
+  assert.ok(['deer', 'doe', 'boar'].includes(game.item));
+
+  const hunter = forestGameFor({ variant: 0.5, predatorDraw: 0.01, climate: 'continental' });
+  assert.equal(hunter.solitary, true);
+  assert.ok(['fox', 'wolf'].includes(hunter.item));
+
+  // Sans second tirage, on ne tombe jamais sur un carnassier : c'est la
+  // valeur par défaut, et elle doit rester du côté du gibier.
+  assert.equal(forestGameFor({ variant: 0.5, climate: 'boreal' }).solitary, false);
+
+  // Là où la glace couvre tout, il n'y a ni gibier ni carnassier : le repli
+  // ne doit pas ramener un renard sur un glacier.
+  assert.equal(forestGameFor({ variant: 0.5, predatorDraw: 0, climate: 'glacial' }), null);
+
+  // Rare, et à garder rare : un loup par bois cesse d'être un loup.
+  assert.ok(PREDATOR_ODDS < 0.25, 'un carnassier reste un événement');
+  assert.ok(PREDATOR_MAX <= 3, 'ils ne vont pas en horde');
 });
 
 test('un tas de bois se range le long de la lisière', () => {
@@ -3332,6 +3404,593 @@ test('les tronçons raides sont contigus et assez longs pour valoir une glissiè
   // au milieu d’un plateau, elle se lirait comme un défaut.
   assert.equal(runs.length, 1);
   assert.equal(runs[0].length, 5);
+});
+
+
+// ---------------------------------------------------------------------------
+// Le vivant : modèles articulés (models/fauna), conduites (faunaMotion)
+// ---------------------------------------------------------------------------
+
+/** Le peu de `THREE` dont une géométrie de faune a besoin. */
+function fakeFaunaTHREE() {
+  class Attribute {
+    constructor(array, itemSize) {
+      this.array = Float32Array.from(array);
+      this.itemSize = itemSize;
+      this.count = this.array.length / itemSize;
+    }
+  }
+  return {
+    FrontSide: 0,
+    BufferGeometry: class {
+      constructor() {
+        this.attributes = {};
+      }
+      setAttribute(name, attribute) {
+        this.attributes[name] = attribute;
+        return this;
+      }
+      getAttribute(name) {
+        return this.attributes[name];
+      }
+      computeBoundingSphere() {}
+      dispose() {}
+    },
+    Float32BufferAttribute: Attribute,
+    InstancedBufferAttribute: Attribute,
+    MeshLambertMaterial: class {
+      constructor(options) {
+        Object.assign(this, options, { userData: {} });
+      }
+    },
+  };
+}
+
+/** Les sommets d'un membre donné, dans un assembleur déjà bâti. */
+function limbVertices(kit, limb) {
+  const out = [];
+  for (let v = 0; v < kit.vertexCount; v++) {
+    if (kit.limbs[v] !== limb) continue;
+    out.push({ x: kit.positions[v * 3], y: kit.positions[v * 3 + 1], z: kit.positions[v * 3 + 2] });
+  }
+  return out;
+}
+
+test('chaque bête du catalogue se bâtit, repose au sol, et a de quoi être détaillée', () => {
+  assert.ok(FAUNA_KINDS.length >= 12, `catalogue fourni (${FAUNA_KINDS.length} espèces)`);
+
+  for (const kind of FAUNA_KINDS) {
+    const kit = FAUNA_BUILDERS[kind](defaultTheme.fauna.colors);
+    assert.equal(kit.positions.length % 9, 0, `${kind} : triangles complets`);
+    assert.equal(kit.normals.length, kit.positions.length, `${kind} : une normale par sommet`);
+    assert.equal(kit.colors.length, kit.positions.length, `${kind} : une couleur par sommet`);
+    assert.equal(kit.limbs.length, kit.vertexCount, `${kind} : un membre par sommet`);
+    assert.equal(kit.pivots.length, kit.vertexCount * 3, `${kind} : un pivot par sommet`);
+    assert.equal(kit.coats.length, kit.vertexCount, `${kind} : un masque de robe par sommet`);
+
+    // Le grief d'origine : une bête faite de six boîtes se lit comme une
+    // caisse à pattes à quinze mètres. Le seuil ne dit pas que le modèle est
+    // beau, il dit qu'il n'est pas retombé à l'état de boîtes.
+    const triangles = kit.vertexCount / 3;
+    assert.ok(triangles >= 150, `${kind} : de quoi tenir un galbe (${triangles} triangles)`);
+    assert.ok(triangles <= 700, `${kind} : mais on reste en low poly (${triangles} triangles)`);
+
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (let i = 1; i < kit.positions.length; i += 3) {
+      minY = Math.min(minY, kit.positions[i]);
+      maxY = Math.max(maxY, kit.positions[i]);
+    }
+    // Origine au pied, comme le mobilier : une bête dont la base flotte
+    // lévite une fois posée sur le terrain.
+    assert.ok(Math.abs(minY) < 0.06, `${kind} : les pieds touchent le sol (${minY.toFixed(3)})`);
+    assert.ok(maxY > 0.3, `${kind} : de la hauteur (${maxY.toFixed(2)})`);
+  }
+});
+
+test('le masque de robe ne porte que sur des gris — sinon la teinte d’instance ment', () => {
+  // La teinte d'instance **multiplie** la couleur de sommet. Un sommet de robe
+  // doit donc être un niveau de gris : lui donner une vraie couleur ferait un
+  // produit de deux teintes, c'est-à-dire n'importe quoi.
+  for (const kind of FAUNA_KINDS) {
+    const kit = FAUNA_BUILDERS[kind](defaultTheme.fauna.colors);
+    let coated = 0;
+    let fixed = 0;
+    for (let v = 0; v < kit.vertexCount; v++) {
+      const [r, g, b] = [kit.colors[v * 3], kit.colors[v * 3 + 1], kit.colors[v * 3 + 2]];
+      assert.ok(kit.coats[v] === 0 || kit.coats[v] === 1, `${kind} : masque binaire`);
+      if (kit.coats[v] === 1) {
+        coated++;
+        close(r, g, 1e-9, `${kind} : la robe est un gris`);
+        close(g, b, 1e-9, `${kind} : la robe est un gris`);
+      } else {
+        fixed++;
+      }
+    }
+    assert.ok(coated > 0, `${kind} : une robe teintable`);
+    // Sabots, cornes, mufle, œil : ce qui ne doit pas suivre la robe.
+    assert.ok(fixed > 0, `${kind} : des parties qui résistent à la teinte`);
+  }
+});
+
+test('un membre tourne autour de son attache, jamais autour du sol', () => {
+  // C'est l'erreur que rien dans le rendu ne signale : une patte dont le
+  // pivot est au pied tourne comme une aiguille de montre, et la bête a
+  // simplement l'air de patiner.
+  for (const kind of FAUNA_KINDS) {
+    const kit = FAUNA_BUILDERS[kind](defaultTheme.fauna.colors);
+
+    // Le tronc ne tourne pas : son pivot est l'origine, et c'est ce que le
+    // shader teste pour l'épargner.
+    for (let v = 0; v < kit.vertexCount; v++) {
+      if (kit.limbs[v] !== LIMB.BODY) continue;
+      assert.equal(kit.pivots[v * 3], 0, `${kind} : le tronc n'a pas de pivot`);
+      assert.equal(kit.pivots[v * 3 + 1], 0);
+      assert.equal(kit.pivots[v * 3 + 2], 0);
+    }
+
+    for (const limb of LEGS) {
+      const points = limbVertices(kit, limb);
+      if (points.length === 0) continue; // la poule n'a que deux pattes
+      const index = kit.limbs.indexOf(limb);
+      const pivotY = kit.pivots[index * 3 + 1];
+      const highest = Math.max(...points.map((p) => p.y));
+      const lowest = Math.min(...points.map((p) => p.y));
+      // La tolérance n'est pas de la complaisance : un tronçon incliné
+      // (`bone`) dépasse d'un centimètre ou deux au-dessus de son attache,
+      // par le coin de sa section. Ce qui compte est que le pivot soit en
+      // haut de la patte et pas en bas.
+      assert.ok(
+        pivotY >= highest - 0.04,
+        `${kind} : l'attache de la patte ${limb} est en haut (${pivotY.toFixed(2)} contre ${highest.toFixed(2)})`
+      );
+      assert.ok(
+        pivotY > (lowest + highest) / 2,
+        `${kind} : l'attache de la patte ${limb} est du côté de l'épaule`
+      );
+      assert.ok(pivotY > 0.05, `${kind} : l'attache de la patte ${limb} n'est pas au sol`);
+    }
+
+    // L'encolure part du pivot vers le haut : le pivot est donc sous la tête.
+    const head = limbVertices(kit, LIMB.HEAD);
+    assert.ok(head.length > 0, `${kind} : une tête articulée`);
+    const headIndex = kit.limbs.indexOf(LIMB.HEAD);
+    const headPivotY = kit.pivots[headIndex * 3 + 1];
+    assert.ok(headPivotY < Math.max(...head.map((p) => p.y)), `${kind} : l'encolure monte depuis son attache`);
+  }
+});
+
+test('les quadrupèdes ont bien quatre pattes, et la poule deux', () => {
+  for (const kind of FAUNA_KINDS) {
+    const kit = FAUNA_BUILDERS[kind](defaultTheme.fauna.colors);
+    const legs = LEGS.filter((limb) => limbVertices(kit, limb).length > 0);
+    const expected = kind === 'chicken' ? 2 : 4;
+    assert.equal(legs.length, expected, `${kind} : ${expected} pattes`);
+  }
+});
+
+test('l’angle de broutage amène vraiment le museau dans l’herbe', () => {
+  // Le reproche de départ : une bête qui mime le broutage trente centimètres
+  // au-dessus du sol. L'angle n'est pas réglé à la main mais déduit du modèle
+  // (`grazeAngleFor`) — ce test vérifie que la déduction tient pour chacune.
+  for (const kind of FAUNA_KINDS) {
+    const kit = FAUNA_BUILDERS[kind](defaultTheme.fauna.colors);
+    assert.ok(kit.muzzlePoint, `${kind} : le museau est déclaré`);
+    assert.ok(kit.headPivot, `${kind} : l'attache d'encolure est déclarée`);
+
+    const angle = grazeAngleFor(kit);
+    assert.ok(angle > 0.3, `${kind} : l'encolure se rabat vraiment (${angle.toFixed(2)} rad)`);
+    assert.ok(angle <= GRAZE_MAX_RAD + 1e-9, `${kind} : et pas au-delà du plié possible`);
+
+    const dy = kit.muzzlePoint[1] - kit.headPivot[1];
+    const dz = kit.muzzlePoint[2] - kit.headPivot[2];
+    const muzzleY = kit.headPivot[1] + dy * Math.cos(angle) - dz * Math.sin(angle);
+    assert.ok(muzzleY < 0.25, `${kind} : le museau descend dans l'herbe (${muzzleY.toFixed(3)} m)`);
+    assert.ok(muzzleY > -0.2, `${kind} : sans s'enfoncer dans le sol (${muzzleY.toFixed(3)} m)`);
+  }
+});
+
+test('la forme close de l’angle de broutage vaut le balayage numérique', () => {
+  // La forme close est la seule chose ici qu'on ne puisse pas relire : on la
+  // confronte au balayage qu'elle remplace.
+  //
+  // Le museau décrit un cercle : il passe **deux fois** par la hauteur visée,
+  // en descendant puis en remontant de l'autre côté. Seule la première
+  // compte — la seconde, c'est une encolure qui a basculé sous le poitrail.
+  // Le balayage cherche donc la première descente, pas la meilleure racine.
+  for (const kind of FAUNA_KINDS) {
+    const kit = FAUNA_BUILDERS[kind](defaultTheme.fauna.colors);
+    const dy = kit.muzzlePoint[1] - kit.headPivot[1];
+    const dz = kit.muzzlePoint[2] - kit.headPivot[2];
+    const heightAt = (a) => kit.headPivot[1] + dy * Math.cos(a) - dz * Math.sin(a);
+
+    let first = null;
+    let lowest = 0;
+    let lowestY = Infinity;
+    for (let step = 0; step <= 40000; step++) {
+      const a = (step / 40000) * GRAZE_MAX_RAD;
+      const y = heightAt(a);
+      if (y < lowestY) {
+        lowestY = y;
+        lowest = a;
+      }
+      if (first === null && y <= GRAZE_TARGET_M) first = a;
+    }
+    // Encolure trop courte pour atteindre la cible : l'angle attendu est
+    // celui qui descend le plus bas — une bête qui tend le cou au maximum.
+    close(grazeAngleFor(kit), first ?? lowest, 2e-3, `${kind} : même angle que le balayage`);
+  }
+});
+
+test('sans museau déclaré, l’angle de broutage est nul plutôt que faux', () => {
+  assert.equal(grazeAngleFor(null), 0);
+  assert.equal(grazeAngleFor({}), 0);
+  assert.equal(grazeAngleFor({ headPivot: [0, 1, 0], muzzlePoint: null }), 0);
+  // Museau confondu avec l'attache : aucune rotation ne le déplace.
+  assert.equal(grazeAngleFor({ headPivot: [0, 1, 0], muzzlePoint: [0, 1, 0] }), 0);
+});
+
+test('le matériau du vivant greffe bien ses quatre morceaux dans le shader', () => {
+  // Une greffe par `replace` échoue **en silence** : si three renomme un
+  // chunk, le shader compile toujours et l'animation disparaît sans erreur.
+  const material = createFaunaMaterial(fakeFaunaTHREE());
+  const shader = {
+    vertexShader: [
+      '#include <common>',
+      'void main() {',
+      '#include <color_vertex>',
+      '#include <beginnormal_vertex>',
+      '#include <begin_vertex>',
+      '}',
+    ].join('\n'),
+  };
+  material.onBeforeCompile(shader);
+
+  for (const attribute of ['aLimb', 'aPivot', 'aCoat', 'aMotion']) {
+    assert.ok(shader.vertexShader.includes(`attribute`), 'des attributs déclarés');
+    assert.ok(shader.vertexShader.includes(attribute), `${attribute} est utilisé`);
+  }
+  assert.ok(shader.vertexShader.includes('mat3 faunaJointRotation()'), 'la rotation est définie');
+  assert.ok(shader.vertexShader.includes('objectNormal = faunaJointRotation()'), 'la normale suit le membre');
+  assert.ok(shader.vertexShader.includes('transformed = aPivot + faunaJointRotation()'), 'la position suit le membre');
+  assert.ok(shader.vertexShader.includes('mix(color.xyz'), 'la teinte ne porte que sur la robe');
+
+  // Les noms d'attributs viennent d'`animalKit` : les recopier dans le shader
+  // les ferait diverger au premier renommage.
+  assert.ok(shader.vertexShader.includes(LIMB_ATTRIBUTE));
+  assert.ok(shader.vertexShader.includes(MOTION_ATTRIBUTE));
+});
+
+test('les deux greffes du shader ne dépendent pas l’une de l’autre', () => {
+  // Dans le shader du `MeshBasicMaterial`, three enferme déjà
+  // `<beginnormal_vertex>` dans un `#if` : une variable déclarée là ne serait
+  // pas en portée à `<begin_vertex>`. Rien ne garantit que le lambertien y
+  // échappera toujours, et l'échec serait une erreur de compilation.
+  //
+  // On le vérifie en inversant l'ordre des deux chunks : les deux greffes
+  // doivent rester valides.
+  const material = createFaunaMaterial(fakeFaunaTHREE());
+  const shader = {
+    vertexShader: [
+      '#include <common>',
+      'void main() {',
+      '#include <color_vertex>',
+      '#include <begin_vertex>',
+      '#include <beginnormal_vertex>',
+      '}',
+    ].join('\n'),
+  };
+  material.onBeforeCompile(shader);
+
+  const lines = shader.vertexShader.split('\n');
+  const declared = lines.findIndex((l) => l.includes('mat3 faunaJointRotation()'));
+  const usedByPosition = lines.findIndex((l) => l.includes('transformed = aPivot'));
+  const usedByNormal = lines.findIndex((l) => l.includes('objectNormal = faunaJointRotation()'));
+  assert.ok(declared >= 0 && usedByPosition > declared, 'la fonction est définie avant son premier usage');
+  assert.ok(usedByNormal > declared, 'et avant le second');
+  // Aucune variable partagée entre les deux greffes : chacune se suffit.
+  assert.ok(!shader.vertexShader.includes('mat3 faunaJoint ='), 'pas de variable partagée entre les greffes');
+});
+
+test('les géométries du vivant portent leurs attributs d’articulation', () => {
+  const { geometries, grazeRad } = createFaunaGeometries(fakeFaunaTHREE(), defaultTheme.fauna.colors);
+  for (const kind of FAUNA_KINDS) {
+    const geometry = geometries[kind];
+    const vertices = geometry.attributes.position.count;
+    assert.equal(geometry.attributes.aLimb.count, vertices, `${kind} : un membre par sommet`);
+    assert.equal(geometry.attributes.aPivot.count, vertices, `${kind} : un pivot par sommet`);
+    assert.equal(geometry.attributes.aCoat.count, vertices, `${kind} : une robe par sommet`);
+    assert.equal(geometry.attributes.aPivot.itemSize, 3);
+    assert.ok(grazeRad[kind] > 0, `${kind} : un angle de broutage`);
+
+    for (const limb of geometry.attributes.aLimb.array) {
+      assert.ok(limb >= 0 && limb <= LIMB.EAR, `${kind} : membre connu (${limb})`);
+    }
+  }
+});
+
+// --- Conduites et circuits ---------------------------------------------------
+
+/** Un sol plat : le relief est testé ailleurs, pas ici. */
+const flatGround = () => 100;
+
+test('toute conduite du répertoire existe, et le pré reste majoritairement calme', () => {
+  for (const [family, pool] of Object.entries(FAUNA_REPERTOIRE)) {
+    assert.ok(pool.length > 0, `${family} : un répertoire`);
+    for (const behaviour of pool) {
+      assert.ok(FAUNA_BEHAVIOURS[behaviour], `${family} : ${behaviour} est une conduite connue`);
+    }
+  }
+  for (const behaviour of DEFAULT_REPERTOIRE) assert.ok(FAUNA_BEHAVIOURS[behaviour], behaviour);
+
+  // Chaque espèce du catalogue tire dans un répertoire décrit : une famille
+  // oubliée retomberait en silence sur le répertoire de repli.
+  for (const kind of FAUNA_KINDS) {
+    const family = FAUNA_SPECIES[kind].family;
+    assert.ok(FAUNA_REPERTOIRE[family], `${kind} : la famille ${family} a un répertoire`);
+  }
+
+  // Un pré est fait de bêtes qui broutent. C'est ce qui rend remarquable
+  // celle qui relève la tête.
+  const calm = FAUNA_REPERTOIRE.grazer.filter((b) => b === 'graze').length;
+  assert.ok(calm / FAUNA_REPERTOIRE.grazer.length > 0.5, 'la plupart des bêtes d’un pré broutent');
+});
+
+test('la traversée ne se déclenche que près d’une route, et rarement', () => {
+  assert.equal(behaviourFor({ family: 'grazer', variant: 0.1, nearRoad: true, crossDraw: 0.01 }), 'cross');
+  // Loin de toute route, le même tirage ne traverse rien.
+  assert.notEqual(behaviourFor({ family: 'grazer', variant: 0.1, nearRoad: false, crossDraw: 0.01 }), 'cross');
+  // Près d'une route mais au-dessus du seuil : elle broute comme les autres.
+  assert.notEqual(behaviourFor({ family: 'grazer', variant: 0.1, nearRoad: true, crossDraw: 0.9 }), 'cross');
+  assert.ok(CROSS_ODDS < 0.35, 'une traversée reste un événement');
+
+  // Sans second tirage, on ne traverse jamais : c'est la valeur par défaut.
+  assert.notEqual(behaviourFor({ family: 'grazer', variant: 0.1, nearRoad: true }), 'cross');
+});
+
+test('un circuit se referme : au bout d’une période, la bête est revenue', () => {
+  const circuit = buildCircuit({
+    behaviour: 'amble',
+    x: 120,
+    z: -40,
+    walkMS: 1,
+    runMS: 4,
+    sampleY: flatGround,
+  });
+  assert.ok(circuit, 'un circuit est tracé');
+
+  for (const t of [0, 3.5, 11.25, 40]) {
+    const now = faunaStateAt(circuit, t);
+    const later = faunaStateAt(circuit, t + circuit.period);
+    close(later.x, now.x, 1e-9, 'même abscisse un tour plus tard');
+    close(later.z, now.z, 1e-9, 'même ordonnée');
+    close(later.heading, now.heading, 1e-9, 'même cap');
+    // Le chemin, lui, ne se referme pas : c'est ce qui fait avancer la foulée.
+    close(later.distance - now.distance, circuit.loopLength, 1e-9, 'un tour de plus au compteur');
+  }
+});
+
+test('le chemin parcouru ne recule jamais, et vaut zéro à l’arrêt', () => {
+  const circuit = buildCircuit({
+    behaviour: 'graze',
+    x: -300,
+    z: 88,
+    walkMS: 1.1,
+    runMS: 3,
+    sampleY: flatGround,
+  });
+
+  let previous = faunaStateAt(circuit, 0).distance;
+  for (let step = 1; step <= 500; step++) {
+    const state = faunaStateAt(circuit, step * 0.19);
+    assert.ok(state.distance >= previous - 1e-9, 'le compteur de foulée ne recule pas');
+    // À l'arrêt, rien n'avance : c'est ce qui empêche les pattes de battre
+    // sur place quand la bête broute.
+    if (state.speed === 0) assert.ok(state.head >= 0);
+    previous = state.distance;
+  }
+});
+
+test('la tête ne se baisse qu’à l’arrêt', () => {
+  for (const behaviour of ['graze', 'amble', 'sniff', 'peck']) {
+    const circuit = buildCircuit({
+      behaviour,
+      x: 41,
+      z: 17,
+      walkMS: 1,
+      runMS: 4,
+      sampleY: flatGround,
+    });
+    let grazed = false;
+    for (let step = 0; step < 900; step++) {
+      const state = faunaStateAt(circuit, step * 0.07);
+      if (state.speed > 0) {
+        assert.equal(state.head, 0, `${behaviour} : tête haute en marchant`);
+      }
+      assert.ok(state.head >= 0 && state.head <= 1, `${behaviour} : rabattement borné`);
+      if (state.head > 0.5) grazed = true;
+    }
+    assert.ok(grazed, `${behaviour} : la tête descend pour de bon à un moment`);
+  }
+});
+
+test('une bête qui guette ne bouge pas d’un pouce', () => {
+  const circuit = buildCircuit({
+    behaviour: 'watch',
+    x: 5,
+    z: 5,
+    walkMS: 1,
+    runMS: 4,
+    sampleY: flatGround,
+  });
+  assert.equal(circuit.stations.length, 1);
+  assert.equal(circuit.loopLength, 0);
+  const first = faunaStateAt(circuit, 0);
+  for (const t of [0.5, 9, 61, 400]) {
+    const state = faunaStateAt(circuit, t);
+    assert.equal(state.speed, 0);
+    assert.equal(state.distance, 0, 'aucune foulée : les pattes restent droites');
+    close(state.x, first.x, 1e-9);
+    close(state.z, first.z, 1e-9);
+    close(state.heading, first.heading, 1e-9);
+  }
+});
+
+test('un circuit ne pose aucune station sur la chaussée', () => {
+  // Une bande interdite en travers du champ : aucune station ne doit y tomber,
+  // et le circuit doit malgré tout exister — une bête qui échoue à trouver sa
+  // place disparaîtrait du pré.
+  // L'ancre est hors emprise — c'est la précondition : `furnitureLayer` ne
+  // pose une bête que sur un point déjà filtré (`_filterOffInfra`), et le
+  // repli de dernier recours d'une station est justement de revenir dessus.
+  const onRoad = (x) => Math.abs(x) < 6;
+  const circuit = buildCircuit({
+    behaviour: 'amble',
+    x: 20,
+    z: 0,
+    walkMS: 1,
+    runMS: 4,
+    sampleY: flatGround,
+    allow: (x) => !onRoad(x),
+  });
+  assert.ok(circuit, 'la bête trouve quand même où aller');
+  // Le rayon d'`amble` (14 m) dépasse largement la bande interdite : sans
+  // repli, la moitié des stations y tomberaient.
+  assert.ok(FAUNA_BEHAVIOURS.amble.radiusM > 14 - 6, 'le circuit croise bien la bande');
+  for (const station of circuit.stations) {
+    if (station.dwell > 0) assert.ok(!onRoad(station.x), 'aucune halte sur la chaussée');
+  }
+
+  // Le nombre de haltes ne change pas selon ce qui est refusé : une station
+  // rejetée est ramenée, jamais retirée. Sinon la période du circuit
+  // changerait et la bête sauterait à chaque reconstruction.
+  const free = buildCircuit({ behaviour: 'amble', x: 20, z: 0, walkMS: 1, runMS: 4, sampleY: flatGround });
+  assert.equal(
+    circuit.stations.filter((s) => s.dwell > 0).length,
+    free.stations.filter((s) => s.dwell > 0).length,
+    'autant de haltes, contrainte ou non'
+  );
+});
+
+test('une traversée franchit vraiment la route, de bas-côté à bas-côté', () => {
+  const circuit = buildCircuit({
+    behaviour: 'cross',
+    x: 200,
+    z: 300,
+    walkMS: 1.1,
+    runMS: 4,
+    sampleY: flatGround,
+    // La traversée ignore délibérément l'interdit : c'est tout son objet.
+    allow: () => false,
+    crossAxis: { x: 1, z: 0 },
+  });
+  assert.ok(circuit);
+
+  const halts = circuit.stations.filter((s) => s.dwell > 0);
+  assert.equal(halts.length, 2, 'un bas-côté de chaque côté');
+  const [a, b] = halts;
+  close(Math.hypot(a.x - b.x, a.z - b.z), 2 * 9, 1e-9, 'la largeur franchie');
+  // L'axe est bien celui qu'on a imposé : la bête traverse, elle ne longe pas.
+  close(Math.abs(a.z - b.z), 0, 1e-9, 'perpendiculaire à la chaussée');
+  // Le milieu du trajet est le point qu'on lui a donné : la route.
+  close((a.x + b.x) / 2, 200, 1e-9);
+
+  // Et elle attend longuement avant de s'engager.
+  assert.ok(halts[0].dwell > 5, 'on ne traverse pas sans regarder');
+});
+
+test('un long trajet suit le terrain au lieu de le traverser', () => {
+  // Sans points de passage, l'altitude est interpolée en ligne droite d'une
+  // station à l'autre : une bête qui traverse trente mètres de pré vallonné
+  // passe sous la butte du milieu.
+  const hill = (x, z) => 100 + 8 * Math.sin(x / 20) * Math.cos(z / 20);
+  const circuit = buildCircuit({
+    behaviour: 'run',
+    x: 0,
+    z: 0,
+    walkMS: 1.2,
+    runMS: 7,
+    sampleY: hill,
+  });
+  assert.ok(circuit.stations.length > FAUNA_BEHAVIOURS.run.stations, 'des points de passage insérés');
+  assert.ok(circuit.stations.length <= CIRCUIT_MAX_STATIONS, 'mais bornés');
+
+  // Aucun tronçon ne dépasse le pas d'échantillonnage, à la tolérance de
+  // l'arrondi près : c'est ce qui garantit que le sol est suivi.
+  for (let i = 0; i < circuit.stations.length; i++) {
+    const from = circuit.stations[i];
+    const to = circuit.stations[(i + 1) % circuit.stations.length];
+    const span = Math.hypot(to.x - from.x, to.z - from.z);
+    assert.ok(span <= TERRAIN_SAMPLE_M + 1e-6, `tronçon échantillonné (${span.toFixed(2)} m)`);
+  }
+
+  // Et la bête passe bien par ces altitudes-là.
+  for (const station of circuit.stations) {
+    close(station.y, hill(station.x, station.z), 1e-9, 'altitude relevée sur le terrain');
+  }
+});
+
+test('deux passages au même endroit rendent la même bête', () => {
+  // Le déterminisme spatial est un invariant dur du projet : la conduite, le
+  // circuit et la robe se tirent du lieu, jamais de l'ordre de parcours.
+  const build = () =>
+    buildCircuit({
+      behaviour: behaviourFor({ family: 'grazer', variant: randomAt(77, -13, 227), crossDraw: 1 }),
+      x: 77,
+      z: -13,
+      walkMS: 1,
+      runMS: 3.4,
+      sampleY: flatGround,
+    });
+
+  const first = build();
+  const second = build();
+  assert.equal(first.behaviour, second.behaviour);
+  assert.equal(first.stations.length, second.stations.length);
+  close(first.period, second.period, 1e-12);
+  close(first.offset, second.offset, 1e-12);
+  for (let i = 0; i < first.stations.length; i++) {
+    close(first.stations[i].x, second.stations[i].x, 1e-12);
+    close(first.stations[i].z, second.stations[i].z, 1e-12);
+  }
+});
+
+test('deux bêtes voisines ne sont pas synchrones', () => {
+  // Le défaut qui trahit un troupeau engendré : dix bêtes qui lèvent la tête
+  // en même temps.
+  const offsets = new Set();
+  for (let i = 0; i < 12; i++) {
+    const circuit = buildCircuit({
+      behaviour: 'graze',
+      x: 500 + i * 2.3,
+      z: 500 - i * 1.7,
+      walkMS: 1,
+      runMS: 3,
+      sampleY: flatGround,
+    });
+    offsets.add(circuit.offset.toFixed(4));
+  }
+  assert.equal(offsets.size, 12, 'chaque bête a son propre décalage');
+});
+
+test('chaque bête a un nom lisible et un nuancier de robes', () => {
+  for (const kind of FAUNA_KINDS) {
+    assert.ok(LABEL_FAUNA[kind], `${kind} doit avoir un nom lisible`);
+    assert.equal(labelForMeshName(`fauna-${kind}`), LABEL_FAUNA[kind]);
+
+    const coats = defaultTheme.fauna.coats[kind];
+    assert.ok(Array.isArray(coats) && coats.length >= 3, `${kind} : plusieurs robes`);
+    for (const coat of coats) {
+      assert.equal(coat.length, 3, `${kind} : une robe est un triplet linéaire`);
+      for (const channel of coat) assert.ok(channel >= 0 && channel <= 1, `${kind} : canal dans [0, 1]`);
+    }
+    // Plusieurs robes distinctes : une liste d'une seule couleur répétée
+    // passerait les contrôles ci-dessus sans rien varier du tout.
+    assert.ok(new Set(coats.map((c) => c.join(','))).size >= 3, `${kind} : des robes réellement différentes`);
+  }
+
+  // Une espèce inconnue ne disparaît pas de l'étiquetage : elle se nomme.
+  assert.equal(labelForMeshName('fauna-licorne'), 'bête (licorne)');
 });
 
 // --- Semis dans une parcelle ------------------------------------------------
@@ -6842,6 +7501,10 @@ function farmsteadPlacementHarness() {
   const layer = Object.create(FurnitureLayer.prototype);
   layer.bubble = { surfaceElevationAtLocal: () => 100, verticalScale: 1 };
   layer.chimneys = [];
+  // Les poules de la cour ne sont plus du mobilier : elles partent dans
+  // `fauna`, que la couche publie pour `faunaLayer`.
+  layer.fauna = [];
+  layer._coats = defaultTheme.fauna.coats;
   const placements = new Map();
   for (const item of POINT_ITEMS) placements.set(item, []);
   return { layer, placements };
@@ -6894,6 +7557,99 @@ test('_placeFarmstead aligne plusieurs serres, longues de la parcelle plutôt qu
     const d = Math.hypot(greenhouses[i].x - greenhouses[i - 1].x, greenhouses[i].z - greenhouses[i - 1].z);
     close(d, GREENHOUSE_SPACING_M, 1e-6, 'écart régulier entre deux tunnels voisins');
   }
+});
+
+
+test('les bêtes quittent le mobilier : elles sont publiées, pas instanciées', () => {
+  // Le mobilier ne les porte plus, ni dans son catalogue ni dans ses
+  // instances. Un reste dans `POINT_ITEMS` ferait un maillage vide qui
+  // n'aurait plus de géométrie.
+  for (const kind of FAUNA_KINDS) {
+    assert.ok(!POINT_ITEMS.includes(kind), `${kind} n'est plus une forme de mobilier`);
+    assert.ok(!FURNITURE_BUILDERS[kind], `${kind} n'est plus au catalogue du mobilier`);
+  }
+});
+
+test('_placeFauna publie une bête complète, prête à être jouée', () => {
+  const { layer, placements } = farmsteadPlacementHarness();
+
+  assert.equal(layer._placeFauna('cow', { x: 120, z: -80, scale: 1.05 }), 1);
+  assert.equal(layer.fauna.length, 1);
+
+  const [animal] = layer.fauna;
+  assert.equal(animal.kind, 'cow');
+  assert.equal(animal.scale, 1.05);
+  assert.ok(animal.circuit.stations.length >= 1, 'un circuit tracé');
+  assert.ok(FAUNA_BEHAVIOURS[animal.circuit.behaviour], 'une conduite connue');
+  assert.equal(animal.tint.length, 3, 'une robe');
+  // Rien n'a été instancié comme mobilier : c'est tout l'objet du découpage.
+  for (const list of placements.values()) assert.equal(list.length, 0);
+
+  // Une espèce inconnue ne fait pas tomber la reconstruction du décor.
+  assert.equal(layer._placeFauna('licorne', { x: 0, z: 0 }), 0);
+  assert.equal(layer.fauna.length, 1);
+});
+
+test('le nombre de bêtes posées est plafonné', () => {
+  const { layer } = farmsteadPlacementHarness();
+  for (let i = 0; i < FURNITURE_LIMITS.fauna + 40; i++) {
+    layer._placeFauna('sheep', { x: i * 7.3, z: i * 3.1 });
+  }
+  assert.equal(layer.fauna.length, FURNITURE_LIMITS.fauna, 'plafonné, pas débordé');
+});
+
+test('la cour d’une ferme publie ses poules au lieu de les poser', () => {
+  const { layer, placements } = farmsteadPlacementHarness();
+  const centre = { x: 400, z: 900 };
+  const ring = [
+    { x: centre.x - 40, z: centre.z - 40 },
+    { x: centre.x + 40, z: centre.z - 40 },
+    { x: centre.x + 40, z: centre.z + 40 },
+    { x: centre.x - 40, z: centre.z + 40 },
+  ];
+  layer._placeFarmstead(placements, ring, centre);
+
+  const hens = layer.fauna.filter((a) => a.kind === 'chicken');
+  assert.ok(hens.length >= 4, `une basse-cour (${hens.length} poules)`);
+  // Elles ne s'éloignent pas du bâtiment : c'était vrai avant, ça doit le
+  // rester maintenant qu'elles marchent.
+  for (const hen of hens) {
+    const spread = Math.hypot(hen.x - centre.x, hen.z - centre.z);
+    assert.ok(spread < 16, `poule dans la cour (${spread.toFixed(1)} m)`);
+    for (const station of hen.circuit.stations) {
+      const reach = Math.hypot(station.x - centre.x, station.z - centre.z);
+      assert.ok(reach < 24, `elle ne quitte pas la cour (${reach.toFixed(1)} m)`);
+    }
+  }
+});
+
+test('sans emprise routière connue, personne ne traverse', () => {
+  const { layer } = farmsteadPlacementHarness();
+  // `_infraIndex` ne vit que le temps d'une reconstruction : hors de là, il
+  // n'y a pas de route à traverser, seulement un index absent.
+  assert.equal(layer._crossingAt(0, 0), null);
+});
+
+test('_crossingAt vise le milieu de la chaussée, pas son bord', () => {
+  const { layer } = farmsteadPlacementHarness();
+  // Une bande de bitume en travers, à quelques mètres au nord de la bête.
+  const roadZ = 9;
+  layer._infraIndex = {
+    covers: (x, z) => Math.abs(z - roadZ) < 3.5,
+  };
+
+  const crossing = layer._crossingAt(0, 0);
+  assert.ok(crossing, 'une route à portée');
+  // Le centre du trajet tombe dans l'emprise : une traversée qui commence
+  // sur le bas-côté opposé n'en est pas une.
+  assert.ok(layer._infraIndex.covers(crossing.centre.x, crossing.centre.z), 'le milieu est sur la chaussée');
+  // L'axe pointe vers elle, donc franchement vers +Z ici.
+  assert.ok(crossing.axis.z > 0.5, 'on traverse vers la route');
+  close(Math.hypot(crossing.axis.x, crossing.axis.z), 1, 1e-9, 'axe normalisé');
+
+  // Une route hors de portée ne déclenche rien.
+  layer._infraIndex = { covers: (x, z) => Math.abs(z - 400) < 3.5 };
+  assert.equal(layer._crossingAt(0, 0), null);
 });
 
 test('une emprise habitée se lit par lancer de rayon', () => {
