@@ -305,6 +305,7 @@ import {
   interiorSamples,
   quantile,
   principalAxis,
+  WATER_SURFACE_MARGIN_M,
   reachLevels,
   waterLevelField,
   WATER_REACH_M,
@@ -1305,8 +1306,16 @@ test('l’altitude d’une nappe couvre son fond sans passer par-dessus l’exut
   const levelOf = (outer, sample) => waterLevelField(outer, [], sample).levelAt(50, 50);
 
   // Un pixel de MNT sans tuile chargée ne doit pas faire chuter la nappe à zéro.
+  // Le niveau est celui du sol, plus la marge qui fait sortir l'eau (le MNT
+  // donne la surface de l'eau, pas son fond : posée dessus, elle disparaîtrait).
   const sampleWithHole = (x, z) => (x > 40 && x < 60 && z > 40 && z < 60 ? NaN : 100);
-  close(levelOf(square, sampleWithHole), 100, 1e-9, 'la lacune du milieu est ignorée');
+  // Tolérance large : les altitudes de bief transitent par un `Float32Array`.
+  close(levelOf(square, sampleWithHole), 100 + WATER_SURFACE_MARGIN_M, 1e-4, 'la lacune du milieu est ignorée');
+
+  // La marge est bien au-dessus, jamais en dessous : c'est tout l'objet du
+  // correctif, une nappe posée à ras du MNT se faisait cacher par lui.
+  assert.ok(WATER_SURFACE_MARGIN_M > 0, 'la nappe sort du sol');
+  close(levelOf(square, () => 0), WATER_SURFACE_MARGIN_M, 1e-4, 'un fond à zéro porte quand même de l’eau');
 
   // Le cas ordinaire : un fond bruité sous une rive nette. L'ancien quantile
   // bas se calait sur le plancher du bruit et le fond ressortait partout ;
@@ -1315,12 +1324,15 @@ test('l’altitude d’une nappe couvre son fond sans passer par-dessus l’exut
   const noisyBottom = (x, z) => (Math.abs(x - 50) < 45 && Math.abs(z - 50) < 45 ? 90 + ((x * 7 + z * 13) % 5) : 100);
   const level = levelOf(square, noisyBottom);
   assert.ok(level >= 93, `le niveau couvre le bruit du fond (${level})`);
-  assert.ok(level <= 100, `sans dépasser la rive (${level})`);
+  assert.ok(level <= 100 + WATER_SURFACE_MARGIN_M, `sans dépasser la rive (${level})`);
 
   // L'exutoire plafonne : une cuvette dont un seul côté est bas ne monte pas
   // au-dessus de ce côté-là, même si le fond appelle plus haut.
   const spillway = (x, z) => (z <= 0 ? 80 : 200);
-  assert.ok(levelOf(square, spillway) <= 80 + 1e-9, 'la nappe ne monte pas au-dessus de son point bas');
+  assert.ok(
+    levelOf(square, spillway) <= 80 + WATER_SURFACE_MARGIN_M + 1e-9,
+    'la nappe ne monte pas au-dessus de son point bas'
+  );
 
   // Une nappe ramassée sur une pente : trop courte pour des biefs, et aucun
   // plan horizontal ne lui convient. Elle se range sur l'exutoire — une flaque
@@ -1396,6 +1408,7 @@ test('une nappe ramassée reste plane, une rivière allongée descend avec le te
     const ground = slope(x);
     assert.ok(level >= ground - 1e-6, `l’eau couvre le lit en ${x} m (${level} / ${ground})`);
     assert.ok(level - ground <= 3, `sans noyer le versant en ${x} m (${level - ground} m)`);
+    assert.ok(level > ground || x > 590, `l’eau émerge du lit en ${x} m`);
   }
 
   // La descente est bien celle du terrain, pas une pente inventée.

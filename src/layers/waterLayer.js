@@ -40,7 +40,8 @@
  * horizontal d'un lac : c'est le même mécanisme, pas un cas particulier.
  *
  * Les cours d'eau linéaires suivent la même règle de monotonie, sur leur
- * tracé plutôt que sur un axe reconstruit (`waterwayProfile`).
+ * tracé plutôt que sur un axe reconstruit (`waterwayProfile`), et la même
+ * marge au-dessus du sol (`WATER_SURFACE_MARGIN_M`).
  *
  * Une limite assumée : le niveau n'est évalué qu'aux sommets du polygone, et
  * la carte graphique interpole entre eux. Un très long côté sans sommet
@@ -71,13 +72,19 @@ export const WATER_REBUILD_M = 250;
 /** Pas de ré-échantillonnage le long d'un cours d'eau, en mètres. */
 export const WATER_SAMPLE_M = 8;
 /**
- * Enfoncement d'un cours d'eau linéaire sous l'altitude trouvée, en mètres.
- * Ne concerne pas les nappes, qui se posent au niveau trouvé et se laissent
- * cacher par le terrain. Un cours d'eau linéaire (1,2 à 9 m de large) est trop
- * étroit pour que la maille rende son lit : cette marge reste sa seule
- * protection.
+ * Hauteur d'eau au-dessus du sol que le MNT donne, en mètres.
+ *
+ * Le MNT ne décrit pas le fond d'un lac : sous une nappe, le sol qu'il donne
+ * **est** la surface de l'eau. Posée exactement dessus, la nappe se retrouve
+ * coplanaire au terrain qui la cache — et le terrain gagne les égalités (voir
+ * `createWaterMaterial`) : il ne reste qu'un liseré d'eau au fond du bruit du
+ * MNT, quelques centimètres sous le sol.
+ *
+ * Cette marge l'en fait sortir. Elle ne noie rien : n'est inondé que ce qui
+ * était déjà à quelques centimètres du niveau, c'est-à-dire la nappe
+ * elle-même. Les berges, qui montent, cachent toujours ce qui passe derrière.
  */
-export const WATER_SINK_M = 0.15;
+export const WATER_SURFACE_MARGIN_M = 0.2;
 /** Nombre maximal de surfaces retenues par reconstruction. */
 export const WATER_MAX_POLYGONS = 300;
 /** Nombre maximal de points échantillonnés à l'intérieur d'un polygone pour en tirer l'altitude (voir `interiorSamples`). */
@@ -375,6 +382,8 @@ export function waterLevelField(outer, holes, sampleGround, maxInteriorSamples =
 
   const levels = reachLevels(project(bottom), banks, tMin, span || 1, count);
   if (!levels) return null;
+  // Le MNT donne la surface de l'eau, pas son fond : il faut en sortir.
+  for (let b = 0; b < levels.length; b++) levels[b] += WATER_SURFACE_MARGIN_M;
 
   if (count === 1) {
     const level = levels[0];
@@ -613,7 +622,9 @@ export class WaterLayer {
         // La mer est à zéro par définition (chercher un niveau sur un polygone multi-tuiles n'aurait pas de sens).
         let field;
         if (properties.class === 'ocean') {
-          field = { levelAt: () => 0 };
+          // Le zéro marin, remonté de la même marge : le MNT met la mer à zéro
+          // lui aussi, et une mer coplanaire au rivage ne se verrait pas.
+          field = { levelAt: () => WATER_SURFACE_MARGIN_M };
         } else {
           field = waterLevelField(outer, holeRings, sampleGround);
           if (!field) continue;
@@ -683,7 +694,7 @@ export class WaterLayer {
           path,
           halfWidth: style.halfWidth,
           sampleElevation,
-          lift: -WATER_SINK_M,
+          lift: WATER_SURFACE_MARGIN_M,
           platform, // profil calculé puis imposé, comme la plate-forme de chaussée
           level: true,
           smoothRadius: 0, // sinon le lissage par défaut annulerait la monotonie imposée

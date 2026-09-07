@@ -527,8 +527,10 @@ export class GroundClassMap {
             ctx.stroke(path);
             // Le trait est centré sur l'axe : il faut reprendre le lit, sinon
             // un large cours d'eau se retrouve planté d'arbres en son milieu.
+            // Peint en sol nu, et non effacé : effacer rendrait le lit « non
+            // classé », dont le repli est l'herbe (`unclassifiedWeights`).
             ctx.save();
-            ctx.globalCompositeOperation = 'destination-out';
+            ctx.strokeStyle = CLASS_FILL.bare;
             ctx.lineWidth = width * perMeter;
             ctx.stroke(path);
             ctx.restore();
@@ -545,8 +547,14 @@ export class GroundClassMap {
 
     // Le lit d'un grand cours d'eau est un polygone (`water`), pas seulement
     // le trait `waterway` (dont la largeur de thème décrit un ruisseau, pas
-    // un fleuve). On efface donc, après coup, tout ce qui a été peint sous
+    // un fleuve). On reprend donc, après coup, tout ce qui a été peint sous
     // l'emprise réelle de l'eau.
+    //
+    // En sol nu, pas en effaçant : effacer laisse la carte « non classée », et
+    // le repli du non-classé est l'herbe pleine (`unclassifiedWeights`) — d'où
+    // des touffes et des arbres qui poussaient dans les lacs. Sol nu est le
+    // moins faux des quatre : rien n'y pousse, et ce qu'on en voit est le
+    // fond, là où l'eau ne le cache pas.
     source.forEachFeature('water', tiles, (geometry, properties) => {
       if (!isDrawableWater(properties)) return;
       for (const rings of classPolygons(geometry)) {
@@ -567,9 +575,16 @@ export class GroundClassMap {
         }
 
         ctx.save();
-        ctx.globalCompositeOperation = 'destination-out';
+        ctx.fillStyle = CLASS_FILL.bare;
         ctx.fill(path, 'evenodd');
         ctx.restore();
+
+        // La carte des cultures, elle, s'efface bel et bien : sous l'eau il n'y
+        // a ni culture ni couverture à décrire.
+        this.cropCtx.save();
+        this.cropCtx.globalCompositeOperation = 'destination-out';
+        this.cropCtx.fill(path, 'evenodd');
+        this.cropCtx.restore();
       }
     });
 
