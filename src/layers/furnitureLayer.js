@@ -85,6 +85,9 @@ import {
   pickShare,
   scatterFurnitureFor,
   herdFor,
+  forestGameFor,
+  FOREST_GAME_PER_HECTARE,
+  FOREST_GAME_EMPTY_ODDS,
   rockKindFor,
   signKindFor,
   pathTurn,
@@ -103,7 +106,9 @@ import {
   ROW_CROPS,
   STEEP_CROSS_SLOPE,
   EMBANKMENT_MIN_DROP_M,
+  WOOD_PILE_EDGE_MIN,
 } from './furniturePlacement.js';
+import { WOOD_EDGE_REACH_M } from '../terrain/groundClassMap.js';
 
 /**
  * Seuils de taille d'un bourg, en bâtiments comptés autour de son centroïde
@@ -358,6 +363,9 @@ export const POINT_ITEMS = [
   'goat',
   'horse',
   'donkey',
+  'deer',
+  'boar',
+  'reindeer',
   'chicken',
   'bush',
   'treeBroad',
@@ -1966,7 +1974,7 @@ export class FurnitureLayer {
 
     const hectares = ringAreaMeters(ring) / 10000;
     if (hectares < 0.4) return 0;
-    // Arrondi stochastique, comme `vegetationLayer.treesForScore` : sans lui,
+    // Arrondi stochastique : sans lui,
     // `floor` renvoyait zéro pour **toute** parcelle sous le seuil d'un
     // exemplaire plein — pour un troupeau (1,1/ha), tout pré de moins de
     // 0,91 ha, c'est-à-dire l'essentiel du bocage. Un pré de 0,5 ha a une
@@ -1981,6 +1989,12 @@ export class FurnitureLayer {
     let placed = 0;
 
     if (rule.item === 'herd') return this._placeHerd(placements, ring, centre, variant, steepness, count);
+    if (rule.item === 'woodland') {
+      return (
+        this._placeWoodPiles(placements, ring, centre, count) +
+        this._placeForestGame(placements, ring, centre, variant, hectares)
+      );
+    }
 
     // Rondes ou parallélépipédiques, mais pas les deux dans le même champ : une
     // moissonneuse ne change pas de presse au milieu d'une parcelle. Les bottes
@@ -2035,6 +2049,97 @@ export class FurnitureLayer {
       placed++;
     }
     return placed;
+  }
+
+  /**
+   * Range du bois de coupe en lisière.
+   *
+   * Un tas de bois ne se fait pas au milieu d'un massif : il est empilé au
+   * bord, là où le tracteur passe. Le semis est celui de toutes les parcelles,
+   * et c'est l'ourlet (`groundClass.woodEdgeAt`) qui en écarte l'essentiel — un
+   * massif compact en porte donc proportionnellement moins qu'un bosquet.
+   *
+   * Sans carte de classes, personne ne sait où est le bord : rien ne se pose,
+   * ce qui vaut mieux qu'un tas de bois au hasard en plein bois.
+   */
+  _placeWoodPiles(placements, ring, centre, count) {
+    const groundClass = this.groundClass;
+    if (!groundClass?.woodEdgeAt) return 0;
+
+    const seed = positionSeed(centre.x, centre.z, 71);
+    let placed = 0;
+    // Ni sur la chaussée ni sur le ballast, comme les bottes et le bétail.
+    for (const spot of this._filterOffInfra(scatterInRing(ring, count, seed))) {
+      if (groundClass.woodEdgeAt(spot.x, spot.z) < WOOD_PILE_EDGE_MIN) continue;
+      this._place(placements, 'woodPile', {
+        x: spot.x,
+        z: spot.z,
+        yaw: this._woodEdgeYaw(spot.x, spot.z, spot.variant),
+      });
+      placed++;
+    }
+    return placed;
+  }
+
+  /**
+   * Met du gibier dans un bois.
+   *
+   * Trois choses le distinguent d'un troupeau au pré, et les trois comptent :
+   * il est rare (deux massifs sur trois n'en portent aucun), il est groupé
+   * (compagnie de sangliers, harde de cervidés), et il dépend du pays — le
+   * renne remplace le cervidé au nord, le sanglier domine au sud.
+   *
+   * Il n'est pas cantonné à l'ourlet, contrairement au bois de coupe : une bête
+   * se tient où elle veut, et c'est en lisière qu'on la voit le mieux de toute
+   * façon.
+   */
+  _placeForestGame(placements, ring, centre, variant, hectares) {
+    if (randomAt(centre.x, centre.z, 83) < FOREST_GAME_EMPTY_ODDS) return 0;
+
+    const game = forestGameFor({ variant, climate: this.climate });
+    if (!game) return 0;
+
+    const jitter = randomAt(centre.x, centre.z, 87);
+    const count = Math.min(6, Math.floor(hectares * FOREST_GAME_PER_HECTARE + jitter));
+    if (count <= 0) return 0;
+
+    const heading = randomAt(centre.x, centre.z, 89) * Math.PI * 2;
+    const seed = positionSeed(centre.x, centre.z, 91);
+    let placed = 0;
+
+    for (const spot of this._filterOffInfra(scatterInRing(ring, count, seed, { cluster: game.spread }))) {
+      this._place(placements, game.item, {
+        x: spot.x,
+        z: spot.z,
+        // Une harde regarde à peu près dans la même direction, comme un
+        // troupeau — mais elle est plus dispersée, elle n'est pas parquée.
+        yaw: heading + (spot.variant - 0.5) * 1.8,
+        scale: 0.9 + spot.variant * 0.2,
+      });
+      placed++;
+    }
+    return placed;
+  }
+
+  /**
+   * Cap d'un tas de bois : le long de la lisière, comme il est empilé le long
+   * du chemin qui le dessert. La direction de l'ourlet est la perpendiculaire
+   * au gradient de boisé, mesuré sur le même voisinage que `woodEdgeAt`.
+   *
+   * `yaw` fait tourner l'objet autour de Y, et les rondins de `woodPile` sont
+   * couchés selon Z : amener +Z sur une direction (dx, dz) demande
+   * `π/2 − atan2(dz, dx)`. Sans pente lisible — un tirage tombé dans une
+   * clairière parfaitement ronde —, un cap tiré au lieu vaut mieux qu'un cap
+   * nul, qui alignerait toutes les piles sur l'axe des X.
+   */
+  _woodEdgeYaw(x, z, jitter = 0) {
+    const wood = (dx, dz) => this.groundClass?.woodAt?.(x + dx, z + dz) ?? 0;
+    const r = WOOD_EDGE_REACH_M;
+    const gx = wood(r, 0) - wood(-r, 0);
+    const gz = wood(0, r) - wood(0, -r);
+    if (gx === 0 && gz === 0) return jitter * Math.PI * 2;
+    // Bord = perpendiculaire au gradient, donc la direction (−gz, gx).
+    return Math.PI / 2 - Math.atan2(gx, -gz);
   }
 
   /**

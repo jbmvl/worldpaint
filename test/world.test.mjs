@@ -62,6 +62,12 @@ import {
   realBoundaryRuns,
   boundaryFurnitureFor,
   scatterFurnitureFor,
+  WOOD_PILE_EDGE_MIN,
+  forestGameFor,
+  FOREST_GAME,
+  DEFAULT_FOREST_GAME,
+  FOREST_GAME_EMPTY_ODDS,
+  FOREST_GAME_PER_HECTARE,
   herdFor,
   HERD_SHEEP_ODDS,
   DEFAULT_SHEEP_ODDS,
@@ -124,6 +130,7 @@ import {
   NODE_WELD_M,
   JUNCTION_OVERLAP_M,
   JUNCTION_MIN_RUN_M,
+  knownCoverage,
 } from '../src/layers/roadGraph.js';
 import {
   WORK_NONE,
@@ -191,11 +198,23 @@ import {
   TOWER_RISE_MAX_M,
 } from '../src/layers/buildingLayer.js';
 import {
-  treesForScore,
+  woodDensity,
+  standTreesPerCell,
+  lowStratumPart,
+  standDraw,
+  describeTree,
+  standTypeFrom,
   forestTypeAt,
   variantsFor,
-  understoryVariants,
+  understoryStrata,
   treeHeight,
+  saplingHeight,
+  thicketPerCell,
+  thicketDensityFor,
+  UNDERSTORY_REF,
+  edgeLowPart,
+  edgeCanopy,
+  EDGE_CANOPY_DROP,
   foliageTint,
   thinPlacements,
   FOREST_PATCH_M,
@@ -203,6 +222,14 @@ import {
   WOOD_DENSITY_CURVE,
   EMERGENT_SHARE,
   CLUMP_TINT_M,
+  STAND_SLOTS,
+  STAND_CANDIDATES,
+  TREES_PER_CELL,
+  THICKET_BANDS,
+  THICKET_PER_HA,
+  SAPLING_MIN_HEIGHT,
+  BUSH_MIN_HEIGHT,
+  BUSH_MAX_HEIGHT,
   coverBushesFor,
 } from '../src/layers/vegetationLayer.js';
 import { TREE_ESSENCES } from '../src/themes/default.js';
@@ -217,7 +244,11 @@ import {
   GRASS_COUNT,
   GRASS_FADE_FROM,
   GRASS_HEIGHT_FADE_FLOOR,
+  GRASS_GREEN_MIN,
   coverGrassFor,
+  grassGreenFor,
+  woodFloorFor,
+  WOODLAND_FLOWER_MAX,
 } from '../src/layers/groundCover.js';
 import {
   cropCellRing,
@@ -293,7 +324,11 @@ import {
   hedgeClumps,
   appendHedgeClump,
 } from '../src/layers/hedgeGeometry.js';
-import { TREE_ATLAS_OFFSETS, GRASS_VARIANTS } from '../src/materials/proceduralTextures.js';
+import {
+  TREE_ATLAS_OFFSETS,
+  GRASS_VARIANTS,
+  createTreeAtlasCanvas,
+} from '../src/materials/proceduralTextures.js';
 import { snapToShadowTexels, sunDirection, SHADOW_RADIUS_M } from '../src/environment/shadowFrame.js';
 import {
   railProfileFor,
@@ -328,6 +363,7 @@ import {
   coverFromId,
   COVER_KINDS,
   COVER_ID_STEP,
+  WOOD_EDGE_REACH_M,
 } from '../src/terrain/groundClassMap.js';
 import {
   collectBuiltUpAreas,
@@ -664,31 +700,79 @@ test('l’étirement laisse un champ constant tranquille', () => {
 
 // --- Végétation ------------------------------------------------------------
 
-test('le nombre d’arbres suit la part de boisé, et zéro sous le seuil', () => {
-  assert.equal(treesForScore(0, 9), 0);
-  assert.equal(treesForScore(WOOD_SCORE_MIN - 0.001, 9), 0);
-  assert.equal(treesForScore(1, 9), 9, 'un sous-bois plein donne le maximum');
-  // Un score moyen donne peu d’arbres : c’est la courbe de densité qui creuse
-  // l’écart entre une lisière et un sous-bois.
-  const middling = treesForScore(0.65, 9);
-  assert.ok(middling >= 1 && middling <= 4, `score moyen → ${middling} arbres`);
+test('la part de boisé se convertit en densité, et zéro sous le seuil', () => {
+  assert.equal(woodDensity(0), 0);
+  assert.equal(woodDensity(WOOD_SCORE_MIN - 0.001), 0);
+  assert.equal(woodDensity(1), 1, 'un bois plein donne la densité pleine');
+  // La courbe creuse l’écart entre une lisière et un sous-bois : au milieu du
+  // barème, on est loin de la moitié de la densité.
+  const middling = woodDensity(0.65);
+  assert.ok(middling > 0.4 && middling < 0.62, `score moyen → densité ${middling}`);
+  close(
+    middling,
+    Math.pow((0.65 - WOOD_SCORE_MIN) / (1 - WOOD_SCORE_MIN), WOOD_DENSITY_CURVE),
+    1e-12,
+    'courbe de densité'
+  );
 });
 
-test('l’arrondi stochastique évite l’effet de verger', () => {
-  // Densité attendue < 1 : sans tirage, chaque cellule recevrait le même
-  // nombre d’arbres — un arbre partout, soit une savane régulière.
-  const score = 0.42;
-  const low = treesForScore(score, 9, 0);
-  const high = treesForScore(score, 9, 0.999);
-  assert.ok(high > low, `le tirage doit départager : ${low} vs ${high}`);
+test('le sous-bois se compte en plus des arbres, pas à leur place', () => {
+  const clair = { density: 1, understory: 0 };
+  const fourni = { density: 1, understory: 0.5 };
+  assert.equal(standTreesPerCell(clair), TREES_PER_CELL);
+  close(standTreesPerCell(fourni), TREES_PER_CELL * 1.5, 1e-9, 'sous-bois en plus');
+  assert.equal(lowStratumPart(clair), 0);
+  close(lowStratumPart(fourni), 1 / 3, 1e-9, 'part de strate basse');
+  // Le peuplement le plus fourni du thème tient sous le plafond de candidats,
+  // sans quoi une maille saturerait au lieu de suivre sa densité.
+  const worst = Math.max(...FOREST_TYPES.map((type) => standTreesPerCell(type)));
+  assert.ok(worst <= STAND_CANDIDATES, `${worst} arbres attendus pour ${STAND_CANDIDATES} candidats`);
+});
 
-  // Et l’espérance suit bien la densité attendue.
+test('les tirages d’un candidat sont indépendants les uns des autres', () => {
+  const seed = 123456789;
+  // Un tirage ne dépend que de son rang : lire le voisin ne le déplace pas.
+  assert.equal(standDraw(seed, 7), standDraw(seed, 7));
+  assert.notEqual(standDraw(seed, 7), standDraw(seed, 8));
+  // Et la suite couvre l’intervalle sans se tasser d’un côté.
   let total = 0;
-  const draws = 400;
-  for (let i = 0; i < draws; i++) total += treesForScore(score, 9, (i + 0.5) / draws);
-  const normalized = (score - WOOD_SCORE_MIN) / (1 - WOOD_SCORE_MIN);
-  const expected = Math.pow(normalized, WOOD_DENSITY_CURVE) * 9;
-  close(total / draws, expected, 0.02, 'espérance du tirage');
+  const draws = 4000;
+  for (let k = 0; k < draws; k++) {
+    const v = standDraw(seed, k);
+    assert.ok(v >= 0 && v < 1, `tirage hors bornes : ${v}`);
+    total += v;
+  }
+  close(total / draws, 0.5, 0.02, 'moyenne des tirages');
+});
+
+test('écarter un arbre de la chaussée n’en déplace aucun autre', () => {
+  // C’est l’invariant du semis, et le défaut qu’il corrige : avec une suite
+  // parcourue dans l’ordre, le premier arbre refusé décalait tout le reste de
+  // la tuile — le même bois ne se plantait pas deux fois pareil selon que la
+  // route était connue ou non.
+  const seed = 987654321;
+  const type = { density: 1, understory: 0.2, minHeight: 8, maxHeight: 16, tint: [1, 1, 1] };
+  const strata = understoryStrata(defaultTheme.trees, true);
+  const sow = (rejected) => {
+    const out = [];
+    for (let i = 0; i < STAND_CANDIDATES; i++) {
+      const base = i * STAND_SLOTS;
+      if (standDraw(seed, base) >= 0.5) continue; // présence
+      const x = standDraw(seed, base + 1);
+      const z = standDraw(seed, base + 2);
+      if (rejected(x, z)) continue; // « sur la chaussée »
+      out.push({ x, z, ...describeTree({}, seed, base, type, 0.2, [1, 2], strata) });
+    }
+    return out;
+  };
+
+  const libre = sow(() => false);
+  const coupe = sow((x) => x > 0.4 && x < 0.6);
+  assert.ok(coupe.length < libre.length, 'la chaussée doit bien retirer des arbres');
+  // Tout ce qui n’est pas sur la chaussée est identique, au même endroit, de la
+  // même hauteur, de la même silhouette.
+  const survivants = libre.filter((tree) => !(tree.x > 0.4 && tree.x < 0.6));
+  assert.deepEqual(coupe, survivants, 'le reste du semis ne bouge pas');
 });
 
 test('les hauteurs se répartissent en strates, avec quelques dominants', () => {
@@ -707,13 +791,148 @@ test('les hauteurs se répartissent en strates, avec quelques dominants', () => 
   assert.ok(EMERGENT_SHARE > 0 && EMERGENT_SHARE < 0.25, 'un dominant reste une exception');
 });
 
-test('le sous-bois tire dans les buissons, quel que soit le peuplement', () => {
-  const variants = understoryVariants();
-  assert.ok(variants.length > 0);
-  // Ce sont bien les silhouettes basses, pas celles de la futaie au-dessus.
-  assert.deepEqual(variants, TREE_ESSENCES.bushy);
-  // Et sans essence buissonnante, on rend quand même une case d’atlas valide.
-  assert.deepEqual(understoryVariants({}), [0]);
+test('une tige de sous-étage monte vers le peuplement sans l’atteindre', () => {
+  const futaie = { minHeight: 12, maxHeight: 22 };
+  assert.equal(saplingHeight(futaie, 0), SAPLING_MIN_HEIGHT);
+  close(saplingHeight(futaie, 1), 12, 1e-9, 'elle s’arrête au bas du peuplement');
+  for (let i = 0; i <= 20; i++) {
+    const h = saplingHeight(futaie, i / 20);
+    assert.ok(h >= SAPLING_MIN_HEIGHT && h <= futaie.minHeight, `hauteur de tige ${h}`);
+  }
+  // Un taillis est déjà bas : sa régénération ne doit pas se retrouver au-dessus.
+  const taillis = { minHeight: 3.5, maxHeight: 7 };
+  assert.ok(saplingHeight(taillis, 1) <= taillis.minHeight + 1e-9);
+  // Et un peuplement plus bas que la tige minimale garde une fourchette utile.
+  const nain = { minHeight: 1, maxHeight: 2 };
+  assert.ok(saplingHeight(nain, 1) > saplingHeight(nain, 0), 'fourchette non nulle');
+
+});
+
+test('un candidat retenu est décrit par ses seuls tirages', () => {
+  const seed = 24680;
+  const type = { minHeight: 6, maxHeight: 12, density: 1, understory: 0.3 };
+  const strata = understoryStrata(defaultTheme.trees, true);
+  const a = describeTree({}, seed, 0, type, 0.3, [3, 4], strata);
+  const b = describeTree({}, seed, 0, type, 0.3, [3, 4], strata);
+  assert.deepEqual(a, b, 'même graine, même arbre');
+  // La strate basse prend les plantes du tapis, la haute celles du peuplement.
+  const bas = describeTree({}, seed, 0, type, 1, [3, 4], strata);
+  const plante = strata.find((p) => p.variant === bas.variant);
+  assert.ok(bas.low && plante, 'plante de strate basse');
+  assert.ok(bas.height >= plante.min && bas.height <= plante.max, 'à sa taille à elle');
+  assert.equal(bas.aspect, plante.aspect, 'et à son port');
+  const haut = describeTree({}, seed, 0, type, 0, [3, 4], strata);
+  assert.ok(!haut.low && [3, 4].includes(haut.variant), 'arbre du peuplement');
+  // Le sous-étage tire dans la régénération, le peuplement dans les arbres faits.
+  const tige = describeTree({}, seed, 0, type, 0, [3, 4], strata, true);
+  assert.ok(tige.height <= type.minHeight, `tige de ${tige.height} m`);
+  assert.ok(haut.height >= type.minHeight, `arbre fait de ${haut.height} m`);
+});
+
+test('le sous-étage se lit à deux échelles, et sa densité est celle d’un bois', () => {
+  const [proche, lointaine] = THICKET_BANDS;
+  assert.ok(lointaine.cell > proche.cell, 'la maille double avec la distance');
+  assert.ok(lointaine.from < proche.to, 'les bandes se recouvrent, sinon un anneau nu');
+  // Une maille demande ce que sa surface vaut : deux fois plus large, quatre
+  // fois plus de tiges.
+  close(
+    thicketPerCell(1, lointaine.cell) / thicketPerCell(1, proche.cell),
+    (lointaine.cell / proche.cell) ** 2,
+    1e-9,
+    'densité par surface'
+  );
+  close(thicketPerCell(1, 100), THICKET_PER_HA, 1e-9, 'un hectare de maille');
+  // Et chaque bande peut porter ce qu’un bois ordinaire lui demande.
+  for (const band of THICKET_BANDS) {
+    assert.ok(
+      thicketPerCell(1, band.cell) <= band.perCell,
+      `bande de ${band.cell} m : ${thicketPerCell(1, band.cell)} tiges pour ${band.perCell} candidats`
+    );
+  }
+});
+
+test('le sous-étage suit la part de sous-bois du peuplement, pas seulement sa densité', () => {
+  // Une futaie entretenue est dégagée au sol — c’est même ce qui la définit —
+  // et doit se traverser à pied ; un taillis *est* son sous-bois. Sans ça, deux
+  // bois également fournis en houppes se ressemblent au pied, ce qui est
+  // justement là où on les traverse.
+  const futaie = FOREST_TYPES.find((t) => t.name === 'futaie');
+  const taillis = FOREST_TYPES.find((t) => t.name === 'taillis');
+  assert.ok(
+    thicketDensityFor(taillis) > thicketDensityFor(futaie) * 2,
+    `taillis ${thicketDensityFor(taillis)} contre futaie ${thicketDensityFor(futaie)}`
+  );
+  // Le peuplement de référence vaut exactement sa densité de tiges : c’est ce
+  // qui garde `THICKET_PER_HA` lisible comme le réglage du sous-étage.
+  close(
+    thicketDensityFor({ density: 1.4, understory: UNDERSTORY_REF }),
+    1.4,
+    1e-9,
+    'peuplement de référence'
+  );
+  // Et une pinède dont l’aiguille étouffe tout reste claire au sol, malgré ses
+  // houppes serrées.
+  const pinede = FOREST_TYPES.find((t) => t.name === 'pinede');
+  assert.ok(pinede.density > futaie.density, 'la pinède est la plus fournie en houppes');
+  assert.ok(
+    thicketDensityFor(pinede) < thicketDensityFor(taillis) * 0.5,
+    'et pourtant dégagée au sol'
+  );
+});
+
+test('le bord d’un bois est un ourlet : houppe basse, fourré épais', () => {
+  // En plein bois, la lisière ne change rien du tout — c’est la condition pour
+  // qu’elle ne soit pas un effet de bord déguisé en style.
+  assert.equal(edgeLowPart(0.2, 0), 0.2);
+  assert.equal(edgeCanopy(0), 1);
+
+  // Au bord, la strate basse monte sans jamais dépasser un fourré plein, et la
+  // houppe descend sans s’effondrer.
+  const ourlet = edgeLowPart(0.2, 1);
+  assert.ok(ourlet > 0.2 && ourlet < 1, `part de strate basse en lisière : ${ourlet}`);
+  close(edgeCanopy(1), 1 - EDGE_CANOPY_DROP, 1e-9, 'hauteur en lisière');
+  assert.ok(EDGE_CANOPY_DROP > 0 && EDGE_CANOPY_DROP < 0.5, 'un ourlet penche, il ne rampe pas');
+
+  // Un taillis, déjà tout en strate basse, ne peut pas le devenir davantage.
+  assert.equal(edgeLowPart(1, 1), 1);
+  // Et l’effet est continu : à mi-lisière, à mi-chemin.
+  close(edgeLowPart(0.2, 0.5), (0.2 + edgeLowPart(0.2, 1)) / 2, 1e-9, 'fondu de fourré');
+  close(edgeCanopy(0.5), (1 + edgeCanopy(1)) / 2, 1e-9, 'fondu de houppe');
+});
+
+test('la strate basse porte sa taille, et le tapis du sol ne pousse que de près', () => {
+  // De loin : les arbustes, et eux seuls — une fougère de 80 cm à un kilomètre
+  // coûte une instance et ne se voit pas.
+  const loin = understoryStrata();
+  assert.deepEqual(loin.map((p) => p.variant), TREE_ESSENCES.bushy);
+  for (const plant of loin) {
+    assert.equal(plant.min, BUSH_MIN_HEIGHT, 'fourchette commune faute de taille déclarée');
+    assert.equal(plant.max, BUSH_MAX_HEIGHT);
+  }
+
+  // De près, le tapis s’y ajoute, et chaque plante impose sa taille : une
+  // fougère ne fait pas trois mètres.
+  const pres = understoryStrata(defaultTheme.trees, true);
+  assert.ok(pres.length > loin.length, 'le tapis vient en plus des arbustes');
+  const tapis = pres.filter((p) => TREE_ESSENCES.undergrowth.includes(p.variant));
+  assert.equal(tapis.length, TREE_ESSENCES.undergrowth.length);
+  for (const plant of tapis) {
+    const look = TREE_VARIANTS[plant.variant];
+    assert.deepEqual([plant.min, plant.max], look.heightM, 'la taille vient de la plante');
+    assert.ok(plant.max < BUSH_MAX_HEIGHT, `${look.kind} plus bas qu’un arbuste`);
+    assert.ok(plant.min > 0.3, `${look.kind} : une plante, pas de l’herbe`);
+    assert.ok(TREE_ATLAS_OFFSETS[plant.variant], `${look.kind} : case d’atlas présente`);
+  }
+  // Aucune de ces silhouettes n’est l’essence d’un peuplement : le tapis ne
+  // pousse jamais à hauteur de houppe.
+  for (const type of FOREST_TYPES) {
+    for (const variant of variantsFor(type)) {
+      assert.ok(!TREE_ESSENCES.undergrowth.includes(variant), `${type.name} tire dans le tapis`);
+    }
+  }
+
+  // Et un thème sans strate basse rend quand même une case d’atlas valide.
+  assert.equal(understoryStrata({}, true).length, 1);
 });
 
 test('la teinte d’un feuillage dérive par bosquet, et reste ancrée au lieu', () => {
@@ -742,18 +961,26 @@ test('la teinte d’un feuillage dérive par bosquet, et reste ancrée au lieu',
 });
 
 test('le plafond d’une tuile éclaircit le semis au lieu de le rogner', () => {
-  const list = Array.from({ length: 1000 }, (_, i) => i);
+  const list = Array.from({ length: 1000 }, (_, i) => ({ i, thin: (i * 37) % 1000 / 1000 }));
   assert.equal(thinPlacements(list, 2000), list, 'sous le plafond, on ne touche à rien');
 
   const thinned = thinPlacements(list, 250);
-  assert.equal(thinned.length, 250, 'le plafond est tenu exactement');
+  assert.ok(Math.abs(thinned.length - 250) <= 5, `${thinned.length} arbres gardés pour 250`);
   // L’éclaircie est répartie : chaque quart du semis garde un quart de ce qui
   // reste. C’est ce qui manquait quand on s’arrêtait de planter en route — le
   // sud d’une tuile restait nu au milieu d’un massif.
   for (let q = 0; q < 4; q++) {
-    const kept = thinned.filter((v) => v >= q * 250 && v < (q + 1) * 250).length;
-    assert.ok(Math.abs(kept - 62.5) <= 2, `quart ${q} : ${kept} points gardés`);
+    const kept = thinned.filter((v) => v.i >= q * 250 && v.i < (q + 1) * 250).length;
+    assert.ok(Math.abs(kept - 62.5) <= 6, `quart ${q} : ${kept} points gardés`);
   }
+
+  // Et surtout : elle tient sur le tirage de l’arbre, pas sur son rang. Retirer
+  // les arbres tombés sur la chaussée ne rebat pas le semis de toute la tuile.
+  const sansRoute = thinPlacements(list.filter((v) => v.i % 10 !== 3), 250);
+  const gardes = new Set(thinned.filter((v) => v.i % 10 !== 3).map((v) => v.i));
+  const communs = sansRoute.filter((v) => gardes.has(v.i)).length;
+  assert.equal(communs, gardes.size, 'aucun arbre gardé ne disparaît parce qu’un autre est parti');
+  assert.ok(sansRoute.length - communs <= 30, `${sansRoute.length - communs} arbres de rattrapage`);
 });
 
 // --- Bâti ------------------------------------------------------------------
@@ -1596,6 +1823,80 @@ test('la couverture règle l’herbe et le fourré, jamais leur présence', () =
   assert.ok(coverGrassFor('scrub').density < coverGrassFor('heath').density);
   assert.ok(coverBushesFor('scrub') > coverBushesFor('heath'));
   assert.equal(coverBushesFor('scree'), 0, 'rien ne pousse dans un éboulis');
+});
+
+test('le sol d’un bois porte une litière, pas une prairie à l’ombre', () => {
+  const bois = { grass: 0, wood: 1, farmland: 0, bare: 0 };
+  const pre = { grass: 1, wood: 0, farmland: 0, bare: 0 };
+  const nu = { grass: 0, wood: 0, farmland: 0, bare: 1 };
+
+  // Le défaut : la part de bois ne comptait pour rien, donc une forêt n’avait
+  // pas une touffe — `grass` vaut zéro sous un couvert d’arbres.
+  const sousBois = grassGreenFor(bois);
+  assert.ok(sousBois.green > GRASS_GREEN_MIN, `un bois est du végétal (${sousBois.green})`);
+  assert.equal(sousBois.shade, 1, 'et tout ce vert-là est du sous-bois');
+  // Mais moins qu’un pré : c’est ce qui garde le pire cas d’instances sur la
+  // prairie pleine, celle sur laquelle `GRASS_COUNT` est mesuré.
+  assert.ok(sousBois.green < grassGreenFor(pre).green, 'un bois vaut moins qu’un pré');
+  assert.equal(grassGreenFor(pre).shade, 0, 'un pré n’est l’ombre de personne');
+  assert.equal(grassGreenFor(nu).green, 0, 'un sol nu reste nu');
+
+  // Une lisière mêle les deux, et la part d’ombre suit.
+  const lisiere = grassGreenFor({ grass: 0.5, wood: 0.5, farmland: 0 });
+  assert.ok(lisiere.shade > 0 && lisiere.shade < 1, `part d’ombre en lisière : ${lisiere.shade}`);
+  assert.ok(lisiere.green > sousBois.green, 'la lisière est plus verte que le sous-bois');
+
+  // Ce qui y pousse : rase, clairsemée, assombrie — et le neutre exact hors
+  // des bois, sinon toute prairie du monde changerait de couleur.
+  assert.deepEqual(woodFloorFor(0), { height: 1, density: 1, tint: [1, 1, 1] });
+  const litiere = woodFloorFor(1);
+  assert.ok(litiere.height < 0.7, `herbe rase (${litiere.height})`);
+  assert.ok(litiere.density < 1, 'clairsemée');
+  assert.ok(litiere.tint[1] < 1 && litiere.tint[2] < litiere.tint[1], 'assombrie et réchauffée');
+  // Et la transition est continue : à mi-ombre, on est à mi-chemin.
+  const demi = woodFloorFor(0.5);
+  close(demi.height, (1 + litiere.height) / 2, 1e-9, 'fondu de hauteur');
+  close(demi.tint[2], (1 + litiere.tint[2]) / 2, 1e-9, 'fondu de teinte');
+
+  // Sous un couvert fermé, rien ne fleurit : les fleurs de l’atlas sont des
+  // fleurs de plein soleil.
+  assert.ok(WOODLAND_FLOWER_MAX > 0 && WOODLAND_FLOWER_MAX < 1);
+  assert.ok(sousBois.shade > WOODLAND_FLOWER_MAX, 'un vrai bois passe le seuil');
+});
+
+test('la carte de classes sait où s’arrête un bois', () => {
+  // `woodEdgeAt` ne lit que `sampleAt` : on lui donne une carte de poche, un
+  // bois qui occupe le demi-plan x < 0.
+  const carte = {
+    sampleAt(x) {
+      if (x < -400 || x > 400) return null; // hors carte : la donnée se tait
+      return { grass: 0, wood: x < 0 ? 1 : 0, farmland: 0, bare: 0 };
+    },
+  };
+  const edgeAt = (x, z) => GroundClassMap.prototype.woodEdgeAt.call(carte, x, z);
+
+  // Hors du bois, il n’y a pas de lisière : l’ourlet appartient au bois.
+  assert.equal(edgeAt(20, 0), 0);
+  // Juste au bord, en revanche, elle est franche.
+  assert.equal(edgeAt(-1, 0), 1, 'le bord est une lisière pleine');
+  // Et en plein bois, il n’y en a plus.
+  assert.equal(edgeAt(-WOOD_EDGE_REACH_M * 3, 0), 0, 'le cœur du massif n’est pas un ourlet');
+
+  // Un voisin dont la carte ne dit rien ne fait pas une lisière — sans quoi
+  // tout le pourtour du carré couvert en serait une.
+  const bord = {
+    sampleAt(x) {
+      if (x > 100) return null;
+      return { grass: 0, wood: 1, farmland: 0, bare: 0 };
+    },
+  };
+  assert.equal(GroundClassMap.prototype.woodEdgeAt.call(bord, 95, 0), 0, 'le bord de carte n’est pas une lisière');
+
+  // Une lisière molle (le bois s’éclaircit au lieu de s’arrêter) donne un
+  // ourlet partiel, pas un tout ou rien.
+  const fondu = { sampleAt: (x) => ({ grass: 0, wood: Math.max(0, Math.min(1, 0.5 - x / 200)), farmland: 0, bare: 0 }) };
+  const doux = GroundClassMap.prototype.woodEdgeAt.call(fondu, 0, 0);
+  assert.ok(doux > 0 && doux < 1, `lisière progressive : ${doux}`);
 });
 
 test('la carte de classes sait dire ce qu’elle ne couvre pas', () => {
@@ -2663,7 +2964,76 @@ test('ce qui se sème dans un champ dépend de sa culture', () => {
   assert.equal(scatterFurnitureFor({ class: 'farmland' }, { crop: 'plough' }).item, 'hay');
   // Une pâture porte du bétail, pas des bosquets.
   assert.equal(scatterFurnitureFor({ class: 'grass', subclass: 'meadow' }).item, 'herd');
-  assert.equal(scatterFurnitureFor({ class: 'wood' }), null);
+  // Un bois porte du bois de coupe — mais c'est l'ourlet qui décide où, pas la
+  // règle : au milieu d'un massif, un tas de bois n'a rien à faire.
+  assert.equal(scatterFurnitureFor({ class: 'wood' }).item, 'woodland');
+  assert.ok(WOOD_PILE_EDGE_MIN > 0 && WOOD_PILE_EDGE_MIN < 1, 'seuil de lisière plausible');
+  // Une classe qu'on ne sait pas lire ne sème rien.
+  assert.equal(scatterFurnitureFor({ class: 'quarry' }), null);
+});
+
+test('le gibier d’un bois est celui du pays', () => {
+  // Même massif, même tirage : seul le pays change. Le renne remplace le
+  // cervidé au nord, le sanglier domine au sud.
+  assert.equal(forestGameFor({ variant: 0.5, climate: 'boreal' }).item, 'reindeer');
+  assert.equal(forestGameFor({ variant: 0.5, climate: 'mediterranean' }).item, 'boar');
+  assert.equal(forestGameFor({ variant: 0.1, climate: 'oceanic' }).item, 'deer');
+  // Là où il n’y a pas de forêt, il n’y a rien à voir — et surtout pas un
+  // chevreuil au milieu des Bardenas.
+  assert.equal(forestGameFor({ variant: 0.5, climate: 'arid' }), null);
+  assert.equal(forestGameFor({ variant: 0.5, climate: 'glacial' }), null);
+  // Sans climat connu, un bois tempéré.
+  assert.deepEqual(
+    forestGameFor({ variant: 0.5 }),
+    forestGameFor({ variant: 0.5, climate: 'pays-inconnu' })
+  );
+
+  // Le sanglier va en compagnie serrée, le cervidé en harde lâche.
+  assert.ok(
+    forestGameFor({ variant: 0.5, climate: 'mediterranean' }).spread <
+      forestGameFor({ variant: 0.5, climate: 'boreal' }).spread
+  );
+
+  // Toute la table tire dans des silhouettes qui existent, et couvre toutes
+  // les familles : une famille oubliée retomberait silencieusement sur le
+  // gibier tempéré, ce qui se verrait en Laponie.
+  for (const family of CLIMATE_FAMILIES) {
+    assert.ok(FOREST_GAME[family], `${family} : gibier décrit`);
+    for (const item of FOREST_GAME[family]) {
+      assert.ok(FURNITURE_BUILDERS[item], `${family} : ${item} au catalogue`);
+    }
+  }
+  for (const item of DEFAULT_FOREST_GAME) assert.ok(FURNITURE_BUILDERS[item], item);
+
+  // Le gibier reste rare : sans ça, un bois sur deux est un parc animalier.
+  assert.ok(FOREST_GAME_EMPTY_ODDS > 0.5, 'la plupart des bois ne montrent rien');
+  assert.ok(FOREST_GAME_PER_HECTARE < 0.5, 'de quoi en croiser, pas de quoi en compter');
+});
+
+test('un tas de bois se range le long de la lisière', () => {
+  // Bois dans le demi-plan x < 0 : sa lisière court donc selon Z.
+  const layer = Object.create(FurnitureLayer.prototype);
+  layer.groundClass = { woodAt: (x) => (x < 0 ? 1 : 0) };
+  const yaw = layer._woodEdgeYaw(0, 0);
+
+  // Les rondins de `woodPile` sont couchés selon Z : après le lacet, ils
+  // doivent border le bois, pas y entrer.
+  const [dx, , dz] = Kit.transform([0, 0, 1], { yaw });
+  close(Math.abs(dz), 1, 1e-9, 'les rondins suivent la lisière');
+  close(dx, 0, 1e-9, 'et ne pointent pas vers le bois');
+
+  // Une lisière tournée d'un quart de tour tourne la pile d'autant.
+  const autre = Object.create(FurnitureLayer.prototype);
+  autre.groundClass = { woodAt: (x, z) => (z < 0 ? 1 : 0) };
+  const [ax, , az] = Kit.transform([0, 0, 1], { yaw: autre._woodEdgeYaw(0, 0) });
+  close(Math.abs(ax), 1, 1e-9, 'lisière est-ouest');
+  close(az, 0, 1e-9);
+
+  // Sans pente lisible, le cap est tiré au lieu : sinon toutes les piles d'une
+  // clairière ronde s'aligneraient sur le même axe.
+  const plat = Object.create(FurnitureLayer.prototype);
+  plat.groundClass = { woodAt: () => 1 };
+  assert.notEqual(plat._woodEdgeYaw(0, 0, 0.3), plat._woodEdgeYaw(0, 0, 0.7));
 });
 
 test('le bétail suit le terrain : bovins en plaine, ovins sur les pentes', () => {
@@ -4560,10 +4930,123 @@ test('chaque peuplement tire dans des silhouettes qui existent', () => {
 test('les décalages d’atlas couvrent la grille sans se répéter', () => {
   const keys = new Set(TREE_ATLAS_OFFSETS.map(([u, v]) => `${u.toFixed(4)},${v.toFixed(4)}`));
   assert.equal(keys.size, TREE_ATLAS_OFFSETS.length, 'aucune case en double');
-  assert.equal(TREE_ATLAS_OFFSETS.length, TREE_VARIANTS.length, 'une case par silhouette');
+  // Une case par silhouette au moins ; les cases en trop restent transparentes
+  // (l'atlas peut grandir avant que le thème le remplisse).
+  assert.ok(
+    TREE_ATLAS_OFFSETS.length >= TREE_VARIANTS.length,
+    `${TREE_ATLAS_OFFSETS.length} cases pour ${TREE_VARIANTS.length} silhouettes`
+  );
   for (const [u, v] of TREE_ATLAS_OFFSETS) {
     assert.ok(u >= 0 && u < 1 && v >= 0 && v < 1, 'décalage dans la texture');
   }
+});
+
+/**
+ * Contexte 2D d'inventaire : il ne dessine rien, il retient où on a dessiné.
+ * C'est la seule vérification automatique possible sur une texture — le rendu,
+ * lui, se regarde.
+ */
+function atlasRecorder() {
+  const marks = [];
+  const stack = [];
+  let tx = 0;
+  let ty = 0;
+  const mark = (x, y, pad = 0) => marks.push({ x, y, pad, cell: `${tx},${ty}` });
+  return {
+    marks,
+    lineWidth: 0,
+    fillStyle: '',
+    strokeStyle: '',
+    lineCap: '',
+    lineJoin: '',
+    save() {
+      stack.push([tx, ty]);
+    },
+    restore() {
+      [tx, ty] = stack.pop();
+    },
+    translate(x, y) {
+      tx += x;
+      ty += y;
+    },
+    beginPath() {},
+    closePath() {},
+    fill() {},
+    stroke() {},
+    moveTo(x, y) {
+      mark(x, y, this.lineWidth / 2);
+    },
+    lineTo(x, y) {
+      mark(x, y, this.lineWidth / 2);
+    },
+    fillRect(x, y, w, h) {
+      mark(x, y);
+      mark(x + w, y + h);
+    },
+    arc(x, y, r) {
+      mark(x, y, r);
+    },
+    ellipse(x, y, rx, ry) {
+      mark(x, y, Math.max(rx, ry));
+    },
+  };
+}
+
+test('chaque silhouette tient dans sa case, pose au sol et la remplit', () => {
+  const cell = 160;
+  const recorder = atlasRecorder();
+  const previous = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      this.width = width;
+      this.height = height;
+    }
+    getContext() {
+      return recorder;
+    }
+  };
+  try {
+    createTreeAtlasCanvas(cell);
+  } finally {
+    if (previous) globalThis.OffscreenCanvas = previous;
+    else delete globalThis.OffscreenCanvas;
+  }
+
+  const cells = new Map();
+  for (const m of recorder.marks) {
+    if (!cells.has(m.cell)) cells.set(m.cell, []);
+    cells.get(m.cell).push(m);
+  }
+  assert.equal(cells.size, TREE_VARIANTS.length, 'une case dessinée par silhouette');
+
+  const keys = [...cells.keys()];
+  cells.forEach((marks, key) => {
+    const look = TREE_VARIANTS[keys.indexOf(key)];
+    const kind = look.kind;
+    assert.ok(marks.length > 20, `${kind} : la case reçoit de l’encre`);
+
+    // Déborder, c’est mordre sur la silhouette voisine de l’atlas : une fougère
+    // gagnerait le pied d’un chêne. Le tapis du sol (celui qui déclare sa
+    // taille) n’en a pas le droit ; les arbres, eux, mordent d’assez peu pour
+    // que ça ne se soit jamais vu — la pointe d’un conifère sort de 7 % au
+    // sommet de sa case, depuis toujours.
+    const slack = look.heightM ? 0 : cell * 0.08;
+    const over = Math.max(
+      0,
+      ...marks.map((m) =>
+        Math.max(-(m.x - m.pad), m.x + m.pad - cell, -(m.y - m.pad), m.y + m.pad - cell)
+      )
+    );
+    assert.ok(over <= slack, `${kind} : déborde de ${((over / cell) * 100).toFixed(1)} % de sa case`);
+    // La plante pose au sol et occupe au moins les trois cinquièmes de sa case :
+    // le panneau porte la hauteur qu’on lui donne, donc une silhouette tassée
+    // en bas rendrait systématiquement plus petite qu’annoncé. L’arbuste de
+    // `drawBushy` est le plus juste à cette barre (64 %).
+    const low = Math.max(...marks.map((m) => m.y + m.pad));
+    const high = Math.min(...marks.map((m) => m.y - m.pad));
+    assert.ok(low >= cell * 0.9, `${kind} : posée au sol (${(low / cell).toFixed(2)})`);
+    assert.ok(high <= cell * 0.4, `${kind} : remplit sa case (${(high / cell).toFixed(2)})`);
+  });
 });
 
 // --- Fleurs et cultures -----------------------------------------------------
@@ -5976,6 +6459,30 @@ test('l’écart rapide de l’index ne se trompe que dans le sens sûr', () => 
         `un point couvert doit toujours être annoncé (${x}, ${z})`
       );
     }
+  }
+});
+
+test('un réseau dit jusqu’où il sait, ce qui n’est pas dire ce qu’il contient', () => {
+  // Hors du disque construit, un index ne répond pas « pas de route » : il ne
+  // répond rien. Sans cette mesure, une tuile semée à 1 400 m plantait des
+  // arbres sur une chaussée qu’elle ne pouvait pas voir, et ne les enlevait jamais.
+  const here = { x: 0, z: 0 };
+  assert.equal(knownCoverage(-10, -10, 10, 10, here, 900), 1, 'sous le nez, tout est su');
+  assert.equal(knownCoverage(2000, 2000, 2100, 2100, here, 900), 0, 'au loin, rien');
+  assert.equal(knownCoverage(-10, -10, 10, 10, null, 900), 0, 'sans point de construction, rien');
+
+  // À cheval sur le bord, la mesure est partielle et croît quand on approche.
+  const loin = knownCoverage(800, -100, 1200, 300, here, 900);
+  const proche = knownCoverage(800, -100, 1200, 300, { x: 400, z: 100 }, 900);
+  assert.ok(loin > 0 && loin < 1, `part connue au bord : ${loin}`);
+  assert.ok(proche > loin, `approcher fait savoir davantage : ${proche} > ${loin}`);
+
+  // Et elle est monotone : s’approcher n’a jamais fait oublier une route.
+  let previous = 0;
+  for (let x = -400; x <= 900; x += 100) {
+    const seen = knownCoverage(800, -100, 1200, 300, { x, z: 100 }, 900);
+    assert.ok(seen >= previous - 1e-9, `recul de connaissance à x=${x}`);
+    previous = seen;
   }
 });
 

@@ -19,6 +19,14 @@
  * coquelicot) ; la hauteur ne suit pas le même fondu que la présence
  * (`coverHeightFade` plancher la taille pour qu'elle ne s'éteigne pas avant
  * de disparaître).
+ *
+ * Le sol d'un bois, enfin, n'est plus nu : la part de bois ne comptait pour
+ * rien dans le végétal (`grass` vaut zéro sous les arbres), donc une forêt
+ * n'avait pas une touffe, jusque sous le nez de l'observateur. Elle compte
+ * maintenant pour ce qu'elle vaut (`grassGreenFor`) et ce qui y pousse est une
+ * litière — rase, clairsemée, sans fleurs (`woodFloorFor`), pas une prairie à
+ * l'ombre. Le pire cas d'instances ne bouge pas : un bois plein rend moins de
+ * touffes qu'une prairie pleine, sur laquelle `GRASS_COUNT` est mesuré.
  */
 
 import {
@@ -293,6 +301,57 @@ export function coverGrassFor(cover, covers = defaultTheme.covers) {
 }
 
 /**
+ * Part de végétal au sol vue par l'herbe, et part de ce vert qui est du
+ * sous-bois.
+ *
+ * Un bois comptait pour zéro : `grass` vaut zéro sous un couvert d'arbres, et
+ * le sol d'une forêt restait donc la seule texture du terrain, sans une touffe,
+ * jusque sous le nez de l'observateur. Il compte maintenant pour ce qu'il vaut
+ * (`woodFloor.green`) — une litière, pas une prairie, et c'est `shade` qui dit
+ * de combien s'en écarter.
+ *
+ * Fonction pure.
+ *
+ * @param {{grass:number, wood:number, farmland:number}} sample
+ * @param {Object} [look] Tranche `theme.grass.woodFloor`.
+ * @returns {{green:number, shade:number}}
+ */
+export function grassGreenFor(sample, look = defaultTheme.grass.woodFloor) {
+  const meadow = sample.grass + sample.farmland * 0.5;
+  const floor = (sample.wood || 0) * (look?.green ?? 0);
+  const green = Math.min(1, meadow + floor);
+  return { green, shade: green > 0 ? Math.min(1, floor / green) : 0 };
+}
+
+/**
+ * Ce que l'ombre des arbres fait aux touffes : leur taille, leur nombre, leur
+ * couleur. Même contrat que `coverGrassFor`, et les deux se multiplient — un
+ * sous-bois de lande reste une lande.
+ *
+ * Fonction pure. `shade` nul rend le neutre, sans rien allouer.
+ *
+ * @param {number} shade Part de sous-bois dans le vert du lieu (`grassGreenFor`).
+ * @param {Object} [look] Tranche `theme.grass.woodFloor`.
+ */
+export function woodFloorFor(shade, look = defaultTheme.grass.woodFloor) {
+  if (!(shade > 0) || !look) return COVER_GRASS_NEUTRAL;
+  const mix = (value) => 1 + ((value ?? 1) - 1) * shade;
+  const tint = look.tint || COVER_GRASS_NEUTRAL.tint;
+  return {
+    height: mix(look.height),
+    density: mix(look.density),
+    tint: [mix(tint[0]), mix(tint[1]), mix(tint[2])],
+  };
+}
+
+/**
+ * Part de sous-bois au-delà de laquelle rien ne fleurit. Les fleurs de l'atlas
+ * sont des fleurs de plein soleil — coquelicot, marguerite, bouton d'or : aucune
+ * ne pousse sous un couvert fermé.
+ */
+export const WOODLAND_FLOWER_MAX = 0.5;
+
+/**
  * Variantes d'atlas qui portent une fleur, par indice.
  *
  * La correction de sol d'un climat s'applique à l'herbe, pas à ce qui fleurit
@@ -515,7 +574,7 @@ export class GroundCover {
         this.theme.terrain.unclassifiedWeights
       );
       // Échantillon brut (pas élargi) : la verdure de la touffe ne doit rien à une culture à 5 m de là.
-      const green = Math.min(1, sample.grass + sample.farmland * 0.5);
+      const { green, shade } = grassGreenFor(sample, this.theme.grass.woodFloor);
       if (green < GRASS_GREEN_MIN) continue;
 
       const edgeSample = widenFieldEdge(groundClass, cellX, cellZ, sample);
@@ -534,11 +593,19 @@ export class GroundCover {
       const fade = coverBandFade(cell.distance, band);
       if (fade <= 0.02) continue;
       const heightFade = coverHeightFade(fade, GRASS_HEIGHT_FADE_FLOOR);
+      // Et ce que l'ombre des arbres en fait, par-dessus : une litière rase.
+      // Après le fondu : hors des bois elle ne coûte rien, mais dans un bois
+      // elle alloue, et une maille écartée n'a pas à la payer.
+      const floorLook = woodFloorFor(shade, this.theme.grass.woodFloor);
       // À distance, une instance représente plusieurs mètres carrés. La
       // couverture dit *ce que c'est*, le climat *dans quel pays* : une lande
       // écossaise est rase parce que c'est une lande, et un peu plus rase
       // encore parce qu'elle est en pays venté. Les deux se multiplient.
-      const density = coverMassDensity(green, band) * coverLook.density * this._wash.grassDensity;
+      const density =
+        coverMassDensity(green, band) *
+        coverLook.density *
+        floorLook.density *
+        this._wash.grassDensity;
 
       fillGrassCell(tufts, gx, gz, band.cell, band.perCell, band.salt);
 
@@ -556,6 +623,7 @@ export class GroundCover {
           (grass.minHeight + tufts[at + 3] * (grass.maxHeight - grass.minHeight)) *
           (0.72 + green * 0.28) * // plus dense, plus haute
           coverLook.height *
+          floorLook.height *
           this._wash.grassHeight *
           heightFade *
           band.rise;
@@ -570,15 +638,18 @@ export class GroundCover {
         // Fleurissement décidé par le sol, pas par un tirage libre ; survit au
         // changement d'échelle. Tiré **avant** la teinte, qui en dépend : voir
         // `FLOWERING_VARIANTS`.
-        let variant = grassVariantFor(edgeSample, tufts[at + 6], this.theme.grass);
+        let variant =
+          shade > WOODLAND_FLOWER_MAX
+            ? 0
+            : grassVariantFor(edgeSample, tufts[at + 6], this.theme.grass);
         if (cell.band > 0) variant = grassMassVariant(variant, tufts[at + 5]);
 
         const dry = (1 - green) * 0.5 + tint * 0.35;
         const wash = isFloweringVariant(variant) ? COVER_GRASS_NEUTRAL.tint : this._wash.grass;
         this._color.setRGB(
-          (0.82 + dry * 0.26) * coverLook.tint[0] * wash[0],
-          (0.96 + tint * 0.09) * coverLook.tint[1] * wash[1],
-          (0.74 - dry * 0.2) * coverLook.tint[2] * wash[2]
+          (0.82 + dry * 0.26) * coverLook.tint[0] * floorLook.tint[0] * wash[0],
+          (0.96 + tint * 0.09) * coverLook.tint[1] * floorLook.tint[1] * wash[1],
+          (0.74 - dry * 0.2) * coverLook.tint[2] * floorLook.tint[2] * wash[2]
         );
         mesh.setColorAt(placed, this._color);
 

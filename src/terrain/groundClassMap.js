@@ -77,6 +77,22 @@ export function waterwayStyleFor(properties = {}, waterways = defaultTheme.water
 }
 
 /**
+ * Distance à laquelle `woodEdgeAt` va chercher le dehors, en mètres. Plus
+ * large que le fondu de la carte (2,7 m par pixel, filtré) pour ne pas prendre
+ * le flou d'un bord pour le bord lui-même ; plus étroite que la profondeur d'un
+ * ourlet, faute de quoi tout un bosquet serait sa propre lisière.
+ */
+export const WOOD_EDGE_REACH_M = 14;
+
+/** Voisins sondés par `woodEdgeAt` : les quatre directions cardinales suffisent à couper un bord, quelle que soit son orientation. */
+const WOOD_EDGE_OFFSETS = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+];
+
+/**
  * Matière d'une entité surfacique, ou `null` si elle n'en décrit aucune.
  *
  * `landuse=residential` ne prend pas `bare` : c'est un périmètre
@@ -322,6 +338,38 @@ export class GroundClassMap {
   /** Part de boisé, de 0 à 1. Zéro là où la donnée se tait : on ne devine pas un bois. */
   woodAt(x, z) {
     return this.sampleAt(x, z)?.wood ?? 0;
+  }
+
+  /**
+   * Part de lisière d'un point : 0 en plein bois comme hors du bois, 1 sur un
+   * bord franc. C'est la seule réponse à « suis-je à l'ourlet ? », et deux
+   * couches la posent — la végétation, qui y baisse la houppe et y épaissit le
+   * fourré, et le mobilier, qui n'empile du bois qu'au bord.
+   *
+   * Mesurée par comparaison avec le voisinage, pas par un gradient : ce qui
+   * compte est l'écart au voisin **le plus ouvert**, sinon un coin de bois
+   * répond moins qu'un bord droit alors qu'il est plus lisière encore.
+   *
+   * Un voisin dont la carte ne dit rien ne compte pas : on ne devine pas une
+   * lisière là où la donnée se tait — sans quoi tout le pourtour du carré
+   * couvert en serait une.
+   *
+   * @param {number} x Mètres locaux.
+   * @param {number} z
+   * @param {number} [reach] Distance du sondage, en mètres.
+   * @returns {number} de 0 à 1.
+   */
+  woodEdgeAt(x, z, reach = WOOD_EDGE_REACH_M) {
+    const here = this.sampleAt(x, z)?.wood ?? 0;
+    if (here <= 0) return 0;
+    let open = 0;
+    for (const [dx, dz] of WOOD_EDGE_OFFSETS) {
+      const neighbour = this.sampleAt(x + dx * reach, z + dz * reach);
+      if (!neighbour) continue;
+      const gap = here - neighbour.wood;
+      if (gap > open) open = gap;
+    }
+    return Math.min(1, open / here);
   }
 
   /**

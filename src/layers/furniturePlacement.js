@@ -428,8 +428,24 @@ export function scatterFurnitureFor(properties = {}, { crop = null } = {}) {
   if (klass === 'grass' || subclass === 'meadow' || subclass === 'grassland') {
     return { item: 'herd', perHectare: 1.1 };
   }
+  // Bois : du bois de coupe, rangé en lisière. La densité se compte à
+  // l'hectare comme le reste, mais l'ourlet en écarte l'essentiel (voir
+  // `WOOD_PILE_EDGE_MIN`) — un massif compact en porte donc proportionnellement
+  // moins qu'un bosquet, ce qui est juste : le tas est au bord, pas au milieu.
+  if (klass === 'wood') {
+    // Pseudo-objet, comme `herd` : la couche en tire deux choses, le bois rangé
+    // en lisière et ce qui vit dedans. La densité annoncée est celle des tas.
+    return { item: 'woodland', perHectare: 0.8 };
+  }
   return null;
 }
+
+/**
+ * Part de lisière (`groundClassMap.woodEdgeAt`) en deçà de laquelle on
+ * n'empile pas de bois. Un tas de bois se fait là où le tracteur passe — au
+ * bord du massif, jamais en son cœur.
+ */
+export const WOOD_PILE_EDGE_MIN = 0.35;
 
 /**
  * Part d'ovins d'une pâture de plaine, par famille climatique. La pente disait
@@ -488,6 +504,62 @@ export function herdFor({ steepness = 0, variant = 0, climate = null } = {}) {
   if (variant > 0.85) return { item: 'donkey', spread: 0.6 };
   return { item: 'cow', spread: 0.55 };
 }
+
+/**
+ * Le gibier d'un bois, par famille climatique — la liste dans laquelle un
+ * massif tire ce qu'il abrite. Un item répété pèse d'autant plus lourd (même
+ * convention que les essences d'un peuplement) ; une liste vide veut dire qu'il
+ * n'y a rien à voir, ce qui est le cas là où il n'y a pas de forêt.
+ *
+ * Ce ne sont pas des inventaires fauniques : ce sont les trois silhouettes que
+ * le catalogue sait poser, réparties là où on les rencontre. Le renne remplace
+ * le cervidé au nord, le sanglier domine au sud (une chênaie méditerranéenne
+ * en est pleine, et le cerf y est rare).
+ */
+export const FOREST_GAME = {
+  oceanic: ['deer', 'deer', 'boar'],
+  oceanicUpland: ['deer'],
+  mediterranean: ['boar', 'boar', 'deer'],
+  mediterraneanCool: ['boar', 'deer'],
+  mediterraneanMontane: ['boar', 'deer'],
+  semiArid: ['boar'],
+  arid: [],
+  continental: ['deer', 'boar', 'boar'],
+  boreal: ['reindeer', 'reindeer', 'deer'],
+  alpine: ['deer'],
+  glacial: [],
+};
+
+/** Le gibier d'un pays inconnu : celui d'avant les climats, un bois tempéré. */
+export const DEFAULT_FOREST_GAME = ['deer', 'boar'];
+
+/**
+ * Ce qu'un bois abrite : l'espèce, et de combien elle se tient groupée. Le
+ * sanglier va en compagnie serrée, le cervidé en hardes lâches.
+ *
+ * Fonction pure. Rend `null` là où il n'y a rien à poser.
+ *
+ * @param {Object} [context]
+ * @param {number} [context.variant] Tirage dans [0, 1[ attaché au massif.
+ * @param {string|null} [context.climate] Famille climatique.
+ * @returns {{item:string, spread:number}|null}
+ */
+export function forestGameFor({ variant = 0, climate = null } = {}) {
+  const pool = (climate && FOREST_GAME[climate]) || DEFAULT_FOREST_GAME;
+  if (pool.length === 0) return null;
+  const item = pool[Math.min(pool.length - 1, Math.floor(variant * pool.length))];
+  return { item, spread: item === 'boar' ? 0.2 : 0.34 };
+}
+
+/** Bêtes à l'hectare dans un bois : de quoi en croiser, pas de quoi en compter. */
+export const FOREST_GAME_PER_HECTARE = 0.12;
+
+/**
+ * Part des bois où l'on ne voit rien du tout. Le gibier est ce qu'on aperçoit
+ * une fois de temps en temps : en mettre dans tous les massifs en ferait un
+ * parc animalier.
+ */
+export const FOREST_GAME_EMPTY_ODDS = 0.65;
 
 /**
  * La pierre qui affleure, d'après la matière du sol et la pente — le seul

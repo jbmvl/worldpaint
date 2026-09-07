@@ -164,10 +164,16 @@ export const TERRAIN_LOOK = {
 
 // --- Les arbres ----------------------------------------------------------------
 /**
- * Les neuf silhouettes, décrites une fois. `hue` module la teinte de base
+ * Les treize silhouettes, décrites une fois. `hue` module la teinte de base
  * (peu saturée, la variation finale venant de la couleur d'instance).
  * `crownBase` fixe où commence la houppe (tronc dégagé d'une futaie vs
- * taillis qui part du sol).
+ * taillis qui part du sol) ; `trunk` à zéro, il n'y a pas de tronc du tout.
+ *
+ * Les quatre dernières sont le **tapis du sous-bois**, et elles portent deux
+ * champs que les arbres n'ont pas : `heightM`, la taille réelle de la plante,
+ * et `aspect`, sa largeur en part de sa hauteur. Un arbre tire sa hauteur de
+ * son peuplement ; une fougère, elle, fait ce qu'elle fait — sans ça, la
+ * fourchette commune des buissons lui donnait trois mètres.
  */
 export const TREE_VARIANTS = [
   { kind: 'broadleaf', hue: { r: 0.62, g: 1, b: 0.46 }, trunk: 0.075, crownBase: 0.6, spread: 0.34 },
@@ -179,17 +185,32 @@ export const TREE_VARIANTS = [
   { kind: 'conifer', hue: { r: 0.38, g: 1, b: 0.44 }, trunk: 0.055, crownBase: 0.9, spread: 0.24 },
   { kind: 'bushy', hue: { r: 0.6, g: 1, b: 0.4 }, trunk: 0.05, crownBase: 0.86, spread: 0.4 },
   { kind: 'bushy', hue: { r: 0.74, g: 1, b: 0.46 }, trunk: 0.04, crownBase: 0.9, spread: 0.44 },
+  // Le tapis : ni tronc, ni houppe, et sa taille lui appartient.
+  { kind: 'fern', hue: { r: 0.5, g: 1, b: 0.42 }, trunk: 0, crownBase: 1, spread: 0.42,
+    heightM: [0.5, 1.1], aspect: 1.5 },
+  { kind: 'fern', hue: { r: 0.6, g: 1, b: 0.48 }, trunk: 0, crownBase: 1, spread: 0.36,
+    heightM: [0.6, 1.3], aspect: 1.3 },
+  { kind: 'bramble', hue: { r: 0.46, g: 0.94, b: 0.42 }, trunk: 0, crownBase: 1, spread: 0.25,
+    heightM: [0.7, 1.6], aspect: 1.7 },
+  { kind: 'lowShrub', hue: { r: 0.36, g: 0.88, b: 0.4 }, trunk: 0, crownBase: 1, spread: 0.4,
+    heightM: [1.2, 2.4], aspect: 1 },
 ];
 /**
  * Les essences, par indices de variantes. C'est ce que lit `vegetationLayer`
- * pour composer un peuplement : un bois n'est pas un tirage uniforme dans neuf
+ * pour composer un peuplement : un bois n'est pas un tirage uniforme dans treize
  * silhouettes, c'est deux ou trois essences qui dominent.
+ *
+ * `undergrowth` n'est l'essence d'aucun peuplement : c'est le tapis du sol,
+ * semé par le seul sous-étage (`understoryStrata`). De loin, la strate basse
+ * reste faite d'arbustes — une fougère de quatre-vingts centimètres à un
+ * kilomètre coûte une instance et ne se voit pas.
  */
 export const TREE_ESSENCES = {
   broadleaf: [0, 1, 2],
   column: [3, 4],
   conifer: [5, 6],
   bushy: [7, 8],
+  undergrowth: [9, 10, 11, 12],
 };
 
 // --- Les peuplements -----------------------------------------------------------
@@ -376,6 +397,27 @@ export const GRASS_ASPECT = 0.62;
 export const FLOWER_SHARE = 0.16;
 /** Part de fleurs en lisière de culture, où poussent les coquelicots (lue directement dans la carte de classes filtrée). */
 export const POPPY_SHARE = 0.42;
+
+/**
+ * Ce que devient l'herbe **sous les arbres**. Un sol de forêt n'est pas une
+ * prairie plus sombre : c'est une litière où pousse une herbe rase, clairsemée
+ * et sans éclat, parce que la lumière ne descend pas jusque-là.
+ *
+ * - `green` : ce qu'un bois plein vaut de végétal pour `groundCover`. Sans lui,
+ *   la part de bois ne comptait pour rien et le sol d'un bois restait la seule
+ *   texture du terrain, jusque sous le nez de l'observateur ;
+ * - `height` et `density` multiplient la taille et le nombre des touffes ;
+ * - `tint` multiplie leur couleur, canal par canal — assombrie et réchauffée
+ *   vers la litière. C'est le raccord avec `woodAlbedo`, qui peint le même sol
+ *   au loin, qui décide de ces trois nombres : ils se règlent à l'œil, sur
+ *   place, en regardant le sol entre les troncs.
+ */
+export const WOODLAND_FLOOR = {
+  green: 0.55,
+  height: 0.5,
+  density: 0.7,
+  tint: [0.98, 0.82, 0.74],
+};
 
 // --- Les cultures --------------------------------------------------------------
 /**
@@ -1004,6 +1046,11 @@ export const FURNITURE_COLORS = {
   muzzle: srgb('#c49a94'),
   chestnut: srgb('#8a5a3a'), // robe alezane du cheval, se détache de l'herbe
   donkeyGrey: srgb('#9a9488'), // robe grise de l'âne, plus claire et froide que le cheval
+  // Le gibier : trois robes qui doivent se détacher d'un sous-bois sombre sans
+  // être des taches — un chevreuil fluo dans un bois se voit de trop loin.
+  fawn: srgb('#a5714a'), // robe fauve du cervidé
+  bristle: srgb('#3d3630'), // soies du sanglier, plus froides et plus sombres qu'un cuir
+  antler: srgb('#8f8067'), // bois et andouillers, gris-beige
   feather: srgb('#c9c2b4'),
   comb: srgb('#a3372f'),
   linen: srgb('#e6e2d8'),
@@ -1185,6 +1232,7 @@ export const defaultTheme = Object.freeze({
     aspect: GRASS_ASPECT,
     flowerShare: FLOWER_SHARE,
     poppyShare: POPPY_SHARE,
+    woodFloor: WOODLAND_FLOOR,
   },
   crops: CROP_LOOK,
   covers: COVER_LOOK,
