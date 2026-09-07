@@ -22,7 +22,9 @@
  *   - **le sous-étage** — les tiges basses et les buissons, semés dans un
  *     anneau autour de l'observateur (`THICKET_BANDS`) et redistribués en
  *     marchant. À deux cents mètres il n'y a rien à y voir ; à vingt, c'est
- *     tout ce qui manque pour qu'un bois ne soit pas une colonnade.
+ *     tout ce qui manque pour qu'un bois ne soit pas une colonnade. Sa densité
+ *     suit la part de sous-bois du peuplement (`thicketDensityFor`) : une
+ *     futaie se traverse à pied, un taillis non.
  *
  * Les deux lisent la même part de boisé, le même peuplement, la même emprise
  * routière ; ils ne se recouvrent pas (le peuplement plante des arbres faits,
@@ -191,11 +193,18 @@ export const THICKET_BANDS = [
 export const THICKET_RADIUS_M = coverBandsRadius(THICKET_BANDS);
 /**
  * Tiges de sous-étage à l'hectare, pour un bois plein et un peuplement de
- * densité 1. **C'est le réglage de la densité de près** : le peuplement seul
+ * référence. **C'est le réglage de la densité de près** : le peuplement seul
  * pose une centaine d'arbres faits à l'hectare, ce qui suffit à distance et
  * laisse voir au travers dès qu'on y entre.
  */
 export const THICKET_PER_HA = 500;
+/**
+ * Part de sous-bois du peuplement de référence — celui dont le sous-étage vaut
+ * exactement `THICKET_PER_HA`. Le reste s'y compare : une futaie entretenue est
+ * dégagée au sol (c'est même ce qui la définit) et doit se traverser à pied ;
+ * un taillis, lui, *est* son sous-bois.
+ */
+export const UNDERSTORY_REF = 0.3;
 /** Plafond d'instances du sous-étage (bois le plus épais, anneau plein). */
 export const THICKET_COUNT = 12000;
 /** Déplacement de l'observateur avant redistribution, en mètres. */
@@ -206,6 +215,16 @@ export const THICKET_HEIGHT_FADE_FLOOR = 0.45;
 /** Tiges de sous-étage attendues dans une maille pleinement boisée. Fonction pure. */
 export function thicketPerCell(density, cell) {
   return THICKET_PER_HA * density * ((cell * cell) / 10000);
+}
+
+/**
+ * Densité de sous-étage d'un peuplement, rapportée au peuplement de référence.
+ * Elle suit sa part de sous-bois, pas seulement sa densité de tiges : deux bois
+ * également fournis en houppes ne se traversent pas de la même façon, et c'est
+ * au pied que ça se voit. Fonction pure.
+ */
+export function thicketDensityFor(type) {
+  return (type.density ?? 1) * ((type.understory || 0) / UNDERSTORY_REF);
 }
 
 // --- Les strates ---------------------------------------------------------------
@@ -823,7 +842,7 @@ export class VegetationLayer {
         const type = standTypeFrom(pool, centreX, centreZ);
         const stems =
           woodDensity(groundClass.woodAt(centreX, centreZ)) *
-          thicketPerCell(type.density ?? 1, band.cell);
+          thicketPerCell(thicketDensityFor(type), band.cell);
         const thick =
           coverBushesFor(groundClass.coverAt?.(centreX, centreZ) ?? null, this.theme.covers) *
           thicketPerCell(1, band.cell);

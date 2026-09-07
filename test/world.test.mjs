@@ -206,6 +206,8 @@ import {
   saplingHeight,
   bushHeight,
   thicketPerCell,
+  thicketDensityFor,
+  UNDERSTORY_REF,
   foliageTint,
   thinPlacements,
   FOREST_PATCH_M,
@@ -842,6 +844,35 @@ test('le sous-étage se lit à deux échelles, et sa densité est celle d’un b
       `bande de ${band.cell} m : ${thicketPerCell(1, band.cell)} tiges pour ${band.perCell} candidats`
     );
   }
+});
+
+test('le sous-étage suit la part de sous-bois du peuplement, pas seulement sa densité', () => {
+  // Une futaie entretenue est dégagée au sol — c’est même ce qui la définit —
+  // et doit se traverser à pied ; un taillis *est* son sous-bois. Sans ça, deux
+  // bois également fournis en houppes se ressemblent au pied, ce qui est
+  // justement là où on les traverse.
+  const futaie = FOREST_TYPES.find((t) => t.name === 'futaie');
+  const taillis = FOREST_TYPES.find((t) => t.name === 'taillis');
+  assert.ok(
+    thicketDensityFor(taillis) > thicketDensityFor(futaie) * 2,
+    `taillis ${thicketDensityFor(taillis)} contre futaie ${thicketDensityFor(futaie)}`
+  );
+  // Le peuplement de référence vaut exactement sa densité de tiges : c’est ce
+  // qui garde `THICKET_PER_HA` lisible comme le réglage du sous-étage.
+  close(
+    thicketDensityFor({ density: 1.4, understory: UNDERSTORY_REF }),
+    1.4,
+    1e-9,
+    'peuplement de référence'
+  );
+  // Et une pinède dont l’aiguille étouffe tout reste claire au sol, malgré ses
+  // houppes serrées.
+  const pinede = FOREST_TYPES.find((t) => t.name === 'pinede');
+  assert.ok(pinede.density > futaie.density, 'la pinède est la plus fournie en houppes');
+  assert.ok(
+    thicketDensityFor(pinede) < thicketDensityFor(taillis) * 0.5,
+    'et pourtant dégagée au sol'
+  );
 });
 
 test('le sous-bois tire dans les buissons, quel que soit le peuplement', () => {
