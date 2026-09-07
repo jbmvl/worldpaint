@@ -538,7 +538,7 @@ export class WaterLayer {
     const radius = Math.min(WATER_RADIUS_M, this.bubble.radiusMeters || WATER_RADIUS_M);
 
     const mesh = { positions: [], normals: [], uvs: [] };
-    /** @type {Array<{rings: Array, level: number}>} nappes retenues, pour l'index. */
+    /** @type {Array<{rings: Array, levelAt: Function}>} nappes retenues, pour l'index. */
     const surfaces = [];
 
     this._appendPolygons(source, tiles, here, radius, mesh, surfaces);
