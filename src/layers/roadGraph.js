@@ -836,6 +836,49 @@ export class RoadIndex {
   }
 }
 
+/** Sondages par côté du rectangle mesuré par `knownCoverage` (une grille 8 × 8). */
+export const KNOWN_SAMPLES = 8;
+
+/**
+ * Part d'un rectangle qui tombe dans le disque où un réseau a été construit —
+ * ce qu'il **sait**, à distinguer de ce qu'il **contient**. Hors de ce disque
+ * un index ne répond pas « pas de route » : il ne répond rien, et qui sème
+ * d'après lui (la végétation) doit pouvoir constater qu'il en sait davantage
+ * qu'au moment où il a semé, sans quoi les arbres plantés sur une chaussée
+ * ignorée y restent pour toujours.
+ *
+ * Mesurée par sondage régulier plutôt que par une aire exacte : le rectangle
+ * est une tuile, la précision utile est celle d'un « ça a bougé ».
+ *
+ * Fonction pure.
+ *
+ * @param {number} minX Mètres locaux.
+ * @param {number} minZ
+ * @param {number} maxX
+ * @param {number} maxZ
+ * @param {{x:number,z:number}|null} anchor Centre du disque construit.
+ * @param {number} radius Rayon de construction, en mètres.
+ * @param {number} [samples] Sondages par côté.
+ * @returns {number} de 0 (rien) à 1 (tout le rectangle).
+ */
+export function knownCoverage(minX, minZ, maxX, maxZ, anchor, radius, samples = KNOWN_SAMPLES) {
+  if (!anchor || !(radius > 0) || !(maxX > minX) || !(maxZ > minZ)) return 0;
+  const stepX = (maxX - minX) / samples;
+  const stepZ = (maxZ - minZ) / samples;
+  const reach = radius * radius;
+  let inside = 0;
+  for (let j = 0; j < samples; j++) {
+    const z = minZ + (j + 0.5) * stepZ;
+    for (let i = 0; i < samples; i++) {
+      const x = minX + (i + 0.5) * stepX;
+      const dx = x - anchor.x;
+      const dz = z - anchor.z;
+      if (dx * dx + dz * dz <= reach) inside++;
+    }
+  }
+  return inside / (samples * samples);
+}
+
 /**
  * Plusieurs index d'emprise combinés, comme s'ils n'en faisaient qu'un.
  * Route et voie ferrée sont deux réseaux distincts, mais l'herbe, les

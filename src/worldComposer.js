@@ -18,8 +18,10 @@
  * trottoir a besoin des deux ; publie sa bande revêtue) → jardins (tirent clôtures et buissons des
  * maisons, lisent emprise et bande revêtue) → mobilier (tronçons + index des
  * chaussées, compte de bâtiments, emprise ferroviaire, lieux nommés) →
- * arbres (après la carte de classes et les chaussées) → herbe (après l'index
- * des chaussées) → cheminées (publiées par le mobilier, animées par `lifeLayer`).
+ * arbres (après la carte de classes et les chaussées : une tuile semée hors de
+ * portée de l'index des chaussées se resème quand il va jusqu'à elle) → herbe
+ * (après l'index des chaussées) → cheminées (publiées par le mobilier, animées
+ * par `lifeLayer`).
  *
  * Une couche qui manque ne casse rien : elle se contente de ne rien poser.
  *
@@ -159,6 +161,18 @@ export class WorldComposer {
     this._infra = {
       get index() {
         return new CombinedIndex([composer.roads.index, composer.railways.index]);
+      },
+      /**
+       * Part d'un rectangle sur laquelle les deux réseaux ont quelque chose à
+       * dire (la plus faible des deux : l'emprise n'est connue que là où les
+       * deux le sont). La végétation s'en sert pour resemer une tuile qu'elle
+       * avait semée hors de portée de l'index — voir `knownCoverage`.
+       */
+      knownCoverageOf(minX, minZ, maxX, maxZ) {
+        return Math.min(
+          composer.roads.knownCoverageOf(minX, minZ, maxX, maxZ),
+          composer.railways.knownCoverageOf(minX, minZ, maxX, maxZ)
+        );
       },
     };
 
@@ -380,10 +394,16 @@ export class WorldComposer {
         places
       );
 
-      // 6. Arbres — semis déterministe : seuls l'arrivée de la carte de classes
+      // 6. Arbres — après les chaussées, dont l'emprise décide où le semis
+      //    s'interrompt. `sync` remet en file les tuiles semées quand l'index
+      //    n'allait pas jusqu'à elles ; seuls l'arrivée de la carte de classes
       //    et un changement de climat justifient de tout reprendre (ce qui est
       //    planté l'aurait été avec les essences d'une autre région).
-      if (classArrived || climateChanged) this.vegetation.sync({ replant: true });
+      this.vegetation.sync({ replant: classArrived || climateChanged });
+      // Le sous-étage, lui, se refait d'un bloc : l'emprise vient de changer.
+      this.vegetation.update(here.x, here.z, {
+        force: hasRoads || classStale || climateChanged || force,
+      });
 
       // 7. Herbe — l'index des chaussées vient peut-être de changer.
       if (hasRoads || classStale || climateChanged || force) {
@@ -486,6 +506,7 @@ export class WorldComposer {
     this.grass.advance(delta);
     this.grass.update(at.x, at.z);
     this.vegetation.advance(delta);
+    this.vegetation.update(at.x, at.z);
     this.crops.advance(delta);
     this.crops.update(at.x, at.z);
     this.life.advance(delta, at);

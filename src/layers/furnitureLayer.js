@@ -1966,7 +1966,7 @@ export class FurnitureLayer {
 
     const hectares = ringAreaMeters(ring) / 10000;
     if (hectares < 0.4) return 0;
-    // Arrondi stochastique, comme `vegetationLayer.treesForScore` : sans lui,
+    // Arrondi stochastique : sans lui,
     // `floor` renvoyait zéro pour **toute** parcelle sous le seuil d'un
     // exemplaire plein — pour un troupeau (1,1/ha), tout pré de moins de
     // 0,91 ha, c'est-à-dire l'essentiel du bocage. Un pré de 0,5 ha a une

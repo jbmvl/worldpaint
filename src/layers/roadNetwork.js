@@ -30,7 +30,13 @@
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
-import { mergeRoadLines, RoadIndex, stitchPlatforms, trimAtJunctions } from './roadGraph.js';
+import {
+  mergeRoadLines,
+  RoadIndex,
+  knownCoverage,
+  stitchPlatforms,
+  trimAtJunctions,
+} from './roadGraph.js';
 import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
 import {
   workCodeFor,
@@ -574,6 +580,17 @@ export class RoadNetwork {
     this.index = null;
     /** Carrefours de la dernière reconstruction (un feu n'a de sens qu'à un carrefour). @type {Array<Object>} */
     this.junctions = [];
+  }
+
+  /**
+   * Part d'un rectangle sur laquelle le réseau a quelque chose à dire : le
+   * disque de `ROAD_RADIUS_M` autour du point où il a été construit. Ce qui
+   * sème d'après l'emprise (la végétation) s'en sert pour savoir qu'il en sait
+   * maintenant plus qu'à la plantation — voir `knownCoverage`.
+   */
+  knownCoverageOf(minX, minZ, maxX, maxZ) {
+    if (this._frame !== this.bubble?.frame) return 0;
+    return knownCoverage(minX, minZ, maxX, maxZ, this._anchor, ROAD_RADIUS_M);
   }
 
   /** Vrai si l'observateur s'est assez éloigné pour justifier une reconstruction. */

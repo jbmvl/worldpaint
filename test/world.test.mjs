@@ -125,6 +125,7 @@ import {
   NODE_WELD_M,
   JUNCTION_OVERLAP_M,
   JUNCTION_MIN_RUN_M,
+  knownCoverage,
 } from '../src/layers/roadGraph.js';
 import {
   WORK_NONE,
@@ -192,11 +193,19 @@ import {
   TOWER_RISE_MAX_M,
 } from '../src/layers/buildingLayer.js';
 import {
-  treesForScore,
+  woodDensity,
+  standTreesPerCell,
+  lowStratumPart,
+  standDraw,
+  describeTree,
+  standTypeFrom,
   forestTypeAt,
   variantsFor,
   understoryVariants,
   treeHeight,
+  saplingHeight,
+  bushHeight,
+  thicketPerCell,
   foliageTint,
   thinPlacements,
   FOREST_PATCH_M,
@@ -204,6 +213,14 @@ import {
   WOOD_DENSITY_CURVE,
   EMERGENT_SHARE,
   CLUMP_TINT_M,
+  STAND_SLOTS,
+  STAND_CANDIDATES,
+  TREES_PER_CELL,
+  THICKET_BANDS,
+  THICKET_PER_HA,
+  SAPLING_MIN_HEIGHT,
+  BUSH_MIN_HEIGHT,
+  BUSH_MAX_HEIGHT,
   coverBushesFor,
 } from '../src/layers/vegetationLayer.js';
 import { TREE_ESSENCES } from '../src/themes/default.js';
@@ -679,31 +696,78 @@ test('l’étirement laisse un champ constant tranquille', () => {
 
 // --- Végétation ------------------------------------------------------------
 
-test('le nombre d’arbres suit la part de boisé, et zéro sous le seuil', () => {
-  assert.equal(treesForScore(0, 9), 0);
-  assert.equal(treesForScore(WOOD_SCORE_MIN - 0.001, 9), 0);
-  assert.equal(treesForScore(1, 9), 9, 'un sous-bois plein donne le maximum');
-  // Un score moyen donne peu d’arbres : c’est la courbe de densité qui creuse
-  // l’écart entre une lisière et un sous-bois.
-  const middling = treesForScore(0.65, 9);
-  assert.ok(middling >= 1 && middling <= 4, `score moyen → ${middling} arbres`);
+test('la part de boisé se convertit en densité, et zéro sous le seuil', () => {
+  assert.equal(woodDensity(0), 0);
+  assert.equal(woodDensity(WOOD_SCORE_MIN - 0.001), 0);
+  assert.equal(woodDensity(1), 1, 'un bois plein donne la densité pleine');
+  // La courbe creuse l’écart entre une lisière et un sous-bois : au milieu du
+  // barème, on est loin de la moitié de la densité.
+  const middling = woodDensity(0.65);
+  assert.ok(middling > 0.4 && middling < 0.62, `score moyen → densité ${middling}`);
+  close(
+    middling,
+    Math.pow((0.65 - WOOD_SCORE_MIN) / (1 - WOOD_SCORE_MIN), WOOD_DENSITY_CURVE),
+    1e-12,
+    'courbe de densité'
+  );
 });
 
-test('l’arrondi stochastique évite l’effet de verger', () => {
-  // Densité attendue < 1 : sans tirage, chaque cellule recevrait le même
-  // nombre d’arbres — un arbre partout, soit une savane régulière.
-  const score = 0.42;
-  const low = treesForScore(score, 9, 0);
-  const high = treesForScore(score, 9, 0.999);
-  assert.ok(high > low, `le tirage doit départager : ${low} vs ${high}`);
+test('le sous-bois se compte en plus des arbres, pas à leur place', () => {
+  const clair = { density: 1, understory: 0 };
+  const fourni = { density: 1, understory: 0.5 };
+  assert.equal(standTreesPerCell(clair), TREES_PER_CELL);
+  close(standTreesPerCell(fourni), TREES_PER_CELL * 1.5, 1e-9, 'sous-bois en plus');
+  assert.equal(lowStratumPart(clair), 0);
+  close(lowStratumPart(fourni), 1 / 3, 1e-9, 'part de strate basse');
+  // Le peuplement le plus fourni du thème tient sous le plafond de candidats,
+  // sans quoi une maille saturerait au lieu de suivre sa densité.
+  const worst = Math.max(...FOREST_TYPES.map((type) => standTreesPerCell(type)));
+  assert.ok(worst <= STAND_CANDIDATES, `${worst} arbres attendus pour ${STAND_CANDIDATES} candidats`);
+});
 
-  // Et l’espérance suit bien la densité attendue.
+test('les tirages d’un candidat sont indépendants les uns des autres', () => {
+  const seed = 123456789;
+  // Un tirage ne dépend que de son rang : lire le voisin ne le déplace pas.
+  assert.equal(standDraw(seed, 7), standDraw(seed, 7));
+  assert.notEqual(standDraw(seed, 7), standDraw(seed, 8));
+  // Et la suite couvre l’intervalle sans se tasser d’un côté.
   let total = 0;
-  const draws = 400;
-  for (let i = 0; i < draws; i++) total += treesForScore(score, 9, (i + 0.5) / draws);
-  const normalized = (score - WOOD_SCORE_MIN) / (1 - WOOD_SCORE_MIN);
-  const expected = Math.pow(normalized, WOOD_DENSITY_CURVE) * 9;
-  close(total / draws, expected, 0.02, 'espérance du tirage');
+  const draws = 4000;
+  for (let k = 0; k < draws; k++) {
+    const v = standDraw(seed, k);
+    assert.ok(v >= 0 && v < 1, `tirage hors bornes : ${v}`);
+    total += v;
+  }
+  close(total / draws, 0.5, 0.02, 'moyenne des tirages');
+});
+
+test('écarter un arbre de la chaussée n’en déplace aucun autre', () => {
+  // C’est l’invariant du semis, et le défaut qu’il corrige : avec une suite
+  // parcourue dans l’ordre, le premier arbre refusé décalait tout le reste de
+  // la tuile — le même bois ne se plantait pas deux fois pareil selon que la
+  // route était connue ou non.
+  const seed = 987654321;
+  const type = { density: 1, understory: 0.2, minHeight: 8, maxHeight: 16, tint: [1, 1, 1] };
+  const sow = (rejected) => {
+    const out = [];
+    for (let i = 0; i < STAND_CANDIDATES; i++) {
+      const base = i * STAND_SLOTS;
+      if (standDraw(seed, base) >= 0.5) continue; // présence
+      const x = standDraw(seed, base + 1);
+      const z = standDraw(seed, base + 2);
+      if (rejected(x, z)) continue; // « sur la chaussée »
+      out.push({ x, z, ...describeTree({}, seed, base, type, 0.2, [1, 2], [7, 8]) });
+    }
+    return out;
+  };
+
+  const libre = sow(() => false);
+  const coupe = sow((x) => x > 0.4 && x < 0.6);
+  assert.ok(coupe.length < libre.length, 'la chaussée doit bien retirer des arbres');
+  // Tout ce qui n’est pas sur la chaussée est identique, au même endroit, de la
+  // même hauteur, de la même silhouette.
+  const survivants = libre.filter((tree) => !(tree.x > 0.4 && tree.x < 0.6));
+  assert.deepEqual(coupe, survivants, 'le reste du semis ne bouge pas');
 });
 
 test('les hauteurs se répartissent en strates, avec quelques dominants', () => {
@@ -720,6 +784,64 @@ test('les hauteurs se répartissent en strates, avec quelques dominants', () => 
   // Et quelques-uns dépassent la strate : ce sont eux qui donnent le relief.
   assert.ok(treeHeight(type, 1, 0) > 16, 'un dominant dépasse la hauteur du peuplement');
   assert.ok(EMERGENT_SHARE > 0 && EMERGENT_SHARE < 0.25, 'un dominant reste une exception');
+});
+
+test('une tige de sous-étage monte vers le peuplement sans l’atteindre', () => {
+  const futaie = { minHeight: 12, maxHeight: 22 };
+  assert.equal(saplingHeight(futaie, 0), SAPLING_MIN_HEIGHT);
+  close(saplingHeight(futaie, 1), 12, 1e-9, 'elle s’arrête au bas du peuplement');
+  for (let i = 0; i <= 20; i++) {
+    const h = saplingHeight(futaie, i / 20);
+    assert.ok(h >= SAPLING_MIN_HEIGHT && h <= futaie.minHeight, `hauteur de tige ${h}`);
+  }
+  // Un taillis est déjà bas : sa régénération ne doit pas se retrouver au-dessus.
+  const taillis = { minHeight: 3.5, maxHeight: 7 };
+  assert.ok(saplingHeight(taillis, 1) <= taillis.minHeight + 1e-9);
+  // Et un peuplement plus bas que la tige minimale garde une fourchette utile.
+  const nain = { minHeight: 1, maxHeight: 2 };
+  assert.ok(saplingHeight(nain, 1) > saplingHeight(nain, 0), 'fourchette non nulle');
+
+  assert.equal(bushHeight(0), BUSH_MIN_HEIGHT);
+  close(bushHeight(1), BUSH_MAX_HEIGHT, 1e-9, 'buisson au plafond');
+});
+
+test('un candidat retenu est décrit par ses seuls tirages', () => {
+  const seed = 24680;
+  const type = { minHeight: 6, maxHeight: 12, density: 1, understory: 0.3 };
+  const a = describeTree({}, seed, 0, type, 0.3, [3, 4], [7, 8]);
+  const b = describeTree({}, seed, 0, type, 0.3, [3, 4], [7, 8]);
+  assert.deepEqual(a, b, 'même graine, même arbre');
+  // La strate basse prend les silhouettes basses, la haute celles du peuplement.
+  const bas = describeTree({}, seed, 0, type, 1, [3, 4], [7, 8]);
+  assert.ok(bas.low && [7, 8].includes(bas.variant), 'buisson buissonnant');
+  const haut = describeTree({}, seed, 0, type, 0, [3, 4], [7, 8]);
+  assert.ok(!haut.low && [3, 4].includes(haut.variant), 'arbre du peuplement');
+  // Le sous-étage tire dans la régénération, le peuplement dans les arbres faits.
+  const tige = describeTree({}, seed, 0, type, 0, [3, 4], [7, 8], true);
+  assert.ok(tige.height <= type.minHeight, `tige de ${tige.height} m`);
+  assert.ok(haut.height >= type.minHeight, `arbre fait de ${haut.height} m`);
+});
+
+test('le sous-étage se lit à deux échelles, et sa densité est celle d’un bois', () => {
+  const [proche, lointaine] = THICKET_BANDS;
+  assert.ok(lointaine.cell > proche.cell, 'la maille double avec la distance');
+  assert.ok(lointaine.from < proche.to, 'les bandes se recouvrent, sinon un anneau nu');
+  // Une maille demande ce que sa surface vaut : deux fois plus large, quatre
+  // fois plus de tiges.
+  close(
+    thicketPerCell(1, lointaine.cell) / thicketPerCell(1, proche.cell),
+    (lointaine.cell / proche.cell) ** 2,
+    1e-9,
+    'densité par surface'
+  );
+  close(thicketPerCell(1, 100), THICKET_PER_HA, 1e-9, 'un hectare de maille');
+  // Et chaque bande peut porter ce qu’un bois ordinaire lui demande.
+  for (const band of THICKET_BANDS) {
+    assert.ok(
+      thicketPerCell(1, band.cell) <= band.perCell,
+      `bande de ${band.cell} m : ${thicketPerCell(1, band.cell)} tiges pour ${band.perCell} candidats`
+    );
+  }
 });
 
 test('le sous-bois tire dans les buissons, quel que soit le peuplement', () => {
@@ -757,18 +879,26 @@ test('la teinte d’un feuillage dérive par bosquet, et reste ancrée au lieu',
 });
 
 test('le plafond d’une tuile éclaircit le semis au lieu de le rogner', () => {
-  const list = Array.from({ length: 1000 }, (_, i) => i);
+  const list = Array.from({ length: 1000 }, (_, i) => ({ i, thin: (i * 37) % 1000 / 1000 }));
   assert.equal(thinPlacements(list, 2000), list, 'sous le plafond, on ne touche à rien');
 
   const thinned = thinPlacements(list, 250);
-  assert.equal(thinned.length, 250, 'le plafond est tenu exactement');
+  assert.ok(Math.abs(thinned.length - 250) <= 5, `${thinned.length} arbres gardés pour 250`);
   // L’éclaircie est répartie : chaque quart du semis garde un quart de ce qui
   // reste. C’est ce qui manquait quand on s’arrêtait de planter en route — le
   // sud d’une tuile restait nu au milieu d’un massif.
   for (let q = 0; q < 4; q++) {
-    const kept = thinned.filter((v) => v >= q * 250 && v < (q + 1) * 250).length;
-    assert.ok(Math.abs(kept - 62.5) <= 2, `quart ${q} : ${kept} points gardés`);
+    const kept = thinned.filter((v) => v.i >= q * 250 && v.i < (q + 1) * 250).length;
+    assert.ok(Math.abs(kept - 62.5) <= 6, `quart ${q} : ${kept} points gardés`);
   }
+
+  // Et surtout : elle tient sur le tirage de l’arbre, pas sur son rang. Retirer
+  // les arbres tombés sur la chaussée ne rebat pas le semis de toute la tuile.
+  const sansRoute = thinPlacements(list.filter((v) => v.i % 10 !== 3), 250);
+  const gardes = new Set(thinned.filter((v) => v.i % 10 !== 3).map((v) => v.i));
+  const communs = sansRoute.filter((v) => gardes.has(v.i)).length;
+  assert.equal(communs, gardes.size, 'aucun arbre gardé ne disparaît parce qu’un autre est parti');
+  assert.ok(sansRoute.length - communs <= 30, `${sansRoute.length - communs} arbres de rattrapage`);
 });
 
 // --- Bâti ------------------------------------------------------------------
@@ -6183,6 +6313,30 @@ test('l’écart rapide de l’index ne se trompe que dans le sens sûr', () => 
         `un point couvert doit toujours être annoncé (${x}, ${z})`
       );
     }
+  }
+});
+
+test('un réseau dit jusqu’où il sait, ce qui n’est pas dire ce qu’il contient', () => {
+  // Hors du disque construit, un index ne répond pas « pas de route » : il ne
+  // répond rien. Sans cette mesure, une tuile semée à 1 400 m plantait des
+  // arbres sur une chaussée qu’elle ne pouvait pas voir, et ne les enlevait jamais.
+  const here = { x: 0, z: 0 };
+  assert.equal(knownCoverage(-10, -10, 10, 10, here, 900), 1, 'sous le nez, tout est su');
+  assert.equal(knownCoverage(2000, 2000, 2100, 2100, here, 900), 0, 'au loin, rien');
+  assert.equal(knownCoverage(-10, -10, 10, 10, null, 900), 0, 'sans point de construction, rien');
+
+  // À cheval sur le bord, la mesure est partielle et croît quand on approche.
+  const loin = knownCoverage(800, -100, 1200, 300, here, 900);
+  const proche = knownCoverage(800, -100, 1200, 300, { x: 400, z: 100 }, 900);
+  assert.ok(loin > 0 && loin < 1, `part connue au bord : ${loin}`);
+  assert.ok(proche > loin, `approcher fait savoir davantage : ${proche} > ${loin}`);
+
+  // Et elle est monotone : s’approcher n’a jamais fait oublier une route.
+  let previous = 0;
+  for (let x = -400; x <= 900; x += 100) {
+    const seen = knownCoverage(800, -100, 1200, 300, { x, z: 100 }, 900);
+    assert.ok(seen >= previous - 1e-9, `recul de connaissance à x=${x}`);
+    previous = seen;
   }
 });
 

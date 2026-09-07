@@ -29,7 +29,7 @@ import {
   toGeometry,
 } from './ribbonGeometry.js';
 import { createRoadCanvas, ROAD_TEXTURE_LENGTH } from '../materials/proceduralTextures.js';
-import { RoadIndex, ROAD_INDEX_MARGIN_M } from './roadGraph.js';
+import { RoadIndex, ROAD_INDEX_MARGIN_M, knownCoverage } from './roadGraph.js';
 import { defaultTheme } from '../themes/default.js';
 
 /** Couche source des tuiles vectorielles — celle des chaussées aussi. */
@@ -109,6 +109,17 @@ export class RailwayLayer {
 
     /** Emprise ferroviaire, au même format que celle des routes (`RoadIndex`). @type {Object|null} */
     this.index = null;
+  }
+
+  /**
+   * Part d'un rectangle sur laquelle la voie a quelque chose à dire — même
+   * contrat que `RoadNetwork.knownCoverageOf`, avec le rayon effectivement
+   * parcouru (voir `rebuild`).
+   */
+  knownCoverageOf(minX, minZ, maxX, maxZ) {
+    if (this._frame !== this.bubble?.frame) return 0;
+    const radius = Math.min(RAILWAY_RADIUS_M, this.bubble?.radiusMeters || RAILWAY_RADIUS_M);
+    return knownCoverage(minX, minZ, maxX, maxZ, this._anchor, radius);
   }
 
   /** Vrai si l'observateur s'est assez éloigné pour justifier une reconstruction. */
