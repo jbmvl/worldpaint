@@ -352,6 +352,7 @@ import {
   groundClassFor,
   classPolygons,
   CLASS_FILL,
+  CLASS_SOURCE_LAYERS,
   WATER_COVER_ID,
   waterwayStyleFor,
   isDrawableWater,
@@ -1759,8 +1760,18 @@ test('les couches vectorielles décrivent la matière du sol', () => {
   assert.equal(groundClassFor('landuse', { class: 'retail' }), 'bare');
   assert.equal(groundClassFor('landuse', { class: 'quarry' }), 'bare');
   assert.equal(groundClassFor('landuse', { class: 'cemetery' }), 'grass');
-  // Un parc est un parc, quelle que soit la zone qui l’entoure.
-  assert.equal(groundClassFor('park', { class: 'public_park' }), 'grass');
+  // La couche `park` ne peint plus rien, et le nom est le piège : au schéma
+  // OpenMapTiles elle ne porte aucun parc de ville mais des **périmètres de
+  // protection** — `boundary=protected_area`, `national_park`,
+  // `leisure=nature_reserve`. Elle était peinte en herbe, en dernier, par-dessus
+  // tout le reste : un cordon dunaire classé, un marais protégé, une forêt de
+  // parc régional finissaient en prairie, leur couverture effacée avec. Le parc
+  // de ville, lui, arrive par `landcover` en classe `grass`.
+  assert.equal(groundClassFor('park', { class: 'national_park' }), null);
+  assert.equal(groundClassFor('park', { class: 'protected_area' }), null);
+  assert.equal(groundClassFor('park', { class: 'nature_reserve' }), null);
+  assert.equal(groundClassFor('landcover', { class: 'grass', subclass: 'park' }), 'grass');
+  assert.ok(!CLASS_SOURCE_LAYERS.includes('park'), 'la couche n’est plus parcourue du tout');
 
   // Ce qui ne décrit pas une surface ne doit rien peindre du tout.
   assert.equal(groundClassFor('landuse', { class: 'school' }), null);

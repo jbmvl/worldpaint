@@ -51,8 +51,19 @@ export const CLASS_PIXELS = 1536;
 /** Déplacement de l'observateur avant re-rasterisation, en mètres. */
 export const CLASS_REBUILD_M = 400;
 
-/** Couches source lues, dans l'ordre de dessin (les dernières recouvrent). */
-export const CLASS_SOURCE_LAYERS = ['landuse', 'landcover', 'park'];
+/**
+ * Couches source lues, dans l'ordre de dessin (les dernières recouvrent).
+ *
+ * La couche `park` n'en fait **pas** partie, et c'est un piège de nommage : au
+ * schéma OpenMapTiles elle ne contient aucun parc de ville, mais
+ * `boundary=protected_area`, `boundary=national_park`, `leisure=nature_reserve`
+ * — des périmètres de protection, souvent immenses (Natura 2000 couvre presque
+ * tout le littoral français, la Camargue, les Landes). Un périmètre juridique
+ * ne dit rien de la matière du sol. Le parc de ville, lui, arrive bien :
+ * `leisure=park`, `garden`, `village_green`, `recreation_ground` et
+ * `golf_course` sont rangés par le schéma dans `landcover`, classe `grass`.
+ */
+export const CLASS_SOURCE_LAYERS = ['landuse', 'landcover'];
 
 /** Couches source de l'eau, dans les tuiles vectorielles. */
 export const WATER_SOURCE_LAYER = 'water';
@@ -101,11 +112,15 @@ const WOOD_EDGE_OFFSETS = [
  * séparément par `streetLayer`). D'où `settled` : part d'herbe dominante,
  * part de minéral. Une zone d'activité (industrielle, commerciale, ferroviaire,
  * carrière), elle, reste `bare` : réellement minérale sur toute sa surface.
+ *
+ * La couche `park` rendait `grass`, et c'était le défaut le plus coûteux de ce
+ * module : elle ne porte pas de parcs mais des périmètres de protection (voir
+ * `CLASS_SOURCE_LAYERS`), peints en dernier par-dessus tout le reste. Un
+ * cordon dunaire classé, un marais protégé, une forêt de parc naturel
+ * régional : tous ramenés à de l'herbe, et leur couverture effacée avec.
  */
 export function groundClassFor(sourceLayer, properties = {}) {
   const klass = properties.class;
-
-  if (sourceLayer === 'park') return 'grass';
 
   if (sourceLayer === 'landcover') {
     if (klass === 'wood') return 'wood';
@@ -177,9 +192,9 @@ export const COVER_ID_STEP = 30;
  * Couverture décrite par une entité surfacique, ou `null`.
  *
  * Seule la couche `landcover` en porte : `landuse` décrit qui occupe le sol,
- * pas de quoi il est fait, et `park` est un usage, pas une matière. Les valeurs
- * de `subclass` sont celles du schéma OpenMapTiles, qui y recopie le tag OSM
- * d'origine (`natural`, `landuse`, `leisure` ou `wetland`).
+ * pas de quoi il est fait. Les valeurs de `subclass` sont celles du schéma
+ * OpenMapTiles, qui y recopie le tag OSM d'origine (`natural`, `landuse`,
+ * `leisure` ou `wetland`).
  *
  * Fonction pure.
  */
@@ -478,8 +493,8 @@ export class GroundClassMap {
 
     let painted = 0;
 
-    // L'ordre compte : landuse (grandes emprises) puis landcover (bois/prairies
-    // par-dessus) puis park en dernier (doit rester un parc en zone résidentielle).
+    // L'ordre compte : landuse (grandes emprises) puis landcover, qui pose la
+    // matière réelle par-dessus (un bois, une prairie, un cordon dunaire).
     for (const sourceLayer of CLASS_SOURCE_LAYERS) {
       source.forEachFeature(sourceLayer, tiles, (geometry, properties) => {
         const kind = groundClassFor(sourceLayer, properties);
@@ -522,17 +537,7 @@ export class GroundClassMap {
           const cover = coverId(coverFor(sourceLayer, properties));
 
           if (kind !== 'farmland') {
-            // `park` est la seule couche peinte après `landcover` : sans cet
-            // effacement, un parc sur une terre agricole garderait sa culture.
-            // Vaut aussi pour la couverture — un parc n'est pas une lande,
-            // même tracé sur une lande.
-            if (sourceLayer === 'park') {
-              this.cropCtx.save();
-              this.cropCtx.globalCompositeOperation = 'destination-out';
-              this.cropCtx.fillStyle = '#000';
-              this.cropCtx.fill(path, 'evenodd');
-              this.cropCtx.restore();
-            } else if (cover) {
+            if (cover) {
               this.cropCtx.fillStyle = `rgba(0, ${cover * COVER_ID_STEP}, 0, 1)`;
               this.cropCtx.fill(path, 'evenodd');
             }

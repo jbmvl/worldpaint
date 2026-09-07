@@ -70,11 +70,28 @@ Sources : [schéma `landcover`](https://github.com/openmaptiles/openmaptiles/blo
 (c'est celui qu'OpenFreeMap fait tourner ; le sable y est servi jusqu'au z14
 sans autre filtre qu'une taille minimale au-dessous du z13).
 
-### `park`
+### `park` — **pas lue**, et le nom est un piège
 
-Toujours de l'herbe, peint en dernier, et il **efface** la culture ou la
-couverture qui se trouvait dessous : un parc tracé sur une lande n'est pas une
-lande.
+La couche `park` ne contient aucun parc de ville. Au schéma OpenMapTiles elle
+porte `boundary=protected_area`, `boundary=national_park`,
+`boundary=aboriginal_lands`, `leisure=nature_reserve` et quelques
+`historic=*` : des **périmètres de protection**, souvent immenses — Natura 2000
+couvre presque tout le littoral français, la Camargue, les Landes, la plupart
+des massifs.
+
+Elle était lue, rendue en herbe, peinte **en dernier par-dessus tout le
+reste**, et son passage **effaçait** la couverture en dessous. Tout ce qui
+était classé finissait donc en prairie dès qu'il tombait dans un périmètre
+protégé : un cordon dunaire, un marais, une lande, une forêt de parc naturel
+régional. C'est la raison pour laquelle on ne voyait de sable nulle part.
+
+Un périmètre juridique ne dit rien de la matière du sol : la couche n'est plus
+parcourue. Le parc de ville, lui, n'est pas perdu — `leisure=park`, `garden`,
+`village_green`, `recreation_ground` et `golf_course` sont rangés par le schéma
+dans `landcover`, classe `grass`.
+
+Source : [schéma `park`](https://github.com/openmaptiles/openmaptiles/blob/master/layers/park/park.yaml),
+[correspondance des tags](https://github.com/openmaptiles/openmaptiles/blob/master/layers/park/mapping.yaml).
 
 ### `water` et `waterway` — l'eau
 
