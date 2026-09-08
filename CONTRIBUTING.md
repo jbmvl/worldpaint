@@ -116,6 +116,16 @@ these needs a very good reason, stated in the PR description.
   the terrain cut, platform stitching, spaced furniture and kerbs all keep
   reading one whole road. Only the ribbon is laid in pieces — exactly the same
   figure as a tunnel (`roadWorks.drawableRuns`).
+- **The carriageway has one edge, and everything that borders it reads that
+  edge.** The paved surface is the union of the ribbons and the junction
+  surfaces; its boundary is a single object (`layers/roadEdges.js`). A kerb run
+  ends exactly where its ribbon ends (`junctionBoundaryAt`), a street corner is
+  bordered from the piece of boundary the junction itself publishes
+  (`area.edges`), and how much room is left beyond an edge is a **width**
+  (`edgeClearance`), never a yes/no probe: a pavement narrows before it
+  disappears. Deriving the edge again from a segment axis, or refusing a whole
+  pavement because a probe touched some other road, is what put pavements
+  across junctions and cut them a half-street short.
 - **A bridge is a state of the carriageway, not a class of road.** `brunnel`
   travels as a per-row flag alongside the path (`segment.works`, see
   `layers/roadWorks.js`), never as an extra road profile. That is what keeps a

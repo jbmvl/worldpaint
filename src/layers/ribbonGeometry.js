@@ -340,6 +340,11 @@ export function appendRibbon(
  * @param {Float32Array|number[]} [options.lateralJitter] Décalage de
  *        `offset`, une valeur par ligne, en mètres — déplace l'axe lui-même
  *        (ondule en plan, pas seulement en coupe).
+ * @param {Float64Array} [options.frames] Repères déjà connus (`pathFrames`),
+ *        quatre nombres par ligne. À donner quand la section doit se poser
+ *        **exactement** sur une rive déjà construite ailleurs : recalculés sur
+ *        une portion, les repères de tête et de queue diffèrent de ceux du
+ *        tracé entier, et la section s'en écarte de quelques millimètres.
  * @returns {boolean} vrai si de la géométrie a été produite.
  */
 export function appendProfile(
@@ -356,13 +361,20 @@ export function appendProfile(
     scaleUp = null,
     scaleAcross = null,
     lateralJitter = null,
+    frames = null,
   }
 ) {
   const rows = path?.length ?? 0;
   const cols = profile?.length ?? 0;
   if (rows < 2 || cols < 2) return false;
 
-  const frames = pathFrames(path);
+  // Les repères peuvent être **donnés** : une bordure suit la rive d'une
+  // chaussée, et cette rive est posée par le ruban à partir des repères du
+  // tronçon **entier**. Les recalculer sur la seule portion bordurée les fait
+  // diverger à ses deux bouts (un repère de tête n'a pas de voisin avant lui),
+  // d'où une fente de quelques millimètres entre bitume et caniveau — celle
+  // que six centimètres de recouvrement cachaient jusqu'ici.
+  const framesUsed = frames || pathFrames(path);
   const base = buffer.positions.length / 3;
 
   // Lissée avant usage, sinon le muret suit le bruit métrique du MNT.
@@ -372,16 +384,16 @@ export function appendProfile(
       ground[r] = baseHeights[r] + lift;
       continue;
     }
-    const px = frames[r * 4 + 2];
-    const pz = frames[r * 4 + 3];
+    const px = framesUsed[r * 4 + 2];
+    const pz = framesUsed[r * 4 + 3];
     const off = offset + (lateralJitter ? lateralJitter[r] : 0);
     ground[r] = sampleElevation(path[r].x + px * off, path[r].z + pz * off) + lift;
   }
   smoothColumns(ground, rows, 1, smoothRadius);
 
   for (let r = 0; r < rows; r++) {
-    const px = frames[r * 4 + 2];
-    const pz = frames[r * 4 + 3];
+    const px = framesUsed[r * 4 + 2];
+    const pz = framesUsed[r * 4 + 3];
     const off = offset + (lateralJitter ? lateralJitter[r] : 0);
     const ax = path[r].x + px * off;
     const az = path[r].z + pz * off;

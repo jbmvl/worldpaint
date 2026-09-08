@@ -217,8 +217,10 @@ export function junctionCorner(node, a, b, { steps = JUNCTION_ARC_STEPS } = {}) 
  * @param {Object} [options]
  * @returns {{x:number, z:number, level:number, profile:string, halfWidth:number,
  *          outline:Array<{x:number,z:number}>, mouths:Array<Object>,
- *          radius:number}|null} `null` si le carrefour n'a pas de quoi en faire
- *          une surface (moins de trois branches utilisables).
+ *          edges:Array<Object>, radius:number}|null} `null` si le carrefour n'a
+ *          pas de quoi en faire une surface (moins de trois branches
+ *          utilisables). `edges` porte les morceaux de rive — les coins de rue —
+ *          que le carrefour ajoute entre deux bouches consécutives.
  */
 export function junctionArea(junction, options = {}) {
   const { margin = JUNCTION_MOUTH_MARGIN_M } = options;
@@ -253,6 +255,7 @@ export function junctionArea(junction, options = {}) {
 
   const outline = [];
   const mouths = [];
+  const corner = [];
 
   for (let i = 0; i < count; i++) {
     const branch = branches[i];
@@ -270,6 +273,12 @@ export function junctionArea(junction, options = {}) {
     // Puis l'arc qui la relie à la suivante.
     for (const point of corners[i].points) outline.push(point);
 
+    // Le morceau de rive que ce carrefour ajoute au réseau, entre la bouche de
+    // cette branche et celle de la suivante : c'est le **coin de rue**, celui
+    // le long duquel un trottoir tourne au lieu de traverser la chaussée. Il
+    // est refermé plus bas, une fois toutes les bouches posées.
+    corner.push({ from: i, to: (i + 1) % count, arc: corners[i].points, right });
+
     mouths.push({
       profile: branch.profile,
       halfWidth: branch.halfWidth,
@@ -280,6 +289,26 @@ export function junctionArea(junction, options = {}) {
       right,
     });
   }
+
+  // Chaque coin va de la rive droite d'une bouche à la rive gauche de la
+  // suivante, en passant par l'arc : les deux extrémités sont **exactement**
+  // les sommets où les rives de tronçon s'arrêtent, si bien que la rive de la
+  // chaussée est continue d'un bout à l'autre du réseau.
+  const edges = corner.map((piece) => {
+    const points = [piece.right, ...piece.arc, mouths[piece.to].left];
+    const middle = points[Math.floor(points.length / 2)];
+    let ox = middle.x - node.x;
+    let oz = middle.z - node.z;
+    const length = Math.hypot(ox, oz) || 1;
+    return {
+      from: piece.from,
+      to: piece.to,
+      points,
+      // Vers l'extérieur du carrefour : le côté où se pose ce qui borde la
+      // chaussée. Mesuré, pas déduit d'un sens de rotation supposé.
+      outward: { x: ox / length, z: oz / length },
+    };
+  });
 
   let radius = 0;
   for (const point of outline) {
@@ -295,6 +324,7 @@ export function junctionArea(junction, options = {}) {
     degree: junction.degree,
     outline,
     mouths,
+    edges,
     radius,
   };
 }
@@ -385,12 +415,23 @@ export class JunctionAreas {
     this.areas = [];
     /** @type {Map<number, number[]>} */
     this.buckets = new Map();
+    /**
+     * Tronçons qui débouchent dans chaque aire.
+     *
+     * Une aire n'est pas un obstacle pour ce qui la borde : la bordure d'un
+     * coin de rue est tangente aux rives de ses propres branches, et mesurer
+     * la place disponible sans les écarter rendrait zéro partout. Il faut donc
+     * savoir, aire par aire, de quelles chaussées elle est faite.
+     * @type {Array<Set<Object>>}
+     */
+    this.feeders = [];
 
     for (const junction of junctions) {
       const area = junctionArea(junction, options);
       if (!area) continue;
       const index = this.areas.length;
       this.areas.push(area);
+      this.feeders.push(new Set());
 
       const minX = Math.floor((area.x - area.radius) / cell);
       const maxX = Math.floor((area.x + area.radius) / cell);
@@ -409,6 +450,26 @@ export class JunctionAreas {
 
   get length() {
     return this.areas.length;
+  }
+
+  /**
+   * Retient qu'un tronçon débouche dans les aires que ses lignes traversent.
+   * Appelé une fois par tronçon, juste après `markJunctionRows`.
+   *
+   * @param {Object} segment Tronçon portant déjà son tableau `junction`.
+   */
+  noteFeeder(segment) {
+    const rows = segment?.junction;
+    if (!rows) return;
+    for (let r = 0; r < rows.length; r++) {
+      const index = rows[r];
+      if (index >= 0) this.feeders[index].add(segment);
+    }
+  }
+
+  /** Vrai si ce tronçon débouche dans cette aire. */
+  feeds(index, segment) {
+    return index >= 0 && index < this.feeders.length && this.feeders[index].has(segment);
   }
 
   /**
@@ -496,6 +557,29 @@ function boundaryTowards(path, platform, keep, drop, outline, steps) {
     else lo = mid;
   }
   return between(path, platform, keep, drop, (lo + hi) / 2);
+}
+
+/**
+ * Le sommet exact où un tronçon franchit le contour d'un carrefour, entre une
+ * ligne gardée et la ligne voisine qui, elle, est dedans.
+ *
+ * Exporté parce que le ruban n'est pas seul à s'arrêter là : la bordure et le
+ * trottoir doivent finir sur la **même** section, sans quoi la rive de la
+ * chaussée aurait deux bouts distants de cinq mètres.
+ *
+ * @param {Object} segment Tronçon portant `path`, `platform` et `junction`.
+ * @param {JunctionAreas} areas
+ * @param {number} keep Ligne hors carrefour.
+ * @param {number} drop Ligne voisine, dans le carrefour.
+ * @param {Object} [options]
+ * @returns {{point:{x:number,z:number,distance:number}, deck:number}|null}
+ */
+export function junctionBoundaryAt(segment, areas, keep, drop, { steps = JUNCTION_BISECT_STEPS } = {}) {
+  const rows = segment?.path?.length ?? 0;
+  if (keep < 0 || drop < 0 || keep >= rows || drop >= rows) return null;
+  const index = segment.junction?.[drop] ?? -1;
+  if (index < 0 || !areas?.areas?.[index]) return null;
+  return boundaryTowards(segment.path, segment.platform, keep, drop, areas.areas[index].outline, steps);
 }
 
 /**

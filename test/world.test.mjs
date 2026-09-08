@@ -51,6 +51,7 @@ import {
 } from '../src/inspect/roadDebug.js';
 import {
   junctionArea,
+  junctionBoundaryAt,
   junctionCorner,
   junctionSurface,
   junctionRibbonRuns,
@@ -60,6 +61,12 @@ import {
   JunctionAreas,
   JUNCTION_CORNER_MAX_M,
 } from '../src/layers/roadJunctions.js';
+import {
+  edgeClearance,
+  outwardSide,
+  polylineLength,
+  EDGE_REACH_M,
+} from '../src/layers/roadEdges.js';
 import {
   resamplePath,
   smoothColumns,
@@ -422,8 +429,8 @@ import {
   STREET_FABRIC_MIN,
   STREET_FABRIC_RADIUS_M,
   STREET_MAX_CROSS_SLOPE,
-  STREET_MIN_RUN,
-  pavementOnOtherRoad,
+  STREET_MIN_LENGTH_M,
+  walkWidthFor,
 } from '../src/layers/streetLayer.js';
 import { streetSurfaceAt } from '../src/layers/townStyle.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
@@ -5810,6 +5817,119 @@ test('le ruban s’arrête pile sur le contour, et reprend de l’autre côté',
   assert.equal(runs[0].platform.length, runs[0].path.length);
 });
 
+test('une section peut emprunter les repères de la rive qu’elle borde', () => {
+  // Une courbe : c'est là que des repères recalculés sur une portion divergent
+  // de ceux du tracé entier — à ses deux bouts, où le repère n'a plus qu'un
+  // voisin. C'est cette divergence-là que six centimètres de recouvrement du
+  // caniveau sur la chaussée cachaient.
+  const path = Array.from({ length: 9 }, (_, i) => {
+    const a = (i * Math.PI) / 16;
+    return { x: Math.cos(a) * 40, z: Math.sin(a) * 40 };
+  });
+  const frames = pathFrames(path);
+  const run = path.slice(3, 7);
+  const own = pathFrames(run);
+  assert.ok(Math.abs(own[2] - frames[3 * 4 + 2]) > 1e-3, 'le repère de tête diverge bien');
+
+  const borrowed = new Float64Array(16);
+  for (let i = 0; i < 4; i++) {
+    for (let k = 0; k < 4; k++) borrowed[i * 4 + k] = frames[(3 + i) * 4 + k];
+  }
+
+  const profile = [
+    { across: 0, up: 0, color: [0, 0, 0] },
+    { across: 1, up: 0, color: [0, 0, 0] },
+  ];
+  const buffer = createProfileBuffer();
+  appendProfile(buffer, {
+    path: run,
+    profile,
+    sampleElevation: null,
+    baseHeights: new Float32Array(4),
+    frames: borrowed,
+    smoothRadius: 0,
+  });
+
+  // Le premier sommet décalé tombe pile où le tracé entier le mettrait.
+  const expectedX = run[0].x + frames[3 * 4 + 2];
+  const expectedZ = run[0].z + frames[3 * 4 + 3];
+  assert.ok(Math.abs(buffer.positions[3] - expectedX) < 1e-9);
+  assert.ok(Math.abs(buffer.positions[5] - expectedZ) < 1e-9);
+
+  // Sans les repères donnés, il tombe ailleurs : la fente.
+  const loose = createProfileBuffer();
+  appendProfile(loose, {
+    path: run,
+    profile,
+    sampleElevation: null,
+    baseHeights: new Float32Array(4),
+    smoothRadius: 0,
+  });
+  assert.ok(Math.hypot(loose.positions[3] - expectedX, loose.positions[5] - expectedZ) > 1e-3);
+});
+
+test('la bordure finit sur la même bouche que le ruban', () => {
+  // Sans ce sommet-là, la bordure s'arrêterait à la dernière ligne de
+  // ré-échantillonnage, jusqu'à cinq mètres avant que le ruban s'arrête : la
+  // rive de la chaussée aurait deux bouts à des endroits différents.
+  const areas = new JunctionAreas([teeJunction()]);
+  const rows = 41;
+  const path = Array.from({ length: rows }, (_, i) => ({ x: -100 + i * 5, z: 0, distance: i * 5 }));
+  const segment = {
+    path,
+    platform: new Float32Array(rows).fill(7),
+    levels: new Int8Array(rows),
+  };
+  segment.junction = markJunctionRows(segment, areas);
+
+  // La dernière ligne hors du carrefour, et sa voisine dedans.
+  let keep = -1;
+  for (let r = 0; r < rows; r++) {
+    if (segment.junction[r] < 0 && segment.junction[r + 1] >= 0) keep = r;
+  }
+  assert.ok(keep > 0, 'le tronçon entre bien dans le carrefour');
+
+  const edge = junctionBoundaryAt(segment, areas, keep, keep + 1);
+  const outline = areas.areas[0].outline;
+  assert.ok(!pointInOutline(outline, edge.point.x, edge.point.z), 'le sommet est hors du carrefour');
+  assert.ok(pointInOutline(outline, edge.point.x + 0.02, edge.point.z), 'et son voisin dedans');
+  assert.equal(edge.deck, 7, 'il porte la plate-forme');
+
+  // C'est bien le même sommet que celui où le ruban s'arrête.
+  const runs = junctionRibbonRuns(segment, areas, [{ from: 0, to: rows - 1 }]);
+  const tip = runs[0].path[runs[0].path.length - 1];
+  assert.ok(Math.hypot(tip.x - edge.point.x, tip.z - edge.point.z) < 1e-9);
+
+  // Hors carrefour des deux côtés, il n'y a pas de bouche : rien à poser.
+  assert.equal(junctionBoundaryAt(segment, areas, 0, 1), null);
+  assert.equal(junctionBoundaryAt(segment, areas, 0, -1), null);
+});
+
+test('un carrefour sait de quelles chaussées il est fait', () => {
+  // La bordure d'un coin de rue est tangente aux rives des branches : sans
+  // cette liste, mesurer la place qui lui reste rendrait zéro partout.
+  const areas = new JunctionAreas([teeJunction()]);
+  const rows = 41;
+  const through = {
+    path: Array.from({ length: rows }, (_, i) => ({ x: -100 + i * 5, z: 0, distance: i * 5 })),
+    platform: new Float32Array(rows).fill(0),
+    levels: new Int8Array(rows),
+  };
+  const aside = {
+    path: Array.from({ length: rows }, (_, i) => ({ x: 400 + i * 5, z: 0, distance: i * 5 })),
+    platform: new Float32Array(rows).fill(0),
+    levels: new Int8Array(rows),
+  };
+  for (const segment of [through, aside]) {
+    segment.junction = markJunctionRows(segment, areas);
+    areas.noteFeeder(segment);
+  }
+
+  assert.equal(areas.feeds(0, through), true, 'la route qui le traverse en fait partie');
+  assert.equal(areas.feeds(0, aside), false, 'celle d’à côté, non');
+  assert.equal(areas.feeds(-1, through), false, 'et hors index, la question n’a pas de sens');
+});
+
 test('deux carrefours voisins laissent quand même la chaussée entre eux', () => {
   // Vingt-cinq mètres d'écart : les deux bouches se font presque face. Le
   // morceau qui reste est court, et il doit exister — sinon la rue disparaît
@@ -9023,57 +9143,105 @@ test('une clôture de jardin ne traverse pas un trottoir', () => {
   assert.equal(fittedGardenMargin(box, 6.5, () => false), null);
 });
 
-test('un trottoir ne se pose pas sur la chaussée d’à côté', () => {
-  // Deux rues parallèles à sept mètres d'axe en axe — le cas d'une venelle qui
-  // double une rue, ou des deux branches d'un Y juste avant qu'elles se
-  // touchent : entre les deux il y a la place d'un bas-côté, pas d'un trottoir.
+test('la place au-delà d’une rive est une largeur, pas un refus', () => {
+  // Deux rues parallèles à sept mètres d'axe en axe, larges de cinq : entre
+  // les deux il reste deux mètres. C'est le cas d'une venelle qui double une
+  // rue, ou des deux branches d'un Y juste avant qu'elles se touchent.
   const north = [];
   const south = [];
   for (let x = -100; x <= 100; x += 10) north.push({ x, z: 0 });
   for (let x = -100; x <= 100; x += 10) south.push({ x, z: 7 });
   const segments = [fakeSegment(north, 2.5, 10), fakeSegment(south, 2.5, 10)];
   const index = new RoadIndex(segments);
+  const ignore = (other) => other === segments[0];
 
-  // Perpendiculaire de la marche : la rue court d'ouest en est, donc +z est le
-  // côté -1 dans la convention d'`appendProfile` (px = tz, pz = -tx).
-  const at = { x: 0, z: 0, px: 0, pz: -1, halfWidth: 2.5, segment: segments[0] };
+  // Sur sa propre rive sud, il reste la distance d'axe à axe moins les deux
+  // demi-largeurs : deux mètres.
+  const between = edgeClearance(0, 2.5, { roadIndex: index, ignore });
+  assert.ok(Math.abs(between - 2) < 1e-6, `deux mètres entre les deux rives, vu ${between}`);
 
-  assert.equal(
-    pavementOnOtherRoad({ ...at, side: -1 }, index),
-    true,
-    'du côté de l’autre rue, le trottoir tomberait sur son bitume'
-  );
-  assert.equal(
-    pavementOnOtherRoad({ ...at, side: 1 }, index),
-    false,
-    'de l’autre côté, rien ne gêne'
-  );
+  // Du côté nord, rien en vue : la portée entière.
+  assert.equal(edgeClearance(0, -2.5, { roadIndex: index, ignore }), EDGE_REACH_M);
 
-  // Sa propre chaussée ne compte pas : sans l'exception, aucun trottoir ne se
-  // poserait jamais, puisqu'il borde la rue par définition.
-  assert.equal(
-    pavementOnOtherRoad({ ...at, side: 1, segment: null }, new RoadIndex([segments[0]])),
-    true,
-    'sans exception, sa propre rive le refuse'
-  );
-  assert.equal(
-    pavementOnOtherRoad({ ...at, side: 1 }, new RoadIndex([segments[0]])),
-    false,
-    'avec elle, il la borde tranquillement'
-  );
+  // Sans l'exception, sa propre chaussée se compterait elle-même et ne
+  // laisserait aucune place à sa propre bordure.
+  assert.equal(edgeClearance(0, -2.5, { roadIndex: index }), 0);
 
-  // Sans réseau connu, la couche ne devine pas : elle ne refuse rien.
-  assert.equal(pavementOnOtherRoad({ ...at, side: -1 }, null), false);
+  // Sans réseau connu, la couche ne devine pas : toute la place est libre.
+  assert.equal(edgeClearance(0, 0, {}), EDGE_REACH_M);
+});
+
+test('une chaussée d’un autre niveau ne prend pas la place du sol', () => {
+  const under = [];
+  for (let x = -100; x <= 100; x += 10) under.push({ x, z: 7 });
+  const deck = fakeSegment(under, 2.5, 10);
+  deck.levels = new Int8Array(deck.path.length).fill(1);
+  const index = new RoadIndex([deck]);
+
+  // Au sol, la voie relevée n'occupe rien : c'est la règle du lot A, relue ici.
+  assert.equal(edgeClearance(0, 2.5, { roadIndex: index, level: 0 }), EDGE_REACH_M);
+  // Au même niveau qu'elle, en revanche, elle borne bien la place.
+  assert.ok(edgeClearance(0, 2.5, { roadIndex: index, level: 1 }) < EDGE_REACH_M);
+});
+
+test('un carrefour prend toute la place, sauf pour ce qui le borde', () => {
+  const areas = new JunctionAreas([teeJunction()]);
+  assert.equal(areas.length, 1);
+
+  // Le nœud est au milieu de la surface : aucune place pour qui que ce soit.
+  assert.equal(edgeClearance(0, 0, { areas }), 0);
+  // Sauf pour la bordure du carrefour lui-même, qui n'est pas son propre obstacle.
+  assert.equal(edgeClearance(0, 0, { areas, ignoreArea: (i) => i === 0 }), EDGE_REACH_M);
+  // Et pas au niveau du dessus : une bretelle qui le survole n'y entre pas.
+  assert.equal(edgeClearance(0, 0, { areas, level: 1 }), EDGE_REACH_M);
+});
+
+test('le trottoir se rétrécit avant de disparaître', () => {
+  const streets = defaultTheme.streets;
+  const fixed = streets.gutterWidth + streets.kerbNose + streets.skirtWidth;
+
+  // Large : le lieu obtient ce qu'il voulait.
+  assert.equal(walkWidthFor(6, 2, streets), 2);
+  // À l'étroit : ce qui reste, et pas plus.
+  const tight = walkWidthFor(fixed + 1.5, 2, streets);
+  assert.ok(Math.abs(tight - 1.5) < 1e-6, `un mètre cinquante, vu ${tight}`);
+  // Trop étroit pour le plus mince trottoir du thème : rien du tout. C'est là
+  // que le comblement entre voies prendra le relais, pas un trottoir raboté.
+  assert.equal(walkWidthFor(fixed + streets.walkWidth[0] - 0.01, 2, streets), 0);
+  assert.equal(walkWidthFor(0, 2, streets), 0);
 });
 
 test('une portion de trottoir trop courte est un artefact du découpage', () => {
-  // Cinq lignes de cinq mètres : vingt-cinq mètres, la longueur en deçà de
-  // laquelle un bout de bordure se lit comme un bug et non comme une rue.
-  assert.ok(STREET_MIN_RUN >= 4, 'assez long pour être une rue');
-  const rows = [1, 1, 1, 0, 1, 1, 1, 1, 1, 1].map((ok, r) => ({ r, ok: ok === 1 }));
-  const runs = contiguousRuns(rows, (row) => row.ok, STREET_MIN_RUN);
-  assert.equal(runs.length, 1, 'seule la portion assez longue est retenue');
-  assert.equal(runs[0].length, 6);
+  // Une longueur, pas un compte de lignes : depuis que les carrefours
+  // découpent les rives, un pâté de maisons entre deux croisements proches
+  // fait légitimement moins de vingt-cinq mètres.
+  assert.ok(STREET_MIN_LENGTH_M >= 10, 'assez long pour être une rue');
+  const short = [{ x: 0, z: 0 }, { x: 5, z: 0 }];
+  const long = [{ x: 0, z: 0 }, { x: 20, z: 0 }, { x: 40, z: 0 }];
+  assert.ok(polylineLength(short) < STREET_MIN_LENGTH_M);
+  assert.equal(polylineLength(long), 40);
+  assert.equal(polylineLength([{ x: 0, z: 0 }]), 0);
+});
+
+test('la bordure d’un coin de rue se pose du côté extérieur', () => {
+  const area = junctionArea(teeJunction());
+  assert.ok(area.edges.length >= 3, 'un coin par paire de bouches consécutives');
+
+  for (const edge of area.edges) {
+    // Le morceau va d'une bouche à la suivante, sans trou : ses deux bouts
+    // sont exactement les sommets où les rives de tronçon s'arrêtent.
+    assert.ok(edge.points.length >= 2);
+    const mid = edge.points[Math.floor(edge.points.length / 2)];
+    const outward = edge.outward;
+    assert.ok(Math.abs(Math.hypot(outward.x, outward.z) - 1) < 1e-9, 'direction unitaire');
+    // Elle pointe bien vers le dehors : le point poussé dans ce sens sort du
+    // contour, celui poussé dans l'autre y reste.
+    assert.equal(pointInOutline(area.outline, mid.x + outward.x * 0.5, mid.z + outward.z * 0.5), false);
+    assert.equal(pointInOutline(area.outline, mid.x - outward.x * 0.2, mid.z - outward.z * 0.2), true);
+
+    const side = outwardSide(edge.points, outward);
+    assert.ok(side === 1 || side === -1);
+  }
 });
 
 // --- Les attributs que three déclare déjà -----------------------------------

@@ -383,6 +383,9 @@ export class WorldComposer {
         builtUp,
         fabric,
         roadIndex: this.roads.index,
+        // Les surfaces de carrefour : elles arrêtent les rives de tronçon et
+        // portent les coins de rue.
+        areas: this.roads.junctionAreas,
       });
 
       // 4 ter. Jardins — après le bâti (maisons) et la voirie (bande revêtue).

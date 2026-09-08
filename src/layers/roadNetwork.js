@@ -626,7 +626,12 @@ export function collectRoadSegments(
   // Le ruban les sautera ; tout le reste (emprise, déblai, couture, mobilier,
   // trottoirs) continue de lire une route entière.
   if (areas.length > 0) {
-    for (const segment of out) segment.junction = markJunctionRows(segment, areas);
+    for (const segment of out) {
+      segment.junction = markJunctionRows(segment, areas);
+      // De quelles chaussées chaque aire est faite : ce qui borde un coin de
+      // rue ne doit pas compter les branches du carrefour comme un obstacle.
+      areas.noteFeeder(segment);
+    }
   }
 
   // Passe 2 : les travées, une fois tous les tronçons dressés.
@@ -792,6 +797,9 @@ export class RoadNetwork {
     for (const area of areas.areas) {
       const deck = index.deckAt(index.query(area.x, area.z, 1));
       if (deck == null) continue;
+      // Retenue sur l'aire : la voirie borde ce carrefour et doit s'aligner sur
+      // la même cote, comme un trottoir de tronçon s'aligne sur sa plate-forme.
+      area.deck = deck;
       const surface = this._surfaceOf(area.profile);
       if (!junctionBuffers[surface]) junctionBuffers[surface] = createRibbonBuffer();
       const buffer = junctionBuffers[surface];
