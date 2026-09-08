@@ -146,6 +146,11 @@ import {
   workRuns,
   drawableRuns,
   resampleWorks,
+  resampleLevels,
+  roadLevelFor,
+  LEVEL_GROUND,
+  LEVEL_MIN,
+  LEVEL_MAX,
   levelWorkSpans,
   BRIDGE_CLEARANCE_M,
   BRIDGE_FREEBOARD_M,
@@ -5056,6 +5061,192 @@ test('le relevé des carrefours ne dépend pas de l’ordre des tuiles', () => {
   assert.deepEqual(
     forward.map((j) => [j.x, j.z, j.degree, j.halfWidth]),
     backward.map((j) => [j.x, j.z, j.degree, j.halfWidth])
+  );
+});
+
+// --- Niveaux de croisement : ce qui se rencontre et ce qui se survole --------
+
+/**
+ * Deux chaussées qui se coupent en croix. `level` s'applique à la seconde, et
+ * le croisement tombe pile sur un sommet de chacune : c'est le cas le plus
+ * défavorable pour la soudure, celui qui inventait un carrefour.
+ */
+function crossLines(level = 0) {
+  return [
+    { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8), level: 0 },
+    {
+      profile: 'major',
+      halfWidth: 4.25,
+      points: [
+        { x: 100, z: -60 },
+        { x: 100, z: 0 },
+        { x: 100, z: 60 },
+      ],
+      level,
+    },
+  ];
+}
+
+test('le niveau de croisement se lit dans `layer`, et n’est pas une altitude', () => {
+  assert.equal(roadLevelFor({ class: 'primary' }), LEVEL_GROUND, 'sans rien, le sol');
+  assert.equal(roadLevelFor({ layer: 1 }), 1);
+  assert.equal(roadLevelFor({ layer: '-1' }), -1, 'une chaîne de caractères se lit aussi');
+  assert.equal(roadLevelFor({ level: 2 }), 2, 'à défaut de `layer`');
+  assert.equal(roadLevelFor({ layer: 0, level: 3 }), 0, '`layer` prime');
+  assert.equal(roadLevelFor({ layer: 'oui' }), LEVEL_GROUND, 'illisible : le sol');
+  assert.equal(roadLevelFor({ layer: 900 }), LEVEL_MAX, 'borné');
+  assert.equal(roadLevelFor({ layer: -900 }), LEVEL_MIN, 'borné');
+  assert.equal(roadStyleFor({ class: 'primary', layer: 1 }).level, 1, 'porté par le style');
+  assert.equal(roadStyleFor({ class: 'primary' }).level, LEVEL_GROUND);
+});
+
+test('un croisement au même niveau reste un carrefour', () => {
+  const { junctions } = mergeRoadLines(crossLines(0));
+  assert.equal(junctions.length, 1, 'un carrefour');
+  assert.equal(junctions[0].degree, 4, 'quatre branches');
+  assert.equal(junctions[0].level, LEVEL_GROUND);
+});
+
+test('un passage supérieur n’est pas un carrefour, même sans `bridge`', () => {
+  // Deux routes au même endroit, `layer` différent : elles se croisent en XY,
+  // elles ne se rencontrent pas. Sans le niveau, la soudure des nœuds en
+  // faisait un croisement de degré quatre — donc une voie rognée, une couture
+  // d'altitude et un feu tricolore, tout cela sous un pont.
+  const { chains, junctions } = mergeRoadLines(crossLines(1));
+
+  assert.equal(junctions.length, 0, 'aucun carrefour');
+  assert.equal(chains.length, 2, 'les deux chaussées restent entières');
+  for (const chain of chains) {
+    assert.ok(chain.points.length >= 3, 'aucune n’est coupée au croisement');
+  }
+});
+
+test('un croisement à niveaux différents ne se soude pas, même à un cheveu', () => {
+  // Le sommet de la voie supérieure est à moins de la tolérance de soudure du
+  // sommet de l’autre : c’est exactement ce que la tolérance recollait à tort.
+  const { junctions } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8), level: 0 },
+    {
+      profile: 'major',
+      halfWidth: 4.25,
+      points: [
+        { x: 100 + NODE_WELD_M * 0.4, z: -60 },
+        { x: 100 + NODE_WELD_M * 0.4, z: 0 },
+        { x: 100 + NODE_WELD_M * 0.4, z: 60 },
+      ],
+      level: 1,
+    },
+  ]);
+
+  assert.equal(junctions.length, 0);
+});
+
+test('le relevé des carrefours ne dépend pas de l’ordre, niveaux compris', () => {
+  const lines = crossLines(1);
+  const forward = mergeRoadLines(lines);
+  const backward = mergeRoadLines([...lines].reverse());
+
+  assert.deepEqual(forward.junctions, backward.junctions, 'aucun carrefour, dans les deux sens');
+  assert.equal(forward.chains.length, backward.chains.length);
+});
+
+test('la culée tient : un pont marqué `layer` reste dans la chaîne de sa route', () => {
+  // Le pont porte `layer=1`, ses approches rien. Leurs nœuds de culée ne se
+  // soudent donc plus — et c'est `joinLooseEnds` qui recoud, parce que deux
+  // bouts libres alignés qui se font face sont la définition d'une culée. La
+  // route doit rester UNE chaîne : sinon le mobilier espacé recommence sa
+  // numérotation à chaque pont.
+  const { chains } = mergeRoadLines([
+    { profile: 'minor', halfWidth: 2.5, points: straight(0, 40, 2), works: WORK_NONE, level: 0 },
+    { profile: 'minor', halfWidth: 2.5, points: straight(40, 60, 1), works: WORK_BRIDGE, level: 1 },
+    { profile: 'minor', halfWidth: 2.5, points: straight(60, 100, 2), works: WORK_NONE, level: 0 },
+  ]);
+
+  assert.equal(chains.length, 1, 'une seule chaîne');
+  const chain = chains[0];
+  close(chain.points[0].x, 0, 1e-6, 'début');
+  close(chain.points[chain.points.length - 1].x, 100, 1e-6, 'fin');
+  assert.ok(
+    chain.works.some((code) => code === WORK_BRIDGE),
+    'le pont est toujours signalé'
+  );
+  assert.ok(
+    chain.levels.some((level) => level === 1),
+    'et son niveau voyage avec lui'
+  );
+});
+
+test('les niveaux se reportent par intervalle, culée comprise', () => {
+  // Même convention que les ouvrages : le sommet porte le maximum, l'intervalle
+  // le minimum. C'est ce qui rend exactement les arêtes d'origine.
+  const points = straight(0, 40, 4);
+  const levels = [0, 0, -1, 0, 0]; // un souterrain entre les sommets 1 et 3
+  const path = Array.from({ length: 9 }, (_, i) => ({ x: i * 5, z: 0, distance: i * 5 }));
+  const out = resampleLevels(points, levels, path);
+
+  assert.equal(out.length, 9);
+  assert.equal(out[0], 0, 'avant');
+  assert.equal(out[3], -1, 'sous la colline');
+  assert.equal(out[8], 0, 'après');
+  assert.ok(out instanceof Int8Array, 'un niveau peut être négatif');
+});
+
+test('deux plate-formes de niveaux différents ne se recousent pas', () => {
+  // Même emprise en plan, deux mètres d'écart en altitude : sous le seuil de
+  // `STITCH_MAX_STEP_M`, donc l'ancien code les recousait. Le niveau dit que
+  // l'une passe sur l'autre.
+  const rows = 8;
+  const build = (z, height, level) => {
+    const path = Array.from({ length: rows }, (_, i) => ({ x: i * 5, z, distance: i * 5 }));
+    return {
+      profile: 'major',
+      halfWidth: 4.25,
+      path,
+      platform: new Float32Array(rows).fill(height),
+      works: new Uint8Array(rows),
+      levels: new Int8Array(rows).fill(level),
+      anchor: { x: 0, z },
+    };
+  };
+
+  const under = build(0, 0, 0);
+  const over = build(0, 2, 1);
+  const segments = [under, over];
+  stitchPlatforms(segments, new RoadIndex(segments, { margin: 0 }));
+
+  assert.deepEqual(Array.from(over.platform), new Array(rows).fill(2), 'le pont ne redescend pas');
+  assert.deepEqual(Array.from(under.platform), new Array(rows).fill(0), 'la route ne monte pas');
+});
+
+test('au même niveau, la voie étroite retrouve bien l’altitude de la large', () => {
+  // Contrôle négatif du test précédent : sans différence de niveau, la couture
+  // doit continuer de fonctionner exactement comme avant.
+  const rows = 8;
+  const wide = {
+    profile: 'major',
+    halfWidth: 6,
+    path: Array.from({ length: rows }, (_, i) => ({ x: i * 5, z: 0, distance: i * 5 })),
+    platform: new Float32Array(rows).fill(2),
+    works: new Uint8Array(rows),
+    levels: new Int8Array(rows),
+    anchor: { x: 0, z: 0 },
+  };
+  const narrow = {
+    profile: 'minor',
+    halfWidth: 2.5,
+    path: Array.from({ length: rows }, (_, i) => ({ x: 15, z: -10 + i * 5, distance: i * 5 })),
+    platform: new Float32Array(rows).fill(0),
+    works: new Uint8Array(rows),
+    levels: new Int8Array(rows),
+    anchor: { x: 15, z: -10 },
+  };
+
+  const segments = [wide, narrow];
+  stitchPlatforms(segments, new RoadIndex(segments, { margin: 0 }));
+
+  assert.ok(
+    Math.max(...narrow.platform) > 0.5,
+    'la voie étroite remonte vers la chaussée qu’elle rejoint'
   );
 });
 

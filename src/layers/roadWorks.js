@@ -11,7 +11,10 @@
  *   - `workCodeFor` traduit `brunnel` en code entier (les drapeaux voyagent
  *     dans des tableaux typés, pas des chaînes) ;
  *   - `resampleWorks` reporte les drapeaux du tracé brut sur le tracé
- *     ré-échantillonné ;
+ *     ré-échantillonné, et `resampleLevels` fait de même pour les niveaux ;
+ *   - `roadLevelFor` lit le **niveau de croisement** (`layer`), la seule chose
+ *     qui distingue un vrai carrefour d'un passage supérieur (voir plus bas :
+ *     ce n'est pas une altitude) ;
  *   - `levelWorkSpans` remplace la plate-forme d'une travée par une corde
  *     tendue entre ses deux appuis, relevée si elle ne dégage pas ce qu'elle
  *     franchit ;
@@ -24,6 +27,9 @@
  *   - un **sommet** porte le maximum des arêtes qui s'y rejoignent (une
  *     extrémité de pont est marquée pont) ;
  *   - un **intervalle** porte le minimum de ses deux sommets.
+ *
+ * Les niveaux voyagent par la même convention, d'où un seul corps de report
+ * (`resampleCodes`) pour les deux.
  *
  * Le couple rend exactement les arêtes d'origine, sans déborder d'un segment
  * sur la route d'approche — ce que ferait un simple maximum, en posant un
@@ -56,6 +62,54 @@ export const WORK_NONE = 0;
 export const WORK_BRIDGE = 1;
 /** Tunnel : rien en surface, mais la chaîne continue sous la colline. */
 export const WORK_TUNNEL = 2;
+
+/**
+ * Niveau de croisement, au sol.
+ *
+ * ## Ce que `layer` dit, et ce qu'il ne dit pas
+ *
+ * `layer` (et `level`, son cousin des tuiles) **n'est pas une altitude**. Il
+ * n'ordonne que ce qui se superpose au même endroit : une route marquée
+ * `layer=-1` en rase campagne est posée sur le sol comme les autres, et la
+ * relever ou l'enfoncer de quoi que ce soit serait une faute. Rien, dans le
+ * moteur, ne doit donc déduire une hauteur d'un niveau.
+ *
+ * Il ne répond qu'à une seule question, et c'est celle qui manquait :
+ *
+ *   - **proximité XY** — deux tracés passent près l'un de l'autre ;
+ *   - **croisement XY** — leurs tracés se coupent en projection au sol ;
+ *   - **connexion routière** — ils partagent un nœud **au même niveau** :
+ *     c'est la seule des quatre qui autorise un carrefour, une couture
+ *     d'altitude ou un rognage ;
+ *   - **séparation verticale** — même endroit, niveaux différents : il n'y a
+ *     pas de rencontre, quoi qu'en dise la géométrie plane.
+ *
+ * Jusqu'ici les deux dernières étaient confondues, et seul `brunnel` les
+ * départageait : un passage supérieur non tagué `bridge` était traité comme un
+ * carrefour. Le niveau est ce qui manquait pour trancher sans deviner.
+ */
+export const LEVEL_GROUND = 0;
+
+/** Bornes du niveau : une donnée fantaisiste ne doit pas ouvrir mille nœuds distincts. */
+export const LEVEL_MIN = -8;
+export const LEVEL_MAX = 8;
+
+/**
+ * Niveau de croisement d'une entité vectorielle. Fonction pure.
+ *
+ * `layer` d'abord (l'ordre de superposition d'OpenStreetMap), `level` ensuite
+ * (ce que certains jeux de tuiles servent à sa place). Absent ou illisible :
+ * le sol, qui est le cas de l'immense majorité des chaussées.
+ *
+ * @param {Object} [properties] Attributs de l'entité.
+ * @returns {number} entier borné à [`LEVEL_MIN`, `LEVEL_MAX`].
+ */
+export function roadLevelFor(properties = {}) {
+  const raw = properties?.layer ?? properties?.level;
+  const value = typeof raw === 'string' ? Number.parseInt(raw, 10) : raw;
+  if (!Number.isFinite(value)) return LEVEL_GROUND;
+  return Math.max(LEVEL_MIN, Math.min(LEVEL_MAX, Math.trunc(value)));
+}
 
 /**
  * Garde libre exigée au-dessus d'un **obstacle à gabarit** — une chaussée
@@ -183,9 +237,38 @@ export function drawableRuns(works, rows) {
  * @returns {Uint8Array} un code par ligne de `path`.
  */
 export function resampleWorks(points, works, path) {
+  return resampleCodes(points, works, path, new Uint8Array(path?.length ?? 0));
+}
+
+/**
+ * Le même report, pour les niveaux de croisement. Même convention, et pour la
+ * même raison : un sommet de culée porte le maximum de ses deux arêtes, donc
+ * le niveau du tablier ; l'intervalle en reprend le minimum, donc chaque arête
+ * retrouve exactement le sien.
+ *
+ * Tableau signé : un niveau peut être négatif (`LEVEL_MIN`).
+ *
+ * @param {Array<{x:number,z:number}>} points
+ * @param {Int8Array|number[]|null} levels Un niveau par sommet de `points`.
+ * @param {Array<{distance:number}>} path
+ * @returns {Int8Array} un niveau par ligne de `path`.
+ */
+export function resampleLevels(points, levels, path) {
+  return resampleCodes(points, levels, path, new Int8Array(path?.length ?? 0));
+}
+
+/**
+ * Report d'un tableau de codes entiers d'une polyligne brute sur son tracé
+ * ré-échantillonné : chaque ligne reçoit le code de l'**intervalle** qui la
+ * contient, c'est-à-dire le minimum de ses deux sommets.
+ *
+ * Un seul corps pour les ouvrages et les niveaux : les deux voyagent par la
+ * même convention (sommet = maximum, intervalle = minimum), et la seule chose
+ * qui les distingue est le tableau qui les reçoit.
+ */
+function resampleCodes(points, codes, path, out) {
   const rows = path?.length ?? 0;
-  const out = new Uint8Array(rows);
-  if (!works || !points || points.length < 2 || rows === 0) return out;
+  if (!codes || !points || points.length < 2 || rows === 0) return out;
 
   // Abscisse curviligne des sommets d'origine, dans le même repère que `path`.
   const marks = new Float64Array(points.length);
@@ -195,8 +278,8 @@ export function resampleWorks(points, works, path) {
 
   /** Code de l'intervalle `[i, i+1]` : le minimum de ses deux sommets. */
   const between = (i) => {
-    const a = works[i] || 0;
-    const b = works[i + 1] || 0;
+    const a = codes[i] || 0;
+    const b = codes[i + 1] || 0;
     return a < b ? a : b;
   };
 

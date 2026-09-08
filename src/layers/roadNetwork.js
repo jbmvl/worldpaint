@@ -1,9 +1,16 @@
 /*
  * roadNetwork — le réseau routier, pas seulement la route de l'observateur.
  * Les chaussées viennent de la couche `transportation` (`class` pour la
- * largeur et le revêtement, `brunnel` pour tunnels et ponts), livrées en
- * morceaux coupés à chaque frontière de tuile. `roadGraph.js` les recoud
- * avant qu'on en fasse quoi que ce soit.
+ * largeur et le revêtement, `brunnel` pour tunnels et ponts, `layer` pour le
+ * niveau de croisement), livrées en morceaux coupés à chaque frontière de
+ * tuile. `roadGraph.js` les recoud avant qu'on en fasse quoi que ce soit.
+ *
+ * Le niveau (`segment.levels`, un entier par ligne) n'est **pas** une
+ * altitude et rien ici n'en déduit de hauteur — voir `roadWorks.js`. Il ne
+ * sert qu'à dire si deux chaussées qui se touchent en plan se rencontrent
+ * vraiment ; le graphe s'en sert pour ne plus souder ce qui se survole, et
+ * `crossedDeckAt` pour ne jamais donner de gabarit à ce qui passe au-dessus
+ * d'une travée plutôt qu'en dessous.
  *
  * Un ouvrage d'art n'est pas une classe de route : c'est un état de la
  * chaussée, ligne par ligne (`roadWorks.js`). Il traverse donc ce module comme
@@ -40,11 +47,14 @@ import {
 import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
 import {
   workCodeFor,
+  roadLevelFor,
   resampleWorks,
+  resampleLevels,
   levelWorkSpans,
   drawableRuns,
   BRIDGE_FREEBOARD_M,
   BRIDGE_CROSSING_COS,
+  LEVEL_GROUND,
 } from './roadWorks.js';
 import {
   resamplePath,
@@ -244,6 +254,7 @@ export function roadStyleFor(properties = {}, profiles = defaultTheme.roads.prof
     halfWidth: profile.width / 2,
     paved: (profile.surface || 'asphalt') === 'asphalt',
     works: workCodeFor(properties.brunnel),
+    level: roadLevelFor(properties),
   };
 }
 
@@ -325,7 +336,13 @@ export function collectRoadLines(source, tiles, frame, roads = defaultTheme.road
         });
       }
       if (points.length < 2) continue;
-      lines.push({ profile: style.profile, halfWidth: style.halfWidth, points, works: style.works });
+      lines.push({
+        profile: style.profile,
+        halfWidth: style.halfWidth,
+        points,
+        works: style.works,
+        level: style.level,
+      });
     }
   });
 
@@ -388,6 +405,13 @@ export function crossedDeckAt(index, segment, si, cos = BRIDGE_CROSSING_COS) {
   return (x, z, r) => {
     const hit = index.query(x, z, 0, (_, oi) => oi !== si);
     if (!hit) return NaN;
+
+    // Une travée ne se relève que sur ce qu'elle passe **au-dessus**. Une
+    // chaussée d'un niveau supérieur passe au-dessus d'elle : lui laisser du
+    // gabarit reviendrait à la pousser dans le tablier qui la franchit.
+    const mine = segment.levels?.[r] ?? LEVEL_GROUND;
+    const theirs = hit.segment.levels?.[hit.row] ?? LEVEL_GROUND;
+    if (theirs > mine) return NaN;
 
     const a = hit.segment.path[hit.row];
     const b = hit.segment.path[hit.row + 1];
@@ -464,6 +488,13 @@ export function collectRoadSegments(
         chain.works?.slice(run.startIndex, run.startIndex + run.points.length),
         path
       );
+      // Le niveau de croisement suit le même découpage : c'est lui qui dira,
+      // plus loin, si deux chaussées qui se touchent en plan se rencontrent.
+      const runLevels = resampleLevels(
+        run.points,
+        chain.levels?.slice(run.startIndex, run.startIndex + run.points.length),
+        path
+      );
 
       const frames = pathFrames(path);
       const rows = path.length;
@@ -507,6 +538,7 @@ export function collectRoadSegments(
         platform,
         edges,
         works: runWorks,
+        levels: runLevels,
         probeSpan: probe * 2,
       });
     }
