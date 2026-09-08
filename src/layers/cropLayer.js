@@ -3,8 +3,11 @@
  * ------------------------------------------
  * Un champ était un aplat de terre labourée, partout et en toute saison. C'est
  * juste une fois sur cinq : le reste du temps il porte du blé, du maïs, du
- * tournesol, du chaume. Et c'est ce qui donne à une campagne sa couleur — le
- * jaune d'un champ de blé se voit d'un kilomètre, bien plus loin qu'aucune haie.
+ * tournesol, du colza, de la lavande, du chaume. Et c'est ce qui donne à une
+ * campagne sa couleur — le jaune d'un champ de blé se voit d'un kilomètre,
+ * bien plus loin qu'aucune haie. Quelle culture pour quel pays est l'affaire de
+ * `CROP_MIXES` (`furniturePlacement`) : c'est là, et non ici, qu'un plateau de
+ * Haute-Provence porte de la lavande et une plaine picarde du colza.
  *
  * ## Où est la culture
  *
@@ -27,6 +30,11 @@
  * ça ne coûte rien puisque le shader le fait déjà. Seules changent l'échelle (un
  * maïs fait deux mètres et demi, un chaume vingt centimètres) et la silhouette,
  * tirée d'un atlas.
+ *
+ * Le vent, lui, se mesure sur la **hauteur** de la plante et non sur la largeur
+ * de son panneau (voir `foliageMaterial`) : sans cela, les masses lointaines,
+ * larges de plusieurs mètres, ondulaient d'autant — un champ de tournesols
+ * bougeait plus à cent mètres qu'à dix.
  *
  * Les **rangs** — vigne et verger — ne passent pas par ici : ils sont balayés
  * par `furnitureLayer`, parce qu'un rang est une ligne continue et non un semis.
@@ -100,29 +108,53 @@ import {
  * thème (voir `CONTRIBUTING.md`). Ce qui reste au thème, c'est ce que porte le
  * champ : hauteur, largeur, densité et teinte par culture (`CROP_LOOK`).
  */
+
+/**
+ * Élargissement commun aux deux bandes de masse.
+ *
+ * Il était de 2,4 puis 4,5, et c'était le défaut le plus visible du champ
+ * lointain : la case d'atlas est **carrée**, donc étirée d'autant sur le
+ * panneau — un capitule de tournesol y devenait une galette quatre fois plus
+ * large que haute. Une seule valeur pour les deux bandes permet de dessiner la
+ * masse une fois pour l'élancement auquel elle sera vue
+ * (`CROP_MASS_ASPECT`, dans `proceduralTextures`), et le passage d'une bande à
+ * l'autre ne change plus les proportions de la plante.
+ *
+ * La bande lointaine y perd de la surface par instance ; ses tirages par maille
+ * passent de deux à trois pour la rendre.
+ */
+export const CROP_MASS_SPREAD = 3.2;
+
+/**
+ * Les bandes se recouvrent largement — quatorze et seize mètres, contre six et
+ * dix. C'est ce qui règle la mue trop visible à l'approche : le semis de détail
+ * et la masse coexistent sur une quinzaine de mètres au lieu de six, donc le
+ * champ change de facture le temps qu'on parcoure la distance, et non le temps
+ * qu'on fasse deux pas.
+ */
 export const CROP_BANDS = [
-  coverBand({ from: 0, to: 30, cell: 1.6, perCell: 9, fadeOut: 6, salt: 0 }),
+  coverBand({ from: 0, to: 34, cell: 1.6, perCell: 9, fadeOut: 14, salt: 0 }),
   coverBand({
-    from: 24,
-    to: 72,
+    from: 20,
+    to: 74,
     cell: 3.2,
     perCell: 3,
-    spread: 2.4,
+    spread: CROP_MASS_SPREAD,
     rise: 1.2,
     massBias: 0.25,
-    fadeIn: 6,
-    fadeOut: 10,
+    fadeIn: 14,
+    fadeOut: 16,
     salt: 1,
   }),
   coverBand({
-    from: 62,
+    from: 58,
     to: 140,
     cell: 6.4,
-    perCell: 2,
-    spread: 4.5,
+    perCell: 3,
+    spread: CROP_MASS_SPREAD,
     rise: 1.35,
     massBias: 0.45,
-    fadeIn: 10,
+    fadeIn: 16,
     // Long fondu de sortie : le champ s'éclaircit sur ses soixante derniers
     // mètres, où la teinte du sol prend le relais.
     fadeOut: 63,
@@ -139,8 +171,8 @@ export const CROP_PER_CELL = CROP_BANDS[0].perCell;
 /**
  * Nombre maximal de touffes. Voir `GRASS_COUNT` : c'est un garde-fou.
  *
- * Le pire cas est le blé, seule culture à `density: 1` — mesuré à 12 762 sur
- * champ plein, pour une portée passée de quarante-huit à cent quarante mètres.
+ * Le pire cas est le blé, seule culture à `density: 1` — mesuré à 13 452 sur
+ * champ plein, pour une portée de cent quarante mètres.
  */
 export const CROP_COUNT = 15000;
 /** Déplacement de l'observateur avant redistribution, en mètres. */
@@ -156,6 +188,19 @@ export const CROP_FADE_FROM = 1 - CROP_BANDS[CROP_BANDS.length - 1].fadeOut / CR
  * raréfier, mais les tiges qui restent ne rapetissent plus jusqu'à s'éteindre.
  */
 export const CROP_HEIGHT_FADE_FLOOR = 0.6;
+/**
+ * Amplitude du vent dans un champ. Plus fort que dans les arbres, plus faible
+ * que dans l'herbe : un champ de blé ondule, c'est même le seul mouvement d'un
+ * paysage d'été.
+ *
+ * C'était 0,26, exprimé en part de la **largeur** du panneau. Depuis que
+ * l'amplitude se mesure sur la hauteur (voir `foliageMaterial`), la valeur est
+ * ramenée à l'élancement moyen d'une tige de près — `look.spread × 4`, soit
+ * environ 0,8. Le premier plan bouge donc comme avant, et les masses
+ * lointaines cessent de balayer plusieurs mètres.
+ */
+export const CROP_WIND_STRENGTH = 0.21;
+
 /** Compensation d'alpha à distance — voir `GRASS_COVERAGE_RANGE`. */
 export const CROP_COVERAGE_RANGE = [26, 115];
 export const CROP_COVERAGE_GAIN = 2.2;
@@ -276,15 +321,13 @@ export class CropLayer {
       THREE,
       map: this.texture,
       wind: true,
-      // Plus fort que dans les arbres, plus faible que dans l'herbe : un champ
-      // de blé ondule, c'est même le seul mouvement d'un paysage d'été.
-      windStrength: 0.26,
+      windStrength: CROP_WIND_STRENGTH,
       atlas: true,
       tiles: CROP_ATLAS_COLS,
       coverage: true,
       coverageRange: CROP_COVERAGE_RANGE,
       coverageGain: CROP_COVERAGE_GAIN,
-      cacheKey: 'foliage-crop-cover-v2',
+      cacheKey: 'foliage-crop-cover-v3',
     });
 
     this.mesh = new THREE.InstancedMesh(this.geometry, this.material, count);

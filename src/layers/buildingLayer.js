@@ -8,6 +8,14 @@
  * côté de l'empreinte : il transforme celle qui le contient (couleur, forme
  * de toit, devanture) et lui greffe au besoin un clocher ou un minaret. Voir
  * `buildingPersonalityFor`, `sortPersonalities`, `theme.personalities`.
+ *
+ * Une empreinte est rabotée de ce qu'elle pose sur une chaussée
+ * (`roadCorridor.clipPolygonOutsideCorridor`) avant d'être extrudée. La donnée
+ * en pose : le tracé de la voie et le contour du bâti viennent de deux relevés
+ * différents, et rien dans le schéma ne les réconcilie. La découpe vient
+ * **avant** l'assise, le rectangle orienté et la façade sur rue, faute de quoi
+ * la maison serait rabotée mais son toit, sa devanture et sa clôture garderaient
+ * l'emprise d'avant.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
@@ -15,6 +23,7 @@ import { srgb } from '../core/color.js';
 import { buildingStyleAt } from './townStyle.js';
 import { orientedBox, roofTriangles, roofRise, ringArea } from './roofGeometry.js';
 import { pointInRing } from './furniturePlacement.js';
+import { clipPolygonOutsideCorridor } from './roadCorridor.js';
 import { Kit } from './furnitureKit.js';
 import { defaultTheme } from '../themes/default.js';
 import { LabelAtlas, pushLabelQuad, labelFontPxForCellHeight, LABEL_PX_PER_M } from '../materials/labelAtlas.js';
@@ -899,6 +908,11 @@ export class BuildingLayer {
      */
     this.footprints = [];
     /**
+     * Index des chaussées de la dernière reconstruction, ou `null` — c'est lui
+     * qui dit ce qu'une empreinte pose sur la voie. Posé par `rebuild`.
+     */
+    this._roadIndex = null;
+    /**
      * Points d'intérêt classés de la dernière reconstruction — voir
      * `buildingPersonalityFor` — publiés pour l'étiquetage de mise au point
      * (`inspect/objectLabels`). Une église, une mosquée ou une boulangerie ne
@@ -971,10 +985,15 @@ export class BuildingLayer {
    * @param {Object} source Instance `VectorTileSource`.
    * @param {Array} tiles   Tuiles à parcourir.
    * @param {{x:number,z:number}} here Position locale de l'observateur.
+   * @param {Object} [options]
+   * @param {Object} [options.roadIndex] Index des chaussées (`RoadIndex`). Sert
+   *        à raboter ce qu'une empreinte pose sur la voie — la donnée le fait,
+   *        voir `_appendBuilding`. Absent, le bâti est extrudé tel quel.
    * @returns {boolean} vrai si des bâtiments ont été produits.
    */
-  rebuild(source, tiles, here) {
+  rebuild(source, tiles, here, { roadIndex = null } = {}) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
+    this._roadIndex = roadIndex;
     this._build(source, tiles, here);
     this._anchor = { x: here.x, z: here.z };
     this._frame = this.bubble.frame;
@@ -1141,6 +1160,28 @@ export class BuildingLayer {
       points.push(new THREE.Vector2((lngToTileX(lng, zoom) - origin.x) * scale, (latToTileY(lat, zoom) - origin.y) * scale));
     }
     if (points.length < 3) return false;
+
+    // Rabotage de ce qui empiète sur la chaussée. La donnée pose parfois un
+    // bâtiment à cheval sur la route : le tracé de la voie et le contour du
+    // bâti viennent de deux relevés différents, et rien dans le schéma ne les
+    // réconcilie. On coupe ce qui dépasse plutôt que de rejeter le bâtiment —
+    // un trou dans un village pour quelques dizaines de centimètres d'écart
+    // serait pire que le défaut. Ce qu'il en reste, quand il n'en reste rien,
+    // était entièrement sur la voie : là, on ne bâtit pas.
+    //
+    // Avant tout le reste : l'assise, le rectangle orienté, la façade sur rue
+    // et l'empreinte publiée doivent tous décrire le bâtiment **tel qu'il sera
+    // dessiné**, sinon la maison est rabotée mais sa clôture, sa devanture et
+    // son toit gardent l'emprise d'avant.
+    if (this._roadIndex) {
+      const kept = clipPolygonOutsideCorridor(
+        points.map((p) => ({ x: p.x, z: p.y })),
+        this._roadIndex
+      );
+      if (!kept || kept.length < 3) return false;
+      points.length = 0;
+      for (const p of kept) points.push(new THREE.Vector2(p.x, p.z));
+    }
 
     // Assise : le point le plus bas de l'empreinte. Sur une pente, poser le
     // bâtiment à l'altitude de son centre le ferait flotter d'un côté.
