@@ -260,6 +260,8 @@ export const LABEL_CROPS = {
   plough: 'labour',
   vineyard: 'vigne',
   orchard: 'verger',
+  lavender: 'lavande',
+  rapeseed: 'colza',
 };
 
 /**

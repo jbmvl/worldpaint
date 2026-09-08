@@ -41,7 +41,10 @@
  *   - un **plancher** (`floorAt`) : l'altitude sous laquelle la plate-forme
  *     n'a pas le droit de descendre — le terrain naturel (un tablier enterré
  *     n'est pas un tablier) et l'eau augmentée de sa revanche. Aucune garde
- *     au-dessus : on s'y pose, on ne le survole pas.
+ *     au-dessus : on s'y pose, on ne le survole pas. Cette revanche-là suit la
+ *     **portée** de l'ouvrage (`bridgeFreeboardFor`) : rien dans les tuiles ne
+ *     dit le débit d'un cours d'eau, mais un tablier de dix mètres passe un
+ *     fossé et un tablier de deux cents passe un fleuve.
  *
  * Confondre les deux — relever de cinq mètres au-dessus de tout ce qui passe
  * sous la travée, terrain compris — jetait chaque pont de rase campagne en
@@ -79,6 +82,39 @@ export const BRIDGE_CLEARANCE_M = 5.5;
  * première pluie.
  */
 export const BRIDGE_FREEBOARD_M = 2;
+
+/**
+ * Revanche minimale, en mètres : celle d'un pont de ruisseau.
+ *
+ * Deux mètres pour tout le monde, c'était le défaut des **petits** ponts. Le
+ * relief est lu dans un MNT à trente mètres, qui ne résout pas le lit d'un
+ * ruisseau : la cote « de l'eau » y est celle du pré autour. Une revanche fixe
+ * jetait donc en l'air le moindre franchissement de rase campagne, avec ses
+ * deux remblais d'accès, là où en vrai on passe un ruisseau sur une dalle.
+ */
+export const BRIDGE_FREEBOARD_MIN_M = 0.6;
+
+/**
+ * Part de la portée rendue en revanche. Ce n'est pas une règle d'ingénieur,
+ * c'est le seul indice disponible : rien dans les tuiles ne dit le débit d'un
+ * cours d'eau, mais la **longueur** de l'ouvrage dit ce qu'il franchit. Un
+ * tablier de dix mètres passe un fossé, un tablier de deux cents passe un
+ * fleuve, et les deux ne se tiennent pas à la même hauteur.
+ */
+export const BRIDGE_FREEBOARD_SLOPE = 0.06;
+
+/**
+ * Revanche exigée au-dessus de l'eau pour une travée d'une portée donnée,
+ * bornée par `BRIDGE_FREEBOARD_MIN_M` et `BRIDGE_FREEBOARD_M`. Fonction pure.
+ *
+ * @param {number} span Portée de la travée, en mètres.
+ */
+export function bridgeFreeboardFor(span) {
+  if (!(span > 0)) return BRIDGE_FREEBOARD_M;
+  const wanted = span * BRIDGE_FREEBOARD_SLOPE;
+  if (wanted < BRIDGE_FREEBOARD_MIN_M) return BRIDGE_FREEBOARD_MIN_M;
+  return wanted > BRIDGE_FREEBOARD_M ? BRIDGE_FREEBOARD_M : wanted;
+}
 
 /**
  * Cosinus au-delà duquel deux chaussées superposées ne se croisent pas : elles
@@ -245,9 +281,12 @@ export function resampleWorks(points, works, path) {
  *        croisée. Rend une valeur non finie là où il n'y a rien à dégager, ce
  *        qui est le cas courant : au-dessus d'un pré, d'un ravin ou d'un
  *        village, une travée n'a rien à passer.
- * @param {Function} [options.floorAt] `(x, z, r) => altitude plancher` : le
+ * @param {Function} [options.floorAt] `(x, z, span) => altitude plancher` : le
  *        terrain naturel, ou la nappe augmentée de sa revanche. La plate-forme
- *        s'y pose sans garde ; elle ne descend simplement pas dessous.
+ *        s'y pose sans garde ; elle ne descend simplement pas dessous. La
+ *        **portée** de la travée lui est passée parce que la revanche en
+ *        dépend (`bridgeFreeboardFor`) : un ruisseau et un fleuve ne se
+ *        franchissent pas à la même hauteur.
  * @param {number} [options.clearance] Garde au-dessus d'un obstacle à gabarit.
  * @param {number} [options.maxSpan]
  * @param {number} [options.ramp]
@@ -302,7 +341,10 @@ export function levelWorkSpans(
           if (Number.isFinite(gauge)) lift = Math.max(lift, gauge + clearance - platform[r]);
         }
         if (floorAt) {
-          const floor = floorAt(path[r].x, path[r].z, r);
+          // La portée est passée : la revanche au-dessus de l'eau en dépend
+          // (`bridgeFreeboardFor`), et c'est ici, et seulement ici, qu'on la
+          // connaît.
+          const floor = floorAt(path[r].x, path[r].z, span);
           if (Number.isFinite(floor)) lift = Math.max(lift, floor - platform[r]);
         }
       }

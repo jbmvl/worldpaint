@@ -514,10 +514,20 @@ export function mergeRoadLines(lines, options = {}) {
       halfWidth: edge.halfWidth,
       works,
       points: ids.map((id) => ({ x: nodes.xs[id], z: nodes.zs[id] })),
-      // Un nœud de degré deux est un simple sommet de la ligne ; tout le reste
-      // — embranchement, croisement, cul-de-sac, changement de classe — est un
-      // point d'ancrage, et ne bouge pas d'une reconstruction à l'autre.
-      anchors: ids.map((id, i) => i === 0 || i === last || (degree.get(id) || 0) !== 2),
+      // Un nœud de degré deux est un simple sommet de la ligne ; un
+      // embranchement, un croisement, un changement de classe est un point
+      // d'ancrage, et ne bouge pas d'une reconstruction à l'autre.
+      //
+      // Les **extrémités**, elles, n'en sont plus. Une chaîne s'arrête là où la
+      // donnée s'arrête, c'est-à-dire au bord des tuiles chargées — un bord qui
+      // avance avec l'observateur —, et le graphe seul ne distingue pas ce
+      // bout-là d'un vrai cul-de-sac : les deux sont de degré un. L'ancrer
+      // revenait donc à ancrer sur une position d'observateur, et c'est ce qui
+      // faisait changer la ligne téléphonique de côté et l'alignement
+      // d'essence à chaque reconstruction. `anchorDistances` sait maintenant se
+      // rabattre sur le nœud **suivant** quand une tête de chaîne n'a rien
+      // derrière elle.
+      anchors: ids.map((id, i) => i > 0 && i < last && (degree.get(id) || 0) !== 2),
     });
   }
 
@@ -789,6 +799,44 @@ export class RoadIndex {
   /** Vrai si le point tombe sur une chaussée, marge comprise. */
   covers(x, z, margin = 0) {
     return this.query(x, z, margin) !== null;
+  }
+
+  /**
+   * Parcourt toutes les arêtes dont l'emprise peut toucher une boîte.
+   *
+   * `query` répond « quelle chaussée recouvre ce point ? », donc une seule, la
+   * plus proche. Une **surface** — l'empreinte d'un bâtiment — n'a pas de point
+   * unique à interroger : il lui faut toutes les chaussées qui la traversent,
+   * et c'est ce que celle-ci rend. Chaque arête n'est visitée qu'une fois,
+   * quel que soit le nombre de cellules qu'elle occupe.
+   *
+   * @param {number} minX Coin de la boîte, en mètres locaux.
+   * @param {number} minZ
+   * @param {number} maxX
+   * @param {number} maxZ
+   * @param {Function} visit `(segment, row, index) => void`.
+   */
+  forEachNear(minX, minZ, maxX, maxZ, visit) {
+    const cx0 = Math.floor(minX / this.cell);
+    const cx1 = Math.floor(maxX / this.cell);
+    const cz0 = Math.floor(minZ / this.cell);
+    const cz1 = Math.floor(maxZ / this.cell);
+    const seen = new Set();
+
+    for (let cx = cx0; cx <= cx1; cx++) {
+      for (let cz = cz0; cz <= cz1; cz++) {
+        const bucket = this.buckets.get(cellKey(cx, cz));
+        if (!bucket) continue;
+        for (let i = 0; i < bucket.length; i += 2) {
+          const index = bucket[i];
+          const row = bucket[i + 1];
+          const key = index * 1048576 + row;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          visit(this.segments[index], row, index);
+        }
+      }
+    }
   }
 
   /**

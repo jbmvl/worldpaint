@@ -79,6 +79,10 @@ const CORRIDOR_PUSH_ITERATIONS = 4;
  * parcelle qui longe une route sur toute sa longueur (le bocage) : le couper
  * ne laisserait aucun tronçon dehors, alors que le repousser garde la haie continue.
  *
+ * Ni à un objet que la donnée place elle-même sur la chaussée : un arrêt de bus
+ * est très souvent porté par le tracé de la route (`stop_position`), et le
+ * retirer ferait disparaître un objet réel. On l'écarte.
+ *
  * @param {number} x
  * @param {number} z
  * @param {Object|null} index Instance `RoadIndex`, ou `null`.
@@ -87,7 +91,7 @@ const CORRIDOR_PUSH_ITERATIONS = 4;
  *        reposer le point exactement dessus.
  * @returns {{x:number,z:number}} le point, inchangé s'il est déjà hors emprise.
  */
-function pushPointOutsideCorridor(x, z, index, margin = CORRIDOR_MARGIN_M, clearance = CORRIDOR_PUSH_CLEARANCE_M) {
+export function pushPointOutsideCorridor(x, z, index, margin = CORRIDOR_MARGIN_M, clearance = CORRIDOR_PUSH_CLEARANCE_M) {
   if (!index) return { x, z };
   let px = x;
   let pz = z;
@@ -331,4 +335,145 @@ export function clipOutsideCorridor(
   }
 
   return runs;
+}
+
+/**
+ * Part d'aire en deçà de laquelle une empreinte découpée ne vaut plus d'être
+ * bâtie : ce qui reste d'une maison entièrement posée sur la chaussée.
+ */
+export const CORRIDOR_CLIP_MIN_AREA = 0.12;
+
+/** Aire (signée) d'un anneau `{x, z}`. */
+function ringArea2(ring) {
+  let sum = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    sum += ring[j].x * ring[i].z - ring[i].x * ring[j].z;
+  }
+  return sum / 2;
+}
+
+/**
+ * Coupe un anneau par un demi-plan : ne garde que ce qui est du côté vers
+ * lequel pointe `(nx, nz)` depuis `(ax, az)`. Sutherland–Hodgman.
+ */
+function clipRingByHalfPlane(ring, ax, az, nx, nz) {
+  const out = [];
+  const rows = ring.length;
+  for (let i = 0; i < rows; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % rows];
+    const da = (a.x - ax) * nx + (a.z - az) * nz;
+    const db = (b.x - ax) * nx + (b.z - az) * nz;
+
+    if (da >= 0) out.push(a);
+    if ((da >= 0) !== (db >= 0)) {
+      const t = da / (da - db);
+      out.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t });
+    }
+  }
+  return out;
+}
+
+/**
+ * Retire d'une empreinte ce qui empiète sur une chaussée.
+ *
+ * ## Pourquoi une découpe, et pas un rejet
+ *
+ * La donnée pose parfois un bâtiment à cheval sur la route : le tracé de la
+ * voie et le contour du bâti viennent de deux relevés différents, et rien dans
+ * le schéma ne les réconcilie. Rejeter le bâtiment ferait un trou dans un
+ * village pour un défaut de quelques dizaines de centimètres ; le laisser
+ * met un mur au milieu de la chaussée. On rabote donc ce qui dépasse, et la
+ * façade vient s'aligner sur la rive — ce qu'elle fait en vrai.
+ *
+ * ## Ce que la découpe fait exactement
+ *
+ * Chaque arête de chaussée dont l'emprise touche l'empreinte lui applique un
+ * demi-plan parallèle à elle, à la distance de sa rive. Un demi-plan, et non le
+ * gabarit exact de l'arête : soustraire une forme convexe d'un polygone
+ * quelconque demande une algèbre booléenne complète, alors qu'une chaussée est
+ * découpée tous les cinq mètres, si bien que les demi-plans successifs suivent
+ * la rive d'assez près. Le seul cas où la coupe déborde est celui d'une route
+ * qui **s'arrête** dans le bâtiment, ce qui n'est déjà pas une donnée.
+ *
+ * @param {Array<{x:number,z:number}>} ring Empreinte, en mètres locaux.
+ * @param {Object|null} index Instance `RoadIndex`, ou `null`.
+ * @param {number} [margin] Débord au-delà de la rive, en mètres.
+ * @param {number} [minArea] Part de l'aire d'origine en deçà de laquelle on
+ *        rend `null` : le bâtiment était sur la route, pas à côté.
+ * @returns {Array<{x:number,z:number}>|null} l'empreinte, inchangée si elle
+ *          n'empiétait pas ; `null` s'il n'en reste rien.
+ */
+export function clipPolygonOutsideCorridor(
+  ring,
+  index,
+  margin = CORRIDOR_MARGIN_M,
+  minArea = CORRIDOR_CLIP_MIN_AREA
+) {
+  if (!Array.isArray(ring) || ring.length < 3) return ring;
+  if (!index || typeof index.forEachNear !== 'function') return ring;
+
+  let minX = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxZ = -Infinity;
+  for (const p of ring) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.z < minZ) minZ = p.z;
+    if (p.z > maxZ) maxZ = p.z;
+  }
+  if (!Number.isFinite(minX)) return ring;
+
+  const before = Math.abs(ringArea2(ring));
+  let out = ring;
+
+  index.forEachNear(minX, minZ, maxX, maxZ, (segment, row) => {
+    if (!out || out.length < 3) return;
+    const path = segment?.path;
+    if (!path || row + 1 >= path.length) return;
+    // Une ligne d'ouvrage ne touche pas le sol : un bâtiment sous un viaduc
+    // n'a pas à être raboté.
+    if (segment.works?.[row] && segment.works[row + 1]) return;
+
+    const a = path[row];
+    const b = path[row + 1];
+    let tx = b.x - a.x;
+    let tz = b.z - a.z;
+    const length = Math.hypot(tx, tz);
+    if (length < 1e-6) return;
+    tx /= length;
+    tz /= length;
+    // La garde de `pushOutsideCorridor`, pour la même raison : un mur posé
+    // exactement sur la rive est encore dans l'emprise, au bit près.
+    const reach = segment.halfWidth + margin + CORRIDOR_PUSH_CLEARANCE_M;
+
+    // De quel côté de l'axe se tient l'empreinte : le signe de la moyenne de
+    // ses sommets. Pris sur toute l'empreinte et non sur son sommet le plus
+    // enfoncé, sinon un bâtiment posé pile sur l'axe basculerait d'un côté ou
+    // de l'autre selon le sommet examiné en premier.
+    let side = 0;
+    let overlaps = false;
+    for (const p of out) {
+      const across = (p.x - a.x) * tz - (p.z - a.z) * tx;
+      side += across;
+      if (!overlaps) {
+        const along = (p.x - a.x) * tx + (p.z - a.z) * tz;
+        // Dans le gabarit de l'arête : entre ses deux bouts, à moins d'une rive.
+        if (along >= -reach && along <= length + reach && Math.abs(across) < reach) overlaps = true;
+      }
+    }
+    if (!overlaps) return;
+
+    // Normale sortante : vers le côté où se tient l'empreinte.
+    const sign = side >= 0 ? 1 : -1;
+    const nx = tz * sign;
+    const nz = -tx * sign;
+    out = clipRingByHalfPlane(out, a.x + nx * reach, a.z + nz * reach, nx, nz);
+  });
+
+  if (!out || out.length < 3) return null;
+  if (out === ring) return ring;
+  if (Math.abs(ringArea2(out)) < before * minArea) return null;
+  return out;
 }

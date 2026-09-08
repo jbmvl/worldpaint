@@ -13,7 +13,8 @@
  * publient l'emprise routière que le reste du décor ne franchit pas) → ouvrages d'art (tabliers, piles, têtes de
  * tunnel : ne lisent que les tronçons publiés par les chaussées) → voie ferrée
  * (indépendante, suit le terrain sans l'entailler, voir `railwayLayer.js`) →
- * bâti (publie maisons et empreintes) → voirie (après chaussées et bâti, un
+ * bâti (lit l'emprise, qui rabote ce qu'une empreinte pose sur la voie ;
+ * publie maisons et empreintes) → voirie (après chaussées et bâti, un
  * trottoir a besoin des deux ; publie sa bande revêtue) → jardins (tirent clôtures et buissons des
  * maisons, lisent emprise et bande revêtue) → mobilier (tronçons + index des
  * chaussées, compte de bâtiments, emprise ferroviaire, lieux nommés) →
@@ -367,8 +368,10 @@ export class WorldComposer {
       // 2 ter. Voie ferrée — ne dépend de rien, ne publie rien.
       this.railways.rebuild(this.vectorTiles, wanted, here);
 
-      // 4. Bâti.
-      this.buildings.rebuild(this.vectorTiles, wanted, here);
+      // 4. Bâti — après les chaussées, dont l'emprise rabote ce qu'une
+      //    empreinte pose sur la voie (la donnée en pose : le tracé de la route
+      //    et le contour du bâti viennent de deux relevés différents).
+      this.buildings.rebuild(this.vectorTiles, wanted, here, { roadIndex: this.roads.index });
 
       // 4 bis. Voirie — après chaussées et bâti. Emprises habitées lues une
       //    seule fois ici (voirie et mobilier posent la même question).

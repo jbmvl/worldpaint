@@ -88,7 +88,11 @@ export const TERRAIN_LOOK = {
    * sol et ce qui y pousse divergent à la jointure premier plan/lointain.
    */
   grassAlbedo: [0.051, 0.135, 0.017],
-  woodAlbedo: [0.042, 0.056, 0.02],
+  // À mi-chemin de `grassAlbedo` : un sol de forêt est une litière, pas un pré,
+  // mais l'ancienne valeur en faisait un trou noir sous les arbres — la seule
+  // matière du décor plus sombre que l'ombre qu'elle porte. Elle vaut
+  // maintenant la moyenne exacte de l'ancienne et de celle de l'herbe.
+  woodAlbedo: [0.047, 0.096, 0.019],
   farmlandAlbedo: [0.431, 0.331, 0.08],
   bareAlbedo: [0.27, 0.255, 0.225],
   /**
@@ -106,6 +110,12 @@ export const TERRAIN_LOOK = {
     plough: [0.431, 0.331, 0.08],
     vineyard: [0.168, 0.246, 0.069],
     orchard: [0.153, 0.219, 0.061],
+    // Un champ de lavande vu de loin n'est pas violet vif : c'est un gris
+    // bleuté que le feuillage tire vers le vert entre les rangs.
+    lavender: [0.132, 0.118, 0.176],
+    // Le colza en fleur, en revanche, est la tache la plus saturée d'un
+    // paysage de printemps — plus jaune encore qu'un blé mûr.
+    rapeseed: [0.604, 0.522, 0.061],
   },
   /**
    * Albédo par **couverture**, dans l'ordre de `COVER_KINDS`.
@@ -445,7 +455,11 @@ export const WOODLAND_FLOOR = {
   green: 0.55,
   height: 0.5,
   density: 0.7,
-  tint: [0.98, 0.82, 0.74],
+  // Le même déplacement que `woodAlbedo`, et il n'a pas le choix : les deux
+  // peignent le même sol, l'un au loin et l'autre sous le nez. Le facteur est
+  // à mi-chemin de son ancienne valeur et du neutre, comme l'albédo est à
+  // mi-chemin de celui de l'herbe.
+  tint: [0.99, 0.91, 0.87],
 };
 
 // --- Les cultures --------------------------------------------------------------
@@ -461,6 +475,13 @@ export const CROP_LOOK = {
   maize: { atlas: 'maize', height: 2.4, spread: 0.15, density: 0.22, tint: [0.82, 1, 0.62] },
   sunflower: { atlas: 'sunflower', height: 1.7, spread: 0.2, density: 0.3, tint: [0.96, 0.98, 0.6] },
   plough: { atlas: 'stubble', height: 0.3, spread: 0.22, density: 0.72, tint: [1, 0.94, 0.74] },
+  // La lavande est un buisson bas et large, pas une tige : d'où un `spread`
+  // presque égal à sa hauteur. La teinte laisse passer le violet des épis, que
+  // le lavage de sol méditerranéen (jaunissant) écraserait sinon.
+  lavender: { atlas: 'lavender', height: 0.6, spread: 0.28, density: 0.4, tint: [0.94, 0.9, 1.06] },
+  // Le colza : une masse serrée et haute, la seule culture dont la fleur, et
+  // non le feuillage, fait la couleur du champ.
+  rapeseed: { atlas: 'rapeseed', height: 1.3, spread: 0.24, density: 0.85, tint: [1.02, 0.98, 0.56] },
 };
 
 // --- Le sol d'un pays ---------------------------------------------------------
@@ -1279,6 +1300,13 @@ export const HEDGE_SHAPES = {
     spacingM: 6.5,
     /** Débattement latéral d'un arbuste autour de l'axe, en mètres. */
     lateralM: 0.3,
+    /**
+     * Longueur du bout arrondi, en mètres. Une haie s'arrêtait au couteau, sur
+     * la section entière tranchée net ; elle rentre maintenant sur cette
+     * longueur-là, en quart d'ellipse (`hedgeGeometry.hedgeEndTaper`). À peu
+     * près la largeur de la haie : c'est le rayon d'un bout taillé.
+     */
+    noseM: 1.1,
     /** Hauteur d'un arbuste, en mètres. */
     heightM: [1.35, 2.45],
     /** Demi-longueur le long du tracé, en mètres. */
@@ -1302,6 +1330,7 @@ export const HEDGE_SHAPES = {
     coreWidth: 0.92,
     spacingM: 4,
     lateralM: 0.22,
+    noseM: 0.7,
     heightM: [0.5, 0.95],
     alongM: [1, 1.5],
     acrossM: [0.48, 0.76],
