@@ -43,21 +43,26 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
   bord est à sa place.
 - **Case « afficher le réseau routier compris »** : trace, en traits colorés,
   ce que le moteur **comprend** du réseau — à distinguer de la case
-  précédente, qui montre ce que la chaussée **occupe**. Sept familles, rendues
+  précédente, qui montre ce que la chaussée **occupe**. Neuf familles, rendues
   par `collectRoadDebug` (`src/inspect/roadDebug.js`, pur — la géométrie de
   lignes se monte dans la démo) : l'axe de chaque tronçon *teinté par niveau de
   croisement*, ses deux rives, les nœuds d'ancrage, le cercle des carrefours
   relevés sur le graphe, une flèche par branche, **le contour de la chaussée de
   chaque carrefour** (là où les rubans s'arrêtent et où la surface commune
-  prend le relais), les plages de pont et de tunnel, et un trait vertical sur
-  chaque ligne que la couture d'altitude a reprise (sa hauteur est le
-  déplacement).
+  prend le relais), **les vides de faisceau** (un trait jaune en travers,
+  partout où deux voies sont jugées se longer), les plages de pont et de
+  tunnel, et un trait vertical sur chaque ligne que la couture d'altitude a
+  reprise (sa hauteur est le déplacement).
 
   C'est l'outil qui répond à « pourquoi ces deux voies n'ont-elles pas été
   raccordées ? ». Deux axes qui se croisent **sans marqueur de carrefour entre
   eux** sont un croisement en XY, pas une rencontre : leurs `layer` diffèrent,
   l'une passe au-dessus de l'autre. Un axe qui change de teinte au milieu d'un
-  pont dit la même chose autrement.
+  pont dit la même chose autrement. Et deux voies proches **sans trait jaune
+  entre elles** ne se longent pas au sens du moteur : l'une des six conditions
+  du faisceau manque — niveau, écart, parallélisme, longueur du voisinage,
+  continuité du vis-à-vis, ou l'aire est close (un îlot de giratoire, qui
+  reste le terrain).
 - **Panneau « Faune »** : déclenche la traversée d'une bête devant la caméra
   (<kbd>C</kbd>, ou le bouton). C'est le seul geste du moteur qui ne soit pas
   une fonction du lieu : `world.crossFauna({ kind, at, forward, distanceM })`

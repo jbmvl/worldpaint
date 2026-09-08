@@ -34,6 +34,18 @@
  * mètres autour de chaque carrefour et coupait donc le trottoir juste là où
  * on le regarde.
  *
+ * ## Le vide entre deux voies qui se longent
+ *
+ * Cette couche pose aussi le **comblement** des entre-deux de faisceau
+ * (`roadBundles`) : la bande de terrain de deux mètres qui reste entre une
+ * départementale et la piste cyclable qui la double, entre une contre-allée et
+ * sa rue, entre deux sens séparés. Elle est ici et pas dans `roadNetwork`
+ * parce qu'elle vient **après** le trottoir : là où un trottoir tient, il vaut
+ * mieux qu'un zébra, et un vide déjà revêtu n'est plus un vide.
+ *
+ * Elle n'attend pas d'être en bourg — un longement de piste cyclable laisse de
+ * l'herbe au milieu du bitume en rase campagne comme ailleurs.
+ *
  * Pas de trottoir sur simple `landuse=residential` (qui contient aussi prés
  * et chemins non bordés) : trois conditions tenues ensemble, ligne par ligne
  * et côté par côté — la chaussée s'y prête (desserte/traversée, pas voie
@@ -66,6 +78,8 @@ import { contiguousRuns, crossSlope, randomAt, STEEP_CROSS_SLOPE } from './furni
 import { pointInAreas } from './settlement.js';
 import { edgeClearance, outwardSide, polylineLength } from './roadEdges.js';
 import { junctionBoundaryAt } from './roadJunctions.js';
+import { appendZebra, collectRoadGaps } from './roadBundles.js';
+import { srgb } from '../core/color.js';
 import { streetSurfaceAt } from './townStyle.js';
 import { defaultTheme } from '../themes/default.js';
 
@@ -217,15 +231,21 @@ export class StreetLayer {
     this.geometry = null;
     /** Portions de trottoir posées lors de la dernière reconstruction. */
     this.count = 0;
+    /** Bandes de hachures posées dans les vides de faisceau. */
+    this.fills = 0;
     /** Bande revêtue, au format de `RoadIndex` (l'herbe l'interroge comme la chaussée). @type {RoadIndex|null} */
     this.index = null;
 
     this.material = new THREE.MeshLambertMaterial({
       vertexColors: true,
-      // Le pied du caniveau tombe pile sur la rive de la chaussée, et partage
-      // ses sommets : rien à départager, donc pas de décalage de profondeur.
-      // Celui qui était là arbitrait un recouvrement de six centimètres qui
-      // n'existe plus.
+      // Le décalage de profondeur ne sert plus à arbitrer un recouvrement de
+      // six centimètres du caniveau sur la chaussée — il n'y en a plus, les
+      // deux partagent leurs sommets. Il protège le **comblement**, qui est
+      // posé au ras du sol entre deux rives, comme la chaussée elle-même :
+      // mêmes valeurs qu'elle, pour que les deux se tiennent pareil.
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -4,
     });
     this.material.name = 'streets';
   }
@@ -269,10 +289,69 @@ export class StreetLayer {
       built += this._buildCorners(buffer, bands, context);
     }
 
-    this.count = built;
+    // La bande revêtue est publiée avant le comblement, parce que le
+    // comblement l'interroge : là où un trottoir tient, il vaut mieux qu'un
+    // zébra, et un vide déjà occupé n'est plus un vide.
     this.index = bands.length > 0 ? new RoadIndex(bands, { margin: 0 }) : null;
+
+    // Les vides de faisceau, partout — un longement de piste cyclable n'attend
+    // pas d'être en bourg pour laisser deux mètres d'herbe au milieu du bitume.
+    this.fills = this._buildFills(buffer, roadSegments, here, roadIndex, areas);
+
+    this.count = built;
     this._apply(buffer);
-    return built > 0;
+    return built > 0 || this.fills > 0;
+  }
+
+  /**
+   * Comble les vides de faisceau : les entre-deux trop étroits entre deux
+   * chaussées qui se longent (voir `roadBundles`).
+   *
+   * @returns {number} bandes de hachures posées.
+   */
+  _buildFills(buffer, roadSegments, here, roadIndex, areas) {
+    if (!roadIndex || !Array.isArray(roadSegments) || roadSegments.length === 0) return 0;
+    const roads = this.theme.roads;
+    const paint = srgb(roads.markingColor);
+    const ground = srgb(roads.surfaces.asphalt.base);
+    const pavement = this.index;
+
+    // Seules les chaussées revêtues font un faisceau : entre une route et le
+    // chemin de terre qui la longe, il n'y a pas de vide de construction, il y
+    // a de l'herbe.
+    const paved = (segment) => {
+      const profile = roads.profiles[segment.profile];
+      return !!profile && (profile.surface || 'asphalt') === 'asphalt';
+    };
+    // Une chaîne peut faire neuf cents mètres : c'est une ligne sur dix qui
+    // décide qu'elle est à portée, pas son premier point.
+    const nearby = (segment) => {
+      const path = segment.path;
+      for (let r = 0; r < path.length; r += 10) {
+        if (Math.hypot(path[r].x - here.x, path[r].z - here.z) <= STREET_RADIUS_M) return true;
+      }
+      return false;
+    };
+    const inReach = roadSegments.filter(
+      (segment) => paved(segment) && segment.path?.length > 1 && nearby(segment)
+    );
+
+    let bands = 0;
+    const gaps = collectRoadGaps(inReach, {
+      roadIndex,
+      areas,
+      accept: paved,
+      taken: pavement ? (x, z) => pavement.covers(x, z) : null,
+    });
+    for (const gap of gaps) {
+      bands += appendZebra(buffer, gap, {
+        paint,
+        ground,
+        lift: ROAD_LIFT_M,
+        startDistance: gap.a.startDistance || 0,
+      });
+    }
+    return bands;
   }
 
   /** Les deux côtés d'un tronçon. @returns {number} portions posées. */

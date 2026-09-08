@@ -39,7 +39,13 @@
  *   - `outlines`  le contour de la chaussée de chaque carrefour, tel que
  *                 `roadJunctions` le construit — c'est-à-dire exactement là où
  *                 chaque ruban s'arrête et où la surface commune prend le
- *                 relais.
+ *                 relais ;
+ *   - `bundles`   les vides de faisceau : un trait en travers, d'une rive à
+ *                 l'autre, partout où deux voies sont jugées se **longer**
+ *                 (`roadBundles`). C'est la seule façon de voir pourquoi deux
+ *                 voies proches ont été groupées et deux autres non — six
+ *                 conditions y entrent, et aucune ne se lit sur la géométrie
+ *                 finie.
  *
  * Un croisement en XY sans rencontre (un passage supérieur) se lit alors
  * immédiatement : deux axes de couleurs différentes se coupent, et il n'y a
@@ -47,6 +53,7 @@
  */
 
 import { WORK_BRIDGE, WORK_TUNNEL, LEVEL_GROUND } from '../layers/roadWorks.js';
+import { collectRoadGaps } from '../layers/roadBundles.js';
 
 /** Décollement des traits au-dessus de la plate-forme, en mètres (au-dessus du mobilier bas). */
 export const ROAD_DEBUG_LIFT_M = 0.35;
@@ -71,6 +78,7 @@ export const ROAD_DEBUG_KINDS = [
   'junctions',
   'branches',
   'outlines',
+  'bundles',
   'works',
   'stitch',
 ];
@@ -83,6 +91,7 @@ export const ROAD_DEBUG_COLORS = {
   junctions: [1, 0.35, 0.45],
   branches: [1, 0.55, 0.2],
   outlines: [0.3, 1, 0.7],
+  bundles: [1, 1, 0.35],
   bridge: [0.55, 1, 0.5],
   tunnel: [0.7, 0.45, 1],
   stitch: [1, 0.25, 0.9],
@@ -145,7 +154,7 @@ function perpendicularAt(path, r) {
  * @param {Array<string>} [options.kinds] Groupes voulus.
  * @returns {{groups: Array<{kind:string, positions:number[], colors:number[]}>,
  *          counts: {segments:number, junctions:number, stitched:number,
- *          works:number, levels:number[]}}}
+ *          works:number, bundles:number, levels:number[]}}}
  */
 export function collectRoadDebug(
   segments = [],
@@ -171,7 +180,7 @@ export function collectRoadDebug(
   };
 
   const inReach = (x, z) => !here || Math.hypot(x - here.x, z - here.z) <= radius;
-  const counts = { segments: 0, junctions: 0, stitched: 0, works: 0, levels: [] };
+  const counts = { segments: 0, junctions: 0, stitched: 0, works: 0, bundles: 0, levels: [] };
   const seenLevels = new Set();
 
   for (const segment of segments || []) {
@@ -306,6 +315,26 @@ export function collectRoadDebug(
         const a = outline[i];
         const b = outline[(i + 1) % outline.length];
         pushLine(group, a.x, y, a.z, b.x, y, b.z, ROAD_DEBUG_COLORS.outlines);
+      }
+    }
+  }
+
+  // Les faisceaux : un trait en travers de chaque vide, d'une rive à l'autre.
+  // C'est la réponse à « pourquoi ces deux voies-là sont-elles considérées
+  // comme se longeant, et ces deux-là non » — la question que pose le
+  // comblement, et la seule qu'on ne peut pas lire sur la géométrie finale.
+  if (wanted.has('bundles') && roadIndex) {
+    const group = groupFor('bundles');
+    for (const gap of collectRoadGaps(segments || [], { roadIndex, areas })) {
+      for (const pair of gap.pairs) {
+        if (!inReach(pair.near.x, pair.near.z)) continue;
+        counts.bundles++;
+        pushLine(
+          group,
+          pair.near.x, pair.near.deck + lift, pair.near.z,
+          pair.far.x, pair.far.deck + lift, pair.far.z,
+          ROAD_DEBUG_COLORS.bundles
+        );
       }
     }
   }

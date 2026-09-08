@@ -126,6 +126,19 @@ these needs a very good reason, stated in the PR description.
   disappears. Deriving the edge again from a segment axis, or refusing a whole
   pavement because a probe touched some other road, is what put pavements
   across junctions and cut them a half-street short.
+- **Two ways are near each other for three different reasons, and only one of
+  them is a bundle.** They cross (the graph knows: a junction), one flies over
+  the other (`layer` says so), or they *run alongside* — a cycleway beside a
+  road, a service road, two separated carriageways. That third case is
+  `layers/roadBundles.js`, and it is never `distance < X`: six conditions hold
+  together (same level, edge-to-edge gap, parallel tangents, length of the
+  proximity run, the same partner throughout, outside junctions and works).
+  The void inside a bundle is **painted**, never closed: no carriageway is
+  widened, moved or covered — the fill is a ruled surface tied to both edges at
+  their own deck heights, hatched by alternating the quads themselves.
+  And an area **enclosed** by carriageways is never filled and never claimed:
+  a void whose two edges both curve toward it is an island (a roundabout
+  centre), and an island stays terrain, with its trees.
 - **A bridge is a state of the carriageway, not a class of road.** `brunnel`
   travels as a per-row flag alongside the path (`segment.works`, see
   `layers/roadWorks.js`), never as an extra road profile. That is what keeps a

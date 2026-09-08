@@ -62,6 +62,14 @@ import {
   JUNCTION_CORNER_MAX_M,
 } from '../src/layers/roadJunctions.js';
 import {
+  appendZebra,
+  collectRoadGaps,
+  curvesTowards,
+  facingEdgeAt,
+  gapLength,
+  ZEBRA_PITCH_M,
+} from '../src/layers/roadBundles.js';
+import {
   edgeClearance,
   outwardSide,
   polylineLength,
@@ -9242,6 +9250,198 @@ test('la bordure d’un coin de rue se pose du côté extérieur', () => {
     const side = outwardSide(edge.points, outward);
     assert.ok(side === 1 || side === -1);
   }
+});
+
+// --- Le faisceau : des voies qui vont ensemble ------------------------------
+
+/** Tronçon complet — repères, plate-forme, niveaux — pour interroger un faisceau. */
+function fakeRoad(points, halfWidth, deck = 0, profile = 'minor') {
+  let distance = 0;
+  const path = points.map((p, i) => {
+    if (i > 0) distance += Math.hypot(p.x - points[i - 1].x, p.z - points[i - 1].z);
+    return { x: p.x, z: p.z, distance };
+  });
+  return {
+    profile,
+    halfWidth,
+    path,
+    frames: pathFrames(path),
+    platform: new Float32Array(path.length).fill(deck),
+    levels: new Int8Array(path.length),
+    startDistance: 0,
+  };
+}
+
+/** Une droite est-ouest, à l'ordonnée donnée. */
+const straightRoad = (z, halfWidth, deck = 0) =>
+  fakeRoad(
+    Array.from({ length: 41 }, (_, i) => ({ x: -100 + i * 5, z })),
+    halfWidth,
+    deck
+  );
+
+/** Un arc de cercle centré à l'origine, entre deux angles. */
+const arcRoad = (radius, from, to, halfWidth, deck = 0) =>
+  fakeRoad(
+    Array.from({ length: 25 }, (_, i) => {
+      const a = from + ((to - from) * i) / 24;
+      return { x: Math.cos(a) * radius, z: Math.sin(a) * radius };
+    }),
+    halfWidth,
+    deck
+  );
+
+test('une rive en face se reconnaît à six conditions, pas à une distance', () => {
+  // Deux voies parallèles : axes à sept mètres, rives à deux.
+  const north = straightRoad(0, 2.5);
+  const south = straightRoad(7, 2.5);
+  const index = new RoadIndex([north, south]);
+
+  // La perpendiculaire gauche de la marche vaut (tz, -tx) : la route va vers
+  // +x, donc +z est le côté -1.
+  const hit = facingEdgeAt(north, 20, -1, { roadIndex: index });
+  assert.ok(hit, 'la rive d’en face est trouvée');
+  assert.equal(hit.other, south);
+  assert.ok(Math.abs(hit.gap - 2) < 1e-6, `deux mètres de vide, vu ${hit.gap}`);
+  // Le point d'en face est bien sur *sa* rive, pas sur son axe.
+  assert.ok(Math.abs(hit.far.z - 4.5) < 1e-6);
+  // Et la direction du vide va de nous vers eux.
+  assert.ok(hit.outward.z > 0.99);
+
+  // De l'autre côté, il n'y a rien.
+  assert.equal(facingEdgeAt(north, 20, 1, { roadIndex: index }), null);
+
+  // Deux voies qui se coupent passent forcément près l'une de l'autre juste
+  // avant de se couper : le parallélisme les écarte.
+  const across = fakeRoad(
+    Array.from({ length: 21 }, (_, i) => ({ x: 20, z: -50 + i * 5 })),
+    2.5
+  );
+  const crossing = new RoadIndex([north, across]);
+  assert.equal(facingEdgeAt(north, 24, -1, { roadIndex: crossing }), null);
+
+  // Superposées, elles ne se longent pas : elles se survolent.
+  const above = straightRoad(7, 2.5);
+  above.levels = new Int8Array(above.path.length).fill(1);
+  assert.equal(facingEdgeAt(north, 20, -1, { roadIndex: new RoadIndex([north, above]) }), null);
+
+  // Sur un ouvrage, il n'y a pas de sol à traiter.
+  const carried = straightRoad(0, 2.5);
+  carried.works = new Uint8Array(carried.path.length).fill(1);
+  assert.equal(facingEdgeAt(carried, 20, -1, { roadIndex: index }), null);
+});
+
+test('un vide n’appartient qu’à une rive, et il doit durer', () => {
+  const north = straightRoad(0, 2.5);
+  const south = straightRoad(7, 2.5);
+  const gaps = collectRoadGaps([north, south], { roadIndex: new RoadIndex([north, south]) });
+
+  assert.equal(gaps.length, 1, 'un seul vide, pas un par rive');
+  assert.ok(gapLength(gaps[0].pairs) > 150, 'il court sur toute la longueur');
+  for (const pair of gaps[0].pairs) {
+    assert.ok(Math.abs(pair.gap - 2) < 1e-6);
+  }
+
+  // Un frôlement ne fait pas un longement : deux tracés qui se rapprochent
+  // puis repartent ne se longent que sur quelques mètres, et cela ne se
+  // comble pas.
+  const wedge = fakeRoad(
+    Array.from({ length: 41 }, (_, i) => ({ x: -100 + i * 5, z: 7 + Math.abs(i - 20) * 1.5 })),
+    2.5
+  );
+  const brief = collectRoadGaps([north, wedge], { roadIndex: new RoadIndex([north, wedge]) });
+  assert.equal(brief.length, 0, 'le voisinage est trop court pour être un faisceau');
+});
+
+test('une aire close par des chaussées reste le terrain', () => {
+  // R1, le cas propre : deux arcs du même cercle. Leurs deux rives
+  // intérieures se courbent vers le vide — c'est un îlot, et le centre d'un
+  // giratoire n'a pas à être comblé sous prétexte que des routes en font le
+  // tour.
+  const east = arcRoad(7, -Math.PI / 2, Math.PI / 2, 5);
+  const west = arcRoad(7, Math.PI / 2, (3 * Math.PI) / 2, 5);
+  const ring = new RoadIndex([east, west]);
+
+  // Les deux se voient : la condition de distance, elle, est remplie.
+  const hit = facingEdgeAt(east, 12, 1, { roadIndex: ring }) || facingEdgeAt(east, 12, -1, { roadIndex: ring });
+  assert.ok(hit, 'les deux rives intérieures se font bien face');
+
+  // Et pourtant rien n'est comblé.
+  assert.equal(collectRoadGaps([east, west], { roadIndex: ring }).length, 0);
+
+  // La règle est bien celle de la courbure, et elle est symétrique : chacune
+  // des deux se courbe vers l'autre.
+  const inward = { x: -east.path[12].x, z: -east.path[12].z };
+  const length = Math.hypot(inward.x, inward.z);
+  assert.equal(curvesTowards(east.path, 12, { x: inward.x / length, z: inward.z / length }), true);
+  assert.equal(curvesTowards(east.path, 12, { x: -inward.x / length, z: -inward.z / length }), false);
+  // Une droite ne se courbe vers rien.
+  assert.equal(curvesTowards(straightRoad(0, 2.5).path, 12, { x: 0, z: 1 }), false);
+});
+
+test('deux voies parallèles en courbe se longent, elles ne s’enferment pas', () => {
+  // Le contre-exemple qui rend la règle utile : deux arcs concentriques. Le
+  // centre est du même côté pour les deux, donc l'une est concave vers le
+  // vide et l'autre convexe — ce n'est pas un enclos.
+  const inner = arcRoad(60, 0, Math.PI / 2, 3);
+  const outer = arcRoad(68, 0, Math.PI / 2, 3);
+  const gaps = collectRoadGaps([inner, outer], { roadIndex: new RoadIndex([inner, outer]) });
+  assert.equal(gaps.length, 1, 'un vide, et il se comble');
+});
+
+test('ce que le sol porte déjà n’est pas un vide', () => {
+  const north = straightRoad(0, 2.5);
+  const south = straightRoad(7, 2.5);
+  const index = new RoadIndex([north, south]);
+
+  // Un trottoir qui occupe l'entre-deux : il n'y a plus rien à peindre.
+  assert.equal(
+    collectRoadGaps([north, south], { roadIndex: index, taken: () => true }).length,
+    0
+  );
+  // Et un revêtement qui n'occupe que la moitié du vide le referme aussi :
+  // deux revêtements au même endroit ne valent pas mieux qu'aucun.
+  const halfway = (x, z) => z > 3.4 && z < 4.6;
+  assert.equal(collectRoadGaps([north, south], { roadIndex: index, taken: halfway }).length, 0);
+});
+
+test('les hachures sont le maillage, et elles sont ancrées au sol', () => {
+  const north = straightRoad(0, 2.5, 11);
+  const south = straightRoad(7, 2.5, 13);
+  const [gap] = collectRoadGaps([north, south], { roadIndex: new RoadIndex([north, south]) });
+
+  const buffer = createProfileBuffer();
+  const paint = [1, 1, 1];
+  const ground = [0, 0, 0];
+  const bands = appendZebra(buffer, gap, { paint, ground, pitch: ZEBRA_PITCH_M, lift: 0.1 });
+
+  assert.ok(bands > 100, `une bande par pas de hachure, vu ${bands}`);
+  assert.equal(buffer.positions.length / 3, bands * 4, 'quatre sommets par bande');
+  assert.equal(buffer.indices.length, bands * 6, 'deux triangles par bande');
+
+  // Chaque bande est d'une seule couleur, et les deux couleurs alternent.
+  const kinds = new Set();
+  for (let b = 0; b < bands; b++) {
+    const first = buffer.colors[b * 12];
+    for (let v = 0; v < 4; v++) assert.equal(buffer.colors[b * 12 + v * 3], first);
+    kinds.add(first);
+  }
+  assert.equal(kinds.size, 2, 'peinte et revêtement, alternées');
+
+  // La nappe est tendue entre les deux plate-formes, pas posée à plat : c'est
+  // ce qui évite une marche ou une fente sur l'une des deux rives.
+  const heights = new Set();
+  for (let i = 1; i < buffer.positions.length; i += 3) heights.add(Math.round(buffer.positions[i] * 100));
+  assert.ok(heights.has(1110) && heights.has(1310), 'les deux cotes s’y retrouvent');
+
+  // Le rang d'une bande est tiré de l'abscisse curviligne de la chaussée : la
+  // même portion décalée d'un pas entier tombe sur les mêmes couleurs.
+  const shifted = createProfileBuffer();
+  appendZebra(shifted, gap, { paint, ground, pitch: ZEBRA_PITCH_M, startDistance: ZEBRA_PITCH_M * 4 });
+  assert.deepEqual([...shifted.colors].slice(0, 12), [...buffer.colors].slice(0, 12));
+  const odd = createProfileBuffer();
+  appendZebra(odd, gap, { paint, ground, pitch: ZEBRA_PITCH_M, startDistance: ZEBRA_PITCH_M });
+  assert.notDeepEqual([...odd.colors].slice(0, 3), [...buffer.colors].slice(0, 3));
 });
 
 // --- Les attributs que three déclare déjà -----------------------------------

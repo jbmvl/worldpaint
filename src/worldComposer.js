@@ -16,7 +16,9 @@
  * (indépendante, suit le terrain sans l'entailler, voir `railwayLayer.js`) →
  * bâti (lit l'emprise, qui rabote ce qu'une empreinte pose sur la voie ;
  * publie maisons et empreintes) → voirie (après chaussées et bâti, un
- * trottoir a besoin des deux ; publie sa bande revêtue) → jardins (tirent clôtures et buissons des
+ * trottoir a besoin des deux ; borde aussi les coins de rue des carrefours et
+ * comble les vides de faisceau, dans cet ordre — là où un trottoir tient, il
+ * vaut mieux qu'un zébra ; publie sa bande revêtue) → jardins (tirent clôtures et buissons des
  * maisons, lisent emprise et bande revêtue) → mobilier (tronçons + index des
  * chaussées, compte de bâtiments, emprise ferroviaire, lieux nommés) →
  * arbres (après la carte de classes et les chaussées : une tuile semée hors de

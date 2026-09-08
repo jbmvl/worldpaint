@@ -955,6 +955,18 @@ export const ROAD_SURFACES = {
 /** Terre claire de l'accotement. */
 export const ROAD_SHOULDER_COLOR = '#8c8168';
 
+/**
+ * Blanc de marquage.
+ *
+ * Il existe pour l'instant deux fois : ici, pour le marquage **en géométrie**
+ * (les hachures de comblement entre deux voies qui se longent), et dans
+ * `createRoadCanvas`, qui peint encore ses lignes de rive et son axe dans la
+ * texture des rubans, à deux nuances près et sous une opacité. Les deux se
+ * rejoindront quand tout le marquage sera de la géométrie découpée par les
+ * carrefours ; en attendant, changer celui-ci ne touche que les hachures.
+ */
+export const ROAD_MARKING_COLOR = '#e9e7de';
+
 // --- Les ouvrages d'art ---------------------------------------------------------
 /**
  * Les familles d'ouvrage : de quoi sont faits les ponts et les têtes de tunnel
@@ -1383,7 +1395,12 @@ export const defaultTheme = Object.freeze({
     emoji: SHOPFRONT_EMOJI,
     emojiDefault: SHOPFRONT_EMOJI_DEFAULT,
   },
-  roads: { profiles: ROAD_PROFILES, surfaces: ROAD_SURFACES, shoulderColor: ROAD_SHOULDER_COLOR },
+  roads: {
+    profiles: ROAD_PROFILES,
+    surfaces: ROAD_SURFACES,
+    shoulderColor: ROAD_SHOULDER_COLOR,
+    markingColor: ROAD_MARKING_COLOR,
+  },
   works: WORKS_STYLES,
   streets: STREET_LOOK,
   water: { waterways: WATERWAY_CLASSES, riparianBufferM: RIPARIAN_BUFFER_M },
