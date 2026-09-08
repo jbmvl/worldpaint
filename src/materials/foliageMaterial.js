@@ -14,6 +14,21 @@
  *   de la hauteur pour garder le pied planté). L'amplitude construite
  *   (`windStrength`) est le temps ordinaire ; la météo la multiplie
  *   (`setFoliageWind`) sans l'écraser.
+ *
+ * ## Le vent se mesure sur la hauteur, pas sur la largeur
+ *
+ * Le déplacement est écrit dans l'espace du quadrilatère unité, puis mis à
+ * l'échelle par la matrice d'instance — largeur en x et z, hauteur en y. Écrit
+ * tel quel, il valait donc `windStrength` × la **largeur** du panneau, ce qui
+ * n'a pas de sens : deux panneaux de la même plante, l'un à sa taille réelle et
+ * l'autre élargi par le niveau de détail (`coverBands`), n'ondulaient pas de la
+ * même façon — la masse lointaine balayait plusieurs mètres. Le shader corrige
+ * donc par le rapport hauteur/largeur de l'instance, et `windStrength`
+ * s'exprime désormais en part de la **hauteur** de la plante.
+ *
+ * Les couches qui l'appellent ont vu leur `windStrength` multiplié par leur
+ * élancement de près, pour que le premier plan ne change pas : c'est le
+ * lointain, et lui seul, qui se calme.
  */
 
 /** Nom de l'attribut d'instance portant le décalage d'atlas. */
@@ -72,7 +87,8 @@ function foliageLightsChunk(THREE) {
  * @param {boolean} [options.atlas] Active le décalage UV par instance.
  * @param {number} [options.tiles]  Nombre de cases par côté de l'atlas.
  * @param {boolean} [options.wind]  Anime le sommet des panneaux.
- * @param {number} [options.windStrength] Amplitude, en part de la largeur.
+ * @param {number} [options.windStrength] Amplitude, en part de la **hauteur**
+ *        du panneau (voir l'en-tête : la largeur variait avec le niveau de détail).
  * @param {boolean} [options.coverage] Compense l'érosion de l'alpha à distance
  *        (voir plus haut). Éteint par défaut : les arbres n'y gagnent rien et
  *        leur programme reste inchangé au bit près.
@@ -133,13 +149,22 @@ export function createFoliageMaterial({
              // Phase tirée de la position de l'instance : deux touffes voisines ne penchent pas ensemble.
              #ifdef USE_INSTANCING
                vec2 anchor = vec2(instanceMatrix[3][0], instanceMatrix[3][2]);
+               // Rapport hauteur/largeur du panneau. Le déplacement est écrit
+               // dans l'espace du quadrilatère unité, où il sera multiplié par
+               // la **largeur** de l'instance : sans ce rapport, l'amplitude
+               // réelle du vent est celle de la largeur du panneau, pas celle
+               // de la plante. Une masse lointaine, élargie par le niveau de
+               // détail, ondulait alors de plusieurs mètres là où la même
+               // plante, de près, bougeait de dix centimètres.
+               float slim = length(instanceMatrix[1].xyz) / max(length(instanceMatrix[0].xyz), 1e-4);
              #else
                vec2 anchor = vec2(0.0);
+               float slim = 1.0;
              #endif
              float phase = anchor.x * 0.42 + anchor.y * 0.31;
              float sway = sin(uWindTime * 1.7 + phase) * 0.62 + sin(uWindTime * 3.1 + phase * 1.9) * 0.38;
              // En carré de la hauteur : le pied ne bouge pas, la pointe fouette.
-             float bend = transformed.y * transformed.y * uWindStrength;
+             float bend = transformed.y * transformed.y * uWindStrength * slim;
              transformed.x += sway * bend;
              transformed.z += sway * bend * 0.45;
            }`

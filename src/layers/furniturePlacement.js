@@ -296,17 +296,22 @@ export function boundaryFurnitureFor(
 
 /**
  * L'assolement par défaut : celui de la France, et le repli de tout climat
- * inconnu. Parts cumulées dans l'ordre — ce sont exactement les seuils qui
- * étaient écrits en dur dans `cropFor`.
+ * inconnu. Parts cumulées dans l'ordre.
+ *
+ * C'étaient les seuils écrits en dur dans `cropFor` ; le colza y a pris sa
+ * part depuis, parce qu'une plaine céréalière française en porte autant que de
+ * tournesol. La lavande, elle, n'y est pas : c'est une culture de pays, pas un
+ * repli.
  */
 export const DEFAULT_CROP_MIX = [
-  ['wheat', 0.34],
-  ['plough', 0.18],
-  ['maize', 0.16],
+  ['wheat', 0.3],
+  ['plough', 0.16],
+  ['maize', 0.14],
+  ['rapeseed', 0.12],
   ['sunflower', 0.1],
   ['vineyard', 0.08],
   ['orchard', 0.06],
-  ['plough', 0.08],
+  ['plough', 0.04],
 ];
 
 /**
@@ -315,22 +320,26 @@ export const DEFAULT_CROP_MIX = [
  * la proportion exacte de blé dans un canton, non.
  *
  * Les cultures disponibles sont celles de `CROP_KINDS` et rien d'autre : leur
- * ordre est un encodage gravé dans une image, donc ajouter une lavande demande
- * un atlas, pas une ligne ici. `orchard` porte l'olivier comme le pommier.
+ * ordre est un encodage gravé dans une image, donc en ajouter une demande une
+ * case d'atlas, un albédo lointain et une silhouette, pas une ligne ici.
+ * `orchard` porte l'olivier comme le pommier.
  *
  * Une famille absente retombe sur l'assolement par défaut.
  */
 export const CROP_MIXES = {
-  oceanic: [['wheat', 0.34], ['plough', 0.22], ['maize', 0.24], ['orchard', 0.1], ['sunflower', 0.06], ['vineyard', 0.04]],
+  oceanic: [['wheat', 0.3], ['plough', 0.18], ['maize', 0.22], ['rapeseed', 0.12], ['orchard', 0.09], ['sunflower', 0.05], ['vineyard', 0.04]],
   // Les hautes terres atlantiques : de l'orge, du fourrage, des prés retournés.
-  oceanicUpland: [['plough', 0.55], ['wheat', 0.3], ['maize', 0.1], ['orchard', 0.05]],
-  continental: [['wheat', 0.42], ['plough', 0.22], ['maize', 0.18], ['sunflower', 0.1], ['orchard', 0.06], ['vineyard', 0.02]],
-  // Au nord, ni maïs ni tournesol : la saison est trop courte.
-  boreal: [['plough', 0.55], ['wheat', 0.4], ['orchard', 0.05]],
-  mediterranean: [['vineyard', 0.26], ['orchard', 0.26], ['wheat', 0.2], ['plough', 0.18], ['sunflower', 0.1]],
-  mediterraneanCool: [['wheat', 0.26], ['vineyard', 0.22], ['plough', 0.2], ['orchard', 0.18], ['sunflower', 0.14]],
-  mediterraneanMontane: [['plough', 0.4], ['wheat', 0.25], ['orchard', 0.25], ['vineyard', 0.1]],
-  semiArid: [['plough', 0.4], ['wheat', 0.25], ['orchard', 0.25], ['vineyard', 0.1]],
+  oceanicUpland: [['plough', 0.5], ['wheat', 0.27], ['rapeseed', 0.1], ['maize', 0.08], ['orchard', 0.05]],
+  continental: [['wheat', 0.38], ['plough', 0.2], ['maize', 0.16], ['rapeseed', 0.1], ['sunflower', 0.08], ['orchard', 0.06], ['vineyard', 0.02]],
+  // Au nord, ni maïs ni tournesol : la saison est trop courte. Le colza, si —
+  // c'est même la culture qui monte le plus haut en latitude.
+  boreal: [['plough', 0.52], ['wheat', 0.33], ['rapeseed', 0.1], ['orchard', 0.05]],
+  mediterranean: [['vineyard', 0.24], ['orchard', 0.24], ['wheat', 0.17], ['plough', 0.16], ['lavender', 0.1], ['sunflower', 0.09]],
+  mediterraneanCool: [['wheat', 0.24], ['vineyard', 0.2], ['plough', 0.18], ['orchard', 0.16], ['sunflower', 0.13], ['lavender', 0.09]],
+  // Les plateaux secs de l'arrière-pays : c'est là que la lavande est chez
+  // elle, plus que sur le littoral.
+  mediterraneanMontane: [['plough', 0.36], ['wheat', 0.22], ['orchard', 0.22], ['lavender', 0.12], ['vineyard', 0.08]],
+  semiArid: [['plough', 0.38], ['wheat', 0.22], ['orchard', 0.22], ['lavender', 0.1], ['vineyard', 0.08]],
   // En désert, une parcelle cultivée est irriguée : du verger ou de la terre
   // nue, jamais un champ de blé à perte de vue.
   arid: [['plough', 0.7], ['orchard', 0.2], ['wheat', 0.1]],
@@ -369,7 +378,7 @@ export function pickShare(mix, variant) {
  * @param {Object} properties
  * @param {number} variant Tirage dans [0, 1[ attaché à la parcelle.
  * @param {string|null} [climate] Famille climatique (`core/climate.js`).
- * @returns {'wheat'|'maize'|'sunflower'|'vineyard'|'orchard'|'plough'|null}
+ * @returns {'wheat'|'maize'|'sunflower'|'vineyard'|'orchard'|'plough'|'lavender'|'rapeseed'|null}
  */
 export function cropFor(properties = {}, variant = 0, climate = null) {
   const klass = properties.class;
@@ -391,10 +400,25 @@ export const ROW_CROPS = new Set(['vineyard', 'orchard']);
  * le shader de terrain et `cropLayer` — l'ordre est gravé, le changer repeint
  * des champs d'une autre culture.
  */
-export const CROP_KINDS = ['wheat', 'maize', 'sunflower', 'plough', 'vineyard', 'orchard'];
+export const CROP_KINDS = [
+  'wheat',
+  'maize',
+  'sunflower',
+  'plough',
+  'vineyard',
+  'orchard',
+  'lavender',
+  'rapeseed',
+];
 
-/** Pas entre deux identifiants dans le canal rouge. */
-export const CROP_ID_STEP = 40;
+/**
+ * Pas entre deux identifiants dans le canal rouge.
+ *
+ * Il était de 40, ce qui plafonnait à six cultures (7 × 40 dépasse 255). Huit
+ * cultures tiennent à 28, avec ± 14 de tolérance à l'arrondi de la texture —
+ * largement de quoi encaisser le passage par un canevas 8 bits.
+ */
+export const CROP_ID_STEP = 28;
 
 /** Identifiant d'une culture dans la carte, ou 0. Fonction pure. */
 export function cropId(crop) {

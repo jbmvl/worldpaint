@@ -546,8 +546,12 @@ export class VegetationLayer {
       atlas: true,
       tiles: TREE_ATLAS_COLS,
       wind: true, // dix fois plus discret que dans l'herbe
-      windStrength: 0.05,
-      cacheKey: 'foliage-atlas-wind-v3',
+      // 0,05 × `TREE_ASPECT` : l'amplitude se mesure sur la hauteur de l'arbre
+      // et non sur la largeur de son panneau (voir `foliageMaterial`). Un arbre
+      // moyen bouge autant qu'avant ; une colonne étroite penche un peu plus,
+      // une masse de sous-étage élargie beaucoup moins.
+      windStrength: 0.05 * TREE_ASPECT,
+      cacheKey: 'foliage-atlas-wind-v4',
     });
     this.depthMaterial = createFoliageDepthMaterial({
       THREE,

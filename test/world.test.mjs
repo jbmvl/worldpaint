@@ -80,6 +80,7 @@ import {
   pickShare,
   CROP_MIXES,
   DEFAULT_CROP_MIX,
+  ROW_CROPS,
   rockKindFor,
   signKindFor,
   pathCurvature,
@@ -270,6 +271,7 @@ import {
   CROP_FADE_FROM,
   CROP_HEIGHT_FADE_FLOOR,
   CROP_COUNT,
+  CROP_MASS_SPREAD,
 } from '../src/layers/cropLayer.js';
 import { coverBandRing, coverBandFade, coverMassDensity } from '../src/layers/coverBands.js';
 import { createFoliageMaterial } from '../src/materials/foliageMaterial.js';
@@ -284,6 +286,7 @@ import {
   CROP_ATLAS_ROWS,
   CROP_ATLAS_OFFSETS,
   CROP_VARIANTS,
+  CROP_MASS_ASPECT,
 } from '../src/materials/proceduralTextures.js';
 import {
   townPaletteAt,
@@ -3125,13 +3128,16 @@ test('l’assolement suit le climat, et la donnée passe avant lui', () => {
   assert.equal(cropFor({ class: 'farmland', subclass: 'vineyard' }, 0.1, 'boreal'), 'vineyard');
 });
 
-test('sans climat, l’assolement est exactement celui d’avant', () => {
-  // Les seuils étaient écrits en dur ; ils sont maintenant une table. La
-  // promesse est que rien ne bouge tant qu’aucun climat n’est connu.
+test('l’assolement par défaut est celui d’une campagne française', () => {
+  // Les seuils étaient écrits en dur ; ils sont maintenant une table. Le blé
+  // domine, le labour vient ensuite, et le colza tient sa part — mais pas la
+  // lavande, qui est une culture de pays et non un repli.
   const parts = new Map();
   for (const [crop, share] of DEFAULT_CROP_MIX) parts.set(crop, (parts.get(crop) || 0) + share);
-  assert.equal(parts.get('wheat'), 0.34);
-  close(parts.get('plough'), 0.26, 1e-9, 'labour');
+  assert.equal(parts.get('wheat'), 0.3);
+  close(parts.get('plough'), 0.2, 1e-9, 'labour');
+  assert.ok(parts.get('rapeseed') > 0, 'le colza est semé sans climat connu');
+  assert.equal(parts.get('lavender'), undefined, 'la lavande demande un pays');
   close([...parts.values()].reduce((a, b) => a + b, 0), 1, 1e-9, 'les parts font un tout');
 
   // Chaque assolement de climat est complet : une somme sous un rend la
@@ -6904,6 +6910,62 @@ test('l’identifiant de culture fait l’aller-retour par le canal rouge', () =
   }
 });
 
+test('une masse de culture est peinte pour l’élancement auquel elle sera vue', () => {
+  // Le défaut que cela corrige : la case d'atlas est carrée, le panneau qui la
+  // porte ne l'est pas. À 4,5 d'élargissement, un capitule de tournesol
+  // s'étalait quatre fois plus large que haut — le champ lointain devenait une
+  // frise de galettes. La masse est donc peinte resserrée d'autant, et pour que
+  // ce soit possible avec **une** case, les deux bandes de masse partagent leur
+  // élargissement.
+  const massBands = CROP_BANDS.filter((band) => band.spread !== 1);
+  assert.ok(massBands.length >= 2, 'il y a bien plusieurs bandes de masse');
+  for (const band of massBands) {
+    assert.equal(band.spread, CROP_MASS_SPREAD, 'les bandes de masse partagent leur élargissement');
+  }
+
+  // Et la compensation suit ce que le champ vaudra réellement à l'écran : la
+  // largeur que `cropLayer` donne au panneau, divisée par sa hauteur.
+  for (const [nom, look] of Object.entries(CROP_LOOK)) {
+    const attendu = look.spread * 4 * CROP_MASS_SPREAD;
+    const ecrit = CROP_MASS_ASPECT[look.atlas];
+    assert.ok(ecrit, `${nom} : la masse ${look.atlas} n’a pas d’élancement`);
+    assert.ok(
+      Math.abs(ecrit - attendu) < 0.2,
+      `${nom} : masse peinte pour ${ecrit}, vue à ${attendu.toFixed(2)}`
+    );
+  }
+});
+
+test('la lavande pousse dans le Midi, le colza dans le Nord', () => {
+  // C'est ce que les climats étaient censés apporter, et ce qui manquait : les
+  // assolements se distinguaient par des **parts** de quatre cultures
+  // partout identiques. Un pays se reconnaît d'abord à ce qu'il cultive.
+  const porte = (famille, culture) =>
+    (CROP_MIXES[famille] || []).some(([crop]) => crop === culture);
+
+  for (const famille of ['mediterranean', 'mediterraneanCool', 'mediterraneanMontane', 'semiArid']) {
+    assert.ok(porte(famille, 'lavender'), `${famille} porte de la lavande`);
+  }
+  for (const famille of ['oceanic', 'oceanicUpland', 'continental', 'boreal']) {
+    assert.ok(porte(famille, 'rapeseed'), `${famille} porte du colza`);
+    assert.ok(!porte(famille, 'lavender'), `${famille} ne porte pas de lavande`);
+  }
+  // Et l'inverse : une lavande de Laponie ou un colza de désert se remarquent.
+  assert.ok(!porte('boreal', 'lavender'));
+  assert.ok(!porte('arid', 'rapeseed'));
+
+  // Une culture d'assolement est soit semée en touffes, soit balayée en rangs :
+  // rien ne doit être tiré qui ne sache se dessiner.
+  for (const [famille, mix] of Object.entries(CROP_MIXES)) {
+    for (const [crop] of mix) {
+      assert.ok(
+        CROP_LOOK[crop] || ROW_CROPS.has(crop),
+        `${famille} : ${crop} n’est ni semé ni balayé`
+      );
+    }
+  }
+});
+
 test('toute culture semée en touffes est une culture connue', () => {
   // `cropLayer` ne connaît que les cultures qu'il sait dessiner ; vigne et
   // verger passent par les rangs du mobilier. Mais l'inverse doit tenir : rien
@@ -8392,6 +8454,35 @@ test('la compensation d’alpha atteint sa cible, et n’atteint que les couvert
     !/vCoverDist/.test(arbres.vertexShader + arbres.fragmentShader),
     'sans `coverage`, aucune trace de la compensation'
   );
+});
+
+test('le vent se mesure sur la hauteur de la plante, pas sur la largeur du panneau', () => {
+  // Le déplacement est écrit dans le quadrilatère unité, puis mis à l'échelle
+  // par la matrice d'instance : sans correction, son amplitude réelle était
+  // celle de la **largeur** du panneau. Comme le niveau de détail élargit les
+  // masses lointaines d'un facteur trois, un champ de tournesols ondulait de
+  // plusieurs mètres à cent mètres et de dix centimètres à dix — l'inverse de
+  // ce qu'on voit.
+  const source = readFileSync('src/materials/foliageMaterial.js', 'utf8');
+  assert.match(
+    source,
+    /float slim = length\(instanceMatrix\[1\]\.xyz\) \/ max\(length\(instanceMatrix\[0\]\.xyz\), 1e-4\);/
+  );
+  assert.match(source, /float bend = transformed\.y \* transformed\.y \* uWindStrength \* slim;/);
+  // Sans instanciation, il n'y a pas de matrice à lire : le rapport vaut un.
+  assert.match(source, /float slim = 1\.0;/);
+
+  // Les couches qui l'appellent ont vu leur amplitude ramenée à leur élancement
+  // de près : c'est ce qui garde le premier plan tel quel.
+  assert.match(
+    readFileSync('src/layers/groundCover.js', 'utf8'),
+    /windStrength: 0\.35 \* theme\.grass\.aspect,/
+  );
+  assert.match(
+    readFileSync('src/layers/vegetationLayer.js', 'utf8'),
+    /windStrength: 0\.05 \* TREE_ASPECT,/
+  );
+  assert.match(readFileSync('src/layers/cropLayer.js', 'utf8'), /windStrength: CROP_WIND_STRENGTH,/);
 });
 
 test('le contour de l’eau se fond, sans que les identifiants cessent d’être lus au plus proche', () => {

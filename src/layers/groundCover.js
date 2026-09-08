@@ -511,12 +511,18 @@ export class GroundCover {
       THREE,
       map: this.texture,
       wind: true,
+      // 0,35 × l'élancement de la touffe : l'amplitude s'exprime maintenant
+      // en part de la hauteur et non de la largeur du panneau (voir
+      // `foliageMaterial`). Le produit est le même de près — ce qui change,
+      // c'est que les masses élargies des bandes lointaines cessent de
+      // balayer deux mètres au lieu de vingt centimètres.
+      windStrength: 0.35 * theme.grass.aspect,
       atlas: true,
       tiles: GRASS_ATLAS_COLS,
       coverage: true,
       coverageRange: GRASS_COVERAGE_RANGE,
       coverageGain: GRASS_COVERAGE_GAIN,
-      cacheKey: 'foliage-grass-cover-v3',
+      cacheKey: 'foliage-grass-cover-v4',
     });
 
     this.mesh = new THREE.InstancedMesh(this.geometry, this.material, count);

@@ -106,6 +106,12 @@ export const TERRAIN_LOOK = {
     plough: [0.431, 0.331, 0.08],
     vineyard: [0.168, 0.246, 0.069],
     orchard: [0.153, 0.219, 0.061],
+    // Un champ de lavande vu de loin n'est pas violet vif : c'est un gris
+    // bleuté que le feuillage tire vers le vert entre les rangs.
+    lavender: [0.132, 0.118, 0.176],
+    // Le colza en fleur, en revanche, est la tache la plus saturée d'un
+    // paysage de printemps — plus jaune encore qu'un blé mûr.
+    rapeseed: [0.604, 0.522, 0.061],
   },
   /**
    * Albédo par **couverture**, dans l'ordre de `COVER_KINDS`.
@@ -461,6 +467,13 @@ export const CROP_LOOK = {
   maize: { atlas: 'maize', height: 2.4, spread: 0.15, density: 0.22, tint: [0.82, 1, 0.62] },
   sunflower: { atlas: 'sunflower', height: 1.7, spread: 0.2, density: 0.3, tint: [0.96, 0.98, 0.6] },
   plough: { atlas: 'stubble', height: 0.3, spread: 0.22, density: 0.72, tint: [1, 0.94, 0.74] },
+  // La lavande est un buisson bas et large, pas une tige : d'où un `spread`
+  // presque égal à sa hauteur. La teinte laisse passer le violet des épis, que
+  // le lavage de sol méditerranéen (jaunissant) écraserait sinon.
+  lavender: { atlas: 'lavender', height: 0.6, spread: 0.28, density: 0.4, tint: [0.94, 0.9, 1.06] },
+  // Le colza : une masse serrée et haute, la seule culture dont la fleur, et
+  // non le feuillage, fait la couleur du champ.
+  rapeseed: { atlas: 'rapeseed', height: 1.3, spread: 0.24, density: 0.85, tint: [1.02, 0.98, 0.56] },
 };
 
 // --- Le sol d'un pays ---------------------------------------------------------

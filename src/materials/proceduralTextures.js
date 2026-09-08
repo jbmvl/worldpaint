@@ -732,13 +732,18 @@ export function atlasOffsets(cols, rows) {
  * plusieurs fois côte à côte plutôt qu'un second jeu à garder d'accord avec
  * le premier ; les sous-touffes se recouvrent largement pour un contour plein.
  */
-function drawMass(ctx, size, random, paint, passes = 5) {
-  for (let i = 0; i < passes; i++) {
-    const spreadX = 0.52 + random() * 0.42;
+function drawMass(ctx, size, random, paint, passes = 5, aspect = 1) {
+  // La case est carrée, le panneau ne l'est pas : à `aspect` = 3, il sera trois
+  // fois plus large que haut, et tout ce qui est peint ici s'y étalera d'autant.
+  // On compense en peignant `aspect` fois plus de sous-touffes, chacune
+  // resserrée d'autant : la plante retrouve ses proportions une fois étirée.
+  const columns = Math.max(1, Math.round(passes * aspect));
+  for (let i = 0; i < columns; i++) {
+    const spreadX = (0.52 + random() * 0.42) / aspect;
     const spreadY = 0.72 + random() * 0.34;
     // Les sous-touffes sont réparties sur la largeur, avec un flottement : un
     // pas régulier se lirait comme une clôture.
-    const center = ((i + 0.5) / passes) * size + (random() - 0.5) * size * 0.14;
+    const center = ((i + 0.5) / columns) * size + (random() - 0.5) * (size * 0.14) / aspect;
     ctx.save();
     // La base reste posée sur y = size après l'échelle, sinon la masse flotte.
     ctx.translate(center - (size * spreadX) / 2, size * (1 - spreadY));
@@ -866,28 +871,37 @@ export function createGrassAtlasCanvas(cell = 128, seed = 3313) {
 }
 
 /**
- * Atlas des cultures : blé, maïs, tournesol, chaume. Des touffes comme
- * l'herbe (panneaux croisés, même matériau, même vent), à l'échelle de la
- * plante — `cropLayer` applique la hauteur, ici on ne dessine que la silhouette.
+ * Atlas des cultures : blé, maïs, tournesol, chaume, lavande, colza. Des
+ * touffes comme l'herbe (panneaux croisés, même matériau, même vent), à
+ * l'échelle de la plante — `cropLayer` applique la hauteur, ici on ne dessine
+ * que la silhouette.
  */
-export const CROP_ATLAS_COLS = 3;
-export const CROP_ATLAS_ROWS = 3;
+export const CROP_ATLAS_COLS = 4;
+export const CROP_ATLAS_ROWS = 4;
 
 /**
- * Les quatre cultures dessinées, puis leurs masses agrégées (`drawMass`,
- * `cropLayer`), pour rester identifiables à cent mètres. Huit cases pour une
- * grille 3×3 (la neuvième reste vide) ; le décalage d'atlas se lit par
- * `CROP_VARIANTS.indexOf`.
+ * Les six cultures dessinées, puis leurs masses agrégées (`drawMass`,
+ * `cropLayer`), pour rester identifiables à cent mètres. Douze cases pour une
+ * grille 4×4 (les quatre dernières restent vides) ; le décalage d'atlas se lit
+ * par `CROP_VARIANTS.indexOf`.
+ *
+ * La lavande et le colza sont arrivés avec les climats : sans eux, une plaine
+ * de Beauce et un plateau de Sault portaient exactement les mêmes champs, et
+ * l'assolement par pays (`CROP_MIXES`) ne se voyait pas.
  */
 export const CROP_VARIANTS = [
   'wheat',
   'maize',
   'sunflower',
   'stubble',
+  'lavender',
+  'rapeseed',
   'wheatMass',
   'maizeMass',
   'sunflowerMass',
   'stubbleMass',
+  'lavenderMass',
+  'rapeseedMass',
 ];
 
 export const CROP_ATLAS_OFFSETS = atlasOffsets(CROP_ATLAS_COLS, CROP_ATLAS_ROWS);
@@ -993,13 +1007,114 @@ function drawStubble(ctx, size, random) {
   }
 }
 
-const CROP_PAINTERS = { wheat: drawWheat, maize: drawMaize, sunflower: drawSunflower, stubble: drawStubble };
+/**
+ * Lavande : des touffes en dôme, gris-vert, d'où partent des hampes fines. La
+ * couleur du champ tient tout entière aux épis — la touffe seule est un buis.
+ */
+function drawLavender(ctx, size, random) {
+  for (let i = 0; i < 5; i++) {
+    const baseX = size * (0.12 + i * 0.19 + random() * 0.05);
+    const bush = size * (0.09 + random() * 0.05);
+
+    ctx.fillStyle = `rgb(${100 + random() * 22 | 0}, ${116 + random() * 20 | 0}, ${88 + random() * 18 | 0})`;
+    ctx.beginPath();
+    ctx.ellipse(baseX, size * 0.88, bush, size * 0.15, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    for (let s = 0; s < 7; s++) {
+      const x = baseX + (random() - 0.5) * bush * 1.7;
+      const lean = (random() - 0.5) * size * 0.09;
+      const tip = size * (0.16 + random() * 0.22);
+
+      ctx.strokeStyle = `rgb(${116 + random() * 22 | 0}, ${130 + random() * 20 | 0}, ${92 + random() * 18 | 0})`;
+      ctx.lineWidth = Math.max(1, size * 0.006);
+      ctx.beginPath();
+      ctx.moveTo(x, size * 0.82);
+      ctx.quadraticCurveTo(x + lean * 0.5, size * 0.5, x + lean, tip + size * 0.12);
+      ctx.stroke();
+
+      ctx.strokeStyle = `rgb(${112 + random() * 34 | 0}, ${92 + random() * 28 | 0}, ${162 + random() * 40 | 0})`;
+      ctx.lineWidth = Math.max(1, size * 0.017);
+      ctx.beginPath();
+      ctx.moveTo(x + lean, tip + size * 0.13);
+      ctx.lineTo(x + lean, tip);
+      ctx.stroke();
+    }
+  }
+}
+
+/** Colza : des tiges serrées, chacune coiffée d'une grappe jaune. */
+function drawRapeseed(ctx, size, random) {
+  for (let i = 0; i < 16; i++) {
+    const baseX = size * (0.06 + random() * 0.88);
+    const height = size * (0.64 + random() * 0.32);
+    const lean = size * (random() - 0.5) * 0.12;
+    const tipX = baseX + lean;
+    const tipY = size - height;
+
+    ctx.strokeStyle = `rgb(${88 + random() * 28 | 0}, ${118 + random() * 28 | 0}, ${56 + random() * 22 | 0})`;
+    ctx.lineWidth = Math.max(1, size * 0.01);
+    ctx.beginPath();
+    ctx.moveTo(baseX, size);
+    ctx.quadraticCurveTo(baseX + lean * 0.4, size - height * 0.6, tipX, tipY);
+    ctx.stroke();
+
+    // La grappe : quelques fleurs serrées au sommet, et c'est tout ce qu'on voit
+    // d'un champ de colza en avril.
+    for (let f = 0; f < 5; f++) {
+      ctx.fillStyle = `rgb(${228 + random() * 26 | 0}, ${202 + random() * 26 | 0}, ${44 + random() * 38 | 0})`;
+      ctx.beginPath();
+      ctx.arc(
+        tipX + (random() - 0.5) * size * 0.055,
+        tipY + random() * size * 0.09,
+        size * 0.018,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+    }
+  }
+}
+
+const CROP_PAINTERS = {
+  wheat: drawWheat,
+  maize: drawMaize,
+  sunflower: drawSunflower,
+  stubble: drawStubble,
+  lavender: drawLavender,
+  rapeseed: drawRapeseed,
+};
 
 /** Nombre de sous-touffes d'une masse, par culture (une case ne contient pas le même nombre de plantes selon la culture). */
-const CROP_MASS_PASSES = { wheat: 3, maize: 6, sunflower: 6, stubble: 3 };
+const CROP_MASS_PASSES = { wheat: 3, maize: 6, sunflower: 6, stubble: 3, lavender: 4, rapeseed: 3 };
 
-/** Atlas 3 × 3 des cultures et de leurs masses, fond transparent. */
-export function createCropAtlasCanvas(cell = 128, seed = 6607) {
+/**
+ * Élancement du panneau sur lequel chaque masse sera plaquée : la largeur que
+ * `cropLayer` lui donne divisée par sa hauteur, soit
+ * `CROP_LOOK[culture].spread × 4 × CROP_MASS_SPREAD`. La masse est peinte
+ * resserrée d'autant, pour ressortir droite une fois étirée — sans quoi un
+ * capitule de tournesol est une galette et un épi de blé une barre.
+ *
+ * Ces nombres suivent donc `CROP_LOOK` et `CROP_MASS_SPREAD` : changer l'un
+ * sans l'autre remet l'écrasement.
+ */
+export const CROP_MASS_ASPECT = {
+  wheat: 2.8,
+  maize: 1.9,
+  sunflower: 2.6,
+  stubble: 2.8,
+  lavender: 3.6,
+  rapeseed: 3.1,
+};
+
+/**
+ * Atlas 3 × 3 des cultures et de leurs masses, fond transparent.
+ *
+ * La case est passée de 128 à 256 pixels : une masse resserrée contient deux à
+ * trois fois plus de plantes qu'avant, et à 128 pixels un capitule de tournesol
+ * n'y faisait plus que deux pixels de large.
+ */
+export function createCropAtlasCanvas(cell = 256, seed = 6607) {
   const canvas = createCanvas(cell * CROP_ATLAS_COLS, cell * CROP_ATLAS_ROWS);
   const ctx = canvas.getContext('2d');
   ctx.lineCap = 'round';
@@ -1012,7 +1127,7 @@ export function createCropAtlasCanvas(cell = 128, seed = 6607) {
     ctx.translate(col * cell, row * cell);
     const random = makeRandom(seed + index * 1289);
     if (variant.endsWith('Mass')) {
-      drawMass(ctx, cell, random, CROP_PAINTERS[base], CROP_MASS_PASSES[base]);
+      drawMass(ctx, cell, random, CROP_PAINTERS[base], CROP_MASS_PASSES[base], CROP_MASS_ASPECT[base]);
     } else {
       CROP_PAINTERS[base](ctx, cell, random);
     }
