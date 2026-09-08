@@ -15,6 +15,19 @@
  * chaînes, et `roadJunctions` en fait des **surfaces**. Les redécouvrir après
  * coup en cherchant où deux rubans se touchent en inventerait d'autres.
  *
+ * Encore faut-il que le graphe porte le nœud. La tuile n'est pas le relevé :
+ * elle simplifie les tracés (le sommet d'un carrefour, aligné avec ses
+ * voisins, y est redondant et disparaît) et elle quantifie les coordonnées
+ * tuile par tuile (le même nœud livré par deux tuiles voisines se retrouve à un
+ * mètre de lui-même). Deux routes connectées dans la donnée d'origine y
+ * arrivent donc régulièrement sans partager de sommet, et le carrefour est
+ * perdu — pas rogné, pas mal dessiné : absent. `graftLooseNodes` le rétablit
+ * avant tout le reste, en amenant sur la chaussée le sommet qui la borde et en
+ * coupant l'arête d'accueil dessous. C'est le seul endroit où on peut le faire
+ * sans inventer : sur le graphe, où le niveau de croisement et l'ouvrage d'art
+ * sont connus, et où la différence entre « aborder » et « prolonger » est un
+ * angle.
+ *
  * Ce module ne rogne plus rien. Il l'a fait — la voie la plus étroite
  * s'arrêtait sur un cercle centré sur le nœud —, et c'était la mauvaise
  * réponse à la bonne question : deux voies de même largeur ne se rognaient
@@ -61,6 +74,10 @@ export const LOOSE_OFFSET_M = 2.5;
 export const CONTINUE_COS = Math.cos((72 * Math.PI) / 180);
 /** Cosinus de l'angle toléré entre deux bouts libres qu'on recoud. */
 export const COLLINEAR_COS = Math.cos((40 * Math.PI) / 180);
+/** Distance en deçà de laquelle un sommet débouche sur la chaussée qu'il aborde, en mètres. */
+export const GRAFT_REACH_M = 2.5;
+/** Cosinus de l'angle en deçà duquel un sommet est dans l'axe de la chaussée qu'il touche (et n'y débouche donc pas). */
+export const GRAFT_SKEW_COS = Math.cos((25 * Math.PI) / 180);
 
 /** Décalage de cellule : les coordonnées locales sont signées. */
 const CELL_BIAS = 1 << 14;
@@ -277,6 +294,244 @@ function addEdge(state, a, b, profile, halfWidth, works = WORK_NONE, level = LEV
     else state.adjacency.set(listKey, [index]);
     state.degree.set(node, (state.degree.get(node) || 0) + 1);
   }
+}
+
+/**
+ * Greffe sur une chaussée les sommets qui y débouchent sans partager de nœud
+ * avec elle.
+ *
+ * ## Pourquoi c'est nécessaire
+ *
+ * Un carrefour est un nœud du graphe, et le graphe est construit sur les
+ * sommets que la tuile livre. Or la tuile n'est pas le relevé : deux routes
+ * connectées dans la donnée d'origine y arrivent régulièrement **sans sommet
+ * commun**, pour deux raisons qui n'ont rien à voir avec le terrain :
+ *
+ *   - la traversante est simplifiée. Le sommet du carrefour y est aligné avec
+ *     ses voisins, donc redondant, donc retiré : il ne reste que la desserte
+ *     qui bute au milieu d'une arête ;
+ *   - les deux moitiés viennent de deux tuiles, dont les grilles de
+ *     quantification ne tombent pas au même endroit. Le même nœud y est livré
+ *     deux fois, à un ou deux mètres près — au-delà de la tolérance de soudure,
+ *     qui ne peut pas être élargie sans souder des voies voisines distinctes.
+ *
+ * Dans les deux cas le carrefour existe sur le terrain, la donnée le dit, et
+ * le graphe ne le voit pas : la desserte s'arrête en l'air, son ruban recouvre
+ * la traversante, et rien n'est peint entre les deux. Le rattraper plus tard —
+ * en cherchant où deux rubans se recouvrent — inventerait des carrefours
+ * ailleurs (voir l'en-tête du module). C'est ici, sur le graphe, que ça se
+ * répare : le sommet est amené sur la chaussée et l'arête d'accueil est
+ * **coupée** sous lui. Le nœud est alors de degré trois, comme il l'aurait été
+ * si la donnée avait porté le sommet.
+ *
+ * Un sommet **intérieur** est traité comme un bout libre, à une réserve près :
+ * il ne se déplace que de la tolérance de soudure, parce qu'il tire deux arêtes
+ * derrière lui et qu'un déplacement plus grand coderait un coude dans un tracé
+ * continu. C'est ce qui rattrape la croisée dont les deux dessertes se sont
+ * soudées entre elles à un demi-mètre de la traversante : leur nœud commun est
+ * de degré deux, et il n'a rien d'un bout libre.
+ *
+ * ## Ce qui n'est pas une greffe
+ *
+ * Un sommet **dans l'axe** de la chaussée qu'il touche n'y débouche pas :
+ * c'est la moitié amont d'une route qui recouvre sa moitié aval, à la
+ * frontière des tuiles, ou une contre-allée qui la longe. La greffe y
+ * planterait un carrefour au milieu d'une ligne droite, tous les cinq cents
+ * mètres. C'est `joinLooseEnds` qui traite le premier cas, et le critère
+ * d'angle (`GRAFT_SKEW_COS`) sépare les deux sans ambiguïté : au-delà de
+ * vingt-cinq degrés on aborde, en deçà on prolonge.
+ *
+ * Un niveau différent n'est pas une greffe non plus : ce qui survole ne
+ * rencontre pas (`NodeIndex`). Un ouvrage d'art non plus, `layer` ou pas : une
+ * culée n'a rien à voir avec la chaussée qu'elle enjambe.
+ *
+ * @param {Object} state  Graphe construit par `addEdge`.
+ * @param {NodeIndex} nodes
+ * @param {Object} [options]
+ * @returns {Object} le graphe, arêtes coupées et bouts amenés à leur place.
+ */
+function graftLooseNodes(state, nodes, { reach = GRAFT_REACH_M, skewCos = GRAFT_SKEW_COS } = {}) {
+  const { edges, degree } = state;
+  if (!(reach > 0) || edges.length === 0) return state;
+
+  // Les nœuds qui ne sont pas déjà des carrefours, et leurs arêtes.
+  const loose = new Map();
+  // Cellule large devant la portée : la question se pose sur presque tous les
+  // sommets du graphe (un sommet ordinaire est de degré deux), donc c'est le
+  // **remplissage** de la grille qu'il faut tenir, pas la longueur des listes.
+  const cell = Math.max(ROAD_INDEX_CELL_M, reach);
+  const grid = new Map();
+
+  for (let i = 0; i < edges.length; i++) {
+    const edge = edges[i];
+    for (const node of [edge.a, edge.b]) {
+      if ((degree.get(node) || 0) > 2) continue;
+      const list = loose.get(node);
+      if (list) list.push(i);
+      else loose.set(node, [i]);
+    }
+    const minX = Math.floor((Math.min(nodes.xs[edge.a], nodes.xs[edge.b]) - reach) / cell);
+    const maxX = Math.floor((Math.max(nodes.xs[edge.a], nodes.xs[edge.b]) + reach) / cell);
+    const minZ = Math.floor((Math.min(nodes.zs[edge.a], nodes.zs[edge.b]) - reach) / cell);
+    const maxZ = Math.floor((Math.max(nodes.zs[edge.a], nodes.zs[edge.b]) + reach) / cell);
+    for (let cx = minX; cx <= maxX; cx++) {
+      for (let cz = minZ; cz <= maxZ; cz++) {
+        const key = cellKey(cx, cz);
+        const bucket = grid.get(key);
+        if (bucket) bucket.push(i);
+        else grid.set(key, [i]);
+      }
+    }
+  }
+
+  // Tout est décidé sur la géométrie d'origine, puis appliqué : une greffe ne
+  // déplace donc jamais le repère de la suivante, et l'ordre de parcours ne
+  // change pas le résultat.
+  const splits = new Map();
+  const moves = [];
+  // Les greffes déjà décidées sur chaque arête d'accueil. Deux dessertes qui se
+  // font face — une croisée dont la donnée a perdu le sommet commun — se
+  // projettent au même endroit : sans ça elles y planteraient deux nœuds
+  // superposés, donc deux carrefours et deux dalles l'une sur l'autre.
+  const decided = new Map();
+
+  for (const node of [...loose.keys()].sort((a, b) => a - b)) {
+    const own = loose.get(node);
+    // Un sommet **intérieur** ne se déplace que de la tolérance de soudure :
+    // au-delà, ce n'est plus le même point, et le tracé y prendrait un coude.
+    // Un bout libre, lui, ne tire rien derrière lui et peut aller jusqu'au bout
+    // de la portée.
+    const span = own.length > 1 ? Math.min(reach, nodes.tolerance) : reach;
+    // Un ouvrage d'art ne se greffe pas : la culée d'un pont n'a rien à voir
+    // avec la chaussée qu'il enjambe, `layer` ou pas.
+    if (own.some((index) => edges[index].works !== WORK_NONE)) continue;
+
+    const x = nodes.xs[node];
+    const z = nodes.zs[node];
+    const level = nodes.levels[node];
+    const bucket = grid.get(cellKey(Math.floor(x / cell), Math.floor(z / cell)));
+    if (!bucket) continue;
+
+    // Les directions sortantes du nœud, calculées à la première question posée :
+    // la plupart des sommets n'ont aucune chaussée à portée, et les calculer
+    // d'avance reviendrait à en construire deux par sommet du graphe pour rien.
+    let headings = null;
+    const abords = (along) => {
+      if (!headings) {
+        headings = [];
+        for (const index of own) {
+          const edge = edges[index];
+          const other = edge.a === node ? edge.b : edge.a;
+          const out = direction(nodes.xs[other], nodes.zs[other], nodes.xs[node], nodes.zs[node]);
+          if (out) headings.push(out);
+        }
+      }
+      // Dans l'axe : ce bout prolonge la chaussée, il n'y débouche pas. Il faut
+      // qu'au moins une des voies qui se rejoignent ici l'aborde vraiment.
+      return headings.some(
+        (heading) => Math.abs(heading.x * along.x + heading.z * along.z) <= skewCos
+      );
+    };
+
+    let best = null;
+    for (const index of bucket) {
+      if (own.includes(index)) continue;
+      const host = edges[index];
+      if (host.a === node || host.b === node) continue;
+      if (host.level !== level) continue;
+      if (host.works !== WORK_NONE) continue;
+
+      const ax = nodes.xs[host.a];
+      const az = nodes.zs[host.a];
+      const bx = nodes.xs[host.b];
+      const bz = nodes.zs[host.b];
+      // La distance d'abord : elle ne construit rien, et elle écarte presque
+      // tout. L'angle ensuite, sur le seul candidat qui reste.
+      const hit = distanceToSegment(x, z, ax, az, bx, bz);
+      if (hit.distance > span) continue;
+      if (best && !(hit.distance < best.distance)) continue;
+      const along = direction(ax, az, bx, bz);
+      if (!along || !abords(along)) continue;
+      best = {
+        index,
+        distance: hit.distance,
+        t: hit.t,
+        x: ax + (bx - ax) * hit.t,
+        z: az + (bz - az) * hit.t,
+      };
+    }
+
+    if (!best) continue;
+
+    const host = edges[best.index];
+    const weld = nodes.tolerance;
+
+    // Amené sur un sommet que l'arête d'accueil porte déjà, ou sur une greffe
+    // déjà posée là : rien à couper, il suffit que les deux nœuds n'en fassent
+    // plus qu'un.
+    const toA = Math.hypot(best.x - nodes.xs[host.a], best.z - nodes.zs[host.a]);
+    const toB = Math.hypot(best.x - nodes.xs[host.b], best.z - nodes.zs[host.b]);
+    if (toA <= weld || toB <= weld) {
+      const onto = toA <= toB ? host.a : host.b;
+      moves.push({ node, x: nodes.xs[onto], z: nodes.zs[onto], onto });
+      continue;
+    }
+
+    const done = decided.get(best.index);
+    const twin = done?.find((g) => Math.hypot(g.x - best.x, g.z - best.z) <= weld);
+    if (twin) {
+      moves.push({ node, x: twin.x, z: twin.z, onto: twin.node });
+      continue;
+    }
+
+    // Le sommet vient se poser sur la chaussée : c'est lui qui bouge, pas elle.
+    moves.push({ node, x: best.x, z: best.z });
+    const graft = { node, x: best.x, z: best.z };
+    if (done) done.push(graft);
+    else decided.set(best.index, [graft]);
+
+    const cuts = splits.get(best.index);
+    if (cuts) cuts.push({ t: best.t, node });
+    else splits.set(best.index, [{ t: best.t, node }]);
+  }
+
+  if (moves.length === 0) return state;
+
+  const merged = new Map();
+  for (const move of moves) {
+    nodes.xs[move.node] = move.x;
+    nodes.zs[move.node] = move.z;
+    if (move.onto !== undefined) merged.set(move.node, move.onto);
+  }
+
+  // Reconstruit d'un bloc : degrés, adjacence et doublons se recalculent tous
+  // ensemble, et les rangs de profil déjà attribués sont conservés.
+  const next = {
+    edges: [],
+    seen: new Map(),
+    adjacency: new Map(),
+    degree: new Map(),
+    ranks: state.ranks,
+  };
+  const at = (node) => (merged.has(node) ? merged.get(node) : node);
+
+  for (let i = 0; i < edges.length; i++) {
+    const edge = edges[i];
+    const cuts = splits.get(i);
+    if (!cuts) {
+      addEdge(next, at(edge.a), at(edge.b), edge.profile, edge.halfWidth, edge.works, edge.level);
+      continue;
+    }
+    cuts.sort((p, q) => p.t - q.t);
+    let from = at(edge.a);
+    for (const cut of cuts) {
+      addEdge(next, from, cut.node, edge.profile, edge.halfWidth, edge.works, edge.level);
+      from = cut.node;
+    }
+    addEdge(next, from, at(edge.b), edge.profile, edge.halfWidth, edge.works, edge.level);
+  }
+
+  return next;
 }
 
 /**
@@ -532,6 +787,8 @@ export function mergeRoadLines(lines, options = {}) {
     offset = LOOSE_OFFSET_M,
     continueCos = CONTINUE_COS,
     collinearCos = COLLINEAR_COS,
+    graft = GRAFT_REACH_M,
+    graftSkewCos = GRAFT_SKEW_COS,
   } = options;
 
   const nodes = new NodeIndex(weld);
@@ -556,7 +813,11 @@ export function mergeRoadLines(lines, options = {}) {
     }
   }
 
-  const { edges, adjacency, degree } = state;
+  // Les sommets qui débouchent sur une chaussée y sont greffés avant tout le
+  // reste : un carrefour que la donnée porte sans le dire doit exister dans le
+  // graphe comme les autres, sans quoi rien de ce qui le lit ne le verra.
+  const graph = graftLooseNodes(state, nodes, { reach: graft, skewCos: graftSkewCos });
+  const { edges, adjacency, degree, seen } = graph;
   const used = new Uint8Array(edges.length);
   const chains = [];
 
@@ -581,7 +842,7 @@ export function mergeRoadLines(lines, options = {}) {
     // la chaîne qui en sort, elle, en traverse deux.
     const levels = new Array(ids.length).fill(edge.level ?? LEVEL_GROUND);
     for (let i = 1; i < ids.length; i++) {
-      const between = state.edges[state.seen.get(edgeKey(ids[i - 1], ids[i], edge.rank))];
+      const between = edges[seen.get(edgeKey(ids[i - 1], ids[i], edge.rank))];
       const code = between ? between.works : WORK_NONE;
       if (code > works[i - 1]) works[i - 1] = code;
       if (code > works[i]) works[i] = code;
@@ -610,7 +871,7 @@ export function mergeRoadLines(lines, options = {}) {
     });
   }
 
-  const junctions = collectJunctions(state, nodes);
+  const junctions = collectJunctions(graph, nodes);
   const joined = joinLooseEnds(chains, { join, offset, collinearCos });
 
   // Orientation canonique : deux reconstructions successives doivent parcourir

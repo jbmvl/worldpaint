@@ -56,6 +56,7 @@ import {
   JunctionAreas,
   branchYields,
   markJunctionRows,
+  junctionCentreDeck,
   junctionRibbonRuns,
   junctionSurface,
 } from './roadJunctions.js';
@@ -843,20 +844,29 @@ export class RoadNetwork {
     }
 
     // Les surfaces de carrefour, une fois les plate-formes cousues : un
-    // carrefour prend l'altitude de la chaussée qui y passe, il n'en a pas à
-    // lui. Une aire dont aucune chaussée ne porte plus l'altitude (toutes hors
-    // de portée) n'est simplement pas posée.
+    // carrefour prend l'altitude des chaussées qui y aboutissent, il n'en a pas
+    // à lui. Une cote par bouche, relevée là où le ruban s'arrête : c'est ce
+    // qui fait que la dalle et les rubans se rejoignent sans marche, sur un
+    // versant comme à plat. Une aire dont aucune bouche ne porte d'altitude
+    // (toutes hors de portée) n'est simplement pas posée.
     const junctionBuffers = {};
     for (const area of areas.areas) {
-      const deck = index.deckAt(index.query(area.x, area.z, 1));
-      if (deck == null) continue;
-      // Retenue sur l'aire : la voirie borde ce carrefour et doit s'aligner sur
-      // la même cote, comme un trottoir de tronçon s'aligne sur sa plate-forme.
-      area.deck = deck;
+      const decks = area.mouths.map((mouth) => {
+        const deck = index.deckAt(index.query(mouth.centre.x, mouth.centre.z, 1));
+        return deck == null ? NaN : deck;
+      });
+      const centre = junctionCentreDeck(decks);
+      if (!Number.isFinite(centre)) continue;
+      // Retenues sur l'aire, sans le décollement : la voirie borde ce carrefour
+      // et doit s'aligner sur les mêmes cotes, comme un trottoir de tronçon
+      // s'aligne sur sa plate-forme. `deck` reste la cote du nœud — ce qui n'a
+      // qu'un point à poser s'en contente ; `decks` sert à qui suit une rive.
+      area.decks = decks;
+      area.deck = centre;
       const surface = this._surfaceOf(area.profile);
       if (!junctionBuffers[surface]) junctionBuffers[surface] = createRibbonBuffer();
       const buffer = junctionBuffers[surface];
-      const piece = junctionSurface(area, deck + ROAD_LIFT_M, {
+      const piece = junctionSurface(area, decks.map((deck) => deck + ROAD_LIFT_M), {
         textureLength: ROAD_TEXTURE_LENGTH,
         base: buffer.positions.length / 3,
       });
@@ -874,7 +884,9 @@ export class RoadNetwork {
     this.segments = segments;
     this.crossings = junctionsDrawn;
     this.markings = markings;
-    this.bubble.setRoadCut(segments > 0 ? index : null);
+    // L'emprise entaillée, c'est la chaussée entière : les rubans et les dalles
+    // de carrefour, qui débordent d'eux.
+    this.bubble.setRoadCut(segments > 0 ? index : null, areas);
     // Tous les profils sont visités, y compris ceux sans géométrie cette fois : leur ancien maillage doit disparaître.
     for (const profile of ROAD_PROFILE_ORDER) {
       this._applyBuffer(profile, buffers[profile] || createRibbonBuffer());

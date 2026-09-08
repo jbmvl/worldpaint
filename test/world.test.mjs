@@ -53,8 +53,11 @@ import {
   branchYields,
   junctionArea,
   junctionBoundaryAt,
+  junctionCentreDeck,
   junctionCorner,
+  junctionDeckAt,
   junctionSurface,
+  outlineDeckAt,
   junctionRibbonRuns,
   markJunctionRows,
   mergeParallelBranches,
@@ -178,6 +181,7 @@ import {
   RoadIndex,
   CombinedIndex,
   NODE_WELD_M,
+  GRAFT_REACH_M,
   knownCoverage,
 } from '../src/layers/roadGraph.js';
 import {
@@ -1295,6 +1299,35 @@ test('un ruban droit est plaqué à plat, avec les bonnes coordonnées de textur
   close(buffer.uvs[0], 0, 1e-9, 'u sur la première colonne');
   close(buffer.uvs[4 * 2], 1, 1e-9, 'u sur la dernière');
   close(buffer.uvs[5 * 2 + 1], 6 / 12, 1e-9, 'v après six mètres');
+});
+
+test('une plate-forme donnée se pose telle quelle : le ruban ne la relisse pas', () => {
+  // Au sommet d'une côte, une seconde moyenne glissante faisait passer le ruban
+  // sous le terrain entaillé à la cote de la plate-forme — celle-ci étant, elle,
+  // lue telle quelle par le déblai, les bordures, le marquage et le mobilier.
+  const buffer = createRibbonBuffer();
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 60, z: 0 }], 5);
+  const platform = Float32Array.from(path, (p) => 100 - Math.abs(p.x - 30) * 0.05);
+
+  appendRibbon(buffer, {
+    path,
+    halfWidth: 4,
+    sampleElevation: () => 0,
+    platform,
+    lift: 0.1,
+    columns: 5,
+  });
+
+  for (let r = 0; r < path.length; r++) {
+    for (let c = 0; c < 5; c++) {
+      close(
+        buffer.positions[(r * 5 + c) * 3 + 1],
+        platform[r] + 0.1,
+        1e-4,
+        `ligne ${r}, colonne ${c}`
+      );
+    }
+  }
 });
 
 test('un ruban dégénéré ne produit rien', () => {
@@ -5332,6 +5365,127 @@ test('un nœud de degré trois est publié comme carrefour', () => {
   assert.equal(junction.branches.length, 3);
 });
 
+test('une desserte qui bute sur une traversante sans sommet commun est un carrefour', () => {
+  // Le cas le plus fréquent, et celui que le graphe seul ne voyait pas : la
+  // traversante est simplifiée (le sommet du carrefour y est aligné, donc
+  // retiré), et la desserte s'arrête au milieu d'une arête.
+  const { junctions, chains } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: [{ x: 0, z: 0 }, { x: 200, z: 0 }] },
+    { profile: 'minor', halfWidth: 2.5, points: [{ x: 100, z: 0 }, { x: 100, z: 60 }] },
+  ]);
+
+  assert.equal(junctions.length, 1, 'un carrefour');
+  assert.equal(junctions[0].degree, 3, 'la traversante y est coupée en deux');
+  close(junctions[0].x, 100, 1e-6, 'au point de greffe');
+  const through = chains.find((c) => c.profile === 'major');
+  assert.ok(
+    through.points.some((p) => Math.abs(p.x - 100) < 1e-6),
+    'la traversante porte désormais le sommet'
+  );
+});
+
+test('un bout libre à deux mètres de la chaussée y est amené, à cinq il reste où il est', () => {
+  // Deux tuiles voisines quantifient le même nœud à quelques décimètres près :
+  // au-delà de la tolérance de soudure, le carrefour se perdait.
+  const near = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8) },
+    { profile: 'minor', halfWidth: 2.5, points: [{ x: 100, z: 2 }, { x: 100, z: 60 }] },
+  ]);
+  assert.equal(near.junctions.length, 1, 'greffé');
+  const branch = near.chains.find((c) => c.profile === 'minor');
+  close(branch.points[0].z, 0, 1e-6, 'le bout est posé sur la chaussée');
+
+  const far = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8) },
+    { profile: 'minor', halfWidth: 2.5, points: [{ x: 100, z: GRAFT_REACH_M + 2 }, { x: 100, z: 60 }] },
+  ]);
+  assert.equal(far.junctions.length, 0, 'trop loin : une impasse reste une impasse');
+});
+
+test('deux dessertes qui se rejoignent au ras d’une chaussée n’y font qu’un carrefour', () => {
+  // La croisée dont la traversante a perdu son sommet : les deux dessertes se
+  // soudent entre elles à un demi-mètre de l'axe, et ce nœud-là est de degré
+  // deux — pas un bout libre. Greffé, il devient le carrefour de degré quatre
+  // que la donnée décrit ; laissé seul, il posait deux rubans sur la chaussée.
+  const { junctions } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: [{ x: -100, z: 0 }, { x: 100, z: 0 }] },
+    { profile: 'minor', halfWidth: 2.5, points: [{ x: 0, z: 0.5 }, { x: 0, z: 80 }] },
+    { profile: 'minor', halfWidth: 2.5, points: [{ x: 0, z: -0.5 }, { x: 0, z: -80 }] },
+  ]);
+
+  assert.equal(junctions.length, 1, 'un seul carrefour, pas deux superposés');
+  assert.equal(junctions[0].degree, 4, 'quatre branches');
+  close(junctions[0].z, 0, 1e-6, 'ramené sur l’axe de la traversante');
+});
+
+test('un sommet intérieur ne se déplace pas au-delà de la tolérance de soudure', () => {
+  // Une voie qui passe à deux mètres d'une autre sans s'y raccorder : la tirer
+  // jusque-là coderait un coude de deux mètres dans un tracé continu.
+  const { junctions } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: [{ x: -100, z: 0 }, { x: 100, z: 0 }] },
+    {
+      profile: 'minor',
+      halfWidth: 2.5,
+      points: [{ x: 0, z: -80 }, { x: 0, z: -2 }, { x: 20, z: 60 }],
+    },
+  ]);
+
+  assert.equal(junctions.length, 0);
+});
+
+test('deux moitiés d’une même route qui se recouvrent ne font pas un carrefour', () => {
+  // La couture de tuile : les deux bouts sont dans l'axe l'un de l'autre, donc
+  // l'un prolonge l'autre — il n'y débouche pas. Sans ce critère, la greffe
+  // planterait un carrefour au milieu d'une ligne droite à chaque frontière.
+  const { junctions } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: [{ x: 0, z: 0 }, { x: 105, z: 0 }] },
+    { profile: 'major', halfWidth: 4.25, points: [{ x: 95, z: 0.4 }, { x: 200, z: 0.4 }] },
+  ]);
+
+  assert.equal(junctions.length, 0);
+});
+
+test('une contre-allée qui longe une nationale ne s’y greffe pas', () => {
+  const { junctions } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8) },
+    { profile: 'lane', halfWidth: 2, points: [{ x: 40, z: 6 }, { x: 120, z: 5.5 }] },
+  ]);
+
+  assert.equal(junctions.length, 0, 'deux voies qui se longent ne se rencontrent pas');
+});
+
+test('un bout libre ne se greffe pas sur une chaussée d’un autre niveau', () => {
+  const { junctions } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8) },
+    {
+      profile: 'minor',
+      halfWidth: 2.5,
+      level: 1,
+      points: [{ x: 100, z: 1 }, { x: 100, z: 60 }],
+    },
+  ]);
+
+  assert.equal(junctions.length, 0, 'ce qui survole ne débouche pas');
+});
+
+test('la greffe ne dépend pas de l’ordre de lecture des lignes', () => {
+  const lines = [
+    { profile: 'major', halfWidth: 4.25, points: [{ x: 0, z: 0 }, { x: 200, z: 0 }] },
+    { profile: 'minor', halfWidth: 2.5, points: [{ x: 60, z: 1.5 }, { x: 60, z: 60 }] },
+    { profile: 'lane', halfWidth: 2, points: [{ x: 140, z: -1.5 }, { x: 140, z: -60 }] },
+  ];
+  const places = (junctions) =>
+    junctions.map((j) => `${j.x.toFixed(3)}|${j.z.toFixed(3)}|${j.degree}`).sort();
+  const forward = mergeRoadLines(lines).junctions;
+  const backward = mergeRoadLines([...lines].reverse()).junctions;
+
+  assert.equal(forward.length, 2, 'les deux dessertes sont greffées');
+  // Le rang d'un carrefour dans la liste suit l'ordre de lecture des arêtes,
+  // comme avant la greffe ; ce sont les carrefours eux-mêmes qui ne doivent pas
+  // en dépendre.
+  assert.deepEqual(places(forward), places(backward), 'mêmes carrefours, aux mêmes places');
+});
+
 test('un changement de classe au milieu d’une route n’est pas un carrefour', () => {
   // Deux profils bout à bout : le nœud est de degré deux. Y planter un feu
   // reviendrait à en poser un partout où la donnée change d'attribut.
@@ -5972,6 +6126,61 @@ test('deux carrefours voisins laissent quand même la chaussée entre eux', () =
 
   assert.equal(middle.length, 1, 'un morceau entre les deux carrefours');
   assert.ok(middle[0].path.length >= 2, 'et il a de quoi être dessiné');
+});
+
+test('la dalle d’un carrefour suit ses bouches au lieu d’être horizontale', () => {
+  // Un versant : une branche arrive plus haut, l'autre plus bas. Posée à plat,
+  // la dalle laissait une marche contre chacun des deux rubans, et le terrain
+  // entaillé à la cote du ruban amont passait par-dessus.
+  const area = junctionArea(teeJunction());
+  const decks = area.mouths.map((mouth) => 100 + mouth.centre.x * 0.08);
+  const surface = junctionSurface(area, decks);
+
+  for (let i = 0; i < area.mouths.length; i++) {
+    const rank = area.outline.indexOf(area.mouths[i].left);
+    close(surface.positions[(1 + rank) * 3 + 1], decks[i], 1e-6, `bouche ${i} : aucune marche`);
+  }
+  close(surface.positions[1], junctionCentreDeck(decks), 1e-9, 'le nœud est à la moyenne');
+});
+
+test('une cote par branche : un sommet de bouche prend la sienne, un sommet d’arc les deux', () => {
+  const decks = [10, 20];
+  close(outlineDeckAt({ from: 0, to: 0, blend: 0 }, decks), 10, 1e-9, 'la bouche');
+  close(outlineDeckAt({ from: 0, to: 1, blend: 0.25 }, decks), 12.5, 1e-9, 'le quart de l’arc');
+  close(outlineDeckAt({ from: 0, to: 1, blend: 1 }, decks), 20, 1e-9, 'la bouche suivante');
+  // Une branche hors de portée du réseau n'a pas de cote : le sommet prend
+  // celle de l'autre plutôt que rien.
+  close(outlineDeckAt({ from: 0, to: 1, blend: 0.5 }, [NaN, 20]), 20, 1e-9, 'une seule cote connue');
+  assert.ok(Number.isNaN(junctionCentreDeck([NaN, NaN])), 'aucune : pas de dalle');
+});
+
+test('la cote de la dalle se lit en tout point qu’elle couvre', () => {
+  const area = junctionArea(teeJunction());
+  const decks = area.mouths.map((mouth) => 100 + mouth.centre.x * 0.08);
+  const centre = junctionCentreDeck(decks);
+
+  close(junctionDeckAt(area, decks, area.x, area.z), centre, 1e-6, 'au nœud');
+  for (let i = 0; i < area.mouths.length; i++) {
+    const mouth = area.mouths[i];
+    close(junctionDeckAt(area, decks, mouth.left.x, mouth.left.z), decks[i], 1e-6, `bouche ${i}`);
+  }
+  // À mi-chemin du nœud et d'une bouche, à mi-cote : la dalle est réglée.
+  const mouth = area.mouths[0];
+  close(
+    junctionDeckAt(area, decks, (area.x + mouth.left.x) / 2, (area.z + mouth.left.z) / 2),
+    (centre + decks[0]) / 2,
+    1e-6,
+    'entre les deux'
+  );
+});
+
+test('un carrefour sans cote ne creuse pas le terrain', () => {
+  const areas = new JunctionAreas([teeJunction()]);
+  assert.equal(areas.deckAt(0, 0), null, 'aire hors de portée du réseau construit');
+  areas.areas[0].decks = areas.areas[0].mouths.map(() => 42);
+  close(areas.deckAt(0, 0), 42, 1e-9, 'une fois les cotes posées');
+  assert.equal(areas.deckAt(200, 200), null, 'et rien en dehors du contour');
+  assert.equal(areas.deckAt(0, 0, 1), null, 'ni pour ce qui passe au-dessus');
 });
 
 test('la surface d’un carrefour est plane et refermée sur son contour', () => {
@@ -9211,6 +9420,29 @@ test('une chaussée d’un autre niveau ne prend pas la place du sol', () => {
   assert.equal(edgeClearance(0, 2.5, { roadIndex: index, level: 0 }), EDGE_REACH_M);
   // Au même niveau qu'elle, en revanche, elle borne bien la place.
   assert.ok(edgeClearance(0, 2.5, { roadIndex: index, level: 1 }) < EDGE_REACH_M);
+});
+
+test('le mobilier de rive lit la même règle : sa chaussée ne compte pas, celle d’en face si', () => {
+  // Un lampadaire est posé à quatre-vingt-dix centimètres de la rive de **sa**
+  // chaussée. Le décalage est légitime chez lui ; à un carrefour, ou le long
+  // d'une voie qui en double une autre, il tombe sur la chaussée d'en face.
+  const own = [];
+  const across = [];
+  for (let x = -100; x <= 100; x += 10) own.push({ x, z: 0 });
+  for (let z = 4; z <= 100; z += 10) across.push({ x: 0, z });
+  const segments = [fakeSegment(own, 2.5, 10), fakeSegment(across, 3.5, 10)];
+  const index = new RoadIndex(segments);
+  const ignore = (other) => other === segments[0];
+  const kerb = (x, z) => edgeClearance(x, z, { roadIndex: index, ignore, reach: 0.01 });
+
+  // Au ras de sa propre rive, loin du croisement : sa place.
+  assert.ok(kerb(-60, 3.4) > 0, 'la sienne ne se compte pas elle-même');
+  // À la même distance de sa rive, mais en travers de l'autre chaussée : refusé.
+  assert.equal(kerb(0, 3.4), 0, 'celle d’en face, si');
+
+  // Et dans la dalle d'un carrefour, quelle que soit la chaussée qui la borde.
+  const areas = new JunctionAreas([teeJunction()]);
+  assert.equal(edgeClearance(0, 0, { areas, ignore, reach: 0.01 }), 0);
 });
 
 test('un carrefour prend toute la place, sauf pour ce qui le borde', () => {
