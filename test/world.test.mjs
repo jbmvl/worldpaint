@@ -45,6 +45,11 @@ import {
   LABEL_SOURCE_GENERATED,
 } from '../src/inspect/objectLabels.js';
 import {
+  collectRoadDebug,
+  levelTint,
+  ROAD_DEBUG_COLORS,
+} from '../src/inspect/roadDebug.js';
+import {
   resamplePath,
   smoothColumns,
   createRibbonBuffer,
@@ -5062,6 +5067,107 @@ test('le relevé des carrefours ne dépend pas de l’ordre des tuiles', () => {
     forward.map((j) => [j.x, j.z, j.degree, j.halfWidth]),
     backward.map((j) => [j.x, j.z, j.degree, j.halfWidth])
   );
+});
+
+// --- Mise au point : voir le réseau tel qu'il est compris --------------------
+
+/** Tronçon complet, tel que `collectRoadSegments` le publie. */
+function debugSegment({ rows = 6, works = null, levels = null, stitched = null } = {}) {
+  return {
+    profile: 'minor',
+    halfWidth: 2.5,
+    anchor: { x: 0, z: 0 },
+    path: Array.from({ length: rows }, (_, i) => ({ x: i * 5, z: 0, distance: i * 5 })),
+    platform: new Float32Array(rows).fill(3),
+    works: Uint8Array.from(works || new Array(rows).fill(0)),
+    levels: Int8Array.from(levels || new Array(rows).fill(0)),
+    stitched: stitched ? Float32Array.from(stitched) : null,
+  };
+}
+
+test('le relevé de mise au point rend un groupe par famille, et rien d’autre', () => {
+  const { groups, counts } = collectRoadDebug([debugSegment()], [], { here: { x: 0, z: 0 } });
+  const kinds = groups.map((g) => g.kind);
+
+  assert.deepEqual(kinds, ['axis', 'edges', 'anchors'], 'sans carrefour ni ouvrage, trois familles');
+  assert.equal(counts.segments, 1);
+  assert.equal(counts.junctions, 0);
+  for (const group of groups) {
+    assert.equal(group.positions.length % 6, 0, 'des paires de points');
+    assert.equal(group.colors.length, group.positions.length, 'une couleur par sommet');
+  }
+});
+
+test('l’application choisit ce qu’elle affiche', () => {
+  const { groups } = collectRoadDebug([debugSegment()], [], { kinds: ['axis'] });
+  assert.deepEqual(groups.map((g) => g.kind), ['axis']);
+});
+
+test('un axe change de teinte avec son niveau : un survol se voit sans cliquer', () => {
+  const sol = levelTint(0);
+  const dessus = levelTint(1);
+  const dessous = levelTint(-1);
+
+  assert.notDeepEqual(sol, dessus, 'ce qui passe au-dessus ne se confond pas avec le sol');
+  assert.notDeepEqual(sol, dessous);
+  assert.notDeepEqual(dessus, dessous, 'ni le dessus avec le dessous');
+  assert.deepEqual(levelTint(0), ROAD_DEBUG_COLORS.axis, 'le sol garde la couleur de base');
+});
+
+test('le relevé montre les ouvrages, les niveaux rencontrés et les lignes recousues', () => {
+  const segment = debugSegment({
+    works: [0, 0, 1, 1, 0, 0],
+    levels: [0, 0, 1, 1, 0, 0],
+    stitched: [0, 0.4, 0, 0, 0, 0],
+  });
+  const { groups, counts } = collectRoadDebug([segment], [], { here: { x: 0, z: 0 } });
+  const byKind = Object.fromEntries(groups.map((g) => [g.kind, g]));
+
+  assert.ok(byKind.works, 'la travée est surlignée');
+  assert.ok(byKind.stitch, 'la couture aussi');
+  assert.equal(counts.stitched, 1, 'une seule ligne reprise');
+  assert.deepEqual(counts.levels, [0, 1], 'les deux niveaux rencontrés');
+
+  // Le trait de couture mesure le déplacement : sans hauteur, il ne dirait rien.
+  const y = byKind.stitch.positions;
+  close(y[4] - y[1], 0.4, 1e-5, 'la hauteur du trait est le déplacement');
+});
+
+test('un carrefour se lit à son cercle et à ses branches, un croisement XY à leur absence', () => {
+  const junction = {
+    x: 10,
+    z: 0,
+    degree: 3,
+    level: 0,
+    halfWidth: 4,
+    profile: 'major',
+    branches: [
+      { x: 1, z: 0, halfWidth: 4, profile: 'major' },
+      { x: -1, z: 0, halfWidth: 4, profile: 'major' },
+      { x: 0, z: 1, halfWidth: 2.5, profile: 'minor' },
+    ],
+  };
+  const withJunction = collectRoadDebug([debugSegment()], [junction], { here: { x: 0, z: 0 } });
+  const byKind = Object.fromEntries(withJunction.groups.map((g) => [g.kind, g]));
+
+  assert.equal(withJunction.counts.junctions, 1);
+  assert.equal(byKind.branches.positions.length / 6, 3, 'une flèche par branche');
+  assert.ok(byKind.junctions.positions.length > 0, 'et le cercle du carrefour');
+
+  // Les deux mêmes chaussées sans carrefour relevé : c'est exactement ce que
+  // doit donner un passage supérieur, et c'est ce qui le rend lisible.
+  const without = collectRoadDebug([debugSegment()], [], { here: { x: 0, z: 0 } });
+  assert.ok(!without.groups.some((g) => g.kind === 'junctions'), 'aucun marqueur');
+});
+
+test('le relevé se borne à la portée demandée', () => {
+  const near = debugSegment();
+  const far = debugSegment();
+  for (const p of far.path) p.x += 5000;
+  far.anchor = { x: 5000, z: 0 };
+
+  const { counts } = collectRoadDebug([near, far], [], { here: { x: 0, z: 0 }, radius: 100 });
+  assert.equal(counts.segments, 1, 'le tronçon lointain n’est pas relevé');
 });
 
 // --- Niveaux de croisement : ce qui se rencontre et ce qui se survole --------

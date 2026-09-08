@@ -1117,6 +1117,8 @@ function dominates(a, indexA, b, indexB) {
  * XY, pas une rencontre.
  *
  * @param {Array<Object>} segments Tronçons, dont les `platform` sont modifiées.
+ *        Un tronçon repris reçoit aussi `stitched` : le déplacement appliqué,
+ *        ligne par ligne, pour que la mise au point puisse le montrer.
  * @param {RoadIndex} index        Index bâti sur ces mêmes tronçons.
  * @param {Object} [options]
  * @returns {number} nombre de tronçons retouchés.
@@ -1192,12 +1194,19 @@ export function stitchPlatforms(segments, index, { maxStep = STITCH_MAX_STEP_M, 
       }
     }
 
+    // Ce que la couture a repris, ligne par ligne : le tronçon le publie, et
+    // `inspect/roadDebug` le montre. Sans ça, une voie qui aurait dû être
+    // cousue et ne l'a pas été est indiscernable d'une voie déjà à la bonne
+    // altitude — les deux se dessinent pareil.
+    const moved = new Float32Array(rows);
     for (let r = 0; r < rows; r++) {
       if (works?.[r]) continue;
       if (nearest[r] < 0 || distance[r] > rampRows) continue;
       const fade = 1 - distance[r] / (rampRows + 1);
-      platform[r] += delta[nearest[r]] * fade;
+      moved[r] = delta[nearest[r]] * fade;
+      platform[r] += moved[r];
     }
+    segment.stitched = moved;
     touched++;
   }
 

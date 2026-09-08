@@ -24,6 +24,8 @@ import {
   collectPlaceLabels,
   collectBuildingLabels,
   CORRIDOR_MARGIN_M,
+  collectRoadDebug,
+  ROAD_DEBUG_RADIUS_M,
   DEFAULT_WEATHER,
   CLIMATE_FAMILIES,
   FAUNA_KINDS,
@@ -56,6 +58,7 @@ const searchInput = document.getElementById('search');
 const goButton = document.getElementById('go');
 const showLabelsCheckbox = document.getElementById('showLabels');
 const showCorridorCheckbox = document.getElementById('showCorridor');
+const showRoadGraphCheckbox = document.getElementById('showRoadGraph');
 const minimapCanvas = document.getElementById('minimap');
 const minimapCtx = minimapCanvas.getContext('2d');
 const realTimeCheckbox = document.getElementById('realTime');
@@ -604,6 +607,84 @@ function updateCorridor() {
 showCorridorCheckbox.addEventListener('change', () => {
   if (!showCorridorCheckbox.checked) clearCorridor();
   else updateCorridor();
+});
+
+// --- Le réseau routier compris (mise au point) --------------------------------
+// L'emprise ci-dessus montre ce que la chaussée **occupe** ; celui-ci montre ce
+// que le moteur en **comprend** — axes, rives, nœuds d'ancrage, carrefours
+// relevés sur le graphe et leurs branches, niveaux de croisement, ouvrages,
+// lignes reprises par la couture d'altitude.
+//
+// C'est la seule façon de répondre à « pourquoi ces deux voies n'ont-elles pas
+// été raccordées ? » : deux axes qui se coupent sans marqueur de carrefour
+// entre eux sont un croisement en XY, pas une rencontre. Le moteur ne rend que
+// des paires de points colorées (`collectRoadDebug`) : la géométrie de lignes
+// se monte ici.
+
+let roadGraphMesh = null;
+let roadGraphSignature = '';
+
+const roadGraphMaterial = new THREE.LineBasicMaterial({
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.95,
+  depthTest: false,
+});
+
+function clearRoadGraph() {
+  if (!roadGraphMesh) return;
+  scene.remove(roadGraphMesh);
+  roadGraphMesh.geometry.dispose();
+  roadGraphMesh = null;
+  roadGraphSignature = '';
+}
+
+function updateRoadGraph() {
+  if (!showRoadGraphCheckbox.checked || !world) {
+    clearRoadGraph();
+    return;
+  }
+
+  const roads = world.composer.roads;
+  const segments = roads?.roadSegments || [];
+  // Même raison que pour l'emprise : les tronçons ne bougent qu'à une
+  // reconstruction du réseau, refaire les traits par image serait absurde.
+  const signature = `${segments.length}:${segments[0]?.path?.[0]?.x ?? 0}:${roads?.junctions?.length ?? 0}`;
+  if (roadGraphMesh && signature === roadGraphSignature) return;
+
+  clearRoadGraph();
+  const { groups } = collectRoadDebug(segments, roads?.junctions || [], {
+    here: { x: camera.position.x, z: camera.position.z },
+    radius: ROAD_DEBUG_RADIUS_M,
+    roadIndex: roads?.index || null,
+  });
+
+  const positions = [];
+  const colors = [];
+  for (const group of groups) {
+    positions.push(...group.positions);
+    colors.push(...group.colors);
+  }
+  if (positions.length === 0) return;
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  geometry.computeBoundingSphere();
+
+  roadGraphMesh = new THREE.LineSegments(geometry, roadGraphMaterial);
+  roadGraphMesh.name = 'debug-road-graph';
+  roadGraphMesh.matrixAutoUpdate = false;
+  roadGraphMesh.frustumCulled = false;
+  roadGraphMesh.renderOrder = 21;
+  roadGraphMesh.updateMatrix();
+  scene.add(roadGraphMesh);
+  roadGraphSignature = signature;
+}
+
+showRoadGraphCheckbox.addEventListener('change', () => {
+  if (!showRoadGraphCheckbox.checked) clearRoadGraph();
+  else updateRoadGraph();
 });
 
 // --- Mini-carte façon Street View -----------------------------------------------
@@ -1429,6 +1510,7 @@ function loop() {
     labelAcc = 0;
     updateLabels();
     updateCorridor();
+    updateRoadGraph();
     updateMinimap();
     if (!mapOverlay.hidden) updateBigMinimap();
     // L'horloge n'avance que si c'est elle qu'on suit : le curseur, lui, ne
