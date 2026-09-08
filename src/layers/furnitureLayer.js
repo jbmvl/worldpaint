@@ -57,6 +57,8 @@ import {
   filterOutsideCorridor,
   inCorridor,
   pushOutsideCorridor,
+  pushPointOutsideCorridor,
+  CORRIDOR_MARGIN_M,
 } from './roadCorridor.js';
 import { CombinedIndex } from './roadGraph.js';
 import {
@@ -184,6 +186,14 @@ export const LANDMARK_RADIUS_M = 2400;
 export const LANDMARK_CLEARANCE_M = 55;
 /** Même chose pour l'arbre de crête, qui tient moins de place. */
 export const RIDGE_TREE_CLEARANCE_M = 25;
+/**
+ * Dégagement d'un point d'intérêt au-delà de l'emprise routière, en mètres.
+ *
+ * Un abribus fait 1,7 m de profondeur, un lavoir 3 m, et c'est leur **centre**
+ * que la donnée situe : sorti de l'emprise au ras, l'objet y laisse la moitié
+ * de lui-même. Un mètre et demi couvre le plus encombrant.
+ */
+export const POI_CLEARANCE_M = 1.6;
 /** Déplacement de l'observateur avant reconstruction, en mètres. */
 export const FURNITURE_REBUILD_M = 250;
 /** Pas de ré-échantillonnage des contours de parcelles, en mètres. */
@@ -2822,10 +2832,23 @@ export class FurnitureLayer {
       const item = FurnitureLayer._poiItem(properties);
       if (!item) return;
 
+      // Écarté de la chaussée. Un arrêt de bus est très souvent porté par le
+      // tracé de la route elle-même (`stop_position` sur la voie), et l'abribus
+      // se posait alors au milieu du bitume. Le retirer ferait disparaître un
+      // objet qui existe vraiment : on le repousse au bord, place qui est la
+      // sienne. Le dégagement compte la demi-profondeur de l'abri, sans quoi
+      // c'est son origine qui sort de l'emprise et son dos qui y reste.
+      const at = pushPointOutsideCorridor(
+        x,
+        z,
+        this._infraIndex,
+        CORRIDOR_MARGIN_M + POI_CLEARANCE_M
+      );
       // Orienté vers la chaussée la plus proche : un abribus qui tourne le dos
-      // à la route est le genre de détail qui saute aux yeux.
-      const yaw = this._facingRoad(x, z, roadSegments);
-      this._place(placements, item, { x, z, yaw });
+      // à la route est le genre de détail qui saute aux yeux. Le cap se prend à
+      // la place définitive, pas à celle que la donnée annonçait.
+      const yaw = this._facingRoad(at.x, at.z, roadSegments);
+      this._place(placements, item, { x: at.x, z: at.z, yaw });
     });
   }
 

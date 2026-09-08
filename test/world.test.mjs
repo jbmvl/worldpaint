@@ -160,6 +160,7 @@ import {
   clipOutsideCorridor,
   filterOutsideCorridor,
   pushOutsideCorridor,
+  pushPointOutsideCorridor,
 } from '../src/layers/roadCorridor.js';
 import { fittedGardenMargin, gardenOutlineClear } from '../src/layers/gardenLayer.js';
 import {
@@ -317,6 +318,7 @@ import {
   FurnitureLayer,
   LINEAR_KINDS,
   POINT_ITEMS,
+  POI_CLEARANCE_M,
   FURNITURE_LIMITS,
   FARMSTEAD_MAX_HECTARES,
   FARMSTEAD_CLUSTER_RADIUS_M,
@@ -7636,6 +7638,33 @@ test('le semis par points ne perd que ce qui tombe sur la voirie', () => {
   // L'ordre et les valeurs sont conservés : on retire, on ne recompose pas.
   assert.deepEqual(kept, [bales[0], bales[3]]);
   assert.deepEqual(filterOutsideCorridor(bales, null), bales, 'sans réseau, rien ne bouge');
+});
+
+test('un abribus posé sur la chaussée en sort, avec de quoi loger son dos', () => {
+  // La donnée porte très souvent l'arrêt de bus sur le tracé de la route
+  // lui-même (`stop_position`), et l'abribus se posait alors au milieu du
+  // bitume. Le retirer ferait disparaître un objet qui existe : on l'écarte.
+  const index = corridorIndex(2.5);
+  const edge = 2.5 + CORRIDOR_MARGIN_M;
+  const margin = CORRIDOR_MARGIN_M + POI_CLEARANCE_M;
+
+  for (const depart of [{ x: 0, z: 0 }, { x: 12, z: 1.4 }, { x: -30, z: -2 }]) {
+    const at = pushPointOutsideCorridor(depart.x, depart.z, index, margin);
+    assert.ok(!inCorridor(index, at.x, at.z), `(${depart.x}, ${depart.z}) sort de l’emprise`);
+    // Et pas de justesse : le centre est écarté d'assez pour que l'abri entier
+    // tienne hors de la chaussée.
+    assert.ok(
+      Math.abs(at.z) >= edge + POI_CLEARANCE_M - 1e-6,
+      `(${depart.x}, ${depart.z}) : centre à ${at.z.toFixed(2)} pour un bord à ${edge.toFixed(2)}`
+    );
+  }
+
+  // Un arrêt déjà au bord de la route n'est pas déplacé pour rien.
+  const loin = pushPointOutsideCorridor(0, 20, index, margin);
+  assert.deepEqual(loin, { x: 0, z: 20 });
+
+  // Sans réseau, aucune raison de bouger quoi que ce soit.
+  assert.deepEqual(pushPointOutsideCorridor(0, 0, null, margin), { x: 0, z: 0 });
 });
 
 test('un contour de parcelle qui longe la route est repoussé au bord, pas supprimé', () => {

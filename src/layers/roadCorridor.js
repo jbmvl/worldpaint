@@ -79,6 +79,10 @@ const CORRIDOR_PUSH_ITERATIONS = 4;
  * parcelle qui longe une route sur toute sa longueur (le bocage) : le couper
  * ne laisserait aucun tronçon dehors, alors que le repousser garde la haie continue.
  *
+ * Ni à un objet que la donnée place elle-même sur la chaussée : un arrêt de bus
+ * est très souvent porté par le tracé de la route (`stop_position`), et le
+ * retirer ferait disparaître un objet réel. On l'écarte.
+ *
  * @param {number} x
  * @param {number} z
  * @param {Object|null} index Instance `RoadIndex`, ou `null`.
@@ -87,7 +91,7 @@ const CORRIDOR_PUSH_ITERATIONS = 4;
  *        reposer le point exactement dessus.
  * @returns {{x:number,z:number}} le point, inchangé s'il est déjà hors emprise.
  */
-function pushPointOutsideCorridor(x, z, index, margin = CORRIDOR_MARGIN_M, clearance = CORRIDOR_PUSH_CLEARANCE_M) {
+export function pushPointOutsideCorridor(x, z, index, margin = CORRIDOR_MARGIN_M, clearance = CORRIDOR_PUSH_CLEARANCE_M) {
   if (!index) return { x, z };
   let px = x;
   let pz = z;
