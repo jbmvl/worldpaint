@@ -161,6 +161,7 @@ import {
   filterOutsideCorridor,
   pushOutsideCorridor,
   pushPointOutsideCorridor,
+  clipPolygonOutsideCorridor,
 } from '../src/layers/roadCorridor.js';
 import { fittedGardenMargin, gardenOutlineClear } from '../src/layers/gardenLayer.js';
 import {
@@ -7686,6 +7687,52 @@ test('le semis par points ne perd que ce qui tombe sur la voirie', () => {
   // L'ordre et les valeurs sont conservés : on retire, on ne recompose pas.
   assert.deepEqual(kept, [bales[0], bales[3]]);
   assert.deepEqual(filterOutsideCorridor(bales, null), bales, 'sans réseau, rien ne bouge');
+});
+
+test('une maison à cheval sur la route est rabotée, pas rejetée', () => {
+  // Le tracé de la voie et le contour du bâti viennent de deux relevés
+  // différents : la donnée pose parfois une maison sur la chaussée. Rejeter le
+  // bâtiment ferait un trou dans un village pour quelques dizaines de
+  // centimètres d'écart ; le laisser met un mur au milieu de la route.
+  const index = corridorIndex(2.5); // axe z = 0, rive à 2,5 + 1,2 m
+  const rive = 2.5 + CORRIDOR_MARGIN_M + CORRIDOR_PUSH_CLEARANCE_M;
+
+  // Une maison de 10 × 10 dont le tiers sud mord sur la chaussée.
+  const maison = [
+    { x: 0, z: -2 },
+    { x: 10, z: -2 },
+    { x: 10, z: 8 },
+    { x: 0, z: 8 },
+  ];
+  const rabotee = clipPolygonOutsideCorridor(maison, index);
+  assert.ok(rabotee && rabotee.length >= 3, 'il reste une maison');
+  for (const p of rabotee) {
+    assert.ok(p.z >= rive - 1e-6, `sommet à z = ${p.z.toFixed(2)}, rive à ${rive.toFixed(2)}`);
+    assert.ok(!inCorridor(index, p.x, p.z), 'et aucun sommet dans l’emprise');
+  }
+  // La coupe est un rabotage, pas une démolition : le nord du bâtiment n'a
+  // pas bougé.
+  assert.ok(
+    rabotee.some((p) => Math.abs(p.z - 8) < 1e-6 && Math.abs(p.x) < 1e-6),
+    'le coin nord-ouest est intact'
+  );
+
+  // Une maison qui ne touche pas la route ressort telle quelle, à l'identique.
+  const loin = maison.map((p) => ({ x: p.x, z: p.z + 40 }));
+  assert.deepEqual(clipPolygonOutsideCorridor(loin, index), loin);
+
+  // Une maison entièrement posée sur la chaussée n'est pas bâtie : il n'en
+  // reste rien d'habitable, et la garder mettrait une façade sur la voie.
+  const dessus = [
+    { x: 20, z: -1.5 },
+    { x: 26, z: -1.5 },
+    { x: 26, z: 1.5 },
+    { x: 20, z: 1.5 },
+  ];
+  assert.equal(clipPolygonOutsideCorridor(dessus, index), null);
+
+  // Sans réseau, on ne devine pas de route : rien n'est raboté.
+  assert.deepEqual(clipPolygonOutsideCorridor(maison, null), maison);
 });
 
 test('un abribus posé sur la chaussée en sort, avec de quoi loger son dos', () => {

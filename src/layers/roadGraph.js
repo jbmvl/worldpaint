@@ -802,6 +802,44 @@ export class RoadIndex {
   }
 
   /**
+   * Parcourt toutes les arêtes dont l'emprise peut toucher une boîte.
+   *
+   * `query` répond « quelle chaussée recouvre ce point ? », donc une seule, la
+   * plus proche. Une **surface** — l'empreinte d'un bâtiment — n'a pas de point
+   * unique à interroger : il lui faut toutes les chaussées qui la traversent,
+   * et c'est ce que celle-ci rend. Chaque arête n'est visitée qu'une fois,
+   * quel que soit le nombre de cellules qu'elle occupe.
+   *
+   * @param {number} minX Coin de la boîte, en mètres locaux.
+   * @param {number} minZ
+   * @param {number} maxX
+   * @param {number} maxZ
+   * @param {Function} visit `(segment, row, index) => void`.
+   */
+  forEachNear(minX, minZ, maxX, maxZ, visit) {
+    const cx0 = Math.floor(minX / this.cell);
+    const cx1 = Math.floor(maxX / this.cell);
+    const cz0 = Math.floor(minZ / this.cell);
+    const cz1 = Math.floor(maxZ / this.cell);
+    const seen = new Set();
+
+    for (let cx = cx0; cx <= cx1; cx++) {
+      for (let cz = cz0; cz <= cz1; cz++) {
+        const bucket = this.buckets.get(cellKey(cx, cz));
+        if (!bucket) continue;
+        for (let i = 0; i < bucket.length; i += 2) {
+          const index = bucket[i];
+          const row = bucket[i + 1];
+          const key = index * 1048576 + row;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          visit(this.segments[index], row, index);
+        }
+      }
+    }
+  }
+
+  /**
    * Chaussée la plus proche d'un point **à distance**, et le point de son axe
    * qui lui fait face.
    *
