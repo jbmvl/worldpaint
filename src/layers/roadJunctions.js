@@ -63,9 +63,14 @@
  * les trottoirs continuent de lire une route entière : le carrefour ajoute une
  * surface, il ne perce pas de trou dans le réseau.
  *
- * Il ne connaît pas non plus l'altitude : tout est en plan. Le carrefour prend
- * la cote de la chaussée qui y passe, une fois les plate-formes dressées et
- * cousues — c'est-à-dire bien plus tard.
+ * Il ne relève pas non plus l'altitude : tout se construit en plan. Les cotes
+ * lui sont données bien plus tard, une fois les plate-formes dressées et
+ * cousues, et il y en a **une par bouche** : sur un versant, les branches d'un
+ * même carrefour n'arrivent pas à la même hauteur, et une dalle horizontale y
+ * laisserait une marche de plusieurs dizaines de centimètres contre chaque
+ * ruban. Chaque sommet du contour sait donc de quelles branches il tient sa
+ * cote (`from`, `to`, `blend`, lus par `outlineDeckAt`), et la dalle est
+ * gauche.
  *
  * Module pur : aucun `three`, testable sous Node.
  */
@@ -272,21 +277,43 @@ export function junctionArea(junction, options = {}) {
     // la seule façon qu'elle ne coupe aucun des deux.
     const t = Math.max(reach[i], branch.halfWidth * 0.5) + margin;
     const p = { x: branch.z, z: -branch.x };
+    const next = (i + 1) % count;
     const centre = { x: node.x + branch.x * t, z: node.z + branch.z * t };
-    const left = { x: centre.x + p.x * branch.halfWidth, z: centre.z + p.z * branch.halfWidth };
-    const right = { x: centre.x - p.x * branch.halfWidth, z: centre.z - p.z * branch.halfWidth };
+    // `from`, `to`, `blend` : de quelles branches ce sommet tient sa cote (voir
+    // `outlineDeckAt`). Une bouche est celle de sa branche ; un sommet d'arc est
+    // entre deux, et passe de l'une à l'autre en tournant.
+    const left = {
+      x: centre.x + p.x * branch.halfWidth,
+      z: centre.z + p.z * branch.halfWidth,
+      from: i,
+      to: i,
+      blend: 0,
+    };
+    const right = {
+      x: centre.x - p.x * branch.halfWidth,
+      z: centre.z - p.z * branch.halfWidth,
+      from: i,
+      to: i,
+      blend: 0,
+    };
 
     // Le contour entre par la rive gauche de la branche et ressort par la
     // droite : c'est le sens dans lequel le tri par azimut le fait tourner.
     outline.push(left, right);
     // Puis l'arc qui la relie à la suivante.
-    for (const point of corners[i].points) outline.push(point);
+    const arc = corners[i].points;
+    for (let k = 0; k < arc.length; k++) {
+      arc[k].from = i;
+      arc[k].to = next;
+      arc[k].blend = (k + 1) / (arc.length + 1);
+      outline.push(arc[k]);
+    }
 
     // Le morceau de rive que ce carrefour ajoute au réseau, entre la bouche de
     // cette branche et celle de la suivante : c'est le **coin de rue**, celui
     // le long duquel un trottoir tourne au lieu de traverser la chaussée. Il
     // est refermé plus bas, une fois toutes les bouches posées.
-    corner.push({ from: i, to: (i + 1) % count, arc: corners[i].points, right });
+    corner.push({ from: i, to: next, arc, right });
 
     mouths.push({
       profile: branch.profile,
@@ -336,6 +363,104 @@ export function junctionArea(junction, options = {}) {
     edges,
     radius,
   };
+}
+
+/**
+ * Cote d'un sommet de contour, d'après celles des branches du carrefour.
+ *
+ * Un sommet de bouche prend la cote de sa branche — celle-là même où le ruban
+ * s'arrête, si bien que les deux se rejoignent sans marche. Un sommet d'arc
+ * est entre deux bouches, et passe de l'une à l'autre en tournant.
+ *
+ * Fonction pure.
+ *
+ * @param {{from:number,to:number,blend:number}} point Sommet du contour.
+ * @param {Array<number>} decks Cote par branche, dans l'ordre des bouches.
+ * @returns {number}
+ */
+export function outlineDeckAt(point, decks) {
+  const from = decks[point?.from ?? 0];
+  const to = decks[point?.to ?? 0];
+  if (!Number.isFinite(from)) return to;
+  if (!Number.isFinite(to)) return from;
+  return from + (to - from) * (point.blend || 0);
+}
+
+/**
+ * Cote de la dalle d'un carrefour en un point qu'elle couvre.
+ *
+ * La dalle est un éventail depuis le nœud : le point tombe donc dans un
+ * triangle (nœud, sommet, sommet suivant), et sa cote s'y interpole en
+ * coordonnées barycentriques. Exacte sur le contour comme au nœud, c'est ce qui
+ * permet au déblai du terrain de descendre **sous la dalle** et non sous la
+ * plus basse de ses bouches, ce qui creuserait une marche au ras d'un
+ * carrefour de versant.
+ *
+ * Fonction pure.
+ *
+ * @param {Object} area  Aire rendue par `junctionArea`.
+ * @param {Array<number>} decks Cote par bouche.
+ * @param {number} x
+ * @param {number} z
+ * @returns {number} `NaN` si aucune bouche n'a de cote.
+ */
+export function junctionDeckAt(area, decks, x, z) {
+  const centre = junctionCentreDeck(decks);
+  const outline = area?.outline;
+  if (!Number.isFinite(centre) || !Array.isArray(outline) || outline.length < 3) return centre;
+
+  const cx = area.x;
+  const cz = area.z;
+  const px = x - cx;
+  const pz = z - cz;
+
+  for (let i = 0; i < outline.length; i++) {
+    const a = outline[i];
+    const b = outline[(i + 1) % outline.length];
+    const ax = a.x - cx;
+    const az = a.z - cz;
+    const bx = b.x - cx;
+    const bz = b.z - cz;
+    const area2 = ax * bz - az * bx;
+    if (Math.abs(area2) < 1e-9) continue;
+    // Poids du sommet `b`, puis de `a` : le reste revient au nœud.
+    const wb = (ax * pz - az * px) / area2;
+    const wa = (px * bz - pz * bx) / area2;
+    if (wa < 0 || wb < 0 || wa + wb > 1) continue;
+    const da = outlineDeckAt(a, decks);
+    const db = outlineDeckAt(b, decks);
+    return (
+      centre * (1 - wa - wb) +
+      (Number.isFinite(da) ? da : centre) * wa +
+      (Number.isFinite(db) ? db : centre) * wb
+    );
+  }
+
+  return centre;
+}
+
+/**
+ * Cote du nœud d'un carrefour : la moyenne de ses bouches.
+ *
+ * Ce n'est pas la cote de la chaussée dominante, et c'est délibéré. Sur un
+ * versant, les bouches d'un même carrefour ne sont pas à la même hauteur — une
+ * branche monte, l'autre descend —, et c'est la moyenne qui met le centre au
+ * milieu de la dalle plutôt que sur l'une de ses rives.
+ *
+ * Fonction pure.
+ *
+ * @param {Array<number>} decks
+ * @returns {number} `NaN` si aucune bouche n'a de cote.
+ */
+export function junctionCentreDeck(decks) {
+  let sum = 0;
+  let count = 0;
+  for (const deck of decks || []) {
+    if (!Number.isFinite(deck)) continue;
+    sum += deck;
+    count++;
+  }
+  return count ? sum / count : NaN;
 }
 
 /**
@@ -533,6 +658,30 @@ export class JunctionAreas {
   covers(x, z, level = LEVEL_GROUND) {
     return this.indexAt(x, z, level) >= 0;
   }
+
+  /**
+   * Cote de la dalle qui couvre ce point au sol, ou `null` — parce qu'aucun
+   * carrefour n'y est, ou parce que celui qui y est n'a pas encore reçu ses
+   * cotes (aire hors de portée du réseau construit).
+   *
+   * Le déblai du terrain s'en sert : la chaussée d'un carrefour déborde des
+   * rubans qui l'alimentent — les arcs de raccordement bombent au-delà de leurs
+   * rives —, donc l'entaille tirée des seuls rubans laisse le sol remonter dans
+   * les coins, par-dessus la dalle.
+   *
+   * @param {number} x
+   * @param {number} z
+   * @param {number} [level]
+   * @returns {number|null}
+   */
+  deckAt(x, z, level = LEVEL_GROUND) {
+    const index = this.indexAt(x, z, level);
+    if (index < 0) return null;
+    const area = this.areas[index];
+    if (!area?.decks) return null;
+    const deck = junctionDeckAt(area, area.decks, x, z);
+    return Number.isFinite(deck) ? deck : null;
+  }
 }
 
 /** Pas de dichotomie pour poser un sommet sur le contour (≈ 1 mm sur 5 m). */
@@ -705,16 +854,29 @@ export function junctionRibbonRuns(segment, areas, runs, { steps = JUNCTION_BISE
  * générale : le contour est étoilé vu du nœud par construction — chaque bouche
  * lui fait face, et les arcs bombent vers l'extérieur.
  *
+ * **La dalle n'est pas horizontale.** Elle l'a été, posée d'un bloc à la cote
+ * relevée au nœud, et c'était faux dès qu'un carrefour est sur un versant : à
+ * huit pour cent de pente, les rubans s'arrêtent quarante centimètres au-dessus
+ * de la dalle en amont et autant en dessous en aval. La marche se voit, le
+ * terrain entaillé à la cote du ruban passe par-dessus la dalle en amont, et le
+ * carrefour disparaît sous le sol. Chaque sommet prend donc la cote de la
+ * ou des branches dont il tient (`outlineDeckAt`) : le contour est un
+ * gauche, la dalle épouse ses bouches, et il n'y a plus de marche nulle part.
+ *
  * @param {Object} area   Aire rendue par `junctionArea`.
- * @param {number} deck   Altitude de la chaussée du carrefour.
+ * @param {number|Array<number>} deck Altitude de la chaussée du carrefour :
+ *        une cote par bouche, ou une seule pour une dalle plane.
  * @param {Object} [options]
  * @returns {{positions:number[], uvs:number[], indices:number[]}|null}
  */
 export function junctionSurface(area, deck, { textureLength = 12, base = 0 } = {}) {
   const outline = area?.outline;
-  if (!Array.isArray(outline) || outline.length < 3 || !Number.isFinite(deck)) return null;
+  if (!Array.isArray(outline) || outline.length < 3) return null;
+  const decks = Array.isArray(deck) ? deck : null;
+  const centre = decks ? junctionCentreDeck(decks) : deck;
+  if (!Number.isFinite(centre)) return null;
 
-  const positions = [area.x, deck, area.z];
+  const positions = [area.x, centre, area.z];
   // UV pris au sol : le carrefour n'a ni sens de marche ni largeur, donc pas
   // d'axe le long duquel dérouler une texture. Le grain suffit, et deux
   // carrefours voisins n'y tombent pas au même endroit.
@@ -722,7 +884,8 @@ export function junctionSurface(area, deck, { textureLength = 12, base = 0 } = {
   const indices = [];
 
   for (const point of outline) {
-    positions.push(point.x, deck, point.z);
+    const height = decks ? outlineDeckAt(point, decks) : centre;
+    positions.push(point.x, Number.isFinite(height) ? height : centre, point.z);
     uvs.push(point.x / textureLength, point.z / textureLength);
   }
 

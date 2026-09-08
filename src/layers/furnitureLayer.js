@@ -51,6 +51,8 @@ import {
 } from './hedgeGeometry.js';
 import { ROAD_SAMPLE_M, ROAD_LIFT_M } from './roadNetwork.js';
 import { branchYields } from './roadJunctions.js';
+import { edgeClearance } from './roadEdges.js';
+import { LEVEL_GROUND } from './roadWorks.js';
 import { MARKING_BAR_M, MOUTH_CROSSING_M } from './roadMarkings.js';
 import { WATER_SOURCE_LAYER } from '../terrain/groundClassMap.js';
 import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
@@ -698,6 +700,8 @@ export class FurnitureLayer {
      * frontière à faire respecter, seulement un index périmé.
      */
     this._roadIndex = null;
+    /** Dalles de carrefour de la reconstruction en cours (`JunctionAreas`), même durée de vie. */
+    this._areas = null;
     this._night = 0;
     this._matrix = new THREE.Matrix4();
     this._position = new THREE.Vector3();
@@ -795,6 +799,7 @@ export class FurnitureLayer {
     // Gardés le temps de la reconstruction, remis à `null` en sortie pour
     // qu'aucun appel tardif ne s'appuie sur une donnée périmée.
     this._roadIndex = roadIndex;
+    this._areas = areas;
     this._fabric = fabric;
     this._railIndex = railIndex;
     this._infraIndex = new CombinedIndex([roadIndex, railIndex]);
@@ -859,6 +864,7 @@ export class FurnitureLayer {
     this._anchor = { x: here.x, z: here.z };
     this._frame = this.bubble.frame;
     this._roadIndex = null;
+    this._areas = null;
     this._fabric = null;
     this._railIndex = null;
     this._infraIndex = null;
@@ -879,7 +885,10 @@ export class FurnitureLayer {
    * Le mobilier **de bord de route** ne passe pas par là, et c'est voulu :
    * glissière, lampadaire, borne et feu sont posés au ras de la rive, donc
    * dans l'emprise, et c'est exactement là qu'ils doivent être. Seul le décor
-   * qui n'a rien à faire sur la voirie — ou sur la voie — s'y heurte.
+   * qui n'a rien à faire sur la voirie — ou sur la voie — s'y heurte. Ce qui ne
+   * veut pas dire qu'il ait le droit de se poser n'importe où : sa rive à lui
+   * n'est pas la chaussée d'en face, et c'est `_onOtherPavement` qui fait la
+   * différence.
    *
    * `own` ne vaut que pour la route : c'est toujours une chaussée que l'objet
    * borde délibérément (voir `_clipOffRoad`), jamais un tronçon de voie
@@ -888,6 +897,43 @@ export class FurnitureLayer {
   _onRoad(x, z, own = null) {
     const accept = own ? (other) => other !== own : null;
     return inCorridor(this._infraIndex, x, z, undefined, accept);
+  }
+
+  /**
+   * Vrai si ce point tombe sur une chaussée **qui n'est pas la sienne**, ou
+   * dans un carrefour.
+   *
+   * Le mobilier de rive ne passe pas par `_onRoad` : il est posé au ras de la
+   * chaussée, donc dans son emprise, et c'est sa place (voir `_onRoad`). Mais
+   * « au ras de la sienne » n'a jamais voulu dire « sur celle d'à côté ». Or un
+   * lampadaire est posé à quatre-vingt-dix centimètres de sa propre rive, sans
+   * rien demander à personne : à un carrefour, où deux chaussées se rejoignent,
+   * et dans un faisceau, où deux voies se longent, ce décalage-là tombe droit
+   * sur la chaussée d'en face. C'est ce qui plantait un lampadaire et un poteau
+   * électrique au milieu de la route.
+   *
+   * La question posée est celle de la rive (`roadEdges.edgeClearance`) : la
+   * place libre entre le point et la prochaine chaussée, sa propre chaussée
+   * exceptée. Zéro veut dire « dessus ». La portée demandée est minuscule —
+   * c'est un oui ou non, pas une largeur : on ne cherche pas ici de quoi
+   * s'écarter, seulement de quoi refuser.
+   *
+   * @param {number} x
+   * @param {number} z
+   * @param {Object|null} own Le tronçon que l'objet borde délibérément.
+   * @param {number} [level] Niveau de croisement de ce tronçon.
+   * @returns {boolean}
+   */
+  _onOtherPavement(x, z, own, level = LEVEL_GROUND) {
+    if (!this._roadIndex && !this._areas) return false;
+    const room = edgeClearance(x, z, {
+      roadIndex: this._roadIndex,
+      areas: this._areas,
+      level,
+      ignore: own ? (segment) => segment === own : null,
+      reach: 0.01,
+    });
+    return room <= 0;
   }
 
   /**
@@ -1465,6 +1511,11 @@ export class FurnitureLayer {
    * côté de la route — la ligne téléphonique, la haie — s'y tire au sort. Deux
    * portions d'une même chaîne rendent donc le même côté, ce qui évite la haie
    * qui saute d'un bord à l'autre à chaque limite d'agglomération.
+   *
+   * Tout ce qui se pose au ras de la rive (`atKerb`) le fait à un décalage compté
+   * depuis **sa** chaussée. Le décalage est chez lui tant qu'il n'y a rien en
+   * face ; à un carrefour et dans un faisceau, il tombe sur la chaussée
+   * voisine, et l'objet n'est alors pas posé (`_onOtherPavement`).
    */
   _applyRoadsidePlan({
     plan,
@@ -1483,6 +1534,10 @@ export class FurnitureLayer {
     segment,
     here = null,
   }) {
+    // Le niveau de croisement de cette portion : ce qui la borde s'y heurte aux
+    // chaussées du même niveau, pas à celle qui passe dessous.
+    const level = segment?.levels?.[rows?.[0]?.r] ?? LEVEL_GROUND;
+
     if (plan.lamp) {
       for (const p of spacedAlongPath(path, plan.lamp, spacing)) {
         // Alternance d'un côté et de l'autre : deux rangées face à face
@@ -1492,6 +1547,9 @@ export class FurnitureLayer {
         const placed = this._placeBeside(placements, 'streetLamp', p, offset, platform, {
           facing: 'road',
           onPlatform: true,
+          atKerb: true,
+          own: segment,
+          level,
         });
         // Halo nocturne : accroché à la tête, c'est-à-dire au bout de la crosse,
         // qui avance au-dessus de la chaussée — pas au-dessus du mât.
@@ -1508,17 +1566,25 @@ export class FurnitureLayer {
 
     if (plan.utilityPole) {
       const poleSide = randomAt(side.x, side.z, 11) < 0.5 ? 1 : -1;
-      const poles = spacedAlongPath(path, plan.utilityPole, spacing);
-      for (const p of poles) {
+      const offset = poleSide * (halfWidth + 2.2);
+      const standing = [];
+      for (const p of spacedAlongPath(path, plan.utilityPole, spacing)) {
         // Dans l'axe de la route, et non tourné vers elle : la traverse d'un
         // poteau est perpendiculaire aux fils qu'elle porte, donc à la ligne.
         // Tourné vers la chaussée, il présentait sa traverse en travers de la
         // route — un détail qu'on ne peut plus ne pas voir une fois repéré.
-        this._placeBeside(placements, 'utilityPole', p, poleSide * (halfWidth + 2.2), platform, {
+        const placed = this._placeBeside(placements, 'utilityPole', p, offset, platform, {
           facing: 'along',
+          atKerb: true,
+          own: segment,
+          level,
         });
+        if (placed) standing.push(p);
       }
-      this._appendOverheadLine(buffers.wire, poles, poleSide * (halfWidth + 2.2), sampleElevation, 8.35);
+      // La ligne ne relie que les poteaux réellement plantés : un carrefour se
+      // franchit d'une portée plus longue, il ne se traverse pas à mi-hauteur
+      // sur un poteau qui n'existe pas.
+      this._appendOverheadLine(buffers.wire, standing, offset, sampleElevation, 8.35);
     }
 
     // Bornes hectométriques, sauf tous les dix rangs : là, c'est la borne
@@ -1529,7 +1595,13 @@ export class FurnitureLayer {
       const every = plan.kilometreStone ? Math.round(plan.kilometreStone / plan.milestone) : 0;
       for (const p of spacedAlongPath(path, plan.milestone, spacing)) {
         if (every && p.index % every === 0) continue;
-        this._placeBeside(placements, 'milestone', p, kerb, platform, { facing: 'road', onPlatform: true });
+        this._placeBeside(placements, 'milestone', p, kerb, platform, {
+          facing: 'road',
+          onPlatform: true,
+          atKerb: true,
+          own: segment,
+          level,
+        });
       }
     }
     if (plan.kilometreStone) {
@@ -1538,6 +1610,9 @@ export class FurnitureLayer {
           facing: 'road',
           scale: 1.7,
           onPlatform: true,
+          atKerb: true,
+          own: segment,
+          level,
         });
       }
     }
@@ -1562,6 +1637,9 @@ export class FurnitureLayer {
         this._placeBeside(placements, item, p, -(halfWidth + 1.1), platform, {
           facing: 'traffic',
           onPlatform: true,
+          atKerb: true,
+          own: segment,
+          level,
         });
       }
     }
@@ -1583,6 +1661,9 @@ export class FurnitureLayer {
       this._placeBeside(placements, 'signChevron', p, outer * (halfWidth + 1), platform, {
         facing: 'traffic',
         onPlatform: true,
+        atKerb: true,
+        own: segment,
+        level,
       });
     }
 
@@ -1591,6 +1672,9 @@ export class FurnitureLayer {
         this._placeBeside(placements, 'signDirection', p, -(halfWidth + 1.8), platform, {
           facing: 'traffic',
           onPlatform: true,
+          atKerb: true,
+          own: segment,
+          level,
         });
       }
     }
@@ -1621,7 +1705,7 @@ export class FurnitureLayer {
           { x: start.x, z: start.z, tx: tx / length, tz: tz / length, distance: start.distance },
           -(halfWidth + 1.4),
           platform,
-          { facing: 'traffic', onPlatform: true }
+          { facing: 'traffic', onPlatform: true, atKerb: true, own: segment, level }
         );
         if (placed) this._labelQuads.push({ x: placed.x, y: placed.y, z: placed.z, yaw: placed.yaw, name: place.name });
       }
@@ -3601,11 +3685,17 @@ export class FurnitureLayer {
       offRoad = false,
       openGround = false,
       own = null,
+      atKerb = false,
+      level = LEVEL_GROUND,
     } = {}
   ) {
     // Perpendiculaire à gauche de la marche, comme partout ailleurs.
     const x = point.x + point.tz * offset;
     const z = point.z - point.tx * offset;
+    // `atKerb` : mobilier de rive. Il a le droit d'être dans l'emprise de **sa**
+    // chaussée — c'est sa place —, pas sur celle d'une autre ni dans un
+    // carrefour (voir `_onOtherPavement`).
+    if (atKerb && this._onOtherPavement(x, z, own, level)) return null;
     // `offRoad` ne concerne que ce qui pousse — un alignement d'arbres. Le
     // mobilier réglementaire, lui, est posé au ras de la rive, donc dans
     // l'emprise, et c'est sa place : une glissière hors de l'emprise ne

@@ -90,7 +90,7 @@ import { RoadIndex } from './roadGraph.js';
 import { contiguousRuns, crossSlope, randomAt, STEEP_CROSS_SLOPE } from './furniturePlacement.js';
 import { pointInAreas } from './settlement.js';
 import { edgeClearance, outwardSide, polylineLength } from './roadEdges.js';
-import { junctionBoundaryAt } from './roadJunctions.js';
+import { junctionBoundaryAt, outlineDeckAt } from './roadJunctions.js';
 import { appendZebra, collectRoadGaps } from './roadBundles.js';
 import {
   MARKING_LIFT_M,
@@ -645,8 +645,9 @@ export class StreetLayer {
    * Mêmes conditions qu'ailleurs (bourg, bâti, place disponible), posées au
    * milieu du morceau — une seule règle, évaluée sur chaque morceau de la
    * frontière de la chaussée, quel que soit ce qui le porte. Le devers n'y est
-   * pas mesuré : un carrefour est dressé à plat par la couture des
-   * plate-formes, il n'a pas de pente en travers à lui.
+   * pas mesuré : un carrefour n'a pas de pente en travers à lui, il tient ses
+   * cotes des bouches qui le bordent — d'où une bordure dressée sommet par
+   * sommet, sur les mêmes cotes que la dalle.
    *
    * @returns {number} coins posés.
    */
@@ -695,7 +696,15 @@ export class StreetLayer {
         if (!kerbQualifies({ builtUp: true, buildings, crossSlope: 0 })) continue;
 
         const side = outwardSide(points, edge.outward);
-        const decks = new Float32Array(points.length).fill(area.deck);
+        // Sommet par sommet, comme la dalle : sur un versant, un coin de rue
+        // relie deux bouches qui ne sont pas à la même hauteur, et une bordure
+        // posée à plat y ferait une marche contre l'une des deux.
+        const decks = Float32Array.from(points, (point) => {
+          const deck = area.decks ? outlineDeckAt(point, area.decks) : area.deck;
+          // Une branche hors de portée du réseau n'a pas de cote : le coin
+          // retombe sur celle du nœud plutôt que de porter un `NaN`.
+          return Number.isFinite(deck) ? deck : area.deck;
+        });
         this._appendKerb(buffer, bands, {
           points,
           decks,

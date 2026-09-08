@@ -9,6 +9,12 @@
  * au mètre, pas une route). Une chaussée y ajoute une quatrième qui remplace
  * la première : dressée de niveau en travers (voir `levelRow`).
  *
+ * Le lissage ne vaut que pour les altitudes relevées ici. Une plate-forme déjà
+ * dressée arrive de l'extérieur et se pose telle quelle : elle est partagée
+ * avec le déblai du terrain, les bordures, le marquage et le mobilier, et un
+ * second lissage n'aurait déplacé que le ruban — sous le terrain, au sommet
+ * d'une côte.
+ *
  * `appendProfile` généralise le ruban à une section quelconque le long de la
  * même polyligne (haie, muret, glissière, remblai, caténaire). `appendVariableWall`
  * couvre le seul cas restant : une hauteur qui change le long du tracé, et
@@ -241,7 +247,8 @@ export function createProfileBuffer() {
  *        (`levelRow`). Vrai par défaut : c'est le comportement d'une chaussée.
  * @param {Float32Array} [options.platform] Altitudes de plate-forme déjà
  *        calculées et lissées, une par ligne — évite de refaire l'échantillonnage
- *        quand l'appelant en a besoin par ailleurs (talus, glissières).
+ *        quand l'appelant en a besoin par ailleurs (talus, glissières). Posées
+ *        telles quelles : c'est la cote que tout le reste lit.
  * @returns {boolean} vrai si de la géométrie a été produite.
  */
 export function appendRibbon(
@@ -287,7 +294,15 @@ export function appendRibbon(
     }
   }
 
-  smoothColumns(heights, rows, columns, smoothRadius);
+  // Lissé seulement quand les altitudes viennent d'être relevées ici : c'est le
+  // bruit du MNT qu'il s'agit d'amortir (le ballast d'une voie ferrée, qui suit
+  // le sol point par point). Une plate-forme, elle, est déjà dressée et
+  // **partagée** — le déblai du terrain, les bordures, le marquage et le
+  // mobilier la lisent telle quelle. La relisser ici ne lissait que le ruban :
+  // au sommet d'une côte, la moyenne glissante le faisait passer sous le
+  // terrain entaillé à la cote de la plate-forme, et le sol traversait la
+  // chaussée.
+  if (!platform) smoothColumns(heights, rows, columns, smoothRadius);
 
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < columns; c++) {

@@ -98,6 +98,8 @@ export class TerrainBubble {
 
     /** Index des chaussées construites (`RoadIndex`), ou `null` — voir `setRoadCut`. */
     this._roadCut = null;
+    /** Dalles de carrefour (`JunctionAreas`), ou `null` — elles s'entaillent aussi. */
+    this._junctions = null;
     /** Incrémenté à chaque publication d'index : périme les mailles déjà creusées. */
     this._cutGeneration = 0;
   }
@@ -282,15 +284,23 @@ export class TerrainBubble {
   }
 
   /**
-   * Publie l'index des chaussées et remet en file les tuiles à entailler. Les
+   * Publie l'emprise des chaussées et remet en file les tuiles à entailler. Les
    * tuiles passent par la file drainée une par image, sinon recreuser toutes
    * les mailles d'un coup produirait un à-coup net.
    *
+   * Deux choses à entailler, et non une seule : les rubans (`index`) et les
+   * **dalles de carrefour** (`areas`). Une dalle déborde des rubans qui
+   * l'alimentent — ses arcs de raccordement bombent au-delà de leurs rives —,
+   * si bien qu'une entaille tirée des seuls rubans laissait le terrain remonter
+   * dans les coins d'un carrefour et passer par-dessus sa chaussée.
+   *
    * @param {Object|null} index Instance `RoadIndex`, ou `null` pour ne rien creuser.
+   * @param {Object|null} [areas] Instance `JunctionAreas`, cotes posées.
    */
-  setRoadCut(index) {
+  setRoadCut(index, areas = null) {
     if (this.disposed) return;
     this._roadCut = index || null;
+    this._junctions = (index && areas) || null;
     this._cutGeneration++;
     for (const tile of this.tiles.values()) {
       if (tile.ring > ROAD_CUT_MAX_RING) continue;
@@ -316,6 +326,15 @@ export class TerrainBubble {
   _roadCutAt(x, z, raw) {
     const index = this._roadCut;
     if (!index) return raw;
+
+    // La dalle d'un carrefour d'abord : c'est elle qui est dessinée là, et elle
+    // déborde des rubans. Le sol y descend jusqu'à la dalle, sans raccord — ce
+    // sont les rubans alentour qui ramènent l'entaille au terrain naturel.
+    const slab = this._junctions?.deckAt(x, z);
+    if (slab != null) {
+      const scale = this.verticalScale || 1;
+      return Math.min(raw, slab / scale);
+    }
 
     const hit = index.query(x, z, ROAD_CUT_M + ROAD_CUT_BLEND_M);
     if (!hit) return raw;
@@ -513,6 +532,7 @@ export class TerrainBubble {
     this.disposed = true;
     this._abort.abort();
     this._roadCut = null;
+    this._junctions = null;
     this._rebuildQueue.length = 0;
     this._clearTiles();
     this.materials.dispose();

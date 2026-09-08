@@ -87,7 +87,12 @@ these needs a very good reason, stated in the PR description.
   grass, scatter — asks `roadCorridor` (`inCorridor` for a point,
   `clipOutsideCorridor` for a polyline) rather than reading `roadSegments` or
   inventing its own margin. Roadside furniture that belongs at the kerb
-  (guardrails, lamps, signs, traffic lights) deliberately does not.
+  (guardrails, lamps, signs, traffic lights) deliberately does not: it is *meant*
+  to stand inside the corridor of the road it serves. It still owes that road,
+  and only that one — a lamp set 90 cm past its own kerb lands squarely on the
+  crossing carriageway at a junction, or on the neighbour in a bundle. So kerb
+  furniture (`atKerb`) asks `roadEdges.edgeClearance` with its own segment ignored, which
+  answers for the whole paved surface, junction slabs included.
   `clipOutsideCorridor` **cuts**: it fits anything that genuinely has two ends
   once a road crosses it (a ditch, a vine row, a roadside hedge offset from its
   own carriageway). It is the wrong tool for a line that isn't attached to a
@@ -105,11 +110,34 @@ these needs a very good reason, stated in the PR description.
   where two ribbons overlap, invents different ones: they land somewhere else,
   and there is one per overlapping row instead of one per crossroads.
 
+  A tile is not the survey, though: it simplifies geometry (the vertex at a
+  crossroads is collinear with its neighbours, hence redundant, hence dropped)
+  and quantises coordinates tile by tile. Two ways that share a node in the
+  source data therefore reach the graph without a common vertex more often than
+  not, and the junction is simply absent. `graftLooseNodes` repairs that on the
+  graph, before anything reads it: a node that is not already a junction and
+  that lands on another carriageway is brought onto it, and the host edge is
+  cut underneath. Three guards keep it from inventing anything — the same level,
+  no `brunnel`, and an angle: past 25° a way *meets* a carriageway, below it
+  merely runs along or continues it (that second case is `joinLooseEnds`, the
+  tile seam). A vertex in the middle of a chain moves at most by the weld
+  tolerance; only a free end may travel the full reach.
+
   What a junction *looks like* is built from that node, in `roadJunctions.js`:
   its branches give a carriageway **outline** (corner arcs included), every
   branch's ribbon stops on it, and the outline is drawn as one surface. Two
   ribbons must never overlap to make a crossroads — that is a picture, and it
   cannot be made right by lifting one of them.
+
+  That surface is **not horizontal**. It takes one height per mouth, read where
+  each branch's ribbon stops, and every outline vertex knows which branches it
+  hangs between (`outlineDeckAt`). A slab laid flat at the node's level left a
+  step of tens of centimetres against each ribbon as soon as a crossroads sat on
+  a slope — and the ground, cut to the ribbon's own platform, then ran over the
+  slab on the uphill side. The terrain cut reads the slab too
+  (`TerrainBubble.setRoadCut` takes the areas): a junction's carriageway bulges
+  past the ribbons that feed it, so an excavation derived from ribbons alone
+  leaves the ground standing in its corners.
 
 - **A junction interrupts a ribbon, not a road.** Chains are not cut at
   junctions: the carriageway still crosses them in the data, so the corridor,
