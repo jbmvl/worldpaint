@@ -46,6 +46,8 @@ import {
   hedgeModulation,
   appendHedgeClumps,
   facetJitter,
+  hedgeNosePath,
+  hedgeEndTaper,
 } from './hedgeGeometry.js';
 import { ROAD_SAMPLE_M, ROAD_LIFT_M } from './roadNetwork.js';
 import { WATER_SOURCE_LAYER } from '../terrain/groundClassMap.js';
@@ -3402,7 +3404,11 @@ export class FurnitureLayer {
   _appendHedgerowRun(buffer, kind, path, sampleElevation, { offset = 0, here = null, startDistance = 0 } = {}) {
     const style = hedgeStyleFor(kind, this.theme.furniture.hedges);
     const fine = resamplePath(path, HEDGE_SAMPLE_M);
-    const dense = fine.length >= 2 ? fine : path;
+    // Les deux bouts sont densifiés avant tout le reste : l'arrondi et le
+    // facettage sont calculés dessus comme sur n'importe quelle ligne, donc le
+    // museau garde le grain du corps de la haie au lieu d'être une calotte
+    // lisse rapportée.
+    const dense = hedgeNosePath(fine.length >= 2 ? fine : path, style.noseM);
 
     // Deux bruits composés, pas un seul : `hedgeModulation` reste la courbe
     // longue qui porte la silhouette au loin, `facetJitter` y superpose un
@@ -3410,11 +3416,19 @@ export class FurnitureLayer {
     // `_applyLinear`, qui casse le tube de près.
     const modulation = hedgeModulation(dense, { offset, here, style });
     const facets = facetJitter(dense, style.salt);
+    // Le bout arrondi vient **après** le facettage, et le multiplie : sinon un
+    // tirage haut au ras de la pointe ressortirait de l'arrondi, et le bout
+    // redeviendrait une coupe franche à un arbuste près.
+    const nose = hedgeEndTaper(dense, style.noseM);
     const scaleUp = new Float32Array(dense.length);
     const scaleAcross = new Float32Array(dense.length);
+    const lateral = new Float32Array(dense.length);
     for (let r = 0; r < dense.length; r++) {
-      scaleUp[r] = modulation.up[r] * facets.up[r];
-      scaleAcross[r] = modulation.across[r] * facets.across[r];
+      scaleUp[r] = modulation.up[r] * facets.up[r] * nose[r];
+      scaleAcross[r] = modulation.across[r] * facets.across[r] * nose[r];
+      // Le débattement latéral rentre lui aussi : à pleine amplitude, il ferait
+      // partir la pointe de travers.
+      lateral[r] = facets.lateral[r] * nose[r];
     }
 
     appendProfile(buffer, {
@@ -3426,7 +3440,7 @@ export class FurnitureLayer {
       closed: true,
       scaleUp,
       scaleAcross,
-      lateralJitter: facets.lateral,
+      lateralJitter: lateral,
       // Fenêtre de lissage du pied gardée à ~6 m de chaque côté (l'ancien
       // rayon par défaut, 2, au pas d'avant ce chantier, 3 m) : le pas plus
       // fin qui fait les arêtes du balayage ne doit pas aussi laisser

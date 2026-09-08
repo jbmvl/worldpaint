@@ -332,9 +332,14 @@ import {
 } from '../src/layers/furnitureLayer.js';
 import {
   HEDGE_STYLES,
+  HEDGE_SAMPLE_M,
+  HEDGE_NOSE_FLOOR,
   hedgeNearness,
   hedgeModulation,
   hedgeClumps,
+  hedgeNosePath,
+  hedgeEndTaper,
+  hedgeNoseFactor,
   appendHedgeClump,
 } from '../src/layers/hedgeGeometry.js';
 import {
@@ -2818,6 +2823,49 @@ test('un bois interrompt l’alignement au lieu de l’effacer selon d’où l�
   for (const clef of long) {
     assert.ok(Number(clef.split('@')[1].split(',')[0]) >= 150, `${clef} pousse sous le bois`);
   }
+});
+
+test('une haie ne s’arrête plus au couteau : elle rentre en museau', () => {
+  // Une haie finissait sur un bouchon plat — sa section entière tranchée net,
+  // ce qui se lit comme un tube coupé. Elle rentre maintenant sur sa dernière
+  // longueur de museau, en quart d'ellipse.
+  const style = HEDGE_STYLES.hedge;
+  const fine = resamplePath([{ x: 0, z: 0 }, { x: 60, z: 0 }], HEDGE_SAMPLE_M);
+
+  // Le museau est d'abord une question de lignes : à soixante-quinze
+  // centimètres de pas, l'arrondi tiendrait sur une ligne et demie.
+  const dense = hedgeNosePath(fine, style.noseM);
+  assert.ok(dense.length > fine.length, 'les bouts sont densifiés');
+  const dansLeMuseau = dense.filter((p) => p.distance < style.noseM).length;
+  assert.ok(dansLeMuseau >= 5, `${dansLeMuseau} lignes dans le museau`);
+  // Et rien n'a bougé ailleurs : même longueur, mêmes distances croissantes.
+  close(dense[dense.length - 1].distance, fine[fine.length - 1].distance, 1e-9, 'même longueur');
+  for (let r = 1; r < dense.length; r++) {
+    assert.ok(dense[r].distance > dense[r - 1].distance, 'aucune ligne confondue');
+  }
+
+  const taper = hedgeEndTaper(dense, style.noseM);
+  assert.ok(taper[0] <= HEDGE_NOSE_FLOOR + 1e-9, 'la pointe ne garde presque rien de la section');
+  assert.ok(taper[0] > 0, 'mais pas rien du tout : un anneau nul rend des triangles plats');
+  close(taper[taper.length - 1], taper[0], 1e-6, 'les deux bouts se valent');
+  const cœur = taper[Math.floor(taper.length / 2)];
+  assert.equal(cœur, 1, 'le corps de la haie garde sa section');
+
+  // Rond, pas conique : la courbe monte plus vite qu'une rampe près du bout,
+  // c'est ce qui distingue une haie taillée d'un crayon.
+  const moitie = hedgeNoseFactor(style.noseM * 0.5, style.noseM);
+  assert.ok(moitie > 0.8, `à mi-museau la section vaut déjà ${moitie.toFixed(2)}`);
+  assert.equal(hedgeNoseFactor(style.noseM * 2, style.noseM), 1, 'au-delà, plus d’arrondi');
+
+  // Sans museau au thème, rien ne rentre : un thème qui ne le décrit pas garde
+  // le bout franc d'avant.
+  assert.equal(hedgeNoseFactor(0, 0), 1);
+  assert.deepEqual(hedgeNosePath(fine, 0), fine);
+
+  // Une haie trop courte pour deux museaux n'est pas retournée pour autant.
+  const courte = resamplePath([{ x: 0, z: 0 }, { x: 1.2, z: 0 }], HEDGE_SAMPLE_M);
+  const petit = hedgeEndTaper(hedgeNosePath(courte, style.noseM), style.noseM);
+  assert.ok(petit.every((v) => v > 0 && v <= 1), 'facteurs bornés même sur un bout de haie');
 });
 
 test('le champ proche d’une haie se fond au lieu de basculer', () => {

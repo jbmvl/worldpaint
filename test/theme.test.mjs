@@ -431,7 +431,10 @@ test('la haie prend ses arbustes du thème, et son budget du moteur', () => {
     hedgeStyleFor('hedge', DEFAULT.furniture.hedges).detailRadiusM,
     'le thème ne décide pas jusqu’où on détaille'
   );
-  const [tall] = hedgeClumps(path, { style: hedgeStyleFor('hedge', OTHER.furniture.hedges), here });
+  // Pris au milieu : les arbustes des deux bouts rentrent avec le museau de la
+  // haie (`hedgeNoseFactor`), et ne valent donc pas leur cote nominale.
+  const clumps = hedgeClumps(path, { style: hedgeStyleFor('hedge', OTHER.furniture.hedges), here });
+  const tall = clumps[Math.floor(clumps.length / 2)];
   assert.equal(tall.height, 6, 'l’arbuste fait la taille que le thème lui donne');
 });
 

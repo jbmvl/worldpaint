@@ -1300,6 +1300,13 @@ export const HEDGE_SHAPES = {
     spacingM: 6.5,
     /** Débattement latéral d'un arbuste autour de l'axe, en mètres. */
     lateralM: 0.3,
+    /**
+     * Longueur du bout arrondi, en mètres. Une haie s'arrêtait au couteau, sur
+     * la section entière tranchée net ; elle rentre maintenant sur cette
+     * longueur-là, en quart d'ellipse (`hedgeGeometry.hedgeEndTaper`). À peu
+     * près la largeur de la haie : c'est le rayon d'un bout taillé.
+     */
+    noseM: 1.1,
     /** Hauteur d'un arbuste, en mètres. */
     heightM: [1.35, 2.45],
     /** Demi-longueur le long du tracé, en mètres. */
@@ -1323,6 +1330,7 @@ export const HEDGE_SHAPES = {
     coreWidth: 0.92,
     spacingM: 4,
     lateralM: 0.22,
+    noseM: 0.7,
     heightM: [0.5, 0.95],
     alongM: [1, 1.5],
     acrossM: [0.48, 0.76],
