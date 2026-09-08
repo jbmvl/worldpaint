@@ -139,6 +139,23 @@ these needs a very good reason, stated in the PR description.
   And an area **enclosed** by carriageways is never filled and never claimed:
   a void whose two edges both curve toward it is an island (a roundabout
   centre), and an island stays terrain, with its trees.
+- **Road markings are geometry, laid in the same pieces as the ribbon.**
+  Nothing paints a line into a road texture. Longitudinal lines, give-way
+  bars, crossings and bundle hatching are triangles laid over the drawable
+  runs a carriageway already has (`roadWorks.drawableRuns`, then
+  `roadJunctions.junctionRibbonRuns`), so they stop at a tunnel mouth and at a
+  junction outline without a clipping rule of their own — see
+  `layers/roadMarkings.js`. A dashed line's phase comes from the chain's
+  curvilinear abscissa from its graph anchor, never from the loop index, so a
+  chain cut elsewhere paints the same dashes in the same places. There is one
+  white for all of it: `theme.roads.markingColor`.
+- **Priority is decided at the junction, once, and read twice.** The data
+  carries no priority, so `roadJunctions.branchYields` derives it from what the
+  data does carry — the class, hence the width, of each branch: a branch yields
+  when a strictly wider one meets it there, and two equal branches yield to
+  nobody. The painted bar and the posted sign read that same function. Never
+  place a sign because an intersection exists: a random draw between stop,
+  give-way and roundabout is what this rule replaced.
 - **A bridge is a state of the carriageway, not a class of road.** `brunnel`
   travels as a per-row flag alongside the path (`segment.works`, see
   `layers/roadWorks.js`), never as an extra road profile. That is what keeps a

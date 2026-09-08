@@ -405,7 +405,10 @@ export class WorldComposer {
         builtUp,
         fabric,
         this.railways.index,
-        places
+        places,
+        // Les surfaces de carrefour : un panneau de priorité se pose à une
+        // bouche, et la bouche n'existe que là.
+        { areas: this.roads.junctionAreas }
       );
 
       // 6. Arbres — après les chaussées, dont l'emprise décide où le semis

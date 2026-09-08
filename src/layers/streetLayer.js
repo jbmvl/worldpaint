@@ -22,7 +22,20 @@
  *     qu'un trottoir ne ressemble pas à un ruban posé en travers d'un
  *     carrefour ;
  *   - le trottoir est **interrompu à chaque bouche**. Il n'y passe pas : c'est
- *     là qu'une traversée se peindra.
+ *     là que la traversée se peint.
+ *
+ * ## La traversée
+ *
+ * Elle se pose là où un trottoir arrive **des deux côtés** de la même bouche,
+ * et nulle part ailleurs. Ce n'est pas un raffinement : c'est la seule
+ * condition qui distingue une traversée d'un carrefour de campagne, et c'est
+ * la raison pour laquelle elle est peinte ici plutôt qu'avec le reste du
+ * marquage (`roadMarkings`, posé par `roadNetwork`). Une chaussée ne sait pas
+ * ce qui la borde ; cette couche vient de le décider.
+ *
+ * La chaussée lui réserve sa profondeur à la bouche (`MOUTH_CROSSING_M`) et
+ * pose sa ligne d'effet au-delà : les deux ne se recouvrent pas, et c'est
+ * l'ordre réel d'un débouché — on cède le passage avant le passage piétons.
  *
  * ## La place disponible, et non plus un refus
  *
@@ -79,6 +92,12 @@ import { pointInAreas } from './settlement.js';
 import { edgeClearance, outwardSide, polylineLength } from './roadEdges.js';
 import { junctionBoundaryAt } from './roadJunctions.js';
 import { appendZebra, collectRoadGaps } from './roadBundles.js';
+import {
+  MARKING_LIFT_M,
+  MOUTH_CROSSING_M,
+  appendCrossing,
+  sectionAtDistance,
+} from './roadMarkings.js';
 import { srgb } from '../core/color.js';
 import { streetSurfaceAt } from './townStyle.js';
 import { defaultTheme } from '../themes/default.js';
@@ -233,6 +252,8 @@ export class StreetLayer {
     this.count = 0;
     /** Bandes de hachures posées dans les vides de faisceau. */
     this.fills = 0;
+    /** Traversées piétonnes peintes aux bouches de carrefour. */
+    this.crossings = 0;
     /** Bande revêtue, au format de `RoadIndex` (l'herbe l'interroge comme la chaussée). @type {RoadIndex|null} */
     this.index = null;
 
@@ -248,6 +269,21 @@ export class StreetLayer {
       polygonOffsetUnits: -4,
     });
     this.material.name = 'streets';
+
+    // Le marquage a sa matière à lui, et une seule raison de l'avoir : il est
+    // peint **sur** la chaussée, donc il doit gagner contre elle en
+    // profondeur, là où le trottoir est posé à côté d'elle et ne doit rien
+    // gagner du tout. Mêmes valeurs que le marquage de `roadNetwork`, dont il
+    // est la suite : une traversée et une ligne d'effet se touchent.
+    this.markingMaterial = new THREE.MeshLambertMaterial({
+      vertexColors: true,
+      polygonOffset: true,
+      polygonOffsetFactor: -4,
+      polygonOffsetUnits: -8,
+    });
+    this.markingMaterial.name = 'street-markings';
+    /** @type {Object|null} */
+    this.markingMesh = null;
   }
 
   /**
@@ -274,12 +310,16 @@ export class StreetLayer {
     if (this.disposed || !this.bubble?.frame) return false;
 
     const buffer = createProfileBuffer();
+    const marks = createProfileBuffer();
     const bands = [];
+    // Les bouches atteintes par un trottoir, côté par côté : une traversée se
+    // peint là où il y en a un **des deux** côtés, et nulle part ailleurs.
+    const mouths = new Map();
     let built = 0;
 
     // Sans emprise habitée ni bâti relevé, la couche ne pose rien.
     if (builtUp.length > 0 && fabric && fabric.count > 0) {
-      const context = { here, builtUp, fabric, roadIndex, areas };
+      const context = { here, builtUp, fabric, roadIndex, areas, mouths };
       for (const segment of roadSegments) {
         if (!STREET_PROFILES.has(segment.profile)) continue;
         built += this._buildSegment(buffer, bands, segment, context);
@@ -288,6 +328,9 @@ export class StreetLayer {
       // le morceau que porte le carrefour, pas celui que porte une chaussée.
       built += this._buildCorners(buffer, bands, context);
     }
+
+    // Les traversées, une fois les deux rives connues.
+    this.crossings = this._buildCrossings(marks, mouths, areas);
 
     // La bande revêtue est publiée avant le comblement, parce que le
     // comblement l'interroge : là où un trottoir tient, il vaut mieux qu'un
@@ -300,6 +343,7 @@ export class StreetLayer {
 
     this.count = built;
     this._apply(buffer);
+    this._applyMarkings(marks);
     return built > 0 || this.fills > 0;
   }
 
@@ -355,7 +399,7 @@ export class StreetLayer {
   }
 
   /** Les deux côtés d'un tronçon. @returns {number} portions posées. */
-  _buildSegment(buffer, bands, segment, { here, builtUp, fabric, roadIndex, areas }) {
+  _buildSegment(buffer, bands, segment, { here, builtUp, fabric, roadIndex, areas, mouths }) {
     const { path, platform, edges, probeSpan, halfWidth } = segment;
     const rows = path.length;
     if (rows < 2 || !platform || !edges) return 0;
@@ -430,6 +474,7 @@ export class StreetLayer {
       for (const run of contiguousRuns(shared, qualifies, 1)) {
         const rail = this._railFor(segment, run, areas);
         if (polylineLength(rail.points) < STREET_MIN_LENGTH_M) continue;
+        if (mouths) StreetLayer._noteMouths(mouths, segment, run, side, areas);
         // La largeur tient au point le plus à l'étroit de la portion : une
         // section constante ne peut pas déborder ailleurs qu'à son minimum.
         let narrowest = Infinity;
@@ -493,6 +538,104 @@ export class StreetLayer {
       for (let k = 0; k < 4; k++) out[i * 4 + k] = frames[rows[i] * 4 + k];
     }
     return { points, decks: Float32Array.from(decks), frames: out };
+  }
+
+  /**
+   * Relève les bouches de carrefour qu'une portion de trottoir vient toucher.
+   *
+   * Une portion touche une bouche par ses **bouts**, et seulement par eux :
+   * c'est là que le trottoir s'arrête parce que la surface du carrefour prend
+   * le relais (lot D). Le relevé est fait par côté, et la clé retient la
+   * section — le couple (ligne gardée, ligne écartée) —, pas seulement le
+   * carrefour : une chaussée qui traverse un carrefour y a deux bouches, et
+   * elles ne se confondent pas.
+   */
+  static _noteMouths(mouths, segment, run, side, areas) {
+    if (!areas) return;
+    const rows = segment.path.length;
+    const first = run[0].r;
+    const last = run[run.length - 1].r;
+
+    for (const [keep, drop] of [
+      [first, first - 1],
+      [last, last + 1],
+    ]) {
+      if (drop < 0 || drop >= rows) continue;
+      const index = segment.junction?.[drop] ?? -1;
+      if (index < 0) continue;
+      const key = `${index}:${keep}:${drop}`;
+      let entry = mouths.get(key);
+      if (!entry) {
+        entry = { segment, keep, drop, sides: new Set() };
+        mouths.set(key, entry);
+      }
+      entry.sides.add(side);
+    }
+  }
+
+  /**
+   * Les traversées piétonnes.
+   *
+   * Une traversée ne se pose pas parce qu'un carrefour existe : elle se pose
+   * là où **un trottoir arrive des deux côtés** de la chaussée, ce qui est
+   * exactement ce qu'un piéton traverse d'un trottoir à l'autre. C'est la
+   * raison pour laquelle elle est ici et non dans `roadNetwork` : la chaussée
+   * ne sait pas ce qui la borde, la voirie si — et elle vient de le décider.
+   *
+   * Elle occupe la profondeur que la chaussée lui a réservée à la bouche
+   * (`MOUTH_CROSSING_M`), en deçà de la ligne d'effet et non dessus.
+   *
+   * @returns {number} traversées peintes.
+   */
+  _buildCrossings(buffer, mouths, areas) {
+    if (!areas || !mouths || mouths.size === 0) return 0;
+    const roads = this.theme.roads;
+    const paint = srgb(roads.markingColor);
+    let painted = 0;
+
+    for (const entry of mouths.values()) {
+      // Les deux côtés, sans quoi il n'y a pas de traversée mais un trottoir
+      // qui s'arrête devant un carrefour.
+      if (entry.sides.size < 2) continue;
+
+      const { segment, keep, drop } = entry;
+      const spec = roads.profiles[segment.profile];
+      const half = segment.halfWidth - (spec?.shoulder || 0);
+      if (!(half > 0)) continue;
+
+      const edge = junctionBoundaryAt(segment, areas, keep, drop);
+      if (!edge) continue;
+
+      // S'éloigner du carrefour, c'est aller vers la ligne gardée.
+      const sign = keep < drop ? -1 : 1;
+      const near = {
+        x: edge.point.x,
+        z: edge.point.z,
+        deck: edge.deck,
+        px: segment.frames[keep * 4 + 2],
+        pz: segment.frames[keep * 4 + 3],
+      };
+      const far = sectionAtDistance(
+        segment.path,
+        segment.platform,
+        segment.frames,
+        edge.point.distance + sign * MOUTH_CROSSING_M
+      );
+      // Deux carrefours si proches que la traversée n'a pas la place de tenir
+      // entre eux : elle ne se peint pas, plutôt que de déborder sur l'autre.
+      if (!far) continue;
+
+      const bands = appendCrossing(buffer, {
+        near,
+        far,
+        halfWidth: half,
+        color: paint,
+        lift: ROAD_LIFT_M + MARKING_LIFT_M,
+      });
+      if (bands > 0) painted++;
+    }
+
+    return painted;
   }
 
   /**
@@ -632,6 +775,35 @@ export class StreetLayer {
     this.geometry = geometry;
   }
 
+  /** Le marquage de la voirie, dans son maillage à lui : ce n'est pas la même matière. */
+  _applyMarkings(buffer) {
+    const { THREE } = this;
+    const geometry = toColoredGeometry(THREE, buffer);
+
+    if (!geometry) {
+      if (this.markingMesh) {
+        this.scene.remove(this.markingMesh);
+        this.markingMesh.geometry.dispose();
+        this.markingMesh = null;
+      }
+      return;
+    }
+
+    if (this.markingMesh) {
+      this.markingMesh.geometry.dispose();
+      this.markingMesh.geometry = geometry;
+      return;
+    }
+
+    const mesh = new THREE.Mesh(geometry, this.markingMaterial);
+    mesh.name = 'street-markings';
+    mesh.matrixAutoUpdate = false;
+    mesh.receiveShadow = true;
+    mesh.updateMatrix();
+    this.scene.add(mesh);
+    this.markingMesh = mesh;
+  }
+
   /**
    * Mouille trottoirs et caniveaux (un peu moins sombre que la chaussée : une
    * dalle boit l'eau, le bitume la garde en surface).
@@ -641,6 +813,7 @@ export class StreetLayer {
     const wet = Math.min(1, Math.max(0, value || 0));
     const shade = 1 - wet * 0.3;
     this.material.color.setRGB(shade, shade, shade + wet * 0.04);
+    this.markingMaterial.color.setRGB(shade, shade, shade + wet * 0.04);
   }
 
   dispose() {
@@ -653,6 +826,12 @@ export class StreetLayer {
       this.mesh = null;
       this.geometry = null;
     }
+    if (this.markingMesh) {
+      this.scene.remove(this.markingMesh);
+      this.markingMesh.geometry.dispose();
+      this.markingMesh = null;
+    }
     this.material.dispose();
+    this.markingMaterial.dispose();
   }
 }

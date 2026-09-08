@@ -1144,13 +1144,18 @@ export const ROAD_TEXTURE_LENGTH = 12;
  * Section de chaussée, dessinée d'après une description en mètres — la
  * largeur du profil est aussi celle du ruban, donc l'échelle est juste sur
  * toutes les classes de route. Axe horizontal en travers, vertical le long
- * (répété tous les `ROAD_TEXTURE_LENGTH` mètres pour les pointillés).
+ * (répété tous les `ROAD_TEXTURE_LENGTH` mètres).
+ *
+ * **Le marquage n'est plus ici.** Cette texture ne porte que le revêtement,
+ * son accotement, ses ornières et son grain : les lignes de rive et l'axe sont
+ * de la géométrie (`roadMarkings`), posée dans les mêmes morceaux que le
+ * ruban. Peintes ici, elles ne pouvaient ni s'arrêter à une bouche de
+ * carrefour, ni exister sur la surface d'un carrefour — qui n'a ni milieu ni
+ * bords —, ni être posées en travers.
  *
  * @param {Object} profile
  * @param {number} profile.width       Largeur totale, accotements compris.
  * @param {number} [profile.shoulder]  Largeur d'un accotement en terre (0 = aucun).
- * @param {boolean} [profile.edgeLines] Lignes de rive continues.
- * @param {boolean} [profile.centerDash] Axe en pointillés.
  * @param {string} [profile.surface]   `asphalt` ou `dirt`.
  * @param {boolean} [profile.ruts]     Deux ornières claires (chemin d'exploitation).
  * @param {string} [profile.tint]      Remplace la couleur de base du revêtement.
@@ -1160,8 +1165,6 @@ export function createRoadCanvas(profile, seed = 4711, roads = defaultTheme.road
   const {
     width: meters,
     shoulder = 0,
-    edgeLines = false,
-    centerDash = false,
     surface = 'asphalt',
     ruts = false,
     tint = null,
@@ -1206,24 +1209,6 @@ export function createRoadCanvas(profile, seed = 4711, roads = defaultTheme.road
     grain.data[i + 2] = Math.min(255, Math.max(0, grain.data[i + 2] + jitter));
   }
   ctx.putImageData(grain, 0, 0);
-
-  const edge = Math.max(1, px(0.12));
-
-  if (edgeLines) {
-    ctx.fillStyle = 'rgba(233, 231, 222, 0.82)';
-    ctx.fillRect(inset + px(0.35), 0, edge, height);
-    ctx.fillRect(width - inset - px(0.35) - edge, 0, edge, height);
-  }
-
-  // Axe central : 3 m de trait, 3 m de vide sur les 12 m du cycle.
-  if (centerDash) {
-    const dash = (3 / ROAD_TEXTURE_LENGTH) * height;
-    ctx.fillStyle = 'rgba(236, 232, 214, 0.78)';
-    const center = width / 2 - edge / 2;
-    for (let y = 0; y < height; y += dash * 2) {
-      ctx.fillRect(center, y, edge, dash);
-    }
-  }
 
   return canvas;
 }

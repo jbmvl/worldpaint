@@ -44,6 +44,15 @@
  * convexe par construction en dehors des arcs, et il n'y a plus un seul ruban
  * qui en recouvre un autre.
  *
+ * ## Qui cède le passage
+ *
+ * Un carrefour est aussi le seul endroit du modèle où une **priorité** a un
+ * sens, et c'est donc ici qu'elle se décide (`branchYields`), une fois pour
+ * toutes : le marquage au sol et le panneau la lisent, ils ne la recalculent
+ * pas chacun de son côté. La donnée n'en porte aucune ; la largeur des
+ * branches, si, et la règle de tracé qui en découle suffit — on cède le
+ * passage à plus large que soi.
+ *
  * ## Ce que ce module ne fait pas
  *
  * Il ne coupe pas les chaînes. La chaussée **continue** de traverser le
@@ -330,6 +339,33 @@ export function junctionArea(junction, options = {}) {
 }
 
 /**
+ * Vrai si une branche doit céder le passage au carrefour.
+ *
+ * La donnée ne porte aucune priorité : ni `highway=give_way`, ni panneau, ni
+ * sens de circulation. Elle porte en revanche la **classe** de chaque branche,
+ * donc sa largeur — et la règle de tracé qui en découle est générale : on cède
+ * le passage à plus large que soi. Deux branches de même largeur ne cèdent ni
+ * l'une ni l'autre, et c'est le bon résultat : une croisée de deux voies
+ * identiques n'est pas marquée sur le terrain non plus.
+ *
+ * Cette règle est lue à deux endroits — le marquage au sol (`roadMarkings`) et
+ * le panneau (`furnitureLayer`) — et il est essentiel que ce soit la même : un
+ * cédez-le-passage peint sans panneau, ou l'inverse, se lit comme une faute.
+ *
+ * @param {{halfWidth:number}} area Aire de carrefour, ou carrefour de graphe :
+ *        les deux portent la demi-largeur de leur branche dominante.
+ * @param {number} halfWidth Demi-largeur de la branche examinée.
+ * @returns {boolean}
+ */
+export function branchYields(area, halfWidth) {
+  const dominant = area?.halfWidth;
+  if (!(dominant > 0) || !(halfWidth > 0)) return false;
+  // Les largeurs viennent d'une table par classe : l'égalité y est exacte, et
+  // l'epsilon ne fait que garder le calcul flottant de la trahir.
+  return halfWidth < dominant - 1e-6;
+}
+
+/**
  * Fond les branches voisines qui repartent dans la même direction.
  *
  * Le critère est celui du débord d'un coin (`JUNCTION_CORNER_REACH`), lu à
@@ -594,7 +630,9 @@ export function junctionBoundaryAt(segment, areas, keep, drop, { steps = JUNCTIO
  * @param {JunctionAreas} areas
  * @param {Array<{from:number,to:number}>} runs Plages dessinables.
  * @param {Object} [options]
- * @returns {Array<{path:Array<{x:number,z:number,distance:number}>, platform:Float32Array}>}
+ * @returns {Array<{path:Array<{x:number,z:number,distance:number}>,
+ *          platform:Float32Array, head:number, tail:number}>} `head` et `tail`
+ *          donnent le rang de l'aire qui borne chaque bout, `-1` s'il est libre.
  */
 export function junctionRibbonRuns(segment, areas, runs, { steps = JUNCTION_BISECT_STEPS } = {}) {
   const { path, platform } = segment;
@@ -606,6 +644,8 @@ export function junctionRibbonRuns(segment, areas, runs, { steps = JUNCTION_BISE
     const index = junction ? junction[r] : -1;
     return index >= 0 ? areas.areas[index].outline : null;
   };
+
+  const areaAt = (r) => (junction && r >= 0 && r < path.length ? junction[r] : -1);
 
   const emit = (from, to) => {
     const points = [];
@@ -632,7 +672,15 @@ export function junctionRibbonRuns(segment, areas, runs, { steps = JUNCTION_BISE
     }
 
     if (points.length < 2) return;
-    out.push({ path: points, platform: Float32Array.from(decks) });
+    // Quel carrefour borne ce bout, et non pas seulement « il y en a un » :
+    // ce qui se pose à une bouche — la ligne d'effet, la traversée — dépend de
+    // ce que le carrefour dit de cette branche-là.
+    out.push({
+      path: points,
+      platform: Float32Array.from(decks),
+      head: before ? areaAt(from - 1) : -1,
+      tail: after ? areaAt(to + 1) : -1,
+    });
   };
 
   for (const run of runs || []) {

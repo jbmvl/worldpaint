@@ -791,24 +791,31 @@ export function roadsideFurnitureFor(profile, { builtUp = false } = {}) {
 }
 
 /**
- * Le panneau qu'on pose à cet endroit, d'après ce qui s'y passe (une courbe,
- * un carrefour, une entrée d'agglomération), pas un tirage uniforme entre formes.
+ * Chaussées qu'un panneau de priorité concerne : celles qu'un véhicule routier
+ * emprunte. Une piste cyclable, un sentier et un chemin d'exploitation ont
+ * leurs propres règles, et le mobilier routier ne les signale pas.
+ */
+export const PRIORITY_SIGN_PROFILES = new Set(['express', 'major', 'minor', 'lane']);
+
+/**
+ * Le panneau qu'une **portion** de route porte, d'après ce qui s'y passe : une
+ * courbe, une agglomération, la classe de la chaussée.
+ *
+ * Il n'y a plus de cas « carrefour » ici, et c'est le lot : un carrefour ne
+ * choisissait pas un panneau, il en **tirait un au hasard** entre stop,
+ * cédez-le-passage et anneau, sur la seule foi qu'une intersection existait.
+ * Aucune des trois n'était justifiée par la donnée. La priorité se décide
+ * maintenant au carrefour (`roadJunctions.branchYields`), elle se pose à sa
+ * bouche, et c'est le même fait qui la peint au sol.
  *
  * @param {Object} context
  * @param {number} [context.curvature] Courbure locale, en 1/m (voir `pathCurvature`).
  * @param {boolean} [context.builtUp]  La portion est en agglomération.
- * @param {boolean} [context.junction] Un carrefour est proche.
  * @param {string} [context.profile]   Classe de chaussée.
  * @param {number} [context.variant]   Tirage dans [0, 1[ attaché au lieu.
  * @returns {string} clé du catalogue.
  */
-export function signKindFor({ curvature = 0, builtUp = false, junction = false, profile = 'minor', variant = 0 } = {}) {
-  // Un carrefour prime sur tout le reste.
-  if (junction) {
-    if (variant < 0.32) return 'signStop';
-    if (variant < 0.72) return 'signYield';
-    return 'signRoundabout';
-  }
+export function signKindFor({ curvature = 0, builtUp = false, profile = 'minor', variant = 0 } = {}) {
   if (curvature > 0.02) return 'signChevron';
   if (curvature > 0.009) return variant < 0.6 ? 'signWarning' : 'signChevron';
 

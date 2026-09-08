@@ -63,6 +63,17 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
   du faisceau manque — niveau, écart, parallélisme, longueur du voisinage,
   continuité du vis-à-vis, ou l'aire est close (un îlot de giratoire, qui
   reste le terrain).
+
+  Le **marquage**, lui, n'a pas de calque de mise au point : il est visible tel
+  quel, en géométrie blanche sur la chaussée (`roadMarkings`). Il se lit avec
+  cette case : les lignes de rive et l'axe s'arrêtent pile sur le contour vert
+  d'un carrefour, et une **ligne d'effet** en travers d'une bouche dit que
+  cette branche-là cède le passage — parce qu'une autre branche du même
+  carrefour est plus large. Le panneau de cédez-le-passage se dresse au même
+  endroit, et il n'y en a jamais un sans l'autre. Un carrefour de deux voies
+  identiques n'a ni ligne d'effet ni panneau, ce qui est le bon résultat. Une
+  **traversée piétonne** se peint là où un trottoir arrive des deux côtés
+  d'une bouche, et nulle part ailleurs.
 - **Panneau « Faune »** : déclenche la traversée d'une bête devant la caméra
   (<kbd>C</kbd>, ou le bouton). C'est le seul geste du moteur qui ne soit pas
   une fonction du lieu : `world.crossFauna({ kind, at, forward, distanceM })`

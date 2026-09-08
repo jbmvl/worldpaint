@@ -50,6 +50,7 @@ import {
   ROAD_DEBUG_COLORS,
 } from '../src/inspect/roadDebug.js';
 import {
+  branchYields,
   junctionArea,
   junctionBoundaryAt,
   junctionCorner,
@@ -75,6 +76,18 @@ import {
   polylineLength,
   EDGE_REACH_M,
 } from '../src/layers/roadEdges.js';
+import {
+  appendCrossing,
+  appendMarkingBar,
+  approachLane,
+  appendMarkingLine,
+  markingLinesFor,
+  sectionAtDistance,
+  MARKING_BAR_M,
+  MARKING_DASH_M,
+  MARKING_WIDTH_M,
+  MOUTH_CROSSING_M,
+} from '../src/layers/roadMarkings.js';
 import {
   resamplePath,
   smoothColumns,
@@ -153,6 +166,7 @@ import {
   ROAD_LIFT_M,
   collectRoadSegments,
   gradeAllowance,
+  RoadNetwork,
   ROAD_GRADE_CUT_FLAT_M,
   ROAD_GRADE_CUT_STEEP_M,
   ROAD_GRADE_FILL_STEEP_M,
@@ -381,6 +395,7 @@ import {
   TREE_ATLAS_OFFSETS,
   GRASS_VARIANTS,
   createTreeAtlasCanvas,
+  createRoadCanvas,
 } from '../src/materials/proceduralTextures.js';
 import { snapToShadowTexels, sunDirection, SHADOW_RADIUS_M } from '../src/environment/shadowFrame.js';
 import {
@@ -439,6 +454,7 @@ import {
   STREET_MAX_CROSS_SLOPE,
   STREET_MIN_LENGTH_M,
   walkWidthFor,
+  StreetLayer,
 } from '../src/layers/streetLayer.js';
 import { streetSurfaceAt } from '../src/layers/townStyle.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
@@ -6811,16 +6827,22 @@ test('un parapet demande un vide, pas seulement une pente', () => {
 });
 
 test('le panneau posé dépend de ce qui se passe à cet endroit', () => {
-  // Un carrefour prime sur tout le reste.
-  for (const variant of [0.1, 0.5, 0.9]) {
-    const item = signKindFor({ junction: true, variant });
-    assert.ok(['signStop', 'signYield', 'signRoundabout'].includes(item), item);
-  }
   // Un virage serré appelle sa balise.
   assert.equal(signKindFor({ curvature: 0.05, variant: 0.5 }), 'signChevron');
   // La ville a ses passages piétons, la rase campagne non.
   const town = new Set([0.1, 0.4, 0.8].map((v) => signKindFor({ builtUp: true, variant: v })));
   assert.ok(town.has('signCrossing'));
+
+  // Un carrefour ne choisit plus de panneau ici, et surtout n'en tire plus au
+  // sort : `junction` n'est plus lu du tout, et la priorité se pose à la
+  // bouche (`branchYields`). Passer l'ancien drapeau ne change donc rien.
+  for (const variant of [0.1, 0.5, 0.9]) {
+    assert.equal(signKindFor({ junction: true, variant }), signKindFor({ variant }));
+  }
+  const drawn = new Set();
+  for (let i = 0; i < 200; i++) drawn.add(signKindFor({ variant: i / 200, builtUp: true }));
+  assert.ok(!drawn.has('signStop'), 'aucun stop tiré au hasard');
+  assert.ok(!drawn.has('signRoundabout'), 'aucun anneau tiré au hasard');
 
   // Tout ce que la règle peut rendre existe dans le catalogue : un panneau
   // oublié dans `SIGN_ITEMS` serait silencieusement invisible.
@@ -6829,7 +6851,6 @@ test('le panneau posé dépend de ce qui se passe à cet endroit', () => {
     for (const context of [
       { variant },
       { variant, builtUp: true },
-      { variant, junction: true },
       { variant, curvature: 0.03 },
       { variant, curvature: 0.012 },
       { variant, profile: 'express' },
@@ -10241,4 +10262,490 @@ test('la frange déplace la lecture du sol, sans dépendre du parcours ni sortir
 
   // Portée nulle : aucun décalage (un thème peut éteindre la frange).
   assert.deepEqual(fringeOffset(3, 9, 1, 0), { x: 0, z: 0 });
+});
+
+// --- Lot F : le marquage est de la géométrie ---------------------------------
+
+test('la texture de chaussée ne porte plus une seule ligne', () => {
+  // Le marquage peint dans la texture ne pouvait ni s'arrêter à une bouche de
+  // carrefour, ni exister sur une surface de carrefour. La preuve qu'il n'y
+  // est plus : les deux drapeaux du thème ne changent plus rien au dessin.
+  const paint = (profile) => {
+    const rects = [];
+    const previous = globalThis.OffscreenCanvas;
+    globalThis.OffscreenCanvas = class {
+      constructor(width, height) {
+        Object.assign(this, { width, height });
+      }
+      getContext() {
+        const ctx = paintingCanvasContext();
+        ctx.fillRect = function fillRect(x, y, w, h) {
+          rects.push({ x, y, w, h, style: this.fillStyle });
+        };
+        return ctx;
+      }
+    };
+    try {
+      createRoadCanvas(profile, 4711);
+    } finally {
+      if (previous) globalThis.OffscreenCanvas = previous;
+      else delete globalThis.OffscreenCanvas;
+    }
+    return rects;
+  };
+
+  const base = { width: 8.5, shoulder: 0, texture: 128 };
+  const marked = paint({ ...base, edgeLines: true, centerDash: true });
+  assert.deepEqual(marked, paint(base), 'les drapeaux de marquage sont inertes');
+  // Et rien de clair n'y est peint : une ligne se voit à sa couleur.
+  for (const rect of marked) {
+    assert.ok(!/2[0-9]{2},/.test(String(rect.style)), `couleur claire posée : ${rect.style}`);
+  }
+});
+
+test('les lignes d’une chaussée se lisent dans son profil, et nulle part ailleurs', () => {
+  // Une voie rapide : deux rives et un axe. Les rives se posent en deçà de
+  // l'accotement, qui n'est pas de la chaussée.
+  const express = markingLinesFor({ width: 12, shoulder: 1.2, edgeLines: true, centerDash: true }, 6);
+  assert.equal(express.length, 3);
+  const axis = express.filter((line) => line.offset === 0);
+  assert.equal(axis.length, 1);
+  assert.equal(axis[0].dash, MARKING_DASH_M, 'l’axe est discontinu');
+  const edges = express.filter((line) => line.offset !== 0).map((line) => line.offset);
+  assert.equal(edges.length, 2);
+  assert.ok(Math.abs(edges[0] + edges[1]) < 1e-9, 'les deux rives sont symétriques');
+  assert.ok(Math.abs(Math.abs(edges[0]) - (6 - 1.2 - 0.35 - MARKING_WIDTH_M / 2)) < 1e-9);
+  for (const line of express) assert.ok(Math.abs(line.offset) < 6, 'aucune ligne au-delà de la rive');
+
+  // Une petite route : ses rives, pas d'axe.
+  const minor = markingLinesFor({ width: 5, shoulder: 0, edgeLines: true, centerDash: false }, 2.5);
+  assert.equal(minor.length, 2);
+  assert.ok(minor.every((line) => line.dash === 0));
+
+  // Une desserte : rien du tout. Un marquage ne s'invente pas.
+  assert.deepEqual(markingLinesFor({ width: 3.6, shoulder: 0 }, 1.8), []);
+
+  // Un accotement qui mange toute la largeur ne laisse pas de rive à marquer.
+  assert.deepEqual(markingLinesFor({ width: 3, shoulder: 1.4, edgeLines: true }, 1.5), []);
+});
+
+test('un trait discontinu tombe aux mêmes mètres, quel que soit le découpage', () => {
+  // C'est l'invariant de déterminisme : la phase se compte depuis l'ancre de
+  // graphe de la chaîne, pas depuis le début du morceau dessiné.
+  const road = straightRoad(0, 2.5);
+  const lay = (from) => {
+    const buffer = createProfileBuffer();
+    const origin = road.path[from].distance;
+    appendMarkingLine(buffer, {
+      path: road.path.slice(from).map((p) => ({ x: p.x, z: p.z, distance: p.distance - origin })),
+      decks: road.platform.slice(from),
+      offset: 0,
+      color: [1, 1, 1],
+      dash: MARKING_DASH_M,
+      startDistance: origin,
+    });
+    // Les abscisses x couvertes par de la peinture, arrondies au décimètre.
+    const painted = new Set();
+    for (let i = 0; i < buffer.positions.length; i += 3) {
+      painted.add(Math.round(buffer.positions[i] * 10));
+    }
+    return painted;
+  };
+
+  const whole = lay(0);
+  const cut = lay(10);
+  assert.ok(cut.size > 4, 'le morceau porte bien des traits');
+  for (const x of cut) assert.ok(whole.has(x), `le découpage a déplacé un trait en x=${x / 10}`);
+
+  // Et la phase est bien celle du cycle de six mètres : un trait sur deux.
+  const buffer = createProfileBuffer();
+  const laid = appendMarkingLine(buffer, {
+    path: road.path,
+    decks: road.platform,
+    offset: 0,
+    color: [1, 1, 1],
+    dash: MARKING_DASH_M,
+  });
+  assert.ok(laid > 0);
+  for (let i = 0; i < buffer.positions.length; i += 3) {
+    const along = buffer.positions[i] + 100; // la droite part de x = -100
+    const k = Math.floor((along + 1e-6) / MARKING_DASH_M);
+    assert.ok(k % 2 === 0 || Math.abs(along % MARKING_DASH_M) < 1e-6, `peinture à ${along} m`);
+  }
+});
+
+test('une ligne continue reste dans sa largeur et suit la plate-forme', () => {
+  const road = straightRoad(0, 2.5);
+  for (let r = 0; r < road.platform.length; r++) road.platform[r] = r * 0.1;
+  const buffer = createProfileBuffer();
+  const laid = appendMarkingLine(buffer, {
+    path: road.path,
+    decks: road.platform,
+    frames: road.frames,
+    offset: 2,
+    color: [1, 1, 1],
+    lift: 0.5,
+  });
+  assert.equal(laid, road.path.length - 1, 'un quadrilatère par intervalle');
+
+  // La route va vers +x, donc la perpendiculaire gauche vaut (0, -1) : un
+  // décalage de +2 se lit en z = -2.
+  for (let i = 0; i < buffer.positions.length; i += 3) {
+    const z = buffer.positions[i + 2];
+    assert.ok(Math.abs(z + 2) <= MARKING_WIDTH_M / 2 + 1e-9, `trait sorti de sa largeur : ${z}`);
+    // Et il monte avec la plate-forme, décollement compris.
+    const expected = ((buffer.positions[i] + 100) / 5) * 0.1 + 0.5;
+    assert.ok(Math.abs(buffer.positions[i + 1] - expected) < 1e-6);
+  }
+});
+
+test('une section se prend à l’abscisse voulue, ou nulle part', () => {
+  const road = straightRoad(0, 2.5);
+  for (let r = 0; r < road.platform.length; r++) road.platform[r] = r;
+
+  const at = sectionAtDistance(road.path, road.platform, road.frames, 12.5);
+  assert.ok(at);
+  assert.ok(Math.abs(at.x - (-100 + 12.5)) < 1e-6);
+  assert.ok(Math.abs(at.deck - 2.5) < 1e-6, 'la cote est interpolée, pas arrondie à la ligne');
+
+  // Hors de la plage : rien. Une ligne d'effet ne se pose pas au jugé.
+  assert.equal(sectionAtDistance(road.path, road.platform, road.frames, -1), null);
+  assert.equal(sectionAtDistance(road.path, road.platform, road.frames, 1e4), null);
+});
+
+test('une traversée n’est faite que de ses bandes peintes', () => {
+  const near = { x: 0, z: 0, deck: 0, px: 0, pz: -1 };
+  const far = { x: MOUTH_CROSSING_M, z: 0, deck: 0, px: 0, pz: -1 };
+  const buffer = createProfileBuffer();
+  const bands = appendCrossing(buffer, { near, far, halfWidth: 2.5, color: [1, 1, 1] });
+
+  // Une bande peinte, un vide, sur toute la largeur : le vide est le bitume,
+  // il n'est pas maillé.
+  assert.ok(bands >= 2, `deux bandes au moins sur cinq mètres, vu ${bands}`);
+  assert.equal(buffer.positions.length / 3, bands * 4);
+  const painted = bands * MARKING_BAR_M;
+  assert.ok(painted < 5, 'moins de peinture que de chaussée');
+
+  // Rien ne déborde de la chaussée, ni en travers ni le long.
+  for (let i = 0; i < buffer.positions.length; i += 3) {
+    assert.ok(Math.abs(buffer.positions[i + 2]) <= 2.5 + 1e-9);
+    assert.ok(buffer.positions[i] >= -1e-9 && buffer.positions[i] <= MOUTH_CROSSING_M + 1e-9);
+  }
+
+  // Le rang d'une bande se tire de l'axe de la chaussée : arriver par l'autre
+  // bout ne déplace pas les bandes.
+  const back = createProfileBuffer();
+  appendCrossing(back, { near: far, far: near, halfWidth: 2.5, color: [1, 1, 1] });
+  const lateral = (buf) => {
+    const set = new Set();
+    for (let i = 0; i < buf.positions.length; i += 3) set.add(Math.round(buf.positions[i + 2] * 1e6));
+    return [...set].sort((a, b) => a - b);
+  };
+  assert.deepEqual(lateral(back), lateral(buffer));
+});
+
+test('une ligne d’effet ne couvre que la voie qui arrive', () => {
+  const near = { x: 0, z: 0, deck: 0, px: 0, pz: -1 };
+  const far = { x: MARKING_BAR_M, z: 0, deck: 0, px: 0, pz: -1 };
+  const buffer = createProfileBuffer();
+  // Décalages négatifs : la droite du conducteur qui marche vers +x.
+  assert.equal(appendMarkingBar(buffer, { near, far, from: -2.5, to: 0, color: [1, 1, 1] }), 1);
+  for (let i = 0; i < buffer.positions.length; i += 3) {
+    const z = buffer.positions[i + 2];
+    assert.ok(z >= -1e-9 && z <= 2.5 + 1e-9, `la ligne déborde sur l’autre voie : ${z}`);
+  }
+  // Une largeur nulle ne pose rien : mieux vaut pas de ligne qu'une ligne plate.
+  assert.equal(appendMarkingBar(buffer, { near, far, from: 1, to: 1, color: [1, 1, 1] }), 0);
+});
+
+test('la ligne d’effet se pose sur la voie qui arrive, pas sur celle qui repart', () => {
+  // La convention du projet met la gauche de la marche du tracé dans les
+  // décalages positifs — c'est pour ça que tout le mobilier de bord de route
+  // est posé à décalage négatif, « à droite ». Le conducteur, lui, ne marche
+  // dans le sens du tracé qu'à l'un des deux bouts.
+  assert.deepEqual(approachLane(2.5, false), { from: -2.5, to: 0 }, 'à la queue, il suit le tracé');
+  assert.deepEqual(approachLane(2.5, true), { from: 0, to: 2.5 }, 'à la tête, il le remonte');
+
+  // Les deux voies d'une même chaussée : disjointes, et elles la couvrent.
+  const head = approachLane(2.5, true);
+  const tail = approachLane(2.5, false);
+  assert.equal(head.from, tail.to, 'les deux voies se touchent à l’axe');
+  assert.equal(head.to - tail.from, 5, 'et remplissent la chaussée');
+});
+
+test('on cède le passage à plus large que soi, et à personne d’autre', () => {
+  const area = { halfWidth: 4.25 };
+  assert.equal(branchYields(area, 2.5), true, 'une petite route cède à une grande');
+  assert.equal(branchYields(area, 4.25), false, 'deux voies identiques ne cèdent ni l’une ni l’autre');
+  assert.equal(branchYields(area, 6), false, 'la plus large ne cède pas');
+  // Sans donnée, aucune priorité inventée.
+  assert.equal(branchYields(null, 2.5), false);
+  assert.equal(branchYields({ halfWidth: 0 }, 2.5), false);
+});
+
+test('un morceau de ruban sait par quel carrefour chacun de ses bouts est borné', () => {
+  // Sans cela, la ligne d'effet ne saurait pas de quel carrefour elle dépend,
+  // et devrait redécouvrir seule ce que le découpage vient de faire.
+  const branches = [
+    { x: 1, z: 0, halfWidth: 2.5, profile: 'minor' },
+    { x: -1, z: 0, halfWidth: 2.5, profile: 'minor' },
+    { x: 0, z: 1, halfWidth: 1.8, profile: 'lane' },
+  ];
+  const area = junctionArea({ x: 0, z: 0, degree: 3, halfWidth: 2.5, profile: 'minor', branches });
+  assert.ok(area);
+  const areas = new JunctionAreas([{ x: 0, z: 0, degree: 3, halfWidth: 2.5, profile: 'minor', branches }]);
+
+  const road = straightRoad(0, 2.5);
+  road.junction = markJunctionRows(road, areas);
+  const runs = junctionRibbonRuns(road, areas, [{ from: 0, to: road.path.length - 1 }]);
+  assert.equal(runs.length, 2, 'la chaussée est coupée en deux par le carrefour');
+  // Le bout libre est en dehors du réseau, le bout qui bute porte le rang.
+  assert.equal(runs[0].head, -1);
+  assert.equal(runs[0].tail, 0);
+  assert.equal(runs[1].head, 0);
+  assert.equal(runs[1].tail, -1);
+});
+
+test('le marquage d’une plage sort du profil, du carrefour, et de rien d’autre', () => {
+  // Le câblage complet, sans three : `_appendMarkings` ne lit que le thème.
+  const lay = (segment, run, areas) => {
+    const buffer = createProfileBuffer();
+    const laid = RoadNetwork.prototype._appendMarkings.call(
+      { theme: defaultTheme },
+      buffer,
+      segment,
+      run,
+      areas,
+      [1, 1, 1]
+    );
+    return { buffer, laid };
+  };
+
+  const road = straightRoad(0, 2.5); // `minor` : deux rives, pas d'axe
+  const free = { path: road.path, platform: road.platform, head: -1, tail: -1 };
+  const areas = { areas: [{ halfWidth: 4.25 }] };
+
+  // Plage libre des deux bouts : les deux rives, et rien en travers.
+  const plain = lay(road, free, areas);
+  assert.equal(plain.laid, 2 * (road.path.length - 1), 'deux rives continues');
+
+  // Même plage, mais butant sur un carrefour plus large : la ligne d'effet
+  // s'ajoute, une seule fois, au bout qui bute.
+  const stopped = lay(road, { ...free, tail: 0 }, areas);
+  assert.equal(stopped.laid, plain.laid + 1);
+
+  // Elle est posée en deçà de la bouche, au-delà de la place réservée à une
+  // traversée, et sur la seule voie qui arrive.
+  const bar = stopped.buffer.positions.slice(-12);
+  for (let i = 0; i < 12; i += 3) {
+    assert.ok(bar[i + 2] >= -1e-9 && bar[i + 2] <= 2.5 + 1e-9, `voie d’en face : ${bar[i + 2]}`);
+    const back = 100 - bar[i]; // la droite finit en x = 100
+    assert.ok(
+      back >= MOUTH_CROSSING_M - 1e-6 && back <= MOUTH_CROSSING_M + MARKING_BAR_M + 1e-6,
+      `ligne d’effet à ${back} m de la bouche`
+    );
+  }
+
+  // Une branche aussi large que le carrefour ne cède pas : aucune ligne d'effet.
+  assert.equal(lay(road, { ...free, tail: 0 }, { areas: [{ halfWidth: 2.5 }] }).laid, plain.laid);
+
+  // Un chemin de terre ne porte aucun marquage, où qu'il aboutisse.
+  const track = straightRoad(0, 1.5);
+  track.profile = 'track';
+  assert.equal(lay(track, { ...free, tail: 0 }, areas).laid, 0);
+});
+
+test('une traversée se peint là où un trottoir arrive des deux côtés, et pas ailleurs', () => {
+  // Une traversée ne se pose pas parce qu'un carrefour existe : elle se pose
+  // là où un piéton a un trottoir de départ **et** un trottoir d'arrivée.
+  const junction = {
+    x: 0,
+    z: 0,
+    degree: 3,
+    halfWidth: 2.5,
+    profile: 'minor',
+    branches: [
+      { x: 1, z: 0, halfWidth: 2.5, profile: 'minor' },
+      { x: -1, z: 0, halfWidth: 2.5, profile: 'minor' },
+      { x: 0, z: 1, halfWidth: 1.8, profile: 'lane' },
+    ],
+  };
+  const areas = new JunctionAreas([junction]);
+  const road = straightRoad(0, 2.5);
+  road.junction = markJunctionRows(road, areas);
+
+  // La dernière ligne hors du carrefour, en venant de l'ouest.
+  let keep = 0;
+  while (road.junction[keep + 1] < 0) keep++;
+  const run = Array.from({ length: keep + 1 }, (_, r) => ({ r }));
+
+  const paint = (sides) => {
+    const mouths = new Map();
+    for (const side of sides) StreetLayer._noteMouths(mouths, road, run, side, areas);
+    const buffer = createProfileBuffer();
+    const painted = StreetLayer.prototype._buildCrossings.call(
+      { theme: defaultTheme },
+      buffer,
+      mouths,
+      areas
+    );
+    return { painted, buffer };
+  };
+
+  // Un seul trottoir : rien. C'est un trottoir qui s'arrête devant un
+  // carrefour, pas une traversée.
+  assert.equal(paint([1]).painted, 0);
+  assert.equal(paint([-1]).painted, 0);
+
+  const both = paint([1, -1]);
+  assert.equal(both.painted, 1);
+  assert.ok(both.buffer.positions.length > 0, 'et elle a des bandes');
+
+  // Elle tient dans la chaussée, et dans la profondeur que la chaussée lui a
+  // réservée à la bouche — celle en deçà de laquelle la ligne d'effet se pose.
+  const mouth = junctionBoundaryAt(road, areas, keep, keep + 1);
+  assert.ok(mouth);
+  for (let i = 0; i < both.buffer.positions.length; i += 3) {
+    assert.ok(Math.abs(both.buffer.positions[i + 2]) <= 2.5 + 1e-6);
+    const back = mouth.point.x - both.buffer.positions[i];
+    assert.ok(back >= -1e-6 && back <= MOUTH_CROSSING_M + 1e-6, `bande à ${back} m de la bouche`);
+  }
+});
+
+test('un panneau de priorité se pose à la bouche qui cède, et à aucune autre', () => {
+  // Le lot : un panneau n'est plus tiré au sort parce qu'une intersection
+  // existe. Deux `minor` de même largeur et une desserte : seule la desserte
+  // cède, donc un seul panneau.
+  const junction = {
+    x: 0,
+    z: 0,
+    degree: 3,
+    halfWidth: 2.5,
+    profile: 'minor',
+    branches: [
+      { x: 1, z: 0, halfWidth: 2.5, profile: 'minor' },
+      { x: -1, z: 0, halfWidth: 2.5, profile: 'minor' },
+      { x: 0, z: 1, halfWidth: 1.8, profile: 'lane' },
+    ],
+  };
+  const areas = new JunctionAreas([junction]);
+  const roadIndex = new RoadIndex([straightRoad(0, 2.5)]);
+
+  const post = (signalled) => {
+    const placed = [];
+    FurnitureLayer.prototype._buildJunctionSigns.call(
+      {
+        _signalled: signalled,
+        _place: (_placements, item, at) => {
+          placed.push({ item, ...at });
+          return at;
+        },
+      },
+      { placements: new Map(), here: { x: 0, z: 0 } },
+      areas,
+      roadIndex,
+      []
+    );
+    return placed;
+  };
+
+  const signs = post([]);
+  assert.equal(signs.length, 1, 'une seule branche cède');
+  assert.equal(signs[0].item, 'signYield');
+
+  // Posé au-delà de la bouche, à hauteur de la ligne d'effet, et à droite du
+  // conducteur qui arrive — la desserte descend vers le carrefour depuis +z,
+  // sa droite est donc +x.
+  const mouth = areas.areas[0].mouths.find((m) => m.profile === 'lane');
+  assert.ok(mouth);
+  assert.ok(signs[0].x > 0, 'à droite de qui arrive');
+  assert.ok(
+    signs[0].z > mouth.distance && signs[0].z < mouth.distance + MOUTH_CROSSING_M + MARKING_BAR_M,
+    `posé à z = ${signs[0].z}, bouche à ${mouth.distance}`
+  );
+
+  // Un carrefour à feux ne porte pas de cédez-le-passage : c'est le feu qui
+  // règle l'accès.
+  assert.equal(post([{ x: 0, z: 0 }]).length, 0);
+
+  // Et un carrefour de deux voies identiques n'en porte aucun.
+  const even = new JunctionAreas([
+    {
+      ...junction,
+      branches: junction.branches.map((b) => ({ ...b, halfWidth: 2.5, profile: 'minor' })),
+    },
+  ]);
+  const placed = [];
+  FurnitureLayer.prototype._buildJunctionSigns.call(
+    { _signalled: [], _place: (_p, item, at) => placed.push({ item, ...at }) },
+    { placements: new Map(), here: { x: 0, z: 0 } },
+    even,
+    roadIndex,
+    []
+  );
+  assert.equal(placed.length, 0);
+});
+
+test('le marquage regarde le ciel, sur les deux rives et dans les deux sens', () => {
+  // Le sens de parcours *est* l'orientation de la face : l'ordre naturel des
+  // quatre sommets d'un quadrilatère donne une face tournée vers le sol, donc
+  // noire. Ce test la mesure au lieu de la supposer.
+  const up = (buffer) => {
+    let worst = Infinity;
+    for (let i = 0; i < buffer.indices.length; i += 3) {
+      const at = (k) => {
+        const v = buffer.indices[i + k] * 3;
+        return [buffer.positions[v], buffer.positions[v + 1], buffer.positions[v + 2]];
+      };
+      const [a, b, c] = [at(0), at(1), at(2)];
+      const u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+      // Composante verticale du produit vectoriel : positive = face au ciel.
+      worst = Math.min(worst, u[2] * v[0] - u[0] * v[2]);
+    }
+    return worst;
+  };
+
+  const road = straightRoad(0, 2.5);
+  for (const offset of [2, -2, 0]) {
+    const buffer = createProfileBuffer();
+    appendMarkingLine(buffer, {
+      path: road.path,
+      decks: road.platform,
+      frames: road.frames,
+      offset,
+      color: [1, 1, 1],
+    });
+    assert.ok(up(buffer) > 0, `ligne à ${offset} m retournée`);
+  }
+
+  // Une route qui marche dans l'autre sens : les repères tournent avec elle,
+  // donc l'orientation ne bouge pas.
+  const back = fakeRoad(
+    Array.from({ length: 21 }, (_, i) => ({ x: 100 - i * 5, z: 0 })),
+    2.5
+  );
+  const reversed = createProfileBuffer();
+  appendMarkingLine(reversed, {
+    path: back.path,
+    decks: back.platform,
+    frames: back.frames,
+    offset: 2,
+    color: [1, 1, 1],
+  });
+  assert.ok(up(reversed) > 0, 'ligne retournée sur une route à contre-sens');
+
+  // La traversée et la ligne d'effet, qui empruntent le même quadrilatère.
+  const near = { x: 0, z: 0, deck: 0, px: 0, pz: -1 };
+  const far = { x: MOUTH_CROSSING_M, z: 0, deck: 0, px: 0, pz: -1 };
+  const crossing = createProfileBuffer();
+  appendCrossing(crossing, { near, far, halfWidth: 2.5, color: [1, 1, 1] });
+  assert.ok(up(crossing) > 0, 'traversée retournée');
+
+  const bar = createProfileBuffer();
+  appendMarkingBar(bar, { near, far, from: -2.5, to: 0, color: [1, 1, 1] });
+  assert.ok(up(bar) > 0, 'ligne d’effet retournée');
+  const other = createProfileBuffer();
+  appendMarkingBar(other, { near, far, from: 0, to: 2.5, color: [1, 1, 1] });
+  assert.ok(up(other) > 0, 'ligne d’effet retournée sur l’autre voie');
 });

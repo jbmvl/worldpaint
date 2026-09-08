@@ -50,6 +50,8 @@ import {
   hedgeEndTaper,
 } from './hedgeGeometry.js';
 import { ROAD_SAMPLE_M, ROAD_LIFT_M } from './roadNetwork.js';
+import { branchYields } from './roadJunctions.js';
+import { MARKING_BAR_M, MOUTH_CROSSING_M } from './roadMarkings.js';
 import { WATER_SOURCE_LAYER } from '../terrain/groundClassMap.js';
 import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
 import { collectBuiltUpAreas, collectPlaceNames, nearestNamedPlace, pointInAreas, ringsOf } from './settlement.js';
@@ -97,6 +99,7 @@ import {
   PREDATOR_MAX,
   rockKindFor,
   signKindFor,
+  PRIORITY_SIGN_PROFILES,
   pathTurn,
   guardrailStyleFor,
   roadsideVergeFor,
@@ -231,9 +234,16 @@ const ROCK_CUT_SEED = 9137;
 /**
  * Toute la signalisation du catalogue, dans un seul endroit.
  *
- * C'est `signKindFor` qui choisit lequel poser, et il ne rend que des clés de
- * cette liste : ajouter un panneau au catalogue et l'oublier ici le rendrait
- * silencieusement invisible.
+ * Deux règles y puisent : `signKindFor` pour ce qu'une portion de route porte,
+ * et `_buildJunctionSigns` pour ce qu'une bouche de carrefour porte. Toutes
+ * deux ne rendent que des clés de cette liste : ajouter un panneau au
+ * catalogue et l'oublier ici le rendrait silencieusement invisible.
+ *
+ * `signStop` et `signRoundabout` ne sont posés par aucune des deux : la donnée
+ * ne dit ni où l'arrêt est obligatoire, ni où il y a un anneau, et les tirer
+ * au sort — ce que faisait `signKindFor` — revenait à poser un panneau parce
+ * qu'une intersection existe. Les modèles restent au catalogue ; leur sort est
+ * à décider, pas à trancher au passage.
  */
 export const SIGN_ITEMS = [
   'signWarning',
@@ -760,6 +770,11 @@ export class FurnitureLayer {
    * @param {Array|null} places Lieux nommés (`settlement.collectPlaceNames`)
    *        — seule source qui associe un nom à une agglomération, pour le
    *        panneau d'entrée (`nearestNamedPlace`, dans `_applyRoadsidePlan`).
+   * @param {Object} [options]
+   * @param {Object|null} [options.areas] `JunctionAreas` (`roadJunctions`) :
+   *        les surfaces de carrefour. Un panneau de priorité se pose à une
+   *        **bouche**, pas au nœud — et la bouche est une propriété de la
+   *        surface, pas du graphe.
    * @returns {boolean} vrai si quelque chose a été posé.
    */
   rebuild(
@@ -772,7 +787,8 @@ export class FurnitureLayer {
     builtUpAreas = null,
     fabric = null,
     railIndex = null,
-    places = null
+    places = null,
+    { areas = null } = {}
   ) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
 
@@ -818,6 +834,7 @@ export class FurnitureLayer {
       const builtUp = builtUpAreas || collectBuiltUpAreas(source, tiles, this.bubble.frame);
       this._buildRoadside(context, roadSegments, builtUp);
       this._buildCrossings(context, junctions, roadIndex, builtUp);
+      this._buildJunctionSigns(context, areas, roadIndex, builtUp);
       this._buildParcels(context, builtUp);
       this._buildVillageLandmarks(context, builtUp);
       this._buildPointsOfInterest(context, roadSegments);
@@ -1766,6 +1783,9 @@ export class FurnitureLayer {
    * feu), et sa chaussée dominante doit en mériter un (`plan`).
    */
   _buildCrossings(context, junctions, roadIndex, builtUp) {
+    // Relevé même quand la passe ne pose rien : `_buildJunctionSigns` le lit
+    // pour ne pas doubler un feu d'un cédez-le-passage.
+    this._signalled = [];
     if (!roadIndex || !Array.isArray(junctions)) return;
     const { placements, here } = context;
     let placed = 0;
@@ -1821,7 +1841,70 @@ export class FurnitureLayer {
           phase: randomAt(post.x, post.z, 97) * TRAFFIC_CYCLE_S,
         });
       }
+      this._signalled.push(junction);
       placed++;
+    }
+  }
+
+  /**
+   * Les panneaux de priorité, aux bouches des carrefours.
+   *
+   * Ce qu'ils remplacent : `signKindFor` posait un stop, un cédez-le-passage
+   * ou un anneau **tiré au sort**, à un rang quelconque le long d'une chaîne,
+   * sur la seule foi qu'un carrefour était proche. Un panneau était donc posé
+   * parce qu'une intersection existait, ce qui n'en justifie aucun.
+   *
+   * Ce qu'ils sont maintenant : la donnée ne porte pas de priorité, mais elle
+   * porte la classe de chaque branche, donc sa largeur, et la règle de tracé
+   * qui en découle suffit — on cède le passage à plus large que soi
+   * (`branchYields`). Trois conséquences :
+   *
+   *   - un panneau par branche **qui cède**, et aucun sur celles qui ne cèdent
+   *     pas. Une croisée de deux voies identiques n'en porte donc aucun, ce qui
+   *     est le bon résultat ;
+   *   - il est posé à sa **bouche**, à la hauteur de la ligne d'effet peinte au
+   *     sol, et non au petit bonheur d'un espacement ;
+   *   - c'est le **même fait** qui pose le panneau et qui peint la ligne. Un
+   *     cédez-le-passage peint sans panneau, ou l'inverse, se lirait comme une
+   *     faute.
+   *
+   * Un carrefour à feux n'en porte pas : c'est le feu qui règle l'accès.
+   */
+  _buildJunctionSigns(context, areas, roadIndex, builtUp) {
+    if (!roadIndex || !areas?.areas?.length) return;
+    const { placements, here } = context;
+
+    for (const area of areas.areas) {
+      if (Math.hypot(area.x - here.x, area.z - here.z) > FURNITURE_RADIUS_M) continue;
+      // Le nœud d'un feu et celui de son aire sont le **même** point, repris
+      // tel quel par `junctionArea` : l'écart toléré ne couvre que le calcul
+      // flottant, il n'élargit rien.
+      if (this._signalled?.some((j) => Math.hypot(j.x - area.x, j.z - area.z) < 0.5)) continue;
+
+      for (const mouth of area.mouths || []) {
+        if (!PRIORITY_SIGN_PROFILES.has(mouth.profile)) continue;
+        if (!branchYields(area, mouth.halfWidth)) continue;
+
+        // À hauteur de la ligne d'effet : la traversée d'abord, la ligne
+        // ensuite, le panneau avec elle (voir `roadMarkings`).
+        const back = mouth.distance + MOUTH_CROSSING_M + MARKING_BAR_M / 2;
+        const px = area.x + mouth.direction.x * back;
+        const pz = area.z + mouth.direction.z * back;
+        // Le conducteur arrive **vers** le carrefour : sa marche est l'inverse
+        // de la direction sortante de la bouche.
+        const tx = -mouth.direction.x;
+        const tz = -mouth.direction.z;
+        const offset = -(mouth.halfWidth + 1.1);
+        const deck = roadIndex.deckAt(roadIndex.query(px, pz, 1));
+
+        this._place(placements, 'signYield', {
+          x: px + tz * offset,
+          z: pz - tx * offset,
+          y: deck,
+          yaw: roadsideYaw(tx, tz, offset, 'traffic'),
+          exactY: deck != null,
+        });
+      }
     }
   }
 

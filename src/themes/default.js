@@ -935,6 +935,11 @@ export const WINDOW_LIT_SHARE = 0.34;
  * l'échelle : une départementale portant les pointillés d'une nationale se
  * lirait comme une nationale rétrécie. `width` sert deux fois (section et
  * largeur du ruban), donc les deux ne peuvent pas diverger.
+ *
+ * `edgeLines` et `centerDash` disent ce que la classe **porte**, et c'est bien
+ * une description du pays. Ils ne sont plus dessinés dans la texture : c'est
+ * `roadMarkings` qui les lit et pose les lignes en géométrie, à la même place
+ * qu'avant — en deçà de l'accotement pour la rive, sur l'axe pour l'autre.
  */
 export const ROAD_PROFILES = {
   express: { width: 12, shoulder: 1.2, edgeLines: true, centerDash: true, texture: 256 },
@@ -956,14 +961,15 @@ export const ROAD_SURFACES = {
 export const ROAD_SHOULDER_COLOR = '#8c8168';
 
 /**
- * Blanc de marquage.
+ * Blanc de marquage — un seul, pour tout ce qui est peint au sol.
  *
- * Il existe pour l'instant deux fois : ici, pour le marquage **en géométrie**
- * (les hachures de comblement entre deux voies qui se longent), et dans
- * `createRoadCanvas`, qui peint encore ses lignes de rive et son axe dans la
- * texture des rubans, à deux nuances près et sous une opacité. Les deux se
- * rejoindront quand tout le marquage sera de la géométrie découpée par les
- * carrefours ; en attendant, changer celui-ci ne touche que les hachures.
+ * Il a existé deux fois : ici pour les hachures de comblement, et dans
+ * `createRoadCanvas` pour les lignes de rive et l'axe, à deux nuances près et
+ * sous une opacité. La texture n'en porte plus aucune : rive, axe, ligne
+ * d'effet, passage piétons et hachures sont de la géométrie, et tous lisent
+ * cette valeur-ci. Elle est donc devenue le seul réglage du marquage — et le
+ * marquage est devenu **opaque**, là où la texture le mêlait au bitume à
+ * quatre cinquièmes.
  */
 export const ROAD_MARKING_COLOR = '#e9e7de';
 

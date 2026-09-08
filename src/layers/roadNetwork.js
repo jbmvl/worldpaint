@@ -34,6 +34,15 @@
  *     ailleurs, puisqu'il faut que **tous** les tronçons soient dressés pour
  *     savoir lequel passe sous lequel. D'où les deux passes de
  *     `collectRoadSegments`.
+ *
+ * ## Le marquage
+ *
+ * La chaussée pose aussi son **marquage** (`roadMarkings`), et il ne peut pas
+ * être posé ailleurs : il se pose plage dessinable par plage dessinable, sur
+ * les mêmes morceaux que le ruban, ce qui est la seule façon qu'il s'arrête où
+ * la chaussée s'arrête — au pied d'un tunnel comme à la bouche d'un carrefour.
+ * Il tient dans un seul maillage pour tout le réseau : une couleur, pas de
+ * texture, rien qui dépende de la classe de la route une fois le trait choisi.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
@@ -45,10 +54,21 @@ import {
 } from './roadGraph.js';
 import {
   JunctionAreas,
+  branchYields,
   markJunctionRows,
   junctionRibbonRuns,
   junctionSurface,
 } from './roadJunctions.js';
+import {
+  MARKING_BAR_M,
+  MARKING_LIFT_M,
+  MOUTH_CROSSING_M,
+  approachLane,
+  appendMarkingBar,
+  appendMarkingLine,
+  markingLinesFor,
+  sectionAtDistance,
+} from './roadMarkings.js';
 import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
 import {
   workCodeFor,
@@ -64,12 +84,15 @@ import {
 import {
   resamplePath,
   createRibbonBuffer,
+  createProfileBuffer,
   appendRibbon,
   toGeometry,
+  toColoredGeometry,
   pathFrames,
   levelRow,
   flattenGrade,
 } from './ribbonGeometry.js';
+import { srgb } from '../core/color.js';
 import { ROAD_TEXTURE_LENGTH, createRoadCanvas } from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
 
@@ -101,13 +124,14 @@ export function junctionSurfaces(roads = defaultTheme.roads) {
  * de carrefour.
  *
  * Un carrefour ne peut pas porter la matière d'un ruban, et ce n'est pas une
- * question de coût : le marquage d'un profil est peint dans sa texture, à une
- * abscisse fixe en travers — l'axe au milieu, les rives sur les bords. Une
- * surface n'a ni milieu ni bords, et un carrefour habillé d'un ruban se
- * retrouverait traversé de lignes blanches, ce qui est exactement le défaut
- * qu'on corrige. Sa matière est donc le même revêtement, même grain, sans
- * aucune ligne — le lot des marquages les posera en géométrie, découpées par
- * le carrefour.
+ * question de coût : la texture d'un profil est dessinée à l'échelle de sa
+ * largeur, alors qu'une surface de carrefour n'a ni milieu, ni bords, ni sens
+ * de marche. Elle prend donc le même revêtement et le même grain, sans plus.
+ *
+ * Le marquage, lui, n'est plus dans aucune des deux textures : il est de la
+ * géométrie (`roadMarkings`), posée dans les mêmes morceaux que le ruban, donc
+ * découpée par les carrefours sans règle supplémentaire. D'où une troisième
+ * matière, sans texture : celle de la peinture.
  */
 export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
   const entries = {};
@@ -150,6 +174,18 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
     entries[key] = { texture, material };
   }
 
+  // Le marquage : une seule matière pour tout ce qui est peint au sol, sans
+  // texture — un trait blanc n'a pas de grain. Son décalage de profondeur est
+  // le double de celui de la chaussée : il doit gagner contre elle, sur
+  // laquelle il est posé, comme elle gagne contre le terrain.
+  const markings = new THREE.MeshLambertMaterial({
+    vertexColors: true,
+    polygonOffset: true,
+    polygonOffsetFactor: -4,
+    polygonOffsetUnits: -8,
+  });
+  markings.name = 'road-markings';
+
   return {
     /** @type {Record<string, Object>} matériau par clé de profil. */
     byProfile: Object.fromEntries(
@@ -157,6 +193,8 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
     ),
     /** @type {Record<string, Object>} matériau de surface de carrefour, par revêtement. */
     junctions,
+    /** @type {Object} matériau du marquage au sol. */
+    markings,
     /**
      * Mouille la chaussée, par `material.color` (multiplie la texture, le
      * marquage reste net et rien n'est à redessiner).
@@ -169,6 +207,10 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
       for (const entry of Object.values(entries)) {
         entry.material.color.setRGB(shade, shade, shade + wet * 0.06);
       }
+      // Le marquage se mouille moins que le bitume : la peinture est fermée,
+      // l'eau y fait un film au lieu d'y entrer. Même écart que le trottoir.
+      const paint = 1 - wet * 0.3;
+      markings.color.setRGB(paint, paint, paint + wet * 0.04);
     },
     setMaxAnisotropy(value) {
       for (const entry of Object.values(entries)) {
@@ -181,6 +223,7 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
         entry.material.dispose();
         entry.texture.dispose();
       }
+      markings.dispose();
     },
   };
 }
@@ -688,6 +731,10 @@ export class RoadNetwork {
     this.meshes = {};
     /** @type {Record<string, Object|null>} un maillage de carrefours par revêtement. */
     this.junctionMeshes = {};
+    /** @type {Object|null} maillage du marquage au sol. */
+    this.markingMesh = null;
+    /** Traits de marquage posés à la dernière reconstruction. */
+    this.markings = 0;
     /** Surfaces de carrefour posées à la dernière reconstruction. */
     this.crossings = 0;
     /** Aires des carrefours (contours, bouches). @type {Object|null} */
@@ -763,8 +810,11 @@ export class RoadNetwork {
     stitchPlatforms(collected, index);
 
     const buffers = {};
+    const markingBuffer = createProfileBuffer();
+    const paint = srgb(this.theme.roads.markingColor);
     let segments = 0;
     let junctionsDrawn = 0;
+    let markings = 0;
 
     for (const segment of collected) {
       if (!buffers[segment.profile]) buffers[segment.profile] = createRibbonBuffer();
@@ -786,6 +836,9 @@ export class RoadNetwork {
           textureLength: ROAD_TEXTURE_LENGTH, // pas au sol constant, quelle que soit la largeur
         });
         if (added) segments++;
+        // Le marquage se pose sur la **même** plage que le ruban : il hérite
+        // donc de sa découpe — tunnels et carrefours — sans règle à lui.
+        markings += this._appendMarkings(markingBuffer, segment, run, areas, paint);
       }
     }
 
@@ -820,6 +873,7 @@ export class RoadNetwork {
     this.index = index;
     this.segments = segments;
     this.crossings = junctionsDrawn;
+    this.markings = markings;
     this.bubble.setRoadCut(segments > 0 ? index : null);
     // Tous les profils sont visités, y compris ceux sans géométrie cette fois : leur ancien maillage doit disparaître.
     for (const profile of ROAD_PROFILE_ORDER) {
@@ -828,10 +882,127 @@ export class RoadNetwork {
     for (const surface of Object.keys(this.materials.junctions || {})) {
       this._applyJunctionBuffer(surface, junctionBuffers[surface] || createRibbonBuffer());
     }
+    this._applyMarkings(markingBuffer);
     this._anchor = { x: here.x, z: here.z };
     this._frame = this.bubble.frame;
     this._surface = this.bubble.surfaceGeneration;
     return segments > 0;
+  }
+
+  /**
+   * Le marquage d'une plage dessinable.
+   *
+   * Deux familles, et rien d'autre :
+   *
+   *   - les **lignes longitudinales** que le profil de la chaussée porte
+   *     (`markingLinesFor`), sur toute la plage. Elles s'arrêtent donc pile où
+   *     le ruban s'arrête, bouche de carrefour comprise ;
+   *   - la **ligne d'effet** aux bouts qui butent sur un carrefour, et
+   *     seulement du côté qui doit céder le passage (`branchYields`). Elle est
+   *     posée au-delà de la profondeur réservée à une traversée
+   *     (`MOUTH_CROSSING_M`) : c'est l'ordre réel d'un débouché, et c'est ce
+   *     qui fait que la voirie peut y poser un passage piétons sans que les
+   *     deux se recouvrent.
+   *
+   * Elle ne couvre que la **moitié droite** de la chaussée : c'est la voie qui
+   * arrive, l'autre est celle qui repart. Le côté se déduit du sens dans lequel
+   * on aborde le carrefour, donc du bout de la plage concerné.
+   *
+   * @returns {number} traits posés.
+   */
+  _appendMarkings(buffer, segment, run, areas, paint) {
+    const spec = this.theme.roads.profiles[segment.profile];
+    // Rien de peint sur une chaussée qui ne l'est pas : la terre ne porte pas
+    // de marquage, et un chemin d'exploitation n'en a jamais eu.
+    if (!spec || (spec.surface || 'asphalt') !== 'asphalt') return 0;
+
+    const { path, platform } = run;
+    if (!path || path.length < 2) return 0;
+    const frames = pathFrames(path);
+    const lift = ROAD_LIFT_M + MARKING_LIFT_M;
+    let laid = 0;
+
+    for (const line of markingLinesFor(spec, segment.halfWidth)) {
+      laid += appendMarkingLine(buffer, {
+        path,
+        decks: platform,
+        frames,
+        offset: line.offset,
+        dash: line.dash,
+        color: paint,
+        lift,
+        startDistance: segment.startDistance || 0,
+      });
+    }
+
+    // La demi-largeur peinte exclut l'accotement, qui n'est pas de la chaussée.
+    const half = segment.halfWidth - (spec.shoulder || 0);
+    if (!(half > 0)) return laid;
+
+    for (const end of [
+      { index: run.head, at: path[0].distance, forward: true },
+      { index: run.tail, at: path[path.length - 1].distance, forward: false },
+    ]) {
+      const area = end.index >= 0 ? areas?.areas?.[end.index] : null;
+      if (!area || !branchYields(area, segment.halfWidth)) continue;
+
+      // S'éloigner du carrefour, c'est remonter la plage depuis sa tête et la
+      // descendre depuis sa queue.
+      const sign = end.forward ? 1 : -1;
+      const near = sectionAtDistance(path, platform, frames, end.at + sign * MOUTH_CROSSING_M);
+      const far = sectionAtDistance(
+        path,
+        platform,
+        frames,
+        end.at + sign * (MOUTH_CROSSING_M + MARKING_BAR_M)
+      );
+      // Plage trop courte pour porter la ligne d'effet à sa place : mieux vaut
+      // ne rien peindre que la poser au milieu d'un carrefour.
+      if (!near || !far) continue;
+
+      laid += appendMarkingBar(buffer, {
+        near,
+        far,
+        ...approachLane(half, end.forward),
+        color: paint,
+        lift,
+      });
+    }
+
+    return laid;
+  }
+
+  /** Le marquage au sol, en un maillage : une seule matière pour tout le réseau. */
+  _applyMarkings(buffer) {
+    const { THREE } = this;
+    const geometry = toColoredGeometry(THREE, buffer);
+
+    if (!geometry) {
+      if (this.markingMesh) {
+        this.scene.remove(this.markingMesh);
+        this.markingMesh.geometry.dispose();
+        this.markingMesh = null;
+      }
+      return;
+    }
+
+    if (this.markingMesh) {
+      this.markingMesh.geometry.dispose();
+      this.markingMesh.geometry = geometry;
+      return;
+    }
+
+    const mesh = new THREE.Mesh(geometry, this.materials.markings);
+    mesh.name = 'road-markings';
+    mesh.matrixAutoUpdate = false;
+    mesh.receiveShadow = true;
+    mesh.updateMatrix();
+    // Après les rubans **et** après les surfaces de carrefour : le marquage
+    // est ce qu'on peint en dernier sur une chaussée, dans le rendu comme sur
+    // le terrain.
+    mesh.renderOrder = 1 + ROAD_PROFILE_ORDER.length + 2;
+    this.scene.add(mesh);
+    this.markingMesh = mesh;
   }
 
   /** Revêtement d'un profil : celui de sa surface de carrefour. */
@@ -923,6 +1094,11 @@ export class RoadNetwork {
         mesh.geometry.dispose();
         store[key] = null;
       }
+    }
+    if (this.markingMesh) {
+      this.scene.remove(this.markingMesh);
+      this.markingMesh.geometry.dispose();
+      this.markingMesh = null;
     }
   }
 }
