@@ -88,7 +88,11 @@ export const TERRAIN_LOOK = {
    * sol et ce qui y pousse divergent à la jointure premier plan/lointain.
    */
   grassAlbedo: [0.051, 0.135, 0.017],
-  woodAlbedo: [0.042, 0.056, 0.02],
+  // À mi-chemin de `grassAlbedo` : un sol de forêt est une litière, pas un pré,
+  // mais l'ancienne valeur en faisait un trou noir sous les arbres — la seule
+  // matière du décor plus sombre que l'ombre qu'elle porte. Elle vaut
+  // maintenant la moyenne exacte de l'ancienne et de celle de l'herbe.
+  woodAlbedo: [0.047, 0.096, 0.019],
   farmlandAlbedo: [0.431, 0.331, 0.08],
   bareAlbedo: [0.27, 0.255, 0.225],
   /**
@@ -451,7 +455,11 @@ export const WOODLAND_FLOOR = {
   green: 0.55,
   height: 0.5,
   density: 0.7,
-  tint: [0.98, 0.82, 0.74],
+  // Le même déplacement que `woodAlbedo`, et il n'a pas le choix : les deux
+  // peignent le même sol, l'un au loin et l'autre sous le nez. Le facteur est
+  // à mi-chemin de son ancienne valeur et du neutre, comme l'albédo est à
+  // mi-chemin de celui de l'herbe.
+  tint: [0.99, 0.91, 0.87],
 };
 
 // --- Les cultures --------------------------------------------------------------

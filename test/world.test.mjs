@@ -465,6 +465,8 @@ import {
   ROAD_PROFILES,
   FOREST_TYPES,
   CROP_LOOK,
+  TERRAIN_LOOK,
+  WOODLAND_FLOOR,
   TOWN_PALETTES,
   TREE_VARIANTS,
   ROOF_PITCH as DEFAULT_PITCH,
@@ -1922,6 +1924,29 @@ test('le sol d’un bois porte une litière, pas une prairie à l’ombre', () =
   // fleurs de plein soleil.
   assert.ok(WOODLAND_FLOWER_MAX > 0 && WOODLAND_FLOWER_MAX < 1);
   assert.ok(sousBois.shade > WOODLAND_FLOWER_MAX, 'un vrai bois passe le seuil');
+});
+
+test('un sol de forêt reste vert : plus sombre qu’un pré, jamais un trou noir', () => {
+  // Il l'était : son vert valait 0,056 contre 0,135 pour l'herbe, soit moins de
+  // la moitié — sous les arbres, le décor tombait dans une matière plus sombre
+  // que l'ombre qu'elle portait. La règle est maintenant écrite : un sous-bois
+  // est une litière, donc plus sombre qu'une prairie, mais il en garde au moins
+  // la moitié du vert.
+  const { woodAlbedo, grassAlbedo } = TERRAIN_LOOK;
+  assert.ok(woodAlbedo[1] < grassAlbedo[1], 'un sous-bois reste plus sombre qu’un pré');
+  assert.ok(
+    woodAlbedo[1] >= grassAlbedo[1] * 0.5,
+    `le vert du sous-bois : ${woodAlbedo[1]} pour ${grassAlbedo[1]} en prairie`
+  );
+  // Et c'est bien du vert : le canal dominant, comme dans l'herbe.
+  assert.ok(woodAlbedo[1] > woodAlbedo[0] && woodAlbedo[1] > woodAlbedo[2]);
+
+  // Les touffes qui poussent dessus suivent le même déplacement, sans quoi le
+  // premier plan et le lointain peindraient deux forêts différentes.
+  assert.ok(
+    WOODLAND_FLOOR.tint[1] > 0.85,
+    `la teinte des touffes de sous-bois : ${WOODLAND_FLOOR.tint[1]}`
+  );
 });
 
 test('la carte de classes sait où s’arrête un bois', () => {
