@@ -514,10 +514,20 @@ export function mergeRoadLines(lines, options = {}) {
       halfWidth: edge.halfWidth,
       works,
       points: ids.map((id) => ({ x: nodes.xs[id], z: nodes.zs[id] })),
-      // Un nœud de degré deux est un simple sommet de la ligne ; tout le reste
-      // — embranchement, croisement, cul-de-sac, changement de classe — est un
-      // point d'ancrage, et ne bouge pas d'une reconstruction à l'autre.
-      anchors: ids.map((id, i) => i === 0 || i === last || (degree.get(id) || 0) !== 2),
+      // Un nœud de degré deux est un simple sommet de la ligne ; un
+      // embranchement, un croisement, un changement de classe est un point
+      // d'ancrage, et ne bouge pas d'une reconstruction à l'autre.
+      //
+      // Les **extrémités**, elles, n'en sont plus. Une chaîne s'arrête là où la
+      // donnée s'arrête, c'est-à-dire au bord des tuiles chargées — un bord qui
+      // avance avec l'observateur —, et le graphe seul ne distingue pas ce
+      // bout-là d'un vrai cul-de-sac : les deux sont de degré un. L'ancrer
+      // revenait donc à ancrer sur une position d'observateur, et c'est ce qui
+      // faisait changer la ligne téléphonique de côté et l'alignement
+      // d'essence à chaque reconstruction. `anchorDistances` sait maintenant se
+      // rabattre sur le nœud **suivant** quand une tête de chaîne n'a rien
+      // derrière elle.
+      anchors: ids.map((id, i) => i > 0 && i < last && (degree.get(id) || 0) !== 2),
     });
   }
 

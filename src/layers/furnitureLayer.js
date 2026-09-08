@@ -171,6 +171,19 @@ export const CROSS_PROBE_M = 13;
 export const CROSS_PROBE_STEPS = 8;
 /** Portée des seuls repères d'horizon — ils n'existent que pour la profondeur. */
 export const LANDMARK_RADIUS_M = 2400;
+/**
+ * Dégagement autour d'une éolienne ou d'un pylône, en mètres : aucun bâtiment
+ * à moins de ça.
+ *
+ * Ces objets n'existent pas dans la donnée — ils sont posés sur une grille, là
+ * où le relief est haut. Rien ne dit donc qu'ils tombent sur du vide, et c'est
+ * ce que cette distance vérifie. Elle a remplacé une distance **à
+ * l'observateur** (420 m), qui protégeait la même chose de la mauvaise
+ * manière : en effaçant le repère au moment où on l'atteignait.
+ */
+export const LANDMARK_CLEARANCE_M = 55;
+/** Même chose pour l'arbre de crête, qui tient moins de place. */
+export const RIDGE_TREE_CLEARANCE_M = 25;
 /** Déplacement de l'observateur avant reconstruction, en mètres. */
 export const FURNITURE_REBUILD_M = 250;
 /** Pas de ré-échantillonnage des contours de parcelles, en mètres. */
@@ -871,6 +884,58 @@ export class FurnitureLayer {
     return filterOutsideCorridor(points, this._infraIndex);
   }
 
+  /**
+   * Découpe une polyligne aux passages en sous-bois.
+   *
+   * Une haie sous un couvert déjà planté ne se voit pas et n'existe pas : le
+   * bois y tient lieu de limite. La question se posait auparavant **une fois**,
+   * sur un point pris au milieu du tronçon rendu — c'est-à-dire sur un point
+   * qui avance avec l'observateur, si bien que la haie d'une même route
+   * apparaissait et disparaissait en roulant. Posée ligne par ligne, elle ne
+   * dépend plus que du sol : la haie s'arrête au bois et reprend après.
+   *
+   * @param {Array<{x:number,z:number}>} path
+   * @param {number} [offset] Décalage latéral auquel la haie sera posée : c'est
+   *        là qu'il faut sonder, pas sur l'axe de la route.
+   * @param {number} [minLength] Longueur en deçà de laquelle un bout de haie ne
+   *        vaut pas d'être posé.
+   */
+  _clipOpenGround(path, { offset = 0, minLength = BOUNDARY_MIN_LENGTH_M } = {}) {
+    const rows = path?.length ?? 0;
+    if (rows < 2) return [];
+    if (!this.groundClass?.woodAt) return [path];
+
+    const perp = pathFrames(path);
+    const runs = [];
+    let run = null;
+    for (let r = 0; r < rows; r++) {
+      // `pathFrames` range la tangente puis la perpendiculaire gauche —
+      // `(tz, -tx)`, la même convention que `_placeBeside`.
+      const x = path[r].x + perp[r * 4 + 2] * offset;
+      const z = path[r].z + perp[r * 4 + 3] * offset;
+      if (this._openGround(x, z)) {
+        if (!run) runs.push((run = []));
+        run.push(path[r]);
+      } else {
+        run = null;
+      }
+    }
+
+    const out = [];
+    for (const points of runs) {
+      if (points.length < 2) continue;
+      let travelled = 0;
+      const withDistance = [{ ...points[0], distance: 0 }];
+      for (let i = 1; i < points.length; i++) {
+        travelled += Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z);
+        withDistance.push({ ...points[i], distance: travelled });
+      }
+      if (travelled < minLength) continue;
+      out.push(withDistance);
+    }
+    return out;
+  }
+
   // --- Bord de route -------------------------------------------------------
   //
   // Les emprises habitées (`settlement.js`) servent d'interrupteur : à
@@ -1307,7 +1372,6 @@ export class FurnitureLayer {
       const origin = rows[0].distance;
       const path = rows.map((row) => ({ x: row.x, z: row.z, distance: row.distance - origin }));
       const deck = new Float32Array(rows.map((row) => platform[row.r]));
-      const mid = rows[Math.floor(rows.length / 2)];
 
       const inTown = run.value;
       const plan = roadsideFurnitureFor(profile, { builtUp: inTown });
@@ -1322,7 +1386,6 @@ export class FurnitureLayer {
         rows,
         platform: deck,
         halfWidth,
-        mid,
         side,
         spacing,
         profile,
@@ -1351,7 +1414,6 @@ export class FurnitureLayer {
     rows,
     platform,
     halfWidth,
-    mid,
     side,
     spacing,
     profile,
@@ -1508,23 +1570,24 @@ export class FurnitureLayer {
     }
 
     if (plan.alignmentTree) {
-      // Un alignement n'a de sens qu'en terrain découvert : dans un bois, il
-      // se noierait dans les arbres déjà plantés depuis la photo.
-      if (this._openGround(mid.x, mid.z)) {
-        // L'essence est tirée **une fois pour la chaîne** : un alignement mêlant
-        // platanes et sapins n'existe pas, c'est le propre d'un alignement d'être
-        // planté le même jour.
-        const species = alignmentTreeSpeciesFor(side.x, side.z, this.climate);
-        for (const p of spacedAlongPath(path, plan.alignmentTree, spacing)) {
-          const row = p.index % 2 === 0 ? 1 : -1;
-          this._placeBeside(placements, species, p, row * (halfWidth + 3.2), platform, {
-            scale: 1.05 + randomAt(p.x, p.z, 3) * 0.5,
-            // Un platane pousse au bord de la route qu'il borde — donc celle-ci
-            // ne le gêne pas — mais pas au milieu de celle qui la croise.
-            offRoad: true,
-            own: segment,
-          });
-        }
+      // L'essence est tirée **une fois pour la chaîne** : un alignement mêlant
+      // platanes et sapins n'existe pas, c'est le propre d'un alignement d'être
+      // planté le même jour.
+      const species = alignmentTreeSpeciesFor(side.x, side.z, this.climate);
+      for (const p of spacedAlongPath(path, plan.alignmentTree, spacing)) {
+        const row = p.index % 2 === 0 ? 1 : -1;
+        this._placeBeside(placements, species, p, row * (halfWidth + 3.2), platform, {
+          scale: 1.05 + randomAt(p.x, p.z, 3) * 0.5,
+          // Un platane pousse au bord de la route qu'il borde — donc celle-ci
+          // ne le gêne pas — mais pas au milieu de celle qui la croise.
+          offRoad: true,
+          // Et pas sous un bois : il s'y noierait dans les arbres déjà plantés
+          // depuis la photo. Arbre par arbre, l'alignement s'interrompt donc
+          // au bois et reprend après, au lieu d'exister ou non selon un point
+          // pris au milieu du tronçon rendu.
+          openGround: true,
+          own: segment,
+        });
       }
     }
 
@@ -1532,12 +1595,12 @@ export class FurnitureLayer {
     // portion sur trois environ : appliqué partout, il transforme la
     // campagne en circuit.
     const verge = roadsideVergeFor(profile, { builtUp: inTown, variant: randomAt(side.x, side.z, 83) });
-    const openGround = this._openGround(mid.x, mid.z);
-    if (verge.verge && openGround) {
+    if (verge.verge) {
       this._appendHedgerow(buffers.lowHedge, 'lowHedge', path, sampleElevation, {
         offset: verge.vergeSide * (halfWidth + 2.6),
         here,
         startDistance: spacing.startDistance,
+        openGround: true,
         own: segment,
       });
     }
@@ -1545,7 +1608,7 @@ export class FurnitureLayer {
     // La haie de bocage le long de la route reste, mais elle n'est plus
     // systématique : une petite route sur deux seulement en porte une, et
     // jamais du côté où court déjà la haie basse du bas-côté.
-    if (plan.hedge && openGround && randomAt(side.x, side.z, 29) < 0.5) {
+    if (plan.hedge && randomAt(side.x, side.z, 29) < 0.5) {
       const hedgeSide = verge.verge
         ? -verge.vergeSide
         : randomAt(side.x, side.z, 23) < 0.5 ? 1 : -1;
@@ -1553,6 +1616,7 @@ export class FurnitureLayer {
         offset: hedgeSide * (halfWidth + 1.8),
         here,
         startDistance: spacing.startDistance,
+        openGround: true,
         own: segment,
       });
     }
@@ -2959,9 +3023,17 @@ export class FurnitureLayer {
         // Décalage dans la maille : une grille régulière se lit comme une grille.
         const px = x + (randomAt(x, z, 92) - 0.5) * step * 0.8;
         const pz = z + (randomAt(x, z, 93) - 0.5) * step * 0.8;
-        const distance = Math.hypot(px - here.x, pz - here.z);
-        if (distance < 420 || distance > radius) continue;
+        if (Math.hypot(px - here.x, pz - here.z) > radius) continue;
         if (pointInAreas(builtUp, px, pz)) continue;
+        // Ni sur une chaussée, ni au fond d'un jardin : les deux garde-fous
+        // remplacent la distance minimale qui existait ici. Elle valait quatre
+        // cent vingt mètres, et c'est elle qui faisait disparaître une éolienne
+        // dès qu'on s'en approchait — un objet qu'on voit à deux kilomètres et
+        // qui s'efface quand on arrive dessus est le contraire d'un repère.
+        // Ce qui la justifiait — ne pas poser un pylône inventé au milieu de
+        // quelque chose — est mieux dit par ce qu'il ne faut pas écraser.
+        if (this._onRoad(px, pz)) continue;
+        if (this._fabric?.countWithin(px, pz, LANDMARK_CLEARANCE_M, 1) > 0) continue;
         if (!this._isHighPoint(px, pz)) continue;
 
         const item = draw < 0.08 ? 'windTurbine' : 'pylon';
@@ -3020,10 +3092,13 @@ export class FurnitureLayer {
 
         const px = x + (randomAt(x, z, 182) - 0.5) * step * 0.8;
         const pz = z + (randomAt(x, z, 183) - 0.5) * step * 0.8;
-        const distance = Math.hypot(px - here.x, pz - here.z);
-        if (distance < 60 || distance > radius) continue;
+        if (Math.hypot(px - here.x, pz - here.z) > radius) continue;
         if (pointInAreas(builtUp, px, pz)) continue;
+        // Même chose que pour les éoliennes : l'ancienne distance minimale de
+        // soixante mètres effaçait l'arbre de crête au moment où l'on y
+        // arrivait. L'emprise routière et le bâti disent déjà où il ne va pas.
         if (this._onRoad(px, pz)) continue;
+        if (this._fabric?.countWithin(px, pz, RIDGE_TREE_CLEARANCE_M, 1) > 0) continue;
         if (!this._openGround(px, pz)) continue;
         if (!this._isHighPoint(px, pz)) continue;
 
@@ -3252,16 +3327,22 @@ export class FurnitureLayer {
    * replanterait tout ce qui la suit.
    */
   _appendHedgerow(buffer, kind, path, sampleElevation, options = {}) {
-    const { offset = 0, own = null, startDistance = 0 } = options;
-    if (!own) {
-      this._appendHedgerowRun(buffer, kind, path, sampleElevation, options);
-      return;
-    }
-    for (const run of this._clipOffRoad(path, { offset, minLength: BOUNDARY_MIN_LENGTH_M, own })) {
-      this._appendHedgerowRun(buffer, kind, run, sampleElevation, {
-        ...options,
-        startDistance: startDistance + FurnitureLayer._distanceAlong(path, run[0]),
-      });
+    const { offset = 0, own = null, startDistance = 0, openGround = false } = options;
+    const crossings = own
+      ? this._clipOffRoad(path, { offset, minLength: BOUNDARY_MIN_LENGTH_M, own })
+      : [path];
+    for (const crossed of crossings) {
+      // `openGround` ne vaut que pour la haie de bord de route, qui n'existe
+      // que parce qu'on invente un bocage : dans un bois, elle n'a rien à
+      // clore. Un contour de parcelle, lui, vient de la donnée — il longe une
+      // lisière aussi souvent qu'un champ, et le couper là l'effacerait.
+      const runs = openGround ? this._clipOpenGround(crossed, { offset }) : [crossed];
+      for (const run of runs) {
+        this._appendHedgerowRun(buffer, kind, run, sampleElevation, {
+          ...options,
+          startDistance: startDistance + FurnitureLayer._distanceAlong(path, run[0]),
+        });
+      }
     }
   }
 
@@ -3364,7 +3445,14 @@ export class FurnitureLayer {
     point,
     offset,
     platform,
-    { facing = 'along', scale = 1, onPlatform = false, offRoad = false, own = null } = {}
+    {
+      facing = 'along',
+      scale = 1,
+      onPlatform = false,
+      offRoad = false,
+      openGround = false,
+      own = null,
+    } = {}
   ) {
     // Perpendiculaire à gauche de la marche, comme partout ailleurs.
     const x = point.x + point.tz * offset;
@@ -3374,6 +3462,11 @@ export class FurnitureLayer {
     // l'emprise, et c'est sa place : une glissière hors de l'emprise ne
     // protège rien.
     if (offRoad && this._onRoad(x, z, own)) return null;
+    // `openGround` : ce qui n'a pas de sens sous un couvert déjà planté. La
+    // question se pose **là où l'objet se pose**, et non une fois pour toute
+    // une portion — un point pris au milieu du tronçon rendu se déplace avec
+    // l'observateur, et l'alignement apparaissait et disparaissait en roulant.
+    if (openGround && !this._openGround(x, z)) return null;
     const yaw = roadsideYaw(point.tx, point.tz, offset, facing);
 
     let y = null;

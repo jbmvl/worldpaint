@@ -333,9 +333,22 @@ export function collectRoadLines(source, tiles, frame, roads = defaultTheme.road
 }
 
 /**
- * Distance depuis le dernier nœud d'ancrage, sommet par sommet. L'ancrage est
- * pris au dernier carrefour ou cul-de-sac rencontré (un point stable, que le
- * découpage ignore), pas au début de la chaîne qui bouge avec les tuiles chargées.
+ * Distance depuis le nœud d'ancrage, sommet par sommet, et rang de ce nœud.
+ *
+ * L'ancrage est un carrefour ou un changement de classe — un point que la
+ * donnée porte, et que le découpage ignore. C'est de lui que se comptent les
+ * bornes, les lampadaires et les arbustes d'une haie, et c'est lui qui tire le
+ * côté de la ligne téléphonique et l'essence d'un alignement : il ne doit donc
+ * dépendre en rien de l'endroit d'où l'on regarde.
+ *
+ * Le nœud retenu est **le dernier rencontré**, et à défaut **le premier à
+ * venir** : une chaîne commence là où la donnée s'arrête, c'est-à-dire au bord
+ * mouvant des tuiles chargées, et ses premières lignes n'ont donc rien de
+ * stable derrière elles. Se rabattre en avant leur donne un nœud réel ; la
+ * distance y est alors négative, ce que `spacedAlongPath` traite sans rien de
+ * particulier (c'est une phase, pas une longueur). Une chaîne sans aucun nœud
+ * — une voie isolée dans toute la fenêtre — retombe sur son premier sommet,
+ * faute de mieux.
  *
  * @param {Array<{x:number,z:number}>} points
  * @param {Array<boolean>} anchors
@@ -345,18 +358,28 @@ export function anchorDistances(points, anchors) {
   const rows = points.length;
   const distance = new Float64Array(rows);
   const anchorIndex = new Int32Array(rows);
-  let travelled = 0;
-  let anchorTravelled = 0;
-  let anchor = 0;
+  const travelled = new Float64Array(rows);
+
+  for (let i = 1; i < rows; i++) {
+    travelled[i] =
+      travelled[i - 1] + Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z);
+  }
+
+  let behind = -1;
+  for (let i = 0; i < rows; i++) {
+    if (anchors?.[i]) behind = i;
+    anchorIndex[i] = behind;
+  }
+
+  let ahead = -1;
+  for (let i = rows - 1; i >= 0; i--) {
+    if (anchors?.[i]) ahead = i;
+    if (anchorIndex[i] < 0) anchorIndex[i] = ahead;
+  }
 
   for (let i = 0; i < rows; i++) {
-    if (i > 0) travelled += Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z);
-    if (anchors?.[i]) {
-      anchor = i;
-      anchorTravelled = travelled;
-    }
-    distance[i] = travelled - anchorTravelled;
-    anchorIndex[i] = anchor;
+    if (anchorIndex[i] < 0) anchorIndex[i] = 0;
+    distance[i] = travelled[i] - travelled[anchorIndex[i]];
   }
 
   return { distance, anchorIndex };

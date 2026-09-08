@@ -2773,6 +2773,51 @@ test('le mobilier de bord de route se pose sans variable libre', () => {
   assert.ok(clumps > 0, 'avec ses arbustes, l’observateur étant au ras du tracé');
 });
 
+test('un bois interrompt l’alignement au lieu de l’effacer selon d’où l’on regarde', () => {
+  // Le défaut : la question « sommes-nous en terrain découvert ? » se posait une
+  // seule fois par portion, sur son point **médian** — c'est-à-dire sur un
+  // point qui avance avec l'observateur, puisque la portion est ce qui reste du
+  // tronçon après découpe au rayon. Un alignement entier existait ou non selon
+  // l'endroit d'où on le regardait, et se replantait en roulant.
+  //
+  // Un bois sur la première moitié de la route, du découvert ensuite : le
+  // découpage ne doit plus rien changer à ce qui pousse.
+  const bois = { woodAt: (x) => (x < 150 ? 0.8 : 0), cropAt: () => null };
+
+  const arbres = (jusqu) => {
+    const { layer, context, segment, rowsInfo } = roadsideHarness({
+      profile: 'major',
+      here: { x: 100, z: 0 },
+    });
+    layer.groundClass = bois;
+    const rows = rowsInfo.filter((row) => row.x <= jusqu);
+    const path = segment.path.filter((p) => p.x <= jusqu);
+    layer._buildRoadsideContext(context, { ...segment, path }, rows, []);
+
+    const out = [];
+    for (const [kind, list] of context.placements) {
+      if (!kind.startsWith('tree')) continue;
+      for (const item of list) out.push(`${kind}@${item.x.toFixed(3)},${item.z.toFixed(3)}`);
+    }
+    return out.sort();
+  };
+
+  const court = arbres(200);
+  const long = arbres(400);
+  assert.ok(long.length > court.length, 'la route longue porte plus d’arbres');
+  assert.ok(court.length > 0, 'et la courte en porte quand même');
+
+  // L'invariant : sur la portion commune, ce sont exactement les mêmes arbres.
+  const communs = long.filter((clef) => Number(clef.split('@')[1].split(',')[0]) <= 200);
+  assert.deepEqual(court, communs, 'le découpage ne replante rien');
+
+  // Et rien ne pousse sous le bois : c'est bien le sol qui décide, pas la
+  // longueur du tronçon rendu.
+  for (const clef of long) {
+    assert.ok(Number(clef.split('@')[1].split(',')[0]) >= 150, `${clef} pousse sous le bois`);
+  }
+});
+
 test('le champ proche d’une haie se fond au lieu de basculer', () => {
   const style = HEDGE_STYLES.hedge;
   const here = { x: 0, z: 0 };
@@ -5036,6 +5081,64 @@ test('la distance d’ancrage se compte depuis le dernier carrefour', () => {
   // changement de jeu de tuiles — ne change aucune distance après le carrefour.
   const truncated = anchorDistances(points.slice(2), anchors.slice(2));
   close(truncated.distance[4], distance[6], 1e-9, 'stable si la chaîne est tronquée');
+});
+
+test('une tête de chaîne s’ancre au nœud suivant, faute d’en avoir un derrière', () => {
+  // C'est le correctif du « reset » : une chaîne ne commence pas à un
+  // cul-de-sac, elle commence là où les tuiles chargées s'arrêtent — un bord
+  // qui avance avec l'observateur. Ancrées sur ce bout-là, les lignes d'avant
+  // le premier carrefour se replantaient à chaque reconstruction : la ligne
+  // téléphonique changeait de côté, l'alignement d'essence.
+  const points = straight(0, 400, 8); // pas de 50 m
+  const anchors = points.map((_, i) => i === 4); // un seul vrai carrefour, à 200 m
+
+  const { distance, anchorIndex } = anchorDistances(points, anchors);
+  assert.equal(anchorIndex[0], 4, 'la tête vise le carrefour qui la suit');
+  close(distance[0], -200, 1e-9, 'et compte à rebours depuis lui');
+  close(distance[4], 0, 1e-9);
+
+  // Et c'est bien le même nœud, quel que soit l'endroit où la donnée s'arrête.
+  for (const coupe of [1, 2, 3]) {
+    const coupee = anchorDistances(points.slice(coupe), anchors.slice(coupe));
+    for (let i = coupe; i < points.length; i++) {
+      close(
+        coupee.distance[i - coupe],
+        distance[i],
+        1e-9,
+        `coupée à ${coupe} : la ligne ${i} garde sa phase`
+      );
+      assert.deepEqual(
+        points[anchorIndex[i]],
+        points.slice(coupe)[coupee.anchorIndex[i - coupe]],
+        `coupée à ${coupe} : la ligne ${i} garde son nœud`
+      );
+    }
+  }
+
+  // Sans aucun nœud, il faut bien se rabattre sur quelque chose : le premier
+  // sommet, comme avant.
+  const orpheline = anchorDistances(points, points.map(() => false));
+  assert.equal(orpheline.anchorIndex[3], 0);
+  close(orpheline.distance[3], 150, 1e-9);
+});
+
+test('une extrémité de chaîne n’est pas un ancrage : elle bouge avec les tuiles', () => {
+  // Le graphe ne distingue pas un cul-de-sac d'une route coupée au bord des
+  // tuiles — les deux sont de degré un. Aucun des deux n'ancre donc plus rien ;
+  // seuls les vrais nœuds (embranchement, croisement, changement de classe) le
+  // font, et eux ne bougent pas.
+  const merged = mergedChains([
+    { profile: 'minor', halfWidth: 2.5, points: straight(0, 100) },
+    { profile: 'minor', halfWidth: 2.5, points: straight(100, 200) },
+    { profile: 'minor', halfWidth: 2.5, points: [{ x: 100, z: 0 }, { x: 100, z: 60 }] },
+  ]);
+  const through = merged.find((c) => c.points.length > 2);
+  assert.equal(through.anchors[0], false, 'le bout de la chaîne n’ancre rien');
+  assert.equal(through.anchors[through.anchors.length - 1], false);
+  assert.ok(
+    through.anchors.some((flag) => flag),
+    'mais le carrefour, si'
+  );
 });
 
 // --- Carrefours relevés sur le graphe ----------------------------------------
