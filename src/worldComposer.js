@@ -10,12 +10,15 @@
  *
  * Ordre de génération : occupation du sol (tout le monde la lit — l'eau en
  * fait partie, c'est une matière du sol) → chaussées (entaillent le terrain,
- * publient l'emprise routière que le reste du décor ne franchit pas) → ouvrages d'art (tabliers, piles, têtes de
+ * posent la surface des carrefours, publient l'emprise routière que le reste
+ * du décor ne franchit pas) → ouvrages d'art (tabliers, piles, têtes de
  * tunnel : ne lisent que les tronçons publiés par les chaussées) → voie ferrée
  * (indépendante, suit le terrain sans l'entailler, voir `railwayLayer.js`) →
  * bâti (lit l'emprise, qui rabote ce qu'une empreinte pose sur la voie ;
  * publie maisons et empreintes) → voirie (après chaussées et bâti, un
- * trottoir a besoin des deux ; publie sa bande revêtue) → jardins (tirent clôtures et buissons des
+ * trottoir a besoin des deux ; borde aussi les coins de rue des carrefours et
+ * comble les vides de faisceau, dans cet ordre — là où un trottoir tient, il
+ * vaut mieux qu'un zébra ; publie sa bande revêtue) → jardins (tirent clôtures et buissons des
  * maisons, lisent emprise et bande revêtue) → mobilier (tronçons + index des
  * chaussées, compte de bâtiments, emprise ferroviaire, lieux nommés) →
  * arbres (après la carte de classes et les chaussées : une tuile semée hors de
@@ -161,7 +164,7 @@ export class WorldComposer {
       THREE,
       scene,
       bubble,
-      materials: this.roadMaterials.byProfile,
+      materials: this.roadMaterials,
       theme,
     });
 
@@ -382,6 +385,9 @@ export class WorldComposer {
         builtUp,
         fabric,
         roadIndex: this.roads.index,
+        // Les surfaces de carrefour : elles arrêtent les rives de tronçon et
+        // portent les coins de rue.
+        areas: this.roads.junctionAreas,
       });
 
       // 4 ter. Jardins — après le bâti (maisons) et la voirie (bande revêtue).
@@ -399,7 +405,10 @@ export class WorldComposer {
         builtUp,
         fabric,
         this.railways.index,
-        places
+        places,
+        // Les surfaces de carrefour : un panneau de priorité se pose à une
+        // bouche, et la bouche n'existe que là.
+        { areas: this.roads.junctionAreas }
       );
 
       // 6. Arbres — après les chaussées, dont l'emprise décide où le semis

@@ -60,6 +60,18 @@ export {
 } from './inspect/objectLabels.js';
 export { forestTypeAt } from './layers/vegetationLayer.js';
 
+// --- Mise au point : voir le réseau routier tel qu'il est compris -----------
+// Rend des paires de points colorées, en mètres du repère local : à
+// l'application d'en faire une géométrie de lignes. Voir `demo/main.js`.
+export {
+  collectRoadDebug,
+  levelTint,
+  ROAD_DEBUG_KINDS,
+  ROAD_DEBUG_COLORS,
+  ROAD_DEBUG_LIFT_M,
+  ROAD_DEBUG_RADIUS_M,
+} from './inspect/roadDebug.js';
+
 // --- Le climat --------------------------------------------------------------
 // Même question que le décor se pose : quelle famille climatique à cette
 // longitude et cette latitude. Pure, synchrone, sans réseau.

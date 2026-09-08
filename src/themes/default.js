@@ -935,6 +935,11 @@ export const WINDOW_LIT_SHARE = 0.34;
  * l'échelle : une départementale portant les pointillés d'une nationale se
  * lirait comme une nationale rétrécie. `width` sert deux fois (section et
  * largeur du ruban), donc les deux ne peuvent pas diverger.
+ *
+ * `edgeLines` et `centerDash` disent ce que la classe **porte**, et c'est bien
+ * une description du pays. Ils ne sont plus dessinés dans la texture : c'est
+ * `roadMarkings` qui les lit et pose les lignes en géométrie, à la même place
+ * qu'avant — en deçà de l'accotement pour la rive, sur l'axe pour l'autre.
  */
 export const ROAD_PROFILES = {
   express: { width: 12, shoulder: 1.2, edgeLines: true, centerDash: true, texture: 256 },
@@ -954,6 +959,19 @@ export const ROAD_SURFACES = {
 };
 /** Terre claire de l'accotement. */
 export const ROAD_SHOULDER_COLOR = '#8c8168';
+
+/**
+ * Blanc de marquage — un seul, pour tout ce qui est peint au sol.
+ *
+ * Il a existé deux fois : ici pour les hachures de comblement, et dans
+ * `createRoadCanvas` pour les lignes de rive et l'axe, à deux nuances près et
+ * sous une opacité. La texture n'en porte plus aucune : rive, axe, ligne
+ * d'effet, passage piétons et hachures sont de la géométrie, et tous lisent
+ * cette valeur-ci. Elle est donc devenue le seul réglage du marquage — et le
+ * marquage est devenu **opaque**, là où la texture le mêlait au bitume à
+ * quatre cinquièmes.
+ */
+export const ROAD_MARKING_COLOR = '#e9e7de';
 
 // --- Les ouvrages d'art ---------------------------------------------------------
 /**
@@ -1383,7 +1401,12 @@ export const defaultTheme = Object.freeze({
     emoji: SHOPFRONT_EMOJI,
     emojiDefault: SHOPFRONT_EMOJI_DEFAULT,
   },
-  roads: { profiles: ROAD_PROFILES, surfaces: ROAD_SURFACES, shoulderColor: ROAD_SHOULDER_COLOR },
+  roads: {
+    profiles: ROAD_PROFILES,
+    surfaces: ROAD_SURFACES,
+    shoulderColor: ROAD_SHOULDER_COLOR,
+    markingColor: ROAD_MARKING_COLOR,
+  },
   works: WORKS_STYLES,
   streets: STREET_LOOK,
   water: { waterways: WATERWAY_CLASSES, riparianBufferM: RIPARIAN_BUFFER_M },

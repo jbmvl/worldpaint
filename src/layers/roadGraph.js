@@ -12,9 +12,15 @@
  *
  * Le graphe est le seul endroit où un croisement existe comme tel (nœud de
  * degré trois) : `mergeRoadLines` publie la liste des carrefours avec les
- * chaînes, dont s'appuient le rognage des voies secondaires
- * (`trimAtJunctions`) et les feux tricolores. Les redécouvrir après coup en
- * cherchant où deux rubans se touchent en inventerait d'autres.
+ * chaînes, et `roadJunctions` en fait des **surfaces**. Les redécouvrir après
+ * coup en cherchant où deux rubans se touchent en inventerait d'autres.
+ *
+ * Ce module ne rogne plus rien. Il l'a fait — la voie la plus étroite
+ * s'arrêtait sur un cercle centré sur le nœud —, et c'était la mauvaise
+ * réponse à la bonne question : deux voies de même largeur ne se rognaient
+ * pas du tout, un cercle coupe une rive courbe de travers, et rien ne
+ * construisait la surface du carrefour. Elle se construit maintenant à partir
+ * des branches, et les chaînes ressortent d'ici entières.
  *
  * Le mobilier espacé (bornes, lampadaires) se compte depuis le dernier nœud
  * d'ancrage rencontré (carrefour, cul-de-sac, changement de classe), pas
@@ -26,9 +32,24 @@
  * travers son pont, donc le mobilier ne recommence pas sa numérotation à
  * chaque culée. Un sommet porte le maximum des arêtes qui s'y rejoignent —
  * convention lue par `resampleWorks`, qui reprend le minimum par intervalle.
+ *
+ * ## Le niveau de croisement : un quatrième tableau, et une règle de soudure
+ *
+ * `layer` voyage de la même façon (`chain.levels`), mais il ne se contente pas
+ * d'être transporté : il décide de la **soudure des nœuds** (`NodeIndex`).
+ * Deux sommets ne deviennent le même nœud que s'ils sont au même niveau.
+ *
+ * C'est ce qui manquait pour distinguer les quatre situations que le plan
+ * confondait en une (voir l'en-tête de `roadWorks.js`) : proximité XY,
+ * croisement XY, connexion routière, séparation verticale. Le graphe ne
+ * contient donc plus jamais de nœud à cheval sur deux niveaux, et tout ce qui
+ * le lit — carrefours, rognage, couture d'altitude, feux — hérite de la
+ * distinction sans avoir à porter de filtre. Un passage supérieur sans
+ * `bridge` cesse d'être un carrefour, et il n'a pas fallu quatre exceptions
+ * pour ça.
  */
 
-import { WORK_NONE } from './roadWorks.js';
+import { WORK_NONE, LEVEL_GROUND } from './roadWorks.js';
 
 /** Distance en deçà de laquelle deux sommets sont le même nœud, en mètres. */
 export const NODE_WELD_M = 1.2;
@@ -41,13 +62,6 @@ export const CONTINUE_COS = Math.cos((72 * Math.PI) / 180);
 /** Cosinus de l'angle toléré entre deux bouts libres qu'on recoud. */
 export const COLLINEAR_COS = Math.cos((40 * Math.PI) / 180);
 
-/** De combien la voie secondaire s'arrête en deçà de la rive dominante, en mètres (rentre sous elle, `renderOrder` dans `roadNetwork`). */
-export const JUNCTION_OVERLAP_M = 0.5;
-/** Longueur en deçà de laquelle ce qui reste d'une voie rognée est abandonné (un moignon qui dépasse d'un carrefour). */
-export const JUNCTION_MIN_RUN_M = 4;
-/** Pas de dichotomie pour poser le sommet de coupe sur le cercle du carrefour (plus nombreux que `roadCorridor` : arête brute, longue). */
-export const JUNCTION_BISECT_STEPS = 14;
-
 /** Décalage de cellule : les coordonnées locales sont signées. */
 const CELL_BIAS = 1 << 14;
 
@@ -58,9 +72,36 @@ export function cellKey(cx, cz) {
 
 /**
  * Index de nœuds soudés : deux sommets distants de moins que la tolérance
- * sont le même nœud (le premier arrivé impose sa position). Une simple
- * quantification ne suffirait pas (frontière de grille) : on regarde les
- * neuf cellules voisines et on compare des distances.
+ * **et au même niveau** sont le même nœud (le premier arrivé impose sa
+ * position). Une simple quantification ne suffirait pas (frontière de
+ * grille) : on regarde les neuf cellules voisines et on compare des distances.
+ *
+ * ## Pourquoi le niveau soude, plutôt que d'être filtré plus loin
+ *
+ * La tolérance de soudure existe pour recoller **le même nœud** livré par deux
+ * tuiles voisines, dont la quantification diffère de quelques décimètres. Elle
+ * ne dit rien de deux nœuds *distincts* qui se trouvent à un mètre l'un de
+ * l'autre — et c'est exactement ce qui se passe sous un passage supérieur, où
+ * les deux chaussées ne partagent aucun nœud dans la donnée. Soudés quand
+ * même, ils formaient un nœud de degré quatre : un carrefour inventé, avec sa
+ * voie rognée, sa couture d'altitude et son feu tricolore.
+ *
+ * Refuser la soudure entre niveaux différents règle les quatre d'un coup, et
+ * en amont : le graphe ne contient plus jamais de nœud à cheval sur deux
+ * niveaux, donc rien de ce qui le lit n'a de filtre à porter. C'est la seule
+ * façon de le corriger comme une règle plutôt que comme quatre exceptions.
+ *
+ * ## La culée, et pourquoi elle tient quand même
+ *
+ * Un pont porte `layer=1` et sa route d'approche `layer=0` : leurs sommets de
+ * culée ne se soudent donc plus, et la chaîne se coupe là. C'est
+ * `joinLooseEnds` qui la recoud — deux bouts libres qui se font face, alignés,
+ * de même profil : la définition exacte d'une culée. La route reste donc une
+ * seule chaîne à travers son pont (le mobilier espacé ne redémarre pas sa
+ * numérotation), et on n'a pas eu à percer un trou dans la règle pour ça.
+ *
+ * Un croisement au **même** niveau reste soudé comme avant : la règle ne
+ * retire rien à une donnée qui ne dit rien.
  */
 class NodeIndex {
   constructor(tolerance = NODE_WELD_M) {
@@ -69,14 +110,22 @@ class NodeIndex {
     this.cells = new Map();
     this.xs = [];
     this.zs = [];
+    /** Niveau de croisement du nœud : un nœud n'en a qu'un. @type {number[]} */
+    this.levels = [];
   }
 
   get size() {
     return this.xs.length;
   }
 
-  /** Identifiant du nœud à cette position, créé au besoin. */
-  idFor(x, z) {
+  /**
+   * Identifiant du nœud à cette position et à ce niveau, créé au besoin.
+   *
+   * @param {number} x
+   * @param {number} z
+   * @param {number} [level] Niveau de croisement (`roadWorks.roadLevelFor`).
+   */
+  idFor(x, z, level = LEVEL_GROUND) {
     const cx = Math.floor(x / this.cell);
     const cz = Math.floor(z / this.cell);
     let best = -1;
@@ -87,6 +136,7 @@ class NodeIndex {
         const bucket = this.cells.get(cellKey(cx + dx, cz + dz));
         if (!bucket) continue;
         for (const id of bucket) {
+          if (this.levels[id] !== level) continue;
           const ex = this.xs[id] - x;
           const ez = this.zs[id] - z;
           const distance = ex * ex + ez * ez;
@@ -103,6 +153,7 @@ class NodeIndex {
     const id = this.xs.length;
     this.xs.push(x);
     this.zs.push(z);
+    this.levels.push(level);
     const key = cellKey(cx, cz);
     const bucket = this.cells.get(key);
     if (bucket) bucket.push(id);
@@ -203,7 +254,7 @@ function edgeKey(a, b, rank) {
  * doublon garde l'ouvrage le plus fort : la même arête livrée deux fois par
  * deux tuiles ne doit pas perdre son pont selon l'ordre de lecture.
  */
-function addEdge(state, a, b, profile, halfWidth, works = WORK_NONE) {
+function addEdge(state, a, b, profile, halfWidth, works = WORK_NONE, level = LEVEL_GROUND) {
   if (a === b) return;
   const rank = profileRank(state, profile);
   const key = edgeKey(a, b, rank);
@@ -216,7 +267,9 @@ function addEdge(state, a, b, profile, halfWidth, works = WORK_NONE) {
 
   const index = state.edges.length;
   state.seen.set(key, index);
-  state.edges.push({ a, b, profile, rank, halfWidth, works });
+  // Le niveau n'entre pas dans la clé : les nœuds sont déjà séparés par niveau
+  // (`NodeIndex`), donc deux arêtes entre les mêmes nœuds sont du même niveau.
+  state.edges.push({ a, b, profile, rank, halfWidth, works, level });
   for (const node of [a, b]) {
     const listKey = adjacencyKey(node, rank);
     const list = state.adjacency.get(listKey);
@@ -308,17 +361,31 @@ function joinLooseEnds(chains, { join, offset, collinearCos }) {
  * Ajoute une chaîne à la suite d'une autre, en retirant ce qui repart en
  * arrière. Sans cette coupe, la bande de recouvrement des tuiles produirait un
  * crochet de quelques mètres au raccord — un repli visible sur le ruban.
+ *
+ * Les tableaux parallèles aux sommets (ancres, ouvrages, niveaux) suivent le
+ * même découpage : ils voyagent groupés plutôt qu'en arguments séparés, sans
+ * quoi en ajouter un revient à retoucher chaque appel.
  */
-function appendChain(out, anchorsOut, worksOut, points, anchors, works) {
-  if (out.length === 0) {
-    out.push(...points);
-    anchorsOut.push(...anchors);
-    worksOut.push(...works);
+function appendChain(out, run) {
+  const { points, anchors, works, levels } = run;
+
+  const copy = (from) => {
+    for (let i = from; i < points.length; i++) {
+      out.points.push(points[i]);
+      out.anchors.push(anchors[i]);
+      out.works.push(works[i]);
+      out.levels.push(levels[i]);
+    }
+  };
+
+  if (out.points.length === 0) {
+    copy(0);
     return;
   }
 
-  const head = out[out.length - 1];
-  const heading = direction(out[out.length - 2].x, out[out.length - 2].z, head.x, head.z);
+  const head = out.points[out.points.length - 1];
+  const previous = out.points[out.points.length - 2];
+  const heading = direction(previous.x, previous.z, head.x, head.z);
   let start = 0;
   if (heading) {
     while (
@@ -329,11 +396,7 @@ function appendChain(out, anchorsOut, worksOut, points, anchors, works) {
     }
   }
 
-  for (let i = start; i < points.length; i++) {
-    out.push(points[i]);
-    anchorsOut.push(anchors[i]);
-    worksOut.push(works[i]);
-  }
+  copy(start);
 }
 
 /** Suit les appariements de bouts libres et concatène ce qui va ensemble. */
@@ -342,9 +405,7 @@ function assembleChains(chains, partner) {
   const merged = [];
 
   const walk = (startEnd) => {
-    const points = [];
-    const anchors = [];
-    const works = [];
+    const out = { points: [], anchors: [], works: [], levels: [] };
     let end = startEnd;
 
     for (;;) {
@@ -354,10 +415,13 @@ function assembleChains(chains, partner) {
       visited[c] = 1;
       const chain = chains[c];
       // Entrer par le bout `at` revient à parcourir la chaîne dans ce sens-là.
-      const ordered = at === 0 ? chain.points : chain.points.slice().reverse();
-      const orderedAnchors = at === 0 ? chain.anchors : chain.anchors.slice().reverse();
-      const orderedWorks = at === 0 ? chain.works : chain.works.slice().reverse();
-      appendChain(points, anchors, works, ordered, orderedAnchors, orderedWorks);
+      const flip = (array) => (at === 0 ? array : array.slice().reverse());
+      appendChain(out, {
+        points: flip(chain.points),
+        anchors: flip(chain.anchors),
+        works: flip(chain.works),
+        levels: flip(chain.levels),
+      });
 
       const exit = c * 2 + (1 - at);
       const next = partner[exit];
@@ -365,13 +429,14 @@ function assembleChains(chains, partner) {
       end = next;
     }
 
-    if (points.length >= 2) {
+    if (out.points.length >= 2) {
       merged.push({
         profile: chains[startEnd >> 1].profile,
         halfWidth: chains[startEnd >> 1].halfWidth,
-        points,
-        anchors,
-        works,
+        points: out.points,
+        anchors: out.anchors,
+        works: out.works,
+        levels: out.levels,
       });
     }
   };
@@ -394,9 +459,13 @@ function assembleChains(chains, partner) {
  * Ne voit pas les chaussées qui se croisent sans partager de nœud (un pont) —
  * volontaire : mieux vaut ignorer un vrai carrefour que rogner sous un viaduc.
  *
- * @returns {Array<{x:number, z:number, degree:number, halfWidth:number,
- *          profile:string, branches:Array<{x:number, z:number,
- *          halfWidth:number, profile:string}>}>}
+ * Un nœud étant désormais propre à un niveau (`NodeIndex`), un passage
+ * supérieur n'en produit plus du tout, même quand ses deux chaussées se
+ * frôlent à moins d'un mètre : il n'y a pas de rencontre à un croisement XY.
+ *
+ * @returns {Array<{x:number, z:number, degree:number, level:number,
+ *          halfWidth:number, profile:string, branches:Array<{x:number,
+ *          z:number, halfWidth:number, profile:string}>}>}
  *          Carrefours, direction sortante unitaire par branche. `halfWidth` et
  *          `profile` sont ceux de la branche dominante — la plus large.
  */
@@ -416,6 +485,9 @@ function collectJunctions({ edges, degree }, nodes) {
           x: nodes.xs[node],
           z: nodes.zs[node],
           degree: degree.get(node),
+          // Un nœud n'a qu'un niveau : celui des chaussées qui s'y rencontrent
+          // vraiment. Ce qui passe au-dessus a son propre nœud, ailleurs.
+          level: nodes.levels[node] ?? LEVEL_GROUND,
           halfWidth: 0,
           profile: null,
           branches: [],
@@ -475,10 +547,11 @@ export function mergeRoadLines(lines, options = {}) {
     const points = line?.points;
     if (!Array.isArray(points) || points.length < 2) continue;
     const works = line.works || WORK_NONE;
-    let previous = nodes.idFor(points[0].x, points[0].z);
+    const level = line.level || LEVEL_GROUND;
+    let previous = nodes.idFor(points[0].x, points[0].z, level);
     for (let i = 1; i < points.length; i++) {
-      const id = nodes.idFor(points[i].x, points[i].z);
-      addEdge(state, previous, id, line.profile, line.halfWidth, works);
+      const id = nodes.idFor(points[i].x, points[i].z, level);
+      addEdge(state, previous, id, line.profile, line.halfWidth, works, level);
       previous = id;
     }
   }
@@ -502,6 +575,11 @@ export function mergeRoadLines(lines, options = {}) {
     // les deux extrémités d'un pont sont marquées pont, et `resampleWorks`
     // retrouve l'arête exacte en reprenant le minimum par intervalle.
     const works = new Array(ids.length).fill(WORK_NONE);
+    // Une chaîne brute ne peut pas enjamber deux niveaux : ses nœuds sont
+    // séparés par niveau. Le tableau n'a de raison d'être que parce que
+    // `joinLooseEnds` recoud ensuite une culée à sa route d'approche, et que
+    // la chaîne qui en sort, elle, en traverse deux.
+    const levels = new Array(ids.length).fill(edge.level ?? LEVEL_GROUND);
     for (let i = 1; i < ids.length; i++) {
       const between = state.edges[state.seen.get(edgeKey(ids[i - 1], ids[i], edge.rank))];
       const code = between ? between.works : WORK_NONE;
@@ -513,6 +591,7 @@ export function mergeRoadLines(lines, options = {}) {
       profile: edge.profile,
       halfWidth: edge.halfWidth,
       works,
+      levels,
       points: ids.map((id) => ({ x: nodes.xs[id], z: nodes.zs[id] })),
       // Un nœud de degré deux est un simple sommet de la ligne ; un
       // embranchement, un croisement, un changement de classe est un point
@@ -544,150 +623,11 @@ export function mergeRoadLines(lines, options = {}) {
       chain.points.reverse();
       chain.anchors.reverse();
       chain.works.reverse();
+      chain.levels.reverse();
     }
   }
 
   return { chains: joined, junctions };
-}
-
-/**
- * Rogne les voies secondaires au bord de la chaussée dominante d'un
- * carrefour (sinon la petite route traverse le croisement au lieu de s'y
- * arrêter). Coupée sur un cercle centré sur le nœud, de rayon la
- * demi-largeur de la dominante. Deux voies de même largeur ne se rognent pas
- * l'une l'autre (pas de dominante). Seuls les carrefours qui sont un sommet
- * de la chaîne la coupent — un nœud simplement à portée est un pont ou deux
- * tuiles mal recoupées. Une ligne d'ouvrage n'est jamais rognée : une bretelle
- * d'échangeur passe **au-dessus** de l'autoroute dont elle partage un nœud
- * quelques dizaines de mètres plus loin, elle ne s'arrête pas à sa rive.
- *
- * Une chaîne peut en ressortir coupée en plusieurs, ou disparaître.
- *
- * @param {Array<Object>} chains    Chaînes issues de `mergeRoadLines`.
- * @param {Array<Object>} junctions Carrefours issus de `mergeRoadLines`.
- * @param {Object} [options]
- * @returns {Array<Object>} chaînes de même forme, rognées.
- */
-export function trimAtJunctions(chains, junctions, options = {}) {
-  const {
-    overlap = JUNCTION_OVERLAP_M,
-    minLength = JUNCTION_MIN_RUN_M,
-    weld = NODE_WELD_M,
-    steps = JUNCTION_BISECT_STEPS,
-  } = options;
-
-  if (!Array.isArray(chains)) return [];
-  if (!Array.isArray(junctions) || junctions.length === 0) return chains;
-
-  const cell = Math.max(weld, 1) * 4;
-  const grid = new Map();
-  for (let j = 0; j < junctions.length; j++) {
-    const key = cellKey(Math.floor(junctions[j].x / cell), Math.floor(junctions[j].z / cell));
-    const bucket = grid.get(key);
-    if (bucket) bucket.push(j);
-    else grid.set(key, [j]);
-  }
-
-  const out = [];
-
-  for (const chain of chains) {
-    const points = chain?.points;
-    if (!Array.isArray(points) || points.length < 2) continue;
-
-    // Les carrefours qui coupent *cette* chaîne : dominants, et posés sur un de
-    // ses sommets.
-    const centres = [];
-    for (const point of points) {
-      const cx = Math.floor(point.x / cell);
-      const cz = Math.floor(point.z / cell);
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dz = -1; dz <= 1; dz++) {
-          const bucket = grid.get(cellKey(cx + dx, cz + dz));
-          if (!bucket) continue;
-          for (const j of bucket) {
-            const junction = junctions[j];
-            if (junction.halfWidth <= chain.halfWidth + 1e-3) continue;
-            if (Math.hypot(junction.x - point.x, junction.z - point.z) > weld) continue;
-            if (centres.some((c) => c.index === j)) continue;
-            centres.push({ index: j, x: junction.x, z: junction.z, radius: Math.max(0, junction.halfWidth - overlap) });
-          }
-        }
-      }
-    }
-
-    if (centres.length === 0) {
-      out.push(chain);
-      continue;
-    }
-
-    const covered = (x, z) =>
-      centres.some((c) => Math.hypot(x - c.x, z - c.z) < c.radius);
-
-    /** Sommet posé sur la limite, en partant du côté conservé. */
-    const boundary = (keep, drop) => {
-      let lo = keep;
-      let hi = drop;
-      for (let i = 0; i < steps; i++) {
-        const mid = { x: (lo.x + hi.x) / 2, z: (lo.z + hi.z) / 2 };
-        if (covered(mid.x, mid.z)) hi = mid;
-        else lo = mid;
-      }
-      return hi;
-    };
-
-    const runs = [];
-    let run = null;
-    for (let i = 0; i < points.length; i++) {
-      // Un ouvrage ne se rogne pas : il ne touche pas la chaussée qu'il croise.
-      const inside = !chain.works?.[i] && covered(points[i].x, points[i].z);
-      if (!inside) {
-        if (!run) {
-          run = { points: [], anchors: [], works: [] };
-          // Entrée de plage : le sommet de coupe manquant est celui posé sur
-          // la limite, entre le sommet écarté et celui-ci.
-          if (i > 0) {
-            const edge = boundary(points[i], points[i - 1]);
-            run.points.push(edge);
-            // Il vient du carrefour, donc d'un point que la donnée porte : il
-            // fait une origine aussi stable que le nœud lui-même.
-            run.anchors.push(true);
-            run.works.push(chain.works?.[i] || WORK_NONE);
-          }
-          runs.push(run);
-        }
-        run.points.push(points[i]);
-        run.anchors.push(!!chain.anchors?.[i]);
-        run.works.push(chain.works?.[i] || WORK_NONE);
-      } else if (run) {
-        // Sortie de plage : la limite se cherche depuis le dernier sommet gardé.
-        run.points.push(boundary(run.points[run.points.length - 1], points[i]));
-        run.anchors.push(true);
-        run.works.push(run.works[run.works.length - 1] || WORK_NONE);
-        run = null;
-      }
-    }
-
-    for (const candidate of runs) {
-      if (candidate.points.length < 2) continue;
-      let length = 0;
-      for (let i = 1; i < candidate.points.length; i++) {
-        length += Math.hypot(
-          candidate.points[i].x - candidate.points[i - 1].x,
-          candidate.points[i].z - candidate.points[i - 1].z
-        );
-      }
-      if (length < minLength) continue;
-      out.push({
-        profile: chain.profile,
-        halfWidth: chain.halfWidth,
-        points: candidate.points,
-        anchors: candidate.anchors,
-        works: candidate.works,
-      });
-    }
-  }
-
-  return out;
 }
 
 /** Marge de requête au-delà de la chaussée couverte par l'index, en mètres. */
@@ -1028,8 +968,13 @@ export class CombinedIndex {
 }
 
 /**
- * Écart d'altitude au-delà duquel deux chaussées qui se croisent ne se
- * rejoignent pas : c'est un pont ou un passage inférieur, pas un carrefour.
+ * Écart d'altitude au-delà duquel deux plate-formes ne se rejoignent pas.
+ *
+ * Ce n'est **plus** ce qui distingue un carrefour d'un passage supérieur — le
+ * niveau de croisement s'en charge, en amont et sans deviner (`roadWorks`,
+ * `NodeIndex`). Ce qui reste est le garde-fou qu'il aurait toujours dû être :
+ * au-delà de deux mètres et demi, un raccord en trois lignes ferait une marche,
+ * quelle que soit la raison de l'écart.
  */
 export const STITCH_MAX_STEP_M = 2.5;
 /** Longueur du raccordement en altitude, en lignes de ré-échantillonnage. */
@@ -1066,7 +1011,13 @@ function dominates(a, indexA, b, indexB) {
  * coller), ni l'inverse. C'est `deckAt` qui refuse de servir l'altitude d'un
  * ouvrage ; ici on refuse d'y toucher.
  *
+ * Deux chaussées de **niveaux différents** ne se recousent pas davantage,
+ * ouvrage ou pas : un passage supérieur sans `bridge` reste un croisement en
+ * XY, pas une rencontre.
+ *
  * @param {Array<Object>} segments Tronçons, dont les `platform` sont modifiées.
+ *        Un tronçon repris reçoit aussi `stitched` : le déplacement appliqué,
+ *        ligne par ligne, pour que la mise au point puisse le montrer.
  * @param {RoadIndex} index        Index bâti sur ces mêmes tronçons.
  * @param {Object} [options]
  * @returns {number} nombre de tronçons retouchés.
@@ -1097,12 +1048,20 @@ export function stitchPlatforms(segments, index, { maxStep = STITCH_MAX_STEP_M, 
 
     const works = segment.works;
 
+    const levels = segment.levels;
+
     for (let r = 0; r < rows; r++) {
       if (works?.[r]) continue;
       const hit = index.query(path[r].x, path[r].z, 0, (other, oi) =>
         oi !== si && dominates(other, oi, segment, si)
       );
       if (!hit) continue;
+      // Deux chaussées superposées ne se rejoignent pas : le croisement est en
+      // XY seulement. `maxStep` reste ce qu'il aurait toujours dû être — un
+      // garde-fou d'altitude —, et non le seul juge de la question.
+      const mine = levels?.[r] ?? LEVEL_GROUND;
+      const theirs = hit.segment.levels?.[hit.row] ?? LEVEL_GROUND;
+      if (mine !== theirs) continue;
       const deck = index.deckAt(hit);
       if (deck == null) continue;
       const step = deck - platform[r];
@@ -1134,12 +1093,19 @@ export function stitchPlatforms(segments, index, { maxStep = STITCH_MAX_STEP_M, 
       }
     }
 
+    // Ce que la couture a repris, ligne par ligne : le tronçon le publie, et
+    // `inspect/roadDebug` le montre. Sans ça, une voie qui aurait dû être
+    // cousue et ne l'a pas été est indiscernable d'une voie déjà à la bonne
+    // altitude — les deux se dessinent pareil.
+    const moved = new Float32Array(rows);
     for (let r = 0; r < rows; r++) {
       if (works?.[r]) continue;
       if (nearest[r] < 0 || distance[r] > rampRows) continue;
       const fade = 1 - distance[r] / (rampRows + 1);
-      platform[r] += delta[nearest[r]] * fade;
+      moved[r] = delta[nearest[r]] * fade;
+      platform[r] += moved[r];
     }
+    segment.stitched = moved;
     touched++;
   }
 
