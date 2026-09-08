@@ -1470,15 +1470,22 @@ const rockCutFor = (C) => ({
  * dépend de la hauteur dont la plate-forme surplombe le terrain. Fruit d'un
  * remblai courant (3 de base pour 2 de hauteur).
  *
+ * `outward` dit de quel côté la section descend, dans le repère de
+ * `appendProfile` (positif à gauche de la marche). Il n'existait pas : la
+ * section descendait toujours vers la droite, si bien qu'un talus posé sur la
+ * rive gauche repartait **par-dessus la chaussée**. Le défaut n'apparaissait
+ * qu'un versant sur deux, selon le côté où penche le terrain.
+ *
  * @param {number} drop Hauteur à combler, en mètres.
+ * @param {number} [outward] Sens de la descente : `-1` à droite, `+1` à gauche.
  * @returns {Array<{across:number, up:number, color:number[]}>}
  */
-const embankmentFor = (C) => (drop) => {
-  const run = Math.max(0.4, drop * 1.5);
+const embankmentFor = (C) => (drop, outward = -1) => {
+  const run = Math.max(0.4, drop * 1.5) * (outward >= 0 ? 1 : -1);
   return [
     { across: 0, up: 0, color: C.stoneDark },
     { across: 0, up: -Math.max(0.15, drop) * 0.35, color: C.stoneDark },
-    { across: -run, up: -Math.max(0.15, drop), color: C.stone },
+    { across: run, up: -Math.max(0.15, drop), color: C.stone },
   ];
 };
 

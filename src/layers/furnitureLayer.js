@@ -1001,6 +1001,12 @@ export class FurnitureLayer {
           turn: Math.sign(turn),
           // Surplomb de la rive aval : c'est lui qui appelle le mur ou le talus.
           drop: platform[r] - downhillGround,
+          // Surplomb de la rive **amont**. Négatif sur un versant — le terrain
+          // y domine la route —, positif quand la plate-forme est au-dessus du
+          // sol des deux côtés : ce n'est plus une route de versant, c'est un
+          // remblai en pleine terre, et il lui faut un talus de chaque côté. La
+          // rampe d'accès d'un pont est exactement ce cas-là.
+          perch: platform[r] - uphillGround,
           // Hauteur du terrain au-dessus de la plate-forme, côté amont : la
           // tranchée que le déblai a creusée, et que le mur doit habiller.
           rise: uphillGround - platform[r],
@@ -1332,22 +1338,45 @@ export class FurnitureLayer {
    * ne s'en charge — un simple remblai de rase campagne, en terre et non en
    * pierre. Les lignes déjà tenues par un mur en sont exclues : les deux
    * ouvrages se superposeraient au même endroit.
+   *
+   * ## Les deux rives, et pas seulement l'aval
+   *
+   * Sur un versant, une seule rive surplombe : la route est encaissée en amont
+   * et portée en aval, et un talus d'un côté suffit. Mais une plate-forme peut
+   * dominer le terrain **des deux côtés** — c'est un remblai en pleine terre,
+   * et c'est exactement ce qu'est la rampe d'accès d'un pont, que la travée
+   * relève sur trente mètres (`roadWorks.BRIDGE_RAMP_M`). Sans le second
+   * talus, la route montait vers son pont en ruban volant, l'air visible
+   * dessous : le défaut le plus voyant d'un petit ouvrage.
+   *
+   * Les deux rives sont donc traitées de la même façon, chacune avec son
+   * propre surplomb.
    */
   _buildEmbankment(context, segment, rowsInfo, walled) {
     const { buffers, sampleElevation } = context;
     const { platform, halfWidth } = segment;
 
-    const keep = (row) => row.drop >= EMBANKMENT_MIN_DROP_M && !walled.has(row.r);
-    for (const run of contiguousRuns(rowsInfo, keep, 4)) {
-      const side = run[Math.floor(run.length / 2)].uphill;
-      const drop = run.reduce((max, row) => Math.max(max, row.drop), 0);
-      appendProfile(buffers.embankment, {
-        path: run.map((row) => ({ x: row.x, z: row.z, distance: row.distance })),
-        profile: this.specs.embankmentProfile(Math.min(drop, 6)),
-        sampleElevation,
-        offset: -side * halfWidth,
-        baseHeights: new Float32Array(run.map((row) => platform[row.r])),
-      });
+    // `drop` est le surplomb de la rive aval, `perch` celui de la rive amont —
+    // négatif dès qu'il y a un vrai versant, donc le second talus n'apparaît
+    // que sur un remblai.
+    for (const [dropOf, sideOf] of [
+      [(row) => row.drop, (row) => -row.uphill],
+      [(row) => row.perch, (row) => row.uphill],
+    ]) {
+      const keep = (row) => dropOf(row) >= EMBANKMENT_MIN_DROP_M && !walled.has(row.r);
+      for (const run of contiguousRuns(rowsInfo, keep, 4)) {
+        const side = sideOf(run[Math.floor(run.length / 2)]);
+        const drop = run.reduce((max, row) => Math.max(max, dropOf(row)), 0);
+        appendProfile(buffers.embankment, {
+          path: run.map((row) => ({ x: row.x, z: row.z, distance: row.distance })),
+          // La section descend du côté où elle est posée : sur la rive gauche,
+          // une section orientée à droite repartirait par-dessus la chaussée.
+          profile: this.specs.embankmentProfile(Math.min(drop, 6), side),
+          sampleElevation,
+          offset: side * halfWidth,
+          baseHeights: new Float32Array(run.map((row) => platform[row.r])),
+        });
+      }
     }
   }
 

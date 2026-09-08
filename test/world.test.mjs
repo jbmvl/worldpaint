@@ -148,6 +148,8 @@ import {
   drawableRuns,
   resampleWorks,
   levelWorkSpans,
+  bridgeFreeboardFor,
+  BRIDGE_FREEBOARD_MIN_M,
   BRIDGE_CLEARANCE_M,
   BRIDGE_FREEBOARD_M,
 } from '../src/layers/roadWorks.js';
@@ -4651,6 +4653,65 @@ test('le talus de remblai s’approfondit avec le surplomb', () => {
   // Même sans surplomb mesurable, le talus garde une amorce : sans elle, la
   // rive de la chaussée serait une arête franche en l’air.
   assert.ok(depthOf(FURNITURE_SPECS.embankmentProfile(0)) > 0);
+
+  // Le talus descend du côté où il est posé. Il descendait toujours vers la
+  // droite : sur la rive gauche, il repartait par-dessus la chaussée — un
+  // versant sur deux, selon le côté où penche le terrain.
+  const droite = FURNITURE_SPECS.embankmentProfile(2, -1);
+  const gauche = FURNITURE_SPECS.embankmentProfile(2, 1);
+  assert.ok(Math.min(...droite.map((v) => v.across)) < 0, 'à droite de la marche');
+  assert.ok(Math.max(...gauche.map((v) => v.across)) > 0, 'à gauche de la marche');
+  // Miroir exact : c'est le même talus, du côté opposé.
+  gauche.forEach((v, i) => close(v.across, -droite[i].across, 1e-9, `sommet ${i}`));
+  gauche.forEach((v, i) => close(v.up, droite[i].up, 1e-9, `hauteur du sommet ${i}`));
+  // Sans rien préciser, c'est le talus d'avant, au bit près.
+  assert.deepEqual(FURNITURE_SPECS.embankmentProfile(2), droite);
+});
+
+test('une route en remblai porte un talus de chaque côté, pas d’un seul', () => {
+  // Une route de versant est encaissée en amont et portée en aval : un talus
+  // d'un seul côté suffit. Une plate-forme qui domine le terrain **des deux
+  // côtés** est autre chose — un remblai en pleine terre —, et c'est
+  // exactement ce qu'est la rampe d'accès d'un pont, que la travée relève sur
+  // trente mètres. Sans le second talus, la route montait vers son ouvrage en
+  // ruban volant, l'air visible dessous.
+  const { layer, context, segment, rowsInfo, buffers } = roadsideHarness();
+  // Le terrain est plat, la plate-forme relevée de deux mètres : les deux
+  // rives surplombent d'autant.
+  const remblai = rowsInfo.map((row) => ({ ...row, drop: 2, perch: 2, uphill: 1 }));
+  const platform = new Float32Array(segment.platform.length).fill(102);
+
+  layer._buildEmbankment(context, { ...segment, platform }, remblai, new Set());
+
+  const zs = [];
+  for (let i = 2; i < buffers.embankment.positions.length; i += 3) {
+    zs.push(buffers.embankment.positions[i]);
+  }
+  assert.ok(zs.length > 0, 'un talus est bien posé');
+  assert.ok(Math.max(...zs) > segment.halfWidth, 'une rive');
+  assert.ok(Math.min(...zs) < -segment.halfWidth, 'et l’autre');
+  // Et chacun s'écarte de la chaussée : aucun sommet ne revient dessus.
+  for (const z of zs) {
+    assert.ok(Math.abs(z) >= segment.halfWidth - 1e-6, `sommet de talus à ${z.toFixed(2)}`);
+  }
+
+  // Sur un vrai versant — le terrain domine en amont —, un seul talus.
+  const versant = rowsInfo.map((row) => ({ ...row, drop: 2, perch: -1.5, uphill: 1 }));
+  const seul = createProfileBuffer();
+  layer._buildEmbankment(
+    { ...context, buffers: { ...buffers, embankment: seul } },
+    { ...segment, platform },
+    versant,
+    new Set()
+  );
+  const cotes = [];
+  for (let i = 2; i < seul.positions.length; i += 3) cotes.push(seul.positions[i]);
+  assert.ok(cotes.length > 0, 'le talus aval est bien là');
+  // Une seule rive : tous les sommets du même côté de l'axe.
+  assert.ok(
+    cotes.every((z) => z >= segment.halfWidth - 1e-6),
+    `et lui seul : cotes de ${Math.min(...cotes).toFixed(2)} à ${Math.max(...cotes).toFixed(2)}`
+  );
 });
 
 /** Le seul bout de `THREE` dont `createFurnitureRotorMaterial` a besoin. */
@@ -5550,6 +5611,44 @@ test('un pont de plaine reste à l’altitude de ses appuis', () => {
   levelWorkSpans(segment.path, segment.platform, segment.works, { floorAt: () => 0 });
 
   for (const height of segment.platform) close(height, 0, 1e-6, 'la chaussée reste au sol');
+});
+
+test('un ruisseau ne se franchit pas à la hauteur d’un fleuve', () => {
+  // Le relief est lu dans un MNT à trente mètres, qui ne résout pas le lit d'un
+  // ruisseau : la cote « de l'eau » y est celle du pré autour. Une revanche
+  // fixe de deux mètres jetait donc en l'air le moindre franchissement de rase
+  // campagne, avec ses deux remblais d'accès. Elle suit maintenant la portée de
+  // l'ouvrage — le seul indice disponible sur ce qu'il franchit.
+  assert.ok(
+    bridgeFreeboardFor(10) < bridgeFreeboardFor(200),
+    'un tablier de dix mètres passe plus bas qu’un tablier de deux cents'
+  );
+  close(bridgeFreeboardFor(10), BRIDGE_FREEBOARD_MIN_M, 1e-9, 'un fossé : la revanche plancher');
+  close(bridgeFreeboardFor(400), BRIDGE_FREEBOARD_M, 1e-9, 'un fleuve : la revanche pleine');
+  // Bornée des deux côtés, et croissante entre les deux.
+  let previous = 0;
+  for (let span = 1; span <= 400; span += 7) {
+    const value = bridgeFreeboardFor(span);
+    assert.ok(value >= BRIDGE_FREEBOARD_MIN_M && value <= BRIDGE_FREEBOARD_M, `portée ${span}`);
+    assert.ok(value >= previous, 'jamais décroissante');
+    previous = value;
+  }
+  // Sans portée connue, on garde la revanche pleine : c'est le cas prudent.
+  close(bridgeFreeboardFor(0), BRIDGE_FREEBOARD_M, 1e-9);
+
+  // Et la portée arrive bien jusqu'au plancher : c'est `levelWorkSpans` qui la
+  // connaît, personne d'autre.
+  const segment = worksSegment(21, Array.from({ length: 21 }, (_, r) => (r >= 8 && r <= 12 ? 1 : 0)));
+  const vues = [];
+  levelWorkSpans(segment.path, segment.platform, segment.works, {
+    floorAt: (x, z, span) => {
+      vues.push(span);
+      return -50;
+    },
+  });
+  assert.ok(vues.length > 0, 'le plancher est bien interrogé');
+  const portee = segment.path[13].distance - segment.path[7].distance;
+  for (const span of vues) close(span, portee, 1e-9, 'la portée passée est celle de la travée');
 });
 
 test('le remblai d’accès d’une travée ne fait pas pencher sa voisine', () => {

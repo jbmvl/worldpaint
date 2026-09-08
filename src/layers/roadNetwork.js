@@ -43,7 +43,7 @@ import {
   resampleWorks,
   levelWorkSpans,
   drawableRuns,
-  BRIDGE_FREEBOARD_M,
+  bridgeFreeboardFor,
   BRIDGE_CROSSING_COS,
 } from './roadWorks.js';
 import {
@@ -644,9 +644,12 @@ export class RoadNetwork {
     // Le plancher d'une travée : le terrain, majoré d'une revanche au-dessus
     // de l'eau. Ce n'est pas un gabarit — rien ne passe sous un pont de
     // rivière — mais une cote sous laquelle le tablier n'a rien à faire.
-    const floorAt = (x, z) => {
+    const floorAt = (x, z, span) => {
       const ground = sampleElevation(x, z);
-      return groundClass?.coverAt(x, z) === 'water' ? ground + BRIDGE_FREEBOARD_M : ground;
+      if (groundClass?.coverAt(x, z) !== 'water') return ground;
+      // La revanche suit la portée de l'ouvrage : c'est le seul indice
+      // disponible sur ce qu'il franchit (voir `bridgeFreeboardFor`).
+      return ground + bridgeFreeboardFor(span);
     };
 
     const { segments: collected, junctions } = collectRoadSegments(
