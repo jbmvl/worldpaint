@@ -20,12 +20,12 @@
  * critère ne dépend que de coordonnées au sol (stable au découpage).
  *
  * Le trottoir reçoit le `platform` du tronçon et le décollement exact de la
- * chaussée (`roadLiftFor`) : il ne peut pas diverger de la rue, même sur un
+ * chaussée (`ROAD_LIFT_M`) : il ne peut pas diverger de la rue, même sur un
  * dos-d'âne ou un raccord de carrefour.
  */
 
 import { appendProfile, createProfileBuffer, toColoredGeometry } from './ribbonGeometry.js';
-import { roadLiftFor } from './roadNetwork.js';
+import { ROAD_LIFT_M } from './roadNetwork.js';
 import { RoadIndex } from './roadGraph.js';
 import { contiguousRuns, crossSlope, randomAt, STEEP_CROSS_SLOPE } from './furniturePlacement.js';
 import { pointInAreas } from './settlement.js';
@@ -229,7 +229,7 @@ export class StreetLayer {
     if (rows < STREET_MIN_RUN || !platform || !edges) return 0;
 
     const frames = segment.frames;
-    const lift = roadLiftFor(profile);
+    const lift = ROAD_LIFT_M;
     const streets = this.theme.streets;
     let built = 0;
 

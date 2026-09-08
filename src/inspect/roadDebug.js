@@ -35,7 +35,11 @@
  *                 coup d'œil un carrefour à qui il manque une branche ;
  *   - `works`     les plages de pont et de tunnel ;
  *   - `stitch`    les lignes dont la couture d'altitude a repris la
- *                 plate-forme, et de combien.
+ *                 plate-forme, et de combien ;
+ *   - `outlines`  le contour de la chaussée de chaque carrefour, tel que
+ *                 `roadJunctions` le construit — c'est-à-dire exactement là où
+ *                 chaque ruban s'arrête et où la surface commune prend le
+ *                 relais.
  *
  * Un croisement en XY sans rencontre (un passage supérieur) se lit alors
  * immédiatement : deux axes de couleurs différentes se coupent, et il n'y a
@@ -66,6 +70,7 @@ export const ROAD_DEBUG_KINDS = [
   'anchors',
   'junctions',
   'branches',
+  'outlines',
   'works',
   'stitch',
 ];
@@ -77,6 +82,7 @@ export const ROAD_DEBUG_COLORS = {
   anchors: [1, 0.86, 0.2],
   junctions: [1, 0.35, 0.45],
   branches: [1, 0.55, 0.2],
+  outlines: [0.3, 1, 0.7],
   bridge: [0.55, 1, 0.5],
   tunnel: [0.7, 0.45, 1],
   stitch: [1, 0.25, 0.9],
@@ -133,6 +139,8 @@ function perpendicularAt(path, r) {
  * @param {Object|null} [options.roadIndex] `RoadIndex` des chaussées : un
  *        carrefour n'a pas d'altitude à lui, elle se lit sur la chaussée qui y
  *        passe. Absent, les marqueurs de carrefour se posent à zéro.
+ * @param {Object|null} [options.areas] `JunctionAreas` publiées par le réseau :
+ *        sans elles, le contour des carrefours n'est pas tracé.
  * @param {number} [options.lift]
  * @param {Array<string>} [options.kinds] Groupes voulus.
  * @returns {{groups: Array<{kind:string, positions:number[], colors:number[]}>,
@@ -146,6 +154,7 @@ export function collectRoadDebug(
     here = null,
     radius = ROAD_DEBUG_RADIUS_M,
     roadIndex = null,
+    areas = null,
     lift = ROAD_DEBUG_LIFT_M,
     kinds = ROAD_DEBUG_KINDS,
   } = {}
@@ -280,6 +289,23 @@ export function collectRoadDebug(
           junction.z + branch.z * ROAD_DEBUG_BRANCH_M,
           ROAD_DEBUG_COLORS.branches
         );
+      }
+    }
+  }
+
+  // Le contour des carrefours : la frontière exacte entre les rubans et la
+  // surface commune. C'est le seul trait qui montre où la chaussée s'arrête.
+  if (wanted.has('outlines') && areas) {
+    const group = groupFor('outlines');
+    for (const area of areas.areas || []) {
+      if (!inReach(area.x, area.z)) continue;
+      const deck = roadIndex ? roadIndex.deckAt(roadIndex.query(area.x, area.z, 1)) : null;
+      const y = (deck ?? 0) + lift;
+      const outline = area.outline;
+      for (let i = 0; i < outline.length; i++) {
+        const a = outline[i];
+        const b = outline[(i + 1) % outline.length];
+        pushLine(group, a.x, y, a.z, b.x, y, b.z, ROAD_DEBUG_COLORS.outlines);
       }
     }
   }

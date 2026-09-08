@@ -657,6 +657,7 @@ function updateRoadGraph() {
     here: { x: camera.position.x, z: camera.position.z },
     radius: ROAD_DEBUG_RADIUS_M,
     roadIndex: roads?.index || null,
+    areas: roads?.junctionAreas || null,
   });
 
   const positions = [];

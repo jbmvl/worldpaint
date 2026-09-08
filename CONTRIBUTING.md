@@ -97,12 +97,25 @@ these needs a very good reason, stated in the PR description.
   `pushOutsideCorridor` displaces every point clear of the nearest road instead
   of cutting, keeping the line one continuous run.
 - **A junction is a graph node, not a picture.** `roadGraph` is the only place
-  where a crossroads exists as such — a node where more than two edges meet.
-  It publishes them (`mergeRoadLines` returns `{chains, junctions}`) and
-  everything that needs one reads that list. Rediscovering junctions later, by
-  looking for places where two ribbons overlap, invents different ones: they
-  land somewhere else, and there is one per overlapping row instead of one per
-  crossroads.
+  where a crossroads exists as such — a node where more than two edges meet
+  **at the same level** (`layer`; two ways that cross in XY at different levels
+  do not meet at all, and are not welded into a node). It publishes them
+  (`mergeRoadLines` returns `{chains, junctions}`) and everything that needs
+  one reads that list. Rediscovering junctions later, by looking for places
+  where two ribbons overlap, invents different ones: they land somewhere else,
+  and there is one per overlapping row instead of one per crossroads.
+
+  What a junction *looks like* is built from that node, in `roadJunctions.js`:
+  its branches give a carriageway **outline** (corner arcs included), every
+  branch's ribbon stops on it, and the outline is drawn as one surface. Two
+  ribbons must never overlap to make a crossroads — that is a picture, and it
+  cannot be made right by lifting one of them.
+
+- **A junction interrupts a ribbon, not a road.** Chains are not cut at
+  junctions: the carriageway still crosses them in the data, so the corridor,
+  the terrain cut, platform stitching, spaced furniture and kerbs all keep
+  reading one whole road. Only the ribbon is laid in pieces — exactly the same
+  figure as a tunnel (`roadWorks.drawableRuns`).
 - **A bridge is a state of the carriageway, not a class of road.** `brunnel`
   travels as a per-row flag alongside the path (`segment.works`, see
   `layers/roadWorks.js`), never as an extra road profile. That is what keeps a

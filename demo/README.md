@@ -47,9 +47,11 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
   par `collectRoadDebug` (`src/inspect/roadDebug.js`, pur — la géométrie de
   lignes se monte dans la démo) : l'axe de chaque tronçon *teinté par niveau de
   croisement*, ses deux rives, les nœuds d'ancrage, le cercle des carrefours
-  relevés sur le graphe, une flèche par branche, les plages de pont et de
-  tunnel, et un trait vertical sur chaque ligne que la couture d'altitude a
-  reprise (sa hauteur est le déplacement).
+  relevés sur le graphe, une flèche par branche, **le contour de la chaussée de
+  chaque carrefour** (là où les rubans s'arrêtent et où la surface commune
+  prend le relais), les plages de pont et de tunnel, et un trait vertical sur
+  chaque ligne que la couture d'altitude a reprise (sa hauteur est le
+  déplacement).
 
   C'est l'outil qui répond à « pourquoi ces deux voies n'ont-elles pas été
   raccordées ? ». Deux axes qui se croisent **sans marqueur de carrefour entre

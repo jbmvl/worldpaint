@@ -50,6 +50,17 @@ import {
   ROAD_DEBUG_COLORS,
 } from '../src/inspect/roadDebug.js';
 import {
+  junctionArea,
+  junctionCorner,
+  junctionSurface,
+  junctionRibbonRuns,
+  markJunctionRows,
+  mergeParallelBranches,
+  pointInOutline,
+  JunctionAreas,
+  JUNCTION_CORNER_MAX_M,
+} from '../src/layers/roadJunctions.js';
+import {
   resamplePath,
   smoothColumns,
   createRibbonBuffer,
@@ -120,7 +131,6 @@ import {
   roadStyleFor,
   roadLines,
   clipToRadius,
-  roadLiftFor,
   anchorDistances,
   collectRoadLines,
   ROAD_PROFILE_ORDER,
@@ -133,14 +143,11 @@ import {
 } from '../src/layers/roadNetwork.js';
 import {
   mergeRoadLines,
-  trimAtJunctions,
   distanceToSegment,
   stitchPlatforms,
   RoadIndex,
   CombinedIndex,
   NODE_WELD_M,
-  JUNCTION_OVERLAP_M,
-  JUNCTION_MIN_RUN_M,
   knownCoverage,
 } from '../src/layers/roadGraph.js';
 import {
@@ -1317,11 +1324,12 @@ test('la hiérarchie des profils descend par retraits successifs', () => {
   }
 });
 
-test('les voies secondaires passent sous les grandes aux carrefours', () => {
-  close(roadLiftFor('express'), ROAD_LIFT_M, 1e-9, 'le premier rang porte l’observateur');
-  assert.ok(roadLiftFor('minor') < roadLiftFor('major'));
-  assert.ok(roadLiftFor('path') < roadLiftFor('track'));
-  assert.ok(roadLiftFor('path') > 0, 'aucun ruban ne repasse sous le terrain');
+test('toutes les chaussées se décollent d’autant : le carrefour n’est plus un empilement', () => {
+  // La hiérarchie de décollement (deux centimètres par rang) n'existait que
+  // pour départager deux rubans qui se recouvraient à un carrefour. Ils ne se
+  // recouvrent plus : `roadJunctions` leur donne une surface commune, et une
+  // bouche de petite rue doit affleurer cette surface, pas passer dessous.
+  assert.ok(ROAD_LIFT_M > 0, 'aucun ruban ne repasse sous le terrain');
 });
 
 test('la sous-classe sépare piste cyclable, sentier et escalier', () => {
@@ -5356,139 +5364,6 @@ test('au même niveau, la voie étroite retrouve bien l’altitude de la large',
   );
 });
 
-// --- Rognage des voies secondaires au carrefour -------------------------------
-
-test('la voie secondaire s’arrête au bord de la chaussée dominante', () => {
-  const { chains, junctions } = mergeRoadLines(teeLines());
-  const trimmed = trimAtJunctions(chains, junctions);
-
-  const minor = trimmed.find((c) => c.profile === 'minor');
-  assert.ok(minor, 'la desserte survit au rognage');
-
-  // Elle partait du nœud ; elle doit maintenant partir de la rive, c'est-à-dire
-  // à la demi-largeur de la nationale, moins le recouvrement volontaire.
-  const start = minor.points.reduce((a, b) => (Math.abs(a.z) < Math.abs(b.z) ? a : b));
-  close(Math.abs(start.z), 4.25 - JUNCTION_OVERLAP_M, 1e-2, 'coupée sur la rive');
-  assert.ok(
-    minor.points.every((p) => Math.abs(p.z) >= 4.25 - JUNCTION_OVERLAP_M - 1e-2),
-    'plus rien de la desserte ne court sous la nationale'
-  );
-});
-
-test('la chaussée dominante n’est pas rognée par sa propre branche', () => {
-  const { chains, junctions } = mergeRoadLines(teeLines());
-  const trimmed = trimAtJunctions(chains, junctions);
-
-  const major = trimmed.filter((c) => c.profile === 'major');
-  assert.equal(major.length, 1, 'la nationale n’est pas coupée en deux');
-  close(major[0].points[0].x, 0, 1e-6, 'ni raccourcie au départ');
-  close(major[0].points[major[0].points.length - 1].x, 200, 1e-6, 'ni à l’arrivée');
-});
-
-test('deux routes de même largeur ne se rognent pas l’une l’autre', () => {
-  // Sans dominante, couper les deux ouvrirait un trou au milieu du croisement
-  // au lieu de recouvrir un chevauchement.
-  const lines = teeLines(100, 4.25);
-  lines[1].profile = 'major';
-  const { chains, junctions } = mergeRoadLines(lines);
-  const trimmed = trimAtJunctions(chains, junctions);
-
-  assert.deepEqual(
-    trimmed.map((c) => c.points.length),
-    chains.map((c) => c.points.length),
-    'rien n’est coupé'
-  );
-});
-
-test('une desserte qui traverse la nationale est coupée en deux, pas raccourcie', () => {
-  const { chains, junctions } = mergeRoadLines([
-    { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8) },
-    {
-      profile: 'minor',
-      halfWidth: 2.5,
-      points: [
-        { x: 100, z: -60 },
-        { x: 100, z: 0 },
-        { x: 100, z: 60 },
-      ],
-    },
-  ]);
-  const trimmed = trimAtJunctions(chains, junctions);
-
-  const minor = trimmed.filter((c) => c.profile === 'minor');
-  assert.equal(minor.length, 2, 'une amorce de chaque côté');
-  for (const run of minor) {
-    assert.ok(
-      run.points.every((p) => Math.abs(p.z) >= 4.25 - JUNCTION_OVERLAP_M - 1e-2),
-      'aucune des deux ne traverse la chaussée'
-    );
-  }
-});
-
-test('le sommet posé sur la rive est un point d’ancrage', () => {
-  // C'est de lui que se comptent lampadaires et bornes le long de la desserte,
-  // et il vient du nœud du carrefour : il ne bouge pas d'une reconstruction à
-  // l'autre, contrairement au bout de chaîne que le découpage en tuiles décide.
-  const { chains, junctions } = mergeRoadLines(teeLines());
-  const minor = trimAtJunctions(chains, junctions).find((c) => c.profile === 'minor');
-
-  const nearest = minor.points.reduce(
-    (best, p, i) => (Math.abs(p.z) < Math.abs(minor.points[best].z) ? i : best),
-    0
-  );
-  assert.equal(minor.anchors[nearest], true);
-});
-
-test('un moignon plus court que le seuil disparaît au lieu de dépasser', () => {
-  const { chains, junctions } = mergeRoadLines([
-    { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8) },
-    // Une amorce de six mètres : il n'en resterait que deux une fois la rive
-    // atteinte, moins que `JUNCTION_MIN_RUN_M`.
-    {
-      profile: 'minor',
-      halfWidth: 2.5,
-      points: [
-        { x: 100, z: 0 },
-        { x: 100, z: 6 },
-      ],
-    },
-  ]);
-  const trimmed = trimAtJunctions(chains, junctions);
-
-  assert.ok(JUNCTION_MIN_RUN_M > 6 - (4.25 - JUNCTION_OVERLAP_M), 'le cas testé est bien un moignon');
-  assert.equal(trimmed.filter((c) => c.profile === 'minor').length, 0);
-});
-
-test('sans carrefour, le rognage rend les chaînes telles quelles', () => {
-  const { chains } = mergeRoadLines([
-    { profile: 'minor', halfWidth: 2.5, points: straight(0, 200, 8) },
-  ]);
-
-  assert.equal(trimAtJunctions(chains, []), chains, 'pas de recopie inutile');
-  assert.equal(trimAtJunctions(chains, null), chains);
-});
-
-test('le rognage ne touche pas à deux chaussées qui se croisent sans nœud', () => {
-  // Un pont : les deux rubans se recouvrent au sol mais ne partagent aucun
-  // sommet. Rogner y ouvrirait une brèche sous l'ouvrage.
-  const { chains, junctions } = mergeRoadLines([
-    { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8) },
-    {
-      profile: 'minor',
-      halfWidth: 2.5,
-      points: [
-        { x: 103, z: -60 },
-        { x: 103, z: 60 },
-      ],
-    },
-  ]);
-
-  assert.equal(junctions.length, 0, 'aucun nœud partagé');
-  assert.equal(trimAtJunctions(chains, junctions), chains);
-});
-
-// --- Index des chaussées et recouture des carrefours -------------------------
-
 /** Tronçon minimal, tel que `collectRoadSegments` le produirait. */
 function fakeSegment(points, halfWidth, deck = 0) {
   const path = points.map((p, i) => ({ ...p, distance: i * 5 }));
@@ -5500,54 +5375,270 @@ function fakeSegment(points, halfWidth, deck = 0) {
   };
 }
 
-test('la distance à un segment est bien prise sur le segment, pas sur ses bouts', () => {
-  close(distanceToSegment(50, 10, 0, 0, 100, 0).distance, 10, 1e-9, 'de côté');
-  close(distanceToSegment(150, 0, 0, 0, 100, 0).distance, 50, 1e-9, 'au-delà du bout');
-  close(distanceToSegment(50, 0, 0, 0, 100, 0).t, 0.5, 1e-9, 'abscisse du projeté');
+// --- Le carrefour comme surface ---------------------------------------------
+
+/** Branche sortante d'un carrefour, direction donnée en radians. */
+const branchAt = (angle, halfWidth, profile = 'major') => ({
+  x: Math.cos(angle),
+  z: Math.sin(angle),
+  halfWidth,
+  profile,
 });
 
-test('l’index sait ce qui tombe sur le bitume et ce qui tombe à côté', () => {
-  const segments = [fakeSegment(straight(0, 100, 20), 2.5)];
-  const index = new RoadIndex(segments);
-
-  assert.ok(index.covers(50, 0), 'au milieu de la chaussée');
-  assert.ok(index.covers(50, 2.4), 'au ras de la rive');
-  assert.ok(!index.covers(50, 4), 'sur l’accotement, l’herbe pousse');
-  assert.ok(index.covers(50, 3, 1), 'la marge élargit la chaussée');
-  assert.ok(!index.covers(50, 40), 'en pleine prairie');
-  assert.ok(!index.covers(400, 0), 'au-delà de la chaussée');
+/** Un T : une nationale est-ouest, une petite route vers le sud. */
+const teeJunction = () => ({
+  x: 0,
+  z: 0,
+  degree: 3,
+  level: 0,
+  halfWidth: 4.25,
+  profile: 'major',
+  branches: [branchAt(0, 4.25), branchAt(Math.PI, 4.25), branchAt(Math.PI / 2, 2.5, 'minor')],
 });
 
-test('une voie qui débouche sur une plus large vient épouser son altitude', () => {
-  // Une nationale à l'altitude 10, une petite route à l'altitude 9 qui la
-  // rejoint : sans recouture, elle l'aborde par une marche d'un mètre.
-  const main = fakeSegment(straight(-50, 50, 20), 4.25, 10);
-  const branch = fakeSegment(
-    Array.from({ length: 11 }, (_, i) => ({ x: 0, z: 50 - i * 5 })),
-    2.5,
-    9
+/** Un X de quatre voies identiques : le cas que l'ancien rognage ne voyait pas. */
+const crossJunction = (halfWidth = 2.5) => ({
+  x: 0,
+  z: 0,
+  degree: 4,
+  level: 0,
+  halfWidth,
+  profile: 'minor',
+  branches: [0, Math.PI / 2, Math.PI, -Math.PI / 2].map((a) => branchAt(a, halfWidth, 'minor')),
+});
+
+test('un carrefour est une surface fermée qui contient son nœud', () => {
+  const area = junctionArea(teeJunction());
+
+  assert.ok(area, 'le T donne une aire');
+  assert.ok(area.outline.length >= 8, 'un contour, pas un triangle');
+  assert.ok(pointInOutline(area.outline, 0, 0), 'le nœud est dedans');
+  assert.ok(!pointInOutline(area.outline, 30, 0), 'trente mètres plus loin, dehors');
+  assert.ok(!pointInOutline(area.outline, 0, -30), 'et du côté sans branche aussi');
+});
+
+test('chaque branche s’arrête au-delà de la largeur des autres — la plus large comprise', () => {
+  const area = junctionArea(teeJunction());
+  const byProfile = Object.fromEntries(area.mouths.map((m) => [m.profile + m.distance, m]));
+  const distances = area.mouths.map((m) => m.distance);
+
+  // La nationale ne traverse plus le carrefour : elle s'arrête elle aussi.
+  for (const mouth of area.mouths) {
+    assert.ok(mouth.distance > 2.5, `la bouche ${mouth.profile} sort du carrefour`);
+  }
+  // La petite route doit dégager toute la largeur de la nationale ; la
+  // nationale n'a que celle de la petite à dégager. Sa bouche est donc plus près.
+  const minor = area.mouths.find((m) => m.profile === 'minor');
+  const major = area.mouths.find((m) => m.profile === 'major');
+  assert.ok(minor.distance > major.distance, 'la petite route recule davantage');
+  assert.ok(major.distance > 2.5, 'et la nationale recule quand même');
+  assert.ok(distances.length === 3 && byProfile);
+});
+
+test('deux voies de même largeur ont un carrefour, elles ne s’empilent plus', () => {
+  // C'est le défaut central de l'ancien système : sans dominante, il ne rognait
+  // rien du tout, et les deux rubans se superposaient sur toute la traversée.
+  const area = junctionArea(crossJunction());
+
+  assert.ok(area, 'un X de quatre voies identiques donne une aire');
+  assert.equal(area.mouths.length, 4, 'quatre bouches');
+  const [first] = area.mouths;
+  for (const mouth of area.mouths) {
+    close(mouth.distance, first.distance, 1e-9, 'aucune n’est privilégiée');
+    assert.ok(mouth.distance > 2.5, 'et toutes s’arrêtent hors du carrefour');
+  }
+});
+
+test('un angle de rue est un arc, et il ajoute de la chaussée au lieu d’en retirer', () => {
+  const area = junctionArea(teeJunction());
+  const corner = junctionCorner(
+    { x: 0, z: 0 },
+    branchAt(0, 4.25),
+    branchAt(Math.PI / 2, 2.5, 'minor')
   );
-  const segments = [main, branch];
-  const index = new RoadIndex(segments);
-  assert.equal(stitchPlatforms(segments, index), 1, 'seule la plus étroite bouge');
 
-  const last = branch.platform.length - 1;
-  close(branch.platform[last], 10, 1e-4, 'au carrefour, les deux se rejoignent');
-  assert.ok(branch.platform[last - 2] > 9 && branch.platform[last - 2] < 10, 'raccord en rampe');
-  close(branch.platform[0], 9, 1e-6, 'loin du carrefour, rien ne change');
-  close(main.platform[10], 10, 1e-6, 'la plus large ne se dérange pas');
+  assert.ok(corner.points.length > 2, 'plusieurs sommets : un arc, pas un coin');
+  // Le coin franc des deux rives est à (2,5 ; 4,25). Un rayon de bordure
+  // l'enveloppe : le coin doit donc être **dans** la chaussée du carrefour.
+  assert.ok(pointInOutline(area.outline, 2.5, 4.25), 'le coin franc est couvert');
+  assert.ok(!pointInOutline(area.outline, 4.5, 6.25), 'mais pas le champ derrière');
 });
 
-test('un pont n’est pas un carrefour : les deux chaussées se laissent tranquilles', () => {
-  const under = fakeSegment(straight(-50, 50, 20), 4.25, 10);
-  const over = fakeSegment(
-    Array.from({ length: 11 }, (_, i) => ({ x: 0, z: 50 - i * 5 })),
-    2.5,
-    18
+test('une route droite garde sa rive droite : pas d’arc entre deux branches opposées', () => {
+  const corner = junctionCorner({ x: 0, z: 0 }, branchAt(0, 4.25), branchAt(Math.PI, 4.25));
+
+  assert.equal(corner.points.length, 1, 'un seul sommet');
+  // Le secteur qui sépare la branche est de la branche ouest, dans l'ordre des
+  // azimuts, est le côté sud : c'est là que passe la rive, et elle y est droite.
+  close(corner.points[0].z, 4.25, 1e-6, 'posé sur la rive, à sa demi-largeur');
+  close(corner.points[0].x, 0, 1e-6, 'au droit du nœud');
+});
+
+test('deux branches qui repartent ensemble n’en font qu’une', () => {
+  // Une bretelle qui quitte une voie rapide à huit degrés n'est pas un angle de
+  // rue : ses rives ne se rencontrent qu'à cinquante mètres. Les traiter comme
+  // deux branches replierait le contour sur lui-même.
+  const sorted = [branchAt(0, 4), branchAt(0.15, 4), branchAt(Math.PI, 4)].sort(
+    (a, b) => Math.atan2(a.z, a.x) - Math.atan2(b.z, b.x)
+  ).map((b) => ({ ...b, angle: Math.atan2(b.z, b.x) }));
+
+  assert.equal(mergeParallelBranches(sorted).length, 2, 'les deux rasantes fondent');
+  assert.equal(
+    junctionArea({ x: 0, z: 0, degree: 3, level: 0, halfWidth: 4, profile: 'major', branches: sorted }),
+    null,
+    'il ne reste pas de quoi faire un carrefour'
   );
-  const segments = [under, over];
-  stitchPlatforms(segments, new RoadIndex(segments));
-  close(over.platform[over.platform.length - 1], 18, 1e-6, 'le pont reste en l’air');
+
+  // Une vraie fourche, elle, en reste une.
+  const fork = [branchAt(0, 4), branchAt(0.9, 4), branchAt(Math.PI, 4)].map((b) => ({
+    ...b,
+    angle: Math.atan2(b.z, b.x),
+  }));
+  assert.equal(mergeParallelBranches(fork).length, 3, 'à cinquante degrés, trois branches');
+});
+
+test('le rayon de raccordement reste borné, quelles que soient les largeurs', () => {
+  const wide = junctionArea({
+    x: 0,
+    z: 0,
+    degree: 4,
+    level: 0,
+    halfWidth: 40,
+    profile: 'express',
+    branches: [0, Math.PI / 2, Math.PI, -Math.PI / 2].map((a) => branchAt(a, 40, 'express')),
+  });
+
+  // Sans borne, un rayon proportionnel à la largeur ferait d'un carrefour
+  // d'autoroute une place de deux cents mètres.
+  for (const mouth of wide.mouths) {
+    assert.ok(
+      mouth.distance < 40 + JUNCTION_CORNER_MAX_M + 2,
+      `la bouche reste au bord (${mouth.distance})`
+    );
+  }
+});
+
+test('un carrefour ne prend que les lignes de son niveau', () => {
+  const areas = new JunctionAreas([teeJunction()]);
+  const rows = 5;
+  const build = (level) => ({
+    path: Array.from({ length: rows }, (_, i) => ({ x: -10 + i * 5, z: 0, distance: i * 5 })),
+    levels: new Int8Array(rows).fill(level),
+  });
+
+  const onGround = markJunctionRows(build(0), areas);
+  const flyover = markJunctionRows(build(1), areas);
+
+  assert.ok([...onGround].some((v) => v >= 0), 'la route au sol entre dans le carrefour');
+  assert.ok([...flyover].every((v) => v < 0), 'la bretelle qui le survole n’y entre pas');
+});
+
+test('le ruban s’arrête pile sur le contour, et reprend de l’autre côté', () => {
+  const areas = new JunctionAreas([teeJunction()]);
+  const rows = 41;
+  const path = Array.from({ length: rows }, (_, i) => ({ x: -100 + i * 5, z: 0, distance: i * 5 }));
+  const segment = {
+    path,
+    platform: new Float32Array(rows).fill(7),
+    levels: new Int8Array(rows),
+  };
+  segment.junction = markJunctionRows(segment, areas);
+
+  const runs = junctionRibbonRuns(segment, areas, [{ from: 0, to: rows - 1 }]);
+  assert.equal(runs.length, 2, 'deux morceaux, un de chaque côté');
+
+  const outline = areas.areas[0].outline;
+  const tip = runs[0].path[runs[0].path.length - 1];
+  const resume = runs[1].path[0];
+
+  // « Pile sur le contour » se vérifie des deux côtés : le sommet est dehors,
+  // et deux centimètres plus loin il est dedans. C'est ce qui garantit qu'il
+  // n'y a ni fente ni recouvrement à la bouche.
+  assert.ok(!pointInOutline(outline, tip.x, tip.z), 'le dernier sommet est hors du carrefour');
+  assert.ok(pointInOutline(outline, tip.x + 0.02, tip.z), 'et le suivant dedans');
+  assert.ok(!pointInOutline(outline, resume.x, resume.z), 'la reprise aussi est dehors');
+  assert.ok(pointInOutline(outline, resume.x - 0.02, resume.z), 'et son voisin dedans');
+
+  // La plate-forme suit : un sommet inventé à la bouche doit porter une altitude.
+  assert.ok(Number.isFinite(runs[0].platform[runs[0].platform.length - 1]));
+  assert.equal(runs[0].platform.length, runs[0].path.length);
+});
+
+test('deux carrefours voisins laissent quand même la chaussée entre eux', () => {
+  // Vingt-cinq mètres d'écart : les deux bouches se font presque face. Le
+  // morceau qui reste est court, et il doit exister — sinon la rue disparaît
+  // entre deux places.
+  const areas = new JunctionAreas([
+    { ...teeJunction(), x: 0 },
+    { ...teeJunction(), x: 25 },
+  ]);
+  const rows = 21;
+  const path = Array.from({ length: rows }, (_, i) => ({ x: -25 + i * 5, z: 0, distance: i * 5 }));
+  const segment = { path, platform: new Float32Array(rows).fill(0), levels: new Int8Array(rows) };
+  segment.junction = markJunctionRows(segment, areas);
+
+  const runs = junctionRibbonRuns(segment, areas, [{ from: 0, to: rows - 1 }]);
+  const middle = runs.filter((run) => run.path[0].x > 0 && run.path[run.path.length - 1].x < 25);
+
+  assert.equal(middle.length, 1, 'un morceau entre les deux carrefours');
+  assert.ok(middle[0].path.length >= 2, 'et il a de quoi être dessiné');
+});
+
+test('la surface d’un carrefour est plane et refermée sur son contour', () => {
+  const area = junctionArea(crossJunction(4));
+  const surface = junctionSurface(area, 12);
+
+  assert.equal(surface.positions.length / 3, area.outline.length + 1, 'un éventail depuis le nœud');
+  assert.equal(surface.indices.length / 3, area.outline.length, 'un triangle par côté');
+  for (let i = 1; i < surface.positions.length; i += 3) {
+    close(surface.positions[i], 12, 1e-9, 'toute la surface est à l’altitude donnée');
+  }
+  for (const index of surface.indices) {
+    assert.ok(index >= 0 && index < surface.positions.length / 3, 'aucun indice hors bornes');
+  }
+});
+
+test('de la tuile au carrefour : les rubans s’arrêtent, la surface prend le relais', () => {
+  // Un T complet lu depuis une fausse source, comme le fait le moteur.
+  const frame = createLocalFrame(2.35, 48.85, 15);
+  const at = (dx, dz) => [2.35 + dx * 0.0000135, 48.85 - dz * 0.000009];
+  const source = {
+    forEachFeature(layer, tiles, callback) {
+      if (layer !== 'transportation') return;
+      callback(
+        { type: 'LineString', coordinates: [at(-120, 0), at(0, 0), at(120, 0)] },
+        { class: 'primary' }
+      );
+      callback({ type: 'LineString', coordinates: [at(0, 0), at(0, 120)] }, { class: 'tertiary' });
+    },
+  };
+
+  const { segments, junctions, areas } = collectRoadSegments(
+    source,
+    [{ x: 0, y: 0 }],
+    { x: 0, z: 0 },
+    frame,
+    () => 0
+  );
+
+  assert.equal(junctions.length, 1, 'un carrefour');
+  assert.equal(areas.length, 1, 'et sa surface');
+
+  const major = segments.find((s) => s.profile === 'major');
+  const minor = segments.find((s) => s.profile === 'minor');
+  assert.ok(major && minor);
+
+  // La nationale traverse toujours le carrefour dans les **données** : c'est ce
+  // qui fait que l'emprise, le déblai et le mobilier continuent de lire une
+  // route entière. Seul son ruban s'interrompt.
+  assert.ok([...major.junction].some((v) => v >= 0), 'ses lignes sont marquées');
+  assert.ok(major.path.length > 40, 'mais la chaîne n’est pas coupée');
+
+  const runs = junctionRibbonRuns(major, areas, [{ from: 0, to: major.path.length - 1 }]);
+  assert.equal(runs.length, 2, 'deux morceaux de ruban');
+  const gap =
+    runs[1].path[0].x - runs[0].path[runs[0].path.length - 1].x;
+  close(gap, areas.areas[0].mouths[0].distance * 2, 1e-3, 'la trouée vaut les deux bouches');
 });
 
 // --- Les ouvrages d'art : ponts et tunnels ----------------------------------

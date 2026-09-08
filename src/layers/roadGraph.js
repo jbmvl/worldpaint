@@ -12,9 +12,15 @@
  *
  * Le graphe est le seul endroit où un croisement existe comme tel (nœud de
  * degré trois) : `mergeRoadLines` publie la liste des carrefours avec les
- * chaînes, dont s'appuient le rognage des voies secondaires
- * (`trimAtJunctions`) et les feux tricolores. Les redécouvrir après coup en
- * cherchant où deux rubans se touchent en inventerait d'autres.
+ * chaînes, et `roadJunctions` en fait des **surfaces**. Les redécouvrir après
+ * coup en cherchant où deux rubans se touchent en inventerait d'autres.
+ *
+ * Ce module ne rogne plus rien. Il l'a fait — la voie la plus étroite
+ * s'arrêtait sur un cercle centré sur le nœud —, et c'était la mauvaise
+ * réponse à la bonne question : deux voies de même largeur ne se rognaient
+ * pas du tout, un cercle coupe une rive courbe de travers, et rien ne
+ * construisait la surface du carrefour. Elle se construit maintenant à partir
+ * des branches, et les chaînes ressortent d'ici entières.
  *
  * Le mobilier espacé (bornes, lampadaires) se compte depuis le dernier nœud
  * d'ancrage rencontré (carrefour, cul-de-sac, changement de classe), pas
@@ -55,13 +61,6 @@ export const LOOSE_OFFSET_M = 2.5;
 export const CONTINUE_COS = Math.cos((72 * Math.PI) / 180);
 /** Cosinus de l'angle toléré entre deux bouts libres qu'on recoud. */
 export const COLLINEAR_COS = Math.cos((40 * Math.PI) / 180);
-
-/** De combien la voie secondaire s'arrête en deçà de la rive dominante, en mètres (rentre sous elle, `renderOrder` dans `roadNetwork`). */
-export const JUNCTION_OVERLAP_M = 0.5;
-/** Longueur en deçà de laquelle ce qui reste d'une voie rognée est abandonné (un moignon qui dépasse d'un carrefour). */
-export const JUNCTION_MIN_RUN_M = 4;
-/** Pas de dichotomie pour poser le sommet de coupe sur le cercle du carrefour (plus nombreux que `roadCorridor` : arête brute, longue). */
-export const JUNCTION_BISECT_STEPS = 14;
 
 /** Décalage de cellule : les coordonnées locales sont signées. */
 const CELL_BIAS = 1 << 14;
@@ -619,154 +618,6 @@ export function mergeRoadLines(lines, options = {}) {
   }
 
   return { chains: joined, junctions };
-}
-
-/**
- * Rogne les voies secondaires au bord de la chaussée dominante d'un
- * carrefour (sinon la petite route traverse le croisement au lieu de s'y
- * arrêter). Coupée sur un cercle centré sur le nœud, de rayon la
- * demi-largeur de la dominante. Deux voies de même largeur ne se rognent pas
- * l'une l'autre (pas de dominante). Seuls les carrefours qui sont un sommet
- * de la chaîne la coupent — un nœud simplement à portée est un pont ou deux
- * tuiles mal recoupées. Une ligne d'ouvrage n'est jamais rognée : une bretelle
- * d'échangeur passe **au-dessus** de l'autoroute dont elle partage un nœud
- * quelques dizaines de mètres plus loin, elle ne s'arrête pas à sa rive.
- *
- * Une chaîne peut en ressortir coupée en plusieurs, ou disparaître.
- *
- * @param {Array<Object>} chains    Chaînes issues de `mergeRoadLines`.
- * @param {Array<Object>} junctions Carrefours issus de `mergeRoadLines`.
- * @param {Object} [options]
- * @returns {Array<Object>} chaînes de même forme, rognées.
- */
-export function trimAtJunctions(chains, junctions, options = {}) {
-  const {
-    overlap = JUNCTION_OVERLAP_M,
-    minLength = JUNCTION_MIN_RUN_M,
-    weld = NODE_WELD_M,
-    steps = JUNCTION_BISECT_STEPS,
-  } = options;
-
-  if (!Array.isArray(chains)) return [];
-  if (!Array.isArray(junctions) || junctions.length === 0) return chains;
-
-  const cell = Math.max(weld, 1) * 4;
-  const grid = new Map();
-  for (let j = 0; j < junctions.length; j++) {
-    const key = cellKey(Math.floor(junctions[j].x / cell), Math.floor(junctions[j].z / cell));
-    const bucket = grid.get(key);
-    if (bucket) bucket.push(j);
-    else grid.set(key, [j]);
-  }
-
-  const out = [];
-
-  for (const chain of chains) {
-    const points = chain?.points;
-    if (!Array.isArray(points) || points.length < 2) continue;
-
-    // Les carrefours qui coupent *cette* chaîne : dominants, et posés sur un de
-    // ses sommets.
-    const centres = [];
-    for (let index = 0; index < points.length; index++) {
-      const point = points[index];
-      const cx = Math.floor(point.x / cell);
-      const cz = Math.floor(point.z / cell);
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dz = -1; dz <= 1; dz++) {
-          const bucket = grid.get(cellKey(cx + dx, cz + dz));
-          if (!bucket) continue;
-          for (const j of bucket) {
-            const junction = junctions[j];
-            if (junction.halfWidth <= chain.halfWidth + 1e-3) continue;
-            // Un carrefour ne rogne que ce qui le rencontre vraiment : une voie
-            // qui passe au-dessus ou au-dessous n'est pas une branche.
-            if ((junction.level ?? LEVEL_GROUND) !== (chain.levels?.[index] ?? LEVEL_GROUND)) continue;
-            if (Math.hypot(junction.x - point.x, junction.z - point.z) > weld) continue;
-            if (centres.some((c) => c.index === j)) continue;
-            centres.push({ index: j, x: junction.x, z: junction.z, radius: Math.max(0, junction.halfWidth - overlap) });
-          }
-        }
-      }
-    }
-
-    if (centres.length === 0) {
-      out.push(chain);
-      continue;
-    }
-
-    const covered = (x, z) =>
-      centres.some((c) => Math.hypot(x - c.x, z - c.z) < c.radius);
-
-    /** Sommet posé sur la limite, en partant du côté conservé. */
-    const boundary = (keep, drop) => {
-      let lo = keep;
-      let hi = drop;
-      for (let i = 0; i < steps; i++) {
-        const mid = { x: (lo.x + hi.x) / 2, z: (lo.z + hi.z) / 2 };
-        if (covered(mid.x, mid.z)) hi = mid;
-        else lo = mid;
-      }
-      return hi;
-    };
-
-    const runs = [];
-    let run = null;
-    for (let i = 0; i < points.length; i++) {
-      // Un ouvrage ne se rogne pas : il ne touche pas la chaussée qu'il croise.
-      const inside = !chain.works?.[i] && covered(points[i].x, points[i].z);
-      if (!inside) {
-        if (!run) {
-          run = { points: [], anchors: [], works: [], levels: [] };
-          // Entrée de plage : le sommet de coupe manquant est celui posé sur
-          // la limite, entre le sommet écarté et celui-ci.
-          if (i > 0) {
-            const edge = boundary(points[i], points[i - 1]);
-            run.points.push(edge);
-            // Il vient du carrefour, donc d'un point que la donnée porte : il
-            // fait une origine aussi stable que le nœud lui-même.
-            run.anchors.push(true);
-            run.works.push(chain.works?.[i] || WORK_NONE);
-            run.levels.push(chain.levels?.[i] ?? LEVEL_GROUND);
-          }
-          runs.push(run);
-        }
-        run.points.push(points[i]);
-        run.anchors.push(!!chain.anchors?.[i]);
-        run.works.push(chain.works?.[i] || WORK_NONE);
-        run.levels.push(chain.levels?.[i] ?? LEVEL_GROUND);
-      } else if (run) {
-        // Sortie de plage : la limite se cherche depuis le dernier sommet gardé.
-        run.points.push(boundary(run.points[run.points.length - 1], points[i]));
-        run.anchors.push(true);
-        run.works.push(run.works[run.works.length - 1] || WORK_NONE);
-        run.levels.push(run.levels[run.levels.length - 1] ?? LEVEL_GROUND);
-        run = null;
-      }
-    }
-
-    for (const candidate of runs) {
-      if (candidate.points.length < 2) continue;
-      let length = 0;
-      for (let i = 1; i < candidate.points.length; i++) {
-        length += Math.hypot(
-          candidate.points[i].x - candidate.points[i - 1].x,
-          candidate.points[i].z - candidate.points[i - 1].z
-        );
-      }
-      if (length < minLength) continue;
-      out.push({
-        profile: chain.profile,
-        halfWidth: chain.halfWidth,
-        points: candidate.points,
-        anchors: candidate.anchors,
-        works: candidate.works,
-        levels: candidate.levels,
-      });
-    }
-  }
-
-  return out;
 }
 
 /** Marge de requête au-delà de la chaussée couverte par l'index, en mètres. */

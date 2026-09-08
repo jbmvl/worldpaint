@@ -10,7 +10,8 @@
  *
  * Ordre de génération : occupation du sol (tout le monde la lit — l'eau en
  * fait partie, c'est une matière du sol) → chaussées (entaillent le terrain,
- * publient l'emprise routière que le reste du décor ne franchit pas) → ouvrages d'art (tabliers, piles, têtes de
+ * posent la surface des carrefours, publient l'emprise routière que le reste
+ * du décor ne franchit pas) → ouvrages d'art (tabliers, piles, têtes de
  * tunnel : ne lisent que les tronçons publiés par les chaussées) → voie ferrée
  * (indépendante, suit le terrain sans l'entailler, voir `railwayLayer.js`) →
  * bâti (publie maisons et empreintes) → voirie (après chaussées et bâti, un
@@ -160,7 +161,7 @@ export class WorldComposer {
       THREE,
       scene,
       bubble,
-      materials: this.roadMaterials.byProfile,
+      materials: this.roadMaterials,
       theme,
     });
 
