@@ -10940,7 +10940,14 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
 
   // Le grain ne porte plus aucune teinte : ce qu'il en reste est un scalaire,
   // et la couleur vient de l'albédo de la matière, seul.
-  assert.match(source, /float texMod = mix\(structure \* 2\.0, 1\.0, far\);/);
+  // Centré sur 1 : au milieu du champ le grain ne fait rien, et le contraste
+  // dit seulement de combien il s'en écarte. Il ne touche que la lumière — le
+  // relief et la dentelure des lisières lisent le champ brut.
+  assert.match(
+    source,
+    /float texMod = mix\(1\.0 \+ \(structure - 0\.5\) \* uGrainContrast, 1\.0, far\);/
+  );
+  assert.equal(shader.uniforms.uGrainContrast.value, defaultTheme.terrain.grainContrast);
   assert.match(source, /vec3 modulation = vec3\(texMod\);/);
 
   // La couche « de détail » a disparu : c'est elle qui constellait le sol de

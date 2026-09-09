@@ -46,6 +46,20 @@ export const TERRAIN_LOOK = {
    */
   grainScaleM: 6,
   /**
+   * Contraste du grain en luminosité, autour de 1.
+   *
+   * Le relevé a un écart-type de 0,136 : à 0,67 le grain module la lumière de
+   * ±9 % (un écart-type), et un accident marqué du champ, à deux écarts-types,
+   * de ±18 %. Il valait 2 — donc ±27 % et ±54 % — ce qui marquait les creux
+   * bien trop noir pour un grain.
+   *
+   * Ne touche **que** la lumière. Le relief (`grainRelief`) et la dentelure
+   * des lisières (`blendWidth`) lisent le champ brut : les éclaircir en même
+   * temps demanderait de baisser l'amplitude du relevé lui-même, ce qui
+   * aplatirait les trois d'un coup.
+   */
+  grainContrast: 0.67,
+  /**
    * Variation macro : période en mètres, amplitude en luminosité, dérive
    * chaud/froid.
    *

@@ -259,6 +259,7 @@ export class TerrainMaterialFactory {
       uDetailRange: { value: new THREE.Vector2(look.detailNear, look.detailFar) },
       uGrainMap: { value: this.grainTexture },
       uGrainScale: { value: look.grainScaleM },
+      uGrainContrast: { value: look.grainContrast },
       // (période en mètres, amplitude en luminosité, dérive chaud/froid).
       uMacroMap: { value: this.macroTexture },
       uMacro: {
@@ -349,6 +350,7 @@ export class TerrainMaterialFactory {
            uniform vec2 uDetailRange;
            uniform sampler2D uGrainMap;
            uniform float uGrainScale;
+           uniform float uGrainContrast;
            uniform sampler2D uMacroMap;
            uniform vec3 uMacro;
            uniform float uBlendWidth;
@@ -626,7 +628,14 @@ export class TerrainMaterialFactory {
 
              // Le grain s'efface avec la distance. Scalaire, et c'est le fond
              // du chantier precedent : une texture de sol ne teinte plus rien.
-             float texMod = mix(structure * 2.0, 1.0, far);
+             //
+             // Centre sur 1 : au milieu du champ le grain ne fait rien du tout,
+             // et uGrainContrast dit seulement de combien il s'en ecarte. Il ne
+             // sert **qu'a la lumiere** — le relief et la dentelure des
+             // lisieres continuent de lire le champ brut, plus bas et dans
+             // surfaceAt. Les eclaircir en meme temps demanderait de toucher a
+             // l'amplitude du releve lui-meme, ce qui aplatirait les trois.
+             float texMod = mix(1.0 + (structure - 0.5) * uGrainContrast, 1.0, far);
              vec3 modulation = vec3(texMod);
 
              // Variation macro. Centree sur 1 : elle etale la luminosite sans
