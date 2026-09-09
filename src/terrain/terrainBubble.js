@@ -94,6 +94,7 @@ export class TerrainBubble {
       groundClass,
       look: theme.terrain,
       soils: theme.soils,
+      streets: theme.streets,
     });
 
     /** Index des chaussées construites (`RoadIndex`), ou `null` — voir `setRoadCut`. */

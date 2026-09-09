@@ -24,6 +24,13 @@
  *   qui monte avec la distance — un albédo constant par classe est ce qui
  *   donne l'aplat de carte routière, et le grain, au mètre, n'y peut rien.
  *
+ * Une couverture peut en outre **assourdir** le grain (`uCoverGrain`), et une
+ * seule le fait : le revêtement urbain. Le sol d'une ville n'est pas une terre
+ * plus grise, c'est une dalle — elle garde quelque chose du grain du bitume
+ * voisin, en plus sourd. Sa couleur ne vient pas d'ici mais de la voirie
+ * (`townStyle.pavementTone`), pour qu'une bordure de trottoir et le sol qu'elle
+ * borde ne puissent pas diverger.
+ *
  * Et trois choses tiennent les **limites** entre surfaces, dont le défaut
  * commun était le carreau de 2,7 m des cartes du sol, lisible en marches
  * d'escalier dès que deux matières contrastent :
@@ -50,7 +57,14 @@ import {
   createMacroCanvas,
 } from '../materials/proceduralTextures.js';
 import { CROP_KINDS, CROP_ID_STEP } from '../layers/furniturePlacement.js';
-import { COVER_KINDS, COVER_ID_STEP, WATER_COVER_ID, CLASS_PIXELS } from './groundClassMap.js';
+import {
+  COVER_KINDS,
+  COVER_ID_STEP,
+  WATER_COVER_ID,
+  PAVEMENT_COVER_ID,
+  CLASS_PIXELS,
+} from './groundClassMap.js';
+import { pavementTone } from '../layers/townStyle.js';
 import { createWaterNormalCanvas } from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
 import { soilWashFor } from '../core/climate.js';
@@ -64,11 +78,15 @@ export class TerrainMaterialFactory {
    * @param {Object} [options.soils] Tranche `soils` du thème.
    * @param {Object} [options.groundClass] Instance `GroundClassMap`. Absente,
    *        tout le sol prend la matière de repli.
+   * @param {Object} [options.streets] Tranche `streets` du thème. Le sol d'une
+   *        ville est du trottoir, et sa teinte ne peut pas être décidée deux
+   *        fois : la bordure la lit là aussi (`townStyle.pavementTone`).
    */
-  constructor({ THREE, look = {}, soils = null, groundClass = null }) {
+  constructor({ THREE, look = {}, soils = null, streets = null, groundClass = null }) {
     this.THREE = THREE;
     this.look = { ...defaultTheme.terrain, ...look };
     this.soils = soils || defaultTheme.soils;
+    this.streets = streets || defaultTheme.streets;
     this.groundClass = groundClass || null;
     /** Famille appliquée aux albédos. `null` = aucune correction. */
     this._climate = null;
@@ -138,7 +156,10 @@ export class TerrainMaterialFactory {
    * où le sol lointain apprend le pays. Les touffes et les tiges du premier
    * plan lisent le même facteur par `soilWashFor` : voir `SOIL_LOOK` sur
    * pourquoi c'est un facteur et pas une palette. Les couvertures ne bougent
-   * pas, une lande dit déjà son pays.
+   * pas, une lande dit déjà son pays — sauf une, le revêtement urbain, qui
+   * n'est pas une matière relevée mais une convention de pays : le nord coule
+   * du béton gris, le Midi pose de la pierre claire, la steppe un enrobé
+   * poussiéreux. Elle est lue à la même source que la bordure de trottoir.
    */
   setClimate(family) {
     if (!this._uniforms || family === this._climate) return;
@@ -154,6 +175,9 @@ export class TerrainMaterialFactory {
       const base = look.cropAlbedo[kind] || look.farmlandAlbedo;
       this._uniforms.uCropAlbedo.value[i].set(...scale(base, wash.farmland));
     });
+    this._uniforms.uCoverAlbedo.value[PAVEMENT_COVER_ID - 1].set(
+      ...pavementTone(this._climate, this.streets)
+    );
   }
 
   /**
@@ -204,9 +228,22 @@ export class TerrainMaterialFactory {
       // même carte. Le repli est l'albédo d'herbe : une couverture qu'un thème
       // ne décrit pas se peint comme une prairie, ce qui est le comportement
       // d'avant qu'elles existent.
+      // Le revêtement urbain n'a pas d'albédo dans `coverAlbedo` et n'en aura
+      // pas : il vient de la voirie, par climat (`setClimate`). Posé ici aussi,
+      // parce que `setClimate` ne fait rien tant que la famille n'a pas changé
+      // — et au montage elle vaut déjà `null`.
       uCoverAlbedo: {
-        value: COVER_KINDS.map(
-          (kind) => new THREE.Vector3(...((look.coverAlbedo || {})[kind] || look.grassAlbedo))
+        value: COVER_KINDS.map((kind) =>
+          kind === 'pavement'
+            ? new THREE.Vector3(...pavementTone(null, this.streets))
+            : new THREE.Vector3(...((look.coverAlbedo || {})[kind] || look.grassAlbedo))
+        ),
+      },
+      // Force du grain d'une couverture, de 0 (aplat) à 1 (le grain du sol
+      // qu'elle remplace). Une seule s'en écarte : le revêtement urbain.
+      uCoverGrain: {
+        value: COVER_KINDS.map((kind) =>
+          kind === 'pavement' ? (this.streets.pavementGrain ?? 1) : 1
         ),
       },
       // L'eau. Elle ne se mélange pas aux autres matières : là où la
@@ -278,6 +315,7 @@ export class TerrainMaterialFactory {
            uniform sampler2D uCropMap;
            uniform vec3 uCropAlbedo[${CROP_KINDS.length}];
            uniform vec3 uCoverAlbedo[${COVER_KINDS.length}];
+           uniform float uCoverGrain[${COVER_KINDS.length}];
            uniform vec3 uRockColor;
            uniform vec2 uSlopeRange;
            uniform float uRockStrength;
@@ -395,7 +433,9 @@ export class TerrainMaterialFactory {
             * il faudrait pour cela une carte peinte avec son antialiasing. Ce
             * qui disparaît ici est la marche d'escalier, pas le pas de la carte.
             */
-           void surfaceAt(vec2 uv, out vec3 coverAlbedo, out float coverShare, out float water) {
+           void surfaceAt(
+             vec2 uv, out vec3 coverAlbedo, out float coverShare, out float coverGrain, out float water
+           ) {
              vec2 grid = uv * ${CLASS_PIXELS}.0 - 0.5;
              vec2 corner = floor(grid);
              vec2 f = grid - corner;
@@ -418,12 +458,17 @@ export class TerrainMaterialFactory {
 
              coverAlbedo = vec3(0.0);
              coverShare = 0.0;
+             coverGrain = 0.0;
              for (int i = 1; i <= ${COVER_KINDS.length}; i++) {
                if (i != ${WATER_COVER_ID}) {
                  vec4 hit = step(abs(ids - float(i)), vec4(0.5)) * weight;
                  float share = (hit.x + hit.y + hit.z + hit.w) / land;
                  coverShare += share;
                  coverAlbedo += uCoverAlbedo[i - 1] * share;
+                 // Le grain d'une couverture, mélangé comme sa couleur : une
+                 // dalle de trottoir a le grain du bitume en plus sourd, une
+                 // lande a celui de la terre entier.
+                 coverGrain += uCoverGrain[i - 1] * share;
                }
              }
            }`
@@ -497,7 +542,6 @@ export class TerrainMaterialFactory {
 
              // Le grain s'efface avec la distance.
              vec3 structure = grass * w.x + wood * w.y + soil * (w.z + w.w);
-             grainHeight = dot(structure, vec3(0.3333));
              vec3 texMod = mix(structure * 2.0, vec3(1.0), far);
              float texLuma = max(dot(texMod, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
              // Part de teinte propre à la texture ; le reste reste neutre pour nuancer l'albédo sans s'y ajouter.
@@ -550,10 +594,28 @@ float macroSigned = (macro - 0.5) * far;
                // terre à l'eau.
                vec3 coverAlbedo;
                float coverShare;
-               surfaceAt(classUv, coverAlbedo, coverShare, gWater);
+               float coverGrain;
+               surfaceAt(classUv, coverAlbedo, coverShare, coverGrain, gWater);
                grassAlbedo = mix(grassAlbedo, coverAlbedo, coverShare);
                bareAlbedo = mix(bareAlbedo, coverAlbedo, coverShare);
+
+               // Une couverture peut aussi **assourdir** le grain, et une seule
+               // le fait : le revêtement urbain. Le sol d'une ville n'est pas
+               // une terre plus grise, c'est une dalle — elle garde le grain du
+               // bitume voisin, en plus faible, sinon le trottoir serait un
+               // aplat au milieu d'une rue grainée. La modulation se ramène
+               // vers le neutre, et le relief de grain avec elle.
+               float grainScale = mix(1.0, coverGrain, coverShare);
+               modulation = mix(vec3(1.0), modulation, grainScale);
+               structure = mix(vec3(0.5), structure, grainScale);
              }
+
+             // Après les couvertures : c'est là seulement que la structure du
+             // grain est définitive (le revêtement urbain l'assourdit), et
+             // c'est elle que lit la perturbation de normale, plus bas dans le
+             // shader de three. Pas d'accent grave dans ce commentaire : il
+             // vit dans un littéral de gabarit, qu'il refermerait.
+             grainHeight = dot(structure, vec3(0.3333));
 
              vec3 albedo =
                grassAlbedo * w.x +

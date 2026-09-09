@@ -34,10 +34,33 @@
  * L'eau est une couverture comme les autres (`water`), et c'est la seule
  * description de l'eau dans la scène : il n'y a pas de plan d'eau posé sur le
  * terrain, le sol *est* l'eau là où la carte le dit.
+ *
+ * ## Le sol de la ville
+ *
+ * Une couverture n'est pas relevée : `pavement` est **déduite**. Entre la
+ * chaussée et les façades, un centre-ville n'a ni herbe ni sol nu, il a du
+ * trottoir — et le dire ici plutôt qu'en géométrie est ce qui permet au
+ * revêtement d'aller jusqu'aux murs, d'épouser n'importe quelle forme de bâti
+ * et de ne laisser aucun trou, sans qu'aucune couche n'ait à connaître le
+ * contour des bâtiments.
+ *
+ * Elle est peinte par sa propre passe (`_paintPavement`), à un rang précis :
+ *
+ *     landuse (occupation) → PAVEMENT → vert urbain → landcover
+ *
+ * Ce rang **est** la règle des parcs. Le revêtement recouvre `settled` (un
+ * quartier d'habitation n'est pas deux tiers d'herbe en centre-ville) et se
+ * fait recouvrir par tout ce qui décrit du vert — cimetière, stade et terrain
+ * de jeu par le troisième temps, parc, bois et prairie par `landcover`. Un parc
+ * en ville reste donc un parc, avec son herbe et ses allées de terre, sans
+ * aucune règle de plus. Le vert urbain est en outre retiré du revêtement en
+ * **trous** au moment de le peindre, et pas seulement recouvert après : sinon
+ * la couverture, elle, resterait dessous et le parc se peindrait en dalle.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { cropFor, cropId, cropFromId, randomAt, CROP_ID_STEP } from '../layers/furniturePlacement.js';
+import { URBAN_GREEN_LANDUSE } from '../layers/settlement.js';
 import { defaultTheme } from '../themes/default.js';
 
 /**
@@ -173,10 +196,28 @@ export const CLASS_FILL = {
  * jusqu'à l'horizon, et par l'herbe et la végétation, qui décident de ce qui y
  * pousse. L'ordre est donc gravé : le changer repeint une lande en éboulis.
  *
- * Les trois premières sont **végétales** (peintes sur de l'herbe), les quatre
+ * Les trois premières sont **végétales** (peintes sur de l'herbe), les cinq
  * suivantes **minérales** (peintes sur du sol nu).
+ *
+ * `pavement` n'a pas de source dans les tuiles, et c'est la seule : elle n'est
+ * pas une matière relevée mais une **déduction** — le sol d'une ville, entre la
+ * chaussée et les façades, est revêtu. Elle est peinte par sa propre passe
+ * (voir `rebuild`), à un endroit précis de l'ordre : après l'occupation du sol,
+ * qu'elle recouvre, et avant le vert urbain, qui la recouvre à son tour. C'est
+ * cet ordre-là, et rien d'autre, qui laisse un parc et un cimetière verts au
+ * milieu du bitume.
  */
-export const COVER_KINDS = ['heath', 'scrub', 'wetland', 'alpine', 'scree', 'rock', 'sand', 'water'];
+export const COVER_KINDS = [
+  'heath',
+  'scrub',
+  'wetland',
+  'alpine',
+  'scree',
+  'rock',
+  'sand',
+  'pavement',
+  'water',
+];
 
 /**
  * Rang de l'eau dans `COVER_KINDS`, à partir de 1 comme tous les
@@ -185,8 +226,18 @@ export const COVER_KINDS = ['heath', 'scrub', 'wetland', 'alpine', 'scree', 'roc
  */
 export const WATER_COVER_ID = COVER_KINDS.indexOf('water') + 1;
 
-/** Pas entre deux identifiants dans le canal vert. */
-export const COVER_ID_STEP = 30;
+/**
+ * Pas entre deux identifiants dans le canal vert.
+ *
+ * Vingt-cinq, et non trente : neuf couvertures à trente dépasseraient 255. Le
+ * pas ne sert qu'à écarter deux identifiants d'assez pour qu'un filtrage au
+ * plus proche ne les confonde pas — douze niveaux de marge suffisent
+ * largement, l'arrondi de lecture ayant la moitié du pas pour lui.
+ */
+export const COVER_ID_STEP = 25;
+
+/** Rang du revêtement urbain, à partir de 1 comme tous les identifiants peints. */
+export const PAVEMENT_COVER_ID = COVER_KINDS.indexOf('pavement') + 1;
 
 /**
  * Couverture décrite par une entité surfacique, ou `null`.
@@ -470,14 +521,95 @@ export class GroundClassMap {
   }
 
   /**
+   * Le sol revêtu de la ville : entre la chaussée et les façades, un
+   * centre-ville n'a pas de sol nu ni d'herbe, il a du trottoir.
+   *
+   * Trois termes, ceux du masque urbain (voir `settlement.UrbanMask`) : le
+   * **disque** d'agglomération borne la portée et sert de découpe ; les
+   * emprises **bâties** donnent la forme ; le **vert urbain** est retiré, et
+   * l'est ici en trous d'un remplissage pair-impair plutôt qu'en effacement —
+   * effacer creuserait aussi l'occupation du sol déjà peinte dessous.
+   *
+   * Une emprise à la fois, et non toutes en un tracé : deux emprises bâties
+   * qui se recouvrent (un quartier dans une commune) s'annuleraient en
+   * pair-impair, et la ville aurait un trou là où elle est le plus dense.
+   *
+   * Le revêtement s'écrit dans les deux cartes : sol nu dans celle des
+   * matières (ni herbe ni semis n'y poussent, gratuitement), couverture
+   * `pavement` dans celle des cultures, d'où le shader tire sa couleur.
+   *
+   * @returns {number} emprises revêtues.
+   */
+  _paintPavement(urban, originX, originZ, perMeter) {
+    if (!urban?.any || !urban.builtUp?.length) return 0;
+    const { ctx, cropCtx } = this;
+
+    const ringPath = (ring, into = new Path2D()) => {
+      for (let i = 0; i < ring.length; i++) {
+        const px = (ring[i].x - originX) * perMeter;
+        const pz = (ring[i].z - originZ) * perMeter;
+        if (i === 0) into.moveTo(px, pz);
+        else into.lineTo(px, pz);
+      }
+      into.closePath();
+      return into;
+    };
+
+    // La découpe : les disques d'agglomération. Ce sont eux, et rien d'autre,
+    // qui font qu'un village bâti ne se retrouve pas pavé jusqu'aux jardins.
+    const discs = new Path2D();
+    for (const disc of urban.discs) {
+      discs.arc(
+        (disc.x - originX) * perMeter,
+        (disc.z - originZ) * perMeter,
+        disc.radius * perMeter,
+        0,
+        Math.PI * 2
+      );
+      discs.closePath();
+    }
+
+    // Les trous, construits une fois : ils sont les mêmes pour chaque emprise.
+    const greens = new Path2D();
+    for (const ring of urban.greens || []) {
+      if (Array.isArray(ring) && ring.length >= 3) ringPath(ring, greens);
+    }
+
+    ctx.save();
+    cropCtx.save();
+    ctx.clip(discs);
+    cropCtx.clip(discs);
+    ctx.fillStyle = CLASS_FILL.bare;
+    cropCtx.fillStyle = `rgba(0, ${PAVEMENT_COVER_ID * COVER_ID_STEP}, 0, 1)`;
+    let painted = 0;
+
+    for (const ring of urban.builtUp) {
+      if (!Array.isArray(ring) || ring.length < 3) continue;
+      const path = ringPath(ring);
+      path.addPath(greens);
+      ctx.fill(path, 'evenodd');
+      cropCtx.fill(path, 'evenodd');
+      painted++;
+    }
+
+    cropCtx.restore();
+    ctx.restore();
+    return painted;
+  }
+
+  /**
    * Re-rasterise la carte autour d'un point.
    * @param {Object} source Instance `VectorTileSource`.
    * @param {Array} tiles   Tuiles à parcourir.
    * @param {{x:number,z:number}} here Position locale de l'observateur.
    * @param {Object} frame  Repère local de la bulle.
+   * @param {Object} [options]
+   * @param {Object|null} [options.urban] `UrbanMask` : le sol revêtu de la
+   *        ville. Absent, aucune passe de revêtement — c'est le comportement de
+   *        campagne, et celui d'avant ce lot.
    * @returns {boolean} vrai si des surfaces ont été peintes.
    */
-  rebuild(source, tiles, here, frame) {
+  rebuild(source, tiles, here, frame, { urban = null } = {}) {
     if (this.disposed || !source || !frame) return false;
 
     const { ctx } = this;
@@ -493,12 +625,27 @@ export class GroundClassMap {
 
     let painted = 0;
 
-    // L'ordre compte : landuse (grandes emprises) puis landcover, qui pose la
-    // matière réelle par-dessus (un bois, une prairie, un cordon dunaire).
+    // L'ordre compte, et il compte maintenant à trois temps :
+    //
+    //   occupation du sol → revêtement urbain → vert urbain → landcover
+    //
+    // Le revêtement de ville recouvre `settled` (un quartier d'habitation
+    // n'est pas deux tiers d'herbe en centre-ville), et le vert urbain
+    // — cimetière, stade, terrain de jeu — le recouvre à son tour. Sans ce
+    // troisième temps, un cimetière peint avant le revêtement dans l'ordre des
+    // entités de la tuile disparaîtrait sous le bitume, et l'ordre des entités
+    // dans une tuile n'est pas quelque chose dont on décide.
+    //
+    // Le vert urbain n'est donc pas relu : son tracé est **différé**, mis de
+    // côté au passage et rejoué après le revêtement. Une seule traversée de
+    // `landuse`, comme avant.
+    const deferred = [];
+
     for (const sourceLayer of CLASS_SOURCE_LAYERS) {
       source.forEachFeature(sourceLayer, tiles, (geometry, properties) => {
         const kind = groundClassFor(sourceLayer, properties);
         if (!kind) return;
+        const green = sourceLayer === 'landuse' && URBAN_GREEN_LANDUSE.has(properties.class);
 
         ctx.fillStyle = CLASS_FILL[kind];
         for (const rings of classPolygons(geometry)) {
@@ -529,6 +676,13 @@ export class GroundClassMap {
             path.closePath();
           }
 
+          if (green) {
+            // Rejoué après le revêtement : voir plus haut.
+            deferred.push({ path, fill: CLASS_FILL[kind] });
+            painted++;
+            continue;
+          }
+
           ctx.fill(path, 'evenodd'); // anneaux intérieurs = trous
           painted++;
 
@@ -553,6 +707,18 @@ export class GroundClassMap {
           this.cropCtx.fill(path, 'evenodd');
         }
       });
+
+      // Le revêtement de ville et le vert qu'il ne recouvre pas, entre les
+      // deux couches source : `landuse` vient de poser l'occupation, et
+      // `landcover` posera par-dessus la matière réelle — un parc, un bois,
+      // une prairie —, ce qui est exactement le rang qu'on veut leur laisser.
+      if (sourceLayer === 'landuse') {
+        painted += this._paintPavement(urban, originX, originZ, perMeter);
+        for (const piece of deferred) {
+          ctx.fillStyle = piece.fill;
+          ctx.fill(piece.path, 'evenodd');
+        }
+      }
     }
 
     // Ripisylve : une bande de bois tracée le long des cours d'eau linéaires

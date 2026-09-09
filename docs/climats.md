@@ -99,6 +99,14 @@ au loin, `COVER_LOOK` la strate basse (hauteur, densité et teinte de l'herbe,
 densité d'arbustes). Les deux sont indispensables : une lande de la bonne
 couleur couverte d'une prairie de quatre-vingts centimètres reste une prairie.
 
+**Une exception, et une seule** : le revêtement urbain (`pavement`) ne vient pas
+d'une entité mais d'une déduction — le sol d'une ville —, et ce que le pays y
+change n'est pas une matière mais une convention de travaux publics. Sa couleur
+vit donc dans `STREET_LOOK.pavement`, une teinte par famille, et pas dans
+`coverAlbedo`. Elle est lue **deux fois** : par le shader de terrain, qui peint
+le sol, et par la bordure de trottoir, qui le borde (`townStyle.pavementTone`).
+Deux valeurs divergentes se verraient exactement là où elles se rejoignent.
+
 ### 4. L'air — `SKY_PALETTE.variants`
 
 ```js
@@ -145,7 +153,8 @@ Trois choses à savoir avant de toucher aux valeurs :
   nu partout se lit comme un décor qui n'a pas fini de charger.
 
 Les couvertures ne sont pas touchées par ces facteurs — une lande ou un maquis
-disent déjà leur pays. Les fleurs non plus : un coquelicot d'Andalousie est
+disent déjà leur pays, et le revêtement urbain a sa propre table plutôt qu'un
+facteur. Les fleurs non plus : un coquelicot d'Andalousie est
 rouge, pas rouge fois trois.
 
 `oceanic` n'a **pas** d'entrée, volontairement : c'est la référence sur

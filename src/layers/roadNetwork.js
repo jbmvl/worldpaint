@@ -43,9 +43,36 @@
  * la chaussée s'arrête — au pied d'un tunnel comme à la bouche d'un carrefour.
  * Il tient dans un seul maillage pour tout le réseau : une couleur, pas de
  * texture, rien qui dépende de la classe de la route une fois le trait choisi.
+ *
+ * Il porte aussi le **pictogramme** d'une piste cyclable, et c'est la seule
+ * classe qui en ait un : voir l'en-tête de `roadMarkings` sur pourquoi le vélo
+ * n'invente rien là où une flèche de rabattement inventerait tout.
+ *
+ * ## Ce que la ville retranche
+ *
+ * Le réseau d'un centre-ville n'est pas le réseau de campagne avec plus de
+ * rues : c'est le même réseau relevé beaucoup plus finement. Un boulevard y
+ * arrive en cinq ou six voies parallèles — chaque sens, la contre-allée, la
+ * voie de bus —, et chaque trottoir y arrive comme une voie à part entière.
+ * Tout dessiner donne un tas de rubans qui se chevauchent, sans marquage
+ * lisible, et il n'y a aucun réglage de largeur qui en sorte.
+ *
+ * Ce module reçoit donc un `UrbanMask` (`settlement`) et retranche deux fois,
+ * **avant le graphe** — ce qui n'est pas dessiné ne crée ni nœud, ni carrefour,
+ * ni numérotation de mobilier :
+ *
+ *   - les **voies piétonnes** (`isPedestrianWay`), qui n'ont jamais été des
+ *     chaussées. Le sol de la ville les porte maintenant en entier
+ *     (`groundClassMap`, couverture `pavement`) ;
+ *   - les **voies redondantes** (`roadBundles.absorbParallelLines`), celles
+ *     qui longent une voie de rang supérieur et sont déjà dans sa largeur.
+ *
+ * Hors ville, rien de tout cela ne se produit : un sentier reste un sentier, et
+ * une contre-allée de campagne est un objet du paysage.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
+import { absorbParallelLines } from './roadBundles.js';
 import {
   mergeRoadLines,
   RoadIndex,
@@ -67,6 +94,8 @@ import {
   approachLane,
   appendMarkingBar,
   appendMarkingLine,
+  appendMarkingSymbols,
+  cycleGlyph,
   markingLinesFor,
   sectionAtDistance,
 } from './roadMarkings.js';
@@ -96,6 +125,13 @@ import {
 import { srgb } from '../core/color.js';
 import { ROAD_TEXTURE_LENGTH, createRoadCanvas } from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
+
+/**
+ * Le pictogramme cycliste, construit une fois : c'est un dessin fixe, en
+ * mètres, et le reconstruire à chaque piste rencontrée coûterait plus cher que
+ * de le poser.
+ */
+const CYCLE_GLYPH = cycleGlyph();
 
 /** Graines distinctes : deux profils voisins ne doivent pas avoir le même grain. */
 const ROAD_JUNCTION_SEED = 6101;
@@ -323,6 +359,36 @@ export const ROAD_CLASSES = {
 };
 
 /**
+ * Sous-classes de `path` qui décrivent une voie **piétonne** au sens strict :
+ * un trottoir, une traversée, un cheminement. Le sentier de randonnée
+ * (`path` sans sous-classe) n'en est pas — c'est un chemin de campagne.
+ */
+export const PEDESTRIAN_SUBCLASSES = new Set(['footway', 'sidewalk', 'crossing']);
+
+/**
+ * Vrai si l'entité décrit une voie piétonne.
+ *
+ * En ville, ces voies-là ne sont **pas** des chaussées et ne doivent pas être
+ * dessinées comme telles : un trottoir relevé voie par voie dans OSM devenait
+ * ici une desserte de 3,60 m (`pedestrian` était rangé en `lane`), et un
+ * cheminement devenait un chemin de terre au milieu du bitume. Le sol de la
+ * ville les porte maintenant en entier (voir `groundClassMap`, couverture
+ * `pavement`) : les dessiner en plus serait les compter deux fois.
+ *
+ * Hors ville, rien ne change : une aire piétonne de bourg et un sentier
+ * restent ce qu'ils sont. C'est `collectRoadLines` qui tranche, parce que lui
+ * seul connaît le lieu.
+ *
+ * Fonction pure.
+ */
+export function isPedestrianWay(properties = {}) {
+  if (properties.class === 'pedestrian') return true;
+  if (properties.class !== 'path') return false;
+  if (properties.bicycle === 'designated') return false;
+  return PEDESTRIAN_SUBCLASSES.has(properties.subclass);
+}
+
+/**
  * Style de chaussée d'une entité, ou `null` si elle ne doit pas être dessinée.
  * `subclass` affine `class` : piste cyclable, sentier et escalier partagent la
  * même classe `path`.
@@ -410,15 +476,22 @@ export function clipToRadius(points, centerX, centerZ, radius) {
  * Ce qui en sort sont des morceaux — c'est `mergeRoadLines` qui en fait des chaussées.
  *
  * @param {Object} [roads] Tranche `theme.roads` (profils de chaussée).
+ * @param {Object} [options]
+ * @param {Object|null} [options.urban] `UrbanMask` : en ville, les voies
+ *        piétonnes ne sont pas des chaussées (voir `isPedestrianWay`). Le lieu
+ *        est jugé au **milieu** de la ligne, une fois par entité : un trottoir
+ *        ne change pas de nature en cours de route, et sonder chaque sommet
+ *        coûterait un lancer de rayon par mètre de trottoir.
  * @returns {Array<{profile:string, halfWidth:number, points:Array}>}
  */
-export function collectRoadLines(source, tiles, frame, roads = defaultTheme.roads) {
+export function collectRoadLines(source, tiles, frame, roads = defaultTheme.roads, { urban = null } = {}) {
   const { origin, scale, zoom } = frame;
   const lines = [];
 
   source.forEachFeature('transportation', tiles, (geometry, properties) => {
     const style = roadStyleFor(properties, roads.profiles);
     if (!style) return;
+    const pedestrian = urban?.any ? isPedestrianWay(properties) : false;
 
     for (const line of roadLines(geometry)) {
       if (!Array.isArray(line) || line.length < 2) continue;
@@ -432,6 +505,10 @@ export function collectRoadLines(source, tiles, frame, roads = defaultTheme.road
         });
       }
       if (points.length < 2) continue;
+      if (pedestrian) {
+        const mid = points[Math.floor(points.length / 2)];
+        if (urban.covers(mid.x, mid.z)) continue;
+      }
       lines.push({
         profile: style.profile,
         halfWidth: style.halfWidth,
@@ -570,6 +647,9 @@ export function crossedDeckAt(index, segment, si, cos = BRIDGE_CROSSING_COS) {
  *        Une travée s'y pose sans garde : elle ne descend pas
  *        dessous, mais rien ne la relève au-dessus. Absente, les travées
  *        restent exactement tendues entre leurs appuis.
+ * @param {Object|null} [options.urban] `UrbanMask` : en ville, les voies
+ *        piétonnes ne sont pas dessinées et les voies redondantes sont
+ *        absorbées. Absent, le réseau est celui de la campagne.
  *
  * Les carrefours sortent d'ici avec les tronçons (ils viennent du même graphe).
  *
@@ -585,11 +665,22 @@ export function collectRoadSegments(
   sampleElevation,
   radius = ROAD_RADIUS_M,
   roads = defaultTheme.roads,
-  { floorAt = null } = {}
+  { floorAt = null, urban = null } = {}
 ) {
   const out = [];
   let anyWorks = false; // vrai dès qu'un tronçon porte un ouvrage
-  const { chains, junctions } = mergeRoadLines(collectRoadLines(source, tiles, frame, roads));
+  let lines = collectRoadLines(source, tiles, frame, roads, { urban });
+  // L'absorption se pose ici, sur les lignes, et pas plus tard : ce qui n'est
+  // pas dessiné ne doit pas entrer dans le graphe (voir `roadBundles`). Elle
+  // n'a lieu qu'en ville — un boulevard relevé en six voies est un fait
+  // urbain, une contre-allée de campagne est un objet du paysage.
+  if (urban?.any) {
+    lines = absorbParallelLines(lines, {
+      order: ROAD_PROFILE_ORDER,
+      where: (x, z) => urban.covers(x, z),
+    });
+  }
+  const { chains, junctions } = mergeRoadLines(lines);
   // Les carrefours deviennent des surfaces, en plan, avant tout le reste : ce
   // sont elles qui diront où chaque ruban s'arrête. Les chaînes, elles, ne sont
   // plus coupées — la chaussée traverse le carrefour dans les données, et seul
@@ -778,7 +869,7 @@ export class RoadNetwork {
    *        à savoir où est l'eau (elle en est la matière du sol) : un pont doit
    *        s'en dégager.
    */
-  rebuild(source, tiles, here, { groundClass = null } = {}) {
+  rebuild(source, tiles, here, { groundClass = null, urban = null } = {}) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
 
     const { bubble } = this;
@@ -803,7 +894,7 @@ export class RoadNetwork {
       sampleElevation,
       ROAD_RADIUS_M,
       this.theme.roads,
-      { floorAt }
+      { floorAt, urban }
     );
     // La marge doit couvrir toute la portée du déblai, raccord compris ;
     // laissée à sa valeur par défaut, l'entaille finissait en marche verticale.
@@ -941,6 +1032,20 @@ export class RoadNetwork {
         frames,
         offset: line.offset,
         dash: line.dash,
+        color: paint,
+        lift,
+        startDistance: segment.startDistance || 0,
+      });
+    }
+
+    // Le pictogramme que porte la classe, s'il y en a un (aujourd'hui le seul :
+    // le vélo d'une piste cyclable — voir l'en-tête de `roadMarkings`).
+    if (spec.symbol === 'cycle') {
+      laid += appendMarkingSymbols(buffer, {
+        path,
+        decks: platform,
+        frames,
+        polygons: CYCLE_GLYPH,
         color: paint,
         lift,
         startDistance: segment.startDistance || 0,

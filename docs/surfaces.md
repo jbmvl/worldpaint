@@ -50,6 +50,27 @@ Une parcelle porte donc une part de chaque matière, et *une* culture **ou**
 `landuse` ne pose jamais de couverture : il dit qui occupe le sol, pas de quoi
 il est fait.
 
+### Le revêtement urbain — la seule matière qui ne vient d'aucune couche
+
+`pavement` n'est pas relevée, elle est **déduite** : entre la chaussée et les
+façades, un centre-ville n'a ni herbe ni sol nu, il a du trottoir. Elle est
+peinte à partir du masque urbain (`settlement.UrbanMask` : emprise bâtie ∩
+disque autour d'un `place` de classe `city`/`town`, moins le vert urbain), en
+sol nu dans la carte des matières et en couverture dans celle des cultures.
+
+Son rang dans l'ordre de peinture **est** la règle des parcs :
+
+    landuse (occupation) → pavement → vert urbain → landcover
+
+Elle recouvre le 66 % d'herbe d'un quartier d'habitation, et se fait recouvrir
+par tout ce qui décrit du vert — cimetière, stade et terrain de jeu au troisième
+temps, parc, bois et prairie par `landcover`. Le vert est en outre **retiré en
+trous** au moment de peindre le revêtement, et pas seulement recouvert après :
+sinon la couverture resterait sous le parc, et le parc se peindrait en dalle.
+
+Un village n'est donc jamais pavé : sans `place` de rang urbain dans la fenêtre,
+la passe ne pose rien.
+
 ### Ce que `landcover` ne contient pas
 
 Notre `class` vient de la tuile, pas d'OSM : c'est OpenMapTiles qui range le
@@ -136,6 +157,12 @@ Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
    repli — ce qui est plausible pour une école, moins pour un barrage.
 6. **Aucune couverture ne vient de `landuse`.** Une saline (`salt_pond`), une
    tourbière exploitée ou une piste ne peuvent pas être décrites aujourd'hui.
+   `pavement` fait exception et n'en est pas une : elle ne vient d'aucune
+   entité, elle est déduite du masque urbain.
+7. **La ville est un disque, pas un contour.** Sa portée se tire d'un point
+   `place`, seule chose que la donnée dise du rang d'une agglomération : une
+   banlieue loin du point nommé n'est pas pavée, et un quartier dense d'un gros
+   bourg non plus.
 
 ## Comment vérifier ce que la donnée dit, sans deviner
 
