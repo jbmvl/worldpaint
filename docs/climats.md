@@ -180,11 +180,9 @@ laquelle tout le reste du thème a été réglé.
   `layers/furnitureLayer.js`) et le bétail (`HERD_SHEEP_ODDS`) : ce sont des
   règles de plausibilité, pas des couleurs. Elles se discutent quand même — la
   trame agraire, en particulier, se lit de bien plus loin qu'une teinte ;
-- les réglages de grain du sol (`grainPixels`, `macroScaleM`, `macroStrength`,
+- les réglages de grain du sol (`grainScaleM`, `macroScaleM`, `macroStrength`,
   `blendWidth`, `grainRelief`, dans `TERRAIN_LOOK`) : ce sont des paramètres de
-  matière, et ils valent pour tous les climats à la fois. `grainPixels` se
-  compte en **pixels d'écran par texel**, pas en mètres : la période en mètres
-  est choisie par fragment pour tenir cette finesse à toutes les distances.
+  matière, et ils valent pour tous les climats à la fois.
 
 ## Vérifier
 
