@@ -29,8 +29,24 @@
  *
  * Reste donc un seul relevé de grain, sans motif ni couleur
  * (`createGrainCanvas`), et une matière s'ajoute désormais en ajoutant un
- * albédo. Le grain change d'échelle avec la distance (période fine près,
- * octave large loin). La pente au-delà de 30° vire à la roche.
+ * albédo. La pente au-delà de 30° vire à la roche.
+ *
+ * ## Le grain se règle en pixels d'écran, pas en mètres
+ *
+ * Une période fixe en mètres a un seul bon point de vue, et se trompe partout
+ * ailleurs : trop grosse au ras du sol, où l'on voit la trame de la carte ;
+ * noyée dans le mip à dix mètres, où la route redevient un plastique lisse.
+ * `grainAt` renverse donc le réglage — on dit combien de **pixels d'écran**
+ * doit couvrir un texel (`grainPixels`), et la période en mètres s'en déduit
+ * par fragment. La période saute par échelons de facteur deux, avec un fondu
+ * entre voisins : dans un échelon elle est constante, donc le grain reste
+ * accroché au sol au lieu de glisser sous les pas. `grainScaleM` n'est plus
+ * la finesse du grain mais l'ancrage de cette échelle.
+ *
+ * Le corollaire compte autant : la carte de grain n'est plus lue au même
+ * endroit selon la distance, donc **rien qui doive tenir en place ne peut la
+ * lire ainsi**. `edgeWarp`, qui place les limites de parcelles, garde sa
+ * période fixe pour cette raison.
  *
  * Trois choses sortent le sol de l'aplat, et elles tiennent ensemble :
  *
@@ -97,6 +113,22 @@ import { soilWashFor } from '../core/climate.js';
 /** Couleur d'une matière qu'un thème ne décrit pas : un gris de terre neutre. */
 const FALLBACK_ALBEDO = [0.18, 0.17, 0.15];
 
+/**
+ * Côté du relevé de grain, en texels. Le shader en a besoin : c'est lui qui
+ * convertit « tant de pixels d'écran par texel » en une période en mètres.
+ * D'où la constante ici plutôt que le défaut de `createGrainCanvas`, pour que
+ * les deux ne puissent pas diverger.
+ */
+const GRAIN_TEXELS = 512;
+
+/**
+ * Anisotropie garantie de la carte de grain. Le shader s'en sert comme d'un
+ * budget : une empreinte de pixel deux fois plus longue que large est encore
+ * rattrapée par le filtrage, on peut donc lire plus fin que son grand côté.
+ * `setMaxAnisotropy` peut la monter ; il ne faut pas la descendre.
+ */
+const GRAIN_ANISOTROPY = 4;
+
 /** Fabrique du matériau de terrain. Un seul matériau pour toute la bulle. */
 export class TerrainMaterialFactory {
   /**
@@ -127,7 +159,7 @@ export class TerrainMaterialFactory {
       texture.wrapS = THREE.RepeatWrapping;
       texture.wrapT = THREE.RepeatWrapping;
       texture.colorSpace = THREE.NoColorSpace;
-      texture.anisotropy = 4;
+      texture.anisotropy = GRAIN_ANISOTROPY;
       return texture;
     };
 
@@ -135,7 +167,7 @@ export class TerrainMaterialFactory {
     this.macroTexture = repeated(createMacroCanvas());
     // Un seul grain pour toutes les matières : ses trois canaux portent trois
     // champs indépendants, lus d'un coup (voir `createGrainCanvas`).
-    this.grainTexture = repeated(createGrainCanvas());
+    this.grainTexture = repeated(createGrainCanvas(GRAIN_TEXELS));
     // Rides : la même carte que celle qui servait la nappe d'eau, du temps où
     // l'eau était une surface posée sur le terrain.
     this.waterRippleTexture = repeated(createWaterNormalCanvas());
@@ -234,6 +266,10 @@ export class TerrainMaterialFactory {
       uDetailRange: { value: new THREE.Vector2(look.detailNear, look.detailFar) },
       uGrainMap: { value: this.grainTexture },
       uGrainScale: { value: look.grainScaleM },
+      // Combien de pixels d'écran doit couvrir un texel de grain. C'est ce
+      // réglage-là, et plus la période en mètres, qui décide de la finesse
+      // qu'on voit ; la période s'en déduit par fragment (voir `grainAt`).
+      uGrainPixels: { value: look.grainPixels },
       // (période en mètres, amplitude en luminosité, dérive chaud/froid).
       uMacroMap: { value: this.macroTexture },
       uMacro: {
@@ -326,6 +362,7 @@ export class TerrainMaterialFactory {
            uniform vec2 uDetailRange;
            uniform sampler2D uGrainMap;
            uniform float uGrainScale;
+           uniform float uGrainPixels;
            uniform sampler2D uMacroMap;
            uniform vec3 uMacro;
            uniform float uBlendWidth;
@@ -387,6 +424,58 @@ export class TerrainMaterialFactory {
            vec2 edgeWarp(vec2 world) {
              vec2 shift = texture2D(uGrainMap, world / uEdgeWarp.y).rg;
              return (shift - 0.5) * 2.0 * uEdgeWarp.x;
+           }
+
+           /*
+            * Le grain, lu a une periode choisie pour l'ecran.
+            *
+            * Une periode fixe en metres ne peut pas convenir. A 1,2 cm par
+            * texel le grain vaut quelques pixels a trois metres et il est
+            * deja noye dans le mip a dix : la route redevient lisse
+            * exactement la ou on la regarde, et la trame de la carte se lit
+            * au premier plan. On choisit donc la periode par fragment, pour
+            * qu'un texel couvre toujours a peu pres uGrainPixels pixels
+            * d'ecran, quelle que soit la distance.
+            *
+            * Elle ne varie pas continument mais par echelons de facteur deux,
+            * ancres sur uGrainScale, avec un fondu entre deux echelons
+            * voisins. Dans un echelon la periode est constante en metres,
+            * donc le grain reste accroche au sol ; une periode strictement
+            * continue le ferait glisser sous les pas. Cout : deux lectures au
+            * lieu d'une, la ou le chantier precedent en avait rendu six.
+            *
+            * L'empreinte d'un pixel n'est pas un carre : sur une route vue de
+            * bout elle est longue dans l'axe du regard. Se caler sur son grand
+            * cote eteindrait le grain precisement dans ce cas ; on se cale sur
+            * le petit, dans la limite de l'anisotropie que la carte porte,
+            * qui est ce que le filtrage sait rattraper.
+            *
+            * Consequence assumee : la lisiere entre deux matieres, dont la
+            * dentelure est decoupee dans ce grain, se redessine plus fine
+            * quand on s'approche. Elle reste au meme endroit au metre pres —
+            * c'est edgeWarp qui la place, et lui lit la carte a une periode
+            * fixe, sans quoi une parcelle changerait de forme avec le regard.
+            *
+            * Bornes : hors de [-2, 6] echelons, soit 1,5 m a 384 m de
+            * periode, on retombe sur une periode fixe. En haut c'est du sol
+            * lointain, ou le grain s'efface de toute facon ; en bas c'est le
+            * nez colle au sol, ou l'agrandir encore ne montrerait que du
+            * flou d'interpolation.
+            */
+           vec3 grainAt(vec2 world) {
+             vec2 fw = fwidth(world);
+             float span = max(max(fw.x, fw.y), 1e-6);
+             float px = max(min(fw.x, fw.y), span / ${GRAIN_ANISOTROPY}.0);
+             float level = clamp(
+               log2(px * uGrainPixels * ${GRAIN_TEXELS}.0 / uGrainScale), -2.0, 6.0
+             );
+             float rung = floor(level);
+             vec2 uv = world / (uGrainScale * exp2(rung));
+             return mix(
+               texture2D(uGrainMap, uv).rgb,
+               texture2D(uGrainMap, uv * 0.5).rgb,
+               level - rung
+             );
            }
 
            /*
@@ -536,10 +625,11 @@ export class TerrainMaterialFactory {
              // reste a voir sur un sol lointain.
              float macro = texture2D(uMacroMap, vScenePos.xz / uMacro.x).r;
 
-             // Le grain, en une lecture : trois champs independants. Il ne
-             // porte aucune couleur — l'albedo la porte seul — il module la
-             // luminosite et incline la normale.
-             vec3 grain = texture2D(uGrainMap, vScenePos.xz / uGrainScale).rgb;
+             // Le grain : trois champs independants, a la periode que
+             // l'ecran demande (voir grainAt). Il ne porte aucune couleur —
+             // l'albedo la porte seul — il module la luminosite, incline la
+             // normale, et decoupe la dentelure des lisieres.
+             vec3 grain = grainAt(vScenePos.xz);
 
              // La culture : un second axe, qui remplace la couleur de la terre
              // labouree la ou il est peint. Lu au plus proche, d'ou l'arrondi

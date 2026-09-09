@@ -30,19 +30,29 @@ export const TERRAIN_LOOK = {
   detailNear: 60,
   detailFar: 420,
   /**
-   * Période du grain du sol, en mètres.
+   * Finesse du grain du sol, en **pixels d'écran par texel**.
    *
-   * Une seule, là où il y en avait trois : elles ne différaient que pour que
-   * les trois textures de matière ne se répètent pas ensemble, et il n'y a
-   * plus qu'un relevé (`createGrainCanvas`). Six mètres pour 512 pixels font
-   * 1,2 cm par texel — la finesse qu'avait l'herbe à 2,6 m sur 256 pixels,
-   * avec une période de répétition plus de deux fois plus longue.
+   * C'est le réglage à toucher pour rendre un sol plus ou moins granuleux, et
+   * une période en mètres ne pouvait pas jouer ce rôle : elle donne un grain
+   * juste à une seule distance. Trop grosse au ras du sol, elle laisse voir la
+   * trame de la carte ; à dix mètres le mip l'a déjà lissée et la route
+   * redevient un plastique. En pixels d'écran, la même finesse tient à toutes
+   * les distances — trois pixels de côté, c'est du bitume vu de la hauteur
+   * d'un homme.
    *
-   * C'est le réglage de ce chantier qui se juge à l'œil, et le seul : si la
-   * trame de six mètres se lit au premier plan sous une lumière rasante, il
-   * faut soit l'agrandir (le grain grossit d'autant), soit remettre un relevé
-   * anti-répétition — mais sur cette seule carte, donc deux lectures et non
-   * plus six.
+   * Monter la valeur grossit le grain (et coûte moins cher en filtrage) ;
+   * descendre sous ~2 le fait crépiter, l'échantillonnage n'ayant plus de quoi
+   * le tenir.
+   */
+  grainPixels: 3,
+  /**
+   * Ancrage de l'échelle du grain, en mètres.
+   *
+   * Ce n'est plus la finesse du grain — `grainPixels` la porte — mais le
+   * barreau zéro de l'échelle de périodes que `grainAt` gravit par facteurs de
+   * deux : 1,5 m, 3 m, 6 m, 12 m… Y toucher décale tous les barreaux d'un
+   * coup, sans rien changer à la finesse vue ; c'est un réglage de phase, pas
+   * d'aspect. Six mètres pour 512 texels font 1,2 cm au barreau zéro.
    */
   grainScaleM: 6,
   /**

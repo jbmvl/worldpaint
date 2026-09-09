@@ -10876,13 +10876,32 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
     'les trois textures de matière ont fusionné en une carte de grain'
   );
 
-  // Deux lectures : le grain, et la frange — qui prend deux canaux d'un coup
-  // au lieu de deux relevés décalés du même bruit gris.
+  // Trois lectures : deux barreaux de grain qu'on fond l'un dans l'autre, et
+  // la frange — qui prend deux canaux d'un coup au lieu de deux relevés
+  // décalés du même bruit gris.
   assert.equal(
     (source.match(/texture2D\(uGrainMap/g) || []).length,
-    2,
-    'le grain et la frange, pas une de plus'
+    3,
+    'deux barreaux de grain et la frange, pas une de plus'
   );
+
+  // Le grain se cale sur l'écran : c'est `fwidth` qui décide de la période,
+  // pas une constante en mètres. Sans ça il n'a la bonne finesse qu'à une
+  // seule distance.
+  assert.match(source, /vec2 fw = fwidth\(world\);/);
+  assert.match(source, /vec3 grain = grainAt\(vScenePos\.xz\);/);
+
+  // Les barreaux sont espacés d'un facteur deux et on fond entre deux
+  // voisins : dans un barreau la période est constante en mètres, donc le
+  // grain reste accroché au sol. Une période continue le ferait glisser.
+  assert.match(source, /float rung = floor\(level\);/);
+  assert.match(source, /vec2 uv = world \/ \(uGrainScale \* exp2\(rung\)\);/);
+  assert.match(source, /texture2D\(uGrainMap, uv \* 0\.5\)\.rgb,\s*level - rung/);
+
+  // La frange, elle, garde une période fixe : elle place les limites de
+  // parcelles, et une limite qui bougerait avec la distance de l'observateur
+  // ferait respirer la forme d'un champ quand on marche vers lui.
+  assert.match(source, /texture2D\(uGrainMap, world \/ uEdgeWarp\.y\)/);
   // Chaque matière prend son champ de grain dans la table, par un sélecteur :
   // un grain commun serait un facteur commun, qui s'annule à la normalisation
   // de l'interpénétration, et la lisière retomberait sur un fondu linéaire.
@@ -10894,6 +10913,23 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   assert.match(source, /vec3 modulation = vec3\(texMod\) \* \(0\.7 \+ noise \* 0\.6\);/);
 
   assert.equal(shader.uniforms.uGrainScale.value, defaultTheme.terrain.grainScaleM);
+  assert.equal(shader.uniforms.uGrainPixels.value, defaultTheme.terrain.grainPixels);
+
+  // Le shader convertit des pixels d'écran en mètres, et pour ça il lui faut
+  // le côté du relevé en texels, écrit en dur dans sa source. S'il s'écartait
+  // de la vraie taille de la carte, le grain aurait partout la mauvaise
+  // finesse — sans que rien ne le signale.
+  const texels = Number(
+    source.match(/log2\(px \* uGrainPixels \* (\d+)\.0 \/ uGrainScale\)/)[1]
+  );
+  assert.equal(texels, factory.grainTexture.image.width);
+
+  // Le shader n'est compilé par personne ici : rien ne rattrape une parenthèse
+  // ou une accolade perdue en éditant le gabarit, et l'erreur ne se verrait
+  // qu'au premier rendu. Le compte, au moins, doit tomber juste.
+  const count = (sign) => source.split(sign).length - 1;
+  assert.equal(count('('), count(')'), 'parenthèses équilibrées');
+  assert.equal(count('{'), count('}'), 'accolades équilibrées');
   assert.equal(factory.textures.length, 4, 'détail, macro, grain, rides');
 
   // Une matière = une couleur : le tableau d'albédos a exactement une entrée
