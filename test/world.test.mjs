@@ -50,6 +50,7 @@ import {
   ROAD_DEBUG_COLORS,
 } from '../src/inspect/roadDebug.js';
 import {
+  branchSection,
   branchYields,
   junctionArea,
   junctionBoundaryAt,
@@ -5365,6 +5366,29 @@ test('un nœud de degré trois est publié comme carrefour', () => {
   assert.equal(junction.branches.length, 3);
 });
 
+test('une branche publie la chaussée telle qu’elle part, et sa direction sur une longueur de rue', () => {
+  // La tuile pose souvent son premier sommet à quelques mètres du nœud, et la
+  // route tourne juste après : la direction de cette arête-là ne dit pas où la
+  // branche s'en va.
+  const { junctions } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: [{ x: 0, z: 0 }, { x: 200, z: 0 }] },
+    {
+      profile: 'minor',
+      halfWidth: 2.5,
+      points: [{ x: 100, z: 0 }, { x: 100, z: 2 }, { x: 104, z: 8 }, { x: 108, z: 20 }],
+    },
+  ]);
+
+  const branch = junctions[0].branches.find((b) => b.profile === 'minor');
+  assert.ok(branch.x > 0.3, 'la direction tient compte du coude, pas seulement du premier sommet');
+  close(Math.hypot(branch.x, branch.z), 1, 1e-9, 'et elle reste unitaire');
+
+  close(branch.path[0].x, 100, 1e-6, 'la polyligne part du nœud');
+  close(branch.path[0].z, 0, 1e-6);
+  assert.ok(branch.path.length >= 3, 'et elle porte le coude');
+  close(branch.path[branch.path.length - 1].z, 20, 1e-6, 'suivie jusqu’au bout de la branche');
+});
+
 test('une desserte qui bute sur une traversante sans sommet commun est un carrefour', () => {
   // Le cas le plus fréquent, et celui que le graphe seul ne voyait pas : la
   // traversante est simplifiée (le sommet du carrefour y est aligné, donc
@@ -5893,6 +5917,110 @@ test('un angle de rue est un arc, et il ajoute de la chaussée au lieu d’en re
   // l'enveloppe : le coin doit donc être **dans** la chaussée du carrefour.
   assert.ok(pointInOutline(area.outline, 2.5, 4.25), 'le coin franc est couvert');
   assert.ok(!pointInOutline(area.outline, 4.5, 6.25), 'mais pas le champ derrière');
+});
+
+// --- Une branche qui oblique avant la fin du carrefour -----------------------
+
+/** Une branche qui part vers le sud puis tourne franchement à l'est. */
+const bendingPath = () => [
+  { x: 0, z: 0 },
+  { x: 0, z: 4 },
+  { x: 3, z: 7 },
+  { x: 8, z: 9 },
+];
+
+test('la section d’une branche est prise sur la chaussée, pas sur son rayon', () => {
+  const branch = { ...branchAt(Math.PI / 2, 2.5, 'minor'), path: bendingPath() };
+  const section = branchSection({ x: 0, z: 0 }, branch, 6);
+
+  // Six mètres de profondeur le long du rayon (le sud), c'est le sommet
+  // (2 ; 6) de la polyligne — et non (0 ; 6), où le rayon seul l'aurait mise.
+  close(section.centre.x, 2, 1e-9, 'la bouche a suivi la chaussée');
+  close(section.centre.z, 6, 1e-9, 'sans reculer ni avancer le long du rayon');
+  close(section.direction.x, Math.SQRT1_2, 1e-9, 'et elle prend la direction du coude');
+  close(section.direction.z, Math.SQRT1_2, 1e-9);
+});
+
+test('sans polyligne, une branche reste son rayon', () => {
+  const section = branchSection({ x: 0, z: 0 }, branchAt(Math.PI / 2, 2.5, 'minor'), 6);
+  close(section.centre.x, 0, 1e-9);
+  close(section.centre.z, 6, 1e-9);
+  close(section.direction.z, 1, 1e-9);
+});
+
+test('une polyligne trop courte se prolonge sur sa dernière direction', () => {
+  // Deux carrefours proches : la branche s'arrête avant la profondeur voulue.
+  const branch = { ...branchAt(Math.PI / 2, 2.5, 'minor'), path: [{ x: 0, z: 0 }, { x: 0, z: 3 }] };
+  const section = branchSection({ x: 0, z: 0 }, branch, 6);
+  close(section.centre.z, 6, 1e-9, 'la profondeur demandée est tenue');
+});
+
+test('la bouche d’une branche coudée tombe sur la chaussée, et le contour avec elle', () => {
+  // Le défaut : la couture couvre une dizaine de mètres, et une route oblique
+  // bien avant d'en sortir. Posée sur le rayon, sa bouche se retrouvait à
+  // plusieurs mètres à côté du ruban — d'où la fente d'un côté, la dalle
+  // débordant sur le pré de l'autre.
+  const path = bendingPath();
+  const tee = {
+    x: 0,
+    z: 0,
+    degree: 3,
+    level: 0,
+    halfWidth: 4.25,
+    profile: 'major',
+    branches: [
+      branchAt(0, 4.25),
+      branchAt(Math.PI, 4.25),
+      { ...branchAt(Math.PI / 2, 2.5, 'minor'), path },
+    ],
+  };
+
+  const area = junctionArea(tee);
+  const mouth = area.mouths.find((m) => m.profile === 'minor');
+  const straight = junctionArea({ ...tee, branches: tee.branches.map(({ path: _, ...b }) => b) });
+  const reference = straight.mouths.find((m) => m.profile === 'minor');
+
+  close(mouth.distance, reference.distance, 1e-9, 'la profondeur ne change pas');
+  assert.ok(
+    Math.hypot(mouth.centre.x - reference.centre.x, mouth.centre.z - reference.centre.z) > 3,
+    'mais la bouche s’est déplacée en travers, avec la chaussée'
+  );
+
+  // Sur la polyligne, à la profondeur de la bouche : c'est là que le ruban
+  // s'arrête, et c'est là que le contour doit passer.
+  const along = (depth) => {
+    let travelled = 0;
+    for (let i = 1; i < path.length; i++) {
+      const step = Math.hypot(path[i].x - path[i - 1].x, path[i].z - path[i - 1].z);
+      if (travelled + step >= depth) {
+        const k = (depth - travelled) / step;
+        return {
+          x: path[i - 1].x + (path[i].x - path[i - 1].x) * k,
+          z: path[i - 1].z + (path[i].z - path[i - 1].z) * k,
+        };
+      }
+      travelled += step;
+    }
+    return path[path.length - 1];
+  };
+  let onPath = Infinity;
+  for (let i = 1; i < path.length; i++) {
+    const a = path[i - 1];
+    const b = path[i];
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const k = Math.min(
+      1,
+      Math.max(0, ((mouth.centre.x - a.x) * dx + (mouth.centre.z - a.z) * dz) / (dx * dx + dz * dz))
+    );
+    onPath = Math.min(onPath, Math.hypot(mouth.centre.x - a.x - dx * k, mouth.centre.z - a.z - dz * k));
+  }
+  assert.ok(onPath < 1e-9, 'la bouche est posée sur l’axe de la chaussée');
+
+  const before = along(6);
+  const after = along(12);
+  assert.ok(pointInOutline(area.outline, before.x, before.z), 'la chaussée est dans le carrefour avant');
+  assert.ok(!pointInOutline(area.outline, after.x, after.z), 'et dehors après');
 });
 
 test('une route droite garde sa rive droite : pas d’arc entre deux branches opposées', () => {

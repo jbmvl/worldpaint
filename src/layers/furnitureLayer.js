@@ -1970,10 +1970,13 @@ export class FurnitureLayer {
         if (!branchYields(area, mouth.halfWidth)) continue;
 
         // À hauteur de la ligne d'effet : la traversée d'abord, la ligne
-        // ensuite, le panneau avec elle (voir `roadMarkings`).
-        const back = mouth.distance + MOUTH_CROSSING_M + MARKING_BAR_M / 2;
-        const px = area.x + mouth.direction.x * back;
-        const pz = area.z + mouth.direction.z * back;
+        // ensuite, le panneau avec elle (voir `roadMarkings`). Mesuré **depuis
+        // la bouche**, sur la direction que la chaussée y suit : c'est là que
+        // le ruban reprend, et une branche qui oblique emporte son panneau
+        // avec elle.
+        const back = MOUTH_CROSSING_M + MARKING_BAR_M / 2;
+        const px = mouth.centre.x + mouth.direction.x * back;
+        const pz = mouth.centre.z + mouth.direction.z * back;
         // Le conducteur arrive **vers** le carrefour : sa marche est l'inverse
         // de la direction sortante de la bouche.
         const tx = -mouth.direction.x;

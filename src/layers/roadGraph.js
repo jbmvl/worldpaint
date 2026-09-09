@@ -35,6 +35,14 @@
  * construisait la surface du carrefour. Elle se construit maintenant à partir
  * des branches, et les chaînes ressortent d'ici entières.
  *
+ * Un carrefour est publié avec, pour chaque branche, sa direction sortante
+ * **et sa polyligne** sur quelques dizaines de mètres. La direction se mesure
+ * à la corde sur une longueur de rue et non sur la première arête : la tuile
+ * pose souvent son premier sommet à quelques centimètres du nœud, où sa
+ * quantification pèse plus lourd que le tracé. La polyligne, elle, est ce qui
+ * permet à `roadJunctions` de poser ses bouches sur la chaussée telle qu'elle
+ * part, et non sur un rayon dont elle s'écarte dès les premiers mètres.
+ *
  * Le mobilier espacé (bornes, lampadaires) se compte depuis le dernier nœud
  * d'ancrage rencontré (carrefour, cul-de-sac, changement de classe), pas
  * depuis le début de la chaîne : ce bout-là bouge avec le jeu de tuiles chargées.
@@ -709,6 +717,95 @@ function assembleChains(chains, partner) {
 }
 
 /**
+ * Longueur sur laquelle on suit une branche au-delà du nœud, en mètres. Elle
+ * couvre largement la profondeur qu'un carrefour peut prendre le long d'une
+ * branche (`roadJunctions`, bouche comprise) : au-delà, plus personne ne lit
+ * cette polyligne.
+ */
+export const BRANCH_SIGHT_M = 26;
+
+/**
+ * Distance à laquelle se mesure la direction sortante d'une branche, en
+ * mètres.
+ *
+ * Ce n'est pas la direction de la **première arête**, et c'est le correctif :
+ * la tuile pose souvent son premier sommet à quelques centimètres du nœud, si
+ * bien que cette arête-là ne dit rien de l'endroit où la route s'en va — la
+ * quantification de la tuile y pèse autant que le tracé. La corde sur une
+ * longueur de rue, elle, le dit.
+ */
+export const BRANCH_HEADING_M = 8;
+
+/**
+ * La branche telle qu'elle part vraiment : la polyligne depuis le nœud, sur
+ * `sight` mètres au plus.
+ *
+ * On la suit tant qu'elle n'a pas le choix — un nœud de degré deux du même
+ * profil n'est qu'un sommet de la ligne. Au premier nœud qui en a un
+ * (carrefour, bout, changement de classe), on s'arrête : ce qui est au-delà
+ * n'est plus cette branche.
+ *
+ * @returns {Array<{x:number,z:number}>} du nœud vers l'extérieur, nœud compris.
+ */
+function branchPath({ edges, adjacency, degree }, nodes, node, first, rank, sight) {
+  const points = [{ x: nodes.xs[node], z: nodes.zs[node] }];
+  const visited = new Set([node]);
+  let previous = node;
+  let current = first;
+  let travelled = 0;
+
+  for (;;) {
+    travelled += Math.hypot(
+      nodes.xs[current] - nodes.xs[previous],
+      nodes.zs[current] - nodes.zs[previous]
+    );
+    points.push({ x: nodes.xs[current], z: nodes.zs[current] });
+    if (travelled >= sight || visited.has(current)) break;
+    visited.add(current);
+    if ((degree.get(current) || 0) !== 2) break;
+
+    const candidates = adjacency.get(adjacencyKey(current, rank));
+    if (!candidates) break;
+    let next = -1;
+    for (const index of candidates) {
+      const edge = edges[index];
+      const other = edge.a === current ? edge.b : edge.a;
+      if (other === previous || other === current) continue;
+      // Deux continuations possibles : il n'y a plus de branche unique à
+      // suivre, et deviner laquelle rendrait la géométrie dépendante de
+      // l'ordre de lecture des arêtes.
+      if (next >= 0) return points;
+      next = other;
+    }
+    if (next < 0) break;
+    previous = current;
+    current = next;
+  }
+
+  return points;
+}
+
+/**
+ * Point d'une polyligne à une distance parcourue donnée, ou son dernier point
+ * si elle s'arrête avant. Fonction pure.
+ */
+function pointAlong(points, distance) {
+  let travelled = 0;
+  for (let i = 1; i < points.length; i++) {
+    const step = Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z);
+    if (travelled + step >= distance && step > 1e-9) {
+      const k = (distance - travelled) / step;
+      return {
+        x: points[i - 1].x + (points[i].x - points[i - 1].x) * k,
+        z: points[i - 1].z + (points[i].z - points[i - 1].z) * k,
+      };
+    }
+    travelled += step;
+  }
+  return points[points.length - 1];
+}
+
+/**
  * Relève les carrefours du graphe : les nœuds où plus de deux arêtes se
  * rejoignent (degré deux = simple changement de classe, pas un carrefour).
  * Ne voit pas les chaussées qui se croisent sans partager de nœud (un pont) —
@@ -718,20 +815,32 @@ function assembleChains(chains, partner) {
  * supérieur n'en produit plus du tout, même quand ses deux chaussées se
  * frôlent à moins d'un mètre : il n'y a pas de rencontre à un croisement XY.
  *
+ * Une branche est publiée avec sa direction sortante **et sa polyligne**
+ * (`path`). Les deux, parce qu'une branche n'est pas un rayon : elle oblique,
+ * et souvent dès les premiers mètres. Le carrefour se construit sur les rayons
+ * — c'est ce qui rend ses coins calculables — mais il pose ses bouches sur la
+ * polyligne, là où la chaussée est vraiment (`roadJunctions.branchSection`).
+ *
  * @returns {Array<{x:number, z:number, degree:number, level:number,
  *          halfWidth:number, profile:string, branches:Array<{x:number,
- *          z:number, halfWidth:number, profile:string}>}>}
+ *          z:number, halfWidth:number, profile:string,
+ *          path:Array<{x:number,z:number}>}>}>}
  *          Carrefours, direction sortante unitaire par branche. `halfWidth` et
  *          `profile` sont ceux de la branche dominante — la plus large.
  */
-function collectJunctions({ edges, degree }, nodes) {
+function collectJunctions(graph, nodes, { sight = BRANCH_SIGHT_M, headingAt = BRANCH_HEADING_M } = {}) {
+  const { edges, degree } = graph;
   const byNode = new Map();
 
   for (const edge of edges) {
     for (const node of [edge.a, edge.b]) {
       if ((degree.get(node) || 0) < 3) continue;
       const other = node === edge.a ? edge.b : edge.a;
-      const heading = direction(nodes.xs[node], nodes.zs[node], nodes.xs[other], nodes.zs[other]);
+      const path = branchPath(graph, nodes, node, other, edge.rank, sight);
+      // La corde sur une longueur de rue, et non la première arête : voir
+      // `BRANCH_HEADING_M`.
+      const ahead = pointAlong(path, headingAt);
+      const heading = direction(nodes.xs[node], nodes.zs[node], ahead.x, ahead.z);
       if (!heading) continue;
 
       let junction = byNode.get(node);
@@ -754,6 +863,7 @@ function collectJunctions({ edges, degree }, nodes) {
         z: heading.z,
         halfWidth: edge.halfWidth,
         profile: edge.profile,
+        path,
       });
       if (edge.halfWidth > junction.halfWidth) {
         junction.halfWidth = edge.halfWidth;
