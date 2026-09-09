@@ -44,6 +44,29 @@
  * convexe par construction en dehors des arcs, et il n'y a plus un seul ruban
  * qui en recouvre un autre.
  *
+ * ## Une branche n'est pas un rayon
+ *
+ * Un carrefour couvre une dizaine de mètres le long de chaque branche — bien
+ * davantage quand deux branches se quittent sous un angle fermé, parce que
+ * leurs rives ne se coupent que loin. Or une route oblique, et souvent bien
+ * avant d'en sortir. Construite sur le seul rayon sortant, sa bouche se posait
+ * alors à plusieurs mètres à côté de son ruban : une fente d'un côté, la dalle
+ * débordant sur le pré de l'autre, et la cote de la bouche relevée là où il n'y
+ * a pas de chaussée.
+ *
+ * Le partage est donc celui-ci, et il tient en une phrase : **les coins se
+ * calculent sur les rayons, les bouches se posent sur la chaussée**. Le rayon
+ * reste ce qui rend un coin calculable (deux droites se coupent, deux courbes
+ * demanderaient tout autre chose) et ce qui dit la profondeur du carrefour ;
+ * mais à cette profondeur, `branchSection` va chercher la branche là où elle
+ * est vraiment, sur la polyligne que le graphe publie avec elle
+ * (`roadGraph.branchPath`). L'écart ainsi rattrapé est **en travers** — la
+ * profondeur, elle, se mesure toujours le long du rayon —, ce qui garde la
+ * bouche au-delà des raccords d'angle et le contour sans repli. L'arc qui
+ * relie deux bouches glisse avec elles, en passant de l'écart de l'une à celui
+ * de l'autre comme il passe de leurs cotes : sans quoi la rive ferait un
+ * décroché à chaque coin de rue.
+ *
  * ## Qui cède le passage
  *
  * Un carrefour est aussi le seul endroit du modèle où une **priorité** a un
@@ -224,6 +247,70 @@ export function junctionCorner(node, a, b, { steps = JUNCTION_ARC_STEPS } = {}) 
 }
 
 /**
+ * La section de la chaussée d'une branche à la profondeur `depth` du
+ * carrefour : où elle passe, et la direction qu'elle y suit.
+ *
+ * La profondeur est comptée **le long du rayon** de la branche, et non le long
+ * de sa polyligne. C'est ce qui garde la bouche au-delà des raccords d'angle,
+ * qui sont eux construits sur les rayons : la bouche se déplace en travers
+ * pour rejoindre la chaussée, jamais en avant ou en arrière.
+ *
+ * Sans polyligne (`branch.path`), la branche est son rayon et rien n'a changé.
+ * Quand la polyligne s'arrête avant la profondeur voulue — une branche courte,
+ * entre deux carrefours proches —, on prolonge sa dernière direction : c'est
+ * la seule qu'on connaisse, et elle vaut mieux que le rayon d'origine.
+ *
+ * Fonction pure.
+ *
+ * @param {{x:number,z:number}} node Le nœud du carrefour.
+ * @param {{x:number,z:number,path?:Array<{x:number,z:number}>}} branch
+ * @param {number} depth Profondeur le long du rayon, en mètres.
+ * @returns {{centre:{x:number,z:number}, direction:{x:number,z:number}}}
+ */
+export function branchSection(node, branch, depth) {
+  const ray = { x: branch.x, z: branch.z };
+  const along = (p) => (p.x - node.x) * ray.x + (p.z - node.z) * ray.z;
+  const fallback = {
+    centre: { x: node.x + ray.x * depth, z: node.z + ray.z * depth },
+    direction: ray,
+  };
+
+  const path = branch.path;
+  if (!Array.isArray(path) || path.length < 2) return fallback;
+
+  const heading = (a, b) => {
+    const dx = b.x - a.x;
+    const dz = b.z - a.z;
+    const length = Math.hypot(dx, dz);
+    return length > 1e-9 ? { x: dx / length, z: dz / length } : null;
+  };
+
+  for (let i = 1; i < path.length; i++) {
+    const a = path[i - 1];
+    const b = path[i];
+    const da = along(a);
+    const db = along(b);
+    if (db < depth || db - da < 1e-9) continue;
+    const k = Math.min(1, Math.max(0, (depth - da) / (db - da)));
+    return {
+      centre: { x: a.x + (b.x - a.x) * k, z: a.z + (b.z - a.z) * k },
+      direction: heading(a, b) || ray,
+    };
+  }
+
+  // La polyligne finit en deçà : prolongement de sa dernière direction.
+  const last = path[path.length - 1];
+  const direction = heading(path[path.length - 2], last) || ray;
+  const reach = direction.x * ray.x + direction.z * ray.z;
+  if (!(reach > 1e-6)) return fallback;
+  const extra = (depth - along(last)) / reach;
+  return {
+    centre: { x: last.x + direction.x * extra, z: last.z + direction.z * extra },
+    direction,
+  };
+}
+
+/**
  * Construit l'aire d'un carrefour : le contour de sa chaussée, et la bouche de
  * chaque branche.
  *
@@ -267,18 +354,38 @@ export function junctionArea(junction, options = {}) {
     if (corner.tb > reach[next]) reach[next] = corner.tb;
   }
 
+  // Chaque bouche d'abord : sa profondeur, où la chaussée passe vraiment à
+  // cette profondeur, et de combien elle s'y est écartée du rayon (`drift`).
+  // Ce dernier écart n'est pas propre à la bouche — il vaut pour tout le
+  // morceau de carrefour que la branche commande, arc de raccordement compris,
+  // faute de quoi la rive ferait un décroché entre les deux.
+  const sections = new Array(count);
+  const drifts = new Array(count);
+  for (let i = 0; i < count; i++) {
+    const branch = branches[i];
+    // La bouche se pose au-delà du plus lointain de ses deux raccords : c'est
+    // la seule façon qu'elle ne coupe aucun des deux.
+    const t = Math.max(reach[i], branch.halfWidth * 0.5) + margin;
+    // La bouche est posée sur la chaussée telle qu'elle part, pas sur le rayon
+    // qui l'approche : une branche qui oblique avant la fin de l'aire y était
+    // sinon coupée en biais, à côté de son ruban.
+    const section = branchSection(node, branch, t);
+    sections[i] = { ...section, t };
+    drifts[i] = {
+      x: section.centre.x - (node.x + branch.x * t),
+      z: section.centre.z - (node.z + branch.z * t),
+    };
+  }
+
   const outline = [];
   const mouths = [];
   const corner = [];
 
   for (let i = 0; i < count; i++) {
     const branch = branches[i];
-    // La bouche se pose au-delà du plus lointain de ses deux raccords : c'est
-    // la seule façon qu'elle ne coupe aucun des deux.
-    const t = Math.max(reach[i], branch.halfWidth * 0.5) + margin;
-    const p = { x: branch.z, z: -branch.x };
+    const { t, centre, direction } = sections[i];
     const next = (i + 1) % count;
-    const centre = { x: node.x + branch.x * t, z: node.z + branch.z * t };
+    const p = { x: direction.z, z: -direction.x };
     // `from`, `to`, `blend` : de quelles branches ce sommet tient sa cote (voir
     // `outlineDeckAt`). Une bouche est celle de sa branche ; un sommet d'arc est
     // entre deux, et passe de l'une à l'autre en tournant.
@@ -306,6 +413,11 @@ export function junctionArea(junction, options = {}) {
       arc[k].from = i;
       arc[k].to = next;
       arc[k].blend = (k + 1) / (arc.length + 1);
+      // Le raccord glisse avec les deux chaussées qu'il relie, comme leurs
+      // bouches : il passe de l'écart de l'une à celui de l'autre en tournant,
+      // exactement comme il passe de leurs cotes.
+      arc[k].x += drifts[i].x + (drifts[next].x - drifts[i].x) * arc[k].blend;
+      arc[k].z += drifts[i].z + (drifts[next].z - drifts[i].z) * arc[k].blend;
       outline.push(arc[k]);
     }
 
@@ -318,7 +430,9 @@ export function junctionArea(junction, options = {}) {
     mouths.push({
       profile: branch.profile,
       halfWidth: branch.halfWidth,
-      direction: { x: branch.x, z: branch.z },
+      // Celle de la chaussée à la bouche, et non le rayon de la branche : ce
+      // qui se pose à une bouche se pose en travers de la route qui y arrive.
+      direction,
       distance: t,
       centre,
       left,
