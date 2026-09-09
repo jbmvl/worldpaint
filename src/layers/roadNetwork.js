@@ -880,7 +880,7 @@ export class RoadNetwork {
     // rivière — mais une cote sous laquelle le tablier n'a rien à faire.
     const floorAt = (x, z, span) => {
       const ground = sampleElevation(x, z);
-      if (groundClass?.coverAt(x, z) !== 'water') return ground;
+      if (groundClass?.surfaceAt(x, z) !== 'water') return ground;
       // La revanche suit la portée de l'ouvrage : c'est le seul indice
       // disponible sur ce qu'il franchit (voir `bridgeFreeboardFor`).
       return ground + bridgeFreeboardFor(span);

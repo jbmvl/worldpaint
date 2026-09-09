@@ -434,22 +434,23 @@ import {
   soilWashFor,
 } from '../src/core/climate.js';
 import {
-  groundClassFor,
+  surfaceFor,
+  surfaceId,
+  surfaceFromId,
+  surfaceFill,
   classPolygons,
-  CLASS_FILL,
   CLASS_SOURCE_LAYERS,
-  WATER_COVER_ID,
+  SURFACE_KINDS,
+  SURFACE_ID_STEP,
+  WATER_ID,
+  PAVEMENT_ID,
   waterwayStyleFor,
   isDrawableWater,
   GroundClassMap,
   CLASS_AREA_M,
+  CLASS_PIXELS,
   SETTLED_GRASS,
-  coverFor,
-  coverId,
-  coverFromId,
-  COVER_KINDS,
-  COVER_ID_STEP,
-  PAVEMENT_COVER_ID,
+  VEGETAL_SURFACES,
   WOOD_EDGE_REACH_M,
 } from '../src/terrain/groundClassMap.js';
 import {
@@ -1605,15 +1606,15 @@ test('les cours d’eau souterrains et intermittents ne sont pas dessinés', () 
   assert.equal(isDrawableWater({ class: 'lake', brunnel: 'tunnel' }), false);
 });
 
-test('l’eau est une couverture du sol, et la dernière de la liste', () => {
-  // L'ordre de `COVER_KINDS` est gravé : il est peint dans un canal et relu
-  // par le shader. L'eau y a été ajoutée en fin de liste pour cette raison.
-  assert.equal(COVER_KINDS[WATER_COVER_ID - 1], 'water', 'l’identifiant désigne bien l’eau');
-  assert.equal(WATER_COVER_ID, COVER_KINDS.length, 'ajoutée en fin de liste, sans décaler les autres');
+test('l’eau est une matière du sol, et la dernière de la liste', () => {
+  // L'ordre de `SURFACE_KINDS` est gravé : il est peint dans un canal et relu
+  // par le shader. L'eau est en fin de liste pour cette raison.
+  assert.equal(SURFACE_KINDS[WATER_ID - 1], 'water', 'l’identifiant désigne bien l’eau');
+  assert.equal(WATER_ID, SURFACE_KINDS.length, 'en fin de liste, sans décaler les autres');
 
   // L'identifiant doit tenir dans un octet une fois multiplié par son pas,
   // sinon le canal saturerait et l'eau se relirait comme une autre matière.
-  assert.ok(WATER_COVER_ID * COVER_ID_STEP <= 255, 'l’identifiant tient dans le canal');
+  assert.ok(WATER_ID * SURFACE_ID_STEP <= 255, 'l’identifiant tient dans le canal');
 
   // Et rien ne pousse dans l'eau.
   assert.equal(coverBushesFor('water'), 0, 'aucun buisson dans l’eau');
@@ -1904,78 +1905,191 @@ test('la grille climatique et son vocabulaire tiennent ensemble', () => {
 // --- Occupation du sol ------------------------------------------------------
 
 test('les couches vectorielles décrivent la matière du sol', () => {
-  // Les valeurs de `class` sont celles que filtrent les styles du projet.
-  assert.equal(groundClassFor('landcover', { class: 'wood' }), 'wood');
-  assert.equal(groundClassFor('landcover', { class: 'grass' }), 'grass');
-  assert.equal(groundClassFor('landcover', { class: 'wetland' }), 'grass');
-  assert.equal(groundClassFor('landcover', { class: 'farmland' }), 'farmland');
-  assert.equal(groundClassFor('landcover', { class: 'rock' }), 'bare');
-  assert.equal(groundClassFor('landcover', { subclass: 'glacier' }), 'bare');
+  // Une seule fonction, là où il en fallait deux : `groundClassFor` disait la
+  // matière grossière et `coverFor` la précisait quand elle savait, si bien
+  // qu'un `landcover.class = 'sand'` devait d'abord se déclarer « sol nu »
+  // pour ensuite se corriger en « sable ». Il dit « sable » du premier coup.
+  assert.equal(surfaceFor('landcover', { class: 'wood' }), 'wood');
+  assert.equal(surfaceFor('landcover', { class: 'grass' }), 'grass');
+  assert.equal(surfaceFor('landcover', { class: 'farmland' }), 'farmland');
+  assert.equal(surfaceFor('landcover', { class: 'wetland' }), 'wetland');
+  assert.equal(surfaceFor('landcover', { class: 'sand' }), 'sand');
+  assert.equal(surfaceFor('landcover', { class: 'rock' }), 'rock');
+  assert.equal(surfaceFor('landcover', { subclass: 'glacier' }), 'bare');
 
-  // Un quartier d’habitation n’est pas une surface minérale : c’est un
+  // Ce que les tuiles portent déjà : une lande, un maquis et une prairie sont
+  // trois `class: grass`, et c'est la sous-classe qui les sépare.
+  assert.equal(surfaceFor('landcover', { class: 'grass', subclass: 'heath' }), 'heath');
+  assert.equal(surfaceFor('landcover', { class: 'grass', subclass: 'scrub' }), 'scrub');
+  assert.equal(surfaceFor('landcover', { class: 'grass', subclass: 'fell' }), 'alpine');
+  assert.equal(surfaceFor('landcover', { class: 'grass', subclass: 'tundra' }), 'alpine');
+  assert.equal(surfaceFor('landcover', { class: 'wetland', subclass: 'bog' }), 'wetland');
+  assert.equal(surfaceFor('landcover', { class: 'sand', subclass: 'dune' }), 'sand');
+  // Un éboulis n'est pas une dalle : l'un est une pente qui bouge, l'autre un plateau.
+  assert.equal(surfaceFor('landcover', { class: 'rock', subclass: 'scree' }), 'scree');
+  assert.equal(surfaceFor('landcover', { class: 'rock', subclass: 'bare_rock' }), 'rock');
+  // Une prairie ordinaire reste de l'herbe : la sous-classe ne dit rien de plus.
+  assert.equal(surfaceFor('landcover', { class: 'grass', subclass: 'meadow' }), 'grass');
+
+  // Un quartier d'habitation n'est pas une surface minérale : c'est un
   // périmètre, majoritairement vert, dont le minéral se compose le long des
-  // rues. Une zone d’activité, elle, l’est réellement.
-  assert.equal(groundClassFor('landuse', { class: 'residential' }), 'settled');
-  assert.equal(groundClassFor('landuse', { class: 'suburb' }), 'settled');
-  assert.equal(groundClassFor('landuse', { class: 'industrial' }), 'bare');
-  assert.equal(groundClassFor('landuse', { class: 'retail' }), 'bare');
-  assert.equal(groundClassFor('landuse', { class: 'quarry' }), 'bare');
-  assert.equal(groundClassFor('landuse', { class: 'cemetery' }), 'grass');
-  // La couche `park` ne peint plus rien, et le nom est le piège : au schéma
+  // rues. Une zone d'activité, elle, l'est réellement.
+  assert.equal(surfaceFor('landuse', { class: 'residential' }), 'settled');
+  assert.equal(surfaceFor('landuse', { class: 'suburb' }), 'settled');
+  assert.equal(surfaceFor('landuse', { class: 'industrial' }), 'bare');
+  assert.equal(surfaceFor('landuse', { class: 'retail' }), 'bare');
+  assert.equal(surfaceFor('landuse', { class: 'quarry' }), 'bare');
+  assert.equal(surfaceFor('landuse', { class: 'cemetery' }), 'grass');
+
+  // La couche `park` ne peint rien, et le nom est le piège : au schéma
   // OpenMapTiles elle ne porte aucun parc de ville mais des **périmètres de
   // protection** — `boundary=protected_area`, `national_park`,
-  // `leisure=nature_reserve`. Elle était peinte en herbe, en dernier, par-dessus
-  // tout le reste : un cordon dunaire classé, un marais protégé, une forêt de
-  // parc régional finissaient en prairie, leur couverture effacée avec. Le parc
-  // de ville, lui, arrive par `landcover` en classe `grass`.
-  assert.equal(groundClassFor('park', { class: 'national_park' }), null);
-  assert.equal(groundClassFor('park', { class: 'protected_area' }), null);
-  assert.equal(groundClassFor('park', { class: 'nature_reserve' }), null);
-  assert.equal(groundClassFor('landcover', { class: 'grass', subclass: 'park' }), 'grass');
+  // `leisure=nature_reserve`. Le parc de ville arrive par `landcover`, en
+  // classe `grass`.
+  assert.equal(surfaceFor('park', { class: 'national_park' }), null);
+  assert.equal(surfaceFor('park', { class: 'protected_area' }), null);
+  assert.equal(surfaceFor('park', { class: 'nature_reserve' }), null);
+  assert.equal(surfaceFor('landcover', { class: 'grass', subclass: 'park' }), 'grass');
   assert.ok(!CLASS_SOURCE_LAYERS.includes('park'), 'la couche n’est plus parcourue du tout');
 
   // Ce qui ne décrit pas une surface ne doit rien peindre du tout.
-  assert.equal(groundClassFor('landuse', { class: 'school' }), null);
-  assert.equal(groundClassFor('landcover', { class: 'unknown' }), null);
-  assert.equal(groundClassFor('transportation', { class: 'motorway' }), null);
-  assert.equal(groundClassFor('landcover', {}), null);
+  assert.equal(surfaceFor('landuse', { class: 'school' }), null);
+  assert.equal(surfaceFor('landcover', { class: 'unknown' }), null);
+  assert.equal(surfaceFor('transportation', { class: 'motorway' }), null);
+  assert.equal(surfaceFor('landcover', {}), null);
 });
 
-test('la sous-classe dit la sorte de sol, pas seulement sa matière', () => {
-  // Ce que les tuiles portent déjà et qui était jeté : une lande, un maquis et
-  // une prairie sont trois `class: grass`, et c’est la sous-classe qui les
-  // sépare.
-  assert.equal(coverFor('landcover', { class: 'grass', subclass: 'heath' }), 'heath');
-  assert.equal(coverFor('landcover', { class: 'grass', subclass: 'scrub' }), 'scrub');
-  assert.equal(coverFor('landcover', { class: 'grass', subclass: 'fell' }), 'alpine');
-  assert.equal(coverFor('landcover', { class: 'wetland', subclass: 'bog' }), 'wetland');
-  assert.equal(coverFor('landcover', { class: 'sand', subclass: 'dune' }), 'sand');
-  // Un éboulis n’est pas une dalle : l’un est une pente qui bouge, l’autre un
-  // plateau.
-  assert.equal(coverFor('landcover', { class: 'rock', subclass: 'scree' }), 'scree');
-  assert.equal(coverFor('landcover', { class: 'rock', subclass: 'bare_rock' }), 'rock');
-
-  // Une prairie ordinaire n’est pas une couverture : c’est le cas par défaut,
-  // et rien ne doit être peint pour elle.
-  assert.equal(coverFor('landcover', { class: 'grass', subclass: 'meadow' }), null);
-  assert.equal(coverFor('landcover', { class: 'farmland' }), null);
-  // Ni `landuse` ni `park` ne décrivent une matière : ils disent l’usage.
-  assert.equal(coverFor('landuse', { class: 'residential' }), null);
-  assert.equal(coverFor('park', { class: 'public_park' }), null);
-});
-
-test('l’identifiant de couverture survit à l’aller-retour dans le canal vert', () => {
-  // Même contrat que les cultures : l’identifiant est peint dans une image et
-  // relu par le shader comme par les couches. Un décalage repeint une lande en
-  // éboulis, en silence.
-  for (const kind of COVER_KINDS) {
-    assert.equal(coverFromId(coverId(kind) * COVER_ID_STEP), kind, kind);
+test('l’identifiant de matière survit à l’aller-retour dans le canal rouge', () => {
+  // L'identifiant est peint dans une image et relu par le shader comme par les
+  // couches. Un décalage repeint une lande en éboulis, en silence.
+  for (const kind of SURFACE_KINDS) {
+    assert.equal(surfaceFromId(surfaceId(kind) * SURFACE_ID_STEP), kind, kind);
   }
-  assert.equal(coverId(null), 0, 'zéro reste « aucune couverture »');
-  assert.equal(coverFromId(0), null);
-  // Le pas doit tenir toutes les couvertures dans un octet, sinon la dernière
-  // déborde et se relit comme rien du tout.
-  assert.ok(COVER_KINDS.length * COVER_ID_STEP <= 255, 'les identifiants tiennent dans le canal');
+  assert.equal(surfaceId(null), 0, 'zéro reste « la donnée se tait »');
+  assert.equal(surfaceFromId(0), null);
+
+  // Le pas doit tenir toutes les matières dans un octet, sinon la dernière
+  // déborde et se relit comme rien du tout. Et il doit rester de la place :
+  // pouvoir en ajouter sans rien réorganiser est le point de la fusion.
+  assert.ok(SURFACE_KINDS.length * SURFACE_ID_STEP <= 255, 'les identifiants tiennent dans le canal');
+  const room = Math.floor(255 / SURFACE_ID_STEP) - SURFACE_KINDS.length;
+  assert.ok(room >= 10, `il reste de la place pour ${room} matières, il en faut au moins dix`);
+});
+
+test('un remplissage porte la matière et sa culture, dans le même texel', () => {
+  // C'étaient deux tracés dans deux canevas, qui pouvaient diverger : une case
+  // portait une matière ici et une couverture sans rapport là.
+  assert.equal(surfaceFill('grass'), `rgba(${surfaceId('grass') * SURFACE_ID_STEP}, 0, 0, 1)`);
+  assert.match(surfaceFill('farmland', 3), /^rgba\(\d+, \d+, 0, 1\)$/);
+
+  // Peindre une matière efface la culture qui était dessous, gratuitement.
+  assert.ok(surfaceFill('wood').includes(', 0, 0, 1'), 'le canal des cultures repart à zéro');
+
+  // L'alpha est toujours plein : le fond est peint, pas effacé. Un canevas
+  // transparent ferait porter aux pixels de bord un alpha partiel, donc des
+  // canaux prémultipliés, donc un identifiant divisé — relu comme une matière
+  // sans rapport tout le long des lisières.
+  for (const kind of [...SURFACE_KINDS, null]) {
+    assert.ok(surfaceFill(kind).endsWith(', 1)'), `alpha plein pour ${kind}`);
+  }
+  assert.equal(surfaceFill(null), 'rgba(0, 0, 0, 1)', 'le fond porte l’identifiant zéro');
+});
+
+test('la table des matières décrit chaque matière, et répartit les champs de grain', () => {
+  const surfaces = defaultTheme.surfaces;
+
+  for (const kind of SURFACE_KINDS) {
+    const look = surfaces[kind];
+    assert.ok(look, `${kind} : une ligne dans la table`);
+    assert.equal(look.albedo?.length, 3, `${kind} : un albédo linéaire`);
+    assert.ok(
+      look.albedo.every((v) => v >= 0 && v <= 1),
+      `${kind} : l’albédo reste dans [0, 1]`
+    );
+    assert.ok([0, 1, 2].includes(look.grain), `${kind} : un champ de grain parmi trois`);
+  }
+
+  // La table ne décrit **que** des matières de la liste : une ligne orpheline
+  // est du réglage qui ne sert jamais, et qu'on croit pourtant régler.
+  for (const kind of Object.keys(surfaces)) {
+    assert.ok(SURFACE_KINDS.includes(kind), `${kind} : une matière qui existe`);
+  }
+
+  // Deux matières rangées côte à côte se touchent souvent dans le monde (c'est
+  // le critère de l'ordre) : elles doivent prendre deux champs de grain
+  // différents, sans quoi leur lisière perd l'interpénétration et retombe sur
+  // un fondu linéaire. L'eau est hors du mélange, son champ ne sert jamais.
+  for (let i = 1; i < SURFACE_KINDS.length; i++) {
+    const before = SURFACE_KINDS[i - 1];
+    const here = SURFACE_KINDS[i];
+    if (here === 'water' || before === 'water') continue;
+    assert.notEqual(
+      surfaces[before].grain,
+      surfaces[here].grain,
+      `${before} et ${here} se touchent : deux champs de grain distincts`
+    );
+  }
+
+  // Une seule matière assourdit le grain, et c'est la dalle du trottoir.
+  const muted = SURFACE_KINDS.filter((kind) => (surfaces[kind].grainKeep ?? 1) !== 1);
+  assert.deepEqual(muted, ['pavement'], 'une seule matière assourdit son grain');
+});
+
+test('la part d’une matière s’interpole, là où son identifiant ne le peut pas', () => {
+  // Un identifiant ne se mélange pas — entre le sable et l'eau il n'y a rien —
+  // mais l'appartenance à une matière, si. C'est ce que le filtrage linéaire
+  // de la carte de poids donnait gratuitement, et qu'il faut reconstruire
+  // depuis qu'il n'y a plus que des identifiants : sans ça une lisière de bois
+  // répondrait « bois » ou « pas bois » au texel de 2,7 m, et les semis
+  // s'aligneraient sur ce damier.
+  const data = new Uint8ClampedArray(CLASS_PIXELS * CLASS_PIXELS * 4);
+  const half = CLASS_PIXELS / 2;
+  for (let z = 0; z < CLASS_PIXELS; z++) {
+    for (let x = 0; x < CLASS_PIXELS; x++) {
+      const i = (z * CLASS_PIXELS + x) * 4;
+      data[i] = surfaceId(x < half ? 'wood' : 'grass') * SURFACE_ID_STEP;
+      data[i + 3] = 255;
+    }
+  }
+
+  const carte = Object.create(GroundClassMap.prototype);
+  Object.assign(carte, { _data: data, origin: { x: 0, y: 0 }, size: CLASS_AREA_M });
+  const perTexel = CLASS_AREA_M / CLASS_PIXELS;
+  const boundary = half * perTexel;
+  const share = (kind, x) => carte.shareOf(kind, x, CLASS_AREA_M / 2);
+
+  // Au cœur de chaque moitié, la réponse est franche.
+  assert.equal(share('wood', boundary - 50), 1, 'en plein bois');
+  assert.equal(share('wood', boundary + 50), 0, 'en plein champ');
+  assert.equal(share('grass', boundary + 50), 1);
+
+  // Sur la limite, elle ne l'est pas : c'est une rampe d'un texel, pas une
+  // marche. C'est exactement ce que le filtrage linéaire faisait.
+  // La limite tombe à mi-chemin des deux centres de texel : moitié-moitié.
+  const edge = share('wood', boundary);
+  assert.ok(Math.abs(edge - 0.5) < 1e-9, `au milieu de la rampe : ${edge}`);
+  const inside = share('wood', boundary - perTexel / 4);
+  assert.ok(inside > 0.5 && inside < 1, `un quart avant la limite : ${inside}`);
+
+  // Et la somme des parts vaut un partout où la carte dit quelque chose :
+  // sinon les albédos se mélangeraient à un poids total faux, et le sol
+  // s'assombrirait le long de chaque lisière.
+  for (const offset of [-40, -perTexel, -perTexel / 3, 0, perTexel / 3, perTexel, 40]) {
+    const total = share('wood', boundary + offset) + share('grass', boundary + offset);
+    assert.ok(Math.abs(total - 1) < 1e-9, `somme des parts à ${offset} m : ${total}`);
+  }
+
+  // `sampleAt` en dérive, et le lotissement y compte pour sa part d'herbe —
+  // ce qui était un poids peint dans la carte.
+  for (let x = 0; x < CLASS_PIXELS; x++) {
+    const i = ((half | 0) * CLASS_PIXELS + x) * 4;
+    data[i] = surfaceId('settled') * SURFACE_ID_STEP;
+  }
+  const lotissement = carte.sampleAt(CLASS_AREA_M / 2, (half + 0.5) * perTexel);
+  assert.ok(
+    Math.abs(lotissement.grass - SETTLED_GRASS) < 1e-9,
+    `part d’herbe d’un lotissement : ${lotissement.grass}`
+  );
 });
 
 test('la couverture règle l’herbe et le fourré, jamais leur présence', () => {
@@ -2042,7 +2156,8 @@ test('un sol de forêt reste vert : plus sombre qu’un pré, jamais un trou noi
   // que l'ombre qu'elle portait. La règle est maintenant écrite : un sous-bois
   // est une litière, donc plus sombre qu'une prairie, mais il en garde au moins
   // la moitié du vert.
-  const { woodAlbedo, grassAlbedo } = TERRAIN_LOOK;
+  const woodAlbedo = defaultTheme.surfaces.wood.albedo;
+  const grassAlbedo = defaultTheme.surfaces.grass.albedo;
   assert.ok(woodAlbedo[1] < grassAlbedo[1], 'un sous-bois reste plus sombre qu’un pré');
   assert.ok(
     woodAlbedo[1] >= grassAlbedo[1] * 0.5,
@@ -2060,13 +2175,11 @@ test('un sol de forêt reste vert : plus sombre qu’un pré, jamais un trou noi
 });
 
 test('la carte de classes sait où s’arrête un bois', () => {
-  // `woodEdgeAt` ne lit que `sampleAt` : on lui donne une carte de poche, un
-  // bois qui occupe le demi-plan x < 0.
+  // `woodEdgeAt` ne lit que `woodAt` et `hasDataAt` : on lui donne une carte de
+  // poche, un bois qui occupe le demi-plan x < 0.
   const carte = {
-    sampleAt(x) {
-      if (x < -400 || x > 400) return null; // hors carte : la donnée se tait
-      return { grass: 0, wood: x < 0 ? 1 : 0, farmland: 0, bare: 0 };
-    },
+    hasDataAt: (x) => x >= -400 && x <= 400,
+    woodAt: (x) => (x < 0 ? 1 : 0),
   };
   const edgeAt = (x, z) => GroundClassMap.prototype.woodEdgeAt.call(carte, x, z);
 
@@ -2080,16 +2193,17 @@ test('la carte de classes sait où s’arrête un bois', () => {
   // Un voisin dont la carte ne dit rien ne fait pas une lisière — sans quoi
   // tout le pourtour du carré couvert en serait une.
   const bord = {
-    sampleAt(x) {
-      if (x > 100) return null;
-      return { grass: 0, wood: 1, farmland: 0, bare: 0 };
-    },
+    hasDataAt: (x) => x <= 100,
+    woodAt: () => 1,
   };
   assert.equal(GroundClassMap.prototype.woodEdgeAt.call(bord, 95, 0), 0, 'le bord de carte n’est pas une lisière');
 
   // Une lisière molle (le bois s’éclaircit au lieu de s’arrêter) donne un
   // ourlet partiel, pas un tout ou rien.
-  const fondu = { sampleAt: (x) => ({ grass: 0, wood: Math.max(0, Math.min(1, 0.5 - x / 200)), farmland: 0, bare: 0 }) };
+  const fondu = {
+    hasDataAt: () => true,
+    woodAt: (x) => Math.max(0, Math.min(1, 0.5 - x / 200)),
+  };
   const doux = GroundClassMap.prototype.woodEdgeAt.call(fondu, 0, 0);
   assert.ok(doux > 0 && doux < 1, `lisière progressive : ${doux}`);
 });
@@ -2152,6 +2266,9 @@ function recordingCanvas() {
       Object.assign(ctx, stack.pop() || state);
     },
     clearRect() {},
+    fillRect() {
+      ops.push({ op: 'fillRect', style: ctx.fillStyle });
+    },
     fill() {
       ops.push({ op: 'fill', style: ctx.fillStyle, mode: ctx.globalCompositeOperation });
     },
@@ -2237,34 +2354,49 @@ test('un cours d’eau linéaire porte de l’eau, et son ourlet ne l’efface p
     else delete globalThis.Path2D;
   }
 
-  // Le second canevas est celui des cultures et des couvertures.
-  const crop = canvases[1].ops;
-  const water = `rgba(0, ${WATER_COVER_ID * COVER_ID_STEP}, 0, 1)`;
+  // Une seule carte, désormais : les deux canaux du même texel.
+  assert.equal(canvases.length, 1, 'une carte, pas deux');
+  const ops = canvases[0].ops;
 
-  const bed = crop.findIndex((o) => o.op === 'stroke' && o.style === water);
-  assert.ok(bed >= 0, 'le lit est peint en eau dans la carte des couvertures');
-  // Le fond du défaut : sous `destination-out`, la couleur de la source n'est
-  // pas lue — le trait effaçait au lieu de peindre, et aucun ruisseau, aucune
-  // rivière trop étroite pour être un polygone ne portait d'eau.
-  assert.equal(crop[bed].mode, 'source-over', 'le lit peint, il n’efface pas');
+  // Le fond est peint, pas effacé : identifiant zéro, alpha plein.
+  assert.equal(ops[0].op, 'fillRect', 'le fond est peint en premier');
+  assert.equal(ops[0].style, surfaceFill(null), 'et il porte l’identifiant zéro');
 
-  const hem = crop.findIndex((o) => o.op === 'stroke' && o.mode === 'destination-out');
-  assert.ok(hem >= 0, 'l’ourlet efface bien ce qui poussait sur le passage');
-  // L'ourlet est plus large que le lit : peint après, il reprendrait l'eau.
-  assert.ok(crop[hem].width > crop[bed].width, 'l’ourlet déborde le lit');
+  const strokes = ops.filter((o) => o.op === 'stroke');
+  const hem = strokes.findIndex((o) => o.style === surfaceFill('wood'));
+  const bed = strokes.findIndex((o) => o.style === surfaceFill('water'));
+
+  assert.ok(hem >= 0, 'l’ourlet de ripisylve est peint en bois');
+  assert.ok(bed >= 0, 'le lit est peint en eau');
   assert.ok(hem < bed, 'l’ourlet passe avant le lit, sans quoi il le rongerait');
+  assert.ok(strokes[hem].width > strokes[bed].width, 'l’ourlet déborde le lit');
+
+  // Deux traits, là où il en fallait cinq — dont un en `destination-out` pour
+  // effacer, dans l'autre carte, la culture que l'ourlet recouvrait. Peindre
+  // une matière efface désormais la culture d'un même geste : c'est le même
+  // texel, et le canal des cultures y repart à zéro.
+  assert.equal(strokes.length, 2, 'deux traits par cours d’eau, pas cinq');
+  assert.ok(
+    !ops.some((o) => o.mode === 'destination-out'),
+    'plus rien à effacer dans une seconde carte'
+  );
 });
 
-test('chaque matière a un canal distinct, et l’alpha porte la couverture', () => {
-  // L’encodage est le contrat entre ce module et le shader : R herbe, G bois,
-  // B culture, et « classé sol nu » = alpha plein avec les trois canaux à zéro.
+test('l’encodage : un identifiant de matière, un de culture, le même texel', () => {
+  // L'encodage est le contrat entre ce module et le shader. C'étaient deux
+  // cartes — quatre poids interpolés d'un côté, deux identifiants au plus
+  // proche de l'autre — et une case pouvait porter une matière ici et une
+  // couverture sans rapport là. Il n'y a plus qu'un texel à tenir juste.
   const seen = new Set();
-  for (const [kind, fill] of Object.entries(CLASS_FILL)) {
+  for (const kind of SURFACE_KINDS) {
+    const fill = surfaceFill(kind);
     assert.ok(/^rgba\(\d+, \d+, \d+, 1\)$/.test(fill), `${kind} : alpha plein`);
-    assert.ok(!seen.has(fill), `${kind} : couleur distincte`);
+    assert.ok(!seen.has(fill), `${kind} : identifiant distinct`);
     seen.add(fill);
   }
-  assert.equal(CLASS_FILL.bare, 'rgba(0, 0, 0, 1)', 'le sol nu est le complément');
+  // Zéro n'est aucune matière : c'est « la donnée se tait », et le shader y
+  // substitue le repli du thème.
+  assert.ok(!seen.has(surfaceFill(null)), 'le silence n’est pas une matière');
 });
 
 test('les deux formes de géométrie surfacique sont acceptées par la carte de classes', () => {
@@ -7038,24 +7170,35 @@ test('les cultures ont le même plancher de hauteur que l’herbe', () => {
 });
 
 test('une zone non classée reçoit le même repli que le terrain : de l’herbe', () => {
-  // Le shader de terrain peint le non-classé avec `unclassifiedWeights` — par
-  // défaut tout herbe. Avant ce correctif, `groundCover` recevait `null` de
-  // `sampleAt` et ne semait rien : sol vert, aucune touffe.
-  const allGrass = grassSampleFallback(null, [1, 0, 0, 0]);
+  // Le shader de terrain peint le non-classé avec `unclassified` — par défaut
+  // de l'herbe. Avant ce correctif, `groundCover` recevait `null` de `sampleAt`
+  // et ne semait rien : sol vert, aucune touffe. Les deux replis doivent rester
+  // le même, sinon la peinture du sol et les touffes se contredisent.
+  const allGrass = grassSampleFallback(null, 'grass');
   assert.equal(allGrass.grass, 1);
   assert.equal(allGrass.farmland, 0);
+  assert.equal(defaultTheme.terrain.unclassified, 'grass', 'le repli du thème est bien de l’herbe');
 
-  // Un thème qui déciderait un repli différent (davantage de bois, par
-  // exemple) doit se refléter ici aussi : ce n'est pas une constante figée.
-  const mixed = grassSampleFallback(null, [0.4, 0.3, 0.2, 0.1]);
-  assert.equal(mixed.grass, 0.4);
-  assert.equal(mixed.wood, 0.3);
-  assert.equal(mixed.farmland, 0.2);
-  assert.equal(mixed.bare, 0.1);
+  // C'était quatre poids, c'est un nom de matière : un thème qui déciderait un
+  // autre repli doit se refléter ici aussi.
+  assert.equal(grassSampleFallback(null, 'wood').wood, 1);
+  assert.equal(grassSampleFallback(null, 'farmland').farmland, 1);
+
+  // Une couverture végétale pousse comme de l'herbe — c'est sa ligne de
+  // `SURFACE_LOOK` qui dit ensuite de quelle taille et de quelle teinte.
+  for (const kind of VEGETAL_SURFACES) {
+    assert.equal(grassSampleFallback(null, kind).grass, 1, `${kind} porte de l’herbe`);
+  }
+  // Le minéral n'en porte pas.
+  for (const kind of ['bare', 'scree', 'rock', 'sand', 'pavement', 'water']) {
+    assert.equal(grassSampleFallback(null, kind).bare, 1, `${kind} ne porte rien`);
+  }
+  // Et un lotissement porte sa part, celle qu'il peignait dans la carte.
+  assert.equal(grassSampleFallback(null, 'settled').grass, SETTLED_GRASS);
 
   // Un échantillon réel n'est jamais remplacé par le repli.
   const real = { grass: 0.9, wood: 0, farmland: 0, bare: 0.1 };
-  assert.equal(grassSampleFallback(real, [1, 0, 0, 0]), real);
+  assert.equal(grassSampleFallback(real, 'grass'), real);
 });
 
 test('une vraie culture efface l’herbe générique, mais pas la lisière', () => {
@@ -9019,16 +9162,24 @@ test('un réseau dit jusqu’où il sait, ce qui n’est pas dire ce qu’il con
 // --- La voirie urbaine -------------------------------------------------------
 
 test('un quartier d’habitation porte de l’herbe, une zone d’activité non', () => {
-  // Le fond du problème : `residential` décrit un périmètre, pas un revêtement.
-  // Son remplissage est donc **partiel** — la seule matière qui le soit.
-  const settled = CLASS_FILL.settled.match(/rgba\((\d+), (\d+), (\d+), 1\)/);
-  assert.equal(Number(settled[1]), Math.round(SETTLED_GRASS * 255), 'part d’herbe dans le rouge');
-  assert.equal(Number(settled[2]), 0, 'pas de bois dans un lotissement');
-  assert.equal(Number(settled[3]), 0, 'ni de culture');
+  // `residential` décrit un périmètre, pas un revêtement : pelouses tondues et
+  // allées. C'était un remplissage **partiel** — deux tiers d'herbe peints dans
+  // un canal de poids, la seule matière qui le fût. C'est maintenant une
+  // matière comme les autres, et la part d'herbe n'est plus dans la carte mais
+  // dans la strate basse, qui est la seule à en avoir besoin.
+  assert.ok(SURFACE_KINDS.includes('settled'), 'le lotissement est une matière');
   assert.ok(SETTLED_GRASS > 0.5 && SETTLED_GRASS < 1, 'majoritairement vert, jamais un pré');
 
-  // Le sol nu reste le complément exact : c’est le contrat avec le shader.
-  assert.equal(CLASS_FILL.bare, 'rgba(0, 0, 0, 1)');
+  // Sa couleur est la moyenne exacte que le mélange rendait : la fusion ne
+  // devait pas déplacer une valeur artistique au passage.
+  const { grass, bare, settled } = defaultTheme.surfaces;
+  for (let i = 0; i < 3; i++) {
+    const expected = grass.albedo[i] * SETTLED_GRASS + bare.albedo[i] * (1 - SETTLED_GRASS);
+    assert.ok(
+      Math.abs(settled.albedo[i] - expected) < 0.002,
+      `canal ${i} : ${settled.albedo[i]} pour ${expected} attendu`
+    );
+  }
 });
 
 test('un périmètre habité ne suffit pas à faire une rue', () => {
@@ -9997,27 +10148,35 @@ test('le contour de l’eau se fond, sans que les identifiants cessent d’être
   // rate son ancrage ne casse rien, elle ne fait rien.
   const source = readFileSync('src/terrain/terrainMaterial.js', 'utf8');
 
-  // La part d'eau vient de l'interpolation du test sur quatre carreaux, et
-  // plus du seul carreau le plus proche — c'est ce qui dessinait un escalier.
-  // Elle est rendue par la lecture qui sert aussi les couvertures : les mêmes
-  // quatre relevés répondent aux deux questions.
-  assert.match(source, /surfaceAt\(classUv, coverAlbedo, coverShare, coverGrain, gWater\);/);
-  assert.match(source, /water = dot\(wet, weight\);/);
+  // Une seule carte, un seul appel : la couleur, le grain, ce qu'il en reste et
+  // l'eau viennent tous des quatre mêmes relevés. C'étaient trois mécanismes —
+  // un mélange de quatre poids interpolés linéairement, une boucle de
+  // couvertures, une substitution de culture — pour une seule question.
+  assert.match(
+    source,
+    /surfaceAt\(surfaceUv, grain, far, farmAlbedo, albedo, structure, grainKeep, gWater\);/
+  );
+  assert.ok(!/uClassMap|uCropMap/.test(source), 'les deux cartes ont fusionné');
 
   // Ce qui est interpolé est l'**appartenance**, pas l'identifiant : chaque
-  // relevé vise un centre de carreau, là où le filtrage au plus proche rend la
+  // relevé vise un centre de texel, là où le filtrage au plus proche rend la
   // valeur peinte et rien d'autre.
-  assert.match(source, /texture2D\(uCropMap, \(texel \+ 0\.5\) \/ \$\{CLASS_PIXELS\}\.0\)/);
-  assert.match(source, /floor\(fine\.g \* 255\.0 \/ \$\{COVER_ID_STEP\}\.0 \+ 0\.5\)/);
+  assert.match(source, /texture2D\(uSurfaceMap, \(texel \+ 0\.5\) \/ \$\{CLASS_PIXELS\}\.0\)/);
+  assert.equal(
+    (source.match(/surfaceIdAt\(corner/g) || []).length,
+    4,
+    'les quatre texels voisins, pas un seul'
+  );
 
   // Et la berge est un fondu, pas une substitution.
   assert.match(source, /base = mix\(base, water, gWater\);/);
 
-  // L'eau ne doit pas être peinte deux fois : écartée du mélange des
-  // couvertures, sans quoi le sol sous le fondu serait déjà de l'eau.
-  assert.match(source, /if \(i != \$\{WATER_COVER_ID\}\)/);
-  // Et la part de couverture est rapportée à ce qui n'est pas de l'eau, sans
-  // quoi une plage tournerait au gravier à l'approche de la mer.
+  // L'eau ne doit pas être peinte deux fois : écartée du mélange, sans quoi le
+  // sol sous le fondu serait déjà de l'eau.
+  assert.match(source, /if \(i != \$\{WATER_ID\}\)/);
+  assert.match(source, /water = dot\(step\(abs\(ids - \$\{WATER_ID\}\.0\), vec4\(0\.5\)\), lifted\);/);
+  // Et les parts sont rapportées à ce qui n'est pas de l'eau, sans quoi une
+  // plage tournerait au gravier à l'approche de la mer.
   assert.match(source, /float land = max\(1\.0 - water, 1e-4\);/);
 });
 
@@ -10535,7 +10694,7 @@ function terrainThreeStub() {
   };
 }
 
-test('les limites de surfaces : la frange, les couvertures interpolées et la rive arrivent dans le shader', () => {
+test('les limites de surfaces : la frange, les matières interpolées et la rive arrivent dans le shader', () => {
   // Une greffe par `replace` qui rate son ancrage ne casse rien : elle ne fait
   // simplement rien, en silence. Ce test ne juge pas du rendu — il vérifie que
   // les trois morceaux sont bien dans la source, et que les réglages du thème
@@ -10572,23 +10731,25 @@ test('les limites de surfaces : la frange, les couvertures interpolées et la ri
 
   // La frange : déclarée, et appliquée au point de lecture des deux cartes.
   assert.match(source, /vec2 edgeWarp\(vec2 world\)/);
-  assert.match(source, /classUv = \(vScenePos\.xz \+ edgeWarp\(vScenePos\.xz\) - uClassOrigin\)/);
+  assert.match(
+    source,
+    /surfaceUv = \(vScenePos\.xz \+ edgeWarp\(vScenePos\.xz\) - uSurfaceOrigin\)/
+  );
 
   // Les couvertures : lues aux quatre carreaux voisins, mélangées par leur
   // appartenance, l'eau tenue à part.
   assert.match(
     source,
-    /out vec3 coverAlbedo, out float coverShare, out float coverGrain, out float water/
+    /out vec3 albedo, out float grainHere, out float grainKeep, out float water/
   );
-  assert.match(source, /surfaceAt\(classUv, coverAlbedo, coverShare, coverGrain, gWater\);/);
   assert.equal(
-    (source.match(/coverIdAt\(corner/g) || []).length,
+    (source.match(/surfaceIdAt\(corner/g) || []).length,
     4,
-    'les quatre carreaux voisins, pas un seul'
+    'les quatre texels voisins, pas un seul'
   );
   assert.ok(
-    !/waterShareAt/.test(source),
-    'la lecture d’eau isolée a été reprise par surfaceAt'
+    !/waterShareAt|coverIdAt/.test(source),
+    'les lectures séparées ont été reprises par surfaceAt'
   );
 
   // La rive : le même sol mouillé que la pluie, deux appels pour une formule.
@@ -10722,14 +10883,23 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
     2,
     'le grain et la frange, pas une de plus'
   );
-  assert.match(source, /vec4 height = vec4\(grain\.r, grain\.g, grain\.b, grain\.b\);/);
+  // Chaque matière prend son champ de grain dans la table, par un sélecteur :
+  // un grain commun serait un facteur commun, qui s'annule à la normalisation
+  // de l'interpénétration, et la lisière retomberait sur un fondu linéaire.
+  assert.match(source, /height \+= hit \* dot\(grain, uSurfaceGrain\[i - 1\]\);/);
 
   // Le grain ne porte plus aucune teinte : ce qu'il en reste est un scalaire,
   // et la couleur vient de l'albédo de la matière, seul.
-  assert.match(source, /float structure = dot\(height, w\);/);
+  assert.match(source, /float texMod = mix\(structure \* 2\.0, 1\.0, far\);/);
+  assert.match(source, /vec3 modulation = vec3\(texMod\) \* \(0\.7 \+ noise \* 0\.6\);/);
 
   assert.equal(shader.uniforms.uGrainScale.value, defaultTheme.terrain.grainScaleM);
   assert.equal(factory.textures.length, 4, 'détail, macro, grain, rides');
+
+  // Une matière = une couleur : le tableau d'albédos a exactement une entrée
+  // par matière, et c'est tout ce qu'il faut pour en ajouter une.
+  assert.equal(shader.uniforms.uSurfaceAlbedo.value.length, SURFACE_KINDS.length);
+  assert.equal(shader.uniforms.uSurfaceGrain.value.length, SURFACE_KINDS.length);
 
   // Les trois périodes de matière n'ont plus d'objet.
   for (const key of ['groundScaleGrass', 'groundScaleSoil', 'groundScaleWood']) {
@@ -11510,11 +11680,11 @@ test('le pictogramme cycliste : un dessin fermé, posé en phase avec la chaîne
   assert.equal(nothing.positions.length, 0);
 });
 
-test('le revêtement urbain : une couverture qui tient dans le canal, et une seule teinte pour deux lectures', () => {
-  // Neuf couvertures à leur pas doivent tenir dans un octet, sans quoi le
-  // dernier identifiant serait écrêté et lu comme un autre.
-  assert.ok(COVER_KINDS.length * COVER_ID_STEP <= 255, 'les identifiants tiennent dans le canal');
-  assert.equal(COVER_KINDS[PAVEMENT_COVER_ID - 1], 'pavement');
+test('le revêtement urbain : une matière qui tient dans le canal, et une seule teinte pour deux lectures', () => {
+  // Les matières à leur pas doivent tenir dans un octet, sans quoi le dernier
+  // identifiant serait écrêté et lu comme un autre.
+  assert.ok(SURFACE_KINDS.length * SURFACE_ID_STEP <= 255, 'les identifiants tiennent dans le canal');
+  assert.equal(SURFACE_KINDS[PAVEMENT_ID - 1], 'pavement');
 
   // La teinte du sol de la ville et celle du dessus de trottoir sont la même
   // valeur : deux lectures divergentes se verraient là où elles se rejoignent.

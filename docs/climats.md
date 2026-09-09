@@ -91,19 +91,23 @@ Quatre règles, et elles sont tenues par des tests :
 - **`pitch` se voit de plus loin que la couleur.** 0,25 est un toit-terrasse,
   0,42 une tuile canal, 0,55 le défaut, 0,85 un pignon balte ou nordique.
 
-### 3. Les couvertures — `COVER_LOOK` et `TERRAIN_LOOK.coverAlbedo`
+### 3. Les matières du sol — `SURFACE_LOOK`
 
-Elles ne dépendent pas du climat mais de la donnée OSM : lande, maquis, marais,
-pelouse d'altitude, éboulis, dalle, sable. `coverAlbedo` donne la couleur du sol
-au loin, `COVER_LOOK` la strate basse (hauteur, densité et teinte de l'herbe,
-densité d'arbustes). Les deux sont indispensables : une lande de la bonne
-couleur couverte d'une prairie de quatre-vingts centimètres reste une prairie.
+Une table, une ligne par matière : `albedo` donne la couleur du sol au loin,
+`grassHeight`/`grassDensity`/`grassTint`/`bushes` la strate basse. Les deux sont
+indispensables : une lande de la bonne couleur couverte d'une prairie de
+quatre-vingts centimètres reste une prairie.
+
+La colonne `climate` dit quel lavage climatique s'applique, ou `null`. Les
+matières qui viennent d'un relevé OSM précis — lande, maquis, marais, pelouse
+d'altitude, éboulis, dalle, sable — n'en prennent aucun : elles disent déjà leur
+pays, les teinter une seconde fois le dirait deux fois.
 
 **Une exception, et une seule** : le revêtement urbain (`pavement`) ne vient pas
 d'une entité mais d'une déduction — le sol d'une ville —, et ce que le pays y
 change n'est pas une matière mais une convention de travaux publics. Sa couleur
-vit donc dans `STREET_LOOK.pavement`, une teinte par famille, et pas dans
-`coverAlbedo`. Elle est lue **deux fois** : par le shader de terrain, qui peint
+vit donc dans `STREET_LOOK.pavement`, une teinte par famille, et pas dans son
+albédo de table. Elle est lue **deux fois** : par le shader de terrain, qui peint
 le sol, et par la bordure de trottoir, qui le borde (`townStyle.pavementTone`).
 Deux valeurs divergentes se verraient exactement là où elles se rejoignent.
 
@@ -134,7 +138,7 @@ mediterranean: {
 **Des facteurs, pas des couleurs, et c'est important.** Un sol est peint deux
 fois : par le shader de terrain pour le lointain, par les touffes et les tiges
 instanciées pour le premier plan. Les deux sont calés l'un sur l'autre (voir
-l'en-tête de `TERRAIN_LOOK.grassAlbedo`), et ce calage est ce qui empêche de
+l'en-tête de `SURFACE_LOOK`), et ce calage est ce qui empêche de
 voir un disque de couleur différente autour de l'observateur. Écrire deux
 palettes séparées le déferait. Un facteur appliqué aux deux le préserve, quelle
 que soit la couleur de base.
@@ -164,10 +168,12 @@ laquelle tout le reste du thème a été réglé.
 
 - les portées, les plafonds d'instances, les cadences de reconstruction : ce
   sont des images par seconde, pas du goût ;
-- la liste des cultures (`CROP_KINDS`) et celle des couvertures
-  (`COVER_KINDS`) : leur ordre est un **encodage** peint dans une image et relu
-  par le shader. Ajouter une lavande ou un olivier demande un motif d'atlas et
-  un réencodage, pas une ligne de table ;
+- la liste des cultures (`CROP_KINDS`) et celle des matières
+  (`SURFACE_KINDS`) : leur ordre est un **encodage** peint dans une image et
+  relu par le shader. Ajouter une lavande demande en plus un motif d'atlas.
+  Ajouter une matière, en revanche, ne demande qu'une ligne dans la liste et
+  une dans `SURFACE_LOOK` — c'est ce que la fusion des deux cartes a rendu
+  possible ;
 - l'assolement par climat (`CROP_MIXES`, dans `layers/furniturePlacement.js`),
   le traitement des limites de parcelle (`BOUNDARY_MIXES`, même fichier),
   l'essence des alignements de route (`ALIGNMENT_SPECIES_MIXES`, dans

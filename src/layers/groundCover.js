@@ -60,6 +60,7 @@ import {
   coverMassDensity,
   coverBandsRadius,
 } from './coverBands.js';
+import { SETTLED_GRASS, VEGETAL_SURFACES } from '../terrain/groundClassMap.js';
 import { defaultTheme } from '../themes/default.js';
 
 /**
@@ -250,18 +251,28 @@ export function grassHeightFade(
 }
 
 /**
- * Échantillon à utiliser quand `sampleAt` ne sait rien dire (alpha nul, non
- * classé, ou hors carte) — le même repli que le shader de terrain
- * (`uUnclassified`, voir `terrainMaterial.js`).
+ * Échantillon à utiliser quand `sampleAt` ne sait rien dire (hors carte, ou
+ * donnée absente) — le même repli que le shader de terrain (`uUnclassified`,
+ * voir `terrainMaterial.js`), et il faut que ce soit le même : la peinture du
+ * sol et les touffes qui poussent dessus se contrediraient sinon.
+ *
+ * C'étaient quatre poids ; c'est un **nom de matière** depuis que la carte du
+ * sol n'en porte plus qu'un par texel. Une matière que la strate basse ne
+ * distingue pas compte pour du minéral, où rien ne pousse.
  *
  * @param {{grass:number, wood:number, farmland:number, bare:number}|null} sample
- * @param {number[]} unclassifiedWeights [herbe, bois, culture, sol nu] —
- *        `TERRAIN_LOOK.unclassifiedWeights`.
+ * @param {string} unclassified Matière de repli — `TERRAIN_LOOK.unclassified`.
  */
-export function grassSampleFallback(sample, unclassifiedWeights) {
+export function grassSampleFallback(sample, unclassified) {
   if (sample) return sample;
-  const [grass, wood, farmland, bare] = unclassifiedWeights;
-  return { grass, wood, farmland, bare };
+  const empty = { grass: 0, wood: 0, farmland: 0, bare: 0 };
+  if (unclassified === 'wood') return { ...empty, wood: 1 };
+  if (unclassified === 'farmland') return { ...empty, farmland: 1 };
+  if (unclassified === 'settled') return { ...empty, grass: SETTLED_GRASS, bare: 1 - SETTLED_GRASS };
+  // Les couvertures végétales poussent comme de l'herbe : c'est leur ligne de
+  // `SURFACE_LOOK` qui dit ensuite de quelle taille et de quelle teinte.
+  if (VEGETAL_SURFACES.has(unclassified)) return { ...empty, grass: 1 };
+  return { ...empty, bare: 1 };
 }
 
 /**
@@ -288,17 +299,17 @@ export const COVER_GRASS_NEUTRAL = Object.freeze({ height: 1, density: 1, tint: 
  * Une lande n'est pas une prairie plus terne, c'est une prairie **rase** ; un
  * maquis est surtout fait de vide entre les arbustes ; une roselière monte plus
  * haut qu'un pré. Ces trois écarts se lisent à hauteur d'homme, et aucun ne se
- * rend par la seule couleur du sol (voir `TERRAIN_LOOK.coverAlbedo`, qui la
+ * rend par la seule couleur du sol (voir l'albédo de `SURFACE_LOOK`, qui la
  * porte, elle).
  *
  * Fonction pure. Une couverture absente de la table pousse comme une prairie —
  * c'est-à-dire exactement comme avant que les couvertures existent.
  *
- * @param {string|null} cover Retour de `groundClass.coverAt`.
- * @param {Object} [covers] Tranche `theme.covers`.
+ * @param {string|null} cover Matière du sol (`groundClass.surfaceAt`).
+ * @param {Object} [surfaces] Tranche `theme.surfaces`.
  */
-export function coverGrassFor(cover, covers = defaultTheme.covers) {
-  const look = cover ? covers?.[cover] : null;
+export function coverGrassFor(cover, surfaces = defaultTheme.surfaces) {
+  const look = cover ? surfaces?.[cover] : null;
   if (!look) return COVER_GRASS_NEUTRAL;
   return {
     height: look.grassHeight ?? 1,
@@ -460,7 +471,7 @@ export class GroundCover {
    * @param {Object} [options.roads]    Instance `RoadNetwork` — l'herbe ne pousse
    *        pas sur ses chaussées.
    * @param {Object} [options.streets]  Instance `StreetLayer` — ni sur ses
-   *        trottoirs (un quartier porte une part d'herbe, voir `groundClassFor`).
+   *        trottoirs (un quartier porte une part d'herbe, voir `SETTLED_GRASS`).
    */
   constructor({
     THREE,
@@ -633,7 +644,7 @@ export class GroundCover {
       const readZ = cellZ + fringe.z;
       const sample = grassSampleFallback(
         groundClass?.sampleAt(readX, readZ) ?? null,
-        this.theme.terrain.unclassifiedWeights
+        this.theme.terrain.unclassified
       );
       // Échantillon brut (pas élargi) : la verdure de la touffe ne doit rien à une culture à 5 m de là.
       const { green, shade } = grassGreenFor(sample, this.theme.grass.woodFloor);
@@ -648,8 +659,8 @@ export class GroundCover {
       // l'herbe pousse — c'est la part de végétal qui le dit — mais de quelle
       // taille, en quelle quantité et de quelle couleur.
       const coverLook = coverGrassFor(
-        groundClass?.coverAt?.(readX, readZ) ?? null,
-        this.theme.covers
+        groundClass?.surfaceAt?.(readX, readZ) ?? null,
+        this.theme.surfaces
       );
 
       const fade = coverBandFade(cell.distance, band);
