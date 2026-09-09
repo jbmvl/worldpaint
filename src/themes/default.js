@@ -22,11 +22,12 @@ import { srgb } from '../core/color.js';
 /** Réglages de l'aspect du sol. Un seul endroit à toucher. */
 export const TERRAIN_LOOK = {
   /**
-   * Périodes du bruit de grain, en mètres : proche, puis lointaine. Le fondu
-   * de l'une à l'autre court sur `detailNear` → `detailFar`.
+   * Distances, en mètres, sur lesquelles le sol perd son grain et gagne sa
+   * variation macro. Plus rien d'autre ne s'y accroche : la couche de bruit
+   * « de détail » qui portait ces noms a été retirée — elle constellait le sol
+   * de taches de 1 à 2 m à ±30 % de luminosité, ce qui était le défaut le plus
+   * voyant du sol de près.
    */
-  detailScaleNear: 8,
-  detailScaleFar: 45,
   detailNear: 60,
   detailFar: 420,
   /**

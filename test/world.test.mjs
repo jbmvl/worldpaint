@@ -10835,6 +10835,47 @@ test('le grain du sol : trois champs indépendants dans une seule carte', () => 
     channel(3).every((v) => v === 255),
     'l’alpha doit rester plein'
   );
+
+  // Et le point de tout le relevé : c'est un **grain**, pas un nuage.
+  //
+  // Le test qui manquait. Une somme d'octaves à la mode habituelle est
+  // dominée par sa grille la plus grossière : deux texels voisins y différaient
+  // de 5 % de l'écart-type du champ — autant dire qu'ils étaient identiques, et
+  // aucune échelle de lecture ne pouvait rattraper ça. On mesure donc
+  // directement ce qui compte : l'écart entre voisins, rapporté à l'étendue du
+  // champ. Au-dessus de 1, les voisins sont décorrélés et le grain vit à
+  // l'échelle du texel, qui est la seule où un grain existe.
+  for (const [name, values] of [['R', red], ['G', green], ['B', blue]]) {
+    const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+    const spread = Math.sqrt(
+      values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length
+    );
+    let gap = 0;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        gap += (values[y * size + x] - values[y * size + ((x + 1) % size)]) ** 2;
+      }
+    }
+    gap = Math.sqrt(gap / (size * size));
+    assert.ok(
+      gap / spread > 1,
+      `le canal ${name} doit avoir des voisins décorrélés (${(gap / spread).toFixed(2)})`
+    );
+  }
+
+  // La quantité de lumière que le grain module, elle, n'a pas bougé : c'est
+  // l'écart-type de l'ancien relevé nuageux, repris tel quel. Changer le
+  // spectre et l'amplitude dans le même geste rendrait les deux effets
+  // impossibles à départager à l'œil.
+  for (const [name, values] of [['R', red], ['G', green], ['B', blue]]) {
+    const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
+    const spread =
+      Math.sqrt(values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length) / 255;
+    assert.ok(
+      Math.abs(spread - 0.1361) < 0.01,
+      `le canal ${name} doit garder l'amplitude d'avant (${spread.toFixed(4)})`
+    );
+  }
 });
 
 test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition', () => {
@@ -10910,7 +10951,13 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   // Le grain ne porte plus aucune teinte : ce qu'il en reste est un scalaire,
   // et la couleur vient de l'albédo de la matière, seul.
   assert.match(source, /float texMod = mix\(structure \* 2\.0, 1\.0, far\);/);
-  assert.match(source, /vec3 modulation = vec3\(texMod\) \* \(0\.7 \+ noise \* 0\.6\);/);
+  assert.match(source, /vec3 modulation = vec3\(texMod\);/);
+
+  // La couche « de détail » a disparu : c'est elle qui constellait le sol de
+  // taches de 1 à 2 m à ±30 % de luminosité, et elle ne disait rien que le
+  // grain ne dise déjà. Deux lectures de moins, une texture de moins.
+  assert.ok(!/uDetailMap|uDetailScale/.test(source), 'plus de bruit de détail');
+  assert.match(source, /uniform vec2 uDetailRange;/, 'la portée du fondu reste');
 
   assert.equal(shader.uniforms.uGrainScale.value, defaultTheme.terrain.grainScaleM);
   assert.equal(shader.uniforms.uGrainPixels.value, defaultTheme.terrain.grainPixels);
@@ -10930,12 +10977,16 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   const count = (sign) => source.split(sign).length - 1;
   assert.equal(count('('), count(')'), 'parenthèses équilibrées');
   assert.equal(count('{'), count('}'), 'accolades équilibrées');
-  assert.equal(factory.textures.length, 4, 'détail, macro, grain, rides');
+  assert.equal(factory.textures.length, 3, 'macro, grain, rides');
 
   // Une matière = une couleur : le tableau d'albédos a exactement une entrée
   // par matière, et c'est tout ce qu'il faut pour en ajouter une.
   assert.equal(shader.uniforms.uSurfaceAlbedo.value.length, SURFACE_KINDS.length);
   assert.equal(shader.uniforms.uSurfaceGrain.value.length, SURFACE_KINDS.length);
+
+  for (const key of ['detailScaleNear', 'detailScaleFar']) {
+    assert.equal(defaultTheme.terrain[key], undefined, `${key} n'a plus d'objet`);
+  }
 
   // Les trois périodes de matière n'ont plus d'objet.
   for (const key of ['groundScaleGrass', 'groundScaleSoil', 'groundScaleWood']) {

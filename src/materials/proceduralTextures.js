@@ -1,10 +1,13 @@
 /*
- * proceduralTextures — les textures qu'on ne télécharge pas. Deux besoins que
- * le réseau ne peut pas couvrir : le détail de proximité (une orthophoto vue
- * de 5 m est grossie une trentaine de fois, il ne reste que des taches
- * floues — la parade classique est de multiplier par une texture de détail
- * haute fréquence) et la section de route (plus simple à dessiner qu'à
- * télécharger).
+ * proceduralTextures — les textures qu'on ne télécharge pas : le grain du sol,
+ * sa variation à grande échelle, les rides de l'eau, la section de route.
+ *
+ * Un mot sur le **spectre**, parce que c'est le piège de ce fichier. Une somme
+ * d'octaves à la mode habituelle (`fractalNoise`, chaque grille à la moitié de
+ * l'amplitude de la précédente) est dominée par sa grille la plus grossière :
+ * elle produit des nuages, jamais un grain. C'est exactement ce qu'il faut
+ * pour une variation de paysage (`createMacroCanvas`) et exactement ce qu'il
+ * ne faut pas pour une matière (`createGrainCanvas`, qui pondère à l'envers).
  *
  * Bruit déterministe et cyclique : même graine, même image, bords raccordés.
  *
@@ -30,6 +33,16 @@ export function makeRandom(seed) {
 }
 
 const smoothstep = (t) => t * t * (3 - 2 * t);
+
+/**
+ * Écart-type d'un champ de grain, en unités de texture.
+ *
+ * C'est la **quantité** de lumière que le grain module, indépendamment de sa
+ * finesse. Reprise telle quelle de l'ancien relevé nuageux (0,1361 mesuré) :
+ * changer le spectre d'un champ et son amplitude dans le même geste rendrait
+ * les deux effets impossibles à départager à l'œil.
+ */
+const GRAIN_SPREAD = 0.1361;
 
 /**
  * Bruit de valeur cyclique sur une grille `lattice × lattice`, échantillonné
@@ -98,29 +111,6 @@ export function fractalNoise(size, lattices, seed) {
 function createCanvas(width, height) {
   if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(width, height);
   return Object.assign(document.createElement('canvas'), { width, height });
-}
-
-/**
- * Texture de détail : bruit fractal gris, centré sur 0,5, destinée à être
- * appliquée en multiplication douce sur la couleur du terrain.
- *
- */
-export function createDetailCanvas(size = 256, seed = 20260816) {
-  const noise = fractalNoise(size, [4, 8, 16, 32, 64], seed);
-  const canvas = createCanvas(size, size);
-  const ctx = canvas.getContext('2d');
-  const image = ctx.createImageData(size, size);
-
-  for (let i = 0; i < noise.length; i++) {
-    // Recentre autour de 0,5 et resserre : le détail module, il ne domine pas.
-    const value = Math.round(255 * (0.5 + (noise[i] - 0.5) * 0.9));
-    image.data[i * 4] = value;
-    image.data[i * 4 + 1] = value;
-    image.data[i * 4 + 2] = value;
-    image.data[i * 4 + 3] = 255;
-  }
-  ctx.putImageData(image, 0, 0);
-  return canvas;
 }
 
 /**
@@ -201,30 +191,57 @@ export function createGrainCanvas(size = 512, seed = 91711) {
   const ctx = canvas.getContext('2d');
   const image = ctx.createImageData(size, size);
 
-  // La plus fine grille donne des accidents de quatre pixels : le grain, pas
-  // l'objet. Les trois graines sont écartées pour que les champs soient
-  // indépendants — deux champs corrélés recolleraient les lisières.
-  const lattices = [8, 16, 32, 64, 128];
+  // Le spectre, et c'est **tout** ce qui fait qu'un grain est un grain.
+  //
+  // Une somme d'octaves ordinaire (`fractalNoise`) donne à chaque grille la
+  // moitié de l'amplitude de la précédente : la plus grossière emporte la
+  // moitié du champ à elle seule, la plus fine en porte 3 %. Le résultat n'est
+  // pas granuleux, il est **nuageux** — des taches larges du huitième de la
+  // texture, et rien à l'échelle du texel. Mesuré sur l'ancien relevé : deux
+  // texels voisins différaient de 5 % de l'écart-type du champ. Autant dire
+  // qu'ils étaient identiques. Aucune échelle de lecture ne pouvait rattraper
+  // ça — vue de près la carte montrait ses taches, vue de loin son pavage.
+  //
+  // On renverse donc la pondération : l'essentiel de l'énergie au texel, et ce
+  // qui reste juste assez loin pour que les lisières entre matières, qui sont
+  // découpées dans ce champ, gardent une forme au lieu d'être un tramage.
+  const lattices = [size, size / 2, size / 4, size / 8];
+  const weights = [1, 0.6, 0.35, 0.2];
+  // Trois graines écartées : deux champs corrélés recolleraient les lisières.
   const seeds = [seed, seed + 3301, seed + 7717];
 
   for (let c = 0; c < 3; c++) {
-    const field = stretchToUnit(fractalNoise(size, lattices, seeds[c]));
+    const field = new Float32Array(size * size);
+    let total = 0;
+    lattices.forEach((lattice, octave) => {
+      const layer = tileableValueNoise(size, lattice, seeds[c] + octave * 7919);
+      for (let i = 0; i < field.length; i++) field[i] += layer[i] * weights[octave];
+      total += weights[octave];
+    });
+    for (let i = 0; i < field.length; i++) field[i] /= total;
 
-    // Recentré sur **sa** moyenne, et pas sur 0,5 : une somme d'octaves
-    // étirée sur [0, 1] tombe où elle veut (0,44 à 0,49 selon la graine). Le
-    // grain multiplie l'albédo de la matière ; un champ dont la moyenne dérive
-    // de 5 % assombrit de 5 % toutes les couleurs qu'il module, en silence, et
-    // les trois canaux ne dérivant pas de la même quantité, il les décale les
-    // unes par rapport aux autres. C'est ce que garantissait la normalisation
-    // des anciennes textures, et ça vaut indépendamment des motifs qu'elles
-    // portaient.
+    // Recentré sur **sa** moyenne, et pas sur 0,5 : une somme d'octaves tombe
+    // où elle veut. Le grain multiplie l'albédo de la matière ; un champ dont
+    // la moyenne dérive de 5 % assombrit de 5 % toutes les couleurs qu'il
+    // module, en silence, et les trois canaux ne dérivant pas de la même
+    // quantité, il les décale les uns par rapport aux autres.
     let mean = 0;
     for (let i = 0; i < field.length; i++) mean += field[i];
     mean /= field.length;
 
+    // Puis remis à l'écart-type visé, plutôt qu'étiré sur [0, 1] comme avant.
+    // C'est ce qui permet de changer le spectre **sans toucher à la quantité
+    // de lumière** que le grain module : un champ décorrélé étiré sur tout
+    // l'intervalle serait quatre fois plus contrasté que l'ancien, et le sol
+    // grésillerait. Ici il module d'autant, en plus fin, et c'est tout.
+    let spread = 0;
+    for (let i = 0; i < field.length; i++) spread += (field[i] - mean) ** 2;
+    spread = Math.sqrt(spread / field.length) || 1;
+    const gain = GRAIN_SPREAD / spread;
+
     for (let i = 0; i < field.length; i++) {
-      // Resserré : le grain module une couleur, il ne la remplace pas.
-      image.data[i * 4 + c] = Math.round(255 * (0.5 + (field[i] - mean) * 0.9));
+      const value = Math.round(255 * (0.5 + (field[i] - mean) * gain));
+      image.data[i * 4 + c] = Math.max(0, Math.min(255, value));
     }
   }
   for (let i = 3; i < image.data.length; i += 4) image.data[i] = 255;

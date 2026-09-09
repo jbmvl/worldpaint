@@ -48,6 +48,19 @@
  * lire ainsi**. `edgeWarp`, qui place les limites de parcelles, garde sa
  * période fixe pour cette raison.
  *
+ * Et une échelle de lecture ne rachète pas un mauvais relevé : tant que la
+ * carte de grain était une somme d'octaves ordinaire, elle était dominée par
+ * sa grille la plus grossière et ne montrait que des nuages, à n'importe
+ * quelle échelle. C'est `createGrainCanvas` qui a dû changer de spectre.
+ *
+ * ## Ce qui reste, en tout et pour tout
+ *
+ * Une couleur, un grain, et une variation à deux cents mètres. Il y avait une
+ * quatrième couche — un « détail » à 8 m puis 45 m de période, deux lectures
+ * de plus — qui constellait le sol de taches de 1 à 2 m à ±30 % de
+ * luminosité. Elle est partie : c'était le défaut le plus voyant du sol, et
+ * elle ne disait rien que le grain ne dise déjà.
+ *
  * Trois choses sortent le sol de l'aplat, et elles tiennent ensemble :
  *
  * - le grain **incline la normale** (dérivées d'écran, Mikkelsen) : sans ça
@@ -92,11 +105,7 @@
  * shader complet, pour garder l'éclairage/brouillard/tone mapping de three.
  */
 
-import {
-  createDetailCanvas,
-  createGrainCanvas,
-  createMacroCanvas,
-} from '../materials/proceduralTextures.js';
+import { createGrainCanvas, createMacroCanvas } from '../materials/proceduralTextures.js';
 import { CROP_KINDS, CROP_ID_STEP } from '../layers/furniturePlacement.js';
 import {
   SURFACE_KINDS,
@@ -163,7 +172,6 @@ export class TerrainMaterialFactory {
       return texture;
     };
 
-    this.detailTexture = repeated(createDetailCanvas());
     this.macroTexture = repeated(createMacroCanvas());
     // Un seul grain pour toutes les matières : ses trois canaux portent trois
     // champs indépendants, lus d'un coup (voir `createGrainCanvas`).
@@ -177,7 +185,6 @@ export class TerrainMaterialFactory {
 
   get textures() {
     return [
-      this.detailTexture,
       this.macroTexture,
       this.grainTexture,
       this.waterRippleTexture,
@@ -261,8 +268,6 @@ export class TerrainMaterialFactory {
     const material = new THREE.MeshLambertMaterial({ color: 0xffffff });
 
     const uniforms = {
-      uDetailMap: { value: this.detailTexture },
-      uDetailScale: { value: new THREE.Vector2(look.detailScaleNear, look.detailScaleFar) },
       uDetailRange: { value: new THREE.Vector2(look.detailNear, look.detailFar) },
       uGrainMap: { value: this.grainTexture },
       uGrainScale: { value: look.grainScaleM },
@@ -357,8 +362,6 @@ export class TerrainMaterialFactory {
           `#include <common>
            varying vec3 vScenePos;
            varying vec3 vSceneNormal;
-           uniform sampler2D uDetailMap;
-           uniform vec2 uDetailScale;
            uniform vec2 uDetailRange;
            uniform sampler2D uGrainMap;
            uniform float uGrainScale;
@@ -613,11 +616,15 @@ export class TerrainMaterialFactory {
                  surfaceUv.x > 0.0 && surfaceUv.x < 1.0 &&
                  surfaceUv.y > 0.0 && surfaceUv.y < 1.0 ? 1.0 : 0.0;
 
+             // Distance a l'observateur, ramenee sur [0, 1] : c'est elle qui
+             // eteint le grain et fait monter la variation macro. Il y avait
+             // ici une troisieme couche de bruit, dite « de detail », a huit
+             // metres de periode : elle constellait le sol de taches de un a
+             // deux metres a plus ou moins trente pour cent de luminosite.
+             // C'etait le defaut le plus voyant du sol, et il ne restait rien
+             // a lui faire dire que le grain ne dise deja.
              float dist = distance(vScenePos, cameraPosition);
              float far = smoothstep(uDetailRange.x, uDetailRange.y, dist);
-             float near = texture2D(uDetailMap, vScenePos.xz / uDetailScale.x).r;
-             float coarse = texture2D(uDetailMap, vScenePos.xz / uDetailScale.y).r;
-             float noise = mix(near, coarse, far);
 
              // Bruit macro : deux cents metres de periode. Il fait deriver la
              // couleur d'un bout a l'autre d'une parcelle — et c'est, depuis
@@ -670,7 +677,7 @@ export class TerrainMaterialFactory {
              // Le grain s'efface avec la distance. Scalaire, et c'est le fond
              // du chantier precedent : une texture de sol ne teinte plus rien.
              float texMod = mix(structure * 2.0, 1.0, far);
-             vec3 modulation = vec3(texMod) * (0.7 + noise * 0.6);
+             vec3 modulation = vec3(texMod);
 
              // Variation macro. Centree sur 1 : elle etale la luminosite sans
              // la deplacer, et fait deriver la teinte vers le chaud dans les
