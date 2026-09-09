@@ -1768,7 +1768,7 @@ export class FurnitureLayer {
    * Forme urbaine correspondant à une classe `landuse`, ou `null`.
    *
    * `cemetery` et `stadium` sont des classes `landuse` vérifiées dans ce
-   * projet (`groundClassMap.groundClassFor` les peint déjà en herbe).
+   * projet (`groundClassMap.surfaceFor` les peint déjà en herbe).
    * `industrial` l'est également. `fairground`, en revanche, est une
    * supposition — la même réserve que `_poiItem` s'applique.
    */

@@ -30,12 +30,21 @@ export const TERRAIN_LOOK = {
   detailNear: 60,
   detailFar: 420,
   /**
-   * Périodes des textures de matière. Toutes différentes : deux textures
-   * répétées au même pas se répéteraient ensemble, et la grille se verrait.
+   * Période du grain du sol, en mètres.
+   *
+   * Une seule, là où il y en avait trois : elles ne différaient que pour que
+   * les trois textures de matière ne se répètent pas ensemble, et il n'y a
+   * plus qu'un relevé (`createGrainCanvas`). Six mètres pour 512 pixels font
+   * 1,2 cm par texel — la finesse qu'avait l'herbe à 2,6 m sur 256 pixels,
+   * avec une période de répétition plus de deux fois plus longue.
+   *
+   * C'est le réglage de ce chantier qui se juge à l'œil, et le seul : si la
+   * trame de six mètres se lit au premier plan sous une lumière rasante, il
+   * faut soit l'agrandir (le grain grossit d'autant), soit remettre un relevé
+   * anti-répétition — mais sur cette seule carte, donc deux lectures et non
+   * plus six.
    */
-  groundScaleGrass: 2.6,
-  groundScaleSoil: 3.7,
-  groundScaleWood: 3.1,
+  grainScaleM: 6,
   /**
    * Variation macro : période en mètres, amplitude en luminosité, dérive
    * chaud/froid.
@@ -76,32 +85,28 @@ export const TERRAIN_LOOK = {
    */
   grainRelief: 0.45,
   /**
-   * Matière retenue là où le vectoriel ne dit rien — ordre (herbe, bois,
-   * culture, sol nu). L'herbe est de loin le pari le plus souvent gagnant en
-   * rase campagne : un accotement, une friche, une banquette en sont.
+   * Matière retenue là où le vectoriel ne dit rien — un nom de `SURFACE_LOOK`,
+   * là où c'étaient quatre poids. L'herbe est de loin le pari le plus souvent
+   * gagnant en rase campagne : un accotement, une friche, une banquette en sont.
+   *
+   * C'est aussi le réglage qui décide de la couleur d'une **grande** part du
+   * sol : la donnée se tait souvent, et elle se tait d'autant plus qu'on
+   * s'éloigne des pays bien relevés.
    */
-  unclassifiedWeights: [1, 0, 0, 0],
+  unclassified: 'grass',
   /**
-   * Albédos, en espace linéaire. `grassAlbedo`/`cropAlbedo` ne sont pas
-   * choisis à l'œil : calés sur la couleur que rend réellement le motif
-   * instancié qui pousse dessus (`groundCover`, `cropLayer`), sans quoi le
-   * sol et ce qui y pousse divergent à la jointure premier plan/lointain.
-   */
-  grassAlbedo: [0.051, 0.135, 0.017],
-  // À mi-chemin de `grassAlbedo` : un sol de forêt est une litière, pas un pré,
-  // mais l'ancienne valeur en faisait un trou noir sous les arbres — la seule
-  // matière du décor plus sombre que l'ombre qu'elle porte. Elle vaut
-  // maintenant la moyenne exacte de l'ancienne et de celle de l'herbe.
-  woodAlbedo: [0.047, 0.096, 0.019],
-  farmlandAlbedo: [0.431, 0.331, 0.08],
-  bareAlbedo: [0.27, 0.255, 0.225],
-  /**
-   * Albédo par culture, dans l'ordre de `CROP_KINDS` — ce qui rend un champ
+   * Albédo par culture, dans l'ordre de `CROP_KINDS`. Une culture n'est pas une
+   * matière : c'est un second axe, qui remplace la couleur de `farmland` là où
+   * il est peint. Il a son propre canal, et il marche — on n'y touche pas.
+   *
+   * Ces valeurs ne sont pas choisies à l'œil : elles sont calées sur la couleur
+   * que rend le motif instancié qui pousse dessus (`cropLayer`), sans quoi le
+   * sol et ce qui y pousse divergent à la jointure premier plan/lointain — ce qui rend un champ
    * visible de loin (les tiges instanciées ne portent que les 50 premiers
    * mètres). `vineyard`/`orchard` n'ont pas de motif propre à `cropLayer`
    * (rang de vigne et alignement d'arbres, via `furnitureLayer`) : leur
    * albédo est calé sur les mêmes couleurs de feuillage. Le labour garde
-   * `farmlandAlbedo`, repli de toute culture inconnue.
+   * l'albédo de `farmland` (`SURFACE_LOOK`), repli de toute culture inconnue.
    */
   cropAlbedo: {
     wheat: [0.566, 0.439, 0.092],
@@ -116,40 +121,6 @@ export const TERRAIN_LOOK = {
     // Le colza en fleur, en revanche, est la tache la plus saturée d'un
     // paysage de printemps — plus jaune encore qu'un blé mûr.
     rapeseed: [0.604, 0.522, 0.061],
-  },
-  /**
-   * Albédo par **couverture**, dans l'ordre de `COVER_KINDS`.
-   *
-   * Même rôle que `cropAlbedo`, et pour la même raison : c'est ce qui rend une
-   * lande, un maquis ou un marais reconnaissables au-delà de la portée des
-   * touffes instanciées. Sans ça, les quatre matières du sol (herbe, bois,
-   * culture, minéral) peignent de la même teinte une prairie normande et une
-   * lande écossaise, alors que les tuiles savaient déjà les distinguer — la
-   * `subclass` d'OpenMapTiles porte `heath`, `scrub`, `wetland`, `scree`.
-   *
-   * La couverture **remplace** l'albédo d'herbe et celui de sol nu là où elle
-   * est peinte : une lande n'est pas de l'herbe un peu brune, c'est une autre
-   * matière. Les trois premières sont végétales (elles se peignent sur du
-   * `grass`), les quatre suivantes minérales (sur du `bare`).
-   */
-  coverAlbedo: {
-    // Bruyère et molinie sèche : brun-pourpre, la couleur d'un moor.
-    heath: [0.159, 0.122, 0.08],
-    // Maquis et garrigue : olive poussiéreux, jamais le vert d'un pré.
-    scrub: [0.147, 0.171, 0.08],
-    // Marais, tourbière, roselière : le vert le plus profond du décor.
-    wetland: [0.072, 0.107, 0.048],
-    // Éboulis : pierre cassée, plus claire et plus froide que la terre.
-    scree: [0.323, 0.292, 0.254],
-    // Dalle nue, causse, lapiaz.
-    rock: [0.371, 0.332, 0.27],
-    // Dune, plage, sable sec.
-    sand: [0.624, 0.539, 0.361],
-    // Pelouse d'altitude et toundra : vert jaune, ras.
-    alpine: [0.205, 0.254, 0.107],
-    // Eau : ce qu'on voit d'un lac par temps couvert, avant tout reflet — le
-    // ciel qu'il renvoie est ajouté par le shader (`waterSheen`), pas ici.
-    water: [0.021, 0.045, 0.06],
   },
   /** Teinte de roche sur les fortes pentes. */
   rockColor: [0.72, 0.68, 0.62],
@@ -447,7 +418,7 @@ export const POPPY_SHARE = 0.42;
  *   texture du terrain, jusque sous le nez de l'observateur ;
  * - `height` et `density` multiplient la taille et le nombre des touffes ;
  * - `tint` multiplie leur couleur, canal par canal — assombrie et réchauffée
- *   vers la litière. C'est le raccord avec `woodAlbedo`, qui peint le même sol
+ *   vers la litière. C'est le raccord avec l'albédo de `wood`, qui peint le même sol
  *   au loin, qui décide de ces trois nombres : ils se règlent à l'œil, sur
  *   place, en regardant le sol entre les troncs.
  */
@@ -455,7 +426,7 @@ export const WOODLAND_FLOOR = {
   green: 0.55,
   height: 0.5,
   density: 0.7,
-  // Le même déplacement que `woodAlbedo`, et il n'a pas le choix : les deux
+  // Le même déplacement que l'albédo de `wood`, et il n'a pas le choix : les deux
   // peignent le même sol, l'un au loin et l'autre sous le nez. Le facteur est
   // à mi-chemin de son ancienne valeur et du neutre, comme l'albédo est à
   // mi-chemin de celui de l'herbe.
@@ -493,7 +464,7 @@ export const CROP_LOOK = {
  * Un sol est peint **deux fois** : par le shader de terrain, qui en donne
  * l'albédo lointain, et par les touffes et les tiges instanciées qui poussent
  * dessus, qui en donnent le premier plan. Les deux sont déjà calés l'un sur
- * l'autre (voir `TERRAIN_LOOK.grassAlbedo`), et ce calage est ce qui empêche
+ * l'autre (voir l'albédo de `grass` dans `SURFACE_LOOK`), et ce calage est ce qui empêche
  * de voir un disque de couleur différente autour de l'observateur.
  *
  * Deux palettes séparées — une pour le sol, une pour les plantes — le
@@ -521,10 +492,10 @@ export const CROP_LOOK = {
  *   la hauteur.
  *
  * Ces deux-là multiplient ce que la couverture du sol décide déjà
- * (`COVER_LOOK`) : une lande écossaise est rase parce que c'est une lande,
+ * (`SURFACE_LOOK`) : une lande écossaise est rase parce que c'est une lande,
  * *et* un peu plus rase parce qu'elle est en pays venté.
  *
- * Les couvertures (`coverAlbedo`) ne sont pas touchées : une lande, un maquis
+ * Les matières relevées ne sont pas touchées (colonne `climate` à `null`) : une lande, un maquis
  * ou un éboulis disent déjà leur pays, les teinter une seconde fois le dirait
  * deux fois.
  *
@@ -629,45 +600,161 @@ export const SOIL_LOOK = {
   },
 };
 
-// --- Les couvertures ----------------------------------------------------------
+// --- Les matières du sol ------------------------------------------------------
 /**
- * Ce qu'une couverture fait pousser, et de quelle taille.
+ * **Toutes** les matières du sol, sur un pied d'égalité, et c'est tout ce
+ * qu'une matière est : une couleur, un champ de grain, et ce qu'elle laisse
+ * pousser.
  *
- * `coverAlbedo` (plus haut) donne sa couleur au sol ; ceci donne sa **strate
- * basse**. Les deux sont indispensables : une lande peinte de la bonne couleur
- * mais couverte d'une prairie de quatre-vingts centimètres reste une prairie.
+ * Il y avait deux catégories, et la différence était un accident d'histoire.
+ * Quatre « matières » vivaient dans les canaux d'une carte de poids parce que
+ * chacune avait sa texture dessinée (herbe, limon, litière) ; neuf
+ * « couvertures » vivaient dans un identifiant et n'avaient qu'une teinte,
+ * empruntant la texture d'une matière. Une plage avait donc le grain d'un
+ * labour, et la teinte était le seul levier restant pour l'en distinguer —
+ * alors que ce n'est pas la teinte qui les sépare. Depuis qu'il n'y a plus
+ * qu'un grain pour tout le décor, plus rien ne justifiait la hiérarchie : il
+ * n'y a plus qu'une liste, et on y ajoute une matière en ajoutant une ligne.
  *
- * - `grassHeight` et `grassDensity` multiplient la hauteur et la densité des
- *   touffes (`groundCover`) ;
- * - `grassTint` multiplie leur teinte, canal par canal ;
- * - `bushes` est une densité d'arbustes semés par `vegetationLayer` **hors des
- *   bois** — c'est ce qui fait exister un maquis, qui n'est ni une prairie ni
- *   une forêt mais un fourré bas et discontinu.
+ * - `albedo` : la couleur, en linéaire. C'est la seule chose qui se lise encore
+ *   à cent mètres, donc la seule qui compte vraiment ;
+ * - `grain` : lequel des trois champs de la carte de grain cette matière
+ *   emploie (voir `createGrainCanvas`). Deux matières souvent voisines doivent
+ *   en prendre deux différents, sans quoi leur lisière perd
+ *   l'interpénétration et redevient un fondu linéaire. Trois champs pour
+ *   quatorze matières : la table les répartit au mieux, et une collision ne
+ *   coûte que cette lisière-là ;
+ * - `climate` : quel lavage climatique s'applique (`SOIL_LOOK`), ou `null`. Une
+ *   lande, un maquis, un éboulis disent déjà leur pays ; les teinter une
+ *   seconde fois le dirait deux fois ;
+ * - `grainKeep` : part du grain conservée, de 0 (aplat) à 1. Une seule matière
+ *   s'en écarte ;
+ * - `grassHeight`, `grassDensity`, `grassTint` multiplient la taille, le
+ *   nombre et la teinte des touffes (`groundCover`) ; `bushes` est une densité
+ *   d'arbustes semés hors des bois par `vegetationLayer` — c'est ce qui fait
+ *   exister un maquis, ni prairie ni forêt mais un fourré bas.
  *
- * Une couverture absente d'ici pousse comme n'importe quelle prairie : la table
- * ne décrit que les écarts.
+ * Un champ absent vaut le neutre : la table ne décrit que les écarts. Une
+ * matière peinte de la bonne couleur mais couverte d'une prairie de quatre-
+ * vingts centimètres reste une prairie, d'où la strate basse ici et pas ailleurs.
  */
-export const COVER_LOOK = {
-  // Lande : rase, dense, brune. C'est la couverture d'une côte écossaise ou
-  // d'un plateau granitique, et elle ne porte quasiment pas d'arbre.
-  heath: { grassHeight: 0.45, grassDensity: 0.95, grassTint: [1.02, 0.84, 0.76], bushes: 0.3 },
-  // Maquis et garrigue : peu d'herbe, beaucoup d'arbustes. L'inverse exact
-  // d'une prairie, et c'est ce contraste qui doit se lire.
-  scrub: { grassHeight: 0.55, grassDensity: 0.4, grassTint: [1.04, 0.94, 0.7], bushes: 0.9 },
-  // Marais et roselière : la seule couverture plus haute qu'une prairie.
-  wetland: { grassHeight: 1.4, grassDensity: 1, grassTint: [0.86, 1.04, 0.82], bushes: 0.08 },
-  // Pelouse d'altitude : rase et continue, comme une lande mais verte.
-  alpine: { grassHeight: 0.4, grassDensity: 0.9, grassTint: [0.94, 1.02, 0.78], bushes: 0.04 },
-  // Minéral : rien n'y pousse, ou presque. Ces trois-là sont peintes sur du
-  // sol nu, où l'herbe ne se sème déjà pas — les valeurs sont là pour le jour
-  // où une donnée les mêlerait à du végétal.
-  scree: { grassHeight: 0.3, grassDensity: 0.06, grassTint: [1, 0.96, 0.88], bushes: 0 },
-  rock: { grassHeight: 0.35, grassDensity: 0.1, grassTint: [1, 0.96, 0.88], bushes: 0.02 },
-  sand: { grassHeight: 0.6, grassDensity: 0.08, grassTint: [1.06, 0.98, 0.72], bushes: 0.05 },
-  // L'eau. Rien n'y pousse, et il ne s'agit pas d'un réglage d'aspect : une
-  // touffe qui sortirait de la Seine se verrait de loin. Sa couleur et ses
-  // rides sont dans `TERRAIN_LOOK`, pas ici — ce n'est pas de la végétation.
-  water: { grassHeight: 0, grassDensity: 0, grassTint: [1, 1, 1], bushes: 0 },
+export const SURFACE_LOOK = {
+  // --- Le végétal ordinaire -------------------------------------------------
+  grass: { albedo: [0.051, 0.135, 0.017], grain: 0, climate: 'grass' },
+  // Un sol de forêt est une litière, pas un pré : à mi-chemin de l'herbe. Le
+  // climat ne le lave pas — une hêtraie se ressemble d'un pays à l'autre.
+  wood: { albedo: [0.047, 0.096, 0.019], grain: 1, climate: null },
+  farmland: { albedo: [0.431, 0.331, 0.08], grain: 2, climate: 'farmland' },
+  // Lotissement : pelouses tondues et allées. C'était un mélange peint dans un
+  // canal (deux tiers d'herbe, un tiers de minéral) ; c'est désormais une
+  // matière, et son albédo est la moyenne exacte que ce mélange rendait — la
+  // reprendre à l'œil est une décision à part, pas un effet de bord de la fusion.
+  settled: { albedo: [0.125, 0.176, 0.088], grain: 1, climate: 'grass' },
+
+  // --- Les couvertures végétales --------------------------------------------
+  // Bruyère et molinie sèche : brun-pourpre, la couleur d'un moor. Rase, dense,
+  // et elle ne porte quasiment pas d'arbre.
+  heath: {
+    albedo: [0.159, 0.122, 0.08],
+    grain: 2,
+    climate: null,
+    grassHeight: 0.45,
+    grassDensity: 0.95,
+    grassTint: [1.02, 0.84, 0.76],
+    bushes: 0.3,
+  },
+  // Maquis et garrigue : olive poussiéreux, jamais le vert d'un pré. Peu
+  // d'herbe, beaucoup d'arbustes — l'inverse exact d'une prairie.
+  scrub: {
+    albedo: [0.147, 0.171, 0.08],
+    grain: 1,
+    climate: null,
+    grassHeight: 0.55,
+    grassDensity: 0.4,
+    grassTint: [1.04, 0.94, 0.7],
+    bushes: 0.9,
+  },
+  // Marais, tourbière, roselière : le vert le plus profond du décor, et la
+  // seule couverture plus haute qu'une prairie.
+  wetland: {
+    albedo: [0.072, 0.107, 0.048],
+    grain: 1,
+    climate: null,
+    grassHeight: 1.4,
+    grassDensity: 1,
+    grassTint: [0.86, 1.04, 0.82],
+    bushes: 0.08,
+  },
+  // Pelouse d'altitude et toundra : vert jaune, rase et continue.
+  alpine: {
+    albedo: [0.205, 0.254, 0.107],
+    grain: 2,
+    climate: null,
+    grassHeight: 0.4,
+    grassDensity: 0.9,
+    grassTint: [0.94, 1.02, 0.78],
+    bushes: 0.04,
+  },
+
+  // --- Le minéral -----------------------------------------------------------
+  bare: { albedo: [0.27, 0.255, 0.225], grain: 0, climate: 'bare' },
+  // L'éboulis et la dalle sont deux paysages : une pente de cailloux qui bouge,
+  // un plateau de pierre. Les confondre était le défaut du gris unique.
+  scree: {
+    albedo: [0.323, 0.292, 0.254],
+    grain: 1,
+    climate: null,
+    grassHeight: 0.3,
+    grassDensity: 0.06,
+    grassTint: [1, 0.96, 0.88],
+    bushes: 0,
+  },
+  rock: {
+    albedo: [0.371, 0.332, 0.27],
+    grain: 2,
+    climate: null,
+    grassHeight: 0.35,
+    grassDensity: 0.1,
+    grassTint: [1, 0.96, 0.88],
+    bushes: 0.02,
+  },
+  sand: {
+    albedo: [0.624, 0.539, 0.361],
+    grain: 1,
+    climate: null,
+    grassHeight: 0.6,
+    grassDensity: 0.08,
+    grassTint: [1.06, 0.98, 0.72],
+    bushes: 0.05,
+  },
+
+  // --- Les deux matières à part ---------------------------------------------
+  // Le revêtement urbain. Sa couleur ne vient pas d'ici mais de la voirie
+  // (`townStyle.pavementTone`), pour qu'une bordure de trottoir et le sol
+  // qu'elle borde ne puissent pas diverger : l'albédo posé ici n'est qu'un
+  // repli. Seule matière qui assourdit le grain — une ville n'est pas une terre
+  // plus grise, c'est une dalle, qui garde du grain du bitume voisin en plus sourd.
+  pavement: {
+    albedo: [0.31, 0.3, 0.28],
+    grain: 0,
+    climate: 'pavement',
+    grainKeep: 0.55,
+    grassDensity: 0,
+    bushes: 0,
+  },
+  // L'eau, et c'est la seule matière que le shader traite à part : elle ne se
+  // mélange pas aux autres, elle les remplace, et ce qui la fait lire est son
+  // reflet (`waterSheen`), pas son albédo — presque noir. Rien n'y pousse, et
+  // ce n'est pas un réglage d'aspect : une touffe sortant de la Seine se
+  // verrait de loin.
+  water: {
+    albedo: [0.021, 0.045, 0.06],
+    grain: 0,
+    climate: null,
+    grassHeight: 0,
+    grassDensity: 0,
+    bushes: 0,
+  },
 };
 
 // --- Les bourgs ----------------------------------------------------------------
@@ -1425,7 +1512,7 @@ export const defaultTheme = Object.freeze({
     woodFloor: WOODLAND_FLOOR,
   },
   crops: CROP_LOOK,
-  covers: COVER_LOOK,
+  surfaces: SURFACE_LOOK,
   soils: SOIL_LOOK,
   towns: TOWN_PALETTES,
   personalities: BUILDING_PERSONALITIES,

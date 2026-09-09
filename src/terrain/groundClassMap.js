@@ -4,40 +4,52 @@
  * (`terrainMaterial`), la végétation (`vegetationLayer`) et l'herbe/le
  * mobilier lisent tous la même carte au même endroit, donc jamais de contradiction.
  *
- * Encodage — un canal par matière, l'alpha portant la couverture :
+ * ## Une carte, un identifiant par texel
  *
- *   R = herbe      G = bois      B = culture      alpha = classé
- *   alpha nul → non classé (l'appelant décide de son repli)
- *   alpha plein, R = G = B = 0 → sol nu, minéral ou bâti
+ *   R = identifiant de matière (`SURFACE_KINDS`)   0 = la donnée se tait
+ *   G = identifiant de culture (`CROP_KINDS`)      0 = rien ne pousse
+ *   alpha = toujours plein
  *
- * Les poids sont des parts, pas des étiquettes : une entité peut en peindre
- * plusieurs à la fois (le lotissement en est le cas type — voir `groundClassFor`).
- * Filtrage linéaire : les lisières se fondent sur quelques mètres, ce qui est
- * plus juste que la donnée elle-même.
+ * Il y en avait **deux**, et c'est la simplification de ce lot. Une carte
+ * portait quatre poids interpolés linéairement (herbe, bois, culture, sol nu),
+ * l'autre deux identifiants relus au plus proche (culture, couverture). Cette
+ * frontière n'était pas une idée : une « matière » avait sa texture dessinée et
+ * méritait donc un canal, une « couverture » n'avait qu'une teinte et
+ * empruntait la texture d'une voisine. Depuis qu'il n'y a plus qu'un grain pour
+ * tout le décor, la hiérarchie n'a plus d'objet — il n'y a qu'une liste de
+ * quatorze matières, et on en ajoute une en ajoutant une ligne (trente et une
+ * tiennent dans le canal).
  *
- * ## La seconde carte : ce qui pousse, et de quelle sorte
+ * Ce que la fusion fait gagner, au-delà du nom :
  *
- * Quatre matières ne distinguent pas une lande écossaise d'une prairie
- * normande — les deux sont de l'herbe, alors que les tuiles savent le dire
- * (`landcover.subclass` vaut `heath`, `scrub`, `wetland`, `scree`, `dune`…).
- * Cette information était lue puis jetée ; elle vit maintenant dans la carte
- * des cultures, qui n'utilisait qu'un de ses canaux :
+ * - **rien ne peut plus diverger.** Une case portait une matière dans une carte
+ *   et une couverture sans rapport dans l'autre, et il fallait tenir les deux
+ *   tracés d'accord à chaque passe ;
+ * - **peindre une matière efface la culture** qui était dessous, gratuitement :
+ *   c'est le même texel. La ripisylve y perd trois traits, dont un en
+ *   `destination-out` dont c'était la seule raison d'être ;
+ * - une texture au lieu de deux (9,4 Mo au lieu de 18,9), une rasterisation au
+ *   lieu de deux, et quatre lectures par pixel au lieu de six.
  *
- *   R = identifiant de culture    (`CROP_KINDS`)
- *   G = identifiant de couverture (`COVER_KINDS`)
- *   alpha = peint
+ * Le fondu des lisières, que le filtrage linéaire donnait gratuitement, est
+ * reconstruit là où il est lu : le shader et `shareOf` lisent les **quatre
+ * texels voisins** et mélangent leurs appartenances. Un identifiant ne
+ * s'interpole pas — entre le sable et l'eau il n'y a rien — mais
+ * l'appartenance à une matière, si. C'est ce que le shader faisait déjà pour
+ * les couvertures ; c'est devenu le cas général.
  *
- * Deux identifiants indépendants, même repère, filtrés au plus proche : une
- * parcelle porte une culture **ou** une couverture, jamais un mélange, et les
- * deux se lisent d'un seul échantillonnage.
+ * Le fond est **peint** et non effacé : un canevas transparent ferait porter
+ * aux pixels de bord un alpha partiel, donc des canaux prémultipliés, donc un
+ * identifiant divisé — relu comme une matière sans rapport tout le long des
+ * lisières.
  *
- * L'eau est une couverture comme les autres (`water`), et c'est la seule
- * description de l'eau dans la scène : il n'y a pas de plan d'eau posé sur le
- * terrain, le sol *est* l'eau là où la carte le dit.
+ * L'eau est une matière comme les autres, et c'est la seule description de
+ * l'eau dans la scène : il n'y a pas de plan d'eau posé sur le terrain, le sol
+ * *est* l'eau là où la carte le dit.
  *
  * ## Le sol de la ville
  *
- * Une couverture n'est pas relevée : `pavement` est **déduite**. Entre la
+ * Une matière n'est pas relevée : `pavement` est **déduite**. Entre la
  * chaussée et les façades, un centre-ville n'a ni herbe ni sol nu, il a du
  * trottoir — et le dire ici plutôt qu'en géométrie est ce qui permet au
  * revêtement d'aller jusqu'aux murs, d'épouser n'importe quelle forme de bâti
@@ -54,8 +66,7 @@
  * de jeu par le troisième temps, parc, bois et prairie par `landcover`. Un parc
  * en ville reste donc un parc, avec son herbe et ses allées de terre, sans
  * aucune règle de plus. Le vert urbain est en outre retiré du revêtement en
- * **trous** au moment de le peindre, et pas seulement recouvert après : sinon
- * la couverture, elle, resterait dessous et le parc se peindrait en dalle.
+ * **trous** au moment de le peindre, et pas seulement recouvert après.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
@@ -127,31 +138,164 @@ const WOOD_EDGE_OFFSETS = [
 ];
 
 /**
+ * **Toutes** les matières du sol, dans l'ordre de leur identifiant (qui vaut
+ * `indice + 1` ; zéro veut dire « la donnée se tait »).
+ *
+ * Une seule liste, et c'est le fond de ce module. Il y avait deux catégories —
+ * quatre « matières » en poids dans les canaux d'une carte, neuf
+ * « couvertures » en identifiant dans une autre — et la frontière n'était pas
+ * une idée mais un accident : une matière avait sa texture dessinée, une
+ * couverture n'avait qu'une teinte et empruntait celle d'une voisine. Depuis
+ * qu'il n'y a plus qu'un grain pour tout le décor, la hiérarchie n'a plus
+ * d'objet. On ajoute une matière en ajoutant une ligne ici et une ligne dans
+ * `SURFACE_LOOK`.
+ *
+ * **L'ordre est gravé** : l'identifiant est peint dans un canal 8 bits et relu
+ * des deux côtés — par le shader de terrain, qui en tire la couleur du sol
+ * jusqu'à l'horizon, et par l'herbe et la végétation, qui décident de ce qui y
+ * pousse. Le changer repeint une lande en éboulis.
+ *
+ * L'ordre n'est pas arbitraire non plus : le canevas 2D lisse le bord de ses
+ * tracés, et un pixel de bord porte donc un mélange des deux identifiants
+ * voisins, relu comme celui qui en est le plus proche. Deux matières qui se
+ * touchent souvent dans le monde sont donc rangées côte à côte ici, pour que ce
+ * mélange tombe sur l'une des deux et non sur une troisième sans rapport.
+ */
+export const SURFACE_KINDS = [
+  // Le végétal ordinaire, dans l'ordre où il se côtoie en rase campagne.
+  'grass',
+  'settled',
+  'farmland',
+  'wood',
+  // Les couvertures végétales.
+  'heath',
+  'scrub',
+  'alpine',
+  'wetland',
+  // Le minéral.
+  'bare',
+  'scree',
+  'rock',
+  'sand',
+  // Les deux matières à part : l'une est déduite, l'autre remplace tout.
+  'pavement',
+  'water',
+];
+
+/**
+ * Part d'herbe d'un lotissement, telle que la strate basse la voit (ordre de
+ * grandeur du non-bâti et non-revêtu dans un lotissement français).
+ *
+ * Ce n'est plus un poids peint dans la carte — `settled` est une matière — mais
+ * l'herbe a encore besoin de savoir qu'on y sème, et de combien.
+ */
+export const SETTLED_GRASS = 0.66;
+
+/**
+ * Pas entre deux identifiants dans le canal rouge.
+ *
+ * Huit, ce qui plafonne à trente et une matières — la liste en compte
+ * quatorze, et cette marge est le point de la fusion : on peut désormais en
+ * ajouter sans rien réorganiser. Le pas ne sert qu'à laisser à l'arrondi de
+ * lecture de quoi encaisser le passage par un canevas 8 bits ; quatre niveaux
+ * de part et d'autre suffisent, la valeur écrite étant exacte.
+ */
+export const SURFACE_ID_STEP = 8;
+
+/**
+ * Rang de l'eau, à partir de 1. Le shader en a besoin nommément : l'eau n'est
+ * pas une matière de plus, elle remplace tout ce qui la précède.
+ */
+export const WATER_ID = SURFACE_KINDS.indexOf('water') + 1;
+
+/** Rang du revêtement urbain, à partir de 1. Seule matière qui ne soit pas relevée mais déduite. */
+export const PAVEMENT_ID = SURFACE_KINDS.indexOf('pavement') + 1;
+
+/**
+ * Les matières sur lesquelles il pousse de l'herbe.
+ *
+ * Ce n'est pas un jugement d'aspect mais la seule distinction que la strate
+ * basse ait besoin de faire : une lande et un maquis sont rases et clairsemés,
+ * mais c'est bien de l'herbe qui y pousse, et leur ligne de `SURFACE_LOOK` dit
+ * ensuite de quelle taille et de quelle teinte. Ce qui n'est pas là ne porte
+ * rien : ni le minéral, ni la dalle, ni l'eau.
+ */
+export const VEGETAL_SURFACES = new Set(['grass', 'heath', 'scrub', 'alpine', 'wetland']);
+
+/** Identifiant d'une matière, ou 0 si on ne la connaît pas. Fonction pure. */
+export function surfaceId(kind) {
+  const index = SURFACE_KINDS.indexOf(kind);
+  return index < 0 ? 0 : index + 1;
+}
+
+/** Matière portée par une valeur du canal rouge, ou `null`. Fonction pure. */
+export function surfaceFromId(red) {
+  const index = Math.round(red / SURFACE_ID_STEP) - 1;
+  return SURFACE_KINDS[index] || null;
+}
+
+/**
+ * Remplissage d'un texel : la matière dans le rouge, la culture dans le vert.
+ *
+ * Un seul remplissage là où il en fallait deux, dans deux canevas. C'est ce qui
+ * rend impossible la divergence d'avant — une case pouvait porter une matière
+ * dans une carte et une couverture sans rapport dans l'autre — et ce qui fait
+ * qu'une matière peinte **efface la culture** qui était dessous, gratuitement.
+ *
+ * Alpha toujours plein : le fond est peint, pas effacé (voir `rebuild`).
+ *
+ * @param {string|null} kind Matière.
+ * @param {number} [crop] Identifiant de culture (`cropId`), 0 pour aucune.
+ */
+export function surfaceFill(kind, crop = 0) {
+  return `rgba(${surfaceId(kind) * SURFACE_ID_STEP}, ${crop * CROP_ID_STEP}, 0, 1)`;
+}
+
+/**
  * Matière d'une entité surfacique, ou `null` si elle n'en décrit aucune.
  *
- * `landuse=residential` ne prend pas `bare` : c'est un périmètre
- * administratif où le sol réel est majoritairement de l'herbe (pelouses,
- * jardins), le minéral ne couvrant que la chaussée et ses abords (composés
- * séparément par `streetLayer`). D'où `settled` : part d'herbe dominante,
- * part de minéral. Une zone d'activité (industrielle, commerciale, ferroviaire,
- * carrière), elle, reste `bare` : réellement minérale sur toute sa surface.
+ * C'était deux fonctions — `groundClassFor` disait la matière grossière,
+ * `coverFor` la précisait quand elle savait — et ce découpage était le
+ * symptôme : `landcover.class = 'sand'` devait d'abord se déclarer « sol nu »
+ * pour ensuite se corriger en « sable ». Il dit maintenant « sable » du premier
+ * coup.
  *
- * La couche `park` rendait `grass`, et c'était le défaut le plus coûteux de ce
- * module : elle ne porte pas de parcs mais des périmètres de protection (voir
- * `CLASS_SOURCE_LAYERS`), peints en dernier par-dessus tout le reste. Un
- * cordon dunaire classé, un marais protégé, une forêt de parc naturel
- * régional : tous ramenés à de l'herbe, et leur couverture effacée avec.
+ * `landuse=residential` ne prend pas `bare` : c'est un périmètre administratif
+ * où le sol réel est surtout de l'herbe (pelouses, jardins), le minéral ne
+ * couvrant que la chaussée et ses abords (composés par `streetLayer`). D'où
+ * `settled`, qui était un mélange peint dans un canal et qui est désormais une
+ * matière comme les autres. Une zone d'activité (industrielle, commerciale,
+ * ferroviaire, carrière), elle, reste `bare` : réellement minérale partout.
+ *
+ * La couche `park` n'est pas lue, et c'est un piège de nommage : au schéma
+ * OpenMapTiles elle ne porte aucun parc de ville mais des périmètres de
+ * protection, souvent immenses (voir `CLASS_SOURCE_LAYERS`). Un périmètre
+ * juridique ne dit rien de la matière du sol.
+ *
+ * Fonction pure.
  */
-export function groundClassFor(sourceLayer, properties = {}) {
+export function surfaceFor(sourceLayer, properties = {}) {
   const klass = properties.class;
+  const subclass = properties.subclass;
 
   if (sourceLayer === 'landcover') {
     if (klass === 'wood') return 'wood';
-    if (klass === 'grass' || klass === 'wetland') return 'grass';
     if (klass === 'farmland') return 'farmland';
-    if (klass === 'rock' || klass === 'sand' || klass === 'ice') return 'bare';
-    // `glacier` et `ice_shelf` arrivent par la sous-classe.
-    if (properties.subclass === 'glacier' || properties.subclass === 'ice_shelf') return 'bare';
+    if (klass === 'wetland') return 'wetland';
+    if (klass === 'sand') return 'sand';
+    // L'éboulis et la dalle sont deux paysages : une pente de cailloux qui
+    // bouge, un plateau de pierre. Les confondre était le défaut du gris unique.
+    if (klass === 'rock') return subclass === 'scree' ? 'scree' : 'rock';
+    if (klass === 'grass') {
+      if (subclass === 'heath') return 'heath';
+      if (subclass === 'scrub' || subclass === 'shrubbery') return 'scrub';
+      // `fell` est la pelouse d'altitude au-dessus de la limite forestière ;
+      // `tundra` en est l'équivalent boréal.
+      if (subclass === 'fell' || subclass === 'tundra') return 'alpine';
+      return 'grass';
+    }
+    // La glace n'a pas encore de matière à elle : elle passe pour du minéral.
+    if (klass === 'ice' || subclass === 'glacier' || subclass === 'ice_shelf') return 'bare';
     return null;
   }
 
@@ -169,117 +313,6 @@ export function groundClassFor(sourceLayer, properties = {}) {
   }
 
   return null;
-}
-
-/** Part d'herbe d'un quartier d'habitation (ordre de grandeur du non-bâti/non-revêtu dans un lotissement français). */
-export const SETTLED_GRASS = 0.66;
-
-/**
- * Couleur de remplissage d'une matière. L'alpha vaut toujours 255 (distingue
- * « classé sol nu » de « pas classé du tout »). `settled` est le seul
- * remplissage partiel : un mélange d'herbe et de minéral écrit dans le canal rouge.
- */
-export const CLASS_FILL = {
-  grass: 'rgba(255, 0, 0, 1)',
-  wood: 'rgba(0, 255, 0, 1)',
-  farmland: 'rgba(0, 0, 255, 1)',
-  settled: `rgba(${Math.round(SETTLED_GRASS * 255)}, 0, 0, 1)`,
-  bare: 'rgba(0, 0, 0, 1)',
-};
-
-/**
- * Les couvertures, dans l'ordre de leur identifiant.
- *
- * Même contrat que `CROP_KINDS`, et les mêmes précautions : l'identifiant vaut
- * `indice + 1`, il est **peint** dans le canal vert de la carte des cultures, et
- * relu des deux côtés — par le shader de terrain, qui en tire la couleur du sol
- * jusqu'à l'horizon, et par l'herbe et la végétation, qui décident de ce qui y
- * pousse. L'ordre est donc gravé : le changer repeint une lande en éboulis.
- *
- * Les trois premières sont **végétales** (peintes sur de l'herbe), les cinq
- * suivantes **minérales** (peintes sur du sol nu).
- *
- * `pavement` n'a pas de source dans les tuiles, et c'est la seule : elle n'est
- * pas une matière relevée mais une **déduction** — le sol d'une ville, entre la
- * chaussée et les façades, est revêtu. Elle est peinte par sa propre passe
- * (voir `rebuild`), à un endroit précis de l'ordre : après l'occupation du sol,
- * qu'elle recouvre, et avant le vert urbain, qui la recouvre à son tour. C'est
- * cet ordre-là, et rien d'autre, qui laisse un parc et un cimetière verts au
- * milieu du bitume.
- */
-export const COVER_KINDS = [
-  'heath',
-  'scrub',
-  'wetland',
-  'alpine',
-  'scree',
-  'rock',
-  'sand',
-  'pavement',
-  'water',
-];
-
-/**
- * Rang de l'eau dans `COVER_KINDS`, à partir de 1 comme tous les
- * identifiants peints. Le shader de terrain en a besoin nommément : l'eau
- * n'est pas une matière de plus, elle remplace tout ce qui la précède.
- */
-export const WATER_COVER_ID = COVER_KINDS.indexOf('water') + 1;
-
-/**
- * Pas entre deux identifiants dans le canal vert.
- *
- * Vingt-cinq, et non trente : neuf couvertures à trente dépasseraient 255. Le
- * pas ne sert qu'à écarter deux identifiants d'assez pour qu'un filtrage au
- * plus proche ne les confonde pas — douze niveaux de marge suffisent
- * largement, l'arrondi de lecture ayant la moitié du pas pour lui.
- */
-export const COVER_ID_STEP = 25;
-
-/** Rang du revêtement urbain, à partir de 1 comme tous les identifiants peints. */
-export const PAVEMENT_COVER_ID = COVER_KINDS.indexOf('pavement') + 1;
-
-/**
- * Couverture décrite par une entité surfacique, ou `null`.
- *
- * Seule la couche `landcover` en porte : `landuse` décrit qui occupe le sol,
- * pas de quoi il est fait. Les valeurs de `subclass` sont celles du schéma
- * OpenMapTiles, qui y recopie le tag OSM d'origine (`natural`, `landuse`,
- * `leisure` ou `wetland`).
- *
- * Fonction pure.
- */
-export function coverFor(sourceLayer, properties = {}) {
-  if (sourceLayer !== 'landcover') return null;
-  const klass = properties.class;
-  const subclass = properties.subclass;
-
-  if (klass === 'wetland') return 'wetland';
-  if (klass === 'sand') return 'sand';
-  // L'éboulis et la dalle sont deux paysages différents : l'un est une pente de
-  // cailloux qui bouge, l'autre un plateau de pierre. Les confondre était le
-  // défaut du gris unique.
-  if (klass === 'rock') return subclass === 'scree' ? 'scree' : 'rock';
-  if (klass === 'grass') {
-    if (subclass === 'heath') return 'heath';
-    if (subclass === 'scrub' || subclass === 'shrubbery') return 'scrub';
-    // `fell` est la pelouse d'altitude au-dessus de la limite forestière ;
-    // `tundra` en est l'équivalent boréal.
-    if (subclass === 'fell' || subclass === 'tundra') return 'alpine';
-  }
-  return null;
-}
-
-/** Identifiant d'une couverture dans la carte, ou 0. Fonction pure. */
-export function coverId(cover) {
-  const index = COVER_KINDS.indexOf(cover);
-  return index < 0 ? 0 : index + 1;
-}
-
-/** Couverture portée par une valeur du canal vert, ou `null`. Fonction pure. */
-export function coverFromId(green) {
-  const index = Math.round(green / COVER_ID_STEP) - 1;
-  return COVER_KINDS[index] || null;
 }
 
 /** Anneaux d'une géométrie surfacique. */
@@ -312,34 +345,27 @@ export class GroundClassMap {
      * climat doit arriver — pas dans `cropLayer`, qui ne fait que relire.
      */
     this.climate = null;
+    // Une seule carte, un seul repère, un seul filtrage. Elle portait des
+    // poids interpolés linéairement dans une carte et des identifiants relus au
+    // plus proche dans une autre ; ce sont désormais deux canaux du même texel,
+    // tous deux des identifiants, tous deux au plus proche. Le fondu des
+    // lisières que le filtrage linéaire donnait gratuitement est reconstruit
+    // par le shader, qui lit les quatre voisins et mélange leurs
+    // appartenances — ce qu'il faisait déjà pour les couvertures.
     this.canvas = createCanvas(CLASS_PIXELS, CLASS_PIXELS);
     this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
 
     this.texture = new THREE.CanvasTexture(this.canvas);
-    this.texture.colorSpace = THREE.NoColorSpace; // les canaux portent des poids, pas une couleur
+    this.texture.colorSpace = THREE.NoColorSpace; // les canaux portent des identifiants, pas une couleur
     // Sans ce réglage, three retourne l'image et la carte serait en miroir nord-sud.
     this.texture.flipY = false;
     this.texture.wrapS = THREE.ClampToEdgeWrapping;
     this.texture.wrapT = THREE.ClampToEdgeWrapping;
-    this.texture.minFilter = THREE.LinearFilter;
-    this.texture.magFilter = THREE.LinearFilter;
+    // Au plus proche : interpoler un identifiant inventerait une matière entre
+    // deux, et entre le sable et l'eau il n'y a rien.
+    this.texture.minFilter = THREE.NearestFilter;
+    this.texture.magFilter = THREE.NearestFilter;
     this.texture.generateMipmaps = false;
-
-    // Carte des cultures : même carré, même repère, identifiant de culture
-    // dans le rouge au lieu de poids de matière.
-    this.cropCanvas = createCanvas(CLASS_PIXELS, CLASS_PIXELS);
-    this.cropCtx = this.cropCanvas.getContext('2d', { willReadFrequently: true });
-
-    this.cropTexture = new THREE.CanvasTexture(this.cropCanvas);
-    this.cropTexture.colorSpace = THREE.NoColorSpace;
-    this.cropTexture.flipY = false;
-    this.cropTexture.wrapS = THREE.ClampToEdgeWrapping;
-    this.cropTexture.wrapT = THREE.ClampToEdgeWrapping;
-    // Au plus proche, contrairement à la carte de classes : le rouge porte un
-    // identifiant, pas une quantité (interpoler donnerait une culture inventée).
-    this.cropTexture.minFilter = THREE.NearestFilter;
-    this.cropTexture.magFilter = THREE.NearestFilter;
-    this.cropTexture.generateMipmaps = false;
 
     /** Coin nord-ouest du carré couvert, en mètres locaux. */
     this.origin = new THREE.Vector2(0, 0);
@@ -350,7 +376,6 @@ export class GroundClassMap {
 
     /** Copie CPU, relue par la végétation. `null` tant que rien n'a été peint. */
     this._data = null;
-    this._cropData = null;
 
     this._anchor = null;
     this._frame = null;
@@ -365,28 +390,104 @@ export class GroundClassMap {
     this.climate = family || null;
   }
 
+  /** Index du texel qui contient un point, ou -1 hors carte. */
+  _texelAt(x, z) {
+    const px = Math.floor(((x - this.origin.x) / this.size) * CLASS_PIXELS);
+    const pz = Math.floor(((z - this.origin.y) / this.size) * CLASS_PIXELS);
+    if (px < 0 || pz < 0 || px >= CLASS_PIXELS || pz >= CLASS_PIXELS) return -1;
+    return (pz * CLASS_PIXELS + px) * 4;
+  }
+
+  /** Vrai si la carte couvre ce point. Distinct de « rien n'y pousse ». */
+  hasDataAt(x, z) {
+    return this._data !== null && this._texelAt(x, z) >= 0;
+  }
+
   /**
-   * Matières présentes en un point, ou `null` hors carte ou non classé (même
-   * donnée que celle lue par le shader, au même endroit).
+   * Matière du sol en un point, ou `null` si la donnée se tait — la seule
+   * réponse à « de quelle sorte est ce sol ». Le shader, l'herbe, la
+   * végétation et les chaussées la lisent tous ici, donc jamais de contradiction.
+   *
+   * @param {number} x Mètres locaux.
+   * @param {number} z
+   * @returns {string|null} Un nom de `SURFACE_KINDS`.
+   */
+  surfaceAt(x, z) {
+    const data = this._data;
+    if (!data) return null;
+    const i = this._texelAt(x, z);
+    if (i < 0) return null;
+    return surfaceFromId(data[i]);
+  }
+
+  /**
+   * Part d'une matière autour d'un point, de 0 à 1 — l'appartenance des quatre
+   * texels voisins, pondérée bilinéairement.
+   *
+   * C'est le pendant CPU de ce que fait le shader, et il faut bien qu'il
+   * existe : un identifiant ne s'interpole pas, mais l'appartenance à une
+   * matière, si. Sans lui, une lisière de bois répondrait « bois » ou
+   * « pas bois » au texel de 2,7 m, et les semis s'aligneraient sur ce damier.
+   *
+   * @param {string} kind Matière cherchée.
+   * @param {number} x Mètres locaux.
+   * @param {number} z
+   * @returns {number} de 0 à 1, ou 0 hors carte.
+   */
+  shareOf(kind, x, z) {
+    const data = this._data;
+    if (!data) return 0;
+    const wanted = surfaceId(kind) * SURFACE_ID_STEP;
+    if (!wanted) return 0;
+
+    const gx = ((x - this.origin.x) / this.size) * CLASS_PIXELS - 0.5;
+    const gz = ((z - this.origin.y) / this.size) * CLASS_PIXELS - 0.5;
+    const x0 = Math.floor(gx);
+    const z0 = Math.floor(gz);
+    const fx = gx - x0;
+    const fz = gz - z0;
+
+    let share = 0;
+    for (let dz = 0; dz <= 1; dz++) {
+      const pz = z0 + dz;
+      if (pz < 0 || pz >= CLASS_PIXELS) continue;
+      const weightZ = dz === 0 ? 1 - fz : fz;
+      for (let dx = 0; dx <= 1; dx++) {
+        const px = x0 + dx;
+        if (px < 0 || px >= CLASS_PIXELS) continue;
+        const red = data[(pz * CLASS_PIXELS + px) * 4];
+        if (Math.abs(red - wanted) > SURFACE_ID_STEP / 2) continue;
+        share += (dx === 0 ? 1 - fx : fx) * weightZ;
+      }
+    }
+    return share;
+  }
+
+  /**
+   * Parts des quatre matières que l'herbe et le mobilier savent lire, ou `null`
+   * si la donnée se tait.
+   *
+   * Ces quatre-là n'ont plus rien de fondamental — ce sont quatre matières
+   * parmi quatorze — mais elles restent les seules que la strate basse
+   * distingue : l'herbe pousse, la litière pousse à moitié, le champ selon la
+   * saison, le minéral pas. La forme est conservée pour ses lecteurs
+   * (`grassGreenFor`, `woodEdgeAt`).
    *
    * @param {number} x Mètres locaux.
    * @param {number} z
    * @returns {{grass:number, wood:number, farmland:number, bare:number}|null}
    */
   sampleAt(x, z) {
-    const data = this._data;
-    if (!data) return null;
+    if (!this._data) return null;
+    if (this._texelAt(x, z) < 0) return null;
 
-    const px = Math.floor(((x - this.origin.x) / this.size) * CLASS_PIXELS);
-    const pz = Math.floor(((z - this.origin.y) / this.size) * CLASS_PIXELS);
-    if (px < 0 || pz < 0 || px >= CLASS_PIXELS || pz >= CLASS_PIXELS) return null;
-
-    const i = (pz * CLASS_PIXELS + px) * 4;
-    if (data[i + 3] === 0) return null; // la donnée ne dit rien ici
-
-    const grass = data[i] / 255;
-    const wood = data[i + 1] / 255;
-    const farmland = data[i + 2] / 255;
+    // Le lotissement compte pour ce qu'il est : deux tiers d'herbe, un tiers de
+    // minéral. C'était un poids peint dans un canal ; c'est maintenant une
+    // matière, et la part se lit ici plutôt que dans la carte.
+    let grass = this.shareOf('settled', x, z) * SETTLED_GRASS;
+    for (const kind of VEGETAL_SURFACES) grass += this.shareOf(kind, x, z);
+    const wood = this.shareOf('wood', x, z);
+    const farmland = this.shareOf('farmland', x, z);
     return { grass, wood, farmland, bare: Math.max(0, 1 - grass - wood - farmland) };
   }
 
@@ -401,94 +502,55 @@ export class GroundClassMap {
     return Math.min(1, sample.grass + sample.farmland * 0.5);
   }
 
-  /** Part de boisé, de 0 à 1. Zéro là où la donnée se tait : on ne devine pas un bois. */
+  /** Part de bois en un point, de 0 à 1. */
   woodAt(x, z) {
-    return this.sampleAt(x, z)?.wood ?? 0;
+    return this.shareOf('wood', x, z);
   }
 
   /**
-   * Part de lisière d'un point : 0 en plein bois comme hors du bois, 1 sur un
-   * bord franc. C'est la seule réponse à « suis-je à l'ourlet ? », et deux
-   * couches la posent — la végétation, qui y baisse la houppe et y épaissit le
-   * fourré, et le mobilier, qui n'empile du bois qu'au bord.
-   *
-   * Mesurée par comparaison avec le voisinage, pas par un gradient : ce qui
-   * compte est l'écart au voisin **le plus ouvert**, sinon un coin de bois
-   * répond moins qu'un bord droit alors qu'il est plus lisière encore.
-   *
-   * Un voisin dont la carte ne dit rien ne compte pas : on ne devine pas une
-   * lisière là où la donnée se tait — sans quoi tout le pourtour du carré
-   * couvert en serait une.
+   * Part de lisière en un point : combien ce bois-ci donne sur autre chose.
+   * Zéro en plein bois comme en plein champ, maximal sur le bord.
    *
    * @param {number} x Mètres locaux.
    * @param {number} z
-   * @param {number} [reach] Distance du sondage, en mètres.
-   * @returns {number} de 0 à 1.
+   * @param {number} [reach] Distance à laquelle on va chercher le dehors.
    */
   woodEdgeAt(x, z, reach = WOOD_EDGE_REACH_M) {
-    const here = this.sampleAt(x, z)?.wood ?? 0;
+    const here = this.woodAt(x, z);
     if (here <= 0) return 0;
-    let open = 0;
+    let outside = 0;
     for (const [dx, dz] of WOOD_EDGE_OFFSETS) {
-      const neighbour = this.sampleAt(x + dx * reach, z + dz * reach);
-      if (!neighbour) continue;
-      const gap = here - neighbour.wood;
-      if (gap > open) open = gap;
+      const nx = x + dx * reach;
+      const nz = z + dz * reach;
+      // Un voisin dont la carte ne dit rien n'est pas un dehors : sans ce
+      // test, tout le pourtour du carré couvert serait une lisière, et le
+      // sous-bois s'y ourlerait d'arbres qui n'ont rien à border.
+      if (!this.hasDataAt(nx, nz)) continue;
+      outside = Math.max(outside, here - this.woodAt(nx, nz));
     }
-    return Math.min(1, open / here);
+    return Math.max(0, Math.min(1, outside));
   }
 
   /**
-   * Culture portée par un point, ou `null` (hors carte, hors champ, ou
-   * culture qu'on ne sait pas nommer). Seule réponse à « qu'est-ce qui pousse
-   * ici », lue aussi par le shader, `cropLayer`, et le mobilier.
+   * Culture portée par un point, ou `null` (hors carte, hors champ, ou culture
+   * qu'on ne sait pas nommer). Second axe, indépendant de la matière : un champ
+   * de blé est du `farmland` **et** du blé.
    *
    * @param {number} x Mètres locaux.
    * @param {number} z
    * @returns {string|null}
    */
   cropAt(x, z) {
-    const data = this._cropData;
+    const data = this._data;
     if (!data) return null;
-
-    const px = Math.floor(((x - this.origin.x) / this.size) * CLASS_PIXELS);
-    const pz = Math.floor(((z - this.origin.y) / this.size) * CLASS_PIXELS);
-    if (px < 0 || pz < 0 || px >= CLASS_PIXELS || pz >= CLASS_PIXELS) return null;
-
-    const i = (pz * CLASS_PIXELS + px) * 4;
-    if (data[i + 3] === 0) return null;
-    return cropFromId(data[i]);
+    const i = this._texelAt(x, z);
+    if (i < 0) return null;
+    return cropFromId(data[i + 1]);
   }
 
-  /**
-   * Couverture portée par un point, ou `null` — hors carte, ou couverture
-   * ordinaire (une prairie n'en est pas une : c'est le cas par défaut).
-   *
-   * Lue dans le canal **vert** de la carte des cultures, au même repère et au
-   * même échantillonnage que la culture elle-même. C'est la seule réponse à la
-   * question « de quelle sorte est ce sol » : le shader de terrain y prend sa
-   * couleur, l'herbe sa hauteur, la végétation ses arbustes.
-   *
-   * @param {number} x Mètres locaux.
-   * @param {number} z
-   * @returns {string|null}
-   */
-  coverAt(x, z) {
-    const data = this._cropData;
-    if (!data) return null;
-
-    const px = Math.floor(((x - this.origin.x) / this.size) * CLASS_PIXELS);
-    const pz = Math.floor(((z - this.origin.y) / this.size) * CLASS_PIXELS);
-    if (px < 0 || pz < 0 || px >= CLASS_PIXELS || pz >= CLASS_PIXELS) return null;
-
-    const i = (pz * CLASS_PIXELS + px) * 4;
-    if (data[i + 3] === 0) return null;
-    return coverFromId(data[i + 1]);
-  }
-
-  /** Vrai dès qu'une carte des cultures **et des couvertures** a été relue. */
+  /** Vrai dès qu'une carte a été relue : la culture vit dans la même. */
   get cropReady() {
-    return this._cropData !== null;
+    return this._data !== null;
   }
 
   /** Vrai dès qu'une rasterisation a été relue : avant, personne ne sait rien. */
@@ -542,7 +604,7 @@ export class GroundClassMap {
    */
   _paintPavement(urban, originX, originZ, perMeter) {
     if (!urban?.any || !urban.builtUp?.length) return 0;
-    const { ctx, cropCtx } = this;
+    const { ctx } = this;
 
     const ringPath = (ring, into = new Path2D()) => {
       for (let i = 0; i < ring.length; i++) {
@@ -576,11 +638,10 @@ export class GroundClassMap {
     }
 
     ctx.save();
-    cropCtx.save();
     ctx.clip(discs);
-    cropCtx.clip(discs);
-    ctx.fillStyle = CLASS_FILL.bare;
-    cropCtx.fillStyle = `rgba(0, ${PAVEMENT_COVER_ID * COVER_ID_STEP}, 0, 1)`;
+    // Un seul remplissage : le revêtement était une matière dans une carte et
+    // une couverture dans l'autre, et il fallait que les deux restent d'accord.
+    ctx.fillStyle = surfaceFill('pavement');
     let painted = 0;
 
     for (const ring of urban.builtUp) {
@@ -588,11 +649,9 @@ export class GroundClassMap {
       const path = ringPath(ring);
       path.addPath(greens);
       ctx.fill(path, 'evenodd');
-      cropCtx.fill(path, 'evenodd');
       painted++;
     }
 
-    cropCtx.restore();
     ctx.restore();
     return painted;
   }
@@ -619,9 +678,12 @@ export class GroundClassMap {
     const perMeter = CLASS_PIXELS / CLASS_AREA_M;
     const { origin, scale, zoom } = frame;
 
-    // Transparent = non classé, distinct du sol nu.
-    ctx.clearRect(0, 0, CLASS_PIXELS, CLASS_PIXELS);
-    this.cropCtx.clearRect(0, 0, CLASS_PIXELS, CLASS_PIXELS);
+    // Le fond est **peint**, pas effacé : identifiant zéro, alpha plein. Un
+    // canevas transparent ferait porter aux pixels de bord d'un tracé un alpha
+    // partiel, donc des canaux prémultipliés, donc un identifiant divisé —
+    // relu comme une matière sans rapport tout le long des lisières.
+    ctx.fillStyle = surfaceFill(null);
+    ctx.fillRect(0, 0, CLASS_PIXELS, CLASS_PIXELS);
 
     let painted = 0;
 
@@ -643,11 +705,10 @@ export class GroundClassMap {
 
     for (const sourceLayer of CLASS_SOURCE_LAYERS) {
       source.forEachFeature(sourceLayer, tiles, (geometry, properties) => {
-        const kind = groundClassFor(sourceLayer, properties);
+        const kind = surfaceFor(sourceLayer, properties);
         if (!kind) return;
         const green = sourceLayer === 'landuse' && URBAN_GREEN_LANDUSE.has(properties.class);
 
-        ctx.fillStyle = CLASS_FILL[kind];
         for (const rings of classPolygons(geometry)) {
           if (!Array.isArray(rings) || rings.length === 0) continue;
 
@@ -676,35 +737,27 @@ export class GroundClassMap {
             path.closePath();
           }
 
+          // La culture, tirée ici et nulle part ailleurs, ancrée au sol
+          // (centre de la parcelle) pour que la bulle qui repasse la retrouve.
+          const crop =
+            kind === 'farmland' && counted > 0
+              ? cropId(
+                  cropFor(properties, randomAt(sumX / counted, sumZ / counted, 43), this.climate)
+                )
+              : 0;
+
           if (green) {
             // Rejoué après le revêtement : voir plus haut.
-            deferred.push({ path, fill: CLASS_FILL[kind] });
+            deferred.push({ path, fill: surfaceFill(kind, crop) });
             painted++;
             continue;
           }
 
+          // Un seul remplissage pour la matière **et** sa culture : c'était
+          // deux tracés dans deux canevas, qui pouvaient diverger.
+          ctx.fillStyle = surfaceFill(kind, crop);
           ctx.fill(path, 'evenodd'); // anneaux intérieurs = trous
           painted++;
-
-          // Couverture fine — lande, maquis, marais, éboulis. Elle vit dans le
-          // canal vert de la carte des cultures (voir l'en-tête).
-          const cover = coverId(coverFor(sourceLayer, properties));
-
-          if (kind !== 'farmland') {
-            if (cover) {
-              this.cropCtx.fillStyle = `rgba(0, ${cover * COVER_ID_STEP}, 0, 1)`;
-              this.cropCtx.fill(path, 'evenodd');
-            }
-            continue;
-          }
-          if (counted === 0) continue;
-          // Tirée ici et nulle part ailleurs, ancrée au sol (centre de la parcelle).
-          const id = cropId(
-            cropFor(properties, randomAt(sumX / counted, sumZ / counted, 43), this.climate)
-          );
-          if (!id && !cover) continue;
-          this.cropCtx.fillStyle = `rgba(${id * CROP_ID_STEP}, ${cover * COVER_ID_STEP}, 0, 1)`;
-          this.cropCtx.fill(path, 'evenodd');
         }
       });
 
@@ -729,12 +782,9 @@ export class GroundClassMap {
       const waterways = this.theme.water.waterways;
       const bufferM = this.theme.water.riparianBufferM ?? 0;
       if (bufferM > 0) {
+        ctx.save();
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-        ctx.strokeStyle = CLASS_FILL.wood;
-        this.cropCtx.save();
-        this.cropCtx.lineCap = 'round';
-        this.cropCtx.lineJoin = 'round';
 
         source.forEachFeature(WATERWAY_SOURCE_LAYER, tiles, (geometry, properties) => {
           // Un fossé n'a pas de ripisylve.
@@ -770,41 +820,26 @@ export class GroundClassMap {
             }
             if (!started) continue;
 
+            // L'ourlet, puis le lit par-dessus : le trait est centré sur
+            // l'axe, et sans reprise un large cours d'eau se retrouverait
+            // planté d'arbres en son milieu.
+            //
+            // Deux traits, là où il en fallait cinq — dont un en
+            // `destination-out` pour effacer, dans l'autre carte, la culture
+            // que l'ourlet recouvrait. Peindre une matière efface désormais la
+            // culture d'un même geste : elles sont deux canaux du même texel.
+            ctx.strokeStyle = surfaceFill('wood');
             ctx.lineWidth = lineWidthPx;
             ctx.stroke(path);
-            // Le trait est centré sur l'axe : il faut reprendre le lit, sinon
-            // un large cours d'eau se retrouve planté d'arbres en son milieu.
-            // Peint en sol nu, et non effacé : effacer rendrait le lit « non
-            // classé », dont le repli est l'herbe (`unclassifiedWeights`).
-            ctx.save();
-            ctx.strokeStyle = CLASS_FILL.bare;
+
+            ctx.strokeStyle = surfaceFill('water');
             ctx.lineWidth = width * perMeter;
             ctx.stroke(path);
-            ctx.restore();
-            // Dans l'autre carte, deux traits, et l'ordre n'est pas
-            // indifférent. D'abord l'ourlet entier efface ce qui poussait là
-            // (un champ ne pousse pas sous un bosquet)…
-            this.cropCtx.save();
-            this.cropCtx.globalCompositeOperation = 'destination-out';
-            this.cropCtx.strokeStyle = '#000';
-            this.cropCtx.lineWidth = lineWidthPx;
-            this.cropCtx.stroke(path);
-            this.cropCtx.restore();
-            // …puis le lit reprend par-dessus, en eau. Peint avant, il serait
-            // effacé par l'ourlet qui est plus large ; peint sous
-            // `destination-out`, il effacerait au lieu de peindre — la couleur
-            // d'une source n'est pas lue dans ce mode. Les deux à la fois, et
-            // c'était le défaut : aucun cours d'eau linéaire ne portait d'eau.
-            this.cropCtx.save();
-            this.cropCtx.strokeStyle = `rgba(0, ${WATER_COVER_ID * COVER_ID_STEP}, 0, 1)`;
-            this.cropCtx.lineWidth = width * perMeter;
-            this.cropCtx.stroke(path);
-            this.cropCtx.restore();
             painted++;
           }
         });
 
-        this.cropCtx.restore();
+        ctx.restore();
       }
     }
 
@@ -832,17 +867,14 @@ export class GroundClassMap {
           path.closePath();
         }
 
+        // Le lit d'un grand cours d'eau est un polygone (`water`), pas
+        // seulement le trait `waterway`, dont la largeur de thème décrit un
+        // ruisseau et pas un fleuve. C'est de là que le shader de terrain tire
+        // le plan d'eau lui-même.
         ctx.save();
-        ctx.fillStyle = CLASS_FILL.bare;
+        ctx.fillStyle = surfaceFill('water');
         ctx.fill(path, 'evenodd');
         ctx.restore();
-
-        // Et la matière : de l'eau. C'est de là que le shader de terrain tire
-        // le plan d'eau lui-même.
-        this.cropCtx.save();
-        this.cropCtx.fillStyle = `rgba(0, ${WATER_COVER_ID * COVER_ID_STEP}, 0, 1)`;
-        this.cropCtx.fill(path, 'evenodd');
-        this.cropCtx.restore();
       }
     });
 
@@ -850,7 +882,6 @@ export class GroundClassMap {
     this.revision++;
     this.origin.set(originX, originZ);
     this.texture.needsUpdate = true;
-    this.cropTexture.needsUpdate = true;
 
     // Relecture unique, à la rasterisation (un `getImageData` par appel serait ruineux).
     try {
@@ -858,13 +889,6 @@ export class GroundClassMap {
     } catch (e) {
       this._data = null;
       console.warn('[groundClassMap] relecture impossible', e?.message || e);
-    }
-    // Relue en entier, comme celle des matières, pour la même indexation.
-    try {
-      this._cropData = this.cropCtx.getImageData(0, 0, CLASS_PIXELS, CLASS_PIXELS).data;
-    } catch (e) {
-      this._cropData = null;
-      console.warn('[groundClassMap] relecture des cultures impossible', e?.message || e);
     }
     this._anchor = { x: here.x, z: here.z };
     this._frame = frame;
@@ -875,8 +899,6 @@ export class GroundClassMap {
     if (this.disposed) return;
     this.disposed = true;
     this._data = null;
-    this._cropData = null;
     this.texture.dispose();
-    this.cropTexture.dispose();
   }
 }

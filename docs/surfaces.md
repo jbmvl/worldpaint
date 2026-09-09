@@ -1,21 +1,34 @@
 # Les surfaces : ce qu'on lit, ce qu'on peint, ce qu'on laisse
 
 État des lieux de l'occupation du sol, à jour de la branche courante. Tout ce
-qui suit est décidé dans `src/terrain/groundClassMap.js` — deux fonctions pures
-(`groundClassFor`, `coverFor`) et deux rasters de 4096 m de côté à 1536 px,
-soit **2,7 m par pixel**.
+qui suit est décidé dans `src/terrain/groundClassMap.js` — une fonction pure
+(`surfaceFor`) et **un** raster de 4096 m de côté à 1536 px, soit **2,7 m par
+pixel**.
 
-Le reste du décor ne fait que relire ces deux cartes : le shader de terrain y
-prend la couleur du sol jusqu'à l'horizon (`terrainMaterial`), l'herbe sa
-hauteur et sa densité (`groundCover`), la végétation ses arbustes
-(`vegetationLayer`).
+Le reste du décor ne fait que relire cette carte : le shader de terrain y prend
+la couleur du sol jusqu'à l'horizon (`terrainMaterial`), l'herbe sa hauteur et
+sa densité (`groundCover`), la végétation ses arbustes (`vegetationLayer`).
 
-## Les deux cartes
+## La carte
 
-| Carte | Canaux | Filtrage | Sens |
-| --- | --- | --- | --- |
-| matières | R herbe, G bois, B culture, A classé | linéaire | des **parts**, qui se mélangent ; les lisières se fondent sur quelques mètres |
-| cultures/couvertures | R culture, G couverture, A peint | au plus proche | des **identifiants**, qui ne se mélangent pas — mais l'**appartenance** à une couverture, si (voir « le pas de la carte ») |
+| Canal | Sens |
+| --- | --- |
+| R | identifiant de **matière** (`SURFACE_KINDS`), 0 = la donnée se tait |
+| G | identifiant de **culture** (`CROP_KINDS`), 0 = rien ne pousse |
+| alpha | toujours plein — le fond est peint, pas effacé |
+
+Filtrage au plus proche : ce sont des identifiants, et interpoler un
+identifiant inventerait une matière entre deux (entre le sable et l'eau, il n'y
+a rien). Le fondu des lisières est reconstruit là où il est lu — le shader et
+`shareOf` lisent les **quatre texels voisins** et mélangent leurs
+appartenances. Une appartenance, elle, s'interpole.
+
+Il y en avait **deux**, une de poids et une d'identifiants, et la frontière
+n'était pas une idée : une « matière » avait sa texture dessinée et méritait un
+canal, une « couverture » n'avait qu'une teinte et empruntait la texture d'une
+voisine. Depuis qu'il n'y a plus qu'un grain pour tout le décor, il n'y a plus
+qu'une liste de quatorze matières — et trente et une tiennent dans le canal, ce
+qui est le point : on en ajoute une en ajoutant une ligne.
 
 Une parcelle porte donc une part de chaque matière, et *une* culture **ou**
 *une* couverture, jamais un mélange des deux.
@@ -131,17 +144,18 @@ carte le dit (couverture `water`). Deux entrées :
 
 Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
 
-1. **Là où la donnée se tait, c'est de l'herbe.** `unclassifiedWeights` vaut
-   `[1, 0, 0, 0]` partout, quel que soit le pays. C'est le pari gagnant en rase
+1. **Là où la donnée se tait, c'est de l'herbe.** `unclassified` vaut `grass`
+   partout, quel que soit le pays. C'est le pari gagnant en rase
    campagne européenne ; c'est aussi la raison pour laquelle **un désert non
    cartographié est une prairie**. Le climat (`soilWashFor`) ne fait ensuite que
    jaunir cette herbe — en `arid` elle devient olive et clairsemée, jamais du
    sable — et la grille climatique **s'arrête à l'Europe** : hors fenêtre, le
    Sahara est peint avec l'albédo d'herbe d'une prairie normande.
    Un désert n'existe donc aujourd'hui que là où OSM a tracé un `natural=sand`.
-2. **La glace n'a pas de couverture.** `ice`, `glacier`, `ice_shelf` tombent en
-   sol nu sans identifiant : un glacier est peint comme du gravier gris.
-   `COVER_KINDS` n'a ni `snow` ni `ice`.
+2. **La glace n'a pas de matière.** `ice`, `glacier`, `ice_shelf` tombent en
+   sol nu : un glacier est peint comme du gravier gris. `SURFACE_KINDS` n'a ni
+   `snow` ni `ice` — et depuis la fusion, les ajouter n'est plus qu'une ligne
+   dans la liste et une dans `SURFACE_LOOK`.
 3. **Un marais n'a pas d'eau.** La couverture `wetland` existe, avec sa couleur
    et sa roselière haute, mais rien ne rend le **film d'eau** entre les touffes.
    Toutes les sous-classes (`bog`, `marsh`, `swamp`, `saltmarsh`, `fen`…) sont

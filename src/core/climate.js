@@ -32,7 +32,7 @@
  *
  * Une lande écossaise et un bocage normand sont tous les deux `Cfb`. Ce qui les
  * sépare est ailleurs, et déjà là : la sous-classe d'occupation du sol
- * (`coverFor`, dans `groundClassMap`) et le relief. Le climat est une entrée
+ * (`surfaceFor`, dans `groundClassMap`) et le relief. Le climat est une entrée
  * parmi trois, pas un oracle.
  */
 
@@ -42,7 +42,7 @@ import { CLIMATE_GRID_RUNS } from './climateGrid.js';
  * Les codes Köppen-Geiger, dans l'ordre qui sert d'**encodage à la grille** :
  * une cellule porte `indice + 1`, et zéro signifie « pas de donnée ».
  *
- * L'ordre est donc gravé, comme celui de `CROP_KINDS` et de `COVER_KINDS` : le
+ * L'ordre est donc gravé, comme celui de `CROP_KINDS` et de `SURFACE_KINDS` : le
  * changer sans refabriquer la grille repeint l'Espagne en Finlande. C'est
  * volontairement la liste **mondiale** complète, même si la moitié n'apparaît
  * pas en Europe — elle est la table de correspondance d'une source, pas une

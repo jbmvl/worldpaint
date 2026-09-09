@@ -94,6 +94,7 @@ export class TerrainBubble {
       groundClass,
       look: theme.terrain,
       soils: theme.soils,
+      surfaces: theme.surfaces,
       streets: theme.streets,
     });
 

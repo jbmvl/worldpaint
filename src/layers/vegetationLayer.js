@@ -62,7 +62,7 @@
  * Un maquis, une garrigue, une lande ne sont pas des forêts clairsemées : ce
  * sont des tapis d'arbustes sans strate haute, que la carte de classes peint
  * en herbe — `woodAt` y répond zéro et rien n'y pousserait. La couverture
- * (`groundClass.coverAt`) le dit, et c'est elle qui sème ici les buissons hors
+ * (`groundClass.surfaceAt`) le dit, et c'est elle qui sème ici les buissons hors
  * des bois, dans les deux semis, avec les silhouettes du sous-bois.
  */
 
@@ -368,11 +368,11 @@ export const BLIND_EPSILON = 0.02;
  * C'est ce qui distingue un maquis d'un pré : ni l'un ni l'autre n'est un bois
  * pour la carte de classes, mais l'un est couvert d'arbustes et l'autre non.
  *
- * @param {string|null} cover Retour de `groundClass.coverAt`.
- * @param {Object} [covers] Tranche `theme.covers`.
+ * @param {string|null} cover Matière du sol (`groundClass.surfaceAt`).
+ * @param {Object} [surfaces] Tranche `theme.surfaces`.
  */
-export function coverBushesFor(cover, covers = defaultTheme.covers) {
-  const look = cover ? covers?.[cover] : null;
+export function coverBushesFor(cover, surfaces = defaultTheme.surfaces) {
+  const look = cover ? surfaces?.[cover] : null;
   return look?.bushes ?? 0;
 }
 
@@ -770,7 +770,7 @@ export class VegetationLayer {
         // Fourré de couverture — voir `coverBushesFor`. Il se sème là où il n'y
         // a pas de bois, donc il ne peut pas être conditionné aux tiges.
         const thicket =
-          coverBushesFor(groundClass.coverAt?.(centreX, centreZ) ?? null, this.theme.covers) *
+          coverBushesFor(groundClass.surfaceAt?.(centreX, centreZ) ?? null, this.theme.surfaces) *
           TREES_PER_CELL;
         const expected = stems + thicket;
         if (expected <= 0) continue;
@@ -920,7 +920,7 @@ export class VegetationLayer {
           woodDensity(groundClass.woodAt(centreX, centreZ)) *
           thicketPerCell(thicketDensityFor(type), band.cell);
         const thick =
-          coverBushesFor(groundClass.coverAt?.(centreX, centreZ) ?? null, this.theme.covers) *
+          coverBushesFor(groundClass.surfaceAt?.(centreX, centreZ) ?? null, this.theme.surfaces) *
           thicketPerCell(1, band.cell);
         const expected = stems + thick;
         if (expected <= 0) continue;

@@ -3,26 +3,51 @@
  * du sol autour de l'observateur ; ce shader y lit la part d'herbe, de bois,
  * de culture et de sol nu, et compose la matière correspondante.
  *
- * Structure (grain, textures procédurales moyennées à 0,5) et couleur
- * (albédos linéaires) sont séparées. Le grain change d'échelle avec la
- * distance (période fine près, octave large loin). La pente au-delà de 30°
- * vire à la roche.
+ * ## Une matière = une couleur, plus un grain
  *
- * Quatre choses le sortent de l'aplat, et elles tiennent ensemble :
+ * C'est la règle du module, et elle a été chèrement acquise. **La couleur
+ * d'une matière vient de son albédo, et de lui seul ; le grain ne porte
+ * aucune teinte.** Il y avait trois textures de sol qui, elles, en portaient
+ * une — un vert d'herbe, un brun de limon, une litière — et qui dessinaient
+ * en plus des objets : des brins, des cailloux avec leur ombre peinte, des
+ * feuilles mortes. Trois défauts tenaient ensemble là-dedans :
+ *
+ * - un objet de trois centimètres passe sous le pixel d'écran vers trente
+ *   mètres ; au-delà il ne restait de ces motifs que le pavage de leur
+ *   période, qu'il fallait ensuite masquer (deux relevés décalés par matière,
+ *   technique d'Íñigo Quílez : six lectures de texture par pixel, dépensées à
+ *   cacher un défaut que les motifs créaient eux-mêmes) ;
+ * - l'ombre des cailloux était peinte dans la texture, donc figée : elle ne
+ *   suivait pas le soleil ;
+ * - une matière sans texture propre ne pouvait qu'emprunter celle d'une
+ *   autre. Sable, lande, éboulis et trottoir avaient tous le grain du limon
+ *   labouré, à la teinte près — et la teinte est le seul levier qui restait
+ *   pour les distinguer, alors que ce n'est pas elle qui les sépare.
+ *
+ * Ce qui doit se voir de loin est un **objet de la scène** — un arbre, une
+ * falaise —, pas un dessin dans une texture. Ne pas réintroduire de motif ici.
+ *
+ * Reste donc un seul relevé de grain, sans motif ni couleur
+ * (`createGrainCanvas`), et une matière s'ajoute désormais en ajoutant un
+ * albédo. Le grain change d'échelle avec la distance (période fine près,
+ * octave large loin). La pente au-delà de 30° vire à la roche.
+ *
+ * Trois choses sortent le sol de l'aplat, et elles tiennent ensemble :
  *
  * - le grain **incline la normale** (dérivées d'écran, Mikkelsen) : sans ça
- *   un sol reste une peinture, c'est l'ombre d'un caillou qui fait la matière.
- *   Aucun relevé de plus, et l'effet s'éteint au loin où le mip a lissé ;
- * - **aucune texture ne se répète à sa période** : deux relevés décalés,
- *   choisis par un bruit cent fois plus large, fondus là où ils se ressemblent
- *   (technique d'Íñigo Quílez). Une période de 2,6 m dessine sinon une grille
- *   lisible jusqu'à l'horizon ;
+ *   un sol reste une peinture. Aucun relevé de plus, et l'effet s'éteint au
+ *   loin où le mip a lissé ;
  * - **deux matières s'interpénètrent** au lieu de se fondre : les poids sont
  *   repondérés par la hauteur du grain puis seuillés (`blendWidth`). Un
- *   mélange linéaire donne une bande dégradée de cinq mètres, une aquarelle ;
+ *   mélange linéaire donne une bande dégradée de cinq mètres, une aquarelle.
+ *   C'est ce mécanisme qui impose **trois champs de grain** et non un seul :
+ *   un grain commun serait un facteur commun, qui s'annule à la
+ *   normalisation. Ils tiennent dans les trois canaux d'une seule lecture ;
  * - une **variation macro** de deux cents mètres en luminosité et en chaleur,
  *   qui monte avec la distance — un albédo constant par classe est ce qui
  *   donne l'aplat de carte routière, et le grain, au mètre, n'y peut rien.
+ *   Depuis que les textures ne dessinent plus rien, c'est la seule structure
+ *   qui subsiste sur un sol lointain.
  *
  * Une couverture peut en outre **assourdir** le grain (`uCoverGrain`), et une
  * seule le fait : le revêtement urbain. Le sol d'une ville n'est pas une terre
@@ -36,8 +61,8 @@
  * d'escalier dès que deux matières contrastent :
  *
  * - la **frange** (`edgeWarp`) : le sol est lu quelques mètres à côté, d'un
- *   déplacement continu tiré du grain. La limite reste où elle est, au mètre
- *   près, mais perd l'angle droit du carreau ;
+ *   déplacement continu tiré de deux canaux du grain, lus d'un coup. La limite
+ *   reste où elle est, au mètre près, mais perd l'angle droit du carreau ;
  * - les **couvertures s'interpolent** (`surfaceAt`) : un identifiant ne se
  *   mélange pas, mais l'appartenance à une couverture, si. Les quatre
  *   carreaux voisins sont lus au plus proche et ce sont leurs appartenances
@@ -53,21 +78,24 @@
 
 import {
   createDetailCanvas,
-  createGroundDetailCanvas,
+  createGrainCanvas,
   createMacroCanvas,
 } from '../materials/proceduralTextures.js';
 import { CROP_KINDS, CROP_ID_STEP } from '../layers/furniturePlacement.js';
 import {
-  COVER_KINDS,
-  COVER_ID_STEP,
-  WATER_COVER_ID,
-  PAVEMENT_COVER_ID,
+  SURFACE_KINDS,
+  SURFACE_ID_STEP,
+  WATER_ID,
+  PAVEMENT_ID,
   CLASS_PIXELS,
 } from './groundClassMap.js';
 import { pavementTone } from '../layers/townStyle.js';
 import { createWaterNormalCanvas } from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
 import { soilWashFor } from '../core/climate.js';
+
+/** Couleur d'une matière qu'un thème ne décrit pas : un gris de terre neutre. */
+const FALLBACK_ALBEDO = [0.18, 0.17, 0.15];
 
 /** Fabrique du matériau de terrain. Un seul matériau pour toute la bulle. */
 export class TerrainMaterialFactory {
@@ -82,10 +110,12 @@ export class TerrainMaterialFactory {
    *        ville est du trottoir, et sa teinte ne peut pas être décidée deux
    *        fois : la bordure la lit là aussi (`townStyle.pavementTone`).
    */
-  constructor({ THREE, look = {}, soils = null, streets = null, groundClass = null }) {
+  constructor({ THREE, look = {}, soils = null, surfaces = null, streets = null, groundClass = null }) {
     this.THREE = THREE;
     this.look = { ...defaultTheme.terrain, ...look };
     this.soils = soils || defaultTheme.soils;
+    /** Table des matières du sol, une ligne par matière (`SURFACE_LOOK`). */
+    this.surfaces = surfaces || defaultTheme.surfaces;
     this.streets = streets || defaultTheme.streets;
     this.groundClass = groundClass || null;
     /** Famille appliquée aux albédos. `null` = aucune correction. */
@@ -103,9 +133,9 @@ export class TerrainMaterialFactory {
 
     this.detailTexture = repeated(createDetailCanvas());
     this.macroTexture = repeated(createMacroCanvas());
-    this.grassTexture = repeated(createGroundDetailCanvas('grass', 256, 91711));
-    this.soilTexture = repeated(createGroundDetailCanvas('soil', 256, 60413));
-    this.woodTexture = repeated(createGroundDetailCanvas('forest', 256, 77201));
+    // Un seul grain pour toutes les matières : ses trois canaux portent trois
+    // champs indépendants, lus d'un coup (voir `createGrainCanvas`).
+    this.grainTexture = repeated(createGrainCanvas());
     // Rides : la même carte que celle qui servait la nappe d'eau, du temps où
     // l'eau était une surface posée sur le terrain.
     this.waterRippleTexture = repeated(createWaterNormalCanvas());
@@ -117,9 +147,7 @@ export class TerrainMaterialFactory {
     return [
       this.detailTexture,
       this.macroTexture,
-      this.grassTexture,
-      this.soilTexture,
-      this.woodTexture,
+      this.grainTexture,
       this.waterRippleTexture,
     ];
   }
@@ -140,8 +168,8 @@ export class TerrainMaterialFactory {
   syncGroundClass() {
     const map = this.groundClass;
     if (!map || !this._uniforms) return;
-    this._uniforms.uClassOrigin.value.copy(map.origin);
-    this._uniforms.uClassSize.value = map.size;
+    this._uniforms.uSurfaceOrigin.value.copy(map.origin);
+    this._uniforms.uSurfaceSize.value = map.size;
   }
 
   setMaxAnisotropy(value) {
@@ -164,20 +192,27 @@ export class TerrainMaterialFactory {
   setClimate(family) {
     if (!this._uniforms || family === this._climate) return;
     this._climate = family || null;
-    const { look } = this;
     const wash = soilWashFor(this._climate, this.soils);
     const scale = (albedo, by) => albedo.map((v, i) => v * by[i]);
 
-    this._uniforms.uGrassAlbedo.value.set(...scale(look.grassAlbedo, wash.grass));
-    this._uniforms.uBareAlbedo.value.set(...scale(look.bareAlbedo, wash.bare));
-    this._uniforms.uFarmlandAlbedo.value.set(...scale(look.farmlandAlbedo, wash.farmland));
+    // Une matière déclare le lavage qu'elle prend, ou aucun. C'était quatre
+    // affectations nommées, plus un cas particulier pour le trottoir ; c'est
+    // maintenant une colonne de la table.
+    SURFACE_KINDS.forEach((kind, i) => {
+      const look = this.surfaces[kind] || {};
+      const uniform = this._uniforms.uSurfaceAlbedo.value[i];
+      if (look.climate === 'pavement') {
+        uniform.set(...pavementTone(this._climate, this.streets));
+        return;
+      }
+      const base = look.albedo || FALLBACK_ALBEDO;
+      uniform.set(...(look.climate ? scale(base, wash[look.climate]) : base));
+    });
+
     CROP_KINDS.forEach((kind, i) => {
-      const base = look.cropAlbedo[kind] || look.farmlandAlbedo;
+      const base = this.look.cropAlbedo[kind] || this.surfaces.farmland.albedo;
       this._uniforms.uCropAlbedo.value[i].set(...scale(base, wash.farmland));
     });
-    this._uniforms.uCoverAlbedo.value[PAVEMENT_COVER_ID - 1].set(
-      ...pavementTone(this._climate, this.streets)
-    );
   }
 
   /**
@@ -197,12 +232,8 @@ export class TerrainMaterialFactory {
       uDetailMap: { value: this.detailTexture },
       uDetailScale: { value: new THREE.Vector2(look.detailScaleNear, look.detailScaleFar) },
       uDetailRange: { value: new THREE.Vector2(look.detailNear, look.detailFar) },
-      uGrassMap: { value: this.grassTexture },
-      uSoilMap: { value: this.soilTexture },
-      uWoodMap: { value: this.woodTexture },
-      uGroundScale: {
-        value: new THREE.Vector3(look.groundScaleGrass, look.groundScaleSoil, look.groundScaleWood),
-      },
+      uGrainMap: { value: this.grainTexture },
+      uGrainScale: { value: look.grainScaleM },
       // (période en mètres, amplitude en luminosité, dérive chaud/froid).
       uMacroMap: { value: this.macroTexture },
       uMacro: {
@@ -210,46 +241,44 @@ export class TerrainMaterialFactory {
       },
       uBlendWidth: { value: look.blendWidth },
       uGrainRelief: { value: look.grainRelief },
-      uGrassAlbedo: { value: new THREE.Vector3(...look.grassAlbedo) },
-      uWoodAlbedo: { value: new THREE.Vector3(...look.woodAlbedo) },
-      uFarmlandAlbedo: { value: new THREE.Vector3(...look.farmlandAlbedo) },
-      uBareAlbedo: { value: new THREE.Vector3(...look.bareAlbedo) },
-      uUnclassified: { value: new THREE.Vector4(...look.unclassifiedWeights) },
-      uClassMap: { value: this.groundClass ? this.groundClass.texture : null },
-      uClassOrigin: { value: new THREE.Vector2(0, 0) },
-      uClassSize: { value: 1 },
-      uClassEnabled: { value: this.groundClass ? 1 : 0 },
-      // Partage le repère de la carte de classes (même origine, même côté).
-      uCropMap: { value: this.groundClass ? this.groundClass.cropTexture : null },
+      // Une matière = une couleur. Le tableau est indexé par l'identifiant
+      // peint dans la carte, moins un.
+      uSurfaceAlbedo: {
+        value: SURFACE_KINDS.map(
+          (kind) => new THREE.Vector3(...(this.surfaces[kind]?.albedo || FALLBACK_ALBEDO))
+        ),
+      },
+      // Lequel des trois champs de la carte de grain chaque matière emploie,
+      // sous forme de sélecteur : le produit scalaire en tire le bon canal sans
+      // indexer un vecteur par une variable, ce que toutes les versions de GLSL
+      // n'acceptent pas.
+      uSurfaceGrain: {
+        value: SURFACE_KINDS.map((kind) => {
+          const field = Math.min(2, Math.max(0, Math.round(this.surfaces[kind]?.grain ?? 0)));
+          return new THREE.Vector3(field === 0 ? 1 : 0, field === 1 ? 1 : 0, field === 2 ? 1 : 0);
+        }),
+      },
+      // Part du grain qu'une matière conserve, de 0 (aplat) à 1. Une seule s'en
+      // écarte : le trottoir, qui est une dalle et pas une terre plus grise.
+      uSurfaceGrainKeep: {
+        value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.grainKeep ?? 1),
+      },
+      // Matière retenue là où la donnée se tait.
+      uUnclassified: { value: Math.max(0, SURFACE_KINDS.indexOf(look.unclassified)) + 1 },
+      uSurfaceMap: { value: this.groundClass ? this.groundClass.texture : null },
+      uSurfaceOrigin: { value: new THREE.Vector2(0, 0) },
+      uSurfaceSize: { value: 1 },
+      uSurfaceEnabled: { value: this.groundClass ? 1 : 0 },
       uCropAlbedo: {
-        value: CROP_KINDS.map((kind) => new THREE.Vector3(...(look.cropAlbedo[kind] || look.farmlandAlbedo))),
-      },
-      // Couvertures — même mécanique que les cultures, dans l'autre canal de la
-      // même carte. Le repli est l'albédo d'herbe : une couverture qu'un thème
-      // ne décrit pas se peint comme une prairie, ce qui est le comportement
-      // d'avant qu'elles existent.
-      // Le revêtement urbain n'a pas d'albédo dans `coverAlbedo` et n'en aura
-      // pas : il vient de la voirie, par climat (`setClimate`). Posé ici aussi,
-      // parce que `setClimate` ne fait rien tant que la famille n'a pas changé
-      // — et au montage elle vaut déjà `null`.
-      uCoverAlbedo: {
-        value: COVER_KINDS.map((kind) =>
-          kind === 'pavement'
-            ? new THREE.Vector3(...pavementTone(null, this.streets))
-            : new THREE.Vector3(...((look.coverAlbedo || {})[kind] || look.grassAlbedo))
+        value: CROP_KINDS.map(
+          (kind) =>
+            new THREE.Vector3(...(look.cropAlbedo[kind] || this.surfaces.farmland.albedo))
         ),
       },
-      // Force du grain d'une couverture, de 0 (aplat) à 1 (le grain du sol
-      // qu'elle remplace). Une seule s'en écarte : le revêtement urbain.
-      uCoverGrain: {
-        value: COVER_KINDS.map((kind) =>
-          kind === 'pavement' ? (this.streets.pavementGrain ?? 1) : 1
-        ),
-      },
-      // L'eau. Elle ne se mélange pas aux autres matières : là où la
-      // couverture le dit, elle remplace tout — couleur, grain, relief.
+      // L'eau ne se mélange pas aux autres matières : là où la carte le dit,
+      // elle remplace tout — couleur, grain, relief.
       uWaterAlbedo: {
-        value: new THREE.Vector3(...((look.coverAlbedo || {}).water || [0.02, 0.045, 0.06])),
+        value: new THREE.Vector3(...(this.surfaces.water?.albedo || [0.02, 0.045, 0.06])),
       },
       uWaterSheenColor: { value: new THREE.Vector3(...look.waterSheenColor) },
       uWaterSheen: { value: look.waterSheen },
@@ -295,27 +324,21 @@ export class TerrainMaterialFactory {
            uniform sampler2D uDetailMap;
            uniform vec2 uDetailScale;
            uniform vec2 uDetailRange;
-           uniform sampler2D uGrassMap;
-           uniform sampler2D uSoilMap;
-           uniform sampler2D uWoodMap;
-           uniform vec3 uGroundScale;
+           uniform sampler2D uGrainMap;
+           uniform float uGrainScale;
            uniform sampler2D uMacroMap;
            uniform vec3 uMacro;
            uniform float uBlendWidth;
            uniform float uGrainRelief;
-           uniform vec3 uGrassAlbedo;
-           uniform vec3 uWoodAlbedo;
-           uniform vec3 uFarmlandAlbedo;
-           uniform vec3 uBareAlbedo;
-           uniform vec4 uUnclassified;
-           uniform sampler2D uClassMap;
-           uniform vec2 uClassOrigin;
-           uniform float uClassSize;
-           uniform float uClassEnabled;
-           uniform sampler2D uCropMap;
+           uniform sampler2D uSurfaceMap;
+           uniform vec2 uSurfaceOrigin;
+           uniform float uSurfaceSize;
+           uniform float uSurfaceEnabled;
+           uniform float uUnclassified;
            uniform vec3 uCropAlbedo[${CROP_KINDS.length}];
-           uniform vec3 uCoverAlbedo[${COVER_KINDS.length}];
-           uniform float uCoverGrain[${COVER_KINDS.length}];
+           uniform vec3 uSurfaceAlbedo[${SURFACE_KINDS.length}];
+           uniform vec3 uSurfaceGrain[${SURFACE_KINDS.length}];
+           uniform float uSurfaceGrainKeep[${SURFACE_KINDS.length}];
            uniform vec3 uRockColor;
            uniform vec2 uSlopeRange;
            uniform float uRockStrength;
@@ -328,39 +351,6 @@ export class TerrainMaterialFactory {
            uniform vec2 uWaterFlow;
            uniform float uShoreWet;
            uniform vec2 uEdgeWarp;
-
-           /*
-            * Relevé d'une texture cyclique **sans que sa période se voie**.
-            *
-            * Deux relevés de la même image, décalés chacun d'un vecteur tiré
-            * d'un indice de région, fondus l'un dans l'autre. Le fondu est
-            * biaisé par l'écart entre les deux relevés : il
-            * passe donc de préférence là où ils se ressemblent, et la couture
-            * n'a rien à cacher. C'est la première des techniques d'Íñigo
-            * Quílez sur la répétition de texture — deux relevés au lieu de
-            * neuf, ce qui est le seul coût qu'un sol peut se permettre.
-            *
-            * Limite connue et assumée : au passage d'une région à l'autre,
-            * le décalage saute, donc le niveau de mip calculé sur une ligne
-            * de pixels est faux. Sur une photo ça se verrait ; sur du grain
-            * dont on ne garde que la variation, non.
-            *
-            * L'indice de région vient du bruit macro, dont la période est
-            * cent fois plus large : le motif ne se répète donc plus tous les
-            * trois mètres mais tous les deux cents, à quoi s'ajoute que les
-            * deux relevés ne se répètent pas ensemble.
-            */
-           vec3 noTile(sampler2D tex, vec2 uv, float region) {
-             float l = region * 8.0;
-             float i = floor(l);
-             float f = fract(l);
-             vec2 offA = sin(vec2(3.0, 7.0) * i);
-             vec2 offB = sin(vec2(3.0, 7.0) * (i + 1.0));
-             vec3 a = texture2D(tex, uv + offA).rgb;
-             vec3 b = texture2D(tex, uv + offB).rgb;
-             float d = dot(a - b, vec3(0.3333));
-             return mix(a, b, smoothstep(0.2, 0.8, f - 0.1 * d));
-           }
 
            /*
             * Sol mouillé : le film d'eau assombrit et sature (réflexions
@@ -383,8 +373,11 @@ export class TerrainMaterialFactory {
             * une période bien plus large, garde la limite à sa place au mètre
             * près et lui retire son angle droit.
             *
-            * Deux relevés du même bruit, décalés l'un de l'autre, faute d'un
-            * bruit à deux canaux : le grain est en niveaux de gris.
+            * Deux canaux du grain, lus d'un coup : la carte de grain range
+            * trois champs indépendants dans R, G et B. C'était deux relevés
+            * décalés du même bruit gris, du temps où il n'y avait pas de bruit
+            * à plusieurs canaux. Pas d'accent grave ici : ce commentaire vit
+            * dans un littéral de gabarit, qu'il refermerait.
             *
             * Conséquence assumée : ce qui lit ces cartes au sol (l'herbe, la
             * végétation) ne connaît pas ce déplacement. La peinture et les
@@ -392,49 +385,60 @@ export class TerrainMaterialFactory {
             * la brouillent chacune de leur côté, sur la même largeur.
             */
            vec2 edgeWarp(vec2 world) {
-             vec2 p = world / uEdgeWarp.y;
-             float wx = texture2D(uDetailMap, p).r;
-             float wz = texture2D(uDetailMap, p + vec2(0.37, 0.61)).r;
-             return (vec2(wx, wz) - 0.5) * 2.0 * uEdgeWarp.x;
-           }
-
-           /* Identifiant de couverture porté par un carreau (0 = aucune). */
-           float coverIdAt(vec2 texel) {
-             vec4 fine = texture2D(uCropMap, (texel + 0.5) / ${CLASS_PIXELS}.0);
-             return floor(fine.g * 255.0 / ${COVER_ID_STEP}.0 + 0.5);
+             vec2 shift = texture2D(uGrainMap, world / uEdgeWarp.y).rg;
+             return (shift - 0.5) * 2.0 * uEdgeWarp.x;
            }
 
            /*
-            * Ce que la carte des couvertures dit en un point : la couleur de
-            * couverture, la part de sol qu'elle couvre, et la part d'eau.
+            * Identifiant de matière porté par un texel, ou celui du repli là
+            * où la donnée se tait.
+            */
+           float surfaceIdAt(vec2 texel) {
+             float id = floor(
+               texture2D(uSurfaceMap, (texel + 0.5) / ${CLASS_PIXELS}.0).r * 255.0
+                 / ${SURFACE_ID_STEP}.0 + 0.5
+             );
+             return id < 0.5 ? uUnclassified : id;
+           }
+
+           /*
+            * Ce que la carte dit en un point : la couleur du sol, son grain,
+            * ce qu'il en reste, et la part d'eau.
             *
-            * Une couverture est un **identifiant** peint dans un canal : il se
-            * relit au plus proche, sans quoi l'interpolation inventerait une
-            * matière entre deux (entre le sable et l'eau, il n'y a rien).
-            * D'où le défaut : le contour d'une couverture suivait le carreau
-            * de la carte — deux mètres et demi de côté — et se lisait comme un
-            * escalier, alors que les lisières des matières, elles, sont
-            * filtrées linéairement et se fondent.
+            * Une matière est un **identifiant**, relu au plus proche : sans
+            * quoi l'interpolation inventerait une matière entre deux, et entre
+            * le sable et l'eau il n'y a rien. Mais un contour qui suit le texel
+            * de 2,7 m se lit en escalier. On interpole donc le **resultat du
+            * test**, pas l'identifiant : les quatre texels voisins sont lus au
+            * plus proche, chacun est d'une matière ou d'une autre, et ce sont
+            * ces appartenances qu'on mélange. Le sable arrive sur l'herbe par
+            * une rampe d'un texel, et la berge de même.
             *
-            * On interpole donc le **résultat du test**, pas l'identifiant :
-            * les quatre carreaux voisins sont lus au plus proche, chacun est
-            * d'une couverture ou d'une autre, et ce sont ces appartenances
-            * qu'on mélange. Le sable arrive alors sur l'herbe par une rampe
-            * d'un carreau, de la largeur du fondu que la carte des matières a
-            * déjà — et la berge de même.
+            * Ce mécanisme servait les seules couvertures, la carte des poids
+            * fondant les quatre autres matières par son filtrage lineaire.
+            * Depuis qu'il n'y a plus qu'une carte d'identifiants, il est le cas
+            * general — et il porte du meme coup l'interpenetration : chaque
+            * voisin est repondere par la hauteur du grain de **sa** matiere,
+            * puis on ne garde que ce qui reste dans uBlendWidth du plus fort.
+            * La lisiere suit alors la forme du grain au lieu d'etre un degrade.
             *
-            * L'eau est tenue à part de la part de couverture, et la part de
-            * couverture est rapportée à ce qui n'est **pas** de l'eau : sinon
-            * une plage se dénaturerait en gravier à l'approche de la mer,
-            * faute de sable dans les carreaux mouillés.
+            * D'ou les trois champs de grain : deux matieres qui partagent le
+            * leur ont un facteur commun, qui s'annule a la normalisation, et
+            * leur lisiere retombe sur le fondu lineaire. La table les repartit
+            * pour que ce cas soit rare (voir SURFACE_LOOK).
             *
-            * Limite assumée : le contour passe par les centres des carreaux.
-            * Il ne retrouve pas la position du polygone **dans** un carreau —
-            * il faudrait pour cela une carte peinte avec son antialiasing. Ce
-            * qui disparaît ici est la marche d'escalier, pas le pas de la carte.
+            * L'eau est tenue a part : elle ne se melange pas, elle remplace.
+            *
+            * Limite assumee : le contour passe par les centres des texels. Il
+            * ne retrouve pas la position du polygone **dans** un texel. Ce qui
+            * disparait ici est la marche d'escalier, pas le pas de la carte.
+            *
+            * Pas d'accent grave ni d'accent sur les majuscules dans ce bloc :
+            * il vit dans un litteral de gabarit.
             */
            void surfaceAt(
-             vec2 uv, out vec3 coverAlbedo, out float coverShare, out float coverGrain, out float water
+             vec2 uv, vec3 grain, float far, vec3 farmAlbedo,
+             out vec3 albedo, out float grainHere, out float grainKeep, out float water
            ) {
              vec2 grid = uv * ${CLASS_PIXELS}.0 - 0.5;
              vec2 corner = floor(grid);
@@ -446,29 +450,55 @@ export class TerrainMaterialFactory {
                f.x * f.y
              );
              vec4 ids = vec4(
-               coverIdAt(corner),
-               coverIdAt(corner + vec2(1.0, 0.0)),
-               coverIdAt(corner + vec2(0.0, 1.0)),
-               coverIdAt(corner + vec2(1.0, 1.0))
+               surfaceIdAt(corner),
+               surfaceIdAt(corner + vec2(1.0, 0.0)),
+               surfaceIdAt(corner + vec2(0.0, 1.0)),
+               surfaceIdAt(corner + vec2(1.0, 1.0))
              );
 
-             vec4 wet = step(abs(ids - ${WATER_COVER_ID}.0), vec4(0.5));
-             water = dot(wet, weight);
+             // Premiere passe : la hauteur du grain de chaque voisin.
+             vec4 height = vec4(0.0);
+             for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
+               vec4 hit = step(abs(ids - float(i)), vec4(0.5));
+               height += hit * dot(grain, uSurfaceGrain[i - 1]);
+             }
+
+             // Interpenetration. Au loin, la carte est plus fine que le pixel :
+             // trancher la-bas ferait crepiter la lisiere d'une image a
+             // l'autre, on y revient donc au fondu doux.
+             vec4 lifted = weight * (0.35 + height);
+             float peak = max(max(lifted.x, lifted.y), max(lifted.z, lifted.w));
+             lifted = max(lifted - (peak - uBlendWidth), 0.0);
+             lifted = mix(lifted / max(lifted.x + lifted.y + lifted.z + lifted.w, 1e-4), weight, far);
+
+             // Seconde passe : la couleur, le grain retenu, l'eau.
+             //
+             // L'eau est tenue hors du melange, et les parts sont rapportees a
+             // ce qui n'est **pas** de l'eau. Elle n'est pas une matiere de
+             // plus mais une surface qui remplace le sol, reprise plus bas avec
+             // sa rive : peindre sa couleur ici, avant ce fondu, ferait aller
+             // la berge d'une eau grainee vers une eau lisse au lieu d'aller de
+             // la terre a l'eau. Et sans le rapport, une plage se denaturerait
+             // en gravier a l'approche de la mer, faute de sable dans les
+             // texels mouilles.
+             water = dot(step(abs(ids - ${WATER_ID}.0), vec4(0.5)), lifted);
              float land = max(1.0 - water, 1e-4);
 
-             coverAlbedo = vec3(0.0);
-             coverShare = 0.0;
-             coverGrain = 0.0;
-             for (int i = 1; i <= ${COVER_KINDS.length}; i++) {
-               if (i != ${WATER_COVER_ID}) {
-                 vec4 hit = step(abs(ids - float(i)), vec4(0.5)) * weight;
-                 float share = (hit.x + hit.y + hit.z + hit.w) / land;
-                 coverShare += share;
-                 coverAlbedo += uCoverAlbedo[i - 1] * share;
-                 // Le grain d'une couverture, mélangé comme sa couleur : une
-                 // dalle de trottoir a le grain du bitume en plus sourd, une
-                 // lande a celui de la terre entier.
-                 coverGrain += uCoverGrain[i - 1] * share;
+             albedo = vec3(0.0);
+             grainHere = 0.0;
+             grainKeep = 0.0;
+             for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
+               if (i != ${WATER_ID}) {
+                 vec4 hit = step(abs(ids - float(i)), vec4(0.5));
+                 float share = dot(hit, lifted) / land;
+                 // La culture remplace la couleur de la terre labouree, et elle
+                 // seule : c'est un second axe, pas une matiere de plus.
+                 vec3 tone = i == ${SURFACE_KINDS.indexOf('farmland') + 1}
+                   ? farmAlbedo
+                   : uSurfaceAlbedo[i - 1];
+                 albedo += tone * share;
+                 grainKeep += uSurfaceGrainKeep[i - 1] * share;
+                 grainHere += dot(hit, lifted * height) / land;
                }
              }
            }`
@@ -483,145 +513,97 @@ export class TerrainMaterialFactory {
            float grainHeight = 0.5;
            float gWater = 0.0;
            {
-             // La carte de classes porte un poids par canal, et dans son
-             // alpha la couverture (alpha nul = donnée absente, pas sol nu).
-             // Lue à la frange (voir edgeWarp) : le déplacement vaut pour
-             // les deux cartes, sans quoi la matière et la couverture d'un
-             // même point ne parleraient plus du même endroit.
-             vec2 classUv = (vScenePos.xz + edgeWarp(vScenePos.xz) - uClassOrigin) / uClassSize;
-             vec4 cls = vec4(0.0);
-             // Hors du carré couvert, la texture est bornée au bord : lire quand
-             // même y étalerait la lisière sur des kilomètres.
-             float inClass = uClassEnabled > 0.5 &&
-                 classUv.x > 0.0 && classUv.x < 1.0 &&
-                 classUv.y > 0.0 && classUv.y < 1.0 ? 1.0 : 0.0;
-             if (inClass > 0.5) {
-               cls = texture2D(uClassMap, classUv);
-             }
-             // (herbe, bois, culture, sol nu) : le sol nu est le complément.
-             vec4 vectorWeights = vec4(cls.rgb, max(0.0, 1.0 - cls.r - cls.g - cls.b));
-             vec4 w = mix(uUnclassified, vectorWeights, cls.a);
-             w /= max(w.x + w.y + w.z + w.w, 1e-4);
+             // La carte porte un identifiant de matiere par texel, et celui de
+             // la culture dans le canal voisin. Lue a la frange (voir
+             // edgeWarp) : le deplacement vaut pour les deux canaux, qui sont
+             // ceux du meme texel.
+             vec2 surfaceUv = (vScenePos.xz + edgeWarp(vScenePos.xz) - uSurfaceOrigin) / uSurfaceSize;
+             // Hors du carre couvert, la texture est bornee au bord : lire
+             // quand meme y etalerait la lisiere sur des kilometres.
+             float inMap = uSurfaceEnabled > 0.5 &&
+                 surfaceUv.x > 0.0 && surfaceUv.x < 1.0 &&
+                 surfaceUv.y > 0.0 && surfaceUv.y < 1.0 ? 1.0 : 0.0;
 
-             // Grain projeté en coordonnées monde (pas de découpage visible).
              float dist = distance(vScenePos, cameraPosition);
              float far = smoothstep(uDetailRange.x, uDetailRange.y, dist);
              float near = texture2D(uDetailMap, vScenePos.xz / uDetailScale.x).r;
              float coarse = texture2D(uDetailMap, vScenePos.xz / uDetailScale.y).r;
              float noise = mix(near, coarse, far);
 
-             // Bruit macro : deux cents mètres de période. Il sert deux fois —
-             // à choisir la région des relevés sans répétition, et à faire
-             // dériver la couleur d'un bout à l'autre d'une parcelle.
+             // Bruit macro : deux cents metres de periode. Il fait deriver la
+             // couleur d'un bout a l'autre d'une parcelle — et c'est, depuis
+             // que les textures ne portent plus de motif, la seule chose qui
+             // reste a voir sur un sol lointain.
              float macro = texture2D(uMacroMap, vScenePos.xz / uMacro.x).r;
 
-             vec3 grass = noTile(uGrassMap, vScenePos.xz / uGroundScale.x, macro);
-             vec3 soil = noTile(uSoilMap, vScenePos.xz / uGroundScale.y, macro);
-             vec3 wood = noTile(uWoodMap, vScenePos.xz / uGroundScale.z, macro);
+             // Le grain, en une lecture : trois champs independants. Il ne
+             // porte aucune couleur — l'albedo la porte seul — il module la
+             // luminosite et incline la normale.
+             vec3 grain = texture2D(uGrainMap, vScenePos.xz / uGrainScale).rgb;
 
-             // Interpénétration des matières. Chaque relevé porte sa propre
-             // « hauteur » — la luminance de son grain, c'est-à-dire ce qui
-             // dépasse : un brin, un caillou, une feuille. On repondère les
-             // poids par elle, puis on ne garde que ce qui reste dans
-             // uBlendWidth du plus fort. La lisière suit alors la forme du
-             // grain au lieu d'être un dégradé, et une matière minoritaire
-             // disparaît franchement au lieu de teinter l'autre de moitié.
-             vec4 height = vec4(
-               dot(grass, vec3(0.3333)),
-               dot(wood, vec3(0.3333)),
-               dot(soil, vec3(0.3333)),
-               dot(soil, vec3(0.3333))
-             );
-             vec4 lifted = w * (0.35 + height);
-             float peak = max(max(lifted.x, lifted.y), max(lifted.z, lifted.w));
-             lifted = max(lifted - (peak - uBlendWidth), 0.0);
-             // Au loin, la carte de classes est plus fine que le pixel :
-             // trancher là-bas ferait crépiter la lisière d'une image à
-             // l'autre. On y revient donc au fondu doux.
-             w = mix(lifted / max(lifted.x + lifted.y + lifted.z + lifted.w, 1e-4), w, far);
+             // La culture : un second axe, qui remplace la couleur de la terre
+             // labouree la ou il est peint. Lu au plus proche, d'ou l'arrondi
+             // et non un seuil — une valeur interpolee n'aurait aucun sens.
+             // L'indexation passe par une boucle a bornes constantes, seule
+             // forme d'acces a un tableau d'uniformes que toutes les versions
+             // de GLSL acceptent.
+             vec3 farmAlbedo = uSurfaceAlbedo[${SURFACE_KINDS.indexOf('farmland')}];
+             if (inMap > 0.5) {
+               int crop = int(
+                 floor(texture2D(uSurfaceMap, surfaceUv).g * 255.0 / ${CROP_ID_STEP}.0 + 0.5)
+               ) - 1;
+               for (int i = 0; i < ${CROP_KINDS.length}; i++) {
+                 if (i == crop) farmAlbedo = uCropAlbedo[i];
+               }
+             }
 
-             // Le grain s'efface avec la distance.
-             vec3 structure = grass * w.x + wood * w.y + soil * (w.z + w.w);
-             vec3 texMod = mix(structure * 2.0, vec3(1.0), far);
-             float texLuma = max(dot(texMod, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
-             // Part de teinte propre à la texture ; le reste reste neutre pour nuancer l'albédo sans s'y ajouter.
-             vec3 modulation = mix(vec3(texLuma), texMod, 0.45) * (0.7 + noise * 0.6);
+             // Tout le sol en un appel : la couleur, le grain de la matiere,
+             // ce qu'elle en garde, et la part d'eau. C'etaient trois
+             // mecanismes — un melange de quatre poids, une boucle de
+             // couvertures, une substitution de culture — pour une seule
+             // question.
+             vec3 albedo = uSurfaceAlbedo[${SURFACE_KINDS.indexOf('grass')}];
+             float structure = 0.5;
+             float grainKeep = 1.0;
+             if (inMap > 0.5) {
+               surfaceAt(surfaceUv, grain, far, farmAlbedo, albedo, structure, grainKeep, gWater);
+             } else {
+               // Hors carte : la matiere de repli, avec le grain de son champ.
+               for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
+                 if (float(i) == uUnclassified) {
+                   albedo = uSurfaceAlbedo[i - 1];
+                   structure = dot(grain, uSurfaceGrain[i - 1]);
+                 }
+               }
+             }
 
-             // Variation macro. Centrée sur 1 : elle étale la luminosité sans
-             // la déplacer, et fait dériver la teinte vers le chaud dans les
+             // Le grain s'efface avec la distance. Scalaire, et c'est le fond
+             // du chantier precedent : une texture de sol ne teinte plus rien.
+             float texMod = mix(structure * 2.0, 1.0, far);
+             vec3 modulation = vec3(texMod) * (0.7 + noise * 0.6);
+
+             // Variation macro. Centree sur 1 : elle etale la luminosite sans
+             // la deplacer, et fait deriver la teinte vers le chaud dans les
              // zones claires. Elle monte **avec la distance**, et c'est une
-             // contrainte : les touffes instanciées ne la connaissent pas,
-             // donc à portée de semis le sol doit rester la couleur sur
-             // laquelle elles sont calées. Le grain porte le près, la nappe
-             // le loin, sur la même rampe.
-float macroSigned = (macro - 0.5) * far;
+             // contrainte : les touffes instanciees ne la connaissent pas,
+             // donc a portee de semis le sol doit rester la couleur sur
+             // laquelle elles sont calees.
+             float macroSigned = (macro - 0.5) * far;
              modulation *= (1.0 + macroSigned * uMacro.y) *
                vec3(1.0 + macroSigned * uMacro.z, 1.0, 1.0 - macroSigned * uMacro.z);
 
-             // Culture du champ. Le rouge porte un identifiant, lu au plus
-             // proche — d'où l'arrondi, et non un seuil : une valeur
-             // interpolée n'aurait aucun sens. L'indexation passe par une
-             // boucle à bornes constantes, seule forme d'accès à un tableau
-             // d'uniformes que toutes les versions de GLSL acceptent.
-             vec3 farmAlbedo = uFarmlandAlbedo;
-             vec3 grassAlbedo = uGrassAlbedo;
-             vec3 bareAlbedo = uBareAlbedo;
-             if (inClass > 0.5) {
-               vec4 fine = texture2D(uCropMap, classUv);
-               if (w.z > 0.001) {
-                 int crop = int(floor(fine.r * 255.0 / ${CROP_ID_STEP}.0 + 0.5)) - 1;
-                 for (int i = 0; i < ${CROP_KINDS.length}; i++) {
-                   if (i == crop) farmAlbedo = uCropAlbedo[i];
-                 }
-               }
-               // Couverture. Elle remplace l'herbe **et** le minéral, et non
-               // l'un des deux : une lande, un maquis ou un éboulis ne sont pas
-               // une prairie un peu terne ni un parking, ce sont d'autres
-               // matières. Chacune n'est peinte que sur l'une des deux, donc
-               // remplacer les deux ne mélange rien.
-               //
-               // Sa part est **interpolée** (voir surfaceAt) : deux
-               // couvertures voisines, ou une couverture et le sol ordinaire,
-               // se rejoignent sur une rampe d'un carreau au lieu de se
-               // couper au carreau. C'est la limite herbe/sable qui se lisait
-               // en marches d'escalier.
-               //
-               // L'eau est écartée de ce mélange : elle n'est pas une matière
-               // de plus mais une surface qui remplace le sol, et elle est
-               // reprise plus bas avec sa rive. La laisser ici peindrait le
-               // sol en couleur d'eau **avant** ce fondu, et la berge irait
-               // d'une eau grainée vers une eau lisse au lieu d'aller de la
-               // terre à l'eau.
-               vec3 coverAlbedo;
-               float coverShare;
-               float coverGrain;
-               surfaceAt(classUv, coverAlbedo, coverShare, coverGrain, gWater);
-               grassAlbedo = mix(grassAlbedo, coverAlbedo, coverShare);
-               bareAlbedo = mix(bareAlbedo, coverAlbedo, coverShare);
+             // Une matiere peut assourdir le grain, et une seule le fait : le
+             // trottoir. Le sol d'une ville n'est pas une terre plus grise,
+             // c'est une dalle — elle garde quelque chose du grain du bitume
+             // voisin, en plus sourd, sinon elle serait un aplat au milieu
+             // d'une rue grainee.
+             modulation = mix(vec3(1.0), modulation, grainKeep);
+             structure = mix(0.5, structure, grainKeep);
 
-               // Une couverture peut aussi **assourdir** le grain, et une seule
-               // le fait : le revêtement urbain. Le sol d'une ville n'est pas
-               // une terre plus grise, c'est une dalle — elle garde le grain du
-               // bitume voisin, en plus faible, sinon le trottoir serait un
-               // aplat au milieu d'une rue grainée. La modulation se ramène
-               // vers le neutre, et le relief de grain avec elle.
-               float grainScale = mix(1.0, coverGrain, coverShare);
-               modulation = mix(vec3(1.0), modulation, grainScale);
-               structure = mix(vec3(0.5), structure, grainScale);
-             }
-
-             // Après les couvertures : c'est là seulement que la structure du
-             // grain est définitive (le revêtement urbain l'assourdit), et
-             // c'est elle que lit la perturbation de normale, plus bas dans le
-             // shader de three. Pas d'accent grave dans ce commentaire : il
-             // vit dans un littéral de gabarit, qu'il refermerait.
-             grainHeight = dot(structure, vec3(0.3333));
-
-             vec3 albedo =
-               grassAlbedo * w.x +
-               uWoodAlbedo * w.y +
-               farmAlbedo * w.z +
-               bareAlbedo * w.w;
+             // Apres cela seulement le grain est definitif, et c'est lui que
+             // lit la perturbation de normale, plus bas dans le shader de
+             // three. Pas d'accent grave dans ce bloc : litteral de gabarit.
+             grainHeight = structure;
 
              vec3 base = albedo * modulation;
 
