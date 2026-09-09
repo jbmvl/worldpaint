@@ -7,6 +7,13 @@
  * télécharger).
  *
  * Bruit déterministe et cyclique : même graine, même image, bords raccordés.
+ *
+ * Décision à ne pas défaire par inadvertance : les textures de sol ne portent
+ * **aucun motif dessiné**. Un objet peint dans une texture de quelques mètres
+ * passe sous le pixel d'écran à trente mètres et ne laisse plus voir que le
+ * pavage de sa période ; et son ombre, peinte, ne suit pas le soleil. Ce qui
+ * doit se voir de loin est un objet de la scène (un arbre, une falaise), pas
+ * un dessin dans une texture. Voir `createGrainCanvas`.
  */
 
 import { defaultTheme } from '../themes/default.js';
@@ -166,146 +173,63 @@ export function createMacroCanvas(size = 128, seed = 40213) {
 }
 
 /**
- * Dessine un élément et ses huit copies décalées d'une période — rend
- * cyclable une texture faite de traits (un brin qui dépasse à droite doit
- * réapparaître à gauche).
- */
-function drawWrapped(ctx, size, draw) {
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      ctx.save();
-      ctx.translate(dx * size, dy * size);
-      draw(ctx);
-      ctx.restore();
-    }
-  }
-}
-
-/** Ramène la luminance moyenne d'une image à 0,5 (ces textures sont des modulations, pas des couleurs). */
-function normalizeMean(ctx, width, height, target = 0.5) {
-  const image = ctx.getImageData(0, 0, width, height);
-  const { data } = image;
-  let sum = 0;
-  for (let i = 0; i < data.length; i += 4) {
-    sum += (data[i] + data[i + 1] + data[i + 2]) / 3;
-  }
-  const mean = sum / (data.length / 4);
-  if (mean <= 0) return;
-  const gain = (target * 255) / mean;
-  for (let i = 0; i < data.length; i += 4) {
-    data[i] = Math.min(255, data[i] * gain);
-    data[i + 1] = Math.min(255, data[i + 1] * gain);
-    data[i + 2] = Math.min(255, data[i + 2] * gain);
-  }
-  ctx.putImageData(image, 0, 0);
-}
-
-/**
- * Texture de sol en couleur, cyclable : herbe ou terre. Le bruit fractal gris
- * seul donnait du grain mais aucune matière ; ce qui manque de près, ce sont
- * des objets de taille connue (brins, cailloux), qui rendent l'échelle sans
- * prétendre décrire le sol réel. Valeurs en facteurs de modulation linéaire, pas en sRGB.
+ * Grain du sol : trois champs de bruit indépendants, rangés dans les canaux R,
+ * G et B d'une seule image. Aucun motif dessiné — ni brin, ni caillou, ni
+ * feuille morte.
  *
- * @param {'grass'|'soil'} kind
+ * Ce module en dessinait, et c'était une erreur de portée. Un brin de trois
+ * centimètres tient dans trois pixels d'une texture qui couvre 2,6 m : passé
+ * une trentaine de mètres il descend sous le pixel d'écran, le mip le moyenne
+ * en aplat, et il ne reste de ces motifs que leur pavage. De près, l'ombre des
+ * cailloux était peinte dans la texture, donc figée : elle ne suivait pas le
+ * soleil. La couleur d'une matière vient de son albédo, et de lui seul ; le
+ * grain ne fait que la moduler et incliner sa normale.
+ *
+ * Trois champs et non un seul : l'interpénétration des matières
+ * (`terrainMaterial`) repondère les poids par la hauteur du grain de chacune.
+ * Un grain commun serait un facteur commun, qui s'annule à la normalisation —
+ * la lisière redeviendrait le dégradé linéaire que ce mécanisme remplace.
+ * Trois canaux d'une même lecture les donnent pour le prix d'un.
+ *
+ * L'alpha reste plein : un canevas 2D prémultiplie, et un quatrième champ
+ * rangé là abîmerait les trois autres.
+ *
+ * @param {number} size Côté, en pixels. Les grilles doivent le diviser.
  */
-export function createGroundDetailCanvas(kind = 'grass', size = 256, seed = 91711) {
+export function createGrainCanvas(size = 512, seed = 91711) {
   const canvas = createCanvas(size, size);
   const ctx = canvas.getContext('2d');
-  const random = makeRandom(seed);
-
-  // Fond : bruit fractal cyclable, teinté selon la matière.
-  const noise = fractalNoise(size, [4, 8, 16, 32], seed + 13);
   const image = ctx.createImageData(size, size);
-  const palette = {
-    soil: { dark: [86, 68, 48], light: [156, 132, 100] },
-    forest: { dark: [54, 42, 28], light: [104, 84, 54] }, // feuille morte, pas du limon
-    grass: { dark: [58, 84, 38], light: [126, 152, 74] },
-  }[kind] || { dark: [58, 84, 38], light: [126, 152, 74] };
 
-  for (let i = 0; i < noise.length; i++) {
-    const t = noise[i];
-    for (let c = 0; c < 3; c++) {
-      image.data[i * 4 + c] = palette.dark[c] + (palette.light[c] - palette.dark[c]) * t;
+  // La plus fine grille donne des accidents de quatre pixels : le grain, pas
+  // l'objet. Les trois graines sont écartées pour que les champs soient
+  // indépendants — deux champs corrélés recolleraient les lisières.
+  const lattices = [8, 16, 32, 64, 128];
+  const seeds = [seed, seed + 3301, seed + 7717];
+
+  for (let c = 0; c < 3; c++) {
+    const field = stretchToUnit(fractalNoise(size, lattices, seeds[c]));
+
+    // Recentré sur **sa** moyenne, et pas sur 0,5 : une somme d'octaves
+    // étirée sur [0, 1] tombe où elle veut (0,44 à 0,49 selon la graine). Le
+    // grain multiplie l'albédo de la matière ; un champ dont la moyenne dérive
+    // de 5 % assombrit de 5 % toutes les couleurs qu'il module, en silence, et
+    // les trois canaux ne dérivant pas de la même quantité, il les décale les
+    // unes par rapport aux autres. C'est ce que garantissait la normalisation
+    // des anciennes textures, et ça vaut indépendamment des motifs qu'elles
+    // portaient.
+    let mean = 0;
+    for (let i = 0; i < field.length; i++) mean += field[i];
+    mean /= field.length;
+
+    for (let i = 0; i < field.length; i++) {
+      // Resserré : le grain module une couleur, il ne la remplace pas.
+      image.data[i * 4 + c] = Math.round(255 * (0.5 + (field[i] - mean) * 0.9));
     }
-    image.data[i * 4 + 3] = 255;
   }
+  for (let i = 3; i < image.data.length; i += 4) image.data[i] = 255;
+
   ctx.putImageData(image, 0, 0);
-
-  if (kind === 'forest') {
-    // Feuilles mortes : des taches allongées, orientées au hasard, qui se
-    // recouvrent. C'est le recouvrement qui fait la litière — des feuilles
-    // isolées donneraient un confetti.
-    for (let i = 0; i < 700; i++) {
-      const x = random() * size;
-      const y = random() * size;
-      const long = size * (0.012 + random() * 0.026);
-      const angle = random() * Math.PI;
-      const warm = random();
-      const shade = 60 + random() * 70;
-      ctx.fillStyle = `rgb(${Math.round(shade * (1 + warm * 0.35))}, ${Math.round(shade * 0.82)}, ${Math.round(shade * 0.5)})`;
-      drawWrapped(ctx, size, (c) => {
-        c.save();
-        c.translate(x, y);
-        c.rotate(angle);
-        c.beginPath();
-        c.ellipse(0, 0, long, long * 0.42, 0, 0, Math.PI * 2);
-        c.fill();
-        c.restore();
-      });
-    }
-  } else if (kind === 'soil') {
-    // Cailloux : quelques centaines, de tailles très inégales. Une taille
-    // unique se lirait comme un motif.
-    for (let i = 0; i < 260; i++) {
-      const x = random() * size;
-      const y = random() * size;
-      const r = size * (0.004 + Math.pow(random(), 3) * 0.022);
-      const shade = 120 + random() * 90;
-      const angle = random() * Math.PI;
-      ctx.fillStyle = `rgb(${Math.round(shade)}, ${Math.round(shade * 0.94)}, ${Math.round(shade * 0.84)})`;
-      drawWrapped(ctx, size, (c) => {
-        c.save();
-        c.translate(x, y);
-        c.rotate(angle);
-        c.beginPath();
-        c.ellipse(0, 0, r, r * (0.6 + random() * 0.4), 0, 0, Math.PI * 2);
-        c.fill();
-        // Ombre courte du côté opposé : un caillou plat ne se voit pas.
-        c.fillStyle = 'rgba(40, 32, 24, 0.35)';
-        c.beginPath();
-        c.ellipse(r * 0.35, r * 0.35, r * 0.8, r * 0.5, 0, 0, Math.PI * 2);
-        c.fill();
-        c.restore();
-      });
-    }
-  } else {
-    // Brins : orientés au hasard, groupés en touffes. Une répartition uniforme
-    // donnerait un tapis, pas une prairie.
-    const clumps = 90;
-    for (let t = 0; t < clumps; t++) {
-      const cx = random() * size;
-      const cy = random() * size;
-      const blades = 8 + Math.floor(random() * 10);
-      for (let b = 0; b < blades; b++) {
-        const x = cx + (random() - 0.5) * size * 0.06;
-        const y = cy + (random() - 0.5) * size * 0.06;
-        const length = size * (0.012 + random() * 0.022);
-        const angle = random() * Math.PI * 2;
-        const shade = 70 + random() * 90;
-        ctx.strokeStyle = `rgb(${Math.round(shade * 0.62)}, ${Math.round(shade)}, ${Math.round(shade * 0.42)})`;
-        ctx.lineWidth = Math.max(1, size * 0.004);
-        ctx.lineCap = 'round';
-        drawWrapped(ctx, size, (c) => {
-          c.beginPath();
-          c.moveTo(x, y);
-          c.lineTo(x + Math.cos(angle) * length, y + Math.sin(angle) * length);
-          c.stroke();
-        });
-      }
-    }
-  }
-
-  normalizeMean(ctx, size, size);
   return canvas;
 }
 

@@ -3,26 +3,51 @@
  * du sol autour de l'observateur ; ce shader y lit la part d'herbe, de bois,
  * de culture et de sol nu, et compose la matière correspondante.
  *
- * Structure (grain, textures procédurales moyennées à 0,5) et couleur
- * (albédos linéaires) sont séparées. Le grain change d'échelle avec la
- * distance (période fine près, octave large loin). La pente au-delà de 30°
- * vire à la roche.
+ * ## Une matière = une couleur, plus un grain
  *
- * Quatre choses le sortent de l'aplat, et elles tiennent ensemble :
+ * C'est la règle du module, et elle a été chèrement acquise. **La couleur
+ * d'une matière vient de son albédo, et de lui seul ; le grain ne porte
+ * aucune teinte.** Il y avait trois textures de sol qui, elles, en portaient
+ * une — un vert d'herbe, un brun de limon, une litière — et qui dessinaient
+ * en plus des objets : des brins, des cailloux avec leur ombre peinte, des
+ * feuilles mortes. Trois défauts tenaient ensemble là-dedans :
+ *
+ * - un objet de trois centimètres passe sous le pixel d'écran vers trente
+ *   mètres ; au-delà il ne restait de ces motifs que le pavage de leur
+ *   période, qu'il fallait ensuite masquer (deux relevés décalés par matière,
+ *   technique d'Íñigo Quílez : six lectures de texture par pixel, dépensées à
+ *   cacher un défaut que les motifs créaient eux-mêmes) ;
+ * - l'ombre des cailloux était peinte dans la texture, donc figée : elle ne
+ *   suivait pas le soleil ;
+ * - une matière sans texture propre ne pouvait qu'emprunter celle d'une
+ *   autre. Sable, lande, éboulis et trottoir avaient tous le grain du limon
+ *   labouré, à la teinte près — et la teinte est le seul levier qui restait
+ *   pour les distinguer, alors que ce n'est pas elle qui les sépare.
+ *
+ * Ce qui doit se voir de loin est un **objet de la scène** — un arbre, une
+ * falaise —, pas un dessin dans une texture. Ne pas réintroduire de motif ici.
+ *
+ * Reste donc un seul relevé de grain, sans motif ni couleur
+ * (`createGrainCanvas`), et une matière s'ajoute désormais en ajoutant un
+ * albédo. Le grain change d'échelle avec la distance (période fine près,
+ * octave large loin). La pente au-delà de 30° vire à la roche.
+ *
+ * Trois choses sortent le sol de l'aplat, et elles tiennent ensemble :
  *
  * - le grain **incline la normale** (dérivées d'écran, Mikkelsen) : sans ça
- *   un sol reste une peinture, c'est l'ombre d'un caillou qui fait la matière.
- *   Aucun relevé de plus, et l'effet s'éteint au loin où le mip a lissé ;
- * - **aucune texture ne se répète à sa période** : deux relevés décalés,
- *   choisis par un bruit cent fois plus large, fondus là où ils se ressemblent
- *   (technique d'Íñigo Quílez). Une période de 2,6 m dessine sinon une grille
- *   lisible jusqu'à l'horizon ;
+ *   un sol reste une peinture. Aucun relevé de plus, et l'effet s'éteint au
+ *   loin où le mip a lissé ;
  * - **deux matières s'interpénètrent** au lieu de se fondre : les poids sont
  *   repondérés par la hauteur du grain puis seuillés (`blendWidth`). Un
- *   mélange linéaire donne une bande dégradée de cinq mètres, une aquarelle ;
+ *   mélange linéaire donne une bande dégradée de cinq mètres, une aquarelle.
+ *   C'est ce mécanisme qui impose **trois champs de grain** et non un seul :
+ *   un grain commun serait un facteur commun, qui s'annule à la
+ *   normalisation. Ils tiennent dans les trois canaux d'une seule lecture ;
  * - une **variation macro** de deux cents mètres en luminosité et en chaleur,
  *   qui monte avec la distance — un albédo constant par classe est ce qui
  *   donne l'aplat de carte routière, et le grain, au mètre, n'y peut rien.
+ *   Depuis que les textures ne dessinent plus rien, c'est la seule structure
+ *   qui subsiste sur un sol lointain.
  *
  * Une couverture peut en outre **assourdir** le grain (`uCoverGrain`), et une
  * seule le fait : le revêtement urbain. Le sol d'une ville n'est pas une terre
@@ -36,8 +61,8 @@
  * d'escalier dès que deux matières contrastent :
  *
  * - la **frange** (`edgeWarp`) : le sol est lu quelques mètres à côté, d'un
- *   déplacement continu tiré du grain. La limite reste où elle est, au mètre
- *   près, mais perd l'angle droit du carreau ;
+ *   déplacement continu tiré de deux canaux du grain, lus d'un coup. La limite
+ *   reste où elle est, au mètre près, mais perd l'angle droit du carreau ;
  * - les **couvertures s'interpolent** (`surfaceAt`) : un identifiant ne se
  *   mélange pas, mais l'appartenance à une couverture, si. Les quatre
  *   carreaux voisins sont lus au plus proche et ce sont leurs appartenances
@@ -53,7 +78,7 @@
 
 import {
   createDetailCanvas,
-  createGroundDetailCanvas,
+  createGrainCanvas,
   createMacroCanvas,
 } from '../materials/proceduralTextures.js';
 import { CROP_KINDS, CROP_ID_STEP } from '../layers/furniturePlacement.js';
@@ -103,9 +128,9 @@ export class TerrainMaterialFactory {
 
     this.detailTexture = repeated(createDetailCanvas());
     this.macroTexture = repeated(createMacroCanvas());
-    this.grassTexture = repeated(createGroundDetailCanvas('grass', 256, 91711));
-    this.soilTexture = repeated(createGroundDetailCanvas('soil', 256, 60413));
-    this.woodTexture = repeated(createGroundDetailCanvas('forest', 256, 77201));
+    // Un seul grain pour toutes les matières : ses trois canaux portent trois
+    // champs indépendants, lus d'un coup (voir `createGrainCanvas`).
+    this.grainTexture = repeated(createGrainCanvas());
     // Rides : la même carte que celle qui servait la nappe d'eau, du temps où
     // l'eau était une surface posée sur le terrain.
     this.waterRippleTexture = repeated(createWaterNormalCanvas());
@@ -117,9 +142,7 @@ export class TerrainMaterialFactory {
     return [
       this.detailTexture,
       this.macroTexture,
-      this.grassTexture,
-      this.soilTexture,
-      this.woodTexture,
+      this.grainTexture,
       this.waterRippleTexture,
     ];
   }
@@ -197,12 +220,8 @@ export class TerrainMaterialFactory {
       uDetailMap: { value: this.detailTexture },
       uDetailScale: { value: new THREE.Vector2(look.detailScaleNear, look.detailScaleFar) },
       uDetailRange: { value: new THREE.Vector2(look.detailNear, look.detailFar) },
-      uGrassMap: { value: this.grassTexture },
-      uSoilMap: { value: this.soilTexture },
-      uWoodMap: { value: this.woodTexture },
-      uGroundScale: {
-        value: new THREE.Vector3(look.groundScaleGrass, look.groundScaleSoil, look.groundScaleWood),
-      },
+      uGrainMap: { value: this.grainTexture },
+      uGrainScale: { value: look.grainScaleM },
       // (période en mètres, amplitude en luminosité, dérive chaud/froid).
       uMacroMap: { value: this.macroTexture },
       uMacro: {
@@ -295,10 +314,8 @@ export class TerrainMaterialFactory {
            uniform sampler2D uDetailMap;
            uniform vec2 uDetailScale;
            uniform vec2 uDetailRange;
-           uniform sampler2D uGrassMap;
-           uniform sampler2D uSoilMap;
-           uniform sampler2D uWoodMap;
-           uniform vec3 uGroundScale;
+           uniform sampler2D uGrainMap;
+           uniform float uGrainScale;
            uniform sampler2D uMacroMap;
            uniform vec3 uMacro;
            uniform float uBlendWidth;
@@ -330,39 +347,6 @@ export class TerrainMaterialFactory {
            uniform vec2 uEdgeWarp;
 
            /*
-            * Relevé d'une texture cyclique **sans que sa période se voie**.
-            *
-            * Deux relevés de la même image, décalés chacun d'un vecteur tiré
-            * d'un indice de région, fondus l'un dans l'autre. Le fondu est
-            * biaisé par l'écart entre les deux relevés : il
-            * passe donc de préférence là où ils se ressemblent, et la couture
-            * n'a rien à cacher. C'est la première des techniques d'Íñigo
-            * Quílez sur la répétition de texture — deux relevés au lieu de
-            * neuf, ce qui est le seul coût qu'un sol peut se permettre.
-            *
-            * Limite connue et assumée : au passage d'une région à l'autre,
-            * le décalage saute, donc le niveau de mip calculé sur une ligne
-            * de pixels est faux. Sur une photo ça se verrait ; sur du grain
-            * dont on ne garde que la variation, non.
-            *
-            * L'indice de région vient du bruit macro, dont la période est
-            * cent fois plus large : le motif ne se répète donc plus tous les
-            * trois mètres mais tous les deux cents, à quoi s'ajoute que les
-            * deux relevés ne se répètent pas ensemble.
-            */
-           vec3 noTile(sampler2D tex, vec2 uv, float region) {
-             float l = region * 8.0;
-             float i = floor(l);
-             float f = fract(l);
-             vec2 offA = sin(vec2(3.0, 7.0) * i);
-             vec2 offB = sin(vec2(3.0, 7.0) * (i + 1.0));
-             vec3 a = texture2D(tex, uv + offA).rgb;
-             vec3 b = texture2D(tex, uv + offB).rgb;
-             float d = dot(a - b, vec3(0.3333));
-             return mix(a, b, smoothstep(0.2, 0.8, f - 0.1 * d));
-           }
-
-           /*
             * Sol mouillé : le film d'eau assombrit et sature (réflexions
             * internes dans la pellicule). Deux causes, une seule matière —
             * la pluie (uWetness) et la rive.
@@ -383,8 +367,11 @@ export class TerrainMaterialFactory {
             * une période bien plus large, garde la limite à sa place au mètre
             * près et lui retire son angle droit.
             *
-            * Deux relevés du même bruit, décalés l'un de l'autre, faute d'un
-            * bruit à deux canaux : le grain est en niveaux de gris.
+            * Deux canaux du grain, lus d'un coup : la carte de grain range
+            * trois champs indépendants dans R, G et B. C'était deux relevés
+            * décalés du même bruit gris, du temps où il n'y avait pas de bruit
+            * à plusieurs canaux. Pas d'accent grave ici : ce commentaire vit
+            * dans un littéral de gabarit, qu'il refermerait.
             *
             * Conséquence assumée : ce qui lit ces cartes au sol (l'herbe, la
             * végétation) ne connaît pas ce déplacement. La peinture et les
@@ -392,10 +379,8 @@ export class TerrainMaterialFactory {
             * la brouillent chacune de leur côté, sur la même largeur.
             */
            vec2 edgeWarp(vec2 world) {
-             vec2 p = world / uEdgeWarp.y;
-             float wx = texture2D(uDetailMap, p).r;
-             float wz = texture2D(uDetailMap, p + vec2(0.37, 0.61)).r;
-             return (vec2(wx, wz) - 0.5) * 2.0 * uEdgeWarp.x;
+             vec2 shift = texture2D(uGrainMap, world / uEdgeWarp.y).rg;
+             return (shift - 0.5) * 2.0 * uEdgeWarp.x;
            }
 
            /* Identifiant de couverture porté par un carreau (0 = aucune). */
@@ -510,28 +495,29 @@ export class TerrainMaterialFactory {
              float coarse = texture2D(uDetailMap, vScenePos.xz / uDetailScale.y).r;
              float noise = mix(near, coarse, far);
 
-             // Bruit macro : deux cents mètres de période. Il sert deux fois —
-             // à choisir la région des relevés sans répétition, et à faire
-             // dériver la couleur d'un bout à l'autre d'une parcelle.
+             // Bruit macro : deux cents mètres de période. Il fait dériver la
+             // couleur d'un bout à l'autre d'une parcelle — et c'est, depuis
+             // que les textures ne portent plus de motif, la seule chose qui
+             // reste à voir sur un sol lointain.
              float macro = texture2D(uMacroMap, vScenePos.xz / uMacro.x).r;
 
-             vec3 grass = noTile(uGrassMap, vScenePos.xz / uGroundScale.x, macro);
-             vec3 soil = noTile(uSoilMap, vScenePos.xz / uGroundScale.y, macro);
-             vec3 wood = noTile(uWoodMap, vScenePos.xz / uGroundScale.z, macro);
+             // Le grain, en une lecture : trois champs indépendants, un par
+             // matière. Il ne porte aucune couleur — l'albédo la porte seul —
+             // il module la luminosité et incline la normale.
+             vec3 grain = texture2D(uGrainMap, vScenePos.xz / uGrainScale).rgb;
 
-             // Interpénétration des matières. Chaque relevé porte sa propre
-             // « hauteur » — la luminance de son grain, c'est-à-dire ce qui
-             // dépasse : un brin, un caillou, une feuille. On repondère les
-             // poids par elle, puis on ne garde que ce qui reste dans
+             // Interpénétration des matières. Chaque matière porte sa propre
+             // « hauteur » de grain, c'est-à-dire ce qui dépasse. On repondère
+             // les poids par elle, puis on ne garde que ce qui reste dans
              // uBlendWidth du plus fort. La lisière suit alors la forme du
              // grain au lieu d'être un dégradé, et une matière minoritaire
              // disparaît franchement au lieu de teinter l'autre de moitié.
-             vec4 height = vec4(
-               dot(grass, vec3(0.3333)),
-               dot(wood, vec3(0.3333)),
-               dot(soil, vec3(0.3333)),
-               dot(soil, vec3(0.3333))
-             );
+             //
+             // Trois champs distincts, et c'est la raison d'être des trois
+             // canaux : un grain commun serait un facteur commun, qui
+             // s'annulerait à la normalisation deux lignes plus bas. Le sol nu
+             // partage celui de la culture, comme il partageait sa texture.
+             vec4 height = vec4(grain.r, grain.g, grain.b, grain.b);
              vec4 lifted = w * (0.35 + height);
              float peak = max(max(lifted.x, lifted.y), max(lifted.z, lifted.w));
              lifted = max(lifted - (peak - uBlendWidth), 0.0);
@@ -540,12 +526,14 @@ export class TerrainMaterialFactory {
              // l'autre. On y revient donc au fondu doux.
              w = mix(lifted / max(lifted.x + lifted.y + lifted.z + lifted.w, 1e-4), w, far);
 
+             // Le grain retenu : celui des matières effectivement présentes.
+             // Scalaire, et c'est le fond de ce chantier — une texture de sol
+             // ne teinte plus rien. La couleur vient de l'albédo de la matière,
+             // qui est la seule chose qui se lise encore à cent mètres.
+             float structure = dot(height, w);
              // Le grain s'efface avec la distance.
-             vec3 structure = grass * w.x + wood * w.y + soil * (w.z + w.w);
-             vec3 texMod = mix(structure * 2.0, vec3(1.0), far);
-             float texLuma = max(dot(texMod, vec3(0.2126, 0.7152, 0.0722)), 1e-4);
-             // Part de teinte propre à la texture ; le reste reste neutre pour nuancer l'albédo sans s'y ajouter.
-             vec3 modulation = mix(vec3(texLuma), texMod, 0.45) * (0.7 + noise * 0.6);
+             float texMod = mix(structure * 2.0, 1.0, far);
+             vec3 modulation = vec3(texMod) * (0.7 + noise * 0.6);
 
              // Variation macro. Centrée sur 1 : elle étale la luminosité sans
              // la déplacer, et fait dériver la teinte vers le chaud dans les
@@ -605,9 +593,9 @@ float macroSigned = (macro - 0.5) * far;
                // bitume voisin, en plus faible, sinon le trottoir serait un
                // aplat au milieu d'une rue grainée. La modulation se ramène
                // vers le neutre, et le relief de grain avec elle.
-               float grainScale = mix(1.0, coverGrain, coverShare);
-               modulation = mix(vec3(1.0), modulation, grainScale);
-               structure = mix(vec3(0.5), structure, grainScale);
+               float grainKeep = mix(1.0, coverGrain, coverShare);
+               modulation = mix(vec3(1.0), modulation, grainKeep);
+               structure = mix(0.5, structure, grainKeep);
              }
 
              // Après les couvertures : c'est là seulement que la structure du
@@ -615,7 +603,7 @@ float macroSigned = (macro - 0.5) * far;
              // c'est elle que lit la perturbation de normale, plus bas dans le
              // shader de three. Pas d'accent grave dans ce commentaire : il
              // vit dans un littéral de gabarit, qu'il refermerait.
-             grainHeight = dot(structure, vec3(0.3333));
+             grainHeight = structure;
 
              vec3 albedo =
                grassAlbedo * w.x +

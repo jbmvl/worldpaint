@@ -30,12 +30,21 @@ export const TERRAIN_LOOK = {
   detailNear: 60,
   detailFar: 420,
   /**
-   * Périodes des textures de matière. Toutes différentes : deux textures
-   * répétées au même pas se répéteraient ensemble, et la grille se verrait.
+   * Période du grain du sol, en mètres.
+   *
+   * Une seule, là où il y en avait trois : elles ne différaient que pour que
+   * les trois textures de matière ne se répètent pas ensemble, et il n'y a
+   * plus qu'un relevé (`createGrainCanvas`). Six mètres pour 512 pixels font
+   * 1,2 cm par texel — la finesse qu'avait l'herbe à 2,6 m sur 256 pixels,
+   * avec une période de répétition plus de deux fois plus longue.
+   *
+   * C'est le réglage de ce chantier qui se juge à l'œil, et le seul : si la
+   * trame de six mètres se lit au premier plan sous une lumière rasante, il
+   * faut soit l'agrandir (le grain grossit d'autant), soit remettre un relevé
+   * anti-répétition — mais sur cette seule carte, donc deux lectures et non
+   * plus six.
    */
-  groundScaleGrass: 2.6,
-  groundScaleSoil: 3.7,
-  groundScaleWood: 3.1,
+  grainScaleM: 6,
   /**
    * Variation macro : période en mètres, amplitude en luminosité, dérive
    * chaud/froid.

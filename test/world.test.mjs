@@ -242,6 +242,7 @@ import {
   tileableValueNoise,
   fractalNoise,
   stretchToUnit,
+  createGrainCanvas,
 } from '../src/materials/proceduralTextures.js';
 import {
   buildingHeight,
@@ -10603,6 +10604,137 @@ test('les limites de surfaces : la frange, les couvertures interpolées et la ri
   assert.equal(shader.uniforms.uShoreWet.value, defaultTheme.terrain.shoreWet);
   assert.equal(shader.uniforms.uEdgeWarp.value.x, defaultTheme.terrain.edgeWarpM);
   assert.equal(shader.uniforms.uEdgeWarp.value.y, defaultTheme.terrain.edgeWarpScaleM);
+});
+
+/** Corrélation de Pearson, en valeur absolue. Deux champs indépendants tendent vers 0. */
+function correlation(a, b) {
+  const n = a.length;
+  const meanA = a.reduce((sum, v) => sum + v, 0) / n;
+  const meanB = b.reduce((sum, v) => sum + v, 0) / n;
+  let joint = 0;
+  let spreadA = 0;
+  let spreadB = 0;
+  for (let i = 0; i < n; i++) {
+    const x = a[i] - meanA;
+    const y = b[i] - meanB;
+    joint += x * y;
+    spreadA += x * x;
+    spreadB += y * y;
+  }
+  return Math.abs(joint / Math.sqrt(spreadA * spreadB || 1));
+}
+
+test('le grain du sol : trois champs indépendants dans une seule carte', () => {
+  // Les trois canaux ne sont pas un confort. L'interpénétration des matières
+  // repondère les poids par la hauteur du grain de chacune : un grain commun
+  // serait un facteur commun, qui s'annule à la normalisation, et la lisière
+  // redeviendrait le dégradé linéaire que ce mécanisme remplace.
+  const size = 128;
+  let written = null;
+  const previousCanvas = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      Object.assign(this, { width, height });
+    }
+    getContext() {
+      return {
+        createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+        putImageData: (image) => {
+          written = image.data;
+        },
+      };
+    }
+  };
+  try {
+    createGrainCanvas(size, 4242);
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+  }
+  assert.ok(written, 'la carte de grain a bien été écrite');
+
+  const channel = (c) => Array.from({ length: size * size }, (_, i) => written[i * 4 + c]);
+  const red = channel(0);
+  const green = channel(1);
+  const blue = channel(2);
+
+  assert.ok(correlation(red, green) < 0.2, 'R et G doivent être indépendants');
+  assert.ok(correlation(red, blue) < 0.2, 'R et B doivent être indépendants');
+  assert.ok(correlation(green, blue) < 0.2, 'G et B doivent être indépendants');
+
+  // Une modulation, pas une couleur : centrée sur 0,5 et resserrée.
+  for (const [name, values] of [['R', red], ['G', green], ['B', blue]]) {
+    const mean = values.reduce((sum, v) => sum + v, 0) / values.length / 255;
+    assert.ok(Math.abs(mean - 0.5) < 0.01, `le canal ${name} doit moduler autour de 0,5`);
+  }
+
+  // L'alpha reste plein : un canevas 2D prémultiplie, et un quatrième champ
+  // rangé là abîmerait les trois autres.
+  assert.ok(
+    channel(3).every((v) => v === 255),
+    'l’alpha doit rester plein'
+  );
+});
+
+test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition', () => {
+  const previousCanvas = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      Object.assign(this, { width, height });
+    }
+    getContext() {
+      return paintingCanvasContext();
+    }
+  };
+
+  let factory;
+  try {
+    factory = new TerrainMaterialFactory({ THREE: terrainThreeStub() });
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+  }
+
+  const shader = {
+    uniforms: {},
+    vertexShader: ['#include <common>', '#include <begin_vertex>'].join('\n'),
+    fragmentShader: [
+      '#include <common>',
+      '#include <map_fragment>',
+      '#include <normal_fragment_begin>',
+    ].join('\n'),
+  };
+  factory.material.onBeforeCompile(shader);
+  const source = shader.fragmentShader;
+
+  // Le relevé anti-répétition ne masquait que le pavage des motifs dessinés :
+  // il part avec eux, et avec lui six lectures de texture par pixel.
+  assert.ok(!/noTile/.test(source), 'le relevé anti-répétition a disparu');
+  assert.ok(
+    !/uGrassMap|uSoilMap|uWoodMap/.test(source),
+    'les trois textures de matière ont fusionné en une carte de grain'
+  );
+
+  // Deux lectures : le grain, et la frange — qui prend deux canaux d'un coup
+  // au lieu de deux relevés décalés du même bruit gris.
+  assert.equal(
+    (source.match(/texture2D\(uGrainMap/g) || []).length,
+    2,
+    'le grain et la frange, pas une de plus'
+  );
+  assert.match(source, /vec4 height = vec4\(grain\.r, grain\.g, grain\.b, grain\.b\);/);
+
+  // Le grain ne porte plus aucune teinte : ce qu'il en reste est un scalaire,
+  // et la couleur vient de l'albédo de la matière, seul.
+  assert.match(source, /float structure = dot\(height, w\);/);
+
+  assert.equal(shader.uniforms.uGrainScale.value, defaultTheme.terrain.grainScaleM);
+  assert.equal(factory.textures.length, 4, 'détail, macro, grain, rides');
+
+  // Les trois périodes de matière n'ont plus d'objet.
+  for (const key of ['groundScaleGrass', 'groundScaleSoil', 'groundScaleWood']) {
+    assert.ok(!(key in defaultTheme.terrain), `${key} doit avoir disparu du thème`);
+  }
 });
 
 test('la frange déplace la lecture du sol, sans dépendre du parcours ni sortir de sa portée', () => {
