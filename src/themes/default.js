@@ -31,34 +31,14 @@ export const TERRAIN_LOOK = {
   detailNear: 60,
   detailFar: 420,
   /**
-   * Période du grain du sol, en mètres.
+   * Période du bruit de lisière, en mètres.
    *
-   * Six mètres pour 512 texels font 1,2 cm par texel, soit deux à trois pixels
-   * d'écran à cinq mètres de distance : le grain qu'on voit sur une route.
-   * Le mip l'efface ensuite tout seul sur une dizaine de mètres, ce qui est
-   * aussi ce que fait une route.
-   *
-   * Ce qui fait qu'un grain est fin n'est pas ce réglage mais le **spectre**
-   * du relevé (`createGrainCanvas`) : tant qu'il était dominé par sa grille la
-   * plus grossière, aucune période ne montrait autre chose que des nuages.
-   * Baisser cette valeur rapproche la répétition de la carte sans rien gagner
-   * en finesse ; la monter grossit le grain.
+   * Ce bruit ne se voit pas : c'est lui qui donne leur forme aux limites entre
+   * matières (`createEdgeNoiseCanvas`). La période décide de la taille des
+   * dents : six mètres pour 512 texels font 1,2 cm, donc une limite finement
+   * dentelée plutôt qu'un feston.
    */
-  grainScaleM: 6,
-  /**
-   * Contraste du grain en luminosité, autour de 1.
-   *
-   * Le relevé a un écart-type de 0,136 : à 0,67 le grain module la lumière de
-   * ±9 % (un écart-type), et un accident marqué du champ, à deux écarts-types,
-   * de ±18 %. Il valait 2 — donc ±27 % et ±54 % — ce qui marquait les creux
-   * bien trop noir pour un grain.
-   *
-   * Ne touche **que** la lumière. Le relief (`grainRelief`) et la dentelure
-   * des lisières (`blendWidth`) lisent le champ brut : les éclaircir en même
-   * temps demanderait de baisser l'amplitude du relevé lui-même, ce qui
-   * aplatirait les trois d'un coup.
-   */
-  grainContrast: 0.67,
+  edgeNoiseScaleM: 6,
   /**
    * Variation macro : période en mètres, amplitude en luminosité, dérive
    * chaud/froid.
@@ -90,14 +70,6 @@ export const TERRAIN_LOOK = {
    * creux du labour et réciproquement, ce qui est ce que fait une lisière.
    */
   blendWidth: 0.15,
-  /**
-   * Force du relief tiré du grain, en pente apparente.
-   *
-   * Au-delà de 1, le sol se met à moutonner sous une lumière rasante : le
-   * grain n'est pas un relevé d'altitude, il n'a pas d'échelle verticale
-   * propre, et on ne peut donc que le doser à l'œil.
-   */
-  grainRelief: 0.45,
   /**
    * Matière retenue là où le vectoriel ne dit rien — un nom de `SURFACE_LOOK`,
    * là où c'étaient quatre poids. L'herbe est de loin le pari le plus souvent
@@ -626,23 +598,23 @@ export const SOIL_LOOK = {
  * « couvertures » vivaient dans un identifiant et n'avaient qu'une teinte,
  * empruntant la texture d'une matière. Une plage avait donc le grain d'un
  * labour, et la teinte était le seul levier restant pour l'en distinguer —
- * alors que ce n'est pas la teinte qui les sépare. Depuis qu'il n'y a plus
- * qu'un grain pour tout le décor, plus rien ne justifiait la hiérarchie : il
- * n'y a plus qu'une liste, et on y ajoute une matière en ajoutant une ligne.
+ * alors que ce n'est pas la teinte qui les sépare. Les textures ont fini par
+ * disparaître entièrement : une surface est une couleur, et plus rien ne
+ * justifiait la hiérarchie. Il n'y a plus qu'une liste, et on y ajoute une
+ * matière en ajoutant une ligne.
  *
  * - `albedo` : la couleur, en linéaire. C'est la seule chose qui se lise encore
  *   à cent mètres, donc la seule qui compte vraiment ;
- * - `grain` : lequel des trois champs de la carte de grain cette matière
- *   emploie (voir `createGrainCanvas`). Deux matières souvent voisines doivent
- *   en prendre deux différents, sans quoi leur lisière perd
- *   l'interpénétration et redevient un fondu linéaire. Trois champs pour
- *   quatorze matières : la table les répartit au mieux, et une collision ne
- *   coûte que cette lisière-là ;
+ * - `noiseField` : lequel des trois champs de bruit de lisière cette matière
+ *   emploie (voir `createEdgeNoiseCanvas`). Ce bruit ne se voit pas — il donne
+ *   sa forme à la limite. Deux matières souvent voisines doivent en prendre
+ *   deux différents, sans quoi leur lisière perd l'interpénétration et
+ *   redevient un fondu linéaire. Trois champs pour quatorze matières : la
+ *   table les répartit au mieux, et une collision ne coûte que cette
+ *   lisière-là ;
  * - `climate` : quel lavage climatique s'applique (`SOIL_LOOK`), ou `null`. Une
  *   lande, un maquis, un éboulis disent déjà leur pays ; les teinter une
  *   seconde fois le dirait deux fois ;
- * - `grainKeep` : part du grain conservée, de 0 (aplat) à 1. Une seule matière
- *   s'en écarte ;
  * - `grassHeight`, `grassDensity`, `grassTint` multiplient la taille, le
  *   nombre et la teinte des touffes (`groundCover`) ; `bushes` est une densité
  *   d'arbustes semés hors des bois par `vegetationLayer` — c'est ce qui fait
@@ -654,23 +626,23 @@ export const SOIL_LOOK = {
  */
 export const SURFACE_LOOK = {
   // --- Le végétal ordinaire -------------------------------------------------
-  grass: { albedo: [0.051, 0.135, 0.017], grain: 0, climate: 'grass' },
+  grass: { albedo: [0.051, 0.135, 0.017], noiseField: 0, climate: 'grass' },
   // Un sol de forêt est une litière, pas un pré : à mi-chemin de l'herbe. Le
   // climat ne le lave pas — une hêtraie se ressemble d'un pays à l'autre.
-  wood: { albedo: [0.047, 0.096, 0.019], grain: 1, climate: null },
-  farmland: { albedo: [0.431, 0.331, 0.08], grain: 2, climate: 'farmland' },
+  wood: { albedo: [0.047, 0.096, 0.019], noiseField: 1, climate: null },
+  farmland: { albedo: [0.431, 0.331, 0.08], noiseField: 2, climate: 'farmland' },
   // Lotissement : pelouses tondues et allées. C'était un mélange peint dans un
   // canal (deux tiers d'herbe, un tiers de minéral) ; c'est désormais une
   // matière, et son albédo est la moyenne exacte que ce mélange rendait — la
   // reprendre à l'œil est une décision à part, pas un effet de bord de la fusion.
-  settled: { albedo: [0.125, 0.176, 0.088], grain: 1, climate: 'grass' },
+  settled: { albedo: [0.125, 0.176, 0.088], noiseField: 1, climate: 'grass' },
 
   // --- Les couvertures végétales --------------------------------------------
   // Bruyère et molinie sèche : brun-pourpre, la couleur d'un moor. Rase, dense,
   // et elle ne porte quasiment pas d'arbre.
   heath: {
     albedo: [0.159, 0.122, 0.08],
-    grain: 2,
+    noiseField: 2,
     climate: null,
     grassHeight: 0.45,
     grassDensity: 0.95,
@@ -681,7 +653,7 @@ export const SURFACE_LOOK = {
   // d'herbe, beaucoup d'arbustes — l'inverse exact d'une prairie.
   scrub: {
     albedo: [0.147, 0.171, 0.08],
-    grain: 1,
+    noiseField: 1,
     climate: null,
     grassHeight: 0.55,
     grassDensity: 0.4,
@@ -692,7 +664,7 @@ export const SURFACE_LOOK = {
   // seule couverture plus haute qu'une prairie.
   wetland: {
     albedo: [0.072, 0.107, 0.048],
-    grain: 1,
+    noiseField: 1,
     climate: null,
     grassHeight: 1.4,
     grassDensity: 1,
@@ -702,7 +674,7 @@ export const SURFACE_LOOK = {
   // Pelouse d'altitude et toundra : vert jaune, rase et continue.
   alpine: {
     albedo: [0.205, 0.254, 0.107],
-    grain: 2,
+    noiseField: 2,
     climate: null,
     grassHeight: 0.4,
     grassDensity: 0.9,
@@ -711,12 +683,12 @@ export const SURFACE_LOOK = {
   },
 
   // --- Le minéral -----------------------------------------------------------
-  bare: { albedo: [0.27, 0.255, 0.225], grain: 0, climate: 'bare' },
+  bare: { albedo: [0.27, 0.255, 0.225], noiseField: 0, climate: 'bare' },
   // L'éboulis et la dalle sont deux paysages : une pente de cailloux qui bouge,
   // un plateau de pierre. Les confondre était le défaut du gris unique.
   scree: {
     albedo: [0.323, 0.292, 0.254],
-    grain: 1,
+    noiseField: 1,
     climate: null,
     grassHeight: 0.3,
     grassDensity: 0.06,
@@ -725,7 +697,7 @@ export const SURFACE_LOOK = {
   },
   rock: {
     albedo: [0.371, 0.332, 0.27],
-    grain: 2,
+    noiseField: 2,
     climate: null,
     grassHeight: 0.35,
     grassDensity: 0.1,
@@ -734,7 +706,7 @@ export const SURFACE_LOOK = {
   },
   sand: {
     albedo: [0.624, 0.539, 0.361],
-    grain: 1,
+    noiseField: 1,
     climate: null,
     grassHeight: 0.6,
     grassDensity: 0.08,
@@ -746,13 +718,12 @@ export const SURFACE_LOOK = {
   // Le revêtement urbain. Sa couleur ne vient pas d'ici mais de la voirie
   // (`townStyle.pavementTone`), pour qu'une bordure de trottoir et le sol
   // qu'elle borde ne puissent pas diverger : l'albédo posé ici n'est qu'un
-  // repli. Seule matière qui assourdit le grain — une ville n'est pas une terre
-  // plus grise, c'est une dalle, qui garde du grain du bitume voisin en plus sourd.
+  // repli. Elle assourdissait le grain, seule de la table — sans objet depuis
+  // que plus aucune matière n'en a.
   pavement: {
     albedo: [0.31, 0.3, 0.28],
-    grain: 0,
+    noiseField: 0,
     climate: 'pavement',
-    grainKeep: 0.55,
     grassDensity: 0,
     bushes: 0,
   },
@@ -763,7 +734,7 @@ export const SURFACE_LOOK = {
   // verrait de loin.
   water: {
     albedo: [0.021, 0.045, 0.06],
-    grain: 0,
+    noiseField: 0,
     climate: null,
     grassHeight: 0,
     grassDensity: 0,
@@ -1054,12 +1025,16 @@ export const ROAD_PROFILES = {
   track: { width: 3, shoulder: 0, surface: 'dirt', ruts: true, texture: 64 },
   path: { width: 1.4, shoulder: 0, surface: 'dirt', texture: 64 },
 };
-/** Revêtements : couleur de base et amplitude du grain. */
+/**
+ * Revêtements : une couleur de base, et rien d'autre. Chacun portait aussi une
+ * amplitude de grain — un bruit par pixel semé dans la texture — retirée avec
+ * celui du sol : une surface est une couleur, et une chaussée n'y fait pas
+ * exception.
+ */
 export const ROAD_SURFACES = {
-  asphalt: { base: '#4a4a4e', grain: 26 },
-  dirt: { base: '#8a7d63', grain: 34 },
-  ballast: { base: '#847d70', grain: 46 }, // pierre concassée, grain le plus fort des trois
-
+  asphalt: { base: '#4a4a4e' },
+  dirt: { base: '#8a7d63' },
+  ballast: { base: '#847d70' },
 };
 /** Terre claire de l'accotement. */
 export const ROAD_SHOULDER_COLOR = '#8c8168';

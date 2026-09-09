@@ -26,7 +26,7 @@ appartenances. Une appartenance, elle, s'interpole.
 Il y en avait **deux**, une de poids et une d'identifiants, et la frontière
 n'était pas une idée : une « matière » avait sa texture dessinée et méritait un
 canal, une « couverture » n'avait qu'une teinte et empruntait la texture d'une
-voisine. Depuis qu'il n'y a plus qu'un grain pour tout le décor, il n'y a plus
+voisine. Depuis qu'une surface est une couleur — ni motif, ni grain —, il n'y a plus
 qu'une liste de quatorze matières — et trente et une tiennent dans le canal, ce
 qui est le point : on en ajoute une en ajoutant une ligne.
 
@@ -204,7 +204,7 @@ Trois choses la traitent, toutes dans `terrainMaterial.js` :
    sable rejoint l'herbe par une rampe d'un carreau, comme les matières le font
    déjà ; l'eau suit la même mécanique, sa part étant tenue à part du mélange.
 2. **La frange** (`edgeWarp`, thème `edgeWarpM`). Le sol est lu quelques mètres
-   à côté du point demandé, d'un déplacement continu tiré du grain. La limite
+   à côté du point demandé, d'un déplacement continu tiré du bruit de lisière. La limite
    reste où elle est, au mètre près, mais perd l'angle droit du carreau. Ce
    n'est pas un flou : c'est la même limite, déformée. L'herbe instanciée fait
    de même de son côté (`fringeOffset`, dans `groundCover.js`), avec son propre

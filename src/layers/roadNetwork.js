@@ -133,18 +133,6 @@ import { defaultTheme } from '../themes/default.js';
  */
 const CYCLE_GLYPH = cycleGlyph();
 
-/** Graines distinctes : deux profils voisins ne doivent pas avoir le même grain. */
-const ROAD_JUNCTION_SEED = 6101;
-const ROAD_PROFILE_SEEDS = {
-  express: 4711,
-  major: 4801,
-  minor: 4903,
-  lane: 5009,
-  cycleway: 5107,
-  track: 5521,
-  path: 5623,
-};
-
 /**
  * Revêtements dont une surface de carrefour peut être faite : ceux que portent
  * les profils de chaussée. Le ballast n'en est pas — c'est une voie ferrée.
@@ -176,7 +164,7 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
 
   for (const surface of junctionSurfaces(roads)) {
     const texture = new THREE.CanvasTexture(
-      createRoadCanvas({ width: 8, surface, shoulder: 0, texture: 128 }, ROAD_JUNCTION_SEED, roads)
+      createRoadCanvas({ width: 8, surface, shoulder: 0, texture: 128 }, roads)
     );
     texture.colorSpace = THREE.SRGBColorSpace;
     // Répétée dans les deux sens : les UV d'un carrefour sont pris au sol.
@@ -195,7 +183,7 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
   }
 
   for (const [key, profile] of Object.entries(roads.profiles)) {
-    const texture = new THREE.CanvasTexture(createRoadCanvas(profile, ROAD_PROFILE_SEEDS[key], roads));
+    const texture = new THREE.CanvasTexture(createRoadCanvas(profile, roads));
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.wrapS = THREE.ClampToEdgeWrapping;
     texture.wrapT = THREE.RepeatWrapping;

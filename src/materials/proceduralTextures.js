@@ -1,22 +1,35 @@
 /*
- * proceduralTextures — les textures qu'on ne télécharge pas : le grain du sol,
- * sa variation à grande échelle, les rides de l'eau, la section de route.
- *
- * Un mot sur le **spectre**, parce que c'est le piège de ce fichier. Une somme
- * d'octaves à la mode habituelle (`fractalNoise`, chaque grille à la moitié de
- * l'amplitude de la précédente) est dominée par sa grille la plus grossière :
- * elle produit des nuages, jamais un grain. C'est exactement ce qu'il faut
- * pour une variation de paysage (`createMacroCanvas`) et exactement ce qu'il
- * ne faut pas pour une matière (`createGrainCanvas`, qui pondère à l'envers).
+ * proceduralTextures — les textures qu'on ne télécharge pas : la variation du
+ * sol à grande échelle, le bruit qui découpe ses lisières, les rides de l'eau,
+ * la section de route.
  *
  * Bruit déterministe et cyclique : même graine, même image, bords raccordés.
  *
- * Décision à ne pas défaire par inadvertance : les textures de sol ne portent
- * **aucun motif dessiné**. Un objet peint dans une texture de quelques mètres
- * passe sous le pixel d'écran à trente mètres et ne laisse plus voir que le
- * pavage de sa période ; et son ombre, peinte, ne suit pas le soleil. Ce qui
- * doit se voir de loin est un objet de la scène (un arbre, une falaise), pas
- * un dessin dans une texture. Voir `createGrainCanvas`.
+ * ## Les surfaces sont lisses, et c'est une décision
+ *
+ * Aucune texture de ce fichier ne porte de **matière** : ni motif dessiné, ni
+ * grain. Une surface est une couleur, et rien de plus. On y est venu par
+ * étapes, en retirant à chaque fois quelque chose qui prétendait faire lire
+ * un matériau et n'y arrivait pas :
+ *
+ * - les **motifs dessinés** (brins, cailloux, feuilles) : un objet peint dans
+ *   une texture de quelques mètres passe sous le pixel d'écran à trente
+ *   mètres, et il ne reste alors que le pavage de sa période. Son ombre,
+ *   peinte, ne suivait pas le soleil ;
+ * - une couche de **bruit « de détail »** qui constellait le sol de taches de
+ *   1 à 2 m ;
+ * - le **grain** lui-même, sur le sol comme sur la chaussée, sous toutes ses
+ *   formes successives — période fixe, période calée sur l'écran, spectre
+ *   nuageux puis spectre fin.
+ *
+ * Ce qui doit se voir est un **objet de la scène** — un arbre, une falaise,
+ * une bordure de trottoir —, jamais un dessin dans une texture. Ne pas
+ * réintroduire de grain ici : la question a été tranchée à l'œil, plusieurs
+ * fois, et toujours dans le même sens.
+ *
+ * Reste `createEdgeNoiseCanvas`, qui n'est **pas** une matière : c'est un
+ * outil de découpe, jamais vu comme tel, qui donne leur forme aux limites
+ * entre surfaces.
  */
 
 import { defaultTheme } from '../themes/default.js';
@@ -35,14 +48,11 @@ export function makeRandom(seed) {
 const smoothstep = (t) => t * t * (3 - 2 * t);
 
 /**
- * Écart-type d'un champ de grain, en unités de texture.
- *
- * C'est la **quantité** de lumière que le grain module, indépendamment de sa
- * finesse. Reprise telle quelle de l'ancien relevé nuageux (0,1361 mesuré) :
- * changer le spectre d'un champ et son amplitude dans le même geste rendrait
- * les deux effets impossibles à départager à l'œil.
+ * Écart-type d'un champ de bruit de lisière, en unités de texture. Il fixe la
+ * largeur sur laquelle deux matières s'interpénètrent, de concert avec
+ * `blendWidth`.
  */
-const GRAIN_SPREAD = 0.1361;
+const EDGE_NOISE_SPREAD = 0.1361;
 
 /**
  * Bruit de valeur cyclique sur une grille `lattice × lattice`, échantillonné
@@ -163,48 +173,44 @@ export function createMacroCanvas(size = 128, seed = 40213) {
 }
 
 /**
- * Grain du sol : trois champs de bruit indépendants, rangés dans les canaux R,
- * G et B d'une seule image. Aucun motif dessiné — ni brin, ni caillou, ni
- * feuille morte.
+ * Bruit de lisière : trois champs indépendants, rangés dans les canaux R, G et
+ * B d'une seule image.
  *
- * Ce module en dessinait, et c'était une erreur de portée. Un brin de trois
- * centimètres tient dans trois pixels d'une texture qui couvre 2,6 m : passé
- * une trentaine de mètres il descend sous le pixel d'écran, le mip le moyenne
- * en aplat, et il ne reste de ces motifs que leur pavage. De près, l'ombre des
- * cailloux était peinte dans la texture, donc figée : elle ne suivait pas le
- * soleil. La couleur d'une matière vient de son albédo, et de lui seul ; le
- * grain ne fait que la moduler et incliner sa normale.
+ * **Ce n'est pas une matière, et on ne le voit jamais.** C'est un outil de
+ * découpe. Le sol n'a plus ni motif ni grain — une surface est une couleur —,
+ * mais deux mécanismes ont besoin d'un bruit pour donner une *forme* à ce qui
+ * serait sinon un tracé de logiciel de dessin :
  *
- * Trois champs et non un seul : l'interpénétration des matières
- * (`terrainMaterial`) repondère les poids par la hauteur du grain de chacune.
- * Un grain commun serait un facteur commun, qui s'annule à la normalisation —
- * la lisière redeviendrait le dégradé linéaire que ce mécanisme remplace.
- * Trois canaux d'une même lecture les donnent pour le prix d'un.
+ * - la **frange** (`edgeWarp`) : les cartes du sol ont un pas de 2,7 m, et une
+ *   limite lue à l'endroit exact est celle du carreau — l'escalier à 45° entre
+ *   le sable et l'herbe. On lit quelques mètres à côté, d'un déplacement tiré
+ *   de ce bruit ;
+ * - l'**interpénétration** (`surfaceAt`) : les poids des matières voisines
+ *   sont repondérés par la valeur de ce bruit puis seuillés, de sorte qu'une
+ *   matière déborde dans les creux de l'autre au lieu de s'y fondre par un
+ *   dégradé linéaire de cinq mètres.
+ *
+ * Trois champs et non un seul, et c'est ce qui impose les trois canaux : le
+ * second mécanisme normalise ses poids, donc un bruit commun aux deux matières
+ * serait un facteur commun, qui s'annule — la lisière redeviendrait le dégradé
+ * qu'il s'agit d'éviter. Trois canaux d'une même lecture les donnent pour le
+ * prix d'un.
  *
  * L'alpha reste plein : un canevas 2D prémultiplie, et un quatrième champ
  * rangé là abîmerait les trois autres.
  *
  * @param {number} size Côté, en pixels. Les grilles doivent le diviser.
  */
-export function createGrainCanvas(size = 512, seed = 91711) {
+export function createEdgeNoiseCanvas(size = 512, seed = 91711) {
   const canvas = createCanvas(size, size);
   const ctx = canvas.getContext('2d');
   const image = ctx.createImageData(size, size);
 
-  // Le spectre, et c'est **tout** ce qui fait qu'un grain est un grain.
-  //
-  // Une somme d'octaves ordinaire (`fractalNoise`) donne à chaque grille la
-  // moitié de l'amplitude de la précédente : la plus grossière emporte la
-  // moitié du champ à elle seule, la plus fine en porte 3 %. Le résultat n'est
-  // pas granuleux, il est **nuageux** — des taches larges du huitième de la
-  // texture, et rien à l'échelle du texel. Mesuré sur l'ancien relevé : deux
-  // texels voisins différaient de 5 % de l'écart-type du champ. Autant dire
-  // qu'ils étaient identiques. Aucune échelle de lecture ne pouvait rattraper
-  // ça — vue de près la carte montrait ses taches, vue de loin son pavage.
-  //
-  // On renverse donc la pondération : l'essentiel de l'énergie au texel, et ce
-  // qui reste juste assez loin pour que les lisières entre matières, qui sont
-  // découpées dans ce champ, gardent une forme au lieu d'être un tramage.
+  // Pondération inverse de celle de `fractalNoise`, qui donne à chaque grille
+  // la moitié de l'amplitude de la précédente et se retrouve dominée par la
+  // plus grossière — un champ nuageux, sans rien à l'échelle du texel. Ici
+  // l'essentiel de l'énergie est au texel, et ce qui reste juste assez loin
+  // pour qu'une lisière ait une forme au lieu d'être un tramage régulier.
   const lattices = [size, size / 2, size / 4, size / 8];
   const weights = [1, 0.6, 0.35, 0.2];
   // Trois graines écartées : deux champs corrélés recolleraient les lisières.
@@ -229,15 +235,13 @@ export function createGrainCanvas(size = 512, seed = 91711) {
     for (let i = 0; i < field.length; i++) mean += field[i];
     mean /= field.length;
 
-    // Puis remis à l'écart-type visé, plutôt qu'étiré sur [0, 1] comme avant.
-    // C'est ce qui permet de changer le spectre **sans toucher à la quantité
-    // de lumière** que le grain module : un champ décorrélé étiré sur tout
-    // l'intervalle serait quatre fois plus contrasté que l'ancien, et le sol
-    // grésillerait. Ici il module d'autant, en plus fin, et c'est tout.
+    // Puis remis à l'écart-type visé plutôt qu'étiré sur [0, 1] : ce champ ne
+    // sert qu'à comparer des voisins entre eux, et une amplitude qui dépend de
+    // la graine ferait varier la largeur des lisières d'un canal à l'autre.
     let spread = 0;
     for (let i = 0; i < field.length; i++) spread += (field[i] - mean) ** 2;
     spread = Math.sqrt(spread / field.length) || 1;
-    const gain = GRAIN_SPREAD / spread;
+    const gain = EDGE_NOISE_SPREAD / spread;
 
     for (let i = 0; i < field.length; i++) {
       const value = Math.round(255 * (0.5 + (field[i] - mean) * gain));
@@ -1087,8 +1091,13 @@ export const ROAD_TEXTURE_LENGTH = 12;
  * toutes les classes de route. Axe horizontal en travers, vertical le long
  * (répété tous les `ROAD_TEXTURE_LENGTH` mètres).
  *
- * **Le marquage n'est plus ici.** Cette texture ne porte que le revêtement,
- * son accotement, ses ornières et son grain : les lignes de rive et l'axe sont
+ * Elle n'a plus de graine : elle ne tire plus rien au hasard. Son grain — un
+ * bruit par pixel, d'amplitude propre à chaque revêtement — a été retiré avec
+ * celui du sol : une surface est une couleur, et une chaussée n'y fait pas
+ * exception.
+ *
+ * **Le marquage n'est plus ici** non plus. Cette texture ne porte que le
+ * revêtement, son accotement et ses ornières : les lignes de rive et l'axe sont
  * de la géométrie (`roadMarkings`), posée dans les mêmes morceaux que le
  * ruban. Peintes ici, elles ne pouvaient ni s'arrêter à une bouche de
  * carrefour, ni exister sur la surface d'un carrefour — qui n'a ni milieu ni
@@ -1102,7 +1111,7 @@ export const ROAD_TEXTURE_LENGTH = 12;
  * @param {string} [profile.tint]      Remplace la couleur de base du revêtement.
  * @param {number} [profile.texture]   Côté horizontal de la texture, en pixels.
  */
-export function createRoadCanvas(profile, seed = 4711, roads = defaultTheme.roads) {
+export function createRoadCanvas(profile, roads = defaultTheme.roads) {
   const {
     width: meters,
     shoulder = 0,
@@ -1116,7 +1125,6 @@ export function createRoadCanvas(profile, seed = 4711, roads = defaultTheme.road
   const height = 512;
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
-  const random = makeRandom(seed);
 
   const px = (m) => (m / meters) * width;
   const spec = roads.surfaces[surface] || roads.surfaces.asphalt;
@@ -1140,16 +1148,6 @@ export function createRoadCanvas(profile, seed = 4711, roads = defaultTheme.road
     ctx.fillRect(width * 0.22, 0, rut, height);
     ctx.fillRect(width * 0.62, 0, rut, height);
   }
-
-  // Grain : sans lui, la chaussée est une bande de plastique.
-  const grain = ctx.getImageData(0, 0, width, height);
-  for (let i = 0; i < grain.data.length; i += 4) {
-    const jitter = (random() - 0.5) * spec.grain;
-    grain.data[i] = Math.min(255, Math.max(0, grain.data[i] + jitter));
-    grain.data[i + 1] = Math.min(255, Math.max(0, grain.data[i + 1] + jitter));
-    grain.data[i + 2] = Math.min(255, Math.max(0, grain.data[i + 2] + jitter));
-  }
-  ctx.putImageData(grain, 0, 0);
 
   return canvas;
 }

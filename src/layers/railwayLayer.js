@@ -40,9 +40,6 @@ export const RAILWAY_RADIUS_M = 900;
 export const RAILWAY_REBUILD_M = 250;
 /** Pas de ré-échantillonnage le long d'une voie, en mètres. */
 export const RAILWAY_SAMPLE_M = 6;
-/** Graine du canevas de ballast, propre à cette pièce. */
-const RAILWAY_TEXTURE_SEED = 6203;
-
 /** Demi-écartement des rails, en mètres — proche de la voie normale (1,435 m). */
 export const RAILWAY_GAUGE_HALF_M = 0.72;
 /** Demi-largeur du ballast, rails compris — c'est aussi la demi-largeur du corridor. */
@@ -76,7 +73,6 @@ export class RailwayLayer {
     // Ballast texturé comme une chaussée (revêtement `ballast` du thème, sans accotement ni ligne peinte).
     const canvas = createRoadCanvas(
       { width: RAILWAY_BALLAST_HALF_M * 2, texture: 64, surface: 'ballast' },
-      RAILWAY_TEXTURE_SEED,
       theme.roads
     );
     this.ballastTexture = new THREE.CanvasTexture(canvas);

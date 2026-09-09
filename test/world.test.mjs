@@ -242,7 +242,7 @@ import {
   tileableValueNoise,
   fractalNoise,
   stretchToUnit,
-  createGrainCanvas,
+  createEdgeNoiseCanvas,
 } from '../src/materials/proceduralTextures.js';
 import {
   buildingHeight,
@@ -2006,7 +2006,10 @@ test('la table des matières décrit chaque matière, et répartit les champs de
       look.albedo.every((v) => v >= 0 && v <= 1),
       `${kind} : l’albédo reste dans [0, 1]`
     );
-    assert.ok([0, 1, 2].includes(look.grain), `${kind} : un champ de grain parmi trois`);
+    assert.ok(
+      [0, 1, 2].includes(look.noiseField),
+      `${kind} : un champ de bruit de lisière parmi trois`
+    );
   }
 
   // La table ne décrit **que** des matières de la liste : une ligne orpheline
@@ -2016,7 +2019,7 @@ test('la table des matières décrit chaque matière, et répartit les champs de
   }
 
   // Deux matières rangées côte à côte se touchent souvent dans le monde (c'est
-  // le critère de l'ordre) : elles doivent prendre deux champs de grain
+  // le critère de l'ordre) : elles doivent prendre deux champs de bruit
   // différents, sans quoi leur lisière perd l'interpénétration et retombe sur
   // un fondu linéaire. L'eau est hors du mélange, son champ ne sert jamais.
   for (let i = 1; i < SURFACE_KINDS.length; i++) {
@@ -2024,15 +2027,16 @@ test('la table des matières décrit chaque matière, et répartit les champs de
     const here = SURFACE_KINDS[i];
     if (here === 'water' || before === 'water') continue;
     assert.notEqual(
-      surfaces[before].grain,
-      surfaces[here].grain,
-      `${before} et ${here} se touchent : deux champs de grain distincts`
+      surfaces[before].noiseField,
+      surfaces[here].noiseField,
+      `${before} et ${here} se touchent : deux champs de bruit distincts`
     );
   }
 
-  // Une seule matière assourdit le grain, et c'est la dalle du trottoir.
-  const muted = SURFACE_KINDS.filter((kind) => (surfaces[kind].grainKeep ?? 1) !== 1);
-  assert.deepEqual(muted, ['pavement'], 'une seule matière assourdit son grain');
+  // Plus aucune matière n'a de texture : ni grain, ni ce qu'elle en gardait.
+  for (const kind of SURFACE_KINDS) {
+    assert.equal(surfaces[kind].grainKeep, undefined, `${kind} : plus de grain à garder`);
+  }
 });
 
 test('la part d’une matière s’interpole, là où son identifiant ne le peut pas', () => {
@@ -10148,14 +10152,11 @@ test('le contour de l’eau se fond, sans que les identifiants cessent d’être
   // rate son ancrage ne casse rien, elle ne fait rien.
   const source = readFileSync('src/terrain/terrainMaterial.js', 'utf8');
 
-  // Une seule carte, un seul appel : la couleur, le grain, ce qu'il en reste et
-  // l'eau viennent tous des quatre mêmes relevés. C'étaient trois mécanismes —
-  // un mélange de quatre poids interpolés linéairement, une boucle de
-  // couvertures, une substitution de culture — pour une seule question.
-  assert.match(
-    source,
-    /surfaceAt\(surfaceUv, grain, far, farmAlbedo, albedo, structure, grainKeep, gWater\);/
-  );
+  // Une seule carte, un seul appel : la couleur et l'eau viennent des quatre
+  // mêmes relevés. C'étaient trois mécanismes — un mélange de quatre poids
+  // interpolés linéairement, une boucle de couvertures, une substitution de
+  // culture — pour une seule question.
+  assert.match(source, /surfaceAt\(surfaceUv, noise, far, farmAlbedo, albedo, gWater\);/);
   assert.ok(!/uClassMap|uCropMap/.test(source), 'les deux cartes ont fusionné');
 
   // Ce qui est interpolé est l'**appartenance**, pas l'identifiant : chaque
@@ -10738,10 +10739,7 @@ test('les limites de surfaces : la frange, les matières interpolées et la rive
 
   // Les couvertures : lues aux quatre carreaux voisins, mélangées par leur
   // appartenance, l'eau tenue à part.
-  assert.match(
-    source,
-    /out vec3 albedo, out float grainHere, out float grainKeep, out float water/
-  );
+  assert.match(source, /out vec3 albedo, out float water/);
   assert.equal(
     (source.match(/surfaceIdAt\(corner/g) || []).length,
     4,
@@ -10807,7 +10805,7 @@ test('le grain du sol : trois champs indépendants dans une seule carte', () => 
     }
   };
   try {
-    createGrainCanvas(size, 4242);
+    createEdgeNoiseCanvas(size, 4242);
   } finally {
     if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
     else delete globalThis.OffscreenCanvas;
@@ -10909,55 +10907,48 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   factory.material.onBeforeCompile(shader);
   const source = shader.fragmentShader;
 
-  // Le relevé anti-répétition ne masquait que le pavage des motifs dessinés :
-  // il part avec eux, et avec lui six lectures de texture par pixel.
+  // Rien de ce qui a été retiré ne doit revenir. Chaque ligne ici est une
+  // couche qui prétendait faire lire un matériau et qu'on a fini par juger à
+  // l'œil : motifs dessinés, relevé anti-répétition qui masquait leur pavage,
+  // bruit « de détail », grain, relief tiré du grain.
   assert.ok(!/noTile/.test(source), 'le relevé anti-répétition a disparu');
-  assert.ok(
-    !/uGrassMap|uSoilMap|uWoodMap/.test(source),
-    'les trois textures de matière ont fusionné en une carte de grain'
-  );
+  assert.ok(!/uGrassMap|uSoilMap|uWoodMap/.test(source), 'les textures de matière');
+  assert.ok(!/uDetailMap|uDetailScale/.test(source), 'le bruit de détail');
+  assert.ok(!/uGrainContrast|uGrainRelief|grainHeight/.test(source), 'le grain et son relief');
+  assert.ok(!/dFdx|dFdy|fwidth/.test(source), 'plus aucune dérivée d’écran');
+  for (const key of ['grainScaleM', 'grainPixels', 'grainContrast', 'grainRelief']) {
+    assert.equal(defaultTheme.terrain[key], undefined, `${key} n'a plus d'objet`);
+  }
 
-  // Deux lectures : le grain, et la frange — qui prend deux canaux d'un coup
-  // au lieu de deux relevés décalés du même bruit gris.
-  assert.equal(
-    (source.match(/texture2D\(uGrainMap/g) || []).length,
-    2,
-    'le grain et la frange, pas une de plus'
-  );
-
-  // Période **fixe** en mètres, et c'est un choix qu'on a payé pour
-  // comprendre. Une période calée sur l'écran lit toujours au premier niveau
-  // de mip ; or c'est le mip qui éteint le relief au loin, et la perturbation
-  // de normale, privée de lui, différencie un champ dont l'accident fait deux
-  // pixels : elle rend du scintillement, qui suit l'observateur.
-  assert.ok(!/fwidth|exp2\(rung\)/.test(source), 'plus d’échelle calée sur l’écran');
-  assert.match(source, /vec3 grain = texture2D\(uGrainMap, vScenePos\.xz \/ uGrainScale\)\.rgb;/);
-  assert.match(source, /texture2D\(uGrainMap, world \/ uEdgeWarp\.y\)/);
-  // Chaque matière prend son champ de grain dans la table, par un sélecteur :
-  // un grain commun serait un facteur commun, qui s'annule à la normalisation
-  // de l'interpénétration, et la lisière retomberait sur un fondu linéaire.
-  assert.match(source, /height \+= hit \* dot\(grain, uSurfaceGrain\[i - 1\]\);/);
-
-  // Le grain ne porte plus aucune teinte : ce qu'il en reste est un scalaire,
-  // et la couleur vient de l'albédo de la matière, seul.
-  // Centré sur 1 : au milieu du champ le grain ne fait rien, et le contraste
-  // dit seulement de combien il s'en écarte. Il ne touche que la lumière — le
-  // relief et la dentelure des lisières lisent le champ brut.
-  assert.match(
-    source,
-    /float texMod = mix\(1\.0 \+ \(structure - 0\.5\) \* uGrainContrast, 1\.0, far\);/
-  );
-  assert.equal(shader.uniforms.uGrainContrast.value, defaultTheme.terrain.grainContrast);
-  assert.match(source, /vec3 modulation = vec3\(texMod\);/);
-
-  // La couche « de détail » a disparu : c'est elle qui constellait le sol de
-  // taches de 1 à 2 m à ±30 % de luminosité, et elle ne disait rien que le
-  // grain ne dise déjà. Deux lectures de moins, une texture de moins.
-  assert.ok(!/uDetailMap|uDetailScale/.test(source), 'plus de bruit de détail');
+  // Une surface est une couleur : ce qui multiplie l'albédo ne peut plus être
+  // qu'une variation à l'échelle du paysage, jamais une matière.
+  assert.match(source, /vec3 modulation = vec3\(1\.0\);/);
   assert.match(source, /uniform vec2 uDetailRange;/, 'la portée du fondu reste');
 
-  assert.equal(shader.uniforms.uGrainScale.value, defaultTheme.terrain.grainScaleM);
-  assert.equal(defaultTheme.terrain.grainPixels, undefined, 'grainPixels n’a plus d’objet');
+  // La seule normale encore perturbée est celle de l'eau. Le sol est lisse, et
+  // il ne reste aucune dérivée d'écran dans le shader — c'est ce que dit
+  // l'assertion ci-dessus, et c'est ce qui a fait disparaître le
+  // fourmillement qui suivait l'observateur.
+  assert.match(source, /mix\(worldNormal, wavy, gWater\)/);
+
+  // Le bruit de lisière reste, et il ne s'affiche nulle part : deux lectures,
+  // l'une pour la frange, l'autre pour donner leur forme aux limites.
+  assert.equal(
+    (source.match(/texture2D\(uEdgeNoise/g) || []).length,
+    2,
+    'la frange et la découpe des lisières, pas une de plus'
+  );
+  assert.match(
+    source,
+    /vec3 noise = texture2D\(uEdgeNoise, vScenePos\.xz \/ uEdgeNoiseScale\)\.rgb;/
+  );
+  assert.match(source, /texture2D\(uEdgeNoise, world \/ uEdgeWarp\.y\)/);
+  // Chaque matière prend son champ dans la table, par un sélecteur : un bruit
+  // commun serait un facteur commun, qui s'annule à la normalisation de
+  // l'interpénétration, et la lisière retomberait sur un fondu linéaire.
+  assert.match(source, /height \+= hit \* dot\(noise, uSurfaceNoise\[i - 1\]\);/);
+
+  assert.equal(shader.uniforms.uEdgeNoiseScale.value, defaultTheme.terrain.edgeNoiseScaleM);
 
   // Le shader n'est compilé par personne ici : rien ne rattrape une parenthèse
   // ou une accolade perdue en éditant le gabarit, et l'erreur ne se verrait
@@ -10965,12 +10956,12 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   const count = (sign) => source.split(sign).length - 1;
   assert.equal(count('('), count(')'), 'parenthèses équilibrées');
   assert.equal(count('{'), count('}'), 'accolades équilibrées');
-  assert.equal(factory.textures.length, 3, 'macro, grain, rides');
+  assert.equal(factory.textures.length, 3, 'macro, bruit de lisière, rides');
 
   // Une matière = une couleur : le tableau d'albédos a exactement une entrée
   // par matière, et c'est tout ce qu'il faut pour en ajouter une.
   assert.equal(shader.uniforms.uSurfaceAlbedo.value.length, SURFACE_KINDS.length);
-  assert.equal(shader.uniforms.uSurfaceGrain.value.length, SURFACE_KINDS.length);
+  assert.equal(shader.uniforms.uSurfaceNoise.value.length, SURFACE_KINDS.length);
 
   for (const key of ['detailScaleNear', 'detailScaleFar']) {
     assert.equal(defaultTheme.terrain[key], undefined, `${key} n'a plus d'objet`);
@@ -11042,7 +11033,7 @@ test('la texture de chaussée ne porte plus une seule ligne', () => {
       }
     };
     try {
-      createRoadCanvas(profile, 4711);
+      createRoadCanvas(profile);
     } finally {
       if (previous) globalThis.OffscreenCanvas = previous;
       else delete globalThis.OffscreenCanvas;
@@ -11057,6 +11048,39 @@ test('la texture de chaussée ne porte plus une seule ligne', () => {
   for (const rect of marked) {
     assert.ok(!/2[0-9]{2},/.test(String(rect.style)), `couleur claire posée : ${rect.style}`);
   }
+
+  // Elle ne tire plus rien au hasard non plus : son grain — un bruit par pixel,
+  // d'amplitude propre à chaque revêtement — est parti avec celui du sol. D'où
+  // la disparition de la graine, et de celles que chaque profil portait pour
+  // que deux chaussées voisines n'aient pas le même.
+  for (const surface of Object.values(defaultTheme.roads.surfaces)) {
+    assert.equal(surface.grain, undefined, 'un revêtement est une couleur');
+  }
+  // Le thème est passé en **deuxième** argument, à la place qu'occupait la
+  // graine : un appel resté à trois arguments peindrait la route en gris de
+  // repli sans que rien ne le signale.
+  const roads = { ...defaultTheme.roads, surfaces: { asphalt: { base: '#123456' } } };
+  const previousCanvas = globalThis.OffscreenCanvas;
+  const styles = [];
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      Object.assign(this, { width, height });
+    }
+    getContext() {
+      const ctx = paintingCanvasContext();
+      ctx.fillRect = function fillRect() {
+        styles.push(this.fillStyle);
+      };
+      return ctx;
+    }
+  };
+  try {
+    createRoadCanvas({ width: 6, texture: 64 }, roads);
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+  }
+  assert.ok(styles.includes('#123456'), 'le thème est lu au deuxième argument');
 });
 
 test('les lignes d’une chaussée se lisent dans son profil, et nulle part ailleurs', () => {
