@@ -12,10 +12,18 @@
  *
  * Couleurs linéaires, prêtes pour les attributs de sommet, volontairement pastel.
  *
- * Le même geste sert trois fois — palette du bâti, revêtement de voirie,
- * famille d'ouvrage d'art —, toujours sur la même maille (`TOWN_PATCH_M`) et
- * avec une graine distincte : ce qui se ressemble se rassemble par lieu, sans
- * que les trois tirages ne se copient l'un l'autre.
+ * Le même geste sert trois fois — palette du bâti, rebord de voirie, famille
+ * d'ouvrage d'art —, toujours sur la même maille (`TOWN_PATCH_M`) et avec une
+ * graine distincte : ce qui se ressemble se rassemble par lieu, sans que les
+ * trois tirages ne se copient l'un l'autre.
+ *
+ * Une chose échappe à ce geste, et il faut dire pourquoi : le **dessus** du
+ * trottoir (`pavementTone`) est tiré du **climat**, pas du bourg. Ce n'est plus
+ * la couleur d'un objet mais celle du sol — en ville le revêtement va de la
+ * chaussée aux façades (`groundClassMap`, couverture `pavement`) —, et le sol
+ * est peint par un shader qui n'a qu'un albédo par couverture pour toute la
+ * bulle. Un tirage sur la maille du bourg s'y lirait comme une frontière de
+ * 1400 mètres au milieu de la ville. Le pays, lui, s'y lit sans couture.
  */
 
 import { srgb } from '../core/color.js';
@@ -96,15 +104,40 @@ export function townPaletteAt(x, z, towns = defaultTheme.towns, climate = null) 
  * @param {Object} [streets] Tranche `theme.streets`.
  * @returns {{name:string, walk:number[], kerb:number[], joint:number[], gutter:number[]}}
  */
-export function streetSurfaceAt(x, z, streets = defaultTheme.streets) {
+export function streetSurfaceAt(x, z, streets = defaultTheme.streets, climate = null) {
   const surfaces = linearStreets(streets);
   const gx = Math.floor(x / TOWN_PATCH_M) * TOWN_PATCH_M;
   const gz = Math.floor(z / TOWN_PATCH_M) * TOWN_PATCH_M;
   const draw = randomAt(gx, gz, 191);
-  return surfaces[Math.min(surfaces.length - 1, Math.floor(draw * surfaces.length))];
+  const rebord = surfaces[Math.min(surfaces.length - 1, Math.floor(draw * surfaces.length))];
+  // Le dessus vient du climat, pas du bourg : c'est le sol de la ville, et le
+  // sol est peint par un shader qui n'a qu'un albédo par couverture pour toute
+  // la bulle. Voir `STREET_LOOK.pavement`.
+  return { ...rebord, walk: pavementTone(climate, streets) };
+}
+
+/**
+ * Le dessus du trottoir, et par la même valeur le sol revêtu de la ville, en
+ * couleur linéaire.
+ *
+ * Lue des deux côtés — par la bordure, qui est de la géométrie, et par le
+ * shader de terrain, qui peint la couverture `pavement`. C'est la même figure
+ * que `soilWashFor` : une seule source, parce que deux lectures divergentes se
+ * verraient exactement là où elles se rejoignent.
+ *
+ * Fonction pure.
+ *
+ * @param {string|null} climate Famille climatique.
+ * @param {Object} [streets] Tranche `theme.streets`.
+ * @returns {number[]} couleur linéaire.
+ */
+export function pavementTone(climate, streets = defaultTheme.streets) {
+  const table = linearPavement(streets);
+  return table[climate] || table.default;
 }
 
 const LINEAR_STREETS = new WeakMap();
+const LINEAR_PAVEMENT = new WeakMap();
 
 function linearStreets(streets) {
   let out = LINEAR_STREETS.get(streets);
@@ -112,12 +145,23 @@ function linearStreets(streets) {
     const gutter = srgb(streets.gutter);
     out = streets.surfaces.map((surface) => ({
       name: surface.name,
-      walk: srgb(surface.walk),
       kerb: srgb(surface.kerb),
       joint: srgb(surface.joint),
       gutter,
     }));
     LINEAR_STREETS.set(streets, out);
+  }
+  return out;
+}
+
+function linearPavement(streets) {
+  let out = LINEAR_PAVEMENT.get(streets);
+  if (!out) {
+    out = {};
+    for (const [family, hex] of Object.entries(streets.pavement || {})) out[family] = srgb(hex);
+    // Un thème sans table retombe sur un gris de béton plutôt que sur `undefined`.
+    if (!out.default) out.default = srgb('#9b968c');
+    LINEAR_PAVEMENT.set(streets, out);
   }
   return out;
 }

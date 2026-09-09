@@ -946,7 +946,10 @@ export const ROAD_PROFILES = {
   major: { width: 8.5, shoulder: 0, edgeLines: true, centerDash: true, texture: 128 },
   minor: { width: 5, shoulder: 0, edgeLines: true, centerDash: false, texture: 128 },
   lane: { width: 3.6, shoulder: 0, edgeLines: false, centerDash: false, texture: 64 },
-  cycleway: { width: 2.2, shoulder: 0, edgeLines: false, centerDash: false, tint: '#56565c', texture: 64 },
+  // `symbol` dit ce que la classe porte **peint au sol**, au même titre
+  // qu'`edgeLines` : le vélo n'est pas une décoration, c'est la seule chose
+  // qui distingue une piste cyclable d'une allée de service de même largeur.
+  cycleway: { width: 2.2, shoulder: 0, edgeLines: false, centerDash: false, symbol: 'cycle', tint: '#56565c', texture: 64 },
   track: { width: 3, shoulder: 0, surface: 'dirt', ruts: true, texture: 64 },
   path: { width: 1.4, shoulder: 0, surface: 'dirt', texture: 64 },
 };
@@ -1042,16 +1045,60 @@ export const STREET_LOOK = {
   /** Fond de caniveau : plus sombre que la chaussée, l'eau y stagne. */
   gutter: '#403e3b',
   /**
-   * Revêtements, un par bourg. `walk` est le dessus, `kerb` la bordure, `joint`
-   * le bord arrière — toujours plus sombre, parce qu'il est à l'ombre du mur ou
-   * de la haie qui le suit.
+   * Le **rebord**, un par bourg : `kerb` la bordure, `joint` le bord arrière —
+   * toujours plus sombre, parce qu'il est à l'ombre du mur ou de la haie qui le
+   * suit. Du ciment, dans les quatre cas : une commune coule ses bordures d'un
+   * coup, et une bordure est du béton à peu près partout.
+   *
+   * Le **dessus** du trottoir n'est plus ici, et c'est le lot : il vient de
+   * `pavement`, par climat. Un trottoir de ville se prolonge maintenant dans le
+   * sol lui-même (couverture `pavement` de `groundClassMap`), et le sol est
+   * peint par un shader qui n'a qu'un albédo par couverture pour toute la
+   * bulle. Une teinte tirée par bourg, sur une maille de 1400 m, se lirait donc
+   * comme une frontière au milieu de la ville. Ce que le pays change, en
+   * revanche, le shader sait le dire.
    */
   surfaces: [
-    { name: 'béton balayé', walk: '#bab4a6', kerb: '#c0bbaf', joint: '#948d80' },
-    { name: 'enrobé clair', walk: '#98948c', kerb: '#b3aea3', joint: '#797570' },
-    { name: 'pavé de grès', walk: '#a89f8e', kerb: '#b5ac9a', joint: '#847b6c' },
-    { name: 'béton désactivé', walk: '#b0a897', kerb: '#b8b1a2', joint: '#8b8374' },
+    { name: 'béton balayé', kerb: '#c0bbaf', joint: '#948d80' },
+    { name: 'enrobé clair', kerb: '#b3aea3', joint: '#797570' },
+    { name: 'pavé de grès', kerb: '#b5ac9a', joint: '#847b6c' },
+    { name: 'béton désactivé', kerb: '#b8b1a2', joint: '#8b8374' },
   ],
+  /**
+   * Le dessus du trottoir, par famille climatique — et, par la même valeur, le
+   * sol revêtu de la ville entière (voir `townStyle.pavementTone`).
+   *
+   * Une seule table pour les deux, parce qu'il n'y a pas deux surfaces : la
+   * bordure borde le sol, elle ne borde pas un ruban de trottoir posé sur un
+   * autre sol. Deux valeurs divergentes se liraient comme une bande de couleur
+   * le long de chaque bordure.
+   *
+   * Ce que le climat change n'est pas un caprice : le nord pose du béton gris,
+   * le Midi de la pierre claire qui blanchit au soleil, la steppe et le désert
+   * un enrobé qui prend la poussière du pays. `default` est l'océanique, sur
+   * lequel le reste du thème est réglé.
+   */
+  /**
+   * Force du grain du revêtement, de 0 (aplat) à 1 (le grain du sol qu'il
+   * remplace). Une dalle n'est pas lisse — elle garde quelque chose du grain
+   * du bitume voisin — mais elle l'a plus sourd qu'une terre : à 1, un
+   * trottoir se lirait comme une allée de gravier.
+   */
+  pavementGrain: 0.55,
+  pavement: {
+    default: '#9b968c',
+    oceanic: '#9b968c',
+    oceanicUpland: '#93918c',
+    mediterranean: '#b3a992',
+    mediterraneanCool: '#aaa190',
+    mediterraneanMontane: '#a9a08e',
+    semiArid: '#b2a68f',
+    arid: '#bdae94',
+    continental: '#9a968e',
+    boreal: '#8f8d89',
+    alpine: '#98958f',
+    glacial: '#93938f',
+  },
 };
 
 // --- L’eau ---------------------------------------------------------------------

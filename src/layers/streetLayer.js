@@ -56,6 +56,14 @@
  * parce qu'elle vient **après** le trottoir : là où un trottoir tient, il vaut
  * mieux qu'un zébra, et un vide déjà revêtu n'est plus un vide.
  *
+ * Le comblement se fait de deux façons, et la distinction est tout ce qui
+ * séparait un boulevard lisible d'un tapis de hachures : entre deux chaussées
+ * du **même profil** — les deux sens d'une même route — c'est une *couture*,
+ * comblée en revêtement plein (`gapIsSeam`, `appendGapSurface`) ; partout
+ * ailleurs c'est un îlot, hachuré comme un zébra. Le zébra dit « ne roulez pas
+ * ici », ce qui est faux au milieu d'un boulevard, et ses hachures couvrent le
+ * marquage.
+ *
  * Elle n'attend pas d'être en bourg — un longement de piste cyclable laisse de
  * l'herbe au milieu du bitume en rase campagne comme ailleurs.
  *
@@ -75,6 +83,26 @@
  * l'axe : une rue bâtie d'un seul côté n'a de trottoir que de ce côté, et le
  * critère ne dépend que de coordonnées au sol (stable au découpage).
  *
+ * ## Le rebord, et le sol qu'il borde
+ *
+ * Le dessus du trottoir n'est plus tiré du bourg comme le reste de la section,
+ * et c'est le lot : en ville, le trottoir ne s'arrête pas à sa jupe arrière —
+ * le **sol** continue, revêtu jusqu'aux façades (`groundClassMap`, couverture
+ * `pavement`). La bordure ne borde donc plus un ruban posé sur de l'herbe, elle
+ * borde le sol lui-même.
+ *
+ * D'où deux teintes de sources différentes, et il n'y a pas moyen de faire
+ * autrement : le **rebord** (caniveau, face, nez, jupe) reste tiré du bourg,
+ * comme la palette de ses maisons ; le **dessus** vient du climat
+ * (`townStyle.pavementTone`), parce que c'est aussi la couleur du sol, et que
+ * le sol est peint par un shader qui n'a qu'un albédo par couverture pour toute
+ * la bulle. Une teinte de dessus tirée par bourg se lirait comme une frontière
+ * au milieu de la ville, et surtout ne coïnciderait plus avec le sol qu'elle
+ * prolonge.
+ *
+ * Hors ville, rien de tout cela ne change : le sol n'est pas revêtu, et le
+ * trottoir est le ruban qu'il a toujours été.
+ *
  * Le trottoir reçoit le `platform` du tronçon et le décollement exact de la
  * chaussée (`ROAD_LIFT_M`) : il ne peut pas diverger de la rue, même sur un
  * dos-d'âne ou un raccord de carrefour. Il reçoit aussi ses **repères**
@@ -91,7 +119,7 @@ import { contiguousRuns, crossSlope, randomAt, STEEP_CROSS_SLOPE } from './furni
 import { pointInAreas } from './settlement.js';
 import { edgeClearance, outwardSide, polylineLength } from './roadEdges.js';
 import { junctionBoundaryAt, outlineDeckAt } from './roadJunctions.js';
-import { appendZebra, collectRoadGaps } from './roadBundles.js';
+import { appendGapSurface, appendZebra, collectRoadGaps, gapIsSeam } from './roadBundles.js';
 import {
   MARKING_LIFT_M,
   MOUTH_CROSSING_M,
@@ -300,12 +328,15 @@ export class StreetLayer {
    * @param {Object} [context.areas] `JunctionAreas` : les surfaces de
    *        carrefour, qui arrêtent les rives de tronçon et fournissent les
    *        coins de rue.
+   * @param {string|null} [context.climate] Famille climatique : elle décide du
+   *        **dessus** du trottoir, qui est celui du sol de la ville
+   *        (`townStyle.pavementTone`). Le rebord, lui, reste tiré du bourg.
    * @returns {boolean} vrai si de la voirie a été posée.
    */
   rebuild(
     roadSegments = [],
     here = { x: 0, z: 0 },
-    { builtUp = [], fabric = null, roadIndex = null, areas = null } = {}
+    { builtUp = [], fabric = null, roadIndex = null, areas = null, climate = null } = {}
   ) {
     if (this.disposed || !this.bubble?.frame) return false;
 
@@ -319,7 +350,7 @@ export class StreetLayer {
 
     // Sans emprise habitée ni bâti relevé, la couche ne pose rien.
     if (builtUp.length > 0 && fabric && fabric.count > 0) {
-      const context = { here, builtUp, fabric, roadIndex, areas, mouths };
+      const context = { here, builtUp, fabric, roadIndex, areas, mouths, climate };
       for (const segment of roadSegments) {
         if (!STREET_PROFILES.has(segment.profile)) continue;
         built += this._buildSegment(buffer, bands, segment, context);
@@ -388,6 +419,14 @@ export class StreetLayer {
       taken: pavement ? (x, z) => pavement.covers(x, z) : null,
     });
     for (const gap of gaps) {
+      // Une couture — deux chaussées du même profil, donc les deux sens d'une
+      // même route — se comble en revêtement plein. Le zébra dirait « ne
+      // roulez pas ici », ce qui est faux, et ses hachures couvriraient le
+      // marquage, qui est la seule chose qui rende un boulevard lisible.
+      if (gapIsSeam(gap)) {
+        bands += appendGapSurface(buffer, gap, { color: ground, lift: ROAD_LIFT_M });
+        continue;
+      }
       bands += appendZebra(buffer, gap, {
         paint,
         ground,
@@ -399,7 +438,7 @@ export class StreetLayer {
   }
 
   /** Les deux côtés d'un tronçon. @returns {number} portions posées. */
-  _buildSegment(buffer, bands, segment, { here, builtUp, fabric, roadIndex, areas, mouths }) {
+  _buildSegment(buffer, bands, segment, { here, builtUp, fabric, roadIndex, areas, mouths, climate }) {
     const { path, platform, edges, probeSpan, halfWidth } = segment;
     const rows = path.length;
     if (rows < 2 || !platform || !edges) return 0;
@@ -488,6 +527,7 @@ export class StreetLayer {
           halfWidth,
           room: narrowest,
           streets,
+          climate,
         });
         built++;
       }
@@ -651,7 +691,7 @@ export class StreetLayer {
    *
    * @returns {number} coins posés.
    */
-  _buildCorners(buffer, bands, { here, builtUp, fabric, roadIndex, areas }) {
+  _buildCorners(buffer, bands, { here, builtUp, fabric, roadIndex, areas, climate }) {
     if (!areas || areas.length === 0) return 0;
     const streets = this.theme.streets;
     let built = 0;
@@ -716,6 +756,7 @@ export class StreetLayer {
           room,
           streets,
           walkWidth,
+          climate,
         });
         built++;
       }
@@ -725,13 +766,17 @@ export class StreetLayer {
   }
 
   /** Une portion continue de bordure et son trottoir. */
-  _appendKerb(buffer, bands, { points, decks, frames, side, halfWidth, room, streets, walkWidth = null }) {
+  _appendKerb(
+    buffer,
+    bands,
+    { points, decks, frames, side, halfWidth, room, streets, walkWidth = null, climate = null }
+  ) {
     // Largeur et revêtement tirés au premier point de la portion (ancrés au
     // sol) puis ramenés à ce qui tient dans la place disponible.
     const anchor = points[0];
     const width = walkWidth ?? walkWidthFor(room, walkWidthAt(anchor.x, anchor.z, streets), streets);
     if (width <= 0) return;
-    const tones = streetSurfaceAt(anchor.x, anchor.z, streets);
+    const tones = streetSurfaceAt(anchor.x, anchor.z, streets, climate);
 
     appendProfile(buffer, {
       path: points,

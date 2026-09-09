@@ -281,10 +281,10 @@ test('le compositeur sert le thème à toutes les couches qu’il monte', () => 
   assert.ok(constructions.length >= 8, 'toutes les couches sont montées ici');
   for (const call of constructions) {
     const name = call.slice(4, call.indexOf('('));
-    // Deux exceptions, et elles ne peignent ni l'une ni l'autre : la carte de
-    // classes est un raster d'occupation du sol, la source vectorielle est un
-    // cache de tuiles.
-    if (name === 'GroundClassMap' || name === 'VectorTileSource') continue;
+    // Trois exceptions, et aucune ne peint : la carte de classes est un raster
+    // d'occupation du sol, la source vectorielle un cache de tuiles, le masque
+    // urbain un prédicat de lieu (« sommes-nous en ville ? »).
+    if (name === 'GroundClassMap' || name === 'VectorTileSource' || name === 'UrbanMask') continue;
     assert.ok(/\btheme\b/.test(call), `${name} est monté sans thème`);
   }
 });

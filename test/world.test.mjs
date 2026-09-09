@@ -67,11 +67,15 @@ import {
   JUNCTION_CORNER_MAX_M,
 } from '../src/layers/roadJunctions.js';
 import {
+  absorbParallelLines,
+  appendGapSurface,
   appendZebra,
   collectRoadGaps,
   curvesTowards,
   facingEdgeAt,
+  gapIsSeam,
   gapLength,
+  ABSORB_GAP_M,
   ZEBRA_PITCH_M,
 } from '../src/layers/roadBundles.js';
 import {
@@ -87,8 +91,13 @@ import {
   appendMarkingLine,
   markingLinesFor,
   sectionAtDistance,
+  appendMarkingSymbols,
+  cycleGlyph,
+  glyphBar,
+  glyphRing,
   MARKING_BAR_M,
   MARKING_DASH_M,
+  MARKING_SYMBOL_SPACING_M,
   MARKING_WIDTH_M,
   MOUTH_CROSSING_M,
 } from '../src/layers/roadMarkings.js';
@@ -162,6 +171,7 @@ import {
 import { tileBounds } from '../src/core/vectorTileSource.js';
 import {
   roadStyleFor,
+  isPedestrianWay,
   roadLines,
   clipToRadius,
   anchorDistances,
@@ -353,6 +363,7 @@ import {
   SHUTTER_SHARE,
   HOUSE_MAX_HEIGHT_M,
   HOUSE_MAX_AREA_M2,
+  pavementTone,
 } from '../src/layers/townStyle.js';
 import {
   picketOffsets,
@@ -437,6 +448,7 @@ import {
   coverFromId,
   COVER_KINDS,
   COVER_ID_STEP,
+  PAVEMENT_COVER_ID,
   WOOD_EDGE_REACH_M,
 } from '../src/terrain/groundClassMap.js';
 import {
@@ -446,7 +458,11 @@ import {
   FabricIndex,
   SETTLEMENT_PLACE_CLASSES,
   collectPlaceNames,
+  collectUrbanGreens,
   nearestNamedPlace,
+  UrbanMask,
+  URBAN_GREEN_LANDUSE,
+  URBAN_PLACE_RADIUS_M,
 } from '../src/layers/settlement.js';
 import {
   kerbQualifies,
@@ -9984,7 +10000,7 @@ test('le contour de l’eau se fond, sans que les identifiants cessent d’être
   // plus du seul carreau le plus proche — c'est ce qui dessinait un escalier.
   // Elle est rendue par la lecture qui sert aussi les couvertures : les mêmes
   // quatre relevés répondent aux deux questions.
-  assert.match(source, /surfaceAt\(classUv, coverAlbedo, coverShare, gWater\);/);
+  assert.match(source, /surfaceAt\(classUv, coverAlbedo, coverShare, coverGrain, gWater\);/);
   assert.match(source, /water = dot\(wet, weight\);/);
 
   // Ce qui est interpolé est l'**appartenance**, pas l'identifiant : chaque
@@ -10559,8 +10575,11 @@ test('les limites de surfaces : la frange, les couvertures interpolées et la ri
 
   // Les couvertures : lues aux quatre carreaux voisins, mélangées par leur
   // appartenance, l'eau tenue à part.
-  assert.match(source, /void surfaceAt\(vec2 uv, out vec3 coverAlbedo, out float coverShare, out float water\)/);
-  assert.match(source, /surfaceAt\(classUv, coverAlbedo, coverShare, gWater\);/);
+  assert.match(
+    source,
+    /out vec3 coverAlbedo, out float coverShare, out float coverGrain, out float water/
+  );
+  assert.match(source, /surfaceAt\(classUv, coverAlbedo, coverShare, coverGrain, gWater\);/);
   assert.equal(
     (source.match(/coverIdAt\(corner/g) || []).length,
     4,
@@ -11108,4 +11127,273 @@ test('le marquage regarde le ciel, sur les deux rives et dans les deux sens', ()
   const other = createProfileBuffer();
   appendMarkingBar(other, { near, far, from: 0, to: 2.5, color: [1, 1, 1] });
   assert.ok(up(other) > 0, 'ligne d’effet retournée sur l’autre voie');
+});
+
+// --- La ville : ce qu'on n'y dessine pas, et ce qu'on y peint ------------------
+
+test('isPedestrianWay reconnaît le trottoir relevé et laisse le sentier tranquille', () => {
+  assert.equal(isPedestrianWay({ class: 'pedestrian' }), true, 'une aire piétonne');
+  assert.equal(isPedestrianWay({ class: 'path', subclass: 'footway' }), true);
+  assert.equal(isPedestrianWay({ class: 'path', subclass: 'sidewalk' }), true);
+  assert.equal(isPedestrianWay({ class: 'path', subclass: 'crossing' }), true);
+
+  // Le sentier de campagne n'a pas de sous-classe piétonne : c'est un objet du
+  // paysage, pas une redondance de saisie.
+  assert.equal(isPedestrianWay({ class: 'path' }), false, 'un sentier reste un sentier');
+  assert.equal(isPedestrianWay({ class: 'path', subclass: 'track' }), false);
+  assert.equal(isPedestrianWay({ class: 'cycleway' }), false);
+  // Un cheminement ouvert au vélo est une piste : on veut la voir.
+  assert.equal(
+    isPedestrianWay({ class: 'path', subclass: 'footway', bicycle: 'designated' }),
+    false,
+    'un cheminement cyclable n’est pas une voie piétonne'
+  );
+  assert.equal(isPedestrianWay({ class: 'residential' }), false);
+  assert.equal(isPedestrianWay({}), false);
+});
+
+test('UrbanMask : un disque de ville, une emprise bâtie, et le vert retiré', () => {
+  const square = (cx, cz, half) => [
+    { x: cx - half, z: cz - half },
+    { x: cx + half, z: cz - half },
+    { x: cx + half, z: cz + half },
+    { x: cx - half, z: cz + half },
+  ];
+
+  const mask = new UrbanMask({
+    builtUp: [square(0, 0, 500)],
+    greens: [square(200, 200, 60)],
+    places: [{ x: 0, z: 0, class: 'town' }],
+  });
+
+  assert.equal(mask.any, true);
+  assert.equal(mask.covers(100, 100), true, 'bâti, à portée du bourg');
+  assert.equal(mask.covers(200, 200), false, 'le parc reste un parc');
+  assert.equal(mask.covers(2000, 0), false, 'hors emprise bâtie');
+
+  // Un village ne fait pas une ville : sans `city`/`town`, le masque ne couvre
+  // rien, et tout le décor retombe sur son comportement de campagne.
+  const village = new UrbanMask({
+    builtUp: [square(0, 0, 500)],
+    places: [{ x: 0, z: 0, class: 'village' }],
+  });
+  assert.equal(village.any, false);
+  assert.equal(village.covers(0, 0), false);
+
+  // Et le disque borne bien la portée du point nommé.
+  assert.ok(URBAN_PLACE_RADIUS_M.city > URBAN_PLACE_RADIUS_M.town);
+  assert.equal(URBAN_PLACE_RADIUS_M.village, undefined, 'un village n’a pas de portée urbaine');
+  assert.equal(new UrbanMask().covers(0, 0), false, 'sans rien, personne n’est en ville');
+});
+
+test('collectUrbanGreens relève le vert urbain des deux couches source', () => {
+  const ring = [
+    [0, 0],
+    [0.001, 0],
+    [0.001, 0.001],
+    [0, 0.001],
+    [0, 0],
+  ];
+  const features = {
+    landuse: [
+      [{ type: 'Polygon', coordinates: [ring] }, { class: 'cemetery' }],
+      [{ type: 'Polygon', coordinates: [ring] }, { class: 'residential' }],
+    ],
+    landcover: [[{ type: 'Polygon', coordinates: [ring] }, { class: 'grass' }]],
+  };
+  const source = {
+    forEachFeature(layer, tiles, visit) {
+      for (const [geometry, properties] of features[layer] || []) visit(geometry, properties);
+    },
+  };
+  const frame = { origin: { x: 0, y: 0 }, scale: 1000, zoom: 14 };
+
+  // Le cimetière et le parc, pas le quartier d'habitation.
+  assert.equal(collectUrbanGreens(source, [{ x: 0, y: 0 }], frame).length, 2);
+  assert.equal(collectUrbanGreens(null, [], null).length, 0, 'sans source, aucun vert');
+  assert.ok(URBAN_GREEN_LANDUSE.has('cemetery') && URBAN_GREEN_LANDUSE.has('stadium'));
+  assert.equal(URBAN_GREEN_LANDUSE.has('residential'), false);
+});
+
+test('absorbParallelLines écarte la desserte qui double une avenue, et rien d’autre', () => {
+  const along = (offset, profile, halfWidth) => ({
+    profile,
+    halfWidth,
+    level: 0,
+    points: Array.from({ length: 21 }, (_, i) => ({ x: i * 10, z: offset })),
+  });
+
+  const avenue = along(0, 'major', 4.25);
+  // Rives à 4,25 + 1,8 = 6,05 m d'écart d'axe : moins d'un mètre de vide.
+  const service = along(7, 'lane', 1.8);
+  // Une piste cyclable au même endroit : on veut la voir, elle n'est pas absorbée.
+  const cycle = { ...along(7, 'cycleway', 1.1) };
+  // Une rue perpendiculaire : elle passe près, elle ne longe pas.
+  const cross = {
+    profile: 'lane',
+    halfWidth: 1.8,
+    level: 0,
+    points: Array.from({ length: 21 }, (_, i) => ({ x: 100, z: -100 + i * 10 })),
+  };
+
+  const kept = absorbParallelLines([avenue, service, cycle, cross], {
+    order: ROAD_PROFILE_ORDER,
+  });
+  assert.ok(kept.includes(avenue), 'l’avenue reste');
+  assert.ok(!kept.includes(service), 'la desserte est dans la largeur de l’avenue');
+  assert.ok(kept.includes(cycle), 'la piste cyclable n’est jamais absorbée');
+  assert.ok(kept.includes(cross), 'une transversale ne longe rien');
+
+  // Le niveau tranche avant la distance : une voie qui passe dessous ne longe pas.
+  const under = { ...along(7, 'lane', 1.8), level: -1 };
+  assert.ok(
+    absorbParallelLines([avenue, under], { order: ROAD_PROFILE_ORDER }).includes(under),
+    'un passage inférieur n’est pas un longement'
+  );
+
+  // Écartée du champ d'application, la desserte revient.
+  assert.ok(
+    absorbParallelLines([avenue, service], {
+      order: ROAD_PROFILE_ORDER,
+      where: () => false,
+    }).includes(service),
+    'hors ville, on n’absorbe rien'
+  );
+
+  // Et trop loin, ce sont deux rues.
+  const apart = along(6 + ABSORB_GAP_M + 4.25 + 1.8, 'lane', 1.8);
+  assert.ok(
+    absorbParallelLines([avenue, apart], { order: ROAD_PROFILE_ORDER }).includes(apart),
+    'au-delà de l’écart, deux rues parallèles sont deux rues'
+  );
+
+  assert.deepEqual(absorbParallelLines([], { order: ROAD_PROFILE_ORDER }), []);
+});
+
+test('une couture entre deux chaussées jumelles se comble en plein, pas en zébra', () => {
+  const gap = {
+    a: { profile: 'major' },
+    other: { profile: 'major' },
+    pairs: [
+      { near: { x: 0, z: 0, deck: 10, distance: 0 }, far: { x: 0, z: 2, deck: 10 } },
+      { near: { x: 10, z: 0, deck: 10, distance: 10 }, far: { x: 10, z: 2, deck: 10 } },
+    ],
+  };
+  assert.equal(gapIsSeam(gap), true);
+  assert.equal(gapIsSeam({ ...gap, other: { profile: 'cycleway' } }), false, 'un îlot n’est pas une couture');
+  assert.equal(gapIsSeam(null), false);
+
+  const buffer = createProfileBuffer();
+  const laid = appendGapSurface(buffer, gap, { color: [0.2, 0.2, 0.2], lift: 0.01 });
+  assert.equal(laid, 1, 'un quadrilatère par couple de sections');
+  assert.equal(buffer.positions.length / 3, 4);
+  assert.equal(buffer.indices.length, 6);
+
+  // Une seule couleur : c'est du revêtement, pas des hachures. Le zébra, lui,
+  // en pose deux, et bien plus de bandes sur la même longueur.
+  const colors = new Set();
+  for (let i = 0; i < buffer.colors.length; i += 3) colors.add(buffer.colors.slice(i, i + 3).join(','));
+  assert.equal(colors.size, 1);
+
+  const hatched = createProfileBuffer();
+  const bands = appendZebra(hatched, gap, { paint: [1, 1, 1], ground: [0.2, 0.2, 0.2] });
+  assert.ok(bands > laid, 'le zébra découpe, le comblement plein non');
+});
+
+test('le pictogramme cycliste : un dessin fermé, posé en phase avec la chaîne', () => {
+  const glyph = cycleGlyph();
+  assert.ok(glyph.length > 20, 'deux roues et un cadre');
+
+  // Tous les polygones tournent dans le **même** sens, et c'est ce qui décide
+  // de la face : `appendMarkingGlyph` les retourne en éventail, un polygone à
+  // l'envers rend une face tournée vers le sol, donc noire. Un test possible
+  // sans les yeux, sur exactement le défaut qu'on ne verrait qu'à l'écran.
+  const shoelace = (polygon) => {
+    let sum = 0;
+    for (let i = 0; i < polygon.length; i++) {
+      const a = polygon[i];
+      const b = polygon[(i + 1) % polygon.length];
+      sum += a.along * b.across - b.along * a.across;
+    }
+    return sum;
+  };
+  for (const polygon of glyph) {
+    assert.ok(polygon.length >= 3, 'aucun polygone dégénéré');
+    assert.ok(shoelace(polygon) < 0, 'tous les polygones tournent dans le sens horaire');
+  }
+  assert.ok(shoelace(glyphBar({ along: 0, across: 0 }, { along: 1, across: 0 })) < 0);
+  // Il tient dans la largeur d'une piste (2,20 m) et fait la longueur d'un vélo.
+  const alongs = glyph.flat().map((v) => v.along);
+  const acrosses = glyph.flat().map((v) => v.across);
+  const length = Math.max(...alongs) - Math.min(...alongs);
+  const width = Math.max(...acrosses) - Math.min(...acrosses);
+  assert.ok(length > 1.3 && length < 1.9, `longueur du vélo : ${length}`);
+  assert.ok(width < 2.2, `largeur du vélo : ${width}`);
+
+  assert.equal(glyphBar({ along: 0, across: 0 }, { along: 0, across: 0 }).length, 0, 'un trait nul n’en est pas un');
+  assert.equal(glyphRing(0, 0, 0.3, 0.07, 8).length, 8, 'une facette par côté');
+
+  // Posé le long d'une chaussée droite de cent mètres : un vélo tous les
+  // `MARKING_SYMBOL_SPACING_M`, aux multiples de l'abscisse de la chaîne.
+  const path = Array.from({ length: 21 }, (_, i) => ({ x: i * 5, z: 0, distance: i * 5 }));
+  const decks = new Float32Array(path.length).fill(12);
+  const buffer = createProfileBuffer();
+  const laid = appendMarkingSymbols(buffer, {
+    path,
+    decks,
+    polygons: glyph,
+    color: [1, 1, 1],
+    startDistance: 0,
+  });
+  // Les multiples de l'espacement dans la plage — sauf celui de l'origine, où
+  // la moitié arrière du vélo tomberait avant le début de la chaussée.
+  assert.equal(laid, Math.floor(100 / MARKING_SYMBOL_SPACING_M));
+  assert.ok(buffer.positions.length > 0);
+
+  // La phase suit la chaîne, pas le découpage : décaler l'ancre décale les vélos.
+  const shifted = createProfileBuffer();
+  appendMarkingSymbols(shifted, {
+    path,
+    decks,
+    polygons: glyph,
+    color: [1, 1, 1],
+    startDistance: MARKING_SYMBOL_SPACING_M / 2,
+  });
+  assert.notEqual(shifted.positions[0], buffer.positions[0], 'la phase a bougé avec l’ancre');
+
+  // Une plage trop courte pour un vélo entier n'en porte aucun : mieux vaut
+  // rien qu'un demi-vélo au bord d'un carrefour.
+  const stub = [
+    { x: 0, z: 0, distance: 0 },
+    { x: 0.4, z: 0, distance: 0.4 },
+  ];
+  const nothing = createProfileBuffer();
+  appendMarkingSymbols(nothing, {
+    path: stub,
+    decks: new Float32Array([12, 12]),
+    polygons: glyph,
+    color: [1, 1, 1],
+    spacing: 0.2,
+  });
+  assert.equal(nothing.positions.length, 0);
+});
+
+test('le revêtement urbain : une couverture qui tient dans le canal, et une seule teinte pour deux lectures', () => {
+  // Neuf couvertures à leur pas doivent tenir dans un octet, sans quoi le
+  // dernier identifiant serait écrêté et lu comme un autre.
+  assert.ok(COVER_KINDS.length * COVER_ID_STEP <= 255, 'les identifiants tiennent dans le canal');
+  assert.equal(COVER_KINDS[PAVEMENT_COVER_ID - 1], 'pavement');
+
+  // La teinte du sol de la ville et celle du dessus de trottoir sont la même
+  // valeur : deux lectures divergentes se verraient là où elles se rejoignent.
+  const tone = pavementTone('mediterranean');
+  assert.deepEqual(streetSurfaceAt(0, 0, undefined, 'mediterranean').walk, tone);
+  assert.notDeepEqual(pavementTone('boreal'), tone, 'le pays change le revêtement');
+  assert.deepEqual(pavementTone('inconnu'), pavementTone(null), 'un climat non décrit retombe sur le défaut');
+
+  // Le rebord, lui, reste tiré du bourg : deux mailles éloignées ne donnent pas
+  // forcément la même bordure, mais aucune ne donne le dessus.
+  const here = streetSurfaceAt(0, 0, undefined, 'oceanic');
+  assert.ok(Array.isArray(here.kerb) && here.kerb.length === 3);
+  assert.ok(Array.isArray(here.joint) && Array.isArray(here.gutter));
 });

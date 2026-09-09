@@ -8,7 +8,10 @@
  *   refresh(lng, lat)     refait le décor     (tout ce qui vient du vectoriel)
  *   advance(delta, at)    fait vivre l'image  (file de plantation, herbe, vie)
  *
- * Ordre de génération : occupation du sol (tout le monde la lit — l'eau en
+ * Ordre de génération : « sommes-nous en ville ? » (`settlement.UrbanMask` :
+ * ni une couche ni un thème, un prédicat de lieu, lu par la carte du sol qui y
+ * peint son trottoir et par les chaussées qui y retranchent voies piétonnes et
+ * voies redondantes) → occupation du sol (tout le monde la lit — l'eau en
  * fait partie, c'est une matière du sol) → chaussées (entaillent le terrain,
  * posent la surface des carrefours, publient l'emprise routière que le reste
  * du décor ne franchit pas) → ouvrages d'art (tabliers, piles, têtes de
@@ -57,7 +60,13 @@ import { CombinedIndex } from './layers/roadGraph.js';
 import { BuildingLayer } from './layers/buildingLayer.js';
 import { GardenLayer } from './layers/gardenLayer.js';
 import { StreetLayer } from './layers/streetLayer.js';
-import { collectBuiltUpAreas, collectPlaceNames, FabricIndex } from './layers/settlement.js';
+import {
+  collectBuiltUpAreas,
+  collectPlaceNames,
+  collectUrbanGreens,
+  FabricIndex,
+  UrbanMask,
+} from './layers/settlement.js';
 import { VegetationLayer } from './layers/vegetationLayer.js';
 import { GroundCover } from './layers/groundCover.js';
 import { CropLayer } from './layers/cropLayer.js';
@@ -347,12 +356,26 @@ export class WorldComposer {
       await Promise.all(wanted.map((t) => this.vectorTiles.load(t.x, t.y, undefined)));
       if (this.disposed || this.bubble.disposed) return false;
 
+      // 0. « Sommes-nous en ville ? » — avant tout le monde, parce que la carte
+      //    du sol y peint son trottoir et que les chaussées en dépendent (voies
+      //    piétonnes jetées, voies redondantes absorbées). Aucune lecture de
+      //    tuile en plus : emprises habitées et lieux nommés étaient déjà
+      //    relevés plus bas, pour la voirie et le mobilier — ils ne le sont plus
+      //    qu'ici.
+      const builtUp = collectBuiltUpAreas(this.vectorTiles, wanted, this.bubble.frame);
+      const places = collectPlaceNames(this.vectorTiles, wanted, this.bubble.frame);
+      const urban = new UrbanMask({
+        builtUp,
+        greens: collectUrbanGreens(this.vectorTiles, wanted, this.bubble.frame),
+        places,
+      });
+
       // 1. Occupation du sol — tout le reste la lit. Rasterisation coûteuse : refaite seulement si elle a glissé.
       const wasReady = this.groundClass.ready;
       // Le climat repeint la carte au même titre qu'un glissement : ce qui y
       // était semé l'a été avec l'assolement d'une autre région.
       if (classStale || climateChanged || force) {
-        this.groundClass.rebuild(this.vectorTiles, wanted, here, this.bubble.frame);
+        this.groundClass.rebuild(this.vectorTiles, wanted, here, this.bubble.frame, { urban });
         this.bubble.materials.syncGroundClass();
       }
       const classArrived = !wasReady && this.groundClass.ready;
@@ -362,6 +385,7 @@ export class WorldComposer {
       //    l'eau qu'elle franchit (voir `roadWorks.levelWorkSpans`).
       const hasRoads = this.roads.rebuild(this.vectorTiles, wanted, here, {
         groundClass: this.groundClass,
+        urban,
       });
 
       // 2 bis. Ouvrages d'art — après les chaussées, dont ils habillent les
@@ -376,14 +400,14 @@ export class WorldComposer {
       //    et le contour du bâti viennent de deux relevés différents).
       this.buildings.rebuild(this.vectorTiles, wanted, here, { roadIndex: this.roads.index });
 
-      // 4 bis. Voirie — après chaussées et bâti. Emprises habitées lues une
-      //    seule fois ici (voirie et mobilier posent la même question).
-      const builtUp = collectBuiltUpAreas(this.vectorTiles, wanted, this.bubble.frame);
+      // 4 bis. Voirie — après chaussées et bâti.
       const fabric = new FabricIndex(this.buildings.footprints);
-      const places = collectPlaceNames(this.vectorTiles, wanted, this.bubble.frame);
       this.streets.rebuild(this.roads.roadSegments, here, {
         builtUp,
         fabric,
+        // Le dessus du trottoir est celui du sol de la ville, et le sol tire sa
+        // teinte du climat : les deux doivent lire la même (`pavementTone`).
+        climate: family,
         roadIndex: this.roads.index,
         // Les surfaces de carrefour : elles arrêtent les rives de tronçon et
         // portent les coins de rue.

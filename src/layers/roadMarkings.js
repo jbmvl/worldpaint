@@ -39,10 +39,25 @@
  *
  * Il ne décide de rien : ni où un trait va (c'est le profil de la chaussée qui
  * le dit, `markingLinesFor`), ni quelle branche cède le passage (c'est le
- * carrefour qui le dit, `roadJunctions.branchYields`). Il ne pose aucun
- * **pictogramme** — flèche de rabattement, symbole cycliste : ce ne sont pas
- * des règles de géométrie mais des dessins, et la donnée ne porte ni nombre de
- * voies ni affectation de voie. En poser serait les inventer.
+ * carrefour qui le dit, `roadJunctions.branchYields`).
+ *
+ * ## Le pictogramme, et pourquoi il y en a un maintenant
+ *
+ * Ce module refusait tout pictogramme — flèche de rabattement, symbole
+ * cycliste — au motif que la donnée ne porte ni nombre de voies ni affectation
+ * de voie : en poser serait les inventer. L'argument tient toujours pour la
+ * flèche, et il tombe pour le vélo : sur une entité de classe `cycleway`, ce
+ * n'est pas *une voie parmi d'autres* qui est cyclable, c'est la chaussée
+ * entière. Le pictogramme ne dit alors rien que la donnée ne dise déjà, et
+ * sans lui une piste cyclable ne se distingue d'une allée de service que par
+ * vingt centimètres de largeur — c'est-à-dire pas du tout.
+ *
+ * Un pictogramme est décrit en coordonnées **(le long, en travers)**, en
+ * mètres, et posé par `appendMarkingSymbols` : chaque sommet cherche sa
+ * section à son abscisse propre, donc le dessin suit la courbe et le devers de
+ * la chaussée au lieu d'être une décalcomanie plane. Sa phase se tire de
+ * l'abscisse de la chaîne, comme les pointillés : un vélo reste au même
+ * endroit du terrain d'une reconstruction à l'autre.
  *
  * Module pur : aucun `three`, testable sous Node.
  */
@@ -367,6 +382,231 @@ export function appendCrossing(buffer, { near, far, halfWidth, color, band = MAR
     if (!(to - from > 1e-6)) continue;
     appendMarkingQuad(buffer, near, far, from, to, color, lift);
     laid++;
+  }
+
+  return laid;
+}
+
+/**
+ * Espacement de deux pictogrammes le long d'une chaussée, en mètres.
+ *
+ * Assez rapproché pour qu'on en voie un depuis n'importe où sur la piste,
+ * assez espacé pour que la piste ne soit pas un tapis de vélos.
+ */
+export const MARKING_SYMBOL_SPACING_M = 26;
+
+/** Épaisseur d'un trait de pictogramme, en mètres. */
+export const GLYPH_STROKE_M = 0.07;
+
+/**
+ * Un trait de pictogramme : le quadrilatère qui joint deux points, épaissi de
+ * part et d'autre de sa direction.
+ *
+ * @param {{along:number, across:number}} a
+ * @param {{along:number, across:number}} b
+ * @param {number} [thickness]
+ * @returns {Array<{along:number, across:number}>} quatre sommets, dans l'ordre.
+ */
+export function glyphBar(a, b, thickness = GLYPH_STROKE_M) {
+  let dx = b.along - a.along;
+  let dy = b.across - a.across;
+  const length = Math.hypot(dx, dy);
+  if (!(length > 1e-6)) return [];
+  dx /= length;
+  dy /= length;
+  const nx = -dy * (thickness / 2);
+  const ny = dx * (thickness / 2);
+  return [
+    { along: a.along + nx, across: a.across + ny },
+    { along: b.along + nx, across: b.across + ny },
+    { along: b.along - nx, across: b.across - ny },
+    { along: a.along - nx, across: a.across - ny },
+  ];
+}
+
+/**
+ * Un anneau de pictogramme (une roue), découpé en quadrilatères.
+ *
+ * Les sommets sortent dans le **sens horaire** du repère (le long, en travers),
+ * comme ceux de `glyphBar` : c'est ce sens-là qu'`appendMarkingGlyph` retourne
+ * en éventail pour obtenir des faces tournées vers le ciel. L'ordre naturel —
+ * intérieur, extérieur, extérieur suivant, intérieur suivant — tourne dans
+ * l'autre sens, et les deux roues seraient noires.
+ *
+ * @param {number} along Centre.
+ * @param {number} across
+ * @param {number} radius Rayon moyen, en mètres.
+ * @param {number} [thickness] Épaisseur du cerclage.
+ * @param {number} [sides] Facettes.
+ * @returns {Array<Array<{along:number, across:number}>>}
+ */
+export function glyphRing(along, across, radius, thickness = GLYPH_STROKE_M, sides = 12) {
+  const out = [];
+  const inner = Math.max(0, radius - thickness / 2);
+  const outer = radius + thickness / 2;
+  for (let k = 0; k < sides; k++) {
+    const a = (k / sides) * Math.PI * 2;
+    const b = ((k + 1) / sides) * Math.PI * 2;
+    out.push([
+      { along: along + Math.cos(a) * outer, across: across + Math.sin(a) * outer },
+      { along: along + Math.cos(a) * inner, across: across + Math.sin(a) * inner },
+      { along: along + Math.cos(b) * inner, across: across + Math.sin(b) * inner },
+      { along: along + Math.cos(b) * outer, across: across + Math.sin(b) * outer },
+    ]);
+  }
+  return out;
+}
+
+/**
+ * Le vélo, vu de côté et couché sur la chaussée : deux roues, un cadre, une
+ * selle et un guidon. Environ 1,55 m dans le sens de la marche pour 0,55 m en
+ * travers — les cotes du pictogramme peint en France.
+ *
+ * Le sens de la marche est celui du **tracé**, faute de mieux : la donnée ne
+ * dit pas dans quel sens on roule sur une piste, et une piste bidirectionnelle
+ * n'aurait de toute façon pas de réponse.
+ *
+ * @returns {Array<Array<{along:number, across:number}>>} polygones convexes.
+ */
+export function cycleGlyph() {
+  const rear = { along: -0.48, across: 0 };
+  const front = { along: 0.48, across: 0 };
+  const bracket = { along: -0.06, across: 0.02 };
+  const saddle = { along: -0.2, across: 0.42 };
+  const stem = { along: 0.3, across: 0.42 };
+
+  return [
+    ...glyphRing(rear.along, rear.across, 0.28),
+    ...glyphRing(front.along, front.across, 0.28),
+    glyphBar(rear, bracket), // base
+    glyphBar(bracket, saddle), // tube de selle
+    glyphBar(rear, saddle), // hauban
+    glyphBar(bracket, stem), // tube diagonal
+    glyphBar(saddle, stem), // tube horizontal
+    glyphBar(stem, front), // fourche
+    glyphBar({ along: -0.33, across: 0.44 }, { along: -0.09, across: 0.48 }, 0.09), // selle
+    glyphBar({ along: 0.22, across: 0.5 }, { along: 0.38, across: 0.36 }, 0.07), // guidon
+  ].filter((polygon) => polygon.length >= 3);
+}
+
+/**
+ * Pose un pictogramme centré sur une abscisse de la plage.
+ *
+ * Chaque sommet est cherché à **son** abscisse (`sectionAtDistance`) puis
+ * décalé de sa cote en travers : le dessin se couche sur la chaussée, courbe
+ * et devers compris. Si l'un des sommets tombe hors de la plage, rien n'est
+ * posé — un demi-vélo au bord d'un carrefour serait pire que pas de vélo.
+ *
+ * @param {Object} buffer Tampon `createProfileBuffer()`.
+ * @param {Object} options
+ * @param {Array<{x:number,z:number,distance:number}>} options.path
+ * @param {ArrayLike<number>} options.decks
+ * @param {ArrayLike<number>} options.frames
+ * @param {number} options.at Abscisse du centre, dans le repère de `path`.
+ * @param {Array<Array<{along:number, across:number}>>} options.polygons
+ * @param {number[]} options.color
+ * @param {number} [options.lift]
+ * @param {number} [options.side] Décalage en travers du centre du pictogramme.
+ * @returns {number} `1` si posé, `0` sinon.
+ */
+export function appendMarkingGlyph(
+  buffer,
+  { path, decks, frames, at, polygons, color, lift = 0, side = 0 }
+) {
+  if (!Array.isArray(polygons) || polygons.length === 0 || !color) return 0;
+
+  // Une section par abscisse distincte, au millimètre : un pictogramme a une
+  // trentaine de cotes le long pour cent quarante sommets.
+  const sections = new Map();
+  const sectionFor = (along) => {
+    const key = Math.round((at + along) * 1000);
+    if (sections.has(key)) return sections.get(key);
+    const found = sectionAtDistance(path, decks, frames, key / 1000);
+    sections.set(key, found);
+    return found;
+  };
+
+  for (const polygon of polygons) {
+    for (const vertex of polygon) {
+      if (!sectionFor(vertex.along)) return 0;
+    }
+  }
+
+  for (const polygon of polygons) {
+    const base = buffer.positions.length / 3;
+    for (const vertex of polygon) {
+      const section = sectionFor(vertex.along);
+      const across = vertex.across + side;
+      buffer.positions.push(
+        section.x + section.px * across,
+        section.deck + lift,
+        section.z + section.pz * across
+      );
+      buffer.colors.push(color[0], color[1], color[2]);
+    }
+    // Éventail : les polygones du pictogramme sont convexes par construction.
+    // Le sens est celui d'`appendMarkingQuad` — la perpendiculaire de
+    // `pathFrames` étant constante par rapport à la tangente, il n'y a rien à
+    // mesurer, et l'ordre inverse donnerait une face tournée vers le sol.
+    for (let k = 1; k < polygon.length - 1; k++) {
+      buffer.indices.push(base, base + k + 1, base + k);
+    }
+  }
+
+  return 1;
+}
+
+/**
+ * Les pictogrammes d'une plage dessinable, espacés le long de la chaîne.
+ *
+ * La phase se tire de l'abscisse de la chaîne (`startDistance`) et non du rang
+ * dans la boucle : même invariant que les pointillés et que les hachures de
+ * comblement — deux reconstructions qui découpent la chaîne ailleurs posent
+ * les vélos aux mêmes endroits du terrain.
+ *
+ * @param {Object} buffer
+ * @param {Object} options
+ * @param {Array<{x:number,z:number,distance:number}>} options.path
+ * @param {ArrayLike<number>} options.decks
+ * @param {ArrayLike<number>} [options.frames]
+ * @param {Array<Array<{along:number, across:number}>>} options.polygons
+ * @param {number[]} options.color
+ * @param {number} [options.spacing]
+ * @param {number} [options.lift]
+ * @param {number} [options.startDistance]
+ * @returns {number} pictogrammes posés.
+ */
+export function appendMarkingSymbols(
+  buffer,
+  {
+    path,
+    decks,
+    frames = null,
+    polygons,
+    color,
+    spacing = MARKING_SYMBOL_SPACING_M,
+    lift = 0,
+    startDistance = 0,
+  }
+) {
+  const rows = path?.length ?? 0;
+  if (rows < 2 || !decks || !(spacing > 0)) return 0;
+  const used = frames || pathFrames(path);
+
+  const first = startDistance + path[0].distance;
+  const last = startDistance + path[rows - 1].distance;
+  let laid = 0;
+
+  for (let k = Math.ceil(first / spacing); k * spacing <= last; k++) {
+    laid += appendMarkingGlyph(buffer, {
+      path,
+      decks,
+      frames: used,
+      at: k * spacing - startDistance,
+      polygons,
+      color,
+      lift,
+    });
   }
 
   return laid;

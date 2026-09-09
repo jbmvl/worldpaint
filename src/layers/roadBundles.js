@@ -58,6 +58,32 @@
  * l'autre convexe. Un îlot triangulaire entre deux branches qui divergent n'a
  * aucune rive courbe, et se remplit — ce qui est bien ce qu'on en fait.
  *
+ * ## L'absorption : ce qu'on ne dessine pas du tout
+ *
+ * Peindre le vide ne suffisait pas, et en ville c'était même le contraire d'un
+ * remède. Un boulevard urbain est relevé dans OSM en cinq ou six voies
+ * parallèles — la contre-allée, la desserte, la voie de bus, chaque sens —, et
+ * les dessiner toutes donne un tas de rubans qui se chevauchent, hachuré de
+ * zébras dans chaque interstice. Le paysage n'y gagne aucune information : ces
+ * voies **sont** la même chaussée.
+ *
+ * D'où une seconde réponse, posée bien plus tôt — sur les **lignes**, avant
+ * que le graphe n'en fasse des chaînes, donc sans toucher ni aux nœuds ni au
+ * mobilier : une voie de rang inférieur qui longe une voie de rang supérieur
+ * sur l'essentiel de sa longueur n'est pas dessinée (`absorbParallelLines`).
+ * Elle est déjà là, dans la largeur de l'autre.
+ *
+ * Deux garde-fous, et ils disent tout ce que l'absorption n'est pas :
+ *
+ *   - seuls les **profils absorbables** le sont (`ABSORBABLE_PROFILES`). Une
+ *     piste cyclable n'en fait pas partie, et c'est délibéré : on veut
+ *     précisément la voir. Un chemin non plus — un chemin de terre le long
+ *     d'une route est un objet du paysage, pas une redondance de saisie ;
+ *   - le rang doit être **strictement** supérieur. Deux chaussées de même
+ *     profil qui se longent sont les deux sens d'une même route : aucune des
+ *     deux n'est de trop, et c'est le comblement qui les réunit — en
+ *     revêtement plein, pas en zébra (voir `gapIsSeam`).
+ *
  * Module pur : aucun `three`, testable sous Node.
  */
 
@@ -416,4 +442,249 @@ export function appendZebra(
   }
 
   return bands;
+}
+
+/**
+ * Vrai si le vide entre deux rives est une **couture** et non un îlot : les
+ * deux chaussées sont du même profil, donc ce sont les deux sens de la même
+ * route, et l'entre-deux est de la chaussée qu'on n'a pas relevée.
+ *
+ * Un zébra dit « ne roulez pas ici ». Le poser entre les deux chaussées d'un
+ * boulevard est faux deux fois : ce n'est pas un îlot, et les hachures
+ * couvrent la seule chose qui rende un boulevard lisible — son marquage. La
+ * couture se comble donc en revêtement plein.
+ *
+ * @param {{a:Object, other:Object}} gap Vide rendu par `collectRoadGaps`.
+ * @returns {boolean}
+ */
+export function gapIsSeam(gap) {
+  return !!gap && !!gap.a && !!gap.other && gap.a.profile === gap.other.profile;
+}
+
+/**
+ * Comble un vide d'une nappe unie, sans hachure : une bande de quadrilatères
+ * tendue de rive à rive, un par couple de sections.
+ *
+ * @param {Object} buffer Tampon `createProfileBuffer()`.
+ * @param {Object} gap Vide rendu par `collectRoadGaps`.
+ * @param {Object} options
+ * @param {number[]} options.color Couleur du revêtement, linéaire.
+ * @param {number} [options.lift]
+ * @returns {number} quadrilatères posés.
+ */
+export function appendGapSurface(buffer, gap, { color, lift = 0 }) {
+  const pairs = gap?.pairs;
+  if (!Array.isArray(pairs) || pairs.length < 2 || !color) return 0;
+
+  // Même mesure de sens de rotation qu'`appendZebra`, et pour la même raison :
+  // selon la rive interrogée, la marche et la direction du vide tournent dans
+  // un sens ou dans l'autre, et une face à l'envers serait noire.
+  const up =
+    (pairs[0].far.z - pairs[0].near.z) * (pairs[1].near.x - pairs[0].near.x) -
+    (pairs[0].far.x - pairs[0].near.x) * (pairs[1].near.z - pairs[0].near.z);
+  const flip = up < 0;
+  let laid = 0;
+
+  for (let i = 1; i < pairs.length; i++) {
+    const base = buffer.positions.length / 3;
+    for (const at of [pairs[i - 1], pairs[i]]) {
+      for (const edge of ['near', 'far']) {
+        buffer.positions.push(at[edge].x, at[edge].deck + lift, at[edge].z);
+        buffer.colors.push(color[0], color[1], color[2]);
+      }
+    }
+    if (flip) buffer.indices.push(base, base + 3, base + 1, base, base + 2, base + 3);
+    else buffer.indices.push(base, base + 1, base + 3, base, base + 3, base + 2);
+    laid++;
+  }
+
+  return laid;
+}
+
+/**
+ * Profils qu'une voie plus grande peut absorber. Ce sont les voies dont la
+ * présence dans la donnée décrit une **desserte** plutôt qu'un objet du
+ * paysage : contre-allée, voie de bus, parking longitudinal, doublon de saisie.
+ *
+ * Ni `cycleway` (qu'on veut voir), ni `track`/`path` (un chemin de terre le
+ * long d'une route n'est pas une redondance), ni `express`/`major` (qui n'ont
+ * personne au-dessus d'eux).
+ */
+export const ABSORBABLE_PROFILES = new Set(['lane', 'minor']);
+
+/**
+ * Écart maximal, de rive à rive, en deçà duquel une voie est **dans** la
+ * largeur d'une autre, en mètres.
+ *
+ * Plus large que `BUNDLE_GAP_MAX_M`, et ce n'est pas la même mesure : le
+ * comblement demande « reste-t-il un vide trop étroit pour porter quoi que ce
+ * soit ? », l'absorption demande « cette voie longe-t-elle celle-là ? ». Six
+ * mètres, c'est-à-dire la place d'un trottoir et d'une file de stationnement :
+ * au-delà, deux rues parallèles sont deux rues.
+ */
+export const ABSORB_GAP_M = 6;
+
+/**
+ * Part de sa longueur qu'une voie doit passer le long d'une autre pour être
+ * absorbée. En deçà, elle s'en écarte : c'est une rue qui part, pas un
+ * doublon.
+ */
+export const ABSORB_SHARE = 0.75;
+
+/** Côté d'une maille de l'index de lignes, en mètres. */
+const ABSORB_CELL_M = 24;
+
+/**
+ * Écarte les voies redondantes d'un jeu de lignes de chaussée.
+ *
+ * Posée sur les **lignes**, avant `mergeRoadLines` : ce qui n'est pas dessiné
+ * n'entre pas dans le graphe, ne crée pas de nœud, ne numérote pas de
+ * mobilier et ne fabrique pas de carrefour. Une absorption faite plus tard
+ * laisserait derrière elle des carrefours sans branche.
+ *
+ * Les candidats sont traités **du meilleur rang au pire** : une desserte
+ * absorbée par une rue elle-même absorbée par un boulevard ne peut pas
+ * survivre à sa rue.
+ *
+ * @param {Array<{profile:string, halfWidth:number, points:Array, level:number}>} lines
+ * @param {Object} options
+ * @param {Array<string>} options.order Hiérarchie des profils, du plus large
+ *        au plus étroit (`roadNetwork.ROAD_PROFILE_ORDER`).
+ * @param {Set<string>} [options.absorbable]
+ * @param {number} [options.gapMax]
+ * @param {number} [options.share]
+ * @param {number} [options.parallelCos]
+ * @param {Function|null} [options.where] `(x, z) => boolean` : où l'absorption
+ *        s'applique. Absente, partout.
+ * @returns {Array<Object>} les lignes conservées, dans leur ordre d'origine.
+ */
+export function absorbParallelLines(
+  lines,
+  {
+    order = [],
+    absorbable = ABSORBABLE_PROFILES,
+    gapMax = ABSORB_GAP_M,
+    share = ABSORB_SHARE,
+    parallelCos = BUNDLE_PARALLEL_COS,
+    where = null,
+  } = {}
+) {
+  if (!Array.isArray(lines) || lines.length === 0) return lines || [];
+  const rankOf = (profile) => {
+    const at = order.indexOf(profile);
+    return at < 0 ? order.length : at;
+  };
+
+  // Index de mailles sur les segments de toutes les lignes : une voie de ville
+  // en croise des centaines, et la comparaison de ligne à ligne coûterait le
+  // carré du réseau.
+  const cells = new Map();
+  const key = (cx, cz) => cx * 73856093 + cz * 19349663;
+  const spans = [];
+  for (let li = 0; li < lines.length; li++) {
+    const points = lines[li].points;
+    if (!Array.isArray(points) || points.length < 2) continue;
+    for (let i = 1; i < points.length; i++) {
+      const span = { line: li, a: points[i - 1], b: points[i] };
+      spans.push(span);
+      const minX = Math.floor(Math.min(span.a.x, span.b.x) / ABSORB_CELL_M);
+      const maxX = Math.floor(Math.max(span.a.x, span.b.x) / ABSORB_CELL_M);
+      const minZ = Math.floor(Math.min(span.a.z, span.b.z) / ABSORB_CELL_M);
+      const maxZ = Math.floor(Math.max(span.a.z, span.b.z) / ABSORB_CELL_M);
+      for (let cx = minX; cx <= maxX; cx++) {
+        for (let cz = minZ; cz <= maxZ; cz++) {
+          const at = key(cx, cz);
+          const bucket = cells.get(at);
+          if (bucket) bucket.push(span);
+          else cells.set(at, [span]);
+        }
+      }
+    }
+  }
+
+  const dropped = new Set();
+  const candidates = [];
+  for (let li = 0; li < lines.length; li++) {
+    if (absorbable.has(lines[li].profile) && lines[li].points?.length >= 2) candidates.push(li);
+  }
+  candidates.sort((a, b) => rankOf(lines[a].profile) - rankOf(lines[b].profile));
+
+  for (const li of candidates) {
+    const line = lines[li];
+    const mine = rankOf(line.profile);
+    const level = line.level ?? LEVEL_GROUND;
+    const points = line.points;
+    let total = 0;
+    let covered = 0;
+
+    for (let i = 0; i < points.length; i++) {
+      // Poids d'un sommet : la moitié de chacun de ses segments voisins. La
+      // part mesurée est donc une **longueur**, pas un compte de sommets — la
+      // donnée n'échantillonne pas régulièrement.
+      const before = i > 0 ? Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z) : 0;
+      const after =
+        i < points.length - 1
+          ? Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z)
+          : 0;
+      const weight = (before + after) / 2;
+      if (!(weight > 0)) continue;
+      total += weight;
+      if (where && !where(points[i].x, points[i].z)) continue;
+
+      // Tangente locale, prise sur les deux voisins présents.
+      const from = points[Math.max(0, i - 1)];
+      const to = points[Math.min(points.length - 1, i + 1)];
+      let tx = to.x - from.x;
+      let tz = to.z - from.z;
+      const length = Math.hypot(tx, tz);
+      if (!(length > 1e-6)) continue;
+      tx /= length;
+      tz /= length;
+
+      const reach = gapMax + line.halfWidth;
+      const minX = Math.floor((points[i].x - reach) / ABSORB_CELL_M);
+      const maxX = Math.floor((points[i].x + reach) / ABSORB_CELL_M);
+      const minZ = Math.floor((points[i].z - reach) / ABSORB_CELL_M);
+      const maxZ = Math.floor((points[i].z + reach) / ABSORB_CELL_M);
+      let hit = false;
+
+      for (let cx = minX; cx <= maxX && !hit; cx++) {
+        for (let cz = minZ; cz <= maxZ && !hit; cz++) {
+          const bucket = cells.get(key(cx, cz));
+          if (!bucket) continue;
+          for (const span of bucket) {
+            if (span.line === li || dropped.has(span.line)) continue;
+            const other = lines[span.line];
+            if (rankOf(other.profile) >= mine) continue;
+            if ((other.level ?? LEVEL_GROUND) !== level) continue;
+
+            const seen = distanceToSegment(
+              points[i].x,
+              points[i].z,
+              span.a.x,
+              span.a.z,
+              span.b.x,
+              span.b.z
+            );
+            if (seen.distance - other.halfWidth - line.halfWidth > gapMax) continue;
+
+            let ox = span.b.x - span.a.x;
+            let oz = span.b.z - span.a.z;
+            const olength = Math.hypot(ox, oz);
+            if (!(olength > 1e-6)) continue;
+            if (Math.abs((ox / olength) * tx + (oz / olength) * tz) < parallelCos) continue;
+
+            hit = true;
+            break;
+          }
+        }
+      }
+
+      if (hit) covered += weight;
+    }
+
+    if (total > 0 && covered / total >= share) dropped.add(li);
+  }
+
+  return dropped.size === 0 ? lines : lines.filter((_, li) => !dropped.has(li));
 }
