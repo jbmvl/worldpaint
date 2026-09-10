@@ -969,9 +969,10 @@ export class GroundClassMap {
     // les polygones : le lit d'un ruisseau qui traverse un champ de blé doit y
     // remplacer la culture.
     //
-    // Le lit se peint que la ripisylve existe ou non : il dépendait de
-    // `riparianBufferM`, et un thème qui ne voulait pas d'ourlet perdait du
-    // même coup tous ses ruisseaux.
+    // Le lit se peint que la ripisylve existe ou non. Il dépendait de
+    // `riparianBufferM` — un thème qui ne voulait pas d'ourlet perdait du même
+    // coup tous ses ruisseaux — et le fossé, qui n'a pas d'ourlet, sortait
+    // avant d'avoir eu son lit : sa largeur de thème ne servait à rien.
     {
       const waterways = this.theme.water.waterways;
       const bufferM = this.theme.water.riparianBufferM ?? 0;
@@ -983,6 +984,9 @@ export class GroundClassMap {
         const style = waterwayStyleFor(properties, waterways);
         if (!style) return;
         const width = style.halfWidth * 2;
+        // Un fossé n'a pas de ripisylve : c'est un trait creusé en bord de
+        // champ, pas un cours d'eau bordé d'arbres.
+        const riparianM = properties.class === 'ditch' ? 0 : bufferM;
 
         const lines =
           geometry.type === 'LineString'
@@ -990,7 +994,7 @@ export class GroundClassMap {
             : geometry.type === 'MultiLineString'
               ? geometry.coordinates
               : [];
-        const lineWidthPx = (width + bufferM * 2) * perMeter;
+        const lineWidthPx = (width + riparianM * 2) * perMeter;
 
         for (const line of lines) {
           if (!Array.isArray(line) || line.length < 2) continue;
@@ -1019,7 +1023,7 @@ export class GroundClassMap {
           // `destination-out` pour effacer, dans l'autre carte, la culture
           // que l'ourlet recouvrait. Peindre une matière efface désormais la
           // culture d'un même geste : elles sont deux canaux du même texel.
-          if (bufferM > 0) {
+          if (riparianM > 0) {
             ctx.strokeStyle = surfaceFill('wood');
             ctx.lineWidth = lineWidthPx;
             ctx.stroke(path);

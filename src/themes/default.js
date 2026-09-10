@@ -1185,18 +1185,13 @@ export const RIPARIAN_BUFFER_M = 7;
  * Largeur des cours d'eau linéaires, en mètres, par `class` OpenMapTiles.
  * Les grands fleuves sont déjà des polygones dans la couche `water` ; ce qui
  * reste ici est trop étroit pour l'être.
- *
- * Une classe absente n'a pas de surface d'eau du tout. Le drain (1,6 m) et le
- * fossé (1,2 m) y étaient et n'y sont plus : la carte du sol a un pas de
- * 2,7 m, ils couvrent donc moins de la moitié des texels qu'ils traversent et
- * ne pouvaient se rendre qu'en pointillé. Un trait d'eau discontinu au milieu
- * d'un champ se voit plus qu'il ne décrit. Le ruisseau (3 m) est le plus
- * étroit qui tienne encore.
  */
 export const WATERWAY_CLASSES = {
   river: 9,
   canal: 6,
   stream: 3,
+  drain: 1.6,
+  ditch: 1.2,
 };
 
 // --- Ce qui vit ----------------------------------------------------------------
