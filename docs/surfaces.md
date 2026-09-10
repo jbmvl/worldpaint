@@ -15,6 +15,7 @@ sa densité (`groundCover`), la végétation ses arbustes (`vegetationLayer`).
 | --- | --- |
 | R | identifiant de **matière** (`SURFACE_KINDS`), 0 = la donnée se tait |
 | G | identifiant de **culture** (`CROP_KINDS`), 0 = rien ne pousse |
+| B | **signature** de la matière — voir « le bord d'un tracé ment » |
 | alpha | toujours plein — le fond est peint, pas effacé |
 
 Filtrage au plus proche : ce sont des identifiants, et interpoler un
@@ -22,6 +23,46 @@ identifiant inventerait une matière entre deux (entre le sable et l'eau, il n'y
 a rien). Le fondu des lisières est reconstruit là où il est lu — le shader et
 `shareOf` lisent les **quatre texels voisins** et mélangent leurs
 appartenances. Une appartenance, elle, s'interpole.
+
+### Le bord d'un tracé ment, et on le lui reprend
+
+L'alpha plein ne suffit pas. **Le canevas 2D lisse le bord de ses tracés**, et
+aucune API ne le débraye : un texel de bord porte `α·A + (1−α)·B`, le mélange
+des deux identifiants voisins — et un identifiant mélangé en désigne un
+**troisième**. Entre le bois et l'eau, c'est-à-dire tout le long de chaque cours
+d'eau (où la ripisylve borde le lit), quatre-vingt-dix pour cent de la rampe
+tombe sur une matière absente du lieu : du sable, de la roche, du trottoir, une
+lande. Autour d'un lac, c'est douze matières parasites.
+
+C'est ce qui semait des taches claires le long des ruisseaux, les faisait
+changer de place à chaque re-rasterisation (la grille se requantifie tous les
+400 m) et n'en laissait voir qu'une partie — le shader ne les faisait gagner que
+là où son bruit de lisière les favorisait. Ranger les matières voisines côte à
+côte dans `SURFACE_KINDS` limite les dégâts entre voisines ; ça ne peut rien
+pour l'eau, qui borde tout.
+
+Deux pièces le défont :
+
+1. le canal **bleu** porte une signature de la matière (`SURFACE_SIGNATURES`).
+   La table est faite pour qu'**aucun triplet n'y soit aligné** : pour qu'un
+   texel de bord se fasse passer pour la matière C, il faudrait que son rouge
+   tombe sur celui de C *et* que son bleu tombe en même temps sur la signature
+   de C. L'écart minimal est de 8 quand l'arrondi du canevas vaut 1 ; un test le
+   vérifie en balayant toutes les couvertures de toutes les paires ;
+2. `repairSurfaceEdges`, passée sur la relecture, rend chaque texel non signé à
+   la matière dont son rouge est le plus proche — c'est-à-dire à **celle qui
+   couvre plus de la moitié de sa surface**. La limite tombe donc au bon
+   demi-texel au lieu d'inventer une matière. La carte réparée est renvoyée au
+   canevas : le shader lit la texture, la végétation lit la copie, et les deux
+   doivent dire la même chose.
+
+Ce que la passe ne rattrape pas : le canal des cultures n'a pas de signature à
+lui — il n'y a plus de canal libre — et n'est vérifié que par son pas. Un
+mélange de deux cultures sur vingt-huit passe encore au travers, à la seule
+limite entre deux parcelles de cultures différentes.
+
+Ajouter une matière demande donc une ligne de plus qu'avant : une signature. Le
+test dit sans ambiguïté si la valeur choisie tient.
 
 Il y en avait **deux**, une de poids et une d'identifiants, et la frontière
 n'était pas une idée : une « matière » avait sa texture dessinée et méritait un
@@ -137,8 +178,21 @@ carte le dit (couverture `water`). Deux entrées :
 - les **traits** de la couche `waterway`, élargis par la largeur de thème
   (`WATERWAY_CLASSES` : rivière 9 m, canal 6 m, ruisseau 3 m, drain 1,6 m,
   fossé 1,2 m). Un cours d'eau souterrain ou intermittent n'a pas de surface.
-  Chaque lit reçoit de part et d'autre une **ripisylve** de 7 m, peinte en bois
-  et plantée comme une vraie forêt ; le fossé n'en a pas.
+  Le lit d'une rivière, d'un canal et d'un ruisseau reçoit de part et d'autre
+  une **ripisylve** de 7 m, peinte en bois et plantée comme une vraie forêt.
+
+  Le fossé et le drain n'en ont pas (`BARE_WATERWAY_CLASSES`) : ce sont des
+  traits creusés — en bord de champ, en bord de route — et non des cours d'eau
+  bordés d'arbres. L'ourlet leur plantait quinze mètres de bois le long de la
+  moindre chaussée assainie, le fossé d'une route étant très souvent un
+  `waterway=drain` dans OSM. Leur lit reste, lui : c'est un fait de la carte.
+
+  Attention : un trait plus étroit qu'un texel ne peut pas être rasterisé
+  proprement. Le drain (1,6 m) et le fossé (1,2 m) couvrent moins de la moitié
+  des texels qu'ils traversent, et se rendent donc en **pointillé** plutôt qu'en
+  trait continu. Les faire disparaître (les retirer de `WATERWAY_CLASSES`) ou
+  leur donner une largeur plancher d'un texel sont deux décisions d'auteur,
+  pas des correctifs.
 
 ## Ce qui n'est pas lu, et ce que ça donne à l'écran
 
@@ -196,24 +250,34 @@ matières la masquent par le filtrage linéaire de leur carte ; les identifiants
 (culture, couverture) ne le peuvent pas, puisqu'interpoler un identifiant
 inventerait une matière entre deux.
 
-Trois choses la traitent, toutes dans `terrainMaterial.js` :
+Quatre choses la traitent. La première est dans `groundClassMap.js`, les trois
+autres dans `terrainMaterial.js` :
 
-1. **L'appartenance s'interpole, l'identifiant non** (`surfaceAt`). Les quatre
+1. **Le contour tombe au bon demi-texel** (`repairSurfaceEdges`). Le lissage du
+   canevas est défait après coup, et le seuil de reprise est celui de la
+   couverture : un texel couvert à plus de la moitié par une matière la prend.
+   C'est la seule des quatre qui déplace la limite plutôt que de la déguiser.
+2. **L'appartenance s'interpole, l'identifiant non** (`surfaceAt`). Les quatre
    carreaux voisins sont lus au plus proche — chacun rend donc la couverture
    peinte et rien d'autre — et ce sont ces appartenances qu'on mélange. Le
    sable rejoint l'herbe par une rampe d'un carreau, comme les matières le font
    déjà ; l'eau suit la même mécanique, sa part étant tenue à part du mélange.
-2. **La frange** (`edgeWarp`, thème `edgeWarpM`). Le sol est lu quelques mètres
+3. **La frange** (`edgeWarp`, thème `edgeWarpM`). Le sol est lu quelques mètres
    à côté du point demandé, d'un déplacement continu tiré du bruit de lisière. La limite
    reste où elle est, au mètre près, mais perd l'angle droit du carreau. Ce
    n'est pas un flou : c'est la même limite, déformée. L'herbe instanciée fait
    de même de son côté (`fringeOffset`, dans `groundCover.js`), avec son propre
    tirage : les deux ne suivent pas la même limite, elles la brouillent sur la
    même largeur.
-3. **La rive** (thème `shoreWet`). Le sol au contact de l'eau est mouillé — plus
+4. **La rive** (thème `shoreWet`). Le sol au contact de l'eau est mouillé — plus
    sombre, plus saturé, du même film d'eau que la pluie y met. Une berge cesse
    d'être une découpe entre deux couleurs.
 
-Ce qui reste, et qui demanderait une carte peinte avec son antialiasing : le
-contour passe par les centres des carreaux, il ne retrouve pas la position
-exacte du polygone à l'intérieur de l'un d'eux.
+Ce qui reste : le contour passe par les centres des carreaux, il ne retrouve pas
+la position exacte du polygone à l'intérieur de l'un d'eux. La couverture
+sous-texel existe pourtant, un instant : c'est **exactement** ce que porte la
+valeur d'antialiasing que `repairSurfaceEdges` écrase. La rendre au shader —
+α = (rouge − A) / (B − A), les deux voisins étant connus — placerait le contour
+au huitième de texel, soit trente centimètres au lieu de deux mètres soixante-
+dix, sans supersampling ni seconde rasterisation. Le canal bleu, libéré une fois
+la réparation faite, est là où elle irait. Ce n'est pas fait.

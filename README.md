@@ -247,6 +247,14 @@ paint anything convinces nobody.
   content for it, and `scripts/build-climate-grid.mjs` to rebuild the grid from
   another source.
 
+## What the scenery is made of
+
+`docs/inventaire.md` is the inventory: for every object in the scene — surface,
+tree, building, road fitting, animal, landmark — it says whether it is **read**
+from the tiles, **inferred** from what was read, or **invented** under stated
+conditions, with the actual thresholds and climate tables. `docs/surfaces.md`
+covers the ground in detail, `docs/climats.md` the climate families.
+
 Attribution for whatever you display is your responsibility;
 `world.attribution` gives the string for the defaults. WorldPaint expects
 the OpenMapTiles schema specifically — a different vector-tile schema will

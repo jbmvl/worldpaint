@@ -438,6 +438,9 @@ import {
   surfaceId,
   surfaceFromId,
   surfaceFill,
+  surfaceSignature,
+  SURFACE_SIGNATURES,
+  repairSurfaceEdges,
   classPolygons,
   CLASS_SOURCE_LAYERS,
   SURFACE_KINDS,
@@ -445,6 +448,7 @@ import {
   WATER_ID,
   PAVEMENT_ID,
   waterwayStyleFor,
+  BARE_WATERWAY_CLASSES,
   isDrawableWater,
   GroundClassMap,
   CLASS_AREA_M,
@@ -1979,11 +1983,20 @@ test('l’identifiant de matière survit à l’aller-retour dans le canal rouge
 test('un remplissage porte la matière et sa culture, dans le même texel', () => {
   // C'étaient deux tracés dans deux canevas, qui pouvaient diverger : une case
   // portait une matière ici et une couverture sans rapport là.
-  assert.equal(surfaceFill('grass'), `rgba(${surfaceId('grass') * SURFACE_ID_STEP}, 0, 0, 1)`);
-  assert.match(surfaceFill('farmland', 3), /^rgba\(\d+, \d+, 0, 1\)$/);
+  const grass = surfaceId('grass');
+  assert.equal(
+    surfaceFill('grass'),
+    `rgba(${grass * SURFACE_ID_STEP}, 0, ${surfaceSignature(grass)}, 1)`
+  );
+  assert.match(surfaceFill('farmland', 3), /^rgba\(\d+, \d+, \d+, 1\)$/);
 
   // Peindre une matière efface la culture qui était dessous, gratuitement.
-  assert.ok(surfaceFill('wood').includes(', 0, 0, 1'), 'le canal des cultures repart à zéro');
+  const wood = surfaceId('wood');
+  assert.equal(
+    surfaceFill('wood'),
+    `rgba(${wood * SURFACE_ID_STEP}, 0, ${surfaceSignature(wood)}, 1)`,
+    'le canal des cultures repart à zéro'
+  );
 
   // L'alpha est toujours plein : le fond est peint, pas effacé. Un canevas
   // transparent ferait porter aux pixels de bord un alpha partiel, donc des
@@ -1993,6 +2006,115 @@ test('un remplissage porte la matière et sa culture, dans le même texel', () =
     assert.ok(surfaceFill(kind).endsWith(', 1)'), `alpha plein pour ${kind}`);
   }
   assert.equal(surfaceFill(null), 'rgba(0, 0, 0, 1)', 'le fond porte l’identifiant zéro');
+});
+
+test('aucun mélange de deux matières ne peut se faire passer pour une troisième', () => {
+  // Le défaut que la signature répare, et la seule raison qu'elle ait d'exister.
+  //
+  // Le canevas lisse le bord de ses tracés — rien ne le débraye — donc un texel
+  // de bord porte `alpha x A + (1 - alpha) x B`. Sans signature, ce mélange se
+  // relit comme un **troisième** identifiant : entre le bois et l'eau, c'est-à-
+  // dire tout le long de chaque cours d'eau, la quasi-totalité de la rampe
+  // tombe sur une matière absente du lieu (du sable, de la roche, du trottoir).
+  const woodId = surfaceId('wood') * SURFACE_ID_STEP;
+  const waterId = surfaceId('water') * SURFACE_ID_STEP;
+  const invented = new Set();
+  for (let k = 1; k < 100; k++) {
+    const red = Math.round(woodId + (k / 100) * (waterId - woodId));
+    const kind = surfaceFromId(red);
+    if (kind && kind !== 'wood' && kind !== 'water') invented.add(kind);
+  }
+  assert.ok(invented.size >= 8, `le seul rouge en invente ${invented.size}`);
+
+  // Avec la signature, plus aucune : pour contrefaire la matière C, il faudrait
+  // que le rouge tombe sur celui de C **et** que le bleu tombe en même temps
+  // sur sa signature. On balaie toutes les couvertures de toutes les paires.
+  let forged = 0;
+  let closest = Infinity;
+  for (let a = 0; a <= SURFACE_KINDS.length; a++) {
+    for (let b = 0; b <= SURFACE_KINDS.length; b++) {
+      if (a === b) continue;
+      for (let k = 0; k <= 2000; k++) {
+        const share = k / 2000;
+        const red = Math.round(a * SURFACE_ID_STEP + share * (b - a) * SURFACE_ID_STEP);
+        if (red % SURFACE_ID_STEP !== 0) continue;
+        const id = red / SURFACE_ID_STEP;
+        if (id === a || id === b || id > SURFACE_KINDS.length) continue;
+        const blue = Math.round(
+          SURFACE_SIGNATURES[a] + share * (SURFACE_SIGNATURES[b] - SURFACE_SIGNATURES[a])
+        );
+        const gap = Math.abs(blue - SURFACE_SIGNATURES[id]);
+        if (gap === 0) forged++;
+        closest = Math.min(closest, gap);
+      }
+    }
+  }
+  assert.equal(forged, 0, 'aucune contrefaçon possible');
+  // La marge doit dépasser l'arrondi du canevas, sinon la propriété ne tient
+  // que sur le papier.
+  assert.ok(closest >= 4, `il reste ${closest} d’écart au plus juste`);
+
+  // Une signature par identifiant, fond compris, sinon la table se décale.
+  assert.equal(SURFACE_SIGNATURES.length, SURFACE_KINDS.length + 1, 'une signature par matière');
+  assert.equal(new Set(SURFACE_SIGNATURES).size, SURFACE_SIGNATURES.length, 'toutes distinctes');
+  assert.equal(surfaceSignature(0), 0, 'le fond garde la signature zéro');
+});
+
+test('la réparation rend un texel de bord à la matière qui le couvre le plus', () => {
+  const PIXELS = 4;
+  const texel = (id, crop = 0) => [id * SURFACE_ID_STEP, crop * CROP_ID_STEP, surfaceSignature(id), 255];
+  const build = (ids) => {
+    const data = new Uint8ClampedArray(PIXELS * PIXELS * 4);
+    ids.forEach((cell, p) => data.set(cell, p * 4));
+    return data;
+  };
+
+  const wood = surfaceId('wood');
+  const water = surfaceId('water');
+  const cells = Array.from({ length: PIXELS * PIXELS }, () => texel(wood));
+
+  // Une colonne d'eau, et entre les deux la colonne de bord que le canevas
+  // aurait fabriquée : le mélange se relit aujourd'hui comme du sable ou de la
+  // roche selon la couverture.
+  for (let y = 0; y < PIXELS; y++) {
+    cells[y * PIXELS + 3] = texel(water);
+    const share = y < 2 ? 0.2 : 0.8; // couvert à 20 % puis à 80 % par l'eau
+    const mixed = (from, to) => Math.round(from + share * (to - from));
+    cells[y * PIXELS + 2] = [
+      mixed(wood * SURFACE_ID_STEP, water * SURFACE_ID_STEP),
+      0,
+      mixed(surfaceSignature(wood), surfaceSignature(water)),
+      255,
+    ];
+  }
+
+  const data = build(cells);
+  // Sans réparation, la colonne de bord porte n'importe quoi.
+  assert.notEqual(surfaceFromId(data[(0 * PIXELS + 2) * 4]), 'wood');
+  assert.notEqual(surfaceFromId(data[(0 * PIXELS + 2) * 4]), 'water');
+
+  const repaired = repairSurfaceEdges(data, PIXELS);
+  assert.equal(repaired, PIXELS, 'une colonne réparée, et elle seule');
+
+  // Le rouge le plus proche **est** le seuil de couverture : sous la moitié le
+  // texel revient au bois, au-dessus il passe à l'eau. La limite tombe donc au
+  // bon demi-texel au lieu d'inventer une matière.
+  assert.equal(surfaceFromId(data[(0 * PIXELS + 2) * 4]), 'wood', 'couvert à 20 %');
+  assert.equal(surfaceFromId(data[(3 * PIXELS + 2) * 4]), 'water', 'couvert à 80 %');
+
+  // Et après la passe, plus un seul texel qui ne porte sa signature : c'est la
+  // propriété que le shader et la végétation lisent tous les deux.
+  for (let p = 0; p < PIXELS * PIXELS; p++) {
+    const id = data[p * 4] / SURFACE_ID_STEP;
+    assert.equal(data[p * 4] % SURFACE_ID_STEP, 0, `texel ${p} : identifiant entier`);
+    assert.equal(data[p * 4 + 2], surfaceSignature(id), `texel ${p} : signé`);
+  }
+
+  // Une carte déjà saine ne coûte rien et ne bouge pas.
+  const clean = build(Array.from({ length: PIXELS * PIXELS }, () => texel(surfaceId('grass'), 2)));
+  const before = clean.slice();
+  assert.equal(repairSurfaceEdges(clean, PIXELS), 0, 'rien à réparer');
+  assert.deepEqual(clean, before);
 });
 
 test('la table des matières décrit chaque matière, et répartit les champs de grain', () => {
@@ -2285,6 +2407,9 @@ function recordingCanvas() {
       });
     },
     getImageData: (x, y, w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+    putImageData: () => {
+      ops.push({ op: 'putImageData' });
+    },
   };
   return ctx;
 }
@@ -2335,22 +2460,30 @@ test('un cours d’eau linéaire porte de l’eau, et son ourlet ne l’efface p
     },
   };
 
-  // Une seule entité : un ruisseau, qui n'existe dans les tuiles que comme
-  // trait — c'est tout l'objet de cette passe.
-  const source = {
+  // Une seule entité par passe : un cours d'eau, qui n'existe dans les tuiles
+  // que comme trait — c'est tout l'objet de cette passe.
+  const sourceOf = (klass) => ({
     forEachFeature(layer, tiles, callback) {
       if (layer !== 'waterway') return;
       callback(
         { type: 'LineString', coordinates: [[0, 0], [0.001, 0.001]] },
-        { class: 'stream' }
+        { class: klass }
       );
     },
-  };
+  });
 
   let map;
   try {
     map = new GroundClassMap({ THREE });
-    map.rebuild(source, [{ x: 0, y: 0 }], { x: 0, z: 0 }, { origin: { x: 0, y: 0 }, scale: 1, zoom: 14 });
+    map.rebuild(sourceOf('stream'), [{ x: 0, y: 0 }], { x: 0, z: 0 }, { origin: { x: 0, y: 0 }, scale: 1, zoom: 14 });
+    for (const klass of ['ditch', 'drain']) {
+      new GroundClassMap({ THREE }).rebuild(
+        sourceOf(klass),
+        [{ x: 0, y: 0 }],
+        { x: 0, z: 0 },
+        { origin: { x: 0, y: 0 }, scale: 1, zoom: 14 }
+      );
+    }
   } finally {
     if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
     else delete globalThis.OffscreenCanvas;
@@ -2358,8 +2491,8 @@ test('un cours d’eau linéaire porte de l’eau, et son ourlet ne l’efface p
     else delete globalThis.Path2D;
   }
 
-  // Une seule carte, désormais : les deux canaux du même texel.
-  assert.equal(canvases.length, 1, 'une carte, pas deux');
+  // Une seule carte par instance, désormais : les deux canaux du même texel.
+  assert.equal(canvases.length, 3, 'une carte par instance, pas deux');
   const ops = canvases[0].ops;
 
   // Le fond est peint, pas effacé : identifiant zéro, alpha plein.
@@ -2384,6 +2517,28 @@ test('un cours d’eau linéaire porte de l’eau, et son ourlet ne l’efface p
     !ops.some((o) => o.mode === 'destination-out'),
     'plus rien à effacer dans une seconde carte'
   );
+
+  // Le fossé et le drain : un lit, et **pas** d'ourlet. Ce sont des traits
+  // creusés — en bord de champ, en bord de route — pas des cours d'eau bordés
+  // d'arbres, et les border plantait quinze mètres de bois le long de la
+  // moindre chaussée assainie. Le lit, lui, est un fait de la carte : il reste.
+  for (const [i, klass] of ['fossé', 'drain'].entries()) {
+    const bare = canvases[i + 1].ops.filter((o) => o.op === 'stroke');
+    assert.equal(bare.length, 1, `un seul trait pour un ${klass}`);
+    assert.equal(bare[0].style, surfaceFill('water'), `et c’est le lit du ${klass}`);
+  }
+});
+
+test('qui est bordé d’arbres et qui ne l’est pas se décide en un seul endroit', () => {
+  // La ripisylve est la seule chose qui plante du bois sans qu'aucune entité
+  // ne dise « bois » : ce qui la porte doit se lire d'un coup d'œil.
+  for (const klass of ['river', 'canal', 'stream']) {
+    assert.equal(waterwayStyleFor({ class: klass }).riparian, true, klass);
+  }
+  for (const klass of BARE_WATERWAY_CLASSES) {
+    assert.equal(waterwayStyleFor({ class: klass }).riparian, false, klass);
+    assert.ok(waterwayStyleFor({ class: klass }).halfWidth > 0, `${klass} garde son lit`);
+  }
 });
 
 test('l’encodage : un identifiant de matière, un de culture, le même texel', () => {
