@@ -86,13 +86,17 @@ import {
   junctionCentreDeck,
   junctionRibbonRuns,
   junctionSurface,
+  outlineDeckAt,
 } from './roadJunctions.js';
 import {
   MARKING_BAR_M,
+  MARKING_EDGE_INSET_M,
   MARKING_LIFT_M,
+  MARKING_WIDTH_M,
   MOUTH_CROSSING_M,
   approachLane,
   appendMarkingBar,
+  appendMarkingBorder,
   appendMarkingLine,
   appendMarkingSymbols,
   cycleGlyph,
@@ -954,6 +958,11 @@ export class RoadNetwork {
       // qu'un point à poser s'en contente ; `decks` sert à qui suit une rive.
       area.decks = decks;
       area.deck = centre;
+      // La rive fait le tour de la dalle : elle est posée ici, avec les cotes
+      // qu'on vient de relever, et non dans `_appendMarkings` — celui-ci ne
+      // connaît qu'une plage de ruban, et un contour de carrefour n'en est pas
+      // une.
+      markings += this._appendJunctionEdges(markingBuffer, area, decks, centre, paint);
       const surface = this._surfaceOf(area.profile);
       if (!junctionBuffers[surface]) junctionBuffers[surface] = createRibbonBuffer();
       const buffer = junctionBuffers[surface];
@@ -1083,6 +1092,58 @@ export class RoadNetwork {
         ...approachLane(half, end.forward),
         color: paint,
         lift,
+      });
+    }
+
+    return laid;
+  }
+
+  /**
+   * Les lignes de rive que le carrefour prolonge le long de son contour.
+   *
+   * Un ruban s'arrête à la bouche, et sa rive avec lui : sans ce prolongement,
+   * une ligne continue s'interrompt à chaque croisée. Elle est reprise ici sur
+   * les morceaux de contour entre deux bouches — trois pour un carrefour en T,
+   * quatre pour une croisée — dont les extrémités sont **exactement** les
+   * sommets où les rives de ruban s'arrêtent (`junctionArea.edges`).
+   *
+   * Une seule condition, et c'est celle du thème : les deux branches que le
+   * morceau relie portent une ligne de rive. Faire le tour d'une desserte qui
+   * n'en porte pas y peindrait une ligne qu'aucune des deux rues n'a.
+   *
+   * Rien d'autre n'est repris au carrefour — ni axe, ni ligne d'effet à égalité
+   * de largeur : voir l'en-tête de `roadMarkings`.
+   *
+   * @returns {number} traits posés.
+   */
+  _appendJunctionEdges(buffer, area, decks, centre, paint) {
+    const profiles = this.theme.roads.profiles;
+    // Le retrait est celui d'une rive de ruban (`markingLinesFor`), compté
+    // depuis la rive et non depuis l'axe : c'est ce qui fait que les deux se
+    // rejoignent. `NaN` marque une branche sans ligne de rive.
+    const insets = area.mouths.map((mouth) => {
+      const spec = profiles[mouth.profile];
+      if (!spec?.edgeLines) return NaN;
+      return (spec.shoulder || 0) + MARKING_EDGE_INSET_M + MARKING_WIDTH_M / 2;
+    });
+
+    let laid = 0;
+    for (const edge of area.edges || []) {
+      if (!Number.isFinite(insets[edge.from]) || !Number.isFinite(insets[edge.to])) continue;
+      laid += appendMarkingBorder(buffer, {
+        points: edge.points,
+        // Mêmes cotes et même interpolation que la dalle qu'elle borde : un
+        // sommet d'arc tient de deux branches, et passe de l'une à l'autre en
+        // tournant. `outlineDeckAt` fait ce mélange-là ; il sert ici deux fois,
+        // pour la hauteur et pour le retrait, parce que c'est le même mélange.
+        decks: edge.points.map((point) => {
+          const height = outlineDeckAt(point, decks);
+          return Number.isFinite(height) ? height : centre;
+        }),
+        insets: edge.points.map((point) => outlineDeckAt(point, insets)),
+        outward: edge.outward,
+        color: paint,
+        lift: ROAD_LIFT_M + MARKING_LIFT_M,
       });
     }
 
