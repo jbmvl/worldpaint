@@ -178,10 +178,14 @@ carte le dit (couverture `water`). Deux entrées :
 - les **traits** de la couche `waterway`, élargis par la largeur de thème
   (`WATERWAY_CLASSES` : rivière 9 m, canal 6 m, ruisseau 3 m, drain 1,6 m,
   fossé 1,2 m). Un cours d'eau souterrain ou intermittent n'a pas de surface.
-  Chaque lit reçoit de part et d'autre une **ripisylve** de 7 m, peinte en bois
-  et plantée comme une vraie forêt ; le fossé n'en a pas — mais il a son lit,
-  ce qui n'était pas le cas : la passe sortait sur sa classe avant d'avoir rien
-  peint, et la largeur que le thème lui donne ne servait à rien.
+  Le lit d'une rivière, d'un canal et d'un ruisseau reçoit de part et d'autre
+  une **ripisylve** de 7 m, peinte en bois et plantée comme une vraie forêt.
+
+  Le fossé et le drain n'en ont pas (`BARE_WATERWAY_CLASSES`) : ce sont des
+  traits creusés — en bord de champ, en bord de route — et non des cours d'eau
+  bordés d'arbres. L'ourlet leur plantait quinze mètres de bois le long de la
+  moindre chaussée assainie, le fossé d'une route étant très souvent un
+  `waterway=drain` dans OSM. Leur lit reste, lui : c'est un fait de la carte.
 
   Attention : un trait plus étroit qu'un texel ne peut pas être rasterisé
   proprement. Le drain (1,6 m) et le fossé (1,2 m) couvrent moins de la moitié

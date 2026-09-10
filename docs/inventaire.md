@@ -126,6 +126,34 @@ La **lisière** est traitée à part : la canopée y baisse (−30 %) et la stra
 basse y monte (+55 %) — un bois vu du dehors est un mur de feuilles, pas une
 coupe dans une futaie.
 
+### La ripisylve : les arbres que personne n'a plantés
+
+**Déduite**, et c'est le seul endroit où du bois apparaît sans qu'aucune entité
+ne dise « bois ». Chaque trait de la couche `waterway` reçoit de part et d'autre
+une bande de 7 m (`RIPARIAN_BUFFER_M`) peinte en `wood` dans la carte du sol —
+et ce qui est peint en bois est **planté comme une vraie forêt**, avec les
+mêmes silhouettes, la même densité et le même peuplement qu'un massif.
+
+La bande totale est donc large : le lit plus deux fois sept mètres.
+
+| Classe `waterway` | Lit | Bande de bois |
+| --- | --- | --- |
+| `river` | 9 m | 23 m |
+| `canal` | 6 m | 20 m |
+| `stream` | 3 m | 17 m |
+| `drain` | 1,6 m | **aucune** |
+| `ditch` | 1,2 m | **aucune** |
+
+Le fossé et le drain n'en portent pas (`BARE_WATERWAY_CLASSES`) : ce sont des
+traits creusés — en bord de champ, en bord de route — et non des cours d'eau
+bordés d'arbres. Ils en portaient, et c'était l'origine des bosquets qui
+suivaient les routes : dans OSM, le fossé d'assainissement d'une chaussée est
+très souvent un `waterway=drain`, et l'ourlet lui plantait quinze mètres de bois
+le long du bitume. Leur lit, lui, reste : c'est un fait de la carte.
+
+Un cours d'eau souterrain (`brunnel=tunnel`) ou intermittent n'a ni lit ni
+ourlet.
+
 ### Les arbustes hors des bois
 
 Semés d'après la matière du sol seule (colonne `bushes` de `SURFACE_LOOK`) :

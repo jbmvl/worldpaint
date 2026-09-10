@@ -138,15 +138,30 @@ export function isDrawableWater(properties = {}) {
 }
 
 /**
- * Demi-largeur d'un cours d'eau linéaire, ou `null` s'il n'a pas de surface
- * d'eau visible. Un cours d'eau souterrain n'en a pas ; un cours d'eau
- * intermittent, la plupart du temps, non plus. Fonction pure.
+ * Cours d'eau qui ne portent **pas** de ripisylve.
+ *
+ * Un fossé et un drain sont des traits creusés — en bord de champ, en bord de
+ * route — et non des cours d'eau bordés d'arbres. Leur donner l'ourlet de sept
+ * mètres plantait une bande de bois de quinze mètres, arbres compris, le long
+ * de la moindre chaussée assainie : c'est l'origine des bosquets qui suivaient
+ * les routes. Ils gardent leur lit, qui est un fait de la carte.
+ */
+export const BARE_WATERWAY_CLASSES = new Set(['ditch', 'drain']);
+
+/**
+ * Ce qu'un cours d'eau linéaire pose au sol, ou `null` s'il ne pose rien : sa
+ * demi-largeur, et s'il est bordé d'arbres. Un cours d'eau souterrain n'a pas
+ * de surface ; un cours d'eau intermittent, la plupart du temps, non plus.
+ * Fonction pure.
+ *
+ * @returns {{halfWidth:number, riparian:boolean}|null}
  */
 export function waterwayStyleFor(properties = {}, waterways = defaultTheme.water.waterways) {
   if (properties.brunnel === 'tunnel') return null;
   if (properties.intermittent === 1 || properties.intermittent === true) return null;
   const width = waterways[properties.class];
-  return width ? { halfWidth: width / 2 } : null;
+  if (!width) return null;
+  return { halfWidth: width / 2, riparian: !BARE_WATERWAY_CLASSES.has(properties.class) };
 }
 
 /**
@@ -984,9 +999,9 @@ export class GroundClassMap {
         const style = waterwayStyleFor(properties, waterways);
         if (!style) return;
         const width = style.halfWidth * 2;
-        // Un fossé n'a pas de ripisylve : c'est un trait creusé en bord de
-        // champ, pas un cours d'eau bordé d'arbres.
-        const riparianM = properties.class === 'ditch' ? 0 : bufferM;
+        // Qui est bordé d'arbres et qui ne l'est pas se décide dans
+        // `waterwayStyleFor` — voir `BARE_WATERWAY_CLASSES`.
+        const riparianM = style.riparian ? bufferM : 0;
 
         const lines =
           geometry.type === 'LineString'

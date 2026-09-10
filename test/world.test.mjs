@@ -448,6 +448,7 @@ import {
   WATER_ID,
   PAVEMENT_ID,
   waterwayStyleFor,
+  BARE_WATERWAY_CLASSES,
   isDrawableWater,
   GroundClassMap,
   CLASS_AREA_M,
@@ -2472,12 +2473,17 @@ test('un cours d’eau linéaire porte de l’eau, et son ourlet ne l’efface p
   });
 
   let map;
-  let ditch;
   try {
     map = new GroundClassMap({ THREE });
     map.rebuild(sourceOf('stream'), [{ x: 0, y: 0 }], { x: 0, z: 0 }, { origin: { x: 0, y: 0 }, scale: 1, zoom: 14 });
-    ditch = new GroundClassMap({ THREE });
-    ditch.rebuild(sourceOf('ditch'), [{ x: 0, y: 0 }], { x: 0, z: 0 }, { origin: { x: 0, y: 0 }, scale: 1, zoom: 14 });
+    for (const klass of ['ditch', 'drain']) {
+      new GroundClassMap({ THREE }).rebuild(
+        sourceOf(klass),
+        [{ x: 0, y: 0 }],
+        { x: 0, z: 0 },
+        { origin: { x: 0, y: 0 }, scale: 1, zoom: 14 }
+      );
+    }
   } finally {
     if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
     else delete globalThis.OffscreenCanvas;
@@ -2486,7 +2492,7 @@ test('un cours d’eau linéaire porte de l’eau, et son ourlet ne l’efface p
   }
 
   // Une seule carte par instance, désormais : les deux canaux du même texel.
-  assert.equal(canvases.length, 2, 'une carte par instance, pas deux');
+  assert.equal(canvases.length, 3, 'une carte par instance, pas deux');
   const ops = canvases[0].ops;
 
   // Le fond est peint, pas effacé : identifiant zéro, alpha plein.
@@ -2512,13 +2518,27 @@ test('un cours d’eau linéaire porte de l’eau, et son ourlet ne l’efface p
     'plus rien à effacer dans une seconde carte'
   );
 
-  // Le fossé : pas de ripisylve — c'est un trait creusé en bord de champ, pas
-  // un cours d'eau bordé d'arbres — mais un lit quand même. Il n'en avait pas :
-  // la passe sortait sur la classe avant d'avoir peint quoi que ce soit, si
-  // bien que la largeur que le thème lui donne ne servait à rien.
-  const ditchStrokes = canvases[1].ops.filter((o) => o.op === 'stroke');
-  assert.equal(ditchStrokes.length, 1, 'un seul trait pour un fossé');
-  assert.equal(ditchStrokes[0].style, surfaceFill('water'), 'et c’est son lit');
+  // Le fossé et le drain : un lit, et **pas** d'ourlet. Ce sont des traits
+  // creusés — en bord de champ, en bord de route — pas des cours d'eau bordés
+  // d'arbres, et les border plantait quinze mètres de bois le long de la
+  // moindre chaussée assainie. Le lit, lui, est un fait de la carte : il reste.
+  for (const [i, klass] of ['fossé', 'drain'].entries()) {
+    const bare = canvases[i + 1].ops.filter((o) => o.op === 'stroke');
+    assert.equal(bare.length, 1, `un seul trait pour un ${klass}`);
+    assert.equal(bare[0].style, surfaceFill('water'), `et c’est le lit du ${klass}`);
+  }
+});
+
+test('qui est bordé d’arbres et qui ne l’est pas se décide en un seul endroit', () => {
+  // La ripisylve est la seule chose qui plante du bois sans qu'aucune entité
+  // ne dise « bois » : ce qui la porte doit se lire d'un coup d'œil.
+  for (const klass of ['river', 'canal', 'stream']) {
+    assert.equal(waterwayStyleFor({ class: klass }).riparian, true, klass);
+  }
+  for (const klass of BARE_WATERWAY_CLASSES) {
+    assert.equal(waterwayStyleFor({ class: klass }).riparian, false, klass);
+    assert.ok(waterwayStyleFor({ class: klass }).halfWidth > 0, `${klass} garde son lit`);
+  }
 });
 
 test('l’encodage : un identifiant de matière, un de culture, le même texel', () => {
