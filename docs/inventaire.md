@@ -4,6 +4,8 @@ Ce document répond à une seule question, objet par objet : **qu'est-ce qui a
 mis ça là ?** Il complète `docs/surfaces.md` (le sol, en détail) et
 `docs/climats.md` (comment la famille climatique est décidée).
 
+Les mots du métier sont définis en fin de document, dans le [glossaire](#glossaire).
+
 ## Les trois régimes
 
 Tout ce qui apparaît à l'écran relève de l'un des trois, et savoir lequel est
@@ -470,3 +472,168 @@ Dans la démo, cocher **« étiquettes »**. Chaque couche nomme ses maillages e
 code*. Les cultures et les surfaces, qui n'ont pas d'objet, sont retrouvées par
 échantillonnage de la carte du sol. Pas d'étiquette : la donnée ne dit rien à
 cet endroit, et c'est le repli qu'on voit.
+
+---
+
+## Glossaire
+
+Les mots qui reviennent dans ce document et dans le code, par ordre
+alphabétique. Chacun dit aussi *pourquoi* la chose existe : c'est ce qui manque
+le plus souvent quand on lit un terme pour la première fois.
+
+**Albédo** — la couleur d'une matière, exprimée en lumière réfléchie plutôt
+qu'en couleur d'écran (0,05 pour une herbe grasse, 0,62 pour du sable). C'est la
+seule chose d'une surface qui se lise encore à cent mètres, donc la seule qui
+compte vraiment.
+
+**Assolement** — la répartition des cultures d'une région : ce qu'on a une
+chance de trouver dans un champ tiré au hasard. Le nôtre change par famille
+climatique.
+
+**Balayage** (`appendProfile`) — construire un volume en promenant une section
+constante le long d'une ligne. C'est ainsi que sont faits les haies, les murets,
+les glissières et les talus : une forme en travers, répétée tout du long.
+
+**Bocage / openfield** — les deux trames agraires opposées. Le bocage
+compartimente l'horizon en chambres closes de haies ; l'openfield le laisse
+filer sans limite visible. C'est ce qui se lit de plus loin dans un paysage
+agricole, avant toute couleur.
+
+**Brunnel** — mot du schéma OpenMapTiles, contraction de *bridge* et *tunnel* :
+l'attribut qui dit qu'un tronçon de route passe au-dessus ou au-dessous du
+terrain. C'est lui qui décide qu'on construit un pont ou une tête de tunnel.
+
+**Bulle** — la portion de monde chargée et affichée autour de l'observateur.
+Elle a un rayon fini, elle suit l'observateur, et tout le décor est reconstruit
+quand elle se déplace assez.
+
+**Canopée / strate basse / sous-bois** — les étages d'un bois. La canopée est le
+couvert des grands arbres, la strate basse ce qui pousse au sol (herbe,
+litière), le sous-bois ce qui pousse entre les deux (ronces, jeunes pousses,
+arbustes). Un taillis *est* son sous-bois ; une futaie entretenue n'en a
+presque pas.
+
+**Carte du sol** (carte de classes, `groundClassMap`) — une image de 1536 × 1536
+points couvrant 4 km de côté autour de l'observateur, où l'on peint l'occupation
+du sol avant de l'afficher. Chaque point y porte un numéro de matière et un
+numéro de culture. Tout le reste du décor la relit : le sol y prend sa couleur,
+l'herbe sa densité, la forêt ses arbres. C'est la source unique — d'où le fait
+que rien ne peut se contredire.
+
+**Classe / sous-classe** — les deux attributs par lesquels une tuile décrit une
+entité (`class: 'grass'`, `subclass: 'heath'`). Ce ne sont **pas** les tags
+OpenStreetMap : c'est OpenMapTiles qui range les tags d'origine dans une liste
+fermée de classes, et ce qui n'y entre pas ne nous parvient jamais.
+
+**Couche** (*source layer*) — un des tiroirs d'une tuile vectorielle :
+`landcover`, `building`, `transportation`… Neuf sont ouvertes, et une entité qui
+n'est dans aucune n'existe pas pour nous.
+
+**Dévers** — la pente du terrain **en travers** d'une route, par opposition à la
+pente dans son axe. C'est ce qui décide si une chaussée mérite un mur de
+soutènement, un talus ou une glissière.
+
+**Emprise** (routière) — la bande que la chaussée occupe réellement : le bitume
+plus son accotement creusé. Rien n'a le droit de la franchir — ni haie, ni
+botte de paille, ni arbre. C'est la frontière partagée du paysage, et elle est
+tenue en un seul endroit pour que toutes les couches disent la même chose.
+
+**Essence** — l'espèce d'un arbre, au sens forestier. Nous n'en distinguons que
+quatre silhouettes : feuillu, résineux, colonne (peuplier, bouleau), buissonnant.
+
+**Famille climatique** — une des onze catégories de pays que nous savons peindre
+(océanique, continentale, méditerranéenne, boréale, aride…). Elle est décidée
+une fois pour le lieu, à partir d'une grille de classification Köppen embarquée
+et corrigée par l'altitude, puis elle change les arbres, les cultures, les
+troupeaux, les murs, les couleurs de village et la couleur du sol.
+
+**Graine / tirage** — un nombre pseudo-aléatoire *reproductible*, calculé à
+partir d'une position au sol arrondie à 50 cm. C'est ce qui fait qu'un objet
+« tiré au hasard » retombe toujours au même endroit avec la même apparence :
+sans ça, chaque reconstruction redistribuerait tout le décor.
+
+**Instance** — une même forme dessinée des milliers de fois avec une position,
+une taille et une teinte différentes, en un seul ordre donné à la carte
+graphique. Les touffes d'herbe, les arbres et les lampadaires sont des instances
+— c'est ce qui rend leur nombre abordable.
+
+**Köppen** — la classification climatique de référence (Cfb pour l'océanique,
+Csa pour le méditerranéen…). Nous en embarquons une grille pour l'Europe, et
+nous la traduisons en familles.
+
+**Lisière** — le bord d'un bois, vu du dehors. Traité à part : la canopée y
+baisse et la strate basse y monte, parce qu'un bois vu de l'extérieur est un mur
+de feuilles et non une coupe dans une futaie.
+
+**Litière** — le sol d'un bois : feuilles mortes et herbe rase, pas une prairie
+à l'ombre.
+
+**Maille** — une case d'une grille imaginaire posée sur le monde (1400 m pour la
+palette d'un bourg, 320 m pour les éoliennes, 1,6 m pour les touffes d'herbe).
+Tout ce qui est tiré au sort l'est **par maille**, ce qui donne au tirage un
+ancrage au sol.
+
+**MNT** (modèle numérique de terrain) — le relevé d'altitude du terrain, lu dans
+des tuiles d'élévation. Il est bruité au mètre près, d'où les lissages
+partout où une route ou une berge doit rester droite.
+
+**OpenStreetMap / OpenMapTiles / OpenFreeMap** — trois choses différentes qu'il
+vaut mieux ne pas confondre. OpenStreetMap est la base de données mondiale ;
+OpenMapTiles est un **schéma** qui décide comment ses tags sont rangés en
+classes et découpés en tuiles ; OpenFreeMap est un hébergeur qui sert des tuiles
+à ce schéma. Nous lisons le schéma, pas OSM : c'est pourquoi certains tags
+existants ne nous parviennent jamais.
+
+**Ourlet** — une bande de matière ajoutée le long d'une ligne (ici, les sept
+mètres de bois de part et d'autre d'un cours d'eau). Voir *ripisylve*.
+
+**Peuplement** — la composition d'un massif forestier : quelles essences, à
+quelle hauteur, à quelle densité, avec quel sous-bois. Tiré une fois par massif
+parmi les types que le climat autorise.
+
+**Plate-forme** — l'assise horizontale sur laquelle une route est posée, une
+fois le terrain entaillé ou remblayé. Une route ne suit pas le terrain brut :
+elle se creuse une plate-forme, et c'est ce qui produit les talus.
+
+**Profil** — la catégorie d'une chaussée pour nous (express, major, minor, lane,
+track, path, cycleway), déduite de sa classe OSM. Il donne la largeur, le
+revêtement, le marquage et tout le mobilier qui l'accompagne.
+
+**Rasteriser** — transformer un contour (un polygone, une ligne) en points d'une
+image. C'est ce que fait la carte du sol, et c'est de là que vient sa limite :
+un objet plus petit qu'un point de l'image ne peut pas s'y écrire.
+
+**Ripisylve** — la végétation qui pousse spontanément le long d'un cours d'eau.
+Chez nous, une bande de 7 m de part et d'autre du lit, peinte en « bois » dans
+la carte du sol et donc plantée d'arbres comme une vraie forêt.
+
+**Rive** — le bord de la chaussée, en tant qu'objet à part entière : la
+frontière de l'union des rubans et des surfaces de carrefour. La bordure de
+trottoir s'y pose, et rien d'autre ne la calcule dans son coin.
+
+**Ruban** — une bande plaquée sur le terrain le long d'une ligne : c'est la
+forme d'une chaussée, d'une voie ferrée. Plusieurs colonnes en travers, pour
+qu'un côté ne se retrouve pas en l'air sur un dévers.
+
+**Shader** — le petit programme qui s'exécute sur la carte graphique pour chaque
+point de l'écran, et qui décide de sa couleur. Celui du terrain lit la carte du
+sol et compose la matière du sol jusqu'à l'horizon.
+
+**Signature** — un nombre écrit dans la carte du sol à côté de chaque
+identifiant de matière, qui certifie que ce point a été peint et non fabriqué
+par le lissage du dessin. Voir `docs/surfaces.md`.
+
+**Texel** — un point de la carte du sol, et l'unité de sa finesse : ici 2,67 m
+de côté. C'est la taille du plus petit détail que la carte sache décrire, et
+elle explique la plupart de ses limites.
+
+**Tuile vectorielle** — un carré de carte livré en formes géométriques (et non
+en image), à un niveau de zoom donné. Nous lisons le **zoom 14**, soit des
+carrés de 2,45 km de côté à l'équateur, 1,7 km à la latitude de la France. Une
+entité qui traverse une frontière de tuile est livrée en morceaux, qu'il faut
+recoudre.
+
+**Vert urbain / masque urbain** — le vert urbain, ce sont les cimetières,
+stades et terrains de jeu, qu'on retire du revêtement d'une ville pour qu'un
+parc reste un parc. Le masque urbain est l'emprise de la ville elle-même : le
+bâti relevé, borné par un disque autour d'une agglomération nommée.
