@@ -234,7 +234,7 @@ export const SURFACE_ID_STEP = 8;
  * Signature d'un identifiant, peinte dans le canal bleu.
  *
  * Elle existe pour une raison précise, et c'est le seul moyen qu'on ait de
- * distinguer un texte peint d'un texte inventé : **le canevas 2D lisse le bord
+ * distinguer un texel peint d'un texel inventé : **le canevas 2D lisse le bord
  * de ses tracés, et rien ne le désactive**. Un pixel de bord porte donc
  * `alpha x A + (1 - alpha) x B` — le mélange de deux identifiants voisins, relu
  * par `surfaceFromId` comme un **troisième**. Entre le bois (4) et l'eau (14),
