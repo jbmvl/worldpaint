@@ -176,19 +176,16 @@ carte le dit (couverture `water`). Deux entrées :
 - les **polygones** de la couche `water` (lacs, fleuves larges, mer), sauf les
   piscines et les tunnels ;
 - les **traits** de la couche `waterway`, élargis par la largeur de thème
-  (`WATERWAY_CLASSES` : rivière 9 m, canal 6 m, ruisseau 3 m, drain 1,6 m,
-  fossé 1,2 m). Un cours d'eau souterrain ou intermittent n'a pas de surface.
-  Chaque lit reçoit de part et d'autre une **ripisylve** de 7 m, peinte en bois
-  et plantée comme une vraie forêt ; le fossé n'en a pas — mais il a son lit,
-  ce qui n'était pas le cas : la passe sortait sur sa classe avant d'avoir rien
-  peint, et la largeur que le thème lui donne ne servait à rien.
+  (`WATERWAY_CLASSES` : rivière 9 m, canal 6 m, ruisseau 3 m). Un cours d'eau
+  souterrain ou intermittent n'a pas de surface, et une classe absente du thème
+  n'en a pas non plus. Chaque lit reçoit de part et d'autre une **ripisylve**
+  de 7 m, peinte en bois et plantée comme une vraie forêt.
 
-  Attention : un trait plus étroit qu'un texel ne peut pas être rasterisé
-  proprement. Le drain (1,6 m) et le fossé (1,2 m) couvrent moins de la moitié
-  des texels qu'ils traversent, et se rendent donc en **pointillé** plutôt qu'en
-  trait continu. Les faire disparaître (les retirer de `WATERWAY_CLASSES`) ou
-  leur donner une largeur plancher d'un texel sont deux décisions d'auteur,
-  pas des correctifs.
+  Le drain (1,6 m) et le fossé (1,2 m) y étaient et n'y sont plus : la carte a
+  un pas de 2,7 m, ils couvrent donc moins de la moitié des texels qu'ils
+  traversent et ne pouvaient se rendre qu'en **pointillé**. Un trait d'eau
+  discontinu au milieu d'un champ se voit plus qu'il ne décrit. Le ruisseau
+  (3 m) est le plus étroit qui tienne encore.
 
 ## Ce qui n'est pas lu, et ce que ça donne à l'écran
 

@@ -165,7 +165,8 @@ test('les largeurs de cours d’eau suivent le thème', () => {
   assert.equal(b, 20);
   // Une classe retirée du thème n'est plus dessinée : c'est bien le thème qui
   // décide, pas une liste que le moteur garderait par-devers lui.
-  assert.equal(waterwayStyleFor({ class: 'ditch' }, OTHER.water.waterways), null);
+  assert.ok(waterwayStyleFor({ class: 'canal' }, DEFAULT.water.waterways));
+  assert.equal(waterwayStyleFor({ class: 'canal' }, OTHER.water.waterways), null);
 });
 
 test('la part de fleurs suit le thème', () => {

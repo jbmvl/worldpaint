@@ -2472,12 +2472,12 @@ test('un cours d’eau linéaire porte de l’eau, et son ourlet ne l’efface p
   });
 
   let map;
-  let ditch;
+  let narrow;
   try {
     map = new GroundClassMap({ THREE });
     map.rebuild(sourceOf('stream'), [{ x: 0, y: 0 }], { x: 0, z: 0 }, { origin: { x: 0, y: 0 }, scale: 1, zoom: 14 });
-    ditch = new GroundClassMap({ THREE });
-    ditch.rebuild(sourceOf('ditch'), [{ x: 0, y: 0 }], { x: 0, z: 0 }, { origin: { x: 0, y: 0 }, scale: 1, zoom: 14 });
+    narrow = new GroundClassMap({ THREE });
+    narrow.rebuild(sourceOf('ditch'), [{ x: 0, y: 0 }], { x: 0, z: 0 }, { origin: { x: 0, y: 0 }, scale: 1, zoom: 14 });
   } finally {
     if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
     else delete globalThis.OffscreenCanvas;
@@ -2512,13 +2512,14 @@ test('un cours d’eau linéaire porte de l’eau, et son ourlet ne l’efface p
     'plus rien à effacer dans une seconde carte'
   );
 
-  // Le fossé : pas de ripisylve — c'est un trait creusé en bord de champ, pas
-  // un cours d'eau bordé d'arbres — mais un lit quand même. Il n'en avait pas :
-  // la passe sortait sur la classe avant d'avoir peint quoi que ce soit, si
-  // bien que la largeur que le thème lui donne ne servait à rien.
-  const ditchStrokes = canvases[1].ops.filter((o) => o.op === 'stroke');
-  assert.equal(ditchStrokes.length, 1, 'un seul trait pour un fossé');
-  assert.equal(ditchStrokes[0].style, surfaceFill('water'), 'et c’est son lit');
+  // Une classe que le thème ne décrit pas ne peint rien du tout — ni lit, ni
+  // ourlet. Le fossé et le drain en sont sortis : plus étroits qu'un texel de
+  // la carte (2,7 m), ils ne pouvaient se rendre qu'en pointillé.
+  assert.equal(
+    canvases[1].ops.filter((o) => o.op === 'stroke').length,
+    0,
+    'une classe hors du thème ne peint rien'
+  );
 });
 
 test('l’encodage : un identifiant de matière, un de culture, le même texel', () => {

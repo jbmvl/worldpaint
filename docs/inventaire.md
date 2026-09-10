@@ -30,7 +30,7 @@ couches sont ouvertes, et **elles seules** :
 | `landcover` | `groundClassMap`, `furnitureLayer` | matière du sol, cultures, contours de parcelle |
 | `landuse` | `groundClassMap`, `settlement`, `furnitureLayer` | occupation, zones bâties, vert urbain |
 | `water` | `groundClassMap`, `furnitureLayer` | lacs, fleuves larges, mer, trait de côte |
-| `waterway` | `groundClassMap` | ruisseaux, canaux, fossés, et leur ripisylve |
+| `waterway` | `groundClassMap` | ruisseaux, canaux, rivières, et leur ripisylve |
 | `transportation` | `roadNetwork`, `railwayLayer` | chaussées, voies ferrées, ponts et tunnels |
 | `building` | `buildingLayer`, `settlement` | empreintes bâties, densité du tissu |
 | `poi` | `buildingLayer`, `furnitureLayer` | fonction d'un bâtiment, abribus, fontaines, châteaux |
@@ -428,9 +428,10 @@ Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
    sont confondues — alors qu'un `swamp` est un marais boisé.
 6. `natural=shingle`, `mud`, `rock`, `cliff` **n'arrivent jamais** jusqu'à nous :
    le tableau de correspondance d'OpenMapTiles est fermé et ne les retient pas.
-7. **Un cours d'eau plus étroit qu'un texel** (2,7 m) ne peut pas être rasterisé
-   proprement : le drain (1,6 m) et le fossé (1,2 m) se rendent en pointillé.
-   Voir `docs/surfaces.md`.
+7. **Un cours d'eau plus étroit qu'un texel** (2,7 m) ne peut pas être
+   rasterisé proprement — il se rendrait en pointillé. C'est pourquoi le thème
+   n'en décrit aucun au-dessous du ruisseau (3 m) : le drain et le fossé, qui y
+   étaient, en sont sortis. Voir `docs/surfaces.md`.
 8. Le dispatch des points d'intérêt au-delà des trois premières lignes
    (abribus, fontaine, lavoir) suit le schéma `poi.yaml` **sans avoir été
    vérifié** sur les tuiles réellement servies.
