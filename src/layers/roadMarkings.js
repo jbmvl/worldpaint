@@ -29,6 +29,24 @@
  * point. C'est la même figure que le ruban et que la bordure — une seule
  * découpe, lue par tout ce qui suit la chaussée.
  *
+ * ## La rive traverse le carrefour, l'axe non
+ *
+ * Un carrefour restait pourtant nu : les rubans s'arrêtent à ses bouches, donc
+ * le marquage aussi, et la dalle ne portait rien. Une rive s'y interrompait
+ * ainsi tous les cent mètres en ville, ce qu'aucune route ne fait sur le
+ * terrain — la ligne de rive d'un carrefour en T fait le tour de ses trois
+ * côtés, sans discontinuité.
+ *
+ * `appendMarkingBorder` la pose, le long des **morceaux de contour** que le
+ * carrefour publie déjà (`roadJunctions.junctionArea.edges` — ceux-là mêmes que
+ * suit la bordure de trottoir). Ces morceaux commencent et finissent exactement
+ * là où les rives de ruban s'arrêtent : un retrait constant les raccorde sans
+ * qu'aucun des deux bouts ait à connaître l'autre.
+ *
+ * L'axe, lui, ne traverse pas : il n'y a pas de sens de marche dans un
+ * carrefour, donc pas de milieu à marquer. Rien d'autre n'a été ajouté — pas de
+ * ligne d'effet à égalité de largeur, pas de flèche, pas de zébra central.
+ *
  * La phase des pointillés est tirée de l'**abscisse curviligne de la chaîne**
  * comptée depuis son ancre de graphe (`segment.startDistance`), et non du rang
  * du trait dans la boucle : deux reconstructions qui découpent la chaîne
@@ -309,6 +327,109 @@ export function appendMarkingLine(
   }
 
   return laid;
+}
+
+/**
+ * Retrait d'une ligne de rive au-delà de la rive, en mètres — la même cote que
+ * `markingLinesFor` compte depuis l'axe, retournée par l'autre bout.
+ *
+ * Sert à prolonger la rive le long d'un contour de carrefour, qui n'a pas
+ * d'axe : c'est ce qui garantit que les deux tombent au même endroit.
+ *
+ * @param {Object} spec Profil du thème.
+ * @returns {number} `NaN` si la classe ne porte pas de ligne de rive.
+ */
+export function borderInsetFor(spec) {
+  if (!spec?.edgeLines) return NaN;
+  return (spec.shoulder || 0) + MARKING_EDGE_INSET_M + MARKING_WIDTH_M / 2;
+}
+
+/**
+ * Une ligne continue posée le long d'un **morceau de contour**, en retrait vers
+ * l'intérieur.
+ *
+ * C'est ce qui prolonge une ligne de rive au travers d'un carrefour : le
+ * contour d'une aire (`roadJunctions.junctionArea`) n'est pas une chaussée — il
+ * n'a ni axe ni largeur — mais c'est exactement la rive que les rubans
+ * quittent et retrouvent, sommet pour sommet. Une ligne posée en retrait
+ * constant de ce contour tombe donc pile dans le prolongement de celle du
+ * ruban, sans qu'aucune des deux ait à connaître l'autre.
+ *
+ * Le retrait est donné **par sommet** : les deux bouts du morceau appartiennent
+ * à deux branches, qui peuvent ne pas avoir le même accotement. Le trait passe
+ * de l'un à l'autre en tournant, comme les cotes du contour.
+ *
+ * Un sommet sans retrait connu (`NaN`) est une branche qui ne porte pas de
+ * ligne de rive : le trait prend celui de l'autre sur toute sa longueur plutôt
+ * que de s'arrêter, parce que sur le terrain la rive d'une rue fait bien le
+ * tour du coin quand elle croise une sortie de garage. Aucun retrait connu du
+ * tout, et il n'y a pas de rive à prolonger : rien n'est posé.
+ *
+ * De quel côté est « l'intérieur » n'est pas déduit d'un sens de rotation
+ * supposé : le contour tourne dans le sens que lui donne le tri des branches
+ * par azimut, et la perpendiculaire de `pathFrames` en hérite. On le **mesure**
+ * donc contre la normale sortante que le morceau publie — même règle que la
+ * bordure de trottoir, qui borde le même contour.
+ *
+ * @param {Object} buffer Tampon `createProfileBuffer()`.
+ * @param {Object} options
+ * @param {Array<{x:number,z:number}>} options.points Morceau de contour.
+ * @param {ArrayLike<number>} options.decks Cote par sommet.
+ * @param {ArrayLike<number>} options.insets Retrait par sommet, en mètres.
+ * @param {{x:number,z:number}} options.outward Normale sortante du morceau.
+ * @param {number[]} options.color
+ * @param {number} [options.width]
+ * @param {number} [options.lift]
+ * @returns {number} traits posés.
+ */
+export function appendMarkingBorder(
+  buffer,
+  { points, decks, insets, outward, color, width = MARKING_WIDTH_M, lift = 0 }
+) {
+  const rows = points?.length ?? 0;
+  if (rows < 2 || !decks || !insets || !outward || !color) return 0;
+
+  let known = NaN;
+  for (const inset of insets) {
+    if (!Number.isFinite(inset)) continue;
+    known = inset;
+    break;
+  }
+  if (!Number.isFinite(known)) return 0;
+
+  const frames = pathFrames(points);
+  // Mesurée au milieu du morceau : la perpendiculaire est une rotation fixe de
+  // la tangente, donc elle reste du même côté d'un bout à l'autre, mais un
+  // sommet d'extrémité a une tangente moins franche qu'un sommet d'arc.
+  const middle = Math.floor(rows / 2);
+  const inward =
+    frames[middle * 4 + 2] * outward.x + frames[middle * 4 + 3] * outward.z > 0 ? -1 : 1;
+
+  // L'axe du trait, décalé sommet par sommet. On repasse ensuite par
+  // `appendMarkingLine` sur cette polyligne-là plutôt que d'émettre les
+  // quadrilatères ici : le sens des faces est alors celui de tout le reste du
+  // marquage, sans rien à mesurer de plus.
+  const path = [];
+  const platform = [];
+  let distance = 0;
+  for (let i = 0; i < rows; i++) {
+    const shift = inward * (Number.isFinite(insets[i]) ? insets[i] : known);
+    const x = points[i].x + frames[i * 4 + 2] * shift;
+    const z = points[i].z + frames[i * 4 + 3] * shift;
+    if (i > 0) distance += Math.hypot(x - path[i - 1].x, z - path[i - 1].z);
+    path.push({ x, z, distance });
+    platform.push(decks[i]);
+  }
+
+  return appendMarkingLine(buffer, {
+    path,
+    decks: platform,
+    offset: 0,
+    color,
+    width,
+    lift,
+    dash: 0,
+  });
 }
 
 /**

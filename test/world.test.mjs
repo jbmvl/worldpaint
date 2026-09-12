@@ -87,7 +87,9 @@ import {
 import {
   appendCrossing,
   appendMarkingBar,
+  appendMarkingBorder,
   approachLane,
+  borderInsetFor,
   appendMarkingLine,
   markingLinesFor,
   sectionAtDistance,
@@ -97,6 +99,7 @@ import {
   glyphRing,
   MARKING_BAR_M,
   MARKING_DASH_M,
+  MARKING_EDGE_INSET_M,
   MARKING_SYMBOL_SPACING_M,
   MARKING_WIDTH_M,
   MOUTH_CROSSING_M,
@@ -11952,4 +11955,142 @@ test('le revêtement urbain : une matière qui tient dans le canal, et une seule
   const here = streetSurfaceAt(0, 0, undefined, 'oceanic');
   assert.ok(Array.isArray(here.kerb) && here.kerb.length === 3);
   assert.ok(Array.isArray(here.joint) && Array.isArray(here.gutter));
+});
+
+// --- La rive traverse le carrefour ------------------------------------------
+
+test('la rive fait le tour du carrefour : un trait par côté, posé sur la dalle', () => {
+  const area = junctionArea(teeJunction());
+  // Trois bouches, donc trois morceaux de contour entre elles : les « trois
+  // bords » d'un carrefour en T.
+  assert.equal(area.edges.length, 3, 'un T a trois côtés entre ses trois bouches');
+
+  const inset = MARKING_EDGE_INSET_M + MARKING_WIDTH_M / 2; // accotement nul ici
+  for (const edge of area.edges) {
+    const buffer = createProfileBuffer();
+    const laid = appendMarkingBorder(buffer, {
+      points: edge.points,
+      decks: edge.points.map(() => 0),
+      insets: edge.points.map(() => inset),
+      outward: edge.outward,
+      color: [1, 1, 1],
+    });
+    assert.equal(laid, edge.points.length - 1, 'un trait continu par intervalle du contour');
+
+    // L'axe du trait au premier sommet : le milieu de ses deux bords.
+    const axis = {
+      x: (buffer.positions[0] + buffer.positions[3]) / 2,
+      z: (buffer.positions[2] + buffer.positions[5]) / 2,
+    };
+    const start = edge.points[0];
+    close(Math.hypot(axis.x - start.x, axis.z - start.z), inset, 1e-6, 'en retrait de la rive');
+    // Du bon côté : le trait est peint sur la chaussée du carrefour, pas sur ce
+    // qui la borde. C'est tout ce que la mesure contre `outward` doit garantir.
+    // Le point est repoussé de deux centimètres vers le nœud avant le test :
+    // la pointe du trait affleure la section d'une bouche, et la dépasse de
+    // quelques millimètres là où le contour tourne juste avant — c'est le
+    // recouvrement du raccord avec la ligne du ruban, pas une fuite. Deux
+    // centimètres ne rattrapent pas un trait posé du mauvais côté, qui serait
+    // dehors de près d'un mètre.
+    for (let i = 0; i < buffer.positions.length / 3; i++) {
+      const x = buffer.positions[i * 3];
+      const z = buffer.positions[i * 3 + 2];
+      const reach = Math.hypot(x - area.x, z - area.z) || 1;
+      assert.ok(
+        pointInOutline(
+          area.outline,
+          x + ((area.x - x) / reach) * 0.02,
+          z + ((area.z - z) / reach) * 0.02
+        ),
+        'chaque sommet du trait est sur la dalle'
+      );
+    }
+  }
+});
+
+test('la rive du carrefour reprend là où celle du ruban s’arrête', () => {
+  const area = junctionArea(teeJunction());
+
+  for (const edge of area.edges) {
+    const mouth = area.mouths[edge.from];
+    const spec = defaultTheme.roads.profiles[mouth.profile];
+    const inset = (spec.shoulder || 0) + MARKING_EDGE_INSET_M + MARKING_WIDTH_M / 2;
+
+    const buffer = createProfileBuffer();
+    appendMarkingBorder(buffer, {
+      points: edge.points,
+      decks: edge.points.map(() => 0),
+      insets: edge.points.map(() => inset),
+      outward: edge.outward,
+      color: [1, 1, 1],
+    });
+    const axis = {
+      x: (buffer.positions[0] + buffer.positions[3]) / 2,
+      z: (buffer.positions[2] + buffer.positions[5]) / 2,
+    };
+
+    // Là où le ruban arrête sa ligne de rive droite : `markingLinesFor` compte
+    // depuis l'axe, le contour depuis la rive, et les deux doivent tomber au
+    // même endroit — c'est toute la raison d'être du prolongement.
+    const lines = markingLinesFor(spec, mouth.halfWidth);
+    const offset = -Math.max(...lines.map((line) => line.offset));
+    const p = { x: mouth.direction.z, z: -mouth.direction.x };
+    const end = {
+      x: mouth.centre.x + p.x * offset,
+      z: mouth.centre.z + p.z * offset,
+    };
+
+    // Pas au micron : le raccord quitte la bouche le long de la chaussée, mais
+    // c'est un arc échantillonné, dont la première corde s'écarte un peu de la
+    // tangente. Deux centimètres, sur un trait de douze de large.
+    close(Math.hypot(axis.x - end.x, axis.z - end.z), 0, 0.02, `bouche ${edge.from}`);
+  }
+});
+
+test('une branche non marquée n’interrompt pas la rive de celle qui l’est', () => {
+  const profiles = defaultTheme.roads.profiles;
+  assert.ok(Number.isFinite(borderInsetFor(profiles.minor)), 'une rue porte une rive');
+  assert.ok(Number.isNaN(borderInsetFor(profiles.lane)), 'une desserte n’en porte pas');
+  assert.ok(Number.isNaN(borderInsetFor(undefined)), 'ni une classe inconnue');
+
+  // Un morceau de contour entre une rue marquée et une desserte qui ne l'est
+  // pas : la ligne de la rue fait le tour du coin, à retrait constant.
+  const points = [
+    { x: 0, z: 0 },
+    { x: 4, z: 0 },
+    { x: 8, z: 0 },
+  ];
+  const inset = borderInsetFor(profiles.minor);
+  const buffer = createProfileBuffer();
+  const laid = appendMarkingBorder(buffer, {
+    points,
+    decks: [0, 0, 0],
+    insets: [inset, inset, NaN],
+    outward: { x: 0, z: -1 },
+    color: [1, 1, 1],
+  });
+
+  assert.equal(laid, 2, 'le morceau est tracé de bout en bout');
+  // Tous les sommets du même côté du contour, et tous au même retrait : le
+  // trait ne s'évase pas là où la desserte prend le relais.
+  for (let i = 0; i < buffer.positions.length / 3; i++) {
+    const z = buffer.positions[i * 3 + 2];
+    close(Math.abs(z), inset, MARKING_WIDTH_M / 2 + 1e-9, `sommet ${i} au retrait`);
+    assert.ok(z > 0, 'du côté opposé à la normale sortante');
+  }
+
+  // Deux branches nues : rien à prolonger.
+  const bare = createProfileBuffer();
+  assert.equal(
+    appendMarkingBorder(bare, {
+      points,
+      decks: [0, 0, 0],
+      insets: [NaN, NaN, NaN],
+      outward: { x: 0, z: -1 },
+      color: [1, 1, 1],
+    }),
+    0,
+    'un carrefour de dessertes reste nu'
+  );
+  assert.equal(bare.positions.length, 0, 'et rien n’est écrit');
 });

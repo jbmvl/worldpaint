@@ -443,7 +443,9 @@ export function junctionArea(junction, options = {}) {
   // Chaque coin va de la rive droite d'une bouche à la rive gauche de la
   // suivante, en passant par l'arc : les deux extrémités sont **exactement**
   // les sommets où les rives de tronçon s'arrêtent, si bien que la rive de la
-  // chaussée est continue d'un bout à l'autre du réseau.
+  // chaussée est continue d'un bout à l'autre du réseau. C'est ce qui permet à
+  // deux choses de la suivre sans se concerter : la bordure de trottoir
+  // (`streetLayer`) et la ligne de rive peinte (`roadMarkings`).
   const edges = corner.map((piece) => {
     const points = [piece.right, ...piece.arc, mouths[piece.to].left];
     const middle = points[Math.floor(points.length / 2)];
