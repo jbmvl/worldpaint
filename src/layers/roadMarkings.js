@@ -330,6 +330,21 @@ export function appendMarkingLine(
 }
 
 /**
+ * Retrait d'une ligne de rive au-delà de la rive, en mètres — la même cote que
+ * `markingLinesFor` compte depuis l'axe, retournée par l'autre bout.
+ *
+ * Sert à prolonger la rive le long d'un contour de carrefour, qui n'a pas
+ * d'axe : c'est ce qui garantit que les deux tombent au même endroit.
+ *
+ * @param {Object} spec Profil du thème.
+ * @returns {number} `NaN` si la classe ne porte pas de ligne de rive.
+ */
+export function borderInsetFor(spec) {
+  if (!spec?.edgeLines) return NaN;
+  return (spec.shoulder || 0) + MARKING_EDGE_INSET_M + MARKING_WIDTH_M / 2;
+}
+
+/**
  * Une ligne continue posée le long d'un **morceau de contour**, en retrait vers
  * l'intérieur.
  *
@@ -343,6 +358,12 @@ export function appendMarkingLine(
  * Le retrait est donné **par sommet** : les deux bouts du morceau appartiennent
  * à deux branches, qui peuvent ne pas avoir le même accotement. Le trait passe
  * de l'un à l'autre en tournant, comme les cotes du contour.
+ *
+ * Un sommet sans retrait connu (`NaN`) est une branche qui ne porte pas de
+ * ligne de rive : le trait prend celui de l'autre sur toute sa longueur plutôt
+ * que de s'arrêter, parce que sur le terrain la rive d'une rue fait bien le
+ * tour du coin quand elle croise une sortie de garage. Aucun retrait connu du
+ * tout, et il n'y a pas de rive à prolonger : rien n'est posé.
  *
  * De quel côté est « l'intérieur » n'est pas déduit d'un sens de rotation
  * supposé : le contour tourne dans le sens que lui donne le tri des branches
@@ -368,6 +389,14 @@ export function appendMarkingBorder(
   const rows = points?.length ?? 0;
   if (rows < 2 || !decks || !insets || !outward || !color) return 0;
 
+  let known = NaN;
+  for (const inset of insets) {
+    if (!Number.isFinite(inset)) continue;
+    known = inset;
+    break;
+  }
+  if (!Number.isFinite(known)) return 0;
+
   const frames = pathFrames(points);
   // Mesurée au milieu du morceau : la perpendiculaire est une rotation fixe de
   // la tangente, donc elle reste du même côté d'un bout à l'autre, mais un
@@ -384,7 +413,7 @@ export function appendMarkingBorder(
   const platform = [];
   let distance = 0;
   for (let i = 0; i < rows; i++) {
-    const shift = inward * (insets[i] || 0);
+    const shift = inward * (Number.isFinite(insets[i]) ? insets[i] : known);
     const x = points[i].x + frames[i * 4 + 2] * shift;
     const z = points[i].z + frames[i * 4 + 3] * shift;
     if (i > 0) distance += Math.hypot(x - path[i - 1].x, z - path[i - 1].z);

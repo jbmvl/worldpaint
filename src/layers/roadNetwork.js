@@ -90,15 +90,14 @@ import {
 } from './roadJunctions.js';
 import {
   MARKING_BAR_M,
-  MARKING_EDGE_INSET_M,
   MARKING_LIFT_M,
-  MARKING_WIDTH_M,
   MOUTH_CROSSING_M,
   approachLane,
   appendMarkingBar,
   appendMarkingBorder,
   appendMarkingLine,
   appendMarkingSymbols,
+  borderInsetFor,
   cycleGlyph,
   markingLinesFor,
   sectionAtDistance,
@@ -1107,9 +1106,15 @@ export class RoadNetwork {
    * quatre pour une croisée — dont les extrémités sont **exactement** les
    * sommets où les rives de ruban s'arrêtent (`junctionArea.edges`).
    *
-   * Une seule condition, et c'est celle du thème : les deux branches que le
-   * morceau relie portent une ligne de rive. Faire le tour d'une desserte qui
-   * n'en porte pas y peindrait une ligne qu'aucune des deux rues n'a.
+   * Une seule condition, et c'est celle du thème : **au moins une** des deux
+   * branches que le morceau relie porte une ligne de rive. Une rue qui débouche
+   * sur une sortie de garage garde donc sa rive jusqu'au bout du coin, au lieu
+   * de la voir s'interrompre parce que la desserte d'en face n'est pas marquée
+   * — sur le terrain, la ligne de la rue fait bien le tour. Le morceau prend
+   * alors le retrait de la branche marquée sur toute sa longueur : le retrait
+   * de l'autre n'existe pas, il n'y a rien à interpoler. Un carrefour dont
+   * aucune branche n'est marquée — trois allées de service, deux chemins —
+   * reste nu, et c'est le bon résultat.
    *
    * Rien d'autre n'est repris au carrefour — ni axe, ni ligne d'effet à égalité
    * de largeur : voir l'en-tête de `roadMarkings`.
@@ -1118,18 +1123,10 @@ export class RoadNetwork {
    */
   _appendJunctionEdges(buffer, area, decks, centre, paint) {
     const profiles = this.theme.roads.profiles;
-    // Le retrait est celui d'une rive de ruban (`markingLinesFor`), compté
-    // depuis la rive et non depuis l'axe : c'est ce qui fait que les deux se
-    // rejoignent. `NaN` marque une branche sans ligne de rive.
-    const insets = area.mouths.map((mouth) => {
-      const spec = profiles[mouth.profile];
-      if (!spec?.edgeLines) return NaN;
-      return (spec.shoulder || 0) + MARKING_EDGE_INSET_M + MARKING_WIDTH_M / 2;
-    });
+    const insets = area.mouths.map((mouth) => borderInsetFor(profiles[mouth.profile]));
 
     let laid = 0;
     for (const edge of area.edges || []) {
-      if (!Number.isFinite(insets[edge.from]) || !Number.isFinite(insets[edge.to])) continue;
       laid += appendMarkingBorder(buffer, {
         points: edge.points,
         // Mêmes cotes et même interpolation que la dalle qu'elle borde : un

@@ -89,6 +89,7 @@ import {
   appendMarkingBar,
   appendMarkingBorder,
   approachLane,
+  borderInsetFor,
   appendMarkingLine,
   markingLinesFor,
   sectionAtDistance,
@@ -11488,4 +11489,52 @@ test('la rive du carrefour reprend là où celle du ruban s’arrête', () => {
     // tangente. Deux centimètres, sur un trait de douze de large.
     close(Math.hypot(axis.x - end.x, axis.z - end.z), 0, 0.02, `bouche ${edge.from}`);
   }
+});
+
+test('une branche non marquée n’interrompt pas la rive de celle qui l’est', () => {
+  const profiles = defaultTheme.roads.profiles;
+  assert.ok(Number.isFinite(borderInsetFor(profiles.minor)), 'une rue porte une rive');
+  assert.ok(Number.isNaN(borderInsetFor(profiles.lane)), 'une desserte n’en porte pas');
+  assert.ok(Number.isNaN(borderInsetFor(undefined)), 'ni une classe inconnue');
+
+  // Un morceau de contour entre une rue marquée et une desserte qui ne l'est
+  // pas : la ligne de la rue fait le tour du coin, à retrait constant.
+  const points = [
+    { x: 0, z: 0 },
+    { x: 4, z: 0 },
+    { x: 8, z: 0 },
+  ];
+  const inset = borderInsetFor(profiles.minor);
+  const buffer = createProfileBuffer();
+  const laid = appendMarkingBorder(buffer, {
+    points,
+    decks: [0, 0, 0],
+    insets: [inset, inset, NaN],
+    outward: { x: 0, z: -1 },
+    color: [1, 1, 1],
+  });
+
+  assert.equal(laid, 2, 'le morceau est tracé de bout en bout');
+  // Tous les sommets du même côté du contour, et tous au même retrait : le
+  // trait ne s'évase pas là où la desserte prend le relais.
+  for (let i = 0; i < buffer.positions.length / 3; i++) {
+    const z = buffer.positions[i * 3 + 2];
+    close(Math.abs(z), inset, MARKING_WIDTH_M / 2 + 1e-9, `sommet ${i} au retrait`);
+    assert.ok(z > 0, 'du côté opposé à la normale sortante');
+  }
+
+  // Deux branches nues : rien à prolonger.
+  const bare = createProfileBuffer();
+  assert.equal(
+    appendMarkingBorder(bare, {
+      points,
+      decks: [0, 0, 0],
+      insets: [NaN, NaN, NaN],
+      outward: { x: 0, z: -1 },
+      color: [1, 1, 1],
+    }),
+    0,
+    'un carrefour de dessertes reste nu'
+  );
+  assert.equal(bare.positions.length, 0, 'et rien n’est écrit');
 });
