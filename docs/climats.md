@@ -94,13 +94,14 @@ Quatre règles, et elles sont tenues par des tests :
 ### 3. Les matières du sol — `SURFACE_LOOK`
 
 Une table, une ligne par matière : `albedo` donne la couleur du sol au loin,
-`grassHeight`/`grassDensity`/`grassTint`/`bushes` la strate basse. Les deux sont
+`grassHeight`/`grassDensity`/`grassTint`/`bushes` la strate basse,
+`standingWater` la part d'eau libre entre les touffes. Les deux premiers sont
 indispensables : une lande de la bonne couleur couverte d'une prairie de
 quatre-vingts centimètres reste une prairie.
 
 La colonne `climate` dit quel lavage climatique s'applique, ou `null`. Les
-matières qui viennent d'un relevé OSM précis — lande, maquis, marais, pelouse
-d'altitude, éboulis, dalle, sable — n'en prennent aucun : elles disent déjà leur
+matières qui viennent d'un relevé OSM précis — lande, maquis, marais, pré salé,
+vasière, pelouse d'altitude, éboulis, dalle, glace, sable — n'en prennent aucun : elles disent déjà leur
 pays, les teinter une seconde fois le dirait deux fois.
 
 **Une exception, et une seule** : le revêtement urbain (`pavement`) ne vient pas
@@ -170,10 +171,12 @@ laquelle tout le reste du thème a été réglé.
   sont des images par seconde, pas du goût ;
 - la liste des cultures (`CROP_KINDS`) et celle des matières
   (`SURFACE_KINDS`) : leur ordre est un **encodage** peint dans une image et
-  relu par le shader. Ajouter une lavande demande en plus un motif d'atlas.
-  Ajouter une matière, en revanche, ne demande qu'une ligne dans la liste et
-  une dans `SURFACE_LOOK` — c'est ce que la fusion des deux cartes a rendu
-  possible ;
+  relu par le shader. Ajouter une culture semée en vrac demande en plus un
+  motif d'atlas (`cropLayer`) ; une culture semée en rangs (`ROW_CROPS`,
+  comme la vigne ou la lavande) n'en a pas besoin, c'est `furnitureLayer` qui
+  la balaie. Ajouter une matière, en revanche, ne demande qu'une ligne dans la
+  liste et une dans `SURFACE_LOOK` — c'est ce que la fusion des deux cartes a
+  rendu possible ;
 - l'assolement par climat (`CROP_MIXES`, dans `layers/furniturePlacement.js`),
   le traitement des limites de parcelle (`BOUNDARY_MIXES`, même fichier),
   l'essence des alignements de route (`ALIGNMENT_SPECIES_MIXES`, dans
@@ -181,8 +184,8 @@ laquelle tout le reste du thème a été réglé.
   règles de plausibilité, pas des couleurs. Elles se discutent quand même — la
   trame agraire, en particulier, se lit de bien plus loin qu'une teinte ;
 - les réglages de surface du sol (`macroScaleM`, `macroStrength`,
-  `edgeNoiseScaleM`, `blendWidth`, dans `TERRAIN_LOOK`) : ce sont des
-  paramètres de matière, et ils valent pour tous les climats à la fois.
+  `edgeWarpM`, dans `TERRAIN_LOOK`) : ce sont des paramètres de matière, et ils
+  valent pour tous les climats à la fois.
 
 ## Vérifier
 

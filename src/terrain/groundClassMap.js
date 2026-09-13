@@ -17,8 +17,8 @@
  * méritait donc un canal, une « couverture » n'avait qu'une teinte et
  * empruntait la texture d'une voisine. Depuis qu'il n'y a plus qu'un grain pour
  * tout le décor, la hiérarchie n'a plus d'objet — il n'y a qu'une liste de
- * quatorze matières, et on en ajoute une en ajoutant une ligne (trente et une
- * tiennent dans le canal).
+ * matières, et on en ajoute une en ajoutant une ligne (trente et une tiennent
+ * dans le canal).
  *
  * Ce que la fusion fait gagner, au-delà du nom :
  *
@@ -101,6 +101,31 @@ import {
 } from '../layers/furniturePlacement.js';
 import { URBAN_GREEN_LANDUSE } from '../layers/settlement.js';
 import { defaultTheme } from '../themes/default.js';
+import {
+  CLASS_SOURCE_LAYERS,
+  WATER_SOURCE_LAYER,
+  WATERWAY_SOURCE_LAYER,
+  waterSurfaceFor,
+  waterwayStyleFor,
+  surfaceFor,
+  classPolygons,
+} from './surfaceClassification.js';
+
+/*
+ * Ce que dit une entité de tuile reste lisible depuis ici : la carte du sol est
+ * une seule adresse pour ses lecteurs, même si la lecture du vectoriel vit à
+ * côté (`surfaceClassification.js`).
+ */
+export {
+  CLASS_SOURCE_LAYERS,
+  WATER_SOURCE_LAYER,
+  WATERWAY_SOURCE_LAYER,
+  BARE_WATERWAY_CLASSES,
+  waterSurfaceFor,
+  waterwayStyleFor,
+  surfaceFor,
+  classPolygons,
+} from './surfaceClassification.js';
 
 /**
  * Côté du carré couvert, en mètres. Il doit dépasser la portée du sol de
@@ -113,56 +138,6 @@ export const CLASS_PIXELS = 1536;
 /** Déplacement de l'observateur avant re-rasterisation, en mètres. */
 export const CLASS_REBUILD_M = 400;
 
-/**
- * Couches source lues, dans l'ordre de dessin (les dernières recouvrent).
- *
- * La couche `park` n'en fait **pas** partie, et c'est un piège de nommage : au
- * schéma OpenMapTiles elle ne contient aucun parc de ville, mais
- * `boundary=protected_area`, `boundary=national_park`, `leisure=nature_reserve`
- * — des périmètres de protection, souvent immenses (Natura 2000 couvre presque
- * tout le littoral français, la Camargue, les Landes). Un périmètre juridique
- * ne dit rien de la matière du sol. Le parc de ville, lui, arrive bien :
- * `leisure=park`, `garden`, `village_green`, `recreation_ground` et
- * `golf_course` sont rangés par le schéma dans `landcover`, classe `grass`.
- */
-export const CLASS_SOURCE_LAYERS = ['landuse', 'landcover'];
-
-/** Couches source de l'eau, dans les tuiles vectorielles. */
-export const WATER_SOURCE_LAYER = 'water';
-export const WATERWAY_SOURCE_LAYER = 'waterway';
-
-/** Vrai si une surface d'eau compte (les piscines produisent des confettis bleus à cette échelle). */
-export function isDrawableWater(properties = {}) {
-  if (properties.brunnel === 'tunnel') return false;
-  return properties.class !== 'swimming_pool';
-}
-
-/**
- * Cours d'eau qui ne portent **pas** de ripisylve.
- *
- * Un fossé et un drain sont des traits creusés — en bord de champ, en bord de
- * route — et non des cours d'eau bordés d'arbres. Leur donner l'ourlet de sept
- * mètres plantait une bande de bois de quinze mètres, arbres compris, le long
- * de la moindre chaussée assainie : c'est l'origine des bosquets qui suivaient
- * les routes. Ils gardent leur lit, qui est un fait de la carte.
- */
-export const BARE_WATERWAY_CLASSES = new Set(['ditch', 'drain']);
-
-/**
- * Ce qu'un cours d'eau linéaire pose au sol, ou `null` s'il ne pose rien : sa
- * demi-largeur, et s'il est bordé d'arbres. Un cours d'eau souterrain n'a pas
- * de surface ; un cours d'eau intermittent, la plupart du temps, non plus.
- * Fonction pure.
- *
- * @returns {{halfWidth:number, riparian:boolean}|null}
- */
-export function waterwayStyleFor(properties = {}, waterways = defaultTheme.water.waterways) {
-  if (properties.brunnel === 'tunnel') return null;
-  if (properties.intermittent === 1 || properties.intermittent === true) return null;
-  const width = waterways[properties.class];
-  if (!width) return null;
-  return { halfWidth: width / 2, riparian: !BARE_WATERWAY_CLASSES.has(properties.class) };
-}
 
 /**
  * Distance à laquelle `woodEdgeAt` va chercher le dehors, en mètres. Plus
@@ -215,10 +190,14 @@ export const SURFACE_KINDS = [
   'scrub',
   'alpine',
   'wetland',
-  // Le minéral.
+  // Les sols où l'eau affleure, entre le marais et le minéral qu'ils côtoient.
+  'saltmarsh',
+  'mud',
+  // Le minéral, et la glace qui le borde en montagne.
   'bare',
   'scree',
   'rock',
+  'ice',
   'sand',
   // Les deux matières à part : l'une est déduite, l'autre remplace tout.
   'pavement',
@@ -237,8 +216,7 @@ export const SETTLED_GRASS = 0.66;
 /**
  * Pas entre deux identifiants dans le canal rouge.
  *
- * Huit, ce qui plafonne à trente et une matières — la liste en compte
- * quatorze, et cette marge est le point de la fusion : on peut désormais en
+ * Huit, ce qui plafonne à trente et une matières : la marge permet d'en
  * ajouter sans rien réorganiser. Le pas ne sert qu'à laisser à l'arrondi de
  * lecture de quoi encaisser le passage par un canevas 8 bits ; quatre niveaux
  * de part et d'autre suffisent, la valeur écrite étant exacte.
@@ -252,7 +230,7 @@ export const SURFACE_ID_STEP = 8;
  * distinguer un texel peint d'un texel inventé : **le canevas 2D lisse le bord
  * de ses tracés, et rien ne le désactive**. Un pixel de bord porte donc
  * `alpha x A + (1 - alpha) x B` — le mélange de deux identifiants voisins, relu
- * par `surfaceFromId` comme un **troisième**. Entre le bois (4) et l'eau (14),
+ * par `surfaceFromId` comme un **troisième**. Entre le bois (4) et l'eau (17),
  * c'est-à-dire tout le long de chaque cours d'eau, quatre-vingt-dix pour cent
  * de la rampe tombe sur une matière qui n'a jamais été peinte là : du sable,
  * de la roche, du trottoir, une lande. C'est ce qui semait des taches claires
@@ -266,19 +244,21 @@ export const SURFACE_ID_STEP = 8;
  * n'est aligné**. Pour qu'un pixel de bord se fasse passer pour la matière C,
  * il faudrait que son rouge tombe sur celui de C *et* que son bleu tombe en
  * même temps sur la signature de C — or le bleu se mélange linéairement, et la
- * table est faite pour qu'il rate. L'écart minimal mesuré est de 8, très
+ * table est faite pour qu'il rate. L'écart minimal mesuré est de 7, très
  * au-dessus de l'arrondi du canevas ; un test le vérifie en balayant toutes les
  * couvertures possibles de toutes les paires.
  *
  * D'où les valeurs, qui n'ont aucun sens à l'unité : elles ont été cherchées
  * pour maximiser cet écart, sous la seule contrainte que le fond (identifiant
- * zéro) garde la signature zéro. En ajouter une pour une quinzième matière
+ * zéro) garde la signature zéro. En ajouter une pour une matière de plus
  * demande de relancer cette recherche — le test dit sans ambiguïté si la valeur
  * choisie tient.
  *
  * Indexée par l'identifiant lui-même, fond compris.
  */
-export const SURFACE_SIGNATURES = [0, 68, 163, 75, 226, 152, 251, 48, 12, 255, 176, 2, 225, 167, 49];
+export const SURFACE_SIGNATURES = [
+  0, 157, 181, 240, 110, 31, 197, 255, 11, 69, 250, 26, 192, 138, 2, 211, 158, 80,
+];
 
 /** Signature d'un identifiant de matière. Fonction pure. */
 export function surfaceSignature(id) {
@@ -301,9 +281,9 @@ export const PAVEMENT_ID = SURFACE_KINDS.indexOf('pavement') + 1;
  * basse ait besoin de faire : une lande et un maquis sont rases et clairsemés,
  * mais c'est bien de l'herbe qui y pousse, et leur ligne de `SURFACE_LOOK` dit
  * ensuite de quelle taille et de quelle teinte. Ce qui n'est pas là ne porte
- * rien : ni le minéral, ni la dalle, ni l'eau.
+ * rien : ni le minéral, ni la vasière, ni la glace, ni la dalle, ni l'eau.
  */
-export const VEGETAL_SURFACES = new Set(['grass', 'heath', 'scrub', 'alpine', 'wetland']);
+export const VEGETAL_SURFACES = new Set(['grass', 'heath', 'scrub', 'alpine', 'wetland', 'saltmarsh']);
 
 /** Identifiant d'une matière, ou 0 si on ne la connaît pas. Fonction pure. */
 export function surfaceId(kind) {
@@ -452,79 +432,6 @@ export function repairSurfaceEdges(data, pixels = CLASS_PIXELS) {
 
   return repaired;
 }
-
-/**
- * Matière d'une entité surfacique, ou `null` si elle n'en décrit aucune.
- *
- * C'était deux fonctions — `groundClassFor` disait la matière grossière,
- * `coverFor` la précisait quand elle savait — et ce découpage était le
- * symptôme : `landcover.class = 'sand'` devait d'abord se déclarer « sol nu »
- * pour ensuite se corriger en « sable ». Il dit maintenant « sable » du premier
- * coup.
- *
- * `landuse=residential` ne prend pas `bare` : c'est un périmètre administratif
- * où le sol réel est surtout de l'herbe (pelouses, jardins), le minéral ne
- * couvrant que la chaussée et ses abords (composés par `streetLayer`). D'où
- * `settled`, qui était un mélange peint dans un canal et qui est désormais une
- * matière comme les autres. Une zone d'activité (industrielle, commerciale,
- * ferroviaire, carrière), elle, reste `bare` : réellement minérale partout.
- *
- * La couche `park` n'est pas lue, et c'est un piège de nommage : au schéma
- * OpenMapTiles elle ne porte aucun parc de ville mais des périmètres de
- * protection, souvent immenses (voir `CLASS_SOURCE_LAYERS`). Un périmètre
- * juridique ne dit rien de la matière du sol.
- *
- * Fonction pure.
- */
-export function surfaceFor(sourceLayer, properties = {}) {
-  const klass = properties.class;
-  const subclass = properties.subclass;
-
-  if (sourceLayer === 'landcover') {
-    if (klass === 'wood') return 'wood';
-    if (klass === 'farmland') return 'farmland';
-    if (klass === 'wetland') return 'wetland';
-    if (klass === 'sand') return 'sand';
-    // L'éboulis et la dalle sont deux paysages : une pente de cailloux qui
-    // bouge, un plateau de pierre. Les confondre était le défaut du gris unique.
-    if (klass === 'rock') return subclass === 'scree' ? 'scree' : 'rock';
-    if (klass === 'grass') {
-      if (subclass === 'heath') return 'heath';
-      if (subclass === 'scrub' || subclass === 'shrubbery') return 'scrub';
-      // `fell` est la pelouse d'altitude au-dessus de la limite forestière ;
-      // `tundra` en est l'équivalent boréal.
-      if (subclass === 'fell' || subclass === 'tundra') return 'alpine';
-      return 'grass';
-    }
-    // La glace n'a pas encore de matière à elle : elle passe pour du minéral.
-    if (klass === 'ice' || subclass === 'glacier' || subclass === 'ice_shelf') return 'bare';
-    return null;
-  }
-
-  if (sourceLayer === 'landuse') {
-    if (klass === 'cemetery' || klass === 'pitch' || klass === 'playground' || klass === 'stadium') {
-      return 'grass';
-    }
-    if (klass === 'residential' || klass === 'suburb' || klass === 'neighbourhood' || klass === 'quarter') {
-      return 'settled';
-    }
-    if (klass === 'industrial' || klass === 'commercial' || klass === 'retail' || klass === 'railway' || klass === 'quarry') {
-      return 'bare';
-    }
-    return null;
-  }
-
-  return null;
-}
-
-/** Anneaux d'une géométrie surfacique. */
-export function classPolygons(geometry) {
-  if (!geometry) return [];
-  if (geometry.type === 'Polygon') return [geometry.coordinates];
-  if (geometry.type === 'MultiPolygon') return geometry.coordinates;
-  return [];
-}
-
 function createCanvas(width, height) {
   if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(width, height);
   return Object.assign(document.createElement('canvas'), { width, height });
@@ -672,7 +579,7 @@ export class GroundClassMap {
    * si la donnée se tait.
    *
    * Ces quatre-là n'ont plus rien de fondamental — ce sont quatre matières
-   * parmi quatorze — mais elles restent les seules que la strate basse
+   * parmi d'autres — mais elles restent les seules que la strate basse
    * distingue : l'herbe pousse, la litière pousse à moitié, le champ selon la
    * saison, le minéral pas. La forme est conservée pour ses lecteurs
    * (`grassGreenFor`, `woodEdgeAt`).
@@ -1059,8 +966,13 @@ export class GroundClassMap {
     // fleuve). On reprend donc, après coup, tout ce qui a été peint sous
     // l'emprise réelle de l'eau — en sol nu, et non en effaçant : une case
     // effacée est « non classée », dont le repli est l'herbe pleine.
+    //
+    // L'eau permanente est peinte après l'intermittente : un étang qui
+    // s'assèche ne recouvre pas celui qui ne s'assèche jamais.
+    const permanent = [];
     source.forEachFeature(WATER_SOURCE_LAYER, tiles, (geometry, properties) => {
-      if (!isDrawableWater(properties)) return;
+      const kind = waterSurfaceFor(properties);
+      if (!kind) return;
       for (const rings of classPolygons(geometry)) {
         if (!Array.isArray(rings) || rings.length === 0) continue;
 
@@ -1078,16 +990,16 @@ export class GroundClassMap {
           path.closePath();
         }
 
-        // Le lit d'un grand cours d'eau est un polygone (`water`), pas
-        // seulement le trait `waterway`, dont la largeur de thème décrit un
-        // ruisseau et pas un fleuve. C'est de là que le shader de terrain tire
-        // le plan d'eau lui-même.
-        ctx.save();
-        ctx.fillStyle = surfaceFill('water');
+        if (kind === 'water') {
+          permanent.push(path);
+          continue;
+        }
+        ctx.fillStyle = surfaceFill(kind);
         ctx.fill(path, 'evenodd');
-        ctx.restore();
       }
     });
+    ctx.fillStyle = surfaceFill('water');
+    for (const path of permanent) ctx.fill(path, 'evenodd');
 
     this.count = painted;
     this.revision++;

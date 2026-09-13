@@ -56,7 +56,7 @@ devient alpin.
 
 ## Le sol
 
-Quatorze matières, décrites en détail dans `docs/surfaces.md`. En résumé :
+Les matières du sol, décrites en détail dans `docs/surfaces.md`. En résumé :
 
 | Matière | Condition |
 | --- | --- |
@@ -65,12 +65,15 @@ Quatorze matières, décrites en détail dans `docs/surfaces.md`. En résumé :
 | `farmland` | `landcover class=farmland` |
 | `wood` | `landcover class=wood`, et la ripisylve des cours d'eau |
 | `heath`, `scrub`, `alpine` | `class=grass` + sous-classe heath / scrub·shrubbery / fell·tundra |
-| `wetland` | `landcover class=wetland` |
-| `bare` | `landuse` industrial/commercial/retail/railway/quarry, et la glace |
+| `wetland` | `landcover class=wetland` ; 30 % d'eau libre en flaques |
+| `saltmarsh` | `class=wetland` + sous-classe `saltmarsh` ; 15 % d'eau libre |
+| `mud` | polygones `water` intermittents, `class=wetland` + `tidalflat` ; 35 % d'eau libre |
+| `bare` | `landuse` industrial/commercial/retail/railway/quarry/construction/parking/garages/bus_station/dam |
 | `scree`, `rock` | `class=rock` selon la sous-classe `scree` |
+| `ice` | `landcover class=ice` (glacier, ice_shelf) |
 | `sand` | `landcover class=sand` (beach, sand, dune) |
 | `pavement` | **déduit** : bâti ∩ disque urbain, moins le vert urbain |
-| `water` | polygones `water`, traits `waterway` élargis |
+| `water` | polygones `water` permanents, traits `waterway` élargis |
 
 Le climat ne lave que quatre d'entre elles (`grass`, `farmland`, `bare`,
 `pavement`) : une lande, un maquis ou un éboulis disent déjà leur pays.
@@ -95,8 +98,8 @@ du pays (`CROP_MIXES`) :
 | glacial | labour, et rien d'autre |
 
 Deux sous-classes court-circuitent le tirage : `vineyard` donne une vigne,
-`orchard`/`plant_nursery` un verger. Ces deux-là sont semées **en rangs**
-(`ROW_CROPS`), les autres en vrac.
+`orchard`/`plant_nursery` un verger. Ces deux-là, et la lavande avec elles,
+sont semées **en rangs** (`ROW_CROPS`), les autres en vrac.
 
 ---
 
@@ -159,8 +162,8 @@ ourlet.
 ### Les arbustes hors des bois
 
 Semés d'après la matière du sol seule (colonne `bushes` de `SURFACE_LOOK`) :
-maquis 0,9, lande 0,3, marais 0,08, sable 0,05, pelouse d'altitude 0,04, dalle
-0,02, éboulis 0. C'est ce qui fait exister un maquis — ni prairie ni forêt, mais
+maquis 0,9, lande 0,3, pré salé 0,12, marais 0,08, sable 0,05, pelouse
+d'altitude 0,04, dalle 0,02 ; éboulis, vasière et glace 0. C'est ce qui fait exister un maquis — ni prairie ni forêt, mais
 un fourré bas.
 
 ### L'herbe (`groundCover`)
@@ -185,9 +188,11 @@ Empreintes relevées (`building`), extrudées à leur hauteur réelle. Une empre
 est d'abord **rabotée** de ce qu'elle pose sur une chaussée : le tracé de la
 voie et le contour du bâti viennent de deux relevés que rien ne réconcilie.
 
-Le toit est construit sur le rectangle englobant orienté de l'empreinte ; une
-empreinte trop mal remplie (moins de 62 % du rectangle) retombe sur le toit
-plat.
+Le toit tient sa forme (axe du faîtage, pente) du rectangle englobant orienté
+de l'empreinte, mais n'est posé que sur l'empreinte elle-même : pas de débord.
+Au-dessus d'un mur où le toit n'est pas à l'égout — pignon, flanc d'une aile —
+un panneau vertical ferme le comble. Une empreinte trop mal remplie (moins de
+62 % du rectangle) retombe sur le toit plat.
 
 ### La couleur : un village, pas une maison
 
@@ -250,14 +255,25 @@ Six profils, tirés de `transportation.class` :
 | major | primary, secondary, et les bretelles | 8,5 m |
 | minor | tertiary, unclassified, residential | 5 m |
 | lane | service, pedestrian | 3,6 m |
-| track | track | 3 m, terre, ornières |
-| path | path | 1,4 m, terre |
+| track | track | 3 m, terre, ornières, bord rongé |
+| path | path | 1,4 m, terre, bord rongé |
 | cycleway | cycleway, `bicycle=designated` | 2,2 m, avec pictogramme au sol |
+
+Les deux profils en terre sont les seuls dont le **bord est rongé** : un chemin
+n'a pas de rive, sa largeur est celle que les pas ont tassée, et elle varie d'un
+mètre à l'autre. Un masque à part (`createRoadEdgeCanvas`) mange le ruban sur
+quelques décimètres depuis chaque bord, par plaques, et le matériau tranche au
+seuil — un texel est du chemin ou du terrain. Une chaussée revêtue garde son
+bord franc : le ronger la ferait lire comme un chemin. Le bout libre d'un chemin
+est rongé de la même façon, et recule d'un mètre : posé sur une route, il n'en
+déborde pas.
 
 Les morceaux livrés par les tuiles (coupés à chaque frontière et à chaque
 changement d'attribut) sont **recousus en graphe** avant qu'on en fasse quoi que
 ce soit, faute de quoi le marquage, le mobilier et les haies redémarrent à
 chaque couture. Les carrefours sont des **surfaces**, pas des points.
+Un chemin de terre n'entre pas dans le carrefour d'une route revêtue : il passe
+par-dessus, marquage compris. Une piste cyclable, revêtue, en reste une branche.
 
 `brunnel` décide de l'ouvrage : un pont reçoit tablier, piles, culées et
 parapets ; un tunnel, ses têtes.
@@ -453,15 +469,16 @@ Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
    `place` (3 km pour une `city`, 1,2 km pour une `town`), seule chose que la
    donnée dise du rang d'une agglomération. Une banlieue loin du point nommé
    n'est pas pavée.
-4. **La glace n'a pas de matière** : un glacier est peint comme du gravier gris.
-5. **Un marais n'a pas d'eau** entre ses touffes, et toutes ses sous-classes
-   sont confondues — alors qu'un `swamp` est un marais boisé.
-6. `natural=shingle`, `mud`, `rock`, `cliff` **n'arrivent jamais** jusqu'à nous :
+4. **Un marais n'a qu'une forme** : les tuiles servies ne transmettent presque
+   jamais la sous-classe d'une zone humide (seul `saltmarsh` a été vu). Un
+   marais boisé est peint comme une roselière, sans arbres. Ses flaques ne sont
+   vues que du shader : l'herbe y pousse comme sur la terre ferme.
+5. `natural=shingle`, `mud`, `rock`, `cliff` **n'arrivent jamais** jusqu'à nous :
    le tableau de correspondance d'OpenMapTiles est fermé et ne les retient pas.
-7. **Un cours d'eau plus étroit qu'un texel** (2,7 m) ne peut pas être rasterisé
+6. **Un cours d'eau plus étroit qu'un texel** (2,7 m) ne peut pas être rasterisé
    proprement : le drain (1,6 m) et le fossé (1,2 m) se rendent en pointillé.
    Voir `docs/surfaces.md`.
-8. Le dispatch des points d'intérêt au-delà des trois premières lignes
+7. Le dispatch des points d'intérêt au-delà des trois premières lignes
    (abribus, fontaine, lavoir) suit le schéma `poi.yaml` **sans avoir été
    vérifié** sur les tuiles réellement servies.
 

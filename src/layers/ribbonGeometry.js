@@ -61,6 +61,48 @@ export function resamplePath(points, spacing) {
 }
 
 /**
+ * La portion d'une plage de ruban comprise entre deux distances, plate-forme
+ * comprise, avec une ligne à chacune des distances `stops` qui y tombent. Les
+ * distances restent celles du tracé : la texture ne glisse pas. Fonction pure.
+ *
+ * @param {Array<{x:number,z:number,distance:number}>} path
+ * @param {Float32Array|number[]} platform Une cote par ligne.
+ * @param {number} from
+ * @param {number} to
+ * @param {number[]} [stops]
+ * @returns {{path:Array<{x:number,z:number,distance:number}>, platform:Float32Array}|null}
+ */
+export function slicePath(path, platform, from, to, stops = []) {
+  const rows = path?.length ?? 0;
+  if (rows < 2) return null;
+  const low = Math.max(from, path[0].distance);
+  const high = Math.min(to, path[rows - 1].distance);
+  if (!(high > low)) return null;
+
+  const wanted = [low, high, ...stops.filter((d) => d > low && d < high)];
+  for (const point of path) {
+    if (point.distance > low && point.distance < high) wanted.push(point.distance);
+  }
+  wanted.sort((a, b) => a - b);
+
+  const points = [];
+  const decks = [];
+  let row = 0;
+  for (const distance of wanted) {
+    if (points.length > 0 && distance - points[points.length - 1].distance < 1e-6) continue;
+    while (row < rows - 2 && path[row + 1].distance < distance) row++;
+    const a = path[row];
+    const b = path[row + 1];
+    const span = b.distance - a.distance;
+    const t = span > 0 ? Math.min(1, Math.max(0, (distance - a.distance) / span)) : 0;
+    points.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, distance });
+    decks.push(platform[row] + (platform[row + 1] - platform[row]) * t);
+  }
+
+  return points.length >= 2 ? { path: points, platform: Float32Array.from(decks) } : null;
+}
+
+/**
  * Moyenne glissante sur l'altitude, colonne par colonne.
  * @param {Float32Array|number[]} heights Altitudes, `rows × cols` en ligne d'abord.
  * @param {number} rows
@@ -221,9 +263,14 @@ export function levelRow(path, r, frames, halfWidth, sampleElevation) {
   };
 }
 
-/** Accumulateur de géométrie : plusieurs rubans finissent dans un seul maillage. */
-export function createRibbonBuffer() {
-  return { positions: [], uvs: [], indices: [] };
+/**
+ * Accumulateur de géométrie : plusieurs rubans finissent dans un seul maillage.
+ * `tips` y ajoute l'attribut des bouts rongés (voir `appendRibbon`).
+ */
+export function createRibbonBuffer({ tips = false } = {}) {
+  const buffer = { positions: [], uvs: [], indices: [] };
+  if (tips) buffer.tips = [];
+  return buffer;
 }
 
 /** Accumulateur de sections balayées : positions et couleurs, pas d'UV. */
@@ -249,6 +296,11 @@ export function createProfileBuffer() {
  *        calculées et lissées, une par ligne — évite de refaire l'échantillonnage
  *        quand l'appelant en a besoin par ailleurs (talus, glissières). Posées
  *        telles quelles : c'est la cote que tout le reste lit.
+ * @param {{head:boolean, tail:boolean}} [options.tips] Bouts rongés, écrits
+ *        dans l'accumulateur qui les porte : le masque du bord y est relu en
+ *        travers sur une demi-largeur depuis le bout. Une ligne doit exister à
+ *        cette distance (`slicePath`), sans quoi la morsure s'étire jusqu'à la
+ *        suivante.
  * @returns {boolean} vrai si de la géométrie a été produite.
  */
 export function appendRibbon(
@@ -263,6 +315,7 @@ export function appendRibbon(
     smoothRadius = 2,
     level = true,
     platform = null,
+    tips = null,
   }
 ) {
   const rows = path?.length ?? 0;
@@ -304,11 +357,29 @@ export function appendRibbon(
   // chaussée.
   if (!platform) smoothColumns(heights, rows, columns, smoothRadius);
 
+  const width = halfWidth * 2;
+  const start = path[0].distance;
+  const end = path[rows - 1].distance;
+  // Phase du bruit prise sur la position quantifiée du bout, et ramenée à un
+  // cycle : deux chemins ne s'y rongent pas pareil.
+  const phase = (point) =>
+    (((Math.round(point.x) * 7.31 + Math.round(point.z) * 3.17) % textureLength) + textureLength) %
+    textureLength;
+  const headPhase = phase(path[0]);
+  const tailPhase = phase(path[rows - 1]);
+
   for (let r = 0; r < rows; r++) {
+    const fromHead = tips?.head ? path[r].distance - start : Infinity;
+    const fromTail = tips?.tail ? end - path[r].distance : Infinity;
+    // Zéro au-delà d'une demi-largeur du bout : le milieu du masque, qui est plein.
+    const bite = Math.max(0, 0.5 - Math.min(fromHead, fromTail) / width);
+    const tipPhase = fromHead <= fromTail ? headPhase : tailPhase;
     for (let c = 0; c < columns; c++) {
       const index = r * columns + c;
+      const u = c / (columns - 1);
       buffer.positions.push(points[index * 2], heights[index], points[index * 2 + 1]);
-      buffer.uvs.push(c / (columns - 1), path[r].distance / textureLength);
+      buffer.uvs.push(u, path[r].distance / textureLength);
+      buffer.tips?.push(bite, (u * width + tipPhase) / textureLength);
     }
   }
 
@@ -465,6 +536,15 @@ export function appendProfile(
  * @param {number[]} options.colorFoot Couleur du pied, RVB linéaire.
  * @param {number[]} options.colorTop  Couleur de l'arase.
  * @param {number} [options.minHeight] En deçà, la ligne est ignorée.
+ * @param {Float32Array|number[]} [options.scaleAcross] Facteur de l'épaisseur,
+ *        une valeur par ligne ; le couronnement garde son débord.
+ * @param {Float32Array|number[]} [options.lateralJitter] Décalage de `offset`,
+ *        une valeur par ligne, en mètres.
+ * @param {Float32Array|number[]} [options.batter] Fruit, une valeur par ligne :
+ *        écart du pied sous l'arase, en mètres, signé dans le repère de
+ *        `offset`. Seul le parement de ce côté s'incline.
+ * @param {boolean} [options.flat] Triangles désolidarisés : ombrage plat, même
+ *        dans un maillage lissé ailleurs.
  * @returns {boolean} vrai si de la géométrie a été produite.
  */
 export function appendVariableWall(
@@ -479,6 +559,10 @@ export function appendVariableWall(
     colorFoot,
     colorTop,
     minHeight = 0.12,
+    scaleAcross = null,
+    lateralJitter = null,
+    batter = null,
+    flat = false,
   }
 ) {
   const rows = path?.length ?? 0;
@@ -490,20 +574,30 @@ export function appendVariableWall(
 
   const frames = pathFrames(path);
   const start = buffer.positions.length / 3;
-  const half = thickness / 2;
-  // Six sommets par ligne en anneau : pied, arase débordante, dessus, retour.
-  const across = [-half, -half - coping, -half - coping, half + coping, half + coping, half];
+  const firstIndex = buffer.indices.length;
   const colors = [colorFoot, colorTop, colorTop, colorTop, colorTop, colorFoot];
-  const cols = across.length;
+  const cols = colors.length;
 
   for (let r = 0; r < rows; r++) {
     const px = frames[r * 4 + 2];
     const pz = frames[r * 4 + 3];
-    const ax = path[r].x + px * offset;
-    const az = path[r].z + pz * offset;
+    const off = offset + (lateralJitter ? lateralJitter[r] : 0);
+    const ax = path[r].x + px * off;
+    const az = path[r].z + pz * off;
     // Hauteur plancher : évite les faces dégénérées au milieu du balayage.
     const foot = base[r];
     const crest = Math.max(top[r], foot + minHeight);
+    const half = (thickness / 2) * (scaleAcross ? scaleAcross[r] : 1);
+    const lean = batter ? batter[r] : 0;
+    // Six sommets par ligne en anneau : pied, arase débordante, dessus, retour.
+    const across = [
+      -half + Math.min(lean, 0),
+      -half - coping,
+      -half - coping,
+      half + coping,
+      half + coping,
+      half + Math.max(lean, 0),
+    ];
     const ups = [foot, crest - coping, crest, crest, crest - coping, foot];
 
     for (let c = 0; c < cols; c++) {
@@ -529,7 +623,24 @@ export function appendVariableWall(
     buffer.indices.push(lastRow, lastRow + c, lastRow + c + 1);
   }
 
+  if (flat) unweld(buffer, start, firstIndex);
   return true;
+}
+
+/**
+ * Donne à chaque triangle écrit depuis `vertex` et `index` ses propres
+ * sommets : `computeVertexNormals` n'a plus rien à moyenner, et ce morceau est
+ * ombré à plat dans un maillage lissé ailleurs.
+ */
+function unweld(buffer, vertex, index) {
+  const positions = buffer.positions.splice(vertex * 3);
+  const colors = buffer.colors.splice(vertex * 3);
+  for (let i = index; i < buffer.indices.length; i++) {
+    const v = (buffer.indices[i] - vertex) * 3;
+    buffer.positions.push(positions[v], positions[v + 1], positions[v + 2]);
+    buffer.colors.push(colors[v], colors[v + 1], colors[v + 2]);
+    buffer.indices[i] = vertex + i - index;
+  }
 }
 
 /**
@@ -558,16 +669,9 @@ export function appendVariableWall(
  *
  * ## Le grain low poly
  *
- * Une section constante balayée reste un tube extrudé, quelle que soit sa
- * forme — c'est le défaut que `hedgeGeometry` décrit pour la haie, et une
- * paroi rocheuse y est encore plus sensible : la roche se lit à ses écailles.
- * Toutes les cotes de la section sont donc données **par ligne**, tirées au
- * sol par l'appelant, sans corrélation d'une ligne à la suivante
- * (`hedgeGeometry.facetJitter`, même recette) : l'arase avance et recule, la
- * cassure monte, descend et saille, le pied ondule. Associé à un maillage non
- * lissé (`FLAT_SHADED_LINEAR_KINDS`), chaque quadrilatère devient deux
- * facettes franches, et l'espacement des arêtes est celui du
- * ré-échantillonnage du tracé — pas un réglage d'ici.
+ * Toutes les cotes de la section sont données **par ligne**, tirées par
+ * l'appelant (`facetJitter`) : l'arase avance et recule, la cassure monte,
+ * descend et saille, le pied ondule. Une paroi rocheuse se lit à ses écailles.
  *
  * @param {Object} buffer  Résultat de `createProfileBuffer()`.
  * @param {Object} options
@@ -693,9 +797,9 @@ export function appendRockCut(
  * Convertit un accumulateur de sections en `BufferGeometry` colorée.
  *
  * @param {boolean} [options.flat] Normales par face plutôt que moyennées
- *        (nécessaire pour qu'un tracé facetté, `hedgeGeometry.facetJitter`,
- *        garde ses arêtes visibles ; `false` pour l'ombrage lissé attendu par
- *        muret, glissière, remblai, câble).
+ *        (nécessaire pour qu'un tracé facetté, `facetJitter`, garde ses
+ *        arêtes visibles ; `false` pour l'ombrage lissé attendu par
+ *        glissière, câble).
  * @returns {Object|null} `null` si rien n'a été accumulé.
  */
 export function toColoredGeometry(THREE, buffer, { flat = false } = {}) {
@@ -720,6 +824,7 @@ export function toGeometry(THREE, buffer) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(buffer.positions, 3));
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(buffer.uvs, 2));
+  if (buffer.tips) geometry.setAttribute('tipUv', new THREE.Float32BufferAttribute(buffer.tips, 2));
   geometry.setIndex(buffer.indices);
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();

@@ -68,7 +68,7 @@ Il y en avait **deux**, une de poids et une d'identifiants, et la frontière
 n'était pas une idée : une « matière » avait sa texture dessinée et méritait un
 canal, une « couverture » n'avait qu'une teinte et empruntait la texture d'une
 voisine. Depuis qu'une surface est une couleur — ni motif, ni grain —, il n'y a plus
-qu'une liste de quatorze matières — et trente et une tiennent dans le canal, ce
+qu'une liste de matières — et trente et une tiennent dans le canal, ce
 qui est le point : on en ajoute une en ajoutant une ligne.
 
 Une parcelle porte donc une part de chaque matière, et *une* culture **ou**
@@ -86,11 +86,13 @@ Une parcelle porte donc une part de chaque matière, et *une* culture **ou**
 | `grass` + `heath` | herbe | `heath` | rase, dense, brune, 0,3 arbuste |
 | `grass` + `scrub`, `shrubbery` | herbe | `scrub` | peu d'herbe, 0,9 arbuste |
 | `grass` + `fell`, `tundra` | herbe | `alpine` | rase, verte |
-| `wetland` | herbe | `wetland` | **la plus haute du décor** (×1,4), roselière |
+| `wetland` | herbe | `wetland` | **la plus haute du décor** (×1,4), roselière, 30 % d'eau libre |
+| `wetland` + `saltmarsh` | herbe | `saltmarsh` | rase, gris-vert, 0,12 arbuste, 15 % d'eau libre |
+| `wetland` + `tidalflat` | sol nu | `mud` | rien, 35 % d'eau libre |
 | `rock` + `scree` | sol nu | `scree` | quasi rien |
 | `rock` (autre) | sol nu | `rock` | quasi rien |
 | `sand` | sol nu | `sand` | quasi rien (0,08) |
-| `ice`, `subclass` `glacier`/`ice_shelf` | sol nu | **aucune** | — |
+| `ice`, `subclass` `glacier`/`ice_shelf` | sol nu | `ice` | rien |
 
 ### `landuse` — qui occupe le sol
 
@@ -98,7 +100,7 @@ Une parcelle porte donc une part de chaque matière, et *une* culture **ou**
 | --- | --- |
 | `residential`, `suburb`, `neighbourhood`, `quarter` | 66 % herbe, le reste minéral |
 | `cemetery`, `pitch`, `playground`, `stadium` | herbe |
-| `industrial`, `commercial`, `retail`, `railway`, `quarry` | sol nu |
+| `industrial`, `commercial`, `retail`, `railway`, `quarry`, `construction`, `parking`, `garages`, `bus_station`, `dam` | sol nu |
 | tout le reste | **rien** (voir « ce qui n'est pas lu ») |
 
 `landuse` ne pose jamais de couverture : il dit qui occupe le sol, pas de quoi
@@ -174,7 +176,9 @@ L'eau n'est pas une surface posée sur le terrain : le sol *est* l'eau là où l
 carte le dit (couverture `water`). Deux entrées :
 
 - les **polygones** de la couche `water` (lacs, fleuves larges, mer), sauf les
-  piscines et les tunnels ;
+  piscines et les tunnels. Un polygone `intermittent` — un étang qui s'assèche,
+  une lagune de Camargue — est peint en vasière (`mud`), et l'eau permanente
+  est peinte après lui ;
 - les **traits** de la couche `waterway`, élargis par la largeur de thème
   (`WATERWAY_CLASSES` : rivière 9 m, canal 6 m, ruisseau 3 m, drain 1,6 m,
   fossé 1,2 m). Un cours d'eau souterrain ou intermittent n'a pas de surface.
@@ -194,6 +198,28 @@ carte le dit (couverture `water`). Deux entrées :
   leur donner une largeur plancher d'un texel sont deux décisions d'auteur,
   pas des correctifs.
 
+### L'eau qui affleure — marais, pré salé, vasière
+
+Trois matières portent une part d'eau libre (`standingWater`, dans
+`SURFACE_LOOK`) : le marais 30 %, la vasière 35 %, le pré salé 15 %. Le shader
+de terrain y découpe des flaques — un bruit tranché à cette part — qui prennent
+le rendu de l'eau, rides et rive comprises.
+
+Le bruit est la différence de deux lectures de la texture macro, à deux échelles
+incommensurables (`poolScaleM`, et 1,618 fois plus), axes permutés : symétrique
+autour de sa moyenne, sans période lisible. Étiré d'un facteur 1,25, la part
+mouillée mesurée sur ce bruit suit la part demandée à six points près entre 5 et
+90 %.
+
+Ce que ce mécanisme ne fait pas :
+
+- **seul le shader voit les flaques.** La carte des matières ne les porte pas :
+  l'herbe, les roseaux et les arbustes poussent sur toute la matière, eau
+  comprise ;
+- **les flaques rétrécissent avec la distance.** Le mip lisse le bruit, ses
+  écarts se resserrent autour de la moyenne, et le seuil d'une part inférieure
+  à la moitié n'est plus atteint : un marais très lointain est peint sans eau.
+
 ## Ce qui n'est pas lu, et ce que ça donne à l'écran
 
 Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
@@ -206,28 +232,28 @@ Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
    sable — et la grille climatique **s'arrête à l'Europe** : hors fenêtre, le
    Sahara est peint avec l'albédo d'herbe d'une prairie normande.
    Un désert n'existe donc aujourd'hui que là où OSM a tracé un `natural=sand`.
-2. **La glace n'a pas de matière.** `ice`, `glacier`, `ice_shelf` tombent en
-   sol nu : un glacier est peint comme du gravier gris. `SURFACE_KINDS` n'a ni
-   `snow` ni `ice` — et depuis la fusion, les ajouter n'est plus qu'une ligne
-   dans la liste et une dans `SURFACE_LOOK`.
-3. **Un marais n'a pas d'eau.** La couverture `wetland` existe, avec sa couleur
-   et sa roselière haute, mais rien ne rend le **film d'eau** entre les touffes.
-   Toutes les sous-classes (`bog`, `marsh`, `swamp`, `saltmarsh`, `fen`…) sont
-   confondues, alors que le `swamp` est un marais **boisé**.
-4. **Une plage n'a pas de laisse de mer.** Le sable est géré de bout en bout
+2. **Un marais n'a qu'une forme.** Les tuiles servies ne transmettent presque
+   jamais la sous-classe d'une zone humide. Relevé au z14 sur la Camargue, la
+   Brière, le lac de Grand-Lieu, la baie de l'Aiguillon, le delta du Danube, le
+   Pripiat, les Everglades, les mangroves de Floride, les Sundarbans et le Flow
+   Country : tout arrive en `wetland`, sauf quelques `saltmarsh` en Camargue.
+   Un marais boisé (`swamp`, `mangrove`) est donc peint comme une roselière,
+   sans arbres, et une saline (`saltern`) comme un marais.
+3. **Une plage n'a pas de laisse de mer.** Le sable est géré de bout en bout
    (matière, couleur, quasi-absence d'herbe), et il est mouillé au contact de
    l'eau (voir « la rive »), mais cette bande ne tient qu'un carreau : elle ne
    rend pas l'estran d'une grande plage, qui court sur des dizaines de mètres
    — il y faudrait une distance à l'eau que la carte ne porte pas. Rien ne
    distingue non plus la plage, la dune et le sable de désert.
-5. **`landuse` ignoré** : `military`, `school`, `university`, `college`,
-   `kindergarten`, `hospital`, `track`, `dam`. Ils retombent donc sur l'herbe de
-   repli — ce qui est plausible pour une école, moins pour un barrage.
-6. **Aucune couverture ne vient de `landuse`.** Une saline (`salt_pond`), une
+4. **`landuse` en partie ignoré** : `school`, `education`, `university`,
+   `college`, `kindergarten`, `library`, `hospital`, `military`, `theme_park`,
+   `zoo`, `track`. Ce sont des emprises qui mêlent pelouses, bois et bâti :
+   `landcover` y dit ce qui pousse, et là où il se tait c'est l'herbe de repli.
+5. **Aucune couverture ne vient de `landuse`.** Une saline (`salt_pond`), une
    tourbière exploitée ou une piste ne peuvent pas être décrites aujourd'hui.
    `pavement` fait exception et n'en est pas une : elle ne vient d'aucune
    entité, elle est déduite du masque urbain.
-7. **La ville est un disque, pas un contour.** Sa portée se tire d'un point
+6. **La ville est un disque, pas un contour.** Sa portée se tire d'un point
    `place`, seule chose que la donnée dise du rang d'une agglomération : une
    banlieue loin du point nommé n'est pas pavée, et un quartier dense d'un gros
    bourg non plus.
@@ -250,28 +276,50 @@ matières la masquent par le filtrage linéaire de leur carte ; les identifiants
 (culture, couverture) ne le peuvent pas, puisqu'interpoler un identifiant
 inventerait une matière entre deux.
 
-Quatre choses la traitent. La première est dans `groundClassMap.js`, les trois
-autres dans `terrainMaterial.js` :
+Quatre choses la traitent, dans trois fichiers :
 
-1. **Le contour tombe au bon demi-texel** (`repairSurfaceEdges`). Le lissage du
-   canevas est défait après coup, et le seuil de reprise est celui de la
-   couverture : un texel couvert à plus de la moitié par une matière la prend.
-   C'est la seule des quatre qui déplace la limite plutôt que de la déguiser.
-2. **L'appartenance s'interpole, l'identifiant non** (`surfaceAt`). Les quatre
-   carreaux voisins sont lus au plus proche — chacun rend donc la couverture
-   peinte et rien d'autre — et ce sont ces appartenances qu'on mélange. Le
-   sable rejoint l'herbe par une rampe d'un carreau, comme les matières le font
-   déjà ; l'eau suit la même mécanique, sa part étant tenue à part du mélange.
-3. **La frange** (`edgeWarp`, thème `edgeWarpM`). Le sol est lu quelques mètres
-   à côté du point demandé, d'un déplacement continu tiré du bruit de lisière. La limite
-   reste où elle est, au mètre près, mais perd l'angle droit du carreau. Ce
-   n'est pas un flou : c'est la même limite, déformée. L'herbe instanciée fait
-   de même de son côté (`fringeOffset`, dans `groundCover.js`), avec son propre
-   tirage : les deux ne suivent pas la même limite, elles la brouillent sur la
-   même largeur.
+1. **Le contour tombe au bon demi-texel** (`repairSurfaceEdges`, dans
+   `groundClassMap.js`). Le lissage du canevas est défait après coup, et le
+   seuil de reprise est celui de la couverture : un texel couvert à plus de la
+   moitié par une matière la prend. C'est la seule des quatre qui déplace la
+   limite plutôt que de la dessiner autrement.
+2. **L'appartenance s'interpole, l'identifiant non** (`surfaceAt`, dans
+   `terrainMaterial.js`). Chaque texel est d'une matière ou d'une autre — un ou
+   zéro —, et ce sont ces valeurs-là qu'on lisse, jamais l'identifiant. Sur
+   **seize** texels et par une cubique de Catmull-Rom : le champ est C¹, donc
+   son contour n'a plus d'angle — c'est une courbe. Quatre texels et un lissage
+   bilinéaire ne suffisent pas : la dérivée de ce champ-là saute à chaque bord
+   de texel, et les cassures du contour retombent sur la grille. La spline est
+   **interpolante** et non approximante : au centre d'un texel elle rend sa
+   valeur exacte, donc un ruisseau ou un sentier large d'un seul texel survit.
+
+   Ce qu'elle ne fait pas : redresser le trait. Mesuré sur une droite à 30°
+   rasterisée, le contour s'écarte de sa vraie place de 0,25 texel en écart
+   quadratique — 0,23 pour le bilinéaire, 0,17 pour une B-spline. La carte ne
+   dit pas où passe le polygone **dans** un texel, et aucun noyau ne l'invente :
+   ce qui disparaît est l'angle droit, pas l'ondulation. La B-spline la
+   réduirait d'un tiers au prix d'un texel isolé, qu'elle efface (0,44 contre
+   le 0,5 qu'il lui faudrait) — c'est ce qui l'a fait écarter.
+3. **Le contour est tranché, pas fondu** (même fonction). La matière la plus
+   forte l'emporte, sur la largeur d'un pixel d'écran (`fwidth`) : net de près,
+   sans créneler au loin, et sans dégradé de plusieurs mètres entre deux
+   couleurs.
 4. **La rive** (thème `shoreWet`). Le sol au contact de l'eau est mouillé — plus
    sombre, plus saturé, du même film d'eau que la pluie y met. Une berge cesse
    d'être une découpe entre deux couleurs.
+
+L'herbe instanciée, elle, ne lit pas ce contour : chaque maille lit le sol à
+quelques mètres d'elle-même (`fringeOffset`, thème `edgeWarpM`, dans
+`groundCover.js`), et au bord une maille sur deux lit l'autre surface. Ce sont
+les petits points d'une lisière, et ils n'obéissent pas à la peinture.
+
+Ce qui a été essayé et retiré : un **bruit de lisière** qui déplaçait la lecture
+du sol de quelques mètres et repondérait les matières voisines par son grain.
+Il dentelait, il ne courbait pas ; et son champ, plus fin que le pixel d'écran,
+était rendu à sa moyenne par le filtrage bien avant les distances où le carreau
+se voit — une moyenne ne déplace rien, et un grain commun à toutes les matières
+est un facteur commun que la normalisation annule. Le contour ne se brouille
+pas, il se dessine.
 
 Ce qui reste : le contour passe par les centres des carreaux, il ne retrouve pas
 la position exacte du polygone à l'intérieur de l'un d'eux. La couverture

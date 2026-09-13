@@ -24,6 +24,7 @@ import { buildingStyleAt } from './townStyle.js';
 import { orientedBox, roofTriangles, roofRise, ringArea } from './roofGeometry.js';
 import { pointInRing } from './furniturePlacement.js';
 import { clipPolygonOutsideCorridor } from './roadCorridor.js';
+import { walkTopRise } from './streetLayer.js';
 import { Kit } from './furnitureKit.js';
 import { defaultTheme } from '../themes/default.js';
 import { LabelAtlas, pushLabelQuad, labelFontPxForCellHeight, LABEL_PX_PER_M } from '../materials/labelAtlas.js';
@@ -82,6 +83,9 @@ export function buildingPersonalityFor(properties = {}) {
   if (SHOPFRONT_CLASSES.has(klass)) return 'shop';
   return null;
 }
+
+/** Classes brutes de point d'intérêt qui reçoivent un auvent et une terrasse (`appendAwning`, `_appendTerrace`) — la salle déborde sur la rue, une boutique non. */
+const AWNING_CLASSES = new Set(['restaurant', 'bar']);
 
 /** Rang d'une personnalité quand il faut en écarter, petit d'abord (un clocher se voit de loin, une devanture se compte par milliers). */
 export const BUILDING_PERSONALITY_RANK = {
@@ -237,6 +241,38 @@ export function windowGrid(length, height, windows = defaultTheme.windows) {
  * @param {number[]} low  Couleur du bas.
  * @param {number[]} high Couleur du haut.
  */
+/**
+ * Pousse un quadrilatère quelconque (les quatre coins peuvent porter chacun
+ * leur propre hauteur), normale déduite du sens de parcours — `pushPanel` ne
+ * sait faire que du vertical, ce qui ne couvre pas un pan penché comme un
+ * auvent.
+ *
+ * @param {{positions:number[], normals:number[], colors:number[]}} buffer
+ * @param {{x:number,y:number,z:number}} p0
+ * @param {{x:number,y:number,z:number}} p1
+ * @param {{x:number,y:number,z:number}} p2
+ * @param {{x:number,y:number,z:number}} p3
+ * @param {number[]} color
+ */
+export function pushFacetQuad(buffer, p0, p1, p2, p3, color) {
+  const ux = p1.x - p0.x, uy = p1.y - p0.y, uz = p1.z - p0.z;
+  const vx = p2.x - p0.x, vy = p2.y - p0.y, vz = p2.z - p0.z;
+  let nx = uy * vz - uz * vy;
+  let ny = uz * vx - ux * vz;
+  let nz = ux * vy - uy * vx;
+  const len = Math.hypot(nx, ny, nz) || 1;
+  nx /= len;
+  ny /= len;
+  nz /= len;
+  for (const [a, b, c] of [[p0, p1, p2], [p0, p2, p3]]) {
+    for (const p of [a, b, c]) {
+      buffer.positions.push(p.x, p.y, p.z);
+      buffer.normals.push(nx, ny, nz);
+      buffer.colors.push(color[0], color[1], color[2]);
+    }
+  }
+}
+
 export function pushPanel(buffer, a, b, bottom, top, nx, nz, low, high) {
   const corners = [
     [a.x, bottom, a.y, low],
@@ -865,6 +901,86 @@ export function appendShopSignBlade(walls, labels, atlas, a, b, nx, nz, base, mi
   pushLabelQuad(labels, iconOuterBack, iconInnerBack, mountY - iconHalfHeight, mountY + iconHalfHeight, uv);
 }
 
+/**
+ * Auvent d'un restaurant ou d'un bar (`AWNING_CLASSES`) : une retombée en
+ * couleur unie — celle de la devanture — tendue depuis le bas du bandeau
+ * d'enseigne (`appendShopfront` peint le nom juste au-dessus). Un pan mince,
+ * penché vers la rue, fermé par-dessus, par-dessous et sur sa rive avant pour
+ * rester lisible qu'on le voie d'en dessous (le cas courant, un piéton) ou
+ * de plus haut.
+ *
+ * @param {Object} walls Accumulateur de la géométrie opaque.
+ * @param {{x:number,y:number}} a Début du pan de façade.
+ * @param {{x:number,y:number}} b Fin du pan.
+ * @param {number} nx Normale sortante, composante x.
+ * @param {number} nz Normale sortante, composante z.
+ * @param {number} shopfrontTop Cote haute de la devanture (`shopfrontTopFor`).
+ * @param {number[]} color Couleur de la devanture (`look.front`).
+ * @param {Object} [theme] `theme.shopfront`.
+ */
+export function appendAwning(walls, a, b, nx, nz, shopfrontTop, color, theme = defaultTheme.shopfront) {
+  const length = Math.hypot(b.x - a.x, b.y - a.y);
+  const span = length - theme.awningMarginM * 2;
+  if (span <= 0.6) return;
+
+  const ux = (b.x - a.x) / length;
+  const uz = (b.y - a.y) / length;
+  const centre = length / 2;
+  const half = span / 2;
+  const at = (along, lift, y) => ({ x: a.x + ux * along + nx * lift, y, z: a.y + uz * along + nz * lift });
+
+  // Juste sous le bandeau d'enseigne (voir `appendShopfront` : le nom occupe
+  // `[innerY, shopfrontTop]`), penché vers la rue de `awningDropM`.
+  const innerY = shopfrontTop - theme.fasciaHeightM - theme.fasciaGapM;
+  const outerY = innerY - theme.awningDropM;
+
+  const innerLeft = at(centre - half, 0, innerY);
+  const innerRight = at(centre + half, 0, innerY);
+  const outerRight = at(centre + half, theme.awningDepthM, outerY);
+  const outerLeft = at(centre - half, theme.awningDepthM, outerY);
+  const drop = (p) => ({ x: p.x, y: p.y - theme.awningThicknessM, z: p.z });
+  const innerLeftLow = drop(innerLeft);
+  const innerRightLow = drop(innerRight);
+  const outerRightLow = drop(outerRight);
+  const outerLeftLow = drop(outerLeft);
+
+  pushFacetQuad(walls, innerLeft, innerRight, outerRight, outerLeft, color); // dessus
+  pushFacetQuad(walls, outerLeftLow, outerRightLow, innerRightLow, innerLeftLow, color); // dessous
+  pushFacetQuad(walls, outerLeft, outerRight, outerRightLow, outerLeftLow, color); // rive avant
+}
+
+/** Rayon auquel les chaises entourent une table de terrasse, en mètres. */
+const TERRACE_CHAIR_RADIUS_M = 0.55;
+/** Nombre de chaises par table — trois, pas quatre : une table de terrasse fait face à la rue, pas à elle-même. */
+const TERRACE_CHAIR_COUNT = 3;
+
+/**
+ * Une table de terrasse et ses chaises, radialement symétriques — aucune
+ * orientation à leur donner, qu'on les pose au bord d'un trottoir rectiligne
+ * ou d'un angle de rue. Nappée en blanc pour un restaurant, plateau bois nu
+ * pour un bar.
+ *
+ * @param {boolean} dressed Vrai pour un restaurant (table dressée).
+ * @param {Object} colors `theme.furniture.colors`.
+ */
+function buildTerraceKit(dressed, colors) {
+  const kit = new Kit(colors);
+  const legColor = colors.steelDark;
+  const topColor = dressed ? colors.white : colors.wood;
+
+  kit.cylinder({ radiusBottom: 0.03, radiusTop: 0.03, height: 0.72, radial: 8, color: legColor });
+  kit.cylinder({ radiusBottom: 0.34, radiusTop: 0.34, height: 0.04, radial: 12, y: 0.72, color: topColor });
+
+  for (let i = 0; i < TERRACE_CHAIR_COUNT; i++) {
+    const angle = (i / TERRACE_CHAIR_COUNT) * Math.PI * 2;
+    const x = Math.cos(angle) * TERRACE_CHAIR_RADIUS_M;
+    const z = Math.sin(angle) * TERRACE_CHAIR_RADIUS_M;
+    kit.cylinder({ radiusBottom: 0.025, radiusTop: 0.025, height: 0.45, radial: 6, x, z, color: legColor });
+    kit.cylinder({ radiusBottom: 0.19, radiusTop: 0.19, height: 0.04, radial: 10, x, y: 0.45, z, color: legColor });
+  }
+  return kit;
+}
+
 export class BuildingLayer {
   /**
    * @param {Object} options
@@ -1374,20 +1490,29 @@ export class BuildingLayer {
             personalityClass,
             this.theme.shopfront
           );
+
+          // Salle qui déborde sur la rue : auvent coloré à l'enseigne et
+          // terrasse, restaurant comme bar — voir `AWNING_CLASSES`.
+          if (AWNING_CLASSES.has(personalityClass)) {
+            appendAwning(walls, a, b, nx, nz, shopfrontTop, look.front, this.theme.shopfront);
+            this._appendTerrace(walls, a, b, nx, nz, base, minHeight, personalityClass === 'restaurant');
+          }
         }
       }
     }
 
+    // Triangulation par oreilles de l'empreinte, fournie par three : elle porte
+    // le toit-terrasse comme les pans d'un comble. Une empreinte dégénérée la
+    // fait échouer — un bâtiment sans toit vaut mieux qu'une scène sans
+    // bâtiments.
+    let faces = [];
+    try {
+      faces = THREE.ShapeUtils.triangulateShape(ordered, []) || [];
+    } catch (e) {
+      faces = [];
+    }
+
     if (shape === 'flat') {
-      // Toit-terrasse : triangulation par oreilles, fournie par three. Une
-      // empreinte dégénérée la fait échouer — un bâtiment sans toit vaut mieux
-      // qu'une scène sans bâtiments.
-      let faces = [];
-      try {
-        faces = THREE.ShapeUtils.triangulateShape(ordered, []) || [];
-      } catch (e) {
-        faces = [];
-      }
       // Ordre inversé pour la même raison que les murs : la toiture doit
       // regarder le ciel.
       for (const [i0, i1, i2] of faces) {
@@ -1399,9 +1524,9 @@ export class BuildingLayer {
         }
       }
     } else {
-      // Comble : faîtière, croupe ou pyramide, bâti sur le rectangle englobant
-      // orienté de l'empreinte (voir `roofGeometry`).
-      const roof = roofTriangles(box, eaves, shape, roofs);
+      // Comble : faîtière, croupe ou pyramide, posé sur l'empreinte elle-même
+      // (voir `roofGeometry`).
+      const roof = roofTriangles(footprint, faces, box, eaves, shape, roofs);
       for (let i = 0; i < roof.positions.length; i += 3) {
         walls.positions.push(roof.positions[i], roof.positions[i + 1], roof.positions[i + 2]);
         walls.normals.push(roof.normals[i], roof.normals[i + 1], roof.normals[i + 2]);
@@ -1527,6 +1652,51 @@ export class BuildingLayer {
     }
     for (let i = 0; i < kit.normals.length; i++) walls.normals.push(kit.normals[i]);
     for (let i = 0; i < kit.colors.length; i++) walls.colors.push(kit.colors[i]);
+  }
+
+  /**
+   * Terrasse d'un restaurant ou d'un bar : des tables réparties le long du pan
+   * de façade, reculées de `terraceDepthM` — la section entre le mur et la
+   * chaussée, trottoir ou simple espace vide, peu importe : rien n'y borne la
+   * pose que la chaussée elle-même. Une table qui mordrait dessus (moins de
+   * `terraceClearanceM` de dégagement) est sautée plutôt que déplacée, pour
+   * ne pas s'écarter de l'espacement régulier du reste de la rangée.
+   *
+   * Posée à `walkTopRise` au-dessus de l'assise du bâtiment : le dessus d'un
+   * vrai trottoir, pas le terrain nu. Cette couche se reconstruit avant
+   * `StreetLayer` et ne sait donc pas si un trottoir existe réellement à cet
+   * endroit précis (un restaurant isolé en bord de route n'en a pas) ; la
+   * table y flotte alors un peu au-dessus du sol plutôt que de s'enfoncer
+   * dans un trottoir qui, lui, existe.
+   *
+   * @param {Object} walls Accumulateur de la géométrie opaque.
+   * @param {{x:number,y:number}} a Début du pan de façade.
+   * @param {{x:number,y:number}} b Fin du pan.
+   * @param {number} nx Normale sortante, composante x.
+   * @param {number} nz Normale sortante, composante z.
+   * @param {number} base Assise du bâtiment.
+   * @param {number} minHeight Hauteur du dessous (surplomb).
+   * @param {boolean} dressed Vrai pour un restaurant (table dressée).
+   */
+  _appendTerrace(walls, a, b, nx, nz, base, minHeight, dressed) {
+    const theme = this.theme.shopfront;
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    const ux = (b.x - a.x) / length;
+    const uz = (b.y - a.y) / length;
+    const groundY = base + minHeight + walkTopRise(this.theme.streets);
+
+    const count = Math.max(1, Math.round(length / theme.terraceSpacingM));
+    const span = (count - 1) * theme.terraceSpacingM;
+    const start = length / 2 - span / 2;
+    const kit = buildTerraceKit(dressed, this.theme.furniture.colors);
+
+    for (let i = 0; i < count; i++) {
+      const along = start + i * theme.terraceSpacingM;
+      const x = a.x + ux * along + nx * theme.terraceDepthM;
+      const z = a.y + uz * along + nz * theme.terraceDepthM;
+      if (this._roadIndex && this._roadIndex.query(x, z, theme.terraceClearanceM)) continue;
+      this._pushKitAt(walls, kit, x, groundY, z);
+    }
   }
 
   /** (Ré)alimente le maillage des fenêtres allumées. */

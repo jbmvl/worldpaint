@@ -229,6 +229,16 @@ export function kerbProfile({ halfWidth, walkWidth, side, tones }, streets = def
   return side >= 0 ? signed : signed.reverse();
 }
 
+/**
+ * Hauteur du dessus du trottoir au-dessus de la chaussée, côté mur (avant la
+ * contre-pente vers le caniveau) — voir `kerbProfile`. Sert à poser dessus ce
+ * qui n'est pas la voirie elle-même (mobilier de terrasse), sans dupliquer la
+ * section en dur.
+ */
+export function walkTopRise(streets = defaultTheme.streets) {
+  return streets.kerbHeight + 0.004 + streets.walkFall;
+}
+
 /** Décalage et demi-largeur de la bande revêtue, pour l'index publié (l'herbe ne pousse pas au travers du trottoir). */
 export function pavementBand({ halfWidth, walkWidth, side }, streets = defaultTheme.streets) {
   const inner = halfWidth;

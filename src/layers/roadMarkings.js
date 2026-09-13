@@ -63,19 +63,27 @@
  *
  * Ce module refusait tout pictogramme — flèche de rabattement, symbole
  * cycliste — au motif que la donnée ne porte ni nombre de voies ni affectation
- * de voie : en poser serait les inventer. L'argument tient toujours pour la
- * flèche, et il tombe pour le vélo : sur une entité de classe `cycleway`, ce
- * n'est pas *une voie parmi d'autres* qui est cyclable, c'est la chaussée
- * entière. Le pictogramme ne dit alors rien que la donnée ne dise déjà, et
- * sans lui une piste cyclable ne se distingue d'une allée de service que par
- * vingt centimètres de largeur — c'est-à-dire pas du tout.
+ * de voie : en poser serait les inventer. L'argument tombe pour le vélo : sur
+ * une entité de classe `cycleway`, ce n'est pas *une voie parmi d'autres* qui
+ * est cyclable, c'est la chaussée entière. Le pictogramme ne dit alors rien
+ * que la donnée ne dise déjà, et sans lui une piste cyclable ne se distingue
+ * d'une allée de service que par vingt centimètres de largeur — c'est-à-dire
+ * pas du tout.
+ *
+ * Il tombe aussi pour la flèche de sens unique, mais pour une autre raison :
+ * ce n'est pas une voie qu'elle affecte, c'est un sens de circulation que la
+ * donnée porte déjà (`oneway`, lu par `roadGraph.mergeRoadLines` et reporté
+ * chaîne par chaîne). La flèche de rabattement, elle, resterait une
+ * invention — la donnée ne dit toujours pas quelle voie va où — et ce module
+ * n'en pose pas.
  *
  * Un pictogramme est décrit en coordonnées **(le long, en travers)**, en
- * mètres, et posé par `appendMarkingSymbols` : chaque sommet cherche sa
- * section à son abscisse propre, donc le dessin suit la courbe et le devers de
- * la chaussée au lieu d'être une décalcomanie plane. Sa phase se tire de
- * l'abscisse de la chaîne, comme les pointillés : un vélo reste au même
- * endroit du terrain d'une reconstruction à l'autre.
+ * mètres, et posé par `appendMarkingSymbols` (ou `appendMarkingArrows` pour la
+ * flèche, qui n'en pose que là où un sens est affirmé) : chaque sommet cherche
+ * sa section à son abscisse propre, donc le dessin suit la courbe et le
+ * devers de la chaussée au lieu d'être une décalcomanie plane. Sa phase se
+ * tire de l'abscisse de la chaîne, comme les pointillés : un vélo ou une
+ * flèche reste au même endroit du terrain d'une reconstruction à l'autre.
  *
  * Module pur : aucun `three`, testable sous Node.
  */
@@ -611,6 +619,62 @@ export function cycleGlyph() {
 }
 
 /**
+ * La flèche de sens unique, vue de dessus : un chevron et une hampe qui monte
+ * jusqu'à son creux, dans le sens du tracé. Environ 2,4 m, cote courante d'une
+ * flèche de rabattement.
+ *
+ * Les deux ailes sont coupées à l'onglet sur l'axe, et non deux traits qui se
+ * croisent : la pointe est nette, et le bord intérieur du chevron donne
+ * l'endroit exact où la hampe vient buter.
+ *
+ * Symétrique en travers, ce qui permet d'obtenir la flèche de sens contraire
+ * par une simple rotation de 180° (`mirrorDirection`) plutôt que par une
+ * réflexion : une réflexion en `along` seul retournerait les faces vers le
+ * sol, une rotation ne le fait pas.
+ *
+ * @returns {Array<Array<{along:number, across:number}>>} polygones convexes,
+ *          la hampe en premier.
+ */
+export function directionGlyph() {
+  const tip = 1.2;
+  const tail = -1.2;
+  const back = 0.8; // recul des ailes derrière la pointe
+  const spread = 0.4; // demi-ouverture du chevron
+  const wing = 0.14;
+  const length = Math.hypot(back, spread);
+  // Le bord intérieur, parallèle au bord extérieur à une épaisseur d'aile,
+  // recoupe l'axe en retrait de la pointe.
+  const notch = tip - (wing * length) / spread;
+
+  const side = (sign) => {
+    const polygon = [
+      { along: tip, across: 0 },
+      { along: notch, across: 0 },
+      { along: tip - back - (wing * spread) / length, across: sign * (spread - (wing * back) / length) },
+      { along: tip - back, across: sign * spread },
+    ];
+    // Même sens de parcours que `glyphBar` des deux côtés de l'axe.
+    return sign > 0 ? polygon : polygon.reverse();
+  };
+
+  return [
+    glyphBar({ along: tail, across: 0 }, { along: notch, across: 0 }, 0.16), // hampe
+    side(1),
+    side(-1),
+  ].filter((polygon) => polygon.length >= 3);
+}
+
+/**
+ * Le même pictogramme, tourné de 180° : la flèche de sens contraire.
+ *
+ * @param {Array<Array<{along:number, across:number}>>} polygons
+ * @returns {Array<Array<{along:number, across:number}>>}
+ */
+export function mirrorDirection(polygons) {
+  return polygons.map((polygon) => polygon.map((v) => ({ along: -v.along, across: -v.across })));
+}
+
+/**
  * Pose un pictogramme centré sur une abscisse de la plage.
  *
  * Chaque sommet est cherché à **son** abscisse (`sectionAtDistance`) puis
@@ -725,6 +789,96 @@ export function appendMarkingSymbols(
       frames: used,
       at: k * spacing - startDistance,
       polygons,
+      color,
+      lift,
+    });
+  }
+
+  return laid;
+}
+
+/**
+ * Le sens porté à une abscisse donnée, lu sur le tracé où
+ * `roadWorks.resampleOneway` l'a reporté ligne par ligne.
+ *
+ * Une seule ligne suffit : le sens ne varie pas assez vite pour qu'interpoler
+ * entre deux sommets ait un sens, contrairement à la cote ou au décalage.
+ */
+function onewayAt(path, oneway, target) {
+  const rows = path?.length ?? 0;
+  if (!oneway || rows === 0) return 0;
+  for (let i = 1; i < rows; i++) {
+    if (target <= path[i].distance) {
+      const t = (target - path[i - 1].distance) / (path[i].distance - path[i - 1].distance || 1);
+      return t < 0.5 ? oneway[i - 1] : oneway[i];
+    }
+  }
+  return oneway[rows - 1];
+}
+
+/**
+ * Les flèches de sens unique d'une plage dessinable, espacées le long de la
+ * chaîne comme les pictogrammes (`appendMarkingSymbols`) — même phase tirée de
+ * l'abscisse de la chaîne.
+ *
+ * Ce qui diffère : une flèche n'a de sens que là où le sens de circulation est
+ * affirmé (`oneway`), et elle pointe dans ce sens-là, pas dans celui du tracé.
+ * Un tronçon à double sens, ou dont le sens est ambigu (`0`), n'en reçoit
+ * aucune plutôt qu'une flèche inventée.
+ *
+ * @param {Object} buffer
+ * @param {Object} options
+ * @param {Array<{x:number,z:number,distance:number}>} options.path
+ * @param {ArrayLike<number>} options.decks
+ * @param {ArrayLike<number>} [options.frames]
+ * @param {Int8Array|number[]} options.oneway Un sens par ligne de `onewayPath`.
+ * @param {Array<{distance:number}>} [options.onewayPath] Tracé sur lequel
+ *        `oneway` est indexé, quand `path` n'en est qu'une plage (sortie de
+ *        carrefour, tunnel) ; `path` par défaut.
+ * @param {Array<Array<{along:number, across:number}>>} options.forward Flèche
+ *        dans le sens du tracé.
+ * @param {Array<Array<{along:number, across:number}>>} options.backward Flèche
+ *        dans le sens contraire (`mirrorDirection(forward)`).
+ * @param {number[]} options.color
+ * @param {number} [options.spacing]
+ * @param {number} [options.lift]
+ * @param {number} [options.startDistance]
+ * @returns {number} flèches posées.
+ */
+export function appendMarkingArrows(
+  buffer,
+  {
+    path,
+    decks,
+    frames = null,
+    oneway,
+    onewayPath = path,
+    forward,
+    backward,
+    color,
+    spacing = MARKING_SYMBOL_SPACING_M,
+    lift = 0,
+    startDistance = 0,
+  }
+) {
+  const rows = path?.length ?? 0;
+  if (rows < 2 || !decks || !oneway || !(spacing > 0)) return 0;
+  const used = frames || pathFrames(path);
+
+  const first = startDistance + path[0].distance;
+  const last = startDistance + path[rows - 1].distance;
+  let laid = 0;
+
+  for (let k = Math.ceil(first / spacing); k * spacing <= last; k++) {
+    const at = k * spacing - startDistance;
+    const sign = onewayAt(onewayPath, oneway, at);
+    if (!sign) continue;
+    laid += appendMarkingGlyph(buffer, {
+      path,
+      decks,
+      frames: used,
+      at,
+      polygons: sign > 0 ? forward : backward,
       color,
       lift,
     });

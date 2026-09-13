@@ -64,6 +64,13 @@ export const CROSS_SPAN_M = 9;
 export const DASH_SPAN_M = 20;
 
 /**
+ * Distance à laquelle un chat surpris s'échappe, en mètres — assez pour
+ * sortir du champ rapproché, assez peu pour rester une bête de cour et pas
+ * un sprinteur.
+ */
+export const FLEE_SPAN_M = 9;
+
+/**
  * Les conduites, et ce qui les distingue.
  *
  * - `stations` : combien d'arrêts sur le circuit ;
@@ -122,6 +129,23 @@ export const FAUNA_BEHAVIOURS = {
     spanM: DASH_SPAN_M,
     closed: false,
   },
+  /**
+   * La fuite déclenchée par l'approche de l'observateur (voir
+   * `faunaLayer._checkFlee`) : la bête s'échappe droit devant elle, sans
+   * demi-tour, et se fige une fois à l'abri. Comme `dash`, ce n'est pas une
+   * conduite tirée au sort — c'est un événement qui remplace, un temps, la
+   * conduite en cours.
+   */
+  flee: {
+    stations: 2,
+    radiusM: 0,
+    dwellS: [0.05, 0.2],
+    feed: 0,
+    run: true,
+    axial: true,
+    spanM: FLEE_SPAN_M,
+    closed: false,
+  },
 };
 
 /**
@@ -141,6 +165,10 @@ export const FAUNA_REPERTOIRE = {
   boar: ['graze', 'graze', 'amble', 'amble', 'walk'],
   canid: ['sniff', 'sniff', 'walk', 'walk', 'watch', 'run'],
   bear: ['graze', 'amble', 'amble', 'walk', 'watch'],
+  // Un chat passe le plus clair de son temps à guetter, immobile — il ne
+  // broute pas et n'a pas de pré à parcourir.
+  cat: ['watch', 'watch', 'watch', 'sniff', 'amble'],
+  dog: ['sniff', 'sniff', 'walk', 'watch', 'amble'],
 };
 
 /** Conduites de repli, pour une famille qu'on ne connaîtrait pas. */
@@ -365,6 +393,38 @@ export function buildCircuit({
     offset: closed ? randomAt(x, z, 223) * Math.max(1, period) : 0,
     period: Math.max(0.1, period),
   };
+}
+
+/**
+ * Trace la fuite d'une bête surprise : elle part de sa position courante et
+ * s'échappe en ligne droite, à l'opposé de ce qui l'a fait fuir.
+ *
+ * Construit sur `buildCircuit` en l'ancrant à mi-chemin de la fuite : la
+ * station de départ (`side: -1`) retombe exactement sur `x, z`, celle
+ * d'arrivée (`side: 1`) à `FLEE_SPAN_M` de là — voir la géométrie axiale de
+ * `buildCircuit`.
+ *
+ * @param {Object} options
+ * @param {number} options.x Position actuelle de la bête.
+ * @param {number} options.z Position actuelle de la bête.
+ * @param {{x:number,z:number}} options.away Direction de fuite, normalisée.
+ * @param {number} options.walkMS Allure de marche de l'espèce (inutilisée : `flee` court).
+ * @param {number} options.runMS Allure vive de l'espèce.
+ * @param {Function} options.sampleY `(x, z) => altitude`.
+ * @returns {Object|null} Circuit ouvert, voir `buildCircuit`.
+ */
+export function buildFleeCircuit({ x, z, away, walkMS, runMS, sampleY }) {
+  const half = FLEE_SPAN_M / 2;
+  return buildCircuit({
+    behaviour: 'flee',
+    x: x + away.x * half,
+    z: z + away.z * half,
+    walkMS,
+    runMS,
+    sampleY,
+    crossAxis: away,
+    spanM: half,
+  });
 }
 
 /** Repli en boucle dans [0, span[, sans le saut que `%` fait sur un négatif. */

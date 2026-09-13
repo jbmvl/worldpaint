@@ -391,8 +391,14 @@ export function cropFor(properties = {}, variant = 0, climate = null) {
   return pickShare((climate && CROP_MIXES[climate]) || DEFAULT_CROP_MIX, variant);
 }
 
-/** Cultures semées en rangs visibles, donc balayées et non semées en vrac. */
-export const ROW_CROPS = new Set(['vineyard', 'orchard']);
+/**
+ * Cultures semées en rangs visibles, donc balayées et non semées en vrac.
+ *
+ * La lavande y est pour la même raison que la vigne : de loin c'est une
+ * teinte (`cropAlbedo`), de près ce sont des lignes de petites haies, pas un
+ * semis dru — c'est le rang qui la fait reconnaître, pas le buisson isolé.
+ */
+export const ROW_CROPS = new Set(['vineyard', 'orchard', 'lavender']);
 
 /**
  * Les cultures, dans l'ordre de leur identifiant (`indice + 1`, zéro = aucune
@@ -1037,6 +1043,17 @@ export function ringAreaMeters(ring) {
   return Math.abs(sum / 2);
 }
 
+/** Centroïde des sommets d'un anneau — pas celui de sa surface. Fonction pure. */
+export function ringCentroid(ring) {
+  let x = 0;
+  let z = 0;
+  for (const p of ring) {
+    x += p.x;
+    z += p.z;
+  }
+  return { x: x / ring.length, z: z / ring.length };
+}
+
 /** Test d'appartenance à un anneau, par lancer de rayon. Fonction pure. */
 export function pointInRing(ring, x, z) {
   let inside = false;
@@ -1064,7 +1081,7 @@ export function pointInRing(ring, x, z) {
  *        ensemble).
  * @param {{x:number,z:number}|null} [options.focus] Point de regroupement
  *        imposé, au lieu du tirage. Sert à adosser un groupe à quelque chose
- *        — une route, en pratique (voir `FurnitureLayer._roadwardFocus`).
+ *        — une route, en pratique (voir `furniture/parcelFauna.js`).
  *        Le tirage du point libre a lieu de toute façon, pour que la suite du
  *        semis soit la même avec et sans : une parcelle ne doit pas changer de
  *        semis selon qu'une route passe à côté.

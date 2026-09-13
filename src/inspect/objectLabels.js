@@ -136,6 +136,7 @@ export const LABEL_FURNITURE = {
   hedge: 'haie',
   lowHedge: 'haie basse',
   vineRow: 'rang de vigne',
+  lavenderRow: 'rang de lavande',
   dryStoneWall: 'muret de pierre',
   rockCut: 'falaise de déblai',
   fillWall: 'mur de soutènement',
@@ -166,6 +167,8 @@ export const LABEL_FAUNA = {
   fox: 'renard',
   wolf: 'loup',
   bear: 'ours',
+  cat: 'chat',
+  dog: 'chien',
 };
 
 /** Objets qu'on ne nomme pas : ils sont l'ambiance, pas le décor. */
@@ -213,7 +216,7 @@ const OSM_MESH_EXACT = new Set(['buildings', 'water', 'railway', 'streets', 'bri
 
 /**
  * Formes du catalogue mobilier posées d'après un point d'intérêt ou une
- * emprise `landuse` réels (voir `FurnitureLayer._poiItem` et
+ * emprise `landuse` réels (voir `furniture/pointsOfInterest.js` et
  * `_urbanLanduseKind`), jamais d'après un tirage.
  */
 const OSM_FURNITURE_KINDS = new Set([
@@ -284,7 +287,13 @@ export const LABEL_PLACE_CLASS = {
   cemetery: 'cimetière',
   military: 'zone militaire',
   quarry: 'carrière',
+  construction: 'chantier',
+  parking: 'parking',
+  garages: 'garages',
+  bus_station: 'gare routière',
+  dam: 'barrage',
   wetland: 'zone humide',
+  ice: 'glace',
   glacier: 'glacier',
   beach: 'plage',
   sand: 'sable',
@@ -295,7 +304,7 @@ export const LABEL_PLACE_CLASS = {
  * Traduction du `subclass` — plus précis que `class` quand il est renseigné.
  * `farmyard`/`farm` sont traduits par honnêteté de vocabulaire mais
  * n'atteignent pas les tuiles OpenFreeMap en pratique (voir
- * `furnitureLayer._looksLikeFarmstead`, qui détecte par indice indirect).
+ * `furniture/parcels.js`, qui détecte par indice indirect).
  */
 export const LABEL_PLACE_SUBCLASS = {
   farmyard: 'cour de ferme',
@@ -311,6 +320,8 @@ export const LABEL_PLACE_SUBCLASS = {
   stadium: 'stade',
   glacier: 'glacier',
   ice_shelf: 'banquise',
+  saltmarsh: 'pré salé',
+  tidalflat: 'vasière',
 };
 
 /**

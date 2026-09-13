@@ -48,7 +48,9 @@
  *
  * Ce n'est pas une couche et ça ne pose rien : c'est une **entrée**, lue par
  * celles qui choisissent un contenu dans une liste — peuplements, palettes de
- * bourg, cultures, bétail, couleur du sol.
+ * bourg, cultures, bétail, couleur du sol. La lecture elle-même est dans
+ * `core/landscape.js` ; le compositeur ne fait que la distribuer
+ * (`_distributeClimate`).
  */
 
 import { TerrainBubble } from './terrain/terrainBubble.js';
@@ -60,13 +62,7 @@ import { CombinedIndex } from './layers/roadGraph.js';
 import { BuildingLayer } from './layers/buildingLayer.js';
 import { GardenLayer } from './layers/gardenLayer.js';
 import { StreetLayer } from './layers/streetLayer.js';
-import {
-  collectBuiltUpAreas,
-  collectPlaceNames,
-  collectUrbanGreens,
-  FabricIndex,
-  UrbanMask,
-} from './layers/settlement.js';
+import { FabricIndex, readSettlement } from './layers/settlement.js';
 import { VegetationLayer } from './layers/vegetationLayer.js';
 import { GroundCover } from './layers/groundCover.js';
 import { CropLayer } from './layers/cropLayer.js';
@@ -75,10 +71,8 @@ import { LifeLayer } from './layers/lifeLayer.js';
 import { FaunaLayer } from './layers/faunaLayer.js';
 import { VectorTileSource, coveringTiles, VECTOR_ZOOM } from './core/vectorTileSource.js';
 import { lngLatToTile } from './core/tileMath.js';
-import { climateAt, refineByRelief } from './core/climate.js';
-import { crossSlope, coatFor } from './layers/furniturePlacement.js';
-import { buildCircuit, DASH_SPAN_M } from './layers/faunaMotion.js';
-import { FAUNA_SPECIES } from './models/fauna/index.js';
+import { landscapeAt } from './core/landscape.js';
+import { planFaunaCrossing } from './layers/faunaCrossing.js';
 import { defaultTheme } from './themes/default.js';
 
 /**
@@ -88,18 +82,7 @@ import { defaultTheme } from './themes/default.js';
 export const WORLD_ATTRIBUTION =
   '© OpenStreetMap contributors — relief AWS Terrain Tiles — climat Köppen-Geiger (Rubel et al.)';
 
-/** Demi-portée de la mesure de pente sous l'observateur, en mètres. */
-const RELIEF_SPAN_M = 60;
-
-/**
- * Distance par défaut à laquelle une traversée déclenchée coupe la trajectoire
- * de l'observateur, en mètres (`crossFauna`).
- *
- * Assez loin pour qu'on voie la bête arriver, assez près pour qu'on la voie
- * tout court. C'est un défaut, pas une règle : une application qui roule vite
- * la voudra plus loin, et c'est à elle de le dire.
- */
-export const FAUNA_CROSS_AHEAD_M = 55;
+export { FAUNA_CROSS_AHEAD_M } from './layers/faunaCrossing.js';
 
 export class WorldComposer {
   /**
@@ -313,24 +296,8 @@ export class WorldComposer {
     // il ne coûte qu'une lecture de tableau et cinq altitudes, et ce qui le lit
     // le lit à la construction de son propre contenu.
     const climateChanged = this._updateLandscape(lng, lat, here);
-    // Les essences d'un bois et la pierre d'un village dépendent du climat :
-    // les couches doivent l'avoir en main avant de poser quoi que ce soit.
     const family = this.landscape?.climate?.family ?? null;
-    this.vegetation.setClimate(family);
-    this.buildings.setClimate(family);
-    // La carte des cultures est le seul endroit où une culture est tirée : le
-    // climat doit y être avant la prochaine rasterisation.
-    this.groundClass.setClimate(family);
-    // Le bétail non plus n'est pas le même partout.
-    this.furniture.setClimate(family);
-    // La couleur du sol, enfin — et elle se pose à trois endroits qui doivent
-    // recevoir le **même** facteur : l'albédo lointain dans le shader, les
-    // touffes d'herbe et les tiges de culture du premier plan. Les trois
-    // passent par `soilWashFor`, et la redistribution est déclenchée plus bas
-    // par `climateChanged`, la teinte étant écrite dans les instances.
-    this.bubble.materials.setClimate(family);
-    this.grass.setClimate(family);
-    this.crops.setClimate(family);
+    this._distributeClimate(family);
     const wanted = this._wantedTiles(lng, lat);
 
     // La végétation suit les tuiles de la bulle, pas le vectoriel : se resynchronise même sans autre changement.
@@ -358,17 +325,10 @@ export class WorldComposer {
 
       // 0. « Sommes-nous en ville ? » — avant tout le monde, parce que la carte
       //    du sol y peint son trottoir et que les chaussées en dépendent (voies
-      //    piétonnes jetées, voies redondantes absorbées). Aucune lecture de
-      //    tuile en plus : emprises habitées et lieux nommés étaient déjà
-      //    relevés plus bas, pour la voirie et le mobilier — ils ne le sont plus
-      //    qu'ici.
-      const builtUp = collectBuiltUpAreas(this.vectorTiles, wanted, this.bubble.frame);
-      const places = collectPlaceNames(this.vectorTiles, wanted, this.bubble.frame);
-      const urban = new UrbanMask({
-        builtUp,
-        greens: collectUrbanGreens(this.vectorTiles, wanted, this.bubble.frame),
-        places,
-      });
+      //    piétonnes jetées, voies redondantes absorbées). Lu une seule fois
+      //    ici, puis passé à la voirie et au mobilier, qui posaient la même
+      //    question chacun de leur côté.
+      const { builtUp, places, urban } = readSettlement(this.vectorTiles, wanted, this.bubble.frame);
 
       // 1. Occupation du sol — tout le reste la lit. Rasterisation coûteuse : refaite seulement si elle a glissé.
       const wasReady = this.groundClass.ready;
@@ -430,9 +390,13 @@ export class WorldComposer {
         fabric,
         this.railways.index,
         places,
-        // Les surfaces de carrefour : un panneau de priorité se pose à une
-        // bouche, et la bouche n'existe que là.
-        { areas: this.roads.junctionAreas }
+        {
+          // Les surfaces de carrefour : un panneau de priorité se pose à une
+          // bouche, et la bouche n'existe que là.
+          areas: this.roads.junctionAreas,
+          // Maisons du bâti déjà posé — voir `furniture/domesticFauna.js`.
+          houses: this.buildings.houses,
+        }
       );
 
       // 6. Arbres — après les chaussées, dont l'emprise décide où le semis
@@ -476,15 +440,34 @@ export class WorldComposer {
   }
 
   /**
+   * Passe la famille climatique à tout ce qui choisit un contenu dans une
+   * liste. Avant toute construction : les essences d'un bois, la pierre d'un
+   * village, l'assolement d'une carte de cultures et le bétail d'un pré
+   * doivent l'avoir en main avant de poser quoi que ce soit.
+   *
+   * La couleur du sol se pose à trois endroits qui doivent recevoir le **même**
+   * facteur (`soilWashFor`) : l'albédo lointain dans le shader, les touffes
+   * d'herbe et les tiges de culture du premier plan. La redistribution, elle,
+   * est déclenchée par `climateChanged` — la teinte est écrite dans les
+   * instances.
+   */
+  _distributeClimate(family) {
+    this.vegetation.setClimate(family);
+    this.buildings.setClimate(family);
+    this.groundClass.setClimate(family);
+    this.furniture.setClimate(family);
+    this.bubble.materials.setClimate(family);
+    this.grass.setClimate(family);
+    this.crops.setClimate(family);
+  }
+
+  /**
    * Repose la question du climat et du relief.
    *
    * Appelée à chaque `refresh`, donc à chaque fois que l'observateur a bougé
-   * assez pour justifier d'y regarder — jamais par image. Pas d'ancre ni de
-   * seuil de distance ici : `climateAt` n'est qu'une lecture de tableau et
-   * `_reliefAt` cinq altitudes déjà montées, moins cher que de maintenir un
-   * cache qui doit lui-même savoir se périmer (voir l'historique : un cache en
-   * mètres locaux, relatifs à un repère qui se recentre au loin, a longtemps
-   * laissé une ville cherchée dans la démo garder le climat de la précédente).
+   * assez pour justifier d'y regarder — jamais par image. La lecture elle-même
+   * est dans `core/landscape.js`, avec la raison pour laquelle elle n'est pas
+   * mémoïsée.
    *
    * @returns {boolean} vrai si la **famille** climatique a changé — c'est le
    *          seul changement qui périme du décor déjà posé, une altitude qui
@@ -492,35 +475,11 @@ export class WorldComposer {
    */
   _updateLandscape(lng, lat, here) {
     const before = this.landscape?.climate?.family ?? null;
-    const relief = this._reliefAt(here);
-    const climate = climateAt(lng, lat);
-    // Le relief corrige la famille, jamais le code Köppen : celui-ci reste ce
-    // que dit la donnée, et sert à comprendre ce qu'on regarde.
-    //
-    // Une famille forcée n'est corrigée par rien : elle ne décrit plus le
-    // lieu, elle le contredit exprès, et la raffiner en montagne ferait mentir
-    // le réglage qu'on vient d'imposer.
-    const forced = this.climateOverride;
-    const family = forced || refineByRelief(climate?.family ?? null, relief);
-    const koppen = forced ? null : climate?.koppen ?? null;
-    this.landscape = family ? { climate: { family, koppen }, relief } : null;
-    return family !== before;
-  }
-
-  /** Altitude et pente sous l'observateur, mesurées dans le MNT monté. */
-  _reliefAt(here) {
-    const bubble = this.bubble;
-    const at = (x, z) => bubble.surfaceElevationAtLocal(x, z);
-    const span = RELIEF_SPAN_M * 2;
-    // Mesurée sur cent vingt mètres et non sur la maille : un MNT à trente
-    // mètres bruite la pente de quelques pour cent partout, et c'est le versant
-    // qu'on veut, pas le grain (même raison que `crossSlope` côté chaussée).
-    const eastWest = crossSlope(at(here.x + RELIEF_SPAN_M, here.z), at(here.x - RELIEF_SPAN_M, here.z), span);
-    const northSouth = crossSlope(at(here.x, here.z - RELIEF_SPAN_M), at(here.x, here.z + RELIEF_SPAN_M), span);
-    return {
-      elevation: at(here.x, here.z),
-      slope: Math.hypot(eastWest.slope, northSouth.slope),
-    };
+    this.landscape = landscapeAt(lng, lat, here, {
+      bubble: this.bubble,
+      override: this.climateOverride,
+    });
+    return (this.landscape?.climate?.family ?? null) !== before;
   }
 
   /** Tuiles vectorielles couvrant la bulle autour d'un point. */
@@ -540,74 +499,24 @@ export class WorldComposer {
    * Déclenche la traversée d'une bête devant l'observateur.
    *
    * C'est le seul endroit du moteur où une application peut demander qu'il se
-   * passe **quelque chose**, à un instant qu'elle choisit. Tout le reste du
-   * décor est une fonction du lieu : la même donnée rend le même paysage, et
-   * ça ne change pas — cette bête-ci n'est pas posée dans le monde, elle est
-   * jouée par-dessus, et un passage ultérieur au même endroit ne la retrouvera
-   * pas. C'est la définition d'un événement.
+   * passe **quelque chose**, à un instant qu'elle choisit. Le trajet lui-même
+   * se compose dans `layers/faunaCrossing.js` ; ce verbe le confie à la couche
+   * qui le joue.
    *
-   * Le tracé se déduit du regard, pas de la route : la bête débouche d'un côté
-   * du champ de vision, franchit la trajectoire de l'observateur et repart de
-   * l'autre. C'est ce qui la rend utilisable partout — sur une route comme sur
-   * un chemin — et c'est aussi ce qui rend le résultat lisible : elle traverse
-   * ce qu'on regarde.
-   *
-   * @param {Object} options
-   * @param {string} options.kind Espèce (`FAUNA_SPECIES`).
-   * @param {{x:number,z:number}} options.at Position de l'observateur, en
-   *        unités de scène.
-   * @param {{x:number,z:number}} options.forward Direction du regard, à plat.
-   *        Pas besoin qu'elle soit normalisée.
-   * @param {number} [options.distanceM] À quelle distance devant l'observateur
-   *        la bête coupe sa trajectoire.
-   * @param {number} [options.side] De quel côté elle débouche : `1` ou `-1`,
-   *        les deux côtés du champ de vision.
-   * @param {number} [options.spanM] Demi-longueur de la traversée, en mètres —
-   *        de son point d'apparition au milieu du trajet.
-   * @param {number} [options.scale] Taille, `1` étant la taille du modèle.
+   * @param {Object} options Voir `planFaunaCrossing` : espèce, position et
+   *        direction du regard de l'observateur, et les réglages du trajet.
    * @returns {Object|null} La bête lancée (à repasser à
-   *          `fauna.cancelCrossing` pour l'interrompre), ou `null` si l'espèce
-   *          est inconnue, le regard nul, ou le sol illisible à cet endroit.
+   *          `fauna.cancelCrossing` pour l'interrompre), ou `null` si la
+   *          traversée ne peut pas être composée.
    */
-  crossFauna({ kind, at, forward, distanceM = FAUNA_CROSS_AHEAD_M, side = 1, spanM = DASH_SPAN_M, scale = 1 } = {}) {
-    // Sans repère local, le sol se lit à zéro partout (`surfaceElevationAtLocal`
-    // retombe sur son défaut) : la bête traverserait à l'altitude de la mer.
-    if (this.disposed || !this.bubble.frame || !FAUNA_SPECIES[kind] || !at || !forward) return null;
-
-    const gaze = Math.hypot(forward.x, forward.z);
-    if (!(gaze > 1e-6)) return null;
-    const ahead = { x: forward.x / gaze, z: forward.z / gaze };
-
-    // Le milieu de la traversée est devant l'observateur, sur son axe de
-    // regard : c'est là qu'elle doit être vue, pas là où il se trouve.
-    const anchor = { x: at.x + ahead.x * distanceM, z: at.z + ahead.z * distanceM };
-    // La perpendiculaire au regard, dans le plan du sol. Le signe décide du
-    // côté d'où la bête débouche — les deux sont symétriques.
-    const axis = { x: -ahead.z * Math.sign(side || 1), z: ahead.x * Math.sign(side || 1) };
-
-    const spec = FAUNA_SPECIES[kind];
-    const circuit = buildCircuit({
-      behaviour: 'dash',
-      x: anchor.x,
-      z: anchor.z,
-      walkMS: spec.walkMS,
-      runMS: spec.runMS,
-      sampleY: (sx, sz) => this.bubble.surfaceElevationAtLocal(sx, sz, 0) * this.bubble.verticalScale,
-      crossAxis: axis,
-      // Aucune contrainte de terrain (`allow`) : une traversée déclenchée doit
-      // passer, c'est tout son objet — exactement comme celle du décor.
-      spanM,
+  crossFauna(options = {}) {
+    if (this.disposed) return null;
+    const beast = planFaunaCrossing({
+      ...options,
+      bubble: this.bubble,
+      coats: this.theme.fauna?.coats,
     });
-    if (!circuit) return null;
-
-    return this.fauna.addCrossing({
-      kind,
-      x: anchor.x,
-      z: anchor.z,
-      circuit,
-      tint: coatFor(this.theme.fauna?.coats, kind, anchor.x, anchor.z),
-      scale,
-    });
+    return beast ? this.fauna.addCrossing(beast) : null;
   }
 
   /**
@@ -631,8 +540,10 @@ export class WorldComposer {
     this.crops.update(at.x, at.z);
     this.life.advance(delta, at);
     // La position sert à `faunaLayer` pour n'oublier une traversée déclenchée
-    // qu'une fois l'observateur passé au large.
-    this.fauna.advance(delta, at);
+    // qu'une fois l'observateur passé au large, et pour faire fuir une bête
+    // marquée `flee` qui le voit approcher ; l'échantillonnage du relief lui
+    // est nécessaire pour tracer cette fuite (voir `faunaLayer._checkFlee`).
+    this.fauna.advance(delta, at, (x, z) => this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale);
     // Ce que le mobilier a d'animé : les feux, et les deux lampes qui suivent l'observateur.
     this.furniture.advanceSignals(delta);
     this.furniture.advanceLamps(at);

@@ -412,15 +412,15 @@ export function variantsFor(type, essences = defaultTheme.trees.essences) {
 /**
  * La strate basse d'un semis : ses silhouettes **et leur taille réelle**.
  *
- * Une fougère ne fait pas trois mètres. Tant que la strate basse n'était qu'une
+ * Une ronce ne fait pas trois mètres. Tant que la strate basse n'était qu'une
  * liste de cases d'atlas, tout ce qu'elle portait tirait dans la même
  * fourchette de buisson ; une plante qui déclare sa taille (`heightM`) et sa
  * largeur (`aspect`) l'impose, les autres gardent la fourchette commune.
  *
- * `floor` ouvre le tapis du sol (fougère, ronce, buisson bas) en plus des
- * arbustes. Il n'a de sens que dans le sous-étage : de loin, la strate basse
- * reste faite d'arbustes, une fougère à un kilomètre coûtant une instance sans
- * rien donner à voir.
+ * `floor` ouvre le tapis du sol (ronce, buisson bas) en plus des arbustes. Il
+ * n'a de sens que dans le sous-étage : de loin, la strate basse reste faite
+ * d'arbustes, une ronce à un kilomètre coûtant une instance sans rien donner
+ * à voir.
  *
  * Fonction pure.
  *
@@ -891,7 +891,7 @@ export class VegetationLayer {
     const capacity = thicket.instanceMatrix.count;
     const index = this.roads?.index || null;
     const pool = filterByClimate(this.theme.forests, this.climate);
-    // De près, le tapis du sol s'ouvre : fougère, ronce, buisson bas.
+    // De près, le tapis du sol s'ouvre : ronce, buisson bas.
     const strata = understoryStrata(this.theme.trees, true);
     const tree = this._tree;
     // Un centre arrondi par bande : les mailles retenues ne dépendent que du sol.

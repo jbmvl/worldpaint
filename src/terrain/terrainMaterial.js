@@ -43,36 +43,41 @@
  * luminosité et en chaleur, qui monte avec la distance — un albédo constant
  * par classe donne l'aplat de carte routière, et c'est la seule chose qui
  * subsiste à voir sur un sol lointain. La pente au-delà de 30° vire à la
- * roche. Une matière s'ajoute en ajoutant une couleur.
+ * roche. Une matière s'ajoute en ajoutant une couleur ; celle où l'eau affleure
+ * (`standingWater`) y gagne des flaques, découpées par un bruit et rendues comme
+ * l'eau.
  *
- * Le **bruit de lisière** (`createEdgeNoiseCanvas`) n'est pas une exception à
- * cette règle : il ne s'affiche nulle part. C'est un outil de découpe, et il
- * sert les deux mécanismes ci-dessous.
+ * Deux choses tiennent les **limites** entre surfaces, dont le défaut commun
+ * est le carreau de 2,7 m de la carte du sol, lisible en marches d'escalier
+ * dès que deux matières contrastent. C'est là que tout se joue : quand une
+ * surface est un aplat, ce qu'on regarde est son contour.
  *
- * Trois choses tiennent les **limites** entre surfaces, dont le défaut commun
- * était le carreau de 2,7 m des cartes du sol, lisible en marches d'escalier
- * dès que deux matières contrastent. C'est là que tout se joue maintenant :
- * quand une surface est un aplat, ce qu'on regarde est son contour.
- *
- * - la **frange** (`edgeWarp`) : le sol est lu quelques mètres à côté, d'un
- *   déplacement continu tiré de deux canaux du bruit, lus d'un coup. La limite
- *   reste où elle est, au mètre près, mais perd l'angle droit du carreau ;
- * - les **matières s'interpénètrent** (`surfaceAt`) : les quatre carreaux
- *   voisins sont lus au plus proche, leurs appartenances repondérées par la
- *   valeur du bruit propre à chacun, puis seuillées (`blendWidth`). L'une
- *   déborde donc dans les creux de l'autre, au lieu du dégradé de cinq mètres
- *   qu'un mélange linéaire donnerait. C'est ce mécanisme qui impose **trois
- *   champs de bruit** et non un seul : un bruit commun serait un facteur
- *   commun, qui s'annule à la normalisation ;
+ * - le **contour est interpolé, puis tranché** (`surfaceAt`). Ce qui
+ *   s'interpole est l'appartenance de chaque texel à une matière — un ou zéro,
+ *   un identifiant ne s'interpolant pas —, sur seize texels et par une cubique
+ *   de Catmull-Rom : le champ est C¹, donc son contour n'a plus d'angle. Sur
+ *   quatre texels, un lissage bilinéaire n'a pas cette propriété et ses
+ *   cassures retombent sur la grille. Puis on tranche : la matière la plus
+ *   forte l'emporte, sur la largeur d'un pixel d'écran, sans dégradé. Ce que
+ *   l'interpolation ne redresse pas, c'est l'ondulation d'un quart de texel
+ *   autour du tracé réel : la carte ne dit pas où passe le polygone dans un
+ *   texel, et aucun noyau ne l'invente ;
  * - la **rive** : le sol au contact de l'eau est mouillé, du même film d'eau
  *   que la pluie y met (`wetGround`). C'est ce qui fait une berge plutôt
  *   qu'une découpe.
+ *
+ * Ont été essayés et retirés, parce qu'ils travaillaient à côté du défaut : un
+ * **bruit de lisière** qui déplaçait la lecture du sol de quelques mètres et
+ * repondérait les matières voisines par son grain. Le contour y gagnait une
+ * dentelure, jamais une courbe, et les deux mécanismes s'annulaient dans le
+ * filtrage dès que leur champ passait sous le pixel. Le contour ne se brouille
+ * pas, il se dessine.
  *
  * Greffé sur `MeshLambertMaterial` via `onBeforeCompile` plutôt qu'écrit en
  * shader complet, pour garder l'éclairage/brouillard/tone mapping de three.
  */
 
-import { createEdgeNoiseCanvas, createMacroCanvas } from '../materials/proceduralTextures.js';
+import { createMacroCanvas } from '../materials/proceduralTextures.js';
 import { CROP_KINDS, CROP_ID_STEP } from '../layers/furniturePlacement.js';
 import {
   SURFACE_KINDS,
@@ -89,8 +94,6 @@ import { soilWashFor } from '../core/climate.js';
 /** Couleur d'une matière qu'un thème ne décrit pas : un gris de terre neutre. */
 const FALLBACK_ALBEDO = [0.18, 0.17, 0.15];
 
-/** Côté du relevé de bruit de lisière, en texels. */
-const EDGE_NOISE_TEXELS = 512;
 
 /** Fabrique du matériau de terrain. Un seul matériau pour toute la bulle. */
 export class TerrainMaterialFactory {
@@ -127,9 +130,6 @@ export class TerrainMaterialFactory {
     };
 
     this.macroTexture = repeated(createMacroCanvas());
-    // Trois champs indépendants dans les trois canaux d'une seule image, lus
-    // d'un coup. Ce bruit ne se voit jamais : il découpe des lisières.
-    this.edgeNoiseTexture = repeated(createEdgeNoiseCanvas(EDGE_NOISE_TEXELS));
     // Rides : la même carte que celle qui servait la nappe d'eau, du temps où
     // l'eau était une surface posée sur le terrain.
     this.waterRippleTexture = repeated(createWaterNormalCanvas());
@@ -140,7 +140,6 @@ export class TerrainMaterialFactory {
   get textures() {
     return [
       this.macroTexture,
-      this.edgeNoiseTexture,
       this.waterRippleTexture,
     ];
   }
@@ -223,14 +222,11 @@ export class TerrainMaterialFactory {
 
     const uniforms = {
       uDetailRange: { value: new THREE.Vector2(look.detailNear, look.detailFar) },
-      uEdgeNoise: { value: this.edgeNoiseTexture },
-      uEdgeNoiseScale: { value: look.edgeNoiseScaleM },
       // (période en mètres, amplitude en luminosité, dérive chaud/froid).
       uMacroMap: { value: this.macroTexture },
       uMacro: {
         value: new THREE.Vector3(look.macroScaleM, look.macroStrength, look.macroWarmth),
       },
-      uBlendWidth: { value: look.blendWidth },
       // Une matière = une couleur. Le tableau est indexé par l'identifiant
       // peint dans la carte, moins un.
       uSurfaceAlbedo: {
@@ -238,17 +234,11 @@ export class TerrainMaterialFactory {
           (kind) => new THREE.Vector3(...(this.surfaces[kind]?.albedo || FALLBACK_ALBEDO))
         ),
       },
-      // Lequel des trois champs de bruit chaque matière emploie, sous forme de
-      // sélecteur : le produit scalaire en tire le bon canal sans indexer un
-      // vecteur par une variable, ce que toutes les versions de GLSL
-      // n'acceptent pas. Deux matières voisines qui partageraient un champ
-      // verraient leur lisière redevenir un dégradé.
-      uSurfaceNoise: {
-        value: SURFACE_KINDS.map((kind) => {
-          const field = Math.min(2, Math.max(0, Math.round(this.surfaces[kind]?.noiseField ?? 0)));
-          return new THREE.Vector3(field === 0 ? 1 : 0, field === 1 ? 1 : 0, field === 2 ? 1 : 0);
-        }),
+      // Part du sol sous l'eau, par matière, dans l'ordre des identifiants.
+      uSurfaceWater: {
+        value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.standingWater ?? 0),
       },
+      uPoolScale: { value: look.poolScaleM },
       // Matière retenue là où la donnée se tait.
       uUnclassified: { value: Math.max(0, SURFACE_KINDS.indexOf(look.unclassified)) + 1 },
       uSurfaceMap: { value: this.groundClass ? this.groundClass.texture : null },
@@ -272,8 +262,6 @@ export class TerrainMaterialFactory {
       uWaterRipple: { value: new THREE.Vector2(look.waterRippleM, look.waterRippleRelief) },
       /** La rive : part de sol mouillé au contact de l'eau. */
       uShoreWet: { value: look.shoreWet },
-      /** La frange : (amplitude du déplacement, période du bruit), en mètres. */
-      uEdgeWarp: { value: new THREE.Vector2(look.edgeWarpM, look.edgeWarpScaleM) },
       /** Dérive des rides, en cycles. Deux vitesses inégales : sinon on lit un glissement. */
       uWaterFlow: { value: new THREE.Vector2(0, 0) },
       uRockColor: { value: new THREE.Vector3(...look.rockColor) },
@@ -308,11 +296,8 @@ export class TerrainMaterialFactory {
            varying vec3 vScenePos;
            varying vec3 vSceneNormal;
            uniform vec2 uDetailRange;
-           uniform sampler2D uEdgeNoise;
-           uniform float uEdgeNoiseScale;
            uniform sampler2D uMacroMap;
            uniform vec3 uMacro;
-           uniform float uBlendWidth;
            uniform sampler2D uSurfaceMap;
            uniform vec2 uSurfaceOrigin;
            uniform float uSurfaceSize;
@@ -320,7 +305,8 @@ export class TerrainMaterialFactory {
            uniform float uUnclassified;
            uniform vec3 uCropAlbedo[${CROP_KINDS.length}];
            uniform vec3 uSurfaceAlbedo[${SURFACE_KINDS.length}];
-           uniform vec3 uSurfaceNoise[${SURFACE_KINDS.length}];
+           uniform float uSurfaceWater[${SURFACE_KINDS.length}];
+           uniform float uPoolScale;
            uniform vec3 uRockColor;
            uniform vec2 uSlopeRange;
            uniform float uRockStrength;
@@ -332,7 +318,6 @@ export class TerrainMaterialFactory {
            uniform vec2 uWaterRipple;
            uniform vec2 uWaterFlow;
            uniform float uShoreWet;
-           uniform vec2 uEdgeWarp;
 
            /*
             * Sol mouillé : le film d'eau assombrit et sature (réflexions
@@ -343,32 +328,6 @@ export class TerrainMaterialFactory {
              float luma = dot(base, vec3(0.2126, 0.7152, 0.0722));
              vec3 saturated = luma + (base - luma) * 1.35;
              return mix(base, saturated * 0.62, clamp(amount, 0.0, 1.0));
-           }
-
-           /*
-            * Déplacement du point de lecture du sol, en mètres — la frange.
-            *
-            * Les deux cartes du sol ont un pas de 2,7 m, et une limite lue à
-            * l'endroit exact est donc celle du carreau : l'escalier à 45°
-            * qu'on voit entre le sable et l'herbe, ou au bord de l'eau. Lire
-            * quelques mètres à côté, d'un déplacement continu tiré du grain à
-            * une période bien plus large, garde la limite à sa place au mètre
-            * près et lui retire son angle droit.
-            *
-            * Deux canaux du grain, lus d'un coup : la carte de grain range
-            * trois champs indépendants dans R, G et B. C'était deux relevés
-            * décalés du même bruit gris, du temps où il n'y avait pas de bruit
-            * à plusieurs canaux. Pas d'accent grave ici : ce commentaire vit
-            * dans un littéral de gabarit, qu'il refermerait.
-            *
-            * Conséquence assumée : ce qui lit ces cartes au sol (l'herbe, la
-            * végétation) ne connaît pas ce déplacement. La peinture et les
-            * touffes ne suivent donc pas la même limite au mètre près — elles
-            * la brouillent chacune de leur côté, sur la même largeur.
-            */
-           vec2 edgeWarp(vec2 world) {
-             vec2 shift = texture2D(uEdgeNoise, world / uEdgeWarp.y).rg;
-             return (shift - 0.5) * 2.0 * uEdgeWarp.x;
            }
 
            /*
@@ -383,90 +342,137 @@ export class TerrainMaterialFactory {
              return id < 0.5 ? uUnclassified : id;
            }
 
+           /* Les quatre texels d'une ligne du voisinage, dans l'ordre des poids. */
+           vec4 surfaceRow(vec2 corner, float row) {
+             return vec4(
+               surfaceIdAt(corner + vec2(-1.0, row)),
+               surfaceIdAt(corner + vec2(0.0, row)),
+               surfaceIdAt(corner + vec2(1.0, row)),
+               surfaceIdAt(corner + vec2(2.0, row))
+             );
+           }
+
            /*
-            * Ce que la carte dit en un point : la couleur du sol, son grain,
-            * ce qu'il en reste, et la part d'eau.
+            * Poids d'une cubique de Catmull-Rom pour une position entre les
+            * deux points du milieu. Interpolante, et c'est ce qui la fait
+            * preferer a une B-spline : au centre d'un texel elle rend sa
+            * valeur exacte, donc un ruisseau ou un sentier large d'un seul
+            * texel survit. Une approximante les effacerait.
+            */
+           vec4 splineWeights(float t) {
+             float t2 = t * t;
+             float t3 = t2 * t;
+             return 0.5 * vec4(
+               -t3 + 2.0 * t2 - t,
+               3.0 * t3 - 5.0 * t2 + 2.0,
+               -3.0 * t3 + 4.0 * t2 + t,
+               t3 - t2
+             );
+           }
+
+           /*
+            * Part d'une matiere dans le voisinage : son appartenance texel par
+            * texel — un ou zero —, pesee par les seize poids de la spline.
+            */
+           float splineShare(
+             float id, vec4 r0, vec4 r1, vec4 r2, vec4 r3, vec4 wx, vec4 wz
+           ) {
+             return wz.x * dot(step(abs(r0 - id), vec4(0.5)), wx)
+                  + wz.y * dot(step(abs(r1 - id), vec4(0.5)), wx)
+                  + wz.z * dot(step(abs(r2 - id), vec4(0.5)), wx)
+                  + wz.w * dot(step(abs(r3 - id), vec4(0.5)), wx);
+           }
+
+           /*
+            * Ce que la carte dit en un point : la couleur du sol, et la part
+            * d'eau.
             *
-            * Une matière est un **identifiant**, relu au plus proche : sans
-            * quoi l'interpolation inventerait une matière entre deux, et entre
-            * le sable et l'eau il n'y a rien. Mais un contour qui suit le texel
-            * de 2,7 m se lit en escalier. On interpole donc le **resultat du
-            * test**, pas l'identifiant : les quatre texels voisins sont lus au
-            * plus proche, chacun est d'une matière ou d'une autre, et ce sont
-            * ces appartenances qu'on mélange. Le sable arrive sur l'herbe par
-            * une rampe d'un texel, et la berge de même.
+            * Une matiere est un **identifiant**, relu au plus proche : sans
+            * quoi l'interpolation inventerait une matiere entre deux, et entre
+            * le sable et l'eau il n'y a rien. Ce qui s'interpole est
+            * l'**appartenance** — chaque texel est d'une matiere ou d'une
+            * autre, et ce sont ces un et ces zero qu'on lisse.
             *
-            * Ce mécanisme servait les seules couvertures, la carte des poids
-            * fondant les quatre autres matières par son filtrage lineaire.
-            * Depuis qu'il n'y a plus qu'une carte d'identifiants, il est le cas
-            * general — et il porte du meme coup l'interpenetration : chaque
-            * voisin est repondere par la hauteur du grain de **sa** matiere,
-            * puis on ne garde que ce qui reste dans uBlendWidth du plus fort.
-            * La lisiere suit alors la forme du grain au lieu d'etre un degrade.
+            * Sur quatre texels, ce lissage est bilineaire : sa derivee saute a
+            * chaque bord de texel, et le contour qui en sort est une ligne
+            * brisee, dont les cassures retombent sur la grille. Sur seize, par
+            * une cubique, le champ est C1 : le contour n'a plus d'angle, c'est
+            * une courbe continue.
             *
-            * D'ou les trois champs de bruit : deux matieres qui partagent le
-            * leur ont un facteur commun, qui s'annule a la normalisation, et
-            * leur lisiere retombe sur le fondu lineaire. La table les repartit
-            * pour que ce cas soit rare (voir SURFACE_LOOK).
+            * Ce qu'il ne fait pas, et qu'aucun filtre ne peut faire : redresser
+            * le trait. La carte ne dit pas ou passe le polygone dans un texel,
+            * donc le contour ondule d'environ un quart de texel autour de sa
+            * vraie place, quel que soit le noyau. Ce qui disparait est l'angle
+            * droit, pas l'ondulation. Un noyau approximant (B-spline) la
+            * reduirait d'un tiers, mais effacerait au passage un texel isole,
+            * et c'est ce qui l'a fait ecarter.
+            *
+            * C'est le seul mecanisme de lisiere : ni bruit, ni deplacement de
+            * la lecture, ni degrade entre deux couleurs.
+            *
+            * Le contour est **tranche**, pas fondu : on ne garde que la
+            * matiere la plus forte, sur la largeur d'un pixel d'ecran. C'est
+            * la seule derivee d'ecran du shader et elle ne fourmille pas — le
+            * champ sous elle est lisse et fixe dans le monde, elle ne fait
+            * qu'en donner l'epaisseur du trait. Sans elle, le contour
+            * crenellerait au loin, ou il faudrait le fondre sur des metres.
             *
             * L'eau est tenue a part : elle ne se melange pas, elle remplace.
             *
-            * Limite assumee : le contour passe par les centres des texels. Il
-            * ne retrouve pas la position du polygone **dans** un texel. Ce qui
-            * disparait ici est la marche d'escalier, pas le pas de la carte.
+            * Limite assumee : le contour ne peut pas retrouver la position du
+            * polygone **dans** un texel. Ce qui disparait ici est la forme de
+            * la grille, pas son pas.
             *
             * Pas d'accent grave ni d'accent sur les majuscules dans ce bloc :
             * il vit dans un litteral de gabarit.
             */
            void surfaceAt(
-             vec2 uv, vec3 noise, float far, vec3 farmAlbedo,
-             out vec3 albedo, out float water
+             vec2 uv, vec3 farmAlbedo, out vec3 albedo, out float water,
+             out float standing
            ) {
              vec2 grid = uv * ${CLASS_PIXELS}.0 - 0.5;
              vec2 corner = floor(grid);
              vec2 f = grid - corner;
-             vec4 weight = vec4(
-               (1.0 - f.x) * (1.0 - f.y),
-               f.x * (1.0 - f.y),
-               (1.0 - f.x) * f.y,
-               f.x * f.y
+
+             vec4 r0 = surfaceRow(corner, -1.0);
+             vec4 r1 = surfaceRow(corner, 0.0);
+             vec4 r2 = surfaceRow(corner, 1.0);
+             vec4 r3 = surfaceRow(corner, 2.0);
+             vec4 wx = splineWeights(f.x);
+             vec4 wz = splineWeights(f.y);
+
+             // Les candidats sont les quatre matieres du carre central : une
+             // matiere qui n'est que dans l'anneau exterieur n'est pas ici,
+             // elle est a cote.
+             vec4 ids = vec4(r1.y, r1.z, r2.y, r2.z);
+             vec4 share = vec4(
+               splineShare(ids.x, r0, r1, r2, r3, wx, wz),
+               splineShare(ids.y, r0, r1, r2, r3, wx, wz),
+               splineShare(ids.z, r0, r1, r2, r3, wx, wz),
+               splineShare(ids.w, r0, r1, r2, r3, wx, wz)
              );
-             vec4 ids = vec4(
-               surfaceIdAt(corner),
-               surfaceIdAt(corner + vec2(1.0, 0.0)),
-               surfaceIdAt(corner + vec2(0.0, 1.0)),
-               surfaceIdAt(corner + vec2(1.0, 1.0))
-             );
 
-             // Premiere passe : la valeur du bruit propre a chaque voisin.
-             vec4 height = vec4(0.0);
-             for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
-               vec4 hit = step(abs(ids - float(i)), vec4(0.5));
-               height += hit * dot(noise, uSurfaceNoise[i - 1]);
-             }
+             // L'epaisseur du trait : un pixel d'ecran, mesure en texels. Le
+             // plancher garde un raccord de quelques centimetres au pied de
+             // l'observateur, le plafond empeche un texel entier de se fondre
+             // quand la carte passe sous le pixel.
+             float aa = clamp(max(fwidth(grid.x), fwidth(grid.y)), 0.04, 1.0);
+             float peak = max(max(share.x, share.y), max(share.z, share.w));
+             vec4 lifted = smoothstep(-aa, 0.0, share - peak);
+             lifted /= max(lifted.x + lifted.y + lifted.z + lifted.w, 1e-4);
 
-             // Interpenetration. Au loin, la carte est plus fine que le pixel :
-             // trancher la-bas ferait crepiter la lisiere d'une image a
-             // l'autre, on y revient donc au fondu doux.
-             vec4 lifted = weight * (0.35 + height);
-             float peak = max(max(lifted.x, lifted.y), max(lifted.z, lifted.w));
-             lifted = max(lifted - (peak - uBlendWidth), 0.0);
-             lifted = mix(lifted / max(lifted.x + lifted.y + lifted.z + lifted.w, 1e-4), weight, far);
-
-             // Seconde passe : la couleur, et l'eau.
-             //
              // L'eau est tenue hors du melange, et les parts sont rapportees a
              // ce qui n'est **pas** de l'eau. Elle n'est pas une matiere de
              // plus mais une surface qui remplace le sol, reprise plus bas avec
-             // sa rive : peindre sa couleur ici, avant ce fondu, ferait aller
-             // la berge d'une eau texturee vers une eau lisse au lieu d'aller de
-             // la terre a l'eau. Et sans le rapport, une plage se denaturerait
-             // en gravier a l'approche de la mer, faute de sable dans les
-             // texels mouilles.
+             // sa rive : peindre sa couleur ici ferait aller la berge d'une eau
+             // texturee vers une eau lisse au lieu d'aller de la terre a l'eau.
+             // Et sans le rapport, une plage se denaturerait en gravier a
+             // l'approche de la mer, faute de sable dans les texels mouilles.
              water = dot(step(abs(ids - ${WATER_ID}.0), vec4(0.5)), lifted);
              float land = max(1.0 - water, 1e-4);
 
              albedo = vec3(0.0);
+             standing = 0.0;
              for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
                if (i != ${WATER_ID}) {
                  vec4 hit = step(abs(ids - float(i)), vec4(0.5));
@@ -477,6 +483,7 @@ export class TerrainMaterialFactory {
                    ? farmAlbedo
                    : uSurfaceAlbedo[i - 1];
                  albedo += tone * share;
+                 standing += uSurfaceWater[i - 1] * share;
                }
              }
            }`
@@ -490,10 +497,10 @@ export class TerrainMaterialFactory {
            float gWater = 0.0;
            {
              // La carte porte un identifiant de matiere par texel, et celui de
-             // la culture dans le canal voisin. Lue a la frange (voir
-             // edgeWarp) : le deplacement vaut pour les deux canaux, qui sont
-             // ceux du meme texel.
-             vec2 surfaceUv = (vScenePos.xz + edgeWarp(vScenePos.xz) - uSurfaceOrigin) / uSurfaceSize;
+             // la culture dans le canal voisin. Lue a l'endroit exact : c'est
+             // l'interpolation de surfaceAt qui donne sa forme au contour, et
+             // rien ne deplace plus la lecture.
+             vec2 surfaceUv = (vScenePos.xz - uSurfaceOrigin) / uSurfaceSize;
              // Hors du carre couvert, la texture est bornee au bord : lire
              // quand meme y etalerait la lisiere sur des kilometres.
              float inMap = uSurfaceEnabled > 0.5 &&
@@ -501,8 +508,7 @@ export class TerrainMaterialFactory {
                  surfaceUv.y > 0.0 && surfaceUv.y < 1.0 ? 1.0 : 0.0;
 
              // Distance a l'observateur, ramenee sur [0, 1] : elle fait monter
-             // la variation macro, et elle ramene la lisiere au fondu doux la
-             // ou la carte devient plus fine que le pixel.
+             // la variation macro, et elle seule.
              float dist = distance(vScenePos, cameraPosition);
              float far = smoothstep(uDetailRange.x, uDetailRange.y, dist);
 
@@ -511,11 +517,6 @@ export class TerrainMaterialFactory {
              // n'ayant plus ni motif ni grain, la seule chose qui reste a voir
              // sur un sol lointain.
              float macro = texture2D(uMacroMap, vScenePos.xz / uMacro.x).r;
-
-             // Le bruit de lisiere : trois champs independants, lus d'un coup.
-             // Il n'apparait nulle part a l'ecran — il ne sert qu'a donner une
-             // forme aux limites entre matieres, dans surfaceAt.
-             vec3 noise = texture2D(uEdgeNoise, vScenePos.xz / uEdgeNoiseScale).rgb;
 
              // La culture : un second axe, qui remplace la couleur de la terre
              // labouree la ou il est peint. Lu au plus proche, d'ou l'arrondi
@@ -538,13 +539,33 @@ export class TerrainMaterialFactory {
              // couvertures, une substitution de culture — pour une seule
              // question.
              vec3 albedo = uSurfaceAlbedo[${SURFACE_KINDS.indexOf('grass')}];
+             float standing = 0.0;
              if (inMap > 0.5) {
-               surfaceAt(surfaceUv, noise, far, farmAlbedo, albedo, gWater);
+               surfaceAt(surfaceUv, farmAlbedo, albedo, gWater, standing);
              } else {
                // Hors carte : la matiere de repli.
                for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
-                 if (float(i) == uUnclassified) albedo = uSurfaceAlbedo[i - 1];
+                 if (float(i) == uUnclassified) {
+                   albedo = uSurfaceAlbedo[i - 1];
+                   standing = uSurfaceWater[i - 1];
+                 }
                }
+             }
+
+             // Les flaques d'un sol ou l'eau affleure. Le bruit est la
+             // difference de deux lectures a des echelles incommensurables,
+             // axes permutes : symetrique autour de 0.5, et sans periode
+             // lisible. Etire de 1.25, la part mouillee suit la part demandee
+             // a six points pres entre 5 et 90 %. Tranche la, la flaque prend
+             // le rendu de l'eau et sa rive.
+             if (standing > 0.001) {
+               float poolNoise = 0.5 + 1.25 * (
+                 texture2D(uMacroMap, vScenePos.xz / uPoolScale).r -
+                 texture2D(uMacroMap, vScenePos.zx / (uPoolScale * 1.618)).r
+               );
+               float poolEdge = 1.0 - standing;
+               float pool = smoothstep(poolEdge - 0.04, poolEdge + 0.04, poolNoise);
+               gWater += (1.0 - gWater) * pool;
              }
 
              // Il ne reste plus rien a moduler qu'a l'echelle du paysage : une
@@ -639,7 +660,7 @@ export class TerrainMaterialFactory {
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v12';
+    material.customProgramCacheKey = () => 'terrain-bubble-v13';
     return material;
   }
 

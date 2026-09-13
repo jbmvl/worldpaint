@@ -29,7 +29,7 @@ import { skyPaletteFor } from '../src/environment/sceneEnvironment.js';
 import { resolveTheme } from '../src/themes/theme.js';
 import { townPaletteAt, buildingStyleAt, streetSurfaceAt } from '../src/layers/townStyle.js';
 import { kerbProfile } from '../src/layers/streetLayer.js';
-import { roofRise, roofTriangles, orientedBox } from '../src/layers/roofGeometry.js';
+import { roofRise } from '../src/layers/roofGeometry.js';
 import { waterwayStyleFor } from '../src/terrain/groundClassMap.js';
 import { grassVariantFor } from '../src/layers/groundCover.js';
 import { windowGrid } from '../src/layers/buildingLayer.js';
@@ -45,7 +45,7 @@ const OTHER = resolveTheme({
   towns: [
     { name: 'béton', walls: ['#101010', '#202020'], roofs: ['#050505', '#060606'], roofShapes: ['flat', 'flat'] },
   ],
-  roofs: { pitch: 0.2, maxRiseM: 1, overhangM: 0 },
+  roofs: { pitch: 0.2, maxRiseM: 1 },
   windows: { widthM: 2, heightM: 3, levelM: 6, sillM: 2, litShare: 1 },
   water: { waterways: { river: 40, stream: 20 } },
   grass: { minHeight: 5, maxHeight: 6, aspect: 2, flowerShare: 1, poppyShare: 1 },
@@ -92,7 +92,7 @@ function interleaved(readA, readB) {
 }
 
 test('resolveTheme rend un thème complet et gelé', () => {
-  const t = resolveTheme({ roofs: { pitch: 0.1, maxRiseM: 1, overhangM: 0 } });
+  const t = resolveTheme({ roofs: { pitch: 0.1, maxRiseM: 1 } });
   assert.equal(Object.keys(t).length, Object.keys(defaultTheme).length, 'toutes les tranches sont là');
   assert.equal(t.roofs.pitch, 0.1);
   assert.equal(t.towns, defaultTheme.towns, 'une tranche non donnée est celle du défaut');
@@ -134,26 +134,6 @@ test('la pente des toits suit le thème', () => {
   const [a, b] = interleaved(() => roofRise(10, DEFAULT.roofs), () => roofRise(10, OTHER.roofs));
   assert.equal(a, 4.2, 'plafonné par le défaut');
   assert.equal(b, 1);
-});
-
-test('le débord de toiture suit le thème', () => {
-  const ring = [
-    { x: 0, z: 0 },
-    { x: 10, z: 0 },
-    { x: 10, z: 6 },
-    { x: 0, z: 6 },
-  ];
-  const box = orientedBox(ring);
-  // Étendue en X des sommets du toit : c'est le débord qui la fixe.
-  const spread = (roof) => {
-    const xs = roof.positions.filter((_, i) => i % 3 === 0);
-    return Math.max(...xs) - Math.min(...xs);
-  };
-  const [a, b] = interleaved(
-    () => spread(roofTriangles(box, 5, 'gable', DEFAULT.roofs)),
-    () => spread(roofTriangles(box, 5, 'gable', OTHER.roofs))
-  );
-  assert.ok(a > b, 'un débord nul donne un toit plus étroit');
 });
 
 test('les largeurs de cours d’eau suivent le thème', () => {

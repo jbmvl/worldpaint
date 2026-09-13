@@ -1,7 +1,7 @@
 /*
  * proceduralTextures — les textures qu'on ne télécharge pas : la variation du
- * sol à grande échelle, le bruit qui découpe ses lisières, les rides de l'eau,
- * la section de route.
+ * sol à grande échelle, les rides de l'eau, la section de route et le bord
+ * rongé d'un chemin.
  *
  * Bruit déterministe et cyclique : même graine, même image, bords raccordés.
  *
@@ -27,9 +27,9 @@
  * réintroduire de grain ici : la question a été tranchée à l'œil, plusieurs
  * fois, et toujours dans le même sens.
  *
- * Reste `createEdgeNoiseCanvas`, qui n'est **pas** une matière : c'est un
- * outil de découpe, jamais vu comme tel, qui donne leur forme aux limites
- * entre surfaces.
+ * Reste `createRoadEdgeCanvas`, qui n'est **pas** une matière : c'est un
+ * outil de découpe, jamais vu comme tel, qui ronge le bord d'un chemin de
+ * terre.
  */
 
 import { defaultTheme } from '../themes/default.js';
@@ -46,13 +46,6 @@ export function makeRandom(seed) {
 }
 
 const smoothstep = (t) => t * t * (3 - 2 * t);
-
-/**
- * Écart-type d'un champ de bruit de lisière, en unités de texture. Il fixe la
- * largeur sur laquelle deux matières s'interpénètrent, de concert avec
- * `blendWidth`.
- */
-const EDGE_NOISE_SPREAD = 0.1361;
 
 /**
  * Bruit de valeur cyclique sur une grille `lattice × lattice`, échantillonné
@@ -173,88 +166,6 @@ export function createMacroCanvas(size = 128, seed = 40213) {
 }
 
 /**
- * Bruit de lisière : trois champs indépendants, rangés dans les canaux R, G et
- * B d'une seule image.
- *
- * **Ce n'est pas une matière, et on ne le voit jamais.** C'est un outil de
- * découpe. Le sol n'a plus ni motif ni grain — une surface est une couleur —,
- * mais deux mécanismes ont besoin d'un bruit pour donner une *forme* à ce qui
- * serait sinon un tracé de logiciel de dessin :
- *
- * - la **frange** (`edgeWarp`) : les cartes du sol ont un pas de 2,7 m, et une
- *   limite lue à l'endroit exact est celle du carreau — l'escalier à 45° entre
- *   le sable et l'herbe. On lit quelques mètres à côté, d'un déplacement tiré
- *   de ce bruit ;
- * - l'**interpénétration** (`surfaceAt`) : les poids des matières voisines
- *   sont repondérés par la valeur de ce bruit puis seuillés, de sorte qu'une
- *   matière déborde dans les creux de l'autre au lieu de s'y fondre par un
- *   dégradé linéaire de cinq mètres.
- *
- * Trois champs et non un seul, et c'est ce qui impose les trois canaux : le
- * second mécanisme normalise ses poids, donc un bruit commun aux deux matières
- * serait un facteur commun, qui s'annule — la lisière redeviendrait le dégradé
- * qu'il s'agit d'éviter. Trois canaux d'une même lecture les donnent pour le
- * prix d'un.
- *
- * L'alpha reste plein : un canevas 2D prémultiplie, et un quatrième champ
- * rangé là abîmerait les trois autres.
- *
- * @param {number} size Côté, en pixels. Les grilles doivent le diviser.
- */
-export function createEdgeNoiseCanvas(size = 512, seed = 91711) {
-  const canvas = createCanvas(size, size);
-  const ctx = canvas.getContext('2d');
-  const image = ctx.createImageData(size, size);
-
-  // Pondération inverse de celle de `fractalNoise`, qui donne à chaque grille
-  // la moitié de l'amplitude de la précédente et se retrouve dominée par la
-  // plus grossière — un champ nuageux, sans rien à l'échelle du texel. Ici
-  // l'essentiel de l'énergie est au texel, et ce qui reste juste assez loin
-  // pour qu'une lisière ait une forme au lieu d'être un tramage régulier.
-  const lattices = [size, size / 2, size / 4, size / 8];
-  const weights = [1, 0.6, 0.35, 0.2];
-  // Trois graines écartées : deux champs corrélés recolleraient les lisières.
-  const seeds = [seed, seed + 3301, seed + 7717];
-
-  for (let c = 0; c < 3; c++) {
-    const field = new Float32Array(size * size);
-    let total = 0;
-    lattices.forEach((lattice, octave) => {
-      const layer = tileableValueNoise(size, lattice, seeds[c] + octave * 7919);
-      for (let i = 0; i < field.length; i++) field[i] += layer[i] * weights[octave];
-      total += weights[octave];
-    });
-    for (let i = 0; i < field.length; i++) field[i] /= total;
-
-    // Recentré sur **sa** moyenne, et pas sur 0,5 : une somme d'octaves tombe
-    // où elle veut. Le grain multiplie l'albédo de la matière ; un champ dont
-    // la moyenne dérive de 5 % assombrit de 5 % toutes les couleurs qu'il
-    // module, en silence, et les trois canaux ne dérivant pas de la même
-    // quantité, il les décale les uns par rapport aux autres.
-    let mean = 0;
-    for (let i = 0; i < field.length; i++) mean += field[i];
-    mean /= field.length;
-
-    // Puis remis à l'écart-type visé plutôt qu'étiré sur [0, 1] : ce champ ne
-    // sert qu'à comparer des voisins entre eux, et une amplitude qui dépend de
-    // la graine ferait varier la largeur des lisières d'un canal à l'autre.
-    let spread = 0;
-    for (let i = 0; i < field.length; i++) spread += (field[i] - mean) ** 2;
-    spread = Math.sqrt(spread / field.length) || 1;
-    const gain = EDGE_NOISE_SPREAD / spread;
-
-    for (let i = 0; i < field.length; i++) {
-      const value = Math.round(255 * (0.5 + (field[i] - mean) * gain));
-      image.data[i * 4 + c] = Math.max(0, Math.min(255, value));
-    }
-  }
-  for (let i = 3; i < image.data.length; i += 4) image.data[i] = 255;
-
-  ctx.putImageData(image, 0, 0);
-  return canvas;
-}
-
-/**
  * Carte de normales de rides, cyclable. C'est le reflet qui fait lire une
  * surface comme de l'eau (sans réflexion d'environnement, la ride reste le
  * seul moyen de faire accrocher le soleil). Normales dérivées du gradient
@@ -293,9 +204,9 @@ export function createWaterNormalCanvas(size = 256, seed = 33107) {
  * clonage, mais donnaient partout la même forêt mélangée. Carré, pour que le
  * shader applique un seul facteur d'échelle (`foliageMaterial`).
  *
- * Les quatre dernières cases sont le **tapis** du sous-bois : fougère, ronce,
- * buisson bas. Elles ne sont pas des arbres en réduction — c'est justement ce
- * qui manquait au sol d'un bois, où les seules silhouettes basses disponibles
+ * Les deux dernières cases sont le **tapis** du sous-bois : ronce, buisson
+ * bas. Elles ne sont pas des arbres en réduction — c'est justement ce qui
+ * manquait au sol d'un bois, où les seules silhouettes basses disponibles
  * étaient des arbustes, c'est-à-dire de petits arbres à tronc.
  *
  * Une case sans variante reste transparente : l'atlas peut grandir avant que
@@ -425,62 +336,6 @@ function drawBushy(ctx, size, random, variant) {
 }
 
 /**
- * Fougère : une touffe de frondes qui montent du sol en s'arquant, sans tige
- * ligneuse. Les pennes s'allongent au milieu de la fronde et se resserrent à la
- * pointe — c'est ce dessin-là, et pas la couleur, qui fait lire une fougère
- * plutôt qu'un buisson vert.
- */
-function drawFern(ctx, size, random, variant) {
-  const { hue, spread } = variant;
-  const fronds = 7 + Math.floor(random() * 3);
-
-  for (let f = 0; f < fronds; f++) {
-    const side = fronds > 1 ? f / (fronds - 1) - 0.5 : 0;
-    const lean = side * 1.5 * spread * (0.8 + random() * 0.4);
-    // Les frondes du milieu montent le plus haut : la touffe remplit sa case,
-    // sinon la plante rend plus petite que la hauteur qu'on lui donne.
-    const rise = (1 - Math.abs(side) * 0.45) * (0.86 + random() * 0.14);
-    const steps = 16;
-    const atX = (t) => 0.5 + lean * t * t;
-    const atY = (t) => 0.97 - rise * Math.sin(t * 1.28) * 0.98;
-
-    ctx.strokeStyle = 'rgba(72, 82, 44, 0.85)';
-    ctx.lineWidth = size * 0.012;
-    ctx.beginPath();
-    for (let s = 0; s <= steps; s++) {
-      const t = s / steps;
-      if (s === 0) ctx.moveTo(size * atX(t), size * atY(t));
-      else ctx.lineTo(size * atX(t), size * atY(t));
-    }
-    ctx.stroke();
-
-    for (let s = 2; s <= steps; s++) {
-      const t = s / steps;
-      const x = atX(t);
-      const y = atY(t);
-      const leaf = 0.09 * spread * Math.sin(Math.pow(t, 0.7) * Math.PI);
-      if (leaf <= 0.002) continue;
-      for (const dir of [-1, 1]) {
-        const lift = (1 - y) * 0.75 + (1 - x) * 0.25;
-        const value = 40 + lift * 78 + random() * 14;
-        ctx.fillStyle = `rgb(${Math.round(value * hue.r)}, ${Math.round(value * hue.g)}, ${Math.round(value * hue.b)})`;
-        ctx.beginPath();
-        ctx.ellipse(
-          size * (x + dir * leaf * 0.75),
-          size * (y + leaf * 0.3),
-          size * leaf * 0.85,
-          size * leaf * 0.36,
-          dir * 0.55,
-          0,
-          Math.PI * 2
-        );
-        ctx.fill();
-      }
-    }
-  }
-}
-
-/**
  * Ronce : des cannes qui partent en arc et retombent, feuilles par trois. Elle
  * s'étale plus qu'elle ne monte — c'est le fourré qu'on contourne, celui des
  * lisières et des coupes.
@@ -538,7 +393,7 @@ function drawBramble(ctx, size, random, variant) {
 /**
  * Buisson bas à petites feuilles — houx, buis, ciste : une masse dense et
  * sombre, quelques tiges ligneuses visibles au pied. Il tient le milieu entre
- * la fougère et l'arbuste de `drawBushy`, qui, lui, est un petit arbre.
+ * la ronce et l'arbuste de `drawBushy`, qui, lui, est un petit arbre.
  */
 function drawLowShrub(ctx, size, random, variant) {
   const { hue, spread } = variant;
@@ -572,7 +427,6 @@ const TREE_PAINTERS = {
   column: drawColumn,
   conifer: drawConifer,
   bushy: drawBushy,
-  fern: drawFern,
   bramble: drawBramble,
   lowShrub: drawLowShrub,
 };
@@ -1086,6 +940,12 @@ export function createCropAtlasCanvas(cell = 256, seed = 6607) {
 export const ROAD_TEXTURE_LENGTH = 12;
 
 /**
+ * Hauteur des textures de chaussée, en pixels. Partagée par la section et son
+ * masque de bord : les deux se superposent au texel près.
+ */
+export const ROAD_TEXTURE_ROWS = 512;
+
+/**
  * Section de chaussée, dessinée d'après une description en mètres — la
  * largeur du profil est aussi celle du ruban, donc l'échelle est juste sur
  * toutes les classes de route. Axe horizontal en travers, vertical le long
@@ -1122,7 +982,7 @@ export function createRoadCanvas(profile, roads = defaultTheme.roads) {
   } = profile;
 
   const width = texture;
-  const height = 512;
+  const height = ROAD_TEXTURE_ROWS;
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
 
@@ -1149,5 +1009,69 @@ export function createRoadCanvas(profile, roads = defaultTheme.roads) {
     ctx.fillRect(width * 0.62, 0, rut, height);
   }
 
+  return canvas;
+}
+
+/**
+ * Masque de bord d'un chemin : ce qu'il reste du ruban une fois que le sol l'a
+ * rongé. Gris clair là où le chemin tient, noir là où il a cédé ; le matériau
+ * le prend en `alphaMap` et tranche au seuil, donc rien n'est fondu — un texel
+ * est du chemin ou du terrain.
+ *
+ * Un chemin de terre n'a pas de rive. Sa largeur est celle que les pas et les
+ * roues ont tassée, et elle varie d'un mètre à l'autre : l'herbe remonte par
+ * plaques, la terre déborde ailleurs. Le ruban, lui, est une bande d'exactement
+ * `width` mètres, à bords droits — c'est cette droite-là que le masque mange.
+ *
+ * Ce qui ronge n'est pas une dent de scie mais un **bruit**, comparé à la
+ * distance au bord : près de la rive presque tout tombe, un peu plus loin
+ * presque rien, et entre les deux il reste des îlots détachés et des morsures.
+ * C'est la forme d'un bord repris par la végétation, pas celle d'un tracé
+ * découpé.
+ *
+ * Le masque est porté par une image à part, et **pas** par l'alpha de la
+ * section : un canevas prémultiplie ses canaux, et un texel transparent y
+ * perdrait sa couleur, que le filtrage étalerait ensuite en liseré noir tout
+ * le long du chemin.
+ *
+ * Cyclique en hauteur comme la section, qu'il double au texel près. Le bout
+ * libre d'un chemin relit le même masque en travers (`roadNetwork.gnawTips`).
+ *
+ * @param {Object} profile
+ * @param {number} profile.width     Largeur du ruban, en mètres.
+ * @param {number} profile.ragged    Profondeur rongée depuis chaque bord, en mètres.
+ * @param {number} [profile.texture] Côté horizontal, en pixels.
+ */
+export function createRoadEdgeCanvas({ width: meters, ragged, texture = 64 }, seed = 20731) {
+  const width = texture;
+  const height = ROAD_TEXTURE_ROWS;
+  const canvas = createCanvas(width, height);
+  const ctx = canvas.getContext('2d');
+  const image = ctx.createImageData(width, height);
+
+  // Deux octaves : le premier fait les plaques, le second leur donne un bord
+  // irrégulier. Un octave seul rendrait des taches toutes de la même taille,
+  // posées sur la grille de sa maille.
+  const field = fractalNoise(height, [64, 128], seed);
+  // Profondeur rongée, en pixels, et jamais moins d'un : un masque sans un
+  // seul texel de jeu ne rongerait rien.
+  const depth = Math.max(1, (ragged / meters) * width);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const edge = Math.min(x, width - 1 - x) + 0.5;
+      // Le champ est lu à l'endroit d'un côté, à l'envers de l'autre : les deux
+      // bords d'un même chemin ne doivent pas se répondre.
+      const noise = x * 2 < width ? field[y * height + x] : field[y * height + (height - 1 - x)];
+      const value = noise < Math.min(1, edge / depth) ? 255 : 0;
+      const i = (y * width + x) * 4;
+      image.data[i] = value;
+      image.data[i + 1] = value;
+      image.data[i + 2] = value;
+      image.data[i + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(image, 0, 0);
   return canvas;
 }

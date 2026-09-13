@@ -94,7 +94,10 @@ import {
   markingLinesFor,
   sectionAtDistance,
   appendMarkingSymbols,
+  appendMarkingArrows,
   cycleGlyph,
+  directionGlyph,
+  mirrorDirection,
   glyphBar,
   glyphRing,
   MARKING_BAR_M,
@@ -116,6 +119,7 @@ import {
   appendVariableWall,
   appendRockCut,
   flattenGrade,
+  slicePath,
 } from '../src/layers/ribbonGeometry.js';
 import {
   spacedAlongPath,
@@ -174,6 +178,7 @@ import {
 import { tileBounds } from '../src/core/vectorTileSource.js';
 import {
   roadStyleFor,
+  onewayFor,
   isPedestrianWay,
   roadLines,
   clipToRadius,
@@ -181,6 +186,9 @@ import {
   collectRoadLines,
   ROAD_PROFILE_ORDER,
   ROAD_LIFT_M,
+  roadLiftFor,
+  unpavedRun,
+  UNPAVED_TIP_TRIM_M,
   collectRoadSegments,
   gradeAllowance,
   RoadNetwork,
@@ -198,6 +206,7 @@ import {
   GRAFT_REACH_M,
   knownCoverage,
 } from '../src/layers/roadGraph.js';
+import { MARKING_LIFT_M } from '../src/layers/roadMarkings.js';
 import {
   WORK_NONE,
   WORK_BRIDGE,
@@ -207,6 +216,7 @@ import {
   drawableRuns,
   resampleWorks,
   resampleLevels,
+  resampleOneway,
   roadLevelFor,
   LEVEL_GROUND,
   LEVEL_MIN,
@@ -245,7 +255,8 @@ import {
   tileableValueNoise,
   fractalNoise,
   stretchToUnit,
-  createEdgeNoiseCanvas,
+  createRoadEdgeCanvas,
+  ROAD_TEXTURE_ROWS,
 } from '../src/materials/proceduralTextures.js';
 import {
   buildingHeight,
@@ -379,7 +390,7 @@ import {
   GARDEN_CLEAR_M,
   PICKET_SPACING_M,
 } from '../src/layers/gardenLayer.js';
-import { orientedBox, roofTriangles, ringArea } from '../src/layers/roofGeometry.js';
+import { orientedBox, roofTriangles, ringArea, roofRise } from '../src/layers/roofGeometry.js';
 import {
   trafficPhaseAt,
   TRAFFIC_CYCLE_S,
@@ -392,6 +403,7 @@ import {
   FARMSTEAD_MAX_HECTARES,
   FARMSTEAD_CLUSTER_RADIUS_M,
   FARMSTEAD_CLUSTER_MIN_BUILDINGS,
+  FARMSTEAD_SHARE,
   GREENHOUSE_MIN_LENGTH_M,
   GREENHOUSE_MAX_LENGTH_M,
   GREENHOUSE_SPACING_M,
@@ -399,6 +411,23 @@ import {
   SIGN_PLACE_NAME_MIN_GAP_M,
   ROCK_CUT_MIN_RISE_M,
 } from '../src/layers/furnitureLayer.js';
+import {
+  buildRoadsideRelief,
+  buildRockCut,
+  buildEmbankment,
+} from '../src/layers/furniture/roadsideRelief.js';
+import { facetJitter } from '../src/layers/facetJitter.js';
+import { FLAT_SHADED_LINEAR_KINDS, DRY_STONE_WALL_SAMPLE_M } from '../src/layers/furniture/catalog.js';
+import { buildRoadsideContext } from '../src/layers/furniture/roadsideFurniture.js';
+import { buildJunctionSigns } from '../src/layers/furniture/junctionFurniture.js';
+import {
+  woodEdgeYaw,
+  looksLikeFarmstead,
+  placeFarmstead,
+  greenhouseLengthFor,
+  greenhouseAnchorFor,
+} from '../src/layers/furniture/parcels.js';
+import { placeFauna, crossingAt } from '../src/layers/furniture/parcelFauna.js';
 import {
   HEDGE_STYLES,
   HEDGE_SAMPLE_M,
@@ -409,6 +438,7 @@ import {
   hedgeNosePath,
   hedgeEndTaper,
   hedgeNoseFactor,
+  hedgeFacets,
   appendHedgeClump,
 } from '../src/layers/hedgeGeometry.js';
 import {
@@ -452,7 +482,7 @@ import {
   PAVEMENT_ID,
   waterwayStyleFor,
   BARE_WATERWAY_CLASSES,
-  isDrawableWater,
+  waterSurfaceFor,
   GroundClassMap,
   CLASS_AREA_M,
   CLASS_PIXELS,
@@ -535,6 +565,10 @@ import {
   appendShopfront,
   appendShopSignBlade,
   shopfrontEmojiFor,
+  BLADE_SIGN_SIZE_M,
+  BLADE_SIGN_HEIGHT_M,
+  BLADE_SIGN_REACH_M,
+  BLADE_SIGN_THICKNESS_M,
 } from '../src/layers/buildingLayer.js';
 import {
   fitLabelText,
@@ -1041,8 +1075,8 @@ test('le bord d’un bois est un ourlet : houppe basse, fourré épais', () => {
 });
 
 test('la strate basse porte sa taille, et le tapis du sol ne pousse que de près', () => {
-  // De loin : les arbustes, et eux seuls — une fougère de 80 cm à un kilomètre
-  // coûte une instance et ne se voit pas.
+  // De loin : les arbustes, et eux seuls — une ronce à un kilomètre coûte une
+  // instance et ne se voit pas.
   const loin = understoryStrata();
   assert.deepEqual(loin.map((p) => p.variant), TREE_ESSENCES.bushy);
   for (const plant of loin) {
@@ -1051,7 +1085,7 @@ test('la strate basse porte sa taille, et le tapis du sol ne pousse que de près
   }
 
   // De près, le tapis s’y ajoute, et chaque plante impose sa taille : une
-  // fougère ne fait pas trois mètres.
+  // ronce ne fait pas trois mètres.
   const pres = understoryStrata(defaultTheme.trees, true);
   assert.ok(pres.length > loin.length, 'le tapis vient en plus des arbustes');
   const tapis = pres.filter((p) => TREE_ESSENCES.undergrowth.includes(p.variant));
@@ -1371,10 +1405,8 @@ test('la classe OpenMapTiles choisit un profil de chaussée', () => {
   assert.equal(roadStyleFor({ class: 'service' }).profile, 'lane');
   assert.equal(roadStyleFor({ class: 'primary' }).paved, true);
   assert.equal(roadStyleFor({ class: 'track' }).paved, false, 'un chemin n’est pas revêtu');
-  // Un tunnel n’est plus écarté à la lecture : il reste dans le graphe (sinon
-  // la route s’arrête net au pied de la colline) et porte son code d’ouvrage.
-  // C’est le ruban qui saute ses lignes, voir `drawableRuns`.
-  assert.equal(roadStyleFor({ class: 'primary', brunnel: 'tunnel' }).works, WORK_TUNNEL, 'tunnel signalé');
+  // Un tunnel est écarté à la lecture : retiré du rendu pour le moment.
+  assert.equal(roadStyleFor({ class: 'primary', brunnel: 'tunnel' }), null, 'tunnel écarté');
   assert.equal(roadStyleFor({ class: 'primary', brunnel: 'bridge' }).works, WORK_BRIDGE, 'pont signalé');
   assert.equal(roadStyleFor({ class: 'primary' }).works, WORK_NONE, 'route ordinaire');
   // Rails, transports guidés et lignes de ferry n’ont pas de revêtement.
@@ -1608,9 +1640,11 @@ test('les cours d’eau souterrains et intermittents ne sont pas dessinés', () 
   assert.equal(waterwayStyleFor({ class: 'dam' }), null);
   assert.equal(waterwayStyleFor({}), null);
 
-  assert.equal(isDrawableWater({ class: 'lake' }), true);
-  assert.equal(isDrawableWater({ class: 'swimming_pool' }), false, 'pas de confettis dans les jardins');
-  assert.equal(isDrawableWater({ class: 'lake', brunnel: 'tunnel' }), false);
+  assert.equal(waterSurfaceFor({ class: 'lake' }), 'water');
+  assert.equal(waterSurfaceFor({ class: 'swimming_pool' }), null, 'pas de confettis dans les jardins');
+  assert.equal(waterSurfaceFor({ class: 'lake', brunnel: 'tunnel' }), null);
+  // Un étang qui s'assèche est une vasière, pas un plan d'eau.
+  assert.equal(waterSurfaceFor({ class: 'lake', intermittent: 1 }), 'mud');
 });
 
 test('l’eau est une matière du sol, et la dernière de la liste', () => {
@@ -1724,7 +1758,6 @@ test('un saut d’un pays à l’autre repose la question du climat', async () =
   const composer = {
     bubble: { frame: { repere: 'Paris' }, surfaceElevationAtLocal: () => 40 },
     landscape: null,
-    _reliefAt: WorldComposer.prototype._reliefAt,
   };
   const update = (...args) => WorldComposer.prototype._updateLandscape.apply(composer, args);
 
@@ -1842,7 +1875,6 @@ test('un climat imposé ne suit plus le lieu, et rien ne le corrige', async () =
     bubble: { frame: {}, surfaceElevationAtLocal: () => 1800 },
     landscape: null,
     climateOverride: null,
-    _reliefAt: WorldComposer.prototype._reliefAt,
   };
   const update = () => WorldComposer.prototype._updateLandscape.call(composer, 2.35, 48.85, { x: 0, z: 0 });
   const setClimate = (f) => WorldComposer.prototype.setClimate.call(composer, f);
@@ -1922,7 +1954,7 @@ test('les couches vectorielles décrivent la matière du sol', () => {
   assert.equal(surfaceFor('landcover', { class: 'wetland' }), 'wetland');
   assert.equal(surfaceFor('landcover', { class: 'sand' }), 'sand');
   assert.equal(surfaceFor('landcover', { class: 'rock' }), 'rock');
-  assert.equal(surfaceFor('landcover', { subclass: 'glacier' }), 'bare');
+  assert.equal(surfaceFor('landcover', { subclass: 'glacier' }), 'ice');
 
   // Ce que les tuiles portent déjà : une lande, un maquis et une prairie sont
   // trois `class: grass`, et c'est la sous-classe qui les sépare.
@@ -1931,6 +1963,9 @@ test('les couches vectorielles décrivent la matière du sol', () => {
   assert.equal(surfaceFor('landcover', { class: 'grass', subclass: 'fell' }), 'alpine');
   assert.equal(surfaceFor('landcover', { class: 'grass', subclass: 'tundra' }), 'alpine');
   assert.equal(surfaceFor('landcover', { class: 'wetland', subclass: 'bog' }), 'wetland');
+  // Le pré salé et l'estran ont leur matière ; les autres zones humides restent un marais.
+  assert.equal(surfaceFor('landcover', { class: 'wetland', subclass: 'saltmarsh' }), 'saltmarsh');
+  assert.equal(surfaceFor('landcover', { class: 'wetland', subclass: 'tidalflat' }), 'mud');
   assert.equal(surfaceFor('landcover', { class: 'sand', subclass: 'dune' }), 'sand');
   // Un éboulis n'est pas une dalle : l'un est une pente qui bouge, l'autre un plateau.
   assert.equal(surfaceFor('landcover', { class: 'rock', subclass: 'scree' }), 'scree');
@@ -1946,6 +1981,8 @@ test('les couches vectorielles décrivent la matière du sol', () => {
   assert.equal(surfaceFor('landuse', { class: 'industrial' }), 'bare');
   assert.equal(surfaceFor('landuse', { class: 'retail' }), 'bare');
   assert.equal(surfaceFor('landuse', { class: 'quarry' }), 'bare');
+  assert.equal(surfaceFor('landuse', { class: 'parking' }), 'bare');
+  assert.equal(surfaceFor('landuse', { class: 'dam' }), 'bare');
   assert.equal(surfaceFor('landuse', { class: 'cemetery' }), 'grass');
 
   // La couche `park` ne peint rien, et le nom est le piège : au schéma
@@ -1961,6 +1998,7 @@ test('les couches vectorielles décrivent la matière du sol', () => {
 
   // Ce qui ne décrit pas une surface ne doit rien peindre du tout.
   assert.equal(surfaceFor('landuse', { class: 'school' }), null);
+  assert.equal(surfaceFor('landuse', { class: 'military' }), null, 'une emprise mêle bois, landes et bâti');
   assert.equal(surfaceFor('landcover', { class: 'unknown' }), null);
   assert.equal(surfaceFor('transportation', { class: 'motorway' }), null);
   assert.equal(surfaceFor('landcover', {}), null);
@@ -2120,7 +2158,7 @@ test('la réparation rend un texel de bord à la matière qui le couvre le plus'
   assert.deepEqual(clean, before);
 });
 
-test('la table des matières décrit chaque matière, et répartit les champs de grain', () => {
+test('la table des matières décrit chaque matière, et rien de plus', () => {
   const surfaces = defaultTheme.surfaces;
 
   for (const kind of SURFACE_KINDS) {
@@ -2131,10 +2169,6 @@ test('la table des matières décrit chaque matière, et répartit les champs de
       look.albedo.every((v) => v >= 0 && v <= 1),
       `${kind} : l’albédo reste dans [0, 1]`
     );
-    assert.ok(
-      [0, 1, 2].includes(look.noiseField),
-      `${kind} : un champ de bruit de lisière parmi trois`
-    );
   }
 
   // La table ne décrit **que** des matières de la liste : une ligne orpheline
@@ -2143,25 +2177,21 @@ test('la table des matières décrit chaque matière, et répartit les champs de
     assert.ok(SURFACE_KINDS.includes(kind), `${kind} : une matière qui existe`);
   }
 
-  // Deux matières rangées côte à côte se touchent souvent dans le monde (c'est
-  // le critère de l'ordre) : elles doivent prendre deux champs de bruit
-  // différents, sans quoi leur lisière perd l'interpénétration et retombe sur
-  // un fondu linéaire. L'eau est hors du mélange, son champ ne sert jamais.
-  for (let i = 1; i < SURFACE_KINDS.length; i++) {
-    const before = SURFACE_KINDS[i - 1];
-    const here = SURFACE_KINDS[i];
-    if (here === 'water' || before === 'water') continue;
-    assert.notEqual(
-      surfaces[before].noiseField,
-      surfaces[here].noiseField,
-      `${before} et ${here} se touchent : deux champs de bruit distincts`
-    );
-  }
-
-  // Plus aucune matière n'a de texture : ni grain, ni ce qu'elle en gardait.
+  // Plus aucune matière n'a de texture, ni de champ de bruit : le contour
+  // d'une lisière vient de l'interpolation, pas d'un grain propre à chacune.
   for (const kind of SURFACE_KINDS) {
     assert.equal(surfaces[kind].grainKeep, undefined, `${kind} : plus de grain à garder`);
+    assert.equal(surfaces[kind].noiseField, undefined, `${kind} : plus de champ de bruit`);
   }
+
+  // L'eau libre est une part du sol, pas une matière : elle ne couvre jamais
+  // tout, sinon la matière serait de l'eau.
+  for (const kind of SURFACE_KINDS) {
+    const standing = surfaces[kind].standingWater ?? 0;
+    assert.ok(standing >= 0 && standing < 1, `${kind} : part d’eau libre dans [0, 1[`);
+  }
+  assert.ok(surfaces.wetland.standingWater > 0, 'un marais a de l’eau entre ses touffes');
+  assert.ok(surfaces.mud.standingWater > 0, 'une vasière garde ses flaques');
 });
 
 test('la part d’une matière s’interpole, là où son identifiant ne le peut pas', () => {
@@ -2979,7 +3009,7 @@ test('la section se dilate en travers sans quitter son axe', () => {
  * Un bord de route complet, sans three.js ni tuiles : une chaussée droite, un
  * terrain plat, et les seules dépendances que la chaîne de bord de route lit
  * réellement. Ce n’est pas un test de rendu — c’est le seul moyen de faire
- * *exécuter* `_buildRoadsideContext`, dont une variable libre passerait
+ * *exécuter* `buildRoadsideContext`, dont une variable libre passerait
  * autrement toutes les vérifications jusqu’à l’écran.
  */
 function roadsideHarness({ profile = 'minor', here = { x: 200, z: 0 } } = {}) {
@@ -3045,7 +3075,7 @@ function rockCutHarness({ rise = 4, slope = 0.35 } = {}) {
 test('un versant qui domine la chaussée est bordé de roche, pas d’un mur', () => {
   const { layer, context, segment, rowsInfo, buffers, deck, rawElevation, sampleElevation } =
     rockCutHarness();
-  layer._buildRockCut(context, segment, rowsInfo);
+  buildRockCut(layer, context, segment, rowsInfo);
 
   assert.ok(buffers.rockCut.indices.length > 0, 'la falaise est bien engendrée');
   assert.equal(buffers.fillWall.indices.length, 0, 'et rien n’est maçonné au passage');
@@ -3069,7 +3099,7 @@ test('un versant qui domine la chaussée est bordé de roche, pas d’un mur', (
     const natural = rawElevation(0, z(r, 2));
     assert.ok(y(r, 2) >= rawElevation(0, -foot) - 1e-3, `arase au moins au pied du versant, ligne ${r}`);
     assert.ok(
-      y(r, 2) <= natural + spec.grain.crest * (natural - deck) + 0.1,
+      y(r, 2) <= natural + spec.grain.crest[1] * (natural - deck) + 0.1,
       `arase sans lame au-dessus du versant, ligne ${r}`
     );
     // Le raccord, lui, va chercher le versant intact, cinq mètres plus loin —
@@ -3092,7 +3122,7 @@ test('un terrain qui ne domine pas la chaussée ne donne pas de falaise', () => 
     rise: ROCK_CUT_MIN_RISE_M - 0.1,
     slope: 0.05,
   });
-  layer._buildRockCut(context, segment, rowsInfo);
+  buildRockCut(layer, context, segment, rowsInfo);
   assert.equal(buffers.rockCut.indices.length, 0);
 });
 
@@ -3100,7 +3130,7 @@ test('la falaise n’est pas un tube extrudé : sa section change à chaque lign
   // Versant franc : sous un mètre de paroi, le fruit tape son plancher partout
   // et la section ne varie plus qu’en hauteur.
   const { layer, context, segment, rowsInfo, buffers } = rockCutHarness({ rise: 6, slope: 0.9 });
-  layer._buildRockCut(context, segment, rowsInfo);
+  buildRockCut(layer, context, segment, rowsInfo);
 
   // Le grain low poly tient à ce qu’aucune ligne ne ressemble à sa voisine :
   // sans quoi le maillage non lissé n’a aucune arête à montrer.
@@ -3149,6 +3179,144 @@ test('la falaise n’est pas un tube extrudé : sa section change à chaque lign
   }
 });
 
+test('le grain facetté tire chaque canal dans son intervalle, ancré au sol', () => {
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 60, z: 0 }], 5);
+  const ranges = { up: [1, 1.35], lateral: [-0.2, 0.2] };
+  const grain = facetJitter(path, 17, ranges);
+  for (const [name, [low, high]] of Object.entries(ranges)) {
+    assert.equal(grain[name].length, path.length);
+    for (const v of grain[name]) assert.ok(v >= low - 1e-6 && v <= high + 1e-6, `${name} : ${v}`);
+    assert.ok(new Set(grain[name]).size > path.length / 2, `${name} change d’une ligne à l’autre`);
+  }
+  // Un tronçon redécoupé garde le grain de ses lignes, et un canal ajouté à la
+  // fin ne retire pas ceux d’avant.
+  facetJitter(path.slice(4), 17, ranges).up.forEach((v, i) => assert.equal(v, grain.up[i + 4]));
+  assert.deepEqual(facetJitter(path, 17, { ...ranges, extra: [0, 1] }).up, grain.up);
+});
+
+test('le grain de la haie : ±9 % en hauteur et en largeur, ±5 cm d’axe, tirés au sol', () => {
+  const path = resamplePath([{ x: 3, z: 7 }, { x: 40, z: 19 }], HEDGE_SAMPLE_M);
+  const facets = hedgeFacets(path, 11);
+  path.forEach(({ x, z }, r) => {
+    close(facets.up[r], 1 + (randomAt(x, z, 41) - 0.5) * 2 * 0.09, 1e-6, `hauteur, ligne ${r}`);
+    close(facets.across[r], 1 + (randomAt(x, z, 42) - 0.5) * 2 * 0.09, 1e-6, `largeur, ligne ${r}`);
+    close(facets.lateral[r], (randomAt(x, z, 43) - 0.5) * 2 * 0.05, 1e-6, `axe, ligne ${r}`);
+  });
+});
+
+test('le mur de soutènement a du grain côté vide, et tient la rive côté chaussée', () => {
+  const { layer, context, segment, rowsInfo, buffers } = roadsideHarness();
+  // Le versant descend vers +z : la rive aval est à droite de la marche.
+  const ground = (x, z) => 100 - Math.max(0, z) * 0.8;
+  const versant = rowsInfo.map((row) => ({ ...row, slope: 0.4, uphill: 1, drop: 3 }));
+  buildRoadsideRelief(layer, { ...context, sampleElevation: ground, rawElevation: ground }, segment, versant);
+
+  assert.ok(FLAT_SHADED_LINEAR_KINDS.has('fillWall'), 'ombré à plat');
+  const fill = FURNITURE_SPECS.wallSpecs.fill;
+  const positions = buffers.fillWall.positions;
+  const cols = 6;
+  const rows = positions.length / 3 / cols;
+  assert.ok(rows > 0, 'un mur est bien posé');
+  const at = (r, c, k) => positions[(r * cols + c) * 3 + k];
+  const feet = new Set();
+  for (let r = 0; r < rows; r++) {
+    close(at(r, 5, 2), segment.halfWidth, 1e-4, `parement côté chaussée sur la rive, ligne ${r}`);
+    close(at(r, 3, 2), segment.halfWidth - fill.coping, 1e-4, `couronnement côté chaussée, ligne ${r}`);
+    close(at(r, 2, 1), 100 + ROAD_LIFT_M, 1e-4, `arase au ras de la chaussée, ligne ${r}`);
+    // Le pied aval s’écarte, mais ne décolle pas du versant.
+    assert.ok(
+      at(r, 0, 2) >= segment.halfWidth + fill.thickness * fill.grain.thickness[0] - 1e-4,
+      `pied aval, ligne ${r}`
+    );
+    assert.ok(at(r, 0, 1) <= ground(0, at(r, 0, 2)) + 1e-3, `pied posé sur le versant, ligne ${r}`);
+    feet.add(at(r, 0, 2).toFixed(3));
+  }
+  assert.ok(feet.size > rows / 3, `${feet.size} pieds distincts sur ${rows} lignes`);
+});
+
+test('le talus a du grain sans quitter la rive ni remonter au-dessus de sa section', () => {
+  const { layer, context, segment, rowsInfo, buffers } = roadsideHarness();
+  const remblai = rowsInfo.map((row) => ({ ...row, drop: 2, perch: -1, uphill: 1 }));
+  const platform = new Float32Array(segment.platform.length).fill(102);
+  buildEmbankment(layer, context, { ...segment, platform }, remblai, new Set());
+
+  assert.ok(FLAT_SHADED_LINEAR_KINDS.has('embankment'), 'ombré à plat');
+  const positions = buffers.embankment.positions;
+  const cols = 3;
+  const rows = positions.length / 3 / cols;
+  assert.ok(rows > 0, 'un talus est bien posé');
+  const at = (r, c, k) => positions[(r * cols + c) * 3 + k];
+  const reaches = new Set();
+  for (let r = 0; r < rows; r++) {
+    close(at(r, 0, 2), segment.halfWidth, 1e-4, `arête sur la rive, ligne ${r}`);
+    close(at(r, 0, 1), 102, 1e-4, `arête au niveau de la plate-forme, ligne ${r}`);
+    // Jamais moins profond que la section : sur un remblai plat, le pied décollerait.
+    assert.ok(at(r, 2, 1) <= 100 + 1e-4, `pied de la ligne ${r}`);
+    reaches.add(at(r, 2, 2).toFixed(3));
+  }
+  assert.ok(reaches.size > rows / 3, `${reaches.size} étalements distincts sur ${rows} lignes`);
+});
+
+test('un muret de pierre est facetté sur un pas fin, sans raccourcir', () => {
+  const layer = Object.create(FurnitureLayer.prototype);
+  layer.specs = furnitureSpecsFor(defaultTheme.furniture.colors);
+  const path = [{ x: 0, z: 0 }, { x: 31, z: 0 }, { x: 31, z: 23.3 }];
+  const buffer = createProfileBuffer();
+  layer._appendDryStoneWall(buffer, path, () => 50);
+
+  assert.ok(FLAT_SHADED_LINEAR_KINDS.has('dryStoneWall'), 'ombré à plat');
+  const cols = FURNITURE_SPECS.profiles.dryStoneWall.length;
+  const rows = buffer.positions.length / 3 / cols;
+  assert.ok(rows >= 54.3 / DRY_STONE_WALL_SAMPLE_M, `${rows} lignes`);
+
+  // Section symétrique : le milieu de ses deux pieds est l’axe, à son
+  // débattement près.
+  const centre = (r) => {
+    const a = r * cols * 3;
+    const b = (r * cols + cols - 1) * 3;
+    return { x: (buffer.positions[a] + buffer.positions[b]) / 2, z: (buffer.positions[a + 2] + buffer.positions[b + 2]) / 2 };
+  };
+  const reach = FURNITURE_SPECS.dryStoneWallGrain.lateral[1];
+  for (const [r, end] of [[0, path[0]], [rows - 1, path[path.length - 1]]]) {
+    const c = centre(r);
+    assert.ok(Math.hypot(c.x - end.x, c.z - end.z) <= reach + 1e-4, `bout du muret, ligne ${r}`);
+  }
+
+  const tops = new Set();
+  for (let r = 0; r < rows; r++) tops.add(buffer.positions[(r * cols + 2) * 3 + 1].toFixed(3));
+  assert.ok(tops.size > rows / 2, `${tops.size} arases distinctes sur ${rows} lignes`);
+});
+
+test('un mur désolidarisé garde sa forme, chaque triangle avec ses sommets', () => {
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 30, z: 0 }], 10);
+  const options = {
+    path,
+    base: new Float32Array(path.length).fill(100),
+    top: Float32Array.from({ length: path.length }, (_, r) => 101 + r * 0.3),
+    offset: 3,
+    thickness: 0.5,
+    coping: 0.1,
+    colorFoot: [0, 0, 0],
+    colorTop: [1, 1, 1],
+  };
+  const welded = createProfileBuffer();
+  appendVariableWall(welded, options);
+  const mixed = createProfileBuffer();
+  appendVariableWall(mixed, options);
+  appendVariableWall(mixed, { ...options, flat: true });
+
+  const vertices = welded.positions.length / 3;
+  assert.deepEqual(mixed.positions.slice(0, vertices * 3), welded.positions, 'le morceau lissé est intact');
+  const tail = mixed.indices.slice(welded.indices.length);
+  assert.equal(tail.length, welded.indices.length);
+  tail.forEach((v, i) => {
+    assert.equal(v, vertices + i, `sommet propre au triangle, indice ${i}`);
+    const w = welded.indices[i] * 3;
+    for (let k = 0; k < 3; k++) assert.equal(mixed.positions[v * 3 + k], welded.positions[w + k]);
+  });
+  assert.equal(mixed.colors.length, mixed.positions.length);
+});
+
 test('le mobilier de bord de route se pose sans variable libre', () => {
   // Le mobilier entier est bâti dans un seul `try` : une variable libre dans la
   // chaîne de bord de route n’explose pas la haie, elle **avale tout ce qui
@@ -3165,7 +3333,7 @@ test('le mobilier de bord de route se pose sans variable libre', () => {
     const moved = rowsInfo.map((row) => ({ ...row, z: row.z + z }));
     const shifted = { ...segment, path: segment.path.map((p) => ({ ...p, z: p.z + z })), anchor: { x: 0, z } };
 
-    layer._buildRoadsideContext({ ...context, here: { x: 200, z } }, shifted, moved, []);
+    buildRoadsideContext(layer, { ...context, here: { x: 200, z } }, shifted, moved, []);
 
     clumps += layer.counts.hedgeClumps;
     hedgeTriangles += buffers.hedge.indices.length / 3 + buffers.lowHedge.indices.length / 3;
@@ -3196,7 +3364,7 @@ test('un bois interrompt l’alignement au lieu de l’effacer selon d’où l�
     layer.groundClass = bois;
     const rows = rowsInfo.filter((row) => row.x <= jusqu);
     const path = segment.path.filter((p) => p.x <= jusqu);
-    layer._buildRoadsideContext(context, { ...segment, path }, rows, []);
+    buildRoadsideContext(layer, context, { ...segment, path }, rows, []);
 
     const out = [];
     for (const [kind, list] of context.placements) {
@@ -3767,7 +3935,7 @@ test('un tas de bois se range le long de la lisière', () => {
   // Bois dans le demi-plan x < 0 : sa lisière court donc selon Z.
   const layer = Object.create(FurnitureLayer.prototype);
   layer.groundClass = { woodAt: (x) => (x < 0 ? 1 : 0) };
-  const yaw = layer._woodEdgeYaw(0, 0);
+  const yaw = woodEdgeYaw(layer, 0, 0);
 
   // Les rondins de `woodPile` sont couchés selon Z : après le lacet, ils
   // doivent border le bois, pas y entrer.
@@ -3778,7 +3946,7 @@ test('un tas de bois se range le long de la lisière', () => {
   // Une lisière tournée d'un quart de tour tourne la pile d'autant.
   const autre = Object.create(FurnitureLayer.prototype);
   autre.groundClass = { woodAt: (x, z) => (z < 0 ? 1 : 0) };
-  const [ax, , az] = Kit.transform([0, 0, 1], { yaw: autre._woodEdgeYaw(0, 0) });
+  const [ax, , az] = Kit.transform([0, 0, 1], { yaw: woodEdgeYaw(autre, 0, 0) });
   close(Math.abs(ax), 1, 1e-9, 'lisière est-ouest');
   close(az, 0, 1e-9);
 
@@ -3786,7 +3954,7 @@ test('un tas de bois se range le long de la lisière', () => {
   // clairière ronde s'aligneraient sur le même axe.
   const plat = Object.create(FurnitureLayer.prototype);
   plat.groundClass = { woodAt: () => 1 };
-  assert.notEqual(plat._woodEdgeYaw(0, 0, 0.3), plat._woodEdgeYaw(0, 0, 0.7));
+  assert.notEqual(woodEdgeYaw(plat, 0, 0, 0.3), woodEdgeYaw(plat, 0, 0, 0.7));
 });
 
 test('le bétail suit le terrain : bovins en plaine, ovins sur les pentes', () => {
@@ -4582,8 +4750,8 @@ test('deux bêtes voisines ne sont pas synchrones', () => {
 test('le bond ne concerne que les espèces qui bondissent, et seulement lancées', () => {
   // C'est le nombre qui décide de tout : une espèce qui trotte ne bondit
   // jamais, une espèce qui bondit ne le fait qu'une fois lancée.
-  const bondissent = ['goat', 'deer', 'doe', 'reindeer', 'fox'];
-  const trottinent = ['cow', 'sheep', 'horse', 'donkey', 'chicken', 'boar', 'wolf', 'bear'];
+  const bondissent = ['goat', 'deer', 'doe', 'reindeer', 'fox', 'cat'];
+  const trottinent = ['cow', 'sheep', 'horse', 'donkey', 'chicken', 'boar', 'wolf', 'bear', 'dog'];
   assert.equal(bondissent.length + trottinent.length, FAUNA_KINDS.length, 'le catalogue est couvert');
 
   for (const kind of bondissent) {
@@ -5075,7 +5243,7 @@ test('une route en remblai porte un talus de chaque côté, pas d’un seul', ()
   const remblai = rowsInfo.map((row) => ({ ...row, drop: 2, perch: 2, uphill: 1 }));
   const platform = new Float32Array(segment.platform.length).fill(102);
 
-  layer._buildEmbankment(context, { ...segment, platform }, remblai, new Set());
+  buildEmbankment(layer, context, { ...segment, platform }, remblai, new Set());
 
   const zs = [];
   for (let i = 2; i < buffers.embankment.positions.length; i += 3) {
@@ -5092,7 +5260,8 @@ test('une route en remblai porte un talus de chaque côté, pas d’un seul', ()
   // Sur un vrai versant — le terrain domine en amont —, un seul talus.
   const versant = rowsInfo.map((row) => ({ ...row, drop: 2, perch: -1.5, uphill: 1 }));
   const seul = createProfileBuffer();
-  layer._buildEmbankment(
+  buildEmbankment(
+    layer,
     { ...context, buffers: { ...buffers, embankment: seul } },
     { ...segment, platform },
     versant,
@@ -5700,6 +5869,48 @@ test('une branche publie la chaussée telle qu’elle part, et sa direction sur 
   close(branch.path[branch.path.length - 1].z, 20, 1e-6, 'suivie jusqu’au bout de la branche');
 });
 
+test('un chemin ne fait pas carrefour avec une route revêtue', () => {
+  const lines = teeLines();
+  lines[1] = { ...lines[1], profile: 'track', halfWidth: 1.5, paved: false };
+  assert.equal(mergeRoadLines(lines).junctions.length, 0, 'il s’embranche sans ouvrir de carrefour');
+
+  const crossroads = mergeRoadLines([
+    ...teeLines(),
+    { profile: 'track', halfWidth: 1.5, paved: false, points: [{ x: 100, z: 0 }, { x: 100, z: -60 }] },
+  ]).junctions;
+  assert.equal(crossroads.length, 1, 'le carrefour des routes reste');
+  assert.equal(crossroads[0].degree, 3, 'sans le chemin');
+  assert.ok(crossroads[0].branches.every((b) => b.profile !== 'track'));
+});
+
+test('une piste cyclable revêtue reste une branche du carrefour', () => {
+  const lines = teeLines();
+  lines[1] = { ...lines[1], profile: 'cycleway', halfWidth: 1.1, paved: true };
+  const { junctions } = mergeRoadLines(lines);
+  assert.equal(junctions.length, 1);
+  assert.ok(junctions[0].branches.some((b) => b.profile === 'cycleway'));
+});
+
+test('des chemins qu’aucune route ne rejoint font carrefour entre eux', () => {
+  const track = (points) => ({ profile: 'track', halfWidth: 1.5, paved: false, points });
+  const { junctions } = mergeRoadLines([
+    track(straight(0, 200, 8)),
+    track([{ x: 100, z: 0 }, { x: 100, z: 60 }]),
+  ]);
+  assert.equal(junctions.length, 1);
+  assert.equal(junctions[0].profile, 'track');
+});
+
+test('un chemin qui coupe une branche n’arrête pas sa polyligne', () => {
+  const { junctions } = mergeRoadLines([
+    teeLines()[0],
+    { profile: 'minor', halfWidth: 2.5, points: [{ x: 100, z: 0 }, { x: 100, z: 6 }, { x: 100, z: 60 }] },
+    { profile: 'path', halfWidth: 0.7, paved: false, points: [{ x: 90, z: 6 }, { x: 100, z: 6 }, { x: 110, z: 6 }] },
+  ]);
+  const branch = junctions[0].branches.find((b) => b.profile === 'minor');
+  close(branch.path[branch.path.length - 1].z, 60, 1e-6, 'suivie au-delà du chemin');
+});
+
 test('une desserte qui bute sur une traversante sans sommet commun est un carrefour', () => {
   // Le cas le plus fréquent, et celui que le graphe seul ne voyait pas : la
   // traversante est simplifiée (le sommet du carrefour y est aligné, donc
@@ -5980,6 +6191,18 @@ test('le niveau de croisement se lit dans `layer`, et n’est pas une altitude',
   assert.equal(roadStyleFor({ class: 'primary' }).level, LEVEL_GROUND);
 });
 
+test('le sens unique se lit dans `oneway`, jamais deviné', () => {
+  assert.equal(onewayFor({ class: 'primary' }), 0, 'sans rien, le cas prudent');
+  assert.equal(onewayFor({ oneway: 1 }), 1);
+  assert.equal(onewayFor({ oneway: '1' }), 1, 'une chaîne de caractères se lit aussi');
+  assert.equal(onewayFor({ oneway: -1 }), -1);
+  assert.equal(onewayFor({ oneway: '-1' }), -1);
+  assert.equal(onewayFor({ oneway: 0 }), 0);
+  assert.equal(onewayFor({ oneway: 'oui' }), 0, 'illisible : aucun sens affirmé');
+  assert.equal(roadStyleFor({ class: 'primary', oneway: 1 }).oneway, 1, 'porté par le style');
+  assert.equal(roadStyleFor({ class: 'primary' }).oneway, 0);
+});
+
 test('un croisement au même niveau reste un carrefour', () => {
   const { junctions } = mergeRoadLines(crossLines(0));
   assert.equal(junctions.length, 1, 'un carrefour');
@@ -6056,6 +6279,63 @@ test('la culée tient : un pont marqué `layer` reste dans la chaîne de sa rout
   );
 });
 
+test('le sens de circulation suit l’ordre du tracé, et se retourne avec lui', () => {
+  // Ligne déjà croissante : rien à retourner, le sens se lit tel quel.
+  const ascending = mergeRoadLines([
+    { profile: 'minor', halfWidth: 2.5, points: straight(0, 40, 1), oneway: 1 },
+  ]).chains[0];
+  assert.deepEqual([...ascending.oneway], [1, 1]);
+
+  // Même route livrée à l’envers : `oneway` reste compté depuis le premier
+  // sommet de la donnée, donc son sens absolu est le même — mais une fois la
+  // chaîne remise dans l’ordre canonique (x croissant), ce sens s’écrit à
+  // l’envers du tableau, pas à l’endroit.
+  const descending = mergeRoadLines([
+    { profile: 'minor', halfWidth: 2.5, points: straight(40, 0, 1), oneway: 1 },
+  ]).chains[0];
+  close(descending.points[0].x, 0, 1e-6, 'remis dans l’ordre canonique');
+  assert.deepEqual([...descending.oneway], [-1, -1]);
+});
+
+test('deux tronçons soudés qui se contredisent n’affirment aucun sens à la couture', () => {
+  // Le premier veut aller vers 20, le second veut revenir de 40 vers 20 :
+  // au nœud partagé, les deux arêtes qui s’y rejoignent ne sont pas d’accord.
+  const chain = mergeRoadLines([
+    { profile: 'minor', halfWidth: 2.5, points: straight(0, 20, 1), oneway: 1 },
+    { profile: 'minor', halfWidth: 2.5, points: straight(20, 40, 1), oneway: -1 },
+  ]).chains[0];
+
+  assert.equal(chain.points.length, 3);
+  assert.deepEqual([...chain.oneway], [1, 0, -1], 'affirmé aux deux bouts, muet à la couture');
+});
+
+test('le sens de circulation survit à la greffe d’un bout libre', () => {
+  // La greffe reconstruit le graphe d'un bloc, et coupe la traversante en deux.
+  const { junctions, chains } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: [{ x: 0, z: 0 }, { x: 200, z: 0 }], oneway: 1 },
+    { profile: 'minor', halfWidth: 2.5, points: [{ x: 100, z: 2 }, { x: 100, z: 60 }], oneway: -1 },
+  ]);
+
+  assert.equal(junctions.length, 1, 'greffé');
+  const through = chains.filter((c) => c.profile === 'major');
+  assert.ok(through.length > 0);
+  for (const chain of through) {
+    assert.ok(chain.oneway.every((v) => v === 1), 'chaque morceau de la traversante garde son sens');
+  }
+  const branch = chains.find((c) => c.profile === 'minor');
+  assert.ok(branch.oneway.every((v) => v === -1), 'la branche amenée sur la chaussée aussi');
+});
+
+test('le même tronçon livré deux fois à rebours garde son sens', () => {
+  // Deux livraisons d'accord sur le sens absolu, pas sur l'ordre des sommets.
+  const chain = mergeRoadLines([
+    { profile: 'minor', halfWidth: 2.5, points: straight(0, 40, 1), oneway: 1 },
+    { profile: 'minor', halfWidth: 2.5, points: straight(40, 0, 1), oneway: -1 },
+  ]).chains[0];
+
+  assert.deepEqual([...chain.oneway], [1, 1]);
+});
+
 test('les niveaux se reportent par intervalle, culée comprise', () => {
   // Même convention que les ouvrages : le sommet porte le maximum, l'intervalle
   // le minimum. C'est ce qui rend exactement les arêtes d'origine.
@@ -6069,6 +6349,23 @@ test('les niveaux se reportent par intervalle, culée comprise', () => {
   assert.equal(out[3], -1, 'sous la colline');
   assert.equal(out[8], 0, 'après');
   assert.ok(out instanceof Int8Array, 'un niveau peut être négatif');
+});
+
+test('un sens de circulation ne se reporte que là où les deux bouts s’accordent', () => {
+  const points = straight(0, 40, 4);
+  const path = Array.from({ length: 9 }, (_, i) => ({ x: i * 5, z: 0, distance: i * 5 }));
+
+  // Sommets 0..4 : sens affirmé partout, sauf un désaccord entre 2 et 3.
+  const agreeing = resampleOneway(points, [1, 1, 1, 1, 1], path);
+  assert.equal(agreeing[0], 1, 'avant');
+  assert.equal(agreeing[4], 1, 'au milieu');
+  assert.equal(agreeing[8], 1, 'après');
+
+  const disagreeing = resampleOneway(points, [1, 1, -1, 1, 1], path);
+  assert.equal(disagreeing[3], 0, 'les deux bouts de l’intervalle 1-2 se contredisent');
+  assert.equal(disagreeing[0], 1, 'les autres intervalles restent affirmés');
+
+  assert.ok(resampleOneway(points, null, path) instanceof Int8Array, 'sans donnée : aucun sens');
 });
 
 test('deux plate-formes de niveaux différents ne se recousent pas', () => {
@@ -6679,6 +6976,98 @@ test('de la tuile au carrefour : les rubans s’arrêtent, la surface prend le r
   close(gap, areas.areas[0].mouths[0].distance * 2, 1e-3, 'la trouée vaut les deux bouches');
 });
 
+/** Un chemin rectiligne de `length` mètres, une ligne tous les cinq mètres, plate-forme égale à la distance. */
+function straightRun(length, halfWidth = 1.5) {
+  const path = [];
+  for (let d = 0; d <= length; d += 5) path.push({ x: d, z: 0, distance: d });
+  const platform = Float32Array.from(path.map((p) => p.distance));
+  return { segment: { path, halfWidth }, run: { path, platform, head: -1, tail: -1 } };
+}
+
+test('slicePath garde les distances du tracé et pose une ligne où on la demande', () => {
+  const { run } = straightRun(10);
+  const sliced = slicePath(run.path, run.platform, 1, 9, [1.5, 8.5, 12]);
+  assert.deepEqual(sliced.path.map((p) => p.distance), [1, 1.5, 5, 8.5, 9]);
+  sliced.path.forEach((p, i) => {
+    close(p.x, p.distance, 1e-9);
+    close(sliced.platform[i], p.distance, 1e-5, 'plate-forme interpolée');
+  });
+  assert.equal(slicePath(run.path, run.platform, 6, 6), null, 'rien à garder');
+});
+
+test('un chemin recule d’un mètre à ses bouts libres, et seulement là', () => {
+  const { segment, run } = straightRun(20);
+  const free = unpavedRun(segment, run, () => false);
+  close(free.path[0].distance, UNPAVED_TIP_TRIM_M, 1e-9);
+  close(free.path[free.path.length - 1].distance, 20 - UNPAVED_TIP_TRIM_M, 1e-9);
+  assert.deepEqual(free.tips, { head: true, tail: true });
+  assert.ok(free.path.some((p) => Math.abs(p.distance - (UNPAVED_TIP_TRIM_M + 1.5)) < 1e-9), 'une ligne à une demi-largeur du bout');
+
+  const continued = unpavedRun(segment, run, (point) => point.x > 10);
+  close(continued.path[continued.path.length - 1].distance, 20, 1e-9, 'prolongé par un autre chemin : pas de recul');
+  assert.deepEqual(continued.tips, { head: true, tail: false });
+
+  const atJunction = unpavedRun(segment, { ...run, head: 0, tail: 0 }, () => false);
+  assert.equal(atJunction.tips, null, 'contre un carrefour de chemins, rien ne recule');
+
+  const ring = straightRun(20);
+  ring.segment.path = [...ring.segment.path, { x: 0, z: 0, distance: 25 }];
+  assert.equal(unpavedRun(ring.segment, { ...ring.run, path: ring.segment.path }, () => false).tips, null, 'une boucle ne s’ouvre pas');
+
+  const short = [0, 1.5].map((d) => ({ x: d, z: 0, distance: d }));
+  const shortRun = { path: short, platform: new Float32Array(2), head: -1, tail: -1 };
+  assert.equal(unpavedRun({ path: short, halfWidth: 1.5 }, shortRun, () => false), null, 'trop court : rien ne reste');
+});
+
+test('un bout rongé ne mord que sur une demi-largeur, et seulement dans un accumulateur qui le porte', () => {
+  const path = [0, 1.5, 5, 10].map((d) => ({ x: d, z: 0, distance: d }));
+  const platform = new Float32Array(path.length);
+  const buffer = createRibbonBuffer({ tips: true });
+  appendRibbon(buffer, { path, halfWidth: 1.5, sampleElevation: () => 0, platform, tips: { head: true, tail: false } });
+  const columns = buffer.positions.length / 3 / path.length;
+  assert.equal(buffer.tips.length, buffer.uvs.length);
+  const biteAt = (r) => buffer.tips[r * columns * 2];
+  close(biteAt(0), 0.5, 1e-9, 'au bout, le bord du masque');
+  close(biteAt(1), 0, 1e-9, 'à une demi-largeur, son milieu');
+  close(biteAt(3), 0, 1e-9, 'la queue n’est pas rongée');
+
+  const plain = createRibbonBuffer();
+  appendRibbon(plain, { path, halfWidth: 1.5, sampleElevation: () => 0, platform, tips: { head: true, tail: true } });
+  assert.equal(plain.tips, undefined);
+});
+
+test('un chemin qui part d’un carrefour de routes passe par-dessus', () => {
+  const frame = createLocalFrame(2.35, 48.85, 15);
+  const at = (dx, dz) => [2.35 + dx * 0.0000135, 48.85 - dz * 0.000009];
+  const source = {
+    forEachFeature(layer, tiles, callback) {
+      if (layer !== 'transportation') return;
+      callback(
+        { type: 'LineString', coordinates: [at(-120, 0), at(0, 0), at(120, 0)] },
+        { class: 'primary' }
+      );
+      callback({ type: 'LineString', coordinates: [at(0, 0), at(0, 120)] }, { class: 'tertiary' });
+      callback({ type: 'LineString', coordinates: [at(0, 0), at(0, -120)] }, { class: 'track' });
+    },
+  };
+
+  const { segments, junctions } = collectRoadSegments(
+    source,
+    [{ x: 0, y: 0 }],
+    { x: 0, z: 0 },
+    frame,
+    () => 0
+  );
+
+  assert.equal(junctions.length, 1, 'le carrefour des routes');
+  assert.equal(junctions[0].degree, 3, 'sans le chemin');
+  const track = segments.find((s) => s.profile === 'track');
+  assert.ok(track);
+  assert.ok([...track.junction].every((v) => v < 0), 'son ruban ne s’arrête pas à la bouche');
+  assert.ok(roadLiftFor(ROAD_PROFILES.track) > ROAD_LIFT_M + MARKING_LIFT_M, 'il est posé au-dessus du marquage');
+  assert.equal(roadLiftFor(ROAD_PROFILES.cycleway), ROAD_LIFT_M, 'une piste cyclable revêtue reste au niveau des routes');
+});
+
 // --- Les ouvrages d'art : ponts et tunnels ----------------------------------
 
 /** Tronçon d'ouvrage : `works[r]` par ligne, plate-forme posée sur le terrain. */
@@ -7177,6 +7566,36 @@ test('un pont pose un tablier, des piles et deux parapets au-dessus du vide', ()
   close(Math.min(...heights), 0, 1e-4, 'les piles se fondent au sol');
   assert.ok(Math.max(...heights) > 15.5, 'le parapet dépasse la chaussée');
 
+  layer.dispose();
+});
+
+test('un parapet plein a du grain côté chaussée, et affleure la corniche côté vide', () => {
+  const layer = new BridgeLayer({ THREE: stubWorksTHREE(), scene: { add() {}, remove() {} }, bubble: stubBubble(0) });
+  const path = Array.from({ length: 21 }, (_, i) => ({ x: i * 5, z: 0, distance: i * 5 }));
+  const surface = new Float32Array(path.length).fill(15);
+  const halfWidth = 4.25;
+  const styleOf = (name) => {
+    const works = defaultTheme.works.find((s) => s.name === name);
+    return { deck: works.deck, parapet: { ...works.parapet, color: [0, 0, 0], colorTop: [1, 1, 1] } };
+  };
+
+  const masonry = styleOf('maçonnerie');
+  const buffer = createProfileBuffer();
+  layer._buildParapets(buffer, path, surface, halfWidth, masonry);
+  const rim = halfWidth + masonry.deck.overhang;
+  const inner = new Set();
+  for (let i = 0; i < buffer.positions.length; i += 3) {
+    const across = Math.abs(buffer.positions[i + 2]);
+    assert.ok(across <= rim + 1e-4, `rien ne déborde de la corniche (${across})`);
+    if (across < rim - masonry.parapet.coping - 0.1) inner.add(across.toFixed(3));
+  }
+  assert.ok(inner.size > path.length, `${inner.size} reculs distincts côté chaussée`);
+  assert.ok(buffer.indices.every((v, i) => v === i), 'ombré à plat');
+
+  // L’acier est un garde-corps, pas un mur : il reste lisse et sans grain.
+  const steel = createProfileBuffer();
+  layer._buildParapets(steel, path, surface, halfWidth, styleOf('acier'));
+  assert.equal(steel.positions.length / 3, path.length * 6 * 2, 'six sommets par ligne, par rive');
   layer.dispose();
 });
 
@@ -7731,7 +8150,7 @@ test('chaque silhouette tient dans sa case, pose au sol et la remplit', () => {
     const kind = look.kind;
     assert.ok(marks.length > 20, `${kind} : la case reçoit de l’encre`);
 
-    // Déborder, c’est mordre sur la silhouette voisine de l’atlas : une fougère
+    // Déborder, c’est mordre sur la silhouette voisine de l’atlas : une ronce
     // gagnerait le pied d’un chêne. Le tapis du sol (celui qui déclare sa
     // taille) n’en a pas le droit ; les arbres, eux, mordent d’assez peu pour
     // que ça ne se soit jamais vu — la pointe d’un conifère sort de 7 % au
@@ -7992,15 +8411,28 @@ test('une empreinte en L remplit mal sa boîte, et retombe donc sur le toit plat
   close(ringArea(l), 20 * 6 + 6 * 14, 1e-6);
 });
 
-test('les pans d’un toit regardent le ciel, jamais l’intérieur', () => {
+test('les pans d’un toit regardent le ciel, jamais l’intérieur, et ne débordent jamais du mur', () => {
   const box = { cx: 0, cz: 0, angle: 0, long: 8, short: 4, fill: 1 };
+  // L'anneau des murs, exactement celui que décrit la boîte : c'est sur lui,
+  // pas sur un rectangle plus grand, que le toit doit se poser.
+  const ring = [{ x: -8, z: -4 }, { x: 8, z: -4 }, { x: 8, z: 4 }, { x: -8, z: 4 }];
+  const faces = [[0, 1, 2], [0, 2, 3]];
+
   for (const shape of ['gable', 'hip', 'pyramid']) {
-    const roof = roofTriangles(box, 6, shape);
+    const roof = roofTriangles(ring, faces, box, 6, shape);
     assert.ok(roof.positions.length > 0, `${shape} : de la géométrie`);
     assert.equal(roof.positions.length % 9, 0, `${shape} : triangles complets`);
     assert.equal(roof.normals.length, roof.positions.length);
 
     let up = 0;
+    let maxY = -Infinity;
+    for (let i = 0; i < roof.positions.length; i += 3) {
+      // Aucun sommet du toit ne sort du plan des murs : c'est ce qui garantit
+      // qu'il ne déborde ni ne flotte au-dessus d'un vide.
+      assert.ok(roof.positions[i] >= -8 - 1e-6 && roof.positions[i] <= 8 + 1e-6, `${shape} : pas de débord en x`);
+      assert.ok(roof.positions[i + 2] >= -4 - 1e-6 && roof.positions[i + 2] <= 4 + 1e-6, `${shape} : pas de débord en z`);
+      maxY = Math.max(maxY, roof.positions[i + 1]);
+    }
     for (let i = 1; i < roof.normals.length; i += 3) {
       assert.ok(roof.normals[i] > -1e-6, `${shape} : aucun pan retourné`);
       if (roof.normals[i] > 0.2) up++;
@@ -8008,13 +8440,52 @@ test('les pans d’un toit regardent le ciel, jamais l’intérieur', () => {
     assert.ok(up > 0, `${shape} : des pans inclinés`);
 
     // Le comble monte au-dessus de l'égout, et pas de façon déraisonnable.
-    let maxY = -Infinity;
-    for (let i = 1; i < roof.positions.length; i += 3) maxY = Math.max(maxY, roof.positions[i]);
     assert.ok(maxY > 6 && maxY <= 6 + 4.3, `${shape} : comble plausible (${maxY})`);
   }
   // Un toit plat n'est pas construit ici : c'est la triangulation de l'empreinte.
-  assert.equal(roofTriangles(box, 6, 'flat').positions.length, 0);
-  assert.equal(roofTriangles(null, 6, 'gable').positions.length, 0);
+  assert.equal(roofTriangles(ring, faces, box, 6, 'flat').positions.length, 0);
+  assert.equal(roofTriangles(ring, faces, null, 6, 'gable').positions.length, 0);
+  assert.equal(roofTriangles([], faces, box, 6, 'gable').positions.length, 0);
+});
+
+/** Aires d'un toit : projection au sol des pans (signée par leur enroulement), surface des panneaux verticaux. */
+function roofAreas(roof) {
+  let pans = 0;
+  let gables = 0;
+  const p = roof.positions;
+  for (let i = 0; i < p.length; i += 9) {
+    const ux = p[i + 3] - p[i], uy = p[i + 4] - p[i + 1], uz = p[i + 5] - p[i + 2];
+    const vx = p[i + 6] - p[i], vy = p[i + 7] - p[i + 1], vz = p[i + 8] - p[i + 2];
+    const ny = uz * vx - ux * vz;
+    if (Math.abs(ny) > 1e-9) pans += ny / 2;
+    else gables += Math.hypot(uy * vz - uz * vy, ux * vy - uy * vx) / 2;
+  }
+  return { pans, gables };
+}
+
+test('un comble couvre exactement l’empreinte, et ses pignons le ferment', () => {
+  const box = { cx: 0, cz: 0, angle: 0, long: 8, short: 4, fill: 1 };
+  const ring = [{ x: -8, z: -4 }, { x: 8, z: -4 }, { x: 8, z: 4 }, { x: -8, z: 4 }];
+  const faces = [[0, 1, 2], [0, 2, 3]];
+  const rise = roofRise(4);
+  for (const shape of ['gable', 'hip', 'pyramid']) {
+    const { pans, gables } = roofAreas(roofTriangles(ring, faces, box, 6, shape));
+    close(pans, 16 * 8, 1e-6, `${shape} : les pans couvrent l’empreinte, sans trou ni recouvrement`);
+    close(gables, shape === 'gable' ? 8 * rise : 0, 1e-6, `${shape} : pignons`);
+  }
+
+  // Coin entaillé : le toit suit l'entaille au lieu de la recouvrir.
+  const notched = [{ x: 0, z: 0 }, { x: 16, z: 0 }, { x: 16, z: 8 }, { x: 4, z: 8 }, { x: 4, z: 5 }, { x: 0, z: 5 }];
+  const notchedFaces = [[4, 5, 0], [4, 0, 1], [4, 1, 2], [4, 2, 3]];
+  const roof = roofTriangles(notched, notchedFaces, orientedBox(notched), 6, 'hip');
+  const { pans, gables } = roofAreas(roof);
+  close(pans, ringArea(notched), 1e-6, 'les pans couvrent l’empreinte entaillée');
+  assert.ok(gables > 0, 'les flancs de l’entaille sont fermés');
+  for (let i = 0; i < roof.positions.length; i += 3) {
+    const x = roof.positions[i];
+    const z = roof.positions[i + 2];
+    assert.ok(!(x < 4 - 1e-6 && z > 5 + 1e-6), `aucun sommet au-dessus de l’entaille (${x}, ${z})`);
+  }
 });
 
 test('la crosse d’un lampadaire est continue du fût à la lanterne', () => {
@@ -9414,7 +9885,7 @@ test('le côté examiné change la réponse, pas le découpage', () => {
 //
 // `landuse=farmyard` n'atteint pas les tuiles OpenFreeMap (vérifié contre une
 // vraie ferme d'OSM — voir le commentaire de `FARMSTEAD_MAX_HECTARES`).
-// `_looksLikeFarmstead` s'appuie donc sur `FabricIndex` : une petite parcelle
+// `looksLikeFarmstead` s'appuie donc sur `FabricIndex` : une petite parcelle
 // agricole ou une pâture, avec une vraie grappe de bâtiments à portée.
 
 /** Carré de `side` mètres de côté, coin sud-ouest à l'origine. */
@@ -9427,20 +9898,20 @@ function squareRing(side) {
   ];
 }
 
-/** Instance minimale de `FurnitureLayer`, juste assez pour `_looksLikeFarmstead`. */
+/** Instance minimale de `FurnitureLayer`, juste assez pour `looksLikeFarmstead`. */
 function farmsteadHarness(fabric) {
   const layer = Object.create(FurnitureLayer.prototype);
   layer._fabric = fabric;
   return layer;
 }
 
-test('_looksLikeFarmstead réclame une vraie grappe de bâtiments, pas un pavillon isolé', () => {
+test('looksLikeFarmstead réclame une vraie grappe de bâtiments, pas un pavillon isolé', () => {
   const centre = { x: 50, z: 50 };
   const ring = squareRing(100); // 1 ha : sous FARMSTEAD_MAX_HECTARES
 
   const lone = new FabricIndex([{ x: 50, z: 55 }]);
   assert.equal(
-    farmsteadHarness(lone)._looksLikeFarmstead({ class: 'farmland' }, ring, centre),
+    looksLikeFarmstead(farmsteadHarness(lone), { class: 'farmland' }, ring, centre),
     false,
     'une seule maison ne fait pas une ferme'
   );
@@ -9450,13 +9921,13 @@ test('_looksLikeFarmstead réclame une vraie grappe de bâtiments, pas un pavill
     { x: 60, z: 45 },
   ]);
   assert.equal(
-    farmsteadHarness(cluster)._looksLikeFarmstead({ class: 'farmland' }, ring, centre),
+    looksLikeFarmstead(farmsteadHarness(cluster), { class: 'farmland' }, ring, centre),
     true,
     'deux bâtiments groupés en font une'
   );
 });
 
-test('_looksLikeFarmstead : pâture oui, jardin ou parc non', () => {
+test('looksLikeFarmstead : pâture oui, jardin ou parc non', () => {
   const centre = { x: 50, z: 50 };
   const ring = squareRing(100);
   const cluster = new FabricIndex([
@@ -9465,16 +9936,16 @@ test('_looksLikeFarmstead : pâture oui, jardin ou parc non', () => {
   ]);
   const layer = farmsteadHarness(cluster);
 
-  assert.equal(layer._looksLikeFarmstead({ class: 'farmland' }, ring, centre), true);
-  assert.equal(layer._looksLikeFarmstead({ class: 'grass', subclass: 'meadow' }, ring, centre), true);
-  assert.equal(layer._looksLikeFarmstead({ class: 'grass', subclass: 'grassland' }, ring, centre), true);
+  assert.equal(looksLikeFarmstead(layer, { class: 'farmland' }, ring, centre), true);
+  assert.equal(looksLikeFarmstead(layer, { class: 'grass', subclass: 'meadow' }, ring, centre), true);
+  assert.equal(looksLikeFarmstead(layer, { class: 'grass', subclass: 'grassland' }, ring, centre), true);
   // Une pelouse d'agrément n'est pas une terre agricole, même à côté de maisons.
-  assert.equal(layer._looksLikeFarmstead({ class: 'grass', subclass: 'garden' }, ring, centre), false);
-  assert.equal(layer._looksLikeFarmstead({ class: 'grass', subclass: 'park' }, ring, centre), false);
-  assert.equal(layer._looksLikeFarmstead({ class: 'wood' }, ring, centre), false);
+  assert.equal(looksLikeFarmstead(layer, { class: 'grass', subclass: 'garden' }, ring, centre), false);
+  assert.equal(looksLikeFarmstead(layer, { class: 'grass', subclass: 'park' }, ring, centre), false);
+  assert.equal(looksLikeFarmstead(layer, { class: 'wood' }, ring, centre), false);
 });
 
-test('_looksLikeFarmstead écarte le grand champ ouvert et exige FabricIndex', () => {
+test('looksLikeFarmstead écarte le grand champ ouvert et exige FabricIndex', () => {
   const cluster = new FabricIndex([
     { x: 50, z: 55 },
     { x: 60, z: 45 },
@@ -9483,13 +9954,13 @@ test('_looksLikeFarmstead écarte le grand champ ouvert et exige FabricIndex', (
   // d'être près d'un bâtiment, même si `FabricIndex` en trouve un par hasard.
   const bigRing = squareRing(1000); // 100 ha
   assert.equal(
-    farmsteadHarness(cluster)._looksLikeFarmstead({ class: 'farmland' }, bigRing, { x: 500, z: 500 }),
+    looksLikeFarmstead(farmsteadHarness(cluster), { class: 'farmland' }, bigRing, { x: 500, z: 500 }),
     false
   );
 
   const smallRing = squareRing(100);
   assert.equal(
-    farmsteadHarness(null)._looksLikeFarmstead({ class: 'farmland' }, smallRing, { x: 50, z: 50 }),
+    looksLikeFarmstead(farmsteadHarness(null), { class: 'farmland' }, smallRing, { x: 50, z: 50 }),
     false,
     'sans FabricIndex, le repli est de ne rien poser'
   );
@@ -9499,11 +9970,12 @@ test('les seuils de détection restent ceux documentés', () => {
   assert.equal(FARMSTEAD_MAX_HECTARES, 3);
   assert.equal(FARMSTEAD_CLUSTER_RADIUS_M, 80);
   assert.equal(FARMSTEAD_CLUSTER_MIN_BUILDINGS, 2);
+  assert.equal(FARMSTEAD_SHARE, 0.1);
 });
 
 // --- Serres : un rang, dans le sens de la ferme, long de la parcelle -------
 
-test('_greenhouseLengthFor mesure la parcelle dans le sens de la ferme, et la borne', () => {
+test('greenhouseLengthFor mesure la parcelle dans le sens de la ferme, et la borne', () => {
   // Rectangle 20 m (largeur) × 40 m (longueur), aligné sur les axes du monde.
   const ring = [
     { x: 0, z: 0 },
@@ -9514,9 +9986,9 @@ test('_greenhouseLengthFor mesure la parcelle dans le sens de la ferme, et la bo
   const centre = { x: 10, z: 20 };
 
   // yaw = π/2 : direction (cos, sin) = (0, 1), l'axe z — la longueur.
-  close(FurnitureLayer._greenhouseLengthFor(ring, centre, Math.PI / 2), 40, 1e-6);
+  close(greenhouseLengthFor(ring, centre, Math.PI / 2), 40, 1e-6);
   // yaw = 0 : direction (1, 0), l'axe x — la largeur.
-  close(FurnitureLayer._greenhouseLengthFor(ring, centre, 0), 20, 1e-6);
+  close(greenhouseLengthFor(ring, centre, 0), 20, 1e-6);
 
   // Bornée en dessous : une parcelle minuscule ne redescend pas sous le
   // gabarit minimal.
@@ -9526,11 +9998,52 @@ test('_greenhouseLengthFor mesure la parcelle dans le sens de la ferme, et la bo
     { x: 1, z: 1 },
     { x: 0, z: 1 },
   ];
-  assert.equal(FurnitureLayer._greenhouseLengthFor(tiny, { x: 0.5, z: 0.5 }, 0), GREENHOUSE_MIN_LENGTH_M);
+  assert.equal(greenhouseLengthFor(tiny, { x: 0.5, z: 0.5 }, 0), GREENHOUSE_MIN_LENGTH_M);
 
   // Bornée au-dessus : un openfield ne dépasse pas le gabarit maximal.
   const huge = squareRing(500);
-  assert.equal(FurnitureLayer._greenhouseLengthFor(huge, { x: 250, z: 250 }, 0), GREENHOUSE_MAX_LENGTH_M);
+  assert.equal(greenhouseLengthFor(huge, { x: 250, z: 250 }, 0), GREENHOUSE_MAX_LENGTH_M);
+});
+
+test('greenhouseAnchorFor garde l’ancrage par défaut hors culture, ou sans carte de cultures', () => {
+  const ring = squareRing(100);
+  const base = { x: 50, z: 60 };
+
+  // Sans `groundClass`, comme dans les tests de placement : on ne sait pas
+  // qu'il faudrait déplacer le rang, donc on ne le déplace pas.
+  assert.deepEqual(greenhouseAnchorFor({}, ring, base, 1, 0), base);
+
+  // Avec une carte de cultures qui ne voit rien à cet endroit, l'ancrage ne
+  // bouge pas non plus.
+  const noCrop = { groundClass: { cropAt: () => null } };
+  assert.deepEqual(greenhouseAnchorFor(noCrop, ring, base, 1, 0), base);
+});
+
+test('greenhouseAnchorFor s’écarte d’une culture en cours, dans la parcelle', () => {
+  const ring = squareRing(100);
+  const base = { x: 50, z: 60 };
+  // Culture seulement sur x < 70 : le premier cran perpendiculaire (axe X)
+  // au-delà en sort.
+  const layer = { groundClass: { cropAt: (x) => (x < 70 ? 'wheat' : null) } };
+
+  const anchor = greenhouseAnchorFor(layer, ring, base, 1, 0);
+  assert.ok(anchor, 'un point sans culture existe dans la parcelle');
+  assert.notDeepEqual(anchor, base, 'l’ancrage a bougé');
+  assert.equal(layer.groundClass.cropAt(anchor.x), null, 'le point retenu est hors culture');
+  assert.ok(pointInRing(ring, anchor.x, anchor.z), 'toujours dans la parcelle');
+});
+
+test('greenhouseAnchorFor renonce plutôt que deviner sur une culture qui couvre tout, ou une grande parcelle', () => {
+  const ring = squareRing(100);
+  const base = { x: 50, z: 60 };
+  const allCrop = { groundClass: { cropAt: () => 'wheat' } };
+  assert.equal(greenhouseAnchorFor(allCrop, ring, base, 1, 0), null, 'aucun point libre trouvé');
+
+  // Openfield de cinquante hectares : au-delà de `FARMSTEAD_MAX_HECTARES`,
+  // on renonce sans même chercher.
+  const bigRing = squareRing(1000);
+  const bigBase = { x: 500, z: 500 };
+  assert.equal(greenhouseAnchorFor(allCrop, bigRing, bigBase, 1, 0), null);
 });
 
 /** Instance de `FurnitureLayer` juste assez armée pour poser du mobilier ponctuel. */
@@ -9560,7 +10073,7 @@ test('_place propage scaleX/scaleZ, et retombe sur scale sans eux', () => {
   assert.equal(plain.scale, 1);
 });
 
-test('_placeFarmstead aligne plusieurs serres, longues de la parcelle plutôt que du modèle', () => {
+test('placeFarmstead aligne plusieurs serres, longues de la parcelle plutôt que du modèle', () => {
   const { layer, placements } = farmsteadPlacementHarness();
 
   // Un losange plutôt qu'un carré aligné sur les axes : la longueur mesurée
@@ -9574,7 +10087,7 @@ test('_placeFarmstead aligne plusieurs serres, longues de la parcelle plutôt qu
     { x: centre.x - 60, z: centre.z },
   ];
 
-  layer._placeFarmstead(placements, ring, centre);
+  placeFarmstead(layer, placements, ring, centre);
 
   const greenhouses = placements.get('greenhouse');
   assert.ok([2, 3].includes(greenhouses.length), 'un rang de deux ou trois tunnels');
@@ -9607,10 +10120,10 @@ test('les bêtes quittent le mobilier : elles sont publiées, pas instanciées',
   }
 });
 
-test('_placeFauna publie une bête complète, prête à être jouée', () => {
+test('placeFauna publie une bête complète, prête à être jouée', () => {
   const { layer, placements } = farmsteadPlacementHarness();
 
-  assert.equal(layer._placeFauna('cow', { x: 120, z: -80, scale: 1.05 }), 1);
+  assert.equal(placeFauna(layer, 'cow', { x: 120, z: -80, scale: 1.05 }), 1);
   assert.equal(layer.fauna.length, 1);
 
   const [animal] = layer.fauna;
@@ -9623,14 +10136,14 @@ test('_placeFauna publie une bête complète, prête à être jouée', () => {
   for (const list of placements.values()) assert.equal(list.length, 0);
 
   // Une espèce inconnue ne fait pas tomber la reconstruction du décor.
-  assert.equal(layer._placeFauna('licorne', { x: 0, z: 0 }), 0);
+  assert.equal(placeFauna(layer, 'licorne', { x: 0, z: 0 }), 0);
   assert.equal(layer.fauna.length, 1);
 });
 
 test('le nombre de bêtes posées est plafonné', () => {
   const { layer } = farmsteadPlacementHarness();
   for (let i = 0; i < FURNITURE_LIMITS.fauna + 40; i++) {
-    layer._placeFauna('sheep', { x: i * 7.3, z: i * 3.1 });
+    placeFauna(layer, 'sheep', { x: i * 7.3, z: i * 3.1 });
   }
   assert.equal(layer.fauna.length, FURNITURE_LIMITS.fauna, 'plafonné, pas débordé');
 });
@@ -9644,7 +10157,7 @@ test('la cour d’une ferme publie ses poules au lieu de les poser', () => {
     { x: centre.x + 40, z: centre.z + 40 },
     { x: centre.x - 40, z: centre.z + 40 },
   ];
-  layer._placeFarmstead(placements, ring, centre);
+  placeFarmstead(layer, placements, ring, centre);
 
   const hens = layer.fauna.filter((a) => a.kind === 'chicken');
   assert.ok(hens.length >= 4, `une basse-cour (${hens.length} poules)`);
@@ -9664,10 +10177,10 @@ test('sans emprise routière connue, personne ne traverse', () => {
   const { layer } = farmsteadPlacementHarness();
   // `_infraIndex` ne vit que le temps d'une reconstruction : hors de là, il
   // n'y a pas de route à traverser, seulement un index absent.
-  assert.equal(layer._crossingAt(0, 0), null);
+  assert.equal(crossingAt(layer, 0, 0), null);
 });
 
-test('_crossingAt vise le milieu de la chaussée, pas son bord', () => {
+test('crossingAt vise le milieu de la chaussée, pas son bord', () => {
   const { layer } = farmsteadPlacementHarness();
   // Une bande de bitume en travers, à quelques mètres au nord de la bête.
   const roadZ = 9;
@@ -9675,7 +10188,7 @@ test('_crossingAt vise le milieu de la chaussée, pas son bord', () => {
     covers: (x, z) => Math.abs(z - roadZ) < 3.5,
   };
 
-  const crossing = layer._crossingAt(0, 0);
+  const crossing = crossingAt(layer, 0, 0);
   assert.ok(crossing, 'une route à portée');
   // Le centre du trajet tombe dans l'emprise : une traversée qui commence
   // sur le bas-côté opposé n'en est pas une.
@@ -9686,7 +10199,7 @@ test('_crossingAt vise le milieu de la chaussée, pas son bord', () => {
 
   // Une route hors de portée ne déclenche rien.
   layer._infraIndex = { covers: (x, z) => Math.abs(z - 400) < 3.5 };
-  assert.equal(layer._crossingAt(0, 0), null);
+  assert.equal(crossingAt(layer, 0, 0), null);
 });
 
 test('une emprise habitée se lit par lancer de rayon', () => {
@@ -10314,7 +10827,7 @@ test('le contour de l’eau se fond, sans que les identifiants cessent d’être
   // mêmes relevés. C'étaient trois mécanismes — un mélange de quatre poids
   // interpolés linéairement, une boucle de couvertures, une substitution de
   // culture — pour une seule question.
-  assert.match(source, /surfaceAt\(surfaceUv, noise, far, farmAlbedo, albedo, gWater\);/);
+  assert.match(source, /surfaceAt\(surfaceUv, farmAlbedo, albedo, gWater, standing\);/);
   assert.ok(!/uClassMap|uCropMap/.test(source), 'les deux cartes ont fusionné');
 
   // Ce qui est interpolé est l'**appartenance**, pas l'identifiant : chaque
@@ -10324,7 +10837,7 @@ test('le contour de l’eau se fond, sans que les identifiants cessent d’être
   assert.equal(
     (source.match(/surfaceIdAt\(corner/g) || []).length,
     4,
-    'les quatre texels voisins, pas un seul'
+    'quatre texels par ligne du voisinage'
   );
 
   // Et la berge est un fondu, pas une substitution.
@@ -10654,9 +11167,14 @@ test('appendShopSignBlade pose un panneau des deux côtés, avec son pictogramme
   assert.equal(labels.positions.length / 3, 12, 'deux faces peintes');
 
   // Rien ne flotte au-dessus du toit ni sous le sol : tout reste autour de
-  // `BLADE_SIGN_HEIGHT_M` (2,55 m), à `BLADE_SIGN_SIZE_M` (0,5 m) près.
+  // `BLADE_SIGN_HEIGHT_M`, à une demi-largeur de panneau près.
+  const centre = 100 + BLADE_SIGN_HEIGHT_M;
+  const reach = BLADE_SIGN_SIZE_M / 2 + 1e-6;
   for (let i = 1; i < walls.positions.length; i += 3) {
-    assert.ok(walls.positions[i] > 102 && walls.positions[i] < 103.1, 'autour de la hauteur de pose');
+    assert.ok(
+      Math.abs(walls.positions[i] - centre) <= reach,
+      'autour de la hauteur de pose'
+    );
   }
 });
 
@@ -10692,16 +11210,17 @@ test('appendShopSignBlade a une vraie épaisseur et deux tiges qui le lient au m
   const backXs = xs(18, 36);
   assert.notDeepEqual(frontXs, backXs, 'les deux faces ne sont pas coplanaires');
   const thickness = Math.abs(frontXs[0] - backXs[0]);
-  close(thickness, 0.05, 1e-9, 'l’épaisseur du panneau');
+  close(thickness, BLADE_SIGN_THICKNESS_M, 1e-9, 'l’épaisseur du panneau');
 
   // Deux tiges (quatre passes, deux par tige) après les deux faces du
   // panneau : chacune touche le mur (z = 0, à l’inset près sur x) d’un côté,
-  // et la face intérieure du panneau (z ≈ -0,3 m) de l’autre.
+  // et la face intérieure du panneau de l’autre — le bras moins la demi-largeur.
+  const innerZ = -(BLADE_SIGN_REACH_M - BLADE_SIGN_SIZE_M / 2);
   const rodPositions = walls.positions.slice(36);
   assert.equal(rodPositions.length / 18, 4, 'quatre passes de tige (deux tiges, deux faces chacune)');
   const zs = rodPositions.filter((_, i) => i % 3 === 2);
-  assert.ok(zs.some((z) => Math.abs(z) < 0.03), 'une tige touche le mur');
-  assert.ok(zs.some((z) => z < -0.25), 'une tige atteint la face intérieure du panneau');
+  assert.ok(zs.some((z) => Math.abs(z) < 1e-9), 'une tige touche le mur');
+  assert.ok(zs.some((z) => Math.abs(z - innerZ) < 1e-9), 'une tige atteint la face intérieure du panneau');
 });
 
 test('les deux faces du panneau et de son pictogramme se font face, pas dos à dos', () => {
@@ -10888,21 +11407,48 @@ test('les limites de surfaces : la frange, les matières interpolées et la rive
   factory.material.onBeforeCompile(shader);
   const source = shader.fragmentShader;
 
-  // La frange : déclarée, et appliquée au point de lecture des deux cartes.
-  assert.match(source, /vec2 edgeWarp\(vec2 world\)/);
-  assert.match(
-    source,
-    /surfaceUv = \(vScenePos\.xz \+ edgeWarp\(vScenePos\.xz\) - uSurfaceOrigin\)/
-  );
+  // Rien ne déplace plus la lecture : le contour vient de l'interpolation, et
+  // d'elle seule. Ni frange, ni bruit, ni largeur de fondu.
+  assert.ok(!/edgeWarp|uEdgeNoise|uBlendWidth|uSurfaceNoise/.test(source), 'le bruit de lisière');
+  assert.match(source, /surfaceUv = \(vScenePos\.xz - uSurfaceOrigin\)/);
+  for (const key of ['blendWidth', 'edgeNoiseScaleM', 'edgeWarpScaleM']) {
+    assert.equal(defaultTheme.terrain[key], undefined, `${key} n'a plus d'objet`);
+  }
 
-  // Les couvertures : lues aux quatre carreaux voisins, mélangées par leur
-  // appartenance, l'eau tenue à part.
+  // Le contour : l'appartenance de seize texels, lissée par une cubique.
+  // Quatre ne suffisent pas — un champ bilinéaire casse à chaque bord de
+  // texel, et sa ligne brisée redessine la grille qu'on veut effacer.
   assert.match(source, /out vec3 albedo, out float water/);
   assert.equal(
     (source.match(/surfaceIdAt\(corner/g) || []).length,
     4,
-    'les quatre texels voisins, pas un seul'
+    'quatre par ligne, appelées sur les quatre lignes du voisinage'
   );
+  assert.equal(
+    (source.match(/surfaceRow\(corner, /g) || []).length,
+    4,
+    'les quatre lignes du voisinage 4 × 4'
+  );
+  assert.match(source, /vec4 splineWeights\(float t\)/);
+  assert.equal(
+    (source.match(/splineShare\(ids\./g) || []).length,
+    4,
+    'une part par candidat, et les candidats sont le carré central'
+  );
+
+  // Tranché, pas fondu : la matière la plus forte l'emporte sur la largeur
+  // d'un pixel. C'est la seule dérivée d'écran du shader.
+  assert.match(source, /smoothstep\(-aa, 0\.0, share - peak\)/);
+  assert.equal(
+    (source.match(/fwidth\(/g) || []).length,
+    2,
+    'la largeur du trait, en x et en z, et rien d’autre'
+  );
+  assert.ok(
+    !/dFdx|dFdy/.test(source),
+    'aucune dérivée à la main : le relief tiré du grain ne revient pas'
+  );
+
   assert.ok(
     !/waterShareAt|coverIdAt/.test(source),
     'les lectures séparées ont été reprises par surfaceAt'
@@ -10919,34 +11465,11 @@ test('les limites de surfaces : la frange, les matières interpolées et la rive
 
   // Les réglages viennent du thème, pas du shader.
   assert.equal(shader.uniforms.uShoreWet.value, defaultTheme.terrain.shoreWet);
-  assert.equal(shader.uniforms.uEdgeWarp.value.x, defaultTheme.terrain.edgeWarpM);
-  assert.equal(shader.uniforms.uEdgeWarp.value.y, defaultTheme.terrain.edgeWarpScaleM);
 });
 
-/** Corrélation de Pearson, en valeur absolue. Deux champs indépendants tendent vers 0. */
-function correlation(a, b) {
-  const n = a.length;
-  const meanA = a.reduce((sum, v) => sum + v, 0) / n;
-  const meanB = b.reduce((sum, v) => sum + v, 0) / n;
-  let joint = 0;
-  let spreadA = 0;
-  let spreadB = 0;
-  for (let i = 0; i < n; i++) {
-    const x = a[i] - meanA;
-    const y = b[i] - meanB;
-    joint += x * y;
-    spreadA += x * x;
-    spreadB += y * y;
-  }
-  return Math.abs(joint / Math.sqrt(spreadA * spreadB || 1));
-}
-
-test('le grain du sol : trois champs indépendants dans une seule carte', () => {
-  // Les trois canaux ne sont pas un confort. L'interpénétration des matières
-  // repondère les poids par la hauteur du grain de chacune : un grain commun
-  // serait un facteur commun, qui s'annule à la normalisation, et la lisière
-  // redeviendrait le dégradé linéaire que ce mécanisme remplace.
-  const size = 128;
+test('le bord d’un chemin est rongé par le sol, et il l’est au seuil', () => {
+  const size = 64;
+  const rows = ROAD_TEXTURE_ROWS;
   let written = null;
   const previousCanvas = globalThis.OffscreenCanvas;
   globalThis.OffscreenCanvas = class {
@@ -10963,74 +11486,45 @@ test('le grain du sol : trois champs indépendants dans une seule carte', () => 
     }
   };
   try {
-    createEdgeNoiseCanvas(size, 4242);
+    createRoadEdgeCanvas({ width: 1.4, ragged: 0.2, texture: size });
   } finally {
     if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
     else delete globalThis.OffscreenCanvas;
   }
-  assert.ok(written, 'la carte de grain a bien été écrite');
+  assert.ok(written, 'le masque a bien été écrit');
 
-  const channel = (c) => Array.from({ length: size * size }, (_, i) => written[i * 4 + c]);
-  const red = channel(0);
-  const green = channel(1);
-  const blue = channel(2);
+  // Un texel est du chemin ou du terrain, jamais entre les deux : le matériau
+  // tranche au seuil, et une valeur intermédiaire ne voudrait rien dire.
+  const values = new Set();
+  for (let i = 0; i < written.length; i += 4) values.add(written[i]);
+  assert.deepEqual([...values].sort((a, b) => a - b), [0, 255], 'deux valeurs, pas un dégradé');
 
-  assert.ok(correlation(red, green) < 0.2, 'R et G doivent être indépendants');
-  assert.ok(correlation(red, blue) < 0.2, 'R et B doivent être indépendants');
-  assert.ok(correlation(green, blue) < 0.2, 'G et B doivent être indépendants');
-
-  // Une modulation, pas une couleur : centrée sur 0,5 et resserrée.
-  for (const [name, values] of [['R', red], ['G', green], ['B', blue]]) {
-    const mean = values.reduce((sum, v) => sum + v, 0) / values.length / 255;
-    assert.ok(Math.abs(mean - 0.5) < 0.01, `le canal ${name} doit moduler autour de 0,5`);
+  // Part gardée, colonne par colonne : nulle au bord, pleine au-delà de la
+  // profondeur rongée, et croissante entre les deux. C'est le profil d'un bord
+  // repris par la végétation, et non celui d'une bande rétrécie.
+  const kept = [];
+  for (let x = 0; x < size; x++) {
+    let on = 0;
+    for (let y = 0; y < rows; y++) if (written[(y * size + x) * 4] > 127) on++;
+    kept.push(on / rows);
+  }
+  const depth = Math.round((0.2 / 1.4) * size);
+  assert.equal(kept[0], 0, 'le tout premier texel n’est jamais du chemin');
+  assert.ok(kept[depth] > 0.9, `plein chemin à ${depth} texels du bord (${kept[depth].toFixed(2)})`);
+  assert.equal(kept[size >> 1], 1, 'le milieu du chemin est intact');
+  for (let x = 1; x < depth; x++) {
+    assert.ok(kept[x] >= kept[x - 1], `la part gardée ne redescend pas (colonne ${x})`);
   }
 
-  // L'alpha reste plein : un canevas 2D prémultiplie, et un quatrième champ
-  // rangé là abîmerait les trois autres.
-  assert.ok(
-    channel(3).every((v) => v === 255),
-    'l’alpha doit rester plein'
-  );
+  // Les deux bords ne se répondent pas : le champ est lu à l'envers de l'autre
+  // côté, sans quoi le chemin serait rongé en miroir.
+  const mirrored = kept.filter((v, x) => x < depth && Math.abs(v - kept[size - 1 - x]) < 1e-9);
+  assert.ok(mirrored.length < depth, 'les deux bords ne sont pas symétriques');
 
-  // Et le point de tout le relevé : c'est un **grain**, pas un nuage.
-  //
-  // Le test qui manquait. Une somme d'octaves à la mode habituelle est
-  // dominée par sa grille la plus grossière : deux texels voisins y différaient
-  // de 5 % de l'écart-type du champ — autant dire qu'ils étaient identiques, et
-  // aucune échelle de lecture ne pouvait rattraper ça. On mesure donc
-  // directement ce qui compte : l'écart entre voisins, rapporté à l'étendue du
-  // champ. Au-dessus de 1, les voisins sont décorrélés et le grain vit à
-  // l'échelle du texel, qui est la seule où un grain existe.
-  for (const [name, values] of [['R', red], ['G', green], ['B', blue]]) {
-    const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
-    const spread = Math.sqrt(
-      values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length
-    );
-    let gap = 0;
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        gap += (values[y * size + x] - values[y * size + ((x + 1) % size)]) ** 2;
-      }
-    }
-    gap = Math.sqrt(gap / (size * size));
-    assert.ok(
-      gap / spread > 1,
-      `le canal ${name} doit avoir des voisins décorrélés (${(gap / spread).toFixed(2)})`
-    );
-  }
-
-  // La quantité de lumière que le grain module, elle, n'a pas bougé : c'est
-  // l'écart-type de l'ancien relevé nuageux, repris tel quel. Changer le
-  // spectre et l'amplitude dans le même geste rendrait les deux effets
-  // impossibles à départager à l'œil.
-  for (const [name, values] of [['R', red], ['G', green], ['B', blue]]) {
-    const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
-    const spread =
-      Math.sqrt(values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length) / 255;
-    assert.ok(
-      Math.abs(spread - 0.1361) < 0.01,
-      `le canal ${name} doit garder l'amplitude d'avant (${spread.toFixed(4)})`
-    );
+  // Une chaussée revêtue n'a pas de bord rongé : c'est ce qui la distingue.
+  for (const [key, profile] of Object.entries(defaultTheme.roads.profiles)) {
+    const ragged = (profile.ragged ?? 0) > 0;
+    assert.equal(ragged, profile.surface === 'dirt', `${key} : rongé si et seulement si en terre`);
   }
 });
 
@@ -11073,7 +11567,11 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   assert.ok(!/uGrassMap|uSoilMap|uWoodMap/.test(source), 'les textures de matière');
   assert.ok(!/uDetailMap|uDetailScale/.test(source), 'le bruit de détail');
   assert.ok(!/uGrainContrast|uGrainRelief|grainHeight/.test(source), 'le grain et son relief');
-  assert.ok(!/dFdx|dFdy|fwidth/.test(source), 'plus aucune dérivée d’écran');
+  // L'interdit porte sur la dérivée **à la main**, celle qui inventait une
+  // normale depuis un grain et faisait fourmiller le sol. La largeur du trait
+  // d'une lisière (`fwidth`, dans surfaceAt) n'en est pas : elle ne touche pas
+  // la normale, et le champ sous elle est lisse et fixe dans le monde.
+  assert.ok(!/dFdx|dFdy/.test(source), 'plus aucune dérivée à la main');
   for (const key of ['grainScaleM', 'grainPixels', 'grainContrast', 'grainRelief']) {
     assert.equal(defaultTheme.terrain[key], undefined, `${key} n'a plus d'objet`);
   }
@@ -11089,24 +11587,10 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   // fourmillement qui suivait l'observateur.
   assert.match(source, /mix\(worldNormal, wavy, gWater\)/);
 
-  // Le bruit de lisière reste, et il ne s'affiche nulle part : deux lectures,
-  // l'une pour la frange, l'autre pour donner leur forme aux limites.
-  assert.equal(
-    (source.match(/texture2D\(uEdgeNoise/g) || []).length,
-    2,
-    'la frange et la découpe des lisières, pas une de plus'
-  );
-  assert.match(
-    source,
-    /vec3 noise = texture2D\(uEdgeNoise, vScenePos\.xz \/ uEdgeNoiseScale\)\.rgb;/
-  );
-  assert.match(source, /texture2D\(uEdgeNoise, world \/ uEdgeWarp\.y\)/);
-  // Chaque matière prend son champ dans la table, par un sélecteur : un bruit
-  // commun serait un facteur commun, qui s'annule à la normalisation de
-  // l'interpénétration, et la lisière retomberait sur un fondu linéaire.
-  assert.match(source, /height \+= hit \* dot\(noise, uSurfaceNoise\[i - 1\]\);/);
-
-  assert.equal(shader.uniforms.uEdgeNoiseScale.value, defaultTheme.terrain.edgeNoiseScaleM);
+  // Le bruit de lisière est parti avec le reste : il dentelait au centimètre
+  // ce qu'il fallait courber au mètre, et le filtrage le ramenait à sa
+  // moyenne — donc à rien — avant même qu'on puisse le voir.
+  assert.ok(!/uEdgeNoise/.test(source), 'plus de bruit de lisière dans le shader');
 
   // Le shader n'est compilé par personne ici : rien ne rattrape une parenthèse
   // ou une accolade perdue en éditant le gabarit, et l'erreur ne se verrait
@@ -11114,12 +11598,12 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   const count = (sign) => source.split(sign).length - 1;
   assert.equal(count('('), count(')'), 'parenthèses équilibrées');
   assert.equal(count('{'), count('}'), 'accolades équilibrées');
-  assert.equal(factory.textures.length, 3, 'macro, bruit de lisière, rides');
+  assert.equal(factory.textures.length, 2, 'la variation macro et les rides, et c’est tout');
 
   // Une matière = une couleur : le tableau d'albédos a exactement une entrée
   // par matière, et c'est tout ce qu'il faut pour en ajouter une.
   assert.equal(shader.uniforms.uSurfaceAlbedo.value.length, SURFACE_KINDS.length);
-  assert.equal(shader.uniforms.uSurfaceNoise.value.length, SURFACE_KINDS.length);
+  assert.equal(shader.uniforms.uSurfaceWater.value.length, SURFACE_KINDS.length, 'une part d’eau libre par matière');
 
   for (const key of ['detailScaleNear', 'detailScaleFar']) {
     assert.equal(defaultTheme.terrain[key], undefined, `${key} n'a plus d'objet`);
@@ -11571,7 +12055,7 @@ test('un panneau de priorité se pose à la bouche qui cède, et à aucune autre
 
   const post = (signalled) => {
     const placed = [];
-    FurnitureLayer.prototype._buildJunctionSigns.call(
+    buildJunctionSigns(
       {
         _signalled: signalled,
         _place: (_placements, item, at) => {
@@ -11614,7 +12098,7 @@ test('un panneau de priorité se pose à la bouche qui cède, et à aucune autre
     },
   ]);
   const placed = [];
-  FurnitureLayer.prototype._buildJunctionSigns.call(
+  buildJunctionSigns(
     { _signalled: [], _place: (_p, item, at) => placed.push({ item, ...at }) },
     { placements: new Map(), here: { x: 0, z: 0 } },
     even,
@@ -11934,6 +12418,111 @@ test('le pictogramme cycliste : un dessin fermé, posé en phase avec la chaîne
     color: [1, 1, 1],
     spacing: 0.2,
   });
+  assert.equal(nothing.positions.length, 0);
+});
+
+test('la flèche de sens unique : une rotation de 180°, pas une réflexion', () => {
+  const shoelace = (polygon) => {
+    let sum = 0;
+    for (let i = 0; i < polygon.length; i++) {
+      const a = polygon[i];
+      const b = polygon[(i + 1) % polygon.length];
+      sum += a.along * b.across - b.along * a.across;
+    }
+    return sum;
+  };
+
+  const forward = directionGlyph();
+  assert.ok(forward.length >= 3, 'une hampe et deux ailes');
+  for (const polygon of forward) {
+    assert.ok(shoelace(polygon) < 0, 'sens horaire, comme le reste du catalogue de pictogrammes');
+  }
+
+  // Tournée de 180°, la flèche pointe dans l'autre sens sans que ses faces ne
+  // se retournent vers le sol : une réflexion en `along` seul l'aurait fait.
+  const backward = mirrorDirection(forward);
+  assert.deepEqual(
+    backward,
+    forward.map((polygon) => polygon.map((v) => ({ along: -v.along, across: -v.across }))),
+    'une rotation de 180°, sommet pour sommet, dans le même ordre'
+  );
+  for (const polygon of backward) {
+    assert.ok(shoelace(polygon) < 0, 'toujours à l’endroit après la rotation');
+  }
+  const forwardAlongs = forward.flat().map((v) => v.along);
+  assert.ok(Math.max(...forwardAlongs) > 0, 'la pointe est vers l’avant');
+
+  // La hampe va jusqu'au creux du chevron : aucun jour entre les deux.
+  const [shaft, ...wings] = forward;
+  const shaftEnd = Math.max(...shaft.map((v) => v.along));
+  for (const wing of wings) {
+    const onAxis = wing.filter((v) => Math.abs(v.across) < 1e-9).map((v) => v.along);
+    assert.equal(onAxis.length, 2, 'chaque aile est coupée à l’onglet sur l’axe');
+    assert.ok(shaftEnd >= Math.min(...onAxis) - 1e-9, 'la hampe touche le chevron');
+  }
+});
+
+test('les flèches de sens unique : posées seulement là où un sens est affirmé, dans le bon sens', () => {
+  const path = Array.from({ length: 21 }, (_, i) => ({ x: i * 5, z: 0, distance: i * 5 }));
+  const decks = new Float32Array(path.length).fill(8);
+  const forward = directionGlyph();
+  const backward = mirrorDirection(forward);
+
+  // Moitié de la plage à double sens (aucune flèche), l'autre à sens unique.
+  const oneway = new Int8Array(path.length);
+  for (let r = 11; r < path.length; r++) oneway[r] = 1;
+
+  const buffer = createProfileBuffer();
+  const laid = appendMarkingArrows(buffer, {
+    path,
+    decks,
+    oneway,
+    forward,
+    backward,
+    color: [1, 1, 1],
+  });
+  assert.ok(laid > 0, 'au moins une flèche sur la moitié affirmée');
+  assert.ok(laid < Math.floor(100 / MARKING_SYMBOL_SPACING_M) + 1, 'aucune sur la moitié à double sens');
+
+  // Sens contraire : les mêmes emplacements, l'autre pictogramme.
+  const oppositeOneway = oneway.map((v) => -v);
+  const opposite = createProfileBuffer();
+  appendMarkingArrows(opposite, {
+    path,
+    decks,
+    oneway: oppositeOneway,
+    forward,
+    backward,
+    color: [1, 1, 1],
+  });
+  assert.equal(opposite.positions.length, buffer.positions.length, 'autant de flèches, juste retournées');
+  assert.notDeepEqual([...opposite.positions], [...buffer.positions], 'mais pas aux mêmes coordonnées');
+
+  // Une plage qui ne commence pas à la première ligne du tronçon : le sens se
+  // lit sur le tracé du tronçon, pas au rang dans la plage.
+  const sliced = createProfileBuffer();
+  appendMarkingArrows(sliced, {
+    path: path.slice(10),
+    decks: decks.subarray(10),
+    oneway,
+    onewayPath: path,
+    forward,
+    backward,
+    color: [1, 1, 1],
+  });
+  assert.deepEqual([...sliced.positions], [...buffer.positions], 'les mêmes flèches, aux mêmes endroits');
+
+  // Un sens partout ambigu (0) n'en pose aucune.
+  const nothing = createProfileBuffer();
+  const none = appendMarkingArrows(nothing, {
+    path,
+    decks,
+    oneway: new Int8Array(path.length),
+    forward,
+    backward,
+    color: [1, 1, 1],
+  });
+  assert.equal(none, 0);
   assert.equal(nothing.positions.length, 0);
 });
 

@@ -34,7 +34,7 @@ import {
 
 // --- Réglages ---------------------------------------------------------------
 
-const START = { lng: 2.3522, lat: 48.8566, label: 'Paris' }; // point de départ
+const START = { lng: -0.1450, lat: 47.1310, label: 'Montreuil-Bellay' }; // point de départ
 const EYE_HEIGHT_M = 1.75;
 const MOVE_SPEED = 22; // m/s
 const BOOST_FACTOR = 4.5;

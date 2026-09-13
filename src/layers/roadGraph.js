@@ -278,8 +278,14 @@ function edgeKey(a, b, rank) {
  * Ajoute une arête au graphe, en écartant les doublons entre tuiles. Le
  * doublon garde l'ouvrage le plus fort : la même arête livrée deux fois par
  * deux tuiles ne doit pas perdre son pont selon l'ordre de lecture.
+ *
+ * `oneway` est le sens de circulation tel que la donnée le porte, compté de
+ * `a` vers `b` dans l'ordre où cette arête a été insérée : `1` n'autorise que
+ * ce sens-là, `-1` l'autre, `0` les deux. Un doublon qui s'en dédit — deux
+ * tuiles pas d'accord sur le même tronçon — retombe sur `0` : mieux vaut ne
+ * rien affirmer qu'inventer un sens.
  */
-function addEdge(state, a, b, profile, halfWidth, works = WORK_NONE, level = LEVEL_GROUND) {
+function addEdge(state, a, b, profile, halfWidth, works = WORK_NONE, level = LEVEL_GROUND, oneway = 0) {
   if (a === b) return;
   const rank = profileRank(state, profile);
   const key = edgeKey(a, b, rank);
@@ -287,6 +293,9 @@ function addEdge(state, a, b, profile, halfWidth, works = WORK_NONE, level = LEV
   if (seen !== undefined) {
     const edge = state.edges[seen];
     if (works > edge.works) edge.works = works;
+    // Un doublon peut être livré à rebours : son sens se compare ramené à `edge.a → edge.b`.
+    const directed = edge.a === a ? oneway : -oneway;
+    if (edge.oneway !== directed) edge.oneway = 0;
     return;
   }
 
@@ -294,7 +303,7 @@ function addEdge(state, a, b, profile, halfWidth, works = WORK_NONE, level = LEV
   state.seen.set(key, index);
   // Le niveau n'entre pas dans la clé : les nœuds sont déjà séparés par niveau
   // (`NodeIndex`), donc deux arêtes entre les mêmes nœuds sont du même niveau.
-  state.edges.push({ a, b, profile, rank, halfWidth, works, level });
+  state.edges.push({ a, b, profile, rank, halfWidth, works, level, oneway });
   for (const node of [a, b]) {
     const listKey = adjacencyKey(node, rank);
     const list = state.adjacency.get(listKey);
@@ -527,16 +536,17 @@ function graftLooseNodes(state, nodes, { reach = GRAFT_REACH_M, skewCos = GRAFT_
     const edge = edges[i];
     const cuts = splits.get(i);
     if (!cuts) {
-      addEdge(next, at(edge.a), at(edge.b), edge.profile, edge.halfWidth, edge.works, edge.level);
+      addEdge(next, at(edge.a), at(edge.b), edge.profile, edge.halfWidth, edge.works, edge.level, edge.oneway);
       continue;
     }
+    // Les morceaux se suivent de `a` vers `b` : le sens de l'arête vaut pour chacun.
     cuts.sort((p, q) => p.t - q.t);
     let from = at(edge.a);
     for (const cut of cuts) {
-      addEdge(next, from, cut.node, edge.profile, edge.halfWidth, edge.works, edge.level);
+      addEdge(next, from, cut.node, edge.profile, edge.halfWidth, edge.works, edge.level, edge.oneway);
       from = cut.node;
     }
-    addEdge(next, from, at(edge.b), edge.profile, edge.halfWidth, edge.works, edge.level);
+    addEdge(next, from, at(edge.b), edge.profile, edge.halfWidth, edge.works, edge.level, edge.oneway);
   }
 
   return next;
@@ -630,7 +640,7 @@ function joinLooseEnds(chains, { join, offset, collinearCos }) {
  * quoi en ajouter un revient à retoucher chaque appel.
  */
 function appendChain(out, run) {
-  const { points, anchors, works, levels } = run;
+  const { points, anchors, works, levels, oneway } = run;
 
   const copy = (from) => {
     for (let i = from; i < points.length; i++) {
@@ -638,6 +648,7 @@ function appendChain(out, run) {
       out.anchors.push(anchors[i]);
       out.works.push(works[i]);
       out.levels.push(levels[i]);
+      out.oneway.push(oneway[i]);
     }
   };
 
@@ -668,7 +679,7 @@ function assembleChains(chains, partner) {
   const merged = [];
 
   const walk = (startEnd) => {
-    const out = { points: [], anchors: [], works: [], levels: [] };
+    const out = { points: [], anchors: [], works: [], levels: [], oneway: [] };
     let end = startEnd;
 
     for (;;) {
@@ -679,11 +690,15 @@ function assembleChains(chains, partner) {
       const chain = chains[c];
       // Entrer par le bout `at` revient à parcourir la chaîne dans ce sens-là.
       const flip = (array) => (at === 0 ? array : array.slice().reverse());
+      // Le sens de circulation change de signe en même temps que d'ordre : lui
+      // seul dépend du sens de parcours, pas de l'état qu'il décrit.
+      const flipDirected = (array) => (at === 0 ? array : array.slice().reverse().map((v) => (v ? -v : 0)));
       appendChain(out, {
         points: flip(chain.points),
         anchors: flip(chain.anchors),
         works: flip(chain.works),
         levels: flip(chain.levels),
+        oneway: flipDirected(chain.oneway),
       });
 
       const exit = c * 2 + (1 - at);
@@ -700,6 +715,7 @@ function assembleChains(chains, partner) {
         anchors: out.anchors,
         works: out.works,
         levels: out.levels,
+        oneway: out.oneway,
       });
     }
   };
@@ -747,7 +763,7 @@ export const BRANCH_HEADING_M = 8;
  *
  * @returns {Array<{x:number,z:number}>} du nœud vers l'extérieur, nœud compris.
  */
-function branchPath({ edges, adjacency, degree }, nodes, node, first, rank, sight) {
+function branchPath({ edges, adjacency }, nodes, node, first, rank, sight, degreeOf) {
   const points = [{ x: nodes.xs[node], z: nodes.zs[node] }];
   const visited = new Set([node]);
   let previous = node;
@@ -762,7 +778,7 @@ function branchPath({ edges, adjacency, degree }, nodes, node, first, rank, sigh
     points.push({ x: nodes.xs[current], z: nodes.zs[current] });
     if (travelled >= sight || visited.has(current)) break;
     visited.add(current);
-    if ((degree.get(current) || 0) !== 2) break;
+    if (degreeOf(current) !== 2) break;
 
     const candidates = adjacency.get(adjacencyKey(current, rank));
     if (!candidates) break;
@@ -821,6 +837,14 @@ function pointAlong(points, distance) {
  * — c'est ce qui rend ses coins calculables — mais il pose ses bouches sur la
  * polyligne, là où la chaussée est vraiment (`roadJunctions.branchSection`).
  *
+ * Un chemin ne fait pas carrefour avec une chaussée revêtue. À un nœud qu'une
+ * revêtue atteint, seules les revêtues comptent : le chemin qui s'y embranche
+ * ou la traverse n'ouvre ni bouche ni surface, il est dessiné par-dessus
+ * (`roadNetwork.roadLiftFor`). Là où aucune revêtue n'arrive, les chemins font
+ * carrefour entre eux. Une polyligne de branche suit la même règle : un chemin
+ * qui la coupe ne l'arrête pas.
+ *
+ * @param {Set<string>|null} [options.unpaved] Profils non revêtus.
  * @returns {Array<{x:number, z:number, degree:number, level:number,
  *          halfWidth:number, profile:string, branches:Array<{x:number,
  *          z:number, halfWidth:number, profile:string,
@@ -828,15 +852,32 @@ function pointAlong(points, distance) {
  *          Carrefours, direction sortante unitaire par branche. `halfWidth` et
  *          `profile` sont ceux de la branche dominante — la plus large.
  */
-function collectJunctions(graph, nodes, { sight = BRANCH_SIGHT_M, headingAt = BRANCH_HEADING_M } = {}) {
+function collectJunctions(
+  graph,
+  nodes,
+  { sight = BRANCH_SIGHT_M, headingAt = BRANCH_HEADING_M, unpaved = null } = {}
+) {
   const { edges, degree } = graph;
   const byNode = new Map();
 
+  const pavedDegree = new Map();
   for (const edge of edges) {
+    if (unpaved?.has(edge.profile)) continue;
+    for (const node of [edge.a, edge.b]) pavedDegree.set(node, (pavedDegree.get(node) || 0) + 1);
+  }
+  const degreeOf = (node, paved) => {
+    const count = pavedDegree.get(node) || 0;
+    return paved ? count : (degree.get(node) || 0) - count;
+  };
+
+  for (const edge of edges) {
+    const paved = !unpaved?.has(edge.profile);
     for (const node of [edge.a, edge.b]) {
-      if ((degree.get(node) || 0) < 3) continue;
+      if (paved !== pavedDegree.has(node)) continue;
+      const count = degreeOf(node, paved);
+      if (count < 3) continue;
       const other = node === edge.a ? edge.b : edge.a;
-      const path = branchPath(graph, nodes, node, other, edge.rank, sight);
+      const path = branchPath(graph, nodes, node, other, edge.rank, sight, (n) => degreeOf(n, paved));
       // La corde sur une longueur de rue, et non la première arête : voir
       // `BRANCH_HEADING_M`.
       const ahead = pointAlong(path, headingAt);
@@ -848,7 +889,7 @@ function collectJunctions(graph, nodes, { sight = BRANCH_SIGHT_M, headingAt = BR
         junction = {
           x: nodes.xs[node],
           z: nodes.zs[node],
-          degree: degree.get(node),
+          degree: count,
           // Un nœud n'a qu'un niveau : celui des chaussées qui s'y rencontrent
           // vraiment. Ce qui passe au-dessus a son propre nœud, ailleurs.
           level: nodes.levels[node] ?? LEVEL_GROUND,
@@ -882,8 +923,9 @@ function collectJunctions(graph, nodes, { sight = BRANCH_SIGHT_M, headingAt = BR
  * carrefours du graphe au passage (une propriété du graphe — nœud de degré
  * trois — qui n'existe qu'ici).
  *
- * @param {Array<{profile:string, halfWidth:number, points:Array<{x:number,z:number}>}>} lines
- *        Polylignes métriques, telles qu'elles sortent des tuiles.
+ * @param {Array<{profile:string, halfWidth:number, paved?:boolean, points:Array<{x:number,z:number}>}>} lines
+ *        Polylignes métriques, telles qu'elles sortent des tuiles. `paved:
+ *        false` marque un chemin (voir `collectJunctions`).
  * @param {Object} [options]
  * @returns {{chains: Array<{profile:string, halfWidth:number, points:Array,
  *          anchors:Array<boolean>}>, junctions: Array<Object>}}
@@ -910,15 +952,18 @@ export function mergeRoadLines(lines, options = {}) {
     ranks: new Map(),
   };
 
+  const unpaved = new Set();
   for (const line of lines || []) {
     const points = line?.points;
     if (!Array.isArray(points) || points.length < 2) continue;
+    if (line.paved === false) unpaved.add(line.profile);
     const works = line.works || WORK_NONE;
     const level = line.level || LEVEL_GROUND;
+    const oneway = line.oneway || 0;
     let previous = nodes.idFor(points[0].x, points[0].z, level);
     for (let i = 1; i < points.length; i++) {
       const id = nodes.idFor(points[i].x, points[i].z, level);
-      addEdge(state, previous, id, line.profile, line.halfWidth, works, level);
+      addEdge(state, previous, id, line.profile, line.halfWidth, works, level, oneway);
       previous = id;
     }
   }
@@ -951,11 +996,27 @@ export function mergeRoadLines(lines, options = {}) {
     // `joinLooseEnds` recoud ensuite une culée à sa route d'approche, et que
     // la chaîne qui en sort, elle, en traverse deux.
     const levels = new Array(ids.length).fill(edge.level ?? LEVEL_GROUND);
+    // Le sens de circulation, lui, n'est affirmé que si les deux arêtes qui
+    // rejoignent un sommet s'accordent : ce n'est pas un état qui s'aggrave
+    // comme l'ouvrage, c'est une affirmation, et deux avis contraires n'en
+    // valent aucun (voir `roadWorks.resampleOneway`).
+    const oneway = new Array(ids.length).fill(0);
     for (let i = 1; i < ids.length; i++) {
       const between = edges[seen.get(edgeKey(ids[i - 1], ids[i], edge.rank))];
       const code = between ? between.works : WORK_NONE;
       if (code > works[i - 1]) works[i - 1] = code;
       if (code > works[i]) works[i] = code;
+
+      if (between) {
+        // Le sens porté par l'arête est compté de `between.a` vers
+        // `between.b` : il se lit à l'endroit si la chaîne la parcourt dans
+        // ce sens-là, à l'envers sinon.
+        const directed = between.a === ids[i - 1] ? between.oneway : between.oneway ? -between.oneway : 0;
+        if (oneway[i - 1] === 0) oneway[i - 1] = directed;
+        else if (oneway[i - 1] !== directed) oneway[i - 1] = 0;
+        if (oneway[i] === 0) oneway[i] = directed;
+        else if (oneway[i] !== directed) oneway[i] = 0;
+      }
     }
 
     chains.push({
@@ -963,6 +1024,7 @@ export function mergeRoadLines(lines, options = {}) {
       halfWidth: edge.halfWidth,
       works,
       levels,
+      oneway,
       points: ids.map((id) => ({ x: nodes.xs[id], z: nodes.zs[id] })),
       // Un nœud de degré deux est un simple sommet de la ligne ; un
       // embranchement, un croisement, un changement de classe est un point
@@ -981,7 +1043,7 @@ export function mergeRoadLines(lines, options = {}) {
     });
   }
 
-  const junctions = collectJunctions(graph, nodes);
+  const junctions = collectJunctions(graph, nodes, { unpaved });
   const joined = joinLooseEnds(chains, { join, offset, collinearCos });
 
   // Orientation canonique : deux reconstructions successives doivent parcourir
@@ -995,6 +1057,12 @@ export function mergeRoadLines(lines, options = {}) {
       chain.anchors.reverse();
       chain.works.reverse();
       chain.levels.reverse();
+      // Un sens se lit relativement au parcours de la chaîne : le retourner
+      // sans en inverser le signe ferait rouler tout le monde à l'envers.
+      chain.oneway.reverse();
+      for (let i = 0; i < chain.oneway.length; i++) {
+        if (chain.oneway[i]) chain.oneway[i] = -chain.oneway[i];
+      }
     }
   }
 

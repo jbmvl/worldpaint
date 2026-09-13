@@ -42,9 +42,14 @@ import { defaultTheme } from '../../themes/default.js';
 import { LIMB_ATTRIBUTE, PIVOT_ATTRIBUTE, COAT_ATTRIBUTE, MOTION_ATTRIBUTE } from '../animalKit.js';
 import { cow, sheep, goat, horse, donkey, chicken } from './livestock.js';
 import { deer, doe, reindeer, boar, fox, wolf, bear } from './wildlife.js';
+import { cat, dog } from './pets.js';
 
 /** Les modèles, par espèce. */
-export const FAUNA_BUILDERS = { cow, sheep, goat, horse, donkey, chicken, deer, doe, reindeer, boar, fox, wolf, bear };
+export const FAUNA_BUILDERS = {
+  cow, sheep, goat, horse, donkey, chicken,
+  deer, doe, reindeer, boar, fox, wolf, bear,
+  cat, dog,
+};
 
 /** Les espèces du catalogue, dans l'ordre du fichier. */
 export const FAUNA_KINDS = Object.keys(FAUNA_BUILDERS);
@@ -146,6 +151,11 @@ export const FAUNA_SPECIES = {
   fox: { roam: 1.1, family: 'canid', strideM: 0.8, swingRad: 0.58, walkMS: 1.0, runMS: 6.0, bound: true },
   wolf: { roam: 1.4, family: 'canid', strideM: 1.4, swingRad: 0.56, walkMS: 1.4, runMS: 8.0, bound: false },
   bear: { roam: 1.2, family: 'bear', strideM: 1.5, swingRad: 0.34, walkMS: 1.1, runMS: 5.5, bound: false },
+
+  // Bêtes du bâti, pas du pré : rayon d'errance court, elles ne s'éloignent
+  // pas de la maison. Le chat bondit quand il détale, le chien trottine.
+  cat: { roam: 0.35, family: 'cat', strideM: 0.4, swingRad: 0.52, walkMS: 0.55, runMS: 3.4, bound: true },
+  dog: { roam: 0.55, family: 'dog', strideM: 0.75, swingRad: 0.5, walkMS: 0.9, runMS: 4.8, bound: false },
 };
 
 /**
