@@ -42,15 +42,14 @@
  * Avant tout ça, le compositeur répond pour tout le monde à une question que
  * personne ne se posait : **où sur la Terre sommes-nous ?** `refresh` recevait
  * une longitude et une latitude depuis toujours et les jetait après en avoir
- * tiré des mètres ; il en tire maintenant aussi un `landscape` — la famille
- * climatique et son code Köppen (`core/climate.js`), l'altitude et la pente
- * sous l'observateur.
+ * tiré des mètres ; il en tire maintenant aussi un `landscape` — la région
+ * naturelle (`core/region.js`), l'altitude et la pente sous l'observateur.
  *
  * Ce n'est pas une couche et ça ne pose rien : c'est une **entrée**, lue par
  * celles qui choisissent un contenu dans une liste — peuplements, palettes de
  * bourg, cultures, bétail, couleur du sol. La lecture elle-même est dans
  * `core/landscape.js` ; le compositeur ne fait que la distribuer
- * (`_distributeClimate`).
+ * (`_distributeRegion`).
  */
 
 import { TerrainBubble } from './terrain/terrainBubble.js';
@@ -72,6 +71,7 @@ import { FaunaLayer } from './layers/faunaLayer.js';
 import { VectorTileSource, coveringTiles, VECTOR_ZOOM } from './core/vectorTileSource.js';
 import { lngLatToTile } from './core/tileMath.js';
 import { landscapeAt } from './core/landscape.js';
+import { regionById } from './core/region.js';
 import { planFaunaCrossing } from './layers/faunaCrossing.js';
 import { defaultTheme } from './themes/default.js';
 
@@ -80,7 +80,7 @@ import { defaultTheme } from './themes/default.js';
  * vectorielles de la carte, le relief des tuiles Terrarium.
  */
 export const WORLD_ATTRIBUTION =
-  '© OpenStreetMap contributors — relief AWS Terrain Tiles — climat Köppen-Geiger (Rubel et al.)';
+  '© OpenStreetMap contributors — relief AWS Terrain Tiles';
 
 export { FAUNA_CROSS_AHEAD_M } from './layers/faunaCrossing.js';
 
@@ -116,17 +116,17 @@ export class WorldComposer {
     this.disposed = false;
     this._refreshing = false;
     /**
-     * Profil du lieu : climat et relief. `null` tant qu'aucun rafraîchissement
-     * n'a eu lieu, et hors de la fenêtre couverte par la grille climatique —
-     * auquel cas tout se peint comme avant qu'un climat existe.
-     * @type {{climate: {family: string, koppen: string}, relief: {elevation: number, slope: number}}|null}
+     * Profil du lieu : région et relief. `null` tant qu'aucun rafraîchissement
+     * n'a eu lieu, et hors de toute région couverte — auquel cas tout se peint
+     * générique.
+     * @type {{region: Object, relief: {elevation: number, slope: number}}|null}
      */
     this.landscape = null;
     /**
-     * Famille climatique imposée, ou `null` pour suivre la géographie. Ce
-     * n'est pas un réglage de décor mais un **outil** : voir `setClimate`.
+     * Région imposée, ou `null` pour suivre la géographie. Ce n'est pas un
+     * réglage de décor mais un **outil** : voir `setRegion`.
      */
-    this.climateOverride = null;
+    this.regionOverride = null;
     /** Dernière part de nuit appliquée. `null` force la prochaine à passer. */
     this._night = null;
     /** Dernier vent appliqué, pour ne pas réécrire des uniformes inchangés. */
@@ -252,24 +252,24 @@ export class WorldComposer {
   }
 
   /**
-   * Impose une famille climatique, ou rend la main à la géographie (`null`).
+   * Impose une région, ou rend la main à la géographie (`null`).
    *
    * Le décor ne suit alors plus le lieu : c'est délibéré, et c'est le seul
    * moyen de comparer deux pays sur le **même** terrain — mêmes routes, mêmes
-   * parcelles, même relief, tout le reste changé. Sans ça, comparer une
-   * Provence et une Laponie demande de se téléporter, donc de changer aussi
-   * de bâti, de tracé et de pente, et on ne sait plus ce qui vient du climat.
+   * parcelles, même relief, tout le reste changé. Sans ça, comparer un Anjou
+   * et une Alpujarra demande de se téléporter, donc de changer aussi de bâti,
+   * de tracé et de pente, et on ne sait plus ce qui vient du pays.
    *
    * L'appelant doit ensuite reconstruire le décor (`refresh(..., { force:
    * true })`) : cette méthode ne fait que poser l'intention.
    *
-   * @param {string|null} family Une des `CLIMATE_FAMILIES`, ou `null`.
+   * @param {string|null} id Un identifiant de `REGIONS`, ou `null`.
    * @returns {boolean} vrai si l'intention a changé.
    */
-  setClimate(family) {
-    const next = family || null;
-    if (next === this.climateOverride) return false;
-    this.climateOverride = next;
+  setRegion(id) {
+    const next = id ? regionById(id) : null;
+    if (next === this.regionOverride) return false;
+    this.regionOverride = next;
     return true;
   }
 
@@ -295,9 +295,9 @@ export class WorldComposer {
     // Le profil se prend avant tout le reste, et même quand rien n'est périmé :
     // il ne coûte qu'une lecture de tableau et cinq altitudes, et ce qui le lit
     // le lit à la construction de son propre contenu.
-    const climateChanged = this._updateLandscape(lng, lat, here);
-    const family = this.landscape?.climate?.family ?? null;
-    this._distributeClimate(family);
+    const regionChanged = this._updateLandscape(lng, lat, here);
+    const region = this.landscape?.region ?? null;
+    this._distributeRegion(region);
     const wanted = this._wantedTiles(lng, lat);
 
     // La végétation suit les tuiles de la bulle, pas le vectoriel : se resynchronise même sans autre changement.
@@ -306,10 +306,10 @@ export class WorldComposer {
     const classStale = this.groundClass.needsRebuild(here.x, here.z, this.bubble.frame);
     const stale =
       classStale ||
-      // Changer de climat change ce qu'il y a à poser, pas seulement où : le
+      // Changer de pays change ce qu'il y a à poser, pas seulement où : le
       // décor est aussi périmé que s'il avait glissé de deux cent cinquante
       // mètres.
-      climateChanged ||
+      regionChanged ||
       this.roads.needsRebuild(here.x, here.z) ||
       this.buildings.needsRebuild(here.x, here.z) ||
       this.railways.needsRebuild(here.x, here.z) ||
@@ -332,9 +332,9 @@ export class WorldComposer {
 
       // 1. Occupation du sol — tout le reste la lit. Rasterisation coûteuse : refaite seulement si elle a glissé.
       const wasReady = this.groundClass.ready;
-      // Le climat repeint la carte au même titre qu'un glissement : ce qui y
+      // La région repeint la carte au même titre qu'un glissement : ce qui y
       // était semé l'a été avec l'assolement d'une autre région.
-      if (classStale || climateChanged || force) {
+      if (classStale || regionChanged || force) {
         this.groundClass.rebuild(this.vectorTiles, wanted, here, this.bubble.frame, { urban });
         this.bubble.materials.syncGroundClass();
       }
@@ -366,8 +366,8 @@ export class WorldComposer {
         builtUp,
         fabric,
         // Le dessus du trottoir est celui du sol de la ville, et le sol tire sa
-        // teinte du climat : les deux doivent lire la même (`pavementTone`).
-        climate: family,
+        // teinte du pays : les deux doivent lire la même (`pavementTone`).
+        matrix: region?.matrix ?? null,
         roadIndex: this.roads.index,
         // Les surfaces de carrefour : elles arrêtent les rives de tronçon et
         // portent les coins de rue.
@@ -402,23 +402,23 @@ export class WorldComposer {
       // 6. Arbres — après les chaussées, dont l'emprise décide où le semis
       //    s'interrompt. `sync` remet en file les tuiles semées quand l'index
       //    n'allait pas jusqu'à elles ; seuls l'arrivée de la carte de classes
-      //    et un changement de climat justifient de tout reprendre (ce qui est
+      //    et un changement de région justifient de tout reprendre (ce qui est
       //    planté l'aurait été avec les essences d'une autre région).
-      this.vegetation.sync({ replant: classArrived || climateChanged });
+      this.vegetation.sync({ replant: classArrived || regionChanged });
       // Le sous-étage, lui, se refait d'un bloc : l'emprise vient de changer.
       this.vegetation.update(here.x, here.z, {
-        force: hasRoads || classStale || climateChanged || force,
+        force: hasRoads || classStale || regionChanged || force,
       });
 
       // 7. Herbe — l'index des chaussées vient peut-être de changer.
-      if (hasRoads || classStale || climateChanged || force) {
+      if (hasRoads || classStale || regionChanged || force) {
         this.grass.update(here.x, here.z, { force: true });
       }
 
       // 8. Cultures — même carte que le sol.
-      if (classStale || climateChanged || force) this.crops.invalidate();
+      if (classStale || regionChanged || force) this.crops.invalidate();
       this.crops.update(here.x, here.z, {
-        force: hasRoads || classStale || climateChanged || force,
+        force: hasRoads || classStale || regionChanged || force,
       });
 
       // 9. Cheminées à faire fumer, et bêtes à faire vivre. Les deux sont
@@ -440,46 +440,49 @@ export class WorldComposer {
   }
 
   /**
-   * Passe la famille climatique à tout ce qui choisit un contenu dans une
-   * liste. Avant toute construction : les essences d'un bois, la pierre d'un
-   * village, l'assolement d'une carte de cultures et le bétail d'un pré
-   * doivent l'avoir en main avant de poser quoi que ce soit.
+   * Passe le dossier de région à tout ce qui choisit un contenu dans une liste.
+   * Avant toute construction : les essences d'un bois, la pierre d'un village,
+   * l'assolement d'une carte de cultures et le bétail d'un pré doivent l'avoir
+   * en main avant de poser quoi que ce soit.
+   *
+   * Chaque couche y prend ce qui la regarde — la matrice, les essences, les
+   * matériaux — plutôt que de recevoir sept arguments dont elle ignore six.
    *
    * La couleur du sol se pose à trois endroits qui doivent recevoir le **même**
    * facteur (`soilWashFor`) : l'albédo lointain dans le shader, les touffes
    * d'herbe et les tiges de culture du premier plan. La redistribution, elle,
-   * est déclenchée par `climateChanged` — la teinte est écrite dans les
+   * est déclenchée par `regionChanged` — la teinte est écrite dans les
    * instances.
    */
-  _distributeClimate(family) {
-    this.vegetation.setClimate(family);
-    this.buildings.setClimate(family);
-    this.groundClass.setClimate(family);
-    this.furniture.setClimate(family);
-    this.bubble.materials.setClimate(family);
-    this.grass.setClimate(family);
-    this.crops.setClimate(family);
+  _distributeRegion(region) {
+    this.vegetation.setRegion(region);
+    this.buildings.setRegion(region);
+    this.groundClass.setRegion(region);
+    this.furniture.setRegion(region);
+    this.bubble.materials.setRegion(region);
+    this.grass.setRegion(region);
+    this.crops.setRegion(region);
   }
 
   /**
-   * Repose la question du climat et du relief.
+   * Repose la question de la région et du relief.
    *
    * Appelée à chaque `refresh`, donc à chaque fois que l'observateur a bougé
    * assez pour justifier d'y regarder — jamais par image. La lecture elle-même
    * est dans `core/landscape.js`, avec la raison pour laquelle elle n'est pas
    * mémoïsée.
    *
-   * @returns {boolean} vrai si la **famille** climatique a changé — c'est le
-   *          seul changement qui périme du décor déjà posé, une altitude qui
-   *          glisse de dix mètres n'en périmant aucun.
+   * @returns {boolean} vrai si la **région** a changé — c'est le seul
+   *          changement qui périme du décor déjà posé, une altitude qui glisse
+   *          de dix mètres n'en périmant aucun.
    */
   _updateLandscape(lng, lat, here) {
-    const before = this.landscape?.climate?.family ?? null;
+    const before = this.landscape?.region ?? null;
     this.landscape = landscapeAt(lng, lat, here, {
       bubble: this.bubble,
-      override: this.climateOverride,
+      override: this.regionOverride,
     });
-    return (this.landscape?.climate?.family ?? null) !== before;
+    return (this.landscape?.region ?? null) !== before;
   }
 
   /** Tuiles vectorielles couvrant la bulle autour d'un point. */

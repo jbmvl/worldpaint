@@ -31,13 +31,16 @@
  * la donnée ou par le moteur. La liste de ces mots, et le nombre de régions qui
  * les emploient, sort du test : c'est la feuille de route du contenu à faire.
  *
- * ## Deux vocabulaires sans consommateur
+ * ## Un vocabulaire sans consommateur
  *
- * `STONE_KINDS` et `BUILDING_KINDS` ne traduisent encore vers rien : la couleur
- * de la roche est une constante unique du thème et les palettes de bourg se
- * choisissent par le climat. Ils sont fermés et validés dès maintenant pour que
- * le fichier de régions se remplisse une seule fois ; ce qu'ils valent à l'œil
- * est une affaire de thème, et se branchera là.
+ * `STONE_KINDS` ne traduit encore vers rien : la couleur de la roche est une
+ * constante unique du thème. Il est fermé et validé quand même, pour que le
+ * fichier de régions se remplisse une seule fois ; ce qu'une pierre vaut à
+ * l'œil est une affaire de thème, et se branchera là.
+ *
+ * `BUILDING_KINDS`, lui, ne traduit vers rien **ici** mais sert bien : ses mots
+ * sont ceux que les palettes de bourg citent (`materials`), et c'est le thème
+ * qui les rapproche.
  *
  * Toutes les fonctions sont pures.
  */
@@ -53,7 +56,6 @@ export const BOUNDARY_STYLES = Object.freeze([
   'openfield',
   'drystone',
   'wood_fence',
-  'wire',
   'none',
 ]);
 
@@ -69,7 +71,7 @@ export const BOUNDARY_STYLES = Object.freeze([
 export const MATRIX_KINDS = Object.freeze({
   hedgerow_meadow: { surface: 'grass', boundary: 'bocage' },
   openfield_cropland: { surface: 'grass', boundary: 'openfield' },
-  wet_grassland: { surface: 'grass', boundary: 'wire' },
+  wet_grassland: { surface: 'grass', boundary: 'bocage' },
   marsh: { surface: 'wetland', boundary: 'none' },
   moor_heath: { surface: 'heath', boundary: 'drystone' },
   broadleaf_woodland: { surface: 'wood', boundary: 'bocage' },
@@ -194,29 +196,39 @@ export const FARMING_KINDS = Object.freeze({
  * ce qui permet d'affiner plus tard sans toucher au fichier de régions.
  */
 export const TREE_KINDS = Object.freeze({
-  oak: { essence: 'broadleaf' },
-  beech: { essence: 'broadleaf' },
-  chestnut: { essence: 'broadleaf' },
-  ash: { essence: 'broadleaf' },
-  hornbeam: { essence: 'broadleaf' },
-  alder: { essence: 'broadleaf' },
-  holm_oak: { essence: 'broadleaf' },
-  cork_oak: { essence: 'broadleaf' },
-  birch: { essence: 'column' },
-  poplar: { essence: 'column' },
-  eucalyptus: { essence: 'column' },
-  scots_pine: { essence: 'conifer' },
-  maritime_pine: { essence: 'conifer' },
-  aleppo_pine: { essence: 'conifer' },
-  black_pine: { essence: 'conifer' },
-  stone_pine: { essence: 'conifer' },
-  spruce: { essence: 'conifer' },
-  fir: { essence: 'conifer' },
-  larch: { essence: 'conifer' },
-  olive: { essence: 'bushy' },
-  juniper: { essence: 'bushy' },
-  acacia: { essence: 'bushy', unsupported: 'aucune silhouette de parasol épineux' },
-  palm: { essence: 'column', unsupported: 'aucune silhouette de palmier' },
+  oak: { essence: 'broadleaf', alignment: 'treeBroad' },
+  beech: { essence: 'broadleaf', alignment: 'treeBroad' },
+  chestnut: { essence: 'broadleaf', alignment: 'treeBroad' },
+  ash: { essence: 'broadleaf', alignment: 'treeBroad' },
+  hornbeam: { essence: 'broadleaf', alignment: 'treeBroad' },
+  alder: { essence: 'broadleaf', alignment: 'treeBroad' },
+  holm_oak: { essence: 'broadleaf', alignment: 'treeRound' },
+  cork_oak: { essence: 'broadleaf', alignment: 'treeRound' },
+  birch: { essence: 'column', alignment: 'treeColumnar' },
+  poplar: { essence: 'column', alignment: 'treeColumnar' },
+  eucalyptus: { essence: 'column', alignment: 'treeColumnar' },
+  scots_pine: { essence: 'conifer', alignment: 'treeConifer' },
+  maritime_pine: { essence: 'conifer', alignment: 'treeConifer' },
+  black_pine: { essence: 'conifer', alignment: 'treeConifer' },
+  spruce: { essence: 'conifer', alignment: 'treeConifer' },
+  fir: { essence: 'conifer', alignment: 'treeConifer' },
+  larch: { essence: 'conifer', alignment: 'treeConifer' },
+  // Un pin d'Alep ou un pin parasol est un conifère dans un massif et une
+  // boule en bord de route : la même espèce, dans deux catalogues.
+  aleppo_pine: { essence: 'conifer', alignment: 'treeRound' },
+  stone_pine: { essence: 'conifer', alignment: 'treeRound' },
+  olive: { essence: 'bushy', alignment: 'treeOval' },
+  juniper: { essence: 'bushy', alignment: 'treeOval' },
+  acacia: {
+    essence: 'bushy',
+    alignment: 'treeRound',
+    unsupported: 'aucune silhouette de parasol épineux',
+  },
+  palm: {
+    essence: 'column',
+    alignment: 'treeColumnar',
+    unsupported: 'aucune silhouette de palmier',
+  },
 });
 
 /** Les cinq vocabulaires, par champ du dossier de région. */
@@ -249,9 +261,14 @@ export function cropForFarming(word) {
   return FARMING_KINDS[word]?.crop ?? null;
 }
 
-/** Silhouette qu'une essence emprunte, ou `null`. */
+/** Silhouette de peuplement qu'une essence emprunte, ou `null`. */
 export function essenceForTree(word) {
   return TREE_KINDS[word]?.essence ?? null;
+}
+
+/** Silhouette de mobilier qu'une essence emprunte en alignement, ou `null`. */
+export function alignmentShapeForTree(word) {
+  return TREE_KINDS[word]?.alignment ?? null;
 }
 
 /** Tous les mots d'un dossier de région, avec leur champ. Fonction pure. */
@@ -278,4 +295,95 @@ export function unsupportedWords(region) {
   return wordsOf(region)
     .map(({ field, word }) => ({ field, word, note: VOCABULARIES[field][word]?.unsupported }))
     .filter((entry) => entry.note);
+}
+
+/**
+ * Réduit une liste de contenus à ceux qui citent au moins un des mots donnés.
+ *
+ * C'est la **seule** mécanique de filtrage du projet, et elle est délibérément
+ * pauvre : une entrée du thème porte une liste de mots (`species` pour un
+ * peuplement, `materials` pour une palette de bourg), et elle est retenue si un
+ * seul d'entre eux figure dans ceux du pays. Une entrée qui n'en porte pas est
+ * retenue partout.
+ *
+ * **Le repli est la liste entière.** Un pays sans contenu dédié rend un décor
+ * générique, jamais un décor vide : lever ici aborterait `refresh` et
+ * emporterait toutes les couches suivantes (voir `CONTRIBUTING.md`). Le
+ * garde-fou est ailleurs, dans les tests, où un mot sans contenu est une erreur
+ * franche au lieu d'un paysage silencieusement générique.
+ *
+ * Fonction pure.
+ *
+ * @param {Array<{species?: string[], materials?: string[]}>} items
+ * @param {string} key Nom du champ qui porte les mots dans une entrée.
+ * @param {string[]|null} words Les mots du pays.
+ */
+export function filterByWords(items, key, words) {
+  if (!Array.isArray(items) || !Array.isArray(words) || words.length === 0) return items;
+  const wanted = new Set(words);
+  const matching = items.filter(
+    (item) => !item?.[key] || item[key].some((word) => wanted.has(word))
+  );
+  return matching.length > 0 ? matching : items;
+}
+
+/**
+ * Parts d'une liste ordonnée par dominance, prêtes pour `pickShare`.
+ *
+ * Le rang **est** l'information : un dossier de région écrit ses cultures et
+ * ses essences de la plus répandue à la moins répandue, et rien d'autre. La loi
+ * est harmonique — la n-ième pèse `1/n` avant normalisation —, ce qui donne à
+ * peu près la moitié à la première, le quart à la deuxième. Une seule règle,
+ * la même pour l'assolement et pour les alignements de route, et prévisible
+ * quand on écrit une région : déplacer un mot d'un rang se voit.
+ *
+ * Fonction pure.
+ *
+ * @param {string[]} words
+ * @returns {Array<[string, number]>}
+ */
+export function sharesFor(words) {
+  if (!Array.isArray(words) || words.length === 0) return [];
+  const weights = words.map((_, rank) => 1 / (rank + 1));
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  return words.map((word, rank) => [word, weights[rank] / total]);
+}
+
+/**
+ * Correction de sol neutre : celle d'un pays inconnu, et celle du bocage
+ * atlantique, sur lequel tout le reste du thème a été réglé.
+ */
+export const SOIL_WASH_NEUTRAL = Object.freeze({
+  grass: Object.freeze([1, 1, 1]),
+  bare: Object.freeze([1, 1, 1]),
+  farmland: Object.freeze([1, 1, 1]),
+  grassDensity: 1,
+  grassHeight: 1,
+});
+
+/**
+ * Ce que la matrice fait au sol, toujours complet.
+ *
+ * Le shader de terrain, les touffes d'herbe et les tiges de culture lisent
+ * **cette** fonction et pas la tranche du thème directement : c'est ce qui
+ * garantit qu'ils appliquent le même facteur. Trois lectures indépendantes d'un
+ * tableau à trous divergeraient à la première matrice qui n'en décrit que deux,
+ * et l'écart se verrait exactement là où il est le plus visible — à la jointure
+ * entre le premier plan instancié et la teinte lointaine.
+ *
+ * Fonction pure.
+ *
+ * @param {string|null} matrix
+ * @param {Object} [soils] Tranche `theme.soils`.
+ */
+export function soilWashFor(matrix, soils = null) {
+  const look = matrix && soils ? soils[matrix] : null;
+  if (!look) return SOIL_WASH_NEUTRAL;
+  return {
+    grass: look.grass || SOIL_WASH_NEUTRAL.grass,
+    bare: look.bare || SOIL_WASH_NEUTRAL.bare,
+    farmland: look.farmland || SOIL_WASH_NEUTRAL.farmland,
+    grassDensity: look.grassDensity ?? 1,
+    grassHeight: look.grassHeight ?? 1,
+  };
 }

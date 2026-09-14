@@ -89,6 +89,45 @@ Aucune couleur, aucune hauteur, aucune densité. Un mot de région est une clé 
 qu'il vaut à l'œil. Une teinte écrite ici serait une direction artistique
 échappée de `themes/default.js`.
 
+## Ce que le thème accroche au pays
+
+Un dossier de région ne contient aucune couleur : ses mots sont des clés, et
+c'est `src/themes/default.js` qui dit ce qu'elles valent à l'œil. Cinq tranches
+les lisent, et une seule personne les écrit — le graphiste, sans toucher au
+moteur.
+
+| Tranche | Ce qu'elle accroche | Comment |
+| --- | --- | --- |
+| `FOREST_TYPES` | les essences | un peuplement cite des `species` ; il est retenu si le pays en nomme une |
+| `TOWN_PALETTES` | le bâti | une palette cite des `materials` ; même règle |
+| `SOIL_LOOK` | la matrice | une entrée par matrice : le lavage du sol, la densité et la hauteur des touffes |
+| `SKY_PALETTE.variants` | la matrice | une variante cite les matrices dont elle colore l'air |
+| `STREET_LOOK.pavement` | la matrice | la teinte du sol revêtu de la ville |
+
+Trois choses à savoir avant d'y toucher :
+
+- **le repli est la liste entière.** Un pays dont aucun peuplement ne cite les
+  essences se peint avec tous les peuplements, jamais avec aucun : lever ici
+  aborterait la construction et emporterait les couches suivantes. C'est le test
+  qui signale l'oubli, pas le décor ;
+- **`SOIL_LOOK` porte des facteurs, pas des couleurs**, et son plafond de 3,5
+  n'est pas décoratif : au-delà, la touffe du premier plan sature au blanc
+  pendant que le sol continue de foncer, donc les deux divergent. Une matrice
+  absente vaut « pas de correction » — c'est le cas du bocage atlantique, sur
+  lequel le reste du thème a été réglé ;
+- **`grassDensity` fait autant que la couleur.** Un sol jauni couvert d'une
+  prairie continue reste une prairie jaunie ; ce qui fait une steppe, c'est la
+  terre qu'on voit entre les touffes.
+
+Trois tables ne sont pas de la direction artistique mais des règles de
+plausibilité, et elles vivent dans les couches : la trame des limites de
+parcelle (`BOUNDARY_MIXES`, par style de limite), le bétail (`HERD_SHEEP_ODDS`,
+par matrice) et le gibier (`FOREST_GAME`, par matrice). Elles se discutent quand
+même — la trame agraire se lit de bien plus loin qu'une teinte.
+
+L'assolement, lui, n'a plus de table du tout : il est la liste `farming` du
+dossier, et ses parts se déduisent du rang.
+
 ## Vérifier
 
 ```

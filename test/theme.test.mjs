@@ -24,7 +24,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { defaultTheme } from '../src/themes/default.js';
-import { CLIMATE_FAMILIES, filterByClimate } from '../src/core/climate.js';
+import { filterByWords, VOCABULARIES } from '../src/core/regionInterpretation.js';
+import { REGIONS } from '../src/core/regions.js';
 import { skyPaletteFor } from '../src/environment/sceneEnvironment.js';
 import { resolveTheme } from '../src/themes/theme.js';
 import { townPaletteAt, buildingStyleAt, streetSurfaceAt } from '../src/layers/townStyle.js';
@@ -305,15 +306,9 @@ test('le sol et ce qui y pousse lisent le même facteur', () => {
  */
 const ALLOWED_MODULE_STATE = {
   'materials/foliageMaterial.js': ['leanWarned'],
-  // La grille climatique décodée. C'est la seule mémoire de module qui ne
-  // puisse pas fuir d'un monde à l'autre : elle ne dépend d'aucune entrée — ni
-  // thème, ni scène, ni observateur —, elle est en lecture seule une fois
-  // remplie, et sa valeur est la même pour tout le monde. La garder paresseuse
-  // évite de décoder 266 000 cellules dans une application qui ne demande
-  // jamais de climat.
-  'core/climate.js': ['cells'],
-  // Les ancres de région, à plat. Même raison que la grille climatique : elles
-  // ne dépendent d'aucune entrée, elles sont en lecture seule une fois
+  // Les ancres de région, à plat. C'est la seule mémoire de module qui ne
+  // puisse pas fuir d'un monde à l'autre : elles ne dépendent d'aucune entrée —
+  // ni thème, ni scène, ni observateur —, elles sont en lecture seule une fois
   // dressées, et leur valeur est la même pour tout le monde.
   'core/region.js': ['anchors'],
 };
@@ -375,11 +370,11 @@ test('le ciel est une tranche du thème', () => {
   assert.equal(DEFAULT.sky.fog, '#e8eef3');
   assert.equal(OTHER.sky.fog, '#000000');
   // Une tranche de ciel sans variantes est une tranche valide : c'est le cas
-  // d'un thème écrit avant qu'elles existent, et le climat n'y touche rien.
-  assert.equal(skyPaletteFor('arid', OTHER.sky), null);
-  assert.equal(skyPaletteFor(null, DEFAULT.sky), null, 'sans climat, rien à imposer');
+  // d'un thème écrit avant qu'elles existent, et le pays n'y touche rien.
+  assert.equal(skyPaletteFor('desert_stone', OTHER.sky), null);
+  assert.equal(skyPaletteFor(null, DEFAULT.sky), null, 'sans pays, rien à imposer');
   // Une variante ne redit que ce qu'elle change : le reste vient de la base.
-  const sec = skyPaletteFor('arid', DEFAULT.sky);
+  const sec = skyPaletteFor('desert_stone', DEFAULT.sky);
   assert.notEqual(sec.fog, DEFAULT.sky.fog, 'l’air d’un pays sec n’est pas celui d’une côte');
   assert.equal(sec.nightZenith, DEFAULT.sky.nightZenith, 'ce qu’elle ne dit pas ne change pas');
   // Le brouillard et le raccord d'horizon lisent la même valeur : c'est cette
@@ -423,42 +418,66 @@ test('la haie prend ses arbustes du thème, et son budget du moteur', () => {
 });
 
 /*
- * Le garde-fou de couverture climatique.
+ * Le garde-fou de couverture.
  *
- * `filterByClimate` retombe volontairement sur la liste entière quand une
- * famille n'a aucun contenu : lever à cet endroit-là aborterait `refresh` et
- * emporterait toutes les couches suivantes. Le prix de cette prudence est
- * qu'une famille oubliée ne se signale pas — elle rend un décor générique, en
- * silence. C'est donc ici qu'elle doit se signaler, franchement.
+ * `filterByWords` retombe volontairement sur la liste entière quand un pays n'a
+ * aucun contenu : lever à cet endroit-là aborterait `refresh` et emporterait
+ * toutes les couches suivantes. Le prix de cette prudence est qu'un pays oublié
+ * ne se signale pas — il rend un décor générique, en silence. C'est donc ici
+ * qu'il doit se signaler, franchement.
+ *
+ * La question n'est pas « chaque entrée du thème est-elle atteignable » : le
+ * thème a le droit de décrire une Scandinavie qu'aucune région n'atteint
+ * encore. C'est l'inverse qui doit tenir — aucune région ne doit se peindre
+ * avec la liste entière faute d'avoir trouvé quoi que ce soit à elle.
+ *
+ * Sauf quand elle n'emploie que des mots que le décor ne sait pas rendre : le
+ * repli générique est alors la promesse tenue de `unsupported`, et l'inventaire
+ * du test des régions dit déjà ce qui manque.
  */
-test('chaque famille climatique a du contenu dédié dans le thème par défaut', () => {
-  for (const family of CLIMATE_FAMILIES) {
-    const forests = DEFAULT.forests.filter((type) => type.climates?.includes(family));
-    assert.ok(forests.length >= 1, `${family} : aucun peuplement`);
-    const towns = DEFAULT.towns.filter((palette) => palette.climates?.includes(family));
-    assert.ok(towns.length >= 1, `${family} : aucune palette de bourg`);
+test('chaque région trouve dans le thème un peuplement et une palette à elle', () => {
+  const rendu = (region, field) =>
+    region[field].filter((word) => !VOCABULARIES[field][word]?.unsupported);
+
+  for (const region of REGIONS) {
+    const forests = DEFAULT.forests.filter((type) =>
+      type.species?.some((word) => region.trees.includes(word))
+    );
+    assert.ok(forests.length >= 1, `${region.id} : aucun peuplement`);
+
+    if (rendu(region, 'building').length === 0) continue;
+    const towns = DEFAULT.towns.filter((palette) =>
+      palette.materials?.some((word) => region.building.includes(word))
+    );
+    assert.ok(towns.length >= 1, `${region.id} : aucune palette de bourg`);
   }
 });
 
-test('un climat que le thème ne connaît pas ne vide pas le décor', () => {
-  // Le repli est la liste entière, jamais rien : un climat inconnu rend un
+test('un pays que le thème ne connaît pas ne vide pas le décor', () => {
+  // Le repli est la liste entière, jamais rien : un pays inconnu rend un
   // paysage générique, pas un paysage nu.
-  const pool = filterByClimate(DEFAULT.forests, 'climat-inventé');
+  const pool = filterByWords(DEFAULT.forests, 'species', ['essence-inventée']);
   assert.equal(pool.length, DEFAULT.forests.length);
 });
 
-test('la mémoire des palettes est indexée par nuancier ET par climat', () => {
+test('la mémoire des palettes est indexée par nuancier ET par région', () => {
   // Deux mémoires se superposent ici : la conversion en linéaire, et le
-  // filtrage par climat. Une seconde mal indexée peindrait un village
+  // filtrage par matériaux. Une seconde mal indexée peindrait un village
   // andalou avec le bois d'un village finlandais, et seulement quand les deux
   // sont demandés dans le même ordre.
+  const boreale = { id: 'test-nord', building: ['red_timber'] };
+  const andalouse = { id: 'test-sud', building: ['whitewash', 'flat_roof'] };
   const [nord, sud] = interleaved(
-    () => townPaletteAt(4200, 1400, DEFAULT.towns, 'boreal').name,
-    () => townPaletteAt(4200, 1400, DEFAULT.towns, 'arid').name
+    () => townPaletteAt(4200, 1400, DEFAULT.towns, boreale).name,
+    () => townPaletteAt(4200, 1400, DEFAULT.towns, andalouse).name
   );
   assert.notEqual(nord, sud);
-  assert.ok(DEFAULT.towns.find((p) => p.name === nord).climates.includes('boreal'));
-  assert.ok(DEFAULT.towns.find((p) => p.name === sud).climates.includes('arid'));
-  // Et sans climat, on retrouve exactement le tirage d'avant les climats.
+  const cite = (name, region) =>
+    DEFAULT.towns
+      .find((p) => p.name === name)
+      .materials.some((word) => region.building.includes(word));
+  assert.ok(cite(nord, boreale), `${nord} est bâtie dans un matériau du nord`);
+  assert.ok(cite(sud, andalouse), `${sud} est bâtie dans un matériau du sud`);
+  // Et sans pays, on retrouve exactement le tirage d'avant les régions.
   assert.equal(townPaletteAt(4200, 1400, DEFAULT.towns).name, townPaletteAt(4200, 1400).name);
 });

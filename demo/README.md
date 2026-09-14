@@ -85,15 +85,14 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
 - **Champ de recherche** : géocode le texte tapé via Nominatim
   (OpenStreetMap) et déplace la bulle (`setCenter` + `refresh`) sur le
   résultat.
-- **Sélecteur de climat** : force la famille climatique du décor
-  (`world.setClimate`) au lieu de la lire dans la grille Köppen à la position
+- **Sélecteur de région naturelle** : force le pays du décor
+  (`world.setRegion`) au lieu de le lire à l'ancre la plus proche de la position
   courante. C'est ce qui permet de juger le travail : **même terrain, mêmes
   routes, mêmes parcelles, même relief, tout le reste changé**. Se téléporter
-  d'une Provence à une Laponie change aussi le tracé, le bâti et la pente, et
-  on ne sait plus ce qui vient du climat. Les onze familles sont celles que le
-  moteur connaît (`CLIMATE_FAMILIES`) ; « Automatique » rend la main à la
-  géographie. La famille en cours s'affiche à côté des coordonnées, suivie de
-  son code Köppen ou de « imposé ».
+  d'un Anjou à une Alpujarra change aussi le tracé, le bâti et la pente, et on
+  ne sait plus ce qui vient du pays. La liste est celle que le moteur connaît
+  (`REGIONS`) ; « Automatique » rend la main à la géographie. La région en cours
+  s'affiche à côté des coordonnées, suivie de sa matrice de paysage.
 - **Panneau météo et heure** : sept temps prêts à l'emploi (grand beau,
   ordinaire, couvert, pluie, orage, neige, brume) et les curseurs qui les
   composent — couverture nuageuse, densité, précipitation et son type, vent,

@@ -994,11 +994,11 @@ export class BuildingLayer {
     this.scene = scene;
     this.bubble = bubble;
     /**
-     * Famille climatique du lieu, ou `null`. Posée par le compositeur, comme
-     * pour la végétation : elle change en cours de route, donc elle n'a rien à
-     * faire dans le thème.
+     * Dossier de région du lieu, ou `null`. Posé par le compositeur, comme pour
+     * la végétation : il change en cours de route, donc il n'a rien à faire
+     * dans le thème.
      */
-    this.climate = null;
+    this.region = null;
     this.disposed = false;
     this.mesh = null;
     this.geometry = null;
@@ -1080,14 +1080,13 @@ export class BuildingLayer {
 
   /** Vrai si l'observateur s'est assez éloigné pour justifier une reconstruction. */
   /**
-   * Pose la famille climatique du lieu. Le bâti se refait de toute façon quand
-   * elle change (le compositeur périme le décor), donc il n'y a rien à
-   * invalider ici.
+   * Pose la région du lieu. Le bâti se refait de toute façon quand elle change
+   * (le compositeur périme le décor), donc il n'y a rien à invalider ici.
    *
-   * @param {string|null} family
+   * @param {Object|null} region
    */
-  setClimate(family) {
-    this.climate = family || null;
+  setRegion(region) {
+    this.region = region || null;
   }
 
   needsRebuild(x, z) {
@@ -1334,7 +1333,7 @@ export class BuildingLayer {
       footprint[0].z,
       { area: ground, height },
       this.theme.towns,
-      this.climate
+      this.region
     );
     // Pente du bourg si sa palette en impose une, celle du thème sinon. L'objet
     // n'est composé que dans le premier cas : une allocation par bâtiment pour

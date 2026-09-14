@@ -34,10 +34,9 @@ après. Rapporte ces chiffres tels quels, sans les arrondir dans le bon sens.
 - `docs/inventaire.md` — objet par objet : qu'est-ce qui a mis ça là. Le premier
   endroit où aller devant un élément du décor qui surprend. Glossaire en fin.
 - `docs/surfaces.md` — le sol en détail : ce qui est lu, peint, laissé.
-- `docs/climats.md` — comment le lieu décide du contenu ; s'adresse à la
-  direction artistique, donc à `themes/default.js`.
-- `docs/regions.md` — les régions naturelles : le dossier d'un pays, le
-  vocabulaire fermé, et comment poser une ancre.
+- `docs/regions.md` — les régions naturelles : comment le lieu décide du
+  contenu, le dossier d'un pays, le vocabulaire fermé, et comment poser une
+  ancre.
 - `src/layers/CLAUDE.md` et `src/terrain/CLAUDE.md` — la carte fine de ces deux
   répertoires, et ce qu'il ne faut pas ajouter aux gros fichiers qui y vivent.
 
@@ -51,7 +50,7 @@ RAW DATA → INTERPRÉTATION → COMPOSITION → GÉNÉRATION → THREE.JS
 ```
 
 - **interprétation** — comprendre le territoire : `core/` (tuiles, relief,
-  climat, profil du lieu), `terrain/surfaceClassification.js` (ce qu'une classe
+  région, profil du lieu), `terrain/surfaceClassification.js` (ce qu'une classe
   OSM dit du sol), `layers/settlement.js` (habitat, « sommes-nous en ville ? »),
   `layers/roadGraph.js` (un carrefour est un nœud).
 - **composition** — décider ce qui existe et où : `layers/furniturePlacement.js`,

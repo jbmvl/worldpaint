@@ -93,7 +93,7 @@
  *
  * D'où deux teintes de sources différentes, et il n'y a pas moyen de faire
  * autrement : le **rebord** (caniveau, face, nez, jupe) reste tiré du bourg,
- * comme la palette de ses maisons ; le **dessus** vient du climat
+ * comme la palette de ses maisons ; le **dessus** vient du pays
  * (`townStyle.pavementTone`), parce que c'est aussi la couleur du sol, et que
  * le sol est peint par un shader qui n'a qu'un albédo par couverture pour toute
  * la bulle. Une teinte de dessus tirée par bourg se lirait comme une frontière
@@ -338,7 +338,7 @@ export class StreetLayer {
    * @param {Object} [context.areas] `JunctionAreas` : les surfaces de
    *        carrefour, qui arrêtent les rives de tronçon et fournissent les
    *        coins de rue.
-   * @param {string|null} [context.climate] Famille climatique : elle décide du
+   * @param {string|null} [context.matrix] Matrice de paysage : elle décide du
    *        **dessus** du trottoir, qui est celui du sol de la ville
    *        (`townStyle.pavementTone`). Le rebord, lui, reste tiré du bourg.
    * @returns {boolean} vrai si de la voirie a été posée.
@@ -346,7 +346,7 @@ export class StreetLayer {
   rebuild(
     roadSegments = [],
     here = { x: 0, z: 0 },
-    { builtUp = [], fabric = null, roadIndex = null, areas = null, climate = null } = {}
+    { builtUp = [], fabric = null, roadIndex = null, areas = null, matrix = null } = {}
   ) {
     if (this.disposed || !this.bubble?.frame) return false;
 
@@ -360,7 +360,7 @@ export class StreetLayer {
 
     // Sans emprise habitée ni bâti relevé, la couche ne pose rien.
     if (builtUp.length > 0 && fabric && fabric.count > 0) {
-      const context = { here, builtUp, fabric, roadIndex, areas, mouths, climate };
+      const context = { here, builtUp, fabric, roadIndex, areas, mouths, matrix };
       for (const segment of roadSegments) {
         if (!STREET_PROFILES.has(segment.profile)) continue;
         built += this._buildSegment(buffer, bands, segment, context);
@@ -448,7 +448,7 @@ export class StreetLayer {
   }
 
   /** Les deux côtés d'un tronçon. @returns {number} portions posées. */
-  _buildSegment(buffer, bands, segment, { here, builtUp, fabric, roadIndex, areas, mouths, climate }) {
+  _buildSegment(buffer, bands, segment, { here, builtUp, fabric, roadIndex, areas, mouths, matrix }) {
     const { path, platform, edges, probeSpan, halfWidth } = segment;
     const rows = path.length;
     if (rows < 2 || !platform || !edges) return 0;
@@ -537,7 +537,7 @@ export class StreetLayer {
           halfWidth,
           room: narrowest,
           streets,
-          climate,
+          matrix,
         });
         built++;
       }
@@ -701,7 +701,7 @@ export class StreetLayer {
    *
    * @returns {number} coins posés.
    */
-  _buildCorners(buffer, bands, { here, builtUp, fabric, roadIndex, areas, climate }) {
+  _buildCorners(buffer, bands, { here, builtUp, fabric, roadIndex, areas, matrix }) {
     if (!areas || areas.length === 0) return 0;
     const streets = this.theme.streets;
     let built = 0;
@@ -766,7 +766,7 @@ export class StreetLayer {
           room,
           streets,
           walkWidth,
-          climate,
+          matrix,
         });
         built++;
       }
@@ -779,14 +779,14 @@ export class StreetLayer {
   _appendKerb(
     buffer,
     bands,
-    { points, decks, frames, side, halfWidth, room, streets, walkWidth = null, climate = null }
+    { points, decks, frames, side, halfWidth, room, streets, walkWidth = null, matrix = null }
   ) {
     // Largeur et revêtement tirés au premier point de la portion (ancrés au
     // sol) puis ramenés à ce qui tient dans la place disponible.
     const anchor = points[0];
     const width = walkWidth ?? walkWidthFor(room, walkWidthAt(anchor.x, anchor.z, streets), streets);
     if (width <= 0) return;
-    const tones = streetSurfaceAt(anchor.x, anchor.z, streets, climate);
+    const tones = streetSurfaceAt(anchor.x, anchor.z, streets, matrix);
 
     appendProfile(buffer, {
       path: points,

@@ -27,7 +27,7 @@ import {
   collectRoadDebug,
   ROAD_DEBUG_RADIUS_M,
   DEFAULT_WEATHER,
-  CLIMATE_FAMILIES,
+  REGIONS,
   FAUNA_KINDS,
   LABEL_FAUNA,
 } from '../src/index.js';
@@ -74,8 +74,8 @@ const faunaKindSelect = document.getElementById('faunaKind');
 const faunaDistanceInput = document.getElementById('faunaDistance');
 const faunaDistanceVal = document.getElementById('faunaDistanceVal');
 const faunaCrossBtn = document.getElementById('faunaCross');
-const climateSelect = document.getElementById('climate');
-const climateHint = document.getElementById('climateHint');
+const regionSelect = document.getElementById('region');
+const regionHint = document.getElementById('regionHint');
 const streetViewBtn = document.getElementById('streetViewBtn');
 const mapOverlay = document.getElementById('mapOverlay');
 const mapOverlayClose = document.getElementById('mapOverlayClose');
@@ -1312,7 +1312,7 @@ weatherBtn.textContent = PRESETS[1].label.split(' ')[0];
 
 // Raccourci « temps suivant » : rejoue le même clic que le bouton de temps
 // prêt à l'emploi actif + 1, pour ne pas dupliquer la logique de sélection.
-// Il cycle la **météo**, pas le climat — celui-ci a son propre sélecteur, et
+// Il cycle la **météo**, pas le pays — celui-ci a son propre sélecteur, et
 // confondre les deux était le principal malentendu de l'ancien nom.
 weatherBtn.addEventListener('click', () => {
   const buttons = [...presetsRoot.children];
@@ -1323,35 +1323,20 @@ weatherBtn.addEventListener('click', () => {
 });
 
 /*
- * --- Choix du climat ---------------------------------------------------------
+ * --- Choix de la région naturelle --------------------------------------------
  *
- * Le décor tire sa famille climatique du lieu (grille Köppen, `core/climate`).
- * Ce sélecteur la **remplace** : le moteur cesse alors de suivre la
- * géographie, ce qui est exactement ce qu'on veut pour juger le travail — même
- * terrain, mêmes routes, mêmes parcelles, tout le reste changé. Se téléporter
- * en Laponie change aussi le tracé, le bâti et la pente, et on ne sait plus ce
- * qui vient du climat.
+ * Le décor tire son pays du lieu (`core/region`). Ce sélecteur le **remplace** :
+ * le moteur cesse alors de suivre la géographie, ce qui est exactement ce qu'on
+ * veut pour juger le travail — même terrain, mêmes routes, mêmes parcelles,
+ * tout le reste changé. Se téléporter en Andalousie change aussi le tracé, le
+ * bâti et la pente, et on ne sait plus ce qui vient du pays.
  *
- * Les noms viennent de `CLIMATE_FAMILIES`, qui est la liste que le moteur
- * connaît : une famille ajoutée là apparaît ici sans rien écrire.
+ * La liste vient de `REGIONS` : une région ajoutée là apparaît ici sans rien
+ * écrire. Elle est rangée par nom, l'ordre du fichier étant géographique.
  */
-const CLIMATE_LABELS = {
-  oceanic: 'Océanique — Bretagne, Irlande',
-  oceanicUpland: 'Océanique froid — Highlands, Islande',
-  mediterranean: 'Méditerranéen — Provence, Grèce',
-  mediterraneanCool: 'Méditerranéen tempéré — Galice',
-  semiArid: 'Steppe — Èbre, Castille',
-  arid: 'Désertique — Tabernas, Bardenas',
-  continental: 'Continental — Pologne, plaine du Pô',
-  boreal: 'Boréal — Scandinavie, taïga',
-  alpine: 'Alpin — au-dessus de la forêt',
-  mediterraneanMontane: 'Montagne sèche — Apennins, sierras',
-  glacial: 'Glaciaire — calottes',
-};
-
-climateSelect.append(new Option('Automatique (d’après le lieu)', ''));
-for (const family of CLIMATE_FAMILIES) {
-  climateSelect.append(new Option(CLIMATE_LABELS[family] || family, family));
+regionSelect.append(new Option('Automatique (d’après le lieu)', ''));
+for (const region of [...REGIONS].sort((a, b) => a.name.localeCompare(b.name, 'fr'))) {
+  regionSelect.append(new Option(`${region.name} — ${region.matrix}`, region.id));
 }
 
 // --- Faune : déclencher une traversée -----------------------------------------
@@ -1416,7 +1401,7 @@ async function rebuildHere(message) {
   setStatus(message);
   try {
     const { lng, lat } = world.frame.toLngLat(camera.position.x, camera.position.z);
-    // Forcé : le climat décide de ce qu'il y a à poser, pas seulement d'où —
+    // Forcé : le pays décide de ce qu'il y a à poser, pas seulement d'où —
     // rien ne serait périmé au sens du compositeur si on ne le lui disait pas.
     await world.refresh(lng, lat, { force: true });
     setStatus('');
@@ -1427,20 +1412,20 @@ async function rebuildHere(message) {
   }
 }
 
-climateSelect.addEventListener('change', () => {
-  const family = climateSelect.value || null;
-  if (!world || !world.setClimate(family)) return;
-  writeClimateHint();
-  rebuildHere(family ? 'Changement de climat…' : 'Retour au climat du lieu…');
+regionSelect.addEventListener('change', () => {
+  const id = regionSelect.value || null;
+  if (!world || !world.setRegion(id)) return;
+  writeRegionHint();
+  rebuildHere(id ? 'Changement de région…' : 'Retour à la région du lieu…');
 });
 
 /** Rappelle ce que le sélecteur fait au décor, et ce qu'il ne fait pas. */
-function writeClimateHint() {
-  climateHint.textContent = climateSelect.value
-    ? 'Le décor ne suit plus le lieu : essences, villages, cultures et sol sont ceux de ce climat.'
-    : 'Le climat est lu dans la grille Köppen, à la position de la caméra.';
+function writeRegionHint() {
+  regionHint.textContent = regionSelect.value
+    ? 'Le décor ne suit plus le lieu : essences, villages, cultures et sol sont ceux de ce pays.'
+    : 'La région est lue à l’ancre la plus proche de la caméra ; hors couverture, le décor est générique.';
 }
-writeClimateHint();
+writeRegionHint();
 
 hourInput.addEventListener('input', refreshWeatherLabels);
 realTimeCheckbox.addEventListener('change', () => {
@@ -1529,17 +1514,13 @@ function loop() {
   const where = here
     ? `lng ${here.lng.toFixed(5)}  lat ${here.lat.toFixed(5)}`
     : `x ${camera.position.x.toFixed(0)}  z ${camera.position.z.toFixed(0)}`;
-  // Le climat courant s'affiche parce qu'il ne se lit pas au premier coup
+  // Le pays courant s'affiche parce qu'il ne se lit pas au premier coup
   // d'oeil : c'est lui qui décide des essences, des palettes de village et de
   // l'assolement, et sans repère écrit on ne sait pas si le décor a changé de
-  // pays ou si l'on regarde deux fois le même bois.
-  const profile = world?.composer?.landscape;
-  // Sans code Köppen, la famille est imposée : le code décrivait le lieu,
-  // qu'on a justement cessé de suivre.
-  const climat = profile
-    ? `  ${profile.climate.family} (${profile.climate.koppen || 'imposé'})`
-    : '';
-  coordsEl.textContent = `${where}  alt ${camera.position.y.toFixed(0)} m  cap ${bearingDeg.toFixed(0)}°  incl ${pitchDeg.toFixed(0)}°${climat}`;
+  // région ou si l'on regarde deux fois le même bois.
+  const region = world?.composer?.landscape?.region;
+  const pays = region ? `  ${region.name} (${region.matrix})` : '';
+  coordsEl.textContent = `${where}  alt ${camera.position.y.toFixed(0)} m  cap ${bearingDeg.toFixed(0)}°  incl ${pitchDeg.toFixed(0)}°${pays}`;
 
   renderer.render(scene, camera);
 }

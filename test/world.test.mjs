@@ -146,8 +146,8 @@ import {
   DEFAULT_SHEEP_ODDS,
   cropFor,
   pickShare,
-  CROP_MIXES,
   DEFAULT_CROP_MIX,
+  BOUNDARY_MIXES,
   ROW_CROPS,
   rockKindFor,
   signKindFor,
@@ -459,17 +459,15 @@ import {
 } from '../src/layers/railwayLayer.js';
 import { skyParameters, lightingFor, sunlightColor } from '../src/environment/skyModel.js';
 import {
-  climateAt,
-  refineByRelief,
-  filterByClimate,
-  CLIMATE_FAMILIES,
-  FAMILY_OF_KOPPEN,
-  KOPPEN_CODES,
-  GRID,
-  MONTANE_ELEVATION_M,
-  ALPINE_ELEVATION_M,
+  filterByWords,
+  sharesFor,
+  boundaryForMatrix,
+  cropForFarming,
+  MATRIX_KINDS,
+  FARMING_KINDS,
   soilWashFor,
-} from '../src/core/climate.js';
+} from '../src/core/regionInterpretation.js';
+import { REGIONS } from '../src/core/regions.js';
 import {
   surfaceFor,
   surfaceId,
@@ -1809,76 +1807,37 @@ test('la lumière directe rougit à l’horizon et blanchit au zénith', () => {
   close(zenith[0], zenith[1], 0.06, 'lumière presque neutre à midi');
 });
 
-// --- Climat -----------------------------------------------------------------
+// --- Le pays ----------------------------------------------------------------
 
-test('le climat d’un lieu est celui qu’on y trouve', () => {
-  // Des points de contrôle plutôt qu’un échantillon : une erreur de projection
-  // dans la lecture de la grille décale l’Europe entière, et ne se voit
-  // autrement qu’à l’œil, sur un paysage qui a l’air « presque juste ».
-  assert.deepEqual(climateAt(5.37, 43.3), { family: 'mediterranean', koppen: 'Csa' }, 'Marseille');
-  assert.deepEqual(climateAt(-4.49, 48.39), { family: 'oceanic', koppen: 'Cfb' }, 'Brest');
-  assert.deepEqual(climateAt(25.72, 66.5), { family: 'boreal', koppen: 'Dfc' }, 'Rovaniemi');
-  assert.deepEqual(climateAt(-2.39, 37.05), { family: 'semiArid', koppen: 'BSk' }, 'Tabernas');
-  assert.deepEqual(climateAt(-21.94, 64.15), { family: 'oceanicUpland', koppen: 'Cfc' }, 'Reykjavik');
-  assert.equal(climateAt(27.56, 53.9).family, 'continental', 'Minsk');
-  assert.equal(climateAt(7.75, 46.02).family, 'alpine', 'Zermatt');
-});
-
-test('hors de la fenêtre couverte, le climat se tait', () => {
-  // `null` n’est pas une panne : c’est l’état dans lequel le décor se peint
-  // comme il se peignait avant qu’un climat existe. Tout ce qui le lit doit
-  // savoir s’en passer.
-  assert.equal(climateAt(-74, 40.7), null, 'New York, hors grille');
-  assert.equal(climateAt(2.35, 12), null, 'sous le bord sud');
-  assert.equal(climateAt(NaN, 48), null);
-  assert.equal(climateAt(2.35, undefined), null);
-  // En plein Atlantique, la recherche de proximité ne doit pas ramener une
-  // côte à cinq cents kilomètres.
-  assert.equal(climateAt(-18, 48), null, 'plein océan');
-});
-
-test('une côte garde son climat même quand la cellule tombe à l’eau', () => {
-  // La côte réelle passe au milieu d’une cellule de dix kilomètres : sans la
-  // recherche de proximité, le décor perdrait son climat par intermittence
-  // tout le long d’un littoral, c’est-à-dire là où l’on roule le plus.
-  for (const [nom, lng, lat] of [
-    ['pointe du Raz', -4.73, 48.04],
-    ['cap Corse', 9.36, 43.0],
-    ['Sagres', -8.94, 37.01],
-  ]) {
-    assert.ok(climateAt(lng, lat)?.family, nom);
-  }
-});
-
-test('un saut d’un pays à l’autre repose la question du climat', async () => {
+test('un saut d’un pays à l’autre repose la question de la région', async () => {
   // Régression : le profil s'est longtemps mémorisé sur une ancre en mètres
   // locaux. Le repère se ré-ancre au-delà de vingt kilomètres, si bien qu'après
-  // une téléportation l'observateur était de nouveau à l'origine — Paris et
-  // Athènes se lisaient à la même distance de zéro, la garde tenait, et le
-  // climat pris au premier décor ne bougeait plus. Toute mémoïsation ajoutée
-  // ici doit repasser ce test.
+  // une téléportation l'observateur était de nouveau à l'origine — deux villes
+  // se lisaient à la même distance de zéro, la garde tenait, et le pays pris au
+  // premier décor ne bougeait plus. Toute mémoïsation ajoutée ici doit repasser
+  // ce test.
   const { WorldComposer } = await import('../src/worldComposer.js');
   const composer = {
-    bubble: { frame: { repere: 'Paris' }, surfaceElevationAtLocal: () => 40 },
+    bubble: { frame: { repere: 'Angers' }, surfaceElevationAtLocal: () => 40 },
     landscape: null,
   };
   const update = (...args) => WorldComposer.prototype._updateLandscape.apply(composer, args);
 
-  assert.equal(update(2.35, 48.85, { x: 0, z: 0 }), true, 'premier décor');
-  assert.equal(composer.landscape.climate.family, 'oceanic');
+  assert.equal(update(-0.55, 47.47, { x: 0, z: 0 }), true, 'premier décor');
+  assert.equal(composer.landscape.region.id, 'anjou');
 
   // Même point local, autre repère : c'est une téléportation.
-  composer.bubble.frame = { repere: 'Athènes' };
-  assert.equal(update(23.72, 37.98, { x: 0, z: 0 }), true, 'la famille a changé');
-  assert.equal(composer.landscape.climate.family, 'mediterranean');
+  composer.bubble.frame = { repere: 'Séville' };
+  assert.equal(update(-5.98, 37.39, { x: 0, z: 0 }), true, 'la région a changé');
+  assert.equal(composer.landscape.region.id, 'campina_guadalquivir');
 
   // Et rester au même endroit ne périme rien : c'est ce que lit `refresh`.
-  assert.equal(update(23.72, 37.98, { x: 100, z: 0 }), false, 'même famille');
+  assert.equal(update(-5.98, 37.39, { x: 100, z: 0 }), false, 'même région');
 });
 
 test('la correction de sol est toujours complète', () => {
   // Trois facteurs, toujours les trois : le shader, les touffes et les tiges
-  // les lisent séparément, et une famille qui n'en décrirait que deux ferait
+  // les lisent séparément, et une matrice qui n'en décrirait que deux ferait
   // diverger celui qui manque.
   const complete = (wash) => {
     for (const key of ['grass', 'bare', 'farmland']) {
@@ -1887,17 +1846,17 @@ test('la correction de sol est toujours complète', () => {
   };
 
   complete(soilWashFor(null, defaultTheme.soils));
-  complete(soilWashFor('climat-inconnu', defaultTheme.soils));
-  // `alpine` ne décrit pas ses champs — il n'en a guère : le facteur manquant
+  complete(soilWashFor('pays-inconnu', defaultTheme.soils));
+  // L'alpage ne décrit pas ses champs — il n'en a guère : le facteur manquant
   // doit valoir « pas de correction », pas `undefined`.
-  const alpine = soilWashFor('alpine', defaultTheme.soils);
-  complete(alpine);
-  assert.deepEqual(alpine.farmland, [1, 1, 1]);
-  assert.notDeepEqual(alpine.bare, [1, 1, 1], 'la roche claire, elle, est décrite');
+  const alpage = soilWashFor('alpine_pasture', defaultTheme.soils);
+  complete(alpage);
+  assert.deepEqual(alpage.farmland, [1, 1, 1]);
+  assert.notDeepEqual(alpage.bare, [1, 1, 1], 'la roche claire, elle, est décrite');
 
   // Sans tranche de thème, tout est neutre : un thème d'avant les sols se
   // comporte comme avant.
-  assert.deepEqual(soilWashFor('mediterranean', null), {
+  assert.deepEqual(soilWashFor('garrigue', null), {
     grass: [1, 1, 1],
     bare: [1, 1, 1],
     farmland: [1, 1, 1],
@@ -1910,18 +1869,18 @@ test('un pays sec éclaircit et jaunit son herbe', () => {
   // La seule propriété qu'on peut vérifier sans regarder : une herbe sèche
   // réfléchit plus qu'une herbe grasse, et son rouge monte plus vite que son
   // vert. C'est ce qui distingue « plus claire » de « plus jaune ».
-  const oceanique = soilWashFor('oceanic', defaultTheme.soils).grass;
-  assert.deepEqual(oceanique, [1, 1, 1], 'la référence n’est pas corrigée');
+  const bocage = soilWashFor('hedgerow_meadow', defaultTheme.soils).grass;
+  assert.deepEqual(bocage, [1, 1, 1], 'la référence n’est pas corrigée');
 
-  for (const family of ['mediterranean', 'semiArid', 'arid']) {
-    const { grass } = soilWashFor(family, defaultTheme.soils);
-    assert.ok(grass[1] > 1, `${family} : plus clair`);
-    assert.ok(grass[0] / grass[1] > 1.4, `${family} : plus jaune`);
+  for (const matrix of ['garrigue', 'dry_steppe', 'desert_stone']) {
+    const { grass } = soilWashFor(matrix, defaultTheme.soils);
+    assert.ok(grass[1] > 1, `${matrix} : plus clair`);
+    assert.ok(grass[0] / grass[1] > 1.4, `${matrix} : plus jaune`);
   }
 
   // Et un pays froid va dans l'autre sens.
-  const boreal = soilWashFor('boreal', defaultTheme.soils);
-  assert.ok(boreal.grass[0] < 1 && boreal.bare[0] < 1, 'la taïga est sombre');
+  const taiga = soilWashFor('boreal_taiga', defaultTheme.soils);
+  assert.ok(taiga.grass[0] < 1 && taiga.bare[0] < 1, 'la taïga est sombre');
 });
 
 test('aucune correction de sol ne sature la touffe du premier plan', () => {
@@ -1929,11 +1888,11 @@ test('aucune correction de sol ne sature la touffe du premier plan', () => {
   // facteur d'environ 3,5, le brin part au blanc alors que le sol, lui,
   // continue de foncer — c'est-à-dire exactement la divergence que tout ce
   // mécanisme existe pour éviter. Voir `SOIL_LOOK`.
-  for (const [family, look] of Object.entries(defaultTheme.soils)) {
+  for (const [matrix, look] of Object.entries(defaultTheme.soils)) {
     for (const [key, factors] of Object.entries(look)) {
       if (!Array.isArray(factors)) continue;
       for (const value of factors) {
-        assert.ok(value > 0 && value <= 3.5, `${family}.${key} = ${value}`);
+        assert.ok(value > 0 && value <= 3.5, `${matrix}.${key} = ${value}`);
       }
     }
   }
@@ -1943,18 +1902,18 @@ test('un pays sec laisse voir sa terre entre les touffes', () => {
   // C'est ce qui fait une steppe, et la couleur seule ne le fait pas : un sol
   // jauni couvert d'une prairie continue reste une prairie jaunie. La densité
   // doit donc décroître avec la sécheresse, et la hauteur avec elle.
-  const densite = (family) => soilWashFor(family, defaultTheme.soils).grassDensity;
-  assert.equal(densite('oceanic'), 1, 'la référence garde sa prairie');
-  assert.ok(densite('mediterranean') < densite('oceanic'));
-  assert.ok(densite('semiArid') < densite('mediterranean'));
-  assert.ok(densite('arid') < densite('semiArid'));
+  const densite = (matrix) => soilWashFor(matrix, defaultTheme.soils).grassDensity;
+  assert.equal(densite('hedgerow_meadow'), 1, 'la référence garde sa prairie');
+  assert.ok(densite('garrigue') < densite('hedgerow_meadow'));
+  assert.ok(densite('dry_steppe') < densite('garrigue'));
+  assert.ok(densite('desert_stone') < densite('dry_steppe'));
 
-  // Aucune famille ne va jusqu'à supprimer l'herbe : un sol nu partout se lit
+  // Aucune matrice ne va jusqu'à supprimer l'herbe : un sol nu partout se lit
   // comme un décor qui n'a pas fini de charger.
-  for (const family of CLIMATE_FAMILIES) {
-    const { grassDensity, grassHeight } = soilWashFor(family, defaultTheme.soils);
-    assert.ok(grassDensity > 0 && grassDensity <= 1, `${family} densité`);
-    assert.ok(grassHeight > 0.3 && grassHeight <= 1, `${family} hauteur`);
+  for (const matrix of Object.keys(MATRIX_KINDS)) {
+    const { grassDensity, grassHeight } = soilWashFor(matrix, defaultTheme.soils);
+    assert.ok(grassDensity > 0 && grassDensity <= 1, `${matrix} densité`);
+    assert.ok(grassHeight > 0.3 && grassHeight <= 1, `${matrix} hauteur`);
   }
 });
 
@@ -1968,80 +1927,40 @@ test('une fleur garde sa couleur, l’herbe autour prend celle du pays', () => {
   }
 });
 
-test('un climat imposé ne suit plus le lieu, et rien ne le corrige', async () => {
+test('une région imposée ne suit plus le lieu', async () => {
   // C'est le seul moyen de comparer deux pays sur le **même** terrain : mêmes
   // routes, mêmes parcelles, même relief, tout le reste changé. Se téléporter
-  // change aussi le tracé et la pente, et on ne sait plus ce qui vient du
-  // climat.
+  // change aussi le tracé et la pente, et on ne sait plus ce qui vient du pays.
   const { WorldComposer } = await import('../src/worldComposer.js');
   const composer = {
-    bubble: { frame: {}, surfaceElevationAtLocal: () => 1800 },
+    bubble: { frame: {}, surfaceElevationAtLocal: () => 40 },
     landscape: null,
-    climateOverride: null,
+    regionOverride: null,
   };
-  const update = () => WorldComposer.prototype._updateLandscape.call(composer, 2.35, 48.85, { x: 0, z: 0 });
-  const setClimate = (f) => WorldComposer.prototype.setClimate.call(composer, f);
+  const update = () =>
+    WorldComposer.prototype._updateLandscape.call(composer, -0.55, 47.47, { x: 0, z: 0 });
+  const setRegion = (id) => WorldComposer.prototype.setRegion.call(composer, id);
 
   update();
-  // Paris à 1 800 m n'existe pas, mais le relief a le dernier mot : c'est ce
-  // que la famille imposée devra contredire.
-  assert.equal(composer.landscape.climate.family, 'alpine');
+  assert.equal(composer.landscape.region.id, 'anjou');
 
-  assert.equal(setClimate('mediterranean'), true);
-  assert.equal(setClimate('mediterranean'), false, 'idempotent');
-  assert.equal(update(), true, 'la famille a changé');
-  assert.equal(composer.landscape.climate.family, 'mediterranean');
-  // Le code Köppen n'est plus rendu : il décrivait le lieu, qu'on vient
-  // justement de cesser de suivre. Le donner quand même laisserait lire
-  // « mediterranean (Cfb) », qui n'est vrai ni d'un côté ni de l'autre.
-  assert.equal(composer.landscape.climate.koppen, null);
+  assert.equal(setRegion('alpujarra'), true);
+  assert.equal(setRegion('alpujarra'), false, 'idempotent');
+  assert.equal(update(), true, 'la région a changé');
+  assert.equal(composer.landscape.region.id, 'alpujarra');
 
-  assert.equal(setClimate(null), true);
+  assert.equal(setRegion(null), true);
   update();
-  assert.equal(composer.landscape.climate.family, 'alpine', 'la géographie reprend la main');
-  assert.equal(composer.landscape.climate.koppen, 'Cfb');
+  assert.equal(composer.landscape.region.id, 'anjou', 'la géographie reprend la main');
 });
 
-test('le relief corrige ce que Köppen ne peut pas dire', () => {
-  // Innsbruck est classée comme Rennes : la classification dit vrai pour le
-  // fond de vallée et faux pour tout ce qui le domine. Le MNT, lui, est au
-  // mètre.
-  assert.equal(refineByRelief('oceanic', { elevation: 300 }), 'oceanic');
-  assert.equal(refineByRelief('oceanic', { elevation: ALPINE_ELEVATION_M }), 'alpine');
-  assert.equal(refineByRelief('continental', { elevation: 1800 }), 'alpine');
-  // Une montagne méditerranéenne n’est pas une montagne alpine : pin noir et
-  // karst sec contre épicéa et alpage.
-  assert.equal(
-    refineByRelief('mediterranean', { elevation: MONTANE_ELEVATION_M }),
-    'mediterraneanMontane'
-  );
-  assert.equal(refineByRelief('mediterraneanMontane', { elevation: 2500 }), 'mediterraneanMontane');
-  assert.equal(refineByRelief('glacial', { elevation: 3000 }), 'glacial', 'rien au-dessus');
-  // Sans relief connu, on ne corrige rien plutôt que de deviner.
-  assert.equal(refineByRelief('oceanic', null), 'oceanic');
-  assert.equal(refineByRelief('oceanic', { elevation: NaN }), 'oceanic');
-  assert.equal(refineByRelief(null, { elevation: 3000 }), null);
-});
-
-test('la grille climatique et son vocabulaire tiennent ensemble', () => {
-  // L’ordre de `KOPPEN_CODES` est l’encodage de la grille : le changer sans
-  // refabriquer la grille repeint l’Espagne en Finlande.
-  assert.equal(KOPPEN_CODES.length, 31);
-  assert.equal(new Set(KOPPEN_CODES).size, KOPPEN_CODES.length, 'aucun code en double');
-  assert.ok(KOPPEN_CODES.length <= 255, 'les codes tiennent dans un octet');
-  // Toute famille annoncée doit être atteignable, et toute famille atteinte
-  // doit être annoncée : une faute de frappe ici ne se verrait qu’au moment où
-  // une région entière se peindrait avec le contenu par défaut.
-  for (const [code, family] of Object.entries(FAMILY_OF_KOPPEN)) {
-    assert.ok(KOPPEN_CODES.includes(code), `${code} est un code connu`);
-    assert.ok(CLIMATE_FAMILIES.includes(family), `${family} est une famille connue`);
-  }
-  const reachable = new Set(Object.values(FAMILY_OF_KOPPEN));
-  for (const family of CLIMATE_FAMILIES) {
-    assert.ok(reachable.has(family), `${family} est atteignable depuis un code Köppen`);
-  }
-  assert.equal(GRID.cols * GRID.step, 70, 'la fenêtre couvre l’Europe en longitude');
-  assert.equal(GRID.rows * GRID.step, 38, 'et en latitude');
+test('un pays que le thème ne connaît pas ne vide pas le décor', () => {
+  // Le repli est la liste entière, jamais rien : lever ou rendre vide ici
+  // emporterait toutes les couches suivantes de `refresh`.
+  const pool = filterByWords(defaultTheme.forests, 'species', ['essence-inventée']);
+  assert.equal(pool, defaultTheme.forests, 'la liste entière, telle quelle');
+  assert.equal(filterByWords(defaultTheme.forests, 'species', null), defaultTheme.forests);
+  assert.equal(filterByWords(defaultTheme.forests, 'species', []), defaultTheme.forests);
 });
 
 // --- Occupation du sol ------------------------------------------------------
@@ -3818,36 +3737,41 @@ test('la trame agraire n’est pas la même d’un pays à l’autre', () => {
   const labour = { class: 'farmland', subclass: 'farmland' };
   const plat = { steepness: 0.02 };
 
-  // Un tirage sur vingt : la part de haies vives, par pays.
-  const partDe = (cible, properties, climate) => {
+  // Un tirage sur vingt : la part de haies vives, par style de limite.
+  const partDe = (cible, properties, boundary) => {
     let compte = 0;
     for (let i = 0; i < 20; i++) {
-      const item = boundaryFurnitureFor(properties, { ...plat, variant: i / 20, climate });
+      const item = boundaryFurnitureFor(properties, { ...plat, variant: i / 20, boundary });
       if (cible.includes(item)) compte++;
     }
     return compte / 20;
   };
 
   const haies = ['hedge', 'lowHedge'];
-  assert.ok(partDe(haies, labour, 'oceanic') > 0.5, 'le bocage clôt ses labours');
-  assert.ok(partDe(haies, labour, 'continental') < 0.25, 'l’openfield, non');
-  assert.equal(partDe(haies, labour, 'arid'), 0, 'rien n’entretient une haie en désert');
+  assert.ok(partDe(haies, labour, 'bocage') > 0.5, 'le bocage clôt ses labours');
+  assert.ok(partDe(haies, labour, 'openfield') < 0.25, 'l’openfield, non');
+  assert.equal(partDe(haies, labour, 'none'), 0, 'rien n’entretient une haie en désert');
 
   const pierre = ['dryStoneWall'];
-  assert.equal(partDe(pierre, pature, 'oceanic'), 0, 'pas de muret en plaine humide');
-  assert.ok(partDe(pierre, pature, 'mediterraneanMontane') > 0.5, 'la terrasse est en pierre');
-  assert.ok(partDe(pierre, pature, 'oceanicUpland') > 0.4, 'les Highlands aussi');
+  assert.equal(partDe(pierre, pature, 'bocage'), 0, 'pas de muret en plaine humide');
+  assert.ok(partDe(pierre, pature, 'drystone') > 0.5, 'la terrasse est en pierre');
 
   // Et la pierre sort du premier pli de terrain là où le sol en donne, alors
   // qu'il faut une vraie pente ailleurs.
   const pente = { steepness: 0.1, variant: 0.9 };
-  assert.equal(boundaryFurnitureFor(pature, { ...pente, climate: 'mediterranean' }), 'dryStoneWall');
-  assert.notEqual(boundaryFurnitureFor(pature, { ...pente, climate: 'oceanic' }), 'dryStoneWall');
+  assert.equal(boundaryFurnitureFor(pature, { ...pente, boundary: 'drystone' }), 'dryStoneWall');
+  assert.notEqual(boundaryFurnitureFor(pature, { ...pente, boundary: 'bocage' }), 'dryStoneWall');
+
+  // Chaque matrice appelle un style que la table connaît : une matrice qui en
+  // nommerait un absent retomberait sur le bocage, en silence et partout.
+  for (const matrix of Object.keys(MATRIX_KINDS)) {
+    assert.ok(BOUNDARY_MIXES[boundaryForMatrix(matrix)], `${matrix} : style connu`);
+  }
 });
 
-test('sans climat, la trame agraire est celle d’avant', () => {
+test('sans région, la trame agraire est celle d’avant', () => {
   // Le repli doit être **exactement** le bocage français d'origine : sinon
-  // toute la campagne change le jour où la grille climatique ne répond pas.
+  // toute la campagne change le jour où le lieu est hors de toute région.
   const pature = { class: 'grass', subclass: 'meadow' };
   const labour = { class: 'farmland', subclass: 'farmland' };
   //
@@ -3862,9 +3786,9 @@ test('sans climat, la trame agraire est celle d’avant', () => {
     assert.equal(boundaryFurnitureFor(labour, { steepness: 0.02, variant }), attenduLabour, `labour ${variant}`);
     assert.equal(boundaryFurnitureFor(pature, { steepness: 0.02, variant }), attenduPature, `pâture ${variant}`);
   }
-  // Et un climat que la table ne connaît pas retombe dessus.
+  // Et un style que la table ne connaît pas retombe dessus.
   assert.equal(
-    boundaryFurnitureFor(labour, { steepness: 0.02, variant: 0.1, climate: 'climat-inconnu' }),
+    boundaryFurnitureFor(labour, { steepness: 0.02, variant: 0.1, boundary: 'style-inconnu' }),
     'hedge'
   );
 });
@@ -3887,33 +3811,39 @@ test('la culture d’un champ est tirée une fois par parcelle', () => {
   }
 });
 
-test('l’assolement suit le climat, et la donnée passe avant lui', () => {
+test('l’assolement est celui du pays, et la donnée passe avant lui', () => {
   const field = { class: 'farmland' };
-  const share = (climate) => {
+  const share = (farming) => {
     const seen = new Map();
     for (let i = 0; i < 500; i++) {
-      const crop = cropFor(field, i / 500, climate);
+      const crop = cropFor(field, i / 500, farming);
       seen.set(crop, (seen.get(crop) || 0) + 1);
     }
     return seen;
   };
 
-  // Ni maïs ni tournesol au nord : la saison est trop courte, et un champ de
-  // tournesol en Laponie se remarque immédiatement.
-  const boreal = share('boreal');
-  assert.equal(boreal.get('maize'), undefined);
-  assert.equal(boreal.get('sunflower'), undefined);
-  assert.equal(boreal.get('vineyard'), undefined);
-  // Au sud, la vigne et le verger portent le paysage agricole.
-  const midi = share('mediterranean');
-  assert.ok(midi.get('vineyard') + midi.get('orchard') > midi.get('wheat'));
-  // En désert, la terre nue domine et le blé est marginal.
-  const desert = share('arid');
-  assert.ok(desert.get('plough') > 300);
+  // Ce que le pays ne nomme pas ne pousse pas : un champ de tournesol en
+  // Laponie se remarque immédiatement.
+  const nord = share(['fallow', 'cereal', 'rapeseed']);
+  assert.equal(nord.get('maize'), undefined);
+  assert.equal(nord.get('sunflower'), undefined);
+  assert.equal(nord.get('vineyard'), undefined);
 
-  // Une vigne cartographiée reste une vigne, où qu’elle soit : le climat ne
+  // Le rang décide de la part : la première l'emporte largement sur la seconde.
+  const midi = share(['vineyard', 'olive', 'cereal']);
+  assert.ok(midi.get('vineyard') > midi.get('wheat'), 'la vigne domine là où elle est en tête');
+  assert.ok(midi.get('vineyard') > 1.6 * midi.get('orchard'), 'et de loin sur le rang suivant');
+
+  // Une liste d'un seul mot rend ce mot partout.
+  const alpage = share(['fallow']);
+  assert.equal(alpage.get('plough'), 500);
+
+  // Une vigne cartographiée reste une vigne, où qu’elle soit : le pays ne
   // décide que de ce que la donnée ignore.
-  assert.equal(cropFor({ class: 'farmland', subclass: 'vineyard' }, 0.1, 'boreal'), 'vineyard');
+  assert.equal(
+    cropFor({ class: 'farmland', subclass: 'vineyard' }, 0.1, ['fallow', 'cereal']),
+    'vineyard'
+  );
 });
 
 test('l’assolement par défaut est celui d’une campagne française', () => {
@@ -3924,16 +3854,19 @@ test('l’assolement par défaut est celui d’une campagne française', () => {
   for (const [crop, share] of DEFAULT_CROP_MIX) parts.set(crop, (parts.get(crop) || 0) + share);
   assert.equal(parts.get('wheat'), 0.3);
   close(parts.get('plough'), 0.2, 1e-9, 'labour');
-  assert.ok(parts.get('rapeseed') > 0, 'le colza est semé sans climat connu');
+  assert.ok(parts.get('rapeseed') > 0, 'le colza est semé sans région connue');
   assert.equal(parts.get('lavender'), undefined, 'la lavande demande un pays');
   close([...parts.values()].reduce((a, b) => a + b, 0), 1, 1e-9, 'les parts font un tout');
 
-  // Chaque assolement de climat est complet : une somme sous un rend la
-  // dernière culture plus fréquente qu’écrit, en silence.
-  for (const [family, mix] of Object.entries(CROP_MIXES)) {
-    const total = mix.reduce((sum, [, share]) => sum + share, 0);
-    close(total, 1, 1e-9, `${family} : les parts font un tout`);
-    for (const [crop] of mix) assert.ok(CROP_KINDS.includes(crop), `${family} : ${crop} existe`);
+  // La loi de dominance fait toujours un tout, quelle que soit la longueur de
+  // la liste : une somme sous un rend la dernière culture plus fréquente
+  // qu’écrit, en silence.
+  for (let n = 1; n <= 6; n++) {
+    const mix = sharesFor(Array.from({ length: n }, (_, i) => `mot${i}`));
+    close(mix.reduce((sum, [, share]) => sum + share, 0), 1, 1e-9, `${n} mots`);
+    for (let i = 1; i < n; i++) {
+      assert.ok(mix[i - 1][1] > mix[i][1], `${n} mots : le rang ${i} pèse plus que ${i + 1}`);
+    }
   }
   // Le tirage est déterministe et couvre les deux bords.
   assert.equal(pickShare([['wheat', 0.5], ['plough', 0.5]], 0), 'wheat');
@@ -3965,40 +3898,44 @@ test('le gibier d’un bois est celui du pays', () => {
   // écrite sur un `variant` choisi, l'assertion cassait au premier ajout
   // d'espèce sans que rien du sens n'ait bougé.
   const share = (pool, item) => pool.filter((k) => k === item).length / pool.length;
-  assert.ok(share(FOREST_GAME.boreal, 'reindeer') >= 0.5, 'le renne domine la taïga');
-  assert.ok(share(FOREST_GAME.mediterranean, 'boar') >= 0.5, 'le sanglier domine la chênaie');
-  assert.ok(!FOREST_GAME.mediterranean.includes('reindeer'), 'pas de renne en Provence');
-  assert.ok(!FOREST_GAME.boreal.includes('boar'), 'pas de sanglier en Laponie');
-  assert.equal(forestGameFor({ variant: 0.1, climate: 'oceanic' }).item, 'deer');
+  assert.ok(share(FOREST_GAME.boreal_taiga, 'reindeer') >= 0.5, 'le renne domine la taïga');
+  assert.ok(share(FOREST_GAME.garrigue, 'boar') >= 0.5, 'le sanglier domine la chênaie');
+  assert.ok(!FOREST_GAME.garrigue.includes('reindeer'), 'pas de renne en Provence');
+  assert.ok(!FOREST_GAME.boreal_taiga.includes('boar'), 'pas de sanglier en Laponie');
+  assert.equal(forestGameFor({ variant: 0.1, matrix: 'hedgerow_meadow' }).item, 'deer');
   // Là où il n’y a pas de forêt, il n’y a rien à voir — et surtout pas un
   // chevreuil au milieu des Bardenas.
-  assert.equal(forestGameFor({ variant: 0.5, climate: 'arid' }), null);
-  assert.equal(forestGameFor({ variant: 0.5, climate: 'glacial' }), null);
-  // Sans climat connu, un bois tempéré.
+  assert.equal(forestGameFor({ variant: 0.5, matrix: 'desert_stone' }), null);
+  assert.equal(forestGameFor({ variant: 0.5, matrix: 'bare_rock' }), null);
+  // Sans pays connu, un bois tempéré.
   assert.deepEqual(
     forestGameFor({ variant: 0.5 }),
-    forestGameFor({ variant: 0.5, climate: 'pays-inconnu' })
+    forestGameFor({ variant: 0.5, matrix: 'pays-inconnu' })
   );
 
   // Le sanglier va en compagnie serrée, le cervidé en harde lâche.
   assert.ok(
-    forestGameFor({ variant: 0, climate: 'mediterranean' }).spread <
-      forestGameFor({ variant: 0, climate: 'boreal' }).spread
+    forestGameFor({ variant: 0, matrix: 'garrigue' }).spread <
+      forestGameFor({ variant: 0, matrix: 'boreal_taiga' }).spread
   );
 
-  // Toute la table tire dans des silhouettes qui existent, et couvre toutes
-  // les familles : une famille oubliée retomberait silencieusement sur le
-  // gibier tempéré, ce qui se verrait en Laponie. Les bêtes ne sont plus au
-  // catalogue du mobilier : elles bougent, donc elles sont dans `models/fauna`.
-  for (const family of CLIMATE_FAMILIES) {
-    assert.ok(FOREST_GAME[family], `${family} : gibier décrit`);
-    assert.ok(FOREST_PREDATORS[family], `${family} : carnassiers décrits`);
-    for (const item of FOREST_GAME[family]) {
-      assert.ok(FAUNA_BUILDERS[item], `${family} : ${item} au catalogue`);
+  // Toute la table tire dans des silhouettes qui existent. Une matrice sans
+  // gibier décrit retombe sur le bois tempéré, ce qui est un repli acceptable
+  // pour un pays boisé et faux pour un désert : les matrices nues sont donc
+  // décrites, et vides. Les bêtes ne sont pas au catalogue du mobilier : elles
+  // bougent, donc elles sont dans `models/fauna`.
+  for (const matrix of Object.keys(FOREST_GAME)) {
+    for (const item of FOREST_GAME[matrix]) {
+      assert.ok(FAUNA_BUILDERS[item], `${matrix} : ${item} au catalogue`);
     }
-    for (const item of FOREST_PREDATORS[family]) {
-      assert.ok(FAUNA_BUILDERS[item], `${family} : ${item} au catalogue`);
+  }
+  for (const matrix of Object.keys(FOREST_PREDATORS)) {
+    for (const item of FOREST_PREDATORS[matrix]) {
+      assert.ok(FAUNA_BUILDERS[item], `${matrix} : ${item} au catalogue`);
     }
+  }
+  for (const matrix of ['desert_stone', 'desert_sand', 'bare_rock']) {
+    assert.deepEqual(FOREST_GAME[matrix], [], `${matrix} : rien à voir`);
   }
   for (const item of DEFAULT_FOREST_GAME) assert.ok(FAUNA_BUILDERS[item], item);
   for (const item of DEFAULT_FOREST_PREDATORS) assert.ok(FAUNA_BUILDERS[item], item);
@@ -4013,21 +3950,21 @@ test('le gibier d’un bois est celui du pays', () => {
 test('les carnassiers se tirent à part du gibier, et restent rares', () => {
   // Le second tirage décide seul de la famille : au-dessus du seuil c'est du
   // gibier, en dessous c'est un carnassier — quel que soit `variant`.
-  const game = forestGameFor({ variant: 0.5, predatorDraw: 0.9, climate: 'continental' });
+  const game = forestGameFor({ variant: 0.5, predatorDraw: 0.9, matrix: 'openfield_cropland' });
   assert.equal(game.solitary, false);
   assert.ok(['deer', 'doe', 'boar'].includes(game.item));
 
-  const hunter = forestGameFor({ variant: 0.5, predatorDraw: 0.01, climate: 'continental' });
+  const hunter = forestGameFor({ variant: 0.5, predatorDraw: 0.01, matrix: 'openfield_cropland' });
   assert.equal(hunter.solitary, true);
   assert.ok(['fox', 'wolf'].includes(hunter.item));
 
   // Sans second tirage, on ne tombe jamais sur un carnassier : c'est la
   // valeur par défaut, et elle doit rester du côté du gibier.
-  assert.equal(forestGameFor({ variant: 0.5, climate: 'boreal' }).solitary, false);
+  assert.equal(forestGameFor({ variant: 0.5, matrix: 'boreal_taiga' }).solitary, false);
 
   // Là où la glace couvre tout, il n'y a ni gibier ni carnassier : le repli
   // ne doit pas ramener un renard sur un glacier.
-  assert.equal(forestGameFor({ variant: 0.5, predatorDraw: 0, climate: 'glacial' }), null);
+  assert.equal(forestGameFor({ variant: 0.5, predatorDraw: 0, matrix: 'bare_rock' }), null);
 
   // Rare, et à garder rare : un loup par bois cesse d'être un loup.
   assert.ok(PREDATOR_ODDS < 0.25, 'un carnassier reste un événement');
@@ -4073,23 +4010,23 @@ test('le bétail d’une pâture est celui du pays', () => {
   // Même pente, même tirage : seul le pays change. Une plaine irlandaise et un
   // causse castillan portaient jusqu’ici le même troupeau.
   const plaine = { steepness: 0.02, variant: 0.5 };
-  assert.equal(herdFor({ ...plaine, climate: 'oceanic' }).item, 'cow');
-  assert.equal(herdFor({ ...plaine, climate: 'arid' }).item, 'sheep');
-  assert.equal(herdFor({ ...plaine, climate: 'oceanicUpland' }).item, 'sheep');
-  assert.equal(herdFor({ ...plaine, climate: 'boreal' }).item, 'cow');
+  assert.equal(herdFor({ ...plaine, matrix: 'hedgerow_meadow' }).item, 'cow');
+  assert.equal(herdFor({ ...plaine, matrix: 'desert_stone' }).item, 'sheep');
+  assert.equal(herdFor({ ...plaine, matrix: 'moor_heath' }).item, 'sheep');
+  assert.equal(herdFor({ ...plaine, matrix: 'boreal_taiga' }).item, 'cow');
 
-  // Sans climat, exactement le comportement d’avant.
-  assert.equal(herdFor(plaine).item, herdFor({ ...plaine, climate: 'inconnu' }).item);
+  // Sans pays, exactement le comportement d’avant.
+  assert.equal(herdFor(plaine).item, herdFor({ ...plaine, matrix: 'inconnu' }).item);
   assert.equal(DEFAULT_SHEEP_ODDS, 0.34);
 
   // La pente prime toujours : un pays à vaches en montagne reste un pays à
   // moutons et à chèvres, sinon la règle de pente aurait été perdue en route.
-  assert.equal(herdFor({ steepness: 0.3, variant: 0.5, climate: 'oceanic' }).item, 'sheep');
-  assert.equal(herdFor({ steepness: 0.4, variant: 0.2, climate: 'oceanic' }).item, 'goat');
+  assert.equal(herdFor({ steepness: 0.3, variant: 0.5, matrix: 'hedgerow_meadow' }).item, 'sheep');
+  assert.equal(herdFor({ steepness: 0.4, variant: 0.2, matrix: 'hedgerow_meadow' }).item, 'goat');
 
-  // Toutes les familles annoncées sont des parts valides.
-  for (const [family, odds] of Object.entries(HERD_SHEEP_ODDS)) {
-    assert.ok(odds > 0 && odds < 1, `${family} : part d’ovins plausible (${odds})`);
+  // Toutes les matrices annoncées sont des parts valides.
+  for (const [matrix, odds] of Object.entries(HERD_SHEEP_ODDS)) {
+    assert.ok(odds > 0 && odds < 1, `${matrix} : part d’ovins plausible (${odds})`);
   }
 });
 
@@ -8151,36 +8088,39 @@ test('un bois garde ses essences quand la bulle se déplace', () => {
 test('un bois ne pousse que là où son essence pousse vraiment', () => {
   // Le pin d’Alep en Finlande et l’épicéa en garrigue étaient possibles tant
   // que la liste était tirée en entier partout.
-  const mediterranean = new Set();
-  const boreal = new Set();
+  const midi = new Set();
+  const nord = new Set();
+  const provence = { trees: ['holm_oak', 'aleppo_pine', 'juniper'] };
+  const taiga = { trees: ['spruce', 'birch'] };
   for (let i = 0; i < 60; i++) {
-    mediterranean.add(forestTypeAt(i * FOREST_PATCH_M, 0, FOREST_TYPES, 'mediterranean').name);
-    boreal.add(forestTypeAt(i * FOREST_PATCH_M, 0, FOREST_TYPES, 'boreal').name);
+    midi.add(forestTypeAt(i * FOREST_PATCH_M, 0, FOREST_TYPES, provence).name);
+    nord.add(forestTypeAt(i * FOREST_PATCH_M, 0, FOREST_TYPES, taiga).name);
   }
-  assert.ok(mediterranean.size >= 2, `plusieurs peuplements (${[...mediterranean].join(', ')})`);
-  for (const name of mediterranean) assert.ok(!boreal.has(name), `${name} n’est pas des deux`);
-  assert.ok(boreal.has('taïga'));
+  assert.ok(midi.size >= 2, `plusieurs peuplements (${[...midi].join(', ')})`);
+  for (const name of midi) assert.ok(!nord.has(name), `${name} n’est pas des deux`);
+  assert.ok(nord.has('taïga'));
 
-  // La maille tient toujours : le climat réduit la liste, il ne déplace pas le
+  // La maille tient toujours : le pays réduit la liste, il ne déplace pas le
   // tirage.
+  const bocage = { trees: ['oak', 'beech'] };
   assert.equal(
-    forestTypeAt(1234, -5678, FOREST_TYPES, 'oceanic').name,
-    forestTypeAt(1234 + 3, -5678 - 4, FOREST_TYPES, 'oceanic').name
+    forestTypeAt(1234, -5678, FOREST_TYPES, bocage).name,
+    forestTypeAt(1234 + 3, -5678 - 4, FOREST_TYPES, bocage).name
   );
 });
 
-test('un peuplement sans climat déclaré pousse partout', () => {
-  // C’est ce qui fait qu’un thème écrit avant l’existence des climats se
-  // comporte exactement comme avant.
-  const ancien = [{ name: 'sans-climat', essences: ['broadleaf'], minHeight: 5, maxHeight: 9, density: 1, understory: 0.2, tint: [1, 1, 1] }];
-  for (const family of CLIMATE_FAMILIES) {
-    assert.equal(forestTypeAt(500, 500, ancien, family).name, 'sans-climat', family);
+test('un peuplement sans essence déclarée pousse partout', () => {
+  // C’est ce qui fait qu’un thème qui ne nomme aucune espèce se comporte comme
+  // s’il n’y avait pas de pays.
+  const ancien = [{ name: 'sans-espèce', essences: ['broadleaf'], minHeight: 5, maxHeight: 9, density: 1, understory: 0.2, tint: [1, 1, 1] }];
+  for (const trees of [['spruce'], ['olive'], ['oak', 'beech']]) {
+    assert.equal(forestTypeAt(500, 500, ancien, { trees }).name, 'sans-espèce', trees.join('+'));
   }
-  // Et un climat sans aucun contenu retombe sur la liste entière plutôt que de
+  // Et un pays sans aucun contenu retombe sur la liste entière plutôt que de
   // rendre un décor vide : lever ici emporterait toutes les couches suivantes.
-  assert.equal(filterByClimate(ancien, 'boreal').length, 1);
-  const tagged = [{ name: 'a', climates: ['arid'] }];
-  assert.deepEqual(filterByClimate(tagged, 'boreal'), tagged, 'repli sur la liste entière');
+  assert.equal(filterByWords(ancien, 'species', ['spruce']).length, 1);
+  const tagged = [{ name: 'a', species: ['olive'] }];
+  assert.deepEqual(filterByWords(tagged, 'species', ['spruce']), tagged, 'repli sur la liste entière');
 });
 
 test('chaque peuplement tire dans des silhouettes qui existent', () => {
@@ -8437,18 +8377,21 @@ test('un village est bâti dans la pierre de son pays', () => {
   // l’Andalousie interchangeables.
   const nordiques = new Set();
   const arides = new Set();
+  const nord = { building: ['red_timber'] };
+  const sud = { building: ['whitewash', 'flat_roof'] };
   for (let i = 0; i < 60; i++) {
-    nordiques.add(townPaletteAt(i * TOWN_PATCH_M, 0, TOWN_PALETTES, 'boreal').name);
-    arides.add(townPaletteAt(i * TOWN_PATCH_M, 0, TOWN_PALETTES, 'arid').name);
+    nordiques.add(townPaletteAt(i * TOWN_PATCH_M, 0, TOWN_PALETTES, nord).name);
+    arides.add(townPaletteAt(i * TOWN_PATCH_M, 0, TOWN_PALETTES, sud).name);
   }
   for (const name of nordiques) assert.ok(!arides.has(name), `${name} n’est pas des deux`);
   assert.ok(nordiques.has('bois rouge'));
   assert.ok(arides.has('badigeon'));
 
-  // La maille tient : le climat réduit la liste, il ne déplace pas le tirage.
+  // La maille tient : le pays réduit la liste, il ne déplace pas le tirage.
+  const ouest = { building: ['granite', 'slate_roof'] };
   assert.equal(
-    townPaletteAt(10, 10, TOWN_PALETTES, 'oceanic').name,
-    townPaletteAt(10 + TOWN_PATCH_M * 0.4, 10, TOWN_PALETTES, 'oceanic').name
+    townPaletteAt(10, 10, TOWN_PALETTES, ouest).name,
+    townPaletteAt(10 + TOWN_PATCH_M * 0.4, 10, TOWN_PALETTES, ouest).name
   );
 });
 
@@ -9028,32 +8971,23 @@ test('une masse de culture est peinte pour l’élancement auquel elle sera vue'
   }
 });
 
-test('la lavande pousse dans le Midi, le colza dans le Nord', () => {
-  // C'est ce que les climats étaient censés apporter, et ce qui manquait : les
-  // assolements se distinguaient par des **parts** de quatre cultures
-  // partout identiques. Un pays se reconnaît d'abord à ce qu'il cultive.
-  const porte = (famille, culture) =>
-    (CROP_MIXES[famille] || []).some(([crop]) => crop === culture);
-
-  for (const famille of ['mediterranean', 'mediterraneanCool', 'mediterraneanMontane', 'semiArid']) {
-    assert.ok(porte(famille, 'lavender'), `${famille} porte de la lavande`);
+test('toute culture qu’un pays peut nommer sait se dessiner', () => {
+  // Un pays se reconnaît d'abord à ce qu'il cultive : la lavande d'un plateau
+  // de Sault et le colza d'une plaine picarde se voient d'un kilomètre. Mais
+  // rien ne doit être tiré qui ne sache se dessiner — une culture est soit
+  // semée en touffes (`CROP_LOOK`), soit balayée en rangs (`ROW_CROPS`).
+  for (const word of Object.keys(FARMING_KINDS)) {
+    const crop = cropForFarming(word);
+    assert.ok(
+      CROP_LOOK[crop] || ROW_CROPS.has(crop),
+      `${word} → ${crop} n’est ni semé ni balayé`
+    );
   }
-  for (const famille of ['oceanic', 'oceanicUpland', 'continental', 'boreal']) {
-    assert.ok(porte(famille, 'rapeseed'), `${famille} porte du colza`);
-    assert.ok(!porte(famille, 'lavender'), `${famille} ne porte pas de lavande`);
-  }
-  // Et l'inverse : une lavande de Laponie ou un colza de désert se remarquent.
-  assert.ok(!porte('boreal', 'lavender'));
-  assert.ok(!porte('arid', 'rapeseed'));
 
-  // Une culture d'assolement est soit semée en touffes, soit balayée en rangs :
-  // rien ne doit être tiré qui ne sache se dessiner.
-  for (const [famille, mix] of Object.entries(CROP_MIXES)) {
-    for (const [crop] of mix) {
-      assert.ok(
-        CROP_LOOK[crop] || ROW_CROPS.has(crop),
-        `${famille} : ${crop} n’est ni semé ni balayé`
-      );
+  // Et chaque région emploie des mots qui mènent quelque part.
+  for (const region of REGIONS) {
+    for (const word of region.farming) {
+      assert.ok(cropForFarming(word), `${region.id} : ${word} ne mène à aucune culture`);
     }
   }
 });
@@ -12711,14 +12645,14 @@ test('le revêtement urbain : une matière qui tient dans le canal, et une seule
 
   // La teinte du sol de la ville et celle du dessus de trottoir sont la même
   // valeur : deux lectures divergentes se verraient là où elles se rejoignent.
-  const tone = pavementTone('mediterranean');
-  assert.deepEqual(streetSurfaceAt(0, 0, undefined, 'mediterranean').walk, tone);
-  assert.notDeepEqual(pavementTone('boreal'), tone, 'le pays change le revêtement');
-  assert.deepEqual(pavementTone('inconnu'), pavementTone(null), 'un climat non décrit retombe sur le défaut');
+  const tone = pavementTone('garrigue');
+  assert.deepEqual(streetSurfaceAt(0, 0, undefined, 'garrigue').walk, tone);
+  assert.notDeepEqual(pavementTone('boreal_taiga'), tone, 'le pays change le revêtement');
+  assert.deepEqual(pavementTone('inconnu'), pavementTone(null), 'une matrice non décrite retombe sur le défaut');
 
   // Le rebord, lui, reste tiré du bourg : deux mailles éloignées ne donnent pas
   // forcément la même bordure, mais aucune ne donne le dessus.
-  const here = streetSurfaceAt(0, 0, undefined, 'oceanic');
+  const here = streetSurfaceAt(0, 0, undefined, 'hedgerow_meadow');
   assert.ok(Array.isArray(here.kerb) && here.kerb.length === 3);
   assert.ok(Array.isArray(here.joint) && Array.isArray(here.gutter));
 });

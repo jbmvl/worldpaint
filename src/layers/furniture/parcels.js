@@ -13,6 +13,7 @@
  */
 
 import { lngToTileX, latToTileY } from '../../core/tileMath.js';
+import { boundaryForMatrix } from '../../core/regionInterpretation.js';
 import { appendProfile, resamplePath } from '../ribbonGeometry.js';
 import { HEDGE_SAMPLE_M, hedgeFacets } from '../hedgeGeometry.js';
 import { pointInAreas, ringsOf } from '../settlement.js';
@@ -186,7 +187,12 @@ export function buildParcels(layer, context, builtUp) {
       // rangs de vigne ce qui est sous les roues de l'observateur.
       const kind =
         boundaries < FURNITURE_LIMITS.boundaries
-          ? boundaryFurnitureFor(properties, { steepness, variant, crop, climate: layer.climate })
+          ? boundaryFurnitureFor(properties, {
+              steepness,
+              variant,
+              crop,
+              boundary: boundaryForMatrix(layer.region?.matrix),
+            })
           : null;
       if (kind) {
         boundaries += appendParcelBoundary(layer, buffers, placements, kind, ring, bounds, sampleElevation, here);
