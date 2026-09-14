@@ -522,7 +522,7 @@ import { streetSurfaceAt } from '../src/layers/townStyle.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
 import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
 import { TerrainMaterialFactory } from '../src/terrain/terrainMaterial.js';
-import { birdAt, createBirdGeometry } from '../src/layers/lifeLayer.js';
+import { birdAt, createBirdGeometry, balloonAt, createBalloonGeometry } from '../src/layers/lifeLayer.js';
 import {
   FAUNA_BUILDERS,
   FAUNA_KINDS,
@@ -5425,6 +5425,51 @@ test('la silhouette d’oiseau est faite de deux ailes', () => {
     },
   });
   assert.equal(geometry.attributes.position.count, 6, 'deux triangles');
+});
+
+test('une montgolfière dérive dans le sens du vent, bien plus haut et plus lentement qu’un oiseau', () => {
+  const balloon = { baseX: 10, baseZ: -20, height: 150, speed: 1, phase: 0.2 };
+  const centre = { x: 0, y: 0, z: 0 };
+  const windDirection = 0.4;
+  const a = balloonAt(balloon, 0, centre, windDirection);
+  const b = balloonAt(balloon, 10, centre, windDirection);
+  close((b.x - a.x) / 10, Math.cos(windDirection) * balloon.speed, 1e-6, 'dérive à la vitesse donnée, en x');
+  close((b.z - a.z) / 10, Math.sin(windDirection) * balloon.speed, 1e-6, 'dérive à la vitesse donnée, en z');
+  assert.ok(a.y > centre.y + 100, 'bien plus haut qu’un vol d’oiseaux');
+});
+
+test('une montgolfière reste dans sa boîte de dérive et finit par y boucler', () => {
+  const centre = { x: 0, y: 100, z: 0 };
+  const balloon = { baseX: 0, baseZ: 0, height: 150, speed: 1.4, phase: 0 };
+  const windDirection = 0.6;
+  let sawWrap = false;
+  let previous = null;
+  for (let t = 0; t <= 900; t += 5) {
+    const at = balloonAt(balloon, t, centre, windDirection);
+    assert.ok(Math.abs(at.x - centre.x) <= 520 + 1e-6, 'toujours dans la boîte, en x');
+    assert.ok(Math.abs(at.z - centre.z) <= 520 + 1e-6, 'toujours dans la boîte, en z');
+    if (previous && Math.hypot(at.x - previous.x, at.z - previous.z) > 300) sawWrap = true;
+    previous = at;
+  }
+  assert.ok(sawWrap, 'le survol est assez long pour boucler au moins une fois');
+});
+
+test('l’enveloppe de la montgolfière alterne ses deux couleurs par fuseau', () => {
+  const geometry = createBalloonGeometry(stubWorksTHREE(), {
+    radius: 8,
+    height: 20,
+    colorA: [1, 0, 0],
+    colorB: [0, 0, 1],
+    basket: [0.3, 0.2, 0.1],
+  });
+  const colors = geometry.attributes.color.array;
+  let reds = 0;
+  let blues = 0;
+  for (let i = 0; i < colors.length; i += 3) {
+    if (colors[i] === 1 && colors[i + 1] === 0 && colors[i + 2] === 0) reds++;
+    if (colors[i] === 0 && colors[i + 1] === 0 && colors[i + 2] === 1) blues++;
+  }
+  assert.ok(reds > 0 && blues > 0, 'les deux couleurs sont bien présentes dans l’enveloppe');
 });
 
 test('la grille de fenêtres tient dans le mur qui la porte', () => {

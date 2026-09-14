@@ -1241,6 +1241,22 @@ export const WATERWAY_CLASSES = {
 export const LIFE_COLORS = {
   bird: '#2b2f36',
   smoke: [0.86, 0.85, 0.83],
+  // Osier du panier de nacelle.
+  balloonBasket: srgb('#7a5c3c'),
+  /**
+   * Couples de couleurs des montgolfières — enveloppe en fuseaux de deux
+   * teintes alternées (voir `lifeLayer.createBalloonGeometry`). Chaque ballon
+   * en tire un au sort une fois pour toutes : c'est ce qui fait qu'un vol en
+   * porte plusieurs différentes plutôt qu'une flotte identique.
+   */
+  balloonColors: [
+    [srgb('#c0392b'), srgb('#f4ead0')],
+    [srgb('#2f5fa8'), srgb('#f2c94c')],
+    [srgb('#2f8a4a'), srgb('#f4ead0')],
+    [srgb('#d9691e'), srgb('#5b3a8a')],
+    [srgb('#1c8c86'), srgb('#f4ead0')],
+    [srgb('#b3352f'), srgb('#e9e6df')],
+  ],
 };
 
 // --- Les bêtes -----------------------------------------------------------------

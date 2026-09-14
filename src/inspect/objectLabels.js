@@ -55,6 +55,7 @@ export const LABEL_EXACT = {
   'ground-cover': 'herbe',
   crops: 'cultures (semis)',
   birds: 'oiseaux',
+  balloon: 'montgolfière',
   'chimney-smoke': 'fumée',
   'furniture-lamp-glow': 'halo de lampadaire',
   'furniture-lamp-pool': 'nappe de lumière',
