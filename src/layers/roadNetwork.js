@@ -518,9 +518,9 @@ export function roadStyleFor(properties = {}, profiles = defaultTheme.roads.prof
 
   if (properties.class === 'path' || properties.class === 'cycleway') {
     const subclass = properties.subclass;
-    if (subclass === 'steps') return null;
     if (subclass === 'cycleway' || properties.bicycle === 'designated') key = 'cycleway';
     else if (subclass === 'track') key = 'track';
+    // L'escalier n'a pas de profil propre : il partage celui du sentier.
   }
 
   const profile = key ? profiles[key] : null;

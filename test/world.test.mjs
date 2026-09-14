@@ -1474,7 +1474,7 @@ test('la sous-classe sépare piste cyclable, sentier et escalier', () => {
   assert.equal(roadStyleFor({ class: 'path', subclass: 'cycleway' }).profile, 'cycleway');
   assert.equal(roadStyleFor({ class: 'path', bicycle: 'designated' }).profile, 'cycleway');
   assert.equal(roadStyleFor({ class: 'path', subclass: 'footway' }).profile, 'path');
-  assert.equal(roadStyleFor({ class: 'path', subclass: 'steps' }), null, 'un escalier n’est pas un ruban');
+  assert.equal(roadStyleFor({ class: 'path', subclass: 'steps' }).profile, 'path', 'un escalier partage le profil du sentier');
 });
 
 /** Une classe menant à chaque profil, pour le test d’invariant. */
