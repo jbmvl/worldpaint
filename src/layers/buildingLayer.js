@@ -22,7 +22,8 @@ import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { srgb } from '../core/color.js';
 import { buildingStyleAt } from './townStyle.js';
 import { orientedBox, roofTriangles, roofRise, ringArea } from './roofGeometry.js';
-import { pointInRing } from './furniturePlacement.js';
+import { pointInRing, randomAt } from './furniturePlacement.js';
+import { pointInAreas } from './settlement.js';
 import { clipPolygonOutsideCorridor } from './roadCorridor.js';
 import { walkTopRise } from './streetLayer.js';
 import { Kit } from './furnitureKit.js';
@@ -352,6 +353,76 @@ export function towerRise(box) {
 export function towerFoot(box, side) {
   const reach = Math.max(0, box.long - side * 0.75);
   return { x: box.cx + Math.cos(box.angle) * reach, z: box.cz + Math.sin(box.angle) * reach };
+}
+
+/** Part des maisons à toit pentu qui reçoivent une cheminée de toit. */
+export const CHIMNEY_SHARE = 0.22;
+
+/**
+ * Position et gabarit d'une cheminée de toit sur une empreinte donnée. Pure —
+ * voir `BuildingLayer._appendChimney` pour la géométrie qu'elle sert.
+ *
+ * Décalée du centre du faîtage plutôt que posée dessus : une cheminée au
+ * milieu se lirait comme un clocher (voir `towerFoot`), une vraie cheminée
+ * sort près d'un pignon.
+ *
+ * @param {{cx:number,cz:number,angle:number,long:number,short:number}} box
+ * @returns {{x:number,z:number,side:number,height:number}}
+ */
+export function chimneyFootFor(box) {
+  const along = (randomAt(box.cx, box.cz, 423) * 2 - 1) * box.long * 0.5;
+  const across = (randomAt(box.cx, box.cz, 427) * 2 - 1) * box.short * 0.35;
+  const cos = Math.cos(box.angle);
+  const sin = Math.sin(box.angle);
+  return {
+    x: box.cx + cos * along - sin * across,
+    z: box.cz + sin * along + cos * across,
+    side: 0.5 + randomAt(box.cx, box.cz, 433) * 0.25,
+    height: 1.1 + randomAt(box.cx, box.cz, 439) * 0.6,
+  };
+}
+
+/** Hauteur de mur minimale pour qu'un balcon ait un sens — l'ordre d'un étage. */
+export const BALCONY_MIN_WALL_M = 5.4;
+/** Largeur de façade minimale pour y poser un balcon. */
+export const BALCONY_MIN_FACADE_M = 4;
+/** Part des maisons de ville, assez hautes, qui reçoivent un balcon. */
+export const BALCONY_SHARE = 0.24;
+
+/**
+ * Décalage local d'une pièce de balcon (le long de la façade `along`, en
+ * sortie du mur `out`) vers un décalage du repère non tourné. Pure.
+ *
+ * `Kit.transform` tourne un point avant de le translater ; la translation
+ * d'une pièce dont la géométrie porte elle-même `yaw` doit donc être donnée
+ * **dans le repère déjà tourné**, pas dans celui de la façade — c'est ce que
+ * cette fonction calcule. `yaw` suit la même convention que `roadsideYaw` et
+ * `birdAt` : `atan2(dx, dz)` pour une direction `(dx, dz)`, ici la normale
+ * sortante du pan porteur.
+ */
+export function balconyLocalToWorld(along, out, yaw) {
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  return { x: along * cos + out * sin, z: -along * sin + out * cos };
+}
+
+/**
+ * Gabarit d'un balcon sur une façade donnée. Pure.
+ * @param {number} mx Milieu du pan porteur, x.
+ * @param {number} mz Milieu du pan porteur, z.
+ * @param {number} length Longueur du pan.
+ * @param {number} base Assise du bâtiment.
+ * @param {number} eaves Égout du toit.
+ * @returns {{width:number,depth:number,level:number}}
+ */
+export function balconyGeometryFor(mx, mz, length, base, eaves) {
+  return {
+    width: Math.min(length * 0.5, 1.7 + randomAt(mx, mz, 443) * 1.1),
+    depth: 0.9 + randomAt(mx, mz, 449) * 0.5,
+    // Le dernier étage entier sous l'égout, jamais plus haut : un balcon ne
+    // flotte pas au-dessus du toit.
+    level: Math.max(base + BALCONY_MIN_WALL_M - 2.6, eaves - 2.8),
+  };
 }
 
 /**
@@ -1024,10 +1095,23 @@ export class BuildingLayer {
      */
     this.footprints = [];
     /**
+     * Cheminées de toit de la dernière reconstruction, publiées pour
+     * `lifeLayer` — même titre que `furnitureLayer.chimneys`, dont
+     * `worldComposer` fait la somme avant de les passer à `life.setChimneys`.
+     * @type {Array<{x:number,y:number,z:number}>}
+     */
+    this.chimneys = [];
+    /**
      * Index des chaussées de la dernière reconstruction, ou `null` — c'est lui
      * qui dit ce qu'une empreinte pose sur la voie. Posé par `rebuild`.
      */
     this._roadIndex = null;
+    /**
+     * Emprise habitée de la dernière reconstruction (`settlement.readSettlement`),
+     * ou `null` — distingue une maison de ville d'une maison isolée pour ce qui
+     * n'a de sens qu'en ville (balcon). Posé par `rebuild`.
+     */
+    this._builtUp = null;
     /**
      * Points d'intérêt classés de la dernière reconstruction — voir
      * `buildingPersonalityFor` — publiés pour l'étiquetage de mise au point
@@ -1105,11 +1189,15 @@ export class BuildingLayer {
    * @param {Object} [options.roadIndex] Index des chaussées (`RoadIndex`). Sert
    *        à raboter ce qu'une empreinte pose sur la voie — la donnée le fait,
    *        voir `_appendBuilding`. Absent, le bâti est extrudé tel quel.
+   * @param {Array|null} [options.builtUp] Emprises habitées
+   *        (`settlement.readSettlement`) — distingue une maison de ville d'une
+   *        maison isolée pour le balcon. Absent, aucune maison n'en reçoit.
    * @returns {boolean} vrai si des bâtiments ont été produits.
    */
-  rebuild(source, tiles, here, { roadIndex = null } = {}) {
+  rebuild(source, tiles, here, { roadIndex = null, builtUp = null } = {}) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
     this._roadIndex = roadIndex;
+    this._builtUp = builtUp;
     this._build(source, tiles, here);
     this._anchor = { x: here.x, z: here.z };
     this._frame = this.bubble.frame;
@@ -1125,6 +1213,7 @@ export class BuildingLayer {
     const lamps = { positions: [], normals: [], colors: [] };
     const labels = { positions: [], uvs: [] };
     const houses = [];
+    const chimneys = [];
     // Vidée avant d'être remplie : la géométrie qui référence ses cases
     // (`labels`, ci-dessus) est de toute façon intégralement refaite dans
     // cette même passe — voir l'en-tête de `LabelAtlas`.
@@ -1205,7 +1294,16 @@ export class BuildingLayer {
             }
           : null;
       if (
-        this._appendBuilding(candidate.ring, candidate.properties, walls, openings, houses, personalities, labels)
+        this._appendBuilding(
+          candidate.ring,
+          candidate.properties,
+          walls,
+          openings,
+          houses,
+          personalities,
+          labels,
+          chimneys
+        )
       ) {
         built++;
         footprints.push({ x: candidate.x, z: candidate.z });
@@ -1218,6 +1316,7 @@ export class BuildingLayer {
     this.windowCount = lamps.positions.length / 9;
     this.houses = houses;
     this.footprints = footprints;
+    this.chimneys = chimneys;
     this.personalities = personalities;
     this._applyWindows(lamps);
     this._applyLabels(labels);
@@ -1259,9 +1358,20 @@ export class BuildingLayer {
    *        bâtiment dont l'empreinte les contient — voir plus bas.
    * @param {Object|null} labels Accumulateur `{positions, uvs}` des enseignes
    *        peintes (`appendShopfront`), ou `null` pour ne pas en poser.
+   * @param {Array|null} chimneys Cheminées de toit publiées pour `lifeLayer`,
+   *        ou `null` pour ne pas en poser.
    * @returns {boolean} vrai si le bâtiment a produit de la géométrie.
    */
-  _appendBuilding(ring, properties, walls, openings = null, houses = null, personalities = null, labels = null) {
+  _appendBuilding(
+    ring,
+    properties,
+    walls,
+    openings = null,
+    houses = null,
+    personalities = null,
+    labels = null,
+    chimneys = null
+  ) {
     const { THREE, bubble } = this;
     const { origin, scale, zoom } = bubble.frame;
 
@@ -1411,22 +1521,33 @@ export class BuildingLayer {
     const plinthColor = shopfrontTop === null ? wallColor.map((c) => c * PLINTH_SHADE) : look.front;
 
     // Façade sur rue : le pan le plus long de l'empreinte, seul à recevoir la
-    // devanture articulée (`appendShopfront`) — rien dans les tuiles ne dit
-    // quel pan donne vraiment sur la rue, et le plus long est le choix le
-    // moins arbitraire. Les autres pans gardent le simple bandeau coloré.
+    // devanture articulée (`appendShopfront`) ou le balcon — rien dans les
+    // tuiles ne dit quel pan donne vraiment sur la rue, et le plus long est le
+    // choix le moins arbitraire. Les autres pans gardent le simple bandeau
+    // coloré. Calculé pour tout bâtiment, pas seulement un commerce : le
+    // balcon en a besoin lui aussi.
     let frontIndex = -1;
-    if (shopfrontTop !== null) {
-      let bestLength = -1;
-      for (let i = 0; i < ordered.length; i++) {
-        const pa = ordered[i];
-        const pb = ordered[(i + 1) % ordered.length];
-        const panLength = Math.hypot(pb.x - pa.x, pb.y - pa.y);
-        if (panLength > bestLength) {
-          bestLength = panLength;
-          frontIndex = i;
-        }
+    let frontLength = -1;
+    for (let i = 0; i < ordered.length; i++) {
+      const pa = ordered[i];
+      const pb = ordered[(i + 1) % ordered.length];
+      const panLength = Math.hypot(pb.x - pa.x, pb.y - pa.y);
+      if (panLength > frontLength) {
+        frontLength = panLength;
+        frontIndex = i;
       }
     }
+
+    // Balcon : une maison de ville assez haute pour un étage — jamais une
+    // grange, une église ou un commerce (voir `_appendBalcony`).
+    const wantsBalcony =
+      box &&
+      style.house &&
+      !look &&
+      frontLength >= BALCONY_MIN_FACADE_M &&
+      eaves - base >= BALCONY_MIN_WALL_M &&
+      pointInAreas(this._builtUp, box.cx, box.cz) &&
+      randomAt(box.cx, box.cz, 431) < BALCONY_SHARE;
 
     for (let i = 0; i < ordered.length; i++) {
       const a = ordered[i];
@@ -1499,6 +1620,10 @@ export class BuildingLayer {
           }
         }
       }
+
+      if (wantsBalcony && i === frontIndex) {
+        this._appendBalcony(walls, a, b, nx, nz, base, eaves);
+      }
     }
 
     // Triangulation par oreilles de l'empreinte, fournie par three : elle porte
@@ -1539,6 +1664,21 @@ export class BuildingLayer {
     if (box && look) {
       if (look.spire) this._appendSteeple(walls, look.spire, box, base, top);
       if (look.dome || look.minaret) this._appendDomeAndMinaret(walls, look, box, base, eaves);
+    }
+
+    // Cheminée de toit : un comble, une maison, jamais une église ni un
+    // commerce — la fumée d'une exploitation agricole a déjà sa propre place
+    // (`furniture/parcels.placeFarmstead`), celle-ci est pour le reste du bâti.
+    if (
+      chimneys &&
+      box &&
+      shape !== 'flat' &&
+      style.house &&
+      !look &&
+      randomAt(box.cx, box.cz, 421) < CHIMNEY_SHARE
+    ) {
+      const smoke = this._appendChimney(walls, box, top);
+      if (smoke) chimneys.push(smoke);
     }
 
     return true;
@@ -1643,6 +1783,80 @@ export class BuildingLayer {
       const { x, z } = towerFoot(box, side);
       this._pushKitAt(walls, kit, x, base, z);
     }
+  }
+
+  /**
+   * Cheminée de toit : un fût de brique qui perce le faîtage, un chapeau de
+   * pierre plus large que le fût. Décalée du centre du faîtage — une cheminée
+   * au milieu se lirait comme un clocher (voir `_appendSteeple`), une vraie
+   * cheminée sort près d'un pignon.
+   *
+   * @returns {{x:number,y:number,z:number}} le sommet du fût, pour la fumée
+   *          de `lifeLayer` (voir `_appendBuilding`).
+   */
+  _appendChimney(walls, box, top) {
+    const foot = chimneyFootFor(box);
+    const colors = this.theme.furniture.colors;
+
+    const kit = new Kit(colors);
+    kit.box({ width: foot.side, height: foot.height, depth: foot.side, color: colors.brick });
+    kit.box({
+      width: foot.side * 1.25,
+      height: 0.12,
+      depth: foot.side * 1.25,
+      y: foot.height,
+      color: colors.stoneDark,
+    });
+
+    // Posée juste sous le faîtage : elle perce le comble plutôt que de flotter dessus.
+    const base = top - 0.6;
+    this._pushKitAt(walls, kit, foot.x, base, foot.z);
+    return { x: foot.x, y: base + foot.height + 0.12, z: foot.z };
+  }
+
+  /**
+   * Balcon : un plancher en léger surplomb du mur, un garde-corps sur ses
+   * trois côtés extérieurs — rien contre la façade, qui n'en a pas besoin.
+   *
+   * `yaw` aligne tout le petit assemblage sur la normale sortante du pan
+   * porteur (`nx`, `nz`) — même convention que `roadsideYaw`/`birdAt` :
+   * `atan2(dx, dz)` pour une direction `(dx, dz)`. Chaque pièce est ensuite
+   * décalée dans le repère déjà tourné (`toWorld`), puisque `Kit.transform`
+   * tourne un point avant de le translater : la translation d'une pièce est
+   * donc à donner **dans le repère tourné**, pas dans celui de la façade.
+   *
+   * @param {{x:number,y:number}} a Début du pan porteur.
+   * @param {{x:number,y:number}} b Fin du pan.
+   * @param {number} nx Normale sortante, composante x.
+   * @param {number} nz Normale sortante, composante z.
+   * @param {number} base Assise du bâtiment.
+   * @param {number} eaves Égout du toit — le balcon se pose sous lui, à hauteur du dernier étage.
+   */
+  _appendBalcony(walls, a, b, nx, nz, base, eaves) {
+    const mx = (a.x + b.x) / 2;
+    const mz = (a.y + b.y) / 2;
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    const yaw = Math.atan2(nx, nz);
+    // Décalage local (le long de la façade, en sortie du mur) vers un décalage
+    // du repère non tourné — voir la note ci-dessus.
+    const toWorld = (along, out) => balconyLocalToWorld(along, out, yaw);
+
+    const { width, depth, level } = balconyGeometryFor(mx, mz, length, base, eaves);
+    const railHeight = 0.95;
+    const slab = 0.1;
+    const colors = this.theme.furniture.colors;
+
+    const kit = new Kit(colors);
+    const floor = toWorld(0, depth / 2);
+    kit.box({ width, height: slab, depth, x: floor.x, z: floor.z, yaw, color: colors.stone });
+    const front = toWorld(0, depth - 0.04);
+    kit.box({ width, height: railHeight, depth: 0.08, x: front.x, y: slab, z: front.z, yaw, color: colors.steelDark });
+    const left = toWorld(-width / 2 + 0.04, depth / 2);
+    kit.box({ width: 0.08, height: railHeight, depth, x: left.x, y: slab, z: left.z, yaw, color: colors.steelDark });
+    const right = toWorld(width / 2 - 0.04, depth / 2);
+    kit.box({ width: 0.08, height: railHeight, depth, x: right.x, y: slab, z: right.z, yaw, color: colors.steelDark });
+
+    this._pushKitAt(walls, kit, mx, level, mz);
   }
 
   /** Ajoute les triangles d'un `Kit` à `walls`, translatés en un point du monde. */

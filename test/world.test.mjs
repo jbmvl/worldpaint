@@ -156,6 +156,7 @@ import {
   guardrailStyleFor,
   roadsideVergeFor,
   roadsideFurnitureFor,
+  streetLampKindFor,
   roadsideYaw,
   crossSlope,
   contiguousRuns,
@@ -288,6 +289,11 @@ import {
   TOWER_SIDE_MAX_M,
   TOWER_RISE_MIN_M,
   TOWER_RISE_MAX_M,
+  chimneyFootFor,
+  CHIMNEY_SHARE,
+  balconyLocalToWorld,
+  balconyGeometryFor,
+  BALCONY_MIN_WALL_M,
 } from '../src/layers/buildingLayer.js';
 import {
   woodDensity,
@@ -423,6 +429,7 @@ import {
 import { facetJitter } from '../src/layers/facetJitter.js';
 import { FLAT_SHADED_LINEAR_KINDS, DRY_STONE_WALL_SAMPLE_M } from '../src/layers/furniture/catalog.js';
 import { buildRoadsideContext } from '../src/layers/furniture/roadsideFurniture.js';
+import { churchWithin } from '../src/layers/furniture/pointsOfInterest.js';
 import { buildJunctionSigns } from '../src/layers/furniture/junctionFurniture.js';
 import {
   woodEdgeYaw,
@@ -430,7 +437,13 @@ import {
   placeFarmstead,
   greenhouseLengthFor,
   greenhouseAnchorFor,
+  placeTractor,
+  TRACTOR_RADIUS_M,
+  TRACTOR_PASS_MAX_M,
+  TRACTOR_SPEED_MIN_MS,
+  TRACTOR_SPEED_MAX_MS,
 } from '../src/layers/furniture/parcels.js';
+import { fieldVehicleAt, TRACTOR_ANIMATED_MAX } from '../src/layers/tractorLayer.js';
 import { placeFauna, crossingAt } from '../src/layers/furniture/parcelFauna.js';
 import {
   HEDGE_STYLES,
@@ -524,7 +537,15 @@ import { streetSurfaceAt } from '../src/layers/townStyle.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
 import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
 import { TerrainMaterialFactory } from '../src/terrain/terrainMaterial.js';
-import { birdAt, createBirdGeometry } from '../src/layers/lifeLayer.js';
+import {
+  birdAt,
+  createBirdGeometry,
+  balloonAt,
+  createBalloonGeometry,
+  raptorAt,
+  createRaptorGeometry,
+  RAPTOR_CLIMATE_FAMILIES,
+} from '../src/layers/lifeLayer.js';
 import {
   FAUNA_BUILDERS,
   FAUNA_KINDS,
@@ -1352,6 +1373,52 @@ test('le clocher est dimensionné et posé sur le bâtiment qui le porte', () =>
   const tourne = towerFoot(biais, side);
   close(tourne.x, 0, 1e-9);
   assert.ok(tourne.z > 0, 'le pied suit le grand axe, pas l’axe du monde');
+});
+
+test('la cheminée de toit reste sur le faîtage, décalée du centre', () => {
+  const box = { cx: 100, cz: -50, angle: 0, long: 8, short: 4 };
+  const foot = chimneyFootFor(box);
+  assert.ok(Math.abs(foot.x - box.cx) <= box.long * 0.5 + 1e-9, 'reste sur le faîtage en long');
+  assert.ok(Math.abs(foot.z - box.cz) <= box.short * 0.35 + 1e-9, 'reste sur le faîtage en travers');
+  assert.ok(foot.side > 0 && foot.height > 0);
+
+  // Ancrée au lieu : la même empreinte rend toujours la même cheminée.
+  const again = chimneyFootFor(box);
+  assert.deepEqual(foot, again);
+
+  // Tournée avec le bâtiment.
+  const tourne = chimneyFootFor({ ...box, angle: Math.PI / 2 });
+  assert.ok(Math.abs(tourne.x - box.cx) <= box.short * 0.35 + 1e-9, 'le long axe a tourné');
+
+  assert.ok(CHIMNEY_SHARE > 0 && CHIMNEY_SHARE < 1, 'une minorité de toits, pas tous');
+});
+
+test('un décalage de balcon suit la normale sortante de sa façade', () => {
+  // Façade qui regarde +X (yaw = atan2(1, 0) = π/2).
+  const yaw = Math.atan2(1, 0);
+  const out = balconyLocalToWorld(0, 2, yaw);
+  close(out.x, 2, 1e-9, 'purement en sortie du mur');
+  close(out.z, 0, 1e-9);
+
+  // Décalé le long de la façade seulement : reste sur le plan du mur (x = 0).
+  const along = balconyLocalToWorld(3, 0, yaw);
+  close(along.x, 0, 1e-9);
+  assert.ok(Math.abs(along.z) > 0, 'se déplace le long du mur, pas en avant');
+});
+
+test('le gabarit d’un balcon reste sous l’égout et dans la largeur de la façade', () => {
+  const base = 100;
+  const eaves = base + 7.5; // deux étages et demi
+  const { width, depth, level } = balconyGeometryFor(10, 20, 6, base, eaves);
+  assert.ok(width > 0 && width <= 3, 'largeur bornée');
+  assert.ok(depth > 0 && depth < 2, 'profondeur bornée, ce n’est pas une terrasse');
+  assert.ok(level > base && level < eaves, 'entre le sol et l’égout, jamais au-dessus');
+
+  // Une façade étroite borne aussi la largeur du balcon.
+  const narrow = balconyGeometryFor(10, 20, 2, base, eaves);
+  assert.ok(narrow.width <= 1, 'ne déborde pas d’une façade étroite');
+
+  assert.ok(BALCONY_MIN_WALL_M >= 4, 'exige au moins un étage de mur');
 });
 
 test('le dessous du bâtiment vaut zéro sauf mention contraire', () => {
@@ -4191,6 +4258,21 @@ test('le mobilier de bord de route distingue la rue de la route', () => {
   assert.equal(path.sign, null);
 });
 
+test('le style de lampadaire suit le clocher, puis le sol industriel', () => {
+  assert.equal(streetLampKindFor(), 'streetLamp', 'repli ordinaire');
+  assert.equal(streetLampKindFor({ industrial: true }), 'streetLampLed');
+  assert.equal(streetLampKindFor({ nearChurch: true }), 'streetLampClassic');
+  // Un centre-ville autour d’une église reste un centre-ville, même sur un sol bare.
+  assert.equal(streetLampKindFor({ nearChurch: true, industrial: true }), 'streetLampClassic');
+});
+
+test('un lieu de culte n’allume le lampadaire classique que dans son rayon', () => {
+  const churches = [{ x: 100, z: 0 }];
+  assert.equal(churchWithin(churches, 100, 900, 1000), true);
+  assert.equal(churchWithin(churches, 100, 1100, 1000), false);
+  assert.equal(churchWithin(null, 0, 0, 1000), false, 'pas de liste : jamais de clocher à proximité');
+});
+
 test('la pente en travers désigne le versant amont', () => {
   // Gauche plus haute que droite : le versant monte à gauche de la marche.
   const left = crossSlope(120, 100, 20);
@@ -5511,6 +5593,198 @@ test('la silhouette d’oiseau est faite de deux ailes', () => {
     },
   });
   assert.equal(geometry.attributes.position.count, 6, 'deux triangles');
+});
+
+test('une montgolfière dérive dans le sens du vent, bien plus haut et plus lentement qu’un oiseau', () => {
+  const balloon = { baseX: 10, baseZ: -20, height: 150, speed: 1, phase: 0.2 };
+  const centre = { x: 0, y: 0, z: 0 };
+  const windDirection = 0.4;
+  const a = balloonAt(balloon, 0, centre, windDirection);
+  const b = balloonAt(balloon, 10, centre, windDirection);
+  close((b.x - a.x) / 10, Math.cos(windDirection) * balloon.speed, 1e-6, 'dérive à la vitesse donnée, en x');
+  close((b.z - a.z) / 10, Math.sin(windDirection) * balloon.speed, 1e-6, 'dérive à la vitesse donnée, en z');
+  assert.ok(a.y > centre.y + 100, 'bien plus haut qu’un vol d’oiseaux');
+});
+
+test('une montgolfière reste dans sa boîte de dérive et finit par y boucler', () => {
+  const centre = { x: 0, y: 100, z: 0 };
+  const balloon = { baseX: 0, baseZ: 0, height: 150, speed: 1.4, phase: 0 };
+  const windDirection = 0.6;
+  let sawWrap = false;
+  let previous = null;
+  for (let t = 0; t <= 900; t += 5) {
+    const at = balloonAt(balloon, t, centre, windDirection);
+    assert.ok(Math.abs(at.x - centre.x) <= 520 + 1e-6, 'toujours dans la boîte, en x');
+    assert.ok(Math.abs(at.z - centre.z) <= 520 + 1e-6, 'toujours dans la boîte, en z');
+    if (previous && Math.hypot(at.x - previous.x, at.z - previous.z) > 300) sawWrap = true;
+    previous = at;
+  }
+  assert.ok(sawWrap, 'le survol est assez long pour boucler au moins une fois');
+});
+
+test('l’enveloppe de la montgolfière alterne ses deux couleurs par fuseau', () => {
+  const geometry = createBalloonGeometry(stubWorksTHREE(), {
+    radius: 8,
+    height: 20,
+    colorA: [1, 0, 0],
+    colorB: [0, 0, 1],
+    basket: [0.3, 0.2, 0.1],
+  });
+  const colors = geometry.attributes.color.array;
+  let reds = 0;
+  let blues = 0;
+  for (let i = 0; i < colors.length; i += 3) {
+    if (colors[i] === 1 && colors[i + 1] === 0 && colors[i + 2] === 0) reds++;
+    if (colors[i] === 0 && colors[i + 1] === 0 && colors[i + 2] === 1) blues++;
+  }
+  assert.ok(reds > 0 && blues > 0, 'les deux couleurs sont bien présentes dans l’enveloppe');
+});
+
+test('un rapace tourne en rond autour d’un centre fixe, sans dériver', () => {
+  const bird = { baseX: 15, baseZ: -8, height: 45, radius: 30, angularSpeed: 0.15, orbitPhase: 0.3, phase: 0.9, bobHz: 0.05 };
+  const centre = { x: 100, y: 0, z: -50 };
+  for (let t = 0; t <= 80; t += 1) {
+    const at = raptorAt(bird, t, centre);
+    const dist = Math.hypot(at.x - (centre.x + bird.baseX), at.z - (centre.z + bird.baseZ));
+    close(dist, bird.radius, 1e-6, `reste sur le cercle d’orbite à t=${t}`);
+  }
+});
+
+test('le cap d’un rapace suit la tangente du cercle, pas le centre', () => {
+  const bird = { baseX: 0, baseZ: 0, height: 40, radius: 25, angularSpeed: 0.2, orbitPhase: 0, phase: 0, bobHz: 0.05 };
+  const centre = { x: 0, y: 0, z: 0 };
+  const a = raptorAt(bird, 0, centre);
+  const b = raptorAt(bird, 0.05, centre);
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const norm = Math.hypot(dx, dz) || 1;
+  close(Math.sin(a.heading), dx / norm, 0.02, 'composante x du vol');
+  close(Math.cos(a.heading), dz / norm, 0.02, 'composante z du vol');
+});
+
+test('un rapace plane : son battement reste proche du plein régime', () => {
+  const bird = { baseX: 0, baseZ: 0, height: 40, radius: 25, angularSpeed: 0.2, orbitPhase: 0, phase: 0, bobHz: 0.05 };
+  const centre = { x: 0, y: 0, z: 0 };
+  for (let t = 0; t <= 20; t += 0.5) {
+    const flap = raptorAt(bird, t, centre).flap;
+    assert.ok(flap >= 0.7 && flap <= 1, `presque plein régime en vol plané (${flap})`);
+  }
+});
+
+test('les climats de montagne, et seulement eux, font voler un rapace', () => {
+  assert.ok(RAPTOR_CLIMATE_FAMILIES.has('alpine'));
+  assert.ok(RAPTOR_CLIMATE_FAMILIES.has('mediterraneanMontane'));
+  assert.ok(RAPTOR_CLIMATE_FAMILIES.has('oceanicUpland'));
+  assert.ok(!RAPTOR_CLIMATE_FAMILIES.has('oceanic'));
+  assert.ok(!RAPTOR_CLIMATE_FAMILIES.has('mediterranean'));
+});
+
+test('la silhouette de rapace ajoute une queue en éventail aux deux ailes', () => {
+  const geometry = createRaptorGeometry({
+    BufferGeometry: class {
+      constructor() {
+        this.attributes = {};
+      }
+      setAttribute(name, attribute) {
+        this.attributes[name] = attribute;
+      }
+      computeVertexNormals() {}
+    },
+    BufferAttribute: class {
+      constructor(array, itemSize) {
+        this.array = array;
+        this.itemSize = itemSize;
+        this.count = array.length / itemSize;
+      }
+    },
+  });
+  assert.equal(geometry.attributes.position.count, 9, 'deux ailes et une queue, trois triangles');
+});
+
+test('un tracteur fait l’aller-retour entre ses deux points, à vitesse constante', () => {
+  const tractor = {
+    a: { x: 0, y: 100, z: 0 },
+    b: { x: 30, y: 100, z: 0 },
+    headingForward: Math.atan2(30, 0),
+    speed: 1.5,
+    phase: 0,
+  };
+  const span = 30;
+  const cycle = span * 2;
+
+  // À mi-aller, à mi-chemin ; au complet, arrivé sur b.
+  const half = fieldVehicleAt(tractor, span / 2 / tractor.speed);
+  close(half.x, span / 2, 1e-6, 'à mi-parcours de l’aller');
+  const atB = fieldVehicleAt(tractor, span / tractor.speed);
+  close(atB.x, span, 1e-6, 'arrivé au bout');
+
+  // Passé le point de retournement, il revient — jamais au-delà de b.
+  const backing = fieldVehicleAt(tractor, (span + span / 4) / tractor.speed);
+  assert.ok(backing.x < span + 1e-6, 'ne déborde jamais de b');
+  assert.ok(backing.x > 0 - 1e-6, 'reste dans le passage');
+
+  // Un tour complet (aller-retour) ramène exactement au point de départ.
+  const full = fieldVehicleAt(tractor, cycle / tractor.speed);
+  close(full.x, 0, 1e-6, 'de retour à a après un cycle complet');
+
+  // Le cap bascule d’un demi-tour au retour.
+  close(half.heading, tractor.headingForward, 1e-9, 'cap à l’aller');
+  close(backing.heading, tractor.headingForward + Math.PI, 1e-9, 'cap inversé au retour');
+
+  assert.ok(TRACTOR_ANIMATED_MAX > 0);
+});
+
+test('placeTractor n’agit que sur un vrai labour, à portée', () => {
+  const ring = squareRing(100);
+  const centre = { x: 50, z: 50 };
+  const context = { sampleElevation: () => 100 };
+
+  const notPloughed = Object.create(FurnitureLayer.prototype);
+  notPloughed.tractors = [];
+  placeTractor(notPloughed, context, ring, centre, 'wheat', centre);
+  assert.equal(notPloughed.tractors.length, 0, 'une autre culture ne travaille pas au tracteur');
+
+  const tooFar = Object.create(FurnitureLayer.prototype);
+  tooFar.tractors = [];
+  placeTractor(tooFar, context, ring, centre, 'plough', { x: centre.x + TRACTOR_RADIUS_M + 50, z: centre.z });
+  assert.equal(tooFar.tractors.length, 0, 'hors de portée, on ne pose rien');
+
+  const full = Object.create(FurnitureLayer.prototype);
+  full.tractors = new Array(FURNITURE_LIMITS.vehicles).fill({});
+  placeTractor(full, context, ring, centre, 'plough', centre);
+  assert.equal(full.tractors.length, FURNITURE_LIMITS.vehicles, 'le plafond n’est pas dépassé');
+});
+
+test('un tracteur posé reste dans le champ, sur un passage borné, à vitesse plausible', () => {
+  const ring = squareRing(100);
+  const context = { sampleElevation: (x) => 100 + x * 0.01 };
+  let placed = null;
+
+  // Le tirage de probabilité (`TRACTOR_SHARE`) est ancré au centre : on
+  // cherche une position qui le passe plutôt que de deviner le sel interne.
+  for (let i = 0; i < 400 && !placed; i++) {
+    const centre = { x: 50 + i, z: 50 };
+    const layer = Object.create(FurnitureLayer.prototype);
+    layer.tractors = [];
+    placeTractor(layer, context, ring, centre, 'plough', centre);
+    if (layer.tractors.length > 0) placed = layer.tractors[0];
+  }
+
+  assert.ok(placed, 'au moins un tirage, sur 400, pose un tracteur');
+  assert.ok(pointInRing(ring, placed.a.x, placed.a.z), 'extrémité a dans le champ');
+  assert.ok(pointInRing(ring, placed.b.x, placed.b.z), 'extrémité b dans le champ');
+  const span = Math.hypot(placed.b.x - placed.a.x, placed.b.z - placed.a.z);
+  assert.ok(span > 0 && span <= TRACTOR_PASS_MAX_M + 1e-6, `passage borné (${span})`);
+  assert.ok(
+    placed.speed >= TRACTOR_SPEED_MIN_MS && placed.speed <= TRACTOR_SPEED_MAX_MS,
+    'vitesse dans la fourchette'
+  );
+  close(
+    placed.headingForward,
+    Math.atan2(placed.b.x - placed.a.x, placed.b.z - placed.a.z),
+    1e-9,
+    'le cap suit vraiment a→b'
+  );
 });
 
 test('la grille de fenêtres tient dans le mur qui la porte', () => {
