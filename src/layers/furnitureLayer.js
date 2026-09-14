@@ -89,7 +89,7 @@ import {
   buildCoastalLandmarks,
   buildRidgeTrees,
 } from './furniture/landmarks.js';
-import { buildPointsOfInterest } from './furniture/pointsOfInterest.js';
+import { buildPointsOfInterest, collectChurches } from './furniture/pointsOfInterest.js';
 import { buildDomesticFauna } from './furniture/domesticFauna.js';
 import {
   SIGN_PLACE_NAME_TEXT_WIDTH_M,
@@ -120,7 +120,9 @@ export {
   SIGN_PLACE_NAME_MAX_M,
   SIGN_PLACE_NAME_FABRIC_RADIUS_M,
   SIGN_PLACE_NAME_MIN_GAP_M,
+  STREET_LAMP_CHURCH_RADIUS_M,
 } from './furniture/roadsideFurniture.js';
+export { churchWithin } from './furniture/pointsOfInterest.js';
 export { trafficPhaseAt, TRAFFIC_CYCLE_S } from './furniture/junctionFurniture.js';
 export { ROCK_CUT_MIN_RISE_M } from './furniture/roadsideRelief.js';
 export { POI_CLEARANCE_M } from './furniture/pointsOfInterest.js';
@@ -324,6 +326,8 @@ export class FurnitureLayer {
     this._labelQuads = [];
     /** @type {Array<{x:number,z:number,name:string}>|null} */
     this._places = null;
+    /** @type {Array<{x:number,z:number}>|null} lieux de culte relevés — voir `furniture/pointsOfInterest.collectChurches`. */
+    this._churches = null;
   }
 
   /** Vrai si l'observateur s'est assez éloigné pour justifier une reconstruction. */
@@ -408,6 +412,9 @@ export class FurnitureLayer {
     // déjà tous les deux au même moment pour la voirie, mais la couche reste
     // capable de les relire seule.
     this._places = places || collectPlaceNames(source, tiles, this.bubble.frame);
+    // Toujours relus ici : aucune autre couche n'a besoin d'un lieu de culte,
+    // ce n'est donc pas une question posée deux fois.
+    this._churches = collectChurches(source, tiles, this.bubble.frame);
     this._labelQuads = [];
 
     const sampleElevation = (x, z) =>
@@ -471,6 +478,7 @@ export class FurnitureLayer {
     this._railIndex = null;
     this._infraIndex = null;
     this._places = null;
+    this._churches = null;
     return this.counts.points + this.counts.boundaries > 0;
   }
 

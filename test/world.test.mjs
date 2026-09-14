@@ -152,6 +152,7 @@ import {
   guardrailStyleFor,
   roadsideVergeFor,
   roadsideFurnitureFor,
+  streetLampKindFor,
   roadsideYaw,
   crossSlope,
   contiguousRuns,
@@ -419,6 +420,7 @@ import {
 import { facetJitter } from '../src/layers/facetJitter.js';
 import { FLAT_SHADED_LINEAR_KINDS, DRY_STONE_WALL_SAMPLE_M } from '../src/layers/furniture/catalog.js';
 import { buildRoadsideContext } from '../src/layers/furniture/roadsideFurniture.js';
+import { churchWithin } from '../src/layers/furniture/pointsOfInterest.js';
 import { buildJunctionSigns } from '../src/layers/furniture/junctionFurniture.js';
 import {
   woodEdgeYaw,
@@ -4086,6 +4088,21 @@ test('le mobilier de bord de route distingue la rue de la route', () => {
   const path = roadsideFurnitureFor('path', { builtUp: false });
   assert.equal(path.guardrail, false);
   assert.equal(path.sign, null);
+});
+
+test('le style de lampadaire suit le clocher, puis le sol industriel', () => {
+  assert.equal(streetLampKindFor(), 'streetLamp', 'repli ordinaire');
+  assert.equal(streetLampKindFor({ industrial: true }), 'streetLampLed');
+  assert.equal(streetLampKindFor({ nearChurch: true }), 'streetLampClassic');
+  // Un centre-ville autour d’une église reste un centre-ville, même sur un sol bare.
+  assert.equal(streetLampKindFor({ nearChurch: true, industrial: true }), 'streetLampClassic');
+});
+
+test('un lieu de culte n’allume le lampadaire classique que dans son rayon', () => {
+  const churches = [{ x: 100, z: 0 }];
+  assert.equal(churchWithin(churches, 100, 900, 1000), true);
+  assert.equal(churchWithin(churches, 100, 1100, 1000), false);
+  assert.equal(churchWithin(null, 0, 0, 1000), false, 'pas de liste : jamais de clocher à proximité');
 });
 
 test('la pente en travers désigne le versant amont', () => {

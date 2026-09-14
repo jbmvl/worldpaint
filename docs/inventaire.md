@@ -304,6 +304,12 @@ un tiers par rapport aux minimums réglementaires (un plan large paraît saturé
 | feu tricolore | major et minor, en agglomération | aux carrefours |
 | haie | minor, lane et track hors agglomération | continue |
 
+Le **lampadaire** posé dépend du lieu : le modèle courant partout, sauf à
+moins d'un kilomètre d'un lieu de culte relevé (`poi.class=place_of_worship`),
+où il est remplacé par un modèle traditionnel (fer forgé, lanterne à pans), et
+sur un sol peint `bare` — zone industrielle, commerciale et assimilée —, où
+c'est un modèle LED sans vasque (`furniturePlacement.streetLampKindFor`).
+
 Le **panneau** qu'une portion porte dépend de ce qui s'y passe : au-delà de
 0,02 rad/m de courbure c'est une balise de virage, entre 0,009 et 0,02 un
 danger ou une balise ; en agglomération, passage piéton (30 %), limitation

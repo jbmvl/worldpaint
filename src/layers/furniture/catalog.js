@@ -123,6 +123,8 @@ export const FURNITURE_LIMITS = {
 /** Formes ponctuelles du catalogue, dans l'ordre où on les instancie. */
 export const POINT_ITEMS = [
   'streetLamp',
+  'streetLampClassic',
+  'streetLampLed',
   'utilityPole',
   'pylon',
   'radioMast',

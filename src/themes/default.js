@@ -1339,6 +1339,9 @@ export const FURNITURE_COLORS = {
   red: srgb('#b3352f'),
   blue: srgb('#2f5fa8'),
   lamp: srgb('#d6d2c8'),
+  // Verre chaud d'un lampadaire classique (sodium/incandescent), verre froid d'une tête LED.
+  lampWarm: srgb('#f0c988'),
+  lampLed: srgb('#dceeff'),
   water: srgb('#4d6b78'),
   corrugated: srgb('#8f9498'),
   hide: srgb('#e4ded4'),

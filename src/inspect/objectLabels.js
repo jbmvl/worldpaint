@@ -76,6 +76,8 @@ export const LABEL_ROADS = {
 export const LABEL_FURNITURE = {
   // Instancié
   streetLamp: 'lampadaire',
+  streetLampClassic: 'lampadaire classique',
+  streetLampLed: 'lampadaire LED',
   utilityPole: 'poteau électrique',
   pylon: 'pylône',
   radioMast: 'antenne relais',

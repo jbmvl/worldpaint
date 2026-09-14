@@ -126,6 +126,58 @@ export const FURNITURE_BUILDERS = {
     return k;
   },
 
+  /**
+   * Lampadaire traditionnel : base à collerette, fût galbé, lanterne à pans
+   * en fer forgé — le style d'un centre ancien, pas d'une avenue neuve. Même
+   * crosse que `streetLamp` (`LAMP_ARC`) : la tête reste au même point, donc
+   * le halo et la nappe de lumière (`furnitureLayer._lampHeads`) n'ont pas à
+   * savoir de quel modèle il s'agit.
+   */
+  streetLampClassic(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const iron = C.black;
+    k.cylinder({ radiusBottom: 0.32, radiusTop: 0.26, height: 0.22, radial: 10, color: iron });
+    k.cylinder({ radiusBottom: 0.22, radiusTop: 0.16, height: 0.3, y: 0.22, radial: 10, color: iron });
+    k.cylinder({ radiusBottom: 0.13, radiusTop: 0.075, height: LAMP_ARC.shaft - 0.52, y: 0.52, radial: 10, color: iron });
+
+    const steps = 5;
+    for (let i = 0; i < steps; i++) {
+      k.strutYZ({ from: lampArcAt(i / steps), to: lampArcAt((i + 1) / steps), width: 0.075, color: iron });
+    }
+
+    // Lanterne à pans : collerette sombre, globe chaud, pointe — pas le
+    // capot-vasque du modèle moderne.
+    const head = lampArcAt(1);
+    const z = head.z + LAMP_ARC.lantern;
+    k.cylinder({ radiusBottom: 0.2, radiusTop: 0.15, height: 0.08, y: head.y + 0.02, z, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.155, radiusTop: 0.155, height: 0.24, y: head.y - 0.22, z, radial: 8, color: C.lampWarm });
+    k.cylinder({ radiusBottom: 0.16, radiusTop: 0, height: 0.14, y: head.y - 0.36, z, radial: 8, color: iron });
+    return k;
+  },
+
+  /**
+   * Lampadaire LED de zone d'activité : fût plus fin, tête plate et nue —
+   * ni vasque ni collerette. Même crosse que `streetLamp`.
+   */
+  streetLampLed(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.cylinder({ radiusBottom: 0.19, radiusTop: 0.14, height: 0.3, radial: 6, color: C.galvanised });
+    k.cylinder({ radiusBottom: 0.1, radiusTop: 0.055, height: LAMP_ARC.shaft - 0.3, y: 0.3, radial: 6, color: C.galvanised });
+
+    const steps = 4;
+    for (let i = 0; i < steps; i++) {
+      k.strutYZ({ from: lampArcAt(i / steps), to: lampArcAt((i + 1) / steps), width: 0.055, color: C.galvanised });
+    }
+
+    // Tête géométrique : un bandeau sombre au-dessus d'une réglette froide, à
+    // plat — la LED n'a pas besoin de vasque pour diffuser.
+    const head = lampArcAt(1);
+    const z = head.z + LAMP_ARC.lantern;
+    k.box({ width: 0.34, height: 0.1, depth: 0.62, y: head.y - 0.03, z, color: C.steelDark });
+    k.box({ width: 0.26, height: 0.025, depth: 0.5, y: head.y - 0.11, z, color: C.lampLed });
+    return k;
+  },
+
   /** Poteau électrique en bois, une traverse et ses isolateurs. */
   utilityPole(C = DEFAULT_COLORS) {
     const k = new Kit(C);
