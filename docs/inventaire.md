@@ -219,6 +219,21 @@ donc tirée **par bourg** (maille de 1400 m), parmi celles que le climat admet :
 une vraie couleur est admise. Une « maison » est une empreinte de moins de
 320 m² et moins de 11,5 m de haut.
 
+### Cheminée de toit et balcon
+
+**Inventés**, sous conditions, sur une maison ordinaire — jamais une église,
+un commerce ou une grange (`buildingPersonalityFor` n'y a rien reconnu).
+
+| Objet | Condition | Part |
+| --- | --- | --- |
+| cheminée de toit | toit pentu (pas de toit plat) | 22 % |
+| balcon | mur d'au moins 5,4 m (l'ordre d'un étage), façade d'au moins 4 m, **emprise habitée** | 24 % |
+
+La cheminée fume comme celle d'une ferme (`furniture/parcels.placeFarmstead`) :
+publiée pour `lifeLayer`, qui anime la fumée des plus proches. Le balcon —
+plancher et garde-corps sur trois côtés — se pose sur le pan le plus long de
+l'empreinte, sous l'égout, jamais au-dessus.
+
 ### La fonction, quand la donnée la dit
 
 Un point d'intérêt ne pose jamais un modèle à côté : il **transforme**

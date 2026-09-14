@@ -17,9 +17,10 @@
  * du décor ne franchit pas) → ouvrages d'art (tabliers, piles, têtes de
  * tunnel : ne lisent que les tronçons publiés par les chaussées) → voie ferrée
  * (indépendante, suit le terrain sans l'entailler, voir `railwayLayer.js`) →
- * bâti (lit l'emprise, qui rabote ce qu'une empreinte pose sur la voie ;
- * publie maisons et empreintes) → voirie (après chaussées et bâti, un
- * trottoir a besoin des deux ; borde aussi les coins de rue des carrefours et
+ * bâti (lit l'emprise, qui rabote ce qu'une empreinte pose sur la voie, et
+ * l'emprise habitée, qui distingue une maison de ville — balcon, cheminée de
+ * toit — d'une maison isolée ; publie maisons et empreintes) → voirie (après
+ * chaussées et bâti, un trottoir a besoin des deux ; borde aussi les coins de rue des carrefours et
  * comble les vides de faisceau, dans cet ordre — là où un trottoir tient, il
  * vaut mieux qu'un zébra ; publie sa bande revêtue) → jardins (tirent clôtures et buissons des
  * maisons, lisent emprise et bande revêtue) → mobilier (tronçons + index des
@@ -358,7 +359,7 @@ export class WorldComposer {
       // 4. Bâti — après les chaussées, dont l'emprise rabote ce qu'une
       //    empreinte pose sur la voie (la donnée en pose : le tracé de la route
       //    et le contour du bâti viennent de deux relevés différents).
-      this.buildings.rebuild(this.vectorTiles, wanted, here, { roadIndex: this.roads.index });
+      this.buildings.rebuild(this.vectorTiles, wanted, here, { roadIndex: this.roads.index, builtUp });
 
       // 4 bis. Voirie — après chaussées et bâti.
       const fabric = new FabricIndex(this.buildings.footprints);
@@ -421,11 +422,11 @@ export class WorldComposer {
         force: hasRoads || classStale || climateChanged || force,
       });
 
-      // 9. Cheminées à faire fumer, et bêtes à faire vivre. Les deux sont
-      //    publiées par le mobilier, qui seul a lu les tuiles : ce sont les
-      //    deux endroits où une couche animée par image reprend le travail
-      //    d'une couche reconstruite tous les 250 mètres.
-      this.life.setChimneys(this.furniture.chimneys, here);
+      // 9. Cheminées à faire fumer, et bêtes à faire vivre. Publiées par le
+      //    mobilier (fermes) et le bâti (toits de ville), qui seuls ont lu les
+      //    tuiles : ce sont les deux endroits où une couche animée par image
+      //    reprend le travail d'une couche reconstruite tous les 250 mètres.
+      this.life.setChimneys([...this.furniture.chimneys, ...this.buildings.chimneys], here);
       this.fauna.setAnimals(this.furniture.fauna, here);
 
       // Maillages neufs : ils naissent éteints, il faut leur repasser l'heure.

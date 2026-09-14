@@ -285,6 +285,11 @@ import {
   TOWER_SIDE_MAX_M,
   TOWER_RISE_MIN_M,
   TOWER_RISE_MAX_M,
+  chimneyFootFor,
+  CHIMNEY_SHARE,
+  balconyLocalToWorld,
+  balconyGeometryFor,
+  BALCONY_MIN_WALL_M,
 } from '../src/layers/buildingLayer.js';
 import {
   woodDensity,
@@ -1301,6 +1306,52 @@ test('le clocher est dimensionné et posé sur le bâtiment qui le porte', () =>
   const tourne = towerFoot(biais, side);
   close(tourne.x, 0, 1e-9);
   assert.ok(tourne.z > 0, 'le pied suit le grand axe, pas l’axe du monde');
+});
+
+test('la cheminée de toit reste sur le faîtage, décalée du centre', () => {
+  const box = { cx: 100, cz: -50, angle: 0, long: 8, short: 4 };
+  const foot = chimneyFootFor(box);
+  assert.ok(Math.abs(foot.x - box.cx) <= box.long * 0.5 + 1e-9, 'reste sur le faîtage en long');
+  assert.ok(Math.abs(foot.z - box.cz) <= box.short * 0.35 + 1e-9, 'reste sur le faîtage en travers');
+  assert.ok(foot.side > 0 && foot.height > 0);
+
+  // Ancrée au lieu : la même empreinte rend toujours la même cheminée.
+  const again = chimneyFootFor(box);
+  assert.deepEqual(foot, again);
+
+  // Tournée avec le bâtiment.
+  const tourne = chimneyFootFor({ ...box, angle: Math.PI / 2 });
+  assert.ok(Math.abs(tourne.x - box.cx) <= box.short * 0.35 + 1e-9, 'le long axe a tourné');
+
+  assert.ok(CHIMNEY_SHARE > 0 && CHIMNEY_SHARE < 1, 'une minorité de toits, pas tous');
+});
+
+test('un décalage de balcon suit la normale sortante de sa façade', () => {
+  // Façade qui regarde +X (yaw = atan2(1, 0) = π/2).
+  const yaw = Math.atan2(1, 0);
+  const out = balconyLocalToWorld(0, 2, yaw);
+  close(out.x, 2, 1e-9, 'purement en sortie du mur');
+  close(out.z, 0, 1e-9);
+
+  // Décalé le long de la façade seulement : reste sur le plan du mur (x = 0).
+  const along = balconyLocalToWorld(3, 0, yaw);
+  close(along.x, 0, 1e-9);
+  assert.ok(Math.abs(along.z) > 0, 'se déplace le long du mur, pas en avant');
+});
+
+test('le gabarit d’un balcon reste sous l’égout et dans la largeur de la façade', () => {
+  const base = 100;
+  const eaves = base + 7.5; // deux étages et demi
+  const { width, depth, level } = balconyGeometryFor(10, 20, 6, base, eaves);
+  assert.ok(width > 0 && width <= 3, 'largeur bornée');
+  assert.ok(depth > 0 && depth < 2, 'profondeur bornée, ce n’est pas une terrasse');
+  assert.ok(level > base && level < eaves, 'entre le sol et l’égout, jamais au-dessus');
+
+  // Une façade étroite borne aussi la largeur du balcon.
+  const narrow = balconyGeometryFor(10, 20, 2, base, eaves);
+  assert.ok(narrow.width <= 1, 'ne déborde pas d’une façade étroite');
+
+  assert.ok(BALCONY_MIN_WALL_M >= 4, 'exige au moins un étage de mur');
 });
 
 test('le dessous du bâtiment vaut zéro sauf mention contraire', () => {
