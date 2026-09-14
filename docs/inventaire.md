@@ -436,6 +436,11 @@ Les bêtes sont les seules choses posées au sol qui bougent d'une image à
 l'autre ; tout le reste du décor est reconstruit tous les 250 m et immobile
 entre deux reconstructions.
 
+L'**oiseau** change d'espèce avec le climat : un corvidé qui dérive au vent
+partout, un rapace qui tourne en rond au-dessus d'un relief de montagne
+(`alpine`, `mediterraneanMontane`, `oceanicUpland` — `lifeLayer.setClimate`).
+C'est un remplacement, jamais les deux à la fois.
+
 ## Le ciel et le temps
 
 Le ciel suit le modèle de Preetham, avec les nuages natifs de three : rien n'y

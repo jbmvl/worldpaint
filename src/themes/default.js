@@ -1240,6 +1240,9 @@ export const WATERWAY_CLASSES = {
  */
 export const LIFE_COLORS = {
   bird: '#2b2f36',
+  // Silhouette du rapace qui remplace le corvidé en climat de montagne — même
+  // principe (une teinte plus sombre que le ciel, quelle que soit l'heure).
+  raptor: '#332821',
   smoke: [0.86, 0.85, 0.83],
   // Osier du panier de nacelle.
   balloonBasket: srgb('#7a5c3c'),

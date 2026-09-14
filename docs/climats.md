@@ -18,15 +18,15 @@ l'Europe :
 | Famille | Où | Ce qui la caractérise à l'écran |
 |---|---|---|
 | `oceanic` | Bretagne, Normandie, Irlande, Benelux, plaine anglaise | feuillus hauts, herbe grasse, bocage |
-| `oceanicUpland` | Highlands, côtes norvégiennes, Islande | arbres bas et rares, lande, roche |
+| `oceanicUpland` | Highlands, côtes norvégiennes, Islande | arbres bas et rares, lande, roche, rapaces en vol |
 | `mediterranean` | Provence, Espagne côtière, Italie, Grèce | pins, chênes verts, herbe sèche, vigne et verger |
 | `mediterraneanCool` | Portugal intérieur, Galice, arrière-pays | même famille, moins sèche |
 | `semiArid` | Èbre, Castille sèche, Murcie | steppe rase, sol nu dominant |
 | `arid` | Tabernas, Bardenas | presque pas d'arbre, roche et gravier |
 | `continental` | Pologne, Baltique, plaine du Pô | grandes futaies mêlées, openfield |
 | `boreal` | Scandinavie, Finlande | épicéas serrés, bouleaux |
-| `alpine` | au-dessus de la limite forestière | alpage, pessière, roche |
-| `mediterraneanMontane` | montagnes grecques, Apennins, sierras | pin noir, karst sec |
+| `alpine` | au-dessus de la limite forestière | alpage, pessière, roche, rapaces en vol |
+| `mediterraneanMontane` | montagnes grecques, Apennins, sierras | pin noir, karst sec, rapaces en vol |
 | `glacial` | calottes | cas limite, peu de contenu |
 
 **Le climat n'est pas l'occupation du sol.** Ce qu'il y a *réellement* à un

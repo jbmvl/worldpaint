@@ -10,7 +10,9 @@
  * place au sol :
  *
  * - des **oiseaux**, qui dérivent haut au-dessus de l'observateur, tous dans
- *   le sens du vent (`setWindDirection`) ;
+ *   le sens du vent (`setWindDirection`) — un corvidé partout, un rapace qui
+ *   tourne en rond dans les climats de montagne (`setClimate`,
+ *   `RAPTOR_CLIMATE_FAMILIES`) ;
  * - des **montgolfières**, plus haut et bien plus lentement, chacune avec ses
  *   deux couleurs propres ;
  * - la **fumée** des cheminées, publiée par `furnitureLayer.chimneys`.
@@ -151,6 +153,92 @@ export function birdAt(bird, time, centre, windDirection = 0) {
   };
 }
 
+/**
+ * Familles climatiques où le corvidé cède la place au rapace : le relief
+ * alpin et son équivalent méditerranéen (`refineByRelief`, `core/climate.js`),
+ * et l'upland océanique — trois climats de montagne ou de rebord venteux.
+ */
+export const RAPTOR_CLIMATE_FAMILIES = new Set(['alpine', 'mediterraneanMontane', 'oceanicUpland']);
+
+/**
+ * Rayon de la boîte où se dispersent les centres d'orbite, en mètres. Plus
+ * serré que `BIRD_SPREAD_M` : un rapace qui tourne doit rester dans le champ,
+ * là où un corvidé qui dérive traverse simplement le ciel.
+ */
+export const RAPTOR_SPREAD_M = 80;
+/** Hauteur d'orbite, en mètres au-dessus de l'observateur. */
+export const RAPTOR_HEIGHT_MIN = 30;
+export const RAPTOR_HEIGHT_MAX = 70;
+/** Rayon d'orbite, en mètres. */
+export const RAPTOR_ORBIT_MIN_M = 22;
+export const RAPTOR_ORBIT_MAX_M = 50;
+/** Vitesse angulaire, en radians par seconde — un tour complet en une à deux minutes. */
+export const RAPTOR_ANGULAR_SPEED_MIN = 0.09;
+export const RAPTOR_ANGULAR_SPEED_MAX = 0.16;
+/** Envergure, en mètres — un rapace plane avec de bien plus grandes ailes qu'un corvidé. */
+export const RAPTOR_SPAN_M = 1.9;
+/** Fréquence du frémissement des ailes en vol plané, cycles par seconde — bien plus lente qu'un battement. */
+export const RAPTOR_FLAP_HZ = 0.35;
+/** Amplitude et fréquence du gain d'altitude porté par une ascendance thermique. */
+export const RAPTOR_BOB_M = 5;
+export const RAPTOR_BOB_HZ = 0.05;
+
+/**
+ * Silhouette de rapace : ailes larges et peu coudées — un vol plané, pas un
+ * battement —, queue en éventail. C'est la queue qui distingue un rapace d'un
+ * corvidé vu de dessous ; les deux n'ont, sinon, que deux triangles.
+ *
+ * Même repère que `createBirdGeometry` : vole vers +Z, ailes sur X, dièdre
+ * porté par Y.
+ */
+export function createRaptorGeometry(THREE) {
+  const positions = new Float32Array([
+    // Aile gauche : plus large et moins coudée que le corvidé.
+    0, 0, 0.1, -0.62, 0.05, -0.02, 0, 0, -0.16,
+    // Aile droite.
+    0, 0, 0.1, 0, 0, -0.16, 0.62, 0.05, -0.02,
+    // Queue en éventail, déployée en vol plané.
+    -0.09, 0, -0.16, 0.09, 0, -0.16, 0, 0, -0.34,
+  ]);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.computeVertexNormals();
+  geometry.name = 'raptor';
+  return geometry;
+}
+
+/**
+ * Position d'un rapace à un instant donné. Fonction pure — même principe que
+ * `birdAt`, mais il tourne autour d'un centre au lieu de dériver : c'est ce
+ * qui fait un rapace en vol de reconnaissance plutôt qu'un corvidé pressé.
+ * Le centre suit l'observateur, comme tout le reste de cette couche.
+ *
+ * @param {Object} bird Paramètres propres au rapace (voir `LifeLayer._buildFlock`).
+ * @param {number} time Secondes écoulées.
+ * @param {{x:number,y:number,z:number}} centre Position de l'observateur.
+ * @returns {{x:number,y:number,z:number,heading:number,flap:number}}
+ */
+export function raptorAt(bird, time, centre) {
+  const angle = bird.orbitPhase + time * bird.angularSpeed;
+  const ca = Math.cos(angle);
+  const sa = Math.sin(angle);
+  const x = centre.x + bird.baseX + ca * bird.radius;
+  const z = centre.z + bird.baseZ + sa * bird.radius;
+  // Une ascendance thermique fait gagner puis reperdre un peu d'altitude —
+  // un rapace ne tourne pas à plat comme un manège.
+  const y = centre.y + bird.height + Math.sin(time * bird.bobHz + bird.phase) * RAPTOR_BOB_M;
+  // Tangente au cercle, dans le sens de `angularSpeed` : c'est la direction
+  // de vol réelle, pas une orientation vers le centre.
+  const sign = Math.sign(bird.angularSpeed) || 1;
+  return {
+    x,
+    y,
+    z,
+    heading: Math.atan2(-sa * sign, ca * sign),
+    flap: 0.85 + 0.15 * Math.sin(time * Math.PI * RAPTOR_FLAP_HZ + bird.phase),
+  };
+}
+
 /** Montgolfières en vol. */
 export const BALLOON_COUNT = 5;
 /** Altitude de la nacelle, en mètres au-dessus de l'observateur — bien plus haut qu'un vol d'oiseaux. */
@@ -277,6 +365,7 @@ export class LifeLayer {
     this.THREE = THREE;
     this.scene = scene;
     this.bubble = bubble;
+    this.theme = theme;
     this.disposed = false;
     this.time = 0;
     this._night = 0;
@@ -287,7 +376,12 @@ export class LifeLayer {
     scene.add(this.group);
 
     // --- Oiseaux ------------------------------------------------------------
-    this.birdGeometry = createBirdGeometry(THREE);
+    // Deux géométries tenues en même temps, une seule affichée : `setClimate`
+    // bascule l'une pour l'autre plutôt que de tenir deux `InstancedMesh` —
+    // il n'y a jamais qu'un seul vol à la fois (voir l'en-tête du fichier).
+    this._corvidGeometry = createBirdGeometry(THREE);
+    this._raptorGeometry = createRaptorGeometry(THREE);
+    this._birdSpecies = 'corvid';
     this.birdMaterial = new THREE.MeshBasicMaterial({
       // Un oiseau vu d'en dessous est une silhouette : il est plus sombre que
       // le ciel quelle que soit l'heure, et un éclairage lambertien ne lui
@@ -301,7 +395,7 @@ export class LifeLayer {
       opacity: 0.85,
     });
     this.birdMaterial.name = 'bird';
-    this.birds = new THREE.InstancedMesh(this.birdGeometry, this.birdMaterial, BIRD_COUNT);
+    this.birds = new THREE.InstancedMesh(this._corvidGeometry, this.birdMaterial, BIRD_COUNT);
     this.birds.name = 'birds';
     this.birds.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.birds.frustumCulled = false;
@@ -310,22 +404,7 @@ export class LifeLayer {
     this.birds.count = 0;
     this.group.add(this.birds);
 
-    this._flock = [];
-    for (let i = 0; i < BIRD_COUNT; i++) {
-      const a = draw(i * 7 + 1);
-      const b = draw(i * 13 + 2);
-      const c = draw(i * 19 + 3);
-      this._flock.push({
-        // Origine dans la boîte de dérive — voir `BIRD_SPREAD_M`.
-        baseX: (draw(i * 41 + 8) * 2 - 1) * BIRD_SPREAD_M,
-        baseZ: (draw(i * 43 + 9) * 2 - 1) * BIRD_SPREAD_M,
-        height: BIRD_HEIGHT_MIN + a * (BIRD_HEIGHT_MAX - BIRD_HEIGHT_MIN),
-        speed: BIRD_SPEED_MIN + b * (BIRD_SPEED_MAX - BIRD_SPEED_MIN),
-        phase: draw(i * 29 + 5) * Math.PI * 2,
-        beat: 0.75 + draw(i * 31 + 6) * 0.5,
-        scale: BIRD_SPAN_M * (0.85 + c * 0.6),
-      });
-    }
+    this._flock = this._buildFlock(this._birdSpecies);
 
     // --- Montgolfières --------------------------------------------------------
     // Pas d'`InstancedMesh` : trop peu de ballons pour le justifier, et chacun
@@ -419,6 +498,68 @@ export class LifeLayer {
   }
 
   /**
+   * Tire le peuplement du flock : les paramètres de dérive au vent pour un
+   * corvidé, ceux d'une orbite pour un rapace. Deux tirages distincts, pas un
+   * seul rendu conditionnel — la forme des deux vols n'a rien de commun.
+   * @param {'corvid'|'raptor'} species
+   */
+  _buildFlock(species) {
+    const flock = [];
+    for (let i = 0; i < BIRD_COUNT; i++) {
+      const a = draw(i * 7 + 1);
+      const b = draw(i * 13 + 2);
+      const c = draw(i * 19 + 3);
+      if (species === 'raptor') {
+        flock.push({
+          // Centre d'orbite dans la boîte de dispersion — voir `RAPTOR_SPREAD_M`.
+          baseX: (draw(i * 41 + 8) * 2 - 1) * RAPTOR_SPREAD_M,
+          baseZ: (draw(i * 43 + 9) * 2 - 1) * RAPTOR_SPREAD_M,
+          height: RAPTOR_HEIGHT_MIN + a * (RAPTOR_HEIGHT_MAX - RAPTOR_HEIGHT_MIN),
+          radius: RAPTOR_ORBIT_MIN_M + b * (RAPTOR_ORBIT_MAX_M - RAPTOR_ORBIT_MIN_M),
+          // Sens de rotation tiré : deux rapaces ne tournent pas forcément dans le même sens.
+          angularSpeed:
+            (draw(i * 47 + 10) < 0.5 ? -1 : 1) *
+            (RAPTOR_ANGULAR_SPEED_MIN + c * (RAPTOR_ANGULAR_SPEED_MAX - RAPTOR_ANGULAR_SPEED_MIN)),
+          orbitPhase: draw(i * 29 + 5) * Math.PI * 2,
+          phase: draw(i * 31 + 6) * Math.PI * 2,
+          bobHz: RAPTOR_BOB_HZ * (0.8 + draw(i * 59 + 13) * 0.4),
+          scale: RAPTOR_SPAN_M * (0.85 + draw(i * 53 + 12) * 0.4),
+        });
+      } else {
+        flock.push({
+          // Origine dans la boîte de dérive — voir `BIRD_SPREAD_M`.
+          baseX: (draw(i * 41 + 8) * 2 - 1) * BIRD_SPREAD_M,
+          baseZ: (draw(i * 43 + 9) * 2 - 1) * BIRD_SPREAD_M,
+          height: BIRD_HEIGHT_MIN + a * (BIRD_HEIGHT_MAX - BIRD_HEIGHT_MIN),
+          speed: BIRD_SPEED_MIN + b * (BIRD_SPEED_MAX - BIRD_SPEED_MIN),
+          phase: draw(i * 29 + 5) * Math.PI * 2,
+          beat: 0.75 + draw(i * 31 + 6) * 0.5,
+          scale: BIRD_SPAN_M * (0.85 + c * 0.6),
+        });
+      }
+    }
+    return flock;
+  }
+
+  /**
+   * Le lieu décide de l'espèce : un rapace qui tourne en rond au-dessus d'un
+   * relief de montagne (`RAPTOR_CLIMATE_FAMILIES`), un corvidé qui dérive au
+   * vent partout ailleurs. Un seul vol à la fois — ce n'est pas un ajout,
+   * c'est un remplacement, comme au sol le bétail change d'espèce avec le
+   * climat (`furniture/parcelFauna.js`).
+   * @param {string|null} family
+   */
+  setClimate(family) {
+    if (this.disposed) return;
+    const species = RAPTOR_CLIMATE_FAMILIES.has(family) ? 'raptor' : 'corvid';
+    if (species === this._birdSpecies) return;
+    this._birdSpecies = species;
+    this.birds.geometry = species === 'raptor' ? this._raptorGeometry : this._corvidGeometry;
+    this.birdMaterial.color.set(species === 'raptor' ? this.theme.life.raptor : this.theme.life.bird);
+    this._flock = this._buildFlock(species);
+  }
+
+  /**
    * Règle l'ambiance nocturne : les oiseaux se posent, la fumée s'assombrit.
    * @param {number} mix 0 en plein jour, 1 en pleine nuit.
    */
@@ -453,9 +594,10 @@ export class LifeLayer {
   _advanceBirds(at) {
     if (!this.birds.visible) return;
     const centre = { x: at.x, y: at.y, z: at.z };
+    const raptor = this._birdSpecies === 'raptor';
 
     this._flock.forEach((bird, index) => {
-      const at = birdAt(bird, this.time, centre, this._windDirection);
+      const at = raptor ? raptorAt(bird, this.time, centre) : birdAt(bird, this.time, centre, this._windDirection);
       this._position.set(at.x, at.y, at.z);
       this._euler.set(0, at.heading, 0);
       this._quaternion.setFromEuler(this._euler);
@@ -530,7 +672,8 @@ export class LifeLayer {
     this.group.remove(this.smoke);
     this.birds.dispose?.();
     this.smoke.dispose?.();
-    this.birdGeometry.dispose();
+    this._corvidGeometry.dispose();
+    this._raptorGeometry.dispose();
     this.birdMaterial.dispose();
     for (const mesh of this._balloonMeshes) {
       this.group.remove(mesh);

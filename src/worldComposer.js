@@ -459,6 +459,7 @@ export class WorldComposer {
     this.bubble.materials.setClimate(family);
     this.grass.setClimate(family);
     this.crops.setClimate(family);
+    this.life.setClimate(family);
   }
 
   /**

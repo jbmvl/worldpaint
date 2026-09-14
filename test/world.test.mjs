@@ -522,7 +522,15 @@ import { streetSurfaceAt } from '../src/layers/townStyle.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
 import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
 import { TerrainMaterialFactory } from '../src/terrain/terrainMaterial.js';
-import { birdAt, createBirdGeometry, balloonAt, createBalloonGeometry } from '../src/layers/lifeLayer.js';
+import {
+  birdAt,
+  createBirdGeometry,
+  balloonAt,
+  createBalloonGeometry,
+  raptorAt,
+  createRaptorGeometry,
+  RAPTOR_CLIMATE_FAMILIES,
+} from '../src/layers/lifeLayer.js';
 import {
   FAUNA_BUILDERS,
   FAUNA_KINDS,
@@ -5470,6 +5478,67 @@ test('l’enveloppe de la montgolfière alterne ses deux couleurs par fuseau', (
     if (colors[i] === 0 && colors[i + 1] === 0 && colors[i + 2] === 1) blues++;
   }
   assert.ok(reds > 0 && blues > 0, 'les deux couleurs sont bien présentes dans l’enveloppe');
+});
+
+test('un rapace tourne en rond autour d’un centre fixe, sans dériver', () => {
+  const bird = { baseX: 15, baseZ: -8, height: 45, radius: 30, angularSpeed: 0.15, orbitPhase: 0.3, phase: 0.9, bobHz: 0.05 };
+  const centre = { x: 100, y: 0, z: -50 };
+  for (let t = 0; t <= 80; t += 1) {
+    const at = raptorAt(bird, t, centre);
+    const dist = Math.hypot(at.x - (centre.x + bird.baseX), at.z - (centre.z + bird.baseZ));
+    close(dist, bird.radius, 1e-6, `reste sur le cercle d’orbite à t=${t}`);
+  }
+});
+
+test('le cap d’un rapace suit la tangente du cercle, pas le centre', () => {
+  const bird = { baseX: 0, baseZ: 0, height: 40, radius: 25, angularSpeed: 0.2, orbitPhase: 0, phase: 0, bobHz: 0.05 };
+  const centre = { x: 0, y: 0, z: 0 };
+  const a = raptorAt(bird, 0, centre);
+  const b = raptorAt(bird, 0.05, centre);
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const norm = Math.hypot(dx, dz) || 1;
+  close(Math.sin(a.heading), dx / norm, 0.02, 'composante x du vol');
+  close(Math.cos(a.heading), dz / norm, 0.02, 'composante z du vol');
+});
+
+test('un rapace plane : son battement reste proche du plein régime', () => {
+  const bird = { baseX: 0, baseZ: 0, height: 40, radius: 25, angularSpeed: 0.2, orbitPhase: 0, phase: 0, bobHz: 0.05 };
+  const centre = { x: 0, y: 0, z: 0 };
+  for (let t = 0; t <= 20; t += 0.5) {
+    const flap = raptorAt(bird, t, centre).flap;
+    assert.ok(flap >= 0.7 && flap <= 1, `presque plein régime en vol plané (${flap})`);
+  }
+});
+
+test('les climats de montagne, et seulement eux, font voler un rapace', () => {
+  assert.ok(RAPTOR_CLIMATE_FAMILIES.has('alpine'));
+  assert.ok(RAPTOR_CLIMATE_FAMILIES.has('mediterraneanMontane'));
+  assert.ok(RAPTOR_CLIMATE_FAMILIES.has('oceanicUpland'));
+  assert.ok(!RAPTOR_CLIMATE_FAMILIES.has('oceanic'));
+  assert.ok(!RAPTOR_CLIMATE_FAMILIES.has('mediterranean'));
+});
+
+test('la silhouette de rapace ajoute une queue en éventail aux deux ailes', () => {
+  const geometry = createRaptorGeometry({
+    BufferGeometry: class {
+      constructor() {
+        this.attributes = {};
+      }
+      setAttribute(name, attribute) {
+        this.attributes[name] = attribute;
+      }
+      computeVertexNormals() {}
+    },
+    BufferAttribute: class {
+      constructor(array, itemSize) {
+        this.array = array;
+        this.itemSize = itemSize;
+        this.count = array.length / itemSize;
+      }
+    },
+  });
+  assert.equal(geometry.attributes.position.count, 9, 'deux ailes et une queue, trois triangles');
 });
 
 test('la grille de fenêtres tient dans le mur qui la porte', () => {
