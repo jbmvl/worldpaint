@@ -14,7 +14,6 @@
  */
 
 import { appendProfile } from '../ribbonGeometry.js';
-import { ROAD_SAMPLE_M } from '../roadNetwork.js';
 import { LEVEL_GROUND } from '../roadWorks.js';
 import { nearestNamedPlace, pointInAreas } from '../settlement.js';
 import { LAMP_HEAD_HEIGHT_M, LAMP_HEAD_REACH_M } from '../furnitureKit.js';
@@ -399,7 +398,7 @@ export function applyRoadsidePlan(layer, {
   // lisait comme un motif dès le troisième.
   if (plan.sign) {
     for (const p of spacedAlongPath(path, plan.sign, spacing)) {
-      const row = nearestRow(rows, p.distance);
+      const row = rows[p.row];
       const item = signKindFor({
         curvature: row?.curvature ?? 0,
         builtUp: inTown,
@@ -424,7 +423,7 @@ export function applyRoadsidePlan(layer, {
     ? spacedAlongPath(path, 14, spacing)
     : [];
   for (const p of curveMarkers) {
-    const row = nearestRow(rows, p.distance);
+    const row = rows[p.row];
     if (!row || row.curvature < 0.022) continue;
     // Extérieur de la courbe : la perpendiculaire gauche étant `(tz, -tx)`, un
     // virage à gauche a un `turn` négatif et son extérieur est donc du côté
@@ -538,14 +537,6 @@ export function applyRoadsidePlan(layer, {
       own: segment,
     });
   }
-}
-
-/** Ligne d'échantillonnage la plus proche d'une distance donnée. */
-export function nearestRow(rows, distance) {
-  if (!rows || rows.length === 0) return null;
-  const origin = rows[0].distance;
-  const index = Math.round(distance / ROAD_SAMPLE_M);
-  return rows[Math.min(rows.length - 1, Math.max(0, index))] ?? rows[0] ?? { distance: origin };
 }
 
 /**

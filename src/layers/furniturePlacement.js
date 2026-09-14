@@ -77,6 +77,10 @@ export function spacedAlongPath(path, spacing, { startDistance = 0, phase = 0, m
       tz: tz / length,
       distance: target,
       index: n,
+      // La ligne d'où l'objet sort, pour ce qui a un tableau par ligne à lire
+      // (la plate-forme, la courbure) : le pas du tracé n'étant pas constant,
+      // elle ne se retrouve pas en divisant une distance.
+      row: t < 0.5 ? cursor - 1 : cursor,
     });
   }
   return out;

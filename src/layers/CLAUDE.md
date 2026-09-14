@@ -10,7 +10,7 @@ son état.
 
 | Fichier | Ce qu'il fait |
 | --- | --- |
-| `roadGraph.js` | recoud les chaussées, relève les carrefours (un carrefour est un **nœud**, pas une image) |
+| `roadGraph.js` | recoud les chaussées, arrondit leurs brisures, relève les carrefours (un carrefour est un **nœud**, pas une image) |
 | `roadNetwork.js` | les rubans de chaussée, leur plate-forme, l'index publié |
 | `roadJunctions.js` | la surface d'un carrefour, ses bouches, qui cède le passage |
 | `roadEdges.js`, `roadCorridor.js` | la rive de la chaussée, et l'emprise que le décor ne franchit pas |

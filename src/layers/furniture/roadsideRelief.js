@@ -12,9 +12,15 @@
  * `buildRoadside` les a déjà écartées, un tablier n'a ni talus ni mur.
  */
 
-import { appendProfile, appendVariableWall, appendRockCut, smoothColumns, pathFrames } from '../ribbonGeometry.js';
+import {
+  appendProfile,
+  appendVariableWall,
+  appendRockCut,
+  smoothColumns,
+  pathFrames,
+} from '../ribbonGeometry.js';
 import { facetJitter } from '../facetJitter.js';
-import { ROAD_SAMPLE_M, ROAD_LIFT_M } from '../roadNetwork.js';
+import { ROAD_LIFT_M } from '../roadNetwork.js';
 import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../../terrain/roadCut.js';
 import {
   spacedAlongPath,
@@ -344,7 +350,7 @@ export function buildParapets(layer, context, segment, rowsInfo) {
         // Le poteau se pose sur la plate-forme, pas sur le terrain : la rive
         // aval surplombe le vide, et un poteau posé au sol pendrait sous la
         // lisse.
-        const row = Math.min(deck.length - 1, Math.max(0, Math.round(p.distance / ROAD_SAMPLE_M)));
+        const row = Math.min(deck.length - 1, Math.max(0, p.row));
         layer._place(placements, post, {
           x: p.x + p.tz * offset,
           z: p.z - p.tx * offset,

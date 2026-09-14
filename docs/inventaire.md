@@ -271,7 +271,11 @@ déborde pas.
 Les morceaux livrés par les tuiles (coupés à chaque frontière et à chaque
 changement d'attribut) sont **recousus en graphe** avant qu'on en fasse quoi que
 ce soit, faute de quoi le marquage, le mobilier et les haies redémarrent à
-chaque couture. Les carrefours sont des **surfaces**, pas des points.
+chaque couture. Le tracé en ressort **arrondi** : la tuile rend un virage par
+deux ou trois brisures franches, un arc est inscrit dans chacune, et tout ce qui
+suit la chaussée — bordure, trottoir, marquage — le suit. Restent francs le
+carrefour, où la route tourne vraiment, et la culée d'un pont. Les carrefours
+sont des **surfaces**, pas des points.
 Un chemin de terre n'entre pas dans le carrefour d'une route revêtue : il passe
 par-dessus, marquage compris. Une piste cyclable, revêtue, en reste une branche.
 
