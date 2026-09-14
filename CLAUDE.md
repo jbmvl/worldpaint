@@ -36,6 +36,8 @@ après. Rapporte ces chiffres tels quels, sans les arrondir dans le bon sens.
 - `docs/surfaces.md` — le sol en détail : ce qui est lu, peint, laissé.
 - `docs/climats.md` — comment le lieu décide du contenu ; s'adresse à la
   direction artistique, donc à `themes/default.js`.
+- `docs/regions.md` — les régions naturelles : le dossier d'un pays, le
+  vocabulaire fermé, et comment poser une ancre.
 - `src/layers/CLAUDE.md` et `src/terrain/CLAUDE.md` — la carte fine de ces deux
   répertoires, et ce qu'il ne faut pas ajouter aux gros fichiers qui y vivent.
 
@@ -75,6 +77,8 @@ maillage.
 | une forme du catalogue de mobilier | `layers/furnitureKit.js` |
 | ce qui est posé et combien (listes, plafonds) | `layers/furniture/catalog.js` |
 | ce qu'une classe `landuse`/`landcover` peint au sol | `terrain/surfaceClassification.js` |
+| le portrait d'un pays (matrice, pierre, bâti, cultures, essences) | `core/regions.js` — voir `docs/regions.md` |
+| ce qu'un mot de région signifie pour le moteur | `core/regionInterpretation.js` |
 | une couche (routes, bâti, végétation, herbe…) | `src/layers/CLAUDE.md` d'abord |
 
 ## Comment on écrit

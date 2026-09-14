@@ -312,6 +312,10 @@ const ALLOWED_MODULE_STATE = {
   // évite de décoder 266 000 cellules dans une application qui ne demande
   // jamais de climat.
   'core/climate.js': ['cells'],
+  // Les ancres de région, à plat. Même raison que la grille climatique : elles
+  // ne dépendent d'aucune entrée, elles sont en lecture seule une fois
+  // dressées, et leur valeur est la même pour tout le monde.
+  'core/region.js': ['anchors'],
 };
 
 function sourceFiles(dir, base = dir) {
