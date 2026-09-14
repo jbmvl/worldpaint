@@ -21,7 +21,7 @@ son état.
 | `streetLayer.js`, `gardenLayer.js` | trottoirs et coins de rue, clôtures et buissons de maison |
 | `vegetationLayer.js`, `groundCover.js`, `cropLayer.js` | arbres, herbe, cultures |
 | `furnitureLayer.js` + `furniture/` | tout le mobilier — voir ci-dessous |
-| `faunaLayer.js`, `faunaMotion.js`, `faunaCrossing.js`, `lifeLayer.js` | ce qui bouge |
+| `faunaLayer.js`, `faunaMotion.js`, `faunaCrossing.js`, `lifeLayer.js`, `tractorLayer.js` | ce qui bouge |
 | `settlement.js` | l'habitat : emprises habitées, lieux nommés, `UrbanMask`, `FabricIndex` |
 
 ## Le mobilier

@@ -27,10 +27,11 @@
  * chaussées, compte de bâtiments, emprise ferroviaire, lieux nommés) →
  * arbres (après la carte de classes et les chaussées : une tuile semée hors de
  * portée de l'index des chaussées se resème quand il va jusqu'à elle) → herbe
- * (après l'index des chaussées) → cheminées et bêtes (publiées par le
- * mobilier, animées par `lifeLayer` et `faunaLayer`).
+ * (après l'index des chaussées) → cheminées, bêtes et tracteurs (publiés par
+ * le mobilier et le bâti, animés par `lifeLayer`, `faunaLayer` et
+ * `tractorLayer`).
  *
- * Ces deux dernières sont la même figure et méritent qu'on la nomme : une
+ * Ces trois derniers sont la même figure et méritent qu'on la nomme : une
  * couche reconstruite tous les 250 mètres décide **ce qui existe** — elle
  * seule a lu les tuiles —, et une couche animée par image ne fait plus que le
  * jouer. C'est la seule façon d'avoir du mouvement dans un décor par ailleurs
@@ -70,6 +71,7 @@ import { CropLayer } from './layers/cropLayer.js';
 import { FurnitureLayer } from './layers/furnitureLayer.js';
 import { LifeLayer } from './layers/lifeLayer.js';
 import { FaunaLayer } from './layers/faunaLayer.js';
+import { TractorLayer } from './layers/tractorLayer.js';
 import { VectorTileSource, coveringTiles, VECTOR_ZOOM } from './core/vectorTileSource.js';
 import { lngLatToTile } from './core/tileMath.js';
 import { landscapeAt } from './core/landscape.js';
@@ -238,6 +240,9 @@ export class WorldComposer {
     this.life = new LifeLayer({ THREE, scene, bubble, theme });
     // Le vivant au sol : posé par le mobilier, animé ici (voir `faunaLayer`).
     this.fauna = new FaunaLayer({ THREE, scene, theme });
+    // Les tracteurs au travail : posés par le mobilier, ancrés au sol comme
+    // la faune, mais rien en eux n'est articulé — voir `tractorLayer.js`.
+    this.tractors = new TractorLayer({ THREE, scene, theme });
 
     this.vectorTiles = vectorConfig
       ? new VectorTileSource({
@@ -422,12 +427,14 @@ export class WorldComposer {
         force: hasRoads || classStale || climateChanged || force,
       });
 
-      // 9. Cheminées à faire fumer, et bêtes à faire vivre. Publiées par le
-      //    mobilier (fermes) et le bâti (toits de ville), qui seuls ont lu les
-      //    tuiles : ce sont les deux endroits où une couche animée par image
-      //    reprend le travail d'une couche reconstruite tous les 250 mètres.
+      // 9. Cheminées à faire fumer, bêtes et tracteurs à faire vivre. Publiés
+      //    par le mobilier (fermes, labours) et le bâti (toits de ville), qui
+      //    seuls ont lu les tuiles : ce sont les endroits où une couche
+      //    animée par image reprend le travail d'une couche reconstruite
+      //    tous les 250 mètres.
       this.life.setChimneys([...this.furniture.chimneys, ...this.buildings.chimneys], here);
       this.fauna.setAnimals(this.furniture.fauna, here);
+      this.tractors.setTractors(this.furniture.tractors, here);
 
       // Maillages neufs : ils naissent éteints, il faut leur repasser l'heure.
       this._night = null;
@@ -546,6 +553,7 @@ export class WorldComposer {
     // marquée `flee` qui le voit approcher ; l'échantillonnage du relief lui
     // est nécessaire pour tracer cette fuite (voir `faunaLayer._checkFlee`).
     this.fauna.advance(delta, at, (x, z) => this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale);
+    this.tractors.advance(delta);
     // Ce que le mobilier a d'animé : les feux, et les deux lampes qui suivent l'observateur.
     this.furniture.advanceSignals(delta);
     this.furniture.advanceLamps(at);
@@ -610,6 +618,7 @@ export class WorldComposer {
     this.disposed = true;
     this.life.dispose();
     this.fauna.dispose();
+    this.tractors.dispose();
     this.furniture.dispose();
     this.crops.dispose();
     this.grass.dispose();

@@ -433,7 +433,13 @@ import {
   placeFarmstead,
   greenhouseLengthFor,
   greenhouseAnchorFor,
+  placeTractor,
+  TRACTOR_RADIUS_M,
+  TRACTOR_PASS_MAX_M,
+  TRACTOR_SPEED_MIN_MS,
+  TRACTOR_SPEED_MAX_MS,
 } from '../src/layers/furniture/parcels.js';
+import { fieldVehicleAt, TRACTOR_ANIMATED_MAX } from '../src/layers/tractorLayer.js';
 import { placeFauna, crossingAt } from '../src/layers/furniture/parcelFauna.js';
 import {
   HEDGE_STYLES,
@@ -5590,6 +5596,92 @@ test('la silhouette de rapace ajoute une queue en éventail aux deux ailes', () 
     },
   });
   assert.equal(geometry.attributes.position.count, 9, 'deux ailes et une queue, trois triangles');
+});
+
+test('un tracteur fait l’aller-retour entre ses deux points, à vitesse constante', () => {
+  const tractor = {
+    a: { x: 0, y: 100, z: 0 },
+    b: { x: 30, y: 100, z: 0 },
+    headingForward: Math.atan2(30, 0),
+    speed: 1.5,
+    phase: 0,
+  };
+  const span = 30;
+  const cycle = span * 2;
+
+  // À mi-aller, à mi-chemin ; au complet, arrivé sur b.
+  const half = fieldVehicleAt(tractor, span / 2 / tractor.speed);
+  close(half.x, span / 2, 1e-6, 'à mi-parcours de l’aller');
+  const atB = fieldVehicleAt(tractor, span / tractor.speed);
+  close(atB.x, span, 1e-6, 'arrivé au bout');
+
+  // Passé le point de retournement, il revient — jamais au-delà de b.
+  const backing = fieldVehicleAt(tractor, (span + span / 4) / tractor.speed);
+  assert.ok(backing.x < span + 1e-6, 'ne déborde jamais de b');
+  assert.ok(backing.x > 0 - 1e-6, 'reste dans le passage');
+
+  // Un tour complet (aller-retour) ramène exactement au point de départ.
+  const full = fieldVehicleAt(tractor, cycle / tractor.speed);
+  close(full.x, 0, 1e-6, 'de retour à a après un cycle complet');
+
+  // Le cap bascule d’un demi-tour au retour.
+  close(half.heading, tractor.headingForward, 1e-9, 'cap à l’aller');
+  close(backing.heading, tractor.headingForward + Math.PI, 1e-9, 'cap inversé au retour');
+
+  assert.ok(TRACTOR_ANIMATED_MAX > 0);
+});
+
+test('placeTractor n’agit que sur un vrai labour, à portée', () => {
+  const ring = squareRing(100);
+  const centre = { x: 50, z: 50 };
+  const context = { sampleElevation: () => 100 };
+
+  const notPloughed = Object.create(FurnitureLayer.prototype);
+  notPloughed.tractors = [];
+  placeTractor(notPloughed, context, ring, centre, 'wheat', centre);
+  assert.equal(notPloughed.tractors.length, 0, 'une autre culture ne travaille pas au tracteur');
+
+  const tooFar = Object.create(FurnitureLayer.prototype);
+  tooFar.tractors = [];
+  placeTractor(tooFar, context, ring, centre, 'plough', { x: centre.x + TRACTOR_RADIUS_M + 50, z: centre.z });
+  assert.equal(tooFar.tractors.length, 0, 'hors de portée, on ne pose rien');
+
+  const full = Object.create(FurnitureLayer.prototype);
+  full.tractors = new Array(FURNITURE_LIMITS.vehicles).fill({});
+  placeTractor(full, context, ring, centre, 'plough', centre);
+  assert.equal(full.tractors.length, FURNITURE_LIMITS.vehicles, 'le plafond n’est pas dépassé');
+});
+
+test('un tracteur posé reste dans le champ, sur un passage borné, à vitesse plausible', () => {
+  const ring = squareRing(100);
+  const context = { sampleElevation: (x) => 100 + x * 0.01 };
+  let placed = null;
+
+  // Le tirage de probabilité (`TRACTOR_SHARE`) est ancré au centre : on
+  // cherche une position qui le passe plutôt que de deviner le sel interne.
+  for (let i = 0; i < 400 && !placed; i++) {
+    const centre = { x: 50 + i, z: 50 };
+    const layer = Object.create(FurnitureLayer.prototype);
+    layer.tractors = [];
+    placeTractor(layer, context, ring, centre, 'plough', centre);
+    if (layer.tractors.length > 0) placed = layer.tractors[0];
+  }
+
+  assert.ok(placed, 'au moins un tirage, sur 400, pose un tracteur');
+  assert.ok(pointInRing(ring, placed.a.x, placed.a.z), 'extrémité a dans le champ');
+  assert.ok(pointInRing(ring, placed.b.x, placed.b.z), 'extrémité b dans le champ');
+  const span = Math.hypot(placed.b.x - placed.a.x, placed.b.z - placed.a.z);
+  assert.ok(span > 0 && span <= TRACTOR_PASS_MAX_M + 1e-6, `passage borné (${span})`);
+  assert.ok(
+    placed.speed >= TRACTOR_SPEED_MIN_MS && placed.speed <= TRACTOR_SPEED_MAX_MS,
+    'vitesse dans la fourchette'
+  );
+  close(
+    placed.headingForward,
+    Math.atan2(placed.b.x - placed.a.x, placed.b.z - placed.a.z),
+    1e-9,
+    'le cap suit vraiment a→b'
+  );
 });
 
 test('la grille de fenêtres tient dans le mur qui la porte', () => {

@@ -56,6 +56,7 @@ export const LABEL_EXACT = {
   crops: 'cultures (semis)',
   birds: 'oiseaux',
   balloon: 'montgolfière',
+  tractors: 'tracteur',
   'chimney-smoke': 'fumée',
   'furniture-lamp-glow': 'halo de lampadaire',
   'furniture-lamp-pool': 'nappe de lumière',

@@ -118,6 +118,11 @@ export const FURNITURE_LIMITS = {
   // bout à bout fait des kilomètres de limite, et il n'y a aucune raison d'en
   // détailler plus que ce que la caméra a sous les yeux.
   hedgeClumps: 3600,
+  // Tracteurs au travail, posés sur toute la bulle. Plus haut que ce que
+  // `tractorLayer` anime (`TRACTOR_ANIMATED_MAX`), même raison que `fauna` :
+  // la couche garde les plus proches, et ne peut le faire que si on lui en
+  // propose plus qu'elle n'en retient.
+  vehicles: 40,
 };
 
 /** Formes ponctuelles du catalogue, dans l'ordre où on les instancie. */

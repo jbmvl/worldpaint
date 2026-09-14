@@ -290,6 +290,14 @@ export class FurnitureLayer {
      * @type {Array<Object>}
      */
     this.fauna = [];
+    /**
+     * Tracteurs au travail, publiés pour `tractorLayer`. Même raison que les
+     * cheminées et les bêtes : le passage d'un labour (deux points, avec leur
+     * altitude, et un aller-retour) est composé ici, une fois pour toutes,
+     * puis rejoué par image.
+     * @type {Array<Object>}
+     */
+    this.tractors = [];
     /** Nuancier des robes, une liste par espèce (voir `theme.fauna.coats`). */
     this._coats = theme.fauna?.coats || {};
     /**
@@ -439,6 +447,7 @@ export class FurnitureLayer {
     this._signals = [];
     this.chimneys = [];
     this.fauna = [];
+    this.tractors = [];
 
     try {
       // Les emprises habitées viennent de `worldComposer` quand il les a déjà
@@ -1400,6 +1409,7 @@ export class FurnitureLayer {
     this._signals = [];
     this.chimneys = [];
     this.fauna = [];
+    this.tractors = [];
 
     for (const geometry of Object.values(this.geometries)) geometry.dispose();
     this.geometries = {};

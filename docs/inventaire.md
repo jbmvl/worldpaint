@@ -443,13 +443,18 @@ et tourné vers la chaussée.
 | Objet | Nombre | Comportement |
 | --- | --- | --- |
 | bêtes au sol | 240 animées au plus | haltes et trajets sur un circuit fermé, jusqu'à 8 traversées de route en cours |
+| tracteurs | 12 animés au plus | aller-retour sur un passage de labour, 1,1 à 1,8 m/s |
 | oiseaux | 22 | dérivent entre 16 et 52 m au-dessus de l'observateur, 3 à 9 m/s |
 | montgolfières | 5 | dérivent entre 90 et 240 m au-dessus de l'observateur, 0,5 à 1,6 m/s, chacune avec ses deux couleurs propres |
 | fumée | 6 cheminées, 9 bouffées chacune | monte à 1,15 m/s, dérive à 0,75 m/s, vit 5,5 s |
 
-Les bêtes sont les seules choses posées au sol qui bougent d'une image à
-l'autre ; tout le reste du décor est reconstruit tous les 250 m et immobile
-entre deux reconstructions.
+Les bêtes et les tracteurs sont les seules choses posées au sol qui bougent
+d'une image à l'autre ; tout le reste du décor est reconstruit tous les 250 m
+et immobile entre deux reconstructions. Un tracteur n'est pas une bête
+(`tractorLayer`, pas `faunaLayer`) : rien en lui n'est articulé, il ne fait
+qu'un aller-retour entre deux points composés une fois par
+`furniture/parcels.placeTractor`, sur un champ en labour (`plough`), 12 % du
+temps.
 
 L'**oiseau** change d'espèce avec le climat : un corvidé qui dérive au vent
 partout, un rapace qui tourne en rond au-dessus d'un relief de montagne
@@ -478,7 +483,7 @@ bougé tout seul » :
 
 | Ce qui est refait | Tous les |
 | --- | --- |
-| mobilier, bâti, chaussées, bêtes | 250 m |
+| mobilier, bâti, chaussées, bêtes, tracteurs | 250 m |
 | carte du sol (matières et cultures) | 400 m |
 | fourrés du sous-bois | 12 m |
 | oiseaux, montgolfières, fumée, pluie, vent | chaque image |
