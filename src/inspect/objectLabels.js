@@ -70,6 +70,7 @@ export const LABEL_ROADS = {
   track: 'chemin',
   cycleway: 'piste cyclable',
   path: 'sentier',
+  steps: 'escalier',
 };
 
 /** Noms lisibles du mobilier — formes instanciées et ouvrages balayés. */
