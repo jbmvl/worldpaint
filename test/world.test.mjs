@@ -173,6 +173,7 @@ import {
   advanceFurnitureRotor,
   FURNITURE_BUILDERS,
   furnitureSpecsFor,
+  furnitureSpecsForStone,
   lampArcAt,
   LAMP_ARC,
   LAMP_HEAD_HEIGHT_M,
@@ -463,8 +464,10 @@ import {
   sharesFor,
   boundaryForMatrix,
   cropForFarming,
+  stoneTintFor,
   MATRIX_KINDS,
   FARMING_KINDS,
+  STONE_KINDS,
   soilWashFor,
 } from '../src/core/regionInterpretation.js';
 import { REGIONS } from '../src/core/regions.js';
@@ -1914,6 +1917,64 @@ test('un pays sec laisse voir sa terre entre les touffes', () => {
     const { grassDensity, grassHeight } = soilWashFor(matrix, defaultTheme.soils);
     assert.ok(grassDensity > 0 && grassDensity <= 1, `${matrix} densité`);
     assert.ok(grassHeight > 0.3 && grassHeight <= 1, `${matrix} hauteur`);
+  }
+});
+
+test('la pierre d’un pays est la même partout où elle se montre', () => {
+  // La roche est peinte à trois endroits — la teinte de pente et les matières
+  // minérales dans le shader, les ouvrages balayés dans le mobilier. Une seule
+  // source, sinon un causse blanc porte des murets gris.
+  const tint = stoneTintFor('granite', defaultTheme.stones);
+  const pente = defaultTheme.terrain.rockColor.map((c, i) => c * tint[i]);
+  const dalle = defaultTheme.surfaces.rock.albedo.map((c, i) => c * tint[i]);
+
+  const neutres = furnitureSpecsFor(defaultTheme.furniture.colors);
+  const granitiques = furnitureSpecsForStone(defaultTheme.furniture.colors, tint);
+  const murNeutre = neutres.wallSpecs.fill.colorTop;
+  const murGranit = granitiques.wallSpecs.fill.colorTop;
+
+  // Le même rapport, canal par canal, de la pente au muret.
+  for (let i = 0; i < 3; i++) {
+    close(pente[i] / defaultTheme.terrain.rockColor[i], tint[i], 1e-9, `pente ${i}`);
+    close(dalle[i] / defaultTheme.surfaces.rock.albedo[i], tint[i], 1e-9, `dalle ${i}`);
+    close(murGranit[i] / murNeutre[i], tint[i], 1e-9, `muret ${i}`);
+  }
+
+  // Le muret de pierre sèche en est fait lui aussi.
+  const profil = granitiques.profiles.dryStoneWall;
+  const profilNeutre = neutres.profiles.dryStoneWall;
+  close(profil[1].color[2] / profilNeutre[1].color[2], tint[2], 1e-9, 'muret de pierre sèche');
+
+  // Une pierre de référence ne dérive rien : même objet, donc même cache.
+  assert.equal(
+    furnitureSpecsForStone(defaultTheme.furniture.colors, [1, 1, 1]),
+    furnitureSpecsFor(defaultTheme.furniture.colors)
+  );
+});
+
+test('chaque géologie a une teinte lisible, et le calcaire est la référence', () => {
+  // Le calcaire n'a volontairement pas d'entrée : c'est sur lui que la teinte
+  // de pente et les albédos de roche ont été réglés.
+  assert.deepEqual(stoneTintFor('limestone', defaultTheme.stones), [1, 1, 1]);
+  assert.deepEqual(stoneTintFor(null, defaultTheme.stones), [1, 1, 1]);
+  assert.deepEqual(stoneTintFor('roche-inventée', defaultTheme.stones), [1, 1, 1]);
+  assert.deepEqual(stoneTintFor('granite', null), [1, 1, 1], 'sans tranche, rien');
+
+  for (const stone of Object.keys(STONE_KINDS)) {
+    if (stone === 'limestone') continue;
+    const tint = stoneTintFor(stone, defaultTheme.stones);
+    assert.notDeepEqual(tint, [1, 1, 1], `${stone} : aucune teinte`);
+    for (const factor of tint) {
+      // En deçà, la pierre est une ombre ; au-delà, une dalle claire part au
+      // blanc avant que la lumière rasante ne la modèle.
+      assert.ok(factor >= 0.2 && factor <= 1.6, `${stone} : facteur ${factor}`);
+    }
+  }
+
+  // Et toute pierre qu'une région emploie se voit vraiment.
+  for (const region of REGIONS) {
+    assert.ok(defaultTheme.stones[region.stone] || region.stone === 'limestone',
+      `${region.id} : ${region.stone} n’a pas de teinte`);
   }
 });
 

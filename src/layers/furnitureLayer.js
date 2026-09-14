@@ -24,6 +24,7 @@
  */
 
 import { defaultTheme } from '../themes/default.js';
+import { stoneTintFor } from '../core/regionInterpretation.js';
 import {
   createProfileBuffer,
   appendProfile,
@@ -63,6 +64,7 @@ import {
   createLightPoolGeometry,
   createLightPoolMaterial,
   furnitureSpecsFor,
+  furnitureSpecsForStone,
   LAMP_HEAD_HEIGHT_M,
   TRAFFIC_LENS_REACH_M,
 } from './furnitureKit.js';
@@ -173,10 +175,10 @@ export class FurnitureLayer {
     this.theme = theme;
     /**
      * Dossier de région du lieu, ou `null`. Posé par le compositeur. Il décide
-     * de trois choses ici : le bétail d'une pâture, le traitement de ses
-     * limites (`BOUNDARY_MIXES`) et l'essence d'un alignement de route — les
-     * deux dernières dessinant la trame du paysage agraire, qui se lit de bien
-     * plus loin qu'une couleur.
+     * de quatre choses ici : le bétail d'une pâture, le traitement de ses
+     * limites (`BOUNDARY_MIXES`), l'essence d'un alignement de route — ces deux
+     * dernières dessinant la trame du paysage agraire, qui se lit de bien plus
+     * loin qu'une couleur — et la pierre dont sont bâtis les ouvrages balayés.
      */
     this.region = null;
     this.specs = furnitureSpecsFor(theme.furniture.colors);
@@ -328,11 +330,18 @@ export class FurnitureLayer {
   /** Vrai si l'observateur s'est assez éloigné pour justifier une reconstruction. */
   /**
    * Pose la région du lieu. Le mobilier se refait quand elle change (le
-   * compositeur périme le décor), donc il n'y a rien à invalider ici.
+   * compositeur périme le décor), donc il n'y a rien à invalider ici — hormis
+   * les sections balayées, dont la couleur de pierre est cuite dans la
+   * géométrie et doit donc être prête avant la reconstruction.
+   *
    * @param {Object|null} region
    */
   setRegion(region) {
     this.region = region || null;
+    this.specs = furnitureSpecsForStone(
+      this.theme.furniture.colors,
+      stoneTintFor(this.region?.stone ?? null, this.theme.stones)
+    );
   }
 
   needsRebuild(x, z) {

@@ -76,7 +76,10 @@ Les matières du sol, décrites en détail dans `docs/surfaces.md`. En résumé 
 | `water` | polygones `water` permanents, traits `waterway` élargis |
 
 Le pays ne lave que quatre d'entre elles (`grass`, `farmland`, `bare`,
-`pavement`) : une lande, un maquis ou un éboulis disent déjà leur pays.
+`pavement`) : une lande ou un maquis disent déjà leur pays. La dalle et
+l'éboulis prennent un autre axe, la **géologie** (`STONE_LOOK`), qui teinte
+aussi la roche des fortes pentes et tout ce qui est bâti en pierre — muret de
+pierre sèche, mur de soutènement, paroi de déblai.
 
 ### Les cultures
 

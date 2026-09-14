@@ -57,7 +57,9 @@ continent sans rien casser d'autre.
   celui-là, et l'écrire en pensant à l'entre-deux — pas au morceau le plus
   remarquable du pays, mais à ce qu'on traverse entre deux villages.
 - **`stone`** — la géologie dominante, c'est-à-dire la couleur de la pierre
-  quand elle affleure : falaise, éboulis, muret, moellon. Une seule.
+  partout où elle se montre : la roche des fortes pentes, la dalle et
+  l'éboulis, et ce qui est bâti dedans — muret de pierre sèche, mur de
+  soutènement, paroi de déblai. Une seule.
 - **`building`** — un mur, puis un toit, dans cet ordre, deux mots au plus. Le
   toit se lit de plus loin que le mur.
 - **`farming`** — l'assolement, **du plus répandu au moins répandu**. Le rang
@@ -101,6 +103,7 @@ moteur.
 | `FOREST_TYPES` | les essences | un peuplement cite des `species` ; il est retenu si le pays en nomme une |
 | `TOWN_PALETTES` | le bâti | une palette cite des `materials` ; même règle |
 | `SOIL_LOOK` | la matrice | une entrée par matrice : le lavage du sol, la densité et la hauteur des touffes |
+| `STONE_LOOK` | la pierre | une teinte par géologie, appliquée à la roche et aux ouvrages qui en sont faits |
 | `SKY_PALETTE.variants` | la matrice | une variante cite les matrices dont elle colore l'air |
 | `STREET_LOOK.pavement` | la matrice | la teinte du sol revêtu de la ville |
 
@@ -117,7 +120,13 @@ Trois choses à savoir avant d'y toucher :
   lequel le reste du thème a été réglé ;
 - **`grassDensity` fait autant que la couleur.** Un sol jauni couvert d'une
   prairie continue reste une prairie jaunie ; ce qui fait une steppe, c'est la
-  terre qu'on voit entre les touffes.
+  terre qu'on voit entre les touffes ;
+- **`STONE_LOOK` porte des facteurs, comme `SOIL_LOOK`**, et pour la même
+  raison : la pierre est peinte par le shader du sol *et* par la géométrie des
+  ouvrages, et deux palettes les feraient diverger. Le calcaire est la
+  référence et n'a pas d'entrée. Les formes du catalogue — calvaire, moulin,
+  château — gardent leur pierre neutre : elles sont instanciées une fois pour
+  toutes.
 
 Trois tables ne sont pas de la direction artistique mais des règles de
 plausibilité, et elles vivent dans les couches : la trame des limites de

@@ -31,16 +31,13 @@
  * la donnée ou par le moteur. La liste de ces mots, et le nombre de régions qui
  * les emploient, sort du test : c'est la feuille de route du contenu à faire.
  *
- * ## Un vocabulaire sans consommateur
+ * ## Deux vocabulaires que le thème rapproche lui-même
  *
- * `STONE_KINDS` ne traduit encore vers rien : la couleur de la roche est une
- * constante unique du thème. Il est fermé et validé quand même, pour que le
- * fichier de régions se remplisse une seule fois ; ce qu'une pierre vaut à
- * l'œil est une affaire de thème, et se branchera là.
- *
- * `BUILDING_KINDS`, lui, ne traduit vers rien **ici** mais sert bien : ses mots
- * sont ceux que les palettes de bourg citent (`materials`), et c'est le thème
- * qui les rapproche.
+ * `STONE_KINDS` et `BUILDING_KINDS` ne traduisent vers rien **ici**, et c'est
+ * normal : ce qu'une pierre ou un mur vaut à l'œil est une couleur, donc une
+ * affaire de thème. Les palettes de bourg citent les mots de bâti
+ * (`materials`), et `STONE_LOOK` porte une teinte par géologie, que
+ * `stoneTintFor` résout.
  *
  * Toutes les fonctions sont pures.
  */
@@ -120,8 +117,8 @@ export const STONE_KINDS = Object.freeze({
   clay: {},
   alluvium: {},
   gypsum: {},
-  laterite: { unsupported: 'aucune teinte de roche latéritique' },
-  loess: { unsupported: 'aucune teinte de limon éolien' },
+  laterite: {},
+  loess: {},
 });
 
 /**
@@ -386,4 +383,28 @@ export function soilWashFor(matrix, soils = null) {
     grassDensity: look.grassDensity ?? 1,
     grassHeight: look.grassHeight ?? 1,
   };
+}
+
+/** Teinte de pierre neutre : celle du calcaire, sur lequel tout a été réglé. */
+export const STONE_TINT_NEUTRAL = Object.freeze([1, 1, 1]);
+
+/**
+ * Ce que la géologie fait à la pierre, toujours complet.
+ *
+ * Même figure que `soilWashFor`, et pour la même raison : la roche est peinte à
+ * trois endroits — la teinte de pente et les matières minérales dans le shader
+ * de terrain, les ouvrages balayés dans le mobilier — et trois lectures
+ * indépendantes d'un tableau à trous divergeraient à la première géologie qui
+ * n'en décrirait que deux. Un causse blanc dont les murets resteraient gris se
+ * lirait comme deux pays superposés.
+ *
+ * Fonction pure.
+ *
+ * @param {string|null} stone
+ * @param {Object} [stones] Tranche `theme.stones`.
+ * @returns {number[]} facteur par canal, en espace linéaire.
+ */
+export function stoneTintFor(stone, stones = null) {
+  const tint = stone && stones ? stones[stone] : null;
+  return Array.isArray(tint) && tint.length === 3 ? tint : STONE_TINT_NEUTRAL;
 }

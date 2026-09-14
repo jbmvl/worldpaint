@@ -91,7 +91,7 @@ export const TERRAIN_LOOK = {
     // paysage de printemps — plus jaune encore qu'un blé mûr.
     rapeseed: [0.604, 0.522, 0.061],
   },
-  /** Teinte de roche sur les fortes pentes. */
+  /** Teinte de roche sur les fortes pentes, avant la géologie (`STONE_LOOK`). */
   rockColor: [0.72, 0.68, 0.62],
   slopeStart: 0.22,
   slopeEnd: 0.62,
@@ -563,6 +563,63 @@ export const SOIL_LOOK = {
   },
 };
 
+// --- La pierre d'un pays ------------------------------------------------------
+/**
+ * Ce que la géologie fait à la couleur de la pierre, par `region.stone`.
+ *
+ * Trois choses la montrent, et elles doivent s'accorder : la roche qui affleure
+ * sur les fortes pentes (`rockColor`), les matières minérales du sol (celles
+ * que `SURFACE_LOOK` marque `stone`), et ce qui est **bâti** dedans — muret de
+ * pierre sèche, mur de soutènement, paroi de déblai. Un causse blanc dont les
+ * murets seraient gris se lirait comme deux pays superposés.
+ *
+ * ## Des facteurs, pas des couleurs
+ *
+ * Même raison que `SOIL_LOOK` : ces trois lectures partent de bases
+ * différentes — une teinte de pente, deux albédos de matière, deux tons de
+ * nuancier — et une palette par géologie les ferait diverger. Un facteur
+ * multiplicatif, en espace linéaire, les fait toutes bouger du même rapport.
+ *
+ * Le **calcaire est la référence** et n'a pas d'entrée : c'est sur lui que les
+ * valeurs de base ont été réglées. Une géologie absente vaut « pas de
+ * correction ».
+ *
+ * ## Comment elles ont été choisies
+ *
+ * Chaque ligne vise une couleur de roche mouillée de lumière du jour, et le
+ * facteur en est déduit par division. La base étant beige (0,72 / 0,68 / 0,62),
+ * un gris **neutre** demande un facteur qui monte vers le bleu : c'est pourquoi
+ * le granit n'est pas [0,9 0,9 0,9]. Le plafond utile est 1,6 : au-delà, une
+ * dalle claire part au blanc avant que la lumière rasante ne la modèle.
+ *
+ * Deux valeurs sont volontairement moins sombres que la réalité — un basalte
+ * réel réfléchit autour de 0,12, un schiste guère plus. Prises au pied de la
+ * lettre, elles rendent un muret presque noir, qui ne se lit plus comme un
+ * ouvrage mais comme une ombre.
+ */
+export const STONE_LOOK = {
+  /** Craie : le blanc le plus froid du lot, Champagne, Artois, Kent. */
+  chalk: [1.19, 1.28, 1.39],
+  /** Gypse : blanc à peine rosé, Bardenas, Monegros, Tabernas. */
+  gypsum: [1.22, 1.25, 1.29],
+  /** Granit : gris franc, sans jaune — Bretagne, Massif central, Gredos. */
+  granite: [0.86, 0.91, 1.0],
+  /** Schiste : gris bleuté sombre, Ardenne, Cévennes, Alpujarra. */
+  schist: [0.52, 0.57, 0.68],
+  /** Basalte : la roche la plus sombre, Auvergne, Aubrac. */
+  basalt: [0.4, 0.43, 0.49],
+  /** Grès : ocre rouge, Vosges, Fontainebleau, Somontano. */
+  sandstone: [1.08, 0.88, 0.68],
+  /** Argile et marne : brun ocre, terres lourdes du nord et des campiñas. */
+  clay: [0.92, 0.82, 0.68],
+  /** Alluvions : galets et graves, gris beige clair. */
+  alluvium: [0.97, 1.0, 1.02],
+  /** Latérite : rouge brique des sols tropicaux ferrugineux. */
+  laterite: [0.81, 0.44, 0.32],
+  /** Lœss : limon éolien jaune pâle, bassins d'Europe centrale. */
+  loess: [1.03, 0.97, 0.81],
+};
+
 // --- Les matières du sol ------------------------------------------------------
 /**
  * **Toutes** les matières du sol, sur un pied d'égalité, et c'est tout ce
@@ -582,6 +639,10 @@ export const SOIL_LOOK = {
  *
  * - `albedo` : la couleur, en linéaire. C'est la seule chose qui se lise encore
  *   à cent mètres, donc la seule qui compte vraiment ;
+ * - `stone` : vrai si la matière est la roche du socle, donc teintée par la
+ *   géologie du pays (`STONE_LOOK`). C'est un second axe, indépendant du
+ *   lavage : un éboulis ne jaunit pas parce qu'il fait sec, il est gris ou ocre
+ *   parce que la roche l'est ;
  * - `wash` : quel lavage de pays s'applique (`SOIL_LOOK`), ou `null`. Une
  *   lande, un maquis, un éboulis disent déjà leur pays ; les teinter une
  *   seconde fois le dirait deux fois ;
@@ -682,8 +743,8 @@ export const SURFACE_LOOK = {
   // un plateau de pierre. Les confondre était le défaut du gris unique.
   scree: {
     albedo: [0.323, 0.292, 0.254],
-   
     wash: null,
+    stone: true,
     grassHeight: 0.3,
     grassDensity: 0.06,
     grassTint: [1, 0.96, 0.88],
@@ -691,8 +752,8 @@ export const SURFACE_LOOK = {
   },
   rock: {
     albedo: [0.371, 0.332, 0.27],
-   
     wash: null,
+    stone: true,
     grassHeight: 0.35,
     grassDensity: 0.1,
     grassTint: [1, 0.96, 0.88],
@@ -1556,6 +1617,7 @@ export const defaultTheme = Object.freeze({
   crops: CROP_LOOK,
   surfaces: SURFACE_LOOK,
   soils: SOIL_LOOK,
+  stones: STONE_LOOK,
   towns: TOWN_PALETTES,
   personalities: BUILDING_PERSONALITIES,
   roofs: { pitch: ROOF_PITCH, maxRiseM: ROOF_MAX_RISE_M },
