@@ -118,7 +118,7 @@ import {
   LEVEL_GROUND,
 } from './roadWorks.js';
 import {
-  resamplePath,
+  subdividePath,
   createRibbonBuffer,
   slicePath,
   createProfileBuffer,
@@ -308,7 +308,11 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
   };
 }
 
-/** Pas de ré-échantillonnage le long d'une chaussée, en mètres. */
+/**
+ * Pas **maximal** de ré-échantillonnage le long d'une chaussée, en mètres.
+ * Un arc de raccordement y arrive déjà décrit par ses cordes, et
+ * `subdividePath` les garde : le pas réel y est plus serré.
+ */
 export const ROAD_SAMPLE_M = 5;
 /** Portée du réseau autour de l'observateur, en mètres. */
 export const ROAD_RADIUS_M = 900;
@@ -809,7 +813,7 @@ export function collectRoadSegments(
     const { distance: sinceAnchor, anchorIndex } = anchorDistances(chain.points, chain.anchors);
 
     for (const run of clipToRadius(chain.points, here.x, here.z, radius)) {
-      const path = resamplePath(run.points, ROAD_SAMPLE_M);
+      const path = subdividePath(run.points, ROAD_SAMPLE_M);
       if (path.length < 2) continue;
 
       // Les drapeaux d'ouvrage suivent le découpage : `clipToRadius` rend une

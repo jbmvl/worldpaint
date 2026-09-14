@@ -43,6 +43,21 @@
  * permet à `roadJunctions` de poser ses bouches sur la chaussée telle qu'elle
  * part, et non sur un rayon dont elle s'écarte dès les premiers mètres.
  *
+ * ## Le tracé qui sort d'ici est arrondi
+ *
+ * La tuile simplifie et quantifie : un virage y arrive en deux ou trois
+ * brisures franches, et cette brisure se lit sur tout ce qui suit la chaussée
+ * — la rive, la bordure du trottoir, le marquage, le mobilier. Les chaînes
+ * sortent donc d'ici avec un arc inscrit dans chaque brisure
+ * (`ribbonGeometry.roundCorners`), tableaux parallèles reportés avec elles, et
+ * les branches d'un carrefour avec le même arc : la bouche va chercher la
+ * chaussée sur la branche, et les deux doivent parler du même tracé.
+ *
+ * Deux sommets n'y bougent pas : l'**ancre** — un carrefour tourne au
+ * carrefour, pas dix mètres avant, et la surface du carrefour se construit sur
+ * le nœud — et la ligne où l'**ouvrage** change, qui porte le passage du sol au
+ * tablier.
+ *
  * Le mobilier espacé (bornes, lampadaires) se compte depuis le dernier nœud
  * d'ancrage rencontré (carrefour, cul-de-sac, changement de classe), pas
  * depuis le début de la chaîne : ce bout-là bouge avec le jeu de tuiles chargées.
@@ -71,6 +86,7 @@
  */
 
 import { WORK_NONE, LEVEL_GROUND } from './roadWorks.js';
+import { roundCorners } from './ribbonGeometry.js';
 
 /** Distance en deçà de laquelle deux sommets sont le même nœud, en mètres. */
 export const NODE_WELD_M = 1.2;
@@ -877,7 +893,12 @@ function collectJunctions(
       const count = degreeOf(node, paved);
       if (count < 3) continue;
       const other = node === edge.a ? edge.b : edge.a;
-      const path = branchPath(graph, nodes, node, other, edge.rank, sight, (n) => degreeOf(n, paved));
+      // La branche est arrondie comme la chaîne qu'elle décrit : c'est sur elle
+      // que la bouche du carrefour va chercher la chaussée, et les deux doivent
+      // parler du même tracé.
+      const { points: path } = roundCorners(
+        branchPath(graph, nodes, node, other, edge.rank, sight, (n) => degreeOf(n, paved))
+      );
       // La corde sur une longueur de rue, et non la première arête : voir
       // `BRANCH_HEADING_M`.
       const ahead = pointAlong(path, headingAt);
@@ -1066,7 +1087,44 @@ export function mergeRoadLines(lines, options = {}) {
     }
   }
 
+  for (const chain of joined) smoothChain(chain);
+
   return { chains: joined, junctions };
+}
+
+/**
+ * Sommets qu'un arrondi ne doit pas déplacer : les ancres du graphe — un
+ * carrefour tourne au carrefour, pas dix mètres avant — et les deux bouts d'un
+ * ouvrage, dont la ligne porte le passage du sol au tablier.
+ */
+function rigidVertices(chain) {
+  const count = chain.points.length;
+  const rigid = new Array(count);
+  for (let i = 0; i < count; i++) {
+    const before = Math.max(0, i - 1);
+    const after = Math.min(count - 1, i + 1);
+    rigid[i] =
+      Boolean(chain.anchors[i]) ||
+      chain.works[i] !== chain.works[before] ||
+      chain.works[i] !== chain.works[after] ||
+      chain.levels[i] !== chain.levels[before] ||
+      chain.levels[i] !== chain.levels[after];
+  }
+  return rigid;
+}
+
+/**
+ * Arrondit une chaîne, tableaux parallèles compris : une ligne d'arc hérite de
+ * l'état du sommet qu'elle remplace.
+ */
+function smoothChain(chain) {
+  const { points, source } = roundCorners(chain.points, { keep: rigidVertices(chain) });
+  const carry = (values) => Array.from(source, (i) => values[i]);
+  chain.anchors = carry(chain.anchors);
+  chain.works = carry(chain.works);
+  chain.levels = carry(chain.levels);
+  chain.oneway = carry(chain.oneway);
+  chain.points = points;
 }
 
 /** Marge de requête au-delà de la chaussée couverte par l'index, en mètres. */

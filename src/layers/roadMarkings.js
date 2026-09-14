@@ -173,11 +173,13 @@ function sectionBetween(path, decks, frames, i, j, t) {
     x: a.x + (b.x - a.x) * t,
     z: a.z + (b.z - a.z) * t,
     deck: decks[i] + (decks[j] - decks[i]) * t,
-    // Les repères ne sont pas moyennés : la perpendiculaire de la ligne amont
-    // est celle du ruban sur tout l'intervalle, et un marquage qui prendrait
-    // une autre normale s'écarterait de la rive qu'il longe.
-    px: frames[i * 4 + 2],
-    pz: frames[i * 4 + 3],
+    // La perpendiculaire se prend **entre les deux lignes**, et sans la
+    // renormaliser : c'est ainsi que le ruban tend sa rive d'un sommet décalé
+    // au suivant, donc c'est ainsi qu'un trait la longe. Celle de la ligne
+    // amont, gardée sur tout l'intervalle, rouvrait le marquage à chaque
+    // ligne — d'un écart proportionnel au décalage et à l'angle.
+    px: frames[i * 4 + 2] + (frames[j * 4 + 2] - frames[i * 4 + 2]) * t,
+    pz: frames[i * 4 + 3] + (frames[j * 4 + 3] - frames[i * 4 + 3]) * t,
   };
 }
 

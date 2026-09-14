@@ -109,6 +109,8 @@ import {
 } from '../src/layers/roadMarkings.js';
 import {
   resamplePath,
+  subdividePath,
+  roundCorners,
   smoothColumns,
   createRibbonBuffer,
   appendRibbon,
@@ -777,6 +779,63 @@ test('le ré-échantillonnage refuse les entrées dégénérées', () => {
   assert.deepEqual(resamplePath([], 10), []);
   assert.deepEqual(resamplePath([{ x: 0, z: 0 }], 10), []);
   assert.deepEqual(resamplePath([{ x: 0, z: 0 }, { x: 1, z: 0 }], 0), []);
+});
+
+test('l’arrondi inscrit un arc tangent dans une brisure', () => {
+  // Deux arêtes de 30 m à angle droit : le raccord prend la moitié de chacune,
+  // donc un arc de rayon 15 centré sur (15, 15).
+  const corner = [{ x: 0, z: 0 }, { x: 30, z: 0 }, { x: 30, z: 30 }];
+  const { points, source } = roundCorners(corner);
+
+  assert.ok(points.length > 3, 'la brisure est décrite par plusieurs cordes');
+  close(points[0].x, 0, 1e-9, 'le premier sommet ne bouge pas');
+  close(points[points.length - 1].z, 30, 1e-9, 'le dernier non plus');
+  close(points[1].x, 15, 1e-9, 'l’arc part au milieu de l’arête amont');
+  close(points[1].z, 0, 1e-9, 'et il en part tangent');
+  close(points[points.length - 2].x, 30, 1e-9, 'il arrive au milieu de l’arête aval');
+  close(points[points.length - 2].z, 15, 1e-9, 'tangent lui aussi');
+
+  for (let i = 1; i < points.length - 1; i++) {
+    close(Math.hypot(points[i].x - 15, points[i].z - 15), 15, 1e-6, `rayon de la ligne ${i}`);
+  }
+
+  // Chaque ligne dit de quel sommet elle sort : c'est ce qui permet de reporter
+  // les tableaux parallèles au tracé (ouvrage, niveau, sens).
+  assert.equal(source[0], 0);
+  assert.equal(source[source.length - 1], 2);
+  for (let i = 1; i < source.length - 1; i++) assert.equal(source[i], 1, `origine de la ligne ${i}`);
+});
+
+test('un sommet gardé franc traverse l’arrondi sans bouger', () => {
+  const corner = [{ x: 0, z: 0 }, { x: 30, z: 0 }, { x: 30, z: 30 }];
+  assert.deepEqual(roundCorners(corner, { keep: [false, true, false] }).points, corner);
+});
+
+test('l’arrondi écarte les sommets que la tuile a quantifiés', () => {
+  // Trois sommets dans le mètre : c'est le pas de la grille de la tuile, pas un
+  // virage. Les raccorder ferait trois brisures là où il n'y a qu'une droite.
+  const line = [{ x: 0, z: 0 }, { x: 0.3, z: 0.2 }, { x: 0.7, z: -0.2 }, { x: 40, z: 0 }];
+  assert.deepEqual(roundCorners(line).points, [{ x: 0, z: 0 }, { x: 40, z: 0 }]);
+});
+
+test('la subdivision garde les sommets du tracé et borne le pas', () => {
+  const line = [{ x: 0, z: 0 }, { x: 12, z: 0 }, { x: 12, z: 3 }];
+  const path = subdividePath(line, 5);
+
+  const last = path[path.length - 1];
+  close(last.x, 12, 1e-9, 'le tracé va jusqu’au bout en x');
+  close(last.z, 3, 1e-9, 'le tracé va jusqu’au bout en z');
+  close(last.distance, 15, 1e-9, 'et son abscisse est la longueur parcourue');
+  assert.ok(
+    path.some((p) => Math.abs(p.x - 12) < 1e-9 && Math.abs(p.z) < 1e-9),
+    'le sommet de la polyligne est resté une ligne'
+  );
+
+  for (let i = 1; i < path.length; i++) {
+    const step = Math.hypot(path[i].x - path[i - 1].x, path[i].z - path[i - 1].z);
+    assert.ok(step <= 5 + 1e-9, `pas ${i} = ${step}`);
+    assert.ok(path[i].distance > path[i - 1].distance, `abscisse croissante en ${i}`);
+  }
 });
 
 test('le lissage longitudinal écrête le bruit sans mélanger les colonnes', () => {
@@ -5899,6 +5958,50 @@ test('des chemins qu’aucune route ne rejoint font carrefour entre eux', () => 
   ]);
   assert.equal(junctions.length, 1);
   assert.equal(junctions[0].profile, 'track');
+});
+
+test('une chaîne ressort du graphe arrondie, ses tableaux parallèles avec elle', () => {
+  const [chain] = mergedChains([
+    {
+      profile: 'minor',
+      halfWidth: 2.5,
+      points: [{ x: 0, z: 0 }, { x: 60, z: 0 }, { x: 100, z: 40 }],
+    },
+  ]);
+
+  assert.ok(chain.points.length > 3, 'la brisure est décrite par un arc');
+  for (const parallel of ['anchors', 'works', 'levels', 'oneway']) {
+    assert.equal(chain[parallel].length, chain.points.length, `${parallel} suit le tracé`);
+  }
+
+  // Les deux bouts sont ceux de la donnée, et plus aucune brisure ne dépasse le
+  // pas d'angle que la flèche consentie autorise.
+  close(chain.points[0].x, 0, 1e-6, 'départ');
+  close(chain.points[chain.points.length - 1].x, 100, 1e-6, 'arrivée');
+  for (let i = 1; i < chain.points.length - 1; i++) {
+    const a = chain.points[i - 1];
+    const b = chain.points[i];
+    const c = chain.points[i + 1];
+    const turn = Math.abs(
+      Math.atan2(c.z - b.z, c.x - b.x) - Math.atan2(b.z - a.z, b.x - a.x)
+    );
+    assert.ok(turn < (15 * Math.PI) / 180, `brisure de ${(turn * 180) / Math.PI}° en ${i}`);
+  }
+});
+
+test('le nœud d’un carrefour reste un angle franc', () => {
+  // Un carrefour tourne au carrefour : un arc l'emmènerait à côté de la surface
+  // que les branches construisent, et la bouche ne retrouverait pas son ruban.
+  const { chains } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: [{ x: 0, z: 0 }, { x: 100, z: 0 }, { x: 140, z: 40 }] },
+    { profile: 'minor', halfWidth: 2.5, points: [{ x: 100, z: 0 }, { x: 100, z: -60 }] },
+  ]);
+
+  const through = chains.find((c) => c.profile === 'major');
+  assert.ok(
+    through.points.some((p) => Math.abs(p.x - 100) < 1e-6 && Math.abs(p.z) < 1e-6),
+    'le nœud est resté sur la chaîne'
+  );
 });
 
 test('un chemin qui coupe une branche n’arrête pas sa polyligne', () => {
@@ -11793,6 +11896,36 @@ test('un trait discontinu tombe aux mêmes mètres, quel que soit le découpage'
     const along = buffer.positions[i] + 100; // la droite part de x = -100
     const k = Math.floor((along + 1e-6) / MARKING_DASH_M);
     assert.ok(k % 2 === 0 || Math.abs(along % MARKING_DASH_M) < 1e-6, `peinture à ${along} m`);
+  }
+});
+
+test('un trait de marquage se referme d’une ligne à l’autre dans un virage', () => {
+  const path = subdividePath(
+    roundCorners([{ x: 0, z: 0 }, { x: 60, z: 0 }, { x: 60, z: 60 }]).points,
+    5
+  );
+  const decks = new Float32Array(path.length);
+  const buffer = createProfileBuffer();
+  const laid = appendMarkingLine(buffer, {
+    path,
+    decks,
+    frames: pathFrames(path),
+    offset: 2.5,
+    color: [1, 1, 1],
+  });
+  assert.equal(laid, path.length - 1, 'un quadrilatère par intervalle');
+
+  // Ordre des sommets d'un quadrilatère : (amont·gauche, amont·droite,
+  // aval·gauche, aval·droite). L'aval de l'un est donc l'amont du suivant, et
+  // deux traits qui ne partagent pas ces sommets laissent une fente dans le
+  // virage — d'autant plus large que le trait est décalé de l'axe.
+  for (let q = 1; q < laid; q++) {
+    for (const edge of [0, 1]) {
+      const before = ((q - 1) * 4 + 2 + edge) * 3;
+      const after = (q * 4 + edge) * 3;
+      close(buffer.positions[after], buffer.positions[before], 1e-9, `raccord ${q} en x`);
+      close(buffer.positions[after + 2], buffer.positions[before + 2], 1e-9, `raccord ${q} en z`);
+    }
   }
 });
 

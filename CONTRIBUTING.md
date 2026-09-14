@@ -93,6 +93,18 @@ Breaking one of these needs a very good reason, stated in the PR description.
   never leaves the corridor, so cutting deletes it whole: use
   `pushOutsideCorridor`, which displaces each point clear and keeps one run.
 
+- **The carriageway arrives broken, and leaves rounded.** A tile simplifies and
+  quantises: a bend reaches us as two or three hard corners, and that corner is
+  read by everything that follows the road — kerb, pavement, markings, spaced
+  furniture. `mergeRoadLines` therefore publishes chains, and junction branches,
+  with an arc inscribed in every corner (`ribbonGeometry.roundCorners`). Two
+  vertices never move: a graph **anchor** (a crossroads turns at the crossroads,
+  and its surface is built on the node) and the row where a **brunnel** changes.
+  The sampling step of a road is a **maximum**, not a constant
+  (`ribbonGeometry.subdividePath`): an arc keeps its own chords, so a row is
+  never found by dividing a distance — a point laid along the path carries the
+  row it comes from.
+
 - **A junction is a graph node, not a picture.** `roadGraph` is the only place a
   crossroads exists as such — a node where more than two edges meet **at the
   same level** — and `mergeRoadLines` publishes the list everything else reads.

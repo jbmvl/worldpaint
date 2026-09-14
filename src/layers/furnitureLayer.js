@@ -41,7 +41,6 @@ import {
   hedgeEndTaper,
 } from './hedgeGeometry.js';
 import { facetJitter } from './facetJitter.js';
-import { ROAD_SAMPLE_M } from './roadNetwork.js';
 import { edgeClearance } from './roadEdges.js';
 import { LEVEL_GROUND } from './roadWorks.js';
 import { collectBuiltUpAreas, collectPlaceNames } from './settlement.js';
@@ -891,8 +890,7 @@ export class FurnitureLayer {
 
     let y = null;
     if (onPlatform && platform?.length) {
-      const row = Math.min(platform.length - 1, Math.max(0, Math.round(point.distance / ROAD_SAMPLE_M)));
-      y = platform[row];
+      y = platform[Math.min(platform.length - 1, Math.max(0, point.row ?? 0))];
     }
 
     return this._place(placements, item, { x, z, y, yaw, scale, exactY: y != null });
