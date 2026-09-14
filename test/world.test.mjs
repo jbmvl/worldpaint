@@ -9202,8 +9202,11 @@ test('un nom de maillage se traduit, et rien ne se perd en route', () => {
   assert.equal(labelForMeshName('vegetation-15/16594/11269'), 'arbres');
   assert.equal(labelForMeshName('terrain-15/16594/11269'), 'terrain 15/16594/11269');
 
-  // Ce qui n'est pas du décor n'est pas étiqueté.
+  // Ce qui n'est pas du décor n'est pas étiqueté. Les rayons de soleil en
+  // sont : leurs quatre sommets vivent à l'origine de la scène (le panneau est
+  // déplié dans le shader), et une étiquette les y aurait épinglés.
   assert.equal(labelForMeshName('sky-dome'), null);
+  assert.equal(labelForMeshName('light-shafts'), null);
   assert.equal(labelForMeshName(''), null);
 
   // Un outil de mise au point qui tait ce qu'il ne connaît pas ment sur l'état

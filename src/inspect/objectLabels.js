@@ -172,7 +172,7 @@ export const LABEL_FAUNA = {
 };
 
 /** Objets qu'on ne nomme pas : ils sont l'ambiance, pas le décor. */
-export const LABEL_IGNORED = new Set(['sky-dome', 'sun']);
+export const LABEL_IGNORED = new Set(['sky-dome', 'sun', 'light-shafts']);
 
 /**
  * Nom lisible d'un maillage, ou `null` s'il ne doit pas être étiqueté.
