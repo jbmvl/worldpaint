@@ -320,6 +320,17 @@ import {
   BUSH_MAX_HEIGHT,
   coverBushesFor,
 } from '../src/layers/vegetationLayer.js';
+import {
+  LightShafts,
+  SHAFT_BANDS,
+  SHAFT_COUNT,
+  SHAFT_RADIUS_M,
+  SHAFT_FOOT_LIFT_M,
+  SHAFT_WOOD_MIN,
+  shaftShare,
+  shaftLength,
+  shaftWidth,
+} from '../src/layers/lightShafts.js';
 import { TREE_ESSENCES } from '../src/themes/default.js';
 import {
   grassVariantFor,
@@ -1107,6 +1118,265 @@ test('la strate basse porte sa taille, et le tapis du sol ne pousse que de près
 
   // Et un thème sans strate basse rend quand même une case d’atlas valide.
   assert.equal(understoryStrata({}, true).length, 1);
+});
+
+// --- Les rayons de soleil sous les houppes --------------------------------------
+
+/** Le peu de `THREE` dont les rayons ont besoin : rien n’y dessine. */
+function fakeShaftTHREE() {
+  class Attribute {
+    constructor(array, itemSize) {
+      this.array = array;
+      this.itemSize = itemSize;
+      this.needsUpdate = false;
+    }
+    setUsage() {
+      return this;
+    }
+  }
+  return {
+    AdditiveBlending: 2,
+    DoubleSide: 2,
+    DynamicDrawUsage: 0,
+    Group: class {
+      constructor() {
+        this.children = [];
+      }
+      add(child) {
+        this.children.push(child);
+      }
+      remove(child) {
+        this.children = this.children.filter((c) => c !== child);
+      }
+    },
+    Vector3: class {
+      constructor(x, y, z) {
+        Object.assign(this, { x, y, z });
+      }
+      set(x, y, z) {
+        return Object.assign(this, { x, y, z });
+      }
+    },
+    Color: class {
+      constructor(r, g, b) {
+        Object.assign(this, { r, g, b });
+      }
+      setRGB(r, g, b) {
+        return Object.assign(this, { r, g, b });
+      }
+    },
+    BufferAttribute: Attribute,
+    InstancedBufferAttribute: Attribute,
+    InstancedBufferGeometry: class {
+      constructor() {
+        this.attributes = {};
+        this.instanceCount = 0;
+      }
+      setAttribute(name, attribute) {
+        this.attributes[name] = attribute;
+        return this;
+      }
+      getAttribute(name) {
+        return this.attributes[name];
+      }
+      setIndex() {
+        return this;
+      }
+      dispose() {}
+    },
+    ShaderMaterial: class {
+      constructor(options) {
+        Object.assign(this, options);
+      }
+      dispose() {}
+    },
+    Mesh: class {
+      constructor(geometry, material) {
+        this.geometry = geometry;
+        this.material = material;
+      }
+    },
+  };
+}
+
+/** Une couche de rayons montée sur des stubs, dans un bois qu’on décrit. */
+function shaftLayer(woodAt = () => 1) {
+  return new LightShafts({
+    THREE: fakeShaftTHREE(),
+    scene: fakeScene(),
+    bubble: {
+      frame: 'frame',
+      verticalScale: 1,
+      // Une pente douce : le pied d’un rayon doit suivre le sol, pas un plan.
+      surfaceElevationAtLocal: (x) => x * 0.01,
+    },
+    groundClass: { woodAt },
+    theme: defaultTheme,
+  });
+}
+
+/** Ce qui a été semé, rayon par rayon. */
+function scattered(layer) {
+  const out = [];
+  for (let i = 0; i < layer.geometry.instanceCount; i++) {
+    const o = i * 3;
+    out.push({
+      x: layer._feet[o],
+      y: layer._feet[o + 1],
+      z: layer._feet[o + 2],
+      length: layer._shafts[o],
+      width: layer._shafts[o + 1],
+      glow: layer._shafts[o + 2],
+    });
+  }
+  return out;
+}
+
+test('un rayon ne naît que sous une houppe fermée, et se compte à l’hectare', () => {
+  const look = defaultTheme.shafts;
+  const [band] = SHAFT_BANDS;
+
+  // Une lisière laisse passer le jour partout : elle ne fabrique pas de
+  // faisceau. Le seuil lui-même ne donne donc rien, et le couvert monte en
+  // fondu au-dessus — sans quoi le bord du bois serait une frontière nette
+  // entre « criblé de rayons » et « aucun ».
+  assert.equal(shaftShare(0.2, look, band), 0);
+  assert.equal(shaftShare(SHAFT_WOOD_MIN, look, band), 0);
+  assert.ok(shaftShare(0.8, look, band) < shaftShare(1, look, band));
+
+  // En bois plein, c’est le réglage du thème qu’on retrouve : tant de rayons
+  // à l’hectare, répartis sur les tirages de la maille.
+  close(
+    shaftShare(1, look, band) * band.perCell * (10000 / (band.cell * band.cell)),
+    look.perHectare,
+    1e-9,
+    'rayons à l’hectare'
+  );
+  // Et la maille peut porter ce que le thème lui demande : au-delà, c’est le
+  // nombre de tirages qui déciderait de la densité, pas le thème.
+  assert.ok(shaftShare(1, look, band) < 1, `part des tirages : ${shaftShare(1, look, band)}`);
+});
+
+test('un rayon s’efface aux deux bords de la bande, et jamais sous le nez', () => {
+  const [band] = SHAFT_BANDS;
+  assert.equal(SHAFT_BANDS.length, 1, 'une seule échelle : un rayon lointain s’efface, il ne se remplace pas');
+  assert.equal(SHAFT_RADIUS_M, band.to);
+  // Le fondu d’entrée n’est pas un détail : un panneau à deux mètres de l’œil
+  // est un mur, pas un rayon.
+  assert.ok(band.fadeIn > band.cell, `fondu d’entrée de ${band.fadeIn} m`);
+  assert.ok(band.fadeOut > 0);
+
+  const layer = shaftLayer();
+  layer.update(0, 0, { force: true });
+  const semis = scattered(layer);
+  assert.ok(semis.length > 0, 'un bois plein porte des rayons');
+  assert.ok(semis.length <= SHAFT_COUNT, `plafond tenu (${semis.length})`);
+
+  for (const ray of semis) {
+    const distance = Math.hypot(ray.x, ray.z);
+    assert.ok(distance < SHAFT_RADIUS_M, `dans l’anneau (${distance.toFixed(1)} m)`);
+    // L’éclat porte le fondu : au bord, un rayon pâlit au lieu de s’éteindre.
+    if (distance < band.fadeIn * 0.5) assert.ok(ray.glow < 0.55, 'pâle sous le nez');
+    assert.ok(ray.glow > 0 && ray.glow <= 1, `éclat ${ray.glow}`);
+    // Le pied est au sol, décollé de ce qu’il faut pour que la pente ne le coupe pas.
+    close(ray.y, ray.x * 0.01 + SHAFT_FOOT_LIFT_M, 1e-6, 'pied posé sur le terrain');
+    assert.ok(
+      ray.length >= defaultTheme.shafts.minLengthM && ray.length <= defaultTheme.shafts.maxLengthM,
+      `longueur ${ray.length}`
+    );
+    assert.ok(ray.width > 0 && ray.width < ray.length, `largeur ${ray.width}`);
+  }
+});
+
+test('un rayon est ancré au sol : s’éloigner et revenir ne le déplace pas', () => {
+  const [band] = SHAFT_BANDS;
+  const layer = shaftLayer();
+
+  layer.update(0, 0, { force: true });
+  const ici = scattered(layer);
+  layer.update(band.cell * 2, 0, { force: true });
+  const laBas = scattered(layer);
+
+  // Ce qui est dans les deux anneaux est au même endroit dans les deux semis :
+  // c’est l’invariant, et il ne tient que parce que la graine vient d’une
+  // maille du sol, jamais de l’observateur ni du rang dans la boucle.
+  const key = (ray) => `${ray.x.toFixed(3)}/${ray.z.toFixed(3)}/${ray.length.toFixed(3)}`;
+  const connus = new Set(ici.map(key));
+  const interieur = (ray, cx) => {
+    const d = Math.hypot(ray.x - cx, ray.z);
+    return d > band.fadeIn + band.cell && d < band.to - band.fadeOut - band.cell;
+  };
+  const communs = laBas.filter((ray) => interieur(ray, 0) && interieur(ray, band.cell * 2));
+  assert.ok(communs.length > 0, 'les deux anneaux se recouvrent largement');
+  for (const ray of communs) assert.ok(connus.has(key(ray)), `rayon déplacé en ${key(ray)}`);
+
+  // Et un semis ne dépend que du centre : y revenir rend exactement le même bois.
+  layer.update(0, 0, { force: true });
+  assert.deepEqual(scattered(layer), ici);
+});
+
+test('hors du bois, aucun rayon — et sans soleil, rien n’est dessiné', () => {
+  // Un bois qui s’arrête net : rien ne doit être semé du côté clair.
+  const layer = shaftLayer((x) => (x < 0 ? 1 : 0));
+  layer.update(0, 0, { force: true });
+  const semis = scattered(layer);
+  assert.ok(semis.length > 0, 'du côté boisé, des rayons');
+  for (const ray of semis) assert.ok(ray.x < 0, `rayon en plein champ (x = ${ray.x})`);
+
+  const soleil = { direction: { x: 0.3, y: 0.8, z: 0.5 }, color: [1, 0.9, 0.7], amount: 0.5 };
+  layer.setSunlight(soleil);
+  assert.ok(layer.mesh.visible);
+  close(layer.uniforms.uAmount.value, 0.5 * defaultTheme.shafts.opacity, 1e-9, 'opacité du thème');
+  // La couleur est celle de la lumière du moment, teintée par le thème : un
+  // rayon du soir est roux parce que le soleil l’est.
+  const tint = defaultTheme.shafts.tint;
+  close(layer.uniforms.uColor.value.r, 1 * tint[0], 1e-9, 'rouge');
+  close(layer.uniforms.uColor.value.g, 0.9 * tint[1], 1e-9, 'vert');
+  assert.deepEqual({ ...layer.uniforms.uSunDir.value }, soleil.direction);
+
+  // Nuit, ciel bouché, soleil sous l’horizon : plus rien à traverser.
+  layer.setSunlight({ ...soleil, amount: 0 });
+  assert.equal(layer.mesh.visible, false);
+
+  // Sans carte du sol, on ne devine pas une houppe.
+  const aveugle = new LightShafts({
+    THREE: fakeShaftTHREE(),
+    scene: fakeScene(),
+    bubble: { frame: 'frame', verticalScale: 1, surfaceElevationAtLocal: () => 0 },
+    theme: defaultTheme,
+  });
+  aveugle.update(0, 0, { force: true });
+  assert.equal(aveugle.geometry.instanceCount, 0);
+});
+
+test('un rayon pivote autour de l’axe du soleil, pas autour de la verticale', () => {
+  // C’est toute l’astuce : le panneau tourne autour du faisceau pour faire
+  // face à la caméra. Tourné autour de la verticale, il se coucherait à plat
+  // dès que le soleil descend, et le rayon deviendrait une flaque en l’air.
+  const layer = shaftLayer();
+  const { vertexShader, fragmentShader } = layer.material;
+  assert.match(vertexShader, /vec3 side = cross\(axis, toEye\);/);
+  assert.match(vertexShader, /vec3 spine = aFoot \+ axis \* \(reach \* position\.y\);/);
+  // Soleil haut, le faisceau s’arrête à la trouée : sans ça il sortirait du
+  // couvert et se verrait depuis le champ d’à côté.
+  assert.match(vertexShader, /float reach = min\(aShaft\.x, uCeiling \/ max\(axis\.y, 0\.15\)\);/);
+  assert.equal(layer.uniforms.uCeiling.value, defaultTheme.shafts.ceilingM);
+  assert.ok(
+    defaultTheme.shafts.ceilingM < defaultTheme.shafts.maxLengthM,
+    'sinon le plafond ne plafonne rien'
+  );
+  // Regardé par la tranche, il s’efface au lieu de disparaître d’un coup.
+  assert.match(vertexShader, /vFacing = clamp\(span \/ max\(length\(toEye\), 1e-4\), 0\.0, 1\.0\);/);
+  // Et il n’a pas de bord : la section s’adoucit, elle ne se découpe pas.
+  assert.match(fragmentShader, /float across = 1\.0 - vAcross \* vAcross;/);
+
+  // Additif et sans écriture de profondeur : de la lumière ajoutée à l’image,
+  // qui n’a pas d’ordre à décider entre deux rayons — mais que le relief et
+  // les troncs coupent, eux, parce que la profondeur reste testée.
+  assert.equal(layer.material.blending, 2);
+  assert.equal(layer.material.depthWrite, false);
+  assert.equal(layer.material.depthTest, undefined, 'le défaut de three : testée');
+  assert.ok(!('fog' in layer.material), 'aucun brouillard : il ajouterait sa couleur au lieu de l’éteindre');
 });
 
 test('la teinte d’un feuillage dérive par bosquet, et reste ancrée au lieu', () => {

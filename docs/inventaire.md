@@ -166,6 +166,24 @@ maquis 0,9, lande 0,3, pré salé 0,12, marais 0,08, sable 0,05, pelouse
 d'altitude 0,04, dalle 0,02 ; éboulis, vasière et glace 0. C'est ce qui fait exister un maquis — ni prairie ni forêt, mais
 un fourré bas.
 
+### Les rayons de soleil (`lightShafts`)
+
+Sous un couvert fermé — au moins 55 % de bois dans la maille, une lisière n'en
+porte pas —, des faisceaux tendus le long de l'axe du soleil, du sol à la
+trouée de houppe : 7 à l'hectare, longs de 9 à 24 m — mais jamais plus haut que
+la trouée (14 m), sinon le soleil de midi les ferait sortir du couvert par le
+dessus. Semés dans un anneau de 150 m, redistribué tous les 10 m de marche.
+
+Ce ne sont pas des volumes éclairés mais des panneaux additifs qui pivotent
+autour de l'axe du soleil pour rester face à la caméra ; aucune brume n'est
+requise. Ils s'éteignent avec la nuit, sous un ciel bouché, et quand le soleil
+rase l'horizon. La profondeur est testée mais jamais écrite : le relief et les
+troncs les coupent, et deux rayons n'ont pas d'ordre à décider.
+
+Seule chose du décor à lire la lumière directe du ciel — direction, couleur et
+force lui sont passées par le compositeur (`setSunlight`), comme la nuit et le
+vent.
+
 ### L'herbe (`groundCover`)
 
 Trois échelles selon la distance (la plante, la touffe, la masse). La quantité
@@ -442,6 +460,10 @@ brouillard, la teinte du sol (mouillé, il fonce et sature), et deux couches de
 particules — la pluie ou la neige, et les feuilles arrachées par le vent, qui
 s'éteignent dès qu'il pleut.
 
+La lumière directe qui en sort est aussi ce qui allume les rayons de soleil
+sous les houppes (voir « La végétation ») : plus de disque solaire, plus de
+rayons.
+
 ---
 
 ## Les cadences
@@ -454,6 +476,7 @@ bougé tout seul » :
 | mobilier, bâti, chaussées, bêtes | 250 m |
 | carte du sol (matières et cultures) | 400 m |
 | fourrés du sous-bois | 12 m |
+| rayons de soleil | 10 m |
 | oiseaux, fumée, pluie, vent | chaque image |
 
 ## Les limites connues

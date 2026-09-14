@@ -25,7 +25,8 @@
  * maisons, lisent emprise et bande revêtue) → mobilier (tronçons + index des
  * chaussées, compte de bâtiments, emprise ferroviaire, lieux nommés) →
  * arbres (après la carte de classes et les chaussées : une tuile semée hors de
- * portée de l'index des chaussées se resème quand il va jusqu'à elle) → herbe
+ * portée de l'index des chaussées se resème quand il va jusqu'à elle) → rayons
+ * de soleil (même lecture du bois que les arbres, rien de plus) → herbe
  * (après l'index des chaussées) → cheminées et bêtes (publiées par le
  * mobilier, animées par `lifeLayer` et `faunaLayer`).
  *
@@ -64,6 +65,7 @@ import { GardenLayer } from './layers/gardenLayer.js';
 import { StreetLayer } from './layers/streetLayer.js';
 import { FabricIndex, readSettlement } from './layers/settlement.js';
 import { VegetationLayer } from './layers/vegetationLayer.js';
+import { LightShafts } from './layers/lightShafts.js';
 import { GroundCover } from './layers/groundCover.js';
 import { CropLayer } from './layers/cropLayer.js';
 import { FurnitureLayer } from './layers/furnitureLayer.js';
@@ -205,6 +207,9 @@ export class WorldComposer {
       theme,
     });
     this.vegetation.setMaxAnisotropy(maxAnisotropy);
+    // Les rayons lisent le même bois que les arbres, et rien d'autre du décor :
+    // ce qui leur manque vient du ciel, par `setSunlight`.
+    this.shafts = new LightShafts({ THREE, scene, bubble, groundClass: this.groundClass, theme });
     this.grass = new GroundCover({
       THREE,
       scene,
@@ -410,6 +415,10 @@ export class WorldComposer {
         force: hasRoads || classStale || climateChanged || force,
       });
 
+      // 6 bis. Rayons de soleil — même lecture du bois, redistribuée autour de
+      //    l'observateur comme le sous-étage.
+      this.shafts.update(here.x, here.z, { force: classStale || force });
+
       // 7. Herbe — l'index des chaussées vient peut-être de changer.
       if (hasRoads || classStale || climateChanged || force) {
         this.grass.update(here.x, here.z, { force: true });
@@ -536,6 +545,7 @@ export class WorldComposer {
     this.grass.update(at.x, at.z);
     this.vegetation.advance(delta);
     this.vegetation.update(at.x, at.z);
+    this.shafts.update(at.x, at.z);
     this.crops.advance(delta);
     this.crops.update(at.x, at.z);
     this.life.advance(delta, at);
@@ -560,6 +570,21 @@ export class WorldComposer {
     this.buildings.setNight(mix);
     this.furniture.setNight(mix);
     this.life.setNight(mix);
+  }
+
+  /**
+   * Passe la lumière directe du moment à ce que le soleil traverse — les
+   * rayons sous les houppes, et rien d'autre pour l'instant.
+   *
+   * Sans garde d'idempotence, contrairement à `setNight` : deux uniformes
+   * écrits, là où la nuit parcourt des maillages.
+   *
+   * @param {{direction:{x:number,y:number,z:number}, color:number[], amount:number}} sunlight
+   *        Voir `SceneEnvironment.sunlight`.
+   */
+  setSunlight(sunlight) {
+    if (this.disposed || !sunlight) return;
+    this.shafts.setSunlight(sunlight);
   }
 
   /**
@@ -611,6 +636,7 @@ export class WorldComposer {
     this.furniture.dispose();
     this.crops.dispose();
     this.grass.dispose();
+    this.shafts.dispose();
     this.vegetation.dispose();
     this.gardens.dispose();
     this.streets.dispose();

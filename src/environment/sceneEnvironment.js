@@ -180,6 +180,14 @@ export class SceneEnvironment {
     this.wind = windField(this.weather);
     /** Part de sol mouillé, de 0 à 1. Lue par le terrain, la chaussée, la voirie. */
     this.wetness = this.weather.wetness;
+    /**
+     * La lumière directe telle qu'elle arrive au sol : sa direction, sa couleur
+     * linéaire, et ce qu'il en reste une fois la nuit, le couvert et la hauteur
+     * du soleil comptés. Publiée pour ce que le soleil **traverse** — les
+     * rayons sous les houppes ; même figure que `nightMix` et `wind`.
+     * Refaite à chaque `update` : à lire, pas à garder.
+     */
+    this.sunlight = { direction: { x: 0, y: 1, z: 0 }, color: [1, 1, 1], amount: 0 };
 
     this.sky = new Sky();
     this.sky.name = 'sky-dome';
@@ -490,6 +498,12 @@ export class SceneEnvironment {
     // La perspective aérienne lit la couleur de jour, pas déjà mélangée à la
     // nuit : la part de nuit est appliquée ensuite, comme le fait la voûte.
     this._publishAerialFog(dayFogColor, [r, g, b], dir, nightMix);
+
+    // Ce qui reste du disque solaire. Le dernier facteur éteint un soleil qui
+    // rase l'horizon : ce qu'il traverse est alors couché et sans fin.
+    this.sunlight.direction = dir;
+    this.sunlight.color = [r, g, b];
+    this.sunlight.amount = light.shadow * (1 - nightMix) * smoothstep(0.02, 0.18, dir.y);
 
     // L'ombre s'efface en opacité avant de s'éteindre en tout ou rien (sinon un nuage ferait tout disparaître d'un coup).
     if (this.sun.shadow && 'intensity' in this.sun.shadow) {

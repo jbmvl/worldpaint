@@ -79,6 +79,7 @@ function fakeComposer() {
     setNight: (...a) => calls.push(['setNight', ...a]),
     setWind: (...a) => calls.push(['setWind', ...a]),
     setWetness: (...a) => calls.push(['setWetness', ...a]),
+    setSunlight: (...a) => calls.push(['setSunlight', ...a]),
     dispose: () => calls.push(['dispose']),
   };
 }
@@ -117,6 +118,7 @@ test('avec un ciel, updateSky recale le dôme avant de propager la nuit', () => 
     nightMix: 0.4,
     wetness: 0.25,
     wind: { amplitude: 1, speed: 1 },
+    sunlight: { direction: { x: 0, y: 1, z: 0 }, color: [1, 1, 1], amount: 0.5 },
     weather: 'météo',
     clearColor: 'bleu',
     followCamera: () => order.push('followCamera'),
@@ -154,6 +156,7 @@ test('avec un ciel, updateSky recale le dôme avant de propager la nuit', () => 
     // et les oiseaux si — voir `WorldComposer.setWind`.
     ['setWind', { amplitude: 1, speed: 1 }, 'météo'],
     ['setWetness', 0.25],
+    ['setSunlight', { direction: { x: 0, y: 1, z: 0 }, color: [1, 1, 1], amount: 0.5 }],
   ]);
 });
 
@@ -271,6 +274,7 @@ import {
   ROAD_PROFILES,
   WORKS_STYLES,
   FURNITURE_COLORS,
+  LIGHT_SHAFT_LOOK,
 } from '../src/themes/default.js';
 
 test('la vue groupée du thème ne recopie rien', () => {
@@ -281,6 +285,7 @@ test('la vue groupée du thème ne recopie rien', () => {
   assert.equal(defaultTheme.roads.profiles, ROAD_PROFILES);
   assert.equal(defaultTheme.works, WORKS_STYLES);
   assert.equal(defaultTheme.furniture.colors, FURNITURE_COLORS);
+  assert.equal(defaultTheme.shafts, LIGHT_SHAFT_LOOK);
 });
 
 test('le thème ne porte ni plafond ni portée', () => {

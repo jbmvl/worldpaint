@@ -231,8 +231,8 @@ export class World {
   /**
    * Avance l'heure du ciel et rend de quoi peindre le reste de l'image. Les
    * gestes vont dans cet ordre : dôme recalé sur la caméra, soleil replacé,
-   * nuit propagée aux fenêtres/lampadaires, vent et mouillé propagés au
-   * décor, puis boîte d'ombre posée devant l'observateur.
+   * nuit propagée aux fenêtres/lampadaires, vent, mouillé et lumière directe
+   * propagés au décor, puis boîte d'ombre posée devant l'observateur.
    *
    * @param {Object} options
    * @param {Object} options.camera  Caméra de l'application (le dôme la suit).
@@ -260,6 +260,7 @@ export class World {
     this.composer.setNight(env.nightMix);
     this.composer.setWind(env.wind, env.weather);
     this.composer.setWetness(env.wetness);
+    this.composer.setSunlight(env.sunlight);
     env.followShadow(shadowAt || camera.position);
     return {
       nightMix: env.nightMix,

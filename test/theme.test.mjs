@@ -34,6 +34,7 @@ import { waterwayStyleFor } from '../src/terrain/groundClassMap.js';
 import { grassVariantFor } from '../src/layers/groundCover.js';
 import { windowGrid } from '../src/layers/buildingLayer.js';
 import { forestTypeAt, variantsFor } from '../src/layers/vegetationLayer.js';
+import { SHAFT_BANDS, shaftShare, shaftLength, shaftWidth } from '../src/layers/lightShafts.js';
 import { roadStyleFor } from '../src/layers/roadNetwork.js';
 import { furnitureSpecsFor, FURNITURE_BUILDERS } from '../src/layers/furnitureKit.js';
 import { hedgeStyleFor, hedgeClumps } from '../src/layers/hedgeGeometry.js';
@@ -49,6 +50,16 @@ const OTHER = resolveTheme({
   windows: { widthM: 2, heightM: 3, levelM: 6, sillM: 2, litShare: 1 },
   water: { waterways: { river: 40, stream: 20 } },
   grass: { minHeight: 5, maxHeight: 6, aspect: 2, flowerShare: 1, poppyShare: 1 },
+  shafts: {
+    minLengthM: 2,
+    maxLengthM: 3,
+    ceilingM: 2,
+    widthRatio: 1,
+    widthJitter: 0,
+    opacity: 1,
+    tint: [0, 0, 1],
+    perHectare: 60,
+  },
   forests: [{ name: 'palmeraie', essences: ['column'], minHeight: 30, maxHeight: 40, density: 0.1, tint: [1, 1, 1] }],
   trees: { variants: defaultTheme.trees.variants, essences: { column: [7, 8] } },
   roads: {
@@ -146,6 +157,25 @@ test('les largeurs de cours d’eau suivent le thème', () => {
   // Une classe retirée du thème n'est plus dessinée : c'est bien le thème qui
   // décide, pas une liste que le moteur garderait par-devers lui.
   assert.equal(waterwayStyleFor({ class: 'ditch' }, OTHER.water.waterways), null);
+});
+
+test('les rayons de soleil suivent le thème', () => {
+  const [band] = SHAFT_BANDS;
+  const [a, b] = interleaved(
+    () => [
+      shaftShare(1, DEFAULT.shafts, band),
+      shaftLength(DEFAULT.shafts, 0.5),
+      shaftWidth(10, DEFAULT.shafts, 0.5),
+    ],
+    () => [
+      shaftShare(1, OTHER.shafts, band),
+      shaftLength(OTHER.shafts, 0.5),
+      shaftWidth(10, OTHER.shafts, 0.5),
+    ]
+  );
+  assert.ok(b[0] > a[0], `un bois plus criblé de rayons (${b[0]} contre ${a[0]})`);
+  assert.ok(b[1] < a[1], 'des faisceaux plus courts');
+  assert.equal(b[2], 10, 'aussi larges que longs, sans écart d’un rayon à l’autre');
 });
 
 test('la part de fleurs suit le thème', () => {

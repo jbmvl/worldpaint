@@ -400,6 +400,36 @@ export const WOODLAND_FLOOR = {
   tint: [0.99, 0.91, 0.87],
 };
 
+// --- Les rayons de soleil sous les houppes ---------------------------------------
+/**
+ * Ce que vaut une trouée de houppe traversée par le soleil (`layers/lightShafts.js`).
+ *
+ * - `minLengthM`/`maxLengthM` : longueur du faisceau, mesurée le long de l'axe
+ *   du soleil, du sol à la trouée. Soleil rasant, un rayon de vingt mètres ne
+ *   monte qu'à sept ;
+ * - `ceilingM` : hauteur de la trouée au-dessus du sol. Elle raccourcit le
+ *   faisceau quand le soleil est haut — sans elle, un rayon de pleine longueur
+ *   sortirait du couvert et se verrait depuis le champ d'à côté ;
+ * - `widthRatio` et `widthJitter` : largeur au pied, en part de la longueur, et
+ *   l'écart d'un rayon à l'autre ;
+ * - `opacity` : ce qu'un rayon ajoute à l'image, plein soleil et vu de flanc.
+ *   Additif : au-delà de quelques dixièmes, la forêt devient une nappe de lait ;
+ * - `tint` : la teinte, multipliée par la couleur de la lumière directe du
+ *   moment — un rayon du soir est roux parce que le soleil l'est ;
+ * - `perHectare` : combien de rayons dans un bois plein. C'est ici que se règle
+ *   « une clairière percée de loin en loin » contre « une cathédrale ».
+ */
+export const LIGHT_SHAFT_LOOK = {
+  minLengthM: 9,
+  maxLengthM: 24,
+  ceilingM: 14,
+  widthRatio: 0.1,
+  widthJitter: 0.45,
+  opacity: 0.2,
+  tint: [1, 0.95, 0.8],
+  perHectare: 7,
+};
+
 // --- Les cultures --------------------------------------------------------------
 /**
  * Hauteur et silhouette de chaque culture. `atlas` désigne la case de
@@ -1546,6 +1576,7 @@ export const defaultTheme = Object.freeze({
     poppyShare: POPPY_SHARE,
     woodFloor: WOODLAND_FLOOR,
   },
+  shafts: LIGHT_SHAFT_LOOK,
   crops: CROP_LOOK,
   surfaces: SURFACE_LOOK,
   soils: SOIL_LOOK,

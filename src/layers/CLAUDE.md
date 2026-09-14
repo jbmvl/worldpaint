@@ -20,6 +20,7 @@ son état.
 | `buildingLayer.js`, `roofGeometry.js` | le bâti et ses toitures |
 | `streetLayer.js`, `gardenLayer.js` | trottoirs et coins de rue, clôtures et buissons de maison |
 | `vegetationLayer.js`, `groundCover.js`, `cropLayer.js` | arbres, herbe, cultures |
+| `lightShafts.js` | les rayons de soleil sous les houppes : la seule couche qui lise la lumière directe |
 | `furnitureLayer.js` + `furniture/` | tout le mobilier — voir ci-dessous |
 | `faunaLayer.js`, `faunaMotion.js`, `faunaCrossing.js`, `lifeLayer.js` | ce qui bouge |
 | `settlement.js` | l'habitat : emprises habitées, lieux nommés, `UrbanMask`, `FabricIndex` |
