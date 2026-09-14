@@ -118,6 +118,8 @@ import {
   appendProfile,
   appendVariableWall,
   appendRockCut,
+  appendSteps,
+  STEP_RISE_M,
   flattenGrade,
   slicePath,
 } from '../src/layers/ribbonGeometry.js';
@@ -1396,6 +1398,45 @@ test('un ruban dégénéré ne produit rien', () => {
   assert.equal(buffer.positions.length, 0);
 });
 
+test('un escalier redécoupe la dénivelée en marches de hauteur constante', () => {
+  const buffer = createRibbonBuffer();
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 6, z: 0 }], 0.5);
+  const drop = 1; // 1 m de dénivelée sur 6 m de tracé
+  const platform = Float32Array.from(path, (p) => (p.x / 6) * drop);
+  const steps = Math.round(drop / STEP_RISE_M);
+
+  assert.ok(appendSteps(buffer, { path, halfWidth: 0.7, platform }));
+  // Deux quads par marche (contremarche puis giron), quatre sommets chacun.
+  assert.equal(buffer.positions.length / 3, steps * 2 * 4);
+
+  // Chaque contremarche est verticale : ses deux points bas partagent le même
+  // (x, z) que ses deux points hauts — seule la hauteur change.
+  for (let k = 0; k < steps; k++) {
+    const base = k * 8 * 3; // 8 sommets par marche (contremarche + giron)
+    for (const c of [0, 1]) {
+      close(buffer.positions[base + c * 3], buffer.positions[base + (c + 2) * 3], 1e-9, `marche ${k}`);
+      close(buffer.positions[base + c * 3 + 2], buffer.positions[base + (c + 2) * 3 + 2], 1e-9, `marche ${k}`);
+    }
+  }
+  // La dernière marche atteint exactement la cote d'arrivée.
+  close(buffer.positions[buffer.positions.length - 2], platform[platform.length - 1], 1e-4, 'cote finale');
+});
+
+test('un escalier plat (sans dénivelée) reste une marche unique', () => {
+  const buffer = createRibbonBuffer();
+  const path = resamplePath([{ x: 0, z: 0 }, { x: 3, z: 0 }], 0.5);
+  const platform = Float32Array.from(path, () => 10);
+  assert.ok(appendSteps(buffer, { path, halfWidth: 0.7, platform }));
+  assert.equal(buffer.positions.length / 3, 1 * 2 * 4);
+});
+
+test('un escalier dégénéré ne produit rien', () => {
+  const buffer = createRibbonBuffer();
+  assert.equal(appendSteps(buffer, { path: [], halfWidth: 0.7, platform: [] }), false);
+  assert.equal(appendSteps(buffer, { path: [{ x: 0, z: 0, distance: 0 }], halfWidth: 0.7, platform: [0] }), false);
+  assert.equal(buffer.positions.length, 0);
+});
+
 // --- Réseau routier --------------------------------------------------------
 
 test('la classe OpenMapTiles choisit un profil de chaussée', () => {
@@ -1438,7 +1479,8 @@ test('la largeur du ruban est celle de la section dessinée', () => {
   // C’est l’invariant qui empêche le marquage de s’étirer : une seule source
   // de vérité pour la texture et pour la géométrie.
   for (const [key, profile] of Object.entries(ROAD_PROFILES)) {
-    const style = roadStyleFor({ class: classForProfile(key) });
+    // L'escalier n'a pas de classe propre : c'est une sous-classe de `path`.
+    const style = roadStyleFor(key === 'steps' ? { class: 'path', subclass: 'steps' } : { class: classForProfile(key) });
     assert.ok(style, `une classe mène au profil ${key}`);
     close(ROAD_PROFILES[style.profile].width / 2, style.halfWidth, 1e-9, key);
     assert.ok(profile.width > 0);
@@ -1453,8 +1495,10 @@ test('la hiérarchie des profils descend par retraits successifs', () => {
   assert.equal(minor.centerDash, false, 'la petite route perd l’axe central');
   assert.equal(minor.edgeLines, true);
   assert.equal(lane.edgeLines, false, 'une desserte n’a aucun marquage');
-  // Les largeurs sont strictement décroissantes le long de la hiérarchie.
+  // Les largeurs sont strictement décroissantes le long de la hiérarchie —
+  // sauf l'escalier, dernier de l'ordre, qui partage le gabarit du sentier.
   for (let i = 1; i < ROAD_PROFILE_ORDER.length; i++) {
+    if (ROAD_PROFILE_ORDER[i] === 'steps') continue;
     const wide = ROAD_PROFILES[ROAD_PROFILE_ORDER[i - 1]].width;
     const narrow = ROAD_PROFILES[ROAD_PROFILE_ORDER[i]].width;
     assert.ok(wide > narrow, `${ROAD_PROFILE_ORDER[i - 1]} plus large que ${ROAD_PROFILE_ORDER[i]}`);
@@ -1474,7 +1518,7 @@ test('la sous-classe sépare piste cyclable, sentier et escalier', () => {
   assert.equal(roadStyleFor({ class: 'path', subclass: 'cycleway' }).profile, 'cycleway');
   assert.equal(roadStyleFor({ class: 'path', bicycle: 'designated' }).profile, 'cycleway');
   assert.equal(roadStyleFor({ class: 'path', subclass: 'footway' }).profile, 'path');
-  assert.equal(roadStyleFor({ class: 'path', subclass: 'steps' }), null, 'un escalier n’est pas un ruban');
+  assert.equal(roadStyleFor({ class: 'path', subclass: 'steps' }).profile, 'steps');
 });
 
 /** Une classe menant à chaque profil, pour le test d’invariant. */

@@ -123,6 +123,7 @@ import {
   slicePath,
   createProfileBuffer,
   appendRibbon,
+  appendSteps,
   toGeometry,
   toColoredGeometry,
   pathFrames,
@@ -230,6 +231,9 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
     texture.anisotropy = 8;
     const material = new THREE.MeshLambertMaterial({ map: texture, ...depthOffset(profile) });
     material.name = `road-${key}`;
+    // Un escalier a des contremarches verticales : vues de dos (en descendant
+    // une pente qui monte derrière soi), une face simple les rendrait invisibles.
+    if (profile.steps) material.side = THREE.DoubleSide;
 
     // Un chemin de terre n'a pas de rive : son bord est rongé par le sol, et
     // le masque le découpe au seuil plutôt que de le fondre — une chaussée
@@ -428,7 +432,7 @@ export function gradeAllowance(slope) {
  * centimètres dessous. Un chemin, qui n'entre pas dans le carrefour d'une
  * route, est décollé au-dessus (`UNPAVED_LIFT_M`).
  */
-export const ROAD_PROFILE_ORDER = ['express', 'major', 'minor', 'lane', 'track', 'cycleway', 'path'];
+export const ROAD_PROFILE_ORDER = ['express', 'major', 'minor', 'lane', 'track', 'cycleway', 'path', 'steps'];
 
 /**
  * Profil par `class` OpenMapTiles. Les valeurs de `class` sont celles que
@@ -518,8 +522,8 @@ export function roadStyleFor(properties = {}, profiles = defaultTheme.roads.prof
 
   if (properties.class === 'path' || properties.class === 'cycleway') {
     const subclass = properties.subclass;
-    if (subclass === 'steps') return null;
-    if (subclass === 'cycleway' || properties.bicycle === 'designated') key = 'cycleway';
+    if (subclass === 'steps') key = 'steps';
+    else if (subclass === 'cycleway' || properties.bicycle === 'designated') key = 'cycleway';
     else if (subclass === 'track') key = 'track';
   }
 
@@ -1056,11 +1060,14 @@ export class RoadNetwork {
       // celles du tracé entier : le marquage ne se décale ni au ressortir d'un
       // tunnel ni au sortir d'un carrefour.
       const drawable = drawableRuns(segment.works, segment.path.length);
+      // Un escalier n'a pas de ruban : sa plate-forme continue est redécoupée
+      // en marches (`appendSteps`) plutôt que balayée telle quelle.
+      const geometryFor = spec.steps ? appendSteps : appendRibbon;
       for (const run of junctionRibbonRuns(segment, areas, drawable)) {
         const ribbon = isPaved(spec) ? run : unpavedRun(segment, run, continued);
         const added =
           ribbon &&
-          appendRibbon(buffers[segment.profile], {
+          geometryFor(buffers[segment.profile], {
             path: ribbon.path,
             halfWidth: segment.halfWidth,
             sampleElevation,

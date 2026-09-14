@@ -396,6 +396,118 @@ export function appendRibbon(
   return true;
 }
 
+/** Hauteur de contremarche visée, en mètres (norme du bâtiment : 16 à 18 cm). */
+export const STEP_RISE_M = 0.17;
+
+/**
+ * Balaie un escalier le long d'une polyligne : la plate-forme continue
+ * (`platform`, une cote par ligne, dressée comme pour `appendRibbon`) est
+ * redécoupée en marches de hauteur constante — un vrai plan horizontal par
+ * marche relié à la suivante par une face verticale, pas une rampe qui
+ * l'imite.
+ *
+ * Le nombre de marches vient de la dénivelée totale entre les deux bouts du
+ * tronçon, divisée par `STEP_RISE_M` et arrondie : c'est la seule cote qu'un
+ * escalier OSM ne porte jamais, et elle fixe une contremarche régulière du
+ * bas en haut, comme un escalier réel — le giron, lui, est ce que la longueur
+ * du tracé laisse à chaque marche une fois leur nombre fixé.
+ *
+ * Repris de `appendRibbon` : les colonnes vont de la rive droite (u=0) à la
+ * rive gauche (u=1) de la marche, dans le même ordre — un escalier partage
+ * son buffer avec les rubans du même profil.
+ *
+ * @param {Object} buffer Résultat de `createRibbonBuffer()`.
+ * @param {Object} options
+ * @param {Array<{x:number,z:number,distance:number}>} options.path Tracé
+ *        continu de la volée (déjà ré-échantillonné, comme pour `appendRibbon`).
+ * @param {number} options.halfWidth
+ * @param {Float32Array} options.platform Cote de plate-forme continue, une
+ *        par ligne de `path` : c'est elle qui donne la dénivelée à répartir en
+ *        marches, pas le terrain brut revisité ligne à ligne.
+ * @param {number} [options.lift] Décollement au-dessus de la plate-forme.
+ * @param {number} [options.textureLength] Mètres couverts par un cycle de texture.
+ * @param {number} [options.riseM] Hauteur de marche visée (`STEP_RISE_M`).
+ * @returns {boolean} vrai si de la géométrie a été produite.
+ */
+export function appendSteps(
+  buffer,
+  { path, halfWidth, platform, lift = 0, textureLength = 12, riseM = STEP_RISE_M }
+) {
+  const rows = path?.length ?? 0;
+  if (rows < 2 || !platform) return false;
+
+  const start = path[0].distance;
+  const end = path[rows - 1].distance;
+  const span = end - start;
+  if (!(span > 0)) return false;
+
+  const frames = pathFrames(path);
+  // Position et repère transverse à une distance quelconque du tracé continu —
+  // c'est lui qui donne le sens de la marche ; les marches elles-mêmes n'en
+  // portent pas, deux d'entre elles pouvant partager le même point du plan.
+  const at = (distance) => {
+    let row = 0;
+    while (row < rows - 2 && path[row + 1].distance < distance) row++;
+    const a = path[row];
+    const b = path[row + 1];
+    const span2 = b.distance - a.distance;
+    const t = span2 > 0 ? Math.min(1, Math.max(0, (distance - a.distance) / span2)) : 0;
+    return {
+      x: a.x + (b.x - a.x) * t,
+      z: a.z + (b.z - a.z) * t,
+      px: frames[row * 4 + 2] + (frames[(row + 1) * 4 + 2] - frames[row * 4 + 2]) * t,
+      pz: frames[row * 4 + 3] + (frames[(row + 1) * 4 + 3] - frames[row * 4 + 3]) * t,
+    };
+  };
+
+  const drop = platform[rows - 1] - platform[0];
+  const steps = Math.max(1, Math.round(Math.abs(drop) / riseM));
+
+  // Les deux arêtes d'une section, dans l'ordre de colonne d'`appendRibbon` :
+  // rive droite (u=0) puis rive gauche (u=1).
+  const edges = (point, height) => ({
+    right: { x: point.x - point.px * halfWidth, y: height, z: point.z - point.pz * halfWidth },
+    left: { x: point.x + point.px * halfWidth, y: height, z: point.z + point.pz * halfWidth },
+  });
+
+  const pushQuad = (a, b, va, vb) => {
+    const i0 = buffer.positions.length / 3;
+    buffer.positions.push(a.right.x, a.right.y, a.right.z);
+    buffer.positions.push(a.left.x, a.left.y, a.left.z);
+    buffer.positions.push(b.right.x, b.right.y, b.right.z);
+    buffer.positions.push(b.left.x, b.left.y, b.left.z);
+    buffer.uvs.push(0, va, 1, va, 0, vb, 1, vb);
+    buffer.indices.push(i0, i0 + 2, i0 + 1, i0 + 1, i0 + 2, i0 + 3);
+    if (buffer.tips) for (let i = 0; i < 4; i++) buffer.tips.push(0, 0);
+  };
+
+  let point = at(start);
+  let height = platform[0] + lift;
+  let distance = start;
+
+  for (let k = 1; k <= steps; k++) {
+    const nextDistance = start + (span * k) / steps;
+    const nextHeight = platform[0] + (drop * k) / steps + lift;
+    const nextPoint = at(nextDistance);
+
+    // Contremarche : face verticale à la position de la marche précédente.
+    pushQuad(edges(point, height), edges(point, nextHeight), distance / textureLength, distance / textureLength);
+    // Giron : plan horizontal jusqu'à la marche suivante.
+    pushQuad(
+      edges(point, nextHeight),
+      edges(nextPoint, nextHeight),
+      distance / textureLength,
+      nextDistance / textureLength
+    );
+
+    point = nextPoint;
+    height = nextHeight;
+    distance = nextDistance;
+  }
+
+  return true;
+}
+
 /**
  * Balaie une section quelconque le long d'une polyligne posée sur le terrain.
  * Brique de tout le mobilier linéaire : haie, muret, glissière, mur de

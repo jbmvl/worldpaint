@@ -1054,6 +1054,10 @@ export const ROAD_PROFILES = {
   // part de sa largeur : c'est un passage, pas une voie.
   track: { width: 3, shoulder: 0, surface: 'dirt', ruts: true, ragged: 0.3, texture: 64 },
   path: { width: 1.4, shoulder: 0, surface: 'dirt', ragged: 0.2, texture: 64 },
+  // Même gabarit que le sentier — c'en est un, en marches. `steps` dit à
+  // `roadNetwork` de le balayer en contremarches (`appendSteps`) plutôt qu'en
+  // ruban continu.
+  steps: { width: 1.4, shoulder: 0, surface: 'dirt', ragged: 0.2, texture: 64, steps: true },
 };
 /**
  * Revêtements : une couleur de base, et rien d'autre. Chacun portait aussi une
