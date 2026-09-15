@@ -12,10 +12,15 @@
  * a été demandé), dispose. Plus un sixième, à part : `crossFauna`, qui ne
  * construit ni n'avance rien — il déclenche un événement (voir
  * `WorldComposer.crossFauna`).
+ *
+ * `roadPositionAt` n'est ni l'un ni l'autre : une question, pas une action —
+ * où poser quelque chose qui doit suivre la chaussée (remblai, pont) plutôt
+ * que le terrain nu que suit déjà `bubble.toScenePosition`.
  */
 
 import { ElevationField } from './core/elevationField.js';
 import { WorldComposer, WORLD_ATTRIBUTION, FAUNA_CROSS_AHEAD_M } from './worldComposer.js';
+import { platformPositionAt } from './layers/roadNetwork.js';
 import {
   SceneEnvironment,
   SKY_RADIUS,
@@ -174,6 +179,42 @@ export class World {
   /** Carte d'occupation du sol, lue par l'étiquetage des cultures. */
   get groundClass() {
     return this.composer.groundClass;
+  }
+
+  /**
+   * Position de scène au point `(lng, lat)`, sur la plate-forme de la
+   * chaussée qui y passe — remblai et pont compris — ou sur le terrain nu
+   * ailleurs. `heightAboveGround` a le même sens que pour
+   * `bubble.toScenePosition`, dont c'est le pendant conscient de la route :
+   * celui-là suit toujours le terrain, y compris sous un viaduc ou sur un
+   * pont, puisqu'il ne connaît pas les chaussées.
+   *
+   * À un croisement en dénivelé, deux chaussées peuvent recouvrir le même
+   * point en plan. `aheadLng`/`aheadLat` — un point à quelques mètres, dans
+   * le sens du déplacement — départage en faveur de celle dont le tracé va
+   * dans cette direction : l'autre est celle qu'on franchit, pas celle qu'on
+   * suit. Sans eux, la plus proche l'emporte.
+   *
+   * @param {number} lng
+   * @param {number} lat
+   * @param {number} [heightAboveGround]
+   * @param {{aheadLng?: number, aheadLat?: number}} [options]
+   * @returns {{x:number, y:number, z:number}}
+   */
+  roadPositionAt(lng, lat, heightAboveGround = 0, { aheadLng, aheadLat } = {}) {
+    const bubble = this.composer.bubble;
+    if (!bubble?.frame) return { x: 0, y: heightAboveGround, z: 0 };
+
+    const here = bubble.frame.toLocal(lng, lat);
+    let ahead = null;
+    if (aheadLng != null && aheadLat != null) {
+      const there = bubble.frame.toLocal(aheadLng, aheadLat);
+      ahead = { x: there.x - here.x, z: there.z - here.z };
+    }
+
+    const deck = platformPositionAt(this.composer.roads, here.x, here.z, ahead);
+    if (deck == null) return bubble.toScenePosition(lng, lat, heightAboveGround);
+    return { x: here.x, y: deck + heightAboveGround, z: here.z };
   }
 
   /** Couleur de fond à donner au renderer, ou `null` sans ciel. */

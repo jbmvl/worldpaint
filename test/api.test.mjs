@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import * as api from '../src/index.js';
 import { defaultTheme } from '../src/themes/default.js';
 import { World, createWorld, DEFAULT_VIEW } from '../src/world.js';
+import { RoadIndex } from '../src/layers/roadGraph.js';
 
 /** Ce qu'une application a le droit d'attendre à la version 0.1. */
 const CONTRACT = [
@@ -100,6 +101,33 @@ test('la façade délègue sans rien ajouter', () => {
     ['refresh', 2.35, 48.85, { force: true }],
     ['advance', 0.016, { x: 1, y: 2, z: 3 }],
   ]);
+});
+
+test('roadPositionAt suit la plate-forme d’une chaussée, le terrain sinon', () => {
+  // Repère jouet où 1° vaut 1 m : suffisant pour vérifier la délégation,
+  // sans reconstruire un vrai repère local.
+  const bubble = {
+    frame: { toLocal: (lng, lat) => ({ x: lng, z: lat }) },
+    toScenePosition: (lng, lat, height) => ({ x: lng, y: 1 + height, z: lat }),
+  };
+  const segment = {
+    halfWidth: 2.5,
+    path: [
+      { x: 0, z: 0 },
+      { x: 10, z: 0 },
+    ],
+    platform: new Float32Array([5, 5]),
+  };
+  const composer = fakeComposer();
+  composer.bubble = bubble;
+  composer.roads = { elevationIndex: new RoadIndex([segment], { includeWorks: true }) };
+  const world = new World({ composer, environment: null, elevation: null, ownsElevation: false });
+
+  const onRoad = world.roadPositionAt(5, 0, 0.14);
+  assert.ok(Math.abs(onRoad.y - 5.14) < 1e-9, 'sur la chaussée, la plate-forme l’emporte sur le terrain');
+
+  const offRoad = world.roadPositionAt(50, 50, 0.14);
+  assert.ok(Math.abs(offRoad.y - 1.14) < 1e-9, 'hors chaussée, retombe sur le terrain');
 });
 
 test('sans ciel, updateSky ne rend rien et n’allume rien', () => {

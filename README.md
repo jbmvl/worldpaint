@@ -173,6 +173,26 @@ Deer, goats and foxes bound; everything else trots. That is decided per species
 (`FAUNA_SPECIES[kind].bound`) and blended in with speed, so a walking deer
 still moves diagonally.
 
+### Reading the road, not just the ground
+
+```js
+world.roadPositionAt(lng, lat, heightAboveGround, { aheadLng, aheadLat });
+```
+
+`world.bubble.toScenePosition(lng, lat, heightAboveGround)` always answers on
+the terrain — the natural ground, cut where a road is carved into it. That is
+wrong for an embankment or a bridge: the road there sits above the terrain it
+crosses, not at its height. `roadPositionAt` answers the same question but on
+the road's own platform when one passes through the point, falling back to
+`toScenePosition` off-road. `heightAboveGround` keeps the same meaning either
+way.
+
+At a grade-separated crossing two roads can cover the same point in plan —
+the one the caller means, and the one it passes over or under. `aheadLng`/
+`aheadLat`, a point a few metres ahead along the direction of travel, breaks
+the tie in favour of whichever road's own direction matches; without them the
+nearest one wins.
+
 ### Weather
 
 Weather is **state, not art direction**: it changes as you go, so it travels

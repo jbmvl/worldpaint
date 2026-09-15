@@ -200,6 +200,7 @@ import {
   ROAD_GRADE_CUT_FLAT_M,
   ROAD_GRADE_CUT_STEEP_M,
   ROAD_GRADE_FILL_STEEP_M,
+  platformPositionAt,
 } from '../src/layers/roadNetwork.js';
 import {
   mergeRoadLines,
@@ -7703,6 +7704,60 @@ test('l’emprise s’arrête à la culée : l’herbe pousse au-dessus d’un t
   assert.equal(index.deckAt(index.query(50, 0, 1)), null, 'ni altitude à y lire');
   // La culée reste inscrite : l'emprise ne s'interrompt pas avant la tête.
   assert.ok(index.covers(25, 0), 'la dernière arête au jour tient encore');
+});
+
+test('l’index d’altitude sert la plate-forme sous un pont, quand l’emprise s’y refuse', () => {
+  const segment = fakeSegment(straight(0, 100, 20), 4.25, 12);
+  segment.works = new Uint8Array(segment.path.length);
+  segment.works.fill(WORK_BRIDGE, 5, 15);
+  const ground = new RoadIndex([segment]);
+  const elevation = new RoadIndex([segment], { includeWorks: true });
+
+  assert.equal(ground.query(50, 0, 1), null, 'l’emprise au sol ignore le tablier');
+  close(elevation.deckAt(elevation.query(50, 0, 1)), 12, 1e-6, 'l’index d’altitude, non');
+});
+
+test('queryAll rend toutes les chaussées qui se recouvrent, la plus proche en tête', () => {
+  const own = fakeSegment(straight(0, 100, 10), 2.5, 10);
+  const other = fakeSegment(straight(-100, 0, 1, 2), 2.5, 20); // passe un peu plus loin
+  const index = new RoadIndex([own, other]);
+
+  const hits = index.queryAll(0, 0, 1);
+  assert.equal(hits.length, 2, 'les deux chaussées couvrent le point');
+  assert.equal(hits[0].segment, own, 'la plus proche en tête');
+  assert.ok(hits[0].distance <= hits[1].distance);
+});
+
+test('platformPositionAt lit la plate-forme, remblai et pont compris', () => {
+  const segment = fakeSegment(straight(0, 100, 20), 4.25, 12);
+  segment.works = new Uint8Array(segment.path.length);
+  segment.works.fill(WORK_BRIDGE, 5, 15);
+  const roads = { elevationIndex: new RoadIndex([segment], { includeWorks: true }) };
+
+  close(platformPositionAt(roads, 50, 0), 12, 1e-6, 'sous le tablier, la plate-forme répond');
+  assert.equal(platformPositionAt(roads, 500, 0), null, 'hors chaussée, rien à lire');
+  assert.equal(platformPositionAt(null, 50, 0), null, 'sans réseau construit, rien ne casse');
+});
+
+test('platformPositionAt départage un croisement en dénivelé par le sens du déplacement', () => {
+  // Une route est-ouest à z = 0, une autre nord-sud à x = 50 : elles se
+  // recouvrent exactement à (50, 0), comme un pont qui en franchit une autre.
+  const eastWest = fakeSegment(straight(0, 100, 10), 2.5, 5);
+  const northSouth = fakeSegment(straight(-50, 50, 10, 0).map((p) => ({ x: 50, z: p.x })), 2.5, 25);
+  const roads = { elevationIndex: new RoadIndex([eastWest, northSouth], { includeWorks: true }) };
+
+  close(
+    platformPositionAt(roads, 50, 0, { x: 1, z: 0 }),
+    5,
+    1e-6,
+    'on avance vers l’est : c’est la route est-ouest qu’on suit'
+  );
+  close(
+    platformPositionAt(roads, 50, 0, { x: 0, z: 1 }),
+    25,
+    1e-6,
+    'on avance vers le sud : c’est l’autre'
+  );
 });
 
 test('sur un versant, l’aplanissement et la travée se passent le relais', () => {
