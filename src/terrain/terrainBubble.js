@@ -11,7 +11,9 @@
  *
  * Le déblai des chaussées (`setRoadCut`) perturbe ce relief naturel : une
  * route est taillée dans le versant, pas posée dessus, et l'entaille est une
- * fonction pure de la position au sol, donc les tuiles voisines s'accordent au bord.
+ * fonction pure de la position au sol, donc les tuiles voisines s'accordent au
+ * bord. Son fond plat ne peut pas être plus étroit qu'une maille, sans quoi
+ * aucun sommet n'y tombe et le triangle enjambe la chaussée (`cutBenchM`).
  *
  * L'eau, elle, ne touche pas au relief : c'est une matière du sol, pas une
  * surface (`groundClassMap`).
@@ -21,7 +23,7 @@ import { createLocalFrame, tilesAround, tileKey, lngLatToTile } from '../core/ti
 import { DEM_TILE_PIXELS } from '../core/elevationField.js';
 import { TerrainMaterialFactory } from './terrainMaterial.js';
 import { defaultTheme } from '../themes/default.js';
-import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M, ROAD_CUT_MAX_RING } from './roadCut.js';
+import { cutElevationAt, cutBenchAt, ROAD_CUT_BLEND_M, ROAD_CUT_MAX_RING } from './roadCut.js';
 
 /** Un pixel DEM, en unités de tuile : pas d'échantillonnage du gradient. */
 const GRADIENT_STEP_TILES = 1 / DEM_TILE_PIXELS;
@@ -39,7 +41,8 @@ export class TerrainBubble {
    * @param {number} options.zoom            Zoom des tuiles.
    * @param {number} [options.blockSize]     Côté du bloc, en tuiles (impair).
    * @param {number[]} [options.segmentsByRing] Mailles par tuile et par côté,
-   *        anneau par anneau. Rapport 2 d'un anneau au suivant, pour un raccord de bord exact (cf. `_buildMesh`).
+   *        anneau par anneau. Le bord commun à deux finesses est rééchantillonné
+   *        sur la plus grossière (`_buildMesh`), quel que soit leur rapport.
    * @param {number} [options.verticalScale] Exagération du relief (1 = réel).
    * @param {Object} [options.groundClass] Instance `GroundClassMap`, transmise
    *        au matériau : c'est elle qui décide la matière du sol.
@@ -125,6 +128,16 @@ export class TerrainBubble {
   /** Finesse de maille d'une tuile donnée. */
   segmentsForTile(x, y) {
     return this.segmentsForRing(this.ringOf(x, y));
+  }
+
+  /**
+   * Largeur du fond plat de l'entaille, en mètres — la cote que tout ce qui
+   * borde une chaussée doit lire (`roadCut.cutBenchAt`). Tirée de la maille la
+   * plus grossière qui soit creusée, donc constante tant que la bulle l'est.
+   */
+  get cutBenchM() {
+    if (!this.frame) return cutBenchAt(0);
+    return cutBenchAt(this.frame.scale / this.segmentsForRing(ROAD_CUT_MAX_RING));
   }
 
   /** Numéro de la surface affichée. Change quand la maille a fini de se réajuster, pas pendant que la file se draine. */
@@ -338,7 +351,8 @@ export class TerrainBubble {
       return Math.min(raw, slab / scale);
     }
 
-    const hit = index.query(x, z, ROAD_CUT_M + ROAD_CUT_BLEND_M);
+    const bench = this.cutBenchM;
+    const hit = index.query(x, z, bench + ROAD_CUT_BLEND_M);
     if (!hit) return raw;
     const deck = index.deckAt(hit);
     if (deck == null) return raw;
@@ -346,7 +360,7 @@ export class TerrainBubble {
     // La plate-forme est en unités de scène (déjà multipliée par l'exagération
     // verticale) ; `raw` est en unités de MNT. On compare dans le même espace.
     const scale = this.verticalScale || 1;
-    return cutElevationAt(raw, deck / scale, hit.distance, hit.segment.halfWidth);
+    return cutElevationAt(raw, deck / scale, hit.distance, hit.segment.halfWidth, bench);
   }
 
   /** Position dans le repère local, posée sur la surface affichée. */

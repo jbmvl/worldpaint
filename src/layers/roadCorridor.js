@@ -17,7 +17,12 @@
 
 import { ROAD_CUT_M } from '../terrain/roadCut.js';
 
-/** Débord de l'emprise au-delà de la rive de la chaussée, en mètres — le fond plat du déblai (`ROAD_CUT_M`). */
+/**
+ * Débord de l'emprise au-delà de la rive de la chaussée, en mètres —
+ * l'accotement excavé (`ROAD_CUT_M`). C'est ce que le décor garde libre, et non
+ * la largeur à laquelle le terrain est creusé (`roadCut.cutBenchAt`), plus
+ * large : de l'herbe pousse sur un accotement en déblai.
+ */
 export const CORRIDOR_MARGIN_M = ROAD_CUT_M;
 
 /**

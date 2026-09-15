@@ -535,7 +535,7 @@ import {
 } from '../src/layers/streetLayer.js';
 import { streetSurfaceAt } from '../src/layers/townStyle.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
-import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
+import { cutElevationAt, cutBenchAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
 import { TerrainMaterialFactory } from '../src/terrain/terrainMaterial.js';
 import {
   birdAt,
@@ -3115,6 +3115,70 @@ test('le déblai ne remblaie jamais : côté aval, le terrain ne bouge pas', () 
   close(cutElevationAt(100, 100, 1, 3), 100, 1e-9, 'à niveau, rien à creuser');
 });
 
+
+test('le fond plat vaut au moins une maille de terrain', () => {
+  // Sur une maille plus fine que l’emprise, c’est l’emprise qui commande : rien
+  // ne gagne à creuser moins large qu’un terrassier.
+  close(cutBenchAt(0.4), ROAD_CUT_M, 1e-9, 'maille fine');
+  close(cutBenchAt(0), ROAD_CUT_M, 1e-9, 'maille inconnue');
+  close(cutBenchAt(4.64), 4.64, 1e-9, 'maille large');
+});
+
+test('un fond plat d’une maille garde la corde du triangle sous la chaussée', () => {
+  // Le déblai n’est creusé qu’aux sommets de la maille ; entre deux sommets,
+  // ce qui s’affiche est la corde du triangle. Un fond plat plus étroit qu’une
+  // maille peut n’en contenir aucun sommet, et la corde enjambe alors la
+  // chaussée. Versant à 60 %, plate-forme enfoncée de 2 m sous le terrain de
+  // l’axe, maille de l’anneau entaillé.
+  const step = 890 / 192;
+  const halfWidth = 3.5;
+  const deck = 100;
+  // La maille n’est jamais alignée sur la route, ni décalée d’un compte rond.
+  const theta = Math.PI / 5;
+  const across = (x, z) => x * -Math.sin(theta) + z * Math.cos(theta);
+  const raw = (x, z) => deck + 2 + across(x, z) * 0.6;
+  const vertex = (i, j, bench) => {
+    const x = step / 2 + i * step;
+    const z = step / 2 + j * step;
+    return { x, z, y: cutElevationAt(raw(x, z), deck, Math.abs(across(x, z)), halfWidth, bench) };
+  };
+
+  /** Plus haut point de la surface affichée au-dessus de la chaussée. */
+  const highest = (bench) => {
+    let above = -Infinity;
+    const N = 8;
+    const scan = (a, b, c) => {
+      for (let u = 0; u <= N; u++) {
+        for (let v = 0; u + v <= N; v++) {
+          const wa = u / N;
+          const wb = v / N;
+          const wc = 1 - wa - wb;
+          const x = a.x * wa + b.x * wb + c.x * wc;
+          const z = a.z * wa + b.z * wb + c.z * wc;
+          if (Math.abs(across(x, z)) > halfWidth) continue;
+          above = Math.max(above, a.y * wa + b.y * wb + c.y * wc - deck);
+        }
+      }
+    };
+    for (let i = -8; i < 8; i++) {
+      for (let j = -8; j < 8; j++) {
+        const a = vertex(i, j, bench);
+        const b = vertex(i + 1, j, bench);
+        const c = vertex(i, j + 1, bench);
+        const d = vertex(i + 1, j + 1, bench);
+        scan(a, c, b);
+        scan(b, c, d);
+      }
+    }
+    return above;
+  };
+
+  const bare = highest(ROAD_CUT_M);
+  assert.ok(bare > 1, `la seule emprise laisse percer le terrain (${bare.toFixed(2)} m)`);
+  const held = highest(cutBenchAt(step));
+  assert.ok(held <= ROAD_LIFT_M, `un fond plat d’une maille le retient (${held.toFixed(2)} m)`);
+});
+
 // --- Sections balayées ------------------------------------------------------
 
 test('une section balayée pose ses sommets en travers et referme son anneau', () => {
@@ -3205,7 +3269,7 @@ function roadsideHarness({ profile = 'minor', here = { x: 200, z: 0 } } = {}) {
   const placements = new Map();
   for (const item of POINT_ITEMS) placements.set(item, []);
 
-  const context = { buffers, placements, sampleElevation: () => 100, here };
+  const context = { buffers, placements, sampleElevation: () => 100, cutBench: ROAD_CUT_M, here };
   const segment = { path, platform, edges, probeSpan: 4, halfWidth: 2.5, profile, startDistance: 0, anchor: path[0] };
   return { layer, context, segment, rowsInfo, buffers, placements };
 }
@@ -3215,7 +3279,7 @@ function roadsideHarness({ profile = 'minor', here = { x: 200, z: 0 } } = {}) {
  * de déblai lit : la plate-forme, le terrain naturel et la hauteur dont il la
  * domine. Le versant monte vers -z, donc en amont à gauche de la marche.
  */
-function rockCutHarness({ rise = 4, slope = 0.35 } = {}) {
+function rockCutHarness({ rise = 4, slope = 0.35, cutBench = ROAD_CUT_M } = {}) {
   const layer = Object.create(FurnitureLayer.prototype);
   layer.specs = furnitureSpecsFor(defaultTheme.furniture.colors);
 
@@ -3228,7 +3292,7 @@ function rockCutHarness({ rise = 4, slope = 0.35 } = {}) {
   // que la roche vient couvrir.
   const rawElevation = (x, z) => deck - z * slope;
   const sampleElevation = (x, z) =>
-    cutElevationAt(rawElevation(x, z), deck, Math.abs(z), 2.5);
+    cutElevationAt(rawElevation(x, z), deck, Math.abs(z), 2.5, cutBench);
 
   const rowsInfo = path.map((p, r) => ({
     r, x: p.x, z: p.z, distance: p.distance,
@@ -3237,9 +3301,9 @@ function rockCutHarness({ rise = 4, slope = 0.35 } = {}) {
 
   const buffers = {};
   for (const kind of LINEAR_KINDS) buffers[kind] = createProfileBuffer();
-  const context = { buffers, sampleElevation, rawElevation, here: { x: 100, z: 0 } };
+  const context = { buffers, sampleElevation, rawElevation, cutBench, here: { x: 100, z: 0 } };
   const segment = { path, platform, halfWidth: 2.5, profile: 'minor' };
-  return { layer, context, segment, rowsInfo, buffers, deck, rawElevation, sampleElevation };
+  return { layer, context, segment, rowsInfo, buffers, deck, cutBench, rawElevation, sampleElevation };
 }
 
 test('un versant qui domine la chaussée est bordé de roche, pas d’un mur', () => {
@@ -3346,6 +3410,22 @@ test('la falaise n’est pas un tube extrudé : sa section change à chaque lign
       positions[(r * cols) * 3 + 2] <= -(2.5 + ROAD_CUT_M) + 1e-6,
       `pied de la ligne ${r} au-delà de l’accotement`
     );
+  }
+});
+
+test('la falaise du déblai se dresse au bord du fond plat, si large soit-il', () => {
+  const cutBench = cutBenchAt(890 / 192);
+  const { layer, context, segment, rowsInfo, buffers } = rockCutHarness({ cutBench });
+  buildRockCut(layer, context, segment, rowsInfo);
+
+  const positions = buffers.rockCut.positions;
+  const cols = 6;
+  const rows = positions.length / 3 / cols;
+  assert.ok(rows > 0, 'la falaise est bien engendrée');
+  for (let r = 0; r < rows; r++) {
+    const foot = positions[r * cols * 3 + 2];
+    assert.ok(foot <= -(2.5 + cutBench) + 1e-6, `pied au-delà du fond plat, ligne ${r}`);
+    assert.ok(foot >= -(2.5 + cutBench) - 1, `pied sans dérive, ligne ${r}`);
   }
 });
 

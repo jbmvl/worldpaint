@@ -30,11 +30,14 @@ import { defaultTheme } from './themes/default.js';
  * Réglages de la bulle. Zoom 15 : assez fin pour le relief à hauteur d'homme,
  * assez large pour qu'un bloc de 3×3 tuiles couvre plus loin que le brouillard.
  * La finesse de maille décroît par anneau (détail au centre, silhouette autour).
+ * Les anneaux entaillés font exception et gardent la maille fine : c'est le plus
+ * grossier d'entre eux qui fixe la largeur du fond plat du déblai
+ * (`roadCut.cutBenchAt`), et un fond plat large se lit comme une terrasse.
  */
 export const DEFAULT_VIEW = {
   zoom: 15,
   blockSize: 3,
-  segmentsByRing: [192, 96, 48],
+  segmentsByRing: [192, 192, 48],
   maxAnisotropy: 4,
 };
 

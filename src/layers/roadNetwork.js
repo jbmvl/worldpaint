@@ -104,7 +104,7 @@ import {
   mirrorDirection,
   sectionAtDistance,
 } from './roadMarkings.js';
-import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
+import { ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
 import {
   workCodeFor,
   roadLevelFor,
@@ -1038,8 +1038,10 @@ export class RoadNetwork {
       { floorAt, urban }
     );
     // La marge doit couvrir toute la portée du déblai, raccord compris ;
-    // laissée à sa valeur par défaut, l'entaille finissait en marche verticale.
-    const index = new RoadIndex(collected, { margin: ROAD_CUT_M + ROAD_CUT_BLEND_M });
+    // laissée à sa valeur par défaut, l'entaille finirait en marche verticale.
+    // Le fond plat est celui que la maille du terrain tient (`cutBenchM`), et
+    // non la seule emprise : c'est lui que `terrainBubble` interrogera.
+    const index = new RoadIndex(collected, { margin: bubble.cutBenchM + ROAD_CUT_BLEND_M });
     stitchPlatforms(collected, index);
 
     const buffers = {};

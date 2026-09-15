@@ -21,7 +21,7 @@ import {
 } from '../ribbonGeometry.js';
 import { facetJitter } from '../facetJitter.js';
 import { ROAD_LIFT_M } from '../roadNetwork.js';
-import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../../terrain/roadCut.js';
+import { ROAD_CUT_BLEND_M } from '../../terrain/roadCut.js';
 import {
   spacedAlongPath,
   guardrailStyleFor,
@@ -187,7 +187,7 @@ export function buildRoadsideRelief(layer, context, segment, rowsInfo) {
  *   lui, ni paroi qui le traverse.
  */
 export function buildRockCut(layer, context, segment, rowsInfo) {
-  const { buffers, rawElevation, sampleElevation } = context;
+  const { buffers, rawElevation, sampleElevation, cutBench } = context;
   const { platform, halfWidth } = segment;
   const spec = layer.specs.rockCut;
 
@@ -214,7 +214,7 @@ export function buildRockCut(layer, context, segment, rowsInfo) {
 
       // Le pied se dresse au bord du **fond plat** de l'entaille, pas au ras
       // de la chaussée : entre les deux, il y a l'accotement excavé.
-      const offset = side * (halfWidth + ROAD_CUT_M);
+      const offset = side * (halfWidth + cutBench);
       const capReach = ROAD_CUT_BLEND_M;
 
       const grain = facetJitter(runPath, ROCK_CUT_SEED + 1, spec.grain);
