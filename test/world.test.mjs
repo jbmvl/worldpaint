@@ -5734,15 +5734,20 @@ test('un tracteur fait l’aller-retour entre ses deux points, à vitesse consta
   assert.ok(TRACTOR_ANIMATED_MAX > 0);
 });
 
-test('placeTractor n’agit que sur un vrai labour, à portée', () => {
+test('placeTractor n’agit que sur une vraie culture, hors verger, à portée', () => {
   const ring = squareRing(100);
   const centre = { x: 50, z: 50 };
   const context = { sampleElevation: () => 100 };
 
-  const notPloughed = Object.create(FurnitureLayer.prototype);
-  notPloughed.tractors = [];
-  placeTractor(notPloughed, context, ring, centre, 'wheat', centre);
-  assert.equal(notPloughed.tractors.length, 0, 'une autre culture ne travaille pas au tracteur');
+  const orchard = Object.create(FurnitureLayer.prototype);
+  orchard.tractors = [];
+  placeTractor(orchard, context, ring, centre, 'orchard', centre);
+  assert.equal(orchard.tractors.length, 0, 'un verger, avec ses arbres, ne travaille pas au tracteur');
+
+  const noCrop = Object.create(FurnitureLayer.prototype);
+  noCrop.tractors = [];
+  placeTractor(noCrop, context, ring, centre, null, centre);
+  assert.equal(noCrop.tractors.length, 0, 'sans culture, pas de tracteur');
 
   const tooFar = Object.create(FurnitureLayer.prototype);
   tooFar.tractors = [];

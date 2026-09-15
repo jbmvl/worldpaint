@@ -179,7 +179,7 @@ export function buildParcels(layer, context, builtUp) {
       }
 
       if (crop && ROW_CROPS.has(crop)) buildRows(layer, context, local, centre, crop, here);
-      if (crop === 'plough') placeTractor(layer, context, local, centre, crop, here);
+      if (crop && crop !== 'orchard') placeTractor(layer, context, local, centre, crop, here);
 
       // Le budget de contours ne coupe **que** les contours : les parcelles
       // arrivent dans l'ordre des tuiles et non des distances, et un budget
@@ -448,7 +448,7 @@ export function principalAngle(ring) {
 
 /** Rayon dans lequel un tracteur est posé, en mètres. */
 export const TRACTOR_RADIUS_M = 400;
-/** Part des parcelles en labour, assez grandes, qui reçoivent un tracteur au travail. */
+/** Part des parcelles cultivées, assez grandes, qui reçoivent un tracteur au travail. */
 export const TRACTOR_SHARE = 0.12;
 const TRACTOR_SALT = 887;
 /** Longueur maximale d'un passage, en mètres — un aller-retour, pas la traversée du champ. */
@@ -458,10 +458,14 @@ export const TRACTOR_SPEED_MIN_MS = 1.1;
 export const TRACTOR_SPEED_MAX_MS = 1.8;
 
 /**
- * Tracteur au travail dans un champ en labour : un aller-retour le long du
- * sens du travail (`principalAngle`), coupé aux vraies limites du champ comme
- * un rang de vigne (`buildRows`) — jamais une ligne posée en travers d'une
+ * Tracteur au travail dans un champ cultivé : un aller-retour le long du sens
+ * du travail (`principalAngle`), coupé aux vraies limites du champ comme un
+ * rang de vigne (`buildRows`) — jamais une ligne posée en travers d'une
  * parcelle en croissant ou en L.
+ *
+ * Posé sur toute culture sauf le verger : un tracteur y roulerait sous des
+ * arbres qu'on ne verrait pas depuis la route, ce qui trahirait la scène plus
+ * qu'il ne la confirmerait.
  *
  * Publié dans `layer.tractors` pour `tractorLayer`, qui le rejoue par image :
  * ce n'est plus du mobilier immobile, c'est ancré au sol comme une bête (voir
@@ -469,7 +473,7 @@ export const TRACTOR_SPEED_MAX_MS = 1.8;
  * la graine vient du centre de la parcelle, jamais de l'ordre de parcours.
  */
 export function placeTractor(layer, context, ring, centre, crop, here) {
-  if (crop !== 'plough') return;
+  if (!crop || crop === 'orchard') return;
   if (Math.hypot(centre.x - here.x, centre.z - here.z) > TRACTOR_RADIUS_M) return;
   if (!layer.tractors || layer.tractors.length >= FURNITURE_LIMITS.vehicles) return;
   if (randomAt(centre.x, centre.z, TRACTOR_SALT) >= TRACTOR_SHARE) return;

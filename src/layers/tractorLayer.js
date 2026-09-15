@@ -1,5 +1,5 @@
 /*
- * tractorLayer — les tracteurs qui travaillent un champ en labour.
+ * tractorLayer — les tracteurs qui travaillent un champ cultivé.
  * -------------------------------------------------------------------------
  * Troisième couche animée par image, sœur de `lifeLayer` et `faunaLayer`,
  * mais ni l'une ni l'autre : un tracteur n'est pas du ciel — il est ancré au
