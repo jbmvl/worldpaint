@@ -224,6 +224,21 @@ figure dans le `building` du pays :
 une vraie couleur est admise. Une « maison » est une empreinte de moins de
 320 m² et moins de 11,5 m de haut.
 
+### Cheminée de toit et balcon
+
+**Inventés**, sous conditions, sur une maison ordinaire — jamais une église,
+un commerce ou une grange (`buildingPersonalityFor` n'y a rien reconnu).
+
+| Objet | Condition | Part |
+| --- | --- | --- |
+| cheminée de toit | toit pentu (pas de toit plat) | 22 % |
+| balcon | mur d'au moins 5,4 m (l'ordre d'un étage), façade d'au moins 4 m, **emprise habitée** | 24 % |
+
+La cheminée fume comme celle d'une ferme (`furniture/parcels.placeFarmstead`) :
+publiée pour `lifeLayer`, qui anime la fumée des plus proches. Le balcon —
+plancher et garde-corps sur trois côtés — se pose sur le pan le plus long de
+l'empreinte, sous l'égout, jamais au-dessus.
+
 ### La fonction, quand la donnée la dit
 
 Un point d'intérêt ne pose jamais un modèle à côté : il **transforme**
@@ -312,6 +327,12 @@ un tiers par rapport aux minimums réglementaires (un plan large paraît saturé
 | panneau de direction | express 1300 m, major 1700 m | — |
 | feu tricolore | major et minor, en agglomération | aux carrefours |
 | haie | minor, lane et track hors agglomération | continue |
+
+Le **lampadaire** posé dépend du lieu : le modèle courant partout, sauf à
+moins d'un kilomètre d'un lieu de culte relevé (`poi.class=place_of_worship`),
+où il est remplacé par un modèle traditionnel (fer forgé, lanterne à pans), et
+sur un sol peint `bare` — zone industrielle, commerciale et assimilée —, où
+c'est un modèle LED sans vasque (`furniturePlacement.streetLampKindFor`).
 
 Le **panneau** qu'une portion porte dépend de ce qui s'y passe : au-delà de
 0,02 rad/m de courbure c'est une balise de virage, entre 0,009 et 0,02 un
@@ -432,12 +453,23 @@ et tourné vers la chaussée.
 | Objet | Nombre | Comportement |
 | --- | --- | --- |
 | bêtes au sol | 240 animées au plus | haltes et trajets sur un circuit fermé, jusqu'à 8 traversées de route en cours |
+| tracteurs | 12 animés au plus | aller-retour sur un passage de labour, 1,1 à 1,8 m/s |
 | oiseaux | 22 | dérivent entre 16 et 52 m au-dessus de l'observateur, 3 à 9 m/s |
+| montgolfières | 5 | dérivent entre 90 et 240 m au-dessus de l'observateur, 0,5 à 1,6 m/s, chacune avec ses deux couleurs propres |
 | fumée | 6 cheminées, 9 bouffées chacune | monte à 1,15 m/s, dérive à 0,75 m/s, vit 5,5 s |
 
-Les bêtes sont les seules choses posées au sol qui bougent d'une image à
-l'autre ; tout le reste du décor est reconstruit tous les 250 m et immobile
-entre deux reconstructions.
+Les bêtes et les tracteurs sont les seules choses posées au sol qui bougent
+d'une image à l'autre ; tout le reste du décor est reconstruit tous les 250 m
+et immobile entre deux reconstructions. Un tracteur n'est pas une bête
+(`tractorLayer`, pas `faunaLayer`) : rien en lui n'est articulé, il ne fait
+qu'un aller-retour entre deux points composés une fois par
+`furniture/parcels.placeTractor`, sur un champ en labour (`plough`), 12 % du
+temps.
+
+L'**oiseau** change d'espèce avec le climat : un corvidé qui dérive au vent
+partout, un rapace qui tourne en rond au-dessus d'un relief de montagne
+(`alpine`, `mediterraneanMontane`, `oceanicUpland` — `lifeLayer.setClimate`).
+C'est un remplacement, jamais les deux à la fois.
 
 ## Le ciel et le temps
 
@@ -461,10 +493,10 @@ bougé tout seul » :
 
 | Ce qui est refait | Tous les |
 | --- | --- |
-| mobilier, bâti, chaussées, bêtes | 250 m |
+| mobilier, bâti, chaussées, bêtes, tracteurs | 250 m |
 | carte du sol (matières et cultures) | 400 m |
 | fourrés du sous-bois | 12 m |
-| oiseaux, fumée, pluie, vent | chaque image |
+| oiseaux, montgolfières, fumée, pluie, vent | chaque image |
 
 ## Les limites connues
 

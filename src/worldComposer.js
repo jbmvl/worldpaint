@@ -17,19 +17,21 @@
  * du décor ne franchit pas) → ouvrages d'art (tabliers, piles, têtes de
  * tunnel : ne lisent que les tronçons publiés par les chaussées) → voie ferrée
  * (indépendante, suit le terrain sans l'entailler, voir `railwayLayer.js`) →
- * bâti (lit l'emprise, qui rabote ce qu'une empreinte pose sur la voie ;
- * publie maisons et empreintes) → voirie (après chaussées et bâti, un
- * trottoir a besoin des deux ; borde aussi les coins de rue des carrefours et
+ * bâti (lit l'emprise, qui rabote ce qu'une empreinte pose sur la voie, et
+ * l'emprise habitée, qui distingue une maison de ville — balcon, cheminée de
+ * toit — d'une maison isolée ; publie maisons et empreintes) → voirie (après
+ * chaussées et bâti, un trottoir a besoin des deux ; borde aussi les coins de rue des carrefours et
  * comble les vides de faisceau, dans cet ordre — là où un trottoir tient, il
  * vaut mieux qu'un zébra ; publie sa bande revêtue) → jardins (tirent clôtures et buissons des
  * maisons, lisent emprise et bande revêtue) → mobilier (tronçons + index des
  * chaussées, compte de bâtiments, emprise ferroviaire, lieux nommés) →
  * arbres (après la carte de classes et les chaussées : une tuile semée hors de
  * portée de l'index des chaussées se resème quand il va jusqu'à elle) → herbe
- * (après l'index des chaussées) → cheminées et bêtes (publiées par le
- * mobilier, animées par `lifeLayer` et `faunaLayer`).
+ * (après l'index des chaussées) → cheminées, bêtes et tracteurs (publiés par
+ * le mobilier et le bâti, animés par `lifeLayer`, `faunaLayer` et
+ * `tractorLayer`).
  *
- * Ces deux dernières sont la même figure et méritent qu'on la nomme : une
+ * Ces trois derniers sont la même figure et méritent qu'on la nomme : une
  * couche reconstruite tous les 250 mètres décide **ce qui existe** — elle
  * seule a lu les tuiles —, et une couche animée par image ne fait plus que le
  * jouer. C'est la seule façon d'avoir du mouvement dans un décor par ailleurs
@@ -68,6 +70,7 @@ import { CropLayer } from './layers/cropLayer.js';
 import { FurnitureLayer } from './layers/furnitureLayer.js';
 import { LifeLayer } from './layers/lifeLayer.js';
 import { FaunaLayer } from './layers/faunaLayer.js';
+import { TractorLayer } from './layers/tractorLayer.js';
 import { VectorTileSource, coveringTiles, VECTOR_ZOOM } from './core/vectorTileSource.js';
 import { lngLatToTile } from './core/tileMath.js';
 import { landscapeAt } from './core/landscape.js';
@@ -237,6 +240,9 @@ export class WorldComposer {
     this.life = new LifeLayer({ THREE, scene, bubble, theme });
     // Le vivant au sol : posé par le mobilier, animé ici (voir `faunaLayer`).
     this.fauna = new FaunaLayer({ THREE, scene, theme });
+    // Les tracteurs au travail : posés par le mobilier, ancrés au sol comme
+    // la faune, mais rien en eux n'est articulé — voir `tractorLayer.js`.
+    this.tractors = new TractorLayer({ THREE, scene, theme });
 
     this.vectorTiles = vectorConfig
       ? new VectorTileSource({
@@ -298,6 +304,9 @@ export class WorldComposer {
     const regionChanged = this._updateLandscape(lng, lat, here);
     const region = this.landscape?.region ?? null;
     this._distributeRegion(region);
+    // Le relief n'est pas la région (voir `core/region.js`) : c'est lui, et
+    // lui seul, qui dit si le rapace remplace le corvidé.
+    this.life.setRelief(this.landscape?.relief ?? null);
     const wanted = this._wantedTiles(lng, lat);
 
     // La végétation suit les tuiles de la bulle, pas le vectoriel : se resynchronise même sans autre changement.
@@ -358,7 +367,7 @@ export class WorldComposer {
       // 4. Bâti — après les chaussées, dont l'emprise rabote ce qu'une
       //    empreinte pose sur la voie (la donnée en pose : le tracé de la route
       //    et le contour du bâti viennent de deux relevés différents).
-      this.buildings.rebuild(this.vectorTiles, wanted, here, { roadIndex: this.roads.index });
+      this.buildings.rebuild(this.vectorTiles, wanted, here, { roadIndex: this.roads.index, builtUp });
 
       // 4 bis. Voirie — après chaussées et bâti.
       const fabric = new FabricIndex(this.buildings.footprints);
@@ -421,12 +430,14 @@ export class WorldComposer {
         force: hasRoads || classStale || regionChanged || force,
       });
 
-      // 9. Cheminées à faire fumer, et bêtes à faire vivre. Les deux sont
-      //    publiées par le mobilier, qui seul a lu les tuiles : ce sont les
-      //    deux endroits où une couche animée par image reprend le travail
-      //    d'une couche reconstruite tous les 250 mètres.
-      this.life.setChimneys(this.furniture.chimneys, here);
+      // 9. Cheminées à faire fumer, bêtes et tracteurs à faire vivre. Publiés
+      //    par le mobilier (fermes, labours) et le bâti (toits de ville), qui
+      //    seuls ont lu les tuiles : ce sont les endroits où une couche
+      //    animée par image reprend le travail d'une couche reconstruite
+      //    tous les 250 mètres.
+      this.life.setChimneys([...this.furniture.chimneys, ...this.buildings.chimneys], here);
       this.fauna.setAnimals(this.furniture.fauna, here);
+      this.tractors.setTractors(this.furniture.tractors, here);
 
       // Maillages neufs : ils naissent éteints, il faut leur repasser l'heure.
       this._night = null;
@@ -547,6 +558,7 @@ export class WorldComposer {
     // marquée `flee` qui le voit approcher ; l'échantillonnage du relief lui
     // est nécessaire pour tracer cette fuite (voir `faunaLayer._checkFlee`).
     this.fauna.advance(delta, at, (x, z) => this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale);
+    this.tractors.advance(delta);
     // Ce que le mobilier a d'animé : les feux, et les deux lampes qui suivent l'observateur.
     this.furniture.advanceSignals(delta);
     this.furniture.advanceLamps(at);
@@ -611,6 +623,7 @@ export class WorldComposer {
     this.disposed = true;
     this.life.dispose();
     this.fauna.dispose();
+    this.tractors.dispose();
     this.furniture.dispose();
     this.crops.dispose();
     this.grass.dispose();

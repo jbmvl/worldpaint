@@ -662,6 +662,25 @@ export function rockKindFor({ bare = 0, steepness = 0, variant = 0 } = {}) {
   return { item: 'rockSmall', scale: 0.7 + variant * 1.6 };
 }
 
+/**
+ * Style de lampadaire selon le contexte. Le clocher l'emporte sur
+ * l'industriel si jamais les deux coïncidaient — un centre-ville autour
+ * d'une église reste un centre-ville.
+ *
+ * @param {Object} context
+ * @param {boolean} [context.nearChurch] Un lieu de culte relevé à moins d'un
+ *        kilomètre (voir `furniture/pointsOfInterest.churchWithin`).
+ * @param {boolean} [context.industrial] Le sol à cet endroit est peint
+ *        `bare` — la matière des zones industrielles, commerciales et
+ *        assimilées (voir `groundClassMap.surfaceAt`).
+ * @returns {string} clé du catalogue.
+ */
+export function streetLampKindFor({ nearChurch = false, industrial = false } = {}) {
+  if (nearChurch) return 'streetLampClassic';
+  if (industrial) return 'streetLampLed';
+  return 'streetLamp';
+}
+
 /** Classes `landuse` qui font une zone bâtie — donc éclairée. */
 export const BUILT_UP_CLASSES = new Set([
   'residential',

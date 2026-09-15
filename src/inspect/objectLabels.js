@@ -55,6 +55,8 @@ export const LABEL_EXACT = {
   'ground-cover': 'herbe',
   crops: 'cultures (semis)',
   birds: 'oiseaux',
+  balloon: 'montgolfière',
+  tractors: 'tracteur',
   'chimney-smoke': 'fumée',
   'furniture-lamp-glow': 'halo de lampadaire',
   'furniture-lamp-pool': 'nappe de lumière',
@@ -77,6 +79,8 @@ export const LABEL_ROADS = {
 export const LABEL_FURNITURE = {
   // Instancié
   streetLamp: 'lampadaire',
+  streetLampClassic: 'lampadaire classique',
+  streetLampLed: 'lampadaire LED',
   utilityPole: 'poteau électrique',
   pylon: 'pylône',
   radioMast: 'antenne relais',
