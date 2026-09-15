@@ -85,6 +85,8 @@ const bigMinimapCanvas = document.getElementById('minimapBig');
 const bigMinimapCtx = bigMinimapCanvas.getContext('2d');
 const showcaseToggle = document.getElementById('showcaseToggle');
 const showcaseFieldSelect = document.getElementById('showcaseField');
+const showcaseWordField = document.getElementById('showcaseWordField');
+const showcaseWordSelect = document.getElementById('showcaseWord');
 
 function setBusy(busy) {
   dot.classList.toggle('busy', busy);
@@ -1447,16 +1449,36 @@ for (const { field, label } of showcase.fields) {
 /** Position et regard d'avant l'afficheur, pour les retrouver en sortant. */
 let savedCamera = null;
 
+/** Bascule le champ affiché, repeuple le sélecteur de mot s'il y a lieu, et cadre la caméra. */
+function applyShowcaseField(field) {
+  const entries = showcase.setField(field);
+  const isTile = showcase.isTileField(field);
+  showcaseWordField.hidden = !isTile;
+  showcaseWordSelect.disabled = !isTile;
+  if (isTile) {
+    showcaseWordSelect.replaceChildren();
+    for (const entry of entries) {
+      showcaseWordSelect.append(new Option(entry.unsupported ? `${entry.value} ⚠` : entry.value, entry.value));
+    }
+    // Debout au milieu de la tuile : c'est une étendue de plusieurs dizaines
+    // de mètres (le même rayon que l'herbe et les cultures du monde réel),
+    // pas une vignette qu'on regarde de loin.
+    camera.position.set(0, EYE_HEIGHT_M, -18);
+    camera.lookAt(0, 0.5, 30);
+  } else {
+    // Face à la grille, assez reculé pour voir plusieurs rangées d'un coup.
+    camera.position.set(0, 3.2, -7);
+    camera.lookAt(0, 1.3, 12);
+  }
+}
+
 showcaseToggle.addEventListener('change', () => {
   const active = showcaseToggle.checked;
   document.body.classList.toggle('showcase-mode', active);
   showcaseFieldSelect.disabled = !active;
   if (active) {
     savedCamera = { position: camera.position.clone(), quaternion: camera.quaternion.clone() };
-    showcase.setField(showcaseFieldSelect.value);
-    // Face à la grille, assez reculé pour voir plusieurs rangées d'un coup.
-    camera.position.set(0, 3.2, -7);
-    camera.lookAt(0, 1.3, 12);
+    applyShowcaseField(showcaseFieldSelect.value);
   } else if (savedCamera) {
     camera.position.copy(savedCamera.position);
     camera.quaternion.copy(savedCamera.quaternion);
@@ -1465,7 +1487,11 @@ showcaseToggle.addEventListener('change', () => {
 });
 
 showcaseFieldSelect.addEventListener('change', () => {
-  if (showcaseToggle.checked) showcase.setField(showcaseFieldSelect.value);
+  if (showcaseToggle.checked) applyShowcaseField(showcaseFieldSelect.value);
+});
+
+showcaseWordSelect.addEventListener('change', () => {
+  if (showcaseToggle.checked) showcase.setWord(showcaseWordSelect.value);
 });
 
 hourInput.addEventListener('input', refreshWeatherLabels);

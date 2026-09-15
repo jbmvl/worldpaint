@@ -330,10 +330,10 @@
 
   <div class="section">Afficheur</div>
   <div class="help" style="margin-bottom: 6px">
-    Pas un pays : un mot. Affiche côte à côte toutes les valeurs possibles
-    d’un champ de région (terrain, pierre, bâti, cultures, arbres), isolées,
-    sans qu’il faille rouler jusqu’au lieu qui les emploie. ⚠ signale un mot
-    que le décor ne rend pas encore (voir <code>regionInterpretation.js</code>).
+    Pas un pays : un mot. Affiche isolément toutes les valeurs possibles d’un
+    champ de région (terrain, pierre, bâti, cultures, arbres), sans qu’il
+    faille rouler jusqu’au lieu qui les emploie. ⚠ signale un mot que le décor
+    ne rend pas encore (voir <code>regionInterpretation.js</code>).
   </div>
   <label class="check" style="margin-bottom: 6px">
     <input type="checkbox" id="showcaseToggle" />
@@ -341,6 +341,9 @@
   </label>
   <div class="field">
     <select id="showcaseField" disabled></select>
+  </div>
+  <div class="field" id="showcaseWordField" hidden>
+    <select id="showcaseWord" disabled></select>
   </div>
 
   <hr />

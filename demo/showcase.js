@@ -1,16 +1,32 @@
 /*
- * demo/showcase.js — le mode « afficheur » : une scène à part, qui pose côte
- * à côte tous les mots possibles d'un champ de région (`src/inspect/
- * showcase.js`) au lieu de faire rouler la caméra jusqu'au pays qui les
- * emploie. Ce n'est pas un sélecteur de région : le panneau en a déjà un.
+ * demo/showcase.js — le mode « afficheur » : une scène à part, séparée de
+ * celle du monde, pilotée par `src/inspect/showcase.js` (`main.js` choisit
+ * laquelle rendre selon le mode actif).
  *
- * Scène et éclairage sont les siens, séparés de ceux du monde — `main.js`
- * choisit laquelle rendre selon le mode actif, plutôt que de démonter et
- * remonter le décor à chaque bascule.
+ * Deux présentations, selon ce que le champ désigne (`TILE_FIELDS`) :
+ *
+ * - **grille** (pierre, bâti, arbres) : une vignette par mot, côte à côte —
+ *   une couleur ou une silhouette isolée suffit à en juger.
+ * - **tuile** (terrain, cultures) : une couleur seule mentirait sur ce qui
+ *   recouvre le sol, donc une seule tuile pleine à la fois, avec de vraies
+ *   touffes d'herbe ou tiges de culture (`GroundCover`/`CropLayer`, les mêmes
+ *   couches que le monde emploie) posées sur un `groundClass` truqué qui
+ *   répond « ce mot, partout » plutôt que de lire des tuiles vectorielles. Un
+ *   second sélecteur du panneau (`showcaseWord`) choisit lequel.
  */
 
 import * as THREE from 'three';
-import { showcaseEntries, SHOWCASE_FIELDS, createFurnitureGeometries, createFurnitureMaterial } from '../src/index.js';
+import {
+  showcaseEntries,
+  SHOWCASE_FIELDS,
+  TILE_FIELDS,
+  uniformGroundSample,
+  createFurnitureGeometries,
+  createFurnitureMaterial,
+  GroundCover,
+  CropLayer,
+  defaultTheme,
+} from '../src/index.js';
 
 /** Côté d'une case de la grille, en mètres. */
 const CELL_M = 5;
@@ -21,7 +37,7 @@ function linearColor(albedo) {
   return new THREE.Color().setRGB(albedo[0], albedo[1], albedo[2], THREE.LinearSRGBColorSpace);
 }
 
-/** Étiquette texte, en sprite : elle doit rester lisible de n'importe quel côté de la grille. */
+/** Étiquette texte, en sprite : elle doit rester lisible de n'importe quel côté. */
 function makeLabelSprite(text) {
   const canvas = document.createElement('canvas');
   canvas.width = 256;
@@ -86,16 +102,6 @@ function buildHouse(THREE, entry) {
   return group;
 }
 
-/** Un empan de sol coloré : le rendu le plus honnête d'une matière ou d'une culture. */
-function buildPlane(THREE, entry) {
-  const geometry = new THREE.PlaneGeometry(CELL_M * 0.86, CELL_M * 0.86);
-  const material = new THREE.MeshStandardMaterial({ roughness: 1 });
-  material.color = linearColor(entry.albedo);
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.rotation.x = -Math.PI / 2;
-  return mesh;
-}
-
 /** Un bloc : la géologie n'est pas un sol qu'on marche, c'est une masse qui affleure. */
 function buildBlock(THREE, entry) {
   const geometry = new THREE.BoxGeometry(2.4, 1.4, 2.4);
@@ -122,8 +128,42 @@ export function createShowcase(THREEns) {
   const grid = new THREEns.Group();
   scene.add(grid);
 
-  /** Reconstruit la grille pour un champ. Détruit tout ce qu'il y avait avant. */
-  function setField(field) {
+  const tile = new THREEns.Group();
+  scene.add(tile);
+
+  // --- La tuile pleine : sol + vraie couverture, sur un groundClass truqué --
+
+  /** Ce que `groundClass.sampleAt`/`surfaceAt`/`cropAt` répondent, partout. */
+  const tileState = { sample: uniformGroundSample(null), surface: null, crop: null };
+  const fakeGroundClass = {
+    ready: true,
+    cropReady: true,
+    sampleAt: () => tileState.sample,
+    surfaceAt: () => tileState.surface,
+    cropAt: () => tileState.crop,
+    woodAt: () => (tileState.surface === 'wood' ? 1 : 0),
+  };
+  // Bulle plate : ni tuile ni relief, la tuile de l'afficheur est un plan.
+  const fakeBubble = { frame: {}, verticalScale: 1, surfaceElevationAtLocal: () => 0 };
+
+  const groundPlane = new THREEns.Mesh(
+    new THREEns.PlaneGeometry(320, 320),
+    new THREEns.MeshStandardMaterial({ roughness: 1 })
+  );
+  groundPlane.rotation.x = -Math.PI / 2;
+  tile.add(groundPlane);
+
+  // Coûteuses (jusqu'à 17 000 / 15 000 instances) : montées une fois, pas par mot.
+  const grassCover = new GroundCover({ THREE: THREEns, scene: tile, bubble: fakeBubble, groundClass: fakeGroundClass, theme: defaultTheme });
+  const cropCover = new CropLayer({ THREE: THREEns, scene: tile, bubble: fakeBubble, groundClass: fakeGroundClass, theme: defaultTheme });
+  grassCover.mesh.visible = false;
+  cropCover.mesh.visible = false;
+
+  let currentField = null;
+  let currentEntries = [];
+
+  /** Vide la grille et libère géométries et matériaux — pas la tuile, réutilisée. */
+  function clearGrid() {
     while (grid.children.length) {
       const child = grid.children.pop();
       child.traverse?.((node) => {
@@ -132,8 +172,10 @@ export function createShowcase(THREEns) {
       });
       grid.remove(child);
     }
+  }
 
-    const entries = showcaseEntries(field);
+  function buildGrid(entries) {
+    clearGrid();
     let treeGeometries = null;
     let treeMaterial = null;
     if (entries.some((e) => e.shape === 'tree')) {
@@ -144,14 +186,10 @@ export function createShowcase(THREEns) {
     entries.forEach((entry, i) => {
       const col = i % COLUMNS;
       const row = Math.floor(i / COLUMNS);
-      const x = (col - (COLUMNS - 1) / 2) * CELL_M;
-      const z = row * CELL_M;
-
       const cell = new THREEns.Group();
-      cell.position.set(x, 0, z);
+      cell.position.set((col - (COLUMNS - 1) / 2) * CELL_M, 0, row * CELL_M);
 
-      if (entry.shape === 'plane') cell.add(buildPlane(THREEns, entry));
-      else if (entry.shape === 'block') cell.add(buildBlock(THREEns, entry));
+      if (entry.shape === 'block') cell.add(buildBlock(THREEns, entry));
       else if (entry.shape === 'house') cell.add(buildHouse(THREEns, entry));
       else if (entry.shape === 'tree') {
         const geometry = treeGeometries[entry.alignment];
@@ -164,13 +202,44 @@ export function createShowcase(THREEns) {
 
       grid.add(cell);
     });
+  }
 
-    return entries.length;
+  /** Peuple la tuile pleine avec un seul mot (`matrix` ou `farming`). */
+  function setWord(value) {
+    const entry = currentEntries.find((e) => e.value === value);
+    if (!entry) return;
+
+    const isFarming = currentField === 'farming';
+    tileState.surface = isFarming ? 'farmland' : entry.surface;
+    tileState.crop = isFarming ? entry.crop : null;
+    tileState.sample = uniformGroundSample(tileState.surface);
+    groundPlane.material.color = linearColor(entry.albedo);
+
+    grassCover.mesh.visible = !isFarming;
+    cropCover.mesh.visible = isFarming;
+    if (isFarming) cropCover.update(0, 0, { force: true });
+    else grassCover.update(0, 0, { force: true });
+  }
+
+  /** Bascule vers un champ. Rend la liste de ses mots (pour peupler le sélecteur). */
+  function setField(field) {
+    currentField = field;
+    currentEntries = showcaseEntries(field);
+    const isTile = TILE_FIELDS.has(field);
+    tile.visible = isTile;
+    grid.visible = !isTile;
+    if (isTile) setWord(currentEntries[0]?.value);
+    else buildGrid(currentEntries);
+    return currentEntries;
   }
 
   function dispose() {
-    setField(null); // vide la grille et libère géométries et matériaux
+    clearGrid();
+    grassCover.dispose();
+    cropCover.dispose();
+    groundPlane.geometry.dispose();
+    groundPlane.material.dispose();
   }
 
-  return { scene, setField, dispose, fields: SHOWCASE_FIELDS };
+  return { scene, setField, setWord, dispose, fields: SHOWCASE_FIELDS, isTileField: (field) => TILE_FIELDS.has(field) };
 }

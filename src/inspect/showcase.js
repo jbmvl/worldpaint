@@ -19,6 +19,7 @@
  */
 
 import { VOCABULARIES } from '../core/regionInterpretation.js';
+import { VEGETAL_SURFACES } from '../terrain/groundClassMap.js';
 import { defaultTheme } from '../themes/default.js';
 
 /** Les catégories de l'afficheur, dans l'ordre où le panneau les propose. */
@@ -30,15 +31,39 @@ export const SHOWCASE_FIELDS = Object.freeze([
   { field: 'trees', label: 'Arbres' },
 ]);
 
+/**
+ * Les champs qu'on ne montre pas en grille de vignettes mais en une seule
+ * tuile pleine — le sol, et ce que la carte de classes y sème réellement
+ * (touffes d'herbe, tiges de culture). Une couleur seule mentirait sur ce que
+ * la matière ou la culture recouvre à l'œil.
+ */
+export const TILE_FIELDS = Object.freeze(new Set(['matrix', 'farming']));
+
 /** Un mot dont personne ne s'occupe encore n'a pas de couleur. Gris neutre. */
 const FALLBACK_ALBEDO = [0.3, 0.3, 0.3];
+
+/**
+ * Ce que porterait une carte de classes réduite à une seule matière, partout —
+ * la forme que lit `GroundCover` (`groundClassMap.sampleAt`). `wood` et
+ * `farmland` sont leurs propres part ; les autres couvertures végétales
+ * (`VEGETAL_SURFACES`) comptent comme de l'herbe, le reste comme du minéral nu.
+ *
+ * @param {string|null} surface Une matière de `theme.surfaces`.
+ */
+export function uniformGroundSample(surface) {
+  if (VEGETAL_SURFACES.has(surface)) return { grass: 1, wood: 0, farmland: 0, bare: 0 };
+  if (surface === 'wood') return { grass: 0, wood: 1, farmland: 0, bare: 0 };
+  if (surface === 'farmland') return { grass: 0, wood: 0, farmland: 1, bare: 0 };
+  return { grass: 0, wood: 0, farmland: 0, bare: 1 };
+}
 
 function matrixEntries(theme) {
   return Object.entries(VOCABULARIES.matrix).map(([value, def]) => ({
     value,
     unsupported: !!def.unsupported,
     note: def.unsupported || null,
-    shape: 'plane',
+    shape: 'tile',
+    surface: def.surface,
     albedo: theme.surfaces[def.surface]?.albedo || FALLBACK_ALBEDO,
   }));
 }
@@ -86,7 +111,10 @@ function farmingEntries(theme) {
     value,
     unsupported: !!def.unsupported,
     note: def.unsupported || null,
-    shape: 'plane',
+    shape: 'tile',
+    // Nom du `CROP_LOOK` que porte ce mot — c'est lui que `groundClassMap.cropAt`
+    // rendrait pour un champ de cette culture, et ce que `CropLayer` y sème.
+    crop: def.crop,
     albedo:
       theme.terrain.cropAlbedo?.[def.crop] ||
       theme.surfaces.farmland?.albedo ||

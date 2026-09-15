@@ -484,7 +484,7 @@ import {
   soilWashFor,
 } from '../src/core/regionInterpretation.js';
 import { REGIONS } from '../src/core/regions.js';
-import { showcaseEntries, SHOWCASE_FIELDS } from '../src/inspect/showcase.js';
+import { showcaseEntries, SHOWCASE_FIELDS, TILE_FIELDS, uniformGroundSample } from '../src/inspect/showcase.js';
 import {
   surfaceFor,
   surfaceId,
@@ -13155,4 +13155,33 @@ test('un mot non rendu de l’afficheur porte sa raison', () => {
   const rice = showcaseEntries('matrix').find((e) => e.value === 'rice_terrace');
   assert.equal(rice.unsupported, true);
   assert.ok(rice.note && rice.note.length > 0);
+});
+
+test('l’afficheur sème une matière uniforme comme le ferait une vraie carte de classes', () => {
+  assert.deepEqual(uniformGroundSample('grass'), { grass: 1, wood: 0, farmland: 0, bare: 0 });
+  assert.deepEqual(uniformGroundSample('heath'), { grass: 1, wood: 0, farmland: 0, bare: 0 });
+  assert.deepEqual(uniformGroundSample('wood'), { grass: 0, wood: 1, farmland: 0, bare: 0 });
+  assert.deepEqual(uniformGroundSample('farmland'), { grass: 0, wood: 0, farmland: 1, bare: 0 });
+  assert.deepEqual(uniformGroundSample('rock'), { grass: 0, wood: 0, farmland: 0, bare: 1 });
+  assert.deepEqual(uniformGroundSample(null), { grass: 0, wood: 0, farmland: 0, bare: 1 });
+});
+
+test('terrain et cultures sont les champs à tuile pleine, le reste reste une grille', () => {
+  assert.ok(TILE_FIELDS.has('matrix'));
+  assert.ok(TILE_FIELDS.has('farming'));
+  assert.ok(!TILE_FIELDS.has('stone'));
+  assert.ok(!TILE_FIELDS.has('building'));
+  assert.ok(!TILE_FIELDS.has('trees'));
+});
+
+test('chaque mot de terrain porte la matière que sèmerait une vraie carte de classes', () => {
+  for (const entry of showcaseEntries('matrix')) {
+    assert.equal(typeof entry.surface, 'string', `${entry.value} : une matière`);
+  }
+});
+
+test('chaque mot de culture porte le nom du motif que `CropLayer` y sèmerait', () => {
+  for (const entry of showcaseEntries('farming')) {
+    assert.equal(typeof entry.crop, 'string', `${entry.value} : une culture`);
+  }
 });
