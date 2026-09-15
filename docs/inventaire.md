@@ -440,6 +440,18 @@ château, tour, grande roue (`theme_park`). L'abribus est repoussé hors de
 l'emprise routière — il est souvent porté par le tracé de la voie elle-même —
 et tourné vers la chaussée.
 
+La **fontaine** posée dépend du lieu (`furniturePlacement.fountainKindFor`) :
+colonne en fonte sous un dôme, sans vasque, dans l'esprit d'une fontaine
+Wallace, sur le sol revêtu (`pavement`) d'une grande ville ; vasque octogonale
+et colonne dans un bourg (emprise bâtie, sol par défaut) ; robinet sur dalle,
+le même qu'au cimetière (`cemeteryTap`), hors de toute agglomération.
+
+L'**abribus** posé dépend lui aussi du lieu (`busShelterKindFor`) : mini
+chalet en climat de montagne (`alpine`, `mediterraneanMontane`,
+`oceanicUpland`), quelle que soit l'agglomération — la montagne l'emporte sur
+tout le reste ; sinon abri de plaine en emprise bâtie ; tôle et poteaux
+d'acier, plus sommaire, hors agglomération.
+
 ---
 
 ## Le vivant

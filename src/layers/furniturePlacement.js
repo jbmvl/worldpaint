@@ -733,6 +733,54 @@ export function streetLampKindFor({ nearChurch = false, industrial = false } = {
   return 'streetLamp';
 }
 
+/**
+ * Style de fontaine selon le contexte urbain.
+ *
+ * `paved` reprend la variable qui décide, ailleurs, si le sol est du trottoir
+ * ou du sol par défaut (`groundClassMap.surfaceAt(x, z) === 'pavement'`) :
+ * cette matière n'est peinte qu'à portée d'une agglomération de rang
+ * `city`/`town` (voir `settlement.UrbanMask`), donc seule une vraie ville en
+ * porte assez pour la couvrir — un bourg ou un village n'en a jamais. Hors de
+ * toute emprise bâtie, la fontaine cède la place au robinet de campagne.
+ *
+ * @param {Object} context
+ * @param {boolean} [context.paved] Le sol à cet endroit est peint `pavement`.
+ * @param {boolean} [context.builtUp] Le point est dans une emprise bâtie
+ *        (voir `settlement.pointInAreas`).
+ * @returns {string} clé du catalogue.
+ */
+export function fountainKindFor({ paved = false, builtUp = false } = {}) {
+  if (paved) return 'fountainWallace';
+  if (builtUp) return 'fountain';
+  return 'cemeteryTap';
+}
+
+/**
+ * Familles climatiques de montagne — les mêmes trois que
+ * `lifeLayer.RAPTOR_CLIMATE_FAMILIES` : alpin, montagne méditerranéenne,
+ * upland océanique. Reprise ici plutôt qu'importée : la couche de faune et le
+ * mobilier n'ont pas à se lire l'un l'autre pour une question aussi générale.
+ */
+export const MOUNTAIN_CLIMATE_FAMILIES = new Set(['alpine', 'mediterraneanMontane', 'oceanicUpland']);
+
+/**
+ * Style d'abribus selon le contexte. La montagne l'emporte sur tout — un
+ * arrêt de montagne reste un chalet, en ville comme hors agglomération — et
+ * c'est ensuite l'emprise bâtie qui distingue la ville de plaine du bord de
+ * route rural.
+ *
+ * @param {Object} context
+ * @param {boolean} [context.mountain] Climat de montagne (voir
+ *        `MOUNTAIN_CLIMATE_FAMILIES`).
+ * @param {boolean} [context.builtUp] Le point est dans une emprise bâtie.
+ * @returns {string} clé du catalogue.
+ */
+export function busShelterKindFor({ mountain = false, builtUp = false } = {}) {
+  if (mountain) return 'busShelterMountain';
+  if (builtUp) return 'busShelter';
+  return 'busShelterRural';
+}
+
 /** Classes `landuse` qui font une zone bâtie — donc éclairée. */
 export const BUILT_UP_CLASSES = new Set([
   'residential',
