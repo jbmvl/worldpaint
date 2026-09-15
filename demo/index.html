@@ -60,6 +60,16 @@
     background: rgba(151, 214, 137, 0.85);
   }
 
+  /* Mode afficheur : ni recherche, ni mini-carte, ni coordonnées n'ont de
+     sens sur une grille d'échantillons qui n'est reliée à aucun lieu. */
+  body.showcase-mode #searchBar,
+  body.showcase-mode #coords,
+  body.showcase-mode #minimap,
+  body.showcase-mode #quickbar,
+  body.showcase-mode #worldPanel {
+    display: none;
+  }
+
   #panel {
     position: fixed; top: calc(84px + var(--safe-t)); left: calc(12px + var(--safe-l)); z-index: 10;
     width: 268px;
@@ -318,6 +328,24 @@
 <div id="panel">
   <h1><span class="dot" id="dot"></span> WorldPaint — démo</h1>
 
+  <div class="section">Afficheur</div>
+  <div class="help" style="margin-bottom: 6px">
+    Pas un pays : un mot. Affiche côte à côte toutes les valeurs possibles
+    d’un champ de région (terrain, pierre, bâti, cultures, arbres), isolées,
+    sans qu’il faille rouler jusqu’au lieu qui les emploie. ⚠ signale un mot
+    que le décor ne rend pas encore (voir <code>regionInterpretation.js</code>).
+  </div>
+  <label class="check" style="margin-bottom: 6px">
+    <input type="checkbox" id="showcaseToggle" />
+    Mode afficheur
+  </label>
+  <div class="field">
+    <select id="showcaseField" disabled></select>
+  </div>
+
+  <hr />
+
+  <div id="worldPanel">
   <label class="check" title="🗺️ vient de la carte (OpenStreetMap) — 🤖 est inventé par la procédure">
     <input type="checkbox" id="showLabels" />
     Afficher le nom des objets
@@ -422,6 +450,7 @@
     <div class="row"><span>Se téléporter</span><span>clic simple au sol</span></div>
     <div class="row"><span>Accélérer</span><span><kbd>Alt</kbd></span></div>
     <div class="row"><span>Faire traverser une bête</span><span><kbd>C</kbd></span></div>
+  </div>
   </div>
 </div>
 

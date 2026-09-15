@@ -31,6 +31,7 @@ import {
   FAUNA_KINDS,
   LABEL_FAUNA,
 } from '../src/index.js';
+import { createShowcase } from './showcase.js';
 
 // --- Réglages ---------------------------------------------------------------
 
@@ -82,6 +83,8 @@ const mapOverlayClose = document.getElementById('mapOverlayClose');
 const mapOverlayLegend = document.getElementById('mapOverlayLegend');
 const bigMinimapCanvas = document.getElementById('minimapBig');
 const bigMinimapCtx = bigMinimapCanvas.getContext('2d');
+const showcaseToggle = document.getElementById('showcaseToggle');
+const showcaseFieldSelect = document.getElementById('showcaseField');
 
 function setBusy(busy) {
   dot.classList.toggle('busy', busy);
@@ -1427,6 +1430,44 @@ function writeRegionHint() {
 }
 writeRegionHint();
 
+/*
+ * --- Mode afficheur -----------------------------------------------------------
+ *
+ * Une seconde scène, à côté de celle du monde : elle pose côte à côte tous
+ * les mots d'un champ de région (`showcase.js`), et `loop` choisit laquelle
+ * rendre. Ce n'est pas le sélecteur de région ci-dessus — celui-là compare un
+ * pays entier sur le même terrain, celui-ci isole un mot du vocabulaire pour
+ * voir à quoi il ressemble sans savoir dans quel pays le trouver.
+ */
+const showcase = createShowcase(THREE);
+for (const { field, label } of showcase.fields) {
+  showcaseFieldSelect.append(new Option(label, field));
+}
+
+/** Position et regard d'avant l'afficheur, pour les retrouver en sortant. */
+let savedCamera = null;
+
+showcaseToggle.addEventListener('change', () => {
+  const active = showcaseToggle.checked;
+  document.body.classList.toggle('showcase-mode', active);
+  showcaseFieldSelect.disabled = !active;
+  if (active) {
+    savedCamera = { position: camera.position.clone(), quaternion: camera.quaternion.clone() };
+    showcase.setField(showcaseFieldSelect.value);
+    // Face à la grille, assez reculé pour voir plusieurs rangées d'un coup.
+    camera.position.set(0, 3.2, -7);
+    camera.lookAt(0, 1.3, 12);
+  } else if (savedCamera) {
+    camera.position.copy(savedCamera.position);
+    camera.quaternion.copy(savedCamera.quaternion);
+    savedCamera = null;
+  }
+});
+
+showcaseFieldSelect.addEventListener('change', () => {
+  if (showcaseToggle.checked) showcase.setField(showcaseFieldSelect.value);
+});
+
 hourInput.addEventListener('input', refreshWeatherLabels);
 realTimeCheckbox.addEventListener('change', () => {
   hourInput.disabled = realTimeCheckbox.checked;
@@ -1455,6 +1496,14 @@ function loop() {
   const delta = Math.min(clock.getDelta(), 0.1); // évite un bond si l'onglet était en arrière-plan
 
   updateMovement(delta);
+
+  // Le mode afficheur suspend le monde (aucune raison de le reconstruire ou
+  // de l'animer pendant qu'on regarde une grille d'échantillons) et rend sa
+  // propre scène : la caméra continue de voler, c'est tout ce qu'ils partagent.
+  if (showcaseToggle.checked) {
+    renderer.render(showcase.scene, camera);
+    return;
+  }
 
   if (world) {
     // `advance` situe la pluie et les feuilles au sol au point observé, pas à

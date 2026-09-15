@@ -85,6 +85,15 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
 - **Champ de recherche** : géocode le texte tapé via Nominatim
   (OpenStreetMap) et déplace la bulle (`setCenter` + `refresh`) sur le
   résultat.
+- **Mode afficheur** : n'est pas un sélecteur de région, mais un sélecteur de
+  mot. Bascule vers une seconde scène, sans lien avec un lieu, qui pose côte à
+  côte tous les mots possibles d'un champ du vocabulaire de région (`src/core/
+  regionInterpretation.js` via `src/inspect/showcase.js`) : le terrain d'une
+  matrice, une couleur de pierre, un mur et un toit, une culture, un arbre.
+  C'est ce qui répond à « à quoi ressemble `granite` ? » sans qu'il faille
+  trouver le pays qui l'emploie et s'y téléporter. Un mot marqué ⚠ est
+  `unsupported` dans le vocabulaire : le décor n'a rien de juste à mettre à sa
+  place, et l'afficheur montre le même repli que verrait qui roule jusque-là.
 - **Sélecteur de région naturelle** : force le pays du décor
   (`world.setRegion`) au lieu de le lire à l'ancre la plus proche de la position
   courante. C'est ce qui permet de juger le travail : **même terrain, mêmes

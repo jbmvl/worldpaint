@@ -484,6 +484,7 @@ import {
   soilWashFor,
 } from '../src/core/regionInterpretation.js';
 import { REGIONS } from '../src/core/regions.js';
+import { showcaseEntries, SHOWCASE_FIELDS } from '../src/inspect/showcase.js';
 import {
   surfaceFor,
   surfaceId,
@@ -13128,4 +13129,30 @@ test('une branche non marquée n’interrompt pas la rive de celle qui l’est',
     'un carrefour de dessertes reste nu'
   );
   assert.equal(bare.positions.length, 0, 'et rien n’est écrit');
+});
+
+test('l’afficheur couvre les cinq champs, chacun avec une couleur ou un alignement', () => {
+  assert.equal(SHOWCASE_FIELDS.length, 5);
+  for (const { field } of SHOWCASE_FIELDS) {
+    const entries = showcaseEntries(field);
+    assert.ok(entries.length > 0, `${field} : au moins un mot`);
+    for (const entry of entries) {
+      assert.equal(typeof entry.value, 'string');
+      assert.equal(typeof entry.unsupported, 'boolean');
+      if (entry.shape === 'tree') {
+        assert.equal(typeof entry.alignment, 'string', `${field}/${entry.value} : un alignement`);
+      } else if (entry.shape === 'house') {
+        assert.match(entry.wall, /^#[0-9a-f]{6}$/i, `${field}/${entry.value} : un mur`);
+        assert.match(entry.roof, /^#[0-9a-f]{6}$/i, `${field}/${entry.value} : un toit`);
+      } else {
+        assert.equal(entry.albedo.length, 3, `${field}/${entry.value} : un albédo`);
+      }
+    }
+  }
+});
+
+test('un mot non rendu de l’afficheur porte sa raison', () => {
+  const rice = showcaseEntries('matrix').find((e) => e.value === 'rice_terrace');
+  assert.equal(rice.unsupported, true);
+  assert.ok(rice.note && rice.note.length > 0);
 });

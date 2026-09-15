@@ -60,6 +60,10 @@ export {
 } from './inspect/objectLabels.js';
 export { forestTypeAt } from './layers/vegetationLayer.js';
 
+// --- Mise au point : isoler une valeur possible du vocabulaire de région ----
+// Pas un pays, un mot : « à quoi ressemble `granite` », sans y rouler.
+export { showcaseEntries, SHOWCASE_FIELDS } from './inspect/showcase.js';
+
 // --- Mise au point : voir le réseau routier tel qu'il est compris -----------
 // Rend des paires de points colorées, en mètres du repère local : à
 // l'application d'en faire une géométrie de lignes. Voir `demo/main.js`.
@@ -104,3 +108,7 @@ export {
 // sources lumineuses les fasse de la même matière.
 export { createGlowGeometry, createGlowMaterial } from './layers/furnitureKit.js';
 export { srgb } from './core/color.js';
+
+// Le catalogue de formes isolées (mobilier, arbres de crête…), pour qui veut
+// poser un objet du décor sans passer par une couche entière — voir l'afficheur.
+export { createFurnitureGeometries, createFurnitureMaterial } from './layers/furnitureKit.js';
