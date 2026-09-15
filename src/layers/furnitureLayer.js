@@ -459,7 +459,7 @@ export class FurnitureLayer {
       buildParcels(this, context, builtUp);
       buildDomesticFauna(this, houses);
       buildVillageLandmarks(this, context, builtUp);
-      buildPointsOfInterest(this, context, roadSegments);
+      buildPointsOfInterest(this, context, roadSegments, builtUp);
       buildRocks(this, context, builtUp);
       buildLandmarks(this, context, builtUp);
       buildPeakLandmarks(this, context, builtUp);

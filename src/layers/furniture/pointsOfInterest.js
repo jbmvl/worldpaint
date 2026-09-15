@@ -14,7 +14,14 @@
 
 import { lngToTileX, latToTileY } from '../../core/tileMath.js';
 import { pushPointOutsideCorridor, CORRIDOR_MARGIN_M } from '../roadCorridor.js';
-import { roadsideYaw, randomAt } from '../furniturePlacement.js';
+import { pointInAreas } from '../settlement.js';
+import {
+  roadsideYaw,
+  randomAt,
+  fountainKindFor,
+  busShelterKindFor,
+  MOUNTAIN_CLIMATE_FAMILIES,
+} from '../furniturePlacement.js';
 import { FURNITURE_RADIUS_M } from './catalog.js';
 
 /**
@@ -34,7 +41,7 @@ export const POI_CLEARANCE_M = 1.6;
  * y chercher : ni lampadaire, ni panneau, ni borne ne survivent à la
  * génération des tuiles.
  */
-export function buildPointsOfInterest(layer, context, roadSegments) {
+export function buildPointsOfInterest(layer, context, roadSegments, builtUp = null) {
   const { source, tiles, here, placements } = context;
   const { origin, scale, zoom } = layer.bubble.frame;
 
@@ -47,7 +54,7 @@ export function buildPointsOfInterest(layer, context, roadSegments) {
     const z = (latToTileY(lat, zoom) - origin.y) * scale;
     if (Math.hypot(x - here.x, z - here.z) > FURNITURE_RADIUS_M) return;
 
-    const item = poiItem(properties);
+    let item = poiItem(properties);
     if (!item) return;
 
     // Écarté de la chaussée. Un arrêt de bus est très souvent porté par le
@@ -62,6 +69,21 @@ export function buildPointsOfInterest(layer, context, roadSegments) {
       layer._infraIndex,
       CORRIDOR_MARGIN_M + POI_CLEARANCE_M
     );
+
+    // Style de la fontaine et de l'abribus, décidés à la place définitive :
+    // sol revêtu (grande ville), emprise bâtie (bourg) ou hors agglomération.
+    if (item === 'fountain') {
+      item = fountainKindFor({
+        paved: layer.groundClass?.surfaceAt(at.x, at.z) === 'pavement',
+        builtUp: pointInAreas(builtUp, at.x, at.z),
+      });
+    } else if (item === 'busShelter') {
+      item = busShelterKindFor({
+        mountain: MOUNTAIN_CLIMATE_FAMILIES.has(layer.climate),
+        builtUp: pointInAreas(builtUp, at.x, at.z),
+      });
+    }
+
     // Orienté vers la chaussée la plus proche : un abribus qui tourne le dos
     // à la route est le genre de détail qui saute aux yeux. Le cap se prend à
     // la place définitive, pas à celle que la donnée annonçait.
