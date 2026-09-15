@@ -13185,3 +13185,28 @@ test('chaque mot de culture porte le nom du motif que `CropLayer` y sèmerait', 
     assert.equal(typeof entry.crop, 'string', `${entry.value} : une culture`);
   }
 });
+
+test('chaque mot de l’afficheur porte une traduction française distincte du mot brut', () => {
+  for (const { field } of SHOWCASE_FIELDS) {
+    for (const entry of showcaseEntries(field)) {
+      assert.equal(typeof entry.label, 'string', `${field}/${entry.value} : un intitulé`);
+      assert.ok(entry.label.length > 0, `${field}/${entry.value} : non vide`);
+    }
+  }
+});
+
+test('les mots boisés de terrain portent un couvert isolé, les autres aucun', () => {
+  const entries = showcaseEntries('matrix');
+  for (const entry of entries) {
+    if (entry.surface === 'wood') assert.equal(typeof entry.canopy, 'string', `${entry.value} : un couvert`);
+    else assert.equal(entry.canopy, null, `${entry.value} : pas de couvert hors matière boisée`);
+  }
+});
+
+test('vigne, verger et lavande portent des rangs, les cultures de `CropLayer` aucun', () => {
+  const rowed = ['vineyard', 'orchard', 'olive', 'almond', 'lavender', 'tea', 'coffee', 'oil_palm'];
+  for (const entry of showcaseEntries('farming')) {
+    if (rowed.includes(entry.value)) assert.ok(entry.rows, `${entry.value} : des rangs`);
+    else assert.equal(entry.rows, null, `${entry.value} : rien à ajouter, CropLayer sème déjà`);
+  }
+});

@@ -88,11 +88,13 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
 - **Mode afficheur** : n'est pas un sélecteur de région, mais un sélecteur de
   mot. Bascule vers une seconde scène, sans lien avec un lieu, qui isole un mot
   du vocabulaire fermé de région (`src/core/regionInterpretation.js` via
-  `src/inspect/showcase.js`). C'est ce qui répond à « à quoi ressemble
-  `granite` ? » sans qu'il faille trouver le pays qui l'emploie et s'y
-  téléporter. Un mot marqué ⚠ est `unsupported` dans le vocabulaire : le décor
-  n'a rien de juste à mettre à sa place, et l'afficheur montre le même repli
-  que verrait qui roule jusque-là.
+  `src/inspect/showcase.js`), **traduit en français** dans le panneau — le mot
+  brut (`vineyard`, `hedgerow_meadow`…) reste la clé stable, la traduction n'en
+  est qu'un habillage. C'est ce qui répond à « à quoi ressemble `granite` ? »
+  sans qu'il faille trouver le pays qui l'emploie et s'y téléporter. Un mot
+  marqué ⚠ est `unsupported` dans le vocabulaire : le décor n'a rien de juste
+  à mettre à sa place, et l'afficheur montre le même repli que verrait qui
+  roule jusque-là.
 
   Deux présentations, selon le champ :
   - **pierre, bâti, arbres** : une grille de vignettes, un mot par case — un
@@ -102,10 +104,20 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
     **tuile pleine** — pas une couleur, mais le sol et ce qui pousse vraiment
     dessus. `GroundCover` et `CropLayer`, les couches du monde réel, sèment
     leurs touffes et leurs tiges sur un `groundClass` truqué qui répond « ce
-    mot, partout » au lieu de lire des tuiles vectorielles. Une matière boisée
-    montre la litière du sous-bois (`grassGreenFor`), pas des arbres : la
-    matrice ne décide jamais du couvert forestier, seul un polygone de forêt
-    du vectoriel le fait.
+    mot, partout » au lieu de lire des tuiles vectorielles. Deux cas que
+    `CropLayer` ne sait pas semer reçoivent un second habillage, ajouté par la
+    démo et non par le moteur :
+    - une matière boisée (bois de feuillus, forêt de conifères…) montre la
+      litière du sous-bois (`grassGreenFor`) *et*, en plus, quelques arbres
+      isolés du catalogue de mobilier — un repère, pas la vraie canopée : la
+      matrice ne décide jamais du couvert forestier, seul un polygone de forêt
+      du vectoriel le fait ;
+    - la vigne, le verger et la lavande n'ont pas de motif de tiges
+      (`CROP_LOOK`) : ils se plantent en **rangs**, posés par le mobilier sur
+      le contour d'une parcelle réelle (`furniture/parcels.js`, `buildRows`).
+      Sans parcelle à suivre, l'afficheur plante à la place des rangs
+      d'échalas, d'arbres taillés ou de buissons du même catalogue — le motif,
+      pas le tracé exact d'un vrai bord de parcelle.
 - **Sélecteur de région naturelle** : force le pays du décor
   (`world.setRegion`) au lieu de le lire à l'ancre la plus proche de la position
   courante. C'est ce qui permet de juger le travail : **même terrain, mêmes

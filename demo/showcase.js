@@ -113,6 +113,50 @@ function buildBlock(THREE, entry) {
 }
 
 /**
+ * La même géométrie, recolorée vers `albedo` en gardant le grain facetté du
+ * modèle d'origine (chaque facette garde sa clarté relative, seule la teinte
+ * change) — il n'existe pas de buisson de lavande dans le catalogue, `bush`
+ * est un repère approché, pas la vraie plante.
+ */
+function recoloredGeometry(THREE, geometry, albedo) {
+  const recolored = geometry.clone();
+  const colors = recolored.getAttribute('color');
+  for (let i = 0; i < colors.count; i++) {
+    const shade = (colors.getX(i) + colors.getY(i) + colors.getZ(i)) / 3 / 0.4; // 0,4 : clarté moyenne du feuillage d'origine
+    colors.setXYZ(i, albedo[0] * shade, albedo[1] * shade, albedo[2] * shade);
+  }
+  colors.needsUpdate = true;
+  return recolored;
+}
+
+/**
+ * Sème une géométrie en rangs réguliers sur un carré centré, avec un peu de
+ * gigue pour ne pas trahir la grille au premier coup d'œil. Un
+ * `InstancedMesh` : un rang de vigne en pose des centaines.
+ */
+function scatterRows(THREE, geometry, material, { areaM, spacingX, spacingZ, offsetZ = 0, disposableGeometry = false }) {
+  const cols = Math.max(1, Math.round(areaM / spacingX));
+  const rows = Math.max(1, Math.round(areaM / spacingZ));
+  const mesh = new THREE.InstancedMesh(geometry, material, cols * rows);
+  mesh.userData.disposableGeometry = disposableGeometry;
+  const m = new THREE.Matrix4();
+  let i = 0;
+  for (let cz = 0; cz < rows; cz++) {
+    for (let cx = 0; cx < cols; cx++) {
+      const jitterX = (Math.random() - 0.5) * spacingX * 0.25;
+      const jitterZ = (Math.random() - 0.5) * spacingZ * 0.25;
+      const x = (cx - (cols - 1) / 2) * spacingX + jitterX;
+      const z = (cz - (rows - 1) / 2) * spacingZ + jitterZ + offsetZ;
+      m.makeRotationY(Math.random() * Math.PI * 2);
+      m.setPosition(x, 0, z);
+      mesh.setMatrixAt(i++, m);
+    }
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  return mesh;
+}
+
+/**
  * Construit et pilote la scène de l'afficheur.
  * @param {Object} THREEns Le module `three` déjà importé par `main.js`.
  */
@@ -159,16 +203,43 @@ export function createShowcase(THREEns) {
   grassCover.mesh.visible = false;
   cropCover.mesh.visible = false;
 
+  // Le catalogue de formes isolées : les arbres de la grille, le couvert d'un
+  // mot boisé, les repères d'un rang de vigne ou de verger — un seul jeu de
+  // géométries pour les trois usages.
+  const furnitureGeometries = createFurnitureGeometries(THREEns);
+  const furnitureMaterial = createFurnitureMaterial(THREEns);
+
+  /** Ce que `canopy`/`rows` ont posé sur la tuile pour le mot courant. */
+  const overlay = new THREEns.Group();
+  tile.add(overlay);
+
+  function clearOverlay() {
+    while (overlay.children.length) {
+      const child = overlay.children.pop();
+      // La géométrie du catalogue (`furnitureGeometries`) est partagée d'un
+      // mot à l'autre ; seule une géométrie teintée à la volée (lavande) est
+      // à elle et se libère ici.
+      if (child.userData.disposableGeometry) child.geometry?.dispose?.();
+      overlay.remove(child);
+    }
+  }
+
   let currentField = null;
   let currentEntries = [];
 
-  /** Vide la grille et libère géométries et matériaux — pas la tuile, réutilisée. */
+  /** Vide la grille et libère géométries et matériaux propres à une case. */
   function clearGrid() {
     while (grid.children.length) {
       const child = grid.children.pop();
       child.traverse?.((node) => {
-        node.geometry?.dispose?.();
-        node.material?.dispose?.();
+        // Le catalogue de formes (`furnitureGeometries`/`furnitureMaterial`)
+        // est partagé entre toutes les cases « arbre » et la tuile : une case
+        // ne possède que sa propre géométrie (bloc, maison) et son étiquette.
+        if (node.geometry && !node.userData.sharedGeometry) node.geometry.dispose();
+        if (node.material && node.material !== furnitureMaterial) {
+          node.material.map?.dispose();
+          node.material.dispose();
+        }
       });
       grid.remove(child);
     }
@@ -176,12 +247,6 @@ export function createShowcase(THREEns) {
 
   function buildGrid(entries) {
     clearGrid();
-    let treeGeometries = null;
-    let treeMaterial = null;
-    if (entries.some((e) => e.shape === 'tree')) {
-      treeGeometries = createFurnitureGeometries(THREEns);
-      treeMaterial = createFurnitureMaterial(THREEns);
-    }
 
     entries.forEach((entry, i) => {
       const col = i % COLUMNS;
@@ -192,11 +257,15 @@ export function createShowcase(THREEns) {
       if (entry.shape === 'block') cell.add(buildBlock(THREEns, entry));
       else if (entry.shape === 'house') cell.add(buildHouse(THREEns, entry));
       else if (entry.shape === 'tree') {
-        const geometry = treeGeometries[entry.alignment];
-        if (geometry) cell.add(new THREEns.Mesh(geometry, treeMaterial));
+        const geometry = furnitureGeometries[entry.alignment];
+        if (geometry) {
+          const mesh = new THREEns.Mesh(geometry, furnitureMaterial);
+          mesh.userData.sharedGeometry = true;
+          cell.add(mesh);
+        }
       }
 
-      const label = makeLabelSprite(entry.unsupported ? `${entry.value} ⚠` : entry.value);
+      const label = makeLabelSprite(entry.unsupported ? `${entry.label} ⚠` : entry.label);
       label.position.set(0, 2.6, 0);
       cell.add(label);
 
@@ -208,6 +277,7 @@ export function createShowcase(THREEns) {
   function setWord(value) {
     const entry = currentEntries.find((e) => e.value === value);
     if (!entry) return;
+    clearOverlay();
 
     const isFarming = currentField === 'farming';
     tileState.surface = isFarming ? 'farmland' : entry.surface;
@@ -219,6 +289,38 @@ export function createShowcase(THREEns) {
     cropCover.mesh.visible = isFarming;
     if (isFarming) cropCover.update(0, 0, { force: true });
     else grassCover.update(0, 0, { force: true });
+
+    // Couvert d'un mot boisé : la matrice ne le pose jamais elle-même (voir
+    // `WOOD_CANOPY`), un repère isolé du catalogue évite qu'un bois ne rende
+    // qu'un sol nu à l'écran.
+    if (!isFarming && entry.canopy) {
+      const geometry = furnitureGeometries[entry.canopy];
+      if (geometry) {
+        const areaM = 90;
+        overlay.add(
+          scatterRows(THREEns, geometry, furnitureMaterial, { areaM, spacingX: 9, spacingZ: 9, offsetZ: areaM / 2 + 3 })
+        );
+      }
+    }
+
+    // Rangs d'une culture que `CropLayer` ne sème pas (vigne, verger, lavande) :
+    // voir `ROW_CROPS`, dans `src/inspect/showcase.js`.
+    if (isFarming && entry.rows) {
+      const { kind, areaM, spacingX, spacingZ } = entry.rows;
+      let geometry = null;
+      let disposableGeometry = false;
+      if (kind === 'stakes') geometry = furnitureGeometries.vineStock;
+      else if (kind === 'trees') geometry = furnitureGeometries.treeOval;
+      else if (kind === 'bushes') {
+        geometry = recoloredGeometry(THREEns, furnitureGeometries.bush, entry.albedo);
+        disposableGeometry = true;
+      }
+      if (geometry) {
+        overlay.add(
+          scatterRows(THREEns, geometry, furnitureMaterial, { areaM, spacingX, spacingZ, offsetZ: areaM / 2 + 3, disposableGeometry })
+        );
+      }
+    }
   }
 
   /** Bascule vers un champ. Rend la liste de ses mots (pour peupler le sélecteur). */
@@ -235,10 +337,13 @@ export function createShowcase(THREEns) {
 
   function dispose() {
     clearGrid();
+    clearOverlay();
     grassCover.dispose();
     cropCover.dispose();
     groundPlane.geometry.dispose();
     groundPlane.material.dispose();
+    for (const geometry of Object.values(furnitureGeometries)) geometry.dispose();
+    furnitureMaterial.dispose();
   }
 
   return { scene, setField, setWord, dispose, fields: SHOWCASE_FIELDS, isTileField: (field) => TILE_FIELDS.has(field) };

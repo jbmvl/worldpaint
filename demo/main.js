@@ -1458,7 +1458,7 @@ function applyShowcaseField(field) {
   if (isTile) {
     showcaseWordSelect.replaceChildren();
     for (const entry of entries) {
-      showcaseWordSelect.append(new Option(entry.unsupported ? `${entry.value} ⚠` : entry.value, entry.value));
+      showcaseWordSelect.append(new Option(entry.unsupported ? `${entry.label} ⚠` : entry.label, entry.value));
     }
     // Debout au milieu de la tuile : c'est une étendue de plusieurs dizaines
     // de mètres (le même rayon que l'herbe et les cultures du monde réel),
