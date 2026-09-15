@@ -788,7 +788,7 @@ export function roadsideFurnitureFor(profile, { builtUp = false } = {}) {
       if (builtUp) plan.lamp = 38;
       else {
         plan.utilityPole = 62;
-        plan.alignmentTree = 20;
+        plan.alignmentTree = 16;
       }
       break;
 

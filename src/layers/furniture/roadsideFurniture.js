@@ -518,7 +518,10 @@ export function applyRoadsidePlan(layer, {
     }
   }
 
-  if (plan.alignmentTree) {
+  // Alignement d'arbres : pas systématique. Une route sur trois environ n'en
+  // porte pas, ce qui évite qu'une route majeure hors agglomération en soit
+  // toujours bordée sur toute sa longueur.
+  if (plan.alignmentTree && randomAt(side.x, side.z, 47) < 0.7) {
     // L'essence est tirée **une fois pour la chaîne** : un alignement mêlant
     // platanes et sapins n'existe pas, c'est le propre d'un alignement d'être
     // planté le même jour.
