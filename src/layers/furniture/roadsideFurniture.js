@@ -453,6 +453,23 @@ export function applyRoadsidePlan(layer, {
     });
   }
 
+  // Bâtons de repère de neige : le bord de route se perd sous la neige dès
+  // qu'elle tombe, et c'est justement là que ce jalon a sa raison d'être —
+  // sur toute chaussée aménagée, en climat de montagne, plus rapprochés que
+  // les poteaux de glissière puisqu'ils marquent la rive même où elle manque.
+  if ((layer.climate === 'alpine' || layer.climate === 'glacial') && profileTakesGuardrail(profile)) {
+    for (const p of spacedAlongPath(path, 9, spacing)) {
+      const row = p.index % 2 === 0 ? 1 : -1;
+      layer._placeBeside(placements, 'snowPole', p, row * (halfWidth + 0.5), platform, {
+        facing: 'road',
+        onPlatform: true,
+        atKerb: true,
+        own: segment,
+        level,
+      });
+    }
+  }
+
   if (plan.directionSign) {
     for (const p of spacedAlongPath(path, plan.directionSign, spacing)) {
       layer._placeBeside(placements, 'signDirection', p, -(halfWidth + 1.8), platform, {

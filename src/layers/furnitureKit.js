@@ -446,6 +446,18 @@ export const FURNITURE_BUILDERS = {
   },
 
   /**
+   * Bâton de repère de neige : une tige souple plantée en bord de route de
+   * montagne, qui dépasse le manteau neigeux là où la glissière disparaît
+   * sous elle. La pointe rouge est ce qui reste visible du sommet du tas.
+   */
+  snowPole(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.cylinder({ radiusBottom: 0.03, radiusTop: 0.025, height: 1.6, radial: 5, color: C.signRed });
+    k.cylinder({ radiusBottom: 0.032, radiusTop: 0.032, height: 0.22, radial: 5, y: 1.05, color: C.signWhite });
+    return k;
+  },
+
+  /**
    * ## La signalisation
    *
    * Onze panneaux, et la raison d'en avoir onze plutôt qu'un : un bord de route
