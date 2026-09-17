@@ -383,10 +383,12 @@ test('la section d’une rue est celle du thème qu’on lui donne', () => {
 
 test('le ciel est une tranche du thème', () => {
   assert.deepEqual(Object.keys(DEFAULT.sky).sort(), [
+    'cloud',
     'fog',
     'nightHorizon',
     'nightZenith',
     'variants',
+    'zenith',
   ]);
   assert.equal(DEFAULT.sky.fog, '#e8eef3');
   assert.equal(OTHER.sky.fog, '#000000');

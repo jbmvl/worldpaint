@@ -1378,12 +1378,29 @@ export const FURNITURE_COLORS = {
 
 // --- Le ciel -------------------------------------------------------------------
 /**
- * Les trois couleurs d'ambiance. `fog` teinte le brouillard et le raccord
- * d'horizon du ciel (doivent rester identiques, sinon couture visible).
- * `nightZenith`/`nightHorizon` remplacent Preetham sous l'horizon.
+ * Les couleurs d'ambiance — les seules du thème qu'on voie sur la moitié haute
+ * de chaque image. `fog` teinte le brouillard **et** le raccord d'horizon du
+ * ciel (la même valeur des deux côtés, sinon couture visible) ; `zenith` et
+ * `cloud` peignent la voûte depuis qu'elle n'est plus calculée ;
+ * `nightZenith`/`nightHorizon` la remplacent sous l'horizon.
  */
 export const SKY_PALETTE = {
   fog: '#e8eef3',
+  /**
+   * Le haut de la voûte, de jour. Le ciel était calculé par un modèle de
+   * diffusion, qui décidait lui-même de cette couleur à partir de la position
+   * du soleil. Il est maintenant peint (voir `environment/skyDome.js`), donc
+   * quelqu'un doit la dire, et ce quelqu'un est la palette.
+   *
+   * C'est, avec `fog`, la couleur la plus visible du décor — les deux occupent
+   * à elles seules la moitié haute de l'image.
+   */
+  zenith: '#7fb6e8',
+  /**
+   * Le corps des nuages. Rarement blanc pur : un nuage prend la couleur de
+   * l'air qui l'entoure, et un blanc franc sur un ciel pâle ne se voit pas.
+   */
+  cloud: '#fdfdfb',
   nightZenith: '#0d1428', // une nuit sombre, pas noire (voir sceneEnvironment.js)
 
   nightHorizon: '#1c2c4c',
@@ -1411,16 +1428,25 @@ export const SKY_PALETTE = {
       climates: ['oceanicUpland'],
       // Plus gris et plus dense : c'est un air chargé d'eau, pas une brume.
       fog: '#dfe6ea',
+      // Le bleu n'y monte jamais franc, même par beau temps.
+      zenith: '#93b3cd',
+      cloud: '#f4f6f7',
     },
     {
       name: 'midi',
       climates: ['mediterranean', 'mediterraneanCool'],
       fog: '#eeeadf',
+      // L'air sec du sud : le bleu y est plus profond qu'ailleurs en plaine.
+      zenith: '#6ba7e2',
+      cloud: '#fffdf6',
     },
     {
       name: 'poussière',
       climates: ['semiArid', 'arid'],
       fog: '#efe6d6',
+      // La poussière en suspension lave le bleu et jaunit le nuage.
+      zenith: '#96b6ce',
+      cloud: '#fdf5e6',
       // Une nuit de pays sec est plus chaude et plus claire : il n'y a pas de
       // couche d'eau pour l'éteindre.
       nightHorizon: '#2a2b40',
@@ -1429,11 +1455,14 @@ export const SKY_PALETTE = {
       name: 'continental',
       climates: ['continental'],
       fog: '#e9eef1',
+      zenith: '#79b0e4',
     },
     {
       name: 'boréal',
       climates: ['boreal', 'glacial'],
       fog: '#e6edf2',
+      // Un soleil qui ne monte jamais haut : le bleu reste pâle et froid.
+      zenith: '#8ab9df',
       nightZenith: '#0b1226',
     },
     {
@@ -1442,6 +1471,9 @@ export const SKY_PALETTE = {
       // L'air y est le plus clair d'Europe : le lointain reste lisible bien
       // plus loin qu'ailleurs, et c'est ce qui fait la montagne.
       fog: '#e2ecf4',
+      // Et c'est aussi ce qui donne le bleu le plus profond du jeu de palettes.
+      zenith: '#4d90d6',
+      cloud: '#ffffff',
     },
   ],
 };

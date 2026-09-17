@@ -170,19 +170,23 @@ export function fogColorFor(rgb, weather) {
 }
 
 /**
- * Correction des coefficients de Preetham par la météo. Seule la turbidité
- * bouge, et seulement avec la brume (les nuages sont déjà rendus par le
- * shader de `Sky` de three).
+ * Correction du dégradé du ciel (`skyModel.skyParameters`) par la météo.
+ * Seule la brume le déforme, et elle le fait dans un seul sens : elle fait
+ * monter la couleur d'horizon vers le zénith (`curve`) et éteint ce que le
+ * soleil ajoute. Les nuages, eux, ne touchent à rien ici — ils sont déjà
+ * peints par le shader de la voûte, et les redoubler blanchirait le ciel deux
+ * fois.
  *
- * @param {{turbidity:number, rayleigh:number, mieCoefficient:number, mieDirectionalG:number}} sky
+ * @param {{curve:number, sunset:number, glow:number, glowFocus:number}} gradient
  * @param {Object} weather État résolu.
  */
-export function weatherSkyParameters(sky, weather) {
+export function weatherSkyGradient(gradient, weather) {
   return {
-    ...sky,
-    turbidity: sky.turbidity * (1 + weather.haze * 1.6),
-    // Le bleu franc du zénith s'affadit avec la brume.
-    rayleigh: sky.rayleigh * (1 - weather.haze * 0.35),
+    ...gradient,
+    curve: gradient.curve * (1 + weather.haze * 1.6),
+    // Une brume avale le couchant et le halo : il n'y a plus de disque à voir.
+    sunset: gradient.sunset * (1 - weather.haze * 0.75),
+    glow: gradient.glow * (1 - weather.haze * 0.6),
   };
 }
 

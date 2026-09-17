@@ -59,10 +59,18 @@ test('createWorld refuse de monter sans scène ni three', () => {
   assert.throws(() => createWorld({ THREE: {} }), /scene/);
 });
 
-test('createWorld exige la classe Sky dès qu’un ciel est demandé', () => {
-  // On n’arrive jamais jusqu’au ciel sans scène : le contrôle est donc lu ici
-  // à travers le message, pas à travers un montage complet.
-  assert.throws(() => createWorld({ THREE: {}, scene: {}, sky: {} }), /Sky/);
+test('un ciel ne réclame plus la classe Sky de three', () => {
+  // La voûte est la nôtre depuis qu'elle n'est plus le modèle de Preetham
+  // (`environment/skyDome.js`) : `sky: {}` est un appel complet. Le montage va
+  // donc plus loin que ce contrôle et échoue sur le THREE en carton — ce qui
+  // est précisément la preuve qu'aucun contrôle sur `Sky` ne l'a arrêté avant.
+  assert.doesNotThrow(() => {
+    try {
+      createWorld({ THREE: {}, scene: {}, sky: {} });
+    } catch (err) {
+      if (/Sky/.test(err.message)) throw err;
+    }
+  }, /Sky/);
 });
 
 /** Compositeur en carton : il note ce qu'on lui demande. */

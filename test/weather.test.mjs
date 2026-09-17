@@ -26,7 +26,7 @@ import {
   resolveWeather,
   overcastOf,
   weatherLighting,
-  weatherSkyParameters,
+  weatherSkyGradient,
   castsShadow,
   fogScale,
   fogColorFor,
@@ -98,7 +98,7 @@ test('par temps ordinaire, rien du rendu d’avant ne bouge', () => {
   assert.deepEqual(fogColorFor(palette, ORDINARY), palette, 'la palette passe intacte');
 
   const sky = skyParameters(0.5);
-  assert.deepEqual(weatherSkyParameters(sky, ORDINARY), sky, 'Preetham inchangé sans brume');
+  assert.deepEqual(weatherSkyGradient(sky, ORDINARY), sky, 'le dégradé inchangé sans brume');
 
   const light = lightingFor(0.5);
   const applied = weatherLighting(light, ORDINARY);
@@ -193,15 +193,18 @@ test('la brume désature le brouillard même sous un ciel dégagé', () => {
   );
 });
 
-test('la brume charge l’atmosphère, les nuages non', () => {
-  const sky = skyParameters(0.5);
-  const hazy = weatherSkyParameters(sky, resolveWeather({ haze: 1 }));
-  assert.ok(hazy.turbidity > sky.turbidity, 'plus d’aérosols');
-  assert.ok(hazy.rayleigh < sky.rayleigh, 'le bleu du zénith s’affadit');
+test('la brume aplatit le ciel, les nuages non', () => {
+  // Soleil rasant : c'est la seule hauteur où le couchant et le halo ont une
+  // valeur non nulle, donc la seule où leur extinction se mesure.
+  const sky = skyParameters(0.05);
+  const hazy = weatherSkyGradient(sky, resolveWeather({ haze: 1 }));
+  assert.ok(hazy.curve > sky.curve, 'la couleur d’horizon monte vers le zénith');
+  assert.ok(hazy.glow < sky.glow, 'plus de halo : il n’y a plus de disque à voir');
+  assert.ok(hazy.sunset < sky.sunset, 'ni de couchant');
 
-  // Les nuages sont déjà rendus par le shader de nuages : les redoubler ici
+  // Les nuages sont déjà peints par le shader de la voûte : les redoubler ici
   // blanchirait le ciel deux fois.
-  assert.deepEqual(weatherSkyParameters(sky, OVERCAST), sky);
+  assert.deepEqual(weatherSkyGradient(sky, OVERCAST), sky);
 });
 
 test('le vent pilote l’amplitude et la vitesse ensemble mais séparément', () => {

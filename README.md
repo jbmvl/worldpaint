@@ -93,7 +93,6 @@ direction (`themes/default.js`) are deliberately separate — see
 
 ```js
 import * as THREE from 'three';
-import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { createWorld } from 'worldpaint';
 
 const scene = new THREE.Scene();
@@ -104,7 +103,7 @@ const world = createWorld({
   // Vector tiles are optional: without them you get bare relief.
   vector: { tiles: ['https://…/{z}/{x}/{y}.pbf'], maxZoom: 14 },
   // The sky is optional too: without it, you light the scene yourself.
-  sky: { Sky },
+  sky: {},
 });
 
 await world.setCenter(2.3522, 48.8566);
@@ -128,12 +127,20 @@ function frame(delta, camera) {
 ```
 
 The application owns the renderer, the scene, the camera, the clock and the
-position. The generator only dresses the point it is shown — including tone
-mapping: the light rig intentionally goes above 1 (a night that reads as
-truly black is illegible), and `NoToneMapping` — three's default — clips
-that to flat white instead of rolling it off. Set
-`renderer.toneMapping = THREE.ACESFilmicToneMapping` (or whatever curve the
-application already uses) rather than leaving it at the default.
+position. The generator only dresses the point it is shown.
+
+**Tone mapping: leave it off.** The light rig and the sky are both calibrated
+to stay inside display range — on an upward-facing surface in full daylight,
+sun and ambient sum to a little over 1 — so `NoToneMapping`, three's default,
+renders an albedo roughly as it was painted. A filmic curve on top desaturates
+and lifts the blacks of a palette that was already placed. Set
+`renderer.outputColorSpace = THREE.SRGBColorSpace` and nothing else.
+
+Earlier versions asked for `ACESFilmicToneMapping` at 0.5 exposure, because
+the sky followed the Preetham model and the rig went well above 1 to match.
+Neither is true any more: the sky is painted from the theme palette
+(`src/environment/skyDome.js`), and `sky.Sky` — three's `Sky.js` class, once
+mandatory — is now accepted and ignored.
 
 ### The five verbs
 

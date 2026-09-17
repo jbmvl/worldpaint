@@ -1622,23 +1622,24 @@ test('l’eau est une matière du sol, et la dernière de la liste', () => {
 
 // --- Ciel -------------------------------------------------------------------
 
-test('l’atmosphère s’épaissit quand le soleil descend', () => {
+test('le ciel se couche quand le soleil descend', () => {
   const midi = skyParameters(0.9);
   const rasant = skyParameters(0.02);
 
-  // Soleil rasant : la lumière traverse bien plus d’air, le bleu est diffusé
-  // hors du trajet et il ne reste que le rouge.
-  assert.ok(rasant.turbidity > midi.turbidity, 'turbidité');
-  assert.ok(rasant.rayleigh > midi.rayleigh, 'Rayleigh');
-  assert.ok(rasant.mieCoefficient > midi.mieCoefficient, 'Mie');
-  assert.ok(rasant.mieDirectionalG > midi.mieDirectionalG, 'halo resserré');
+  // Soleil rasant : la bande d’horizon monte haut dans la voûte, elle prend la
+  // couleur de la lumière, et le halo s’élargit autour du disque.
+  assert.ok(rasant.curve > midi.curve, 'la bande d’horizon monte');
+  assert.ok(rasant.sunset > midi.sunset, 'couchant');
+  assert.equal(midi.sunset, 0, 'aucun couchant à midi');
+  assert.ok(rasant.glow > midi.glow, 'halo plus fort');
+  assert.ok(rasant.glowFocus < midi.glowFocus, 'et plus large');
 
   // Monotone : pas d’inversion entre l’aube et le plein jour.
   let previous = Infinity;
   for (let y = 0; y <= 1; y += 0.05) {
-    const t = skyParameters(y).turbidity;
-    assert.ok(t <= previous + 1e-9, `turbidité décroissante à ${y.toFixed(2)}`);
-    previous = t;
+    const c = skyParameters(y).curve;
+    assert.ok(c <= previous + 1e-9, `courbure décroissante à ${y.toFixed(2)}`);
+    previous = c;
   }
 });
 
@@ -2411,7 +2412,9 @@ test('la nuit reste éclairée assez pour qu’on lise le relief', () => {
   // Une nuit noire ne se distingue plus d’un rendu en panne.
   const nuit = lightingFor(-0.4);
   const jour = lightingFor(0.9);
-  assert.ok(nuit.ambient > 0.5, 'ambiance nocturne');
+  // Relatif au jour, pas un seuil absolu : les intensités ont changé d’échelle
+  // en passant au rendu sans tone mapping, la lisibilité de la nuit non.
+  assert.ok(nuit.ambient > jour.ambient * 0.4, 'ambiance nocturne');
   assert.ok(nuit.ambient < jour.ambient, 'mais toujours moins que le jour');
   assert.ok(nuit.sun < jour.sun);
 });

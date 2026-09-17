@@ -16,7 +16,6 @@
  */
 
 import * as THREE from 'three';
-import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import {
   createWorld,
   collectSceneLabels,
@@ -105,10 +104,16 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-// Le rig de lumière du moteur monte volontairement au-dessus de 1 (voir
-// `environment/skyModel.js`) ; sans tone mapping ça écrête à blanc plat.
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.5; // valeur de l'exemple officiel three pour ce Sky.js
+// Aucun tone mapping, et c'est une décision, pas un oubli.
+//
+// L'ACES filmique était là pour deux raisons qui ont disparu ensemble : le
+// ciel de Preetham montait à des luminances arbitrairement hautes, et le rig
+// de lumière suivait (soleil 1,75 + ambiance 1,2). Les deux tiennent
+// maintenant dans la plage d'affichage — voir `environment/skyModel.js` — et
+// la courbe filmique ne faisait plus que désaturer et grisailler des aplats
+// déjà calés. `toneMappingExposure` n'a plus d'effet sous `NoToneMapping` :
+// l'exposition est portée par les intensités du rig, pas ici.
+renderer.toneMapping = THREE.NoToneMapping;
 
 
 const scene = new THREE.Scene();
@@ -150,7 +155,7 @@ async function boot() {
     THREE,
     scene,
     vector,
-    sky: { Sky },
+    sky: {},
   });
 
   setStatus(`Centrage sur ${START.label}…`);
@@ -1165,42 +1170,6 @@ const windDirectionSlider = {
 };
 
 /**
- * Calibration de la réglette « couverture nuageuse ». Le masque de nuage du
- * `Sky.js` natif de three sature vers 0,5 (la moitié haute de 0-1 ne change
- * presque rien) : cette table, mesure empirique de ce masque, fait qu'une
- * réglette 0-100 % répond sur toute sa course (`uiToCloudCover`,
- * `cloudCoverToUi`). Calibrage de présentation propre à la démo : ne change
- * pas la sémantique de `weather.cloudCover`.
- */
-const CLOUD_COVER_CURVE = [0, 0.16, 0.2, 0.23, 0.26, 0.29, 0.31, 0.34, 0.37, 0.41, 0.55];
-
-function interpolateCurve(curve, x) {
-  const scaled = Math.min(1, Math.max(0, x)) * (curve.length - 1);
-  const i = Math.min(curve.length - 2, Math.floor(scaled));
-  const t = scaled - i;
-  return curve[i] + (curve[i + 1] - curve[i]) * t;
-}
-
-/** Position de réglette (0–1) → `weather.cloudCover` (0–1). */
-function uiToCloudCover(ui) {
-  return interpolateCurve(CLOUD_COVER_CURVE, ui);
-}
-
-/** `weather.cloudCover` (0–1) → position de réglette (0–1). Inverse de la table. */
-function cloudCoverToUi(raw) {
-  const value = Math.min(1, Math.max(0, raw));
-  for (let i = 1; i < CLOUD_COVER_CURVE.length; i++) {
-    if (CLOUD_COVER_CURVE[i] >= value) {
-      const lo = CLOUD_COVER_CURVE[i - 1];
-      const hi = CLOUD_COVER_CURVE[i];
-      const t = hi === lo ? 0 : (value - lo) / (hi - lo);
-      return (i - 1 + t) / (CLOUD_COVER_CURVE.length - 1);
-    }
-  }
-  return 1;
-}
-
-/**
  * Le mouillé suit l'averse **jusqu'à ce qu'on y touche**. C'est la seule façon
  * de regarder un sol trempé sans avoir la pluie devant les yeux — et de vérifier
  * qu'un sol sèche sans que le ciel change, ce qu'une application réelle ferait
@@ -1211,12 +1180,15 @@ let wetnessManual = false;
 /** Ne repasse la météo au moteur que lorsqu'elle a bougé : omise, il la reconduit. */
 let weatherDirty = true;
 
+/**
+ * L'état météo lu dans les curseurs. Chaque réglette est la valeur du moteur,
+ * sans calibrage : la couverture nuageuse avait le sien tant que les nuages
+ * étaient ceux du `Sky.js` de three, dont le masque saturait vers 0,5 ; le
+ * seuil de la voûte est maintenant linéaire en `cloudCover`.
+ */
 function readWeather() {
   const weather = { precipitationType: precipitationTypeSelect.value };
   for (const key of SLIDER_KEYS) weather[key] = Number(sliders[key].input.value) / 100;
-  // Voir `CLOUD_COVER_CURVE` : la position de la réglette est calibrée pour
-  // répondre sur toute sa course, pas la valeur brute envoyée au moteur.
-  weather.cloudCover = uiToCloudCover(weather.cloudCover);
   weather.windDirection = (Number(windDirectionSlider.input.value) * Math.PI) / 180;
   return weather;
 }
@@ -1226,8 +1198,7 @@ function writeWeather(weather) {
   const full = { ...DEFAULT_WEATHER, ...weather };
   for (const key of SLIDER_KEYS) {
     if (key === 'wetness') continue;
-    const ui = key === 'cloudCover' ? cloudCoverToUi(full[key]) : full[key];
-    sliders[key].input.value = Math.round(ui * 100);
+    sliders[key].input.value = Math.round(full[key] * 100);
   }
   precipitationTypeSelect.value = full.precipitationType;
   // En degrés positifs, dans le sens du curseur : un `windDirection` négatif
@@ -1304,8 +1275,8 @@ for (const preset of PRESETS) {
   presetsRoot.appendChild(button);
 }
 // L'état de départ vient de `writeWeather`, pas des attributs `value` du HTML :
-// la position de la réglette de couverture est calibrée (`cloudCoverToUi`), un
-// « 42 » écrit en dur dans le markup ne représenterait pas la bonne position.
+// une valeur écrite en dur dans le markup se désaccorderait de `DEFAULT_WEATHER`
+// à la première retouche du temps ordinaire.
 writeWeather(DEFAULT_WEATHER);
 presetsRoot.children[1].classList.add('on'); // « Ordinaire », qui est l'état de départ
 weatherBtn.textContent = PRESETS[1].label.split(' ')[0];

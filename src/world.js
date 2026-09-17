@@ -54,10 +54,15 @@ export const DEFAULT_VIEW = {
  * @param {Object|null} [options.theme] Direction artistique — tranches
  *        entières qui remplacent celles de `defaultTheme`, voir `resolveTheme`.
  * @param {Object|null} [options.sky] Ciel, soleil et brouillard. `null` (le
- *        défaut) n'en pose aucun. Sinon `{ Sky }` est obligatoire : la classe
- *        `three/examples/jsm/objects/Sky.js`.
- * @param {Object} [options.sky.Sky]
- * @param {{fog: string, nightZenith: string, nightHorizon: string}} [options.sky.palette]
+ *        défaut) n'en pose aucun ; un objet, même vide, en pose un.
+ *
+ *        `sky.Sky` (la classe `three/examples/jsm/objects/Sky.js`) était
+ *        obligatoire tant que le ciel suivait le modèle de Preetham. La voûte
+ *        est maintenant la nôtre (`environment/skyDome.js`) : la clé est
+ *        encore acceptée, pour ne casser aucun appel existant, mais elle n'est
+ *        plus lue.
+ * @param {Object} [options.sky.Sky] Ignoré. Voir ci-dessus.
+ * @param {{fog: string, zenith?: string, cloud?: string, nightZenith: string, nightHorizon: string}} [options.sky.palette]
  * @param {number} [options.sky.fogRadius] Défaut : le demi-côté de la bulle.
  * @param {number} [options.sky.shadowMapSize]
  * @param {Object} [options.sky.weather] Temps qu'il fait au montage (voir
@@ -78,10 +83,6 @@ export function createWorld({
 }) {
   if (!THREE) throw new Error('createWorld: THREE manquant');
   if (!scene) throw new Error('createWorld: scene manquante');
-  // Contrôlé avant toute allocation, pour ne pas laisser un compositeur non libéré.
-  if (sky && !sky.Sky) {
-    throw new Error('createWorld: sky.Sky manquant (three/examples/jsm/objects/Sky.js)');
-  }
 
   const settings = { ...DEFAULT_VIEW, ...view };
   const resolved = resolveTheme(theme);
@@ -108,7 +109,6 @@ export function createWorld({
     const latitude = Number.isFinite(sky.latitude) ? sky.latitude : 45;
     environment = new SceneEnvironment({
       THREE,
-      Sky: sky.Sky,
       scene,
       fogRadius:
         sky.fogRadius ?? (settings.blockSize / 2) * tileSizeMeters(settings.zoom, latitude),
