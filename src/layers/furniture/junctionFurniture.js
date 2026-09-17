@@ -75,10 +75,12 @@ export function buildCrossings(layer, context, junctions, roadIndex, builtUp) {
 
     // Une dizaine de mètres en amont du nœud, sur la branche, et à droite —
     // c'est la position française. `branch` sort du carrefour, donc reculer
-    // le long de la branche veut dire avancer dans son sens.
+    // le long de la branche veut dire avancer dans son sens. Le recul part du
+    // nœud de la branche, qui n'est pas le carrefour dans une grappe.
     const back = TRAFFIC_LIGHT_SETBACK_M;
-    const px = junction.x + branch.x * back;
-    const pz = junction.z + branch.z * back;
+    const origin = branch.origin || junction;
+    const px = origin.x + branch.x * back;
+    const pz = origin.z + branch.z * back;
     // Sens de la marche : celui du trafic qui arrive au feu, donc l'inverse
     // de la direction sortante de la branche.
     const tx = -branch.x;

@@ -7106,6 +7106,208 @@ test('le rayon de raccordement reste borné, quelles que soient les largeurs', (
   }
 });
 
+// --- La grappe : un carrefour que la donnée relève en plusieurs nœuds -------
+
+/** Une route droite le long de `x`, à l'ordonnée `z`. */
+const eastWest = (z, profile = 'major', halfWidth = 4) => ({
+  profile,
+  halfWidth,
+  points: [
+    { x: -100, z },
+    { x: 100, z },
+  ],
+});
+
+/** Une 2×2 est-ouest, traversée par une rue nord-sud. */
+const dualCrossedByStreet = () => [
+  eastWest(-4.5),
+  eastWest(4.5),
+  {
+    profile: 'minor',
+    halfWidth: 3,
+    points: [
+      { x: 0, z: -100 },
+      { x: 0, z: -4.5 },
+      { x: 0, z: 4.5 },
+      { x: 0, z: 100 },
+    ],
+  },
+];
+
+/** Deux petites routes abordant la même nationale, à dix mètres l'une de l'autre. */
+const staggeredJunction = () => [
+  {
+    profile: 'major',
+    halfWidth: 4,
+    points: [
+      { x: -100, z: 0 },
+      { x: -5, z: 0 },
+      { x: 5, z: 0 },
+      { x: 100, z: 0 },
+    ],
+  },
+  { profile: 'minor', halfWidth: 3, points: [{ x: -5, z: -100 }, { x: -5, z: 0 }] },
+  { profile: 'minor', halfWidth: 3, points: [{ x: 5, z: -100 }, { x: 5, z: 0 }] },
+];
+
+/**
+ * Le tour que fait un contour vu du nœud, et le nombre de fois qu'il revient en
+ * arrière. Un contour étoilé fait un tour complet sans jamais reculer — c'est
+ * ce dont la triangulation en éventail a besoin.
+ */
+function windingOf(area) {
+  let turn = 0;
+  let back = 0;
+  let previous = null;
+  for (const point of area.outline) {
+    const at = Math.atan2(point.z - area.z, point.x - area.x);
+    if (previous !== null) {
+      let step = at - previous;
+      while (step > Math.PI) step -= Math.PI * 2;
+      while (step < -Math.PI) step += Math.PI * 2;
+      turn += step;
+      if (step < -1e-9) back++;
+    }
+    previous = at;
+  }
+  return { turn, back };
+}
+
+test('une 2×2 traversée par une rue est un seul carrefour', () => {
+  const junctions = mergeRoadLines(dualCrossedByStreet()).junctions;
+
+  assert.equal(junctions.length, 1, 'un carrefour, pas deux');
+  const junction = junctions[0];
+  close(junction.z, 0, 1e-6, 'posé au barycentre de ses deux nœuds');
+  // Les deux sens de la 2×2 de chaque côté, et la rue de chaque côté : la
+  // chaussée qui relie les deux nœuds n'est pas une branche, elle est dessous.
+  assert.equal(junction.branches.length, 6, 'six bouches');
+  assert.deepEqual(
+    [...new Set(junction.branches.map((b) => b.origin.z.toFixed(1)))].sort(),
+    ['-4.5', '4.5'],
+    'chaque branche part de son propre nœud'
+  );
+});
+
+test('un carrefour décalé de dix mètres est un seul carrefour', () => {
+  const junctions = mergeRoadLines(staggeredJunction()).junctions;
+
+  assert.equal(junctions.length, 1);
+  assert.equal(junctions[0].branches.length, 4);
+});
+
+test('deux carrefours à soixante mètres restent deux carrefours', () => {
+  const junctions = mergeRoadLines([
+    {
+      profile: 'major',
+      halfWidth: 4,
+      points: [
+        { x: -100, z: 0 },
+        { x: -30, z: 0 },
+        { x: 30, z: 0 },
+        { x: 100, z: 0 },
+      ],
+    },
+    { profile: 'minor', halfWidth: 3, points: [{ x: -30, z: -100 }, { x: -30, z: 100 }] },
+    { profile: 'minor', halfWidth: 3, points: [{ x: 30, z: -100 }, { x: 30, z: 100 }] },
+  ]).junctions;
+
+  assert.equal(junctions.length, 2);
+  for (const junction of junctions) assert.equal(junction.branches.length, 4);
+});
+
+test('un anneau n’est pas un carrefour : l’îlot d’un giratoire reste du terrain', () => {
+  const ring = [];
+  for (let i = 0; i <= 4; i++) {
+    const at = (i / 4) * Math.PI * 2;
+    ring.push({ x: Math.cos(at) * 11, z: Math.sin(at) * 11 });
+  }
+  const junctions = mergeRoadLines([
+    { profile: 'minor', halfWidth: 3.5, points: ring },
+    { profile: 'major', halfWidth: 4, points: [{ x: -100, z: 0 }, { x: -11, z: 0 }] },
+    { profile: 'major', halfWidth: 4, points: [{ x: 11, z: 0 }, { x: 100, z: 0 }] },
+    { profile: 'major', halfWidth: 4, points: [{ x: 0, z: -100 }, { x: 0, z: -11 }] },
+    { profile: 'major', halfWidth: 4, points: [{ x: 0, z: 11 }, { x: 0, z: 100 }] },
+  ]).junctions;
+
+  assert.equal(junctions.length, 4, 'les quatre nœuds de l’anneau gardent le leur');
+  for (const junction of junctions) {
+    const area = junctionArea(junction);
+    assert.ok(area);
+    assert.ok(!pointInOutline(area.outline, 0, 0), 'aucune dalle ne couvre le centre');
+  }
+});
+
+test('deux aires de carrefour ne se recouvrent pas', () => {
+  const areas = mergeRoadLines(dualCrossedByStreet())
+    .junctions.map((junction) => junctionArea(junction))
+    .filter(Boolean);
+
+  for (let i = 0; i < areas.length; i++) {
+    for (const point of areas[i].outline) {
+      for (let k = 0; k < areas.length; k++) {
+        if (k === i) continue;
+        assert.ok(
+          !pointInOutline(areas[k].outline, point.x, point.z),
+          'un sommet de contour tombe dans une autre dalle'
+        );
+      }
+    }
+  }
+});
+
+test('le contour reste étoilé depuis le nœud, grappe comprise', () => {
+  const cases = [
+    [
+      eastWest(0),
+      { profile: 'minor', halfWidth: 3, points: [{ x: 0, z: -100 }, { x: 0, z: 100 }] },
+    ],
+    dualCrossedByStreet(),
+    staggeredJunction(),
+  ];
+
+  for (const lines of cases) {
+    for (const junction of mergeRoadLines(lines).junctions) {
+      const area = junctionArea(junction);
+      assert.ok(area);
+      assert.ok(pointInOutline(area.outline, area.x, area.z), 'le nœud est dedans');
+      const { turn, back } = windingOf(area);
+      assert.equal(back, 0, 'le contour ne revient jamais en arrière');
+      close(Math.abs(turn), Math.PI * 2, 0.5, 'un tour complet');
+    }
+  }
+});
+
+test('la profondeur d’une bouche se compte depuis l’origine de sa branche', () => {
+  const node = { x: 0, z: 0 };
+  const section = branchSection(node, { ...branchAt(0, 4), origin: { x: 0, z: -4.5 } }, 7);
+
+  close(section.centre.x, 7, 1e-9, 'sept mètres le long du rayon');
+  close(section.centre.z, -4.5, 1e-9, 'sur la chaussée de sa branche, pas sur celle du carrefour');
+
+  // Sans origine, la branche part du carrefour : rien ne change.
+  const plain = branchSection(node, branchAt(0, 4), 7);
+  close(plain.centre.x, 7, 1e-9);
+  close(plain.centre.z, 0, 1e-9);
+});
+
+test('deux bouches côte à côte ne fondent pas en une', () => {
+  // Les deux chaussées d'une 2×2 quittent une grappe dans la même direction
+  // sans être la même voie : les fondre effacerait une bouche et le terre-plein.
+  const apart = [
+    { ...branchAt(0, 4), origin: { x: 0, z: -4.5 }, angle: 0 },
+    { ...branchAt(0, 4), origin: { x: 0, z: 4.5 }, angle: 0 },
+  ];
+  assert.equal(mergeParallelBranches(apart).length, 2);
+
+  // Deux branches rasantes du même nœud, elles, n'en font qu'une.
+  const together = [
+    { ...branchAt(0, 4), origin: { x: 0, z: 0 }, angle: 0 },
+    { ...branchAt(0.15, 4), origin: { x: 0, z: 0 }, angle: 0.15 },
+  ];
+  assert.equal(mergeParallelBranches(together).length, 1);
+});
+
 test('un carrefour ne prend que les lignes de son niveau', () => {
   const areas = new JunctionAreas([teeJunction()]);
   const rows = 5;

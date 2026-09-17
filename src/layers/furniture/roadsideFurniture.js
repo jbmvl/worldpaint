@@ -149,16 +149,24 @@ function alignmentTreeSpeciesFor(x, z, climate = null) {
 /**
  * Le mobilier qui accompagne la chaussée.
  *
- * Trois passes sur chaque portion : le relief d'abord, qui décide des deux
- * murs et de la glissière ; le contexte ensuite, qui décide de l'éclairage,
- * des poteaux, des bornes, des panneaux, de l'alignement et de la haie ; le
- * talus enfin, qui comble ce que le mur n'a pas pris.
+ * Deux découpages, parce que les deux ne s'arrêtent pas aux mêmes endroits :
+ * le **contexte** — éclairage, poteaux, bornes, panneaux, alignement, haie —
+ * suit la chaussée d'un bout à l'autre ; le **relief** — les deux murs, la
+ * glissière, puis le talus qui comble ce que le mur n'a pas pris — s'arrête à
+ * l'ouvrage d'art et à la bouche du carrefour.
  *
  * La portée se mesure ligne par ligne et non au milieu du tronçon. Depuis que
  * les chaussées sont fusionnées, une chaîne traverse la bulle de part en part :
  * juger au milieu poserait du mobilier à neuf cents mètres, derrière le
  * brouillard — ou, pire, en écarterait une chaîne qui passe juste à côté 
  * de l'observateur mais dont le milieu tombe au loin.
+ *
+ * Le relief s'arrête à la bouche du carrefour comme le ruban s'y arrête : au
+ * delà, la chaussée n'a plus de rive à elle, elle a une surface commune avec
+ * les autres branches, et un mur, un talus ou une glissière qui continuerait
+ * la traverserait, les chaussées qui y débouchent comprises. Le contexte, lui,
+ * ne s'y arrête pas : un lampadaire ou un panneau de carrefour est à sa place
+ * au carrefour.
  */
 export function buildRoadside(layer, context, roadSegments, builtUp) {
   const { placements, here } = context;
@@ -203,6 +211,9 @@ export function buildRoadside(layer, context, roadSegments, builtUp) {
         // Ouvrage d'art (`roadWorks.js`) : la plate-forme n'y est plus posée
         // sur le terrain.
         work: segment.works?.[r] || 0,
+        // Rang du carrefour où cette ligne débouche, `-1` dehors
+        // (`roadJunctions.markJunctionRows`).
+        junction: segment.junction?.[r] ?? -1,
       });
     }
 
@@ -215,8 +226,10 @@ export function buildRoadside(layer, context, roadSegments, builtUp) {
     const inReach = (row) =>
       !row.work && Math.hypot(row.x - here.x, row.z - here.z) <= FURNITURE_RADIUS_M;
     for (const near of contiguousRuns(rowsInfo, inReach, 4)) {
-      const walled = buildRoadsideRelief(layer, context, segment, near);
       buildRoadsideContext(layer, context, segment, near, builtUp);
+    }
+    for (const near of contiguousRuns(rowsInfo, (row) => inReach(row) && row.junction < 0, 4)) {
+      const walled = buildRoadsideRelief(layer, context, segment, near);
       buildEmbankment(layer, context, segment, near, walled);
     }
   }

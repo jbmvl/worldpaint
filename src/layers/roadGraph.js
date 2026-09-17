@@ -15,6 +15,15 @@
  * chaînes, et `roadJunctions` en fait des **surfaces**. Les redécouvrir après
  * coup en cherchant où deux rubans se touchent en inventerait d'autres.
  *
+ * Un carrefour n'est pas toujours un seul nœud. La donnée en relève plusieurs
+ * dès qu'une de ses chaussées y est dédoublée, et c'est ici qu'ils sont
+ * regroupés (`clusterJunctionNodes`) : un seul carrefour, posé au barycentre
+ * de sa grappe, dont les branches sont les chaussées qui en **sortent**. Ce
+ * qui reste dedans n'est plus une branche — la surface passe dessus. Deux
+ * grappes sont refusées : celle qui enferme une aire, parce que c'est un îlot
+ * (le giratoire), et celle qui s'étend plus qu'un carrefour, parce que ce sont
+ * deux carrefours de suite.
+ *
  * Encore faut-il que le graphe porte le nœud. La tuile n'est pas le relevé :
  * elle simplifie les tracés (le sommet d'un carrefour, aligné avec ses
  * voisins, y est redondant et disparaît) et elle quantifie les coordonnées
@@ -102,6 +111,15 @@ export const COLLINEAR_COS = Math.cos((40 * Math.PI) / 180);
 export const GRAFT_REACH_M = 2.5;
 /** Cosinus de l'angle en deçà duquel un sommet est dans l'axe de la chaussée qu'il touche (et n'y débouche donc pas). */
 export const GRAFT_SKEW_COS = Math.cos((25 * Math.PI) / 180);
+
+/**
+ * Part des largeurs cumulées de deux carrefours en deçà de laquelle la
+ * chaussée qui les sépare n'est plus une route entre eux, mais l'intérieur
+ * d'un seul (`clusterJunctionNodes`).
+ */
+export const JUNCTION_CLUSTER_RATIO = 1.5;
+/** Étendue au-delà de laquelle une grappe de nœuds n'est plus un carrefour, en mètres. */
+export const JUNCTION_CLUSTER_MAX_M = 18;
 
 /** Décalage de cellule : les coordonnées locales sont signées. */
 const CELL_BIAS = 1 << 14;
@@ -838,14 +856,150 @@ function pointAlong(points, distance) {
 }
 
 /**
- * Relève les carrefours du graphe : les nœuds où plus de deux arêtes se
- * rejoignent (degré deux = simple changement de classe, pas un carrefour).
+ * Les nœuds de carrefour du graphe, et la demi-largeur qui y commande.
+ *
+ * Un carrefour est un nœud où plus de deux arêtes se rejoignent — degré deux =
+ * simple changement de classe —, la règle des chemins comprise (voir
+ * `collectJunctions`).
+ *
+ * @returns {{paving: Map<number,boolean>, width: Map<number,number>}}
+ *          `paving` dit si le nœud est celui de chaussées revêtues, `width` la
+ *          demi-largeur de la plus large qui l'atteint.
+ */
+function junctionNodes(edges, degreeOf, pavedDegree, unpaved) {
+  const paving = new Map();
+  const width = new Map();
+
+  for (const edge of edges) {
+    const paved = !unpaved?.has(edge.profile);
+    for (const node of [edge.a, edge.b]) {
+      if (paved !== pavedDegree.has(node)) continue;
+      if (degreeOf(node, paved) < 3) continue;
+      paving.set(node, paved);
+      if (!(width.get(node) >= edge.halfWidth)) width.set(node, edge.halfWidth);
+    }
+  }
+
+  return { paving, width };
+}
+
+/**
+ * Regroupe en une seule grappe les nœuds de carrefour que la donnée sépare
+ * sans qu'il y ait de route entre eux.
+ *
+ * La donnée relève un croisement en plusieurs nœuds dès qu'une de ses
+ * chaussées y est dédoublée : les deux sens d'une 2×2 traversés par une rue en
+ * font deux, un carrefour décalé de quelques mètres en fait deux aussi. Or un
+ * carrefour couvre une dizaine de mètres le long de chaque branche : à cette
+ * distance-là, une surface par nœud en donne deux au même endroit, à deux
+ * cotes, sans se rejoindre — avec du terrain au milieu du croisement, et entre
+ * elles un bout de ruban de quelques mètres portant sa plate-forme, ses rives
+ * et ses talus.
+ *
+ * Deux nœuds sont donc le même carrefour quand la chaussée qui les sépare est
+ * plus courte que leurs largeurs cumulées ne le permet : ce n'est pas une
+ * route entre deux carrefours, c'est l'intérieur d'un seul. L'ouvrage d'art
+ * coupe le lien — une travée entre deux nœuds est une route, si courte
+ * soit-elle.
+ *
+ * Deux grappes sont refusées, et chacun de leurs nœuds reprend son carrefour :
+ * celle qui **enferme une aire** — ses chaussées intérieures font un anneau,
+ * donc un îlot, et un îlot reste du terrain (le giratoire en est le cas
+ * propre) — et celle qui est plus **étendue** qu'un carrefour, c'est-à-dire
+ * deux carrefours de suite plutôt qu'un seul.
+ *
+ * @returns {Map<number, number>} nœud → nœud qui porte la grappe.
+ */
+function clusterJunctionNodes(
+  edges,
+  nodes,
+  paving,
+  width,
+  { ratio = JUNCTION_CLUSTER_RATIO, max = JUNCTION_CLUSTER_MAX_M } = {}
+) {
+  const parent = new Map();
+  const inside = [];
+  for (const node of paving.keys()) parent.set(node, node);
+
+  const find = (node) => {
+    let at = node;
+    while (parent.get(at) !== at) {
+      parent.set(at, parent.get(parent.get(at)));
+      at = parent.get(at);
+    }
+    return at;
+  };
+  const union = (a, b) => {
+    const ra = find(a);
+    const rb = find(b);
+    // Le plus petit identifiant porte la grappe : deux reconstructions du même
+    // jeu de tuiles la nomment pareil.
+    if (ra !== rb) parent.set(Math.max(ra, rb), Math.min(ra, rb));
+  };
+
+  for (const edge of edges) {
+    if (edge.works !== WORK_NONE) continue;
+    if (!paving.has(edge.a) || !paving.has(edge.b)) continue;
+    if (paving.get(edge.a) !== paving.get(edge.b)) continue;
+    const span = Math.hypot(nodes.xs[edge.a] - nodes.xs[edge.b], nodes.zs[edge.a] - nodes.zs[edge.b]);
+    if (span > (width.get(edge.a) + width.get(edge.b)) * ratio) continue;
+    inside.push(edge);
+    union(edge.a, edge.b);
+  }
+
+  const members = new Map();
+  for (const node of paving.keys()) {
+    const root = find(node);
+    const list = members.get(root);
+    if (list) list.push(node);
+    else members.set(root, [node]);
+  }
+
+  const loops = new Map();
+  for (const edge of inside) {
+    const root = find(edge.a);
+    loops.set(root, (loops.get(root) || 0) + 1);
+  }
+
+  for (const [root, list] of members) {
+    if (list.length < 2) continue;
+    let extent = 0;
+    for (let i = 0; i < list.length; i++) {
+      for (let k = i + 1; k < list.length; k++) {
+        extent = Math.max(
+          extent,
+          Math.hypot(nodes.xs[list[i]] - nodes.xs[list[k]], nodes.zs[list[i]] - nodes.zs[list[k]])
+        );
+      }
+    }
+    // Autant d'arêtes intérieures que de nœuds : elles font un tour, donc un
+    // îlot.
+    const encloses = (loops.get(root) || 0) >= list.length;
+    if (encloses || extent > max) for (const node of list) parent.set(node, node);
+  }
+
+  const root = new Map();
+  for (const node of paving.keys()) root.set(node, find(node));
+  return root;
+}
+
+/**
+ * Relève les carrefours du graphe.
+ *
  * Ne voit pas les chaussées qui se croisent sans partager de nœud (un pont) —
  * volontaire : mieux vaut ignorer un vrai carrefour que rogner sous un viaduc.
  *
- * Un nœud étant désormais propre à un niveau (`NodeIndex`), un passage
- * supérieur n'en produit plus du tout, même quand ses deux chaussées se
- * frôlent à moins d'un mètre : il n'y a pas de rencontre à un croisement XY.
+ * Un nœud étant propre à un niveau (`NodeIndex`), un passage supérieur n'en
+ * produit pas du tout, même quand ses deux chaussées se frôlent à moins d'un
+ * mètre : il n'y a pas de rencontre à un croisement XY.
+ *
+ * Un carrefour n'est pas toujours un seul nœud : la donnée le relève en
+ * plusieurs dès qu'une de ses chaussées y est dédoublée, et
+ * `clusterJunctionNodes` les regroupe. Le carrefour se pose alors au
+ * barycentre de sa grappe, ses branches sont les arêtes qui en **sortent**, et
+ * les chaussées qui restent dedans ne sont plus des branches : elles sont sous
+ * la surface. Chaque branche garde donc son **origine** — le nœud d'où elle
+ * part —, sans quoi deux bouches voisines se poseraient au même endroit.
  *
  * Une branche est publiée avec sa direction sortante **et sa polyligne**
  * (`path`). Les deux, parce qu'une branche n'est pas un rayon : elle oblique,
@@ -864,17 +1018,23 @@ function pointAlong(points, distance) {
  * @returns {Array<{x:number, z:number, degree:number, level:number,
  *          halfWidth:number, profile:string, branches:Array<{x:number,
  *          z:number, halfWidth:number, profile:string,
- *          path:Array<{x:number,z:number}>}>}>}
+ *          origin:{x:number,z:number}, path:Array<{x:number,z:number}>}>}>}
  *          Carrefours, direction sortante unitaire par branche. `halfWidth` et
  *          `profile` sont ceux de la branche dominante — la plus large.
  */
 function collectJunctions(
   graph,
   nodes,
-  { sight = BRANCH_SIGHT_M, headingAt = BRANCH_HEADING_M, unpaved = null } = {}
+  {
+    sight = BRANCH_SIGHT_M,
+    headingAt = BRANCH_HEADING_M,
+    unpaved = null,
+    clusterRatio = JUNCTION_CLUSTER_RATIO,
+    clusterMax = JUNCTION_CLUSTER_MAX_M,
+  } = {}
 ) {
   const { edges, degree } = graph;
-  const byNode = new Map();
+  const byRoot = new Map();
 
   const pavedDegree = new Map();
   for (const edge of edges) {
@@ -886,6 +1046,23 @@ function collectJunctions(
     return paved ? count : (degree.get(node) || 0) - count;
   };
 
+  const { paving, width } = junctionNodes(edges, degreeOf, pavedDegree, unpaved);
+  const root = clusterJunctionNodes(edges, nodes, paving, width, {
+    ratio: clusterRatio,
+    max: clusterMax,
+  });
+
+  // Le carrefour se pose au barycentre de sa grappe — au nœud lui-même quand
+  // elle n'en compte qu'un.
+  const centres = new Map();
+  for (const [node, at] of root) {
+    const centre = centres.get(at) || { x: 0, z: 0, count: 0 };
+    centre.x += nodes.xs[node];
+    centre.z += nodes.zs[node];
+    centre.count++;
+    centres.set(at, centre);
+  }
+
   for (const edge of edges) {
     const paved = !unpaved?.has(edge.profile);
     for (const node of [edge.a, edge.b]) {
@@ -893,6 +1070,10 @@ function collectJunctions(
       const count = degreeOf(node, paved);
       if (count < 3) continue;
       const other = node === edge.a ? edge.b : edge.a;
+      const at = root.get(node);
+      // Une chaussée qui reste dans la grappe n'est pas une branche : elle est
+      // sous la surface du carrefour.
+      if (root.get(other) === at) continue;
       // La branche est arrondie comme la chaîne qu'elle décrit : c'est sur elle
       // que la bouche du carrefour va chercher la chaussée, et les deux doivent
       // parler du même tracé.
@@ -905,26 +1086,31 @@ function collectJunctions(
       const heading = direction(nodes.xs[node], nodes.zs[node], ahead.x, ahead.z);
       if (!heading) continue;
 
-      let junction = byNode.get(node);
+      let junction = byRoot.get(at);
       if (!junction) {
+        const centre = centres.get(at);
         junction = {
-          x: nodes.xs[node],
-          z: nodes.zs[node],
-          degree: count,
+          x: centre.x / centre.count,
+          z: centre.z / centre.count,
           // Un nœud n'a qu'un niveau : celui des chaussées qui s'y rencontrent
-          // vraiment. Ce qui passe au-dessus a son propre nœud, ailleurs.
+          // vraiment. Ce qui passe au-dessus a son propre nœud, ailleurs. Une
+          // grappe ne franchit pas de niveau non plus — ses nœuds sont reliés
+          // par des arêtes, et une arête n'en traverse pas.
           level: nodes.levels[node] ?? LEVEL_GROUND,
           halfWidth: 0,
           profile: null,
           branches: [],
         };
-        byNode.set(node, junction);
+        byRoot.set(at, junction);
       }
       junction.branches.push({
         x: heading.x,
         z: heading.z,
         halfWidth: edge.halfWidth,
         profile: edge.profile,
+        // Le nœud d'où part cette branche : dans une grappe, ce n'est pas le
+        // carrefour, et c'est de là que sa rive se mesure.
+        origin: { x: nodes.xs[node], z: nodes.zs[node] },
         path,
       });
       if (edge.halfWidth > junction.halfWidth) {
@@ -934,9 +1120,13 @@ function collectJunctions(
     }
   }
 
+  // Le degré est le nombre de bouches, et non le degré du nœud : dans une
+  // grappe, les deux diffèrent.
+  for (const junction of byRoot.values()) junction.degree = junction.branches.length;
+
   // Par identifiant de nœud croissant, donc dans l'ordre où les arêtes ont été
   // lues : deux reconstructions du même jeu de tuiles rendent la même liste.
-  return [...byNode.keys()].sort((a, b) => a - b).map((node) => byNode.get(node));
+  return [...byRoot.keys()].sort((a, b) => a - b).map((at) => byRoot.get(at));
 }
 
 /**

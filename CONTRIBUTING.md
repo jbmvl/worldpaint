@@ -111,6 +111,18 @@ Breaking one of these needs a very good reason, stated in the PR description.
   Never rediscover junctions from overlapping ribbons: that finds one per
   overlapping row, in the wrong place.
 
+  It is sometimes a **cluster** of nodes: data splits a crossroads into several
+  as soon as one of its carriageways is doubled there, and one surface per node
+  gives several at the same place, at different heights, with a ribbon stub and
+  its embankments in between. `clusterJunctionNodes` groups nodes that a
+  carriageway shorter than their summed widths separates; the junction sits at
+  the cluster's centroid, its branches are the ways that **leave** it, and what
+  stays inside is under the surface. Two clusters are refused: one that
+  encloses an area (an island, a roundabout — it stays terrain, as in
+  `roadBundles`) and one wider than a junction, which is two junctions in a
+  row. A branch therefore carries its own **origin**, and the junction is
+  walked in the order of its **mouths**, not of its branch directions.
+
   Only paved ways count at a node a paved way reaches. A track or footpath
   never opens a mouth onto a road: it is laid over it, markings included
   (`roadNetwork.roadLiftFor`). Unpaved ways still meet each other where no
@@ -122,7 +134,9 @@ Breaking one of these needs a very good reason, stated in the PR description.
   that a way continues rather than meets — `joinLooseEnds`, the tile seam).
 
   The picture is built from the node in `roadJunctions.js`: branches give an
-  outline, ribbons stop on it, and it is drawn as one surface — **not
+  outline, ribbons stop on it, kerb relief (retaining wall, embankment,
+  guardrail) stops on it too — past the mouth a carriageway has no bank of its
+  own —, and it is drawn as one surface — **not
   horizontal**, one height per mouth (`outlineDeckAt`), or a crossroads on a
   slope steps against every ribbon. The terrain cut reads that slab too
   (`TerrainBubble.setRoadCut`).

@@ -44,6 +44,18 @@
  * convexe par construction en dehors des arcs, et il n'y a plus un seul ruban
  * qui en recouvre un autre.
  *
+ * ## Une branche ne part pas forcément du carrefour
+ *
+ * Un carrefour peut être une **grappe** de nœuds que la donnée sépare sans
+ * qu'il y ait de route entre eux (`roadGraph.clusterJunctionNodes`), et il se
+ * pose alors à leur barycentre. Chaque branche garde donc son **origine** — le
+ * nœud d'où elle part —, et c'est de là que sa rive se mesure et que sa
+ * profondeur se compte : deux branches qui partiraient toutes du centre
+ * poseraient leurs bouches au même endroit. Le tour du carrefour se fait dans
+ * l'ordre des **bouches** et non des directions, sans quoi les deux chaussées
+ * d'une 2×2, qui s'en vont dans la même direction, ne se suivraient pas dans
+ * l'ordre où elles se présentent sur le pourtour.
+ *
  * ## Une branche n'est pas un rayon
  *
  * Un carrefour couvre une dizaine de mètres le long de chaque branche — bien
@@ -174,31 +186,41 @@ function intersectLines(ax, az, dax, daz, bx, bz, dbx, dbz) {
  * sens d'un rayon de bordure, qui élargit le tourne-à-droite au lieu de le
  * rogner.
  *
- * @param {{x:number,z:number}} node Le nœud du carrefour.
- * @param {{x:number,z:number,halfWidth:number}} a Branche, direction sortante unitaire.
- * @param {{x:number,z:number,halfWidth:number}} b Branche suivante en azimut.
+ * @param {{x:number,z:number}} node Le carrefour — origine des branches qui
+ *        n'en portent pas.
+ * @param {{x:number,z:number,halfWidth:number,origin?:Object}} a Branche, direction sortante unitaire.
+ * @param {{x:number,z:number,halfWidth:number,origin?:Object}} b Branche suivante en azimut.
  * @param {Object} [options]
  * @returns {{points:Array<{x:number,z:number}>, ta:number, tb:number}|null}
  *          sommets de l'arc dans le sens `a → b`, et l'abscisse le long de
- *          chaque branche au-delà de laquelle sa bouche doit se poser.
+ *          chaque branche, **comptée depuis son origine**, au-delà de laquelle
+ *          sa bouche doit se poser.
  */
 export function junctionCorner(node, a, b, { steps = JUNCTION_ARC_STEPS } = {}) {
   // Perpendiculaire gauche de la marche, convention de `pathFrames`.
   const pa = { x: a.z, z: -a.x };
   const pb = { x: b.z, z: -b.x };
+  const oa = a.origin || node;
+  const ob = b.origin || node;
 
   // Rive droite de `a` (côté du secteur), rive gauche de `b`.
-  const a0 = { x: node.x - pa.x * a.halfWidth, z: node.z - pa.z * a.halfWidth };
-  const b0 = { x: node.x + pb.x * b.halfWidth, z: node.z + pb.z * b.halfWidth };
+  const a0 = { x: oa.x - pa.x * a.halfWidth, z: oa.z - pa.z * a.halfWidth };
+  const b0 = { x: ob.x + pb.x * b.halfWidth, z: ob.z + pb.z * b.halfWidth };
 
   const hit = intersectLines(a0.x, a0.z, a.x, a.z, b0.x, b0.z, b.x, b.z);
   const reach = (a.halfWidth + b.halfWidth) * JUNCTION_CORNER_REACH;
 
-  // Rives parallèles : les deux branches se prolongent (une route droite qu'une
-  // troisième aborde). La rive continue tout droit, et il n'y a pas de coin.
+  // Rives parallèles : il n'y a pas de coin à construire. Reste à savoir si
+  // c'est la **même** rive. Une route droite qu'une troisième aborde, oui : les
+  // deux rives sont alignées, et le sommet qu'on y pose est dessus, ce qui
+  // garde la rive droite d'un bout à l'autre du carrefour. Deux branches qui
+  // vont côte à côte, non — le terre-plein d'une 2×2 les sépare, et un sommet
+  // au milieu ferait rentrer le contour jusqu'aux origines, c'est-à-dire sous
+  // la chaussée. La surface passe alors droit d'une bouche à l'autre.
   if (!hit || !Number.isFinite(hit.ta) || Math.abs(hit.ta) > reach || Math.abs(hit.tb) > reach) {
-    const mid = { x: (a0.x + b0.x) / 2, z: (a0.z + b0.z) / 2 };
-    return { points: [mid], ta: 0, tb: 0 };
+    const apart = Math.abs(a.x * (b0.z - a0.z) - a.z * (b0.x - a0.x));
+    if (apart > 1e-6) return { points: [], ta: 0, tb: 0 };
+    return { points: [{ x: (a0.x + b0.x) / 2, z: (a0.z + b0.z) / 2 }], ta: 0, tb: 0 };
   }
 
   const corner = { x: hit.x, z: hit.z };
@@ -262,16 +284,19 @@ export function junctionCorner(node, a, b, { steps = JUNCTION_ARC_STEPS } = {}) 
  *
  * Fonction pure.
  *
- * @param {{x:number,z:number}} node Le nœud du carrefour.
- * @param {{x:number,z:number,path?:Array<{x:number,z:number}>}} branch
- * @param {number} depth Profondeur le long du rayon, en mètres.
+ * @param {{x:number,z:number}} node Le carrefour — origine des branches qui
+ *        n'en portent pas.
+ * @param {{x:number,z:number,origin?:Object,path?:Array<{x:number,z:number}>}} branch
+ * @param {number} depth Profondeur le long du rayon, depuis l'origine de la
+ *        branche, en mètres.
  * @returns {{centre:{x:number,z:number}, direction:{x:number,z:number}}}
  */
 export function branchSection(node, branch, depth) {
   const ray = { x: branch.x, z: branch.z };
-  const along = (p) => (p.x - node.x) * ray.x + (p.z - node.z) * ray.z;
+  const origin = branch.origin || node;
+  const along = (p) => (p.x - origin.x) * ray.x + (p.z - origin.z) * ray.z;
   const fallback = {
-    centre: { x: node.x + ray.x * depth, z: node.z + ray.z * depth },
+    centre: { x: origin.x + ray.x * depth, z: origin.z + ray.z * depth },
     direction: ray,
   };
 
@@ -328,12 +353,32 @@ export function junctionArea(junction, options = {}) {
   const raw = junction?.branches;
   if (!Array.isArray(raw) || raw.length < 3) return null;
 
-  // Triées par azimut : c'est ce qui rend « la branche suivante » bien définie,
-  // et donc la construction indépendante du nombre de branches.
+  const node = { x: junction.x, z: junction.z };
+  const usable = raw
+    .filter((b) => Number.isFinite(b?.x) && Number.isFinite(b?.z) && b.halfWidth > 0)
+    .map((b) => ({ ...b, origin: b.origin || node }));
+  // De combien les branches ne partent pas toutes du même point : nul pour un
+  // carrefour d'un seul nœud, quelques mètres pour une grappe.
+  let spread = 0;
+  for (const b of usable) {
+    spread = Math.max(spread, Math.hypot(b.origin.x - node.x, b.origin.z - node.z));
+  }
+
+  // Triées par azimut de leur **bouche**, et non de leur direction : c'est ce
+  // qui rend « la branche suivante » bien définie, et donc la construction
+  // indépendante du nombre de branches. Les deux se confondent tant que toutes
+  // partent du même point ; dans une grappe, non — les deux chaussées d'une
+  // 2×2 s'en vont dans la même direction et se suivent pourtant sur le
+  // pourtour, dans l'ordre où leurs bouches s'y présentent.
   const branches = mergeParallelBranches(
-    raw
-      .filter((b) => Number.isFinite(b?.x) && Number.isFinite(b?.z) && b.halfWidth > 0)
-      .map((b) => ({ ...b, angle: Math.atan2(b.z, b.x) }))
+    usable
+      .map((b) => {
+        const reach = spread + b.halfWidth;
+        return {
+          ...b,
+          angle: Math.atan2(b.origin.z - node.z + b.z * reach, b.origin.x - node.x + b.x * reach),
+        };
+      })
       .sort((a, b) => a.angle - b.angle)
   );
   // Moins de trois bouches : ce n'est pas un carrefour mais un embranchement
@@ -341,7 +386,6 @@ export function junctionArea(junction, options = {}) {
   // construire, et prétendre le contraire poserait un polygone replié.
   if (branches.length < 3) return null;
 
-  const node = { x: junction.x, z: junction.z };
   const count = branches.length;
   const corners = new Array(count);
   const reach = new Float64Array(count);
@@ -372,8 +416,8 @@ export function junctionArea(junction, options = {}) {
     const section = branchSection(node, branch, t);
     sections[i] = { ...section, t };
     drifts[i] = {
-      x: section.centre.x - (node.x + branch.x * t),
-      z: section.centre.z - (node.z + branch.z * t),
+      x: section.centre.x - (branch.origin.x + branch.x * t),
+      z: section.centre.z - (branch.origin.z + branch.z * t),
     };
   }
 
@@ -606,6 +650,12 @@ export function branchYields(area, halfWidth) {
   return halfWidth < dominant - 1e-6;
 }
 
+/** Écart entre deux branches en travers de la première, en mètres. Fonction pure. */
+function branchOffset(a, b) {
+  if (!a.origin || !b.origin) return 0;
+  return Math.abs(a.x * (b.origin.z - a.origin.z) - a.z * (b.origin.x - a.origin.x));
+}
+
 /**
  * Fond les branches voisines qui repartent dans la même direction.
  *
@@ -618,6 +668,11 @@ export function branchYields(area, halfWidth) {
  * Deux branches **opposées** ne fondent jamais : leur produit scalaire est
  * négatif. C'est une route droite qu'une troisième aborde, et sa rive doit
  * rester droite d'un bout à l'autre du carrefour.
+ *
+ * Deux branches qui ne partent pas du même nœud ne fondent que si leurs rives
+ * se recouvrent. Les deux chaussées d'une 2×2 quittent une grappe dans la même
+ * direction sans être la même voie : les fondre effacerait une bouche sur
+ * deux, et le terre-plein avec.
  *
  * @param {Array<Object>} sorted Branches triées par azimut.
  * @returns {Array<Object>}
@@ -636,6 +691,7 @@ export function mergeParallelBranches(sorted, reach = JUNCTION_CORNER_REACH) {
       const dot = a.x * b.x + a.z * b.z;
       if (dot <= 0) continue; // opposées : une route droite, pas deux branches
       if (Math.abs(a.x * b.z - a.z * b.x) >= limit) continue;
+      if (branchOffset(a, b) >= a.halfWidth + b.halfWidth) continue;
 
       const wide = a.halfWidth >= b.halfWidth ? a : b;
       const fused = { ...wide, halfWidth: Math.max(a.halfWidth, b.halfWidth) };

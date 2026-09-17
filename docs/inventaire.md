@@ -290,7 +290,10 @@ chaque couture. Le tracé en ressort **arrondi** : la tuile rend un virage par
 deux ou trois brisures franches, un arc est inscrit dans chacune, et tout ce qui
 suit la chaussée — bordure, trottoir, marquage — le suit. Restent francs le
 carrefour, où la route tourne vraiment, et la culée d'un pont. Les carrefours
-sont des **surfaces**, pas des points.
+sont des **surfaces**, pas des points — et une seule quand la donnée relève le
+croisement en plusieurs nœuds, ce qu'elle fait dès qu'une de ses chaussées y
+est dédoublée (une 2×2, un carrefour décalé). Un anneau y échappe : l'îlot d'un
+giratoire reste du terrain.
 Un chemin de terre n'entre pas dans le carrefour d'une route revêtue : il passe
 par-dessus, marquage compris. Une piste cyclable, revêtue, en reste une branche.
 
