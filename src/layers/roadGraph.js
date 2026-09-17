@@ -1332,10 +1332,13 @@ export class RoadIndex {
    * @param {number} x
    * @param {number} z
    * @param {number} radius Portée de la recherche, en mètres.
+   * @param {Function} [accept] `(segment, row, index) => boolean`, pour écarter
+   *        des arêtes dont on sait qu'elles ne répondent pas à la question —
+   *        la rue qu'on traverse quand on cherche celle qu'on suit.
    * @returns {{segment:Object, index:number, row:number, t:number,
    *           distance:number, x:number, z:number}|null}
    */
-  nearestWithin(x, z, radius) {
+  nearestWithin(x, z, radius, accept = null) {
     if (!(radius > 0)) return null;
     const span = Math.ceil(radius / this.cell);
     const cx = Math.floor(x / this.cell);
@@ -1350,6 +1353,7 @@ export class RoadIndex {
           const index = bucket[i];
           const row = bucket[i + 1];
           const segment = this.segments[index];
+          if (accept && !accept(segment, row, index)) continue;
           const a = segment.path[row];
           const b = segment.path[row + 1];
           const hit = distanceToSegment(x, z, a.x, a.z, b.x, b.z);

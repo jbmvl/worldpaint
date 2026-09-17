@@ -13,14 +13,15 @@
  * construit ni n'avance rien — il déclenche un événement (voir
  * `WorldComposer.crossFauna`).
  *
- * `roadPositionAt` n'est ni l'un ni l'autre : une question, pas une action —
- * où poser quelque chose qui doit suivre la chaussée (remblai, pont) plutôt
- * que le terrain nu que suit déjà `bubble.toScenePosition`.
+ * `roadPositionAt` et `roadSnapAt` ne sont ni l'un ni l'autre : des questions,
+ * pas des actions — à quelle altitude passe la chaussée sous ce point (remblai,
+ * pont) plutôt que le terrain nu que suit déjà `bubble.toScenePosition`, et où
+ * est son axe pour qui doit y rester.
  */
 
 import { ElevationField } from './core/elevationField.js';
 import { WorldComposer, WORLD_ATTRIBUTION, FAUNA_CROSS_AHEAD_M } from './worldComposer.js';
-import { platformPositionAt } from './layers/roadNetwork.js';
+import { platformPositionAt, platformSnapAt, ROAD_SNAP_RADIUS_M } from './layers/roadNetwork.js';
 import {
   SceneEnvironment,
   SKY_RADIUS,
@@ -215,6 +216,39 @@ export class World {
     const deck = platformPositionAt(this.composer.roads, here.x, here.z, ahead);
     if (deck == null) return bubble.toScenePosition(lng, lat, heightAboveGround);
     return { x: here.x, y: deck + heightAboveGround, z: here.z };
+  }
+
+  /**
+   * Point de l'axe de la chaussée rendue le plus proche d'une position — ce
+   * qu'il faut à un mobile qui suit sa propre polyligne et doit malgré tout
+   * rester sur le bitume. Voir `platformSnapAt` : les deux tracés ne coupent
+   * pas les virages de la même façon.
+   *
+   * @param {number} lng
+   * @param {number} lat
+   * @param {Object} [options]
+   * @param {number} [options.aheadLng] Point visé, pour écarter la transversale
+   *        d'un carrefour au profit de la chaussée qu'on suit.
+   * @param {number} [options.aheadLat]
+   * @param {number} [options.radius] Portée de la recherche, en mètres.
+   * @returns {{lng:number, lat:number, distanceM:number}|null} `null` hors de
+   *          portée de toute chaussée — au consommateur de garder son tracé.
+   */
+  roadSnapAt(lng, lat, { aheadLng, aheadLat, radius = ROAD_SNAP_RADIUS_M } = {}) {
+    const bubble = this.composer.bubble;
+    if (!bubble?.frame) return null;
+
+    const here = bubble.frame.toLocal(lng, lat);
+    let ahead = null;
+    if (aheadLng != null && aheadLat != null) {
+      const there = bubble.frame.toLocal(aheadLng, aheadLat);
+      ahead = { x: there.x - here.x, z: there.z - here.z };
+    }
+
+    const hit = platformSnapAt(this.composer.roads, here.x, here.z, ahead, radius);
+    if (!hit) return null;
+    const at = bubble.frame.toLngLat(hit.x, hit.z);
+    return { lng: at.lng, lat: at.lat, distanceM: hit.distance };
   }
 
   /** Couleur de fond à donner au renderer, ou `null` sans ciel. */

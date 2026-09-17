@@ -79,7 +79,7 @@ export { climateAt, refineByRelief, CLIMATE_FAMILIES, KOPPEN_CODES } from './cor
 
 // Hauteur dont la chaussée est décollée du terrain — à appliquer à tout objet
 // posé sur la route par l'application, sous peine de s'enfoncer dans le bitume.
-export { ROAD_LIFT_M } from './layers/roadNetwork.js';
+export { ROAD_LIFT_M, ROAD_SNAP_RADIUS_M } from './layers/roadNetwork.js';
 
 // L'emprise routière (chaussée + accotement excavé), pour qu'une application
 // pose ses propres objets à la même frontière que l'herbe, les haies et les

@@ -749,6 +749,62 @@ export function crossedDeckAt(index, segment, si, cos = BRIDGE_CROSSING_COS) {
   };
 }
 
+/** Portée par défaut de `platformSnapAt`, en mètres. */
+export const ROAD_SNAP_RADIUS_M = 25;
+
+/**
+ * Cosinus en deçà duquel une chaussée n'est pas celle qu'on suit : au-delà de
+ * soixante-dix degrés d'écart avec la direction donnée, c'est une rue qu'on
+ * croise, pas celle sur laquelle on roule.
+ */
+const SNAP_ALIGNMENT_COS = 0.35;
+
+/**
+ * Point de l'axe de la chaussée la plus proche de `(x, z)`, en mètres locaux.
+ *
+ * `platformPositionAt` répond « à quelle altitude est la chaussée **sous** ce
+ * point » et se tait dès qu'on en sort ; celle-ci répond « où est la chaussée »,
+ * et c'est la question de qui doit **rester dessus**. Le tracé rendu ici n'est
+ * pas celui d'un calculateur d'itinéraire : la tuile simplifie, et les chaînes
+ * sortent du graphe avec un arc inscrit dans chaque brisure (`roadGraph`). Un
+ * mobile qui suit sa propre polyligne s'écarte donc du bitume dans les virages,
+ * là où les deux tracés ne coupent pas pareil.
+ *
+ * `ahead` — un vecteur, pas forcément unitaire, pris dans le sens du
+ * déplacement — écarte les chaussées qui ne vont pas dans cette direction : au
+ * carrefour, la transversale ; le long d'une route, le trottoir qui la double
+ * reste candidat, il va du même côté.
+ *
+ * @param {RoadNetwork} roads
+ * @param {number} x
+ * @param {number} z
+ * @param {{x:number, z:number}|null} [ahead]
+ * @param {number} [radius] Portée de la recherche, en mètres.
+ * @returns {{x:number, z:number, distance:number}|null} `null` si aucune
+ *          chaussée n'est à portée : au consommateur de garder son tracé.
+ */
+export function platformSnapAt(roads, x, z, ahead = null, radius = ROAD_SNAP_RADIUS_M) {
+  const index = roads?.elevationIndex;
+  if (!index) return null;
+
+  let accept = null;
+  if (ahead && (ahead.x !== 0 || ahead.z !== 0)) {
+    const length = Math.hypot(ahead.x, ahead.z);
+    const dirX = ahead.x / length;
+    const dirZ = ahead.z / length;
+    accept = (segment, row) => {
+      const a = segment.path[row];
+      const b = segment.path[row + 1];
+      const rowLength = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+      const alignment = ((b.x - a.x) / rowLength) * dirX + ((b.z - a.z) / rowLength) * dirZ;
+      return Math.abs(alignment) >= SNAP_ALIGNMENT_COS;
+    };
+  }
+
+  const hit = index.nearestWithin(x, z, radius, accept);
+  return hit ? { x: hit.x, z: hit.z, distance: hit.distance } : null;
+}
+
 /**
  * Altitude de plate-forme au point `(x, z)`, remblai et tablier de pont
  * compris — c'est la question qu'un consommateur externe se pose pour poser
