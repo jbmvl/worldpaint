@@ -319,7 +319,6 @@ un tiers par rapport aux minimums réglementaires (un plan large paraît saturé
 | borne kilométrique | express, major | 1000 m |
 | alignement d'arbres | major hors agglomération | 16 m |
 | panneau | major 620 m, minor 900 m | — |
-| panneau de direction | express 1300 m, major 1700 m | — |
 | feu tricolore | major et minor, en agglomération | aux carrefours |
 | haie | minor, lane et track hors agglomération | continue |
 

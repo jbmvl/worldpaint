@@ -448,7 +448,7 @@ export const FURNITURE_BUILDERS = {
   /**
    * ## La signalisation
    *
-   * Onze panneaux, et la raison d'en avoir onze plutôt qu'un : un bord de route
+   * Dix panneaux, et la raison d'en avoir dix plutôt qu'un : un bord de route
    * qui ne porte qu'un seul type de panneau se lit comme un motif répété au bout
    * de trois occurrences. La diversité y coûte moins cher que partout ailleurs —
    * un panneau est une **face** (`Kit.panel`), pas un volume, donc une dizaine de
@@ -549,21 +549,6 @@ export const FURNITURE_BUILDERS = {
     const square = [[-0.36, -0.36], [0.36, -0.36], [0.36, 0.36], [-0.36, 0.36]];
     k.panel({ points: square, color: C.signBlue, y: 2.52 });
     k.face([[0, 0.26], [-0.26, -0.2], [0.26, -0.2]], C.signWhite, { y: 2.52, plane: 0.035 });
-    return k;
-  },
-
-  /**
-   * Direction : lame en pointe, deux pieds. La pointe est ce qui la distingue
-   * d'un panneau d'agglomération — sans elle, les deux lames se ressemblent.
-   */
-  signDirection(C = DEFAULT_COLORS) {
-    const k = new Kit(C);
-    for (const x of [-0.5, 0.5]) {
-      k.cylinder({ radiusBottom: 0.045, radiusTop: 0.045, height: 2.3, radial: 5, x, color: C.galvanised });
-    }
-    const lame = [[-0.85, -0.22], [0.62, -0.22], [0.92, 0], [0.62, 0.22], [-0.85, 0.22]];
-    k.panel({ points: lame, color: C.signWhite, y: 2.4, thickness: 0.06 });
-    k.box({ width: 1.44, height: 0.05, depth: 0.075, x: -0.12, y: 2.58, color: C.signBlue });
     return k;
   },
 

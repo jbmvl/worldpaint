@@ -1387,8 +1387,8 @@ export class RoadNetwork {
     mesh.updateMatrix();
     // Après tous les rubans : la surface d'un carrefour est ce qui les relie,
     // elle se pose donc par-dessus leurs bouches et non l'inverse. Un
-    // carrefour de chemins se dessine avec eux, après le marquage.
-    mesh.renderOrder = 1 + ROAD_PROFILE_ORDER.length + (isPaved({ surface }) ? 1 : 3);
+    // carrefour de chemins se dessine avant celui des chaussées bitumées.
+    mesh.renderOrder = 1 + ROAD_PROFILE_ORDER.length + (isPaved({ surface }) ? 3 : 1);
     this.scene.add(mesh);
     this.junctionMeshes[surface] = mesh;
   }
@@ -1419,10 +1419,10 @@ export class RoadNetwork {
     mesh.receiveShadow = true;
     mesh.updateMatrix();
     // Après le terrain, dans l'ordre de la hiérarchie : la voie la plus importante se dessine par-dessus.
-    // Un chemin passe après tout ce qui est revêtu, marquage compris.
+    // Un chemin passe avant tout ce qui est revêtu, marquage compris.
     const rank = ROAD_PROFILE_ORDER.length - ROAD_PROFILE_ORDER.indexOf(profile);
     const paved = isPaved(this.theme.roads.profiles[profile]);
-    mesh.renderOrder = 1 + rank + (paved ? 0 : ROAD_PROFILE_ORDER.length + 2);
+    mesh.renderOrder = 1 + rank + (paved ? ROAD_PROFILE_ORDER.length + 2 : 0);
     this.scene.add(mesh);
     this.meshes[profile] = mesh;
   }
