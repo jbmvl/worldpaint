@@ -306,8 +306,9 @@ export class TerrainBubble {
    * Deux choses à entailler, et non une seule : les rubans (`index`) et les
    * **dalles de carrefour** (`areas`). Une dalle déborde des rubans qui
    * l'alimentent — ses arcs de raccordement bombent au-delà de leurs rives —,
-   * si bien qu'une entaille tirée des seuls rubans laissait le terrain remonter
-   * dans les coins d'un carrefour et passer par-dessus sa chaussée.
+   * si bien qu'une entaille tirée des seuls rubans laisse le terrain remonter
+   * dans les coins d'un carrefour et passer par-dessus sa chaussée. Les deux
+   * s'entaillent au même profil, fond plat et raccord compris.
    *
    * @param {Object|null} index Instance `RoadIndex`, ou `null` pour ne rien creuser.
    * @param {Object|null} [areas] Instance `JunctionAreas`, cotes posées.
@@ -337,30 +338,39 @@ export class TerrainBubble {
     return this._roadCutAt(x, z, raw);
   }
 
-  /** Creuse le déblai d'une chaussée. Profil dans `cutElevationAt`, pur et testé. */
+  /**
+   * Creuse le déblai d'une chaussée. Profil dans `cutElevationAt`, pur et testé.
+   *
+   * Deux choses peuvent être dessinées au même endroit — le ruban d'un tronçon
+   * et la dalle d'un carrefour, qui déborde des rubans qui l'alimentent. Le
+   * terrain doit passer sous les deux, donc on retient la plus basse des deux
+   * entailles plutôt que de s'arrêter à la première trouvée.
+   */
   _roadCutAt(x, z, raw) {
     const index = this._roadCut;
     if (!index) return raw;
 
-    // La dalle d'un carrefour d'abord : c'est elle qui est dessinée là, et elle
-    // déborde des rubans. Le sol y descend jusqu'à la dalle, sans raccord — ce
-    // sont les rubans alentour qui ramènent l'entaille au terrain naturel.
-    const slab = this._junctions?.deckAt(x, z);
-    if (slab != null) {
-      const scale = this.verticalScale || 1;
-      return Math.min(raw, slab / scale);
-    }
-
-    const bench = this.cutBenchM;
-    const hit = index.query(x, z, bench + ROAD_CUT_BLEND_M);
-    if (!hit) return raw;
-    const deck = index.deckAt(hit);
-    if (deck == null) return raw;
-
     // La plate-forme est en unités de scène (déjà multipliée par l'exagération
     // verticale) ; `raw` est en unités de MNT. On compare dans le même espace.
     const scale = this.verticalScale || 1;
-    return cutElevationAt(raw, deck / scale, hit.distance, hit.segment.halfWidth, bench);
+    const bench = this.cutBenchM;
+    const reach = bench + ROAD_CUT_BLEND_M;
+    let cut = raw;
+
+    const hit = index.query(x, z, reach);
+    const deck = hit && index.deckAt(hit);
+    if (deck != null) {
+      cut = cutElevationAt(raw, deck / scale, hit.distance, hit.segment.halfWidth, bench);
+    }
+
+    // Une dalle n'a pas de demi-largeur : son fond plat se mesure depuis son
+    // contour, et le raccord part de là.
+    const slab = this._junctions?.deckNear(x, z, reach);
+    if (slab) {
+      cut = Math.min(cut, cutElevationAt(raw, slab.deck / scale, slab.distance, 0, bench));
+    }
+
+    return cut;
   }
 
   /** Position dans le repère local, posée sur la surface affichée. */

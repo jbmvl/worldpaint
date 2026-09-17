@@ -59,6 +59,7 @@ const goButton = document.getElementById('go');
 const showLabelsCheckbox = document.getElementById('showLabels');
 const showCorridorCheckbox = document.getElementById('showCorridor');
 const showRoadGraphCheckbox = document.getElementById('showRoadGraph');
+const showTerrainMeshCheckbox = document.getElementById('showTerrainMesh');
 const minimapCanvas = document.getElementById('minimap');
 const minimapCtx = minimapCanvas.getContext('2d');
 const realTimeCheckbox = document.getElementById('realTime');
@@ -686,6 +687,67 @@ function updateRoadGraph() {
 showRoadGraphCheckbox.addEventListener('change', () => {
   if (!showRoadGraphCheckbox.checked) clearRoadGraph();
   else updateRoadGraph();
+});
+
+// --- La maille du terrain (mise au point) -------------------------------------
+// Quand quelque chose recouvre une chaussée, une seule question compte : est-ce
+// un triangle de terrain ? Les arêtes de la maille répondent — elles
+// apparaissent sur ce qui déborde, ou n'y sont pas. Les géométries sont
+// partagées avec les tuiles, jamais recopiées : la liste seule est refaite,
+// quand une tuile a changé de géométrie.
+
+let terrainMeshGroup = null;
+
+const terrainMeshMaterial = new THREE.MeshBasicMaterial({
+  color: 0xff2d6f,
+  wireframe: true,
+  transparent: true,
+  opacity: 0.55,
+  // Le fil est coplanaire à la surface qu'il décrit : sans décalage il clignote.
+  polygonOffset: true,
+  polygonOffsetFactor: -1,
+  polygonOffsetUnits: -2,
+});
+
+function clearTerrainMesh() {
+  if (!terrainMeshGroup) return;
+  scene.remove(terrainMeshGroup);
+  terrainMeshGroup.clear();
+  terrainMeshGroup = null;
+}
+
+function updateTerrainMesh() {
+  if (!showTerrainMeshCheckbox.checked || !world?.bubble) {
+    clearTerrainMesh();
+    return;
+  }
+  if (!terrainMeshGroup) {
+    terrainMeshGroup = new THREE.Group();
+    terrainMeshGroup.name = 'debug-terrain-mesh';
+    scene.add(terrainMeshGroup);
+  }
+
+  // Une tuile change de géométrie à chaque recreusement : on ne remonte la
+  // liste que quand elle ne correspond plus, pas à chaque image.
+  const wanted = [];
+  for (const tile of world.bubble.tiles.values()) if (tile.mesh) wanted.push(tile.mesh.geometry);
+  const shown = terrainMeshGroup.children;
+  if (wanted.length === shown.length && wanted.every((g, i) => g === shown[i].geometry)) return;
+
+  terrainMeshGroup.clear();
+  for (const geometry of wanted) {
+    const wire = new THREE.Mesh(geometry, terrainMeshMaterial);
+    wire.matrixAutoUpdate = false;
+    wire.frustumCulled = false;
+    wire.renderOrder = 19;
+    wire.updateMatrix();
+    terrainMeshGroup.add(wire);
+  }
+}
+
+showTerrainMeshCheckbox.addEventListener('change', () => {
+  if (!showTerrainMeshCheckbox.checked) clearTerrainMesh();
+  else updateTerrainMesh();
 });
 
 // --- Mini-carte façon Street View -----------------------------------------------
@@ -1512,6 +1574,7 @@ function loop() {
     updateLabels();
     updateCorridor();
     updateRoadGraph();
+    updateTerrainMesh();
     updateMinimap();
     if (!mapOverlay.hidden) updateBigMinimap();
     // L'horloge n'avance que si c'est elle qu'on suit : le curseur, lui, ne
