@@ -142,6 +142,28 @@ export const URBAN_PLACE_RADIUS_M = { city: 3000, town: 1200 };
  * dans la fenêtre, `covers` répond non partout, et tout le décor retombe sur
  * le comportement de campagne.
  */
+/**
+ * Ce que les tuiles disent de l'habitat, lu une seule fois pour tout le décor :
+ * les emprises habitées, les lieux nommés, et le prédicat « sommes-nous en
+ * ville ? » qui s'en déduit.
+ *
+ * Trois lecteurs s'en servent et posent la même question : la carte du sol (qui
+ * y peint son trottoir), les chaussées (qui y retranchent voies piétonnes et
+ * voies redondantes) et le mobilier (éclairage, haies, panneau d'entrée). La
+ * poser une fois est aussi ce qui garantit qu'ils y répondent pareil.
+ *
+ * @param {Object} source Instance `VectorTileSource`.
+ * @param {Array} tiles   Tuiles à parcourir.
+ * @param {Object} frame  Repère local de la bulle.
+ * @returns {{builtUp:Array, places:Array, urban:UrbanMask}}
+ */
+export function readSettlement(source, tiles, frame) {
+  const builtUp = collectBuiltUpAreas(source, tiles, frame);
+  const places = collectPlaceNames(source, tiles, frame);
+  const greens = collectUrbanGreens(source, tiles, frame);
+  return { builtUp, places, urban: new UrbanMask({ builtUp, greens, places }) };
+}
+
 export class UrbanMask {
   /**
    * @param {Object} [options]
@@ -286,11 +308,11 @@ export function collectPlaceNames(source, tiles, frame) {
  * Le lieu nommé le plus proche d'un point, dans un rayon donné, ou `null`.
  * Parcours linéaire : une bulle n'en porte jamais plus de quelques dizaines.
  *
- * @param {Array<{x:number,z:number,name:string}>} places
+ * @param {Array<{x:number,z:number,name:string,class:string}>} places
  * @param {number} x
  * @param {number} z
  * @param {number} maxDistance En mètres.
- * @returns {{name:string,distance:number}|null}
+ * @returns {{name:string,distance:number,class:string}|null}
  */
 export function nearestNamedPlace(places, x, z, maxDistance) {
   if (!places) return null;
@@ -303,7 +325,7 @@ export function nearestNamedPlace(places, x, z, maxDistance) {
       bestDistance = distance;
     }
   }
-  return best ? { name: best.name, distance: bestDistance } : null;
+  return best ? { name: best.name, distance: bestDistance, class: best.class } : null;
 }
 
 /** Anneaux extérieurs d'une géométrie surfacique GeoJSON. Fonction pure. */

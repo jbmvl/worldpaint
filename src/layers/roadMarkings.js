@@ -29,6 +29,24 @@
  * point. C'est la même figure que le ruban et que la bordure — une seule
  * découpe, lue par tout ce qui suit la chaussée.
  *
+ * ## La rive traverse le carrefour, l'axe non
+ *
+ * Un carrefour restait pourtant nu : les rubans s'arrêtent à ses bouches, donc
+ * le marquage aussi, et la dalle ne portait rien. Une rive s'y interrompait
+ * ainsi tous les cent mètres en ville, ce qu'aucune route ne fait sur le
+ * terrain — la ligne de rive d'un carrefour en T fait le tour de ses trois
+ * côtés, sans discontinuité.
+ *
+ * `appendMarkingBorder` la pose, le long des **morceaux de contour** que le
+ * carrefour publie déjà (`roadJunctions.junctionArea.edges` — ceux-là mêmes que
+ * suit la bordure de trottoir). Ces morceaux commencent et finissent exactement
+ * là où les rives de ruban s'arrêtent : un retrait constant les raccorde sans
+ * qu'aucun des deux bouts ait à connaître l'autre.
+ *
+ * L'axe, lui, ne traverse pas : il n'y a pas de sens de marche dans un
+ * carrefour, donc pas de milieu à marquer. Rien d'autre n'a été ajouté — pas de
+ * ligne d'effet à égalité de largeur, pas de flèche, pas de zébra central.
+ *
  * La phase des pointillés est tirée de l'**abscisse curviligne de la chaîne**
  * comptée depuis son ancre de graphe (`segment.startDistance`), et non du rang
  * du trait dans la boucle : deux reconstructions qui découpent la chaîne
@@ -45,19 +63,27 @@
  *
  * Ce module refusait tout pictogramme — flèche de rabattement, symbole
  * cycliste — au motif que la donnée ne porte ni nombre de voies ni affectation
- * de voie : en poser serait les inventer. L'argument tient toujours pour la
- * flèche, et il tombe pour le vélo : sur une entité de classe `cycleway`, ce
- * n'est pas *une voie parmi d'autres* qui est cyclable, c'est la chaussée
- * entière. Le pictogramme ne dit alors rien que la donnée ne dise déjà, et
- * sans lui une piste cyclable ne se distingue d'une allée de service que par
- * vingt centimètres de largeur — c'est-à-dire pas du tout.
+ * de voie : en poser serait les inventer. L'argument tombe pour le vélo : sur
+ * une entité de classe `cycleway`, ce n'est pas *une voie parmi d'autres* qui
+ * est cyclable, c'est la chaussée entière. Le pictogramme ne dit alors rien
+ * que la donnée ne dise déjà, et sans lui une piste cyclable ne se distingue
+ * d'une allée de service que par vingt centimètres de largeur — c'est-à-dire
+ * pas du tout.
+ *
+ * Il tombe aussi pour la flèche de sens unique, mais pour une autre raison :
+ * ce n'est pas une voie qu'elle affecte, c'est un sens de circulation que la
+ * donnée porte déjà (`oneway`, lu par `roadGraph.mergeRoadLines` et reporté
+ * chaîne par chaîne). La flèche de rabattement, elle, resterait une
+ * invention — la donnée ne dit toujours pas quelle voie va où — et ce module
+ * n'en pose pas.
  *
  * Un pictogramme est décrit en coordonnées **(le long, en travers)**, en
- * mètres, et posé par `appendMarkingSymbols` : chaque sommet cherche sa
- * section à son abscisse propre, donc le dessin suit la courbe et le devers de
- * la chaussée au lieu d'être une décalcomanie plane. Sa phase se tire de
- * l'abscisse de la chaîne, comme les pointillés : un vélo reste au même
- * endroit du terrain d'une reconstruction à l'autre.
+ * mètres, et posé par `appendMarkingSymbols` (ou `appendMarkingArrows` pour la
+ * flèche, qui n'en pose que là où un sens est affirmé) : chaque sommet cherche
+ * sa section à son abscisse propre, donc le dessin suit la courbe et le
+ * devers de la chaussée au lieu d'être une décalcomanie plane. Sa phase se
+ * tire de l'abscisse de la chaîne, comme les pointillés : un vélo ou une
+ * flèche reste au même endroit du terrain d'une reconstruction à l'autre.
  *
  * Module pur : aucun `three`, testable sous Node.
  */
@@ -147,11 +173,13 @@ function sectionBetween(path, decks, frames, i, j, t) {
     x: a.x + (b.x - a.x) * t,
     z: a.z + (b.z - a.z) * t,
     deck: decks[i] + (decks[j] - decks[i]) * t,
-    // Les repères ne sont pas moyennés : la perpendiculaire de la ligne amont
-    // est celle du ruban sur tout l'intervalle, et un marquage qui prendrait
-    // une autre normale s'écarterait de la rive qu'il longe.
-    px: frames[i * 4 + 2],
-    pz: frames[i * 4 + 3],
+    // La perpendiculaire se prend **entre les deux lignes**, et sans la
+    // renormaliser : c'est ainsi que le ruban tend sa rive d'un sommet décalé
+    // au suivant, donc c'est ainsi qu'un trait la longe. Celle de la ligne
+    // amont, gardée sur tout l'intervalle, rouvrait le marquage à chaque
+    // ligne — d'un écart proportionnel au décalage et à l'angle.
+    px: frames[i * 4 + 2] + (frames[j * 4 + 2] - frames[i * 4 + 2]) * t,
+    pz: frames[i * 4 + 3] + (frames[j * 4 + 3] - frames[i * 4 + 3]) * t,
   };
 }
 
@@ -309,6 +337,109 @@ export function appendMarkingLine(
   }
 
   return laid;
+}
+
+/**
+ * Retrait d'une ligne de rive au-delà de la rive, en mètres — la même cote que
+ * `markingLinesFor` compte depuis l'axe, retournée par l'autre bout.
+ *
+ * Sert à prolonger la rive le long d'un contour de carrefour, qui n'a pas
+ * d'axe : c'est ce qui garantit que les deux tombent au même endroit.
+ *
+ * @param {Object} spec Profil du thème.
+ * @returns {number} `NaN` si la classe ne porte pas de ligne de rive.
+ */
+export function borderInsetFor(spec) {
+  if (!spec?.edgeLines) return NaN;
+  return (spec.shoulder || 0) + MARKING_EDGE_INSET_M + MARKING_WIDTH_M / 2;
+}
+
+/**
+ * Une ligne continue posée le long d'un **morceau de contour**, en retrait vers
+ * l'intérieur.
+ *
+ * C'est ce qui prolonge une ligne de rive au travers d'un carrefour : le
+ * contour d'une aire (`roadJunctions.junctionArea`) n'est pas une chaussée — il
+ * n'a ni axe ni largeur — mais c'est exactement la rive que les rubans
+ * quittent et retrouvent, sommet pour sommet. Une ligne posée en retrait
+ * constant de ce contour tombe donc pile dans le prolongement de celle du
+ * ruban, sans qu'aucune des deux ait à connaître l'autre.
+ *
+ * Le retrait est donné **par sommet** : les deux bouts du morceau appartiennent
+ * à deux branches, qui peuvent ne pas avoir le même accotement. Le trait passe
+ * de l'un à l'autre en tournant, comme les cotes du contour.
+ *
+ * Un sommet sans retrait connu (`NaN`) est une branche qui ne porte pas de
+ * ligne de rive : le trait prend celui de l'autre sur toute sa longueur plutôt
+ * que de s'arrêter, parce que sur le terrain la rive d'une rue fait bien le
+ * tour du coin quand elle croise une sortie de garage. Aucun retrait connu du
+ * tout, et il n'y a pas de rive à prolonger : rien n'est posé.
+ *
+ * De quel côté est « l'intérieur » n'est pas déduit d'un sens de rotation
+ * supposé : le contour tourne dans le sens que lui donne le tri des branches
+ * par azimut, et la perpendiculaire de `pathFrames` en hérite. On le **mesure**
+ * donc contre la normale sortante que le morceau publie — même règle que la
+ * bordure de trottoir, qui borde le même contour.
+ *
+ * @param {Object} buffer Tampon `createProfileBuffer()`.
+ * @param {Object} options
+ * @param {Array<{x:number,z:number}>} options.points Morceau de contour.
+ * @param {ArrayLike<number>} options.decks Cote par sommet.
+ * @param {ArrayLike<number>} options.insets Retrait par sommet, en mètres.
+ * @param {{x:number,z:number}} options.outward Normale sortante du morceau.
+ * @param {number[]} options.color
+ * @param {number} [options.width]
+ * @param {number} [options.lift]
+ * @returns {number} traits posés.
+ */
+export function appendMarkingBorder(
+  buffer,
+  { points, decks, insets, outward, color, width = MARKING_WIDTH_M, lift = 0 }
+) {
+  const rows = points?.length ?? 0;
+  if (rows < 2 || !decks || !insets || !outward || !color) return 0;
+
+  let known = NaN;
+  for (const inset of insets) {
+    if (!Number.isFinite(inset)) continue;
+    known = inset;
+    break;
+  }
+  if (!Number.isFinite(known)) return 0;
+
+  const frames = pathFrames(points);
+  // Mesurée au milieu du morceau : la perpendiculaire est une rotation fixe de
+  // la tangente, donc elle reste du même côté d'un bout à l'autre, mais un
+  // sommet d'extrémité a une tangente moins franche qu'un sommet d'arc.
+  const middle = Math.floor(rows / 2);
+  const inward =
+    frames[middle * 4 + 2] * outward.x + frames[middle * 4 + 3] * outward.z > 0 ? -1 : 1;
+
+  // L'axe du trait, décalé sommet par sommet. On repasse ensuite par
+  // `appendMarkingLine` sur cette polyligne-là plutôt que d'émettre les
+  // quadrilatères ici : le sens des faces est alors celui de tout le reste du
+  // marquage, sans rien à mesurer de plus.
+  const path = [];
+  const platform = [];
+  let distance = 0;
+  for (let i = 0; i < rows; i++) {
+    const shift = inward * (Number.isFinite(insets[i]) ? insets[i] : known);
+    const x = points[i].x + frames[i * 4 + 2] * shift;
+    const z = points[i].z + frames[i * 4 + 3] * shift;
+    if (i > 0) distance += Math.hypot(x - path[i - 1].x, z - path[i - 1].z);
+    path.push({ x, z, distance });
+    platform.push(decks[i]);
+  }
+
+  return appendMarkingLine(buffer, {
+    path,
+    decks: platform,
+    offset: 0,
+    color,
+    width,
+    lift,
+    dash: 0,
+  });
 }
 
 /**
@@ -490,6 +621,62 @@ export function cycleGlyph() {
 }
 
 /**
+ * La flèche de sens unique, vue de dessus : un chevron et une hampe qui monte
+ * jusqu'à son creux, dans le sens du tracé. Environ 2,4 m, cote courante d'une
+ * flèche de rabattement.
+ *
+ * Les deux ailes sont coupées à l'onglet sur l'axe, et non deux traits qui se
+ * croisent : la pointe est nette, et le bord intérieur du chevron donne
+ * l'endroit exact où la hampe vient buter.
+ *
+ * Symétrique en travers, ce qui permet d'obtenir la flèche de sens contraire
+ * par une simple rotation de 180° (`mirrorDirection`) plutôt que par une
+ * réflexion : une réflexion en `along` seul retournerait les faces vers le
+ * sol, une rotation ne le fait pas.
+ *
+ * @returns {Array<Array<{along:number, across:number}>>} polygones convexes,
+ *          la hampe en premier.
+ */
+export function directionGlyph() {
+  const tip = 1.2;
+  const tail = -1.2;
+  const back = 0.8; // recul des ailes derrière la pointe
+  const spread = 0.4; // demi-ouverture du chevron
+  const wing = 0.14;
+  const length = Math.hypot(back, spread);
+  // Le bord intérieur, parallèle au bord extérieur à une épaisseur d'aile,
+  // recoupe l'axe en retrait de la pointe.
+  const notch = tip - (wing * length) / spread;
+
+  const side = (sign) => {
+    const polygon = [
+      { along: tip, across: 0 },
+      { along: notch, across: 0 },
+      { along: tip - back - (wing * spread) / length, across: sign * (spread - (wing * back) / length) },
+      { along: tip - back, across: sign * spread },
+    ];
+    // Même sens de parcours que `glyphBar` des deux côtés de l'axe.
+    return sign > 0 ? polygon : polygon.reverse();
+  };
+
+  return [
+    glyphBar({ along: tail, across: 0 }, { along: notch, across: 0 }, 0.16), // hampe
+    side(1),
+    side(-1),
+  ].filter((polygon) => polygon.length >= 3);
+}
+
+/**
+ * Le même pictogramme, tourné de 180° : la flèche de sens contraire.
+ *
+ * @param {Array<Array<{along:number, across:number}>>} polygons
+ * @returns {Array<Array<{along:number, across:number}>>}
+ */
+export function mirrorDirection(polygons) {
+  return polygons.map((polygon) => polygon.map((v) => ({ along: -v.along, across: -v.across })));
+}
+
+/**
  * Pose un pictogramme centré sur une abscisse de la plage.
  *
  * Chaque sommet est cherché à **son** abscisse (`sectionAtDistance`) puis
@@ -604,6 +791,96 @@ export function appendMarkingSymbols(
       frames: used,
       at: k * spacing - startDistance,
       polygons,
+      color,
+      lift,
+    });
+  }
+
+  return laid;
+}
+
+/**
+ * Le sens porté à une abscisse donnée, lu sur le tracé où
+ * `roadWorks.resampleOneway` l'a reporté ligne par ligne.
+ *
+ * Une seule ligne suffit : le sens ne varie pas assez vite pour qu'interpoler
+ * entre deux sommets ait un sens, contrairement à la cote ou au décalage.
+ */
+function onewayAt(path, oneway, target) {
+  const rows = path?.length ?? 0;
+  if (!oneway || rows === 0) return 0;
+  for (let i = 1; i < rows; i++) {
+    if (target <= path[i].distance) {
+      const t = (target - path[i - 1].distance) / (path[i].distance - path[i - 1].distance || 1);
+      return t < 0.5 ? oneway[i - 1] : oneway[i];
+    }
+  }
+  return oneway[rows - 1];
+}
+
+/**
+ * Les flèches de sens unique d'une plage dessinable, espacées le long de la
+ * chaîne comme les pictogrammes (`appendMarkingSymbols`) — même phase tirée de
+ * l'abscisse de la chaîne.
+ *
+ * Ce qui diffère : une flèche n'a de sens que là où le sens de circulation est
+ * affirmé (`oneway`), et elle pointe dans ce sens-là, pas dans celui du tracé.
+ * Un tronçon à double sens, ou dont le sens est ambigu (`0`), n'en reçoit
+ * aucune plutôt qu'une flèche inventée.
+ *
+ * @param {Object} buffer
+ * @param {Object} options
+ * @param {Array<{x:number,z:number,distance:number}>} options.path
+ * @param {ArrayLike<number>} options.decks
+ * @param {ArrayLike<number>} [options.frames]
+ * @param {Int8Array|number[]} options.oneway Un sens par ligne de `onewayPath`.
+ * @param {Array<{distance:number}>} [options.onewayPath] Tracé sur lequel
+ *        `oneway` est indexé, quand `path` n'en est qu'une plage (sortie de
+ *        carrefour, tunnel) ; `path` par défaut.
+ * @param {Array<Array<{along:number, across:number}>>} options.forward Flèche
+ *        dans le sens du tracé.
+ * @param {Array<Array<{along:number, across:number}>>} options.backward Flèche
+ *        dans le sens contraire (`mirrorDirection(forward)`).
+ * @param {number[]} options.color
+ * @param {number} [options.spacing]
+ * @param {number} [options.lift]
+ * @param {number} [options.startDistance]
+ * @returns {number} flèches posées.
+ */
+export function appendMarkingArrows(
+  buffer,
+  {
+    path,
+    decks,
+    frames = null,
+    oneway,
+    onewayPath = path,
+    forward,
+    backward,
+    color,
+    spacing = MARKING_SYMBOL_SPACING_M,
+    lift = 0,
+    startDistance = 0,
+  }
+) {
+  const rows = path?.length ?? 0;
+  if (rows < 2 || !decks || !oneway || !(spacing > 0)) return 0;
+  const used = frames || pathFrames(path);
+
+  const first = startDistance + path[0].distance;
+  const last = startDistance + path[rows - 1].distance;
+  let laid = 0;
+
+  for (let k = Math.ceil(first / spacing); k * spacing <= last; k++) {
+    const at = k * spacing - startDistance;
+    const sign = onewayAt(onewayPath, oneway, at);
+    if (!sign) continue;
+    laid += appendMarkingGlyph(buffer, {
+      path,
+      decks,
+      frames: used,
+      at,
+      polygons: sign > 0 ? forward : backward,
       color,
       lift,
     });

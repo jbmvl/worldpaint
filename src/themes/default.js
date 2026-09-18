@@ -31,35 +31,6 @@ export const TERRAIN_LOOK = {
   detailNear: 60,
   detailFar: 420,
   /**
-   * Période du grain du sol, en mètres.
-   *
-   * Six mètres pour 512 texels font 1,2 cm par texel, soit deux à trois pixels
-   * d'écran à cinq mètres de distance : le grain qu'on voit sur une route.
-   * Le mip l'efface ensuite tout seul sur une dizaine de mètres, ce qui est
-   * aussi ce que fait une route.
-   *
-   * Ce qui fait qu'un grain est fin n'est pas ce réglage mais le **spectre**
-   * du relevé (`createGrainCanvas`) : tant qu'il était dominé par sa grille la
-   * plus grossière, aucune période ne montrait autre chose que des nuages.
-   * Baisser cette valeur rapproche la répétition de la carte sans rien gagner
-   * en finesse ; la monter grossit le grain.
-   */
-  grainScaleM: 6,
-  /**
-   * Contraste du grain en luminosité, autour de 1.
-   *
-   * Le relevé a un écart-type de 0,136 : à 0,67 le grain module la lumière de
-   * ±9 % (un écart-type), et un accident marqué du champ, à deux écarts-types,
-   * de ±18 %. Il valait 2 — donc ±27 % et ±54 % — ce qui marquait les creux
-   * bien trop noir pour un grain.
-   *
-   * Ne touche **que** la lumière. Le relief (`grainRelief`) et la dentelure
-   * des lisières (`blendWidth`) lisent le champ brut : les éclaircir en même
-   * temps demanderait de baisser l'amplitude du relevé lui-même, ce qui
-   * aplatirait les trois d'un coup.
-   */
-  grainContrast: 0.67,
-  /**
    * Variation macro : période en mètres, amplitude en luminosité, dérive
    * chaud/froid.
    *
@@ -82,23 +53,6 @@ export const TERRAIN_LOOK = {
   macroStrength: 0.3,
   macroWarmth: 0.07,
   /**
-   * Largeur du raccord entre deux matières, en part de poids.
-   *
-   * Zéro donnerait une frontière au pixel de la carte de classes, un
-   * escalier ; un demi redonnerait le fondu linéaire d'avant. Autour de 0,15,
-   * la transition tient dans la largeur du grain : la prairie déborde dans les
-   * creux du labour et réciproquement, ce qui est ce que fait une lisière.
-   */
-  blendWidth: 0.15,
-  /**
-   * Force du relief tiré du grain, en pente apparente.
-   *
-   * Au-delà de 1, le sol se met à moutonner sous une lumière rasante : le
-   * grain n'est pas un relevé d'altitude, il n'a pas d'échelle verticale
-   * propre, et on ne peut donc que le doser à l'œil.
-   */
-  grainRelief: 0.45,
-  /**
    * Matière retenue là où le vectoriel ne dit rien — un nom de `SURFACE_LOOK`,
    * là où c'étaient quatre poids. L'herbe est de loin le pari le plus souvent
    * gagnant en rase campagne : un accotement, une friche, une banquette en sont.
@@ -117,10 +71,11 @@ export const TERRAIN_LOOK = {
    * que rend le motif instancié qui pousse dessus (`cropLayer`), sans quoi le
    * sol et ce qui y pousse divergent à la jointure premier plan/lointain — ce qui rend un champ
    * visible de loin (les tiges instanciées ne portent que les 50 premiers
-   * mètres). `vineyard`/`orchard` n'ont pas de motif propre à `cropLayer`
-   * (rang de vigne et alignement d'arbres, via `furnitureLayer`) : leur
-   * albédo est calé sur les mêmes couleurs de feuillage. Le labour garde
-   * l'albédo de `farmland` (`SURFACE_LOOK`), repli de toute culture inconnue.
+   * mètres). `vineyard`/`orchard`/`lavender` n'ont pas de motif propre à
+   * `cropLayer` (rangs de vigne, de haies de lavande ou alignement d'arbres,
+   * via `furnitureLayer`) : leur albédo est calé sur les mêmes couleurs de
+   * feuillage. Le labour garde l'albédo de `farmland` (`SURFACE_LOOK`), repli
+   * de toute culture inconnue.
    */
   cropAlbedo: {
     wheat: [0.566, 0.439, 0.092],
@@ -165,38 +120,40 @@ export const TERRAIN_LOOK = {
    */
   shoreWet: 0.8,
   /**
-   * Déplacement du point où le sol est lu, en mètres — la « frange ».
+   * Période, en mètres, du bruit qui découpe les flaques d'une matière où l'eau
+   * affleure (`standingWater`, dans `SURFACE_LOOK`). Une flaque en fait du
+   * huitième à la moitié.
+   */
+  poolScaleM: 60,
+  /**
+   * Rayon dans lequel une touffe d'herbe lit le sol autour d'elle, en mètres —
+   * la « frange » du semis (`groundCover.fringeOffset`).
    *
-   * Les cartes du sol ont un pas de 2,7 m. Lues à l'endroit exact, leurs
-   * limites sont celles du carreau : un escalier à 45°, lisible comme tel dès
-   * que deux matières contrastent (le sable et l'herbe, l'eau et n'importe
-   * quoi). On lit donc le sol quelques mètres à côté, d'un déplacement tiré
-   * d'un bruit à l'échelle de `edgeWarpScaleM` : la limite garde sa place au
-   * mètre près mais perd son angle droit.
+   * La carte du sol a un pas de 2,7 m : lue au centre de la maille, elle
+   * arrête l'herbe net sur la ligne du carreau. Chaque maille lit donc à
+   * quelques mètres de là, et au bord une maille sur deux lit l'autre surface :
+   * l'herbe déborde sur le sable, le sable mord dans l'herbe. Ce sont les
+   * petits points de la lisière, et ils sont propres au semis — la peinture du
+   * sol, elle, tient son contour d'une interpolation (`terrainMaterial`) et ne
+   * déplace aucune lecture.
    *
-   * Ce n'est pas un flou : rien n'est fondu, c'est la même limite, déplacée
-   * point par point. Ce qui la fond, c'est le filtrage de la carte des
-   * matières et l'interpolation des couvertures.
-   *
-   * Au-delà de trois mètres environ, la déformation se voit pour elle-même :
-   * un bord droit (un mur de champ, un quai) se met à onduler.
+   * Au-delà de trois mètres environ, une touffe emprunte le sol d'une parcelle
+   * qui n'est plus la sienne.
    */
   edgeWarpM: 2.4,
-  /** Période du bruit de frange, en mètres. Trop courte, la limite frise ; trop longue, elle se contente de glisser. */
-  edgeWarpScaleM: 17,
 };
 
 // --- Les arbres ----------------------------------------------------------------
 /**
- * Les treize silhouettes, décrites une fois. `hue` module la teinte de base
+ * Les onze silhouettes, décrites une fois. `hue` module la teinte de base
  * (peu saturée, la variation finale venant de la couleur d'instance).
  * `crownBase` fixe où commence la houppe (tronc dégagé d'une futaie vs
  * taillis qui part du sol) ; `trunk` à zéro, il n'y a pas de tronc du tout.
  *
- * Les quatre dernières sont le **tapis du sous-bois**, et elles portent deux
+ * Les deux dernières sont le **tapis du sous-bois**, et elles portent deux
  * champs que les arbres n'ont pas : `heightM`, la taille réelle de la plante,
  * et `aspect`, sa largeur en part de sa hauteur. Un arbre tire sa hauteur de
- * son peuplement ; une fougère, elle, fait ce qu'elle fait — sans ça, la
+ * son peuplement ; une ronce, elle, fait ce qu'elle fait — sans ça, la
  * fourchette commune des buissons lui donnait trois mètres.
  */
 export const TREE_VARIANTS = [
@@ -210,10 +167,6 @@ export const TREE_VARIANTS = [
   { kind: 'bushy', hue: { r: 0.6, g: 1, b: 0.4 }, trunk: 0.05, crownBase: 0.86, spread: 0.4 },
   { kind: 'bushy', hue: { r: 0.74, g: 1, b: 0.46 }, trunk: 0.04, crownBase: 0.9, spread: 0.44 },
   // Le tapis : ni tronc, ni houppe, et sa taille lui appartient.
-  { kind: 'fern', hue: { r: 0.5, g: 1, b: 0.42 }, trunk: 0, crownBase: 1, spread: 0.42,
-    heightM: [0.5, 1.1], aspect: 1.5 },
-  { kind: 'fern', hue: { r: 0.6, g: 1, b: 0.48 }, trunk: 0, crownBase: 1, spread: 0.36,
-    heightM: [0.6, 1.3], aspect: 1.3 },
   { kind: 'bramble', hue: { r: 0.46, g: 0.94, b: 0.42 }, trunk: 0, crownBase: 1, spread: 0.25,
     heightM: [0.7, 1.6], aspect: 1.7 },
   { kind: 'lowShrub', hue: { r: 0.36, g: 0.88, b: 0.4 }, trunk: 0, crownBase: 1, spread: 0.4,
@@ -221,20 +174,20 @@ export const TREE_VARIANTS = [
 ];
 /**
  * Les essences, par indices de variantes. C'est ce que lit `vegetationLayer`
- * pour composer un peuplement : un bois n'est pas un tirage uniforme dans treize
+ * pour composer un peuplement : un bois n'est pas un tirage uniforme dans onze
  * silhouettes, c'est deux ou trois essences qui dominent.
  *
  * `undergrowth` n'est l'essence d'aucun peuplement : c'est le tapis du sol,
  * semé par le seul sous-étage (`understoryStrata`). De loin, la strate basse
- * reste faite d'arbustes — une fougère de quatre-vingts centimètres à un
- * kilomètre coûte une instance et ne se voit pas.
+ * reste faite d'arbustes — une ronce à un kilomètre coûte une instance et ne
+ * se voit pas.
  */
 export const TREE_ESSENCES = {
   broadleaf: [0, 1, 2],
   column: [3, 4],
   conifer: [5, 6],
   bushy: [7, 8],
-  undergrowth: [9, 10, 11, 12],
+  undergrowth: [9, 10],
 };
 
 // --- Les peuplements -----------------------------------------------------------
@@ -460,10 +413,6 @@ export const CROP_LOOK = {
   maize: { atlas: 'maize', height: 2.4, spread: 0.15, density: 0.22, tint: [0.82, 1, 0.62] },
   sunflower: { atlas: 'sunflower', height: 1.7, spread: 0.2, density: 0.3, tint: [0.96, 0.98, 0.6] },
   plough: { atlas: 'stubble', height: 0.3, spread: 0.22, density: 0.72, tint: [1, 0.94, 0.74] },
-  // La lavande est un buisson bas et large, pas une tige : d'où un `spread`
-  // presque égal à sa hauteur. La teinte laisse passer le violet des épis, que
-  // le lavage de sol méditerranéen (jaunissant) écraserait sinon.
-  lavender: { atlas: 'lavender', height: 0.6, spread: 0.28, density: 0.4, tint: [0.94, 0.9, 1.06] },
   // Le colza : une masse serrée et haute, la seule culture dont la fleur, et
   // non le feuillage, fait la couleur du champ.
   rapeseed: { atlas: 'rapeseed', height: 1.3, spread: 0.24, density: 0.85, tint: [1.02, 0.98, 0.56] },
@@ -626,27 +575,23 @@ export const SOIL_LOOK = {
  * « couvertures » vivaient dans un identifiant et n'avaient qu'une teinte,
  * empruntant la texture d'une matière. Une plage avait donc le grain d'un
  * labour, et la teinte était le seul levier restant pour l'en distinguer —
- * alors que ce n'est pas la teinte qui les sépare. Depuis qu'il n'y a plus
- * qu'un grain pour tout le décor, plus rien ne justifiait la hiérarchie : il
- * n'y a plus qu'une liste, et on y ajoute une matière en ajoutant une ligne.
+ * alors que ce n'est pas la teinte qui les sépare. Les textures ont fini par
+ * disparaître entièrement : une surface est une couleur, et plus rien ne
+ * justifiait la hiérarchie. Il n'y a plus qu'une liste, et on y ajoute une
+ * matière en ajoutant une ligne.
  *
  * - `albedo` : la couleur, en linéaire. C'est la seule chose qui se lise encore
  *   à cent mètres, donc la seule qui compte vraiment ;
- * - `grain` : lequel des trois champs de la carte de grain cette matière
- *   emploie (voir `createGrainCanvas`). Deux matières souvent voisines doivent
- *   en prendre deux différents, sans quoi leur lisière perd
- *   l'interpénétration et redevient un fondu linéaire. Trois champs pour
- *   quatorze matières : la table les répartit au mieux, et une collision ne
- *   coûte que cette lisière-là ;
  * - `climate` : quel lavage climatique s'applique (`SOIL_LOOK`), ou `null`. Une
  *   lande, un maquis, un éboulis disent déjà leur pays ; les teinter une
  *   seconde fois le dirait deux fois ;
- * - `grainKeep` : part du grain conservée, de 0 (aplat) à 1. Une seule matière
- *   s'en écarte ;
  * - `grassHeight`, `grassDensity`, `grassTint` multiplient la taille, le
  *   nombre et la teinte des touffes (`groundCover`) ; `bushes` est une densité
  *   d'arbustes semés hors des bois par `vegetationLayer` — c'est ce qui fait
- *   exister un maquis, ni prairie ni forêt mais un fourré bas.
+ *   exister un maquis, ni prairie ni forêt mais un fourré bas ;
+ * - `standingWater` : part du sol sous l'eau, de 0 à 1 — les flaques d'un
+ *   marais ou d'une vasière, découpées par le shader de terrain. Ni l'herbe ni
+ *   les arbustes ne la lisent : un roseau sort de l'eau.
  *
  * Un champ absent vaut le neutre : la table ne décrit que les écarts. Une
  * matière peinte de la bonne couleur mais couverte d'une prairie de quatre-
@@ -654,23 +599,23 @@ export const SOIL_LOOK = {
  */
 export const SURFACE_LOOK = {
   // --- Le végétal ordinaire -------------------------------------------------
-  grass: { albedo: [0.051, 0.135, 0.017], grain: 0, climate: 'grass' },
+  grass: { albedo: [0.051, 0.135, 0.017], climate: 'grass' },
   // Un sol de forêt est une litière, pas un pré : à mi-chemin de l'herbe. Le
   // climat ne le lave pas — une hêtraie se ressemble d'un pays à l'autre.
-  wood: { albedo: [0.047, 0.096, 0.019], grain: 1, climate: null },
-  farmland: { albedo: [0.431, 0.331, 0.08], grain: 2, climate: 'farmland' },
+  wood: { albedo: [0.047, 0.096, 0.019], climate: null },
+  farmland: { albedo: [0.431, 0.331, 0.08], climate: 'farmland' },
   // Lotissement : pelouses tondues et allées. C'était un mélange peint dans un
   // canal (deux tiers d'herbe, un tiers de minéral) ; c'est désormais une
   // matière, et son albédo est la moyenne exacte que ce mélange rendait — la
   // reprendre à l'œil est une décision à part, pas un effet de bord de la fusion.
-  settled: { albedo: [0.125, 0.176, 0.088], grain: 1, climate: 'grass' },
+  settled: { albedo: [0.125, 0.176, 0.088], climate: 'grass' },
 
   // --- Les couvertures végétales --------------------------------------------
   // Bruyère et molinie sèche : brun-pourpre, la couleur d'un moor. Rase, dense,
   // et elle ne porte quasiment pas d'arbre.
   heath: {
     albedo: [0.159, 0.122, 0.08],
-    grain: 2,
+   
     climate: null,
     grassHeight: 0.45,
     grassDensity: 0.95,
@@ -681,28 +626,40 @@ export const SURFACE_LOOK = {
   // d'herbe, beaucoup d'arbustes — l'inverse exact d'une prairie.
   scrub: {
     albedo: [0.147, 0.171, 0.08],
-    grain: 1,
+   
     climate: null,
     grassHeight: 0.55,
     grassDensity: 0.4,
     grassTint: [1.04, 0.94, 0.7],
     bushes: 0.9,
   },
-  // Marais, tourbière, roselière : le vert le plus profond du décor, et la
-  // seule couverture plus haute qu'une prairie.
+  // Marais, tourbière, roselière : le vert le plus profond du décor, la seule
+  // couverture plus haute qu'une prairie, et de l'eau entre les touffes.
   wetland: {
     albedo: [0.072, 0.107, 0.048],
-    grain: 1,
+   
     climate: null,
     grassHeight: 1.4,
     grassDensity: 1,
     grassTint: [0.86, 1.04, 0.82],
     bushes: 0.08,
+    standingWater: 0.3,
+  },
+  // Pré salé : salicorne et obione, gris-vert, ras. Les chenaux de marée y
+  // laissent de l'eau.
+  saltmarsh: {
+    albedo: [0.118, 0.13, 0.085],
+    climate: null,
+    grassHeight: 0.5,
+    grassDensity: 0.85,
+    grassTint: [0.96, 0.98, 0.86],
+    bushes: 0.12,
+    standingWater: 0.15,
   },
   // Pelouse d'altitude et toundra : vert jaune, rase et continue.
   alpine: {
     albedo: [0.205, 0.254, 0.107],
-    grain: 2,
+   
     climate: null,
     grassHeight: 0.4,
     grassDensity: 0.9,
@@ -711,12 +668,21 @@ export const SURFACE_LOOK = {
   },
 
   // --- Le minéral -----------------------------------------------------------
-  bare: { albedo: [0.27, 0.255, 0.225], grain: 0, climate: 'bare' },
+  // Vasière : estran, fond d'étang asséché. Brun-gris mouillé, rien n'y
+  // pousse, et l'eau y reste en flaques.
+  mud: {
+    albedo: [0.1, 0.085, 0.063],
+    climate: null,
+    grassDensity: 0,
+    bushes: 0,
+    standingWater: 0.35,
+  },
+  bare: { albedo: [0.27, 0.255, 0.225], climate: 'bare' },
   // L'éboulis et la dalle sont deux paysages : une pente de cailloux qui bouge,
   // un plateau de pierre. Les confondre était le défaut du gris unique.
   scree: {
     albedo: [0.323, 0.292, 0.254],
-    grain: 1,
+   
     climate: null,
     grassHeight: 0.3,
     grassDensity: 0.06,
@@ -725,16 +691,18 @@ export const SURFACE_LOOK = {
   },
   rock: {
     albedo: [0.371, 0.332, 0.27],
-    grain: 2,
+   
     climate: null,
     grassHeight: 0.35,
     grassDensity: 0.1,
     grassTint: [1, 0.96, 0.88],
     bushes: 0.02,
   },
+  // Glacier et névé : blanc bleuté, et rien n'y pousse.
+  ice: { albedo: [0.6, 0.66, 0.72], climate: null, grassDensity: 0, bushes: 0 },
   sand: {
     albedo: [0.624, 0.539, 0.361],
-    grain: 1,
+   
     climate: null,
     grassHeight: 0.6,
     grassDensity: 0.08,
@@ -746,13 +714,12 @@ export const SURFACE_LOOK = {
   // Le revêtement urbain. Sa couleur ne vient pas d'ici mais de la voirie
   // (`townStyle.pavementTone`), pour qu'une bordure de trottoir et le sol
   // qu'elle borde ne puissent pas diverger : l'albédo posé ici n'est qu'un
-  // repli. Seule matière qui assourdit le grain — une ville n'est pas une terre
-  // plus grise, c'est une dalle, qui garde du grain du bitume voisin en plus sourd.
+  // repli. Elle assourdissait le grain, seule de la table — sans objet depuis
+  // que plus aucune matière n'en a.
   pavement: {
     albedo: [0.31, 0.3, 0.28],
-    grain: 0,
+   
     climate: 'pavement',
-    grainKeep: 0.55,
     grassDensity: 0,
     bushes: 0,
   },
@@ -763,7 +730,7 @@ export const SURFACE_LOOK = {
   // verrait de loin.
   water: {
     albedo: [0.021, 0.045, 0.06],
-    grain: 0,
+   
     climate: null,
     grassHeight: 0,
     grassDensity: 0,
@@ -1006,6 +973,28 @@ export const SHOPFRONT_EMOJI = {
  *  matché (`class` absent) : la façade, sans autre indice. */
 export const SHOPFRONT_EMOJI_DEFAULT = '🏪';
 
+/**
+ * Auvent de restaurant ou de bar (`buildingLayer.appendAwning`) : une retombée
+ * tendue depuis le bandeau d'enseigne, en couleur unie. `awningDropM` fixe sa
+ * pente (chute verticale sur `awningDepthM` de saillie) ; `awningMarginM` le
+ * retire des deux bouts du pan, comme la devanture elle-même.
+ */
+export const AWNING_DEPTH_M = 1.3;
+export const AWNING_DROP_M = 0.5;
+export const AWNING_THICKNESS_M = 0.06;
+export const AWNING_MARGIN_M = 0.35;
+
+/**
+ * Terrasse d'un restaurant ou d'un bar (`buildingLayer._appendTerrace`) :
+ * tables et chaises posées entre la façade et la chaussée. `terraceDepthM`
+ * les recule du mur, `terraceSpacingM` les espace le long du pan,
+ * `terraceClearanceM` est la marge qu'on leur laisse avant la chaussée — en
+ * deçà, une table empiéterait sur la voie.
+ */
+export const TERRACE_DEPTH_M = 1.9;
+export const TERRACE_SPACING_M = 2.3;
+export const TERRACE_CLEARANCE_M = 0.9;
+
 // --- Les toits -----------------------------------------------------------------
 /**
  * Pente d'un toit, en part de sa demi-largeur.
@@ -1017,8 +1006,6 @@ export const SHOPFRONT_EMOJI_DEFAULT = '🏪';
  */
 export const ROOF_PITCH = 0.55;
 export const ROOF_MAX_RISE_M = 4.2;
-/** Débord de toiture, en mètres : c'est l'ombre du débord qui fait le toit. */
-export const ROOF_OVERHANG_M = 0.45;
 
 // --- Les fenêtres --------------------------------------------------------------
 /** Dimensions d'une fenêtre, en mètres. */
@@ -1041,25 +1028,47 @@ export const WINDOW_LIT_SHARE = 0.34;
  * une description du pays. Ils ne sont plus dessinés dans la texture : c'est
  * `roadMarkings` qui les lit et pose les lignes en géométrie, à la même place
  * qu'avant — en deçà de l'accotement pour la rive, sur l'axe pour l'autre.
+ *
+ * `directionArrows` dit si la classe peut porter la flèche de sens unique —
+ * elle n'est posée que là où la donnée l'affirme (`oneway`), jamais par
+ * défaut. Une desserte ou un chemin n'en portent pas : trop étroits pour que
+ * le sens s'y peigne, à supposer que la donnée le dise.
+ *
+ * `ragged` est la profondeur, en mètres, sur laquelle le sol ronge le bord du
+ * ruban (`createRoadEdgeCanvas`). Elle ne vaut que pour ce qui n'a pas de
+ * rive : un chemin de terre est large de ce que les pas ont tassé, et cette
+ * largeur-là n'est pas un trait droit. Une chaussée revêtue, elle, a un bord
+ * franc, et le ronger la ferait lire comme un chemin.
  */
 export const ROAD_PROFILES = {
-  express: { width: 12, shoulder: 1.2, edgeLines: true, centerDash: true, texture: 256 },
-  major: { width: 8.5, shoulder: 0, edgeLines: true, centerDash: true, texture: 128 },
-  minor: { width: 5, shoulder: 0, edgeLines: true, centerDash: false, texture: 128 },
+  express: { width: 12, shoulder: 1.2, edgeLines: true, centerDash: true, directionArrows: true, texture: 256 },
+  major: { width: 8.5, shoulder: 0, edgeLines: true, centerDash: true, directionArrows: true, texture: 128 },
+  minor: { width: 5, shoulder: 0, edgeLines: true, centerDash: false, directionArrows: true, texture: 128 },
   lane: { width: 3.6, shoulder: 0, edgeLines: false, centerDash: false, texture: 64 },
   // `symbol` dit ce que la classe porte **peint au sol**, au même titre
   // qu'`edgeLines` : le vélo n'est pas une décoration, c'est la seule chose
   // qui distingue une piste cyclable d'une allée de service de même largeur.
   cycleway: { width: 2.2, shoulder: 0, edgeLines: false, centerDash: false, symbol: 'cycle', tint: '#56565c', texture: 64 },
-  track: { width: 3, shoulder: 0, surface: 'dirt', ruts: true, texture: 64 },
-  path: { width: 1.4, shoulder: 0, surface: 'dirt', texture: 64 },
+  // Les deux chemins de terre, et les seuls à bord rongé. Le sentier est
+  // mangé moins profond que le chemin d'exploitation, mais bien davantage en
+  // part de sa largeur : c'est un passage, pas une voie.
+  track: { width: 3, shoulder: 0, surface: 'dirt', ruts: true, ragged: 0.3, texture: 64 },
+  path: { width: 1.4, shoulder: 0, surface: 'dirt', ragged: 0.2, texture: 64 },
+  // Même gabarit que le sentier — c'en est un, en marches. `steps` dit à
+  // `roadNetwork` de le balayer en contremarches (`appendSteps`) plutôt qu'en
+  // ruban continu.
+  steps: { width: 1.4, shoulder: 0, surface: 'dirt', ragged: 0.2, texture: 64, steps: true },
 };
-/** Revêtements : couleur de base et amplitude du grain. */
+/**
+ * Revêtements : une couleur de base, et rien d'autre. Chacun portait aussi une
+ * amplitude de grain — un bruit par pixel semé dans la texture — retirée avec
+ * celui du sol : une surface est une couleur, et une chaussée n'y fait pas
+ * exception.
+ */
 export const ROAD_SURFACES = {
-  asphalt: { base: '#4a4a4e', grain: 26 },
-  dirt: { base: '#8a7d63', grain: 34 },
-  ballast: { base: '#847d70', grain: 46 }, // pierre concassée, grain le plus fort des trois
-
+  asphalt: { base: '#4a4a4e' },
+  dirt: { base: '#8a7d63' },
+  ballast: { base: '#847d70' },
 };
 /** Terre claire de l'accotement. */
 export const ROAD_SHOULDER_COLOR = '#8c8168';
@@ -1093,7 +1102,9 @@ export const ROAD_MARKING_COLOR = '#e9e7de';
  * Cotes en mètres. `deck.overhang` est le débord de la corniche au-delà de la
  * rive de la chaussée ; `pier.span` la part de la largeur du tablier que
  * couvre la pile (1 = toute la largeur) ; `parapet.kind` ne change que la
- * silhouette (`wall` plein, `rail` mince et haut).
+ * silhouette (`wall` plein, `rail` mince et haut). `parapet.grain`, facultatif,
+ * est le grain low poly d'un parapet plein (`facetJitter`), côté chaussée
+ * seulement : facteurs de hauteur et d'épaisseur, fruit en mètres par mètre.
  */
 export const WORKS_STYLES = [
   {
@@ -1101,7 +1112,10 @@ export const WORKS_STYLES = [
     deck: { thickness: 1.3, overhang: 0.55, edgeDepth: 0.5, color: '#8f8879', edge: '#b3aa97' },
     pier: { spacing: 26, thickness: 2.2, span: 0.55, colorFoot: '#7d766a', colorTop: '#9c9484' },
     abutment: { thickness: 2.6, colorFoot: '#7d766a', colorTop: '#9c9484' },
-    parapet: { kind: 'wall', height: 0.95, thickness: 0.42, coping: 0.07, color: '#a49b89', colorTop: '#c0b6a1' },
+    parapet: {
+      kind: 'wall', height: 0.95, thickness: 0.42, coping: 0.07, color: '#a49b89', colorTop: '#c0b6a1',
+      grain: { height: [0.95, 1.05], thickness: [0.8, 1.3], batter: [0, 0.08] },
+    },
     portal: { face: '#8b8477', arch: '#2c2a27', crown: 1.6, jamb: 2.4 },
   },
   {
@@ -1109,7 +1123,10 @@ export const WORKS_STYLES = [
     deck: { thickness: 0.95, overhang: 0.8, edgeDepth: 0.32, color: '#8d8d8a', edge: '#b8b7b2' },
     pier: { spacing: 34, thickness: 1.5, span: 0.42, colorFoot: '#8a8a87', colorTop: '#a5a5a1' },
     abutment: { thickness: 2, colorFoot: '#8a8a87', colorTop: '#a5a5a1' },
-    parapet: { kind: 'wall', height: 0.82, thickness: 0.3, coping: 0.05, color: '#adaca7', colorTop: '#c6c5bf' },
+    parapet: {
+      kind: 'wall', height: 0.82, thickness: 0.3, coping: 0.05, color: '#adaca7', colorTop: '#c6c5bf',
+      grain: { height: [0.97, 1.03], thickness: [0.9, 1.15], batter: [0, 0.04] },
+    },
     portal: { face: '#9a9a96', arch: '#2a2b2d', crown: 1.4, jamb: 2 },
   },
   {
@@ -1134,10 +1151,10 @@ export const STREET_LOOK = {
   gutterWidth: 0.32,
   gutterDepth: 0.035,
   /** Vue de la bordure, en mètres, et le chanfrein de son nez. */
-  kerbHeight: 0.14,
+  kerbHeight: 0.2,
   kerbNose: 0.055,
   /** Largeur du trottoir : tirée dans cet écart, par portion. */
-  walkWidth: [1.2, 2.3],
+  walkWidth: [0.8, 1.4],
   /** Contre-pente du trottoir vers le caniveau, en mètres sur sa largeur. */
   walkFall: 0.025,
   /** Jupe arrière : de quoi enterrer le bord au lieu de le laisser en l'air. */
@@ -1160,10 +1177,10 @@ export const STREET_LOOK = {
    * revanche, le shader sait le dire.
    */
   surfaces: [
-    { name: 'béton balayé', kerb: '#c0bbaf', joint: '#948d80' },
-    { name: 'enrobé clair', kerb: '#b3aea3', joint: '#797570' },
-    { name: 'pavé de grès', kerb: '#b5ac9a', joint: '#847b6c' },
-    { name: 'béton désactivé', kerb: '#b8b1a2', joint: '#8b8374' },
+    { name: 'béton balayé', kerb: '#bdbcb7', joint: '#948d80' },
+    { name: 'enrobé clair', kerb: '#b4b4b0', joint: '#797570' },
+    { name: 'pavé de grès', kerb: '#b7b6ae', joint: '#847b6c' },
+    { name: 'béton désactivé', kerb: '#c0beb6', joint: '#8b8374' },
   ],
   /**
    * Le dessus du trottoir, par famille climatique — et, par la même valeur, le
@@ -1187,18 +1204,18 @@ export const STREET_LOOK = {
    */
   pavementGrain: 0.55,
   pavement: {
-    default: '#9b968c',
-    oceanic: '#9b968c',
-    oceanicUpland: '#93918c',
-    mediterranean: '#b3a992',
-    mediterraneanCool: '#aaa190',
-    mediterraneanMontane: '#a9a08e',
-    semiArid: '#b2a68f',
-    arid: '#bdae94',
-    continental: '#9a968e',
-    boreal: '#8f8d89',
-    alpine: '#98958f',
-    glacial: '#93938f',
+    default: '#43444a',
+    oceanic: '#43444a',
+    oceanicUpland: '#3f4046',
+    mediterranean: '#4a4b51',
+    mediterraneanCool: '#44454b',
+    mediterraneanMontane: '#43444a',
+    semiArid: '#484950',
+    arid: '#4d4e55',
+    continental: '#424349',
+    boreal: '#3b3c41',
+    alpine: '#404147',
+    glacial: '#3c3d43',
   },
 };
 
@@ -1227,7 +1244,26 @@ export const WATERWAY_CLASSES = {
  */
 export const LIFE_COLORS = {
   bird: '#2b2f36',
+  // Silhouette du rapace qui remplace le corvidé en climat de montagne — même
+  // principe (une teinte plus sombre que le ciel, quelle que soit l'heure).
+  raptor: '#332821',
   smoke: [0.86, 0.85, 0.83],
+  // Osier du panier de nacelle.
+  balloonBasket: srgb('#7a5c3c'),
+  /**
+   * Couples de couleurs des montgolfières — enveloppe en fuseaux de deux
+   * teintes alternées (voir `lifeLayer.createBalloonGeometry`). Chaque ballon
+   * en tire un au sort une fois pour toutes : c'est ce qui fait qu'un vol en
+   * porte plusieurs différentes plutôt qu'une flotte identique.
+   */
+  balloonColors: [
+    [srgb('#c0392b'), srgb('#f4ead0')],
+    [srgb('#2f5fa8'), srgb('#f2c94c')],
+    [srgb('#2f8a4a'), srgb('#f4ead0')],
+    [srgb('#d9691e'), srgb('#5b3a8a')],
+    [srgb('#1c8c86'), srgb('#f4ead0')],
+    [srgb('#b3352f'), srgb('#e9e6df')],
+  ],
 };
 
 // --- Les bêtes -----------------------------------------------------------------
@@ -1295,6 +1331,11 @@ export const FAUNA_COATS = mapCoats({
   fox: ['#b4602c', '#b4602c', '#a55a30', '#c47038'],
   wolf: ['#8a8378', '#6f685e', '#9c9488', '#5a544c'],
   bear: ['#5a4432', '#5a4432', '#4a3728', '#7a5c42'],
+
+  // Robes de cour, pas de nuancier de race : tigré, noir, roux et blanc pour
+  // le chat, les couleurs de corniaud les plus courantes pour le chien.
+  cat: ['#8a8078', '#8a8078', '#2e2b28', '#b4602c', '#ddd6c8'],
+  dog: ['#8d5a3f', '#8d5a3f', '#3a3128', '#c9c2b4', '#6b5442'],
 });
 
 // --- Le mobilier ---------------------------------------------------------------
@@ -1321,6 +1362,9 @@ export const FURNITURE_COLORS = {
   red: srgb('#b3352f'),
   blue: srgb('#2f5fa8'),
   lamp: srgb('#d6d2c8'),
+  // Verre chaud d'un lampadaire classique (sodium/incandescent), verre froid d'une tête LED.
+  lampWarm: srgb('#f0c988'),
+  lampLed: srgb('#dceeff'),
   water: srgb('#4d6b78'),
   corrugated: srgb('#8f9498'),
   hide: srgb('#e4ded4'),
@@ -1374,6 +1418,9 @@ export const FURNITURE_COLORS = {
   // --- Cultures ------------------------------------------------------------
   vineWood: srgb('#6b5540'),
   vineLeaf: srgb('#72884a'),
+  // La lavande : un feuillage gris-vert bas, et l'épi qui le dépasse.
+  lavenderLeaf: srgb('#6e7a5a'),
+  lavenderBloom: srgb('#7f6ab6'),
 };
 
 // --- Le ciel -------------------------------------------------------------------
@@ -1562,7 +1609,7 @@ export const defaultTheme = Object.freeze({
   soils: SOIL_LOOK,
   towns: TOWN_PALETTES,
   personalities: BUILDING_PERSONALITIES,
-  roofs: { pitch: ROOF_PITCH, maxRiseM: ROOF_MAX_RISE_M, overhangM: ROOF_OVERHANG_M },
+  roofs: { pitch: ROOF_PITCH, maxRiseM: ROOF_MAX_RISE_M },
   windows: {
     widthM: WINDOW_WIDTH_M,
     heightM: WINDOW_HEIGHT_M,
@@ -1580,6 +1627,13 @@ export const defaultTheme = Object.freeze({
     fasciaGapM: SHOPFRONT_FASCIA_GAP_M,
     emoji: SHOPFRONT_EMOJI,
     emojiDefault: SHOPFRONT_EMOJI_DEFAULT,
+    awningDepthM: AWNING_DEPTH_M,
+    awningDropM: AWNING_DROP_M,
+    awningThicknessM: AWNING_THICKNESS_M,
+    awningMarginM: AWNING_MARGIN_M,
+    terraceDepthM: TERRACE_DEPTH_M,
+    terraceSpacingM: TERRACE_SPACING_M,
+    terraceClearanceM: TERRACE_CLEARANCE_M,
   },
   roads: {
     profiles: ROAD_PROFILES,

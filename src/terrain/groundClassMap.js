@@ -17,8 +17,8 @@
  * méritait donc un canal, une « couverture » n'avait qu'une teinte et
  * empruntait la texture d'une voisine. Depuis qu'il n'y a plus qu'un grain pour
  * tout le décor, la hiérarchie n'a plus d'objet — il n'y a qu'une liste de
- * quatorze matières, et on en ajoute une en ajoutant une ligne (trente et une
- * tiennent dans le canal).
+ * matières, et on en ajoute une en ajoutant une ligne (trente et une tiennent
+ * dans le canal).
  *
  * Ce que la fusion fait gagner, au-delà du nom :
  *
@@ -42,6 +42,27 @@
  * aux pixels de bord un alpha partiel, donc des canaux prémultipliés, donc un
  * identifiant divisé — relu comme une matière sans rapport tout le long des
  * lisières.
+ *
+ * ## Le bord d'un tracé ment, et on le lui reprend
+ *
+ * L'alpha plein ne suffit pas : **le canevas lisse le bord de ses tracés**, et
+ * aucune API ne le débraye. Un texel de bord porte donc le mélange des deux
+ * identifiants voisins, et un identifiant mélangé en désigne un **troisième** —
+ * entre le bois et l'eau, c'est-à-dire tout le long de chaque cours d'eau,
+ * quatre-vingt-dix pour cent de la rampe tombe sur une matière absente du lieu.
+ * C'est ce qui semait du sable et du trottoir le long des ruisseaux, et qui les
+ * faisait changer de place à chaque re-rasterisation.
+ *
+ * Deux pièces le défont, et elles ne servent qu'à ça :
+ *
+ * - le canal **bleu** porte une **signature** de la matière (`SURFACE_SIGNATURES`),
+ *   choisie pour qu'aucun mélange ne puisse la contrefaire ;
+ * - `repairSurfaceEdges`, passé sur la relecture, rend chaque texel non signé à
+ *   la matière dont il est le plus proche — c'est-à-dire à celle qui couvre
+ *   plus de la moitié de sa surface.
+ *
+ * La carte réparée est renvoyée au canevas : le shader lit la texture, la
+ * végétation lit la copie, et les deux disent la même chose.
  *
  * L'eau est une matière comme les autres, et c'est la seule description de
  * l'eau dans la scène : il n'y a pas de plan d'eau posé sur le terrain, le sol
@@ -70,9 +91,41 @@
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
-import { cropFor, cropId, cropFromId, randomAt, CROP_ID_STEP } from '../layers/furniturePlacement.js';
+import {
+  cropFor,
+  cropId,
+  cropFromId,
+  randomAt,
+  CROP_KINDS,
+  CROP_ID_STEP,
+} from '../layers/furniturePlacement.js';
 import { URBAN_GREEN_LANDUSE } from '../layers/settlement.js';
 import { defaultTheme } from '../themes/default.js';
+import {
+  CLASS_SOURCE_LAYERS,
+  WATER_SOURCE_LAYER,
+  WATERWAY_SOURCE_LAYER,
+  waterSurfaceFor,
+  waterwayStyleFor,
+  surfaceFor,
+  classPolygons,
+} from './surfaceClassification.js';
+
+/*
+ * Ce que dit une entité de tuile reste lisible depuis ici : la carte du sol est
+ * une seule adresse pour ses lecteurs, même si la lecture du vectoriel vit à
+ * côté (`surfaceClassification.js`).
+ */
+export {
+  CLASS_SOURCE_LAYERS,
+  WATER_SOURCE_LAYER,
+  WATERWAY_SOURCE_LAYER,
+  BARE_WATERWAY_CLASSES,
+  waterSurfaceFor,
+  waterwayStyleFor,
+  surfaceFor,
+  classPolygons,
+} from './surfaceClassification.js';
 
 /**
  * Côté du carré couvert, en mètres. Il doit dépasser la portée du sol de
@@ -85,41 +138,6 @@ export const CLASS_PIXELS = 1536;
 /** Déplacement de l'observateur avant re-rasterisation, en mètres. */
 export const CLASS_REBUILD_M = 400;
 
-/**
- * Couches source lues, dans l'ordre de dessin (les dernières recouvrent).
- *
- * La couche `park` n'en fait **pas** partie, et c'est un piège de nommage : au
- * schéma OpenMapTiles elle ne contient aucun parc de ville, mais
- * `boundary=protected_area`, `boundary=national_park`, `leisure=nature_reserve`
- * — des périmètres de protection, souvent immenses (Natura 2000 couvre presque
- * tout le littoral français, la Camargue, les Landes). Un périmètre juridique
- * ne dit rien de la matière du sol. Le parc de ville, lui, arrive bien :
- * `leisure=park`, `garden`, `village_green`, `recreation_ground` et
- * `golf_course` sont rangés par le schéma dans `landcover`, classe `grass`.
- */
-export const CLASS_SOURCE_LAYERS = ['landuse', 'landcover'];
-
-/** Couches source de l'eau, dans les tuiles vectorielles. */
-export const WATER_SOURCE_LAYER = 'water';
-export const WATERWAY_SOURCE_LAYER = 'waterway';
-
-/** Vrai si une surface d'eau compte (les piscines produisent des confettis bleus à cette échelle). */
-export function isDrawableWater(properties = {}) {
-  if (properties.brunnel === 'tunnel') return false;
-  return properties.class !== 'swimming_pool';
-}
-
-/**
- * Demi-largeur d'un cours d'eau linéaire, ou `null` s'il n'a pas de surface
- * d'eau visible. Un cours d'eau souterrain n'en a pas ; un cours d'eau
- * intermittent, la plupart du temps, non plus. Fonction pure.
- */
-export function waterwayStyleFor(properties = {}, waterways = defaultTheme.water.waterways) {
-  if (properties.brunnel === 'tunnel') return null;
-  if (properties.intermittent === 1 || properties.intermittent === true) return null;
-  const width = waterways[properties.class];
-  return width ? { halfWidth: width / 2 } : null;
-}
 
 /**
  * Distance à laquelle `woodEdgeAt` va chercher le dehors, en mètres. Plus
@@ -172,10 +190,14 @@ export const SURFACE_KINDS = [
   'scrub',
   'alpine',
   'wetland',
-  // Le minéral.
+  // Les sols où l'eau affleure, entre le marais et le minéral qu'ils côtoient.
+  'saltmarsh',
+  'mud',
+  // Le minéral, et la glace qui le borde en montagne.
   'bare',
   'scree',
   'rock',
+  'ice',
   'sand',
   // Les deux matières à part : l'une est déduite, l'autre remplace tout.
   'pavement',
@@ -194,13 +216,54 @@ export const SETTLED_GRASS = 0.66;
 /**
  * Pas entre deux identifiants dans le canal rouge.
  *
- * Huit, ce qui plafonne à trente et une matières — la liste en compte
- * quatorze, et cette marge est le point de la fusion : on peut désormais en
+ * Huit, ce qui plafonne à trente et une matières : la marge permet d'en
  * ajouter sans rien réorganiser. Le pas ne sert qu'à laisser à l'arrondi de
  * lecture de quoi encaisser le passage par un canevas 8 bits ; quatre niveaux
  * de part et d'autre suffisent, la valeur écrite étant exacte.
  */
 export const SURFACE_ID_STEP = 8;
+
+/**
+ * Signature d'un identifiant, peinte dans le canal bleu.
+ *
+ * Elle existe pour une raison précise, et c'est le seul moyen qu'on ait de
+ * distinguer un texel peint d'un texel inventé : **le canevas 2D lisse le bord
+ * de ses tracés, et rien ne le désactive**. Un pixel de bord porte donc
+ * `alpha x A + (1 - alpha) x B` — le mélange de deux identifiants voisins, relu
+ * par `surfaceFromId` comme un **troisième**. Entre le bois (4) et l'eau (17),
+ * c'est-à-dire tout le long de chaque cours d'eau, quatre-vingt-dix pour cent
+ * de la rampe tombe sur une matière qui n'a jamais été peinte là : du sable,
+ * de la roche, du trottoir, une lande. C'est ce qui semait des taches claires
+ * le long des ruisseaux, et qui les faisait changer de place à chaque
+ * re-rasterisation.
+ *
+ * Ranger les matières voisines côte à côte dans `SURFACE_KINDS` limite les
+ * dégâts entre voisines ; ça ne peut rien pour l'eau, qui borde tout.
+ *
+ * Un mélange ne peut pas contrefaire ces valeurs : **aucun triplet de la table
+ * n'est aligné**. Pour qu'un pixel de bord se fasse passer pour la matière C,
+ * il faudrait que son rouge tombe sur celui de C *et* que son bleu tombe en
+ * même temps sur la signature de C — or le bleu se mélange linéairement, et la
+ * table est faite pour qu'il rate. L'écart minimal mesuré est de 7, très
+ * au-dessus de l'arrondi du canevas ; un test le vérifie en balayant toutes les
+ * couvertures possibles de toutes les paires.
+ *
+ * D'où les valeurs, qui n'ont aucun sens à l'unité : elles ont été cherchées
+ * pour maximiser cet écart, sous la seule contrainte que le fond (identifiant
+ * zéro) garde la signature zéro. En ajouter une pour une matière de plus
+ * demande de relancer cette recherche — le test dit sans ambiguïté si la valeur
+ * choisie tient.
+ *
+ * Indexée par l'identifiant lui-même, fond compris.
+ */
+export const SURFACE_SIGNATURES = [
+  0, 157, 181, 240, 110, 31, 197, 255, 11, 69, 250, 26, 192, 138, 2, 211, 158, 80,
+];
+
+/** Signature d'un identifiant de matière. Fonction pure. */
+export function surfaceSignature(id) {
+  return SURFACE_SIGNATURES[id] ?? 0;
+}
 
 /**
  * Rang de l'eau, à partir de 1. Le shader en a besoin nommément : l'eau n'est
@@ -218,9 +281,9 @@ export const PAVEMENT_ID = SURFACE_KINDS.indexOf('pavement') + 1;
  * basse ait besoin de faire : une lande et un maquis sont rases et clairsemés,
  * mais c'est bien de l'herbe qui y pousse, et leur ligne de `SURFACE_LOOK` dit
  * ensuite de quelle taille et de quelle teinte. Ce qui n'est pas là ne porte
- * rien : ni le minéral, ni la dalle, ni l'eau.
+ * rien : ni le minéral, ni la vasière, ni la glace, ni la dalle, ni l'eau.
  */
-export const VEGETAL_SURFACES = new Set(['grass', 'heath', 'scrub', 'alpine', 'wetland']);
+export const VEGETAL_SURFACES = new Set(['grass', 'heath', 'scrub', 'alpine', 'wetland', 'saltmarsh']);
 
 /** Identifiant d'une matière, ou 0 si on ne la connaît pas. Fonction pure. */
 export function surfaceId(kind) {
@@ -244,85 +307,131 @@ export function surfaceFromId(red) {
  *
  * Alpha toujours plein : le fond est peint, pas effacé (voir `rebuild`).
  *
+ * Le bleu porte la **signature** de la matière (voir `SURFACE_SIGNATURES`), qui
+ * ne décrit rien du décor : elle certifie que ce texel a été peint et non
+ * fabriqué par le lissage du canevas. C'est elle que `repairSurfaceEdges` relit.
+ *
  * @param {string|null} kind Matière.
  * @param {number} [crop] Identifiant de culture (`cropId`), 0 pour aucune.
  */
 export function surfaceFill(kind, crop = 0) {
-  return `rgba(${surfaceId(kind) * SURFACE_ID_STEP}, ${crop * CROP_ID_STEP}, 0, 1)`;
+  const id = surfaceId(kind);
+  return `rgba(${id * SURFACE_ID_STEP}, ${crop * CROP_ID_STEP}, ${surfaceSignature(id)}, 1)`;
 }
 
 /**
- * Matière d'une entité surfacique, ou `null` si elle n'en décrit aucune.
+ * Ce qu'une valeur de canal peut être, une fois pour toutes : la signature
+ * attendue pour un rouge donné (-1 si ce rouge n'est aucun identifiant), et si
+ * un vert tombe pile sur une culture connue.
  *
- * C'était deux fonctions — `groundClassFor` disait la matière grossière,
- * `coverFor` la précisait quand elle savait — et ce découpage était le
- * symptôme : `landcover.class = 'sand'` devait d'abord se déclarer « sol nu »
- * pour ensuite se corriger en « sable ». Il dit maintenant « sable » du premier
- * coup.
- *
- * `landuse=residential` ne prend pas `bare` : c'est un périmètre administratif
- * où le sol réel est surtout de l'herbe (pelouses, jardins), le minéral ne
- * couvrant que la chaussée et ses abords (composés par `streetLayer`). D'où
- * `settled`, qui était un mélange peint dans un canal et qui est désormais une
- * matière comme les autres. Une zone d'activité (industrielle, commerciale,
- * ferroviaire, carrière), elle, reste `bare` : réellement minérale partout.
- *
- * La couche `park` n'est pas lue, et c'est un piège de nommage : au schéma
- * OpenMapTiles elle ne porte aucun parc de ville mais des périmètres de
- * protection, souvent immenses (voir `CLASS_SOURCE_LAYERS`). Un périmètre
- * juridique ne dit rien de la matière du sol.
- *
- * Fonction pure.
+ * Deux tables de 256 entrées plutôt que des divisions par texel : la passe de
+ * réparation lit deux millions et demi de texels à chaque re-rasterisation, et
+ * elle est la seule chose qui s'ajoute entre la peinture et l'affichage. Elle y
+ * gagne la moitié de son temps.
  */
-export function surfaceFor(sourceLayer, properties = {}) {
-  const klass = properties.class;
-  const subclass = properties.subclass;
+const RED_TO_SIGNATURE = new Int16Array(256).fill(-1);
+const GREEN_IS_CROP = new Uint8Array(256);
+for (let id = 0; id <= SURFACE_KINDS.length; id++) {
+  RED_TO_SIGNATURE[id * SURFACE_ID_STEP] = surfaceSignature(id);
+}
+for (let crop = 0; crop <= CROP_KINDS.length; crop++) GREEN_IS_CROP[crop * CROP_ID_STEP] = 1;
 
-  if (sourceLayer === 'landcover') {
-    if (klass === 'wood') return 'wood';
-    if (klass === 'farmland') return 'farmland';
-    if (klass === 'wetland') return 'wetland';
-    if (klass === 'sand') return 'sand';
-    // L'éboulis et la dalle sont deux paysages : une pente de cailloux qui
-    // bouge, un plateau de pierre. Les confondre était le défaut du gris unique.
-    if (klass === 'rock') return subclass === 'scree' ? 'scree' : 'rock';
-    if (klass === 'grass') {
-      if (subclass === 'heath') return 'heath';
-      if (subclass === 'scrub' || subclass === 'shrubbery') return 'scrub';
-      // `fell` est la pelouse d'altitude au-dessus de la limite forestière ;
-      // `tundra` en est l'équivalent boréal.
-      if (subclass === 'fell' || subclass === 'tundra') return 'alpine';
-      return 'grass';
+/** Voisins consultés pour réparer un texel de bord : les huit, une limite oblique ne laissant parfois que les diagonales. */
+const REPAIR_OFFSETS = [
+  [-1, -1], [0, -1], [1, -1],
+  [-1, 0], [1, 0],
+  [-1, 1], [0, 1], [1, 1],
+];
+
+/**
+ * Rend à chaque texel de bord la matière qui l'emporte, sur place.
+ *
+ * Le lissage du canevas mélange les identifiants de deux tracés voisins, et un
+ * identifiant mélangé en désigne un troisième (voir `SURFACE_SIGNATURES`). On ne
+ * peut pas l'éviter à la peinture — aucune API ne débraye l'antialiasing d'un
+ * tracé — donc on le défait après coup : un texel qui ne porte pas de signature
+ * valable reprend celle de son voisin peint le plus proche en rouge, à égalité
+ * le plus proche en vert.
+ *
+ * « Le plus proche en rouge » **est** le seuil de couverture : entre deux
+ * matières, un texel couvert à plus de la moitié par l'une porte un rouge plus
+ * près de celui-là, et c'est elle qu'il reprend. La limite tombe donc au bon
+ * demi-texel, au lieu d'inventer une matière absente du lieu.
+ *
+ * Deux passes, et c'est ce qui garantit le déterminisme : la première marque,
+ * la seconde répare en ne lisant **que** des texels marqués peints, jamais un
+ * texel déjà réparé. L'ordre de parcours ne change donc rien au résultat.
+ *
+ * Le vert (la culture) n'a pas de signature à lui — il n'y a plus de canal
+ * libre — et n'est vérifié que par son pas : un mélange de deux cultures sur
+ * vingt-huit passe encore au travers. C'est la limite connue de cette passe,
+ * et elle ne touche que la limite entre deux parcelles de cultures différentes.
+ *
+ * @param {Uint8ClampedArray} data Canal par canal, quatre par texel.
+ * @param {number} [pixels] Côté de la carte.
+ * @returns {number} texels réparés.
+ */
+export function repairSurfaceEdges(data, pixels = CLASS_PIXELS) {
+  const total = pixels * pixels;
+  const painted = new Uint8Array(total);
+  let suspects = 0;
+
+  // Un texel est peint si son rouge tombe pile sur un identifiant, que son bleu
+  // en porte la signature, et que son vert tombe pile sur une culture connue.
+  for (let p = 0; p < total; p++) {
+    const i = p * 4;
+    if (data[i + 2] === RED_TO_SIGNATURE[data[i]] && GREEN_IS_CROP[data[i + 1]] === 1) {
+      painted[p] = 1;
+    } else {
+      suspects++;
     }
-    // La glace n'a pas encore de matière à elle : elle passe pour du minéral.
-    if (klass === 'ice' || subclass === 'glacier' || subclass === 'ice_shelf') return 'bare';
-    return null;
+  }
+  if (suspects === 0) return 0;
+
+  let repaired = 0;
+  for (let p = 0; p < total; p++) {
+    if (painted[p]) continue;
+    const i = p * 4;
+    const x = p % pixels;
+    const y = (p - x) / pixels;
+
+    let bestScore = Infinity;
+    let best = -1;
+    for (const [dx, dy] of REPAIR_OFFSETS) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= pixels || ny >= pixels) continue;
+      const q = ny * pixels + nx;
+      if (!painted[q]) continue;
+      const j = q * 4;
+      // Le rouge décide, le vert départage : deux parcelles de la même matière
+      // et de cultures différentes ne diffèrent que par lui.
+      const score = Math.abs(data[j] - data[i]) * 1024 + Math.abs(data[j + 1] - data[i + 1]);
+      if (score < bestScore) {
+        bestScore = score;
+        best = j;
+      }
+    }
+
+    if (best >= 0) {
+      data[i] = data[best];
+      data[i + 1] = data[best + 1];
+      data[i + 2] = data[best + 2];
+    } else {
+      // Aucun voisin peint : un trait plus étroit qu'un texel, entièrement fait
+      // de bord. On arrondit, faute de mieux — c'est ce que faisait toute la
+      // carte avant cette passe.
+      const id = Math.min(SURFACE_KINDS.length, Math.round(data[i] / SURFACE_ID_STEP));
+      const crop = Math.min(CROP_KINDS.length, Math.round(data[i + 1] / CROP_ID_STEP));
+      data[i] = id * SURFACE_ID_STEP;
+      data[i + 1] = crop * CROP_ID_STEP;
+      data[i + 2] = surfaceSignature(id);
+    }
+    repaired++;
   }
 
-  if (sourceLayer === 'landuse') {
-    if (klass === 'cemetery' || klass === 'pitch' || klass === 'playground' || klass === 'stadium') {
-      return 'grass';
-    }
-    if (klass === 'residential' || klass === 'suburb' || klass === 'neighbourhood' || klass === 'quarter') {
-      return 'settled';
-    }
-    if (klass === 'industrial' || klass === 'commercial' || klass === 'retail' || klass === 'railway' || klass === 'quarry') {
-      return 'bare';
-    }
-    return null;
-  }
-
-  return null;
+  return repaired;
 }
-
-/** Anneaux d'une géométrie surfacique. */
-export function classPolygons(geometry) {
-  if (!geometry) return [];
-  if (geometry.type === 'Polygon') return [geometry.coordinates];
-  if (geometry.type === 'MultiPolygon') return geometry.coordinates;
-  return [];
-}
-
 function createCanvas(width, height) {
   if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(width, height);
   return Object.assign(document.createElement('canvas'), { width, height });
@@ -371,6 +480,8 @@ export class GroundClassMap {
     this.origin = new THREE.Vector2(0, 0);
     this.size = CLASS_AREA_M;
     this.count = 0;
+    /** Texels de bord rendus à leur matière à la dernière rasterisation (voir `repairSurfaceEdges`). */
+    this.repaired = 0;
     /** Numéro de rasterisation, incrémenté à chaque repeinte (sert à qui garde ce qu'il a lu ici, ex. la végétation). */
     this.revision = 0;
 
@@ -468,7 +579,7 @@ export class GroundClassMap {
    * si la donnée se tait.
    *
    * Ces quatre-là n'ont plus rien de fondamental — ce sont quatre matières
-   * parmi quatorze — mais elles restent les seules que la strate basse
+   * parmi d'autres — mais elles restent les seules que la strate basse
    * distingue : l'herbe pousse, la litière pousse à moitié, le champ selon la
    * saison, le minéral pas. La forme est conservée pour ses lecteurs
    * (`grassGreenFor`, `woodEdgeAt`).
@@ -774,73 +885,80 @@ export class GroundClassMap {
       }
     }
 
-    // Ripisylve : une bande de bois tracée le long des cours d'eau linéaires
-    // (`waterway`, pas un polygone), plantée par `vegetationLayer` avec les
-    // mêmes silhouettes qu'une vraie forêt. Après les polygones : le lit d'un
-    // ruisseau qui traverse un champ de blé doit y remplacer la culture.
+    // Les cours d'eau linéaires (`waterway`, pas un polygone) : le lit, et
+    // l'ourlet de bois qui le borde — la ripisylve, plantée par
+    // `vegetationLayer` avec les mêmes silhouettes qu'une vraie forêt. Après
+    // les polygones : le lit d'un ruisseau qui traverse un champ de blé doit y
+    // remplacer la culture.
+    //
+    // Le lit se peint que la ripisylve existe ou non. Il dépendait de
+    // `riparianBufferM` — un thème qui ne voulait pas d'ourlet perdait du même
+    // coup tous ses ruisseaux — et le fossé, qui n'a pas d'ourlet, sortait
+    // avant d'avoir eu son lit : sa largeur de thème ne servait à rien.
     {
       const waterways = this.theme.water.waterways;
       const bufferM = this.theme.water.riparianBufferM ?? 0;
-      if (bufferM > 0) {
-        ctx.save();
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
 
-        source.forEachFeature(WATERWAY_SOURCE_LAYER, tiles, (geometry, properties) => {
-          // Un fossé n'a pas de ripisylve.
-          if (properties.class === 'ditch') return;
-          const style = waterwayStyleFor(properties, waterways);
-          if (!style) return;
-          const width = style.halfWidth * 2;
+      source.forEachFeature(WATERWAY_SOURCE_LAYER, tiles, (geometry, properties) => {
+        const style = waterwayStyleFor(properties, waterways);
+        if (!style) return;
+        const width = style.halfWidth * 2;
+        // Qui est bordé d'arbres et qui ne l'est pas se décide dans
+        // `waterwayStyleFor` — voir `BARE_WATERWAY_CLASSES`.
+        const riparianM = style.riparian ? bufferM : 0;
 
-          const lines =
-            geometry.type === 'LineString'
-              ? [geometry.coordinates]
-              : geometry.type === 'MultiLineString'
-                ? geometry.coordinates
-                : [];
-          const lineWidthPx = (width + bufferM * 2) * perMeter;
+        const lines =
+          geometry.type === 'LineString'
+            ? [geometry.coordinates]
+            : geometry.type === 'MultiLineString'
+              ? geometry.coordinates
+              : [];
+        const lineWidthPx = (width + riparianM * 2) * perMeter;
 
-          for (const line of lines) {
-            if (!Array.isArray(line) || line.length < 2) continue;
-            const path = new Path2D();
-            let started = false;
-            for (const [lng, lat] of line) {
-              if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
-              const localX = (lngToTileX(lng, zoom) - origin.x) * scale;
-              const localZ = (latToTileY(lat, zoom) - origin.y) * scale;
-              const px = (localX - originX) * perMeter;
-              const pz = (localZ - originZ) * perMeter;
-              if (!started) {
-                path.moveTo(px, pz);
-                started = true;
-              } else {
-                path.lineTo(px, pz);
-              }
+        for (const line of lines) {
+          if (!Array.isArray(line) || line.length < 2) continue;
+          const path = new Path2D();
+          let started = false;
+          for (const [lng, lat] of line) {
+            if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+            const localX = (lngToTileX(lng, zoom) - origin.x) * scale;
+            const localZ = (latToTileY(lat, zoom) - origin.y) * scale;
+            const px = (localX - originX) * perMeter;
+            const pz = (localZ - originZ) * perMeter;
+            if (!started) {
+              path.moveTo(px, pz);
+              started = true;
+            } else {
+              path.lineTo(px, pz);
             }
-            if (!started) continue;
+          }
+          if (!started) continue;
 
-            // L'ourlet, puis le lit par-dessus : le trait est centré sur
-            // l'axe, et sans reprise un large cours d'eau se retrouverait
-            // planté d'arbres en son milieu.
-            //
-            // Deux traits, là où il en fallait cinq — dont un en
-            // `destination-out` pour effacer, dans l'autre carte, la culture
-            // que l'ourlet recouvrait. Peindre une matière efface désormais la
-            // culture d'un même geste : elles sont deux canaux du même texel.
+          // L'ourlet, puis le lit par-dessus : le trait est centré sur
+          // l'axe, et sans reprise un large cours d'eau se retrouverait
+          // planté d'arbres en son milieu.
+          //
+          // Deux traits, là où il en fallait cinq — dont un en
+          // `destination-out` pour effacer, dans l'autre carte, la culture
+          // que l'ourlet recouvrait. Peindre une matière efface désormais la
+          // culture d'un même geste : elles sont deux canaux du même texel.
+          if (riparianM > 0) {
             ctx.strokeStyle = surfaceFill('wood');
             ctx.lineWidth = lineWidthPx;
             ctx.stroke(path);
-
-            ctx.strokeStyle = surfaceFill('water');
-            ctx.lineWidth = width * perMeter;
-            ctx.stroke(path);
-            painted++;
           }
-        });
 
-        ctx.restore();
-      }
+          ctx.strokeStyle = surfaceFill('water');
+          ctx.lineWidth = width * perMeter;
+          ctx.stroke(path);
+          painted++;
+        }
+      });
+
+      ctx.restore();
     }
 
     // Le lit d'un grand cours d'eau est un polygone (`water`), pas seulement
@@ -848,8 +966,13 @@ export class GroundClassMap {
     // fleuve). On reprend donc, après coup, tout ce qui a été peint sous
     // l'emprise réelle de l'eau — en sol nu, et non en effaçant : une case
     // effacée est « non classée », dont le repli est l'herbe pleine.
+    //
+    // L'eau permanente est peinte après l'intermittente : un étang qui
+    // s'assèche ne recouvre pas celui qui ne s'assèche jamais.
+    const permanent = [];
     source.forEachFeature(WATER_SOURCE_LAYER, tiles, (geometry, properties) => {
-      if (!isDrawableWater(properties)) return;
+      const kind = waterSurfaceFor(properties);
+      if (!kind) return;
       for (const rings of classPolygons(geometry)) {
         if (!Array.isArray(rings) || rings.length === 0) continue;
 
@@ -867,29 +990,38 @@ export class GroundClassMap {
           path.closePath();
         }
 
-        // Le lit d'un grand cours d'eau est un polygone (`water`), pas
-        // seulement le trait `waterway`, dont la largeur de thème décrit un
-        // ruisseau et pas un fleuve. C'est de là que le shader de terrain tire
-        // le plan d'eau lui-même.
-        ctx.save();
-        ctx.fillStyle = surfaceFill('water');
+        if (kind === 'water') {
+          permanent.push(path);
+          continue;
+        }
+        ctx.fillStyle = surfaceFill(kind);
         ctx.fill(path, 'evenodd');
-        ctx.restore();
       }
     });
+    ctx.fillStyle = surfaceFill('water');
+    for (const path of permanent) ctx.fill(path, 'evenodd');
 
     this.count = painted;
     this.revision++;
     this.origin.set(originX, originZ);
-    this.texture.needsUpdate = true;
 
-    // Relecture unique, à la rasterisation (un `getImageData` par appel serait ruineux).
+    // Relecture unique, à la rasterisation (un `getImageData` par appel serait
+    // ruineux) — et c'est aussi le seul moment où l'on peut défaire le lissage
+    // du canevas, qui inventerait sinon une matière tout le long de chaque
+    // limite (voir `repairSurfaceEdges`). La carte est renvoyée au canevas :
+    // le shader lit la texture, pas cette copie, et les deux doivent dire la
+    // même chose.
     try {
-      this._data = ctx.getImageData(0, 0, CLASS_PIXELS, CLASS_PIXELS).data;
+      const image = ctx.getImageData(0, 0, CLASS_PIXELS, CLASS_PIXELS);
+      this.repaired = repairSurfaceEdges(image.data);
+      if (this.repaired > 0) ctx.putImageData(image, 0, 0);
+      this._data = image.data;
     } catch (e) {
       this._data = null;
+      this.repaired = 0;
       console.warn('[groundClassMap] relecture impossible', e?.message || e);
     }
+    this.texture.needsUpdate = true;
     this._anchor = { x: here.x, z: here.z };
     this._frame = frame;
     return painted > 0;

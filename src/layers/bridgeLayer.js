@@ -46,6 +46,7 @@ import {
 import { ROAD_LIFT_M } from './roadNetwork.js';
 import { workRuns, WORK_BRIDGE, WORK_TUNNEL } from './roadWorks.js';
 import { worksStyleAt } from './townStyle.js';
+import { facetJitter } from './facetJitter.js';
 import { defaultTheme } from '../themes/default.js';
 
 /** Portée des ouvrages autour de l'observateur, en mètres (celle de la voirie). */
@@ -62,6 +63,9 @@ export const PORTAL_ARC_STEPS = 7;
 
 /** Jeu entre la rive de la chaussée et le piédroit d'une tête de tunnel, en mètres. */
 export const PORTAL_CLEARANCE_M = 0.7;
+
+/** Sel du grain d'un parapet plein (`facetJitter`). */
+const PARAPET_SEED = 6143;
 
 /**
  * Section d'un tablier, dans le repère (travers, hauteur) d'`appendProfile`.
@@ -235,10 +239,22 @@ export class BridgeLayer {
     // Le couronnement déborde de part et d'autre : l'axe recule d'autant, pour
     // que la face extérieure du parapet affleure la corniche du tablier.
     const offset = halfWidth + deck.overhang - parapet.thickness / 2 - parapet.coping;
-    const top = new Float32Array(path.length);
-    for (let i = 0; i < path.length; i++) top[i] = surface[i] + parapet.height;
+    const rows = path.length;
 
     for (const side of [1, -1]) {
+      // Un sel par rive, sinon les deux parapets se répondraient en miroir.
+      const grain = parapet.grain ? facetJitter(path, PARAPET_SEED + (side > 0 ? 0 : 50), parapet.grain) : null;
+      const top = new Float32Array(rows);
+      const lateral = new Float32Array(rows);
+      const batter = new Float32Array(rows);
+      for (let i = 0; i < rows; i++) {
+        const height = parapet.height * (grain ? grain.height[i] : 1);
+        top[i] = surface[i] + height;
+        if (!grain) continue;
+        // Le grain ne joue que côté chaussée : côté vide, la face affleure la corniche.
+        lateral[i] = (-side * parapet.thickness * (grain.thickness[i] - 1)) / 2;
+        batter[i] = -side * grain.batter[i] * height;
+      }
       appendVariableWall(buffer, {
         path,
         base: surface,
@@ -248,6 +264,10 @@ export class BridgeLayer {
         coping: parapet.coping,
         colorFoot: parapet.color,
         colorTop: parapet.colorTop,
+        scaleAcross: grain ? grain.thickness : null,
+        lateralJitter: grain ? lateral : null,
+        batter: grain ? batter : null,
+        flat: Boolean(grain),
       });
     }
   }

@@ -18,10 +18,10 @@
  * ni de tirage en plus). Tirages ancrés au sol (`randomAt`) partout.
  *
  * Grain low poly : `hedgeModulation` module en continu (courbe lisse même
- * finement échantillonnée), `facetJitter` fait l'inverse (tirage indépendant
- * par ligne, sans corrélation) — associé à un maillage non lissé, ça donne de
- * vraies arêtes. L'espacement des arêtes vient du pas de ré-échantillonnage
- * du tracé (`HEDGE_SAMPLE_M`), pas d'un réglage de cette fonction.
+ * finement échantillonnée), `hedgeFacets` fait l'inverse — le tirage
+ * indépendant par ligne de `facetJitter`, commun au mobilier balayé.
+ * L'espacement des arêtes vient du pas de ré-échantillonnage du tracé
+ * (`HEDGE_SAMPLE_M`).
  *
  * Les bouts, enfin. Une haie s'arrêtait sur le bouchon plat que pose
  * `appendProfile` — sa section entière tranchée net, ce qui se lit comme un
@@ -37,11 +37,12 @@
  */
 
 import { randomAt, spacedAlongPath } from './furniturePlacement.js';
+import { facetJitter } from './facetJitter.js';
 import { defaultTheme } from '../themes/default.js';
 
 /**
  * Pas de ré-échantillonnage d'une haie, en mètres — double emploi assumé avec
- * l'espacement des arêtes facettées (`facetJitter`).
+ * l'espacement des arêtes facettées (`hedgeFacets`).
  */
 export const HEDGE_SAMPLE_M = 0.75;
 
@@ -253,36 +254,22 @@ export function hedgeNoseFactor(edgeDistance, noseM, floor = HEDGE_NOSE_FLOOR) {
 const FACET_SALT_OFFSET = 30;
 
 /**
- * Bruit indépendant par ligne du balayage, sans rapport avec ses voisines
- * (contrairement aux ondes de `hedgeModulation`, qui restent une courbe).
- * C'est ce bruit qui fait les arêtes. Reste modeste par construction
- * (`upAmp`, `acrossAmp`, `lateralM`) : il casse le tube, il ne redessine pas
- * la silhouette de `hedgeModulation`.
- *
- * @param {Array<{x:number,z:number}>} path Polyligne ré-échantillonnée ; son
- *        pas fixe l'espacement des arêtes (voir `HEDGE_SAMPLE_M`).
+ * Le grain d'une haie (`facetJitter`) : hauteur et largeur relatives, et
+ * débattement latéral de l'axe en mètres. Modeste par construction : il casse
+ * le tube, il ne redessine pas la silhouette de `hedgeModulation`.
+ */
+export const HEDGE_FACETS = { up: [0.91, 1.09], across: [0.91, 1.09], lateral: [-0.05, 0.05] };
+
+/**
+ * Bruit indépendant par ligne du balayage d'une haie, ou d'un rang qui en a
+ * la section (vigne, lavande).
+ * @param {Array<{x:number,z:number}>} path Polyligne ré-échantillonnée.
  * @param {number} salt Sel de la haie ou du rang appelant (`style.salt`, ou un
  *        sel dédié pour un mobilier qui n'a pas de style).
- * @param {Object} [options]
- * @param {number} [options.upAmp] Amplitude relative sur la hauteur (0.09 = ±9 %).
- * @param {number} [options.acrossAmp] Amplitude relative sur la largeur.
- * @param {number} [options.lateralM] Débattement latéral de l'axe, en mètres.
  * @returns {{up: Float32Array, across: Float32Array, lateral: Float32Array}}
  */
-export function facetJitter(path, salt, { upAmp = 0.09, acrossAmp = 0.09, lateralM = 0.05 } = {}) {
-  const rows = path?.length ?? 0;
-  const up = new Float32Array(rows);
-  const across = new Float32Array(rows);
-  const lateral = new Float32Array(rows);
-
-  for (let r = 0; r < rows; r++) {
-    const { x, z } = path[r];
-    up[r] = 1 + (randomAt(x, z, salt + FACET_SALT_OFFSET) - 0.5) * 2 * upAmp;
-    across[r] = 1 + (randomAt(x, z, salt + FACET_SALT_OFFSET + 1) - 0.5) * 2 * acrossAmp;
-    lateral[r] = (randomAt(x, z, salt + FACET_SALT_OFFSET + 2) - 0.5) * 2 * lateralM;
-  }
-
-  return { up, across, lateral };
+export function hedgeFacets(path, salt) {
+  return facetJitter(path, salt + FACET_SALT_OFFSET, HEDGE_FACETS);
 }
 
 /**

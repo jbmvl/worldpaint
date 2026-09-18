@@ -49,7 +49,7 @@ export class TerrainBubble {
     scene,
     elevation,
     zoom,
-    blockSize = 5,
+    blockSize = 9,
     segmentsByRing = [192, 96, 48],
     verticalScale = 1,
     groundClass = null,

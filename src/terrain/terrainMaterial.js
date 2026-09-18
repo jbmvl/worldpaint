@@ -3,110 +3,81 @@
  * du sol autour de l'observateur ; ce shader y lit la part d'herbe, de bois,
  * de culture et de sol nu, et compose la matière correspondante.
  *
- * ## Une matière = une couleur, plus un grain
+ * ## Une matière est une couleur, et rien d'autre
  *
- * C'est la règle du module, et elle a été chèrement acquise. **La couleur
- * d'une matière vient de son albédo, et de lui seul ; le grain ne porte
- * aucune teinte.** Il y avait trois textures de sol qui, elles, en portaient
- * une — un vert d'herbe, un brun de limon, une litière — et qui dessinaient
- * en plus des objets : des brins, des cailloux avec leur ombre peinte, des
- * feuilles mortes. Trois défauts tenaient ensemble là-dedans :
+ * C'est la règle du module, et elle a été chèrement acquise — on y est venu
+ * en retirant, une par une, toutes les couches qui prétendaient faire lire un
+ * matériau. Elles sont énumérées ici parce que chacune paraît, isolément, une
+ * bonne idée, et qu'aucune ne survit à un regard :
  *
- * - un objet de trois centimètres passe sous le pixel d'écran vers trente
- *   mètres ; au-delà il ne restait de ces motifs que le pavage de leur
- *   période, qu'il fallait ensuite masquer (deux relevés décalés par matière,
- *   technique d'Íñigo Quílez : six lectures de texture par pixel, dépensées à
- *   cacher un défaut que les motifs créaient eux-mêmes) ;
- * - l'ombre des cailloux était peinte dans la texture, donc figée : elle ne
- *   suivait pas le soleil ;
- * - une matière sans texture propre ne pouvait qu'emprunter celle d'une
- *   autre. Sable, lande, éboulis et trottoir avaient tous le grain du limon
- *   labouré, à la teinte près — et la teinte est le seul levier qui restait
- *   pour les distinguer, alors que ce n'est pas elle qui les sépare.
+ * - **trois textures de sol dessinées** (herbe, limon, litière) portant des
+ *   brins, des cailloux avec leur ombre peinte, des feuilles mortes. Un objet
+ *   de trois centimètres passe sous le pixel d'écran vers trente mètres : au
+ *   delà il ne restait que le pavage de leur période, qu'il fallait masquer à
+ *   son tour (deux relevés décalés par matière, technique d'Íñigo Quílez : six
+ *   lectures par pixel dépensées à cacher un défaut que les motifs créaient
+ *   eux-mêmes). Et l'ombre peinte ne suivait pas le soleil ;
+ * - une couche de **bruit « de détail »** à 8 m puis 45 m de période, qui
+ *   constellait le sol de taches de 1 à 2 m à ±30 % de luminosité ;
+ * - un **grain** unique, sans motif ni couleur, pour toutes les matières.
+ *   Essayé à période fixe, puis à période calée sur l'écran (un texel pour
+ *   trois pixels, par échelons de facteur deux). La seconde forme lit toujours
+ *   au premier niveau de mip, or c'est le mip qui éteignait le relief au
+ *   loin : forcé à zéro partout, il rendait un fourmillement qui suivait
+ *   l'observateur, et ses échelons — des anneaux autour de la caméra —
+ *   faisaient choisir n'importe quel mip sur la ligne où ils sautent. Revenu à
+ *   une période fixe, le spectre corrigé, l'amplitude divisée par trois : il
+ *   restait trop marqué ;
+ * - le **relief** tiré de ce grain par dérivées d'écran (Mikkelsen, « Bump
+ *   Mapping Unparametrized Surfaces on the GPU »). Parti avec lui : un relief
+ *   sans relevé d'altitude n'a pas d'échelle verticale propre.
  *
- * Ce qui doit se voir de loin est un **objet de la scène** — un arbre, une
- * falaise —, pas un dessin dans une texture. Ne pas réintroduire de motif ici.
- *
- * Reste donc un seul relevé de grain, sans motif ni couleur
- * (`createGrainCanvas`), et une matière s'ajoute désormais en ajoutant un
- * albédo. La pente au-delà de 30° vire à la roche.
- *
- * ## Ce qu'on a essayé et défait : caler le grain sur l'écran
- *
- * Le grain se lit à une **période fixe en mètres** (`grainScaleM`), et le mip
- * l'efface avec la distance. On a essayé l'inverse — un texel pour tant de
- * pixels d'écran, la période choisie par fragment, par échelons de facteur
- * deux — pour tenir la même finesse à toute distance. Ça marche, et ça coûte
- * trop cher :
- *
- * - lire à finesse constante, c'est lire **toujours au premier niveau de mip**.
- *   Or c'est le mip qui éteignait le relief au loin. Forcé à zéro partout, la
- *   perturbation de normale différencie un champ dont l'accident fait deux ou
- *   trois pixels : elle ne rend plus du relief mais du scintillement, et il
- *   suit l'observateur ;
- * - les échelons sont des anneaux autour de la caméra, et la période saute
- *   d'un facteur deux en les traversant. Le résultat reste continu, mais pas
- *   la dérivée que le GPU utilise pour choisir son mip : sur cette ligne de
- *   pixels il choisit n'importe quoi. D'où un artefact **par bandes**, sur
- *   certaines surfaces et pas leurs voisines.
- *
- * Ce qui manquait n'était pas une échelle de lecture, c'était un relevé qui
- * ait de l'énergie au texel : voir `createGrainCanvas`, dont le spectre a été
- * renversé. Une échelle ne rachète pas un mauvais relevé.
+ * Ce qui doit se voir est un **objet de la scène** — un arbre, une falaise,
+ * une bordure de trottoir —, jamais un dessin dans une texture. Ne rien
+ * réintroduire ici : la question a été tranchée à l'œil, plusieurs fois, et
+ * toujours dans le même sens.
  *
  * ## Ce qui reste, en tout et pour tout
  *
- * Une couleur, un grain, et une variation à deux cents mètres. Il y avait une
- * quatrième couche — un « détail » à 8 m puis 45 m de période, deux lectures
- * de plus — qui constellait le sol de taches de 1 à 2 m à ±30 % de
- * luminosité. Elle est partie : c'était le défaut le plus voyant du sol, et
- * elle ne disait rien que le grain ne dise déjà.
+ * Un albédo par matière, et une **variation macro** de deux cents mètres en
+ * luminosité et en chaleur, qui monte avec la distance — un albédo constant
+ * par classe donne l'aplat de carte routière, et c'est la seule chose qui
+ * subsiste à voir sur un sol lointain. La pente au-delà de 30° vire à la
+ * roche. Une matière s'ajoute en ajoutant une couleur ; celle où l'eau affleure
+ * (`standingWater`) y gagne des flaques, découpées par un bruit et rendues comme
+ * l'eau.
  *
- * Trois choses sortent le sol de l'aplat, et elles tiennent ensemble :
+ * Deux choses tiennent les **limites** entre surfaces, dont le défaut commun
+ * est le carreau de 2,7 m de la carte du sol, lisible en marches d'escalier
+ * dès que deux matières contrastent. C'est là que tout se joue : quand une
+ * surface est un aplat, ce qu'on regarde est son contour.
  *
- * - le grain **incline la normale** (dérivées d'écran, Mikkelsen) : sans ça
- *   un sol reste une peinture. Aucun relevé de plus, et l'effet s'éteint au
- *   loin où le mip a lissé ;
- * - **deux matières s'interpénètrent** au lieu de se fondre : les poids sont
- *   repondérés par la hauteur du grain puis seuillés (`blendWidth`). Un
- *   mélange linéaire donne une bande dégradée de cinq mètres, une aquarelle.
- *   C'est ce mécanisme qui impose **trois champs de grain** et non un seul :
- *   un grain commun serait un facteur commun, qui s'annule à la
- *   normalisation. Ils tiennent dans les trois canaux d'une seule lecture ;
- * - une **variation macro** de deux cents mètres en luminosité et en chaleur,
- *   qui monte avec la distance — un albédo constant par classe est ce qui
- *   donne l'aplat de carte routière, et le grain, au mètre, n'y peut rien.
- *   Depuis que les textures ne dessinent plus rien, c'est la seule structure
- *   qui subsiste sur un sol lointain.
- *
- * Une couverture peut en outre **assourdir** le grain (`uCoverGrain`), et une
- * seule le fait : le revêtement urbain. Le sol d'une ville n'est pas une terre
- * plus grise, c'est une dalle — elle garde quelque chose du grain du bitume
- * voisin, en plus sourd. Sa couleur ne vient pas d'ici mais de la voirie
- * (`townStyle.pavementTone`), pour qu'une bordure de trottoir et le sol qu'elle
- * borde ne puissent pas diverger.
- *
- * Et trois choses tiennent les **limites** entre surfaces, dont le défaut
- * commun était le carreau de 2,7 m des cartes du sol, lisible en marches
- * d'escalier dès que deux matières contrastent :
- *
- * - la **frange** (`edgeWarp`) : le sol est lu quelques mètres à côté, d'un
- *   déplacement continu tiré de deux canaux du grain, lus d'un coup. La limite
- *   reste où elle est, au mètre près, mais perd l'angle droit du carreau ;
- * - les **couvertures s'interpolent** (`surfaceAt`) : un identifiant ne se
- *   mélange pas, mais l'appartenance à une couverture, si. Les quatre
- *   carreaux voisins sont lus au plus proche et ce sont leurs appartenances
- *   qu'on mélange — le sable rejoint l'herbe par une rampe, comme les
- *   matières le font déjà par le filtrage linéaire de leur carte ;
+ * - le **contour est interpolé, puis tranché** (`surfaceAt`). Ce qui
+ *   s'interpole est l'appartenance de chaque texel à une matière — un ou zéro,
+ *   un identifiant ne s'interpolant pas —, sur seize texels et par une cubique
+ *   de Catmull-Rom : le champ est C¹, donc son contour n'a plus d'angle. Sur
+ *   quatre texels, un lissage bilinéaire n'a pas cette propriété et ses
+ *   cassures retombent sur la grille. Puis on tranche : la matière la plus
+ *   forte l'emporte, sur la largeur d'un pixel d'écran, sans dégradé. Ce que
+ *   l'interpolation ne redresse pas, c'est l'ondulation d'un quart de texel
+ *   autour du tracé réel : la carte ne dit pas où passe le polygone dans un
+ *   texel, et aucun noyau ne l'invente ;
  * - la **rive** : le sol au contact de l'eau est mouillé, du même film d'eau
  *   que la pluie y met (`wetGround`). C'est ce qui fait une berge plutôt
  *   qu'une découpe.
+ *
+ * Ont été essayés et retirés, parce qu'ils travaillaient à côté du défaut : un
+ * **bruit de lisière** qui déplaçait la lecture du sol de quelques mètres et
+ * repondérait les matières voisines par son grain. Le contour y gagnait une
+ * dentelure, jamais une courbe, et les deux mécanismes s'annulaient dans le
+ * filtrage dès que leur champ passait sous le pixel. Le contour ne se brouille
+ * pas, il se dessine.
  *
  * Greffé sur `MeshLambertMaterial` via `onBeforeCompile` plutôt qu'écrit en
  * shader complet, pour garder l'éclairage/brouillard/tone mapping de three.
  */
 
-import { createGrainCanvas, createMacroCanvas } from '../materials/proceduralTextures.js';
+import { createMacroCanvas } from '../materials/proceduralTextures.js';
 import { CROP_KINDS, CROP_ID_STEP } from '../layers/furniturePlacement.js';
 import {
   SURFACE_KINDS,
@@ -123,8 +94,6 @@ import { soilWashFor } from '../core/climate.js';
 /** Couleur d'une matière qu'un thème ne décrit pas : un gris de terre neutre. */
 const FALLBACK_ALBEDO = [0.18, 0.17, 0.15];
 
-/** Côté du relevé de grain, en texels. Six mètres pour 512 font 1,2 cm. */
-const GRAIN_TEXELS = 512;
 
 /** Fabrique du matériau de terrain. Un seul matériau pour toute la bulle. */
 export class TerrainMaterialFactory {
@@ -150,7 +119,7 @@ export class TerrainMaterialFactory {
     /** Famille appliquée aux albédos. `null` = aucune correction. */
     this._climate = null;
 
-    // Textures de grain (pas de couleur) : espace linéaire.
+    // Bruit et variation (pas de couleur) : espace linéaire.
     const repeated = (canvas) => {
       const texture = new THREE.CanvasTexture(canvas);
       texture.wrapS = THREE.RepeatWrapping;
@@ -161,9 +130,6 @@ export class TerrainMaterialFactory {
     };
 
     this.macroTexture = repeated(createMacroCanvas());
-    // Un seul grain pour toutes les matières : ses trois canaux portent trois
-    // champs indépendants, lus d'un coup (voir `createGrainCanvas`).
-    this.grainTexture = repeated(createGrainCanvas(GRAIN_TEXELS));
     // Rides : la même carte que celle qui servait la nappe d'eau, du temps où
     // l'eau était une surface posée sur le terrain.
     this.waterRippleTexture = repeated(createWaterNormalCanvas());
@@ -174,7 +140,6 @@ export class TerrainMaterialFactory {
   get textures() {
     return [
       this.macroTexture,
-      this.grainTexture,
       this.waterRippleTexture,
     ];
   }
@@ -257,16 +222,11 @@ export class TerrainMaterialFactory {
 
     const uniforms = {
       uDetailRange: { value: new THREE.Vector2(look.detailNear, look.detailFar) },
-      uGrainMap: { value: this.grainTexture },
-      uGrainScale: { value: look.grainScaleM },
-      uGrainContrast: { value: look.grainContrast },
       // (période en mètres, amplitude en luminosité, dérive chaud/froid).
       uMacroMap: { value: this.macroTexture },
       uMacro: {
         value: new THREE.Vector3(look.macroScaleM, look.macroStrength, look.macroWarmth),
       },
-      uBlendWidth: { value: look.blendWidth },
-      uGrainRelief: { value: look.grainRelief },
       // Une matière = une couleur. Le tableau est indexé par l'identifiant
       // peint dans la carte, moins un.
       uSurfaceAlbedo: {
@@ -274,21 +234,11 @@ export class TerrainMaterialFactory {
           (kind) => new THREE.Vector3(...(this.surfaces[kind]?.albedo || FALLBACK_ALBEDO))
         ),
       },
-      // Lequel des trois champs de la carte de grain chaque matière emploie,
-      // sous forme de sélecteur : le produit scalaire en tire le bon canal sans
-      // indexer un vecteur par une variable, ce que toutes les versions de GLSL
-      // n'acceptent pas.
-      uSurfaceGrain: {
-        value: SURFACE_KINDS.map((kind) => {
-          const field = Math.min(2, Math.max(0, Math.round(this.surfaces[kind]?.grain ?? 0)));
-          return new THREE.Vector3(field === 0 ? 1 : 0, field === 1 ? 1 : 0, field === 2 ? 1 : 0);
-        }),
+      // Part du sol sous l'eau, par matière, dans l'ordre des identifiants.
+      uSurfaceWater: {
+        value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.standingWater ?? 0),
       },
-      // Part du grain qu'une matière conserve, de 0 (aplat) à 1. Une seule s'en
-      // écarte : le trottoir, qui est une dalle et pas une terre plus grise.
-      uSurfaceGrainKeep: {
-        value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.grainKeep ?? 1),
-      },
+      uPoolScale: { value: look.poolScaleM },
       // Matière retenue là où la donnée se tait.
       uUnclassified: { value: Math.max(0, SURFACE_KINDS.indexOf(look.unclassified)) + 1 },
       uSurfaceMap: { value: this.groundClass ? this.groundClass.texture : null },
@@ -312,8 +262,6 @@ export class TerrainMaterialFactory {
       uWaterRipple: { value: new THREE.Vector2(look.waterRippleM, look.waterRippleRelief) },
       /** La rive : part de sol mouillé au contact de l'eau. */
       uShoreWet: { value: look.shoreWet },
-      /** La frange : (amplitude du déplacement, période du bruit), en mètres. */
-      uEdgeWarp: { value: new THREE.Vector2(look.edgeWarpM, look.edgeWarpScaleM) },
       /** Dérive des rides, en cycles. Deux vitesses inégales : sinon on lit un glissement. */
       uWaterFlow: { value: new THREE.Vector2(0, 0) },
       uRockColor: { value: new THREE.Vector3(...look.rockColor) },
@@ -348,13 +296,8 @@ export class TerrainMaterialFactory {
            varying vec3 vScenePos;
            varying vec3 vSceneNormal;
            uniform vec2 uDetailRange;
-           uniform sampler2D uGrainMap;
-           uniform float uGrainScale;
-           uniform float uGrainContrast;
            uniform sampler2D uMacroMap;
            uniform vec3 uMacro;
-           uniform float uBlendWidth;
-           uniform float uGrainRelief;
            uniform sampler2D uSurfaceMap;
            uniform vec2 uSurfaceOrigin;
            uniform float uSurfaceSize;
@@ -362,8 +305,8 @@ export class TerrainMaterialFactory {
            uniform float uUnclassified;
            uniform vec3 uCropAlbedo[${CROP_KINDS.length}];
            uniform vec3 uSurfaceAlbedo[${SURFACE_KINDS.length}];
-           uniform vec3 uSurfaceGrain[${SURFACE_KINDS.length}];
-           uniform float uSurfaceGrainKeep[${SURFACE_KINDS.length}];
+           uniform float uSurfaceWater[${SURFACE_KINDS.length}];
+           uniform float uPoolScale;
            uniform vec3 uRockColor;
            uniform vec2 uSlopeRange;
            uniform float uRockStrength;
@@ -375,7 +318,6 @@ export class TerrainMaterialFactory {
            uniform vec2 uWaterRipple;
            uniform vec2 uWaterFlow;
            uniform float uShoreWet;
-           uniform vec2 uEdgeWarp;
 
            /*
             * Sol mouillé : le film d'eau assombrit et sature (réflexions
@@ -389,51 +331,6 @@ export class TerrainMaterialFactory {
            }
 
            /*
-            * Déplacement du point de lecture du sol, en mètres — la frange.
-            *
-            * Les deux cartes du sol ont un pas de 2,7 m, et une limite lue à
-            * l'endroit exact est donc celle du carreau : l'escalier à 45°
-            * qu'on voit entre le sable et l'herbe, ou au bord de l'eau. Lire
-            * quelques mètres à côté, d'un déplacement continu tiré du grain à
-            * une période bien plus large, garde la limite à sa place au mètre
-            * près et lui retire son angle droit.
-            *
-            * Deux canaux du grain, lus d'un coup : la carte de grain range
-            * trois champs indépendants dans R, G et B. C'était deux relevés
-            * décalés du même bruit gris, du temps où il n'y avait pas de bruit
-            * à plusieurs canaux. Pas d'accent grave ici : ce commentaire vit
-            * dans un littéral de gabarit, qu'il refermerait.
-            *
-            * Conséquence assumée : ce qui lit ces cartes au sol (l'herbe, la
-            * végétation) ne connaît pas ce déplacement. La peinture et les
-            * touffes ne suivent donc pas la même limite au mètre près — elles
-            * la brouillent chacune de leur côté, sur la même largeur.
-            */
-           vec2 edgeWarp(vec2 world) {
-             vec2 shift = texture2D(uGrainMap, world / uEdgeWarp.y).rg;
-             return (shift - 0.5) * 2.0 * uEdgeWarp.x;
-           }
-
-           /*
-            * Le grain, a une periode fixe en metres.
-            *
-            * Fixe, et c'est un choix qu'on a paye pour comprendre. Une periode
-            * calee sur l'ecran — un texel pour tant de pixels, par echelons de
-            * facteur deux — tient le grain a la meme finesse a toute distance,
-            * mais elle le fait en lisant toujours le premier niveau de mip.
-            * Or c'est precisement le mip qui eteignait le relief au loin : le
-            * force a zero partout, et la perturbation de normale, tiree de
-            * derivees d'ecran, differencie un champ dont l'accident fait deux
-            * ou trois pixels. Elle ne rend plus du relief mais du scintillement,
-            * et il suit l'observateur.
-            *
-            * Le mip fait donc le travail, et il le fait bien : le grain se voit
-            * sur une dizaine de metres puis s'efface, ce qui est aussi ce que
-            * fait une route. Ce qui manquait n'etait pas une echelle de
-            * lecture, c'etait un relevé qui ait de l'energie au texel — voir
-            * createGrainCanvas, dont le spectre a ete renverse.
-            */
-           /*
             * Identifiant de matière porté par un texel, ou celui du repli là
             * où la donnée se tait.
             */
@@ -445,92 +342,137 @@ export class TerrainMaterialFactory {
              return id < 0.5 ? uUnclassified : id;
            }
 
+           /* Les quatre texels d'une ligne du voisinage, dans l'ordre des poids. */
+           vec4 surfaceRow(vec2 corner, float row) {
+             return vec4(
+               surfaceIdAt(corner + vec2(-1.0, row)),
+               surfaceIdAt(corner + vec2(0.0, row)),
+               surfaceIdAt(corner + vec2(1.0, row)),
+               surfaceIdAt(corner + vec2(2.0, row))
+             );
+           }
+
            /*
-            * Ce que la carte dit en un point : la couleur du sol, son grain,
-            * ce qu'il en reste, et la part d'eau.
+            * Poids d'une cubique de Catmull-Rom pour une position entre les
+            * deux points du milieu. Interpolante, et c'est ce qui la fait
+            * preferer a une B-spline : au centre d'un texel elle rend sa
+            * valeur exacte, donc un ruisseau ou un sentier large d'un seul
+            * texel survit. Une approximante les effacerait.
+            */
+           vec4 splineWeights(float t) {
+             float t2 = t * t;
+             float t3 = t2 * t;
+             return 0.5 * vec4(
+               -t3 + 2.0 * t2 - t,
+               3.0 * t3 - 5.0 * t2 + 2.0,
+               -3.0 * t3 + 4.0 * t2 + t,
+               t3 - t2
+             );
+           }
+
+           /*
+            * Part d'une matiere dans le voisinage : son appartenance texel par
+            * texel — un ou zero —, pesee par les seize poids de la spline.
+            */
+           float splineShare(
+             float id, vec4 r0, vec4 r1, vec4 r2, vec4 r3, vec4 wx, vec4 wz
+           ) {
+             return wz.x * dot(step(abs(r0 - id), vec4(0.5)), wx)
+                  + wz.y * dot(step(abs(r1 - id), vec4(0.5)), wx)
+                  + wz.z * dot(step(abs(r2 - id), vec4(0.5)), wx)
+                  + wz.w * dot(step(abs(r3 - id), vec4(0.5)), wx);
+           }
+
+           /*
+            * Ce que la carte dit en un point : la couleur du sol, et la part
+            * d'eau.
             *
-            * Une matière est un **identifiant**, relu au plus proche : sans
-            * quoi l'interpolation inventerait une matière entre deux, et entre
-            * le sable et l'eau il n'y a rien. Mais un contour qui suit le texel
-            * de 2,7 m se lit en escalier. On interpole donc le **resultat du
-            * test**, pas l'identifiant : les quatre texels voisins sont lus au
-            * plus proche, chacun est d'une matière ou d'une autre, et ce sont
-            * ces appartenances qu'on mélange. Le sable arrive sur l'herbe par
-            * une rampe d'un texel, et la berge de même.
+            * Une matiere est un **identifiant**, relu au plus proche : sans
+            * quoi l'interpolation inventerait une matiere entre deux, et entre
+            * le sable et l'eau il n'y a rien. Ce qui s'interpole est
+            * l'**appartenance** — chaque texel est d'une matiere ou d'une
+            * autre, et ce sont ces un et ces zero qu'on lisse.
             *
-            * Ce mécanisme servait les seules couvertures, la carte des poids
-            * fondant les quatre autres matières par son filtrage lineaire.
-            * Depuis qu'il n'y a plus qu'une carte d'identifiants, il est le cas
-            * general — et il porte du meme coup l'interpenetration : chaque
-            * voisin est repondere par la hauteur du grain de **sa** matiere,
-            * puis on ne garde que ce qui reste dans uBlendWidth du plus fort.
-            * La lisiere suit alors la forme du grain au lieu d'etre un degrade.
+            * Sur quatre texels, ce lissage est bilineaire : sa derivee saute a
+            * chaque bord de texel, et le contour qui en sort est une ligne
+            * brisee, dont les cassures retombent sur la grille. Sur seize, par
+            * une cubique, le champ est C1 : le contour n'a plus d'angle, c'est
+            * une courbe continue.
             *
-            * D'ou les trois champs de grain : deux matieres qui partagent le
-            * leur ont un facteur commun, qui s'annule a la normalisation, et
-            * leur lisiere retombe sur le fondu lineaire. La table les repartit
-            * pour que ce cas soit rare (voir SURFACE_LOOK).
+            * Ce qu'il ne fait pas, et qu'aucun filtre ne peut faire : redresser
+            * le trait. La carte ne dit pas ou passe le polygone dans un texel,
+            * donc le contour ondule d'environ un quart de texel autour de sa
+            * vraie place, quel que soit le noyau. Ce qui disparait est l'angle
+            * droit, pas l'ondulation. Un noyau approximant (B-spline) la
+            * reduirait d'un tiers, mais effacerait au passage un texel isole,
+            * et c'est ce qui l'a fait ecarter.
+            *
+            * C'est le seul mecanisme de lisiere : ni bruit, ni deplacement de
+            * la lecture, ni degrade entre deux couleurs.
+            *
+            * Le contour est **tranche**, pas fondu : on ne garde que la
+            * matiere la plus forte, sur la largeur d'un pixel d'ecran. C'est
+            * la seule derivee d'ecran du shader et elle ne fourmille pas — le
+            * champ sous elle est lisse et fixe dans le monde, elle ne fait
+            * qu'en donner l'epaisseur du trait. Sans elle, le contour
+            * crenellerait au loin, ou il faudrait le fondre sur des metres.
             *
             * L'eau est tenue a part : elle ne se melange pas, elle remplace.
             *
-            * Limite assumee : le contour passe par les centres des texels. Il
-            * ne retrouve pas la position du polygone **dans** un texel. Ce qui
-            * disparait ici est la marche d'escalier, pas le pas de la carte.
+            * Limite assumee : le contour ne peut pas retrouver la position du
+            * polygone **dans** un texel. Ce qui disparait ici est la forme de
+            * la grille, pas son pas.
             *
             * Pas d'accent grave ni d'accent sur les majuscules dans ce bloc :
             * il vit dans un litteral de gabarit.
             */
            void surfaceAt(
-             vec2 uv, vec3 grain, float far, vec3 farmAlbedo,
-             out vec3 albedo, out float grainHere, out float grainKeep, out float water
+             vec2 uv, vec3 farmAlbedo, out vec3 albedo, out float water,
+             out float standing
            ) {
              vec2 grid = uv * ${CLASS_PIXELS}.0 - 0.5;
              vec2 corner = floor(grid);
              vec2 f = grid - corner;
-             vec4 weight = vec4(
-               (1.0 - f.x) * (1.0 - f.y),
-               f.x * (1.0 - f.y),
-               (1.0 - f.x) * f.y,
-               f.x * f.y
+
+             vec4 r0 = surfaceRow(corner, -1.0);
+             vec4 r1 = surfaceRow(corner, 0.0);
+             vec4 r2 = surfaceRow(corner, 1.0);
+             vec4 r3 = surfaceRow(corner, 2.0);
+             vec4 wx = splineWeights(f.x);
+             vec4 wz = splineWeights(f.y);
+
+             // Les candidats sont les quatre matieres du carre central : une
+             // matiere qui n'est que dans l'anneau exterieur n'est pas ici,
+             // elle est a cote.
+             vec4 ids = vec4(r1.y, r1.z, r2.y, r2.z);
+             vec4 share = vec4(
+               splineShare(ids.x, r0, r1, r2, r3, wx, wz),
+               splineShare(ids.y, r0, r1, r2, r3, wx, wz),
+               splineShare(ids.z, r0, r1, r2, r3, wx, wz),
+               splineShare(ids.w, r0, r1, r2, r3, wx, wz)
              );
-             vec4 ids = vec4(
-               surfaceIdAt(corner),
-               surfaceIdAt(corner + vec2(1.0, 0.0)),
-               surfaceIdAt(corner + vec2(0.0, 1.0)),
-               surfaceIdAt(corner + vec2(1.0, 1.0))
-             );
 
-             // Premiere passe : la hauteur du grain de chaque voisin.
-             vec4 height = vec4(0.0);
-             for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
-               vec4 hit = step(abs(ids - float(i)), vec4(0.5));
-               height += hit * dot(grain, uSurfaceGrain[i - 1]);
-             }
+             // L'epaisseur du trait : un pixel d'ecran, mesure en texels. Le
+             // plancher garde un raccord de quelques centimetres au pied de
+             // l'observateur, le plafond empeche un texel entier de se fondre
+             // quand la carte passe sous le pixel.
+             float aa = clamp(max(fwidth(grid.x), fwidth(grid.y)), 0.04, 1.0);
+             float peak = max(max(share.x, share.y), max(share.z, share.w));
+             vec4 lifted = smoothstep(-aa, 0.0, share - peak);
+             lifted /= max(lifted.x + lifted.y + lifted.z + lifted.w, 1e-4);
 
-             // Interpenetration. Au loin, la carte est plus fine que le pixel :
-             // trancher la-bas ferait crepiter la lisiere d'une image a
-             // l'autre, on y revient donc au fondu doux.
-             vec4 lifted = weight * (0.35 + height);
-             float peak = max(max(lifted.x, lifted.y), max(lifted.z, lifted.w));
-             lifted = max(lifted - (peak - uBlendWidth), 0.0);
-             lifted = mix(lifted / max(lifted.x + lifted.y + lifted.z + lifted.w, 1e-4), weight, far);
-
-             // Seconde passe : la couleur, le grain retenu, l'eau.
-             //
              // L'eau est tenue hors du melange, et les parts sont rapportees a
              // ce qui n'est **pas** de l'eau. Elle n'est pas une matiere de
              // plus mais une surface qui remplace le sol, reprise plus bas avec
-             // sa rive : peindre sa couleur ici, avant ce fondu, ferait aller
-             // la berge d'une eau grainee vers une eau lisse au lieu d'aller de
-             // la terre a l'eau. Et sans le rapport, une plage se denaturerait
-             // en gravier a l'approche de la mer, faute de sable dans les
-             // texels mouilles.
+             // sa rive : peindre sa couleur ici ferait aller la berge d'une eau
+             // texturee vers une eau lisse au lieu d'aller de la terre a l'eau.
+             // Et sans le rapport, une plage se denaturerait en gravier a
+             // l'approche de la mer, faute de sable dans les texels mouilles.
              water = dot(step(abs(ids - ${WATER_ID}.0), vec4(0.5)), lifted);
              float land = max(1.0 - water, 1e-4);
 
              albedo = vec3(0.0);
-             grainHere = 0.0;
-             grainKeep = 0.0;
+             standing = 0.0;
              for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
                if (i != ${WATER_ID}) {
                  vec4 hit = step(abs(ids - float(i)), vec4(0.5));
@@ -541,8 +483,7 @@ export class TerrainMaterialFactory {
                    ? farmAlbedo
                    : uSurfaceAlbedo[i - 1];
                  albedo += tone * share;
-                 grainKeep += uSurfaceGrainKeep[i - 1] * share;
-                 grainHere += dot(hit, lifted * height) / land;
+                 standing += uSurfaceWater[i - 1] * share;
                }
              }
            }`
@@ -550,45 +491,32 @@ export class TerrainMaterialFactory {
         .replace(
           '#include <map_fragment>',
           `#include <map_fragment>
-           // Hors du bloc : la perturbation de normale, plus bas dans le
-           // shader de three, lit ce grain-là — le relever une seconde fois
-           // coûterait autant que tout le reste du sol. Même raison pour la
-           // part d'eau : décidée ici, relue là-bas.
-           float grainHeight = 0.5;
+           // Hors du bloc : la part d'eau est decidee ici et relue plus bas,
+           // dans la perturbation de normale — la ride de l'eau est le seul
+           // relief qui reste au sol.
            float gWater = 0.0;
            {
              // La carte porte un identifiant de matiere par texel, et celui de
-             // la culture dans le canal voisin. Lue a la frange (voir
-             // edgeWarp) : le deplacement vaut pour les deux canaux, qui sont
-             // ceux du meme texel.
-             vec2 surfaceUv = (vScenePos.xz + edgeWarp(vScenePos.xz) - uSurfaceOrigin) / uSurfaceSize;
+             // la culture dans le canal voisin. Lue a l'endroit exact : c'est
+             // l'interpolation de surfaceAt qui donne sa forme au contour, et
+             // rien ne deplace plus la lecture.
+             vec2 surfaceUv = (vScenePos.xz - uSurfaceOrigin) / uSurfaceSize;
              // Hors du carre couvert, la texture est bornee au bord : lire
              // quand meme y etalerait la lisiere sur des kilometres.
              float inMap = uSurfaceEnabled > 0.5 &&
                  surfaceUv.x > 0.0 && surfaceUv.x < 1.0 &&
                  surfaceUv.y > 0.0 && surfaceUv.y < 1.0 ? 1.0 : 0.0;
 
-             // Distance a l'observateur, ramenee sur [0, 1] : c'est elle qui
-             // eteint le grain et fait monter la variation macro. Il y avait
-             // ici une troisieme couche de bruit, dite « de detail », a huit
-             // metres de periode : elle constellait le sol de taches de un a
-             // deux metres a plus ou moins trente pour cent de luminosite.
-             // C'etait le defaut le plus voyant du sol, et il ne restait rien
-             // a lui faire dire que le grain ne dise deja.
+             // Distance a l'observateur, ramenee sur [0, 1] : elle fait monter
+             // la variation macro, et elle seule.
              float dist = distance(vScenePos, cameraPosition);
              float far = smoothstep(uDetailRange.x, uDetailRange.y, dist);
 
              // Bruit macro : deux cents metres de periode. Il fait deriver la
-             // couleur d'un bout a l'autre d'une parcelle — et c'est, depuis
-             // que les textures ne portent plus de motif, la seule chose qui
-             // reste a voir sur un sol lointain.
+             // couleur d'un bout a l'autre d'une parcelle — et c'est, le sol
+             // n'ayant plus ni motif ni grain, la seule chose qui reste a voir
+             // sur un sol lointain.
              float macro = texture2D(uMacroMap, vScenePos.xz / uMacro.x).r;
-
-             // Le grain : trois champs independants, a periode fixe.
-             // Il ne porte aucune couleur —
-             // l'albedo la porte seul — il module la luminosite, incline la
-             // normale, et decoupe la dentelure des lisieres.
-             vec3 grain = texture2D(uGrainMap, vScenePos.xz / uGrainScale).rgb;
 
              // La culture : un second axe, qui remplace la couleur de la terre
              // labouree la ou il est peint. Lu au plus proche, d'ou l'arrondi
@@ -606,37 +534,43 @@ export class TerrainMaterialFactory {
                }
              }
 
-             // Tout le sol en un appel : la couleur, le grain de la matiere,
-             // ce qu'elle en garde, et la part d'eau. C'etaient trois
-             // mecanismes — un melange de quatre poids, une boucle de
+             // Tout le sol en un appel : la couleur, et la part d'eau. C'etaient
+             // trois mecanismes — un melange de quatre poids, une boucle de
              // couvertures, une substitution de culture — pour une seule
              // question.
              vec3 albedo = uSurfaceAlbedo[${SURFACE_KINDS.indexOf('grass')}];
-             float structure = 0.5;
-             float grainKeep = 1.0;
+             float standing = 0.0;
              if (inMap > 0.5) {
-               surfaceAt(surfaceUv, grain, far, farmAlbedo, albedo, structure, grainKeep, gWater);
+               surfaceAt(surfaceUv, farmAlbedo, albedo, gWater, standing);
              } else {
-               // Hors carte : la matiere de repli, avec le grain de son champ.
+               // Hors carte : la matiere de repli.
                for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
                  if (float(i) == uUnclassified) {
                    albedo = uSurfaceAlbedo[i - 1];
-                   structure = dot(grain, uSurfaceGrain[i - 1]);
+                   standing = uSurfaceWater[i - 1];
                  }
                }
              }
 
-             // Le grain s'efface avec la distance. Scalaire, et c'est le fond
-             // du chantier precedent : une texture de sol ne teinte plus rien.
-             //
-             // Centre sur 1 : au milieu du champ le grain ne fait rien du tout,
-             // et uGrainContrast dit seulement de combien il s'en ecarte. Il ne
-             // sert **qu'a la lumiere** — le relief et la dentelure des
-             // lisieres continuent de lire le champ brut, plus bas et dans
-             // surfaceAt. Les eclaircir en meme temps demanderait de toucher a
-             // l'amplitude du releve lui-meme, ce qui aplatirait les trois.
-             float texMod = mix(1.0 + (structure - 0.5) * uGrainContrast, 1.0, far);
-             vec3 modulation = vec3(texMod);
+             // Les flaques d'un sol ou l'eau affleure. Le bruit est la
+             // difference de deux lectures a des echelles incommensurables,
+             // axes permutes : symetrique autour de 0.5, et sans periode
+             // lisible. Etire de 1.25, la part mouillee suit la part demandee
+             // a six points pres entre 5 et 90 %. Tranche la, la flaque prend
+             // le rendu de l'eau et sa rive.
+             if (standing > 0.001) {
+               float poolNoise = 0.5 + 1.25 * (
+                 texture2D(uMacroMap, vScenePos.xz / uPoolScale).r -
+                 texture2D(uMacroMap, vScenePos.zx / (uPoolScale * 1.618)).r
+               );
+               float poolEdge = 1.0 - standing;
+               float pool = smoothstep(poolEdge - 0.04, poolEdge + 0.04, poolNoise);
+               gWater += (1.0 - gWater) * pool;
+             }
+
+             // Il ne reste plus rien a moduler qu'a l'echelle du paysage : une
+             // surface est une couleur.
+             vec3 modulation = vec3(1.0);
 
              // Variation macro. Centree sur 1 : elle etale la luminosite sans
              // la deplacer, et fait deriver la teinte vers le chaud dans les
@@ -648,19 +582,7 @@ export class TerrainMaterialFactory {
              modulation *= (1.0 + macroSigned * uMacro.y) *
                vec3(1.0 + macroSigned * uMacro.z, 1.0, 1.0 - macroSigned * uMacro.z);
 
-             // Une matiere peut assourdir le grain, et une seule le fait : le
-             // trottoir. Le sol d'une ville n'est pas une terre plus grise,
-             // c'est une dalle — elle garde quelque chose du grain du bitume
-             // voisin, en plus sourd, sinon elle serait un aplat au milieu
-             // d'une rue grainee.
-             modulation = mix(vec3(1.0), modulation, grainKeep);
-             structure = mix(0.5, structure, grainKeep);
-
-             // Apres cela seulement le grain est definitif, et c'est lui que
-             // lit la perturbation de normale, plus bas dans le shader de
-             // three. Pas d'accent grave dans ce bloc : litteral de gabarit.
-             grainHeight = structure;
-
+             // Pas d'accent grave dans ce bloc : litteral de gabarit.
              vec3 base = albedo * modulation;
 
              float slope = 1.0 - clamp(vSceneNormal.y, 0.0, 1.0);
@@ -712,57 +634,33 @@ export class TerrainMaterialFactory {
           '#include <normal_fragment_begin>',
           `#include <normal_fragment_begin>
            {
-             // Relief de grain. Un sol qui ne fait que changer de couleur
-             // reste une peinture : ce qui le fait lire comme une matière,
-             // c'est que la lumière rasante y accroche — l'ombre d'un caillou
-             // du côté opposé au soleil, un pré qui se ternit quand on le
-             // regarde dans le contre-jour.
+             // Le sol est lisse : il n'a plus de normale a perturber.
              //
-             // La pente se tire des dérivées d'écran du grain déjà relevé
+             // Il y avait ici un relief tire du grain par derivees d'ecran
              // (Mikkelsen, « Bump Mapping Unparametrized Surfaces on the
-             // GPU ») : aucun relevé de plus, aucune tangente à transporter,
-             // et l'effet s'éteint tout seul au loin, là où le mip a lissé le
-             // grain. C'est aussi sa limite — le grain n'est pas un relevé
-             // d'altitude, donc l'amplitude se dose à l'œil et rien de plus.
+             // GPU »). Il est parti avec le grain lui-meme : un relief sans
+             // releve d'altitude n'a pas d'echelle verticale propre, et ce
+             // qu'il rendait n'etait pas la lumiere accrochant un caillou mais
+             // un fourmillement qui suivait l'observateur. Ce qui doit
+             // accrocher la lumiere est un objet de la scene.
              //
-             // Le calcul se fait en **coordonnées monde**, parce que c'est là
-             // que vit le grain ; la normale de three, elle, est en espace
-             // vue. D'où le passage par viewMatrix — mélanger les deux repères
-             // donnerait un relief qui tourne avec la caméra.
-             //
-             // Les dérivées se prennent **hors de toute branche** : sur l'eau
-             // comme sur le sol. Une dérivée d'écran prise dans une condition
-             // que les pixels voisins ne suivent pas ensemble n'a pas de
-             // valeur définie, et la frontière d'une berge est exactement
-             // l'endroit où ils divergent.
+             // Reste la ride de l'eau, qui est d'une autre nature : elle a une
+             // periode et une vitesse, et c'est le seul moyen de faire lire une
+             // nappe comme de l'eau sans reflexion d'environnement. Deux
+             // relevés a des vitesses inegales — un seul se lirait comme une
+             // image qui glisse.
              vec3 worldNormal = normalize(vSceneNormal);
-             vec3 dpdx = dFdx(vScenePos);
-             vec3 dpdy = dFdy(vScenePos);
-             float dhdx = dFdx(grainHeight);
-             float dhdy = dFdy(grainHeight);
-
-             vec3 across = cross(dpdy, worldNormal);
-             vec3 along = cross(worldNormal, dpdx);
-             float det = dot(dpdx, across);
-             vec3 bumped = worldNormal;
-             if (abs(det) > 1e-6) {
-               bumped = normalize(worldNormal - uGrainRelief * (across * dhdx + along * dhdy) / det);
-             }
-
-             // Sur l'eau, le relief n'est pas le grain du sol mais la ride.
-             // Deux relevés à des vitesses inégales : un seul se lirait comme
-             // une image qui glisse.
              vec3 a = texture2D(uWaterRipples, vScenePos.xz / uWaterRipple.x + uWaterFlow).xyz * 2.0 - 1.0;
              vec3 b = texture2D(uWaterRipples, vScenePos.zx / (uWaterRipple.x * 0.6) - uWaterFlow * 1.7).xyz * 2.0 - 1.0;
              vec3 wavy = normalize(worldNormal + vec3(a.x + b.x, 0.0, a.z + b.z) * uWaterRipple.y);
 
-             normal = normalize((viewMatrix * vec4(mix(bumped, wavy, gWater), 0.0)).xyz);
+             normal = normalize((viewMatrix * vec4(mix(worldNormal, wavy, gWater), 0.0)).xyz);
            }`
         );
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v12';
+    material.customProgramCacheKey = () => 'terrain-bubble-v13';
     return material;
   }
 

@@ -42,7 +42,7 @@ export const WIND_TURBINE_HUB_M = 78;
 
 /**
  * Gabarit authentique de la serre — la longueur que porte la géométrie avant
- * mise à l'échelle. `furnitureLayer._placeFarmstead` étire l'instance jusqu'à
+ * mise à l'échelle. `furniture/parcels.js` étire l'instance jusqu'à
  * la longueur réelle de la parcelle (`scaleZ = longueur voulue / cette cote`)
  * : les deux doivent rester d'accord sur ce que vaut « 1 » sans qu'on
  * recopie la valeur.
@@ -123,6 +123,58 @@ export const FURNITURE_BUILDERS = {
     const z = head.z + LAMP_ARC.lantern;
     k.box({ width: 0.36, height: 0.14, depth: 0.82, y: head.y - 0.07, z, tilt: 0.14, color: C.steelDark });
     k.box({ width: 0.31, height: 0.05, depth: 0.7, y: head.y - 0.16, z, tilt: 0.14, color: C.lamp });
+    return k;
+  },
+
+  /**
+   * Lampadaire traditionnel : base à collerette, fût galbé, lanterne à pans
+   * en fer forgé — le style d'un centre ancien, pas d'une avenue neuve. Même
+   * crosse que `streetLamp` (`LAMP_ARC`) : la tête reste au même point, donc
+   * le halo et la nappe de lumière (`furnitureLayer._lampHeads`) n'ont pas à
+   * savoir de quel modèle il s'agit.
+   */
+  streetLampClassic(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const iron = C.black;
+    k.cylinder({ radiusBottom: 0.32, radiusTop: 0.26, height: 0.22, radial: 10, color: iron });
+    k.cylinder({ radiusBottom: 0.22, radiusTop: 0.16, height: 0.3, y: 0.22, radial: 10, color: iron });
+    k.cylinder({ radiusBottom: 0.13, radiusTop: 0.075, height: LAMP_ARC.shaft - 0.52, y: 0.52, radial: 10, color: iron });
+
+    const steps = 5;
+    for (let i = 0; i < steps; i++) {
+      k.strutYZ({ from: lampArcAt(i / steps), to: lampArcAt((i + 1) / steps), width: 0.075, color: iron });
+    }
+
+    // Lanterne à pans : collerette sombre, globe chaud, pointe — pas le
+    // capot-vasque du modèle moderne.
+    const head = lampArcAt(1);
+    const z = head.z + LAMP_ARC.lantern;
+    k.cylinder({ radiusBottom: 0.2, radiusTop: 0.15, height: 0.08, y: head.y + 0.02, z, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.155, radiusTop: 0.155, height: 0.24, y: head.y - 0.22, z, radial: 8, color: C.lampWarm });
+    k.cylinder({ radiusBottom: 0.16, radiusTop: 0, height: 0.14, y: head.y - 0.36, z, radial: 8, color: iron });
+    return k;
+  },
+
+  /**
+   * Lampadaire LED de zone d'activité : fût plus fin, tête plate et nue —
+   * ni vasque ni collerette. Même crosse que `streetLamp`.
+   */
+  streetLampLed(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.cylinder({ radiusBottom: 0.19, radiusTop: 0.14, height: 0.3, radial: 6, color: C.galvanised });
+    k.cylinder({ radiusBottom: 0.1, radiusTop: 0.055, height: LAMP_ARC.shaft - 0.3, y: 0.3, radial: 6, color: C.galvanised });
+
+    const steps = 4;
+    for (let i = 0; i < steps; i++) {
+      k.strutYZ({ from: lampArcAt(i / steps), to: lampArcAt((i + 1) / steps), width: 0.055, color: C.galvanised });
+    }
+
+    // Tête géométrique : un bandeau sombre au-dessus d'une réglette froide, à
+    // plat — la LED n'a pas besoin de vasque pour diffuser.
+    const head = lampArcAt(1);
+    const z = head.z + LAMP_ARC.lantern;
+    k.box({ width: 0.34, height: 0.1, depth: 0.62, y: head.y - 0.03, z, color: C.steelDark });
+    k.box({ width: 0.26, height: 0.025, depth: 0.5, y: head.y - 0.11, z, color: C.lampLed });
     return k;
   },
 
@@ -784,7 +836,7 @@ export const FURNITURE_BUILDERS = {
    * lire « plastique » plutôt que « tôle » ou « vitre ».
    *
    * `depth: length` porte toute la longueur du tunnel : c'est l'axe que
-   * `furnitureLayer._placeFarmstead` étire (`scaleZ`) jusqu'à la longueur
+   * `furniture/parcels.js` étire (`scaleZ`) jusqu'à la longueur
    * réelle de la parcelle — voir `GREENHOUSE_BASE_LENGTH_M`.
    */
   greenhouse(C = DEFAULT_COLORS) {
@@ -892,7 +944,7 @@ export const FURNITURE_BUILDERS = {
 
   /**
    * Tombe à stèle : dalle en gradin et croix dressée, en tête. Une des deux
-   * pierres du carré de tombes que `furnitureLayer._buildCemetery` aligne en
+   * pierres du carré de tombes que `furniture/cemetery.js` aligne en
    * grille — voir `cemeteryTombFlat` pour l'autre, sans le bloc dressé.
    */
   cemeteryTomb(C = DEFAULT_COLORS) {
@@ -953,7 +1005,7 @@ export const FURNITURE_BUILDERS = {
 
   /**
    * Cheminée d'usine : fût effilé, bande de balisage. Publie un point de
-   * fumée comme celle de la ferme (`furnitureLayer._placeFarmstead`) — c'est
+   * fumée comme celle de la ferme (`furniture/parcels.js`) — c'est
    * la couche appelante qui pousse le point dans `chimneys`, cette pièce ne
    * fait que porter la forme.
    */
@@ -1340,6 +1392,19 @@ const profilesFor = (C) => ({
   ],
 
   /**
+   * Rang de lavande : une petite haie basse et étroite, l'épi violet en
+   * crête. C'est le rang, pas le buisson isolé, qui fait reconnaître un
+   * champ de lavande.
+   */
+  lavenderRow: [
+    { across: -0.22, up: 0, color: C.leafDeep },
+    { across: -0.24, up: 0.32, color: C.lavenderLeaf },
+    { across: 0, up: 0.52, color: C.lavenderBloom },
+    { across: 0.24, up: 0.32, color: C.lavenderLeaf },
+    { across: 0.22, up: 0, color: C.leafDeep },
+  ],
+
+  /**
    * Garde-corps en bois : deux lisses rondes sur poteaux, le parapet des routes
    * forestières et des ouvrages de montagne. Il remplace la glissière métallique
    * là où celle-ci ferait autoroute.
@@ -1411,6 +1476,12 @@ const wallSpecsFor = (C) => ({
     colorTop: C.stone,
     crown: 0,
     maxHeight: 12,
+    /**
+     * Grain low poly du parement (`facetJitter`), plus discret que celui de la
+     * roche : un facteur d'épaisseur et un fruit, en mètres par mètre de
+     * hauteur. Tous deux ne jouent que côté vide.
+     */
+    grain: { thickness: [0.8, 1.3], batter: [0, 0.1] },
   },
 });
 
@@ -1445,21 +1516,23 @@ const rockCutFor = (C) => ({
   shelfAt: 0.45,
   bank: 0.5,
   /**
-   * Le grain low poly de la paroi : amplitude des tirages faits ligne par
-   * ligne, ancrés au sol (`furniturePlacement.randomAt`).
+   * Le grain low poly de la paroi : l'intervalle de chaque tirage fait ligne
+   * par ligne (`facetJitter`). Des valeurs de forme, pas des tolérances :
+   * élargies, la roche est plus déchiquetée ; resserrées, la paroi est sciée.
    *
-   * Sans eux, la falaise est un tube extrudé — c'est le même défaut, et le
-   * même remède, que la haie (`hedgeGeometry.facetJitter`) : des tirages sans
-   * corrélation d'une ligne à l'autre, un maillage non lissé, et chaque
-   * quadrilatère devient deux facettes franches. Ce sont donc des valeurs de
-   * forme, pas des tolérances : les monter donne une roche plus déchiquetée,
-   * les descendre, une paroi sciée.
-   *
-   * `reach`, `breakUp`, `breakOut` et `bank` sont des parts de la cote qu'ils
-   * bruitent, `crest` une part de la hauteur de la paroi, `foot` et `capOut`
-   * des mètres.
+   * `reach`, `breakUp`, `breakOut` et `bank` sont des facteurs de la cote
+   * qu'ils bruitent, `crest` une part de la hauteur de la paroi, `foot` et
+   * `capOut` des mètres. L'ordre des canaux fixe leurs tirages.
    */
-  grain: { reach: 0.6, breakUp: 0.2, breakOut: 0.35, crest: 0.22, foot: 0.35, bank: 0.45, capOut: 1 },
+  grain: {
+    crest: [0, 0.28],
+    reach: [0.3, 1.7],
+    breakUp: [0.75, 1.25],
+    breakOut: [0.55, 1.45],
+    foot: [0, 0.45],
+    capOut: [0, 1],
+    bank: [0.45, 1.55],
+  },
   colorFoot: C.rockDark,
   colorBreak: C.rock,
   colorTop: C.rockPale,
@@ -1489,6 +1562,21 @@ const embankmentFor = (C) => (drop, outward = -1) => {
   ];
 };
 
+/**
+ * Grain low poly du talus de remblai (`facetJitter`) : facteurs de sa
+ * profondeur et de son étalement. La profondeur ne tire que vers le bas :
+ * moins profond, le pied décollerait du terrain plat d'un remblai en pleine
+ * terre.
+ */
+const EMBANKMENT_GRAIN = { up: [1, 1.35], across: [0.7, 1.35] };
+
+/**
+ * Grain low poly du muret de pierre sèche (`facetJitter`) : hauteur et
+ * épaisseur relatives, débattement de l'axe en mètres. Plus discret que celui
+ * de la haie : c'est un ouvrage appareillé.
+ */
+const DRY_STONE_WALL_GRAIN = { up: [0.94, 1.06], across: [0.92, 1.08], lateral: [-0.04, 0.04] };
+
 /** Tout ce que le mobilier tire de son nuancier (sections balayées, ouvrages de soutènement, feux), mémorisé sur le nuancier lui-même. */
 const SPECS_CACHE = new WeakMap();
 
@@ -1501,6 +1589,8 @@ export function furnitureSpecsFor(colors = defaultTheme.furniture.colors) {
       rockCut: rockCutFor(colors),
       trafficLenses: trafficLensesFor(colors),
       embankmentProfile: embankmentFor(colors),
+      embankmentGrain: EMBANKMENT_GRAIN,
+      dryStoneWallGrain: DRY_STONE_WALL_GRAIN,
     });
     SPECS_CACHE.set(colors, specs);
   }

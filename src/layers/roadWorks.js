@@ -294,6 +294,46 @@ export function resampleLevels(points, levels, path) {
 }
 
 /**
+ * Reporte un sens de circulation (`-1`/`0`/`1`, voir `roadGraph.mergeRoadLines`)
+ * d'une polyligne brute sur son tracé ré-échantillonné.
+ *
+ * Une convention différente de `resampleCodes` : un sens n'est pas un état qui
+ * s'aggrave (le pont) ni se compare (le niveau), c'est une affirmation. Deux
+ * sommets d'accord sur l'intervalle qui les sépare le portent ; en désaccord,
+ * l'intervalle n'affirme rien plutôt que de pencher vers l'un des deux au
+ * hasard de l'ordre des sommets.
+ *
+ * @param {Array<{x:number,z:number}>} points
+ * @param {Int8Array|number[]|null} oneway Un sens par sommet de `points`.
+ * @param {Array<{distance:number}>} path
+ * @returns {Int8Array} un sens par ligne de `path`.
+ */
+export function resampleOneway(points, oneway, path) {
+  const rows = path?.length ?? 0;
+  const out = new Int8Array(rows);
+  if (!oneway || !points || points.length < 2 || rows === 0) return out;
+
+  const marks = new Float64Array(points.length);
+  for (let i = 1; i < points.length; i++) {
+    marks[i] = marks[i - 1] + Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z);
+  }
+
+  const between = (i) => {
+    const a = oneway[i] || 0;
+    const b = oneway[i + 1] || 0;
+    return a === b ? a : 0;
+  };
+
+  let i = 0;
+  for (let r = 0; r < rows; r++) {
+    const d = path[r].distance;
+    while (i < points.length - 2 && marks[i + 1] < d) i++;
+    out[r] = between(i);
+  }
+  return out;
+}
+
+/**
  * Report d'un tableau de codes entiers d'une polyligne brute sur son tracé
  * ré-échantillonné : chaque ligne reçoit le code de l'**intervalle** qui la
  * contient, c'est-à-dire le minimum de ses deux sommets.

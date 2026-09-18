@@ -1,22 +1,35 @@
 /*
- * proceduralTextures — les textures qu'on ne télécharge pas : le grain du sol,
- * sa variation à grande échelle, les rides de l'eau, la section de route.
- *
- * Un mot sur le **spectre**, parce que c'est le piège de ce fichier. Une somme
- * d'octaves à la mode habituelle (`fractalNoise`, chaque grille à la moitié de
- * l'amplitude de la précédente) est dominée par sa grille la plus grossière :
- * elle produit des nuages, jamais un grain. C'est exactement ce qu'il faut
- * pour une variation de paysage (`createMacroCanvas`) et exactement ce qu'il
- * ne faut pas pour une matière (`createGrainCanvas`, qui pondère à l'envers).
+ * proceduralTextures — les textures qu'on ne télécharge pas : la variation du
+ * sol à grande échelle, les rides de l'eau, la section de route et le bord
+ * rongé d'un chemin.
  *
  * Bruit déterministe et cyclique : même graine, même image, bords raccordés.
  *
- * Décision à ne pas défaire par inadvertance : les textures de sol ne portent
- * **aucun motif dessiné**. Un objet peint dans une texture de quelques mètres
- * passe sous le pixel d'écran à trente mètres et ne laisse plus voir que le
- * pavage de sa période ; et son ombre, peinte, ne suit pas le soleil. Ce qui
- * doit se voir de loin est un objet de la scène (un arbre, une falaise), pas
- * un dessin dans une texture. Voir `createGrainCanvas`.
+ * ## Les surfaces sont lisses, et c'est une décision
+ *
+ * Aucune texture de ce fichier ne porte de **matière** : ni motif dessiné, ni
+ * grain. Une surface est une couleur, et rien de plus. On y est venu par
+ * étapes, en retirant à chaque fois quelque chose qui prétendait faire lire
+ * un matériau et n'y arrivait pas :
+ *
+ * - les **motifs dessinés** (brins, cailloux, feuilles) : un objet peint dans
+ *   une texture de quelques mètres passe sous le pixel d'écran à trente
+ *   mètres, et il ne reste alors que le pavage de sa période. Son ombre,
+ *   peinte, ne suivait pas le soleil ;
+ * - une couche de **bruit « de détail »** qui constellait le sol de taches de
+ *   1 à 2 m ;
+ * - le **grain** lui-même, sur le sol comme sur la chaussée, sous toutes ses
+ *   formes successives — période fixe, période calée sur l'écran, spectre
+ *   nuageux puis spectre fin.
+ *
+ * Ce qui doit se voir est un **objet de la scène** — un arbre, une falaise,
+ * une bordure de trottoir —, jamais un dessin dans une texture. Ne pas
+ * réintroduire de grain ici : la question a été tranchée à l'œil, plusieurs
+ * fois, et toujours dans le même sens.
+ *
+ * Reste `createRoadEdgeCanvas`, qui n'est **pas** une matière : c'est un
+ * outil de découpe, jamais vu comme tel, qui ronge le bord d'un chemin de
+ * terre.
  */
 
 import { defaultTheme } from '../themes/default.js';
@@ -33,16 +46,6 @@ export function makeRandom(seed) {
 }
 
 const smoothstep = (t) => t * t * (3 - 2 * t);
-
-/**
- * Écart-type d'un champ de grain, en unités de texture.
- *
- * C'est la **quantité** de lumière que le grain module, indépendamment de sa
- * finesse. Reprise telle quelle de l'ancien relevé nuageux (0,1361 mesuré) :
- * changer le spectre d'un champ et son amplitude dans le même geste rendrait
- * les deux effets impossibles à départager à l'œil.
- */
-const GRAIN_SPREAD = 0.1361;
 
 /**
  * Bruit de valeur cyclique sur une grille `lattice × lattice`, échantillonné
@@ -163,94 +166,6 @@ export function createMacroCanvas(size = 128, seed = 40213) {
 }
 
 /**
- * Grain du sol : trois champs de bruit indépendants, rangés dans les canaux R,
- * G et B d'une seule image. Aucun motif dessiné — ni brin, ni caillou, ni
- * feuille morte.
- *
- * Ce module en dessinait, et c'était une erreur de portée. Un brin de trois
- * centimètres tient dans trois pixels d'une texture qui couvre 2,6 m : passé
- * une trentaine de mètres il descend sous le pixel d'écran, le mip le moyenne
- * en aplat, et il ne reste de ces motifs que leur pavage. De près, l'ombre des
- * cailloux était peinte dans la texture, donc figée : elle ne suivait pas le
- * soleil. La couleur d'une matière vient de son albédo, et de lui seul ; le
- * grain ne fait que la moduler et incliner sa normale.
- *
- * Trois champs et non un seul : l'interpénétration des matières
- * (`terrainMaterial`) repondère les poids par la hauteur du grain de chacune.
- * Un grain commun serait un facteur commun, qui s'annule à la normalisation —
- * la lisière redeviendrait le dégradé linéaire que ce mécanisme remplace.
- * Trois canaux d'une même lecture les donnent pour le prix d'un.
- *
- * L'alpha reste plein : un canevas 2D prémultiplie, et un quatrième champ
- * rangé là abîmerait les trois autres.
- *
- * @param {number} size Côté, en pixels. Les grilles doivent le diviser.
- */
-export function createGrainCanvas(size = 512, seed = 91711) {
-  const canvas = createCanvas(size, size);
-  const ctx = canvas.getContext('2d');
-  const image = ctx.createImageData(size, size);
-
-  // Le spectre, et c'est **tout** ce qui fait qu'un grain est un grain.
-  //
-  // Une somme d'octaves ordinaire (`fractalNoise`) donne à chaque grille la
-  // moitié de l'amplitude de la précédente : la plus grossière emporte la
-  // moitié du champ à elle seule, la plus fine en porte 3 %. Le résultat n'est
-  // pas granuleux, il est **nuageux** — des taches larges du huitième de la
-  // texture, et rien à l'échelle du texel. Mesuré sur l'ancien relevé : deux
-  // texels voisins différaient de 5 % de l'écart-type du champ. Autant dire
-  // qu'ils étaient identiques. Aucune échelle de lecture ne pouvait rattraper
-  // ça — vue de près la carte montrait ses taches, vue de loin son pavage.
-  //
-  // On renverse donc la pondération : l'essentiel de l'énergie au texel, et ce
-  // qui reste juste assez loin pour que les lisières entre matières, qui sont
-  // découpées dans ce champ, gardent une forme au lieu d'être un tramage.
-  const lattices = [size, size / 2, size / 4, size / 8];
-  const weights = [1, 0.6, 0.35, 0.2];
-  // Trois graines écartées : deux champs corrélés recolleraient les lisières.
-  const seeds = [seed, seed + 3301, seed + 7717];
-
-  for (let c = 0; c < 3; c++) {
-    const field = new Float32Array(size * size);
-    let total = 0;
-    lattices.forEach((lattice, octave) => {
-      const layer = tileableValueNoise(size, lattice, seeds[c] + octave * 7919);
-      for (let i = 0; i < field.length; i++) field[i] += layer[i] * weights[octave];
-      total += weights[octave];
-    });
-    for (let i = 0; i < field.length; i++) field[i] /= total;
-
-    // Recentré sur **sa** moyenne, et pas sur 0,5 : une somme d'octaves tombe
-    // où elle veut. Le grain multiplie l'albédo de la matière ; un champ dont
-    // la moyenne dérive de 5 % assombrit de 5 % toutes les couleurs qu'il
-    // module, en silence, et les trois canaux ne dérivant pas de la même
-    // quantité, il les décale les uns par rapport aux autres.
-    let mean = 0;
-    for (let i = 0; i < field.length; i++) mean += field[i];
-    mean /= field.length;
-
-    // Puis remis à l'écart-type visé, plutôt qu'étiré sur [0, 1] comme avant.
-    // C'est ce qui permet de changer le spectre **sans toucher à la quantité
-    // de lumière** que le grain module : un champ décorrélé étiré sur tout
-    // l'intervalle serait quatre fois plus contrasté que l'ancien, et le sol
-    // grésillerait. Ici il module d'autant, en plus fin, et c'est tout.
-    let spread = 0;
-    for (let i = 0; i < field.length; i++) spread += (field[i] - mean) ** 2;
-    spread = Math.sqrt(spread / field.length) || 1;
-    const gain = GRAIN_SPREAD / spread;
-
-    for (let i = 0; i < field.length; i++) {
-      const value = Math.round(255 * (0.5 + (field[i] - mean) * gain));
-      image.data[i * 4 + c] = Math.max(0, Math.min(255, value));
-    }
-  }
-  for (let i = 3; i < image.data.length; i += 4) image.data[i] = 255;
-
-  ctx.putImageData(image, 0, 0);
-  return canvas;
-}
-
-/**
  * Carte de normales de rides, cyclable. C'est le reflet qui fait lire une
  * surface comme de l'eau (sans réflexion d'environnement, la ride reste le
  * seul moyen de faire accrocher le soleil). Normales dérivées du gradient
@@ -289,9 +204,9 @@ export function createWaterNormalCanvas(size = 256, seed = 33107) {
  * clonage, mais donnaient partout la même forêt mélangée. Carré, pour que le
  * shader applique un seul facteur d'échelle (`foliageMaterial`).
  *
- * Les quatre dernières cases sont le **tapis** du sous-bois : fougère, ronce,
- * buisson bas. Elles ne sont pas des arbres en réduction — c'est justement ce
- * qui manquait au sol d'un bois, où les seules silhouettes basses disponibles
+ * Les deux dernières cases sont le **tapis** du sous-bois : ronce, buisson
+ * bas. Elles ne sont pas des arbres en réduction — c'est justement ce qui
+ * manquait au sol d'un bois, où les seules silhouettes basses disponibles
  * étaient des arbustes, c'est-à-dire de petits arbres à tronc.
  *
  * Une case sans variante reste transparente : l'atlas peut grandir avant que
@@ -421,62 +336,6 @@ function drawBushy(ctx, size, random, variant) {
 }
 
 /**
- * Fougère : une touffe de frondes qui montent du sol en s'arquant, sans tige
- * ligneuse. Les pennes s'allongent au milieu de la fronde et se resserrent à la
- * pointe — c'est ce dessin-là, et pas la couleur, qui fait lire une fougère
- * plutôt qu'un buisson vert.
- */
-function drawFern(ctx, size, random, variant) {
-  const { hue, spread } = variant;
-  const fronds = 7 + Math.floor(random() * 3);
-
-  for (let f = 0; f < fronds; f++) {
-    const side = fronds > 1 ? f / (fronds - 1) - 0.5 : 0;
-    const lean = side * 1.5 * spread * (0.8 + random() * 0.4);
-    // Les frondes du milieu montent le plus haut : la touffe remplit sa case,
-    // sinon la plante rend plus petite que la hauteur qu'on lui donne.
-    const rise = (1 - Math.abs(side) * 0.45) * (0.86 + random() * 0.14);
-    const steps = 16;
-    const atX = (t) => 0.5 + lean * t * t;
-    const atY = (t) => 0.97 - rise * Math.sin(t * 1.28) * 0.98;
-
-    ctx.strokeStyle = 'rgba(72, 82, 44, 0.85)';
-    ctx.lineWidth = size * 0.012;
-    ctx.beginPath();
-    for (let s = 0; s <= steps; s++) {
-      const t = s / steps;
-      if (s === 0) ctx.moveTo(size * atX(t), size * atY(t));
-      else ctx.lineTo(size * atX(t), size * atY(t));
-    }
-    ctx.stroke();
-
-    for (let s = 2; s <= steps; s++) {
-      const t = s / steps;
-      const x = atX(t);
-      const y = atY(t);
-      const leaf = 0.09 * spread * Math.sin(Math.pow(t, 0.7) * Math.PI);
-      if (leaf <= 0.002) continue;
-      for (const dir of [-1, 1]) {
-        const lift = (1 - y) * 0.75 + (1 - x) * 0.25;
-        const value = 40 + lift * 78 + random() * 14;
-        ctx.fillStyle = `rgb(${Math.round(value * hue.r)}, ${Math.round(value * hue.g)}, ${Math.round(value * hue.b)})`;
-        ctx.beginPath();
-        ctx.ellipse(
-          size * (x + dir * leaf * 0.75),
-          size * (y + leaf * 0.3),
-          size * leaf * 0.85,
-          size * leaf * 0.36,
-          dir * 0.55,
-          0,
-          Math.PI * 2
-        );
-        ctx.fill();
-      }
-    }
-  }
-}
-
-/**
  * Ronce : des cannes qui partent en arc et retombent, feuilles par trois. Elle
  * s'étale plus qu'elle ne monte — c'est le fourré qu'on contourne, celui des
  * lisières et des coupes.
@@ -534,7 +393,7 @@ function drawBramble(ctx, size, random, variant) {
 /**
  * Buisson bas à petites feuilles — houx, buis, ciste : une masse dense et
  * sombre, quelques tiges ligneuses visibles au pied. Il tient le milieu entre
- * la fougère et l'arbuste de `drawBushy`, qui, lui, est un petit arbre.
+ * la ronce et l'arbuste de `drawBushy`, qui, lui, est un petit arbre.
  */
 function drawLowShrub(ctx, size, random, variant) {
   const { hue, spread } = variant;
@@ -568,7 +427,6 @@ const TREE_PAINTERS = {
   column: drawColumn,
   conifer: drawConifer,
   bushy: drawBushy,
-  fern: drawFern,
   bramble: drawBramble,
   lowShrub: drawLowShrub,
 };
@@ -1082,13 +940,24 @@ export function createCropAtlasCanvas(cell = 256, seed = 6607) {
 export const ROAD_TEXTURE_LENGTH = 12;
 
 /**
+ * Hauteur des textures de chaussée, en pixels. Partagée par la section et son
+ * masque de bord : les deux se superposent au texel près.
+ */
+export const ROAD_TEXTURE_ROWS = 512;
+
+/**
  * Section de chaussée, dessinée d'après une description en mètres — la
  * largeur du profil est aussi celle du ruban, donc l'échelle est juste sur
  * toutes les classes de route. Axe horizontal en travers, vertical le long
  * (répété tous les `ROAD_TEXTURE_LENGTH` mètres).
  *
- * **Le marquage n'est plus ici.** Cette texture ne porte que le revêtement,
- * son accotement, ses ornières et son grain : les lignes de rive et l'axe sont
+ * Elle n'a plus de graine : elle ne tire plus rien au hasard. Son grain — un
+ * bruit par pixel, d'amplitude propre à chaque revêtement — a été retiré avec
+ * celui du sol : une surface est une couleur, et une chaussée n'y fait pas
+ * exception.
+ *
+ * **Le marquage n'est plus ici** non plus. Cette texture ne porte que le
+ * revêtement, son accotement et ses ornières : les lignes de rive et l'axe sont
  * de la géométrie (`roadMarkings`), posée dans les mêmes morceaux que le
  * ruban. Peintes ici, elles ne pouvaient ni s'arrêter à une bouche de
  * carrefour, ni exister sur la surface d'un carrefour — qui n'a ni milieu ni
@@ -1102,7 +971,7 @@ export const ROAD_TEXTURE_LENGTH = 12;
  * @param {string} [profile.tint]      Remplace la couleur de base du revêtement.
  * @param {number} [profile.texture]   Côté horizontal de la texture, en pixels.
  */
-export function createRoadCanvas(profile, seed = 4711, roads = defaultTheme.roads) {
+export function createRoadCanvas(profile, roads = defaultTheme.roads) {
   const {
     width: meters,
     shoulder = 0,
@@ -1113,10 +982,9 @@ export function createRoadCanvas(profile, seed = 4711, roads = defaultTheme.road
   } = profile;
 
   const width = texture;
-  const height = 512;
+  const height = ROAD_TEXTURE_ROWS;
   const canvas = createCanvas(width, height);
   const ctx = canvas.getContext('2d');
-  const random = makeRandom(seed);
 
   const px = (m) => (m / meters) * width;
   const spec = roads.surfaces[surface] || roads.surfaces.asphalt;
@@ -1141,15 +1009,69 @@ export function createRoadCanvas(profile, seed = 4711, roads = defaultTheme.road
     ctx.fillRect(width * 0.62, 0, rut, height);
   }
 
-  // Grain : sans lui, la chaussée est une bande de plastique.
-  const grain = ctx.getImageData(0, 0, width, height);
-  for (let i = 0; i < grain.data.length; i += 4) {
-    const jitter = (random() - 0.5) * spec.grain;
-    grain.data[i] = Math.min(255, Math.max(0, grain.data[i] + jitter));
-    grain.data[i + 1] = Math.min(255, Math.max(0, grain.data[i + 1] + jitter));
-    grain.data[i + 2] = Math.min(255, Math.max(0, grain.data[i + 2] + jitter));
-  }
-  ctx.putImageData(grain, 0, 0);
+  return canvas;
+}
 
+/**
+ * Masque de bord d'un chemin : ce qu'il reste du ruban une fois que le sol l'a
+ * rongé. Gris clair là où le chemin tient, noir là où il a cédé ; le matériau
+ * le prend en `alphaMap` et tranche au seuil, donc rien n'est fondu — un texel
+ * est du chemin ou du terrain.
+ *
+ * Un chemin de terre n'a pas de rive. Sa largeur est celle que les pas et les
+ * roues ont tassée, et elle varie d'un mètre à l'autre : l'herbe remonte par
+ * plaques, la terre déborde ailleurs. Le ruban, lui, est une bande d'exactement
+ * `width` mètres, à bords droits — c'est cette droite-là que le masque mange.
+ *
+ * Ce qui ronge n'est pas une dent de scie mais un **bruit**, comparé à la
+ * distance au bord : près de la rive presque tout tombe, un peu plus loin
+ * presque rien, et entre les deux il reste des îlots détachés et des morsures.
+ * C'est la forme d'un bord repris par la végétation, pas celle d'un tracé
+ * découpé.
+ *
+ * Le masque est porté par une image à part, et **pas** par l'alpha de la
+ * section : un canevas prémultiplie ses canaux, et un texel transparent y
+ * perdrait sa couleur, que le filtrage étalerait ensuite en liseré noir tout
+ * le long du chemin.
+ *
+ * Cyclique en hauteur comme la section, qu'il double au texel près. Le bout
+ * libre d'un chemin relit le même masque en travers (`roadNetwork.gnawTips`).
+ *
+ * @param {Object} profile
+ * @param {number} profile.width     Largeur du ruban, en mètres.
+ * @param {number} profile.ragged    Profondeur rongée depuis chaque bord, en mètres.
+ * @param {number} [profile.texture] Côté horizontal, en pixels.
+ */
+export function createRoadEdgeCanvas({ width: meters, ragged, texture = 64 }, seed = 20731) {
+  const width = texture;
+  const height = ROAD_TEXTURE_ROWS;
+  const canvas = createCanvas(width, height);
+  const ctx = canvas.getContext('2d');
+  const image = ctx.createImageData(width, height);
+
+  // Deux octaves : le premier fait les plaques, le second leur donne un bord
+  // irrégulier. Un octave seul rendrait des taches toutes de la même taille,
+  // posées sur la grille de sa maille.
+  const field = fractalNoise(height, [64, 128], seed);
+  // Profondeur rongée, en pixels, et jamais moins d'un : un masque sans un
+  // seul texel de jeu ne rongerait rien.
+  const depth = Math.max(1, (ragged / meters) * width);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const edge = Math.min(x, width - 1 - x) + 0.5;
+      // Le champ est lu à l'endroit d'un côté, à l'envers de l'autre : les deux
+      // bords d'un même chemin ne doivent pas se répondre.
+      const noise = x * 2 < width ? field[y * height + x] : field[y * height + (height - 1 - x)];
+      const value = noise < Math.min(1, edge / depth) ? 255 : 0;
+      const i = (y * width + x) * 4;
+      image.data[i] = value;
+      image.data[i + 1] = value;
+      image.data[i + 2] = value;
+      image.data[i + 3] = 255;
+    }
+  }
+
+  ctx.putImageData(image, 0, 0);
   return canvas;
 }

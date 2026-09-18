@@ -61,12 +61,17 @@
  *   traversée jouée **et** l'observateur passé au large.
  *
  * Tout le reste — matrice, foulée, encolure — est écrit par le même code.
+ *
+ * Une bête du décor peut aussi réagir sans intervention de l'application :
+ * une bête marquée `flee` (voir `furniture/domesticFauna.js`) s'échappe
+ * quand l'observateur passe à portée (`_checkFlee`), sur le même mécanisme
+ * de circuit ouvert qu'une traversée déclenchée.
  */
 
 import { defaultTheme } from '../themes/default.js';
 import { createFaunaGeometries, createFaunaMaterial, FAUNA_SPECIES, FAUNA_KINDS } from '../models/fauna/index.js';
 import { MOTION_ATTRIBUTE, MOTION_SIZE } from '../models/animalKit.js';
-import { faunaStateAt } from './faunaMotion.js';
+import { faunaStateAt, buildFleeCircuit } from './faunaMotion.js';
 
 /**
  * Bêtes animées au plus, les plus proches d'abord.
@@ -124,6 +129,15 @@ export const FAUNA_CROSSING_MAX = 8;
  * immobile de trop que la faire disparaître dans le champ de vision.
  */
 export const CROSSING_FORGET_M = 300;
+
+/**
+ * Distance en deçà de laquelle une bête marquée `flee` (voir
+ * `furniture/domesticFauna.js`) s'échappe à l'approche de l'observateur, en
+ * mètres. Toutes les bêtes du décor n'y sont pas sujettes — seul un chat sur
+ * trois l'est, tiré une fois pour toutes à la pose ; ici on ne fait
+ * qu'appliquer la réaction à celles qui la portent.
+ */
+export const PET_FLEE_REACH_M = 13;
 
 export class FaunaLayer {
   /**
@@ -337,17 +351,64 @@ export class FaunaLayer {
    * Avance l'animation d'une image.
    *
    * @param {number} delta Secondes écoulées.
-   * @param {{x:number,z:number}} [at] Position de l'observateur, qui ne sert
-   *        qu'à décider quand oublier une traversée déjà jouée. Omise, aucune
-   *        n'est oubliée : c'est le repli sûr.
+   * @param {{x:number,z:number}} [at] Position de l'observateur. Sert à
+   *        décider quand oublier une traversée déjà jouée, et quand une bête
+   *        marquée `flee` s'échappe. Omise, ni l'un ni l'autre ne se produit :
+   *        c'est le repli sûr.
+   * @param {Function} [sampleY] `(x, z) => altitude`, nécessaire pour tracer
+   *        la fuite d'une bête surprise (voir `_checkFlee`). Omis, aucune
+   *        fuite ne se déclenche — le terrain n'est lisible que là où
+   *        `worldComposer` a la bulle sous la main.
    */
-  advance(delta, at = null) {
+  advance(delta, at = null, sampleY = null) {
     if (this.disposed || !Number.isFinite(delta)) return;
     this.time += delta;
+    this._checkFlee(at, sampleY);
     // Une population qui change remet aussi les maillages d'accord, et
     // `_regroup` écrit l'image : inutile de l'écrire deux fois.
     if (this._forgetCrossings(at)) this._regroup();
     else this._writeFrame();
+  }
+
+  /**
+   * Fait fuir les bêtes marquées `flee` qui se trouvent à portée de
+   * l'observateur.
+   *
+   * Chaque bête n'est jugée qu'une fois : `_fled` empêche de retracer une
+   * fuite déjà en cours ou déjà jouée. La fuite remplace le circuit en place
+   * par un aller simple à l'opposé de l'observateur (`buildFleeCircuit`), sur
+   * le même mécanisme que la traversée déclenchée (`addCrossing`) — un
+   * circuit ouvert qui se fige à l'arrivée plutôt que de reprendre le
+   * pâturage en boucle.
+   */
+  _checkFlee(at, sampleY) {
+    if (!at || typeof sampleY !== 'function') return;
+    for (const animal of this.decor) {
+      if (!animal.flee || animal._fled) continue;
+      const dx = animal.x - at.x;
+      const dz = animal.z - at.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist > PET_FLEE_REACH_M) continue;
+
+      const spec = FAUNA_SPECIES[animal.kind];
+      if (!spec) continue;
+      const away = dist > 1e-3 ? { x: dx / dist, z: dz / dist } : { x: 0, z: 1 };
+      const circuit = buildFleeCircuit({
+        x: animal.x,
+        z: animal.z,
+        away,
+        walkMS: spec.walkMS,
+        runMS: spec.runMS,
+        sampleY,
+      });
+      if (!circuit) continue;
+
+      animal.circuit = circuit;
+      // La fuite a sa propre origine des temps, comme une traversée
+      // déclenchée : elle commence maintenant, pas à l'origine du monde.
+      animal.t0 = this.time;
+      animal._fled = true;
+    }
   }
 
   /** Écrit une image : une matrice et quatre flottants par bête. */

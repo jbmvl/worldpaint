@@ -24,6 +24,14 @@
  * Le profil en long, lui, ne se lisse pas comme le reste : `flattenGrade`
  * l'aplanit dans la limite du terrassement consenti, parce qu'une chaussée
  * dressée section par section suit le bruit du MNT au lieu de tendre une pente.
+ *
+ * En plan, le tracé demande la même chose : ce qui arrive des tuiles est une
+ * ligne brisée, et cette brisure se lit sur tout ce qui suit la chaussée — la
+ * rive, la bordure, le marquage. `roundCorners` y inscrit l'arc qui raccorde
+ * les deux arêtes, et `subdividePath` le suit sans le repolygoniser, ce qu'un
+ * pas constant ferait. Le pas d'un tracé n'est donc pas constant : une ligne
+ * ne s'y retrouve pas en divisant une abscisse par le pas — c'est le point
+ * posé le long du tracé qui dit de quelle ligne il sort.
  */
 
 /**
@@ -58,6 +66,252 @@ export function resamplePath(points, spacing) {
   }
 
   return out;
+}
+
+/**
+ * Ré-échantillonne une polyligne sans en perdre un sommet : chaque arête est
+ * divisée en parts égales d'au plus `spacing`. Le pas n'est donc pas constant,
+ * et c'est ce qu'on lui demande — un arc décrit par des cordes courtes reste
+ * un arc, là où un pas constant le repolygonise à son propre pas.
+ *
+ * @param {Array<{x:number,z:number}>} points
+ * @param {number} spacing Pas maximal, en mètres.
+ * @returns {Array<{x:number,z:number,distance:number}>}
+ */
+export function subdividePath(points, spacing) {
+  if (!points || points.length < 2 || spacing <= 0) return [];
+
+  const out = [{ x: points[0].x, z: points[0].z, distance: 0 }];
+  let total = 0;
+
+  for (let i = 1; i < points.length; i++) {
+    const ax = points[i - 1].x;
+    const az = points[i - 1].z;
+    const bx = points[i].x;
+    const bz = points[i].z;
+    const length = Math.hypot(bx - ax, bz - az);
+    if (!(length > 1e-9)) continue;
+
+    const steps = Math.max(1, Math.ceil(length / spacing));
+    for (let k = 1; k <= steps; k++) {
+      const t = k / steps;
+      out.push({ x: ax + (bx - ax) * t, z: az + (bz - az) * t, distance: total + length * t });
+    }
+    total += length;
+  }
+
+  return out.length >= 2 ? out : [];
+}
+
+/**
+ * Part de la plus courte des deux arêtes qu'un raccord peut prendre. Une
+ * moitié : deux raccords voisins se rejoignent alors au milieu de l'arête
+ * qu'ils partagent, et le tracé est tangent d'un bout à l'autre.
+ */
+export const CORNER_TANGENT_RATIO = 0.5;
+/** Écart maximal entre un arc et la corde qui le représente, en mètres. */
+export const CORNER_SAGITTA_M = 0.08;
+/** Brisure en deçà de laquelle il n'y a pas de virage à raccorder. */
+const CORNER_MIN_TURN = (2 * Math.PI) / 180;
+/** Brisure au-delà de laquelle les deux arêtes se font face : l'arc n'y est plus défini. */
+const CORNER_MAX_TURN = (170 * Math.PI) / 180;
+/**
+ * Longueur en deçà de laquelle un sommet n'est pas un virage, en mètres : la
+ * tuile quantifie ses coordonnées, et deux sommets voisins à quelques
+ * décimètres décrivent le pas de sa grille, pas le tracé.
+ */
+export const CORNER_MIN_STEP_M = 1;
+/** Sommets d'un arc, au plus. */
+const CORNER_MAX_STEPS = 12;
+
+/**
+ * L'arc inscrit dans la brisure `a → b → c`, tangent aux deux arêtes, ou
+ * `null` s'il n'y a rien à raccorder. Fonction pure.
+ */
+function cornerArc(a, b, c, ratio, sagitta) {
+  let ix = b.x - a.x;
+  let iz = b.z - a.z;
+  const lengthIn = Math.hypot(ix, iz);
+  let ox = c.x - b.x;
+  let oz = c.z - b.z;
+  const lengthOut = Math.hypot(ox, oz);
+  if (!(lengthIn > 0) || !(lengthOut > 0)) return null;
+  ix /= lengthIn;
+  iz /= lengthIn;
+  ox /= lengthOut;
+  oz /= lengthOut;
+
+  const dot = Math.min(1, Math.max(-1, ix * ox + iz * oz));
+  const turn = Math.acos(dot);
+  if (turn < CORNER_MIN_TURN || turn > CORNER_MAX_TURN) return null;
+
+  const tangent = ratio * Math.min(lengthIn, lengthOut);
+  const radius = tangent / Math.tan(turn / 2);
+  // Un arc qui passe à moins d'une flèche du sommet ne raccorde rien qu'on
+  // puisse voir : la brisure tient déjà dans la tolérance qu'on s'accorde.
+  if (radius * (1 / Math.cos(turn / 2) - 1) < sagitta) return null;
+
+  // Normale du côté où le tracé tourne : la composante de la sortie
+  // perpendiculaire à l'entrée. Le centre de l'arc est dessus.
+  let nx = ox - ix * dot;
+  let nz = oz - iz * dot;
+  const normal = Math.hypot(nx, nz);
+  if (!(normal > 0)) return null;
+  nx /= normal;
+  nz /= normal;
+
+  const startX = b.x - ix * tangent;
+  const startZ = b.z - iz * tangent;
+  const centreX = startX + nx * radius;
+  const centreZ = startZ + nz * radius;
+  const vx = startX - centreX;
+  const vz = startZ - centreZ;
+
+  // Le pas d'angle vient de la flèche consentie, pas d'un nombre de sommets :
+  // un grand rayon se décrit avec moins de cordes, à écart égal.
+  const step = radius > sagitta ? 2 * Math.acos(1 - sagitta / radius) : turn;
+  const steps = Math.min(CORNER_MAX_STEPS, Math.max(1, Math.ceil(turn / step)));
+  const spin = ix * oz - iz * ox >= 0 ? 1 : -1;
+
+  const arc = [];
+  for (let k = 0; k <= steps; k++) {
+    const angle = spin * turn * (k / steps);
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    arc.push({ x: centreX + vx * cos - vz * sin, z: centreZ + vx * sin + vz * cos });
+  }
+  return arc;
+}
+
+/**
+ * Arrondit les brisures d'une polyligne : chaque sommet est remplacé par l'arc
+ * qui raccorde ses deux arêtes, comme le fait le tracé d'une route. Ce qui
+ * arrive des tuiles est une ligne brisée — simplifiée puis quantifiée —, et
+ * cette brisure se lit sur tout ce qui suit la chaussée : rive, bordure,
+ * marquage, mobilier.
+ *
+ * Les sommets marqués par `keep` ne bougent pas : un arc y remplacerait un
+ * angle voulu (un carrefour, une culée) par une courbe qui s'en écarte.
+ *
+ * @param {Array<{x:number,z:number}>} points
+ * @param {Object} [options]
+ * @param {ArrayLike<boolean>|null} [options.keep] Sommets à garder francs.
+ * @param {number} [options.ratio]
+ * @param {number} [options.sagitta]
+ * @param {number} [options.minStep]
+ * @returns {{points:Array<{x:number,z:number}>, source:Int32Array}} `source[i]`
+ *          donne le sommet d'origine dont la ligne `i` est issue — ce qui
+ *          permet de reporter les tableaux parallèles au tracé.
+ */
+export function roundCorners(
+  points,
+  {
+    keep = null,
+    ratio = CORNER_TANGENT_RATIO,
+    sagitta = CORNER_SAGITTA_M,
+    minStep = CORNER_MIN_STEP_M,
+  } = {}
+) {
+  const count = points?.length ?? 0;
+  const out = [];
+  const source = [];
+  // Deux raccords voisins se rejoignent au milieu de l'arête qu'ils partagent,
+  // à quelques centimètres près : la fin de l'un et le début de l'autre sont la
+  // même ligne, et deux lignes aussi proches n'en décrivent qu'une. Un sommet
+  // franc, lui, passe quoi qu'il arrive — c'est la position qu'on lui garde.
+  const merge = minStep / 4;
+  const push = (x, z, index, rigid = false) => {
+    const last = out[out.length - 1];
+    if (!rigid && last && Math.hypot(last.x - x, last.z - z) < merge) return;
+    out.push({ x, z });
+    source.push(index);
+  };
+
+  if (count < 3) {
+    for (let i = 0; i < count; i++) push(points[i].x, points[i].z, i, true);
+    return { points: out, source: Int32Array.from(source) };
+  }
+
+  // Les sommets trop rapprochés sont écartés d'abord : un arc inscrit entre
+  // deux arêtes de trente centimètres ne raccorde rien, et le ré-échantillonnage
+  // qui suit garderait la brisure telle quelle.
+  const kept = [0];
+  for (let i = 1; i < count - 1; i++) {
+    const last = points[kept[kept.length - 1]];
+    if (!keep?.[i] && Math.hypot(points[i].x - last.x, points[i].z - last.z) < minStep) continue;
+    kept.push(i);
+  }
+  // Le dernier sommet est un bout : c'est celui d'avant qui s'efface s'ils sont
+  // trop proches, sinon le tracé finirait sur une arête de quelques centimètres.
+  const tail = count - 1;
+  while (kept.length > 1) {
+    const previous = kept[kept.length - 1];
+    if (keep?.[previous]) break;
+    const gap = Math.hypot(points[tail].x - points[previous].x, points[tail].z - points[previous].z);
+    if (gap >= minStep) break;
+    kept.pop();
+  }
+  kept.push(tail);
+
+  push(points[kept[0]].x, points[kept[0]].z, kept[0], true);
+  for (let k = 1; k < kept.length - 1; k++) {
+    const index = kept[k];
+    const corner = points[index];
+    const arc = keep?.[index]
+      ? null
+      : cornerArc(points[kept[k - 1]], corner, points[kept[k + 1]], ratio, sagitta);
+    if (!arc) {
+      push(corner.x, corner.z, index, Boolean(keep?.[index]));
+      continue;
+    }
+    for (const point of arc) push(point.x, point.z, index);
+  }
+  const last = kept[kept.length - 1];
+  push(points[last].x, points[last].z, last, true);
+
+  return { points: out, source: Int32Array.from(source) };
+}
+
+/**
+ * La portion d'une plage de ruban comprise entre deux distances, plate-forme
+ * comprise, avec une ligne à chacune des distances `stops` qui y tombent. Les
+ * distances restent celles du tracé : la texture ne glisse pas. Fonction pure.
+ *
+ * @param {Array<{x:number,z:number,distance:number}>} path
+ * @param {Float32Array|number[]} platform Une cote par ligne.
+ * @param {number} from
+ * @param {number} to
+ * @param {number[]} [stops]
+ * @returns {{path:Array<{x:number,z:number,distance:number}>, platform:Float32Array}|null}
+ */
+export function slicePath(path, platform, from, to, stops = []) {
+  const rows = path?.length ?? 0;
+  if (rows < 2) return null;
+  const low = Math.max(from, path[0].distance);
+  const high = Math.min(to, path[rows - 1].distance);
+  if (!(high > low)) return null;
+
+  const wanted = [low, high, ...stops.filter((d) => d > low && d < high)];
+  for (const point of path) {
+    if (point.distance > low && point.distance < high) wanted.push(point.distance);
+  }
+  wanted.sort((a, b) => a - b);
+
+  const points = [];
+  const decks = [];
+  let row = 0;
+  for (const distance of wanted) {
+    if (points.length > 0 && distance - points[points.length - 1].distance < 1e-6) continue;
+    while (row < rows - 2 && path[row + 1].distance < distance) row++;
+    const a = path[row];
+    const b = path[row + 1];
+    const span = b.distance - a.distance;
+    const t = span > 0 ? Math.min(1, Math.max(0, (distance - a.distance) / span)) : 0;
+    points.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, distance });
+    decks.push(platform[row] + (platform[row + 1] - platform[row]) * t);
+  }
+
+  return points.length >= 2 ? { path: points, platform: Float32Array.from(decks) } : null;
 }
 
 /**
@@ -221,9 +475,14 @@ export function levelRow(path, r, frames, halfWidth, sampleElevation) {
   };
 }
 
-/** Accumulateur de géométrie : plusieurs rubans finissent dans un seul maillage. */
-export function createRibbonBuffer() {
-  return { positions: [], uvs: [], indices: [] };
+/**
+ * Accumulateur de géométrie : plusieurs rubans finissent dans un seul maillage.
+ * `tips` y ajoute l'attribut des bouts rongés (voir `appendRibbon`).
+ */
+export function createRibbonBuffer({ tips = false } = {}) {
+  const buffer = { positions: [], uvs: [], indices: [] };
+  if (tips) buffer.tips = [];
+  return buffer;
 }
 
 /** Accumulateur de sections balayées : positions et couleurs, pas d'UV. */
@@ -249,6 +508,11 @@ export function createProfileBuffer() {
  *        calculées et lissées, une par ligne — évite de refaire l'échantillonnage
  *        quand l'appelant en a besoin par ailleurs (talus, glissières). Posées
  *        telles quelles : c'est la cote que tout le reste lit.
+ * @param {{head:boolean, tail:boolean}} [options.tips] Bouts rongés, écrits
+ *        dans l'accumulateur qui les porte : le masque du bord y est relu en
+ *        travers sur une demi-largeur depuis le bout. Une ligne doit exister à
+ *        cette distance (`slicePath`), sans quoi la morsure s'étire jusqu'à la
+ *        suivante.
  * @returns {boolean} vrai si de la géométrie a été produite.
  */
 export function appendRibbon(
@@ -263,6 +527,7 @@ export function appendRibbon(
     smoothRadius = 2,
     level = true,
     platform = null,
+    tips = null,
   }
 ) {
   const rows = path?.length ?? 0;
@@ -304,11 +569,29 @@ export function appendRibbon(
   // chaussée.
   if (!platform) smoothColumns(heights, rows, columns, smoothRadius);
 
+  const width = halfWidth * 2;
+  const start = path[0].distance;
+  const end = path[rows - 1].distance;
+  // Phase du bruit prise sur la position quantifiée du bout, et ramenée à un
+  // cycle : deux chemins ne s'y rongent pas pareil.
+  const phase = (point) =>
+    (((Math.round(point.x) * 7.31 + Math.round(point.z) * 3.17) % textureLength) + textureLength) %
+    textureLength;
+  const headPhase = phase(path[0]);
+  const tailPhase = phase(path[rows - 1]);
+
   for (let r = 0; r < rows; r++) {
+    const fromHead = tips?.head ? path[r].distance - start : Infinity;
+    const fromTail = tips?.tail ? end - path[r].distance : Infinity;
+    // Zéro au-delà d'une demi-largeur du bout : le milieu du masque, qui est plein.
+    const bite = Math.max(0, 0.5 - Math.min(fromHead, fromTail) / width);
+    const tipPhase = fromHead <= fromTail ? headPhase : tailPhase;
     for (let c = 0; c < columns; c++) {
       const index = r * columns + c;
+      const u = c / (columns - 1);
       buffer.positions.push(points[index * 2], heights[index], points[index * 2 + 1]);
-      buffer.uvs.push(c / (columns - 1), path[r].distance / textureLength);
+      buffer.uvs.push(u, path[r].distance / textureLength);
+      buffer.tips?.push(bite, (u * width + tipPhase) / textureLength);
     }
   }
 
@@ -320,6 +603,118 @@ export function appendRibbon(
       const e = d + 1;
       buffer.indices.push(a, d, b, b, d, e);
     }
+  }
+
+  return true;
+}
+
+/** Hauteur de contremarche visée, en mètres (norme du bâtiment : 16 à 18 cm). */
+export const STEP_RISE_M = 0.17;
+
+/**
+ * Balaie un escalier le long d'une polyligne : la plate-forme continue
+ * (`platform`, une cote par ligne, dressée comme pour `appendRibbon`) est
+ * redécoupée en marches de hauteur constante — un vrai plan horizontal par
+ * marche relié à la suivante par une face verticale, pas une rampe qui
+ * l'imite.
+ *
+ * Le nombre de marches vient de la dénivelée totale entre les deux bouts du
+ * tronçon, divisée par `STEP_RISE_M` et arrondie : c'est la seule cote qu'un
+ * escalier OSM ne porte jamais, et elle fixe une contremarche régulière du
+ * bas en haut, comme un escalier réel — le giron, lui, est ce que la longueur
+ * du tracé laisse à chaque marche une fois leur nombre fixé.
+ *
+ * Repris de `appendRibbon` : les colonnes vont de la rive droite (u=0) à la
+ * rive gauche (u=1) de la marche, dans le même ordre — un escalier partage
+ * son buffer avec les rubans du même profil.
+ *
+ * @param {Object} buffer Résultat de `createRibbonBuffer()`.
+ * @param {Object} options
+ * @param {Array<{x:number,z:number,distance:number}>} options.path Tracé
+ *        continu de la volée (déjà ré-échantillonné, comme pour `appendRibbon`).
+ * @param {number} options.halfWidth
+ * @param {Float32Array} options.platform Cote de plate-forme continue, une
+ *        par ligne de `path` : c'est elle qui donne la dénivelée à répartir en
+ *        marches, pas le terrain brut revisité ligne à ligne.
+ * @param {number} [options.lift] Décollement au-dessus de la plate-forme.
+ * @param {number} [options.textureLength] Mètres couverts par un cycle de texture.
+ * @param {number} [options.riseM] Hauteur de marche visée (`STEP_RISE_M`).
+ * @returns {boolean} vrai si de la géométrie a été produite.
+ */
+export function appendSteps(
+  buffer,
+  { path, halfWidth, platform, lift = 0, textureLength = 12, riseM = STEP_RISE_M }
+) {
+  const rows = path?.length ?? 0;
+  if (rows < 2 || !platform) return false;
+
+  const start = path[0].distance;
+  const end = path[rows - 1].distance;
+  const span = end - start;
+  if (!(span > 0)) return false;
+
+  const frames = pathFrames(path);
+  // Position et repère transverse à une distance quelconque du tracé continu —
+  // c'est lui qui donne le sens de la marche ; les marches elles-mêmes n'en
+  // portent pas, deux d'entre elles pouvant partager le même point du plan.
+  const at = (distance) => {
+    let row = 0;
+    while (row < rows - 2 && path[row + 1].distance < distance) row++;
+    const a = path[row];
+    const b = path[row + 1];
+    const span2 = b.distance - a.distance;
+    const t = span2 > 0 ? Math.min(1, Math.max(0, (distance - a.distance) / span2)) : 0;
+    return {
+      x: a.x + (b.x - a.x) * t,
+      z: a.z + (b.z - a.z) * t,
+      px: frames[row * 4 + 2] + (frames[(row + 1) * 4 + 2] - frames[row * 4 + 2]) * t,
+      pz: frames[row * 4 + 3] + (frames[(row + 1) * 4 + 3] - frames[row * 4 + 3]) * t,
+    };
+  };
+
+  const drop = platform[rows - 1] - platform[0];
+  const steps = Math.max(1, Math.round(Math.abs(drop) / riseM));
+
+  // Les deux arêtes d'une section, dans l'ordre de colonne d'`appendRibbon` :
+  // rive droite (u=0) puis rive gauche (u=1).
+  const edges = (point, height) => ({
+    right: { x: point.x - point.px * halfWidth, y: height, z: point.z - point.pz * halfWidth },
+    left: { x: point.x + point.px * halfWidth, y: height, z: point.z + point.pz * halfWidth },
+  });
+
+  const pushQuad = (a, b, va, vb) => {
+    const i0 = buffer.positions.length / 3;
+    buffer.positions.push(a.right.x, a.right.y, a.right.z);
+    buffer.positions.push(a.left.x, a.left.y, a.left.z);
+    buffer.positions.push(b.right.x, b.right.y, b.right.z);
+    buffer.positions.push(b.left.x, b.left.y, b.left.z);
+    buffer.uvs.push(0, va, 1, va, 0, vb, 1, vb);
+    buffer.indices.push(i0, i0 + 2, i0 + 1, i0 + 1, i0 + 2, i0 + 3);
+    if (buffer.tips) for (let i = 0; i < 4; i++) buffer.tips.push(0, 0);
+  };
+
+  let point = at(start);
+  let height = platform[0] + lift;
+  let distance = start;
+
+  for (let k = 1; k <= steps; k++) {
+    const nextDistance = start + (span * k) / steps;
+    const nextHeight = platform[0] + (drop * k) / steps + lift;
+    const nextPoint = at(nextDistance);
+
+    // Contremarche : face verticale à la position de la marche précédente.
+    pushQuad(edges(point, height), edges(point, nextHeight), distance / textureLength, distance / textureLength);
+    // Giron : plan horizontal jusqu'à la marche suivante.
+    pushQuad(
+      edges(point, nextHeight),
+      edges(nextPoint, nextHeight),
+      distance / textureLength,
+      nextDistance / textureLength
+    );
+
+    point = nextPoint;
+    height = nextHeight;
+    distance = nextDistance;
   }
 
   return true;
@@ -465,6 +860,15 @@ export function appendProfile(
  * @param {number[]} options.colorFoot Couleur du pied, RVB linéaire.
  * @param {number[]} options.colorTop  Couleur de l'arase.
  * @param {number} [options.minHeight] En deçà, la ligne est ignorée.
+ * @param {Float32Array|number[]} [options.scaleAcross] Facteur de l'épaisseur,
+ *        une valeur par ligne ; le couronnement garde son débord.
+ * @param {Float32Array|number[]} [options.lateralJitter] Décalage de `offset`,
+ *        une valeur par ligne, en mètres.
+ * @param {Float32Array|number[]} [options.batter] Fruit, une valeur par ligne :
+ *        écart du pied sous l'arase, en mètres, signé dans le repère de
+ *        `offset`. Seul le parement de ce côté s'incline.
+ * @param {boolean} [options.flat] Triangles désolidarisés : ombrage plat, même
+ *        dans un maillage lissé ailleurs.
  * @returns {boolean} vrai si de la géométrie a été produite.
  */
 export function appendVariableWall(
@@ -479,6 +883,10 @@ export function appendVariableWall(
     colorFoot,
     colorTop,
     minHeight = 0.12,
+    scaleAcross = null,
+    lateralJitter = null,
+    batter = null,
+    flat = false,
   }
 ) {
   const rows = path?.length ?? 0;
@@ -490,20 +898,30 @@ export function appendVariableWall(
 
   const frames = pathFrames(path);
   const start = buffer.positions.length / 3;
-  const half = thickness / 2;
-  // Six sommets par ligne en anneau : pied, arase débordante, dessus, retour.
-  const across = [-half, -half - coping, -half - coping, half + coping, half + coping, half];
+  const firstIndex = buffer.indices.length;
   const colors = [colorFoot, colorTop, colorTop, colorTop, colorTop, colorFoot];
-  const cols = across.length;
+  const cols = colors.length;
 
   for (let r = 0; r < rows; r++) {
     const px = frames[r * 4 + 2];
     const pz = frames[r * 4 + 3];
-    const ax = path[r].x + px * offset;
-    const az = path[r].z + pz * offset;
+    const off = offset + (lateralJitter ? lateralJitter[r] : 0);
+    const ax = path[r].x + px * off;
+    const az = path[r].z + pz * off;
     // Hauteur plancher : évite les faces dégénérées au milieu du balayage.
     const foot = base[r];
     const crest = Math.max(top[r], foot + minHeight);
+    const half = (thickness / 2) * (scaleAcross ? scaleAcross[r] : 1);
+    const lean = batter ? batter[r] : 0;
+    // Six sommets par ligne en anneau : pied, arase débordante, dessus, retour.
+    const across = [
+      -half + Math.min(lean, 0),
+      -half - coping,
+      -half - coping,
+      half + coping,
+      half + coping,
+      half + Math.max(lean, 0),
+    ];
     const ups = [foot, crest - coping, crest, crest, crest - coping, foot];
 
     for (let c = 0; c < cols; c++) {
@@ -529,7 +947,24 @@ export function appendVariableWall(
     buffer.indices.push(lastRow, lastRow + c, lastRow + c + 1);
   }
 
+  if (flat) unweld(buffer, start, firstIndex);
   return true;
+}
+
+/**
+ * Donne à chaque triangle écrit depuis `vertex` et `index` ses propres
+ * sommets : `computeVertexNormals` n'a plus rien à moyenner, et ce morceau est
+ * ombré à plat dans un maillage lissé ailleurs.
+ */
+function unweld(buffer, vertex, index) {
+  const positions = buffer.positions.splice(vertex * 3);
+  const colors = buffer.colors.splice(vertex * 3);
+  for (let i = index; i < buffer.indices.length; i++) {
+    const v = (buffer.indices[i] - vertex) * 3;
+    buffer.positions.push(positions[v], positions[v + 1], positions[v + 2]);
+    buffer.colors.push(colors[v], colors[v + 1], colors[v + 2]);
+    buffer.indices[i] = vertex + i - index;
+  }
 }
 
 /**
@@ -558,16 +993,9 @@ export function appendVariableWall(
  *
  * ## Le grain low poly
  *
- * Une section constante balayée reste un tube extrudé, quelle que soit sa
- * forme — c'est le défaut que `hedgeGeometry` décrit pour la haie, et une
- * paroi rocheuse y est encore plus sensible : la roche se lit à ses écailles.
- * Toutes les cotes de la section sont donc données **par ligne**, tirées au
- * sol par l'appelant, sans corrélation d'une ligne à la suivante
- * (`hedgeGeometry.facetJitter`, même recette) : l'arase avance et recule, la
- * cassure monte, descend et saille, le pied ondule. Associé à un maillage non
- * lissé (`FLAT_SHADED_LINEAR_KINDS`), chaque quadrilatère devient deux
- * facettes franches, et l'espacement des arêtes est celui du
- * ré-échantillonnage du tracé — pas un réglage d'ici.
+ * Toutes les cotes de la section sont données **par ligne**, tirées par
+ * l'appelant (`facetJitter`) : l'arase avance et recule, la cassure monte,
+ * descend et saille, le pied ondule. Une paroi rocheuse se lit à ses écailles.
  *
  * @param {Object} buffer  Résultat de `createProfileBuffer()`.
  * @param {Object} options
@@ -693,9 +1121,9 @@ export function appendRockCut(
  * Convertit un accumulateur de sections en `BufferGeometry` colorée.
  *
  * @param {boolean} [options.flat] Normales par face plutôt que moyennées
- *        (nécessaire pour qu'un tracé facetté, `hedgeGeometry.facetJitter`,
- *        garde ses arêtes visibles ; `false` pour l'ombrage lissé attendu par
- *        muret, glissière, remblai, câble).
+ *        (nécessaire pour qu'un tracé facetté, `facetJitter`, garde ses
+ *        arêtes visibles ; `false` pour l'ombrage lissé attendu par
+ *        glissière, câble).
  * @returns {Object|null} `null` si rien n'a été accumulé.
  */
 export function toColoredGeometry(THREE, buffer, { flat = false } = {}) {
@@ -720,6 +1148,7 @@ export function toGeometry(THREE, buffer) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(buffer.positions, 3));
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(buffer.uvs, 2));
+  if (buffer.tips) geometry.setAttribute('tipUv', new THREE.Float32BufferAttribute(buffer.tips, 2));
   geometry.setIndex(buffer.indices);
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();

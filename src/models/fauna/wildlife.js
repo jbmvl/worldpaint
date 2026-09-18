@@ -23,6 +23,10 @@
  * taille, et la longueur des oreilles (une biche les a plus grandes,
  * proportionnellement, ce qui est un vrai repère de terrain). `cervid` les
  * porte ensemble ; les deux entrées du catalogue ne font que la régler.
+ *
+ * `canid` est exporté pour la même raison que `cervid` est mutualisé : un
+ * chien de hameau (`models/fauna/pets.js`) porte le même corps qu'un renard
+ * ou un loup, seules les proportions changent.
  */
 
 import { AnimalKit, LIMB, robe } from '../animalKit.js';
@@ -235,7 +239,7 @@ export function boar(C) {
  * pas au-dessus. Un canidé modelé avec l'encolure d'un cervidé ressemble à un
  * lama, ce qui est exactement l'erreur à ne pas refaire.
  */
-function canid(C, { scale = 1, tailLength = 0.5, tailWidth = 0.09, tailDroop = 0.55, earLength = 0.16, muzzle = 0.24, chestDepth = 1, socks = null } = {}) {
+export function canid(C, { scale = 1, tailLength = 0.5, tailWidth = 0.09, tailDroop = 0.55, earLength = 0.16, muzzle = 0.24, chestDepth = 1, socks = null } = {}) {
   const k = new AnimalKit(C);
   const coat = robe(1);
   const s = scale;

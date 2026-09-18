@@ -15,11 +15,10 @@
  * Un ouvrage d'art n'est pas une classe de route : c'est un état de la
  * chaussée, ligne par ligne (`roadWorks.js`). Il traverse donc ce module comme
  * un tableau parallèle au tracé — `segment.works` —, et non comme un profil de
- * plus. Trois conséquences ici :
+ * plus. Le tunnel, lui, est jeté à la lecture des tuiles (`roadStyleFor`) :
+ * retiré du rendu pour le moment, la route s'arrête net au pied de la colline
+ * plutôt que d'être reprise dessous. Deux conséquences pour le reste :
  *
- *   - le tunnel n'est plus jeté à la lecture des tuiles (il l'était : la route
- *     s'arrêtait net au pied de la colline). Il reste dans le graphe, garde la
- *     numérotation du mobilier, et c'est le **ruban** qui saute ses lignes ;
  *   - la plate-forme d'une travée est tendue entre ses appuis
  *     (`levelWorkSpans`) au lieu d'épouser le fond de vallée. Elle passe après
  *     l'aplanissement du profil en long (`flattenGrade`) et non avant : les
@@ -86,17 +85,23 @@ import {
   junctionCentreDeck,
   junctionRibbonRuns,
   junctionSurface,
+  outlineDeckAt,
 } from './roadJunctions.js';
 import {
   MARKING_BAR_M,
   MARKING_LIFT_M,
   MOUTH_CROSSING_M,
   approachLane,
+  appendMarkingArrows,
   appendMarkingBar,
+  appendMarkingBorder,
   appendMarkingLine,
   appendMarkingSymbols,
+  borderInsetFor,
   cycleGlyph,
+  directionGlyph,
   markingLinesFor,
+  mirrorDirection,
   sectionAtDistance,
 } from './roadMarkings.js';
 import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
@@ -105,6 +110,7 @@ import {
   roadLevelFor,
   resampleWorks,
   resampleLevels,
+  resampleOneway,
   levelWorkSpans,
   drawableRuns,
   bridgeFreeboardFor,
@@ -112,10 +118,12 @@ import {
   LEVEL_GROUND,
 } from './roadWorks.js';
 import {
-  resamplePath,
+  subdividePath,
   createRibbonBuffer,
+  slicePath,
   createProfileBuffer,
   appendRibbon,
+  appendSteps,
   toGeometry,
   toColoredGeometry,
   pathFrames,
@@ -123,7 +131,11 @@ import {
   flattenGrade,
 } from './ribbonGeometry.js';
 import { srgb } from '../core/color.js';
-import { ROAD_TEXTURE_LENGTH, createRoadCanvas } from '../materials/proceduralTextures.js';
+import {
+  ROAD_TEXTURE_LENGTH,
+  createRoadCanvas,
+  createRoadEdgeCanvas,
+} from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
 
 /**
@@ -133,17 +145,33 @@ import { defaultTheme } from '../themes/default.js';
  */
 const CYCLE_GLYPH = cycleGlyph();
 
-/** Graines distinctes : deux profils voisins ne doivent pas avoir le même grain. */
-const ROAD_JUNCTION_SEED = 6101;
-const ROAD_PROFILE_SEEDS = {
-  express: 4711,
-  major: 4801,
-  minor: 4903,
-  lane: 5009,
-  cycleway: 5107,
-  track: 5521,
-  path: 5623,
-};
+/**
+ * La flèche de sens unique, dans les deux sens : construite une fois, comme
+ * le vélo. `DIRECTION_GLYPH_BACK` est la même flèche tournée de 180°, pas une
+ * flèche redessinée — voir `roadMarkings.directionGlyph`.
+ */
+const DIRECTION_GLYPH = directionGlyph();
+const DIRECTION_GLYPH_BACK = mirrorDirection(DIRECTION_GLYPH);
+
+/**
+ * Ronge aussi le bout d'un chemin : le masque du bord y est relu en travers, à
+ * partir de `tipUv` (`appendRibbon`, option `tips`). Un sommet sans morsure
+ * porte zéro, qui lit le milieu du masque — plein.
+ */
+function gnawTips(material) {
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute vec2 tipUv;\nvarying vec2 vTipUv;')
+      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvTipUv = tipUv;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vTipUv;')
+      .replace(
+        '#include <alphamap_fragment>',
+        '#include <alphamap_fragment>\ndiffuseColor.a *= texture2D( alphaMap, vec2( 0.5 - vTipUv.x, vTipUv.y ) ).g;'
+      );
+  };
+  material.customProgramCacheKey = () => 'road-ragged-tip';
+}
 
 /**
  * Revêtements dont une surface de carrefour peut être faite : ceux que portent
@@ -173,42 +201,56 @@ export function junctionSurfaces(roads = defaultTheme.roads) {
 export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
   const entries = {};
   const junctions = {};
+  // Chaussée et terrain quasi coplanaires : sans décalage de profondeur, la
+  // route clignote. Un chemin prend celui du marquage, sur lequel il passe.
+  const depthOffset = (spec) =>
+    isPaved(spec)
+      ? { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }
+      : { polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 };
 
   for (const surface of junctionSurfaces(roads)) {
     const texture = new THREE.CanvasTexture(
-      createRoadCanvas({ width: 8, surface, shoulder: 0, texture: 128 }, ROAD_JUNCTION_SEED, roads)
+      createRoadCanvas({ width: 8, surface, shoulder: 0, texture: 128 }, roads)
     );
     texture.colorSpace = THREE.SRGBColorSpace;
     // Répétée dans les deux sens : les UV d'un carrefour sont pris au sol.
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     texture.anisotropy = 8;
-    const material = new THREE.MeshLambertMaterial({
-      map: texture,
-      polygonOffset: true,
-      polygonOffsetFactor: -2,
-      polygonOffsetUnits: -4,
-    });
+    const material = new THREE.MeshLambertMaterial({ map: texture, ...depthOffset({ surface }) });
     material.name = `junction-${surface}`;
     entries[`junction:${surface}`] = { texture, material };
     junctions[surface] = material;
   }
 
   for (const [key, profile] of Object.entries(roads.profiles)) {
-    const texture = new THREE.CanvasTexture(createRoadCanvas(profile, ROAD_PROFILE_SEEDS[key], roads));
+    const texture = new THREE.CanvasTexture(createRoadCanvas(profile, roads));
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.wrapS = THREE.ClampToEdgeWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     texture.anisotropy = 8;
-    const material = new THREE.MeshLambertMaterial({
-      map: texture,
-      // Chaussée et terrain quasi coplanaires : sans décalage de profondeur, la route clignote.
-      polygonOffset: true,
-      polygonOffsetFactor: -2,
-      polygonOffsetUnits: -4,
-    });
+    const material = new THREE.MeshLambertMaterial({ map: texture, ...depthOffset(profile) });
     material.name = `road-${key}`;
-    entries[key] = { texture, material };
+    // Un escalier a des contremarches verticales : vues de dos (en descendant
+    // une pente qui monte derrière soi), une face simple les rendrait invisibles.
+    if (profile.steps) material.side = THREE.DoubleSide;
+
+    // Un chemin de terre n'a pas de rive : son bord est rongé par le sol, et
+    // le masque le découpe au seuil plutôt que de le fondre — une chaussée
+    // à moitié transparente demanderait un tri, et lirait comme du verre.
+    let edge = null;
+    if (profile.ragged > 0) {
+      edge = new THREE.CanvasTexture(createRoadEdgeCanvas(profile));
+      edge.colorSpace = THREE.NoColorSpace; // un masque, pas une couleur
+      edge.wrapS = THREE.ClampToEdgeWrapping;
+      edge.wrapT = THREE.RepeatWrapping;
+      edge.anisotropy = 8;
+      material.alphaMap = edge;
+      material.alphaTest = 0.5;
+      gnawTips(material);
+    }
+
+    entries[key] = { texture, edge, material };
   }
 
   // Le marquage : une seule matière pour tout ce qui est peint au sol, sans
@@ -250,22 +292,31 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
       markings.color.setRGB(paint, paint, paint + wet * 0.04);
     },
     setMaxAnisotropy(value) {
+      const anisotropy = Math.min(value || 8, 16);
       for (const entry of Object.values(entries)) {
-        entry.texture.anisotropy = Math.min(value || 8, 16);
-        entry.texture.needsUpdate = true;
+        for (const texture of [entry.texture, entry.edge]) {
+          if (!texture) continue;
+          texture.anisotropy = anisotropy;
+          texture.needsUpdate = true;
+        }
       }
     },
     dispose() {
       for (const entry of Object.values(entries)) {
         entry.material.dispose();
         entry.texture.dispose();
+        entry.edge?.dispose();
       }
       markings.dispose();
     },
   };
 }
 
-/** Pas de ré-échantillonnage le long d'une chaussée, en mètres. */
+/**
+ * Pas **maximal** de ré-échantillonnage le long d'une chaussée, en mètres.
+ * Un arc de raccordement y arrive déjà décrit par ses cordes, et
+ * `subdividePath` les garde : le pas réel y est plus serré.
+ */
 export const ROAD_SAMPLE_M = 5;
 /** Portée du réseau autour de l'observateur, en mètres. */
 export const ROAD_RADIUS_M = 900;
@@ -273,6 +324,61 @@ export const ROAD_RADIUS_M = 900;
 export const ROAD_REBUILD_M = 250;
 /** Décollement au-dessus de la surface, en mètres. */
 export const ROAD_LIFT_M = 0.14;
+/**
+ * Décollement d'un chemin non revêtu, en mètres : au-dessus du marquage. Un
+ * chemin ne fait pas carrefour avec une route (`roadGraph.collectJunctions`),
+ * il passe par-dessus, rive peinte comprise.
+ */
+export const UNPAVED_LIFT_M = ROAD_LIFT_M + 2 * MARKING_LIFT_M;
+
+/** Vrai si le profil de chaussée est revêtu. Fonction pure. */
+export function isPaved(profile) {
+  return (profile?.surface || 'asphalt') === 'asphalt';
+}
+
+/** Décollement d'un profil de chaussée, en mètres. Fonction pure. */
+export function roadLiftFor(profile) {
+  return isPaved(profile) ? ROAD_LIFT_M : UNPAVED_LIFT_M;
+}
+
+/** Recul d'un chemin à son bout libre, en mètres : posé sur une route, il n'en déborde pas. */
+export const UNPAVED_TIP_TRIM_M = 1;
+
+/**
+ * La plage d'un chemin telle qu'elle se dessine : reculée de
+ * `UNPAVED_TIP_TRIM_M` à chaque bout libre, avec une ligne à une demi-largeur
+ * de ce bout pour que la morsure s'y tienne (`appendRibbon`, `tips`).
+ *
+ * Un bout est libre quand la chaîne s'y arrête et qu'aucun autre chemin ne le
+ * prolonge. Celui qui bute sur un carrefour de chemins, qui se continue en
+ * chemin d'une autre classe ou qui referme une boucle ne l'est pas : reculer y
+ * ouvrirait une fente. Fonction pure.
+ *
+ * @param {Object} segment Tronçon (`path`, `halfWidth`).
+ * @param {{path:Array, platform:Float32Array, head:number, tail:number}} run
+ *        Plage rendue par `junctionRibbonRuns`.
+ * @param {Function} continued `(point) => boolean` : un autre chemin couvre ce point.
+ * @returns {{path:Array, platform:Float32Array, tips:Object|null}|null} `null`
+ *          si le recul ne laisse rien.
+ */
+export function unpavedRun(segment, run, continued) {
+  const first = segment.path[0];
+  const last = segment.path[segment.path.length - 1];
+  const start = run.path[0];
+  const end = run.path[run.path.length - 1];
+  const closed = Math.hypot(first.x - last.x, first.z - last.z) < 1e-6;
+  const head = !closed && run.head < 0 && start.distance === first.distance && !continued(start);
+  const tail = !closed && run.tail < 0 && end.distance === last.distance && !continued(end);
+  if (!head && !tail) return { path: run.path, platform: run.platform, tips: null };
+
+  const from = start.distance + (head ? UNPAVED_TIP_TRIM_M : 0);
+  const to = end.distance - (tail ? UNPAVED_TIP_TRIM_M : 0);
+  const stops = [];
+  if (head) stops.push(from + segment.halfWidth);
+  if (tail) stops.push(to - segment.halfWidth);
+  const sliced = slicePath(run.path, run.platform, from, to, stops);
+  return sliced ? { ...sliced, tips: { head, tail } } : null;
+}
 
 /**
  * Terrassement consenti pour aplanir le profil en long (`flattenGrade`), en
@@ -323,12 +429,14 @@ export function gradeAllowance(slope) {
  * profil se décollait de deux centimètres de plus que le précédent, plus un
  * millimètre tiré au hasard du lieu, parce que deux rubans s'y recouvraient
  * franchement. Ils ne se recouvrent plus — `roadJunctions` leur donne une
- * surface commune, et **toutes** les chaussées s'arrêtent à sa bouche. Le
- * décollement est donc redevenu le même pour toutes (`ROAD_LIFT_M`), ce qui
- * est aussi la condition pour que la bouche d'une petite rue affleure la
- * surface du carrefour au lieu de passer deux centimètres dessous.
+ * surface commune, et **toutes** les chaussées revêtues s'arrêtent à sa
+ * bouche. Le décollement est donc le même pour toutes les revêtues
+ * (`ROAD_LIFT_M`), ce qui est aussi la condition pour que la bouche d'une
+ * petite rue affleure la surface du carrefour au lieu de passer deux
+ * centimètres dessous. Un chemin, qui n'entre pas dans le carrefour d'une
+ * route, est décollé au-dessus (`UNPAVED_LIFT_M`).
  */
-export const ROAD_PROFILE_ORDER = ['express', 'major', 'minor', 'lane', 'track', 'cycleway', 'path'];
+export const ROAD_PROFILE_ORDER = ['express', 'major', 'minor', 'lane', 'track', 'cycleway', 'path', 'steps'];
 
 /**
  * Profil par `class` OpenMapTiles. Les valeurs de `class` sont celles que
@@ -389,22 +497,37 @@ export function isPedestrianWay(properties = {}) {
 }
 
 /**
+ * Sens de circulation porté par l'entité, compté dans le sens où la tuile
+ * livre sa géométrie : `1` interdit le sens inverse, `-1` interdit celui-là,
+ * `0` (valeur absente ou illisible) ne dit rien — c'est le cas prudent, pas un
+ * double sens affirmé.
+ *
+ * Fonction pure.
+ */
+export function onewayFor(properties = {}) {
+  const raw = properties.oneway;
+  if (raw === 1 || raw === '1' || raw === true) return 1;
+  if (raw === -1 || raw === '-1') return -1;
+  return 0;
+}
+
+/**
  * Style de chaussée d'une entité, ou `null` si elle ne doit pas être dessinée.
  * `subclass` affine `class` : piste cyclable, sentier et escalier partagent la
  * même classe `path`.
  *
- * Un tunnel n'est plus écarté ici : il porte son code d'ouvrage (`works`) et
- * traverse le graphe comme le reste de sa route, pour que la chaîne, ses
- * ancres et son mobilier ne se coupent pas au pied de la colline. C'est le
- * ruban qui saute ses lignes, et `bridgeLayer` qui pose ses têtes.
+ * Un tunnel est écarté ici : la route s'arrête net au pied de la colline
+ * plutôt que d'être reprise sous terre (voir `roadWorks.js`, retiré du rendu
+ * pour le moment).
  */
 export function roadStyleFor(properties = {}, profiles = defaultTheme.roads.profiles) {
+  if (properties.brunnel === 'tunnel') return null;
   let key = ROAD_CLASSES[properties.class];
 
   if (properties.class === 'path' || properties.class === 'cycleway') {
     const subclass = properties.subclass;
-    if (subclass === 'steps') return null;
-    if (subclass === 'cycleway' || properties.bicycle === 'designated') key = 'cycleway';
+    if (subclass === 'steps') key = 'steps';
+    else if (subclass === 'cycleway' || properties.bicycle === 'designated') key = 'cycleway';
     else if (subclass === 'track') key = 'track';
   }
 
@@ -414,9 +537,10 @@ export function roadStyleFor(properties = {}, profiles = defaultTheme.roads.prof
   return {
     profile: key,
     halfWidth: profile.width / 2,
-    paved: (profile.surface || 'asphalt') === 'asphalt',
+    paved: isPaved(profile),
     works: workCodeFor(properties.brunnel),
     level: roadLevelFor(properties),
+    oneway: onewayFor(properties),
   };
 }
 
@@ -512,9 +636,11 @@ export function collectRoadLines(source, tiles, frame, roads = defaultTheme.road
       lines.push({
         profile: style.profile,
         halfWidth: style.halfWidth,
+        paved: style.paved,
         points,
         works: style.works,
         level: style.level,
+        oneway: style.oneway,
       });
     }
   });
@@ -655,7 +781,7 @@ export function crossedDeckAt(index, segment, si, cos = BRIDGE_CROSSING_COS) {
  *
  * @returns {{segments: Array<Object>, junctions: Array<Object>}} tronçons
  *          `{profile, halfWidth, path, startDistance, anchor, platform, edges,
- *          works}` et carrefours dans la portée demandée.
+ *          works, oneway}` et carrefours dans la portée demandée.
  */
 export function collectRoadSegments(
   source,
@@ -691,7 +817,7 @@ export function collectRoadSegments(
     const { distance: sinceAnchor, anchorIndex } = anchorDistances(chain.points, chain.anchors);
 
     for (const run of clipToRadius(chain.points, here.x, here.z, radius)) {
-      const path = resamplePath(run.points, ROAD_SAMPLE_M);
+      const path = subdividePath(run.points, ROAD_SAMPLE_M);
       if (path.length < 2) continue;
 
       // Les drapeaux d'ouvrage suivent le découpage : `clipToRadius` rend une
@@ -706,6 +832,12 @@ export function collectRoadSegments(
       const runLevels = resampleLevels(
         run.points,
         chain.levels?.slice(run.startIndex, run.startIndex + run.points.length),
+        path
+      );
+      // Le sens de circulation suit le même découpage, pour la même raison.
+      const runOneway = resampleOneway(
+        run.points,
+        chain.oneway?.slice(run.startIndex, run.startIndex + run.points.length),
         path
       );
 
@@ -752,6 +884,7 @@ export function collectRoadSegments(
         edges,
         works: runWorks,
         levels: runLevels,
+        oneway: runOneway,
         probeSpan: probe * 2,
       });
     }
@@ -763,6 +896,14 @@ export function collectRoadSegments(
   if (areas.length > 0) {
     for (const segment of out) {
       segment.junction = markJunctionRows(segment, areas);
+      // Un chemin passe par-dessus le carrefour d'une route : son ruban ne s'y
+      // interrompt pas.
+      if (!isPaved(roads.profiles[segment.profile])) {
+        const rows = segment.junction;
+        for (let r = 0; r < rows.length; r++) {
+          if (rows[r] >= 0 && isPaved(roads.profiles[areas.areas[rows[r]].profile])) rows[r] = -1;
+        }
+      }
       // De quelles chaussées chaque aire est faite : ce qui borde un coin de
       // rue ne doit pas compter les branches du carrefour comme un obstacle.
       areas.noteFeeder(segment);
@@ -908,8 +1049,13 @@ export class RoadNetwork {
     let junctionsDrawn = 0;
     let markings = 0;
 
+    const profiles = this.theme.roads.profiles;
     for (const segment of collected) {
-      if (!buffers[segment.profile]) buffers[segment.profile] = createRibbonBuffer();
+      const spec = profiles[segment.profile];
+      if (!buffers[segment.profile]) buffers[segment.profile] = createRibbonBuffer({ tips: spec.ragged > 0 });
+      const continued = (point) =>
+        index.query(point.x, point.z, 0, (other) => other !== segment && !isPaved(profiles[other.profile])) !==
+        null;
 
       // Deux raisons, et une seule mécanique, de ne pas dessiner une ligne : le
       // tunnel (la route continue sous la colline) et le carrefour (la surface
@@ -918,15 +1064,22 @@ export class RoadNetwork {
       // celles du tracé entier : le marquage ne se décale ni au ressortir d'un
       // tunnel ni au sortir d'un carrefour.
       const drawable = drawableRuns(segment.works, segment.path.length);
+      // Un escalier n'a pas de ruban : sa plate-forme continue est redécoupée
+      // en marches (`appendSteps`) plutôt que balayée telle quelle.
+      const geometryFor = spec.steps ? appendSteps : appendRibbon;
       for (const run of junctionRibbonRuns(segment, areas, drawable)) {
-        const added = appendRibbon(buffers[segment.profile], {
-          path: run.path,
-          halfWidth: segment.halfWidth,
-          sampleElevation,
-          platform: run.platform,
-          lift: ROAD_LIFT_M,
-          textureLength: ROAD_TEXTURE_LENGTH, // pas au sol constant, quelle que soit la largeur
-        });
+        const ribbon = isPaved(spec) ? run : unpavedRun(segment, run, continued);
+        const added =
+          ribbon &&
+          geometryFor(buffers[segment.profile], {
+            path: ribbon.path,
+            halfWidth: segment.halfWidth,
+            sampleElevation,
+            platform: ribbon.platform,
+            lift: roadLiftFor(spec),
+            textureLength: ROAD_TEXTURE_LENGTH, // pas au sol constant, quelle que soit la largeur
+            tips: ribbon.tips,
+          });
         if (added) segments++;
         // Le marquage se pose sur la **même** plage que le ruban : il hérite
         // donc de sa découpe — tunnels et carrefours — sans règle à lui.
@@ -954,10 +1107,16 @@ export class RoadNetwork {
       // qu'un point à poser s'en contente ; `decks` sert à qui suit une rive.
       area.decks = decks;
       area.deck = centre;
+      // La rive fait le tour de la dalle : elle est posée ici, avec les cotes
+      // qu'on vient de relever, et non dans `_appendMarkings` — celui-ci ne
+      // connaît qu'une plage de ruban, et un contour de carrefour n'en est pas
+      // une.
+      markings += this._appendJunctionEdges(markingBuffer, area, decks, centre, paint);
       const surface = this._surfaceOf(area.profile);
       if (!junctionBuffers[surface]) junctionBuffers[surface] = createRibbonBuffer();
       const buffer = junctionBuffers[surface];
-      const piece = junctionSurface(area, decks.map((deck) => deck + ROAD_LIFT_M), {
+      const lift = roadLiftFor(this.theme.roads.profiles[area.profile]);
+      const piece = junctionSurface(area, decks.map((deck) => deck + lift), {
         textureLength: ROAD_TEXTURE_LENGTH,
         base: buffer.positions.length / 3,
       });
@@ -1017,7 +1176,7 @@ export class RoadNetwork {
     const spec = this.theme.roads.profiles[segment.profile];
     // Rien de peint sur une chaussée qui ne l'est pas : la terre ne porte pas
     // de marquage, et un chemin d'exploitation n'en a jamais eu.
-    if (!spec || (spec.surface || 'asphalt') !== 'asphalt') return 0;
+    if (!spec || !isPaved(spec)) return 0;
 
     const { path, platform } = run;
     if (!path || path.length < 2) return 0;
@@ -1046,6 +1205,24 @@ export class RoadNetwork {
         decks: platform,
         frames,
         polygons: CYCLE_GLYPH,
+        color: paint,
+        lift,
+        startDistance: segment.startDistance || 0,
+      });
+    }
+
+    // La flèche de sens unique : posée là où la donnée l'affirme (`oneway`),
+    // pas là où la classe le permettrait. Une chaussée à double sens, ou dont
+    // le sens est resté ambigu d'une tuile à l'autre, n'en reçoit aucune.
+    if (spec.directionArrows) {
+      laid += appendMarkingArrows(buffer, {
+        path,
+        decks: platform,
+        frames,
+        oneway: segment.oneway,
+        onewayPath: segment.path,
+        forward: DIRECTION_GLYPH,
+        backward: DIRECTION_GLYPH_BACK,
         color: paint,
         lift,
         startDistance: segment.startDistance || 0,
@@ -1089,6 +1266,56 @@ export class RoadNetwork {
     return laid;
   }
 
+  /**
+   * Les lignes de rive que le carrefour prolonge le long de son contour.
+   *
+   * Un ruban s'arrête à la bouche, et sa rive avec lui : sans ce prolongement,
+   * une ligne continue s'interrompt à chaque croisée. Elle est reprise ici sur
+   * les morceaux de contour entre deux bouches — trois pour un carrefour en T,
+   * quatre pour une croisée — dont les extrémités sont **exactement** les
+   * sommets où les rives de ruban s'arrêtent (`junctionArea.edges`).
+   *
+   * Une seule condition, et c'est celle du thème : **au moins une** des deux
+   * branches que le morceau relie porte une ligne de rive. Une rue qui débouche
+   * sur une sortie de garage garde donc sa rive jusqu'au bout du coin, au lieu
+   * de la voir s'interrompre parce que la desserte d'en face n'est pas marquée
+   * — sur le terrain, la ligne de la rue fait bien le tour. Le morceau prend
+   * alors le retrait de la branche marquée sur toute sa longueur : le retrait
+   * de l'autre n'existe pas, il n'y a rien à interpoler. Un carrefour dont
+   * aucune branche n'est marquée — trois allées de service, deux chemins —
+   * reste nu, et c'est le bon résultat.
+   *
+   * Rien d'autre n'est repris au carrefour — ni axe, ni ligne d'effet à égalité
+   * de largeur : voir l'en-tête de `roadMarkings`.
+   *
+   * @returns {number} traits posés.
+   */
+  _appendJunctionEdges(buffer, area, decks, centre, paint) {
+    const profiles = this.theme.roads.profiles;
+    const insets = area.mouths.map((mouth) => borderInsetFor(profiles[mouth.profile]));
+
+    let laid = 0;
+    for (const edge of area.edges || []) {
+      laid += appendMarkingBorder(buffer, {
+        points: edge.points,
+        // Mêmes cotes et même interpolation que la dalle qu'elle borde : un
+        // sommet d'arc tient de deux branches, et passe de l'une à l'autre en
+        // tournant. `outlineDeckAt` fait ce mélange-là ; il sert ici deux fois,
+        // pour la hauteur et pour le retrait, parce que c'est le même mélange.
+        decks: edge.points.map((point) => {
+          const height = outlineDeckAt(point, decks);
+          return Number.isFinite(height) ? height : centre;
+        }),
+        insets: edge.points.map((point) => outlineDeckAt(point, insets)),
+        outward: edge.outward,
+        color: paint,
+        lift: ROAD_LIFT_M + MARKING_LIFT_M,
+      });
+    }
+
+    return laid;
+  }
+
   /** Le marquage au sol, en un maillage : une seule matière pour tout le réseau. */
   _applyMarkings(buffer) {
     const { THREE } = this;
@@ -1115,8 +1342,8 @@ export class RoadNetwork {
     mesh.receiveShadow = true;
     mesh.updateMatrix();
     // Après les rubans **et** après les surfaces de carrefour : le marquage
-    // est ce qu'on peint en dernier sur une chaussée, dans le rendu comme sur
-    // le terrain.
+    // est ce qu'on peint en dernier sur une chaussée revêtue. Seuls les
+    // chemins passent encore par-dessus.
     mesh.renderOrder = 1 + ROAD_PROFILE_ORDER.length + 2;
     this.scene.add(mesh);
     this.markingMesh = mesh;
@@ -1159,8 +1386,9 @@ export class RoadNetwork {
     mesh.receiveShadow = true;
     mesh.updateMatrix();
     // Après tous les rubans : la surface d'un carrefour est ce qui les relie,
-    // elle se pose donc par-dessus leurs bouches et non l'inverse.
-    mesh.renderOrder = 1 + ROAD_PROFILE_ORDER.length + 1;
+    // elle se pose donc par-dessus leurs bouches et non l'inverse. Un
+    // carrefour de chemins se dessine avec eux, après le marquage.
+    mesh.renderOrder = 1 + ROAD_PROFILE_ORDER.length + (isPaved({ surface }) ? 1 : 3);
     this.scene.add(mesh);
     this.junctionMeshes[surface] = mesh;
   }
@@ -1191,7 +1419,10 @@ export class RoadNetwork {
     mesh.receiveShadow = true;
     mesh.updateMatrix();
     // Après le terrain, dans l'ordre de la hiérarchie : la voie la plus importante se dessine par-dessus.
-    mesh.renderOrder = 1 + (ROAD_PROFILE_ORDER.length - ROAD_PROFILE_ORDER.indexOf(profile));
+    // Un chemin passe après tout ce qui est revêtu, marquage compris.
+    const rank = ROAD_PROFILE_ORDER.length - ROAD_PROFILE_ORDER.indexOf(profile);
+    const paved = isPaved(this.theme.roads.profiles[profile]);
+    mesh.renderOrder = 1 + rank + (paved ? 0 : ROAD_PROFILE_ORDER.length + 2);
     this.scene.add(mesh);
     this.meshes[profile] = mesh;
   }
