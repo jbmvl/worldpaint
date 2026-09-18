@@ -19,6 +19,7 @@ import {
   decodeTerrarium,
   decodeTerrainRgb,
   tilesAround,
+  tilesCovering,
   fillTileUrl,
   bearingToYaw,
   lerpBearing,
@@ -703,6 +704,58 @@ test('le bloc de tuiles enjambe l’antiméridien sans produire d’index négat
   const tiles = tilesAround(0.5, 1.5, 3, z);
   assert.ok(tiles.every((t) => t.x >= 0 && t.x < 4), 'x reste dans le monde');
   assert.ok(tiles.some((t) => t.x === 3), 'la colonne à l’ouest boucle par l’est');
+});
+
+test('un MNT plus grossier que la bulle se ramène à une seule tuile', () => {
+  // 15 → 13 : seize tuiles de bulle tombent dans la même tuile de MNT.
+  for (let y = 0; y < 4; y++) {
+    for (let x = 0; x < 4; x++) {
+      assert.deepEqual(tilesCovering(1000 + x, 2000 + y, 1, 15, 13), [{ x: 250, y: 500, z: 13 }]);
+    }
+  }
+  // La tuile suivante bascule bien sur la tuile de MNT d’à côté.
+  assert.deepEqual(tilesCovering(1004, 2000, 1, 15, 13), [{ x: 251, y: 500, z: 13 }]);
+  // Un bloc de 3 tuiles de bulle peut chevaucher deux tuiles de MNT.
+  assert.equal(tilesCovering(1003, 2000, 3, 15, 13).length, 2);
+});
+
+test('un MNT plus fin que la bulle demande toutes les tuiles qui la couvrent', () => {
+  const tiles = tilesCovering(10, 20, 1, 13, 15);
+  assert.equal(tiles.length, 16);
+  assert.ok(tiles.every((t) => t.x >= 40 && t.x < 44 && t.y >= 80 && t.y < 84), 'quadrant exact');
+  // À zoom égal, la couverture est la tuile elle-même.
+  assert.deepEqual(tilesCovering(10, 20, 1, 13, 13), [{ x: 10, y: 20, z: 13 }]);
+});
+
+test('la couverture du MNT enjambe l’antiméridien sans index négatif', () => {
+  const tiles = tilesCovering(-1, 1, 1, 3, 3);
+  assert.deepEqual(tiles, [{ x: 7, y: 1, z: 3 }]);
+});
+
+test('tout point échantillonné tombe dans une tuile de MNT chargée', () => {
+  // L’invariant qui tient le rendu : ce que `_sample` lit doit être dans ce
+  // que le chargement a demandé, marge du gradient comprise.
+  const bubbleZoom = 15;
+  for (const demZoom of [12, 13, 15, 16]) {
+    const scale = Math.pow(2, demZoom - bubbleZoom);
+    const margin = 1 / DEM_TILE_PIXELS; // un pixel de MNT, en unités de tuile de bulle
+    for (const [bx, by] of [[1000, 2000], [1003, 2003], [0, 0]]) {
+      const loaded = new Set(
+        tilesCovering(bx - 1, by - 1, 3, bubbleZoom, demZoom).map((t) => `${t.x}/${t.y}`)
+      );
+      const world = Math.pow(2, demZoom);
+      for (const u of [-margin, 0, 0.5, 1, 1 + margin]) {
+        for (const v of [-margin, 0, 0.5, 1, 1 + margin]) {
+          // En x le monde est cyclique, comme dans `ElevationField._pixel` ;
+          // en y il n’y a rien au-delà des pôles, et le champ le sait.
+          const tx = (((Math.floor((bx + u) * scale) % world) + world) % world);
+          const ty = Math.floor((by + v) * scale);
+          if (ty < 0 || ty >= world) continue;
+          assert.ok(loaded.has(`${tx}/${ty}`), `MNT z${demZoom} en (${bx}, ${by}) + (${u}, ${v})`);
+        }
+      }
+    }
+  }
 });
 
 test('les gabarits d’URL gèrent {z}/{x}/{y} et le schéma TMS', () => {

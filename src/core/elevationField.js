@@ -48,12 +48,14 @@ function decodeTile(bitmap, encoding) {
 export class ElevationField {
   /**
    * @param {Object} options
-   * @param {number} options.zoom      Zoom des tuiles DEM.
+   * @param {number} options.zoom      Zoom des tuiles DEM, indépendant de celui
+   *        de la bulle qui les lit : c'est la résolution de la source qui le
+   *        décide, pas la finesse de la maille.
    * @param {string} [options.url]     Gabarit d'URL.
    * @param {string} [options.encoding] 'terrarium' (défaut) ou 'terrain-rgb'.
    * @param {number} [options.maxTiles] Taille du cache LRU (défaut 64 tuiles,
-   *        soit ~17 Mo : le bloc courant en compte 25, le reste sert au
-   *        recyclage quand l'observateur revient sur ses pas).
+   *        soit ~17 Mo : de quoi couvrir largement le bloc courant, le reste
+   *        sert au recyclage quand l'observateur revient sur ses pas).
    */
   constructor({ zoom, url = TERRARIUM_URL, encoding = 'terrarium', maxTiles = 64 } = {}) {
     this.zoom = zoom;
