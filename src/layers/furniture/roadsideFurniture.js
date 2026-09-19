@@ -118,10 +118,10 @@ const DEFAULT_ALIGNMENT_SPECIES = [
  *
  * Les essences sont celles du pays, dans l'ordre où il les donne : la première
  * pèse à peu près la moitié de l'alignement (`sharesFor`). Elles passent par le
- * catalogue du mobilier, qui ne connaît que cinq silhouettes — `treeColumnar`
+ * catalogue du mobilier, qui ne connaît que six silhouettes — `treeColumnar`
  * porte le cyprès et le peuplier, `treeRound` le pin parasol comme le tilleul,
- * `treeOval` l'olivier comme le bouleau. Sans région, c'est le mélange par
- * défaut.
+ * `treeOval` l'olivier comme le bouleau, `treePalm` le seul mot qui la porte.
+ * Sans région, c'est le mélange par défaut.
  */
 function alignmentTreeSpeciesFor(x, z, trees = null) {
   const mix = trees?.length

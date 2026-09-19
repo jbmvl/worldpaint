@@ -221,11 +221,7 @@ export const TREE_KINDS = Object.freeze({
     alignment: 'treeRound',
     unsupported: 'aucune silhouette de parasol épineux',
   },
-  palm: {
-    essence: 'column',
-    alignment: 'treeColumnar',
-    unsupported: 'aucune silhouette de palmier',
-  },
+  palm: { essence: 'column', alignment: 'treePalm' },
 });
 
 /** Les cinq vocabulaires, par champ du dossier de région. */
