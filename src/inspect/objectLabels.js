@@ -271,6 +271,7 @@ export const LABEL_CROPS = {
   orchard: 'verger',
   lavender: 'lavande',
   rapeseed: 'colza',
+  rice: 'riz',
 };
 
 /**

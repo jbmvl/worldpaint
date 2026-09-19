@@ -90,6 +90,9 @@ export const TERRAIN_LOOK = {
     // Le colza en fleur, en revanche, est la tache la plus saturée d'un
     // paysage de printemps — plus jaune encore qu'un blé mûr.
     rapeseed: [0.604, 0.522, 0.061],
+    // Vert soutenu de la feuille de riz, calé sur `drawRice` : pas de lame
+    // d'eau ni de casier (voir `CONTRIBUTING.md`), seulement le feuillage.
+    rice: [0.09, 0.183, 0.081],
   },
   /** Teinte de roche sur les fortes pentes, avant la géologie (`STONE_LOOK`). */
   rockColor: [0.72, 0.68, 0.62],
@@ -409,6 +412,8 @@ export const CROP_LOOK = {
   // Le colza : une masse serrée et haute, la seule culture dont la fleur, et
   // non le feuillage, fait la couleur du champ.
   rapeseed: { atlas: 'rapeseed', height: 1.3, spread: 0.24, density: 0.85, tint: [1.02, 0.98, 0.56] },
+  // Le riz : des touffes basses et serrées, sans épi visible à cette échelle.
+  rice: { atlas: 'rice', height: 0.55, spread: 0.22, density: 0.9, tint: [0.86, 1.04, 0.82] },
 };
 
 // --- Le sol d'un pays ---------------------------------------------------------

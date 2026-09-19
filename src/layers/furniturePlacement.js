@@ -381,14 +381,16 @@ export const CROP_KINDS = [
   'orchard',
   'lavender',
   'rapeseed',
+  'rice',
 ];
 
 /**
  * Pas entre deux identifiants dans le canal rouge.
  *
- * Il était de 40, ce qui plafonnait à six cultures (7 × 40 dépasse 255). Huit
- * cultures tiennent à 28, avec ± 14 de tolérance à l'arrondi de la texture —
- * largement de quoi encaisser le passage par un canevas 8 bits.
+ * Il était de 40, ce qui plafonnait à six cultures (7 × 40 dépasse 255). Neuf
+ * cultures tiennent à 28 (9 × 28 = 252), avec trois de marge à l'arrondi de la
+ * texture — c'est la dernière place : un dixième identifiant exige de baisser
+ * le pas.
  */
 export const CROP_ID_STEP = 28;
 

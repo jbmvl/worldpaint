@@ -174,7 +174,7 @@ export const FARMING_KINDS = Object.freeze({
   almond: { crop: 'orchard' },
   lavender: { crop: 'lavender' },
   fallow: { crop: 'plough' },
-  rice: { crop: 'plough', unsupported: 'ni lame d’eau ni casier : rend un labour' },
+  rice: { crop: 'rice' },
   greenhouse: { crop: 'plough' }, // le maraîchage lui-même est un mobilier de parcelle, voir furniture/parcels.js
   cotton: { crop: 'plough', unsupported: 'aucun motif de coton : rend un labour' },
   sugarcane: { crop: 'maize', unsupported: 'rend un maïs, qui est trop bas' },
