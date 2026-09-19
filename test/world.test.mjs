@@ -2499,27 +2499,26 @@ test('le sol d’un bois porte une litière, pas une prairie à l’ombre', () =
   assert.ok(sousBois.shade > WOODLAND_FLOWER_MAX, 'un vrai bois passe le seuil');
 });
 
-test('un sol de forêt reste vert : plus sombre qu’un pré, jamais un trou noir', () => {
-  // Il l'était : son vert valait 0,056 contre 0,135 pour l'herbe, soit moins de
-  // la moitié — sous les arbres, le décor tombait dans une matière plus sombre
-  // que l'ombre qu'elle portait. La règle est maintenant écrite : un sous-bois
-  // est une litière, donc plus sombre qu'une prairie, mais il en garde au moins
-  // la moitié du vert.
+test('un sol de forêt est une litière brune, jamais un trou noir', () => {
+  // Un sous-bois n'est pas un pré à l'ombre : c'est une litière, brune plutôt
+  // que verte (rouge ≥ 0,80 × vert), et plus sombre qu'une prairie sans tomber
+  // dans le noir.
   const woodAlbedo = defaultTheme.surfaces.wood.albedo;
   const grassAlbedo = defaultTheme.surfaces.grass.albedo;
-  assert.ok(woodAlbedo[1] < grassAlbedo[1], 'un sous-bois reste plus sombre qu’un pré');
+  const luma = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  assert.ok(luma(woodAlbedo) < luma(grassAlbedo), 'un sous-bois reste plus sombre qu’un pré');
+  assert.ok(luma(woodAlbedo) > 0.02, 'jamais un trou noir');
   assert.ok(
-    woodAlbedo[1] >= grassAlbedo[1] * 0.5,
-    `le vert du sous-bois : ${woodAlbedo[1]} pour ${grassAlbedo[1]} en prairie`
+    woodAlbedo[0] >= woodAlbedo[1] * 0.8,
+    `la litière est brune, pas verte : ${woodAlbedo}`
   );
-  // Et c'est bien du vert : le canal dominant, comme dans l'herbe.
-  assert.ok(woodAlbedo[1] > woodAlbedo[0] && woodAlbedo[1] > woodAlbedo[2]);
 
-  // Les touffes qui poussent dessus suivent le même déplacement, sans quoi le
-  // premier plan et le lointain peindraient deux forêts différentes.
+  // Les touffes qui poussent dessus suivent le même déplacement : le vert y
+  // recule plus que le rouge, sans quoi le premier plan resterait vert alors
+  // que le lointain a viré au brun.
   assert.ok(
-    WOODLAND_FLOOR.tint[1] > 0.85,
-    `la teinte des touffes de sous-bois : ${WOODLAND_FLOOR.tint[1]}`
+    WOODLAND_FLOOR.tint[0] > WOODLAND_FLOOR.tint[1],
+    `le rouge doit reculer moins que le vert : ${WOODLAND_FLOOR.tint}`
   );
 });
 
@@ -10251,23 +10250,19 @@ test('un réseau dit jusqu’où il sait, ce qui n’est pas dire ce qu’il con
 
 test('un quartier d’habitation porte de l’herbe, une zone d’activité non', () => {
   // `residential` décrit un périmètre, pas un revêtement : pelouses tondues et
-  // allées. C'était un remplissage **partiel** — deux tiers d'herbe peints dans
-  // un canal de poids, la seule matière qui le fût. C'est maintenant une
-  // matière comme les autres, et la part d'herbe n'est plus dans la carte mais
-  // dans la strate basse, qui est la seule à en avoir besoin.
+  // allées. La part d'herbe n'est pas dans la carte mais dans la strate basse,
+  // qui est la seule à en avoir besoin.
   assert.ok(SURFACE_KINDS.includes('settled'), 'le lotissement est une matière');
   assert.ok(SETTLED_GRASS > 0.5 && SETTLED_GRASS < 1, 'majoritairement vert, jamais un pré');
 
-  // Sa couleur est la moyenne exacte que le mélange rendait : la fusion ne
-  // devait pas déplacer une valeur artistique au passage.
-  const { grass, bare, settled } = defaultTheme.surfaces;
-  for (let i = 0; i < 3; i++) {
-    const expected = grass.albedo[i] * SETTLED_GRASS + bare.albedo[i] * (1 - SETTLED_GRASS);
-    assert.ok(
-      Math.abs(settled.albedo[i] - expected) < 0.002,
-      `canal ${i} : ${settled.albedo[i]} pour ${expected} attendu`
-    );
-  }
+  // Sa couleur est une valeur propre — plus claire et plus franchement verte
+  // qu'une prairie de rase campagne, l'entretien plutôt que l'herbe elle-même —
+  // et non plus dérivée d'un mélange avec le sol nu.
+  const { settled } = defaultTheme.surfaces;
+  assert.ok(
+    settled.albedo[1] > settled.albedo[0] && settled.albedo[1] > settled.albedo[2],
+    'le vert domine : c’est une pelouse, pas un sol nu'
+  );
 });
 
 test('un périmètre habité ne suffit pas à faire une rue', () => {

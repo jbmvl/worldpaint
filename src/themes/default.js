@@ -389,11 +389,12 @@ export const WOODLAND_FLOOR = {
   green: 0.55,
   height: 0.5,
   density: 0.7,
-  // Le même déplacement que l'albédo de `wood`, et il n'a pas le choix : les deux
-  // peignent le même sol, l'un au loin et l'autre sous le nez. Le facteur est
-  // à mi-chemin de son ancienne valeur et du neutre, comme l'albédo est à
-  // mi-chemin de celui de l'herbe.
-  tint: [0.99, 0.91, 0.87],
+  // Le même déplacement que l'albédo de `wood`, et il n'a pas le choix : les
+  // deux peignent le même sol, l'un au loin et l'autre sous le nez. `wood` est
+  // une litière brune (rouge dominant) : le vert recule bien plus que le
+  // rouge, sans quoi la touffe resterait verte alors que le sol qu'elle
+  // couvre a viré au brun.
+  tint: [0.98, 0.55, 0.45],
 };
 
 // --- Les cultures --------------------------------------------------------------
@@ -671,22 +672,24 @@ export const STONE_LOOK = {
 export const SURFACE_LOOK = {
   // --- Le végétal ordinaire -------------------------------------------------
   grass: { albedo: [0.051, 0.135, 0.017], wash: 'grass' },
-  // Un sol de forêt est une litière, pas un pré : à mi-chemin de l'herbe. Le
-  // pays ne le lave pas — une hêtraie se ressemble d'un bout à l'autre.
-  wood: { albedo: [0.047, 0.096, 0.019], wash: null },
+  // Un sol de forêt est une litière, pas un pré : brune, jamais verte — c'est
+  // ce qui la distingue d'une prairie à l'ombre. Le pays ne le lave pas — une
+  // hêtraie se ressemble d'un bout à l'autre.
+  wood: { albedo: [0.099, 0.062, 0.01], wash: null },
   farmland: { albedo: [0.431, 0.331, 0.08], wash: 'farmland' },
-  // Lotissement : pelouses tondues et allées. C'était un mélange peint dans un
-  // canal (deux tiers d'herbe, un tiers de minéral) ; c'est désormais une
-  // matière, et son albédo est la moyenne exacte que ce mélange rendait — la
-  // reprendre à l'œil est une décision à part, pas un effet de bord de la fusion.
-  // Pelouse tondue et allées : un aplat d'entretien, pas un terrain qui varie.
-  settled: { albedo: [0.125, 0.176, 0.088], wash: 'grass', macro: 0.3 },
+  // Lotissement : pelouses tondues et allées, plus claires et plus franchement
+  // vertes qu'une prairie de rase campagne — l'entretien, pas l'herbe elle-même.
+  // Un aplat, pas un terrain qui varie.
+  settled: { albedo: [0.12, 0.205, 0.08], wash: 'grass', macro: 0.3 },
 
   // --- Les couvertures végétales --------------------------------------------
   // Bruyère et molinie sèche : brun-pourpre, la couleur d'un moor. Rase, dense,
   // et elle ne porte quasiment pas d'arbre.
   heath: {
-    albedo: [0.159, 0.122, 0.08],
+    // Pourpre-brun franc (rouge nettement dominant) : c'est la teinte de la
+    // bruyère et de la molinie sèche, et ce qui distingue une lande d'un maquis
+    // olive ou d'une prairie verte.
+    albedo: [0.174, 0.109, 0.044],
 
     wash: null,
     grassHeight: 0.45,
@@ -701,7 +704,9 @@ export const SURFACE_LOOK = {
   // Maquis et garrigue : olive poussiéreux, jamais le vert d'un pré. Peu
   // d'herbe, beaucoup d'arbustes — l'inverse exact d'une prairie.
   scrub: {
-    albedo: [0.147, 0.171, 0.08],
+    // Kaki clair : rouge et vert proches, beaucoup plus clair qu'une lande —
+    // c'est le sol pierreux du maquis qui affleure entre les buissons.
+    albedo: [0.235, 0.195, 0.08],
 
     wash: null,
     grassHeight: 0.55,
@@ -714,8 +719,10 @@ export const SURFACE_LOOK = {
   // Marais, tourbière, roselière : le vert le plus profond du décor, la seule
   // couverture plus haute qu'une prairie, et de l'eau entre les touffes.
   wetland: {
-    albedo: [0.072, 0.107, 0.048],
-   
+    // Vert profond olive — le rouge y reste au-dessus de 65 % du vert, sinon
+    // c'est un vert franc de prairie, pas la roselière d'un marais.
+    albedo: [0.071, 0.099, 0.075],
+
     wash: null,
     grassHeight: 1.4,
     grassDensity: 1,
@@ -726,7 +733,9 @@ export const SURFACE_LOOK = {
   // Pré salé : salicorne et obione, gris-vert, ras. Les chenaux de marée y
   // laissent de l'eau.
   saltmarsh: {
-    albedo: [0.118, 0.13, 0.085],
+    // Gris froid : le vert n'y descend jamais sous le rouge, à la différence
+    // d'une lande ou d'une vasière, chaudes l'une comme l'autre.
+    albedo: [0.118, 0.148, 0.17],
     wash: null,
     grassHeight: 0.5,
     grassDensity: 0.85,
@@ -746,10 +755,12 @@ export const SURFACE_LOOK = {
   },
 
   // --- Le minéral -----------------------------------------------------------
-  // Vasière : estran, fond d'étang asséché. Brun-gris mouillé, rien n'y
-  // pousse, et l'eau y reste en flaques.
+  // Vasière : estran, fond d'étang asséché. Nappe claire et chaude, quasi
+  // désaturée (rouge ≥ 1,25 × bleu) — c'est ce qui la distingue d'un pré salé,
+  // froid sur le même registre de gris. Rien n'y pousse, l'eau y reste en
+  // flaques.
   mud: {
-    albedo: [0.1, 0.085, 0.063],
+    albedo: [0.155, 0.147, 0.097],
     wash: null,
     grassDensity: 0,
     bushes: 0,
@@ -757,7 +768,8 @@ export const SURFACE_LOOK = {
     macro: 1.6,
     macroNear: 0.35,
   },
-  bare: { albedo: [0.27, 0.255, 0.225], wash: 'bare' },
+  // Sol nu industriel ou en friche : terreux, plus saturé qu'un simple gris.
+  bare: { albedo: [0.25, 0.21, 0.14], wash: 'bare' },
   // L'éboulis et la dalle sont deux paysages : une pente de cailloux qui bouge,
   // un plateau de pierre. Les confondre était le défaut du gris unique.
   scree: {
@@ -798,7 +810,9 @@ export const SURFACE_LOOK = {
   // repli. Elle assourdissait le grain, seule de la table — sans objet depuis
   // que plus aucune matière n'en a.
   pavement: {
-    albedo: [0.31, 0.3, 0.28],
+    // Gris froid (bleu ≥ vert ≥ rouge) : même dérive que `townStyle.pavement`,
+    // sans quoi la bordure et le sol qu'elle borde divergeraient de teinte.
+    albedo: [0.3, 0.345, 0.395],
 
     wash: 'pavement',
     grassDensity: 0,
@@ -1315,19 +1329,19 @@ export const STREET_LOOK = {
    */
   pavementGrain: 0.55,
   pavement: {
-    default: '#43444a',
-    hedgerow_meadow: '#43444a',
-    moor_heath: '#3f4046',
-    garrigue: '#4a4b51',
-    dry_scrub: '#44454b',
-    terraced_slope: '#43444a',
-    dry_steppe: '#484950',
-    desert_stone: '#4d4e55',
-    desert_sand: '#4d4e55',
-    openfield_cropland: '#424349',
-    boreal_taiga: '#3b3c41',
-    alpine_pasture: '#404147',
-    bare_rock: '#3c3d43',
+    default: '#3d464f',
+    hedgerow_meadow: '#3d464f',
+    moor_heath: '#39424b',
+    garrigue: '#444d56',
+    dry_scrub: '#3e4750',
+    terraced_slope: '#3d464f',
+    dry_steppe: '#424b54',
+    desert_stone: '#475059',
+    desert_sand: '#475059',
+    openfield_cropland: '#3c454e',
+    boreal_taiga: '#343d46',
+    alpine_pasture: '#3a434c',
+    bare_rock: '#363f48',
   },
 };
 

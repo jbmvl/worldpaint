@@ -31,7 +31,7 @@ import { resolveTheme } from '../src/themes/theme.js';
 import { townPaletteAt, buildingStyleAt, streetSurfaceAt } from '../src/layers/townStyle.js';
 import { kerbProfile } from '../src/layers/streetLayer.js';
 import { roofRise } from '../src/layers/roofGeometry.js';
-import { waterwayStyleFor } from '../src/terrain/groundClassMap.js';
+import { waterwayStyleFor, SURFACE_KINDS } from '../src/terrain/groundClassMap.js';
 import { grassVariantFor } from '../src/layers/groundCover.js';
 import { windowGrid } from '../src/layers/buildingLayer.js';
 import { forestTypeAt, variantsFor } from '../src/layers/vegetationLayer.js';
@@ -480,4 +480,110 @@ test('la mémoire des palettes est indexée par nuancier ET par région', () => 
   assert.ok(cite(sud, andalouse), `${sud} est bâtie dans un matériau du sud`);
   // Et sans pays, on retrouve exactement le tirage d'avant les régions.
   assert.equal(townPaletteAt(4200, 1400, DEFAULT.towns).name, townPaletteAt(4200, 1400).name);
+});
+
+/** Luminance perçue (Rec. 709), la même pondération que `wetGround` du shader. */
+const perceivedLuma = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+test('deux matières se distinguent par la couleur, à distance RGB minimale', () => {
+  // Règle A : chaque paire de matières s'écarte d'au moins 0,06 en distance
+  // RGB — sans quoi deux matières se peignent de la même couleur et ne se
+  // distinguent plus que par leur silhouette et leur mobilier. Seule
+  // exemption : `scree`, `rock` et `pavement` entre elles, dont la parenté est
+  // géologique — c'est la même roche que la matrice du pays reteinte.
+  const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+  const exempt = new Set(['scree', 'rock', 'pavement']);
+  for (let i = 0; i < SURFACE_KINDS.length; i++) {
+    for (let j = i + 1; j < SURFACE_KINDS.length; j++) {
+      const a = SURFACE_KINDS[i];
+      const b = SURFACE_KINDS[j];
+      if (exempt.has(a) && exempt.has(b)) continue;
+      const d = dist(defaultTheme.surfaces[a].albedo, defaultTheme.surfaces[b].albedo);
+      assert.ok(d >= 0.06, `${a} / ${b} : distance ${d.toFixed(4)}`);
+    }
+  }
+});
+
+test('les matières végétales se distinguent en outre par la luminance ou la dominante', () => {
+  // Règle B : la distance seule ne suffit pas entre végétaux — deux couleurs
+  // peuvent s'écarter en teinte sans s'écarter en luminance ni en dominante,
+  // et c'est justement la luminance (ce qui reste lisible à cent mètres) qui
+  // fait la silhouette d'un biome. Il faut donc, en plus de la règle A, un
+  // écart de luminance perçue d'au moins 0,025 OU un écart du rapport
+  // rouge/vert d'au moins 0,25.
+  const vegetal = ['grass', 'wood', 'heath', 'scrub', 'wetland', 'saltmarsh', 'alpine', 'settled'];
+  for (let i = 0; i < vegetal.length; i++) {
+    for (let j = i + 1; j < vegetal.length; j++) {
+      const a = defaultTheme.surfaces[vegetal[i]].albedo;
+      const b = defaultTheme.surfaces[vegetal[j]].albedo;
+      const dLuma = Math.abs(perceivedLuma(a) - perceivedLuma(b));
+      const dRatio = Math.abs(a[0] / a[1] - b[0] / b[1]);
+      assert.ok(
+        dLuma >= 0.025 || dRatio >= 0.25,
+        `${vegetal[i]} / ${vegetal[j]} : Δluma ${dLuma.toFixed(4)}, Δ(R/G) ${dRatio.toFixed(4)}`
+      );
+    }
+  }
+});
+
+test('l’échelle de luminance végétale vise les valeurs de la fiche, à 0,008 près', () => {
+  // grass et alpine sont fixes : le reste du décor se règle par rapport à eux.
+  const target = {
+    wood: 0.066,
+    wetland: 0.091,
+    grass: 0.109,
+    heath: 0.118,
+    saltmarsh: 0.143,
+    settled: 0.172,
+    scrub: 0.2,
+    alpine: 0.233,
+  };
+  for (const [kind, expected] of Object.entries(target)) {
+    const luma = perceivedLuma(defaultTheme.surfaces[kind].albedo);
+    assert.ok(
+      Math.abs(luma - expected) <= 0.008,
+      `${kind} : luminance ${luma.toFixed(4)} pour ${expected} visé`
+    );
+  }
+  assert.deepEqual(defaultTheme.surfaces.grass.albedo, [0.051, 0.135, 0.017], 'grass est fixe');
+  assert.deepEqual(defaultTheme.surfaces.alpine.albedo, [0.205, 0.254, 0.107], 'alpine est fixe');
+});
+
+test('chaque matière retouchée porte la dominante de sa fiche de biome', () => {
+  const r = (kind) => defaultTheme.surfaces[kind].albedo[0];
+  const g = (kind) => defaultTheme.surfaces[kind].albedo[1];
+  const b = (kind) => defaultTheme.surfaces[kind].albedo[2];
+  assert.ok(r('wood') >= 0.8 * g('wood'), 'bois : litière brune, rouge ≥ 0,80 × vert');
+  assert.ok(r('wetland') >= 0.65 * g('wetland'), 'marais : olive profond, rouge ≥ 0,65 × vert');
+  assert.ok(r('heath') >= 1.4 * g('heath'), 'lande : pourpre-brun, rouge ≥ 1,40 × vert');
+  assert.ok(g('saltmarsh') >= r('saltmarsh'), 'pré salé : gris froid, vert ≥ rouge');
+  assert.ok(r('mud') >= 1.25 * b('mud'), 'vasière : chaude, rouge ≥ 1,25 × bleu');
+  assert.ok(r('bare') >= g('bare') && g('bare') >= b('bare'), 'sol nu : plus terreux, rouge ≥ vert ≥ bleu');
+  assert.ok(
+    b('pavement') >= g('pavement') && g('pavement') >= r('pavement'),
+    'trottoir : plus froid, bleu ≥ vert ≥ rouge'
+  );
+
+  // Le sol et sa bordure ne peuvent pas diverger : la même dérive froide vaut
+  // pour `townStyle.pavement`, lu par `pavementTone`.
+  const town = defaultTheme.streets.pavement.default;
+  const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+  const [tr, tg, tb] = hex(town);
+  assert.ok(tb >= tg && tg >= tr, `townStyle.pavement.default doit aussi être froid : ${town}`);
+});
+
+test('les matières non concernées par le chantier gardent leur couleur', () => {
+  const unchanged = {
+    grass: [0.051, 0.135, 0.017],
+    farmland: [0.431, 0.331, 0.08],
+    alpine: [0.205, 0.254, 0.107],
+    sand: [0.624, 0.539, 0.361],
+    ice: [0.6, 0.66, 0.72],
+    water: [0.021, 0.045, 0.06],
+    scree: [0.323, 0.292, 0.254],
+    rock: [0.371, 0.332, 0.27],
+  };
+  for (const [kind, albedo] of Object.entries(unchanged)) {
+    assert.deepEqual(defaultTheme.surfaces[kind].albedo, albedo, `${kind} n’a pas bougé`);
+  }
 });
