@@ -695,12 +695,14 @@ export const CROP_VARIANTS = [
   'stubble',
   'lavender',
   'rapeseed',
+  'rice',
   'wheatMass',
   'maizeMass',
   'sunflowerMass',
   'stubbleMass',
   'lavenderMass',
   'rapeseedMass',
+  'riceMass',
 ];
 
 export const CROP_ATLAS_OFFSETS = atlasOffsets(CROP_ATLAS_COLS, CROP_ATLAS_ROWS);
@@ -875,6 +877,30 @@ function drawRapeseed(ctx, size, random) {
   }
 }
 
+/**
+ * Riz : des pieds repiqués en petites touffes, bien plus bas qu'un blé et sans
+ * épi — c'est le vert soutenu de la feuille, pas une couleur de grain, qui
+ * fait la rizière.
+ */
+function drawRice(ctx, size, random) {
+  for (let i = 0; i < 9; i++) {
+    const baseX = size * (0.08 + random() * 0.84);
+    const baseY = size * (0.97 + random() * 0.03);
+
+    for (let b = 0; b < 6; b++) {
+      const height = size * (0.3 + random() * 0.24);
+      const lean = size * (random() - 0.5) * 0.2;
+
+      ctx.strokeStyle = `rgb(${64 + random() * 28 | 0}, ${146 + random() * 34 | 0}, ${64 + random() * 26 | 0})`;
+      ctx.lineWidth = Math.max(1, size * 0.008);
+      ctx.beginPath();
+      ctx.moveTo(baseX, baseY);
+      ctx.quadraticCurveTo(baseX + lean * 0.5, baseY - height * 0.6, baseX + lean, baseY - height);
+      ctx.stroke();
+    }
+  }
+}
+
 const CROP_PAINTERS = {
   wheat: drawWheat,
   maize: drawMaize,
@@ -882,10 +908,11 @@ const CROP_PAINTERS = {
   stubble: drawStubble,
   lavender: drawLavender,
   rapeseed: drawRapeseed,
+  rice: drawRice,
 };
 
 /** Nombre de sous-touffes d'une masse, par culture (une case ne contient pas le même nombre de plantes selon la culture). */
-const CROP_MASS_PASSES = { wheat: 3, maize: 6, sunflower: 6, stubble: 3, lavender: 4, rapeseed: 3 };
+const CROP_MASS_PASSES = { wheat: 3, maize: 6, sunflower: 6, stubble: 3, lavender: 4, rapeseed: 3, rice: 4 };
 
 /**
  * Élancement du panneau sur lequel chaque masse sera plaquée : la largeur que
@@ -904,6 +931,7 @@ export const CROP_MASS_ASPECT = {
   stubble: 2.8,
   lavender: 3.6,
   rapeseed: 3.1,
+  rice: 2.8,
 };
 
 /**

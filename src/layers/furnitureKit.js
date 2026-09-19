@@ -1206,6 +1206,38 @@ export const FURNITURE_BUILDERS = {
   },
 
   /**
+   * Palmier isolé : fût fin et penché, panache de palmes en éventail plutôt
+   * qu'une houppe fermée — ce qui manque à `treeColumnar`, qui lit un
+   * peuplier et non un palmier quand on l'emprunte pour l'un comme pour
+   * l'autre.
+   *
+   * Chaque palme est une planche centrée sur l'axe du fût : la moitié qui
+   * recule vers le tronc se perd dans son épaisseur, l'autre porte tout le
+   * panache une fois inclinée (`tilt`) et tournée (`yaw`).
+   */
+  treePalm(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const trunkHeight = 6.5;
+    k.cylinder({ radiusBottom: 0.22, radiusTop: 0.13, height: trunkHeight, radial: 7, tilt: 0.09, color: C.bark });
+    const crownY = trunkHeight * Math.cos(0.09);
+    const fronds = 7;
+    for (let i = 0; i < fronds; i++) {
+      k.box({
+        width: 0.24,
+        height: 0.06,
+        depth: 2.7,
+        y: crownY,
+        tilt: -0.6,
+        yaw: (i / fronds) * Math.PI * 2,
+        color: i % 2 ? C.leafOlive : C.leafDeep,
+      });
+    }
+    // Flèche centrale, la seule palme qui pointe encore vers le haut.
+    k.box({ width: 0.14, height: 0.05, depth: 1.6, y: crownY, tilt: -1.35, color: C.leafSpring });
+    return k;
+  },
+
+  /**
    * Fil à linge : deux piquets, une corde, et quatre pièces qui pendent.
    *
    * Les draps sont des quadrilatères simples plutôt que des surfaces pliées :

@@ -141,14 +141,14 @@ export const BUILDING_KINDS = Object.freeze({
   rendered: {},
   timber: {},
   red_timber: {},
-  adobe: { unsupported: 'aucune palette de terre crue' },
+  adobe: {},
   // Toits.
   slate_roof: {},
   flat_tile_roof: {},
   curved_tile_roof: {},
   stone_slab_roof: {},
   flat_roof: {},
-  thatch_roof: { unsupported: 'aucune couverture de chaume' },
+  thatch_roof: {},
   shingle_roof: { unsupported: 'aucune couverture de bardeau' },
   metal_roof: { unsupported: 'aucune couverture de tôle' },
 });
@@ -174,8 +174,8 @@ export const FARMING_KINDS = Object.freeze({
   almond: { crop: 'orchard' },
   lavender: { crop: 'lavender' },
   fallow: { crop: 'plough' },
-  rice: { crop: 'plough', unsupported: 'ni lame d’eau ni casier : rend un labour' },
-  greenhouse: { crop: 'plough', unsupported: 'aucune serre : rend un labour' },
+  rice: { crop: 'rice' },
+  greenhouse: { crop: 'plough' }, // le maraîchage lui-même est un mobilier de parcelle, voir furniture/parcels.js
   cotton: { crop: 'plough', unsupported: 'aucun motif de coton : rend un labour' },
   sugarcane: { crop: 'maize', unsupported: 'rend un maïs, qui est trop bas' },
   tea: { crop: 'vineyard', unsupported: 'rend des rangs de vigne' },
@@ -221,11 +221,7 @@ export const TREE_KINDS = Object.freeze({
     alignment: 'treeRound',
     unsupported: 'aucune silhouette de parasol épineux',
   },
-  palm: {
-    essence: 'column',
-    alignment: 'treeColumnar',
-    unsupported: 'aucune silhouette de palmier',
-  },
+  palm: { essence: 'column', alignment: 'treePalm' },
 });
 
 /** Les cinq vocabulaires, par champ du dossier de région. */

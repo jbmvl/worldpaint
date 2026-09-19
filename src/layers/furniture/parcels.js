@@ -34,6 +34,7 @@ import {
   positionSeed,
   ROW_CROPS,
   WOOD_PILE_EDGE_MIN,
+  farmingWordFor,
 } from '../furniturePlacement.js';
 import {
   BOUNDARY_SAMPLE_M,
@@ -82,6 +83,8 @@ export const FARMSTEAD_CLUSTER_MIN_BUILDINGS = 2;
 export const FARMSTEAD_SHARE = 0.1;
 /** Sel du tirage de `FARMSTEAD_SHARE`. */
 const FARMSTEAD_SALT = 211;
+/** Sel du tirage qui retire le mot d'assolement d'un champ retombé en labour, pour y reconnaître une serre. */
+const GREENHOUSE_FIELD_SALT = 223;
 
 /**
  * Longueur des tunnels de serre — voir `placeFarmstead`. En dessous du
@@ -165,7 +168,21 @@ export function buildParcels(layer, context, builtUp) {
       // qu'un champ en culture ne se clôt pas et qu'on n'y sème pas de bottes
       // de foin — et il aurait été absurde qu'il en décide autrement que ce
       // qui pousse effectivement dessus.
-      const crop = layer.groundClass?.cropAt?.(centre.x, centre.z) ?? null;
+      let crop = layer.groundClass?.cropAt?.(centre.x, centre.z) ?? null;
+
+      // La serre n'a pas de case dans `CROP_KINDS` (déjà pleine) : un champ
+      // qui y retombe en labour est retiré du tirage de l'assolement pour
+      // savoir s'il s'agissait en réalité d'un maraîchage sous serre — seul
+      // cas où le mobilier lit l'assolement au lieu de la seule carte des
+      // cultures, faute d'une traduction pour le porter.
+      if (crop === 'plough' && layer.region?.farming?.includes('greenhouse')) {
+        const word = farmingWordFor(
+          properties,
+          randomAt(centre.x, centre.z, GREENHOUSE_FIELD_SALT),
+          layer.region.farming
+        );
+        if (word === 'greenhouse') crop = 'greenhouse';
+      }
 
       // Cour de ferme : les bâtiments d'exploitation, à la vraie place.
       // Voir `looksLikeFarmstead` — `landuse=farmyard` n'existe pas dans
@@ -334,7 +351,8 @@ export function buildRows(layer, context, ring, centre, crop, here) {
   // le même champ.
   const vineUnstaked = crop === 'vineyard' && randomAt(centre.x, centre.z, VINE_UNSTAKED_SALT) < VINE_UNSTAKED_SHARE;
   // Perpendiculaire : c'est le long d'elle que les rangs s'échelonnent.
-  const spacing = crop === 'vineyard' ? 2.4 : crop === 'lavender' ? 1.4 : 7;
+  const spacing =
+    crop === 'vineyard' ? 2.4 : crop === 'lavender' ? 1.4 : crop === 'greenhouse' ? GREENHOUSE_SPACING_M : 7;
   const step = crop === 'vineyard' ? 3 : crop === 'lavender' ? 4 : 6;
 
   let minU = Infinity;
@@ -412,6 +430,23 @@ export function buildRows(layer, context, ring, centre, crop, here) {
             lateralJitter: facets.lateral,
             smoothRadius: Math.round(4 / HEDGE_SAMPLE_M),
           });
+        } else if (crop === 'greenhouse') {
+          // Un tunnel par tronçon, pas un semis : la longueur réelle du
+          // tronçon (déjà découpé aux limites du champ et de la route) fait
+          // la longueur du tunnel, comme `greenhouseLengthFor` le fait pour
+          // celui de `placeFarmstead`.
+          const first = path[0];
+          const last = path[path.length - 1];
+          const runLength = Math.hypot(last.x - first.x, last.z - first.z);
+          if (runLength >= GREENHOUSE_MIN_LENGTH_M) {
+            const length = Math.min(GREENHOUSE_MAX_LENGTH_M, runLength);
+            layer._place(placements, 'greenhouse', {
+              x: (first.x + last.x) / 2,
+              z: (first.z + last.z) / 2,
+              yaw: angle,
+              scaleZ: length / GREENHOUSE_BASE_LENGTH_M,
+            });
+          }
         } else {
           for (const tree of spacedAlongPath(path, 6, { margin: 1 })) {
             layer._place(placements, 'treeBroad', {

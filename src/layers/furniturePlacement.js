@@ -334,13 +334,37 @@ export function cropFor(properties = {}, variant = 0, farming = null) {
 }
 
 /**
+ * Mot d'assolement retenu pour un champ, tiré comme `cropFor` (même parts,
+ * mêmes rangs) mais rendu **avant** sa traduction en culture de `CROP_KINDS`.
+ *
+ * Sert aux mots que l'assolement porte sans que `CROP_KINDS` sache les
+ * peindre — la serre, qui n'est pas une texture mais une structure posée sur
+ * la parcelle (`furniture/parcels.js`). `null` hors champ cultivé ou pays sans
+ * assolement écrit.
+ *
+ * Fonction pure.
+ */
+export function farmingWordFor(properties = {}, variant = 0, farming = null) {
+  const klass = properties.class;
+  const subclass = properties.subclass;
+  if (subclass === 'vineyard' || subclass === 'orchard' || subclass === 'plant_nursery') return null;
+  if (klass !== 'farmland' || !farming?.length) return null;
+  return pickShare(sharesFor(farming), variant);
+}
+
+/**
  * Cultures semées en rangs visibles, donc balayées et non semées en vrac.
  *
  * La lavande y est pour la même raison que la vigne : de loin c'est une
  * teinte (`cropAlbedo`), de près ce sont des lignes de petites haies, pas un
  * semis dru — c'est le rang qui la fait reconnaître, pas le buisson isolé.
+ *
+ * La serre n'est pas un semis du tout : c'est une structure. Elle emprunte le
+ * même passage parce qu'un maraîchage sous serre couvre la parcelle de
+ * tunnels côte à côte, sur le même principe géométrique qu'un rang de vigne —
+ * un balayage le long du plus long côté, coupé aux vraies limites du champ.
  */
-export const ROW_CROPS = new Set(['vineyard', 'orchard', 'lavender']);
+export const ROW_CROPS = new Set(['vineyard', 'orchard', 'lavender', 'greenhouse']);
 
 /**
  * Les cultures, dans l'ordre de leur identifiant (`indice + 1`, zéro = aucune
@@ -357,14 +381,16 @@ export const CROP_KINDS = [
   'orchard',
   'lavender',
   'rapeseed',
+  'rice',
 ];
 
 /**
  * Pas entre deux identifiants dans le canal rouge.
  *
- * Il était de 40, ce qui plafonnait à six cultures (7 × 40 dépasse 255). Huit
- * cultures tiennent à 28, avec ± 14 de tolérance à l'arrondi de la texture —
- * largement de quoi encaisser le passage par un canevas 8 bits.
+ * Il était de 40, ce qui plafonnait à six cultures (7 × 40 dépasse 255). Neuf
+ * cultures tiennent à 28 (9 × 28 = 252), avec trois de marge à l'arrondi de la
+ * texture — c'est la dernière place : un dixième identifiant exige de baisser
+ * le pas.
  */
 export const CROP_ID_STEP = 28;
 

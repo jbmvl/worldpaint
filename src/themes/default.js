@@ -90,6 +90,9 @@ export const TERRAIN_LOOK = {
     // Le colza en fleur, en revanche, est la tache la plus saturée d'un
     // paysage de printemps — plus jaune encore qu'un blé mûr.
     rapeseed: [0.604, 0.522, 0.061],
+    // Vert soutenu de la feuille de riz, calé sur `drawRice` : pas de lame
+    // d'eau ni de casier (voir `CONTRIBUTING.md`), seulement le feuillage.
+    rice: [0.09, 0.183, 0.081],
   },
   /** Teinte de roche sur les fortes pentes, avant la géologie (`STONE_LOOK`). */
   rockColor: [0.72, 0.68, 0.62],
@@ -409,6 +412,8 @@ export const CROP_LOOK = {
   // Le colza : une masse serrée et haute, la seule culture dont la fleur, et
   // non le feuillage, fait la couleur du champ.
   rapeseed: { atlas: 'rapeseed', height: 1.3, spread: 0.24, density: 0.85, tint: [1.02, 0.98, 0.56] },
+  // Le riz : des touffes basses et serrées, sans épi visible à cette échelle.
+  rice: { atlas: 'rice', height: 0.55, spread: 0.22, density: 0.9, tint: [0.86, 1.04, 0.82] },
 };
 
 // --- Le sol d'un pays ---------------------------------------------------------
@@ -967,6 +972,33 @@ export const TOWN_PALETTES = [
     shutters: ['#7d4a33', '#3f5a4a'],
     roofShapes: ['gable', 'hip'],
     pitch: 0.45,
+  },
+  {
+    // Torchis de terre crue : la Castille des greniers en pisé, montés à même
+    // la terre du champ voisin plutôt qu'importés d'une carrière.
+    name: 'terre crue',
+    materials: ['adobe'],
+    walls: ['#c9a876', '#bd9a68', '#d4b483'],
+    roofs: ['#a9754c', '#946440'],
+    shutters: ['#4a6b6a', '#8a6a45'],
+    roofShapes: ['gable', 'hip'],
+    // Tuile canal, comme partout où la terre cuite tient lieu de couverture.
+    pitch: 0.42,
+  },
+  {
+    // Chaumière anglaise : le toit l'emporte sur le mur, quel qu'il soit — la
+    // brique du New Forest, le crépi du Devon, la craie du Dorset. D'où un mur
+    // neutre plutôt qu'accordé à un des trois.
+    name: 'chaume',
+    materials: ['thatch_roof'],
+    walls: ['#e8e0cc', '#dcd3ba', '#f0e9d8'],
+    roofs: ['#b89a5c', '#a68a4e'],
+    shutters: ['#4a5f42', '#e0d8c4'],
+    // Ni pyramide ni toit plat : le chaume se pose sur une pente forte, à deux
+    // versants ou à croupe.
+    roofShapes: ['gable', 'hip'],
+    // Une pente forte pour évacuer l'eau : la paille ne pardonne pas la flaque.
+    pitch: 0.85,
   },
 ];
 
