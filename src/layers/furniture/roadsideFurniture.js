@@ -24,11 +24,13 @@ import {
   roadsideVergeFor,
   roadsideFurnitureFor,
   signKindFor,
+  streetLampKindFor,
   crossSlope,
   contiguousRuns,
   runsByValue,
   randomAt,
 } from '../furniturePlacement.js';
+import { churchWithin } from './pointsOfInterest.js';
 import { FURNITURE_RADIUS_M } from './catalog.js';
 import { alignmentShapeForTree, sharesFor } from '../../core/regionInterpretation.js';
 import {
@@ -47,6 +49,13 @@ export const SIGN_PLACE_NAME_FABRIC_RADIUS_M = 80;
  * redémarrait une portion « bâtie », donc un panneau de plus, en plein centre.
  */
 export const SIGN_PLACE_NAME_MIN_GAP_M = 150;
+
+/**
+ * Rayon, en mètres, dans lequel un lieu de culte relevé fait basculer
+ * l'éclairage sur le modèle traditionnel (`streetLampKindFor`) — l'ordre de
+ * grandeur d'un centre ancien, pas d'une paroisse entière.
+ */
+export const STREET_LAMP_CHURCH_RADIUS_M = 1000;
 
 /**
  * Vrai si la portion précédente d'une chaîne (`runsByValue`) est un vrai
@@ -299,7 +308,13 @@ export function applyRoadsidePlan(layer, {
       // n'existent que sur les boulevards, et se voient comme une erreur.
       const lamp = p.index % 2 === 0 ? 1 : -1;
       const offset = lamp * (halfWidth + 0.9);
-      const placed = layer._placeBeside(placements, 'streetLamp', p, offset, platform, {
+      // Style du lampadaire : classique près d'un clocher, LED sur sol
+      // industriel (`bare`), le modèle courant partout ailleurs.
+      const kind = streetLampKindFor({
+        nearChurch: churchWithin(layer._churches, p.x, p.z, STREET_LAMP_CHURCH_RADIUS_M),
+        industrial: layer.groundClass?.surfaceAt(p.x, p.z) === 'bare',
+      });
+      const placed = layer._placeBeside(placements, kind, p, offset, platform, {
         facing: 'road',
         onPlatform: true,
         atKerb: true,

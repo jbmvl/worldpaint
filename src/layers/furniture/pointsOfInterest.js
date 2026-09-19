@@ -104,6 +104,46 @@ export function poiItem(properties = {}) {
 }
 
 /**
+ * Lieux de culte relevés dans la couche `poi`, pour ce que ça implique
+ * alentour — aujourd'hui le style du lampadaire de rive
+ * (`furniturePlacement.streetLampKindFor`). Un lieu de culte marque un
+ * centre ancien quelle que soit sa confession, donc toutes les classes
+ * `place_of_worship` comptent, pas seulement l'église.
+ *
+ * @param {Object} source Instance `VectorTileSource`.
+ * @param {Array} tiles   Tuiles à parcourir.
+ * @param {Object} frame  Repère local de la bulle.
+ * @returns {Array<{x:number,z:number}>}
+ */
+export function collectChurches(source, tiles, frame) {
+  const churches = [];
+  if (!source || !frame) return churches;
+  const { origin, scale, zoom } = frame;
+
+  source.forEachFeature('poi', tiles, (geometry, properties) => {
+    if (geometry?.type !== 'Point') return;
+    if (properties.class !== 'place_of_worship') return;
+    const [lng, lat] = geometry.coordinates;
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+    churches.push({
+      x: (lngToTileX(lng, zoom) - origin.x) * scale,
+      z: (latToTileY(lat, zoom) - origin.y) * scale,
+    });
+  });
+
+  return churches;
+}
+
+/** Vrai si un lieu de culte relevé se trouve à moins de `maxDistance` d'un point. */
+export function churchWithin(churches, x, z, maxDistance) {
+  if (!churches) return false;
+  for (const church of churches) {
+    if (Math.hypot(church.x - x, church.z - z) <= maxDistance) return true;
+  }
+  return false;
+}
+
+/**
  * Cap tourné vers la chaussée la plus proche, **perpendiculairement**.
  *
  * Deux points, dont le second est celui qui se voit :

@@ -180,6 +180,7 @@ export function buildParcels(layer, context, builtUp) {
       }
 
       if (crop && ROW_CROPS.has(crop)) buildRows(layer, context, local, centre, crop, here);
+      if (crop === 'plough') placeTractor(layer, context, local, centre, crop, here);
 
       // Le budget de contours ne coupe **que** les contours : les parcelles
       // arrivent dans l'ordre des tuiles et non des distances, et un budget
@@ -449,6 +450,81 @@ export function principalAngle(ring) {
     }
   }
   return angle;
+}
+
+/** Rayon dans lequel un tracteur est posé, en mètres. */
+export const TRACTOR_RADIUS_M = 400;
+/** Part des parcelles en labour, assez grandes, qui reçoivent un tracteur au travail. */
+export const TRACTOR_SHARE = 0.12;
+const TRACTOR_SALT = 887;
+/** Longueur maximale d'un passage, en mètres — un aller-retour, pas la traversée du champ. */
+export const TRACTOR_PASS_MAX_M = 55;
+/** Vitesse d'un tracteur au travail, en mètres par seconde. */
+export const TRACTOR_SPEED_MIN_MS = 1.1;
+export const TRACTOR_SPEED_MAX_MS = 1.8;
+
+/**
+ * Tracteur au travail dans un champ en labour : un aller-retour le long du
+ * sens du travail (`principalAngle`), coupé aux vraies limites du champ comme
+ * un rang de vigne (`buildRows`) — jamais une ligne posée en travers d'une
+ * parcelle en croissant ou en L.
+ *
+ * Publié dans `layer.tractors` pour `tractorLayer`, qui le rejoue par image :
+ * ce n'est plus du mobilier immobile, c'est ancré au sol comme une bête (voir
+ * l'en-tête de `tractorLayer.js`), donc soumis au même déterminisme spatial —
+ * la graine vient du centre de la parcelle, jamais de l'ordre de parcours.
+ */
+export function placeTractor(layer, context, ring, centre, crop, here) {
+  if (crop !== 'plough') return;
+  if (Math.hypot(centre.x - here.x, centre.z - here.z) > TRACTOR_RADIUS_M) return;
+  if (!layer.tractors || layer.tractors.length >= FURNITURE_LIMITS.vehicles) return;
+  if (randomAt(centre.x, centre.z, TRACTOR_SALT) >= TRACTOR_SHARE) return;
+
+  const { sampleElevation } = context;
+  const angle = principalAngle(ring);
+  const dirX = Math.cos(angle);
+  const dirZ = Math.sin(angle);
+
+  let minU = Infinity;
+  let maxU = -Infinity;
+  for (const p of ring) {
+    const u = (p.x - centre.x) * dirX + (p.z - centre.z) * dirZ;
+    minU = Math.min(minU, u);
+    maxU = Math.max(maxU, u);
+  }
+  if (!Number.isFinite(minU) || maxU - minU < 16) return;
+
+  const samples = [];
+  for (let u = minU; u <= maxU; u += 4) {
+    samples.push({ x: centre.x + dirX * u, z: centre.z + dirZ * u, u });
+  }
+  const runs = contiguousRuns(samples, (s) => pointInRing(ring, s.x, s.z), 3);
+  if (runs.length === 0) return;
+  // Le plus long passage possible, dans les vraies limites du champ.
+  let best = runs[0];
+  for (const run of runs) if (run.length > best.length) best = run;
+  if (best.length < 5) return;
+
+  const first = best[0];
+  const last = best[best.length - 1];
+  const span = Math.min(TRACTOR_PASS_MAX_M, last.u - first.u);
+  // Centré dans le passage retenu plutôt que posé sur toute sa longueur — un
+  // grand champ n'a pas besoin d'un aller-retour de trois cents mètres pour
+  // qu'on croie au labour.
+  const mid = (first.u + last.u) / 2;
+  const startU = mid - span / 2;
+  const endU = mid + span / 2;
+  const start = { x: centre.x + dirX * startU, z: centre.z + dirZ * startU };
+  const end = { x: centre.x + dirX * endU, z: centre.z + dirZ * endU };
+
+  const a = { x: start.x, y: sampleElevation(start.x, start.z), z: start.z };
+  const b = { x: end.x, y: sampleElevation(end.x, end.z), z: end.z };
+  const headingForward = Math.atan2(b.x - a.x, b.z - a.z);
+  const speed =
+    TRACTOR_SPEED_MIN_MS + randomAt(centre.x, centre.z, TRACTOR_SALT + 1) * (TRACTOR_SPEED_MAX_MS - TRACTOR_SPEED_MIN_MS);
+  const phase = randomAt(centre.x, centre.z, TRACTOR_SALT + 2) * 60;
+
+  layer.tractors.push({ a, b, headingForward, speed, phase });
 }
 
 /** Sème l'intérieur d'une parcelle. @returns {number} objets posés. */
