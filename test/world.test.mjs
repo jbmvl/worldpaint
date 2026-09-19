@@ -331,6 +331,7 @@ import {
   BUSH_MIN_HEIGHT,
   BUSH_MAX_HEIGHT,
   coverBushesFor,
+  essenceStrata,
 } from '../src/layers/vegetationLayer.js';
 import { TREE_ESSENCES } from '../src/themes/default.js';
 import {
@@ -1847,7 +1848,7 @@ test('l’eau est une matière du sol, et la dernière de la liste', () => {
   assert.ok(WATER_ID * SURFACE_ID_STEP <= 255, 'l’identifiant tient dans le canal');
 
   // Et rien ne pousse dans l'eau.
-  assert.equal(coverBushesFor('water'), 0, 'aucun buisson dans l’eau');
+  assert.equal(coverBushesFor('water').density, 0, 'aucun buisson dans l’eau');
 });
 
 // --- Ciel -------------------------------------------------------------------
@@ -2474,7 +2475,7 @@ test('l’herbe et le fourré refusent le milieu d’une flaque, et la bordent p
   const vegetationSource = readFileSync('src/layers/vegetationLayer.js', 'utf8');
   assert.match(vegetationSource, /import \{ poolShareAt, poolEdgeGain \} from '\.\.\/terrain\/groundClassMap\.js';/);
   assert.equal(
-    (vegetationSource.match(/> 0\.5\s*\n\s*\?\s*0\s*\n\s*: coverBushesFor/g) || []).length,
+    (vegetationSource.match(/> 0\.5\s*\n\s*\?\s*0\s*\n\s*: \w+Look\.density/g) || []).length,
     2,
     'les deux sites d’appel de coverBushesFor refusent le milieu d’une flaque'
   );
@@ -2543,7 +2544,8 @@ test('la couverture règle l’herbe et le fourré, jamais leur présence', () =
   const prairie = coverGrassFor(null);
   assert.deepEqual(prairie, { height: 1, density: 1, tint: [1, 1, 1] });
   assert.deepEqual(coverGrassFor('couverture-inconnue'), prairie);
-  assert.equal(coverBushesFor(null), 0);
+  assert.equal(coverBushesFor(null).density, 0);
+  assert.equal(coverBushesFor(null).essence, null);
 
   // Une lande est rase, un marais est haut : c’est ce qui les distingue à
   // hauteur d’homme, la couleur du sol ne le dit pas.
@@ -2552,8 +2554,70 @@ test('la couverture règle l’herbe et le fourré, jamais leur présence', () =
   // Un maquis est surtout du vide entre des arbustes : peu d’herbe, beaucoup
   // de buissons — l’inverse exact d’un pré.
   assert.ok(coverGrassFor('scrub').density < coverGrassFor('heath').density);
-  assert.ok(coverBushesFor('scrub') > coverBushesFor('heath'));
-  assert.equal(coverBushesFor('scree'), 0, 'rien ne pousse dans un éboulis');
+  assert.ok(coverBushesFor('scrub').density > coverBushesFor('heath').density);
+  assert.equal(coverBushesFor('scree').density, 0, 'rien ne pousse dans un éboulis');
+
+  // Une lande et un maquis ne sèment plus le même buisson.
+  assert.equal(coverBushesFor('heath').essence, 'gorse');
+  assert.equal(coverBushesFor('scrub').essence, 'thornyScrub');
+  assert.equal(coverBushesFor('sand').essence, 'marram');
+  assert.notEqual(coverBushesFor('heath').essence, coverBushesFor('scrub').essence);
+});
+
+test('une matière sans essence propre replie sur le tapis générique', () => {
+  // grass, wood, wetland… n'ont pas de champ `bush` : le repli est le
+  // comportement actuel, jamais une essence inventée.
+  for (const kind of ['grass', 'wood', 'wetland', 'alpine', 'saltmarsh']) {
+    assert.equal(coverBushesFor(kind).essence, null, `${kind} ne nomme pas d’essence`);
+  }
+});
+
+test('chaque essence de biome tient une silhouette propre, dans le catalogue', () => {
+  for (const essence of ['gorse', 'thornyScrub', 'marram']) {
+    const strata = essenceStrata(essence);
+    assert.ok(strata.length >= 1, `${essence} : au moins une silhouette`);
+    for (const plant of strata) {
+      const look = TREE_VARIANTS[plant.variant];
+      assert.ok(look, `${essence} : variante ${plant.variant} existe`);
+      assert.ok(TREE_ATLAS_OFFSETS[plant.variant], `${essence} : case d’atlas présente`);
+      assert.deepEqual([plant.min, plant.max], look.heightM, 'la taille vient de la plante');
+    }
+  }
+  // Trois essences distinctes, trois silhouettes distinctes.
+  const variantsOf = (essence) => essenceStrata(essence).map((p) => p.variant);
+  assert.notDeepEqual(variantsOf('gorse'), variantsOf('thornyScrub'));
+  assert.notDeepEqual(variantsOf('gorse'), variantsOf('marram'));
+
+  // La fougère rejoint le tapis générique du sous-bois, sans le remplacer.
+  const floor = understoryStrata(defaultTheme.trees, true).map((p) => p.variant);
+  const fernVariant = TREE_VARIANTS.findIndex((v) => v.kind === 'fern');
+  assert.ok(fernVariant >= 0, 'la fougère existe au catalogue');
+  assert.ok(floor.includes(fernVariant), 'la fougère pousse dans le tapis du sous-bois');
+
+  // Le peintre de chaque nouvelle essence existe (source, pas d’exécution).
+  const source = readFileSync('src/materials/proceduralTextures.js', 'utf8');
+  for (const kind of ['gorse', 'thornyScrub', 'fern', 'marram']) {
+    assert.match(source, new RegExp(`${kind}: draw`));
+  }
+});
+
+test('le semis de biome sème l’essence de sa matière, pas celle du peuplement', () => {
+  const source = readFileSync('src/layers/vegetationLayer.js', 'utf8');
+  // Les deux sites d'appel (près, loin) doivent choisir la strate par
+  // essence de matière quand elle existe, et ne jamais tirer le peuplement
+  // pour décider de la silhouette d'un buisson de biome.
+  assert.equal(
+    (source.match(/bushLook\.essence \? essenceStrata\(bushLook\.essence, this\.theme\.trees\) : strata/g) || [])
+      .length,
+    1
+  );
+  assert.equal(
+    (source.match(/thickLook\.essence \? essenceStrata\(thickLook\.essence, this\.theme\.trees\) : strata/g) || [])
+      .length,
+    1
+  );
+  assert.match(source, /describeTree\(tree, seed, base, type, lowPart, variants, cellStrata\);/);
+  assert.match(source, /describeTree\(tree, seed, slot, type, lowPart, variants, cellStrata, true\);/);
 });
 
 test('le sol d’un bois porte une litière, pas une prairie à l’ombre', () => {

@@ -164,6 +164,13 @@ maquis 0,9, lande 0,3, pré salé 0,12, marais 0,08, sable 0,05, pelouse
 d'altitude 0,04, dalle 0,02 ; éboulis, vasière et glace 0. C'est ce qui fait exister un maquis — ni prairie ni forêt, mais
 un fourré bas.
 
+Trois matières nomment en plus leur propre silhouette (`bush` de
+`SURFACE_LOOK`, lu par `coverBushesFor` puis `essenceStrata`,
+vegetationLayer.js) plutôt que de tirer dans le tapis générique du
+sous-bois : la lande sème de l'ajonc/genêt (`gorse`), le maquis un buisson
+épineux étalé (`thornyScrub`), le sable de l'oyat (`marram`). Une matière
+sans `bush` garde le tapis générique.
+
 Là où la matière porte de l'eau libre (marais, pré salé, vasière), rien ne se
 sème au milieu d'une flaque (`poolShareAt`, `groundClassMap.js`), et le fourré
 se densifie sur les derniers mètres qui la bordent (`poolEdgeGain`).

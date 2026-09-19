@@ -184,6 +184,18 @@ export const TREE_VARIANTS = [
     heightM: [0.7, 1.6], aspect: 1.7 },
   { kind: 'lowShrub', hue: { r: 0.36, g: 0.88, b: 0.4 }, trunk: 0, crownBase: 1, spread: 0.4,
     heightM: [1.2, 2.4], aspect: 1 },
+  // Ajonc, genêt : le buisson d'une lande, compact et fleuri de jaune.
+  { kind: 'gorse', hue: { r: 0.66, g: 1, b: 0.32 }, trunk: 0, crownBase: 1, spread: 0.4,
+    heightM: [0.5, 1.3], aspect: 1.3 },
+  // Le buisson épineux d'un maquis : étalé, plus de vide que de feuille.
+  { kind: 'thornyScrub', hue: { r: 0.7, g: 1, b: 0.42 }, trunk: 0, crownBase: 1, spread: 0.5,
+    heightM: [0.5, 1.5], aspect: 1.6 },
+  // La fougère d'un sous-bois : des frondes qui rayonnent, pas une canne.
+  { kind: 'fern', hue: { r: 0.42, g: 1, b: 0.4 }, trunk: 0, crownBase: 1, spread: 0.35,
+    heightM: [0.35, 0.8], aspect: 1.4 },
+  // L'oyat d'une dune : une touffe de lames, presque sans masse.
+  { kind: 'marram', hue: { r: 0.58, g: 1, b: 0.56 }, trunk: 0, crownBase: 1, spread: 0.35,
+    heightM: [0.35, 0.7], aspect: 0.8 },
 ];
 /**
  * Les essences, par indices de variantes. C'est ce que lit `vegetationLayer`
@@ -200,7 +212,13 @@ export const TREE_ESSENCES = {
   column: [3, 4],
   conifer: [5, 6],
   bushy: [7, 8],
-  undergrowth: [9, 10],
+  undergrowth: [9, 10, 13],
+  // Essences de biome, nommées par `SURFACE_LOOK[kind].bush` et lues par
+  // `coverBushesFor` (vegetationLayer.js) — une lande et un maquis ne sèment
+  // plus le même buisson.
+  gorse: [11],
+  thornyScrub: [12],
+  marram: [14],
 };
 
 // --- Les peuplements -----------------------------------------------------------
@@ -708,6 +726,8 @@ export const SURFACE_LOOK = {
     grassDensity: 0.95,
     grassTint: [1.02, 0.84, 0.76],
     bushes: 0.3,
+    // Le buisson d'une lande, nommé : voir TREE_ESSENCES.
+    bush: 'gorse',
     // Le tapis d'une lande est marbré fort, et ça doit se voir à portée
     // d'observation, pas seulement à l'horizon.
     macro: 2,
@@ -725,6 +745,8 @@ export const SURFACE_LOOK = {
     grassDensity: 0.4,
     grassTint: [1.04, 0.94, 0.7],
     bushes: 0.9,
+    // Le buisson épineux d'un maquis, distinct de celui d'une lande.
+    bush: 'thornyScrub',
     macro: 1.8,
     macroNear: 0.35,
   },
@@ -807,12 +829,14 @@ export const SURFACE_LOOK = {
   ice: { albedo: [0.6, 0.66, 0.72], wash: null, grassDensity: 0, bushes: 0 },
   sand: {
     albedo: [0.624, 0.539, 0.361],
-   
+
     wash: null,
     grassHeight: 0.6,
     grassDensity: 0.08,
     grassTint: [1.06, 0.98, 0.72],
     bushes: 0.05,
+    // L'oyat d'une dune, jamais le buisson d'une lande ou d'un maquis.
+    bush: 'marram',
   },
 
   // --- Les deux matières à part ---------------------------------------------
