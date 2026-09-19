@@ -4,7 +4,7 @@
  */
 
 // --- Monter un paysage ------------------------------------------------------
-export { createWorld, World, DEFAULT_VIEW, DEFAULT_ELEVATION_ZOOM } from './world.js';
+export { createWorld, World, DEFAULT_VIEW } from './world.js';
 export { WorldComposer, WORLD_ATTRIBUTION, FAUNA_CROSS_AHEAD_M } from './worldComposer.js';
 
 // --- Le vivant : déclencher un événement -------------------------------------

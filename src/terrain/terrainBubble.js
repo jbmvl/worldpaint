@@ -15,23 +15,16 @@
  *
  * L'eau, elle, ne touche pas au relief : c'est une matière du sol, pas une
  * surface (`groundClassMap`).
- *
- * Le MNT porte son propre zoom, réglé sur la résolution de sa source et non
- * sur la finesse de la maille. La bulle convertit donc ses coordonnées de
- * tuile chaque fois qu'elle le lit (`_sample`) ou le charge (`_demTiles`).
  */
 
-import {
-  createLocalFrame,
-  tilesAround,
-  tilesCovering,
-  tileKey,
-  lngLatToTile,
-} from '../core/tileMath.js';
+import { createLocalFrame, tilesAround, tileKey, lngLatToTile } from '../core/tileMath.js';
 import { DEM_TILE_PIXELS } from '../core/elevationField.js';
 import { TerrainMaterialFactory } from './terrainMaterial.js';
 import { defaultTheme } from '../themes/default.js';
 import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M, ROAD_CUT_MAX_RING } from './roadCut.js';
+
+/** Un pixel DEM, en unités de tuile : pas d'échantillonnage du gradient. */
+const GRADIENT_STEP_TILES = 1 / DEM_TILE_PIXELS;
 
 /** Au-delà, l'approximation métrique du repère local dérive : on ré-ancre. */
 const REANCHOR_DISTANCE_M = 20000;
@@ -66,10 +59,6 @@ export class TerrainBubble {
     this.scene = scene;
     this.elevation = elevation;
     this.zoom = zoom;
-    /** Coordonnées de tuile de la bulle → celles du MNT. */
-    this._demScale = Math.pow(2, elevation.zoom - zoom);
-    /** Un pixel du MNT, en unités de tuile de la bulle : pas du gradient. */
-    this._gradientStep = 1 / (DEM_TILE_PIXELS * this._demScale);
     this.blockSize = blockSize % 2 === 0 ? blockSize + 1 : blockSize;
     this.segmentsByRing = segmentsByRing;
     this.verticalScale = verticalScale;
@@ -119,9 +108,8 @@ export class TerrainBubble {
 
   /**
    * Finesse de maille d'une tuile, d'après son anneau. L'anneau central
-   * descend à ~4,4 m, les anneaux suivants relâchent. La maille est plus fine
-   * que la grille du MNT : entre deux pixels d'altitude, ce que porte le
-   * sommet est l'interpolation, pas une mesure.
+   * descend à ~4,4 m, au plus près de la résolution native du MNT
+   * (~3,3 m/pixel au zoom 15), les anneaux suivants relâchent.
    */
   segmentsForRing(ring) {
     const list = this.segmentsByRing;
@@ -206,19 +194,9 @@ export class TerrainBubble {
       this.tiles.set(key, { key, x: w.x, y: w.y, ring: w.ring, mesh: null, edgeIncomplete: true });
     }
 
-    // Le relief d'abord : une maille construite sans ses voisines aurait des
-    // bords faux. Le MNT étant plus grossier, plusieurs tuiles de la bulle
-    // tombent dans la même : on dédoublonne sans défaire l'ordre de
-    // `tilesAround`, qui sert d'abord ce que l'observateur a sous les roues.
-    const demTiles = new Map();
-    for (const w of wanted) {
-      for (const d of this._demTiles(w.x, w.y)) {
-        const key = tileKey(d.z, d.x, d.y);
-        if (!demTiles.has(key)) demTiles.set(key, d);
-      }
-    }
+    // Le relief d'abord : une maille construite sans ses voisines aurait des bords faux.
     await Promise.all(
-      [...demTiles.values()].map((d) => this.elevation.load(d.x, d.y, this._abort.signal))
+      wanted.map((w) => this.elevation.load(w.x, w.y, this._abort.signal))
     );
     if (this.disposed || generation !== this._generation) return true;
 
@@ -244,25 +222,18 @@ export class TerrainBubble {
   }
 
   _neighboursLoaded(x, y) {
-    // L'échantillonnage d'un bord lit les pixels d'en face : il faut tout le
-    // MNT qui couvre la tuile et ses huit voisines.
-    return this._demTiles(x - 1, y - 1, 3).every((d) => this.elevation.has(d.x, d.y));
-  }
-
-  /** Tuiles du MNT couvrant `span` tuiles de bulle à partir de (x, y). */
-  _demTiles(x, y, span = 1) {
-    return tilesCovering(x, y, span, this.zoom, this.elevation.zoom);
-  }
-
-  /** Altitude du MNT, en coordonnées de tuile **de la bulle**. */
-  _sample(tx, ty, fallback = 0) {
-    return this.elevation.sampleTile(tx * this._demScale, ty * this._demScale, fallback);
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!this.elevation.has(x + dx, y + dy)) return false;
+      }
+    }
+    return true;
   }
 
   /** Altitude brute du MNT sous un point géographique, en mètres. */
   getElevation(lng, lat, fallback = 0) {
     const t = lngLatToTile(lng, lat, this.zoom);
-    return this._sample(t.x, t.y, fallback);
+    return this.elevation.sampleTile(t.x, t.y, fallback);
   }
 
   /**
@@ -285,7 +256,7 @@ export class TerrainBubble {
     const fx = gx - i0;
     const fy = gy - j0;
 
-    const sample = (i, j) => this._sample(i / n, j / n, fallback);
+    const sample = (i, j) => this.elevation.sampleTile(i / n, j / n, fallback);
     const a = sample(i0, j0);
     const b = sample(i0 + 1, j0);
     const c = sample(i0, j0 + 1);
@@ -450,7 +421,7 @@ export class TerrainBubble {
     const normals = new Float32Array(count * 3);
 
     const scale = this.frame.scale;
-    const stepMeters = this._gradientStep * scale;
+    const stepMeters = GRADIENT_STEP_TILES * scale;
     // Les terrassements ne s'appliquent qu'aux tuiles proches (au-delà, la requête d'index ne rendrait rien).
     const carving = !!this._roadCut && tile.ring <= ROAD_CUT_MAX_RING;
     // Gradient pris sur le terrain entaillé, sinon l'éclairage du fond du déblai serait celui du versant.
@@ -468,11 +439,11 @@ export class TerrainBubble {
 
         // Bords recousus sur la résolution du voisin.
         let raw;
-        if (j === 0) raw = this._edgeElevation(u, edge.north, (a) => this._sample(tile.x + a, tile.y));
-        else if (j === n) raw = this._edgeElevation(u, edge.south, (a) => this._sample(tile.x + a, tile.y + 1));
-        else if (i === 0) raw = this._edgeElevation(v, edge.west, (a) => this._sample(tile.x, tile.y + a));
-        else if (i === n) raw = this._edgeElevation(v, edge.east, (a) => this._sample(tile.x + 1, tile.y + a));
-        else raw = this._sample(tx, ty);
+        if (j === 0) raw = this._edgeElevation(u, edge.north, (a) => this.elevation.sampleTile(tile.x + a, tile.y));
+        else if (j === n) raw = this._edgeElevation(u, edge.south, (a) => this.elevation.sampleTile(tile.x + a, tile.y + 1));
+        else if (i === 0) raw = this._edgeElevation(v, edge.west, (a) => this.elevation.sampleTile(tile.x, tile.y + a));
+        else if (i === n) raw = this._edgeElevation(v, edge.east, (a) => this.elevation.sampleTile(tile.x + 1, tile.y + a));
+        else raw = this.elevation.sampleTile(tx, ty);
 
         // Le déblai est une fonction du seul point du sol, donc la couture des bords reste exacte.
         const h = cut(local.x, local.z, raw) * this.verticalScale;
@@ -482,10 +453,10 @@ export class TerrainBubble {
         positions[idx * 3 + 2] = local.z;
 
         // Gradient central : continu au travers des frontières de tuiles.
-        const hE = cut(local.x + stepMeters, local.z, this._sample(tx + this._gradientStep, ty)) * this.verticalScale;
-        const hW = cut(local.x - stepMeters, local.z, this._sample(tx - this._gradientStep, ty)) * this.verticalScale;
-        const hS = cut(local.x, local.z + stepMeters, this._sample(tx, ty + this._gradientStep)) * this.verticalScale;
-        const hN = cut(local.x, local.z - stepMeters, this._sample(tx, ty - this._gradientStep)) * this.verticalScale;
+        const hE = cut(local.x + stepMeters, local.z, this.elevation.sampleTile(tx + GRADIENT_STEP_TILES, ty)) * this.verticalScale;
+        const hW = cut(local.x - stepMeters, local.z, this.elevation.sampleTile(tx - GRADIENT_STEP_TILES, ty)) * this.verticalScale;
+        const hS = cut(local.x, local.z + stepMeters, this.elevation.sampleTile(tx, ty + GRADIENT_STEP_TILES)) * this.verticalScale;
+        const hN = cut(local.x, local.z - stepMeters, this.elevation.sampleTile(tx, ty - GRADIENT_STEP_TILES)) * this.verticalScale;
 
         let nx = -(hE - hW) / (2 * stepMeters);
         let nz = -(hS - hN) / (2 * stepMeters);

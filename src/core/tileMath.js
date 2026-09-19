@@ -139,26 +139,6 @@ export function tilesAround(centerX, centerY, size, z) {
   return out;
 }
 
-/**
- * Tuiles du zoom `toZ` couvrant le carré de `span` tuiles du zoom `fromZ` posé
- * en (x, y). Sert à interroger une source dont le zoom n'est pas celui qui la
- * lit — un MNT plus grossier que la bulle, par exemple : plusieurs tuiles de la
- * bulle tombent alors dans la même tuile de MNT.
- */
-export function tilesCovering(x, y, span, fromZ, toZ) {
-  const k = Math.pow(2, toZ - fromZ);
-  const max = Math.pow(2, toZ);
-  const out = [];
-
-  for (let j = Math.floor(y * k); j < Math.ceil((y + span) * k); j++) {
-    if (j < 0 || j >= max) continue;
-    for (let i = Math.floor(x * k); i < Math.ceil((x + span) * k); i++) {
-      out.push({ x: ((i % max) + max) % max, y: j, z: toZ });
-    }
-  }
-  return out;
-}
-
 /** Clé de cache canonique d'une tuile. */
 export function tileKey(z, x, y) {
   return `${z}/${x}/${y}`;
