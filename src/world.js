@@ -39,14 +39,13 @@ export const DEFAULT_VIEW = {
 };
 
 /**
- * Zoom des tuiles du MNT, distinct de celui de la bulle. La source par défaut
- * ne porte pas d'information au-delà de ~28 m/pixel : ses zooms plus fins sont
- * une interpolation de ce niveau-là, pas une mesure de plus. Lire au zoom 13
- * ne perd donc rien et divise par seize le nombre de tuiles à charger.
+ * Zoom des tuiles du MNT, distinct de celui de la bulle : c'est le zoom
+ * maximal que sert la source qui le décide, pas la finesse de la maille.
+ * MapTiler s'arrête au 14 ; demander plus fin ne rendrait que des 404.
  *
- * Une source plus fine se règle par `elevation.zoom` ; la bulle s'y adapte.
+ * Une autre source se règle par `elevation.zoom` ; la bulle s'y adapte.
  */
-export const DEFAULT_ELEVATION_ZOOM = 13;
+export const DEFAULT_ELEVATION_ZOOM = 14;
 
 /**
  * Monte un paysage dans une scène three.js existante.

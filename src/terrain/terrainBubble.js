@@ -68,8 +68,6 @@ export class TerrainBubble {
     this.zoom = zoom;
     /** Coordonnées de tuile de la bulle → celles du MNT. */
     this._demScale = Math.pow(2, elevation.zoom - zoom);
-    /** Un pixel du MNT, en unités de tuile de la bulle : pas du gradient. */
-    this._gradientStep = 1 / (DEM_TILE_PIXELS * this._demScale);
     this.blockSize = blockSize % 2 === 0 ? blockSize + 1 : blockSize;
     this.segmentsByRing = segmentsByRing;
     this.verticalScale = verticalScale;
@@ -247,6 +245,15 @@ export class TerrainBubble {
     // L'échantillonnage d'un bord lit les pixels d'en face : il faut tout le
     // MNT qui couvre la tuile et ses huit voisines.
     return this._demTiles(x - 1, y - 1, 3).every((d) => this.elevation.has(d.x, d.y));
+  }
+
+  /**
+   * Un pixel du MNT, en unités de tuile de la bulle : pas du gradient. Lu à
+   * chaque maille et non figé, la résolution des tuiles n'étant connue qu'une
+   * fois la première décodée.
+   */
+  get _gradientStep() {
+    return 1 / ((this.elevation.tilePixels || DEM_TILE_PIXELS) * this._demScale);
   }
 
   /** Tuiles du MNT couvrant `span` tuiles de bulle à partir de (x, y). */
