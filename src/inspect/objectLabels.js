@@ -51,6 +51,7 @@ export const LABEL_EXACT = {
   streets: 'voirie (caniveau, bordure, trottoir)',
   water: 'eau',
   railway: 'voie ferrée',
+  'cliff-face': 'falaise (relevée)',
   bridge: 'ouvrage d’art (tablier, piles, tête de tunnel)',
   'ground-cover': 'herbe',
   crops: 'cultures (semis)',

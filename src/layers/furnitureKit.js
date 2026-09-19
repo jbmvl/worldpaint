@@ -1539,6 +1539,46 @@ const rockCutFor = (C) => ({
 });
 
 /**
+ * La falaise relevée (`natural=cliff`), par opposition à celle qu'une route a
+ * taillée. Elle se tient nettement plus droite — une paroi de mer n'a pas été
+ * dressée par un terrassier — et n'a pas de plafond de hauteur : le déblai en
+ * a un parce qu'au-delà ce n'est plus la route qui a entaillé le versant,
+ * tandis qu'une falaise de mer fait couramment ses quatre-vingts mètres.
+ *
+ * `maxReach` remplace ce plafond : sans lui, une grande dénivelée reculerait
+ * de vingt mètres et redeviendrait le versant qu'on cherche justement à
+ * comprimer.
+ */
+const cliffFor = (C) => ({
+  /** Fruit : une paroi de quarante mètres recule de trois. */
+  batter: 0.075,
+  minReach: 1.2,
+  maxReach: 9,
+  /**
+   * Enfoncement du dos sous l'arase, en mètres. Le terrain rend déjà le
+   * plateau du sommet (la marche l'a mis à plat) : la roche n'a qu'à s'y
+   * perdre, pas à le coiffer.
+   */
+  bury: 1.5,
+  capReach: 4,
+  shelfAt: 0.5,
+  breakUp: 0.5,
+  breakOut: 0.4,
+  /** Même rôle que pour le déblai : des valeurs de forme, pas des tolérances. */
+  grain: {
+    crest: [0, 0.16],
+    reach: [0.35, 1.65],
+    breakUp: [0.6, 1.4],
+    breakOut: [0.4, 1.6],
+    foot: [0, 0.8],
+    capOut: [0, 1.4],
+  },
+  colorFoot: C.rockDark,
+  colorBreak: C.rock,
+  colorTop: C.rockPale,
+});
+
+/**
  * Section d'un talus de remblai, engendrée à la demande : sa profondeur
  * dépend de la hauteur dont la plate-forme surplombe le terrain. Fruit d'un
  * remblai courant (3 de base pour 2 de hauteur).
@@ -1587,6 +1627,7 @@ export function furnitureSpecsFor(colors = defaultTheme.furniture.colors) {
       profiles: profilesFor(colors),
       wallSpecs: wallSpecsFor(colors),
       rockCut: rockCutFor(colors),
+      cliff: cliffFor(colors),
       trafficLenses: trafficLensesFor(colors),
       embankmentProfile: embankmentFor(colors),
       embankmentGrain: EMBANKMENT_GRAIN,

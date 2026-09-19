@@ -2,9 +2,10 @@
 
 | Fichier | Ce qu'il fait |
 | --- | --- |
-| `terrainBubble.js` | la bulle de terrain : maillage, anneaux, déblai de la chaussée |
+| `terrainBubble.js` | la bulle de terrain : maillage, anneaux, marche des falaises et déblai de la chaussée |
 | `terrainMaterial.js` | le shader du sol — il lit la carte des matières |
 | `roadCut.js` | l'entaille du terrain sous une chaussée |
+| `cliffCut.js` | la marche du terrain sous une falaise relevée |
 | `groundClassMap.js` | la carte des matières et des cultures, rasterisée pour toute la scène |
 | `surfaceClassification.js` | ce qu'une entité de tuile **dit** du sol |
 
@@ -32,3 +33,16 @@ Deux pièges :
   ligne dans `SURFACE_LOOK` (thème), et une signature qui tient le test d'écart.
 - **l'eau est une matière du sol**, pas une surface posée dessus. Il n'y a pas
   de plan d'eau dans la scène.
+
+## Ce qui déforme le relief lu
+
+Deux choses seulement, et dans cet ordre : la **marche** d'une falaise relevée
+(`cliffCut`, publiée par `layers/cliffLayer`), puis le **déblai** d'une
+chaussée (`roadCut`). La falaise façonne le terrain naturel, la route entaille
+ce qu'elle trouve — l'ordre inverse taillerait la chaussée dans une rampe que
+la marche vient de supprimer.
+
+Les deux sont des fonctions **pures de la position au sol** : c'est ce qui
+permet à deux tuiles voisines de s'accorder au bord sans se consulter. Une
+déformation qui dépendrait de la tuile courante, de l'ordre de parcours ou de
+la position de l'observateur ouvrirait une crevasse à chaque jointure.

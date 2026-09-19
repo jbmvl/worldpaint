@@ -9,6 +9,12 @@
  * d'altitude (pas `computeVertexNormals()`), pour un gradient continu d'une
  * tuile à l'autre.
  *
+ * Deux choses perturbent le relief lu, et toutes deux sont des fonctions pures
+ * de la position au sol, donc les tuiles voisines s'accordent au bord :
+ * la marche des falaises (`setCliffCut`, qui comprime en paroi la rampe que le
+ * MNT étale) puis le déblai des chaussées. Dans cet ordre : la falaise façonne
+ * le terrain naturel, la route entaille ce qu'elle trouve.
+ *
  * Le déblai des chaussées (`setRoadCut`) perturbe ce relief naturel : une
  * route est taillée dans le versant, pas posée dessus, et l'entaille est une
  * fonction pure de la position au sol, donc les tuiles voisines s'accordent au bord.
@@ -113,6 +119,11 @@ export class TerrainBubble {
     this._junctions = null;
     /** Incrémenté à chaque publication d'index : périme les mailles déjà creusées. */
     this._cutGeneration = 0;
+
+    /** Falaises taillées (`CliffIndex`), ou `null` — voir `setCliffCut`. */
+    this._cliffCut = null;
+    /** Même rôle que `_cutGeneration`, pour la marche des falaises. */
+    this._cliffGeneration = 0;
   }
 
   /**
@@ -357,7 +368,24 @@ export class TerrainBubble {
    * @param {number} raw Altitude naturelle, en mètres (échelle du MNT).
    */
   cutElevation(x, z, raw) {
-    return this._roadCutAt(x, z, raw);
+    // La falaise d'abord : elle façonne le relief naturel, que la chaussée
+    // entaille ensuite. L'ordre inverse taillerait la route dans la rampe que
+    // la marche vient de supprimer.
+    const stepped = this._cliffCut ? this._cliffCut.elevationAt(x, z, raw) : raw;
+    return this._roadCutAt(x, z, stepped);
+  }
+
+  /**
+   * Publie les falaises taillées (`CliffIndex`), ou `null`. Toutes les tuiles
+   * sont périmées, pas seulement les proches : une falaise se voit de loin.
+   */
+  setCliffCut(index) {
+    if (this.disposed) return;
+    this._cliffCut = index || null;
+    this._cliffGeneration++;
+    for (const tile of this.tiles.values()) {
+      if (!this._rebuildQueue.includes(tile.key)) this._rebuildQueue.push(tile.key);
+    }
   }
 
   /** Creuse le déblai d'une chaussée. Profil dans `cutElevationAt`, pur et testé. */
@@ -426,6 +454,8 @@ export class TerrainBubble {
     if (tile.segments !== n) return true;
     // Un nouvel index de chaussées périme le terrassement déjà creusé.
     if (tile.ring <= ROAD_CUT_MAX_RING && tile.cutGeneration !== this._cutGeneration) return true;
+    // Celui des falaises périme tous les anneaux : la marche se voit de loin.
+    if (tile.cliffGeneration !== this._cliffGeneration) return true;
     const wanted = this._edgeSegmentsFor(tile, n);
     return (
       wanted.north !== tile.edgeSegments.north ||
@@ -458,10 +488,20 @@ export class TerrainBubble {
 
     const scale = this.frame.scale;
     const stepMeters = this._gradientStep * scale;
-    // Les terrassements ne s'appliquent qu'aux tuiles proches (au-delà, la requête d'index ne rendrait rien).
+    // Le déblai ne s'applique qu'aux tuiles proches (au-delà, la requête
+    // d'index ne rendrait rien). La falaise, elle, se voit de loin : elle
+    // taille tous les anneaux.
     const carving = !!this._roadCut && tile.ring <= ROAD_CUT_MAX_RING;
-    // Gradient pris sur le terrain entaillé, sinon l'éclairage du fond du déblai serait celui du versant.
-    const cut = carving ? (x, z, raw) => this.cutElevation(x, z, raw) : (x, z, raw) => raw;
+    const stepping = !!this._cliffCut;
+    // Gradient pris sur le terrain façonné, sinon l'éclairage du fond du
+    // déblai — ou de la paroi — serait celui du versant.
+    const cut =
+      carving || stepping
+        ? (x, z, raw) => {
+            const stepped = stepping ? this._cliffCut.elevationAt(x, z, raw) : raw;
+            return carving ? this._roadCutAt(x, z, stepped) : stepped;
+          }
+        : (x, z, raw) => raw;
 
     for (let j = 0; j <= n; j++) {
       const v = j / n;
@@ -545,6 +585,7 @@ export class TerrainBubble {
     tile.segments = n;
     tile.edgeSegments = edge;
     tile.cutGeneration = this._cutGeneration;
+    tile.cliffGeneration = this._cliffGeneration;
     tile.edgeIncomplete = !this._neighboursLoaded(tile.x, tile.y);
   }
 

@@ -27,6 +27,13 @@ import {
 
 import { ElevationField, DEM_TILE_PIXELS } from '../src/core/elevationField.js';
 import {
+  cliffElevationAt,
+  cliffFaceWidth,
+  CLIFF_BLEND_M,
+  CLIFF_MIN_HEIGHT_M,
+} from '../src/terrain/cliffCut.js';
+import { CliffIndex } from '../src/layers/cliffLayer.js';
+import {
   labelForMeshName,
   nearestInstance,
   nearestVertex,
@@ -3166,6 +3173,105 @@ test('le déblai ne remblaie jamais : côté aval, le terrain ne bouge pas', () 
   close(cutElevationAt(95, 100, 0, 3), 95, 1e-9, 'sous la chaussée');
   close(cutElevationAt(95, 100, 4, 3), 95, 1e-9, 'au ras de la rive');
   close(cutElevationAt(100, 100, 1, 3), 100, 1e-9, 'à niveau, rien à creuser');
+});
+
+// --- Falaises relevées ------------------------------------------------------
+
+test('la marche de falaise comprime la rampe sans changer la dénivelée', () => {
+  const foot = 20;
+  const crest = 100;
+  const face = 6;
+  // La cote naturelle est la rampe du MNT ; ce qu'on vérifie, c'est ce que la
+  // marche lui substitue près du trait.
+  const at = (across, raw = 60) => cliffElevationAt(raw, foot, crest, across, face);
+
+  close(at(0), foot, 1e-6, 'au trait, le pied');
+  close(at(face), crest, 1e-6, 'au sommet de la paroi, l’arase');
+  // La dénivelée mesurée est conservée : c'est la distance qui est comprimée.
+  close(at(face) - at(0), crest - foot, 1e-6, 'dénivelée intacte');
+
+  // De part et d'autre, le terrain naturel est retrouvé.
+  close(at(-CLIFF_BLEND_M, 33), 33, 1e-6, 'terrain naturel en contrebas');
+  close(at(face + CLIFF_BLEND_M, 88), 88, 1e-6, 'terrain naturel à l’arase');
+  close(at(500, 42), 42, 1e-9, 'loin de la falaise');
+});
+
+test('la paroi est bien plus raide que la rampe qu’elle remplace', () => {
+  const foot = 0;
+  const crest = 80;
+  const face = cliffFaceWidth(crest - foot, { batter: 0.075, minReach: 1.2, maxReach: 9 });
+  // 80 m de dénivelée sur 6 m d'emprise : au-delà de 85°, là où le MNT
+  // étalerait la même chute sur une centaine de mètres.
+  close(face, 6, 1e-9, 'emprise de la paroi');
+  const angle = (Math.atan2(crest - foot, face) * 180) / Math.PI;
+  assert.ok(angle > 85, `paroi à ${angle.toFixed(1)}°`);
+  // Le plafond de recul tient une très grande dénivelée.
+  close(cliffFaceWidth(400, { batter: 0.075, minReach: 1.2, maxReach: 9 }), 9, 1e-9, 'recul plafonné');
+  close(cliffFaceWidth(2, { batter: 0.075, minReach: 1.2, maxReach: 9 }), 1.2, 1e-9, 'jamais en lame');
+});
+
+test('le profil de falaise est monotone et borné', () => {
+  const foot = 10;
+  const crest = 70;
+  const face = 5;
+  let previous = -Infinity;
+  for (let d = -CLIFF_BLEND_M; d <= face + CLIFF_BLEND_M; d += 0.05) {
+    // Rampe naturelle du MNT, linéaire entre les deux cotes.
+    const t = (d + CLIFF_BLEND_M) / (face + 2 * CLIFF_BLEND_M);
+    const raw = foot + (crest - foot) * t;
+    const h = cliffElevationAt(raw, foot, crest, d, face);
+    assert.ok(h >= previous - 1e-6, `monotone à ${d.toFixed(2)} m`);
+    assert.ok(h >= foot - 1e-6 && h <= crest + 1e-6, `borné à ${d.toFixed(2)} m`);
+    previous = h;
+  }
+});
+
+test('un ressaut trop court pour être une falaise laisse le terrain tranquille', () => {
+  // `natural=cliff` est posé dans OSM sur des talus d'un mètre : en deçà du
+  // seuil, la marche écraserait des dizaines de mètres pour rien.
+  const small = CLIFF_MIN_HEIGHT_M - 0.5;
+  close(cliffElevationAt(55, 50, 50 + small, 0, 6), 55, 1e-9, 'sous le seuil, rien');
+  // Juste au-dessus, la marche s'applique.
+  const tall = CLIFF_MIN_HEIGHT_M + 0.5;
+  close(cliffElevationAt(55, 50, 50 + tall, 0, 6), 50, 1e-6, 'au-dessus du seuil, le pied');
+});
+
+test('l’index de falaise oriente sa normale vers le haut et interpole ses cotes', () => {
+  // Un trait droit le long de +x, le haut au nord (-z).
+  const segment = {
+    ax: 0, az: 0, tx: 1, tz: 0,
+    nx: 0, nz: -1, // vers le haut
+    length: 100,
+    footA: 0, footB: 10,
+    crestA: 60, crestB: 80,
+    face: 6,
+  };
+  const index = new CliffIndex([segment]);
+
+  const high = index.query(50, -3);
+  assert.ok(high, 'point au nord trouvé');
+  assert.ok(high.across > 0, 'côté haut compté positif');
+  close(high.foot, 5, 1e-6, 'pied interpolé à mi-longueur');
+  close(high.crest, 70, 1e-6, 'arase interpolée à mi-longueur');
+
+  const low = index.query(50, 3);
+  assert.ok(low.across < 0, 'côté bas compté négatif');
+
+  // Au-delà de la portée, plus rien : le terrain reste celui du MNT.
+  assert.equal(index.query(50, 400), null, 'hors de portée');
+  close(index.elevationAt(50, 400, 77), 77, 1e-9, 'altitude inchangée hors de portée');
+});
+
+test('deux points de part et d’autre du trait sont séparés par toute la dénivelée', () => {
+  const index = new CliffIndex([{
+    ax: 0, az: 0, tx: 1, tz: 0, nx: 0, nz: -1, length: 100,
+    footA: 0, footB: 0, crestA: 50, crestB: 50, face: 4,
+  }]);
+  // Le MNT, lui, donne la même valeur moyenne des deux côtés : c'est bien la
+  // marche qui crée la chute, pas la donnée.
+  const below = index.elevationAt(50, 0.5, 25);
+  const above = index.elevationAt(50, -4.5, 25);
+  assert.ok(above - below > 45, `chute de ${(above - below).toFixed(1)} m sur 5 m`);
 });
 
 // --- Sections balayées ------------------------------------------------------

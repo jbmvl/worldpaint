@@ -37,7 +37,7 @@ couches sont ouvertes, et **elles seules** :
 | `building` | `buildingLayer`, `settlement` | empreintes bâties, densité du tissu |
 | `poi` | `buildingLayer`, `furnitureLayer` | fonction d'un bâtiment, abribus, fontaines, châteaux |
 | `place` | `settlement` | nom et rang d'une agglomération |
-| `mountain_peak` | `furnitureLayer` | sommets, pour les antennes |
+| `mountain_peak` | `furnitureLayer`, `cliffLayer` | sommets, pour les antennes ; falaises (`class=cliff`) |
 
 La couche `park` **n'est pas lue** : au schéma OpenMapTiles elle ne contient
 aucun parc de ville mais des périmètres de protection (Natura 2000, parcs
@@ -53,6 +53,20 @@ climat méditerranéen devient montagnard, au-dessus de 1200 m tout le reste
 devient alpin.
 
 ---
+
+## Le relief taillé
+
+Le MNT ne sait pas qu'une falaise est verticale : il l'étale en rampe sur toute
+sa largeur — une falaise de mer de quatre-vingts mètres se lit sur une centaine
+de mètres de pente douce. Là où OSM a relevé un `natural=cliff`, `cliffLayer`
+comprime cette rampe en marche (`terrain/cliffCut`) et balaie la roche dessus,
+grainée ligne par ligne comme une haie (`facetJitter`).
+
+C'est une **synthèse**, pas une correction : la dénivelée mesurée est
+conservée, seule sa distance change. Et c'est un relevé, donc lacunaire — une
+falaise qu'aucun contributeur n'a tracée reste la rampe du MNT. Un ressaut de
+moins de cinq mètres est ignoré : OSM pose `natural=cliff` jusque sur des
+talus d'un mètre, que le MNT ne distingue pas de son propre bruit.
 
 ## Le sol
 
@@ -509,8 +523,13 @@ Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
    jamais la sous-classe d'une zone humide (seul `saltmarsh` a été vu). Un
    marais boisé est peint comme une roselière, sans arbres. Ses flaques ne sont
    vues que du shader : l'herbe y pousse comme sur la terre ferme.
-5. `natural=shingle`, `mud`, `rock`, `cliff` **n'arrivent jamais** jusqu'à nous :
-   le tableau de correspondance d'OpenMapTiles est fermé et ne les retient pas.
+5. `natural=shingle` et `mud` **n'arrivent jamais** jusqu'à nous en tant que
+   couverture : le tableau de correspondance de `landcover` est fermé et ne les
+   retient pas. `rock` y est en revanche bien présent (sous-classes `bare_rock`
+   et `scree`), et `cliff` arrive par une autre porte que celle où on le
+   cherche : ce n'est pas une couverture mais une **polyligne** de la couche
+   `mountain_peak`, servie à partir du zoom 13 aux côtés de `ridge` et `arete`.
+   C'est elle que lit `cliffLayer`.
 6. **Un cours d'eau plus étroit qu'un texel** (2,7 m) ne peut pas être rasterisé
    proprement : le drain (1,6 m) et le fossé (1,2 m) se rendent en pointillé.
    Voir `docs/surfaces.md`.

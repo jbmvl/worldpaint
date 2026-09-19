@@ -17,6 +17,7 @@ son état.
 | `roadWorks.js`, `bridgeLayer.js` | ponts et tunnels : un état de la chaussée, pas une classe de route |
 | `roadMarkings.js`, `roadBundles.js` | marquage au sol, voies qui se longent |
 | `railwayLayer.js` | la voie ferrée, qui publie sa propre emprise |
+| `cliffLayer.js` | les falaises relevées : la marche qu'elles imposent au terrain, et la paroi rocheuse balayée dessus |
 | `buildingLayer.js`, `roofGeometry.js` | le bâti et ses toitures |
 | `streetLayer.js`, `gardenLayer.js` | trottoirs et coins de rue, clôtures et buissons de maison |
 | `vegetationLayer.js`, `groundCover.js`, `cropLayer.js` | arbres, herbe, cultures |
