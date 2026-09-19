@@ -141,7 +141,7 @@ export const BUILDING_KINDS = Object.freeze({
   rendered: {},
   timber: {},
   red_timber: {},
-  adobe: { unsupported: 'aucune palette de terre crue' },
+  adobe: {},
   // Toits.
   slate_roof: {},
   flat_tile_roof: {},

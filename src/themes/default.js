@@ -969,6 +969,18 @@ export const TOWN_PALETTES = [
     pitch: 0.45,
   },
   {
+    // Torchis de terre crue : la Castille des greniers en pisé, montés à même
+    // la terre du champ voisin plutôt qu'importés d'une carrière.
+    name: 'terre crue',
+    materials: ['adobe'],
+    walls: ['#c9a876', '#bd9a68', '#d4b483'],
+    roofs: ['#a9754c', '#946440'],
+    shutters: ['#4a6b6a', '#8a6a45'],
+    roofShapes: ['gable', 'hip'],
+    // Tuile canal, comme partout où la terre cuite tient lieu de couverture.
+    pitch: 0.42,
+  },
+  {
     // Chaumière anglaise : le toit l'emporte sur le mur, quel qu'il soit — la
     // brique du New Forest, le crépi du Devon, la craie du Dorset. D'où un mur
     // neutre plutôt qu'accordé à un des trois.
