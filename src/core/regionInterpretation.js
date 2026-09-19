@@ -148,7 +148,7 @@ export const BUILDING_KINDS = Object.freeze({
   curved_tile_roof: {},
   stone_slab_roof: {},
   flat_roof: {},
-  thatch_roof: { unsupported: 'aucune couverture de chaume' },
+  thatch_roof: {},
   shingle_roof: { unsupported: 'aucune couverture de bardeau' },
   metal_roof: { unsupported: 'aucune couverture de tôle' },
 });

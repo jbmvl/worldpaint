@@ -968,6 +968,21 @@ export const TOWN_PALETTES = [
     roofShapes: ['gable', 'hip'],
     pitch: 0.45,
   },
+  {
+    // Chaumière anglaise : le toit l'emporte sur le mur, quel qu'il soit — la
+    // brique du New Forest, le crépi du Devon, la craie du Dorset. D'où un mur
+    // neutre plutôt qu'accordé à un des trois.
+    name: 'chaume',
+    materials: ['thatch_roof'],
+    walls: ['#e8e0cc', '#dcd3ba', '#f0e9d8'],
+    roofs: ['#b89a5c', '#a68a4e'],
+    shutters: ['#4a5f42', '#e0d8c4'],
+    // Ni pyramide ni toit plat : le chaume se pose sur une pente forte, à deux
+    // versants ou à croupe.
+    roofShapes: ['gable', 'hip'],
+    // Une pente forte pour évacuer l'eau : la paille ne pardonne pas la flaque.
+    pitch: 0.85,
+  },
 ];
 
 // --- Les bâtiments qui ont une fonction ----------------------------------------
