@@ -31,8 +31,13 @@ Conséquences pratiques quand on écrit :
   que ce soit ;
 - **une région trop serrée contre une voisine disparaît.** Le test le dit :
   chaque région doit se retrouver elle-même depuis sa propre ancre ;
-- au-delà de 150 km de toute ancre, il n'y a **pas** de région, et le décor se
-  peint générique. C'est l'état normal partout où le fichier ne va pas encore.
+- au-delà de 150 km de toute ancre, il n'y a **pas** de région, et le décor
+  **s'éteint** : rien n'est chargé, rien n'est posé, on voit le ciel et rien
+  dessous. C'est l'état normal partout où le fichier ne va pas encore, et c'est
+  volontaire — un paysage tiré dans les listes par défaut ressemble à un
+  paysage, donc personne ne voit qu'il est faux. Imposer une région
+  (`world.setRegion`) le rallume n'importe où, et c'est ainsi qu'on travaille un
+  pays avant de l'avoir ancré.
 
 L'ordre est `[longitude, latitude]`. Inverser les deux déplace une région d'un
 continent sans rien casser d'autre.

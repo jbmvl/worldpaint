@@ -1422,8 +1422,8 @@ regionSelect.addEventListener('change', () => {
 /** Rappelle ce que le sélecteur fait au décor, et ce qu'il ne fait pas. */
 function writeRegionHint() {
   regionHint.textContent = regionSelect.value
-    ? 'Le décor ne suit plus le lieu : essences, villages, cultures et sol sont ceux de ce pays.'
-    : 'La région est lue à l’ancre la plus proche de la caméra ; hors couverture, le décor est générique.';
+    ? 'Le décor ne suit plus le lieu : essences, villages, cultures et sol sont ceux de ce pays, où qu’on aille.'
+    : 'La région est lue à l’ancre la plus proche de la caméra. Hors couverture, le décor s’éteint — choisir une région ci-dessus le rallume.';
 }
 writeRegionHint();
 
@@ -1518,8 +1518,10 @@ function loop() {
   // d'oeil : c'est lui qui décide des essences, des palettes de village et de
   // l'assolement, et sans repère écrit on ne sait pas si le décor a changé de
   // région ou si l'on regarde deux fois le même bois.
+  // Hors couverture, le décor est éteint : il faut le dire, sinon un écran
+  // vide se lit comme une panne de chargement.
   const region = world?.composer?.landscape?.region;
-  const pays = region ? `  ${region.name} (${region.matrix})` : '';
+  const pays = region ? `  ${region.name} (${region.matrix})` : '  hors couverture';
   coordsEl.textContent = `${where}  alt ${camera.position.y.toFixed(0)} m  cap ${bearingDeg.toFixed(0)}°  incl ${pitchDeg.toFixed(0)}°${pays}`;
 
   renderer.render(scene, camera);

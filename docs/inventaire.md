@@ -85,20 +85,15 @@ pierre sèche, mur de soutènement, paroi de déblai.
 
 Second axe, indépendant de la matière : un champ est du `farmland` **et** du
 blé. La culture est tirée une fois, au centre de la parcelle, dans l'assolement
-du pays (`CROP_MIXES`) :
+du pays — la liste `farming` de son dossier, **ordonnée du plus répandu au
+moins répandu**. Il n'y a pas de table intermédiaire : la part de chaque
+culture se déduit de son rang, à peu près la moitié pour la première, le quart
+pour la deuxième (`sharesFor`).
 
-| Famille | Assolement dominant |
-| --- | --- |
-| oceanic | blé 30 %, maïs 22 %, labour 18 %, colza 12 %, verger 9 %, tournesol 5 %, vigne 4 % |
-| oceanicUpland | labour 50 %, blé 27 %, colza 10 %, maïs 8 %, verger 5 % |
-| continental | blé 38 %, labour 20 %, maïs 16 %, colza 10 %, tournesol 8 % |
-| boreal | labour 52 %, blé 33 %, colza 10 %, verger 5 % — ni maïs ni tournesol, la saison est trop courte |
-| mediterranean | vigne 24 %, verger 24 %, blé 17 %, labour 16 %, lavande 10 %, tournesol 9 % |
-| mediterraneanMontane | labour 36 %, blé 22 %, verger 22 %, lavande 12 %, vigne 8 % |
-| semiArid | labour 38 %, blé 22 %, verger 22 %, lavande 10 %, vigne 8 % |
-| arid | labour 70 %, verger 20 %, blé 10 % — une parcelle cultivée y est irriguée |
-| alpine | labour 70 %, blé 25 %, verger 5 % |
-| glacial | labour, et rien d'autre |
+Huit cultures existent (`CROP_KINDS`) : blé, maïs, tournesol, colza, vigne,
+verger, lavande, labour. Ce que le pays nomme passe par `cropForFarming` —
+l'olive et l'amande rendent un verger, le rang décide du reste. Sans région,
+c'est l'assolement français par défaut (`DEFAULT_CROP_MIX`).
 
 Deux sous-classes court-circuitent le tirage : `vineyard` donne une vigne,
 `orchard`/`plant_nursery` un verger. Ces deux-là, et la lavande avec elles,
@@ -115,20 +110,20 @@ donnée que le shader, donc jamais de contradiction. Le **peuplement** est tiré
 sur une maille de terrain, parmi les types dont la liste `species` cite une
 essence du pays :
 
-| Peuplement | Familles | Hauteur | Densité | Sous-bois |
+| Peuplement | Essences citées | Hauteur | Densité | Sous-bois |
 | --- | --- | --- | --- | --- |
-| futaie | oceanic, continental, mediterraneanCool | 12–22 m | 0,95 | 0,12 |
-| pinède | oceanic, continental, mediterraneanCool | 11–19 m | 1,45 | 0,08 |
-| taillis | les six tempérées et méditerranéennes | 3,5–7 m | 1,75 | 0,55 |
-| mixte | oceanic, continental, mediterraneanCool | 7–16 m | 1,3 | 0,34 |
-| pinède méditerranéenne | mediterranean, semiArid | 7–14 m | 0,85 | 0,45 |
-| chênaie verte | mediterranean, mediterraneanCool | 6–11 m | 1,25 | 0,4 |
-| pinède de montagne | mediterraneanMontane | 11–20 m | 1,05 | 0,2 |
-| taïga | boreal | 9–18 m | 1,5 | 0,18 |
-| bétulaie | boreal, oceanicUpland, alpine, glacial | 4–11 m | 1,1 | 0,35 |
-| pessière subalpine | alpine | 8–16 m | 1,2 | 0,16 |
-| bosquet sec | semiArid, arid | 3–8 m | 0,55 | 0,55 |
-| bois rabougri | oceanicUpland | 3–7 m | 0,85 | 0,5 |
+| futaie | chêne, hêtre, frêne, charme | 12–22 m | 0,95 | 0,12 |
+| pinède | pin maritime, pin sylvestre | 11–19 m | 1,45 | 0,08 |
+| taillis | châtaignier, charme, aulne, chêne, chêne-liège | 3,5–7 m | 1,75 | 0,55 |
+| mixte | chêne, hêtre, pin sylvestre, bouleau | 7–16 m | 1,3 | 0,34 |
+| pinède méditerranéenne | pin d'Alep, pin parasol | 7–14 m | 0,85 | 0,45 |
+| chênaie verte | chêne vert, chêne-liège | 6–11 m | 1,25 | 0,4 |
+| pinède de montagne | pin noir | 11–20 m | 1,05 | 0,2 |
+| taïga | épicéa | 9–18 m | 1,5 | 0,18 |
+| bétulaie | bouleau | 4–11 m | 1,1 | 0,35 |
+| pessière subalpine | mélèze, sapin | 8–16 m | 1,2 | 0,16 |
+| bosquet sec | genévrier, pin d'Alep | 3–8 m | 0,55 | 0,55 |
+| bois rabougri | bouleau | 3–7 m | 0,85 | 0,5 |
 
 La **lisière** est traitée à part : la canopée y baisse (−30 %) et la strate
 basse y monte (+55 %) — un bois vu du dehors est un mur de feuilles, pas une
@@ -365,14 +360,9 @@ pâturées :
 | drystone | **mur de pierre sèche 50 %**, rien 40 %, haie basse 10 % | mur 60 %, barbelé 25 % |
 | wood_fence | rien 75 %, haie basse 15 % | **barrière de bois 60 %**, barbelé 25 % |
 | none | rien 85 %, mur 15 % | rien 60 %, barbelé 25 %, mur 15 % |
-| mediterraneanMontane | **mur 50 %** (terrasses), rien 40 % | mur 60 %, barbelé 25 % |
-| semiArid | rien 75 %, mur 20 % | barbelé 40 %, mur 30 % |
-| arid | **rien 85 %** | rien 60 %, barbelé 25 % |
-| alpine | mur 40 %, barrière 20 %, rien 40 % | barrière 45 %, mur 30 % |
-| glacial | rien | rien |
 
 Deux règles priment sur le tirage : au-delà d'un certain **dévers** (de 5 % en
-montagne méditerranéenne à 28 % en taïga), c'est le mur, parce que la pierre
+pays de pierre sèche à 28 % en pays de barrière de bois), c'est le mur, parce que la pierre
 sort du premier pli de terrain ; et une parcelle **en culture** ne se clôt pas —
 le blé ne s'échappe pas.
 
@@ -394,14 +384,14 @@ Le **gibier** : 42 % des massifs ne portent rien du tout, et c'est voulu — un
 chevreuil dans chaque bois est un parc animalier. Un massif habité tire d'abord
 s'il abrite un carnassier (14 %), puis lequel :
 
-| Famille | Gibier | Carnassiers |
+| Matrice | Gibier | Carnassiers |
 | --- | --- | --- |
-| oceanic | chevreuil, biche, sanglier | renard |
-| mediterranean | sanglier surtout | renard |
-| continental | cerf, biche, sanglier | renard, loup |
-| boreal | **renne**, biche, cerf | renard, loup, **ours** |
-| alpine | cerf, biche | renard, loup, ours |
-| arid, glacial | rien | rien |
+| hedgerow_meadow | chevreuil, biche, sanglier | renard |
+| garrigue | sanglier surtout | renard |
+| broadleaf_woodland, openfield_cropland | cerf, biche, sanglier | renard, loup |
+| boreal_taiga | **renne**, biche, cerf | renard, loup, **ours** |
+| alpine_pasture | cerf, biche | renard, loup, ours |
+| desert_stone, desert_sand, bare_rock | rien | rien |
 
 ### La ferme (`_placeFarmstead`)
 
@@ -503,12 +493,12 @@ bougé tout seul » :
 
 Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
 
-1. **Le non-classé est ce que le pays y met** (`matrix`), et l'herbe là où
-   aucun pays n'est connu. Un désert non cartographié hors couverture est donc
-   une prairie jaunie.
-2. **La table des régions couvre la France et l'Espagne.** Ailleurs, tout
-   retombe sur le comportement par défaut, qui est celui du bocage
-   atlantique.
+1. **Le non-classé est ce que le pays y met** (`matrix`). Un désert
+   cartographié nulle part reste donc une prairie, à l'intérieur même d'une
+   région qui ne le décrit pas.
+2. **La table des régions couvre la France et l'Espagne.** Ailleurs, le décor
+   s'éteint : rien n'est chargé ni posé, on voit le ciel et rien dessous.
+   Imposer une région (`world.setRegion`) le rallume n'importe où.
 3. **La ville est un disque**, pas un contour : sa portée se tire d'un point
    `place` (3 km pour une `city`, 1,2 km pour une `town`), seule chose que la
    donnée dise du rang d'une agglomération. Une banlieue loin du point nommé

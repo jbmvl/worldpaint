@@ -246,7 +246,10 @@ paint anything convinces nobody.
   palettes, crops, livestock and haze belong there. See `src/core/regions.js`
   for the records, `src/core/regionInterpretation.js` for the closed vocabulary,
   and `docs/regions.md` for how to write a region. Outside any covered region
-  the scenery paints generically, which is a valid state.
+  the scenery **switches off** — nothing is fetched, nothing is placed, you see
+  the sky and nothing below it. That is deliberate: scenery drawn from the
+  default lists looks like scenery, so nobody notices it is wrong. Forcing a
+  region (`world.setRegion`) turns it back on anywhere.
 
 ## What the scenery is made of
 

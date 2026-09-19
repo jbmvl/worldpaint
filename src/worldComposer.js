@@ -118,10 +118,26 @@ export class WorldComposer {
     this.theme = theme;
     this.disposed = false;
     this._refreshing = false;
+
+    /**
+     * La racine du décor. Toutes les couches et le relief y sont posés, et pas
+     * directement dans la scène de l'application : c'est ce qui permet de
+     * l'éteindre d'un bloc là où le monde n'est pas décrit (voir `refresh`).
+     *
+     * Le ciel, le soleil et le brouillard n'en font pas partie — ils vivent
+     * dans `environment`, sur la scène de l'application. Hors couverture, on
+     * voit donc le ciel et rien dessous, ce qui se lit comme « rien ici » et
+     * non comme un écran noir.
+     */
+    this.root = new THREE.Group();
+    this.root.name = 'worldpaint';
+    scene.add(this.root);
+    this._scene = scene;
+    scene = this.root;
     /**
      * Profil du lieu : région et relief. `null` tant qu'aucun rafraîchissement
-     * n'a eu lieu, et hors de toute région couverte — auquel cas tout se peint
-     * générique.
+     * n'a eu lieu, et hors de toute région couverte — auquel cas le décor
+     * s'éteint (voir `refresh`).
      * @type {{region: Object, relief: {elevation: number, slope: number}}|null}
      */
     this.landscape = null;
@@ -303,6 +319,19 @@ export class WorldComposer {
     // le lit à la construction de son propre contenu.
     const regionChanged = this._updateLandscape(lng, lat, here);
     const region = this.landscape?.region ?? null;
+
+    // Hors de toute région couverte, le décor **s'éteint** au lieu de se peindre
+    // générique. Un paysage tiré dans les listes par défaut ressemble à un
+    // paysage, donc personne ne voit qu'il est faux : il montre une campagne
+    // française au milieu du Sahara. Rien du tout se lit, lui, du premier coup
+    // d'œil — et c'est la réponse honnête tant que le pays n'est pas écrit.
+    //
+    // On sort avant de charger quoi que ce soit : pas de tuile demandée, pas de
+    // semis, pas de rasterisation. Ce qui avait été construit reste en mémoire
+    // et se reconstruit en rentrant, `regionChanged` étant alors vrai.
+    this.root.visible = region !== null;
+    if (!region) return false;
+
     this._distributeRegion(region);
     const wanted = this._wantedTiles(lng, lat);
 
@@ -636,5 +665,6 @@ export class WorldComposer {
     this.vectorTiles?.dispose();
     this.groundClass.dispose();
     this.bubble.dispose();
+    this._scene?.remove(this.root);
   }
 }

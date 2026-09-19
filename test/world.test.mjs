@@ -2055,6 +2055,44 @@ test('une fleur garde sa couleur, l’herbe autour prend celle du pays', () => {
   }
 });
 
+test('hors de toute région, le décor s’éteint et rien n’est chargé', async () => {
+  // Un paysage tiré dans les listes par défaut ressemble à un paysage : rien ne
+  // dit qu'il est faux, et il peint une campagne française au milieu du Sahara.
+  // Éteindre se lit du premier coup d'œil.
+  const { WorldComposer } = await import('../src/worldComposer.js');
+  let demandees = 0;
+  const composer = {
+    disposed: false,
+    _refreshing: false,
+    vectorTiles: { load: () => { demandees++; return Promise.resolve(); }, missing: () => 0 },
+    bubble: {
+      frame: { toLocal: () => ({ x: 0, z: 0 }) },
+      surfaceElevationAtLocal: () => 40,
+    },
+    root: { visible: true },
+    landscape: null,
+    regionOverride: null,
+    _updateLandscape: WorldComposer.prototype._updateLandscape,
+  };
+  const refresh = (lng, lat) => WorldComposer.prototype.refresh.call(composer, lng, lat);
+
+  // New York : hors de toute ancre.
+  assert.equal(await refresh(-74, 40.7), false, 'rien à construire');
+  assert.equal(composer.root.visible, false, 'le décor est éteint');
+  assert.equal(demandees, 0, 'aucune tuile demandée');
+
+  // Et la sortie est prise avant tout chargement, à chaque passage.
+  await refresh(13.4, 52.5);
+  assert.equal(composer.root.visible, false);
+  assert.equal(demandees, 0);
+
+  // Une région imposée rallume le décor n'importe où : c'est l'outil de
+  // comparaison, et il doit continuer de marcher hors couverture.
+  WorldComposer.prototype.setRegion.call(composer, 'anjou');
+  WorldComposer.prototype._updateLandscape.call(composer, -74, 40.7, { x: 0, z: 0 });
+  assert.equal(composer.landscape.region.id, 'anjou');
+});
+
 test('une région imposée ne suit plus le lieu', async () => {
   // C'est le seul moyen de comparer deux pays sur le **même** terrain : mêmes
   // routes, mêmes parcelles, même relief, tout le reste changé. Se téléporter

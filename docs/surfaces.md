@@ -226,11 +226,10 @@ Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
 
 1. **Là où la donnée se tait, c'est le pays qui remplit.** La matrice du
    dossier de région (`surfaceForMatrix`) décide de la matière ; `unclassified`
-   vaut `grass` et ne sert plus que là où aucun pays n'est connu. **Hors des
-   régions couvertes, un désert non cartographié reste donc une prairie** : le
-   lavage du sol (`soilWashFor`) ne fait que jaunir cette herbe, jamais la
-   changer en sable. Un désert n'existe alors que là où OSM a tracé un
-   `natural=sand`.
+   vaut `grass` et ne sert plus que de repli au thème. Hors des régions
+   couvertes la question ne se pose plus : le décor s'éteint. **À l'intérieur
+   d'une région, en revanche, la matrice est le seul recours** — un désert que
+   la carte ne trace pas n'existe que si la matrice le dit.
 2. **Un marais n'a qu'une forme.** Les tuiles servies ne transmettent presque
    jamais la sous-classe d'une zone humide. Relevé au z14 sur la Camargue, la
    Brière, le lac de Grand-Lieu, la baie de l'Aiguillon, le delta du Danube, le
