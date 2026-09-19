@@ -45,7 +45,11 @@
  * subsiste à voir sur un sol lointain. La pente au-delà de 30° vire à la
  * roche. Une matière s'ajoute en ajoutant une couleur ; celle où l'eau affleure
  * (`standingWater`) y gagne des flaques, découpées par un bruit et rendues comme
- * l'eau.
+ * l'eau — le même bruit, relu côté CPU par `poolShareAt` (`groundClassMap.js`),
+ * pour que l'herbe et le sous-bois sachent où elle affleure. Une culture peut
+ * porter la même notion sur son propre axe (`cropStandingWater`, `uCropWater`) :
+ * c'est la lame d'eau d'une rizière, indépendante de la matière `farmland`
+ * qu'elle recouvre.
  *
  * Cette variation macro n'est pas la même partout (`macro`, `macroNear` de
  * `SURFACE_LOOK`) : un stade tondu n'est pas aussi marbré qu'une tourbière.
@@ -95,6 +99,9 @@ import {
   WATER_ID,
   PAVEMENT_ID,
   CLASS_PIXELS,
+  POOL_NOISE_STRETCH,
+  POOL_SCALE_RATIO,
+  POOL_EDGE_SOFTNESS,
 } from './groundClassMap.js';
 import { pavementTone } from '../layers/townStyle.js';
 import { createWaterNormalCanvas } from '../materials/proceduralTextures.js';
@@ -150,6 +157,11 @@ export class TerrainMaterialFactory {
     };
 
     this.macroTexture = repeated(createMacroCanvas());
+    // Sans retournement : `poolShareAt` (groundClassMap.js) relit le même
+    // champ côté CPU pour savoir où tombent les flaques, et les deux lectures
+    // ne peuvent tomber sur le même texel que si aucune des deux n'inverse
+    // l'axe vertical à sa manière.
+    this.macroTexture.flipY = false;
     // Rides : la même carte que celle qui servait la nappe d'eau, du temps où
     // l'eau était une surface posée sur le terrain.
     this.waterRippleTexture = repeated(createWaterNormalCanvas());
@@ -303,6 +315,11 @@ export class TerrainMaterialFactory {
             new THREE.Vector3(...(look.cropAlbedo[kind] || this.surfaces.farmland.albedo))
         ),
       },
+      // Lame d'eau par culture, sur le même principe que `uSurfaceWater` mais
+      // pour le second axe : zéro partout sauf le riz.
+      uCropWater: {
+        value: CROP_KINDS.map((kind) => look.cropStandingWater?.[kind] ?? 0),
+      },
       // L'eau ne se mélange pas aux autres matières : là où la carte le dit,
       // elle remplace tout — couleur, grain, relief.
       uWaterAlbedo: {
@@ -356,6 +373,7 @@ export class TerrainMaterialFactory {
            uniform float uSurfaceEnabled;
            uniform float uUnclassified;
            uniform vec3 uCropAlbedo[${CROP_KINDS.length}];
+           uniform float uCropWater[${CROP_KINDS.length}];
            uniform vec3 uSurfaceAlbedo[${SURFACE_KINDS.length}];
            uniform float uSurfaceWater[${SURFACE_KINDS.length}];
            uniform float uSurfaceMacro[${SURFACE_KINDS.length}];
@@ -481,7 +499,7 @@ export class TerrainMaterialFactory {
             * il vit dans un litteral de gabarit.
             */
            void surfaceAt(
-             vec2 uv, vec3 farmAlbedo, out vec3 albedo, out float water,
+             vec2 uv, vec3 farmAlbedo, float cropWater, out vec3 albedo, out float water,
              out float standing, out float macroAmp, out float macroNear
            ) {
              vec2 grid = uv * ${CLASS_PIXELS}.0 - 0.5;
@@ -534,12 +552,13 @@ export class TerrainMaterialFactory {
                  vec4 hit = step(abs(ids - float(i)), vec4(0.5));
                  float share = dot(hit, lifted) / land;
                  // La culture remplace la couleur de la terre labouree, et elle
-                 // seule : c'est un second axe, pas une matiere de plus.
-                 vec3 tone = i == ${SURFACE_KINDS.indexOf('farmland') + 1}
-                   ? farmAlbedo
-                   : uSurfaceAlbedo[i - 1];
+                 // seule : c'est un second axe, pas une matiere de plus. La
+                 // lame d'eau du riz suit la meme substitution : farmland ne
+                 // porte pas d'eau propre, donc la remplacer ne perd rien.
+                 bool isFarmland = i == ${SURFACE_KINDS.indexOf('farmland') + 1};
+                 vec3 tone = isFarmland ? farmAlbedo : uSurfaceAlbedo[i - 1];
                  albedo += tone * share;
-                 standing += uSurfaceWater[i - 1] * share;
+                 standing += (isFarmland ? cropWater : uSurfaceWater[i - 1]) * share;
                  macroAmp += uSurfaceMacro[i - 1] * share;
                  macroNear += uSurfaceMacroNear[i - 1] * share;
                }
@@ -583,12 +602,20 @@ export class TerrainMaterialFactory {
              // forme d'acces a un tableau d'uniformes que toutes les versions
              // de GLSL acceptent.
              vec3 farmAlbedo = uSurfaceAlbedo[${SURFACE_KINDS.indexOf('farmland')}];
+             // Lame d'eau d'une culture — le riz, et lui seul aujourd'hui —
+             // zero partout ou une matiere n'a pas encore ete peinte de riz.
+             // Meme substitution que l'albedo, meme boucle : un axe de plus
+             // dans le meme tableau d'uniformes, pas un canal de plus.
+             float cropWater = 0.0;
              if (inMap > 0.5) {
                int crop = int(
                  floor(texture2D(uSurfaceMap, surfaceUv).g * 255.0 / ${CROP_ID_STEP}.0 + 0.5)
                ) - 1;
                for (int i = 0; i < ${CROP_KINDS.length}; i++) {
-                 if (i == crop) farmAlbedo = uCropAlbedo[i];
+                 if (i == crop) {
+                   farmAlbedo = uCropAlbedo[i];
+                   cropWater = uCropWater[i];
+                 }
                }
              }
 
@@ -601,7 +628,7 @@ export class TerrainMaterialFactory {
              float macroAmp = 1.0;
              float macroNear = 0.0;
              if (inMap > 0.5) {
-               surfaceAt(surfaceUv, farmAlbedo, albedo, gWater, standing, macroAmp, macroNear);
+               surfaceAt(surfaceUv, farmAlbedo, cropWater, albedo, gWater, standing, macroAmp, macroNear);
              } else {
                // Hors carte : la matiere de repli.
                for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
@@ -621,12 +648,12 @@ export class TerrainMaterialFactory {
              // a six points pres entre 5 et 90 %. Tranche la, la flaque prend
              // le rendu de l'eau et sa rive.
              if (standing > 0.001) {
-               float poolNoise = 0.5 + 1.25 * (
+               float poolNoise = 0.5 + ${POOL_NOISE_STRETCH} * (
                  texture2D(uMacroMap, vScenePos.xz / uPoolScale).r -
-                 texture2D(uMacroMap, vScenePos.zx / (uPoolScale * 1.618)).r
+                 texture2D(uMacroMap, vScenePos.zx / (uPoolScale * ${POOL_SCALE_RATIO})).r
                );
                float poolEdge = 1.0 - standing;
-               float pool = smoothstep(poolEdge - 0.04, poolEdge + 0.04, poolNoise);
+               float pool = smoothstep(poolEdge - ${POOL_EDGE_SOFTNESS}, poolEdge + ${POOL_EDGE_SOFTNESS}, poolNoise);
                gWater += (1.0 - gWater) * pool;
              }
 

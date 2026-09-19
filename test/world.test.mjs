@@ -474,6 +474,7 @@ import {
   GRASS_VARIANTS,
   createTreeAtlasCanvas,
   createRoadCanvas,
+  macroNoiseField,
 } from '../src/materials/proceduralTextures.js';
 import { snapToShadowTexels, sunDirection, SHADOW_RADIUS_M } from '../src/environment/shadowFrame.js';
 import {
@@ -518,6 +519,11 @@ import {
   SETTLED_GRASS,
   VEGETAL_SURFACES,
   WOOD_EDGE_REACH_M,
+  poolShareAt,
+  poolEdgeGain,
+  POOL_NOISE_STRETCH,
+  POOL_SCALE_RATIO,
+  POOL_EDGE_SOFTNESS,
 } from '../src/terrain/groundClassMap.js';
 import {
   collectBuiltUpAreas,
@@ -2392,6 +2398,86 @@ test('la table des matières décrit chaque matière, et rien de plus', () => {
   }
   assert.ok(surfaces.wetland.standingWater > 0, 'un marais a de l’eau entre ses touffes');
   assert.ok(surfaces.mud.standingWater > 0, 'une vasière garde ses flaques');
+});
+
+test('la lecture CPU des flaques suit la part demandée, et ne dépend que de la position', () => {
+  // Sans part d'eau, rien à calculer : une matière qui ne porte pas de flaque
+  // (standing = 0) n'en a jamais, quel que soit le point.
+  assert.equal(poolShareAt(123, 456, 0), 0);
+  assert.equal(poolShareAt(0, 0, 0.3), 0, 'à l’origine aussi');
+
+  // Déterminisme : deux appels au même point, avec les mêmes réglages,
+  // rendent la même part — c'est une fonction pure, sans état.
+  const a = poolShareAt(1234.5, -678.25, 0.3);
+  const b = poolShareAt(1234.5, -678.25, 0.3);
+  assert.equal(a, b);
+
+  // La part mesurée sur un grand nombre de points suit la part demandée, à la
+  // même tolérance que celle mesurée sur le bruit lui-même (« à six points
+  // près entre 5 et 90 % », voir docs/surfaces.md) : un excès de dérive
+  // signalerait une divergence entre cette lecture et celle du shader.
+  const wetFractionFor = (standing) => {
+    let wet = 0;
+    const n = 4000;
+    for (let i = 0; i < n; i++) {
+      // Une grille large et irrégulière : pas d'alignement avec la période
+      // du bruit (60 m par défaut), qui biaiserait l'échantillonnage.
+      const x = i * 17.3 - 30000;
+      const z = i * -11.7 + 20000;
+      wet += poolShareAt(x, z, standing) > 0.5 ? 1 : 0;
+    }
+    return wet / n;
+  };
+  for (const standing of [0.05, 0.3, 0.9]) {
+    const measured = wetFractionFor(standing);
+    assert.ok(
+      Math.abs(measured - standing) <= 0.08,
+      `standing ${standing} : part mesurée ${measured.toFixed(3)}`
+    );
+  }
+
+  // Les constantes ne sont pas dupliquées : `terrainMaterial.js` compose son
+  // GLSL avec les mêmes valeurs, jamais des littéraux à côté.
+  const shaderSource = readFileSync('src/terrain/terrainMaterial.js', 'utf8');
+  assert.ok(shaderSource.includes('POOL_NOISE_STRETCH'));
+  assert.ok(shaderSource.includes('POOL_SCALE_RATIO'));
+  assert.ok(shaderSource.includes('POOL_EDGE_SOFTNESS'));
+  assert.equal(POOL_NOISE_STRETCH, 1.25);
+  assert.equal(POOL_SCALE_RATIO, 1.618);
+  assert.equal(POOL_EDGE_SOFTNESS, 0.04);
+
+  // Un champ propre, de même recette, rend exactement le même résultat que le
+  // champ par défaut : la fonction ne tient aucun état caché.
+  const ownField = macroNoiseField();
+  assert.equal(poolShareAt(500, -200, 0.3, defaultTheme.terrain.poolScaleM, ownField), poolShareAt(500, -200, 0.3));
+});
+
+test('la bordure d’une flaque monte puis retombe, sans jamais sortir de [0, 1]', () => {
+  assert.equal(poolEdgeGain(0), 0, 'au sec, loin de l’eau : rien à border');
+  assert.ok(poolEdgeGain(0.5) > poolEdgeGain(0.9), 'proche de la rive plus que dans l’eau');
+  for (let i = 0; i <= 20; i++) {
+    const pool = i / 20;
+    const gain = poolEdgeGain(pool);
+    assert.ok(gain >= 0 && gain <= 1, `pool ${pool} : gain ${gain}`);
+  }
+});
+
+test('l’herbe et le fourré refusent le milieu d’une flaque, et la bordent plus dense', () => {
+  // Ce que le shader dessine et ce que l'herbe sème doivent partager la même
+  // vérité : pas de comptage séparé de flaques, une seule lecture (`poolShareAt`).
+  const groundCoverSource = readFileSync('src/layers/groundCover.js', 'utf8');
+  assert.match(groundCoverSource, /import \{ SETTLED_GRASS, VEGETAL_SURFACES, poolShareAt, poolEdgeGain \}/);
+  assert.match(groundCoverSource, /if \(pool > 0\.5\) continue;/);
+  assert.match(groundCoverSource, /\(1 \+ poolEdge \* POOL_EDGE_DENSITY_BOOST\)/);
+  assert.match(groundCoverSource, /\(1 \+ poolEdge \* POOL_EDGE_HEIGHT_BOOST\)/);
+
+  const vegetationSource = readFileSync('src/layers/vegetationLayer.js', 'utf8');
+  assert.match(vegetationSource, /import \{ poolShareAt, poolEdgeGain \} from '\.\.\/terrain\/groundClassMap\.js';/);
+  assert.equal(
+    (vegetationSource.match(/> 0\.5\s*\n\s*\?\s*0\s*\n\s*: coverBushesFor/g) || []).length,
+    2,
+    'les deux sites d’appel de coverBushesFor refusent le milieu d’une flaque'
+  );
 });
 
 test('la part d’une matière s’interpole, là où son identifiant ne le peut pas', () => {
@@ -11407,7 +11493,7 @@ test('le contour de l’eau se fond, sans que les identifiants cessent d’être
   // culture — pour une seule question.
   assert.match(
     source,
-    /surfaceAt\(surfaceUv, farmAlbedo, albedo, gWater, standing, macroAmp, macroNear\);/
+    /surfaceAt\(surfaceUv, farmAlbedo, cropWater, albedo, gWater, standing, macroAmp, macroNear\);/
   );
   assert.ok(!/uClassMap|uCropMap/.test(source), 'les deux cartes ont fusionné');
 
@@ -12231,7 +12317,7 @@ test('la variation macro du sol dépend de la matière : amplitude et plancher d
   // la matière dominante.
   assert.match(
     source,
-    /standing \+= uSurfaceWater\[i - 1\] \* share;\s*\n\s*macroAmp \+= uSurfaceMacro\[i - 1\] \* share;\s*\n\s*macroNear \+= uSurfaceMacroNear\[i - 1\] \* share;/
+    /standing \+= \(isFarmland \? cropWater : uSurfaceWater\[i - 1\]\) \* share;\s*\n\s*macroAmp \+= uSurfaceMacro\[i - 1\] \* share;\s*\n\s*macroNear \+= uSurfaceMacroNear\[i - 1\] \* share;/
   );
   assert.match(
     source,
@@ -12295,6 +12381,56 @@ test('la variation macro du sol dépend de la matière : amplitude et plancher d
   );
   assert.ok(nearHeath > 0, 'la lande garde du marbrage à portée d’observation');
   assert.equal(nearScree, 0, 'l’éboulis, sans plancher, reste éteint à la même distance');
+});
+
+test('la lame d’eau d’une culture : le riz en porte une, les autres aucune', () => {
+  for (const crop of CROP_KINDS) {
+    const water = defaultTheme.terrain.cropStandingWater?.[crop] ?? 0;
+    if (crop === 'rice') {
+      assert.ok(water > 0.3, `le riz doit porter une lame d’eau franche (${water})`);
+    } else {
+      assert.equal(water, 0, `${crop} ne porte pas d’eau (${water})`);
+    }
+  }
+  // farmland lui-même ne porte pas d'eau propre : c'est bien la substitution
+  // par culture qui en ajoute, jamais la matière.
+  assert.equal(defaultTheme.surfaces.farmland.standingWater ?? 0, 0);
+
+  const previousCanvas = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      Object.assign(this, { width, height });
+    }
+    getContext() {
+      return paintingCanvasContext();
+    }
+  };
+  let factory;
+  try {
+    factory = new TerrainMaterialFactory({ THREE: terrainThreeStub() });
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+  }
+  const shader = {
+    uniforms: {},
+    vertexShader: ['#include <common>', '#include <begin_vertex>'].join('\n'),
+    fragmentShader: [
+      '#include <common>',
+      '#include <map_fragment>',
+      '#include <normal_fragment_begin>',
+    ].join('\n'),
+  };
+  factory.material.onBeforeCompile(shader);
+
+  // Un tableau d'uniformes de plus, pas un canal de plus : même longueur que
+  // les albédos de culture, indexé dans le même ordre.
+  assert.equal(shader.uniforms.uCropWater.value.length, CROP_KINDS.length);
+  CROP_KINDS.forEach((crop, i) => {
+    const expected = defaultTheme.terrain.cropStandingWater?.[crop] ?? 0;
+    assert.equal(shader.uniforms.uCropWater.value[i], expected, crop);
+  });
+  assert.match(shader.fragmentShader, /uniform float uCropWater\[\d+\];/);
 });
 
 test('la frange déplace la lecture du sol, sans dépendre du parcours ni sortir de sa portée', () => {

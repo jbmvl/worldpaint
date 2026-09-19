@@ -148,8 +148,19 @@ export function stretchToUnit(field) {
  * fines, la couleur crépiterait au mètre et les deux relevés se mélangeraient
  * partout — le flou qu'on voulait éviter.
  */
+/**
+ * Le champ brut derrière `createMacroCanvas`, avant sa mise en image — même
+ * taille, même graine par défaut. C'est ce que relit `poolShareAt`
+ * (`groundClassMap.js`) pour savoir, côté CPU, où tombent les mêmes flaques
+ * que le shader découpe : la texture est faite pour l'écran (huit bits par
+ * canal, filtrée, mipmappée), le champ pour un calcul exact.
+ */
+export function macroNoiseField(size = 128, seed = 40213) {
+  return { size, data: stretchToUnit(fractalNoise(size, [1, 2, 4], seed)) };
+}
+
 export function createMacroCanvas(size = 128, seed = 40213) {
-  const noise = stretchToUnit(fractalNoise(size, [1, 2, 4], seed));
+  const { data: noise } = macroNoiseField(size, seed);
   const canvas = createCanvas(size, size);
   const ctx = canvas.getContext('2d');
   const image = ctx.createImageData(size, size);

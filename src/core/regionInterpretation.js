@@ -96,7 +96,7 @@ export const MATRIX_KINDS = Object.freeze({
   rice_terrace: {
     surface: 'farmland',
     boundary: 'drystone',
-    unsupported: 'ni lame d’eau ni terrasse inondée : rend un champ',
+    unsupported: 'la lame d’eau du riz est rendue, la terrasse inondée non : rend un champ plat',
   },
 });
 

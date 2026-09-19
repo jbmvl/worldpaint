@@ -164,6 +164,10 @@ maquis 0,9, lande 0,3, pré salé 0,12, marais 0,08, sable 0,05, pelouse
 d'altitude 0,04, dalle 0,02 ; éboulis, vasière et glace 0. C'est ce qui fait exister un maquis — ni prairie ni forêt, mais
 un fourré bas.
 
+Là où la matière porte de l'eau libre (marais, pré salé, vasière), rien ne se
+sème au milieu d'une flaque (`poolShareAt`, `groundClassMap.js`), et le fourré
+se densifie sur les derniers mètres qui la bordent (`poolEdgeGain`).
+
 ### L'herbe (`groundCover`)
 
 Trois échelles selon la distance (la plante, la touffe, la masse). La quantité
@@ -175,6 +179,10 @@ visible entre les touffes qui fait une steppe, pas la couleur).
 16 % des touffes portent des fleurs en pleine prairie, 42 % en lisière de
 culture (le coquelicot). Sous les arbres, ce n'est plus une prairie mais une
 litière : moitié moins haute, 30 % moins dense, réchauffée vers le brun.
+
+Sur une matière où l'eau affleure, une touffe refuse le milieu d'une flaque et
+pousse plus haut et plus dense sur sa bordure (`poolShareAt`, `poolEdgeGain`) :
+l'herbe et le shader lisent désormais la même eau.
 
 ---
 
@@ -526,8 +534,7 @@ Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
    n'est pas pavée.
 4. **Un marais n'a qu'une forme** : les tuiles servies ne transmettent presque
    jamais la sous-classe d'une zone humide (seul `saltmarsh` a été vu). Un
-   marais boisé est peint comme une roselière, sans arbres. Ses flaques ne sont
-   vues que du shader : l'herbe y pousse comme sur la terre ferme.
+   marais boisé est peint comme une roselière, sans arbres.
 5. `natural=shingle`, `mud`, `rock`, `cliff` **n'arrivent jamais** jusqu'à nous :
    le tableau de correspondance d'OpenMapTiles est fermé et ne les retient pas.
 6. **Un cours d'eau plus étroit qu'un texel** (2,7 m) ne peut pas être rasterisé

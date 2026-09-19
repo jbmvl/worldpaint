@@ -101,6 +101,7 @@ import {
 } from '../layers/furniturePlacement.js';
 import { URBAN_GREEN_LANDUSE } from '../layers/settlement.js';
 import { defaultTheme } from '../themes/default.js';
+import { macroNoiseField } from '../materials/proceduralTextures.js';
 import {
   CLASS_SOURCE_LAYERS,
   WATER_SOURCE_LAYER,
@@ -1033,4 +1034,115 @@ export class GroundClassMap {
     this._data = null;
     this.texture.dispose();
   }
+}
+
+// --- L'eau qui affleure ---------------------------------------------------
+
+/**
+ * Étirement du bruit de flaque — la différence de deux relevés devient un
+ * écart plus large que 1, pour qu'une part demandée de 5 à 90 % se retrouve
+ * dans le seuillage. Partagé avec le shader (`terrainMaterial.js`), qui
+ * compose le même calcul en GLSL : une seule valeur, jamais deux qui
+ * pourraient diverger.
+ */
+export const POOL_NOISE_STRETCH = 1.25;
+/**
+ * Rapport d'échelle entre les deux relevés du bruit de flaque. Irrationnel :
+ * les deux nappes ne retombent jamais en phase, où le bruit s'annulerait.
+ */
+export const POOL_SCALE_RATIO = 1.618;
+/** Demi-largeur, en part de bruit (0 à 1), du fondu de bord d'une flaque. */
+export const POOL_EDGE_SOFTNESS = 0.04;
+
+/**
+ * Champ de bruit par défaut, calculé une fois : même taille et même graine
+ * que celui que `TerrainMaterialFactory` met en texture. Une fonction pure
+ * n'a pas à recevoir cet objet à chaque appel — `poolShareAt` le prend par
+ * défaut, et un appelant qui sème des milliers de touffes le lit donc une
+ * seule fois, jamais par touffe.
+ */
+export const DEFAULT_POOL_FIELD = macroNoiseField();
+
+/**
+ * Bilinéaire, rebouclé aux deux bords — le pendant CPU d'un `texture2D` en
+ * `RepeatWrapping`. Lecture directe, sans retourner `v` : la texture que
+ * `TerrainMaterialFactory` en tire est chargée avec `flipY = false` pour
+ * cette raison précise — sans ce réglage, une lecture CPU et une lecture GPU
+ * au même point du monde ne tomberaient pas sur le même texel.
+ */
+function sampleField(field, u, v) {
+  const { size, data } = field;
+  const gx = u * size - 0.5;
+  const gy = v * size - 0.5;
+  const x0 = Math.floor(gx);
+  const y0 = Math.floor(gy);
+  const fx = gx - x0;
+  const fy = gy - y0;
+  const wrap = (i) => ((i % size) + size) % size;
+  const a = data[wrap(y0) * size + wrap(x0)];
+  const b = data[wrap(y0) * size + wrap(x0 + 1)];
+  const c = data[wrap(y0 + 1) * size + wrap(x0)];
+  const d = data[wrap(y0 + 1) * size + wrap(x0 + 1)];
+  const top = a + (b - a) * fx;
+  const bottom = c + (d - c) * fx;
+  return top + (bottom - top) * fy;
+}
+
+/**
+ * Part d'un point sous une flaque, côté CPU — le même bruit que celui que le
+ * shader de terrain découpe pour une matière où l'eau affleure
+ * (`standingWater`, `SURFACE_LOOK`), lu sur le même champ, aux mêmes échelles.
+ *
+ * Ce qu'il ne fait pas : suivre le shader jusqu'au mip. La texture que la
+ * carte graphique filtre et mipmappe lisse le bruit à distance, ce qui
+ * resserre ses écarts et éteint le seuil ; cette lecture-ci reste toujours au
+ * premier niveau. Les deux ne coïncident donc qu'à courte distance — un
+ * marais lointain garde ses flaques ici quand le shader a déjà perdu les
+ * siennes (voir `docs/surfaces.md`).
+ *
+ * @param {number} x Mètres locaux.
+ * @param {number} z
+ * @param {number} standing Part du sol sous l'eau pour la matière de ce point
+ *        (`SURFACE_LOOK[kind].standingWater`), de 0 à 1. Zéro si la matière
+ *        ne porte pas de flaque : rien à calculer.
+ * @param {number} [poolScaleM] Période du bruit, en mètres (`terrain.poolScaleM`).
+ * @param {{size:number, data:Float32Array}} [field] Champ de bruit à relire —
+ *        `DEFAULT_POOL_FIELD` sauf pour un test qui veut le sien.
+ * @returns {number} de 0 (sec) à 1 (flaque), la même rampe que `gWater`.
+ */
+export function poolShareAt(x, z, standing, poolScaleM = defaultTheme.terrain.poolScaleM, field = DEFAULT_POOL_FIELD) {
+  if (!(standing > 0.001)) return 0;
+
+  const a = sampleField(field, x / poolScaleM, z / poolScaleM);
+  const b = sampleField(field, z / (poolScaleM * POOL_SCALE_RATIO), x / (poolScaleM * POOL_SCALE_RATIO));
+  const poolNoise = 0.5 + POOL_NOISE_STRETCH * (a - b);
+
+  // La même cubique que le `smoothstep` GLSL (Hermite) — pas une rampe
+  // linéaire, sans quoi le bord de la flaque n'aurait pas le même profil ici
+  // et à l'écran.
+  const poolEdge = 1 - standing;
+  const t = Math.min(1, Math.max(0, (poolNoise - (poolEdge - POOL_EDGE_SOFTNESS)) / (2 * POOL_EDGE_SOFTNESS)));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * Combien un point est **près du bord** d'une flaque, de 0 (au sec, loin) à
+ * 1 (juste avant la rive) — appelée sur `poolShareAt`, pas sur une distance
+ * que la carte ne porte pas. Même forme de bande que la rive du shader
+ * (`shore` dans `terrainMaterial.js`), reprise ici pour que le sous-bois d'un
+ * marais et le shader s'accordent sur ce que « border » veut dire.
+ *
+ * Limite assumée : ce n'est pas une distance en mètres, c'est une largeur de
+ * bande dans l'espace du bruit — elle ne mesure donc pas littéralement les
+ * deux mètres de la fiche du biome, seulement une proximité de même ordre.
+ *
+ * @param {number} pool Retour de `poolShareAt`.
+ * @returns {number} de 0 à 1.
+ */
+export function poolEdgeGain(pool) {
+  const smooth = (edge0, edge1, x) => {
+    const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+    return t * t * (3 - 2 * t);
+  };
+  return Math.max(0, smooth(0, 0.35, pool) - smooth(0.4, 0.9, pool));
 }

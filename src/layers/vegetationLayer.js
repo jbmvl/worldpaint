@@ -64,6 +64,11 @@
  * en herbe — `woodAt` y répond zéro et rien n'y pousserait. La couverture
  * (`groundClass.surfaceAt`) le dit, et c'est elle qui sème ici les buissons hors
  * des bois, dans les deux semis, avec les silhouettes du sous-bois.
+ *
+ * Un marais ou une vasière portent en outre une part d'eau libre
+ * (`standingWater`). Le fourré de couverture y relit la même flaque que le
+ * shader découpe (`poolShareAt`, `groundClassMap.js`) : rien au milieu de
+ * l'eau, plus dense sur la bordure (`poolEdgeGain`).
  */
 
 import {
@@ -91,6 +96,7 @@ import {
 } from '../materials/foliageMaterial.js';
 import { defaultTheme } from '../themes/default.js';
 import { filterByWords } from '../core/regionInterpretation.js';
+import { poolShareAt, poolEdgeGain } from '../terrain/groundClassMap.js';
 
 // --- Le semis : des candidats, pas une suite ------------------------------------
 /**
@@ -132,6 +138,12 @@ export function standDraw(seed, k) {
 export const VEGETATION_CELLS = 24;
 /** Arbres attendus dans une maille pleinement boisée, pour un peuplement de densité 1. */
 export const TREES_PER_CELL = 14;
+/**
+ * Gain de densité du fourré de couverture sur la bordure d'une flaque
+ * (`poolEdgeGain`) — les bosquets d'un marais se groupent sur les langues
+ * sèches qui longent l'eau plutôt que de se répartir au hasard de la matière.
+ */
+export const BUSH_POOL_EDGE_BOOST = 0.6;
 /**
  * Candidats tirés par maille. C'est le plafond de densité du peuplement : une
  * maille qui en demanderait davantage (fourré de couverture sur un bois épais)
@@ -768,10 +780,21 @@ export class VegetationLayer {
         const type = standTypeFrom(pool, centreX, centreZ);
         const stems = woodDensity(groundClass.woodAt(centreX, centreZ)) * standTreesPerCell(type);
         // Fourré de couverture — voir `coverBushesFor`. Il se sème là où il n'y
-        // a pas de bois, donc il ne peut pas être conditionné aux tiges.
+        // a pas de bois, donc il ne peut pas être conditionné aux tiges. Rien
+        // au milieu d'une flaque, plus dense sur sa bordure (`poolEdgeGain`) :
+        // l'eau et le fourré suivent désormais la même vérité.
+        const bushCover = groundClass.surfaceAt?.(centreX, centreZ) ?? null;
+        const bushStanding = bushCover ? this.theme.surfaces[bushCover]?.standingWater ?? 0 : 0;
+        const bushPool =
+          bushStanding > 0
+            ? poolShareAt(centreX, centreZ, bushStanding, this.theme.terrain.poolScaleM)
+            : 0;
         const thicket =
-          coverBushesFor(groundClass.surfaceAt?.(centreX, centreZ) ?? null, this.theme.surfaces) *
-          TREES_PER_CELL;
+          bushPool > 0.5
+            ? 0
+            : coverBushesFor(bushCover, this.theme.surfaces) *
+              TREES_PER_CELL *
+              (1 + poolEdgeGain(bushPool) * BUSH_POOL_EDGE_BOOST);
         const expected = stems + thicket;
         if (expected <= 0) continue;
 
@@ -919,9 +942,20 @@ export class VegetationLayer {
         const stems =
           woodDensity(groundClass.woodAt(centreX, centreZ)) *
           thicketPerCell(thicketDensityFor(type), band.cell);
+        // Même refus au milieu d'une flaque, même bordure plus dense qu'au
+        // premier plan (voir l'autre site d'appel, `_build`).
+        const thickCover = groundClass.surfaceAt?.(centreX, centreZ) ?? null;
+        const thickStanding = thickCover ? this.theme.surfaces[thickCover]?.standingWater ?? 0 : 0;
+        const thickPool =
+          thickStanding > 0
+            ? poolShareAt(centreX, centreZ, thickStanding, this.theme.terrain.poolScaleM)
+            : 0;
         const thick =
-          coverBushesFor(groundClass.surfaceAt?.(centreX, centreZ) ?? null, this.theme.surfaces) *
-          thicketPerCell(1, band.cell);
+          thickPool > 0.5
+            ? 0
+            : coverBushesFor(thickCover, this.theme.surfaces) *
+              thicketPerCell(1, band.cell) *
+              (1 + poolEdgeGain(thickPool) * BUSH_POOL_EDGE_BOOST);
         const expected = stems + thick;
         if (expected <= 0) continue;
 

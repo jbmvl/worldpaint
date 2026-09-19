@@ -90,9 +90,19 @@ export const TERRAIN_LOOK = {
     // Le colza en fleur, en revanche, est la tache la plus saturée d'un
     // paysage de printemps — plus jaune encore qu'un blé mûr.
     rapeseed: [0.604, 0.522, 0.061],
-    // Vert soutenu de la feuille de riz, calé sur `drawRice` : pas de lame
-    // d'eau ni de casier (voir `CONTRIBUTING.md`), seulement le feuillage.
+    // Vert soutenu de la feuille de riz, calé sur `drawRice` : pas de
+    // casier ni de diguette (voir `CONTRIBUTING.md`), seulement le
+    // feuillage — la lame d'eau, elle, est rendue à part (`cropStandingWater`).
     rice: [0.09, 0.183, 0.081],
+  },
+  /**
+   * Lame d'eau par culture, sur le modèle de `standingWater` (`SURFACE_LOOK`)
+   * mais pour le second axe : une culture n'a pas d'eau propre par défaut, une
+   * absence vaut zéro. Seul le riz en porte — c'est une rizière, la lame
+   * d'eau d'où les plants sortent en rangs, pas un champ vert ordinaire.
+   */
+  cropStandingWater: {
+    rice: 0.55,
   },
   /** Teinte de roche sur les fortes pentes, avant la géologie (`STONE_LOOK`). */
   rockColor: [0.72, 0.68, 0.62],
@@ -657,8 +667,10 @@ export const STONE_LOOK = {
  *   d'arbustes semés hors des bois par `vegetationLayer` — c'est ce qui fait
  *   exister un maquis, ni prairie ni forêt mais un fourré bas ;
  * - `standingWater` : part du sol sous l'eau, de 0 à 1 — les flaques d'un
- *   marais ou d'une vasière, découpées par le shader de terrain. Ni l'herbe ni
- *   les arbustes ne la lisent : un roseau sort de l'eau.
+ *   marais ou d'une vasière, découpées par le shader de terrain et relues côté
+ *   CPU par `poolShareAt` (`groundClassMap.js`) : l'herbe et les arbustes s'en
+ *   écartent au lieu de sortir de l'eau, et la bordent en plus haut et plus
+ *   dense sur les derniers mètres avant la flaque (`poolEdgeGain`).
  * - `macro` : multiplicateur de l'amplitude de la variation macro du terrain
  *   (`terrainMaterial`), défaut 1 — un stade tondu n'est pas aussi marbré
  *   qu'une tourbière ; `macroNear` : plancher de sa rampe de distance, défaut

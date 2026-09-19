@@ -34,6 +34,11 @@
  * litière — rase, clairsemée, sans fleurs (`woodFloorFor`), pas une prairie à
  * l'ombre. Le pire cas d'instances ne bouge pas : un bois plein rend moins de
  * touffes qu'une prairie pleine, sur laquelle `GRASS_COUNT` est mesuré.
+ *
+ * Là où une matière porte de l'eau libre (`standingWater`), une maille relit
+ * la même flaque que le shader de terrain découpe (`poolShareAt`,
+ * `groundClassMap.js`) : rien ne pousse en son milieu, et sa bordure porte
+ * plus haut et plus dense (`poolEdgeGain`) — c'est la roselière d'un marais.
  */
 
 import {
@@ -60,7 +65,7 @@ import {
   coverMassDensity,
   coverBandsRadius,
 } from './coverBands.js';
-import { SETTLED_GRASS, VEGETAL_SURFACES } from '../terrain/groundClassMap.js';
+import { SETTLED_GRASS, VEGETAL_SURFACES, poolShareAt, poolEdgeGain } from '../terrain/groundClassMap.js';
 import { defaultTheme } from '../themes/default.js';
 
 /**
@@ -126,6 +131,14 @@ export const GRASS_HEIGHT_FADE_FLOOR = 0.55;
 /** Distances entre lesquelles la compensation d'alpha monte, et son gain — voir `createFoliageMaterial`. */
 export const GRASS_COVERAGE_RANGE = [28, 110];
 export const GRASS_COVERAGE_GAIN = 2.2;
+
+/**
+ * Bordure d'une flaque (`poolEdgeGain`) : gain de hauteur et de densité, au
+ * maximum de la bande. C'est la roselière qui borde l'eau plutôt que de la
+ * recouvrir — voir la fiche du marais.
+ */
+export const POOL_EDGE_HEIGHT_BOOST = 0.4;
+export const POOL_EDGE_DENSITY_BOOST = 0.5;
 
 /**
  * Variante de touffe à semer en un point, d'après ce que dit la carte de
@@ -664,13 +677,22 @@ export class GroundCover {
       const crop = groundClass?.cropAt?.(readX, readZ) ?? null;
       if (grassBlockedByCrop(edgeSample, crop)) continue;
 
+      // L'eau et l'herbe suivent désormais la même vérité : rien ne pousse au
+      // milieu d'une flaque, et la bordure — les derniers mètres avant l'eau
+      // libre — porte plus et plus haut (`poolEdgeGain`).
+      const cover = groundClass?.surfaceAt?.(readX, readZ) ?? null;
+      const standing = cover ? this.theme.surfaces[cover]?.standingWater ?? 0 : 0;
+      let poolEdge = 0;
+      if (standing > 0) {
+        const pool = poolShareAt(readX, readZ, standing, this.theme.terrain.poolScaleM);
+        if (pool > 0.5) continue;
+        poolEdge = poolEdgeGain(pool);
+      }
+
       // Couverture du sol : lande, maquis, marais… Elle ne décide pas *si* de
       // l'herbe pousse — c'est la part de végétal qui le dit — mais de quelle
       // taille, en quelle quantité et de quelle couleur.
-      const coverLook = coverGrassFor(
-        groundClass?.surfaceAt?.(readX, readZ) ?? null,
-        this.theme.surfaces
-      );
+      const coverLook = coverGrassFor(cover, this.theme.surfaces);
 
       const fade = coverBandFade(cell.distance, band);
       if (fade <= 0.02) continue;
@@ -687,7 +709,8 @@ export class GroundCover {
         coverMassDensity(green, band) *
         coverLook.density *
         floorLook.density *
-        this._wash.grassDensity;
+        this._wash.grassDensity *
+        (1 + poolEdge * POOL_EDGE_DENSITY_BOOST);
 
       fillGrassCell(tufts, gx, gz, band.cell, band.perCell, band.salt);
 
@@ -708,7 +731,8 @@ export class GroundCover {
           floorLook.height *
           this._wash.grassHeight *
           heightFade *
-          band.rise;
+          band.rise *
+          (1 + poolEdge * POOL_EDGE_HEIGHT_BOOST);
         const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
         const width = height * grass.aspect * band.spread; // élargi, pas élevé
 

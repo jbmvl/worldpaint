@@ -209,16 +209,37 @@ Le bruit est la différence de deux lectures de la texture macro, à deux échel
 incommensurables (`poolScaleM`, et 1,618 fois plus), axes permutés : symétrique
 autour de sa moyenne, sans période lisible. Étiré d'un facteur 1,25, la part
 mouillée mesurée sur ce bruit suit la part demandée à six points près entre 5 et
-90 %.
+90 %. Ces constantes (l'étirement, le rapport d'échelle, la largeur du fondu)
+sont partagées avec le shader — `POOL_NOISE_STRETCH`, `POOL_SCALE_RATIO`,
+`POOL_EDGE_SOFTNESS` dans `groundClassMap.js` — pour qu'aucune des deux
+lectures ne puisse dériver de l'autre.
 
-Ce que ce mécanisme ne fait pas :
+**Le shader n'est plus le seul à voir les flaques.** `poolShareAt`
+(`groundClassMap.js`) relit le même champ de bruit côté CPU, sur le même
+calcul : `groundCover` et `vegetationLayer` s'en servent pour refuser de semer
+une touffe ou un fourré au milieu d'une flaque, et pour border l'eau plus haut
+et plus dense sur les derniers mètres avant elle (`poolEdgeGain`) — une
+roselière borde l'eau plutôt que de la recouvrir. Ce que cette lecture ne fait
+pas, en revanche : suivre le shader jusqu'au mip. La texture que la carte
+graphique filtre et mipmappe lisse le bruit à distance ; la lecture CPU reste
+toujours au premier niveau. Les deux ne coïncident donc qu'à courte distance —
+c'est la limite suivante, vue de l'autre côté :
 
-- **seul le shader voit les flaques.** La carte des matières ne les porte pas :
-  l'herbe, les roseaux et les arbustes poussent sur toute la matière, eau
-  comprise ;
-- **les flaques rétrécissent avec la distance.** Le mip lisse le bruit, ses
-  écarts se resserrent autour de la moyenne, et le seuil d'une part inférieure
-  à la moitié n'est plus atteint : un marais très lointain est peint sans eau.
+- **les flaques rétrécissent avec la distance, pour le shader seul.** Le mip
+  lisse le bruit, ses écarts se resserrent autour de la moyenne, et le seuil
+  d'une part inférieure à la moitié n'est plus atteint : un marais très
+  lointain est peint sans eau à l'écran, quand bien même `poolShareAt`, lui,
+  la voit toujours.
+
+### L'eau d'une culture — la rizière
+
+Un second axe, indépendant des matières : `standingWater` ne décrit qu'une
+couverture, une culture peut porter sa propre lame d'eau
+(`cropStandingWater`, dans le thème). Seul le riz en a une aujourd'hui — une
+lame franche, assez haute pour se voir entre les rangs — et elle remplace
+celle de `farmland` au même texel, sur le même principe de substitution que
+l'albédo de la culture : un tableau d'uniformes de plus (`uCropWater`), pas un
+canal de plus dans la carte des matières.
 
 ## Ce qui n'est pas lu, et ce que ça donne à l'écran
 

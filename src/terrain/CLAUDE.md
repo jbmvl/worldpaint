@@ -19,6 +19,12 @@ légère — peindre (`rebuild`, `_paintPavement`), encoder et réparer
 sont l'une la raison d'être de l'autre : elles défont le lissage du canevas, et
 les lire séparément ne veut rien dire.
 
+À part de la carte elle-même : `poolShareAt`, le pendant CPU du bruit de
+flaque que `terrainMaterial.js` découpe en GLSL — même champ, mêmes constantes
+partagées (`POOL_NOISE_STRETCH`, `POOL_SCALE_RATIO`, `POOL_EDGE_SOFTNESS`),
+pour que `groundCover` et `vegetationLayer` sachent où l'eau affleure sans
+relire une seconde vérité.
+
 Ce qui en est sorti, parce que c'est de la lecture pure et qu'on y va souvent :
 **`surfaceClassification.js`**. Pour changer ce qu'une classe `landuse` ou
 `landcover` peint au sol, quelle eau compte, ou ce qu'un cours d'eau pose,
