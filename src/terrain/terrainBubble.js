@@ -9,15 +9,12 @@
  * d'altitude (pas `computeVertexNormals()`), pour un gradient continu d'une
  * tuile à l'autre.
  *
- * Deux choses perturbent le relief lu, et toutes deux sont des fonctions pures
- * de la position au sol, donc les tuiles voisines s'accordent au bord :
- * la marche des falaises (`setCliffCut`, qui comprime en paroi la rampe que le
- * MNT étale) puis le déblai des chaussées. Dans cet ordre : la falaise façonne
- * le terrain naturel, la route entaille ce qu'elle trouve.
- *
- * Le déblai des chaussées (`setRoadCut`) perturbe ce relief naturel : une
- * route est taillée dans le versant, pas posée dessus, et l'entaille est une
- * fonction pure de la position au sol, donc les tuiles voisines s'accordent au bord.
+ * Deux choses perturbent le relief lu, dans cet ordre : la marche des falaises
+ * (`setCliffCut`, qui comprime en paroi la rampe que le MNT étale), puis le
+ * déblai des chaussées (`setRoadCut` — une route est taillée dans le versant,
+ * pas posée dessus). La falaise façonne le terrain naturel, la route entaille
+ * ce qu'elle trouve. Les deux sont des fonctions pures de la position au sol,
+ * donc les tuiles voisines s'accordent au bord sans se consulter.
  *
  * L'eau, elle, ne touche pas au relief : c'est une matière du sol, pas une
  * surface (`groundClassMap`).
@@ -376,16 +373,38 @@ export class TerrainBubble {
   }
 
   /**
-   * Publie les falaises taillées (`CliffIndex`), ou `null`. Toutes les tuiles
-   * sont périmées, pas seulement les proches : une falaise se voit de loin.
+   * Publie les falaises taillées (`CliffIndex`), ou `null`.
+   *
+   * Seules les tuiles qu'une falaise touche sont périmées — celles que la
+   * nouvelle atteint, et celles que l'ancienne atteignait. Périmer tout le
+   * bloc à chaque publication reconstruisait le terrain sans fin : la file
+   * n'en rend qu'une par image, et la publication suivante arrivait avant
+   * qu'elle ne soit vidée. Le décor entier ramait, falaise ou pas.
    */
   setCliffCut(index) {
     if (this.disposed) return;
+    const previous = this._cliffCut;
+    if (!previous && !index) return;
+
     this._cliffCut = index || null;
     this._cliffGeneration++;
     for (const tile of this.tiles.values()) {
+      if (!tile.hadCliff && !this._cliffTouches(tile)) continue;
       if (!this._rebuildQueue.includes(tile.key)) this._rebuildQueue.push(tile.key);
     }
+  }
+
+  /** Vrai si une falaise publiée peut modifier cette tuile. */
+  _cliffTouches(tile) {
+    if (!this._cliffCut || !this.frame) return false;
+    const a = this.frame.tileToLocal(tile.x, tile.y);
+    const b = this.frame.tileToLocal(tile.x + 1, tile.y + 1);
+    return this._cliffCut.touches(
+      Math.min(a.x, b.x),
+      Math.min(a.z, b.z),
+      Math.max(a.x, b.x),
+      Math.max(a.z, b.z)
+    );
   }
 
   /** Creuse le déblai d'une chaussée. Profil dans `cutElevationAt`, pur et testé. */
@@ -454,8 +473,14 @@ export class TerrainBubble {
     if (tile.segments !== n) return true;
     // Un nouvel index de chaussées périme le terrassement déjà creusé.
     if (tile.ring <= ROAD_CUT_MAX_RING && tile.cutGeneration !== this._cutGeneration) return true;
-    // Celui des falaises périme tous les anneaux : la marche se voit de loin.
-    if (tile.cliffGeneration !== this._cliffGeneration) return true;
+    // Celui des falaises périme tous les anneaux — la marche se voit de loin —
+    // mais seulement les tuiles qu'une falaise touche, ou touchait.
+    if (
+      tile.cliffGeneration !== this._cliffGeneration &&
+      (tile.hadCliff || this._cliffTouches(tile))
+    ) {
+      return true;
+    }
     const wanted = this._edgeSegmentsFor(tile, n);
     return (
       wanted.north !== tile.edgeSegments.north ||
@@ -492,7 +517,10 @@ export class TerrainBubble {
     // d'index ne rendrait rien). La falaise, elle, se voit de loin : elle
     // taille tous les anneaux.
     const carving = !!this._roadCut && tile.ring <= ROAD_CUT_MAX_RING;
-    const stepping = !!this._cliffCut;
+    // Tranché une fois pour la tuile entière : sans ça, chaque sommet
+    // interrogeait l'index cinq fois pour s'entendre dire qu'il n'y a pas de
+    // falaise ici, soit deux cent mille requêtes inutiles par tuile.
+    const stepping = this._cliffTouches(tile);
     // Gradient pris sur le terrain façonné, sinon l'éclairage du fond du
     // déblai — ou de la paroi — serait celui du versant.
     const cut =
@@ -586,6 +614,7 @@ export class TerrainBubble {
     tile.edgeSegments = edge;
     tile.cutGeneration = this._cutGeneration;
     tile.cliffGeneration = this._cliffGeneration;
+    tile.hadCliff = stepping;
     tile.edgeIncomplete = !this._neighboursLoaded(tile.x, tile.y);
   }
 

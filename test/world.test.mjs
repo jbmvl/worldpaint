@@ -3263,6 +3263,65 @@ test('l’index de falaise oriente sa normale vers le haut et interpole ses cote
   close(index.elevationAt(50, 400, 77), 77, 1e-9, 'altitude inchangée hors de portée');
 });
 
+test('la grille de l’index rend exactement ce que rendrait un parcours exhaustif', () => {
+  // La grille est là pour la vitesse : le maillage l'interroge près de deux
+  // cent mille fois par tuile. Elle ne doit rien changer au résultat.
+  const segments = [];
+  for (let i = 0; i < 200; i++) {
+    const a = i * 6;
+    segments.push({
+      ax: a, az: Math.sin(i / 9) * 40, tx: 1, tz: 0, nx: 0, nz: -1, length: 6,
+      footA: 10, footB: 10, crestA: 48, crestB: 48, face: 4, blend: CLIFF_BLEND_M,
+    });
+  }
+  const index = new CliffIndex(segments);
+
+  const brute = (x, z) => {
+    let best = null;
+    let bestSquared = Infinity;
+    for (const s of segments) {
+      const dx = x - s.ax;
+      const dz = z - s.az;
+      const along = dx * s.tx + dz * s.tz;
+      const across = dx * s.nx + dz * s.nz;
+      const overshoot = along < 0 ? -along : Math.max(0, along - s.length);
+      const squared = across * across + overshoot * overshoot;
+      const reach = s.face + s.blend;
+      if (squared >= bestSquared || squared > reach * reach) continue;
+      bestSquared = squared;
+      best = across;
+    }
+    return best;
+  };
+
+  let compared = 0;
+  for (let x = -40; x < 1240; x += 11) {
+    for (let z = -90; z < 90; z += 7) {
+      const hit = index.query(x, z);
+      const expected = brute(x, z);
+      if (expected === null) {
+        assert.equal(hit, null, `rien attendu en (${x}, ${z})`);
+      } else {
+        assert.ok(hit, `segment attendu en (${x}, ${z})`);
+        close(hit.across, expected, 1e-9, `distance en travers en (${x}, ${z})`);
+      }
+      compared++;
+    }
+  }
+  assert.ok(compared > 2000, `${compared} points comparés`);
+});
+
+test('l’emprise de l’index écarte d’un coup un rectangle sans falaise', () => {
+  const index = new CliffIndex([{
+    ax: 0, az: 0, tx: 1, tz: 0, nx: 0, nz: -1, length: 100,
+    footA: 0, footB: 0, crestA: 50, crestB: 50, face: 4, blend: CLIFF_BLEND_M,
+  }]);
+  assert.equal(index.touches(10, -10, 30, 10), true, 'tuile sur la falaise');
+  assert.equal(index.touches(-500, -500, -400, -400), false, 'tuile au loin');
+  // L'emprise couvre la portée, pas seulement le trait.
+  assert.equal(index.touches(10, -CLIFF_BLEND_M - 2, 30, -CLIFF_BLEND_M), true, 'bord de portée');
+});
+
 test('deux points de part et d’autre du trait sont séparés par toute la dénivelée', () => {
   const index = new CliffIndex([{
     ax: 0, az: 0, tx: 1, tz: 0, nx: 0, nz: -1, length: 100,
