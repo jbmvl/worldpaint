@@ -658,6 +658,11 @@ export const STONE_LOOK = {
  * - `standingWater` : part du sol sous l'eau, de 0 à 1 — les flaques d'un
  *   marais ou d'une vasière, découpées par le shader de terrain. Ni l'herbe ni
  *   les arbustes ne la lisent : un roseau sort de l'eau.
+ * - `macro` : multiplicateur de l'amplitude de la variation macro du terrain
+ *   (`terrainMaterial`), défaut 1 — un stade tondu n'est pas aussi marbré
+ *   qu'une tourbière ; `macroNear` : plancher de sa rampe de distance, défaut
+ *   0 (la variation ne monte qu'avec l'éloignement). Sans lui, l'amplitude est
+ *   quasi nulle à cent mètres.
  *
  * Un champ absent vaut le neutre : la table ne décrit que les écarts. Une
  * matière peinte de la bonne couleur mais couverte d'une prairie de quatre-
@@ -674,30 +679,37 @@ export const SURFACE_LOOK = {
   // canal (deux tiers d'herbe, un tiers de minéral) ; c'est désormais une
   // matière, et son albédo est la moyenne exacte que ce mélange rendait — la
   // reprendre à l'œil est une décision à part, pas un effet de bord de la fusion.
-  settled: { albedo: [0.125, 0.176, 0.088], wash: 'grass' },
+  // Pelouse tondue et allées : un aplat d'entretien, pas un terrain qui varie.
+  settled: { albedo: [0.125, 0.176, 0.088], wash: 'grass', macro: 0.3 },
 
   // --- Les couvertures végétales --------------------------------------------
   // Bruyère et molinie sèche : brun-pourpre, la couleur d'un moor. Rase, dense,
   // et elle ne porte quasiment pas d'arbre.
   heath: {
     albedo: [0.159, 0.122, 0.08],
-   
+
     wash: null,
     grassHeight: 0.45,
     grassDensity: 0.95,
     grassTint: [1.02, 0.84, 0.76],
     bushes: 0.3,
+    // Le tapis d'une lande est marbré fort, et ça doit se voir à portée
+    // d'observation, pas seulement à l'horizon.
+    macro: 2,
+    macroNear: 0.35,
   },
   // Maquis et garrigue : olive poussiéreux, jamais le vert d'un pré. Peu
   // d'herbe, beaucoup d'arbustes — l'inverse exact d'une prairie.
   scrub: {
     albedo: [0.147, 0.171, 0.08],
-   
+
     wash: null,
     grassHeight: 0.55,
     grassDensity: 0.4,
     grassTint: [1.04, 0.94, 0.7],
     bushes: 0.9,
+    macro: 1.8,
+    macroNear: 0.35,
   },
   // Marais, tourbière, roselière : le vert le plus profond du décor, la seule
   // couverture plus haute qu'une prairie, et de l'eau entre les touffes.
@@ -742,6 +754,8 @@ export const SURFACE_LOOK = {
     grassDensity: 0,
     bushes: 0,
     standingWater: 0.35,
+    macro: 1.6,
+    macroNear: 0.35,
   },
   bare: { albedo: [0.27, 0.255, 0.225], wash: 'bare' },
   // L'éboulis et la dalle sont deux paysages : une pente de cailloux qui bouge,
@@ -754,6 +768,7 @@ export const SURFACE_LOOK = {
     grassDensity: 0.06,
     grassTint: [1, 0.96, 0.88],
     bushes: 0,
+    macro: 2.2,
   },
   rock: {
     albedo: [0.371, 0.332, 0.27],
@@ -784,10 +799,11 @@ export const SURFACE_LOOK = {
   // que plus aucune matière n'en a.
   pavement: {
     albedo: [0.31, 0.3, 0.28],
-   
+
     wash: 'pavement',
     grassDensity: 0,
     bushes: 0,
+    macro: 0.3,
   },
   // L'eau, et c'est la seule matière que le shader traite à part : elle ne se
   // mélange pas aux autres, elle les remplace, et ce qui la fait lire est son

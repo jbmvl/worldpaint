@@ -11282,7 +11282,10 @@ test('le contour de l’eau se fond, sans que les identifiants cessent d’être
   // mêmes relevés. C'étaient trois mécanismes — un mélange de quatre poids
   // interpolés linéairement, une boucle de couvertures, une substitution de
   // culture — pour une seule question.
-  assert.match(source, /surfaceAt\(surfaceUv, farmAlbedo, albedo, gWater, standing\);/);
+  assert.match(
+    source,
+    /surfaceAt\(surfaceUv, farmAlbedo, albedo, gWater, standing, macroAmp, macroNear\);/
+  );
   assert.ok(!/uClassMap|uCropMap/.test(source), 'les deux cartes ont fusionné');
 
   // Ce qui est interpolé est l'**appartenance**, pas l'identifiant : chaque
@@ -12068,6 +12071,107 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   for (const key of ['groundScaleGrass', 'groundScaleSoil', 'groundScaleWood']) {
     assert.ok(!(key in defaultTheme.terrain), `${key} doit avoir disparu du thème`);
   }
+});
+
+test('la variation macro du sol dépend de la matière : amplitude et plancher de distance', () => {
+  const previousCanvas = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      Object.assign(this, { width, height });
+    }
+    getContext() {
+      return paintingCanvasContext();
+    }
+  };
+
+  let factory;
+  try {
+    factory = new TerrainMaterialFactory({ THREE: terrainThreeStub() });
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+  }
+
+  const shader = {
+    uniforms: {},
+    vertexShader: ['#include <common>', '#include <begin_vertex>'].join('\n'),
+    fragmentShader: [
+      '#include <common>',
+      '#include <map_fragment>',
+      '#include <normal_fragment_begin>',
+    ].join('\n'),
+  };
+  factory.material.onBeforeCompile(shader);
+  const source = shader.fragmentShader;
+
+  // Accumulés par part, dans la même boucle que l'eau — jamais tranchés sur
+  // la matière dominante.
+  assert.match(
+    source,
+    /standing \+= uSurfaceWater\[i - 1\] \* share;\s*\n\s*macroAmp \+= uSurfaceMacro\[i - 1\] \* share;\s*\n\s*macroNear \+= uSurfaceMacroNear\[i - 1\] \* share;/
+  );
+  assert.match(
+    source,
+    /float macroSigned = \(macro - 0\.5\) \* max\(far, macroNear\) \* macroAmp;/
+  );
+
+  // Une ligne par matière, dans le même ordre que les autres tables.
+  assert.equal(shader.uniforms.uSurfaceMacro.value.length, SURFACE_KINDS.length);
+  assert.equal(shader.uniforms.uSurfaceMacroNear.value.length, SURFACE_KINDS.length);
+  for (const kind of SURFACE_KINDS) {
+    const i = SURFACE_KINDS.indexOf(kind);
+    assert.equal(shader.uniforms.uSurfaceMacro.value[i], defaultTheme.surfaces[kind]?.macro ?? 1);
+    assert.equal(
+      shader.uniforms.uSurfaceMacroNear.value[i],
+      defaultTheme.surfaces[kind]?.macroNear ?? 0
+    );
+  }
+
+  // La lande (marbrage voulu fort) porte une amplitude bien plus haute qu'un
+  // lotissement tondu, et c'est ce qui doit se voir : à noise et distance
+  // égales, son amplitude effective — la même formule que le shader — est
+  // plus grande en valeur absolue.
+  const smoothstep = (edge0, edge1, x) => {
+    const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+    return t * t * (3 - 2 * t);
+  };
+  const effectiveAmplitude = (kind, dist, noise) => {
+    const far = smoothstep(defaultTheme.terrain.detailNear, defaultTheme.terrain.detailFar, dist);
+    const look = defaultTheme.surfaces[kind] || {};
+    const macroAmp = look.macro ?? 1;
+    const macroNear = look.macroNear ?? 0;
+    return (noise - 0.5) * Math.max(far, macroNear) * macroAmp;
+  };
+  const atHundredMeters = Math.abs(effectiveAmplitude('heath', 100, 0.9));
+  const settledAtHundredMeters = Math.abs(effectiveAmplitude('settled', 100, 0.9));
+  assert.ok(
+    atHundredMeters > settledAtHundredMeters,
+    'la lande est plus marbrée que le lotissement, à distance et bruit égaux'
+  );
+
+  // Le critère de réussite du chantier se joue à cent mètres : sans
+  // `macroNear`, `far` y vaut 0,03 et la variation y est déjà éteinte
+  // (`detailNear: 60, detailFar: 420`).
+  const farAtHundredMeters = smoothstep(
+    defaultTheme.terrain.detailNear,
+    defaultTheme.terrain.detailFar,
+    100
+  );
+  assert.ok(farAtHundredMeters < 0.05, 'far est presque nul à cent mètres sans plancher');
+
+  // `macroNear` relève le facteur en deçà de `detailNear` : à moins de soixante
+  // mètres, `far` est nul, et seul le plancher fait encore vivre le marbrage
+  // d'une matière qui le porte.
+  const nearHeath = Math.max(
+    smoothstep(defaultTheme.terrain.detailNear, defaultTheme.terrain.detailFar, 10),
+    defaultTheme.surfaces.heath.macroNear
+  );
+  const nearScree = Math.max(
+    smoothstep(defaultTheme.terrain.detailNear, defaultTheme.terrain.detailFar, 10),
+    defaultTheme.surfaces.scree.macroNear ?? 0
+  );
+  assert.ok(nearHeath > 0, 'la lande garde du marbrage à portée d’observation');
+  assert.equal(nearScree, 0, 'l’éboulis, sans plancher, reste éteint à la même distance');
 });
 
 test('la frange déplace la lecture du sol, sans dépendre du parcours ni sortir de sa portée', () => {

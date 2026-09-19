@@ -47,6 +47,16 @@
  * (`standingWater`) y gagne des flaques, découpées par un bruit et rendues comme
  * l'eau.
  *
+ * Cette variation macro n'est pas la même partout (`macro`, `macroNear` de
+ * `SURFACE_LOOK`) : un stade tondu n'est pas aussi marbré qu'une tourbière.
+ * `macro` multiplie l'amplitude par matière ; `macroNear` relève le plancher
+ * de la rampe de distance (`detailNear` → `detailFar`) pour les matières dont
+ * le marbrage doit rester visible à portée d'observation — sans lui,
+ * l'amplitude est quasi nulle à cent mètres (`far` y vaut 0,03). Les deux sont
+ * accumulés par part dans la même boucle que `standingWater`, jamais tranchés
+ * sur la matière dominante : un texel à cheval sur deux matières marbre selon
+ * leur mélange, pas selon celle qui l'emporte.
+ *
  * Deux choses tiennent les **limites** entre surfaces, dont le défaut commun
  * est le carreau de 2,7 m de la carte du sol, lisible en marches d'escalier
  * dès que deux matières contrastent. C'est là que tout se joue : quand une
@@ -272,6 +282,14 @@ export class TerrainMaterialFactory {
       uSurfaceWater: {
         value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.standingWater ?? 0),
       },
+      // Amplitude de la variation macro par matière (1 = comportement neutre)
+      // et plancher de sa rampe de distance (0 = éteinte à portée d'un semis).
+      uSurfaceMacro: {
+        value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.macro ?? 1),
+      },
+      uSurfaceMacroNear: {
+        value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.macroNear ?? 0),
+      },
       uPoolScale: { value: look.poolScaleM },
       // Matière retenue là où la donnée se tait.
       uUnclassified: { value: Math.max(0, SURFACE_KINDS.indexOf(look.unclassified)) + 1 },
@@ -340,6 +358,8 @@ export class TerrainMaterialFactory {
            uniform vec3 uCropAlbedo[${CROP_KINDS.length}];
            uniform vec3 uSurfaceAlbedo[${SURFACE_KINDS.length}];
            uniform float uSurfaceWater[${SURFACE_KINDS.length}];
+           uniform float uSurfaceMacro[${SURFACE_KINDS.length}];
+           uniform float uSurfaceMacroNear[${SURFACE_KINDS.length}];
            uniform float uPoolScale;
            uniform vec3 uRockColor;
            uniform vec2 uSlopeRange;
@@ -462,7 +482,7 @@ export class TerrainMaterialFactory {
             */
            void surfaceAt(
              vec2 uv, vec3 farmAlbedo, out vec3 albedo, out float water,
-             out float standing
+             out float standing, out float macroAmp, out float macroNear
            ) {
              vec2 grid = uv * ${CLASS_PIXELS}.0 - 0.5;
              vec2 corner = floor(grid);
@@ -507,6 +527,8 @@ export class TerrainMaterialFactory {
 
              albedo = vec3(0.0);
              standing = 0.0;
+             macroAmp = 0.0;
+             macroNear = 0.0;
              for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
                if (i != ${WATER_ID}) {
                  vec4 hit = step(abs(ids - float(i)), vec4(0.5));
@@ -518,6 +540,8 @@ export class TerrainMaterialFactory {
                    : uSurfaceAlbedo[i - 1];
                  albedo += tone * share;
                  standing += uSurfaceWater[i - 1] * share;
+                 macroAmp += uSurfaceMacro[i - 1] * share;
+                 macroNear += uSurfaceMacroNear[i - 1] * share;
                }
              }
            }`
@@ -574,14 +598,18 @@ export class TerrainMaterialFactory {
              // question.
              vec3 albedo = uSurfaceAlbedo[${SURFACE_KINDS.indexOf('grass')}];
              float standing = 0.0;
+             float macroAmp = 1.0;
+             float macroNear = 0.0;
              if (inMap > 0.5) {
-               surfaceAt(surfaceUv, farmAlbedo, albedo, gWater, standing);
+               surfaceAt(surfaceUv, farmAlbedo, albedo, gWater, standing, macroAmp, macroNear);
              } else {
                // Hors carte : la matiere de repli.
                for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
                  if (float(i) == uUnclassified) {
                    albedo = uSurfaceAlbedo[i - 1];
                    standing = uSurfaceWater[i - 1];
+                   macroAmp = uSurfaceMacro[i - 1];
+                   macroNear = uSurfaceMacroNear[i - 1];
                  }
                }
              }
@@ -612,7 +640,12 @@ export class TerrainMaterialFactory {
              // contrainte : les touffes instanciees ne la connaissent pas,
              // donc a portee de semis le sol doit rester la couleur sur
              // laquelle elles sont calees.
-             float macroSigned = (macro - 0.5) * far;
+             //
+             // macroNear releve ce plancher pour une matiere donnee : sans
+             // lui, far vaut 0,03 a cent metres et la variation y est deja
+             // eteinte. macroAmp multiplie l'amplitude elle-meme — un stade
+             // tondu n'a pas a etre aussi marbre qu'une tourbiere.
+             float macroSigned = (macro - 0.5) * max(far, macroNear) * macroAmp;
              modulation *= (1.0 + macroSigned * uMacro.y) *
                vec3(1.0 + macroSigned * uMacro.z, 1.0, 1.0 - macroSigned * uMacro.z);
 
@@ -694,7 +727,7 @@ export class TerrainMaterialFactory {
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v13';
+    material.customProgramCacheKey = () => 'terrain-bubble-v14';
     return material;
   }
 
