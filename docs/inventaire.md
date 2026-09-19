@@ -496,8 +496,9 @@ Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
 1. **Le non-classé est ce que le pays y met** (`matrix`). Un désert
    cartographié nulle part reste donc une prairie, à l'intérieur même d'une
    région qui ne le décrit pas.
-2. **La table des régions couvre la France et l'Espagne.** Ailleurs, le décor
-   s'éteint : rien n'est chargé ni posé, on voit le ciel et rien dessous.
+2. **La table des régions couvre la France, l'Espagne et le Royaume-Uni.**
+   Ailleurs, le décor s'éteint : rien n'est chargé ni posé, on voit le ciel et
+   rien dessous.
    Imposer une région (`world.setRegion`) le rallume n'importe où.
 3. **La ville est un disque**, pas un contour : sa portée se tire d'un point
    `place` (3 km pour une `city`, 1,2 km pour une `town`), seule chose que la
