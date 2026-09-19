@@ -21,6 +21,17 @@ Concrètement :
   visuellement, et où le regarder (quel réglage, quelle case à cocher, quel
   type de lieu).
 
+Ça, c'est pour juger le paysage. Ce n'est pas la même chose que vérifier que le
+**code** de la démo tourne : quand le chantier porte sur `demo/` elle-même
+(une nouvelle case, un nouveau mode, une refonte de `main.js`), tu as le droit
+de la lancer pour t'assurer qu'elle démarre sans erreur JS, que les éléments du
+panneau existent et réagissent, qu'un mode se monte et se démonte sans
+exception — bref, ce qu'un test d'intégration vérifierait s'il y en avait un.
+Reste dans ce rôle : constate qu'il n'y a pas d'erreur dans la console, pas
+que « ça a l'air bien » ou « le rendu est convaincant » — cette dernière
+question reste hors de ta portée, même quand tu as la démo ouverte pour autre
+chose.
+
 Ce qui est vérifiable sans les yeux, en revanche, doit l'être et l'être
 vraiment : `npm test`, le chargement des modules, le nombre de tests avant et
 après. Rapporte ces chiffres tels quels, sans les arrondir dans le bon sens.

@@ -333,6 +333,9 @@ export class WorldComposer {
     if (!region) return false;
 
     this._distributeRegion(region);
+    // Le relief n'est pas la région (voir `core/region.js`) : c'est lui, et
+    // lui seul, qui dit si le rapace remplace le corvidé.
+    this.life.setRelief(this.landscape?.relief ?? null);
     const wanted = this._wantedTiles(lng, lat);
 
     // La végétation suit les tuiles de la bulle, pas le vectoriel : se resynchronise même sans autre changement.
@@ -499,7 +502,6 @@ export class WorldComposer {
     this.bubble.materials.setRegion(region);
     this.grass.setRegion(region);
     this.crops.setRegion(region);
-    this.life.setRegion(region);
   }
 
   /**

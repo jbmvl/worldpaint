@@ -11,8 +11,8 @@
  *
  * - des **oiseaux**, qui dérivent haut au-dessus de l'observateur, tous dans
  *   le sens du vent (`setWindDirection`) — un corvidé partout, un rapace qui
- *   tourne en rond au-dessus des pays de montagne et de lande (`setRegion`,
- *   `RAPTOR_MATRICES`) ;
+ *   tourne en rond au-dessus d'un relief de montagne ou de rebord venteux
+ *   (`setRelief`, `RAPTOR_SLOPE_THRESHOLD`, `RAPTOR_ELEVATION_M`) ;
  * - des **montgolfières**, plus haut et bien plus lentement, chacune avec ses
  *   deux couleurs propres ;
  * - la **fumée** des cheminées, publiée par `furnitureLayer.chimneys`.
@@ -154,16 +154,14 @@ export function birdAt(bird, time, centre, windDirection = 0) {
 }
 
 /**
- * Matrices de paysage où le corvidé cède la place au rapace : l'alpage et la
- * roche nue, la terrasse sèche et la lande — les pays de montagne et de rebord
- * venteux, ceux où un vol plané tient sans battre.
+ * Seuils de relief (`core/landscape.js`) au-delà desquels le corvidé cède la
+ * place au rapace. La pente capture aussi bien un versant alpin qu'un rebord
+ * côtier venteux ; l'altitude rattrape un plateau d'altitude à pente douce.
+ * Ce n'est pas la région qui décide : elle ne connaît ni l'une ni l'autre
+ * (voir `core/region.js`).
  */
-export const RAPTOR_MATRICES = new Set([
-  'alpine_pasture',
-  'bare_rock',
-  'terraced_slope',
-  'moor_heath',
-]);
+export const RAPTOR_SLOPE_THRESHOLD = 0.12;
+export const RAPTOR_ELEVATION_M = 900;
 
 /**
  * Rayon de la boîte où se dispersent les centres d'orbite, en mètres. Plus
@@ -381,7 +379,7 @@ export class LifeLayer {
     scene.add(this.group);
 
     // --- Oiseaux ------------------------------------------------------------
-    // Deux géométries tenues en même temps, une seule affichée : `setRegion`
+    // Deux géométries tenues en même temps, une seule affichée : `setRelief`
     // bascule l'une pour l'autre plutôt que de tenir deux `InstancedMesh` —
     // il n'y a jamais qu'un seul vol à la fois (voir l'en-tête du fichier).
     this._corvidGeometry = createBirdGeometry(THREE);
@@ -547,16 +545,16 @@ export class LifeLayer {
   }
 
   /**
-   * Le lieu décide de l'espèce : un rapace qui tourne en rond au-dessus d'un
-   * pays de montagne (`RAPTOR_MATRICES`), un corvidé qui dérive au vent partout
-   * ailleurs. Un seul vol à la fois — ce n'est pas un ajout, c'est un
-   * remplacement, comme au sol le bétail change d'espèce avec le pays
-   * (`furniture/parcelFauna.js`).
-   * @param {Object|null} region
+   * Le relief décide de l'espèce : un rapace qui tourne en rond au-dessus
+   * d'une pente ou d'une altitude de montagne (`RAPTOR_SLOPE_THRESHOLD`,
+   * `RAPTOR_ELEVATION_M`), un corvidé qui dérive au vent partout ailleurs. Un
+   * seul vol à la fois — ce n'est pas un ajout, c'est un remplacement.
+   * @param {{elevation:number, slope:number}|null} relief
    */
-  setRegion(region) {
+  setRelief(relief) {
     if (this.disposed) return;
-    const species = RAPTOR_MATRICES.has(region?.matrix ?? null) ? 'raptor' : 'corvid';
+    const montane = !!relief && (relief.slope > RAPTOR_SLOPE_THRESHOLD || relief.elevation > RAPTOR_ELEVATION_M);
+    const species = montane ? 'raptor' : 'corvid';
     if (species === this._birdSpecies) return;
     this._birdSpecies = species;
     this.birds.geometry = species === 'raptor' ? this._raptorGeometry : this._corvidGeometry;

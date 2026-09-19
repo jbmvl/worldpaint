@@ -484,6 +484,7 @@ import {
   soilWashFor,
 } from '../src/core/regionInterpretation.js';
 import { REGIONS } from '../src/core/regions.js';
+import { showcaseEntries, SHOWCASE_FIELDS, TILE_FIELDS, uniformGroundSample } from '../src/inspect/showcase.js';
 import {
   surfaceFor,
   surfaceId,
@@ -545,7 +546,8 @@ import {
   createBalloonGeometry,
   raptorAt,
   createRaptorGeometry,
-  RAPTOR_MATRICES,
+  RAPTOR_SLOPE_THRESHOLD,
+  RAPTOR_ELEVATION_M,
 } from '../src/layers/lifeLayer.js';
 import {
   FAUNA_BUILDERS,
@@ -5707,16 +5709,11 @@ test('un rapace plane : son battement reste proche du plein régime', () => {
   }
 });
 
-test('les pays de montagne, et seulement eux, font voler un rapace', () => {
-  assert.ok(RAPTOR_MATRICES.has('alpine_pasture'));
-  assert.ok(RAPTOR_MATRICES.has('bare_rock'));
-  assert.ok(RAPTOR_MATRICES.has('terraced_slope'));
-  assert.ok(RAPTOR_MATRICES.has('moor_heath'));
-  assert.ok(!RAPTOR_MATRICES.has('hedgerow_meadow'));
-  assert.ok(!RAPTOR_MATRICES.has('garrigue'));
-  // Toute matrice nommée doit exister : une faute de frappe ferait voler un
-  // corvidé partout, en silence.
-  for (const matrix of RAPTOR_MATRICES) assert.ok(MATRIX_KINDS[matrix], matrix);
+test('un relief de montagne, et seulement lui, fait voler un rapace', () => {
+  const montane = (elevation, slope) => slope > RAPTOR_SLOPE_THRESHOLD || elevation > RAPTOR_ELEVATION_M;
+  assert.ok(montane(1800, 0.05), 'altitude alpine, pente douce');
+  assert.ok(montane(200, 0.2), 'rebord venteux, altitude modeste');
+  assert.ok(!montane(50, 0.02), 'plaine');
 });
 
 test('la silhouette de rapace ajoute une queue en éventail aux deux ailes', () => {
@@ -13170,4 +13167,84 @@ test('une branche non marquée n’interrompt pas la rive de celle qui l’est',
     'un carrefour de dessertes reste nu'
   );
   assert.equal(bare.positions.length, 0, 'et rien n’est écrit');
+});
+
+test('l’afficheur couvre les cinq champs, chacun avec une couleur ou un alignement', () => {
+  assert.equal(SHOWCASE_FIELDS.length, 5);
+  for (const { field } of SHOWCASE_FIELDS) {
+    const entries = showcaseEntries(field);
+    assert.ok(entries.length > 0, `${field} : au moins un mot`);
+    for (const entry of entries) {
+      assert.equal(typeof entry.value, 'string');
+      assert.equal(typeof entry.unsupported, 'boolean');
+      if (entry.shape === 'tree') {
+        assert.equal(typeof entry.alignment, 'string', `${field}/${entry.value} : un alignement`);
+      } else if (entry.shape === 'house') {
+        assert.match(entry.wall, /^#[0-9a-f]{6}$/i, `${field}/${entry.value} : un mur`);
+        assert.match(entry.roof, /^#[0-9a-f]{6}$/i, `${field}/${entry.value} : un toit`);
+      } else {
+        assert.equal(entry.albedo.length, 3, `${field}/${entry.value} : un albédo`);
+      }
+    }
+  }
+});
+
+test('un mot non rendu de l’afficheur porte sa raison', () => {
+  const rice = showcaseEntries('matrix').find((e) => e.value === 'rice_terrace');
+  assert.equal(rice.unsupported, true);
+  assert.ok(rice.note && rice.note.length > 0);
+});
+
+test('l’afficheur sème une matière uniforme comme le ferait une vraie carte de classes', () => {
+  assert.deepEqual(uniformGroundSample('grass'), { grass: 1, wood: 0, farmland: 0, bare: 0 });
+  assert.deepEqual(uniformGroundSample('heath'), { grass: 1, wood: 0, farmland: 0, bare: 0 });
+  assert.deepEqual(uniformGroundSample('wood'), { grass: 0, wood: 1, farmland: 0, bare: 0 });
+  assert.deepEqual(uniformGroundSample('farmland'), { grass: 0, wood: 0, farmland: 1, bare: 0 });
+  assert.deepEqual(uniformGroundSample('rock'), { grass: 0, wood: 0, farmland: 0, bare: 1 });
+  assert.deepEqual(uniformGroundSample(null), { grass: 0, wood: 0, farmland: 0, bare: 1 });
+});
+
+test('terrain et cultures sont les champs à tuile pleine, le reste reste une grille', () => {
+  assert.ok(TILE_FIELDS.has('matrix'));
+  assert.ok(TILE_FIELDS.has('farming'));
+  assert.ok(!TILE_FIELDS.has('stone'));
+  assert.ok(!TILE_FIELDS.has('building'));
+  assert.ok(!TILE_FIELDS.has('trees'));
+});
+
+test('chaque mot de terrain porte la matière que sèmerait une vraie carte de classes', () => {
+  for (const entry of showcaseEntries('matrix')) {
+    assert.equal(typeof entry.surface, 'string', `${entry.value} : une matière`);
+  }
+});
+
+test('chaque mot de culture porte le nom du motif que `CropLayer` y sèmerait', () => {
+  for (const entry of showcaseEntries('farming')) {
+    assert.equal(typeof entry.crop, 'string', `${entry.value} : une culture`);
+  }
+});
+
+test('chaque mot de l’afficheur porte une traduction française distincte du mot brut', () => {
+  for (const { field } of SHOWCASE_FIELDS) {
+    for (const entry of showcaseEntries(field)) {
+      assert.equal(typeof entry.label, 'string', `${field}/${entry.value} : un intitulé`);
+      assert.ok(entry.label.length > 0, `${field}/${entry.value} : non vide`);
+    }
+  }
+});
+
+test('les mots boisés de terrain portent un couvert isolé, les autres aucun', () => {
+  const entries = showcaseEntries('matrix');
+  for (const entry of entries) {
+    if (entry.surface === 'wood') assert.equal(typeof entry.canopy, 'string', `${entry.value} : un couvert`);
+    else assert.equal(entry.canopy, null, `${entry.value} : pas de couvert hors matière boisée`);
+  }
+});
+
+test('vigne, verger et lavande portent des rangs, les cultures de `CropLayer` aucun', () => {
+  const rowed = ['vineyard', 'orchard', 'olive', 'almond', 'lavender', 'tea', 'coffee', 'oil_palm'];
+  for (const entry of showcaseEntries('farming')) {
+    if (rowed.includes(entry.value)) assert.ok(entry.rows, `${entry.value} : des rangs`);
+    else assert.equal(entry.rows, null, `${entry.value} : rien à ajouter, CropLayer sème déjà`);
+  }
 });
