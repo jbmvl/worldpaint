@@ -456,7 +456,14 @@ import {
   TRACTOR_SPEED_MAX_MS,
 } from '../src/layers/furniture/parcels.js';
 import { fieldVehicleAt, TRACTOR_ANIMATED_MAX } from '../src/layers/tractorLayer.js';
-import { placeFauna, crossingAt } from '../src/layers/furniture/parcelFauna.js';
+import {
+  placeFauna,
+  crossingAt,
+  buildOpenPastureFauna,
+  OPEN_PASTURE_KINDS,
+  OPEN_PASTURE_PER_HA,
+  OPEN_PASTURE_GROUP,
+} from '../src/layers/furniture/parcelFauna.js';
 import {
   HEDGE_STYLES,
   HEDGE_SAMPLE_M,
@@ -10874,6 +10881,64 @@ test('le nombre de bêtes posées est plafonné', () => {
     placeFauna(layer, 'sheep', { x: i * 7.3, z: i * 3.1 });
   }
   assert.equal(layer.fauna.length, FURNITURE_LIMITS.fauna, 'plafonné, pas débordé');
+});
+
+test('le vivant hors parcelle ne se pose que sur les matières ouvertes', () => {
+  assert.deepEqual([...OPEN_PASTURE_KINDS].sort(), ['alpine', 'heath', 'saltmarsh']);
+
+  const { layer } = farmsteadPlacementHarness();
+  layer.counts = {};
+  layer.groundClass = { surfaceAt: () => 'grass' };
+  const here = { x: 10000, z: -4000 };
+  buildOpenPastureFauna(layer, { here }, null);
+  assert.equal(layer.fauna.length, 0, 'une prairie ordinaire ne porte rien de ce mécanisme');
+  assert.equal(layer.counts.openPasture, 0);
+});
+
+test('le vivant hors parcelle est déterministe, et partage le plafond de la faune', () => {
+  const heathLayer = () => {
+    const { layer } = farmsteadPlacementHarness();
+    layer.counts = {};
+    layer.groundClass = { surfaceAt: () => 'heath' };
+    return layer;
+  };
+  const here = { x: 20000, z: 8000 };
+
+  const first = heathLayer();
+  const second = heathLayer();
+  buildOpenPastureFauna(first, { here }, null);
+  buildOpenPastureFauna(second, { here }, null);
+  assert.ok(first.fauna.length > 0, 'une lande entière doit porter au moins un groupe sur 400 m de rayon');
+  assert.deepEqual(
+    first.fauna.map((a) => ({ kind: a.kind, x: a.x, z: a.z })),
+    second.fauna.map((a) => ({ kind: a.kind, x: a.x, z: a.z })),
+    'même lieu, même semis'
+  );
+
+  // Chaque groupe reste petit — hors parcelle, pas un troupeau de pré clos.
+  const byCircuitStart = new Map();
+  for (const animal of first.fauna) {
+    const key = `${Math.round(animal.x / 5)},${Math.round(animal.z / 5)}`;
+    byCircuitStart.set(key, (byCircuitStart.get(key) || 0) + 1);
+  }
+  for (const size of byCircuitStart.values()) {
+    assert.ok(size <= OPEN_PASTURE_GROUP[1], `un groupe hors parcelle ne dépasse pas ${OPEN_PASTURE_GROUP[1]} têtes (${size})`);
+  }
+
+  // Le plafond de la faune est partagé : le rempli d'avance, rien ne s'ajoute.
+  const full = heathLayer();
+  for (let i = 0; i < FURNITURE_LIMITS.fauna; i++) {
+    full.fauna.push({ kind: 'sheep', x: 0, z: 0, circuit: { stations: [{}], behaviour: 'graze' }, tint: [1, 1, 1], scale: 1 });
+  }
+  buildOpenPastureFauna(full, { here }, null);
+  assert.equal(full.fauna.length, FURNITURE_LIMITS.fauna, 'un plafond déjà plein ne déborde pas');
+});
+
+test('OPEN_PASTURE_PER_HA reste dans l’écart voulu : rare, jamais absent', () => {
+  // « Quelques moutons dispersés » : sensiblement plus rare que le mobilier
+  // de biome (0,05 à 0,5/ha), sans quoi une lande ouverte se remplirait
+  // comme un pré clos.
+  assert.ok(OPEN_PASTURE_PER_HA > 0 && OPEN_PASTURE_PER_HA <= 0.1);
 });
 
 test('la cour d’une ferme publie ses poules au lieu de les poser', () => {

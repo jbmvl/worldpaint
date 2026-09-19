@@ -395,6 +395,26 @@ la matrice du pays déplace ensuite la bascule — 28 % d'ovins en bocage, 72 %
 en lande, 85 % en désert. Sinon vache, et rarement cheval (8 %)
 ou âne (7 %).
 
+### Le vivant hors parcelle
+
+Une lande, un pré salé ou une estive n'ont pas de contour fermé — pas de
+`landuse=farmyard` ni de clôture à lire — et restaient vides pour cette seule
+raison, alors que c'est justement le paysage où le mouton fait le décor.
+`buildOpenPastureFauna` (`furniture/parcelFauna.js`) pose le même troupeau
+(`placeHerd`, même choix d'espèce) sur les matières `heath`, `saltmarsh` et
+`alpine`, sur une grille ancrée au monde (400 m de portée, maille de 70 m)
+plutôt que dans un contour — un petit carré de dispersion en tient lieu, sans
+prétendre à une clôture.
+
+| Contenu | Condition | Densité |
+| --- | --- | --- |
+| troupeau hors parcelle | `heath`, `saltmarsh`, `alpine` | 0,06 groupe/ha, 2 à 4 têtes |
+
+Le plafond est celui de toute la faune (`FURNITURE_LIMITS.fauna`, **partagé**) :
+sur une bulle très riche en lande, un groupe de plus peut évincer une vache de
+pré clos posée par ailleurs. La portée choisie (400 m) et la densité basse
+(0,06/ha) rendent ce cas rare en pratique, sans budget séparé pour l'exclure.
+
 Le **gibier** : 42 % des massifs ne portent rien du tout, et c'est voulu — un
 chevreuil dans chaque bois est un parc animalier. Un massif habité tire d'abord
 s'il abrite un carnassier (14 %), puis lequel :

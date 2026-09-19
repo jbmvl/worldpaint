@@ -93,6 +93,7 @@ import {
 import { buildBiomeDebris } from './furniture/biomeDebris.js';
 import { buildPointsOfInterest, collectChurches } from './furniture/pointsOfInterest.js';
 import { buildDomesticFauna } from './furniture/domesticFauna.js';
+import { buildOpenPastureFauna } from './furniture/parcelFauna.js';
 import {
   SIGN_PLACE_NAME_TEXT_WIDTH_M,
   SIGN_PLACE_NAME_LABEL_HEIGHT_M,
@@ -228,6 +229,7 @@ export class FurnitureLayer {
       landmarks: 0,
       rocks: 0,
       biomeDebris: 0,
+      openPasture: 0,
       rows: 0,
       hedgeClumps: 0,
     };
@@ -465,6 +467,7 @@ export class FurnitureLayer {
       landmarks: 0,
       rocks: 0,
       biomeDebris: 0,
+      openPasture: 0,
       rows: 0,
       hedgeClumps: 0,
     };
@@ -484,6 +487,7 @@ export class FurnitureLayer {
       buildJunctionSigns(this, context, areas, roadIndex, builtUp);
       buildParcels(this, context, builtUp);
       buildDomesticFauna(this, houses);
+      buildOpenPastureFauna(this, context, builtUp);
       buildVillageLandmarks(this, context, builtUp);
       buildPointsOfInterest(this, context, roadSegments);
       buildRocks(this, context, builtUp);
