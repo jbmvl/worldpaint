@@ -2,7 +2,7 @@
 
 Ce document répond à une seule question, objet par objet : **qu'est-ce qui a
 mis ça là ?** Il complète `docs/surfaces.md` (le sol, en détail) et
-`docs/climats.md` (comment la famille climatique est décidée).
+`docs/regions.md` (comment le pays est décidé et ce qu'il porte).
 
 Les mots du métier sont définis en fin de document, dans le [glossaire](#glossaire).
 
@@ -45,12 +45,12 @@ nationaux), qui ne disent rien de la matière du sol. Voir `docs/surfaces.md`.
 
 **Relief** : tuiles Terrarium (Mapzen, hébergées par AWS Open Data).
 
-**Climat** : une grille Köppen embarquée, pas 10° et **bornée à l'Europe**
-(−25° à +45° de longitude, 34° à 72° de latitude). Hors fenêtre, aucune famille
-n'est décidée et tout retombe sur les valeurs par défaut, qui sont celles du
-climat océanique. Le relief corrige ensuite la famille : au-dessus de 1000 m un
-climat méditerranéen devient montagnard, au-dessus de 1200 m tout le reste
-devient alpin.
+**Région naturelle** : une table de dossiers embarquée, couvrant la France et
+l'Espagne. Le pays d'un lieu est celui dont une ancre est la plus proche ;
+au-delà de 150 km de toute ancre, aucun pays n'est décidé et tout retombe sur
+les valeurs par défaut, qui sont celles du bocage atlantique. Le relief ne
+corrige rien : ce qui pousse réellement en altitude est relevé par le
+vectoriel.
 
 ---
 
@@ -75,27 +75,25 @@ Les matières du sol, décrites en détail dans `docs/surfaces.md`. En résumé 
 | `pavement` | **déduit** : bâti ∩ disque urbain, moins le vert urbain |
 | `water` | polygones `water` permanents, traits `waterway` élargis |
 
-Le climat ne lave que quatre d'entre elles (`grass`, `farmland`, `bare`,
-`pavement`) : une lande, un maquis ou un éboulis disent déjà leur pays.
+Le pays ne lave que quatre d'entre elles (`grass`, `farmland`, `bare`,
+`pavement`) : une lande ou un maquis disent déjà leur pays. La dalle et
+l'éboulis prennent un autre axe, la **géologie** (`STONE_LOOK`), qui teinte
+aussi la roche des fortes pentes et tout ce qui est bâti en pierre — muret de
+pierre sèche, mur de soutènement, paroi de déblai.
 
 ### Les cultures
 
 Second axe, indépendant de la matière : un champ est du `farmland` **et** du
 blé. La culture est tirée une fois, au centre de la parcelle, dans l'assolement
-du pays (`CROP_MIXES`) :
+du pays — la liste `farming` de son dossier, **ordonnée du plus répandu au
+moins répandu**. Il n'y a pas de table intermédiaire : la part de chaque
+culture se déduit de son rang, à peu près la moitié pour la première, le quart
+pour la deuxième (`sharesFor`).
 
-| Famille | Assolement dominant |
-| --- | --- |
-| oceanic | blé 30 %, maïs 22 %, labour 18 %, colza 12 %, verger 9 %, tournesol 5 %, vigne 4 % |
-| oceanicUpland | labour 50 %, blé 27 %, colza 10 %, maïs 8 %, verger 5 % |
-| continental | blé 38 %, labour 20 %, maïs 16 %, colza 10 %, tournesol 8 % |
-| boreal | labour 52 %, blé 33 %, colza 10 %, verger 5 % — ni maïs ni tournesol, la saison est trop courte |
-| mediterranean | vigne 24 %, verger 24 %, blé 17 %, labour 16 %, lavande 10 %, tournesol 9 % |
-| mediterraneanMontane | labour 36 %, blé 22 %, verger 22 %, lavande 12 %, vigne 8 % |
-| semiArid | labour 38 %, blé 22 %, verger 22 %, lavande 10 %, vigne 8 % |
-| arid | labour 70 %, verger 20 %, blé 10 % — une parcelle cultivée y est irriguée |
-| alpine | labour 70 %, blé 25 %, verger 5 % |
-| glacial | labour, et rien d'autre |
+Huit cultures existent (`CROP_KINDS`) : blé, maïs, tournesol, colza, vigne,
+verger, lavande, labour. Ce que le pays nomme passe par `cropForFarming` —
+l'olive et l'amande rendent un verger, le rang décide du reste. Sans région,
+c'est l'assolement français par défaut (`DEFAULT_CROP_MIX`).
 
 Deux sous-classes court-circuitent le tirage : `vineyard` donne une vigne,
 `orchard`/`plant_nursery` un verger. Ces deux-là, et la lavande avec elles,
@@ -109,23 +107,23 @@ sont semées **en rangs** (`ROW_CROPS`), les autres en vrac.
 
 Ils poussent là où la carte du sol dit « bois », et nulle part ailleurs — même
 donnée que le shader, donc jamais de contradiction. Le **peuplement** est tiré
-sur une maille de terrain, parmi les types dont la liste `climates` accepte la
-famille du lieu :
+sur une maille de terrain, parmi les types dont la liste `species` cite une
+essence du pays :
 
-| Peuplement | Familles | Hauteur | Densité | Sous-bois |
+| Peuplement | Essences citées | Hauteur | Densité | Sous-bois |
 | --- | --- | --- | --- | --- |
-| futaie | oceanic, continental, mediterraneanCool | 12–22 m | 0,95 | 0,12 |
-| pinède | oceanic, continental, mediterraneanCool | 11–19 m | 1,45 | 0,08 |
-| taillis | les six tempérées et méditerranéennes | 3,5–7 m | 1,75 | 0,55 |
-| mixte | oceanic, continental, mediterraneanCool | 7–16 m | 1,3 | 0,34 |
-| pinède méditerranéenne | mediterranean, semiArid | 7–14 m | 0,85 | 0,45 |
-| chênaie verte | mediterranean, mediterraneanCool | 6–11 m | 1,25 | 0,4 |
-| pinède de montagne | mediterraneanMontane | 11–20 m | 1,05 | 0,2 |
-| taïga | boreal | 9–18 m | 1,5 | 0,18 |
-| bétulaie | boreal, oceanicUpland, alpine, glacial | 4–11 m | 1,1 | 0,35 |
-| pessière subalpine | alpine | 8–16 m | 1,2 | 0,16 |
-| bosquet sec | semiArid, arid | 3–8 m | 0,55 | 0,55 |
-| bois rabougri | oceanicUpland | 3–7 m | 0,85 | 0,5 |
+| futaie | chêne, hêtre, frêne, charme | 12–22 m | 0,95 | 0,12 |
+| pinède | pin maritime, pin sylvestre | 11–19 m | 1,45 | 0,08 |
+| taillis | châtaignier, charme, aulne, chêne, chêne-liège | 3,5–7 m | 1,75 | 0,55 |
+| mixte | chêne, hêtre, pin sylvestre, bouleau | 7–16 m | 1,3 | 0,34 |
+| pinède méditerranéenne | pin d'Alep, pin parasol | 7–14 m | 0,85 | 0,45 |
+| chênaie verte | chêne vert, chêne-liège | 6–11 m | 1,25 | 0,4 |
+| pinède de montagne | pin noir | 11–20 m | 1,05 | 0,2 |
+| taïga | épicéa | 9–18 m | 1,5 | 0,18 |
+| bétulaie | bouleau | 4–11 m | 1,1 | 0,35 |
+| pessière subalpine | mélèze, sapin | 8–16 m | 1,2 | 0,16 |
+| bosquet sec | genévrier, pin d'Alep | 3–8 m | 0,55 | 0,55 |
+| bois rabougri | bouleau | 3–7 m | 0,85 | 0,5 |
 
 La **lisière** est traitée à part : la canopée y baisse (−30 %) et la strate
 basse y monte (+55 %) — un bois vu du dehors est un mur de feuilles, pas une
@@ -170,9 +168,9 @@ un fourré bas.
 
 Trois échelles selon la distance (la plante, la touffe, la masse). La quantité
 est le produit de trois choses : la part de végétal lue dans la carte, la ligne
-de la matière (une lande est rase et dense, un maquis clairsemé), et le climat
-(`grassDensity` de 1,0 en plaine continentale à **0,15 en désert** — c'est la
-terre visible entre les touffes qui fait une steppe, pas la couleur).
+de la matière (une lande est rase et dense, un maquis clairsemé), et la matrice
+du pays (`grassDensity` de 1,0 en bocage à **0,15 en désert** — c'est la terre
+visible entre les touffes qui fait une steppe, pas la couleur).
 
 16 % des touffes portent des fleurs en pleine prairie, 42 % en lisière de
 culture (le coquelicot). Sous les arbres, ce n'est plus une prairie mais une
@@ -197,23 +195,25 @@ un panneau vertical ferme le comble. Une empreinte trop mal remplie (moins de
 ### La couleur : un village, pas une maison
 
 Les tuiles ne portent ni matériau, ni couleur, ni forme de toit. La palette est
-donc tirée **par bourg** (maille de 1400 m), parmi celles que le climat admet :
+donc tirée **par bourg** (maille de 1400 m), parmi celles dont un matériau
+figure dans le `building` du pays :
 
-| Palette | Familles |
+| Palette | Matériaux |
 | --- | --- |
-| calcaire | oceanic, continental, mediterraneanCool |
-| ocre | mediterranean, mediterraneanCool, semiArid, arid |
-| granit | oceanic, oceanicUpland |
-| brique, colombage | oceanic, continental |
-| chaux | mediterranean, mediterraneanCool, semiArid |
-| ardoise | oceanic, oceanicUpland, continental |
-| lauze | alpine, mediterraneanMontane, oceanicUpland |
-| bois rouge | boreal, oceanicUpland, glacial |
-| bois vieilli | boreal, alpine |
-| badigeon | arid, semiArid, mediterranean |
-| brique balte | continental, boreal |
-| pierre grecque | mediterraneanMontane, mediterranean |
-| crépi alpin | alpine |
+| calcaire | light_stone, flat_tile_roof |
+| ocre | rendered, curved_tile_roof |
+| granit | granite, slate_roof |
+| brique | red_brick, flat_tile_roof |
+| colombage | half_timber |
+| chaux | whitewash, curved_tile_roof |
+| ardoise | slate_roof, dark_stone |
+| lauze | stone_slab_roof, dark_stone |
+| bois rouge | red_timber |
+| bois vieilli | timber |
+| badigeon | whitewash, flat_roof |
+| brique balte | pale_brick |
+| pierre grecque | light_stone, flat_roof |
+| crépi alpin | rendered, stone_slab_roof |
 
 76 % des maisons portent des volets ; le volet est le seul endroit du bâti où
 une vraie couleur est admise. Une « maison » est une empreinte de moins de
@@ -349,24 +349,20 @@ côté, hors agglomération.
 ### Le contour d'une parcelle
 
 C'est ce qui se lit de plus loin — un bocage compartimente l'horizon, un
-openfield le laisse filer. Tiré par famille climatique (`BOUNDARY_MIXES`), et
-seulement sur les parcelles cultivées ou pâturées :
+openfield le laisse filer. Tiré par style de limite — la matrice du pays en
+nomme un (`BOUNDARY_MIXES`) —, et seulement sur les parcelles cultivées ou
+pâturées :
 
-| Famille | Labour | Pâture |
+| Style | Labour | Pâture |
 | --- | --- | --- |
-| oceanic | haie 40 %, haie basse 22 %, rien 38 % | haie 20 %, barrière 38 %, barbelé 42 % |
-| oceanicUpland | **mur de pierre sèche 45 %**, haie 20 %, rien 25 % | mur 50 %, barbelé 20 %, barrière 18 % |
-| continental | **rien 82 %** (openfield), haie 10 % | barbelé 50 %, barrière 30 % |
-| boreal | rien 75 %, haie basse 15 % | **barrière de bois 60 %**, barbelé 25 % |
-| mediterranean | rien 60 %, mur 30 % — pas de haie vive, il n'y a pas l'eau pour l'entretenir | mur 45 %, barbelé 30 % |
-| mediterraneanMontane | **mur 50 %** (terrasses), rien 40 % | mur 60 %, barbelé 25 % |
-| semiArid | rien 75 %, mur 20 % | barbelé 40 %, mur 30 % |
-| arid | **rien 85 %** | rien 60 %, barbelé 25 % |
-| alpine | mur 40 %, barrière 20 %, rien 40 % | barrière 45 %, mur 30 % |
-| glacial | rien | rien |
+| bocage | haie 40 %, haie basse 22 %, rien 38 % | haie 20 %, barrière 38 %, barbelé 42 % |
+| openfield | **rien 82 %**, haie 10 % | barbelé 50 %, barrière 30 % |
+| drystone | **mur de pierre sèche 50 %**, rien 40 %, haie basse 10 % | mur 60 %, barbelé 25 % |
+| wood_fence | rien 75 %, haie basse 15 % | **barrière de bois 60 %**, barbelé 25 % |
+| none | rien 85 %, mur 15 % | rien 60 %, barbelé 25 %, mur 15 % |
 
 Deux règles priment sur le tirage : au-delà d'un certain **dévers** (de 5 % en
-montagne méditerranéenne à 28 % en taïga), c'est le mur, parce que la pierre
+pays de pierre sèche à 28 % en pays de barrière de bois), c'est le mur, parce que la pierre
 sort du premier pli de terrain ; et une parcelle **en culture** ne se clôt pas —
 le blé ne s'échappe pas.
 
@@ -380,22 +376,22 @@ le blé ne s'échappe pas.
 | gibier | `wood` | 0,3/ha, un massif sur deux en porte |
 
 Le **troupeau** : la pente tranche d'abord (au-delà de 34 %, chèvre ou mouton),
-le climat déplace ensuite la bascule — 28 % d'ovins en prairie océanique, 72 %
-dans les Highlands, 85 % en steppe aride. Sinon vache, et rarement cheval (8 %)
+la matrice du pays déplace ensuite la bascule — 28 % d'ovins en bocage, 72 %
+en lande, 85 % en désert. Sinon vache, et rarement cheval (8 %)
 ou âne (7 %).
 
 Le **gibier** : 42 % des massifs ne portent rien du tout, et c'est voulu — un
 chevreuil dans chaque bois est un parc animalier. Un massif habité tire d'abord
 s'il abrite un carnassier (14 %), puis lequel :
 
-| Famille | Gibier | Carnassiers |
+| Matrice | Gibier | Carnassiers |
 | --- | --- | --- |
-| oceanic | chevreuil, biche, sanglier | renard |
-| mediterranean | sanglier surtout | renard |
-| continental | cerf, biche, sanglier | renard, loup |
-| boreal | **renne**, biche, cerf | renard, loup, **ours** |
-| alpine | cerf, biche | renard, loup, ours |
-| arid, glacial | rien | rien |
+| hedgerow_meadow | chevreuil, biche, sanglier | renard |
+| garrigue | sanglier surtout | renard |
+| broadleaf_woodland, openfield_cropland | cerf, biche, sanglier | renard, loup |
+| boreal_taiga | **renne**, biche, cerf | renard, loup, **ours** |
+| alpine_pasture | cerf, biche | renard, loup, ours |
+| desert_stone, desert_sand, bare_rock | rien | rien |
 
 ### La ferme (`_placeFarmstead`)
 
@@ -460,9 +456,10 @@ qu'un aller-retour entre deux points composés une fois par
 `furniture/parcels.placeTractor`, sur un champ en labour (`plough`), 12 % du
 temps.
 
-L'**oiseau** change d'espèce avec le climat : un corvidé qui dérive au vent
-partout, un rapace qui tourne en rond au-dessus d'un relief de montagne
-(`alpine`, `mediterraneanMontane`, `oceanicUpland` — `lifeLayer.setClimate`).
+L'**oiseau** change d'espèce avec le pays : un corvidé qui dérive au vent
+partout, un rapace qui tourne en rond au-dessus d'un pays de montagne ou de
+lande (`alpine_pasture`, `bare_rock`, `terraced_slope`, `moor_heath` —
+`lifeLayer.setRegion`).
 C'est un remplacement, jamais les deux à la fois.
 
 ## Le ciel et le temps
@@ -496,11 +493,13 @@ bougé tout seul » :
 
 Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
 
-1. **Le non-classé est de l'herbe**, partout et quel que soit le pays. Un désert
-   non cartographié est donc une prairie jaunie, et le climat n'y peut rien : il
-   ne fait que laver une couleur.
-2. **La grille climatique s'arrête à l'Europe.** Hors fenêtre, tout retombe sur
-   le comportement par défaut, qui est celui de l'océanique.
+1. **Le non-classé est ce que le pays y met** (`matrix`). Un désert
+   cartographié nulle part reste donc une prairie, à l'intérieur même d'une
+   région qui ne le décrit pas.
+2. **La table des régions couvre la France, l'Espagne et le Royaume-Uni.**
+   Ailleurs, le décor s'éteint : rien n'est chargé ni posé, on voit le ciel et
+   rien dessous.
+   Imposer une région (`world.setRegion`) le rallume n'importe où.
 3. **La ville est un disque**, pas un contour : sa portée se tire d'un point
    `place` (3 km pour une `city`, 1,2 km pour une `town`), seule chose que la
    donnée dise du rang d'une agglomération. Une banlieue loin du point nommé
@@ -540,8 +539,8 @@ seule chose d'une surface qui se lise encore à cent mètres, donc la seule qui
 compte vraiment.
 
 **Assolement** — la répartition des cultures d'une région : ce qu'on a une
-chance de trouver dans un champ tiré au hasard. Le nôtre change par famille
-climatique.
+chance de trouver dans un champ tiré au hasard. Le nôtre est la liste `farming`
+du dossier de région, ordonnée du plus répandu au moins répandu.
 
 **Balayage** (`appendProfile`) — construire un volume en promenant une section
 constante le long d'une ligne. C'est ainsi que sont faits les haies, les murets,
@@ -594,11 +593,11 @@ tenue en un seul endroit pour que toutes les couches disent la même chose.
 **Essence** — l'espèce d'un arbre, au sens forestier. Nous n'en distinguons que
 quatre silhouettes : feuillu, résineux, colonne (peuplier, bouleau), buissonnant.
 
-**Famille climatique** — une des onze catégories de pays que nous savons peindre
-(océanique, continentale, méditerranéenne, boréale, aride…). Elle est décidée
-une fois pour le lieu, à partir d'une grille de classification Köppen embarquée
-et corrigée par l'altitude, puis elle change les arbres, les cultures, les
-troupeaux, les murs, les couleurs de village et la couleur du sol.
+**Matrice** — le paysage là où la carte se tait (bocage, openfield, garrigue,
+steppe, alpage…). C'est le champ le plus lourd de conséquences d'un dossier de
+région : en rase campagne, le vectoriel se tait sur la plus grande part du sol.
+Elle décide aussi du lavage du sol, de la trame des limites, de la couleur de
+l'air, du revêtement urbain et du troupeau.
 
 **Graine / tirage** — un nombre pseudo-aléatoire *reproductible*, calculé à
 partir d'une position au sol arrondie à 50 cm. C'est ce qui fait qu'un objet
@@ -610,9 +609,10 @@ une taille et une teinte différentes, en un seul ordre donné à la carte
 graphique. Les touffes d'herbe, les arbres et les lampadaires sont des instances
 — c'est ce qui rend leur nombre abordable.
 
-**Köppen** — la classification climatique de référence (Cfb pour l'océanique,
-Csa pour le méditerranéen…). Nous en embarquons une grille pour l'Europe, et
-nous la traduisons en familles.
+**Région naturelle** — un pays au sens paysager (l'Anjou, la Mancha, les
+Landes), décrit par un dossier fermé : sa matrice, sa pierre, son bâti, son
+assolement, ses essences. Le pays d'un lieu est celui dont une ancre est la plus
+proche.
 
 **Lisière** — le bord d'un bois, vu du dehors. Traité à part : la canopée y
 baisse et la strate basse y monte, parce qu'un bois vu de l'extérieur est un mur
@@ -642,7 +642,7 @@ mètres de bois de part et d'autre d'un cours d'eau). Voir *ripisylve*.
 
 **Peuplement** — la composition d'un massif forestier : quelles essences, à
 quelle hauteur, à quelle densité, avec quel sous-bois. Tiré une fois par massif
-parmi les types que le climat autorise.
+parmi les types dont une essence figure dans celles du pays.
 
 **Plate-forme** — l'assise horizontale sur laquelle une route est posée, une
 fois le terrain entaillé ou remblayé. Une route ne suit pas le terrain brut :

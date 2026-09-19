@@ -60,6 +60,10 @@ export {
 } from './inspect/objectLabels.js';
 export { forestTypeAt } from './layers/vegetationLayer.js';
 
+// --- Mise au point : isoler une valeur possible du vocabulaire de région ----
+// Pas un pays, un mot : « à quoi ressemble `granite` », sans y rouler.
+export { showcaseEntries, SHOWCASE_FIELDS, TILE_FIELDS, uniformGroundSample } from './inspect/showcase.js';
+
 // --- Mise au point : voir le réseau routier tel qu'il est compris -----------
 // Rend des paires de points colorées, en mètres du repère local : à
 // l'application d'en faire une géométrie de lignes. Voir `demo/main.js`.
@@ -72,10 +76,19 @@ export {
   ROAD_DEBUG_RADIUS_M,
 } from './inspect/roadDebug.js';
 
-// --- Le climat --------------------------------------------------------------
-// Même question que le décor se pose : quelle famille climatique à cette
+// --- Les régions naturelles -------------------------------------------------
+// Même question que le décor se pose : dans quel pays sommes-nous, à cette
 // longitude et cette latitude. Pure, synchrone, sans réseau.
-export { climateAt, refineByRelief, CLIMATE_FAMILIES, KOPPEN_CODES } from './core/climate.js';
+export { regionAt, regionById, MAX_REACH_KM } from './core/region.js';
+export { REGIONS } from './core/regions.js';
+export {
+  MATRIX_KINDS,
+  STONE_KINDS,
+  BUILDING_KINDS,
+  FARMING_KINDS,
+  TREE_KINDS,
+  VOCABULARIES,
+} from './core/regionInterpretation.js';
 
 // Hauteur dont la chaussée est décollée du terrain — à appliquer à tout objet
 // posé sur la route par l'application, sous peine de s'enfoncer dans le bitume.
@@ -95,3 +108,12 @@ export {
 // sources lumineuses les fasse de la même matière.
 export { createGlowGeometry, createGlowMaterial } from './layers/furnitureKit.js';
 export { srgb } from './core/color.js';
+
+// Le catalogue de formes isolées (mobilier, arbres de crête…), pour qui veut
+// poser un objet du décor sans passer par une couche entière — voir l'afficheur.
+export { createFurnitureGeometries, createFurnitureMaterial } from './layers/furnitureKit.js';
+
+// La couverture du sol et les cultures, pour qui veut semer une seule matière
+// sur une tuile sans monter tout le décor — voir l'afficheur (`demo/showcase.js`).
+export { GroundCover } from './layers/groundCover.js';
+export { CropLayer } from './layers/cropLayer.js';

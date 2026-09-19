@@ -27,10 +27,11 @@ import {
   collectRoadDebug,
   ROAD_DEBUG_RADIUS_M,
   DEFAULT_WEATHER,
-  CLIMATE_FAMILIES,
+  REGIONS,
   FAUNA_KINDS,
   LABEL_FAUNA,
 } from '../src/index.js';
+import { createShowcase } from './showcase.js';
 
 // --- Réglages ---------------------------------------------------------------
 
@@ -74,14 +75,18 @@ const faunaKindSelect = document.getElementById('faunaKind');
 const faunaDistanceInput = document.getElementById('faunaDistance');
 const faunaDistanceVal = document.getElementById('faunaDistanceVal');
 const faunaCrossBtn = document.getElementById('faunaCross');
-const climateSelect = document.getElementById('climate');
-const climateHint = document.getElementById('climateHint');
+const regionSelect = document.getElementById('region');
+const regionHint = document.getElementById('regionHint');
 const streetViewBtn = document.getElementById('streetViewBtn');
 const mapOverlay = document.getElementById('mapOverlay');
 const mapOverlayClose = document.getElementById('mapOverlayClose');
 const mapOverlayLegend = document.getElementById('mapOverlayLegend');
 const bigMinimapCanvas = document.getElementById('minimapBig');
 const bigMinimapCtx = bigMinimapCanvas.getContext('2d');
+const showcaseToggle = document.getElementById('showcaseToggle');
+const showcaseFieldSelect = document.getElementById('showcaseField');
+const showcaseWordField = document.getElementById('showcaseWordField');
+const showcaseWordSelect = document.getElementById('showcaseWord');
 
 function setBusy(busy) {
   dot.classList.toggle('busy', busy);
@@ -1312,7 +1317,7 @@ weatherBtn.textContent = PRESETS[1].label.split(' ')[0];
 
 // Raccourci « temps suivant » : rejoue le même clic que le bouton de temps
 // prêt à l'emploi actif + 1, pour ne pas dupliquer la logique de sélection.
-// Il cycle la **météo**, pas le climat — celui-ci a son propre sélecteur, et
+// Il cycle la **météo**, pas le pays — celui-ci a son propre sélecteur, et
 // confondre les deux était le principal malentendu de l'ancien nom.
 weatherBtn.addEventListener('click', () => {
   const buttons = [...presetsRoot.children];
@@ -1323,35 +1328,20 @@ weatherBtn.addEventListener('click', () => {
 });
 
 /*
- * --- Choix du climat ---------------------------------------------------------
+ * --- Choix de la région naturelle --------------------------------------------
  *
- * Le décor tire sa famille climatique du lieu (grille Köppen, `core/climate`).
- * Ce sélecteur la **remplace** : le moteur cesse alors de suivre la
- * géographie, ce qui est exactement ce qu'on veut pour juger le travail — même
- * terrain, mêmes routes, mêmes parcelles, tout le reste changé. Se téléporter
- * en Laponie change aussi le tracé, le bâti et la pente, et on ne sait plus ce
- * qui vient du climat.
+ * Le décor tire son pays du lieu (`core/region`). Ce sélecteur le **remplace** :
+ * le moteur cesse alors de suivre la géographie, ce qui est exactement ce qu'on
+ * veut pour juger le travail — même terrain, mêmes routes, mêmes parcelles,
+ * tout le reste changé. Se téléporter en Andalousie change aussi le tracé, le
+ * bâti et la pente, et on ne sait plus ce qui vient du pays.
  *
- * Les noms viennent de `CLIMATE_FAMILIES`, qui est la liste que le moteur
- * connaît : une famille ajoutée là apparaît ici sans rien écrire.
+ * La liste vient de `REGIONS` : une région ajoutée là apparaît ici sans rien
+ * écrire. Elle est rangée par nom, l'ordre du fichier étant géographique.
  */
-const CLIMATE_LABELS = {
-  oceanic: 'Océanique — Bretagne, Irlande',
-  oceanicUpland: 'Océanique froid — Highlands, Islande',
-  mediterranean: 'Méditerranéen — Provence, Grèce',
-  mediterraneanCool: 'Méditerranéen tempéré — Galice',
-  semiArid: 'Steppe — Èbre, Castille',
-  arid: 'Désertique — Tabernas, Bardenas',
-  continental: 'Continental — Pologne, plaine du Pô',
-  boreal: 'Boréal — Scandinavie, taïga',
-  alpine: 'Alpin — au-dessus de la forêt',
-  mediterraneanMontane: 'Montagne sèche — Apennins, sierras',
-  glacial: 'Glaciaire — calottes',
-};
-
-climateSelect.append(new Option('Automatique (d’après le lieu)', ''));
-for (const family of CLIMATE_FAMILIES) {
-  climateSelect.append(new Option(CLIMATE_LABELS[family] || family, family));
+regionSelect.append(new Option('Automatique (d’après le lieu)', ''));
+for (const region of [...REGIONS].sort((a, b) => a.name.localeCompare(b.name, 'fr'))) {
+  regionSelect.append(new Option(`${region.name} — ${region.matrix}`, region.id));
 }
 
 // --- Faune : déclencher une traversée -----------------------------------------
@@ -1416,7 +1406,7 @@ async function rebuildHere(message) {
   setStatus(message);
   try {
     const { lng, lat } = world.frame.toLngLat(camera.position.x, camera.position.z);
-    // Forcé : le climat décide de ce qu'il y a à poser, pas seulement d'où —
+    // Forcé : le pays décide de ce qu'il y a à poser, pas seulement d'où —
     // rien ne serait périmé au sens du compositeur si on ne le lui disait pas.
     await world.refresh(lng, lat, { force: true });
     setStatus('');
@@ -1427,20 +1417,82 @@ async function rebuildHere(message) {
   }
 }
 
-climateSelect.addEventListener('change', () => {
-  const family = climateSelect.value || null;
-  if (!world || !world.setClimate(family)) return;
-  writeClimateHint();
-  rebuildHere(family ? 'Changement de climat…' : 'Retour au climat du lieu…');
+regionSelect.addEventListener('change', () => {
+  const id = regionSelect.value || null;
+  if (!world || !world.setRegion(id)) return;
+  writeRegionHint();
+  rebuildHere(id ? 'Changement de région…' : 'Retour à la région du lieu…');
 });
 
 /** Rappelle ce que le sélecteur fait au décor, et ce qu'il ne fait pas. */
-function writeClimateHint() {
-  climateHint.textContent = climateSelect.value
-    ? 'Le décor ne suit plus le lieu : essences, villages, cultures et sol sont ceux de ce climat.'
-    : 'Le climat est lu dans la grille Köppen, à la position de la caméra.';
+function writeRegionHint() {
+  regionHint.textContent = regionSelect.value
+    ? 'Le décor ne suit plus le lieu : essences, villages, cultures et sol sont ceux de ce pays, où qu’on aille.'
+    : 'La région est lue à l’ancre la plus proche de la caméra. Hors couverture, le décor s’éteint — choisir une région ci-dessus le rallume.';
 }
-writeClimateHint();
+writeRegionHint();
+
+/*
+ * --- Mode afficheur -----------------------------------------------------------
+ *
+ * Une seconde scène, à côté de celle du monde : elle pose côte à côte tous
+ * les mots d'un champ de région (`showcase.js`), et `loop` choisit laquelle
+ * rendre. Ce n'est pas le sélecteur de région ci-dessus — celui-là compare un
+ * pays entier sur le même terrain, celui-ci isole un mot du vocabulaire pour
+ * voir à quoi il ressemble sans savoir dans quel pays le trouver.
+ */
+const showcase = createShowcase(THREE);
+for (const { field, label } of showcase.fields) {
+  showcaseFieldSelect.append(new Option(label, field));
+}
+
+/** Position et regard d'avant l'afficheur, pour les retrouver en sortant. */
+let savedCamera = null;
+
+/** Bascule le champ affiché, repeuple le sélecteur de mot s'il y a lieu, et cadre la caméra. */
+function applyShowcaseField(field) {
+  const entries = showcase.setField(field);
+  const isTile = showcase.isTileField(field);
+  showcaseWordField.hidden = !isTile;
+  showcaseWordSelect.disabled = !isTile;
+  if (isTile) {
+    showcaseWordSelect.replaceChildren();
+    for (const entry of entries) {
+      showcaseWordSelect.append(new Option(entry.unsupported ? `${entry.label} ⚠` : entry.label, entry.value));
+    }
+    // Debout au milieu de la tuile : c'est une étendue de plusieurs dizaines
+    // de mètres (le même rayon que l'herbe et les cultures du monde réel),
+    // pas une vignette qu'on regarde de loin.
+    camera.position.set(0, EYE_HEIGHT_M, -18);
+    camera.lookAt(0, 0.5, 30);
+  } else {
+    // Face à la grille, assez reculé pour voir plusieurs rangées d'un coup.
+    camera.position.set(0, 3.2, -7);
+    camera.lookAt(0, 1.3, 12);
+  }
+}
+
+showcaseToggle.addEventListener('change', () => {
+  const active = showcaseToggle.checked;
+  document.body.classList.toggle('showcase-mode', active);
+  showcaseFieldSelect.disabled = !active;
+  if (active) {
+    savedCamera = { position: camera.position.clone(), quaternion: camera.quaternion.clone() };
+    applyShowcaseField(showcaseFieldSelect.value);
+  } else if (savedCamera) {
+    camera.position.copy(savedCamera.position);
+    camera.quaternion.copy(savedCamera.quaternion);
+    savedCamera = null;
+  }
+});
+
+showcaseFieldSelect.addEventListener('change', () => {
+  if (showcaseToggle.checked) applyShowcaseField(showcaseFieldSelect.value);
+});
+
+showcaseWordSelect.addEventListener('change', () => {
+  if (showcaseToggle.checked) showcase.setWord(showcaseWordSelect.value);
+});
 
 hourInput.addEventListener('input', refreshWeatherLabels);
 realTimeCheckbox.addEventListener('change', () => {
@@ -1470,6 +1522,14 @@ function loop() {
   const delta = Math.min(clock.getDelta(), 0.1); // évite un bond si l'onglet était en arrière-plan
 
   updateMovement(delta);
+
+  // Le mode afficheur suspend le monde (aucune raison de le reconstruire ou
+  // de l'animer pendant qu'on regarde une grille d'échantillons) et rend sa
+  // propre scène : la caméra continue de voler, c'est tout ce qu'ils partagent.
+  if (showcaseToggle.checked) {
+    renderer.render(showcase.scene, camera);
+    return;
+  }
 
   if (world) {
     // `advance` situe la pluie et les feuilles au sol au point observé, pas à
@@ -1529,17 +1589,15 @@ function loop() {
   const where = here
     ? `lng ${here.lng.toFixed(5)}  lat ${here.lat.toFixed(5)}`
     : `x ${camera.position.x.toFixed(0)}  z ${camera.position.z.toFixed(0)}`;
-  // Le climat courant s'affiche parce qu'il ne se lit pas au premier coup
+  // Le pays courant s'affiche parce qu'il ne se lit pas au premier coup
   // d'oeil : c'est lui qui décide des essences, des palettes de village et de
   // l'assolement, et sans repère écrit on ne sait pas si le décor a changé de
-  // pays ou si l'on regarde deux fois le même bois.
-  const profile = world?.composer?.landscape;
-  // Sans code Köppen, la famille est imposée : le code décrivait le lieu,
-  // qu'on a justement cessé de suivre.
-  const climat = profile
-    ? `  ${profile.climate.family} (${profile.climate.koppen || 'imposé'})`
-    : '';
-  coordsEl.textContent = `${where}  alt ${camera.position.y.toFixed(0)} m  cap ${bearingDeg.toFixed(0)}°  incl ${pitchDeg.toFixed(0)}°${climat}`;
+  // région ou si l'on regarde deux fois le même bois.
+  // Hors couverture, le décor est éteint : il faut le dire, sinon un écran
+  // vide se lit comme une panne de chargement.
+  const region = world?.composer?.landscape?.region;
+  const pays = region ? `  ${region.name} (${region.matrix})` : '  hors couverture';
+  coordsEl.textContent = `${where}  alt ${camera.position.y.toFixed(0)} m  cap ${bearingDeg.toFixed(0)}°  incl ${pitchDeg.toFixed(0)}°${pays}`;
 
   renderer.render(scene, camera);
 }

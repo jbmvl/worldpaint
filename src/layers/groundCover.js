@@ -50,7 +50,7 @@ import {
   ATLAS_ATTRIBUTE,
 } from '../materials/foliageMaterial.js';
 import { makeRandom } from '../materials/proceduralTextures.js';
-import { soilWashFor } from '../core/climate.js';
+import { soilWashFor, surfaceForMatrix } from '../core/regionInterpretation.js';
 import { CORRIDOR_MARGIN_M, inCorridor } from './roadCorridor.js';
 import {
   coverBand,
@@ -261,7 +261,8 @@ export function grassHeightFade(
  * distingue pas compte pour du minéral, où rien ne pousse.
  *
  * @param {{grass:number, wood:number, farmland:number, bare:number}|null} sample
- * @param {string} unclassified Matière de repli — `TERRAIN_LOOK.unclassified`.
+ * @param {string} unclassified Matière de repli — celle du pays, ou
+ *        `TERRAIN_LOOK.unclassified`.
  */
 export function grassSampleFallback(sample, unclassified) {
   if (sample) return sample;
@@ -372,7 +373,7 @@ export const WOODLAND_FLOWER_MAX = 0.5;
 /**
  * Variantes d'atlas qui portent une fleur, par indice.
  *
- * La correction de sol d'un climat s'applique à l'herbe, pas à ce qui fleurit
+ * La correction de sol d'un pays s'applique à l'herbe, pas à ce qui fleurit
  * dedans : un coquelicot d'Andalousie est rouge, et le multiplier par le
  * facteur d'une herbe sèche — qui triple le rouge — en ferait une lampe. La
  * touffe qui le porte reste donc à sa teinte de prairie ; elle est minoritaire
@@ -491,13 +492,20 @@ export class GroundCover {
     this.roads = roads;
     this.streets = streets;
     /**
-     * Famille climatique du lieu, ou `null`. Posée par le compositeur ; elle
+     * Matrice de paysage du lieu, ou `null`. Posée par le compositeur ; elle
      * décide de la teinte des touffes, et c'est **le même facteur** que le
      * shader de terrain applique à l'albédo du sol — sans quoi le premier plan
      * et le lointain divergeraient.
      */
-    this.climate = null;
+    this.matrix = null;
     this._wash = soilWashFor(null, theme.soils);
+    /**
+     * Matière semée là où la carte du sol se tait — celle du pays quand il en
+     * nomme une, celle du thème sinon. C'est **le même repli** que le shader de
+     * terrain (`uUnclassified`), et il faut que ce soit le même : la peinture
+     * du sol et les touffes qui poussent dessus se contrediraient sinon.
+     */
+    this._unclassified = theme.terrain.unclassified;
     this.disposed = false;
     this._anchor = null;
     this._frame = null;
@@ -553,17 +561,18 @@ export class GroundCover {
   }
 
   /**
-   * Pose la famille climatique du lieu.
+   * Pose la région du lieu ; seule sa matrice sert ici.
    *
-   * @param {string|null} family
+   * @param {Object|null} region
    * @returns {boolean} vrai si elle a changé — l'appelant doit alors
    *          redistribuer, la teinte étant écrite dans les instances.
    */
-  setClimate(family) {
-    const next = family || null;
-    if (next === this.climate) return false;
-    this.climate = next;
+  setRegion(region) {
+    const next = region?.matrix ?? null;
+    if (next === this.matrix) return false;
+    this.matrix = next;
     this._wash = soilWashFor(next, this.theme.soils);
+    this._unclassified = surfaceForMatrix(next) ?? this.theme.terrain.unclassified;
     return true;
   }
 
@@ -644,7 +653,7 @@ export class GroundCover {
       const readZ = cellZ + fringe.z;
       const sample = grassSampleFallback(
         groundClass?.sampleAt(readX, readZ) ?? null,
-        this.theme.terrain.unclassified
+        this._unclassified
       );
       // Échantillon brut (pas élargi) : la verdure de la touffe ne doit rien à une culture à 5 m de là.
       const { green, shade } = grassGreenFor(sample, this.theme.grass.woodFloor);
@@ -671,7 +680,7 @@ export class GroundCover {
       // elle alloue, et une maille écartée n'a pas à la payer.
       const floorLook = woodFloorFor(shade, this.theme.grass.woodFloor);
       // À distance, une instance représente plusieurs mètres carrés. La
-      // couverture dit *ce que c'est*, le climat *dans quel pays* : une lande
+      // couverture dit *ce que c'est*, la matrice *dans quel pays* : une lande
       // écossaise est rase parce que c'est une lande, et un peu plus rase
       // encore parce qu'elle est en pays venté. Les deux se multiplient.
       const density =

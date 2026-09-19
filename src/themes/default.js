@@ -91,7 +91,7 @@ export const TERRAIN_LOOK = {
     // paysage de printemps — plus jaune encore qu'un blé mûr.
     rapeseed: [0.604, 0.522, 0.061],
   },
-  /** Teinte de roche sur les fortes pentes. */
+  /** Teinte de roche sur les fortes pentes, avant la géologie (`STONE_LOOK`). */
   rockColor: [0.72, 0.68, 0.62],
   slopeStart: 0.22,
   slopeEnd: 0.62,
@@ -200,17 +200,17 @@ export const TREE_ESSENCES = {
  * sans strate basse se lit comme une colonnade). Tiré d'une maille de
  * `FOREST_PATCH_M`, donc ancré au lieu.
  *
- * `climates` dit où le peuplement a le droit d'exister : le pin d'Alep ne
- * pousse pas en Finlande, et sans ça la Laponie est identique à la Provence
- * quelle que soit la finesse des silhouettes. Un peuplement sans `climates`
- * pousse partout — un thème d'avant les climats se comporte comme avant.
+ * `species` dit quelles essences le peuplement représente : il est retenu là
+ * où le pays en cite au moins une (`region.trees`). Sans ça, la Laponie est
+ * identique à la Provence quelle que soit la finesse des silhouettes. Un
+ * peuplement sans `species` pousse partout.
  */
 export const FOREST_TYPES = [
   {
     // Futaie de feuillus : de grands arbres, largement espacés, sous-bois clair.
     // Chêne, hêtre, frêne — le bois de plaine tempérée.
     name: 'futaie',
-    climates: ['oceanic', 'continental', 'mediterraneanCool'],
+    species: ['oak', 'beech', 'ash', 'hornbeam'],
     essences: ['broadleaf', 'broadleaf', 'column'],
     minHeight: 12,
     maxHeight: 22,
@@ -223,7 +223,7 @@ export const FOREST_TYPES = [
     // Pinède : haute, sombre, dense et serrée. Les Landes, la Sologne — une
     // plantation de pin maritime ou sylvestre, pas un bois spontané.
     name: 'pinede',
-    climates: ['oceanic', 'continental', 'mediterraneanCool'],
+    species: ['maritime_pine', 'scots_pine'],
     essences: ['conifer', 'conifer', 'conifer', 'column'],
     minHeight: 11,
     maxHeight: 19,
@@ -235,14 +235,7 @@ export const FOREST_TYPES = [
   {
     // Taillis et bosquets : bas, très denses, c'est le fourré qu'on longe.
     name: 'taillis',
-    climates: [
-      'oceanic',
-      'oceanicUpland',
-      'mediterranean',
-      'mediterraneanCool',
-      'mediterraneanMontane',
-      'continental',
-    ],
+    species: ['chestnut', 'hornbeam', 'alder', 'oak', 'cork_oak'],
     essences: ['bushy', 'bushy', 'broadleaf'],
     minHeight: 3.5,
     maxHeight: 7,
@@ -254,7 +247,7 @@ export const FOREST_TYPES = [
   {
     // Bois mêlé : le cas le plus courant, et le seul où le mélange est juste.
     name: 'mixte',
-    climates: ['oceanic', 'continental', 'mediterraneanCool'],
+    species: ['oak', 'beech', 'scots_pine', 'birch'],
     essences: ['broadleaf', 'conifer', 'bushy', 'column'],
     minHeight: 7,
     maxHeight: 16,
@@ -268,7 +261,7 @@ export const FOREST_TYPES = [
     // sol de garrigue qu'on voit entre les troncs. C'est le contraire d'une
     // pinède landaise — l'ombre y est trouée, pas continue.
     name: 'pinède méditerranéenne',
-    climates: ['mediterranean', 'semiArid'],
+    species: ['aleppo_pine', 'stone_pine'],
     essences: ['conifer', 'conifer', 'bushy'],
     minHeight: 7,
     maxHeight: 14,
@@ -281,7 +274,7 @@ export const FOREST_TYPES = [
     // Chênaie verte : basse, dense, sombre, feuillage persistant. Le bois
     // méditerranéen qui n'est pas une pinède.
     name: 'chênaie verte',
-    climates: ['mediterranean', 'mediterraneanCool'],
+    species: ['holm_oak', 'cork_oak'],
     essences: ['broadleaf', 'bushy', 'broadleaf'],
     minHeight: 6,
     maxHeight: 11,
@@ -293,7 +286,7 @@ export const FOREST_TYPES = [
     // Pin noir et sapin de montagne méditerranéenne : Olympe, Apennins,
     // sierras. Haut, droit, sur un sol sec et caillouteux.
     name: 'pinède de montagne',
-    climates: ['mediterraneanMontane'],
+    species: ['black_pine'],
     essences: ['conifer', 'conifer', 'column'],
     minHeight: 11,
     maxHeight: 20,
@@ -305,7 +298,7 @@ export const FOREST_TYPES = [
     // Taïga : épicéas serrés, très hauts, presque rien au sol. C'est la forêt
     // la plus uniforme d'Europe, et cette uniformité *est* son identité.
     name: 'taïga',
-    climates: ['boreal'],
+    species: ['spruce'],
     essences: ['conifer', 'conifer', 'conifer', 'column'],
     minHeight: 9,
     maxHeight: 18,
@@ -317,7 +310,7 @@ export const FOREST_TYPES = [
     // Bétulaie : bouleaux clairs et bas, la forêt de la limite — celle du
     // nord, celle de l'altitude, celle du vent.
     name: 'bétulaie',
-    climates: ['boreal', 'oceanicUpland', 'alpine', 'glacial'],
+    species: ['birch'],
     essences: ['column', 'bushy', 'broadleaf'],
     minHeight: 4,
     maxHeight: 11,
@@ -329,7 +322,7 @@ export const FOREST_TYPES = [
     // Pessière subalpine : épicéas et mélèzes en pente, de plus en plus espacés
     // à mesure qu'on monte vers la limite forestière.
     name: 'pessière subalpine',
-    climates: ['alpine'],
+    species: ['larch', 'fir'],
     essences: ['conifer', 'conifer', 'column'],
     minHeight: 8,
     maxHeight: 16,
@@ -342,7 +335,7 @@ export const FOREST_TYPES = [
     // pins rabougris et des buissons, très espacés. La densité basse n'est pas
     // une économie, c'est le paysage.
     name: 'bosquet sec',
-    climates: ['semiArid', 'arid'],
+    species: ['juniper', 'aleppo_pine'],
     essences: ['bushy', 'bushy', 'conifer'],
     minHeight: 3,
     maxHeight: 8,
@@ -354,7 +347,7 @@ export const FOREST_TYPES = [
     // Bois rabougri de côte venteuse : les arbres n'y montent pas, ils
     // s'étalent. L'Écosse, les îles, les caps.
     name: 'bois rabougri',
-    climates: ['oceanicUpland'],
+    species: ['birch'],
     essences: ['bushy', 'broadleaf', 'bushy'],
     minHeight: 3,
     maxHeight: 7,
@@ -420,7 +413,7 @@ export const CROP_LOOK = {
 
 // --- Le sol d'un pays ---------------------------------------------------------
 /**
- * Ce que le climat fait à la couleur du sol, par famille.
+ * Ce que le pays fait à la couleur du sol, par matrice (`region.matrix`).
  *
  * ## Pourquoi des facteurs et pas des couleurs
  *
@@ -431,7 +424,7 @@ export const CROP_LOOK = {
  * de voir un disque de couleur différente autour de l'observateur.
  *
  * Deux palettes séparées — une pour le sol, une pour les plantes — le
- * défairaient au premier climat. Un **facteur multiplicatif** appliqué aux
+ * défairaient au premier pays sec. Un **facteur multiplicatif** appliqué aux
  * deux, en espace linéaire, le préserve par construction : quoi que vaille
  * l'albédo de base, le sol et ce qui y pousse bougent du même rapport.
  *
@@ -458,7 +451,7 @@ export const CROP_LOOK = {
  * (`SURFACE_LOOK`) : une lande écossaise est rase parce que c'est une lande,
  * *et* un peu plus rase parce qu'elle est en pays venté.
  *
- * Les matières relevées ne sont pas touchées (colonne `climate` à `null`) : une lande, un maquis
+ * Les matières relevées ne sont pas touchées (colonne `wash` à `null`) : une lande, un maquis
  * ou un éboulis disent déjà leur pays, les teinter une seconde fois le dirait
  * deux fois.
  *
@@ -473,26 +466,25 @@ export const CROP_LOOK = {
  *
  * Choix : l'amplitude. Elle a été réglée sans jamais voir le rendu — c'est
  * exactement le genre de valeur qu'un graphiste doit reprendre en regardant
- * (voir `docs/climats.md`). Ce qui ne se reprend pas sans y penser, c'est le
+ * (voir `docs/regions.md`). Ce qui ne se reprend pas sans y penser, c'est le
  * plafond : au-delà de 3,5 environ, la touffe du premier plan sature et vire
  * au blanc, parce que sa couleur d'instance multiplie une texture déjà
  * éclairée. Un test le vérifie.
  *
- * Une famille absente vaut « pas de correction » : c'est le comportement
- * d'avant que ce tableau existe, et celui de l'océanique, sur lequel tout le
- * reste du thème a été réglé.
+ * Une matrice absente vaut « pas de correction » : c'est celui du bocage
+ * atlantique, sur lequel tout le reste du thème a été réglé.
  */
 export const SOIL_LOOK = {
-  /** Highlands, Islande, côtes norvégiennes : tourbe, basalte, herbe rase. */
-  oceanicUpland: {
+  /** Lande atlantique, fjell : tourbe, basalte, herbe rase. */
+  moor_heath: {
     grass: [0.92, 0.95, 1.02],
     bare: [0.78, 0.8, 0.86],
     farmland: [0.95, 0.97, 1.0],
     grassDensity: 0.85,
     grassHeight: 0.7,
   },
-  /** Plaine d'Europe centrale : terre noire, et l'herbe de l'océanique. */
-  continental: {
+  /** Openfield : terre travaillée, noire, et l'herbe du bocage. */
+  openfield_cropland: {
     grass: [1.02, 1.0, 0.94],
     bare: [0.8, 0.74, 0.66],
     farmland: [0.95, 0.9, 0.82],
@@ -500,7 +492,7 @@ export const SOIL_LOOK = {
     grassHeight: 1.0,
   },
   /** Taïga : podzol gris, granite, prairie froide. */
-  boreal: {
+  boreal_taiga: {
     grass: [0.9, 0.96, 0.98],
     bare: [0.85, 0.86, 0.9],
     farmland: [0.92, 0.94, 0.95],
@@ -508,23 +500,23 @@ export const SOIL_LOOK = {
     grassHeight: 0.8,
   },
   /** Provence, Grèce, Italie : le pré est jaune huit mois sur douze. */
-  mediterranean: {
+  garrigue: {
     grass: [2.2, 1.35, 2.6],
     bare: [1.5, 1.25, 0.95],
     farmland: [1.25, 1.1, 0.85],
     grassDensity: 0.55,
     grassHeight: 0.7,
   },
-  /** Arrière-pays portugais, Galice : la même chose de moitié. */
-  mediterraneanCool: {
+  /** Matorral, maquis d'arrière-pays : la même chose de moitié. */
+  dry_scrub: {
     grass: [1.6, 1.2, 1.8],
     bare: [1.3, 1.15, 0.95],
     farmland: [1.12, 1.05, 0.92],
     grassDensity: 0.75,
     grassHeight: 0.85,
   },
-  /** Montagnes sèches : karst pâle, pelouse brûlée. */
-  mediterraneanMontane: {
+  /** Terrasses sèches : karst pâle, pelouse brûlée. */
+  terraced_slope: {
     grass: [1.8, 1.25, 2.0],
     bare: [1.45, 1.35, 1.2],
     farmland: [1.15, 1.08, 0.95],
@@ -532,7 +524,7 @@ export const SOIL_LOOK = {
     grassHeight: 0.65,
   },
   /** Èbre, Castille, Murcie : la steppe. */
-  semiArid: {
+  dry_steppe: {
     grass: [2.8, 1.5, 3.2],
     bare: [1.7, 1.4, 1.0],
     farmland: [1.35, 1.15, 0.8],
@@ -540,27 +532,92 @@ export const SOIL_LOOK = {
     grassHeight: 0.55,
   },
   /** Tabernas, Bardenas : plus d'herbe verte du tout. */
-  arid: {
+  desert_stone: {
     grass: [3.0, 1.55, 3.4],
     bare: [1.85, 1.5, 1.05],
     farmland: [1.4, 1.18, 0.8],
     grassDensity: 0.15,
     grassHeight: 0.45,
   },
-  /** Au-dessus de la forêt : pelouse rase jaune-vert, roche claire. */
-  alpine: {
+  /** Alpage : pelouse rase jaune-vert, roche claire. */
+  alpine_pasture: {
     grass: [1.35, 1.1, 1.5],
     bare: [1.3, 1.3, 1.35],
     grassDensity: 0.5,
     grassHeight: 0.4,
   },
-  /** Névé et moraine. */
-  glacial: {
+  /** Roche nue, névé et moraine. */
+  bare_rock: {
     grass: [1.2, 1.15, 1.3],
     bare: [2.2, 2.3, 2.5],
     grassDensity: 0.1,
     grassHeight: 0.35,
   },
+  /** Erg : le sable ne se lave pas autrement que le reg. */
+  desert_sand: {
+    grass: [3.0, 1.55, 3.4],
+    bare: [1.85, 1.5, 1.05],
+    farmland: [1.4, 1.18, 0.8],
+    grassDensity: 0.15,
+    grassHeight: 0.45,
+  },
+};
+
+// --- La pierre d'un pays ------------------------------------------------------
+/**
+ * Ce que la géologie fait à la couleur de la pierre, par `region.stone`.
+ *
+ * Trois choses la montrent, et elles doivent s'accorder : la roche qui affleure
+ * sur les fortes pentes (`rockColor`), les matières minérales du sol (celles
+ * que `SURFACE_LOOK` marque `stone`), et ce qui est **bâti** dedans — muret de
+ * pierre sèche, mur de soutènement, paroi de déblai. Un causse blanc dont les
+ * murets seraient gris se lirait comme deux pays superposés.
+ *
+ * ## Des facteurs, pas des couleurs
+ *
+ * Même raison que `SOIL_LOOK` : ces trois lectures partent de bases
+ * différentes — une teinte de pente, deux albédos de matière, deux tons de
+ * nuancier — et une palette par géologie les ferait diverger. Un facteur
+ * multiplicatif, en espace linéaire, les fait toutes bouger du même rapport.
+ *
+ * Le **calcaire est la référence** et n'a pas d'entrée : c'est sur lui que les
+ * valeurs de base ont été réglées. Une géologie absente vaut « pas de
+ * correction ».
+ *
+ * ## Comment elles ont été choisies
+ *
+ * Chaque ligne vise une couleur de roche mouillée de lumière du jour, et le
+ * facteur en est déduit par division. La base étant beige (0,72 / 0,68 / 0,62),
+ * un gris **neutre** demande un facteur qui monte vers le bleu : c'est pourquoi
+ * le granit n'est pas [0,9 0,9 0,9]. Le plafond utile est 1,6 : au-delà, une
+ * dalle claire part au blanc avant que la lumière rasante ne la modèle.
+ *
+ * Deux valeurs sont volontairement moins sombres que la réalité — un basalte
+ * réel réfléchit autour de 0,12, un schiste guère plus. Prises au pied de la
+ * lettre, elles rendent un muret presque noir, qui ne se lit plus comme un
+ * ouvrage mais comme une ombre.
+ */
+export const STONE_LOOK = {
+  /** Craie : le blanc le plus froid du lot, Champagne, Artois, Kent. */
+  chalk: [1.19, 1.28, 1.39],
+  /** Gypse : blanc à peine rosé, Bardenas, Monegros, Tabernas. */
+  gypsum: [1.22, 1.25, 1.29],
+  /** Granit : gris franc, sans jaune — Bretagne, Massif central, Gredos. */
+  granite: [0.86, 0.91, 1.0],
+  /** Schiste : gris bleuté sombre, Ardenne, Cévennes, Alpujarra. */
+  schist: [0.52, 0.57, 0.68],
+  /** Basalte : la roche la plus sombre, Auvergne, Aubrac. */
+  basalt: [0.4, 0.43, 0.49],
+  /** Grès : ocre rouge, Vosges, Fontainebleau, Somontano. */
+  sandstone: [1.08, 0.88, 0.68],
+  /** Argile et marne : brun ocre, terres lourdes du nord et des campiñas. */
+  clay: [0.92, 0.82, 0.68],
+  /** Alluvions : galets et graves, gris beige clair. */
+  alluvium: [0.97, 1.0, 1.02],
+  /** Latérite : rouge brique des sols tropicaux ferrugineux. */
+  laterite: [0.81, 0.44, 0.32],
+  /** Lœss : limon éolien jaune pâle, bassins d'Europe centrale. */
+  loess: [1.03, 0.97, 0.81],
 };
 
 // --- Les matières du sol ------------------------------------------------------
@@ -582,7 +639,11 @@ export const SOIL_LOOK = {
  *
  * - `albedo` : la couleur, en linéaire. C'est la seule chose qui se lise encore
  *   à cent mètres, donc la seule qui compte vraiment ;
- * - `climate` : quel lavage climatique s'applique (`SOIL_LOOK`), ou `null`. Une
+ * - `stone` : vrai si la matière est la roche du socle, donc teintée par la
+ *   géologie du pays (`STONE_LOOK`). C'est un second axe, indépendant du
+ *   lavage : un éboulis ne jaunit pas parce qu'il fait sec, il est gris ou ocre
+ *   parce que la roche l'est ;
+ * - `wash` : quel lavage de pays s'applique (`SOIL_LOOK`), ou `null`. Une
  *   lande, un maquis, un éboulis disent déjà leur pays ; les teinter une
  *   seconde fois le dirait deux fois ;
  * - `grassHeight`, `grassDensity`, `grassTint` multiplient la taille, le
@@ -599,16 +660,16 @@ export const SOIL_LOOK = {
  */
 export const SURFACE_LOOK = {
   // --- Le végétal ordinaire -------------------------------------------------
-  grass: { albedo: [0.051, 0.135, 0.017], climate: 'grass' },
+  grass: { albedo: [0.051, 0.135, 0.017], wash: 'grass' },
   // Un sol de forêt est une litière, pas un pré : à mi-chemin de l'herbe. Le
-  // climat ne le lave pas — une hêtraie se ressemble d'un pays à l'autre.
-  wood: { albedo: [0.047, 0.096, 0.019], climate: null },
-  farmland: { albedo: [0.431, 0.331, 0.08], climate: 'farmland' },
+  // pays ne le lave pas — une hêtraie se ressemble d'un bout à l'autre.
+  wood: { albedo: [0.047, 0.096, 0.019], wash: null },
+  farmland: { albedo: [0.431, 0.331, 0.08], wash: 'farmland' },
   // Lotissement : pelouses tondues et allées. C'était un mélange peint dans un
   // canal (deux tiers d'herbe, un tiers de minéral) ; c'est désormais une
   // matière, et son albédo est la moyenne exacte que ce mélange rendait — la
   // reprendre à l'œil est une décision à part, pas un effet de bord de la fusion.
-  settled: { albedo: [0.125, 0.176, 0.088], climate: 'grass' },
+  settled: { albedo: [0.125, 0.176, 0.088], wash: 'grass' },
 
   // --- Les couvertures végétales --------------------------------------------
   // Bruyère et molinie sèche : brun-pourpre, la couleur d'un moor. Rase, dense,
@@ -616,7 +677,7 @@ export const SURFACE_LOOK = {
   heath: {
     albedo: [0.159, 0.122, 0.08],
    
-    climate: null,
+    wash: null,
     grassHeight: 0.45,
     grassDensity: 0.95,
     grassTint: [1.02, 0.84, 0.76],
@@ -627,7 +688,7 @@ export const SURFACE_LOOK = {
   scrub: {
     albedo: [0.147, 0.171, 0.08],
    
-    climate: null,
+    wash: null,
     grassHeight: 0.55,
     grassDensity: 0.4,
     grassTint: [1.04, 0.94, 0.7],
@@ -638,7 +699,7 @@ export const SURFACE_LOOK = {
   wetland: {
     albedo: [0.072, 0.107, 0.048],
    
-    climate: null,
+    wash: null,
     grassHeight: 1.4,
     grassDensity: 1,
     grassTint: [0.86, 1.04, 0.82],
@@ -649,7 +710,7 @@ export const SURFACE_LOOK = {
   // laissent de l'eau.
   saltmarsh: {
     albedo: [0.118, 0.13, 0.085],
-    climate: null,
+    wash: null,
     grassHeight: 0.5,
     grassDensity: 0.85,
     grassTint: [0.96, 0.98, 0.86],
@@ -660,7 +721,7 @@ export const SURFACE_LOOK = {
   alpine: {
     albedo: [0.205, 0.254, 0.107],
    
-    climate: null,
+    wash: null,
     grassHeight: 0.4,
     grassDensity: 0.9,
     grassTint: [0.94, 1.02, 0.78],
@@ -672,18 +733,18 @@ export const SURFACE_LOOK = {
   // pousse, et l'eau y reste en flaques.
   mud: {
     albedo: [0.1, 0.085, 0.063],
-    climate: null,
+    wash: null,
     grassDensity: 0,
     bushes: 0,
     standingWater: 0.35,
   },
-  bare: { albedo: [0.27, 0.255, 0.225], climate: 'bare' },
+  bare: { albedo: [0.27, 0.255, 0.225], wash: 'bare' },
   // L'éboulis et la dalle sont deux paysages : une pente de cailloux qui bouge,
   // un plateau de pierre. Les confondre était le défaut du gris unique.
   scree: {
     albedo: [0.323, 0.292, 0.254],
-   
-    climate: null,
+    wash: null,
+    stone: true,
     grassHeight: 0.3,
     grassDensity: 0.06,
     grassTint: [1, 0.96, 0.88],
@@ -691,19 +752,19 @@ export const SURFACE_LOOK = {
   },
   rock: {
     albedo: [0.371, 0.332, 0.27],
-   
-    climate: null,
+    wash: null,
+    stone: true,
     grassHeight: 0.35,
     grassDensity: 0.1,
     grassTint: [1, 0.96, 0.88],
     bushes: 0.02,
   },
   // Glacier et névé : blanc bleuté, et rien n'y pousse.
-  ice: { albedo: [0.6, 0.66, 0.72], climate: null, grassDensity: 0, bushes: 0 },
+  ice: { albedo: [0.6, 0.66, 0.72], wash: null, grassDensity: 0, bushes: 0 },
   sand: {
     albedo: [0.624, 0.539, 0.361],
    
-    climate: null,
+    wash: null,
     grassHeight: 0.6,
     grassDensity: 0.08,
     grassTint: [1.06, 0.98, 0.72],
@@ -719,7 +780,7 @@ export const SURFACE_LOOK = {
   pavement: {
     albedo: [0.31, 0.3, 0.28],
    
-    climate: 'pavement',
+    wash: 'pavement',
     grassDensity: 0,
     bushes: 0,
   },
@@ -731,7 +792,7 @@ export const SURFACE_LOOK = {
   water: {
     albedo: [0.021, 0.045, 0.06],
    
-    climate: null,
+    wash: null,
     grassHeight: 0,
     grassDensity: 0,
     bushes: 0,
@@ -746,10 +807,12 @@ export const SURFACE_LOOK = {
  * admise (mur et toit varient peu, donnés par la carrière et la tuilerie du
  * coin) : le bleu de Provence, le rouge d'Alsace, le vert de Bretagne.
  *
- * `climates` restreint la palette aux familles où elle est plausible : les
- * huit premières sont françaises, et sans ça un village polonais et un
- * village andalou sont tirés dans la même liste. Une palette sans `climates`
- * reste tirée partout.
+ * `materials` dit de quoi la palette est faite, et **un seul mot suffit** :
+ * celui qui la nomme. Elle est retenue là où le pays le cite
+ * (`region.building`), et sans ça un village breton et un village andalou sont
+ * tirés dans la même liste. En citer un second, s'il est répandu — la tuile
+ * canal, l'ardoise —, élargit la palette à tout pays qui le porte et ramène un
+ * mur de granit en Anjou. Une palette sans `materials` reste tirée partout.
  *
  * `pitch` remplace la pente de toit par défaut pour ce bourg-là, et ce n'est
  * pas un détail : un toit-terrasse andalou, une tuile canal presque plate et
@@ -759,7 +822,7 @@ export const SURFACE_LOOK = {
 export const TOWN_PALETTES = [
   {
     name: 'calcaire',
-    climates: ['oceanic', 'continental', 'mediterraneanCool'],
+    materials: ['light_stone'],
     walls: ['#e6ddc9', '#dcd2bb', '#efe8d8'],
     roofs: ['#b0654a', '#9c5a44'],
     shutters: ['#93a6ab', '#c6bfab'],
@@ -767,7 +830,7 @@ export const TOWN_PALETTES = [
   },
   {
     name: 'ocre',
-    climates: ['mediterranean', 'mediterraneanCool', 'semiArid', 'arid'],
+    materials: ['rendered', 'curved_tile_roof'],
     walls: ['#e8cfa8', '#dcbe94', '#f0dcc0'],
     roofs: ['#c07b4c', '#ab6a45'],
     shutters: ['#7d8fae', '#7c8a5c'],
@@ -777,7 +840,7 @@ export const TOWN_PALETTES = [
   },
   {
     name: 'granit',
-    climates: ['oceanic', 'oceanicUpland'],
+    materials: ['granite', 'dark_stone'],
     walls: ['#cfcdc6', '#c0bfba', '#dcdad3'],
     roofs: ['#6a6f78', '#585d66'],
     shutters: ['#3f5a78', '#3d5a4a'],
@@ -787,7 +850,7 @@ export const TOWN_PALETTES = [
   },
   {
     name: 'brique',
-    climates: ['oceanic', 'continental'],
+    materials: ['red_brick'],
     walls: ['#d9a98e', '#c8977d', '#e4bda6'],
     roofs: ['#8d5f4c', '#7a5041'],
     shutters: ['#415c48', '#d5cab2'],
@@ -796,7 +859,7 @@ export const TOWN_PALETTES = [
   },
   {
     name: 'colombage',
-    climates: ['oceanic', 'continental'],
+    materials: ['half_timber'],
     walls: ['#efe6d4', '#e3d6c0', '#d8c8ae'],
     roofs: ['#8a5a49', '#6f4b3f'],
     shutters: ['#8e4034', '#405c3f'],
@@ -805,7 +868,7 @@ export const TOWN_PALETTES = [
   },
   {
     name: 'chaux',
-    climates: ['mediterranean', 'mediterraneanCool', 'semiArid'],
+    materials: ['whitewash'],
     walls: ['#eeeae0', '#e3ded2', '#f4f1e9'],
     roofs: ['#a9713f', '#8f6039'],
     shutters: ['#9fb2b6', '#93a37c'],
@@ -814,7 +877,7 @@ export const TOWN_PALETTES = [
   },
   {
     name: 'ardoise',
-    climates: ['oceanic', 'oceanicUpland', 'continental'],
+    materials: ['slate_roof'],
     walls: ['#dfe0dd', '#d0d2cf', '#eceded'],
     roofs: ['#5b626b', '#4c525a'],
     shutters: ['#dbd8cf', '#6d7f92'],
@@ -823,7 +886,7 @@ export const TOWN_PALETTES = [
   },
   {
     name: 'lauze',
-    climates: ['alpine', 'mediterraneanMontane', 'oceanicUpland'],
+    materials: ['stone_slab_roof'],
     walls: ['#d5cbb8', '#c5bba7', '#e0d7c6'],
     roofs: ['#77726a', '#655f57'],
     shutters: ['#6f5a42', '#4c5f4a'],
@@ -835,7 +898,7 @@ export const TOWN_PALETTES = [
     // Bois rouge de Scandinavie : rouge de Falun, encadrements blancs, toit
     // sombre et raide. C'est le village nordique en une couleur.
     name: 'bois rouge',
-    climates: ['boreal', 'oceanicUpland', 'glacial'],
+    materials: ['red_timber'],
     // Rouge de Falun **délavé**. Le vrai est bien plus sombre et plus saturé,
     // mais la règle pastel de ce fichier (voir l'en-tête de `townStyle`) tient
     // tout le nuancier ensemble, et un mur qui la casse fait basculer le décor
@@ -851,7 +914,7 @@ export const TOWN_PALETTES = [
     // Bois goudronné sombre : chalet d'altitude et ferme nordique. Le même
     // matériau que le rouge de Falun, vieilli au lieu d'être peint.
     name: 'bois vieilli',
-    climates: ['boreal', 'alpine'],
+    materials: ['timber'],
     // Bois gris de vieillissement plutôt que bois goudronné : même raison que
     // ci-dessus, le goudron sort de la plage claire du nuancier.
     walls: ['#bb9d74', '#c7aa83', '#b39468'],
@@ -864,7 +927,7 @@ export const TOWN_PALETTES = [
     // Badigeon andalou : chaux vive, toit presque plat, volets francs. Le seul
     // endroit d'Europe où le mur est plus clair que le ciel.
     name: 'badigeon',
-    climates: ['arid', 'semiArid', 'mediterranean'],
+    materials: ['flat_roof'],
     walls: ['#f4f2ea', '#eae7dc', '#faf8f2'],
     roofs: ['#c07a4e', '#a96a45'],
     shutters: ['#3f6f8e', '#2f5a4a'],
@@ -876,7 +939,7 @@ export const TOWN_PALETTES = [
     // Brique et pignon droit : Baltique, Pologne, Prusse. Le pignon sur rue est
     // ce qui distingue une ville hanséatique d'un bourg français.
     name: 'brique balte',
-    climates: ['continental', 'boreal'],
+    materials: ['pale_brick'],
     walls: ['#c08670', '#b87f66', '#cb9580'],
     roofs: ['#6a4a3e', '#7b5747'],
     shutters: ['#4a5f4a', '#d9d2c2'],
@@ -887,7 +950,7 @@ export const TOWN_PALETTES = [
     // Pierre grecque : moellon clair et tuile romaine, sur les montagnes du
     // sud. Ni le blanc des Cyclades, ni l'ocre de Provence.
     name: 'pierre grecque',
-    climates: ['mediterraneanMontane', 'mediterranean'],
+    materials: ['flat_roof'],
     walls: ['#ddd4c1', '#cfc5b0', '#e8e0d0'],
     roofs: ['#b06a44', '#96593a'],
     shutters: ['#3d6b86', '#7a6a4a'],
@@ -898,7 +961,7 @@ export const TOWN_PALETTES = [
     // Crépi alpin : mur clair, large débord, toit peu pentu chargé de pierres.
     // Le contraire du chalet à pignon raide qu'on imagine.
     name: 'crépi alpin',
-    climates: ['alpine'],
+    materials: ['rendered'],
     walls: ['#efe8d8', '#e2dac8', '#f5f0e4'],
     roofs: ['#7a736a', '#66605a'],
     shutters: ['#7d4a33', '#3f5a4a'],
@@ -1169,7 +1232,7 @@ export const STREET_LOOK = {
    * coup, et une bordure est du béton à peu près partout.
    *
    * Le **dessus** du trottoir n'est plus ici, et c'est le lot : il vient de
-   * `pavement`, par climat. Un trottoir de ville se prolonge maintenant dans le
+   * `pavement`, par matrice. Un trottoir de ville se prolonge maintenant dans le
    * sol lui-même (couverture `pavement` de `groundClassMap`), et le sol est
    * peint par un shader qui n'a qu'un albédo par couverture pour toute la
    * bulle. Une teinte tirée par bourg, sur une maille de 1400 m, se lirait donc
@@ -1183,7 +1246,7 @@ export const STREET_LOOK = {
     { name: 'béton désactivé', kerb: '#c0beb6', joint: '#8b8374' },
   ],
   /**
-   * Le dessus du trottoir, par famille climatique — et, par la même valeur, le
+   * Le dessus du trottoir, par matrice (`region.matrix`) — et, par la même valeur, le
    * sol revêtu de la ville entière (voir `townStyle.pavementTone`).
    *
    * Une seule table pour les deux, parce qu'il n'y a pas deux surfaces : la
@@ -1191,9 +1254,9 @@ export const STREET_LOOK = {
    * autre sol. Deux valeurs divergentes se liraient comme une bande de couleur
    * le long de chaque bordure.
    *
-   * Ce que le climat change n'est pas un caprice : le nord pose du béton gris,
+   * Ce que le pays change n'est pas un caprice : le nord pose du béton gris,
    * le Midi de la pierre claire qui blanchit au soleil, la steppe et le désert
-   * un enrobé qui prend la poussière du pays. `default` est l'océanique, sur
+   * un enrobé qui prend la poussière. `default` est le bocage atlantique, sur
    * lequel le reste du thème est réglé.
    */
   /**
@@ -1205,17 +1268,18 @@ export const STREET_LOOK = {
   pavementGrain: 0.55,
   pavement: {
     default: '#43444a',
-    oceanic: '#43444a',
-    oceanicUpland: '#3f4046',
-    mediterranean: '#4a4b51',
-    mediterraneanCool: '#44454b',
-    mediterraneanMontane: '#43444a',
-    semiArid: '#484950',
-    arid: '#4d4e55',
-    continental: '#424349',
-    boreal: '#3b3c41',
-    alpine: '#404147',
-    glacial: '#3c3d43',
+    hedgerow_meadow: '#43444a',
+    moor_heath: '#3f4046',
+    garrigue: '#4a4b51',
+    dry_scrub: '#44454b',
+    terraced_slope: '#43444a',
+    dry_steppe: '#484950',
+    desert_stone: '#4d4e55',
+    desert_sand: '#4d4e55',
+    openfield_cropland: '#424349',
+    boreal_taiga: '#3b3c41',
+    alpine_pasture: '#404147',
+    bare_rock: '#3c3d43',
   },
 };
 
@@ -1244,7 +1308,7 @@ export const WATERWAY_CLASSES = {
  */
 export const LIFE_COLORS = {
   bird: '#2b2f36',
-  // Silhouette du rapace qui remplace le corvidé en climat de montagne — même
+  // Silhouette du rapace qui remplace le corvidé en pays de montagne — même
   // principe (une teinte plus sombre que le ciel, quelle que soit l'heure).
   raptor: '#332821',
   smoke: [0.86, 0.85, 0.83],
@@ -1455,18 +1519,18 @@ export const SKY_PALETTE = {
   variants: [
     {
       name: 'atlantique',
-      climates: ['oceanicUpland'],
+      matrix: ['moor_heath'],
       // Plus gris et plus dense : c'est un air chargé d'eau, pas une brume.
       fog: '#dfe6ea',
     },
     {
       name: 'midi',
-      climates: ['mediterranean', 'mediterraneanCool'],
+      matrix: ['garrigue', 'dry_scrub'],
       fog: '#eeeadf',
     },
     {
       name: 'poussière',
-      climates: ['semiArid', 'arid'],
+      matrix: ['dry_steppe', 'desert_stone', 'desert_sand'],
       fog: '#efe6d6',
       // Une nuit de pays sec est plus chaude et plus claire : il n'y a pas de
       // couche d'eau pour l'éteindre.
@@ -1474,18 +1538,18 @@ export const SKY_PALETTE = {
     },
     {
       name: 'continental',
-      climates: ['continental'],
+      matrix: ['openfield_cropland'],
       fog: '#e9eef1',
     },
     {
       name: 'boréal',
-      climates: ['boreal', 'glacial'],
+      matrix: ['boreal_taiga'],
       fog: '#e6edf2',
       nightZenith: '#0b1226',
     },
     {
       name: 'altitude',
-      climates: ['alpine', 'mediterraneanMontane'],
+      matrix: ['alpine_pasture', 'bare_rock', 'terraced_slope'],
       // L'air y est le plus clair d'Europe : le lointain reste lisible bien
       // plus loin qu'ailleurs, et c'est ce qui fait la montagne.
       fog: '#e2ecf4',
@@ -1575,6 +1639,7 @@ export const defaultTheme = Object.freeze({
   crops: CROP_LOOK,
   surfaces: SURFACE_LOOK,
   soils: SOIL_LOOK,
+  stones: STONE_LOOK,
   towns: TOWN_PALETTES,
   personalities: BUILDING_PERSONALITIES,
   roofs: { pitch: ROOF_PITCH, maxRiseM: ROOF_MAX_RISE_M },

@@ -89,7 +89,7 @@ import {
 import { pavementTone } from '../layers/townStyle.js';
 import { createWaterNormalCanvas } from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
-import { soilWashFor } from '../core/climate.js';
+import { soilWashFor, surfaceForMatrix, stoneTintFor } from '../core/regionInterpretation.js';
 
 /** Couleur d'une matière qu'un thème ne décrit pas : un gris de terre neutre. */
 const FALLBACK_ALBEDO = [0.18, 0.17, 0.15];
@@ -102,22 +102,32 @@ export class TerrainMaterialFactory {
    * @param {Object} options.THREE
    * @param {Object} [options.look] Tranche `terrain` du thème.
    * @param {Object} [options.soils] Tranche `soils` du thème.
+   * @param {Object} [options.stones] Tranche `stones` du thème.
    * @param {Object} [options.groundClass] Instance `GroundClassMap`. Absente,
    *        tout le sol prend la matière de repli.
    * @param {Object} [options.streets] Tranche `streets` du thème. Le sol d'une
    *        ville est du trottoir, et sa teinte ne peut pas être décidée deux
    *        fois : la bordure la lit là aussi (`townStyle.pavementTone`).
    */
-  constructor({ THREE, look = {}, soils = null, surfaces = null, streets = null, groundClass = null }) {
+  constructor({
+    THREE,
+    look = {},
+    soils = null,
+    stones = null,
+    surfaces = null,
+    streets = null,
+    groundClass = null,
+  }) {
     this.THREE = THREE;
     this.look = { ...defaultTheme.terrain, ...look };
     this.soils = soils || defaultTheme.soils;
+    this.stones = stones || defaultTheme.stones;
     /** Table des matières du sol, une ligne par matière (`SURFACE_LOOK`). */
     this.surfaces = surfaces || defaultTheme.surfaces;
     this.streets = streets || defaultTheme.streets;
     this.groundClass = groundClass || null;
-    /** Famille appliquée aux albédos. `null` = aucune correction. */
-    this._climate = null;
+    /** Matrice appliquée aux albédos. `null` = aucune correction. */
+    this._matrix = null;
 
     // Bruit et variation (pas de couleur) : espace linéaire.
     const repeated = (canvas) => {
@@ -172,20 +182,42 @@ export class TerrainMaterialFactory {
   }
 
   /**
-   * Applique la correction de sol d'une famille climatique — le seul endroit
-   * où le sol lointain apprend le pays. Les touffes et les tiges du premier
-   * plan lisent le même facteur par `soilWashFor` : voir `SOIL_LOOK` sur
-   * pourquoi c'est un facteur et pas une palette. Les couvertures ne bougent
-   * pas, une lande dit déjà son pays — sauf une, le revêtement urbain, qui
-   * n'est pas une matière relevée mais une convention de pays : le nord coule
-   * du béton gris, le Midi pose de la pierre claire, la steppe un enrobé
-   * poussiéreux. Elle est lue à la même source que la bordure de trottoir.
+   * Applique au sol lointain ce que le pays lui fait — le seul endroit où il
+   * l'apprend. Deux corrections s'y croisent, sur deux axes :
+   *
+   * - le **lavage de la matrice** (`soilWashFor`) sur l'herbe, les champs et la
+   *   terre nue. Les touffes et les tiges du premier plan lisent le même
+   *   facteur : voir `SOIL_LOOK` sur pourquoi c'est un facteur et pas une
+   *   palette ;
+   * - la **teinte de la géologie** (`stoneTintFor`) sur la roche du socle —
+   *   celle qui affleure en pente, la dalle et l'éboulis. Le mobilier bâti en
+   *   pierre lit le même facteur, sans quoi un causse blanc porterait des
+   *   murets gris.
+   *
+   * Les autres couvertures ne bougent pas, une lande dit déjà son pays — sauf
+   * une, le revêtement urbain, qui n'est pas une matière relevée mais une
+   * convention de pays : le nord coule du béton gris, le Midi pose de la pierre
+   * claire, la steppe un enrobé poussiéreux. Elle est lue à la même source que
+   * la bordure de trottoir.
    */
-  setClimate(family) {
-    if (!this._uniforms || family === this._climate) return;
-    this._climate = family || null;
-    const wash = soilWashFor(this._climate, this.soils);
+  setRegion(region) {
+    const matrix = region?.matrix ?? null;
+    if (!this._uniforms || matrix === this._matrix) return;
+    this._matrix = matrix;
+
+    // Ce que le pays met là où la carte se tait. C'est la lecture la plus
+    // lourde de conséquences du dossier de région : en rase campagne, le
+    // vectoriel se tait sur la plus grande part du sol.
+    const fill = surfaceForMatrix(matrix) ?? this.look.unclassified;
+    this._uniforms.uUnclassified.value = Math.max(0, SURFACE_KINDS.indexOf(fill)) + 1;
+
+    const wash = soilWashFor(this._matrix, this.soils);
+    const stone = stoneTintFor(region?.stone ?? null, this.stones);
     const scale = (albedo, by) => albedo.map((v, i) => v * by[i]);
+
+    // La roche qui perce les fortes pentes : même géologie que la dalle et
+    // l'éboulis d'à côté, donc même facteur.
+    this._uniforms.uRockColor.value.set(...scale(this.look.rockColor, stone));
 
     // Une matière déclare le lavage qu'elle prend, ou aucun. C'était quatre
     // affectations nommées, plus un cas particulier pour le trottoir ; c'est
@@ -193,12 +225,14 @@ export class TerrainMaterialFactory {
     SURFACE_KINDS.forEach((kind, i) => {
       const look = this.surfaces[kind] || {};
       const uniform = this._uniforms.uSurfaceAlbedo.value[i];
-      if (look.climate === 'pavement') {
-        uniform.set(...pavementTone(this._climate, this.streets));
+      if (look.wash === 'pavement') {
+        uniform.set(...pavementTone(this._matrix, this.streets));
         return;
       }
-      const base = look.albedo || FALLBACK_ALBEDO;
-      uniform.set(...(look.climate ? scale(base, wash[look.climate]) : base));
+      const base = look.stone
+        ? scale(look.albedo || FALLBACK_ALBEDO, stone)
+        : look.albedo || FALLBACK_ALBEDO;
+      uniform.set(...(look.wash ? scale(base, wash[look.wash]) : base));
     });
 
     CROP_KINDS.forEach((kind, i) => {

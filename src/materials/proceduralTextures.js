@@ -684,9 +684,9 @@ export const CROP_ATLAS_ROWS = 4;
  * grille 4×4 (les quatre dernières restent vides) ; le décalage d'atlas se lit
  * par `CROP_VARIANTS.indexOf`.
  *
- * La lavande et le colza sont arrivés avec les climats : sans eux, une plaine
- * de Beauce et un plateau de Sault portaient exactement les mêmes champs, et
- * l'assolement par pays (`CROP_MIXES`) ne se voyait pas.
+ * Sans la lavande et le colza, une plaine de Beauce et un plateau de Sault
+ * portent exactement les mêmes champs, et l'assolement du pays ne se voit
+ * pas.
  */
 export const CROP_VARIANTS = [
   'wheat',

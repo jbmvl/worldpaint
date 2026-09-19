@@ -1580,6 +1580,51 @@ const DRY_STONE_WALL_GRAIN = { up: [0.94, 1.06], across: [0.92, 1.08], lateral: 
 /** Tout ce que le mobilier tire de son nuancier (sections balayées, ouvrages de soutènement, feux), mémorisé sur le nuancier lui-même. */
 const SPECS_CACHE = new WeakMap();
 
+/**
+ * Nuanciers dérivés d'une pierre de pays, mémorisés par nuancier puis par
+ * teinte. Une teinte est un tableau, donc jamais comparable par référence : la
+ * clé est sa forme écrite.
+ */
+const STONED_CACHE = new WeakMap();
+
+/**
+ * Les mêmes sections balayées, dans la pierre du pays.
+ *
+ * Seuls les deux tons de pierre du nuancier bougent, donc seuls les ouvrages
+ * qui en sont faits changent : le muret de pierre sèche, le mur de soutènement
+ * et la paroi de déblai. Les formes du catalogue, elles, sont instanciées une
+ * fois pour toutes et gardent leur pierre neutre — recolorier un calvaire et un
+ * moulin à chaque changement de pays coûterait tout le catalogue pour deux
+ * objets qu'on croise rarement.
+ *
+ * La teinte vient de `stoneTintFor`, la même que le shader de terrain applique
+ * à la roche : un causse blanc porte des murets blancs.
+ *
+ * @param {Object} colors Nuancier du thème (`theme.furniture.colors`).
+ * @param {number[]} tint Facteur par canal, en espace linéaire.
+ */
+export function furnitureSpecsForStone(colors, tint) {
+  if (!Array.isArray(tint) || tint.every((factor) => factor === 1)) {
+    return furnitureSpecsFor(colors);
+  }
+  let byTint = STONED_CACHE.get(colors);
+  if (!byTint) {
+    byTint = new Map();
+    STONED_CACHE.set(colors, byTint);
+  }
+  const key = tint.join(',');
+  let stoned = byTint.get(key);
+  if (!stoned) {
+    stoned = {
+      ...colors,
+      stone: colors.stone.map((channel, i) => channel * tint[i]),
+      stoneDark: colors.stoneDark.map((channel, i) => channel * tint[i]),
+    };
+    byTint.set(key, stoned);
+  }
+  return furnitureSpecsFor(stoned);
+}
+
 export function furnitureSpecsFor(colors = defaultTheme.furniture.colors) {
   let specs = SPECS_CACHE.get(colors);
   if (!specs) {

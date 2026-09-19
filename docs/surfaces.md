@@ -224,14 +224,12 @@ Ce que ce mécanisme ne fait pas :
 
 Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
 
-1. **Là où la donnée se tait, c'est de l'herbe.** `unclassified` vaut `grass`
-   partout, quel que soit le pays. C'est le pari gagnant en rase
-   campagne européenne ; c'est aussi la raison pour laquelle **un désert non
-   cartographié est une prairie**. Le climat (`soilWashFor`) ne fait ensuite que
-   jaunir cette herbe — en `arid` elle devient olive et clairsemée, jamais du
-   sable — et la grille climatique **s'arrête à l'Europe** : hors fenêtre, le
-   Sahara est peint avec l'albédo d'herbe d'une prairie normande.
-   Un désert n'existe donc aujourd'hui que là où OSM a tracé un `natural=sand`.
+1. **Là où la donnée se tait, c'est le pays qui remplit.** La matrice du
+   dossier de région (`surfaceForMatrix`) décide de la matière ; `unclassified`
+   vaut `grass` et ne sert plus que de repli au thème. Hors des régions
+   couvertes la question ne se pose plus : le décor s'éteint. **À l'intérieur
+   d'une région, en revanche, la matrice est le seul recours** — un désert que
+   la carte ne trace pas n'existe que si la matrice le dit.
 2. **Un marais n'a qu'une forme.** Les tuiles servies ne transmettent presque
    jamais la sous-classe d'une zone humide. Relevé au z14 sur la Camargue, la
    Brière, le lac de Grand-Lieu, la baie de l'Aiguillon, le delta du Danube, le

@@ -159,7 +159,7 @@ test('avec un ciel, updateSky recale le dôme avant de propager la nuit', () => 
 
 test('l’air prend la couleur du pays, sauf si l’application en a choisi une', () => {
   // La palette d'ambiance est la couleur la plus déterminante du décor. Elle
-  // suit donc le climat — mais jamais contre le choix explicite d'une
+  // suit donc le pays — mais jamais contre le choix explicite d'une
   // application, ici ou au montage.
   const palettes = [];
   const environment = {
@@ -177,7 +177,10 @@ test('l’air prend la couleur du pays, sauf si l’application en a choisi une'
   const shot = { camera, date: new Date(0), lng: 2, lat: 48 };
 
   const composer = fakeComposer();
-  composer.landscape = { climate: { family: 'arid', koppen: 'BWh' }, relief: { elevation: 300, slope: 0 } };
+  composer.landscape = {
+    region: { id: 'tabernas', matrix: 'desert_stone' },
+    relief: { elevation: 300, slope: 0 },
+  };
   const world = new World({ composer, environment, elevation: null, ownsElevation: false });
   world.updateSky(shot);
   assert.equal(palettes[0].fog, defaultTheme.sky.variants.find((v) => v.name === 'poussière').fog);
@@ -185,25 +188,25 @@ test('l’air prend la couleur du pays, sauf si l’application en a choisi une'
   // Deux images de suite au même endroit ne recomposent pas la palette : elle
   // change tous les deux kilomètres, pas soixante fois par seconde.
   world.updateSky(shot);
-  assert.equal(palettes[1], palettes[0], 'la palette est mémorisée par famille');
+  assert.equal(palettes[1], palettes[0], 'la palette est mémorisée par matrice');
 
-  // Une palette passée à l'image l'emporte sur le climat.
+  // Une palette passée à l'image l'emporte sur le pays.
   world.updateSky({ ...shot, palette: 'la mienne' });
   assert.equal(palettes[2], 'la mienne');
 
-  // Un monde monté avec sa propre palette n'en reçoit jamais d'autre : le
-  // climat ne rend rien, et l'environnement garde la sienne.
+  // Un monde monté avec sa propre palette n'en reçoit jamais d'autre : le pays
+  // ne rend rien, et l'environnement garde la sienne.
   const fixe = new World({
     composer,
     environment,
     elevation: null,
     ownsElevation: false,
-    skyFollowsClimate: false,
+    skyFollowsRegion: false,
   });
   fixe.updateSky(shot);
   assert.equal(palettes[3], undefined);
 
-  // Hors de la fenêtre climatique, rien non plus.
+  // Hors de toute région, rien non plus.
   composer.landscape = null;
   world.updateSky(shot);
   assert.equal(palettes[4], undefined);
