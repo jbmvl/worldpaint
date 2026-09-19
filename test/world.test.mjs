@@ -3245,6 +3245,7 @@ test('l’index de falaise oriente sa normale vers le haut et interpole ses cote
     footA: 0, footB: 10,
     crestA: 60, crestB: 80,
     face: 6,
+    blend: CLIFF_BLEND_M,
   };
   const index = new CliffIndex([segment]);
 
@@ -3265,7 +3266,7 @@ test('l’index de falaise oriente sa normale vers le haut et interpole ses cote
 test('deux points de part et d’autre du trait sont séparés par toute la dénivelée', () => {
   const index = new CliffIndex([{
     ax: 0, az: 0, tx: 1, tz: 0, nx: 0, nz: -1, length: 100,
-    footA: 0, footB: 0, crestA: 50, crestB: 50, face: 4,
+    footA: 0, footB: 0, crestA: 50, crestB: 50, face: 4, blend: CLIFF_BLEND_M,
   }]);
   // Le MNT, lui, donne la même valeur moyenne des deux côtés : c'est bien la
   // marche qui crée la chute, pas la donnée.

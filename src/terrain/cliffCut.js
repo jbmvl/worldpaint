@@ -15,12 +15,20 @@
  */
 
 /**
- * Distance à laquelle le profil forcé rejoint le terrain naturel, en mètres.
- * C'est aussi la distance à laquelle le pied et l'arase sont lus dans le MNT :
- * les deux doivent coïncider, sinon le raccord repart d'une altitude que le
- * terrain n'a pas là.
+ * Distances, en mètres, auxquelles on cherche le pied et l'arase de part et
+ * d'autre du trait. La bonne n'est pas connue d'avance : elle vaut la largeur
+ * de la rampe sur laquelle le MNT a étalé la falaise, et cette largeur est
+ * proportionnelle à la dénivelée. Sondé trop près, on ne capte qu'une part de
+ * la chute — sur une rampe de quatre-vingt-dix mètres, lire à vingt-quatre n'en
+ * rend que la moitié ; sondé trop loin, on aplatit du versant qui n'y est pour
+ * rien.
+ *
+ * `cliffLayer` retient la plus courte qui capte la chute entière.
  */
-export const CLIFF_BLEND_M = 24;
+export const CLIFF_PROBE_M = [24, 36, 48, 60, 72];
+
+/** Sonde par défaut, et plancher : en deçà, le raccord serait une arête. */
+export const CLIFF_BLEND_M = CLIFF_PROBE_M[0];
 
 /**
  * Dénivelée minimale pour qu'un trait relevé devienne une marche, en mètres.
@@ -45,18 +53,19 @@ const smooth = (t) => t * t * (3 - 2 * t);
  * voisines s'accordent au bord sans se consulter.
  *
  * @param {number} raw    Altitude naturelle, en mètres.
- * @param {number} foot   Altitude du pied, lue à `CLIFF_BLEND_M` en contrebas.
- * @param {number} crest  Altitude de l'arase, lue à `CLIFF_BLEND_M` au-dessus.
+ * @param {number} foot   Altitude du pied, lue à `blend` en contrebas.
+ * @param {number} crest  Altitude de l'arase, lue à `blend` au-dessus.
  * @param {number} across Distance signée au trait, en mètres.
  * @param {number} face   Largeur au sol de la paroi, en mètres.
+ * @param {number} [blend] Distance de la sonde, donc du raccord.
  * @returns {number} altitude retenue.
  */
-export function cliffElevationAt(raw, foot, crest, across, face) {
+export function cliffElevationAt(raw, foot, crest, across, face, blend = CLIFF_BLEND_M) {
   if (!(crest - foot >= CLIFF_MIN_HEIGHT_M) || !(face > 0)) return raw;
 
   // Distance au-delà de la paroi, d'un côté comme de l'autre.
   const out = across < 0 ? -across : Math.max(0, across - face);
-  if (out >= CLIFF_BLEND_M) return raw;
+  if (out >= blend) return raw;
 
   // Le pied et l'arase sont des **bornes**, pas des consignes : on ne ramène
   // pas le terrain à elles, on l'empêche seulement de les franchir. Le tirer

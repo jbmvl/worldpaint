@@ -35,7 +35,7 @@ import { furnitureSpecsFor } from './furnitureKit.js';
 import {
   cliffElevationAt,
   cliffFaceWidth,
-  CLIFF_BLEND_M,
+  CLIFF_PROBE_M,
   CLIFF_MIN_HEIGHT_M,
 } from '../terrain/cliffCut.js';
 
@@ -74,7 +74,7 @@ export class CliffIndex {
   constructor(segments) {
     this.segments = segments;
     this.reach = 0;
-    for (const s of segments) this.reach = Math.max(this.reach, s.face + CLIFF_BLEND_M);
+    for (const s of segments) this.reach = Math.max(this.reach, s.face + s.blend);
   }
 
   get size() {
@@ -85,7 +85,7 @@ export class CliffIndex {
    * Le segment le plus proche du point, et la position du point par rapport à
    * lui. `null` si aucun n'est à portée.
    *
-   * @returns {{foot:number, crest:number, face:number, across:number}|null}
+   * @returns {{foot:number, crest:number, face:number, blend:number, across:number}|null}
    *          `across` est compté positif vers le haut de la falaise.
    */
   query(x, z) {
@@ -109,11 +109,12 @@ export class CliffIndex {
         foot: s.footA + (s.footB - s.footA) * t,
         crest: s.crestA + (s.crestB - s.crestA) * t,
         face: s.face,
+        blend: s.blend,
         across,
       };
     }
 
-    if (!best || bestDistance > best.face + CLIFF_BLEND_M) return null;
+    if (!best || bestDistance > best.face + best.blend) return null;
     return best;
   }
 
@@ -121,7 +122,7 @@ export class CliffIndex {
   elevationAt(x, z, raw) {
     const hit = this.query(x, z);
     if (!hit) return raw;
-    return cliffElevationAt(raw, hit.foot, hit.crest, hit.across, hit.face);
+    return cliffElevationAt(raw, hit.foot, hit.crest, hit.across, hit.face, hit.blend);
   }
 }
 
@@ -170,8 +171,17 @@ export class CliffLayer {
     const segments = [];
     const buffer = createProfileBuffer();
 
-    for (const line of this._collectPaths(source, tiles, here)) {
-      this._buildCliff(line, segments, buffer);
+    // Compté à chaque étape : une falaise absente à l'écran peut l'être parce
+    // que la couche source est vide, parce qu'aucun trait n'est classé
+    // `cliff`, ou parce que le MNT ne voit pas de dénivelée là où OSM en
+    // annonce une. Les trois se corrigent ailleurs, d'où le décompte.
+    const seen = { features: 0, cliffs: 0, paths: 0, tooFlat: 0 };
+    for (const line of this._collectPaths(source, tiles, here, seen)) {
+      this._buildCliff(line, segments, buffer, seen);
+    }
+    this.seen = seen;
+    if (segments.length === 0 && seen.features > 0) {
+      console.warn('[cliffLayer] aucune falaise taillée', JSON.stringify(seen));
     }
 
     this.count = segments.length;
@@ -187,14 +197,16 @@ export class CliffLayer {
   }
 
   /** Les tracés de falaise à portée, en mètres locaux et rééchantillonnés. */
-  _collectPaths(source, tiles, here) {
+  _collectPaths(source, tiles, here, seen) {
     const { origin, scale, zoom } = this.bubble.frame;
     const paths = [];
 
     source.forEachFeature(CLIFF_SOURCE_LAYER, tiles, (geometry, properties) => {
+      seen.features++;
       // `mountain_peak` porte aussi les sommets (points) et les crêtes : seule
       // la falaise casse le terrain.
       if (properties.class !== 'cliff') return;
+      seen.cliffs++;
 
       const lines =
         geometry.type === 'LineString'
@@ -217,7 +229,10 @@ export class CliffLayer {
         if (!local.some((p) => Math.hypot(p.x - here.x, p.z - here.z) <= CLIFF_RADIUS_M)) continue;
 
         const path = resamplePath(local, CLIFF_SAMPLE_M);
-        if (path.length >= 2) paths.push(path);
+        if (path.length >= 2) {
+          paths.push(path);
+          seen.paths++;
+        }
       }
     });
 
@@ -225,20 +240,43 @@ export class CliffLayer {
   }
 
   /** Taille un tracé : cotes lues dans le MNT, segments publiés, paroi balayée. */
-  _buildCliff(path, segments, buffer) {
+  _buildCliff(path, segments, buffer, seen) {
     const rows = path.length;
     const frames = pathFrames(path);
     const raw = (x, z) => this.bubble.rawSurfaceElevationAtLocal(x, z, 0);
 
-    // Les deux altitudes de part et d'autre, lues à la distance même où le
-    // profil forcé rejoint le terrain naturel (voir `cliffCut`).
+    const sideAt = (r, distance) => {
+      const px = frames[r * 4 + 2];
+      const pz = frames[r * 4 + 3];
+      return [
+        raw(path[r].x + px * distance, path[r].z + pz * distance),
+        raw(path[r].x - px * distance, path[r].z - pz * distance),
+      ];
+    };
+
+    // Largeur de la rampe sur laquelle le MNT a étalé la falaise : on sonde de
+    // plus en plus loin et on retient la plus courte distance qui capte
+    // l'essentiel de la chute. Au-delà, on n'aplatirait que du versant.
+    let bestDrop = 0;
+    const drops = CLIFF_PROBE_M.map((d) => {
+      let total = 0;
+      for (let r = 0; r < rows; r++) {
+        const [l, rt] = sideAt(r, d);
+        total += Math.abs(l - rt);
+      }
+      const mean = total / rows;
+      bestDrop = Math.max(bestDrop, mean);
+      return mean;
+    });
+    const probeAt = drops.findIndex((d) => d >= bestDrop * 0.95);
+    const blend = CLIFF_PROBE_M[probeAt < 0 ? 0 : probeAt];
+
     const left = new Float32Array(rows);
     const right = new Float32Array(rows);
     for (let r = 0; r < rows; r++) {
-      const px = frames[r * 4 + 2];
-      const pz = frames[r * 4 + 3];
-      left[r] = raw(path[r].x + px * CLIFF_BLEND_M, path[r].z + pz * CLIFF_BLEND_M);
-      right[r] = raw(path[r].x - px * CLIFF_BLEND_M, path[r].z - pz * CLIFF_BLEND_M);
+      const [l, rt] = sideAt(r, blend);
+      left[r] = l;
+      right[r] = rt;
     }
     smoothColumns(left, rows, 1, CLIFF_SMOOTH_RADIUS);
     smoothColumns(right, rows, 1, CLIFF_SMOOTH_RADIUS);
@@ -257,7 +295,10 @@ export class CliffLayer {
       foot[r] = side > 0 ? right[r] : left[r];
       tallest = Math.max(tallest, crest[r] - foot[r]);
     }
-    if (tallest < CLIFF_MIN_HEIGHT_M) return;
+    if (tallest < CLIFF_MIN_HEIGHT_M) {
+      seen.tooFlat++;
+      return;
+    }
 
     // Une largeur unique par trait : la paroi doit garder son aplomb sur toute
     // sa longueur, et l'index interpole les cotes, pas la géométrie.
@@ -286,6 +327,7 @@ export class CliffLayer {
         crestA: crest[r],
         crestB: crest[r + 1],
         face,
+        blend,
       });
     }
 
