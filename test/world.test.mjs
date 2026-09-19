@@ -150,6 +150,7 @@ import {
   BOUNDARY_MIXES,
   ROW_CROPS,
   rockKindFor,
+  biomeDebrisKindFor,
   signKindFor,
   pathCurvature,
   pathTurn,
@@ -428,7 +429,16 @@ import {
   buildEmbankment,
 } from '../src/layers/furniture/roadsideRelief.js';
 import { facetJitter } from '../src/layers/facetJitter.js';
-import { FLAT_SHADED_LINEAR_KINDS, DRY_STONE_WALL_SAMPLE_M } from '../src/layers/furniture/catalog.js';
+import {
+  FLAT_SHADED_LINEAR_KINDS,
+  DRY_STONE_WALL_SAMPLE_M,
+  BIOME_DEBRIS,
+} from '../src/layers/furniture/catalog.js';
+import {
+  buildBiomeDebris,
+  BIOME_DEBRIS_RADIUS_M,
+  BIOME_DEBRIS_CELL_M,
+} from '../src/layers/furniture/biomeDebris.js';
 import { buildRoadsideContext } from '../src/layers/furniture/roadsideFurniture.js';
 import { churchWithin } from '../src/layers/furniture/pointsOfInterest.js';
 import { buildJunctionSigns } from '../src/layers/furniture/junctionFurniture.js';
@@ -8443,6 +8453,124 @@ test('la pierre suit le minéral et la pente, jamais le hasard seul', () => {
   assert.ok(kinds.has('rockSmall'));
   // Toutes les pièces rendues existent au catalogue.
   for (const item of kinds) assert.ok(FURNITURE_BUILDERS[item], item);
+});
+
+test('la table des objets de biome est bien formée', () => {
+  for (const [kind, table] of Object.entries(BIOME_DEBRIS)) {
+    assert.ok(SURFACE_KINDS.includes(kind), `${kind} doit être une matière`);
+    // Densité entre 0,05 et 0,5 par hectare : l'arithmétique du mandat (154 ha
+    // de portée, un objet par hectare fait déjà 154 objets).
+    assert.ok(table.perHa >= 0.05 && table.perHa <= 0.5, `${kind} : perHa ${table.perHa}`);
+    let sum = 0;
+    for (const entry of table.items) {
+      sum += entry.share;
+      assert.ok(FURNITURE_BUILDERS[entry.item], `${kind} : ${entry.item} au catalogue`);
+      assert.ok(POINT_ITEMS.includes(entry.item), `${kind} : ${entry.item} instancié`);
+      assert.equal(entry.scale.length, 2);
+      assert.ok(entry.scale[0] > 0 && entry.scale[0] <= entry.scale[1]);
+    }
+    assert.ok(Math.abs(sum - 1) < 1e-9, `${kind} : les parts somment à 1 (${sum})`);
+  }
+  // Plafond propre, jamais partagé avec `scatter` (les objets de parcelle) ni
+  // `rocks` (le seul minéral bâti sur pente).
+  assert.ok(FURNITURE_LIMITS.biomeDebris > 0);
+});
+
+test('le choix d’un objet de biome respecte la densité de sa table', () => {
+  const table = { perHa: 1, items: [{ item: 'a', share: 0.6, scale: [1, 2] }, { item: 'b', share: 0.4, scale: [3, 4] }] };
+
+  // Sans table, ou sans densité, rien : une matière absente de `BIOME_DEBRIS`
+  // n'est simplement pas concernée.
+  assert.equal(biomeDebrisKindFor(null, 1, 0.1), null);
+  assert.equal(biomeDebrisKindFor(table, 0, 0.1), null);
+
+  // Au-delà de la densité, rien non plus : c'est elle qui fait la rareté.
+  assert.equal(biomeDebrisKindFor(table, 0.3, 0.5), null);
+
+  // Les deux objets sortent, dans leur fourchette d'échelle, et à peu près
+  // dans la proportion de leurs parts.
+  const counts = { a: 0, b: 0 };
+  for (let i = 0; i < 1000; i++) {
+    const variant = i / 1000;
+    const chosen = biomeDebrisKindFor(table, 1, variant);
+    assert.ok(chosen, `variant ${variant} sous la densité doit rendre un objet`);
+    counts[chosen.item]++;
+    const [min, max] = chosen.item === 'a' ? [1, 2] : [3, 4];
+    assert.ok(chosen.scale >= min && chosen.scale <= max);
+  }
+  assert.ok(Math.abs(counts.a / 1000 - 0.6) < 0.02, `part de a : ${counts.a / 1000}`);
+});
+
+test('le semis de biome est déterministe, et son plafond n’arrête que lui-même', () => {
+  const fakeLayer = (surfaceAt, limit) => {
+    const placed = [];
+    return {
+      counts: {},
+      groundClass: { surfaceAt },
+      _onRoad: () => false,
+      _place(_placements, item, opts) {
+        placed.push({ item, ...opts });
+        return null;
+      },
+      placed,
+      limit,
+    };
+  };
+
+  const here = { x: 1234, z: -567 };
+  const alwaysHeath = () => 'heath';
+
+  const first = fakeLayer(alwaysHeath);
+  const second = fakeLayer(alwaysHeath);
+  buildBiomeDebris(first, { here, placements: {} }, null);
+  buildBiomeDebris(second, { here, placements: {} }, null);
+  assert.deepEqual(first.placed, second.placed, 'même lieu, même semis');
+  assert.ok(first.placed.length > 0, 'la lande doit produire quelques objets sur un rayon de 300 m');
+
+  // Un plafond réduit coupe le compte sans jeter, et sans changer le compte
+  // d'une autre famille : chaque plafond n'arrête que ce qu'il plafonne.
+  const previousLimit = FURNITURE_LIMITS.biomeDebris;
+  try {
+    FURNITURE_LIMITS.biomeDebris = 2;
+    const capped = fakeLayer(alwaysHeath);
+    buildBiomeDebris(capped, { here, placements: {} }, null);
+    assert.equal(capped.placed.length, 2, 'le plafond réduit est bien respecté');
+    assert.equal(capped.counts.biomeDebris, 2);
+    assert.deepEqual(
+      capped.placed,
+      first.placed.slice(0, 2),
+      'les deux premiers objets restent ceux du semis non plafonné'
+    );
+  } finally {
+    FURNITURE_LIMITS.biomeDebris = previousLimit;
+  }
+  assert.equal(FURNITURE_LIMITS.rocks, 200, 'le plafond des rochers minéraux n’a pas bougé');
+});
+
+test('le semis de biome ne pose que ce que la matière de la fiche autorise', () => {
+  const fakeLayer = (surfaceAt) => {
+    const placed = [];
+    return {
+      counts: {},
+      groundClass: { surfaceAt },
+      _onRoad: () => false,
+      _place(_placements, item, opts) {
+        placed.push({ item, ...opts });
+        return null;
+      },
+      placed,
+    };
+  };
+
+  // Une prairie ordinaire (hors de `BIOME_DEBRIS`) ne reçoit rien.
+  const grassOnly = fakeLayer(() => 'grass');
+  buildBiomeDebris(grassOnly, { here: { x: 0, z: 0 }, placements: {} }, null);
+  assert.equal(grassOnly.placed.length, 0, 'la prairie n’est pas une matière de la table');
+
+  // Une vasière ne pose que du bois flotté.
+  const mud = fakeLayer(() => 'mud');
+  buildBiomeDebris(mud, { here: { x: 0, z: 0 }, placements: {} }, null);
+  for (const entry of mud.placed) assert.equal(entry.item, 'driftwood');
 });
 
 // --- Peuplements forestiers -------------------------------------------------

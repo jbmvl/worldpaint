@@ -427,6 +427,26 @@ rayon : si le point tiré retombe dans un bâti voisin ou sur une route, on
 renonce plutôt que de le déplacer — un repère qui bouge d'une reconstruction à
 l'autre est pire que pas de repère.
 
+## Les objets de biome
+
+**Inventés**, sur une seconde grille — plus courte (300 m) que celle du
+mobilier ordinaire — qui choisit par **nom de matière** plutôt que par pente
+ou sol nu : `buildBiomeDebris` (`furniture/biomeDebris.js`), qui lit la table
+`BIOME_DEBRIS` (`furniture/catalog.js`).
+
+| Objet | Biome (matière) | Densité |
+| --- | --- | --- |
+| bloc (`rockSmall`, `rockBoulder`, `rockOutcrop`) | lande (`heath`) | 0,12/ha |
+| bloc, surtout des petits | maquis (`scrub`) | 0,15/ha |
+| souche, tas de bois mort | bois (`wood`) | 0,2/ha |
+| touffe de joncs | marais (`wetland`) | 0,08/ha |
+| bois flotté | vasière (`mud`), sable (`sand`) | 0,05/ha |
+| bloc erratique (`rockBoulder`, `rockSmall`) | pelouse d'altitude (`alpine`) | 0,1/ha |
+
+Les blocs de lande, de maquis et d'alpage reprennent les formes de `buildRocks`
+(le rocher de pente et de sol nu) : même catalogue, deux semis indépendants —
+l'un lit la pente, l'autre le nom de la matière.
+
 ## Ce que la couche `poi` donne vraiment
 
 Ce sont les seuls objets de mobilier que le schéma porte nommément, donc les

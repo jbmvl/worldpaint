@@ -44,6 +44,7 @@ identifie d'abord sa famille :
 | `furniture/parcelFauna.js` | qui **vit** dans une parcelle : troupeau, gibier, carnassier — et le circuit qu'il suit |
 | `furniture/cemetery.js` | l'habillage d'un cimetière : mur, portail, tombes, robinet |
 | `furniture/landmarks.js` | les **repères** : moulin et château d'eau d'un bourg, pierres, éoliennes, pylônes, antennes de sommet, phares, arbres de crête |
+| `furniture/biomeDebris.js` | ce qu'une **matière du sol** laisse traîner : blocs de lande et de maquis, souches de bois, joncs de marais, bois flotté — semé par nom de matière, pas par pente |
 | `furniture/pointsOfInterest.js` | ce que la couche `poi` porte nommément : abribus, fontaine, lavoir, monument, château, tour |
 | `furniture/catalog.js` | les listes et les plafonds : `POINT_ITEMS`, `LINEAR_KINDS`, `FURNITURE_LIMITS`, les portées partagées |
 

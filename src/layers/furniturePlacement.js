@@ -689,6 +689,34 @@ export function rockKindFor({ bare = 0, steepness = 0, variant = 0 } = {}) {
 }
 
 /**
+ * Choix d'un objet de biome pour un point donné, à partir de la table de sa
+ * matière (`BIOME_DEBRIS`, catalog.js) — le pendant de `rockKindFor` pour les
+ * matières hors minéral : un seul tirage sert à la fois de seuil d'acceptation
+ * et de sélection dans la liste pondérée, comme `rockKindFor` le fait déjà.
+ *
+ * @param {Object|undefined} table Entrée `BIOME_DEBRIS[matière]` — absente si
+ *        la matière n'est pas concernée.
+ * @param {number} density Densité par maille (`perHa` × surface de la maille
+ *        en hectares), comparée directement au tirage.
+ * @param {number} [variant] Tirage dans [0, 1[ attaché au lieu.
+ * @returns {{item:string, scale:number}|null}
+ */
+export function biomeDebrisKindFor(table, density, variant = 0) {
+  if (!table || !(density > 0) || variant > density) return null;
+
+  const draw = variant / Math.max(density, 1e-3);
+  let acc = 0;
+  for (const entry of table.items) {
+    acc += entry.share;
+    if (draw < acc) {
+      const [min, max] = entry.scale;
+      return { item: entry.item, scale: min + variant * (max - min) };
+    }
+  }
+  return null;
+}
+
+/**
  * Style de lampadaire selon le contexte. Le clocher l'emporte sur
  * l'industriel si jamais les deux coïncidaient — un centre-ville autour
  * d'une église reste un centre-ville.
