@@ -59,8 +59,13 @@ vectoriel.
 Le MNT ne sait pas qu'une falaise est verticale : il l'étale en rampe sur toute
 sa largeur — une falaise de mer de quatre-vingts mètres se lit sur une centaine
 de mètres de pente douce. Là où OSM a relevé un `natural=cliff`, `cliffLayer`
-comprime cette rampe en marche (`terrain/cliffCut`) et balaie la roche dessus,
-grainée ligne par ligne comme une haie (`facetJitter`).
+comprime cette rampe en marche (`terrain/cliffCut`).
+
+Une falaise n'est **pas un objet posé** : c'est du terrain raide fait de
+roche. La couche ne dessine donc rien — elle publie la marche, et une bande
+que `groundClassMap` peint en `rock` pour le cas où la donnée décrit la
+falaise sans décrire la roche. Sa rugosité lui vient ensuite du grain
+géométrique du sol (`terrain/lowPolyGrain`), comme à n'importe quelle roche.
 
 C'est une **synthèse**, pas une correction : la dénivelée mesurée est
 conservée, seule sa distance change. Et c'est un relevé, donc lacunaire — une

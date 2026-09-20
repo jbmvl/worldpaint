@@ -12118,10 +12118,19 @@ test('les limites de surfaces : la frange, les matières interpolées et la rive
     2,
     'la largeur du trait, en x et en z, et rien d’autre'
   );
-  assert.ok(
-    !/dFdx|dFdy/.test(source),
-    'aucune dérivée à la main : le relief tiré du grain ne revient pas'
+  // La dérivée d'écran est revenue, mais pour la raison inverse de celle qui
+  // l'avait fait bannir : la position est **réellement** bosselée au sommet
+  // (`lowPolyGrain`), et la facette lue est celle qui est dessinée. Ce qui
+  // reste interdit, c'est d'inventer une normale depuis une texture sans
+  // relevé d'altitude — d'où la garde : la dérivée ne vaut que là où le grain
+  // a bougé la géométrie, sinon elle ne rendrait que le facettage de la maille.
+  assert.match(source, /if \(vGrain > 0\.0\)/, 'la facette est gardée par le grain');
+  assert.equal(
+    (source.match(/dFdx\(|dFdy\(/g) || []).length,
+    2,
+    'deux dérivées, celles de la facette, et rien d’autre'
   );
+  assert.match(shader.vertexShader, /transformed\.y \+= lowPolyBump\(/, 'la bosse est géométrique');
 
   assert.ok(
     !/waterShareAt|coverIdAt/.test(source),
@@ -12245,7 +12254,11 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   // normale depuis un grain et faisait fourmiller le sol. La largeur du trait
   // d'une lisière (`fwidth`, dans surfaceAt) n'en est pas : elle ne touche pas
   // la normale, et le champ sous elle est lisse et fixe dans le monde.
-  assert.ok(!/dFdx|dFdy/.test(source), 'plus aucune dérivée à la main');
+  // Seule survit la dérivée de la facette, gardée par le grain : elle lit une
+  // bosse réellement portée par la géométrie, pas une normale tirée d'une
+  // texture — c'est cette seconde-là qui faisait fourmiller le sol.
+  assert.match(source, /if \(vGrain > 0\.0\)/, 'la facette est gardée par le grain');
+  assert.ok(!/uGrainContrast|grainHeight/.test(source), 'aucun relief tiré d’une texture');
   for (const key of ['grainScaleM', 'grainPixels', 'grainContrast', 'grainRelief']) {
     assert.equal(defaultTheme.terrain[key], undefined, `${key} n'a plus d'objet`);
   }

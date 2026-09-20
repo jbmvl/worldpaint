@@ -6,6 +6,7 @@
 | `terrainMaterial.js` | le shader du sol — il lit la carte des matières |
 | `roadCut.js` | l'entaille du terrain sous une chaussée |
 | `cliffCut.js` | la marche du terrain sous une falaise relevée |
+| `lowPolyGrain.js` | le grain géométrique du sol : bosse au sommet, facette par dérivées d'écran |
 | `groundClassMap.js` | la carte des matières et des cultures, rasterisée pour toute la scène |
 | `surfaceClassification.js` | ce qu'une entité de tuile **dit** du sol |
 
@@ -33,6 +34,11 @@ Deux pièges :
   ligne dans `SURFACE_LOOK` (thème), et une signature qui tient le test d'écart.
 - **l'eau est une matière du sol**, pas une surface posée dessus. Il n'y a pas
   de plan d'eau dans la scène.
+- **la rugosité d'une matière est géométrique**, pas une texture : le sommet
+  est bosselé (`lowPolyGrain`), et la facette qui en résulte est lue par
+  dérivées d'écran. Une roche rugueuse se règle donc par son entrée `grain`
+  dans le thème, jamais par un relief inventé au fragment — celui-là avait été
+  retiré parce qu'un relief sans relevé d'altitude fourmille avec l'observateur.
 
 ## Ce qui déforme le relief lu
 

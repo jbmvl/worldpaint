@@ -3,17 +3,23 @@
  * par OpenMapTiles dans la couche `mountain_peak` (classe `cliff`, une
  * polyligne) à partir du zoom 13.
  *
- * Deux gestes, et le premier commande le second :
+ * Elle ne dessine rien. Elle publie deux choses, et c'est tout :
  *
- * 1. **la marche.** Le MNT étale une falaise en rampe — une falaise de mer de
- *    quatre-vingts mètres se lit sur une centaine de mètres de pente douce. La
- *    couche publie un index (`CliffIndex`) que `terrainBubble` interroge pour
- *    comprimer cette rampe en marche (`terrain/cliffCut`). Sans lui, une paroi
- *    verticale posée sur la rampe flotterait au-dessus ou s'y enterrerait ;
- * 2. **la paroi.** La roche est balayée le long du trait (`appendRockCut`,
- *    celui-là même qui sert la falaise du déblai), grainée ligne par ligne
- *    (`facetJitter`) et ombrée à plat : c'est ce grain qui fait lire une
- *    falaise plutôt qu'un plan incliné.
+ * 1. **la marche** (`CliffIndex`), que `terrainBubble` interroge pour
+ *    comprimer en paroi la rampe sur laquelle le MNT étale une falaise — une
+ *    falaise de mer de quatre-vingts mètres s'y lit sur une centaine de mètres
+ *    de pente douce (`terrain/cliffCut`) ;
+ * 2. **la bande de roche** (`bands`), que `groundClassMap` peint en `rock`.
+ *
+ * Une falaise est donc de la **roche**, au même titre qu'un `bare_rock` relevé
+ * par OSM, et sa rugosité lui vient du grain géométrique du sol
+ * (`terrain/lowPolyGrain`), comme à toute roche. La bande n'est là que pour le
+ * cas où la donnée décrit la falaise sans décrire la roche : elle convertit en
+ * roche une paroi que la carte laisserait en herbe.
+ *
+ * Il y avait ici une paroi balayée en géométrie, grainée ligne par ligne comme
+ * une haie. Elle rendait un mur, coûtait un maillage entier, et faisait double
+ * emploi avec le grain du sol.
  *
  * Le haut et le bas ne sont pas déduits du sens de tracé. La convention OSM
  * met le haut à gauche, mais elle est diversement respectée et le découpage en
@@ -21,18 +27,9 @@
  * deux côtés. Il est de toute façon lu là pour les cotes.
  */
 
-import {
-  appendRockCut,
-  createProfileBuffer,
-  toColoredGeometry,
-  resamplePath,
-  pathFrames,
-  smoothColumns,
-} from './ribbonGeometry.js';
-import { facetJitter } from './facetJitter.js';
+import { resamplePath, pathFrames, smoothColumns } from './ribbonGeometry.js';
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { cellKey } from './roadGraph.js';
-import { furnitureSpecsFor } from './furnitureKit.js';
 import {
   cliffElevationAt,
   cliffFaceWidth,
@@ -56,11 +53,15 @@ const CLIFF_RADIUS_M = 1400;
 /** Déplacement de l'observateur qui justifie une reconstruction. */
 const CLIFF_REBUILD_M = 160;
 
-/** Graine du grain de la paroi. */
-const CLIFF_SEED = 9311;
-
-/** Lissage du MNT avant usage : la silhouette a son grain, pas celui du relevé. */
+/** Lissage du MNT avant usage : une cote ne doit pas porter son bruit métrique. */
 const CLIFF_SMOOTH_RADIUS = 2;
+
+/**
+ * Débord de la bande de roche de part et d'autre de la paroi, en mètres. Le
+ * pied et l'arase sont de la roche eux aussi : une bande calée pile sur la
+ * paroi laisserait l'herbe courir jusqu'au bord de la rupture.
+ */
+const CLIFF_ROCK_MARGIN_M = 2.5;
 
 /**
  * Côté d'une cellule de l'index, en mètres. Plus large que celui des
@@ -214,25 +215,24 @@ export class CliffIndex {
 export class CliffLayer {
   /**
    * @param {Object} options
-   * @param {Object} options.THREE
-   * @param {Object} options.scene
-   * @param {Object} options.bubble  La bulle de terrain : elle fournit le MNT
-   *        brut et reçoit l'index (`setCliffCut`).
-   * @param {Object} options.theme
+   * @param {Object} options.bubble La bulle de terrain : elle fournit le MNT
+   *        brut et reçoit la marche (`setCliffCut`).
+   * @param {Object} options.theme  Fournit l'aplomb de la paroi
+   *        (`terrain.cliff`) : une valeur de forme, donc du thème.
    */
-  constructor({ THREE, scene, bubble, material, theme }) {
-    this.THREE = THREE;
-    this.scene = scene;
+  constructor({ bubble, theme }) {
     this.bubble = bubble;
-    this.material = material;
-    this.spec = furnitureSpecsFor(theme.furniture.colors).cliff;
+    this.spec = theme.terrain.cliff;
 
-    this.group = new THREE.Group();
-    this.group.name = 'cliffs';
-    scene.add(this.group);
-
-    this.mesh = null;
+    /** Marche publiée au terrain (`CliffIndex`), ou `null`. */
     this.index = null;
+    /**
+     * Bandes à peindre en roche : un axe en mètres locaux et sa largeur.
+     * Lues par `groundClassMap`, qui ne sait rien de la géométrie d'une
+     * falaise et n'a qu'un trait à tracer.
+     * @type {Array<{path: Array<{x:number,z:number}>, width: number}>}
+     */
+    this.bands = [];
     this.count = 0;
     this.disposed = false;
     this._anchor = null;
@@ -247,14 +247,14 @@ export class CliffLayer {
   }
 
   /**
-   * Reconstruit les falaises depuis les tuiles déjà décodées.
+   * Relit les falaises depuis les tuiles déjà décodées et republie la marche.
    * @returns {boolean} vrai si au moins un trait a été taillé.
    */
   rebuild(source, tiles, here) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
 
     const segments = [];
-    const buffer = createProfileBuffer();
+    const bands = [];
 
     // Compté à chaque étape : une falaise absente à l'écran peut l'être parce
     // que la couche source est vide, parce qu'aucun trait n'est classé
@@ -262,7 +262,7 @@ export class CliffLayer {
     // annonce une. Les trois se corrigent ailleurs, d'où le décompte.
     const seen = { features: 0, cliffs: 0, paths: 0, tooFlat: 0 };
     for (const line of this._collectPaths(source, tiles, here, seen)) {
-      this._buildCliff(line, segments, buffer, seen);
+      this._buildCliff(line, segments, bands, seen);
     }
     this.seen = seen;
     if (segments.length === 0 && seen.features > 0) {
@@ -270,11 +270,9 @@ export class CliffLayer {
     }
 
     this.count = segments.length;
+    this.bands = bands;
     this.index = segments.length ? new CliffIndex(segments) : null;
-    // L'index avant la géométrie : c'est lui qui commande la marche du
-    // terrain, et la paroi se pose sur cette marche.
     this.bubble.setCliffCut(this.index);
-    this._apply(buffer);
 
     this._anchor = { x: here.x, z: here.z };
     this._frame = this.bubble.frame;
@@ -324,8 +322,8 @@ export class CliffLayer {
     return paths;
   }
 
-  /** Taille un tracé : cotes lues dans le MNT, segments publiés, paroi balayée. */
-  _buildCliff(path, segments, buffer, seen) {
+  /** Cotes lues dans le MNT, segments de marche et bande de roche. */
+  _buildCliff(path, segments, bands, seen) {
     const rows = path.length;
     const frames = pathFrames(path);
     const raw = (x, z) => this.bubble.rawSurfaceElevationAtLocal(x, z, 0);
@@ -416,137 +414,24 @@ export class CliffLayer {
       });
     }
 
-    // Le sol derrière l'arase, à mi-dos et au bout du dos : c'est là que la
-    // roche va se perdre. Lu au plus haut du naturel et de l'arase, comme le
-    // fera la marche elle-même — sinon le dos plongerait dans le terrain que
-    // celle-ci vient de relever.
-    const capReach = this.spec.capReach;
-    const behind = { mid: new Float32Array(rows), far: new Float32Array(rows) };
+    // L'axe de la bande de roche : la paroi va du trait à `face` vers le haut,
+    // la bande se centre donc à mi-paroi et non sur le trait.
+    const centre = [];
     for (let r = 0; r < rows; r++) {
-      const px = frames[r * 4 + 2] * side;
-      const pz = frames[r * 4 + 3] * side;
-      const at = (d) => Math.max(raw(path[r].x + px * d, path[r].z + pz * d), crest[r]);
-      behind.mid[r] = at(face + capReach * this.spec.shelfAt);
-      behind.far[r] = at(face + capReach);
+      centre.push({
+        x: path[r].x + frames[r * 4 + 2] * side * (face / 2),
+        z: path[r].z + frames[r * 4 + 3] * side * (face / 2),
+      });
     }
-    smoothColumns(behind.mid, rows, 1, CLIFF_SMOOTH_RADIUS);
-    smoothColumns(behind.far, rows, 1, CLIFF_SMOOTH_RADIUS);
-
-    this._appendFace(path, foot, crest, face, side, buffer, behind);
-  }
-
-  /**
-   * La roche, balayée du pied à l'arase et grainée ligne par ligne.
-   *
-   * Le dessus ne se referme pas sur une table plate : comme la falaise du
-   * déblai, il va chercher le sol derrière l'arase et s'y perd. Une bande
-   * horizontale à cote constante se lit comme un mur posé là, quel que soit
-   * son grain.
-   */
-  _appendFace(path, foot, crest, face, side, buffer, behind) {
-    const rows = path.length;
-    const spec = this.spec;
-    const scale = this.bubble.verticalScale;
-    const grain = facetJitter(path, CLIFF_SEED, spec.grain);
-
-    const base = new Float32Array(rows);
-    const top = new Float32Array(rows);
-    const reach = new Float32Array(rows);
-    const cap = new Float32Array(rows);
-    const shelf = new Float32Array(rows);
-    const breakUp = new Float32Array(rows);
-    const breakOut = new Float32Array(rows);
-    const footOut = new Float32Array(rows);
-    const capOut = new Float32Array(rows);
-
-    for (let r = 0; r < rows; r++) {
-      // Pied enfoncé : sous le trait, le terrain suit le naturel s'il descend
-      // plus bas que le pied lu, et une semelle posée pile à la cote
-      // laisserait voir le dessous de la paroi.
-      base[r] = (foot[r] - spec.bury) * scale;
-      // Arase dentelée vers le haut seulement : vers le bas, la roche
-      // passerait sous le terrain qu'elle est censée couvrir.
-      top[r] = (crest[r] + grain.crest[r]) * scale;
-      reach[r] = face * grain.reach[r];
-      breakUp[r] = spec.breakUp * grain.breakUp[r];
-      breakOut[r] = spec.breakOut * grain.breakOut[r];
-      footOut[r] = grain.foot[r];
-      capOut[r] = grain.capOut[r];
-
-      // Le raccord se pose sur le sol qui est derrière, relevé du débord :
-      // la maille du terrain coupe ce sol en droites qui peuvent dépasser, et
-      // une arase pile au niveau laisserait l'herbe passer par-dessus.
-      cap[r] = (behind.far[r] + spec.crown) * scale;
-      // La banquette se tient entre le sol à mi-dos et la ligne qui joint
-      // l'arase au raccord : à zéro elle épouse le sol, à un elle tend la
-      // roche par-dessus. Entre les deux, le dessus ondule au lieu d'être une
-      // table.
-      const ramp = behind.mid[r] * scale;
-      const straight = top[r] + (cap[r] - top[r]) * spec.shelfAt;
-      const bank = Math.min(1, Math.max(0, spec.bank * grain.bank[r]));
-      shelf[r] = ramp + (Math.max(straight, ramp) - ramp) * bank;
-    }
-
-    appendRockCut(buffer, {
-      path,
-      base,
-      crest: top,
-      shelf,
-      cap,
-      reach,
-      capReach: spec.capReach,
-      capOut,
-      shelfAt: spec.shelfAt,
-      breakUp,
-      breakOut,
-      footOut,
-      side,
-      colorFoot: spec.colorFoot,
-      colorBreak: spec.colorBreak,
-      colorTop: spec.colorTop,
-    });
-  }
-
-  _apply(buffer) {
-    const { THREE } = this;
-    // Ombrage à plat : sans lui les arêtes du grain sont moyennées et la
-    // paroi redevient lisse (voir `FLAT_SHADED_LINEAR_KINDS`).
-    const geometry = toColoredGeometry(THREE, buffer, { flat: true });
-
-    if (!geometry) {
-      if (this.mesh) {
-        this.group.remove(this.mesh);
-        this.mesh.geometry.dispose();
-        this.mesh = null;
-      }
-      return;
-    }
-
-    if (this.mesh) {
-      this.mesh.geometry.dispose();
-      this.mesh.geometry = geometry;
-      return;
-    }
-
-    const mesh = new THREE.Mesh(geometry, this.material);
-    mesh.name = 'cliff-face';
-    mesh.matrixAutoUpdate = false;
-    mesh.updateMatrix();
-    this.group.add(mesh);
-    this.mesh = mesh;
+    bands.push({ path: centre, width: face + 2 * CLIFF_ROCK_MARGIN_M });
   }
 
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
     this.index = null;
-    // Sinon un changement d'observateur laisse des marches sans paroi.
+    this.bands = [];
+    // Sinon un changement d'observateur laisse des marches sans rien dessus.
     this.bubble?.setCliffCut?.(null);
-    if (this.mesh) {
-      this.group.remove(this.mesh);
-      this.mesh.geometry.dispose();
-      this.mesh = null;
-    }
-    this.scene.remove(this.group);
   }
 }

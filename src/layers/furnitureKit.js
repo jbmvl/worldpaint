@@ -1571,62 +1571,6 @@ const rockCutFor = (C) => ({
 });
 
 /**
- * La falaise relevée (`natural=cliff`), par opposition à celle qu'une route a
- * taillée. Elle se tient nettement plus droite — une paroi de mer n'a pas été
- * dressée par un terrassier — et n'a pas de plafond de hauteur : le déblai en
- * a un parce qu'au-delà ce n'est plus la route qui a entaillé le versant,
- * tandis qu'une falaise de mer fait couramment ses quatre-vingts mètres.
- *
- * `maxReach` remplace ce plafond : sans lui, une grande dénivelée reculerait
- * de vingt mètres et redeviendrait le versant qu'on cherche justement à
- * comprimer.
- */
-const cliffFor = (C) => ({
-  /** Fruit : une paroi de quarante mètres recule de trois. */
-  batter: 0.075,
-  minReach: 1.2,
-  maxReach: 9,
-  /** Enfoncement du pied sous sa cote, en mètres : une semelle ne se pose pas dessus. */
-  bury: 1.5,
-  /** Débord du raccord au-dessus du sol qu'il rejoint, en mètres. */
-  crown: 0.4,
-  /**
-   * Largeur du dos, en mètres — la bande par laquelle la roche rejoint le sol
-   * derrière l'arase. Plus large que celle du déblai : un plateau de falaise
-   * n'est pas un talus de raccord, et un dos trop court donne une arête franche
-   * entre la paroi et l'herbe.
-   */
-  capReach: 7,
-  shelfAt: 0.5,
-  /**
-   * Où le dos se tient, entre le sol qu'il rejoint (0) et la ligne tendue de
-   * l'arase au raccord (1). Tendu, la falaise est coiffée d'une table ; posé,
-   * elle n'est qu'un placage. À mi-chemin, le dessus ondule.
-   */
-  bank: 0.45,
-  breakUp: 0.5,
-  breakOut: 0.4,
-  /**
-   * Même rôle que pour le déblai : des valeurs de forme, pas des tolérances.
-   * `crest` est ici en **mètres**, pas en part de la hauteur — une falaise
-   * n'a pas de plafond de hauteur, et une part y donnait une arase dentelée de
-   * plusieurs mètres qui dépassait franchement du plateau.
-   */
-  grain: {
-    crest: [0, 2.2],
-    reach: [0.35, 1.65],
-    breakUp: [0.6, 1.4],
-    breakOut: [0.4, 1.6],
-    foot: [0, 0.8],
-    capOut: [0, 1.4],
-    bank: [0.35, 1.65],
-  },
-  colorFoot: C.rockDark,
-  colorBreak: C.rock,
-  colorTop: C.rockPale,
-});
-
-/**
  * Section d'un talus de remblai, engendrée à la demande : sa profondeur
  * dépend de la hauteur dont la plate-forme surplombe le terrain. Fruit d'un
  * remblai courant (3 de base pour 2 de hauteur).
@@ -1720,7 +1664,6 @@ export function furnitureSpecsFor(colors = defaultTheme.furniture.colors) {
       profiles: profilesFor(colors),
       wallSpecs: wallSpecsFor(colors),
       rockCut: rockCutFor(colors),
-      cliff: cliffFor(colors),
       trafficLenses: trafficLensesFor(colors),
       embankmentProfile: embankmentFor(colors),
       embankmentGrain: EMBANKMENT_GRAIN,

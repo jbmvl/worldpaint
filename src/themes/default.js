@@ -101,6 +101,15 @@ export const TERRAIN_LOOK = {
   rockStrength: 0.75,
 
   /**
+   * L'aplomb d'une falaise relevée (`layers/cliffLayer`) : la dénivelée que le
+   * MNT étale en rampe est comprimée sur cette largeur au sol. `batter` la
+   * tire de la hauteur — 0,075 met une paroi de quarante mètres sur trois —
+   * et `maxReach` la plafonne, sans quoi une très grande dénivelée
+   * redeviendrait le versant qu'on cherche justement à supprimer.
+   */
+  cliff: { batter: 0.075, minReach: 1.2, maxReach: 9 },
+
+  /**
    * L'eau, quand le sol en est fait (couverture `water`). Trois réglages, et
    * c'est le second qui fait qu'on lit de l'eau : un plan d'eau est sombre vu
    * du dessus et clair vu de biais, parce qu'il renvoie le ciel d'autant plus
@@ -750,6 +759,7 @@ export const SURFACE_LOOK = {
     albedo: [0.323, 0.292, 0.254],
     wash: null,
     stone: true,
+    grain: { cellM: 5, amplitudeM: 1 },
     grassHeight: 0.3,
     grassDensity: 0.06,
     grassTint: [1, 0.96, 0.88],
@@ -759,6 +769,7 @@ export const SURFACE_LOOK = {
     albedo: [0.371, 0.332, 0.27],
     wash: null,
     stone: true,
+    grain: { cellM: 6, amplitudeM: 1.4 },
     grassHeight: 0.35,
     grassDensity: 0.1,
     grassTint: [1, 0.96, 0.88],

@@ -89,6 +89,7 @@ import {
 import { pavementTone } from '../layers/townStyle.js';
 import { createWaterNormalCanvas } from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
+import { LOW_POLY_GRAIN_GLSL } from './lowPolyGrain.js';
 import { soilWashFor, surfaceForMatrix, stoneTintFor } from '../core/regionInterpretation.js';
 
 /** Couleur d'une matière qu'un thème ne décrit pas : un gris de terre neutre. */
@@ -301,6 +302,18 @@ export class TerrainMaterialFactory {
       uRockColor: { value: new THREE.Vector3(...look.rockColor) },
       uSlopeRange: { value: new THREE.Vector2(look.slopeStart, look.slopeEnd) },
       uRockStrength: { value: look.rockStrength },
+      /**
+       * Grain géométrique par matière (`lowPolyGrain`) : côté de cellule et
+       * amplitude, en mètres, dans l'ordre des identifiants. Une matière sans
+       * entrée `grain` dans le thème reste à zéro, donc lisse — le repli
+       * neutre, jamais celui de la roche.
+       */
+      uGrainCell: {
+        value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.grain?.cellM ?? 0),
+      },
+      uGrainAmplitude: {
+        value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.grain?.amplitudeM ?? 0),
+      },
       /** Sol mouillé, de 0 à 1. Piloté par la météo, jamais par le thème. */
       uWetness: { value: 0 },
     };
@@ -314,11 +327,40 @@ export class TerrainMaterialFactory {
           '#include <common>',
           `#include <common>
            varying vec3 vScenePos;
-           varying vec3 vSceneNormal;`
+           varying vec3 vSceneNormal;
+           varying float vGrain;
+           uniform sampler2D uSurfaceMap;
+           uniform vec2 uSurfaceOrigin;
+           uniform float uSurfaceSize;
+           uniform float uSurfaceEnabled;
+           uniform float uGrainCell[${SURFACE_KINDS.length}];
+           uniform float uGrainAmplitude[${SURFACE_KINDS.length}];
+           ${LOW_POLY_GRAIN_GLSL}`
         )
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
+           // La matière est lue **au sommet**, au texel le plus proche : le
+           // grain doit être choisi avant de bosseler la position, et la
+           // cubique du fragment ne sert qu'au tracé du contour.
+           float grainCell = 0.0;
+           float grainAmplitude = 0.0;
+           if (uSurfaceEnabled > 0.5) {
+             vec2 grainUv =
+               ((modelMatrix * vec4(transformed, 1.0)).xz - uSurfaceOrigin) / uSurfaceSize;
+             if (grainUv.x >= 0.0 && grainUv.x <= 1.0 && grainUv.y >= 0.0 && grainUv.y <= 1.0) {
+               int grainId = int(texture2D(uSurfaceMap, grainUv).r * 255.0 + 0.5) - 1;
+               for (int i = 0; i < ${SURFACE_KINDS.length}; i++) {
+                 if (i == grainId) {
+                   grainCell = uGrainCell[i];
+                   grainAmplitude = uGrainAmplitude[i];
+                 }
+               }
+             }
+           }
+           transformed.y += lowPolyBump(transformed, grainCell, grainAmplitude);
+           vGrain = grainAmplitude;
+
            vScenePos = (modelMatrix * vec4(transformed, 1.0)).xyz;
            vSceneNormal = normalize(mat3(modelMatrix) * objectNormal);`
         );
@@ -329,6 +371,7 @@ export class TerrainMaterialFactory {
           `#include <common>
            varying vec3 vScenePos;
            varying vec3 vSceneNormal;
+           varying float vGrain;
            uniform vec2 uDetailRange;
            uniform sampler2D uMacroMap;
            uniform vec3 uMacro;
@@ -683,7 +726,18 @@ export class TerrainMaterialFactory {
              // nappe comme de l'eau sans reflexion d'environnement. Deux
              // relevés a des vitesses inegales — un seul se lirait comme une
              // image qui glisse.
+             // Là où la position a été bosselée, la normale analytique décrit
+             // la surface d'avant la bosse : elle rendrait un versant lisse
+             // sous un relief qui, lui, ondule. Les dérivées d'écran rendent la
+             // facette réellement dessinée. Ailleurs — la bosse est nulle —
+             // elles ne rendraient que le facettage de la maille du terrain,
+             // et c'est la normale analytique qui vaut.
              vec3 worldNormal = normalize(vSceneNormal);
+             if (vGrain > 0.0) {
+               vec3 faceted = normalize(cross(dFdx(vScenePos), dFdy(vScenePos)));
+               if (dot(faceted, worldNormal) < 0.0) faceted = -faceted;
+               worldNormal = faceted;
+             }
              vec3 a = texture2D(uWaterRipples, vScenePos.xz / uWaterRipple.x + uWaterFlow).xyz * 2.0 - 1.0;
              vec3 b = texture2D(uWaterRipples, vScenePos.zx / (uWaterRipple.x * 0.6) - uWaterFlow * 1.7).xyz * 2.0 - 1.0;
              vec3 wavy = normalize(worldNormal + vec3(a.x + b.x, 0.0, a.z + b.z) * uWaterRipple.y);
@@ -694,7 +748,7 @@ export class TerrainMaterialFactory {
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v13';
+    material.customProgramCacheKey = () => 'terrain-bubble-v14';
     return material;
   }
 
