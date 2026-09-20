@@ -314,35 +314,11 @@ export class TerrainMaterialFactory {
           '#include <common>',
           `#include <common>
            varying vec3 vScenePos;
-           varying vec3 vSceneNormal;
-
-           // EXPERIMENTAL — grain low poly du sol, a l'essai, tres accentue
-           // pour se verifier a l'oeil. Deforme uniquement le rendu (aucune
-           // lecture d'altitude ailleurs n'en tient compte) : les objets poses
-           // sur le terrain au niveau naturel (route, batiment, haie) ne
-           // suivent pas cette bosse et peuvent sembler flotter ou s'enfoncer.
-           float lowPolyHash(vec2 p) {
-             p = fract(p * vec2(123.34, 456.21));
-             p += dot(p, p + 45.32);
-             return fract(p.x * p.y);
-           }
-           float lowPolyNoise(vec2 p) {
-             vec2 i = floor(p);
-             vec2 f = fract(p);
-             float a = lowPolyHash(i);
-             float b = lowPolyHash(i + vec2(1.0, 0.0));
-             float c = lowPolyHash(i + vec2(0.0, 1.0));
-             float d = lowPolyHash(i + vec2(1.0, 1.0));
-             vec2 u = f * f * (3.0 - 2.0 * f);
-             return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
-           }`
+           varying vec3 vSceneNormal;`
         )
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
-           // EXPERIMENTAL — voir plus haut. Cellule large et amplitude forte :
-           // caricatural par construction, pour verifier l'effet.
-           transformed.y += (lowPolyNoise(transformed.xz / 6.0) - 0.5) * 2.8;
            vScenePos = (modelMatrix * vec4(transformed, 1.0)).xyz;
            vSceneNormal = normalize(mat3(modelMatrix) * objectNormal);`
         );
@@ -707,14 +683,7 @@ export class TerrainMaterialFactory {
              // nappe comme de l'eau sans reflexion d'environnement. Deux
              // relevés a des vitesses inegales — un seul se lirait comme une
              // image qui glisse.
-             // EXPERIMENTAL — normale plate tiree des derivees d'ecran de la
-             // position deja bosselee (voir <begin_vertex>) : c'est elle qui
-             // fait lire des facettes plutot qu'une bosse lissee. Remise du
-             // meme cote que la normale analytique, qui sert de repli aux
-             // coutures ou la derivee degenere.
-             vec3 flatNormal = normalize(cross(dFdx(vScenePos), dFdy(vScenePos)));
-             if (dot(flatNormal, vSceneNormal) < 0.0) flatNormal = -flatNormal;
-             vec3 worldNormal = normalize(flatNormal);
+             vec3 worldNormal = normalize(vSceneNormal);
              vec3 a = texture2D(uWaterRipples, vScenePos.xz / uWaterRipple.x + uWaterFlow).xyz * 2.0 - 1.0;
              vec3 b = texture2D(uWaterRipples, vScenePos.zx / (uWaterRipple.x * 0.6) - uWaterFlow * 1.7).xyz * 2.0 - 1.0;
              vec3 wavy = normalize(worldNormal + vec3(a.x + b.x, 0.0, a.z + b.z) * uWaterRipple.y);
@@ -725,7 +694,7 @@ export class TerrainMaterialFactory {
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v14-lowpoly-experiment';
+    material.customProgramCacheKey = () => 'terrain-bubble-v13';
     return material;
   }
 
