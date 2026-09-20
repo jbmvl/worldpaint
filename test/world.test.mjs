@@ -12046,6 +12046,64 @@ function terrainThreeStub() {
   };
 }
 
+test('tout ce que la greffe du sol nomme y est déclaré, étape par étape', () => {
+  // Un uniforme employé sans être déclaré ne fait pas rater la greffe : il
+  // fait **rejeter le programme entier**, et il ne reste plus un mètre de sol
+  // à l'écran. Aucun test de géométrie ne le voit, et le moteur ne le dit
+  // qu'une fois dans la console du navigateur. D'où ce contrôle, qui relit la
+  // source émise plutôt que l'intention.
+  const previousCanvas = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      Object.assign(this, { width, height });
+    }
+    getContext() {
+      return paintingCanvasContext();
+    }
+  };
+  let factory;
+  try {
+    factory = new TerrainMaterialFactory({ THREE: terrainThreeStub() });
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+  }
+
+  const shader = {
+    uniforms: {},
+    vertexShader: ['#include <common>', '#include <begin_vertex>'].join('\n'),
+    fragmentShader: [
+      '#include <common>',
+      '#include <map_fragment>',
+      '#include <normal_fragment_begin>',
+    ].join('\n'),
+  };
+  factory.material.onBeforeCompile(shader);
+
+  for (const [stage, src] of [
+    ['sommet', shader.vertexShader],
+    ['fragment', shader.fragmentShader],
+  ]) {
+    const declared = new Set();
+    for (const m of src.matchAll(/(?:uniform|varying|attribute)\s+\w+\s+(\w+)/g)) {
+      declared.add(m[1]);
+    }
+    // La convention du projet nomme les uniformes `uXxx` et les varyings
+    // `vXxx` : tout ce qui y ressemble doit être déclaré dans cette étape-là.
+    for (const [, name] of src.matchAll(/\b([uv][A-Z]\w*)\b/g)) {
+      assert.ok(declared.has(name), `${stage} : ${name} employé sans déclaration`);
+    }
+  }
+
+  // Au sommet il n'y a pas de dérivée : une lecture de texture y exige un
+  // niveau explicite, sans quoi GLSL ES 3.00 refuse le programme.
+  assert.ok(
+    !/[^L]texture2D\(/.test(shader.vertexShader),
+    'aucune lecture de texture sans niveau explicite au sommet'
+  );
+  assert.match(shader.vertexShader, /textureLod\(uSurfaceMap/, 'la matière est lue au niveau 0');
+});
+
 test('les limites de surfaces : la frange, les matières interpolées et la rive arrivent dans le shader', () => {
   // Une greffe par `replace` qui rate son ancrage ne casse rien : elle ne fait
   // simplement rien, en silence. Ce test ne juge pas du rendu — il vérifie que

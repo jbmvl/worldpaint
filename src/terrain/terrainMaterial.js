@@ -369,7 +369,12 @@ export class TerrainMaterialFactory {
              vec2 grainUv =
                ((modelMatrix * vec4(transformed, 1.0)).xz - uSurfaceOrigin) / uSurfaceSize;
              if (grainUv.x >= 0.0 && grainUv.x <= 1.0 && grainUv.y >= 0.0 && grainUv.y <= 1.0) {
-               int grainId = int(texture2D(uSurfaceMap, grainUv).r * 255.0 + 0.5) - 1;
+               // Pas d'accent grave ici : literal de gabarit. textureLod et
+               // non texture2D : au sommet il n'y a pas de derivee, donc pas
+               // de niveau implicite — three reecrit texture2D en texture, que
+               // GLSL ES 3.00 refuse dans cette etape. La carte n'a de toute
+               // facon qu'un seul niveau (pas de mipmap).
+               int grainId = int(textureLod(uSurfaceMap, grainUv, 0.0).r * 255.0 + 0.5) - 1;
                for (int i = 0; i < ${SURFACE_KINDS.length}; i++) {
                  if (i == grainId) {
                    grainCell = uGrainCell[i];
@@ -419,6 +424,7 @@ export class TerrainMaterialFactory {
            uniform float uSurfaceWater[${SURFACE_KINDS.length}];
            uniform float uPoolScale;
            uniform vec3 uRockColor;
+           uniform vec3 uRockAlbedo;
            uniform vec2 uSlopeRange;
            uniform float uRockStrength;
            uniform float uWetness;
@@ -788,7 +794,7 @@ export class TerrainMaterialFactory {
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v16';
+    material.customProgramCacheKey = () => 'terrain-bubble-v17';
     return material;
   }
 
