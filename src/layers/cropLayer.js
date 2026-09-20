@@ -328,7 +328,8 @@ export class CropLayer {
       coverage: true,
       coverageRange: CROP_COVERAGE_RANGE,
       coverageGain: CROP_COVERAGE_GAIN,
-      cacheKey: 'foliage-crop-cover-v3',
+      groundLowPoly: true,
+      cacheKey: 'foliage-crop-cover-v4-lowpoly',
     });
 
     this.mesh = new THREE.InstancedMesh(this.geometry, this.material, count);

@@ -31,6 +31,8 @@
  * lointain, et lui seul, qui se calme.
  */
 
+import { LOW_POLY_GRAIN_GLSL, LOW_POLY_GRAIN_DEFAULTS } from '../terrain/lowPolyGrain.js';
+
 /** Nom de l'attribut d'instance portant le décalage d'atlas. */
 export const ATLAS_ATTRIBUTE = 'aAtlasOffset';
 
@@ -97,6 +99,13 @@ function foliageLightsChunk(THREE) {
  * @param {number} [options.coverageGain] Facteur appliqué à l'alpha à pleine
  *        distance. 1 ne change rien ; 2 fait passer le seuil à un fragment deux
  *        fois moins couvrant.
+ * @param {boolean} [options.groundLowPoly] Suit le grain low poly du sol
+ *        (`terrain/lowPolyGrain.js`, mêmes réglages par défaut que
+ *        `terrainMaterial.js`) : l'instance entière se décale de la bosse lue
+ *        à son ancrage au sol, pas sommet par sommet — sans quoi le panneau
+ *        se déformerait au lieu de suivre la pente. Éteint par défaut : ne
+ *        l'activer que pour ce qui est vraiment posé au ras du sol bosselé
+ *        (herbe, culture), pas pour les arbres ou le mobilier.
  * @param {string} options.cacheKey Clé de programme (une par variante de shader).
  * @returns {Object} matériau. `userData.wind` porte l'uniforme de temps quand
  *          le vent est actif — c'est le seul point d'entrée de l'animation.
@@ -111,6 +120,7 @@ export function createFoliageMaterial({
   coverage = false,
   coverageRange = [30, 120],
   coverageGain = 2.2,
+  groundLowPoly = false,
   cacheKey,
 }) {
   const material = new THREE.MeshLambertMaterial({
@@ -137,6 +147,52 @@ export function createFoliageMaterial({
   material.userData.wind = windUniforms;
 
   material.onBeforeCompile = (shader) => {
+    if (groundLowPoly) {
+      shader.uniforms.uGroundGrainCellM = { value: LOW_POLY_GRAIN_DEFAULTS.cellM };
+      shader.uniforms.uGroundGrainAmplitudeM = { value: LOW_POLY_GRAIN_DEFAULTS.amplitudeM };
+      shader.uniforms.uGroundGrainFadeM = {
+        value: new THREE.Vector2(LOW_POLY_GRAIN_DEFAULTS.fadeStartM, LOW_POLY_GRAIN_DEFAULTS.fadeEndM),
+      };
+      // Câblé avant le vent : deux `.replace('#include <begin_vertex>', ...)`
+      // successifs s'empilent dans l'ordre inverse de leur appel (le dernier
+      // appelé se retrouve collé juste après l'inclusion, donc en tête). En
+      // le posant ici, ce bloc s'exécute **après** celui du vent dans le
+      // shader final, qui lit alors la hauteur d'origine du panneau — sans
+      // quoi le décalage de sol, ajouté à `transformed.y` avant le vent,
+      // changerait légèrement l'amplitude de balancement calculée sur `y²`.
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          '#include <common>',
+          `#include <common>
+           uniform float uGroundGrainCellM;
+           uniform float uGroundGrainAmplitudeM;
+           uniform vec2 uGroundGrainFadeM;
+           ${LOW_POLY_GRAIN_GLSL}`
+        )
+        .replace(
+          '#include <begin_vertex>',
+          `#include <begin_vertex>
+           {
+             // Suit le grain low poly du sol (voir terrain/lowPolyGrain.js) :
+             // décalage lu à l'ancrage au sol de l'instance, pas sommet par
+             // sommet — le panneau se translate en bloc, il ne se déforme pas.
+             #ifdef USE_INSTANCING
+               vec2 groundAnchor = vec2(instanceMatrix[3][0], instanceMatrix[3][2]);
+               float groundScale = length(instanceMatrix[1].xyz);
+             #else
+               vec2 groundAnchor = vec2(0.0);
+               float groundScale = 1.0;
+             #endif
+             vec3 groundWorldPos = (modelMatrix * vec4(groundAnchor.x, 0.0, groundAnchor.y, 1.0)).xyz;
+             float groundFade = lowPolyFade(groundWorldPos, cameraPosition, uGroundGrainFadeM.x, uGroundGrainFadeM.y);
+             float groundOffset = lowPolyBump(groundWorldPos.xz, uGroundGrainCellM, uGroundGrainAmplitudeM) * groundFade;
+             // Ramené à l'échelle de l'instance : le décalage voulu est en
+             // mètres du monde, transformed.y est en unité du panneau, et
+             // l'instance le remultiplie par sa propre hauteur.
+             transformed.y += groundOffset / max(groundScale, 1e-4);
+           }`
+        );
+    }
     if (windUniforms) {
       shader.uniforms.uWindTime = windUniforms.uWindTime;
       shader.uniforms.uWindStrength = windUniforms.uWindStrength;
