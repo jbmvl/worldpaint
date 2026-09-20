@@ -111,6 +111,12 @@
  * (`cropLayer.js`) et le mobilier n'existent que sur des matières non
  * branchées ici et suivent le réglage de repli. Les arbres n'en tiennent pas
  * compte.
+ *
+ * Éteint aussi dans l'emprise routière (`roadMask`, un attribut par sommet
+ * écrit par `terrainBubble.js` à partir de `roadCutMaskAt`) : le sommet y a
+ * déjà été recreusé au ras de la chaussée (`roadCut.js`), et le grain ne doit
+ * pas repousser dessus — sans quoi il recouvrirait la plate-forme qu'on vient
+ * d'excaver pour elle.
  */
 
 import { createMacroCanvas } from '../materials/proceduralTextures.js';
@@ -406,6 +412,7 @@ export class TerrainMaterialFactory {
            uniform float uUnclassified;
            uniform float uSurfaceGrainCell[${SURFACE_KINDS.length}];
            uniform float uSurfaceGrainAmplitude[${SURFACE_KINDS.length}];
+           attribute float roadMask;
            ${LOW_POLY_GRAIN_GLSL}
 
            /* Identifiant de matière au texel le plus proche — pas de lissage :
@@ -429,7 +436,11 @@ export class TerrainMaterialFactory {
              // reste du shader (contour, pente, dérivées de normale) lise
              // directement la position déjà déformée.
              vec3 grainPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-             float grainFade = lowPolyFade(grainPos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y);
+             // Le grain s'éteint dans l'emprise routière (roadMask, écrit par
+             // terrainBubble.js à partir de roadCutMaskAt) : le sommet y a
+             // déjà été recreusé pour la chaussée, il n'y repousse pas dessus.
+             float grainFade =
+               lowPolyFade(grainPos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y) * (1.0 - roadMask);
 
              // La cellule et l'amplitude viennent de la matière au pied du
              // sommet, comme l'albédo — hors carte ou hors carreau, celle du
@@ -851,7 +862,7 @@ export class TerrainMaterialFactory {
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v17-lowpoly-grain-par-matiere';
+    material.customProgramCacheKey = () => 'terrain-bubble-v18-lowpoly-grain-hors-emprise';
     return material;
   }
 

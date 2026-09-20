@@ -12,6 +12,10 @@
  * Le déblai des chaussées (`setRoadCut`) perturbe ce relief naturel : une
  * route est taillée dans le versant, pas posée dessus, et l'entaille est une
  * fonction pure de la position au sol, donc les tuiles voisines s'accordent au bord.
+ * Chaque sommet porte aussi l'emprise routière (`roadMask`, `roadCutMaskAt`) :
+ * ce que `terrainMaterial.js` ajoute après coup à la position — le grain low
+ * poly — doit s'y éteindre, sans quoi il recreuserait par-dessus une chaussée
+ * qu'on vient de tailler pour elle.
  *
  * L'eau, elle, ne touche pas au relief : c'est une matière du sol, pas une
  * surface (`groundClassMap`).
@@ -21,7 +25,13 @@ import { createLocalFrame, tilesAround, tileKey, lngLatToTile } from '../core/ti
 import { DEM_TILE_PIXELS } from '../core/elevationField.js';
 import { TerrainMaterialFactory } from './terrainMaterial.js';
 import { defaultTheme } from '../themes/default.js';
-import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M, ROAD_CUT_MAX_RING } from './roadCut.js';
+import {
+  cutElevationAt,
+  roadCutMaskAt,
+  ROAD_CUT_M,
+  ROAD_CUT_BLEND_M,
+  ROAD_CUT_MAX_RING,
+} from './roadCut.js';
 
 /** Un pixel DEM, en unités de tuile : pas d'échantillonnage du gradient. */
 const GRADIENT_STEP_TILES = 1 / DEM_TILE_PIXELS;
@@ -327,8 +337,19 @@ export class TerrainBubble {
 
   /** Creuse le déblai d'une chaussée. Profil dans `cutElevationAt`, pur et testé. */
   _roadCutAt(x, z, raw) {
+    return this._roadCutWithMask(x, z, raw).elevation;
+  }
+
+  /**
+   * Le déblai, et l'emprise routière au même point (`roadCutMaskAt`) — pour
+   * que `_buildMesh` puisse éteindre ce qu'il ajoute après coup au sommet
+   * (le grain low poly de `terrainMaterial.js`) sans recreuser une seconde
+   * fois la chaussée à la main. Une seule interrogation de l'index par
+   * sommet ; `_roadCutAt` s'appuie dessus pour garder sa propre signature.
+   */
+  _roadCutWithMask(x, z, raw) {
     const index = this._roadCut;
-    if (!index) return raw;
+    if (!index) return { elevation: raw, mask: 0 };
 
     // La dalle d'un carrefour d'abord : c'est elle qui est dessinée là, et elle
     // déborde des rubans. Le sol y descend jusqu'à la dalle, sans raccord — ce
@@ -336,18 +357,21 @@ export class TerrainBubble {
     const slab = this._junctions?.deckAt(x, z);
     if (slab != null) {
       const scale = this.verticalScale || 1;
-      return Math.min(raw, slab / scale);
+      return { elevation: Math.min(raw, slab / scale), mask: 1 };
     }
 
     const hit = index.query(x, z, ROAD_CUT_M + ROAD_CUT_BLEND_M);
-    if (!hit) return raw;
+    if (!hit) return { elevation: raw, mask: 0 };
     const deck = index.deckAt(hit);
-    if (deck == null) return raw;
+    if (deck == null) return { elevation: raw, mask: 0 };
 
     // La plate-forme est en unités de scène (déjà multipliée par l'exagération
     // verticale) ; `raw` est en unités de MNT. On compare dans le même espace.
     const scale = this.verticalScale || 1;
-    return cutElevationAt(raw, deck / scale, hit.distance, hit.segment.halfWidth);
+    return {
+      elevation: cutElevationAt(raw, deck / scale, hit.distance, hit.segment.halfWidth),
+      mask: roadCutMaskAt(hit.distance, hit.segment.halfWidth),
+    };
   }
 
   /** Position dans le repère local, posée sur la surface affichée. */
@@ -420,6 +444,10 @@ export class TerrainBubble {
     // Pas de coordonnées de texture : la matière est projetée en coordonnées monde par le shader.
     const positions = new Float32Array(count * 3);
     const normals = new Float32Array(count * 3);
+    // Emprise routière par sommet : 1 recreusé pour la chaussée, 0 en terrain
+    // naturel — lue par `terrainMaterial.js` pour éteindre le grain low poly
+    // sur ce qui vient d'être excavé pour elle (voir `roadCutMaskAt`).
+    const roadMask = new Float32Array(count);
 
     const scale = this.frame.scale;
     const stepMeters = GRADIENT_STEP_TILES * scale;
@@ -427,6 +455,9 @@ export class TerrainBubble {
     const carving = !!this._roadCut && tile.ring <= ROAD_CUT_MAX_RING;
     // Gradient pris sur le terrain entaillé, sinon l'éclairage du fond du déblai serait celui du versant.
     const cut = carving ? (x, z, raw) => this.cutElevation(x, z, raw) : (x, z, raw) => raw;
+    const cutWithMask = carving
+      ? (x, z, raw) => this._roadCutWithMask(x, z, raw)
+      : (x, z, raw) => ({ elevation: raw, mask: 0 });
 
     for (let j = 0; j <= n; j++) {
       const v = j / n;
@@ -447,11 +478,13 @@ export class TerrainBubble {
         else raw = this.elevation.sampleTile(tx, ty);
 
         // Le déblai est une fonction du seul point du sol, donc la couture des bords reste exacte.
-        const h = cut(local.x, local.z, raw) * this.verticalScale;
+        const atVertex = cutWithMask(local.x, local.z, raw);
+        const h = atVertex.elevation * this.verticalScale;
 
         positions[idx * 3] = local.x;
         positions[idx * 3 + 1] = h;
         positions[idx * 3 + 2] = local.z;
+        roadMask[idx] = atVertex.mask;
 
         // Gradient central : continu au travers des frontières de tuiles.
         const hE = cut(local.x + stepMeters, local.z, this.elevation.sampleTile(tx + GRADIENT_STEP_TILES, ty)) * this.verticalScale;
@@ -489,6 +522,7 @@ export class TerrainBubble {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    geometry.setAttribute('roadMask', new THREE.BufferAttribute(roadMask, 1));
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
     geometry.computeBoundingSphere();
 

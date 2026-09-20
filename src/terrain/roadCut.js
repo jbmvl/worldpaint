@@ -42,3 +42,24 @@ export function cutElevationAt(raw, platform, distance, halfWidth) {
   const eased = t * t * (3 - 2 * t);
   return platform + (raw - platform) * eased;
 }
+
+/**
+ * Part d'emprise routière à `distance` de l'axe d'une chaussée : 1 sous la
+ * plate-forme et son accotement, 0 au-delà du raccord, même rampe que
+ * `cutElevationAt`. Sert à éteindre ce qui se rajoute au sommet **après** le
+ * déblai — le grain low poly (`terrainMaterial.js`) — sans quoi il recouvrirait
+ * la chaussée que ce module vient de creuser pour elle. Indépendante du sens
+ * du déblai (`platform < raw`) : l'emprise reste l'emprise même en remblai.
+ *
+ * @param {number} distance  Distance du point à l'axe de la chaussée, en mètres.
+ * @param {number} halfWidth Demi-largeur de la chaussée, en mètres.
+ * @returns {number} de 1 (dans l'emprise) à 0 (terrain naturel).
+ */
+export function roadCutMaskAt(distance, halfWidth) {
+  const edge = halfWidth + ROAD_CUT_M;
+  if (distance <= edge) return 1;
+
+  const t = Math.min(1, (distance - edge) / ROAD_CUT_BLEND_M);
+  const eased = t * t * (3 - 2 * t);
+  return 1 - eased;
+}

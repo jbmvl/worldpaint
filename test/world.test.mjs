@@ -562,7 +562,7 @@ import {
 } from '../src/layers/streetLayer.js';
 import { streetSurfaceAt } from '../src/layers/townStyle.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
-import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
+import { cutElevationAt, roadCutMaskAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
 import { TerrainMaterialFactory } from '../src/terrain/terrainMaterial.js';
 import { LOW_POLY_GRAIN_DEFAULTS } from '../src/terrain/lowPolyGrain.js';
 import {
@@ -3324,6 +3324,32 @@ test('le déblai ne remblaie jamais : côté aval, le terrain ne bouge pas', () 
   close(cutElevationAt(95, 100, 0, 3), 95, 1e-9, 'sous la chaussée');
   close(cutElevationAt(95, 100, 4, 3), 95, 1e-9, 'au ras de la rive');
   close(cutElevationAt(100, 100, 1, 3), 100, 1e-9, 'à niveau, rien à creuser');
+});
+
+test('l’emprise routière couvre exactement la même largeur que le déblai', () => {
+  const halfWidth = 2.5;
+  const edge = halfWidth + ROAD_CUT_M;
+
+  // Pleine sous la chaussée et son accotement, comme le déblai est plat.
+  close(roadCutMaskAt(0, halfWidth), 1, 1e-9, 'sous l’axe');
+  close(roadCutMaskAt(halfWidth, halfWidth), 1, 1e-9, 'sous la rive');
+  close(roadCutMaskAt(edge, halfWidth), 1, 1e-9, 'accotement');
+  // Nulle au bout du même raccord que `cutElevationAt`.
+  close(roadCutMaskAt(edge + ROAD_CUT_BLEND_M, halfWidth), 0, 1e-9, 'terrain naturel retrouvé');
+  close(roadCutMaskAt(400, halfWidth), 0, 1e-9, 'loin de la route');
+
+  // Monotone et bornée entre les deux, comme le déblai lui-même.
+  let previous = Infinity;
+  for (let d = edge; d <= edge + ROAD_CUT_BLEND_M; d += 0.1) {
+    const mask = roadCutMaskAt(d, halfWidth);
+    assert.ok(mask <= previous + 1e-9, `décroissance monotone à ${d.toFixed(1)} m`);
+    assert.ok(mask >= 0 && mask <= 1, `bornée à ${d.toFixed(1)} m`);
+    previous = mask;
+  }
+
+  // Indépendante du sens du déblai : contrairement à `cutElevationAt`,
+  // l’emprise ne dépend pas de savoir si le terrain domine la plate-forme.
+  close(roadCutMaskAt(0, 3), 1, 1e-9, 'emprise pleine même en remblai');
 });
 
 // --- Sections balayées ------------------------------------------------------
@@ -12669,6 +12695,45 @@ test('le grain low poly du sol dépend de la matière au pied du sommet', () => 
   assert.match(
     source,
     /transformed\.y \+= lowPolyBump\(grainPos\.xz, grainCellM, grainAmplitudeM\) \* grainFade;/
+  );
+});
+
+test('le grain low poly du sol s’éteint dans l’emprise routière', () => {
+  const previousCanvas = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      Object.assign(this, { width, height });
+    }
+    getContext() {
+      return paintingCanvasContext();
+    }
+  };
+
+  let factory;
+  try {
+    factory = new TerrainMaterialFactory({ THREE: terrainThreeStub() });
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+  }
+
+  const shader = {
+    uniforms: {},
+    vertexShader: ['#include <common>', '#include <begin_vertex>'].join('\n'),
+    fragmentShader: '',
+  };
+  factory.material.onBeforeCompile(shader);
+  const source = shader.vertexShader;
+
+  // Un attribut par sommet, écrit par `terrainBubble.js` (`roadMask`,
+  // `roadCutMaskAt`) — jamais une seconde interrogation de l'index routier
+  // depuis le shader, qui ne le porte pas.
+  assert.match(source, /attribute float roadMask;/);
+  // Le fondu de distance et l'emprise routière se multiplient : la bosse est
+  // nulle si l'un ou l'autre l'est, jamais recalculée à part.
+  assert.match(
+    source,
+    /float grainFade =\s*\n?\s*lowPolyFade\(grainPos, cameraPosition, uGrainFadeM\.x, uGrainFadeM\.y\) \* \(1\.0 - roadMask\);/
   );
 });
 
