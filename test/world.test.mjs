@@ -29,6 +29,7 @@ import { ElevationField, DEM_TILE_PIXELS } from '../src/core/elevationField.js';
 import {
   cliffElevationAt,
   cliffFaceWidth,
+  cliffProfileAt,
   CLIFF_BLEND_M,
   CLIFF_MIN_HEIGHT_M,
 } from '../src/terrain/cliffCut.js';
@@ -3281,6 +3282,33 @@ test('l’index de falaise oriente sa normale vers le haut et interpole ses cote
   // Au-delà de la portée, plus rien : le terrain reste celui du MNT.
   assert.equal(index.query(50, 400), null, 'hors de portée');
   close(index.elevationAt(50, 400, 77), 77, 1e-9, 'altitude inchangée hors de portée');
+});
+
+test('la nappe de paroi et la marche du terrain lisent le même profil', () => {
+  // La nappe porte les sommets qu'un champ de hauteurs ne peut pas avoir sur
+  // une face verticale. Plaquée sur un autre profil que la marche, elle
+  // passerait au travers du sol par endroits et flotterait ailleurs — et
+  // c'est invisible tant qu'on ne regarde pas le raccord de près.
+  const foot = 12;
+  const crest = 52;
+  const face = 3;
+  for (let i = 0; i <= 20; i++) {
+    const t = i / 20;
+    // Ce que la nappe pose, en fonction de la traversée.
+    const sheet = foot + (crest - foot) * cliffProfileAt(t);
+    // Ce que le terrain rend au même endroit, la rampe naturelle passant
+    // entre les deux cotes.
+    const raw = foot + (crest - foot) * t;
+    const ground = cliffElevationAt(raw, foot, crest, face * t, face);
+    close(sheet, ground, 1e-9, `traversée à ${t.toFixed(2)}`);
+  }
+
+  // Aux deux bords, la nappe touche exactement le pied et l'arase.
+  close(cliffProfileAt(0), 0, 1e-12, 'au pied');
+  close(cliffProfileAt(1), 1, 1e-12, 'à l’arase');
+  // Et elle ne sort pas de l'intervalle, quoi qu'on lui demande.
+  close(cliffProfileAt(-3), 0, 1e-12, 'avant le pied');
+  close(cliffProfileAt(9), 1, 1e-12, 'après l’arase');
 });
 
 test('la grille de l’index rend exactement ce que rendrait un parcours exhaustif', () => {

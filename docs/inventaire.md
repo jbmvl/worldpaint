@@ -62,10 +62,18 @@ de mètres de pente douce. Là où OSM a relevé un `natural=cliff`, `cliffLayer
 comprime cette rampe en marche (`terrain/cliffCut`).
 
 Une falaise n'est **pas un objet posé** : c'est du terrain raide fait de
-roche. La couche ne dessine donc rien — elle publie la marche, et une bande
-que `groundClassMap` peint en `rock` pour le cas où la donnée décrit la
-falaise sans décrire la roche. Sa rugosité lui vient ensuite du grain
-géométrique du sol (`terrain/lowPolyGrain`), comme à n'importe quelle roche.
+roche. La couche publie donc la marche, et une bande que `groundClassMap`
+peint en `rock` pour le cas où la donnée décrit la falaise sans décrire la
+roche. Sa rugosité lui vient du grain géométrique du sol
+(`terrain/lowPolyGrain`), comme à n'importe quelle roche.
+
+Elle pose en plus une **nappe de paroi**, et pour une seule raison : le
+terrain est un champ de hauteurs, où une face verticale tient dans un seul
+quadrilatère et ne porte aucune rangée de sommets entre son pied et son
+arase — à Saumur, 0,69 quad de large pour quarante mètres de haut. Le grain
+déplace des sommets ; sans sommet, il ne rendait qu'une valeur par colonne,
+donc des cannelures verticales. La nappe n'apporte que ces sommets : elle
+est rendue avec le matériau du terrain, et c'est le même grain qui la creuse.
 
 C'est une **synthèse**, pas une correction : la dénivelée mesurée est
 conservée, seule sa distance change. Et c'est un relevé, donc lacunaire — une

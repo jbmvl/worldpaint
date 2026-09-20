@@ -188,10 +188,12 @@ export class WorldComposer {
     // d'aucune autre couche — voir `railwayLayer.js`.
     this.railways = new RailwayLayer({ THREE, scene, bubble, theme });
 
-    // Les falaises relevées : elles ne dessinent rien. Elles lisent les tuiles
-    // et le MNT, et publient la marche que le terrain suit, plus la bande que
-    // la carte du sol peint en roche.
-    this.cliffs = new CliffLayer({ bubble, theme });
+    // Les falaises relevées : elles publient la marche que le terrain suit et
+    // la bande que la carte du sol peint en roche, et posent la nappe de
+    // paroi — les sommets qu'un champ de hauteurs ne peut pas porter sur une
+    // face verticale. Elle est rendue avec le matériau du terrain, donc
+    // creusée par le même grain que le reste du sol.
+    this.cliffs = new CliffLayer({ THREE, scene, bubble, theme });
     // Façade d'emprise combinée (route + voie ferrée) pour les consommateurs
     // de `roads.index` (jardins, végétation, herbe, cultures). Un `get`, pas
     // une valeur figée : les deux index sont réécrits à chaque reconstruction.

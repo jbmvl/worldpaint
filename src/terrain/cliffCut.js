@@ -2,10 +2,9 @@
  * cliffCut — la marche de terrain sous une falaise relevée, cotes partagées en
  * un seul endroit.
  *
- * `terrainBubble` écrase le relief (`cliffElevation`), `furniture/cliffs` pose
- * la paroi rocheuse dessus : les deux doivent lire les mêmes cotes, d'où le
- * fichier séparé plutôt qu'une constante logée chez l'un des deux — même
- * raison que `roadCut`.
+ * `terrainBubble` écrase le relief, `layers/cliffLayer` y plaque la nappe de
+ * paroi : les deux doivent lire le même profil, d'où le fichier séparé plutôt
+ * qu'une constante logée chez l'un des deux — même raison que `roadCut`.
  *
  * Le MNT ne sait pas qu'une falaise est verticale : il l'étale en rampe sur
  * toute sa largeur (une falaise de mer de quatre-vingts mètres se lit sur une
@@ -41,6 +40,16 @@ export const CLIFF_BLEND_M = CLIFF_PROBE_M[0];
 export const CLIFF_MIN_HEIGHT_M = 5;
 
 const smooth = (t) => t * t * (3 - 2 * t);
+
+/**
+ * Où en est la montée, à `t` de la traversée de la paroi (0 au pied, 1 à
+ * l'arase). La nappe de paroi (`layers/cliffLayer`) et la marche du terrain
+ * lisent la même : plaquée sur un autre profil, la nappe passerait au travers
+ * du sol par endroits et flotterait ailleurs.
+ */
+export function cliffProfileAt(t) {
+  return smooth(t < 0 ? 0 : t > 1 ? 1 : t);
+}
 
 /**
  * Altitude du terrain à `across` mètres du trait de falaise — compté positif

@@ -3,23 +3,33 @@
  * par OpenMapTiles dans la couche `mountain_peak` (classe `cliff`, une
  * polyligne) à partir du zoom 13.
  *
- * Elle ne dessine rien. Elle publie deux choses, et c'est tout :
+ * Elle publie deux choses et en dessine une troisième :
  *
  * 1. **la marche** (`CliffIndex`), que `terrainBubble` interroge pour
  *    comprimer en paroi la rampe sur laquelle le MNT étale une falaise — une
  *    falaise de mer de quatre-vingts mètres s'y lit sur une centaine de mètres
  *    de pente douce (`terrain/cliffCut`) ;
- * 2. **la bande de roche** (`bands`), que `groundClassMap` peint en `rock`.
+ * 2. **la bande de roche** (`bands`), que `groundClassMap` peint en `rock` :
+ *    l'arase et le pied sont minéraux eux aussi ;
+ * 3. **la nappe de paroi**, une grille de quadrilatères plaquée sur la marche.
  *
- * Une falaise est donc de la **roche**, au même titre qu'un `bare_rock` relevé
- * par OSM, et sa rugosité lui vient du grain géométrique du sol
- * (`terrain/lowPolyGrain`), comme à toute roche. La bande n'est là que pour le
- * cas où la donnée décrit la falaise sans décrire la roche : elle convertit en
- * roche une paroi que la carte laisserait en herbe.
+ * ## Pourquoi la paroi a besoin de ses propres polygones
  *
- * Il y avait ici une paroi balayée en géométrie, grainée ligne par ligne comme
- * une haie. Elle rendait un mur, coûtait un maillage entier, et faisait double
- * emploi avec le grain du sol.
+ * Le terrain est un champ de hauteurs : une face verticale y tient dans **un
+ * seul quadrilatère**, quelle que soit la finesse de la maille, et ne porte
+ * aucune rangée de sommets entre son pied et son arase. À Saumur, la paroi
+ * mesure 0,69 quad de large pour quarante mètres de haut. Le grain du sol
+ * (`terrain/lowPolyGrain`) déplace des sommets : sans sommet, il ne rend
+ * qu'une valeur par colonne, donc des cannelures verticales.
+ *
+ * La nappe n'existe que pour ça — porter les sommets que le champ de hauteurs
+ * ne peut pas avoir. Elle est **subdivisée dans les deux sens** et rendue avec
+ * le matériau du terrain : c'est donc le grain du sol, et lui seul, qui la
+ * creuse et l'ombre à plat. Rien n'est déplacé ici.
+ *
+ * Ce n'est pas le retour de l'ancienne paroi balayée : celle-là portait un
+ * profil fermé à six colonnes, son propre grain et son propre matériau. Ici,
+ * une grille et rien d'autre.
  *
  * Le haut et le bas ne sont pas déduits du sens de tracé. La convention OSM
  * met le haut à gauche, mais elle est diversement respectée et le découpage en
@@ -28,6 +38,7 @@
  */
 
 import { resamplePath, pathFrames, smoothColumns } from './ribbonGeometry.js';
+import { cliffProfileAt } from '../terrain/cliffCut.js';
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { cellKey } from './roadGraph.js';
 import {
@@ -62,6 +73,20 @@ const CLIFF_SMOOTH_RADIUS = 2;
  * paroi laisserait l'herbe courir jusqu'au bord de la rupture.
  */
 const CLIFF_ROCK_MARGIN_M = 2.5;
+
+/**
+ * Côté d'une maille de la nappe de paroi, en mètres. Il faut au moins deux
+ * mailles par cellule de grain pour que le bruit se lise comme des aspérités
+ * et non comme un plan qui ondule ; la roche a une cellule de six mètres.
+ */
+const CLIFF_FACE_CELL_M = 3;
+
+/**
+ * Plafond de sommets de la nappe. Un coteau de plusieurs kilomètres en
+ * demanderait des centaines de milliers ; passé ce seuil, on cesse d'en
+ * ajouter plutôt que de faire ramer la vue.
+ */
+const CLIFF_FACE_MAX_VERTICES = 60000;
 
 /**
  * Côté d'une cellule de l'index, en mètres. Plus large que celui des
@@ -220,9 +245,16 @@ export class CliffLayer {
    * @param {Object} options.theme  Fournit l'aplomb de la paroi
    *        (`terrain.cliff`) : une valeur de forme, donc du thème.
    */
-  constructor({ bubble, theme }) {
+  constructor({ THREE, scene, bubble, theme }) {
+    this.THREE = THREE;
     this.bubble = bubble;
     this.spec = theme.terrain.cliff;
+
+    this.group = new THREE.Group();
+    this.group.name = 'cliffs';
+    scene.add(this.group);
+    this.scene = scene;
+    this.mesh = null;
 
     /** Marche publiée au terrain (`CliffIndex`), ou `null`. */
     this.index = null;
@@ -255,6 +287,7 @@ export class CliffLayer {
 
     const segments = [];
     const bands = [];
+    const face = { positions: [], normals: [], indices: [] };
 
     // Compté à chaque étape : une falaise absente à l'écran peut l'être parce
     // que la couche source est vide, parce qu'aucun trait n'est classé
@@ -262,7 +295,7 @@ export class CliffLayer {
     // annonce une. Les trois se corrigent ailleurs, d'où le décompte.
     const seen = { features: 0, cliffs: 0, paths: 0, tooFlat: 0 };
     for (const line of this._collectPaths(source, tiles, here, seen)) {
-      this._buildCliff(line, segments, bands, seen);
+      this._buildCliff(line, segments, bands, face, seen);
     }
     this.seen = seen;
     if (segments.length === 0 && seen.features > 0) {
@@ -273,6 +306,7 @@ export class CliffLayer {
     this.bands = bands;
     this.index = segments.length ? new CliffIndex(segments) : null;
     this.bubble.setCliffCut(this.index);
+    this._applyFace(face);
 
     this._anchor = { x: here.x, z: here.z };
     this._frame = this.bubble.frame;
@@ -323,7 +357,7 @@ export class CliffLayer {
   }
 
   /** Cotes lues dans le MNT, segments de marche et bande de roche. */
-  _buildCliff(path, segments, bands, seen) {
+  _buildCliff(path, segments, bands, face, seen) {
     const rows = path.length;
     const frames = pathFrames(path);
     const raw = (x, z) => this.bubble.rawSurfaceElevationAtLocal(x, z, 0);
@@ -385,7 +419,7 @@ export class CliffLayer {
 
     // Une largeur unique par trait : la paroi doit garder son aplomb sur toute
     // sa longueur, et l'index interpole les cotes, pas la géométrie.
-    const face = cliffFaceWidth(tallest, this.spec);
+    const faceWidth = cliffFaceWidth(tallest, this.spec);
 
     for (let r = 0; r < rows - 1; r++) {
       const ax = path[r].x;
@@ -409,7 +443,7 @@ export class CliffLayer {
         footB: foot[r + 1],
         crestA: crest[r],
         crestB: crest[r + 1],
-        face,
+        face: faceWidth,
         blend,
       });
     }
@@ -419,11 +453,95 @@ export class CliffLayer {
     const centre = [];
     for (let r = 0; r < rows; r++) {
       centre.push({
-        x: path[r].x + frames[r * 4 + 2] * side * (face / 2),
-        z: path[r].z + frames[r * 4 + 3] * side * (face / 2),
+        x: path[r].x + frames[r * 4 + 2] * side * (faceWidth / 2),
+        z: path[r].z + frames[r * 4 + 3] * side * (faceWidth / 2),
       });
     }
-    bands.push({ path: centre, width: face + 2 * CLIFF_ROCK_MARGIN_M });
+    bands.push({ path: centre, width: faceWidth + 2 * CLIFF_ROCK_MARGIN_M });
+    this._appendFaceSheet(path, frames, foot, crest, faceWidth, side, tallest, face);
+  }
+
+  /**
+   * La nappe de paroi : une grille plaquée sur la marche, subdivisée assez
+   * finement pour que le grain du sol ait des sommets à déplacer. Rien n'est
+   * déplacé ici — le shader du terrain s'en charge, et lui seul.
+   */
+  _appendFaceSheet(path, frames, foot, crest, faceWidth, side, tallest, out) {
+    const rows = Math.max(2, Math.ceil(tallest / CLIFF_FACE_CELL_M) + 1);
+    const sub = Math.max(1, Math.round(CLIFF_SAMPLE_M / CLIFF_FACE_CELL_M));
+    const columns = (path.length - 1) * sub + 1;
+    if (out.positions.length / 3 + columns * rows > CLIFF_FACE_MAX_VERTICES) return;
+
+    const scale = this.bubble.verticalScale;
+    const start = out.positions.length / 3;
+
+    for (let c = 0; c < columns; c++) {
+      // Position et cotes interpolées entre deux points du tracé : la nappe
+      // est plus fine que lui, sans quoi le bruit n'aurait qu'un échantillon
+      // par maille et se lirait encore comme un plan.
+      const g = c / sub;
+      const i = Math.min(path.length - 2, Math.floor(g));
+      const u = g - i;
+      const px = path[i].x + (path[i + 1].x - path[i].x) * u;
+      const pz = path[i].z + (path[i + 1].z - path[i].z) * u;
+      const nx = (frames[i * 4 + 2] + (frames[(i + 1) * 4 + 2] - frames[i * 4 + 2]) * u) * side;
+      const nz = (frames[i * 4 + 3] + (frames[(i + 1) * 4 + 3] - frames[i * 4 + 3]) * u) * side;
+      const len = Math.hypot(nx, nz) || 1;
+      const ux = nx / len;
+      const uz = nz / len;
+      const low = foot[i] + (foot[i + 1] - foot[i]) * u;
+      const high = crest[i] + (crest[i + 1] - crest[i]) * u;
+
+      for (let r = 0; r < rows; r++) {
+        const t = r / (rows - 1);
+        const across = faceWidth * t;
+        out.positions.push(
+          px + ux * across,
+          (low + (high - low) * cliffProfileAt(t)) * scale,
+          pz + uz * across
+        );
+        // La paroi regarde le vide, donc l'opposé du haut de la falaise. Une
+        // normale horizontale : c'est elle qui fait dire au shader que c'est
+        // de la roche, et qui choisit le plan du bruit.
+        out.normals.push(-ux, 0, -uz);
+      }
+    }
+
+    for (let c = 0; c < columns - 1; c++) {
+      for (let r = 0; r < rows - 1; r++) {
+        const a = start + c * rows + r;
+        const b = a + rows;
+        const d = a + 1;
+        const e = b + 1;
+        // L'enroulement suit le côté : la nappe doit présenter sa face au vide.
+        if (side > 0) out.indices.push(a, b, d, d, b, e);
+        else out.indices.push(a, d, b, b, d, e);
+      }
+    }
+  }
+
+  _applyFace(buffer) {
+    const { THREE } = this;
+    if (this.mesh) {
+      this.group.remove(this.mesh);
+      this.mesh.geometry.dispose();
+      this.mesh = null;
+    }
+    if (!buffer.indices.length) return;
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(buffer.positions, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(buffer.normals, 3));
+    geometry.setIndex(buffer.indices);
+    geometry.computeBoundingSphere();
+
+    const mesh = new THREE.Mesh(geometry, this.bubble.materials.material);
+    mesh.name = 'cliff-face';
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
+    mesh.receiveShadow = true;
+    this.group.add(mesh);
+    this.mesh = mesh;
   }
 
   dispose() {
@@ -431,6 +549,12 @@ export class CliffLayer {
     this.disposed = true;
     this.index = null;
     this.bands = [];
+    if (this.mesh) {
+      this.group.remove(this.mesh);
+      this.mesh.geometry.dispose();
+      this.mesh = null;
+    }
+    this.scene.remove(this.group);
     // Sinon un changement d'observateur laisse des marches sans rien dessus.
     this.bubble?.setCliffCut?.(null);
   }
