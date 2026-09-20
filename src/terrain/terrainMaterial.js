@@ -312,21 +312,21 @@ export class TerrainMaterialFactory {
         value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.grain?.cellM ?? 0),
       },
       /**
-       * La roche des fortes pentes. Une carte du sol est **plane** : une paroi
-       * verticale n'y occupe qu'un liseré de quelques texels, que la cubique
-       * du contour noie dans ce qui l'entoure, et la matière lue s'y étire en
-       * hauteur. La pente, elle, décrit la paroi exactement — c'est déjà par
-       * elle que la teinte de roche arrive (`uSlopeRange`), et le grain la
-       * suit.
+       * Le grain de la roche des fortes pentes. Une carte du sol est
+       * **plane** : une paroi verticale n'y occupe qu'un liseré de quelques
+       * texels, que la cubique du contour noie dans ce qui l'entoure, et la
+       * matière lue s'y étire en hauteur. La pente, elle, décrit la paroi
+       * exactement — c'est déjà par elle que la teinte de roche arrive
+       * (`uSlopeRange`), et le grain la suit.
+       *
+       * L'albédo, lui, n'a pas d'uniforme à part : la roche régionalisée est
+       * déjà dans `uSurfaceAlbedo`, et la dupliquer ici la figerait au montage.
        */
       uRockGrain: {
         value: new THREE.Vector2(
           this.surfaces.rock?.grain?.cellM ?? 0,
           this.surfaces.rock?.grain?.amplitudeM ?? 0
         ),
-      },
-      uRockAlbedo: {
-        value: new THREE.Vector3(...(this.surfaces.rock?.albedo || [0.371, 0.332, 0.27])),
       },
       uGrainAmplitude: {
         value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.grain?.amplitudeM ?? 0),
@@ -424,7 +424,6 @@ export class TerrainMaterialFactory {
            uniform float uSurfaceWater[${SURFACE_KINDS.length}];
            uniform float uPoolScale;
            uniform vec3 uRockColor;
-           uniform vec3 uRockAlbedo;
            uniform vec2 uSlopeRange;
            uniform float uRockStrength;
            uniform float uWetness;
@@ -708,7 +707,11 @@ export class TerrainMaterialFactory {
              // une paroi, la carte plane n'ayant pu y poser que de l'herbe
              // etiree. La pente, elle, decrit la paroi.
              float rock = vSteep * uRockStrength * (1.0 - gWater);
-             base = mix(base, uRockAlbedo, rock);
+             // Pas d'accent grave ici : literal de gabarit. La roche du
+             // socle, telle que setRegion l'a deja teintee par la geologie du
+             // pays : un uniforme a part serait fige au montage, et rendrait
+             // la meme falaise du calcaire au granite.
+             base = mix(base, uSurfaceAlbedo[${SURFACE_KINDS.indexOf('rock')}], rock);
              // Puis la teinte, qui module ce que la matiere a donne.
              base = mix(base, base * uRockColor, rock);
 
@@ -794,7 +797,7 @@ export class TerrainMaterialFactory {
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v17';
+    material.customProgramCacheKey = () => 'terrain-bubble-v18';
     return material;
   }
 

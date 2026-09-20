@@ -12224,7 +12224,14 @@ test('les limites de surfaces : la frange, les matières interpolées et la rive
   // La pente impose la roche là où la carte du sol ne le peut pas : elle est
   // plane, et une paroi verticale n'y occupe qu'un liseré de texels.
   assert.match(shader.vertexShader, /vSteep = smoothstep\(uSlopeRange/, 'la pente choisit la roche');
-  assert.match(source, /base = mix\(base, uRockAlbedo, rock\)/, 'la paroi prend la matière roche');
+  // La paroi prend la roche **du pays** : `setRegion` teinte `uSurfaceAlbedo`
+  // par la géologie, un uniforme à part serait figé au montage.
+  assert.match(
+    source,
+    /base = mix\(base, uSurfaceAlbedo\[\d+\], rock\)/,
+    'la paroi prend la matière roche, régionalisée'
+  );
+  assert.ok(!/uRockAlbedo/.test(source), 'pas d’albédo de roche en double');
 
   assert.ok(
     !/waterShareAt|coverIdAt/.test(source),
