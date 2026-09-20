@@ -42,10 +42,11 @@
  * Réglages par défaut, partagés par tous les appelants. Cellule et amplitude
  * en mètres, fondu en mètres (début, fin — l'amplitude est nulle au-delà).
  *
- * Ordres de grandeur relevés à l'essai sur une paroi rocheuse. Une lande ou
- * une herbe basse demande une cellule et une amplitude bien plus petites
- * (~1.5 m / ~0.2 m) : reste à brancher par matière (voir plus bas), pas
- * encore fait — ce fichier n'expose aujourd'hui qu'un seul réglage global.
+ * Ordres de grandeur relevés à l'essai sur une paroi rocheuse — c'est le repli
+ * de `terrainMaterial.js` pour une matière que `SURFACE_LOOK` ne couvre pas
+ * (`grainCellM`/`grainAmplitudeM`, voir `themes/default.js`), et le seul
+ * réglage que lisent les appelants qui n'ont pas de matière à consulter
+ * (`foliageMaterial.js` sans instanciation par matière).
  */
 export const LOW_POLY_GRAIN_DEFAULTS = {
   cellM: 6.0,

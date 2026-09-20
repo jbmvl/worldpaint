@@ -347,6 +347,7 @@ import {
   GRASS_HEIGHT_FADE_FLOOR,
   GRASS_GREEN_MIN,
   coverGrassFor,
+  coverGrainFor,
   grassGreenFor,
   woodFloorFor,
   WOODLAND_FLOWER_MAX,
@@ -563,6 +564,7 @@ import { streetSurfaceAt } from '../src/layers/townStyle.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
 import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
 import { TerrainMaterialFactory } from '../src/terrain/terrainMaterial.js';
+import { LOW_POLY_GRAIN_DEFAULTS } from '../src/terrain/lowPolyGrain.js';
 import {
   birdAt,
   createBirdGeometry,
@@ -2569,6 +2571,29 @@ test('la couverture règle l’herbe et le fourré, jamais leur présence', () =
   assert.equal(coverBushesFor('scrub').essence, 'thornyScrub');
   assert.equal(coverBushesFor('sand').essence, 'marram');
   assert.notEqual(coverBushesFor('heath').essence, coverBushesFor('scrub').essence);
+});
+
+test('le grain d’une touffe suit celui du sol, matière par matière', () => {
+  // Une matière absente de la table reprend le réglage de repli — le même
+  // que `terrainMaterial.js` applique par défaut.
+  const repli = coverGrainFor(null);
+  assert.deepEqual(repli, {
+    cellM: LOW_POLY_GRAIN_DEFAULTS.cellM,
+    amplitudeM: LOW_POLY_GRAIN_DEFAULTS.amplitudeM,
+  });
+  assert.deepEqual(coverGrainFor('couverture-inconnue'), repli);
+  assert.deepEqual(coverGrainFor('grass'), repli, 'l’herbe ordinaire n’a pas été branchée');
+
+  // Une lande porte de petites touffes serrées, un pré alpin de larges
+  // colinettes : les deux divergent du repli et l’un de l’autre.
+  const heath = coverGrainFor('heath');
+  const alpine = coverGrainFor('alpine');
+  assert.deepEqual(heath, {
+    cellM: defaultTheme.surfaces.heath.grainCellM,
+    amplitudeM: defaultTheme.surfaces.heath.grainAmplitudeM,
+  });
+  assert.notEqual(heath.cellM, repli.cellM);
+  assert.ok(alpine.cellM > heath.cellM, 'les colinettes d’un pré alpin sont plus larges');
 });
 
 test('une matière sans essence propre replie sur le tapis générique', () => {
@@ -11580,6 +11605,63 @@ test('la compensation d’alpha atteint sa cible, et n’atteint que les couvert
   );
 });
 
+test('le grain low poly suivi par une instance vient d’un réglage unique, ou de la matière', () => {
+  const THREE = {
+    DoubleSide: 2,
+    MeshLambertMaterial: class {
+      constructor(options) {
+        Object.assign(this, options, { userData: {} });
+      }
+    },
+    Vector2: class {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+      }
+    },
+    ShaderChunk: { lights_fragment_begin: 'IncidentLight directLight;\n#if ( NUM_DIR_LIGHTS > 0 ) && defined( RE_Direct )' },
+  };
+  const compile = (material) => {
+    const shader = {
+      uniforms: {},
+      vertexShader: ['#include <common>', '#include <begin_vertex>'].join('\n'),
+      fragmentShader: '',
+    };
+    material.onBeforeCompile(shader);
+    return shader;
+  };
+
+  // Réglage unique (herbe et cultures avant le branchement par matière, et
+  // toute autre couverture qui n'a pas d'instance à consulter) : le même
+  // uniforme pour tout le maillage.
+  const unique = compile(
+    createFoliageMaterial({ THREE, map: null, groundLowPoly: true, cacheKey: 'test-grain-uniforme' })
+  );
+  assert.match(unique.vertexShader, /vec2 groundGrain = vec2\(uGroundGrainCellM, uGroundGrainAmplitudeM\);/);
+  assert.ok(
+    !unique.vertexShader.includes(`attribute vec2 ${'aGroundGrain'};`),
+    'sans `groundGrainPerInstance`, pas d’attribut à lier'
+  );
+
+  // Par instance : la matière lue au semis par l'appelant, pas une seconde
+  // fois ici — l'attribut porte directement la cellule et l'amplitude.
+  const parInstance = compile(
+    createFoliageMaterial({
+      THREE,
+      map: null,
+      groundLowPoly: true,
+      groundGrainPerInstance: true,
+      cacheKey: 'test-grain-instance',
+    })
+  );
+  assert.match(parInstance.vertexShader, /attribute vec2 aGroundGrain;/);
+  assert.match(parInstance.vertexShader, /vec2 groundGrain = aGroundGrain;/);
+  assert.match(
+    parInstance.vertexShader,
+    /float groundOffset = lowPolyBump\(groundWorldPos\.xz, groundGrain\.x, groundGrain\.y\) \* groundFade;/
+  );
+});
+
 test('le vent se mesure sur la hauteur de la plante, pas sur la largeur du panneau', () => {
   // Le déplacement est écrit dans le quadrilatère unité, puis mis à l'échelle
   // par la matrice d'instance : sans correction, son amplitude réelle était
@@ -12233,17 +12315,17 @@ test('les limites de surfaces : la frange, les matières interpolées et la rive
   );
 
   // Tranché, pas fondu : la matière la plus forte l'emporte sur la largeur
-  // d'un pixel. C'est la seule dérivée d'écran du shader.
+  // d'un pixel.
   assert.match(source, /smoothstep\(-aa, 0\.0, share - peak\)/);
   assert.equal(
     (source.match(/fwidth\(/g) || []).length,
     2,
     'la largeur du trait, en x et en z, et rien d’autre'
   );
-  assert.ok(
-    !/dFdx|dFdy/.test(source),
-    'aucune dérivée à la main : le relief tiré du grain ne revient pas'
-  );
+  // La seule dérivée d'écran restante est la normale plate du grain low poly
+  // (`dFdx`/`dFdy` sur la position déjà bosselée) : une par appel, dans
+  // `<normal_fragment_begin>`.
+  assert.match(source, /cross\(dFdx\(vScenePos\), dFdy\(vScenePos\)\)/);
 
   assert.ok(
     !/waterShareAt|coverIdAt/.test(source),
@@ -12363,11 +12445,11 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   assert.ok(!/uGrassMap|uSoilMap|uWoodMap/.test(source), 'les textures de matière');
   assert.ok(!/uDetailMap|uDetailScale/.test(source), 'le bruit de détail');
   assert.ok(!/uGrainContrast|uGrainRelief|grainHeight/.test(source), 'le grain et son relief');
-  // L'interdit porte sur la dérivée **à la main**, celle qui inventait une
-  // normale depuis un grain et faisait fourmiller le sol. La largeur du trait
-  // d'une lisière (`fwidth`, dans surfaceAt) n'en est pas : elle ne touche pas
-  // la normale, et le champ sous elle est lisse et fixe dans le monde.
-  assert.ok(!/dFdx|dFdy/.test(source), 'plus aucune dérivée à la main');
+  // L'interdit portait sur la dérivée à la main tirée d'un grain de
+  // **texture**, sans relevé d'altitude. Le grain low poly (`lowPolyGrain.js`)
+  // en déplace un pour de vrai : sa normale plate, reprise par `dFdx`/`dFdy`
+  // sur la position déjà bosselée, est légitime et n'en est pas une seconde.
+  assert.match(source, /cross\(dFdx\(vScenePos\), dFdy\(vScenePos\)\)/);
   for (const key of ['grainScaleM', 'grainPixels', 'grainContrast', 'grainRelief']) {
     assert.equal(defaultTheme.terrain[key], undefined, `${key} n'a plus d'objet`);
   }
@@ -12510,6 +12592,76 @@ test('la variation macro du sol dépend de la matière : amplitude et plancher d
   );
   assert.ok(nearHeath > 0, 'la lande garde du marbrage à portée d’observation');
   assert.equal(nearScree, 0, 'l’éboulis, sans plancher, reste éteint à la même distance');
+});
+
+test('le grain low poly du sol dépend de la matière au pied du sommet', () => {
+  const previousCanvas = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      Object.assign(this, { width, height });
+    }
+    getContext() {
+      return paintingCanvasContext();
+    }
+  };
+
+  let factory;
+  try {
+    factory = new TerrainMaterialFactory({ THREE: terrainThreeStub() });
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+  }
+
+  const shader = {
+    uniforms: {},
+    vertexShader: ['#include <common>', '#include <begin_vertex>'].join('\n'),
+    fragmentShader: [
+      '#include <common>',
+      '#include <map_fragment>',
+      '#include <normal_fragment_begin>',
+    ].join('\n'),
+  };
+  factory.material.onBeforeCompile(shader);
+  const source = shader.vertexShader;
+
+  // Une ligne par matière, dans le même ordre que les autres tables ; une
+  // matière absente de `SURFACE_LOOK` reprend le réglage de repli.
+  assert.equal(shader.uniforms.uSurfaceGrainCell.value.length, SURFACE_KINDS.length);
+  assert.equal(shader.uniforms.uSurfaceGrainAmplitude.value.length, SURFACE_KINDS.length);
+  for (const kind of SURFACE_KINDS) {
+    const i = SURFACE_KINDS.indexOf(kind);
+    assert.equal(
+      shader.uniforms.uSurfaceGrainCell.value[i],
+      defaultTheme.surfaces[kind]?.grainCellM ?? LOW_POLY_GRAIN_DEFAULTS.cellM
+    );
+    assert.equal(
+      shader.uniforms.uSurfaceGrainAmplitude.value[i],
+      defaultTheme.surfaces[kind]?.grainAmplitudeM ?? LOW_POLY_GRAIN_DEFAULTS.amplitudeM
+    );
+  }
+  // Une matière déclarée diverge bien du réglage de repli — sinon la table
+  // ne ferait rien.
+  assert.notEqual(defaultTheme.surfaces.heath.grainCellM, LOW_POLY_GRAIN_DEFAULTS.cellM);
+  assert.notEqual(defaultTheme.surfaces.alpine.grainCellM, defaultTheme.surfaces.heath.grainCellM);
+  // Une matière non listée (l'eau, le trottoir, l'herbe…) n'a pas été
+  // touchée : elle garde le réglage de repli, comme avant le branchement.
+  for (const kind of ['grass', 'settled', 'farmland', 'wood', 'pavement', 'water']) {
+    assert.equal(defaultTheme.surfaces[kind]?.grainCellM, undefined, `${kind} ne déclare pas de grain`);
+  }
+
+  // La position au sol est relue au texel le plus proche — un identifiant,
+  // jamais une part lissée — pour choisir la cellule et l'amplitude, comme
+  // `surfaceIdAt` le fait côté fragment pour l'albédo.
+  assert.match(source, /float grainSurfaceIdAt\(vec2 uv\)/);
+  assert.match(source, /grainId = grainSurfaceIdAt\(grainUv\)/);
+  // Hors carte ou hors carreau, la matière de repli — jamais un réglage
+  // neutre à part.
+  assert.match(source, /float grainId = uUnclassified;/);
+  assert.match(
+    source,
+    /transformed\.y \+= lowPolyBump\(grainPos\.xz, grainCellM, grainAmplitudeM\) \* grainFade;/
+  );
 });
 
 test('la lame d’eau d’une culture : le riz en porte une, les autres aucune', () => {

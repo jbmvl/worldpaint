@@ -4,6 +4,7 @@
 | --- | --- |
 | `terrainBubble.js` | la bulle de terrain : maillage, anneaux, déblai de la chaussée |
 | `terrainMaterial.js` | le shader du sol — il lit la carte des matières |
+| `lowPolyGrain.js` | le grain low poly géométrique du sol (bruit, fondu de distance) — câblé par matière dans `terrainMaterial.js`, réglages dans `SURFACE_LOOK` |
 | `roadCut.js` | l'entaille du terrain sous une chaussée |
 | `groundClassMap.js` | la carte des matières et des cultures, rasterisée pour toute la scène |
 | `surfaceClassification.js` | ce qu'une entité de tuile **dit** du sol |

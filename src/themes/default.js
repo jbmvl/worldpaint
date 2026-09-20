@@ -694,6 +694,12 @@ export const STONE_LOOK = {
  *   qu'une tourbière ; `macroNear` : plancher de sa rampe de distance, défaut
  *   0 (la variation ne monte qu'avec l'éloignement). Sans lui, l'amplitude est
  *   quasi nulle à cent mètres.
+ * - `grainCellM`, `grainAmplitudeM` : taille et hauteur du grain low poly du
+ *   sol (`terrain/lowPolyGrain.js`), en mètres. Absents, la matière prend le
+ *   réglage de repli (`LOW_POLY_GRAIN_DEFAULTS`, taillé pour une paroi
+ *   rocheuse) — c'est le cas de tout ce qui n'est pas listé ici. L'herbe qui
+ *   pousse dessus (`groundCover.js`) lit la même paire, pour ne pas flotter
+ *   au-dessus du sol qu'elle recouvre.
  *
  * Un champ absent vaut le neutre : la table ne décrit que les écarts. Une
  * matière peinte de la bonne couleur mais couverte d'une prairie de quatre-
@@ -732,6 +738,9 @@ export const SURFACE_LOOK = {
     // d'observation, pas seulement à l'horizon.
     macro: 2,
     macroNear: 0.35,
+    // Petites touffes de bruyère serrées, pas les vagues d'une paroi.
+    grainCellM: 1.4,
+    grainAmplitudeM: 0.18,
   },
   // Maquis et garrigue : olive poussiéreux, jamais le vert d'un pré. Peu
   // d'herbe, beaucoup d'arbustes — l'inverse exact d'une prairie.
@@ -749,6 +758,9 @@ export const SURFACE_LOOK = {
     bush: 'thornyScrub',
     macro: 1.8,
     macroNear: 0.35,
+    // Touffes un peu plus larges que la lande, buissons épineux compris.
+    grainCellM: 1.8,
+    grainAmplitudeM: 0.24,
   },
   // Marais, tourbière, roselière : le vert le plus profond du décor, la seule
   // couverture plus haute qu'une prairie, et de l'eau entre les touffes.
@@ -763,6 +775,9 @@ export const SURFACE_LOOK = {
     grassTint: [0.86, 1.04, 0.82],
     bushes: 0.08,
     standingWater: 0.3,
+    // Touffes de jonc, sur la part qui n'est pas déjà de l'eau.
+    grainCellM: 1.6,
+    grainAmplitudeM: 0.16,
   },
   // Pré salé : salicorne et obione, gris-vert, ras. Les chenaux de marée y
   // laissent de l'eau.
@@ -776,6 +791,9 @@ export const SURFACE_LOOK = {
     grassTint: [0.96, 0.98, 0.86],
     bushes: 0.12,
     standingWater: 0.15,
+    // Salicorne et obione, rases : un grain discret.
+    grainCellM: 1.5,
+    grainAmplitudeM: 0.14,
   },
   // Pelouse d'altitude et toundra : vert jaune, rase et continue.
   alpine: {
@@ -786,6 +804,10 @@ export const SURFACE_LOOK = {
     grassDensity: 0.9,
     grassTint: [0.94, 1.02, 0.78],
     bushes: 0.04,
+    // Les colinettes d'un pré alpin : une échelle bien plus large que le
+    // grain d'une lande, avec une amplitude qui reste modérée.
+    grainCellM: 9,
+    grainAmplitudeM: 0.6,
   },
 
   // --- Le minéral -----------------------------------------------------------
@@ -801,9 +823,12 @@ export const SURFACE_LOOK = {
     standingWater: 0.35,
     macro: 1.6,
     macroNear: 0.35,
+    // Vasière : quasi plane, juste assez de grain pour ne pas être un billard.
+    grainCellM: 3.5,
+    grainAmplitudeM: 0.08,
   },
   // Sol nu industriel ou en friche : terreux, plus saturé qu'un simple gris.
-  bare: { albedo: [0.25, 0.21, 0.14], wash: 'bare' },
+  bare: { albedo: [0.25, 0.21, 0.14], wash: 'bare', grainCellM: 3, grainAmplitudeM: 0.12 },
   // L'éboulis et la dalle sont deux paysages : une pente de cailloux qui bouge,
   // un plateau de pierre. Les confondre était le défaut du gris unique.
   scree: {
@@ -815,6 +840,9 @@ export const SURFACE_LOOK = {
     grassTint: [1, 0.96, 0.88],
     bushes: 0,
     macro: 2.2,
+    // Un jumelage de blocs, cellule courte et amplitude marquée.
+    grainCellM: 2.2,
+    grainAmplitudeM: 0.35,
   },
   rock: {
     albedo: [0.371, 0.332, 0.27],
@@ -824,9 +852,20 @@ export const SURFACE_LOOK = {
     grassDensity: 0.1,
     grassTint: [1, 0.96, 0.88],
     bushes: 0.02,
+    // La dalle : des blocs plus larges que l'éboulis, moins chaotiques.
+    grainCellM: 4.5,
+    grainAmplitudeM: 0.3,
   },
   // Glacier et névé : blanc bleuté, et rien n'y pousse.
-  ice: { albedo: [0.6, 0.66, 0.72], wash: null, grassDensity: 0, bushes: 0 },
+  ice: {
+    albedo: [0.6, 0.66, 0.72],
+    wash: null,
+    grassDensity: 0,
+    bushes: 0,
+    // Un léger modelé, pas le poli d'un billard.
+    grainCellM: 6,
+    grainAmplitudeM: 0.12,
+  },
   sand: {
     albedo: [0.624, 0.539, 0.361],
 
@@ -837,6 +876,9 @@ export const SURFACE_LOOK = {
     bushes: 0.05,
     // L'oyat d'une dune, jamais le buisson d'une lande ou d'un maquis.
     bush: 'marram',
+    // L'ondulation d'une dune : grande échelle, amplitude franche.
+    grainCellM: 5,
+    grainAmplitudeM: 0.35,
   },
 
   // --- Les deux matières à part ---------------------------------------------
