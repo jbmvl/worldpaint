@@ -12130,7 +12130,15 @@ test('les limites de surfaces : la frange, les matières interpolées et la rive
     2,
     'deux dérivées, celles de la facette, et rien d’autre'
   );
-  assert.match(shader.vertexShader, /transformed\.y \+= lowPolyBump\(/, 'la bosse est géométrique');
+  assert.match(
+    shader.vertexShader,
+    /transformed \+= grainAxis \* lowPolyBump\(/,
+    'la bosse est géométrique, et pousse le long de la normale'
+  );
+  // La pente impose la roche là où la carte du sol ne le peut pas : elle est
+  // plane, et une paroi verticale n'y occupe qu'un liseré de texels.
+  assert.match(shader.vertexShader, /vSteep = smoothstep\(uSlopeRange/, 'la pente choisit la roche');
+  assert.match(source, /base = mix\(base, uRockAlbedo, rock\)/, 'la paroi prend la matière roche');
 
   assert.ok(
     !/waterShareAt|coverIdAt/.test(source),

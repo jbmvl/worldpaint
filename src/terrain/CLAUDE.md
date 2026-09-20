@@ -39,6 +39,13 @@ Deux pièges :
   dérivées d'écran. Une roche rugueuse se règle donc par son entrée `grain`
   dans le thème, jamais par un relief inventé au fragment — celui-là avait été
   retiré parce qu'un relief sans relevé d'altitude fourmille avec l'observateur.
+- **la carte des matières est plane, et ne peut rien dire d'une paroi
+  verticale.** Un texel fait 2,67 m ; une falaise de quarante mètres n'occupe
+  que trois mètres d'emprise au sol, soit un liseré que la cubique du contour
+  noie dans ce qui l'entoure — et toute la hauteur de la paroi se texture
+  depuis ce liseré, donc s'étire. Ce qu'une surface raide doit porter se décide
+  par la **pente** (`slopeStart`, `slopeEnd` dans le thème), qui la décrit
+  exactement : c'est par là qu'arrivent la teinte de roche et son grain.
 
 ## Ce qui déforme le relief lu
 

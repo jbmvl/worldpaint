@@ -9,6 +9,14 @@
  * Cellule et amplitude viennent du thème, une entrée `grain` par matière de
  * `SURFACE_KINDS` ; une matière sans entrée reste à zéro, donc lisse.
  *
+ * Une **forte pente** impose en plus le grain de la roche, quelle que soit la
+ * matière lue. Ce n'est pas un raccourci : la carte du sol est plane, et une
+ * paroi verticale n'y occupe qu'un liseré de quelques texels que la cubique du
+ * contour noie dans ce qui l'entoure — la matière s'y étire en hauteur au lieu
+ * de s'y appliquer. La pente, elle, décrit la paroi exactement. L'intervalle
+ * est celui de la teinte de roche du fragment (`slopeStart`, `slopeEnd`), pour
+ * que la couleur et le relief arrivent ensemble.
+ *
  * La normale plate ne vaut **que là où l'amplitude est non nulle** (varying
  * `vGrain`). Ailleurs, la position n'ayant pas bougé, les dérivées d'écran ne
  * rendraient que le facettage de la maille du terrain, et c'est la normale
@@ -43,8 +51,14 @@ float lowPolyNoise(vec2 p) {
   return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
 }
 
-float lowPolyBump(vec3 posLocal, float cellM, float amplitudeM) {
+float lowPolyBump(vec3 posLocal, vec3 normal, float cellM, float amplitudeM) {
   if (cellM <= 0.0 || amplitudeM <= 0.0) return 0.0;
-  return (lowPolyNoise(posLocal.xz / cellM) - 0.5) * 2.0 * amplitudeM;
+  vec3 axis = abs(normal);
+  // Le plan qui fait face a la normale : xz au sol, zy sur une paroi
+  // orientee est-ouest, xy sur une paroi orientee nord-sud.
+  vec2 uv = axis.y >= max(axis.x, axis.z)
+    ? posLocal.xz
+    : (axis.x >= axis.z ? posLocal.zy : posLocal.xy);
+  return (lowPolyNoise(uv / cellM) - 0.5) * 2.0 * amplitudeM;
 }
 `;

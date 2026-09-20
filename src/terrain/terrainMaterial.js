@@ -311,6 +311,23 @@ export class TerrainMaterialFactory {
       uGrainCell: {
         value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.grain?.cellM ?? 0),
       },
+      /**
+       * La roche des fortes pentes. Une carte du sol est **plane** : une paroi
+       * verticale n'y occupe qu'un liseré de quelques texels, que la cubique
+       * du contour noie dans ce qui l'entoure, et la matière lue s'y étire en
+       * hauteur. La pente, elle, décrit la paroi exactement — c'est déjà par
+       * elle que la teinte de roche arrive (`uSlopeRange`), et le grain la
+       * suit.
+       */
+      uRockGrain: {
+        value: new THREE.Vector2(
+          this.surfaces.rock?.grain?.cellM ?? 0,
+          this.surfaces.rock?.grain?.amplitudeM ?? 0
+        ),
+      },
+      uRockAlbedo: {
+        value: new THREE.Vector3(...(this.surfaces.rock?.albedo || [0.371, 0.332, 0.27])),
+      },
       uGrainAmplitude: {
         value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.grain?.amplitudeM ?? 0),
       },
@@ -329,12 +346,15 @@ export class TerrainMaterialFactory {
            varying vec3 vScenePos;
            varying vec3 vSceneNormal;
            varying float vGrain;
+           varying float vSteep;
            uniform sampler2D uSurfaceMap;
            uniform vec2 uSurfaceOrigin;
            uniform float uSurfaceSize;
            uniform float uSurfaceEnabled;
            uniform float uGrainCell[${SURFACE_KINDS.length}];
            uniform float uGrainAmplitude[${SURFACE_KINDS.length}];
+           uniform vec2 uSlopeRange;
+           uniform vec2 uRockGrain;
            ${LOW_POLY_GRAIN_GLSL}`
         )
         .replace(
@@ -358,11 +378,24 @@ export class TerrainMaterialFactory {
                }
              }
            }
-           transformed.y += lowPolyBump(transformed, grainCell, grainAmplitude);
+           // Une paroi est de la roche, quoi qu'en dise la carte : la pente
+           // la décrit là où la carte plane ne le peut pas. Même intervalle
+           // que la teinte de roche du fragment, pour que la couleur et le
+           // relief arrivent ensemble.
+           vec3 grainNormal = normalize(mat3(modelMatrix) * objectNormal);
+           vSteep = smoothstep(uSlopeRange.x, uSlopeRange.y, 1.0 - clamp(grainNormal.y, 0.0, 1.0));
+           grainCell = mix(grainCell, uRockGrain.x, vSteep);
+           grainAmplitude = mix(grainAmplitude, uRockGrain.y, vSteep);
+
+           // Pas d'accent grave ici : literal de gabarit. Le plan du bruit se
+           // choisit dans le repere de la position locale, la pente dans celui
+           // de la scene : deux normales, deux reperes.
+           vec3 grainAxis = normalize(objectNormal);
+           transformed += grainAxis * lowPolyBump(transformed, grainAxis, grainCell, grainAmplitude);
            vGrain = grainAmplitude;
 
            vScenePos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-           vSceneNormal = normalize(mat3(modelMatrix) * objectNormal);`
+           vSceneNormal = grainNormal;`
         );
 
       shader.fragmentShader = shader.fragmentShader
@@ -372,6 +405,7 @@ export class TerrainMaterialFactory {
            varying vec3 vScenePos;
            varying vec3 vSceneNormal;
            varying float vGrain;
+           varying float vSteep;
            uniform vec2 uDetailRange;
            uniform sampler2D uMacroMap;
            uniform vec3 uMacro;
@@ -662,8 +696,14 @@ export class TerrainMaterialFactory {
              // Pas d'accent grave dans ce bloc : litteral de gabarit.
              vec3 base = albedo * modulation;
 
-             float slope = 1.0 - clamp(vSceneNormal.y, 0.0, 1.0);
-             float rock = smoothstep(uSlopeRange.x, uSlopeRange.y, slope) * uRockStrength * (1.0 - gWater);
+             // La roche des fortes pentes, en deux temps. D'abord la matière
+             // elle-meme : multiplier une herbe par un gris ne donne pas de la
+             // roche, ca donne une herbe sombre — et c'est ce qu'on lisait sur
+             // une paroi, la carte plane n'ayant pu y poser que de l'herbe
+             // etiree. La pente, elle, decrit la paroi.
+             float rock = vSteep * uRockStrength * (1.0 - gWater);
+             base = mix(base, uRockAlbedo, rock);
+             // Puis la teinte, qui module ce que la matiere a donne.
              base = mix(base, base * uRockColor, rock);
 
              // Pluie : le sol se mouille. Sans objet sur l'eau elle-même.
@@ -748,7 +788,7 @@ export class TerrainMaterialFactory {
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v14';
+    material.customProgramCacheKey = () => 'terrain-bubble-v16';
     return material;
   }
 
