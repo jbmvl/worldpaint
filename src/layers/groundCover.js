@@ -554,7 +554,8 @@ export class GroundCover {
       coverage: true,
       coverageRange: GRASS_COVERAGE_RANGE,
       coverageGain: GRASS_COVERAGE_GAIN,
-      cacheKey: 'foliage-grass-cover-v4',
+      groundLowPoly: true,
+      cacheKey: 'foliage-grass-cover-v5-lowpoly',
     });
 
     this.mesh = new THREE.InstancedMesh(this.geometry, this.material, count);

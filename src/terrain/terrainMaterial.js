@@ -89,6 +89,28 @@
  *
  * Greffé sur `MeshLambertMaterial` via `onBeforeCompile` plutôt qu'écrit en
  * shader complet, pour garder l'éclairage/brouillard/tone mapping de three.
+ *
+ * ## Le grain low poly, lui, déforme le sommet
+ *
+ * Ce que la section précédente écarte est un grain **de texture** — un
+ * relief lu dans une image, sans échelle verticale propre. `lowPolyGrain.js`
+ * est autre chose : un déplacement du sommet du maillage, en mètres réels, et
+ * une normale reprise sur cette position déformée. Éteint avec la distance
+ * (`uGrainFadeM`) là où la maille n'est plus assez fine pour le porter — voir
+ * `lowPolyGrain.js` pour le détail.
+ *
+ * Cellule et amplitude viennent de la matière au pied du sommet
+ * (`grainCellM`/`grainAmplitudeM` de `SURFACE_LOOK`) : une lande porte de
+ * petites touffes, un pré alpin des colinettes bien plus larges, un éboulis
+ * un jumelage de blocs — une matière qui ne les déclare pas reprend le
+ * réglage de repli (`LOW_POLY_GRAIN_DEFAULTS`). L'identifiant est relu au
+ * texel le plus proche, sans le lissage de `surfaceAt` : c'est un
+ * déplacement géométrique, pas un contour, une marche à la limite de deux
+ * matières n'y a pas besoin d'être adoucie. L'herbe (`groundCover.js`) lit la
+ * même paire par instance, à l'endroit où elle pousse ; les cultures
+ * (`cropLayer.js`) et le mobilier n'existent que sur des matières non
+ * branchées ici et suivent le réglage de repli. Les arbres n'en tiennent pas
+ * compte.
  */
 
 import { createMacroCanvas } from '../materials/proceduralTextures.js';
@@ -107,6 +129,7 @@ import { pavementTone } from '../layers/townStyle.js';
 import { createWaterNormalCanvas } from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
 import { soilWashFor, surfaceForMatrix, stoneTintFor } from '../core/regionInterpretation.js';
+import { LOW_POLY_GRAIN_GLSL, LOW_POLY_GRAIN_DEFAULTS } from './lowPolyGrain.js';
 
 /** Couleur d'une matière qu'un thème ne décrit pas : un gris de terre neutre. */
 const FALLBACK_ALBEDO = [0.18, 0.17, 0.15];
@@ -302,6 +325,18 @@ export class TerrainMaterialFactory {
       uSurfaceMacroNear: {
         value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.macroNear ?? 0),
       },
+      // Grain low poly par matière (`lowPolyGrain.js`) : une matière que
+      // `SURFACE_LOOK` ne couvre pas reprend le réglage de repli.
+      uSurfaceGrainCell: {
+        value: SURFACE_KINDS.map(
+          (kind) => this.surfaces[kind]?.grainCellM ?? LOW_POLY_GRAIN_DEFAULTS.cellM
+        ),
+      },
+      uSurfaceGrainAmplitude: {
+        value: SURFACE_KINDS.map(
+          (kind) => this.surfaces[kind]?.grainAmplitudeM ?? LOW_POLY_GRAIN_DEFAULTS.amplitudeM
+        ),
+      },
       uPoolScale: { value: look.poolScaleM },
       // Matière retenue là où la donnée se tait.
       uUnclassified: { value: Math.max(0, SURFACE_KINDS.indexOf(look.unclassified)) + 1 },
@@ -338,6 +373,17 @@ export class TerrainMaterialFactory {
       uRockStrength: { value: look.rockStrength },
       /** Sol mouillé, de 0 à 1. Piloté par la météo, jamais par le thème. */
       uWetness: { value: 0 },
+      // Grain low poly géométrique (`lowPolyGrain.js`) : un seul réglage pour
+      // tout le sol, pas encore par matière. `foliageMaterial.js` lit les
+      // mêmes valeurs par défaut pour que l'herbe et les cultures suivent.
+      uGrainCellM: { value: LOW_POLY_GRAIN_DEFAULTS.cellM },
+      uGrainAmplitudeM: { value: LOW_POLY_GRAIN_DEFAULTS.amplitudeM },
+      uGrainFadeM: {
+        value: new THREE.Vector2(
+          LOW_POLY_GRAIN_DEFAULTS.fadeStartM,
+          LOW_POLY_GRAIN_DEFAULTS.fadeEndM
+        ),
+      },
     };
     this._uniforms = uniforms;
 
@@ -349,11 +395,63 @@ export class TerrainMaterialFactory {
           '#include <common>',
           `#include <common>
            varying vec3 vScenePos;
-           varying vec3 vSceneNormal;`
+           varying vec3 vSceneNormal;
+           uniform float uGrainCellM;
+           uniform float uGrainAmplitudeM;
+           uniform vec2 uGrainFadeM;
+           uniform sampler2D uSurfaceMap;
+           uniform vec2 uSurfaceOrigin;
+           uniform float uSurfaceSize;
+           uniform float uSurfaceEnabled;
+           uniform float uUnclassified;
+           uniform float uSurfaceGrainCell[${SURFACE_KINDS.length}];
+           uniform float uSurfaceGrainAmplitude[${SURFACE_KINDS.length}];
+           ${LOW_POLY_GRAIN_GLSL}
+
+           /* Identifiant de matière au texel le plus proche — pas de lissage :
+            * le grain est un déplacement géométrique, pas un contour, une
+            * marche d'un texel à la limite de deux matières ne s'y voit pas
+            * comme elle le ferait sur un aplat de couleur. */
+           float grainSurfaceIdAt(vec2 uv) {
+             vec2 texel = floor(uv * ${CLASS_PIXELS}.0);
+             float id = floor(
+               texture2D(uSurfaceMap, (texel + 0.5) / ${CLASS_PIXELS}.0).r * 255.0
+                 / ${SURFACE_ID_STEP}.0 + 0.5
+             );
+             return id < 0.5 ? uUnclassified : id;
+           }`
         )
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
+           {
+             // Grain low poly : bosselé avant de fixer vScenePos, pour que le
+             // reste du shader (contour, pente, dérivées de normale) lise
+             // directement la position déjà déformée.
+             vec3 grainPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+             float grainFade = lowPolyFade(grainPos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y);
+
+             // La cellule et l'amplitude viennent de la matière au pied du
+             // sommet, comme l'albédo — hors carte ou hors carreau, celle du
+             // repli (uUnclassified), jamais un réglage neutre à part.
+             float grainId = uUnclassified;
+             if (uSurfaceEnabled > 0.5) {
+               vec2 grainUv = (grainPos.xz - uSurfaceOrigin) / uSurfaceSize;
+               if (grainUv.x > 0.0 && grainUv.x < 1.0 && grainUv.y > 0.0 && grainUv.y < 1.0) {
+                 grainId = grainSurfaceIdAt(grainUv);
+               }
+             }
+             float grainCellM = uGrainCellM;
+             float grainAmplitudeM = uGrainAmplitudeM;
+             for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
+               if (float(i) == grainId) {
+                 grainCellM = uSurfaceGrainCell[i - 1];
+                 grainAmplitudeM = uSurfaceGrainAmplitude[i - 1];
+               }
+             }
+
+             transformed.y += lowPolyBump(grainPos.xz, grainCellM, grainAmplitudeM) * grainFade;
+           }
            vScenePos = (modelMatrix * vec4(transformed, 1.0)).xyz;
            vSceneNormal = normalize(mat3(modelMatrix) * objectNormal);`
         );
@@ -390,6 +488,10 @@ export class TerrainMaterialFactory {
            uniform vec2 uWaterRipple;
            uniform vec2 uWaterFlow;
            uniform float uShoreWet;
+           uniform float uGrainCellM;
+           uniform float uGrainAmplitudeM;
+           uniform vec2 uGrainFadeM;
+           ${LOW_POLY_GRAIN_GLSL}
 
            /*
             * Sol mouillé : le film d'eau assombrit et sature (réflexions
@@ -728,22 +830,17 @@ export class TerrainMaterialFactory {
           '#include <normal_fragment_begin>',
           `#include <normal_fragment_begin>
            {
-             // Le sol est lisse : il n'a plus de normale a perturber.
-             //
-             // Il y avait ici un relief tire du grain par derivees d'ecran
-             // (Mikkelsen, « Bump Mapping Unparametrized Surfaces on the
-             // GPU »). Il est parti avec le grain lui-meme : un relief sans
-             // releve d'altitude n'a pas d'echelle verticale propre, et ce
-             // qu'il rendait n'etait pas la lumiere accrochant un caillou mais
-             // un fourmillement qui suivait l'observateur. Ce qui doit
-             // accrocher la lumiere est un objet de la scene.
-             //
-             // Reste la ride de l'eau, qui est d'une autre nature : elle a une
-             // periode et une vitesse, et c'est le seul moyen de faire lire une
-             // nappe comme de l'eau sans reflexion d'environnement. Deux
-             // relevés a des vitesses inegales — un seul se lirait comme une
-             // image qui glisse.
-             vec3 worldNormal = normalize(vSceneNormal);
+             // Grain low poly : normale plate tiree des derivees d'ecran de
+             // la position deja bosselee (voir <begin_vertex>), melangee a la
+             // normale analytique lissee par le meme fondu de distance que la
+             // bosse elle-meme — au-dela de uGrainFadeM.y la bosse est nulle
+             // et cette normale doit l'etre aussi, sans quoi le sol lointain
+             // resterait facette sur la seule triangulation grossiere de la
+             // maille.
+             float grainFade = lowPolyFade(vScenePos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y);
+             vec3 flatNormal = normalize(cross(dFdx(vScenePos), dFdy(vScenePos)));
+             if (dot(flatNormal, vSceneNormal) < 0.0) flatNormal = -flatNormal;
+             vec3 worldNormal = normalize(mix(vSceneNormal, flatNormal, grainFade));
              vec3 a = texture2D(uWaterRipples, vScenePos.xz / uWaterRipple.x + uWaterFlow).xyz * 2.0 - 1.0;
              vec3 b = texture2D(uWaterRipples, vScenePos.zx / (uWaterRipple.x * 0.6) - uWaterFlow * 1.7).xyz * 2.0 - 1.0;
              vec3 wavy = normalize(worldNormal + vec3(a.x + b.x, 0.0, a.z + b.z) * uWaterRipple.y);
@@ -754,7 +851,7 @@ export class TerrainMaterialFactory {
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v14';
+    material.customProgramCacheKey = () => 'terrain-bubble-v17-lowpoly-grain-par-matiere';
     return material;
   }
 
