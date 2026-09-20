@@ -12644,9 +12644,17 @@ test('le grain low poly du sol dépend de la matière au pied du sommet', () => 
   // ne ferait rien.
   assert.notEqual(defaultTheme.surfaces.heath.grainCellM, LOW_POLY_GRAIN_DEFAULTS.cellM);
   assert.notEqual(defaultTheme.surfaces.alpine.grainCellM, defaultTheme.surfaces.heath.grainCellM);
+  // La litière d'un bois n'est pas plane, mais le désordre y est de détail :
+  // une cellule courte, une amplitude bien plus faible que celle du pré
+  // alpin (des racines et des monticules, pas des colinettes).
+  assert.notEqual(defaultTheme.surfaces.wood.grainCellM, LOW_POLY_GRAIN_DEFAULTS.cellM);
+  assert.ok(
+    defaultTheme.surfaces.wood.grainAmplitudeM < defaultTheme.surfaces.alpine.grainAmplitudeM,
+    'un désordre de détail, pas un modelé de colinettes'
+  );
   // Une matière non listée (l'eau, le trottoir, l'herbe…) n'a pas été
   // touchée : elle garde le réglage de repli, comme avant le branchement.
-  for (const kind of ['grass', 'settled', 'farmland', 'wood', 'pavement', 'water']) {
+  for (const kind of ['grass', 'settled', 'farmland', 'pavement', 'water']) {
     assert.equal(defaultTheme.surfaces[kind]?.grainCellM, undefined, `${kind} ne déclare pas de grain`);
   }
 

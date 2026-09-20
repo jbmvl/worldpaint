@@ -711,7 +711,15 @@ export const SURFACE_LOOK = {
   // Un sol de forêt est une litière, pas un pré : brune, jamais verte — c'est
   // ce qui la distingue d'une prairie à l'ombre. Le pays ne le lave pas — une
   // hêtraie se ressemble d'un bout à l'autre.
-  wood: { albedo: [0.099, 0.062, 0.01], wash: null },
+  wood: {
+    albedo: [0.099, 0.062, 0.01],
+    wash: null,
+    // Racines, souches, monticules de feuilles : un sol de forêt n'est jamais
+    // plan. Cellule courte, amplitude modeste — c'est un désordre de détail,
+    // pas le modelé d'un pré alpin.
+    grainCellM: 2,
+    grainAmplitudeM: 0.22,
+  },
   farmland: { albedo: [0.431, 0.331, 0.08], wash: 'farmland' },
   // Lotissement : pelouses tondues et allées, plus claires et plus franchement
   // vertes qu'une prairie de rase campagne — l'entretien, pas l'herbe elle-même.
