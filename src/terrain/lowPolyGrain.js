@@ -1,65 +1,94 @@
 /*
- * lowPolyGrain — la fonction seule d'un essai de grain low poly géométrique
- * pour le sol : un bruit de valeur qui bosselle la position, une normale
- * reprise par dérivées d'écran pour lire des facettes plutôt qu'un dégradé
- * lissé. Voir la branche d'essai pour le rendu constaté.
+ * lowPolyGrain — grain low poly géométrique du sol : un bruit sur réseau
+ * triangulaire bosselle la position, une normale reprise par dérivées d'écran
+ * fait lire des facettes plutôt qu'un dégradé lissé.
  *
- * **Non câblé.** Rien dans `worldComposer` ni `terrainMaterial` n'importe ce
- * fichier : c'est la fonction à brancher, pas une couche qui tourne. La
- * brancher pose deux questions que ce fichier ne tranche pas :
- *
- * - **où lire la matière.** `terrainMaterial.js` ne connaît la matière du sol
- *   (`uSurfaceMap`) qu'au fragment, par une cubique de Catmull-Rom coûteuse.
- *   Le grain, lui, doit être choisi **au sommet**, avant de bosseler la
- *   position — une lecture au texel le plus proche suffit, la cubique ne sert
- *   qu'au tracé du contour.
- * - **où vivent cellule et amplitude.** Ce sont des réglages artistiques :
- *   par la règle du projet, ils vont dans le thème (`themes/default.js`, une
- *   entrée par `SURFACE_KINDS`, avec un repli neutre), jamais en dur dans le
- *   shader. Ce fichier n'expose qu'une fonction à deux paramètres ; la table
- *   qui les fournit par matière reste à écrire côté appelant.
- *
- * Un essai relevé sur le terrain a donné les ordres de grandeur suivants (à
- * affiner à l'œil, pas à prendre pour acquis) :
- *
- * | Matière       | cellM   | amplitudeM |
- * |---------------|---------|------------|
- * | roche, éboulis | ~6      | ~1.4       |
- * | lande, herbe basse | ~1.5 | ~0.2      |
- *
- * Une cellule large et une amplitude forte se lisent comme une ondulation
- * (des « collines », pas des facettes) : c'est le bon réglage pour une paroi
- * rocheuse, pas pour un sol bas.
+ * **Câblé dans `terrainMaterial.js`** (tout le sol, un seul réglage) et dans
+ * `foliageMaterial.js` côté herbe/cultures (`groundLowPoly`), pour que ce qui
+ * pousse suive la bosse plutôt que de flotter sur l'ancien plan. Les deux
+ * lisent les **mêmes constantes** (`LOW_POLY_GRAIN_DEFAULTS`) : c'est ce qui
+ * les fait s'accorder, pas une coïncidence de réglage.
  *
  * Purement visuel : ça ne touche à aucune lecture d'altitude ailleurs dans le
- * moteur (routes, bâti, haies, `cliffCut`, placement). Un objet posé au niveau
- * naturel ne suit pas la bosse et peut sembler flotter ou s'enfoncer à son
- * pied — à vérifier au raccord une fois câblé.
+ * moteur (routes, bâti, haies, `cliffCut`, placement, mobilier ponctuel). Un
+ * point posé au niveau naturel et qui ne lit pas `LOW_POLY_GRAIN_GLSL`
+ * (aujourd'hui : tout `furnitureKit.js`, les arbres de `vegetationLayer.js`)
+ * ne suit pas la bosse et peut sembler flotter ou s'enfoncer à son pied.
+ *
+ * ## Le réseau est triangulaire, pas carré
+ *
+ * Un bruit de valeur sur grille carrée (bilinéaire ou lissé) se lit comme un
+ * pavage de losanges coupés en deux — la diagonale du carré reste visible
+ * quelle que soit la fonction de lissage, parce que les quatre coins d'une
+ * cellule sont mélangés deux triangles à la fois. Le réseau ici est skewé à
+ * la façon d'un bruit simplex (Gustavson) : chaque point n'est influencé que
+ * par les trois sommets du triangle qui le contient, avec un dégradé propre à
+ * chaque sommet (pas une valeur scalaire) — la diagonale du réseau ne se voit
+ * plus parce qu'il n'y a plus de carré à couper.
+ *
+ * ## Le fondu de distance
+ *
+ * La maille du terrain grossit par anneaux (`terrainBubble.segmentsForRing`) :
+ * au zoom 15, l'anneau central tient ~4-6 m entre sommets, le suivant ~9-13 m,
+ * au-delà ~18-25 m. Une cellule de quelques mètres n'a de sens que là où la
+ * maille est assez fine pour la porter ; plus loin, deux sommets voisins
+ * tombent dans des cellules de bruit non corrélées et la bosse tremble au
+ * lieu de se lire. `lowPolyFade` éteint donc l'amplitude avec la distance à
+ * la caméra, bien avant la frontière d'anneau la plus proche possible (un
+ * observateur peut être au bord de sa tuile).
  */
 
 /**
- * Fonctions GLSL du bruit et de la normale plate, à coller dans un shader.
+ * Réglages par défaut, partagés par tous les appelants. Cellule et amplitude
+ * en mètres, fondu en mètres (début, fin — l'amplitude est nulle au-delà).
  *
- * - `lowPolyNoise(vec2 p)` — bruit de valeur continu, C¹, dans `[0, 1]`.
- * - `lowPolyBump(vec3 posLocal, float cellM, float amplitudeM)` — décalage à
- *   ajouter à la composante verticale d'une position **locale** (avant
- *   `modelMatrix`), à partir de ses deux composantes horizontales.
+ * Ordres de grandeur relevés à l'essai sur une paroi rocheuse. Une lande ou
+ * une herbe basse demande une cellule et une amplitude bien plus petites
+ * (~1.5 m / ~0.2 m) : reste à brancher par matière (voir plus bas), pas
+ * encore fait — ce fichier n'expose aujourd'hui qu'un seul réglage global.
+ */
+export const LOW_POLY_GRAIN_DEFAULTS = {
+  cellM: 6.0,
+  amplitudeM: 1.4,
+  fadeStartM: 40.0,
+  fadeEndM: 90.0,
+};
+
+/**
+ * Fonctions GLSL du bruit, du fondu et de la normale plate, à coller dans un
+ * shader (`onBeforeCompile`).
  *
- * Usage type, dans `onBeforeCompile` :
+ * - `lowPolyNoise(vec2 p)` — bruit sur réseau triangulaire, dans `[-1, 1]`.
+ * - `lowPolyBump(vec2 xz, float cellM, float amplitudeM)` — décalage vertical
+ *   à partir d'une position au sol (mêmes unités que `vScenePos.xz`).
+ * - `lowPolyFade(vec3 worldPos, vec3 cameraPos, float startM, float endM)` —
+ *   1 près de la caméra, 0 au-delà de `endM`.
+ *
+ * Usage terrain, dans `onBeforeCompile` :
  *
  * ```glsl
  * // #include <begin_vertex>, avant de calculer vScenePos :
- * transformed.y += lowPolyBump(transformed, uGrainCellM, uGrainAmplitudeM);
+ * vec3 grainPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+ * float grainFade = lowPolyFade(grainPos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y);
+ * transformed.y += lowPolyBump(grainPos.xz, uGrainCellM, uGrainAmplitudeM) * grainFade;
+ * vScenePos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+ * vSceneNormal = normalize(mat3(modelMatrix) * objectNormal);
  *
  * // #include <normal_fragment_begin>, à la place de la normale analytique :
  * vec3 flatNormal = normalize(cross(dFdx(vScenePos), dFdy(vScenePos)));
  * if (dot(flatNormal, vSceneNormal) < 0.0) flatNormal = -flatNormal;
- * vec3 worldNormal = flatNormal;
+ * float grainFade = lowPolyFade(vScenePos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y);
+ * vec3 worldNormal = normalize(mix(vSceneNormal, flatNormal, grainFade));
  * ```
  *
- * `cellM` et `amplitudeM` à 0 désactive le grain (bruit non nul mais
- * multiplié par une amplitude nulle) : une matière sans entrée dans la table
- * du thème doit retomber sur ce cas, pas sur les valeurs de la roche.
+ * Usage d'un objet posé (herbe, culture) : lire `lowPolyBump` à l'ancrage au
+ * sol de l'instance (`instanceMatrix[3].xz`, jamais un sommet du panneau —
+ * sans quoi le pied et la pointe ne bougeraient pas ensemble), diviser par
+ * l'échelle verticale de l'instance avant de l'ajouter à `transformed.y` : le
+ * décalage vertical voulu est en mètres du monde, pas en unité du panneau, et
+ * l'instance le remet à l'échelle en le multipliant par sa propre hauteur.
+ *
+ * `cellM`/`amplitudeM` à 0 désactive le grain (repli neutre).
  */
 export const LOW_POLY_GRAIN_GLSL = `
 float lowPolyHash(vec2 p) {
@@ -68,19 +97,41 @@ float lowPolyHash(vec2 p) {
   return fract(p.x * p.y);
 }
 
-float lowPolyNoise(vec2 p) {
-  vec2 i = floor(p);
-  vec2 f = fract(p);
-  float a = lowPolyHash(i);
-  float b = lowPolyHash(i + vec2(1.0, 0.0));
-  float c = lowPolyHash(i + vec2(0.0, 1.0));
-  float d = lowPolyHash(i + vec2(1.0, 1.0));
-  vec2 u = f * f * (3.0 - 2.0 * f);
-  return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+// Dégradé unitaire du sommet du réseau, pas une valeur scalaire : c'est ce
+// qui évite le pavage carré d'un bruit de valeur (voir l'en-tête).
+vec2 lowPolyGrad(vec2 cell) {
+  float a = lowPolyHash(cell) * 6.28318530718;
+  return vec2(cos(a), sin(a));
 }
 
-float lowPolyBump(vec3 posLocal, float cellM, float amplitudeM) {
+// Bruit sur réseau triangulaire (construction simplex 2D) : le repère est
+// skewé pour que les cellules soient des triangles équilatéraux, et chaque
+// point ne lit que les trois sommets du triangle qui le contient.
+float lowPolyNoise(vec2 p) {
+  const float K1 = 0.366025404; // (sqrt(3) - 1) / 2
+  const float K2 = 0.211324865; // (3 - sqrt(3)) / 6
+
+  vec2 i = floor(p + (p.x + p.y) * K1);
+  vec2 a = p - i + (i.x + i.y) * K2;
+  vec2 o = a.x > a.y ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+  vec2 b = a - o + K2;
+  vec2 c = a - 1.0 + 2.0 * K2;
+
+  vec3 h = max(0.5 - vec3(dot(a, a), dot(b, b), dot(c, c)), 0.0);
+  vec3 n = h * h * h * h * vec3(
+    dot(a, lowPolyGrad(i)),
+    dot(b, lowPolyGrad(i + o)),
+    dot(c, lowPolyGrad(i + 1.0))
+  );
+  return clamp(dot(n, vec3(70.0)), -1.0, 1.0);
+}
+
+float lowPolyBump(vec2 xz, float cellM, float amplitudeM) {
   if (cellM <= 0.0 || amplitudeM <= 0.0) return 0.0;
-  return (lowPolyNoise(posLocal.xz / cellM) - 0.5) * 2.0 * amplitudeM;
+  return lowPolyNoise(xz / cellM) * amplitudeM;
+}
+
+float lowPolyFade(vec3 worldPos, vec3 cameraPos, float startM, float endM) {
+  return 1.0 - smoothstep(startM, endM, distance(worldPos, cameraPos));
 }
 `;

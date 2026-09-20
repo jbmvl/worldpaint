@@ -75,6 +75,17 @@
  *
  * Greffé sur `MeshLambertMaterial` via `onBeforeCompile` plutôt qu'écrit en
  * shader complet, pour garder l'éclairage/brouillard/tone mapping de three.
+ *
+ * ## Le grain low poly, lui, déforme le sommet
+ *
+ * Ce que la section précédente écarte est un grain **de texture** — un
+ * relief lu dans une image, sans échelle verticale propre. `lowPolyGrain.js`
+ * est autre chose : un déplacement du sommet du maillage, en mètres réels, et
+ * une normale reprise sur cette position déformée. Éteint avec la distance
+ * (`uGrainFadeM`) là où la maille n'est plus assez fine pour le porter — voir
+ * `lowPolyGrain.js` pour le détail. Herbe et cultures (`foliageMaterial.js`,
+ * `groundLowPoly`) lisent le même réglage pour suivre la bosse ; le mobilier
+ * ponctuel et les arbres n'en tiennent pas compte.
  */
 
 import { createMacroCanvas } from '../materials/proceduralTextures.js';
@@ -90,6 +101,7 @@ import { pavementTone } from '../layers/townStyle.js';
 import { createWaterNormalCanvas } from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
 import { soilWashFor, surfaceForMatrix, stoneTintFor } from '../core/regionInterpretation.js';
+import { LOW_POLY_GRAIN_GLSL, LOW_POLY_GRAIN_DEFAULTS } from './lowPolyGrain.js';
 
 /** Couleur d'une matière qu'un thème ne décrit pas : un gris de terre neutre. */
 const FALLBACK_ALBEDO = [0.18, 0.17, 0.15];
@@ -303,6 +315,17 @@ export class TerrainMaterialFactory {
       uRockStrength: { value: look.rockStrength },
       /** Sol mouillé, de 0 à 1. Piloté par la météo, jamais par le thème. */
       uWetness: { value: 0 },
+      // Grain low poly géométrique (`lowPolyGrain.js`) : un seul réglage pour
+      // tout le sol, pas encore par matière. `foliageMaterial.js` lit les
+      // mêmes valeurs par défaut pour que l'herbe et les cultures suivent.
+      uGrainCellM: { value: LOW_POLY_GRAIN_DEFAULTS.cellM },
+      uGrainAmplitudeM: { value: LOW_POLY_GRAIN_DEFAULTS.amplitudeM },
+      uGrainFadeM: {
+        value: new THREE.Vector2(
+          LOW_POLY_GRAIN_DEFAULTS.fadeStartM,
+          LOW_POLY_GRAIN_DEFAULTS.fadeEndM
+        ),
+      },
     };
     this._uniforms = uniforms;
 
@@ -314,11 +337,23 @@ export class TerrainMaterialFactory {
           '#include <common>',
           `#include <common>
            varying vec3 vScenePos;
-           varying vec3 vSceneNormal;`
+           varying vec3 vSceneNormal;
+           uniform float uGrainCellM;
+           uniform float uGrainAmplitudeM;
+           uniform vec2 uGrainFadeM;
+           ${LOW_POLY_GRAIN_GLSL}`
         )
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
+           {
+             // Grain low poly : bosselé avant de fixer vScenePos, pour que le
+             // reste du shader (contour, pente, dérivées de normale) lise
+             // directement la position déjà déformée.
+             vec3 grainPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+             float grainFade = lowPolyFade(grainPos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y);
+             transformed.y += lowPolyBump(grainPos.xz, uGrainCellM, uGrainAmplitudeM) * grainFade;
+           }
            vScenePos = (modelMatrix * vec4(transformed, 1.0)).xyz;
            vSceneNormal = normalize(mat3(modelMatrix) * objectNormal);`
         );
@@ -352,6 +387,10 @@ export class TerrainMaterialFactory {
            uniform vec2 uWaterRipple;
            uniform vec2 uWaterFlow;
            uniform float uShoreWet;
+           uniform float uGrainCellM;
+           uniform float uGrainAmplitudeM;
+           uniform vec2 uGrainFadeM;
+           ${LOW_POLY_GRAIN_GLSL}
 
            /*
             * Sol mouillé : le film d'eau assombrit et sature (réflexions
@@ -668,22 +707,17 @@ export class TerrainMaterialFactory {
           '#include <normal_fragment_begin>',
           `#include <normal_fragment_begin>
            {
-             // Le sol est lisse : il n'a plus de normale a perturber.
-             //
-             // Il y avait ici un relief tire du grain par derivees d'ecran
-             // (Mikkelsen, « Bump Mapping Unparametrized Surfaces on the
-             // GPU »). Il est parti avec le grain lui-meme : un relief sans
-             // releve d'altitude n'a pas d'echelle verticale propre, et ce
-             // qu'il rendait n'etait pas la lumiere accrochant un caillou mais
-             // un fourmillement qui suivait l'observateur. Ce qui doit
-             // accrocher la lumiere est un objet de la scene.
-             //
-             // Reste la ride de l'eau, qui est d'une autre nature : elle a une
-             // periode et une vitesse, et c'est le seul moyen de faire lire une
-             // nappe comme de l'eau sans reflexion d'environnement. Deux
-             // relevés a des vitesses inegales — un seul se lirait comme une
-             // image qui glisse.
-             vec3 worldNormal = normalize(vSceneNormal);
+             // Grain low poly : normale plate tiree des derivees d'ecran de
+             // la position deja bosselee (voir <begin_vertex>), melangee a la
+             // normale analytique lissee par le meme fondu de distance que la
+             // bosse elle-meme — au-dela de uGrainFadeM.y la bosse est nulle
+             // et cette normale doit l'etre aussi, sans quoi le sol lointain
+             // resterait facette sur la seule triangulation grossiere de la
+             // maille.
+             float grainFade = lowPolyFade(vScenePos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y);
+             vec3 flatNormal = normalize(cross(dFdx(vScenePos), dFdy(vScenePos)));
+             if (dot(flatNormal, vSceneNormal) < 0.0) flatNormal = -flatNormal;
+             vec3 worldNormal = normalize(mix(vSceneNormal, flatNormal, grainFade));
              vec3 a = texture2D(uWaterRipples, vScenePos.xz / uWaterRipple.x + uWaterFlow).xyz * 2.0 - 1.0;
              vec3 b = texture2D(uWaterRipples, vScenePos.zx / (uWaterRipple.x * 0.6) - uWaterFlow * 1.7).xyz * 2.0 - 1.0;
              vec3 wavy = normalize(worldNormal + vec3(a.x + b.x, 0.0, a.z + b.z) * uWaterRipple.y);
@@ -694,7 +728,7 @@ export class TerrainMaterialFactory {
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v13';
+    material.customProgramCacheKey = () => 'terrain-bubble-v15-lowpoly-grain';
     return material;
   }
 
