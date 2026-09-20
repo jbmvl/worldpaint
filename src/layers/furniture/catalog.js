@@ -163,6 +163,7 @@ export const POINT_ITEMS = [
   'treeRound',
   'treeColumnar',
   'treeOval',
+  'treePalm',
   'vineStock',
   'rockSmall',
   'rockBoulder',

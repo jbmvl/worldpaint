@@ -15,6 +15,7 @@
  */
 
 import { makeRandom } from '../materials/proceduralTextures.js';
+import { cropForFarming, sharesFor } from '../core/regionInterpretation.js';
 
 /** Pas de quantification des graines de position, en mètres. */
 export const SEED_GRID_M = 0.5;
@@ -146,10 +147,10 @@ export function realBoundaryRuns(ring, bounds, minPoints = 2) {
 
 /**
  * Le traitement de contour par défaut : le bocage français, et le repli de
- * tout climat qu'on ne connaît pas.
+ * tout pays qu'on ne connaît pas.
  *
  * Ce sont **exactement** les seuils qui étaient écrits en dur dans
- * `boundaryFurnitureFor` : sans climat, rien ne change.
+ * `boundaryFurnitureFor` : sans région, rien ne change.
  *
  * - `stoneSlope` — pente à partir de laquelle on bâtit un mur plutôt que de
  *   clore. `stoneSlopeTilled` est la même pour une terre travaillée et pour la
@@ -165,114 +166,76 @@ export const DEFAULT_BOUNDARY_MIX = {
 };
 
 /**
- * Comment on borne un champ, par famille climatique.
+ * Comment on borne un champ, par style de limite (`boundaryForMatrix`).
  *
  * C'est la trame du paysage agraire, et elle se lit de plus loin que la
  * couleur d'un mur : un bocage compartimente l'horizon en chambres de deux
- * cents mètres, un openfield le laisse filer, une terrasse méditerranéenne le
- * raye de lignes de pierre. Tant que toutes les limites portaient la même
- * haie, une plaine castillane était un bocage normand jauni.
+ * cents mètres, un openfield le laisse filer, une terrasse le raye de lignes
+ * de pierre. Tant que toutes les limites portaient la même haie, une plaine
+ * castillane était un bocage normand jauni.
  *
  * Ce qui décide, dans l'ordre : la pierre est là où le sol en donne — pente,
  * causse, karst —, la haie vive là où il pleut et où l'élevage est ancien, le
  * bois là où la forêt est proche, et le rien partout où la terre est trop
  * grande ou trop pauvre pour qu'on la clôture.
  *
- * Une famille absente retombe sur le bocage par défaut.
+ * Un style absent retombe sur le bocage par défaut.
  */
 export const BOUNDARY_MIXES = {
-  oceanic: DEFAULT_BOUNDARY_MIX,
-  // Highlands, Connemara, Islande : le mur de pierre sèche est le paysage.
-  oceanicUpland: {
-    stoneSlope: 0.06,
-    stoneSlopeTilled: 0.04,
-    plough: [['dryStoneWall', 0.45], ['hedge', 0.2], ['lowHedge', 0.1], [null, 0.25]],
-    pasture: [['dryStoneWall', 0.5], ['hedge', 0.12], ['woodFence', 0.18], ['barbedWire', 0.2]],
-  },
+  bocage: DEFAULT_BOUNDARY_MIX,
   // Openfield : la plaine polonaise ou beauceronne ne se compartimente pas.
-  continental: {
+  openfield: {
     stoneSlope: 0.24,
     stoneSlopeTilled: 0.2,
     plough: [[null, 0.82], ['hedge', 0.1], ['lowHedge', 0.08]],
     pasture: [['barbedWire', 0.5], ['woodFence', 0.3], [null, 0.15], ['hedge', 0.05]],
   },
-  // Là où le bois est la matière la moins chère, on clôt en bois.
-  boreal: {
-    stoneSlope: 0.28,
-    stoneSlopeTilled: 0.24,
-    plough: [[null, 0.75], ['lowHedge', 0.15], ['hedge', 0.1]],
-    pasture: [['woodFence', 0.6], ['barbedWire', 0.25], [null, 0.15]],
-  },
-  // Pas de haie vive : il n'y a pas assez d'eau pour l'entretenir.
-  mediterranean: {
-    stoneSlope: 0.08,
-    stoneSlopeTilled: 0.06,
-    plough: [[null, 0.6], ['dryStoneWall', 0.3], ['lowHedge', 0.1]],
-    pasture: [['dryStoneWall', 0.45], ['barbedWire', 0.3], [null, 0.25]],
-  },
-  mediterraneanCool: {
-    stoneSlope: 0.12,
-    stoneSlopeTilled: 0.1,
-    plough: [[null, 0.5], ['dryStoneWall', 0.22], ['hedge', 0.16], ['lowHedge', 0.12]],
-    pasture: [['dryStoneWall', 0.3], ['hedge', 0.15], ['woodFence', 0.2], ['barbedWire', 0.35]],
-  },
-  // Terrasses : la pierre sort du premier pli de terrain, et elle est partout.
-  mediterraneanMontane: {
+  // Terrasses, causses, Connemara : la pierre sort du premier pli de terrain,
+  // et elle est partout.
+  drystone: {
     stoneSlope: 0.05,
     stoneSlopeTilled: 0.04,
     plough: [['dryStoneWall', 0.5], [null, 0.4], ['lowHedge', 0.1]],
     pasture: [['dryStoneWall', 0.6], ['barbedWire', 0.25], [null, 0.15]],
   },
-  semiArid: {
-    stoneSlope: 0.1,
-    stoneSlopeTilled: 0.08,
-    plough: [[null, 0.75], ['dryStoneWall', 0.2], ['lowHedge', 0.05]],
-    pasture: [['barbedWire', 0.4], ['dryStoneWall', 0.3], [null, 0.3]],
+  // Là où le bois est la matière la moins chère, on clôt en bois.
+  wood_fence: {
+    stoneSlope: 0.28,
+    stoneSlopeTilled: 0.24,
+    plough: [[null, 0.75], ['lowHedge', 0.15], ['hedge', 0.1]],
+    pasture: [['woodFence', 0.6], ['barbedWire', 0.25], [null, 0.15]],
   },
   // Une parcelle qu'on ne clôt pas, parce qu'il n'y a rien à retenir dedans.
-  arid: {
+  none: {
     stoneSlope: 0.12,
     stoneSlopeTilled: 0.1,
     plough: [[null, 0.85], ['dryStoneWall', 0.15]],
     pasture: [[null, 0.6], ['barbedWire', 0.25], ['dryStoneWall', 0.15]],
   },
-  // Alpage : le muret de pierre et la barrière de mélèze, à parts égales.
-  alpine: {
-    stoneSlope: 0.06,
-    stoneSlopeTilled: 0.06,
-    plough: [['dryStoneWall', 0.4], ['woodFence', 0.2], [null, 0.4]],
-    pasture: [['woodFence', 0.45], ['dryStoneWall', 0.3], [null, 0.25]],
-  },
-  // Rien ne se clôt sur un glacier.
-  glacial: {
-    stoneSlope: 0.5,
-    stoneSlopeTilled: 0.5,
-    plough: [[null, 1]],
-    pasture: [[null, 1]],
-  },
 };
+
 
 /**
  * Traitement de contour d'une parcelle, d'après ses attributs OpenMapTiles.
  * Suit le paysage agraire réel : bocage sur les labours, clôture sur les
  * pâtures, muret là où le terrain est accidenté (`steepness`). Et là où le
- * pays le veut : le partage lui-même change d'un climat à l'autre, voir
- * `BOUNDARY_MIXES`. Sans climat, c'est le bocage français à la valeur près.
+ * pays le veut : le partage lui-même change d'un style à l'autre, voir
+ * `BOUNDARY_MIXES`. Sans région, c'est le bocage français à la valeur près.
  *
  * @param {Object} properties Attributs de l'entité.
  * @param {Object} [context]
  * @param {number} [context.steepness] Pente moyenne alentour, en pente relative.
  * @param {number} [context.variant]   Tirage dans [0, 1[ attaché au lieu.
- * @param {string|null} [context.climate] Famille climatique.
+ * @param {string|null} [context.boundary] Style de limite (`boundaryForMatrix`).
  * @returns {string|null} clé de `FURNITURE_PROFILES`, ou `null`.
  */
 export function boundaryFurnitureFor(
   properties = {},
-  { steepness = 0, variant = 0, crop = null, climate = null } = {}
+  { steepness = 0, variant = 0, crop = null, boundary = null } = {}
 ) {
   const klass = properties.class;
   const subclass = properties.subclass;
-  const mix = (climate && BOUNDARY_MIXES[climate]) || DEFAULT_BOUNDARY_MIX;
+  const mix = (boundary && BOUNDARY_MIXES[boundary]) || DEFAULT_BOUNDARY_MIX;
 
   // Rocher, éboulis, causse : rien à clore, mais de quoi bâtir.
   if (klass === 'rock') return steepness > mix.stoneSlopeTilled ? 'dryStoneWall' : null;
@@ -299,8 +262,8 @@ export function boundaryFurnitureFor(
 }
 
 /**
- * L'assolement par défaut : celui de la France, et le repli de tout climat
- * inconnu. Parts cumulées dans l'ordre.
+ * L'assolement par défaut : celui de la France, et le repli de tout lieu sans
+ * région. Parts cumulées dans l'ordre.
  *
  * C'étaient les seuils écrits en dur dans `cropFor` ; le colza y a pris sa
  * part depuis, parce qu'une plaine céréalière française en porte autant que de
@@ -318,39 +281,6 @@ export const DEFAULT_CROP_MIX = [
   ['plough', 0.04],
 ];
 
-/**
- * L'assolement, par famille climatique. Pas de la statistique agricole : ce
- * qu'il faut pour qu'un champ ne mente pas — une vigne en Laponie se remarque,
- * la proportion exacte de blé dans un canton, non.
- *
- * Les cultures disponibles sont celles de `CROP_KINDS` et rien d'autre : leur
- * ordre est un encodage gravé dans une image, donc en ajouter une demande une
- * case d'atlas, un albédo lointain et une silhouette, pas une ligne ici.
- * `orchard` porte l'olivier comme le pommier.
- *
- * Une famille absente retombe sur l'assolement par défaut.
- */
-export const CROP_MIXES = {
-  oceanic: [['wheat', 0.3], ['plough', 0.18], ['maize', 0.22], ['rapeseed', 0.12], ['orchard', 0.09], ['sunflower', 0.05], ['vineyard', 0.04]],
-  // Les hautes terres atlantiques : de l'orge, du fourrage, des prés retournés.
-  oceanicUpland: [['plough', 0.5], ['wheat', 0.27], ['rapeseed', 0.1], ['maize', 0.08], ['orchard', 0.05]],
-  continental: [['wheat', 0.38], ['plough', 0.2], ['maize', 0.16], ['rapeseed', 0.1], ['sunflower', 0.08], ['orchard', 0.06], ['vineyard', 0.02]],
-  // Au nord, ni maïs ni tournesol : la saison est trop courte. Le colza, si —
-  // c'est même la culture qui monte le plus haut en latitude.
-  boreal: [['plough', 0.52], ['wheat', 0.33], ['rapeseed', 0.1], ['orchard', 0.05]],
-  mediterranean: [['vineyard', 0.24], ['orchard', 0.24], ['wheat', 0.17], ['plough', 0.16], ['lavender', 0.1], ['sunflower', 0.09]],
-  mediterraneanCool: [['wheat', 0.24], ['vineyard', 0.2], ['plough', 0.18], ['orchard', 0.16], ['sunflower', 0.13], ['lavender', 0.09]],
-  // Les plateaux secs de l'arrière-pays : c'est là que la lavande est chez
-  // elle, plus que sur le littoral.
-  mediterraneanMontane: [['plough', 0.36], ['wheat', 0.22], ['orchard', 0.22], ['lavender', 0.12], ['vineyard', 0.08]],
-  semiArid: [['plough', 0.38], ['wheat', 0.22], ['orchard', 0.22], ['lavender', 0.1], ['vineyard', 0.08]],
-  // En désert, une parcelle cultivée est irriguée : du verger ou de la terre
-  // nue, jamais un champ de blé à perte de vue.
-  arid: [['plough', 0.7], ['orchard', 0.2], ['wheat', 0.1]],
-  // En altitude, la parcelle « agricole » est presque toujours du pré.
-  alpine: [['plough', 0.7], ['wheat', 0.25], ['orchard', 0.05]],
-  glacial: [['plough', 1]],
-};
 
 /**
  * Tire une valeur dans une table de parts cumulées. Fonction pure.
@@ -373,18 +303,23 @@ export function pickShare(mix, variant) {
 
 /**
  * Ce qui pousse dans un champ, d'après ses attributs, un tirage de parcelle et
- * le climat. Le schéma OpenMapTiles ne dit jamais la culture (sauf verger,
- * vigne, pépinière) : le reste est déduit.
+ * l'assolement du pays. Le schéma OpenMapTiles ne dit jamais la culture (sauf
+ * verger, vigne, pépinière) : le reste est déduit.
  *
- * Ce que dit la donnée passe avant le climat : une vigne cartographiée reste
- * une vigne, où qu'elle soit. Le climat ne décide que de ce qu'on ignore.
+ * Ce que dit la donnée passe avant le pays : une vigne cartographiée reste une
+ * vigne, où qu'elle soit. Le pays ne décide que de ce qu'on ignore.
+ *
+ * L'assolement arrive en clair — la liste `farming` d'un dossier de région,
+ * ordonnée du plus répandu au moins répandu — et ses parts se déduisent du rang
+ * (`sharesFor`). Il n'y a pas de table intermédiaire : ce qui pousse dans un
+ * pays est écrit dans le pays.
  *
  * @param {Object} properties
  * @param {number} variant Tirage dans [0, 1[ attaché à la parcelle.
- * @param {string|null} [climate] Famille climatique (`core/climate.js`).
+ * @param {string[]|null} [farming] Assolement du pays (`region.farming`).
  * @returns {'wheat'|'maize'|'sunflower'|'vineyard'|'orchard'|'plough'|'lavender'|'rapeseed'|null}
  */
-export function cropFor(properties = {}, variant = 0, climate = null) {
+export function cropFor(properties = {}, variant = 0, farming = null) {
   const klass = properties.class;
   const subclass = properties.subclass;
 
@@ -392,7 +327,29 @@ export function cropFor(properties = {}, variant = 0, climate = null) {
   if (subclass === 'orchard' || subclass === 'plant_nursery') return 'orchard';
   if (klass !== 'farmland') return null;
 
-  return pickShare((climate && CROP_MIXES[climate]) || DEFAULT_CROP_MIX, variant);
+  const mix = farming?.length
+    ? sharesFor(farming).map(([word, share]) => [cropForFarming(word), share])
+    : DEFAULT_CROP_MIX;
+  return pickShare(mix, variant);
+}
+
+/**
+ * Mot d'assolement retenu pour un champ, tiré comme `cropFor` (même parts,
+ * mêmes rangs) mais rendu **avant** sa traduction en culture de `CROP_KINDS`.
+ *
+ * Sert aux mots que l'assolement porte sans que `CROP_KINDS` sache les
+ * peindre — la serre, qui n'est pas une texture mais une structure posée sur
+ * la parcelle (`furniture/parcels.js`). `null` hors champ cultivé ou pays sans
+ * assolement écrit.
+ *
+ * Fonction pure.
+ */
+export function farmingWordFor(properties = {}, variant = 0, farming = null) {
+  const klass = properties.class;
+  const subclass = properties.subclass;
+  if (subclass === 'vineyard' || subclass === 'orchard' || subclass === 'plant_nursery') return null;
+  if (klass !== 'farmland' || !farming?.length) return null;
+  return pickShare(sharesFor(farming), variant);
 }
 
 /**
@@ -401,8 +358,13 @@ export function cropFor(properties = {}, variant = 0, climate = null) {
  * La lavande y est pour la même raison que la vigne : de loin c'est une
  * teinte (`cropAlbedo`), de près ce sont des lignes de petites haies, pas un
  * semis dru — c'est le rang qui la fait reconnaître, pas le buisson isolé.
+ *
+ * La serre n'est pas un semis du tout : c'est une structure. Elle emprunte le
+ * même passage parce qu'un maraîchage sous serre couvre la parcelle de
+ * tunnels côte à côte, sur le même principe géométrique qu'un rang de vigne —
+ * un balayage le long du plus long côté, coupé aux vraies limites du champ.
  */
-export const ROW_CROPS = new Set(['vineyard', 'orchard', 'lavender']);
+export const ROW_CROPS = new Set(['vineyard', 'orchard', 'lavender', 'greenhouse']);
 
 /**
  * Les cultures, dans l'ordre de leur identifiant (`indice + 1`, zéro = aucune
@@ -419,14 +381,16 @@ export const CROP_KINDS = [
   'orchard',
   'lavender',
   'rapeseed',
+  'rice',
 ];
 
 /**
  * Pas entre deux identifiants dans le canal rouge.
  *
- * Il était de 40, ce qui plafonnait à six cultures (7 × 40 dépasse 255). Huit
- * cultures tiennent à 28, avec ± 14 de tolérance à l'arrondi de la texture —
- * largement de quoi encaisser le passage par un canevas 8 bits.
+ * Il était de 40, ce qui plafonnait à six cultures (7 × 40 dépasse 255). Neuf
+ * cultures tiennent à 28 (9 × 28 = 252), avec trois de marge à l'arrondi de la
+ * texture — c'est la dernière place : un dixième identifiant exige de baisser
+ * le pas.
  */
 export const CROP_ID_STEP = 28;
 
@@ -489,51 +453,53 @@ export function scatterFurnitureFor(properties = {}, { crop = null } = {}) {
 export const WOOD_PILE_EDGE_MIN = 0.35;
 
 /**
- * Part d'ovins d'une pâture de plaine, par famille climatique. La pente disait
+ * Part d'ovins d'une pâture de plaine, par matrice de paysage. La pente disait
  * déjà l'essentiel — le mouton broute où la vache ne monte plus — mais rien du
  * pays : une plaine irlandaise et une plaine castillane ont la même pente et
- * pas le même troupeau. Une famille absente garde `DEFAULT_SHEEP_ODDS`.
+ * pas le même troupeau. Une matrice absente garde `DEFAULT_SHEEP_ODDS`.
  */
 export const HERD_SHEEP_ODDS = {
-  // Prairie humide : le bovin, et c'est ce qui fait le paysage laitier.
-  oceanic: 0.28,
-  // Lande écossaise, fjells : le mouton, presque seul.
-  oceanicUpland: 0.72,
-  mediterranean: 0.68,
-  mediterraneanCool: 0.55,
-  mediterraneanMontane: 0.78,
-  semiArid: 0.8,
-  // En steppe sèche, la chèvre et le mouton tiennent seuls.
-  arid: 0.85,
-  continental: 0.3,
-  boreal: 0.25,
+  // Bocage et prairie humide : le bovin, et c'est ce qui fait le paysage laitier.
+  hedgerow_meadow: 0.28,
+  wet_grassland: 0.26,
+  openfield_cropland: 0.3,
+  // Lande atlantique, fjell : le mouton, presque seul.
+  moor_heath: 0.72,
+  garrigue: 0.68,
+  dry_scrub: 0.55,
+  terraced_slope: 0.78,
+  dry_steppe: 0.8,
+  // En désert, la chèvre et le mouton tiennent seuls.
+  desert_stone: 0.85,
+  desert_sand: 0.85,
+  boreal_taiga: 0.25,
   // Estive : la vache monte l'été, mais le mouton reste au-dessus d'elle.
-  alpine: 0.55,
-  glacial: 0.6,
+  alpine_pasture: 0.55,
+  bare_rock: 0.6,
 };
 
-/** Part d'ovins en l'absence de climat connu : la valeur d'avant. */
+/** Part d'ovins en l'absence de région connue : la valeur d'avant. */
 export const DEFAULT_SHEEP_ODDS = 0.34;
 
 /**
  * Bétail d'une pâture : espèce et taille du troupeau. Les bovins dominent en
  * plaine herbagère, les ovins en terrain sec ou accidenté. La pente tranche
- * d'abord, le climat déplace ensuite la bascule (`HERD_SHEEP_ODDS`).
+ * d'abord, le pays déplace ensuite la bascule (`HERD_SHEEP_ODDS`).
  *
  * @param {Object} [context]
  * @param {number} [context.steepness] Pente moyenne alentour.
  * @param {number} [context.variant]   Tirage dans [0, 1[ attaché à la parcelle.
- * @param {string|null} [context.climate] Famille climatique.
+ * @param {string|null} [context.matrix] Matrice de paysage (`region.matrix`).
  * @returns {{item:string, spread:number}}
  */
-export function herdFor({ steepness = 0, variant = 0, climate = null } = {}) {
+export function herdFor({ steepness = 0, variant = 0, matrix = null } = {}) {
   // Estive ou parcellaire de montagne franc : la chèvre broute où le mouton ne monte plus.
   if (steepness > 0.34) {
     return variant < 0.5
       ? { item: 'goat', spread: 0.24 }
       : { item: 'sheep', spread: 0.3 };
   }
-  const base = (climate && HERD_SHEEP_ODDS[climate]) ?? DEFAULT_SHEEP_ODDS;
+  const base = (matrix && HERD_SHEEP_ODDS[matrix]) ?? DEFAULT_SHEEP_ODDS;
   // Une pente moyenne fait déjà basculer vers l'ovin ; un pays à moutons ne
   // peut pas y basculer *moins* qu'une plaine à vaches, d'où le maximum.
   const sheepOdds = steepness > 0.14 ? Math.max(0.75, base) : base;
@@ -569,7 +535,7 @@ export function coatFor(coats, kind, x, z) {
 }
 
 /**
- * Le gibier d'un bois, par famille climatique — la liste dans laquelle un
+ * Le gibier d'un bois, par matrice de paysage — la liste dans laquelle un
  * massif tire ce qu'il abrite. Un item répété pèse d'autant plus lourd (même
  * convention que les essences d'un peuplement) ; une liste vide veut dire qu'il
  * n'y a rien à voir, ce qui est le cas là où il n'y a pas de forêt.
@@ -580,24 +546,28 @@ export function coatFor(coats, kind, x, z) {
  * en est pleine, et le cerf y est rare).
  */
 export const FOREST_GAME = {
-  oceanic: ['deer', 'doe', 'doe', 'boar'],
-  oceanicUpland: ['deer', 'doe'],
-  mediterranean: ['boar', 'boar', 'doe', 'deer'],
-  mediterraneanCool: ['boar', 'doe', 'deer'],
-  mediterraneanMontane: ['boar', 'deer', 'doe'],
-  semiArid: ['boar'],
-  arid: [],
-  continental: ['deer', 'doe', 'boar', 'boar'],
-  boreal: ['reindeer', 'reindeer', 'doe', 'deer'],
-  alpine: ['deer', 'doe'],
-  glacial: [],
+  hedgerow_meadow: ['deer', 'doe', 'doe', 'boar'],
+  wet_grassland: ['deer', 'doe', 'boar'],
+  broadleaf_woodland: ['deer', 'doe', 'boar', 'boar'],
+  conifer_forest: ['deer', 'doe', 'boar'],
+  moor_heath: ['deer', 'doe'],
+  garrigue: ['boar', 'boar', 'doe', 'deer'],
+  dry_scrub: ['boar', 'doe', 'deer'],
+  terraced_slope: ['boar', 'deer', 'doe'],
+  dry_steppe: ['boar'],
+  desert_stone: [],
+  desert_sand: [],
+  openfield_cropland: ['deer', 'doe', 'boar', 'boar'],
+  boreal_taiga: ['reindeer', 'reindeer', 'doe', 'deer'],
+  alpine_pasture: ['deer', 'doe'],
+  bare_rock: [],
 };
 
-/** Le gibier d'un pays inconnu : celui d'avant les climats, un bois tempéré. */
+/** Le gibier d'un pays inconnu : un bois tempéré. */
 export const DEFAULT_FOREST_GAME = ['deer', 'doe', 'boar'];
 
 /**
- * Les carnassiers, par famille climatique.
+ * Les carnassiers, par matrice de paysage.
  *
  * Ils sont tirés **à part** du gibier, et c'est le point. Mis dans la même
  * liste, un loup listé une fois sur six sortirait dans un bois sur six : on
@@ -609,17 +579,21 @@ export const DEFAULT_FOREST_GAME = ['deer', 'doe', 'boar'];
  * montagne, forêt continentale, taïga.
  */
 export const FOREST_PREDATORS = {
-  oceanic: ['fox'],
-  oceanicUpland: ['fox'],
-  mediterranean: ['fox'],
-  mediterraneanCool: ['fox'],
-  mediterraneanMontane: ['fox', 'fox', 'wolf'],
-  semiArid: ['fox'],
-  arid: ['fox'],
-  continental: ['fox', 'fox', 'wolf'],
-  boreal: ['fox', 'wolf', 'bear', 'bear'],
-  alpine: ['fox', 'wolf', 'bear'],
-  glacial: [],
+  hedgerow_meadow: ['fox'],
+  wet_grassland: ['fox'],
+  moor_heath: ['fox'],
+  garrigue: ['fox'],
+  dry_scrub: ['fox'],
+  terraced_slope: ['fox', 'fox', 'wolf'],
+  dry_steppe: ['fox'],
+  desert_stone: ['fox'],
+  desert_sand: ['fox'],
+  openfield_cropland: ['fox'],
+  broadleaf_woodland: ['fox', 'fox', 'wolf'],
+  conifer_forest: ['fox', 'fox', 'wolf'],
+  boreal_taiga: ['fox', 'wolf', 'bear', 'bear'],
+  alpine_pasture: ['fox', 'wolf', 'bear'],
+  bare_rock: [],
 };
 
 /** Le carnassier d'un pays inconnu : le renard, le seul qui soit partout. */
@@ -645,18 +619,18 @@ export const PREDATOR_ODDS = 0.14;
  * @param {number} [context.predatorDraw] Second tirage, indépendant : sans
  *        lui, « c'est un carnassier » et « lequel » seraient le même nombre,
  *        et un massif ne pourrait jamais abriter qu'un seul des deux.
- * @param {string|null} [context.climate] Famille climatique.
+ * @param {string|null} [context.matrix] Matrice de paysage (`region.matrix`).
  * @returns {{item:string, spread:number, solitary:boolean}|null}
  */
-export function forestGameFor({ variant = 0, predatorDraw = 1, climate = null } = {}) {
+export function forestGameFor({ variant = 0, predatorDraw = 1, matrix = null } = {}) {
   if (predatorDraw < PREDATOR_ODDS) {
-    const hunters = (climate && FOREST_PREDATORS[climate]) || DEFAULT_FOREST_PREDATORS;
+    const hunters = (matrix && FOREST_PREDATORS[matrix]) || DEFAULT_FOREST_PREDATORS;
     if (hunters.length > 0) {
       const item = hunters[Math.min(hunters.length - 1, Math.floor(variant * hunters.length))];
       return { item, spread: 0.5, solitary: true };
     }
   }
-  const pool = (climate && FOREST_GAME[climate]) || DEFAULT_FOREST_GAME;
+  const pool = (matrix && FOREST_GAME[matrix]) || DEFAULT_FOREST_GAME;
   if (pool.length === 0) return null;
   const item = pool[Math.min(pool.length - 1, Math.floor(variant * pool.length))];
   return { item, spread: item === 'boar' ? 0.2 : 0.34, solitary: false };

@@ -20,8 +20,8 @@ really verified by looking at it there, or in a consuming application.
 
 ```
 src/
-  core/         geography and low-level primitives (tiles, elevation, climate,
-                the landscape profile of a place)
+  core/         geography and low-level primitives (tiles, elevation, natural
+                regions, the landscape profile of a place)
   terrain/      the ground mesh: bubble, material, ground-class map, road cut,
                 and what a tile feature says about the ground
   layers/       everything built on the terrain — roads, bridges and tunnels,
@@ -42,7 +42,7 @@ src/
 `src/layers/CLAUDE.md` and `src/terrain/CLAUDE.md` map those two directories
 file by file, and say what not to add to the big ones. `docs/` explains what
 the landscape contains (`inventaire.md`), how the ground is read
-(`surfaces.md`), and how a place decides its content (`climats.md`).
+(`surfaces.md`), and how a place decides its content (`regions.md`).
 
 ## Adding or changing a layer
 

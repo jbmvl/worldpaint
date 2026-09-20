@@ -81,15 +81,16 @@ const HORIZON_BAND = 0.18;
 export const DEFAULT_SKY_PALETTE = defaultTheme.sky;
 
 /**
- * Palette d'ambiance d'un climat, ou `null` s'il n'en a pas de propre.
+ * Palette d'ambiance d'une matrice de paysage, ou `null` si elle n'en a pas de
+ * propre.
  *
  * `null` compte : `update({ palette: undefined })` garde la dernière palette
  * reçue, donc une application qui a choisi la sienne ne se la fait pas
- * remplacer par le climat. Une variante ne redit que ce qu'elle change.
+ * remplacer par le pays. Une variante ne redit que ce qu'elle change.
  */
-export function skyPaletteFor(climate, sky = DEFAULT_SKY_PALETTE) {
-  if (!climate || !Array.isArray(sky?.variants)) return null;
-  const variant = sky.variants.find((entry) => entry?.climates?.includes(climate));
+export function skyPaletteFor(matrix, sky = DEFAULT_SKY_PALETTE) {
+  if (!matrix || !Array.isArray(sky?.variants)) return null;
+  const variant = sky.variants.find((entry) => entry?.matrix?.includes(matrix));
   if (!variant) return null;
   return {
     fog: variant.fog ?? sky.fog,

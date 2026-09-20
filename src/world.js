@@ -138,9 +138,9 @@ export function createWorld({
     elevation: field,
     ownsElevation,
     theme: resolved,
-    // Le climat n'a le droit de teinter l'air que si l'application n'a pas
+    // Le pays n'a le droit de teinter l'air que si l'application n'a pas
     // choisi sa propre palette : entre le pays et l'auteur, c'est l'auteur.
-    skyFollowsClimate: !sky?.palette,
+    skyFollowsRegion: !sky?.palette,
   });
 }
 
@@ -155,12 +155,12 @@ export class World {
     elevation,
     ownsElevation,
     theme = defaultTheme,
-    skyFollowsClimate = true,
+    skyFollowsRegion = true,
   }) {
     this.composer = composer;
-    this._skyFollowsClimate = skyFollowsClimate;
-    /** Famille pour laquelle `_skyPalette` a été composée. */
-    this._skyFamily = undefined;
+    this._skyFollowsRegion = skyFollowsRegion;
+    /** Matrice pour laquelle `_skyPalette` a été composée. */
+    this._skyMatrix = undefined;
     this._skyPalette = null;
     /** Le thème résolu de ce monde. En lecture seule : il est gelé. */
     this.theme = theme;
@@ -198,15 +198,16 @@ export class World {
 
   /** Refait le décor vectoriel autour d'un point. @returns {Promise<boolean>} */
   /**
-   * Impose une famille climatique au décor, ou rend la main à la géographie
-   * (`null`). Voir `WorldComposer.setClimate` : le décor cesse alors de suivre
-   * le lieu, ce qui est le seul moyen de comparer deux pays sur le même
-   * terrain. Le prochain `refresh` doit être forcé.
+   * Impose une région au décor, ou rend la main à la géographie (`null`). Voir
+   * `WorldComposer.setRegion` : le décor cesse alors de suivre le lieu, ce qui
+   * est le seul moyen de comparer deux pays sur le même terrain. Le prochain
+   * `refresh` doit être forcé.
    *
+   * @param {string|null} id Un identifiant de `REGIONS`.
    * @returns {boolean} vrai si l'intention a changé.
    */
-  setClimate(family) {
-    return this.composer.setClimate(family);
+  setRegion(id) {
+    return this.composer.setRegion(id);
   }
 
   refresh(lng, lat, options) {
@@ -266,7 +267,7 @@ export class World {
     // atlantique, chaud et poussiéreux en Castille, presque transparent en
     // altitude. C'est la couleur la plus déterminante du décor, donc elle suit
     // le pays — sauf si l'application en impose une, ici ou au montage.
-    env.update({ palette: palette ?? this._climateSky(), date, lat, lng, weather });
+    env.update({ palette: palette ?? this._regionSky(), date, lat, lng, weather });
     this.composer.setNight(env.nightMix);
     this.composer.setWind(env.wind, env.weather);
     this.composer.setWetness(env.wetness);
@@ -280,19 +281,19 @@ export class World {
   }
 
   /**
-   * Palette d'ambiance du climat courant, ou `undefined` — auquel cas
+   * Palette d'ambiance du pays courant, ou `undefined` — auquel cas
    * l'environnement garde celle qu'il a déjà (voir `skyPaletteFor`).
    *
-   * Mémorisée par famille : `updateSky` est appelée à chaque image, et composer
+   * Mémorisée par matrice : `updateSky` est appelée à chaque image, et composer
    * un objet par image pour une valeur qui change tous les deux kilomètres
    * serait du gaspillage pur.
    */
-  _climateSky() {
-    if (!this._skyFollowsClimate) return undefined;
-    const family = this.composer.landscape?.climate?.family ?? null;
-    if (family !== this._skyFamily) {
-      this._skyFamily = family;
-      this._skyPalette = skyPaletteFor(family, this.theme.sky);
+  _regionSky() {
+    if (!this._skyFollowsRegion) return undefined;
+    const matrix = this.composer.landscape?.region?.matrix ?? null;
+    if (matrix !== this._skyMatrix) {
+      this._skyMatrix = matrix;
+      this._skyPalette = skyPaletteFor(matrix, this.theme.sky);
     }
     return this._skyPalette ?? undefined;
   }

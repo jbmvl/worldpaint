@@ -1,19 +1,24 @@
 /*
  * landscape — où sur la Terre sommes-nous, et sur quel terrain.
  *
- * Le profil du lieu : la famille climatique et son code Köppen
- * (`core/climate.js`), l'altitude et la pente sous l'observateur. Ce n'est ni
- * une couche ni un thème et ça ne pose rien — c'est une **entrée**, lue par
- * tout ce qui choisit un contenu dans une liste : peuplements, palettes de
- * bourg, cultures, bétail, couleur du sol.
+ * Le profil du lieu : la région naturelle (`core/region.js`), l'altitude et la
+ * pente sous l'observateur. Ce n'est ni une couche ni un thème et ça ne pose
+ * rien — c'est une **entrée**, lue par tout ce qui choisit un contenu dans une
+ * liste : peuplements, palettes de bourg, cultures, bétail, couleur du sol.
+ *
+ * Les deux ne se mêlent pas : la région dit à quoi ressemble le pays, le relief
+ * quelle forme a le terrain sous les pieds. Le second ne corrige pas la
+ * première — ce qui pousse réellement en altitude est relevé par le vectoriel,
+ * qui ne met pas de forêt là où il n'y en a pas.
  *
  * La lecture est refaite à chaque `refresh` et jamais mémoïsée : elle ne coûte
- * qu'une lecture de tableau et cinq altitudes déjà montées. Un cache en mètres
- * locaux, eux, se périme mal — le repère se ré-ancre au loin, et une ville
- * cherchée depuis une autre gardait le climat de la précédente.
+ * qu'une boucle sur quelques centaines d'ancres et cinq altitudes déjà montées.
+ * Un cache en mètres locaux, lui, se périme mal — le repère se ré-ancre au
+ * loin, et une ville cherchée depuis une autre gardait la région de la
+ * précédente.
  */
 
-import { climateAt, refineByRelief } from './climate.js';
+import { regionAt } from './region.js';
 
 /** Demi-portée de la mesure de pente sous l'observateur, en mètres. */
 export const RELIEF_SPAN_M = 60;
@@ -41,26 +46,21 @@ export function reliefAt(bubble, here) {
 }
 
 /**
- * Le profil du lieu, ou `null` hors de la fenêtre climatique.
+ * Le profil du lieu, ou `null` hors de toute région couverte.
  *
- * Le relief corrige la famille, jamais le code Köppen : celui-ci reste ce que
- * dit la donnée, et sert à comprendre ce qu'on regarde. Une famille imposée
- * (`override`) n'est corrigée par rien — elle ne décrit plus le lieu, elle le
- * contredit exprès — et son code Köppen est tu, parce qu'il décrivait le lieu
- * qu'on vient justement de cesser de suivre.
+ * Une région imposée (`override`) prend la place de celle du lieu : elle ne le
+ * décrit plus, elle le contredit exprès.
  *
  * @param {number} lng
  * @param {number} lat
  * @param {{x:number,z:number}} here
  * @param {Object} options
  * @param {Object} options.bubble Instance `TerrainBubble`.
- * @param {string|null} [options.override] Famille imposée par l'application.
- * @returns {{climate:{family:string, koppen:string|null}, relief:Object}|null}
+ * @param {Object|null} [options.override] Dossier de région imposé.
+ * @returns {{region:Object, relief:Object}|null}
  */
 export function landscapeAt(lng, lat, here, { bubble, override = null }) {
   const relief = reliefAt(bubble, here);
-  const climate = climateAt(lng, lat);
-  const family = override || refineByRelief(climate?.family ?? null, relief);
-  const koppen = override ? null : climate?.koppen ?? null;
-  return family ? { climate: { family, koppen }, relief } : null;
+  const region = override || regionAt(lng, lat);
+  return region ? { region, relief } : null;
 }

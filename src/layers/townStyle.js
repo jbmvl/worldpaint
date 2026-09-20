@@ -18,7 +18,7 @@
  * trois tirages ne se copient l'un l'autre.
  *
  * Une chose échappe à ce geste, et il faut dire pourquoi : le **dessus** du
- * trottoir (`pavementTone`) est tiré du **climat**, pas du bourg. Ce n'est plus
+ * trottoir (`pavementTone`) est tiré du **pays**, pas du bourg. Ce n'est plus
  * la couleur d'un objet mais celle du sol — en ville le revêtement va de la
  * chaussée aux façades (`groundClassMap`, couverture `pavement`) —, et le sol
  * est peint par un shader qui n'a qu'un albédo par couverture pour toute la
@@ -29,7 +29,7 @@
 import { srgb } from '../core/color.js';
 import { positionSeed, randomAt } from './furniturePlacement.js';
 import { defaultTheme } from '../themes/default.js';
-import { filterByClimate } from '../core/climate.js';
+import { filterByWords } from '../core/regionInterpretation.js';
 
 /** Côté de la maille qui décide de la palette d'un bourg, en mètres. */
 export const TOWN_PATCH_M = 1400;
@@ -49,7 +49,7 @@ function linearTowns(towns) {
       roofShapes: palette.roofShapes,
       // Recopiés tels quels : ce ne sont pas des couleurs, mais ils voyagent
       // avec la palette jusqu'au bâtiment.
-      climates: palette.climates,
+      materials: palette.materials,
       pitch: palette.pitch,
     }));
     LINEAR_CACHE.set(towns, out);
@@ -58,36 +58,40 @@ function linearTowns(towns) {
 }
 
 /**
- * Palettes converties **et** filtrées par climat, mémorisées par nuancier puis
- * par famille. Le filtrage rend un tableau neuf, et `townPaletteAt` est appelée
- * une fois par bâtiment : sans cette seconde mémoire, chaque maison d'un bourg
- * reconstruirait la liste.
+ * Palettes converties **et** réduites aux matériaux du pays, mémorisées par
+ * nuancier puis par région. Le filtrage rend un tableau neuf, et
+ * `townPaletteAt` est appelée une fois par bâtiment : sans cette seconde
+ * mémoire, chaque maison d'un bourg reconstruirait la liste.
+ *
+ * La seconde clé est le **dossier de région** lui-même : les dossiers sont
+ * constants et partagés, donc comparables par référence, là où leur liste de
+ * matériaux ne l'est pas.
  */
-const CLIMATE_CACHE = new WeakMap();
+const REGION_CACHE = new WeakMap();
 
-function palettesFor(towns, climate) {
+function palettesFor(towns, region) {
   const all = linearTowns(towns);
-  if (!climate) return all;
-  let byFamily = CLIMATE_CACHE.get(towns);
-  if (!byFamily) {
-    byFamily = new Map();
-    CLIMATE_CACHE.set(towns, byFamily);
+  if (!region) return all;
+  let byRegion = REGION_CACHE.get(towns);
+  if (!byRegion) {
+    byRegion = new WeakMap();
+    REGION_CACHE.set(towns, byRegion);
   }
-  let pool = byFamily.get(climate);
+  let pool = byRegion.get(region);
   if (!pool) {
-    pool = filterByClimate(all, climate);
-    byFamily.set(climate, pool);
+    pool = filterByWords(all, 'materials', region.building);
+    byRegion.set(region, pool);
   }
   return pool;
 }
 
 /**
  * Palette du bourg qui contient un point. Ancrée au lieu (stable en traversée).
- * Le climat réduit d'abord la liste : la pierre du pays n'est pas la même en
- * Andalousie et en Baltique.
+ * Le pays réduit d'abord la liste : la pierre n'est pas la même en Andalousie
+ * et en Bretagne.
  */
-export function townPaletteAt(x, z, towns = defaultTheme.towns, climate = null) {
-  const palettes = palettesFor(towns, climate);
+export function townPaletteAt(x, z, towns = defaultTheme.towns, region = null) {
+  const palettes = palettesFor(towns, region);
   const gx = Math.floor(x / TOWN_PATCH_M) * TOWN_PATCH_M;
   const gz = Math.floor(z / TOWN_PATCH_M) * TOWN_PATCH_M;
   const draw = randomAt(gx, gz, 149);
@@ -104,16 +108,16 @@ export function townPaletteAt(x, z, towns = defaultTheme.towns, climate = null) 
  * @param {Object} [streets] Tranche `theme.streets`.
  * @returns {{name:string, walk:number[], kerb:number[], joint:number[], gutter:number[]}}
  */
-export function streetSurfaceAt(x, z, streets = defaultTheme.streets, climate = null) {
+export function streetSurfaceAt(x, z, streets = defaultTheme.streets, matrix = null) {
   const surfaces = linearStreets(streets);
   const gx = Math.floor(x / TOWN_PATCH_M) * TOWN_PATCH_M;
   const gz = Math.floor(z / TOWN_PATCH_M) * TOWN_PATCH_M;
   const draw = randomAt(gx, gz, 191);
   const rebord = surfaces[Math.min(surfaces.length - 1, Math.floor(draw * surfaces.length))];
-  // Le dessus vient du climat, pas du bourg : c'est le sol de la ville, et le
+  // Le dessus vient du pays, pas du bourg : c'est le sol de la ville, et le
   // sol est peint par un shader qui n'a qu'un albédo par couverture pour toute
   // la bulle. Voir `STREET_LOOK.pavement`.
-  return { ...rebord, walk: pavementTone(climate, streets) };
+  return { ...rebord, walk: pavementTone(matrix, streets) };
 }
 
 /**
@@ -127,13 +131,13 @@ export function streetSurfaceAt(x, z, streets = defaultTheme.streets, climate = 
  *
  * Fonction pure.
  *
- * @param {string|null} climate Famille climatique.
+ * @param {string|null} matrix Matrice de paysage (`region.matrix`).
  * @param {Object} [streets] Tranche `theme.streets`.
  * @returns {number[]} couleur linéaire.
  */
-export function pavementTone(climate, streets = defaultTheme.streets) {
+export function pavementTone(matrix, streets = defaultTheme.streets) {
   const table = linearPavement(streets);
-  return table[climate] || table.default;
+  return table[matrix] || table.default;
 }
 
 const LINEAR_STREETS = new WeakMap();
@@ -158,7 +162,7 @@ function linearPavement(streets) {
   let out = LINEAR_PAVEMENT.get(streets);
   if (!out) {
     out = {};
-    for (const [family, hex] of Object.entries(streets.pavement || {})) out[family] = srgb(hex);
+    for (const [matrix, hex] of Object.entries(streets.pavement || {})) out[matrix] = srgb(hex);
     // Un thème sans table retombe sur un gris de béton plutôt que sur `undefined`.
     if (!out.default) out.default = srgb('#9b968c');
     LINEAR_PAVEMENT.set(streets, out);
@@ -179,7 +183,7 @@ function linearPavement(streets) {
  * @param {Object} [context]
  * @param {number} [context.area]   Emprise au sol, en m².
  * @param {number} [context.height] Hauteur, en mètres.
- * @param {string|null} [climate] Famille climatique.
+ * @param {Object|null} [region] Dossier de région.
  * @returns {{wall:number[], roof:number[], shutter:number[], shape:string,
  *           pitch:number|undefined, house:boolean, shutters:boolean,
  *           palette:string}}
@@ -189,9 +193,9 @@ export function buildingStyleAt(
   z,
   { area = 100, height = 7 } = {},
   towns = defaultTheme.towns,
-  climate = null
+  region = null
 ) {
-  const palette = townPaletteAt(x, z, towns, climate);
+  const palette = townPaletteAt(x, z, towns, region);
   const seed = positionSeed(x, z, 151);
   const pickWall = palette.walls[seed % palette.walls.length];
   const pickRoof = palette.roofs[(seed >>> 3) % palette.roofs.length];

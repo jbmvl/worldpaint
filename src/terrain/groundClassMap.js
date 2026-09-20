@@ -449,11 +449,11 @@ export class GroundClassMap {
     this.THREE = THREE;
     this.theme = theme;
     /**
-     * Famille climatique du lieu, ou `null`. La carte des cultures est le seul
+     * Dossier de région du lieu, ou `null`. La carte des cultures est le seul
      * endroit où une culture est tirée (voir `cropFor`), donc c'est ici que le
-     * climat doit arriver — pas dans `cropLayer`, qui ne fait que relire.
+     * pays doit arriver — pas dans `cropLayer`, qui ne fait que relire.
      */
-    this.climate = null;
+    this.region = null;
     // Une seule carte, un seul repère, un seul filtrage. Elle portait des
     // poids interpolés linéairement dans une carte et des identifiants relus au
     // plus proche dans une autre ; ce sont désormais deux canaux du même texel,
@@ -494,11 +494,11 @@ export class GroundClassMap {
   }
 
   /**
-   * Pose la famille climatique du lieu. Le compositeur repeint la carte quand
-   * elle change : ce qui a été semé sous un autre climat n'est plus valable.
+   * Pose la région du lieu. Le compositeur repeint la carte quand elle change :
+   * ce qui a été semé sous un autre assolement n'est plus valable.
    */
-  setClimate(family) {
-    this.climate = family || null;
+  setRegion(region) {
+    this.region = region || null;
   }
 
   /** Index du texel qui contient un point, ou -1 hors carte. */
@@ -853,7 +853,7 @@ export class GroundClassMap {
           const crop =
             kind === 'farmland' && counted > 0
               ? cropId(
-                  cropFor(properties, randomAt(sumX / counted, sumZ / counted, 43), this.climate)
+                  cropFor(properties, randomAt(sumX / counted, sumZ / counted, 43), this.region?.farming)
                 )
               : 0;
 

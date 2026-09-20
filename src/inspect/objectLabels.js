@@ -121,6 +121,7 @@ export const LABEL_FURNITURE = {
   treeRound: 'arbre (boule)',
   treeColumnar: 'arbre (fuseau)',
   treeOval: 'arbre (dôme)',
+  treePalm: 'arbre (palmier)',
   laundryLine: 'étendage',
   trafficLight: 'feu tricolore',
   rockSmall: 'caillou',
@@ -271,6 +272,7 @@ export const LABEL_CROPS = {
   orchard: 'verger',
   lavender: 'lavande',
   rapeseed: 'colza',
+  rice: 'riz',
 };
 
 /**

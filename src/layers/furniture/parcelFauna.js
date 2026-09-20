@@ -87,7 +87,7 @@ export const CROSS_PROBE_STEPS = 8;
 export function placeHerd(layer, ring, centre, variant, steepness, count) {
   if (randomAt(centre.x, centre.z, 53) < HERD_EMPTY_ODDS) return 0;
 
-  const { item, spread } = herdFor({ steepness, variant, climate: layer.climate });
+  const { item, spread } = herdFor({ steepness, variant, matrix: layer.region?.matrix ?? null });
   const seed = positionSeed(centre.x, centre.z, 61);
   const focus = roadwardFocus(layer, ring, centre);
   let placed = 0;
@@ -129,7 +129,7 @@ export function placeForestGame(layer, ring, centre, variant, hectares) {
   const game = forestGameFor({
     variant,
     predatorDraw: randomAt(centre.x, centre.z, 97),
-    climate: layer.climate,
+    matrix: layer.region?.matrix ?? null,
   });
   if (!game) return 0;
 

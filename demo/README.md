@@ -85,15 +85,47 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
 - **Champ de recherche** : géocode le texte tapé via Nominatim
   (OpenStreetMap) et déplace la bulle (`setCenter` + `refresh`) sur le
   résultat.
-- **Sélecteur de climat** : force la famille climatique du décor
-  (`world.setClimate`) au lieu de la lire dans la grille Köppen à la position
+- **Mode afficheur** : n'est pas un sélecteur de région, mais un sélecteur de
+  mot. Bascule vers une seconde scène, sans lien avec un lieu, qui isole un mot
+  du vocabulaire fermé de région (`src/core/regionInterpretation.js` via
+  `src/inspect/showcase.js`), **traduit en français** dans le panneau — le mot
+  brut (`vineyard`, `hedgerow_meadow`…) reste la clé stable, la traduction n'en
+  est qu'un habillage. C'est ce qui répond à « à quoi ressemble `granite` ? »
+  sans qu'il faille trouver le pays qui l'emploie et s'y téléporter. Un mot
+  marqué ⚠ est `unsupported` dans le vocabulaire : le décor n'a rien de juste
+  à mettre à sa place, et l'afficheur montre le même repli que verrait qui
+  roule jusque-là.
+
+  Deux présentations, selon le champ :
+  - **pierre, bâti, arbres** : une grille de vignettes, un mot par case — un
+    bloc teinté, une maison à deux pans, la silhouette isolée du catalogue de
+    mobilier (`furnitureKit.js`, les mêmes formes qu'un arbre de crête).
+  - **terrain, cultures** : un mot à la fois (second sélecteur), posé sur une
+    **tuile pleine** — pas une couleur, mais le sol et ce qui pousse vraiment
+    dessus. `GroundCover` et `CropLayer`, les couches du monde réel, sèment
+    leurs touffes et leurs tiges sur un `groundClass` truqué qui répond « ce
+    mot, partout » au lieu de lire des tuiles vectorielles. Deux cas que
+    `CropLayer` ne sait pas semer reçoivent un second habillage, ajouté par la
+    démo et non par le moteur :
+    - une matière boisée (bois de feuillus, forêt de conifères…) montre la
+      litière du sous-bois (`grassGreenFor`) *et*, en plus, quelques arbres
+      isolés du catalogue de mobilier — un repère, pas la vraie canopée : la
+      matrice ne décide jamais du couvert forestier, seul un polygone de forêt
+      du vectoriel le fait ;
+    - la vigne, le verger et la lavande n'ont pas de motif de tiges
+      (`CROP_LOOK`) : ils se plantent en **rangs**, posés par le mobilier sur
+      le contour d'une parcelle réelle (`furniture/parcels.js`, `buildRows`).
+      Sans parcelle à suivre, l'afficheur plante à la place des rangs
+      d'échalas, d'arbres taillés ou de buissons du même catalogue — le motif,
+      pas le tracé exact d'un vrai bord de parcelle.
+- **Sélecteur de région naturelle** : force le pays du décor
+  (`world.setRegion`) au lieu de le lire à l'ancre la plus proche de la position
   courante. C'est ce qui permet de juger le travail : **même terrain, mêmes
   routes, mêmes parcelles, même relief, tout le reste changé**. Se téléporter
-  d'une Provence à une Laponie change aussi le tracé, le bâti et la pente, et
-  on ne sait plus ce qui vient du climat. Les onze familles sont celles que le
-  moteur connaît (`CLIMATE_FAMILIES`) ; « Automatique » rend la main à la
-  géographie. La famille en cours s'affiche à côté des coordonnées, suivie de
-  son code Köppen ou de « imposé ».
+  d'un Anjou à une Alpujarra change aussi le tracé, le bâti et la pente, et on
+  ne sait plus ce qui vient du pays. La liste est celle que le moteur connaît
+  (`REGIONS`) ; « Automatique » rend la main à la géographie. La région en cours
+  s'affiche à côté des coordonnées, suivie de sa matrice de paysage.
 - **Panneau météo et heure** : sept temps prêts à l'emploi (grand beau,
   ordinaire, couvert, pluie, orage, neige, brume) et les curseurs qui les
   composent — couverture nuageuse, densité, précipitation et son type, vent,

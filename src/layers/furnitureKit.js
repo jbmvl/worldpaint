@@ -1206,6 +1206,38 @@ export const FURNITURE_BUILDERS = {
   },
 
   /**
+   * Palmier isolé : fût fin et penché, panache de palmes en éventail plutôt
+   * qu'une houppe fermée — ce qui manque à `treeColumnar`, qui lit un
+   * peuplier et non un palmier quand on l'emprunte pour l'un comme pour
+   * l'autre.
+   *
+   * Chaque palme est une planche centrée sur l'axe du fût : la moitié qui
+   * recule vers le tronc se perd dans son épaisseur, l'autre porte tout le
+   * panache une fois inclinée (`tilt`) et tournée (`yaw`).
+   */
+  treePalm(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const trunkHeight = 6.5;
+    k.cylinder({ radiusBottom: 0.22, radiusTop: 0.13, height: trunkHeight, radial: 7, tilt: 0.09, color: C.bark });
+    const crownY = trunkHeight * Math.cos(0.09);
+    const fronds = 7;
+    for (let i = 0; i < fronds; i++) {
+      k.box({
+        width: 0.24,
+        height: 0.06,
+        depth: 2.7,
+        y: crownY,
+        tilt: -0.6,
+        yaw: (i / fronds) * Math.PI * 2,
+        color: i % 2 ? C.leafOlive : C.leafDeep,
+      });
+    }
+    // Flèche centrale, la seule palme qui pointe encore vers le haut.
+    k.box({ width: 0.14, height: 0.05, depth: 1.6, y: crownY, tilt: -1.35, color: C.leafSpring });
+    return k;
+  },
+
+  /**
    * Fil à linge : deux piquets, une corde, et quatre pièces qui pendent.
    *
    * Les draps sont des quadrilatères simples plutôt que des surfaces pliées :
@@ -1635,6 +1667,51 @@ const DRY_STONE_WALL_GRAIN = { up: [0.94, 1.06], across: [0.92, 1.08], lateral: 
 
 /** Tout ce que le mobilier tire de son nuancier (sections balayées, ouvrages de soutènement, feux), mémorisé sur le nuancier lui-même. */
 const SPECS_CACHE = new WeakMap();
+
+/**
+ * Nuanciers dérivés d'une pierre de pays, mémorisés par nuancier puis par
+ * teinte. Une teinte est un tableau, donc jamais comparable par référence : la
+ * clé est sa forme écrite.
+ */
+const STONED_CACHE = new WeakMap();
+
+/**
+ * Les mêmes sections balayées, dans la pierre du pays.
+ *
+ * Seuls les deux tons de pierre du nuancier bougent, donc seuls les ouvrages
+ * qui en sont faits changent : le muret de pierre sèche, le mur de soutènement
+ * et la paroi de déblai. Les formes du catalogue, elles, sont instanciées une
+ * fois pour toutes et gardent leur pierre neutre — recolorier un calvaire et un
+ * moulin à chaque changement de pays coûterait tout le catalogue pour deux
+ * objets qu'on croise rarement.
+ *
+ * La teinte vient de `stoneTintFor`, la même que le shader de terrain applique
+ * à la roche : un causse blanc porte des murets blancs.
+ *
+ * @param {Object} colors Nuancier du thème (`theme.furniture.colors`).
+ * @param {number[]} tint Facteur par canal, en espace linéaire.
+ */
+export function furnitureSpecsForStone(colors, tint) {
+  if (!Array.isArray(tint) || tint.every((factor) => factor === 1)) {
+    return furnitureSpecsFor(colors);
+  }
+  let byTint = STONED_CACHE.get(colors);
+  if (!byTint) {
+    byTint = new Map();
+    STONED_CACHE.set(colors, byTint);
+  }
+  const key = tint.join(',');
+  let stoned = byTint.get(key);
+  if (!stoned) {
+    stoned = {
+      ...colors,
+      stone: colors.stone.map((channel, i) => channel * tint[i]),
+      stoneDark: colors.stoneDark.map((channel, i) => channel * tint[i]),
+    };
+    byTint.set(key, stoned);
+  }
+  return furnitureSpecsFor(stoned);
+}
 
 export function furnitureSpecsFor(colors = defaultTheme.furniture.colors) {
   let specs = SPECS_CACHE.get(colors);

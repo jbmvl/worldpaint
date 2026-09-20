@@ -32,6 +32,7 @@ import {
 } from '../furniturePlacement.js';
 import { churchWithin } from './pointsOfInterest.js';
 import { FURNITURE_RADIUS_M } from './catalog.js';
+import { alignmentShapeForTree, sharesFor } from '../../core/regionInterpretation.js';
 import {
   buildRoadsideRelief,
   buildEmbankment,
@@ -105,7 +106,9 @@ const DEFAULT_ALIGNMENT_SPECIES = [
 ];
 
 /**
- * Essences d'alignement par famille climatique.
+ * Choisit l'essence d'un alignement, tirée une fois pour toute la chaîne (voir
+ * l'appelant) — jamais arbre par arbre, ce qui replanterait une haie de
+ * platanes en sapins au hasard de chaque pied.
  *
  * Un alignement de bord de route est un objet **planté**, donc daté et situé :
  * le platane de nationale, le cyprès de mas, le bouleau de chemin nordique. Il
@@ -113,36 +116,17 @@ const DEFAULT_ALIGNMENT_SPECIES = [
  * cher à laisser générique — une route de Crète bordée de sapins se remarque
  * plus vite qu'un bois mal composé.
  *
- * Les silhouettes disponibles sont celles du catalogue et rien d'autre :
- * `treeColumnar` porte le cyprès et le peuplier, `treeRound` le pin parasol
- * comme le tilleul, `treeOval` l'olivier comme le bouleau. C'est la limite
- * honnête de ce qu'on sait dessiner — le reste se joue sur les proportions.
- *
- * Une famille absente retombe sur le mélange par défaut.
+ * Les essences sont celles du pays, dans l'ordre où il les donne : la première
+ * pèse à peu près la moitié de l'alignement (`sharesFor`). Elles passent par le
+ * catalogue du mobilier, qui ne connaît que six silhouettes — `treeColumnar`
+ * porte le cyprès et le peuplier, `treeRound` le pin parasol comme le tilleul,
+ * `treeOval` l'olivier comme le bouleau, `treePalm` le seul mot qui la porte.
+ * Sans région, c'est le mélange par défaut.
  */
-const ALIGNMENT_SPECIES_MIXES = {
-  oceanic: DEFAULT_ALIGNMENT_SPECIES,
-  oceanicUpland: [['treeConifer', 0.35], ['treeRound', 0.25], ['treeOval', 0.25], ['treeBroad', 0.15]],
-  // Peupliers de bord de route, en rideau : la plaine d'Europe centrale.
-  continental: [['treeColumnar', 0.3], ['treeBroad', 0.3], ['treeOval', 0.25], ['treeConifer', 0.15]],
-  boreal: [['treeConifer', 0.6], ['treeColumnar', 0.2], ['treeOval', 0.2]],
-  // Cyprès, pin parasol, olivier. Le sapin de bord de route n'existe pas ici.
-  mediterranean: [['treeColumnar', 0.4], ['treeRound', 0.28], ['treeOval', 0.22], ['treeBroad', 0.1]],
-  mediterraneanCool: [['treeColumnar', 0.32], ['treeRound', 0.26], ['treeOval', 0.24], ['treeBroad', 0.18]],
-  mediterraneanMontane: [['treeConifer', 0.45], ['treeColumnar', 0.3], ['treeOval', 0.25]],
-  semiArid: [['treeColumnar', 0.45], ['treeOval', 0.3], ['treeRound', 0.25]],
-  arid: [['treeColumnar', 0.5], ['treeOval', 0.3], ['treeRound', 0.2]],
-  alpine: [['treeConifer', 0.7], ['treeColumnar', 0.2], ['treeOval', 0.1]],
-  glacial: [['treeConifer', 1]],
-};
-
-/**
- * Choisit l'essence d'un alignement, tirée une fois pour toute la chaîne
- * (voir l'appelant) — jamais arbre par arbre, ce qui replanterait une haie de
- * platanes en sapins au hasard de chaque pied.
- */
-function alignmentTreeSpeciesFor(x, z, climate = null) {
-  const mix = (climate && ALIGNMENT_SPECIES_MIXES[climate]) || DEFAULT_ALIGNMENT_SPECIES;
+function alignmentTreeSpeciesFor(x, z, trees = null) {
+  const mix = trees?.length
+    ? sharesFor(trees).map(([word, share]) => [alignmentShapeForTree(word), share])
+    : DEFAULT_ALIGNMENT_SPECIES;
   return pickShare(mix, randomAt(x, z, 37));
 }
 
@@ -505,7 +489,7 @@ export function applyRoadsidePlan(layer, {
     // L'essence est tirée **une fois pour la chaîne** : un alignement mêlant
     // platanes et sapins n'existe pas, c'est le propre d'un alignement d'être
     // planté le même jour.
-    const species = alignmentTreeSpeciesFor(side.x, side.z, layer.climate);
+    const species = alignmentTreeSpeciesFor(side.x, side.z, layer.region?.trees);
     for (const p of spacedAlongPath(path, plan.alignmentTree, spacing)) {
       const row = p.index % 2 === 0 ? 1 : -1;
       layer._placeBeside(placements, species, p, row * (halfWidth + 3.2), platform, {

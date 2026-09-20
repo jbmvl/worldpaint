@@ -90,7 +90,7 @@ import {
   ATLAS_ATTRIBUTE,
 } from '../materials/foliageMaterial.js';
 import { defaultTheme } from '../themes/default.js';
-import { filterByClimate } from '../core/climate.js';
+import { filterByWords } from '../core/regionInterpretation.js';
 
 // --- Le semis : des candidats, pas une suite ------------------------------------
 /**
@@ -380,11 +380,11 @@ export function coverBushesFor(cover, surfaces = defaultTheme.surfaces) {
 export const FOREST_PATCH_M = 420;
 
 /**
- * Peuplement d'un point du sol, tiré dans une liste déjà réduite au climat.
+ * Peuplement d'un point du sol, tiré dans une liste déjà réduite au pays.
  * Ancré au lieu : une forêt garde ses essences quand la bulle se déplace.
  *
  * C'est cette forme-là que les semis appellent, maille après maille : le
- * filtrage climatique alloue, et il n'a rien à faire dans une boucle chaude.
+ * filtrage alloue, et il n'a rien à faire dans une boucle chaude.
  */
 export function standTypeFrom(pool, x, z) {
   const gx = Math.floor(x / FOREST_PATCH_M) * FOREST_PATCH_M;
@@ -394,12 +394,12 @@ export function standTypeFrom(pool, x, z) {
 }
 
 /**
- * Peuplement d'un point du sol. Le climat réduit d'abord la liste à ce qui
- * pousse ici, ce qui empêche un pin d'Alep en Finlande ; sans climat, la liste
- * entière est ouverte.
+ * Peuplement d'un point du sol. Les essences du pays réduisent d'abord la liste
+ * à ce qui pousse ici, ce qui empêche un pin d'Alep en Finlande ; sans région,
+ * la liste entière est ouverte.
  */
-export function forestTypeAt(x, z, forests = defaultTheme.forests, climate = null) {
-  return standTypeFrom(filterByClimate(forests, climate), x, z);
+export function forestTypeAt(x, z, forests = defaultTheme.forests, region = null) {
+  return standTypeFrom(filterByWords(forests, 'species', region?.trees), x, z);
 }
 
 /** Variantes d'atlas ouvertes à un peuplement, dans l'ordre de ses essences. */
@@ -522,11 +522,11 @@ export class VegetationLayer {
     this.roads = roads;
     this.maxRing = maxRing;
     /**
-     * Famille climatique du lieu, ou `null` hors de la fenêtre couverte. Elle
-     * n'arrive pas par le thème : elle change en cours de route, comme l'heure
-     * et la météo, et c'est le compositeur qui la pose (`setClimate`).
+     * Dossier de région du lieu, ou `null` hors de toute région couverte. Il
+     * n'arrive pas par le thème : il change en cours de route, comme l'heure et
+     * la météo, et c'est le compositeur qui le pose (`setRegion`).
      */
-    this.climate = null;
+    this.region = null;
     this.disposed = false;
 
     this.group = new THREE.Group();
@@ -625,17 +625,17 @@ export class VegetationLayer {
   }
 
   /**
-   * Pose la famille climatique du lieu.
+   * Pose la région du lieu.
    *
-   * @param {string|null} family
+   * @param {Object|null} region
    * @returns {boolean} vrai si elle a changé — auquel cas ce qui est déjà
    *          planté l'a été avec les mauvaises essences, et le compositeur
    *          replante (voir `sync({replant: true})`).
    */
-  setClimate(family) {
-    const next = family || null;
-    if (next === this.climate) return false;
-    this.climate = next;
+  setRegion(region) {
+    const next = region || null;
+    if (next === this.region) return false;
+    this.region = next;
     this._thicketAnchor = null; // le sous-étage est du même bois : il change d'essences aussi
     return true;
   }
@@ -647,7 +647,7 @@ export class VegetationLayer {
    * pour être appelé à chaque recentrage.
    *
    * @param {boolean} [replant] Vrai quand tout est à reprendre (changement de
-   *        climat, arrivée de la carte de classes).
+   *        région, arrivée de la carte de classes).
    */
   sync({ replant = false } = {}) {
     if (this.disposed || !this.bubble?.frame) return;
@@ -752,7 +752,7 @@ export class VegetationLayer {
     if (known < 1) this._partial.set(tile.key, known);
     else this._partial.delete(tile.key);
 
-    const pool = filterByClimate(this.theme.forests, this.climate);
+    const pool = filterByWords(this.theme.forests, 'species', this.region?.trees);
     // De loin, la strate basse reste faite d'arbustes (voir `understoryStrata`).
     const strata = understoryStrata(this.theme.trees);
     const tree = this._tree;
@@ -890,7 +890,7 @@ export class VegetationLayer {
     const { bubble, groundClass, thicket } = this;
     const capacity = thicket.instanceMatrix.count;
     const index = this.roads?.index || null;
-    const pool = filterByClimate(this.theme.forests, this.climate);
+    const pool = filterByWords(this.theme.forests, 'species', this.region?.trees);
     // De près, le tapis du sol s'ouvre : ronce, buisson bas.
     const strata = understoryStrata(this.theme.trees, true);
     const tree = this._tree;

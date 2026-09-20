@@ -6,8 +6,9 @@
  * tournesol, du colza, de la lavande, du chaume. Et c'est ce qui donne à une
  * campagne sa couleur — le jaune d'un champ de blé se voit d'un kilomètre,
  * bien plus loin qu'aucune haie. Quelle culture pour quel pays est l'affaire de
- * `CROP_MIXES` (`furniturePlacement`) : c'est là, et non ici, qu'un plateau de
- * Haute-Provence porte de la lavande et une plaine picarde du colza.
+ * `cropFor` (`furniturePlacement`) et de la liste `farming` du dossier de
+ * région : c'est là, et non ici, qu'un plateau de Haute-Provence porte de la
+ * lavande et une plaine picarde du colza.
  *
  * ## Où est la culture
  *
@@ -77,7 +78,7 @@ import {
   ATLAS_ATTRIBUTE,
 } from '../materials/foliageMaterial.js';
 import { defaultTheme } from '../themes/default.js';
-import { soilWashFor } from '../core/climate.js';
+import { soilWashFor } from '../core/regionInterpretation.js';
 import { inCorridor } from './roadCorridor.js';
 import {
   coverBand,
@@ -292,11 +293,11 @@ export class CropLayer {
     this.groundClass = groundClass;
     this.roads = roads;
     /**
-     * Famille climatique du lieu, ou `null`. Elle ne décide pas *quelle*
+     * Matrice de paysage du lieu, ou `null`. Elle ne décide pas *quelle*
      * culture pousse — ça, c'est `cropFor`, dans la carte de classes — mais de
      * quelle couleur elle est, du même facteur que le sol sous elle.
      */
-    this.climate = null;
+    this.matrix = null;
     this._wash = soilWashFor(null, theme.soils);
     this.disposed = false;
     this._anchor = null;
@@ -370,16 +371,16 @@ export class CropLayer {
    * plus valable. Appelé après chaque re-rasterisation de `groundClassMap`.
    */
   /**
-   * Pose la famille climatique du lieu.
+   * Pose la région du lieu ; seule sa matrice sert ici.
    *
-   * @param {string|null} family
+   * @param {Object|null} region
    * @returns {boolean} vrai si elle a changé — la teinte étant écrite dans les
    *          instances, l'appelant doit alors redistribuer.
    */
-  setClimate(family) {
-    const next = family || null;
-    if (next === this.climate) return false;
-    this.climate = next;
+  setRegion(region) {
+    const next = region?.matrix ?? null;
+    if (next === this.matrix) return false;
+    this.matrix = next;
     this._wash = soilWashFor(next, this.theme.soils);
     return true;
   }

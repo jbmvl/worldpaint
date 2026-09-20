@@ -21,6 +21,17 @@ Concrètement :
   visuellement, et où le regarder (quel réglage, quelle case à cocher, quel
   type de lieu).
 
+Ça, c'est pour juger le paysage. Ce n'est pas la même chose que vérifier que le
+**code** de la démo tourne : quand le chantier porte sur `demo/` elle-même
+(une nouvelle case, un nouveau mode, une refonte de `main.js`), tu as le droit
+de la lancer pour t'assurer qu'elle démarre sans erreur JS, que les éléments du
+panneau existent et réagissent, qu'un mode se monte et se démonte sans
+exception — bref, ce qu'un test d'intégration vérifierait s'il y en avait un.
+Reste dans ce rôle : constate qu'il n'y a pas d'erreur dans la console, pas
+que « ça a l'air bien » ou « le rendu est convaincant » — cette dernière
+question reste hors de ta portée, même quand tu as la démo ouverte pour autre
+chose.
+
 Ce qui est vérifiable sans les yeux, en revanche, doit l'être et l'être
 vraiment : `npm test`, le chargement des modules, le nombre de tests avant et
 après. Rapporte ces chiffres tels quels, sans les arrondir dans le bon sens.
@@ -34,8 +45,9 @@ après. Rapporte ces chiffres tels quels, sans les arrondir dans le bon sens.
 - `docs/inventaire.md` — objet par objet : qu'est-ce qui a mis ça là. Le premier
   endroit où aller devant un élément du décor qui surprend. Glossaire en fin.
 - `docs/surfaces.md` — le sol en détail : ce qui est lu, peint, laissé.
-- `docs/climats.md` — comment le lieu décide du contenu ; s'adresse à la
-  direction artistique, donc à `themes/default.js`.
+- `docs/regions.md` — les régions naturelles : comment le lieu décide du
+  contenu, le dossier d'un pays, le vocabulaire fermé, et comment poser une
+  ancre.
 - `src/layers/CLAUDE.md` et `src/terrain/CLAUDE.md` — la carte fine de ces deux
   répertoires, et ce qu'il ne faut pas ajouter aux gros fichiers qui y vivent.
 
@@ -49,7 +61,7 @@ RAW DATA → INTERPRÉTATION → COMPOSITION → GÉNÉRATION → THREE.JS
 ```
 
 - **interprétation** — comprendre le territoire : `core/` (tuiles, relief,
-  climat, profil du lieu), `terrain/surfaceClassification.js` (ce qu'une classe
+  région, profil du lieu), `terrain/surfaceClassification.js` (ce qu'une classe
   OSM dit du sol), `layers/settlement.js` (habitat, « sommes-nous en ville ? »),
   `layers/roadGraph.js` (un carrefour est un nœud).
 - **composition** — décider ce qui existe et où : `layers/furniturePlacement.js`,
@@ -75,6 +87,8 @@ maillage.
 | une forme du catalogue de mobilier | `layers/furnitureKit.js` |
 | ce qui est posé et combien (listes, plafonds) | `layers/furniture/catalog.js` |
 | ce qu'une classe `landuse`/`landcover` peint au sol | `terrain/surfaceClassification.js` |
+| le portrait d'un pays (matrice, pierre, bâti, cultures, essences) | `core/regions.js` — voir `docs/regions.md` |
+| ce qu'un mot de région signifie pour le moteur | `core/regionInterpretation.js` |
 | une couche (routes, bâti, végétation, herbe…) | `src/layers/CLAUDE.md` d'abord |
 
 ## Comment on écrit
