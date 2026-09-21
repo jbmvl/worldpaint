@@ -216,6 +216,8 @@ import {
   ROAD_GRADE_CUT_STEEP_M,
   ROAD_GRADE_FILL_STEEP_M,
   platformPositionAt,
+  platformSnapAt,
+  ROAD_SNAP_RADIUS_M,
 } from '../src/layers/roadNetwork.js';
 import {
   mergeRoadLines,
@@ -8529,6 +8531,46 @@ test('platformPositionAt lit la plate-forme, remblai et pont compris', () => {
   close(platformPositionAt(roads, 50, 0), 12, 1e-6, 'sous le tablier, la plate-forme répond');
   assert.equal(platformPositionAt(roads, 500, 0), null, 'hors chaussée, rien à lire');
   assert.equal(platformPositionAt(null, 50, 0), null, 'sans réseau construit, rien ne casse');
+});
+
+test('platformSnapAt rend le point de l’axe, là où platformPositionAt se tait', () => {
+  // Une route est-ouest, et un point à huit mètres au sud : hors chaussée pour
+  // qui demande « suis-je dessus », mais la question posée est « où est-elle ».
+  const roads = { elevationIndex: new RoadIndex([fakeSegment(straight(0, 100, 10), 3, 5)]) };
+
+  assert.equal(platformPositionAt(roads, 50, 8), null, 'à huit mètres, on n’est plus dessus');
+  const hit = platformSnapAt(roads, 50, 8);
+  close(hit.x, 50, 1e-9, 'l’axe qui fait face');
+  close(hit.z, 0, 1e-9);
+  close(hit.distance, 8, 1e-9);
+
+  assert.equal(platformSnapAt(roads, 50, 400), null, 'hors de portée, rien');
+  assert.equal(platformSnapAt(null, 50, 8), null, 'sans réseau construit, rien ne casse');
+});
+
+test('platformSnapAt ignore la rue qu’on croise et garde celle qu’on suit', () => {
+  // Une est-ouest et une nord-sud qui se croisent en (50, 0). Le mobile est à
+  // (50, 6) : la transversale passe plus près de lui que la route qu'il suit.
+  const eastWest = fakeSegment(straight(0, 100, 10), 3, 5);
+  const northSouth = fakeSegment(
+    Array.from({ length: 11 }, (_, i) => ({ x: 50, z: -50 + i * 10 })),
+    3,
+    5
+  );
+  const roads = { elevationIndex: new RoadIndex([eastWest, northSouth]) };
+
+  close(platformSnapAt(roads, 50, 6).distance, 0, 1e-9, 'sans sens, la transversale l’emporte');
+
+  // En roulant vers l'est, c'est l'est-ouest qui répond, six mètres plus au nord.
+  const snapped = platformSnapAt(roads, 50, 6, { x: 1, z: 0 });
+  close(snapped.z, 0, 1e-9);
+  close(snapped.distance, 6, 1e-9);
+});
+
+test('la portée de platformSnapAt borne la recherche', () => {
+  const roads = { elevationIndex: new RoadIndex([fakeSegment(straight(0, 100, 10), 3, 5)]) };
+  assert.ok(platformSnapAt(roads, 50, ROAD_SNAP_RADIUS_M - 1), 'en deçà, la route est trouvée');
+  assert.equal(platformSnapAt(roads, 50, ROAD_SNAP_RADIUS_M + 1), null, 'au-delà, non');
 });
 
 test('platformPositionAt départage un croisement en dénivelé par le sens du déplacement', () => {
