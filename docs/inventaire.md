@@ -37,7 +37,7 @@ couches sont ouvertes, et **elles seules** :
 | `building` | `buildingLayer`, `settlement` | empreintes bâties, densité du tissu |
 | `poi` | `buildingLayer`, `furnitureLayer` | fonction d'un bâtiment, abribus, fontaines, châteaux |
 | `place` | `settlement` | nom et rang d'une agglomération |
-| `mountain_peak` | `furnitureLayer` | sommets, pour les antennes |
+| `mountain_peak` | `furnitureLayer`, `cliffLayer` | sommets, pour les antennes ; falaises (`class=cliff`) |
 
 La couche `park` **n'est pas lue** : au schéma OpenMapTiles elle ne contient
 aucun parc de ville mais des périmètres de protection (Natura 2000, parcs
@@ -53,6 +53,33 @@ corrige rien : ce qui pousse réellement en altitude est relevé par le
 vectoriel.
 
 ---
+
+## Le relief taillé
+
+Le MNT ne sait pas qu'une falaise est verticale : il l'étale en rampe sur toute
+sa largeur — une falaise de mer de quatre-vingts mètres se lit sur une centaine
+de mètres de pente douce. Là où OSM a relevé un `natural=cliff`, `cliffLayer`
+comprime cette rampe en marche (`terrain/cliffCut`).
+
+Une falaise n'est **pas un objet posé** : c'est du terrain raide fait de
+roche. La couche publie donc la marche, et une bande que `groundClassMap`
+peint en `rock` pour le cas où la donnée décrit la falaise sans décrire la
+roche. Sa rugosité lui vient du grain géométrique du sol
+(`terrain/lowPolyGrain`), comme à n'importe quelle roche.
+
+Elle pose en plus une **nappe de paroi**, et pour une seule raison : le
+terrain est un champ de hauteurs, où une face verticale tient dans un seul
+quadrilatère et ne porte aucune rangée de sommets entre son pied et son
+arase — à Saumur, 0,69 quad de large pour quarante mètres de haut. Le grain
+déplace des sommets ; sans sommet, il ne rendait qu'une valeur par colonne,
+donc des cannelures verticales. La nappe n'apporte que ces sommets : elle
+est rendue avec le matériau du terrain, et c'est le même grain qui la creuse.
+
+C'est une **synthèse**, pas une correction : la dénivelée mesurée est
+conservée, seule sa distance change. Et c'est un relevé, donc lacunaire — une
+falaise qu'aucun contributeur n'a tracée reste la rampe du MNT. Un ressaut de
+moins de cinq mètres est ignoré : OSM pose `natural=cliff` jusque sur des
+talus d'un mètre, que le MNT ne distingue pas de son propre bruit.
 
 ## Le sol
 
@@ -562,8 +589,13 @@ Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
 4. **Un marais n'a qu'une forme** : les tuiles servies ne transmettent presque
    jamais la sous-classe d'une zone humide (seul `saltmarsh` a été vu). Un
    marais boisé est peint comme une roselière, sans arbres.
-5. `natural=shingle`, `mud`, `rock`, `cliff` **n'arrivent jamais** jusqu'à nous :
-   le tableau de correspondance d'OpenMapTiles est fermé et ne les retient pas.
+5. `natural=shingle` et `mud` **n'arrivent jamais** jusqu'à nous en tant que
+   couverture : le tableau de correspondance de `landcover` est fermé et ne les
+   retient pas. `rock` y est en revanche bien présent (sous-classes `bare_rock`
+   et `scree`), et `cliff` arrive par une autre porte que celle où on le
+   cherche : ce n'est pas une couverture mais une **polyligne** de la couche
+   `mountain_peak`, servie à partir du zoom 13 aux côtés de `ridge` et `arete`.
+   C'est elle que lit `cliffLayer`.
 6. **Un cours d'eau plus étroit qu'un texel** (2,7 m) ne peut pas être rasterisé
    proprement : le drain (1,6 m) et le fossé (1,2 m) se rendent en pointillé.
    Voir `docs/surfaces.md`.

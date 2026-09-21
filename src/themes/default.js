@@ -111,6 +111,15 @@ export const TERRAIN_LOOK = {
   rockStrength: 0.75,
 
   /**
+   * L'aplomb d'une falaise relevée (`layers/cliffLayer`) : la dénivelée que le
+   * MNT étale en rampe est comprimée sur cette largeur au sol. `batter` la
+   * tire de la hauteur — 0,075 met une paroi de quarante mètres sur trois —
+   * et `maxReach` la plafonne, sans quoi une très grande dénivelée
+   * redeviendrait le versant qu'on cherche justement à supprimer.
+   */
+  cliff: { batter: 0.075, minReach: 1.2, maxReach: 9 },
+
+  /**
    * L'eau, quand le sol en est fait (couverture `water`). Trois réglages, et
    * c'est le second qui fait qu'on lit de l'eau : un plan d'eau est sombre vu
    * du dessus et clair vu de biais, parce qu'il renvoie le ciel d'autant plus
@@ -699,7 +708,10 @@ export const STONE_LOOK = {
  *   réglage de repli (`LOW_POLY_GRAIN_DEFAULTS`, taillé pour une paroi
  *   rocheuse) — c'est le cas de tout ce qui n'est pas listé ici. L'herbe qui
  *   pousse dessus (`groundCover.js`) lit la même paire, pour ne pas flotter
- *   au-dessus du sol qu'elle recouvre.
+ *   au-dessus du sol qu'elle recouvre. Sur `rock` uniquement, `grain: { cellM,
+ *   amplitudeM }` porte un second réglage : celui qu'une forte pente impose
+ *   (`uRockGrain`) à toute matière sur une paroi, là où la carte du sol,
+ *   plane, ne peut rien dire d'une verticale.
  *
  * Un champ absent vaut le neutre : la table ne décrit que les écarts. Une
  * matière peinte de la bonne couleur mais couverte d'une prairie de quatre-
@@ -856,6 +868,7 @@ export const SURFACE_LOOK = {
     albedo: [0.371, 0.332, 0.27],
     wash: null,
     stone: true,
+    grain: { cellM: 6, amplitudeM: 1.4 },
     grassHeight: 0.35,
     grassDensity: 0.1,
     grassTint: [1, 0.96, 0.88],

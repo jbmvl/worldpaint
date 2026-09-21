@@ -134,8 +134,8 @@ import {
 import { pavementTone } from '../layers/townStyle.js';
 import { createWaterNormalCanvas } from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
-import { soilWashFor, surfaceForMatrix, stoneTintFor } from '../core/regionInterpretation.js';
 import { LOW_POLY_GRAIN_GLSL, LOW_POLY_GRAIN_DEFAULTS } from './lowPolyGrain.js';
+import { soilWashFor, surfaceForMatrix, stoneTintFor } from '../core/regionInterpretation.js';
 
 /** Couleur d'une matière qu'un thème ne décrit pas : un gris de terre neutre. */
 const FALLBACK_ALBEDO = [0.18, 0.17, 0.15];
@@ -377,10 +377,27 @@ export class TerrainMaterialFactory {
       uRockColor: { value: new THREE.Vector3(...look.rockColor) },
       uSlopeRange: { value: new THREE.Vector2(look.slopeStart, look.slopeEnd) },
       uRockStrength: { value: look.rockStrength },
+      /**
+       * Le grain de la roche des fortes pentes, forcé quelle que soit la
+       * matière lue. Une carte du sol est **plane** : une paroi verticale n'y
+       * occupe qu'un liseré de quelques texels, que la cubique du contour noie
+       * dans ce qui l'entoure, et la matière lue s'y étire en hauteur. La
+       * pente, elle, décrit la paroi exactement — c'est déjà par elle que la
+       * teinte de roche arrive (`uSlopeRange`), et le grain la suit.
+       *
+       * L'albédo, lui, n'a pas d'uniforme à part : la roche régionalisée est
+       * déjà dans `uSurfaceAlbedo`, et la dupliquer ici la figerait au montage.
+       */
+      uRockGrain: {
+        value: new THREE.Vector2(
+          this.surfaces.rock?.grain?.cellM ?? 0,
+          this.surfaces.rock?.grain?.amplitudeM ?? 0
+        ),
+      },
       /** Sol mouillé, de 0 à 1. Piloté par la météo, jamais par le thème. */
       uWetness: { value: 0 },
-      // Grain low poly géométrique (`lowPolyGrain.js`) : un seul réglage pour
-      // tout le sol, pas encore par matière. `foliageMaterial.js` lit les
+      // Grain low poly géométrique (`lowPolyGrain.js`) : repli hors carte ou
+      // hors matière connue (`uUnclassified`) — `foliageMaterial.js` lit les
       // mêmes valeurs par défaut pour que l'herbe et les cultures suivent.
       uGrainCellM: { value: LOW_POLY_GRAIN_DEFAULTS.cellM },
       uGrainAmplitudeM: { value: LOW_POLY_GRAIN_DEFAULTS.amplitudeM },
@@ -402,6 +419,8 @@ export class TerrainMaterialFactory {
           `#include <common>
            varying vec3 vScenePos;
            varying vec3 vSceneNormal;
+           varying float vGrain;
+           varying float vSteep;
            uniform float uGrainCellM;
            uniform float uGrainAmplitudeM;
            uniform vec2 uGrainFadeM;
@@ -412,17 +431,23 @@ export class TerrainMaterialFactory {
            uniform float uUnclassified;
            uniform float uSurfaceGrainCell[${SURFACE_KINDS.length}];
            uniform float uSurfaceGrainAmplitude[${SURFACE_KINDS.length}];
+           uniform vec2 uSlopeRange;
+           uniform vec2 uRockGrain;
            attribute float roadMask;
            ${LOW_POLY_GRAIN_GLSL}
 
            /* Identifiant de matière au texel le plus proche — pas de lissage :
             * le grain est un déplacement géométrique, pas un contour, une
             * marche d'un texel à la limite de deux matières ne s'y voit pas
-            * comme elle le ferait sur un aplat de couleur. */
+            * comme elle le ferait sur un aplat de couleur. textureLod et non
+            * texture2D : au sommet il n'y a pas de dérivée, donc pas de niveau
+            * implicite — three réécrit texture2D en texture, que GLSL ES 3.00
+            * refuse dans cette étape. La carte n'a de toute façon qu'un seul
+            * niveau (pas de mipmap). */
            float grainSurfaceIdAt(vec2 uv) {
              vec2 texel = floor(uv * ${CLASS_PIXELS}.0);
              float id = floor(
-               texture2D(uSurfaceMap, (texel + 0.5) / ${CLASS_PIXELS}.0).r * 255.0
+               textureLod(uSurfaceMap, (texel + 0.5) / ${CLASS_PIXELS}.0, 0.0).r * 255.0
                  / ${SURFACE_ID_STEP}.0 + 0.5
              );
              return id < 0.5 ? uUnclassified : id;
@@ -431,40 +456,54 @@ export class TerrainMaterialFactory {
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
-           {
-             // Grain low poly : bosselé avant de fixer vScenePos, pour que le
-             // reste du shader (contour, pente, dérivées de normale) lise
-             // directement la position déjà déformée.
-             vec3 grainPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-             // Le grain s'éteint dans l'emprise routière (roadMask, écrit par
-             // terrainBubble.js à partir de roadCutMaskAt) : le sommet y a
-             // déjà été recreusé pour la chaussée, il n'y repousse pas dessus.
-             float grainFade =
-               lowPolyFade(grainPos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y) * (1.0 - roadMask);
+           // Grain low poly : la matière est lue au pied du sommet, au texel
+           // le plus proche — pas de lissage, le grain est un déplacement
+           // géométrique, et la cubique du fragment ne sert qu'au tracé du
+           // contour.
+           vec3 grainPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+           // Le grain s'éteint dans l'emprise routière (roadMask, écrit par
+           // terrainBubble.js à partir de roadCutMaskAt) : le sommet y a déjà
+           // été recreusé pour la chaussée, il n'y repousse pas dessus.
+           float grainFade =
+             lowPolyFade(grainPos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y) * (1.0 - roadMask);
 
-             // La cellule et l'amplitude viennent de la matière au pied du
-             // sommet, comme l'albédo — hors carte ou hors carreau, celle du
-             // repli (uUnclassified), jamais un réglage neutre à part.
-             float grainId = uUnclassified;
-             if (uSurfaceEnabled > 0.5) {
-               vec2 grainUv = (grainPos.xz - uSurfaceOrigin) / uSurfaceSize;
-               if (grainUv.x > 0.0 && grainUv.x < 1.0 && grainUv.y > 0.0 && grainUv.y < 1.0) {
-                 grainId = grainSurfaceIdAt(grainUv);
-               }
+           // La cellule et l'amplitude viennent de la matière au pied du
+           // sommet, comme l'albédo — hors carte ou hors carreau, celle du
+           // repli (uUnclassified), jamais un réglage neutre à part.
+           float grainId = uUnclassified;
+           if (uSurfaceEnabled > 0.5) {
+             vec2 grainUv = (grainPos.xz - uSurfaceOrigin) / uSurfaceSize;
+             if (grainUv.x > 0.0 && grainUv.x < 1.0 && grainUv.y > 0.0 && grainUv.y < 1.0) {
+               grainId = grainSurfaceIdAt(grainUv);
              }
-             float grainCellM = uGrainCellM;
-             float grainAmplitudeM = uGrainAmplitudeM;
-             for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
-               if (float(i) == grainId) {
-                 grainCellM = uSurfaceGrainCell[i - 1];
-                 grainAmplitudeM = uSurfaceGrainAmplitude[i - 1];
-               }
-             }
-
-             transformed.y += lowPolyBump(grainPos.xz, grainCellM, grainAmplitudeM) * grainFade;
            }
+           float grainCellM = uGrainCellM;
+           float grainAmplitudeM = uGrainAmplitudeM;
+           for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
+             if (float(i) == grainId) {
+               grainCellM = uSurfaceGrainCell[i - 1];
+               grainAmplitudeM = uSurfaceGrainAmplitude[i - 1];
+             }
+           }
+
+           // Une paroi est de la roche, quoi qu'en dise la carte : la pente
+           // la décrit là où la carte plane ne le peut pas. Même intervalle
+           // que la teinte de roche du fragment, pour que la couleur et le
+           // relief arrivent ensemble.
+           vec3 grainNormal = normalize(mat3(modelMatrix) * objectNormal);
+           vSteep = smoothstep(uSlopeRange.x, uSlopeRange.y, 1.0 - clamp(grainNormal.y, 0.0, 1.0));
+           grainCellM = mix(grainCellM, uRockGrain.x, vSteep);
+           grainAmplitudeM = mix(grainAmplitudeM, uRockGrain.y, vSteep);
+
+           // Pas d'accent grave ici : literal de gabarit. Le plan du bruit se
+           // choisit dans le repere de la position locale, la pente dans celui
+           // de la scene : deux normales, deux reperes.
+           vec3 grainAxis = normalize(objectNormal);
+           transformed += grainAxis * lowPolyBump(transformed, grainAxis, grainCellM, grainAmplitudeM) * grainFade;
+           vGrain = grainAmplitudeM * grainFade;
+
            vScenePos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-           vSceneNormal = normalize(mat3(modelMatrix) * objectNormal);`
+           vSceneNormal = grainNormal;`
         );
 
       shader.fragmentShader = shader.fragmentShader
@@ -473,6 +512,8 @@ export class TerrainMaterialFactory {
           `#include <common>
            varying vec3 vScenePos;
            varying vec3 vSceneNormal;
+           varying float vGrain;
+           varying float vSteep;
            uniform vec2 uDetailRange;
            uniform sampler2D uMacroMap;
            uniform vec3 uMacro;
@@ -792,8 +833,18 @@ export class TerrainMaterialFactory {
              // Pas d'accent grave dans ce bloc : litteral de gabarit.
              vec3 base = albedo * modulation;
 
-             float slope = 1.0 - clamp(vSceneNormal.y, 0.0, 1.0);
-             float rock = smoothstep(uSlopeRange.x, uSlopeRange.y, slope) * uRockStrength * (1.0 - gWater);
+             // La roche des fortes pentes, en deux temps. D'abord la matière
+             // elle-meme : multiplier une herbe par un gris ne donne pas de la
+             // roche, ca donne une herbe sombre — et c'est ce qu'on lisait sur
+             // une paroi, la carte plane n'ayant pu y poser que de l'herbe
+             // etiree. La pente, elle, decrit la paroi.
+             float rock = vSteep * uRockStrength * (1.0 - gWater);
+             // Pas d'accent grave ici : literal de gabarit. La roche du
+             // socle, telle que setRegion l'a deja teintee par la geologie du
+             // pays : un uniforme a part serait fige au montage, et rendrait
+             // la meme falaise du calcaire au granite.
+             base = mix(base, uSurfaceAlbedo[${SURFACE_KINDS.indexOf('rock')}], rock);
+             // Puis la teinte, qui module ce que la matiere a donne.
              base = mix(base, base * uRockColor, rock);
 
              // Pluie : le sol se mouille. Sans objet sur l'eau elle-même.
@@ -841,17 +892,23 @@ export class TerrainMaterialFactory {
           '#include <normal_fragment_begin>',
           `#include <normal_fragment_begin>
            {
-             // Grain low poly : normale plate tiree des derivees d'ecran de
-             // la position deja bosselee (voir <begin_vertex>), melangee a la
-             // normale analytique lissee par le meme fondu de distance que la
-             // bosse elle-meme — au-dela de uGrainFadeM.y la bosse est nulle
-             // et cette normale doit l'etre aussi, sans quoi le sol lointain
-             // resterait facette sur la seule triangulation grossiere de la
-             // maille.
-             float grainFade = lowPolyFade(vScenePos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y);
-             vec3 flatNormal = normalize(cross(dFdx(vScenePos), dFdy(vScenePos)));
-             if (dot(flatNormal, vSceneNormal) < 0.0) flatNormal = -flatNormal;
-             vec3 worldNormal = normalize(mix(vSceneNormal, flatNormal, grainFade));
+             // Grain low poly : normale plate tirée des dérivées d'écran de
+             // la position déjà bosselée (voir <begin_vertex>), mélangée à la
+             // normale analytique. Là où la position a été bosselée, celle-ci
+             // décrit la surface d'avant la bosse et rendrait un versant lisse
+             // sous un relief qui, lui, ondule — les dérivées d'écran rendent
+             // la facette réellement dessinée. vGrain (amplitude déjà
+             // multipliée par le fondu de distance et l'emprise routière côté
+             // sommet) fait le partage : nulle, la bosse ne s'est pas produite
+             // et les dérivées ne rendraient que le facettage de la maille du
+             // terrain — c'est la normale analytique qui vaut.
+             vec3 worldNormal = vSceneNormal;
+             if (vGrain > 0.0) {
+               float grainFade = lowPolyFade(vScenePos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y);
+               vec3 flatNormal = normalize(cross(dFdx(vScenePos), dFdy(vScenePos)));
+               if (dot(flatNormal, vSceneNormal) < 0.0) flatNormal = -flatNormal;
+               worldNormal = normalize(mix(vSceneNormal, flatNormal, grainFade));
+             }
              vec3 a = texture2D(uWaterRipples, vScenePos.xz / uWaterRipple.x + uWaterFlow).xyz * 2.0 - 1.0;
              vec3 b = texture2D(uWaterRipples, vScenePos.zx / (uWaterRipple.x * 0.6) - uWaterFlow * 1.7).xyz * 2.0 - 1.0;
              vec3 wavy = normalize(worldNormal + vec3(a.x + b.x, 0.0, a.z + b.z) * uWaterRipple.y);
@@ -862,7 +919,7 @@ export class TerrainMaterialFactory {
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v18-lowpoly-grain-hors-emprise';
+    material.customProgramCacheKey = () => 'terrain-bubble-v19-cliff-grain';
     return material;
   }
 

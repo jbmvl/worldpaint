@@ -39,15 +39,25 @@ export const DEFAULT_VIEW = {
 };
 
 /**
+ * Zoom des tuiles du MNT, distinct de celui de la bulle : c'est le zoom
+ * maximal que sert la source qui le décide, pas la finesse de la maille.
+ * MapTiler s'arrête au 14 ; demander plus fin ne rendrait que des 404.
+ *
+ * Une autre source se règle par `elevation.zoom` ; la bulle s'y adapte.
+ */
+export const DEFAULT_ELEVATION_ZOOM = 14;
+
+/**
  * Monte un paysage dans une scène three.js existante.
  *
  * @param {Object} options
  * @param {Object} options.THREE  Le module three de l'application (jamais importé ici).
  * @param {Object} options.scene  La scène qui recevra le décor.
- * @param {ElevationField|{url?: string, encoding?: string, maxTiles?: number}} [options.elevation]
+ * @param {ElevationField|{zoom?: number, url?: string, encoding?: string, maxTiles?: number}} [options.elevation]
  *        Relief. Un objet de réglages monte un `ElevationField` par défaut
- *        (tuiles Terrarium d'AWS Open Data, sans clé). Une instance déjà
- *        construite est utilisée telle quelle et n'est pas libérée par `dispose()`.
+ *        (tuiles Terrarium d'AWS Open Data, sans clé, au `DEFAULT_ELEVATION_ZOOM`).
+ *        Une instance déjà construite est utilisée telle quelle et n'est pas
+ *        libérée par `dispose()`.
  * @param {{tiles: string[], maxZoom?: number}|null} [options.vector]
  *        Tuiles vectorielles OpenMapTiles. Absentes, le décor se réduit au relief nu.
  * @param {Object} [options.view] Voir `DEFAULT_VIEW`.
@@ -88,7 +98,7 @@ export function createWorld({
 
   const ownsElevation = !(elevation instanceof ElevationField);
   const field = ownsElevation
-    ? new ElevationField({ zoom: settings.zoom, ...elevation })
+    ? new ElevationField({ zoom: DEFAULT_ELEVATION_ZOOM, ...elevation })
     : elevation;
 
   const composer = new WorldComposer({

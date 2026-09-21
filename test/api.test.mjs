@@ -25,7 +25,7 @@ const CONTRACT = [
   'WorldComposer',
   'WORLD_ATTRIBUTION',
   'ElevationField',
-  'TERRARIUM_URL',
+  'MAPTILER_TERRAIN_URL',
   'VectorTileSource',
   'SceneEnvironment',
   'DEFAULT_SKY_PALETTE',

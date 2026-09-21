@@ -19,12 +19,21 @@ import {
   decodeTerrarium,
   decodeTerrainRgb,
   tilesAround,
+  tilesCovering,
   fillTileUrl,
   bearingToYaw,
   lerpBearing,
 } from '../src/core/tileMath.js';
 
 import { ElevationField, DEM_TILE_PIXELS } from '../src/core/elevationField.js';
+import {
+  cliffElevationAt,
+  cliffFaceWidth,
+  cliffProfileAt,
+  CLIFF_BLEND_M,
+  CLIFF_MIN_HEIGHT_M,
+} from '../src/terrain/cliffCut.js';
+import { CliffIndex } from '../src/layers/cliffLayer.js';
 import {
   labelForMeshName,
   nearestInstance,
@@ -732,6 +741,58 @@ test('le bloc de tuiles enjambe l’antiméridien sans produire d’index négat
   const tiles = tilesAround(0.5, 1.5, 3, z);
   assert.ok(tiles.every((t) => t.x >= 0 && t.x < 4), 'x reste dans le monde');
   assert.ok(tiles.some((t) => t.x === 3), 'la colonne à l’ouest boucle par l’est');
+});
+
+test('un MNT plus grossier que la bulle se ramène à une seule tuile', () => {
+  // 15 → 13 : seize tuiles de bulle tombent dans la même tuile de MNT.
+  for (let y = 0; y < 4; y++) {
+    for (let x = 0; x < 4; x++) {
+      assert.deepEqual(tilesCovering(1000 + x, 2000 + y, 1, 15, 13), [{ x: 250, y: 500, z: 13 }]);
+    }
+  }
+  // La tuile suivante bascule bien sur la tuile de MNT d’à côté.
+  assert.deepEqual(tilesCovering(1004, 2000, 1, 15, 13), [{ x: 251, y: 500, z: 13 }]);
+  // Un bloc de 3 tuiles de bulle peut chevaucher deux tuiles de MNT.
+  assert.equal(tilesCovering(1003, 2000, 3, 15, 13).length, 2);
+});
+
+test('un MNT plus fin que la bulle demande toutes les tuiles qui la couvrent', () => {
+  const tiles = tilesCovering(10, 20, 1, 13, 15);
+  assert.equal(tiles.length, 16);
+  assert.ok(tiles.every((t) => t.x >= 40 && t.x < 44 && t.y >= 80 && t.y < 84), 'quadrant exact');
+  // À zoom égal, la couverture est la tuile elle-même.
+  assert.deepEqual(tilesCovering(10, 20, 1, 13, 13), [{ x: 10, y: 20, z: 13 }]);
+});
+
+test('la couverture du MNT enjambe l’antiméridien sans index négatif', () => {
+  const tiles = tilesCovering(-1, 1, 1, 3, 3);
+  assert.deepEqual(tiles, [{ x: 7, y: 1, z: 3 }]);
+});
+
+test('tout point échantillonné tombe dans une tuile de MNT chargée', () => {
+  // L’invariant qui tient le rendu : ce que `_sample` lit doit être dans ce
+  // que le chargement a demandé, marge du gradient comprise.
+  const bubbleZoom = 15;
+  for (const demZoom of [12, 13, 15, 16]) {
+    const scale = Math.pow(2, demZoom - bubbleZoom);
+    const margin = 1 / DEM_TILE_PIXELS; // un pixel de MNT, en unités de tuile de bulle
+    for (const [bx, by] of [[1000, 2000], [1003, 2003], [0, 0]]) {
+      const loaded = new Set(
+        tilesCovering(bx - 1, by - 1, 3, bubbleZoom, demZoom).map((t) => `${t.x}/${t.y}`)
+      );
+      const world = Math.pow(2, demZoom);
+      for (const u of [-margin, 0, 0.5, 1, 1 + margin]) {
+        for (const v of [-margin, 0, 0.5, 1, 1 + margin]) {
+          // En x le monde est cyclique, comme dans `ElevationField._pixel` ;
+          // en y il n’y a rien au-delà des pôles, et le champ le sait.
+          const tx = (((Math.floor((bx + u) * scale) % world) + world) % world);
+          const ty = Math.floor((by + v) * scale);
+          if (ty < 0 || ty >= world) continue;
+          assert.ok(loaded.has(`${tx}/${ty}`), `MNT z${demZoom} en (${bx}, ${by}) + (${u}, ${v})`);
+        }
+      }
+    }
+  }
 });
 
 test('les gabarits d’URL gèrent {z}/{x}/{y} et le schéma TMS', () => {
@@ -3350,6 +3411,192 @@ test('l’emprise routière couvre exactement la même largeur que le déblai', 
   // Indépendante du sens du déblai : contrairement à `cutElevationAt`,
   // l’emprise ne dépend pas de savoir si le terrain domine la plate-forme.
   close(roadCutMaskAt(0, 3), 1, 1e-9, 'emprise pleine même en remblai');
+});
+
+// --- Falaises relevées ------------------------------------------------------
+
+test('la marche de falaise comprime la rampe sans changer la dénivelée', () => {
+  const foot = 20;
+  const crest = 100;
+  const face = 6;
+  // La cote naturelle est la rampe du MNT ; ce qu'on vérifie, c'est ce que la
+  // marche lui substitue près du trait.
+  const at = (across, raw = 60) => cliffElevationAt(raw, foot, crest, across, face);
+
+  close(at(0), foot, 1e-6, 'au trait, le pied');
+  close(at(face), crest, 1e-6, 'au sommet de la paroi, l’arase');
+  // La dénivelée mesurée est conservée : c'est la distance qui est comprimée.
+  close(at(face) - at(0), crest - foot, 1e-6, 'dénivelée intacte');
+
+  // De part et d'autre, le terrain naturel est retrouvé.
+  close(at(-CLIFF_BLEND_M, 33), 33, 1e-6, 'terrain naturel en contrebas');
+  close(at(face + CLIFF_BLEND_M, 88), 88, 1e-6, 'terrain naturel à l’arase');
+  close(at(500, 42), 42, 1e-9, 'loin de la falaise');
+});
+
+test('la paroi est bien plus raide que la rampe qu’elle remplace', () => {
+  const foot = 0;
+  const crest = 80;
+  const face = cliffFaceWidth(crest - foot, { batter: 0.075, minReach: 1.2, maxReach: 9 });
+  // 80 m de dénivelée sur 6 m d'emprise : au-delà de 85°, là où le MNT
+  // étalerait la même chute sur une centaine de mètres.
+  close(face, 6, 1e-9, 'emprise de la paroi');
+  const angle = (Math.atan2(crest - foot, face) * 180) / Math.PI;
+  assert.ok(angle > 85, `paroi à ${angle.toFixed(1)}°`);
+  // Le plafond de recul tient une très grande dénivelée.
+  close(cliffFaceWidth(400, { batter: 0.075, minReach: 1.2, maxReach: 9 }), 9, 1e-9, 'recul plafonné');
+  close(cliffFaceWidth(2, { batter: 0.075, minReach: 1.2, maxReach: 9 }), 1.2, 1e-9, 'jamais en lame');
+});
+
+test('le profil de falaise est monotone et borné', () => {
+  const foot = 10;
+  const crest = 70;
+  const face = 5;
+  let previous = -Infinity;
+  for (let d = -CLIFF_BLEND_M; d <= face + CLIFF_BLEND_M; d += 0.05) {
+    // Rampe naturelle du MNT, linéaire entre les deux cotes.
+    const t = (d + CLIFF_BLEND_M) / (face + 2 * CLIFF_BLEND_M);
+    const raw = foot + (crest - foot) * t;
+    const h = cliffElevationAt(raw, foot, crest, d, face);
+    assert.ok(h >= previous - 1e-6, `monotone à ${d.toFixed(2)} m`);
+    assert.ok(h >= foot - 1e-6 && h <= crest + 1e-6, `borné à ${d.toFixed(2)} m`);
+    previous = h;
+  }
+});
+
+test('un ressaut trop court pour être une falaise laisse le terrain tranquille', () => {
+  // `natural=cliff` est posé dans OSM sur des talus d'un mètre : en deçà du
+  // seuil, la marche écraserait des dizaines de mètres pour rien.
+  const small = CLIFF_MIN_HEIGHT_M - 0.5;
+  close(cliffElevationAt(55, 50, 50 + small, 0, 6), 55, 1e-9, 'sous le seuil, rien');
+  // Juste au-dessus, la marche s'applique.
+  const tall = CLIFF_MIN_HEIGHT_M + 0.5;
+  close(cliffElevationAt(55, 50, 50 + tall, 0, 6), 50, 1e-6, 'au-dessus du seuil, le pied');
+});
+
+test('l’index de falaise oriente sa normale vers le haut et interpole ses cotes', () => {
+  // Un trait droit le long de +x, le haut au nord (-z).
+  const segment = {
+    ax: 0, az: 0, tx: 1, tz: 0,
+    nx: 0, nz: -1, // vers le haut
+    length: 100,
+    footA: 0, footB: 10,
+    crestA: 60, crestB: 80,
+    face: 6,
+    blend: CLIFF_BLEND_M,
+  };
+  const index = new CliffIndex([segment]);
+
+  const high = index.query(50, -3);
+  assert.ok(high, 'point au nord trouvé');
+  assert.ok(high.across > 0, 'côté haut compté positif');
+  close(high.foot, 5, 1e-6, 'pied interpolé à mi-longueur');
+  close(high.crest, 70, 1e-6, 'arase interpolée à mi-longueur');
+
+  const low = index.query(50, 3);
+  assert.ok(low.across < 0, 'côté bas compté négatif');
+
+  // Au-delà de la portée, plus rien : le terrain reste celui du MNT.
+  assert.equal(index.query(50, 400), null, 'hors de portée');
+  close(index.elevationAt(50, 400, 77), 77, 1e-9, 'altitude inchangée hors de portée');
+});
+
+test('la nappe de paroi et la marche du terrain lisent le même profil', () => {
+  // La nappe porte les sommets qu'un champ de hauteurs ne peut pas avoir sur
+  // une face verticale. Plaquée sur un autre profil que la marche, elle
+  // passerait au travers du sol par endroits et flotterait ailleurs — et
+  // c'est invisible tant qu'on ne regarde pas le raccord de près.
+  const foot = 12;
+  const crest = 52;
+  const face = 3;
+  for (let i = 0; i <= 20; i++) {
+    const t = i / 20;
+    // Ce que la nappe pose, en fonction de la traversée.
+    const sheet = foot + (crest - foot) * cliffProfileAt(t);
+    // Ce que le terrain rend au même endroit, la rampe naturelle passant
+    // entre les deux cotes.
+    const raw = foot + (crest - foot) * t;
+    const ground = cliffElevationAt(raw, foot, crest, face * t, face);
+    close(sheet, ground, 1e-9, `traversée à ${t.toFixed(2)}`);
+  }
+
+  // Aux deux bords, la nappe touche exactement le pied et l'arase.
+  close(cliffProfileAt(0), 0, 1e-12, 'au pied');
+  close(cliffProfileAt(1), 1, 1e-12, 'à l’arase');
+  // Et elle ne sort pas de l'intervalle, quoi qu'on lui demande.
+  close(cliffProfileAt(-3), 0, 1e-12, 'avant le pied');
+  close(cliffProfileAt(9), 1, 1e-12, 'après l’arase');
+});
+
+test('la grille de l’index rend exactement ce que rendrait un parcours exhaustif', () => {
+  // La grille est là pour la vitesse : le maillage l'interroge près de deux
+  // cent mille fois par tuile. Elle ne doit rien changer au résultat.
+  const segments = [];
+  for (let i = 0; i < 200; i++) {
+    const a = i * 6;
+    segments.push({
+      ax: a, az: Math.sin(i / 9) * 40, tx: 1, tz: 0, nx: 0, nz: -1, length: 6,
+      footA: 10, footB: 10, crestA: 48, crestB: 48, face: 4, blend: CLIFF_BLEND_M,
+    });
+  }
+  const index = new CliffIndex(segments);
+
+  const brute = (x, z) => {
+    let best = null;
+    let bestSquared = Infinity;
+    for (const s of segments) {
+      const dx = x - s.ax;
+      const dz = z - s.az;
+      const along = dx * s.tx + dz * s.tz;
+      const across = dx * s.nx + dz * s.nz;
+      const overshoot = along < 0 ? -along : Math.max(0, along - s.length);
+      const squared = across * across + overshoot * overshoot;
+      const reach = s.face + s.blend;
+      if (squared >= bestSquared || squared > reach * reach) continue;
+      bestSquared = squared;
+      best = across;
+    }
+    return best;
+  };
+
+  let compared = 0;
+  for (let x = -40; x < 1240; x += 11) {
+    for (let z = -90; z < 90; z += 7) {
+      const hit = index.query(x, z);
+      const expected = brute(x, z);
+      if (expected === null) {
+        assert.equal(hit, null, `rien attendu en (${x}, ${z})`);
+      } else {
+        assert.ok(hit, `segment attendu en (${x}, ${z})`);
+        close(hit.across, expected, 1e-9, `distance en travers en (${x}, ${z})`);
+      }
+      compared++;
+    }
+  }
+  assert.ok(compared > 2000, `${compared} points comparés`);
+});
+
+test('l’emprise de l’index écarte d’un coup un rectangle sans falaise', () => {
+  const index = new CliffIndex([{
+    ax: 0, az: 0, tx: 1, tz: 0, nx: 0, nz: -1, length: 100,
+    footA: 0, footB: 0, crestA: 50, crestB: 50, face: 4, blend: CLIFF_BLEND_M,
+  }]);
+  assert.equal(index.touches(10, -10, 30, 10), true, 'tuile sur la falaise');
+  assert.equal(index.touches(-500, -500, -400, -400), false, 'tuile au loin');
+  // L'emprise couvre la portée, pas seulement le trait.
+  assert.equal(index.touches(10, -CLIFF_BLEND_M - 2, 30, -CLIFF_BLEND_M), true, 'bord de portée');
+});
+
+test('deux points de part et d’autre du trait sont séparés par toute la dénivelée', () => {
+  const index = new CliffIndex([{
+    ax: 0, az: 0, tx: 1, tz: 0, nx: 0, nz: -1, length: 100,
+    footA: 0, footB: 0, crestA: 50, crestB: 50, face: 4, blend: CLIFF_BLEND_M,
+  }]);
+  // Le MNT, lui, donne la même valeur moyenne des deux côtés : c'est bien la
+  // marche qui crée la chute, pas la donnée.
+  const below = index.elevationAt(50, 0.5, 25);
+  const above = index.elevationAt(50, -4.5, 25);
+  assert.ok(above - below > 45, `chute de ${(above - below).toFixed(1)} m sur 5 m`);
 });
 
 // --- Sections balayées ------------------------------------------------------
@@ -12276,6 +12523,64 @@ function terrainThreeStub() {
   };
 }
 
+test('tout ce que la greffe du sol nomme y est déclaré, étape par étape', () => {
+  // Un uniforme employé sans être déclaré ne fait pas rater la greffe : il
+  // fait **rejeter le programme entier**, et il ne reste plus un mètre de sol
+  // à l'écran. Aucun test de géométrie ne le voit, et le moteur ne le dit
+  // qu'une fois dans la console du navigateur. D'où ce contrôle, qui relit la
+  // source émise plutôt que l'intention.
+  const previousCanvas = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      Object.assign(this, { width, height });
+    }
+    getContext() {
+      return paintingCanvasContext();
+    }
+  };
+  let factory;
+  try {
+    factory = new TerrainMaterialFactory({ THREE: terrainThreeStub() });
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+  }
+
+  const shader = {
+    uniforms: {},
+    vertexShader: ['#include <common>', '#include <begin_vertex>'].join('\n'),
+    fragmentShader: [
+      '#include <common>',
+      '#include <map_fragment>',
+      '#include <normal_fragment_begin>',
+    ].join('\n'),
+  };
+  factory.material.onBeforeCompile(shader);
+
+  for (const [stage, src] of [
+    ['sommet', shader.vertexShader],
+    ['fragment', shader.fragmentShader],
+  ]) {
+    const declared = new Set();
+    for (const m of src.matchAll(/(?:uniform|varying|attribute)\s+\w+\s+(\w+)/g)) {
+      declared.add(m[1]);
+    }
+    // La convention du projet nomme les uniformes `uXxx` et les varyings
+    // `vXxx` : tout ce qui y ressemble doit être déclaré dans cette étape-là.
+    for (const [, name] of src.matchAll(/\b([uv][A-Z]\w*)\b/g)) {
+      assert.ok(declared.has(name), `${stage} : ${name} employé sans déclaration`);
+    }
+  }
+
+  // Au sommet il n'y a pas de dérivée : une lecture de texture y exige un
+  // niveau explicite, sans quoi GLSL ES 3.00 refuse le programme.
+  assert.ok(
+    !/[^L]texture2D\(/.test(shader.vertexShader),
+    'aucune lecture de texture sans niveau explicite au sommet'
+  );
+  assert.match(shader.vertexShader, /textureLod\(uSurfaceMap/, 'la matière est lue au niveau 0');
+});
+
 test('les limites de surfaces : la frange, les matières interpolées et la rive arrivent dans le shader', () => {
   // Une greffe par `replace` qui rate son ancrage ne casse rien : elle ne fait
   // simplement rien, en silence. Ce test ne juge pas du rendu — il vérifie que
@@ -12348,10 +12653,34 @@ test('les limites de surfaces : la frange, les matières interpolées et la rive
     2,
     'la largeur du trait, en x et en z, et rien d’autre'
   );
-  // La seule dérivée d'écran restante est la normale plate du grain low poly
-  // (`dFdx`/`dFdy` sur la position déjà bosselée) : une par appel, dans
-  // `<normal_fragment_begin>`.
-  assert.match(source, /cross\(dFdx\(vScenePos\), dFdy\(vScenePos\)\)/);
+  // La dérivée d'écran est revenue, mais pour la raison inverse de celle qui
+  // l'avait fait bannir : la position est **réellement** bosselée au sommet
+  // (`lowPolyGrain`), et la facette lue est celle qui est dessinée. Ce qui
+  // reste interdit, c'est d'inventer une normale depuis une texture sans
+  // relevé d'altitude — d'où la garde : la dérivée ne vaut que là où le grain
+  // a bougé la géométrie, sinon elle ne rendrait que le facettage de la maille.
+  assert.match(source, /if \(vGrain > 0\.0\)/, 'la facette est gardée par le grain');
+  assert.equal(
+    (source.match(/dFdx\(|dFdy\(/g) || []).length,
+    2,
+    'deux dérivées, celles de la facette, et rien d’autre'
+  );
+  assert.match(
+    shader.vertexShader,
+    /transformed \+= grainAxis \* lowPolyBump\(/,
+    'la bosse est géométrique, et pousse le long de la normale'
+  );
+  // La pente impose la roche là où la carte du sol ne le peut pas : elle est
+  // plane, et une paroi verticale n'y occupe qu'un liseré de texels.
+  assert.match(shader.vertexShader, /vSteep = smoothstep\(uSlopeRange/, 'la pente choisit la roche');
+  // La paroi prend la roche **du pays** : `setRegion` teinte `uSurfaceAlbedo`
+  // par la géologie, un uniforme à part serait figé au montage.
+  assert.match(
+    source,
+    /base = mix\(base, uSurfaceAlbedo\[\d+\], rock\)/,
+    'la paroi prend la matière roche, régionalisée'
+  );
+  assert.ok(!/uRockAlbedo/.test(source), 'pas d’albédo de roche en double');
 
   assert.ok(
     !/waterShareAt|coverIdAt/.test(source),
@@ -12471,11 +12800,15 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   assert.ok(!/uGrassMap|uSoilMap|uWoodMap/.test(source), 'les textures de matière');
   assert.ok(!/uDetailMap|uDetailScale/.test(source), 'le bruit de détail');
   assert.ok(!/uGrainContrast|uGrainRelief|grainHeight/.test(source), 'le grain et son relief');
-  // L'interdit portait sur la dérivée à la main tirée d'un grain de
-  // **texture**, sans relevé d'altitude. Le grain low poly (`lowPolyGrain.js`)
-  // en déplace un pour de vrai : sa normale plate, reprise par `dFdx`/`dFdy`
-  // sur la position déjà bosselée, est légitime et n'en est pas une seconde.
-  assert.match(source, /cross\(dFdx\(vScenePos\), dFdy\(vScenePos\)\)/);
+  // L'interdit porte sur la dérivée **à la main**, celle qui inventait une
+  // normale depuis un grain et faisait fourmiller le sol. La largeur du trait
+  // d'une lisière (`fwidth`, dans surfaceAt) n'en est pas : elle ne touche pas
+  // la normale, et le champ sous elle est lisse et fixe dans le monde.
+  // Seule survit la dérivée de la facette, gardée par le grain : elle lit une
+  // bosse réellement portée par la géométrie, pas une normale tirée d'une
+  // texture — c'est cette seconde-là qui faisait fourmiller le sol.
+  assert.match(source, /if \(vGrain > 0\.0\)/, 'la facette est gardée par le grain');
+  assert.ok(!/uGrainContrast|grainHeight/.test(source), 'aucun relief tiré d’une texture');
   for (const key of ['grainScaleM', 'grainPixels', 'grainContrast', 'grainRelief']) {
     assert.equal(defaultTheme.terrain[key], undefined, `${key} n'a plus d'objet`);
   }
@@ -12692,9 +13025,12 @@ test('le grain low poly du sol dépend de la matière au pied du sommet', () => 
   // Hors carte ou hors carreau, la matière de repli — jamais un réglage
   // neutre à part.
   assert.match(source, /float grainId = uUnclassified;/);
+  // La bosse pousse le long de la normale, pas seulement en hauteur : sur un
+  // sol plat les deux se confondent, mais c'est ce qui permet au même grain
+  // de porter une paroi de falaise (voir lowPolyGrain.js).
   assert.match(
     source,
-    /transformed\.y \+= lowPolyBump\(grainPos\.xz, grainCellM, grainAmplitudeM\) \* grainFade;/
+    /transformed \+= grainAxis \* lowPolyBump\(transformed, grainAxis, grainCellM, grainAmplitudeM\) \* grainFade;/
   );
 });
 

@@ -2,10 +2,11 @@
 
 | Fichier | Ce qu'il fait |
 | --- | --- |
-| `terrainBubble.js` | la bulle de terrain : maillage, anneaux, déblai de la chaussée |
+| `terrainBubble.js` | la bulle de terrain : maillage, anneaux, marche des falaises et déblai de la chaussée |
 | `terrainMaterial.js` | le shader du sol — il lit la carte des matières |
-| `lowPolyGrain.js` | le grain low poly géométrique du sol (bruit, fondu de distance) — câblé par matière dans `terrainMaterial.js`, réglages dans `SURFACE_LOOK` |
+| `lowPolyGrain.js` | le grain low poly géométrique du sol (bruit, fondu de distance, bosse le long de la normale) — câblé par matière dans `terrainMaterial.js`, réglages dans `SURFACE_LOOK` |
 | `roadCut.js` | l'entaille du terrain sous une chaussée |
+| `cliffCut.js` | la marche du terrain sous une falaise relevée |
 | `groundClassMap.js` | la carte des matières et des cultures, rasterisée pour toute la scène |
 | `surfaceClassification.js` | ce qu'une entité de tuile **dit** du sol |
 
@@ -39,3 +40,31 @@ Deux pièges :
   ligne dans `SURFACE_LOOK` (thème), et une signature qui tient le test d'écart.
 - **l'eau est une matière du sol**, pas une surface posée dessus. Il n'y a pas
   de plan d'eau dans la scène.
+- **la rugosité d'une matière est géométrique**, pas une texture : le sommet
+  est bosselé le long de sa normale (`lowPolyGrain`), et la facette qui en
+  résulte est lue par dérivées d'écran. Une matière se règle par
+  `grainCellM`/`grainAmplitudeM` dans le thème, jamais par un relief inventé au
+  fragment — celui-là avait été retiré parce qu'un relief sans relevé
+  d'altitude fourmille avec l'observateur. La roche a en plus une entrée
+  `grain` à part (`uRockGrain`) : celle que toute paroi prend sur la seule foi
+  de sa pente, quelle que soit la matière lue.
+- **la carte des matières est plane, et ne peut rien dire d'une paroi
+  verticale.** Un texel fait 2,67 m ; une falaise de quarante mètres n'occupe
+  que trois mètres d'emprise au sol, soit un liseré que la cubique du contour
+  noie dans ce qui l'entoure — et toute la hauteur de la paroi se texture
+  depuis ce liseré, donc s'étire. Ce qu'une surface raide doit porter se décide
+  par la **pente** (`slopeStart`, `slopeEnd` dans le thème), qui la décrit
+  exactement : c'est par là qu'arrivent la teinte de roche et son grain.
+
+## Ce qui déforme le relief lu
+
+Deux choses seulement, et dans cet ordre : la **marche** d'une falaise relevée
+(`cliffCut`, publiée par `layers/cliffLayer`), puis le **déblai** d'une
+chaussée (`roadCut`). La falaise façonne le terrain naturel, la route entaille
+ce qu'elle trouve — l'ordre inverse taillerait la chaussée dans une rampe que
+la marche vient de supprimer.
+
+Les deux sont des fonctions **pures de la position au sol** : c'est ce qui
+permet à deux tuiles voisines de s'accorder au bord sans se consulter. Une
+déformation qui dépendrait de la tuile courante, de l'ordre de parcours ou de
+la position de l'observateur ouvrirait une crevasse à chaque jointure.

@@ -4,7 +4,7 @@
  */
 
 // --- Monter un paysage ------------------------------------------------------
-export { createWorld, World, DEFAULT_VIEW } from './world.js';
+export { createWorld, World, DEFAULT_VIEW, DEFAULT_ELEVATION_ZOOM } from './world.js';
 export { WorldComposer, WORLD_ATTRIBUTION, FAUNA_CROSS_AHEAD_M } from './worldComposer.js';
 
 // --- Le vivant : déclencher un événement -------------------------------------
@@ -20,7 +20,7 @@ export { defaultTheme } from './themes/default.js';
 export { resolveTheme } from './themes/theme.js';
 
 // --- Les pièces, pour qui veut monter le décor à la main --------------------
-export { ElevationField, TERRARIUM_URL, DEM_TILE_PIXELS } from './core/elevationField.js';
+export { ElevationField, MAPTILER_TERRAIN_URL, DEM_TILE_PIXELS } from './core/elevationField.js';
 export { VectorTileSource, coveringTiles, VECTOR_ZOOM } from './core/vectorTileSource.js';
 export { SceneEnvironment, DEFAULT_SKY_PALETTE, SKY_RADIUS, SHADOW_LEAD_M, SHADOW_RADIUS_M, sunDirection } from './environment/sceneEnvironment.js';
 

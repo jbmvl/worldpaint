@@ -1,7 +1,7 @@
 /*
  * lowPolyGrain — grain low poly géométrique du sol : un bruit sur réseau
- * triangulaire bosselle la position, une normale reprise par dérivées d'écran
- * fait lire des facettes plutôt qu'un dégradé lissé.
+ * triangulaire bosselle la position le long de la normale, une normale reprise
+ * par dérivées d'écran fait lire des facettes plutôt qu'un dégradé lissé.
  *
  * **Câblé dans `terrainMaterial.js`**, une cellule et une amplitude par
  * matière du sol (`SURFACE_LOOK.grainCellM`/`grainAmplitudeM`, repli sur le
@@ -9,6 +9,18 @@
  * `groundGrainPerInstance`), pour que ce qui pousse suive la bosse plutôt que
  * de flotter sur l'ancien plan — les cultures et le mobilier n'existent que
  * sur des matières non branchées et lisent le seul réglage de repli.
+ *
+ * Une **forte pente** impose en plus le grain de la roche (`uRockGrain`),
+ * quelle que soit la matière lue : la carte du sol est plane, et une paroi
+ * verticale n'y occupe qu'un liseré de quelques texels que la cubique du
+ * contour noie dans ce qui l'entoure. La pente décrit la paroi exactement, sur
+ * le même intervalle que la teinte de roche du fragment (`slopeStart`,
+ * `slopeEnd`), pour que couleur et relief arrivent ensemble.
+ *
+ * La bosse se déplace le long de la **normale** de l'objet, pas seulement en
+ * hauteur : sur un sol plat les deux se confondent, mais c'est ce qui permet à
+ * une paroi de falaise de porter le même grain qu'un sol, projeté sur le plan
+ * qui lui fait face plutôt que sur `xz`.
  *
  * Purement visuel : ça ne touche à aucune lecture d'altitude ailleurs dans le
  * moteur (routes, bâti, haies, `cliffCut`, placement, mobilier ponctuel). Un
@@ -65,8 +77,11 @@ export const LOW_POLY_GRAIN_DEFAULTS = {
  * shader (`onBeforeCompile`).
  *
  * - `lowPolyNoise(vec2 p)` — bruit sur réseau triangulaire, dans `[-1, 1]`.
- * - `lowPolyBump(vec2 xz, float cellM, float amplitudeM)` — décalage vertical
- *   à partir d'une position au sol (mêmes unités que `vScenePos.xz`).
+ * - `lowPolyBump(vec3 posLocal, vec3 normal, float cellM, float amplitudeM)` —
+ *   décalage le long de `normal`, à partir d'une position et d'une normale
+ *   dans le **même repère** : le plan de projection du bruit se choisit selon
+ *   l'axe dominant de `normal` (`xz` au sol, `zy`/`xy` sur une paroi), donc les
+ *   deux doivent s'accorder pour que la bosse ne glisse pas d'un repère à l'autre.
  * - `lowPolyFade(vec3 worldPos, vec3 cameraPos, float startM, float endM)` —
  *   1 près de la caméra, 0 au-delà de `endM`.
  *
@@ -74,9 +89,9 @@ export const LOW_POLY_GRAIN_DEFAULTS = {
  *
  * ```glsl
  * // #include <begin_vertex>, avant de calculer vScenePos :
- * vec3 grainPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
- * float grainFade = lowPolyFade(grainPos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y);
- * transformed.y += lowPolyBump(grainPos.xz, uGrainCellM, uGrainAmplitudeM) * grainFade;
+ * vec3 grainAxis = normalize(objectNormal);
+ * float grainFade = lowPolyFade((modelMatrix * vec4(transformed, 1.0)).xyz, cameraPosition, uGrainFadeM.x, uGrainFadeM.y);
+ * transformed += grainAxis * (lowPolyBump(transformed, grainAxis, uGrainCellM, uGrainAmplitudeM) * grainFade);
  * vScenePos = (modelMatrix * vec4(transformed, 1.0)).xyz;
  * vSceneNormal = normalize(mat3(modelMatrix) * objectNormal);
  *
@@ -94,8 +109,13 @@ export const LOW_POLY_GRAIN_DEFAULTS = {
  * décalage vertical voulu est en mètres du monde, pas en unité du panneau, et
  * l'instance le remet à l'échelle en le multipliant par sa propre hauteur.
  *
- * `cellM`/`amplitudeM` à 0 désactive le grain (repli neutre).
+ * `cellM`/`amplitudeM` à 0 désactive le grain (repli neutre). La normale plate
+ * ne vaut que là où l'amplitude effectivement appliquée est non nulle
+ * (`vGrain` côté `terrainMaterial.js`) : ailleurs, la position n'ayant pas
+ * bougé, les dérivées d'écran ne rendraient que le facettage de la maille du
+ * terrain, et c'est la normale analytique qui décrit la surface.
  */
+
 export const LOW_POLY_GRAIN_GLSL = `
 float lowPolyHash(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
@@ -132,9 +152,15 @@ float lowPolyNoise(vec2 p) {
   return clamp(dot(n, vec3(70.0)), -1.0, 1.0);
 }
 
-float lowPolyBump(vec2 xz, float cellM, float amplitudeM) {
+// Décalage le long de normal, projeté sur le plan qui lui fait face : xz au
+// sol, zy sur une paroi orientée est-ouest, xy sur une paroi orientée nord-sud.
+float lowPolyBump(vec3 posLocal, vec3 normal, float cellM, float amplitudeM) {
   if (cellM <= 0.0 || amplitudeM <= 0.0) return 0.0;
-  return lowPolyNoise(xz / cellM) * amplitudeM;
+  vec3 axis = abs(normal);
+  vec2 uv = axis.y >= max(axis.x, axis.z)
+    ? posLocal.xz
+    : (axis.x >= axis.z ? posLocal.zy : posLocal.xy);
+  return lowPolyNoise(uv / cellM) * amplitudeM;
 }
 
 float lowPolyFade(vec3 worldPos, vec3 cameraPos, float startM, float endM) {

@@ -58,6 +58,7 @@ import { TerrainBubble } from './terrain/terrainBubble.js';
 import { GroundClassMap } from './terrain/groundClassMap.js';
 import { RoadNetwork, createRoadMaterials } from './layers/roadNetwork.js';
 import { RailwayLayer } from './layers/railwayLayer.js';
+import { CliffLayer } from './layers/cliffLayer.js';
 import { BridgeLayer } from './layers/bridgeLayer.js';
 import { CombinedIndex } from './layers/roadGraph.js';
 import { BuildingLayer } from './layers/buildingLayer.js';
@@ -186,6 +187,13 @@ export class WorldComposer {
     // La voie ferrée ne lit que les tuiles, comme l'eau, et ne dépend
     // d'aucune autre couche — voir `railwayLayer.js`.
     this.railways = new RailwayLayer({ THREE, scene, bubble, theme });
+
+    // Les falaises relevées : elles publient la marche que le terrain suit et
+    // la bande que la carte du sol peint en roche, et posent la nappe de
+    // paroi — les sommets qu'un champ de hauteurs ne peut pas porter sur une
+    // face verticale. Elle est rendue avec le matériau du terrain, donc
+    // creusée par le même grain que le reste du sol.
+    this.cliffs = new CliffLayer({ THREE, scene, bubble, theme });
     // Façade d'emprise combinée (route + voie ferrée) pour les consommateurs
     // de `roads.index` (jardins, végétation, herbe, cultures). Un `get`, pas
     // une valeur figée : les deux index sont réécrits à chaque reconstruction.
@@ -351,6 +359,7 @@ export class WorldComposer {
       this.roads.needsRebuild(here.x, here.z) ||
       this.buildings.needsRebuild(here.x, here.z) ||
       this.railways.needsRebuild(here.x, here.z) ||
+      this.cliffs.needsRebuild(here.x, here.z) ||
       this.furniture.needsRebuild(here.x, here.z) ||
       // Une tuile absente du cache a échoué : il faut réessayer, sinon un incident réseau laisse un trou de décor.
       this.vectorTiles.missing(wanted) > 0;
@@ -367,6 +376,13 @@ export class WorldComposer {
       //    ici, puis passé à la voirie et au mobilier, qui posaient la même
       //    question chacun de leur côté.
       const { builtUp, places, urban } = readSettlement(this.vectorTiles, wanted, this.bubble.frame);
+
+      // 0 bis. Falaises — avant tout le monde. Elles façonnent le relief
+      //    naturel que les chaussées entailleront ensuite (une route taillée
+      //    dans la rampe que la marche supprime se retrouverait en l'air), et
+      //    la carte du sol a besoin de leurs bandes pour y peindre la roche.
+      const cliffsChanged = this.cliffs.needsRebuild(here.x, here.z) || force;
+      if (cliffsChanged) this.cliffs.rebuild(this.vectorTiles, wanted, here);
 
       // 1. Occupation du sol — tout le reste la lit. Rasterisation coûteuse : refaite seulement si elle a glissé.
       const wasReady = this.groundClass.ready;
@@ -662,6 +678,7 @@ export class WorldComposer {
     this.buildings.dispose();
     this.railways.dispose();
     this.bridges.dispose();
+    this.cliffs.dispose(); // avant la bulle : retire sa marche en partant
     this.roads.dispose(); // avant la bulle : retire son déblai en partant
     this.roadMaterials.dispose();
     this.vectorTiles?.dispose();
