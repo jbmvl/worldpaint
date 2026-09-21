@@ -606,7 +606,7 @@ export const FURNITURE_BUILDERS = {
     return k;
   },
 
-  /** Abribus : quatre montants, un fond, une couverture, un banc. */
+  /** Abribus de ville de plaine : quatre montants, un fond, une couverture, un banc. */
   busShelter(C = DEFAULT_COLORS) {
     const k = new Kit(C);
     for (const [x, z] of [[-1.5, -0.65], [1.5, -0.65], [-1.5, 0.65], [1.5, 0.65]]) {
@@ -619,6 +619,39 @@ export const FURNITURE_BUILDERS = {
     return k;
   },
 
+  /**
+   * Abribus de montagne : mini chalet, soubassement de pierre, bardage bois,
+   * toit à forte pente et large avant-toit — même gabarit que `busShelter`,
+   * silhouette de chalet plutôt que d'abri de plaine.
+   */
+  busShelterMountain(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.box({ width: 3.2, height: 0.4, depth: 1.7, color: C.stone });
+    for (const [x, z] of [[-1.5, -0.6], [1.5, -0.6], [-1.5, 0.6], [1.5, 0.6]]) {
+      k.box({ width: 0.12, height: 2, depth: 0.12, x, y: 0.4, z, color: C.wood });
+    }
+    k.box({ width: 3.2, height: 2, depth: 0.08, y: 0.4, z: -0.62, color: C.wood });
+    k.box({ width: 0.08, height: 2, depth: 1.3, x: -1.56, y: 0.4, color: C.wood });
+    k.gableRoof({ width: 3.6, depth: 1.9, height: 1.4, y: 2.4, overhang: 0.55, color: C.slate, gableColor: C.wood });
+    k.box({ width: 2.6, height: 0.08, depth: 0.4, y: 0.85, z: -0.42, color: C.woodPale });
+    return k;
+  },
+
+  /**
+   * Abribus rural de plaine : tôle ondulée sur poteaux d'acier, sans banc —
+   * l'abri sommaire d'un arrêt de campagne, plus petit que `busShelter`.
+   */
+  busShelterRural(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    for (const [x, z] of [[-1.05, -0.5], [1.05, -0.5], [-1.05, 0.5], [1.05, 0.5]]) {
+      k.box({ width: 0.06, height: 2.1, depth: 0.06, x, z, color: C.steelDark });
+    }
+    k.box({ width: 2.3, height: 1.7, depth: 0.04, z: -0.52, color: C.corrugated });
+    k.box({ width: 0.04, height: 1.7, depth: 1, x: -1.08, color: C.corrugated });
+    k.box({ width: 2.5, height: 0.08, depth: 1.2, y: 2.1, color: C.corrugated });
+    return k;
+  },
+
   /** Fontaine de village : vasque octogonale et colonne. */
   fountain(C = DEFAULT_COLORS) {
     const k = new Kit(C);
@@ -626,6 +659,47 @@ export const FURNITURE_BUILDERS = {
     k.cylinder({ radiusBottom: 1.05, radiusTop: 1.05, height: 0.06, radial: 8, y: 0.58, color: C.water });
     k.cylinder({ radiusBottom: 0.24, radiusTop: 0.17, height: 1.5, radial: 6, y: 0.62, color: C.stoneDark });
     k.box({ width: 0.5, height: 0.16, depth: 0.5, y: 2.05, color: C.stoneDark });
+    return k;
+  },
+
+  /**
+   * Fontaine de grande ville : colonne en fonte sur quatre montants galbés
+   * sous un dôme, sans vasque — l'esprit d'une fontaine Wallace parisienne
+   * sur le trottoir d'un centre-ville, sans en copier le décor.
+   */
+  fountainWallace(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const iron = C.black;
+    k.cylinder({ radiusBottom: 0.32, radiusTop: 0.3, height: 0.12, radial: 8, color: C.stoneDark });
+    k.cylinder({ radiusBottom: 0.1, radiusTop: 0.08, height: 1.73, y: 0.12, radial: 8, color: iron });
+    k.box({ width: 0.16, height: 0.05, depth: 0.05, x: 0.1, y: 0.55, color: C.galvanised });
+
+    const baseY = 0.12;
+    const topY = 1.85;
+    const dy = topY - baseY;
+    const baseR = 0.55;
+    const topR = 0.14;
+    for (let i = 0; i < 4; i++) {
+      const angle = (i / 4) * Math.PI * 2 + Math.PI / 4;
+      const x0 = Math.sin(angle) * baseR;
+      const z0 = Math.cos(angle) * baseR;
+      const dx = Math.sin(angle) * topR - x0;
+      const dz = Math.cos(angle) * topR - z0;
+      const run = Math.hypot(dx, dy, dz);
+      k.box({
+        width: 0.06,
+        height: run,
+        depth: 0.06,
+        x: x0,
+        y: baseY,
+        z: z0,
+        tilt: Math.atan2(dz, dy),
+        roll: -Math.atan2(dx, dy),
+        color: iron,
+      });
+    }
+    k.cylinder({ radiusBottom: 0.32, radiusTop: 0.2, height: 0.16, y: topY, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.2, radiusTop: 0, height: 0.22, y: topY + 0.16, radial: 8, color: iron });
     return k;
   },
 

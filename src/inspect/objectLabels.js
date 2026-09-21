@@ -100,7 +100,10 @@ export const LABEL_FURNITURE = {
   signChevron: 'balise de virage',
   milestone: 'borne',
   busShelter: 'abribus',
+  busShelterMountain: 'abribus (chalet de montagne)',
+  busShelterRural: 'abribus (tôle rurale)',
   fountain: 'fontaine',
+  fountainWallace: 'fontaine (grande ville)',
   lavoir: 'lavoir',
   hayBaleRound: 'botte ronde',
   hayBaleSquare: 'botte carrée',
@@ -230,7 +233,10 @@ const OSM_MESH_EXACT = new Set(['buildings', 'water', 'railway', 'streets', 'bri
  */
 const OSM_FURNITURE_KINDS = new Set([
   'busShelter',
+  'busShelterMountain',
+  'busShelterRural',
   'fountain',
+  'fountainWallace',
   'lavoir',
   'monument',
   'castle',

@@ -167,6 +167,9 @@ import {
   roadsideVergeFor,
   roadsideFurnitureFor,
   streetLampKindFor,
+  fountainKindFor,
+  busShelterKindFor,
+  MOUNTAIN_CLIMATE_FAMILIES,
   roadsideYaw,
   crossSlope,
   contiguousRuns,
@@ -4766,6 +4769,24 @@ test('le style de lampadaire suit le clocher, puis le sol industriel', () => {
   assert.equal(streetLampKindFor({ nearChurch: true }), 'streetLampClassic');
   // Un centre-ville autour d’une église reste un centre-ville, même sur un sol bare.
   assert.equal(streetLampKindFor({ nearChurch: true, industrial: true }), 'streetLampClassic');
+});
+
+test('le style de fontaine suit le sol revêtu, puis l’emprise bâtie', () => {
+  assert.equal(fountainKindFor(), 'cemeteryTap', 'repli hors agglomération : robinet de campagne');
+  assert.equal(fountainKindFor({ builtUp: true }), 'fountain', 'bourg : vasque octogonale');
+  assert.equal(fountainKindFor({ paved: true }), 'fountainWallace', 'grande ville : sol revêtu');
+  // Le sol revêtu l'emporte sur l'emprise bâtie, pas l'inverse.
+  assert.equal(fountainKindFor({ paved: true, builtUp: true }), 'fountainWallace');
+});
+
+test('le style d’abribus suit la montagne, puis l’emprise bâtie', () => {
+  assert.equal(busShelterKindFor(), 'busShelterRural', 'repli hors agglomération : tôle');
+  assert.equal(busShelterKindFor({ builtUp: true }), 'busShelter', 'plaine bâtie');
+  assert.equal(busShelterKindFor({ mountain: true }), 'busShelterMountain');
+  // La montagne l'emporte sur tout, agglomération comprise.
+  assert.equal(busShelterKindFor({ mountain: true, builtUp: true }), 'busShelterMountain');
+  assert.equal(MOUNTAIN_CLIMATE_FAMILIES.has('alpine'), true);
+  assert.equal(MOUNTAIN_CLIMATE_FAMILIES.has('oceanic'), false);
 });
 
 test('un lieu de culte n’allume le lampadaire classique que dans son rayon', () => {
