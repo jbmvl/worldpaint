@@ -95,7 +95,6 @@ export const LABEL_FURNITURE = {
   signNoOvertaking: 'panneau interdiction de doubler',
   signRoundabout: 'panneau giratoire',
   signCrossing: 'panneau passage piéton',
-  signDirection: 'panneau de direction',
   signPlaceName: 'panneau d’entrée de bourg',
   signChevron: 'balise de virage',
   milestone: 'borne',

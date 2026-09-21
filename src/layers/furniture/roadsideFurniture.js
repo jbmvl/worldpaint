@@ -437,18 +437,6 @@ export function applyRoadsidePlan(layer, {
     });
   }
 
-  if (plan.directionSign) {
-    for (const p of spacedAlongPath(path, plan.directionSign, spacing)) {
-      layer._placeBeside(placements, 'signDirection', p, -(halfWidth + 1.8), platform, {
-        facing: 'traffic',
-        onPlatform: true,
-        atKerb: true,
-        own: segment,
-        level,
-      });
-    }
-  }
-
   // Entrée d'agglomération : un seul panneau, au tout début de la portion
   // bâtie — et seulement là où un vrai lieu nommé est à portée
   // (`nearestNamedPlace`), où `FabricIndex` confirme que des bâtiments

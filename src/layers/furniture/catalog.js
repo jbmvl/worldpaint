@@ -53,7 +53,6 @@ export const SIGN_ITEMS = [
   'signRoundabout',
   'signCrossing',
   'signChevron',
-  'signDirection',
   'signPlaceName',
 ];
 

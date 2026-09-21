@@ -814,7 +814,6 @@ export function roadsideFurnitureFor(profile, { builtUp = false } = {}) {
     kilometreStone: null,
     alignmentTree: null,
     sign: null,
-    directionSign: null,
     hedge: false,
     guardrail: false,
     trafficLight: false,
@@ -824,7 +823,6 @@ export function roadsideFurnitureFor(profile, { builtUp = false } = {}) {
     case 'express':
       // Ni éclairée ni plantée hors agglomération, mais bornée et protégée sur toute sa longueur.
       plan.kilometreStone = 1000;
-      plan.directionSign = 1300;
       plan.guardrail = true;
       break;
 
@@ -832,7 +830,6 @@ export function roadsideFurnitureFor(profile, { builtUp = false } = {}) {
       plan.milestone = 100;
       plan.kilometreStone = 1000;
       plan.sign = 620;
-      plan.directionSign = 1700;
       plan.guardrail = true;
       plan.trafficLight = builtUp;
       if (builtUp) plan.lamp = 38;
