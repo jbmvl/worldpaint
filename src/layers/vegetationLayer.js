@@ -82,6 +82,7 @@ import {
   coverBand,
   coverBandRing,
   coverBandFade,
+  coverBandDistance,
   coverHeightFade,
   coverMassDensity,
   coverBandsRadius,
@@ -952,14 +953,13 @@ export class VegetationLayer {
         if (placed >= capacity) break;
 
         const band = THICKET_BANDS[cell.band];
-        const fade = coverBandFade(cell.distance, band);
-        if (fade <= 0.02) continue;
-
         const base = bases[cell.band];
         const cellX = (base.x + cell.gx) * band.cell;
         const cellZ = (base.z + cell.gz) * band.cell;
         const centreX = cellX + band.cell * 0.5;
         const centreZ = cellZ + band.cell * 0.5;
+        const fade = coverBandFade(coverBandDistance(centerX, centerZ, centreX, centreZ), band);
+        if (fade <= 0.02) continue;
 
         const type = standTypeFrom(pool, centreX, centreZ);
         const stems =

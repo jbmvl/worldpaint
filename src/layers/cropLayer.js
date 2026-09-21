@@ -84,6 +84,7 @@ import {
   coverBand,
   coverBandRing,
   coverBandFade,
+  coverBandDistance,
   coverHeightFade,
   coverMassDensity,
   coverBandsRadius,
@@ -429,12 +430,14 @@ export class CropLayer {
       const base = bases[cell.band];
       const gx = base.x + cell.gx;
       const gz = base.z + cell.gz;
-      const crop = this.groundClass.cropAt((gx + 0.5) * band.cell, (gz + 0.5) * band.cell);
+      const cellX = (gx + 0.5) * band.cell;
+      const cellZ = (gz + 0.5) * band.cell;
+      const crop = this.groundClass.cropAt(cellX, cellZ);
       if (!crop) continue;
       const look = this.theme.crops[crop];
       if (!look) continue;
 
-      const fade = coverBandFade(cell.distance, band);
+      const fade = coverBandFade(coverBandDistance(centerX, centerZ, cellX, cellZ), band);
       if (fade <= 0.02) continue;
       // La hauteur ne suit pas le fondu jusqu'à zéro : c'est la densité qui
       // passe la main d'une bande à l'autre, pas la taille.

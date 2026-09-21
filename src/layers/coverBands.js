@@ -93,6 +93,19 @@ export function coverBandFade(distance, band) {
 }
 
 /**
+ * Distance d'une maille au véritable observateur.
+ *
+ * La liste des mailles est dressée autour d'un centre arrondi, pour que son
+ * contenu reste ancré au sol. Le fondu, lui, ne doit pas hériter de cet arrondi
+ * : entre deux redistributions, une même masse doit occuper le même niveau de
+ * détail pour sa distance réelle à l'observateur, pas pour sa place dans une
+ * fenêtre discrète devenue périmée.
+ */
+export function coverBandDistance(centerX, centerZ, cellX, cellZ) {
+  return Math.hypot(cellX - centerX, cellZ - centerZ);
+}
+
+/**
  * Rétrécissement de la **hauteur**, avec un plancher — contrairement à la
  * densité, elle ne doit jamais tomber à zéro sous peine que la couverture
  * s'éteigne au lieu de s'éclaircir.

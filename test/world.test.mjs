@@ -383,7 +383,7 @@ import {
   CROP_COUNT,
   CROP_MASS_SPREAD,
 } from '../src/layers/cropLayer.js';
-import { coverBandRing, coverBandFade, coverMassDensity } from '../src/layers/coverBands.js';
+import { coverBandRing, coverBandFade, coverBandDistance, coverMassDensity } from '../src/layers/coverBands.js';
 import { createFoliageMaterial } from '../src/materials/foliageMaterial.js';
 import {
   atlasOffsets,
@@ -10057,6 +10057,18 @@ test('les bandes se relaient sans creuser la couverture', () => {
     assert.ok(derniere.fadeOut > 0, `${nom} : la dernière bande doit sortir en fondu`);
     close(coverBandFade(derniere.to, derniere), 0, 1e-9, `${nom} : nulle au bord`);
   }
+});
+
+test('le fondu des bandes suit la position réelle de l’observateur', () => {
+  const band = { from: 60, to: 140, fadeIn: 16, fadeOut: 63 };
+  const cell = { x: 100, z: 0 };
+
+  close(coverBandDistance(0, 0, cell.x, cell.z), 100, 1e-9, 'distance initiale');
+  close(coverBandDistance(12, 0, cell.x, cell.z), 88, 1e-9, 'distance après avancée');
+
+  const initial = coverBandFade(coverBandDistance(0, 0, cell.x, cell.z), band);
+  const advanced = coverBandFade(coverBandDistance(12, 0, cell.x, cell.z), band);
+  assert.ok(advanced > initial, 'la même maille entre dans la bande quand le cycliste avance');
 });
 
 test('deux bandes ne sèment pas les mêmes touffes à la même maille', () => {

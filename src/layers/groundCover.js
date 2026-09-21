@@ -68,6 +68,7 @@ import {
   coverBand,
   coverBandRing,
   coverBandFade,
+  coverBandDistance,
   coverHeightFade,
   coverMassDensity,
   coverBandsRadius,
@@ -732,7 +733,7 @@ export class GroundCover {
       const coverLook = coverGrassFor(cover, this.theme.surfaces);
       const grain = coverGrainFor(cover, this.theme.surfaces);
 
-      const fade = coverBandFade(cell.distance, band);
+      const fade = coverBandFade(coverBandDistance(centerX, centerZ, cellX, cellZ), band);
       if (fade <= 0.02) continue;
       const heightFade = coverHeightFade(fade, GRASS_HEIGHT_FADE_FLOOR);
       // Et ce que l'ombre des arbres en fait, par-dessus : une litière rase.
