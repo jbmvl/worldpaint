@@ -437,6 +437,24 @@ export function applyRoadsidePlan(layer, {
     });
   }
 
+  // Bâtons de repère de neige : le bord de route se perd sous la neige dès
+  // qu'elle tombe, et c'est justement là que ce jalon a sa raison d'être —
+  // sur toute chaussée aménagée, en climat de montagne, plus rapprochés que
+  // les poteaux de glissière puisqu'ils marquent la rive même où elle manque.
+  if ((layer.climate === 'alpine' || layer.climate === 'glacial') && profileTakesGuardrail(profile)) {
+    for (const p of spacedAlongPath(path, 9, spacing)) {
+      const row = p.index % 2 === 0 ? 1 : -1;
+      layer._placeBeside(placements, 'snowPole', p, row * (halfWidth + 0.5), platform, {
+        facing: 'road',
+        onPlatform: true,
+        atKerb: true,
+        own: segment,
+        level,
+      });
+    }
+  }
+
+
   // Entrée d'agglomération : un seul panneau, au tout début de la portion
   // bâtie — et seulement là où un vrai lieu nommé est à portée
   // (`nearestNamedPlace`), où `FabricIndex` confirme que des bâtiments
@@ -473,7 +491,10 @@ export function applyRoadsidePlan(layer, {
     }
   }
 
-  if (plan.alignmentTree) {
+  // Alignement d'arbres : pas systématique. Une route sur trois environ n'en
+  // porte pas, ce qui évite qu'une route majeure hors agglomération en soit
+  // toujours bordée sur toute sa longueur.
+  if (plan.alignmentTree && randomAt(side.x, side.z, 47) < 0.7) {
     // L'essence est tirée **une fois pour la chaîne** : un alignement mêlant
     // platanes et sapins n'existe pas, c'est le propre d'un alignement d'être
     // planté le même jour.

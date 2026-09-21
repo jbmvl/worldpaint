@@ -320,7 +320,7 @@ export function buildParapets(layer, context, segment, rowsInfo) {
   const { platform, halfWidth, profile } = segment;
 
   const styleOf = (row) =>
-    guardrailStyleFor({ profile, slope: row.slope, curvature: row.curvature, drop: row.drop });
+    guardrailStyleFor({ profile, slope: row.slope, curvature: row.curvature, drop: row.drop, climate: layer.climate });
 
   // Un tronçon par matière : mélanger acier et bois sur la même longueur
   // produirait un raccord au milieu de la courbe, qu'on ne voit nulle part.

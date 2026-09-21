@@ -140,6 +140,7 @@ export const POINT_ITEMS = [
   'windTurbine',
   'lighthouse',
   'guardrailPost',
+  'snowPole',
   'fencePostWood',
   'fencePostConcrete',
   'trafficLight',

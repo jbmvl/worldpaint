@@ -959,11 +959,18 @@ export const CURVE_RAIL_CURVATURE = 0.012;
  * devers de quelques pour cent partout, donc la seule pente ne suffit pas).
  * Matière suit la route : acier sur les grands axes, bois sur les petites.
  *
+ * En montagne (`alpine`, `glacial`), le vide se protège plus tôt : un
+ * surplomb ou une courbe qu'on laisserait nus ailleurs y bordent déjà un
+ * lacet ou un ravin, ce que le devers seul ne dit pas.
+ *
  * @returns {'steel'|'wood'|null}
  */
-export function guardrailStyleFor({ profile = 'minor', slope = 0, curvature = 0, drop = 0 } = {}) {
-  if (drop < GUARDRAIL_MIN_DROP_M) return null;
-  const exposed = slope >= STEEP_CROSS_SLOPE || curvature >= CURVE_RAIL_CURVATURE;
+export function guardrailStyleFor({ profile = 'minor', slope = 0, curvature = 0, drop = 0, climate = null } = {}) {
+  const mountain = climate === 'alpine' || climate === 'glacial';
+  const minDrop = mountain ? GUARDRAIL_MIN_DROP_M * 0.5 : GUARDRAIL_MIN_DROP_M;
+  if (drop < minDrop) return null;
+  const curveThreshold = mountain ? CURVE_RAIL_CURVATURE * 0.6 : CURVE_RAIL_CURVATURE;
+  const exposed = slope >= STEEP_CROSS_SLOPE || curvature >= curveThreshold;
   if (!exposed) return null;
   if (profile === 'express' || profile === 'major') return 'steel';
   if (profile === 'minor') return drop > 2.5 ? 'steel' : 'wood';

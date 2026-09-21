@@ -4019,9 +4019,13 @@ test('un bois interrompt l’alignement au lieu de l’effacer selon d’où l�
       here: { x: 100, z: 0 },
     });
     layer.groundClass = bois;
+    // L'alignement n'est pas systématique (une chaîne sur trois environ n'en
+    // porte pas) : l'ancre est fixée à un nœud où le tirage l'active, pour que
+    // ce test porte sur l'interruption au bois, pas sur ce tirage-là.
+    const anchor = { x: 100, z: 0, distance: 100 };
     const rows = rowsInfo.filter((row) => row.x <= jusqu);
     const path = segment.path.filter((p) => p.x <= jusqu);
-    buildRoadsideContext(layer, context, { ...segment, path }, rows, []);
+    buildRoadsideContext(layer, context, { ...segment, path, anchor }, rows, []);
 
     const out = [];
     for (const [kind, list] of context.placements) {

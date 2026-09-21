@@ -97,6 +97,7 @@ export const LABEL_FURNITURE = {
   signCrossing: 'panneau passage piéton',
   signPlaceName: 'panneau d’entrée de bourg',
   signChevron: 'balise de virage',
+  snowPole: 'bâton de repère de neige',
   milestone: 'borne',
   busShelter: 'abribus',
   busShelterMountain: 'abribus (chalet de montagne)',
