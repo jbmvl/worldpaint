@@ -1337,6 +1337,82 @@ export const FURNITURE_BUILDERS = {
   },
 
   /**
+   * Souche : ce qu'un bois laisse au sol après une coupe. Un cylindre bas et
+   * large — le fût scié, pas planté — avec une racine cassée qui affleure,
+   * seul détail qui l'empêche de se lire comme un rondin debout.
+   */
+  stump(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.cylinder({ radiusBottom: 0.32, radiusTop: 0.27, height: 0.45, radial: 7, color: C.wood, colorTop: C.woodPale });
+    k.box({ width: 0.14, height: 0.11, depth: 0.52, y: 0.02, x: 0.3, tilt: 0.12, color: C.bark });
+    return k;
+  },
+
+  /**
+   * Touffe de joncs : plusieurs tiges fines et hautes, sans feuillage large —
+   * ce qui la distingue d'un buisson. Fauchée en pointe (`radiusTop` quasi
+   * nul), la base plus verte que la pointe séchée.
+   */
+  reedClump(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const stalks = [
+      { x: 0, z: 0, h: 1.6, tilt: 0.04, yaw: 0.2 },
+      { x: 0.12, z: 0.08, h: 1.4, tilt: -0.08, yaw: 1.1 },
+      { x: -0.1, z: 0.05, h: 1.5, tilt: 0.1, yaw: 2.4 },
+      { x: 0.05, z: -0.12, h: 1.3, tilt: -0.05, yaw: 3.6 },
+      { x: -0.08, z: -0.1, h: 1.7, tilt: 0.07, yaw: 4.8 },
+    ];
+    for (const s of stalks) {
+      k.cylinder({
+        radiusBottom: 0.03,
+        radiusTop: 0.004,
+        height: s.h,
+        radial: 5,
+        x: s.x,
+        z: s.z,
+        tilt: s.tilt,
+        yaw: s.yaw,
+        color: C.leafOlive,
+        colorTop: C.hay,
+      });
+    }
+    return k;
+  },
+
+  /**
+   * Bois flotté : un rondin échoué, jamais entier — un fragment cassé posé à
+   * côté, décentré, pour que la paire ne se lise pas comme une seule pièce
+   * tombée droite.
+   */
+  driftwood(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.cylinder({
+      radiusBottom: 0.14,
+      radiusTop: 0.09,
+      height: 1.8,
+      radial: 6,
+      y: 0.12,
+      tilt: Math.PI / 2,
+      color: C.woodPale,
+      colorTop: C.woodPale,
+    });
+    k.cylinder({
+      radiusBottom: 0.07,
+      radiusTop: 0.05,
+      height: 0.7,
+      radial: 5,
+      x: 0.5,
+      z: 0.6,
+      y: 0.06,
+      tilt: Math.PI / 2,
+      yaw: 0.6,
+      color: C.woodPale,
+      colorTop: C.wood,
+    });
+    return k;
+  },
+
+  /**
    * Pied de vigne : un cep tordu et sa frondaison, à poser en rang.
    *
    * Un vignoble ne se reconnaît pas à ses ceps mais à ses **rangs** — d'où le

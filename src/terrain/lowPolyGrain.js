@@ -3,17 +3,22 @@
  * triangulaire bosselle la position, une normale reprise par dérivées d'écran
  * fait lire des facettes plutôt qu'un dégradé lissé.
  *
- * **Câblé dans `terrainMaterial.js`** (tout le sol, un seul réglage) et dans
- * `foliageMaterial.js` côté herbe/cultures (`groundLowPoly`), pour que ce qui
- * pousse suive la bosse plutôt que de flotter sur l'ancien plan. Les deux
- * lisent les **mêmes constantes** (`LOW_POLY_GRAIN_DEFAULTS`) : c'est ce qui
- * les fait s'accorder, pas une coïncidence de réglage.
+ * **Câblé dans `terrainMaterial.js`**, une cellule et une amplitude par
+ * matière du sol (`SURFACE_LOOK.grainCellM`/`grainAmplitudeM`, repli sur le
+ * réglage ci-dessous), et dans `foliageMaterial.js` côté herbe (`groundLowPoly`,
+ * `groundGrainPerInstance`), pour que ce qui pousse suive la bosse plutôt que
+ * de flotter sur l'ancien plan — les cultures et le mobilier n'existent que
+ * sur des matières non branchées et lisent le seul réglage de repli.
  *
  * Purement visuel : ça ne touche à aucune lecture d'altitude ailleurs dans le
  * moteur (routes, bâti, haies, `cliffCut`, placement, mobilier ponctuel). Un
  * point posé au niveau naturel et qui ne lit pas `LOW_POLY_GRAIN_GLSL`
  * (aujourd'hui : tout `furnitureKit.js`, les arbres de `vegetationLayer.js`)
  * ne suit pas la bosse et peut sembler flotter ou s'enfoncer à son pied.
+ *
+ * Éteint dans l'emprise routière (`roadMask`, écrit par `terrainBubble.js` à
+ * partir de `roadCutMaskAt`) : la géométrie y est déjà l'entaille exacte de
+ * la chaussée (`roadCut.js`), et le grain ajouté après coup la recouvrirait.
  *
  * ## Le réseau est triangulaire, pas carré
  *
@@ -42,10 +47,11 @@
  * Réglages par défaut, partagés par tous les appelants. Cellule et amplitude
  * en mètres, fondu en mètres (début, fin — l'amplitude est nulle au-delà).
  *
- * Ordres de grandeur relevés à l'essai sur une paroi rocheuse. Une lande ou
- * une herbe basse demande une cellule et une amplitude bien plus petites
- * (~1.5 m / ~0.2 m) : reste à brancher par matière (voir plus bas), pas
- * encore fait — ce fichier n'expose aujourd'hui qu'un seul réglage global.
+ * Ordres de grandeur relevés à l'essai sur une paroi rocheuse — c'est le repli
+ * de `terrainMaterial.js` pour une matière que `SURFACE_LOOK` ne couvre pas
+ * (`grainCellM`/`grainAmplitudeM`, voir `themes/default.js`), et le seul
+ * réglage que lisent les appelants qui n'ont pas de matière à consulter
+ * (`foliageMaterial.js` sans instanciation par matière).
  */
 export const LOW_POLY_GRAIN_DEFAULTS = {
   cellM: 6.0,

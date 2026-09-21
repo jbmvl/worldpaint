@@ -4,6 +4,7 @@
 | --- | --- |
 | `terrainBubble.js` | la bulle de terrain : maillage, anneaux, déblai de la chaussée |
 | `terrainMaterial.js` | le shader du sol — il lit la carte des matières |
+| `lowPolyGrain.js` | le grain low poly géométrique du sol (bruit, fondu de distance) — câblé par matière dans `terrainMaterial.js`, réglages dans `SURFACE_LOOK` |
 | `roadCut.js` | l'entaille du terrain sous une chaussée |
 | `groundClassMap.js` | la carte des matières et des cultures, rasterisée pour toute la scène |
 | `surfaceClassification.js` | ce qu'une entité de tuile **dit** du sol |
@@ -18,6 +19,12 @@ légère — peindre (`rebuild`, `_paintPavement`), encoder et réparer
 (`surfaceAt`, `shareOf`, `woodAt`, `cropAt`…). La signature et la réparation
 sont l'une la raison d'être de l'autre : elles défont le lissage du canevas, et
 les lire séparément ne veut rien dire.
+
+À part de la carte elle-même : `poolShareAt`, le pendant CPU du bruit de
+flaque que `terrainMaterial.js` découpe en GLSL — même champ, mêmes constantes
+partagées (`POOL_NOISE_STRETCH`, `POOL_SCALE_RATIO`, `POOL_EDGE_SOFTNESS`),
+pour que `groundCover` et `vegetationLayer` sachent où l'eau affleure sans
+relire une seconde vérité.
 
 Ce qui en est sorti, parce que c'est de la lecture pure et qu'on y va souvent :
 **`surfaceClassification.js`**. Pour changer ce qu'une classe `landuse` ou

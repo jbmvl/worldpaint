@@ -1,6 +1,8 @@
 /*
  * parcelFauna — qui vit dans une parcelle : le troupeau d'une pâture, le
- * gibier ou le carnassier d'un bois.
+ * gibier ou le carnassier d'un bois — et qui vit hors parcelle, sur les
+ * grandes matières ouvertes (lande, pré salé, estive) qu'aucun contour ne
+ * ferme (`buildOpenPastureFauna`).
  *
  * C'est le seul point où le mobilier et le vivant se touchent, et la frontière
  * y est nette : ici on décide de **ce qui existe** — cette espèce, à cet
@@ -23,6 +25,7 @@ import {
   randomAt,
   positionSeed,
 } from '../furniturePlacement.js';
+import { pointInAreas } from '../settlement.js';
 import { FURNITURE_LIMITS } from './catalog.js';
 
 /**
@@ -291,4 +294,102 @@ export function crossingAt(layer, x, z) {
     return { centre: { x: x + ax * CROSS_PROBE_M, z: z + az * CROSS_PROBE_M }, axis: { x: ax, z: az } };
   }
   return null;
+}
+
+// --- Le vivant hors parcelle -------------------------------------------------
+
+/**
+ * Matières ouvertes où un troupeau se tient sans clôture : lande, pré salé,
+ * estive. Une lande ou un pré salé qui reste vide se remarque — c'est
+ * précisément le genre de paysage où le mouton fait le décor.
+ */
+export const OPEN_PASTURE_KINDS = new Set(['heath', 'saltmarsh', 'alpine']);
+
+/** Portée du semis, en mètres — plus courte que celle du mobilier ordinaire (voir `buildBiomeDebris`). */
+export const OPEN_PASTURE_RADIUS_M = 400;
+/** Pas de la grille de semis, en mètres : un groupe prend plus de place qu'un objet posé. */
+export const OPEN_PASTURE_CELL_M = 70;
+/**
+ * Densité de groupes à l'hectare. Sciemment basse : « quelques moutons
+ * dispersés », pas un troupeau à chaque maille — une lande ouverte se
+ * reconnaît aussi à ce qu'elle laisse vide.
+ */
+export const OPEN_PASTURE_PER_HA = 0.06;
+/** Bêtes par groupe, hors parcelle — plus petit qu'un troupeau de pré clos. */
+export const OPEN_PASTURE_GROUP = [2, 4];
+/** Demi-côté du carré où un groupe se disperse, en mètres — sans clôture réelle à lire. */
+export const OPEN_PASTURE_HALF_M = 16;
+
+/**
+ * Carré centré sur un point, pour donner à `scatterInRing`/`placeHerd` une
+ * limite là où aucun contour de parcelle n'existe. Ce n'est pas une clôture :
+ * rien dans le paysage ne le justifierait sur une lande ouverte. C'est
+ * seulement le patron géométrique que ces deux fonctions attendent déjà,
+ * réduit à son plus petit format — la seule alternative étant de dupliquer
+ * leur logique de dispersion pour un unique appelant.
+ */
+function grazingSquare(x, z, half) {
+  return [
+    { x: x - half, z: z - half },
+    { x: x + half, z: z - half },
+    { x: x + half, z: z + half },
+    { x: x - half, z: z + half },
+  ];
+}
+
+/**
+ * Vivant hors parcelle : les mêmes troupeaux qu'une pâture close, mais posés
+ * sur une grille ancrée au monde plutôt que dans un contour — lande, pré
+ * salé, estive n'ont pas de clôture, et restaient vides pour cette seule
+ * raison. Même patron que `buildBiomeDebris` (furniture/biomeDebris.js) :
+ * grille, tirage constant par maille, refus du bâti et des chaussées.
+ *
+ * Réutilise `placeHerd` tel quel — choix de l'espèce (`herdFor`), tirage du
+ * vide (`HERD_EMPTY_ODDS`), ancrage à la route la plus proche
+ * (`roadwardFocus`) — sur un petit carré de dispersion (`grazingSquare`) qui
+ * tient lieu du contour de parcelle qu'il n'y a pas. Le plafond est
+ * `FURNITURE_LIMITS.fauna`, **partagé** avec le bétail de parcelle et le
+ * gibier : un mouton de lande peut évincer une vache de pré si le budget est
+ * déjà pris, et c'est un compromis délibéré plutôt qu'un budget à part, que
+ * rien ne justifierait tant que la portée reste modeste.
+ */
+export function buildOpenPastureFauna(layer, context, builtUp) {
+  if (!layer.groundClass) return;
+  const { here } = context;
+  const step = OPEN_PASTURE_CELL_M;
+  const cellHa = (step * step) / 10000;
+  const startX = Math.floor((here.x - OPEN_PASTURE_RADIUS_M) / step) * step;
+  const startZ = Math.floor((here.z - OPEN_PASTURE_RADIUS_M) / step) * step;
+  let placed = 0;
+
+  for (let z = startZ; z <= here.z + OPEN_PASTURE_RADIUS_M; z += step) {
+    for (let x = startX; x <= here.x + OPEN_PASTURE_RADIUS_M; x += step) {
+      if (layer.fauna.length >= FURNITURE_LIMITS.fauna) {
+        layer.counts.openPasture = placed;
+        return;
+      }
+
+      const px = x + (randomAt(x, z, 491) - 0.5) * step * 0.8;
+      const pz = z + (randomAt(x, z, 499) - 0.5) * step * 0.8;
+      if (Math.hypot(px - here.x, pz - here.z) > OPEN_PASTURE_RADIUS_M) continue;
+      if (pointInAreas(builtUp, px, pz)) continue;
+      if (layer._onRoad(px, pz)) continue;
+
+      const kind = layer.groundClass.surfaceAt?.(px, pz);
+      if (!kind || !OPEN_PASTURE_KINDS.has(kind)) continue;
+
+      // La rareté du semis, avant tout tirage propre à `placeHerd` : une
+      // maille qualifiée sur beaucoup ne pose rien, et c'est voulu.
+      if (randomAt(px, pz, 503) > cellHa * OPEN_PASTURE_PER_HA) continue;
+
+      const variant = randomAt(px, pz, 509);
+      const steepness = layer._steepnessAt(px, pz);
+      const sizeDraw = randomAt(px, pz, 521);
+      const count = OPEN_PASTURE_GROUP[0] + Math.floor(sizeDraw * (OPEN_PASTURE_GROUP[1] - OPEN_PASTURE_GROUP[0] + 1));
+
+      const ring = grazingSquare(px, pz, OPEN_PASTURE_HALF_M);
+      if (placeHerd(layer, ring, { x: px, z: pz }, variant, steepness, count) > 0) placed++;
+    }
+  }
+  layer.counts.openPasture = placed;
 }

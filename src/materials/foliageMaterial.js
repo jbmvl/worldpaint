@@ -36,6 +36,10 @@ import { LOW_POLY_GRAIN_GLSL, LOW_POLY_GRAIN_DEFAULTS } from '../terrain/lowPoly
 /** Nom de l'attribut d'instance portant le décalage d'atlas. */
 export const ATLAS_ATTRIBUTE = 'aAtlasOffset';
 
+/** Nom de l'attribut d'instance portant la cellule et l'amplitude du grain
+ *  low poly (`groundGrainPerInstance`), en mètres. */
+export const GROUND_GRAIN_ATTRIBUTE = 'aGroundGrain';
+
 /**
  * Inclinaison de la normale du feuillage vers la caméra, pour les lampes
  * proches seulement. 0,85 vaut environ 40°.
@@ -106,6 +110,13 @@ function foliageLightsChunk(THREE) {
  *        se déformerait au lieu de suivre la pente. Éteint par défaut : ne
  *        l'activer que pour ce qui est vraiment posé au ras du sol bosselé
  *        (herbe, culture), pas pour les arbres ou le mobilier.
+ * @param {boolean} [options.groundGrainPerInstance] Avec `groundLowPoly`, lit
+ *        la cellule et l'amplitude dans l'attribut d'instance
+ *        `GROUND_GRAIN_ATTRIBUTE` plutôt que dans un réglage unique — pour
+ *        suivre la matière du sol sous chaque instance (`terrainMaterial.js`
+ *        en fait autant par vertex). L'appelant doit alors fournir cet
+ *        attribut sur la géométrie ; sans lui la matière au sol reste le seul
+ *        réglage global (`LOW_POLY_GRAIN_DEFAULTS`).
  * @param {string} options.cacheKey Clé de programme (une par variante de shader).
  * @returns {Object} matériau. `userData.wind` porte l'uniforme de temps quand
  *          le vent est actif — c'est le seul point d'entrée de l'animation.
@@ -121,6 +132,7 @@ export function createFoliageMaterial({
   coverageRange = [30, 120],
   coverageGain = 2.2,
   groundLowPoly = false,
+  groundGrainPerInstance = false,
   cacheKey,
 }) {
   const material = new THREE.MeshLambertMaterial({
@@ -167,6 +179,7 @@ export function createFoliageMaterial({
            uniform float uGroundGrainCellM;
            uniform float uGroundGrainAmplitudeM;
            uniform vec2 uGroundGrainFadeM;
+           ${groundGrainPerInstance ? `attribute vec2 ${GROUND_GRAIN_ATTRIBUTE};` : ''}
            ${LOW_POLY_GRAIN_GLSL}`
         )
         .replace(
@@ -185,7 +198,15 @@ export function createFoliageMaterial({
              #endif
              vec3 groundWorldPos = (modelMatrix * vec4(groundAnchor.x, 0.0, groundAnchor.y, 1.0)).xyz;
              float groundFade = lowPolyFade(groundWorldPos, cameraPosition, uGroundGrainFadeM.x, uGroundGrainFadeM.y);
-             float groundOffset = lowPolyBump(groundWorldPos.xz, uGroundGrainCellM, uGroundGrainAmplitudeM) * groundFade;
+             // Par instance (herbe) : la matière lue sous chaque touffe par
+             // l'appelant, au moment du semis — pas un second échantillonnage
+             // de la carte de classes ici. Sinon, le réglage unique du sol.
+             ${
+               groundGrainPerInstance
+                 ? `vec2 groundGrain = ${GROUND_GRAIN_ATTRIBUTE};`
+                 : `vec2 groundGrain = vec2(uGroundGrainCellM, uGroundGrainAmplitudeM);`
+             }
+             float groundOffset = lowPolyBump(groundWorldPos.xz, groundGrain.x, groundGrain.y) * groundFade;
              // Ramené à l'échelle de l'instance : le décalage voulu est en
              // mètres du monde, transformed.y est en unité du panneau, et
              // l'instance le remultiplie par sa propre hauteur.

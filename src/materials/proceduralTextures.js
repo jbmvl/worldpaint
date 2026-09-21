@@ -148,8 +148,19 @@ export function stretchToUnit(field) {
  * fines, la couleur crépiterait au mètre et les deux relevés se mélangeraient
  * partout — le flou qu'on voulait éviter.
  */
+/**
+ * Le champ brut derrière `createMacroCanvas`, avant sa mise en image — même
+ * taille, même graine par défaut. C'est ce que relit `poolShareAt`
+ * (`groundClassMap.js`) pour savoir, côté CPU, où tombent les mêmes flaques
+ * que le shader découpe : la texture est faite pour l'écran (huit bits par
+ * canal, filtrée, mipmappée), le champ pour un calcul exact.
+ */
+export function macroNoiseField(size = 128, seed = 40213) {
+  return { size, data: stretchToUnit(fractalNoise(size, [1, 2, 4], seed)) };
+}
+
 export function createMacroCanvas(size = 128, seed = 40213) {
-  const noise = stretchToUnit(fractalNoise(size, [1, 2, 4], seed));
+  const { data: noise } = macroNoiseField(size, seed);
   const canvas = createCanvas(size, size);
   const ctx = canvas.getContext('2d');
   const image = ctx.createImageData(size, size);
@@ -422,6 +433,187 @@ function drawLowShrub(ctx, size, random, variant) {
   }
 }
 
+/**
+ * Ajonc, genêt : un buisson bas et compact, presque une boule d'épines, la
+ * fleur jaune qui crève le tapis d'une lande. Plus dense et plus ras que
+ * `drawLowShrub` — c'est ce qui doit se lire à cent mètres, pas le détail —
+ * et semé de points francs pour la fleur, jamais de disques larges.
+ */
+function drawGorse(ctx, size, random, variant) {
+  const { hue, spread } = variant;
+
+  // La compacité vient de la taille réelle (`heightM`), pas de la case : le
+  // panneau se remplit comme les autres, sans quoi il rendrait plus petit
+  // que la hauteur qu'on lui donne.
+  for (let i = 0; i < 150; i++) {
+    const a = random() * Math.PI * 2;
+    const r = Math.sqrt(random());
+    const x = 0.5 + Math.cos(a) * spread * r;
+    const y = 0.64 + Math.sin(a) * spread * r * 0.62;
+    const lift = (1 - y) * 0.72 + (1 - x) * 0.28;
+    const value = 40 + lift * 74 + random() * 14;
+    ctx.fillStyle = `rgb(${Math.round(value * hue.r)}, ${Math.round(value * hue.g)}, ${Math.round(value * hue.b)})`;
+    ctx.beginPath();
+    ctx.arc(size * x, size * y, size * (0.02 + random() * 0.022), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // La fleur : un jaune franc, minoritaire, jamais un lavage — l'ajonc fleurit
+  // toute l'année, et c'est ce qui le distingue d'une masse verte quelconque.
+  ctx.fillStyle = 'rgb(224, 196, 40)';
+  const flowers = 10 + Math.floor(random() * 8);
+  for (let i = 0; i < flowers; i++) {
+    const a = random() * Math.PI * 2;
+    const r = Math.sqrt(random()) * spread * 0.9;
+    const x = size * (0.5 + Math.cos(a) * r);
+    const y = size * (0.64 + Math.sin(a) * r * 0.62);
+    ctx.beginPath();
+    ctx.arc(x, y, size * 0.014, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/**
+ * Buisson épineux étalé — le maquis. Plus de vide que de feuille : des
+ * branches raides qui finissent en pointe, jamais une masse pleine comme
+ * `drawBushy`. C'est le sol qui doit rester visible entre elles.
+ */
+function drawThornyScrub(ctx, size, random, variant) {
+  const { hue, spread } = variant;
+  const branches = 9 + Math.floor(random() * 5);
+
+  ctx.strokeStyle = 'rgba(70, 64, 48, 0.75)';
+  ctx.lineWidth = size * 0.012;
+  for (let b = 0; b < branches; b++) {
+    // La première branche reste proche de la verticale : c'est elle qui
+    // garantit que le buisson remplit sa case, les autres, jetées de côté,
+    // font l'étalement. Aucune ne va au-delà d'un plancher commun, qui la
+    // tient à l'intérieur — un seul et même clamp évite de recaler chaque
+    // branche à la main selon le tirage.
+    const a = b === 0 ? -Math.PI * 0.5 : -Math.PI * 0.5 + (random() - 0.5) * Math.PI * 0.95;
+    const reach = b === 0 ? spread * 1.15 : spread * (0.55 + random() * 0.5);
+    const x0 = size * 0.5;
+    const y0 = size * 0.95;
+    // Bornées, quel que soit l'angle tiré : une branche presque horizontale
+    // ne doit pas mordre sur la case voisine, ce que le seul tirage de
+    // l'angle ne garantit pas.
+    const x1 = Math.min(Math.max(x0 + Math.cos(a) * size * reach, size * 0.08), size * 0.92);
+    const y1 = Math.max(y0 + Math.sin(a) * size * reach * 1.1, size * 0.2);
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+
+    // Une pointe d'épines par branche, clairsemée — jamais une touffe pleine.
+    for (let i = 0; i < 5; i++) {
+      const t = 0.45 + (i / 4) * 0.55;
+      const x = x0 + (x1 - x0) * t + (random() - 0.5) * size * 0.03;
+      const y = y0 + (y1 - y0) * t + (random() - 0.5) * size * 0.03;
+      const lift = (1 - y / size) * 0.7 + (1 - x / size) * 0.3;
+      const value = 42 + lift * 72 + random() * 16;
+      ctx.fillStyle = `rgb(${Math.round(value * hue.r)}, ${Math.round(value * hue.g)}, ${Math.round(value * hue.b)})`;
+      ctx.beginPath();
+      ctx.arc(x, y, size * (0.02 + random() * 0.018), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+/**
+ * Fougère : plusieurs frondes qui rayonnent d'un même pied, chacune une tige
+ * courbe portée de petites folioles alternées. C'est le rayonnement qui la
+ * distingue de `drawBramble` (des cannes qui retombent) — une fougère ne
+ * grimpe pas, elle s'ouvre en éventail bas.
+ */
+function drawFern(ctx, size, random, variant) {
+  const { hue, spread } = variant;
+  const fronds = 5 + Math.floor(random() * 3);
+
+  for (let f = 0; f < fronds; f++) {
+    // La fronde centrale reste verticale et va au bout de sa portée : c'est
+    // elle qui garantit que la touffe remplit sa case. Les autres, en
+    // éventail, font le rayonnement — bornées pour ne mordre ni le haut ni
+    // les côtés voisins, quel que soit leur tirage.
+    const guaranteed = f === 0;
+    const a = guaranteed
+      ? -Math.PI * 0.5
+      : -Math.PI * 0.5 + ((f + 0.5) / fronds - 0.5) * Math.PI * 0.8 + (random() - 0.5) * 0.2;
+    const reach = guaranteed ? spread * 1.8 : spread * (0.75 + random() * 0.35);
+    const steps = 10;
+    const at = (t) => ({
+      x: Math.min(Math.max(0.5 + Math.cos(a) * reach * t, 0.08), 0.92),
+      y: Math.max(0.97 + Math.sin(a) * reach * t * 1.05, 0.18),
+    });
+
+    ctx.strokeStyle = 'rgba(60, 78, 44, 0.8)';
+    ctx.lineWidth = size * 0.01;
+    ctx.beginPath();
+    ctx.moveTo(size * 0.5, size * 0.97);
+    for (let s = 1; s <= steps; s++) {
+      const { x, y } = at(s / steps);
+      ctx.lineTo(size * x, size * y);
+    }
+    ctx.stroke();
+
+    for (let s = 2; s <= steps; s++) {
+      const t = s / steps;
+      const { x, y } = at(t);
+      const lift = (1 - y) * 0.7 + (1 - x) * 0.3;
+      const value = 40 + lift * 70 + random() * 14;
+      ctx.fillStyle = `rgb(${Math.round(value * hue.r)}, ${Math.round(value * hue.g)}, ${Math.round(value * hue.b)})`;
+      // Deux folioles de part et d'autre de la tige, perpendiculaires à elle.
+      const perp = a + Math.PI * 0.5;
+      const leaf = size * 0.032 * (1 - t * 0.4);
+      for (const side of [-1, 1]) {
+        ctx.beginPath();
+        ctx.ellipse(
+          size * x + Math.cos(perp) * leaf * side,
+          size * y + Math.sin(perp) * leaf * side,
+          leaf,
+          leaf * 0.42,
+          perp,
+          0,
+          Math.PI * 2
+        );
+        ctx.fill();
+      }
+    }
+  }
+}
+
+/**
+ * Oyat : une touffe de lames fines et raides, dressées puis retombantes en
+ * pointe — la seule silhouette du catalogue sans masse de feuillage, juste
+ * des traits. C'est ce qui doit se lire sur un sable presque nu.
+ */
+function drawMarram(ctx, size, random, variant) {
+  const { hue, spread } = variant;
+  const blades = 16 + Math.floor(random() * 10);
+
+  for (let i = 0; i < blades; i++) {
+    const lean = (random() - 0.5) * spread * 1.6;
+    const height = 0.55 + random() * 0.4;
+    const x0 = 0.5 + lean * 0.25;
+    const y0 = 0.98;
+    // Une lame raide qui retombe en pointe : deux segments, pas une courbe.
+    const xMid = x0 + lean * 0.6;
+    const yMid = y0 - height * 0.7;
+    const xTip = x0 + lean;
+    const yTip = y0 - height;
+
+    const lift = height * 0.6 + (1 - x0) * 0.2;
+    const value = 46 + lift * 70 + random() * 14;
+    ctx.strokeStyle = `rgb(${Math.round(value * hue.r)}, ${Math.round(value * hue.g)}, ${Math.round(value * hue.b)})`;
+    ctx.lineWidth = size * (0.009 - height * 0.003);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(size * x0, size * y0);
+    ctx.lineTo(size * xMid, size * yMid);
+    ctx.lineTo(size * xTip, size * yTip);
+    ctx.stroke();
+  }
+}
+
 const TREE_PAINTERS = {
   broadleaf: drawBroadleaf,
   column: drawColumn,
@@ -429,6 +621,10 @@ const TREE_PAINTERS = {
   bushy: drawBushy,
   bramble: drawBramble,
   lowShrub: drawLowShrub,
+  gorse: drawGorse,
+  thornyScrub: drawThornyScrub,
+  fern: drawFern,
+  marram: drawMarram,
 };
 
 /**

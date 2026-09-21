@@ -45,7 +45,21 @@
  * subsiste à voir sur un sol lointain. La pente au-delà de 30° vire à la
  * roche. Une matière s'ajoute en ajoutant une couleur ; celle où l'eau affleure
  * (`standingWater`) y gagne des flaques, découpées par un bruit et rendues comme
- * l'eau.
+ * l'eau — le même bruit, relu côté CPU par `poolShareAt` (`groundClassMap.js`),
+ * pour que l'herbe et le sous-bois sachent où elle affleure. Une culture peut
+ * porter la même notion sur son propre axe (`cropStandingWater`, `uCropWater`) :
+ * c'est la lame d'eau d'une rizière, indépendante de la matière `farmland`
+ * qu'elle recouvre.
+ *
+ * Cette variation macro n'est pas la même partout (`macro`, `macroNear` de
+ * `SURFACE_LOOK`) : un stade tondu n'est pas aussi marbré qu'une tourbière.
+ * `macro` multiplie l'amplitude par matière ; `macroNear` relève le plancher
+ * de la rampe de distance (`detailNear` → `detailFar`) pour les matières dont
+ * le marbrage doit rester visible à portée d'observation — sans lui,
+ * l'amplitude est quasi nulle à cent mètres (`far` y vaut 0,03). Les deux sont
+ * accumulés par part dans la même boucle que `standingWater`, jamais tranchés
+ * sur la matière dominante : un texel à cheval sur deux matières marbre selon
+ * leur mélange, pas selon celle qui l'emporte.
  *
  * Deux choses tiennent les **limites** entre surfaces, dont le défaut commun
  * est le carreau de 2,7 m de la carte du sol, lisible en marches d'escalier
@@ -83,9 +97,26 @@
  * est autre chose : un déplacement du sommet du maillage, en mètres réels, et
  * une normale reprise sur cette position déformée. Éteint avec la distance
  * (`uGrainFadeM`) là où la maille n'est plus assez fine pour le porter — voir
- * `lowPolyGrain.js` pour le détail. Herbe et cultures (`foliageMaterial.js`,
- * `groundLowPoly`) lisent le même réglage pour suivre la bosse ; le mobilier
- * ponctuel et les arbres n'en tiennent pas compte.
+ * `lowPolyGrain.js` pour le détail.
+ *
+ * Cellule et amplitude viennent de la matière au pied du sommet
+ * (`grainCellM`/`grainAmplitudeM` de `SURFACE_LOOK`) : une lande porte de
+ * petites touffes, un pré alpin des colinettes bien plus larges, un éboulis
+ * un jumelage de blocs — une matière qui ne les déclare pas reprend le
+ * réglage de repli (`LOW_POLY_GRAIN_DEFAULTS`). L'identifiant est relu au
+ * texel le plus proche, sans le lissage de `surfaceAt` : c'est un
+ * déplacement géométrique, pas un contour, une marche à la limite de deux
+ * matières n'y a pas besoin d'être adoucie. L'herbe (`groundCover.js`) lit la
+ * même paire par instance, à l'endroit où elle pousse ; les cultures
+ * (`cropLayer.js`) et le mobilier n'existent que sur des matières non
+ * branchées ici et suivent le réglage de repli. Les arbres n'en tiennent pas
+ * compte.
+ *
+ * Éteint aussi dans l'emprise routière (`roadMask`, un attribut par sommet
+ * écrit par `terrainBubble.js` à partir de `roadCutMaskAt`) : le sommet y a
+ * déjà été recreusé au ras de la chaussée (`roadCut.js`), et le grain ne doit
+ * pas repousser dessus — sans quoi il recouvrirait la plate-forme qu'on vient
+ * d'excaver pour elle.
  */
 
 import { createMacroCanvas } from '../materials/proceduralTextures.js';
@@ -96,6 +127,9 @@ import {
   WATER_ID,
   PAVEMENT_ID,
   CLASS_PIXELS,
+  POOL_NOISE_STRETCH,
+  POOL_SCALE_RATIO,
+  POOL_EDGE_SOFTNESS,
 } from './groundClassMap.js';
 import { pavementTone } from '../layers/townStyle.js';
 import { createWaterNormalCanvas } from '../materials/proceduralTextures.js';
@@ -152,6 +186,11 @@ export class TerrainMaterialFactory {
     };
 
     this.macroTexture = repeated(createMacroCanvas());
+    // Sans retournement : `poolShareAt` (groundClassMap.js) relit le même
+    // champ côté CPU pour savoir où tombent les flaques, et les deux lectures
+    // ne peuvent tomber sur le même texel que si aucune des deux n'inverse
+    // l'axe vertical à sa manière.
+    this.macroTexture.flipY = false;
     // Rides : la même carte que celle qui servait la nappe d'eau, du temps où
     // l'eau était une surface posée sur le terrain.
     this.waterRippleTexture = repeated(createWaterNormalCanvas());
@@ -284,6 +323,26 @@ export class TerrainMaterialFactory {
       uSurfaceWater: {
         value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.standingWater ?? 0),
       },
+      // Amplitude de la variation macro par matière (1 = comportement neutre)
+      // et plancher de sa rampe de distance (0 = éteinte à portée d'un semis).
+      uSurfaceMacro: {
+        value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.macro ?? 1),
+      },
+      uSurfaceMacroNear: {
+        value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.macroNear ?? 0),
+      },
+      // Grain low poly par matière (`lowPolyGrain.js`) : une matière que
+      // `SURFACE_LOOK` ne couvre pas reprend le réglage de repli.
+      uSurfaceGrainCell: {
+        value: SURFACE_KINDS.map(
+          (kind) => this.surfaces[kind]?.grainCellM ?? LOW_POLY_GRAIN_DEFAULTS.cellM
+        ),
+      },
+      uSurfaceGrainAmplitude: {
+        value: SURFACE_KINDS.map(
+          (kind) => this.surfaces[kind]?.grainAmplitudeM ?? LOW_POLY_GRAIN_DEFAULTS.amplitudeM
+        ),
+      },
       uPoolScale: { value: look.poolScaleM },
       // Matière retenue là où la donnée se tait.
       uUnclassified: { value: Math.max(0, SURFACE_KINDS.indexOf(look.unclassified)) + 1 },
@@ -296,6 +355,11 @@ export class TerrainMaterialFactory {
           (kind) =>
             new THREE.Vector3(...(look.cropAlbedo[kind] || this.surfaces.farmland.albedo))
         ),
+      },
+      // Lame d'eau par culture, sur le même principe que `uSurfaceWater` mais
+      // pour le second axe : zéro partout sauf le riz.
+      uCropWater: {
+        value: CROP_KINDS.map((kind) => look.cropStandingWater?.[kind] ?? 0),
       },
       // L'eau ne se mélange pas aux autres matières : là où la carte le dit,
       // elle remplace tout — couleur, grain, relief.
@@ -341,7 +405,28 @@ export class TerrainMaterialFactory {
            uniform float uGrainCellM;
            uniform float uGrainAmplitudeM;
            uniform vec2 uGrainFadeM;
-           ${LOW_POLY_GRAIN_GLSL}`
+           uniform sampler2D uSurfaceMap;
+           uniform vec2 uSurfaceOrigin;
+           uniform float uSurfaceSize;
+           uniform float uSurfaceEnabled;
+           uniform float uUnclassified;
+           uniform float uSurfaceGrainCell[${SURFACE_KINDS.length}];
+           uniform float uSurfaceGrainAmplitude[${SURFACE_KINDS.length}];
+           attribute float roadMask;
+           ${LOW_POLY_GRAIN_GLSL}
+
+           /* Identifiant de matière au texel le plus proche — pas de lissage :
+            * le grain est un déplacement géométrique, pas un contour, une
+            * marche d'un texel à la limite de deux matières ne s'y voit pas
+            * comme elle le ferait sur un aplat de couleur. */
+           float grainSurfaceIdAt(vec2 uv) {
+             vec2 texel = floor(uv * ${CLASS_PIXELS}.0);
+             float id = floor(
+               texture2D(uSurfaceMap, (texel + 0.5) / ${CLASS_PIXELS}.0).r * 255.0
+                 / ${SURFACE_ID_STEP}.0 + 0.5
+             );
+             return id < 0.5 ? uUnclassified : id;
+           }`
         )
         .replace(
           '#include <begin_vertex>',
@@ -351,8 +436,32 @@ export class TerrainMaterialFactory {
              // reste du shader (contour, pente, dérivées de normale) lise
              // directement la position déjà déformée.
              vec3 grainPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-             float grainFade = lowPolyFade(grainPos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y);
-             transformed.y += lowPolyBump(grainPos.xz, uGrainCellM, uGrainAmplitudeM) * grainFade;
+             // Le grain s'éteint dans l'emprise routière (roadMask, écrit par
+             // terrainBubble.js à partir de roadCutMaskAt) : le sommet y a
+             // déjà été recreusé pour la chaussée, il n'y repousse pas dessus.
+             float grainFade =
+               lowPolyFade(grainPos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y) * (1.0 - roadMask);
+
+             // La cellule et l'amplitude viennent de la matière au pied du
+             // sommet, comme l'albédo — hors carte ou hors carreau, celle du
+             // repli (uUnclassified), jamais un réglage neutre à part.
+             float grainId = uUnclassified;
+             if (uSurfaceEnabled > 0.5) {
+               vec2 grainUv = (grainPos.xz - uSurfaceOrigin) / uSurfaceSize;
+               if (grainUv.x > 0.0 && grainUv.x < 1.0 && grainUv.y > 0.0 && grainUv.y < 1.0) {
+                 grainId = grainSurfaceIdAt(grainUv);
+               }
+             }
+             float grainCellM = uGrainCellM;
+             float grainAmplitudeM = uGrainAmplitudeM;
+             for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
+               if (float(i) == grainId) {
+                 grainCellM = uSurfaceGrainCell[i - 1];
+                 grainAmplitudeM = uSurfaceGrainAmplitude[i - 1];
+               }
+             }
+
+             transformed.y += lowPolyBump(grainPos.xz, grainCellM, grainAmplitudeM) * grainFade;
            }
            vScenePos = (modelMatrix * vec4(transformed, 1.0)).xyz;
            vSceneNormal = normalize(mat3(modelMatrix) * objectNormal);`
@@ -373,8 +482,11 @@ export class TerrainMaterialFactory {
            uniform float uSurfaceEnabled;
            uniform float uUnclassified;
            uniform vec3 uCropAlbedo[${CROP_KINDS.length}];
+           uniform float uCropWater[${CROP_KINDS.length}];
            uniform vec3 uSurfaceAlbedo[${SURFACE_KINDS.length}];
            uniform float uSurfaceWater[${SURFACE_KINDS.length}];
+           uniform float uSurfaceMacro[${SURFACE_KINDS.length}];
+           uniform float uSurfaceMacroNear[${SURFACE_KINDS.length}];
            uniform float uPoolScale;
            uniform vec3 uRockColor;
            uniform vec2 uSlopeRange;
@@ -500,8 +612,8 @@ export class TerrainMaterialFactory {
             * il vit dans un litteral de gabarit.
             */
            void surfaceAt(
-             vec2 uv, vec3 farmAlbedo, out vec3 albedo, out float water,
-             out float standing
+             vec2 uv, vec3 farmAlbedo, float cropWater, out vec3 albedo, out float water,
+             out float standing, out float macroAmp, out float macroNear
            ) {
              vec2 grid = uv * ${CLASS_PIXELS}.0 - 0.5;
              vec2 corner = floor(grid);
@@ -546,17 +658,22 @@ export class TerrainMaterialFactory {
 
              albedo = vec3(0.0);
              standing = 0.0;
+             macroAmp = 0.0;
+             macroNear = 0.0;
              for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
                if (i != ${WATER_ID}) {
                  vec4 hit = step(abs(ids - float(i)), vec4(0.5));
                  float share = dot(hit, lifted) / land;
                  // La culture remplace la couleur de la terre labouree, et elle
-                 // seule : c'est un second axe, pas une matiere de plus.
-                 vec3 tone = i == ${SURFACE_KINDS.indexOf('farmland') + 1}
-                   ? farmAlbedo
-                   : uSurfaceAlbedo[i - 1];
+                 // seule : c'est un second axe, pas une matiere de plus. La
+                 // lame d'eau du riz suit la meme substitution : farmland ne
+                 // porte pas d'eau propre, donc la remplacer ne perd rien.
+                 bool isFarmland = i == ${SURFACE_KINDS.indexOf('farmland') + 1};
+                 vec3 tone = isFarmland ? farmAlbedo : uSurfaceAlbedo[i - 1];
                  albedo += tone * share;
-                 standing += uSurfaceWater[i - 1] * share;
+                 standing += (isFarmland ? cropWater : uSurfaceWater[i - 1]) * share;
+                 macroAmp += uSurfaceMacro[i - 1] * share;
+                 macroNear += uSurfaceMacroNear[i - 1] * share;
                }
              }
            }`
@@ -598,12 +715,20 @@ export class TerrainMaterialFactory {
              // forme d'acces a un tableau d'uniformes que toutes les versions
              // de GLSL acceptent.
              vec3 farmAlbedo = uSurfaceAlbedo[${SURFACE_KINDS.indexOf('farmland')}];
+             // Lame d'eau d'une culture — le riz, et lui seul aujourd'hui —
+             // zero partout ou une matiere n'a pas encore ete peinte de riz.
+             // Meme substitution que l'albedo, meme boucle : un axe de plus
+             // dans le meme tableau d'uniformes, pas un canal de plus.
+             float cropWater = 0.0;
              if (inMap > 0.5) {
                int crop = int(
                  floor(texture2D(uSurfaceMap, surfaceUv).g * 255.0 / ${CROP_ID_STEP}.0 + 0.5)
                ) - 1;
                for (int i = 0; i < ${CROP_KINDS.length}; i++) {
-                 if (i == crop) farmAlbedo = uCropAlbedo[i];
+                 if (i == crop) {
+                   farmAlbedo = uCropAlbedo[i];
+                   cropWater = uCropWater[i];
+                 }
                }
              }
 
@@ -613,14 +738,18 @@ export class TerrainMaterialFactory {
              // question.
              vec3 albedo = uSurfaceAlbedo[${SURFACE_KINDS.indexOf('grass')}];
              float standing = 0.0;
+             float macroAmp = 1.0;
+             float macroNear = 0.0;
              if (inMap > 0.5) {
-               surfaceAt(surfaceUv, farmAlbedo, albedo, gWater, standing);
+               surfaceAt(surfaceUv, farmAlbedo, cropWater, albedo, gWater, standing, macroAmp, macroNear);
              } else {
                // Hors carte : la matiere de repli.
                for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
                  if (float(i) == uUnclassified) {
                    albedo = uSurfaceAlbedo[i - 1];
                    standing = uSurfaceWater[i - 1];
+                   macroAmp = uSurfaceMacro[i - 1];
+                   macroNear = uSurfaceMacroNear[i - 1];
                  }
                }
              }
@@ -632,12 +761,12 @@ export class TerrainMaterialFactory {
              // a six points pres entre 5 et 90 %. Tranche la, la flaque prend
              // le rendu de l'eau et sa rive.
              if (standing > 0.001) {
-               float poolNoise = 0.5 + 1.25 * (
+               float poolNoise = 0.5 + ${POOL_NOISE_STRETCH} * (
                  texture2D(uMacroMap, vScenePos.xz / uPoolScale).r -
-                 texture2D(uMacroMap, vScenePos.zx / (uPoolScale * 1.618)).r
+                 texture2D(uMacroMap, vScenePos.zx / (uPoolScale * ${POOL_SCALE_RATIO})).r
                );
                float poolEdge = 1.0 - standing;
-               float pool = smoothstep(poolEdge - 0.04, poolEdge + 0.04, poolNoise);
+               float pool = smoothstep(poolEdge - ${POOL_EDGE_SOFTNESS}, poolEdge + ${POOL_EDGE_SOFTNESS}, poolNoise);
                gWater += (1.0 - gWater) * pool;
              }
 
@@ -651,7 +780,12 @@ export class TerrainMaterialFactory {
              // contrainte : les touffes instanciees ne la connaissent pas,
              // donc a portee de semis le sol doit rester la couleur sur
              // laquelle elles sont calees.
-             float macroSigned = (macro - 0.5) * far;
+             //
+             // macroNear releve ce plancher pour une matiere donnee : sans
+             // lui, far vaut 0,03 a cent metres et la variation y est deja
+             // eteinte. macroAmp multiplie l'amplitude elle-meme — un stade
+             // tondu n'a pas a etre aussi marbre qu'une tourbiere.
+             float macroSigned = (macro - 0.5) * max(far, macroNear) * macroAmp;
              modulation *= (1.0 + macroSigned * uMacro.y) *
                vec3(1.0 + macroSigned * uMacro.z, 1.0, 1.0 - macroSigned * uMacro.z);
 
@@ -728,7 +862,7 @@ export class TerrainMaterialFactory {
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v15-lowpoly-grain';
+    material.customProgramCacheKey = () => 'terrain-bubble-v18-lowpoly-grain-hors-emprise';
     return material;
   }
 

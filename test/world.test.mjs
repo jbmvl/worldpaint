@@ -150,6 +150,7 @@ import {
   BOUNDARY_MIXES,
   ROW_CROPS,
   rockKindFor,
+  biomeDebrisKindFor,
   signKindFor,
   pathCurvature,
   pathTurn,
@@ -330,6 +331,7 @@ import {
   BUSH_MIN_HEIGHT,
   BUSH_MAX_HEIGHT,
   coverBushesFor,
+  essenceStrata,
 } from '../src/layers/vegetationLayer.js';
 import { TREE_ESSENCES } from '../src/themes/default.js';
 import {
@@ -345,6 +347,7 @@ import {
   GRASS_HEIGHT_FADE_FLOOR,
   GRASS_GREEN_MIN,
   coverGrassFor,
+  coverGrainFor,
   grassGreenFor,
   woodFloorFor,
   WOODLAND_FLOWER_MAX,
@@ -428,7 +431,16 @@ import {
   buildEmbankment,
 } from '../src/layers/furniture/roadsideRelief.js';
 import { facetJitter } from '../src/layers/facetJitter.js';
-import { FLAT_SHADED_LINEAR_KINDS, DRY_STONE_WALL_SAMPLE_M } from '../src/layers/furniture/catalog.js';
+import {
+  FLAT_SHADED_LINEAR_KINDS,
+  DRY_STONE_WALL_SAMPLE_M,
+  BIOME_DEBRIS,
+} from '../src/layers/furniture/catalog.js';
+import {
+  buildBiomeDebris,
+  BIOME_DEBRIS_RADIUS_M,
+  BIOME_DEBRIS_CELL_M,
+} from '../src/layers/furniture/biomeDebris.js';
 import { buildRoadsideContext } from '../src/layers/furniture/roadsideFurniture.js';
 import { churchWithin } from '../src/layers/furniture/pointsOfInterest.js';
 import { buildJunctionSigns } from '../src/layers/furniture/junctionFurniture.js';
@@ -445,7 +457,14 @@ import {
   TRACTOR_SPEED_MAX_MS,
 } from '../src/layers/furniture/parcels.js';
 import { fieldVehicleAt, TRACTOR_ANIMATED_MAX } from '../src/layers/tractorLayer.js';
-import { placeFauna, crossingAt } from '../src/layers/furniture/parcelFauna.js';
+import {
+  placeFauna,
+  crossingAt,
+  buildOpenPastureFauna,
+  OPEN_PASTURE_KINDS,
+  OPEN_PASTURE_PER_HA,
+  OPEN_PASTURE_GROUP,
+} from '../src/layers/furniture/parcelFauna.js';
 import {
   HEDGE_STYLES,
   HEDGE_SAMPLE_M,
@@ -464,6 +483,7 @@ import {
   GRASS_VARIANTS,
   createTreeAtlasCanvas,
   createRoadCanvas,
+  macroNoiseField,
 } from '../src/materials/proceduralTextures.js';
 import { snapToShadowTexels, sunDirection, SHADOW_RADIUS_M } from '../src/environment/shadowFrame.js';
 import {
@@ -508,6 +528,11 @@ import {
   SETTLED_GRASS,
   VEGETAL_SURFACES,
   WOOD_EDGE_REACH_M,
+  poolShareAt,
+  poolEdgeGain,
+  POOL_NOISE_STRETCH,
+  POOL_SCALE_RATIO,
+  POOL_EDGE_SOFTNESS,
 } from '../src/terrain/groundClassMap.js';
 import {
   collectBuiltUpAreas,
@@ -537,8 +562,9 @@ import {
 } from '../src/layers/streetLayer.js';
 import { streetSurfaceAt } from '../src/layers/townStyle.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
-import { cutElevationAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
+import { cutElevationAt, roadCutMaskAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
 import { TerrainMaterialFactory } from '../src/terrain/terrainMaterial.js';
+import { LOW_POLY_GRAIN_DEFAULTS } from '../src/terrain/lowPolyGrain.js';
 import {
   birdAt,
   createBirdGeometry,
@@ -1831,7 +1857,7 @@ test('l’eau est une matière du sol, et la dernière de la liste', () => {
   assert.ok(WATER_ID * SURFACE_ID_STEP <= 255, 'l’identifiant tient dans le canal');
 
   // Et rien ne pousse dans l'eau.
-  assert.equal(coverBushesFor('water'), 0, 'aucun buisson dans l’eau');
+  assert.equal(coverBushesFor('water').density, 0, 'aucun buisson dans l’eau');
 });
 
 // --- Ciel -------------------------------------------------------------------
@@ -2384,6 +2410,86 @@ test('la table des matières décrit chaque matière, et rien de plus', () => {
   assert.ok(surfaces.mud.standingWater > 0, 'une vasière garde ses flaques');
 });
 
+test('la lecture CPU des flaques suit la part demandée, et ne dépend que de la position', () => {
+  // Sans part d'eau, rien à calculer : une matière qui ne porte pas de flaque
+  // (standing = 0) n'en a jamais, quel que soit le point.
+  assert.equal(poolShareAt(123, 456, 0), 0);
+  assert.equal(poolShareAt(0, 0, 0.3), 0, 'à l’origine aussi');
+
+  // Déterminisme : deux appels au même point, avec les mêmes réglages,
+  // rendent la même part — c'est une fonction pure, sans état.
+  const a = poolShareAt(1234.5, -678.25, 0.3);
+  const b = poolShareAt(1234.5, -678.25, 0.3);
+  assert.equal(a, b);
+
+  // La part mesurée sur un grand nombre de points suit la part demandée, à la
+  // même tolérance que celle mesurée sur le bruit lui-même (« à six points
+  // près entre 5 et 90 % », voir docs/surfaces.md) : un excès de dérive
+  // signalerait une divergence entre cette lecture et celle du shader.
+  const wetFractionFor = (standing) => {
+    let wet = 0;
+    const n = 4000;
+    for (let i = 0; i < n; i++) {
+      // Une grille large et irrégulière : pas d'alignement avec la période
+      // du bruit (60 m par défaut), qui biaiserait l'échantillonnage.
+      const x = i * 17.3 - 30000;
+      const z = i * -11.7 + 20000;
+      wet += poolShareAt(x, z, standing) > 0.5 ? 1 : 0;
+    }
+    return wet / n;
+  };
+  for (const standing of [0.05, 0.3, 0.9]) {
+    const measured = wetFractionFor(standing);
+    assert.ok(
+      Math.abs(measured - standing) <= 0.08,
+      `standing ${standing} : part mesurée ${measured.toFixed(3)}`
+    );
+  }
+
+  // Les constantes ne sont pas dupliquées : `terrainMaterial.js` compose son
+  // GLSL avec les mêmes valeurs, jamais des littéraux à côté.
+  const shaderSource = readFileSync('src/terrain/terrainMaterial.js', 'utf8');
+  assert.ok(shaderSource.includes('POOL_NOISE_STRETCH'));
+  assert.ok(shaderSource.includes('POOL_SCALE_RATIO'));
+  assert.ok(shaderSource.includes('POOL_EDGE_SOFTNESS'));
+  assert.equal(POOL_NOISE_STRETCH, 1.25);
+  assert.equal(POOL_SCALE_RATIO, 1.618);
+  assert.equal(POOL_EDGE_SOFTNESS, 0.04);
+
+  // Un champ propre, de même recette, rend exactement le même résultat que le
+  // champ par défaut : la fonction ne tient aucun état caché.
+  const ownField = macroNoiseField();
+  assert.equal(poolShareAt(500, -200, 0.3, defaultTheme.terrain.poolScaleM, ownField), poolShareAt(500, -200, 0.3));
+});
+
+test('la bordure d’une flaque monte puis retombe, sans jamais sortir de [0, 1]', () => {
+  assert.equal(poolEdgeGain(0), 0, 'au sec, loin de l’eau : rien à border');
+  assert.ok(poolEdgeGain(0.5) > poolEdgeGain(0.9), 'proche de la rive plus que dans l’eau');
+  for (let i = 0; i <= 20; i++) {
+    const pool = i / 20;
+    const gain = poolEdgeGain(pool);
+    assert.ok(gain >= 0 && gain <= 1, `pool ${pool} : gain ${gain}`);
+  }
+});
+
+test('l’herbe et le fourré refusent le milieu d’une flaque, et la bordent plus dense', () => {
+  // Ce que le shader dessine et ce que l'herbe sème doivent partager la même
+  // vérité : pas de comptage séparé de flaques, une seule lecture (`poolShareAt`).
+  const groundCoverSource = readFileSync('src/layers/groundCover.js', 'utf8');
+  assert.match(groundCoverSource, /import \{ SETTLED_GRASS, VEGETAL_SURFACES, poolShareAt, poolEdgeGain \}/);
+  assert.match(groundCoverSource, /if \(pool > 0\.5\) continue;/);
+  assert.match(groundCoverSource, /\(1 \+ poolEdge \* POOL_EDGE_DENSITY_BOOST\)/);
+  assert.match(groundCoverSource, /\(1 \+ poolEdge \* POOL_EDGE_HEIGHT_BOOST\)/);
+
+  const vegetationSource = readFileSync('src/layers/vegetationLayer.js', 'utf8');
+  assert.match(vegetationSource, /import \{ poolShareAt, poolEdgeGain \} from '\.\.\/terrain\/groundClassMap\.js';/);
+  assert.equal(
+    (vegetationSource.match(/> 0\.5\s*\n\s*\?\s*0\s*\n\s*: \w+Look\.density/g) || []).length,
+    2,
+    'les deux sites d’appel de coverBushesFor refusent le milieu d’une flaque'
+  );
+});
+
 test('la part d’une matière s’interpole, là où son identifiant ne le peut pas', () => {
   // Un identifiant ne se mélange pas — entre le sable et l'eau il n'y a rien —
   // mais l'appartenance à une matière, si. C'est ce que le filtrage linéaire
@@ -2447,7 +2553,8 @@ test('la couverture règle l’herbe et le fourré, jamais leur présence', () =
   const prairie = coverGrassFor(null);
   assert.deepEqual(prairie, { height: 1, density: 1, tint: [1, 1, 1] });
   assert.deepEqual(coverGrassFor('couverture-inconnue'), prairie);
-  assert.equal(coverBushesFor(null), 0);
+  assert.equal(coverBushesFor(null).density, 0);
+  assert.equal(coverBushesFor(null).essence, null);
 
   // Une lande est rase, un marais est haut : c’est ce qui les distingue à
   // hauteur d’homme, la couleur du sol ne le dit pas.
@@ -2456,8 +2563,93 @@ test('la couverture règle l’herbe et le fourré, jamais leur présence', () =
   // Un maquis est surtout du vide entre des arbustes : peu d’herbe, beaucoup
   // de buissons — l’inverse exact d’un pré.
   assert.ok(coverGrassFor('scrub').density < coverGrassFor('heath').density);
-  assert.ok(coverBushesFor('scrub') > coverBushesFor('heath'));
-  assert.equal(coverBushesFor('scree'), 0, 'rien ne pousse dans un éboulis');
+  assert.ok(coverBushesFor('scrub').density > coverBushesFor('heath').density);
+  assert.equal(coverBushesFor('scree').density, 0, 'rien ne pousse dans un éboulis');
+
+  // Une lande et un maquis ne sèment plus le même buisson.
+  assert.equal(coverBushesFor('heath').essence, 'gorse');
+  assert.equal(coverBushesFor('scrub').essence, 'thornyScrub');
+  assert.equal(coverBushesFor('sand').essence, 'marram');
+  assert.notEqual(coverBushesFor('heath').essence, coverBushesFor('scrub').essence);
+});
+
+test('le grain d’une touffe suit celui du sol, matière par matière', () => {
+  // Une matière absente de la table reprend le réglage de repli — le même
+  // que `terrainMaterial.js` applique par défaut.
+  const repli = coverGrainFor(null);
+  assert.deepEqual(repli, {
+    cellM: LOW_POLY_GRAIN_DEFAULTS.cellM,
+    amplitudeM: LOW_POLY_GRAIN_DEFAULTS.amplitudeM,
+  });
+  assert.deepEqual(coverGrainFor('couverture-inconnue'), repli);
+  assert.deepEqual(coverGrainFor('grass'), repli, 'l’herbe ordinaire n’a pas été branchée');
+
+  // Une lande porte de petites touffes serrées, un pré alpin de larges
+  // colinettes : les deux divergent du repli et l’un de l’autre.
+  const heath = coverGrainFor('heath');
+  const alpine = coverGrainFor('alpine');
+  assert.deepEqual(heath, {
+    cellM: defaultTheme.surfaces.heath.grainCellM,
+    amplitudeM: defaultTheme.surfaces.heath.grainAmplitudeM,
+  });
+  assert.notEqual(heath.cellM, repli.cellM);
+  assert.ok(alpine.cellM > heath.cellM, 'les colinettes d’un pré alpin sont plus larges');
+});
+
+test('une matière sans essence propre replie sur le tapis générique', () => {
+  // grass, wood, wetland… n'ont pas de champ `bush` : le repli est le
+  // comportement actuel, jamais une essence inventée.
+  for (const kind of ['grass', 'wood', 'wetland', 'alpine', 'saltmarsh']) {
+    assert.equal(coverBushesFor(kind).essence, null, `${kind} ne nomme pas d’essence`);
+  }
+});
+
+test('chaque essence de biome tient une silhouette propre, dans le catalogue', () => {
+  for (const essence of ['gorse', 'thornyScrub', 'marram']) {
+    const strata = essenceStrata(essence);
+    assert.ok(strata.length >= 1, `${essence} : au moins une silhouette`);
+    for (const plant of strata) {
+      const look = TREE_VARIANTS[plant.variant];
+      assert.ok(look, `${essence} : variante ${plant.variant} existe`);
+      assert.ok(TREE_ATLAS_OFFSETS[plant.variant], `${essence} : case d’atlas présente`);
+      assert.deepEqual([plant.min, plant.max], look.heightM, 'la taille vient de la plante');
+    }
+  }
+  // Trois essences distinctes, trois silhouettes distinctes.
+  const variantsOf = (essence) => essenceStrata(essence).map((p) => p.variant);
+  assert.notDeepEqual(variantsOf('gorse'), variantsOf('thornyScrub'));
+  assert.notDeepEqual(variantsOf('gorse'), variantsOf('marram'));
+
+  // La fougère rejoint le tapis générique du sous-bois, sans le remplacer.
+  const floor = understoryStrata(defaultTheme.trees, true).map((p) => p.variant);
+  const fernVariant = TREE_VARIANTS.findIndex((v) => v.kind === 'fern');
+  assert.ok(fernVariant >= 0, 'la fougère existe au catalogue');
+  assert.ok(floor.includes(fernVariant), 'la fougère pousse dans le tapis du sous-bois');
+
+  // Le peintre de chaque nouvelle essence existe (source, pas d’exécution).
+  const source = readFileSync('src/materials/proceduralTextures.js', 'utf8');
+  for (const kind of ['gorse', 'thornyScrub', 'fern', 'marram']) {
+    assert.match(source, new RegExp(`${kind}: draw`));
+  }
+});
+
+test('le semis de biome sème l’essence de sa matière, pas celle du peuplement', () => {
+  const source = readFileSync('src/layers/vegetationLayer.js', 'utf8');
+  // Les deux sites d'appel (près, loin) doivent choisir la strate par
+  // essence de matière quand elle existe, et ne jamais tirer le peuplement
+  // pour décider de la silhouette d'un buisson de biome.
+  assert.equal(
+    (source.match(/bushLook\.essence \? essenceStrata\(bushLook\.essence, this\.theme\.trees\) : strata/g) || [])
+      .length,
+    1
+  );
+  assert.equal(
+    (source.match(/thickLook\.essence \? essenceStrata\(thickLook\.essence, this\.theme\.trees\) : strata/g) || [])
+      .length,
+    1
+  );
+  assert.match(source, /describeTree\(tree, seed, base, type, lowPart, variants, cellStrata\);/);
+  assert.match(source, /describeTree\(tree, seed, slot, type, lowPart, variants, cellStrata, true\);/);
 });
 
 test('le sol d’un bois porte une litière, pas une prairie à l’ombre', () => {
@@ -2499,27 +2691,26 @@ test('le sol d’un bois porte une litière, pas une prairie à l’ombre', () =
   assert.ok(sousBois.shade > WOODLAND_FLOWER_MAX, 'un vrai bois passe le seuil');
 });
 
-test('un sol de forêt reste vert : plus sombre qu’un pré, jamais un trou noir', () => {
-  // Il l'était : son vert valait 0,056 contre 0,135 pour l'herbe, soit moins de
-  // la moitié — sous les arbres, le décor tombait dans une matière plus sombre
-  // que l'ombre qu'elle portait. La règle est maintenant écrite : un sous-bois
-  // est une litière, donc plus sombre qu'une prairie, mais il en garde au moins
-  // la moitié du vert.
+test('un sol de forêt est une litière brune, jamais un trou noir', () => {
+  // Un sous-bois n'est pas un pré à l'ombre : c'est une litière, brune plutôt
+  // que verte (rouge ≥ 0,80 × vert), et plus sombre qu'une prairie sans tomber
+  // dans le noir.
   const woodAlbedo = defaultTheme.surfaces.wood.albedo;
   const grassAlbedo = defaultTheme.surfaces.grass.albedo;
-  assert.ok(woodAlbedo[1] < grassAlbedo[1], 'un sous-bois reste plus sombre qu’un pré');
+  const luma = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  assert.ok(luma(woodAlbedo) < luma(grassAlbedo), 'un sous-bois reste plus sombre qu’un pré');
+  assert.ok(luma(woodAlbedo) > 0.02, 'jamais un trou noir');
   assert.ok(
-    woodAlbedo[1] >= grassAlbedo[1] * 0.5,
-    `le vert du sous-bois : ${woodAlbedo[1]} pour ${grassAlbedo[1]} en prairie`
+    woodAlbedo[0] >= woodAlbedo[1] * 0.8,
+    `la litière est brune, pas verte : ${woodAlbedo}`
   );
-  // Et c'est bien du vert : le canal dominant, comme dans l'herbe.
-  assert.ok(woodAlbedo[1] > woodAlbedo[0] && woodAlbedo[1] > woodAlbedo[2]);
 
-  // Les touffes qui poussent dessus suivent le même déplacement, sans quoi le
-  // premier plan et le lointain peindraient deux forêts différentes.
+  // Les touffes qui poussent dessus suivent le même déplacement : le vert y
+  // recule plus que le rouge, sans quoi le premier plan resterait vert alors
+  // que le lointain a viré au brun.
   assert.ok(
-    WOODLAND_FLOOR.tint[1] > 0.85,
-    `la teinte des touffes de sous-bois : ${WOODLAND_FLOOR.tint[1]}`
+    WOODLAND_FLOOR.tint[0] > WOODLAND_FLOOR.tint[1],
+    `le rouge doit reculer moins que le vert : ${WOODLAND_FLOOR.tint}`
   );
 });
 
@@ -3133,6 +3324,32 @@ test('le déblai ne remblaie jamais : côté aval, le terrain ne bouge pas', () 
   close(cutElevationAt(95, 100, 0, 3), 95, 1e-9, 'sous la chaussée');
   close(cutElevationAt(95, 100, 4, 3), 95, 1e-9, 'au ras de la rive');
   close(cutElevationAt(100, 100, 1, 3), 100, 1e-9, 'à niveau, rien à creuser');
+});
+
+test('l’emprise routière couvre exactement la même largeur que le déblai', () => {
+  const halfWidth = 2.5;
+  const edge = halfWidth + ROAD_CUT_M;
+
+  // Pleine sous la chaussée et son accotement, comme le déblai est plat.
+  close(roadCutMaskAt(0, halfWidth), 1, 1e-9, 'sous l’axe');
+  close(roadCutMaskAt(halfWidth, halfWidth), 1, 1e-9, 'sous la rive');
+  close(roadCutMaskAt(edge, halfWidth), 1, 1e-9, 'accotement');
+  // Nulle au bout du même raccord que `cutElevationAt`.
+  close(roadCutMaskAt(edge + ROAD_CUT_BLEND_M, halfWidth), 0, 1e-9, 'terrain naturel retrouvé');
+  close(roadCutMaskAt(400, halfWidth), 0, 1e-9, 'loin de la route');
+
+  // Monotone et bornée entre les deux, comme le déblai lui-même.
+  let previous = Infinity;
+  for (let d = edge; d <= edge + ROAD_CUT_BLEND_M; d += 0.1) {
+    const mask = roadCutMaskAt(d, halfWidth);
+    assert.ok(mask <= previous + 1e-9, `décroissance monotone à ${d.toFixed(1)} m`);
+    assert.ok(mask >= 0 && mask <= 1, `bornée à ${d.toFixed(1)} m`);
+    previous = mask;
+  }
+
+  // Indépendante du sens du déblai : contrairement à `cutElevationAt`,
+  // l’emprise ne dépend pas de savoir si le terrain domine la plate-forme.
+  close(roadCutMaskAt(0, 3), 1, 1e-9, 'emprise pleine même en remblai');
 });
 
 // --- Sections balayées ------------------------------------------------------
@@ -8446,6 +8663,124 @@ test('la pierre suit le minéral et la pente, jamais le hasard seul', () => {
   for (const item of kinds) assert.ok(FURNITURE_BUILDERS[item], item);
 });
 
+test('la table des objets de biome est bien formée', () => {
+  for (const [kind, table] of Object.entries(BIOME_DEBRIS)) {
+    assert.ok(SURFACE_KINDS.includes(kind), `${kind} doit être une matière`);
+    // Densité entre 0,05 et 0,5 par hectare : l'arithmétique du mandat (154 ha
+    // de portée, un objet par hectare fait déjà 154 objets).
+    assert.ok(table.perHa >= 0.05 && table.perHa <= 0.5, `${kind} : perHa ${table.perHa}`);
+    let sum = 0;
+    for (const entry of table.items) {
+      sum += entry.share;
+      assert.ok(FURNITURE_BUILDERS[entry.item], `${kind} : ${entry.item} au catalogue`);
+      assert.ok(POINT_ITEMS.includes(entry.item), `${kind} : ${entry.item} instancié`);
+      assert.equal(entry.scale.length, 2);
+      assert.ok(entry.scale[0] > 0 && entry.scale[0] <= entry.scale[1]);
+    }
+    assert.ok(Math.abs(sum - 1) < 1e-9, `${kind} : les parts somment à 1 (${sum})`);
+  }
+  // Plafond propre, jamais partagé avec `scatter` (les objets de parcelle) ni
+  // `rocks` (le seul minéral bâti sur pente).
+  assert.ok(FURNITURE_LIMITS.biomeDebris > 0);
+});
+
+test('le choix d’un objet de biome respecte la densité de sa table', () => {
+  const table = { perHa: 1, items: [{ item: 'a', share: 0.6, scale: [1, 2] }, { item: 'b', share: 0.4, scale: [3, 4] }] };
+
+  // Sans table, ou sans densité, rien : une matière absente de `BIOME_DEBRIS`
+  // n'est simplement pas concernée.
+  assert.equal(biomeDebrisKindFor(null, 1, 0.1), null);
+  assert.equal(biomeDebrisKindFor(table, 0, 0.1), null);
+
+  // Au-delà de la densité, rien non plus : c'est elle qui fait la rareté.
+  assert.equal(biomeDebrisKindFor(table, 0.3, 0.5), null);
+
+  // Les deux objets sortent, dans leur fourchette d'échelle, et à peu près
+  // dans la proportion de leurs parts.
+  const counts = { a: 0, b: 0 };
+  for (let i = 0; i < 1000; i++) {
+    const variant = i / 1000;
+    const chosen = biomeDebrisKindFor(table, 1, variant);
+    assert.ok(chosen, `variant ${variant} sous la densité doit rendre un objet`);
+    counts[chosen.item]++;
+    const [min, max] = chosen.item === 'a' ? [1, 2] : [3, 4];
+    assert.ok(chosen.scale >= min && chosen.scale <= max);
+  }
+  assert.ok(Math.abs(counts.a / 1000 - 0.6) < 0.02, `part de a : ${counts.a / 1000}`);
+});
+
+test('le semis de biome est déterministe, et son plafond n’arrête que lui-même', () => {
+  const fakeLayer = (surfaceAt, limit) => {
+    const placed = [];
+    return {
+      counts: {},
+      groundClass: { surfaceAt },
+      _onRoad: () => false,
+      _place(_placements, item, opts) {
+        placed.push({ item, ...opts });
+        return null;
+      },
+      placed,
+      limit,
+    };
+  };
+
+  const here = { x: 1234, z: -567 };
+  const alwaysHeath = () => 'heath';
+
+  const first = fakeLayer(alwaysHeath);
+  const second = fakeLayer(alwaysHeath);
+  buildBiomeDebris(first, { here, placements: {} }, null);
+  buildBiomeDebris(second, { here, placements: {} }, null);
+  assert.deepEqual(first.placed, second.placed, 'même lieu, même semis');
+  assert.ok(first.placed.length > 0, 'la lande doit produire quelques objets sur un rayon de 300 m');
+
+  // Un plafond réduit coupe le compte sans jeter, et sans changer le compte
+  // d'une autre famille : chaque plafond n'arrête que ce qu'il plafonne.
+  const previousLimit = FURNITURE_LIMITS.biomeDebris;
+  try {
+    FURNITURE_LIMITS.biomeDebris = 2;
+    const capped = fakeLayer(alwaysHeath);
+    buildBiomeDebris(capped, { here, placements: {} }, null);
+    assert.equal(capped.placed.length, 2, 'le plafond réduit est bien respecté');
+    assert.equal(capped.counts.biomeDebris, 2);
+    assert.deepEqual(
+      capped.placed,
+      first.placed.slice(0, 2),
+      'les deux premiers objets restent ceux du semis non plafonné'
+    );
+  } finally {
+    FURNITURE_LIMITS.biomeDebris = previousLimit;
+  }
+  assert.equal(FURNITURE_LIMITS.rocks, 200, 'le plafond des rochers minéraux n’a pas bougé');
+});
+
+test('le semis de biome ne pose que ce que la matière de la fiche autorise', () => {
+  const fakeLayer = (surfaceAt) => {
+    const placed = [];
+    return {
+      counts: {},
+      groundClass: { surfaceAt },
+      _onRoad: () => false,
+      _place(_placements, item, opts) {
+        placed.push({ item, ...opts });
+        return null;
+      },
+      placed,
+    };
+  };
+
+  // Une prairie ordinaire (hors de `BIOME_DEBRIS`) ne reçoit rien.
+  const grassOnly = fakeLayer(() => 'grass');
+  buildBiomeDebris(grassOnly, { here: { x: 0, z: 0 }, placements: {} }, null);
+  assert.equal(grassOnly.placed.length, 0, 'la prairie n’est pas une matière de la table');
+
+  // Une vasière ne pose que du bois flotté.
+  const mud = fakeLayer(() => 'mud');
+  buildBiomeDebris(mud, { here: { x: 0, z: 0 }, placements: {} }, null);
+  for (const entry of mud.placed) assert.equal(entry.item, 'driftwood');
+});
+
 // --- Peuplements forestiers -------------------------------------------------
 
 test('un bois garde ses essences quand la bulle se déplace', () => {
@@ -10251,23 +10586,19 @@ test('un réseau dit jusqu’où il sait, ce qui n’est pas dire ce qu’il con
 
 test('un quartier d’habitation porte de l’herbe, une zone d’activité non', () => {
   // `residential` décrit un périmètre, pas un revêtement : pelouses tondues et
-  // allées. C'était un remplissage **partiel** — deux tiers d'herbe peints dans
-  // un canal de poids, la seule matière qui le fût. C'est maintenant une
-  // matière comme les autres, et la part d'herbe n'est plus dans la carte mais
-  // dans la strate basse, qui est la seule à en avoir besoin.
+  // allées. La part d'herbe n'est pas dans la carte mais dans la strate basse,
+  // qui est la seule à en avoir besoin.
   assert.ok(SURFACE_KINDS.includes('settled'), 'le lotissement est une matière');
   assert.ok(SETTLED_GRASS > 0.5 && SETTLED_GRASS < 1, 'majoritairement vert, jamais un pré');
 
-  // Sa couleur est la moyenne exacte que le mélange rendait : la fusion ne
-  // devait pas déplacer une valeur artistique au passage.
-  const { grass, bare, settled } = defaultTheme.surfaces;
-  for (let i = 0; i < 3; i++) {
-    const expected = grass.albedo[i] * SETTLED_GRASS + bare.albedo[i] * (1 - SETTLED_GRASS);
-    assert.ok(
-      Math.abs(settled.albedo[i] - expected) < 0.002,
-      `canal ${i} : ${settled.albedo[i]} pour ${expected} attendu`
-    );
-  }
+  // Sa couleur est une valeur propre — plus claire et plus franchement verte
+  // qu'une prairie de rase campagne, l'entretien plutôt que l'herbe elle-même —
+  // et non plus dérivée d'un mélange avec le sol nu.
+  const { settled } = defaultTheme.surfaces;
+  assert.ok(
+    settled.albedo[1] > settled.albedo[0] && settled.albedo[1] > settled.albedo[2],
+    'le vert domine : c’est une pelouse, pas un sol nu'
+  );
 });
 
 test('un périmètre habité ne suffit pas à faire une rue', () => {
@@ -10601,6 +10932,64 @@ test('le nombre de bêtes posées est plafonné', () => {
     placeFauna(layer, 'sheep', { x: i * 7.3, z: i * 3.1 });
   }
   assert.equal(layer.fauna.length, FURNITURE_LIMITS.fauna, 'plafonné, pas débordé');
+});
+
+test('le vivant hors parcelle ne se pose que sur les matières ouvertes', () => {
+  assert.deepEqual([...OPEN_PASTURE_KINDS].sort(), ['alpine', 'heath', 'saltmarsh']);
+
+  const { layer } = farmsteadPlacementHarness();
+  layer.counts = {};
+  layer.groundClass = { surfaceAt: () => 'grass' };
+  const here = { x: 10000, z: -4000 };
+  buildOpenPastureFauna(layer, { here }, null);
+  assert.equal(layer.fauna.length, 0, 'une prairie ordinaire ne porte rien de ce mécanisme');
+  assert.equal(layer.counts.openPasture, 0);
+});
+
+test('le vivant hors parcelle est déterministe, et partage le plafond de la faune', () => {
+  const heathLayer = () => {
+    const { layer } = farmsteadPlacementHarness();
+    layer.counts = {};
+    layer.groundClass = { surfaceAt: () => 'heath' };
+    return layer;
+  };
+  const here = { x: 20000, z: 8000 };
+
+  const first = heathLayer();
+  const second = heathLayer();
+  buildOpenPastureFauna(first, { here }, null);
+  buildOpenPastureFauna(second, { here }, null);
+  assert.ok(first.fauna.length > 0, 'une lande entière doit porter au moins un groupe sur 400 m de rayon');
+  assert.deepEqual(
+    first.fauna.map((a) => ({ kind: a.kind, x: a.x, z: a.z })),
+    second.fauna.map((a) => ({ kind: a.kind, x: a.x, z: a.z })),
+    'même lieu, même semis'
+  );
+
+  // Chaque groupe reste petit — hors parcelle, pas un troupeau de pré clos.
+  const byCircuitStart = new Map();
+  for (const animal of first.fauna) {
+    const key = `${Math.round(animal.x / 5)},${Math.round(animal.z / 5)}`;
+    byCircuitStart.set(key, (byCircuitStart.get(key) || 0) + 1);
+  }
+  for (const size of byCircuitStart.values()) {
+    assert.ok(size <= OPEN_PASTURE_GROUP[1], `un groupe hors parcelle ne dépasse pas ${OPEN_PASTURE_GROUP[1]} têtes (${size})`);
+  }
+
+  // Le plafond de la faune est partagé : le rempli d'avance, rien ne s'ajoute.
+  const full = heathLayer();
+  for (let i = 0; i < FURNITURE_LIMITS.fauna; i++) {
+    full.fauna.push({ kind: 'sheep', x: 0, z: 0, circuit: { stations: [{}], behaviour: 'graze' }, tint: [1, 1, 1], scale: 1 });
+  }
+  buildOpenPastureFauna(full, { here }, null);
+  assert.equal(full.fauna.length, FURNITURE_LIMITS.fauna, 'un plafond déjà plein ne déborde pas');
+});
+
+test('OPEN_PASTURE_PER_HA reste dans l’écart voulu : rare, jamais absent', () => {
+  // « Quelques moutons dispersés » : sensiblement plus rare que le mobilier
+  // de biome (0,05 à 0,5/ha), sans quoi une lande ouverte se remplirait
+  // comme un pré clos.
+  assert.ok(OPEN_PASTURE_PER_HA > 0 && OPEN_PASTURE_PER_HA <= 0.1);
 });
 
 test('la cour d’une ferme publie ses poules au lieu de les poser', () => {
@@ -11242,6 +11631,63 @@ test('la compensation d’alpha atteint sa cible, et n’atteint que les couvert
   );
 });
 
+test('le grain low poly suivi par une instance vient d’un réglage unique, ou de la matière', () => {
+  const THREE = {
+    DoubleSide: 2,
+    MeshLambertMaterial: class {
+      constructor(options) {
+        Object.assign(this, options, { userData: {} });
+      }
+    },
+    Vector2: class {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+      }
+    },
+    ShaderChunk: { lights_fragment_begin: 'IncidentLight directLight;\n#if ( NUM_DIR_LIGHTS > 0 ) && defined( RE_Direct )' },
+  };
+  const compile = (material) => {
+    const shader = {
+      uniforms: {},
+      vertexShader: ['#include <common>', '#include <begin_vertex>'].join('\n'),
+      fragmentShader: '',
+    };
+    material.onBeforeCompile(shader);
+    return shader;
+  };
+
+  // Réglage unique (herbe et cultures avant le branchement par matière, et
+  // toute autre couverture qui n'a pas d'instance à consulter) : le même
+  // uniforme pour tout le maillage.
+  const unique = compile(
+    createFoliageMaterial({ THREE, map: null, groundLowPoly: true, cacheKey: 'test-grain-uniforme' })
+  );
+  assert.match(unique.vertexShader, /vec2 groundGrain = vec2\(uGroundGrainCellM, uGroundGrainAmplitudeM\);/);
+  assert.ok(
+    !unique.vertexShader.includes(`attribute vec2 ${'aGroundGrain'};`),
+    'sans `groundGrainPerInstance`, pas d’attribut à lier'
+  );
+
+  // Par instance : la matière lue au semis par l'appelant, pas une seconde
+  // fois ici — l'attribut porte directement la cellule et l'amplitude.
+  const parInstance = compile(
+    createFoliageMaterial({
+      THREE,
+      map: null,
+      groundLowPoly: true,
+      groundGrainPerInstance: true,
+      cacheKey: 'test-grain-instance',
+    })
+  );
+  assert.match(parInstance.vertexShader, /attribute vec2 aGroundGrain;/);
+  assert.match(parInstance.vertexShader, /vec2 groundGrain = aGroundGrain;/);
+  assert.match(
+    parInstance.vertexShader,
+    /float groundOffset = lowPolyBump\(groundWorldPos\.xz, groundGrain\.x, groundGrain\.y\) \* groundFade;/
+  );
+});
+
 test('le vent se mesure sur la hauteur de la plante, pas sur la largeur du panneau', () => {
   // Le déplacement est écrit dans le quadrilatère unité, puis mis à l'échelle
   // par la matrice d'instance : sans correction, son amplitude réelle était
@@ -11282,7 +11728,10 @@ test('le contour de l’eau se fond, sans que les identifiants cessent d’être
   // mêmes relevés. C'étaient trois mécanismes — un mélange de quatre poids
   // interpolés linéairement, une boucle de couvertures, une substitution de
   // culture — pour une seule question.
-  assert.match(source, /surfaceAt\(surfaceUv, farmAlbedo, albedo, gWater, standing\);/);
+  assert.match(
+    source,
+    /surfaceAt\(surfaceUv, farmAlbedo, cropWater, albedo, gWater, standing, macroAmp, macroNear\);/
+  );
   assert.ok(!/uClassMap|uCropMap/.test(source), 'les deux cartes ont fusionné');
 
   // Ce qui est interpolé est l'**appartenance**, pas l'identifiant : chaque
@@ -11892,17 +12341,17 @@ test('les limites de surfaces : la frange, les matières interpolées et la rive
   );
 
   // Tranché, pas fondu : la matière la plus forte l'emporte sur la largeur
-  // d'un pixel. C'est la seule dérivée d'écran du shader.
+  // d'un pixel.
   assert.match(source, /smoothstep\(-aa, 0\.0, share - peak\)/);
   assert.equal(
     (source.match(/fwidth\(/g) || []).length,
     2,
     'la largeur du trait, en x et en z, et rien d’autre'
   );
-  assert.ok(
-    !/dFdx|dFdy/.test(source),
-    'aucune dérivée à la main : le relief tiré du grain ne revient pas'
-  );
+  // La seule dérivée d'écran restante est la normale plate du grain low poly
+  // (`dFdx`/`dFdy` sur la position déjà bosselée) : une par appel, dans
+  // `<normal_fragment_begin>`.
+  assert.match(source, /cross\(dFdx\(vScenePos\), dFdy\(vScenePos\)\)/);
 
   assert.ok(
     !/waterShareAt|coverIdAt/.test(source),
@@ -12022,11 +12471,11 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   assert.ok(!/uGrassMap|uSoilMap|uWoodMap/.test(source), 'les textures de matière');
   assert.ok(!/uDetailMap|uDetailScale/.test(source), 'le bruit de détail');
   assert.ok(!/uGrainContrast|uGrainRelief|grainHeight/.test(source), 'le grain et son relief');
-  // L'interdit porte sur la dérivée **à la main**, celle qui inventait une
-  // normale depuis un grain et faisait fourmiller le sol. La largeur du trait
-  // d'une lisière (`fwidth`, dans surfaceAt) n'en est pas : elle ne touche pas
-  // la normale, et le champ sous elle est lisse et fixe dans le monde.
-  assert.ok(!/dFdx|dFdy/.test(source), 'plus aucune dérivée à la main');
+  // L'interdit portait sur la dérivée à la main tirée d'un grain de
+  // **texture**, sans relevé d'altitude. Le grain low poly (`lowPolyGrain.js`)
+  // en déplace un pour de vrai : sa normale plate, reprise par `dFdx`/`dFdy`
+  // sur la position déjà bosselée, est légitime et n'en est pas une seconde.
+  assert.match(source, /cross\(dFdx\(vScenePos\), dFdy\(vScenePos\)\)/);
   for (const key of ['grainScaleM', 'grainPixels', 'grainContrast', 'grainRelief']) {
     assert.equal(defaultTheme.terrain[key], undefined, `${key} n'a plus d'objet`);
   }
@@ -12068,6 +12517,274 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   for (const key of ['groundScaleGrass', 'groundScaleSoil', 'groundScaleWood']) {
     assert.ok(!(key in defaultTheme.terrain), `${key} doit avoir disparu du thème`);
   }
+});
+
+test('la variation macro du sol dépend de la matière : amplitude et plancher de distance', () => {
+  const previousCanvas = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      Object.assign(this, { width, height });
+    }
+    getContext() {
+      return paintingCanvasContext();
+    }
+  };
+
+  let factory;
+  try {
+    factory = new TerrainMaterialFactory({ THREE: terrainThreeStub() });
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+  }
+
+  const shader = {
+    uniforms: {},
+    vertexShader: ['#include <common>', '#include <begin_vertex>'].join('\n'),
+    fragmentShader: [
+      '#include <common>',
+      '#include <map_fragment>',
+      '#include <normal_fragment_begin>',
+    ].join('\n'),
+  };
+  factory.material.onBeforeCompile(shader);
+  const source = shader.fragmentShader;
+
+  // Accumulés par part, dans la même boucle que l'eau — jamais tranchés sur
+  // la matière dominante.
+  assert.match(
+    source,
+    /standing \+= \(isFarmland \? cropWater : uSurfaceWater\[i - 1\]\) \* share;\s*\n\s*macroAmp \+= uSurfaceMacro\[i - 1\] \* share;\s*\n\s*macroNear \+= uSurfaceMacroNear\[i - 1\] \* share;/
+  );
+  assert.match(
+    source,
+    /float macroSigned = \(macro - 0\.5\) \* max\(far, macroNear\) \* macroAmp;/
+  );
+
+  // Une ligne par matière, dans le même ordre que les autres tables.
+  assert.equal(shader.uniforms.uSurfaceMacro.value.length, SURFACE_KINDS.length);
+  assert.equal(shader.uniforms.uSurfaceMacroNear.value.length, SURFACE_KINDS.length);
+  for (const kind of SURFACE_KINDS) {
+    const i = SURFACE_KINDS.indexOf(kind);
+    assert.equal(shader.uniforms.uSurfaceMacro.value[i], defaultTheme.surfaces[kind]?.macro ?? 1);
+    assert.equal(
+      shader.uniforms.uSurfaceMacroNear.value[i],
+      defaultTheme.surfaces[kind]?.macroNear ?? 0
+    );
+  }
+
+  // La lande (marbrage voulu fort) porte une amplitude bien plus haute qu'un
+  // lotissement tondu, et c'est ce qui doit se voir : à noise et distance
+  // égales, son amplitude effective — la même formule que le shader — est
+  // plus grande en valeur absolue.
+  const smoothstep = (edge0, edge1, x) => {
+    const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+    return t * t * (3 - 2 * t);
+  };
+  const effectiveAmplitude = (kind, dist, noise) => {
+    const far = smoothstep(defaultTheme.terrain.detailNear, defaultTheme.terrain.detailFar, dist);
+    const look = defaultTheme.surfaces[kind] || {};
+    const macroAmp = look.macro ?? 1;
+    const macroNear = look.macroNear ?? 0;
+    return (noise - 0.5) * Math.max(far, macroNear) * macroAmp;
+  };
+  const atHundredMeters = Math.abs(effectiveAmplitude('heath', 100, 0.9));
+  const settledAtHundredMeters = Math.abs(effectiveAmplitude('settled', 100, 0.9));
+  assert.ok(
+    atHundredMeters > settledAtHundredMeters,
+    'la lande est plus marbrée que le lotissement, à distance et bruit égaux'
+  );
+
+  // Le critère de réussite du chantier se joue à cent mètres : sans
+  // `macroNear`, `far` y vaut 0,03 et la variation y est déjà éteinte
+  // (`detailNear: 60, detailFar: 420`).
+  const farAtHundredMeters = smoothstep(
+    defaultTheme.terrain.detailNear,
+    defaultTheme.terrain.detailFar,
+    100
+  );
+  assert.ok(farAtHundredMeters < 0.05, 'far est presque nul à cent mètres sans plancher');
+
+  // `macroNear` relève le facteur en deçà de `detailNear` : à moins de soixante
+  // mètres, `far` est nul, et seul le plancher fait encore vivre le marbrage
+  // d'une matière qui le porte.
+  const nearHeath = Math.max(
+    smoothstep(defaultTheme.terrain.detailNear, defaultTheme.terrain.detailFar, 10),
+    defaultTheme.surfaces.heath.macroNear
+  );
+  const nearScree = Math.max(
+    smoothstep(defaultTheme.terrain.detailNear, defaultTheme.terrain.detailFar, 10),
+    defaultTheme.surfaces.scree.macroNear ?? 0
+  );
+  assert.ok(nearHeath > 0, 'la lande garde du marbrage à portée d’observation');
+  assert.equal(nearScree, 0, 'l’éboulis, sans plancher, reste éteint à la même distance');
+});
+
+test('le grain low poly du sol dépend de la matière au pied du sommet', () => {
+  const previousCanvas = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      Object.assign(this, { width, height });
+    }
+    getContext() {
+      return paintingCanvasContext();
+    }
+  };
+
+  let factory;
+  try {
+    factory = new TerrainMaterialFactory({ THREE: terrainThreeStub() });
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+  }
+
+  const shader = {
+    uniforms: {},
+    vertexShader: ['#include <common>', '#include <begin_vertex>'].join('\n'),
+    fragmentShader: [
+      '#include <common>',
+      '#include <map_fragment>',
+      '#include <normal_fragment_begin>',
+    ].join('\n'),
+  };
+  factory.material.onBeforeCompile(shader);
+  const source = shader.vertexShader;
+
+  // Une ligne par matière, dans le même ordre que les autres tables ; une
+  // matière absente de `SURFACE_LOOK` reprend le réglage de repli.
+  assert.equal(shader.uniforms.uSurfaceGrainCell.value.length, SURFACE_KINDS.length);
+  assert.equal(shader.uniforms.uSurfaceGrainAmplitude.value.length, SURFACE_KINDS.length);
+  for (const kind of SURFACE_KINDS) {
+    const i = SURFACE_KINDS.indexOf(kind);
+    assert.equal(
+      shader.uniforms.uSurfaceGrainCell.value[i],
+      defaultTheme.surfaces[kind]?.grainCellM ?? LOW_POLY_GRAIN_DEFAULTS.cellM
+    );
+    assert.equal(
+      shader.uniforms.uSurfaceGrainAmplitude.value[i],
+      defaultTheme.surfaces[kind]?.grainAmplitudeM ?? LOW_POLY_GRAIN_DEFAULTS.amplitudeM
+    );
+  }
+  // Une matière déclarée diverge bien du réglage de repli — sinon la table
+  // ne ferait rien.
+  assert.notEqual(defaultTheme.surfaces.heath.grainCellM, LOW_POLY_GRAIN_DEFAULTS.cellM);
+  assert.notEqual(defaultTheme.surfaces.alpine.grainCellM, defaultTheme.surfaces.heath.grainCellM);
+  // La litière d'un bois n'est pas plane, mais le désordre y est de détail :
+  // une cellule courte, une amplitude bien plus faible que celle du pré
+  // alpin (des racines et des monticules, pas des colinettes).
+  assert.notEqual(defaultTheme.surfaces.wood.grainCellM, LOW_POLY_GRAIN_DEFAULTS.cellM);
+  assert.ok(
+    defaultTheme.surfaces.wood.grainAmplitudeM < defaultTheme.surfaces.alpine.grainAmplitudeM,
+    'un désordre de détail, pas un modelé de colinettes'
+  );
+  // Une matière non listée (l'eau, le trottoir, l'herbe…) n'a pas été
+  // touchée : elle garde le réglage de repli, comme avant le branchement.
+  for (const kind of ['grass', 'settled', 'farmland', 'pavement', 'water']) {
+    assert.equal(defaultTheme.surfaces[kind]?.grainCellM, undefined, `${kind} ne déclare pas de grain`);
+  }
+
+  // La position au sol est relue au texel le plus proche — un identifiant,
+  // jamais une part lissée — pour choisir la cellule et l'amplitude, comme
+  // `surfaceIdAt` le fait côté fragment pour l'albédo.
+  assert.match(source, /float grainSurfaceIdAt\(vec2 uv\)/);
+  assert.match(source, /grainId = grainSurfaceIdAt\(grainUv\)/);
+  // Hors carte ou hors carreau, la matière de repli — jamais un réglage
+  // neutre à part.
+  assert.match(source, /float grainId = uUnclassified;/);
+  assert.match(
+    source,
+    /transformed\.y \+= lowPolyBump\(grainPos\.xz, grainCellM, grainAmplitudeM\) \* grainFade;/
+  );
+});
+
+test('le grain low poly du sol s’éteint dans l’emprise routière', () => {
+  const previousCanvas = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      Object.assign(this, { width, height });
+    }
+    getContext() {
+      return paintingCanvasContext();
+    }
+  };
+
+  let factory;
+  try {
+    factory = new TerrainMaterialFactory({ THREE: terrainThreeStub() });
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+  }
+
+  const shader = {
+    uniforms: {},
+    vertexShader: ['#include <common>', '#include <begin_vertex>'].join('\n'),
+    fragmentShader: '',
+  };
+  factory.material.onBeforeCompile(shader);
+  const source = shader.vertexShader;
+
+  // Un attribut par sommet, écrit par `terrainBubble.js` (`roadMask`,
+  // `roadCutMaskAt`) — jamais une seconde interrogation de l'index routier
+  // depuis le shader, qui ne le porte pas.
+  assert.match(source, /attribute float roadMask;/);
+  // Le fondu de distance et l'emprise routière se multiplient : la bosse est
+  // nulle si l'un ou l'autre l'est, jamais recalculée à part.
+  assert.match(
+    source,
+    /float grainFade =\s*\n?\s*lowPolyFade\(grainPos, cameraPosition, uGrainFadeM\.x, uGrainFadeM\.y\) \* \(1\.0 - roadMask\);/
+  );
+});
+
+test('la lame d’eau d’une culture : le riz en porte une, les autres aucune', () => {
+  for (const crop of CROP_KINDS) {
+    const water = defaultTheme.terrain.cropStandingWater?.[crop] ?? 0;
+    if (crop === 'rice') {
+      assert.ok(water > 0.3, `le riz doit porter une lame d’eau franche (${water})`);
+    } else {
+      assert.equal(water, 0, `${crop} ne porte pas d’eau (${water})`);
+    }
+  }
+  // farmland lui-même ne porte pas d'eau propre : c'est bien la substitution
+  // par culture qui en ajoute, jamais la matière.
+  assert.equal(defaultTheme.surfaces.farmland.standingWater ?? 0, 0);
+
+  const previousCanvas = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      Object.assign(this, { width, height });
+    }
+    getContext() {
+      return paintingCanvasContext();
+    }
+  };
+  let factory;
+  try {
+    factory = new TerrainMaterialFactory({ THREE: terrainThreeStub() });
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+  }
+  const shader = {
+    uniforms: {},
+    vertexShader: ['#include <common>', '#include <begin_vertex>'].join('\n'),
+    fragmentShader: [
+      '#include <common>',
+      '#include <map_fragment>',
+      '#include <normal_fragment_begin>',
+    ].join('\n'),
+  };
+  factory.material.onBeforeCompile(shader);
+
+  // Un tableau d'uniformes de plus, pas un canal de plus : même longueur que
+  // les albédos de culture, indexé dans le même ordre.
+  assert.equal(shader.uniforms.uCropWater.value.length, CROP_KINDS.length);
+  CROP_KINDS.forEach((crop, i) => {
+    const expected = defaultTheme.terrain.cropStandingWater?.[crop] ?? 0;
+    assert.equal(shader.uniforms.uCropWater.value[i], expected, crop);
+  });
+  assert.match(shader.fragmentShader, /uniform float uCropWater\[\d+\];/);
 });
 
 test('la frange déplace la lecture du sol, sans dépendre du parcours ni sortir de sa portée', () => {

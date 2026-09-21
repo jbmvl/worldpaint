@@ -164,6 +164,17 @@ maquis 0,9, lande 0,3, pré salé 0,12, marais 0,08, sable 0,05, pelouse
 d'altitude 0,04, dalle 0,02 ; éboulis, vasière et glace 0. C'est ce qui fait exister un maquis — ni prairie ni forêt, mais
 un fourré bas.
 
+Trois matières nomment en plus leur propre silhouette (`bush` de
+`SURFACE_LOOK`, lu par `coverBushesFor` puis `essenceStrata`,
+vegetationLayer.js) plutôt que de tirer dans le tapis générique du
+sous-bois : la lande sème de l'ajonc/genêt (`gorse`), le maquis un buisson
+épineux étalé (`thornyScrub`), le sable de l'oyat (`marram`). Une matière
+sans `bush` garde le tapis générique.
+
+Là où la matière porte de l'eau libre (marais, pré salé, vasière), rien ne se
+sème au milieu d'une flaque (`poolShareAt`, `groundClassMap.js`), et le fourré
+se densifie sur les derniers mètres qui la bordent (`poolEdgeGain`).
+
 ### L'herbe (`groundCover`)
 
 Trois échelles selon la distance (la plante, la touffe, la masse). La quantité
@@ -175,6 +186,10 @@ visible entre les touffes qui fait une steppe, pas la couleur).
 16 % des touffes portent des fleurs en pleine prairie, 42 % en lisière de
 culture (le coquelicot). Sous les arbres, ce n'est plus une prairie mais une
 litière : moitié moins haute, 30 % moins dense, réchauffée vers le brun.
+
+Sur une matière où l'eau affleure, une touffe refuse le milieu d'une flaque et
+pousse plus haut et plus dense sur sa bordure (`poolShareAt`, `poolEdgeGain`) :
+l'herbe et le shader lisent désormais la même eau.
 
 ---
 
@@ -380,6 +395,26 @@ la matrice du pays déplace ensuite la bascule — 28 % d'ovins en bocage, 72 %
 en lande, 85 % en désert. Sinon vache, et rarement cheval (8 %)
 ou âne (7 %).
 
+### Le vivant hors parcelle
+
+Une lande, un pré salé ou une estive n'ont pas de contour fermé — pas de
+`landuse=farmyard` ni de clôture à lire — et restaient vides pour cette seule
+raison, alors que c'est justement le paysage où le mouton fait le décor.
+`buildOpenPastureFauna` (`furniture/parcelFauna.js`) pose le même troupeau
+(`placeHerd`, même choix d'espèce) sur les matières `heath`, `saltmarsh` et
+`alpine`, sur une grille ancrée au monde (400 m de portée, maille de 70 m)
+plutôt que dans un contour — un petit carré de dispersion en tient lieu, sans
+prétendre à une clôture.
+
+| Contenu | Condition | Densité |
+| --- | --- | --- |
+| troupeau hors parcelle | `heath`, `saltmarsh`, `alpine` | 0,06 groupe/ha, 2 à 4 têtes |
+
+Le plafond est celui de toute la faune (`FURNITURE_LIMITS.fauna`, **partagé**) :
+sur une bulle très riche en lande, un groupe de plus peut évincer une vache de
+pré clos posée par ailleurs. La portée choisie (400 m) et la densité basse
+(0,06/ha) rendent ce cas rare en pratique, sans budget séparé pour l'exclure.
+
 Le **gibier** : 42 % des massifs ne portent rien du tout, et c'est voulu — un
 chevreuil dans chaque bois est un parc animalier. Un massif habité tire d'abord
 s'il abrite un carnassier (14 %), puis lequel :
@@ -426,6 +461,26 @@ Les repères de bourg sont posés **hors** du périmètre bâti, à 1,25 fois so
 rayon : si le point tiré retombe dans un bâti voisin ou sur une route, on
 renonce plutôt que de le déplacer — un repère qui bouge d'une reconstruction à
 l'autre est pire que pas de repère.
+
+## Les objets de biome
+
+**Inventés**, sur une seconde grille — plus courte (300 m) que celle du
+mobilier ordinaire — qui choisit par **nom de matière** plutôt que par pente
+ou sol nu : `buildBiomeDebris` (`furniture/biomeDebris.js`), qui lit la table
+`BIOME_DEBRIS` (`furniture/catalog.js`).
+
+| Objet | Biome (matière) | Densité |
+| --- | --- | --- |
+| bloc (`rockSmall`, `rockBoulder`, `rockOutcrop`) | lande (`heath`) | 0,12/ha |
+| bloc, surtout des petits | maquis (`scrub`) | 0,15/ha |
+| souche, tas de bois mort | bois (`wood`) | 0,2/ha |
+| touffe de joncs | marais (`wetland`) | 0,08/ha |
+| bois flotté | vasière (`mud`), sable (`sand`) | 0,05/ha |
+| bloc erratique (`rockBoulder`, `rockSmall`) | pelouse d'altitude (`alpine`) | 0,1/ha |
+
+Les blocs de lande, de maquis et d'alpage reprennent les formes de `buildRocks`
+(le rocher de pente et de sol nu) : même catalogue, deux semis indépendants —
+l'un lit la pente, l'autre le nom de la matière.
 
 ## Ce que la couche `poi` donne vraiment
 
@@ -506,8 +561,7 @@ Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
    n'est pas pavée.
 4. **Un marais n'a qu'une forme** : les tuiles servies ne transmettent presque
    jamais la sous-classe d'une zone humide (seul `saltmarsh` a été vu). Un
-   marais boisé est peint comme une roselière, sans arbres. Ses flaques ne sont
-   vues que du shader : l'herbe y pousse comme sur la terre ferme.
+   marais boisé est peint comme une roselière, sans arbres.
 5. `natural=shingle`, `mud`, `rock`, `cliff` **n'arrivent jamais** jusqu'à nous :
    le tableau de correspondance d'OpenMapTiles est fermé et ne les retient pas.
 6. **Un cours d'eau plus étroit qu'un texel** (2,7 m) ne peut pas être rasterisé

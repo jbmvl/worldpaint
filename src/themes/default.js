@@ -90,9 +90,19 @@ export const TERRAIN_LOOK = {
     // Le colza en fleur, en revanche, est la tache la plus saturée d'un
     // paysage de printemps — plus jaune encore qu'un blé mûr.
     rapeseed: [0.604, 0.522, 0.061],
-    // Vert soutenu de la feuille de riz, calé sur `drawRice` : pas de lame
-    // d'eau ni de casier (voir `CONTRIBUTING.md`), seulement le feuillage.
+    // Vert soutenu de la feuille de riz, calé sur `drawRice` : pas de
+    // casier ni de diguette (voir `CONTRIBUTING.md`), seulement le
+    // feuillage — la lame d'eau, elle, est rendue à part (`cropStandingWater`).
     rice: [0.09, 0.183, 0.081],
+  },
+  /**
+   * Lame d'eau par culture, sur le modèle de `standingWater` (`SURFACE_LOOK`)
+   * mais pour le second axe : une culture n'a pas d'eau propre par défaut, une
+   * absence vaut zéro. Seul le riz en porte — c'est une rizière, la lame
+   * d'eau d'où les plants sortent en rangs, pas un champ vert ordinaire.
+   */
+  cropStandingWater: {
+    rice: 0.55,
   },
   /** Teinte de roche sur les fortes pentes, avant la géologie (`STONE_LOOK`). */
   rockColor: [0.72, 0.68, 0.62],
@@ -174,6 +184,18 @@ export const TREE_VARIANTS = [
     heightM: [0.7, 1.6], aspect: 1.7 },
   { kind: 'lowShrub', hue: { r: 0.36, g: 0.88, b: 0.4 }, trunk: 0, crownBase: 1, spread: 0.4,
     heightM: [1.2, 2.4], aspect: 1 },
+  // Ajonc, genêt : le buisson d'une lande, compact et fleuri de jaune.
+  { kind: 'gorse', hue: { r: 0.66, g: 1, b: 0.32 }, trunk: 0, crownBase: 1, spread: 0.4,
+    heightM: [0.5, 1.3], aspect: 1.3 },
+  // Le buisson épineux d'un maquis : étalé, plus de vide que de feuille.
+  { kind: 'thornyScrub', hue: { r: 0.7, g: 1, b: 0.42 }, trunk: 0, crownBase: 1, spread: 0.5,
+    heightM: [0.5, 1.5], aspect: 1.6 },
+  // La fougère d'un sous-bois : des frondes qui rayonnent, pas une canne.
+  { kind: 'fern', hue: { r: 0.42, g: 1, b: 0.4 }, trunk: 0, crownBase: 1, spread: 0.35,
+    heightM: [0.35, 0.8], aspect: 1.4 },
+  // L'oyat d'une dune : une touffe de lames, presque sans masse.
+  { kind: 'marram', hue: { r: 0.58, g: 1, b: 0.56 }, trunk: 0, crownBase: 1, spread: 0.35,
+    heightM: [0.35, 0.7], aspect: 0.8 },
 ];
 /**
  * Les essences, par indices de variantes. C'est ce que lit `vegetationLayer`
@@ -190,7 +212,13 @@ export const TREE_ESSENCES = {
   column: [3, 4],
   conifer: [5, 6],
   bushy: [7, 8],
-  undergrowth: [9, 10],
+  undergrowth: [9, 10, 13],
+  // Essences de biome, nommées par `SURFACE_LOOK[kind].bush` et lues par
+  // `coverBushesFor` (vegetationLayer.js) — une lande et un maquis ne sèment
+  // plus le même buisson.
+  gorse: [11],
+  thornyScrub: [12],
+  marram: [14],
 };
 
 // --- Les peuplements -----------------------------------------------------------
@@ -389,11 +417,12 @@ export const WOODLAND_FLOOR = {
   green: 0.55,
   height: 0.5,
   density: 0.7,
-  // Le même déplacement que l'albédo de `wood`, et il n'a pas le choix : les deux
-  // peignent le même sol, l'un au loin et l'autre sous le nez. Le facteur est
-  // à mi-chemin de son ancienne valeur et du neutre, comme l'albédo est à
-  // mi-chemin de celui de l'herbe.
-  tint: [0.99, 0.91, 0.87],
+  // Le même déplacement que l'albédo de `wood`, et il n'a pas le choix : les
+  // deux peignent le même sol, l'un au loin et l'autre sous le nez. `wood` est
+  // une litière brune (rouge dominant) : le vert recule bien plus que le
+  // rouge, sans quoi la touffe resterait verte alors que le sol qu'elle
+  // couvre a viré au brun.
+  tint: [0.98, 0.55, 0.45],
 };
 
 // --- Les cultures --------------------------------------------------------------
@@ -656,8 +685,21 @@ export const STONE_LOOK = {
  *   d'arbustes semés hors des bois par `vegetationLayer` — c'est ce qui fait
  *   exister un maquis, ni prairie ni forêt mais un fourré bas ;
  * - `standingWater` : part du sol sous l'eau, de 0 à 1 — les flaques d'un
- *   marais ou d'une vasière, découpées par le shader de terrain. Ni l'herbe ni
- *   les arbustes ne la lisent : un roseau sort de l'eau.
+ *   marais ou d'une vasière, découpées par le shader de terrain et relues côté
+ *   CPU par `poolShareAt` (`groundClassMap.js`) : l'herbe et les arbustes s'en
+ *   écartent au lieu de sortir de l'eau, et la bordent en plus haut et plus
+ *   dense sur les derniers mètres avant la flaque (`poolEdgeGain`).
+ * - `macro` : multiplicateur de l'amplitude de la variation macro du terrain
+ *   (`terrainMaterial`), défaut 1 — un stade tondu n'est pas aussi marbré
+ *   qu'une tourbière ; `macroNear` : plancher de sa rampe de distance, défaut
+ *   0 (la variation ne monte qu'avec l'éloignement). Sans lui, l'amplitude est
+ *   quasi nulle à cent mètres.
+ * - `grainCellM`, `grainAmplitudeM` : taille et hauteur du grain low poly du
+ *   sol (`terrain/lowPolyGrain.js`), en mètres. Absents, la matière prend le
+ *   réglage de repli (`LOW_POLY_GRAIN_DEFAULTS`, taillé pour une paroi
+ *   rocheuse) — c'est le cas de tout ce qui n'est pas listé ici. L'herbe qui
+ *   pousse dessus (`groundCover.js`) lit la même paire, pour ne pas flotter
+ *   au-dessus du sol qu'elle recouvre.
  *
  * Un champ absent vaut le neutre : la table ne décrit que les écarts. Une
  * matière peinte de la bonne couleur mais couverte d'une prairie de quatre-
@@ -666,61 +708,100 @@ export const STONE_LOOK = {
 export const SURFACE_LOOK = {
   // --- Le végétal ordinaire -------------------------------------------------
   grass: { albedo: [0.051, 0.135, 0.017], wash: 'grass' },
-  // Un sol de forêt est une litière, pas un pré : à mi-chemin de l'herbe. Le
-  // pays ne le lave pas — une hêtraie se ressemble d'un bout à l'autre.
-  wood: { albedo: [0.047, 0.096, 0.019], wash: null },
+  // Un sol de forêt est une litière, pas un pré : brune, jamais verte — c'est
+  // ce qui la distingue d'une prairie à l'ombre. Le pays ne le lave pas — une
+  // hêtraie se ressemble d'un bout à l'autre.
+  wood: {
+    albedo: [0.099, 0.062, 0.01],
+    wash: null,
+    // Racines, souches, monticules de feuilles : un sol de forêt n'est jamais
+    // plan. Cellule courte, amplitude modeste — c'est un désordre de détail,
+    // pas le modelé d'un pré alpin.
+    grainCellM: 2,
+    grainAmplitudeM: 0.22,
+  },
   farmland: { albedo: [0.431, 0.331, 0.08], wash: 'farmland' },
-  // Lotissement : pelouses tondues et allées. C'était un mélange peint dans un
-  // canal (deux tiers d'herbe, un tiers de minéral) ; c'est désormais une
-  // matière, et son albédo est la moyenne exacte que ce mélange rendait — la
-  // reprendre à l'œil est une décision à part, pas un effet de bord de la fusion.
-  settled: { albedo: [0.125, 0.176, 0.088], wash: 'grass' },
+  // Lotissement : pelouses tondues et allées, plus claires et plus franchement
+  // vertes qu'une prairie de rase campagne — l'entretien, pas l'herbe elle-même.
+  // Un aplat, pas un terrain qui varie.
+  settled: { albedo: [0.12, 0.205, 0.08], wash: 'grass', macro: 0.3 },
 
   // --- Les couvertures végétales --------------------------------------------
   // Bruyère et molinie sèche : brun-pourpre, la couleur d'un moor. Rase, dense,
   // et elle ne porte quasiment pas d'arbre.
   heath: {
-    albedo: [0.159, 0.122, 0.08],
-   
+    // Pourpre-brun franc (rouge nettement dominant) : c'est la teinte de la
+    // bruyère et de la molinie sèche, et ce qui distingue une lande d'un maquis
+    // olive ou d'une prairie verte.
+    albedo: [0.174, 0.109, 0.044],
+
     wash: null,
     grassHeight: 0.45,
     grassDensity: 0.95,
     grassTint: [1.02, 0.84, 0.76],
     bushes: 0.3,
+    // Le buisson d'une lande, nommé : voir TREE_ESSENCES.
+    bush: 'gorse',
+    // Le tapis d'une lande est marbré fort, et ça doit se voir à portée
+    // d'observation, pas seulement à l'horizon.
+    macro: 2,
+    macroNear: 0.35,
+    // Petites touffes de bruyère serrées, pas les vagues d'une paroi.
+    grainCellM: 1.4,
+    grainAmplitudeM: 0.18,
   },
   // Maquis et garrigue : olive poussiéreux, jamais le vert d'un pré. Peu
   // d'herbe, beaucoup d'arbustes — l'inverse exact d'une prairie.
   scrub: {
-    albedo: [0.147, 0.171, 0.08],
-   
+    // Kaki clair : rouge et vert proches, beaucoup plus clair qu'une lande —
+    // c'est le sol pierreux du maquis qui affleure entre les buissons.
+    albedo: [0.235, 0.195, 0.08],
+
     wash: null,
     grassHeight: 0.55,
     grassDensity: 0.4,
     grassTint: [1.04, 0.94, 0.7],
     bushes: 0.9,
+    // Le buisson épineux d'un maquis, distinct de celui d'une lande.
+    bush: 'thornyScrub',
+    macro: 1.8,
+    macroNear: 0.35,
+    // Touffes un peu plus larges que la lande, buissons épineux compris.
+    grainCellM: 1.8,
+    grainAmplitudeM: 0.24,
   },
   // Marais, tourbière, roselière : le vert le plus profond du décor, la seule
   // couverture plus haute qu'une prairie, et de l'eau entre les touffes.
   wetland: {
-    albedo: [0.072, 0.107, 0.048],
-   
+    // Vert profond olive — le rouge y reste au-dessus de 65 % du vert, sinon
+    // c'est un vert franc de prairie, pas la roselière d'un marais.
+    albedo: [0.071, 0.099, 0.075],
+
     wash: null,
     grassHeight: 1.4,
     grassDensity: 1,
     grassTint: [0.86, 1.04, 0.82],
     bushes: 0.08,
     standingWater: 0.3,
+    // Touffes de jonc, sur la part qui n'est pas déjà de l'eau.
+    grainCellM: 1.6,
+    grainAmplitudeM: 0.16,
   },
   // Pré salé : salicorne et obione, gris-vert, ras. Les chenaux de marée y
   // laissent de l'eau.
   saltmarsh: {
-    albedo: [0.118, 0.13, 0.085],
+    // Gris froid : le vert n'y descend jamais sous le rouge, à la différence
+    // d'une lande ou d'une vasière, chaudes l'une comme l'autre.
+    albedo: [0.118, 0.148, 0.17],
     wash: null,
     grassHeight: 0.5,
     grassDensity: 0.85,
     grassTint: [0.96, 0.98, 0.86],
     bushes: 0.12,
     standingWater: 0.15,
+    // Salicorne et obione, rases : un grain discret.
+    grainCellM: 1.5,
+    grainAmplitudeM: 0.14,
   },
   // Pelouse d'altitude et toundra : vert jaune, rase et continue.
   alpine: {
@@ -731,19 +812,31 @@ export const SURFACE_LOOK = {
     grassDensity: 0.9,
     grassTint: [0.94, 1.02, 0.78],
     bushes: 0.04,
+    // Les colinettes d'un pré alpin : une échelle bien plus large que le
+    // grain d'une lande, avec une amplitude qui reste modérée.
+    grainCellM: 9,
+    grainAmplitudeM: 0.6,
   },
 
   // --- Le minéral -----------------------------------------------------------
-  // Vasière : estran, fond d'étang asséché. Brun-gris mouillé, rien n'y
-  // pousse, et l'eau y reste en flaques.
+  // Vasière : estran, fond d'étang asséché. Nappe claire et chaude, quasi
+  // désaturée (rouge ≥ 1,25 × bleu) — c'est ce qui la distingue d'un pré salé,
+  // froid sur le même registre de gris. Rien n'y pousse, l'eau y reste en
+  // flaques.
   mud: {
-    albedo: [0.1, 0.085, 0.063],
+    albedo: [0.155, 0.147, 0.097],
     wash: null,
     grassDensity: 0,
     bushes: 0,
     standingWater: 0.35,
+    macro: 1.6,
+    macroNear: 0.35,
+    // Vasière : quasi plane, juste assez de grain pour ne pas être un billard.
+    grainCellM: 3.5,
+    grainAmplitudeM: 0.08,
   },
-  bare: { albedo: [0.27, 0.255, 0.225], wash: 'bare' },
+  // Sol nu industriel ou en friche : terreux, plus saturé qu'un simple gris.
+  bare: { albedo: [0.25, 0.21, 0.14], wash: 'bare', grainCellM: 3, grainAmplitudeM: 0.12 },
   // L'éboulis et la dalle sont deux paysages : une pente de cailloux qui bouge,
   // un plateau de pierre. Les confondre était le défaut du gris unique.
   scree: {
@@ -754,6 +847,10 @@ export const SURFACE_LOOK = {
     grassDensity: 0.06,
     grassTint: [1, 0.96, 0.88],
     bushes: 0,
+    macro: 2.2,
+    // Un jumelage de blocs, cellule courte et amplitude marquée.
+    grainCellM: 2.2,
+    grainAmplitudeM: 0.35,
   },
   rock: {
     albedo: [0.371, 0.332, 0.27],
@@ -763,17 +860,33 @@ export const SURFACE_LOOK = {
     grassDensity: 0.1,
     grassTint: [1, 0.96, 0.88],
     bushes: 0.02,
+    // La dalle : des blocs plus larges que l'éboulis, moins chaotiques.
+    grainCellM: 4.5,
+    grainAmplitudeM: 0.3,
   },
   // Glacier et névé : blanc bleuté, et rien n'y pousse.
-  ice: { albedo: [0.6, 0.66, 0.72], wash: null, grassDensity: 0, bushes: 0 },
+  ice: {
+    albedo: [0.6, 0.66, 0.72],
+    wash: null,
+    grassDensity: 0,
+    bushes: 0,
+    // Un léger modelé, pas le poli d'un billard.
+    grainCellM: 6,
+    grainAmplitudeM: 0.12,
+  },
   sand: {
     albedo: [0.624, 0.539, 0.361],
-   
+
     wash: null,
     grassHeight: 0.6,
     grassDensity: 0.08,
     grassTint: [1.06, 0.98, 0.72],
     bushes: 0.05,
+    // L'oyat d'une dune, jamais le buisson d'une lande ou d'un maquis.
+    bush: 'marram',
+    // L'ondulation d'une dune : grande échelle, amplitude franche.
+    grainCellM: 5,
+    grainAmplitudeM: 0.35,
   },
 
   // --- Les deux matières à part ---------------------------------------------
@@ -783,11 +896,14 @@ export const SURFACE_LOOK = {
   // repli. Elle assourdissait le grain, seule de la table — sans objet depuis
   // que plus aucune matière n'en a.
   pavement: {
-    albedo: [0.31, 0.3, 0.28],
-   
+    // Gris froid (bleu ≥ vert ≥ rouge) : même dérive que `townStyle.pavement`,
+    // sans quoi la bordure et le sol qu'elle borde divergeraient de teinte.
+    albedo: [0.3, 0.345, 0.395],
+
     wash: 'pavement',
     grassDensity: 0,
     bushes: 0,
+    macro: 0.3,
   },
   // L'eau, et c'est la seule matière que le shader traite à part : elle ne se
   // mélange pas aux autres, elle les remplace, et ce qui la fait lire est son
@@ -1299,19 +1415,19 @@ export const STREET_LOOK = {
    */
   pavementGrain: 0.55,
   pavement: {
-    default: '#43444a',
-    hedgerow_meadow: '#43444a',
-    moor_heath: '#3f4046',
-    garrigue: '#4a4b51',
-    dry_scrub: '#44454b',
-    terraced_slope: '#43444a',
-    dry_steppe: '#484950',
-    desert_stone: '#4d4e55',
-    desert_sand: '#4d4e55',
-    openfield_cropland: '#424349',
-    boreal_taiga: '#3b3c41',
-    alpine_pasture: '#404147',
-    bare_rock: '#3c3d43',
+    default: '#3d464f',
+    hedgerow_meadow: '#3d464f',
+    moor_heath: '#39424b',
+    garrigue: '#444d56',
+    dry_scrub: '#3e4750',
+    terraced_slope: '#3d464f',
+    dry_steppe: '#424b54',
+    desert_stone: '#475059',
+    desert_sand: '#475059',
+    openfield_cropland: '#3c454e',
+    boreal_taiga: '#343d46',
+    alpine_pasture: '#3a434c',
+    bare_rock: '#363f48',
   },
 };
 

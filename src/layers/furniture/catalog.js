@@ -87,6 +87,11 @@ export const FURNITURE_LIMITS = {
   // ne plafonnait rien : c'est la règle de détection qui en posait trop.
   trafficLights: 8,
   rocks: 200,
+  // `buildBiomeDebris` (biomeDebris.js). Sa portée est plus courte que celle
+  // du reste du mobilier (voir `BIOME_DEBRIS_RADIUS_M`) : à 0,2 objet par
+  // hectare au plus dense, ce plafond n'est là que pour la maille la plus
+  // riche, jamais atteint en pratique sur le reste.
+  biomeDebris: 60,
   vineRows: 90,
   /**
    * Bêtes posées sur toute la bulle. Plus haut que ce que `faunaLayer` anime
@@ -168,6 +173,9 @@ export const POINT_ITEMS = [
   'rockSmall',
   'rockBoulder',
   'rockOutcrop',
+  'stump',
+  'reedClump',
+  'driftwood',
   'monument',
   'castle',
   'tower',
@@ -213,3 +221,68 @@ export const FLAT_SHADED_LINEAR_KINDS = new Set([
   'fillWall',
   'embankment',
 ]);
+
+/**
+ * Objets de biome semés sur grille, une entrée par matière (`buildBiomeDebris`,
+ * furniture/biomeDebris.js) — le pendant par matière de ce que `buildRocks`
+ * fait pour le seul minéral bâti sur pente. Une matière absente de la table
+ * n'est simplement pas concernée.
+ *
+ * `perHa` est une densité à l'hectare : `biomeDebrisKindFor`
+ * (furniturePlacement.js) la compare au nombre de tirages qu'une maille
+ * représente. `items` est une liste pondérée — les `share` d'une même matière
+ * somment à 1 — avec la fourchette d'échelle de chaque forme.
+ */
+export const BIOME_DEBRIS = {
+  // Lande : blocs de pierre qui crèvent le tapis, à faible densité — un signe,
+  // pas un pierrier.
+  heath: {
+    perHa: 0.12,
+    items: [
+      { item: 'rockSmall', share: 0.5, scale: [0.5, 1.1] },
+      { item: 'rockBoulder', share: 0.3, scale: [0.4, 0.7] },
+      { item: 'rockOutcrop', share: 0.2, scale: [0.35, 0.5] },
+    ],
+  },
+  // Maquis : plus de blocs que de gros rochers — le sol pierreux affleure
+  // partout, il ne se ramasse pas en un seul point.
+  scrub: {
+    perHa: 0.15,
+    items: [
+      { item: 'rockSmall', share: 0.7, scale: [0.5, 1.2] },
+      { item: 'rockBoulder', share: 0.3, scale: [0.4, 0.65] },
+    ],
+  },
+  // Bois : ce qu'une coupe laisse au sol, clairsemé sous couvert.
+  wood: {
+    perHa: 0.2,
+    items: [
+      { item: 'stump', share: 0.6, scale: [0.7, 1.3] },
+      { item: 'woodPile', share: 0.4, scale: [0.5, 0.85] },
+    ],
+  },
+  // Marais : des joncs isolés sur les langues sèches. Ni saule ni aulne ici —
+  // ce sont des arbres, hors du registre d'un semis d'objets ponctuels.
+  wetland: {
+    perHa: 0.08,
+    items: [{ item: 'reedClump', share: 1, scale: [0.7, 1.3] }],
+  },
+  // Vasière : bois flotté, rare — la nappe reste presque nue.
+  mud: {
+    perHa: 0.05,
+    items: [{ item: 'driftwood', share: 1, scale: [0.7, 1.4] }],
+  },
+  // Sable : même bois flotté, aussi rare.
+  sand: {
+    perHa: 0.05,
+    items: [{ item: 'driftwood', share: 1, scale: [0.6, 1.2] }],
+  },
+  // Pelouse d'altitude : blocs erratiques ponctuels.
+  alpine: {
+    perHa: 0.1,
+    items: [
+      { item: 'rockBoulder', share: 0.5, scale: [0.45, 0.75] },
+      { item: 'rockSmall', share: 0.5, scale: [0.55, 1.0] },
+    ],
+  },
+};

@@ -64,6 +64,11 @@
  * en herbe — `woodAt` y répond zéro et rien n'y pousserait. La couverture
  * (`groundClass.surfaceAt`) le dit, et c'est elle qui sème ici les buissons hors
  * des bois, dans les deux semis, avec les silhouettes du sous-bois.
+ *
+ * Un marais ou une vasière portent en outre une part d'eau libre
+ * (`standingWater`). Le fourré de couverture y relit la même flaque que le
+ * shader découpe (`poolShareAt`, `groundClassMap.js`) : rien au milieu de
+ * l'eau, plus dense sur la bordure (`poolEdgeGain`).
  */
 
 import {
@@ -91,6 +96,7 @@ import {
 } from '../materials/foliageMaterial.js';
 import { defaultTheme } from '../themes/default.js';
 import { filterByWords } from '../core/regionInterpretation.js';
+import { poolShareAt, poolEdgeGain } from '../terrain/groundClassMap.js';
 
 // --- Le semis : des candidats, pas une suite ------------------------------------
 /**
@@ -132,6 +138,12 @@ export function standDraw(seed, k) {
 export const VEGETATION_CELLS = 24;
 /** Arbres attendus dans une maille pleinement boisée, pour un peuplement de densité 1. */
 export const TREES_PER_CELL = 14;
+/**
+ * Gain de densité du fourré de couverture sur la bordure d'une flaque
+ * (`poolEdgeGain`) — les bosquets d'un marais se groupent sur les langues
+ * sèches qui longent l'eau plutôt que de se répartir au hasard de la matière.
+ */
+export const BUSH_POOL_EDGE_BOOST = 0.6;
 /**
  * Candidats tirés par maille. C'est le plafond de densité du peuplement : une
  * maille qui en demanderait davantage (fourré de couverture sur un bois épais)
@@ -363,17 +375,23 @@ export const BLIND_EPSILON = 0.02;
 
 /**
  * Densité d'arbustes semés par une couverture **hors des bois**, de 0 (rien) à
- * 1 (fourré plein). Fonction pure.
+ * 1 (fourré plein), et l'essence à y semer. Fonction pure.
  *
  * C'est ce qui distingue un maquis d'un pré : ni l'un ni l'autre n'est un bois
  * pour la carte de classes, mais l'un est couvert d'arbustes et l'autre non.
  *
+ * `essence` nomme une entrée de `TREE_ESSENCES` (`SURFACE_LOOK[cover].bush`) —
+ * une lande et un maquis ne sèment plus le même buisson. `null` si la matière
+ * n'en déclare pas, et c'est l'appelant qui replie alors sur le comportement
+ * générique (`understoryStrata`) : cette fonction ne connaît pas ce repli.
+ *
  * @param {string|null} cover Matière du sol (`groundClass.surfaceAt`).
  * @param {Object} [surfaces] Tranche `theme.surfaces`.
+ * @returns {{density:number, essence:string|null}}
  */
 export function coverBushesFor(cover, surfaces = defaultTheme.surfaces) {
   const look = cover ? surfaces?.[cover] : null;
-  return look?.bushes ?? 0;
+  return { density: look?.bushes ?? 0, essence: look?.bush ?? null };
 }
 
 /** Côté de la maille qui décide du peuplement, en mètres. */
@@ -428,9 +446,8 @@ export function variantsFor(type, essences = defaultTheme.trees.essences) {
  * @param {boolean} [floor] Vrai pour ouvrir le tapis du sol.
  * @returns {Array<{variant:number, min:number, max:number, aspect:number}>}
  */
-export function understoryStrata(trees = defaultTheme.trees, floor = false) {
-  const essences = trees.essences || {};
-  const pool = floor ? [...(essences.undergrowth || []), ...(essences.bushy || [])] : essences.bushy || [];
+/** Une entrée de strate basse par indice de variante, hauteur et port réels. */
+function strataFromVariants(pool, trees) {
   const out = [];
   for (const variant of pool) {
     const look = trees.variants?.[variant];
@@ -443,10 +460,25 @@ export function understoryStrata(trees = defaultTheme.trees, floor = false) {
     });
   }
   // Un thème sans strate basse garde une case d'atlas valide plutôt que rien.
-  if (out.length === 0) {
-    out.push({ variant: 0, min: BUSH_MIN_HEIGHT, max: BUSH_MAX_HEIGHT, aspect: BUSH_ASPECT });
-  }
-  return out;
+  return out.length > 0 ? out : [{ variant: 0, min: BUSH_MIN_HEIGHT, max: BUSH_MAX_HEIGHT, aspect: BUSH_ASPECT }];
+}
+
+export function understoryStrata(trees = defaultTheme.trees, floor = false) {
+  const essences = trees.essences || {};
+  const pool = floor ? [...(essences.undergrowth || []), ...(essences.bushy || [])] : essences.bushy || [];
+  return strataFromVariants(pool, trees);
+}
+
+/**
+ * Strate basse d'une seule essence nommée (`coverBushesFor`), pour qu'une
+ * lande et un maquis sèment chacun leur silhouette plutôt que le tapis
+ * générique de `understoryStrata`. Fonction pure.
+ *
+ * @param {string} essence Nom d'une entrée de `theme.trees.essences`.
+ * @param {Object} [trees] Tranche `theme.trees`.
+ */
+export function essenceStrata(essence, trees = defaultTheme.trees) {
+  return strataFromVariants(trees.essences?.[essence] || [], trees);
 }
 
 /**
@@ -768,10 +800,20 @@ export class VegetationLayer {
         const type = standTypeFrom(pool, centreX, centreZ);
         const stems = woodDensity(groundClass.woodAt(centreX, centreZ)) * standTreesPerCell(type);
         // Fourré de couverture — voir `coverBushesFor`. Il se sème là où il n'y
-        // a pas de bois, donc il ne peut pas être conditionné aux tiges.
+        // a pas de bois, donc il ne peut pas être conditionné aux tiges. Rien
+        // au milieu d'une flaque, plus dense sur sa bordure (`poolEdgeGain`) :
+        // l'eau et le fourré suivent désormais la même vérité.
+        const bushCover = groundClass.surfaceAt?.(centreX, centreZ) ?? null;
+        const bushLook = coverBushesFor(bushCover, this.theme.surfaces);
+        const bushStanding = bushCover ? this.theme.surfaces[bushCover]?.standingWater ?? 0 : 0;
+        const bushPool =
+          bushStanding > 0
+            ? poolShareAt(centreX, centreZ, bushStanding, this.theme.terrain.poolScaleM)
+            : 0;
         const thicket =
-          coverBushesFor(groundClass.surfaceAt?.(centreX, centreZ) ?? null, this.theme.surfaces) *
-          TREES_PER_CELL;
+          bushPool > 0.5
+            ? 0
+            : bushLook.density * TREES_PER_CELL * (1 + poolEdgeGain(bushPool) * BUSH_POOL_EDGE_BOOST);
         const expected = stems + thicket;
         if (expected <= 0) continue;
 
@@ -781,6 +823,10 @@ export class VegetationLayer {
         const lowPart = edgeLowPart((stems * lowStratumPart(type) + thicket) / expected, edge);
         const canopy = edgeCanopy(edge);
         const variants = variantsFor(type, this.theme.trees.essences);
+        // Le tapis générique sert au sous-bois d'un peuplement ; une matière
+        // qui nomme son propre buisson (lande, maquis) sème le sien à la
+        // place — jamais les deux mélangés au hasard de la maille.
+        const cellStrata = bushLook.essence ? essenceStrata(bushLook.essence, this.theme.trees) : strata;
         const seed = positionSeed(cellX, cellZ, STAND_SALT);
 
         for (let i = 0; i < STAND_CANDIDATES; i++) {
@@ -794,7 +840,7 @@ export class VegetationLayer {
           // déplace aucun autre (voir l'en-tête, décision 1).
           if (inCorridor(index, x, z)) continue;
 
-          describeTree(tree, seed, base, type, lowPart, variants, strata);
+          describeTree(tree, seed, base, type, lowPart, variants, cellStrata);
           collected.push({
             x,
             z,
@@ -919,9 +965,19 @@ export class VegetationLayer {
         const stems =
           woodDensity(groundClass.woodAt(centreX, centreZ)) *
           thicketPerCell(thicketDensityFor(type), band.cell);
+        // Même refus au milieu d'une flaque, même bordure plus dense qu'au
+        // premier plan (voir l'autre site d'appel, `_build`).
+        const thickCover = groundClass.surfaceAt?.(centreX, centreZ) ?? null;
+        const thickLook = coverBushesFor(thickCover, this.theme.surfaces);
+        const thickStanding = thickCover ? this.theme.surfaces[thickCover]?.standingWater ?? 0 : 0;
+        const thickPool =
+          thickStanding > 0
+            ? poolShareAt(centreX, centreZ, thickStanding, this.theme.terrain.poolScaleM)
+            : 0;
         const thick =
-          coverBushesFor(groundClass.surfaceAt?.(centreX, centreZ) ?? null, this.theme.surfaces) *
-          thicketPerCell(1, band.cell);
+          thickPool > 0.5
+            ? 0
+            : thickLook.density * thicketPerCell(1, band.cell) * (1 + poolEdgeGain(thickPool) * BUSH_POOL_EDGE_BOOST);
         const expected = stems + thick;
         if (expected <= 0) continue;
 
@@ -934,6 +990,7 @@ export class VegetationLayer {
         const keep = coverMassDensity(share, band) * fade;
         const heightFade = coverHeightFade(fade, THICKET_HEIGHT_FADE_FLOOR);
         const variants = variantsFor(type, this.theme.trees.essences);
+        const cellStrata = thickLook.essence ? essenceStrata(thickLook.essence, this.theme.trees) : strata;
         const seed = positionSeed(cellX, cellZ, band.salt);
 
         for (let i = 0; i < band.perCell && placed < capacity; i++) {
@@ -944,7 +1001,7 @@ export class VegetationLayer {
           const z = cellZ + standDraw(seed, slot + SLOT_Z) * band.cell;
           if (inCorridor(index, x, z)) continue;
 
-          describeTree(tree, seed, slot, type, lowPart, variants, strata, true);
+          describeTree(tree, seed, slot, type, lowPart, variants, cellStrata, true);
           const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
           const height = tree.height * (tree.low ? 1 : canopy) * heightFade * band.rise;
 

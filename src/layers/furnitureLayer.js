@@ -90,8 +90,10 @@ import {
   buildCoastalLandmarks,
   buildRidgeTrees,
 } from './furniture/landmarks.js';
+import { buildBiomeDebris } from './furniture/biomeDebris.js';
 import { buildPointsOfInterest, collectChurches } from './furniture/pointsOfInterest.js';
 import { buildDomesticFauna } from './furniture/domesticFauna.js';
+import { buildOpenPastureFauna } from './furniture/parcelFauna.js';
 import {
   SIGN_PLACE_NAME_TEXT_WIDTH_M,
   SIGN_PLACE_NAME_LABEL_HEIGHT_M,
@@ -221,7 +223,16 @@ export class FurnitureLayer {
     /** @type {Map<string, Object>} maillage fusionné par matière linéaire. */
     this.linear = new Map();
     /** Compte des objets posés lors de la dernière reconstruction. */
-    this.counts = { points: 0, boundaries: 0, landmarks: 0, rocks: 0, rows: 0, hedgeClumps: 0 };
+    this.counts = {
+      points: 0,
+      boundaries: 0,
+      landmarks: 0,
+      rocks: 0,
+      biomeDebris: 0,
+      openPasture: 0,
+      rows: 0,
+      hedgeClumps: 0,
+    };
 
     // Halos des lampadaires : un panneau additif par tête, éteint le jour. Ils
     // vivent dans leur propre maillage parce que leur matériau n'a rien à voir
@@ -450,7 +461,16 @@ export class FurnitureLayer {
     for (const item of POINT_ITEMS) placements.set(item, []);
 
     const context = { source, tiles, here, sampleElevation, rawElevation, buffers, placements };
-    this.counts = { points: 0, boundaries: 0, landmarks: 0, rocks: 0, rows: 0, hedgeClumps: 0 };
+    this.counts = {
+      points: 0,
+      boundaries: 0,
+      landmarks: 0,
+      rocks: 0,
+      biomeDebris: 0,
+      openPasture: 0,
+      rows: 0,
+      hedgeClumps: 0,
+    };
     this._lampHeads = [];
     this._signals = [];
     this.chimneys = [];
@@ -467,9 +487,11 @@ export class FurnitureLayer {
       buildJunctionSigns(this, context, areas, roadIndex, builtUp);
       buildParcels(this, context, builtUp);
       buildDomesticFauna(this, houses);
+      buildOpenPastureFauna(this, context, builtUp);
       buildVillageLandmarks(this, context, builtUp);
       buildPointsOfInterest(this, context, roadSegments);
       buildRocks(this, context, builtUp);
+      buildBiomeDebris(this, context, builtUp);
       buildLandmarks(this, context, builtUp);
       buildPeakLandmarks(this, context, builtUp);
       buildCoastalLandmarks(this, context, builtUp);

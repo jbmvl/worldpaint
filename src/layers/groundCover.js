@@ -34,6 +34,17 @@
  * litière — rase, clairsemée, sans fleurs (`woodFloorFor`), pas une prairie à
  * l'ombre. Le pire cas d'instances ne bouge pas : un bois plein rend moins de
  * touffes qu'une prairie pleine, sur laquelle `GRASS_COUNT` est mesuré.
+ *
+ * Là où une matière porte de l'eau libre (`standingWater`), une maille relit
+ * la même flaque que le shader de terrain découpe (`poolShareAt`,
+ * `groundClassMap.js`) : rien ne pousse en son milieu, et sa bordure porte
+ * plus haut et plus dense (`poolEdgeGain`) — c'est la roselière d'un marais.
+ *
+ * Chaque touffe suit aussi le grain low poly du sol sous elle (`coverGrainFor`,
+ * attribut `GROUND_GRAIN_ATTRIBUTE`) : la cellule et l'amplitude sont celles de
+ * la matière lue au semis, les mêmes que `terrainMaterial.js` applique à cet
+ * endroit — sans quoi une touffe de lande flotterait ou s'enfoncerait au pied
+ * d'une bosse que le sol porte et qu'elle ignore.
  */
 
 import {
@@ -48,6 +59,7 @@ import {
   advanceFoliageWind,
   setFoliageWind,
   ATLAS_ATTRIBUTE,
+  GROUND_GRAIN_ATTRIBUTE,
 } from '../materials/foliageMaterial.js';
 import { makeRandom } from '../materials/proceduralTextures.js';
 import { soilWashFor, surfaceForMatrix } from '../core/regionInterpretation.js';
@@ -60,7 +72,8 @@ import {
   coverMassDensity,
   coverBandsRadius,
 } from './coverBands.js';
-import { SETTLED_GRASS, VEGETAL_SURFACES } from '../terrain/groundClassMap.js';
+import { SETTLED_GRASS, VEGETAL_SURFACES, poolShareAt, poolEdgeGain } from '../terrain/groundClassMap.js';
+import { LOW_POLY_GRAIN_DEFAULTS } from '../terrain/lowPolyGrain.js';
 import { defaultTheme } from '../themes/default.js';
 
 /**
@@ -126,6 +139,14 @@ export const GRASS_HEIGHT_FADE_FLOOR = 0.55;
 /** Distances entre lesquelles la compensation d'alpha monte, et son gain — voir `createFoliageMaterial`. */
 export const GRASS_COVERAGE_RANGE = [28, 110];
 export const GRASS_COVERAGE_GAIN = 2.2;
+
+/**
+ * Bordure d'une flaque (`poolEdgeGain`) : gain de hauteur et de densité, au
+ * maximum de la bande. C'est la roselière qui borde l'eau plutôt que de la
+ * recouvrir — voir la fiche du marais.
+ */
+export const POOL_EDGE_HEIGHT_BOOST = 0.4;
+export const POOL_EDGE_DENSITY_BOOST = 0.5;
 
 /**
  * Variante de touffe à semer en un point, d'après ce que dit la carte de
@@ -316,6 +337,26 @@ export function coverGrassFor(cover, surfaces = defaultTheme.surfaces) {
     height: look.grassHeight ?? 1,
     density: look.grassDensity ?? 1,
     tint: look.grassTint || COVER_GRASS_NEUTRAL.tint,
+  };
+}
+
+/**
+ * Cellule et amplitude du grain low poly à l'endroit d'une touffe
+ * (`grainCellM`/`grainAmplitudeM` de `SURFACE_LOOK`) — le même terrain que le
+ * shader de terrain lit sous ses pieds, sans quoi la touffe flotterait ou
+ * s'enfoncerait à la limite d'une matière. Absente de la table, une matière
+ * reprend le réglage de repli du sol.
+ *
+ * Fonction pure.
+ *
+ * @param {string|null} cover Matière du sol (`groundClass.surfaceAt`).
+ * @param {Object} [surfaces] Tranche `theme.surfaces`.
+ */
+export function coverGrainFor(cover, surfaces = defaultTheme.surfaces) {
+  const look = cover ? surfaces?.[cover] : null;
+  return {
+    cellM: look?.grainCellM ?? LOW_POLY_GRAIN_DEFAULTS.cellM,
+    amplitudeM: look?.grainAmplitudeM ?? LOW_POLY_GRAIN_DEFAULTS.amplitudeM,
   };
 }
 
@@ -526,6 +567,13 @@ export class GroundCover {
       ATLAS_ATTRIBUTE,
       new THREE.InstancedBufferAttribute(this._atlasOffsets, 2).setUsage(THREE.DynamicDrawUsage)
     );
+    // Grain low poly par touffe : la matière lue au semis (`coverGrainFor`),
+    // pour que la touffe suive la même bosse que le sol sous elle.
+    this._grainParams = new Float32Array(count * 2);
+    this.geometry.setAttribute(
+      GROUND_GRAIN_ATTRIBUTE,
+      new THREE.InstancedBufferAttribute(this._grainParams, 2).setUsage(THREE.DynamicDrawUsage)
+    );
     this.material = createFoliageMaterial({
       THREE,
       map: this.texture,
@@ -542,7 +590,8 @@ export class GroundCover {
       coverageRange: GRASS_COVERAGE_RANGE,
       coverageGain: GRASS_COVERAGE_GAIN,
       groundLowPoly: true,
-      cacheKey: 'foliage-grass-cover-v5-lowpoly',
+      groundGrainPerInstance: true,
+      cacheKey: 'foliage-grass-cover-v6-lowpoly-par-matiere',
     });
 
     this.mesh = new THREE.InstancedMesh(this.geometry, this.material, count);
@@ -665,13 +714,23 @@ export class GroundCover {
       const crop = groundClass?.cropAt?.(readX, readZ) ?? null;
       if (grassBlockedByCrop(edgeSample, crop)) continue;
 
+      // L'eau et l'herbe suivent désormais la même vérité : rien ne pousse au
+      // milieu d'une flaque, et la bordure — les derniers mètres avant l'eau
+      // libre — porte plus et plus haut (`poolEdgeGain`).
+      const cover = groundClass?.surfaceAt?.(readX, readZ) ?? null;
+      const standing = cover ? this.theme.surfaces[cover]?.standingWater ?? 0 : 0;
+      let poolEdge = 0;
+      if (standing > 0) {
+        const pool = poolShareAt(readX, readZ, standing, this.theme.terrain.poolScaleM);
+        if (pool > 0.5) continue;
+        poolEdge = poolEdgeGain(pool);
+      }
+
       // Couverture du sol : lande, maquis, marais… Elle ne décide pas *si* de
       // l'herbe pousse — c'est la part de végétal qui le dit — mais de quelle
       // taille, en quelle quantité et de quelle couleur.
-      const coverLook = coverGrassFor(
-        groundClass?.surfaceAt?.(readX, readZ) ?? null,
-        this.theme.surfaces
-      );
+      const coverLook = coverGrassFor(cover, this.theme.surfaces);
+      const grain = coverGrainFor(cover, this.theme.surfaces);
 
       const fade = coverBandFade(cell.distance, band);
       if (fade <= 0.02) continue;
@@ -688,7 +747,8 @@ export class GroundCover {
         coverMassDensity(green, band) *
         coverLook.density *
         floorLook.density *
-        this._wash.grassDensity;
+        this._wash.grassDensity *
+        (1 + poolEdge * POOL_EDGE_DENSITY_BOOST);
 
       fillGrassCell(tufts, gx, gz, band.cell, band.perCell, band.salt);
 
@@ -709,7 +769,8 @@ export class GroundCover {
           floorLook.height *
           this._wash.grassHeight *
           heightFade *
-          band.rise;
+          band.rise *
+          (1 + poolEdge * POOL_EDGE_HEIGHT_BOOST);
         const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
         const width = height * grass.aspect * band.spread; // élargi, pas élevé
 
@@ -739,6 +800,8 @@ export class GroundCover {
         const [u, v] = GRASS_ATLAS_OFFSETS[variant];
         this._atlasOffsets[placed * 2] = u;
         this._atlasOffsets[placed * 2 + 1] = v;
+        this._grainParams[placed * 2] = grain.cellM;
+        this._grainParams[placed * 2 + 1] = grain.amplitudeM;
         placed++;
       }
     }
@@ -747,6 +810,7 @@ export class GroundCover {
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     this.geometry.getAttribute(ATLAS_ATTRIBUTE).needsUpdate = true;
+    this.geometry.getAttribute(GROUND_GRAIN_ATTRIBUTE).needsUpdate = true;
   }
 
   dispose() {
