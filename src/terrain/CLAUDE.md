@@ -68,3 +68,22 @@ Les deux sont des fonctions **pures de la position au sol** : c'est ce qui
 permet à deux tuiles voisines de s'accorder au bord sans se consulter. Une
 déformation qui dépendrait de la tuile courante, de l'ordre de parcours ou de
 la position de l'observateur ouvrirait une crevasse à chaque jointure.
+
+## Deux largeurs de déblai, et on ne les confond pas
+
+`roadCut.js` en porte deux :
+
+- `ROAD_CUT_M` — l'**emprise**, l'accotement excavé tel qu'un terrassier le
+  laisse. C'est ce que le paysage garde libre, et ce dont `roadCorridor` tire
+  sa marge.
+- `cutBenchAt(pas)` — le **fond plat réellement creusé**, au moins une maille
+  de terrain. Plus étroit, il peut ne contenir aucun sommet de la maille : le
+  triangle enjambe alors la chaussée et sa corde passe au-dessus.
+
+Le pas est celui de la maille la plus grossière qui soit entaillée
+(`ROAD_CUT_MAX_RING`), et non celui de la tuile où l'on creuse — sinon la
+largeur du fond plat changerait avec l'anneau, donc avec la caméra.
+`terrainBubble` publie la cote une fois pour toutes en `cutBenchM`, et ce qui
+borde une chaussée la lit là : l'index des routes (`roadNetwork`) pour sa
+marge, la falaise du déblai (`roadsideRelief`) pour le pied de sa paroi, le
+masque du grain low poly (`roadCutMaskAt`) pour son emprise.

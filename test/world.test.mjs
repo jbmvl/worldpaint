@@ -72,6 +72,7 @@ import {
   markJunctionRows,
   mergeParallelBranches,
   pointInOutline,
+  outlineDistance,
   JunctionAreas,
   JUNCTION_CORNER_MAX_M,
 } from '../src/layers/roadJunctions.js';
@@ -575,9 +576,16 @@ import {
 } from '../src/layers/streetLayer.js';
 import { streetSurfaceAt } from '../src/layers/townStyle.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
-import { cutElevationAt, roadCutMaskAt, ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../src/terrain/roadCut.js';
+import {
+  cutElevationAt,
+  cutBenchAt,
+  roadCutMaskAt,
+  ROAD_CUT_M,
+  ROAD_CUT_BLEND_M,
+} from '../src/terrain/roadCut.js';
 import { TerrainMaterialFactory } from '../src/terrain/terrainMaterial.js';
 import { LOW_POLY_GRAIN_DEFAULTS } from '../src/terrain/lowPolyGrain.js';
+import { TerrainBubble } from '../src/terrain/terrainBubble.js';
 import {
   birdAt,
   createBirdGeometry,
@@ -3394,6 +3402,9 @@ test('le déblai ne remblaie jamais : côté aval, le terrain ne bouge pas', () 
 test('l’emprise routière couvre exactement la même largeur que le déblai', () => {
   const halfWidth = 2.5;
   const edge = halfWidth + ROAD_CUT_M;
+  // Ce test raisonne au fond plat minimal (celui de l'emprise, `ROAD_CUT_M`) :
+  // voir plus bas 'le fond plat vaut au moins une maille de terrain' pour le
+  // cas où la maille l'élargit.
 
   // Pleine sous la chaussée et son accotement, comme le déblai est plat.
   close(roadCutMaskAt(0, halfWidth), 1, 1e-9, 'sous l’axe');
@@ -3603,6 +3614,195 @@ test('deux points de part et d’autre du trait sont séparés par toute la dén
   assert.ok(above - below > 45, `chute de ${(above - below).toFixed(1)} m sur 5 m`);
 });
 
+test('le fond plat vaut au moins une maille de terrain', () => {
+  // Sur une maille plus fine que l’emprise, c’est l’emprise qui commande : rien
+  // ne gagne à creuser moins large qu’un terrassier.
+  close(cutBenchAt(0.4), ROAD_CUT_M, 1e-9, 'maille fine');
+  close(cutBenchAt(0), ROAD_CUT_M, 1e-9, 'maille inconnue');
+  close(cutBenchAt(4.64), 4.64, 1e-9, 'maille large');
+});
+
+test('un fond plat d’une maille garde la corde du triangle sous la chaussée', () => {
+  // Le déblai n’est creusé qu’aux sommets de la maille ; entre deux sommets,
+  // ce qui s’affiche est la corde du triangle. Un fond plat plus étroit qu’une
+  // maille peut n’en contenir aucun sommet, et la corde enjambe alors la
+  // chaussée. Versant à 60 %, plate-forme enfoncée de 2 m sous le terrain de
+  // l’axe, maille de l’anneau entaillé.
+  const step = 890 / 192;
+  const halfWidth = 3.5;
+  const deck = 100;
+  // La maille n’est jamais alignée sur la route, ni décalée d’un compte rond.
+  const theta = Math.PI / 5;
+  const across = (x, z) => x * -Math.sin(theta) + z * Math.cos(theta);
+  const raw = (x, z) => deck + 2 + across(x, z) * 0.6;
+  const vertex = (i, j, bench) => {
+    const x = step / 2 + i * step;
+    const z = step / 2 + j * step;
+    return { x, z, y: cutElevationAt(raw(x, z), deck, Math.abs(across(x, z)), halfWidth, bench) };
+  };
+
+  /** Plus haut point de la surface affichée au-dessus de la chaussée. */
+  const highest = (bench) => {
+    let above = -Infinity;
+    const N = 8;
+    const scan = (a, b, c) => {
+      for (let u = 0; u <= N; u++) {
+        for (let v = 0; u + v <= N; v++) {
+          const wa = u / N;
+          const wb = v / N;
+          const wc = 1 - wa - wb;
+          const x = a.x * wa + b.x * wb + c.x * wc;
+          const z = a.z * wa + b.z * wb + c.z * wc;
+          if (Math.abs(across(x, z)) > halfWidth) continue;
+          above = Math.max(above, a.y * wa + b.y * wb + c.y * wc - deck);
+        }
+      }
+    };
+    for (let i = -8; i < 8; i++) {
+      for (let j = -8; j < 8; j++) {
+        const a = vertex(i, j, bench);
+        const b = vertex(i + 1, j, bench);
+        const c = vertex(i, j + 1, bench);
+        const d = vertex(i + 1, j + 1, bench);
+        scan(a, c, b);
+        scan(b, c, d);
+      }
+    }
+    return above;
+  };
+
+  const bare = highest(ROAD_CUT_M);
+  assert.ok(bare > 1, `la seule emprise laisse percer le terrain (${bare.toFixed(2)} m)`);
+  const held = highest(cutBenchAt(step));
+  assert.ok(held <= ROAD_LIFT_M, `un fond plat d’une maille le retient (${held.toFixed(2)} m)`);
+});
+
+
+/**
+ * Une bulle réduite à ce que `_buildMesh` lit, et rien d'autre : un repère
+ * métrique, un MNT analytique, un index de chaussées. Le reste de la classe
+ * n'est pas monté — ce qu'on vérifie ici est la maille qu'elle produit, pas
+ * son cycle de vie.
+ */
+function meshHarness({ segments = 192, slope = 0.6, theta = Math.PI / 5, halfWidth = 3.5, offsetM = 1.7 } = {}) {
+  const TILE = 890;
+  const THREE = {
+    BufferGeometry: class {
+      setAttribute(name, attribute) { this[name] = attribute; }
+      setIndex(attribute) { this.index = attribute; }
+      computeBoundingSphere() {}
+      dispose() {}
+    },
+    BufferAttribute: class { constructor(array) { this.array = array; } },
+    Mesh: class { constructor(geometry) { this.geometry = geometry; } updateMatrix() {} },
+  };
+
+  const bubble = Object.create(TerrainBubble.prototype);
+  bubble.THREE = THREE;
+  bubble.segmentsByRing = [segments, segments, 48];
+  bubble.blockSize = 3;
+  bubble._centerTile = { x: 0, y: 0 };
+  bubble.verticalScale = 1;
+  bubble.group = { add() {} };
+  bubble.materials = { material: {} };
+  bubble._cutGeneration = 1;
+  bubble._junctions = null;
+  bubble.disposed = false;
+  bubble.frame = { scale: TILE, tileToLocal: (tx, ty) => ({ x: tx * TILE, z: ty * TILE }) };
+  // _sample() convertit vers le zoom du MNT via _demScale ; ce harnais fait
+  // coïncider les deux zooms (le MNT est échantillonné directement en
+  // coordonnées de tuile de la bulle).
+  bubble._demScale = 1;
+
+  const dirX = Math.cos(theta);
+  const dirZ = Math.sin(theta);
+  const nx = -dirZ;
+  const nz = dirX;
+  const centre = { x: TILE / 2 + nx * offsetM, z: TILE / 2 + nz * offsetM };
+  const across = (x, z) => (x - centre.x) * nx + (z - centre.z) * nz;
+  // Un versant bruité : un MNT de montagne n'est pas un plan, et c'est le bruit
+  // que la corde d'un triangle va chercher au-delà du fond plat.
+  const rawAt = (x, z) =>
+    100 +
+    across(x, z) * slope +
+    1.4 * Math.sin(x / 12.7 + 0.6) * Math.cos(z / 15.3 - 1.1) +
+    0.8 * Math.sin(x / 5.1 - 2.2) +
+    2.0 * Math.sin((x + z) / 31);
+  bubble.elevation = { has: () => true, sampleTile: (tx, ty) => rawAt(tx * TILE, ty * TILE) };
+
+  const reach = TILE * 1.2;
+  const path = resamplePath(
+    [
+      { x: centre.x - dirX * reach, z: centre.z - dirZ * reach },
+      { x: centre.x + dirX * reach, z: centre.z + dirZ * reach },
+    ],
+    5
+  );
+  const frames = pathFrames(path);
+  const platform = new Float32Array(path.length);
+  for (let r = 0; r < path.length; r++) platform[r] = levelRow(path, r, frames, halfWidth, rawAt).deck;
+  flattenGrade(platform, { maxCut: 4, maxFill: 3 });
+
+  const segment = { path, frames, platform, halfWidth, works: new Uint8Array(path.length), profile: 'minor' };
+  bubble._roadCut = new RoadIndex([segment], { margin: bubble.cutBenchM + ROAD_CUT_BLEND_M });
+  return { bubble, segment };
+}
+
+/** Plus haut point de la surface affichée au-dessus du ruban, sur la chaussée. */
+function highestOverRoad({ bubble, segment }) {
+  const tile = { x: 0, y: 0, ring: 0, key: '0/0/0', mesh: null, edgeIncomplete: true };
+  bubble._buildMesh(tile);
+  const positions = tile.mesh.geometry.position.array;
+  const indices = tile.mesh.geometry.index.array;
+  const index = bubble._roadCut;
+  const half = segment.halfWidth;
+
+  let worst = -Infinity;
+  const N = 5;
+  for (let i = 0; i < indices.length; i += 3) {
+    const v = [indices[i], indices[i + 1], indices[i + 2]].map((k) => ({
+      x: positions[k * 3], y: positions[k * 3 + 1], z: positions[k * 3 + 2],
+    }));
+    // Un triangle loin de la chaussée n'a rien à dire : on l'écarte avant de l'échantillonner.
+    if (!v.some((p) => index.query(p.x, p.z, 15))) continue;
+    for (let u = 0; u <= N; u++) {
+      for (let w = 0; u + w <= N; w++) {
+        const wa = u / N;
+        const wb = w / N;
+        const wc = 1 - wa - wb;
+        const x = v[0].x * wa + v[1].x * wb + v[2].x * wc;
+        const z = v[0].z * wa + v[1].z * wb + v[2].z * wc;
+        const hit = index.query(x, z, 0);
+        if (!hit || hit.distance > half) continue;
+        const deck = index.deckAt(hit);
+        if (deck == null) continue;
+        worst = Math.max(worst, v[0].y * wa + v[1].y * wb + v[2].y * wc - (deck + ROAD_LIFT_M));
+      }
+    }
+  }
+  return worst;
+}
+
+test('la maille construite reste sous la chaussée, quelle que soit son orientation', () => {
+  // Le test au-dessus raisonne sur le profil ; celui-ci monte la vraie maille
+  // (`_buildMesh`, couture de bord comprise) et la compare au ruban tel qu'il
+  // est posé. C'est le seul endroit où les deux se rencontrent vraiment.
+  for (let t = 0; t < 6; t++) {
+    const theta = (t * Math.PI) / 6;
+    for (const offsetM of [0, 1.7, 3.1]) {
+      const worst = highestOverRoad(meshHarness({ theta, offsetM }));
+      assert.ok(
+        Number.isFinite(worst),
+        `la chaussée est bien couverte par la maille (${Math.round((theta * 180) / Math.PI)}°)`
+      );
+      assert.ok(
+        worst <= 0,
+        `le terrain reste sous le ruban à ${Math.round((theta * 180) / Math.PI)}°, décalage ${offsetM} m (${worst.toFixed(2)} m)`
+      );
+    }
+  }
+});
+
 // --- Sections balayées ------------------------------------------------------
 
 test('une section balayée pose ses sommets en travers et referme son anneau', () => {
@@ -3693,7 +3893,7 @@ function roadsideHarness({ profile = 'minor', here = { x: 200, z: 0 } } = {}) {
   const placements = new Map();
   for (const item of POINT_ITEMS) placements.set(item, []);
 
-  const context = { buffers, placements, sampleElevation: () => 100, here };
+  const context = { buffers, placements, sampleElevation: () => 100, cutBench: ROAD_CUT_M, here };
   const segment = { path, platform, edges, probeSpan: 4, halfWidth: 2.5, profile, startDistance: 0, anchor: path[0] };
   return { layer, context, segment, rowsInfo, buffers, placements };
 }
@@ -3703,7 +3903,7 @@ function roadsideHarness({ profile = 'minor', here = { x: 200, z: 0 } } = {}) {
  * de déblai lit : la plate-forme, le terrain naturel et la hauteur dont il la
  * domine. Le versant monte vers -z, donc en amont à gauche de la marche.
  */
-function rockCutHarness({ rise = 4, slope = 0.35 } = {}) {
+function rockCutHarness({ rise = 4, slope = 0.35, cutBench = ROAD_CUT_M } = {}) {
   const layer = Object.create(FurnitureLayer.prototype);
   layer.specs = furnitureSpecsFor(defaultTheme.furniture.colors);
 
@@ -3716,7 +3916,7 @@ function rockCutHarness({ rise = 4, slope = 0.35 } = {}) {
   // que la roche vient couvrir.
   const rawElevation = (x, z) => deck - z * slope;
   const sampleElevation = (x, z) =>
-    cutElevationAt(rawElevation(x, z), deck, Math.abs(z), 2.5);
+    cutElevationAt(rawElevation(x, z), deck, Math.abs(z), 2.5, cutBench);
 
   const rowsInfo = path.map((p, r) => ({
     r, x: p.x, z: p.z, distance: p.distance,
@@ -3725,9 +3925,9 @@ function rockCutHarness({ rise = 4, slope = 0.35 } = {}) {
 
   const buffers = {};
   for (const kind of LINEAR_KINDS) buffers[kind] = createProfileBuffer();
-  const context = { buffers, sampleElevation, rawElevation, here: { x: 100, z: 0 } };
+  const context = { buffers, sampleElevation, rawElevation, cutBench, here: { x: 100, z: 0 } };
   const segment = { path, platform, halfWidth: 2.5, profile: 'minor' };
-  return { layer, context, segment, rowsInfo, buffers, deck, rawElevation, sampleElevation };
+  return { layer, context, segment, rowsInfo, buffers, deck, cutBench, rawElevation, sampleElevation };
 }
 
 test('un versant qui domine la chaussée est bordé de roche, pas d’un mur', () => {
@@ -3834,6 +4034,22 @@ test('la falaise n’est pas un tube extrudé : sa section change à chaque lign
       positions[(r * cols) * 3 + 2] <= -(2.5 + ROAD_CUT_M) + 1e-6,
       `pied de la ligne ${r} au-delà de l’accotement`
     );
+  }
+});
+
+test('la falaise du déblai se dresse au bord du fond plat, si large soit-il', () => {
+  const cutBench = cutBenchAt(890 / 192);
+  const { layer, context, segment, rowsInfo, buffers } = rockCutHarness({ cutBench });
+  buildRockCut(layer, context, segment, rowsInfo);
+
+  const positions = buffers.rockCut.positions;
+  const cols = 6;
+  const rows = positions.length / 3 / cols;
+  assert.ok(rows > 0, 'la falaise est bien engendrée');
+  for (let r = 0; r < rows; r++) {
+    const foot = positions[r * cols * 3 + 2];
+    assert.ok(foot <= -(2.5 + cutBench) + 1e-6, `pied au-delà du fond plat, ligne ${r}`);
+    assert.ok(foot >= -(2.5 + cutBench) - 1, `pied sans dérive, ligne ${r}`);
   }
 });
 
@@ -7636,6 +7852,51 @@ test('le rayon de raccordement reste borné, quelles que soient les largeurs', (
       `la bouche reste au bord (${mouth.distance})`
     );
   }
+});
+
+
+test('le bord d’un carrefour se mesure comme la rive d’un ruban', () => {
+  const outline = [
+    { x: -5, z: -5 }, { x: 5, z: -5 }, { x: 5, z: 5 }, { x: -5, z: 5 },
+  ];
+  close(outlineDistance(outline, 0, 0).distance, 0, 1e-9, 'dedans, distance nulle');
+  close(outlineDistance(outline, 5, 0).distance, 0, 1e-9, 'sur le bord aussi');
+
+  const out = outlineDistance(outline, 9, 0);
+  close(out.distance, 4, 1e-9, 'quatre mètres dehors');
+  close(out.x, 5, 1e-9, 'le point du bord qui fait face, en x');
+  close(out.z, 0, 1e-9, 'et en z');
+});
+
+test('une dalle de carrefour a le même fond plat qu’un ruban', () => {
+  const areas = new JunctionAreas([teeJunction()]);
+  const area = areas.areas[0];
+  const deck = 12;
+  area.decks = area.mouths.map(() => deck);
+  area.deck = deck;
+
+  const bench = cutBenchAt(890 / 192);
+  const reach = bench + ROAD_CUT_BLEND_M;
+  const raw = deck + 6; // un versant qui domine franchement la dalle
+
+  const inside = areas.deckNear(0, 0, reach);
+  assert.ok(inside, 'la dalle est trouvée sous le nœud');
+  close(inside.distance, 0, 1e-9, 'distance nulle sur la dalle');
+  close(inside.deck, deck, 1e-6, 'et c’est bien sa cote');
+
+  // Juste au-delà du contour : c’est là que le terrain retombait d’un coup sur
+  // la dalle, faute de fond plat, et que la corde du triangle l’enjambait.
+  let edge = 0;
+  while (edge < 60 && pointInOutline(area.outline, 0, -edge)) edge += 0.25;
+  const near = areas.deckNear(0, -(edge + bench * 0.4), reach);
+  assert.ok(near, 'et encore trouvée au-delà du contour');
+  assert.ok(near.distance > 0 && near.distance <= bench, `dans le fond plat (${near.distance.toFixed(2)} m)`);
+  close(cutElevationAt(raw, near.deck, near.distance, 0, bench), deck, 1e-6, 'le terrain y est au ras de la dalle');
+
+  // Au-delà du raccord, la dalle ne dit plus rien : le relief est intact.
+  const far = areas.deckNear(0, -(edge + reach + 5), reach);
+  const height = far ? cutElevationAt(raw, far.deck, far.distance, 0, bench) : raw;
+  close(height, raw, 1e-6, 'loin du carrefour, le terrain n’est plus entaillé');
 });
 
 test('un carrefour ne prend que les lignes de son niveau', () => {

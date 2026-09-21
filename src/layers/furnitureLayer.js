@@ -460,7 +460,18 @@ export class FurnitureLayer {
     const placements = new Map();
     for (const item of POINT_ITEMS) placements.set(item, []);
 
-    const context = { source, tiles, here, sampleElevation, rawElevation, buffers, placements };
+    // Le fond plat de l'entaille : la falaise du déblai se dresse à son bord,
+    // et lui seul sait à quelle largeur le terrain a été creusé.
+    const context = {
+      source,
+      tiles,
+      here,
+      sampleElevation,
+      rawElevation,
+      cutBench: this.bubble.cutBenchM,
+      buffers,
+      placements,
+    };
     this.counts = {
       points: 0,
       boundaries: 0,

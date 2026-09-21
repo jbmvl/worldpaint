@@ -15,6 +15,8 @@
  * pas posée dessus). La falaise façonne le terrain naturel, la route entaille
  * ce qu'elle trouve. Les deux sont des fonctions pures de la position au sol,
  * donc les tuiles voisines s'accordent au bord sans se consulter.
+ * Le fond plat du déblai ne peut pas être plus étroit qu'une maille, sans quoi
+ * aucun sommet n'y tombe et le triangle enjambe la chaussée (`cutBenchM`).
  * Chaque sommet porte aussi l'emprise routière (`roadMask`, `roadCutMaskAt`) :
  * ce que `terrainMaterial.js` ajoute après coup à la position — le grain low
  * poly — doit s'y éteindre, sans quoi il recreuserait par-dessus une chaussée
@@ -40,8 +42,8 @@ import { TerrainMaterialFactory } from './terrainMaterial.js';
 import { defaultTheme } from '../themes/default.js';
 import {
   cutElevationAt,
+  cutBenchAt,
   roadCutMaskAt,
-  ROAD_CUT_M,
   ROAD_CUT_BLEND_M,
   ROAD_CUT_MAX_RING,
 } from './roadCut.js';
@@ -59,7 +61,8 @@ export class TerrainBubble {
    * @param {number} options.zoom            Zoom des tuiles.
    * @param {number} [options.blockSize]     Côté du bloc, en tuiles (impair).
    * @param {number[]} [options.segmentsByRing] Mailles par tuile et par côté,
-   *        anneau par anneau. Rapport 2 d'un anneau au suivant, pour un raccord de bord exact (cf. `_buildMesh`).
+   *        anneau par anneau. Le bord commun à deux finesses est rééchantillonné
+   *        sur la plus grossière (`_buildMesh`), quel que soit leur rapport.
    * @param {number} [options.verticalScale] Exagération du relief (1 = réel).
    * @param {Object} [options.groundClass] Instance `GroundClassMap`, transmise
    *        au matériau : c'est elle qui décide la matière du sol.
@@ -154,6 +157,16 @@ export class TerrainBubble {
   /** Finesse de maille d'une tuile donnée. */
   segmentsForTile(x, y) {
     return this.segmentsForRing(this.ringOf(x, y));
+  }
+
+  /**
+   * Largeur du fond plat de l'entaille, en mètres — la cote que tout ce qui
+   * borde une chaussée doit lire (`roadCut.cutBenchAt`). Tirée de la maille la
+   * plus grossière qui soit creusée, donc constante tant que la bulle l'est.
+   */
+  get cutBenchM() {
+    if (!this.frame) return cutBenchAt(0);
+    return cutBenchAt(this.frame.scale / this.segmentsForRing(ROAD_CUT_MAX_RING));
   }
 
   /** Numéro de la surface affichée. Change quand la maille a fini de se réajuster, pas pendant que la file se draine. */
@@ -348,8 +361,9 @@ export class TerrainBubble {
    * Deux choses à entailler, et non une seule : les rubans (`index`) et les
    * **dalles de carrefour** (`areas`). Une dalle déborde des rubans qui
    * l'alimentent — ses arcs de raccordement bombent au-delà de leurs rives —,
-   * si bien qu'une entaille tirée des seuls rubans laissait le terrain remonter
-   * dans les coins d'un carrefour et passer par-dessus sa chaussée.
+   * si bien qu'une entaille tirée des seuls rubans laisse le terrain remonter
+   * dans les coins d'un carrefour et passer par-dessus sa chaussée. Les deux
+   * s'entaillent au même profil, fond plat et raccord compris.
    *
    * @param {Object|null} index Instance `RoadIndex`, ou `null` pour ne rien creuser.
    * @param {Object|null} [areas] Instance `JunctionAreas`, cotes posées.
@@ -418,7 +432,14 @@ export class TerrainBubble {
     );
   }
 
-  /** Creuse le déblai d'une chaussée. Profil dans `cutElevationAt`, pur et testé. */
+  /**
+   * Creuse le déblai d'une chaussée. Profil dans `cutElevationAt`, pur et testé.
+   *
+   * Deux choses peuvent être dessinées au même endroit — le ruban d'un tronçon
+   * et la dalle d'un carrefour, qui déborde des rubans qui l'alimentent. Le
+   * terrain doit passer sous les deux, donc on retient la plus basse des deux
+   * entailles plutôt que de s'arrêter à la première trouvée.
+   */
   _roadCutAt(x, z, raw) {
     return this._roadCutWithMask(x, z, raw).elevation;
   }
@@ -434,27 +455,33 @@ export class TerrainBubble {
     const index = this._roadCut;
     if (!index) return { elevation: raw, mask: 0 };
 
-    // La dalle d'un carrefour d'abord : c'est elle qui est dessinée là, et elle
-    // déborde des rubans. Le sol y descend jusqu'à la dalle, sans raccord — ce
-    // sont les rubans alentour qui ramènent l'entaille au terrain naturel.
-    const slab = this._junctions?.deckAt(x, z);
-    if (slab != null) {
-      const scale = this.verticalScale || 1;
-      return { elevation: Math.min(raw, slab / scale), mask: 1 };
-    }
-
-    const hit = index.query(x, z, ROAD_CUT_M + ROAD_CUT_BLEND_M);
-    if (!hit) return { elevation: raw, mask: 0 };
-    const deck = index.deckAt(hit);
-    if (deck == null) return { elevation: raw, mask: 0 };
-
     // La plate-forme est en unités de scène (déjà multipliée par l'exagération
     // verticale) ; `raw` est en unités de MNT. On compare dans le même espace.
     const scale = this.verticalScale || 1;
-    return {
-      elevation: cutElevationAt(raw, deck / scale, hit.distance, hit.segment.halfWidth),
-      mask: roadCutMaskAt(hit.distance, hit.segment.halfWidth),
-    };
+    const bench = this.cutBenchM;
+    const reach = bench + ROAD_CUT_BLEND_M;
+    let elevation = raw;
+    let mask = 0;
+
+    const hit = index.query(x, z, reach);
+    const deck = hit && index.deckAt(hit);
+    if (deck != null) {
+      elevation = cutElevationAt(raw, deck / scale, hit.distance, hit.segment.halfWidth, bench);
+      mask = roadCutMaskAt(hit.distance, hit.segment.halfWidth, bench);
+    }
+
+    // Une dalle n'a pas de demi-largeur : son fond plat se mesure depuis son
+    // contour, et le raccord part de là. Le sol doit passer sous les deux
+    // entailles là où elles se recouvrent, donc on retient la plus basse —
+    // et l'emprise la plus large, pour que le grain s'éteigne sur les deux.
+    const slab = this._junctions?.deckNear(x, z, reach);
+    if (slab) {
+      const slabElevation = cutElevationAt(raw, slab.deck / scale, slab.distance, 0, bench);
+      if (slabElevation < elevation) elevation = slabElevation;
+      mask = Math.max(mask, roadCutMaskAt(slab.distance, 0, bench));
+    }
+
+    return { elevation, mask };
   }
 
   /** Position dans le repère local, posée sur la surface affichée. */

@@ -99,6 +99,7 @@
  */
 
 import { LEVEL_GROUND } from './roadWorks.js';
+import { distanceToSegment } from './roadGraph.js';
 
 /**
  * Rayon de raccordement d'un coin, en part de la plus étroite des deux
@@ -142,6 +143,13 @@ const STRAIGHT_COS = Math.cos((172 * Math.PI) / 180);
 
 /** Côté d'une cellule de l'index des carrefours, en mètres. */
 export const JUNCTION_CELL_M = 24;
+/**
+ * Débord d'inscription d'une aire dans l'index, en mètres — et donc portée
+ * maximale d'une interrogation au-delà du contour. Le déblai du terrain
+ * interroge à `cutBenchM + ROAD_CUT_BLEND_M` du bord : sans ce débord, une
+ * cellule voisine ne verrait pas l'aire et l'entaille s'arrêterait net.
+ */
+export const JUNCTION_REACH_M = 12;
 
 /** Décalage de cellule : les coordonnées locales sont signées. */
 const CELL_BIAS = 1 << 14;
@@ -674,6 +682,34 @@ export function pointInOutline(outline, x, z) {
 }
 
 /**
+ * Distance d'un point au bord d'un contour, vers l'extérieur, et le point du
+ * bord qui lui fait face. Zéro dedans. Fonction pure.
+ *
+ * @param {Array<{x:number,z:number}>} outline
+ * @param {number} x
+ * @param {number} z
+ * @returns {{distance:number, x:number, z:number}}
+ */
+export function outlineDistance(outline, x, z) {
+  if (!Array.isArray(outline) || outline.length < 3) return { distance: Infinity, x, z };
+  if (pointInOutline(outline, x, z)) return { distance: 0, x, z };
+
+  let best = { distance: Infinity, x, z };
+  for (let i = 0, j = outline.length - 1; i < outline.length; j = i++) {
+    const a = outline[i];
+    const b = outline[j];
+    const hit = distanceToSegment(x, z, a.x, a.z, b.x, b.z);
+    if (hit.distance >= best.distance) continue;
+    best = {
+      distance: hit.distance,
+      x: a.x + (b.x - a.x) * hit.t,
+      z: a.z + (b.z - a.z) * hit.t,
+    };
+  }
+  return best;
+}
+
+/**
  * Les aires des carrefours, avec un index de cellules pour ne pas les
  * comparer toutes à chaque ligne de chaque tronçon.
  *
@@ -710,10 +746,13 @@ export class JunctionAreas {
       this.areas.push(area);
       this.feeders.push(new Set());
 
-      const minX = Math.floor((area.x - area.radius) / cell);
-      const maxX = Math.floor((area.x + area.radius) / cell);
-      const minZ = Math.floor((area.z - area.radius) / cell);
-      const maxZ = Math.floor((area.z + area.radius) / cell);
+      // Disque circonscrit élargi de `JUNCTION_REACH_M` : une interrogation
+      // faite au bord de l'aire ne lit qu'une cellule, et doit y trouver l'aire.
+      const reach = area.radius + JUNCTION_REACH_M;
+      const minX = Math.floor((area.x - reach) / cell);
+      const maxX = Math.floor((area.x + reach) / cell);
+      const minZ = Math.floor((area.z - reach) / cell);
+      const maxZ = Math.floor((area.z + reach) / cell);
       for (let cx = minX; cx <= maxX; cx++) {
         for (let cz = minZ; cz <= maxZ; cz++) {
           const key = cellKey(cx, cz);
@@ -797,6 +836,45 @@ export class JunctionAreas {
     if (!area?.decks) return null;
     const deck = junctionDeckAt(area, area.decks, x, z);
     return Number.isFinite(deck) ? deck : null;
+  }
+
+  /**
+   * Dalle la plus proche d'un point, et la distance à son bord — zéro dessus.
+   *
+   * `deckAt` répond « quelle dalle est **sous** ce point ? » et s'arrête donc
+   * au contour. Le déblai du terrain pose l'autre question : « à quelle
+   * distance de la dalle suis-je ? », parce qu'une dalle a le même fond plat
+   * et le même raccord qu'un ruban. Sans eux, le terrain retombe d'un coup sur
+   * elle au ras du contour, et la corde du triangle qui enjambe ce bord passe
+   * par-dessus la chaussée du carrefour.
+   *
+   * La cote est relevée au point du bord qui fait face, jamais au point
+   * lui-même : dehors, l'interpolation entre bouches n'a plus de sens.
+   *
+   * @param {number} x
+   * @param {number} z
+   * @param {number} margin Portée de la recherche au-delà du contour, en
+   *        mètres, bornée par `JUNCTION_REACH_M`.
+   * @param {number} [level]
+   * @returns {{deck:number, distance:number}|null}
+   */
+  deckNear(x, z, margin, level = LEVEL_GROUND) {
+    const reach = Math.min(margin, JUNCTION_REACH_M);
+    const bucket = this.buckets.get(cellKey(Math.floor(x / this.cell), Math.floor(z / this.cell)));
+    if (!bucket) return null;
+
+    let best = null;
+    for (const index of bucket) {
+      const area = this.areas[index];
+      if (area.level !== level || !area.decks) continue;
+      const near = outlineDistance(area.outline, x, z);
+      if (near.distance > reach) continue;
+      if (best && near.distance >= best.distance) continue;
+      const deck = junctionDeckAt(area, area.decks, near.x, near.z);
+      if (!Number.isFinite(deck)) continue;
+      best = { deck, distance: near.distance };
+    }
+    return best;
   }
 }
 
