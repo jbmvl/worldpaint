@@ -347,7 +347,8 @@ function teleportTo(x, z) {
 
 // --- Boucle de rendu -----------------------------------------------------------
 
-const clock = new THREE.Clock();
+const timer = new THREE.Timer();
+timer.connect(document);
 const forward3 = new THREE.Vector3();
 const move = new THREE.Vector3();
 const cameraDirection = new THREE.Vector3(); // direction non aplatie, pour le cap et l'inclinaison du HUD
@@ -1579,9 +1580,10 @@ function currentDate() {
 
 // --- Boucle principale ----------------------------------------------------------
 
-function loop() {
+function loop(timestamp) {
   requestAnimationFrame(loop);
-  const delta = Math.min(clock.getDelta(), 0.1); // évite un bond si l'onglet était en arrière-plan
+  timer.update(timestamp);
+  const delta = Math.min(timer.getDelta(), 0.1); // évite un bond si l'onglet était en arrière-plan
 
   updateMovement(delta);
 

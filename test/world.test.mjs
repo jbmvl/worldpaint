@@ -12319,7 +12319,7 @@ test('le grain low poly suivi par une instance vient d’un réglage unique, ou 
   assert.match(parInstance.vertexShader, /vec2 groundGrain = aGroundGrain;/);
   assert.match(
     parInstance.vertexShader,
-    /float groundOffset = lowPolyBump\(groundWorldPos\.xz, groundGrain\.x, groundGrain\.y\) \* groundFade;/
+    /float groundOffset = lowPolyBump\(\s*groundLocalPos,\s*vec3\(0\.0, 1\.0, 0\.0\),\s*groundGrain\.x,\s*groundGrain\.y\s*\) \* groundFade;/
   );
 });
 

@@ -105,7 +105,7 @@ import {
   mirrorDirection,
   sectionAtDistance,
 } from './roadMarkings.js';
-import { ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
+import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
 import {
   workCodeFor,
   roadLevelFor,

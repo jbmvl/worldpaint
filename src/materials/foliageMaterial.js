@@ -206,7 +206,16 @@ export function createFoliageMaterial({
                  ? `vec2 groundGrain = ${GROUND_GRAIN_ATTRIBUTE};`
                  : `vec2 groundGrain = vec2(uGroundGrainCellM, uGroundGrainAmplitudeM);`
              }
-             float groundOffset = lowPolyBump(groundWorldPos.xz, groundGrain.x, groundGrain.y) * groundFade;
+             // Le bruit se lit dans le même repère local que le terrain. Sa
+             // signature choisit le plan de projection avec une normale : ici
+             // le sol est horizontal, donc le plan xz est retenu.
+             vec3 groundLocalPos = vec3(groundAnchor.x, 0.0, groundAnchor.y);
+             float groundOffset = lowPolyBump(
+               groundLocalPos,
+               vec3(0.0, 1.0, 0.0),
+               groundGrain.x,
+               groundGrain.y
+             ) * groundFade;
              // Ramené à l'échelle de l'instance : le décalage voulu est en
              // mètres du monde, transformed.y est en unité du panneau, et
              // l'instance le remultiplie par sa propre hauteur.
