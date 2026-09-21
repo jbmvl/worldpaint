@@ -75,6 +75,7 @@ import { absorbParallelLines } from './roadBundles.js';
 import {
   mergeRoadLines,
   RoadIndex,
+  ROAD_INDEX_MARGIN_M,
   knownCoverage,
   stitchPlatforms,
 } from './roadGraph.js';
@@ -749,6 +750,53 @@ export function crossedDeckAt(index, segment, si, cos = BRIDGE_CROSSING_COS) {
 }
 
 /**
+ * Altitude de plate-forme au point `(x, z)`, remblai et tablier de pont
+ * compris — c'est la question qu'un consommateur externe se pose pour poser
+ * quelque chose *sur* la chaussée plutôt que sur le terrain qu'elle surplombe
+ * ou entaille. `null` hors chaussée : au terrain de répondre alors.
+ *
+ * À un croisement en dénivelé, deux chaussées peuvent recouvrir le même
+ * point en plan. `ahead` — un vecteur, pas forcément unitaire, pris dans le
+ * sens du déplacement — départage en faveur de celle dont le tracé va dans
+ * cette direction : l'autre est celle qu'on franchit, pas celle qu'on suit.
+ * Sans lui, la plus proche l'emporte, comme `RoadIndex.query`.
+ *
+ * @param {RoadNetwork} roads
+ * @param {number} x
+ * @param {number} z
+ * @param {{x:number, z:number}|null} [ahead]
+ * @param {number} [margin]
+ * @returns {number|null}
+ */
+export function platformPositionAt(roads, x, z, ahead = null, margin = ROAD_INDEX_MARGIN_M) {
+  const index = roads?.elevationIndex;
+  if (!index) return null;
+  const hits = index.queryAll(x, z, margin);
+  if (hits.length === 0) return null;
+
+  let hit = hits[0];
+  if (hits.length > 1 && ahead && (ahead.x !== 0 || ahead.z !== 0)) {
+    const length = Math.hypot(ahead.x, ahead.z);
+    const dirX = ahead.x / length;
+    const dirZ = ahead.z / length;
+    let bestAlignment = -Infinity;
+    for (const candidate of hits) {
+      const a = candidate.segment.path[candidate.row];
+      const b = candidate.segment.path[candidate.row + 1];
+      const rowLength = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+      const alignment = Math.abs(
+        ((b.x - a.x) / rowLength) * dirX + ((b.z - a.z) / rowLength) * dirZ
+      );
+      if (alignment > bestAlignment) {
+        bestAlignment = alignment;
+        hit = candidate;
+      }
+    }
+  }
+  return index.deckAt(hit);
+}
+
+/**
  * Extrait les tronçons de chaussée d'un jeu de tuiles, ré-échantillonnés et
  * dressés de niveau. Contrat entre la chaussée et son mobilier : les deux ont
  * besoin exactement des mêmes tronçons. `platform` porte l'altitude de
@@ -976,6 +1024,13 @@ export class RoadNetwork {
     this.roadSegments = [];
     /** Index spatial des chaussées construites (herbe, recouture des carrefours). @type {RoadIndex|null} */
     this.index = null;
+    /**
+     * Même réseau, mais tablier de pont et tunnel compris — voir
+     * `platformPositionAt`. `index` les ignore volontairement (l'herbe pousse
+     * sous un viaduc) ; celui-ci les sert précisément pour ça.
+     * @type {RoadIndex|null}
+     */
+    this.elevationIndex = null;
     /** Carrefours de la dernière reconstruction (un feu n'a de sens qu'à un carrefour). @type {Array<Object>} */
     this.junctions = [];
   }
@@ -1041,6 +1096,12 @@ export class RoadNetwork {
     // laissée à sa valeur par défaut, l'entaille finissait en marche verticale.
     const index = new RoadIndex(collected, { margin: ROAD_CUT_M + ROAD_CUT_BLEND_M });
     stitchPlatforms(collected, index);
+    // Même marge, tabliers compris : `platformPositionAt` doit pouvoir lire
+    // l'altitude d'un pont ou d'un tunnel, ce que `index` refuse par construction.
+    const elevationIndex = new RoadIndex(collected, {
+      margin: ROAD_CUT_M + ROAD_CUT_BLEND_M,
+      includeWorks: true,
+    });
 
     const buffers = {};
     const markingBuffer = createProfileBuffer();
@@ -1131,6 +1192,7 @@ export class RoadNetwork {
     this.junctions = junctions;
     this.junctionAreas = areas;
     this.index = index;
+    this.elevationIndex = elevationIndex;
     this.segments = segments;
     this.crossings = junctionsDrawn;
     this.markings = markings;
@@ -1432,6 +1494,7 @@ export class RoadNetwork {
     this.disposed = true;
     this.roadSegments = [];
     this.index = null;
+    this.elevationIndex = null;
     this.junctionAreas = null;
     this.bubble?.setRoadCut?.(null); // sinon un changement d'observateur laisse des tranchées vides
     for (const store of [this.meshes, this.junctionMeshes]) {

@@ -1165,8 +1165,17 @@ export class RoadIndex {
   /**
    * @param {Array<Object>} segments Tronçons produits par `collectRoadSegments`.
    * @param {Object} [options]
+   * @param {boolean} [options.includeWorks] Inscrit aussi les lignes de pont et
+   *        de tunnel. Réservé à l'index d'altitude (`RoadNetwork.elevationIndex`) :
+   *        le tablier a une plate-forme à donner, quand l'emprise au sol
+   *        (`RoadNetwork.index`, l'usage par défaut) doit au contraire les
+   *        ignorer pour laisser l'herbe et les arbres au paysage qu'ils
+   *        survolent ou traversent.
    */
-  constructor(segments, { cell = ROAD_INDEX_CELL_M, margin = ROAD_INDEX_MARGIN_M } = {}) {
+  constructor(
+    segments,
+    { cell = ROAD_INDEX_CELL_M, margin = ROAD_INDEX_MARGIN_M, includeWorks = false } = {}
+  ) {
     this.segments = segments || [];
     this.cell = cell;
     this.margin = margin;
@@ -1181,7 +1190,7 @@ export class RoadIndex {
       const works = segment.works;
 
       for (let r = 0; r < path.length - 1; r++) {
-        if (works?.[r] && works[r + 1]) continue;
+        if (!includeWorks && works?.[r] && works[r + 1]) continue;
         const a = path[r];
         const b = path[r + 1];
         const minX = Math.floor((Math.min(a.x, b.x) - reach) / cell);
@@ -1236,6 +1245,37 @@ export class RoadIndex {
   /** Vrai si le point tombe sur une chaussée, marge comprise. */
   covers(x, z, margin = 0) {
     return this.query(x, z, margin) !== null;
+  }
+
+  /**
+   * Toutes les chaussées qui recouvrent le point, de la plus proche à la plus
+   * lointaine — `query` ne rend que la première. C'est ce qu'il faut à un
+   * croisement en dénivelé : deux chaussées peuvent s'y superposer en plan, et
+   * seul l'appelant sait laquelle des deux il suit.
+   *
+   * @param {number} x
+   * @param {number} z
+   * @param {number} [margin]
+   * @returns {Array<{segment:Object, index:number, row:number, t:number, distance:number}>}
+   */
+  queryAll(x, z, margin = 0) {
+    const reach = Math.min(margin, this.margin);
+    const bucket = this.buckets.get(cellKey(Math.floor(x / this.cell), Math.floor(z / this.cell)));
+    if (!bucket) return [];
+
+    const hits = [];
+    for (let i = 0; i < bucket.length; i += 2) {
+      const index = bucket[i];
+      const row = bucket[i + 1];
+      const segment = this.segments[index];
+      const a = segment.path[row];
+      const b = segment.path[row + 1];
+      const hit = distanceToSegment(x, z, a.x, a.z, b.x, b.z);
+      if (hit.distance > segment.halfWidth + reach) continue;
+      hits.push({ segment, index, row, t: hit.t, distance: hit.distance });
+    }
+    hits.sort((p, q) => p.distance - q.distance);
+    return hits;
   }
 
   /**
