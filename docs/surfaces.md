@@ -351,11 +351,20 @@ la réparation faite, est là où elle irait. Ce n'est pas fait.
 
 ### Couverture proche et transitions
 
-L'herbe proche est une trame de brins facettés sans texture, répartis sur le
-sol dans une maille stratifiée. Sa couleur de pied et de pointe et sa largeur
-se règlent dans `theme.grass.bladeColors` et `bladeWidth`. Le sol garde sa
-couleur jusqu'à l'horizon ; les brins s'effacent entre 40 et 65 mètres.
-Les anciennes silhouettes de touffes et leurs fleurs ne sont plus rendues.
+L'herbe proche est une trame sans texture : neuf brins fins à trois triangles
+occupent toute la surface d'une maille, sans pied commun. Leur couleur est
+uniforme sur la hauteur (`theme.grass.bladeColors.root`) ; `bladeWidth` règle
+leur largeur relative. Les racines suivent le plan local du terrain.
+Le sol porte la continuité verte jusqu'à l'horizon ; les brins s'effacent
+entre 35 et 55 mètres. Les fleurs blanches, jaunes et les coquelicots sont
+rendus séparément, avec les mêmes règles de présence, de sol et d'exclusion.
+Leurs couleurs se règlent dans `theme.grass.flowers`.
+
+La référence visuelle vient du [fil BOTW fourni](https://www.reddit.com/r/howdidtheycodeit/comments/dshc03/how_does_botw_render_the_grass/).
+Le [tutoriel de Roystan](https://roystan.net/articles/grass-shader/) qui y est
+cité détaille les brins courbés et leur répartition ; il ne documente pas
+l'implémentation de Nintendo. Ici, la géométrie est instanciée avec Three.js,
+sans geometry shader ni tessellation dynamique.
 
 Les cultures conservent leurs atlas spécifiques. Le semis de chaque bande
 est chargé avec une réserve autour de la portée visible. Le fondu est

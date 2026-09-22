@@ -1,3 +1,4 @@
+import { FlowerCover } from './flowerCover.js';
 import { InstanceCells } from './instanceCells.js';
 import { COVER_ATTRIBUTE, installCoverTransition, paddedCoverBands } from '../materials/coverTransition.js';
 import { createGrassBlade } from './grassGeometry.js';
@@ -9,17 +10,13 @@ import { createGrassBlade } from './grassGeometry.js';
  */
 
 import {
-  createGrassAtlasCanvas,
   GRASS_ATLAS_COLS,
-  GRASS_ATLAS_OFFSETS,
   GRASS_VARIANTS,
 } from '../materials/proceduralTextures.js';
 import {
   createFoliageMaterial,
-  createCrossedQuads,
   advanceFoliageWind,
   setFoliageWind,
-  ATLAS_ATTRIBUTE,
   GROUND_GRAIN_ATTRIBUTE,
 } from '../materials/foliageMaterial.js';
 import { makeRandom } from '../materials/proceduralTextures.js';
@@ -28,8 +25,6 @@ import { CORRIDOR_MARGIN_M, inCorridor } from './roadCorridor.js';
 import {
   coverBand,
   coverBandRing,
-  coverBandFade,
-  coverBandDistance,
   coverHeightFade,
   coverMassDensity,
   coverBandsRadius,
@@ -513,14 +508,16 @@ export class GroundCover {
     this._anchor = null;
     this._instanceCells = new InstanceCells();
     this._frame = null;
-    this._bands = [coverBand({ from: 0, to: 65, cell: 2.2, perCell: 16, fadeOut: 25, salt: 0 })];
+    this._bands = [coverBand({ from: 0, to: 55, cell: 2.2, perCell: 16, fadeOut: 20, salt: 0 })];
     this._cells = coverBandRing(paddedCoverBands(this._bands, GRASS_REBUILD_M));
     // Une seule allocation, dimensionnée sur la bande la plus fournie.
     const widest = Math.max(...this._bands.map((band) => band.perCell));
     this._tufts = new Float32Array(widest * GRASS_TUFT_STRIDE);
 
-    this.geometry = createGrassBlade(THREE, theme.grass.bladeColors ?? defaultTheme.grass.bladeColors);
+    this.geometry = createGrassBlade(THREE, theme.grass.bladeColors ?? defaultTheme.grass.bladeColors, theme.grass.bladeWidth ?? defaultTheme.grass.bladeWidth);
     this._coverBands = new Float32Array(count * 4);
+    this._flowerVariants = new Float32Array(count);
+    this.flowers = new FlowerCover(THREE, scene, theme.grass.flowers ?? defaultTheme.grass.flowers);
     this.geometry.setAttribute(COVER_ATTRIBUTE, new THREE.InstancedBufferAttribute(this._coverBands, 4).setUsage(THREE.DynamicDrawUsage));
     // Grain low poly par touffe : la matière lue au semis (`coverGrainFor`),
     // pour que la touffe suive la même bosse que le sol sous elle.
@@ -591,6 +588,7 @@ export class GroundCover {
   /** Fait avancer le vent. À appeler une fois par image, avec le delta en secondes. */
   advance(delta) {
     advanceFoliageWind(this.material, delta);
+    this.flowers.advance(delta);
   }
 
   /**
@@ -599,6 +597,7 @@ export class GroundCover {
    */
   setWind(field) {
     setFoliageWind(this.material, field);
+    this.flowers.setWind(field);
   }
 
   /**
@@ -611,6 +610,7 @@ export class GroundCover {
     if (this.disposed || !this.bubble?.frame) return false;
 
     this.material.userData.coverObserver.value.set(x, z);
+    this.flowers.update(x, z);
     const frameChanged = this._frame !== this.bubble.frame;
     if (!force && !frameChanged && this._anchor) {
       if (Math.hypot(x - this._anchor.x, z - this._anchor.z) < GRASS_REBUILD_M) return false;
@@ -641,7 +641,7 @@ export class GroundCover {
     // que les deux brouillent la limite sur la même largeur.
     const fringeM = this.theme.terrain.edgeWarpM ?? 0;
     let placed = 0;
-    const streams = [[mesh.instanceMatrix.array,16],[mesh.instanceColor.array,3],[this._coverBands,4],[this._grainParams,2]];
+    const streams = [[mesh.instanceMatrix.array,16],[mesh.instanceColor.array,3],[this._coverBands,4],[this._grainParams,2],[this._flowerVariants,1]];
 
     for (const cell of this._cells) {
       if (placed >= capacity) break;
@@ -696,9 +696,6 @@ export class GroundCover {
       const coverLook = coverGrassFor(cover, this.theme.surfaces);
       const grain = coverGrainFor(cover, this.theme.surfaces);
 
-      const fade = coverBandFade(coverBandDistance(centerX, centerZ, cellX, cellZ), band);
-
-      const heightFade = 1;
       // Et ce que l'ombre des arbres en fait, par-dessus : une litière rase.
       // Après le fondu : hors des bois elle ne coûte rien, mais dans un bois
       // elle alloue, et une maille écartée n'a pas à la payer.
@@ -722,8 +719,8 @@ export class GroundCover {
 
         const x = gx * band.cell + (i % 4 + 0.2 + (tufts[at] / band.cell - gx) * 0.6) * band.cell / 4;
         const z = gz * band.cell + (Math.floor(i / 4) + 0.2 + (tufts[at + 1] / band.cell - gz) * 0.6) * band.cell / 4;
-        if (inCorridor(index, x, z, GRASS_ROAD_MARGIN_M)) continue;
-        if (pavement?.covers(x, z, 0)) continue;
+        if (inCorridor(index, x, z, GRASS_ROAD_MARGIN_M + band.cell / 4 * Math.SQRT1_2)) continue;
+        if (pavement?.covers(x, z, band.cell / 4 * Math.SQRT1_2)) continue;
 
         const tint = tufts[at + 5];
         const height =
@@ -732,16 +729,23 @@ export class GroundCover {
           coverLook.height *
           floorLook.height *
           this._wash.grassHeight *
-          heightFade *
           band.rise *
           (1 + poolEdge * POOL_EDGE_HEIGHT_BOOST);
         const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
-        const width = (grass.bladeWidth ?? defaultTheme.grass.bladeWidth) * (0.8 + tufts[at + 3] * 0.4); // élargi, pas élevé
+        const width = band.cell / 4;
 
         this._position.set(x, y, z);
         this._quaternion.setFromAxisAngle(this._axis, tufts[at + 4] * Math.PI);
         this._scale.set(width, height, width);
         this._matrix.compose(this._position, this._quaternion, this._scale);
+        // Les racines réparties dans la maille suivent le plan local du sol.
+        // Le cisaillement laisse les brins verticaux, même sur une pente.
+        const probe = width * .5;
+        const slopeX = (bubble.surfaceElevationAtLocal(x + probe, z) * bubble.verticalScale - y) / probe;
+        const slopeZ = (bubble.surfaceElevationAtLocal(x, z + probe) * bubble.verticalScale - y) / probe;
+        const m = this._matrix.elements;
+        m[1] = slopeX * m[0] + slopeZ * m[2];
+        m[9] = slopeX * m[8] + slopeZ * m[10];
         mesh.setMatrixAt(placed, this._matrix);
         // Fleurissement décidé par le sol, pas par un tirage libre ; survit au
         // changement d'échelle. Tiré **avant** la teinte, qui en dépend : voir
@@ -751,6 +755,7 @@ export class GroundCover {
             ? 0
             : grassVariantFor(edgeSample, tufts[at + 6], this.theme.grass);
         if (cell.band > 0) variant = grassMassVariant(variant, tufts[at + 5]);
+        this._flowerVariants[placed] = variant;
 
         const dry = (1 - green) * 0.5 + tint * 0.35;
         const wash = isFloweringVariant(variant) ? COVER_GRASS_NEUTRAL.tint : this._wash.grass;
@@ -772,6 +777,7 @@ export class GroundCover {
     this._instanceCells.end();
     this.geometry.getAttribute(COVER_ATTRIBUTE).needsUpdate = true;
     mesh.count = placed;
+    this.flowers.sync(mesh, this._flowerVariants, this._coverBands);
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     this.geometry.getAttribute(GROUND_GRAIN_ATTRIBUTE).needsUpdate = true;
@@ -785,5 +791,6 @@ export class GroundCover {
     this.mesh.dispose?.();
     this.geometry.dispose();
     this.material.dispose();
+    this.flowers.dispose();
   }
 }

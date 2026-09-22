@@ -2,7 +2,8 @@
  * Le bruit est attaché à la surface, pour éviter un motif qui nage à l'écran.
  */
 export const COVER_ATTRIBUTE = 'aCoverBand';
-export function installCoverTransition(material, THREE) {
+export function installCoverTransition(material, THREE, { mode = 'dither' } = {}) {
+  if (mode === 'alpha') { material.transparent = true; material.depthWrite = false; }
   const observer = { value: new THREE.Vector2() };
   material.userData.coverObserver = observer;
   const previous = material.onBeforeCompile;
@@ -25,12 +26,19 @@ export function installCoverTransition(material, THREE) {
       varying float vCoverFade;
       varying vec3 vCoverPoint;`)
       .replace('#include <alphatest_fragment>', `#include <alphatest_fragment>
-      vec3 coverCell = floor(vCoverPoint * 24.0);
+      ${mode === 'alpha' ? `
+      #ifdef DEPTH_PACKING
+        if (vCoverFade < 0.5) discard;
+      #else
+        if (vCoverFade <= 0.001) discard;
+        diffuseColor.a *= smoothstep(0.0, 1.0, vCoverFade);
+      #endif
+      ` : `vec3 coverCell = floor(vCoverPoint * 24.0);
       float coverThreshold = fract(sin(dot(coverCell,vec3(12.9898,78.233,37.719)))*43758.5453);
-      if (vCoverFade <= coverThreshold) discard;`);
+      if (vCoverFade <= coverThreshold) discard;`}`);
   };
   const cacheKey = material.customProgramCacheKey.bind(material);
-  material.customProgramCacheKey = () => `${cacheKey()}-continuous-cover-v1`;
+  material.customProgramCacheKey = () => `${cacheKey()}-continuous-cover-${mode}-v2`;
 }
 
 export function paddedCoverBands(bands, travel) {
