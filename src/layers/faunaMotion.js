@@ -164,6 +164,7 @@ export const FAUNA_REPERTOIRE = {
   cervid: ['graze', 'graze', 'amble', 'watch', 'watch', 'walk', 'run'],
   boar: ['graze', 'graze', 'amble', 'amble', 'walk'],
   canid: ['sniff', 'sniff', 'walk', 'walk', 'watch', 'run'],
+  fox: ['watch', 'watch', 'run', 'run'],
   bear: ['graze', 'amble', 'amble', 'walk', 'watch'],
   // Un chat passe le plus clair de son temps à guetter, immobile — il ne
   // broute pas et n'a pas de pré à parcourir.

@@ -2,8 +2,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { createFaunaGeometries } from '../src/models/fauna/index.js';
-import { faunaBodyPose } from '../src/layers/faunaLayer.js';
+import { createFaunaGeometries, FAUNA_SPECIES } from '../src/models/fauna/index.js';
+import { faunaBodyPose, faunaStride } from '../src/layers/faunaLayer.js';
 test('chaque espèce porte des genoux uniquement sur ses pattes et rattache les oreilles à la tête', () => {
   const {geometries} = createFaunaGeometries(THREE);
   for (const [kind, geometry] of Object.entries(geometries)) {
@@ -39,4 +39,19 @@ test('le bond alterne appui et vol, reste au-dessus du sol et se raccorde sans s
   }
   assert.ok(Math.abs(pose(Math.PI*2-1e-5).pitch-pose(0).pitch)<1e-5);
   assert.equal(faunaBodyPose(2,0,0,1).lift,0);
+});
+
+test('les bonds couvrent plusieurs mètres et les allures calmes respectent les espèces', () => {
+  for(const kind of ['fox','deer','doe','goat','reindeer']) {
+    const spec=FAUNA_SPECIES[kind];
+    const stride=faunaStride(spec,spec.runMS);
+    assert.ok(stride>=3.8,kind);
+    assert.ok(stride/spec.runMS>1.2,kind);
+  }
+  for(const kind of ['wolf','cat','dog','bear']) {
+    const spec=FAUNA_SPECIES[kind];
+    assert.ok(!spec.bound && !spec.gallop,kind);
+    assert.ok(spec.runMS<=1.8,kind);
+  }
+  assert.equal(FAUNA_SPECIES.bear.runMS,FAUNA_SPECIES.bear.walkMS);
 });

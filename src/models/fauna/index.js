@@ -127,7 +127,7 @@ export const FAUNA_SPECIES = {
   cow: { roam: 1, family: 'grazer', strideM: 1.5, swingRad: 0.4, walkMS: 1.0, runMS: 3.4, bound: false, gallop: true },
   sheep: { roam: 0.85, family: 'grazer', strideM: 0.85, swingRad: 0.45, walkMS: 0.8, runMS: 3.0, bound: false, gallop: true },
   // La chèvre apparie les pattes ; la brebis décale ses battues au galop.
-  goat: { roam: 0.85, family: 'grazer', strideM: 0.85, swingRad: 0.48, walkMS: 0.85, runMS: 3.2, bound: true },
+  goat: { roam: 0.85, family: 'grazer', strideM: 0.85, swingRad: 0.48, walkMS: 0.85, runMS: 3.2, bound: true, runStrideM: 4.5 },
   horse: { roam: 1.25, family: 'grazer', strideM: 2.0, swingRad: 0.42, walkMS: 1.5, runMS: 6.5, bound: false, gallop: true },
   donkey: { roam: 1, family: 'grazer', strideM: 1.4, swingRad: 0.42, walkMS: 1.2, runMS: 4.5, bound: false, gallop: true },
   // La poule n'a que deux pattes et picore au lieu de brouter : sa foulée est
@@ -137,21 +137,21 @@ export const FAUNA_SPECIES = {
 
   // Les cervidés bondissent : une foulée longue, deux battues, et le dos qui
   // travaille. C'est la seule allure à laquelle on les reconnaît en lisière.
-  deer: { roam: 1.2, family: 'cervid', strideM: 1.6, swingRad: 0.46, walkMS: 1.2, runMS: 7.0, bound: true },
-  doe: { roam: 1.2, family: 'cervid', strideM: 1.45, swingRad: 0.46, walkMS: 1.2, runMS: 7.0, bound: true },
-  reindeer: { roam: 1.2, family: 'cervid', strideM: 1.7, swingRad: 0.44, walkMS: 1.2, runMS: 6.0, bound: true },
+  deer: { roam: 1.2, family: 'cervid', strideM: 1.6, swingRad: 0.46, walkMS: 1.2, runMS: 4.5, bound: true, runStrideM: 6 },
+  doe: { roam: 1.2, family: 'cervid', strideM: 1.45, swingRad: 0.46, walkMS: 1.2, runMS: 4.2, bound: true, runStrideM: 5.5 },
+  reindeer: { roam: 1.2, family: 'cervid', strideM: 1.7, swingRad: 0.44, walkMS: 1.2, runMS: 4.2, bound: true, runStrideM: 6 },
   boar: { roam: 0.9, family: 'boar', strideM: 1.0, swingRad: 0.42, walkMS: 0.9, runMS: 5.5, bound: false, gallop: true },
 
   // Les carnivores ne broutent pas : leur tête plonge pour flairer, moins bas
   // et bien moins longtemps. `faunaMotion` en tire des conduites différentes.
-  fox: { roam: 1.1, family: 'canid', strideM: 0.8, swingRad: 0.58, walkMS: 1.0, runMS: 6.0, bound: true },
-  wolf: { roam: 1.4, family: 'canid', strideM: 1.4, swingRad: 0.56, walkMS: 1.4, runMS: 8.0, bound: false, gallop: true },
-  bear: { roam: 1.2, family: 'bear', strideM: 1.5, swingRad: 0.34, walkMS: 1.1, runMS: 5.5, bound: false, gallop: true },
+  fox: { roam: 1.1, family: 'fox', strideM: 0.8, swingRad: 0.58, walkMS: 1.0, runMS: 2.6, bound: true, runStrideM: 3.8 },
+  wolf: { roam: 1.4, family: 'canid', strideM: 1.4, swingRad: 0.56, walkMS: 1.4, runMS: 1.8, bound: false, gallop: false},
+  bear: { roam: 1.2, family: 'bear', strideM: 1.5, swingRad: 0.34, walkMS: 0.8, runMS: 0.8, bound: false, gallop: false},
 
   // Bêtes du bâti, pas du pré : rayon d'errance court, elles ne s'éloignent
-  // pas de la maison. Le chat bondit quand il détale, le chien passe au galop.
-  cat: { roam: 0.35, family: 'cat', strideM: 0.4, swingRad: 0.52, walkMS: 0.55, runMS: 3.4, bound: true },
-  dog: { roam: 0.55, family: 'dog', strideM: 0.75, swingRad: 0.5, walkMS: 0.9, runMS: 4.8, bound: false, gallop: true },
+  // pas de la maison. Chat et chien conservent un trot tranquille.
+  cat: { roam: 0.35, family: 'cat', strideM: 0.4, swingRad: 0.52, walkMS: 0.55, runMS: 1.1, bound: false},
+  dog: { roam: 0.55, family: 'dog', strideM: 0.75, swingRad: 0.5, walkMS: 0.9, runMS: 1.6, bound: false, gallop: false},
 };
 
 /**

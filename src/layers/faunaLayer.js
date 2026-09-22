@@ -444,7 +444,7 @@ export class FaunaLayer {
         const bound = boundMix(state.speed, spec);
         // La foulée suit le chemin réellement parcouru, jamais le temps : une
         // bête qui ralentit ralentit ses pattes, et rien ne patine.
-        const phase = (state.distance / spec.strideM) * Math.PI * 2;
+        const phase = (state.distance / faunaStride(spec, animal.circuit.speed)) * Math.PI * 2;
         const pose = faunaBodyPose(phase, gait, bound, spec.strideM * (spec.gallop ? 0.6 : 1));
         this._position.set(state.x, state.y + pose.lift * animal.scale - FAUNA_SINK_M, state.z);
         this._euler.set(pose.pitch, state.heading, 0, 'YXZ');
@@ -495,12 +495,18 @@ export function boundMix(speed, spec) {
 /** Battue au sol puis trajectoire parabolique ; aucune plongée sous le sol. */
 export function faunaBodyPose(phase, gait, bound, strideM) {
   const cycle = ((phase / (2 * Math.PI)) % 1 + 1) % 1;
-  const flight = Math.max(0, Math.min(1, (cycle - 0.18) / 0.64));
+  const flight = Math.max(0, Math.min(1, (cycle - 0.1) / 0.8));
   const arc = 4 * flight * (1 - flight);
   const walk = BODY_BOB * strideM * gait * (1 - Math.cos(phase * 2));
   const leap = strideM * 0.19 * Math.min(gait, 1.5) * arc;
   return {
     lift: walk * (1 - bound) + leap * bound,
-    pitch: -0.13 * Math.sin(phase) * bound,
+    pitch: -0.08 * Math.sin(phase) * bound,
   };
+}
+
+/** Une longueur fixe pour le circuit évite un saut de phase aux haltes. */
+export function faunaStride(spec, speed = spec.walkMS) {
+  const running = boundMix(speed, spec);
+  return spec.strideM + ((spec.runStrideM ?? spec.strideM) - spec.strideM) * running;
 }

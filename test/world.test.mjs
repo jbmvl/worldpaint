@@ -5681,9 +5681,9 @@ test('deux bêtes voisines ne sont pas synchrones', () => {
 test('le bond ne concerne que les espèces qui bondissent, et seulement lancées', () => {
   // C'est le nombre qui décide de tout : une espèce qui trotte ne bondit
   // jamais, une espèce qui bondit ne le fait qu'une fois lancée.
-  const bondissent = ['goat', 'deer', 'doe', 'reindeer', 'fox', 'cat'];
-  const trottinent = ['chicken'];
-  const galopent = ['cow', 'sheep', 'horse', 'donkey', 'boar', 'wolf', 'bear', 'dog'];
+  const bondissent = ['goat', 'deer', 'doe', 'reindeer', 'fox'];
+  const trottinent = ['chicken', 'wolf', 'cat', 'dog', 'bear'];
+  const galopent = ['cow', 'sheep', 'horse', 'donkey', 'boar'];
   for (const kind of galopent) {
     const spec = FAUNA_SPECIES[kind];
     assert.equal(boundMix(spec.walkMS, spec), 0);
