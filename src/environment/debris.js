@@ -6,11 +6,13 @@
 import { defaultTheme } from '../themes/default.js';
 import { windAxis } from './weather.js';
 
-const SPREAD_M = 20;
+export const DEBRIS_SPREAD_M = 60;
+const SPREAD_M = DEBRIS_SPREAD_M;
 /** Hauteur maximale atteinte pleinement emporté, en mètres. */
 const HEIGHT_M = 3.2;
 /** Nombre maximal de particules. Volontairement modeste : « quelques ». */
-const MAX_DEBRIS = 900;
+export const MAX_DEBRIS = 180;
+export const DEBRIS_WIND_START = 0.3;
 
 /** Générateur graine, façon mulberry32 — voir `precipitation.js`. */
 function seeded(seed) {
@@ -40,12 +42,15 @@ function debrisGeometry(THREE, look) {
   geometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(positions),3));
   geometry.setAttribute('aBase',new THREE.BufferAttribute(new Float32Array(base),3));
   geometry.setAttribute('aPhase',new THREE.BufferAttribute(new Float32Array(phase),1));
+  geometry.setAttribute('aGround',new THREE.BufferAttribute(new Float32Array(phase.length),1));
   return geometry;
 }
 
 function debrisMaterial(THREE) {
   const uniforms = {
     uTime: { value: 0 },
+    uTravel: { value: new THREE.Vector2() },
+    uCenter: { value: new THREE.Vector2() },
     /** Direction et force du vent au sol — même vecteur que la pluie/neige. */
     uWind: { value: new THREE.Vector2(0, 0) },
     /** 0 au sol, 1 pleinement emporté. Voir l'en-tête. */
@@ -62,6 +67,9 @@ function debrisMaterial(THREE) {
     vertexShader: `
       attribute vec3 aBase;
       attribute float aPhase;
+      attribute float aGround;
+      uniform vec2 uTravel;
+      uniform vec2 uCenter;
       uniform float uTime;
       uniform vec2 uWind;
       uniform float uLift;
@@ -69,15 +77,11 @@ function debrisMaterial(THREE) {
       varying float vEdge;
 
       void main() {
-        // Frémissement au sol, amplitude de vol en l'air, mélangés par lift.
-        float settle = sin(uTime * 1.3 + aPhase) * 0.05;
-        float airborne = aBase.y * ${HEIGHT_M.toFixed(1)} * (0.5 + 0.5 * sin(uTime * 0.4 + aPhase));
-        float y = 0.12 + mix(settle, airborne, uLift);
-
-        // Dérive horizontale le long du vent, repliée en boucle dans la boîte.
-        float speed = mix(0.1, 1.0, uLift);
-        float wx = mod(aBase.x + uWind.x * uTime * speed + ${SPREAD_M.toFixed(1)}, ${(2 * SPREAD_M).toFixed(1)}) - ${SPREAD_M.toFixed(1)};
-        float wz = mod(aBase.z + uWind.y * uTime * speed + ${SPREAD_M.toFixed(1)}, ${(2 * SPREAD_M).toFixed(1)}) - ${SPREAD_M.toFixed(1)};
+        float airborne = aBase.y * ${HEIGHT_M.toFixed(1)} * (0.65 + 0.35 * sin(uTime * 0.7 + aPhase));
+        float y = aGround + 0.025 + airborne * uLift;
+        // Le déplacement intégré et le centre se compensent en coordonnées monde.
+        float wx = mod(aBase.x + uTravel.x - uCenter.x + ${SPREAD_M.toFixed(1)}, ${(2 * SPREAD_M).toFixed(1)}) - ${SPREAD_M.toFixed(1)};
+        float wz = mod(aBase.z + uTravel.y - uCenter.y + ${SPREAD_M.toFixed(1)}, ${(2 * SPREAD_M).toFixed(1)}) - ${SPREAD_M.toFixed(1)};
 
         // Tournoiement, nul au sol, marqué en l'air.
         float swirl = uLift * 0.5;
@@ -87,8 +91,8 @@ function debrisMaterial(THREE) {
           wz + cos(uTime * 0.8 + aPhase * 2.1) * swirl
         );
 
-        float roll = uTime*(1.0+uLift*3.0)+aPhase;
-        float pitch = sin(uTime*2.3+aPhase)*1.2;
+        float roll = uLift * (uTime * 2.5 + aPhase);
+        float pitch = sin(uTime*2.3+aPhase) * uLift * 0.9;
         vec3 leaf = vec3(position.x*cos(roll)-position.y*sin(roll),position.x*sin(roll)+position.y*cos(roll),position.z);
         leaf.yz = mat2(cos(pitch),-sin(pitch),sin(pitch),cos(pitch))*leaf.yz;
         vLeafLight = 0.75+0.25*abs(cos(roll));
@@ -135,7 +139,7 @@ export class Debris {
 
     this.points = new THREE.Mesh(debrisGeometry(THREE, look), material);
     this.points.name = 'debris';
-    // La boîte est recentrée à chaque image sur la caméra : pas de culling frustum.
+    // Les coordonnées locales suivent la fenêtre, les positions monde restent fixes.
     this.points.frustumCulled = false;
     this.points.visible = false;
     this.points.renderOrder = 9;
@@ -149,20 +153,22 @@ export class Debris {
    */
   setWeather(weather) {
     // Éteint dès qu'il pleut ou neige (précipitation.js porte déjà l'eau).
-    const active = weather.precipitation <= 0 && weather.wind > 0;
+    const active = weather.precipitation <= 0 && weather.wind > DEBRIS_WIND_START;
     this.points.visible = active;
-    if (!active) return;
+    if (!active) {
+      this.uniforms.uWind.value.set(0, 0);
+      this.uniforms.uLift.value = 0;
+      this.points.geometry.setDrawRange(0, 0);
+      return;
+    }
 
-    // Racine carrée : le compte visible croît plus vite que l'impression de vent.
-    const count = Math.round(MAX_DEBRIS * Math.sqrt(weather.wind));
-    this.points.geometry.setDrawRange(0, count * 12);
-
-    // Seuil bas (0.3) au-dessus de la brise par défaut (0.25), pour que `lift`
-    // reste à 0 à vent ordinaire.
-    this.uniforms.uLift.value = this.THREE.MathUtils.smoothstep(weather.wind, 0.3, 0.8);
-    const [wx, wz] = windAxis([weather.wind * 2.6, weather.wind * 1.1], weather);
+    const strength = (weather.wind - DEBRIS_WIND_START) / (1 - DEBRIS_WIND_START);
+    this.points.geometry.setDrawRange(0, Math.round(MAX_DEBRIS * strength) * 12);
+    this.uniforms.uLift.value = this.THREE.MathUtils.smoothstep(weather.wind, 0.45, 1);
+    const speed = 0.12 + 8 * strength * strength;
+    const [wx, wz] = windAxis([speed / Math.hypot(1, .45), speed * .45 / Math.hypot(1, .45)], weather);
     this.uniforms.uWind.value.set(wx, wz);
-    this.uniforms.uOpacity.value = 0.7 + weather.wind * 0.25;
+    this.uniforms.uOpacity.value = Math.min(1, strength * 5) * 0.85;
   }
 
   /** Teinte des particules — voir `Precipitation.setTint`. */
@@ -172,24 +178,28 @@ export class Debris {
 
   /** Fait dériver. À appeler une fois par image, avec le delta en secondes. */
   advance(delta) {
-    if (!Number.isFinite(delta)) return;
-    this.uniforms.uTime.value = (this.uniforms.uTime.value + delta) % 3600;
+    if (!Number.isFinite(delta) || delta < 0) return;
+    this.uniforms.uTime.value += delta;
+    const travel = this.uniforms.uTravel.value, wind = this.uniforms.uWind.value;
+    travel.set((travel.x + wind.x * delta) % (2 * SPREAD_M), (travel.y + wind.y * delta) % (2 * SPREAD_M));
   }
 
-  /**
-   * Recentre la boîte au sol, sous l'observateur.
-   *
-   * @param {{x:number,y:number,z:number}} position Un point au niveau du sol
-   *        (pas la caméra elle-même — ce module ajoute au plus `HEIGHT_M`
-   *        par-dessus `position.y`) ; trouver ce niveau est à l'application.
-   *        `x`/`z` se recentrent sur une maille du monde, pas en continu —
-   *        voir `Precipitation.follow`.
-   */
-  follow(position) {
-    const step = SPREAD_M / 3;
-    const x = Math.round(position.x / step) * step;
-    const z = Math.round(position.z / step) * step;
-    this.points.position.set(x, position.y, z);
+  /** Déplace la fenêtre sans déplacer les feuilles et échantillonne leur sol. */
+  follow(position, sampleGround = null) {
+    this.uniforms.uCenter.value.set(position.x, position.z);
+    this.points.position.set(position.x, 0, position.z);
+    if (!this.points.visible) return;
+    const base = this.points.geometry.attributes.aBase.array;
+    const ground = this.points.geometry.attributes.aGround;
+    const travel = this.uniforms.uTravel.value;
+    const wrap = v => ((v + SPREAD_M) % (2 * SPREAD_M) + 2 * SPREAD_M) % (2 * SPREAD_M) - SPREAD_M;
+    for (let i = 0; i < this.points.geometry.drawRange.count; i += 12) {
+      const x = position.x + wrap(base[i * 3] + travel.x - position.x);
+      const z = position.z + wrap(base[i * 3 + 2] + travel.y - position.z);
+      const y = sampleGround?.(x, z) ?? position.y;
+      ground.array.fill(y, i, i + 12);
+    }
+    ground.needsUpdate = true;
   }
 
   dispose() {

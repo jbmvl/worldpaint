@@ -469,21 +469,20 @@ test('la libération des débris retire les particules de la scène', () => {
   assert.equal(scene.children.length, 0);
 });
 
-test('les débris se recentrent aussi sur une maille, pas en continu', () => {
+test('le déplacement de la fenêtre compense celui du centre sans resemer les feuilles', () => {
   const { field } = mountDebris();
-
-  field.follow({ x: 0, y: 0, z: 0 });
-  const origin = { x: field.points.position.x, z: field.points.position.z };
-
-  field.follow({ x: 1, y: 0, z: 1 });
-  assert.deepEqual(
-    { x: field.points.position.x, z: field.points.position.z },
-    origin,
-    'sous le pas de maille, les débris ne bougent pas avec l’observateur'
-  );
-
-  field.follow({ x: 30, y: 0, z: 0 });
-  assert.notEqual(field.points.position.x, origin.x, 'au-delà du pas de maille, ils suivent');
+  field.setWeather(resolveWeather({wind: .4}));
+  const base = field.points.geometry.attributes.aBase.array.slice();
+  field.follow({x:0,y:0,z:0});
+  field.advance(1);
+  const travel = field.uniforms.uTravel.value.x;
+  assert.ok(Math.abs(travel)>0);
+  field.follow({x:30,y:0,z:0},()=>4);
+  assert.equal(field.uniforms.uCenter.value.x,30);
+  assert.equal(field.points.position.x,30);
+  assert.deepEqual(field.points.geometry.attributes.aBase.array,base);
+  assert.equal(field.points.geometry.attributes.aGround.array[0],4);
+  assert.equal(field.uniforms.uTravel.value.x,travel);
 });
 
 test('le champ de vent tourne avec la météo et devient immobile au calme', () => {
@@ -499,4 +498,18 @@ test('les feuilles sont des faces pliées en mètres et non des points écran', 
   assert.ok(!field.points.material.vertexShader.includes('gl_PointSize'));
   assert.ok(field.points.material.fragmentShader.includes('colorspace_fragment'));
   field.dispose();
+});
+
+test('les feuilles sont absentes sous le seuil puis glissent avant de voler', () => {
+  const {field}=mountDebris();
+  field.setWeather(resolveWeather({wind:.15}));
+  assert.equal(field.points.visible,false);
+  field.setWeather(resolveWeather({wind:.35}));
+  assert.equal(field.uniforms.uLift.value,0);
+  const speed=field.uniforms.uWind.value.length();
+  assert.ok(speed>0 && speed<1);
+  field.setWeather(resolveWeather({wind:1}));
+  assert.equal(field.points.geometry.drawRange.count,180*12);
+  assert.ok(field.uniforms.uWind.value.length()>speed*5);
+  assert.equal(field.uniforms.uLift.value,1);
 });

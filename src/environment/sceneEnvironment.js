@@ -375,11 +375,11 @@ export class SceneEnvironment {
    * @param {number} delta Secondes écoulées.
    * @param {{x:number,y:number,z:number}} at Position de l'observateur.
    */
-  advance(delta, at) {
+  advance(delta, at, sampleGround) {
     this.precipitation.advance(delta);
     if (at) this.precipitation.follow(at);
     this.debris.advance(delta);
-    if (at) this.debris.follow(at);
+    if (at) this.debris.follow(at, sampleGround);
   }
 
   /** Garde le dôme centré sur la caméra : il ne doit jamais être « atteint ». */

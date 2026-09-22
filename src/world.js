@@ -308,7 +308,7 @@ export class World {
   advance(delta, at) {
     this.composer.advance(delta, at);
     // Animée en temps réel écoulé, contrairement à `updateSky` qui ne connaît qu'une date.
-    this.environment?.advance(delta, at);
+    this.environment?.advance(delta, at, (x, z) => this.composer.groundElevationAt(x, z));
   }
 
   /**

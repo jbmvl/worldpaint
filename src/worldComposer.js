@@ -597,6 +597,10 @@ export class WorldComposer {
    * @param {number} delta Secondes écoulées.
    * @param {{x:number,y:number,z:number}} at Position de l'observateur dans la scène.
    */
+  groundElevationAt(x, z) {
+    return this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale;
+  }
+
   advance(delta, at) {
     if (this.disposed) return;
     this.vegetation.processQueue();
@@ -616,6 +620,7 @@ export class WorldComposer {
     // est nécessaire pour tracer cette fuite (voir `faunaLayer._checkFlee`).
     this.fauna.advance(delta, at, (x, z) => this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale);
     this.tractors.advance(delta);
+    this.bridges.lighting?.update(at);
     // Ce que le mobilier a d'animé : les feux, et les deux lampes qui suivent l'observateur.
     this.furniture.advanceSignals(delta);
     this.furniture.advanceLamps(at);
