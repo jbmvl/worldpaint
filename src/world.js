@@ -138,6 +138,7 @@ export function createWorld({
       palette: sky.palette || resolved.sky,
       // Teinte du feuillage du thème courant, pas inventée par l'environnement.
       debrisTint: resolved.furniture.colors.leaf,
+      leaves: resolved.leaves,
     });
   }
 

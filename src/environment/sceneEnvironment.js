@@ -159,6 +159,7 @@ export class SceneEnvironment {
     weather = null,
     palette = DEFAULT_SKY_PALETTE,
     debrisTint = defaultTheme.furniture.colors.leaf,
+    leaves = defaultTheme.leaves,
   }) {
     this.THREE = THREE;
     this.scene = scene;
@@ -351,7 +352,7 @@ export class SceneEnvironment {
       mix(debrisTint[2], DEBRIS_GRAY_LINEAR, 0.75),
     ];
     this._debrisBaseTint = lightenedDebrisTint;
-    this.debris = new Debris({ THREE, scene, tint: lightenedDebrisTint });
+    this.debris = new Debris({ THREE, scene, tint: lightenedDebrisTint, look: leaves });
     this.debris.setWeather(this.weather);
   }
 

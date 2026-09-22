@@ -1789,6 +1789,7 @@ export const defaultTheme = Object.freeze({
   terrain: TERRAIN_LOOK,
   trees: { variants: TREE_VARIANTS, essences: TREE_ESSENCES, volume: { bark: [0.105, 0.068, 0.035], leaf: [0.19, 0.25, 0.13] } },
   forests: FOREST_TYPES,
+  leaves: { lengthM: 0.3, widthM: 0.16, foldM: 0.035 },
   grass: {
     bladeWidth: 0.28,
     bladeColors: { root: [0.045, 0.11, 0.018], tip: [0.15, 0.29, 0.045] },

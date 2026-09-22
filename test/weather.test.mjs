@@ -107,7 +107,7 @@ test('par temps ordinaire, rien du rendu d’avant ne bouge', () => {
   assert.equal(applied.warmth, light.warmth);
   assert.equal(applied.shadow, 1, 'les ombres sont pleines');
 
-  assert.deepEqual(windField(ORDINARY), { amplitude: 1, speed: 1 }, 'le vent réglé par le thème');
+  assert.deepEqual(windField(ORDINARY), { amplitude: 1, speed: 1, direction: [1, 0.45] }, 'le vent réglé par le thème');
 });
 
 // --- Le sens des variations --------------------------------------------------
@@ -282,6 +282,7 @@ function fakeTHREE() {
     Group: Object3D,
     LineSegments: Mesh,
     Points: Mesh,
+    Mesh,
     Vector2: class {
       constructor(x = 0, y = 0) { this.x = x; this.y = y; }
       set(x, y) { this.x = x; this.y = y; return this; }
@@ -483,4 +484,19 @@ test('les débris se recentrent aussi sur une maille, pas en continu', () => {
 
   field.follow({ x: 30, y: 0, z: 0 });
   assert.notEqual(field.points.position.x, origin.x, 'au-delà du pas de maille, ils suivent');
+});
+
+test('le champ de vent tourne avec la météo et devient immobile au calme', () => {
+  const a=windField(resolveWeather({wind:1,windDirection:0}));
+  const b=windField(resolveWeather({wind:1,windDirection:Math.PI/2}));
+  assert.ok(Math.abs(a.direction[0]+b.direction[1])<1e-8 || Math.abs(a.direction[0]-b.direction[1])<1e-8);
+  assert.equal(windField(resolveWeather({wind:0})).amplitude,0);
+});
+
+test('les feuilles sont des faces pliées en mètres et non des points écran', () => {
+  const { field }=mountDebris();
+  assert.ok(field.points.geometry.attributes.position.array.some(v=>v!==0));
+  assert.ok(!field.points.material.vertexShader.includes('gl_PointSize'));
+  assert.ok(field.points.material.fragmentShader.includes('colorspace_fragment'));
+  field.dispose();
 });

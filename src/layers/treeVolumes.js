@@ -22,7 +22,8 @@ export class TreeVolumes {
       mesh.count=0; mesh.frustumCulled=false; mesh.receiveShadow=true; mesh.castShadow=true;
       // La profondeur reçoit exactement le même fondu que la surface.
       mesh.customDepthMaterial=new THREE.MeshDepthMaterial({depthPacking:THREE.RGBADepthPacking});
-      installCoverTransition(mesh.customDepthMaterial,THREE);
+      mesh.customDepthMaterial.onBeforeCompile = this.material.onBeforeCompile;
+      mesh.customDepthMaterial.customProgramCacheKey = () => 'tree-volume-depth-wind-v1';
       group.add(mesh); this.batches.push(mesh);
     }
     this.matrix=new THREE.Matrix4(); this.position=new THREE.Vector3(); this.rotation=new THREE.Quaternion(); this.scale=new THREE.Vector3(); this.axis=new THREE.Vector3(0,1,0); this.color=new THREE.Color();
@@ -30,7 +31,6 @@ export class TreeVolumes {
   set(key, placements) { if(placements) this.tiles.set(key,placements); else this.tiles.delete(key); this.anchor=null; }
   update(x,z) {
     this.material.userData.coverObserver.value.set(x,z);
-    for(const mesh of this.batches) mesh.customDepthMaterial.userData.coverObserver.value.set(x,z);
     if(this.anchor && Math.hypot(x-this.anchor.x,z-this.anchor.z)<8) return;
     this.anchor={x,z};
     for(const mesh of this.batches) mesh.count=0;

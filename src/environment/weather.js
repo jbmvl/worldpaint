@@ -201,7 +201,8 @@ export function windField(weather) {
   // Deux pentes autour du temps ordinaire.
   const t = weather.wind <= base ? weather.wind / base : 1 + (weather.wind - base) / (1 - base);
   return {
-    amplitude: mix(0.05, 1, Math.min(t, 1)) * (t > 1 ? mix(1, 2.6, t - 1) : 1),
+    direction: windAxis([1, 0.45], weather),
+    amplitude: mix(0, 1, Math.min(t, 1)) * (t > 1 ? mix(1, 2.6, t - 1) : 1),
     speed: mix(0.35, 1, Math.min(t, 1)) * (t > 1 ? mix(1, 2.2, t - 1) : 1),
   };
 }

@@ -150,6 +150,7 @@ export function createFoliageMaterial({
   const windUniforms = wind
     ? {
         uWindTime: { value: 0 },
+        uWindDirection: { value: { x: 1, y: 0.45 } },
         uWindStrength: { value: windStrength },
         /** Amplitude du temps ordinaire. Ne bouge jamais : voir l'en-tête. */
         base: windStrength,
@@ -226,9 +227,10 @@ export function createFoliageMaterial({
     }
     if (windUniforms) {
       shader.uniforms.uWindTime = windUniforms.uWindTime;
+      shader.uniforms.uWindDirection = windUniforms.uWindDirection;
       shader.uniforms.uWindStrength = windUniforms.uWindStrength;
       shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', `#include <common>\n uniform float uWindTime;\n uniform float uWindStrength;`)
+        .replace('#include <common>', `#include <common>\n uniform float uWindTime;\n uniform float uWindStrength;\n uniform vec2 uWindDirection;`)
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
@@ -249,11 +251,17 @@ export function createFoliageMaterial({
                float slim = 1.0;
              #endif
              float phase = anchor.x * 0.42 + anchor.y * 0.31;
-             float sway = sin(uWindTime * 1.7 + phase) * 0.62 + sin(uWindTime * 3.1 + phase * 1.9) * 0.38;
+             float gust = sin(dot(anchor, normalize(uWindDirection)) * 0.07 - uWindTime * 1.7);
+             float sway = 0.55 + gust * 0.3 + sin(uWindTime * 3.1 + phase * 1.9) * 0.15;
              // En carré de la hauteur : le pied ne bouge pas, la pointe fouette.
              float bend = transformed.y * transformed.y * uWindStrength * slim;
-             transformed.x += sway * bend;
-             transformed.z += sway * bend * 0.45;
+             vec2 direction = normalize(uWindDirection);
+             #ifdef USE_INSTANCING
+               vec2 localDirection = vec2(dot(normalize(instanceMatrix[0].xz), direction), dot(normalize(instanceMatrix[2].xz), direction));
+             #else
+               vec2 localDirection = direction;
+             #endif
+             transformed.xz += localDirection * sway * bend;
            }`
         );
     }
@@ -331,6 +339,10 @@ export function setFoliageWind(material, field) {
   if (!wind || !field) return;
   wind.uWindStrength.value = wind.base * field.amplitude;
   wind.speed = field.speed;
+  if (field.direction) {
+    wind.uWindDirection.value.x = field.direction[0];
+    wind.uWindDirection.value.y = field.direction[1];
+  }
 }
 
 /**

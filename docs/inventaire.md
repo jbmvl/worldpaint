@@ -796,3 +796,13 @@ et peuplements régionaux existants. Le même prototype est projeté dans
 l'atlas lointain. Entre 60 et 95 mètres, un fondu tramé passe du volume aux
 plans croisés sans modifier le placement, la taille ou la teinte de l'arbre.
 Les petits végétaux du sous-étage gardent leurs silhouettes spécifiques.
+
+### Vent et feuilles emportées
+
+Le vent du feuillage est directionnel en coordonnées du monde, indépendamment
+de la rotation des instances. Des rafales partagées traversent les masses
+végétales ; à vent nul, l'amplitude est nulle. Les ombres des arbres utilisent
+la même déformation et la même transition de distance.
+Les feuilles emportées sont des surfaces pliées de taille métrique
+(`theme.leaves`), animées en rotation, avec disparition aux bords de la boîte
+suivant l'observateur. Elles ne sont plus des points de taille écran.

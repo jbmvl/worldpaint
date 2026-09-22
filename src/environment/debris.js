@@ -1,15 +1,9 @@
-/*
- * debris — feuilles et brins arrachés par le vent, dans une boîte qui suit
- * l'observateur. Même construction que `precipitation.js` : boîte de
- * quelques dizaines de mètres attachée à la caméra, particules en boucle
- * (dérive horizontale ici, rien ne tombe).
- *
- * Piloté par `weather.wind` seul : `lift` (0 au sol, 1 pleinement emporté)
- * est une transition continue, pas un seuil. Éteint dès qu'il pleut ou neige
- * (`precipitation.js` porte déjà l'eau). Rendu en point : un losange (norme
- * L1), pour se distinguer de la neige sans géométrie orientée.
+/* Feuilles volantes : petites surfaces pliées en rotation, entraînées par
+ * le même vent que la végétation. Un seul maillage, sans points écran.
+ * Le fondu des bords de la boîte masque son recyclage spatial.
  */
 
+import { defaultTheme } from '../themes/default.js';
 import { windAxis } from './weather.js';
 
 const SPREAD_M = 20;
@@ -29,23 +23,23 @@ function seeded(seed) {
   };
 }
 
-function debrisGeometry(THREE) {
+function debrisGeometry(THREE, look) {
   const random = seeded(0xc2b2ae35);
-  const base = new Float32Array(MAX_DEBRIS * 3);
-  const phase = new Float32Array(MAX_DEBRIS);
-
-  for (let i = 0; i < MAX_DEBRIS; i++) {
-    base[i * 3] = (random() * 2 - 1) * SPREAD_M;
-    // Proclivité à s'envoler, propre à chaque particule (sinon toutes montent à la même hauteur).
-    base[i * 3 + 1] = random();
-    base[i * 3 + 2] = (random() * 2 - 1) * SPREAD_M;
-    phase[i] = random() * Math.PI * 2;
+  const base=[], phase=[], positions=[];
+  const { lengthM, widthM, foldM } = look;
+  const a=[0,0,-lengthM/2], b=[widthM/2,0,0], c=[0,0,lengthM/2], d=[-widthM/2,0,0], e=[0,foldM,0];
+  for(let i=0;i<MAX_DEBRIS;i++) {
+    const origin=[(random()*2-1)*SPREAD_M,random(),(random()*2-1)*SPREAD_M];
+    const angle=random()*Math.PI*2;
+    const scale=.7+random()*.7;
+    for(const v of [a,b,e,b,c,e,c,d,e,d,a,e]) {
+      positions.push(...v.map(n=>n*scale)); base.push(...origin); phase.push(angle);
+    }
   }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(base.length), 3));
-  geometry.setAttribute('aBase', new THREE.BufferAttribute(base, 3));
-  geometry.setAttribute('aPhase', new THREE.BufferAttribute(phase, 1));
+  const geometry=new THREE.BufferGeometry();
+  geometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(positions),3));
+  geometry.setAttribute('aBase',new THREE.BufferAttribute(new Float32Array(base),3));
+  geometry.setAttribute('aPhase',new THREE.BufferAttribute(new Float32Array(phase),1));
   return geometry;
 }
 
@@ -64,18 +58,21 @@ function debrisMaterial(THREE) {
     uniforms,
     transparent: true,
     depthWrite: false,
+    side: THREE.DoubleSide,
     vertexShader: `
       attribute vec3 aBase;
       attribute float aPhase;
       uniform float uTime;
       uniform vec2 uWind;
       uniform float uLift;
+      varying float vLeafLight;
+      varying float vEdge;
 
       void main() {
         // Frémissement au sol, amplitude de vol en l'air, mélangés par lift.
         float settle = sin(uTime * 1.3 + aPhase) * 0.05;
         float airborne = aBase.y * ${HEIGHT_M.toFixed(1)} * (0.5 + 0.5 * sin(uTime * 0.4 + aPhase));
-        float y = mix(settle, airborne, uLift);
+        float y = 0.12 + mix(settle, airborne, uLift);
 
         // Dérive horizontale le long du vent, repliée en boucle dans la boîte.
         float speed = mix(0.1, 1.0, uLift);
@@ -90,22 +87,24 @@ function debrisMaterial(THREE) {
           wz + cos(uTime * 0.8 + aPhase * 2.1) * swirl
         );
 
-        vec4 mv = modelViewMatrix * vec4(p, 1.0);
-        // Taille en perspective, comme la neige, mais un peu plus grand.
-        gl_PointSize = clamp(70.0 / max(-mv.z, 1.0), 1.5, 8.0);
-        gl_Position = projectionMatrix * mv;
+        float roll = uTime*(1.0+uLift*3.0)+aPhase;
+        float pitch = sin(uTime*2.3+aPhase)*1.2;
+        vec3 leaf = vec3(position.x*cos(roll)-position.y*sin(roll),position.x*sin(roll)+position.y*cos(roll),position.z);
+        leaf.yz = mat2(cos(pitch),-sin(pitch),sin(pitch),cos(pitch))*leaf.yz;
+        vLeafLight = 0.75+0.25*abs(cos(roll));
+        vEdge = 1.0-smoothstep(${(SPREAD_M-4).toFixed(1)},${SPREAD_M.toFixed(1)},max(abs(wx),abs(wz)));
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(p+leaf,1.0);
       }
     `,
     fragmentShader: `
       uniform vec3 uTint;
       uniform float uOpacity;
+      varying float vLeafLight;
+      varying float vEdge;
       void main() {
-        // Losange (norme L1) plutôt que disque.
-        vec2 pc = gl_PointCoord - vec2(0.5);
-        float d = abs(pc.x) + abs(pc.y);
-        float alpha = smoothstep(0.5, 0.3, d);
-        if (alpha <= 0.01) discard;
-        gl_FragColor = vec4(uTint, uOpacity * alpha);
+        gl_FragColor = vec4(uTint*vLeafLight, uOpacity*vEdge);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
       }
     `,
   });
@@ -126,7 +125,7 @@ export class Debris {
    * @param {[number,number,number]} [options.tint] Couleur linéaire de
    *        référence (teinte du feuillage du thème — voir `sceneEnvironment.js`).
    */
-  constructor({ THREE, scene, tint = [0.3, 0.42, 0.2] }) {
+  constructor({ THREE, scene, tint = [0.3, 0.42, 0.2], look = defaultTheme.leaves }) {
     this.THREE = THREE;
     this.scene = scene;
 
@@ -134,7 +133,7 @@ export class Debris {
     this.uniforms = uniforms;
     this.uniforms.uTint.value.setRGB(tint[0], tint[1], tint[2]);
 
-    this.points = new THREE.Points(debrisGeometry(THREE), material);
+    this.points = new THREE.Mesh(debrisGeometry(THREE, look), material);
     this.points.name = 'debris';
     // La boîte est recentrée à chaque image sur la caméra : pas de culling frustum.
     this.points.frustumCulled = false;
@@ -156,14 +155,14 @@ export class Debris {
 
     // Racine carrée : le compte visible croît plus vite que l'impression de vent.
     const count = Math.round(MAX_DEBRIS * Math.sqrt(weather.wind));
-    this.points.geometry.setDrawRange(0, count);
+    this.points.geometry.setDrawRange(0, count * 12);
 
     // Seuil bas (0.3) au-dessus de la brise par défaut (0.25), pour que `lift`
     // reste à 0 à vent ordinaire.
     this.uniforms.uLift.value = this.THREE.MathUtils.smoothstep(weather.wind, 0.3, 0.8);
     const [wx, wz] = windAxis([weather.wind * 2.6, weather.wind * 1.1], weather);
     this.uniforms.uWind.value.set(wx, wz);
-    this.uniforms.uOpacity.value = 0.35 + weather.wind * 0.35;
+    this.uniforms.uOpacity.value = 0.7 + weather.wind * 0.25;
   }
 
   /** Teinte des particules — voir `Precipitation.setTint`. */

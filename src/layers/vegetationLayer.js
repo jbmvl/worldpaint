@@ -600,7 +600,8 @@ export class VegetationLayer {
       cacheKey: 'foliage-atlas-depth-v2',
     });
 
-    installCoverTransition(this.depthMaterial, THREE);
+    this.depthMaterial.onBeforeCompile = this.standMaterial.onBeforeCompile;
+    this.depthMaterial.customProgramCacheKey = () => 'tree-stand-depth-wind-v1';
 
     /** @type {Map<string, Object>} maillages du peuplement, par clé de tuile */
     this.meshes = new Map();
@@ -938,7 +939,6 @@ export class VegetationLayer {
 
     this.volumes.update(x, z);
     this.standMaterial.userData.coverObserver.value.set(x,z);
-    this.depthMaterial.userData.coverObserver.value.set(x,z);
     const frameChanged = this._thicketFrame !== this.bubble.frame;
     if (!force && !frameChanged && this._thicketAnchor) {
       if (Math.hypot(x - this._thicketAnchor.x, z - this._thicketAnchor.z) < THICKET_REBUILD_M) {
