@@ -70,6 +70,7 @@
  * une contre-allée de campagne est un objet du paysage.
  */
 
+import { RoadContinuity } from './roadContinuity.js';
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { absorbParallelLines } from './roadBundles.js';
 import {
@@ -895,7 +896,7 @@ export function collectRoadSegments(
   sampleElevation,
   radius = ROAD_RADIUS_M,
   roads = defaultTheme.roads,
-  { floorAt = null, urban = null } = {}
+  { floorAt = null, urban = null, continuity = null } = {}
 ) {
   const out = [];
   let anyWorks = false; // vrai dès qu'un tronçon porte un ouvrage
@@ -918,7 +919,8 @@ export function collectRoadSegments(
   const areas = new JunctionAreas(junctions);
 
   for (const chain of chains) {
-    const { distance: sinceAnchor, anchorIndex } = anchorDistances(chain.points, chain.anchors);
+    const stable = continuity?.resolve(chain);
+    const { distance: sinceAnchor, anchorIndex } = stable ?? anchorDistances(chain.points, chain.anchors);
 
     for (const run of clipToRadius(chain.points, here.x, here.z, radius)) {
       const path = subdividePath(run.points, ROAD_SAMPLE_M);
@@ -983,7 +985,7 @@ export function collectRoadSegments(
         path,
         frames,
         startDistance: sinceAnchor[run.startIndex],
-        anchor: chain.points[anchorIndex[run.startIndex]],
+        anchor: stable?.anchor ?? chain.points[anchorIndex[run.startIndex]],
         platform,
         edges,
         works: runWorks,
@@ -1125,6 +1127,10 @@ export class RoadNetwork {
     if (this.disposed || !this.bubble?.frame || !source) return false;
 
     const { bubble } = this;
+    if (this._continuityFrame !== bubble.frame) {
+      this._continuity = new RoadContinuity();
+      this._continuityFrame = bubble.frame;
+    }
     // Terrain naturel, déblai exclu : la plate-forme décide de l'entaille, elle ne peut pas en dépendre.
     const sampleElevation = (x, z) => bubble.rawSurfaceElevationAtLocal(x, z, 0) * bubble.verticalScale;
     // Le plancher d'une travée : le terrain, majoré d'une revanche au-dessus
@@ -1146,7 +1152,7 @@ export class RoadNetwork {
       sampleElevation,
       ROAD_RADIUS_M,
       this.theme.roads,
-      { floorAt, urban }
+      { floorAt, urban, continuity: this._continuity }
     );
     // La marge doit couvrir toute la portée du déblai, raccord compris ;
     // laissée à sa valeur par défaut, l'entaille finirait en marche verticale.
