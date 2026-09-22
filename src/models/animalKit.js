@@ -1,58 +1,10 @@
 /*
  * animalKit — modeler une bête, et la rendre articulable.
  * ------------------------------------------------------
- * Deux problèmes que le mobilier n'a pas, et que ce module résout une fois
- * pour toutes.
- *
- * ## 1. Une bête n'est pas un empilement de boîtes
- *
- * Les animaux du catalogue étaient faits de six à douze boîtes droites. À
- * cinquante mètres c'était juste ; à quinze — la distance à laquelle un
- * cycliste croise une vache — c'était une caisse à pattes. Ce qui manque à une
- * boîte, ce n'est pas des triangles, c'est **du galbe** : un flanc se rétrécit
- * vers la croupe, un poitrail est plus profond qu'un ventre, un canon de patte
- * est plus fin qu'une cuisse.
- *
- * D'où deux primitives, et deux seulement :
- *
- * - `loft` — un corps décrit par ses **sections transversales** successives
- *   (garrot, poitrail, ventre, croupe), reliées par des facettes. Six pans
- *   suffisent à donner un dos rond et un ventre plat ;
- * - `bone` — un tronçon effilé entre deux points du plan (y, z), qui sert à
- *   tout ce qui est allongé : cuisse, canon, encolure, queue, merrain de bois.
- *
- * Le reste (oreilles, cornes, sabots, mufle) est du détail posé à la main sur
- * ces deux-là.
- *
- * ## 2. Une bête bouge, et l'instanciation l'interdit
- *
- * Un `InstancedMesh` partage **une** géométrie entre toutes ses instances : on
- * ne peut pas plier la patte d'une vache sans plier celle de toutes les
- * autres. Découper l'animal en un maillage par membre rendrait l'articulation
- * possible, au prix d'un appel de dessin par membre et par espèce — plus de
- * cent, là où tout le mobilier en coûte soixante.
- *
- * L'animation vit donc **dans le shader**, comme le vent de `groundCover` et
- * le rotor des éoliennes. Chaque sommet porte :
- *
- * - `aLimb`  — à quel membre il appartient (voir `LIMB`) ;
- * - `aPivot` — l'articulation autour de laquelle ce membre tourne, en
- *   coordonnées du modèle ;
- * - `aCoat`  — 1 s'il est de la robe, 0 s'il est d'une partie dont la couleur
- *   ne varie pas d'une bête à l'autre (sabot, corne, mufle, bois).
- *
- * Et chaque **instance** porte `aMotion = (phase, gait, graze, bound)`, écrit
- * par `faunaLayer` à chaque image. Le shader en déduit l'angle de chaque
- * membre. Coût par bête et par image : une matrice et quatre flottants —
- * l'ordre de grandeur de la fumée de `lifeLayer`, pas celui d'un squelette.
- *
- * Conséquence à ne pas défaire : **le pivot d'un membre doit être posé au
- * bon endroit**. Une patte dont le pivot est au sol tourne comme une aiguille
- * de montre au lieu de balancer depuis l'épaule, et rien dans le rendu ne le
- * signale — ça ressemble juste à une bête qui patine.
- *
- * Repère : origine au sol entre les quatre pieds, +Y en haut, +Z vers l'avant
- * (l'animal regarde vers +Z), mètres réels.
+ * Corps en sections facettées, membres effilés et articulation hiérarchique.
+ * Chaque sommet porte son membre, son pivot et, pour le bas d'une patte,
+ * son genou. La flexion du genou précède celle de la hanche dans le shader ;
+ * toutes les instances conservent une seule géométrie par espèce.
  */
 
 import { Kit } from './kit.js';
@@ -82,6 +34,8 @@ export const LEGS = [LIMB.LEG_FRONT_LEFT, LIMB.LEG_FRONT_RIGHT, LIMB.LEG_REAR_LE
 export const LIMB_ATTRIBUTE = 'aLimb';
 export const PIVOT_ATTRIBUTE = 'aPivot';
 export const COAT_ATTRIBUTE = 'aCoat';
+export const KNEE_ATTRIBUTE = 'aKnee';
+export const HEAD_PARENT_ATTRIBUTE = 'aHeadParent';
 /**
  * Nom de l'attribut d'instance : `vec4` (phase de foulée, amplitude, tête
  * baissée, part de bond). La quatrième composante fond le trot — les
@@ -124,6 +78,8 @@ export class AnimalKit extends Kit {
     this.pivots = [];
     /** @type {number[]} 1 si le sommet est de la robe. */
     this.coats = [];
+    this.knees = [];
+    this._knee = [0, 0, 0, 0];
 
     this._limb = LIMB.BODY;
     this._pivot = [0, 0, 0];
@@ -179,6 +135,7 @@ export class AnimalKit extends Kit {
       this.limbs.push(this._limb);
       this.pivots.push(this._pivot[0], this._pivot[1], this._pivot[2]);
       this.coats.push(coat);
+      this.knees.push(...this._knee);
     }
     return this;
   }
@@ -310,6 +267,14 @@ export class AnimalKit extends Kit {
         widthEnd: thin * 1.15,
         color,
       });
+      // Le volume du joint couvre la jonction lorsque le canon se replie.
+      k.loft({ sections: [
+        { z: z + bend - thin, y: kneeY, w: thin * 0.3, h: thin * 0.3 },
+        { z: z + bend, y: kneeY, w: thin * 0.8, h: thin * 0.8 },
+        { z: z + bend + thin, y: kneeY, w: thin * 0.3, h: thin * 0.3 },
+      ], x, sides: 5, color });
+      const previousKnee = k._knee;
+      k._knee = [x, kneeY, z + bend, 1];
       k.bone({
         x,
         from: { y: kneeY, z: z + bend },
@@ -330,6 +295,7 @@ export class AnimalKit extends Kit {
         height: footHeight,
         color: footColor,
       });
+      k._knee = previousKnee;
     });
   }
 
@@ -467,8 +433,12 @@ export class AnimalKit extends Kit {
 
   /** Les attributs propres à la faune, posés au moment de figer la géométrie. */
   decorate(THREE, geometry) {
+    const head = this.headPivot || [0, 0, 0];
+    const parents = this.limbs.flatMap(limb => [...head, limb === LIMB.EAR ? 1 : 0]);
+    geometry.setAttribute(HEAD_PARENT_ATTRIBUTE, new THREE.Float32BufferAttribute(parents, 4));
     geometry.setAttribute(LIMB_ATTRIBUTE, new THREE.Float32BufferAttribute(this.limbs, 1));
     geometry.setAttribute(PIVOT_ATTRIBUTE, new THREE.Float32BufferAttribute(this.pivots, 3));
+    geometry.setAttribute(KNEE_ATTRIBUTE, new THREE.Float32BufferAttribute(this.knees, 4));
     geometry.setAttribute(COAT_ATTRIBUTE, new THREE.Float32BufferAttribute(this.coats, 1));
   }
 }

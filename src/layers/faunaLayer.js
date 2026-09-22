@@ -162,6 +162,9 @@ export class FaunaLayer {
     /** Rabattement maximal de l'encolure, par espèce — déduit du modèle. */
     this.grazeRad = grazeRad;
     this.material = createFaunaMaterial(THREE);
+    this.depthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+    this.depthMaterial.onBeforeCompile = this.material.onBeforeCompile;
+    this.depthMaterial.customProgramCacheKey = () => "fauna-articulated-depth-v1";
 
     /** @type {Map<string, Object>} un `InstancedMesh` par espèce. */
     this.meshes = new Map();
@@ -323,6 +326,9 @@ export class FaunaLayer {
       const geometry = this.geometries[kind];
       mesh = new THREE.InstancedMesh(geometry, this.material, capacity);
       mesh.name = `fauna-${kind}`;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.customDepthMaterial = this.depthMaterial;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       // Les bêtes se déplacent entre deux reconstructions : une sphère
       // englobante calculée à la pose serait fausse dès la seconde suivante,
@@ -414,6 +420,7 @@ export class FaunaLayer {
   /** Écrit une image : une matrice et quatre flottants par bête. */
   _writeFrame() {
     const time = this.time;
+    this.material.userData.faunaTime.value = time;
 
     for (const [kind, animals] of this.animals) {
       if (animals.length === 0) continue;
@@ -441,17 +448,9 @@ export class FaunaLayer {
         // La foulée suit le chemin réellement parcouru, jamais le temps : une
         // bête qui ralentit ralentit ses pattes, et rien ne patine.
         const phase = (state.distance / spec.strideM) * Math.PI * 2;
-        // Le corps monte et descend deux fois par foulée : c'est ce qui fait
-        // qu'un quadrupède marche au lieu de glisser. Le bond, lui, n'est pas
-        // un balancement mais une envolée par foulée — et elle ne va que vers
-        // le haut, sinon la bête s'enfoncerait dans le sol à chaque battue.
-        const swayed = Math.sin(phase * 2);
-        const leapt = BOUND_LIFT * Math.max(0, Math.sin(phase));
-        const bob =
-          gait > 0 ? BODY_BOB * spec.strideM * gait * (swayed + (leapt - swayed) * bound) : 0;
-
-        this._position.set(state.x, state.y + bob - FAUNA_SINK_M, state.z);
-        this._euler.set(0, state.heading, 0);
+        const pose = faunaBodyPose(phase, gait, bound, spec.strideM);
+        this._position.set(state.x, state.y + pose.lift * animal.scale - FAUNA_SINK_M, state.z);
+        this._euler.set(pose.pitch, state.heading, 0, 'YXZ');
         this._quaternion.setFromEuler(this._euler);
         this._scale.setScalar(animal.scale);
         this._matrix.compose(this._position, this._quaternion, this._scale);
@@ -483,6 +482,7 @@ export class FaunaLayer {
     this.crossings = [];
     for (const geometry of Object.values(this.geometries)) geometry.dispose();
     this.material.dispose();
+    this.depthMaterial.dispose();
     this.scene.remove(this.group);
   }
 }
@@ -505,4 +505,17 @@ export function boundMix(speed, spec) {
   const from = spec.walkMS;
   const to = Math.max(from + 0.1, spec.runMS * BOUND_FULL);
   return Math.max(0, Math.min(1, (speed - from) / (to - from)));
+}
+
+/** Battue au sol puis trajectoire parabolique ; aucune plongée sous le sol. */
+export function faunaBodyPose(phase, gait, bound, strideM) {
+  const cycle = ((phase / (2 * Math.PI)) % 1 + 1) % 1;
+  const flight = Math.max(0, Math.min(1, (cycle - 0.18) / 0.64));
+  const arc = 4 * flight * (1 - flight);
+  const walk = BODY_BOB * strideM * gait * (1 - Math.cos(phase * 2));
+  const leap = strideM * 0.19 * Math.min(gait, 1.5) * arc;
+  return {
+    lift: walk * (1 - bound) + leap * bound,
+    pitch: -0.13 * Math.sin(phase) * bound,
+  };
 }

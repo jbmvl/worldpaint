@@ -39,7 +39,7 @@
  */
 
 import { defaultTheme } from '../../themes/default.js';
-import { LIMB_ATTRIBUTE, PIVOT_ATTRIBUTE, COAT_ATTRIBUTE, MOTION_ATTRIBUTE } from '../animalKit.js';
+import { LIMB_ATTRIBUTE, PIVOT_ATTRIBUTE, COAT_ATTRIBUTE, KNEE_ATTRIBUTE, HEAD_PARENT_ATTRIBUTE, MOTION_ATTRIBUTE } from '../animalKit.js';
 import { cow, sheep, goat, horse, donkey, chicken } from './livestock.js';
 import { deer, doe, reindeer, boar, fox, wolf, bear } from './wildlife.js';
 import { cat, dog } from './pets.js';
@@ -204,8 +204,12 @@ export function createFaunaMaterial(THREE) {
     side: THREE.FrontSide,
   });
   material.name = 'fauna';
+  const time = { value: 0 };
+  material.userData = { ...material.userData, faunaTime: time };
 
   material.onBeforeCompile = (shader) => {
+    shader.uniforms ??= {};
+    shader.uniforms.uFaunaTime = time;
     shader.vertexShader = shader.vertexShader
       .replace(
         '#include <common>',
@@ -214,6 +218,9 @@ export function createFaunaMaterial(THREE) {
          attribute vec3 ${PIVOT_ATTRIBUTE};
          attribute float ${COAT_ATTRIBUTE};
          attribute vec4 ${MOTION_ATTRIBUTE};
+         attribute vec4 ${KNEE_ATTRIBUTE};
+         attribute vec4 ${HEAD_PARENT_ATTRIBUTE};
+         uniform float uFaunaTime;
 
          mat3 faunaRotX(float a) {
            float c = cos(a), s = sin(a);
@@ -222,6 +229,19 @@ export function createFaunaMaterial(THREE) {
          mat3 faunaRotZ(float a) {
            float c = cos(a), s = sin(a);
            return mat3(c, s, 0.0, -s, c, 0.0, 0.0, 0.0, 1.0);
+         }
+
+         mat3 faunaHeadRotation() {
+           float nod = mix(0.1 * sin(${MOTION_ATTRIBUTE}.x * 2.0 + 0.6), -0.22 * sin(${MOTION_ATTRIBUTE}.x), ${MOTION_ATTRIBUTE}.w);
+           return faunaRotX(${MOTION_ATTRIBUTE}.z + ${MOTION_ATTRIBUTE}.y * nod);
+         }
+         mat3 faunaKneeRotation() {
+           float trot = (${LIMB_ATTRIBUTE} < 1.5 || ${LIMB_ATTRIBUTE} > 3.5) ? 0.0 : PI;
+           float leap = ${LIMB_ATTRIBUTE} > 2.5 ? PI : 0.0;
+           float phase = ${MOTION_ATTRIBUTE}.x + mix(trot, leap, ${MOTION_ATTRIBUTE}.w);
+           float lift = max(0.0, sin(phase));
+           float signBend = ${LIMB_ATTRIBUTE} > 2.5 ? 1.0 : -1.0;
+           return faunaRotX(signBend * lift * min(1.15, ${MOTION_ATTRIBUTE}.y * 1.4) * ${KNEE_ATTRIBUTE}.w);
          }
 
          mat3 faunaJointRotation() {
@@ -264,12 +284,12 @@ export function createFaunaMaterial(THREE) {
              // La queue balaie même à l'arrêt — c'est ce qui distingue une
              // bête au pré d'une statue de bête au pré. Au bond elle se lève
              // et cesse de battre : un chevreuil qui détale montre son miroir.
-             roll = mix(0.16 * sin(phase * 0.8 + 1.7) + swing * 0.45 * sin(phase), 0.0, bound);
+             roll = mix(0.16 * sin(uFaunaTime * 1.6 + phase * 0.8 + 1.7) + swing * 0.45 * sin(phase), 0.0, bound);
              pitch = mix(-swing * 0.3, -swing * 0.9, bound);
            } else {
              // Les oreilles : le seul mouvement visible d'une bête qui broute.
              // Couchées quand elle bondit, elles ne battent plus.
-             roll = 0.26 * sin(phase * 2.7 + 0.4) * (0.35 + swing) * (1.0 - 0.8 * bound);
+             roll = 0.26 * sin(uFaunaTime * 2.1 + phase * 2.7 + 0.4) * (0.35 + swing) * (1.0 - 0.8 * bound);
              pitch = swing * 0.5 * bound;
            }
            return faunaRotZ(roll) * faunaRotX(pitch);
@@ -294,15 +314,18 @@ export function createFaunaMaterial(THREE) {
       .replace(
         '#include <beginnormal_vertex>',
         `#include <beginnormal_vertex>
-         objectNormal = faunaJointRotation() * objectNormal;`
+         objectNormal = faunaJointRotation() * faunaKneeRotation() * objectNormal;
+         if (${HEAD_PARENT_ATTRIBUTE}.w > 0.5) objectNormal = faunaHeadRotation() * objectNormal;`
       )
       .replace(
         '#include <begin_vertex>',
         `#include <begin_vertex>
-         transformed = ${PIVOT_ATTRIBUTE} + faunaJointRotation() * (transformed - ${PIVOT_ATTRIBUTE});`
+         transformed = ${KNEE_ATTRIBUTE}.xyz + faunaKneeRotation() * (transformed - ${KNEE_ATTRIBUTE}.xyz);
+         transformed = ${PIVOT_ATTRIBUTE} + faunaJointRotation() * (transformed - ${PIVOT_ATTRIBUTE});
+         if (${HEAD_PARENT_ATTRIBUTE}.w > 0.5) transformed = ${HEAD_PARENT_ATTRIBUTE}.xyz + faunaHeadRotation() * (transformed - ${HEAD_PARENT_ATTRIBUTE}.xyz);`
       );
   };
-  material.customProgramCacheKey = () => 'fauna';
+  material.customProgramCacheKey = () => 'fauna-knees-idle-v2';
 
   return material;
 }

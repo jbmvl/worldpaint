@@ -808,3 +808,14 @@ la même déformation et la même transition de distance.
 Les feuilles emportées sont des surfaces pliées de taille métrique
 (`theme.leaves`), animées en rotation, avec disparition aux bords de la boîte
 suivant l'observateur. Elles ne sont plus des points de taille écran.
+
+### Articulation des animaux
+
+Les modèles du catalogue partagent une flexion de hanche puis de genou,
+avec un volume facetté au joint. Les oreilles suivent le rabattement de la
+tête tout en conservant leur mouvement propre ; oreilles et queue utilisent
+une horloge même quand la distance parcourue reste nulle.
+Les espèces marquées `bound` alternent appui et trajectoire aérienne parabolique,
+avec tangage du corps. Les ombres utilisent les mêmes articulations.
+La marche reste une animation procédurale : elle ne résout pas le contact
+individuel de chaque sabot sur les irrégularités du terrain.

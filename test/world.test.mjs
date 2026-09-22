@@ -5054,6 +5054,7 @@ function fakeFaunaTHREE() {
   }
   return {
     FrontSide: 0,
+    MeshDepthMaterial: class { dispose() {} },
     BufferGeometry: class {
       constructor() {
         this.attributes = {};
