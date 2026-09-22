@@ -1,3 +1,4 @@
+import { TunnelLighting } from './tunnelLighting.js';
 /*
  * bridgeLayer — ce qui porte la chaussée quand le terrain ne la porte plus :
  * tabliers, piles, culées, parapets, et les têtes des tunnels.
@@ -140,6 +141,7 @@ export class BridgeLayer {
     this.disposed = false;
     this.counts = { spans: 0, piers: 0, portals: 0 };
     this.tunnelMouths = [];
+    this.tunnelFixtures = [];
 
     // Une seule matière : tout est coloré au sommet. `DoubleSide` parce qu'on
     // regarde une voûte de tunnel par l'intérieur.
@@ -149,6 +151,7 @@ export class BridgeLayer {
     });
     this.material.name = 'bridge-works';
 
+    this.lighting = THREE.PointLight ? new TunnelLighting(THREE, scene, theme.tunnelLights ?? defaultTheme.tunnelLights) : null;
     this.mesh = null;
     this.geometry = null;
   }
@@ -171,6 +174,7 @@ export class BridgeLayer {
     const buffer = createProfileBuffer();
     this.counts = { spans: 0, piers: 0, portals: 0 };
     this.tunnelMouths = [];
+    this.tunnelFixtures = [];
 
     for (const segment of roadSegments || []) {
       if (!segment?.works || !segment.path || segment.path.length < 2) continue;
@@ -191,6 +195,8 @@ export class BridgeLayer {
     }
 
     this._apply(buffer);
+    this.lighting?.rebuild(this.tunnelFixtures);
+    this.lighting?.update(here);
     return this.counts.spans > 0 || this.counts.portals > 0;
   }
 
@@ -359,6 +365,19 @@ export class BridgeLayer {
     if(path.length<2)return;
     const style=worksStyleAt(path[0].x,path[0].z,this.theme.works);
     const surface=new Float32Array(path.map((_,i)=>segment.platform[run.from+i]+ROAD_LIFT_M));
+    const spacing = (this.theme.tunnelLights ?? defaultTheme.tunnelLights).spacingM;
+    const lampHeight = Math.max(...vaultProfile(halfWidth, style.portal).map(p=>p.up)) - .18;
+    let distance = path[0].distance ?? 0;
+    for (let i = 1; i < path.length; i++) {
+      const a = path[i-1], b = path[i];
+      const length = Math.hypot(b.x-a.x,b.z-a.z);
+      for (let d = Math.ceil(distance / spacing) * spacing; d < distance + length; d += spacing) {
+        const t = length ? (d-distance)/length : 0;
+        this.tunnelFixtures.push({x:a.x+(b.x-a.x)*t,z:a.z+(b.z-a.z)*t,
+          y:surface[i-1]+(surface[i]-surface[i-1])*t+lampHeight});
+      }
+      distance += length;
+    }
     // Profil ouvert : aucune face ne bouche l'entrée ou la sortie.
     appendProfile(buffer,{path,profile:vaultProfile(halfWidth,style.portal),sampleElevation,baseHeights:surface,closed:false,smoothRadius:0});
     for(const mouth of [run.from,run.to]) {
@@ -368,7 +387,7 @@ export class BridgeLayer {
       const p=segment.path[mouth], q=segment.path[mouth+inward];
       const length=Math.hypot(q.x-p.x,q.z-p.z);
       if(!length)continue;
-      this.tunnelMouths.push({x:p.x,z:p.z,y:segment.platform[mouth]+ROAD_LIFT_M,radius:halfWidth+PORTAL_CLEARANCE_M,dx:(q.x-p.x)/length,dz:(q.z-p.z)/length,slope:(segment.platform[mouth+inward]-segment.platform[mouth])/length});
+      this.tunnelMouths.push({x:p.x,z:p.z,y:segment.platform[mouth]+ROAD_LIFT_M,radius:halfWidth+PORTAL_CLEARANCE_M,steps:PORTAL_ARC_STEPS,dx:(q.x-p.x)/length,dz:(q.z-p.z)/length,slope:(segment.platform[mouth+inward]-segment.platform[mouth])/length});
       this._buildPortalFace(buffer,path,surface,halfWidth,style,mouth===run.from?0:path.length-1,sampleElevation);
       this.counts.portals++;
     }
@@ -411,17 +430,16 @@ export class BridgeLayer {
       });
     }
 
-    // Linteau : au-dessus de la voûte, d'un piédroit à l'autre.
-    const lintel = base + opening * 0.85 + 1;
-    if (crest - lintel > 0.3) {
+    // Remplit aussi les écoinçons entre l'arc et le front rectangulaire.
+    const arc = vaultProfile(halfWidth, portal).slice(1, -1);
+    for (let i = 1; i < arc.length; i++) {
+      const a = arc[i-1], b = arc[i];
       appendVariableWall(buffer, {
-        path: at2(outer, -outer),
-        base: new Float32Array([lintel, lintel]),
+        path: at2(a.across, b.across),
+        base: new Float32Array([base+a.up, base+b.up]),
         top: new Float32Array([crest, crest]),
-        thickness: 0.9,
-        coping: 0.12,
-        colorFoot: portal.face,
-        colorTop: portal.face,
+        thickness: .9, coping: 0,
+        colorFoot: portal.face, colorTop: portal.face,
       });
     }
   }
@@ -466,5 +484,6 @@ export class BridgeLayer {
       this.geometry = null;
     }
     this.material.dispose();
+    this.lighting?.dispose();
   }
 }

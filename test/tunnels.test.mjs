@@ -20,3 +20,38 @@ test('la voûte ne possède aucune face bouchant une entrée', () => {
    assert.notEqual(Math.min(...z),Math.max(...z),'aucun bouchon transversal');
  }
 });
+
+test('les lanternes éclairent localement avec un budget de deux lumières et se libèrent', async () => {
+  const THREE=await import('three');
+  const {TunnelLighting}=await import('../src/layers/tunnelLighting.js');
+  const {defaultTheme}=await import('../src/themes/default.js');
+  const scene=new THREE.Scene();
+  const lighting=new TunnelLighting(THREE,scene,defaultTheme.tunnelLights);
+  lighting.rebuild([{x:0,y:4,z:0},{x:0,y:4,z:18},{x:0,y:4,z:36}]);
+  lighting.update({x:0,y:0,z:10});
+  assert.equal(lighting.lights.filter(l=>l.visible).length,2);
+  assert.ok(lighting.lights.every(l=>l.intensity>0 && !l.castShadow));
+  lighting.update({x:100,y:0,z:100});
+  assert.ok(lighting.lights.every(l=>!l.visible));
+  lighting.dispose();
+  assert.equal(scene.children.length,0);
+});
+
+test('le front ferme les côtés au-dessus de l’arc tout en gardant la chaussée ouverte', async () => {
+  const THREE=await import('three');
+  const {BridgeLayer}=await import('../src/layers/bridgeLayer.js');
+  const {toColoredGeometry}=await import('../src/layers/ribbonGeometry.js');
+  const buffer=createProfileBuffer();
+  const layer=Object.create(BridgeLayer.prototype);
+  layer._buildPortalFace(buffer,[{x:0,z:0},{x:0,z:20}],[0,0],3,
+    {portal:{face:[.4,.4,.4],arch:[.1,.1,.1],crown:1.4,jamb:2}},0,()=>8);
+  const geometry=toColoredGeometry(THREE,buffer);
+  const material=new THREE.MeshBasicMaterial({side:THREE.DoubleSide});
+  const mesh=new THREE.Mesh(geometry,material);
+  mesh.updateMatrixWorld();
+  const hit=(x,y)=>new THREE.Raycaster(new THREE.Vector3(x,y,-5),new THREE.Vector3(0,0,1)).intersectObject(mesh).length;
+  assert.ok(hit(2.8,4.1)>0);
+  assert.ok(hit(-2.8,4.1)>0);
+  assert.equal(hit(0,1.5),0);
+  geometry.dispose();material.dispose();
+});

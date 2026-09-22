@@ -20,9 +20,15 @@ export function installTunnelMouths(THREE, material) {
         vec4 origin=uTunnelOrigins[i];vec4 axis=uTunnelDirections[i];
         vec2 delta=vScenePos.xz-origin.xz;
         float along=dot(delta,axis.xy);
-        float across=abs(dot(delta,vec2(-axis.y,axis.x)));
+        float lateral=dot(delta,vec2(-axis.y,axis.x));
+        float across=abs(lateral);
         float height=vScenePos.y-origin.y-along*axis.z;
-        float roof=1.0+0.85*sqrt(max(0.0,origin.w*origin.w-across*across));
+        float stepAngle=PI/max(1.0,axis.w);
+        float angle=acos(clamp(lateral/origin.w,-1.0,1.0));
+        float a=min(floor(angle/stepAngle),axis.w-1.0)*stepAngle;
+        vec2 left=vec2(cos(a),sin(a))*origin.w;
+        vec2 right=vec2(cos(a+stepAngle),sin(a+stepAngle))*origin.w;
+        float roof=1.0+0.85*mix(left.y,right.y,clamp((lateral-left.x)/(right.x-left.x),0.0,1.0));
         if(along>-6.0 && along<18.0 && across<origin.w && height>-.2 && height<roof) discard;
       }`);
   };
@@ -32,7 +38,7 @@ export function installTunnelMouths(THREE, material) {
     count.value=Math.min(MAX_MOUTHS,mouths.length);
     for(let i=0;i<count.value;i++) {
       const m=mouths[i];origins.value[i].set(m.x,m.y,m.z,m.radius);
-      directions.value[i].set(m.dx,m.dz,m.slope,0);
+      directions.value[i].set(m.dx,m.dz,m.slope,m.steps ?? 7);
     }
   };
 }
