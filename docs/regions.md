@@ -161,3 +161,9 @@ Le compositeur conserve la région choisie à l'initialisation du repère local.
 Avancer ne remplace donc pas les essences, les cultures et la palette des
 objets déjà générés. Une région explicitement imposée ou un nouveau repère
 après téléportation ouvre une nouvelle génération.
+
+Une tuile de peuplement conserve les descriptions déjà affichées lors d'un
+complément de couverture : essence, hauteur, rotation, teinte et altitude.
+Les places restantes reçoivent les nouveaux candidats. Une emprise routière
+révélée peut retirer un arbre qui la recouvre ; une replantation explicite ou
+la sortie de la tuile libère ces descriptions.

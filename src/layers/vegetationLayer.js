@@ -47,10 +47,9 @@ import { COVER_ATTRIBUTE, installCoverTransition } from '../materials/coverTrans
  *    La relève est **sans trou** (`_swap`) : le maillage en place ne s'en va
  *    qu'une fois le nouveau construit, sinon la forêt clignote le temps que la
  *    file arrive à cette tuile.
- * 3. **Le plafond d'une tuile éclaircit, il ne rogne pas** (`thinPlacements`),
- *    et il éclaircit sur un tirage porté par l'arbre, pas sur son rang dans la
- *    liste : retirer les arbres tombés sur la chaussée ne doit pas rebattre le
- *    semis de toute la tuile.
+ * 3. **Le plafond conserve les arbres déjà décrits** (`stableStand`). Les
+ *    places restantes vont aux candidats de plus faible tirage spatial ; un
+ *    complément de données ne change ni la taille ni l'essence d'un survivant.
  *
  * La strate basse n'est pas une strate haute en réduction : elle tire dans ses
  * propres silhouettes, et chaque plante y porte sa taille (`understoryStrata`).
@@ -97,6 +96,7 @@ import {
   setFoliageWind,
   ATLAS_ATTRIBUTE,
 } from '../materials/foliageMaterial.js';
+import { stableStand } from './stableStand.js';
 import { defaultTheme } from '../themes/default.js';
 import { filterByWords } from '../core/regionInterpretation.js';
 import { poolShareAt, poolEdgeGain } from '../terrain/groundClassMap.js';
@@ -563,6 +563,7 @@ export class VegetationLayer {
      */
     this.region = null;
     this.disposed = false;
+    this._descriptions = new Map();
 
     this.group = new THREE.Group();
     this.group.name = 'vegetation';
@@ -739,6 +740,7 @@ export class VegetationLayer {
   /** Retire les instances d'une tuile. */
   remove(key) {
     this.volumes.set(key, null);
+    this._descriptions.delete(key);
     this._planted.delete(key);
     this._partial.delete(key);
     this._stale.delete(key);
@@ -873,7 +875,8 @@ export class VegetationLayer {
       }
     }
 
-    const placements = thinPlacements(collected, MAX_TREES_PER_TILE);
+    const placements = stableStand(this._descriptions.get(tile.key), collected, MAX_TREES_PER_TILE, p => !inCorridor(index, p.x, p.z));
+    this._descriptions.set(tile.key, placements);
     for (const item of placements) item.color = foliageTint(item.hue, item.x, item.z, item.shade, item.jitter);
     this.volumes.set(tile.key, placements);
     if (placements.length === 0) {
@@ -1057,6 +1060,7 @@ export class VegetationLayer {
       mesh.dispose?.();
     }
     this.meshes.clear();
+    this._descriptions.clear();
     this.group.remove(this.thicket);
     this.thicket.dispose?.();
     this.thicketGeometry.dispose();
