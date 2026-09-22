@@ -1,50 +1,10 @@
+import { COVER_ATTRIBUTE, installCoverTransition, paddedCoverBands } from '../materials/coverTransition.js';
+import { createGrassBlade } from './grassGeometry.js';
 /*
- * groundCover — la couverture herbacée, à trois échelles (`coverBands.js`) :
- * la plante, la touffe, la masse. Une instance ne représente plus une touffe
- * au-delà de la première bande, mais quelques mètres carrés de prairie
- * (`GRASS_VARIANTS`, cases `clump*`).
- *
- * Deux règles gouvernent le module : les touffes sont ancrées au sol (maille
- * fixe, graine dérivée des seules coordonnées de maille — avancer ajoute des
- * mailles devant sans redistribuer le reste) ; le bitume est écarté par
- * l'index du réseau routier (`roadGraph.js`), pas par les polygones
- * d'occupation du sol (qui ne découpent pas les chaussées).
- *
- * Coût tenu par un seul maillage instancié jamais réalloué (matrices
- * réécrites en place, `count` ajusté) et un vent qui vit dans le shader.
- *
- * Trois correctifs de cohérence : le non-classé retombe sur le repli du
- * shader de terrain (`grassSampleFallback`) ; l'herbe générique s'efface
- * devant une vraie culture (`grassBlockedByCrop`, la lisière garde son
- * coquelicot) ; la hauteur ne suit pas le même fondu que la présence
- * (`coverHeightFade` plancher la taille pour qu'elle ne s'éteigne pas avant
- * de disparaître).
- *
- * La limite d'une surface, elle, n'est pas celle du carreau de la carte : le
- * sol est lu quelques mètres à côté de la maille (`fringeOffset`), d'un
- * décalage tiré de la maille elle-même. Sans quoi l'herbe s'arrête au carreau
- * de 2,7 m, en marches d'escalier, là où une prairie s'épuise dans le sable
- * sur quelques mètres. Le shader de terrain fait de même de son côté, à la
- * même amplitude (`edgeWarpM`).
- *
- * Le sol d'un bois, enfin, n'est plus nu : la part de bois ne comptait pour
- * rien dans le végétal (`grass` vaut zéro sous les arbres), donc une forêt
- * n'avait pas une touffe, jusque sous le nez de l'observateur. Elle compte
- * maintenant pour ce qu'elle vaut (`grassGreenFor`) et ce qui y pousse est une
- * litière — rase, clairsemée, sans fleurs (`woodFloorFor`), pas une prairie à
- * l'ombre. Le pire cas d'instances ne bouge pas : un bois plein rend moins de
- * touffes qu'une prairie pleine, sur laquelle `GRASS_COUNT` est mesuré.
- *
- * Là où une matière porte de l'eau libre (`standingWater`), une maille relit
- * la même flaque que le shader de terrain découpe (`poolShareAt`,
- * `groundClassMap.js`) : rien ne pousse en son milieu, et sa bordure porte
- * plus haut et plus dense (`poolEdgeGain`) — c'est la roselière d'un marais.
- *
- * Chaque touffe suit aussi le grain low poly du sol sous elle (`coverGrainFor`,
- * attribut `GROUND_GRAIN_ATTRIBUTE`) : la cellule et l'amplitude sont celles de
- * la matière lue au semis, les mêmes que `terrainMaterial.js` applique à cet
- * endroit — sans quoi une touffe de lande flotterait ou s'enfoncerait au pied
- * d'une bosse que le sol porte et qu'elle ignore.
+ * Couverture herbacée : une trame de brins facettés indépendants, répartis
+ * dans chaque maille du sol. La matière du terrain porte la continuité au
+ * loin ; les brins gardent leur taille et disparaissent progressivement dans
+ * le shader. La caméra n'intervient jamais dans leur identité.
  */
 
 import {
@@ -122,7 +82,7 @@ export const GRASS_RADIUS_M = coverBandsRadius(GRASS_BANDS);
  * de la couverture, où une instance de moins ne se voit pas. Mesuré à 14 501
  * sur prairie pleine ; la marge couvre les arrondis de maille.
  */
-export const GRASS_COUNT = 17000;
+export const GRASS_COUNT = 75000;
 /** Déplacement de l'observateur avant redistribution, en mètres. */
 export const GRASS_REBUILD_M = 8;
 /** Côté de la maille d'ancrage au sol de la bande de détail, en mètres. */
@@ -551,23 +511,15 @@ export class GroundCover {
     this.disposed = false;
     this._anchor = null;
     this._frame = null;
-    this._bands = GRASS_BANDS;
-    this._cells = coverBandRing(this._bands);
+    this._bands = [coverBand({ from: 0, to: 65, cell: 2.2, perCell: 16, fadeOut: 25, salt: 0 })];
+    this._cells = coverBandRing(paddedCoverBands(this._bands, GRASS_REBUILD_M));
     // Une seule allocation, dimensionnée sur la bande la plus fournie.
     const widest = Math.max(...this._bands.map((band) => band.perCell));
     this._tufts = new Float32Array(widest * GRASS_TUFT_STRIDE);
 
-    this.texture = new THREE.CanvasTexture(createGrassAtlasCanvas());
-    this.texture.colorSpace = THREE.SRGBColorSpace;
-    this.texture.anisotropy = 4;
-
-    this.geometry = createCrossedQuads(THREE);
-    // Décalage d'atlas : donnée d'instance, alloué une fois pour toutes comme les matrices.
-    this._atlasOffsets = new Float32Array(count * 2);
-    this.geometry.setAttribute(
-      ATLAS_ATTRIBUTE,
-      new THREE.InstancedBufferAttribute(this._atlasOffsets, 2).setUsage(THREE.DynamicDrawUsage)
-    );
+    this.geometry = createGrassBlade(THREE, theme.grass.bladeColors ?? defaultTheme.grass.bladeColors);
+    this._coverBands = new Float32Array(count * 4);
+    this.geometry.setAttribute(COVER_ATTRIBUTE, new THREE.InstancedBufferAttribute(this._coverBands, 4).setUsage(THREE.DynamicDrawUsage));
     // Grain low poly par touffe : la matière lue au semis (`coverGrainFor`),
     // pour que la touffe suive la même bosse que le sol sous elle.
     this._grainParams = new Float32Array(count * 2);
@@ -577,7 +529,7 @@ export class GroundCover {
     );
     this.material = createFoliageMaterial({
       THREE,
-      map: this.texture,
+      map: null,
       wind: true,
       // 0,35 × l'élancement de la touffe : l'amplitude s'exprime maintenant
       // en part de la hauteur et non de la largeur du panneau (voir
@@ -585,15 +537,17 @@ export class GroundCover {
       // c'est que les masses élargies des bandes lointaines cessent de
       // balayer deux mètres au lieu de vingt centimètres.
       windStrength: 0.35 * theme.grass.aspect,
-      atlas: true,
+      atlas: false,
       tiles: GRASS_ATLAS_COLS,
-      coverage: true,
+      coverage: false,
       coverageRange: GRASS_COVERAGE_RANGE,
       coverageGain: GRASS_COVERAGE_GAIN,
       groundLowPoly: true,
       groundGrainPerInstance: true,
       cacheKey: 'foliage-grass-cover-v6-lowpoly-par-matiere',
     });
+
+    installCoverTransition(this.material, THREE);
 
     this.mesh = new THREE.InstancedMesh(this.geometry, this.material, count);
     this.mesh.name = 'ground-cover';
@@ -628,8 +582,7 @@ export class GroundCover {
   }
 
   setMaxAnisotropy(value) {
-    this.texture.anisotropy = Math.min(value || 4, 8);
-    this.texture.needsUpdate = true;
+    // Géométrie sans texture : aucune anisotropie à régler.
   }
 
   /** Fait avancer le vent. À appeler une fois par image, avec le delta en secondes. */
@@ -654,6 +607,7 @@ export class GroundCover {
   update(x, z, { force = false } = {}) {
     if (this.disposed || !this.bubble?.frame) return false;
 
+    this.material.userData.coverObserver.value.set(x, z);
     const frameChanged = this._frame !== this.bubble.frame;
     if (!force && !frameChanged && this._anchor) {
       if (Math.hypot(x - this._anchor.x, z - this._anchor.z) < GRASS_REBUILD_M) return false;
@@ -734,8 +688,8 @@ export class GroundCover {
       const grain = coverGrainFor(cover, this.theme.surfaces);
 
       const fade = coverBandFade(coverBandDistance(centerX, centerZ, cellX, cellZ), band);
-      if (fade <= 0.02) continue;
-      const heightFade = coverHeightFade(fade, GRASS_HEIGHT_FADE_FLOOR);
+
+      const heightFade = 1;
       // Et ce que l'ombre des arbres en fait, par-dessus : une litière rase.
       // Après le fondu : hors des bois elle ne coûte rien, mais dans un bois
       // elle alloue, et une maille écartée n'a pas à la payer.
@@ -755,10 +709,10 @@ export class GroundCover {
 
       for (let i = 0; i < band.perCell && placed < capacity; i++) {
         const at = i * GRASS_TUFT_STRIDE;
-        if (tufts[at + 2] > density * fade) continue;
+        if (tufts[at + 2] > density) continue;
 
-        const x = tufts[at];
-        const z = tufts[at + 1];
+        const x = gx * band.cell + (i % 4 + 0.2 + (tufts[at] / band.cell - gx) * 0.6) * band.cell / 4;
+        const z = gz * band.cell + (Math.floor(i / 4) + 0.2 + (tufts[at + 1] / band.cell - gz) * 0.6) * band.cell / 4;
         if (inCorridor(index, x, z, GRASS_ROAD_MARGIN_M)) continue;
         if (pavement?.covers(x, z, 0)) continue;
 
@@ -773,7 +727,7 @@ export class GroundCover {
           band.rise *
           (1 + poolEdge * POOL_EDGE_HEIGHT_BOOST);
         const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
-        const width = height * grass.aspect * band.spread; // élargi, pas élevé
+        const width = (grass.bladeWidth ?? defaultTheme.grass.bladeWidth) * (0.8 + tufts[at + 3] * 0.4); // élargi, pas élevé
 
         this._position.set(x, y, z);
         this._quaternion.setFromAxisAngle(this._axis, tufts[at + 4] * Math.PI);
@@ -798,19 +752,17 @@ export class GroundCover {
         );
         mesh.setColorAt(placed, this._color);
 
-        const [u, v] = GRASS_ATLAS_OFFSETS[variant];
-        this._atlasOffsets[placed * 2] = u;
-        this._atlasOffsets[placed * 2 + 1] = v;
+        this._coverBands.set([band.from, band.to, band.fadeIn, band.fadeOut], placed * 4);
         this._grainParams[placed * 2] = grain.cellM;
         this._grainParams[placed * 2 + 1] = grain.amplitudeM;
         placed++;
       }
     }
 
+    this.geometry.getAttribute(COVER_ATTRIBUTE).needsUpdate = true;
     mesh.count = placed;
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    this.geometry.getAttribute(ATLAS_ATTRIBUTE).needsUpdate = true;
     this.geometry.getAttribute(GROUND_GRAIN_ATTRIBUTE).needsUpdate = true;
   }
 
@@ -821,6 +773,5 @@ export class GroundCover {
     this.mesh.dispose?.();
     this.geometry.dispose();
     this.material.dispose();
-    this.texture.dispose();
   }
 }

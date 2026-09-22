@@ -1,66 +1,9 @@
+import { COVER_ATTRIBUTE, installCoverTransition, paddedCoverBands } from '../materials/coverTransition.js';
 /*
- * cropLayer — ce qui pousse dans les champs.
- * ------------------------------------------
- * Un champ était un aplat de terre labourée, partout et en toute saison. C'est
- * juste une fois sur cinq : le reste du temps il porte du blé, du maïs, du
- * tournesol, du colza, de la lavande, du chaume. Et c'est ce qui donne à une
- * campagne sa couleur — le jaune d'un champ de blé se voit d'un kilomètre,
- * bien plus loin qu'aucune haie. Quelle culture pour quel pays est l'affaire de
- * `cropFor` (`furniturePlacement`) et de la liste `farming` du dossier de
- * région : c'est là, et non ici, qu'un plateau de Haute-Provence porte de la
- * lavande et une plaine picarde du colza.
- *
- * ## Où est la culture
- *
- * Nulle part ici. La culture est une propriété de la **parcelle** — tout le
- * champ porte la même chose, et le champ suivant porte autre chose —, et c'est
- * `groundClassMap` qui la rasterise, en même temps que l'occupation du sol et
- * dans le même repère. Cette couche ne fait qu'y lire (`groundClass.cropAt`).
- *
- * Ce n'est pas un détail d'implémentation, c'est **la** règle : la même carte
- * est lue par le shader de terrain, qui en tire la couleur du champ jusqu'à
- * l'horizon. Les tiges du premier plan et la teinte du lointain ne peuvent donc
- * pas se contredire — et elles se contrediraient, si chacun tirait sa culture
- * de son côté. C'est aussi ce qui donne la portée : cinquante mètres de tiges
- * posées sur deux kilomètres de couleur.
- *
- * ## Ce qui est semé
- *
- * Des touffes croisées, exactement comme l'herbe : même géométrie, même
- * matériau, même vent — un champ de blé qui ondule est ce qu'on voit en vrai, et
- * ça ne coûte rien puisque le shader le fait déjà. Seules changent l'échelle (un
- * maïs fait deux mètres et demi, un chaume vingt centimètres) et la silhouette,
- * tirée d'un atlas.
- *
- * Le vent, lui, se mesure sur la **hauteur** de la plante et non sur la largeur
- * de son panneau (voir `foliageMaterial`) : sans cela, les masses lointaines,
- * larges de plusieurs mètres, ondulaient d'autant — un champ de tournesols
- * bougeait plus à cent mètres qu'à dix.
- *
- * Les **rangs** — vigne et verger — ne passent pas par ici : ils sont balayés
- * par `furnitureLayer`, parce qu'un rang est une ligne continue et non un semis.
- *
- * ## À quelle échelle
- *
- * En trois **bandes** (`coverBands.js`), comme l'herbe et pour la même raison :
- * au-delà de trente mètres, semer un pied par pied dessine quelque chose que
- * personne ne distingue et que le premier mip efface. Passé la bande de détail,
- * une instance représente donc plusieurs mètres carrés de champ, et l'atlas
- * fournit pour cela la **masse** de chaque culture — le blé agrégé reste du blé,
- * le maïs agrégé reste du maïs. L'identité agricole tient à cela : une masse
- * unique et neutre aurait rendu tous les champs identiques dès cinquante mètres.
- *
- * L'en-tête disait auparavant qu'au-delà de cinquante mètres « c'est la teinte
- * du sol qui porte le champ, et elle le fait bien ». C'était vrai contre
- * l'alternative d'alors — des tiges éparses —, et faux contre une masse : la
- * teinte porte la **couleur** du champ, pas sa matière, et un champ sans matière
- * se lit comme un aplat peint. Les deux travaillent maintenant ensemble, la
- * teinte au-delà de cent quarante mètres et la masse en deçà.
- *
- * La hauteur, elle, ne suit pas le fondu de présence : c'est la densité qui
- * passe la main d'une bande à l'autre, et `coverHeightFade` plancher la taille
- * de ce qui reste — sans quoi les tiges devenaient rares *et* minuscules, et
- * s'éteignaient juste avant de disparaître.
+ * Les cultures lisent l'assolement de la carte du sol. Chaque bande possède
+ * un semis ancré au sol, chargé au-delà de sa portée visible. La transition
+ * est évaluée à chaque image par le matériau, sans changer la hauteur ou
+ * tirer à nouveau la présence à mesure que le cycliste avance.
  */
 
 import {
@@ -176,7 +119,7 @@ export const CROP_PER_CELL = CROP_BANDS[0].perCell;
  * Le pire cas est le blé, seule culture à `density: 1` — mesuré à 13 452 sur
  * champ plein, pour une portée de cent quarante mètres.
  */
-export const CROP_COUNT = 15000;
+export const CROP_COUNT = 32000;
 /** Déplacement de l'observateur avant redistribution, en mètres. */
 export const CROP_REBUILD_M = 10;
 /**
@@ -304,7 +247,7 @@ export class CropLayer {
     this._anchor = null;
     this._frame = null;
     this._bands = CROP_BANDS;
-    this._cells = coverBandRing(this._bands);
+    this._cells = coverBandRing(paddedCoverBands(this._bands, CROP_REBUILD_M));
     // Une seule allocation, dimensionnée sur la bande la plus fournie.
     const widest = Math.max(...this._bands.map((band) => band.perCell));
     this._tufts = new Float32Array(widest * CROP_TUFT_STRIDE);
@@ -314,6 +257,8 @@ export class CropLayer {
     this.texture.anisotropy = 4;
 
     this.geometry = createCrossedQuads(THREE);
+    this._coverBands = new Float32Array(count * 4);
+    this.geometry.setAttribute(COVER_ATTRIBUTE, new THREE.InstancedBufferAttribute(this._coverBands, 4).setUsage(THREE.DynamicDrawUsage));
     this._atlasOffsets = new Float32Array(count * 2);
     this.geometry.setAttribute(
       ATLAS_ATTRIBUTE,
@@ -332,6 +277,8 @@ export class CropLayer {
       groundLowPoly: true,
       cacheKey: 'foliage-crop-cover-v4-lowpoly',
     });
+
+    installCoverTransition(this.material, THREE);
 
     this.mesh = new THREE.InstancedMesh(this.geometry, this.material, count);
     this.mesh.name = 'crops';
@@ -398,6 +345,7 @@ export class CropLayer {
   update(x, z, { force = false } = {}) {
     if (this.disposed || !this.bubble?.frame || !this.groundClass?.cropReady) return false;
 
+    this.material.userData.coverObserver.value.set(x, z);
     const frameChanged = this._frame !== this.bubble.frame;
     if (!force && !frameChanged && this._anchor) {
       if (Math.hypot(x - this._anchor.x, z - this._anchor.z) < CROP_REBUILD_M) return false;
@@ -438,10 +386,10 @@ export class CropLayer {
       if (!look) continue;
 
       const fade = coverBandFade(coverBandDistance(centerX, centerZ, cellX, cellZ), band);
-      if (fade <= 0.02) continue;
+
       // La hauteur ne suit pas le fondu jusqu'à zéro : c'est la densité qui
       // passe la main d'une bande à l'autre, pas la taille.
-      const heightFade = coverHeightFade(fade, CROP_HEIGHT_FADE_FLOOR);
+      const heightFade = 1;
       // À distance, une instance représente plusieurs mètres carrés de champ :
       // une culture peu dense au pied (le maïs, quatre pieds par case) y est une
       // masse continue, sinon un champ de maïs se troue à cent mètres alors
@@ -456,7 +404,7 @@ export class CropLayer {
 
       for (let i = 0; i < band.perCell && placed < capacity; i++) {
         const at = i * CROP_TUFT_STRIDE;
-        if (tufts[at + 2] > density * fade) continue;
+        if (tufts[at + 2] > density) continue;
 
         const x = tufts[at];
         const z = tufts[at + 1];
@@ -488,12 +436,14 @@ export class CropLayer {
         );
         mesh.setColorAt(placed, this._color);
 
+        this._coverBands.set([band.from, band.to, band.fadeIn, band.fadeOut], placed * 4);
         this._atlasOffsets[placed * 2] = offset[0];
         this._atlasOffsets[placed * 2 + 1] = offset[1];
         placed++;
       }
     }
 
+    this.geometry.getAttribute(COVER_ATTRIBUTE).needsUpdate = true;
     mesh.count = placed;
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;

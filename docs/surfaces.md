@@ -348,3 +348,17 @@ valeur d'antialiasing que `repairSurfaceEdges` écrase. La rendre au shader —
 au huitième de texel, soit trente centimètres au lieu de deux mètres soixante-
 dix, sans supersampling ni seconde rasterisation. Le canal bleu, libéré une fois
 la réparation faite, est là où elle irait. Ce n'est pas fait.
+
+### Couverture proche et transitions
+
+L'herbe proche est une trame de brins facettés sans texture, répartis sur le
+sol dans une maille stratifiée. Sa couleur de pied et de pointe et sa largeur
+se règlent dans `theme.grass.bladeColors` et `bladeWidth`. Le sol garde sa
+couleur jusqu'à l'horizon ; les brins s'effacent entre 40 et 65 mètres.
+Les anciennes silhouettes de touffes et leurs fleurs ne sont plus rendues.
+
+Les cultures conservent leurs atlas spécifiques. Le semis de chaque bande
+est chargé avec une réserve autour de la portée visible. Le fondu est
+calculé à chaque image depuis la position de l'observateur : ni la taille
+nominale ni la présence d'un candidat ne dépendent de ce fondu. Le découpage
+tramé est ancré à la surface, sans transparence triée.

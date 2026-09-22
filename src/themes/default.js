@@ -1790,6 +1790,8 @@ export const defaultTheme = Object.freeze({
   trees: { variants: TREE_VARIANTS, essences: TREE_ESSENCES },
   forests: FOREST_TYPES,
   grass: {
+    bladeWidth: 0.28,
+    bladeColors: { root: [0.045, 0.11, 0.018], tip: [0.15, 0.29, 0.045] },
     minHeight: GRASS_MIN_HEIGHT,
     maxHeight: GRASS_MAX_HEIGHT,
     aspect: GRASS_ASPECT,
