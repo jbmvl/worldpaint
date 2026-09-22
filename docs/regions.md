@@ -154,3 +154,10 @@ est atteignable depuis sa propre ancre, et affiche les mots non rendus.
 
 Le reste ne se vérifie qu'à l'œil : qu'une région ressemble à son pays ne se
 teste pas, ça se regarde.
+
+### Stabilité pendant une génération
+
+Le compositeur conserve la région choisie à l'initialisation du repère local.
+Avancer ne remplace donc pas les essences, les cultures et la palette des
+objets déjà générés. Une région explicitement imposée ou un nouveau repère
+après téléportation ouvre une nouvelle génération.

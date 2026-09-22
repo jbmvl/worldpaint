@@ -1787,7 +1787,7 @@ export const HEDGE_SHAPES = {
  */
 export const defaultTheme = Object.freeze({
   terrain: TERRAIN_LOOK,
-  trees: { variants: TREE_VARIANTS, essences: TREE_ESSENCES },
+  trees: { variants: TREE_VARIANTS, essences: TREE_ESSENCES, volume: { bark: [0.105, 0.068, 0.035], leaf: [0.19, 0.25, 0.13] } },
   forests: FOREST_TYPES,
   grass: {
     bladeWidth: 0.28,

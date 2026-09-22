@@ -787,3 +787,12 @@ recoudre.
 stades et terrains de jeu, qu'on retire du revêtement d'une ville pour qu'un
 parc reste un parc. Le masque urbain est l'emprise de la ville elle-même : le
 bâti relevé, borné par un disque autour d'une agglomération nommée.
+
+### Représentations des arbres
+
+Les neuf variantes adultes du peuplement ont un prototype volumétrique
+facetté dans `models/treeKit.js`. La sélection continue de lire les essences
+et peuplements régionaux existants. Le même prototype est projeté dans
+l'atlas lointain. Entre 60 et 95 mètres, un fondu tramé passe du volume aux
+plans croisés sans modifier le placement, la taille ou la teinte de l'arbre.
+Les petits végétaux du sous-étage gardent leurs silhouettes spécifiques.

@@ -1,3 +1,5 @@
+import { TreeVolumes, TREE_NEAR_FROM, TREE_NEAR_TO } from './treeVolumes.js';
+import { COVER_ATTRIBUTE, installCoverTransition } from '../materials/coverTransition.js';
 /*
  * vegetationLayer — les arbres, en instances. Poussent là où
  * `groundClassMap` dit « bois » — même donnée que le shader du terrain,
@@ -5,7 +7,7 @@
  * traverse une route sans s'interrompre) : c'est cette couche qui refuse de
  * planter dans l'emprise (`roadCorridor`), comme l'herbe et les cultures.
  *
- * Chaque arbre est une paire de quadrilatères croisés (pas un modèle), neuf
+ * Chaque arbre adulte possède un volume proche et des plans croisés lointains, neuf
  * silhouettes d'atlas, rotation/échelle/teinte propres à chaque instance. Le
  * peuplement (`FOREST_TYPES`, ancré à une maille de terrain) décide des
  * essences, des hauteurs, de la densité ; la couleur dérive par bosquets de
@@ -567,7 +569,7 @@ export class VegetationLayer {
     scene.add(this.group);
 
     this.texture = new THREE.CanvasTexture(
-      createTreeAtlasCanvas(undefined, undefined, theme.trees.variants)
+      createTreeAtlasCanvas(undefined, undefined, theme.trees.variants, theme.trees.volume)
     );
     this.texture.colorSpace = THREE.SRGBColorSpace;
     this.texture.anisotropy = 4;
@@ -586,12 +588,19 @@ export class VegetationLayer {
       windStrength: 0.05 * TREE_ASPECT,
       cacheKey: 'foliage-atlas-wind-v4',
     });
+    this.standMaterial = this.material.clone();
+    this.standMaterial.onBeforeCompile = this.material.onBeforeCompile;
+    this.standMaterial.customProgramCacheKey = this.material.customProgramCacheKey;
+    installCoverTransition(this.standMaterial, THREE);
+    this.volumes = new TreeVolumes(THREE, this.group, theme);
     this.depthMaterial = createFoliageDepthMaterial({
       THREE,
       map: this.texture,
       tiles: TREE_ATLAS_COLS,
       cacheKey: 'foliage-atlas-depth-v2',
     });
+
+    installCoverTransition(this.depthMaterial, THREE);
 
     /** @type {Map<string, Object>} maillages du peuplement, par clé de tuile */
     this.meshes = new Map();
@@ -647,6 +656,7 @@ export class VegetationLayer {
   /** Fait avancer le vent dans les houppes (l'ombre portée, elle, ne balance pas). */
   advance(delta) {
     advanceFoliageWind(this.material, delta);
+    this.volumes.advance(delta);
   }
 
   /**
@@ -655,6 +665,7 @@ export class VegetationLayer {
    */
   setWind(field) {
     setFoliageWind(this.material, field);
+    this.volumes.setWind(field);
   }
 
   /**
@@ -726,6 +737,7 @@ export class VegetationLayer {
 
   /** Retire les instances d'une tuile. */
   remove(key) {
+    this.volumes.set(key, null);
     this._planted.delete(key);
     this._partial.delete(key);
     this._stale.delete(key);
@@ -861,6 +873,8 @@ export class VegetationLayer {
     }
 
     const placements = thinPlacements(collected, MAX_TREES_PER_TILE);
+    for (const item of placements) item.color = foliageTint(item.hue, item.x, item.z, item.shade, item.jitter);
+    this.volumes.set(tile.key, placements);
     if (placements.length === 0) {
       this._swap(tile.key, null);
       return;
@@ -868,6 +882,9 @@ export class VegetationLayer {
 
     // Géométrie clonée par tuile : l'attribut d'atlas est une donnée d'instance.
     const geometry = this.baseGeometry.clone();
+    const coverBands = new Float32Array(placements.length * 4);
+    for (let i=0; i<placements.length; i++) coverBands.set(placements[i].variant < 9 ? [TREE_NEAR_FROM, 1e7, TREE_NEAR_TO-TREE_NEAR_FROM, 0] : [0,1e7,0,0],i*4);
+    geometry.setAttribute(COVER_ATTRIBUTE, new THREE.InstancedBufferAttribute(coverBands,4));
     const offsets = new Float32Array(placements.length * 2);
     placements.forEach((item, index_) => {
       const [u, v] = TREE_ATLAS_OFFSETS[item.variant];
@@ -876,7 +893,7 @@ export class VegetationLayer {
     });
     geometry.setAttribute(ATLAS_ATTRIBUTE, new THREE.InstancedBufferAttribute(offsets, 2));
 
-    const mesh = new THREE.InstancedMesh(geometry, this.material, placements.length);
+    const mesh = new THREE.InstancedMesh(geometry, this.standMaterial, placements.length);
     mesh.name = `vegetation-${tile.key}`;
     mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
     mesh.castShadow = true;
@@ -919,6 +936,9 @@ export class VegetationLayer {
   update(x, z, { force = false } = {}) {
     if (this.disposed || !this.bubble?.frame) return false;
 
+    this.volumes.update(x, z);
+    this.standMaterial.userData.coverObserver.value.set(x,z);
+    this.depthMaterial.userData.coverObserver.value.set(x,z);
     const frameChanged = this._thicketFrame !== this.bubble.frame;
     if (!force && !frameChanged && this._thicketAnchor) {
       if (Math.hypot(x - this._thicketAnchor.x, z - this._thicketAnchor.z) < THICKET_REBUILD_M) {
@@ -1042,6 +1062,8 @@ export class VegetationLayer {
     this.thicketGeometry.dispose();
     this.scene.remove(this.group);
     this.baseGeometry.dispose();
+    this.volumes.dispose();
+    this.standMaterial.dispose();
     this.material.dispose();
     this.depthMaterial.dispose();
     this.texture.dispose();

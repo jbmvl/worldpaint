@@ -300,6 +300,7 @@ export class WorldComposer {
     const next = id ? regionById(id) : null;
     if (next === this.regionOverride) return false;
     this.regionOverride = next;
+    this._landscapeFrame = null;
     return true;
   }
 
@@ -536,8 +537,9 @@ export class WorldComposer {
     const before = this.landscape?.region ?? null;
     this.landscape = landscapeAt(lng, lat, here, {
       bubble: this.bubble,
-      override: this.regionOverride,
+      override: this.regionOverride || (this._landscapeFrame === this.bubble.frame ? before : null),
     });
+    this._landscapeFrame = this.bubble.frame;
     return (this.landscape?.region ?? null) !== before;
   }
 

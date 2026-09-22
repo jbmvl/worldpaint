@@ -32,6 +32,7 @@
  * terre.
  */
 
+import { treePrototype, paintTreePrototype } from '../models/treeKit.js';
 import { defaultTheme } from '../themes/default.js';
 
 /** Générateur pseudo-aléatoire déterministe (mulberry32). */
@@ -634,7 +635,7 @@ const TREE_PAINTERS = {
  * découpée garde ses trous après le filtrage, et l'atlas entier tient dans une
  * texture de 640².
  */
-export function createTreeAtlasCanvas(cell = 160, seed = 8821, variants = defaultTheme.trees.variants) {
+export function createTreeAtlasCanvas(cell = 160, seed = 8821, variants = defaultTheme.trees.variants, volume = defaultTheme.trees.volume) {
   const width = cell * TREE_ATLAS_COLS;
   const height = cell * TREE_ATLAS_ROWS;
   const canvas = createCanvas(width, height);
@@ -647,6 +648,11 @@ export function createTreeAtlasCanvas(cell = 160, seed = 8821, variants = defaul
     ctx.save();
     ctx.translate(col * cell, row * cell);
 
+    if (index < 9) {
+      paintTreePrototype(ctx, cell, treePrototype(variant, index, volume));
+      ctx.restore();
+      return;
+    }
     // Tronc d'abord : la houppe le recouvre partiellement, ce qui évite
     // l'aspect « sucette sur un bâton ».
     const trunkWidth = cell * variant.trunk;
@@ -656,7 +662,7 @@ export function createTreeAtlasCanvas(cell = 160, seed = 8821, variants = defaul
     ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
     ctx.fillRect((cell - trunkWidth) / 2, cell * variant.crownBase, trunkWidth * 0.42, cell * (1 - variant.crownBase));
 
-    (TREE_PAINTERS[variant.kind] || drawBroadleaf)(ctx, cell, random, variant);
+    (TREE_PAINTERS[variant.kind] || drawBroadleaf)(ctx, cell, makeRandom(seed + index * 131), variant);
     ctx.restore();
   });
 

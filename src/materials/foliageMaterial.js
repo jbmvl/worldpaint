@@ -131,6 +131,7 @@ export function createFoliageMaterial({
   coverage = false,
   coverageRange = [30, 120],
   coverageGain = 2.2,
+  uprightNormals = true,
   groundLowPoly = false,
   groundGrainPerInstance = false,
   cacheKey,
@@ -293,7 +294,7 @@ export function createFoliageMaterial({
         );
     }
 
-    shader.fragmentShader = shader.fragmentShader
+    if (uprightNormals) shader.fragmentShader = shader.fragmentShader
       .replace(
         '#include <normal_fragment_begin>',
         `#include <normal_fragment_begin>
