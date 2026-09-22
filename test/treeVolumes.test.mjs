@@ -26,3 +26,15 @@ test('le volume proche garde le placement du peuplement et libère ses lots', ()
   volumes.update(300,0); assert.equal(volumes.batches[0].count,0);
   volumes.dispose(); assert.equal(group.children.length,0);
 });
+
+test('le fondu proche se fait au-delà de 120 mètres sans bruit de découpe', () => {
+  const group=new THREE.Group(); const volumes=new TreeVolumes(THREE,group,defaultTheme);
+  const shader={uniforms:{},vertexShader:'#include <common>\n#include <begin_vertex>',fragmentShader:'#include <common>\n#include <alphatest_fragment>'};
+  volumes.material.onBeforeCompile(shader);
+  assert.ok(shader.fragmentShader.includes('diffuseColor.a *= smoothstep'));
+  assert.ok(!shader.fragmentShader.includes('coverThreshold'));
+  const band=volumes.batches[0].geometry.attributes.aCoverBand.array;
+  assert.equal(band[1],190);
+  assert.equal(band[3],70);
+  volumes.dispose();
+});

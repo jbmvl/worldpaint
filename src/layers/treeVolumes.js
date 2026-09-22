@@ -4,14 +4,15 @@
 import { treePrototype } from '../models/treeKit.js';
 import { createFoliageMaterial, advanceFoliageWind, setFoliageWind } from '../materials/foliageMaterial.js';
 import { COVER_ATTRIBUTE, installCoverTransition } from '../materials/coverTransition.js';
-export const TREE_NEAR_FROM = 60;
-export const TREE_NEAR_TO = 95;
-const CAPACITY = 2048;
+export const TREE_NEAR_FROM = 120;
+export const TREE_NEAR_TO = 190;
+const CAPACITY = 8192;
 export class TreeVolumes {
   constructor(THREE, group, theme) {
     this.THREE=THREE; this.group=group; this.tiles=new Map(); this.batches=[];
     this.material=createFoliageMaterial({THREE,map:null,wind:true,windStrength:.028,uprightNormals:false,cacheKey:'tree-volume-v1'});
-    installCoverTransition(this.material,THREE);
+    installCoverTransition(this.material,THREE,{mode:'alpha'});
+    this.material.depthWrite = true;
     for(let variant=0;variant<Math.min(9,theme.trees.variants.length);variant++) {
       const geometry=treePrototype(theme.trees.variants[variant],variant,theme.trees.volume).toGeometry(THREE,'tree-volume');
       geometry.computeVertexNormals();
@@ -19,6 +20,7 @@ export class TreeVolumes {
       for(let i=0;i<CAPACITY;i++) bands.set([0,TREE_NEAR_TO,0,TREE_NEAR_TO-TREE_NEAR_FROM],i*4);
       geometry.setAttribute(COVER_ATTRIBUTE,new THREE.InstancedBufferAttribute(bands,4));
       const mesh=new THREE.InstancedMesh(geometry,this.material,CAPACITY);
+      mesh.renderOrder=2;
       mesh.count=0; mesh.frustumCulled=false; mesh.receiveShadow=true; mesh.castShadow=true;
       // La profondeur reçoit exactement le même fondu que la surface.
       mesh.customDepthMaterial=new THREE.MeshDepthMaterial({depthPacking:THREE.RGBADepthPacking});

@@ -1,5 +1,5 @@
 import { TreeVolumes, TREE_NEAR_FROM, TREE_NEAR_TO } from './treeVolumes.js';
-import { COVER_ATTRIBUTE, installCoverTransition } from '../materials/coverTransition.js';
+import { COVER_ATTRIBUTE, installCoverTransition, paddedCoverBands } from '../materials/coverTransition.js';
 /*
  * vegetationLayer — les arbres, en instances. Poussent là où
  * `groundClassMap` dit « bois » — même donnée que le shader du terrain,
@@ -82,9 +82,6 @@ import { inCorridor } from './roadCorridor.js';
 import {
   coverBand,
   coverBandRing,
-  coverBandFade,
-  coverBandDistance,
-  coverHeightFade,
   coverMassDensity,
   coverBandsRadius,
 } from './coverBands.js';
@@ -592,7 +589,7 @@ export class VegetationLayer {
     this.standMaterial = this.material.clone();
     this.standMaterial.onBeforeCompile = this.material.onBeforeCompile;
     this.standMaterial.customProgramCacheKey = this.material.customProgramCacheKey;
-    installCoverTransition(this.standMaterial, THREE);
+    installCoverTransition(this.standMaterial, THREE, { mode: 'alpha' });
     this.volumes = new TreeVolumes(THREE, this.group, theme);
     this.depthMaterial = createFoliageDepthMaterial({
       THREE,
@@ -620,7 +617,7 @@ export class VegetationLayer {
     this.queue = [];
 
     // Le sous-étage : un maillage jamais réalloué, `count` ajusté, comme l'herbe.
-    this._thicketCells = coverBandRing(THICKET_BANDS);
+    this._thicketCells = coverBandRing(paddedCoverBands(THICKET_BANDS, THICKET_REBUILD_M));
     this._thicketAnchor = null;
     this._thicketFrame = null;
     this._tree = {};
@@ -631,7 +628,13 @@ export class VegetationLayer {
       ATLAS_ATTRIBUTE,
       new THREE.InstancedBufferAttribute(this._thicketOffsets, 2).setUsage(THREE.DynamicDrawUsage)
     );
-    this.thicket = new THREE.InstancedMesh(this.thicketGeometry, this.material, THICKET_COUNT);
+    this._thicketBands = new Float32Array(THICKET_COUNT * 4);
+    this.thicketGeometry.setAttribute(COVER_ATTRIBUTE, new THREE.InstancedBufferAttribute(this._thicketBands, 4));
+    this.thicketMaterial = this.material.clone();
+    this.thicketMaterial.onBeforeCompile = this.material.onBeforeCompile;
+    this.thicketMaterial.customProgramCacheKey = this.material.customProgramCacheKey;
+    installCoverTransition(this.thicketMaterial, THREE, { mode: 'alpha' });
+    this.thicket = new THREE.InstancedMesh(this.thicketGeometry, this.thicketMaterial, THICKET_COUNT);
     this.thicket.name = 'vegetation-thicket';
     this.thicket.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.thicket.count = 0;
@@ -898,6 +901,7 @@ export class VegetationLayer {
     geometry.setAttribute(ATLAS_ATTRIBUTE, new THREE.InstancedBufferAttribute(offsets, 2));
 
     const mesh = new THREE.InstancedMesh(geometry, this.standMaterial, placements.length);
+    mesh.renderOrder = 1;
     mesh.name = `vegetation-${tile.key}`;
     mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
     mesh.castShadow = true;
@@ -942,6 +946,7 @@ export class VegetationLayer {
 
     this.volumes.update(x, z);
     this.standMaterial.userData.coverObserver.value.set(x,z);
+    this.thicketMaterial.userData.coverObserver.value.set(x,z);
     const frameChanged = this._thicketFrame !== this.bubble.frame;
     if (!force && !frameChanged && this._thicketAnchor) {
       if (Math.hypot(x - this._thicketAnchor.x, z - this._thicketAnchor.z) < THICKET_REBUILD_M) {
@@ -981,8 +986,7 @@ export class VegetationLayer {
         const cellZ = (base.z + cell.gz) * band.cell;
         const centreX = cellX + band.cell * 0.5;
         const centreZ = cellZ + band.cell * 0.5;
-        const fade = coverBandFade(coverBandDistance(centerX, centerZ, centreX, centreZ), band);
-        if (fade <= 0.02) continue;
+
 
         const type = standTypeFrom(pool, centreX, centreZ);
         const stems =
@@ -1010,8 +1014,7 @@ export class VegetationLayer {
         const canopy = edgeCanopy(edge);
         // À distance, une instance représente plusieurs mètres carrés : la
         // densité d'une bande large est relevée, son panneau élargi.
-        const keep = coverMassDensity(share, band) * fade;
-        const heightFade = coverHeightFade(fade, THICKET_HEIGHT_FADE_FLOOR);
+        const keep = coverMassDensity(share, band);
         const variants = variantsFor(type, this.theme.trees.essences);
         const cellStrata = thickLook.essence ? essenceStrata(thickLook.essence, this.theme.trees) : strata;
         const seed = positionSeed(cellX, cellZ, band.salt);
@@ -1026,7 +1029,7 @@ export class VegetationLayer {
 
           describeTree(tree, seed, slot, type, lowPart, variants, cellStrata, true);
           const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
-          const height = tree.height * (tree.low ? 1 : canopy) * heightFade * band.rise;
+          const height = tree.height * (tree.low ? 1 : canopy) * band.rise;
 
           this._compose(x, y, z, height, tree.aspect * band.spread, tree.rotation);
           thicket.setMatrixAt(placed, this._matrix);
@@ -1036,6 +1039,7 @@ export class VegetationLayer {
           const [u, v] = TREE_ATLAS_OFFSETS[tree.variant];
           this._thicketOffsets[placed * 2] = u;
           this._thicketOffsets[placed * 2 + 1] = v;
+          this._thicketBands.set([band.from, band.to, band.fadeIn, band.fadeOut], placed * 4);
           placed++;
         }
       }
@@ -1045,6 +1049,7 @@ export class VegetationLayer {
     thicket.instanceMatrix.needsUpdate = true;
     if (thicket.instanceColor) thicket.instanceColor.needsUpdate = true;
     this.thicketGeometry.getAttribute(ATLAS_ATTRIBUTE).needsUpdate = true;
+    this.thicketGeometry.getAttribute(COVER_ATTRIBUTE).needsUpdate = true;
   }
 
   dispose() {
@@ -1064,6 +1069,7 @@ export class VegetationLayer {
     this.group.remove(this.thicket);
     this.thicket.dispose?.();
     this.thicketGeometry.dispose();
+    this.thicketMaterial.dispose();
     this.scene.remove(this.group);
     this.baseGeometry.dispose();
     this.volumes.dispose();
