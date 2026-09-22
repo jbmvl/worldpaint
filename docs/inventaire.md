@@ -816,7 +816,9 @@ avec un volume facetté au joint. Les oreilles suivent le rabattement de la
 tête tout en conservant leur mouvement propre ; oreilles et queue utilisent
 une horloge même quand la distance parcourue reste nulle.
 Les espèces marquées `bound` alternent appui et trajectoire aérienne parabolique,
-avec tangage du corps. Les ombres utilisent les mêmes articulations.
+avec tangage du corps. Les autres quadrupèdes passent du trot au galop,
+avec battues gauche/droite décalées et une élévation plus courte.
+Les ombres utilisent les mêmes articulations.
 La marche reste une animation procédurale : elle ne résout pas le contact
 individuel de chaque sabot sur les irrégularités du terrain.
 

@@ -5682,8 +5682,15 @@ test('le bond ne concerne que les espèces qui bondissent, et seulement lancées
   // C'est le nombre qui décide de tout : une espèce qui trotte ne bondit
   // jamais, une espèce qui bondit ne le fait qu'une fois lancée.
   const bondissent = ['goat', 'deer', 'doe', 'reindeer', 'fox', 'cat'];
-  const trottinent = ['cow', 'sheep', 'horse', 'donkey', 'chicken', 'boar', 'wolf', 'bear', 'dog'];
-  assert.equal(bondissent.length + trottinent.length, FAUNA_KINDS.length, 'le catalogue est couvert');
+  const trottinent = ['chicken'];
+  const galopent = ['cow', 'sheep', 'horse', 'donkey', 'boar', 'wolf', 'bear', 'dog'];
+  for (const kind of galopent) {
+    const spec = FAUNA_SPECIES[kind];
+    assert.equal(boundMix(spec.walkMS, spec), 0);
+    assert.equal(boundMix(spec.runMS, spec), 1);
+    assert.equal(spec.gallop, true);
+  }
+  assert.equal(bondissent.length + trottinent.length + galopent.length, FAUNA_KINDS.length, 'le catalogue est couvert');
 
   for (const kind of bondissent) {
     const spec = FAUNA_SPECIES[kind];

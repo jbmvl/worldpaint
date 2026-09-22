@@ -111,12 +111,9 @@ export function grazeAngleFor(model, target = GRAZE_TARGET_M) {
  *   trottine sur place ; trop longue, elle patine ;
  * - `swingRad` est l'ouverture du balancier au pas. Le galop la multiplie ;
  * - `walkMS` / `runMS` sont les allures, en mètres par seconde ;
- * - `bound`   dit **comment** l'espèce court. Un quadrupède au pas va toujours
- *   en diagonale ; à l'allure vive, deux familles se séparent nettement, et
- *   c'est ce qu'on lit en premier chez une bête qui détale : le cervidé, la
- *   chèvre et le renard **bondissent** — antérieures ensemble, postérieures
- *   ensemble, le dos qui se creuse et se tend —, la vache, le cheval, le
- *   sanglier ou le loup **trottinent**, la même diagonale en plus rapide ;
+ * - `bound` apparie les trains pour le bond ; `gallop` décale les battues
+ *   gauche/droite pour la course des autres quadrupèdes ; au pas, les
+ *   diagonales alternent dans les deux cas ;
  * - `roam`    étire ou resserre le rayon des circuits (`faunaMotion`). Les
  *   conduites sont décrites en mètres absolus, ce qui va pour du bétail et
  *   pas du tout pour une poule : la même « marche » de vingt mètres emmène
@@ -127,13 +124,12 @@ export function grazeAngleFor(model, target = GRAZE_TARGET_M) {
  * patte, et une longueur de patte se lit dans le fichier d'à côté.
  */
 export const FAUNA_SPECIES = {
-  cow: { roam: 1, family: 'grazer', strideM: 1.5, swingRad: 0.4, walkMS: 1.0, runMS: 3.4, bound: false },
-  sheep: { roam: 0.85, family: 'grazer', strideM: 0.85, swingRad: 0.45, walkMS: 0.8, runMS: 3.0, bound: false },
-  // La chèvre bondit là où la brebis trottine : c'est ce qui les distingue de
-  // loin, plus sûrement que la silhouette.
+  cow: { roam: 1, family: 'grazer', strideM: 1.5, swingRad: 0.4, walkMS: 1.0, runMS: 3.4, bound: false, gallop: true },
+  sheep: { roam: 0.85, family: 'grazer', strideM: 0.85, swingRad: 0.45, walkMS: 0.8, runMS: 3.0, bound: false, gallop: true },
+  // La chèvre apparie les pattes ; la brebis décale ses battues au galop.
   goat: { roam: 0.85, family: 'grazer', strideM: 0.85, swingRad: 0.48, walkMS: 0.85, runMS: 3.2, bound: true },
-  horse: { roam: 1.25, family: 'grazer', strideM: 2.0, swingRad: 0.42, walkMS: 1.5, runMS: 6.5, bound: false },
-  donkey: { roam: 1, family: 'grazer', strideM: 1.4, swingRad: 0.42, walkMS: 1.2, runMS: 4.5, bound: false },
+  horse: { roam: 1.25, family: 'grazer', strideM: 2.0, swingRad: 0.42, walkMS: 1.5, runMS: 6.5, bound: false, gallop: true },
+  donkey: { roam: 1, family: 'grazer', strideM: 1.4, swingRad: 0.42, walkMS: 1.2, runMS: 4.5, bound: false, gallop: true },
   // La poule n'a que deux pattes et picore au lieu de brouter : sa foulée est
   // courte et rapide, et elle ne quitte pas la cour — d'où le plus petit
   // rayon d'errance du catalogue, et de loin.
@@ -144,18 +140,18 @@ export const FAUNA_SPECIES = {
   deer: { roam: 1.2, family: 'cervid', strideM: 1.6, swingRad: 0.46, walkMS: 1.2, runMS: 7.0, bound: true },
   doe: { roam: 1.2, family: 'cervid', strideM: 1.45, swingRad: 0.46, walkMS: 1.2, runMS: 7.0, bound: true },
   reindeer: { roam: 1.2, family: 'cervid', strideM: 1.7, swingRad: 0.44, walkMS: 1.2, runMS: 6.0, bound: true },
-  boar: { roam: 0.9, family: 'boar', strideM: 1.0, swingRad: 0.42, walkMS: 0.9, runMS: 5.5, bound: false },
+  boar: { roam: 0.9, family: 'boar', strideM: 1.0, swingRad: 0.42, walkMS: 0.9, runMS: 5.5, bound: false, gallop: true },
 
   // Les carnivores ne broutent pas : leur tête plonge pour flairer, moins bas
   // et bien moins longtemps. `faunaMotion` en tire des conduites différentes.
   fox: { roam: 1.1, family: 'canid', strideM: 0.8, swingRad: 0.58, walkMS: 1.0, runMS: 6.0, bound: true },
-  wolf: { roam: 1.4, family: 'canid', strideM: 1.4, swingRad: 0.56, walkMS: 1.4, runMS: 8.0, bound: false },
-  bear: { roam: 1.2, family: 'bear', strideM: 1.5, swingRad: 0.34, walkMS: 1.1, runMS: 5.5, bound: false },
+  wolf: { roam: 1.4, family: 'canid', strideM: 1.4, swingRad: 0.56, walkMS: 1.4, runMS: 8.0, bound: false, gallop: true },
+  bear: { roam: 1.2, family: 'bear', strideM: 1.5, swingRad: 0.34, walkMS: 1.1, runMS: 5.5, bound: false, gallop: true },
 
   // Bêtes du bâti, pas du pré : rayon d'errance court, elles ne s'éloignent
-  // pas de la maison. Le chat bondit quand il détale, le chien trottine.
+  // pas de la maison. Le chat bondit quand il détale, le chien passe au galop.
   cat: { roam: 0.35, family: 'cat', strideM: 0.4, swingRad: 0.52, walkMS: 0.55, runMS: 3.4, bound: true },
-  dog: { roam: 0.55, family: 'dog', strideM: 0.75, swingRad: 0.5, walkMS: 0.9, runMS: 4.8, bound: false },
+  dog: { roam: 0.55, family: 'dog', strideM: 0.75, swingRad: 0.5, walkMS: 0.9, runMS: 4.8, bound: false, gallop: true },
 };
 
 /**
@@ -169,6 +165,8 @@ export function createFaunaGeometries(THREE, colors = defaultTheme.fauna.colors)
   for (const [name, build] of Object.entries(FAUNA_BUILDERS)) {
     const model = build(colors);
     geometries[name] = model.toGeometry(THREE, `fauna-${name}`);
+    const lead = model.limbs.map(limb => FAUNA_SPECIES[name].gallop && (limb === 2 || limb === 4) ? 0.55 : 0);
+    geometries[name].setAttribute('aRunLead', new THREE.Float32BufferAttribute(lead, 1));
     grazeRad[name] = grazeAngleFor(model);
   }
   return { geometries, grazeRad };
@@ -215,6 +213,7 @@ export function createFaunaMaterial(THREE) {
         '#include <common>',
         `#include <common>
          attribute float ${LIMB_ATTRIBUTE};
+         attribute float aRunLead;
          attribute vec3 ${PIVOT_ATTRIBUTE};
          attribute float ${COAT_ATTRIBUTE};
          attribute vec4 ${MOTION_ATTRIBUTE};
@@ -237,7 +236,7 @@ export function createFaunaMaterial(THREE) {
          }
          mat3 faunaKneeRotation() {
            float trot = (${LIMB_ATTRIBUTE} < 1.5 || ${LIMB_ATTRIBUTE} > 3.5) ? 0.0 : PI;
-           float leap = ${LIMB_ATTRIBUTE} > 2.5 ? PI : 0.0;
+           float leap = (${LIMB_ATTRIBUTE} > 2.5 ? PI : 0.0) + aRunLead;
            float phase = ${MOTION_ATTRIBUTE}.x + mix(trot, leap, ${MOTION_ATTRIBUTE}.w);
            float lift = max(0.0, sin(phase));
            float signBend = ${LIMB_ATTRIBUTE} > 2.5 ? 1.0 : -1.0;
@@ -265,7 +264,7 @@ export function createFaunaMaterial(THREE) {
              // deux antérieures partent ensemble, les deux postérieures
              // ensemble et à contretemps. C'est ce qui donne au chevreuil sa
              // course par battues plutôt qu'un trot accéléré.
-             float leap = (${LIMB_ATTRIBUTE} > 2.5) ? PI : 0.0;
+             float leap = ((${LIMB_ATTRIBUTE} > 2.5) ? PI : 0.0) + aRunLead;
              // Le fondu se fait sur le déphasage lui-même : une bête qui
              // accélère passe continûment du trot au bond, elle ne saute pas
              // d'une allure à l'autre au franchissement d'un seuil.

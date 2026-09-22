@@ -109,9 +109,6 @@ export const BODY_BOB = 0.012;
  */
 export const BOUND_FULL = 0.6;
 
-/** Hauteur du bond, en part du balancement ordinaire. */
-export const BOUND_LIFT = 3.2;
-
 /**
  * Traversées déclenchées vivantes au plus.
  *
@@ -448,7 +445,7 @@ export class FaunaLayer {
         // La foulée suit le chemin réellement parcouru, jamais le temps : une
         // bête qui ralentit ralentit ses pattes, et rien ne patine.
         const phase = (state.distance / spec.strideM) * Math.PI * 2;
-        const pose = faunaBodyPose(phase, gait, bound, spec.strideM);
+        const pose = faunaBodyPose(phase, gait, bound, spec.strideM * (spec.gallop ? 0.6 : 1));
         this._position.set(state.x, state.y + pose.lift * animal.scale - FAUNA_SINK_M, state.z);
         this._euler.set(pose.pitch, state.heading, 0, 'YXZ');
         this._quaternion.setFromEuler(this._euler);
@@ -487,21 +484,9 @@ export class FaunaLayer {
   }
 }
 
-/**
- * Part de bond d'une bête à une vitesse donnée, de 0 (trot) à 1 (bond entier).
- *
- * Deux choses en sortent, et c'est voulu qu'elles sortent du même nombre :
- * une espèce qui ne bondit pas ne bondit jamais, et une espèce qui bondit ne
- * le fait qu'une fois lancée — au pas, tout quadrupède va en diagonale.
- *
- * Fonction pure.
- *
- * @param {number} speed Vitesse au sol, en mètres par seconde.
- * @param {{bound?:boolean, walkMS:number, runMS:number}} spec Voir `FAUNA_SPECIES`.
- * @returns {number} Dans [0, 1].
- */
+/** Fondu du trot vers l'allure de course (bond ou galop), selon la vitesse. */
 export function boundMix(speed, spec) {
-  if (!spec?.bound) return 0;
+  if (!spec?.bound && !spec?.gallop) return 0;
   const from = spec.walkMS;
   const to = Math.max(from + 0.1, spec.runMS * BOUND_FULL);
   return Math.max(0, Math.min(1, (speed - from) / (to - from)));

@@ -8,6 +8,9 @@ test('chaque espèce porte des genoux uniquement sur ses pattes et rattache les 
   const {geometries} = createFaunaGeometries(THREE);
   for (const [kind, geometry] of Object.entries(geometries)) {
     const a=geometry.attributes;
+    assert.equal(a.aRunLead.count,a.position.count,kind);
+    if (kind === "horse") assert.ok(a.aRunLead.array.some(v=>v>0));
+    if (kind === "deer") assert.ok(a.aRunLead.array.every(v=>v===0));
     assert.equal(a.aKnee.count,a.position.count,kind);
     assert.equal(a.aHeadParent.count,a.position.count,kind);
     let knees=0;
