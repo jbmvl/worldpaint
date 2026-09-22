@@ -1,3 +1,4 @@
+import { installTunnelMouths } from './tunnelMouths.js';
 /*
  * terrainMaterial — la matière du sol. `groundClassMap` rasterise l'occupation
  * du sol autour de l'observateur ; ce shader y lit la part d'herbe, de bois,
@@ -196,6 +197,7 @@ export class TerrainMaterialFactory {
     this.waterRippleTexture = repeated(createWaterNormalCanvas());
 
     this.material = this._create();
+    this.setTunnelMouths = installTunnelMouths(THREE, this.material);
   }
 
   get textures() {

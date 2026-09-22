@@ -15,9 +15,8 @@
  * Un ouvrage d'art n'est pas une classe de route : c'est un état de la
  * chaussée, ligne par ligne (`roadWorks.js`). Il traverse donc ce module comme
  * un tableau parallèle au tracé — `segment.works` —, et non comme un profil de
- * plus. Le tunnel, lui, est jeté à la lecture des tuiles (`roadStyleFor`) :
- * retiré du rendu pour le moment, la route s'arrête net au pied de la colline
- * plutôt que d'être reprise dessous. Deux conséquences pour le reste :
+ * plus. Le tunnel conserve sa chaussée et sa plate-forme sous le relief ;
+ * son intérieur et ses portails sont construits par `bridgeLayer`.
  *
  *   - la plate-forme d'une travée est tendue entre ses appuis
  *     (`levelWorkSpans`) au lieu d'épouser le fond de vallée. Elle passe après
@@ -39,7 +38,7 @@
  * La chaussée pose aussi son **marquage** (`roadMarkings`), et il ne peut pas
  * être posé ailleurs : il se pose plage dessinable par plage dessinable, sur
  * les mêmes morceaux que le ruban, ce qui est la seule façon qu'il s'arrête où
- * la chaussée s'arrête — au pied d'un tunnel comme à la bouche d'un carrefour.
+ * la chaussée s'arrête — à la bouche d'un carrefour.
  * Il tient dans un seul maillage pour tout le réseau : une couleur, pas de
  * texture, rien qui dépende de la classe de la route une fois le trait choisi.
  *
@@ -518,12 +517,9 @@ export function onewayFor(properties = {}) {
  * `subclass` affine `class` : piste cyclable, sentier et escalier partagent la
  * même classe `path`.
  *
- * Un tunnel est écarté ici : la route s'arrête net au pied de la colline
- * plutôt que d'être reprise sous terre (voir `roadWorks.js`, retiré du rendu
- * pour le moment).
+ * Un tunnel conserve son profil de chaussée et porte son code d'ouvrage.
  */
 export function roadStyleFor(properties = {}, profiles = defaultTheme.roads.profiles) {
-  if (properties.brunnel === 'tunnel') return null;
   let key = ROAD_CLASSES[properties.class];
 
   if (properties.class === 'path' || properties.class === 'cycleway') {
@@ -1182,13 +1178,9 @@ export class RoadNetwork {
         index.query(point.x, point.z, 0, (other) => other !== segment && !isPaved(profiles[other.profile])) !==
         null;
 
-      // Deux raisons, et une seule mécanique, de ne pas dessiner une ligne : le
-      // tunnel (la route continue sous la colline) et le carrefour (la surface
-      // commune prend le relais). Dans les deux cas la chaîne reste entière,
-      // c'est le ruban qui se pose en morceaux. Les distances de texture sont
-      // celles du tracé entier : le marquage ne se décale ni au ressortir d'un
-      // tunnel ni au sortir d'un carrefour.
-      const drawable = drawableRuns(segment.works, segment.path.length);
+      // La chaussée et ses marquages continuent dans le tunnel ; seules les
+      // dalles de carrefour remplacent une portion du ruban.
+      const drawable = drawableRuns(null, segment.path.length);
       // Un escalier n'a pas de ruban : sa plate-forme continue est redécoupée
       // en marches (`appendSteps`) plutôt que balayée telle quelle.
       const geometryFor = spec.steps ? appendSteps : appendRibbon;
@@ -1207,7 +1199,7 @@ export class RoadNetwork {
           });
         if (added) segments++;
         // Le marquage se pose sur la **même** plage que le ruban : il hérite
-        // donc de sa découpe — tunnels et carrefours — sans règle à lui.
+        // donc de sa découpe aux carrefours sans règle à lui.
         markings += this._appendMarkings(markingBuffer, segment, run, areas, paint);
       }
     }

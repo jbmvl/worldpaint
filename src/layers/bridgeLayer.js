@@ -100,8 +100,7 @@ export function deckProfile(halfWidth, deck) {
 }
 
 /**
- * Section d'une voûte de tunnel : un demi-anneau fermé par son radier. Fermée,
- * donc bouchée aux deux bouts — la bouche noire vue de face, c'est ce bouchon.
+ * Section ouverte d'une voûte : piédroits et arc, sans radier ni bouchon.
  *
  * @param {number} halfWidth Demi-largeur de la chaussée.
  * @param {Object} portal Tranche `portal` d'une famille (couleurs linéaires).
@@ -140,6 +139,7 @@ export class BridgeLayer {
     this.bubble = bubble;
     this.disposed = false;
     this.counts = { spans: 0, piers: 0, portals: 0 };
+    this.tunnelMouths = [];
 
     // Une seule matière : tout est coloré au sommet. `DoubleSide` parce qu'on
     // regarde une voûte de tunnel par l'intérieur.
@@ -170,13 +170,15 @@ export class BridgeLayer {
 
     const buffer = createProfileBuffer();
     this.counts = { spans: 0, piers: 0, portals: 0 };
+    this.tunnelMouths = [];
 
     for (const segment of roadSegments || []) {
       if (!segment?.works || !segment.path || segment.path.length < 2) continue;
       const inReach = (run) =>
         Math.hypot(segment.path[run.from].x - here.x, segment.path[run.from].z - here.z) <=
           BRIDGE_RADIUS_M ||
-        Math.hypot(segment.path[run.to].x - here.x, segment.path[run.to].z - here.z) <= BRIDGE_RADIUS_M;
+        Math.hypot(segment.path[run.to].x - here.x, segment.path[run.to].z - here.z) <= BRIDGE_RADIUS_M ||
+        segment.path.slice(run.from,run.to+1).some(p=>Math.hypot(p.x-here.x,p.z-here.z)<=BRIDGE_RADIUS_M);
 
       for (const run of workRuns(segment.works, WORK_BRIDGE)) {
         if (!inReach(run)) continue;
@@ -352,37 +354,22 @@ export class BridgeLayer {
    * mètres.
    */
   _buildTunnelHeads(buffer, segment, run, sampleElevation) {
-    const { halfWidth } = segment;
-    const rows = segment.path.length;
-
-    for (const mouth of [run.from, run.to]) {
-      // Sens de l'enfoncement : vers l'intérieur du tunnel.
-      const inward = mouth === run.from ? 1 : -1;
-      const depth = Math.min(
-        Math.round(PORTAL_DEPTH_M / Math.max(1, segment.path[1].distance - segment.path[0].distance)),
-        run.to - run.from
-      );
-      if (depth < 1) continue;
-
-      const from = Math.min(mouth, mouth + inward * depth);
-      const to = Math.max(mouth, mouth + inward * depth);
-      if (from < 0 || to >= rows) continue;
-
-      const path = this._runPath(segment, { from, to });
-      const style = worksStyleAt(path[0].x, path[0].z, this.theme.works);
-      const surface = new Float32Array(path.length);
-      for (let i = 0; i < path.length; i++) surface[i] = segment.platform[from + i] + ROAD_LIFT_M;
-
-      appendProfile(buffer, {
-        path,
-        profile: vaultProfile(halfWidth, style.portal),
-        sampleElevation,
-        baseHeights: surface,
-        closed: true,
-        smoothRadius: 0,
-      });
-
-      this._buildPortalFace(buffer, path, surface, halfWidth, style, mouth === run.from ? 0 : path.length - 1, sampleElevation);
+    const { halfWidth }=segment;
+    const path=this._runPath(segment,run);
+    if(path.length<2)return;
+    const style=worksStyleAt(path[0].x,path[0].z,this.theme.works);
+    const surface=new Float32Array(path.map((_,i)=>segment.platform[run.from+i]+ROAD_LIFT_M));
+    // Profil ouvert : aucune face ne bouche l'entrée ou la sortie.
+    appendProfile(buffer,{path,profile:vaultProfile(halfWidth,style.portal),sampleElevation,baseHeights:surface,closed:false,smoothRadius:0});
+    for(const mouth of [run.from,run.to]) {
+      // Une limite de streaming n'est pas une entrée de tunnel.
+      if(mouth===0 || mouth===segment.path.length-1)continue;
+      const inward=mouth===run.from?1:-1;
+      const p=segment.path[mouth], q=segment.path[mouth+inward];
+      const length=Math.hypot(q.x-p.x,q.z-p.z);
+      if(!length)continue;
+      this.tunnelMouths.push({x:p.x,z:p.z,y:segment.platform[mouth]+ROAD_LIFT_M,radius:halfWidth+PORTAL_CLEARANCE_M,dx:(q.x-p.x)/length,dz:(q.z-p.z)/length,slope:(segment.platform[mouth+inward]-segment.platform[mouth])/length});
+      this._buildPortalFace(buffer,path,surface,halfWidth,style,mouth===run.from?0:path.length-1,sampleElevation);
       this.counts.portals++;
     }
   }

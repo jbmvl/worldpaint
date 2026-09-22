@@ -1676,8 +1676,7 @@ test('la classe OpenMapTiles choisit un profil de chaussée', () => {
   assert.equal(roadStyleFor({ class: 'service' }).profile, 'lane');
   assert.equal(roadStyleFor({ class: 'primary' }).paved, true);
   assert.equal(roadStyleFor({ class: 'track' }).paved, false, 'un chemin n’est pas revêtu');
-  // Un tunnel est écarté à la lecture : retiré du rendu pour le moment.
-  assert.equal(roadStyleFor({ class: 'primary', brunnel: 'tunnel' }), null, 'tunnel écarté');
+  assert.equal(roadStyleFor({ class: 'primary', brunnel: 'tunnel' }).works, WORK_TUNNEL, 'tunnel conservé');
   assert.equal(roadStyleFor({ class: 'primary', brunnel: 'bridge' }).works, WORK_BRIDGE, 'pont signalé');
   assert.equal(roadStyleFor({ class: 'primary' }).works, WORK_NONE, 'route ordinaire');
   // Rails, transports guidés et lignes de ferry n’ont pas de revêtement.
@@ -8963,7 +8962,7 @@ test('sur un versant, un voile de pile se fonde sur son propre terrain', () => {
   layer.dispose();
 });
 
-test('un tunnel reçoit une tête à chaque bout, et rien entre les deux', () => {
+test('un tunnel reçoit deux portails et une voûte continue ouverte', () => {
   const scene = { add() {}, remove() {} };
   const layer = new BridgeLayer({ THREE: stubWorksTHREE(), scene, bubble: stubBubble(40) });
 
@@ -8983,9 +8982,10 @@ test('un tunnel reçoit une tête à chaque bout, et rien entre les deux', () =>
   const xs = [];
   const positions = layer.mesh.geometry.attributes.position.array;
   for (let i = 0; i < positions.length; i += 3) xs.push(positions[i]);
-  // Les têtes s'enfoncent de quelques mètres, elles ne courent pas tout le
-  // tunnel : rien au milieu de la colline.
-  assert.ok(!xs.some((x) => x > 105 && x < 145), 'rien au cœur de la montagne');
+  assert.ok(xs.some((x) => x > 105 && x < 145), 'la voûte continue dans la montagne');
+  assert.equal(layer.tunnelMouths.length, 2);
+  assert.ok(layer.tunnelMouths[0].dx > 0);
+  assert.ok(layer.tunnelMouths[1].dx < 0);
   layer.dispose();
 });
 

@@ -415,6 +415,7 @@ export class WorldComposer {
       // 2 bis. Ouvrages d'art — après les chaussées, dont ils habillent les
       //    travées et les têtes de tunnel.
       this.bridges.rebuild(this.roads.roadSegments, here);
+      this.bubble.materials.setTunnelMouths?.(this.bridges.tunnelMouths ?? []);
 
       // 2 ter. Voie ferrée — ne dépend de rien, ne publie rien.
       this.railways.rebuild(this.vectorTiles, wanted, here);

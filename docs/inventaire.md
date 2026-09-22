@@ -337,7 +337,9 @@ Un chemin de terre n'entre pas dans le carrefour d'une route revêtue : il passe
 par-dessus, marquage compris. Une piste cyclable, revêtue, en reste une branche.
 
 `brunnel` décide de l'ouvrage : un pont reçoit tablier, piles, culées et
-parapets ; un tunnel, ses têtes.
+parapets ; un tunnel, sa chaussée continue, sa voûte ouverte aux extrémités et ses têtes.
+Les entrées publiées par `bridgeLayer` découpent le matériau du relief sous la
+voûte (24 entrées simultanées au maximum). Une limite de tuile ne crée pas de portail.
 
 ### Le trottoir (`streetLayer`)
 
@@ -650,7 +652,7 @@ agricole, avant toute couleur.
 
 **Brunnel** — mot du schéma OpenMapTiles, contraction de *bridge* et *tunnel* :
 l'attribut qui dit qu'un tronçon de route passe au-dessus ou au-dessous du
-terrain. C'est lui qui décide qu'on construit un pont ou une tête de tunnel.
+terrain. C'est lui qui décide qu'on construit un pont ou une voûte de tunnel.
 
 **Bulle** — la portion de monde chargée et affichée autour de l'observateur.
 Elle a un rayon fini, elle suit l'observateur, et tout le décor est reconstruit

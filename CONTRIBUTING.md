@@ -129,7 +129,7 @@ Breaking one of these needs a very good reason, stated in the PR description.
 
 - **A junction interrupts a ribbon, not a road.** Corridor, terrain cut,
   platform stitching, spaced furniture and kerbs keep reading one whole chain;
-  only the ribbon is laid in pieces, like a tunnel (`roadWorks.drawableRuns`).
+  only the ribbon is laid in pieces at junctions. Tunnel carriageways remain continuous.
 
 - **The carriageway has one edge**, and it is a single object
   (`layers/roadEdges.js`) covering ribbons and junction surfaces alike. A kerb
@@ -146,7 +146,7 @@ Breaking one of these needs a very good reason, stated in the PR description.
 
 - **Road markings are geometry**, never painted into a texture: triangles laid
   over `roadWorks.drawableRuns` and `roadJunctions.junctionRibbonRuns`, so they
-  stop at a tunnel mouth and a junction outline with no clipping rule of their
+  stop at a junction outline and continue through tunnels, with no clipping rule of their
   own (`layers/roadMarkings.js`). A dash phase comes from the curvilinear
   abscissa from the chain's graph anchor, never a loop index. One white for all
   of it: `theme.roads.markingColor`.

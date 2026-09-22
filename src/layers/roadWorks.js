@@ -444,7 +444,7 @@ export function levelWorkSpans(
       if (before == null && after == null) continue;
 
       const span = path[high].distance - path[low].distance;
-      if (!(span > 0) || span > maxSpan) continue;
+      if (!(span > 0) || (code === WORK_BRIDGE && span > maxSpan)) continue;
 
       const a = before ?? after;
       const b = after ?? before;
