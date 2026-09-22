@@ -183,8 +183,16 @@ export const FURNITURE_BUILDERS = {
     const k = new Kit(C);
     k.cylinder({ radiusBottom: 0.17, radiusTop: 0.12, height: 9, radial: 6, color: C.wood });
     k.box({ width: 2.2, height: 0.12, depth: 0.14, y: 8.35, color: C.wood });
+    for (const side of [-1, 1]) {
+      k.box({ width: 0.045, height: Math.hypot(0.7, 0.7), depth: 0.045,
+        y: 7.7, z: 0.11, roll: -side * Math.PI / 4, color: C.steelDark });
+    }
+    k.cylinder({ radiusBottom: 0.174, radiusTop: 0.164, height: 0.4, radial: 6, y: 0.25, color: C.bark });
     for (const x of [-0.95, 0, 0.95]) {
-      k.cylinder({ radiusBottom: 0.08, radiusTop: 0.06, height: 0.22, radial: 5, x, y: 8.47, color: C.white });
+      k.cylinder({ radiusBottom: 0.04, radiusTop: 0.04, height: 0.3, radial: 5, x, y: 8.45, color: C.steelDark });
+      for (const y of [8.51, 8.62]) {
+        k.cylinder({ radiusBottom: 0.085, radiusTop: 0.06, height: 0.07, radial: 6, x, y, color: C.white });
+      }
     }
     return k;
   },
@@ -613,6 +621,10 @@ export const FURNITURE_BUILDERS = {
     k.box({ width: 0.06, height: 2.3, depth: 1.4, x: -1.55, color: C.plaster });
     k.box({ width: 3.5, height: 0.12, depth: 1.7, y: 2.4, color: C.slate });
     k.box({ width: 2.6, height: 0.08, depth: 0.4, y: 0.45, z: -0.42, color: C.wood });
+    for (const x of [-0.95, 0.95]) {
+      k.box({ width: 0.07, height: 0.45, depth: 0.32, x, y: 0, z: -0.42, color: C.steelDark });
+    }
+    k.box({ width: 2.6, height: 0.25, depth: 0.055, y: 0.77, z: -0.6, color: C.wood });
     return k;
   },
 
@@ -631,6 +643,10 @@ export const FURNITURE_BUILDERS = {
     k.box({ width: 0.08, height: 2, depth: 1.3, x: -1.56, y: 0.4, color: C.wood });
     k.gableRoof({ width: 3.6, depth: 1.9, height: 1.4, y: 2.4, overhang: 0.55, color: C.slate, gableColor: C.wood });
     k.box({ width: 2.6, height: 0.08, depth: 0.4, y: 0.85, z: -0.42, color: C.woodPale });
+    for (const x of [-0.95, 0.95]) {
+      k.box({ width: 0.07, height: 0.45, depth: 0.32, x, y: 0.4, z: -0.42, color: C.steelDark });
+    }
+    k.box({ width: 2.6, height: 0.25, depth: 0.055, y: 1.17, z: -0.6, color: C.wood });
     return k;
   },
 
@@ -646,6 +662,10 @@ export const FURNITURE_BUILDERS = {
     k.box({ width: 2.3, height: 1.7, depth: 0.04, z: -0.52, color: C.corrugated });
     k.box({ width: 0.04, height: 1.7, depth: 1, x: -1.08, color: C.corrugated });
     k.box({ width: 2.5, height: 0.08, depth: 1.2, y: 2.1, color: C.corrugated });
+    for (const x of [-1.08, 1.08]) {
+      k.box({ width: 0.04, height: 0.18, depth: 1.3, x, y: 2.0, color: C.steelDark });
+    }
+    k.box({ width: 0.34, height: 0.45, depth: 0.025, x: 0.6, y: 1.2, z: -0.49, color: C.white });
     return k;
   },
 
@@ -726,13 +746,29 @@ export const FURNITURE_BUILDERS = {
       color: C.hay,
       colorTop: C.hayDark,
     });
+    // Anneaux de paille sur les deux faces, sans texture ni nouveau matériau.
+    for (const side of [-1, 1]) for (const radius of [0.28, 0.52]) {
+      for (let i = 0; i < 10; i++) {
+        const a = i * Math.PI / 5, b = (i + 1) * Math.PI / 5;
+        const p = (r, t) => [r * Math.cos(t), 0.75 + r * Math.sin(t), side * 0.603];
+        const ring = [p(radius, a), p(radius + 0.025, a), p(radius + 0.025, b), p(radius, b)];
+        if (side < 0) ring.reverse();
+        k.quad(...ring, C.hayDark);
+      }
+    }
     return k;
   },
 
   /** Botte parallélépipédique, posée à plat. */
   hayBaleSquare(C = DEFAULT_COLORS) {
     const k = new Kit(C);
-    k.box({ width: 2.2, height: 1.1, depth: 1.2, color: C.hay });
+    k.taper({ width: 2.2, height: 1.1, depth: 1.2, widthTop: 2.08, depthTop: 1.08, color: C.hay });
+    for (const x of [-0.65, 0.65]) {
+      k.box({ width: 0.025, height: 0.012, depth: 1.085, x, y: 1.1, color: C.hayDark });
+      for (const side of [-1, 1]) {
+        k.box({ width: 0.025, height: 1.1, depth: 0.012, x, z: side * 0.603, tilt: -side * 0.055, color: C.hayDark });
+      }
+    }
     return k;
   },
 
@@ -774,6 +810,18 @@ export const FURNITURE_BUILDERS = {
     k.box({ width: 16, height: 5.5, depth: 9, color: C.plaster });
     k.gableRoof({ width: 16, depth: 9, height: 3.2, y: 5.5, color: C.tile, gableColor: C.brick });
     k.box({ width: 4, height: 4.2, depth: 0.12, z: 4.55, color: C.wood });
+    for (const x of [-2.12, 2.12]) {
+      k.box({ width: 0.22, height: 4.5, depth: 0.24, x, z: 4.57, color: C.stone });
+    }
+    k.box({ width: 4.45, height: 0.24, depth: 0.25, y: 4.3, z: 4.57, color: C.stone });
+    k.box({ width: 0.06, height: 4.2, depth: 0.02, z: 4.62, color: C.bark });
+    for (const side of [-1, 1]) {
+      k.box({ width: 0.1, height: Math.hypot(1.8, 3.7), depth: 0.05,
+        x: side * 1.9, y: 0.2, z: 4.63, roll: side * Math.atan2(1.8, 3.7), color: C.woodPale });
+    }
+    for (const x of [-8.04, 8.04]) {
+      k.box({ width: 0.16, height: 0.18, depth: 9.5, x, y: 5.4, color: C.wood });
+    }
     return k;
   },
 
@@ -1415,7 +1463,13 @@ export const FURNITURE_BUILDERS = {
   stump(C = DEFAULT_COLORS) {
     const k = new Kit(C);
     k.cylinder({ radiusBottom: 0.32, radiusTop: 0.27, height: 0.45, radial: 7, color: C.wood, colorTop: C.woodPale });
-    k.box({ width: 0.14, height: 0.11, depth: 0.52, y: 0.02, x: 0.3, tilt: 0.12, color: C.bark });
+    for (let i = 0; i < 5; i++) {
+      const angle = i * Math.PI * 2 / 5;
+      k.taper({ width: 0.18, depth: 0.6, height: 0.18, widthTop: 0.09, depthTop: 0.3,
+        x: Math.sin(angle) * 0.3, z: Math.cos(angle) * 0.3, yaw: angle, color: C.bark });
+    }
+    k.cylinder({ radiusBottom: 0.18, radiusTop: 0.18, height: 0.005, radial: 7, y: 0.45, color: C.wood });
+    k.cylinder({ radiusBottom: 0.14, radiusTop: 0.14, height: 0.006, radial: 7, y: 0.45, color: C.woodPale });
     return k;
   },
 

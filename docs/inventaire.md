@@ -819,3 +819,13 @@ Les espèces marquées `bound` alternent appui et trajectoire aérienne paraboli
 avec tangage du corps. Les ombres utilisent les mêmes articulations.
 La marche reste une animation procédurale : elle ne résout pas le contact
 individuel de chaque sabot sur les irrégularités du terrain.
+
+### Détails du mobilier proche
+
+Les poteaux portent des jambes de force et des isolateurs à deux collerettes.
+Les bancs d'abribus ont piétement et dossier ; l'abri rural porte ses poutres
+de rive et un panneau d'horaire sans texte. Les bottes rondes portent des
+anneaux sur leurs deux faces, les bottes rectangulaires des liens ; les granges
+ont encadrement et contreventement de porte. Les souches ont cinq racines et
+une coupe à deux tons. Ces détails font partie de la géométrie instanciée,
+sans matériau ni appel de dessin supplémentaire.
