@@ -145,6 +145,14 @@ async function resolveVectorSource() {
 // --- Montage du monde ---------------------------------------------------------
 
 let world = null;
+const profileToggle = document.getElementById('profileToggle');
+const profileStats = document.getElementById('profileStats');
+let lastProfileUpdate = 0;
+profileToggle.addEventListener('change', () => {
+  world?.setProfiling(profileToggle.checked);
+  profileStats.hidden = !profileToggle.checked;
+  world?.resetGenerationStats();
+});
 
 async function boot() {
   setBusy(true);
@@ -1665,6 +1673,11 @@ function loop(timestamp) {
   coordsEl.textContent = `${where}  alt ${camera.position.y.toFixed(0)} m  cap ${bearingDeg.toFixed(0)}°  incl ${pitchDeg.toFixed(0)}°${pays}`;
 
   renderer.render(scene, camera);
+  if (profileToggle.checked && timestamp-lastProfileUpdate>500) {
+    lastProfileUpdate=timestamp;
+    const lines=Object.entries(world?.generationStats ?? {}).map(([name,v])=>`${name}: ${v.lastMs.toFixed(1)} ms / max ${v.maxMs.toFixed(1)} ms`);
+    profileStats.textContent=`Rendu: ${renderer.info.render.calls} appels, ${renderer.info.render.triangles} triangles\nMémoire: ${renderer.info.memory.geometries} géométries, ${renderer.info.memory.textures} textures\n${lines.join('\n')}`;
+  }
 }
 
 boot().catch((err) => {

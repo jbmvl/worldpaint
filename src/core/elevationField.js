@@ -80,6 +80,7 @@ export class ElevationField {
     /** @type {Map<string, Promise<Float32Array|null>>} chargements en vol */
     this.pending = new Map();
     this.disposed = false;
+    this.revision = 0;
   }
 
   /** Nombre de pixels sur un côté du monde, au zoom courant. */
@@ -145,6 +146,7 @@ export class ElevationField {
   }
 
   _store(key, heights) {
+    this.revision++;
     this.tiles.set(key, heights);
     while (this.tiles.size > this.maxTiles) {
       const oldest = this.tiles.keys().next().value;

@@ -1,3 +1,4 @@
+import { InstanceCells } from './instanceCells.js';
 import { COVER_ATTRIBUTE, installCoverTransition, paddedCoverBands } from '../materials/coverTransition.js';
 /*
  * Les cultures lisent l'assolement de la carte du sol. Chaque bande possède
@@ -245,6 +246,7 @@ export class CropLayer {
     this._wash = soilWashFor(null, theme.soils);
     this.disposed = false;
     this._anchor = null;
+    this._instanceCells = new InstanceCells();
     this._frame = null;
     this._bands = CROP_BANDS;
     this._cells = coverBandRing(paddedCoverBands(this._bands, CROP_REBUILD_M));
@@ -284,6 +286,7 @@ export class CropLayer {
     this.mesh.name = 'crops';
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.count = 0;
+    this.mesh.setColorAt(0, new THREE.Color());
     this.mesh.frustumCulled = false;
     this.mesh.receiveShadow = true;
     scene.add(this.mesh);
@@ -351,6 +354,7 @@ export class CropLayer {
       if (Math.hypot(x - this._anchor.x, z - this._anchor.z) < CROP_REBUILD_M) return false;
     }
 
+    this._instanceCells.begin(this.bubble.frame, this.bubble.surfaceGeneration, this.roads?.index, force);
     this._scatter(x, z);
     this._anchor = { x, z };
     this._frame = this.bubble.frame;
@@ -370,6 +374,7 @@ export class CropLayer {
     }));
     const tufts = this._tufts;
     let placed = 0;
+    const streams = [[mesh.instanceMatrix.array,16],[mesh.instanceColor.array,3],[this._coverBands,4],[this._atlasOffsets,2]];
 
     for (const cell of this._cells) {
       if (placed >= capacity) break;
@@ -378,6 +383,10 @@ export class CropLayer {
       const base = bases[cell.band];
       const gx = base.x + cell.gx;
       const gz = base.z + cell.gz;
+      const cacheKey = `${cell.band}:${gx}:${gz}`;
+      const retained = this._instanceCells.read(cacheKey, streams, placed, capacity);
+      if (retained !== null) { placed += retained; continue; }
+      const cellStart = placed;
       const cellX = (gx + 0.5) * band.cell;
       const cellZ = (gz + 0.5) * band.cell;
       const crop = this.groundClass.cropAt(cellX, cellZ);
@@ -441,8 +450,10 @@ export class CropLayer {
         this._atlasOffsets[placed * 2 + 1] = offset[1];
         placed++;
       }
+      if (placed < capacity) this._instanceCells.write(cacheKey, streams, cellStart, placed);
     }
 
+    this._instanceCells.end();
     this.geometry.getAttribute(COVER_ATTRIBUTE).needsUpdate = true;
     mesh.count = placed;
     mesh.instanceMatrix.needsUpdate = true;
@@ -453,6 +464,7 @@ export class CropLayer {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this._instanceCells.clear();
     this.scene.remove(this.mesh);
     this.mesh.dispose?.();
     this.geometry.dispose();

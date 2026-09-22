@@ -558,14 +558,21 @@ export class TerrainBubble {
     const count = (n + 1) * (n + 1);
 
     const edge = this._edgeSegmentsFor(tile, n);
+    const revision = this.elevation?.revision;
+    const signature = `${n}:${edge.north}:${edge.south}:${edge.west}:${edge.east}:${revision}:${this._gradientStep}`;
+    const cached = revision != null && tile.demCache?.signature === signature && tile.demCache.source === this.elevation;
+    const samples = cached ? tile.demCache.samples : new Float64Array(count * 5);
+    if (!cached && revision != null) tile.demCache = { signature, samples, source: this.elevation };
+    const previousGeometry = tile.mesh?.geometry;
+    const reuse = previousGeometry?.getAttribute('position').count === count;
 
     // Pas de coordonnées de texture : la matière est projetée en coordonnées monde par le shader.
-    const positions = new Float32Array(count * 3);
-    const normals = new Float32Array(count * 3);
+    const positions = reuse ? previousGeometry.getAttribute('position').array : new Float32Array(count * 3);
+    const normals = reuse ? previousGeometry.getAttribute('normal').array : new Float32Array(count * 3);
     // Emprise routière par sommet : 1 recreusé pour la chaussée, 0 en terrain
     // naturel — lue par `terrainMaterial.js` pour éteindre le grain low poly
     // sur ce qui vient d'être excavé pour elle (voir `roadCutMaskAt`).
-    const roadMask = new Float32Array(count);
+    const roadMask = reuse ? previousGeometry.getAttribute('roadMask').array : new Float32Array(count);
 
     const scale = this.frame.scale;
     const stepMeters = this._gradientStep * scale;
@@ -606,12 +613,20 @@ export class TerrainBubble {
 
         // Bords recousus sur la résolution du voisin.
         let raw;
-        if (j === 0) raw = this._edgeElevation(u, edge.north, (a) => this._sample(tile.x + a, tile.y));
+        if (cached) raw = samples[idx * 5];
+        else if (j === 0) raw = this._edgeElevation(u, edge.north, (a) => this._sample(tile.x + a, tile.y));
         else if (j === n) raw = this._edgeElevation(u, edge.south, (a) => this._sample(tile.x + a, tile.y + 1));
         else if (i === 0) raw = this._edgeElevation(v, edge.west, (a) => this._sample(tile.x, tile.y + a));
         else if (i === n) raw = this._edgeElevation(v, edge.east, (a) => this._sample(tile.x + 1, tile.y + a));
         else raw = this._sample(tx, ty);
 
+        if (!cached) {
+          samples[idx * 5] = raw;
+          samples[idx * 5 + 1] = this._sample(tx + this._gradientStep, ty);
+          samples[idx * 5 + 2] = this._sample(tx - this._gradientStep, ty);
+          samples[idx * 5 + 3] = this._sample(tx, ty + this._gradientStep);
+          samples[idx * 5 + 4] = this._sample(tx, ty - this._gradientStep);
+        }
         // Le déblai est une fonction du seul point du sol, donc la couture des bords reste exacte.
         const atVertex = cutWithMask(local.x, local.z, raw);
         const h = atVertex.elevation * this.verticalScale;
@@ -622,10 +637,10 @@ export class TerrainBubble {
         roadMask[idx] = atVertex.mask;
 
         // Gradient central : continu au travers des frontières de tuiles.
-        const hE = cut(local.x + stepMeters, local.z, this._sample(tx + this._gradientStep, ty)) * this.verticalScale;
-        const hW = cut(local.x - stepMeters, local.z, this._sample(tx - this._gradientStep, ty)) * this.verticalScale;
-        const hS = cut(local.x, local.z + stepMeters, this._sample(tx, ty + this._gradientStep)) * this.verticalScale;
-        const hN = cut(local.x, local.z - stepMeters, this._sample(tx, ty - this._gradientStep)) * this.verticalScale;
+        const hE = cut(local.x + stepMeters, local.z, samples[idx * 5 + 1]) * this.verticalScale;
+        const hW = cut(local.x - stepMeters, local.z, samples[idx * 5 + 2]) * this.verticalScale;
+        const hS = cut(local.x, local.z + stepMeters, samples[idx * 5 + 3]) * this.verticalScale;
+        const hN = cut(local.x, local.z - stepMeters, samples[idx * 5 + 4]) * this.verticalScale;
 
         let nx = -(hE - hW) / (2 * stepMeters);
         let nz = -(hS - hN) / (2 * stepMeters);
@@ -636,9 +651,9 @@ export class TerrainBubble {
       }
     }
 
-    const indices = new (count > 65535 ? Uint32Array : Uint16Array)(n * n * 6);
+    const indices = reuse ? previousGeometry.index.array : new (count > 65535 ? Uint32Array : Uint16Array)(n * n * 6);
     let k = 0;
-    for (let j = 0; j < n; j++) {
+    if (!reuse) for (let j = 0; j < n; j++) {
       for (let i = 0; i < n; i++) {
         const a = j * (n + 1) + i;
         const b = a + 1;
@@ -654,15 +669,19 @@ export class TerrainBubble {
       }
     }
 
-    const geometry = new THREE.BufferGeometry();
+    const geometry = reuse ? previousGeometry : new THREE.BufferGeometry();
+    if (!reuse) {
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
     geometry.setAttribute('roadMask', new THREE.BufferAttribute(roadMask, 1));
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+    } else {
+      for (const name of ['position', 'normal', 'roadMask']) geometry.getAttribute(name).needsUpdate = true;
+    }
     geometry.computeBoundingSphere();
 
     if (tile.mesh) {
-      tile.mesh.geometry.dispose();
+      if (!reuse) tile.mesh.geometry.dispose();
       tile.mesh.geometry = geometry;
     } else {
       const mesh = new THREE.Mesh(geometry, this.materials.material);
@@ -690,6 +709,7 @@ export class TerrainBubble {
   }
 
   _disposeTile(tile) {
+    tile.demCache = null;
     if (!tile.mesh) return;
     this.group.remove(tile.mesh);
     tile.mesh.geometry.dispose();

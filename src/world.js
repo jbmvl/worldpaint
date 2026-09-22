@@ -289,6 +289,13 @@ export class World {
     return this.composer.setRegion(id);
   }
 
+  /** Active les mesures CPU par couche ; le rendu GPU reste à mesurer par le renderer. */
+  setProfiling(enabled = true) { this.composer.metrics.enabled = enabled; }
+
+  get generationStats() { return this.composer.metrics.snapshot(); }
+
+  resetGenerationStats() { this.composer.metrics.reset(); }
+
   refresh(lng, lat, options) {
     return this.composer.refresh(lng, lat, options);
   }

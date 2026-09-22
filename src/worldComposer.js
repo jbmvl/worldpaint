@@ -1,3 +1,4 @@
+import { GenerationMetrics } from './inspect/generationMetrics.js';
 /*
  * worldComposer — l'orchestrateur du décor. Toutes les couches dépendent les
  * unes des autres (occupation du sol → terrain, arbres, herbe ; chaussée →
@@ -274,6 +275,14 @@ export class WorldComposer {
           zoom: Math.min(VECTOR_ZOOM, vectorConfig.maxZoom),
         })
       : null;
+    this.metrics = new GenerationMetrics();
+    for (const [object,method,label] of [
+      [this.bubble,'_buildMesh','terrain'], [this.cliffs,'rebuild','falaises'],
+      [this.roads,'rebuild','routes'], [this.buildings,'rebuild','batiments'],
+      [this.furniture,'rebuild','mobilier'], [this.groundClass,'rebuild','carteSol'],
+      [this.vegetation,'_build','forets'], [this.grass,'_scatter','herbe'],
+      [this.crops,'_scatter','cultures'], [this.fauna,'advance','animationFaune'],
+    ]) this.metrics.watch(object,method,label);
   }
 
   /** Repère local de la bulle, ou `null` avant le premier centrage. */

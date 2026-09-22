@@ -319,7 +319,7 @@ feature list.
 npm test
 ```
 
-429 tests, plain `node --test`, no browser, no build.
+704 tests, plain `node --test`, no browser, no build.
 
 ## Contributing
 
@@ -328,3 +328,6 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md).
 ## License
 
 MIT — see [LICENSE](./LICENSE).
+
+Les mesures CPU par couche et le banc de terrain sont décrits dans
+[docs/performance.md](./docs/performance.md).

@@ -294,7 +294,14 @@ export class CliffLayer {
     // `cliff`, ou parce que le MNT ne voit pas de dénivelée là où OSM en
     // annonce une. Les trois se corrigent ailleurs, d'où le décompte.
     const seen = { features: 0, cliffs: 0, paths: 0, tooFlat: 0 };
-    for (const line of this._collectPaths(source, tiles, here, seen)) {
+    const paths = this._collectPaths(source, tiles, here, seen);
+    const signature = JSON.stringify([paths, this.bubble.verticalScale, this.bubble.elevation?.revision]);
+    if (this._frame === this.bubble.frame && this._signature === signature && this.bubble.elevation?.revision != null) {
+      this._anchor = { x: here.x, z: here.z };
+      return false;
+    }
+    this._signature = signature;
+    for (const line of paths) {
       this._buildCliff(line, segments, bands, face, seen);
     }
     this.seen = seen;

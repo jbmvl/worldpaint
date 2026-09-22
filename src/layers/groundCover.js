@@ -1,3 +1,4 @@
+import { InstanceCells } from './instanceCells.js';
 import { COVER_ATTRIBUTE, installCoverTransition, paddedCoverBands } from '../materials/coverTransition.js';
 import { createGrassBlade } from './grassGeometry.js';
 /*
@@ -510,6 +511,7 @@ export class GroundCover {
     this._unclassified = theme.terrain.unclassified;
     this.disposed = false;
     this._anchor = null;
+    this._instanceCells = new InstanceCells();
     this._frame = null;
     this._bands = [coverBand({ from: 0, to: 65, cell: 2.2, perCell: 16, fadeOut: 25, salt: 0 })];
     this._cells = coverBandRing(paddedCoverBands(this._bands, GRASS_REBUILD_M));
@@ -553,6 +555,7 @@ export class GroundCover {
     this.mesh.name = 'ground-cover';
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.mesh.count = 0;
+    this.mesh.setColorAt(0, new THREE.Color());
     this.mesh.frustumCulled = false; // toujours autour de la caméra
     this.mesh.receiveShadow = true; // reçoit l'ombre, n'en projette pas
     scene.add(this.mesh);
@@ -613,6 +616,7 @@ export class GroundCover {
       if (Math.hypot(x - this._anchor.x, z - this._anchor.z) < GRASS_REBUILD_M) return false;
     }
 
+    this._instanceCells.begin(this.bubble.frame, this.bubble.surfaceGeneration, this.roads?.index, force);
     this._scatter(x, z);
     this._anchor = { x, z };
     this._frame = this.bubble.frame;
@@ -637,6 +641,7 @@ export class GroundCover {
     // que les deux brouillent la limite sur la même largeur.
     const fringeM = this.theme.terrain.edgeWarpM ?? 0;
     let placed = 0;
+    const streams = [[mesh.instanceMatrix.array,16],[mesh.instanceColor.array,3],[this._coverBands,4],[this._grainParams,2]];
 
     for (const cell of this._cells) {
       if (placed >= capacity) break;
@@ -646,6 +651,10 @@ export class GroundCover {
       const gx = base.x + cell.gx;
       const gz = base.z + cell.gz;
 
+      const cacheKey = `${cell.band}:${gx}:${gz}`;
+      const retained = this._instanceCells.read(cacheKey, streams, placed, capacity);
+      if (retained !== null) { placed += retained; continue; }
+      const cellStart = placed;
       const cellX = (gx + 0.5) * band.cell;
       const cellZ = (gz + 0.5) * band.cell;
       // Le sol se lit à la frange, pas au centre de la maille : c'est ce qui
@@ -757,8 +766,10 @@ export class GroundCover {
         this._grainParams[placed * 2 + 1] = grain.amplitudeM;
         placed++;
       }
+      if (placed < capacity) this._instanceCells.write(cacheKey, streams, cellStart, placed);
     }
 
+    this._instanceCells.end();
     this.geometry.getAttribute(COVER_ATTRIBUTE).needsUpdate = true;
     mesh.count = placed;
     mesh.instanceMatrix.needsUpdate = true;
@@ -769,6 +780,7 @@ export class GroundCover {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this._instanceCells.clear();
     this.scene.remove(this.mesh);
     this.mesh.dispose?.();
     this.geometry.dispose();
