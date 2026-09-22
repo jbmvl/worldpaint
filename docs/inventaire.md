@@ -338,6 +338,9 @@ par-dessus, marquage compris. Une piste cyclable, revêtue, en reste une branche
 
 `brunnel` décide de l'ouvrage : un pont reçoit tablier, piles, culées et
 parapets ; un tunnel, sa chaussée continue, sa voûte ouverte aux extrémités et ses têtes.
+Le front remplit les écoinçons entre l’arc et la façade. Des lanternes sont
+espacées de 18 m ; seules les deux plus proches éclairent, sans ombres
+supplémentaires (`theme.tunnelLights`).
 Les entrées publiées par `bridgeLayer` découpent le matériau du relief sous la
 voûte (24 entrées simultanées au maximum). Une limite de tuile ne crée pas de portail.
 
@@ -795,9 +798,11 @@ bâti relevé, borné par un disque autour d'une agglomération nommée.
 Les neuf variantes adultes du peuplement ont un prototype volumétrique
 facetté dans `models/treeKit.js`. La sélection continue de lire les essences
 et peuplements régionaux existants. Le même prototype est projeté dans
-l'atlas lointain. Entre 60 et 95 mètres, un fondu tramé passe du volume aux
+l'atlas lointain. Entre 120 et 190 mètres, un fondu de transparence passe du volume aux
 plans croisés sans modifier le placement, la taille ou la teinte de l'arbre.
 Les petits végétaux du sous-étage gardent leurs silhouettes spécifiques.
+Leur présence et leur taille ne sont pas recalculées selon la distance ; seul
+leur fondu de visibilité change.
 
 ### Vent et feuilles emportées
 
@@ -806,8 +811,11 @@ de la rotation des instances. Des rafales partagées traversent les masses
 végétales ; à vent nul, l'amplitude est nulle. Les ombres des arbres utilisent
 la même déformation et la même transition de distance.
 Les feuilles emportées sont des surfaces pliées de taille métrique
-(`theme.leaves`), animées en rotation, avec disparition aux bords de la boîte
-suivant l'observateur. Elles ne sont plus des points de taille écran.
+(`theme.leaves`, 12 × 6,5 cm), dans une fenêtre de 120 m de côté. Leur déplacement
+est intégré dans le monde : recentrer la fenêtre ne déplace pas les feuilles.
+Aucune feuille jusqu'à 30 % de vent ; elles glissent ensuite sur le relief,
+puis prennent de la hauteur au-delà de 45 %. Le plafond est de 180 feuilles.
+Leur teinte et leur géométrie ne dépendent pas d'une taille en pixels.
 
 ### Articulation des animaux
 
@@ -816,8 +824,10 @@ avec un volume facetté au joint. Les oreilles suivent le rabattement de la
 tête tout en conservant leur mouvement propre ; oreilles et queue utilisent
 une horloge même quand la distance parcourue reste nulle.
 Les espèces marquées `bound` alternent appui et trajectoire aérienne parabolique,
-avec tangage du corps. Les autres quadrupèdes passent du trot au galop,
-avec battues gauche/droite décalées et une élévation plus courte.
+avec tangage du corps. Renards, cervidés et chèvres couvrent 3,8 à 6 mètres
+par foulée de course, durant au moins 1,2 seconde. Loups, chats et chiens
+trottinent à allure calme ; les ours marchent, y compris en traversée et en
+éloignement. Les autres quadrupèdes peuvent passer du trot au galop.
 Les ombres utilisent les mêmes articulations.
 La marche reste une animation procédurale : elle ne résout pas le contact
 individuel de chaque sabot sur les irrégularités du terrain.

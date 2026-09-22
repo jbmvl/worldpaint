@@ -37,3 +37,12 @@ et mobilier lors d'une reconstruction complète. Leurs temps doivent être
 mesurés sur les parcours et appareils cibles ; le cache DEM ne les supprime
 pas. Vérifier les images lentes et la mémoire pendant une session longue,
 pas seulement les FPS moyens à l'arrêt.
+
+Le tapis dense utilise neuf brins à trois triangles par maille (27 triangles),
+sans ombres projetées. Sur un plan intégralement herbeux, sa fenêtre et sa
+réserve représentent environ 47 000 mailles, soit 1,27 million de triangles,
+auxquels s'ajoutent les fleurs. La portée visible est limitée à 55 m.
+Les arbres en volume portent jusqu'à 190 m et les lanternes utilisent deux
+lumières ponctuelles sans ombres. Ces réglages privilégient les demandes de
+densité et de transition lointaine ; leur coût GPU est à contrôler sur les
+appareils cibles, il n'est pas couvert par le banc CPU du terrain.

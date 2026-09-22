@@ -319,7 +319,7 @@ feature list.
 npm test
 ```
 
-711 tests, plain `node --test`, no browser, no build.
+719 tests, plain `node --test`, no browser, no build.
 
 ## Contributing
 
