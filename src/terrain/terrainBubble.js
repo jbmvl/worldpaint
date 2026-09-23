@@ -30,6 +30,7 @@
  * tuile chaque fois qu'elle le lit (`_sample`) ou le charge (`_demTiles`).
  */
 
+import { meshSupport } from './meshSupport.js';
 import {
   createLocalFrame,
   tilesAround,
@@ -333,6 +334,16 @@ export class TerrainBubble {
     const top = a + (b - a) * fx;
     const bottom = c + (d - c) * fx;
     return top + (bottom - top) * fy;
+  }
+
+  /** Appui sur la géométrie chargée, en mètres de scène, hors déplacement GPU. */
+  renderedSupportAtLocal(x, z, out = {}) {
+    if (!this.frame) return null;
+    const { origin, scale } = this.frame;
+    const tx = Math.floor(origin.x + x / scale), tz = Math.floor(origin.y + z / scale);
+    const tile = this.tiles.get(tileKey(this.zoom, tx, tz));
+    return meshSupport(tile?.mesh?.geometry, tile?.segments,
+      (tx-origin.x)*scale, (tz-origin.y)*scale, scale, x, z, out);
   }
 
   /**
@@ -694,7 +705,7 @@ export class TerrainBubble {
       this.group.add(mesh);
     }
     // Une maille qui change de finesse déplace la surface.
-    if (tile.segments !== n) this._surfaceDirty = true;
+    this._surfaceDirty = true;
     tile.segments = n;
     tile.edgeSegments = edge;
     tile.cutGeneration = this._cutGeneration;

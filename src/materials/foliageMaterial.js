@@ -306,7 +306,7 @@ export function createFoliageMaterial({
       .replace(
         '#include <normal_fragment_begin>',
         `#include <normal_fragment_begin>
-         normal = vec3(0.0, 1.0, 0.0);`
+         normal = normalize(mat3(viewMatrix) * vec3(0.0, 1.0, 0.0));`
       )
       .replace('#include <lights_fragment_begin>', foliageLightsChunk(THREE));
   };

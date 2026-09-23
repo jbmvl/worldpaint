@@ -2656,7 +2656,7 @@ test('le grain d’une touffe suit celui du sol, matière par matière', () => {
     amplitudeM: LOW_POLY_GRAIN_DEFAULTS.amplitudeM,
   });
   assert.deepEqual(coverGrainFor('couverture-inconnue'), repli);
-  assert.deepEqual(coverGrainFor('grass'), repli, 'l’herbe ordinaire n’a pas été branchée');
+  assert.deepEqual(coverGrainFor('grass'), {cellM:6,amplitudeM:0}, 'la prairie n’hérite pas du relief rocheux');
 
   // Une lande porte de petites touffes serrées, un pré alpin de larges
   // colinettes : les deux divergent du repli et l’un de l’autre.
@@ -13421,7 +13421,7 @@ test('le grain low poly du sol dépend de la matière au pied du sommet', () => 
   );
   // Une matière non listée (l'eau, le trottoir, l'herbe…) n'a pas été
   // touchée : elle garde le réglage de repli, comme avant le branchement.
-  for (const kind of ['grass', 'settled', 'farmland', 'pavement', 'water']) {
+  for (const kind of ['pavement', 'water']) {
     assert.equal(defaultTheme.surfaces[kind]?.grainCellM, undefined, `${kind} ne déclare pas de grain`);
   }
 

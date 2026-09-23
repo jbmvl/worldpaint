@@ -399,8 +399,8 @@ export const FOREST_TYPES = [
 
 // --- L’herbe et les fleurs -----------------------------------------------------
 /** Hauteur des touffes, en mètres (une prairie non fauchée monte au genou). */
-export const GRASS_MIN_HEIGHT = 0.3;
-export const GRASS_MAX_HEIGHT = 0.8;
+export const GRASS_MIN_HEIGHT = 0.22;
+export const GRASS_MAX_HEIGHT = 0.48;
 /** Largeur d'une touffe, en part de sa hauteur. */
 export const GRASS_ASPECT = 0.62;
 /** Part des touffes qui portent des fleurs, en pleine prairie (volontairement basse : un pré n'est pas un parterre). */
@@ -719,7 +719,7 @@ export const STONE_LOOK = {
  */
 export const SURFACE_LOOK = {
   // --- Le végétal ordinaire -------------------------------------------------
-  grass: { albedo: [0.051, 0.135, 0.017], wash: 'grass' },
+  grass: { albedo: [0.051, 0.135, 0.017], wash: 'grass', grainCellM: 6, grainAmplitudeM: 0 },
   // Un sol de forêt est une litière, pas un pré : brune, jamais verte — c'est
   // ce qui la distingue d'une prairie à l'ombre. Le pays ne le lave pas — une
   // hêtraie se ressemble d'un bout à l'autre.
@@ -732,11 +732,11 @@ export const SURFACE_LOOK = {
     grainCellM: 2,
     grainAmplitudeM: 0.22,
   },
-  farmland: { albedo: [0.431, 0.331, 0.08], wash: 'farmland' },
+  farmland: { albedo: [0.431, 0.331, 0.08], wash: 'farmland', grainCellM: 6, grainAmplitudeM: 0 },
   // Lotissement : pelouses tondues et allées, plus claires et plus franchement
   // vertes qu'une prairie de rase campagne — l'entretien, pas l'herbe elle-même.
   // Un aplat, pas un terrain qui varie.
-  settled: { albedo: [0.12, 0.205, 0.08], wash: 'grass', macro: 0.3 },
+  settled: { albedo: [0.12, 0.205, 0.08], wash: 'grass', macro: 0.3, grainCellM: 6, grainAmplitudeM: 0 },
 
   // --- Les couvertures végétales --------------------------------------------
   // Bruyère et molinie sèche : brun-pourpre, la couleur d'un moor. Rase, dense,
@@ -1793,6 +1793,7 @@ export const defaultTheme = Object.freeze({
   leaves: { lengthM: 0.12, widthM: 0.065, foldM: 0.012 },
   grass: {
     bladeWidth: 0.08,
+    bladeBend: 0.24,
     bladeColors: { root: [0.051, 0.135, 0.017], tip: [0.051, 0.135, 0.017] },
     flowers: { stem: [0.051, 0.135, 0.017], petals: [srgb("#f4f1db"), srgb("#efc627"), srgb("#d63824")], centres: [srgb("#d1a621"), srgb("#c89419"), srgb("#282320")] },
     minHeight: GRASS_MIN_HEIGHT,
