@@ -354,7 +354,16 @@ la réparation faite, est là où elle irait. Ce n'est pas fait.
 L'herbe proche est une trame sans texture : neuf brins fins à trois triangles
 occupent toute la surface d'une maille, sans pied commun. Leur couleur est
 uniforme sur la hauteur (`theme.grass.bladeColors.root`) ; `bladeWidth` règle
-leur largeur relative. Les racines suivent le plan local du terrain.
+leur largeur relative et `bladeBend` leur courbure. Chaque racine suit le
+triangle effectivement chargé sous elle, coutures et déblais compris. Les
+corrections individuelles sont conservées dans le cache des mailles. Une
+reconstruction du terrain invalide les appuis, même sans déplacement.
+Les surfaces `grass`, `farmland` et `settled` ont un grain géométrique nul :
+le relief vient du maillage, sans bosses procédurales sous la prairie.
+Les autres biomes et la roche de pente conservent leur grain GPU ; cet
+appui CPU ne mesure pas cette déformation supplémentaire.
+L’éclairage des brins utilise la verticale du monde transformée dans
+l’espace de la caméra, comme les normales du matériau Lambert.
 Le sol porte la continuité verte jusqu'à l'horizon ; les brins s'effacent
 entre 35 et 55 mètres. Les fleurs blanches, jaunes et les coquelicots sont
 rendus séparément, avec les mêmes règles de présence, de sol et d'exclusion.

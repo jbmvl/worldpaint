@@ -46,3 +46,9 @@ Les arbres en volume portent jusqu'à 190 m et les lanternes utilisent deux
 lumières ponctuelles sans ombres. Ces réglages privilégient les demandes de
 densité et de transition lointaine ; leur coût GPU est à contrôler sur les
 appareils cibles, il n'est pas couvert par le banc CPU du terrain.
+
+Les neuf corrections de racine ajoutent 36 octets par maille aux attributs
+GPU, soit 2,7 Mo pour la capacité de 75 000 mailles, plus leur cache CPU.
+Elles sont calculées à la génération par lecture des triangles chargés,
+puis réutilisées pendant le déplacement ; aucun triangle supplémentaire
+n’est ajouté. Ce coût de génération doit être mesuré sur les appareils cibles.

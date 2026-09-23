@@ -48,3 +48,19 @@ cible : les caches de génération ne diminuent pas leur coût de rendu.
 Les saisons, le préchargement d'itinéraire et de nouveaux repères touristiques
 sont hors périmètre. Le catalogue d'objets reste procédural ; les objets proches
 listés ci-dessus ont été détaillés, pas remplacés par des assets externes.
+
+## Banc de prairie isolé
+
+Avec `npm run demo`, ouvrir `/demo/grass-lab.html`. Le terrain déterministe
+ne dépend d’aucune donnée géographique distante. Le rapport vérifie les
+erreurs de shader, les appuis de 9 000 racines et l’éclairage GPU comparé à
+un Lambert témoin sous trois angles de caméra. Le contrôle négatif réinjecte
+une normale dans le mauvais espace : son écart doit être supérieur à 2,
+celui du calcul courant inférieur ou égal à 2.
+
+À contrôler à l’œil : continuité verte sur les arêtes et les pentes, forme
+des brins courts, présence des fleurs et raccord lointain. Tourner la caméra,
+changer le soleil, régler le vent et activer **Avancer**. La case **Herbe et
+fleurs** permet de comparer avec le sol. Refaire ensuite ces contrôles dans
+la démo géographique : le banc isolé ne couvre pas le grain des autres biomes
+ni les arrivées de tuiles réelles.

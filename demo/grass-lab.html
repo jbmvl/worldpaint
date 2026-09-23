@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WorldPaint — banc de prairie</title>
+<style>body{margin:0;font:14px system-ui;background:#dde8eb}canvas{display:block}aside{position:fixed;top:12px;left:12px;padding:16px;background:#fffe;border-radius:8px;max-width:430px}pre{white-space:pre-wrap;font-size:12px}label{display:block;margin:8px 0}button{margin-right:8px}</style>
+<aside><strong>Prairie — terrain déterministe</strong>
+<p>Brins courts, pente et arêtes du terrain. Glisser pour tourner ; molette pour approcher.</p>
+<label>Vent <input id="wind" type="range" min="0" max="1" step=".01" value=".3"></label>
+<label><input id="grass" type="checkbox" checked> Herbe et fleurs</label>
+<button id="walk">Avancer</button><button id="sun">Changer le soleil</button>
+<pre id="checks">Vérifications GPU en cours…</pre></aside>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/addons/":"/node_modules/three/examples/jsm/"}}</script>
+<script type="module" src="./grass-lab.js"></script></html>
