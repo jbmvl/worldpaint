@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Banc du bas-côté</title>
+<style>html, body { margin: 0; height: 100%; overflow: hidden; background: #9fb8cf; }</style>
+<script type="importmap">
+{ "imports": {
+  "three": "/node_modules/three/build/three.module.js"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+/*
+ * Banc du bas-côté : un champ plat traversé par une route droite (axe z),
+ * bordée d'une haie de bas-côté, avec la vraie `CropLayer` et la vraie
+ * `VergeStrips`. La haie est une simple bande verte : on regarde ici où
+ * s'arrête le champ, pas la haie.
+ *
+ *   vergeLab.set({ crop, hedge, lookDeg, pitchDeg, height, x })
+ */
+import * as THREE from 'three';
+import { CropLayer } from '/src/layers/cropLayer.js';
+import { VergeStrips } from '/src/layers/vergeStrips.js';
+
+const HALF_WIDTH = 2.5;
+const CORRIDOR = HALF_WIDTH + 1.2;
+const HEDGE_OFFSET = HALF_WIDTH + 2.6;
+const HEDGE_PAD = 0.76;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fb8cf);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 2000);
+scene.add(new THREE.HemisphereLight(0xdfe8f0, 0x5a5030, 1.4));
+const sun = new THREE.DirectionalLight(0xfff2dc, 2.2);
+sun.position.set(-60, 120, 40);
+scene.add(sun);
+
+scene.add(new THREE.Mesh(
+  new THREE.PlaneGeometry(2000, 2000).rotateX(-Math.PI / 2),
+  new THREE.MeshStandardMaterial({ color: 0x7d7a3a, roughness: 1 })
+));
+const road = new THREE.Mesh(
+  new THREE.PlaneGeometry(HALF_WIDTH * 2, 2000).rotateX(-Math.PI / 2).translate(0, 0.02, 0),
+  new THREE.MeshStandardMaterial({ color: 0x17181c, roughness: 1 })
+);
+scene.add(road);
+
+// Route le long de z : tangente (0, 1), normale (tz, -tx) = (1, 0), la haie à +x.
+const axis = [{ x: 0, z: -600 }, { x: 0, z: 600 }];
+const hedge = new THREE.Mesh(
+  new THREE.BoxGeometry(HEDGE_PAD * 2, 1.6, 1200).translate(HEDGE_OFFSET, 0.8, 0),
+  new THREE.MeshStandardMaterial({ color: 0x2f5a2a, roughness: 1 })
+);
+scene.add(hedge);
+
+const roads = {
+  index: { covers: (x, z, margin) => Math.abs(x) <= HALF_WIDTH + margin && Math.abs(z) <= 600 },
+};
+const state = { crop: 'wheat', hedge: true, lookDeg: 0, pitchDeg: -12, height: 1.7, x: -1.2 };
+const groundClass = { cropReady: true, cropAt: () => state.crop };
+const bubble = { frame: {}, surfaceGeneration: 0, surfaceElevationAtLocal: () => 0, verticalScale: 1 };
+const crops = new CropLayer({ THREE, scene, bubble, groundClass, roads });
+
+function render() {
+  hedge.visible = state.hedge;
+  const verges = new VergeStrips();
+  if (state.hedge) verges.add(axis, HEDGE_OFFSET, HEDGE_PAD);
+  crops.setVerges(verges);
+  crops.update(state.x, 0, { force: true });
+
+  const yaw = (state.lookDeg * Math.PI) / 180;
+  const pitch = (state.pitchDeg * Math.PI) / 180;
+  camera.position.set(state.x, state.height, 0);
+  camera.lookAt(
+    state.x + Math.sin(yaw) * Math.cos(pitch),
+    state.height + Math.sin(pitch),
+    -Math.cos(yaw) * Math.cos(pitch)
+  );
+  renderer.render(scene, camera);
+  return { instances: crops.mesh.count, corridor: CORRIDOR, hedge: HEDGE_OFFSET };
+}
+
+window.vergeLab = {
+  set(options = {}) {
+    Object.assign(state, options);
+    return render();
+  },
+  state,
+};
+window.vergeLabReady = true;
+render();
+</script>
+</body>
+</html>

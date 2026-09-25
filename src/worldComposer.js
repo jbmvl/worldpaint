@@ -579,14 +579,10 @@ export class WorldComposer {
 
       if (!await checkpoint()) return false;
 
-      // 9. Cheminées à faire fumer, bêtes et tracteurs à faire vivre. Publiés
-      //    par le mobilier (fermes, labours) et le bâti (toits de ville), qui
-      //    seuls ont lu les tuiles : ce sont les endroits où une couche
+      // 9. Bêtes et tracteurs à faire vivre. Publiés par le mobilier (fermes,
+      //    labours), qui seul a lu les tuiles : c'est l'endroit où une couche
       //    animée par image reprend le travail d'une couche reconstruite
       //    tous les 250 mètres.
-      if (furnitureChanged || buildingsChanged) {
-        this.life.setChimneys([...this.furniture.chimneys, ...this.buildings.chimneys], here);
-      }
       if (furnitureChanged) {
         this.fauna.setAnimals(this.furniture.fauna, here);
         this.tractors.setTractors(this.furniture.tractors, here);

@@ -20,8 +20,8 @@ import { finishGeneration } from '../core/generationSteps.js';
  * c'est voulu : sa place est dans l'emprise de **sa** chaussée, pas de celle
  * d'en face (`_onOtherPavement`).
  *
- * Ce qui bouge n'est pas posé ici : le mobilier publie les bêtes (`fauna`) et
- * les cheminées (`chimneys`) pour `faunaLayer` et `lifeLayer`, qui les animent
+ * Ce qui bouge n'est pas posé ici : le mobilier publie les bêtes (`fauna`)
+ * pour `faunaLayer`, qui les anime
  * par image — cette couche, elle, ne se refait que tous les 250 m.
  */
 
@@ -287,15 +287,7 @@ export class FurnitureLayer {
     this._signals = [];
     this._signalClock = 0;
     /**
-     * Cheminées qui fument, publiées pour `lifeLayer`. Ce ne sont pas des objets
-     * de mobilier : la fumée est animée par image, donc elle n'a rien à faire
-     * dans une couche reconstruite tous les 250 mètres.
-     * @type {Array<{x:number,y:number,z:number}>}
-     */
-    this.chimneys = [];
-    /**
-     * Bêtes posées, publiées pour `faunaLayer`. Même raison que les cheminées :
-     * ce qui est animé par image n'a rien à faire dans une couche reconstruite
+     * Bêtes posées, publiées pour `faunaLayer`. Ce qui est animé par image n'a rien à faire dans une couche reconstruite
      * tous les 250 mètres.
      *
      * Ce que la couche de mobilier garde, c'est le seul travail qui demande
@@ -307,7 +299,7 @@ export class FurnitureLayer {
     this.fauna = [];
     /**
      * Tracteurs au travail, publiés pour `tractorLayer`. Même raison que les
-     * cheminées et les bêtes : le passage d'un labour (deux points, avec leur
+     * bêtes : le passage d'un labour (deux points, avec leur
      * altitude, et un aller-retour) est composé ici, une fois pour toutes,
      * puis rejoué par image.
      * @type {Array<Object>}
@@ -489,7 +481,6 @@ export class FurnitureLayer {
       };
       this._lampHeads = [];
       this._signals = [];
-      this.chimneys = [];
       this.fauna = [];
       this.tractors = [];
       this.verges = new VergeStrips();
@@ -1470,7 +1461,6 @@ export class FurnitureLayer {
 
     this._lampHeads = [];
     this._signals = [];
-    this.chimneys = [];
     this.fauna = [];
     this.tractors = [];
     this.verges = new VergeStrips();

@@ -358,9 +358,9 @@ leur largeur relative et `bladeBend` leur courbure. Chaque racine suit le
 triangle effectivement chargé sous elle, coutures et déblais compris. Les
 corrections individuelles sont conservées dans le cache des mailles. Une
 reconstruction du terrain invalide les appuis, même sans déplacement.
-Les surfaces `grass`, `farmland` et `settled` ont un grain géométrique nul :
-le relief vient du maillage, sans bosses procédurales sous la prairie.
-Les autres biomes et la roche de pente conservent leur grain GPU ; cet
+Les surfaces `settled` et `pavement` ont un grain géométrique nul : le bâti
+lit une altitude sans bosse, et une bosse y enterrerait son rez-de-chaussée.
+Les autres matières et la roche de pente conservent leur grain GPU ; cet
 appui CPU ne mesure pas cette déformation supplémentaire.
 L’éclairage des brins utilise la verticale du monde transformée dans
 l’espace de la caméra, comme les normales du matériau Lambert.

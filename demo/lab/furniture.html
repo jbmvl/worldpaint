@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Banc du mobilier</title>
+<style>html,body{margin:0;background:#cfd8de}canvas{display:block}</style>
+<script type="importmap">
+{ "imports": { "three": "/node_modules/three/build/three.module.js" } }
+</script>
+</head>
+<body>
+<script type="module">
+/*
+ * Banc du mobilier — des formes du catalogue (`FURNITURE_BUILDERS`) alignées
+ * sur un sol gris, à côté d'un gabarit d'homme de 1,75 m, sous un soleil fixe.
+ * Aucun réseau : piloté depuis la console ou par `scripts/furniture-shot.mjs`.
+ *
+ *   furnitureLab.set({ kinds: ['fountainWallace'], yawDeg: 30, pitchDeg: 8, distance: 6 })
+ *
+ * `yawDeg` tourne autour de la rangée, `pitchDeg` lève le regard, `target`
+ * est la hauteur visée.
+ */
+import * as THREE from 'three';
+import { FURNITURE_BUILDERS, createFurnitureMaterial } from '/src/layers/furnitureKit.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xcfd8de);
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 500);
+scene.add(new THREE.HemisphereLight(0xdfe8f0, 0x6b6558, 1.4));
+const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);
+sun.position.set(-6, 10, 8);
+scene.add(sun);
+scene.add(new THREE.Mesh(
+  new THREE.PlaneGeometry(200, 200).rotateX(-Math.PI / 2),
+  new THREE.MeshLambertMaterial({ color: 0x8e8c86 })
+));
+
+const material = createFurnitureMaterial(THREE);
+const man = new THREE.Mesh(
+  new THREE.BoxGeometry(0.45, 1.75, 0.25).translate(0, 0.875, 0),
+  new THREE.MeshLambertMaterial({ color: 0xb04a3a })
+);
+const row = new THREE.Group();
+scene.add(row);
+
+const state = { kinds: ['fountainWallace', 'streetLampClassic'], yawDeg: 20, pitchDeg: 6, distance: 9, target: 1.5, spacing: 2.5 };
+
+function render() {
+  // Taille relue à chaque rendu : une page ouverte cachée naît à 0 × 0.
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  row.clear();
+  state.kinds.forEach((kind, i) => {
+    const mesh = new THREE.Mesh(FURNITURE_BUILDERS[kind]().toGeometry(THREE, kind), material);
+    mesh.position.x = (i - (state.kinds.length - 1) / 2) * state.spacing;
+    row.add(mesh);
+  });
+  man.position.x = ((state.kinds.length + 1) / 2) * state.spacing - state.spacing / 2 + 0.8;
+  row.add(man);
+  const yaw = (state.yawDeg * Math.PI) / 180;
+  const pitch = (state.pitchDeg * Math.PI) / 180;
+  camera.position.set(
+    Math.sin(yaw) * Math.cos(pitch) * state.distance,
+    state.target + Math.sin(pitch) * state.distance,
+    Math.cos(yaw) * Math.cos(pitch) * state.distance
+  );
+  camera.lookAt(0, state.target, 0);
+  renderer.render(scene, camera);
+  return { kinds: state.kinds };
+}
+
+window.furnitureLab = { set(options = {}) { Object.assign(state, options); return render(); }, state };
+window.furnitureLabReady = true;
+render();
+</script>
+</body>
+</html>

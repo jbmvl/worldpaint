@@ -103,7 +103,7 @@ export const FURNITURE_LIMITS = {
   // Chats et chiens de maison, comptés à part du reste de la faune : une
   // petite ville de plusieurs centaines de maisons ne doit pas à elle seule
   // remplir le budget `fauna` et évincer le bétail des prés voisins.
-  pets: 60,
+  pets: 30,
   // Antennes de sommet : posées sur les vrais sommets relevés dans les
   // tuiles (`mountain_peak`), donc bornées par leur rareté propre — la bulle
   // n'en contient jamais des dizaines.

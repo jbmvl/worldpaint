@@ -3,87 +3,80 @@
 <head>
 <meta charset="utf-8">
 <title>Banc des cultures</title>
-<style>html, body { margin: 0; height: 100%; overflow: hidden; background: #9fb8cf; }</style>
+<style>html,body{margin:0;background:#9fb8cf}canvas{display:block}</style>
 <script type="importmap">
-{ "imports": {
-  "three": "/node_modules/three/build/three.module.js"
-} }
+{ "imports": { "three": "/node_modules/three/build/three.module.js" } }
 </script>
 </head>
 <body>
 <script type="module">
 /*
- * Banc des cultures : un champ plat traversé par une route droite (axe z),
- * bordée d'une haie de bas-côté, avec la vraie `CropLayer` et la vraie
- * `VergeStrips`. La haie est une simple bande verte : on regarde ici où
- * s'arrête le champ, pas la haie.
+ * Banc des cultures — un champ plat traversé par une route sinueuse, la
+ * `CropLayer` réelle posée dessus. Le champ change de culture à `FIELD_EDGE_M`
+ * devant l'observateur, pour montrer une lisière entre deux cultures. Aucune
+ * tuile, aucun réseau :
  *
- *   cropLab.set({ crop, hedge, lookDeg, pitchDeg, height, x })
+ *   cropLab.set({ crop: 'maize', next: 'wheat', height: 12, pitchDeg: -14 })
  */
 import * as THREE from 'three';
 import { CropLayer } from '/src/layers/cropLayer.js';
-import { VergeStrips } from '/src/layers/vergeStrips.js';
 
-const HALF_WIDTH = 2.5;
-const CORRIDOR = HALF_WIDTH + 1.2;
-const HEDGE_OFFSET = HALF_WIDTH + 2.6;
-const HEDGE_PAD = 0.76;
+const ROAD_HALF_M = 3;
+const FIELD_EDGE_M = 90;
+const roadX = (z) => 10 * Math.sin(z / 45);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-renderer.setPixelRatio(1);
 renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
+
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x9fb8cf);
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 2000);
-scene.add(new THREE.HemisphereLight(0xdfe8f0, 0x5a5030, 1.4));
-const sun = new THREE.DirectionalLight(0xfff2dc, 2.2);
-sun.position.set(-60, 120, 40);
+scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x4a5a30, 1.4));
+const sun = new THREE.DirectionalLight(0xffffff, 2);
+sun.position.set(-40, 80, 30);
 scene.add(sun);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.5, 2000);
 
 scene.add(new THREE.Mesh(
   new THREE.PlaneGeometry(2000, 2000).rotateX(-Math.PI / 2),
-  new THREE.MeshStandardMaterial({ color: 0x7d7a3a, roughness: 1 })
+  new THREE.MeshLambertMaterial({ color: 0x4f6a2c })
 ));
-const road = new THREE.Mesh(
-  new THREE.PlaneGeometry(HALF_WIDTH * 2, 2000).rotateX(-Math.PI / 2).translate(0, 0.02, 0),
-  new THREE.MeshStandardMaterial({ color: 0x17181c, roughness: 1 })
-);
-scene.add(road);
+const road = [];
+for (let z = -200; z <= 400; z += 2) {
+  road.push(roadX(z) - ROAD_HALF_M, 0.05, z, roadX(z) + ROAD_HALF_M, 0.05, z);
+}
+const roadGeometry = new THREE.BufferGeometry();
+roadGeometry.setAttribute('position', new THREE.Float32BufferAttribute(road, 3));
+const roadIndex = [];
+for (let i = 0; i < road.length / 6 - 1; i++) {
+  const a = i * 2;
+  roadIndex.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+}
+roadGeometry.setIndex(roadIndex);
+scene.add(new THREE.Mesh(roadGeometry, new THREE.MeshBasicMaterial({ color: 0x1b1c22, side: THREE.DoubleSide })));
 
-// Route le long de z : tangente (0, 1), normale (tz, -tx) = (1, 0), la haie à +x.
-const axis = [{ x: 0, z: -600 }, { x: 0, z: 600 }];
-const hedge = new THREE.Mesh(
-  new THREE.BoxGeometry(HEDGE_PAD * 2, 1.6, 1200).translate(HEDGE_OFFSET, 0.8, 0),
-  new THREE.MeshStandardMaterial({ color: 0x2f5a2a, roughness: 1 })
-);
-scene.add(hedge);
-
-const roads = {
-  index: { covers: (x, z, margin) => Math.abs(x) <= HALF_WIDTH + margin && Math.abs(z) <= 600 },
+const state = { crop: 'maize', next: 'wheat', height: 12, pitchDeg: -14, z: 0 };
+const bubble = { frame: 1, surfaceGeneration: 1, verticalScale: 1, surfaceElevationAtLocal: () => 0 };
+// La carte des cultures ignore la route, comme une tuile qui en garde la trace.
+const groundClass = {
+  cropReady: true,
+  cropAt: (x, z) => (z < state.z + FIELD_EDGE_M ? state.crop : state.next),
 };
-const state = { crop: 'wheat', hedge: true, lookDeg: 0, pitchDeg: -12, height: 1.7, x: -1.2 };
-const groundClass = { cropReady: true, cropAt: () => state.crop };
-const bubble = { frame: {}, surfaceGeneration: 0, surfaceElevationAtLocal: () => 0, verticalScale: 1 };
-const crops = new CropLayer({ THREE, scene, bubble, groundClass, roads });
+const index = {
+  covers: (x, z, margin) => Math.abs(x - roadX(z)) * Math.cos(Math.atan(Math.cos(z / 45) * 10 / 45)) <= ROAD_HALF_M + margin,
+};
+const crops = new CropLayer({ THREE, scene, bubble, groundClass, roads: { index } });
 
 function render() {
-  hedge.visible = state.hedge;
-  const verges = new VergeStrips();
-  if (state.hedge) verges.add(axis, HEDGE_OFFSET, HEDGE_PAD);
-  crops.setVerges(verges);
-  crops.update(state.x, 0, { force: true });
-
-  const yaw = (state.lookDeg * Math.PI) / 180;
+  bubble.frame++;
+  crops.update(roadX(state.z), state.z, { force: true });
+  const x = roadX(state.z);
+  camera.position.set(x, state.height, state.z);
   const pitch = (state.pitchDeg * Math.PI) / 180;
-  camera.position.set(state.x, state.height, 0);
-  camera.lookAt(
-    state.x + Math.sin(yaw) * Math.cos(pitch),
-    state.height + Math.sin(pitch),
-    -Math.cos(yaw) * Math.cos(pitch)
-  );
+  camera.lookAt(x, state.height + Math.sin(pitch) * 100, state.z + Math.cos(pitch) * 100);
   renderer.render(scene, camera);
-  return { instances: crops.mesh.count, corridor: CORRIDOR, hedge: HEDGE_OFFSET };
+  return { instances: crops.mesh.count };
 }
 
 window.cropLab = {

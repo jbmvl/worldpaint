@@ -503,7 +503,9 @@ export class TerrainBubble {
     // contour, et le raccord part de là. Le sol doit passer sous les deux
     // entailles là où elles se recouvrent, donc on retient la plus basse —
     // et l'emprise la plus large, pour que le grain s'éteigne sur les deux.
-    const slab = this._junctions?.deckNear(x, z, reach);
+    // La cote est la plus basse de la dalle à une diagonale de maille
+    // (`bench`) : sinon la corde du terrain passe au-dessus de ses plis.
+    const slab = this._junctions?.deckNear(x, z, reach, undefined, bench);
     if (slab) {
       const slabElevation = cutElevationAt(raw, slab.deck / scale, slab.distance, 0, bench);
       if (slabElevation < elevation) elevation = slabElevation;

@@ -12,7 +12,8 @@ son état.
 | --- | --- |
 | `roadGraph.js` | recoud les chaussées, arrondit leurs brisures, relève les carrefours (un carrefour est un **nœud**, pas une image) |
 | `roadNetwork.js` | les rubans de chaussée, leur plate-forme, l'index publié |
-| `roadJunctions.js` | la surface d'un carrefour, ses bouches, qui cède le passage |
+| `roadJunctions.js` | la surface d'un carrefour, ses bouches, qui cède le passage — et les deux formes à part : la fourche et la couronne du giratoire |
+| `roadRoundabouts.js` | reconnaît un giratoire (une face du graphe petite et ronde) : il est publié comme **un** carrefour, dont `roadJunctions` fait une couronne |
 | `roadEdges.js`, `roadCorridor.js` | la rive de la chaussée, et l'emprise que le décor ne franchit pas |
 | `roadWorks.js`, `bridgeLayer.js` | ponts et tunnels : un état de la chaussée, pas une classe de route |
 | `roadMarkings.js`, `roadBundles.js` | marquage au sol, voies qui se longent |

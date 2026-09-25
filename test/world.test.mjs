@@ -62,6 +62,7 @@ import {
   branchSection,
   branchYields,
   junctionArea,
+  JUNCTION_FORK_REACH_M,
   junctionBoundaryAt,
   junctionCentreDeck,
   junctionCorner,
@@ -75,6 +76,7 @@ import {
   outlineDistance,
   JunctionAreas,
   JUNCTION_CORNER_MAX_M,
+  lowestDeckAround,
 } from '../src/layers/roadJunctions.js';
 import {
   absorbParallelLines,
@@ -193,6 +195,7 @@ import {
   LAMP_ARC,
   LAMP_HEAD_HEIGHT_M,
   LAMP_HEAD_REACH_M,
+  lampHeadFor,
   GREENHOUSE_BASE_LENGTH_M,
 } from '../src/layers/furnitureKit.js';
 import { tileBounds } from '../src/core/vectorTileSource.js';
@@ -292,7 +295,10 @@ import {
   BUILDING_MAX_HEIGHT,
   plinthTopFor,
   pushPanel,
+  pushBand,
   appendOpenings,
+  wallGroundProfile,
+  profileHighest,
   PLINTH_HEIGHT_M,
   WINDOW_FRAME_M,
   SHUTTER_WIDTH_RATIO,
@@ -300,6 +306,7 @@ import {
   sortPersonalities,
   personalityLookFor,
   shopfrontTopFor,
+  streetFacadeIndex,
   SHOPFRONT_HEIGHT_M,
   towerSide,
   towerRise,
@@ -1451,6 +1458,27 @@ test('la devanture occupe la place du soubassement, pas le mur entier', () => {
   assert.equal(shopfrontTopFor(100, 0, 103.5), null, 'mur trop bas');
   // Sous un passage couvert, il n'y a pas de rez-de-chaussée à habiller.
   assert.equal(shopfrontTopFor(100, 4, 115), null, 'surplomb');
+});
+
+test('la devanture regarde la rue, pas la cour ni le pignon', () => {
+  // Rue nord-sud en x = 0 ; maison 12 × 6 m dont le petit côté donne sur elle.
+  const rue = new RoadIndex([{ halfWidth: 3, path: [{ x: 0, y: 0, z: -50 }, { x: 0, y: 0, z: 50 }] }]);
+  // Sens de `_appendBuilding` : normale sortante (b.y - a.y, -(b.x - a.x)).
+  const maison = [
+    { x: 5, y: 3 },
+    { x: 5, y: -3 },
+    { x: 17, y: -3 },
+    { x: 17, y: 3 },
+  ];
+  const i = streetFacadeIndex(maison, rue);
+  assert.equal(i, 0, 'le pignon sur rue, pas le long pan');
+  const a = maison[i];
+  const b = maison[(i + 1) % maison.length];
+  assert.ok(b.y - a.y < 0, 'et sa normale pointe vers la chaussée');
+
+  // Sans rue devant, pas de façade sur rue.
+  const loin = new RoadIndex([{ halfWidth: 3, path: [{ x: -80, y: 0, z: -50 }, { x: -80, y: 0, z: 50 }] }]);
+  assert.equal(streetFacadeIndex(maison, loin), -1);
 });
 
 test('le clocher est dimensionné et posé sur le bâtiment qui le porte', () => {
@@ -2814,9 +2842,9 @@ test('le sol d’un bois porte une litière, pas une prairie à l’ombre', () =
   assert.ok(sousBois.shade > WOODLAND_FLOWER_MAX, 'un vrai bois passe le seuil');
 });
 
-test('un sol de forêt est une litière brune, jamais un trou noir', () => {
-  // Un sous-bois n'est pas un pré à l'ombre : c'est une litière, brune plutôt
-  // que verte (rouge ≥ 0,80 × vert), et plus sombre qu'une prairie sans tomber
+test('un sol de forêt est un vert mêlé de brun, jamais un trou noir', () => {
+  // Un sous-bois n'est pas un pré à l'ombre : c'est une litière mêlée d'herbe
+  // (vert dominant, rouge ≥ 0,45 × vert), et plus sombre qu'une prairie sans tomber
   // dans le noir.
   const woodAlbedo = defaultTheme.surfaces.wood.albedo;
   const grassAlbedo = defaultTheme.surfaces.grass.albedo;
@@ -2824,13 +2852,12 @@ test('un sol de forêt est une litière brune, jamais un trou noir', () => {
   assert.ok(luma(woodAlbedo) < luma(grassAlbedo), 'un sous-bois reste plus sombre qu’un pré');
   assert.ok(luma(woodAlbedo) > 0.02, 'jamais un trou noir');
   assert.ok(
-    woodAlbedo[0] >= woodAlbedo[1] * 0.8,
-    `la litière est brune, pas verte : ${woodAlbedo}`
+    woodAlbedo[1] >= woodAlbedo[0] && woodAlbedo[0] >= woodAlbedo[1] * 0.45,
+    `la litière est verte mêlée de brun : ${woodAlbedo}`
   );
 
   // Les touffes qui poussent dessus suivent le même déplacement : le vert y
-  // recule plus que le rouge, sans quoi le premier plan resterait vert alors
-  // que le lointain a viré au brun.
+  // recule un peu plus que le rouge.
   assert.ok(
     WOODLAND_FLOOR.tint[0] > WOODLAND_FLOOR.tint[1],
     `le rouge doit reculer moins que le vert : ${WOODLAND_FLOOR.tint}`
@@ -6725,6 +6752,76 @@ test('le budget de baies borne ce qui est posé', () => {
   assert.equal(openings.panes, 3, 'pas une baie de plus que le budget');
 });
 
+test('wallGroundProfile relève le sol le long du pan, bouts compris', () => {
+  const profile = wallGroundProfile({ x: 0, y: 0 }, { x: 9, y: 0 }, (x) => x * 0.5);
+  assert.equal(profile.along[0], 0);
+  assert.equal(profile.along.at(-1), 9);
+  assert.ok(profile.along.length >= 6, 'un relevé tous les deux mètres au plus');
+  assert.equal(profile.y.at(-1), 4.5);
+  // Le sol le plus haut d'un intervalle : les bornes interpolées comptent.
+  close(profileHighest(profile, 1, 3), 1.5, 1e-9, 'borne haute interpolée');
+  // Une bosse entre deux angles se voit, là où l'assise aux angles la manquerait.
+  const bump = wallGroundProfile({ x: 0, y: 0 }, { x: 10, y: 0 }, (x) => (x === 4 ? 3 : 0));
+  assert.equal(profileHighest(bump, 0, 10), 3);
+});
+
+test('pushBand suit une cote différente à chaque bout du pan', () => {
+  const buffer = { positions: [], normals: [], colors: [] };
+  pushBand(buffer, { x: 0, y: 0 }, { x: 4, y: 0 }, 0, 0, 1, 3, 0, -1, [1, 1, 1]);
+  const ys = [];
+  for (let i = 1; i < buffer.positions.length; i += 3) ys.push(buffer.positions[i]);
+  assert.deepEqual([Math.min(...ys), Math.max(...ys)], [0, 3]);
+  assert.equal(buffer.normals[1], 0, 'toujours un pan vertical');
+});
+
+test('appendOpenings : aucune baie enterrée par la pente, la porte descend vers le bas du mur', () => {
+  const style = { shutter: [0.2, 0.3, 0.4], house: true, shutters: false };
+  const look = defaultTheme.windows;
+  const a = { x: 0, y: 0 };
+  const b = { x: 30, y: 0 };
+  // Le sol monte de 0 à 3 m le long du pan ; l'assise est au pied, à 0.
+  const ground = wallGroundProfile(a, b, (x) => x * 0.1);
+  const walls = { positions: [], normals: [], colors: [] };
+  const openings = { panes: 0, budget: 100, lit: null };
+  appendOpenings(openings, walls, a, b, 0, -1, 0, 9, 0, style, look, { ground, door: [0.5, 0.1, 0.1] });
+  assert.ok(openings.panes > 0);
+
+  // Chaque sommet de baie (hors porte, qui part du sol) reste au-dessus du
+  // soubassement qui suit le sol.
+  const panels = [];
+  for (let i = 0; i < walls.positions.length; i += 18) {
+    const xs = [];
+    const ys = [];
+    for (let k = 0; k < 18; k += 3) {
+      xs.push(walls.positions[i + k]);
+      ys.push(walls.positions[i + k + 1]);
+    }
+    panels.push({ x: (Math.min(...xs) + Math.max(...xs)) / 2, right: Math.max(...xs), bottom: Math.min(...ys), red: walls.colors[i] });
+  }
+  const door = panels.find((p) => p.red === 0.5);
+  assert.ok(door, 'une porte');
+  for (const panel of panels) {
+    if (Math.abs(panel.x - door.x) < 1e-6) continue;
+    assert.ok(panel.bottom >= panel.right * 0.1 + PLINTH_HEIGHT_M - 1e-9, 'baie au-dessus du soubassement');
+  }
+  assert.ok(door.x < 15, 'la porte glisse vers le bas du mur');
+  assert.ok(door.bottom >= (door.x + look.doorWidthM / 2) * 0.1 - 1e-9, 'le seuil n’est pas sous le sol');
+  assert.ok(door.bottom + look.doorHeightM < look.levelM + look.sillM, 'sous l’étage');
+});
+
+test('appendOpenings : pas de porte sans couleur, ni sur un surplomb', () => {
+  const style = { shutter: [0.2, 0.3, 0.4], house: false, shutters: false };
+  const count = (options, minHeight = 0) => {
+    const walls = { positions: [], normals: [], colors: [] };
+    const openings = { panes: 0, budget: 100, lit: null };
+    appendOpenings(openings, walls, { x: 0, y: 0 }, { x: 20, y: 0 }, 0, -1, 0, 12, minHeight, style, undefined, options);
+    return walls.colors.filter((c, i) => i % 3 === 0 && c === 0.5).length;
+  };
+  assert.ok(count({ door: [0.5, 0.1, 0.1] }) > 0, 'une porte au rez-de-chaussée');
+  assert.equal(count({}), 0, 'aucune porte demandée');
+  assert.equal(count({ door: [0.5, 0.1, 0.1] }, 4), 0, 'un passage couvert n’a pas de seuil');
+});
+
 // --- Jardins ----------------------------------------------------------------
 
 test('les piquets se répartissent d’un angle à l’autre, portillon compris', () => {
@@ -7056,6 +7153,29 @@ test('une branche publie la chaussée telle qu’elle part, et sa direction sur 
   close(branch.path[branch.path.length - 1].z, 20, 1e-6, 'suivie jusqu’au bout de la branche');
 });
 
+test('une fourche suit ses branches aussi loin qu’elle cherche leur séparation', () => {
+  // Deux sens uniques qui s'écartent puis filent parallèles, sommet tous les
+  // cinq mètres : prolongée en ligne droite au-delà de quelques dizaines de
+  // mètres, la polyligne les séparerait trop tôt.
+  const half = (s) => Array.from({ length: 41 }, (_, i) => ({ x: s * 2.8 * Math.tanh((i * 5) / 30), z: -i * 5 }));
+  const { junctions } = mergeRoadLines([
+    { profile: 'minor', halfWidth: 4.25, points: [{ x: 0, z: 200 }, { x: 0, z: 0 }] },
+    { profile: 'minor', halfWidth: 2.5, points: half(-1) },
+    { profile: 'minor', halfWidth: 2.5, points: half(1).reverse() },
+  ]);
+
+  const legs = junctions[0].branches.filter((b) => b.z < 0);
+  for (const leg of legs) {
+    assert.ok(-leg.path[leg.path.length - 1].z >= JUNCTION_FORK_REACH_M, 'suivie jusqu’à la portée de la fourche');
+  }
+  const area = junctionArea(junctions[0]);
+  assert.ok(area.fork);
+  for (const mouth of area.mouths.slice(1)) {
+    const { x, z } = mouth.centre;
+    close(Math.abs(x), 2.8 * Math.tanh(-z / 30), 0.05, 'la bouche est posée sur la chaussée, pas sur son prolongement');
+  }
+});
+
 test('le morceau qu’une tuile voisine livre d’une branche ne l’arrête pas', () => {
   // La tuile voisine coupe la desserte au bord de sa marge (z = 30), sur
   // l'arête que la tuile d'origine porte entière : le sommet partagé (z = 20)
@@ -7220,11 +7340,30 @@ test('un sommet intérieur ne se déplace pas au-delà de la tolérance de soudu
     {
       profile: 'minor',
       halfWidth: 2.5,
-      points: [{ x: 0, z: -80 }, { x: 0, z: -2 }, { x: 20, z: 60 }],
+      points: [{ x: 0, z: -80 }, { x: 0, z: -2 }, { x: 20, z: -60 }],
     },
   ]);
 
   assert.equal(junctions.length, 0);
+});
+
+test('deux axes qui se traversent sans sommet commun font un carrefour', () => {
+  // La tuile a retiré le sommet du croisement des deux côtés : aucun bout ne
+  // bute sur l'autre chaussée, la greffe ne voit rien.
+  const lines = [
+    { profile: 'major', halfWidth: 4.25, points: [{ x: -100, z: 0 }, { x: 100, z: 0 }] },
+    { profile: 'minor', halfWidth: 2.5, points: [{ x: -30, z: -80 }, { x: 30, z: 80 }] },
+  ];
+  const { junctions } = mergeRoadLines(lines);
+  assert.equal(junctions.length, 1);
+  assert.equal(junctions[0].degree, 4);
+  close(junctions[0].x, 0, 1e-6, 'au croisement des axes');
+  close(junctions[0].z, 0, 1e-6, 'au croisement des axes');
+
+  const over = mergeRoadLines([lines[0], { ...lines[1], level: 1 }]);
+  assert.equal(over.junctions.length, 0, 'ce qui survole ne rencontre pas');
+  const path = mergeRoadLines([lines[0], { ...lines[1], profile: 'path', paved: false }]);
+  assert.equal(path.junctions.length, 0, 'un chemin se pose sur la route');
 });
 
 test('deux moitiés d’une même route qui se recouvrent ne font pas un carrefour', () => {
@@ -7889,20 +8028,22 @@ test('une route droite garde sa rive droite : pas d’arc entre deux branches op
   close(corner.points[0].x, 0, 1e-6, 'au droit du nœud');
 });
 
-test('deux branches qui repartent ensemble n’en font qu’une', () => {
-  // Une bretelle qui quitte une voie rapide à huit degrés n'est pas un angle de
-  // rue : ses rives ne se rencontrent qu'à cinquante mètres. Les traiter comme
-  // deux branches replierait le contour sur lui-même.
-  const sorted = [branchAt(0, 4), branchAt(0.15, 4), branchAt(Math.PI, 4)].sort(
+test('deux branches qui repartent ensemble n’en font qu’une, sauf à une fourche', () => {
+  // Entre quatre branches, deux rasantes n'ont pas d'angle de rue entre elles :
+  // les traiter comme deux replierait le contour sur lui-même.
+  const sorted = [branchAt(0, 6), branchAt(0.15, 4), branchAt(Math.PI, 6)].sort(
     (a, b) => Math.atan2(a.z, a.x) - Math.atan2(b.z, b.x)
   ).map((b) => ({ ...b, angle: Math.atan2(b.z, b.x) }));
-
   assert.equal(mergeParallelBranches(sorted).length, 2, 'les deux rasantes fondent');
-  assert.equal(
-    junctionArea({ x: 0, z: 0, degree: 3, level: 0, halfWidth: 4, profile: 'major', branches: sorted }),
-    null,
-    'il ne reste pas de quoi faire un carrefour'
-  );
+
+  // À trois branches, c'est une fourche — une bretelle qui quitte une voie
+  // rapide à huit degrés : sa surface court jusqu'à ce que les deux chaussées
+  // se séparent, à une soixantaine de mètres.
+  const bretelle = junctionArea({ x: 0, z: 0, degree: 3, level: 0, halfWidth: 6, profile: 'express', branches: sorted });
+  assert.ok(bretelle, 'une surface');
+  const loin = bretelle.mouths.filter((m) => m.direction.x > 0).map((m) => m.distance);
+  assert.equal(loin.length, 2);
+  assert.ok(loin.every((d) => d > 60 && d < 72), `bouches à la séparation (${loin})`);
 
   // Une vraie fourche, elle, en reste une.
   const fork = [branchAt(0, 4), branchAt(0.9, 4), branchAt(Math.PI, 4)].map((b) => ({
@@ -7910,6 +8051,21 @@ test('deux branches qui repartent ensemble n’en font qu’une', () => {
     angle: Math.atan2(b.z, b.x),
   }));
   assert.equal(mergeParallelBranches(fork).length, 3, 'à cinquante degrés, trois branches');
+});
+
+test('une route qui se dédouble garde une surface jusqu’à la pointe de l’îlot', () => {
+  // Deux sens uniques qui se quittent à douze degrés : leurs rubans se
+  // recouvrent sur une quarantaine de mètres, et le carrefour doit les couvrir.
+  const angle = (12 * Math.PI) / 180;
+  const branches = [branchAt(Math.PI, 4.25), branchAt(-angle / 2, 4.25), branchAt(angle / 2, 4.25)];
+  const area = junctionArea({ x: 0, z: 0, degree: 3, level: 0, halfWidth: 4.25, profile: 'major', branches });
+  assert.ok(area, 'une surface');
+  assert.equal(area.mouths.length, 3);
+  const pointe = 8.5 / Math.sin(angle);
+  for (const mouth of area.mouths.filter((m) => m.direction.x > 0)) {
+    assert.ok(mouth.distance > pointe - 1, 'la bouche d’un sens unique est au-delà de la pointe');
+  }
+  assert.ok(area.outline.some((p) => Math.abs(p.z) < 0.5 && p.x > pointe - 1), 'la pointe est sur le contour');
 });
 
 test('le rayon de raccordement reste borné, quelles que soient les largeurs', () => {
@@ -8022,6 +8178,27 @@ test('le ruban s’arrête pile sur le contour, et reprend de l’autre côté',
   // La plate-forme suit : un sommet inventé à la bouche doit porter une altitude.
   assert.ok(Number.isFinite(runs[0].platform[runs[0].platform.length - 1]));
   assert.equal(runs[0].platform.length, runs[0].path.length);
+});
+
+test('entre deux carrefours voisins, la chaussée qui les sépare est dessinée', () => {
+  // Deux T assez proches pour prendre deux lignes consécutives sans se toucher :
+  // aucune ligne libre entre eux, et pourtant un bout de chaussée.
+  const first = teeJunction();
+  const reach = Math.max(...junctionArea(first).outline.map((p) => p.x));
+  const offset = 2 * reach + 1;
+  const areas = new JunctionAreas([first, { ...teeJunction(), x: offset }]);
+  const rows = 41;
+  const path = Array.from({ length: rows }, (_, i) => ({ x: -100 + i * 5, z: 0, distance: i * 5 }));
+  const segment = { path, platform: new Float32Array(rows).fill(7), levels: new Int8Array(rows) };
+  segment.junction = markJunctionRows(segment, areas);
+  const inBetween = path.filter((p) => p.x > reach && p.x < offset - reach);
+  assert.equal(inBetween.length, 0, 'le cas étudié : aucune ligne dans l’intervalle');
+
+  const runs = junctionRibbonRuns(segment, areas, [{ from: 0, to: rows - 1 }]);
+  const bridge = runs.find((run) => run.head >= 0 && run.tail >= 0);
+  assert.ok(bridge, 'un morceau va d’un carrefour à l’autre');
+  close(bridge.path[0].x, reach, 0.01, 'il part du contour du premier');
+  close(bridge.path[bridge.path.length - 1].x, offset - reach, 0.01, 'et finit sur celui du second');
 });
 
 test('une section peut emprunter les repères de la rive qu’elle borde', () => {
@@ -8201,6 +8378,25 @@ test('la cote de la dalle se lit en tout point qu’elle couvre', () => {
     1e-6,
     'entre les deux'
   );
+});
+
+test('le terrain passe sous les plis de la dalle : sa cote est la plus basse à une maille', () => {
+  const area = junctionArea(teeJunction());
+  area.decks = area.mouths.map((mouth) => 100 + mouth.centre.x * 0.1 - mouth.centre.z * 0.15);
+  const radius = 6.6;
+  for (const [x, z] of [[area.x, area.z], [area.x + 3, area.z - 2], [area.x - 5, area.z + 4]]) {
+    let finest = Infinity;
+    for (let dx = -radius; dx <= radius; dx += 0.2) {
+      for (let dz = -radius; dz <= radius; dz += 0.2) {
+        if (dx * dx + dz * dz > radius * radius || !pointInOutline(area.outline, x + dx, z + dz)) continue;
+        finest = Math.min(finest, junctionDeckAt(area, area.decks, x + dx, z + dz));
+      }
+    }
+    assert.ok(lowestDeckAround(area, x, z, radius) <= finest + 1e-9, `(${x}, ${z}) : pas au-dessus de la dalle`);
+  }
+  const areas = new JunctionAreas([teeJunction()]);
+  areas.areas[0].decks = area.decks;
+  assert.ok(areas.deckNear(area.x, area.z, 10, 0, radius).deck < areas.deckNear(area.x, area.z, 10).deck, 'deckNear l’applique');
 });
 
 test('un carrefour sans cote ne creuse pas le terrain', () => {
@@ -10021,6 +10217,17 @@ test('la crosse d’un lampadaire est continue du fût à la lanterne', () => {
   assert.ok(LAMP_HEAD_REACH_M > 1 && LAMP_HEAD_REACH_M < 2, 'la lanterne avance sur la chaussée');
 });
 
+test('le halo du lampadaire de style est au-dessus du mât, dans sa lanterne', () => {
+  assert.deepEqual(lampHeadFor('streetLamp'), { height: LAMP_HEAD_HEIGHT_M, reach: LAMP_HEAD_REACH_M });
+  assert.deepEqual(lampHeadFor('streetLampLed'), { height: LAMP_HEAD_HEIGHT_M, reach: LAMP_HEAD_REACH_M });
+  const classic = lampHeadFor('streetLampClassic');
+  assert.equal(classic.reach, 0, 'pas de crosse : rien n’avance sur la chaussée');
+  const geometry = FURNITURE_BUILDERS.streetLampClassic();
+  let top = 0;
+  for (let i = 1; i < geometry.positions.length; i += 3) top = Math.max(top, geometry.positions[i]);
+  assert.ok(classic.height > 3 && classic.height < top, 'le cœur de la lanterne est sous le sommet du lampadaire');
+});
+
 test('le semis des cultures a la densité de celui de l’herbe', () => {
   // « Il faut faire comme l'herbe » : même maille, donc même densité au mètre
   // carré à `density: 1`. C'est ce rapport, et non un nombre absolu, qui décide
@@ -11573,7 +11780,6 @@ test('greenhouseAnchorFor renonce plutôt que deviner sur une culture qui couvre
 function farmsteadPlacementHarness() {
   const layer = Object.create(FurnitureLayer.prototype);
   layer.bubble = { surfaceElevationAtLocal: () => 100, verticalScale: 1 };
-  layer.chimneys = [];
   // Les poules de la cour ne sont plus du mobilier : elles partent dans
   // `fauna`, que la couche publie pour `faunaLayer`.
   layer.fauna = [];
@@ -12629,6 +12835,21 @@ test('appendShopfront perce une devanture et peint l’enseigne au-dessus', () =
   }
 });
 
+test('appendShopfront : sur une pente, chaque baie part du sol qu’elle surplombe', () => {
+  const walls = { positions: [], normals: [], colors: [] };
+  const openings = { panes: 0, budget: 20 };
+  const a = { x: 0, y: 0 };
+  const b = { x: 8, y: 0 };
+  // Le sol monte de 100 à 101,2 m ; la devanture est calée sur le haut.
+  const ground = wallGroundProfile(a, b, (x) => 100 + x * 0.15);
+  appendShopfront(openings, walls, null, null, a, b, 0, -1, 100, 101.2 + 3.05, 0, null, SHOPFRONT_THEME, ground);
+  assert.ok(openings.panes > 0);
+  for (let i = 0; i < walls.positions.length; i += 3) {
+    const floor = 100 + Math.min(8, walls.positions[i] + 1) * 0.15;
+    assert.ok(walls.positions[i + 1] >= floor - 0.2, 'rien sous le sol de la rue');
+  }
+});
+
 test('appendShopfront : sans nom, la devanture reste percée mais rien n’est peint', () => {
   const walls = { positions: [], normals: [], colors: [] };
   const labels = { positions: [], uvs: [] };
@@ -13489,11 +13710,10 @@ test('le grain low poly du sol dépend de la matière au pied du sommet', () => 
     defaultTheme.surfaces.wood.grainAmplitudeM < defaultTheme.surfaces.alpine.grainAmplitudeM,
     'un désordre de détail, pas un modelé de colinettes'
   );
-  // Une matière non listée (l'eau, le trottoir, l'herbe…) n'a pas été
-  // touchée : elle garde le réglage de repli, comme avant le branchement.
-  for (const kind of ['pavement', 'water']) {
-    assert.equal(defaultTheme.surfaces[kind]?.grainCellM, undefined, `${kind} ne déclare pas de grain`);
-  }
+  // L'eau garde le réglage de repli ; le trottoir est plan, comme tout le sol
+  // où le bâti se pose.
+  assert.equal(defaultTheme.surfaces.water?.grainCellM, undefined, 'water ne déclare pas de grain');
+  assert.equal(defaultTheme.surfaces.pavement.grainAmplitudeM, 0, 'le trottoir est plan');
 
   // La position au sol est relue au texel le plus proche — un identifiant,
   // jamais une part lissée — pour choisir la cellule et l'amplitude, comme

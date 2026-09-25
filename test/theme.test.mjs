@@ -33,7 +33,7 @@ import { kerbProfile } from '../src/layers/streetLayer.js';
 import { roofRise } from '../src/layers/roofGeometry.js';
 import { waterwayStyleFor, SURFACE_KINDS } from '../src/terrain/groundClassMap.js';
 import { grassVariantFor } from '../src/layers/groundCover.js';
-import { windowGrid } from '../src/layers/buildingLayer.js';
+import { windowGrid, isHiddenOutline, mergeTwinPersonalities, assignPersonalities, dropTwinFootprints } from '../src/layers/buildingLayer.js';
 import { forestTypeAt, variantsFor } from '../src/layers/vegetationLayer.js';
 import { roadStyleFor } from '../src/layers/roadNetwork.js';
 import { furnitureSpecsFor, FURNITURE_BUILDERS } from '../src/layers/furnitureKit.js';
@@ -548,7 +548,7 @@ test('chaque matière retouchée porte la dominante de sa fiche de biome', () =>
   const r = (kind) => defaultTheme.surfaces[kind].albedo[0];
   const g = (kind) => defaultTheme.surfaces[kind].albedo[1];
   const b = (kind) => defaultTheme.surfaces[kind].albedo[2];
-  assert.ok(r('wood') >= 0.8 * g('wood'), 'bois : litière brune, rouge ≥ 0,80 × vert');
+  assert.ok(g('wood') >= r('wood') && r('wood') >= 0.45 * g('wood'), 'bois : vert mêlé d’un quart de brun, vert ≥ rouge ≥ 0,45 × vert');
   assert.ok(r('wetland') >= 0.65 * g('wetland'), 'marais : olive profond, rouge ≥ 0,65 × vert');
   assert.ok(r('heath') >= 1.4 * g('heath'), 'lande : pourpre-brun, rouge ≥ 1,40 × vert');
   assert.ok(g('saltmarsh') >= r('saltmarsh'), 'pré salé : gris froid, vert ≥ rouge');
@@ -604,4 +604,45 @@ test('le brouillard de jour prend la lumière du ciel et la teinte de la palette
   const chaude = tintByPalette(sky, [0.9, 0.7, 0.5]);
   assert.ok(Math.abs(lum(chaude) - lum(sky)) < 1e-9, 'même lumière que le ciel');
   assert.ok(chaude[0] / chaude[2] > sky[0] / sky[2], 'réchauffée par la palette');
+});
+
+test('un contour qui a ses parties à part n’est pas extrudé une seconde fois', () => {
+  assert.equal(isHiddenOutline({ hide_3d: true }), true);
+  assert.equal(isHiddenOutline({ hide_3d: 'true' }), true);
+  assert.equal(isHiddenOutline({ hide_3d: false }), false);
+  assert.equal(isHiddenOutline({ render_height: 9 }), false);
+});
+
+test('un commerce qui revient deux fois dans la donnée n’habille qu’une devanture', () => {
+  const a = { x: 10, z: 0, name: 'La Rencontre', class: 'restaurant' };
+  const b = { x: 12, z: 1, name: 'La Rencontre', class: 'restaurant' };
+  const other = { x: 11, z: 0, name: 'Le Central', class: 'bar' };
+  const merged = mergeTwinPersonalities([b, other, a]);
+  assert.equal(merged.filter((p) => p.name === 'La Rencontre').length, 1);
+  assert.deepEqual(mergeTwinPersonalities([a, b, other]), merged, 'l’ordre de lecture ne choisit pas le jumeau');
+  assert.ok(merged.includes(other));
+
+  const box = (x0, x1) => {
+    const footprint = [{ x: x0, z: -5 }, { x: x1, z: -5 }, { x: x1, z: 5 }, { x: x0, z: 5 }];
+    return { footprint, area: (x1 - x0) * 10, x: (x0 + x1) / 2, z: 0, minX: x0, maxX: x1, minZ: -5, maxZ: 5 };
+  };
+  const outline = box(0, 30);
+  const part = box(5, 20);
+  const owners = assignPersonalities([part, outline], [a]);
+  assert.equal(owners.size, 1, 'deux empreintes superposées, une seule enseigne');
+  assert.equal(owners.get(outline), a, 'la plus grande l’emporte');
+  assert.deepEqual([...assignPersonalities([outline, part], [a])], [...owners]);
+});
+
+test('une même bâtisse lue deux fois n’est extrudée qu’une fois', () => {
+  const box = (x0, x1, dz = 0) => {
+    const footprint = [{ x: x0, z: -5 + dz }, { x: x1, z: -5 + dz }, { x: x1, z: 5 + dz }, { x: x0, z: 5 + dz }];
+    return { footprint, area: (x1 - x0) * 10, x: (x0 + x1) / 2, z: dz };
+  };
+  const first = box(0, 30);
+  const twin = box(0.3, 30.4, 0.2);
+  const part = box(5, 10);
+  const neighbour = box(30, 60);
+  const kept = dropTwinFootprints([first, twin, part, neighbour]);
+  assert.deepEqual(kept, [first, part, neighbour]);
 });
