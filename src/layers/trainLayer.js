@@ -27,9 +27,9 @@ import { defaultTheme } from '../themes/default.js';
 import { Kit, seededUnit } from '../models/kit.js';
 
 /** Trains en circulation au plus. */
-export const TRAIN_MAX = 4;
+export const TRAIN_MAX = 2;
 /** Part des apparitions de voie qui font naître un train (1 : à chaque fois). */
-export const TRAIN_SPAWN_CHANCE = 1;
+export const TRAIN_SPAWN_CHANCE = 0.25;
 /** Une voie plus loin que ça de l'observateur ne fait pas naître de train, en mètres. */
 export const TRAIN_SPAWN_SIGHT_M = 500;
 /** Recul de la naissance en amont du point le plus proche de l'observateur, en mètres. */
@@ -372,15 +372,16 @@ export class TrainLayer {
    * fait naître un sur chaque voie proche qui n'en porte pas.
    * @param {Array<Array<{x,y,z}>>} tracks Publiées par `railwayLayer.tracks`.
    * @param {{x:number,z:number}} here Position locale de l'observateur.
+   * @param {number} [chance] Part des voies qui font naître un train.
    */
-  setTracks(tracks, here) {
+  setTracks(tracks, here, chance = TRAIN_SPAWN_CHANCE) {
     if (this.disposed) return;
     this._tracks = Array.isArray(tracks) ? tracks : [];
     this._trains = this._trains.map((train) => reattachTrain(train, this._tracks));
     for (const track of this._tracks) {
       if (this._trains.length >= TRAIN_MAX) break;
       if (this._trains.some((train) => this._runsOn(train, track))) continue;
-      const train = spawnTrain(track, here);
+      const train = spawnTrain(track, here, chance);
       if (train) this._trains.push(train);
     }
     this._writeFrame();

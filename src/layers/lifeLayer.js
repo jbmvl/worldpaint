@@ -15,7 +15,6 @@
  *   (`setRelief`, `RAPTOR_SLOPE_THRESHOLD`, `RAPTOR_ELEVATION_M`) ;
  * - des **montgolfières**, plus haut et bien plus lentement, chacune avec ses
  *   deux couleurs propres ;
- * - la **fumée** des cheminées, publiée par `furnitureLayer.chimneys`.
  *
  * Les bêtes ont leur propre couche (`faunaLayer`), et pas par commodité : un
  * oiseau suit l'observateur et personne ne peut le vérifier, une vache est
@@ -24,8 +23,8 @@
  * ## Pourquoi si peu d'objets
  *
  * Parce que l'animation coûte une écriture de matrice par image et par objet,
- * là où le mobilier n'en coûte qu'une par reconstruction. Vingt oiseaux et cent
- * bouffées de fumée, ce sont cent vingt matrices par image : négligeable. Deux
+ * là où le mobilier n'en coûte qu'une par reconstruction. Vingt oiseaux, ce
+ * sont vingt matrices par image : négligeable. Deux
  * mille brins d'herbe animés, ce serait la moitié du budget d'une image — d'où
  * le vent de `groundCover`, qui vit entièrement dans un shader.
  *
@@ -73,16 +72,6 @@ export const BIRD_SPEED_MAX = 9;
 export const BIRD_SPAN_M = 1.15;
 /** Battement d'ailes : cycles par seconde. */
 export const BIRD_FLAP_HZ = 2.6;
-
-/** Bouffées de fumée entretenues par cheminée. */
-export const PUFF_PER_CHIMNEY = 9;
-/** Cheminées animées au plus — les plus proches d'abord. */
-export const SMOKE_MAX_CHIMNEYS = 6;
-/** Durée de vie d'une bouffée, en secondes. */
-export const PUFF_LIFE_S = 5.5;
-/** Vitesse d'ascension et dérive au vent, en mètres par seconde. */
-export const PUFF_RISE_MS = 1.15;
-export const PUFF_DRIFT_MS = 0.75;
 
 /**
  * Silhouette d'oiseau : deux ailes en V, vues de dessous.
@@ -450,46 +439,11 @@ export class LifeLayer {
       });
     }
 
-    // --- Fumée --------------------------------------------------------------
-    this.smokeGeometry = new THREE.PlaneGeometry(1, 1);
-    this.smokeMaterial = createSmokeMaterial(THREE, theme.life.smoke);
-    this.smoke = new THREE.InstancedMesh(
-      this.smokeGeometry,
-      this.smokeMaterial,
-      SMOKE_MAX_CHIMNEYS * PUFF_PER_CHIMNEY
-    );
-    this.smoke.name = 'chimney-smoke';
-    this.smoke.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.smoke.frustumCulled = false;
-    this.smoke.count = 0;
-    this.group.add(this.smoke);
-
-    /** @type {Array<{x:number,y:number,z:number}>} cheminées retenues. */
-    this._chimneys = [];
-
     this._matrix = new THREE.Matrix4();
     this._position = new THREE.Vector3();
     this._quaternion = new THREE.Quaternion();
     this._scale = new THREE.Vector3();
     this._euler = new THREE.Euler();
-  }
-
-  /**
-   * Retient les cheminées à animer : les plus proches de l'observateur, et pas plus
-   * que le maillage n'en porte. Une ferme à huit cents mètres derrière le
-   * brouillard n'a pas besoin de fumer.
-   *
-   * @param {Array<{x:number,y:number,z:number}>} chimneys
-   * @param {{x:number,z:number}} here Position locale de l'observateur.
-   */
-  setChimneys(chimneys, here) {
-    if (this.disposed) return;
-    const list = Array.isArray(chimneys) ? chimneys.slice() : [];
-    list.sort(
-      (a, b) =>
-        Math.hypot(a.x - here.x, a.z - here.z) - Math.hypot(b.x - here.x, b.z - here.z)
-    );
-    this._chimneys = list.slice(0, SMOKE_MAX_CHIMNEYS);
   }
 
   /**
@@ -563,7 +517,7 @@ export class LifeLayer {
   }
 
   /**
-   * Règle l'ambiance nocturne : les oiseaux se posent, la fumée s'assombrit.
+   * Règle l'ambiance nocturne : les oiseaux se posent.
    * @param {number} mix 0 en plein jour, 1 en pleine nuit.
    */
   setNight(mix) {
@@ -574,7 +528,6 @@ export class LifeLayer {
     this.birds.visible = this._night < 0.45;
     this._balloonsVisible = this._night < 0.45;
     for (const mesh of this._balloonMeshes) mesh.visible = this._balloonsVisible;
-    this.smokeMaterial.uniforms.uTint.value = 0.55 + (1 - this._night) * 0.45;
   }
 
   /**
@@ -591,7 +544,6 @@ export class LifeLayer {
     this.time = (this.time + delta) % 3600;
     this._advanceBirds(at);
     this._advanceBalloons(at);
-    this._advanceSmoke();
   }
 
   _advanceBirds(at) {
@@ -627,54 +579,11 @@ export class LifeLayer {
     });
   }
 
-  _advanceSmoke() {
-    const chimneys = this._chimneys;
-    if (chimneys.length === 0) {
-      this.smoke.count = 0;
-      return;
-    }
-
-    let index = 0;
-    for (let c = 0; c < chimneys.length; c++) {
-      const source = chimneys[c];
-      // Décalage propre à la cheminée : deux colonnes de fumée synchrones se
-      // repèrent instantanément.
-      const offset = draw(c * 41 + 11) * PUFF_LIFE_S;
-
-      for (let p = 0; p < PUFF_PER_CHIMNEY; p++) {
-        // Chaque bouffée occupe une tranche de la durée de vie : la colonne est
-        // continue, et une bouffée qui meurt en haut réapparaît en bas.
-        const age = (this.time + offset + (p / PUFF_PER_CHIMNEY) * PUFF_LIFE_S) % PUFF_LIFE_S;
-        const t = age / PUFF_LIFE_S;
-        const wander = draw(c * 53 + p * 7 + 13) - 0.5;
-
-        this._position.set(
-          source.x + PUFF_DRIFT_MS * age + wander * age * 0.5,
-          source.y + PUFF_RISE_MS * age,
-          source.z + PUFF_DRIFT_MS * age * 0.4 + wander * age * 0.35
-        );
-        this._quaternion.identity();
-        // La bouffée grossit en se diluant : c'est la seule chose qui fait lire
-        // « fumée » plutôt que « chapelet de boules ».
-        const size = 0.7 + t * 3.4;
-        this._scale.setScalar(size);
-        this._matrix.compose(this._position, this._quaternion, this._scale);
-        this.smoke.setMatrixAt(index, this._matrix);
-        index++;
-      }
-    }
-
-    this.smoke.count = index;
-    this.smoke.instanceMatrix.needsUpdate = true;
-  }
-
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
     this.group.remove(this.birds);
-    this.group.remove(this.smoke);
     this.birds.dispose?.();
-    this.smoke.dispose?.();
     this._corvidGeometry.dispose();
     this._raptorGeometry.dispose();
     this.birdMaterial.dispose();
@@ -685,66 +594,6 @@ export class LifeLayer {
     this.balloonMaterial.dispose();
     this._balloonMeshes = [];
     this._balloons = [];
-    this.smokeGeometry.dispose();
-    this.smokeMaterial.dispose();
-    this._chimneys = [];
     this.scene.remove(this.group);
   }
-}
-
-/**
- * Matériau des bouffées de fumée : panneau face caméra, dégradé radial calculé.
- *
- * L'opacité décroît avec la **taille** de l'instance plutôt qu'avec un âge
- * passé en attribut : la taille est déjà dans la matrice, elle y est lisible, et
- * ça évite un second tampon d'instance à tenir à jour. Une bouffée qui grossit
- * est une bouffée qui se dilue — la relation est physique, pas un raccourci.
- */
-function createSmokeMaterial(THREE, tint) {
-  const material = new THREE.ShaderMaterial({
-    transparent: true,
-    depthWrite: false,
-    // Même raison que pour le halo des lampadaires : le panneau est dressé dans
-    // l'espace de la vue, son enroulement dépend donc de la projection.
-    side: THREE.DoubleSide,
-    fog: false,
-    uniforms: {
-      uTint: { value: 1 },
-      uSmoke: { value: new THREE.Vector3(...tint) },
-    },
-    vertexShader: `
-      varying vec2 vUv;
-      varying float vSize;
-      void main() {
-        vUv = uv;
-        #ifdef USE_INSTANCING
-          vec4 centre = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-          vSize = length(instanceMatrix[0].xyz);
-        #else
-          vec4 centre = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-          vSize = 1.0;
-        #endif
-        centre.xy += position.xy * vSize;
-        gl_Position = projectionMatrix * centre;
-      }
-    `,
-    fragmentShader: `
-      uniform float uTint;
-      uniform vec3 uSmoke;
-      varying vec2 vUv;
-      varying float vSize;
-      void main() {
-        float r = length(vUv - 0.5) * 2.0;
-        float falloff = pow(max(0.0, 1.0 - r), 1.8);
-        // Une bouffée jeune est dense et petite ; à quatre mètres elle n'est
-        // plus qu'un voile.
-        float density = clamp(1.25 - vSize * 0.3, 0.0, 1.0);
-        float alpha = falloff * density * 0.42;
-        if (alpha <= 0.004) discard;
-        gl_FragColor = vec4(uSmoke * uTint, alpha);
-      }
-    `,
-  });
-  material.name = 'chimney-smoke';
-  return material;
 }

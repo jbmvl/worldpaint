@@ -15,6 +15,13 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   de blocs ; `skyLab.set({ sunDeg, lookDeg, pitchDeg, weather })` dans la
   console, ou `node scripts/sky-shot.mjs <dossier> '<réglages JSON>'` pour une
   image par réglage.
+- `demo/lab/furniture.html` — des formes du catalogue de mobilier côte à côte,
+  à côté d'un gabarit humain de 1,75 m ; `furnitureLab.set({ kinds, yawDeg,
+  pitchDeg, distance, target })`, ou `node scripts/furniture-shot.mjs`.
+- `demo/lab/roundabout.html` — un giratoire synthétique (anneau à sens unique,
+  branches simples ou dédoublées) passé tel quel dans `RoadNetwork` sur un sol
+  plat ; `roundaboutLab.set({ radius, branches, splitDeg, splitLength, axes,
+  view, span })`, ou `node scripts/roundabout-shot.mjs`.
 
 - `demo/lab/shop.html` — le bâti seul le long d'une rue plate, avec des
   commerces en pignon, en long pan ou sans rue devant ;

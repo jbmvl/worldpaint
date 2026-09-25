@@ -548,7 +548,7 @@ test('chaque matière retouchée porte la dominante de sa fiche de biome', () =>
   const r = (kind) => defaultTheme.surfaces[kind].albedo[0];
   const g = (kind) => defaultTheme.surfaces[kind].albedo[1];
   const b = (kind) => defaultTheme.surfaces[kind].albedo[2];
-  assert.ok(r('wood') >= 0.8 * g('wood'), 'bois : litière brune, rouge ≥ 0,80 × vert');
+  assert.ok(g('wood') >= r('wood') && r('wood') >= 0.45 * g('wood'), 'bois : vert mêlé d’un quart de brun, vert ≥ rouge ≥ 0,45 × vert');
   assert.ok(r('wetland') >= 0.65 * g('wetland'), 'marais : olive profond, rouge ≥ 0,65 × vert');
   assert.ok(r('heath') >= 1.4 * g('heath'), 'lande : pourpre-brun, rouge ≥ 1,40 × vert');
   assert.ok(g('saltmarsh') >= r('saltmarsh'), 'pré salé : gris froid, vert ≥ rouge');

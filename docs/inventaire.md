@@ -258,6 +258,22 @@ Au-dessus d'un mur où le toit n'est pas à l'égout — pignon, flanc d'une ail
 un panneau vertical ferme le comble. Une empreinte trop mal remplie (moins de
 62 % du rectangle) retombe sur le toit plat.
 
+L'assise est le point le plus bas du sol relevé le long des murs (tous les 2 m,
+pas seulement aux angles). Sur une pente, le décor du rez-de-chaussée suit le
+sol de chaque pan : le soubassement en épouse la ligne, une fenêtre dont
+l'encadrement descendrait sous lui n'est pas posée, une devanture se cale sur
+le point le plus haut de sa façade et chacune de ses baies part du sol qu'elle
+surplombe. Le sol de la ville (`settled`, `pavement`) n'a pas de grain low
+poly : c'est l'altitude sans bosse que le bâti lit.
+
+### La porte
+
+Sur le pan le plus long, une porte remplace la fenêtre du rez-de-chaussée la
+plus centrale où elle tient, seuil posé sur le sol, sous l'encadrement de
+l'étage — sur une pente, elle glisse donc vers le bas du mur. Elle est peinte
+dans le ton des volets du bourg. Pas de porte là où une devanture occupe la
+façade (sa baie centrale en tient lieu), ni sous un passage couvert.
+
 ### La couleur : un village, pas une maison
 
 Les tuiles ne portent ni matériau, ni couleur, ni forme de toit. La palette est
@@ -295,8 +311,7 @@ un commerce ou une grange (`buildingPersonalityFor` n'y a rien reconnu).
 | cheminée de toit | toit pentu (pas de toit plat) | 22 % |
 | balcon | mur d'au moins 5,4 m (l'ordre d'un étage), façade d'au moins 4 m, **emprise habitée** | 24 % |
 
-La cheminée fume comme celle d'une ferme (`furniture/parcels.placeFarmstead`) :
-publiée pour `lifeLayer`, qui anime la fumée des plus proches. Le balcon —
+La cheminée ne fume pas. Le balcon —
 plancher et garde-corps sur trois côtés — se pose sur le pan le plus long de
 l'empreinte, sous l'égout, jamais au-dessus.
 
@@ -360,7 +375,13 @@ chaque couture. Le tracé en ressort **arrondi** : la tuile rend un virage par
 deux ou trois brisures franches, un arc est inscrit dans chacune, et tout ce qui
 suit la chaussée — bordure, trottoir, marquage — le suit. Restent francs le
 carrefour, où la route tourne vraiment, et la culée d'un pont. Les carrefours
-sont des **surfaces**, pas des points.
+sont des **surfaces**, pas des points. Un anneau petit et rond est un
+**giratoire** : un seul carrefour en couronne, une bouche par branche, un
+cédez-le-passage à chaque entrée, l'îlot laissé au terrain, jamais de feu.
+Une route qui se dédouble est une **fourche** : la surface suit les deux
+moitiés jusqu'à ce qu'elles se séparent, puis la pointe de l'îlot ; personne
+n'y cède le passage. Une chaussée à sens unique a la largeur d'un sens
+(`oneway` du profil, dans le thème), sans axe peint.
 Un chemin de terre n'entre pas dans le carrefour d'une route revêtue : il passe
 par-dessus, marquage compris. Une piste cyclable, revêtue, en reste une branche.
 
@@ -416,12 +437,13 @@ un tiers par rapport aux minimums réglementaires (un plan large paraît saturé
 | borne kilométrique | express, major | 1000 m |
 | alignement d'arbres | major hors agglomération | 16 m |
 | panneau | major 620 m, minor 900 m | — |
-| feu tricolore | major et minor, en agglomération | aux carrefours |
+| feu tricolore | major et minor, en agglomération | aux carrefours, sauf giratoire |
 | haie | minor, lane et track hors agglomération | continue |
 
 Le **lampadaire** posé dépend du lieu : le modèle courant partout, sauf à
 moins d'un kilomètre d'un lieu de culte relevé (`poi.class=place_of_worship`),
-où il est remplacé par un modèle traditionnel (fer forgé, lanterne à pans), et
+où il est remplacé par un modèle de style (lanterne à pans sur une colonne de
+fonte de 4 m, sans crosse — halo et nappe sont alors au-dessus du pied), et
 sur un sol peint `bare` — zone industrielle, commerciale et assimilée —, où
 c'est un modèle LED sans vasque (`furniturePlacement.streetLampKindFor`).
 
@@ -514,7 +536,7 @@ s'il abrite un carnassier (14 %), puis lequel :
 **Déduite**, faute de `landuse=farmyard` dans cette donnée : une parcelle
 cultivée ou pâturée de moins de 3 ha, avec au moins deux bâtiments relevés dans
 les 80 m. Elle reçoit une grange, un hangar, un ou deux silos, des serres, et ce
-qui la rend habitée — une cheminée qui fume, du linge qui sèche, des poules.
+qui la rend habitée — du linge qui sèche, des poules.
 
 > **À reprendre** : le tirage des serres est forcé à 1 dans le code, avec le
 > commentaire « TEMPORAIRE (inspection visuelle) […] à remettre à 0,4 ».
@@ -573,8 +595,8 @@ l'emprise routière — il est souvent porté par le tracé de la voie elle-mêm
 et tourné vers la chaussée.
 
 La **fontaine** posée dépend du lieu (`furniturePlacement.fountainKindFor`) :
-colonne en fonte sous un dôme, sans vasque, dans l'esprit d'une fontaine
-Wallace, sur le sol revêtu (`pavement`) d'une grande ville ; vasque octogonale
+fontaine Wallace (socle octogonal, quatre cariatides sous un dôme, fonte
+verte, 2,70 m) sur le sol revêtu (`pavement`) d'une grande ville ; vasque octogonale
 et colonne dans un bourg (emprise bâtie, sol par défaut) ; robinet sur dalle,
 le même qu'au cimetière (`cemeteryTap`), hors de toute agglomération.
 
@@ -595,7 +617,6 @@ d'acier, plus sommaire, hors agglomération.
 | trains | 4 en circulation au plus, une locomotive et 3 voitures | naît à 350 m en amont de l'observateur sur une voie à moins de 500 m, roule à 22 m/s jusqu'au bout de la voie ou à 1,4 km de l'observateur |
 | oiseaux | 22 | dérivent entre 16 et 52 m au-dessus de l'observateur, 3 à 9 m/s |
 | montgolfières | 5 | dérivent entre 90 et 240 m au-dessus de l'observateur, 0,5 à 1,6 m/s, chacune avec ses deux couleurs propres |
-| fumée | 6 cheminées, 9 bouffées chacune | monte à 1,15 m/s, dérive à 0,75 m/s, vit 5,5 s |
 | poussière de tracteur | 16 bouffées par tracteur animé | levée à l'arrière, monte à 0,3 m/s, dérive au vent à 0,9 m/s, s'étale de 1,6 à 11 m en 9 s |
 
 Les bêtes, les tracteurs et les trains sont les seules choses posées au sol
@@ -657,7 +678,7 @@ bougé tout seul » :
 | mobilier, bâti, chaussées, bêtes, tracteurs | 250 m |
 | carte du sol (matières et cultures) | 400 m |
 | fourrés du sous-bois | 12 m |
-| oiseaux, montgolfières, fumée, pluie, vent | chaque image |
+| oiseaux, montgolfières, pluie, vent | chaque image |
 
 ## Les limites connues
 

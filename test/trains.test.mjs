@@ -23,18 +23,18 @@ const straight = (from, to, y = 100, z = 50) => {
 };
 
 test('un train naît en amont de l’observateur, rame entière sur la voie, et pas sur une voie lointaine', () => {
-  const train = spawnTrain(straight(-1200, 1200), { x: 0, z: 0 });
+  const train = spawnTrain(straight(-1200, 1200), { x: 0, z: 0 }, 1);
   assert.ok(train, 'une voie à 50 m fait naître un train');
   const cars = trainCars(train);
   assert.equal(cars.length, TRAIN_COACHES + 1);
   const head = cars[0];
   assert.ok(Math.abs(Math.abs(head.x) - TRAIN_SPAWN_LEAD_M) < TRAIN_SPAWN_LEAD_M * 0.2 + 20, 'en amont du point le plus proche');
   assert.ok(Math.sin(head.heading) * head.x < 0, 'tourné vers l’observateur');
-  assert.equal(spawnTrain(straight(-600, 600, 100, TRAIN_SPAWN_SIGHT_M + 100), { x: 0, z: 0 }), null);
+  assert.equal(spawnTrain(straight(-600, 600, 100, TRAIN_SPAWN_SIGHT_M + 100), { x: 0, z: 0 }, 1), null);
 });
 
 test('reconstruit, la voie ne fait ni sauter ni reculer le train', () => {
-  const train = spawnTrain(straight(-600, 600), { x: 0, z: 0 });
+  const train = spawnTrain(straight(-600, 600), { x: 0, z: 0 }, 1);
   const before = trainCars(train);
   // La même voie, prolongée des deux côtés et publiée dans l’autre sens.
   const moved = reattachTrain(train, [straight(-1800, 1800).reverse()]);
@@ -68,9 +68,9 @@ test('la couche fait rouler ses trains et les retire loin de l’observateur', (
   const scene = new THREE.Scene();
   const layer = new TrainLayer({ THREE, scene });
   const tracks = Array.from({ length: TRAIN_MAX + 3 }, (_, i) => straight(-1500, 1500, 100, 10 + i * 40));
-  layer.setTracks(tracks, { x: 0, z: 0 });
+  layer.setTracks(tracks, { x: 0, z: 0 }, 1);
   assert.equal(layer._trains.length, TRAIN_MAX, 'plafonné');
-  layer.setTracks(tracks, { x: 0, z: 0 });
+  layer.setTracks(tracks, { x: 0, z: 0 }, 1);
   assert.equal(layer._trains.length, TRAIN_MAX, 'pas de second train sur une voie déjà parcourue');
   const x0 = trainCars(layer._trains[0])[0].x;
   layer.advance(1, { x: 0, z: 0 });
@@ -83,7 +83,7 @@ test('la couche fait rouler ses trains et les retire loin de l’observateur', (
 
 test('phares et baies suivent les caisses ; les baies ne s’allument que la nuit', () => {
   const layer = new TrainLayer({ THREE, scene: new THREE.Scene() });
-  layer.setTracks([straight(-2000, 2000)], { x: 0, z: 0 });
+  layer.setTracks([straight(-2000, 2000)], { x: 0, z: 0 }, 1);
   assert.equal(layer.locomotiveLights.count, layer.locomotives.count);
   assert.equal(layer.coachLights.count, layer.coaches.count);
   assert.ok(layer.coaches.count > 0, 'un train est en ligne');
