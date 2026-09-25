@@ -986,21 +986,24 @@ export function collectRoadSegments(
       }
       // Aplanissement du profil en long, borné par ce que l'ouvrage tient à
       // cet endroit : le devers dit s'il y a un versant, donc une falaise et
-      // un mur, pour rattraper l'écart au terrain.
-      const maxCut = new Float32Array(rows);
-      const maxFill = new Float32Array(rows);
-      for (let r = 0; r < rows; r++) {
-        const slope = Math.abs(edges[r * 2] - edges[r * 2 + 1]) / (probe * 2);
-        const allowance = gradeAllowance(slope);
-        maxCut[r] = allowance.cut;
-        maxFill[r] = allowance.fill;
+      // un mur, pour rattraper l'écart au terrain. Un chemin n'est pas
+      // terrassé : il reste sur le sol, section par section.
+      if (isPaved(roads.profiles[chain.profile])) {
+        const maxCut = new Float32Array(rows);
+        const maxFill = new Float32Array(rows);
+        for (let r = 0; r < rows; r++) {
+          const slope = Math.abs(edges[r * 2] - edges[r * 2 + 1]) / (probe * 2);
+          const allowance = gradeAllowance(slope);
+          maxCut[r] = allowance.cut;
+          maxFill[r] = allowance.fill;
+        }
+        // Rien à retrancher à la bande de terrassement sur une ligne d'ouvrage :
+        // ce que l'aplanissement y calcule est de toute façon réécrit par la
+        // seconde passe, et chaque ligne étant bornée autour de son propre
+        // terrain, une ligne de pont n'entraîne pas ses voisines au fond de la
+        // vallée.
+        flattenGrade(platform, { maxCut, maxFill });
       }
-      // Rien à retrancher à la bande de terrassement sur une ligne d'ouvrage :
-      // ce que l'aplanissement y calcule est de toute façon réécrit par la
-      // seconde passe, et chaque ligne étant bornée autour de son propre
-      // terrain, une ligne de pont n'entraîne pas ses voisines au fond de la
-      // vallée.
-      flattenGrade(platform, { maxCut, maxFill });
       if (!anyWorks && runWorks.some((code) => code !== 0)) anyWorks = true;
 
       out.push({

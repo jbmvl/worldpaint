@@ -19,7 +19,8 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   par les vraies couches sur un relief et des tuiles synthétiques : pont relevé
   avec un T et un X sur son remblai, pont dont la branche est plus large,
   changement de classe sur un remblai, carrefour en pente, route à flanc de
-  versant, falaise longée au pied et à l'arase et franchie par une rampe ;
+  versant, falaise longée au pied et à l'arase et franchie par une rampe,
+  chemin et sentier sur un versant ;
   `roadsLab.set({ scene, yawDeg, pitchDeg, distance })` et `roadsLab.info()`
   (cotes des bouches), ou `node scripts/roads-shot.mjs <dossier> '<réglages
   JSON>'`. Le mobilier de rase campagne y est posé (talus, murs, glissières,

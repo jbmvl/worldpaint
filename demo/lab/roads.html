@@ -105,6 +105,8 @@ const way = (properties, ...points) => ({
  * branche qui en descend.
  * « falaise » : une route au ras du pied d'une falaise relevée, une autre au
  * ras de l'arase, et une rampe qui les relie à travers la paroi.
+ * « chemin » : un chemin d'exploitation à flanc du versant à 25 %, et un
+ * sentier qui y monte dans la pente — sans terrassement ni talus.
  */
 const FEATURES = [
   way({ class: 'secondary' }, [0, -350], [0, 800]),
@@ -134,6 +136,8 @@ const FEATURES = [
   way({ class: 'minor' }, [-380, -445], [-190, -445], [-20, -445]),
   way({ class: 'minor' }, [-300, -463], [-110, -463], [-60, -463]),
   way({ class: 'minor' }, [-190, -445], [-110, -463]),
+  way({ class: 'track' }, [-420, 120], [-425, 260], [-424, 300], [-415, 420]),
+  way({ class: 'path' }, [-540, 310], [-480, 296], [-424, 300]),
 ];
 
 /** Falaises relevées (`mountain_peak`, classe `cliff`). */
@@ -146,6 +150,7 @@ const SCENES = {
   pente: { x: 520, z: -150, yawDeg: 300, pitchDeg: 25, distance: 80 },
   devers: { x: -480, z: 0, yawDeg: 250, pitchDeg: 30, distance: 70 },
   falaise: { x: -150, z: -454, yawDeg: 20, pitchDeg: 30, distance: 90 },
+  chemin: { x: -440, z: 290, yawDeg: 200, pitchDeg: 25, distance: 60 },
 };
 
 const source = {
