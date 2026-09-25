@@ -938,11 +938,13 @@ function assembleChains(chains, partner) {
 
 /**
  * Longueur sur laquelle on suit une branche au-delà du nœud, en mètres. Elle
- * couvre largement la profondeur qu'un carrefour peut prendre le long d'une
- * branche (`roadJunctions`, bouche comprise) : au-delà, plus personne ne lit
- * cette polyligne.
+ * couvre la profondeur qu'un carrefour peut prendre le long d'une branche
+ * (`roadJunctions`, bouche comprise), y compris celle d'une fourche, qui
+ * cherche la séparation de ses deux branches jusqu'à
+ * `JUNCTION_FORK_REACH_M` : prolonger la polyligne en ligne droite l'y
+ * ferait trouver trop tôt, là où les deux rubans se recouvrent encore.
  */
-export const BRANCH_SIGHT_M = 26;
+export const BRANCH_SIGHT_M = 100;
 
 /**
  * Distance à laquelle se mesure la direction sortante d'une branche, en
