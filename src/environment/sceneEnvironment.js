@@ -25,6 +25,10 @@
  * seuil ; l'étoile filante s'amincit vers la queue plutôt que de garder une
  * largeur uniforme.
  *
+ * Entre le coucher et la fin du crépuscule nautique, une lueur (`twilightGlow`)
+ * éclaire ce ciel de nuit et le brouillard, et masque les étoiles : Preetham
+ * s'éteint dès ~2° sous l'horizon, bien avant la nuit réelle.
+ *
  * `update()` calcule `nightMix` avant la couleur de brouillard et la mélange
  * dedans, pour que la voûte et l'horizon basculent ensemble.
  *
@@ -105,6 +109,21 @@ export function skyPaletteFor(matrix, sky = DEFAULT_SKY_PALETTE) {
   };
 }
 
+/**
+ * Crépuscule : Preetham s'éteint ~2° sous l'horizon, bien avant la fin du
+ * jour réel. Entre le coucher et `TWILIGHT_END_Y` (~12°, fin du crépuscule
+ * nautique), le ciel de nuit garde une lueur, tirée de la couleur de
+ * brouillard de jour teintée par le soleil rasant — sinon une voûte déjà
+ * noire et étoilée surmonte un horizon encore pâle.
+ */
+const TWILIGHT_END_Y = -0.21;
+/** Part de la couleur de brouillard de jour que garde la lueur, au coucher. */
+const TWILIGHT_GLOW = 0.2;
+/** Part de cette lueur qui atteint le zénith, où elle prend la teinte du ciel haut plutôt que celle du soleil. */
+const TWILIGHT_ZENITH_SHARE = 0.5;
+/** Côté opposé au soleil, en part de la lueur côté soleil. */
+const TWILIGHT_ANTISOLAR = 0.6;
+
 /** Échelle du bruit de nuages (la valeur par défaut de three, 0,0002, couvre tout le ciel d'une seule valeur : aucun nuage n'apparaît). */
 const CLOUD_SCALE = 0.0015;
 /** Vitesse de dérive, appliquée à un temps relatif (une date epoch brute détruirait la précision du bruit en float32). */
@@ -130,6 +149,25 @@ function hexToLinear(hex) {
   const n = parseInt(clean.length === 3 ? clean.replace(/(.)/g, '$1$1') : clean, 16);
   const srgb = [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
   return srgb.map((c) => Math.pow(c, 2.2));
+}
+
+/**
+ * Lueur du crépuscule, linéaire, éteinte à mesure que le soleil descend : à
+ * l'horizon, la couleur de brouillard de jour teintée comme la lumière
+ * rasante ; au zénith, le ciel haut qui en dérive.
+ *
+ * @param {[number,number,number]} dayFog Couleur de brouillard de jour, linéaire.
+ * @param {number} twilight 1 au coucher, 0 à la fin du crépuscule.
+ * @returns {{horizon:[number,number,number], zenith:[number,number,number]}}
+ */
+export function twilightGlow(dayFog, twilight) {
+  const warm = sunlightColor(1);
+  const high = aerialSkyColor(dayFog);
+  const k = TWILIGHT_GLOW * twilight;
+  return {
+    horizon: [0, 1, 2].map((i) => dayFog[i] * warm[i] * k),
+    zenith: [0, 1, 2].map((i) => high[i] * k * TWILIGHT_ZENITH_SHARE),
+  };
 }
 
 export class SceneEnvironment {
@@ -203,6 +241,9 @@ export class SceneEnvironment {
     this.uniforms.uNightZenith = { value: new THREE.Color(palette.nightZenith) };
     this.uniforms.uNightHorizon = { value: new THREE.Color(palette.nightHorizon) };
     this.uniforms.uNightMix = { value: 0 };
+    this.uniforms.uTwilight = { value: 0 };
+    this.uniforms.uTwilightHorizon = { value: new THREE.Color(0, 0, 0) };
+    this.uniforms.uTwilightZenith = { value: new THREE.Color(0, 0, 0) };
     // À l'opposé du soleil (pas la vraie position, mais elle se lève quand il se couche).
     this.uniforms.uMoonDirection = { value: new THREE.Vector3(0, 1, 0) };
     this.uniforms.cloudScale.value = CLOUD_SCALE;
@@ -224,6 +265,9 @@ export class SceneEnvironment {
          uniform vec3 uNightZenith;
          uniform vec3 uNightHorizon;
          uniform float uNightMix;
+         uniform float uTwilight;
+         uniform vec3 uTwilightHorizon;
+         uniform vec3 uTwilightZenith;
          uniform vec3 uMoonDirection;`
       )
       .replace(
@@ -241,6 +285,12 @@ export class SceneEnvironment {
         `// Le modèle de Preetham n'a pas de nuit : sous l'horizon, on bascule
          // sur la palette nocturne fournie, sombre sans être noire.
          vec3 night = mix(uNightHorizon, uNightZenith, pow(clamp(direction.y, 0.0, 1.0), 0.45));
+
+         // Lueur du crépuscule : pleine à l'horizon côté soleil, réduite en face et vers le zénith.
+         vec2 twilightSun = normalize(vSunDirection.xz + vec2(1e-5));
+         vec2 twilightLook = normalize(direction.xz + vec2(1e-5));
+         float twilightSide = mix(${TWILIGHT_ANTISOLAR.toFixed(2)}, 1.0, dot(twilightLook, twilightSun) * 0.5 + 0.5);
+         night += mix(uTwilightHorizon * twilightSide, uTwilightZenith, smoothstep(0.0, 0.6, direction.y));
 
          // Lune : un croissant (deux cercles en espace local, l'un mordant
          // l'autre), pas une vraie phase calculée depuis la date. right/up
@@ -274,7 +324,7 @@ export class SceneEnvironment {
          float starSize = mix(0.1, 0.2, fract(starSeed * 71.3));
          float starPoint = smoothstep(starSize, 0.0, starDist);
          float starPresence = step(0.9935, starSeed);
-         float starVeil = 1.0 - cloudCoverage * cloudDensity * 0.85;
+         float starVeil = (1.0 - cloudCoverage * cloudDensity * 0.85) * (1.0 - uTwilight);
          float starMask = smoothstep(0.05, 0.35, direction.y);
          night += vec3(starPresence * starPoint * starVeil * starMask); // éclat fixe, pas de scintillement
 
@@ -456,12 +506,18 @@ export class SceneEnvironment {
     const nightZenith = hexToLinear(this.palette.nightZenith);
     const nightHorizon = hexToLinear(this.palette.nightHorizon);
     const dayFogColor = fogColorFor(hexToLinear(this.palette.fog), this.weather);
-    // nightHorizon, pas nightZenith : le brouillard occupe la bande basse du ciel.
-    const fogColor = [
-      mix(dayFogColor[0], nightHorizon[0], nightMix),
-      mix(dayFogColor[1], nightHorizon[1], nightMix),
-      mix(dayFogColor[2], nightHorizon[2], nightMix),
-    ];
+    const twilight = smoothstep(TWILIGHT_END_Y, 0, dir.y);
+    const dusk = twilightGlow(dayFogColor, twilight);
+    this._twilightGlow = dusk;
+    this.uniforms.uTwilight.value = twilight;
+    this.uniforms.uTwilightHorizon.value.setRGB(...dusk.horizon);
+    this.uniforms.uTwilightZenith.value.setRGB(...dusk.zenith);
+    // nightHorizon, pas nightZenith : le brouillard occupe la bande basse du
+    // ciel ; la lueur y est prise en moyenne entre côté soleil et côté opposé.
+    const side = (1 + TWILIGHT_ANTISOLAR) / 2;
+    const fogColor = [0, 1, 2].map((i) =>
+      mix(dayFogColor[i], nightHorizon[i] + dusk.horizon[i] * side, nightMix)
+    );
 
     this.fog.color.setRGB(fogColor[0], fogColor[1], fogColor[2]);
     this.fog.density = this.baseFogDensity * fogScale(this.weather);
@@ -543,12 +599,9 @@ export class SceneEnvironment {
   _publishAerialFog(dayFog, sunRgb, sunDir, nightMix) {
     const nightZenith = hexToLinear(this.palette.nightZenith);
     const sky = aerialSkyColor(dayFog);
+    const glow = this._twilightGlow?.zenith || [0, 0, 0];
     this.aerialFog.update({
-      skyColor: [
-        mix(sky[0], nightZenith[0], nightMix),
-        mix(sky[1], nightZenith[1], nightMix),
-        mix(sky[2], nightZenith[2], nightMix),
-      ],
+      skyColor: [0, 1, 2].map((i) => mix(sky[i], nightZenith[i] + glow[i], nightMix)),
       sunColor: aerialSunColor(dayFog, sunRgb),
       sunDir,
       sunAmount: sunTintAmount(overcastOf(this.weather), nightMix),

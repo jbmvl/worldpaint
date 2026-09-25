@@ -39,7 +39,7 @@ import { roadStyleFor } from '../src/layers/roadNetwork.js';
 import { furnitureSpecsFor, FURNITURE_BUILDERS } from '../src/layers/furnitureKit.js';
 import { hedgeStyleFor, hedgeClumps } from '../src/layers/hedgeGeometry.js';
 import { resamplePath } from '../src/layers/ribbonGeometry.js';
-import { DEFAULT_SKY_PALETTE } from '../src/environment/sceneEnvironment.js';
+import { DEFAULT_SKY_PALETTE, twilightGlow } from '../src/environment/sceneEnvironment.js';
 
 /** Un thème contraire au défaut sur chaque tranche qu'on sait lire. */
 const OTHER = resolveTheme({
@@ -579,4 +579,17 @@ test('les matières non concernées par le chantier gardent leur couleur', () =>
   for (const [kind, albedo] of Object.entries(unchanged)) {
     assert.deepEqual(defaultTheme.surfaces[kind].albedo, albedo, `${kind} n’a pas bougé`);
   }
+});
+
+test('la lueur du crépuscule s’éteint avec lui et ne dépasse pas le brouillard de jour', () => {
+  const dayFog = [0.8, 0.85, 0.9];
+  const nuit = twilightGlow(dayFog, 0);
+  assert.deepEqual([...nuit.horizon, ...nuit.zenith], [0, 0, 0, 0, 0, 0]);
+  const coucher = twilightGlow(dayFog, 1);
+  for (let i = 0; i < 3; i++) {
+    assert.ok(coucher.horizon[i] > 0 && coucher.horizon[i] < dayFog[i]);
+    assert.ok(coucher.zenith[i] > 0 && coucher.zenith[i] < dayFog[i]);
+  }
+  assert.ok(coucher.horizon[0] > coucher.horizon[2], 'chaude à l’horizon');
+  assert.ok(coucher.zenith[2] > coucher.zenith[0], 'bleue au zénith');
 });
