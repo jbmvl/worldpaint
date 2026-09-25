@@ -7051,6 +7051,23 @@ test('une branche publie la chaussée telle qu’elle part, et sa direction sur 
   close(branch.path[branch.path.length - 1].z, 20, 1e-6, 'suivie jusqu’au bout de la branche');
 });
 
+test('le morceau qu’une tuile voisine livre d’une branche ne l’arrête pas', () => {
+  // La tuile voisine coupe la desserte au bord de sa marge (z = 30), sur
+  // l'arête que la tuile d'origine porte entière : le sommet partagé (z = 20)
+  // n'est pas un carrefour.
+  const desserte = [{ x: 100, z: 0 }, { x: 104, z: 20 }, { x: 104, z: 60 }];
+  const { junctions, chains } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: [{ x: 0, z: 0 }, { x: 200, z: 0 }] },
+    { profile: 'minor', halfWidth: 2.5, points: desserte },
+    { profile: 'minor', halfWidth: 2.5, points: [{ x: 104, z: 30.2 }, ...desserte.slice(0, 2).reverse()] },
+  ]);
+
+  assert.equal(junctions.length, 1, 'un seul carrefour');
+  const branch = junctions[0].branches.find((b) => b.profile === 'minor');
+  close(branch.path[branch.path.length - 1].z, 60, 1e-6, 'la branche est suivie au-delà du sommet partagé');
+  assert.equal(chains.filter((c) => c.profile === 'minor').length, 1, 'et la desserte n’est dessinée qu’une fois');
+});
+
 test('un chemin ne fait pas carrefour avec une route revêtue', () => {
   const lines = teeLines();
   lines[1] = { ...lines[1], profile: 'track', halfWidth: 1.5, paved: false };

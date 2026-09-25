@@ -330,6 +330,66 @@ function addEdge(state, a, b, profile, halfWidth, works = WORK_NONE, level = LEV
 }
 
 /**
+ * Retire les éperons de découpe : le morceau d'une route qu'une tuile voisine
+ * livre jusqu'au bord de sa marge, soudé à un sommet que l'autre tuile porte
+ * aussi. Son arête se couche sur celle de la route entière, et le sommet
+ * partagé passe au degré trois : un faux carrefour, où `branchPath` s'arrête.
+ * Un bout libre posé sur une autre arête du même profil partant du même nœud
+ * n'est que cette route une seconde fois.
+ *
+ * @param {Object} state Graphe construit par `addEdge`.
+ * @param {NodeIndex} nodes
+ * @param {number} weld Écart toléré à l'arête recouverte, en mètres.
+ * @returns {Object} le graphe, sans ces arêtes.
+ */
+function dropClippedSpurs(state, nodes, weld) {
+  const { edges, adjacency, degree } = state;
+  const drop = new Set();
+
+  for (let i = 0; i < edges.length; i++) {
+    const edge = edges[i];
+    for (const [tip, root] of [
+      [edge.a, edge.b],
+      [edge.b, edge.a],
+    ]) {
+      if (degree.get(tip) !== 1) continue;
+      for (const j of adjacency.get(adjacencyKey(root, edge.rank)) || []) {
+        if (j === i || drop.has(j)) continue;
+        const other = edges[j];
+        const far = other.a === root ? other.b : other.a;
+        const { distance } = distanceToSegment(
+          nodes.xs[tip],
+          nodes.zs[tip],
+          nodes.xs[root],
+          nodes.zs[root],
+          nodes.xs[far],
+          nodes.zs[far]
+        );
+        if (distance <= weld) {
+          drop.add(i);
+          break;
+        }
+      }
+    }
+  }
+  if (drop.size === 0) return state;
+
+  const next = {
+    edges: [],
+    seen: new Map(),
+    adjacency: new Map(),
+    degree: new Map(),
+    ranks: state.ranks,
+  };
+  for (let i = 0; i < edges.length; i++) {
+    if (drop.has(i)) continue;
+    const edge = edges[i];
+    addEdge(next, edge.a, edge.b, edge.profile, edge.halfWidth, edge.works, edge.level, edge.oneway);
+  }
+  return next;
+}
+
+/**
  * Greffe sur une chaussée les sommets qui y débouchent sans partager de nœud
  * avec elle.
  *
@@ -992,7 +1052,10 @@ export function mergeRoadLines(lines, options = {}) {
   // Les sommets qui débouchent sur une chaussée y sont greffés avant tout le
   // reste : un carrefour que la donnée porte sans le dire doit exister dans le
   // graphe comme les autres, sans quoi rien de ce qui le lit ne le verra.
-  const graph = graftLooseNodes(state, nodes, { reach: graft, skewCos: graftSkewCos });
+  const graph = graftLooseNodes(dropClippedSpurs(state, nodes, weld), nodes, {
+    reach: graft,
+    skewCos: graftSkewCos,
+  });
   const { edges, adjacency, degree, seen } = graph;
   const used = new Uint8Array(edges.length);
   const chains = [];

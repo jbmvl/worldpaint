@@ -56,7 +56,8 @@ const canvas = document.getElementById('scene');
 const labelsRoot = document.getElementById('labels');
 const dot = document.getElementById('dot');
 const statusEl = document.getElementById('status');
-const coordsEl = document.getElementById('coords');
+const coordsEl = document.getElementById('coordsText');
+const copyCoordsBtn = document.getElementById('copyCoordsBtn');
 const searchInput = document.getElementById('search');
 const goButton = document.getElementById('go');
 const showLabelsCheckbox = document.getElementById('showLabels');
@@ -1194,6 +1195,16 @@ bigMinimapCanvas.addEventListener('pointerup', (e) => {
 // Ouvre la vue Street View de Google Maps sur la position courante de la
 // caméra — un service tiers, jamais interrogé par le moteur : la démo se
 // contente de composer une URL, voir la documentation « Google Maps URLs ».
+
+copyCoordsBtn.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(coordsEl.textContent);
+    copyCoordsBtn.textContent = '✓';
+  } catch {
+    copyCoordsBtn.textContent = '✗';
+  }
+  setTimeout(() => { copyCoordsBtn.textContent = '⧉'; }, 1200);
+});
 
 streetViewBtn.addEventListener('click', () => {
   if (!world) return;
