@@ -471,7 +471,7 @@ export class WorldComposer {
       // La région repeint la carte au même titre qu'un glissement : ce qui y
       // était semé l'a été avec l'assolement d'une autre région.
       if (classesChanged) {
-        this.groundClass.rebuild(this.vectorTiles, wanted, here, this.bubble.frame, { urban });
+        if (!await rebuild(this.groundClass, 'carteSol', this.vectorTiles, wanted, here, this.bubble.frame, { urban })) return false;
         this.bubble.materials.syncGroundClass();
       }
       const classArrived = !wasReady && this.groundClass.ready;
@@ -514,7 +514,7 @@ export class WorldComposer {
 
       // 4 bis. Voirie — après chaussées et bâti.
       const fabric = streetsChanged || furnitureChanged ? new FabricIndex(this.buildings.footprints) : null;
-      if (streetsChanged) this.streets.rebuild(this.roads.roadSegments, here, {
+      if (streetsChanged && !await rebuild(this.streets, 'rues', this.roads.roadSegments, here, {
         builtUp,
         fabric,
         urban,
@@ -522,7 +522,7 @@ export class WorldComposer {
         // Les surfaces de carrefour : elles arrêtent les rives de tronçon et
         // portent les coins de rue.
         areas: this.roads.junctionAreas,
-      });
+      })) return false;
 
       if (!await checkpoint()) return false;
 

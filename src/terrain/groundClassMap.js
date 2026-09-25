@@ -91,6 +91,7 @@
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
+import { finishGeneration } from '../core/generationSteps.js';
 import {
   cropFor,
   cropId,
@@ -373,6 +374,14 @@ const REPAIR_OFFSETS = [
  * @returns {number} texels réparés.
  */
 export function repairSurfaceEdges(data, pixels = CLASS_PIXELS) {
+  return finishGeneration(repairSurfaceEdgesSteps(data, pixels));
+}
+
+/** Lignes réparées entre deux étapes de `repairSurfaceEdgesSteps`. */
+const REPAIR_ROWS_PER_STEP = 256;
+
+/** `repairSurfaceEdges` en étapes, par bandes de lignes ; la première passe reste entière. */
+export function* repairSurfaceEdgesSteps(data, pixels = CLASS_PIXELS) {
   const total = pixels * pixels;
   const painted = new Uint8Array(total);
   let suspects = 0;
@@ -389,8 +398,10 @@ export function repairSurfaceEdges(data, pixels = CLASS_PIXELS) {
   }
   if (suspects === 0) return 0;
 
+  yield;
   let repaired = 0;
   for (let p = 0; p < total; p++) {
+    if (p % (pixels * REPAIR_ROWS_PER_STEP) === 0 && p > 0) yield;
     if (painted[p]) continue;
     const i = p * 4;
     const x = p % pixels;
@@ -780,7 +791,13 @@ export class GroundClassMap {
    *        campagne, et celui d'avant ce lot.
    * @returns {boolean} vrai si des surfaces ont été peintes.
    */
-  rebuild(source, tiles, here, frame, { urban = null, cliffs = null } = {}) {
+  rebuild(...args) { return finishGeneration(this.rebuildSteps(...args)); }
+
+  /**
+   * `rebuild` en étapes : une par tuile et par couche source. Carte relue,
+   * origine et texture ne changent qu'à la dernière.
+   */
+  *rebuildSteps(source, tiles, here, frame, { urban = null, cliffs = null } = {}) {
     if (this.disposed || !source || !frame) return false;
 
     const { ctx } = this;
@@ -815,63 +832,67 @@ export class GroundClassMap {
     // `landuse`, comme avant.
     const deferred = [];
 
+    yield;
     for (const sourceLayer of CLASS_SOURCE_LAYERS) {
-      source.forEachFeature(sourceLayer, tiles, (geometry, properties) => {
-        const kind = surfaceFor(sourceLayer, properties);
-        if (!kind) return;
-        const green = sourceLayer === 'landuse' && URBAN_GREEN_LANDUSE.has(properties.class);
+      for (const tile of tiles) {
+        source.forEachFeature(sourceLayer, [tile], (geometry, properties) => {
+          const kind = surfaceFor(sourceLayer, properties);
+          if (!kind) return;
+          const green = sourceLayer === 'landuse' && URBAN_GREEN_LANDUSE.has(properties.class);
 
-        for (const rings of classPolygons(geometry)) {
-          if (!Array.isArray(rings) || rings.length === 0) continue;
+          for (const rings of classPolygons(geometry)) {
+            if (!Array.isArray(rings) || rings.length === 0) continue;
 
-          // Tracé construit une fois, rempli deux fois (matière + culture).
-          const path = new Path2D();
-          let sumX = 0;
-          let sumZ = 0;
-          let counted = 0;
+            // Tracé construit une fois, rempli deux fois (matière + culture).
+            const path = new Path2D();
+            let sumX = 0;
+            let sumZ = 0;
+            let counted = 0;
 
-          for (const ring of rings) {
-            if (!Array.isArray(ring) || ring.length < 3) continue;
-            for (let i = 0; i < ring.length; i++) {
-              const [lng, lat] = ring[i];
-              if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
-              const localX = (lngToTileX(lng, zoom) - origin.x) * scale;
-              const localZ = (latToTileY(lat, zoom) - origin.y) * scale;
-              if (i === 0) path.moveTo((localX - originX) * perMeter, (localZ - originZ) * perMeter);
-              else path.lineTo((localX - originX) * perMeter, (localZ - originZ) * perMeter);
-              // Centre = graine de la culture ; seul l'anneau extérieur compte.
-              if (ring === rings[0]) {
-                sumX += localX;
-                sumZ += localZ;
-                counted++;
+            for (const ring of rings) {
+              if (!Array.isArray(ring) || ring.length < 3) continue;
+              for (let i = 0; i < ring.length; i++) {
+                const [lng, lat] = ring[i];
+                if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+                const localX = (lngToTileX(lng, zoom) - origin.x) * scale;
+                const localZ = (latToTileY(lat, zoom) - origin.y) * scale;
+                if (i === 0) path.moveTo((localX - originX) * perMeter, (localZ - originZ) * perMeter);
+                else path.lineTo((localX - originX) * perMeter, (localZ - originZ) * perMeter);
+                // Centre = graine de la culture ; seul l'anneau extérieur compte.
+                if (ring === rings[0]) {
+                  sumX += localX;
+                  sumZ += localZ;
+                  counted++;
+                }
               }
+              path.closePath();
             }
-            path.closePath();
-          }
 
-          // La culture, tirée ici et nulle part ailleurs, ancrée au sol
-          // (centre de la parcelle) pour que la bulle qui repasse la retrouve.
-          const crop =
-            kind === 'farmland' && counted > 0
-              ? cropId(
-                  cropFor(properties, randomAt(sumX / counted, sumZ / counted, 43), this.region?.farming)
-                )
-              : 0;
+            // La culture, tirée ici et nulle part ailleurs, ancrée au sol
+            // (centre de la parcelle) pour que la bulle qui repasse la retrouve.
+            const crop =
+              kind === 'farmland' && counted > 0
+                ? cropId(
+                    cropFor(properties, randomAt(sumX / counted, sumZ / counted, 43), this.region?.farming)
+                  )
+                : 0;
 
-          if (green) {
-            // Rejoué après le revêtement : voir plus haut.
-            deferred.push({ path, fill: surfaceFill(kind, crop) });
+            if (green) {
+              // Rejoué après le revêtement : voir plus haut.
+              deferred.push({ path, fill: surfaceFill(kind, crop) });
+              painted++;
+              continue;
+            }
+
+            // Un seul remplissage pour la matière **et** sa culture : c'était
+            // deux tracés dans deux canevas, qui pouvaient diverger.
+            ctx.fillStyle = surfaceFill(kind, crop);
+            ctx.fill(path, 'evenodd'); // anneaux intérieurs = trous
             painted++;
-            continue;
           }
-
-          // Un seul remplissage pour la matière **et** sa culture : c'était
-          // deux tracés dans deux canevas, qui pouvaient diverger.
-          ctx.fillStyle = surfaceFill(kind, crop);
-          ctx.fill(path, 'evenodd'); // anneaux intérieurs = trous
-          painted++;
-        }
-      });
+        });
+        yield;
+      }
 
       // Le revêtement de ville et le vert qu'il ne recouvre pas, entre les
       // deux couches source : `landuse` vient de poser l'occupation, et
@@ -928,61 +949,64 @@ export class GroundClassMap {
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
 
-      source.forEachFeature(WATERWAY_SOURCE_LAYER, tiles, (geometry, properties) => {
-        const style = waterwayStyleFor(properties, waterways);
-        if (!style) return;
-        const width = style.halfWidth * 2;
-        // Qui est bordé d'arbres et qui ne l'est pas se décide dans
-        // `waterwayStyleFor` — voir `BARE_WATERWAY_CLASSES`.
-        const riparianM = style.riparian ? bufferM : 0;
+      for (const tile of tiles) {
+        source.forEachFeature(WATERWAY_SOURCE_LAYER, [tile], (geometry, properties) => {
+          const style = waterwayStyleFor(properties, waterways);
+          if (!style) return;
+          const width = style.halfWidth * 2;
+          // Qui est bordé d'arbres et qui ne l'est pas se décide dans
+          // `waterwayStyleFor` — voir `BARE_WATERWAY_CLASSES`.
+          const riparianM = style.riparian ? bufferM : 0;
 
-        const lines =
-          geometry.type === 'LineString'
-            ? [geometry.coordinates]
-            : geometry.type === 'MultiLineString'
-              ? geometry.coordinates
-              : [];
-        const lineWidthPx = (width + riparianM * 2) * perMeter;
+          const lines =
+            geometry.type === 'LineString'
+              ? [geometry.coordinates]
+              : geometry.type === 'MultiLineString'
+                ? geometry.coordinates
+                : [];
+          const lineWidthPx = (width + riparianM * 2) * perMeter;
 
-        for (const line of lines) {
-          if (!Array.isArray(line) || line.length < 2) continue;
-          const path = new Path2D();
-          let started = false;
-          for (const [lng, lat] of line) {
-            if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
-            const localX = (lngToTileX(lng, zoom) - origin.x) * scale;
-            const localZ = (latToTileY(lat, zoom) - origin.y) * scale;
-            const px = (localX - originX) * perMeter;
-            const pz = (localZ - originZ) * perMeter;
-            if (!started) {
-              path.moveTo(px, pz);
-              started = true;
-            } else {
-              path.lineTo(px, pz);
+          for (const line of lines) {
+            if (!Array.isArray(line) || line.length < 2) continue;
+            const path = new Path2D();
+            let started = false;
+            for (const [lng, lat] of line) {
+              if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+              const localX = (lngToTileX(lng, zoom) - origin.x) * scale;
+              const localZ = (latToTileY(lat, zoom) - origin.y) * scale;
+              const px = (localX - originX) * perMeter;
+              const pz = (localZ - originZ) * perMeter;
+              if (!started) {
+                path.moveTo(px, pz);
+                started = true;
+              } else {
+                path.lineTo(px, pz);
+              }
             }
-          }
-          if (!started) continue;
+            if (!started) continue;
 
-          // L'ourlet, puis le lit par-dessus : le trait est centré sur
-          // l'axe, et sans reprise un large cours d'eau se retrouverait
-          // planté d'arbres en son milieu.
-          //
-          // Deux traits, là où il en fallait cinq — dont un en
-          // `destination-out` pour effacer, dans l'autre carte, la culture
-          // que l'ourlet recouvrait. Peindre une matière efface désormais la
-          // culture d'un même geste : elles sont deux canaux du même texel.
-          if (riparianM > 0) {
-            ctx.strokeStyle = surfaceFill('wood');
-            ctx.lineWidth = lineWidthPx;
+            // L'ourlet, puis le lit par-dessus : le trait est centré sur
+            // l'axe, et sans reprise un large cours d'eau se retrouverait
+            // planté d'arbres en son milieu.
+            //
+            // Deux traits, là où il en fallait cinq — dont un en
+            // `destination-out` pour effacer, dans l'autre carte, la culture
+            // que l'ourlet recouvrait. Peindre une matière efface désormais la
+            // culture d'un même geste : elles sont deux canaux du même texel.
+            if (riparianM > 0) {
+              ctx.strokeStyle = surfaceFill('wood');
+              ctx.lineWidth = lineWidthPx;
+              ctx.stroke(path);
+            }
+
+            ctx.strokeStyle = surfaceFill('water');
+            ctx.lineWidth = width * perMeter;
             ctx.stroke(path);
+            painted++;
           }
-
-          ctx.strokeStyle = surfaceFill('water');
-          ctx.lineWidth = width * perMeter;
-          ctx.stroke(path);
-          painted++;
-        }
-      });
+        });
+        yield;
+      }
 
       ctx.restore();
     }
@@ -996,40 +1020,40 @@ export class GroundClassMap {
     // L'eau permanente est peinte après l'intermittente : un étang qui
     // s'assèche ne recouvre pas celui qui ne s'assèche jamais.
     const permanent = [];
-    source.forEachFeature(WATER_SOURCE_LAYER, tiles, (geometry, properties) => {
-      const kind = waterSurfaceFor(properties);
-      if (!kind) return;
-      for (const rings of classPolygons(geometry)) {
-        if (!Array.isArray(rings) || rings.length === 0) continue;
+    for (const tile of tiles) {
+      source.forEachFeature(WATER_SOURCE_LAYER, [tile], (geometry, properties) => {
+        const kind = waterSurfaceFor(properties);
+        if (!kind) return;
+        for (const rings of classPolygons(geometry)) {
+          if (!Array.isArray(rings) || rings.length === 0) continue;
 
-        const path = new Path2D();
-        for (const ring of rings) {
-          if (!Array.isArray(ring) || ring.length < 3) continue;
-          for (let i = 0; i < ring.length; i++) {
-            const [lng, lat] = ring[i];
-            if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
-            const localX = (lngToTileX(lng, zoom) - origin.x) * scale;
-            const localZ = (latToTileY(lat, zoom) - origin.y) * scale;
-            if (i === 0) path.moveTo((localX - originX) * perMeter, (localZ - originZ) * perMeter);
-            else path.lineTo((localX - originX) * perMeter, (localZ - originZ) * perMeter);
+          const path = new Path2D();
+          for (const ring of rings) {
+            if (!Array.isArray(ring) || ring.length < 3) continue;
+            for (let i = 0; i < ring.length; i++) {
+              const [lng, lat] = ring[i];
+              if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+              const localX = (lngToTileX(lng, zoom) - origin.x) * scale;
+              const localZ = (latToTileY(lat, zoom) - origin.y) * scale;
+              if (i === 0) path.moveTo((localX - originX) * perMeter, (localZ - originZ) * perMeter);
+              else path.lineTo((localX - originX) * perMeter, (localZ - originZ) * perMeter);
+            }
+            path.closePath();
           }
-          path.closePath();
-        }
 
-        if (kind === 'water') {
-          permanent.push(path);
-          continue;
+          if (kind === 'water') {
+            permanent.push(path);
+            continue;
+          }
+          ctx.fillStyle = surfaceFill(kind);
+          ctx.fill(path, 'evenodd');
         }
-        ctx.fillStyle = surfaceFill(kind);
-        ctx.fill(path, 'evenodd');
-      }
-    });
+      });
+      yield;
+    }
     ctx.fillStyle = surfaceFill('water');
     for (const path of permanent) ctx.fill(path, 'evenodd');
-
-    this.count = painted;
-    this.revision++;
-    this.origin.set(originX, originZ);
+    yield;
 
     // Relecture unique, à la rasterisation (un `getImageData` par appel serait
     // ruineux) — et c'est aussi le seul moment où l'on peut défaire le lissage
@@ -1037,16 +1061,19 @@ export class GroundClassMap {
     // limite (voir `repairSurfaceEdges`). La carte est renvoyée au canevas :
     // le shader lit la texture, pas cette copie, et les deux doivent dire la
     // même chose.
+    let image = null;
     try {
-      const image = ctx.getImageData(0, 0, CLASS_PIXELS, CLASS_PIXELS);
-      this.repaired = repairSurfaceEdges(image.data);
-      if (this.repaired > 0) ctx.putImageData(image, 0, 0);
-      this._data = image.data;
+      image = ctx.getImageData(0, 0, CLASS_PIXELS, CLASS_PIXELS);
     } catch (e) {
-      this._data = null;
-      this.repaired = 0;
       console.warn('[groundClassMap] relecture impossible', e?.message || e);
     }
+    yield;
+    this.repaired = image ? yield* repairSurfaceEdgesSteps(image.data) : 0;
+    if (this.repaired > 0) ctx.putImageData(image, 0, 0);
+    this._data = image?.data ?? null;
+    this.count = painted;
+    this.revision++;
+    this.origin.set(originX, originZ);
     this.texture.needsUpdate = true;
     this._anchor = { x: here.x, z: here.z };
     this._frame = frame;
