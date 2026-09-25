@@ -77,6 +77,27 @@ export function preethamRadiance(sunY, dirY, azimuth, params) {
   });
 }
 
+/** Hauteur de soleil de référence de l'exposition (≈ 30°) : au-dessus, aucune compensation. */
+const ADAPT_REFERENCE_Y = 0.5;
+/** Force et plafond de la compensation, calés au banc du ciel sur l'horaire réel du coucher. */
+const ADAPT_EXPONENT = 1.2;
+const ADAPT_MAX = 12;
+
+/**
+ * Compensation d'exposition du ciel quand le soleil baisse, comme l'œil ou
+ * un appareil s'adaptent. À exposition fixe, Preetham tombe à 6 % de sa
+ * luminance de midi une demi-heure avant le coucher : la scène paraissait
+ * couchée trop tôt. De 1 (soleil haut) à `ADAPT_MAX`.
+ *
+ * @param {number} sunY
+ */
+export function skyAdaptation(sunY) {
+  const reference = preethamSunIntensity(ADAPT_REFERENCE_Y);
+  const current = preethamSunIntensity(sunY);
+  if (current <= 0) return ADAPT_MAX;
+  return Math.min(ADAPT_MAX, Math.max(1, Math.pow(reference / current, ADAPT_EXPONENT)));
+}
+
 const ACES_IN = [
   [0.59719, 0.35458, 0.04823],
   [0.076, 0.90834, 0.01566],
@@ -106,6 +127,10 @@ export function acesFilmic(rgb, exposure) {
 /** Hauteur de soleil sous laquelle l'éclairage est entièrement nocturne. */
 const NIGHT_SUN_Y = -0.1;
 const NIGHT_LIGHT = { sun: 0.3, ambient: 0.62 };
+const NOON_LIGHT = { sun: 1.75, ambient: 1.2 };
+/** Part de l'adaptation du ciel reprise par l'éclairage du relief, et son plafond. */
+const LIGHT_ADAPT_EXPONENT = 0.5;
+const LIGHT_ADAPT_MAX = 2.5;
 
 /**
  * Éclairage assorti : intensités du soleil et de l'ambiance, et chaleur de la
@@ -124,9 +149,12 @@ export function lightingFor(sunY) {
   const elevation = Math.max(sunY, 0);
   const daylight = Math.min(1, elevation * 3);
   const nightBlend = smoothstep(0, NIGHT_SUN_Y, sunY);
+  // Même adaptation que le ciel, en plus doux, et jamais au-delà de midi :
+  // sinon le relief s'éteint une heure avant le coucher sous un ciel encore clair.
+  const adapt = Math.min(LIGHT_ADAPT_MAX, Math.pow(skyAdaptation(sunY), LIGHT_ADAPT_EXPONENT));
   return {
-    sun: mix(0.25 + daylight * 1.5, NIGHT_LIGHT.sun, nightBlend),
-    ambient: mix(0.5 + daylight * 0.7, NIGHT_LIGHT.ambient, nightBlend),
+    sun: mix(Math.min(NOON_LIGHT.sun, (0.25 + daylight * 1.5) * adapt), NIGHT_LIGHT.sun, nightBlend),
+    ambient: mix(Math.min(NOON_LIGHT.ambient, (0.5 + daylight * 0.7) * adapt), NIGHT_LIGHT.ambient, nightBlend),
     // 1 au ras de l'horizon, 0 quand le soleil est haut.
     warmth: 1 - Math.min(1, elevation * 2.5),
     night: sunY <= NIGHT_SUN_Y,

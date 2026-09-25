@@ -37,7 +37,14 @@
  * sans jamais aller la chercher — voir `weather.js`.
  */
 
-import { skyParameters, lightingFor, sunlightColor, preethamRadiance, acesFilmic } from './skyModel.js';
+import {
+  skyParameters,
+  lightingFor,
+  sunlightColor,
+  preethamRadiance,
+  acesFilmic,
+  skyAdaptation,
+} from './skyModel.js';
 import {
   resolveWeather,
   weatherLighting,
@@ -80,9 +87,10 @@ export const SKY_RADIUS = 8000;
 const HORIZON_BLEND = 0.7;
 
 /**
- * Gain de la radiance de Preetham avant tone mapping. À l'exposition de
- * l'exemple three (0,5), le ciel de jour sature l'ACES : il sort blanc, le
- * halo du soleil mange la voûte, le bleu ne tient qu'au zénith.
+ * Gain de la radiance de Preetham avant tone mapping, soleil haut. À
+ * l'exposition de l'exemple three (0,5), le ciel de jour sature l'ACES : il
+ * sort blanc, le halo du soleil mange la voûte, le bleu ne tient qu'au zénith.
+ * Multiplié par `skyAdaptation` quand le soleil baisse.
  */
 const SKY_GAIN = 0.4;
 const HORIZON_BAND = 0.18;
@@ -125,7 +133,13 @@ export function skyPaletteFor(matrix, sky = DEFAULT_SKY_PALETTE) {
  */
 const TWILIGHT_END_Y = -0.21;
 /** Part de la couleur de brouillard de jour que garde la lueur, au coucher. */
-const TWILIGHT_GLOW = 0.2;
+const TWILIGHT_GLOW = 1;
+/**
+ * Décroissance de la lueur sous l'horizon (hauteur de soleil pour un facteur
+ * e) : ~1/8 à la fin du crépuscule civil. Plus lente, le ciel s'éclaircissait
+ * après le coucher ; les étoiles, elles, suivent la fin nautique.
+ */
+const TWILIGHT_FALLOFF_Y = 0.05;
 /** Part de cette lueur qui atteint le zénith, où elle prend la teinte du ciel haut plutôt que celle du soleil. */
 const TWILIGHT_ZENITH_SHARE = 0.5;
 /** Côté opposé au soleil, en part de la lueur côté soleil. */
@@ -556,6 +570,7 @@ export class SceneEnvironment {
     const nightZenith = hexToLinear(this.palette.nightZenith);
     const nightHorizon = hexToLinear(this.palette.nightHorizon);
     const sky = weatherSkyParameters(skyParameters(dir.y), this.weather);
+    this._skyGain = SKY_GAIN * skyAdaptation(dir.y);
     const murk = Math.max(overcastOf(this.weather), this.weather.haze);
     const horizonBand = mix(HORIZON_BAND, MURKY_HORIZON_BAND, murk);
     const paletteFog = hexToLinear(this.palette.fog);
@@ -566,9 +581,10 @@ export class SceneEnvironment {
     );
     this._sunwardSky = this._horizonSkyColor(dir.y, horizonBand, sky, [0]);
     const twilight = smoothstep(TWILIGHT_END_Y, 0, dir.y);
-    const dusk = twilightGlow(weatheredFog, twilight);
+    const dusk = twilightGlow(weatheredFog, twilight * Math.exp(Math.min(0, dir.y) / TWILIGHT_FALLOFF_Y));
     this._twilightGlow = dusk;
     this.uniforms.uTwilight.value = twilight;
+    this.uniforms.uSkyGain.value = this._skyGain;
     this.uniforms.uTwilightHorizon.value.setRGB(...dusk.horizon);
     this.uniforms.uTwilightZenith.value.setRGB(...dusk.zenith);
     // nightHorizon, pas nightZenith : le brouillard occupe la bande basse du
@@ -677,7 +693,7 @@ export class SceneEnvironment {
   _horizonSkyColor(sunY, band, params, azimuths) {
     const sum = [0, 0, 0];
     for (const azimuth of azimuths) {
-      const radiance = preethamRadiance(sunY, band, azimuth, params).map((c) => c * SKY_GAIN);
+      const radiance = preethamRadiance(sunY, band, azimuth, params).map((c) => c * this._skyGain);
       acesFilmic(radiance, this.exposure).forEach((c, i) => (sum[i] += c));
     }
     return sum.map((c) => c / azimuths.length);
