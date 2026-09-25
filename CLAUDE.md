@@ -27,6 +27,9 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   commerces en pignon, en long pan ou sans rue devant ;
   `shopLab.set({ yawDeg, pitchDeg, distance })`, ou
   `node scripts/shop-shot.mjs <dossier> '<réglages JSON>'`.
+- `demo/lab/crops.html` — la `CropLayer` réelle sur un champ plat traversé par
+  une route sinueuse, avec une lisière entre deux cultures ;
+  `cropLab.set({ crop, next, height, pitchDeg })` dans la console.
 
 Si le chantier touche une partie du rendu qu'aucun banc ne montre, écris le
 banc plutôt que d'ouvrir la démo.
