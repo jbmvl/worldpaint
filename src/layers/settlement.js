@@ -148,7 +148,7 @@ export const URBAN_PLACE_RADIUS_M = { city: 3000, town: 1200 };
  * ville ? » qui s'en déduit.
  *
  * Trois lecteurs s'en servent et posent la même question : la carte du sol (qui
- * y peint son trottoir), les chaussées (qui y retranchent voies piétonnes et
+ * y peint son trottoir), les chaussées (qui y retranchent voies piétonnes, chemins et
  * voies redondantes) et le mobilier (éclairage, haies, panneau d'entrée). La
  * poser une fois est aussi ce qui garantit qu'ils y répondent pareil.
  *
