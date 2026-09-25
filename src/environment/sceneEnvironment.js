@@ -37,7 +37,7 @@
  * sans jamais aller la chercher — voir `weather.js`.
  */
 
-import { skyParameters, lightingFor, sunlightColor, preethamDaylight } from './skyModel.js';
+import { skyParameters, lightingFor, sunlightColor, preethamRadiance, acesFilmic } from './skyModel.js';
 import {
   resolveWeather,
   weatherLighting,
@@ -146,6 +146,22 @@ const mix = (a, b, t) => a + (b - a) * t;
 /** Plancher de teinte de la pluie, linéaire — 45 % en sRGB, sinon elle se confondait avec une chaussée mouillée sous ciel bouché. */
 const RAIN_GREY_LINEAR = [0.1703, 0.1703, 0.1703];
 
+const luminance = (rgb) => rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+
+/** Écart au soleil des directions où l'on lit le ciel d'horizon : de travers, puis dos à lui. */
+const HORIZON_SAMPLE_AZIMUTHS = [Math.PI / 2, Math.PI];
+
+/**
+ * Ramène une couleur sous une luminance plafond sans toucher à sa teinte : la
+ * palette dit de quelle couleur est l'air, le ciel affiché dit combien il en reste.
+ */
+export function capLuminance(rgb, ceiling) {
+  const current = luminance(rgb);
+  if (current <= ceiling || current <= 0) return [rgb[0], rgb[1], rgb[2]];
+  const k = Math.max(0, ceiling) / current;
+  return [rgb[0] * k, rgb[1] * k, rgb[2] * k];
+}
+
 /** #rrggbb → [r, g, b] linéaires approximés (sRGB → linéaire, gamma 2.2). */
 function hexToLinear(hex) {
   const clean = String(hex || '#000000').replace('#', '');
@@ -183,6 +199,9 @@ export class SceneEnvironment {
    * @param {Object} options.scene
    * @param {number} [options.fogRadius] Distance de disparition, en mètres.
    * @param {number} [options.shadowMapSize] Côté de la carte d'ombres, en texels.
+   * @param {number} [options.toneMappingExposure] Doit valoir celle du renderer
+   *        (tone mapping ACES) : le brouillard, composité après le tone mapping,
+   *        prend la luminance que le ciel affiche une fois passé par elle.
    * @param {Object} [options.weather] État météo de départ (voir `weather.js`).
    *        Omis, c'est le temps ordinaire — celui qui reproduit exactement le
    *        rendu d'avant l'existence de ce réglage.
@@ -201,6 +220,7 @@ export class SceneEnvironment {
     scene,
     fogRadius = 2200,
     shadowMapSize = 2048,
+    toneMappingExposure = 0.5,
     cloudCoverage = undefined,
     cloudDensity = undefined,
     weather = null,
@@ -216,6 +236,7 @@ export class SceneEnvironment {
     this.shadowMapSize = shadowMapSize;
     /** Densité de brouillard par temps ordinaire ; la météo la multiplie plutôt que la remplacer. */
     this.baseFogDensity = 1.7 / fogRadius;
+    this.exposure = toneMappingExposure;
     /** @type {Object} état météo résolu et gelé. Voir `weather.js`. */
     this.weather = resolveWeather({
       cloudCover: cloudCoverage,
@@ -255,8 +276,8 @@ export class SceneEnvironment {
     /** Origine du temps des nuages : voir `CLOUD_SPEED`. */
     this._timeOrigin = null;
 
-    // Greffe du raccord d'horizon, avant l'écriture du fragment (avant le tone
-    // mapping, que la couleur de brouillard traverse aussi en arrivant du terrain).
+    // Greffe du raccord d'horizon, après le tone mapping : les matières du décor
+    // composent le brouillard après le leur, la couleur doit arriver pareille des deux côtés.
     const skyMaterial = this.sky.material;
     skyMaterial.fragmentShader = skyMaterial.fragmentShader
       .replace(
@@ -357,10 +378,13 @@ export class SceneEnvironment {
 
          texColor = mix( texColor, night, uNightMix );
 
-         // Raccord au brouillard, appliqué en dernier (garantit que l'horizon et le terrain lointain se rejoignent).
-         float horizonWeight = uHorizonBlend * (1.0 - smoothstep(0.0, uHorizonBand, direction.y));
-         texColor = mix( texColor, uHorizonColor, horizonWeight );
          gl_FragColor = vec4( texColor, 1.0 );`
+      )
+      .replace(
+        '#include <tonemapping_fragment>',
+        `#include <tonemapping_fragment>
+         float horizonWeight = uHorizonBlend * (1.0 - smoothstep(0.0, uHorizonBand, direction.y));
+         gl_FragColor.rgb = mix( gl_FragColor.rgb, uHorizonColor, horizonWeight );`
       );
     skyMaterial.needsUpdate = true;
 
@@ -508,11 +532,11 @@ export class SceneEnvironment {
 
     const nightZenith = hexToLinear(this.palette.nightZenith);
     const nightHorizon = hexToLinear(this.palette.nightHorizon);
+    const sky = weatherSkyParameters(skyParameters(dir.y), this.weather);
+    const murk = Math.max(overcastOf(this.weather), this.weather.haze);
+    const horizonBand = mix(HORIZON_BAND, MURKY_HORIZON_BAND, murk);
     const weatheredFog = fogColorFor(hexToLinear(this.palette.fog), this.weather);
-    // La part de jour du brouillard s'éteint avec le soleil de Preetham, sinon
-    // le lointain garde une pâleur de jour que la voûte, déjà sombre, n'a plus.
-    const daylight = preethamDaylight(dir.y, NIGHT_START_Y);
-    const dayFogColor = weatheredFog.map((c) => c * daylight);
+    const dayFogColor = capLuminance(weatheredFog, this._horizonSkyLuminance(dir.y, horizonBand, sky));
     const twilight = smoothstep(TWILIGHT_END_Y, 0, dir.y);
     const dusk = twilightGlow(weatheredFog, twilight);
     this._twilightGlow = dusk;
@@ -522,16 +546,17 @@ export class SceneEnvironment {
     // nightHorizon, pas nightZenith : le brouillard occupe la bande basse du
     // ciel ; la lueur y est prise en moyenne entre côté soleil et côté opposé.
     const side = (1 + TWILIGHT_ANTISOLAR) / 2;
-    const fogColor = [0, 1, 2].map((i) =>
-      mix(dayFogColor[i], nightHorizon[i] + dusk.horizon[i] * side, nightMix)
+    const nightFog = acesFilmic(
+      [0, 1, 2].map((i) => nightHorizon[i] + dusk.horizon[i] * side),
+      this.exposure
     );
+    const fogColor = [0, 1, 2].map((i) => mix(dayFogColor[i], nightFog[i], nightMix));
 
     this.fog.color.setRGB(fogColor[0], fogColor[1], fogColor[2]);
     this.fog.density = this.baseFogDensity * fogScale(this.weather);
     this.uniforms.uHorizonColor.value.setRGB(fogColor[0], fogColor[1], fogColor[2]);
-    const murk = Math.max(overcastOf(this.weather), this.weather.haze);
     this.uniforms.uHorizonBlend.value = mix(HORIZON_BLEND, 1, murk);
-    this.uniforms.uHorizonBand.value = mix(HORIZON_BAND, MURKY_HORIZON_BAND, murk);
+    this.uniforms.uHorizonBand.value = horizonBand;
     this.uniforms.uNightZenith.value.setRGB(nightZenith[0], nightZenith[1], nightZenith[2]);
     this.uniforms.uNightHorizon.value.setRGB(nightHorizon[0], nightHorizon[1], nightHorizon[2]);
 
@@ -539,7 +564,6 @@ export class SceneEnvironment {
     this._sunPosition.set(dir.x, dir.y, dir.z).multiplyScalar(SUN_DISTANCE);
     this.uniforms.sunPosition.value.copy(this._sunPosition);
 
-    const sky = weatherSkyParameters(skyParameters(dir.y), this.weather);
     this.uniforms.turbidity.value = sky.turbidity;
     this.uniforms.rayleigh.value = sky.rayleigh;
     this.uniforms.mieCoefficient.value = sky.mieCoefficient;
@@ -607,12 +631,26 @@ export class SceneEnvironment {
     const nightZenith = hexToLinear(this.palette.nightZenith);
     const sky = aerialSkyColor(dayFog);
     const glow = this._twilightGlow?.zenith || [0, 0, 0];
+    const nightSky = acesFilmic([0, 1, 2].map((i) => nightZenith[i] + glow[i]), this.exposure);
     this.aerialFog.update({
-      skyColor: [0, 1, 2].map((i) => mix(sky[i], nightZenith[i] + glow[i], nightMix)),
+      skyColor: [0, 1, 2].map((i) => mix(sky[i], nightSky[i], nightMix)),
       sunColor: aerialSunColor(dayFog, sunRgb),
       sunDir,
       sunAmount: sunTintAmount(overcastOf(this.weather), nightMix),
     });
+  }
+
+  /**
+   * Luminance affichée du ciel de Preetham au haut de la bande d'horizon, là
+   * où le raccord cède la place au ciel pur. Prise de travers et dos au
+   * soleil : côté soleil, la perspective aérienne a sa propre teinte.
+   */
+  _horizonSkyLuminance(sunY, band, params) {
+    let sum = 0;
+    for (const azimuth of HORIZON_SAMPLE_AZIMUTHS) {
+      sum += luminance(acesFilmic(preethamRadiance(sunY, band, azimuth, params), this.exposure));
+    }
+    return sum / HORIZON_SAMPLE_AZIMUTHS.length;
   }
 
   /** Couleur de fond à donner au renderer (évite un flash noir au montage). */

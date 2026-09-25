@@ -27,22 +27,80 @@ export function skyParameters(sunY) {
   };
 }
 
-/** Constantes de `sunIntensity` dans le `Sky.js` de three : le soleil s'y éteint ~2,3° sous l'horizon. */
-const PREETHAM_CUTOFF = 1.6110731556870734;
-const PREETHAM_STEEPNESS = 1.5;
-const preethamSun = (sunY) =>
-  Math.max(0, 1 - Math.exp(-(PREETHAM_CUTOFF - Math.acos(Math.max(-1, Math.min(1, sunY)))) / PREETHAM_STEEPNESS));
+/*
+ * Réplique JS du shader de `Sky.js` (three 0.185) et du tone mapping ACES de
+ * three : le brouillard doit prendre la luminance que le ciel *affiche*, pas
+ * celle d'une palette fixe. À garder aligné sur three si ses constantes bougent.
+ */
+const TOTAL_RAYLEIGH = [5.804542996261093e-6, 1.3562911419845635e-5, 3.0265902468824876e-5];
+const MIE_CONST = [1.8399918514433978e14, 2.7798023919660528e14, 4.0790479543861094e14];
+const SKY_FLOOR = [0, 0.0003, 0.00075];
+
+function preethamSunIntensity(cosZenith) {
+  const c = Math.min(1, Math.max(-1, cosZenith));
+  return 1000 * Math.max(0, 1 - Math.exp(-(1.6110731556870734 - Math.acos(c)) / 1.5));
+}
 
 /**
- * Part de la lumière de jour que le ciel de Preetham porte encore, de 0 à 1 :
- * 1 dès `fullSunY`, 0 quand son soleil s'éteint. Même courbe que le shader,
- * pour qu'une couleur de jour hors du ciel (le brouillard) s'éteigne avec lui.
+ * Radiance du ciel de Preetham (sans nuages ni disque solaire), linéaire,
+ * avant tone mapping.
  *
- * @param {number} sunY
- * @param {number} fullSunY Hauteur à partir de laquelle la part vaut 1.
+ * @param {number} sunY Hauteur du soleil (composante verticale).
+ * @param {number} dirY Hauteur de la direction regardée.
+ * @param {number} azimuth Écart horizontal entre regard et soleil, en radians.
+ * @param {{turbidity:number, rayleigh:number, mieCoefficient:number, mieDirectionalG:number}} params
+ * @returns {[number,number,number]}
  */
-export function preethamDaylight(sunY, fullSunY) {
-  return clamp01(preethamSun(sunY) / preethamSun(fullSunY));
+export function preethamRadiance(sunY, dirY, azimuth, params) {
+  const sunXZ = Math.sqrt(Math.max(0, 1 - sunY * sunY));
+  const dirXZ = Math.sqrt(Math.max(0, 1 - dirY * dirY));
+  const sunE = preethamSunIntensity(sunY);
+  // `sunPosition.y / 450000` du shader, pour un soleil posé à 400 000.
+  const sunfade = 1 - clamp01(1 - Math.exp((sunY * 400000) / 450000));
+  const betaR = TOTAL_RAYLEIGH.map((v) => v * (params.rayleigh - (1 - sunfade)));
+  const mie = 0.434 * 0.2 * params.turbidity * 10e-18;
+  const betaM = MIE_CONST.map((v) => v * mie * params.mieCoefficient);
+
+  const zenith = Math.acos(Math.max(0, dirY));
+  const inverse = 1 / (Math.cos(zenith) + 0.15 * Math.pow(93.885 - (zenith * 180) / Math.PI, -1.253));
+  const cosTheta = dirXZ * sunXZ * Math.cos(azimuth) + dirY * sunY;
+  const rPhase = (3 / (16 * Math.PI)) * (1 + Math.pow(cosTheta * 0.5 + 0.5, 2));
+  const g = params.mieDirectionalG;
+  const mPhase = (1 / (4 * Math.PI)) * ((1 - g * g) / Math.pow(1 - 2 * g * cosTheta + g * g, 1.5));
+  const grazing = clamp01(Math.pow(1 - sunY, 5));
+
+  return [0, 1, 2].map((i) => {
+    const fex = Math.exp(-(betaR[i] * 8.4e3 * inverse + betaM[i] * 1.25e3 * inverse));
+    const phase = (betaR[i] * rPhase + betaM[i] * mPhase) / (betaR[i] + betaM[i]);
+    const lin = Math.pow(sunE * phase * (1 - fex), 1.5) * mix(1, Math.sqrt(sunE * phase * fex), grazing);
+    return (lin + 0.1 * fex) * 0.04 + SKY_FLOOR[i];
+  });
+}
+
+const ACES_IN = [
+  [0.59719, 0.35458, 0.04823],
+  [0.076, 0.90834, 0.01566],
+  [0.0284, 0.13383, 0.83777],
+];
+const ACES_OUT = [
+  [1.60475, -0.53108, -0.07367],
+  [-0.10208, 1.10813, -0.00605],
+  [-0.00327, -0.07276, 1.07602],
+];
+const applyMatrix = (m, v) => m.map((row) => row[0] * v[0] + row[1] * v[1] + row[2] * v[2]);
+
+/**
+ * `ACESFilmicToneMapping` de three, linéaire vers linéaire affichable.
+ * @param {[number,number,number]} rgb
+ * @param {number} exposure `renderer.toneMappingExposure`.
+ */
+export function acesFilmic(rgb, exposure) {
+  const fitted = applyMatrix(ACES_IN, rgb.map((c) => (c * exposure) / 0.6)).map((x) => {
+    const a = x * (x + 0.0245786) - 0.000090537;
+    const b = x * (0.983729 * x + 0.432951) + 0.238081;
+    return a / b;
+  });
+  return applyMatrix(ACES_OUT, fitted).map(clamp01);
 }
 
 /** Hauteur de soleil sous laquelle l'éclairage est entièrement nocturne. */

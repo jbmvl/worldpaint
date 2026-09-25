@@ -507,7 +507,7 @@ import {
   RAILWAY_GAUGE_HALF_M,
   RAILWAY_BALLAST_HALF_M,
 } from '../src/layers/railwayLayer.js';
-import { skyParameters, lightingFor, sunlightColor, preethamDaylight } from '../src/environment/skyModel.js';
+import { skyParameters, lightingFor, sunlightColor, preethamRadiance, acesFilmic } from '../src/environment/skyModel.js';
 import {
   filterByWords,
   sharesFor,
@@ -1996,16 +1996,19 @@ test('le crépuscule glisse vers la nuit sans saut de lumière', () => {
   assert.deepEqual(sunlightColor(1, lightingFor(-0.4).nightBlend), sunlightColor(1, true));
 });
 
-test('la part de jour du brouillard s’éteint avec le soleil de Preetham', () => {
-  assert.equal(preethamDaylight(0.06, 0.06), 1);
-  assert.equal(preethamDaylight(0.8, 0.06), 1);
-  assert.equal(preethamDaylight(-0.05, 0.06), 0, 'soleil de Preetham éteint sous ~2,3°');
-  let previous = 1;
-  for (let y = 0.06; y >= -0.06; y -= 0.01) {
-    const level = preethamDaylight(y, 0.06);
-    assert.ok(level <= previous + 1e-12, `décroissante à ${y.toFixed(2)}`);
+test('le ciel d’horizon affiché s’assombrit quand le soleil descend', () => {
+  const shown = (sunY) => {
+    const [r, g, b] = acesFilmic(preethamRadiance(sunY, 0.18, Math.PI, skyParameters(sunY)), 0.5);
+    return r * 0.2126 + g * 0.7152 + b * 0.0722;
+  };
+  let previous = Infinity;
+  for (const sunY of [0.9, 0.5, 0.25, 0.1, 0.05, 0, -0.05]) {
+    const level = shown(sunY);
+    assert.ok(level < previous, `décroissant à ${sunY}`);
     previous = level;
   }
+  assert.ok(shown(0.9) > 0.6, 'ciel de midi clair');
+  assert.ok(shown(-0.05) < 0.01, 'soleil de Preetham éteint');
 });
 
 // --- Le pays ----------------------------------------------------------------
