@@ -173,6 +173,53 @@ export function assignPersonalities(candidates, personalities) {
   return owners;
 }
 
+/** Rapport d'aires au-dessus duquel deux empreintes superposées sont la même bâtisse. */
+export const FOOTPRINT_TWIN_AREA_RATIO = 0.8;
+
+/**
+ * Écarte les empreintes qui en répètent une déjà gardée : même bâtisse lue
+ * dans deux tuiles, ou deux fois dans la donnée, avec des sommets qui ne
+ * coïncident pas. Extrudées toutes deux, leurs murs se disputeraient le pixel.
+ * Jumelles : aires voisines, et le centre de chacune dans l'autre. La
+ * première de `candidates` est gardée. Pure.
+ *
+ * @param {Array<{footprint:Array<{x:number,z:number}>|null,area:number,x:number,z:number}>} candidates
+ * @returns {Array} les candidats gardés, dans leur ordre.
+ */
+export function dropTwinFootprints(candidates, cellM = 25) {
+  const cells = new Map();
+  const kept = [];
+  for (const c of candidates) {
+    const cx = Math.floor(c.x / cellM);
+    const cz = Math.floor(c.z / cellM);
+    let twin = false;
+    if (c.footprint) {
+      for (let i = -1; i <= 1 && !twin; i++) {
+        for (let j = -1; j <= 1 && !twin; j++) {
+          for (const k of cells.get(`${cx + i},${cz + j}`) || []) {
+            if (
+              Math.min(k.area, c.area) >= FOOTPRINT_TWIN_AREA_RATIO * Math.max(k.area, c.area) &&
+              pointInRing(k.footprint, c.x, c.z) &&
+              pointInRing(c.footprint, k.x, k.z)
+            ) {
+              twin = true;
+              break;
+            }
+          }
+        }
+      }
+    }
+    if (twin) continue;
+    kept.push(c);
+    if (c.footprint) {
+      const key = `${cx},${cz}`;
+      if (!cells.has(key)) cells.set(key, []);
+      cells.get(key).push(c);
+    }
+  }
+  return kept;
+}
+
 /**
  * Habillage d'une personnalité, en couleurs linéaires, ou `null`. Vient du
  * thème (`theme.personalities`), pas du nuancier du mobilier. Mémorisé sur
@@ -1346,8 +1393,8 @@ export class BuildingLayer {
       candidates.length = BUILDING_MAX_COUNT;
     }
 
-    // Empreinte brute en mètres locaux, pour l'attribution des personnalités
-    // seulement : `_appendBuilding` refait la sienne, rabotée par la voirie.
+    // Empreinte brute en mètres locaux, pour écarter les jumelles et attribuer
+    // les personnalités : `_appendBuilding` refait la sienne, rabotée par la voirie.
     for (const candidate of candidates) {
       const footprint = [];
       for (const [lng, lat] of candidate.ring) {
@@ -1362,6 +1409,9 @@ export class BuildingLayer {
       candidate.minZ = Math.min(...footprint.map((q) => q.z));
       candidate.maxZ = Math.max(...footprint.map((q) => q.z));
     }
+    const kept = dropTwinFootprints(candidates);
+    candidates.length = 0;
+    candidates.push(...kept);
     const owners = assignPersonalities(candidates, personalities);
     yield;
 

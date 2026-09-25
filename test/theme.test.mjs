@@ -33,7 +33,7 @@ import { kerbProfile } from '../src/layers/streetLayer.js';
 import { roofRise } from '../src/layers/roofGeometry.js';
 import { waterwayStyleFor, SURFACE_KINDS } from '../src/terrain/groundClassMap.js';
 import { grassVariantFor } from '../src/layers/groundCover.js';
-import { windowGrid, isHiddenOutline, mergeTwinPersonalities, assignPersonalities } from '../src/layers/buildingLayer.js';
+import { windowGrid, isHiddenOutline, mergeTwinPersonalities, assignPersonalities, dropTwinFootprints } from '../src/layers/buildingLayer.js';
 import { forestTypeAt, variantsFor } from '../src/layers/vegetationLayer.js';
 import { roadStyleFor } from '../src/layers/roadNetwork.js';
 import { furnitureSpecsFor, FURNITURE_BUILDERS } from '../src/layers/furnitureKit.js';
@@ -632,4 +632,17 @@ test('un commerce qui revient deux fois dans la donnée n’habille qu’une dev
   assert.equal(owners.size, 1, 'deux empreintes superposées, une seule enseigne');
   assert.equal(owners.get(outline), a, 'la plus grande l’emporte');
   assert.deepEqual([...assignPersonalities([outline, part], [a])], [...owners]);
+});
+
+test('une même bâtisse lue deux fois n’est extrudée qu’une fois', () => {
+  const box = (x0, x1, dz = 0) => {
+    const footprint = [{ x: x0, z: -5 + dz }, { x: x1, z: -5 + dz }, { x: x1, z: 5 + dz }, { x: x0, z: 5 + dz }];
+    return { footprint, area: (x1 - x0) * 10, x: (x0 + x1) / 2, z: dz };
+  };
+  const first = box(0, 30);
+  const twin = box(0.3, 30.4, 0.2);
+  const part = box(5, 10);
+  const neighbour = box(30, 60);
+  const kept = dropTwinFootprints([first, twin, part, neighbour]);
+  assert.deepEqual(kept, [first, part, neighbour]);
 });
