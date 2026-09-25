@@ -923,6 +923,87 @@ export function junctionDeckAt(area, decks, x, z) {
 }
 
 /**
+ * Cote la plus basse de la dalle à moins de `radius` d'un point.
+ *
+ * L'éventail est plié à chaque rayon, et sur un versant ces plis sont souvent
+ * en creux : un triangle de terrain dont les sommets sont posés sur la dalle
+ * la survole entre eux. Un sommet de terrain qui ne dépasse pas la dalle dans
+ * tout le rayon d'une maille garde toute corde qui en part sous elle.
+ *
+ * Exacte : sur un triangle plan, le minimum dans le disque tombe sur un
+ * sommet, là où une arête coupe le cercle, ou au point du cercle qui suit la
+ * pente vers le bas.
+ *
+ * Fonction pure.
+ *
+ * @param {Object} area Aire portant ses `decks`.
+ * @param {number} x
+ * @param {number} z
+ * @param {number} radius En mètres.
+ * @returns {number} `Infinity` si la dalle ne tombe pas dans le disque.
+ */
+export function lowestDeckAround(area, x, z, radius) {
+  const outline = area?.outline;
+  const decks = area?.decks;
+  if (!Array.isArray(outline) || outline.length < 3 || !decks) return Infinity;
+
+  const centre = junctionCentreDeck(decks);
+  const r2 = radius * radius;
+  let lowest = Infinity;
+  const keep = (h) => {
+    if (h < lowest) lowest = h;
+  };
+  // Cote là où le segment (a, b) coupe le cercle.
+  const crossings = (ax, az, ah, bx, bz, bh) => {
+    const dx = bx - ax;
+    const dz = bz - az;
+    const fx = ax - x;
+    const fz = az - z;
+    const qa = dx * dx + dz * dz;
+    if (qa < 1e-12) return;
+    const qb = 2 * (fx * dx + fz * dz);
+    const disc = qb * qb - 4 * qa * (fx * fx + fz * fz - r2);
+    if (disc < 0) return;
+    for (const sign of [-1, 1]) {
+      const t = (-qb + sign * Math.sqrt(disc)) / (2 * qa);
+      if (t >= 0 && t <= 1) keep(ah + (bh - ah) * t);
+    }
+  };
+
+  const cx = area.x;
+  const cz = area.z;
+  if ((cx - x) ** 2 + (cz - z) ** 2 <= r2) keep(centre);
+  for (let i = 0; i < outline.length; i++) {
+    const a = outline[i];
+    const b = outline[(i + 1) % outline.length];
+    const ah = outlineDeckAt(a, decks);
+    const bh = outlineDeckAt(b, decks);
+    if (!Number.isFinite(ah) || !Number.isFinite(bh)) continue;
+    if ((a.x - x) ** 2 + (a.z - z) ** 2 <= r2) keep(ah);
+    crossings(cx, cz, centre, a.x, a.z, ah);
+    crossings(a.x, a.z, ah, b.x, b.z, bh);
+
+    // Le point du cercle qui descend la pente du triangle, s'il y tombe.
+    const ux = a.x - cx;
+    const uz = a.z - cz;
+    const vx = b.x - cx;
+    const vz = b.z - cz;
+    const det = ux * vz - uz * vx;
+    if (Math.abs(det) < 1e-9) continue;
+    const gx = ((ah - centre) * vz - (bh - centre) * uz) / det;
+    const gz = ((bh - centre) * ux - (ah - centre) * vx) / det;
+    const slope = Math.hypot(gx, gz);
+    if (slope < 1e-12) continue;
+    const px = x - (gx / slope) * radius - cx;
+    const pz = z - (gz / slope) * radius - cz;
+    const wa = (px * vz - pz * vx) / det;
+    const wb = (ux * pz - uz * px) / det;
+    if (wa >= 0 && wb >= 0 && wa + wb <= 1) keep(centre + (ah - centre) * wa + (bh - centre) * wb);
+  }
+  return lowest;
+}
+
+/**
  * Cote du nœud d'un carrefour : la moyenne de ses bouches.
  *
  * Ce n'est pas la cote de la chaussée dominante, et c'est délibéré. Sur un
@@ -1213,15 +1294,18 @@ export class JunctionAreas {
    *
    * La cote est relevée au point du bord qui fait face, jamais au point
    * lui-même : dehors, l'interpolation entre bouches n'a plus de sens.
+   * Avec `spread`, c'est la plus basse de la dalle dans ce rayon
+   * (`lowestDeckAround`).
    *
    * @param {number} x
    * @param {number} z
    * @param {number} margin Portée de la recherche au-delà du contour, en
    *        mètres, bornée par `JUNCTION_REACH_M`.
    * @param {number} [level]
+   * @param {number} [spread] Rayon où chercher la cote la plus basse, en mètres.
    * @returns {{deck:number, distance:number}|null}
    */
-  deckNear(x, z, margin, level = LEVEL_GROUND) {
+  deckNear(x, z, margin, level = LEVEL_GROUND, spread = 0) {
     const reach = Math.min(margin, JUNCTION_REACH_M);
     const bucket = this.buckets.get(cellKey(Math.floor(x / this.cell), Math.floor(z / this.cell)));
     if (!bucket) return null;
@@ -1233,7 +1317,8 @@ export class JunctionAreas {
       const near = outlineDistance(area.outline, x, z);
       if (near.distance > reach) continue;
       if (best && near.distance >= best.distance) continue;
-      const deck = junctionDeckAt(area, area.decks, near.x, near.z);
+      let deck = junctionDeckAt(area, area.decks, near.x, near.z);
+      if (spread > near.distance) deck = Math.min(deck, lowestDeckAround(area, x, z, spread));
       if (!Number.isFinite(deck)) continue;
       best = { deck, distance: near.distance };
     }
