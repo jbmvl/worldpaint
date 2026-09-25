@@ -30,6 +30,8 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
 - `demo/lab/crops.html` — la `CropLayer` réelle sur un champ plat traversé par
   une route sinueuse, avec une lisière entre deux cultures ;
   `cropLab.set({ crop, next, height, pitchDeg })` dans la console.
+- `demo/lab/hedge.html` — quelques haies sur un sol plat, bâties par
+  `FurnitureLayer` ; `hedgeLab.set({ x, y, z, lookX, lookY, lookZ })`.
 
 Si le chantier touche une partie du rendu qu'aucun banc ne montre, écris le
 banc plutôt que d'ouvrir la démo.

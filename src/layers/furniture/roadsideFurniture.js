@@ -524,8 +524,6 @@ export function applyRoadsidePlan(layer, {
   if (verge.verge) {
     layer._appendHedgerow(buffers.lowHedge, 'lowHedge', path, sampleElevation, {
       offset: verge.vergeSide * (halfWidth + 2.6),
-      here,
-      startDistance: spacing.startDistance,
       openGround: true,
       own: segment,
     });
@@ -540,8 +538,6 @@ export function applyRoadsidePlan(layer, {
       : randomAt(side.x, side.z, 23) < 0.5 ? 1 : -1;
     layer._appendHedgerow(buffers.hedge, 'hedge', path, sampleElevation, {
       offset: hedgeSide * (halfWidth + 1.8),
-      here,
-      startDistance: spacing.startDistance,
       openGround: true,
       own: segment,
     });

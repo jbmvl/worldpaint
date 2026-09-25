@@ -677,9 +677,9 @@ export function collectRoadLines(source, tiles, frame, roads = defaultTheme.road
  *
  * L'ancrage est un carrefour ou un changement de classe — un point que la
  * donnée porte, et que le découpage ignore. C'est de lui que se comptent les
- * bornes, les lampadaires et les arbustes d'une haie, et c'est lui qui tire le
- * côté de la ligne téléphonique et l'essence d'un alignement : il ne doit donc
- * dépendre en rien de l'endroit d'où l'on regarde.
+ * bornes et les lampadaires, et c'est lui qui tire le côté de la ligne
+ * téléphonique et l'essence d'un alignement : il ne doit donc dépendre en rien
+ * de l'endroit d'où l'on regarde.
  *
  * Le nœud retenu est **le dernier rencontré**, et à défaut **le premier à
  * venir** : une chaîne commence là où la donnée s'arrête, c'est-à-dire au bord
