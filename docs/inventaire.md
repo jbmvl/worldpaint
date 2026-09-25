@@ -151,6 +151,10 @@ Deux sous-classes court-circuitent le tirage : `vineyard` donne une vigne,
 `orchard`/`plant_nursery` un verger. Ces deux-là, et la lavande avec elles,
 sont semées **en rangs** (`ROW_CROPS`), les autres en vrac.
 
+Un champ s'arrête à l'emprise de la route, ou à la haie de bas-côté quand il y
+en a une : la bande entre chaussée et haie reste nue (`vergeStrips`, publiée par
+le mobilier).
+
 ---
 
 ## La végétation

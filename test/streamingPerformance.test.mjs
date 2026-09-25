@@ -102,7 +102,7 @@ test('le budget cède seulement après son seuil et repart après la pause', asy
 function compositeur() {
   const calls = [], stale = new Set();
   const layer = name => ({ needsRebuild: () => stale.has(name), rebuild: () => { calls.push(name); },
-    update() {}, sync() {}, invalidate() {}, setRelief() {}, setChimneys() {}, setAnimals() {}, setTractors() {}, setTracks() {} });
+    update() {}, sync() {}, invalidate() {}, setRelief() {}, setChimneys() {}, setAnimals() {}, setTractors() {}, setTracks() {}, setVerges() {} });
   const composer = Object.assign(Object.create(WorldComposer.prototype), {
     disposed: false, _refreshing: false, root: {}, landscape: { region: {} },
     _updateLandscape: () => false, _distributeRegion() {}, _wantedTiles: () => [{ x: 1, y: 2 }],
