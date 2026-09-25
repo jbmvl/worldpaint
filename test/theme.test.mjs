@@ -33,7 +33,7 @@ import { kerbProfile } from '../src/layers/streetLayer.js';
 import { roofRise } from '../src/layers/roofGeometry.js';
 import { waterwayStyleFor, SURFACE_KINDS } from '../src/terrain/groundClassMap.js';
 import { grassVariantFor } from '../src/layers/groundCover.js';
-import { windowGrid, isHiddenOutline } from '../src/layers/buildingLayer.js';
+import { windowGrid, isHiddenOutline, mergeTwinPersonalities, assignPersonalities } from '../src/layers/buildingLayer.js';
 import { forestTypeAt, variantsFor } from '../src/layers/vegetationLayer.js';
 import { roadStyleFor } from '../src/layers/roadNetwork.js';
 import { furnitureSpecsFor, FURNITURE_BUILDERS } from '../src/layers/furnitureKit.js';
@@ -611,4 +611,25 @@ test('un contour qui a ses parties à part n’est pas extrudé une seconde fois
   assert.equal(isHiddenOutline({ hide_3d: 'true' }), true);
   assert.equal(isHiddenOutline({ hide_3d: false }), false);
   assert.equal(isHiddenOutline({ render_height: 9 }), false);
+});
+
+test('un commerce qui revient deux fois dans la donnée n’habille qu’une devanture', () => {
+  const a = { x: 10, z: 0, name: 'La Rencontre', class: 'restaurant' };
+  const b = { x: 12, z: 1, name: 'La Rencontre', class: 'restaurant' };
+  const other = { x: 11, z: 0, name: 'Le Central', class: 'bar' };
+  const merged = mergeTwinPersonalities([b, other, a]);
+  assert.equal(merged.filter((p) => p.name === 'La Rencontre').length, 1);
+  assert.deepEqual(mergeTwinPersonalities([a, b, other]), merged, 'l’ordre de lecture ne choisit pas le jumeau');
+  assert.ok(merged.includes(other));
+
+  const box = (x0, x1) => {
+    const footprint = [{ x: x0, z: -5 }, { x: x1, z: -5 }, { x: x1, z: 5 }, { x: x0, z: 5 }];
+    return { footprint, area: (x1 - x0) * 10, x: (x0 + x1) / 2, z: 0, minX: x0, maxX: x1, minZ: -5, maxZ: 5 };
+  };
+  const outline = box(0, 30);
+  const part = box(5, 20);
+  const owners = assignPersonalities([part, outline], [a]);
+  assert.equal(owners.size, 1, 'deux empreintes superposées, une seule enseigne');
+  assert.equal(owners.get(outline), a, 'la plus grande l’emporte');
+  assert.deepEqual([...assignPersonalities([outline, part], [a])], [...owners]);
 });

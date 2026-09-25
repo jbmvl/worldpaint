@@ -119,6 +119,60 @@ export function sortPersonalities(list, limit = BUILDING_POI_MAX_COUNT) {
   return sorted;
 }
 
+/** Rayon sous lequel deux points d'intérêt de même nom et de même classe sont un seul commerce, en mètres. */
+export const PERSONALITY_TWIN_RADIUS_M = 40;
+
+/**
+ * Fond les jumeaux : un même commerce revient d'une tuile voisine, ou deux
+ * fois dans la donnée (le nœud et le bâtiment étiqueté). Chacun habillerait
+ * son bâtiment, et l'enseigne se poserait deux fois. Le jumeau gardé est
+ * choisi par position, pas par l'ordre des tuiles. Pure.
+ *
+ * @param {Array<{x:number,z:number,name:string|null,class:string|null}>} list
+ */
+export function mergeTwinPersonalities(list, radius = PERSONALITY_TWIN_RADIUS_M) {
+  const ordered = list.slice().sort((a, b) => a.x - b.x || a.z - b.z);
+  const kept = [];
+  for (const p of ordered) {
+    const twin =
+      p.name &&
+      kept.some(
+        (k) => k.name === p.name && k.class === p.class && Math.hypot(k.x - p.x, k.z - p.z) < radius
+      );
+    if (!twin) kept.push(p);
+  }
+  return kept;
+}
+
+/**
+ * Donne à chaque point d'intérêt un seul bâtiment : le plus grand de ceux qui
+ * le contiennent. Deux empreintes superposées (contour et partie, fragments)
+ * porteraient sinon chacune la devanture. Un bâtiment n'a qu'une
+ * personnalité : la première de `personalities` qui le choisit. Pure.
+ *
+ * @param {Array<{footprint:Array<{x:number,z:number}>|null,area:number,x:number,z:number,
+ *        minX:number,maxX:number,minZ:number,maxZ:number}>} candidates
+ * @param {Array<{x:number,z:number}>} personalities Déjà triées par rang.
+ * @returns {Map<Object,Object>} candidat → point d'intérêt.
+ */
+export function assignPersonalities(candidates, personalities) {
+  const owners = new Map();
+  const taken = new Set();
+  for (const p of personalities) {
+    let best = null;
+    for (const c of candidates) {
+      if (!c.footprint || p.x < c.minX || p.x > c.maxX || p.z < c.minZ || p.z > c.maxZ) continue;
+      if (!pointInRing(c.footprint, p.x, p.z)) continue;
+      if (!best || c.area > best.area || (c.area === best.area && (c.x - best.x || c.z - best.z) < 0)) best = c;
+    }
+    if (best && !taken.has(best)) {
+      taken.add(best);
+      owners.set(best, p);
+    }
+  }
+  return owners;
+}
+
 /**
  * Habillage d'une personnalité, en couleurs linéaires, ou `null`. Vient du
  * thème (`theme.personalities`), pas du nuancier du mobilier. Mémorisé sur
@@ -1279,7 +1333,7 @@ export class BuildingLayer {
       collected.push({ x, z, kind, distance, name: properties.name || null, class: properties.class || null });
     });
     yield;
-    const personalities = sortPersonalities(collected);
+    const personalities = sortPersonalities(mergeTwinPersonalities(collected));
 
     // Le tri est ce qui rend le plafond acceptable : ce qui saute est toujours
     // le plus lointain, jamais ce qui est sous les yeux.
@@ -1291,6 +1345,25 @@ export class BuildingLayer {
       );
       candidates.length = BUILDING_MAX_COUNT;
     }
+
+    // Empreinte brute en mètres locaux, pour l'attribution des personnalités
+    // seulement : `_appendBuilding` refait la sienne, rabotée par la voirie.
+    for (const candidate of candidates) {
+      const footprint = [];
+      for (const [lng, lat] of candidate.ring) {
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) break;
+        footprint.push({ x: (lngToTileX(lng, zoom) - origin.x) * scale, z: (latToTileY(lat, zoom) - origin.y) * scale });
+      }
+      const whole = footprint.length === candidate.ring.length;
+      candidate.footprint = whole ? footprint : null;
+      candidate.area = whole ? ringArea(footprint) : 0;
+      candidate.minX = Math.min(...footprint.map((q) => q.x));
+      candidate.maxX = Math.max(...footprint.map((q) => q.x));
+      candidate.minZ = Math.min(...footprint.map((q) => q.z));
+      candidate.maxZ = Math.max(...footprint.map((q) => q.z));
+    }
+    const owners = assignPersonalities(candidates, personalities);
+    yield;
 
     let built = 0;
     let panes = 0;
@@ -1317,7 +1390,7 @@ export class BuildingLayer {
           walls,
           openings,
           houses,
-          personalities,
+          owners.has(candidate) ? [owners.get(candidate)] : null,
           labels,
           chimneys
         )
@@ -1370,9 +1443,9 @@ export class BuildingLayer {
    * @param {Object|null} openings Budget d'ouvertures, ou `null` pour un
    *        bâtiment trop lointain pour en mériter.
    * @param {Array} houses Maisons publiées pour la couche des jardins.
-   * @param {Array|null} personalities Points d'intérêt classés
-   *        (`buildingPersonalityFor`), pour donner sa personnalité au
-   *        bâtiment dont l'empreinte les contient — voir plus bas.
+   * @param {Array|null} personalities Point d'intérêt attribué à ce bâtiment
+   *        (`assignPersonalities`), en liste d'au plus un — gardé s'il tombe
+   *        encore dans l'empreinte rabotée.
    * @param {Object|null} labels Accumulateur `{positions, uvs}` des enseignes
    *        peintes (`appendShopfront`), ou `null` pour ne pas en poser.
    * @param {Array|null} chimneys Cheminées de toit publiées pour `lifeLayer`,
@@ -1468,11 +1541,7 @@ export class BuildingLayer {
     // rien serait payée sur toute une ville.
     const roofs = style.pitch ? { ...this.theme.roofs, pitch: style.pitch } : this.theme.roofs;
 
-    // Personnalité : le premier point d'intérêt qui tombe dans l'empreinte
-    // l'emporte — voir `buildingPersonalityFor`. La liste est déjà triée par
-    // rang, donc « le premier » veut dire le plus marquant : dans un bâtiment
-    // qui porte à la fois une église et une boutique de souvenirs, c'est
-    // l'église. Un bâtiment n'a qu'une personnalité.
+    // Personnalité : celle qu'`assignPersonalities` a donnée à ce bâtiment.
     let personality = null;
     // Nom du point d'intérêt qui a donné sa personnalité au bâtiment — utile
     // seulement pour un commerce (voir `appendShopfront`), mais capturé ici
@@ -1484,25 +1553,12 @@ export class BuildingLayer {
     // boulangerie et un bar sont tous deux `kind: 'shop'`, mais pas la même
     // enseigne.
     let personalityClass = null;
-    if (personalities && box) {
-      // Rejet grossier avant le test d'anneau : le rectangle englobant est déjà
-      // calculé, et il écarte d'un coup la quasi-totalité des points. Sans lui,
-      // le coût est le produit des deux plafonds — quinze cents empreintes par
-      // six cents points, à chaque reconstruction.
-      //
-      // La somme des deux demi-côtés, et non le seul demi-grand-côté : un
-      // rectangle en biais s'étend en x de `long·|cos θ| + short·|sin θ|`, donc
-      // au plus de leur somme. Plus serré, le garde écarterait des points qui
-      // sont réellement dedans.
-      const reach = box.long + box.short;
-      for (const p of personalities) {
-        if (Math.abs(p.x - box.cx) > reach || Math.abs(p.z - box.cz) > reach) continue;
-        if (pointInRing(footprint, p.x, p.z)) {
-          personality = p.kind;
-          personalityName = p.name || null;
-          personalityClass = p.class || null;
-          break;
-        }
+    for (const p of (box && personalities) || []) {
+      if (pointInRing(footprint, p.x, p.z)) {
+        personality = p.kind;
+        personalityName = p.name || null;
+        personalityClass = p.class || null;
+        break;
       }
     }
     const look = personalityLookFor(personality, this.theme.personalities);
