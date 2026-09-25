@@ -53,6 +53,7 @@ import {
   inCorridor,
 } from './roadCorridor.js';
 import { CombinedIndex } from './roadGraph.js';
+import { VergeStrips } from './vergeStrips.js';
 import {
   Kit,
   createFurnitureGeometries,
@@ -302,6 +303,8 @@ export class FurnitureLayer {
      * @type {Array<Object>}
      */
     this.tractors = [];
+    /** Bandes entre chaussée et haie de bas-côté, publiées pour `cropLayer`. */
+    this.verges = new VergeStrips();
     /** Nuancier des robes, une liste par espèce (voir `theme.fauna.coats`). */
     this._coats = theme.fauna?.coats || {};
     /**
@@ -477,6 +480,7 @@ export class FurnitureLayer {
       this._signals = [];
       this.fauna = [];
       this.tractors = [];
+      this.verges = new VergeStrips();
 
       try {
         // Les emprises habitées viennent de `worldComposer` quand il les a déjà
@@ -744,7 +748,7 @@ export class FurnitureLayer {
    * dans les rues transversales. La découpe la coupe à chacune.
    */
   _appendHedgerow(buffer, kind, path, sampleElevation, options = {}) {
-    const { offset = 0, own = null, openGround = false } = options;
+    const { offset = 0, own = null, openGround = false, verge = false } = options;
     const crossings = own
       ? this._clipOffRoad(path, { offset, minLength: BOUNDARY_MIN_LENGTH_M, own })
       : [path];
@@ -754,7 +758,14 @@ export class FurnitureLayer {
       // clore. Un contour de parcelle, lui, vient de la donnée — il longe une
       // lisière aussi souvent qu'un champ, et le couper là l'effacerait.
       const runs = openGround ? this._clipOpenGround(crossed, { offset }) : [crossed];
-      for (const run of runs) this._appendHedgerowRun(buffer, kind, run, sampleElevation, { offset });
+      for (const run of runs) {
+        // La bande va jusqu'au dos de la haie : sa demi-épaisseur est celle de sa section.
+        if (verge) {
+          const halfWidth = Math.max(...this.specs.profiles[kind].map((p) => Math.abs(p.across)));
+          this.verges.add(run, offset, halfWidth);
+        }
+        this._appendHedgerowRun(buffer, kind, run, sampleElevation, { offset });
+      }
     }
   }
 
@@ -1392,6 +1403,7 @@ export class FurnitureLayer {
     this._signals = [];
     this.fauna = [];
     this.tractors = [];
+    this.verges = new VergeStrips();
 
     for (const geometry of Object.values(this.geometries)) geometry.dispose();
     this.geometries = {};

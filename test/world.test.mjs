@@ -199,6 +199,7 @@ import {
   GREENHOUSE_BASE_LENGTH_M,
 } from '../src/layers/furnitureKit.js';
 import { tileBounds } from '../src/core/vectorTileSource.js';
+import { VergeStrips } from '../src/layers/vergeStrips.js';
 import {
   roadStyleFor,
   onewayFor,
@@ -3952,6 +3953,7 @@ function roadsideHarness({ profile = 'minor', here = { x: 200, z: 0 } } = {}) {
   layer.groundClass = { woodAt: () => 0, cropAt: () => null };
   layer._signals = [];
   layer._lampHeads = [];
+  layer.verges = new VergeStrips();
 
   const path = resamplePath([{ x: 0, z: 0 }, { x: 400, z: 0 }], 5);
   const platform = new Float32Array(path.length).fill(100);
@@ -4271,6 +4273,7 @@ test('le mobilier de bord de route se pose sans variable libre', () => {
   // silencieux, et rien ne se voit plus vite à l’écran.
   let hedgeTriangles = 0;
   let points = 0;
+  let verges = 0;
 
   // Plusieurs positions : le côté de la haie, le fossé et le bas-côté se
   // tirent au lieu, donc une seule portion n’en rencontre pas la moitié.
@@ -4281,12 +4284,14 @@ test('le mobilier de bord de route se pose sans variable libre', () => {
 
     buildRoadsideContext(layer, { ...context, here: { x: 200, z } }, shifted, moved, []);
 
+    verges += layer.verges.size;
     hedgeTriangles += buffers.hedge.indices.length / 3 + buffers.lowHedge.indices.length / 3;
     for (const list of placements.values()) points += list.length;
   }
 
   assert.ok(points > 0, 'la chaîne pose bien du mobilier ponctuel');
   assert.ok(hedgeTriangles > 0, 'et au moins une haie sur les huit portions');
+  assert.ok(verges > 0, 'et la bande qu’elle clôt, publiée pour les cultures');
 });
 
 test('un bois interrompt l’alignement au lieu de l’effacer selon d’où l’on regarde', () => {
@@ -10878,6 +10883,18 @@ test('l’emprise est la chaussée plus son accotement excavé, et rien d’autr
   assert.ok(inCorridor(index, 0, 3.6), 'sur l’accotement excavé');
   assert.ok(!inCorridor(index, 0, 3.8), 'au-delà, le sol redevient naturel');
   assert.ok(!inCorridor(index, 0, 40), 'en pleine prairie');
+});
+
+test('la bande de bas-côté va de la chaussée au dos de sa haie, d’un seul côté', () => {
+  // Une chaussée d'ouest en est, sa haie à 4 m sur la normale (tz, -tx) : au sud.
+  const verges = new VergeStrips();
+  verges.add([{ x: 0, z: 0 }, { x: 60, z: 0 }, { x: 100, z: 0 }], 4, 1);
+  assert.ok(verges.covers(50, -3), 'entre la route et la haie');
+  assert.ok(verges.covers(50, -4.8), 'sous la haie');
+  assert.ok(!verges.covers(50, -5.5), 'derrière la haie, le champ');
+  assert.ok(!verges.covers(50, 3), 'de l’autre côté de la route');
+  assert.ok(!verges.covers(-2, -3), 'avant le début de la haie');
+  assert.ok(!new VergeStrips().covers(50, -3), 'sans haie, pas de bande');
 });
 
 test('sans réseau routier, rien n’est dans l’emprise', () => {
