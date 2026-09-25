@@ -7650,6 +7650,41 @@ test('au même niveau, la voie étroite retrouve bien l’altitude de la large',
   );
 });
 
+test('une branche monte sur le remblai d’accès d’un pont au lieu de s’arrêter au pied', () => {
+  // La large est relevée de cinq mètres par le remblai d'accès d'une travée :
+  // au-delà de `STITCH_MAX_STEP_M`, mais c'est bien un carrefour.
+  const rows = 12;
+  const wide = {
+    profile: 'major',
+    halfWidth: 6,
+    path: Array.from({ length: rows }, (_, i) => ({ x: i * 5, z: 0, distance: i * 5 })),
+    platform: new Float32Array(rows).fill(5),
+    approach: new Float32Array(rows).fill(5),
+    works: new Uint8Array(rows),
+    levels: new Int8Array(rows),
+    anchor: { x: 0, z: 0 },
+  };
+  const narrow = {
+    profile: 'minor',
+    halfWidth: 2.5,
+    path: Array.from({ length: rows }, (_, i) => ({ x: 25, z: i * 5, distance: i * 5 })),
+    platform: new Float32Array(rows).fill(0),
+    works: new Uint8Array(rows),
+    levels: new Int8Array(rows),
+    anchor: { x: 25, z: 0 },
+  };
+
+  const segments = [wide, narrow];
+  stitchPlatforms(segments, new RoadIndex(segments, { margin: 0 }));
+
+  close(narrow.platform[0], 5, 1e-4, 'la bouche est à l’altitude du remblai');
+  for (let r = 1; r < rows; r++) {
+    assert.ok(narrow.platform[r] <= narrow.platform[r - 1] + 1e-6, 'la branche redescend sans rebond');
+    assert.ok(narrow.platform[r - 1] - narrow.platform[r] < 1.5, 'pas de marche : la pente s’étale');
+  }
+  close(narrow.platform[rows - 1], 0, 1e-4, 'au-delà du remblai, la branche retrouve son terrain');
+});
+
 /** Tronçon minimal, tel que `collectRoadSegments` le produirait. */
 function fakeSegment(points, halfWidth, deck = 0) {
   const path = points.map((p, i) => ({ ...p, distance: i * 5 }));

@@ -1035,9 +1035,11 @@ export function collectRoadSegments(
     for (let si = 0; si < out.length; si++) {
       const segment = out[si];
       if (!segment.works.some((code) => code !== 0)) continue;
+      segment.approach = new Float32Array(segment.path.length);
       levelWorkSpans(segment.path, segment.platform, segment.works, {
         clearanceAt: crossedDeckAt(grade, segment, si),
         floorAt,
+        approach: segment.approach,
       });
     }
   }

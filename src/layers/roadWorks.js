@@ -413,6 +413,9 @@ function resampleCodes(points, codes, path, out) {
  * @param {number} [options.clearance] Garde au-dessus d'un obstacle à gabarit.
  * @param {number} [options.maxSpan]
  * @param {number} [options.ramp]
+ * @param {Float32Array|null} [options.approach] Reçoit, ligne par ligne, ce que
+ *        le remblai d'accès a ajouté : une branche qui rejoint la route sur ce
+ *        remblai doit y monter aussi (`stitchPlatforms`).
  * @returns {number} nombre de travées reprises.
  */
 export function levelWorkSpans(
@@ -425,6 +428,7 @@ export function levelWorkSpans(
     clearance = BRIDGE_CLEARANCE_M,
     maxSpan = BRIDGE_MAX_SPAN_M,
     ramp = BRIDGE_RAMP_M,
+    approach = null,
   } = {}
 ) {
   const rows = path?.length ?? 0;
@@ -484,7 +488,9 @@ export function levelWorkSpans(
           const d = Math.abs(path[r].distance - path[start - step].distance);
           if (d >= ramp) break;
           const f = 1 - d / ramp;
-          platform[r] += lift * f * f * (3 - 2 * f);
+          const raised = lift * f * f * (3 - 2 * f);
+          platform[r] += raised;
+          if (approach) approach[r] += raised;
         }
       }
     }

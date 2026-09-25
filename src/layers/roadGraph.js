@@ -85,7 +85,7 @@
  * pour ça.
  */
 
-import { WORK_NONE, LEVEL_GROUND } from './roadWorks.js';
+import { WORK_NONE, LEVEL_GROUND, BRIDGE_RAMP_M } from './roadWorks.js';
 import { roundCorners } from './ribbonGeometry.js';
 
 /** Distance en deçà de laquelle deux sommets sont le même nœud, en mètres. */
@@ -1556,6 +1556,10 @@ function dominates(a, indexA, b, indexB) {
  * ouvrage ou pas : un passage supérieur sans `bridge` reste un croisement en
  * XY, pas une rencontre.
  *
+ * Une voie que le remblai d'accès d'un pont a relevée (`approach`) reste un
+ * carrefour : la marche tolérée s'augmente de ce relevage, et la branche le
+ * rattrape sur la longueur du remblai (`BRIDGE_RAMP_M`), pas sur trois lignes.
+ *
  * @param {Array<Object>} segments Tronçons, dont les `platform` sont modifiées.
  *        Un tronçon repris reçoit aussi `stitched` : le déplacement appliqué,
  *        ligne par ligne, pour que la mise au point puisse le montrer.
@@ -1563,7 +1567,11 @@ function dominates(a, indexA, b, indexB) {
  * @param {Object} [options]
  * @returns {number} nombre de tronçons retouchés.
  */
-export function stitchPlatforms(segments, index, { maxStep = STITCH_MAX_STEP_M, rampRows = STITCH_RAMP_ROWS } = {}) {
+export function stitchPlatforms(
+  segments,
+  index,
+  { maxStep = STITCH_MAX_STEP_M, rampRows = STITCH_RAMP_ROWS, rampLength = BRIDGE_RAMP_M } = {}
+) {
   if (!Array.isArray(segments) || segments.length === 0 || !index) return 0;
 
   // De la plus large à la plus étroite : une voie déjà recousue sert de
@@ -1606,7 +1614,8 @@ export function stitchPlatforms(segments, index, { maxStep = STITCH_MAX_STEP_M, 
       const deck = index.deckAt(hit);
       if (deck == null) continue;
       const step = deck - platform[r];
-      if (!Number.isFinite(step) || Math.abs(step) > maxStep) continue;
+      const raised = hit.segment.approach?.[hit.row] ?? 0;
+      if (!Number.isFinite(step) || Math.abs(step) > maxStep + raised) continue;
       delta[r] = step;
       anchored[r] = 1;
       count++;
@@ -1641,9 +1650,18 @@ export function stitchPlatforms(segments, index, { maxStep = STITCH_MAX_STEP_M, 
     const moved = new Float32Array(rows);
     for (let r = 0; r < rows; r++) {
       if (works?.[r]) continue;
-      if (nearest[r] < 0 || distance[r] > rampRows) continue;
-      const fade = 1 - distance[r] / (rampRows + 1);
-      moved[r] = delta[nearest[r]] * fade;
+      const n = nearest[r];
+      if (n < 0) continue;
+      let fade;
+      if (Math.abs(delta[n]) > maxStep) {
+        const f = 1 - Math.abs(path[r].distance - path[n].distance) / rampLength;
+        if (f <= 0) continue;
+        fade = f * f * (3 - 2 * f);
+      } else {
+        if (distance[r] > rampRows) continue;
+        fade = 1 - distance[r] / (rampRows + 1);
+      }
+      moved[r] = delta[n] * fade;
       platform[r] += moved[r];
     }
     segment.stitched = moved;
