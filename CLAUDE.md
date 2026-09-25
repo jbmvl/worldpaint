@@ -16,6 +16,11 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   console, ou `node scripts/sky-shot.mjs <dossier> '<réglages JSON>'` pour une
   image par réglage.
 
+- `demo/lab/shop.html` — le bâti seul le long d'une rue plate, avec des
+  commerces en pignon, en long pan ou sans rue devant ;
+  `shopLab.set({ yawDeg, pitchDeg, distance })`, ou
+  `node scripts/shop-shot.mjs <dossier> '<réglages JSON>'`.
+
 Si le chantier touche une partie du rendu qu'aucun banc ne montre, écris le
 banc plutôt que d'ouvrir la démo.
 

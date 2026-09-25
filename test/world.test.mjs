@@ -299,6 +299,7 @@ import {
   sortPersonalities,
   personalityLookFor,
   shopfrontTopFor,
+  streetFacadeIndex,
   SHOPFRONT_HEIGHT_M,
   towerSide,
   towerRise,
@@ -1450,6 +1451,27 @@ test('la devanture occupe la place du soubassement, pas le mur entier', () => {
   assert.equal(shopfrontTopFor(100, 0, 103.5), null, 'mur trop bas');
   // Sous un passage couvert, il n'y a pas de rez-de-chaussée à habiller.
   assert.equal(shopfrontTopFor(100, 4, 115), null, 'surplomb');
+});
+
+test('la devanture regarde la rue, pas la cour ni le pignon', () => {
+  // Rue nord-sud en x = 0 ; maison 12 × 6 m dont le petit côté donne sur elle.
+  const rue = new RoadIndex([{ halfWidth: 3, path: [{ x: 0, y: 0, z: -50 }, { x: 0, y: 0, z: 50 }] }]);
+  // Sens de `_appendBuilding` : normale sortante (b.y - a.y, -(b.x - a.x)).
+  const maison = [
+    { x: 5, y: 3 },
+    { x: 5, y: -3 },
+    { x: 17, y: -3 },
+    { x: 17, y: 3 },
+  ];
+  const i = streetFacadeIndex(maison, rue);
+  assert.equal(i, 0, 'le pignon sur rue, pas le long pan');
+  const a = maison[i];
+  const b = maison[(i + 1) % maison.length];
+  assert.ok(b.y - a.y < 0, 'et sa normale pointe vers la chaussée');
+
+  // Sans rue devant, pas de façade sur rue.
+  const loin = new RoadIndex([{ halfWidth: 3, path: [{ x: -80, y: 0, z: -50 }, { x: -80, y: 0, z: 50 }] }]);
+  assert.equal(streetFacadeIndex(maison, loin), -1);
 });
 
 test('le clocher est dimensionné et posé sur le bâtiment qui le porte', () => {
