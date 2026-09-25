@@ -21,9 +21,9 @@ export function skyParameters(sunY) {
   return {
     turbidity: mix(8.5, 2.4, day),
     rayleigh: mix(3.4, 1.3, high),
-    mieCoefficient: mix(0.013, 0.004, day),
+    mieCoefficient: mix(0.008, 0.002, day),
     // Plus la lumière rase, plus le halo autour du soleil est resserré et vif.
-    mieDirectionalG: mix(0.86, 0.79, day),
+    mieDirectionalG: mix(0.9, 0.85, day),
   };
 }
 

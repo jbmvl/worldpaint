@@ -78,6 +78,13 @@ export const SKY_RADIUS = 8000;
  * subsiste entre le lointain gris et la couche nuageuse.
  */
 const HORIZON_BLEND = 0.7;
+
+/**
+ * Gain de la radiance de Preetham avant tone mapping. À l'exposition de
+ * l'exemple three (0,5), le ciel de jour sature l'ACES : il sort blanc, le
+ * halo du soleil mange la voûte, le bleu ne tient qu'au zénith.
+ */
+const SKY_GAIN = 0.4;
 const HORIZON_BAND = 0.18;
 const MURKY_HORIZON_BAND = 0.3;
 
@@ -148,18 +155,30 @@ const RAIN_GREY_LINEAR = [0.1703, 0.1703, 0.1703];
 
 const luminance = (rgb) => rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
 
-/** Écart au soleil des directions où l'on lit le ciel d'horizon : de travers, puis dos à lui. */
+/** Écarts au soleil où l'on lit le ciel d'horizon du brouillard : de travers, puis dos à lui (face au soleil, la perspective aérienne a sa propre teinte). */
 const HORIZON_SAMPLE_AZIMUTHS = [Math.PI / 2, Math.PI];
 
 /**
- * Ramène une couleur sous une luminance plafond sans toucher à sa teinte : la
- * palette dit de quelle couleur est l'air, le ciel affiché dit combien il en reste.
+ * Part de la teinte du brouillard prise à la palette plutôt qu'au ciel : le
+ * ciel seul donne un lointain bleu saturé, la palette seule une bande grise.
  */
-export function capLuminance(rgb, ceiling) {
-  const current = luminance(rgb);
-  if (current <= ceiling || current <= 0) return [rgb[0], rgb[1], rgb[2]];
-  const k = Math.max(0, ceiling) / current;
-  return [rgb[0] * k, rgb[1] * k, rgb[2] * k];
+const PALETTE_HUE_SHARE = 0.5;
+
+/**
+ * Couleur du brouillard de jour : la lumière du ciel d'horizon affiché, dans
+ * une teinte partagée entre ce ciel (teinté par la palette) et la palette
+ * elle-même. Le ciel dit combien de lumière ; la palette, la couleur propre de l'air du pays.
+ *
+ * @param {[number,number,number]} sky Ciel d'horizon affiché, linéaire.
+ * @param {[number,number,number]} palette Couleur de brouillard de la palette, linéaire.
+ */
+export function tintByPalette(sky, palette) {
+  const weight = luminance(palette);
+  if (weight <= 0) return [sky[0], sky[1], sky[2]];
+  const tinted = sky.map((c, i) => (c * palette[i]) / weight);
+  const scale = luminance(sky) / (luminance(tinted) || 1);
+  const flat = palette.map((c) => (c * luminance(sky)) / weight);
+  return tinted.map((c, i) => Math.min(1, mix(c * scale, flat[i], PALETTE_HUE_SHARE)));
 }
 
 /** #rrggbb → [r, g, b] linéaires approximés (sRGB → linéaire, gamma 2.2). */
@@ -262,6 +281,7 @@ export class SceneEnvironment {
     this.uniforms.uHorizonColor = { value: new THREE.Color(palette.fog) };
     this.uniforms.uHorizonBlend = { value: HORIZON_BLEND };
     this.uniforms.uHorizonBand = { value: HORIZON_BAND };
+    this.uniforms.uSkyGain = { value: SKY_GAIN };
     this.uniforms.uNightZenith = { value: new THREE.Color(palette.nightZenith) };
     this.uniforms.uNightHorizon = { value: new THREE.Color(palette.nightHorizon) };
     this.uniforms.uNightMix = { value: 0 };
@@ -285,6 +305,7 @@ export class SceneEnvironment {
         `varying vec3 vWorldPosition;
          uniform vec3 uHorizonColor;
          uniform float uHorizonBlend;
+         uniform float uSkyGain;
          uniform float uHorizonBand;
          uniform vec3 uNightZenith;
          uniform vec3 uNightHorizon;
@@ -306,7 +327,9 @@ export class SceneEnvironment {
       )
       .replace(
         'gl_FragColor = vec4( texColor, 1.0 );',
-        `// Le modèle de Preetham n'a pas de nuit : sous l'horizon, on bascule
+        `texColor *= uSkyGain;
+
+         // Le modèle de Preetham n'a pas de nuit : sous l'horizon, on bascule
          // sur la palette nocturne fournie, sombre sans être noire.
          vec3 night = mix(uNightHorizon, uNightZenith, pow(clamp(direction.y, 0.0, 1.0), 0.45));
 
@@ -535,8 +558,13 @@ export class SceneEnvironment {
     const sky = weatherSkyParameters(skyParameters(dir.y), this.weather);
     const murk = Math.max(overcastOf(this.weather), this.weather.haze);
     const horizonBand = mix(HORIZON_BAND, MURKY_HORIZON_BAND, murk);
-    const weatheredFog = fogColorFor(hexToLinear(this.palette.fog), this.weather);
-    const dayFogColor = capLuminance(weatheredFog, this._horizonSkyLuminance(dir.y, horizonBand, sky));
+    const paletteFog = hexToLinear(this.palette.fog);
+    const weatheredFog = fogColorFor(paletteFog, this.weather);
+    const dayFogColor = fogColorFor(
+      tintByPalette(this._horizonSkyColor(dir.y, horizonBand, sky, HORIZON_SAMPLE_AZIMUTHS), paletteFog),
+      this.weather
+    );
+    this._sunwardSky = this._horizonSkyColor(dir.y, horizonBand, sky, [0]);
     const twilight = smoothstep(TWILIGHT_END_Y, 0, dir.y);
     const dusk = twilightGlow(weatheredFog, twilight);
     this._twilightGlow = dusk;
@@ -634,23 +662,25 @@ export class SceneEnvironment {
     const nightSky = acesFilmic([0, 1, 2].map((i) => nightZenith[i] + glow[i]), this.exposure);
     this.aerialFog.update({
       skyColor: [0, 1, 2].map((i) => mix(sky[i], nightSky[i], nightMix)),
-      sunColor: aerialSunColor(dayFog, sunRgb),
+      // Luminance du ciel face au soleil, pas du brouillard : sinon le lointain
+      // à contre-jour sort plus sombre que le ciel qui le surmonte.
+      sunColor: aerialSunColor(this._sunwardSky || dayFog, sunRgb),
       sunDir,
       sunAmount: sunTintAmount(overcastOf(this.weather), nightMix),
     });
   }
 
   /**
-   * Luminance affichée du ciel de Preetham au haut de la bande d'horizon, là
-   * où le raccord cède la place au ciel pur. Prise de travers et dos au
-   * soleil : côté soleil, la perspective aérienne a sa propre teinte.
+   * Couleur affichée du ciel de Preetham au haut de la bande d'horizon, là où
+   * le raccord cède la place au ciel pur, moyennée sur des écarts au soleil.
    */
-  _horizonSkyLuminance(sunY, band, params) {
-    let sum = 0;
-    for (const azimuth of HORIZON_SAMPLE_AZIMUTHS) {
-      sum += luminance(acesFilmic(preethamRadiance(sunY, band, azimuth, params), this.exposure));
+  _horizonSkyColor(sunY, band, params, azimuths) {
+    const sum = [0, 0, 0];
+    for (const azimuth of azimuths) {
+      const radiance = preethamRadiance(sunY, band, azimuth, params).map((c) => c * SKY_GAIN);
+      acesFilmic(radiance, this.exposure).forEach((c, i) => (sum[i] += c));
     }
-    return sum / HORIZON_SAMPLE_AZIMUTHS.length;
+    return sum.map((c) => c / azimuths.length);
   }
 
   /** Couleur de fond à donner au renderer (évite un flash noir au montage). */

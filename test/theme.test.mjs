@@ -39,7 +39,7 @@ import { roadStyleFor } from '../src/layers/roadNetwork.js';
 import { furnitureSpecsFor, FURNITURE_BUILDERS } from '../src/layers/furnitureKit.js';
 import { hedgeStyleFor, hedgeClumps } from '../src/layers/hedgeGeometry.js';
 import { resamplePath } from '../src/layers/ribbonGeometry.js';
-import { DEFAULT_SKY_PALETTE, twilightGlow, capLuminance } from '../src/environment/sceneEnvironment.js';
+import { DEFAULT_SKY_PALETTE, twilightGlow, tintByPalette } from '../src/environment/sceneEnvironment.js';
 
 /** Un thème contraire au défaut sur chaque tranche qu'on sait lire. */
 const OTHER = resolveTheme({
@@ -594,11 +594,14 @@ test('la lueur du crépuscule s’éteint avec lui et ne dépasse pas le brouill
   assert.ok(coucher.zenith[2] > coucher.zenith[0], 'bleue au zénith');
 });
 
-test('le plafond de luminance du brouillard garde la teinte de la palette', () => {
-  const fog = [0.8, 0.85, 0.9];
-  assert.deepEqual(capLuminance(fog, 2), fog, 'sous le plafond, rien ne bouge');
-  const capped = capLuminance(fog, 0.2);
-  const lum = capped[0] * 0.2126 + capped[1] * 0.7152 + capped[2] * 0.0722;
-  assert.ok(Math.abs(lum - 0.2) < 1e-9);
-  assert.ok(Math.abs(capped[0] / capped[2] - fog[0] / fog[2]) < 1e-9, 'même teinte');
+test('le brouillard de jour prend la lumière du ciel et la teinte de la palette', () => {
+  const sky = [0.5, 0.6, 0.8];
+  const lum = (c) => c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+  const neutre = tintByPalette(sky, [0.7, 0.7, 0.7]);
+  assert.ok(Math.abs(lum(neutre) - lum(sky)) < 1e-9, 'palette neutre : la lumière du ciel');
+  assert.ok(neutre[2] / neutre[0] < sky[2] / sky[0], 'moins saturé que le ciel');
+  assert.ok(neutre[2] > neutre[0], 'mais encore de sa teinte');
+  const chaude = tintByPalette(sky, [0.9, 0.7, 0.5]);
+  assert.ok(Math.abs(lum(chaude) - lum(sky)) < 1e-9, 'même lumière que le ciel');
+  assert.ok(chaude[0] / chaude[2] > sky[0] / sky[2], 'réchauffée par la palette');
 });
