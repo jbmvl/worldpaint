@@ -111,6 +111,24 @@ Breaking one of these needs a very good reason, stated in the PR description.
   Never rediscover junctions from overlapping ribbons: that finds one per
   overlapping row, in the wrong place.
 
+  A roundabout is the one exception to "one node, one junction": its ring is
+  a small, round face of the graph (`layers/roadRoundabouts.js`), and every
+  node on it folds into a single junction centred on the ring. Its surface is
+  a crown — outer edge pierced by one mouth per branch, island left as
+  terrain — and every branch yields on entering.
+
+  A **fork** — three branches, two of them leaving at a closed angle (a two-way
+  road splitting into two one-way legs, a slip road leaving a carriageway) — is
+  its own kind of junction (`roadJunctions.forkArea`). Its surface runs along
+  the legs' actual paths up to where their axes are a sum of half-widths apart;
+  that point is the nose of the island. Nobody yields at a fork, and it carries
+  no traffic light.
+
+  A one-way carriageway is one direction of a road, not the whole road: a
+  profile's `oneway` keys (theme) replace its own when the data says one-way,
+  width and centre line included. Width being part of a chain's identity, a
+  chain never runs from a two-way road onto one of its one-way legs.
+
   Only paved ways count at a node a paved way reaches. A track or footpath
   never opens a mouth onto a road: it is laid over it, markings included
   (`roadNetwork.roadLiftFor`). Unpaved ways still meet each other where no
@@ -120,6 +138,8 @@ Breaking one of these needs a very good reason, stated in the PR description.
   arrive without a common vertex. `graftLooseNodes` repairs that on the graph,
   under three guards: same level, no `brunnel`, and an angle past 25° (below
   that a way continues rather than meets — `joinLooseEnds`, the tile seam).
+  Two paved axes that cross in an X with no vertex near the crossing are cut
+  there by `splitCrossings`, under the same guards.
 
   The picture is built from the node in `roadJunctions.js`: branches give an
   outline, ribbons stop on it, and it is drawn as one surface — **not

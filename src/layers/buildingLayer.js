@@ -88,7 +88,7 @@ export function buildingPersonalityFor(properties = {}) {
 }
 
 /** Classes brutes de point d'intérêt qui reçoivent un auvent et une terrasse (`appendAwning`, `_appendTerrace`) — la salle déborde sur la rue, une boutique non. */
-const AWNING_CLASSES = new Set(['restaurant', 'bar']);
+const AWNING_CLASSES = new Set(['restaurant', 'bar', 'cafe']);
 
 /** Rang d'une personnalité quand il faut en écarter, petit d'abord (un clocher se voit de loin, une devanture se compte par milliers). */
 export const BUILDING_PERSONALITY_RANK = {
@@ -394,6 +394,73 @@ export function pushPanel(buffer, a, b, bottom, top, nx, nz, low, high) {
 }
 
 /**
+ * `pushPanel` dont le bas et le haut varient d'un bout à l'autre du pan : un
+ * soubassement qui suit la pente du sol. Le pan reste dans le plan vertical du
+ * mur, la normale ne change donc pas.
+ */
+export function pushBand(buffer, a, b, bottomA, bottomB, topA, topB, nx, nz, color) {
+  const corners = [
+    [a.x, bottomA, a.y],
+    [b.x, topB, b.y],
+    [b.x, bottomB, b.y],
+    [a.x, bottomA, a.y],
+    [a.x, topA, a.y],
+    [b.x, topB, b.y],
+  ];
+  for (const [x, y, z] of corners) {
+    buffer.positions.push(x, y, z);
+    buffer.normals.push(nx, 0, nz);
+    buffer.colors.push(color[0], color[1], color[2]);
+  }
+}
+
+/** Pas du relevé du sol au pied d'un mur, en mètres — de l'ordre d'une baie. */
+export const WALL_GROUND_STEP_M = 2;
+
+/**
+ * Relevé du sol au pied d'un pan, bouts compris : ce que le décor du
+ * rez-de-chaussée doit dépasser pour ne jamais être enterré. L'assise seule
+ * ne suffit pas — c'est le point le plus bas de l'empreinte, et sur une pente
+ * le sol remonte le long du mur.
+ *
+ * @param {{x:number,y:number}} a
+ * @param {{x:number,y:number}} b
+ * @param {(x:number, z:number) => number} groundAt Altitude du sol, en mètres de scène.
+ * @returns {{along:number[], y:number[]}}
+ */
+export function wallGroundProfile(a, b, groundAt, step = WALL_GROUND_STEP_M) {
+  const length = Math.hypot(b.x - a.x, b.y - a.y);
+  const count = Math.max(1, Math.ceil(length / step));
+  const along = [];
+  const y = [];
+  for (let i = 0; i <= count; i++) {
+    const t = i / count;
+    along.push(t * length);
+    y.push(groundAt(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t));
+  }
+  return { along, y };
+}
+
+/** Sol le plus haut d'un relevé (`wallGroundProfile`) sur `[from, to]`, interpolé aux bornes. */
+export function profileHighest(profile, from, to) {
+  const { along, y } = profile;
+  const at = (d) => {
+    if (d <= along[0]) return y[0];
+    const last = along.length - 1;
+    if (d >= along[last]) return y[last];
+    let i = 1;
+    while (along[i] < d) i++;
+    const t = (d - along[i - 1]) / (along[i] - along[i - 1]);
+    return y[i - 1] + (y[i] - y[i - 1]) * t;
+  };
+  let highest = Math.max(at(from), at(to));
+  for (let i = 0; i < along.length; i++) {
+    if (along[i] > from && along[i] < to && y[i] > highest) highest = y[i];
+  }
+  return highest;
+}
+
+/**
  * Cote du haut du soubassement, ou `null` s'il n'y a pas lieu d'en poser :
  * une partie en surplomb (`min_height`) ne touche pas le sol, et un mur trop
  * bas se ferait manger entièrement par la bande.
@@ -417,6 +484,44 @@ export function shopfrontTopFor(base, minHeight, eaves) {
   if (minHeight > 0.2) return null;
   const top = base + SHOPFRONT_HEIGHT_M;
   return top < eaves - 1.2 ? top : null;
+}
+
+/** Portée à laquelle un pan cherche sa rue, depuis l'axe de la chaussée. */
+export const STREET_FACADE_REACH_M = 20;
+/** Pan plus court que ceci : un décrochement, pas une façade. */
+const STREET_FACADE_MIN_M = 2;
+/** Cosinus minimal entre la normale du pan et la direction de la rue : la rue doit être **devant**, pas sur le côté. */
+const STREET_FACADE_MIN_COS = 0.7;
+
+/**
+ * Indice du pan qui donne sur la rue (le plus proche d'une chaussée qui lui
+ * fait face), ou -1 si aucun : une enseigne, une terrasse ne se posent que là.
+ *
+ * @param {Array<{x:number,y:number}>} ring Empreinte, dans le sens de `_appendBuilding`.
+ * @param {Object} roadIndex `RoadIndex` des chaussées.
+ */
+export function streetFacadeIndex(ring, roadIndex, reach = STREET_FACADE_REACH_M) {
+  let best = -1;
+  let bestGap = Infinity;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    if (length < STREET_FACADE_MIN_M) continue;
+    const nx = (b.y - a.y) / length;
+    const nz = -(b.x - a.x) / length;
+    const mx = (a.x + b.x) / 2;
+    const mz = (a.y + b.y) / 2;
+    const hit = roadIndex.nearestWithin(mx, mz, reach);
+    if (!hit || hit.distance < 1e-6) continue;
+    if (((hit.x - mx) * nx + (hit.z - mz) * nz) / hit.distance < STREET_FACADE_MIN_COS) continue;
+    const gap = hit.distance - (hit.segment.halfWidth || 0);
+    if (gap < bestGap) {
+      bestGap = gap;
+      best = i;
+    }
+  }
+  return best;
 }
 
 /**
@@ -633,6 +738,15 @@ export function outerRings(geometry) {
  *        reçu sa propre devanture (`appendShopfront`) : le niveau 0 de la
  *        grille générique ne se pose alors pas par-dessus, seuls les étages
  *        au-dessus gardent leurs fenêtres ordinaires.
+ * @param {Object|null} [options.ground] Relevé du sol au pied du pan
+ *        (`wallGroundProfile`) : une baie dont l'encadrement descendrait
+ *        sous le haut du soubassement n'est pas posée, et la porte part du sol.
+ *        Sans relevé, le sol est l'assise.
+ * @param {number} [options.clearAbove] Cote sous laquelle aucune baie ne
+ *        descend — le haut d'une devanture relevée par la pente.
+ * @param {number[]|null} [options.door] Couleur de la porte d'entrée, ou
+ *        `null` pour ne pas en percer. Elle prend la place d'une fenêtre du
+ *        rez-de-chaussée, la plus centrale où elle tient sous l'étage.
  */
 export function appendOpenings(
   openings,
@@ -646,7 +760,7 @@ export function appendOpenings(
   minHeight,
   style,
   look = defaultTheme.windows,
-  { skipGroundLevel = false } = {}
+  { skipGroundLevel = false, ground = null, clearAbove = -Infinity, door = null } = {}
 ) {
   const length = Math.hypot(b.x - a.x, b.y - a.y);
   const storeys = height - minHeight;
@@ -655,6 +769,11 @@ export function appendOpenings(
   const grid = windowGrid(length, storeys, look);
   const startLevel = skipGroundLevel ? 1 : 0;
   if (grid.columns === 0 || grid.levels <= startLevel) return;
+
+  const floorUnder = (from, to) => (ground ? profileHighest(ground, from, to) : base + minHeight);
+  const doorAt = startLevel === 0 && minHeight <= 0.2 && door && look.doorWidthM
+    ? pickDoor(grid, look, floorUnder, base + minHeight, base + height)
+    : null;
 
   // Vecteur unitaire le long du mur, et sa normale déjà fournie.
   const ux = (b.x - a.x) / length;
@@ -675,9 +794,18 @@ export function appendOpenings(
     for (let level = startLevel; level < grid.levels; level++) {
       if (openings.panes >= openings.budget) return;
 
+      if (doorAt && level === 0 && c === doorAt.column) {
+        appendDoor(walls, at, along, ux, uz, nx, nz, doorAt.threshold, look, door);
+        openings.panes++;
+        continue;
+      }
+
       const anchor = at(along, 0);
       const sill = base + minHeight + look.sillM + level * look.levelM;
       const head = sill + look.heightM;
+      const frameBottom = sill - WINDOW_FRAME_M;
+      if (frameBottom < clearAbove) continue;
+      if (ground && frameBottom < floorUnder(along - frameHalf, along + frameHalf) + PLINTH_HEIGHT_M) continue;
       const closed = style.shutters && windowDraw(anchor.x, anchor.z, level + 71) < SHUTTER_CLOSED_SHARE;
 
       // 1. L'encadrement : une bande claire tout autour de la baie. Sans lui,
@@ -773,6 +901,58 @@ export function appendOpenings(
 }
 
 /**
+ * Colonne de la porte d'entrée et cote de son seuil, ou `null` : la plus
+ * centrale dont la porte, posée sur le sol, tient sous l'encadrement de
+ * l'étage et sous l'égout. Sur une pente, c'est ce qui la fait glisser vers
+ * le bas du mur plutôt que de disparaître.
+ */
+function pickDoor(grid, look, floorUnder, floor, eaves) {
+  const half = look.doorWidthM / 2 + WINDOW_FRAME_M;
+  const ceiling = Math.min(floor + look.levelM + look.sillM - WINDOW_FRAME_M, eaves - 0.2);
+  const middle = (grid.columns - 1) / 2;
+  const order = Array.from({ length: grid.columns }, (_, c) => c).sort(
+    (c1, c2) => Math.abs(c1 - middle) - Math.abs(c2 - middle) || c1 - c2
+  );
+  for (const column of order) {
+    const along = grid.spacing * (column + 1);
+    const threshold = Math.max(floor, floorUnder(along - half, along + half));
+    if (threshold + look.doorHeightM + WINDOW_FRAME_M <= ceiling) return { column, threshold };
+  }
+  return null;
+}
+
+/** Encadrement et vantail d'une porte, du seuil à son linteau — rien sous le seuil. */
+function appendDoor(walls, at, along, ux, uz, nx, nz, threshold, look, color) {
+  const half = look.doorWidthM / 2;
+  const frameHalf = half + WINDOW_FRAME_M;
+  const head = threshold + look.doorHeightM;
+  const frame = at(along, WINDOW_LIFT_M.frame);
+  pushPanel(
+    walls,
+    { x: frame.x - ux * frameHalf, y: frame.z - uz * frameHalf },
+    { x: frame.x + ux * frameHalf, y: frame.z + uz * frameHalf },
+    threshold,
+    head + WINDOW_FRAME_M,
+    nx,
+    nz,
+    WINDOW_FRAME_TINT,
+    WINDOW_FRAME_TINT
+  );
+  const leaf = at(along, WINDOW_LIFT_M.glass);
+  pushPanel(
+    walls,
+    { x: leaf.x - ux * half, y: leaf.z - uz * half },
+    { x: leaf.x + ux * half, y: leaf.z + uz * half },
+    threshold,
+    head,
+    nx,
+    nz,
+    color,
+    color
+  );
+}
+
+/**
  * Hauteur de case visée pour le nom peint sur une enseigne, en mètres — voir
  * `appendShopfront`. Nettement moins que `SHOPFRONT_FASCIA_HEIGHT_M` (marge
  * au-dessus/dessous du texte). Un plafond, pas une cible : la largeur se
@@ -780,6 +960,9 @@ export function appendOpenings(
  */
 export const SHOPFRONT_LABEL_HEIGHT_M = 0.42;
 export const SHOPFRONT_LABEL_MIN_HEIGHT_M = 0.14;
+
+/** Hauteur de vitrage en deçà de laquelle une baie de devanture, rognée par la pente, n'est pas posée. */
+export const SHOPFRONT_MIN_BAY_M = 1.2;
 
 /**
  * Découpe un pan de devanture en baies et, si la place le permet, une large
@@ -842,6 +1025,9 @@ export function shopfrontLayout(length, theme = defaultTheme.shopfront) {
  * @param {number} minHeight Hauteur du dessous (surplomb).
  * @param {string|null} name Nom du commerce, ou `null`.
  * @param {Object} [theme] `theme.shopfront`.
+ * @param {Object|null} [ground] Relevé du sol au pied du pan
+ *        (`wallGroundProfile`) : chaque baie part du sol qu'elle surplombe,
+ *        et celle qui n'y garderait plus `SHOPFRONT_MIN_BAY_M` n'est pas posée.
  * @returns {boolean} vrai si une devanture articulée a été posée — l'appelant
  *          s'en sert pour savoir si le rez-de-chaussée générique doit encore
  *          se poser par-dessus.
@@ -859,7 +1045,8 @@ export function appendShopfront(
   shopfrontTop,
   minHeight,
   name,
-  theme = defaultTheme.shopfront
+  theme = defaultTheme.shopfront,
+  ground = null
 ) {
   const length = Math.hypot(b.x - a.x, b.y - a.y);
   const modules = shopfrontLayout(length, theme);
@@ -872,14 +1059,17 @@ export function appendShopfront(
   // (x, y) de l'empreinte, qui est le `z` de la scène.
   const at = (along, lift) => ({ x: a.x + ux * along + nx * lift, z: a.y + uz * along + nz * lift });
 
-  const sill = base + minHeight + theme.sillM;
+  const bottomSill = base + minHeight + theme.sillM;
   const head = shopfrontTop - theme.fasciaHeightM - theme.fasciaGapM;
-  if (head <= sill) return false;
+  if (head <= bottomSill) return false;
 
   for (const module of modules) {
     if (openings && openings.panes >= openings.budget) break;
     const along = length / 2 + module.offset;
     const frameHalf = module.halfWidth + WINDOW_FRAME_M;
+    const floor = ground ? profileHighest(ground, along - frameHalf, along + frameHalf) : -Infinity;
+    const sill = Math.max(bottomSill, floor + theme.sillM);
+    if (head - sill < SHOPFRONT_MIN_BAY_M) continue;
 
     const frame = at(along, WINDOW_LIFT_M.frame);
     pushPanel(
@@ -984,7 +1174,7 @@ const BLADE_SIGN_ROD_COLOR = srgb('#b8bcc0');
  * @param {{x:number,y:number}} b Fin du pan.
  * @param {number} nx Normale sortante, composante x.
  * @param {number} nz Normale sortante, composante z.
- * @param {number} base Assise du bâtiment.
+ * @param {number} base Sol de la façade (le plus haut, sur une pente) : le dégagement piéton se compte depuis lui.
  * @param {number} minHeight Hauteur du dessous (surplomb).
  * @param {string|null} klass Classe brute du point d'intérêt (`shopfrontEmojiFor`).
  * @param {Object} [theme] `theme.shopfront` — sa table `emoji`/`emojiDefault`.
@@ -1085,7 +1275,7 @@ export function appendShopSignBlade(walls, labels, atlas, a, b, nx, nz, base, mi
 }
 
 /**
- * Auvent d'un restaurant ou d'un bar (`AWNING_CLASSES`) : une retombée en
+ * Auvent d'un restaurant, d'un bar ou d'un café (`AWNING_CLASSES`) : une retombée en
  * couleur unie — celle de la devanture — tendue depuis le bas du bandeau
  * d'enseigne (`appendShopfront` peint le nom juste au-dessus). Un pan mince,
  * penché vers la rue, fermé par-dessus, par-dessous et sur sa rive avant pour
@@ -1207,13 +1397,6 @@ export class BuildingLayer {
      */
     this.footprints = [];
     /**
-     * Cheminées de toit de la dernière reconstruction, publiées pour
-     * `lifeLayer` — même titre que `furnitureLayer.chimneys`, dont
-     * `worldComposer` fait la somme avant de les passer à `life.setChimneys`.
-     * @type {Array<{x:number,y:number,z:number}>}
-     */
-    this.chimneys = [];
-    /**
      * Index des chaussées de la dernière reconstruction, ou `null` — c'est lui
      * qui dit ce qu'une empreinte pose sur la voie. Posé par `rebuild`.
      */
@@ -1328,7 +1511,6 @@ export class BuildingLayer {
     const lamps = { positions: [], normals: [], colors: [] };
     const labels = { positions: [], uvs: [] };
     const houses = [];
-    const chimneys = [];
     // Vidée avant d'être remplie : la géométrie qui référence ses cases
     // (`labels`, ci-dessus) est de toute façon intégralement refaite dans
     // cette même passe — voir l'en-tête de `LabelAtlas`.
@@ -1441,8 +1623,7 @@ export class BuildingLayer {
           openings,
           houses,
           owners.has(candidate) ? [owners.get(candidate)] : null,
-          labels,
-          chimneys
+          labels
         )
       ) {
         built++;
@@ -1456,7 +1637,6 @@ export class BuildingLayer {
     this.windowCount = lamps.positions.length / 9;
     this.houses = houses;
     this.footprints = footprints;
-    this.chimneys = chimneys;
     this.personalities = personalities;
     this._applyWindows(lamps);
     this._applyLabels(labels);
@@ -1498,8 +1678,6 @@ export class BuildingLayer {
    *        encore dans l'empreinte rabotée.
    * @param {Object|null} labels Accumulateur `{positions, uvs}` des enseignes
    *        peintes (`appendShopfront`), ou `null` pour ne pas en poser.
-   * @param {Array|null} chimneys Cheminées de toit publiées pour `lifeLayer`,
-   *        ou `null` pour ne pas en poser.
    * @returns {boolean} vrai si le bâtiment a produit de la géométrie.
    */
   _appendBuilding(
@@ -1509,8 +1687,7 @@ export class BuildingLayer {
     openings = null,
     houses = null,
     personalities = null,
-    labels = null,
-    chimneys = null
+    labels = null
   ) {
     const { THREE, bubble } = this;
     const { origin, scale, zoom } = bubble.frame;
@@ -1549,17 +1726,27 @@ export class BuildingLayer {
       for (const p of kept) points.push(new THREE.Vector2(p.x, p.z));
     }
 
-    // Assise : le point le plus bas de l'empreinte. Sur une pente, poser le
+    // Sens de parcours : il détermine de quel côté regardent les murs.
+    const area = ringSignedArea(points.map((p) => [p.x, p.y]));
+    const ordered = area < 0 ? points.slice().reverse() : points;
+
+    // Le sol au pied de chaque pan, relevé le long du mur et pas seulement aux
+    // angles : c'est lui que le décor du rez-de-chaussée doit dépasser.
+    const groundAt = (x, z) => bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
+    const profiles = ordered.map((a, i) => wallGroundProfile(a, ordered[(i + 1) % ordered.length], groundAt));
+
+    // Assise : le point le plus bas du pourtour. Sur une pente, poser le
     // bâtiment à l'altitude de son centre le ferait flotter d'un côté.
     // On retient aussi le point le plus haut : le toit doit le dépasser de
     // `height`, sinon sur un terrain montant le bâtiment paraît enfoncé dans
     // le sol du côté haut alors que ses murs, eux, partent bien de l'assise.
     let base = Infinity;
     let crest = -Infinity;
-    for (const p of points) {
-      const ground = bubble.surfaceElevationAtLocal(p.x, p.y) * bubble.verticalScale;
-      if (ground < base) base = ground;
-      if (ground > crest) crest = ground;
+    for (const profile of profiles) {
+      for (const ground of profile.y) {
+        if (ground < base) base = ground;
+        if (ground > crest) crest = ground;
+      }
     }
     if (!Number.isFinite(base)) return false;
 
@@ -1567,10 +1754,6 @@ export class BuildingLayer {
     const minHeight = buildingMinHeight(properties);
     const bottom = base + minHeight - 0.6; // un peu enterré : pas de jour sous les murs
     const top = crest + height;
-
-    // Sens de parcours : il détermine de quel côté regardent les murs.
-    const area = ringSignedArea(points.map((p) => [p.x, p.y]));
-    const ordered = area < 0 ? points.slice().reverse() : points;
 
     // Couleur et forme du toit : celles du **bourg**, avec une variation par
     // maison. Voir `townStyle` — les tuiles ne portent ni matériau ni forme de
@@ -1634,21 +1817,9 @@ export class BuildingLayer {
     const rise = shape === 'flat' ? 0 : roofRise(box.short, roofs);
     const eaves = Math.max(bottom + 2.4, top - rise);
 
-    // Bandeau bas : soubassement d'ordinaire, **devanture** pour un commerce.
-    // Les deux occupent la même place et ne se cumulent donc pas — une vitrine
-    // descend jusqu'au trottoir, elle ne repose pas sur une plinthe. Voir
-    // `plinthTopFor` et `shopfrontTopFor` : il n'y en a ni sous un surplomb ni
-    // sur un mur trop bas.
-    const shopfrontTop = look?.front ? shopfrontTopFor(base, minHeight, eaves) : null;
-    const plinthTop = shopfrontTop ?? plinthTopFor(base, minHeight, eaves);
-    const plinthColor = shopfrontTop === null ? wallColor.map((c) => c * PLINTH_SHADE) : look.front;
-
-    // Façade sur rue : le pan le plus long de l'empreinte, seul à recevoir la
-    // devanture articulée (`appendShopfront`) ou le balcon — rien dans les
-    // tuiles ne dit quel pan donne vraiment sur la rue, et le plus long est le
-    // choix le moins arbitraire. Les autres pans gardent le simple bandeau
-    // coloré. Calculé pour tout bâtiment, pas seulement un commerce : le
-    // balcon en a besoin lui aussi.
+    // Façade principale : le pan le plus long, qui reçoit la porte et le
+    // balcon — et la devanture quand il n'y a pas d'index des chaussées pour
+    // trouver la rue.
     let frontIndex = -1;
     let frontLength = -1;
     for (let i = 0; i < ordered.length; i++) {
@@ -1660,6 +1831,22 @@ export class BuildingLayer {
         frontIndex = i;
       }
     }
+    // Devanture, enseigne et terrasse vont sur le pan qui donne sur la rue ;
+    // sans rue en face, elles ne se posent pas du tout.
+    const streetIndex = !look?.front ? -1 : this._roadIndex ? streetFacadeIndex(ordered, this._roadIndex) : null;
+    const shopIndex = streetIndex ?? frontIndex;
+    // Le sol le plus haut de la façade : une devanture s'y cale, sans quoi le
+    // haut de la rue enterrerait ses baies.
+    const frontFloor = Math.max(...profiles[shopIndex >= 0 ? shopIndex : frontIndex].y);
+
+    // Bandeau bas : soubassement d'ordinaire, **devanture** pour un commerce.
+    // Les deux occupent la même place et ne se cumulent donc pas — une vitrine
+    // descend jusqu'au trottoir, elle ne repose pas sur une plinthe. Voir
+    // `plinthTopFor` et `shopfrontTopFor` : il n'y en a ni sous un surplomb ni
+    // sur un mur trop bas. Le soubassement suit le sol le long de chaque pan.
+    const shopfrontTop = look?.front ? shopfrontTopFor(frontFloor, minHeight, eaves) : null;
+    const plinth = shopfrontTop === null && plinthTopFor(base, minHeight, eaves) !== null;
+    const bandColor = shopfrontTop === null ? wallColor.map((c) => c * PLINTH_SHADE) : look.front;
 
     // Balcon : une maison de ville assez haute pour un étage — jamais une
     // grange, une église ou un commerce (voir `_appendBalcony`).
@@ -1684,9 +1871,20 @@ export class BuildingLayer {
       // Enroulement choisi pour que la face avant regarde vers l'extérieur :
       // notre plan (x, z) est de chiralité opposée au plan (x, y) usuel, donc
       // l'ordre « naturel » donnerait des murs visibles seulement de l'intérieur.
-      if (plinthTop !== null) {
-        pushPanel(walls, a, b, bottom, plinthTop, nx, nz, plinthColor, plinthColor);
-        pushPanel(walls, a, b, plinthTop, eaves, nx, nz, wallColor, wallColor);
+      const profile = profiles[i];
+      if (shopfrontTop !== null) {
+        pushPanel(walls, a, b, bottom, shopfrontTop, nx, nz, bandColor, bandColor);
+        pushPanel(walls, a, b, shopfrontTop, eaves, nx, nz, wallColor, wallColor);
+      } else if (plinth) {
+        const count = profile.along.length - 1;
+        for (let k = 0; k < count; k++) {
+          const p0 = { x: a.x + (b.x - a.x) * (k / count), y: a.y + (b.y - a.y) * (k / count) };
+          const p1 = { x: a.x + (b.x - a.x) * ((k + 1) / count), y: a.y + (b.y - a.y) * ((k + 1) / count) };
+          const top0 = Math.min(eaves, profile.y[k] + PLINTH_HEIGHT_M);
+          const top1 = Math.min(eaves, profile.y[k + 1] + PLINTH_HEIGHT_M);
+          pushBand(walls, p0, p1, bottom, bottom, top0, top1, nx, nz, bandColor);
+          pushBand(walls, p0, p1, top0, top1, eaves, eaves, nx, nz, wallColor);
+        }
       } else {
         pushPanel(walls, a, b, bottom, eaves, nx, nz, wallColor, wallColor);
       }
@@ -1697,7 +1895,7 @@ export class BuildingLayer {
         // est trop étroit pour en tenir une seule, elle ne pose rien et le
         // rez-de-chaussée générique reprend la main, comme partout ailleurs.
         const devanture =
-          i === frontIndex &&
+          i === shopIndex &&
           shopfrontTop !== null &&
           appendShopfront(
             openings,
@@ -1712,15 +1910,19 @@ export class BuildingLayer {
             shopfrontTop,
             minHeight,
             personalityName,
-            this.theme.shopfront
+            this.theme.shopfront,
+            profile
           );
         appendOpenings(openings, walls, a, b, nx, nz, base, eaves - base, minHeight, style, this.theme.windows, {
           skipGroundLevel: devanture,
+          ground: profile,
+          clearAbove: devanture ? shopfrontTop : -Infinity,
+          door: i === frontIndex && !devanture ? style.shutter : null,
         });
 
         // Enseigne en drapeau : indépendante de la devanture au sol — une
         // façade trop étroite pour une porte garde son pictogramme.
-        if (i === frontIndex && shopfrontTop !== null) {
+        if (i === shopIndex && shopfrontTop !== null) {
           appendShopSignBlade(
             walls,
             labels,
@@ -1729,17 +1931,17 @@ export class BuildingLayer {
             b,
             nx,
             nz,
-            base,
+            frontFloor,
             minHeight,
             personalityClass,
             this.theme.shopfront
           );
 
           // Salle qui déborde sur la rue : auvent coloré à l'enseigne et
-          // terrasse, restaurant comme bar — voir `AWNING_CLASSES`.
+          // terrasse, restaurant, bar ou café — voir `AWNING_CLASSES`.
           if (AWNING_CLASSES.has(personalityClass)) {
             appendAwning(walls, a, b, nx, nz, shopfrontTop, look.front, this.theme.shopfront);
-            this._appendTerrace(walls, a, b, nx, nz, base, minHeight, personalityClass === 'restaurant');
+            this._appendTerrace(walls, a, b, nx, nz, groundAt, minHeight, personalityClass === 'restaurant');
           }
         }
       }
@@ -1789,19 +1991,15 @@ export class BuildingLayer {
       if (look.dome || look.minaret) this._appendDomeAndMinaret(walls, look, box, base, eaves);
     }
 
-    // Cheminée de toit : un comble, une maison, jamais une église ni un
-    // commerce — la fumée d'une exploitation agricole a déjà sa propre place
-    // (`furniture/parcels.placeFarmstead`), celle-ci est pour le reste du bâti.
+    // Cheminée de toit : un comble, une maison, jamais une église ni un commerce.
     if (
-      chimneys &&
       box &&
       shape !== 'flat' &&
       style.house &&
       !look &&
       randomAt(box.cx, box.cz, 421) < CHIMNEY_SHARE
     ) {
-      const smoke = this._appendChimney(walls, box, top);
-      if (smoke) chimneys.push(smoke);
+      this._appendChimney(walls, box, top);
     }
 
     return true;
@@ -1914,8 +2112,6 @@ export class BuildingLayer {
    * au milieu se lirait comme un clocher (voir `_appendSteeple`), une vraie
    * cheminée sort près d'un pignon.
    *
-   * @returns {{x:number,y:number,z:number}} le sommet du fût, pour la fumée
-   *          de `lifeLayer` (voir `_appendBuilding`).
    */
   _appendChimney(walls, box, top) {
     const foot = chimneyFootFor(box);
@@ -1934,7 +2130,6 @@ export class BuildingLayer {
     // Posée juste sous le faîtage : elle perce le comble plutôt que de flotter dessus.
     const base = top - 0.6;
     this._pushKitAt(walls, kit, foot.x, base, foot.z);
-    return { x: foot.x, y: base + foot.height + 0.12, z: foot.z };
   }
 
   /**
@@ -1992,7 +2187,7 @@ export class BuildingLayer {
   }
 
   /**
-   * Terrasse d'un restaurant ou d'un bar : des tables réparties le long du pan
+   * Terrasse d'un restaurant, d'un bar ou d'un café : des tables réparties le long du pan
    * de façade, reculées de `terraceDepthM` — la section entre le mur et la
    * chaussée, trottoir ou simple espace vide, peu importe : rien n'y borne la
    * pose que la chaussée elle-même. Une table qui mordrait dessus (moins de
@@ -2004,16 +2199,15 @@ export class BuildingLayer {
    * @param {{x:number,y:number}} b Fin du pan.
    * @param {number} nx Normale sortante, composante x.
    * @param {number} nz Normale sortante, composante z.
-   * @param {number} base Assise du bâtiment.
+   * @param {(x:number, z:number) => number} groundAt Altitude du sol : chaque table se pose sur le sien.
    * @param {number} minHeight Hauteur du dessous (surplomb).
    * @param {boolean} dressed Vrai pour un restaurant (table dressée).
    */
-  _appendTerrace(walls, a, b, nx, nz, base, minHeight, dressed) {
+  _appendTerrace(walls, a, b, nx, nz, groundAt, minHeight, dressed) {
     const theme = this.theme.shopfront;
     const length = Math.hypot(b.x - a.x, b.y - a.y);
     const ux = (b.x - a.x) / length;
     const uz = (b.y - a.y) / length;
-    const groundY = base + minHeight;
 
     const count = Math.max(1, Math.round(length / theme.terraceSpacingM));
     const span = (count - 1) * theme.terraceSpacingM;
@@ -2025,7 +2219,7 @@ export class BuildingLayer {
       const x = a.x + ux * along + nx * theme.terraceDepthM;
       const z = a.y + uz * along + nz * theme.terraceDepthM;
       if (this._roadIndex && this._roadIndex.query(x, z, theme.terraceClearanceM)) continue;
-      this._pushKitAt(walls, kit, x, groundY, z);
+      this._pushKitAt(walls, kit, x, groundAt(x, z) + minHeight, z);
     }
   }
 
