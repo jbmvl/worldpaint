@@ -76,6 +76,7 @@ import {
   outlineDistance,
   JunctionAreas,
   JUNCTION_CORNER_MAX_M,
+  lowestDeckAround,
 } from '../src/layers/roadJunctions.js';
 import {
   absorbParallelLines,
@@ -8372,6 +8373,25 @@ test('la cote de la dalle se lit en tout point qu’elle couvre', () => {
     1e-6,
     'entre les deux'
   );
+});
+
+test('le terrain passe sous les plis de la dalle : sa cote est la plus basse à une maille', () => {
+  const area = junctionArea(teeJunction());
+  area.decks = area.mouths.map((mouth) => 100 + mouth.centre.x * 0.1 - mouth.centre.z * 0.15);
+  const radius = 6.6;
+  for (const [x, z] of [[area.x, area.z], [area.x + 3, area.z - 2], [area.x - 5, area.z + 4]]) {
+    let finest = Infinity;
+    for (let dx = -radius; dx <= radius; dx += 0.2) {
+      for (let dz = -radius; dz <= radius; dz += 0.2) {
+        if (dx * dx + dz * dz > radius * radius || !pointInOutline(area.outline, x + dx, z + dz)) continue;
+        finest = Math.min(finest, junctionDeckAt(area, area.decks, x + dx, z + dz));
+      }
+    }
+    assert.ok(lowestDeckAround(area, x, z, radius) <= finest + 1e-9, `(${x}, ${z}) : pas au-dessus de la dalle`);
+  }
+  const areas = new JunctionAreas([teeJunction()]);
+  areas.areas[0].decks = area.decks;
+  assert.ok(areas.deckNear(area.x, area.z, 10, 0, radius).deck < areas.deckNear(area.x, area.z, 10).deck, 'deckNear l’applique');
 });
 
 test('un carrefour sans cote ne creuse pas le terrain', () => {
