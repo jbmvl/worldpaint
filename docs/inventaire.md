@@ -328,6 +328,10 @@ l'empreinte qui le contient.
 | `bakery` | devanture en bois verni |
 | dix-huit classes de commerce | devanture au rez-de-chaussée, avec enseigne et pictogramme |
 
+Devanture, enseigne, auvent et terrasse se posent sur le pan qui **fait face à
+une chaussée** (la plus proche, à moins de 20 m de son axe) ; un commerce sans
+rue en face garde ses couleurs mais ne porte ni enseigne ni terrasse.
+
 Château, monument, tour, moulin et grande roue restent du mobilier posé à part :
 ce sont de grandes structures qu'une empreinte ordinaire ne recouvre pas.
 

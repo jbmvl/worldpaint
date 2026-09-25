@@ -88,7 +88,7 @@ export function buildingPersonalityFor(properties = {}) {
 }
 
 /** Classes brutes de point d'intérêt qui reçoivent un auvent et une terrasse (`appendAwning`, `_appendTerrace`) — la salle déborde sur la rue, une boutique non. */
-const AWNING_CLASSES = new Set(['restaurant', 'bar']);
+const AWNING_CLASSES = new Set(['restaurant', 'bar', 'cafe']);
 
 /** Rang d'une personnalité quand il faut en écarter, petit d'abord (un clocher se voit de loin, une devanture se compte par milliers). */
 export const BUILDING_PERSONALITY_RANK = {
@@ -383,6 +383,44 @@ export function shopfrontTopFor(base, minHeight, eaves) {
   if (minHeight > 0.2) return null;
   const top = base + SHOPFRONT_HEIGHT_M;
   return top < eaves - 1.2 ? top : null;
+}
+
+/** Portée à laquelle un pan cherche sa rue, depuis l'axe de la chaussée. */
+export const STREET_FACADE_REACH_M = 20;
+/** Pan plus court que ceci : un décrochement, pas une façade. */
+const STREET_FACADE_MIN_M = 2;
+/** Cosinus minimal entre la normale du pan et la direction de la rue : la rue doit être **devant**, pas sur le côté. */
+const STREET_FACADE_MIN_COS = 0.7;
+
+/**
+ * Indice du pan qui donne sur la rue (le plus proche d'une chaussée qui lui
+ * fait face), ou -1 si aucun : une enseigne, une terrasse ne se posent que là.
+ *
+ * @param {Array<{x:number,y:number}>} ring Empreinte, dans le sens de `_appendBuilding`.
+ * @param {Object} roadIndex `RoadIndex` des chaussées.
+ */
+export function streetFacadeIndex(ring, roadIndex, reach = STREET_FACADE_REACH_M) {
+  let best = -1;
+  let bestGap = Infinity;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    if (length < STREET_FACADE_MIN_M) continue;
+    const nx = (b.y - a.y) / length;
+    const nz = -(b.x - a.x) / length;
+    const mx = (a.x + b.x) / 2;
+    const mz = (a.y + b.y) / 2;
+    const hit = roadIndex.nearestWithin(mx, mz, reach);
+    if (!hit || hit.distance < 1e-6) continue;
+    if (((hit.x - mx) * nx + (hit.z - mz) * nz) / hit.distance < STREET_FACADE_MIN_COS) continue;
+    const gap = hit.distance - (hit.segment.halfWidth || 0);
+    if (gap < bestGap) {
+      bestGap = gap;
+      best = i;
+    }
+  }
+  return best;
 }
 
 /**
@@ -1127,7 +1165,7 @@ export function appendShopSignBlade(walls, labels, atlas, a, b, nx, nz, base, mi
 }
 
 /**
- * Auvent d'un restaurant ou d'un bar (`AWNING_CLASSES`) : une retombée en
+ * Auvent d'un restaurant, d'un bar ou d'un café (`AWNING_CLASSES`) : une retombée en
  * couleur unie — celle de la devanture — tendue depuis le bas du bandeau
  * d'enseigne (`appendShopfront` peint le nom juste au-dessus). Un pan mince,
  * penché vers la rue, fermé par-dessus, par-dessous et sur sa rive avant pour
@@ -1663,10 +1701,9 @@ export class BuildingLayer {
     const rise = shape === 'flat' ? 0 : roofRise(box.short, roofs);
     const eaves = Math.max(bottom + 2.4, top - rise);
 
-    // Façade sur rue : le pan le plus long de l'empreinte, seul à recevoir la
-    // devanture articulée (`appendShopfront`), la porte ou le balcon — rien
-    // dans les tuiles ne dit quel pan donne vraiment sur la rue, et le plus
-    // long est le choix le moins arbitraire.
+    // Façade principale : le pan le plus long, qui reçoit la porte et le
+    // balcon — et la devanture quand il n'y a pas d'index des chaussées pour
+    // trouver la rue.
     let frontIndex = -1;
     let frontLength = -1;
     for (let i = 0; i < ordered.length; i++) {
@@ -1678,9 +1715,13 @@ export class BuildingLayer {
         frontIndex = i;
       }
     }
+    // Devanture, enseigne et terrasse vont sur le pan qui donne sur la rue ;
+    // sans rue en face, elles ne se posent pas du tout.
+    const streetIndex = !look?.front ? -1 : this._roadIndex ? streetFacadeIndex(ordered, this._roadIndex) : null;
+    const shopIndex = streetIndex ?? frontIndex;
     // Le sol le plus haut de la façade : une devanture s'y cale, sans quoi le
     // haut de la rue enterrerait ses baies.
-    const frontFloor = Math.max(...profiles[frontIndex].y);
+    const frontFloor = Math.max(...profiles[shopIndex >= 0 ? shopIndex : frontIndex].y);
 
     // Bandeau bas : soubassement d'ordinaire, **devanture** pour un commerce.
     // Les deux occupent la même place et ne se cumulent donc pas — une vitrine
@@ -1738,7 +1779,7 @@ export class BuildingLayer {
         // est trop étroit pour en tenir une seule, elle ne pose rien et le
         // rez-de-chaussée générique reprend la main, comme partout ailleurs.
         const devanture =
-          i === frontIndex &&
+          i === shopIndex &&
           shopfrontTop !== null &&
           appendShopfront(
             openings,
@@ -1765,7 +1806,7 @@ export class BuildingLayer {
 
         // Enseigne en drapeau : indépendante de la devanture au sol — une
         // façade trop étroite pour une porte garde son pictogramme.
-        if (i === frontIndex && shopfrontTop !== null) {
+        if (i === shopIndex && shopfrontTop !== null) {
           appendShopSignBlade(
             walls,
             labels,
@@ -1781,7 +1822,7 @@ export class BuildingLayer {
           );
 
           // Salle qui déborde sur la rue : auvent coloré à l'enseigne et
-          // terrasse, restaurant comme bar — voir `AWNING_CLASSES`.
+          // terrasse, restaurant, bar ou café — voir `AWNING_CLASSES`.
           if (AWNING_CLASSES.has(personalityClass)) {
             appendAwning(walls, a, b, nx, nz, shopfrontTop, look.front, this.theme.shopfront);
             this._appendTerrace(walls, a, b, nx, nz, groundAt, minHeight, personalityClass === 'restaurant');
@@ -2030,7 +2071,7 @@ export class BuildingLayer {
   }
 
   /**
-   * Terrasse d'un restaurant ou d'un bar : des tables réparties le long du pan
+   * Terrasse d'un restaurant, d'un bar ou d'un café : des tables réparties le long du pan
    * de façade, reculées de `terraceDepthM` — la section entre le mur et la
    * chaussée, trottoir ou simple espace vide, peu importe : rien n'y borne la
    * pose que la chaussée elle-même. Une table qui mordrait dessus (moins de
