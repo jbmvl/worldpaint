@@ -123,6 +123,7 @@ import {
   resampleLevels,
   resampleOneway,
   levelWorkSpans,
+  raiseApproaches,
   drawableRuns,
   bridgeFreeboardFor,
   BRIDGE_CROSSING_COS,
@@ -1051,16 +1052,19 @@ export function collectRoadSegments(
     // accotement. L'index n'inscrit pas les lignes d'ouvrage, donc un pont ne
     // se relève jamais au-dessus d'un autre pont — ni au-dessus du sien.
     const grade = new RoadIndex(out, { margin: 0 });
+    const abutments = [];
     for (let si = 0; si < out.length; si++) {
       const segment = out[si];
       if (!segment.works.some((code) => code !== 0)) continue;
-      segment.approach = new Float32Array(segment.path.length);
+      const own = [];
       levelWorkSpans(segment.path, segment.platform, segment.works, {
         clearanceAt: crossedDeckAt(grade, segment, si),
         floorAt,
-        approach: segment.approach,
+        abutments: own,
       });
+      for (const abutment of own) abutments.push({ segment: si, ...abutment });
     }
+    raiseApproaches(out, abutments, { centres: areas?.areas });
   }
 
   return {

@@ -10,6 +10,13 @@
  *
  * Les lignes d'ouvrage d'art (pont, tunnel) n'arrivent pas jusqu'ici :
  * `buildRoadside` les a déjà écartées, un tablier n'a ni talus ni mur.
+ *
+ * Chaque ouvrage se pose **au-delà de la rive**, et ce qui s'y trouve n'est
+ * pas toujours du terrain : une autre chaussée, la dalle d'un carrefour, la
+ * bouche d'une branche. La place libre d'une rive est donc mesurée ligne par
+ * ligne (`measureRoom`, qui pose la question de `roadEdges.edgeClearance`), et
+ * aucun ouvrage ne s'étend au-delà : un talus s'y raidit, un mur, une falaise
+ * ou une glissière qui n'y tiennent pas ne s'y posent pas.
  */
 
 import {
@@ -20,6 +27,8 @@ import {
   pathFrames,
 } from '../ribbonGeometry.js';
 import { facetJitter } from '../facetJitter.js';
+import { edgeClearance } from '../roadEdges.js';
+import { LEVEL_GROUND } from '../roadWorks.js';
 import { ROAD_LIFT_M } from '../roadNetwork.js';
 import { ROAD_CUT_BLEND_M } from '../../terrain/roadCut.js';
 import {
@@ -49,6 +58,92 @@ const ROCK_CUT_SEED = 9137;
 /** Graines du grain du mur de soutènement et du talus (`facetJitter`). */
 const FILL_WALL_SEED = 9241;
 const EMBANKMENT_SEED = 9311;
+
+/** Portée de la mesure de place libre : l'étalement du plus haut talus. */
+export const RELIEF_ROOM_REACH_M = 12;
+/** Place au-dessous de laquelle une rive ne porte aucun ouvrage, en mètres. */
+export const RELIEF_MIN_ROOM_M = 0.5;
+/**
+ * Décollement de la sonde au-delà de la rive : juste assez pour sortir du
+ * ruban, pas assez pour enjamber la bordure d'une dalle voisine.
+ */
+const ROOM_PROBE_M = 0.25;
+
+/**
+ * Pose sur chaque ligne la place libre au-delà de ses deux rives
+ * (`row.room[1]` à gauche de la marche, `row.room[-1]` à droite).
+ *
+ * La chaussée elle-même ne se compte pas ; toutes les autres, et toutes les
+ * dalles de carrefour, oui — y compris celle que ce tronçon traverse : c'est
+ * elle qui ouvre la bouche d'une branche dans sa rive.
+ *
+ * Dans un carrefour, la rive du ruban est sous la dalle ; la plate-forme, elle,
+ * continue jusqu'au contour. `row.fill[side]` dit où ce contour coupe la
+ * normale de la ligne (`offset`, au-delà de la rive) et la place libre au-delà
+ * (`room`) : c'est de là que part le talus, dans la direction de sa route. Les
+ * talus de deux branches se rencontrent ainsi dans le coin, comme ceux d'un
+ * vrai remblai, au lieu de partir de l'arc — dont les normales convergent.
+ */
+export function measureRoom(layer, segment, rows) {
+  const frames = segment.frames ?? pathFrames(segment.path);
+  const areas = layer._areas;
+  const own = (other) => other === segment;
+  // L'axe d'une branche court jusqu'au nœud, sous la dalle : ce bout-là n'est
+  // pas un ruban mais la dalle, déjà comptée comme aire.
+  const underSlab = (other, r) => (other.junction?.[r] ?? -1) >= 0 && (other.junction?.[r + 1] ?? -1) >= 0;
+  for (const row of rows) {
+    const px = frames[row.r * 4 + 2];
+    const pz = frames[row.r * 4 + 3];
+    const level = segment.levels?.[row.r] ?? LEVEL_GROUND;
+    const area = segment.junction?.[row.r] ?? -1;
+    const at = (side, beyond) => {
+      const offset = side * (segment.halfWidth + beyond);
+      return { x: row.x + px * offset, z: row.z + pz * offset };
+    };
+    row.room = {};
+    row.fill = {};
+    for (const side of [1, -1]) {
+      const probe = at(side, ROOM_PROBE_M);
+      row.room[side] = edgeClearance(probe.x, probe.z, {
+        roadIndex: layer._roadIndex,
+        areas,
+        level,
+        ignore: own,
+        ignoreRow: underSlab,
+        reach: RELIEF_ROOM_REACH_M,
+      });
+      if (area < 0 || row.room[side] > 0 || !areas) continue;
+
+      for (let beyond = ROOM_PROBE_M; beyond <= RELIEF_ROOM_REACH_M; beyond += ROOM_PROBE_M) {
+        const p = at(side, beyond);
+        if (areas.indexAt(p.x, p.z, level) === area) continue;
+        row.fill[side] = {
+          offset: beyond,
+          room: edgeClearance(p.x, p.z, {
+            roadIndex: layer._roadIndex,
+            areas,
+            level,
+            ignore: own,
+            ignoreRow: underSlab,
+            ignoreArea: (other) => other === area,
+            reach: RELIEF_ROOM_REACH_M,
+          }),
+        };
+        break;
+      }
+    }
+  }
+}
+
+/** Place libre d'une rive, mesurée ou non (sans mesure : toute la portée). */
+export function roomOn(row, side) {
+  return row.room?.[side] ?? RELIEF_ROOM_REACH_M;
+}
+
+/** Place libre du talus : au-delà du contour d'un carrefour s'il y en a un. */
+function fillRoomOn(row, side) {
+  return row.fill?.[side]?.room ?? roomOn(row, side);
+}
 
 /**
  * Ce que le relief impose : les ouvrages qui tiennent la chaussée sur un
@@ -87,7 +182,10 @@ export function buildRoadsideRelief(layer, context, segment, rowsInfo) {
   buildParapets(layer, context, segment, rowsInfo);
   buildRockCut(layer, context, segment, rowsInfo);
 
-  for (const run of contiguousRuns(rowsInfo, (row) => row.slope >= STEEP_CROSS_SLOPE, 5)) {
+  const fill = layer.specs.wallSpecs.fill;
+  const holds = (row) =>
+    row.slope >= STEEP_CROSS_SLOPE && roomOn(row, -row.uphill) >= fill.thickness + RELIEF_MIN_ROOM_M;
+  for (const run of contiguousRuns(rowsInfo, holds, 5)) {
     const side = run[Math.floor(run.length / 2)].uphill;
     // Distances ramenées à zéro : un tronçon extrait au kilomètre 3 doit
     // s'espacer depuis son propre début, pas depuis celui de la chaussée.
@@ -96,7 +194,6 @@ export function buildRoadsideRelief(layer, context, segment, rowsInfo) {
     const deck = new Float32Array(run.map((row) => platform[row.r]));
 
     // --- Aval : le parement du remblai, et la glissière dessus ------------
-    const fill = layer.specs.wallSpecs.fill;
     const offset = -side * (halfWidth + fill.thickness / 2);
     const frames = pathFrames(runPath);
     const grain = facetJitter(runPath, FILL_WALL_SEED, fill.grain);
@@ -194,7 +291,8 @@ export function buildRockCut(layer, context, segment, rowsInfo) {
   // Un tronçon par côté, et non le côté du milieu retenu pour tout le
   // tronçon : le versant peut changer de main au passage d'un col, et la
   // paroi se retrouverait alors à sonder le vide en aval.
-  const uphill = (row, wanted) => row.uphill === wanted && row.rise >= ROCK_CUT_MIN_RISE_M;
+  const uphill = (row, wanted) =>
+    row.uphill === wanted && row.rise >= ROCK_CUT_MIN_RISE_M && roomOn(row, wanted) >= cutBench + spec.minReach;
   for (const side of [1, -1]) {
     for (const run of contiguousRuns(rowsInfo, (row) => uphill(row, side), 5)) {
       const rows = run.length;
@@ -325,7 +423,8 @@ export function buildParapets(layer, context, segment, rowsInfo) {
   // Un tronçon par matière : mélanger acier et bois sur la même longueur
   // produirait un raccord au milieu de la courbe, qu'on ne voit nulle part.
   for (const family of ['steel', 'wood']) {
-    for (const run of contiguousRuns(rowsInfo, (row) => styleOf(row) === family, 6)) {
+    const fits = (row) => styleOf(row) === family && roomOn(row, -row.uphill) >= RELIEF_MIN_ROOM_M;
+    for (const run of contiguousRuns(rowsInfo, fits, 6)) {
       const side = run[Math.floor(run.length / 2)].uphill;
       const origin = run[0].distance;
       const runPath = run.map((row) => ({ x: row.x, z: row.z, distance: row.distance - origin }));
@@ -393,7 +492,8 @@ export function buildEmbankment(layer, context, segment, rowsInfo, walled) {
     [(row) => row.drop, (row) => -row.uphill],
     [(row) => row.perch, (row) => row.uphill],
   ]) {
-    const keep = (row) => dropOf(row) >= EMBANKMENT_MIN_DROP_M && !walled.has(row.r);
+    const keep = (row) =>
+      dropOf(row) >= EMBANKMENT_MIN_DROP_M && !walled.has(row.r) && fillRoomOn(row, sideOf(row)) >= RELIEF_MIN_ROOM_M;
     for (const run of contiguousRuns(rowsInfo, keep, 4)) {
       const side = sideOf(run[Math.floor(run.length / 2)]);
       const path = run.map((row) => ({ x: row.x, z: row.z, distance: row.distance }));
@@ -405,6 +505,8 @@ export function buildEmbankment(layer, context, segment, rowsInfo, walled) {
       // taillée sur le plus haut débordait loin dans le pré au pied de la rampe.
       const drop = new Float32Array(run.map((row) => Math.min(dropOf(row), 6)));
       smoothColumns(drop, run.length, 1, 2);
+      // Étalement de la section unitaire, en mètres par unité d'échelle.
+      const spreadOf = layer.specs.embankmentProfile(1, side).reduce((m, v) => Math.max(m, Math.abs(v.across)), 0);
       appendProfile(buffers.embankment, {
         path,
         // La section descend du côté où elle est posée : sur la rive gauche,
@@ -414,7 +516,10 @@ export function buildEmbankment(layer, context, segment, rowsInfo, walled) {
         offset: side * halfWidth,
         baseHeights: new Float32Array(run.map((row) => platform[row.r])),
         scaleUp: grain.up.map((up, i) => up * drop[i]),
-        scaleAcross: grain.across.map((across, i) => across * drop[i]),
+        // Au-delà de la place libre, le talus se raidit plutôt que de
+        // s'étaler sur la chaussée d'à côté.
+        scaleAcross: grain.across.map((across, i) => Math.min(across * drop[i], fillRoomOn(run[i], side) / spreadOf)),
+        lateralJitter: new Float32Array(run.map((row) => side * (row.fill?.[side]?.offset ?? 0))),
       });
     }
   }

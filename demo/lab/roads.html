@@ -11,9 +11,10 @@
 <body>
 <script type="module">
 /*
- * Banc de la voirie — chaussées, ponts et carrefours sur un relief synthétique,
- * construits par les vraies couches (`TerrainBubble`, `RoadNetwork`,
- * `BridgeLayer`) à partir de tuiles vectorielles écrites ici. Aucun réseau :
+ * Banc de la voirie — chaussées, ponts, carrefours et falaises sur un relief
+ * synthétique, construits par les vraies couches (`TerrainBubble`,
+ * `CliffLayer`, `RoadNetwork`, `BridgeLayer`, `FurnitureLayer`) à partir de
+ * tuiles vectorielles écrites ici. Aucun réseau :
  * piloté depuis la console ou par `scripts/roads-shot.mjs`.
  *
  *   roadsLab.set({ scene: 'pont', yawDeg: 200, pitchDeg: 30, distance: 70 })
@@ -30,6 +31,8 @@ import { ElevationField } from '/src/core/elevationField.js';
 import { RoadNetwork, createRoadMaterials } from '/src/layers/roadNetwork.js';
 import { BridgeLayer } from '/src/layers/bridgeLayer.js';
 import { FurnitureLayer } from '/src/layers/furnitureLayer.js';
+import { CliffLayer } from '/src/layers/cliffLayer.js';
+import { defaultTheme } from '/src/themes/default.js';
 import { createLocalFrame, tileXToLng, tileYToLat } from '/src/core/tileMath.js';
 
 // Ceux de `world.js` (`DEFAULT_VIEW`, `DEFAULT_ELEVATION_ZOOM`), recopiés :
@@ -41,13 +44,20 @@ const LNG = 0;
 const LAT = 45;
 const frame = createLocalFrame(LNG, LAT, DEFAULT_VIEW.zoom);
 
+const sig = (t) => 1 / (1 + Math.exp(-t));
+/** Rampe douce : 0 avant `d = 0`, pente 1 au-delà, raccordée sans cassure. */
+const softRamp = (d, round = 30) => 0.5 * (d + Math.sqrt(d * d + round * round));
+
 /**
- * Relief, en mètres locaux (x est, z sud) : une plaine à 50 m, et à l'est un
- * versant qui monte à 9 % vers l'est, raccordé sans cassure.
+ * Relief, en mètres locaux (x est, z sud) : une plaine à 50 m ; à l'est, un
+ * versant qui monte à 9 % ; à l'ouest, un flanc à 25 % qui monte vers l'ouest ;
+ * au nord-ouest, un plateau de douze mètres bordé d'une falaise en `z = -450`.
  */
 function heightAt(x, z) {
-  const d = x - 250;
-  return 50 + 0.09 * 0.5 * (d + Math.sqrt(d * d + 900));
+  let h = 50 + 0.09 * softRamp(x - 250);
+  h += 0.25 * softRamp(-350 - x, 20);
+  h += 12 * sig((-450 - z) / 4) * sig((x + 350) / 10) * sig((-50 - x) / 10);
+  return h;
 }
 
 /** MNT tiré de `heightAt` : les tuiles se calculent au lieu de se télécharger. */
@@ -82,42 +92,67 @@ const way = (properties, ...points) => ({
 });
 
 /*
- * « pont » : une primaire franchit une secondaire (niveau 1, `brunnel`) ; le
- * gabarit la relève et le remblai d'accès la ramène au sol sur
- * `BRIDGE_RAMP_M`. Une voie étroite s'y branche en T à huit mètres de la
- * culée, là où le remblai porte encore l'essentiel du relevage.
- * « pont-etroit » : la même chose, mais c'est la route du pont qui est la
- * plus étroite — la couture suit la plus large.
+ * Toutes les scènes vivent dans le même monde, à portée du mobilier.
+ *
+ * « pont » : une primaire franchit une secondaire (niveau 1, `brunnel`) et
+ * redescend en remblai ; une voie étroite s'y branche en T à huit mètres de la
+ * culée, et une autre coupe le remblai en X plus loin.
+ * « pont-large » : la route du pont est la plus étroite ; la branche, plus
+ * large, commande le carrefour.
+ * « classe » : la route change de classe sur son remblai — deux chaînes.
  * « pente » : un carrefour en croix sur le versant à 9 %.
+ * « devers » : une route à flanc de versant à 25 %, en mur côté aval, et une
+ * branche qui en descend.
+ * « falaise » : une route au pied d'une falaise relevée, une autre au sommet,
+ * et une rampe qui les relie à travers la paroi.
  */
 const FEATURES = [
-  way({ class: 'secondary' }, [0, -800], [0, 800]),
+  way({ class: 'secondary' }, [0, -350], [0, 800]),
 
   way({ class: 'primary' }, [-250, 0], [-12, 0]),
   way({ class: 'primary', brunnel: 'bridge', layer: 1 }, [-12, 0], [12, 0]),
-  way({ class: 'primary' }, [12, 0], [20, 0], [250, 0]),
+  way({ class: 'primary' }, [12, 0], [20, 0], [60, 0], [250, 0]),
   way({ class: 'minor' }, [20, 0], [20, 200]),
+  way({ class: 'minor' }, [60, -120], [60, 0], [60, 120]),
 
   way({ class: 'minor' }, [-250, 500], [-12, 500]),
   way({ class: 'minor', brunnel: 'bridge', layer: 1 }, [-12, 500], [12, 500]),
   way({ class: 'minor' }, [12, 500], [20, 500], [250, 500]),
   way({ class: 'primary' }, [20, 500], [20, 700]),
 
-  way({ class: 'primary' }, [150, -300], [520, -300], [850, -300]),
-  way({ class: 'minor' }, [520, -500], [520, -300], [520, -100]),
+  way({ class: 'primary' }, [-250, 250], [-12, 250]),
+  way({ class: 'primary', brunnel: 'bridge', layer: 1 }, [-12, 250], [12, 250]),
+  way({ class: 'primary' }, [12, 250], [30, 250]),
+  way({ class: 'tertiary' }, [30, 250], [250, 250]),
+
+  way({ class: 'primary' }, [150, -150], [520, -150], [850, -150]),
+  way({ class: 'minor' }, [520, -350], [520, -150], [520, 50]),
+
+  way({ class: 'primary' }, [-480, -300], [-480, 0], [-480, 300]),
+  way({ class: 'minor' }, [-480, 0], [-250, 0]),
+
+  way({ class: 'minor' }, [-380, -432], [-150, -432], [-20, -432]),
+  way({ class: 'minor' }, [-300, -478], [-150, -478], [-100, -478]),
+  way({ class: 'minor' }, [-150, -432], [-150, -478]),
 ];
 
+/** Falaises relevées (`mountain_peak`, classe `cliff`). */
+const CLIFFS = [way({ class: 'cliff' }, [-330, -450], [-70, -450])];
+
 const SCENES = {
-  pont: { x: 20, z: 0, yawDeg: 215, pitchDeg: 28, distance: 75 },
-  'pont-etroit': { x: 20, z: 500, yawDeg: 215, pitchDeg: 28, distance: 75 },
-  pente: { x: 520, z: -300, yawDeg: 300, pitchDeg: 25, distance: 80 },
+  pont: { x: 30, z: 0, yawDeg: 215, pitchDeg: 28, distance: 90 },
+  'pont-large': { x: 20, z: 500, yawDeg: 215, pitchDeg: 28, distance: 75 },
+  classe: { x: 30, z: 250, yawDeg: 215, pitchDeg: 28, distance: 75 },
+  pente: { x: 520, z: -150, yawDeg: 300, pitchDeg: 25, distance: 80 },
+  devers: { x: -480, z: 0, yawDeg: 250, pitchDeg: 30, distance: 70 },
+  falaise: { x: -150, z: -450, yawDeg: 20, pitchDeg: 30, distance: 90 },
 };
 
 const source = {
   zoom: DEFAULT_VIEW.zoom,
   forEachFeature(layer, tiles, callback) {
-    if (layer !== 'transportation') return;
-    for (const f of FEATURES) callback(f.geometry, f.properties, null);
+    const features = layer === 'transportation' ? FEATURES : layer === 'mountain_peak' ? CLIFFS : [];
+    for (const f of features) callback(f.geometry, f.properties, null);
   },
 };
 
@@ -145,14 +180,20 @@ const bubble = new TerrainBubble({
   segmentsByRing: DEFAULT_VIEW.segmentsByRing,
 });
 await bubble.setCenter(LNG, LAT);
+const here = { x: 0, z: 0 };
+// Avant les chaussées, comme dans le compositeur : la route entaille le
+// terrain que la falaise a déjà façonné.
+const cliffs = new CliffLayer({ THREE, scene, bubble, theme: defaultTheme });
+cliffs.rebuild(source, [], here);
+// Une tuile par appel, comme le compositeur image après image : on vide la file.
+while (bubble.processRebuildQueue());
 const roads = new RoadNetwork({ THREE, scene, bubble, materials: createRoadMaterials(THREE) });
 const bridges = new BridgeLayer({ THREE, scene, bubble });
-const here = { x: 0, z: 0 };
 // Tant que la maille est reprise, la plate-forme se redresse : on reconstruit
 // jusqu'à ce que le réseau ne demande plus rien, comme le fait le compositeur.
 for (let pass = 0; pass < 4 && roads.needsRebuild(here.x, here.z); pass++) {
   roads.rebuild(source, [], here);
-  bubble.processRebuildQueue();
+  while (bubble.processRebuildQueue());
 }
 bridges.rebuild(roads.roadSegments, here);
 const furniture = new FurnitureLayer({ THREE, scene, bubble });

@@ -64,6 +64,9 @@ export const EDGE_REACH_M = 6;
  *        elles-mêmes.
  * @param {Function|null} [options.ignoreArea] `(index) => boolean` : idem pour
  *        les surfaces de carrefour.
+ * @param {Function|null} [options.ignoreRow] `(segment, row) => boolean` : les
+ *        lignes d'une chaussée à ne pas compter, quand ce n'est pas la
+ *        chaussée entière qu'on écarte.
  * @param {number} [options.reach]
  * @returns {number}
  */
@@ -76,6 +79,7 @@ export function edgeClearance(
     level = LEVEL_GROUND,
     ignore = null,
     ignoreArea = null,
+    ignoreRow = null,
     reach = EDGE_REACH_M,
   } = {}
 ) {
@@ -89,6 +93,7 @@ export function edgeClearance(
   roadIndex.forEachNear(x - reach, z - reach, x + reach, z + reach, (segment, row) => {
     if (best <= 0) return;
     if (ignore && ignore(segment)) return;
+    if (ignoreRow && ignoreRow(segment, row)) return;
     // Une chaussée d'un autre niveau passe au-dessus ou en dessous : elle ne
     // prend pas la place du sol.
     if ((segment.levels?.[row] ?? LEVEL_GROUND) !== level) return;

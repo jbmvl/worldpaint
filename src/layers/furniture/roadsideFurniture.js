@@ -36,6 +36,7 @@ import { alignmentShapeForTree, sharesFor } from '../../core/regionInterpretatio
 import {
   buildRoadsideRelief,
   buildEmbankment,
+  measureRoom,
   profileTakesGuardrail,
 } from './roadsideRelief.js';
 
@@ -199,6 +200,7 @@ export function buildRoadside(layer, context, roadSegments, builtUp) {
     const inReach = (row) =>
       !row.work && Math.hypot(row.x - here.x, row.z - here.z) <= FURNITURE_RADIUS_M;
     for (const near of contiguousRuns(rowsInfo, inReach, 4)) {
+      measureRoom(layer, segment, near);
       const walled = buildRoadsideRelief(layer, context, segment, near);
       buildRoadsideContext(layer, context, segment, near, builtUp);
       buildEmbankment(layer, context, segment, near, walled);

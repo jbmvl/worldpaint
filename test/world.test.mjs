@@ -249,6 +249,7 @@ import {
   LEVEL_MIN,
   LEVEL_MAX,
   levelWorkSpans,
+  raiseApproaches,
   bridgeFreeboardFor,
   BRIDGE_FREEBOARD_MIN_M,
   BRIDGE_CLEARANCE_M,
@@ -452,6 +453,8 @@ import {
   buildRoadsideRelief,
   buildRockCut,
   buildEmbankment,
+  measureRoom,
+  RELIEF_ROOM_REACH_M,
 } from '../src/layers/furniture/roadsideRelief.js';
 import { facetJitter } from '../src/layers/facetJitter.js';
 import {
@@ -4226,6 +4229,44 @@ test('le talus suit le surplomb ligne par ligne, d’un seul pan', () => {
   assert.ok(depth(rows - 1) >= 4 - 1e-4, `pied du haut de rampe : ${depth(rows - 1).toFixed(2)} m`);
 });
 
+/** Une chaussée qui coupe celle du harnais en travers, en `x = 200`. */
+function crossingRoad(halfWidth = 3) {
+  const path = resamplePath([{ x: 200, z: -60 }, { x: 200, z: 60 }], 5);
+  return { path, platform: new Float32Array(path.length).fill(100), halfWidth, levels: new Int8Array(path.length) };
+}
+
+test('la place libre d’une rive s’arrête à la chaussée d’à côté', () => {
+  const { layer, segment, rowsInfo } = roadsideHarness();
+  const other = crossingRoad();
+  layer._roadIndex = new RoadIndex([segment, other], { margin: 0 });
+  layer._areas = null;
+  measureRoom(layer, segment, rowsInfo);
+
+  const at = (x) => rowsInfo.find((row) => Math.abs(row.x - x) < 2.6);
+  for (const side of [1, -1]) {
+    close(at(200).room[side], 0, 1e-9, `en travers de l’autre chaussée, rien (côté ${side})`);
+    close(at(100).room[side], RELIEF_ROOM_REACH_M, 1e-9, `loin d’elle, toute la portée (côté ${side})`);
+  }
+});
+
+test('un talus ne se pose pas sur la chaussée qu’il croise', () => {
+  const { layer, context, segment, rowsInfo, buffers } = roadsideHarness();
+  const other = crossingRoad();
+  layer._roadIndex = new RoadIndex([segment, other], { margin: 0 });
+  layer._areas = null;
+  const remblai = rowsInfo.map((row) => ({ ...row, drop: 3, perch: 3, uphill: 1 }));
+  measureRoom(layer, segment, remblai);
+  const platform = new Float32Array(segment.platform.length).fill(103);
+  buildEmbankment(layer, context, { ...segment, platform }, remblai, new Set());
+
+  const positions = buffers.embankment.positions;
+  assert.ok(positions.length > 0, 'des talus de part et d’autre du croisement');
+  for (let i = 0; i < positions.length; i += 3) {
+    const onOther = Math.abs(positions[i] - 200) < other.halfWidth - 1e-3 && Math.abs(positions[i + 2]) > segment.halfWidth + 1e-3;
+    assert.ok(!onOther, `sommet de talus sur l’autre chaussée : x=${positions[i].toFixed(2)} z=${positions[i + 2].toFixed(2)}`);
+  }
+});
+
 test('un muret de pierre est facetté sur un pas fin, sans raccourcir', () => {
   const layer = Object.create(FurnitureLayer.prototype);
   layer.specs = furnitureSpecsFor(defaultTheme.furniture.colors);
@@ -7723,42 +7764,6 @@ test('au même niveau, la voie étroite retrouve bien l’altitude de la large',
   );
 });
 
-test('une branche monte sur le remblai d’accès d’un pont au lieu de s’arrêter au pied', () => {
-  // La large est relevée de cinq mètres par le remblai d'accès d'une travée :
-  // au-delà de `STITCH_MAX_STEP_M`, mais c'est bien un carrefour.
-  const rows = 30;
-  const wide = {
-    profile: 'major',
-    halfWidth: 6,
-    path: Array.from({ length: rows }, (_, i) => ({ x: i * 5, z: 0, distance: i * 5 })),
-    platform: new Float32Array(rows).fill(5),
-    approach: new Float32Array(rows).fill(5),
-    works: new Uint8Array(rows),
-    levels: new Int8Array(rows),
-    anchor: { x: 0, z: 0 },
-  };
-  const narrow = {
-    profile: 'minor',
-    halfWidth: 2.5,
-    path: Array.from({ length: rows }, (_, i) => ({ x: 25, z: i * 5, distance: i * 5 })),
-    platform: new Float32Array(rows).fill(0),
-    works: new Uint8Array(rows),
-    levels: new Int8Array(rows),
-    anchor: { x: 25, z: 0 },
-  };
-
-  const segments = [wide, narrow];
-  stitchPlatforms(segments, new RoadIndex(segments, { margin: 0 }));
-
-  close(narrow.platform[0], 5, 1e-4, 'la bouche est à l’altitude du remblai');
-  for (let r = 1; r < rows; r++) {
-    assert.ok(narrow.platform[r] <= narrow.platform[r - 1] + 1e-6, 'la branche redescend sans rebond');
-    const grade = (narrow.platform[r - 1] - narrow.platform[r]) / 5;
-    assert.ok(grade <= BRIDGE_RAMP_GRADE + 1e-3, `pente tenue ligne ${r} : ${grade.toFixed(3)}`);
-  }
-  close(narrow.platform[rows - 1], 0, 1e-4, 'au-delà du remblai, la branche retrouve son terrain');
-});
-
 /** Tronçon minimal, tel que `collectRoadSegments` le produirait. */
 function fakeSegment(points, halfWidth, deck = 0) {
   const path = points.map((p, i) => ({ ...p, distance: i * 5 }));
@@ -8591,7 +8596,9 @@ test('une travée trop basse se relève d’un bloc, et le remblai d’accès la
   const segment = worksSegment(61, Array.from({ length: 61 }, (_, r) => (r >= 28 && r <= 32 ? 1 : 0)));
   const clearanceAt = (x) => (x >= 140 && x <= 160 ? 0 : -50);
 
-  levelWorkSpans(segment.path, segment.platform, segment.works, { clearanceAt });
+  const abutments = [];
+  levelWorkSpans(segment.path, segment.platform, segment.works, { clearanceAt, abutments });
+  raiseApproaches([segment], abutments.map((a) => ({ segment: 0, ...a })));
 
   const deck = segment.platform[30];
   close(deck, BRIDGE_CLEARANCE_M, 1e-4, 'le tablier dégage exactement le gabarit');
@@ -8668,13 +8675,72 @@ test('le remblai d’accès d’une travée ne fait pas pencher sa voisine', () 
   // Une nappe sous la seconde travée seulement : elle seule se relève.
   const floorAt = (x) => (x >= 55 && x <= 75 ? 4 : -50);
 
-  levelWorkSpans(segment.path, segment.platform, segment.works, { floorAt });
+  const abutments = [];
+  levelWorkSpans(segment.path, segment.platform, segment.works, { floorAt, abutments });
+  raiseApproaches([segment], abutments.map((a) => ({ segment: 0, ...a })));
 
   close(segment.platform[13], 4, 1e-4, 'la seconde travée est relevée');
   assert.ok(segment.platform[10] > 0.5, 'et son remblai remonte vers la première');
   for (let r = 4; r <= 8; r++) {
     close(segment.platform[r], 0, 1e-6, `la première reste posée et droite (ligne ${r})`);
   }
+});
+
+/** Tronçon d'essai pour `raiseApproaches` : une ligne tous les cinq mètres. */
+function approachSegment(from, step, rows, { halfWidth = 3, works = null, junction = null, level = 0 } = {}) {
+  const path = Array.from({ length: rows }, (_, i) => ({
+    x: from.x + step.x * i * 5,
+    z: from.z + step.z * i * 5,
+    distance: i * 5,
+  }));
+  return {
+    halfWidth,
+    path,
+    platform: new Float32Array(rows),
+    works: Uint8Array.from({ length: rows }, (_, r) => (works?.(r) ? 1 : 0)),
+    levels: new Int8Array(rows).fill(level),
+    junction: Int32Array.from({ length: rows }, (_, r) => junction?.(r) ?? -1),
+  };
+}
+
+test('le remblai d’accès monte dans une branche, qu’elle soit plus large ou non', () => {
+  // La route du pont est la plus étroite : aucune couture ne la ferait
+  // commander. C'est le réseau qui porte le remblai, pas la hiérarchie.
+  const through = approachSegment({ x: 0, z: 0 }, { x: 1, z: 0 }, 60, {
+    halfWidth: 2.5,
+    works: (r) => r <= 3,
+    junction: (r) => (r >= 4 && r <= 6 ? 0 : -1),
+  });
+  through.levels.fill(1, 0, 4);
+  const branch = approachSegment({ x: 25, z: 0 }, { x: 0, z: 1 }, 60, {
+    halfWidth: 6,
+    junction: (r) => (r <= 1 ? 0 : -1),
+  });
+  raiseApproaches([through, branch], [{ segment: 0, row: 3, lift: 5 }], { centres: [{ x: 25, z: 0 }] });
+
+  close(branch.platform[0], through.platform[5], 0.05, 'la bouche de la branche est à la cote du remblai');
+  assert.ok(branch.platform[0] > 4, `la branche est bien relevée : ${branch.platform[0].toFixed(2)} m`);
+  for (let r = 1; r < 60; r++) {
+    const grade = (branch.platform[r - 1] - branch.platform[r]) / 5;
+    assert.ok(grade >= -1e-6 && grade <= BRIDGE_RAMP_GRADE + 1e-3, `pente tenue ligne ${r} : ${grade.toFixed(3)}`);
+  }
+  close(branch.platform[59], 0, 1e-6, 'au-delà du remblai, la branche retrouve son terrain');
+  for (let r = 0; r <= 3; r++) close(through.platform[r], 0, 1e-6, 'le tablier n’est pas touché ici');
+});
+
+test('le remblai d’accès franchit un changement de classe sans marche', () => {
+  // Deux chaînes bout à bout : la route change de largeur sur son remblai.
+  const first = approachSegment({ x: 0, z: 0 }, { x: 1, z: 0 }, 8, { works: (r) => r <= 2 });
+  // Le tablier porte son propre niveau, comme dans les données.
+  first.levels.fill(1, 0, 3);
+  const second = approachSegment({ x: 35, z: 0 }, { x: 1, z: 0 }, 40, { halfWidth: 2.5 });
+  const under = approachSegment({ x: 35, z: 0 }, { x: 0, z: 1 }, 20, { level: -1 });
+  raiseApproaches([first, second, under], [{ segment: 0, row: 2, lift: 5 }]);
+
+  close(second.platform[0], first.platform[7], 1e-4, 'les deux bouts se rejoignent');
+  assert.ok(second.platform[0] > 3, 'la seconde chaîne porte encore le remblai');
+  assert.ok(second.platform[1] < second.platform[0], 'et elle redescend');
+  for (const height of under.platform) close(height, 0, 1e-6, 'une route d’un autre niveau ne monte pas');
 });
 
 test('un `brunnel` qui court sur des kilomètres ne lance pas un viaduc', () => {

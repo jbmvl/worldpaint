@@ -45,7 +45,7 @@ try {
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => m.type() === 'error' && !m.location().url.endsWith('favicon.ico') && errors.push(m.text()));
   await page.goto(`http://localhost:${port}/demo/lab/roads.html`);
-  await page.waitForFunction(() => window.roadsLabReady, null, { timeout: 60000 });
+  await page.waitForFunction(() => window.roadsLabReady, null, { timeout: 240000 });
   for (const [i, shot] of shots.entries()) {
     const info = await page.evaluate((s) => window.roadsLab.set(s), shot);
     const file = join(outDir, `${String(i).padStart(2, '0')}.png`);
