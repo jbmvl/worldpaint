@@ -21,6 +21,16 @@ du dépôt convient aussi (`npx serve .`, `python3 -m http.server`, …).
 `three` est chargé depuis un CDN (jsDelivr) via un `<script type="importmap">`
 dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
 
+## Bancs d'essai
+
+`demo/lab/` rassemble des pages plus petites que la démo, sans réseau
+(`three` pris dans `node_modules`), pilotées depuis la console ou par script :
+
+- `lab/sky.html` — ciel, soleil et brouillard sur un sol plat semé de blocs.
+  `skyLab.set({ sunDeg: 8, lookDeg: 180, weather: { haze: 0.3 } })` dans la
+  console ; `node scripts/sky-shot.mjs <dossier> '[{"sunDeg":8}]'` en fait une
+  image par réglage (Chromium en rendu logiciel, `CHROMIUM_PATH` si besoin).
+
 ## Ce que ça montre
 
 - **Navigation clavier en vol libre** : flèches pour avancer/reculer et se

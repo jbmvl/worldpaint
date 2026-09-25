@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Banc du ciel</title>
+<style>html,body{margin:0;background:#000}canvas{display:block}</style>
+<script src="/node_modules/suncalc/suncalc.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "/node_modules/three/build/three.module.js",
+  "three/examples/jsm/objects/Sky.js": "/node_modules/three/examples/jsm/objects/Sky.js",
+  "suncalc": "/demo/lab/suncalc-global.js"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+/*
+ * Banc du ciel — le ciel, le soleil et le brouillard seuls, sur un sol plat
+ * semé de blocs jusqu'au bord du brouillard. Aucune tuile, aucun réseau :
+ * piloté depuis la console ou par `scripts/sky-shot.mjs`.
+ *
+ *   skyLab.set({ sunDeg: 8, lookDeg: 180, pitchDeg: 5, weather: { haze: 0.3 } })
+ *
+ * `lookDeg` est l'écart de cap avec le soleil (0 = face à lui).
+ */
+import * as THREE from 'three';
+import { Sky } from 'three/examples/jsm/objects/Sky.js';
+import { SceneEnvironment } from '/src/environment/sceneEnvironment.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.5; // comme la démo
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 20000);
+const FOG_RADIUS = 2200;
+const env = new SceneEnvironment({ THREE, Sky, scene, fogRadius: FOG_RADIUS });
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(40000, 40000).rotateX(-Math.PI / 2),
+  new THREE.MeshStandardMaterial({ color: 0x5f8a45, roughness: 1 })
+);
+ground.receiveShadow = true;
+scene.add(ground);
+const block = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
+const wall = new THREE.MeshStandardMaterial({ color: 0xd8d2c4, roughness: 0.9 });
+for (let i = 0; i < 400; i++) {
+  // Semis déterministe : même banc, mêmes blocs.
+  const a = (i * 2.399963) % (Math.PI * 2);
+  const r = 60 + Math.sqrt(i / 400) * 3000;
+  const m = new THREE.Mesh(block, wall);
+  m.scale.set(12 + (i % 5) * 4, 6 + (i % 7) * 3, 10 + (i % 3) * 5);
+  m.position.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+  m.castShadow = true;
+  scene.add(m);
+}
+
+const LAT = 45;
+const LNG = 0;
+const SunCalc = window.SunCalc;
+
+/** Date du matin du solstice d'été où le soleil est à `deg` au-dessus de l'horizon (négatif : avant l'aube). */
+function dateForElevation(deg) {
+  const day = Date.UTC(2026, 5, 21);
+  let lo = day - 4 * 3600e3; // nuit
+  let hi = day + 12 * 3600e3; // midi solaire à lng 0
+  const target = (deg * Math.PI) / 180;
+  for (let k = 0; k < 50; k++) {
+    const mid = (lo + hi) / 2;
+    if (SunCalc.getPosition(new Date(mid), LAT, LNG).altitude < target) lo = mid;
+    else hi = mid;
+  }
+  return new Date(hi);
+}
+
+const state = { sunDeg: 30, lookDeg: 90, pitchDeg: 4, height: 40, weather: null };
+
+function render() {
+  const date = dateForElevation(state.sunDeg);
+  env.update({ date, lat: LAT, lng: LNG, weather: state.weather });
+  const sun = env._sunDir;
+  const sunYaw = Math.atan2(sun.x, -sun.z);
+  const yaw = sunYaw + (state.lookDeg * Math.PI) / 180;
+  const pitch = (state.pitchDeg * Math.PI) / 180;
+  camera.position.set(0, state.height, 0);
+  camera.lookAt(Math.sin(yaw) * Math.cos(pitch), state.height + Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
+  env.followCamera(camera);
+  env.followShadow({ x: 0, y: 0, z: 0 });
+  renderer.setClearColor(env.clearColor, 1);
+  renderer.render(scene, camera);
+  return {
+    sunDeg: state.sunDeg,
+    fog: '#' + env.fog.color.getHexString(THREE.SRGBColorSpace),
+    nightMix: env.nightMix,
+  };
+}
+
+window.skyLab = {
+  set(options = {}) {
+    Object.assign(state, options);
+    if ('weather' in options) state.weather = options.weather;
+    return render();
+  },
+  state,
+  env,
+};
+window.skyLabReady = true;
+render();
+</script>
+</body>
+</html>
