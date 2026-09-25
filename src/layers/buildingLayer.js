@@ -88,7 +88,7 @@ export function buildingPersonalityFor(properties = {}) {
 }
 
 /** Classes brutes de point d'intérêt qui reçoivent un auvent et une terrasse (`appendAwning`, `_appendTerrace`) — la salle déborde sur la rue, une boutique non. */
-const AWNING_CLASSES = new Set(['restaurant', 'bar']);
+const AWNING_CLASSES = new Set(['restaurant', 'bar', 'cafe']);
 
 /** Rang d'une personnalité quand il faut en écarter, petit d'abord (un clocher se voit de loin, une devanture se compte par milliers). */
 export const BUILDING_PERSONALITY_RANK = {
@@ -1013,7 +1013,7 @@ export function appendShopSignBlade(walls, labels, atlas, a, b, nx, nz, base, mi
 }
 
 /**
- * Auvent d'un restaurant ou d'un bar (`AWNING_CLASSES`) : une retombée en
+ * Auvent d'un restaurant, d'un bar ou d'un café (`AWNING_CLASSES`) : une retombée en
  * couleur unie — celle de la devanture — tendue depuis le bas du bandeau
  * d'enseigne (`appendShopfront` peint le nom juste au-dessus). Un pan mince,
  * penché vers la rue, fermé par-dessus, par-dessous et sur sa rive avant pour
@@ -1660,7 +1660,7 @@ export class BuildingLayer {
           );
 
           // Salle qui déborde sur la rue : auvent coloré à l'enseigne et
-          // terrasse, restaurant comme bar — voir `AWNING_CLASSES`.
+          // terrasse, restaurant, bar ou café — voir `AWNING_CLASSES`.
           if (AWNING_CLASSES.has(personalityClass)) {
             appendAwning(walls, a, b, nx, nz, shopfrontTop, look.front, this.theme.shopfront);
             this._appendTerrace(walls, a, b, nx, nz, base, minHeight, personalityClass === 'restaurant');
@@ -1916,7 +1916,7 @@ export class BuildingLayer {
   }
 
   /**
-   * Terrasse d'un restaurant ou d'un bar : des tables réparties le long du pan
+   * Terrasse d'un restaurant, d'un bar ou d'un café : des tables réparties le long du pan
    * de façade, reculées de `terraceDepthM` — la section entre le mur et la
    * chaussée, trottoir ou simple espace vide, peu importe : rien n'y borne la
    * pose que la chaussée elle-même. Une table qui mordrait dessus (moins de

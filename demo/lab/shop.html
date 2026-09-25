@@ -58,10 +58,10 @@ const lngLat = (x, z) => {
 };
 const rect = (x0, z0, x1, z1) => [[lngLat(x0, z0), lngLat(x1, z0), lngLat(x1, z1), lngLat(x0, z1), lngLat(x0, z0)]];
 
-// Rive est de la rue : chaque maison commence à 6 m de l'axe.
+// Rive est de la rue : trottoir de 2,5 m, 5,5 m devant le café (place pour sa terrasse).
 const buildings = [
   // Café en pignon sur rue : 6 m sur rue, 14 m en profondeur (le cas de la capture).
-  { ring: rect(6, -3, 20, 3), poi: { x: 13, z: 0, class: 'cafe', name: 'Le Pignon' } },
+  { ring: rect(9, -3, 23, 3), poi: { x: 16, z: 0, class: 'cafe', name: 'Le Pignon' } },
   // Restaurant en long pan sur rue.
   { ring: rect(6, 6, 12, 20), poi: { x: 9, z: 13, class: 'restaurant', name: 'La Longère' } },
   // Maison voisine, et bâtiment de cour sans rue devant : son bar ne pose rien.

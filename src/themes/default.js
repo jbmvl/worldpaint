@@ -1192,7 +1192,7 @@ export const SHOPFRONT_EMOJI = {
 export const SHOPFRONT_EMOJI_DEFAULT = '🏪';
 
 /**
- * Auvent de restaurant ou de bar (`buildingLayer.appendAwning`) : une retombée
+ * Auvent de restaurant, de bar ou de café (`buildingLayer.appendAwning`) : une retombée
  * tendue depuis le bandeau d'enseigne, en couleur unie. `awningDropM` fixe sa
  * pente (chute verticale sur `awningDepthM` de saillie) ; `awningMarginM` le
  * retire des deux bouts du pan, comme la devanture elle-même.
@@ -1203,7 +1203,7 @@ export const AWNING_THICKNESS_M = 0.06;
 export const AWNING_MARGIN_M = 0.35;
 
 /**
- * Terrasse d'un restaurant ou d'un bar (`buildingLayer._appendTerrace`) :
+ * Terrasse d'un restaurant, d'un bar ou d'un café (`buildingLayer._appendTerrace`) :
  * tables et chaises posées entre la façade et la chaussée. `terraceDepthM`
  * les recule du mur, `terraceSpacingM` les espace le long du pan,
  * `terraceClearanceM` est la marge qu'on leur laisse avant la chaussée — en
