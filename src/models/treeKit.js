@@ -1,5 +1,6 @@
 /* Prototypes d'arbres normalisés : la géométrie et l'atlas partagent les
- * mêmes volumes. Le peuplement régional choisit toujours leur variante.
+ * mêmes volumes. Les lobes ont des sommets désalignés et une orientation
+ * propre ; le peuplement choisit la variante et sa rotation spatiale.
  */
 import { Kit, seededUnit } from './kit.js';
 import { defaultTheme } from '../themes/default.js';
@@ -30,21 +31,35 @@ export function treePrototype(variant, index = 0, look = defaultTheme.trees.volu
       const ry = column ? .25 : j ? .25 : .27;
       const segments=7, rings=4;
       const points=[];
+      const lacet = random() * Math.PI * 2;
+      const roulis = random() * Math.PI * 2;
+      const cosL = Math.cos(lacet), sinL = Math.sin(lacet);
+      const cosR = Math.cos(roulis), sinR = Math.sin(roulis);
       for(let r=0;r<=rings;r++) {
-        const latitude=-Math.PI/2+r*Math.PI/rings;
+        const pole = r === 0 || r === rings;
         const row=[];
         for(let a=0;a<segments;a++) {
-          const azimuth=a*Math.PI*2/segments;
+          const latitude=-Math.PI/2+(r+(pole ? 0 : (random()-.5)*.7))*Math.PI/rings;
+          const azimuth=(a+(pole ? 0 : (random()-.5)*.7))*Math.PI*2/segments;
           const jitter=.88+random()*.22;
-          row.push([cx+Math.cos(azimuth)*Math.cos(latitude)*rx*jitter, cy+Math.sin(latitude)*ry, cz+Math.sin(azimuth)*Math.cos(latitude)*rx*jitter]);
+          const x = pole ? 0 : Math.cos(azimuth)*Math.cos(latitude)*jitter;
+          const y = Math.sin(latitude);
+          const z = pole ? 0 : Math.sin(azimuth)*Math.cos(latitude)*jitter;
+          const xr = x*cosR-y*sinR, yr = x*sinR+y*cosR;
+          row.push([cx+(xr*cosL-z*sinL)*rx, cy+yr*ry, cz+(xr*sinL+z*cosL)*rx]);
         }
         points.push(row);
       }
       for(let r=0;r<rings;r++) for(let a=0;a<segments;a++) {
         const b=(a+1)%segments;
         const color=leaf.map(v=>v*(.84+r*.07));
-        if(r>0) kit.tri(points[r][a],points[r+1][a],points[r][b],color);
-        if(r<rings-1) kit.tri(points[r][b],points[r+1][a],points[r+1][b],color);
+        if(r>0 && r<rings-1 && random()<.5) {
+          kit.tri(points[r][a],points[r+1][a],points[r+1][b],color);
+          kit.tri(points[r][a],points[r+1][b],points[r][b],color);
+        } else {
+          if(r>0) kit.tri(points[r][a],points[r+1][a],points[r][b],color);
+          if(r<rings-1) kit.tri(points[r][b],points[r+1][a],points[r+1][b],color);
+        }
       }
       if(!column && j>0) kit.strutYZ({from:{y:trunk,z:0},to:{y:cy,z:cz},width:.025,color:look.bark});
     }

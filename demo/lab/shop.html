@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Banc des devantures</title>
+<style>html,body{margin:0;background:#9cb8d0}canvas{display:block}</style>
+<script type="importmap">
+{ "imports": { "three": "/node_modules/three/build/three.module.js" } }
+</script>
+</head>
+<body>
+<script type="module">
+/*
+ * Banc des devantures — le bâti seul (`BuildingLayer`) le long d'une rue plate
+ * nord-sud, avec des commerces dont la rue est devant le pignon, le long pan,
+ * ou nulle part. Aucune tuile, aucun réseau : piloté depuis la console ou par
+ * `scripts/shop-shot.mjs`.
+ *
+ *   shopLab.set({ yawDeg: 60, pitchDeg: -25, distance: 45 })
+ *
+ * La rue est l'axe x = 0 (chaussée grise de 7 m) ; la caméra vise l'origine.
+ */
+import * as THREE from 'three';
+import { createLocalFrame } from '/src/core/tileMath.js';
+import { RoadIndex } from '/src/layers/roadGraph.js';
+import { BuildingLayer } from '/src/layers/buildingLayer.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9cb8d0);
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.5, 2000);
+scene.add(new THREE.HemisphereLight(0xdde8f0, 0x6a6458, 1.6));
+const sun = new THREE.DirectionalLight(0xfff4e0, 1.8);
+sun.position.set(-40, 80, 30);
+scene.add(sun);
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(400, 400).rotateX(-Math.PI / 2),
+  new THREE.MeshLambertMaterial({ color: 0x8a8a80 })
+);
+ground.position.y = -0.02;
+scene.add(ground);
+const HALF = 3.5;
+const road = new THREE.Mesh(
+  new THREE.PlaneGeometry(HALF * 2, 200).rotateX(-Math.PI / 2),
+  new THREE.MeshLambertMaterial({ color: 0x2a2c30 })
+);
+scene.add(road);
+
+const frame = createLocalFrame(0, 45, 14);
+const lngLat = (x, z) => {
+  const p = frame.toLngLat(x, z);
+  return [p.lng, p.lat];
+};
+const rect = (x0, z0, x1, z1) => [[lngLat(x0, z0), lngLat(x1, z0), lngLat(x1, z1), lngLat(x0, z1), lngLat(x0, z0)]];
+
+// Rive est de la rue : trottoir de 2,5 m, 5,5 m devant le café (place pour sa terrasse).
+const buildings = [
+  // Café en pignon sur rue : 6 m sur rue, 14 m en profondeur (le cas de la capture).
+  { ring: rect(9, -3, 23, 3), poi: { x: 16, z: 0, class: 'cafe', name: 'Le Pignon' } },
+  // Restaurant en long pan sur rue.
+  { ring: rect(6, 6, 12, 20), poi: { x: 9, z: 13, class: 'restaurant', name: 'La Longère' } },
+  // Maison voisine, et bâtiment de cour sans rue devant : son bar ne pose rien.
+  { ring: rect(6, -14, 16, -6) },
+  { ring: rect(24, -14, 38, -6), poi: { x: 31, z: -10, class: 'bar', name: 'Au Fond' } },
+  // Rive ouest : boutique en long pan.
+  { ring: rect(-18, -8, -6, 2), poi: { x: -12, z: -3, class: 'bakery', name: 'Fournil' } },
+];
+
+const source = {
+  forEachFeature(layer, tiles, visit) {
+    if (layer === 'building') {
+      for (const b of buildings) visit({ type: 'Polygon', coordinates: b.ring }, { height: 9 });
+    } else if (layer === 'poi') {
+      for (const b of buildings) {
+        if (b.poi) visit({ type: 'Point', coordinates: lngLat(b.poi.x, b.poi.z) }, { class: b.poi.class, name: b.poi.name });
+      }
+    }
+  },
+};
+const bubble = { frame, verticalScale: 1, surfaceElevationAtLocal: () => 0 };
+const roadIndex = new RoadIndex([{ halfWidth: HALF, path: [{ x: 0, y: 0, z: -100 }, { x: 0, y: 0, z: 100 }] }]);
+const layer = new BuildingLayer({ THREE, scene, bubble });
+layer.rebuild(source, [], { x: 0, z: 0 }, { roadIndex, builtUp: null });
+
+const state = { yawDeg: 60, pitchDeg: -28, distance: 50 };
+function render() {
+  const yaw = (state.yawDeg * Math.PI) / 180;
+  const pitch = (state.pitchDeg * Math.PI) / 180;
+  const d = state.distance;
+  camera.position.set(
+    Math.sin(yaw) * Math.cos(pitch) * -d,
+    -Math.sin(pitch) * d,
+    Math.cos(yaw) * Math.cos(pitch) * d
+  );
+  camera.lookAt(6, 0, 0);
+  renderer.render(scene, camera);
+  return { built: layer.count };
+}
+
+window.shopLab = {
+  set(options = {}) {
+    Object.assign(state, options);
+    return render();
+  },
+  state,
+  layer,
+};
+window.shopLabReady = true;
+render();
+</script>
+</body>
+</html>

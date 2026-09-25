@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Banc du giratoire</title>
+<style>
+html,body{margin:0;background:#3d5a32}canvas{display:block}
+#info{position:fixed;left:8px;bottom:8px;font:12px/1.4 monospace;color:#fff;background:#0008;padding:4px 8px;white-space:pre}
+</style>
+<script type="importmap">
+{ "imports": { "three": "/node_modules/three/build/three.module.js" } }
+</script>
+</head>
+<body>
+<div id="info"></div>
+<script type="module">
+/*
+ * Banc du giratoire — un anneau et ses branches, tracés comme OSM les livre
+ * (anneau fermé à sens unique, branches soudées à ses sommets, branches
+ * dédoublées en deux sens uniques qui se rejoignent plus loin), passés tels
+ * quels dans `RoadNetwork` sur un sol plat. Aucun réseau.
+ *
+ *   roundaboutLab.set({ radius: 22, branches: [{ deg: 0, cls: 'tertiary', split: false }] })
+ *   roundaboutLab.set({ view: 'persp', yawDeg: 30, pitchDeg: 35, distance: 120, axes: false })
+ *
+ * `deg` est un cap (0 = nord, sens horaire). Une branche `split` part de
+ * l'anneau en deux sens uniques écartés de `splitDeg` qui se rejoignent à
+ * `splitLength` mètres. `axes` trace par-dessus les axes de la donnée.
+ * `view: 'top'` est une vue de dessus orthographique de côté `span` mètres,
+ * centrée sur `at` (`[x, z]` en mètres, x vers l'est, z vers le sud).
+ * `lines` remplace l'anneau par des lignes données telles quelles, pour
+ * rejouer un carrefour relevé dans la démo.
+ */
+import * as THREE from 'three';
+import { RoadNetwork, createRoadMaterials } from '/src/layers/roadNetwork.js';
+import { tileXToLng, tileYToLat, latToTileY, lngToTileX, tileSizeMeters } from '/src/core/tileMath.js';
+
+const ZOOM = 14;
+const LNG = -0.2;
+const LAT = 46.95;
+const frame = {
+  zoom: ZOOM,
+  origin: { x: lngToTileX(LNG, ZOOM), y: latToTileY(LAT, ZOOM) },
+  scale: tileSizeMeters(ZOOM, LAT),
+};
+const toLngLat = ({ x, z }) => [
+  tileXToLng(frame.origin.x + x / frame.scale, ZOOM),
+  tileYToLat(frame.origin.y + z / frame.scale, ZOOM),
+];
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x3d5a32);
+scene.add(new THREE.HemisphereLight(0xdfe8f0, 0x6b6558, 1.6));
+const sun = new THREE.DirectionalLight(0xfff4e0, 1.8);
+sun.position.set(-60, 100, 80);
+scene.add(sun);
+scene.add(new THREE.Mesh(
+  new THREE.PlaneGeometry(2000, 2000).rotateX(-Math.PI / 2),
+  new THREE.MeshLambertMaterial({ color: 0x4a6b3a })
+));
+
+// Terrain plat : le réseau ne demande à la bulle que ceci.
+const bubble = {
+  frame,
+  verticalScale: 1,
+  cutBenchM: 0,
+  surfaceGeneration: 0,
+  rawSurfaceElevationAtLocal: () => 0,
+  setRoadCut() {},
+};
+const network = new RoadNetwork({ THREE, scene, bubble, materials: createRoadMaterials(THREE) });
+
+const axesGroup = new THREE.Group();
+scene.add(axesGroup);
+
+const state = {
+  radius: 22,
+  ringClass: 'secondary',
+  ringSides: 24,
+  branches: [
+    { deg: 300, cls: 'secondary', split: true },
+    { deg: 25, cls: 'tertiary', split: false },
+    { deg: 118, cls: 'secondary', split: true },
+    { deg: 200, cls: 'tertiary', split: false },
+  ],
+  splitDeg: 14,
+  splitLength: 45,
+  length: 220,
+  axes: true,
+  view: 'top',
+  span: 180,
+  at: [0, 0],
+  yawDeg: 20,
+  pitchDeg: 40,
+  distance: 140,
+  // Des lignes données telles quelles (`{points, properties}`) à la place de l'anneau synthétique.
+  lines: null,
+};
+
+// Cap (0 = nord, horaire) → direction au sol ; z croît vers le sud.
+const dir = (deg) => ({ x: Math.sin((deg * Math.PI) / 180), z: -Math.cos((deg * Math.PI) / 180) });
+const onRing = (deg) => { const d = dir(deg); return { x: d.x * state.radius, z: d.z * state.radius }; };
+
+/** Les lignes de la donnée : `{points, properties}` en mètres locaux. */
+function scenario() {
+  if (state.lines) return state.lines;
+  const lines = [];
+  // Sommets de l'anneau : un polygone régulier, plus chaque point d'attache.
+  const attach = [];
+  for (const b of state.branches) {
+    if (b.split) attach.push(b.deg - state.splitDeg, b.deg + state.splitDeg);
+    else attach.push(b.deg);
+  }
+  const caps = [...new Set([
+    ...Array.from({ length: state.ringSides }, (_, i) => (i * 360) / state.ringSides),
+    ...attach.map((d) => ((d % 360) + 360) % 360),
+  ])].sort((a, b) => a - b);
+  // Sens giratoire à droite : anti-horaire vu du ciel, donc caps décroissants.
+  const ring = [...caps].reverse().map(onRing);
+  ring.push(ring[0]);
+  lines.push({ points: ring, properties: { class: state.ringClass, oneway: 1, junction: 'roundabout' } });
+
+  for (const b of state.branches) {
+    const d = dir(b.deg);
+    const far = { x: d.x * (state.radius + state.length), z: d.z * (state.radius + state.length) };
+    if (!b.split) {
+      lines.push({ points: [onRing(b.deg), far], properties: { class: b.cls } });
+      continue;
+    }
+    const fork = { x: d.x * (state.radius + state.splitLength), z: d.z * (state.radius + state.splitLength) };
+    // Entrée à droite de qui arrive (cap + écart), sortie à gauche.
+    lines.push({ points: [fork, onRing(b.deg + state.splitDeg)], properties: { class: b.cls, oneway: 1 } });
+    lines.push({ points: [onRing(b.deg - state.splitDeg), fork], properties: { class: b.cls, oneway: 1 } });
+    lines.push({ points: [fork, far], properties: { class: b.cls } });
+  }
+  return lines;
+}
+
+function drawAxes(lines) {
+  axesGroup.clear();
+  if (!state.axes) return;
+  // Des bandes de 0,5 m plutôt que des `Line` : un trait d'un pixel se perd à la capture.
+  const material = new THREE.MeshBasicMaterial({ color: 0xff3366, depthTest: false });
+  for (const { points } of lines) {
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1];
+      const b = points[i];
+      const length = Math.hypot(b.x - a.x, b.z - a.z);
+      const strip = new THREE.Mesh(new THREE.PlaneGeometry(0.5, length).rotateX(-Math.PI / 2), material);
+      strip.position.set((a.x + b.x) / 2, 0.3, (a.z + b.z) / 2);
+      strip.rotation.y = Math.atan2(a.x - b.x, a.z - b.z);
+      strip.renderOrder = 100; // après la chaussée, qui monte jusqu’à 18
+      axesGroup.add(strip);
+    }
+  }
+}
+
+let ortho = null;
+let persp = null;
+function camera() {
+  const aspect = innerWidth / innerHeight;
+  if (state.view === 'top') {
+    const h = state.span / 2;
+    ortho = new THREE.OrthographicCamera(-h * aspect, h * aspect, h, -h, 1, 1000);
+    ortho.position.set(state.at[0], 500, state.at[1]);
+    ortho.up.set(0, 0, -1); // nord en haut
+    ortho.lookAt(state.at[0], 0, state.at[1]);
+    return ortho;
+  }
+  persp ??= new THREE.PerspectiveCamera(45, aspect, 0.5, 3000);
+  persp.aspect = aspect;
+  persp.updateProjectionMatrix();
+  const yaw = (state.yawDeg * Math.PI) / 180;
+  const pitch = (state.pitchDeg * Math.PI) / 180;
+  persp.position.set(
+    Math.sin(yaw) * Math.cos(pitch) * state.distance,
+    Math.sin(pitch) * state.distance,
+    Math.cos(yaw) * Math.cos(pitch) * state.distance
+  );
+  persp.position.x += state.at[0];
+  persp.position.z += state.at[1];
+  persp.lookAt(state.at[0], 0, state.at[1]);
+  return persp;
+}
+
+function render() {
+  // Taille relue à chaque rendu : une page ouverte cachée naît à 0 × 0.
+  renderer.setSize(innerWidth, innerHeight);
+  const lines = scenario();
+  const source = {
+    forEachFeature(layer, tiles, visit) {
+      if (layer !== 'transportation') return;
+      for (const { points, properties } of lines) {
+        visit({ type: 'LineString', coordinates: points.map(toLngLat) }, properties);
+      }
+    },
+  };
+  // Un réseau neuf à chaque réglage : sa continuité ne doit rien au précédent.
+  network._continuityFrame = null;
+  network.rebuild(source, [], { x: 0, z: 0 });
+  drawAxes(lines);
+  renderer.render(scene, camera());
+  const info = {
+    lignes: lines.length,
+    carrefours: network.junctions.length,
+    surfaces: network.crossings,
+    rubans: network.segments,
+    marquages: network.markings,
+    branches: network.junctions.map((j) => j.branches.length),
+  };
+  document.getElementById('info').textContent = JSON.stringify(info);
+  return info;
+}
+
+window.roundaboutLab = { set(options = {}) { Object.assign(state, options); return render(); }, state, network };
+window.roundaboutLabReady = true;
+addEventListener('resize', () => render());
+render();
+</script>
+</body>
+</html>

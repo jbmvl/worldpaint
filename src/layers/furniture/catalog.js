@@ -103,7 +103,7 @@ export const FURNITURE_LIMITS = {
   // Chats et chiens de maison, comptés à part du reste de la faune : une
   // petite ville de plusieurs centaines de maisons ne doit pas à elle seule
   // remplir le budget `fauna` et évincer le bétail des prés voisins.
-  pets: 60,
+  pets: 30,
   // Antennes de sommet : posées sur les vrais sommets relevés dans les
   // tuiles (`mountain_peak`), donc bornées par leur rareté propre — la bulle
   // n'en contient jamais des dizaines.
@@ -117,11 +117,6 @@ export const FURNITURE_LIMITS = {
   // Repères urbains posés sur une emprise landuse (cimetière, zone
   // industrielle, stade, foire) : un par polygone, donc rarement nombreux.
   urbanLandmarks: 14,
-  // Arbustes de haie. Ils ne coûtent ni matière ni appel de dessin de plus —
-  // ils s'écrivent dans le maillage de la haie —, mais un bocage dense mis
-  // bout à bout fait des kilomètres de limite, et il n'y a aucune raison d'en
-  // détailler plus que ce que la caméra a sous les yeux.
-  hedgeClumps: 3600,
   // Tracteurs au travail, posés sur toute la bulle. Plus haut que ce que
   // `tractorLayer` anime (`TRACTOR_ANIMATED_MAX`), même raison que `fauna` :
   // la couche garde les plus proches, et ne peut le faire que si on lui en

@@ -78,6 +78,7 @@ import { FurnitureLayer } from './layers/furnitureLayer.js';
 import { LifeLayer } from './layers/lifeLayer.js';
 import { FaunaLayer } from './layers/faunaLayer.js';
 import { TractorLayer } from './layers/tractorLayer.js';
+import { TrainLayer } from './layers/trainLayer.js';
 import { VectorTileSource, coveringTiles, VECTOR_ZOOM } from './core/vectorTileSource.js';
 import { lngLatToTile } from './core/tileMath.js';
 import { landscapeAt } from './core/landscape.js';
@@ -275,6 +276,8 @@ export class WorldComposer {
     // Les tracteurs au travail : posés par le mobilier, ancrés au sol comme
     // la faune, mais rien en eux n'est articulé — voir `tractorLayer.js`.
     this.tractors = new TractorLayer({ THREE, scene, theme });
+    // Les trains : la voie publiée par `railwayLayer`, parcourue par image.
+    this.trains = new TrainLayer({ THREE, scene, theme });
 
     this.vectorTiles = vectorConfig
       ? new VectorTileSource({
@@ -488,8 +491,11 @@ export class WorldComposer {
 
       if (!await checkpoint()) return false;
 
-      // 2 ter. Voie ferrée — ne dépend de rien, ne publie rien.
-      if (railwaysChanged) this.railways.rebuild(this.vectorTiles, wanted, here);
+      // 2 ter. Voie ferrée — ne dépend de rien ; publie son emprise et les voies des trains.
+      if (railwaysChanged) {
+        this.railways.rebuild(this.vectorTiles, wanted, here);
+        this.trains.setTracks(this.railways.tracks, here);
+      }
 
       if (!await checkpoint()) return false;
 
@@ -565,20 +571,18 @@ export class WorldComposer {
 
       // 8. Cultures — même carte que le sol.
       if (classesChanged) this.crops.invalidate();
+      // Les haies de bas-côté, posées par le mobilier, bornent le champ.
+      if (furnitureChanged) this.crops.setVerges(this.furniture.verges);
       this.crops.update(here.x, here.z, {
-        force: roadsChanged || classesChanged || streetsChanged,
+        force: roadsChanged || classesChanged || streetsChanged || furnitureChanged,
       });
 
       if (!await checkpoint()) return false;
 
-      // 9. Cheminées à faire fumer, bêtes et tracteurs à faire vivre. Publiés
-      //    par le mobilier (fermes, labours) et le bâti (toits de ville), qui
-      //    seuls ont lu les tuiles : ce sont les endroits où une couche
+      // 9. Bêtes et tracteurs à faire vivre. Publiés par le mobilier (fermes,
+      //    labours), qui seul a lu les tuiles : c'est l'endroit où une couche
       //    animée par image reprend le travail d'une couche reconstruite
       //    tous les 250 mètres.
-      if (furnitureChanged || buildingsChanged) {
-        this.life.setChimneys([...this.furniture.chimneys, ...this.buildings.chimneys], here);
-      }
       if (furnitureChanged) {
         this.fauna.setAnimals(this.furniture.fauna, here);
         this.tractors.setTractors(this.furniture.tractors, here);
@@ -714,6 +718,7 @@ export class WorldComposer {
     // est nécessaire pour tracer cette fuite (voir `faunaLayer._checkFlee`).
     this.fauna.advance(delta, at, (x, z) => this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale);
     this.tractors.advance(delta);
+    this.trains.advance(delta, at);
     this.bridges.lighting?.update(at);
     // Ce que le mobilier a d'animé : les feux, et les deux lampes qui suivent l'observateur.
     this.furniture.advanceSignals(delta);
@@ -731,6 +736,8 @@ export class WorldComposer {
     this.buildings.setNight(mix);
     this.furniture.setNight(mix);
     this.life.setNight(mix);
+    this.tractors.setNight(mix);
+    this.trains.setNight(mix);
   }
 
   /**
@@ -760,6 +767,7 @@ export class WorldComposer {
     this.crops.setWind(field);
     this.furniture.setWindDirection(direction, force);
     this.life.setWindDirection(direction);
+    this.tractors.setWindDirection(direction);
   }
 
   /**
@@ -780,6 +788,7 @@ export class WorldComposer {
     this.life.dispose();
     this.fauna.dispose();
     this.tractors.dispose();
+    this.trains.dispose();
     this.furniture.dispose();
     this.crops.dispose();
     this.grass.dispose();

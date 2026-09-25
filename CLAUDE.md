@@ -23,6 +23,26 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   `node scripts/roads-shot.mjs <dossier> '<réglages JSON>'`. Le mobilier de
   rase campagne y est posé (talus, murs, glissières, alignements), pas le bâti
   ni les parcelles.
+- `demo/lab/furniture.html` — des formes du catalogue de mobilier côte à côte,
+  à côté d'un gabarit humain de 1,75 m ; `furnitureLab.set({ kinds, yawDeg,
+  pitchDeg, distance, target })`, ou `node scripts/furniture-shot.mjs`.
+- `demo/lab/roundabout.html` — un giratoire synthétique (anneau à sens unique,
+  branches simples ou dédoublées) passé tel quel dans `RoadNetwork` sur un sol
+  plat ; `roundaboutLab.set({ radius, branches, splitDeg, splitLength, axes,
+  view, span })`, ou `node scripts/roundabout-shot.mjs`.
+
+- `demo/lab/shop.html` — le bâti seul le long d'une rue plate, avec des
+  commerces en pignon, en long pan ou sans rue devant ;
+  `shopLab.set({ yawDeg, pitchDeg, distance })`, ou
+  `node scripts/shop-shot.mjs <dossier> '<réglages JSON>'`.
+- `demo/lab/crops.html` — la `CropLayer` réelle sur un champ plat traversé par
+  une route sinueuse, avec une lisière entre deux cultures ;
+  `cropLab.set({ crop, next, height, pitchDeg })` dans la console.
+- `demo/lab/hedge.html` — quelques haies sur un sol plat, bâties par
+  `FurnitureLayer` ; `hedgeLab.set({ x, y, z, lookX, lookY, lookZ })`.
+- `demo/lab/verge.html` — un champ plat traversé par une route droite et sa
+  haie de bas-côté, avec la vraie `CropLayer` et la vraie `VergeStrips` ;
+  `vergeLab.set({ crop, hedge, lookDeg, pitchDeg, height, x })` dans la console.
 
 Si le chantier touche une partie du rendu qu'aucun banc ne montre, écris le
 banc plutôt que d'ouvrir la démo.

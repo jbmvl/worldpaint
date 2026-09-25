@@ -13,6 +13,11 @@
  * `furniture/parcels.js`, qui seul a lu les tuiles et sait où est un vrai
  * champ en labour ; cette couche ne fait que le rejouer, en aller-retour,
  * comme un passage de labour plutôt qu'un circuit fermé.
+ *
+ * La poussière qu'il soulève se déduit du même tracé : une bouffée d'âge `a`
+ * est partie de l'arrière du tracteur là où il était il y a `a` secondes, et
+ * dérive depuis au vent. Aucun état à tenir, et un demi-tour laisse le nuage
+ * là où il a été levé.
  */
 
 import { defaultTheme } from '../themes/default.js';
@@ -22,6 +27,46 @@ import { Kit } from '../models/kit.js';
 export const TRACTOR_ANIMATED_MAX = 12;
 /** Enfoncement dans le sol, en mètres — même raison que pour la faune. */
 export const TRACTOR_SINK_M = 0.03;
+/** Bouffées de poussière entretenues par tracteur. */
+export const DUST_PUFFS = 16;
+/** Durée de vie d'une bouffée, en secondes. */
+export const DUST_LIFE_S = 9;
+/** Taille d'une bouffée à sa naissance et en fin de vie, en mètres. */
+export const DUST_SIZE_M = [1.6, 11];
+/** Ascension et dérive au vent, en mètres par seconde. */
+export const DUST_RISE_MS = 0.3;
+export const DUST_DRIFT_MS = 0.9;
+/** Recul du point d'émission derrière le centre du tracteur, en mètres. */
+const DUST_BEHIND_M = 1.8;
+
+/**
+ * Une bouffée de poussière à un instant donné. Fonction pure.
+ *
+ * @param {Object} tractor Voir `fieldVehicleAt`.
+ * @param {number} time Secondes écoulées.
+ * @param {number} p Rang de la bouffée, de 0 à `DUST_PUFFS - 1`.
+ * @param {number} [windDirection] Direction du vent, en radians — même
+ *        convention que les oiseaux (`lifeLayer.birdAt`).
+ * @returns {{x:number,y:number,z:number,size:number,age:number}}
+ */
+export function dustPuffAt(tractor, time, p, windDirection = 0) {
+  // Les bouffées se partagent la durée de vie : le nuage est continu.
+  const shifted = time + (p / DUST_PUFFS) * DUST_LIFE_S;
+  const age = ((shifted % DUST_LIFE_S) + DUST_LIFE_S) % DUST_LIFE_S;
+  const born = fieldVehicleAt(tractor, time - age);
+  const t = age / DUST_LIFE_S;
+  // Écart latéral propre à la bouffée, stable d'une vie à l'autre : sans lui,
+  // le nuage s'aligne en chapelet sur le passage.
+  const spread = Math.sin(p * 12.9898 + 78.233) * 0.5;
+  const drift = DUST_DRIFT_MS * age;
+  return {
+    x: born.x - Math.sin(born.heading) * DUST_BEHIND_M + Math.cos(windDirection) * drift + Math.cos(born.heading) * spread * age * 0.6,
+    y: born.y + 0.5 + DUST_RISE_MS * age,
+    z: born.z - Math.cos(born.heading) * DUST_BEHIND_M + Math.sin(windDirection) * drift - Math.sin(born.heading) * spread * age * 0.6,
+    size: DUST_SIZE_M[0] + (DUST_SIZE_M[1] - DUST_SIZE_M[0]) * Math.sqrt(t),
+    age,
+  };
+}
 
 /**
  * Position et cap d'un tracteur à un instant donné, sur un aller-retour entre
@@ -141,6 +186,16 @@ export class TractorLayer {
     this.mesh.count = 0;
     this.group.add(this.mesh);
 
+    this.dustGeometry = new THREE.PlaneGeometry(1, 1);
+    this.dustMaterial = createDustMaterial(THREE, theme.life.dust);
+    this.dust = new THREE.InstancedMesh(this.dustGeometry, this.dustMaterial, TRACTOR_ANIMATED_MAX * DUST_PUFFS);
+    this.dust.name = 'tractor-dust';
+    this.dust.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.dust.frustumCulled = false;
+    this.dust.count = 0;
+    this.group.add(this.dust);
+    this._windDirection = 0;
+
     /** @type {Array<Object>} tracteurs publiés par `furnitureLayer`. */
     this._tractors = [];
 
@@ -176,6 +231,17 @@ export class TractorLayer {
     this._writeFrame();
   }
 
+  /** @param {number} direction Direction du vent, en radians. */
+  setWindDirection(direction) {
+    this._windDirection = Number.isFinite(direction) ? direction : 0;
+  }
+
+  /** La poussière s'assombrit avec la nuit, comme la fumée. @param {number} mix 0 à 1. */
+  setNight(mix) {
+    const night = Math.min(1, Math.max(0, Number(mix) || 0));
+    this.dustMaterial.uniforms.uTint.value = 0.35 + (1 - night) * 0.65;
+  }
+
   _writeFrame() {
     // Taille fixe : pas de variation d'échelle d'un tracteur à l'autre.
     this._scale.setScalar(1);
@@ -189,6 +255,23 @@ export class TractorLayer {
     });
     this.mesh.count = this._tractors.length;
     this.mesh.instanceMatrix.needsUpdate = true;
+    this._writeDust();
+  }
+
+  _writeDust() {
+    let index = 0;
+    this._quaternion.identity();
+    for (const tractor of this._tractors) {
+      for (let p = 0; p < DUST_PUFFS; p++) {
+        const puff = dustPuffAt(tractor, this.time, p, this._windDirection);
+        this._position.set(puff.x, puff.y, puff.z);
+        this._scale.setScalar(puff.size);
+        this._matrix.compose(this._position, this._quaternion, this._scale);
+        this.dust.setMatrixAt(index++, this._matrix);
+      }
+    }
+    this.dust.count = index;
+    this.dust.instanceMatrix.needsUpdate = true;
   }
 
   dispose() {
@@ -198,7 +281,59 @@ export class TractorLayer {
     this.mesh.dispose?.();
     this.geometry.dispose();
     this.material.dispose();
+    this.group.remove(this.dust);
+    this.dust.dispose?.();
+    this.dustGeometry.dispose();
+    this.dustMaterial.dispose();
     this._tractors = [];
     this.scene.remove(this.group);
   }
+}
+
+/**
+ * Bouffée de poussière : panneau face caméra, même construction que la fumée
+ * de `lifeLayer`. L'opacité se lit sur la taille de l'instance, qui croît avec
+ * l'âge : une bouffée qui s'étale se dilue.
+ */
+function createDustMaterial(THREE, tint) {
+  const material = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    fog: false,
+    uniforms: {
+      uTint: { value: 1 },
+      uDust: { value: new THREE.Vector3(...tint) },
+      uSize: { value: new THREE.Vector2(DUST_SIZE_M[0], DUST_SIZE_M[1]) },
+    },
+    vertexShader: `
+      varying vec2 vUv;
+      varying float vSize;
+      void main() {
+        vUv = uv;
+        vec4 centre = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        vSize = length(instanceMatrix[0].xyz);
+        centre.xy += position.xy * vSize;
+        gl_Position = projectionMatrix * centre;
+      }
+    `,
+    fragmentShader: `
+      uniform float uTint;
+      uniform vec3 uDust;
+      uniform vec2 uSize;
+      varying vec2 vUv;
+      varying float vSize;
+      void main() {
+        float r = length(vUv - 0.5) * 2.0;
+        float falloff = pow(max(0.0, 1.0 - r), 1.6);
+        float t = clamp((vSize - uSize.x) / (uSize.y - uSize.x), 0.0, 1.0);
+        // Dense au ras des roues, un voile en fin de vie.
+        float alpha = falloff * (1.0 - t) * 0.38;
+        if (alpha <= 0.004) discard;
+        gl_FragColor = vec4(uDust * uTint, alpha);
+      }
+    `,
+  });
+  material.name = 'tractor-dust';
+  return material;
 }

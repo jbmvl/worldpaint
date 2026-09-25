@@ -217,7 +217,7 @@ export function roadwardFocus(layer, ring, centre) {
  *        circuit jusqu'au bout.
  * @returns {number} 1 si la bête est posée, 0 sinon.
  */
-export function placeFauna(layer, kind, { x, z, ring = null, scale = 1, flee = false }) {
+export function placeFauna(layer, kind, { x, z, ring = null, scale = 1, flee = false, keepOut = null }) {
   if (layer.fauna.length >= FURNITURE_LIMITS.fauna) return 0;
   const spec = FAUNA_SPECIES[kind];
   if (!spec) return 0;
@@ -243,7 +243,8 @@ export function placeFauna(layer, kind, { x, z, ring = null, scale = 1, flee = f
     sampleY: (sx, sz) => layer.bubble.surfaceElevationAtLocal(sx, sz, 0) * layer.bubble.verticalScale,
     // La bête reste dans sa parcelle et hors de la chaussée. La traversée
     // est la seule exception, et elle passe par `crossAxis`, pas par ici.
-    allow: (sx, sz) => !layer._onRoad(sx, sz) && (!ring || pointInRing(ring, sx, sz)),
+    allow: (sx, sz) =>
+      !layer._onRoad(sx, sz) && (!ring || pointInRing(ring, sx, sz)) && !keepOut?.(sx, sz),
     crossAxis: crossing?.axis || null,
   });
   if (!circuit) return 0;

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Banc des cultures</title>
+<style>html,body{margin:0;background:#9fb8cf}canvas{display:block}</style>
+<script type="importmap">
+{ "imports": { "three": "/node_modules/three/build/three.module.js" } }
+</script>
+</head>
+<body>
+<script type="module">
+/*
+ * Banc des cultures — un champ plat traversé par une route sinueuse, la
+ * `CropLayer` réelle posée dessus. Le champ change de culture à `FIELD_EDGE_M`
+ * devant l'observateur, pour montrer une lisière entre deux cultures. Aucune
+ * tuile, aucun réseau :
+ *
+ *   cropLab.set({ crop: 'maize', next: 'wheat', height: 12, pitchDeg: -14 })
+ */
+import * as THREE from 'three';
+import { CropLayer } from '/src/layers/cropLayer.js';
+
+const ROAD_HALF_M = 3;
+const FIELD_EDGE_M = 90;
+const roadX = (z) => 10 * Math.sin(z / 45);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fb8cf);
+scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x4a5a30, 1.4));
+const sun = new THREE.DirectionalLight(0xffffff, 2);
+sun.position.set(-40, 80, 30);
+scene.add(sun);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.5, 2000);
+
+scene.add(new THREE.Mesh(
+  new THREE.PlaneGeometry(2000, 2000).rotateX(-Math.PI / 2),
+  new THREE.MeshLambertMaterial({ color: 0x4f6a2c })
+));
+const road = [];
+for (let z = -200; z <= 400; z += 2) {
+  road.push(roadX(z) - ROAD_HALF_M, 0.05, z, roadX(z) + ROAD_HALF_M, 0.05, z);
+}
+const roadGeometry = new THREE.BufferGeometry();
+roadGeometry.setAttribute('position', new THREE.Float32BufferAttribute(road, 3));
+const roadIndex = [];
+for (let i = 0; i < road.length / 6 - 1; i++) {
+  const a = i * 2;
+  roadIndex.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+}
+roadGeometry.setIndex(roadIndex);
+scene.add(new THREE.Mesh(roadGeometry, new THREE.MeshBasicMaterial({ color: 0x1b1c22, side: THREE.DoubleSide })));
+
+const state = { crop: 'maize', next: 'wheat', height: 12, pitchDeg: -14, z: 0 };
+const bubble = { frame: 1, surfaceGeneration: 1, verticalScale: 1, surfaceElevationAtLocal: () => 0 };
+// La carte des cultures ignore la route, comme une tuile qui en garde la trace.
+const groundClass = {
+  cropReady: true,
+  cropAt: (x, z) => (z < state.z + FIELD_EDGE_M ? state.crop : state.next),
+};
+const index = {
+  covers: (x, z, margin) => Math.abs(x - roadX(z)) * Math.cos(Math.atan(Math.cos(z / 45) * 10 / 45)) <= ROAD_HALF_M + margin,
+};
+const crops = new CropLayer({ THREE, scene, bubble, groundClass, roads: { index } });
+
+function render() {
+  bubble.frame++;
+  crops.update(roadX(state.z), state.z, { force: true });
+  const x = roadX(state.z);
+  camera.position.set(x, state.height, state.z);
+  const pitch = (state.pitchDeg * Math.PI) / 180;
+  camera.lookAt(x, state.height + Math.sin(pitch) * 100, state.z + Math.cos(pitch) * 100);
+  renderer.render(scene, camera);
+  return { instances: crops.mesh.count };
+}
+
+window.cropLab = {
+  set(options = {}) {
+    Object.assign(state, options);
+    return render();
+  },
+  state,
+};
+window.cropLabReady = true;
+render();
+</script>
+</body>
+</html>

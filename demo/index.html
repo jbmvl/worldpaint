@@ -176,7 +176,14 @@
     background: rgba(16, 19, 26, 0.7); border: 1px solid rgba(255,255,255,0.1);
     border-radius: 6px; padding: 4px 9px; color: #9aa4b2; font-size: 11px;
     font-variant-numeric: tabular-nums;
+    display: flex; align-items: center; gap: 6px;
   }
+  #coordsText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #copyCoordsBtn {
+    flex: none; background: none; border: none; padding: 0 2px;
+    color: inherit; font: inherit; font-size: 12px; cursor: pointer;
+  }
+  #copyCoordsBtn:hover { color: #fff; }
 
   #minimap {
     position: fixed; bottom: calc(12px + var(--safe-b)); right: calc(12px + var(--safe-r)); z-index: 10;
@@ -462,7 +469,7 @@
   </div>
 </div>
 
-<div id="coords">—</div>
+<div id="coords"><span id="coordsText">—</span><button id="copyCoordsBtn" title="Copier les coordonnées" aria-label="Copier les coordonnées">⧉</button></div>
 <canvas id="minimap" width="320" height="320" title="Cliquer pour l’ouvrir en grand"></canvas>
 
 <div id="quickbar">

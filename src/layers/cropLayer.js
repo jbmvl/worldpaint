@@ -23,7 +23,7 @@ import {
 } from '../materials/foliageMaterial.js';
 import { defaultTheme } from '../themes/default.js';
 import { soilWashFor } from '../core/regionInterpretation.js';
-import { inCorridor } from './roadCorridor.js';
+import { CORRIDOR_MARGIN_M, inCorridor } from './roadCorridor.js';
 import {
   coverBand,
   coverBandRing,
@@ -209,6 +209,23 @@ export function fillCropCell(out, gx, gz, cell = CROP_CELL_M, perCell = CROP_PER
   return out;
 }
 
+/**
+ * Vrai si le panneau d'une masse, de demi-largeur `reach`, reste dans la même
+ * culture et hors de l'emprise routière. Une masse lointaine fait plusieurs
+ * mètres de large : posée en lisière, elle déborde sur la route ou le champ
+ * voisin. Les quatre directions cardinales suffisent, le panneau étant en croix.
+ * Fonction pure.
+ */
+export function cropMassFits(groundClass, index, crop, x, z, reach) {
+  if (inCorridor(index, x, z, CORRIDOR_MARGIN_M + reach)) return false;
+  return (
+    groundClass.cropAt(x + reach, z) === crop &&
+    groundClass.cropAt(x - reach, z) === crop &&
+    groundClass.cropAt(x, z + reach) === crop &&
+    groundClass.cropAt(x, z - reach) === crop
+  );
+}
+
 export class CropLayer {
   /**
    * @param {Object} options
@@ -237,6 +254,7 @@ export class CropLayer {
     this.bubble = bubble;
     this.groundClass = groundClass;
     this.roads = roads;
+    this.verges = null;
     /**
      * Matrice de paysage du lieu, ou `null`. Elle ne décide pas *quelle*
      * culture pousse — ça, c'est `cropFor`, dans la carte de classes — mais de
@@ -342,6 +360,14 @@ export class CropLayer {
   }
 
   /**
+   * Pose les bandes de bas-côté publiées par le mobilier (`VergeStrips`) : la
+   * culture reste derrière la haie.
+   */
+  setVerges(verges) {
+    this.verges = verges || null;
+  }
+
+  /**
    * Redistribue les touffes si l'observateur s'est assez éloigné.
    * @returns {boolean} vrai si une redistribution a eu lieu.
    */
@@ -365,6 +391,7 @@ export class CropLayer {
     const { bubble, roads, mesh } = this;
     const capacity = mesh.instanceMatrix.count;
     const index = roads?.index || null;
+    const verges = this.verges;
     const bands = this._bands;
     // Un centre arrondi **par bande** : chaque grille garde son propre pas, donc
     // les mailles retenues ne dépendent que du sol.
@@ -421,11 +448,13 @@ export class CropLayer {
         // choisie ici : c'est l'emprise routière (`roadCorridor`), commune à
         // l'herbe, aux haies, aux clôtures et aux jardins.
         if (inCorridor(index, x, z)) continue;
+        if (verges?.covers(x, z)) continue;
 
         const height = look.height * (0.82 + tufts[at + 3] * 0.36) * heightFade * band.rise;
-        const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
         // Élargi, pas élevé : c'est la largeur qui ferme les trous entre masses.
         const width = height * look.spread * 4 * band.spread;
+        if (cell.band > 0 && !cropMassFits(this.groundClass, index, crop, x, z, width / 2)) continue;
+        const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
 
         this._position.set(x, y, z);
         this._quaternion.setFromAxisAngle(this._axis, tufts[at + 4] * Math.PI);

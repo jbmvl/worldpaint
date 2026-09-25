@@ -26,7 +26,8 @@
  * coupant l'arête d'accueil dessous. C'est le seul endroit où on peut le faire
  * sans inventer : sur le graphe, où le niveau de croisement et l'ouvrage d'art
  * sont connus, et où la différence entre « aborder » et « prolonger » est un
- * angle.
+ * angle. `splitCrossings` fait de même pour deux axes qui se traversent en X
+ * sans sommet commun.
  *
  * Ce module ne rogne plus rien. Il l'a fait — la voie la plus étroite
  * s'arrêtait sur un cercle centré sur le nœud —, et c'était la mauvaise
@@ -87,6 +88,7 @@
 
 import { WORK_NONE, LEVEL_GROUND, BRIDGE_RAMP_M, rampLengthFor } from './roadWorks.js';
 import { roundCorners } from './ribbonGeometry.js';
+import { findRoundabouts } from './roadRoundabouts.js';
 
 /** Distance en deçà de laquelle deux sommets sont le même nœud, en mètres. */
 export const NODE_WELD_M = 1.2;
@@ -190,7 +192,13 @@ class NodeIndex {
     }
 
     if (best >= 0) return best;
+    return this.create(x, z, level);
+  }
 
+  /** Un nœud neuf à cette position, sans soudure. */
+  create(x, z, level = LEVEL_GROUND) {
+    const cx = Math.floor(x / this.cell);
+    const cz = Math.floor(z / this.cell);
     const id = this.xs.length;
     this.xs.push(x);
     this.zs.push(z);
@@ -261,24 +269,33 @@ function extendChain(ids, { edges, adjacency, used, nodes, rank, continueCos }) 
 }
 
 /**
- * Rang numérique d'un profil, attribué à la volée.
+ * Rang numérique d'un profil **et d'une largeur**, attribué à la volée. La
+ * largeur en fait partie parce qu'elle est constante sur une chaîne : la
+ * chaussée à double sens qui se dédouble en deux sens uniques, plus étroits,
+ * s'arrête au nœud où elle se sépare, au lieu de prolonger sa largeur sur
+ * celle des deux qui va le plus droit.
  *
  * Les clés du graphe sont des nombres et pas des chaînes : sur cinquante mille
  * sommets, `${profile}|${a}|${b}` coûte cinquante mille chaînes construites puis
  * hachées, soit le tiers du temps de la fusion.
  */
-function profileRank(state, profile) {
-  let rank = state.ranks.get(profile);
+function profileRank(state, profile, halfWidth) {
+  const key = `${profile}|${halfWidth}`;
+  let rank = state.ranks.get(key);
   if (rank === undefined) {
-    rank = state.ranks.size;
-    state.ranks.set(profile, rank);
+    // Au-delà, deux largeurs partagent un rang : leurs chaînes se recollent, rien ne casse.
+    rank = state.ranks.size % RANK_SLOTS;
+    state.ranks.set(key, rank);
   }
   return rank;
 }
 
+/** Rangs distincts qu'une clé peut porter : profils et largeurs d'un jeu de tuiles. */
+const RANK_SLOTS = 64;
+
 /** Clé d'adjacence : un nœud, pour un profil donné. */
 function adjacencyKey(node, rank) {
-  return node * 16 + rank;
+  return node * RANK_SLOTS + rank;
 }
 
 /** Clé d'une arête entre deux nœuds, pour un profil donné. */
@@ -287,7 +304,7 @@ function edgeKey(a, b, rank) {
   const high = a < b ? b : a;
   // Un nœud tient sur 21 bits pour un million de sommets, donc la clé reste un
   // entier exact bien en deçà de 2^53.
-  return (low * 2097152 + high) * 16 + rank;
+  return (low * 2097152 + high) * RANK_SLOTS + rank;
 }
 
 /**
@@ -303,7 +320,7 @@ function edgeKey(a, b, rank) {
  */
 function addEdge(state, a, b, profile, halfWidth, works = WORK_NONE, level = LEVEL_GROUND, oneway = 0) {
   if (a === b) return;
-  const rank = profileRank(state, profile);
+  const rank = profileRank(state, profile, halfWidth);
   const key = edgeKey(a, b, rank);
   const seen = state.seen.get(key);
   if (seen !== undefined) {
@@ -327,6 +344,66 @@ function addEdge(state, a, b, profile, halfWidth, works = WORK_NONE, level = LEV
     else state.adjacency.set(listKey, [index]);
     state.degree.set(node, (state.degree.get(node) || 0) + 1);
   }
+}
+
+/**
+ * Retire les éperons de découpe : le morceau d'une route qu'une tuile voisine
+ * livre jusqu'au bord de sa marge, soudé à un sommet que l'autre tuile porte
+ * aussi. Son arête se couche sur celle de la route entière, et le sommet
+ * partagé passe au degré trois : un faux carrefour, où `branchPath` s'arrête.
+ * Un bout libre posé sur une autre arête du même profil partant du même nœud
+ * n'est que cette route une seconde fois.
+ *
+ * @param {Object} state Graphe construit par `addEdge`.
+ * @param {NodeIndex} nodes
+ * @param {number} weld Écart toléré à l'arête recouverte, en mètres.
+ * @returns {Object} le graphe, sans ces arêtes.
+ */
+function dropClippedSpurs(state, nodes, weld) {
+  const { edges, adjacency, degree } = state;
+  const drop = new Set();
+
+  for (let i = 0; i < edges.length; i++) {
+    const edge = edges[i];
+    for (const [tip, root] of [
+      [edge.a, edge.b],
+      [edge.b, edge.a],
+    ]) {
+      if (degree.get(tip) !== 1) continue;
+      for (const j of adjacency.get(adjacencyKey(root, edge.rank)) || []) {
+        if (j === i || drop.has(j)) continue;
+        const other = edges[j];
+        const far = other.a === root ? other.b : other.a;
+        const { distance } = distanceToSegment(
+          nodes.xs[tip],
+          nodes.zs[tip],
+          nodes.xs[root],
+          nodes.zs[root],
+          nodes.xs[far],
+          nodes.zs[far]
+        );
+        if (distance <= weld) {
+          drop.add(i);
+          break;
+        }
+      }
+    }
+  }
+  if (drop.size === 0) return state;
+
+  const next = {
+    edges: [],
+    seen: new Map(),
+    adjacency: new Map(),
+    degree: new Map(),
+    ranks: state.ranks,
+  };
+  for (let i = 0; i < edges.length; i++) {
+    if (drop.has(i)) continue;
+    const edge = edges[i];
+    addEdge(next, edge.a, edge.b, edge.profile, edge.halfWidth, edge.works, edge.level, edge.oneway);
+  }
+  return next;
 }
 
 /**
@@ -569,6 +646,116 @@ function graftLooseNodes(state, nodes, { reach = GRAFT_REACH_M, skewCos = GRAFT_
 }
 
 /**
+ * Coupe au point de rencontre deux arêtes qui se traversent sans nœud commun.
+ *
+ * C'est le cas que la greffe ne voit pas : un croisement en X dont la tuile a
+ * retiré le sommet commun des deux côtés, ou l'a décalé au-delà de la
+ * tolérance de soudure. Aucun sommet ne bute sur l'autre chaussée, et pourtant
+ * les deux axes se coupent au même niveau : la donnée d'origine y porte un
+ * nœud. Mêmes gardes que la greffe — même niveau, aucun ouvrage, plus de
+ * vingt-cinq degrés entre les deux — et seules les chaussées revêtues comptent :
+ * un chemin se pose sur la route, il ne s'y raccorde pas.
+ *
+ * Un croisement à moins de la tolérance de soudure d'un sommet est laissé à la
+ * greffe, qui a déjà tranché.
+ *
+ * @param {Object} state Graphe construit par `addEdge`.
+ * @param {NodeIndex} nodes
+ * @param {Object} [options]
+ * @returns {Object} le graphe, arêtes coupées à leurs croisements.
+ */
+function splitCrossings(state, nodes, { skewCos = GRAFT_SKEW_COS, unpaved = null } = {}) {
+  const { edges } = state;
+  const cell = ROAD_INDEX_CELL_M;
+  const grid = new Map();
+  for (let i = 0; i < edges.length; i++) {
+    const edge = edges[i];
+    if (edge.works !== WORK_NONE || unpaved?.has(edge.profile)) continue;
+    const minX = Math.floor(Math.min(nodes.xs[edge.a], nodes.xs[edge.b]) / cell);
+    const maxX = Math.floor(Math.max(nodes.xs[edge.a], nodes.xs[edge.b]) / cell);
+    const minZ = Math.floor(Math.min(nodes.zs[edge.a], nodes.zs[edge.b]) / cell);
+    const maxZ = Math.floor(Math.max(nodes.zs[edge.a], nodes.zs[edge.b]) / cell);
+    for (let cx = minX; cx <= maxX; cx++) {
+      for (let cz = minZ; cz <= maxZ; cz++) {
+        const key = cellKey(cx, cz);
+        const bucket = grid.get(key);
+        if (bucket) bucket.push(i);
+        else grid.set(key, [i]);
+      }
+    }
+  }
+
+  const weld = nodes.tolerance;
+  const found = [];
+  for (const [key, bucket] of grid) {
+    for (let m = 0; m < bucket.length; m++) {
+      const p = edges[bucket[m]];
+      for (let n = m + 1; n < bucket.length; n++) {
+        const q = edges[bucket[n]];
+        if (p.level !== q.level) continue;
+        if (p.a === q.a || p.a === q.b || p.b === q.a || p.b === q.b) continue;
+        const ax = nodes.xs[p.a];
+        const az = nodes.zs[p.a];
+        const ux = nodes.xs[p.b] - ax;
+        const uz = nodes.zs[p.b] - az;
+        const cx = nodes.xs[q.a];
+        const cz = nodes.zs[q.a];
+        const vx = nodes.xs[q.b] - cx;
+        const vz = nodes.zs[q.b] - cz;
+        const lengthP = Math.hypot(ux, uz);
+        const lengthQ = Math.hypot(vx, vz);
+        const cross = ux * vz - uz * vx;
+        if (!(Math.abs(cross) > lengthP * lengthQ * Math.sqrt(1 - skewCos * skewCos))) continue;
+        const s = ((cx - ax) * vz - (cz - az) * vx) / cross;
+        const t = ((cx - ax) * uz - (cz - az) * ux) / cross;
+        if (s * lengthP <= weld || (1 - s) * lengthP <= weld) continue;
+        if (t * lengthQ <= weld || (1 - t) * lengthQ <= weld) continue;
+        const x = ax + ux * s;
+        const z = az + uz * s;
+        // Une paire partage plusieurs cellules : elle n'est comptée que dans
+        // celle qui contient le croisement.
+        if (cellKey(Math.floor(x / cell), Math.floor(z / cell)) !== key) continue;
+        found.push({ p: bucket[m], q: bucket[n], s, t, x, z });
+      }
+    }
+  }
+  if (found.length === 0) return state;
+
+  // Dans l'ordre des arêtes, pas celui de la grille : les nœuds neufs prennent
+  // les mêmes identifiants d'une reconstruction à l'autre.
+  found.sort((f, g) => Math.min(f.p, f.q) - Math.min(g.p, g.q) || Math.max(f.p, f.q) - Math.max(g.p, g.q));
+  const splits = new Map();
+  const cut = (index, t, node) => {
+    const cuts = splits.get(index);
+    if (cuts) cuts.push({ t, node });
+    else splits.set(index, [{ t, node }]);
+  };
+  for (const { p, q, s, t, x, z } of found) {
+    const node = nodes.create(x, z, edges[p].level);
+    cut(p, s, node);
+    cut(q, t, node);
+  }
+
+  const next = {
+    edges: [],
+    seen: new Map(),
+    adjacency: new Map(),
+    degree: new Map(),
+    ranks: state.ranks,
+  };
+  for (let i = 0; i < edges.length; i++) {
+    const edge = edges[i];
+    let from = edge.a;
+    for (const { node } of (splits.get(i) || []).sort((f, g) => f.t - g.t)) {
+      addEdge(next, from, node, edge.profile, edge.halfWidth, edge.works, edge.level, edge.oneway);
+      from = node;
+    }
+    addEdge(next, from, edge.b, edge.profile, edge.halfWidth, edge.works, edge.level, edge.oneway);
+  }
+  return next;
+}
+
+/**
  * Recolle les bouts libres qui se chevauchent sans se toucher.
  *
  * C'est le cas de toutes les frontières de tuile : la moitié amont déborde de
@@ -621,6 +808,7 @@ function joinLooseEnds(chains, { join, offset, collinearCos }) {
           const b = ends[j];
           if (!b || b.chain === a.chain) continue;
           if (chains[a.chain].profile !== chains[b.chain].profile) continue;
+          if (chains[a.chain].halfWidth !== chains[b.chain].halfWidth) continue;
 
           const distance = Math.hypot(b.x - a.x, b.z - a.z);
           if (distance > bestDistance) continue;
@@ -750,11 +938,13 @@ function assembleChains(chains, partner) {
 
 /**
  * Longueur sur laquelle on suit une branche au-delà du nœud, en mètres. Elle
- * couvre largement la profondeur qu'un carrefour peut prendre le long d'une
- * branche (`roadJunctions`, bouche comprise) : au-delà, plus personne ne lit
- * cette polyligne.
+ * couvre la profondeur qu'un carrefour peut prendre le long d'une branche
+ * (`roadJunctions`, bouche comprise), y compris celle d'une fourche, qui
+ * cherche la séparation de ses deux branches jusqu'à
+ * `JUNCTION_FORK_REACH_M` : prolonger la polyligne en ligne droite l'y
+ * ferait trouver trop tôt, là où les deux rubans se recouvrent encore.
  */
-export const BRANCH_SIGHT_M = 26;
+export const BRANCH_SIGHT_M = 100;
 
 /**
  * Distance à laquelle se mesure la direction sortante d'une branche, en
@@ -860,7 +1050,12 @@ function pointAlong(points, distance) {
  * carrefour entre eux. Une polyligne de branche suit la même règle : un chemin
  * qui la coupe ne l'arrête pas.
  *
+ * Un giratoire (`roadRoundabouts`) est publié comme **un** carrefour, centré
+ * sur son anneau et portant `roundabout` : ses branches sont celles qui en
+ * sortent, jamais les arêtes de l'anneau lui-même.
+ *
  * @param {Set<string>|null} [options.unpaved] Profils non revêtus.
+ * @param {Array<Object>} [options.rings] Anneaux rendus par `findRoundabouts`.
  * @returns {Array<{x:number, z:number, degree:number, level:number,
  *          halfWidth:number, profile:string, branches:Array<{x:number,
  *          z:number, halfWidth:number, profile:string,
@@ -871,10 +1066,15 @@ function pointAlong(points, distance) {
 function collectJunctions(
   graph,
   nodes,
-  { sight = BRANCH_SIGHT_M, headingAt = BRANCH_HEADING_M, unpaved = null } = {}
+  { sight = BRANCH_SIGHT_M, headingAt = BRANCH_HEADING_M, unpaved = null, rings = [] } = {}
 ) {
   const { edges, degree } = graph;
   const byNode = new Map();
+  const ringAt = new Map();
+  for (const ring of rings) {
+    const key = Math.min(...ring.nodes);
+    for (const node of ring.nodes) ringAt.set(node, { ring, key });
+  }
 
   const pavedDegree = new Map();
   for (const edge of edges) {
@@ -892,6 +1092,8 @@ function collectJunctions(
       if (paved !== pavedDegree.has(node)) continue;
       const count = degreeOf(node, paved);
       if (count < 3) continue;
+      const onRing = ringAt.get(node);
+      if (onRing?.ring.edges.has(edge)) continue;
       const other = node === edge.a ? edge.b : edge.a;
       // La branche est arrondie comme la chaîne qu'elle décrit : c'est sur elle
       // que la bouche du carrefour va chercher la chaussée, et les deux doivent
@@ -905,7 +1107,22 @@ function collectJunctions(
       const heading = direction(nodes.xs[node], nodes.zs[node], ahead.x, ahead.z);
       if (!heading) continue;
 
-      let junction = byNode.get(node);
+      const key = onRing ? onRing.key : node;
+      let junction = byNode.get(key);
+      if (!junction && onRing) {
+        const { ring } = onRing;
+        junction = {
+          x: ring.x,
+          z: ring.z,
+          degree: 0,
+          level: LEVEL_GROUND,
+          halfWidth: 0,
+          profile: null,
+          branches: [],
+          roundabout: { inner: ring.inner, outer: ring.outer, halfWidth: ring.halfWidth, profile: ring.profile },
+        };
+        byNode.set(key, junction);
+      }
       if (!junction) {
         junction = {
           x: nodes.xs[node],
@@ -936,7 +1153,9 @@ function collectJunctions(
 
   // Par identifiant de nœud croissant, donc dans l'ordre où les arêtes ont été
   // lues : deux reconstructions du même jeu de tuiles rendent la même liste.
-  return [...byNode.keys()].sort((a, b) => a - b).map((node) => byNode.get(node));
+  const junctions = [...byNode.keys()].sort((a, b) => a - b).map((node) => byNode.get(node));
+  for (const junction of junctions) if (junction.roundabout) junction.degree = junction.branches.length;
+  return junctions;
 }
 
 /**
@@ -992,7 +1211,11 @@ export function mergeRoadLines(lines, options = {}) {
   // Les sommets qui débouchent sur une chaussée y sont greffés avant tout le
   // reste : un carrefour que la donnée porte sans le dire doit exister dans le
   // graphe comme les autres, sans quoi rien de ce qui le lit ne le verra.
-  const graph = graftLooseNodes(state, nodes, { reach: graft, skewCos: graftSkewCos });
+  const grafted = graftLooseNodes(dropClippedSpurs(state, nodes, weld), nodes, {
+    reach: graft,
+    skewCos: graftSkewCos,
+  });
+  const graph = splitCrossings(grafted, nodes, { skewCos: graftSkewCos, unpaved });
   const { edges, adjacency, degree, seen } = graph;
   const used = new Uint8Array(edges.length);
   const chains = [];
@@ -1064,7 +1287,7 @@ export function mergeRoadLines(lines, options = {}) {
     });
   }
 
-  const junctions = collectJunctions(graph, nodes, { unpaved });
+  const junctions = collectJunctions(graph, nodes, { unpaved, rings: findRoundabouts(edges, nodes, { unpaved }) });
   const joined = joinLooseEnds(chains, { join, offset, collinearCos });
 
   // Orientation canonique : deux reconstructions successives doivent parcourir

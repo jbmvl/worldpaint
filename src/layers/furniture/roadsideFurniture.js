@@ -16,7 +16,7 @@
 import { appendProfile } from '../ribbonGeometry.js';
 import { LEVEL_GROUND } from '../roadWorks.js';
 import { nearestNamedPlace, pointInAreas } from '../settlement.js';
-import { LAMP_HEAD_HEIGHT_M, LAMP_HEAD_REACH_M } from '../furnitureKit.js';
+import { lampHeadFor } from '../furnitureKit.js';
 import {
   spacedAlongPath,
   pickShare,
@@ -321,13 +321,14 @@ export function applyRoadsidePlan(layer, {
         own: segment,
         level,
       });
-      // Halo nocturne : accroché à la tête, c'est-à-dire au bout de la crosse,
-      // qui avance au-dessus de la chaussée — pas au-dessus du mât.
+      // Halo nocturne : accroché à la lanterne — au bout de la crosse, qui
+      // avance au-dessus de la chaussée, ou au sommet d'un mât de style.
       if (placed) {
-        const reach = -Math.sign(offset) * LAMP_HEAD_REACH_M;
+        const head = lampHeadFor(kind);
+        const reach = -Math.sign(offset) * head.reach;
         layer._lampHeads.push({
           x: placed.x + p.tz * reach,
-          y: placed.y + LAMP_HEAD_HEIGHT_M,
+          y: placed.y + head.height,
           z: placed.z - p.tx * reach,
         });
       }
@@ -523,9 +524,8 @@ export function applyRoadsidePlan(layer, {
   if (verge.verge) {
     layer._appendHedgerow(buffers.lowHedge, 'lowHedge', path, sampleElevation, {
       offset: verge.vergeSide * (halfWidth + 2.6),
-      here,
-      startDistance: spacing.startDistance,
       openGround: true,
+      verge: true,
       own: segment,
     });
   }
@@ -539,9 +539,8 @@ export function applyRoadsidePlan(layer, {
       : randomAt(side.x, side.z, 23) < 0.5 ? 1 : -1;
     layer._appendHedgerow(buffers.hedge, 'hedge', path, sampleElevation, {
       offset: hedgeSide * (halfWidth + 1.8),
-      here,
-      startDistance: spacing.startDistance,
       openGround: true,
+      verge: true,
       own: segment,
     });
   }

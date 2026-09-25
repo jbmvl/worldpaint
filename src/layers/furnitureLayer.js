@@ -20,8 +20,8 @@ import { finishGeneration } from '../core/generationSteps.js';
  * c'est voulu : sa place est dans l'emprise de **sa** chaussée, pas de celle
  * d'en face (`_onOtherPavement`).
  *
- * Ce qui bouge n'est pas posé ici : le mobilier publie les bêtes (`fauna`) et
- * les cheminées (`chimneys`) pour `faunaLayer` et `lifeLayer`, qui les animent
+ * Ce qui bouge n'est pas posé ici : le mobilier publie les bêtes (`fauna`)
+ * pour `faunaLayer`, qui les anime
  * par image — cette couche, elle, ne se refait que tous les 250 m.
  */
 
@@ -38,7 +38,6 @@ import {
   HEDGE_SAMPLE_M,
   hedgeStyleFor,
   hedgeModulation,
-  appendHedgeClumps,
   hedgeFacets,
   hedgeNosePath,
   hedgeEndTaper,
@@ -54,6 +53,7 @@ import {
   inCorridor,
 } from './roadCorridor.js';
 import { CombinedIndex } from './roadGraph.js';
+import { VergeStrips } from './vergeStrips.js';
 import {
   Kit,
   createFurnitureGeometries,
@@ -233,7 +233,6 @@ export class FurnitureLayer {
       biomeDebris: 0,
       openPasture: 0,
       rows: 0,
-      hedgeClumps: 0,
     };
 
     // Halos des lampadaires : un panneau additif par tête, éteint le jour. Ils
@@ -286,15 +285,7 @@ export class FurnitureLayer {
     this._signals = [];
     this._signalClock = 0;
     /**
-     * Cheminées qui fument, publiées pour `lifeLayer`. Ce ne sont pas des objets
-     * de mobilier : la fumée est animée par image, donc elle n'a rien à faire
-     * dans une couche reconstruite tous les 250 mètres.
-     * @type {Array<{x:number,y:number,z:number}>}
-     */
-    this.chimneys = [];
-    /**
-     * Bêtes posées, publiées pour `faunaLayer`. Même raison que les cheminées :
-     * ce qui est animé par image n'a rien à faire dans une couche reconstruite
+     * Bêtes posées, publiées pour `faunaLayer`. Ce qui est animé par image n'a rien à faire dans une couche reconstruite
      * tous les 250 mètres.
      *
      * Ce que la couche de mobilier garde, c'est le seul travail qui demande
@@ -306,12 +297,14 @@ export class FurnitureLayer {
     this.fauna = [];
     /**
      * Tracteurs au travail, publiés pour `tractorLayer`. Même raison que les
-     * cheminées et les bêtes : le passage d'un labour (deux points, avec leur
+     * bêtes : le passage d'un labour (deux points, avec leur
      * altitude, et un aller-retour) est composé ici, une fois pour toutes,
      * puis rejoué par image.
      * @type {Array<Object>}
      */
     this.tractors = [];
+    /** Bandes entre chaussée et haie de bas-côté, publiées pour `cropLayer`. */
+    this.verges = new VergeStrips();
     /** Nuancier des robes, une liste par espèce (voir `theme.fauna.coats`). */
     this._coats = theme.fauna?.coats || {};
     /**
@@ -482,13 +475,12 @@ export class FurnitureLayer {
         biomeDebris: 0,
         openPasture: 0,
         rows: 0,
-        hedgeClumps: 0,
       };
       this._lampHeads = [];
       this._signals = [];
-      this.chimneys = [];
       this.fauna = [];
       this.tractors = [];
+      this.verges = new VergeStrips();
 
       try {
         // Les emprises habitées viennent de `worldComposer` quand il les a déjà
@@ -739,42 +731,24 @@ export class FurnitureLayer {
   }
 
   /**
-   * Pose une haie : sa masse continue, et ses arbustes.
+   * Pose une haie : une masse continue, balayée.
    *
-   * Une haie n'est pas une section balayée — c'est un **alignement d'arbustes**
-   * qui, mis bout à bout, ferme une parcelle. Le balayage seul tient très bien
-   * à cent mètres et se trahit à dix : sa crête est une ligne, sa section est
-   * constante, c'est un tube. Deux moitiés, donc, chacune pour sa distance
-   * (voir `hedgeGeometry`) :
+   * Le balayage seul tient très bien à cent mètres et se trahit à dix : sa
+   * crête est une ligne, sa section est constante, c'est un tube. Il est donc
+   * modulé en hauteur et en largeur, et facetté (`hedgeGeometry.hedgeFacets`)
+   * pour qu'il ne se lise plus, même de près, comme un tube extrudé. Ombrage
+   * plat (`_applyLinear`) : sans lui, les arêtes du facettage seraient
+   * moyennées et invisibles.
    *
-   * - le **balayage**, modulé en hauteur et en largeur, porte la haie au loin,
-   *   et facetté (`hedgeGeometry.hedgeFacets`) pour qu'il ne se lise plus,
-   *   même de près, comme un tube extrudé ;
-   * - les **arbustes**, posés dans le seul champ proche, portent sa silhouette
-   *   de près — et le balayage se baisse d'autant sous eux, de sorte que le
-   *   passage de l'un à l'autre ne se voit pas.
-   *
-   * Ils s'écrivent dans le même accumulateur : une haie reste une géométrie,
-   * une matière, un appel de dessin, et hérite donc du même ombrage plat
-   * (`_applyLinear`) — sans lui, les arêtes du facettage seraient moyennées et
-   * invisibles.
-   *
-   * Le tracé est ré-échantillonné plus fin que les contours dont il vient : à
-   * six mètres, aucune modulation à l'échelle de l'arbuste ne passe. Ce pas
-   * (`HEDGE_SAMPLE_M`) fixe aussi l'espacement des arêtes facettées.
-   *
-   * `startDistance` ancre les arbustes sur le **nœud amont** de la voie et non
-   * sur le début du tronçon rendu : un tronçon redécoupé ailleurs les ferait
-   * sinon tous glisser, et la haie se replanterait à chaque reconstruction.
+   * Le tracé est ré-échantillonné plus fin que les contours dont il vient : ce
+   * pas (`HEDGE_SAMPLE_M`) fixe l'espacement des arêtes facettées.
    *
    * `own` est la chaussée que la haie borde délibérément : posée à `offset` de
    * l'axe, elle est hors de l'emprise de sa propre route, mais file tout droit
-   * dans les rues transversales. La découpe la coupe à chacune ; chaque tronçon
-   * garde alors sa part de la distance parcourue, faute de quoi la coupe
-   * replanterait tout ce qui la suit.
+   * dans les rues transversales. La découpe la coupe à chacune.
    */
   _appendHedgerow(buffer, kind, path, sampleElevation, options = {}) {
-    const { offset = 0, own = null, startDistance = 0, openGround = false } = options;
+    const { offset = 0, own = null, openGround = false, verge = false } = options;
     const crossings = own
       ? this._clipOffRoad(path, { offset, minLength: BOUNDARY_MIN_LENGTH_M, own })
       : [path];
@@ -785,45 +759,18 @@ export class FurnitureLayer {
       // lisière aussi souvent qu'un champ, et le couper là l'effacerait.
       const runs = openGround ? this._clipOpenGround(crossed, { offset }) : [crossed];
       for (const run of runs) {
-        this._appendHedgerowRun(buffer, kind, run, sampleElevation, {
-          ...options,
-          startDistance: startDistance + FurnitureLayer._distanceAlong(path, run[0]),
-        });
-      }
-    }
-  }
-
-  /**
-   * Distance parcourue sur `path` jusqu'à un point qui s'y trouve.
-   *
-   * Les tronçons rendus par la découpe repartent tous de zéro : sans ce report,
-   * l'ancrage des arbustes se perdrait à chaque traversée.
-   */
-  static _distanceAlong(path, point) {
-    let travelled = 0;
-    let best = 0;
-    let bestGap = Infinity;
-    for (let i = 1; i < path.length; i++) {
-      const a = path[i - 1];
-      const b = path[i];
-      const dx = b.x - a.x;
-      const dz = b.z - a.z;
-      const span = Math.hypot(dx, dz);
-      if (span > 1e-6) {
-        const t = Math.min(1, Math.max(0, ((point.x - a.x) * dx + (point.z - a.z) * dz) / (span * span)));
-        const gap = Math.hypot(a.x + dx * t - point.x, a.z + dz * t - point.z);
-        if (gap < bestGap) {
-          bestGap = gap;
-          best = travelled + span * t;
+        // La bande va jusqu'au dos de la haie : sa demi-épaisseur est celle de sa section.
+        if (verge) {
+          const halfWidth = Math.max(...this.specs.profiles[kind].map((p) => Math.abs(p.across)));
+          this.verges.add(run, offset, halfWidth);
         }
+        this._appendHedgerowRun(buffer, kind, run, sampleElevation, { offset });
       }
-      travelled += span;
     }
-    return best;
   }
 
-  /** Une haie d'un seul tenant : sa masse balayée, puis ses arbustes. */
-  _appendHedgerowRun(buffer, kind, path, sampleElevation, { offset = 0, here = null, startDistance = 0 } = {}) {
+  /** Une haie d'un seul tenant. */
+  _appendHedgerowRun(buffer, kind, path, sampleElevation, { offset = 0 } = {}) {
     const style = hedgeStyleFor(kind, this.theme.furniture.hedges);
     const fine = resamplePath(path, HEDGE_SAMPLE_M);
     // Les deux bouts sont densifiés avant tout le reste : l'arrondi et le
@@ -836,11 +783,11 @@ export class FurnitureLayer {
     // longue qui porte la silhouette au loin, `hedgeFacets` y superpose un
     // saut indépendant par ligne — c'est lui, combiné à l'ombrage plat de
     // `_applyLinear`, qui casse le tube de près.
-    const modulation = hedgeModulation(dense, { offset, here, style });
+    const modulation = hedgeModulation(dense, { offset });
     const facets = hedgeFacets(dense, style.salt);
     // Le bout arrondi vient **après** le facettage, et le multiplie : sinon un
     // tirage haut au ras de la pointe ressortirait de l'arrondi, et le bout
-    // redeviendrait une coupe franche à un arbuste près.
+    // redeviendrait une coupe franche.
     const nose = hedgeEndTaper(dense, style.noseM);
     const scaleUp = new Float32Array(dense.length);
     const scaleAcross = new Float32Array(dense.length);
@@ -870,17 +817,6 @@ export class FurnitureLayer {
       smoothRadius: Math.round(6 / HEDGE_SAMPLE_M),
     });
 
-    this.counts.hedgeClumps += appendHedgeClumps(buffer, {
-      path: dense,
-      offset,
-      here,
-      style,
-      sampleElevation,
-      lift: -FURNITURE_SINK_M,
-      colors: this.theme.furniture.colors,
-      startDistance,
-      limit: FURNITURE_LIMITS.hedgeClumps - this.counts.hedgeClumps,
-    });
   }
 
   /**
@@ -1465,9 +1401,9 @@ export class FurnitureLayer {
 
     this._lampHeads = [];
     this._signals = [];
-    this.chimneys = [];
     this.fauna = [];
     this.tractors = [];
+    this.verges = new VergeStrips();
 
     for (const geometry of Object.values(this.geometries)) geometry.dispose();
     this.geometries = {};

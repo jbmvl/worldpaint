@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Banc des haies</title>
+<style>html,body{margin:0;background:#9fb7c9}canvas{display:block}</style>
+<script type="importmap">
+{ "imports": {
+  "three": "/node_modules/three/build/three.module.js",
+  "suncalc": "/demo/lab/suncalc-global.js"
+} }
+</script>
+<script src="/node_modules/suncalc/suncalc.js"></script>
+</head>
+<body>
+<script type="module">
+/*
+ * Banc des haies — quelques haies de bocage et haies basses sur un sol plat,
+ * bâties par le vrai chemin de `FurnitureLayer` (balayage modulé, facettage,
+ * museaux) et ombrées à plat comme dans la démo. Aucune tuile, aucun réseau.
+ *
+ *   hedgeLab.set({ x: 0, y: 1.7, z: 12, lookX: 0, lookZ: -20 })
+ */
+import * as THREE from 'three';
+import { FurnitureLayer } from '/src/layers/furnitureLayer.js';
+import { furnitureSpecsFor } from '/src/layers/furnitureKit.js';
+import { createProfileBuffer, toColoredGeometry } from '/src/layers/ribbonGeometry.js';
+import { defaultTheme } from '/src/themes/default.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fb7c9);
+scene.fog = new THREE.Fog(0x9fb7c9, 150, 600);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.1, 2000);
+scene.add(new THREE.HemisphereLight(0xcfe0ff, 0x4a5a30, 1.1));
+const sun = new THREE.DirectionalLight(0xfff2d8, 2.2);
+sun.position.set(-40, 60, 30);
+scene.add(sun);
+
+scene.add(
+  new THREE.Mesh(
+    new THREE.PlaneGeometry(4000, 4000).rotateX(-Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: 0x6f9a4a, roughness: 1 })
+  )
+);
+
+const layer = Object.create(FurnitureLayer.prototype);
+layer.theme = defaultTheme;
+layer.specs = furnitureSpecsFor(defaultTheme.furniture.colors);
+const flat = () => 0;
+
+const hedges = [
+  { kind: 'hedge', path: [{ x: -80, z: -20 }, { x: 80, z: -20 }] },
+  { kind: 'hedge', path: [{ x: 10, z: -60 }, { x: 30, z: -35 }, { x: 60, z: -30 }, { x: 90, z: -55 }] },
+  { kind: 'hedge', path: [{ x: -20, z: 0 }, { x: -12, z: 0 }] },
+  { kind: 'lowHedge', path: [{ x: -80, z: -8 }, { x: 60, z: -8 }] },
+];
+const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, flatShading: true });
+for (const { kind, path } of hedges) {
+  const buffer = createProfileBuffer();
+  layer._appendHedgerow(buffer, kind, path, flat);
+  const geometry = toColoredGeometry(THREE, buffer, { flat: true });
+  if (geometry) scene.add(new THREE.Mesh(geometry, material));
+}
+
+const state = { x: 0, y: 1.7, z: 12, lookX: 0, lookZ: -20, lookY: 1 };
+
+function render() {
+  camera.position.set(state.x, state.y, state.z);
+  camera.lookAt(state.lookX, state.lookY, state.lookZ);
+  renderer.render(scene, camera);
+  return { ...state };
+}
+
+window.hedgeLab = {
+  set(options = {}) {
+    Object.assign(state, options);
+    return render();
+  },
+  state,
+};
+window.hedgeLabReady = true;
+render();
+</script>
+</body>
+</html>

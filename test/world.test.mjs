@@ -62,6 +62,7 @@ import {
   branchSection,
   branchYields,
   junctionArea,
+  JUNCTION_FORK_REACH_M,
   junctionBoundaryAt,
   junctionCentreDeck,
   junctionCorner,
@@ -75,6 +76,7 @@ import {
   outlineDistance,
   JunctionAreas,
   JUNCTION_CORNER_MAX_M,
+  lowestDeckAround,
 } from '../src/layers/roadJunctions.js';
 import {
   absorbParallelLines,
@@ -193,9 +195,11 @@ import {
   LAMP_ARC,
   LAMP_HEAD_HEIGHT_M,
   LAMP_HEAD_REACH_M,
+  lampHeadFor,
   GREENHOUSE_BASE_LENGTH_M,
 } from '../src/layers/furnitureKit.js';
 import { tileBounds } from '../src/core/vectorTileSource.js';
+import { VergeStrips } from '../src/layers/vergeStrips.js';
 import {
   roadStyleFor,
   onewayFor,
@@ -292,7 +296,10 @@ import {
   BUILDING_MAX_HEIGHT,
   plinthTopFor,
   pushPanel,
+  pushBand,
   appendOpenings,
+  wallGroundProfile,
+  profileHighest,
   PLINTH_HEIGHT_M,
   WINDOW_FRAME_M,
   SHUTTER_WIDTH_RATIO,
@@ -300,6 +307,7 @@ import {
   sortPersonalities,
   personalityLookFor,
   shopfrontTopFor,
+  streetFacadeIndex,
   SHOPFRONT_HEIGHT_M,
   towerSide,
   towerRise,
@@ -330,8 +338,6 @@ import {
   thicketDensityFor,
   UNDERSTORY_REF,
   edgeLowPart,
-  edgeCanopy,
-  EDGE_CANOPY_DROP,
   foliageTint,
   thinPlacements,
   FOREST_PATCH_M,
@@ -486,14 +492,11 @@ import {
   HEDGE_STYLES,
   HEDGE_SAMPLE_M,
   HEDGE_NOSE_FLOOR,
-  hedgeNearness,
   hedgeModulation,
-  hedgeClumps,
   hedgeNosePath,
   hedgeEndTaper,
   hedgeNoseFactor,
   hedgeFacets,
-  appendHedgeClump,
 } from '../src/layers/hedgeGeometry.js';
 import {
   TREE_ATLAS_OFFSETS,
@@ -1239,24 +1242,29 @@ test('le sous-étage suit la part de sous-bois du peuplement, pas seulement sa d
   );
 });
 
-test('le bord d’un bois est un ourlet : houppe basse, fourré épais', () => {
+test('le sous-étage de lisière ne porte que des buissons', () => {
+  const type = { min: 10, max: 20 };
+  const strata = understoryStrata(defaultTheme.trees, true);
+  for (let base = 0; base < 100; base++) {
+    const arbre = describeTree({}, 4321, base, type, 0, [0, 1], strata, true, .1);
+    assert.equal(arbre.low, true);
+    assert.ok(strata.some(p => p.variant === arbre.variant && arbre.height >= p.min && arbre.height <= p.max));
+    assert.deepEqual(arbre, describeTree({}, 4321, base, type, 0, [0, 1], strata, true, .1));
+  }
+});
+
+test('le bord d’un bois augmente la part de fourré', () => {
   // En plein bois, la lisière ne change rien du tout — c’est la condition pour
   // qu’elle ne soit pas un effet de bord déguisé en style.
   assert.equal(edgeLowPart(0.2, 0), 0.2);
-  assert.equal(edgeCanopy(0), 1);
 
-  // Au bord, la strate basse monte sans jamais dépasser un fourré plein, et la
-  // houppe descend sans s’effondrer.
   const ourlet = edgeLowPart(0.2, 1);
   assert.ok(ourlet > 0.2 && ourlet < 1, `part de strate basse en lisière : ${ourlet}`);
-  close(edgeCanopy(1), 1 - EDGE_CANOPY_DROP, 1e-9, 'hauteur en lisière');
-  assert.ok(EDGE_CANOPY_DROP > 0 && EDGE_CANOPY_DROP < 0.5, 'un ourlet penche, il ne rampe pas');
 
   // Un taillis, déjà tout en strate basse, ne peut pas le devenir davantage.
   assert.equal(edgeLowPart(1, 1), 1);
   // Et l’effet est continu : à mi-lisière, à mi-chemin.
   close(edgeLowPart(0.2, 0.5), (0.2 + edgeLowPart(0.2, 1)) / 2, 1e-9, 'fondu de fourré');
-  close(edgeCanopy(0.5), (1 + edgeCanopy(1)) / 2, 1e-9, 'fondu de houppe');
 });
 
 test('la strate basse porte sa taille, et le tapis du sol ne pousse que de près', () => {
@@ -1448,6 +1456,27 @@ test('la devanture occupe la place du soubassement, pas le mur entier', () => {
   assert.equal(shopfrontTopFor(100, 0, 103.5), null, 'mur trop bas');
   // Sous un passage couvert, il n'y a pas de rez-de-chaussée à habiller.
   assert.equal(shopfrontTopFor(100, 4, 115), null, 'surplomb');
+});
+
+test('la devanture regarde la rue, pas la cour ni le pignon', () => {
+  // Rue nord-sud en x = 0 ; maison 12 × 6 m dont le petit côté donne sur elle.
+  const rue = new RoadIndex([{ halfWidth: 3, path: [{ x: 0, y: 0, z: -50 }, { x: 0, y: 0, z: 50 }] }]);
+  // Sens de `_appendBuilding` : normale sortante (b.y - a.y, -(b.x - a.x)).
+  const maison = [
+    { x: 5, y: 3 },
+    { x: 5, y: -3 },
+    { x: 17, y: -3 },
+    { x: 17, y: 3 },
+  ];
+  const i = streetFacadeIndex(maison, rue);
+  assert.equal(i, 0, 'le pignon sur rue, pas le long pan');
+  const a = maison[i];
+  const b = maison[(i + 1) % maison.length];
+  assert.ok(b.y - a.y < 0, 'et sa normale pointe vers la chaussée');
+
+  // Sans rue devant, pas de façade sur rue.
+  const loin = new RoadIndex([{ halfWidth: 3, path: [{ x: -80, y: 0, z: -50 }, { x: -80, y: 0, z: 50 }] }]);
+  assert.equal(streetFacadeIndex(maison, loin), -1);
 });
 
 test('le clocher est dimensionné et posé sur le bâtiment qui le porte', () => {
@@ -2769,7 +2798,7 @@ test('le semis de biome sème l’essence de sa matière, pas celle du peuplemen
     1
   );
   assert.match(source, /describeTree\(tree, seed, base, type, lowPart, variants, cellStrata\);/);
-  assert.match(source, /describeTree\(tree, seed, slot, type, lowPart, variants, cellStrata, true\);/);
+  assert.match(source, /describeTree\(tree, seed, slot, type, lowPart, variants, cellStrata, true, edge\);/);
 });
 
 test('le sol d’un bois porte une litière, pas une prairie à l’ombre', () => {
@@ -2811,9 +2840,9 @@ test('le sol d’un bois porte une litière, pas une prairie à l’ombre', () =
   assert.ok(sousBois.shade > WOODLAND_FLOWER_MAX, 'un vrai bois passe le seuil');
 });
 
-test('un sol de forêt est une litière brune, jamais un trou noir', () => {
-  // Un sous-bois n'est pas un pré à l'ombre : c'est une litière, brune plutôt
-  // que verte (rouge ≥ 0,80 × vert), et plus sombre qu'une prairie sans tomber
+test('un sol de forêt est un vert mêlé de brun, jamais un trou noir', () => {
+  // Un sous-bois n'est pas un pré à l'ombre : c'est une litière mêlée d'herbe
+  // (vert dominant, rouge ≥ 0,45 × vert), et plus sombre qu'une prairie sans tomber
   // dans le noir.
   const woodAlbedo = defaultTheme.surfaces.wood.albedo;
   const grassAlbedo = defaultTheme.surfaces.grass.albedo;
@@ -2821,13 +2850,12 @@ test('un sol de forêt est une litière brune, jamais un trou noir', () => {
   assert.ok(luma(woodAlbedo) < luma(grassAlbedo), 'un sous-bois reste plus sombre qu’un pré');
   assert.ok(luma(woodAlbedo) > 0.02, 'jamais un trou noir');
   assert.ok(
-    woodAlbedo[0] >= woodAlbedo[1] * 0.8,
-    `la litière est brune, pas verte : ${woodAlbedo}`
+    woodAlbedo[1] >= woodAlbedo[0] && woodAlbedo[0] >= woodAlbedo[1] * 0.45,
+    `la litière est verte mêlée de brun : ${woodAlbedo}`
   );
 
   // Les touffes qui poussent dessus suivent le même déplacement : le vert y
-  // recule plus que le rouge, sans quoi le premier plan resterait vert alors
-  // que le lointain a viré au brun.
+  // recule un peu plus que le rouge.
   assert.ok(
     WOODLAND_FLOOR.tint[0] > WOODLAND_FLOOR.tint[1],
     `le rouge doit reculer moins que le vert : ${WOODLAND_FLOOR.tint}`
@@ -3921,11 +3949,12 @@ function roadsideHarness({ profile = 'minor', here = { x: 200, z: 0 } } = {}) {
   const layer = Object.create(FurnitureLayer.prototype);
   layer.theme = defaultTheme;
   layer.specs = furnitureSpecsFor(defaultTheme.furniture.colors);
-  layer.counts = { points: 0, boundaries: 0, landmarks: 0, rocks: 0, rows: 0, hedgeClumps: 0 };
+  layer.counts = { points: 0, boundaries: 0, landmarks: 0, rocks: 0, rows: 0 };
   layer.bubble = { surfaceElevationAtLocal: () => 100, verticalScale: 1 };
   layer.groundClass = { woodAt: () => 0, cropAt: () => null };
   layer._signals = [];
   layer._lampHeads = [];
+  layer.verges = new VergeStrips();
 
   const path = resamplePath([{ x: 0, z: 0 }, { x: 400, z: 0 }], 5);
   const platform = new Float32Array(path.length).fill(100);
@@ -4262,9 +4291,9 @@ test('le mobilier de bord de route se pose sans variable libre', () => {
   // chaîne de bord de route n’explose pas la haie, elle **avale tout ce qui
   // vient après** — les éoliennes, les pylônes, les parcelles. Rien n’est plus
   // silencieux, et rien ne se voit plus vite à l’écran.
-  let clumps = 0;
   let hedgeTriangles = 0;
   let points = 0;
+  let verges = 0;
 
   // Plusieurs positions : le côté de la haie, le fossé et le bas-côté se
   // tirent au lieu, donc une seule portion n’en rencontre pas la moitié.
@@ -4275,14 +4304,14 @@ test('le mobilier de bord de route se pose sans variable libre', () => {
 
     buildRoadsideContext(layer, { ...context, here: { x: 200, z } }, shifted, moved, []);
 
-    clumps += layer.counts.hedgeClumps;
+    verges += layer.verges.size;
     hedgeTriangles += buffers.hedge.indices.length / 3 + buffers.lowHedge.indices.length / 3;
     for (const list of placements.values()) points += list.length;
   }
 
   assert.ok(points > 0, 'la chaîne pose bien du mobilier ponctuel');
   assert.ok(hedgeTriangles > 0, 'et au moins une haie sur les huit portions');
-  assert.ok(clumps > 0, 'avec ses arbustes, l’observateur étant au ras du tracé');
+  assert.ok(verges > 0, 'et la bande qu’elle clôt, publiée pour les cultures');
 });
 
 test('un bois interrompt l’alignement au lieu de l’effacer selon d’où l’on regarde', () => {
@@ -4377,129 +4406,24 @@ test('une haie ne s’arrête plus au couteau : elle rentre en museau', () => {
   assert.ok(petit.every((v) => v > 0 && v <= 1), 'facteurs bornés même sur un bout de haie');
 });
 
-test('le champ proche d’une haie se fond au lieu de basculer', () => {
-  const style = HEDGE_STYLES.hedge;
-  const here = { x: 0, z: 0 };
-  const outer = style.detailRadiusM;
-  const inner = outer - style.fadeM;
-
-  assert.equal(hedgeNearness(0, 0, here, style), 1, 'sous le nez, tout est détaillé');
-  assert.equal(hedgeNearness(inner - 1, 0, here, style), 1, 'dedans, encore plein détail');
-  assert.equal(hedgeNearness(outer + 1, 0, here, style), 0, 'au-delà, plus rien');
-  const middle = hedgeNearness((inner + outer) / 2, 0, here, style);
-  assert.ok(middle > 0.4 && middle < 0.6, 'la bande de transition est linéaire');
-
-  // Sans observateur, la haie est traitée comme lointaine : c’est le repli qui
-  // garantit qu’une haie hors contexte reste une haie, et non un tronçon nu.
-  assert.equal(hedgeNearness(0, 0, null, style), 0, 'pas d’observateur, pas de détail');
-});
-
-test('une haie respire en hauteur et en largeur, et le balayage reste dominant de près', () => {
-  const style = HEDGE_STYLES.hedge;
+test('une haie respire en hauteur et en largeur, d’où qu’on la regarde', () => {
   const path = resamplePath([{ x: 0, z: 0 }, { x: 300, z: 0 }], 3);
 
-  const far = hedgeModulation(path, { style });
+  const far = hedgeModulation(path);
   const upSpread = Math.max(...far.up) - Math.min(...far.up);
   const acrossSpread = Math.max(...far.across) - Math.min(...far.across);
   assert.ok(upSpread > 0.25, 'la crête ondule assez pour ne pas lire comme un tube');
   assert.ok(acrossSpread > 0.15, 'les flancs ne sont pas parallèles');
 
-  // Le même tracé, vu du bout : le balayage reste l’essentiel de la lecture
-  // même de près — les arbustes ne sont que des accents, ils ne le remplacent
-  // pas. Il fléchit un peu, il ne s’efface pas.
-  const near = hedgeModulation(path, { style, here: { x: 0, z: 0 } });
-  assert.ok(near.up[0] < far.up[0], 'le balayage fléchit un peu au pied de l’observateur');
-  assert.ok(near.up[0] > far.up[0] * 0.75, 'mais reste l’essentiel de la silhouette');
-  close(near.up[path.length - 1], far.up[path.length - 1], 1e-6, 'au loin, rien n’a changé');
+  // Le point de vue ne change rien : pas de détail de près qui viendrait
+  // s’ajouter à la haie ou la creuser.
+  const near = hedgeModulation(path, { here: { x: 0, z: 0 } });
+  assert.deepEqual([...near.up], [...far.up], 'la haie ne dépend pas de l’observateur');
 
   // Ancré au sol : la même haie repousse identique d’une reconstruction à
   // l’autre, comme tout le reste du décor.
-  const again = hedgeModulation(path, { style });
+  const again = hedgeModulation(path);
   assert.deepEqual([...again.up], [...far.up], 'le relief ne dépend que du lieu');
-});
-
-test('les arbustes d’une haie sont irréguliers mais continus', () => {
-  const style = HEDGE_STYLES.hedge;
-  const path = resamplePath([{ x: 0, z: 0 }, { x: 120, z: 0 }], 3);
-  const clumps = hedgeClumps(path, { style, here: { x: 0, z: 0 } });
-
-  // Assez d’arbustes pour fermer la haie — quelques-uns sont sautés, la haie
-  // s’éclaircit là, elle ne s’ouvre pas.
-  const nominal = 120 / style.spacingM;
-  assert.ok(clumps.length > nominal * 0.75, 'la haie reste continue');
-  assert.ok(clumps.length <= nominal, 'quelques arbustes manquent à l’appel');
-
-  const heights = clumps.map((c) => c.height);
-  const widths = clumps.map((c) => c.across);
-  assert.ok(Math.max(...heights) - Math.min(...heights) > 0.6, 'les hauteurs sont inégales');
-  assert.ok(Math.max(...widths) - Math.min(...widths) > 0.2, 'les largeurs aussi');
-
-  // Aucun ne tombe sur le pas nominal, et aucun ne s’éloigne de l’axe plus que
-  // le débattement permis : c’est ce qui distingue une haie d’une plantation.
-  for (const clump of clumps) {
-    assert.ok(Math.abs(clump.z) <= style.lateralM + 1e-6, 'l’arbuste reste sur la ligne');
-  }
-  const onGrid = clumps.filter((c) => Math.abs(c.x % style.spacingM) < 1e-6);
-  assert.equal(onGrid.length, 0, 'aucun arbuste sur le pas nominal');
-
-  // Sans observateur, aucun arbuste : le balayage seul, comme au loin.
-  assert.equal(hedgeClumps(path, { style }).length, 0, 'pas d’observateur, pas d’arbuste');
-  // Le plafond est un plafond.
-  assert.equal(hedgeClumps(path, { style, here: { x: 0, z: 0 }, limit: 5 }).length, 5, 'plafond tenu');
-});
-
-test('les arbustes ne glissent pas quand le tronçon est redécoupé', () => {
-  const style = HEDGE_STYLES.hedge;
-  // Un tracé assez long pour porter plusieurs arbustes malgré leur nouvel
-  // écartement — désormais espacés, ils sont bien moins nombreux au mètre.
-  const here = { x: 95, z: 0 };
-  const whole = resamplePath([{ x: 0, z: 0 }, { x: 190, z: 0 }], 3);
-  // Le même tracé, repris quarante mètres plus loin : c’est ce que fait une
-  // reconstruction quand la limite d’agglomération a bougé.
-  const tail = resamplePath([{ x: 40, z: 0 }, { x: 190, z: 0 }], 3);
-
-  const fromWhole = hedgeClumps(whole, { style, here });
-  const fromTail = hedgeClumps(tail, { style, here, startDistance: 40 });
-
-  // Les deux bouts sont hors comparaison : le ré-échantillonnage tronque le
-  // reste d’un pas, donc le tout dernier arbuste peut manquer d’un côté.
-  const common = fromWhole.filter((c) => c.x >= 41 && c.x <= 185);
-  assert.ok(common.length > 10, 'la portion commune porte de quoi comparer');
-  for (const clump of common) {
-    const twin = fromTail.find((c) => Math.abs(c.x - clump.x) < 1e-6);
-    assert.ok(twin, `l’arbuste de ${clump.x.toFixed(2)} m est resté à sa place`);
-    close(twin.height, clump.height, 1e-6, 'et il a gardé sa taille');
-  }
-});
-
-test('un arbuste de haie est un volume fermé, plus long que large', () => {
-  const style = HEDGE_STYLES.hedge;
-  const path = resamplePath([{ x: 0, z: 0 }, { x: 60, z: 0 }], 3);
-  const [clump] = hedgeClumps(path, { style, here: { x: 0, z: 0 } });
-  const buffer = createProfileBuffer();
-
-  assert.ok(appendHedgeClump(buffer, clump, { ground: 100 }));
-  const vertices = buffer.positions.length / 3;
-  assert.equal(vertices, clump.sides * 3 + 1, 'trois couronnes et une pointe');
-  assert.equal(buffer.colors.length, buffer.positions.length, 'une couleur par sommet');
-  assert.equal(buffer.indices.length / 3, clump.sides * 5, 'deux bandes et un éventail');
-  assert.ok(Math.max(...buffer.indices) < vertices, 'aucun indice ne sort du volume');
-
-  let low = Infinity;
-  let high = -Infinity;
-  let spanAlong = 0;
-  let spanAcross = 0;
-  for (let i = 0; i < vertices; i++) {
-    low = Math.min(low, buffer.positions[i * 3 + 1]);
-    high = Math.max(high, buffer.positions[i * 3 + 1]);
-    spanAlong = Math.max(spanAlong, Math.abs(buffer.positions[i * 3] - clump.x));
-    spanAcross = Math.max(spanAcross, Math.abs(buffer.positions[i * 3 + 2] - clump.z));
-  }
-  assert.ok(low >= 100 && low < 100 + clump.height * 0.05, 'le pied est au ras du sol');
-  close(high, 100 + clump.height, 1e-6, 'la pointe fait la hauteur annoncée');
-  // La haie court vers +x : l’arbuste est étiré le long du tracé et mince en
-  // travers, ce qui est la moitié de ce qui la fait lire comme une haie.
-  assert.ok(spanAlong > spanAcross, 'plus long le long du tracé qu’en travers');
 });
 
 test('les altitudes imposées priment sur le terrain', () => {
@@ -6737,6 +6661,76 @@ test('le budget de baies borne ce qui est posé', () => {
   assert.equal(openings.panes, 3, 'pas une baie de plus que le budget');
 });
 
+test('wallGroundProfile relève le sol le long du pan, bouts compris', () => {
+  const profile = wallGroundProfile({ x: 0, y: 0 }, { x: 9, y: 0 }, (x) => x * 0.5);
+  assert.equal(profile.along[0], 0);
+  assert.equal(profile.along.at(-1), 9);
+  assert.ok(profile.along.length >= 6, 'un relevé tous les deux mètres au plus');
+  assert.equal(profile.y.at(-1), 4.5);
+  // Le sol le plus haut d'un intervalle : les bornes interpolées comptent.
+  close(profileHighest(profile, 1, 3), 1.5, 1e-9, 'borne haute interpolée');
+  // Une bosse entre deux angles se voit, là où l'assise aux angles la manquerait.
+  const bump = wallGroundProfile({ x: 0, y: 0 }, { x: 10, y: 0 }, (x) => (x === 4 ? 3 : 0));
+  assert.equal(profileHighest(bump, 0, 10), 3);
+});
+
+test('pushBand suit une cote différente à chaque bout du pan', () => {
+  const buffer = { positions: [], normals: [], colors: [] };
+  pushBand(buffer, { x: 0, y: 0 }, { x: 4, y: 0 }, 0, 0, 1, 3, 0, -1, [1, 1, 1]);
+  const ys = [];
+  for (let i = 1; i < buffer.positions.length; i += 3) ys.push(buffer.positions[i]);
+  assert.deepEqual([Math.min(...ys), Math.max(...ys)], [0, 3]);
+  assert.equal(buffer.normals[1], 0, 'toujours un pan vertical');
+});
+
+test('appendOpenings : aucune baie enterrée par la pente, la porte descend vers le bas du mur', () => {
+  const style = { shutter: [0.2, 0.3, 0.4], house: true, shutters: false };
+  const look = defaultTheme.windows;
+  const a = { x: 0, y: 0 };
+  const b = { x: 30, y: 0 };
+  // Le sol monte de 0 à 3 m le long du pan ; l'assise est au pied, à 0.
+  const ground = wallGroundProfile(a, b, (x) => x * 0.1);
+  const walls = { positions: [], normals: [], colors: [] };
+  const openings = { panes: 0, budget: 100, lit: null };
+  appendOpenings(openings, walls, a, b, 0, -1, 0, 9, 0, style, look, { ground, door: [0.5, 0.1, 0.1] });
+  assert.ok(openings.panes > 0);
+
+  // Chaque sommet de baie (hors porte, qui part du sol) reste au-dessus du
+  // soubassement qui suit le sol.
+  const panels = [];
+  for (let i = 0; i < walls.positions.length; i += 18) {
+    const xs = [];
+    const ys = [];
+    for (let k = 0; k < 18; k += 3) {
+      xs.push(walls.positions[i + k]);
+      ys.push(walls.positions[i + k + 1]);
+    }
+    panels.push({ x: (Math.min(...xs) + Math.max(...xs)) / 2, right: Math.max(...xs), bottom: Math.min(...ys), red: walls.colors[i] });
+  }
+  const door = panels.find((p) => p.red === 0.5);
+  assert.ok(door, 'une porte');
+  for (const panel of panels) {
+    if (Math.abs(panel.x - door.x) < 1e-6) continue;
+    assert.ok(panel.bottom >= panel.right * 0.1 + PLINTH_HEIGHT_M - 1e-9, 'baie au-dessus du soubassement');
+  }
+  assert.ok(door.x < 15, 'la porte glisse vers le bas du mur');
+  assert.ok(door.bottom >= (door.x + look.doorWidthM / 2) * 0.1 - 1e-9, 'le seuil n’est pas sous le sol');
+  assert.ok(door.bottom + look.doorHeightM < look.levelM + look.sillM, 'sous l’étage');
+});
+
+test('appendOpenings : pas de porte sans couleur, ni sur un surplomb', () => {
+  const style = { shutter: [0.2, 0.3, 0.4], house: false, shutters: false };
+  const count = (options, minHeight = 0) => {
+    const walls = { positions: [], normals: [], colors: [] };
+    const openings = { panes: 0, budget: 100, lit: null };
+    appendOpenings(openings, walls, { x: 0, y: 0 }, { x: 20, y: 0 }, 0, -1, 0, 12, minHeight, style, undefined, options);
+    return walls.colors.filter((c, i) => i % 3 === 0 && c === 0.5).length;
+  };
+  assert.ok(count({ door: [0.5, 0.1, 0.1] }) > 0, 'une porte au rez-de-chaussée');
+  assert.equal(count({}), 0, 'aucune porte demandée');
+  assert.equal(count({ door: [0.5, 0.1, 0.1] }, 4), 0, 'un passage couvert n’a pas de seuil');
+});
+
 // --- Jardins ----------------------------------------------------------------
 
 test('les piquets se répartissent d’un angle à l’autre, portillon compris', () => {
@@ -7068,6 +7062,46 @@ test('une branche publie la chaussée telle qu’elle part, et sa direction sur 
   close(branch.path[branch.path.length - 1].z, 20, 1e-6, 'suivie jusqu’au bout de la branche');
 });
 
+test('une fourche suit ses branches aussi loin qu’elle cherche leur séparation', () => {
+  // Deux sens uniques qui s'écartent puis filent parallèles, sommet tous les
+  // cinq mètres : prolongée en ligne droite au-delà de quelques dizaines de
+  // mètres, la polyligne les séparerait trop tôt.
+  const half = (s) => Array.from({ length: 41 }, (_, i) => ({ x: s * 2.8 * Math.tanh((i * 5) / 30), z: -i * 5 }));
+  const { junctions } = mergeRoadLines([
+    { profile: 'minor', halfWidth: 4.25, points: [{ x: 0, z: 200 }, { x: 0, z: 0 }] },
+    { profile: 'minor', halfWidth: 2.5, points: half(-1) },
+    { profile: 'minor', halfWidth: 2.5, points: half(1).reverse() },
+  ]);
+
+  const legs = junctions[0].branches.filter((b) => b.z < 0);
+  for (const leg of legs) {
+    assert.ok(-leg.path[leg.path.length - 1].z >= JUNCTION_FORK_REACH_M, 'suivie jusqu’à la portée de la fourche');
+  }
+  const area = junctionArea(junctions[0]);
+  assert.ok(area.fork);
+  for (const mouth of area.mouths.slice(1)) {
+    const { x, z } = mouth.centre;
+    close(Math.abs(x), 2.8 * Math.tanh(-z / 30), 0.05, 'la bouche est posée sur la chaussée, pas sur son prolongement');
+  }
+});
+
+test('le morceau qu’une tuile voisine livre d’une branche ne l’arrête pas', () => {
+  // La tuile voisine coupe la desserte au bord de sa marge (z = 30), sur
+  // l'arête que la tuile d'origine porte entière : le sommet partagé (z = 20)
+  // n'est pas un carrefour.
+  const desserte = [{ x: 100, z: 0 }, { x: 104, z: 20 }, { x: 104, z: 60 }];
+  const { junctions, chains } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: [{ x: 0, z: 0 }, { x: 200, z: 0 }] },
+    { profile: 'minor', halfWidth: 2.5, points: desserte },
+    { profile: 'minor', halfWidth: 2.5, points: [{ x: 104, z: 30.2 }, ...desserte.slice(0, 2).reverse()] },
+  ]);
+
+  assert.equal(junctions.length, 1, 'un seul carrefour');
+  const branch = junctions[0].branches.find((b) => b.profile === 'minor');
+  close(branch.path[branch.path.length - 1].z, 60, 1e-6, 'la branche est suivie au-delà du sommet partagé');
+  assert.equal(chains.filter((c) => c.profile === 'minor').length, 1, 'et la desserte n’est dessinée qu’une fois');
+});
+
 test('un chemin ne fait pas carrefour avec une route revêtue', () => {
   const lines = teeLines();
   lines[1] = { ...lines[1], profile: 'track', halfWidth: 1.5, paved: false };
@@ -7215,11 +7249,30 @@ test('un sommet intérieur ne se déplace pas au-delà de la tolérance de soudu
     {
       profile: 'minor',
       halfWidth: 2.5,
-      points: [{ x: 0, z: -80 }, { x: 0, z: -2 }, { x: 20, z: 60 }],
+      points: [{ x: 0, z: -80 }, { x: 0, z: -2 }, { x: 20, z: -60 }],
     },
   ]);
 
   assert.equal(junctions.length, 0);
+});
+
+test('deux axes qui se traversent sans sommet commun font un carrefour', () => {
+  // La tuile a retiré le sommet du croisement des deux côtés : aucun bout ne
+  // bute sur l'autre chaussée, la greffe ne voit rien.
+  const lines = [
+    { profile: 'major', halfWidth: 4.25, points: [{ x: -100, z: 0 }, { x: 100, z: 0 }] },
+    { profile: 'minor', halfWidth: 2.5, points: [{ x: -30, z: -80 }, { x: 30, z: 80 }] },
+  ];
+  const { junctions } = mergeRoadLines(lines);
+  assert.equal(junctions.length, 1);
+  assert.equal(junctions[0].degree, 4);
+  close(junctions[0].x, 0, 1e-6, 'au croisement des axes');
+  close(junctions[0].z, 0, 1e-6, 'au croisement des axes');
+
+  const over = mergeRoadLines([lines[0], { ...lines[1], level: 1 }]);
+  assert.equal(over.junctions.length, 0, 'ce qui survole ne rencontre pas');
+  const path = mergeRoadLines([lines[0], { ...lines[1], profile: 'path', paved: false }]);
+  assert.equal(path.junctions.length, 0, 'un chemin se pose sur la route');
 });
 
 test('deux moitiés d’une même route qui se recouvrent ne font pas un carrefour', () => {
@@ -7920,20 +7973,22 @@ test('une route droite garde sa rive droite : pas d’arc entre deux branches op
   close(corner.points[0].x, 0, 1e-6, 'au droit du nœud');
 });
 
-test('deux branches qui repartent ensemble n’en font qu’une', () => {
-  // Une bretelle qui quitte une voie rapide à huit degrés n'est pas un angle de
-  // rue : ses rives ne se rencontrent qu'à cinquante mètres. Les traiter comme
-  // deux branches replierait le contour sur lui-même.
-  const sorted = [branchAt(0, 4), branchAt(0.15, 4), branchAt(Math.PI, 4)].sort(
+test('deux branches qui repartent ensemble n’en font qu’une, sauf à une fourche', () => {
+  // Entre quatre branches, deux rasantes n'ont pas d'angle de rue entre elles :
+  // les traiter comme deux replierait le contour sur lui-même.
+  const sorted = [branchAt(0, 6), branchAt(0.15, 4), branchAt(Math.PI, 6)].sort(
     (a, b) => Math.atan2(a.z, a.x) - Math.atan2(b.z, b.x)
   ).map((b) => ({ ...b, angle: Math.atan2(b.z, b.x) }));
-
   assert.equal(mergeParallelBranches(sorted).length, 2, 'les deux rasantes fondent');
-  assert.equal(
-    junctionArea({ x: 0, z: 0, degree: 3, level: 0, halfWidth: 4, profile: 'major', branches: sorted }),
-    null,
-    'il ne reste pas de quoi faire un carrefour'
-  );
+
+  // À trois branches, c'est une fourche — une bretelle qui quitte une voie
+  // rapide à huit degrés : sa surface court jusqu'à ce que les deux chaussées
+  // se séparent, à une soixantaine de mètres.
+  const bretelle = junctionArea({ x: 0, z: 0, degree: 3, level: 0, halfWidth: 6, profile: 'express', branches: sorted });
+  assert.ok(bretelle, 'une surface');
+  const loin = bretelle.mouths.filter((m) => m.direction.x > 0).map((m) => m.distance);
+  assert.equal(loin.length, 2);
+  assert.ok(loin.every((d) => d > 60 && d < 72), `bouches à la séparation (${loin})`);
 
   // Une vraie fourche, elle, en reste une.
   const fork = [branchAt(0, 4), branchAt(0.9, 4), branchAt(Math.PI, 4)].map((b) => ({
@@ -7941,6 +7996,21 @@ test('deux branches qui repartent ensemble n’en font qu’une', () => {
     angle: Math.atan2(b.z, b.x),
   }));
   assert.equal(mergeParallelBranches(fork).length, 3, 'à cinquante degrés, trois branches');
+});
+
+test('une route qui se dédouble garde une surface jusqu’à la pointe de l’îlot', () => {
+  // Deux sens uniques qui se quittent à douze degrés : leurs rubans se
+  // recouvrent sur une quarantaine de mètres, et le carrefour doit les couvrir.
+  const angle = (12 * Math.PI) / 180;
+  const branches = [branchAt(Math.PI, 4.25), branchAt(-angle / 2, 4.25), branchAt(angle / 2, 4.25)];
+  const area = junctionArea({ x: 0, z: 0, degree: 3, level: 0, halfWidth: 4.25, profile: 'major', branches });
+  assert.ok(area, 'une surface');
+  assert.equal(area.mouths.length, 3);
+  const pointe = 8.5 / Math.sin(angle);
+  for (const mouth of area.mouths.filter((m) => m.direction.x > 0)) {
+    assert.ok(mouth.distance > pointe - 1, 'la bouche d’un sens unique est au-delà de la pointe');
+  }
+  assert.ok(area.outline.some((p) => Math.abs(p.z) < 0.5 && p.x > pointe - 1), 'la pointe est sur le contour');
 });
 
 test('le rayon de raccordement reste borné, quelles que soient les largeurs', () => {
@@ -8053,6 +8123,27 @@ test('le ruban s’arrête pile sur le contour, et reprend de l’autre côté',
   // La plate-forme suit : un sommet inventé à la bouche doit porter une altitude.
   assert.ok(Number.isFinite(runs[0].platform[runs[0].platform.length - 1]));
   assert.equal(runs[0].platform.length, runs[0].path.length);
+});
+
+test('entre deux carrefours voisins, la chaussée qui les sépare est dessinée', () => {
+  // Deux T assez proches pour prendre deux lignes consécutives sans se toucher :
+  // aucune ligne libre entre eux, et pourtant un bout de chaussée.
+  const first = teeJunction();
+  const reach = Math.max(...junctionArea(first).outline.map((p) => p.x));
+  const offset = 2 * reach + 1;
+  const areas = new JunctionAreas([first, { ...teeJunction(), x: offset }]);
+  const rows = 41;
+  const path = Array.from({ length: rows }, (_, i) => ({ x: -100 + i * 5, z: 0, distance: i * 5 }));
+  const segment = { path, platform: new Float32Array(rows).fill(7), levels: new Int8Array(rows) };
+  segment.junction = markJunctionRows(segment, areas);
+  const inBetween = path.filter((p) => p.x > reach && p.x < offset - reach);
+  assert.equal(inBetween.length, 0, 'le cas étudié : aucune ligne dans l’intervalle');
+
+  const runs = junctionRibbonRuns(segment, areas, [{ from: 0, to: rows - 1 }]);
+  const bridge = runs.find((run) => run.head >= 0 && run.tail >= 0);
+  assert.ok(bridge, 'un morceau va d’un carrefour à l’autre');
+  close(bridge.path[0].x, reach, 0.01, 'il part du contour du premier');
+  close(bridge.path[bridge.path.length - 1].x, offset - reach, 0.01, 'et finit sur celui du second');
 });
 
 test('une section peut emprunter les repères de la rive qu’elle borde', () => {
@@ -8232,6 +8323,25 @@ test('la cote de la dalle se lit en tout point qu’elle couvre', () => {
     1e-6,
     'entre les deux'
   );
+});
+
+test('le terrain passe sous les plis de la dalle : sa cote est la plus basse à une maille', () => {
+  const area = junctionArea(teeJunction());
+  area.decks = area.mouths.map((mouth) => 100 + mouth.centre.x * 0.1 - mouth.centre.z * 0.15);
+  const radius = 6.6;
+  for (const [x, z] of [[area.x, area.z], [area.x + 3, area.z - 2], [area.x - 5, area.z + 4]]) {
+    let finest = Infinity;
+    for (let dx = -radius; dx <= radius; dx += 0.2) {
+      for (let dz = -radius; dz <= radius; dz += 0.2) {
+        if (dx * dx + dz * dz > radius * radius || !pointInOutline(area.outline, x + dx, z + dz)) continue;
+        finest = Math.min(finest, junctionDeckAt(area, area.decks, x + dx, z + dz));
+      }
+    }
+    assert.ok(lowestDeckAround(area, x, z, radius) <= finest + 1e-9, `(${x}, ${z}) : pas au-dessus de la dalle`);
+  }
+  const areas = new JunctionAreas([teeJunction()]);
+  areas.areas[0].decks = area.decks;
+  assert.ok(areas.deckNear(area.x, area.z, 10, 0, radius).deck < areas.deckNear(area.x, area.z, 10).deck, 'deckNear l’applique');
 });
 
 test('un carrefour sans cote ne creuse pas le terrain', () => {
@@ -10056,6 +10166,17 @@ test('la crosse d’un lampadaire est continue du fût à la lanterne', () => {
   assert.ok(LAMP_HEAD_REACH_M > 1 && LAMP_HEAD_REACH_M < 2, 'la lanterne avance sur la chaussée');
 });
 
+test('le halo du lampadaire de style est au-dessus du mât, dans sa lanterne', () => {
+  assert.deepEqual(lampHeadFor('streetLamp'), { height: LAMP_HEAD_HEIGHT_M, reach: LAMP_HEAD_REACH_M });
+  assert.deepEqual(lampHeadFor('streetLampLed'), { height: LAMP_HEAD_HEIGHT_M, reach: LAMP_HEAD_REACH_M });
+  const classic = lampHeadFor('streetLampClassic');
+  assert.equal(classic.reach, 0, 'pas de crosse : rien n’avance sur la chaussée');
+  const geometry = FURNITURE_BUILDERS.streetLampClassic();
+  let top = 0;
+  for (let i = 1; i < geometry.positions.length; i += 3) top = Math.max(top, geometry.positions[i]);
+  assert.ok(classic.height > 3 && classic.height < top, 'le cœur de la lanterne est sous le sommet du lampadaire');
+});
+
 test('le semis des cultures a la densité de celui de l’herbe', () => {
   // « Il faut faire comme l'herbe » : même maille, donc même densité au mètre
   // carré à `density: 1`. C'est ce rapport, et non un nombre absolu, qui décide
@@ -10822,6 +10943,18 @@ test('l’emprise est la chaussée plus son accotement excavé, et rien d’autr
   assert.ok(inCorridor(index, 0, 3.6), 'sur l’accotement excavé');
   assert.ok(!inCorridor(index, 0, 3.8), 'au-delà, le sol redevient naturel');
   assert.ok(!inCorridor(index, 0, 40), 'en pleine prairie');
+});
+
+test('la bande de bas-côté va de la chaussée au dos de sa haie, d’un seul côté', () => {
+  // Une chaussée d'ouest en est, sa haie à 4 m sur la normale (tz, -tx) : au sud.
+  const verges = new VergeStrips();
+  verges.add([{ x: 0, z: 0 }, { x: 60, z: 0 }, { x: 100, z: 0 }], 4, 1);
+  assert.ok(verges.covers(50, -3), 'entre la route et la haie');
+  assert.ok(verges.covers(50, -4.8), 'sous la haie');
+  assert.ok(!verges.covers(50, -5.5), 'derrière la haie, le champ');
+  assert.ok(!verges.covers(50, 3), 'de l’autre côté de la route');
+  assert.ok(!verges.covers(-2, -3), 'avant le début de la haie');
+  assert.ok(!new VergeStrips().covers(50, -3), 'sans haie, pas de bande');
 });
 
 test('sans réseau routier, rien n’est dans l’emprise', () => {
@@ -11596,7 +11729,6 @@ test('greenhouseAnchorFor renonce plutôt que deviner sur une culture qui couvre
 function farmsteadPlacementHarness() {
   const layer = Object.create(FurnitureLayer.prototype);
   layer.bubble = { surfaceElevationAtLocal: () => 100, verticalScale: 1 };
-  layer.chimneys = [];
   // Les poules de la cour ne sont plus du mobilier : elles partent dans
   // `fauna`, que la couche publie pour `faunaLayer`.
   layer.fauna = [];
@@ -12652,6 +12784,21 @@ test('appendShopfront perce une devanture et peint l’enseigne au-dessus', () =
   }
 });
 
+test('appendShopfront : sur une pente, chaque baie part du sol qu’elle surplombe', () => {
+  const walls = { positions: [], normals: [], colors: [] };
+  const openings = { panes: 0, budget: 20 };
+  const a = { x: 0, y: 0 };
+  const b = { x: 8, y: 0 };
+  // Le sol monte de 100 à 101,2 m ; la devanture est calée sur le haut.
+  const ground = wallGroundProfile(a, b, (x) => 100 + x * 0.15);
+  appendShopfront(openings, walls, null, null, a, b, 0, -1, 100, 101.2 + 3.05, 0, null, SHOPFRONT_THEME, ground);
+  assert.ok(openings.panes > 0);
+  for (let i = 0; i < walls.positions.length; i += 3) {
+    const floor = 100 + Math.min(8, walls.positions[i] + 1) * 0.15;
+    assert.ok(walls.positions[i + 1] >= floor - 0.2, 'rien sous le sol de la rue');
+  }
+});
+
 test('appendShopfront : sans nom, la devanture reste percée mais rien n’est peint', () => {
   const walls = { positions: [], normals: [], colors: [] };
   const labels = { positions: [], uvs: [] };
@@ -13512,11 +13659,10 @@ test('le grain low poly du sol dépend de la matière au pied du sommet', () => 
     defaultTheme.surfaces.wood.grainAmplitudeM < defaultTheme.surfaces.alpine.grainAmplitudeM,
     'un désordre de détail, pas un modelé de colinettes'
   );
-  // Une matière non listée (l'eau, le trottoir, l'herbe…) n'a pas été
-  // touchée : elle garde le réglage de repli, comme avant le branchement.
-  for (const kind of ['pavement', 'water']) {
-    assert.equal(defaultTheme.surfaces[kind]?.grainCellM, undefined, `${kind} ne déclare pas de grain`);
-  }
+  // L'eau garde le réglage de repli ; le trottoir est plan, comme tout le sol
+  // où le bâti se pose.
+  assert.equal(defaultTheme.surfaces.water?.grainCellM, undefined, 'water ne déclare pas de grain');
+  assert.equal(defaultTheme.surfaces.pavement.grainAmplitudeM, 0, 'le trottoir est plan');
 
   // La position au sol est relue au texel le plus proche — un identifiant,
   // jamais une part lissée — pour choisir la cellule et l'amplitude, comme
@@ -14234,6 +14380,33 @@ test('isPedestrianWay reconnaît le trottoir relevé et laisse le sentier tranqu
   );
   assert.equal(isPedestrianWay({ class: 'residential' }), false);
   assert.equal(isPedestrianWay({}), false);
+});
+
+test('collectRoadLines : en ville, ni sentier ni chemin de terre, sauf dans le parc', () => {
+  const frame = createLocalFrame(2.35, 48.85, 15);
+  const ways = [
+    { class: 'path' },
+    { class: 'path', subclass: 'path' },
+    { class: 'track' },
+    { class: 'path', subclass: 'steps' },
+    { class: 'cycleway' },
+    { class: 'residential' },
+  ];
+  const source = {
+    forEachFeature(sourceLayer, tiles, callback) {
+      for (const properties of ways) {
+        callback({ type: 'LineString', coordinates: [[2.35, 48.85], [2.351, 48.851]] }, properties);
+      }
+    },
+  };
+  const profiles = (covers) =>
+    collectRoadLines(source, [{ x: 0, y: 0 }], frame, undefined, { urban: { any: true, covers: () => covers } })
+      .map((line) => line.profile)
+      .sort();
+
+  assert.deepEqual(profiles(true), ['cycleway', 'minor', 'steps'], 'en ville');
+  // `covers` répond non dans le vert urbain : le parc garde ses allées.
+  assert.deepEqual(profiles(false), ['cycleway', 'minor', 'path', 'path', 'steps', 'track'], 'au parc');
 });
 
 test('UrbanMask : un disque de ville, une emprise bâtie, et le vert retiré', () => {

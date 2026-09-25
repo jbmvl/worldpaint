@@ -57,10 +57,8 @@ import { COVER_ATTRIBUTE, installCoverTransition, paddedCoverBands } from '../ma
  * propres silhouettes, et chaque plante y porte sa taille (`understoryStrata`).
  * De loin ce sont les arbustes, de près le tapis du sol s'y ajoute.
  *
- * Au bord d'un bois, les deux semis lisent la lisière (`groundClass.woodEdgeAt`)
- * et en tirent la même conséquence : la houppe descend, le fourré épaissit. Un
- * ourlet est en pente et il est dense — c'est ce qui fait qu'un bois se pose sur
- * un champ au lieu d'y être découpé à l'emporte-pièce.
+ * En lisière, les arbres gardent leur hauteur et le fourré épaissit.
+ * Le sous-étage ne porte que des buissons, sans jeunes arbres.
  *
  * Un maquis, une garrigue, une lande ne sont pas des forêts clairsemées : ce
  * sont des tapis d'arbustes sans strate haute, que la carte de classes peint
@@ -198,22 +196,9 @@ export function lowStratumPart(type) {
  * laisse passer sur le côté, ce qu'ils ne peuvent pas faire sous le couvert.
  */
 export const EDGE_LOW_GAIN = 0.55;
-/**
- * Ce que le bord d'un bois retire à la hauteur du peuplement. La lisière est en
- * pente : les arbres du bord sont plus courts, et c'est ce profil-là — pas une
- * limite nette — qui fait qu'un bois se pose sur un champ au lieu d'y être
- * découpé à l'emporte-pièce.
- */
-export const EDGE_CANOPY_DROP = 0.3;
-
 /** Part de strate basse corrigée de la lisière, de 0 à 1. Fonction pure. */
 export function edgeLowPart(lowPart, edge) {
   return lowPart + (1 - lowPart) * edge * EDGE_LOW_GAIN;
-}
-
-/** Facteur de hauteur du peuplement à la lisière (jamais des buissons : un buisson a sa taille à lui). Fonction pure. */
-export function edgeCanopy(edge) {
-  return 1 - edge * EDGE_CANOPY_DROP;
 }
 
 // --- Le sous-étage : ce qui n'existe qu'à moins de deux cents mètres --------------
@@ -500,9 +485,10 @@ export function essenceStrata(essence, trees = defaultTheme.trees) {
  * @param {Array<number>} variants Silhouettes du peuplement.
  * @param {Array<Object>} strata   Strate basse, telle que rendue par `understoryStrata`.
  * @param {boolean} [sapling] Vrai pour le sous-étage.
+ * @param {number} [edge] Présence de lisière : le sous-étage y reste arbustif.
  */
-export function describeTree(out, seed, base, type, lowPart, variants, strata, sapling = false) {
-  const low = standDraw(seed, base + SLOT_STRATUM) < lowPart;
+export function describeTree(out, seed, base, type, lowPart, variants, strata, sapling = false, edge = 0) {
+  const low = (sapling && edge > 0) || standDraw(seed, base + SLOT_STRATUM) < lowPart;
   const draw = standDraw(seed, base + SLOT_HEIGHT);
   const pick = standDraw(seed, base + SLOT_VARIANT);
 
@@ -519,7 +505,7 @@ export function describeTree(out, seed, base, type, lowPart, variants, strata, s
       : treeHeight(type, draw, standDraw(seed, base + SLOT_EMERGENT));
     out.aspect = TREE_ASPECT + (standDraw(seed, base + SLOT_ASPECT) - 0.5) * 2 * TREE_ASPECT_JITTER;
   }
-  out.rotation = standDraw(seed, base + SLOT_ROTATION) * Math.PI;
+  out.rotation = standDraw(seed, base + SLOT_ROTATION) * Math.PI * 2;
   // Strate basse plus sombre : elle est à l'ombre des houppes.
   out.shade = (low ? 0.66 : 0.84) + standDraw(seed, base + SLOT_SHADE) * 0.28;
   out.jitter = standDraw(seed, base + SLOT_TINT);
@@ -842,7 +828,6 @@ export class VegetationLayer {
         // L'ourlet : plus de fourré, moins de houppe (voir `EDGE_LOW_GAIN`).
         const edge = groundClass.woodEdgeAt?.(centreX, centreZ) ?? 0;
         const lowPart = edgeLowPart((stems * lowStratumPart(type) + thicket) / expected, edge);
-        const canopy = edgeCanopy(edge);
         const variants = variantsFor(type, this.theme.trees.essences);
         // Le tapis générique sert au sous-bois d'un peuplement ; une matière
         // qui nomme son propre buisson (lande, maquis) sème le sien à la
@@ -867,7 +852,7 @@ export class VegetationLayer {
             z,
             y: bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale,
             // Un buisson garde sa taille : c'est la houppe qui descend, pas le sol.
-            height: tree.low ? tree.height : tree.height * canopy,
+            height: tree.height,
             aspect: tree.aspect,
             rotation: tree.rotation,
             variant: tree.variant,
@@ -1014,7 +999,6 @@ export class VegetationLayer {
         const share = Math.min(1, expected / band.perCell);
         const edge = groundClass.woodEdgeAt?.(centreX, centreZ) ?? 0;
         const lowPart = edgeLowPart((stems * lowStratumPart(type) + thick) / expected, edge);
-        const canopy = edgeCanopy(edge);
         // À distance, une instance représente plusieurs mètres carrés : la
         // densité d'une bande large est relevée, son panneau élargi.
         const keep = coverMassDensity(share, band);
@@ -1030,9 +1014,9 @@ export class VegetationLayer {
           const z = cellZ + standDraw(seed, slot + SLOT_Z) * band.cell;
           if (inCorridor(index, x, z)) continue;
 
-          describeTree(tree, seed, slot, type, lowPart, variants, cellStrata, true);
+          describeTree(tree, seed, slot, type, lowPart, variants, cellStrata, true, edge);
           const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
-          const height = tree.height * (tree.low ? 1 : canopy) * band.rise;
+          const height = tree.height * band.rise;
 
           this._compose(x, y, z, height, tree.aspect * band.spread, tree.rotation);
           thicket.setMatrixAt(placed, this._matrix);
