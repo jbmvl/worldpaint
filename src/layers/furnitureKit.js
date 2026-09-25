@@ -1788,9 +1788,9 @@ const rockCutFor = (C) => ({
  */
 const embankmentFor = (C) => (drop, outward = -1) => {
   const run = Math.max(0.4, drop * 1.5) * (outward >= 0 ? 1 : -1);
+  // Un seul pan, de la rive au pied : un talus de terre n'a pas d'épaulement.
   return [
     { across: 0, up: 0, color: C.stoneDark },
-    { across: 0, up: -Math.max(0.15, drop) * 0.35, color: C.stoneDark },
     { across: run, up: -Math.max(0.15, drop), color: C.stone },
   ];
 };

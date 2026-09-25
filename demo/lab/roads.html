@@ -20,14 +20,16 @@
  *   roadsLab.info()  // cotes des bouches du carrefour de la scène
  *
  * Les scènes sont des endroits d'un même monde ; `yawDeg` est le cap du regard
- * (0 = vers le nord), `pitchDeg` la plongée. Ni mobilier, ni talus : ce banc
- * montre les plates-formes, pas leur habillage.
+ * (0 = vers le nord), `pitchDeg` la plongée. Le mobilier est celui de rase
+ * campagne : talus, murs, glissières — rien de ce que poseraient bâti,
+ * parcelles ou végétation, absents des tuiles.
  */
 import * as THREE from 'three';
 import { TerrainBubble } from '/src/terrain/terrainBubble.js';
 import { ElevationField } from '/src/core/elevationField.js';
 import { RoadNetwork, createRoadMaterials } from '/src/layers/roadNetwork.js';
 import { BridgeLayer } from '/src/layers/bridgeLayer.js';
+import { FurnitureLayer } from '/src/layers/furnitureLayer.js';
 import { createLocalFrame, tileXToLng, tileYToLat } from '/src/core/tileMath.js';
 
 // Ceux de `world.js` (`DEFAULT_VIEW`, `DEFAULT_ELEVATION_ZOOM`), recopiés :
@@ -153,6 +155,10 @@ for (let pass = 0; pass < 4 && roads.needsRebuild(here.x, here.z); pass++) {
   bubble.processRebuildQueue();
 }
 bridges.rebuild(roads.roadSegments, here);
+const furniture = new FurnitureLayer({ THREE, scene, bubble });
+furniture.rebuild(source, [], here, roads.roadSegments, roads.index, roads.junctions, null, null, null, [], {
+  areas: roads.junctionAreas,
+});
 
 const state = { scene: 'pont', ...SCENES.pont };
 

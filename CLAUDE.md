@@ -20,8 +20,9 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   T sur son remblai d'accès, sa variante où le pont est la voie étroite,
   carrefour en pente) ; `roadsLab.set({ scene, yawDeg, pitchDeg, distance })`
   et `roadsLab.info()` (cotes des bouches), ou
-  `node scripts/roads-shot.mjs <dossier> '<réglages JSON>'`. Ni mobilier ni
-  talus.
+  `node scripts/roads-shot.mjs <dossier> '<réglages JSON>'`. Le mobilier de
+  rase campagne y est posé (talus, murs, glissières, alignements), pas le bâti
+  ni les parcelles.
 
 Si le chantier touche une partie du rendu qu'aucun banc ne montre, écris le
 banc plutôt que d'ouvrir la démo.

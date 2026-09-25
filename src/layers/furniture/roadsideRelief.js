@@ -375,7 +375,7 @@ export function buildParapets(layer, context, segment, rowsInfo) {
  * et portée en aval, et un talus d'un côté suffit. Mais une plate-forme peut
  * dominer le terrain **des deux côtés** — c'est un remblai en pleine terre,
  * et c'est exactement ce qu'est la rampe d'accès d'un pont, que la travée
- * relève sur trente mètres (`roadWorks.BRIDGE_RAMP_M`). Sans le second
+ * relève sur des dizaines de mètres (`roadWorks.rampLengthFor`). Sans le second
  * talus, la route montait vers son pont en ruban volant, l'air visible
  * dessous : le défaut le plus voyant d'un petit ouvrage.
  *
@@ -396,21 +396,25 @@ export function buildEmbankment(layer, context, segment, rowsInfo, walled) {
     const keep = (row) => dropOf(row) >= EMBANKMENT_MIN_DROP_M && !walled.has(row.r);
     for (const run of contiguousRuns(rowsInfo, keep, 4)) {
       const side = sideOf(run[Math.floor(run.length / 2)]);
-      const drop = run.reduce((max, row) => Math.max(max, dropOf(row)), 0);
       const path = run.map((row) => ({ x: row.x, z: row.z, distance: row.distance }));
       // Un sel par rive : les deux talus d'un remblai en pleine terre partagent
       // leurs lignes, et se creuseraient sinon en miroir.
       const grain = facetJitter(path, EMBANKMENT_SEED + (side > 0 ? 0 : 50), layer.specs.embankmentGrain);
+      // Section unitaire mise à l'échelle ligne par ligne : le long d'une
+      // rampe d'accès, le surplomb va de six mètres à rien, et une section
+      // taillée sur le plus haut débordait loin dans le pré au pied de la rampe.
+      const drop = new Float32Array(run.map((row) => Math.min(dropOf(row), 6)));
+      smoothColumns(drop, run.length, 1, 2);
       appendProfile(buffers.embankment, {
         path,
         // La section descend du côté où elle est posée : sur la rive gauche,
         // une section orientée à droite repartirait par-dessus la chaussée.
-        profile: layer.specs.embankmentProfile(Math.min(drop, 6), side),
+        profile: layer.specs.embankmentProfile(1, side),
         sampleElevation,
         offset: side * halfWidth,
         baseHeights: new Float32Array(run.map((row) => platform[row.r])),
-        scaleUp: grain.up,
-        scaleAcross: grain.across,
+        scaleUp: grain.up.map((up, i) => up * drop[i]),
+        scaleAcross: grain.across.map((across, i) => across * drop[i]),
       });
     }
   }

@@ -248,6 +248,7 @@ import {
   bridgeFreeboardFor,
   BRIDGE_FREEBOARD_MIN_M,
   BRIDGE_CLEARANCE_M,
+  BRIDGE_RAMP_GRADE,
   BRIDGE_FREEBOARD_M,
 } from '../src/layers/roadWorks.js';
 import { BridgeLayer, deckProfile, vaultProfile } from '../src/layers/bridgeLayer.js';
@@ -4162,7 +4163,8 @@ test('le talus a du grain sans quitter la rive ni remonter au-dessus de sa secti
 
   assert.ok(FLAT_SHADED_LINEAR_KINDS.has('embankment'), 'ombré à plat');
   const positions = buffers.embankment.positions;
-  const cols = 3;
+  const cols = FURNITURE_SPECS.embankmentProfile(1).length;
+  const foot = cols - 1;
   const rows = positions.length / 3 / cols;
   assert.ok(rows > 0, 'un talus est bien posé');
   const at = (r, c, k) => positions[(r * cols + c) * 3 + k];
@@ -4171,10 +4173,28 @@ test('le talus a du grain sans quitter la rive ni remonter au-dessus de sa secti
     close(at(r, 0, 2), segment.halfWidth, 1e-4, `arête sur la rive, ligne ${r}`);
     close(at(r, 0, 1), 102, 1e-4, `arête au niveau de la plate-forme, ligne ${r}`);
     // Jamais moins profond que la section : sur un remblai plat, le pied décollerait.
-    assert.ok(at(r, 2, 1) <= 100 + 1e-4, `pied de la ligne ${r}`);
-    reaches.add(at(r, 2, 2).toFixed(3));
+    assert.ok(at(r, foot, 1) <= 100 + 1e-4, `pied de la ligne ${r}`);
+    reaches.add(at(r, foot, 2).toFixed(3));
   }
   assert.ok(reaches.size > rows / 3, `${reaches.size} étalements distincts sur ${rows} lignes`);
+});
+
+test('le talus suit le surplomb ligne par ligne, d’un seul pan', () => {
+  // Au pied d'une rampe d'accès, le remblai ne fait plus que quelques
+  // décimètres : une section taillée sur le plus haut débordait dans le pré.
+  const { layer, context, segment, rowsInfo, buffers } = roadsideHarness();
+  const half = Math.floor(rowsInfo.length / 2);
+  const remblai = rowsInfo.map((row, i) => ({ ...row, drop: i < half ? 0.5 : 4, perch: -1, uphill: 1 }));
+  const platform = new Float32Array(segment.platform.length).fill(102);
+  buildEmbankment(layer, context, { ...segment, platform }, remblai, new Set());
+
+  assert.equal(FURNITURE_SPECS.embankmentProfile(1).length, 2, 'la rive et le pied, sans épaulement');
+  const positions = buffers.embankment.positions;
+  const rows = positions.length / 3 / 2;
+  const depth = (r) => 102 - positions[(r * 2 + 1) * 3 + 1];
+  const { up } = FURNITURE_SPECS.embankmentGrain;
+  assert.ok(depth(0) <= 0.5 * up[1] + 1e-4, `pied du bas de rampe : ${depth(0).toFixed(2)} m`);
+  assert.ok(depth(rows - 1) >= 4 - 1e-4, `pied du haut de rampe : ${depth(rows - 1).toFixed(2)} m`);
 });
 
 test('un muret de pierre est facetté sur un pas fin, sans raccourcir', () => {
@@ -7653,7 +7673,7 @@ test('au même niveau, la voie étroite retrouve bien l’altitude de la large',
 test('une branche monte sur le remblai d’accès d’un pont au lieu de s’arrêter au pied', () => {
   // La large est relevée de cinq mètres par le remblai d'accès d'une travée :
   // au-delà de `STITCH_MAX_STEP_M`, mais c'est bien un carrefour.
-  const rows = 12;
+  const rows = 30;
   const wide = {
     profile: 'major',
     halfWidth: 6,
@@ -7680,7 +7700,8 @@ test('une branche monte sur le remblai d’accès d’un pont au lieu de s’arr
   close(narrow.platform[0], 5, 1e-4, 'la bouche est à l’altitude du remblai');
   for (let r = 1; r < rows; r++) {
     assert.ok(narrow.platform[r] <= narrow.platform[r - 1] + 1e-6, 'la branche redescend sans rebond');
-    assert.ok(narrow.platform[r - 1] - narrow.platform[r] < 1.5, 'pas de marche : la pente s’étale');
+    const grade = (narrow.platform[r - 1] - narrow.platform[r]) / 5;
+    assert.ok(grade <= BRIDGE_RAMP_GRADE + 1e-3, `pente tenue ligne ${r} : ${grade.toFixed(3)}`);
   }
   close(narrow.platform[rows - 1], 0, 1e-4, 'au-delà du remblai, la branche retrouve son terrain');
 });
@@ -8457,19 +8478,23 @@ test('une travée est tendue entre ses appuis, pas posée dans le ravin', () => 
 
 test('une travée trop basse se relève d’un bloc, et le remblai d’accès la rattrape', () => {
   // Rivière au niveau du terrain : la corde passerait à raser l’eau.
-  const segment = worksSegment(21, Array.from({ length: 21 }, (_, r) => (r >= 8 && r <= 12 ? 1 : 0)));
-  const clearanceAt = (x) => (x >= 40 && x <= 60 ? 0 : -50);
+  const segment = worksSegment(61, Array.from({ length: 61 }, (_, r) => (r >= 28 && r <= 32 ? 1 : 0)));
+  const clearanceAt = (x) => (x >= 140 && x <= 160 ? 0 : -50);
 
   levelWorkSpans(segment.path, segment.platform, segment.works, { clearanceAt });
 
-  const deck = segment.platform[10];
+  const deck = segment.platform[30];
   close(deck, BRIDGE_CLEARANCE_M, 1e-4, 'le tablier dégage exactement le gabarit');
-  for (let r = 8; r <= 12; r++) {
+  for (let r = 28; r <= 32; r++) {
     close(segment.platform[r], deck, 1e-5, `le tablier est droit (ligne ${r})`);
   }
   // Le remblai : décroissant en s’éloignant, nul au-delà de la rampe.
-  assert.ok(segment.platform[7] > segment.platform[6], 'le remblai descend vers la route');
-  assert.ok(segment.platform[6] > 0, 'et il porte encore la chaussée à six lignes');
+  assert.ok(segment.platform[27] > segment.platform[26], 'le remblai descend vers la route');
+  assert.ok(segment.platform[20] > 0, 'et il porte encore la chaussée à quarante mètres');
+  for (let r = 1; r < 28; r++) {
+    const grade = (segment.platform[r] - segment.platform[r - 1]) / 5;
+    assert.ok(grade <= BRIDGE_RAMP_GRADE + 1e-3, `pente tenue ligne ${r} : ${grade.toFixed(3)}`);
+  }
   close(segment.platform[0], 0, 1e-5, 'loin de l’ouvrage, le terrain reprend la main');
 });
 

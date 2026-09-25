@@ -85,7 +85,7 @@
  * pour ça.
  */
 
-import { WORK_NONE, LEVEL_GROUND, BRIDGE_RAMP_M } from './roadWorks.js';
+import { WORK_NONE, LEVEL_GROUND, BRIDGE_RAMP_M, rampLengthFor } from './roadWorks.js';
 import { roundCorners } from './ribbonGeometry.js';
 
 /** Distance en deçà de laquelle deux sommets sont le même nœud, en mètres. */
@@ -1558,7 +1558,7 @@ function dominates(a, indexA, b, indexB) {
  *
  * Une voie que le remblai d'accès d'un pont a relevée (`approach`) reste un
  * carrefour : la marche tolérée s'augmente de ce relevage, et la branche le
- * rattrape sur la longueur du remblai (`BRIDGE_RAMP_M`), pas sur trois lignes.
+ * rattrape comme le remblai lui-même (`rampLengthFor`), pas sur trois lignes.
  *
  * @param {Array<Object>} segments Tronçons, dont les `platform` sont modifiées.
  *        Un tronçon repris reçoit aussi `stitched` : le déplacement appliqué,
@@ -1654,7 +1654,7 @@ export function stitchPlatforms(
       if (n < 0) continue;
       let fade;
       if (Math.abs(delta[n]) > maxStep) {
-        const f = 1 - Math.abs(path[r].distance - path[n].distance) / rampLength;
+        const f = 1 - Math.abs(path[r].distance - path[n].distance) / rampLengthFor(delta[n], rampLength);
         if (f <= 0) continue;
         fade = f * f * (3 - 2 * f);
       } else {

@@ -186,8 +186,24 @@ export const BRIDGE_CROSSING_COS = 0.87;
  */
 export const BRIDGE_MAX_SPAN_M = 420;
 
-/** Longueur du remblai d'accès qui rattrape le relevage d'une travée, en mètres. */
+/** Longueur minimale du remblai d'accès qui rattrape le relevage d'une travée, en mètres. */
 export const BRIDGE_RAMP_M = 30;
+
+/**
+ * Pente de pointe d'un remblai d'accès. Cote de tracé, pas de goût : au-delà,
+ * la dalle d'un carrefour posé sur le remblai ne peut plus raccorder une
+ * branche sans pli.
+ */
+export const BRIDGE_RAMP_GRADE = 0.08;
+
+/**
+ * Longueur d'un raccord en `smoothstep` qui rattrape `rise` mètres sans
+ * dépasser `BRIDGE_RAMP_GRADE` — sa pente de pointe vaut 1,5 fois la pente
+ * moyenne. Jamais sous `minimum`.
+ */
+export function rampLengthFor(rise, minimum = BRIDGE_RAMP_M) {
+  return Math.max(minimum, (1.5 * Math.abs(rise)) / BRIDGE_RAMP_GRADE);
+}
 
 /** Code d'ouvrage d'une entité vectorielle. Fonction pure. */
 export function workCodeFor(brunnel) {
@@ -387,7 +403,7 @@ function resampleCodes(points, codes, path, out) {
  * non le terrain brut que le terrassier vient de quitter. Si la corde ne dégage pas le gabarit au-dessus
  * de ce qu'elle franchit, on relève **toute** la travée d'un bloc (un tablier
  * reste droit ; il n'ondule pas pour éviter un rocher) et on rattrape la
- * différence par un remblai d'accès sur `ramp` mètres de part et d'autre —
+ * différence par un remblai d'accès de part et d'autre (`rampLengthFor`) —
  * remblai que `furnitureLayer` habillera de lui-même, puisque la plate-forme
  * y surplombe désormais le terrain.
  *
@@ -478,16 +494,18 @@ export function levelWorkSpans(
       if (!(lift > 0)) continue;
 
       for (let r = run.from; r <= run.to; r++) platform[r] += lift;
-      // Le remblai d'accès : la route retrouve son terrain sur `ramp` mètres,
-      // en `smoothstep` (une rampe droite laisse une cassure à ses deux bouts).
+      // Le remblai d'accès : la route retrouve son terrain en `smoothstep` (une
+      // rampe droite laisse une cassure à ses deux bouts), sur une longueur
+      // qui croît avec le relevage.
+      const reach = rampLengthFor(lift, ramp);
       // Il s'arrête net sur la travée suivante : deux ponts qui se suivent de
       // près, le remblai de l'un ferait pencher le tablier de l'autre.
       for (const [start, step] of [[run.from - 1, -1], [run.to + 1, 1]]) {
         for (let r = start; r >= 0 && r < rows; r += step) {
           if (works[r]) break;
           const d = Math.abs(path[r].distance - path[start - step].distance);
-          if (d >= ramp) break;
-          const f = 1 - d / ramp;
+          if (d >= reach) break;
+          const f = 1 - d / reach;
           const raised = lift * f * f * (3 - 2 * f);
           platform[r] += raised;
           if (approach) approach[r] += raised;
