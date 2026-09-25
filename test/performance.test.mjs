@@ -32,3 +32,18 @@ test('le profilage est désactivable et enregistre aussi les erreurs', () => {
  m.enabled=true;assert.throws(()=>o.run());assert.equal(m.snapshot().generation.calls,1);
  m.reset();assert.deepEqual(m.snapshot(),{});
 });
+test('une tuile reconstruite en étapes garde sa géométrie affichée jusqu’à la dernière', () => {
+ const b=Object.create(TerrainBubble.prototype);let slope=1;
+ Object.assign(b,{THREE,elevation:{revision:0},verticalScale:1,frame:{scale:100,tileToLocal:(x,z)=>({x:x*100,z:z*100})},group:new THREE.Group(),materials:{material:new THREE.MeshLambertMaterial()},_sample:(x,z)=>slope*(x+z),segmentsForTile:()=>8,_edgeSegmentsFor:()=>({north:8,south:8,east:8,west:8}),_cliffTouches:()=>false,_neighboursLoaded:()=>true});
+ Object.defineProperty(b,'_gradientStep',{value:.01});
+ const tile={x:0,y:0,ring:0};b._buildMesh(tile);
+ const shown=tile.mesh.geometry.attributes.position.array.slice();
+ slope=2;b.elevation.revision++;
+ const steps=b._buildMeshSteps(tile);let calls=0;
+ while(!steps.next().done){calls++;assert.deepEqual(tile.mesh.geometry.attributes.position.array,shown);}
+ assert.ok(calls>=8);
+ const stepped=tile.mesh.geometry.attributes.position.array.slice();
+ b._buildMesh(tile);
+ assert.notDeepEqual(stepped,shown);assert.deepEqual(tile.mesh.geometry.attributes.position.array,stepped);
+ b._disposeTile(tile);b.materials.material.dispose();
+});

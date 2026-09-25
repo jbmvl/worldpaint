@@ -1,4 +1,5 @@
 import { GenerationBudget } from '../core/generationBudget.js';
+import { finishGeneration } from '../core/generationSteps.js';
 /*
  * terrainBubble — la « bulle » de terrain qui suit l'observateur. Bloc carré
  * de tuiles centré sur l'observateur (geometry clipmap, Losasso & Hoppe,
@@ -53,6 +54,8 @@ import {
 
 /** Au-delà, l'approximation métrique du repère local dérive : on ré-ancre. */
 const REANCHOR_DISTANCE_M = 20000;
+/** Temps CPU par image accordé à la reconstruction d'une tuile en file. */
+const TERRAIN_REBUILD_BUDGET_MS = 4;
 
 
 export class TerrainBubble {
@@ -105,6 +108,7 @@ export class TerrainBubble {
     this._generation = 0;
     /** @type {string[]} tuiles dont la finesse a changé, à recoudre. */
     this._rebuildQueue = [];
+    this._pendingBuild = null;
 
     /**
      * Numéro de surface, incrémenté chaque fois que la maille de terrain a
@@ -258,11 +262,15 @@ export class TerrainBubble {
     // Une tuile sans géométrie est construite tout de suite ; une tuile dont
     // seule la finesse a changé garde la sienne et passe par la file.
     this._rebuildQueue.length = 0;
+    this._cancelPendingBuild();
     const budget = new GenerationBudget();
     for (const tile of this.tiles.values()) {
-      if (!tile.mesh) this._buildMesh(tile);
-      else if (tile.edgeIncomplete && this._neighboursLoaded(tile.x, tile.y)) this._buildMesh(tile);
-      else if (this._meshOutdated(tile)) this._rebuildQueue.push(tile.key);
+      const now = !tile.mesh || (tile.edgeIncomplete && this._neighboursLoaded(tile.x, tile.y));
+      if (!now && this._meshOutdated(tile)) this._rebuildQueue.push(tile.key);
+      for (const _ of now ? this._buildMeshSteps(tile) : []) {
+        await budget.checkpoint();
+        if (this.disposed || generation !== this._generation) return true;
+      }
       await budget.checkpoint();
       if (this.disposed || generation !== this._generation) return true;
     }
@@ -586,17 +594,55 @@ export class TerrainBubble {
     );
   }
 
-  /** Reconstruit au plus une tuile périmée, une fois par image (recoudre tout d'un coup ferait un à-coup net). */
-  processRebuildQueue() {
-    if (this.disposed || this._rebuildQueue.length === 0) return false;
-    const key = this._rebuildQueue.shift();
-    const tile = this.tiles.get(key);
-    if (tile && this._meshOutdated(tile)) this._buildMesh(tile);
+  /**
+   * Fait avancer la reconstruction d'une tuile périmée dans la limite de
+   * `budgetMs` ; une tuile au plus s'achève par appel. La tuile garde sa
+   * géométrie jusqu'au bout, et une reconstruction dont l'entaille, la
+   * falaise ou le MNT ont changé en route est reprise du début.
+   * @returns {boolean} vrai s'il reste du travail ou qu'une tuile vient d'aboutir.
+   */
+  processRebuildQueue(budgetMs = TERRAIN_REBUILD_BUDGET_MS) {
+    if (this.disposed) return false;
+    const deadline = performance.now() + budgetMs;
+    while (!this._pendingBuild) {
+      if (this._rebuildQueue.length === 0) return false;
+      const tile = this.tiles.get(this._rebuildQueue.shift());
+      if (tile && this._meshOutdated(tile)) {
+        this._pendingBuild = { tile, steps: this._buildMeshSteps(tile), state: this._buildState() };
+      } else {
+        this._settleSurface();
+      }
+    }
+    const pending = this._pendingBuild;
+    if (this.tiles.get(pending.tile.key) !== pending.tile || pending.state !== this._buildState()) {
+      this._cancelPendingBuild();
+      if (this.tiles.has(pending.tile.key)) this._rebuildQueue.unshift(pending.tile.key);
+      return true;
+    }
+    while (!pending.steps.next().done) {
+      if (performance.now() >= deadline) return true;
+    }
+    this._pendingBuild = null;
     this._settleSurface();
     return true;
   }
 
+  /** Ce dont dépend une maille en cours : s'il change, elle est à reprendre. */
+  _buildState() {
+    return `${this._cutGeneration}:${this._cliffGeneration}:${this.elevation?.revision}`;
+  }
+
+  _cancelPendingBuild() {
+    this._pendingBuild?.steps.return();
+    this._pendingBuild = null;
+  }
+
   _buildMesh(tile) {
+    finishGeneration(this._buildMeshSteps(tile));
+  }
+
+  /** `_buildMesh` en étapes, une par ligne de sommets ; la tuile n'est touchée qu'à la dernière. */
+  *_buildMeshSteps(tile) {
     const { THREE } = this;
     const n = this.segmentsForTile(tile.x, tile.y);
     const count = (n + 1) * (n + 1);
@@ -606,17 +652,16 @@ export class TerrainBubble {
     const signature = `${n}:${edge.north}:${edge.south}:${edge.west}:${edge.east}:${revision}:${this._gradientStep}`;
     const cached = revision != null && tile.demCache?.signature === signature && tile.demCache.source === this.elevation;
     const samples = cached ? tile.demCache.samples : new Float64Array(count * 5);
-    if (!cached && revision != null) tile.demCache = { signature, samples, source: this.elevation };
-    const previousGeometry = tile.mesh?.geometry;
-    const reuse = previousGeometry?.getAttribute('position').count === count;
 
+    // Tampons neufs, même quand la géométrie est reprise : ceux de la tuile
+    // affichée sont lus (appuis des plantes) tant que celle-ci n'est pas finie.
     // Pas de coordonnées de texture : la matière est projetée en coordonnées monde par le shader.
-    const positions = reuse ? previousGeometry.getAttribute('position').array : new Float32Array(count * 3);
-    const normals = reuse ? previousGeometry.getAttribute('normal').array : new Float32Array(count * 3);
+    const positions = new Float32Array(count * 3);
+    const normals = new Float32Array(count * 3);
     // Emprise routière par sommet : 1 recreusé pour la chaussée, 0 en terrain
     // naturel — lue par `terrainMaterial.js` pour éteindre le grain low poly
     // sur ce qui vient d'être excavé pour elle (voir `roadCutMaskAt`).
-    const roadMask = reuse ? previousGeometry.getAttribute('roadMask').array : new Float32Array(count);
+    const roadMask = new Float32Array(count);
 
     const scale = this.frame.scale;
     const stepMeters = this._gradientStep * scale;
@@ -693,8 +738,12 @@ export class TerrainBubble {
         normals[idx * 3 + 1] = 1 / len;
         normals[idx * 3 + 2] = nz / len;
       }
+      yield;
     }
 
+    if (!cached && revision != null) tile.demCache = { signature, samples, source: this.elevation };
+    const previousGeometry = tile.mesh?.geometry;
+    const reuse = previousGeometry?.getAttribute('position').count === count;
     const indices = reuse ? previousGeometry.index.array : new (count > 65535 ? Uint32Array : Uint16Array)(n * n * 6);
     let k = 0;
     if (!reuse) for (let j = 0; j < n; j++) {
@@ -720,6 +769,9 @@ export class TerrainBubble {
     geometry.setAttribute('roadMask', new THREE.BufferAttribute(roadMask, 1));
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
     } else {
+      geometry.getAttribute('position').array = positions;
+      geometry.getAttribute('normal').array = normals;
+      geometry.getAttribute('roadMask').array = roadMask;
       for (const name of ['position', 'normal', 'roadMask']) geometry.getAttribute(name).needsUpdate = true;
     }
     geometry.computeBoundingSphere();
@@ -769,6 +821,7 @@ export class TerrainBubble {
   }
 
   _clearTiles() {
+    this._cancelPendingBuild();
     for (const tile of this.tiles.values()) this._disposeTile(tile);
     this.tiles.clear();
   }

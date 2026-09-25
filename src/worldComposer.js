@@ -291,7 +291,7 @@ export class WorldComposer {
       : null;
     this.metrics = new GenerationMetrics();
     for (const [object,method,label] of [
-      [this.bubble,'_buildMesh','terrain'], [this.cliffs,'rebuild','falaises'],
+      [this.bubble,'processRebuildQueue','terrain'], [this.cliffs,'rebuild','falaises'],
       [this.roads,'rebuild','routes'], [this.buildings,'rebuild','batiments'],
       [this.furniture,'rebuild','mobilier'], [this.groundClass,'rebuild','carteSol'],
       [this.vegetation,'_build','forets'], [this.grass,'_scatter','herbe'],
