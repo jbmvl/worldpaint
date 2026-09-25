@@ -33,7 +33,7 @@ import {
   CLIFF_BLEND_M,
   CLIFF_MIN_HEIGHT_M,
 } from '../src/terrain/cliffCut.js';
-import { CliffIndex } from '../src/layers/cliffLayer.js';
+import { CliffIndex, cliffGaps, splitAtGaps, CLIFF_FADE_M } from '../src/layers/cliffLayer.js';
 import {
   labelForMeshName,
   nearestInstance,
@@ -3592,6 +3592,32 @@ test('l’index de falaise oriente sa normale vers le haut et interpole ses cote
   // Au-delà de la portée, plus rien : le terrain reste celui du MNT.
   assert.equal(index.query(50, 400), null, 'hors de portée');
   close(index.elevationAt(50, 400, 77), 77, 1e-9, 'altitude inchangée hors de portée');
+});
+
+test('une chaussée au sol ouvre une brèche dans la falaise, un pont non', () => {
+  const path = Array.from({ length: 41 }, (_, i) => ({ x: i * 5, z: 0, distance: i * 5 }));
+  const road = { points: [{ x: 100, z: -50 }, { x: 100, z: 50 }], halfWidth: 3 };
+  const pieces = splitAtGaps(path, cliffGaps(path, [road]));
+  assert.equal(pieces.length, 2, 'le trait est coupé en deux');
+  const half = 3 + ROAD_CUT_M + 5 + CLIFF_FADE_M;
+  assert.ok(pieces[0].at(-1).x <= 100 - half + 1e-6, `bout gauche à ${pieces[0].at(-1).x}`);
+  assert.ok(pieces[1][0].x >= 100 + half - 1e-6, `bout droit à ${pieces[1][0].x}`);
+
+  assert.equal(splitAtGaps(path, cliffGaps(path, [{ ...road, works: 1 }])).length, 1, 'un pont laisse la falaise');
+  assert.equal(splitAtGaps(path, cliffGaps(path, [{ ...road, level: -1 }])).length, 1, 'un autre niveau aussi');
+});
+
+test('la marche s’estompe au-delà du bout libre d’un trait, pas entre deux segments', () => {
+  const segment = (ax, openStart, openEnd) => ({
+    ax, az: 0, tx: 1, tz: 0, nx: 0, nz: -1, length: 50,
+    footA: 0, footB: 0, crestA: 20, crestB: 20, face: 6, blend: CLIFF_BLEND_M, openStart, openEnd,
+  });
+  const index = new CliffIndex([segment(0, true, false), segment(50, false, true)]);
+  // Au pied, la marche ramène le terrain à zéro ; le MNT y dit 8.
+  close(index.elevationAt(25, 3, 8), 0, 1e-6, 'dans le trait, la marche entière');
+  close(index.elevationAt(-CLIFF_FADE_M - 1, 3, 8), 8, 1e-6, 'passé l’estompe, le MNT');
+  const half = index.elevationAt(-CLIFF_FADE_M / 2, 3, 8);
+  assert.ok(half > 0 && half < 8, `à mi-estompe, entre les deux : ${half}`);
 });
 
 test('la nappe de paroi et la marche du terrain lisent le même profil', () => {
@@ -8686,6 +8712,20 @@ test('le remblai d’accès d’une travée ne fait pas pencher sa voisine', () 
   }
 });
 
+test('le terrain naturel porte la marche des falaises, le MNT brut non', () => {
+  // Les plates-formes se dressent sur le terrain naturel : lues sur le MNT
+  // brut, elles flottaient au pied d'une falaise, sur la rampe que la marche
+  // a supprimée du sol affiché.
+  const bubble = Object.create(TerrainBubble.prototype);
+  bubble.frame = { origin: { x: 0, y: 0 }, scale: 1 };
+  bubble.surfaceElevationAtTile = () => 53.4;
+  bubble._cliffCut = { elevationAt: (x, z, raw) => Math.min(raw, 50) };
+  close(bubble.rawSurfaceElevationAtLocal(0, 0), 53.4, 1e-9, 'le MNT, pour mesurer la marche');
+  close(bubble.naturalElevationAtLocal(0, 0), 50, 1e-9, 'le pied de la falaise, pour la route');
+  bubble._cliffCut = null;
+  close(bubble.naturalElevationAtLocal(0, 0), 53.4, 1e-9, 'sans falaise, le MNT');
+});
+
 /** Tronçon d'essai pour `raiseApproaches` : une ligne tous les cinq mètres. */
 function approachSegment(from, step, rows, { halfWidth = 3, works = null, junction = null, level = 0 } = {}) {
   const path = Array.from({ length: rows }, (_, i) => ({
@@ -9128,7 +9168,7 @@ function stubBubble(elevation = 0) {
   return {
     frame: {},
     verticalScale: 1,
-    rawSurfaceElevationAtLocal: () => elevation,
+    naturalElevationAtLocal: () => elevation,
   };
 }
 
@@ -9227,7 +9267,7 @@ test('sur un versant, un voile de pile se fonde sur son propre terrain', () => {
   const layer = new BridgeLayer({
     THREE: stubWorksTHREE(),
     scene,
-    bubble: { frame: {}, verticalScale: 1, rawSurfaceElevationAtLocal: slope },
+    bubble: { frame: {}, verticalScale: 1, naturalElevationAtLocal: slope },
   });
 
   const rows = 21;

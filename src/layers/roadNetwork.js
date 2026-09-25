@@ -1163,7 +1163,7 @@ export class RoadNetwork {
       this._continuityFrame = bubble.frame;
     }
     // Terrain naturel, déblai exclu : la plate-forme décide de l'entaille, elle ne peut pas en dépendre.
-    const sampleElevation = (x, z) => bubble.rawSurfaceElevationAtLocal(x, z, 0) * bubble.verticalScale;
+    const sampleElevation = (x, z) => bubble.naturalElevationAtLocal(x, z, 0) * bubble.verticalScale;
     // Le plancher d'une travée : le terrain, majoré d'une revanche au-dessus
     // de l'eau. Ce n'est pas un gabarit — rien ne passe sous un pont de
     // rivière — mais une cote sous laquelle le tablier n'a rien à faire.

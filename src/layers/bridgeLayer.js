@@ -169,7 +169,7 @@ export class BridgeLayer {
     const bubble = this.bubble;
     // Terrain naturel : une pile se fonde sur le sol, pas sur le déblai d'une
     // chaussée voisine, qui la ferait flotter.
-    const sampleElevation = (x, z) => bubble.rawSurfaceElevationAtLocal(x, z, 0) * bubble.verticalScale;
+    const sampleElevation = (x, z) => bubble.naturalElevationAtLocal(x, z, 0) * bubble.verticalScale;
 
     const buffer = createProfileBuffer();
     this.counts = { spans: 0, piers: 0, portals: 0 };

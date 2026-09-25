@@ -103,8 +103,8 @@ const way = (properties, ...points) => ({
  * « pente » : un carrefour en croix sur le versant à 9 %.
  * « devers » : une route à flanc de versant à 25 %, en mur côté aval, et une
  * branche qui en descend.
- * « falaise » : une route au pied d'une falaise relevée, une autre au sommet,
- * et une rampe qui les relie à travers la paroi.
+ * « falaise » : une route au ras du pied d'une falaise relevée, une autre au
+ * ras de l'arase, et une rampe qui les relie à travers la paroi.
  */
 const FEATURES = [
   way({ class: 'secondary' }, [0, -350], [0, 800]),
@@ -131,9 +131,9 @@ const FEATURES = [
   way({ class: 'primary' }, [-480, -300], [-480, 0], [-480, 300]),
   way({ class: 'minor' }, [-480, 0], [-250, 0]),
 
-  way({ class: 'minor' }, [-380, -432], [-150, -432], [-20, -432]),
-  way({ class: 'minor' }, [-300, -478], [-150, -478], [-100, -478]),
-  way({ class: 'minor' }, [-150, -432], [-150, -478]),
+  way({ class: 'minor' }, [-380, -445], [-190, -445], [-20, -445]),
+  way({ class: 'minor' }, [-300, -463], [-110, -463], [-60, -463]),
+  way({ class: 'minor' }, [-190, -445], [-110, -463]),
 ];
 
 /** Falaises relevées (`mountain_peak`, classe `cliff`). */
@@ -145,7 +145,7 @@ const SCENES = {
   classe: { x: 30, z: 250, yawDeg: 215, pitchDeg: 28, distance: 75 },
   pente: { x: 520, z: -150, yawDeg: 300, pitchDeg: 25, distance: 80 },
   devers: { x: -480, z: 0, yawDeg: 250, pitchDeg: 30, distance: 70 },
-  falaise: { x: -150, z: -450, yawDeg: 20, pitchDeg: 30, distance: 90 },
+  falaise: { x: -150, z: -454, yawDeg: 20, pitchDeg: 30, distance: 90 },
 };
 
 const source = {
@@ -199,6 +199,7 @@ bridges.rebuild(roads.roadSegments, here);
 const furniture = new FurnitureLayer({ THREE, scene, bubble });
 furniture.rebuild(source, [], here, roads.roadSegments, roads.index, roads.junctions, null, null, null, [], {
   areas: roads.junctionAreas,
+  cliffs: cliffs.index,
 });
 
 const state = { scene: 'pont', ...SCENES.pont };

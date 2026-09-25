@@ -64,7 +64,15 @@ chaussée (`roadCut`). La falaise façonne le terrain naturel, la route entaille
 ce qu'elle trouve — l'ordre inverse taillerait la chaussée dans une rampe que
 la marche vient de supprimer.
 
-Les deux sont des fonctions **pures de la position au sol** : c'est ce qui
+Trois lectures en découlent, et chacune a son lecteur : le **MNT brut**
+(`rawSurfaceElevationAtLocal`), sur lequel seule la couche des falaises mesure
+la marche ; le **terrain naturel** (`naturalElevationAtLocal`), falaises
+comprises et déblai exclu, sur lequel se dressent les plates-formes et que lit
+le relief de rive ; la **surface affichée** (`surfaceElevationAtLocal`), tout
+compris, pour le reste du décor. Une plate-forme dressée sur le MNT brut
+flotterait au pied d'une falaise et s'enfoncerait à son arase.
+
+Les deux déformations sont des fonctions **pures de la position au sol** : c'est ce qui
 permet à deux tuiles voisines de s'accorder au bord sans se consulter. Une
 déformation qui dépendrait de la tuile courante, de l'ordre de parcours ou de
 la position de l'observateur ouvrirait une crevasse à chaque jointure.

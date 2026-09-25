@@ -31,6 +31,12 @@
  * profil fermé à six colonnes, son propre grain et son propre matériau. Ici,
  * une grille et rien d'autre.
  *
+ * Une chaussée au sol qui franchit le trait l'interrompt (`cliffGaps`) : une
+ * route qui monte d'un pied de falaise à son arase passe par une brèche, sur la
+ * pente que le MNT donne à cet endroit, et non contre une paroi verticale. La
+ * marche s'estompe au bout d'un trait (`CLIFF_FADE_M`) au lieu de se prolonger
+ * au-delà.
+ *
  * Le haut et le bas ne sont pas déduits du sens de tracé. La convention OSM
  * met le haut à gauche, mais elle est diversement respectée et le découpage en
  * tuiles ne garantit pas le sens : le MNT tranche, en lisant l'altitude des
@@ -41,6 +47,9 @@ import { resamplePath, pathFrames, smoothColumns } from './ribbonGeometry.js';
 import { cliffProfileAt } from '../terrain/cliffCut.js';
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { cellKey } from './roadGraph.js';
+import { collectRoadLines } from './roadNetwork.js';
+import { WORK_NONE, LEVEL_GROUND } from './roadWorks.js';
+import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
 import {
   cliffElevationAt,
   cliffFaceWidth,
@@ -63,6 +72,76 @@ const CLIFF_RADIUS_M = 1400;
 
 /** Déplacement de l'observateur qui justifie une reconstruction. */
 const CLIFF_REBUILD_M = 160;
+
+/**
+ * Longueur sur laquelle la marche s'estompe au-delà du bout d'un trait, en
+ * mètres. Sans elle, la marche se prolongeait autour du bout jusqu'à la portée
+ * de son raccord : une brèche ouverte pour une route n'en aurait rien dégagé.
+ */
+export const CLIFF_FADE_M = 12;
+
+/**
+ * Portions d'un trait de falaise qu'une chaussée au sol franchit, en abscisses
+ * curvilignes. Chaque brèche couvre la chaussée, son emprise et son raccord,
+ * plus l'estompe de la marche : c'est là que la route doit trouver le MNT nu.
+ * Un pont ou un tunnel ne l'ouvrent pas — la falaise reste sous l'un, au-dessus
+ * de l'autre.
+ *
+ * Fonction pure.
+ *
+ * @param {Array<{x:number,z:number,distance:number}>} path Trait ré-échantillonné.
+ * @param {Array<{points:Array, halfWidth:number, works?:number, level?:number}>} lines
+ * @returns {Array<[number, number]>} intervalles `[début, fin]`.
+ */
+export function cliffGaps(path, lines) {
+  const gaps = [];
+  for (const line of lines || []) {
+    if ((line.works ?? WORK_NONE) !== WORK_NONE || (line.level ?? LEVEL_GROUND) !== LEVEL_GROUND) continue;
+    const half = line.halfWidth + ROAD_CUT_M + ROAD_CUT_BLEND_M + CLIFF_FADE_M;
+    const points = line.points;
+    for (let i = 0; i < path.length - 1; i++) {
+      const a = path[i];
+      const b = path[i + 1];
+      for (let j = 0; j < points.length - 1; j++) {
+        const t = crossingAt(a, b, points[j], points[j + 1]);
+        if (t == null) continue;
+        const at = a.distance + (b.distance - a.distance) * t;
+        gaps.push([at - half, at + half]);
+      }
+    }
+  }
+  return gaps;
+}
+
+/** Paramètre sur `ab` du point où `ab` coupe `cd`, ou `null`. */
+function crossingAt(a, b, c, d) {
+  const rx = b.x - a.x;
+  const rz = b.z - a.z;
+  const sx = d.x - c.x;
+  const sz = d.z - c.z;
+  const denom = rx * sz - rz * sx;
+  if (Math.abs(denom) < 1e-9) return null;
+  const qx = c.x - a.x;
+  const qz = c.z - a.z;
+  const t = (qx * sz - qz * sx) / denom;
+  const u = (qx * rz - qz * rx) / denom;
+  return t >= 0 && t <= 1 && u >= 0 && u <= 1 ? t : null;
+}
+
+/** Un trait privé de ses brèches : les morceaux d'au moins deux points. */
+export function splitAtGaps(path, gaps) {
+  if (!gaps.length) return [path];
+  const pieces = [];
+  let current = [];
+  for (const point of path) {
+    if (gaps.some(([from, to]) => point.distance >= from && point.distance <= to)) {
+      if (current.length >= 2) pieces.push(current);
+      current = [];
+    } else current.push(point);
+  }
+  if (current.length >= 2) pieces.push(current);
+  return pieces;
+}
 
 /** Lissage du MNT avant usage : une cote ne doit pas porter son bruit métrique. */
 const CLIFF_SMOOTH_RADIUS = 2;
@@ -213,11 +292,26 @@ export class CliffIndex {
       bestSquared = squared;
       found = i;
       this._across = across;
+      this._overshoot = overshoot;
+      // Au-delà d'un bout **libre** du trait, et là seulement : entre deux
+      // segments d'un même trait, le coude extérieur déborde aussi.
+      this._open = (along < 0 && s.openStart) || (along > s.length && s.openEnd) ? overshoot : 0;
       // Abscisse curviligne, bornée aux extrémités.
       this._t = s.length > 0 ? (along < 0 ? 0 : along > s.length ? 1 : along / s.length) : 0;
     }
 
     return found;
+  }
+
+  /**
+   * Vrai si le point tombe sur la paroi d'une falaise, ou à `margin` mètres
+   * de son pied ou de son arase : là, le relief est celui de la falaise.
+   */
+  faceNear(x, z, margin = 1) {
+    const k = this._scan(x, z);
+    if (k < 0) return false;
+    const s = this.segments[k];
+    return this._overshoot <= margin && this._across >= -margin && this._across <= s.face + margin;
   }
 
   /** Altitude du terrain au point, falaise comprise. */
@@ -226,7 +320,9 @@ export class CliffIndex {
     if (k < 0) return raw;
     const s = this.segments[k];
     const t = this._t;
-    return cliffElevationAt(
+    const open = this._open;
+    if (open >= CLIFF_FADE_M) return raw;
+    const stepped = cliffElevationAt(
       raw,
       s.footA + (s.footB - s.footA) * t,
       s.crestA + (s.crestB - s.crestA) * t,
@@ -234,6 +330,9 @@ export class CliffIndex {
       s.face,
       s.blend
     );
+    if (!(open > 0)) return stepped;
+    const w = 1 - cliffProfileAt(open / CLIFF_FADE_M);
+    return raw + (stepped - raw) * w;
   }
 }
 
@@ -249,6 +348,8 @@ export class CliffLayer {
     this.THREE = THREE;
     this.bubble = bubble;
     this.spec = theme.terrain.cliff;
+    /** Profils de chaussée : leur largeur fait celle d'une brèche. */
+    this.roads = theme.roads;
 
     this.group = new THREE.Group();
     this.group.name = 'cliffs';
@@ -294,7 +395,9 @@ export class CliffLayer {
     // `cliff`, ou parce que le MNT ne voit pas de dénivelée là où OSM en
     // annonce une. Les trois se corrigent ailleurs, d'où le décompte.
     const seen = { features: 0, cliffs: 0, paths: 0, tooFlat: 0 };
-    const paths = this._collectPaths(source, tiles, here, seen);
+    const traced = this._collectPaths(source, tiles, here, seen);
+    const lines = traced.length ? collectRoadLines(source, tiles, this.bubble.frame, this.roads) : [];
+    const paths = traced.flatMap((path) => splitAtGaps(path, cliffGaps(path, lines)));
     const signature = JSON.stringify([paths, this.bubble.verticalScale, this.bubble.elevation?.revision]);
     if (this._frame === this.bubble.frame && this._signature === signature && this.bubble.elevation?.revision != null) {
       this._anchor = { x: here.x, z: here.z };
@@ -452,6 +555,8 @@ export class CliffLayer {
         crestB: crest[r + 1],
         face: faceWidth,
         blend,
+        openStart: r === 0,
+        openEnd: r === rows - 2,
       });
     }
 

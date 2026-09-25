@@ -544,6 +544,9 @@ export class WorldComposer {
           areas: this.roads.junctionAreas,
           // Maisons du bâti déjà posé — voir `furniture/domesticFauna.js`.
           houses: this.buildings.houses,
+          // Les falaises relevées : là où elles bordent une route, c'est leur
+          // paroi qui fait le mur, pas un ouvrage de la route.
+          cliffs: this.cliffs.index,
         }
       )) return false;
 

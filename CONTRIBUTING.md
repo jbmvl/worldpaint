@@ -156,6 +156,12 @@ Breaking one of these needs a very good reason, stated in the PR description.
   run ends where its ribbon ends (`junctionBoundaryAt`), a street corner is
   bordered from `area.edges`, and room beyond an edge is a **width**
   (`edgeClearance`), never a yes/no probe — the gutter and concrete kerb must fit without narrowing their section.
+  Roadside relief (embankment, retaining wall, rock cut, guardrail) asks the
+  same question row by row (`roadsideRelief.measureRoom`): it never extends
+  over another carriageway or across a junction mouth, and inside a junction
+  the embankment starts at the slab outline, in its own road's direction. A
+  side bordered by a mapped cliff carries no ground relief — the cliff is the
+  wall.
 
 - **Two ways are near each other for three reasons**, and only one is a bundle:
   they cross (the graph knows), one flies over the other (`layer`), or they run
@@ -189,6 +195,17 @@ Breaking one of these needs a very good reason, stated in the PR description.
   heights go through `RoadIndex.deckAt`, which returns `null` on a works row:
   never carve the terrain down to a tunnel slab, nor stitch a road up to the
   viaduct flying over it.
+
+  A raised span's approach embankment belongs to the **network**, not to the
+  bridge's chain: `raiseApproaches` spreads the lift along graph distance —
+  rows, junction areas, chain ends that touch — with a bounded grade
+  (`rampLengthFor`). A branch on the embankment, or a road changing class on
+  it, rises with it whatever its width.
+
+  Platforms are laid on the **natural** terrain (`naturalElevationAtLocal`):
+  the DEM with mapped cliffs stepped, road cut excluded. Only `cliffLayer`
+  reads the raw DEM. A ground-level road crossing a mapped cliff opens a breach
+  in it (`cliffGaps`); a bridge or a tunnel does not.
 
 - **Layers don't mutate each other implicitly.** A layer publishes what it
   produces; nothing writes into another layer's data uninvited.

@@ -15,14 +15,21 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   de blocs ; `skyLab.set({ sunDeg, lookDeg, pitchDeg, weather })` dans la
   console, ou `node scripts/sky-shot.mjs <dossier> '<réglages JSON>'` pour une
   image par réglage.
-- `demo/lab/roads.html` — chaussées, ponts et carrefours construits par les
-  vraies couches sur un relief et des tuiles synthétiques (pont relevé avec un
-  T sur son remblai d'accès, sa variante où le pont est la voie étroite,
-  carrefour en pente) ; `roadsLab.set({ scene, yawDeg, pitchDeg, distance })`
-  et `roadsLab.info()` (cotes des bouches), ou
-  `node scripts/roads-shot.mjs <dossier> '<réglages JSON>'`. Le mobilier de
-  rase campagne y est posé (talus, murs, glissières, alignements), pas le bâti
-  ni les parcelles.
+- `demo/lab/roads.html` — chaussées, ponts, carrefours et falaises construits
+  par les vraies couches sur un relief et des tuiles synthétiques : pont relevé
+  avec un T et un X sur son remblai, pont dont la branche est plus large,
+  changement de classe sur un remblai, carrefour en pente, route à flanc de
+  versant, falaise longée au pied et à l'arase et franchie par une rampe ;
+  `roadsLab.set({ scene, yawDeg, pitchDeg, distance })` et `roadsLab.info()`
+  (cotes des bouches), ou `node scripts/roads-shot.mjs <dossier> '<réglages
+  JSON>'`. Le mobilier de rase campagne y est posé (talus, murs, glissières,
+  alignements), pas le bâti ni les parcelles.
+- `demo/lab/place.html?lieu=<lieu>` — un lieu réel rejoué par `createWorld`
+  depuis ses tuiles enregistrées dans `demo/lab/places/<lieu>/` ;
+  `placeLab.set({ lng, lat | x, z, yawDeg, pitchDeg, distance, hour })`, ou
+  `node scripts/place-shot.mjs <dossier> '<réglages JSON>' <lieu>`. Un lieu
+  s'enregistre, réseau ouvert, par `node scripts/capture-place.mjs <lieu> <lng>
+  <lat>` ; sans ses tuiles vectorielles, il se rejoue en relief nu.
 - `demo/lab/furniture.html` — des formes du catalogue de mobilier côte à côte,
   à côté d'un gabarit humain de 1,75 m ; `furnitureLab.set({ kinds, yawDeg,
   pitchDeg, distance, target })`, ou `node scripts/furniture-shot.mjs`.
