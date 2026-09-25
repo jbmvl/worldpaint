@@ -1045,7 +1045,7 @@ function pointAlong(points, distance) {
  *
  * Un chemin ne fait pas carrefour avec une chaussée revêtue. À un nœud qu'une
  * revêtue atteint, seules les revêtues comptent : le chemin qui s'y embranche
- * ou la traverse n'ouvre ni bouche ni surface, il est dessiné par-dessus
+ * ou la traverse n'ouvre ni bouche ni surface, il est dessiné dessous
  * (`roadNetwork.roadLiftFor`). Là où aucune revêtue n'arrive, les chemins font
  * carrefour entre eux. Une polyligne de branche suit la même règle : un chemin
  * qui la coupe ne l'arrête pas.

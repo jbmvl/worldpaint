@@ -214,11 +214,12 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
   const entries = {};
   const junctions = {};
   // Chaussée et terrain quasi coplanaires : sans décalage de profondeur, la
-  // route clignote. Un chemin prend celui du marquage, sur lequel il passe.
+  // route clignote. Un chemin en prend un plus faible : il gagne contre le
+  // terrain, mais perd contre la chaussée revêtue, sous laquelle il passe.
   const depthOffset = (spec) =>
     isPaved(spec)
       ? { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }
-      : { polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 };
+      : { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 };
 
   for (const surface of junctionSurfaces(roads)) {
     const texture = new THREE.CanvasTexture(
@@ -337,11 +338,12 @@ export const ROAD_REBUILD_M = 250;
 /** Marge contre les écarts d’interpolation entre la maille du terrain et le profil routier. */
 export const ROAD_LIFT_M = 0.02;
 /**
- * Décollement d'un chemin non revêtu, en mètres : au-dessus du marquage. Un
- * chemin ne fait pas carrefour avec une route (`roadGraph.collectJunctions`),
- * il passe par-dessus, rive peinte comprise.
+ * Décollement d'un chemin non revêtu, en mètres : sous la chaussée revêtue.
+ * Un chemin ne fait pas carrefour avec une route (`roadGraph.collectJunctions`),
+ * il passe dessous ; sa plate-forme y est recousue au tablier de la route
+ * (`stitchPlatforms`), l'écart de décollement suffit donc à trancher.
  */
-export const UNPAVED_LIFT_M = ROAD_LIFT_M + 2 * MARKING_LIFT_M;
+export const UNPAVED_LIFT_M = ROAD_LIFT_M - MARKING_LIFT_M;
 
 /** Vrai si le profil de chaussée est revêtu. Fonction pure. */
 export function isPaved(profile) {
@@ -446,7 +448,7 @@ export function gradeAllowance(slope) {
  * (`ROAD_LIFT_M`), ce qui est aussi la condition pour que la bouche d'une
  * petite rue affleure la surface du carrefour au lieu de passer deux
  * centimètres dessous. Un chemin, qui n'entre pas dans le carrefour d'une
- * route, est décollé au-dessus (`UNPAVED_LIFT_M`).
+ * route, est décollé en dessous (`UNPAVED_LIFT_M`).
  */
 export const ROAD_PROFILE_ORDER = ['express', 'major', 'minor', 'lane', 'track', 'cycleway', 'path', 'steps'];
 
@@ -1029,7 +1031,7 @@ export function collectRoadSegments(
   if (areas.length > 0) {
     for (const segment of out) {
       segment.junction = markJunctionRows(segment, areas);
-      // Un chemin passe par-dessus le carrefour d'une route : son ruban ne s'y
+      // Un chemin passe sous le carrefour d'une route : son ruban ne s'y
       // interrompt pas.
       if (!isPaved(roads.profiles[segment.profile])) {
         const rows = segment.junction;
@@ -1506,8 +1508,7 @@ export class RoadNetwork {
     mesh.receiveShadow = true;
     mesh.updateMatrix();
     // Après les rubans **et** après les surfaces de carrefour : le marquage
-    // est ce qu'on peint en dernier sur une chaussée revêtue. Seuls les
-    // chemins passent encore par-dessus.
+    // est ce qu'on peint en dernier sur une chaussée revêtue.
     mesh.renderOrder = 1 + ROAD_PROFILE_ORDER.length + 2;
     this.scene.add(mesh);
     this.markingMesh = mesh;

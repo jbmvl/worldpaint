@@ -8501,7 +8501,7 @@ test('un bout rongé ne mord que sur une demi-largeur, et seulement dans un accu
   assert.equal(plain.tips, undefined);
 });
 
-test('un chemin qui part d’un carrefour de routes passe par-dessus', () => {
+test('un chemin qui part d’un carrefour de routes passe dessous', () => {
   const frame = createLocalFrame(2.35, 48.85, 15);
   const at = (dx, dz) => [2.35 + dx * 0.0000135, 48.85 - dz * 0.000009];
   const source = {
@@ -8529,7 +8529,8 @@ test('un chemin qui part d’un carrefour de routes passe par-dessus', () => {
   const track = segments.find((s) => s.profile === 'track');
   assert.ok(track);
   assert.ok([...track.junction].every((v) => v < 0), 'son ruban ne s’arrête pas à la bouche');
-  assert.ok(roadLiftFor(ROAD_PROFILES.track) > ROAD_LIFT_M + MARKING_LIFT_M, 'il est posé au-dessus du marquage');
+  assert.ok(roadLiftFor(ROAD_PROFILES.track) > 0, 'il reste décollé du terrain');
+  assert.ok(roadLiftFor(ROAD_PROFILES.track) < ROAD_LIFT_M, 'il passe sous la chaussée revêtue');
   assert.equal(roadLiftFor(ROAD_PROFILES.cycleway), ROAD_LIFT_M, 'une piste cyclable revêtue reste au niveau des routes');
 });
 

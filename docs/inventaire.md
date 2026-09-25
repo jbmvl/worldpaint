@@ -387,7 +387,7 @@ moitiés jusqu'à ce qu'elles se séparent, puis la pointe de l'îlot ; personne
 n'y cède le passage. Une chaussée à sens unique a la largeur d'un sens
 (`oneway` du profil, dans le thème), sans axe peint.
 Un chemin de terre n'entre pas dans le carrefour d'une route revêtue : il passe
-par-dessus, marquage compris. Une piste cyclable, revêtue, en reste une branche.
+dessous, la route et son marquage restent entiers. Une piste cyclable, revêtue, en reste une branche.
 
 `brunnel` décide de l'ouvrage : un pont reçoit tablier, piles, culées et
 parapets ; un tunnel, sa chaussée continue, sa voûte ouverte aux extrémités et ses têtes.
