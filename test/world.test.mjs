@@ -329,8 +329,6 @@ import {
   thicketDensityFor,
   UNDERSTORY_REF,
   edgeLowPart,
-  edgeCanopy,
-  EDGE_CANOPY_DROP,
   foliageTint,
   thinPlacements,
   FOREST_PATCH_M,
@@ -1238,24 +1236,29 @@ test('le sous-étage suit la part de sous-bois du peuplement, pas seulement sa d
   );
 });
 
-test('le bord d’un bois est un ourlet : houppe basse, fourré épais', () => {
+test('le sous-étage de lisière ne porte que des buissons', () => {
+  const type = { min: 10, max: 20 };
+  const strata = understoryStrata(defaultTheme.trees, true);
+  for (let base = 0; base < 100; base++) {
+    const arbre = describeTree({}, 4321, base, type, 0, [0, 1], strata, true, .1);
+    assert.equal(arbre.low, true);
+    assert.ok(strata.some(p => p.variant === arbre.variant && arbre.height >= p.min && arbre.height <= p.max));
+    assert.deepEqual(arbre, describeTree({}, 4321, base, type, 0, [0, 1], strata, true, .1));
+  }
+});
+
+test('le bord d’un bois augmente la part de fourré', () => {
   // En plein bois, la lisière ne change rien du tout — c’est la condition pour
   // qu’elle ne soit pas un effet de bord déguisé en style.
   assert.equal(edgeLowPart(0.2, 0), 0.2);
-  assert.equal(edgeCanopy(0), 1);
 
-  // Au bord, la strate basse monte sans jamais dépasser un fourré plein, et la
-  // houppe descend sans s’effondrer.
   const ourlet = edgeLowPart(0.2, 1);
   assert.ok(ourlet > 0.2 && ourlet < 1, `part de strate basse en lisière : ${ourlet}`);
-  close(edgeCanopy(1), 1 - EDGE_CANOPY_DROP, 1e-9, 'hauteur en lisière');
-  assert.ok(EDGE_CANOPY_DROP > 0 && EDGE_CANOPY_DROP < 0.5, 'un ourlet penche, il ne rampe pas');
 
   // Un taillis, déjà tout en strate basse, ne peut pas le devenir davantage.
   assert.equal(edgeLowPart(1, 1), 1);
   // Et l’effet est continu : à mi-lisière, à mi-chemin.
   close(edgeLowPart(0.2, 0.5), (0.2 + edgeLowPart(0.2, 1)) / 2, 1e-9, 'fondu de fourré');
-  close(edgeCanopy(0.5), (1 + edgeCanopy(1)) / 2, 1e-9, 'fondu de houppe');
 });
 
 test('la strate basse porte sa taille, et le tapis du sol ne pousse que de près', () => {
@@ -2768,7 +2771,7 @@ test('le semis de biome sème l’essence de sa matière, pas celle du peuplemen
     1
   );
   assert.match(source, /describeTree\(tree, seed, base, type, lowPart, variants, cellStrata\);/);
-  assert.match(source, /describeTree\(tree, seed, slot, type, lowPart, variants, cellStrata, true\);/);
+  assert.match(source, /describeTree\(tree, seed, slot, type, lowPart, variants, cellStrata, true, edge\);/);
 });
 
 test('le sol d’un bois porte une litière, pas une prairie à l’ombre', () => {

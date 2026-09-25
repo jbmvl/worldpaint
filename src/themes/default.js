@@ -1429,6 +1429,8 @@ export const LIFE_COLORS = {
   // principe (une teinte plus sombre que le ciel, quelle que soit l'heure).
   raptor: '#332821',
   smoke: [0.86, 0.85, 0.83],
+  // Poussière soulevée derrière un tracteur : terre sèche, plus chaude que la fumée.
+  dust: [0.74, 0.66, 0.54],
   // Osier du panier de nacelle.
   balloonBasket: srgb('#7a5c3c'),
   /**

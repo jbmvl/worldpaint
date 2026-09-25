@@ -177,9 +177,8 @@ essence du pays :
 | bosquet sec | genévrier, pin d'Alep | 3–8 m | 0,55 | 0,55 |
 | bois rabougri | bouleau | 3–7 m | 0,85 | 0,5 |
 
-La **lisière** est traitée à part : la canopée y baisse (−30 %) et la strate
-basse y monte (+55 %) — un bois vu du dehors est un mur de feuilles, pas une
-coupe dans une futaie.
+La **lisière** conserve la hauteur des arbres adultes et augmente la part de
+strate basse (+55 %). Son sous-étage ne porte que des buissons, sans jeunes arbres.
 
 ### La ripisylve : les arbres que personne n'a plantés
 
@@ -589,17 +588,39 @@ d'acier, plus sommaire, hors agglomération.
 | --- | --- | --- |
 | bêtes au sol | 240 animées au plus | haltes et trajets sur un circuit fermé, jusqu'à 8 traversées de route en cours |
 | tracteurs | 12 animés au plus | aller-retour sur un passage de labour, 1,1 à 1,8 m/s |
+| trains | 4 en circulation au plus, une locomotive et 3 voitures | naît à 350 m en amont de l'observateur sur une voie à moins de 500 m, roule à 22 m/s jusqu'au bout de la voie ou à 1,4 km de l'observateur |
 | oiseaux | 22 | dérivent entre 16 et 52 m au-dessus de l'observateur, 3 à 9 m/s |
 | montgolfières | 5 | dérivent entre 90 et 240 m au-dessus de l'observateur, 0,5 à 1,6 m/s, chacune avec ses deux couleurs propres |
 | fumée | 6 cheminées, 9 bouffées chacune | monte à 1,15 m/s, dérive à 0,75 m/s, vit 5,5 s |
+| poussière de tracteur | 16 bouffées par tracteur animé | levée à l'arrière, monte à 0,3 m/s, dérive au vent à 0,9 m/s, s'étale de 1,6 à 11 m en 9 s |
 
-Les bêtes et les tracteurs sont les seules choses posées au sol qui bougent
-d'une image à l'autre ; tout le reste du décor est reconstruit tous les 250 m
+Les bêtes, les tracteurs et les trains sont les seules choses posées au sol
+qui bougent d'une image à l'autre ; tout le reste du décor est reconstruit tous les 250 m
 et immobile entre deux reconstructions. Un tracteur n'est pas une bête
 (`tractorLayer`, pas `faunaLayer`) : rien en lui n'est articulé, il ne fait
 qu'un aller-retour entre deux points composés une fois par
 `furniture/parcels.placeTractor`, sur un champ en labour (`plough`), 12 % du
-temps.
+temps. Sa poussière se déduit du même aller-retour : une bouffée d'âge `a` est
+partie de là où était le tracteur il y a `a` secondes.
+
+Un **train** (`trainLayer`) parcourt les voies que `railwayLayer` publie :
+tronçons `rail` recousus par-delà les bords de tuile, hors tunnel et hors voie
+de service (garage, faisceau, embranchement). Il naît à chaque reconstruction
+de la voie ferrée sur une voie proche qui n'en porte pas (`TRAIN_SPAWN_CHANCE`
+règle la part des voies qui en reçoivent un), et suit sa propre route : à
+chaque reconstruction il reprend devant lui la voie neuve qui passe sous sa
+tête, et au bout d'une voie il enchaîne sur celle qui la prolonge. Il ne
+disparaît qu'au vrai bout de la voie chargée — entrée de tunnel, bord des
+tuiles — ou loin de l'observateur. Ses trois phares avant restent allumés
+jour et nuit ; les baies de ses voitures s'allument la nuit, avec la même
+opacité que les fenêtres du bâti.
+
+Ces mêmes voies portent une **caténaire** (`railwayLayer`), faute de savoir
+lesquelles sont électrifiées : les tuiles ne le disent pas. Un poteau à
+potence tous les 54 m, à 2,8 m de l'axe, du côté que le ballast d'une voie
+voisine laisse libre — aucun sur une voie médiane de faisceau ; un fil de
+contact à 5,5 m au-dessus du rail, un porteur à 6,7 m aux appuis qui pend de
+0,9 m à mi-portée.
 
 L'**oiseau** change d'espèce avec le pays : un corvidé qui dérive au vent
 partout, un rapace qui tourne en rond au-dessus d'un pays de montagne ou de
@@ -843,7 +864,9 @@ bâti relevé, borné par un disque autour d'une agglomération nommée.
 ### Représentations des arbres
 
 Les neuf variantes adultes du peuplement ont un prototype volumétrique
-facetté dans `models/treeKit.js`. La sélection continue de lire les essences
+facetté dans `models/treeKit.js`. Les sommets des houppiers sont désalignés,
+leurs diagonales variées et chaque lobe reçoit une orientation propre.
+Les arbres sont orientés sur un tour complet par un tirage spatial déterministe. La sélection continue de lire les essences
 et peuplements régionaux existants. Le même prototype est projeté dans
 l'atlas lointain. Entre 120 et 190 mètres, un fondu par découpe passe du volume aux
 plans croisés en conservant l’écriture de profondeur, sans modifier le placement,

@@ -16,14 +16,14 @@ son état.
 | `roadEdges.js`, `roadCorridor.js` | la rive de la chaussée, et l'emprise que le décor ne franchit pas |
 | `roadWorks.js`, `bridgeLayer.js` | ponts et tunnels : un état de la chaussée, pas une classe de route |
 | `roadMarkings.js`, `roadBundles.js` | marquage au sol, voies qui se longent |
-| `railwayLayer.js` | la voie ferrée, qui publie sa propre emprise |
+| `railwayLayer.js` | la voie ferrée et sa caténaire ; publie sa propre emprise et les voies que parcourent les trains |
 | `cliffLayer.js` | les falaises relevées : la marche du terrain, la bande peinte en roche, et la nappe de paroi — les sommets qu'un champ de hauteurs ne peut pas porter sur une face verticale |
 | `buildingLayer.js`, `roofGeometry.js` | le bâti et ses toitures |
 | `streetLayer.js`, `streetMasonry.js` | bordures, caniveaux et joints des rues et des carrefours |
 | `gardenLayer.js` | clôtures et buissons de maison |
 | `vegetationLayer.js`, `groundCover.js`, `cropLayer.js` | arbres, herbe, cultures |
 | `furnitureLayer.js` + `furniture/` | tout le mobilier — voir ci-dessous |
-| `faunaLayer.js`, `faunaMotion.js`, `faunaCrossing.js`, `lifeLayer.js`, `tractorLayer.js` | ce qui bouge |
+| `faunaLayer.js`, `faunaMotion.js`, `faunaCrossing.js`, `lifeLayer.js`, `tractorLayer.js`, `trainLayer.js` | ce qui bouge |
 | `settlement.js` | l'habitat : emprises habitées, lieux nommés, `UrbanMask`, `FabricIndex` |
 
 ## Le mobilier
