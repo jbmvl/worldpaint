@@ -724,8 +724,16 @@ export class TerrainBubble {
       tile.mesh = mesh;
       this.group.add(mesh);
     }
-    // Une maille qui change de finesse déplace la surface.
-    this._surfaceDirty = true;
+    // Une maille qui change de finesse déplace la surface ; un simple recreusement
+    // non, sinon chaussées → entaille → surface → chaussées tourne sans fin.
+    const previousEdge = tile.edgeSegments;
+    if (
+      tile.segments !== n || !previousEdge ||
+      previousEdge.north !== edge.north || previousEdge.south !== edge.south ||
+      previousEdge.west !== edge.west || previousEdge.east !== edge.east
+    ) {
+      this._surfaceDirty = true;
+    }
     tile.segments = n;
     tile.edgeSegments = edge;
     tile.cutGeneration = this._cutGeneration;

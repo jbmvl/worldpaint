@@ -1621,13 +1621,13 @@ function loop(timestamp) {
   if (world) {
     // `advance` situe la pluie et les feuilles au sol au point observé, pas à
     // la hauteur des yeux : lui passer `camera.position` tel quel les aurait
-    // fait flotter en l'air, à hauteur de caméra plutôt que par terre. Le
-    // même sondage que `sampleGroundHeight` ailleurs dans ce fichier ; `null`
-    // hors de la bulle chargée retombe sur la caméra, comme avant ce correctif.
-    const ground = sampleGroundHeight(camera.position.x, camera.position.z);
+    // fait flotter en l'air, à hauteur de caméra plutôt que par terre. Lu dans
+    // le relief et non par `sampleGroundHeight` : un lancer de rayon à chaque
+    // image contre des mailles de 192 coûte plusieurs millisecondes.
+    const ground = world.bubble.surfaceElevationAtLocal(camera.position.x, camera.position.z, NaN) * world.bubble.verticalScale;
     world.advance(delta, {
       x: camera.position.x,
-      y: ground ?? camera.position.y,
+      y: Number.isFinite(ground) ? ground : camera.position.y,
       z: camera.position.z,
     });
     // La position du soleil se calcule là où l'on est, pas là où l'on a

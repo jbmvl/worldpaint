@@ -126,6 +126,14 @@ test('le mobilier périmé ne reconstruit pas les couches dont il dépend', asyn
   assert.deepEqual(calls, ['mobilier']);
 });
 
+test('une falaise relue à l’identique ne relance pas le décor', async () => {
+  const { composer, calls, stale } = compositeur();
+  await composer.refresh(0, 0, { force: true });
+  calls.length = 0; stale.add('falaises');
+  await composer.refresh(0, 0);
+  assert.deepEqual(calls, ['falaises']);
+});
+
 test('une tentative réseau sans donnée nouvelle ne relance pas la génération', async () => {
   const { composer, calls } = compositeur();
   await composer.refresh(0, 0, { force: true }); calls.length = 0;

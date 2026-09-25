@@ -280,7 +280,7 @@ export class CliffLayer {
 
   /**
    * Relit les falaises depuis les tuiles déjà décodées et republie la marche.
-   * @returns {boolean} vrai si au moins un trait a été taillé.
+   * @returns {boolean} vrai si la marche publiée a changé.
    */
   rebuild(source, tiles, here) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
@@ -317,7 +317,7 @@ export class CliffLayer {
 
     this._anchor = { x: here.x, z: here.z };
     this._frame = this.bubble.frame;
-    return segments.length > 0;
+    return true;
   }
 
   /** Les tracés de falaise à portée, en mètres locaux et rééchantillonnés. */

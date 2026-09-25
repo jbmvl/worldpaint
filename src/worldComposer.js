@@ -449,14 +449,16 @@ export class WorldComposer {
       //    naturel que les chaussées entailleront ensuite (une route taillée
       //    dans la rampe que la marche supprime se retrouverait en l'air), et
       //    la carte du sol a besoin de leurs bandes pour y peindre la roche.
-      const cliffsChanged = cliffStale || dataChanged || force;
+      //    Une falaise relue à l'identique ne périme rien : son seuil de 160 m
+      //    ne doit pas refaire tout le décor en cascade.
+      const cliffsChanged = (cliffStale || dataChanged || force) &&
+        (this.cliffs.rebuild(this.vectorTiles, wanted, here) || dataChanged || force);
       const classesChanged = classStale || regionChanged || cliffsChanged || dataChanged || force;
       const roadsChanged = roadStale || classesChanged;
       const railwaysChanged = railwayStale || roadsChanged;
       const buildingsChanged = buildingStale || roadsChanged;
       const streetsChanged = roadsChanged || buildingsChanged;
       const furnitureChanged = furnitureStale || streetsChanged || railwaysChanged;
-      if (cliffsChanged) this.cliffs.rebuild(this.vectorTiles, wanted, here);
 
       if (!await checkpoint()) return false;
 
