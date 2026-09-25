@@ -79,6 +79,7 @@ export const DEFAULT_ELEVATION_ZOOM = 14;
  * @param {{fog: string, nightZenith: string, nightHorizon: string}} [options.sky.palette]
  * @param {number} [options.sky.fogRadius] Défaut : le demi-côté de la bulle.
  * @param {number} [options.sky.shadowMapSize]
+ * @param {number} [options.sky.toneMappingExposure] Celle du renderer (ACES). Défaut : 0,5.
  * @param {Object} [options.sky.weather] Temps qu'il fait au montage (voir
  *        `environment/weather.js`) — un état, repassé à `updateSky`, pas une direction artistique.
  * @param {number} [options.sky.cloudCoverage] Raccourci sur `weather.cloudCover`.
@@ -132,6 +133,7 @@ export function createWorld({
       fogRadius:
         sky.fogRadius ?? (settings.blockSize / 2) * tileSizeMeters(settings.zoom, latitude),
       shadowMapSize: sky.shadowMapSize,
+      toneMappingExposure: sky.toneMappingExposure,
       cloudCoverage: sky.cloudCoverage,
       cloudDensity: sky.cloudDensity,
       weather: sky.weather,
