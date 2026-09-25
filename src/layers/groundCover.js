@@ -485,6 +485,7 @@ export class GroundCover {
     streets = null,
     count = GRASS_COUNT,
     theme = defaultTheme,
+    scatterBudgetMs = Infinity,
   }) {
     this.THREE = THREE;
     this.theme = theme;
@@ -511,6 +512,10 @@ export class GroundCover {
     this._unclassified = theme.terrain.unclassified;
     this.disposed = false;
     this._anchor = null;
+    // Temps CPU d'une passe de semis par appel ; une passe inachevée reprend à
+    // l'appel suivant et l'herbe affichée reste l'ancienne jusqu'à son terme.
+    this.scatterBudgetMs = scatterBudgetMs;
+    this._pass = null;
     this._instanceCells = new InstanceCells({ resident: true });
     this._frame = null;
     this._bands = [coverBand({ from: 0, to: 55, cell: 2.2, perCell: 16, fadeOut: 20, salt: 0 })];
@@ -628,10 +633,11 @@ export class GroundCover {
   }
 
   /**
-   * Redistribue les touffes si l'observateur s'est assez éloigné.
+   * Redistribue les touffes si l'observateur s'est assez éloigné, ou poursuit
+   * la redistribution en cours dans la limite de `scatterBudgetMs`.
    * @param {number} x Position locale de l'observateur.
    * @param {number} z
-   * @returns {boolean} vrai si une redistribution a eu lieu.
+   * @returns {boolean} vrai si une redistribution s'est achevée.
    */
   update(x, z, { force = false } = {}) {
     if (this.disposed || !this.bubble?.frame) return false;
@@ -642,21 +648,46 @@ export class GroundCover {
     const frameChanged = this._frame !== this.bubble.frame;
     const surfaceChanged = this._surfaceGeneration !== this.bubble.surfaceGeneration;
     const supportChanged = this._supportComplete !== this.terrainSupport?.complete;
-    if (!force && !frameChanged && !surfaceChanged && !supportChanged && this._anchor) {
-      if (Math.hypot(x - this._anchor.x, z - this._anchor.z) < GRASS_REBUILD_M) return false;
-    }
-
-    this._instanceCells.begin(this.bubble.frame, this.bubble.surfaceGeneration, this.roads?.index, force || supportChanged);
-    this._scatter(x, z);
-    this._anchor = { x, z };
-    this._frame = this.bubble.frame;
-    this._surfaceGeneration = this.bubble.surfaceGeneration;
-    this._supportComplete = this.terrainSupport?.complete;
-    return true;
+    // Une passe en cours s'achève avant qu'un déplacement en ouvre une autre :
+    // la recommencer à chaque pas la priverait de terme à grande vitesse.
+    const moved = !this._pass &&
+      (!this._anchor || Math.hypot(x - this._anchor.x, z - this._anchor.z) >= GRASS_REBUILD_M);
+    if (force || frameChanged || surfaceChanged || supportChanged || moved) {
+      this._instanceCells.begin(this.bubble.frame, this.bubble.surfaceGeneration, this.roads?.index, force || supportChanged);
+      this._startScatter(x, z);
+      this._anchor = { x, z };
+      this._frame = this.bubble.frame;
+      this._surfaceGeneration = this.bubble.surfaceGeneration;
+      this._supportComplete = this.terrainSupport?.complete;
+    } else if (!this._pass) return false;
+    return this._scatter(this.scatterBudgetMs);
   }
 
-  /** Sème la couverture, bande par bande et maille par maille. */
-  _scatter(centerX, centerZ) {
+  /** Vrai tant qu'une passe de semis attend d'être achevée. */
+  get pending() {
+    return this._pass !== null;
+  }
+
+  /** Ouvre une passe de semis centrée sur l'observateur. */
+  _startScatter(centerX, centerZ) {
+    // Un centre arrondi par bande : les mailles retenues ne dépendent que du sol.
+    const bases = this._bands.map((band) => ({
+      x: Math.round(centerX / band.cell),
+      z: Math.round(centerZ / band.cell),
+    }));
+    this._pass = { bases, next: 0, placed: 0 };
+  }
+
+  /**
+   * Sème la couverture, bande par bande et maille par maille, jusqu'au terme
+   * de la passe ou à l'épuisement du budget. Seules les mailles neuves coûtent :
+   * une maille conservée est reprise telle quelle.
+   * @returns {boolean} vrai si la passe s'est achevée et a été publiée.
+   */
+  _scatter(budgetMs = Infinity) {
+    const pass = this._pass;
+    if (!pass) return false;
+    const deadline = budgetMs === Infinity ? Infinity : performance.now() + budgetMs;
     const { bubble, groundClass, roads, streets } = this;
     const mesh = this._staging;
     const coverBands = this._scratch[2], grainParams = this._scratch[3], flowerVariants = this._scratch[4];
@@ -665,21 +696,24 @@ export class GroundCover {
     const index = roads?.index || null;
     const pavement = streets?.index || null;
     const bands = this._bands;
-    // Un centre arrondi par bande : les mailles retenues ne dépendent que du sol.
-    const bases = bands.map((band) => ({
-      x: Math.round(centerX / band.cell),
-      z: Math.round(centerZ / band.cell),
-    }));
+    const bases = pass.bases;
     const tufts = this._tufts;
     const grass = this.theme.grass;
     // Amplitude de la frange : la même valeur que le shader de terrain, pour
     // que les deux brouillent la limite sur la même largeur.
     const fringeM = this.theme.terrain.edgeWarpM ?? 0;
-    let placed = 0;
+    let placed = pass.placed;
+    let sown = false;
     const streams = this._scratch.map((array, i) => [array, this._residentAttributes[i].itemSize]);
 
-    for (const cell of this._cells) {
+    for (; pass.next < this._cells.length; pass.next++) {
       if (placed >= capacity) break;
+      // Au moins une maille neuve par appel, pour que la passe avance toujours.
+      if (sown && performance.now() >= deadline) {
+        pass.placed = placed;
+        return false;
+      }
+      const cell = this._cells[pass.next];
 
       const band = bands[cell.band];
       const base = bases[cell.band];
@@ -689,6 +723,7 @@ export class GroundCover {
       const cacheKey = `${cell.band}:${gx}:${gz}`;
       const retained = this._instanceCells.read(cacheKey, streams, placed, capacity);
       if (retained !== null) { placed += retained; continue; }
+      sown = deadline !== Infinity;
       const cellStart = placed;
       const cellX = (gx + 0.5) * band.cell;
       const cellZ = (gz + 0.5) * band.cell;
@@ -823,11 +858,17 @@ export class GroundCover {
       }
       this._instanceCells.write(cacheKey, streams, 0, placed - cellStart, placed < capacity);
     }
+    // La publication (tampons de l'herbe et des fleurs) prend un appel à elle.
+    if (sown) {
+      pass.placed = placed;
+      return false;
+    }
 
+    this._pass = null;
     this._instanceCells.end();
     this.mesh.count = this._resident.sync(this._instanceCells.selected);
     this.flowers.syncCells(this._instanceCells.selected);
-
+    return true;
   }
 
   dispose() {

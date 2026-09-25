@@ -95,6 +95,9 @@ export const WORLD_ATTRIBUTION =
 
 export { FAUNA_CROSS_AHEAD_M } from './layers/faunaCrossing.js';
 
+/** Temps CPU d'herbe semée par image : la passe s'étale sur les suivantes. */
+const GRASS_SCATTER_BUDGET_MS = 3;
+
 export class WorldComposer {
   /**
    * @param {Object} options
@@ -249,6 +252,7 @@ export class WorldComposer {
       roads: this._infra,
       streets: this.streets,
       theme,
+      scatterBudgetMs: GRASS_SCATTER_BUDGET_MS,
     });
     this.grass.setMaxAnisotropy(maxAnisotropy);
 
@@ -569,7 +573,11 @@ export class WorldComposer {
 
       // 7. Herbe — l'index des chaussées vient peut-être de changer.
       if (roadsChanged || classesChanged || streetsChanged) {
-        this.grass.update(here.x, here.z, { force: true });
+        let done = this.grass.update(here.x, here.z, { force: true });
+        while (!done && this.grass.pending) {
+          if (!await checkpoint()) return false;
+          done = this.grass.update(here.x, here.z);
+        }
       }
 
       if (!await checkpoint()) return false;
