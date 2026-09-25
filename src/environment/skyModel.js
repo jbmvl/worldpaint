@@ -27,6 +27,24 @@ export function skyParameters(sunY) {
   };
 }
 
+/** Constantes de `sunIntensity` dans le `Sky.js` de three : le soleil s'y éteint ~2,3° sous l'horizon. */
+const PREETHAM_CUTOFF = 1.6110731556870734;
+const PREETHAM_STEEPNESS = 1.5;
+const preethamSun = (sunY) =>
+  Math.max(0, 1 - Math.exp(-(PREETHAM_CUTOFF - Math.acos(Math.max(-1, Math.min(1, sunY)))) / PREETHAM_STEEPNESS));
+
+/**
+ * Part de la lumière de jour que le ciel de Preetham porte encore, de 0 à 1 :
+ * 1 dès `fullSunY`, 0 quand son soleil s'éteint. Même courbe que le shader,
+ * pour qu'une couleur de jour hors du ciel (le brouillard) s'éteigne avec lui.
+ *
+ * @param {number} sunY
+ * @param {number} fullSunY Hauteur à partir de laquelle la part vaut 1.
+ */
+export function preethamDaylight(sunY, fullSunY) {
+  return clamp01(preethamSun(sunY) / preethamSun(fullSunY));
+}
+
 /** Hauteur de soleil sous laquelle l'éclairage est entièrement nocturne. */
 const NIGHT_SUN_Y = -0.1;
 const NIGHT_LIGHT = { sun: 0.3, ambient: 0.62 };

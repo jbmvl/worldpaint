@@ -37,7 +37,7 @@
  * sans jamais aller la chercher — voir `weather.js`.
  */
 
-import { skyParameters, lightingFor, sunlightColor } from './skyModel.js';
+import { skyParameters, lightingFor, sunlightColor, preethamDaylight } from './skyModel.js';
 import {
   resolveWeather,
   weatherLighting,
@@ -123,6 +123,9 @@ const TWILIGHT_GLOW = 0.2;
 const TWILIGHT_ZENITH_SHARE = 0.5;
 /** Côté opposé au soleil, en part de la lueur côté soleil. */
 const TWILIGHT_ANTISOLAR = 0.6;
+
+/** Hauteur de soleil où la nuit commence à gagner le ciel. */
+const NIGHT_START_Y = 0.06;
 
 /** Échelle du bruit de nuages (la valeur par défaut de three, 0,0002, couvre tout le ciel d'une seule valeur : aucun nuage n'apparaît). */
 const CLOUD_SCALE = 0.0015;
@@ -498,16 +501,20 @@ export class SceneEnvironment {
     // Calculée avant la couleur de brouillard, pour la corriger (sinon la
     // voûte bascule sur sa palette nocturne pendant que l'horizon reste
     // éclairé de jour). Bien avant que le soleil soit très bas, sinon le ciel resterait noir au crépuscule.
-    const nightMix = smoothstep(0.06, -0.12, dir.y);
+    const nightMix = smoothstep(NIGHT_START_Y, -0.12, dir.y);
     this.nightMix = nightMix;
     this.uniforms.uNightMix.value = nightMix;
     this.uniforms.uMoonDirection.value.set(-dir.x, -dir.y, -dir.z);
 
     const nightZenith = hexToLinear(this.palette.nightZenith);
     const nightHorizon = hexToLinear(this.palette.nightHorizon);
-    const dayFogColor = fogColorFor(hexToLinear(this.palette.fog), this.weather);
+    const weatheredFog = fogColorFor(hexToLinear(this.palette.fog), this.weather);
+    // La part de jour du brouillard s'éteint avec le soleil de Preetham, sinon
+    // le lointain garde une pâleur de jour que la voûte, déjà sombre, n'a plus.
+    const daylight = preethamDaylight(dir.y, NIGHT_START_Y);
+    const dayFogColor = weatheredFog.map((c) => c * daylight);
     const twilight = smoothstep(TWILIGHT_END_Y, 0, dir.y);
-    const dusk = twilightGlow(dayFogColor, twilight);
+    const dusk = twilightGlow(weatheredFog, twilight);
     this._twilightGlow = dusk;
     this.uniforms.uTwilight.value = twilight;
     this.uniforms.uTwilightHorizon.value.setRGB(...dusk.horizon);

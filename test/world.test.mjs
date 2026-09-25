@@ -507,7 +507,7 @@ import {
   RAILWAY_GAUGE_HALF_M,
   RAILWAY_BALLAST_HALF_M,
 } from '../src/layers/railwayLayer.js';
-import { skyParameters, lightingFor, sunlightColor } from '../src/environment/skyModel.js';
+import { skyParameters, lightingFor, sunlightColor, preethamDaylight } from '../src/environment/skyModel.js';
 import {
   filterByWords,
   sharesFor,
@@ -1994,6 +1994,18 @@ test('le crépuscule glisse vers la nuit sans saut de lumière', () => {
     previousColor = color;
   }
   assert.deepEqual(sunlightColor(1, lightingFor(-0.4).nightBlend), sunlightColor(1, true));
+});
+
+test('la part de jour du brouillard s’éteint avec le soleil de Preetham', () => {
+  assert.equal(preethamDaylight(0.06, 0.06), 1);
+  assert.equal(preethamDaylight(0.8, 0.06), 1);
+  assert.equal(preethamDaylight(-0.05, 0.06), 0, 'soleil de Preetham éteint sous ~2,3°');
+  let previous = 1;
+  for (let y = 0.06; y >= -0.06; y -= 0.01) {
+    const level = preethamDaylight(y, 0.06);
+    assert.ok(level <= previous + 1e-12, `décroissante à ${y.toFixed(2)}`);
+    previous = level;
+  }
 });
 
 // --- Le pays ----------------------------------------------------------------
