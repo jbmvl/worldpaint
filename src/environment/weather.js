@@ -101,9 +101,9 @@ export function overcastOf(weather) {
  * l'hémisphérique monte (la source devient la voûte plutôt que le disque
  * solaire), et la chaleur s'en va (lumière diffusée, neutre).
  *
- * @param {{sun:number, ambient:number, warmth:number, night:boolean}} light
+ * @param {{sun:number, ambient:number, warmth:number, night:boolean, nightBlend:number}} light
  * @param {Object} weather État résolu.
- * @returns {{sun:number, ambient:number, warmth:number, night:boolean, shadow:number}}
+ * @returns {{sun:number, ambient:number, warmth:number, night:boolean, nightBlend:number, shadow:number}}
  *          `shadow` est l'opacité des ombres portées, de 0 à 1.
  */
 export function weatherLighting(light, weather) {

@@ -39,7 +39,7 @@ import { roadStyleFor } from '../src/layers/roadNetwork.js';
 import { furnitureSpecsFor, FURNITURE_BUILDERS } from '../src/layers/furnitureKit.js';
 import { hedgeStyleFor, hedgeClumps } from '../src/layers/hedgeGeometry.js';
 import { resamplePath } from '../src/layers/ribbonGeometry.js';
-import { DEFAULT_SKY_PALETTE } from '../src/environment/sceneEnvironment.js';
+import { DEFAULT_SKY_PALETTE, twilightGlow, tintByPalette } from '../src/environment/sceneEnvironment.js';
 
 /** Un thème contraire au défaut sur chaque tranche qu'on sait lire. */
 const OTHER = resolveTheme({
@@ -579,4 +579,29 @@ test('les matières non concernées par le chantier gardent leur couleur', () =>
   for (const [kind, albedo] of Object.entries(unchanged)) {
     assert.deepEqual(defaultTheme.surfaces[kind].albedo, albedo, `${kind} n’a pas bougé`);
   }
+});
+
+test('la lueur du crépuscule s’éteint avec lui', () => {
+  const dayFog = [0.8, 0.85, 0.9];
+  const nuit = twilightGlow(dayFog, 0);
+  assert.deepEqual([...nuit.horizon, ...nuit.zenith], [0, 0, 0, 0, 0, 0]);
+  const coucher = twilightGlow(dayFog, 1);
+  for (let i = 0; i < 3; i++) {
+    assert.ok(coucher.horizon[i] > 0);
+    assert.ok(coucher.zenith[i] > 0);
+  }
+  assert.ok(coucher.horizon[0] > coucher.horizon[2], 'chaude à l’horizon');
+  assert.ok(coucher.zenith[2] > coucher.zenith[0], 'bleue au zénith');
+});
+
+test('le brouillard de jour prend la lumière du ciel et la teinte de la palette', () => {
+  const sky = [0.5, 0.6, 0.8];
+  const lum = (c) => c[0] * 0.2126 + c[1] * 0.7152 + c[2] * 0.0722;
+  const neutre = tintByPalette(sky, [0.7, 0.7, 0.7]);
+  assert.ok(Math.abs(lum(neutre) - lum(sky)) < 1e-9, 'palette neutre : la lumière du ciel');
+  assert.ok(neutre[2] / neutre[0] < sky[2] / sky[0], 'moins saturé que le ciel');
+  assert.ok(neutre[2] > neutre[0], 'mais encore de sa teinte');
+  const chaude = tintByPalette(sky, [0.9, 0.7, 0.5]);
+  assert.ok(Math.abs(lum(chaude) - lum(sky)) < 1e-9, 'même lumière que le ciel');
+  assert.ok(chaude[0] / chaude[2] > sky[0] / sky[2], 'réchauffée par la palette');
 });

@@ -507,7 +507,7 @@ import {
   RAILWAY_GAUGE_HALF_M,
   RAILWAY_BALLAST_HALF_M,
 } from '../src/layers/railwayLayer.js';
-import { skyParameters, lightingFor, sunlightColor } from '../src/environment/skyModel.js';
+import { skyParameters, lightingFor, sunlightColor, preethamRadiance, acesFilmic, skyAdaptation } from '../src/environment/skyModel.js';
 import {
   filterByWords,
   sharesFor,
@@ -1975,6 +1975,52 @@ test('la lumière directe rougit à l’horizon et blanchit au zénith', () => {
   const zenith = sunlightColor(haut.warmth, false);
   assert.ok(rasant[0] - rasant[2] > zenith[0] - zenith[2], 'écart rouge/bleu au couchant');
   close(zenith[0], zenith[1], 0.06, 'lumière presque neutre à midi');
+});
+
+test('le crépuscule glisse vers la nuit sans saut de lumière', () => {
+  // Un saut tomberait à une heure fixée par la vitesse de descente du soleil,
+  // donc par la saison et la latitude.
+  let previous = lightingFor(0);
+  let previousColor = sunlightColor(previous.warmth, previous.nightBlend);
+  for (let y = -0.005; y >= -0.15; y -= 0.005) {
+    const light = lightingFor(y);
+    const color = sunlightColor(light.warmth, light.nightBlend);
+    assert.ok(Math.abs(light.sun - previous.sun) < 0.045, `soleil continu à ${y.toFixed(3)}`);
+    assert.ok(Math.abs(light.ambient - previous.ambient) < 0.045, `ambiance continue à ${y.toFixed(3)}`);
+    for (let i = 0; i < 3; i++) {
+      assert.ok(Math.abs(color[i] - previousColor[i]) < 0.05, `couleur continue à ${y.toFixed(3)}`);
+    }
+    previous = light;
+    previousColor = color;
+  }
+  assert.deepEqual(sunlightColor(1, lightingFor(-0.4).nightBlend), sunlightColor(1, true));
+});
+
+test('le ciel d’horizon affiché s’assombrit quand le soleil descend', () => {
+  const shown = (sunY) => {
+    const [r, g, b] = acesFilmic(preethamRadiance(sunY, 0.18, Math.PI, skyParameters(sunY)), 0.5);
+    return r * 0.2126 + g * 0.7152 + b * 0.0722;
+  };
+  let previous = Infinity;
+  for (const sunY of [0.9, 0.5, 0.25, 0.1, 0.05, 0, -0.05]) {
+    const level = shown(sunY);
+    assert.ok(level < previous, `décroissant à ${sunY}`);
+    previous = level;
+  }
+  assert.ok(shown(0.9) > 0.6, 'ciel de midi clair');
+  assert.ok(shown(-0.05) < 0.01, 'soleil de Preetham éteint');
+});
+
+test('l’exposition du ciel s’adapte au soleil bas, sans toucher au plein jour', () => {
+  assert.equal(skyAdaptation(0.8), 1);
+  assert.equal(skyAdaptation(0.5), 1);
+  let previous = 1;
+  for (const sunY of [0.3, 0.15, 0.06, 0.02, 0]) {
+    const gain = skyAdaptation(sunY);
+    assert.ok(gain >= previous, `croissante quand le soleil baisse (${sunY})`);
+    previous = gain;
+  }
+  assert.ok(skyAdaptation(-0.1) <= 12, 'plafonnée');
 });
 
 // --- Le pays ----------------------------------------------------------------

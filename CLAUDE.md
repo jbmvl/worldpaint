@@ -4,37 +4,30 @@ Ce fichier complète `CONTRIBUTING.md`, qui reste la référence sur la structur
 du projet, la frontière thème/moteur et les invariants d'architecture. Ce qui
 suit est ce qu'un assistant doit savoir **en plus**.
 
-## Vérification visuelle : ce n'est pas à toi de la faire
+## Vérification visuelle
 
-**Ne juge jamais toi-même du rendu.** WorldPaint produit un paysage : sa qualité
-se constate à l'œil, dans la démo ou dans une application consommatrice, et
-c'est le rôle de l'auteur du projet — pas le tien.
+Un changement qui touche l'image se regarde, et c'est à toi de le faire —
+mais pas dans `demo/index.html` : c'est la démo de l'auteur, faite pour un
+humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
+`demo/lab/`, sans réseau, pilotables depuis la console ou par script :
 
-Concrètement :
+- `demo/lab/sky.html` — ciel, soleil et brouillard seuls sur un sol plat semé
+  de blocs ; `skyLab.set({ sunDeg, lookDeg, pitchDeg, weather })` dans la
+  console, ou `node scripts/sky-shot.mjs <dossier> '<réglages JSON>'` pour une
+  image par réglage.
 
-- ne lance pas la démo, ne prends pas de capture, n'ouvre pas de navigateur pour
-  « aller voir si ça rend bien » ;
-- n'affirme jamais qu'un changement « améliore le paysage », « rend mieux » ou
-  « est plus crédible » : tu ne l'as pas vu ;
-- décris ce que le code **fait**, pas l'effet que tu supposes qu'il produira ;
-- à la fin d'un chantier, dis explicitement ce qui reste à vérifier
-  visuellement, et où le regarder (quel réglage, quelle case à cocher, quel
-  type de lieu).
+Si le chantier touche une partie du rendu qu'aucun banc ne montre, écris le
+banc plutôt que d'ouvrir la démo.
 
-Ça, c'est pour juger le paysage. Ce n'est pas la même chose que vérifier que le
-**code** de la démo tourne : quand le chantier porte sur `demo/` elle-même
-(une nouvelle case, un nouveau mode, une refonte de `main.js`), tu as le droit
-de la lancer pour t'assurer qu'elle démarre sans erreur JS, que les éléments du
-panneau existent et réagissent, qu'un mode se monte et se démonte sans
-exception — bref, ce qu'un test d'intégration vérifierait s'il y en avait un.
-Reste dans ce rôle : constate qu'il n'y a pas d'erreur dans la console, pas
-que « ça a l'air bien » ou « le rendu est convaincant » — cette dernière
-question reste hors de ta portée, même quand tu as la démo ouverte pour autre
-chose.
+Dis ce que tu as regardé (quel banc, quels réglages) et ce que tu y vois, en
+termes concrets (« le lointain au sol est plus clair que la bande de ciel »),
+et ce qui reste à voir dans la vraie démo, que les bancs ne remplacent pas
+(relief réel, tuiles, bâti). Le jugement final sur le paysage reste celui de
+l'auteur.
 
-Ce qui est vérifiable sans les yeux, en revanche, doit l'être et l'être
-vraiment : `npm test`, le chargement des modules, le nombre de tests avant et
-après. Rapporte ces chiffres tels quels, sans les arrondir dans le bon sens.
+Ce qui se vérifie sans les yeux doit l'être aussi : `npm test`, le chargement
+des modules, le nombre de tests avant et après. Rapporte ces chiffres tels
+quels, sans les arrondir dans le bon sens.
 
 ## Où est la documentation
 
@@ -150,4 +143,4 @@ ils décrivent l'état actuel, pour quelqu'un qui arrive dans six mois.
 
 Reste sobre. On évite de consommer des token inutilement.
 1. ce qui a été délibérément laissé hors périmètre, et pourquoi ;
-2. ce qui reste à contrôler à l'œil, et où.
+2. ce qui a été regardé sur un banc, et ce qui reste à contrôler dans la démo.
