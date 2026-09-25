@@ -37,7 +37,7 @@ import { windowGrid } from '../src/layers/buildingLayer.js';
 import { forestTypeAt, variantsFor } from '../src/layers/vegetationLayer.js';
 import { roadStyleFor } from '../src/layers/roadNetwork.js';
 import { furnitureSpecsFor, FURNITURE_BUILDERS } from '../src/layers/furnitureKit.js';
-import { hedgeStyleFor, hedgeClumps } from '../src/layers/hedgeGeometry.js';
+import { hedgeStyleFor } from '../src/layers/hedgeGeometry.js';
 import { resamplePath } from '../src/layers/ribbonGeometry.js';
 import { DEFAULT_SKY_PALETTE, twilightGlow, tintByPalette } from '../src/environment/sceneEnvironment.js';
 
@@ -61,7 +61,7 @@ const OTHER = resolveTheme({
     colors: { ...defaultTheme.furniture.colors, stone: [1, 0, 0], stoneDark: [0, 1, 0], white: [0, 0, 1] },
     hedges: {
       ...defaultTheme.furniture.hedges,
-      hedge: { ...defaultTheme.furniture.hedges.hedge, heightM: [6, 6], spacingM: 8, gapChance: 0 },
+      hedge: { ...defaultTheme.furniture.hedges.hedge, noseM: 3 },
     },
   },
   sky: { fog: '#000000', nightZenith: '#000000', nightHorizon: '#000000' },
@@ -387,29 +387,9 @@ test('les feux tricolores éteints sortent du nuancier', () => {
   a.forEach((dark) => assert.ok(dark.every((c) => c >= 0 && c < 0.2), 'un feu au repos reste sombre'));
 });
 
-test('la haie prend ses arbustes du thème, et son budget du moteur', () => {
-  const path = resamplePath([{ x: 0, z: 0 }, { x: 80, z: 0 }], 3);
-  const here = { x: 0, z: 0 };
-  const [a, b] = interleaved(
-    () => hedgeClumps(path, { style: hedgeStyleFor('hedge', DEFAULT.furniture.hedges), here }).length,
-    () => hedgeClumps(path, { style: hedgeStyleFor('hedge', OTHER.furniture.hedges), here }).length
-  );
-  assert.ok(a > b, 'un écartement plus large donne moins d’arbustes');
-  const length = path[path.length - 1].distance;
-  assert.equal(b, Math.floor(length / 8) + 1, 'l’écartement du thème est celui qui s’applique');
-
-  // La portée de détail est un budget de moteur : elle ne bouge pas d’un thème
-  // à l’autre, quand bien même le reste des cotes change du tout au tout.
-  assert.equal(
-    hedgeStyleFor('hedge', OTHER.furniture.hedges).detailRadiusM,
-    hedgeStyleFor('hedge', DEFAULT.furniture.hedges).detailRadiusM,
-    'le thème ne décide pas jusqu’où on détaille'
-  );
-  // Pris au milieu : les arbustes des deux bouts rentrent avec le museau de la
-  // haie (`hedgeNoseFactor`), et ne valent donc pas leur cote nominale.
-  const clumps = hedgeClumps(path, { style: hedgeStyleFor('hedge', OTHER.furniture.hedges), here });
-  const tall = clumps[Math.floor(clumps.length / 2)];
-  assert.equal(tall.height, 6, 'l’arbuste fait la taille que le thème lui donne');
+test('la haie prend ses cotes du thème', () => {
+  assert.equal(hedgeStyleFor('hedge', OTHER.furniture.hedges).noseM, 3, 'le museau du thème est celui qui s’applique');
+  assert.equal(hedgeStyleFor('hedge', DEFAULT.furniture.hedges).noseM, DEFAULT.furniture.hedges.hedge.noseM);
 });
 
 /*

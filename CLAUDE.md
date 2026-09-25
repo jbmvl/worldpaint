@@ -15,6 +15,8 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   de blocs ; `skyLab.set({ sunDeg, lookDeg, pitchDeg, weather })` dans la
   console, ou `node scripts/sky-shot.mjs <dossier> '<réglages JSON>'` pour une
   image par réglage.
+- `demo/lab/hedge.html` — quelques haies sur un sol plat, bâties par
+  `FurnitureLayer` ; `hedgeLab.set({ x, y, z, lookX, lookY, lookZ })`.
 
 Si le chantier touche une partie du rendu qu'aucun banc ne montre, écris le
 banc plutôt que d'ouvrir la démo.

@@ -1584,9 +1584,7 @@ const profilesFor = (C) => ({
    * ouvert que l'autre et une crête décalée cassent la lecture, mais aucune
    * section fixe ne suffit à la défaire — c'est `hedgeGeometry` qui s'en
    * charge : il module cette section en hauteur et en largeur le long du tracé,
-   * et lui pose des arbustes dessus dès qu'on s'en approche. Cette section-ci
-   * n'est donc plus la haie ; elle en est la masse continue, celle qui la ferme
-   * et qu'on voit de loin.
+   * et la facette.
    */
   hedge: [
     { across: -0.5, up: 0, color: C.leafDeep },
@@ -1599,8 +1597,8 @@ const profilesFor = (C) => ({
   ],
 
   /**
-   * Haie basse de ronces et de fougères : 0,7 m, très ouverte. Comme la haie de
-   * bocage, elle reçoit ses arbustes de `hedgeGeometry` dans le champ proche.
+   * Haie basse de ronces et de fougères : 0,7 m, très ouverte. Modulée comme la
+   * haie de bocage (`hedgeGeometry`).
    *
    * C'est ce qui borde la plupart des chemins et des fossés en vrai, et sa
    * seule existence corrige le défaut le plus visible du bocage procédural :

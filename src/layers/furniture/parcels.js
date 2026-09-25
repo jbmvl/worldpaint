@@ -213,7 +213,7 @@ export function buildParcels(layer, context, builtUp) {
             })
           : null;
       if (kind) {
-        boundaries += appendParcelBoundary(layer, buffers, placements, kind, ring, bounds, sampleElevation, here);
+        boundaries += appendParcelBoundary(layer, buffers, placements, kind, ring, bounds, sampleElevation);
       }
 
       if (scattered < FURNITURE_LIMITS.scatter) {
@@ -247,7 +247,7 @@ export function urbanLanduseKind(klass) {
  * Pose un contour de parcelle, en n'en gardant que les tronçons réels.
  * @returns {number} nombre de tronçons posés.
  */
-export function appendParcelBoundary(layer, buffers, placements, kind, ring, bounds, sampleElevation, here = null) {
+export function appendParcelBoundary(layer, buffers, placements, kind, ring, bounds, sampleElevation) {
   let placed = 0;
 
   for (const run of realBoundaryRuns(ring, bounds)) {
@@ -280,10 +280,8 @@ export function appendParcelBoundary(layer, buffers, placements, kind, ring, bou
     // l'accotement, et couper à l'emprise hacherait le bocage à chaque
     // courbe, faute des quinze centimètres de garde que le refoulement laisse.
     for (const path of clipOutsideCorridor(pushed, layer._infraIndex, 0, { minLength: BOUNDARY_MIN_LENGTH_M })) {
-      // Un muret de pierre sèche est un balayage facetté ; une haie est un
-      // alignement d'arbustes, et se bâtit comme tel.
       if (kind === 'hedge' || kind === 'lowHedge') {
-        layer._appendHedgerow(buffers[kind], kind, path, sampleElevation, { here });
+        layer._appendHedgerow(buffers[kind], kind, path, sampleElevation);
         placed++;
         continue;
       }
