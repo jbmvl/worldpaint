@@ -1,0 +1,13 @@
+{
+  "name": "montreuil-bellay",
+  "label": "Montreuil-Bellay",
+  "lng": -0.145,
+  "lat": 47.131,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "encoding": "terrarium",
+    "extension": "png",
+    "source": "s3.amazonaws.com"
+  }
+}

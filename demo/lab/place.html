@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Banc des lieux</title>
+<style>html,body{margin:0;background:#000}canvas{display:block}</style>
+<script src="/node_modules/suncalc/suncalc.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "/node_modules/three/build/three.module.js",
+  "three/examples/jsm/objects/Sky.js": "/node_modules/three/examples/jsm/objects/Sky.js",
+  "suncalc": "/demo/lab/suncalc-global.js",
+  "pbf": "/node_modules/pbf/index.js",
+  "@mapbox/vector-tile": "/node_modules/@mapbox/vector-tile/index.js",
+  "@mapbox/point-geometry": "/node_modules/@mapbox/point-geometry/index.js"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+/*
+ * Banc des lieux — un lieu réel, rejoué depuis ses tuiles enregistrées
+ * (`demo/lab/places/<lieu>/`, écrites par `scripts/capture-place.mjs`) par le
+ * vrai `createWorld` : relief, falaises, voirie, bâti, végétation, ciel. Aucun
+ * réseau : piloté depuis la console ou par `scripts/place-shot.mjs`.
+ *
+ *   /demo/lab/place.html?lieu=montreuil-bellay
+ *   placeLab.set({ lng: -0.1496, lat: 47.1300, yawDeg: 225, pitchDeg: 28, distance: 60 })
+ *   placeLab.set({ x: 120, z: -40, ... })   // en mètres locaux
+ *
+ * `yawDeg` est le cap du regard (0 = vers le nord), `pitchDeg` la plongée,
+ * `distance` le recul de la caméra sur le point visé, `hour` l'heure solaire.
+ * Un lieu sans tuiles vectorielles se rejoue en relief nu.
+ */
+import * as THREE from 'three';
+import { Sky } from 'three/examples/jsm/objects/Sky.js';
+import { createWorld } from '/src/index.js';
+
+const params = new URLSearchParams(location.search);
+const name = params.get('lieu') || 'montreuil-bellay';
+const base = `/demo/lab/places/${name}`;
+const place = await (await fetch(`${base}/place.json`)).json();
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 20000);
+
+const world = createWorld({
+  THREE,
+  scene,
+  elevation: place.elevation
+    ? {
+        zoom: place.zoom,
+        url: `${base}/dem/{z}/{x}/{y}.${place.elevation.extension}`,
+        encoding: place.elevation.encoding,
+      }
+    : { zoom: place.zoom, url: `${base}/dem/{z}/{x}/{y}.absent` },
+  vector: place.vector ? { tiles: [`${location.origin}${base}/vector/{z}/{x}/{y}.pbf`], maxZoom: place.vector.maxZoom } : null,
+  sky: { Sky },
+});
+
+await world.setCenter(place.lng, place.lat);
+// Comme la démo image après image : la bulle reprend ses mailles une par une,
+// et le décor se refait quand la surface a changé. On pompe jusqu'au calme.
+async function settle() {
+  for (let pass = 0; pass < 6; pass++) {
+    await world.refresh(place.lng, place.lat, { force: pass === 0 });
+    for (let frame = 0; frame < 400; frame++) world.advance(1 / 30, { x: 0, y: 0, z: 0 });
+  }
+}
+await settle();
+
+const state = { x: 0, z: 0, yawDeg: 225, pitchDeg: 28, distance: 80, hour: 15 };
+
+function render() {
+  const { x, z, yawDeg, pitchDeg, distance } = state;
+  const y = world.composer.groundElevationAt(x, z) ?? 0;
+  const yaw = (yawDeg * Math.PI) / 180;
+  const pitch = (pitchDeg * Math.PI) / 180;
+  camera.position.set(
+    x - Math.sin(yaw) * Math.cos(pitch) * distance,
+    y + Math.sin(pitch) * distance,
+    z + Math.cos(yaw) * Math.cos(pitch) * distance
+  );
+  camera.lookAt(x, y, z);
+  const date = new Date(Date.UTC(2026, 5, 21, state.hour - Math.round(place.lng / 15), 0));
+  const paint = world.updateSky({ camera, date, lng: place.lng, lat: place.lat, shadowAt: { x, y, z } });
+  if (paint) renderer.setClearColor(paint.clearColor, 1);
+  world.advance(0, { x, y, z });
+  renderer.render(scene, camera);
+  const here = world.frame.toLngLat(x, z);
+  return { lieu: name, lng: +here.lng.toFixed(5), lat: +here.lat.toFixed(5), x: Math.round(x), z: Math.round(z) };
+}
+
+window.placeLab = {
+  set(options = {}) {
+    Object.assign(state, options);
+    if (Number.isFinite(options.lng) && Number.isFinite(options.lat)) {
+      const p = world.frame.toLocal(options.lng, options.lat);
+      state.x = p.x;
+      state.z = p.z;
+    }
+    return render();
+  },
+  state,
+  world,
+  place,
+};
+window.placeLabReady = true;
+render();
+</script>
+</body>
+</html>

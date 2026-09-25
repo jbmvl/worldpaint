@@ -18,6 +18,10 @@
  *   - `levelWorkSpans` remplace la plate-forme d'une travée par une corde
  *     tendue entre ses deux appuis, relevée si elle ne dégage pas ce qu'elle
  *     franchit ;
+ *   - `raiseApproaches` tire le remblai d'accès d'une travée relevée sur le
+ *     **réseau** qui y aboutit, et non sur la seule chaîne du pont : une
+ *     branche posée sur le remblai, une route qui change de classe en chemin,
+ *     montent avec lui ;
  *   - `workRuns` découpe un tronçon en plages homogènes, pour tout le reste
  *     (le ruban qui saute un tunnel, le tablier qui suit un pont).
  *
@@ -186,8 +190,24 @@ export const BRIDGE_CROSSING_COS = 0.87;
  */
 export const BRIDGE_MAX_SPAN_M = 420;
 
-/** Longueur du remblai d'accès qui rattrape le relevage d'une travée, en mètres. */
+/** Longueur minimale du remblai d'accès qui rattrape le relevage d'une travée, en mètres. */
 export const BRIDGE_RAMP_M = 30;
+
+/**
+ * Pente de pointe d'un remblai d'accès. Cote de tracé, pas de goût : au-delà,
+ * la dalle d'un carrefour posé sur le remblai ne peut plus raccorder une
+ * branche sans pli.
+ */
+export const BRIDGE_RAMP_GRADE = 0.08;
+
+/**
+ * Longueur d'un raccord en `smoothstep` qui rattrape `rise` mètres sans
+ * dépasser `BRIDGE_RAMP_GRADE` — sa pente de pointe vaut 1,5 fois la pente
+ * moyenne. Jamais sous `minimum`.
+ */
+export function rampLengthFor(rise, minimum = BRIDGE_RAMP_M) {
+  return Math.max(minimum, (1.5 * Math.abs(rise)) / BRIDGE_RAMP_GRADE);
+}
 
 /** Code d'ouvrage d'une entité vectorielle. Fonction pure. */
 export function workCodeFor(brunnel) {
@@ -387,7 +407,7 @@ function resampleCodes(points, codes, path, out) {
  * non le terrain brut que le terrassier vient de quitter. Si la corde ne dégage pas le gabarit au-dessus
  * de ce qu'elle franchit, on relève **toute** la travée d'un bloc (un tablier
  * reste droit ; il n'ondule pas pour éviter un rocher) et on rattrape la
- * différence par un remblai d'accès sur `ramp` mètres de part et d'autre —
+ * différence par un remblai d'accès de part et d'autre (`raiseApproaches`) —
  * remblai que `furnitureLayer` habillera de lui-même, puisque la plate-forme
  * y surplombe désormais le terrain.
  *
@@ -412,7 +432,9 @@ function resampleCodes(points, codes, path, out) {
  *        franchissent pas à la même hauteur.
  * @param {number} [options.clearance] Garde au-dessus d'un obstacle à gabarit.
  * @param {number} [options.maxSpan]
- * @param {number} [options.ramp]
+ * @param {Array|null} [options.abutments] Reçoit les deux lignes de rive de
+ *        chaque travée relevée, avec son relevage (`{row, lift}`) : c'est de
+ *        là que `raiseApproaches` tire le remblai d'accès.
  * @returns {number} nombre de travées reprises.
  */
 export function levelWorkSpans(
@@ -424,7 +446,7 @@ export function levelWorkSpans(
     floorAt = null,
     clearance = BRIDGE_CLEARANCE_M,
     maxSpan = BRIDGE_MAX_SPAN_M,
-    ramp = BRIDGE_RAMP_M,
+    abutments = null,
   } = {}
 ) {
   const rows = path?.length ?? 0;
@@ -474,21 +496,237 @@ export function levelWorkSpans(
       if (!(lift > 0)) continue;
 
       for (let r = run.from; r <= run.to; r++) platform[r] += lift;
-      // Le remblai d'accès : la route retrouve son terrain sur `ramp` mètres,
-      // en `smoothstep` (une rampe droite laisse une cassure à ses deux bouts).
-      // Il s'arrête net sur la travée suivante : deux ponts qui se suivent de
-      // près, le remblai de l'un ferait pencher le tablier de l'autre.
-      for (const [start, step] of [[run.from - 1, -1], [run.to + 1, 1]]) {
-        for (let r = start; r >= 0 && r < rows; r += step) {
-          if (works[r]) break;
-          const d = Math.abs(path[r].distance - path[start - step].distance);
-          if (d >= ramp) break;
-          const f = 1 - d / ramp;
-          platform[r] += lift * f * f * (3 - 2 * f);
+      // Le remblai d'accès n'appartient pas à la chaîne du pont mais au
+      // réseau qui y aboutit : il est tiré par `raiseApproaches`.
+      if (abutments) abutments.push({ row: run.from, lift }, { row: run.to, lift });
+    }
+  }
+
+  return levelled;
+}
+
+/** Deux bouts de chaîne plus proches que ça sont une même route (nœud commun). */
+export const APPROACH_WELD_M = 1.5;
+
+/**
+ * Tire le remblai d'accès des travées relevées sur le réseau des chaussées.
+ *
+ * Le relevage d'une travée se rattrape en `smoothstep` sur `rampLengthFor`
+ * mètres, mesurés **le long du réseau** : une ligne se relève d'après sa
+ * distance de chemin à la rive de la travée, en passant par les carrefours
+ * (une aire relie toutes les lignes qu'elle couvre, par son centre) et par
+ * les bouts de chaînes qui se touchent (un changement de classe coupe la
+ * chaîne, pas la route). Plusieurs travées : le plus fort relevage l'emporte.
+ *
+ * On ne traverse ni une ligne d'ouvrage — le remblai d'un pont ne fait pas
+ * pencher le tablier d'un autre — ni un changement de niveau entre deux lignes
+ * au sol.
+ *
+ * @param {Array<{path:Array, platform:Float32Array, works?:Uint8Array,
+ *        levels?:Int8Array, junction?:Int32Array}>} segments Plate-formes
+ *        modifiées sur place.
+ * @param {Array<{segment:number, row:number, lift:number}>} abutments
+ * @param {Object} [options]
+ * @param {Array<{x:number,z:number}>} [options.centres] Centre de chaque aire
+ *        de carrefour, dans l'ordre des indices de `junction`.
+ * @param {number} [options.ramp] Longueur minimale du remblai.
+ * @param {number} [options.weld]
+ * @returns {number} lignes relevées.
+ */
+export function raiseApproaches(
+  segments,
+  abutments,
+  { centres = null, ramp = BRIDGE_RAMP_M, weld = APPROACH_WELD_M } = {}
+) {
+  if (!Array.isArray(segments) || !abutments?.length) return 0;
+
+  const offsets = new Int32Array(segments.length + 1);
+  for (let s = 0; s < segments.length; s++) offsets[s + 1] = offsets[s] + (segments[s]?.path?.length ?? 0);
+  const total = offsets[segments.length];
+  const locate = (node) => {
+    let lo = 0;
+    let hi = segments.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (offsets[mid] <= node) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  };
+  const levelOf = (s, r) => segments[s].levels?.[r] ?? LEVEL_GROUND;
+  const isWork = (s, r) => (segments[s].works?.[r] ?? 0) !== 0;
+
+  // Les aires de carrefour sont des nœuds à part, après les lignes.
+  const members = new Map();
+  for (let s = 0; s < segments.length; s++) {
+    const junction = segments[s].junction;
+    if (!junction) continue;
+    for (let r = 0; r < junction.length; r++) {
+      if (junction[r] < 0) continue;
+      if (!members.has(junction[r])) members.set(junction[r], []);
+      members.get(junction[r]).push(offsets[s] + r);
+    }
+  }
+  const hubOf = (area) => total + area;
+  const hubCost = (s, r, area) => {
+    const c = centres?.[area];
+    if (!c) return 0;
+    const p = segments[s].path[r];
+    return Math.hypot(p.x - c.x, p.z - c.z);
+  };
+
+  // Les bouts de chaîne soudés aux lignes qu'ils touchent, au même niveau.
+  const welds = new Map();
+  const cell = Math.max(weld, 1) * 4;
+  const buckets = new Map();
+  const key = (x, z) => `${Math.floor(x / cell)},${Math.floor(z / cell)}`;
+  for (let s = 0; s < segments.length; s++) {
+    const path = segments[s].path;
+    for (let r = 0; r < path.length; r++) {
+      const k = key(path[r].x, path[r].z);
+      if (!buckets.has(k)) buckets.set(k, []);
+      buckets.get(k).push(offsets[s] + r);
+    }
+  }
+  const link = (a, b, w) => {
+    if (!welds.has(a)) welds.set(a, []);
+    if (!welds.has(b)) welds.set(b, []);
+    welds.get(a).push([b, w]);
+    welds.get(b).push([a, w]);
+  };
+  for (let s = 0; s < segments.length; s++) {
+    const path = segments[s].path;
+    for (const r of new Set([0, path.length - 1])) {
+      const p = path[r];
+      const cx = Math.floor(p.x / cell);
+      const cz = Math.floor(p.z / cell);
+      for (let i = -1; i <= 1; i++) {
+        for (let j = -1; j <= 1; j++) {
+          for (const node of buckets.get(`${cx + i},${cz + j}`) ?? []) {
+            const s2 = locate(node);
+            if (s2 === s) continue;
+            const r2 = node - offsets[s2];
+            if (!isWork(s, r) && !isWork(s2, r2) && levelOf(s2, r2) !== levelOf(s, r)) continue;
+            const q = segments[s2].path[r2];
+            const d = Math.hypot(q.x - p.x, q.z - p.z);
+            // Un bout qui touche un autre bout n'est lié qu'une fois, depuis
+            // le tronçon de plus petit indice.
+            const endToEnd = r2 === 0 || r2 === segments[s2].path.length - 1;
+            if (d <= weld && !(endToEnd && s2 < s)) link(offsets[s] + r, node, d);
+          }
         }
       }
     }
   }
 
-  return levelled;
+  const best = new Float32Array(total);
+  const distance = new Float64Array(total + (members.size ? Math.max(...members.keys()) + 1 : 0));
+
+  for (const { segment: s0, row: r0, lift } of abutments) {
+    if (!(lift > 0) || !segments[s0]) continue;
+    const reach = rampLengthFor(lift, ramp);
+    const start = offsets[s0] + r0;
+    distance.fill(Infinity);
+    distance[start] = 0;
+    const heap = new MinHeap();
+    heap.push(0, start);
+
+    while (heap.size) {
+      const [d, node] = heap.pop();
+      if (d > distance[node] || d >= reach) continue;
+      const visit = (next, w) => {
+        const nd = d + w;
+        if (nd < distance[next] && nd < reach) {
+          distance[next] = nd;
+          heap.push(nd, next);
+        }
+      };
+
+      if (node >= total) {
+        for (const member of members.get(node - total) ?? []) {
+          const s = locate(member);
+          const r = member - offsets[s];
+          if (!isWork(s, r)) visit(member, hubCost(s, r, node - total));
+        }
+        continue;
+      }
+
+      const s = locate(node);
+      const r = node - offsets[s];
+      const f = 1 - d / reach;
+      if (!isWork(s, r)) best[node] = Math.max(best[node], lift * f * f * (3 - 2 * f));
+
+      const path = segments[s].path;
+      for (const r2 of [r - 1, r + 1]) {
+        if (r2 < 0 || r2 >= path.length || isWork(s, r2)) continue;
+        // Le tablier porte le niveau de l'ouvrage, son approche celui du sol :
+        // seul un changement de niveau entre deux lignes au sol arrête le remblai.
+        if (!isWork(s, r) && levelOf(s, r2) !== levelOf(s, r)) continue;
+        visit(node + (r2 - r), Math.abs(path[r2].distance - path[r].distance));
+      }
+      const area = segments[s].junction?.[r] ?? -1;
+      if (area >= 0 && !isWork(s, r)) visit(hubOf(area), hubCost(s, r, area));
+      for (const [next, w] of welds.get(node) ?? []) {
+        const s2 = locate(next);
+        if (!isWork(s2, next - offsets[s2])) visit(next, w);
+      }
+    }
+  }
+
+  let raised = 0;
+  for (let s = 0; s < segments.length; s++) {
+    const platform = segments[s].platform;
+    for (let r = 0; r < platform.length; r++) {
+      const lift = best[offsets[s] + r];
+      if (lift > 0) {
+        platform[r] += lift;
+        raised++;
+      }
+    }
+  }
+  return raised;
+}
+
+/** Tas binaire minimal : `[priorité, valeur]`. */
+class MinHeap {
+  constructor() {
+    this.items = [];
+  }
+
+  get size() {
+    return this.items.length;
+  }
+
+  push(priority, value) {
+    const items = this.items;
+    items.push([priority, value]);
+    let i = items.length - 1;
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (items[parent][0] <= items[i][0]) break;
+      [items[parent], items[i]] = [items[i], items[parent]];
+      i = parent;
+    }
+  }
+
+  pop() {
+    const items = this.items;
+    const top = items[0];
+    const last = items.pop();
+    if (items.length) {
+      items[0] = last;
+      let i = 0;
+      for (;;) {
+        const l = 2 * i + 1;
+        const r = l + 1;
+        let m = i;
+        if (l < items.length && items[l][0] < items[m][0]) m = l;
+        if (r < items.length && items[r][0] < items[m][0]) m = r;
+        if (m === i) break;
+        [items[m], items[i]] = [items[i], items[m]];
+        i = m;
+      }
+    }
+    return top;
+  }
 }

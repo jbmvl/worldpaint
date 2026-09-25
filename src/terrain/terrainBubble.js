@@ -367,7 +367,7 @@ export class TerrainBubble {
   /**
    * Idem, à partir de coordonnées métriques locales, déblai compris — c'est
    * cette variante que tout le décor doit employer. Le calcul des
-   * plate-formes de chaussée passe par `rawSurfaceElevationAtLocal` : le
+   * plate-formes de chaussée passe par `naturalElevationAtLocal` : le
    * déblai dérive de la plate-forme, pas l'inverse.
    */
   surfaceElevationAtLocal(x, z, fallback = 0) {
@@ -375,11 +375,24 @@ export class TerrainBubble {
     return this.cutElevation(x, z, this.rawSurfaceElevationAtLocal(x, z, fallback));
   }
 
-  /** Altitude de la surface affichée **avant** déblai. */
+  /**
+   * Altitude du MNT, sans la marche des falaises ni le déblai. Seule la couche
+   * des falaises doit la lire : c'est sur elle qu'elle mesure la marche.
+   */
   rawSurfaceElevationAtLocal(x, z, fallback = 0) {
     if (!this.frame) return fallback;
     const { origin, scale } = this.frame;
     return this.surfaceElevationAtTile(origin.x + x / scale, origin.y + z / scale, fallback);
+  }
+
+  /**
+   * Terrain naturel : le MNT, falaises comprises, **avant** déblai. C'est sur
+   * lui que se dressent les plates-formes : au pied d'une falaise, une route
+   * posée sur la rampe que le MNT étale flotterait au-dessus du sol affiché.
+   */
+  naturalElevationAtLocal(x, z, fallback = 0) {
+    const raw = this.rawSurfaceElevationAtLocal(x, z, fallback);
+    return this._cliffCut ? this._cliffCut.elevationAt(x, z, raw) : raw;
   }
 
   /**

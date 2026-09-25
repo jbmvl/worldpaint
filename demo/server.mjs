@@ -23,6 +23,10 @@ const MIME = {
   '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  // Les tuiles enregistrées des bancs de lieux (`demo/lab/places/`).
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.pbf': 'application/x-protobuf',
 };
 
 const server = http.createServer((req, res) => {

@@ -196,6 +196,8 @@ export class FurnitureLayer {
     this._frame = null;
     this._fabric = null;
     this._railIndex = null;
+    /** Falaises relevées de la reconstruction en cours (`CliffIndex`), même durée de vie. */
+    this._cliffs = null;
     this._infraIndex = null;
 
     this.group = new THREE.Group();
@@ -407,6 +409,9 @@ export class FurnitureLayer {
    *        et sa position existent ensemble, nécessaire pour poser un animal
    *        domestique devant elle.
    * @returns {boolean} vrai si quelque chose a été posé.
+   * @param {Object|null} [options.cliffs] `CliffIndex` (`cliffLayer`) : une
+   *        rive bordée d'une falaise relevée ne porte ni talus, ni mur, ni
+   *        falaise de déblai.
    */
   rebuild(...args) { return finishGeneration(this.rebuildSteps(...args)); }
 
@@ -421,7 +426,7 @@ export class FurnitureLayer {
     fabric = null,
     railIndex = null,
     places = null,
-    { areas = null, houses = null } = {}
+    { areas = null, houses = null, cliffs = null } = {}
   ) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
 
@@ -430,6 +435,7 @@ export class FurnitureLayer {
       // qu'aucun appel tardif ne s'appuie sur une donnée périmée.
       this._roadIndex = roadIndex;
       this._areas = areas;
+      this._cliffs = cliffs;
       this._fabric = fabric;
       this._railIndex = railIndex;
       this._infraIndex = new CombinedIndex([roadIndex, railIndex]);
@@ -448,7 +454,7 @@ export class FurnitureLayer {
       // tel qu'il était avant l'entaille, pas la surface déjà creusée — sur
       // laquelle elle se poserait à mi-pente du raccord.
       const rawElevation = (x, z) =>
-        this.bubble.rawSurfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale;
+        this.bubble.naturalElevationAtLocal(x, z, 0) * this.bubble.verticalScale;
 
       const buffers = {};
       for (const kind of LINEAR_KINDS) buffers[kind] = createProfileBuffer();
@@ -534,6 +540,7 @@ export class FurnitureLayer {
     } finally {
       this._roadIndex = null;
       this._areas = null;
+      this._cliffs = null;
       this._fabric = null;
       this._railIndex = null;
       this._infraIndex = null;

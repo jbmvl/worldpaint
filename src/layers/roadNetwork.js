@@ -123,6 +123,7 @@ import {
   resampleLevels,
   resampleOneway,
   levelWorkSpans,
+  raiseApproaches,
   drawableRuns,
   bridgeFreeboardFor,
   BRIDGE_CROSSING_COS,
@@ -985,21 +986,24 @@ export function collectRoadSegments(
       }
       // Aplanissement du profil en long, borné par ce que l'ouvrage tient à
       // cet endroit : le devers dit s'il y a un versant, donc une falaise et
-      // un mur, pour rattraper l'écart au terrain.
-      const maxCut = new Float32Array(rows);
-      const maxFill = new Float32Array(rows);
-      for (let r = 0; r < rows; r++) {
-        const slope = Math.abs(edges[r * 2] - edges[r * 2 + 1]) / (probe * 2);
-        const allowance = gradeAllowance(slope);
-        maxCut[r] = allowance.cut;
-        maxFill[r] = allowance.fill;
+      // un mur, pour rattraper l'écart au terrain. Un chemin n'est pas
+      // terrassé : il reste sur le sol, section par section.
+      if (isPaved(roads.profiles[chain.profile])) {
+        const maxCut = new Float32Array(rows);
+        const maxFill = new Float32Array(rows);
+        for (let r = 0; r < rows; r++) {
+          const slope = Math.abs(edges[r * 2] - edges[r * 2 + 1]) / (probe * 2);
+          const allowance = gradeAllowance(slope);
+          maxCut[r] = allowance.cut;
+          maxFill[r] = allowance.fill;
+        }
+        // Rien à retrancher à la bande de terrassement sur une ligne d'ouvrage :
+        // ce que l'aplanissement y calcule est de toute façon réécrit par la
+        // seconde passe, et chaque ligne étant bornée autour de son propre
+        // terrain, une ligne de pont n'entraîne pas ses voisines au fond de la
+        // vallée.
+        flattenGrade(platform, { maxCut, maxFill });
       }
-      // Rien à retrancher à la bande de terrassement sur une ligne d'ouvrage :
-      // ce que l'aplanissement y calcule est de toute façon réécrit par la
-      // seconde passe, et chaque ligne étant bornée autour de son propre
-      // terrain, une ligne de pont n'entraîne pas ses voisines au fond de la
-      // vallée.
-      flattenGrade(platform, { maxCut, maxFill });
       if (!anyWorks && runWorks.some((code) => code !== 0)) anyWorks = true;
 
       out.push({
@@ -1051,14 +1055,19 @@ export function collectRoadSegments(
     // accotement. L'index n'inscrit pas les lignes d'ouvrage, donc un pont ne
     // se relève jamais au-dessus d'un autre pont — ni au-dessus du sien.
     const grade = new RoadIndex(out, { margin: 0 });
+    const abutments = [];
     for (let si = 0; si < out.length; si++) {
       const segment = out[si];
       if (!segment.works.some((code) => code !== 0)) continue;
+      const own = [];
       levelWorkSpans(segment.path, segment.platform, segment.works, {
         clearanceAt: crossedDeckAt(grade, segment, si),
         floorAt,
+        abutments: own,
       });
+      for (const abutment of own) abutments.push({ segment: si, ...abutment });
     }
+    raiseApproaches(out, abutments, { centres: areas?.areas });
   }
 
   return {
@@ -1157,7 +1166,7 @@ export class RoadNetwork {
       this._continuityFrame = bubble.frame;
     }
     // Terrain naturel, déblai exclu : la plate-forme décide de l'entaille, elle ne peut pas en dépendre.
-    const sampleElevation = (x, z) => bubble.rawSurfaceElevationAtLocal(x, z, 0) * bubble.verticalScale;
+    const sampleElevation = (x, z) => bubble.naturalElevationAtLocal(x, z, 0) * bubble.verticalScale;
     // Le plancher d'une travée : le terrain, majoré d'une revanche au-dessus
     // de l'eau. Ce n'est pas un gabarit — rien ne passe sous un pont de
     // rivière — mais une cote sous laquelle le tablier n'a rien à faire.
