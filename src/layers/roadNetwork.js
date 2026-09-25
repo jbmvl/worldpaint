@@ -63,8 +63,11 @@ import { finishGeneration } from '../core/generationSteps.js';
  * ni numérotation de mobilier :
  *
  *   - les **voies piétonnes** (`isPedestrianWay`), qui n'ont jamais été des
- *     chaussées. Le sol de la ville les porte maintenant en entier
- *     (`groundClassMap`, couverture `pavement`) ;
+ *     chaussées. Le sol de la ville les porte en entier (`groundClassMap`,
+ *     couverture `pavement`) ;
+ *   - les **chemins** (`URBAN_EXCLUDED_PROFILES`) : un sentier ou un chemin de
+ *     terre n'a pas sa place dans le bâti. Le parc de ville les garde, parce
+ *     que `UrbanMask.covers` en retire le vert urbain ;
  *   - les **voies redondantes** (`roadBundles.absorbParallelLines`), celles
  *     qui longent une voie de rang supérieur et sont déjà dans sa largeur.
  *
@@ -481,6 +484,9 @@ export const ROAD_CLASSES = {
  */
 export const PEDESTRIAN_SUBCLASSES = new Set(['footway', 'sidewalk', 'crossing']);
 
+/** Profils qui ne se dessinent pas en ville, parcs urbains exceptés. */
+export const URBAN_EXCLUDED_PROFILES = new Set(['track', 'path']);
+
 /**
  * Vrai si l'entité décrit une voie piétonne.
  *
@@ -606,11 +612,12 @@ export function clipToRadius(points, centerX, centerZ, radius) {
  *
  * @param {Object} [roads] Tranche `theme.roads` (profils de chaussée).
  * @param {Object} [options]
- * @param {Object|null} [options.urban] `UrbanMask` : en ville, les voies
- *        piétonnes ne sont pas des chaussées (voir `isPedestrianWay`). Le lieu
- *        est jugé au **milieu** de la ligne, une fois par entité : un trottoir
- *        ne change pas de nature en cours de route, et sonder chaque sommet
- *        coûterait un lancer de rayon par mètre de trottoir.
+ * @param {Object|null} [options.urban] `UrbanMask` : en ville, ni les voies
+ *        piétonnes (voir `isPedestrianWay`) ni les chemins
+ *        (`URBAN_EXCLUDED_PROFILES`) ne sont dessinés. Le lieu est jugé au
+ *        **milieu** de la ligne, une fois par entité : un trottoir ne change
+ *        pas de nature en cours de route, et sonder chaque sommet coûterait un
+ *        lancer de rayon par mètre de trottoir.
  * @returns {Array<{profile:string, halfWidth:number, points:Array}>}
  */
 export function collectRoadLines(source, tiles, frame, roads = defaultTheme.roads, { urban = null } = {}) {
@@ -620,7 +627,8 @@ export function collectRoadLines(source, tiles, frame, roads = defaultTheme.road
   source.forEachFeature('transportation', tiles, (geometry, properties) => {
     const style = roadStyleFor(properties, roads.profiles);
     if (!style) return;
-    const pedestrian = urban?.any ? isPedestrianWay(properties) : false;
+    const notInTown =
+      urban?.any && (isPedestrianWay(properties) || URBAN_EXCLUDED_PROFILES.has(style.profile));
 
     for (const line of roadLines(geometry)) {
       if (!Array.isArray(line) || line.length < 2) continue;
@@ -634,7 +642,7 @@ export function collectRoadLines(source, tiles, frame, roads = defaultTheme.road
         });
       }
       if (points.length < 2) continue;
-      if (pedestrian) {
+      if (notInTown) {
         const mid = points[Math.floor(points.length / 2)];
         if (urban.covers(mid.x, mid.z)) continue;
       }

@@ -14196,6 +14196,33 @@ test('isPedestrianWay reconnaît le trottoir relevé et laisse le sentier tranqu
   assert.equal(isPedestrianWay({}), false);
 });
 
+test('collectRoadLines : en ville, ni sentier ni chemin de terre, sauf dans le parc', () => {
+  const frame = createLocalFrame(2.35, 48.85, 15);
+  const ways = [
+    { class: 'path' },
+    { class: 'path', subclass: 'path' },
+    { class: 'track' },
+    { class: 'path', subclass: 'steps' },
+    { class: 'cycleway' },
+    { class: 'residential' },
+  ];
+  const source = {
+    forEachFeature(sourceLayer, tiles, callback) {
+      for (const properties of ways) {
+        callback({ type: 'LineString', coordinates: [[2.35, 48.85], [2.351, 48.851]] }, properties);
+      }
+    },
+  };
+  const profiles = (covers) =>
+    collectRoadLines(source, [{ x: 0, y: 0 }], frame, undefined, { urban: { any: true, covers: () => covers } })
+      .map((line) => line.profile)
+      .sort();
+
+  assert.deepEqual(profiles(true), ['cycleway', 'minor', 'steps'], 'en ville');
+  // `covers` répond non dans le vert urbain : le parc garde ses allées.
+  assert.deepEqual(profiles(false), ['cycleway', 'minor', 'path', 'path', 'steps', 'track'], 'au parc');
+});
+
 test('UrbanMask : un disque de ville, une emprise bâtie, et le vert retiré', () => {
   const square = (cx, cz, half) => [
     { x: cx - half, z: cz - half },
