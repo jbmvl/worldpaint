@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Banc de la voirie</title>
+<style>html,body{margin:0;background:#9fb8cc}canvas{display:block}</style>
+<script type="importmap">
+{ "imports": { "three": "/node_modules/three/build/three.module.js" } }
+</script>
+</head>
+<body>
+<script type="module">
+/*
+ * Banc de la voirie — chaussées, ponts et carrefours sur un relief synthétique,
+ * construits par les vraies couches (`TerrainBubble`, `RoadNetwork`,
+ * `BridgeLayer`) à partir de tuiles vectorielles écrites ici. Aucun réseau :
+ * piloté depuis la console ou par `scripts/roads-shot.mjs`.
+ *
+ *   roadsLab.set({ scene: 'pont', yawDeg: 200, pitchDeg: 30, distance: 70 })
+ *   roadsLab.info()  // cotes des bouches du carrefour de la scène
+ *
+ * Les scènes sont des endroits d'un même monde ; `yawDeg` est le cap du regard
+ * (0 = vers le nord), `pitchDeg` la plongée. Ni mobilier, ni talus : ce banc
+ * montre les plates-formes, pas leur habillage.
+ */
+import * as THREE from 'three';
+import { TerrainBubble } from '/src/terrain/terrainBubble.js';
+import { ElevationField } from '/src/core/elevationField.js';
+import { RoadNetwork, createRoadMaterials } from '/src/layers/roadNetwork.js';
+import { BridgeLayer } from '/src/layers/bridgeLayer.js';
+import { createLocalFrame, tileXToLng, tileYToLat } from '/src/core/tileMath.js';
+
+// Ceux de `world.js` (`DEFAULT_VIEW`, `DEFAULT_ELEVATION_ZOOM`), recopiés :
+// l'importer tirerait les décodeurs de tuiles, qui n'ont rien à faire ici.
+const DEFAULT_VIEW = { zoom: 15, blockSize: 3, segmentsByRing: [192, 192, 48] };
+const DEFAULT_ELEVATION_ZOOM = 14;
+
+const LNG = 0;
+const LAT = 45;
+const frame = createLocalFrame(LNG, LAT, DEFAULT_VIEW.zoom);
+
+/**
+ * Relief, en mètres locaux (x est, z sud) : une plaine à 50 m, et à l'est un
+ * versant qui monte à 9 % vers l'est, raccordé sans cassure.
+ */
+function heightAt(x, z) {
+  const d = x - 250;
+  return 50 + 0.09 * 0.5 * (d + Math.sqrt(d * d + 900));
+}
+
+/** MNT tiré de `heightAt` : les tuiles se calculent au lieu de se télécharger. */
+class SyntheticElevation extends ElevationField {
+  async load(x, y) {
+    const key = `${this.zoom}/${x}/${y}`;
+    if (this.tiles.has(key)) return this.tiles.get(key);
+    const size = this.tilePixels;
+    const heights = new Float32Array(size * size);
+    for (let j = 0; j < size; j++) {
+      const lat = tileYToLat(y + (j + 0.5) / size, this.zoom);
+      for (let i = 0; i < size; i++) {
+        const p = frame.toLocal(tileXToLng(x + (i + 0.5) / size, this.zoom), lat);
+        heights[j * size + i] = heightAt(p.x, p.z);
+      }
+    }
+    this._store(key, heights);
+    return heights;
+  }
+}
+
+/** Une ligne de chaussée en mètres locaux → entité GeoJSON de la couche `transportation`. */
+const way = (properties, ...points) => ({
+  geometry: {
+    type: 'LineString',
+    coordinates: points.map(([x, z]) => {
+      const p = frame.toLngLat(x, z);
+      return [p.lng, p.lat];
+    }),
+  },
+  properties,
+});
+
+/*
+ * « pont » : une primaire franchit une secondaire (niveau 1, `brunnel`) ; le
+ * gabarit la relève et le remblai d'accès la ramène au sol sur
+ * `BRIDGE_RAMP_M`. Une voie étroite s'y branche en T à huit mètres de la
+ * culée, là où le remblai porte encore l'essentiel du relevage.
+ * « pont-etroit » : la même chose, mais c'est la route du pont qui est la
+ * plus étroite — la couture suit la plus large.
+ * « pente » : un carrefour en croix sur le versant à 9 %.
+ */
+const FEATURES = [
+  way({ class: 'secondary' }, [0, -800], [0, 800]),
+
+  way({ class: 'primary' }, [-250, 0], [-12, 0]),
+  way({ class: 'primary', brunnel: 'bridge', layer: 1 }, [-12, 0], [12, 0]),
+  way({ class: 'primary' }, [12, 0], [20, 0], [250, 0]),
+  way({ class: 'minor' }, [20, 0], [20, 200]),
+
+  way({ class: 'minor' }, [-250, 500], [-12, 500]),
+  way({ class: 'minor', brunnel: 'bridge', layer: 1 }, [-12, 500], [12, 500]),
+  way({ class: 'minor' }, [12, 500], [20, 500], [250, 500]),
+  way({ class: 'primary' }, [20, 500], [20, 700]),
+
+  way({ class: 'primary' }, [150, -300], [520, -300], [850, -300]),
+  way({ class: 'minor' }, [520, -500], [520, -300], [520, -100]),
+];
+
+const SCENES = {
+  pont: { x: 20, z: 0, yawDeg: 215, pitchDeg: 28, distance: 75 },
+  'pont-etroit': { x: 20, z: 500, yawDeg: 215, pitchDeg: 28, distance: 75 },
+  pente: { x: 520, z: -300, yawDeg: 300, pitchDeg: 25, distance: 80 },
+};
+
+const source = {
+  zoom: DEFAULT_VIEW.zoom,
+  forEachFeature(layer, tiles, callback) {
+    if (layer !== 'transportation') return;
+    for (const f of FEATURES) callback(f.geometry, f.properties, null);
+  },
+};
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.5; // comme la démo
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fb8cc);
+scene.add(new THREE.HemisphereLight(0xdfe8f0, 0x4a5a3a, 1.2));
+const sun = new THREE.DirectionalLight(0xfff2dd, 2.4);
+sun.position.set(-0.5, 1, 0.35);
+scene.add(sun);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 6000);
+
+const bubble = new TerrainBubble({
+  THREE,
+  scene,
+  elevation: new SyntheticElevation({ zoom: DEFAULT_ELEVATION_ZOOM }),
+  zoom: DEFAULT_VIEW.zoom,
+  blockSize: DEFAULT_VIEW.blockSize,
+  segmentsByRing: DEFAULT_VIEW.segmentsByRing,
+});
+await bubble.setCenter(LNG, LAT);
+const roads = new RoadNetwork({ THREE, scene, bubble, materials: createRoadMaterials(THREE) });
+const bridges = new BridgeLayer({ THREE, scene, bubble });
+const here = { x: 0, z: 0 };
+// Tant que la maille est reprise, la plate-forme se redresse : on reconstruit
+// jusqu'à ce que le réseau ne demande plus rien, comme le fait le compositeur.
+for (let pass = 0; pass < 4 && roads.needsRebuild(here.x, here.z); pass++) {
+  roads.rebuild(source, [], here);
+  bubble.processRebuildQueue();
+}
+bridges.rebuild(roads.roadSegments, here);
+
+const state = { scene: 'pont', ...SCENES.pont };
+
+function render() {
+  const { x, z, yawDeg, pitchDeg, distance } = state;
+  const y = bubble.surfaceElevationAtLocal(x, z, 0) * bubble.verticalScale;
+  const yaw = (yawDeg * Math.PI) / 180;
+  const pitch = (pitchDeg * Math.PI) / 180;
+  // Le regard porte vers `yaw` : la caméra se tient derrière, en retrait.
+  camera.position.set(
+    x - Math.sin(yaw) * Math.cos(pitch) * distance,
+    y + Math.sin(pitch) * distance,
+    z + Math.cos(yaw) * Math.cos(pitch) * distance
+  );
+  camera.lookAt(x, y, z);
+  renderer.render(scene, camera);
+  return info();
+}
+
+/** Carrefour le plus proche du point visé, et l'écart entre les cotes de ses bouches. */
+function info() {
+  let best = null;
+  for (const area of roads.junctionAreas?.areas ?? []) {
+    const d = Math.hypot(area.x - state.x, area.z - state.z);
+    if (area.decks && (!best || d < best.d)) best = { d, area };
+  }
+  const decks = best?.area.decks.map((v) => +v.toFixed(2)) ?? [];
+  return {
+    scene: state.scene,
+    segments: roads.segments,
+    crossings: roads.crossings,
+    bridges: bridges.counts,
+    decks,
+    spread: decks.length ? +(Math.max(...decks) - Math.min(...decks)).toFixed(2) : null,
+  };
+}
+
+window.roadsLab = {
+  set(options = {}) {
+    if (options.scene && SCENES[options.scene]) Object.assign(state, SCENES[options.scene]);
+    Object.assign(state, options);
+    return render();
+  },
+  info,
+  state,
+  scenes: Object.keys(SCENES),
+  roads,
+  bubble,
+};
+window.roadsLabReady = true;
+render();
+</script>
+</body>
+</html>

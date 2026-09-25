@@ -15,6 +15,13 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   de blocs ; `skyLab.set({ sunDeg, lookDeg, pitchDeg, weather })` dans la
   console, ou `node scripts/sky-shot.mjs <dossier> '<réglages JSON>'` pour une
   image par réglage.
+- `demo/lab/roads.html` — chaussées, ponts et carrefours construits par les
+  vraies couches sur un relief et des tuiles synthétiques (pont relevé avec un
+  T sur son remblai d'accès, sa variante où le pont est la voie étroite,
+  carrefour en pente) ; `roadsLab.set({ scene, yawDeg, pitchDeg, distance })`
+  et `roadsLab.info()` (cotes des bouches), ou
+  `node scripts/roads-shot.mjs <dossier> '<réglages JSON>'`. Ni mobilier ni
+  talus.
 
 Si le chantier touche une partie du rendu qu'aucun banc ne montre, écris le
 banc plutôt que d'ouvrir la démo.
