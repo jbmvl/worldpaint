@@ -27,34 +27,46 @@ export function skyParameters(sunY) {
   };
 }
 
+/** Hauteur de soleil sous laquelle l'éclairage est entièrement nocturne. */
+const NIGHT_SUN_Y = -0.1;
+const NIGHT_LIGHT = { sun: 0.3, ambient: 0.62 };
+
 /**
  * Éclairage assorti : intensités du soleil et de l'ambiance, et chaleur de la
  * lumière directe. La nuit reste éclairée au-dessus du physiquement juste
  * (lueur froide) pour garder le relief lisible.
  *
+ * Entre le coucher et `NIGHT_SUN_Y`, le crépuscule glisse continûment vers la
+ * nuit : un basculement net tomberait à une heure qui dépend de la vitesse de
+ * descente du soleil, donc de la saison et de la latitude.
+ *
  * @param {number} sunY
- * @returns {{sun:number, ambient:number, warmth:number, night:boolean}}
+ * @returns {{sun:number, ambient:number, warmth:number, night:boolean, nightBlend:number}}
+ *          `nightBlend` va de 0 (soleil levé) à 1 (nuit pleine).
  */
 export function lightingFor(sunY) {
-  if (sunY <= -0.1) {
-    return { sun: 0.3, ambient: 0.62, warmth: 1, night: true };
-  }
   const elevation = Math.max(sunY, 0);
   const daylight = Math.min(1, elevation * 3);
+  const nightBlend = smoothstep(0, NIGHT_SUN_Y, sunY);
   return {
-    sun: 0.25 + daylight * 1.5,
-    ambient: 0.5 + daylight * 0.7,
+    sun: mix(0.25 + daylight * 1.5, NIGHT_LIGHT.sun, nightBlend),
+    ambient: mix(0.5 + daylight * 0.7, NIGHT_LIGHT.ambient, nightBlend),
     // 1 au ras de l'horizon, 0 quand le soleil est haut.
     warmth: 1 - Math.min(1, elevation * 2.5),
-    night: false,
+    night: sunY <= NIGHT_SUN_Y,
+    nightBlend,
   };
 }
 
 /**
- * Couleur de la lumière directe, du blanc de midi à l'orange rasant.
+ * Couleur de la lumière directe, du blanc de midi à l'orange rasant, puis au
+ * bleu froid de la nuit.
+ * @param {number} warmth
+ * @param {number|boolean} [night] Part de nuit, de 0 à 1 (`true` vaut 1).
  * @returns {[number, number, number]}
  */
-export function sunlightColor(warmth, night = false) {
-  if (night) return [0.5, 0.6, 0.85];
-  return [1, 0.95 - warmth * 0.3, 0.85 - warmth * 0.45];
+export function sunlightColor(warmth, night = 0) {
+  const n = Number(night) || 0;
+  const day = [1, 0.95 - warmth * 0.3, 0.85 - warmth * 0.45];
+  return [mix(day[0], 0.5, n), mix(day[1], 0.6, n), mix(day[2], 0.85, n)];
 }

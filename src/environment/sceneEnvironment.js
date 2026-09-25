@@ -67,9 +67,15 @@ export const SKY_RADIUS = 8000;
  * Le ciel de Preetham est forcé à rejoindre la couleur du brouillard au ras
  * de l'horizon (bande étroite, ~10° d'élévation, poids non total à 0,7 pour
  * laisser survivre le halo du soleil couchant).
+ *
+ * Sous ciel bouché ou dans la brume, il n'y a plus de halo à préserver, et
+ * les nuages natifs s'effacent sous ~0,2 d'élévation : le raccord devient
+ * total et monte au-dessus de ce fondu, sinon une bande de ciel clair
+ * subsiste entre le lointain gris et la couche nuageuse.
  */
 const HORIZON_BLEND = 0.7;
 const HORIZON_BAND = 0.18;
+const MURKY_HORIZON_BAND = 0.3;
 
 /**
  * Palette d'ambiance : les trois seules couleurs que ce module attend d'une
@@ -193,6 +199,7 @@ export class SceneEnvironment {
     this.uniforms = this.sky.material.uniforms;
     this.uniforms.uHorizonColor = { value: new THREE.Color(palette.fog) };
     this.uniforms.uHorizonBlend = { value: HORIZON_BLEND };
+    this.uniforms.uHorizonBand = { value: HORIZON_BAND };
     this.uniforms.uNightZenith = { value: new THREE.Color(palette.nightZenith) };
     this.uniforms.uNightHorizon = { value: new THREE.Color(palette.nightHorizon) };
     this.uniforms.uNightMix = { value: 0 };
@@ -213,6 +220,7 @@ export class SceneEnvironment {
         `varying vec3 vWorldPosition;
          uniform vec3 uHorizonColor;
          uniform float uHorizonBlend;
+         uniform float uHorizonBand;
          uniform vec3 uNightZenith;
          uniform vec3 uNightHorizon;
          uniform float uNightMix;
@@ -297,7 +305,7 @@ export class SceneEnvironment {
          texColor = mix( texColor, night, uNightMix );
 
          // Raccord au brouillard, appliqué en dernier (garantit que l'horizon et le terrain lointain se rejoignent).
-         float horizonWeight = uHorizonBlend * (1.0 - smoothstep(0.0, ${HORIZON_BAND.toFixed(2)}, direction.y));
+         float horizonWeight = uHorizonBlend * (1.0 - smoothstep(0.0, uHorizonBand, direction.y));
          texColor = mix( texColor, uHorizonColor, horizonWeight );
          gl_FragColor = vec4( texColor, 1.0 );`
       );
@@ -458,6 +466,9 @@ export class SceneEnvironment {
     this.fog.color.setRGB(fogColor[0], fogColor[1], fogColor[2]);
     this.fog.density = this.baseFogDensity * fogScale(this.weather);
     this.uniforms.uHorizonColor.value.setRGB(fogColor[0], fogColor[1], fogColor[2]);
+    const murk = Math.max(overcastOf(this.weather), this.weather.haze);
+    this.uniforms.uHorizonBlend.value = mix(HORIZON_BLEND, 1, murk);
+    this.uniforms.uHorizonBand.value = mix(HORIZON_BAND, MURKY_HORIZON_BAND, murk);
     this.uniforms.uNightZenith.value.setRGB(nightZenith[0], nightZenith[1], nightZenith[2]);
     this.uniforms.uNightHorizon.value.setRGB(nightHorizon[0], nightHorizon[1], nightHorizon[2]);
 
@@ -484,7 +495,7 @@ export class SceneEnvironment {
     this.sun.castShadow = dir.y > SHADOW_MIN_SUN_Y && castsShadow(this.weather);
 
     const light = weatherLighting(lightingFor(dir.y), this.weather);
-    const [r, g, b] = sunlightColor(light.warmth, light.night);
+    const [r, g, b] = sunlightColor(light.warmth, light.nightBlend);
     this.sun.color.setRGB(r, g, b);
     this.sun.intensity = light.sun;
     this.ambient.intensity = light.ambient;

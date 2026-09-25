@@ -1977,6 +1977,25 @@ test('la lumière directe rougit à l’horizon et blanchit au zénith', () => {
   close(zenith[0], zenith[1], 0.06, 'lumière presque neutre à midi');
 });
 
+test('le crépuscule glisse vers la nuit sans saut de lumière', () => {
+  // Un saut tomberait à une heure fixée par la vitesse de descente du soleil,
+  // donc par la saison et la latitude.
+  let previous = lightingFor(0);
+  let previousColor = sunlightColor(previous.warmth, previous.nightBlend);
+  for (let y = -0.005; y >= -0.15; y -= 0.005) {
+    const light = lightingFor(y);
+    const color = sunlightColor(light.warmth, light.nightBlend);
+    assert.ok(Math.abs(light.sun - previous.sun) < 0.02, `soleil continu à ${y.toFixed(3)}`);
+    assert.ok(Math.abs(light.ambient - previous.ambient) < 0.02, `ambiance continue à ${y.toFixed(3)}`);
+    for (let i = 0; i < 3; i++) {
+      assert.ok(Math.abs(color[i] - previousColor[i]) < 0.05, `couleur continue à ${y.toFixed(3)}`);
+    }
+    previous = light;
+    previousColor = color;
+  }
+  assert.deepEqual(sunlightColor(1, lightingFor(-0.4).nightBlend), sunlightColor(1, true));
+});
+
 // --- Le pays ----------------------------------------------------------------
 
 test('un saut d’un pays à l’autre repose la question de la région', async () => {
