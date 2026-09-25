@@ -15,6 +15,9 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   de blocs ; `skyLab.set({ sunDeg, lookDeg, pitchDeg, weather })` dans la
   console, ou `node scripts/sky-shot.mjs <dossier> '<réglages JSON>'` pour une
   image par réglage.
+- `demo/lab/crops.html` — la `CropLayer` réelle sur un champ plat traversé par
+  une route sinueuse, avec une lisière entre deux cultures ;
+  `cropLab.set({ crop, next, height, pitchDeg })` dans la console.
 
 Si le chantier touche une partie du rendu qu'aucun banc ne montre, écris le
 banc plutôt que d'ouvrir la démo.
