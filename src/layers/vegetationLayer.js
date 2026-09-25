@@ -1,4 +1,4 @@
-import { TreeVolumes, TREE_NEAR_FROM, TREE_NEAR_TO } from './treeVolumes.js';
+import { TreeVolumes } from './treeVolumes.js';
 import { COVER_ATTRIBUTE, installCoverTransition, paddedCoverBands } from '../materials/coverTransition.js';
 /*
  * vegetationLayer — les arbres, en instances. Poussent là où
@@ -8,7 +8,9 @@ import { COVER_ATTRIBUTE, installCoverTransition, paddedCoverBands } from '../ma
  * planter dans l'emprise (`roadCorridor`), comme l'herbe et les cultures.
  *
  * Chaque arbre adulte possède un volume proche et des plans croisés lointains, neuf
- * silhouettes d'atlas, rotation/échelle/teinte propres à chaque instance. Le
+ * silhouettes d'atlas, rotation/échelle/teinte propres à chaque instance. Les
+ * plans restent présents tant que le budget proche ne fournit pas de volume ;
+ * leur découpe écrit la profondeur, y compris dans le sous-étage. Le
  * peuplement (`FOREST_TYPES`, ancré à une maille de terrain) décide des
  * essences, des hauteurs, de la densité ; la couleur dérive par bosquets de
  * quelques dizaines de mètres (`foliageTint`).
@@ -589,7 +591,7 @@ export class VegetationLayer {
     this.standMaterial = this.material.clone();
     this.standMaterial.onBeforeCompile = this.material.onBeforeCompile;
     this.standMaterial.customProgramCacheKey = this.material.customProgramCacheKey;
-    installCoverTransition(this.standMaterial, THREE, { mode: 'alpha' });
+    installCoverTransition(this.standMaterial, THREE);
     this.volumes = new TreeVolumes(THREE, this.group, theme);
     this.depthMaterial = createFoliageDepthMaterial({
       THREE,
@@ -633,7 +635,7 @@ export class VegetationLayer {
     this.thicketMaterial = this.material.clone();
     this.thicketMaterial.onBeforeCompile = this.material.onBeforeCompile;
     this.thicketMaterial.customProgramCacheKey = this.material.customProgramCacheKey;
-    installCoverTransition(this.thicketMaterial, THREE, { mode: 'alpha' });
+    installCoverTransition(this.thicketMaterial, THREE);
     this.thicket = new THREE.InstancedMesh(this.thicketGeometry, this.thicketMaterial, THICKET_COUNT);
     this.thicket.name = 'vegetation-thicket';
     this.thicket.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -881,8 +883,8 @@ export class VegetationLayer {
     const placements = stableStand(this._descriptions.get(tile.key), collected, MAX_TREES_PER_TILE, p => !inCorridor(index, p.x, p.z));
     this._descriptions.set(tile.key, placements);
     for (const item of placements) item.color = foliageTint(item.hue, item.x, item.z, item.shade, item.jitter);
-    this.volumes.set(tile.key, placements);
     if (placements.length === 0) {
+      this.volumes.set(tile.key, null);
       this._swap(tile.key, null);
       return;
     }
@@ -890,8 +892,9 @@ export class VegetationLayer {
     // Géométrie clonée par tuile : l'attribut d'atlas est une donnée d'instance.
     const geometry = this.baseGeometry.clone();
     const coverBands = new Float32Array(placements.length * 4);
-    for (let i=0; i<placements.length; i++) coverBands.set(placements[i].variant < 9 ? [TREE_NEAR_FROM, 1e7, TREE_NEAR_TO-TREE_NEAR_FROM, 0] : [0,1e7,0,0],i*4);
-    geometry.setAttribute(COVER_ATTRIBUTE, new THREE.InstancedBufferAttribute(coverBands,4));
+    for (let i = 0; i < placements.length; i++) coverBands.set([0, 1e7, 0, 0], i * 4);
+    geometry.setAttribute(COVER_ATTRIBUTE, new THREE.InstancedBufferAttribute(coverBands, 4).setUsage(THREE.DynamicDrawUsage));
+    this.volumes.set(tile.key, placements, geometry.getAttribute(COVER_ATTRIBUTE));
     const offsets = new Float32Array(placements.length * 2);
     placements.forEach((item, index_) => {
       const [u, v] = TREE_ATLAS_OFFSETS[item.variant];

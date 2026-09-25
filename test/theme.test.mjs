@@ -67,15 +67,10 @@ const OTHER = resolveTheme({
   sky: { fog: '#000000', nightZenith: '#000000', nightHorizon: '#000000' },
   streets: {
     gutterWidth: 1,
-    gutterDepth: 0.5,
     kerbHeight: 0.9,
-    kerbNose: 0.2,
-    walkWidth: [4, 4],
-    walkFall: 0,
-    skirtWidth: 1,
-    skirtDepth: 1,
+    kerbWidth: 0.4,
     gutter: '#000000',
-    surfaces: [{ name: 'quai', walk: '#ffffff', kerb: '#ffffff', joint: '#ffffff' }],
+    surfaces: [{ name: 'quai', kerb: '#ffffff' }],
   },
 });
 
@@ -352,12 +347,12 @@ test('la voirie ne mélange pas les revêtements de deux thèmes', () => {
 test('la section d’une rue est celle du thème qu’on lui donne', () => {
   const tones = streetSurfaceAt(0, 0, OTHER.streets);
   const [a, b] = interleaved(
-    () => kerbProfile({ halfWidth: 3, walkWidth: 2, side: 1, tones: streetSurfaceAt(0, 0, DEFAULT.streets) }, DEFAULT.streets).map((v) => v.up),
-    () => kerbProfile({ halfWidth: 3, walkWidth: 2, side: 1, tones }, OTHER.streets).map((v) => v.up)
+    () => kerbProfile({ halfWidth: 3, side: 1, tones: streetSurfaceAt(0, 0, DEFAULT.streets) }, DEFAULT.streets).map((v) => v.up),
+    () => kerbProfile({ halfWidth: 3, side: 1, tones }, OTHER.streets).map((v) => v.up)
   );
   assert.notDeepEqual(a, b);
-  assert.ok(Math.max(...b) >= OTHER.streets.kerbHeight, 'la bordure du second thème est un quai');
-  assert.ok(Math.max(...a) < 0.3, 'celle du défaut reste une marche');
+  assert.equal(Math.min(...b), -OTHER.streets.kerbHeight, 'la profondeur vient du thème');
+  assert.equal(Math.max(...a), 0, 'le béton affleure au support');
 });
 
 test('le ciel est une tranche du thème', () => {
@@ -560,16 +555,14 @@ test('chaque matière retouchée porte la dominante de sa fiche de biome', () =>
   assert.ok(r('mud') >= 1.25 * b('mud'), 'vasière : chaude, rouge ≥ 1,25 × bleu');
   assert.ok(r('bare') >= g('bare') && g('bare') >= b('bare'), 'sol nu : plus terreux, rouge ≥ vert ≥ bleu');
   assert.ok(
-    b('pavement') >= g('pavement') && g('pavement') >= r('pavement'),
-    'trottoir : plus froid, bleu ≥ vert ≥ rouge'
+    r('pavement') >= g('pavement') && g('pavement') >= b('pavement'),
+    'sol piéton : gris chaud, rouge ≥ vert ≥ bleu'
   );
 
-  // Le sol et sa bordure ne peuvent pas diverger : la même dérive froide vaut
-  // pour `townStyle.pavement`, lu par `pavementTone`.
   const town = defaultTheme.streets.pavement.default;
   const hex = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
   const [tr, tg, tb] = hex(town);
-  assert.ok(tb >= tg && tg >= tr, `townStyle.pavement.default doit aussi être froid : ${town}`);
+  assert.ok(tr >= tg && tg >= tb, `le sol urbain conserve une dominante chaude : ${town}`);
 });
 
 test('les matières non concernées par le chantier gardent leur couleur', () => {

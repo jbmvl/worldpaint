@@ -16,15 +16,15 @@
  *   qu'une maille peut n'en contenir aucun : le triangle enjambe alors la
  *   chaussée, et sa corde passe au-dessus. Sur un versant à 60 %, une maille de
  *   9,3 m et un fond plat de 1,2 m mettent jusqu'à 3,9 m de terrain par-dessus
- *   la route. Le fond plat creusé vaut donc au moins une maille.
+ *   la route. Le fond plat creusé couvre donc au moins la diagonale d’une maille.
  */
 
 /** Largeur de l'emprise au-delà de la chaussée (accotement excavé), en mètres. */
 export const ROAD_CUT_M = 1.2;
 
 /**
- * Largeur du fond plat de l'entaille, en mètres : au moins l'emprise, au moins
- * une maille de terrain.
+ * Largeur du fond plat de l'entaille : au moins l'emprise et la diagonale
+ * d'une maille, pour couvrir tous les sommets d'un triangle qui croise la route.
  *
  * Le pas donné est celui de la maille **la plus grossière qui soit creusée**,
  * et non celui de la tuile où l'on creuse : un fond plat qui suivrait l'anneau
@@ -34,7 +34,7 @@ export const ROAD_CUT_M = 1.2;
  * @param {number} meshStepM Pas de cette maille, en mètres.
  */
 export function cutBenchAt(meshStepM) {
-  return Math.max(ROAD_CUT_M, meshStepM || 0);
+  return Math.max(ROAD_CUT_M, Math.SQRT2 * (meshStepM || 0));
 }
 
 /**

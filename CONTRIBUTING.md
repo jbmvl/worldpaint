@@ -135,13 +135,19 @@ Breaking one of these needs a very good reason, stated in the PR description.
   (`layers/roadEdges.js`) covering ribbons and junction surfaces alike. A kerb
   run ends where its ribbon ends (`junctionBoundaryAt`), a street corner is
   bordered from `area.edges`, and room beyond an edge is a **width**
-  (`edgeClearance`), never a yes/no probe — a pavement narrows before it stops.
+  (`edgeClearance`), never a yes/no probe — the gutter and concrete kerb must fit without narrowing their section.
 
 - **Two ways are near each other for three reasons**, and only one is a bundle:
   they cross (the graph knows), one flies over the other (`layer`), or they run
   alongside (`layers/roadBundles.js`). The third is never `distance < X` but six
   conditions together. The void inside a bundle is **painted**, never closed: no
-  carriageway is widened, moved or covered. An area enclosed by carriageways is
+  carriageway is widened, moved or covered. Before surfaces are built,
+  `roadWidths` may reduce overlapping parallel paved chains proportionally
+  to their available spacing, only across stable gaps outside junction areas.
+  A pair whose axis enters the other's nominal carriageway is ambiguous and
+  imposes no width constraint. Junction mouths read the retained widths.
+  Width stays constant per chain. Works, shared vertices and crossing axes
+  are excluded. An area enclosed by carriageways is
   an island, not a bundle — it stays terrain, with its trees.
 
 - **Road markings are geometry**, never painted into a texture: triangles laid

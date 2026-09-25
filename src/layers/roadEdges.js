@@ -19,9 +19,7 @@
  *
  * Une question, et une seule : **combien de place y a-t-il entre ce point et
  * la prochaine chaussée ?** (`edgeClearance`). Une largeur, pas un booléen —
- * c'est ce qui permet à un trottoir de se rétrécir là où il est à l'étroit au
- * lieu de disparaître, et c'est ce que le comblement entre voies voisines
- * interrogera à son tour.
+ * la bordure et le comblement entre voies voisines y vérifient leur emprise.
  *
  * Deux choses prennent de la place, et une seule les deux :
  *
@@ -48,12 +46,7 @@
 import { distanceToSegment } from './roadGraph.js';
 import { LEVEL_GROUND } from './roadWorks.js';
 
-/**
- * Portée de la mesure, en mètres. Ce n'est pas une tolérance : c'est la
- * largeur au-delà de laquelle plus rien de ce qui borde une chaussée ne se
- * soucie de ce qu'il y a en face — le plus large trottoir du thème, caniveau
- * et jupe compris, tient dans trois mètres et demi.
- */
+/** Portée maximale de recherche des chaussées voisines, en mètres. */
 export const EDGE_REACH_M = 6;
 
 /**

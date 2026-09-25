@@ -5,6 +5,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GroundCover } from '../src/layers/groundCover.js';
 import { meshSupport } from '../src/terrain/meshSupport.js';
 import { createFoliageMaterial } from '../src/materials/foliageMaterial.js';
+import { TerrainMaterialFactory } from '../src/terrain/terrainMaterial.js';
+import { PlantSupportAtlas } from '../src/terrain/plantSupportAtlas.js';
 import { defaultTheme } from '../src/themes/default.js';
 const renderer=new THREE.WebGLRenderer({antialias:true});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(innerWidth,innerHeight);
@@ -55,12 +57,17 @@ for(let j=0;j<=n;j++)for(let i=0;i<=n;i++) {
 }
 for(let j=0;j<n;j++)for(let i=0;i<n;i++){const a=j*(n+1)+i,b=a+1,c=a+n+1,d=c+1;indices.push(a,c,b,b,c,d);}
 const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));geometry.setIndex(indices);geometry.computeVertexNormals();
-const soil=new THREE.Mesh(geometry,new THREE.MeshLambertMaterial({color:new THREE.Color().setRGB(...defaultTheme.surfaces.grass.albedo)}));scene.add(soil);
+geometry.setAttribute('roadMask',new THREE.Float32BufferAttribute(new Float32Array(positions.length/3),1));
+const terrainMaterials=new TerrainMaterialFactory({THREE});
+const supportAtlas=new PlantSupportAtlas(THREE,terrainMaterials.grainUniforms);
+const supportTiles=[{key:'lab',geometry,segments:n,size}];
+const soil=new THREE.Mesh(geometry,terrainMaterials.material);scene.add(soil);
 const bubble={frame:{},verticalScale:1,surfaceGeneration:0,
+ plantSupportTiles:()=>supportTiles,
  renderedSupportAtLocal:(x,z,out)=>meshSupport(geometry,n,0,0,size,x,z,out),
  surfaceElevationAtLocal:(x,z)=>meshSupport(geometry,n,0,0,size,x,z).y};
 const groundClass={surfaceAt:()=> 'grass',sampleAt:(x,z)=>({grass:x>=0&&x<=size&&z>=0&&z<=size?1:0,wood:0,farmland:0,bare:0})};
-const cover=new GroundCover({THREE,scene,bubble,groundClass});cover.update(60,60);
+const cover=new GroundCover({THREE,scene,bubble,groundClass,terrainSupport:supportAtlas});cover.update(60,60);
 let rootError=0;const matrix=new THREE.Matrix4(),root=new THREE.Vector3();
 for(let i=0;i<Math.min(1000,cover.mesh.count);i++){
  cover.mesh.getMatrixAt(i,matrix);

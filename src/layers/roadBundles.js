@@ -84,6 +84,10 @@
  *     deux n'est de trop, et c'est le comblement qui les réunit — en
  *     revêtement plein, pas en zébra (voir `gapIsSeam`).
  *
+ * L’absorption sonde les intervalles, au même niveau et hors ouvrages.
+ * Les rubans conservés qui se chevauchent relèvent de `roadWidths` ;
+ * le comblement ne traite que les écarts positifs entre leurs rives.
+ *
  * Module pur : aucun `three`, testable sous Node.
  */
 
@@ -580,13 +584,12 @@ export function absorbParallelLines(
   // carré du réseau.
   const cells = new Map();
   const key = (cx, cz) => cx * 73856093 + cz * 19349663;
-  const spans = [];
+  const maxHalfWidth = lines.reduce((max, line) => Math.max(max, line.halfWidth || 0), 0);
   for (let li = 0; li < lines.length; li++) {
     const points = lines[li].points;
     if (!Array.isArray(points) || points.length < 2) continue;
     for (let i = 1; i < points.length; i++) {
       const span = { line: li, a: points[i - 1], b: points[i] };
-      spans.push(span);
       const minX = Math.floor(Math.min(span.a.x, span.b.x) / ABSORB_CELL_M);
       const maxX = Math.floor(Math.max(span.a.x, span.b.x) / ABSORB_CELL_M);
       const minZ = Math.floor(Math.min(span.a.z, span.b.z) / ABSORB_CELL_M);
@@ -605,7 +608,7 @@ export function absorbParallelLines(
   const dropped = new Set();
   const candidates = [];
   for (let li = 0; li < lines.length; li++) {
-    if (absorbable.has(lines[li].profile) && lines[li].points?.length >= 2) candidates.push(li);
+    if (!lines[li].works && absorbable.has(lines[li].profile) && lines[li].points?.length >= 2) candidates.push(li);
   }
   candidates.sort((a, b) => rankOf(lines[a].profile) - rankOf(lines[b].profile));
 
@@ -617,35 +620,30 @@ export function absorbParallelLines(
     let total = 0;
     let covered = 0;
 
-    for (let i = 0; i < points.length; i++) {
-      // Poids d'un sommet : la moitié de chacun de ses segments voisins. La
-      // part mesurée est donc une **longueur**, pas un compte de sommets — la
-      // donnée n'échantillonne pas régulièrement.
-      const before = i > 0 ? Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z) : 0;
-      const after =
-        i < points.length - 1
-          ? Math.hypot(points[i + 1].x - points[i].x, points[i + 1].z - points[i].z)
-          : 0;
-      const weight = (before + after) / 2;
-      if (!(weight > 0)) continue;
-      total += weight;
-      if (where && !where(points[i].x, points[i].z)) continue;
-
-      // Tangente locale, prise sur les deux voisins présents.
-      const from = points[Math.max(0, i - 1)];
-      const to = points[Math.min(points.length - 1, i + 1)];
-      let tx = to.x - from.x;
-      let tz = to.z - from.z;
-      const length = Math.hypot(tx, tz);
+    const samples = [];
+    for (let i = 1; i < points.length; i++) {
+      const from = points[i - 1], to = points[i];
+      const length = Math.hypot(to.x - from.x, to.z - from.z);
       if (!(length > 1e-6)) continue;
-      tx /= length;
-      tz /= length;
+      const count = Math.ceil(length / 5);
+      for (let j = 0; j < count; j++) {
+        const t = (j + 0.5) / count;
+        samples.push({ x: from.x + (to.x - from.x) * t, z: from.z + (to.z - from.z) * t,
+          tx: (to.x - from.x) / length, tz: (to.z - from.z) / length, weight: length / count });
+      }
+    }
+    // Sonder les intervalles évite qu'une ligne à deux sommets compte son
+    // milieu comme couvert simplement parce que ses deux bouts le sont.
+    for (const point of samples) {
+      const { tx, tz, weight } = point;
+      total += weight;
+      if (where && !where(point.x, point.z)) continue;
 
-      const reach = gapMax + line.halfWidth;
-      const minX = Math.floor((points[i].x - reach) / ABSORB_CELL_M);
-      const maxX = Math.floor((points[i].x + reach) / ABSORB_CELL_M);
-      const minZ = Math.floor((points[i].z - reach) / ABSORB_CELL_M);
-      const maxZ = Math.floor((points[i].z + reach) / ABSORB_CELL_M);
+      const reach = gapMax + line.halfWidth + maxHalfWidth;
+      const minX = Math.floor((point.x - reach) / ABSORB_CELL_M);
+      const maxX = Math.floor((point.x + reach) / ABSORB_CELL_M);
+      const minZ = Math.floor((point.z - reach) / ABSORB_CELL_M);
+      const maxZ = Math.floor((point.z + reach) / ABSORB_CELL_M);
       let hit = false;
 
       for (let cx = minX; cx <= maxX && !hit; cx++) {
@@ -655,12 +653,12 @@ export function absorbParallelLines(
           for (const span of bucket) {
             if (span.line === li || dropped.has(span.line)) continue;
             const other = lines[span.line];
-            if (rankOf(other.profile) >= mine) continue;
+            if (other.works || rankOf(other.profile) >= mine) continue;
             if ((other.level ?? LEVEL_GROUND) !== level) continue;
 
             const seen = distanceToSegment(
-              points[i].x,
-              points[i].z,
+              point.x,
+              point.z,
               span.a.x,
               span.a.z,
               span.b.x,

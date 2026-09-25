@@ -1,4 +1,7 @@
+import { finishGeneration } from '../core/generationSteps.js';
 /*
+ * La génération cède entre les bâtiments ; les maillages sont publiés à la
+ * fin. Le compositeur fixe les pauses, la sélection reste triée par distance.
  * buildingLayer — le bâti, extrudé depuis les tuiles vectorielles. Les
  * empreintes viennent de la couche `building`, chargées pour la bulle (pas
  * une carte 2D voisine) : la portée du décor ne dépend que du décor.
@@ -25,7 +28,6 @@ import { orientedBox, roofTriangles, roofRise, ringArea } from './roofGeometry.j
 import { pointInRing, randomAt } from './furniturePlacement.js';
 import { pointInAreas } from './settlement.js';
 import { clipPolygonOutsideCorridor } from './roadCorridor.js';
-import { walkTopRise } from './streetLayer.js';
 import { Kit } from './furnitureKit.js';
 import { defaultTheme } from '../themes/default.js';
 import { LabelAtlas, pushLabelQuad, labelFontPxForCellHeight, LABEL_PX_PER_M } from '../materials/labelAtlas.js';
@@ -1193,17 +1195,21 @@ export class BuildingLayer {
    *        maison isolée pour le balcon. Absent, aucune maison n'en reçoit.
    * @returns {boolean} vrai si des bâtiments ont été produits.
    */
-  rebuild(source, tiles, here, { roadIndex = null, builtUp = null } = {}) {
+  rebuild(...args) { return finishGeneration(this.rebuildSteps(...args)); }
+
+  *rebuildSteps(source, tiles, here, { roadIndex = null, builtUp = null } = {}) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
     this._roadIndex = roadIndex;
     this._builtUp = builtUp;
-    this._build(source, tiles, here);
+    yield* this._buildSteps(source, tiles, here);
     this._anchor = { x: here.x, z: here.z };
     this._frame = this.bubble.frame;
     return this.count > 0;
   }
 
-  _build(source, tiles, here) {
+  _build(source, tiles, here) { return finishGeneration(this._buildSteps(source, tiles, here)); }
+
+  *_buildSteps(source, tiles, here) {
     const { THREE, bubble } = this;
     const frame = bubble.frame;
     const { origin, scale, zoom } = frame;
@@ -1262,6 +1268,7 @@ export class BuildingLayer {
       if (distance > BUILDING_RADIUS_M) return;
       collected.push({ x, z, kind, distance, name: properties.name || null, class: properties.class || null });
     });
+    yield;
     const personalities = sortPersonalities(collected);
 
     // Le tri est ce qui rend le plafond acceptable : ce qui saute est toujours
@@ -1279,6 +1286,7 @@ export class BuildingLayer {
     let panes = 0;
     const footprints = [];
     for (const candidate of candidates) {
+      yield;
       // Deux portées, et elles ne sont pas les mêmes : de jour la baie n'est
       // qu'un contraste dans un mur, de nuit c'est une lumière dans le noir. La
       // seconde porte donc bien plus loin que la première.
@@ -1875,13 +1883,6 @@ export class BuildingLayer {
    * `terraceClearanceM` de dégagement) est sautée plutôt que déplacée, pour
    * ne pas s'écarter de l'espacement régulier du reste de la rangée.
    *
-   * Posée à `walkTopRise` au-dessus de l'assise du bâtiment : le dessus d'un
-   * vrai trottoir, pas le terrain nu. Cette couche se reconstruit avant
-   * `StreetLayer` et ne sait donc pas si un trottoir existe réellement à cet
-   * endroit précis (un restaurant isolé en bord de route n'en a pas) ; la
-   * table y flotte alors un peu au-dessus du sol plutôt que de s'enfoncer
-   * dans un trottoir qui, lui, existe.
-   *
    * @param {Object} walls Accumulateur de la géométrie opaque.
    * @param {{x:number,y:number}} a Début du pan de façade.
    * @param {{x:number,y:number}} b Fin du pan.
@@ -1896,7 +1897,7 @@ export class BuildingLayer {
     const length = Math.hypot(b.x - a.x, b.y - a.y);
     const ux = (b.x - a.x) / length;
     const uz = (b.y - a.y) / length;
-    const groundY = base + minHeight + walkTopRise(this.theme.streets);
+    const groundY = base + minHeight;
 
     const count = Math.max(1, Math.round(length / theme.terraceSpacingM));
     const span = (count - 1) * theme.terraceSpacingM;

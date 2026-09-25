@@ -1,3 +1,4 @@
+import { GenerationBudget } from '../core/generationBudget.js';
 /*
  * terrainBubble — la « bulle » de terrain qui suit l'observateur. Bloc carré
  * de tuiles centré sur l'observateur (geometry clipmap, Losasso & Hoppe,
@@ -7,7 +8,8 @@
  * questions d'altitude. Ce qui se pose dessus est décidé ailleurs
  * (`worldComposer`). Normales calculées analytiquement depuis le champ
  * d'altitude (pas `computeVertexNormals()`), pour un gradient continu d'une
- * tuile à l'autre.
+ * tuile à l'autre. Les tuiles neuves rendent la main entre deux maillages
+ * après le budget CPU ; les changements de finesse passent par la file.
  *
  * Deux choses perturbent le relief lu, dans cet ordre : la marche des falaises
  * (`setCliffCut`, qui comprime en paroi la rampe que le MNT étale), puis le
@@ -256,10 +258,13 @@ export class TerrainBubble {
     // Une tuile sans géométrie est construite tout de suite ; une tuile dont
     // seule la finesse a changé garde la sienne et passe par la file.
     this._rebuildQueue.length = 0;
+    const budget = new GenerationBudget();
     for (const tile of this.tiles.values()) {
       if (!tile.mesh) this._buildMesh(tile);
       else if (tile.edgeIncomplete && this._neighboursLoaded(tile.x, tile.y)) this._buildMesh(tile);
       else if (this._meshOutdated(tile)) this._rebuildQueue.push(tile.key);
+      await budget.checkpoint();
+      if (this.disposed || generation !== this._generation) return true;
     }
 
     // Rien à recoudre : la surface est déjà stable, on la clôt tout de suite.
@@ -337,6 +342,19 @@ export class TerrainBubble {
   }
 
   /** Appui sur la géométrie chargée, en mètres de scène, hors déplacement GPU. */
+  plantSupportTiles(x, z, radius) {
+    const selected = [];
+    for (const tile of this.tiles.values()) {
+      const geometry = tile.mesh?.geometry;
+      if (!geometry) continue;
+      const p = geometry.attributes.position.array;
+      const size = p[tile.segments * 3] - p[0];
+      if (x+radius < p[0] || x-radius > p[0]+size || z+radius < p[2] || z-radius > p[2]+size) continue;
+      selected.push({ key: tile.key, geometry, segments: tile.segments, size });
+    }
+    return selected;
+  }
+
   renderedSupportAtLocal(x, z, out = {}) {
     if (!this.frame) return null;
     const { origin, scale } = this.frame;

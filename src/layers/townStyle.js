@@ -106,35 +106,18 @@ export function townPaletteAt(x, z, towns = defaultTheme.towns, region = null) {
  * @param {number} x
  * @param {number} z
  * @param {Object} [streets] Tranche `theme.streets`.
- * @returns {{name:string, walk:number[], kerb:number[], joint:number[], gutter:number[]}}
+ * @returns {{name:string, kerb:number[], gutter:number[], joint:number[]}}
  */
-export function streetSurfaceAt(x, z, streets = defaultTheme.streets, matrix = null) {
+export function streetSurfaceAt(x, z, streets = defaultTheme.streets) {
   const surfaces = linearStreets(streets);
   const gx = Math.floor(x / TOWN_PATCH_M) * TOWN_PATCH_M;
   const gz = Math.floor(z / TOWN_PATCH_M) * TOWN_PATCH_M;
   const draw = randomAt(gx, gz, 191);
   const rebord = surfaces[Math.min(surfaces.length - 1, Math.floor(draw * surfaces.length))];
-  // Le dessus vient du pays, pas du bourg : c'est le sol de la ville, et le
-  // sol est peint par un shader qui n'a qu'un albédo par couverture pour toute
-  // la bulle. Voir `STREET_LOOK.pavement`.
-  return { ...rebord, walk: pavementTone(matrix, streets) };
+  return rebord;
 }
 
-/**
- * Le dessus du trottoir, et par la même valeur le sol revêtu de la ville, en
- * couleur linéaire.
- *
- * Lue des deux côtés — par la bordure, qui est de la géométrie, et par le
- * shader de terrain, qui peint la couverture `pavement`. C'est la même figure
- * que `soilWashFor` : une seule source, parce que deux lectures divergentes se
- * verraient exactement là où elles se rejoignent.
- *
- * Fonction pure.
- *
- * @param {string|null} matrix Matrice de paysage (`region.matrix`).
- * @param {Object} [streets] Tranche `theme.streets`.
- * @returns {number[]} couleur linéaire.
- */
+/** Teinte linéaire du support revêtu, choisie par matrice de paysage. */
 export function pavementTone(matrix, streets = defaultTheme.streets) {
   const table = linearPavement(streets);
   return table[matrix] || table.default;
@@ -150,8 +133,8 @@ function linearStreets(streets) {
     out = streets.surfaces.map((surface) => ({
       name: surface.name,
       kerb: srgb(surface.kerb),
-      joint: srgb(surface.joint),
       gutter,
+      joint: srgb(streets.joint ?? streets.gutter),
     }));
     LINEAR_STREETS.set(streets, out);
   }

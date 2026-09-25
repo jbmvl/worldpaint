@@ -567,13 +567,11 @@ import {
   kerbQualifies,
   kerbProfile,
   pavementBand,
-  walkWidthAt,
   STREET_PROFILES,
   STREET_FABRIC_MIN,
   STREET_FABRIC_RADIUS_M,
   STREET_MAX_CROSS_SLOPE,
-  STREET_MIN_LENGTH_M,
-  walkWidthFor,
+  kerbFits,
   StreetLayer,
 } from '../src/layers/streetLayer.js';
 import { streetSurfaceAt } from '../src/layers/townStyle.js';
@@ -1739,7 +1737,7 @@ test('toutes les chaussées se décollent d’autant : le carrefour n’est plus
   // pour départager deux rubans qui se recouvraient à un carrefour. Ils ne se
   // recouvrent plus : `roadJunctions` leur donne une surface commune, et une
   // bouche de petite rue doit affleurer cette surface, pas passer dessous.
-  assert.ok(ROAD_LIFT_M > 0, 'aucun ruban ne repasse sous le terrain');
+  assert.ok(ROAD_LIFT_M > 0 && ROAD_LIFT_M <= 0.02, 'la marge technique ne dépasse pas deux centimètres');
 });
 
 test('la sous-classe sépare piste cyclable, sentier et escalier', () => {
@@ -2176,7 +2174,8 @@ test('hors de toute région, le décor s’éteint et rien n’est chargé', asy
     regionOverride: null,
     _updateLandscape: WorldComposer.prototype._updateLandscape,
   };
-  const refresh = (lng, lat) => WorldComposer.prototype.refresh.call(composer, lng, lat);
+  Object.setPrototypeOf(composer, WorldComposer.prototype);
+  const refresh = (lng, lat) => composer.refresh(lng, lat);
 
   // New York : hors de toute ancre.
   assert.equal(await refresh(-74, 40.7), false, 'rien à construire');
@@ -2551,7 +2550,7 @@ test('l’herbe et le fourré refusent le milieu d’une flaque, et la bordent p
   // vérité : pas de comptage séparé de flaques, une seule lecture (`poolShareAt`).
   const groundCoverSource = readFileSync('src/layers/groundCover.js', 'utf8');
   assert.match(groundCoverSource, /import \{ SETTLED_GRASS, VEGETAL_SURFACES, poolShareAt, poolEdgeGain \}/);
-  assert.match(groundCoverSource, /if \(pool > 0\.5\) continue;/);
+  assert.match(groundCoverSource, /if \(pool > 0\.5\) \{[^}]*continue; \}/);
   assert.match(groundCoverSource, /\(1 \+ poolEdge \* POOL_EDGE_DENSITY_BOOST\)/);
   assert.match(groundCoverSource, /\(1 \+ poolEdge \* POOL_EDGE_HEIGHT_BOOST\)/);
 
@@ -2656,7 +2655,7 @@ test('le grain d’une touffe suit celui du sol, matière par matière', () => {
     amplitudeM: LOW_POLY_GRAIN_DEFAULTS.amplitudeM,
   });
   assert.deepEqual(coverGrainFor('couverture-inconnue'), repli);
-  assert.deepEqual(coverGrainFor('grass'), {cellM:6,amplitudeM:0}, 'la prairie n’hérite pas du relief rocheux');
+  assert.deepEqual(coverGrainFor('grass'), {cellM:6,amplitudeM:1.4}, 'la prairie conserve son modelé procédural');
 
   // Une lande porte de petites touffes serrées, un pré alpin de larges
   // colinettes : les deux divergent du repli et l’un de l’autre.
@@ -3615,15 +3614,15 @@ test('deux points de part et d’autre du trait sont séparés par toute la dén
   assert.ok(above - below > 45, `chute de ${(above - below).toFixed(1)} m sur 5 m`);
 });
 
-test('le fond plat vaut au moins une maille de terrain', () => {
+test('le fond plat couvre la diagonale d’une maille de terrain', () => {
   // Sur une maille plus fine que l’emprise, c’est l’emprise qui commande : rien
   // ne gagne à creuser moins large qu’un terrassier.
   close(cutBenchAt(0.4), ROAD_CUT_M, 1e-9, 'maille fine');
   close(cutBenchAt(0), ROAD_CUT_M, 1e-9, 'maille inconnue');
-  close(cutBenchAt(4.64), 4.64, 1e-9, 'maille large');
+  close(cutBenchAt(4.64), Math.SQRT2 * 4.64, 1e-9, 'maille large');
 });
 
-test('un fond plat d’une maille garde la corde du triangle sous la chaussée', () => {
+test('un fond plat couvrant la diagonale garde la corde du triangle sous la chaussée', () => {
   // Le déblai n’est creusé qu’aux sommets de la maille ; entre deux sommets,
   // ce qui s’affiche est la corde du triangle. Un fond plat plus étroit qu’une
   // maille peut n’en contenir aucun sommet, et la corde enjambe alors la
@@ -11724,99 +11723,72 @@ test('la voirie ne lit que les anneaux extérieurs', () => {
   assert.deepEqual(collectBuiltUpAreas(null, [], null), [], 'sans source, aucune emprise');
 });
 
-test('la section d’une rue va du caniveau au trottoir, dans cet ordre', () => {
+test('le béton a une section de vingt centimètres et aucun dessus de trottoir', () => {
   const streets = defaultTheme.streets;
   const tones = streetSurfaceAt(0, 0, streets);
-  const section = kerbProfile({ halfWidth: 2.5, walkWidth: 1.8, side: 1, tones }, streets);
+  const section = kerbProfile({ halfWidth: 2.5, side: 1, tones }, streets);
+  const top = section.filter((v) => v.color === tones.kerb && v.up === 0);
+  assert.equal(top.length, 2);
+  assert.ok(Math.abs(top[1].across - top[0].across - 0.2) < 1e-9);
+  assert.equal(Math.min(...section.map((v) => v.up)), -0.2);
+  assert.equal(Math.max(...section.map((v) => v.up)), 0);
+  const right = kerbProfile({ halfWidth: 2.5, side: -1, tones }, streets);
+  assert.deepEqual(right.map((v) => v.across), section.map((v) => -v.across).reverse());
+});
 
-  // Les cotes se comptent depuis la chaussée : le caniveau creuse, la bordure
-  // monte, et la jupe arrière s’enterre.
-  const ups = section.map((v) => v.up);
-  assert.ok(Math.min(...ups) < 0, 'le caniveau est un creux');
-  assert.ok(Math.max(...ups) >= streets.kerbHeight, 'la bordure fait sa marche');
-  assert.equal(ups[ups.length - 1], -streets.skirtDepth, 'la jupe arrière est enterrée');
-
-  // Le trottoir est **légèrement** surélevé : c’est une marche, pas un quai.
-  assert.ok(streets.kerbHeight <= 0.2, 'une bordure de quatorze centimètres');
-
-  // La face de bordure est verticale : deux sommets au même travers.
-  const faces = section.filter((v) => Math.abs(v.across - (2.5 + streets.gutterWidth)) < 1e-9);
-  assert.equal(faces.length, 2, 'la bordure présente une face franche');
-
-  // De la chaussée vers l’extérieur, sans retour en arrière.
-  for (let i = 1; i < section.length; i++) {
-    assert.ok(section[i].across >= section[i - 1].across - 1e-9, 'la section ne revient pas sur elle-même');
+test('le caniveau rejoint la chaussée et le béton suit le support sur les deux rives', () => {
+  const layer = Object.create(StreetLayer.prototype);
+  layer.bubble = { verticalScale: 2, surfaceElevationAtLocal: (x, z) => 10 + x * 0.02 + z * 0.01 };
+  const points = [{ x: 0, z: 0 }, { x: 5, z: 0 }];
+  const decks = new Float32Array([19.8, 20]);
+  for (const side of [1, -1]) {
+    const buffer = createProfileBuffer();
+    const bands = [];
+    layer._appendKerb(buffer, bands, {
+      points, decks, frames: pathFrames(points), side, halfWidth: 2.5,
+      room: 1, streets: defaultTheme.streets,
+    });
+    assert.equal(bands.length, 1);
+    const profile = kerbProfile({ halfWidth: 2.5, side, tones: streetSurfaceAt(0, 0) });
+    for (let r = 0; r < 2; r++) {
+      for (let c = 0; c < profile.length; c++) {
+        const at = (r * profile.length + c) * 3;
+        const [x, y, z] = buffer.positions.slice(at, at + 3);
+        const largeur = Math.abs(profile[c].across) - 2.5;
+        const t = largeur / defaultTheme.streets.gutterWidth;
+        const zPied = -side * (2.5 + defaultTheme.streets.gutterWidth);
+        const support = layer.bubble.surfaceElevationAtLocal(x, zPied) * 2 + 0.003;
+        const expected = t <= 1 && profile[c].up === 0
+          ? (decks[r] + ROAD_LIFT_M) * (1 - t) + support * t
+          : layer.bubble.surfaceElevationAtLocal(x, z) * 2 + 0.003 + profile[c].up;
+        assert.ok(Math.abs(y - expected) < 1e-6);
+      }
+    }
+    assert.equal(bands[0].halfWidth, 0.26);
   }
-
-  // Le côté droit est le miroir du gauche, parcouru dans le même sens de
-  // rotation — sinon ses normales sortiraient par-dessous.
-  const right = kerbProfile({ halfWidth: 2.5, walkWidth: 1.8, side: -1, tones }, streets);
-  assert.equal(right.length, section.length);
-  assert.deepEqual(
-    right.map((v) => v.across),
-    section.map((v) => -v.across).reverse()
-  );
 });
 
-test('la section d’une rue se balaie le long de la plate-forme', () => {
+test('la bande publiée couvre seulement le caniveau et la bordure', () => {
   const streets = defaultTheme.streets;
-  const tones = streetSurfaceAt(0, 0, streets);
-  const path = [];
-  for (let i = 0; i < 8; i++) path.push({ x: i * 5, z: 0 });
-  // Plate-forme en pente douce : le trottoir doit la suivre, pas le terrain.
-  const platform = new Float32Array(path.map((_, i) => 100 + i * 0.3));
-
-  const buffer = createProfileBuffer();
-  const built = appendProfile(buffer, {
-    path,
-    profile: kerbProfile({ halfWidth: 2.5, walkWidth: 1.8, side: 1, tones }, streets),
-    sampleElevation: () => 0,
-    baseHeights: platform,
-    lift: 0.14,
-    smoothRadius: 0,
-  });
-
-  assert.equal(built, true);
-  assert.equal(buffer.positions.length / 3, path.length * 7, 'sept sommets par ligne');
-
-  // Le dessus du trottoir de la dernière ligne suit la plate-forme, décollement
-  // compris : c’est ce qui rend la bordure solidaire de la chaussée.
-  const walkIndex = ((path.length - 1) * 7 + 5) * 3;
-  const expected = platform[path.length - 1] + 0.14 + streets.kerbHeight + 0.004 + streets.walkFall;
-  assert.ok(Math.abs(buffer.positions[walkIndex + 1] - expected) < 1e-4);
-  // Et il est bien au-dessus de la chaussée de la même ligne.
-  assert.ok(buffer.positions[walkIndex + 1] > platform[path.length - 1] + 0.14);
-});
-
-test('la bande revêtue publiée couvre le caniveau et le trottoir', () => {
-  const streets = defaultTheme.streets;
-  const band = pavementBand({ halfWidth: 2.5, walkWidth: 1.8, side: 1 }, streets);
+  const band = pavementBand({ halfWidth: 2.5, side: 1 }, streets);
   const inner = band.offset - band.halfWidth;
   const outer = band.offset + band.halfWidth;
 
   assert.ok(Math.abs(inner - 2.5) < 1e-9, 'elle commence à la rive de la chaussée');
   assert.ok(
-    Math.abs(outer - (2.5 + streets.gutterWidth + streets.kerbNose + 1.8)) < 1e-9,
-    'et finit au fond du trottoir'
+    Math.abs(outer - (2.5 + streets.gutterWidth + streets.kerbWidth)) < 1e-9,
+    'et finit derrière le béton'
   );
   // À droite, la bande est du côté des décalages négatifs.
-  assert.ok(pavementBand({ halfWidth: 2.5, walkWidth: 1.8, side: -1 }, streets).offset < 0);
+  assert.ok(pavementBand({ halfWidth: 2.5, side: -1 }, streets).offset < 0);
 });
 
-test('largeur et revêtement d’une rue sont tirés du lieu', () => {
-  const [min, max] = defaultTheme.streets.walkWidth;
-  for (const [x, z] of [[0, 0], [123, -456], [-2000, 3000]]) {
-    const width = walkWidthAt(x, z);
-    assert.ok(width >= min && width <= max, 'la largeur reste dans le gabarit');
-    assert.equal(width, walkWidthAt(x, z), 'et ne dépend que du lieu');
-  }
-
+test('le béton d’une rue est tiré du lieu', () => {
   // Le revêtement est celui du **bourg** : deux points de la même maille le
   // partagent, ce qui est ce qui fait qu’une traversée se lit comme un lieu.
   const here = streetSurfaceAt(10, 10);
   assert.equal(streetSurfaceAt(TOWN_PATCH_M * 0.4, TOWN_PATCH_M * 0.3).name, here.name);
-  assert.ok(Array.isArray(here.walk) && here.walk.length === 3, 'couleurs linéaires');
-  for (const key of ['walk', 'kerb', 'joint', 'gutter']) {
+  for (const key of ['kerb', 'gutter']) {
     assert.ok(here[key].every((c) => c >= 0 && c <= 1), `${key} : composantes valides`);
   }
 
@@ -11927,31 +11899,46 @@ test('un carrefour prend toute la place, sauf pour ce qui le borde', () => {
   assert.equal(edgeClearance(0, 0, { areas, level: 1 }), EDGE_REACH_M);
 });
 
-test('le trottoir se rétrécit avant de disparaître', () => {
-  const streets = defaultTheme.streets;
-  const fixed = streets.gutterWidth + streets.kerbNose + streets.skirtWidth;
-
-  // Large : le lieu obtient ce qu'il voulait.
-  assert.equal(walkWidthFor(6, 2, streets), 2);
-  // À l'étroit : ce qui reste, et pas plus.
-  const tight = walkWidthFor(fixed + 1.5, 2, streets);
-  assert.ok(Math.abs(tight - 1.5) < 1e-6, `un mètre cinquante, vu ${tight}`);
-  // Trop étroit pour le plus mince trottoir du thème : rien du tout. C'est là
-  // que le comblement entre voies prendra le relais, pas un trottoir raboté.
-  assert.equal(walkWidthFor(fixed + streets.walkWidth[0] - 0.01, 2, streets), 0);
-  assert.equal(walkWidthFor(0, 2, streets), 0);
+test('la bordure tient dans cinquante-deux centimètres sans se rétrécir', () => {
+  assert.equal(kerbFits(0.52), true);
+  assert.equal(kerbFits(0.519), false);
+  assert.equal(kerbFits(6), true);
+  assert.equal(kerbFits(0), false);
 });
 
-test('une portion de trottoir trop courte est un artefact du découpage', () => {
-  // Une longueur, pas un compte de lignes : depuis que les carrefours
-  // découpent les rives, un pâté de maisons entre deux croisements proches
-  // fait légitimement moins de vingt-cinq mètres.
-  assert.ok(STREET_MIN_LENGTH_M >= 10, 'assez long pour être une rue');
-  const short = [{ x: 0, z: 0 }, { x: 5, z: 0 }];
-  const long = [{ x: 0, z: 0 }, { x: 20, z: 0 }, { x: 40, z: 0 }];
-  assert.ok(polylineLength(short) < STREET_MIN_LENGTH_M);
-  assert.equal(polylineLength(long), 40);
-  assert.equal(polylineLength([{ x: 0, z: 0 }]), 0);
+test('une rue urbaine courte garde ses deux bordures sans bâtiments proches', () => {
+  const layer = Object.create(StreetLayer.prototype);
+  layer.theme = defaultTheme;
+  layer.bubble = { verticalScale: 1, surfaceElevationAtLocal: () => 0 };
+  const road = fakeRoad([{ x: 0, z: 0 }, { x: 5, z: 0 }], 2.5);
+  road.edges = new Float32Array([0, 4, 0, 4]);
+  road.probeSpan = 10;
+  const context = { here: { x: 0, z: 0 }, builtUp: [], fabric: null,
+    urban: { covers: () => true }, roadIndex: new RoadIndex([road]) };
+  const bands = [];
+  assert.equal(layer._buildSegment(createProfileBuffer(), bands, road, context), 2);
+  assert.equal(bands.length, 2);
+  assert.equal(layer._buildSegment(createProfileBuffer(), [], road, { ...context, urban: null }), 0);
+  road.works = new Uint8Array([1, 1]);
+  assert.equal(layer._buildSegment(createProfileBuffer(), [], road, context), 0, 'les ouvrages restent exclus');
+});
+
+test('la reconstruction urbaine borde les rues et les coins sans relevé du bâti', () => {
+  const layer = Object.create(StreetLayer.prototype);
+  layer.theme = defaultTheme;
+  layer.bubble = { frame: {}, verticalScale: 1, surfaceElevationAtLocal: () => 0 };
+  layer._apply = (buffer) => { assert.ok(buffer.positions.every(Number.isFinite)); };
+  layer._applyMarkings = () => {};
+  const road = fakeRoad([{ x: 20, z: 0 }, { x: 25, z: 0 }], 2.5);
+  road.edges = new Float32Array(4);
+  road.probeSpan = 10;
+  const areas = new JunctionAreas([teeJunction()]);
+  areas.areas[0].deck = 0;
+  const urban = { any: true, covers: () => true };
+  assert.equal(layer.rebuild([road], { x: 0, z: 0 }, { urban, areas }), true);
+  assert.equal(layer.count, 2 + areas.areas[0].edges.length);
+  assert.equal(layer.index.covers(22, -2.75), true);
+  assert.equal(layer.index.covers(22, -4), false, 'le support derrière la bordure reste libre');
 });
 
 test('la bordure d’un coin de rue se pose du côté extérieur', () => {
@@ -13075,12 +13062,12 @@ test('les limites de surfaces : la frange, les matières interpolées et la rive
   );
   assert.match(
     shader.vertexShader,
-    /transformed \+= grainAxis \* lowPolyBump\(/,
+    /return grainAxis \* lowPolyBump\(/,
     'la bosse est géométrique, et pousse le long de la normale'
   );
   // La pente impose la roche là où la carte du sol ne le peut pas : elle est
   // plane, et une paroi verticale n'y occupe qu'un liseré de texels.
-  assert.match(shader.vertexShader, /vSteep = smoothstep\(uSlopeRange/, 'la pente choisit la roche');
+  assert.match(shader.vertexShader, /steep = smoothstep\(uSlopeRange/, 'la pente choisit la roche');
   // La paroi prend la roche **du pays** : `setRegion` teinte `uSurfaceAlbedo`
   // par la géologie, un uniforme à part serait figé au montage.
   assert.match(
@@ -13438,7 +13425,7 @@ test('le grain low poly du sol dépend de la matière au pied du sommet', () => 
   // de porter une paroi de falaise (voir lowPolyGrain.js).
   assert.match(
     source,
-    /transformed \+= grainAxis \* lowPolyBump\(transformed, grainAxis, grainCellM, grainAmplitudeM\) \* grainFade;/
+    /return grainAxis \* lowPolyBump\(point, grainAxis, grainCellM, grainAmplitudeM\) \* \(1\.0 - roadMask\);/
   );
 });
 
@@ -13477,8 +13464,10 @@ test('le grain low poly du sol s’éteint dans l’emprise routière', () => {
   // nulle si l'un ou l'autre l'est, jamais recalculée à part.
   assert.match(
     source,
-    /float grainFade =\s*\n?\s*lowPolyFade\(grainPos, cameraPosition, uGrainFadeM\.x, uGrainFadeM\.y\) \* \(1\.0 - roadMask\);/
+    /return grainAxis \* lowPolyBump\([^;]+\* \(1\.0 - roadMask\);/
   );
+  assert.match(source, /return point \+ displacement \* fade;/);
+  assert.match(source, /float fade = lowPolyFade\(/);
 });
 
 test('la lame d’eau d’une culture : le riz en porte une, les autres aucune', () => {
@@ -14472,24 +14461,21 @@ test('les flèches de sens unique : posées seulement là où un sens est affirm
   assert.equal(nothing.positions.length, 0);
 });
 
-test('le revêtement urbain : une matière qui tient dans le canal, et une seule teinte pour deux lectures', () => {
+test('le revêtement urbain dépend du pays et le béton du bourg', () => {
   // Les matières à leur pas doivent tenir dans un octet, sans quoi le dernier
   // identifiant serait écrêté et lu comme un autre.
   assert.ok(SURFACE_KINDS.length * SURFACE_ID_STEP <= 255, 'les identifiants tiennent dans le canal');
   assert.equal(SURFACE_KINDS[PAVEMENT_ID - 1], 'pavement');
 
-  // La teinte du sol de la ville et celle du dessus de trottoir sont la même
-  // valeur : deux lectures divergentes se verraient là où elles se rejoignent.
   const tone = pavementTone('garrigue');
-  assert.deepEqual(streetSurfaceAt(0, 0, undefined, 'garrigue').walk, tone);
   assert.notDeepEqual(pavementTone('boreal_taiga'), tone, 'le pays change le revêtement');
   assert.deepEqual(pavementTone('inconnu'), pavementTone(null), 'une matrice non décrite retombe sur le défaut');
 
   // Le rebord, lui, reste tiré du bourg : deux mailles éloignées ne donnent pas
   // forcément la même bordure, mais aucune ne donne le dessus.
-  const here = streetSurfaceAt(0, 0, undefined, 'hedgerow_meadow');
+  const here = streetSurfaceAt(0, 0);
   assert.ok(Array.isArray(here.kerb) && here.kerb.length === 3);
-  assert.ok(Array.isArray(here.joint) && Array.isArray(here.gutter));
+  assert.ok(Array.isArray(here.gutter));
 });
 
 // --- La rive traverse le carrefour ------------------------------------------

@@ -1,3 +1,4 @@
+import { TERRAIN_GRAIN_GLSL } from './terrainGrainShader.js';
 import { installTunnelMouths } from './tunnelMouths.js';
 /*
  * terrainMaterial — la matière du sol. `groundClassMap` rasterise l'occupation
@@ -250,8 +251,7 @@ export class TerrainMaterialFactory {
    * Les autres couvertures ne bougent pas, une lande dit déjà son pays — sauf
    * une, le revêtement urbain, qui n'est pas une matière relevée mais une
    * convention de pays : le nord coule du béton gris, le Midi pose de la pierre
-   * claire, la steppe un enrobé poussiéreux. Elle est lue à la même source que
-   * la bordure de trottoir.
+   * claire, la steppe un enrobé poussiéreux (`townStyle.pavementTone`).
    */
   setRegion(region) {
     const matrix = region?.matrix ?? null;
@@ -302,6 +302,8 @@ export class TerrainMaterialFactory {
     if (!this._uniforms) return;
     this._uniforms.uWetness.value = Math.min(1, Math.max(0, value || 0));
   }
+
+  get grainUniforms() { return this._uniforms; }
 
   _create() {
     const { THREE, look } = this;
@@ -423,89 +425,15 @@ export class TerrainMaterialFactory {
            varying vec3 vSceneNormal;
            varying float vGrain;
            varying float vSteep;
-           uniform float uGrainCellM;
-           uniform float uGrainAmplitudeM;
-           uniform vec2 uGrainFadeM;
-           uniform sampler2D uSurfaceMap;
-           uniform vec2 uSurfaceOrigin;
-           uniform float uSurfaceSize;
-           uniform float uSurfaceEnabled;
-           uniform float uUnclassified;
-           uniform float uSurfaceGrainCell[${SURFACE_KINDS.length}];
-           uniform float uSurfaceGrainAmplitude[${SURFACE_KINDS.length}];
-           uniform vec2 uSlopeRange;
-           uniform vec2 uRockGrain;
            attribute float roadMask;
-           ${LOW_POLY_GRAIN_GLSL}
-
-           /* Identifiant de matière au texel le plus proche — pas de lissage :
-            * le grain est un déplacement géométrique, pas un contour, une
-            * marche d'un texel à la limite de deux matières ne s'y voit pas
-            * comme elle le ferait sur un aplat de couleur. textureLod et non
-            * texture2D : au sommet il n'y a pas de dérivée, donc pas de niveau
-            * implicite — three réécrit texture2D en texture, que GLSL ES 3.00
-            * refuse dans cette étape. La carte n'a de toute façon qu'un seul
-            * niveau (pas de mipmap). */
-           float grainSurfaceIdAt(vec2 uv) {
-             vec2 texel = floor(uv * ${CLASS_PIXELS}.0);
-             float id = floor(
-               textureLod(uSurfaceMap, (texel + 0.5) / ${CLASS_PIXELS}.0, 0.0).r * 255.0
-                 / ${SURFACE_ID_STEP}.0 + 0.5
-             );
-             return id < 0.5 ? uUnclassified : id;
-           }`
+           ${TERRAIN_GRAIN_GLSL}`
         )
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
-           // Grain low poly : la matière est lue au pied du sommet, au texel
-           // le plus proche — pas de lissage, le grain est un déplacement
-           // géométrique, et la cubique du fragment ne sert qu'au tracé du
-           // contour.
-           vec3 grainPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-           // Le grain s'éteint dans l'emprise routière (roadMask, écrit par
-           // terrainBubble.js à partir de roadCutMaskAt) : le sommet y a déjà
-           // été recreusé pour la chaussée, il n'y repousse pas dessus.
-           float grainFade =
-             lowPolyFade(grainPos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y) * (1.0 - roadMask);
-
-           // La cellule et l'amplitude viennent de la matière au pied du
-           // sommet, comme l'albédo — hors carte ou hors carreau, celle du
-           // repli (uUnclassified), jamais un réglage neutre à part.
-           float grainId = uUnclassified;
-           if (uSurfaceEnabled > 0.5) {
-             vec2 grainUv = (grainPos.xz - uSurfaceOrigin) / uSurfaceSize;
-             if (grainUv.x > 0.0 && grainUv.x < 1.0 && grainUv.y > 0.0 && grainUv.y < 1.0) {
-               grainId = grainSurfaceIdAt(grainUv);
-             }
-           }
-           float grainCellM = uGrainCellM;
-           float grainAmplitudeM = uGrainAmplitudeM;
-           for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
-             if (float(i) == grainId) {
-               grainCellM = uSurfaceGrainCell[i - 1];
-               grainAmplitudeM = uSurfaceGrainAmplitude[i - 1];
-             }
-           }
-
-           // Une paroi est de la roche, quoi qu'en dise la carte : la pente
-           // la décrit là où la carte plane ne le peut pas. Même intervalle
-           // que la teinte de roche du fragment, pour que la couleur et le
-           // relief arrivent ensemble.
-           vec3 grainNormal = normalize(mat3(modelMatrix) * objectNormal);
-           vSteep = smoothstep(uSlopeRange.x, uSlopeRange.y, 1.0 - clamp(grainNormal.y, 0.0, 1.0));
-           grainCellM = mix(grainCellM, uRockGrain.x, vSteep);
-           grainAmplitudeM = mix(grainAmplitudeM, uRockGrain.y, vSteep);
-
-           // Pas d'accent grave ici : literal de gabarit. Le plan du bruit se
-           // choisit dans le repere de la position locale, la pente dans celui
-           // de la scene : deux normales, deux reperes.
-           vec3 grainAxis = normalize(objectNormal);
-           transformed += grainAxis * lowPolyBump(transformed, grainAxis, grainCellM, grainAmplitudeM) * grainFade;
-           vGrain = grainAmplitudeM * grainFade;
-
+           transformed = terrainDisplaced(transformed, objectNormal, roadMask, vSteep, vGrain);
            vScenePos = (modelMatrix * vec4(transformed, 1.0)).xyz;
-           vSceneNormal = grainNormal;`
+           vSceneNormal = normalize(mat3(modelMatrix) * objectNormal);`
         );
 
       shader.fragmentShader = shader.fragmentShader

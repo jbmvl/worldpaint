@@ -1,8 +1,10 @@
+import { finishGeneration } from '../core/generationSteps.js';
 /*
  * furnitureLayer — le coordinateur du mobilier. Il tient ce que toutes les
  * familles partagent — les accumulateurs, l'emprise routière, la pose d'un
  * objet, les haies, le rendu et les animations — et appelle chaque famille
- * dans l'ordre (voir `rebuild`). Les règles propres à une famille vivent dans
+ * dans l'ordre (voir `rebuild`). Les étapes cèdent entre les familles avant
+ * de publier les maillages ; le compositeur décide quand rendre la main. Les règles propres à une famille vivent dans
  * `furniture/`, une par module ; c'est là qu'on va, et non ici, pour changer
  * un garde-corps, une limite de parcelle ou un repère d'horizon.
  *
@@ -413,7 +415,9 @@ export class FurnitureLayer {
    *        domestique devant elle.
    * @returns {boolean} vrai si quelque chose a été posé.
    */
-  rebuild(
+  rebuild(...args) { return finishGeneration(this.rebuildSteps(...args)); }
+
+  *rebuildSteps(
     source,
     tiles,
     here,
@@ -428,108 +432,122 @@ export class FurnitureLayer {
   ) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
 
-    // Gardés le temps de la reconstruction, remis à `null` en sortie pour
-    // qu'aucun appel tardif ne s'appuie sur une donnée périmée.
-    this._roadIndex = roadIndex;
-    this._areas = areas;
-    this._fabric = fabric;
-    this._railIndex = railIndex;
-    this._infraIndex = new CombinedIndex([roadIndex, railIndex]);
-    // Même repli que `builtUp`, juste en dessous : `worldComposer` les lit
-    // déjà tous les deux au même moment pour la voirie, mais la couche reste
-    // capable de les relire seule.
-    this._places = places || collectPlaceNames(source, tiles, this.bubble.frame);
-    // Toujours relus ici : aucune autre couche n'a besoin d'un lieu de culte,
-    // ce n'est donc pas une question posée deux fois.
-    this._churches = collectChurches(source, tiles, this.bubble.frame);
-    this._labelQuads = [];
-
-    const sampleElevation = (x, z) =>
-      this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale;
-    // Terrain naturel, déblai exclu : la falaise du déblai rejoint le versant
-    // tel qu'il était avant l'entaille, pas la surface déjà creusée — sur
-    // laquelle elle se poserait à mi-pente du raccord.
-    const rawElevation = (x, z) =>
-      this.bubble.rawSurfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale;
-
-    // Accumulateurs remis à zéro : le mobilier est intégralement refait, il ne
-    // se met pas à jour par différence. Sur quelques milliers d'objets, la
-    // reconstruction coûte moins cher que le suivi de ce qui a changé.
-    const buffers = {};
-    for (const kind of LINEAR_KINDS) buffers[kind] = createProfileBuffer();
-    const placements = new Map();
-    for (const item of POINT_ITEMS) placements.set(item, []);
-
-    // Le fond plat de l'entaille : la falaise du déblai se dresse à son bord,
-    // et lui seul sait à quelle largeur le terrain a été creusé.
-    const context = {
-      source,
-      tiles,
-      here,
-      sampleElevation,
-      rawElevation,
-      cutBench: this.bubble.cutBenchM,
-      buffers,
-      placements,
-    };
-    this.counts = {
-      points: 0,
-      boundaries: 0,
-      landmarks: 0,
-      rocks: 0,
-      biomeDebris: 0,
-      openPasture: 0,
-      rows: 0,
-      hedgeClumps: 0,
-    };
-    this._lampHeads = [];
-    this._signals = [];
-    this.chimneys = [];
-    this.fauna = [];
-    this.tractors = [];
-
     try {
-      // Les emprises habitées viennent de `worldComposer` quand il les a déjà
-      // lues pour la voirie : c'est la même question posée une seule fois. En
-      // leur absence, la couche les relit — elle ne dépend de personne.
-      const builtUp = builtUpAreas || collectBuiltUpAreas(source, tiles, this.bubble.frame);
-      buildRoadside(this, context, roadSegments, builtUp);
-      buildCrossings(this, context, junctions, roadIndex, builtUp);
-      buildJunctionSigns(this, context, areas, roadIndex, builtUp);
-      buildParcels(this, context, builtUp);
-      buildDomesticFauna(this, houses);
-      buildOpenPastureFauna(this, context, builtUp);
-      buildVillageLandmarks(this, context, builtUp);
-      buildPointsOfInterest(this, context, roadSegments, builtUp);
-      buildRocks(this, context, builtUp);
-      buildBiomeDebris(this, context, builtUp);
-      buildLandmarks(this, context, builtUp);
-      buildPeakLandmarks(this, context, builtUp);
-      buildCoastalLandmarks(this, context, builtUp);
-      buildRidgeTrees(this, context, builtUp);
-    } catch (e) {
-      // La pile complète, pas le seul message : cette exception avale tout ce
-      // qui restait à construire (voir le commentaire au-dessus), et sans
-      // elle il n'y a aucun moyen de savoir laquelle des étapes a jeté.
-      console.warn('[furniture] mobilier partiel', e?.stack || e?.message || e);
+      // Gardés le temps de la reconstruction, remis à `null` en sortie pour
+      // qu'aucun appel tardif ne s'appuie sur une donnée périmée.
+      this._roadIndex = roadIndex;
+      this._areas = areas;
+      this._fabric = fabric;
+      this._railIndex = railIndex;
+      this._infraIndex = new CombinedIndex([roadIndex, railIndex]);
+      // Même repli que `builtUp`, juste en dessous : `worldComposer` les lit
+      // déjà tous les deux au même moment pour la voirie, mais la couche reste
+      // capable de les relire seule.
+      this._places = places || collectPlaceNames(source, tiles, this.bubble.frame);
+      // Toujours relus ici : aucune autre couche n'a besoin d'un lieu de culte,
+      // ce n'est donc pas une question posée deux fois.
+      this._churches = collectChurches(source, tiles, this.bubble.frame);
+      this._labelQuads = [];
+
+      const sampleElevation = (x, z) =>
+        this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale;
+      // Terrain naturel, déblai exclu : la falaise du déblai rejoint le versant
+      // tel qu'il était avant l'entaille, pas la surface déjà creusée — sur
+      // laquelle elle se poserait à mi-pente du raccord.
+      const rawElevation = (x, z) =>
+        this.bubble.rawSurfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale;
+
+      const buffers = {};
+      for (const kind of LINEAR_KINDS) buffers[kind] = createProfileBuffer();
+      const placements = new Map();
+      for (const item of POINT_ITEMS) placements.set(item, []);
+
+      // Le fond plat de l'entaille : la falaise du déblai se dresse à son bord,
+      // et lui seul sait à quelle largeur le terrain a été creusé.
+      const context = {
+        source,
+        tiles,
+        here,
+        sampleElevation,
+        rawElevation,
+        cutBench: this.bubble.cutBenchM,
+        buffers,
+        placements,
+      };
+      this.counts = {
+        points: 0,
+        boundaries: 0,
+        landmarks: 0,
+        rocks: 0,
+        biomeDebris: 0,
+        openPasture: 0,
+        rows: 0,
+        hedgeClumps: 0,
+      };
+      this._lampHeads = [];
+      this._signals = [];
+      this.chimneys = [];
+      this.fauna = [];
+      this.tractors = [];
+
+      try {
+        // Les emprises habitées viennent de `worldComposer` quand il les a déjà
+        // lues pour la voirie : c'est la même question posée une seule fois. En
+        // leur absence, la couche les relit — elle ne dépend de personne.
+        const builtUp = builtUpAreas || collectBuiltUpAreas(source, tiles, this.bubble.frame);
+        buildRoadside(this, context, roadSegments, builtUp);
+        yield;
+        buildCrossings(this, context, junctions, roadIndex, builtUp);
+        yield;
+        buildJunctionSigns(this, context, areas, roadIndex, builtUp);
+        yield;
+        buildParcels(this, context, builtUp);
+        yield;
+        buildDomesticFauna(this, houses);
+        yield;
+        buildOpenPastureFauna(this, context, builtUp);
+        yield;
+        buildVillageLandmarks(this, context, builtUp);
+        yield;
+        buildPointsOfInterest(this, context, roadSegments, builtUp);
+        yield;
+        buildRocks(this, context, builtUp);
+        yield;
+        buildBiomeDebris(this, context, builtUp);
+        yield;
+        buildLandmarks(this, context, builtUp);
+        yield;
+        buildPeakLandmarks(this, context, builtUp);
+        yield;
+        buildCoastalLandmarks(this, context, builtUp);
+        yield;
+        buildRidgeTrees(this, context, builtUp);
+        yield;
+      } catch (e) {
+        // La pile complète, pas le seul message : cette exception avale tout ce
+        // qui restait à construire (voir le commentaire au-dessus), et sans
+        // elle il n'y a aucun moyen de savoir laquelle des étapes a jeté.
+        console.warn('[furniture] mobilier partiel', e?.stack || e?.message || e);
+      }
+
+      for (const kind of LINEAR_KINDS) this._applyLinear(kind, buffers[kind]);
+      for (const [item, list] of placements) this._applyInstances(item, list);
+      this._applyGlow();
+      this._applySignals();
+      this._applyLabels();
+
+      this._anchor = { x: here.x, z: here.z };
+      this._frame = this.bubble.frame;
+      return this.counts.points + this.counts.boundaries > 0;
+    } finally {
+      this._roadIndex = null;
+      this._areas = null;
+      this._fabric = null;
+      this._railIndex = null;
+      this._infraIndex = null;
+      this._places = null;
+      this._churches = null;
     }
-
-    for (const kind of LINEAR_KINDS) this._applyLinear(kind, buffers[kind]);
-    for (const [item, list] of placements) this._applyInstances(item, list);
-    this._applyGlow();
-    this._applySignals();
-    this._applyLabels();
-
-    this._anchor = { x: here.x, z: here.z };
-    this._frame = this.bubble.frame;
-    this._roadIndex = null;
-    this._areas = null;
-    this._fabric = null;
-    this._railIndex = null;
-    this._infraIndex = null;
-    this._places = null;
-    this._churches = null;
-    return this.counts.points + this.counts.boundaries > 0;
   }
 
   // --- Emprise routière ----------------------------------------------------

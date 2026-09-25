@@ -1,121 +1,18 @@
 /*
- * streetLayer — la voirie : caniveau, bordure, trottoir. Ce qui distingue une
- * route de campagne d'une rue de village n'est pas le revêtement, c'est la
- * bordure. Cette couche compose donc, le long des chaussées qui le méritent :
- *
- *     chaussée │ caniveau │ bordure │ trottoir │ jupe
- *              └ creux    └ marche  └ plat     └ enterré
- *
- * ## La bordure suit la rive, et la rive est une seule chose
- *
- * Cette section se pose sur la **rive de la chaussée** (`roadEdges`), et cette
- * rive n'est plus « l'axe du tronçon plus sa demi-largeur » : c'est la
- * frontière de la surface roulable, rubans et surfaces de carrefour réunis.
- * Trois conséquences, et ce sont elles le lot :
- *
- *   - une portion de bordure **finit exactement sur la bouche** du carrefour
- *     où son ruban s'arrête (`junctionBoundaryAt`), et non à la dernière ligne
- *     de ré-échantillonnage, cinq mètres avant ;
- *   - le **coin de rue** est bordé à son tour : chaque carrefour publie les
- *     morceaux de rive qu'il ajoute entre deux bouches (`area.edges`), et le
- *     trottoir y tourne au lieu de traverser la chaussée. C'est la seule façon
- *     qu'un trottoir ne ressemble pas à un ruban posé en travers d'un
- *     carrefour ;
- *   - le trottoir est **interrompu à chaque bouche**. Il n'y passe pas : c'est
- *     là que la traversée se peint.
- *
- * ## La traversée
- *
- * Elle se pose là où un trottoir arrive **des deux côtés** de la même bouche,
- * et nulle part ailleurs. Ce n'est pas un raffinement : c'est la seule
- * condition qui distingue une traversée d'un carrefour de campagne, et c'est
- * la raison pour laquelle elle est peinte ici plutôt qu'avec le reste du
- * marquage (`roadMarkings`, posé par `roadNetwork`). Une chaussée ne sait pas
- * ce qui la borde ; cette couche vient de le décider.
- *
- * La chaussée lui réserve sa profondeur à la bouche (`MOUTH_CROSSING_M`) et
- * pose sa ligne d'effet au-delà : les deux ne se recouvrent pas, et c'est
- * l'ordre réel d'un débouché — on cède le passage avant le passage piétons.
- *
- * ## La place disponible, et non plus un refus
- *
- * Le trottoir occupe ce qui reste entre la bordure et la chaussée d'en face
- * (`edgeClearance`). Une largeur, pas un booléen : là où deux voies se
- * longent, il se rétrécit, et il ne disparaît que s'il ne tient plus. Le
- * sondage `pavementOnOtherRoad`, qui refusait tout un trottoir dès que sa
- * bande la plus large touchait une autre chaussée, disait oui sur vingt-cinq
- * mètres autour de chaque carrefour et coupait donc le trottoir juste là où
- * on le regarde.
- *
- * ## Le vide entre deux voies qui se longent
- *
- * Cette couche pose aussi le **comblement** des entre-deux de faisceau
- * (`roadBundles`) : la bande de terrain de deux mètres qui reste entre une
- * départementale et la piste cyclable qui la double, entre une contre-allée et
- * sa rue, entre deux sens séparés. Elle est ici et pas dans `roadNetwork`
- * parce qu'elle vient **après** le trottoir : là où un trottoir tient, il vaut
- * mieux qu'un zébra, et un vide déjà revêtu n'est plus un vide.
- *
- * Le comblement se fait de deux façons, et la distinction est tout ce qui
- * séparait un boulevard lisible d'un tapis de hachures : entre deux chaussées
- * du **même profil** — les deux sens d'une même route — c'est une *couture*,
- * comblée en revêtement plein (`gapIsSeam`, `appendGapSurface`) ; partout
- * ailleurs c'est un îlot, hachuré comme un zébra. Le zébra dit « ne roulez pas
- * ici », ce qui est faux au milieu d'un boulevard, et ses hachures couvrent le
- * marquage.
- *
- * Elle n'attend pas d'être en bourg — un longement de piste cyclable laisse de
- * l'herbe au milieu du bitume en rase campagne comme ailleurs.
- *
- * Pas de trottoir sur simple `landuse=residential` (qui contient aussi prés
- * et chemins non bordés) : trois conditions tenues ensemble, ligne par ligne
- * et côté par côté — la chaussée s'y prête (desserte/traversée, pas voie
- * rapide/chemin/sentier), le périmètre l'autorise (emprise habitée), le bâti
- * le confirme (`FabricIndex`, pour distinguer une traversée de bourg de la
- * route qui longe le stade du même bourg). S'y ajoute : pas de trottoir sur
- * devers marqué (déjà un mur côté mobilier).
- *
- * Ces mêmes conditions sont posées **au coin de rue** comme le long d'un
- * tronçon, au milieu du morceau de rive : une seule règle, évaluée sur chaque
- * morceau de la frontière, quel que soit ce qui le porte.
- *
- * Chaque côté est jugé séparément sur un disque de bâti centré à 15 m de
- * l'axe : une rue bâtie d'un seul côté n'a de trottoir que de ce côté, et le
- * critère ne dépend que de coordonnées au sol (stable au découpage).
- *
- * ## Le rebord, et le sol qu'il borde
- *
- * Le dessus du trottoir n'est plus tiré du bourg comme le reste de la section,
- * et c'est le lot : en ville, le trottoir ne s'arrête pas à sa jupe arrière —
- * le **sol** continue, revêtu jusqu'aux façades (`groundClassMap`, couverture
- * `pavement`). La bordure ne borde donc plus un ruban posé sur de l'herbe, elle
- * borde le sol lui-même.
- *
- * D'où deux teintes de sources différentes, et il n'y a pas moyen de faire
- * autrement : le **rebord** (caniveau, face, nez, jupe) reste tiré du bourg,
- * comme la palette de ses maisons ; le **dessus** vient du pays
- * (`townStyle.pavementTone`), parce que c'est aussi la couleur du sol, et que
- * le sol est peint par un shader qui n'a qu'un albédo par couverture pour toute
- * la bulle. Une teinte de dessus tirée par bourg se lirait comme une frontière
- * au milieu de la ville, et surtout ne coïnciderait plus avec le sol qu'elle
- * prolonge.
- *
- * Hors ville, rien de tout cela ne change : le sol n'est pas revêtu, et le
- * trottoir est le ruban qu'il a toujours été.
- *
- * Le trottoir reçoit le `platform` du tronçon et le décollement exact de la
- * chaussée (`ROAD_LIFT_M`) : il ne peut pas diverger de la rue, même sur un
- * dos-d'âne ou un raccord de carrefour. Il reçoit aussi ses **repères**
- * (`pathFrames` du tronçon entier) : recalculés sur la portion, ils divergent
- * à ses deux bouts, et c'est cette divergence-là que six centimètres de
- * recouvrement du caniveau sur la chaussée cachaient. Le recouvrement est
- * parti, le décalage de profondeur qui l'arbitrait aussi : caniveau et bitume
- * partagent maintenant leurs sommets.
+ * streetLayer — bordures en béton et caniveaux des rues habitées.
+ * Le support porte tout le sol piéton : aucune dalle ni jupe ne le recouvre.
+ * Le béton a une section constante, son dessus suit le support ; le caniveau
+ * incliné rejoint la rive exacte de la chaussée, avec les repères du réseau.
+ * Les joints suivent les dalles ; une ligne sombre marque le pied du béton.
+ * En ville, le masque urbain suffit ; dans les villages, le bâti confirme
+ * chaque côté. Les bouches interrompent les bordures, les coins les prolongent.
+ * Les traversées lisent les deux rives ; les comblements lisent leur emprise.
  */
 import { appendProfile, createProfileBuffer, pathFrames, toColoredGeometry } from './ribbonGeometry.js';
+import { ajouterJointsVoirie } from './streetMasonry.js';
 import { ROAD_LIFT_M } from './roadNetwork.js';
 import { RoadIndex } from './roadGraph.js';
-import { contiguousRuns, crossSlope, randomAt, STEEP_CROSS_SLOPE } from './furniturePlacement.js';
+import { contiguousRuns, crossSlope, STEEP_CROSS_SLOPE } from './furniturePlacement.js';
 import { pointInAreas } from './settlement.js';
 import { edgeClearance, outwardSide, polylineLength } from './roadEdges.js';
 import { junctionBoundaryAt, outlineDeckAt } from './roadJunctions.js';
@@ -144,130 +41,48 @@ export const STREET_FABRIC_MIN = 2;
 /** Devers au-delà duquel la bordure deviendrait un mur de soutènement — le seuil du mobilier, repris tel quel. */
 export const STREET_MAX_CROSS_SLOPE = STEEP_CROSS_SLOPE;
 /**
- * Longueur minimale d'une portion de bordure, en mètres.
- *
- * Une **longueur**, et non plus un compte de lignes (`STREET_MIN_RUN`, cinq
- * lignes de cinq mètres). Le compte de lignes disait deux choses à la fois :
- * le pas de ré-échantillonnage de la chaussée et la longueur en deçà de
- * laquelle un morceau de trottoir n'en est pas un. Depuis que les carrefours
- * découpent les rives, un pâté de maisons entre deux croisements proches fait
- * légitimement moins de vingt-cinq mètres, et le compte de lignes l'effaçait.
- *
- * Douze mètres : la façade d'une maison. En deçà, ce n'est pas un trottoir,
- * c'est un reste de découpage.
- */
-export const STREET_MIN_LENGTH_M = 12;
-
-/**
  * Vrai si un côté de chaussée mérite sa bordure, à cet endroit.
  * @param {Object} context
  * @param {boolean} context.builtUp    La ligne est dans une emprise habitée.
+ * @param {boolean} context.urban      Le masque urbain autorise les deux rives.
  * @param {number} context.buildings   Bâtiments comptés du côté examiné.
  * @param {number} context.crossSlope  Pente en travers, sans dimension.
  * @returns {boolean}
  */
-export function kerbQualifies({ builtUp = false, buildings = 0, crossSlope = 0 } = {}) {
+export function kerbQualifies({ builtUp = false, urban = false, buildings = 0, crossSlope = 0 } = {}) {
+  if (urban) return true;
   if (!builtUp) return false;
   if (buildings < STREET_FABRIC_MIN) return false;
   return Math.abs(crossSlope) <= STREET_MAX_CROSS_SLOPE;
 }
 
-/** Largeur du trottoir en un point, en mètres (tirée du lieu, stable d'une reconstruction à l'autre). */
-export function walkWidthAt(x, z, streets = defaultTheme.streets) {
-  const [min, max] = streets.walkWidth;
-  return min + randomAt(x, z, 197) * (max - min);
-}
-
-/**
- * Section d'une rue, d'un côté, en mètres dans le repère (travers, hauteur).
- * `up` se compte depuis la surface de la chaussée (zéro = bitume), pas le
- * terrain. `side` vaut +1 à gauche de la marche, -1 à droite (sommets émis en
- * ordre inverse à droite, pour garder le même sens de rotation).
- *
- * @param {Object} options
- * @param {number} options.halfWidth  Demi-largeur de la chaussée.
- * @param {number} options.walkWidth  Largeur du trottoir.
- * @param {number} options.side       +1 ou -1.
- * @param {Object} options.tones      Retour de `streetSurfaceAt`.
- * @param {Object} [streets]          Tranche `theme.streets`.
- * @returns {Array<{across:number, up:number, color:number[]}>}
- */
-export function kerbProfile({ halfWidth, walkWidth, side, tones }, streets = defaultTheme.streets) {
-  const { gutterWidth, gutterDepth, kerbHeight, kerbNose, walkFall, skirtWidth, skirtDepth } = streets;
-
-  // Fil d'eau plus sombre que la bordure (là où l'eau et la terre s'accumulent).
-  const gutterEdge = tones.gutter.map((c, i) => c * 0.5 + tones.kerb[i] * 0.12);
-  // Face de bordure plus sombre que son dessus, sinon la marche disparaît sous un soleil haut.
-  const kerbFace = tones.kerb.map((c) => c * 0.78);
-
-  // La rive, exactement. Le caniveau mordait jusqu'ici six centimètres sur la
-  // chaussée, et un décalage de profondeur arbitrait le recouvrement ; les
-  // deux ne servaient qu'à cacher la fente que faisaient des repères de
-  // balayage recalculés sur la portion. Les repères sont maintenant ceux du
-  // tronçon, les sommets sont partagés, et il n'y a plus rien à cacher.
-  const foot = halfWidth;
-  const lip = halfWidth + gutterWidth;
-
+/** Section du caniveau et du béton ; les hauteurs sont relatives au support. */
+export function kerbProfile({ halfWidth, side, tones }, streets = defaultTheme.streets) {
+  const lip = halfWidth + streets.gutterWidth;
+  const outer = lip + streets.kerbWidth;
   const section = [
-    // Le recouvrement de la chaussée, au ras du bitume.
-    { across: foot, up: -0.004, color: tones.gutter },
-    // Le fil d'eau.
-    { across: halfWidth + gutterWidth * 0.55, up: -gutterDepth, color: gutterEdge },
-    // Le pied de bordure.
-    { across: lip, up: -0.008, color: tones.gutter },
-    // La face de bordure, verticale : c'est elle qui porte l'ombre.
-    { across: lip, up: kerbHeight, color: kerbFace },
-    // Le nez, chanfreiné.
-    { across: lip + kerbNose, up: kerbHeight + 0.004, color: tones.kerb },
-    // Le dessus du trottoir, en contre-pente vers le caniveau.
-    { across: lip + kerbNose + walkWidth, up: kerbHeight + 0.004 + walkFall, color: tones.walk },
-    // La jupe arrière, enterrée : un bord de trottoir en l'air se voit de loin.
-    { across: lip + kerbNose + walkWidth + skirtWidth, up: -skirtDepth, color: tones.joint },
+    { across: halfWidth, up: 0, color: tones.gutter },
+    { across: lip - Math.min(streets.contactWidth || 0, streets.gutterWidth), up: 0, color: tones.gutter },
+    { across: lip - Math.min(streets.contactWidth || 0, streets.gutterWidth), up: 0, color: tones.joint },
+    { across: lip, up: 0, color: tones.joint },
+    { across: lip, up: 0, color: tones.kerb },
+    { across: outer, up: 0, color: tones.kerb },
+    { across: outer, up: -streets.kerbHeight, color: tones.kerb },
+    { across: lip, up: -streets.kerbHeight, color: tones.kerb },
   ];
-
   const signed = section.map((vertex) => ({ ...vertex, across: vertex.across * side }));
   return side >= 0 ? signed : signed.reverse();
 }
 
-/**
- * Hauteur du dessus du trottoir au-dessus de la chaussée, côté mur (avant la
- * contre-pente vers le caniveau) — voir `kerbProfile`. Sert à poser dessus ce
- * qui n'est pas la voirie elle-même (mobilier de terrasse), sans dupliquer la
- * section en dur.
- */
-export function walkTopRise(streets = defaultTheme.streets) {
-  return streets.kerbHeight + 0.004 + streets.walkFall;
+/** Seuls le caniveau et le béton excluent les plantes et les clôtures. */
+export function pavementBand({ halfWidth, side }, streets = defaultTheme.streets) {
+  const width = streets.gutterWidth + streets.kerbWidth;
+  return { offset: side * (halfWidth + width / 2), halfWidth: width / 2 };
 }
 
-/** Décalage et demi-largeur de la bande revêtue, pour l'index publié (l'herbe ne pousse pas au travers du trottoir). */
-export function pavementBand({ halfWidth, walkWidth, side }, streets = defaultTheme.streets) {
-  const inner = halfWidth;
-  const outer = halfWidth + streets.gutterWidth + streets.kerbNose + walkWidth;
-  return { offset: side * ((inner + outer) / 2), halfWidth: (outer - inner) / 2 };
-}
-
-/**
- * Largeur de trottoir qui tient dans la place disponible, en mètres, ou zéro.
- *
- * `room` est la place libre au-delà de la rive (`edgeClearance`). Le caniveau,
- * le nez de bordure et la jupe arrière la prennent d'abord : ce sont des cotes
- * de la section, elles ne se négocient pas. Ce qui reste est le trottoir, et
- * il est plafonné à ce que le lieu voulait lui donner.
- *
- * La jupe compte comme une marge : enterrée, elle peut passer sous
- * l'accotement d'en face, mais lui laisser sa largeur évite qu'un trottoir
- * meure à ras du bitume voisin.
- *
- * @param {number} room     Place libre au-delà de la rive, en mètres.
- * @param {number} wanted   Largeur voulue par le lieu (`walkWidthAt`).
- * @param {Object} [streets] Tranche `theme.streets`.
- * @returns {number} zéro si le trottoir le plus étroit du thème n'y tient pas.
- */
-export function walkWidthFor(room, wanted, streets = defaultTheme.streets) {
-  const fixed = streets.gutterWidth + streets.kerbNose + streets.skirtWidth;
-  const available = room - fixed;
-  if (!(available >= streets.walkWidth[0])) return 0;
-  return Math.min(wanted, available);
+/** La section en béton ne se rétrécit pas entre deux chaussées. */
+export function kerbFits(room, streets = defaultTheme.streets) {
+  return room >= streets.gutterWidth + streets.kerbWidth;
 }
 
 export class StreetLayer {
@@ -297,11 +112,7 @@ export class StreetLayer {
 
     this.material = new THREE.MeshLambertMaterial({
       vertexColors: true,
-      // Le décalage de profondeur ne sert plus à arbitrer un recouvrement de
-      // six centimètres du caniveau sur la chaussée — il n'y en a plus, les
-      // deux partagent leurs sommets. Il protège le **comblement**, qui est
-      // posé au ras du sol entre deux rives, comme la chaussée elle-même :
-      // mêmes valeurs qu'elle, pour que les deux se tiennent pareil.
+      // Les comblements partagent le décalage de profondeur des chaussées.
       polygonOffset: true,
       polygonOffsetFactor: -2,
       polygonOffsetUnits: -4,
@@ -338,15 +149,13 @@ export class StreetLayer {
    * @param {Object} [context.areas] `JunctionAreas` : les surfaces de
    *        carrefour, qui arrêtent les rives de tronçon et fournissent les
    *        coins de rue.
-   * @param {string|null} [context.matrix] Matrice de paysage : elle décide du
-   *        **dessus** du trottoir, qui est celui du sol de la ville
-   *        (`townStyle.pavementTone`). Le rebord, lui, reste tiré du bourg.
+   * @param {Object} [context.urban] Masque urbain publié par la composition.
    * @returns {boolean} vrai si de la voirie a été posée.
    */
   rebuild(
     roadSegments = [],
     here = { x: 0, z: 0 },
-    { builtUp = [], fabric = null, roadIndex = null, areas = null, matrix = null } = {}
+    { builtUp = [], fabric = null, roadIndex = null, areas = null, urban = null } = {}
   ) {
     if (this.disposed || !this.bubble?.frame) return false;
 
@@ -358,9 +167,9 @@ export class StreetLayer {
     const mouths = new Map();
     let built = 0;
 
-    // Sans emprise habitée ni bâti relevé, la couche ne pose rien.
-    if (builtUp.length > 0 && fabric && fabric.count > 0) {
-      const context = { here, builtUp, fabric, roadIndex, areas, mouths, matrix };
+    // Le masque urbain reste utilisable même si le relevé du bâti est incomplet.
+    if (builtUp.length > 0 || urban?.any) {
+      const context = { here, builtUp, fabric, roadIndex, areas, mouths, urban };
       for (const segment of roadSegments) {
         if (!STREET_PROFILES.has(segment.profile)) continue;
         built += this._buildSegment(buffer, bands, segment, context);
@@ -448,7 +257,7 @@ export class StreetLayer {
   }
 
   /** Les deux côtés d'un tronçon. @returns {number} portions posées. */
-  _buildSegment(buffer, bands, segment, { here, builtUp, fabric, roadIndex, areas, mouths, matrix }) {
+  _buildSegment(buffer, bands, segment, { here, builtUp, fabric, roadIndex, areas, mouths, urban }) {
     const { path, platform, edges, probeSpan, halfWidth } = segment;
     const rows = path.length;
     if (rows < 2 || !platform || !edges) return 0;
@@ -473,6 +282,7 @@ export class StreetLayer {
         // surface commune qui borde, et son coin de rue qui sera bordé.
         inJunction: junction ? junction[r] >= 0 : false,
         builtUp: inReach && pointInAreas(builtUp, point.x, point.z),
+        urban: inReach && !!urban?.covers(point.x, point.z),
         slope: inReach ? crossSlope(edges[r * 2], edges[r * 2 + 1], probeSpan).slope : 0,
       });
     }
@@ -480,7 +290,7 @@ export class StreetLayer {
     for (const side of [1, -1]) {
       // Place libre au-delà de la rive, ligne par ligne : mesurée une fois,
       // relue par la qualification et par la largeur du trottoir.
-      const room = new Float32Array(rows).fill(-1);
+      const room = new Float64Array(rows).fill(-1);
       const roomAt = (row) => {
         if (room[row.r] >= 0) return room[row.r];
         const px = frames[row.r * 4 + 2];
@@ -498,31 +308,32 @@ export class StreetLayer {
       };
 
       const qualifies = (row) => {
-        if (!row.inReach || !row.builtUp || row.inJunction) return false;
-        if (Math.abs(row.slope) > STREET_MAX_CROSS_SLOPE) return false;
+        if (!row.inReach || (!row.builtUp && !row.urban) || row.inJunction || segment.works?.[row.r]) return false;
+        if (!row.urban && Math.abs(row.slope) > STREET_MAX_CROSS_SLOPE) return false;
 
         const px = frames[row.r * 4 + 2];
         const pz = frames[row.r * 4 + 3];
-        // Il faut d'abord que le trottoir le plus étroit du thème y tienne.
-        if (walkWidthFor(roomAt(row), streets.walkWidth[1], streets) <= 0) return false;
+        // Le caniveau et la bordure doivent tenir ensemble.
+        if (!kerbFits(roomAt(row), streets)) return false;
 
         // Disque de lecture du bâti, posé du côté examiné.
         const reach = side * (halfWidth + STREET_PROBE_M);
         return kerbQualifies({
-          builtUp: true,
-          buildings: fabric.countWithin(
+          builtUp: row.builtUp,
+          urban: row.urban,
+          buildings: fabric?.countWithin(
             row.x + px * reach,
             row.z + pz * reach,
             STREET_FABRIC_RADIUS_M,
             STREET_FABRIC_MIN
-          ),
+          ) ?? 0,
           crossSlope: row.slope,
         });
       };
 
       for (const run of contiguousRuns(shared, qualifies, 1)) {
         const rail = this._railFor(segment, run, areas);
-        if (polylineLength(rail.points) < STREET_MIN_LENGTH_M) continue;
+        if (polylineLength(rail.points) <= 0) continue;
         if (mouths) StreetLayer._noteMouths(mouths, segment, run, side, areas);
         // La largeur tient au point le plus à l'étroit de la portion : une
         // section constante ne peut pas déborder ailleurs qu'à son minimum.
@@ -537,7 +348,6 @@ export class StreetLayer {
           halfWidth,
           room: narrowest,
           streets,
-          matrix,
         });
         built++;
       }
@@ -564,18 +374,18 @@ export class StreetLayer {
 
     const head = areas ? junctionBoundaryAt(segment, areas, first, first - 1) : null;
     if (head) {
-      points.push({ x: head.point.x, z: head.point.z });
+      points.push({ ...head.point, distance: head.point.distance + (segment.startDistance || 0) });
       decks.push(head.deck);
       rows.push(first);
     }
     for (const row of run) {
-      points.push({ x: path[row.r].x, z: path[row.r].z });
+      points.push({ ...path[row.r], distance: path[row.r].distance + (segment.startDistance || 0) });
       decks.push(platform[row.r]);
       rows.push(row.r);
     }
     const tail = areas ? junctionBoundaryAt(segment, areas, last, last + 1) : null;
     if (tail) {
-      points.push({ x: tail.point.x, z: tail.point.z });
+      points.push({ ...tail.point, distance: tail.point.distance + (segment.startDistance || 0) });
       decks.push(tail.deck);
       rows.push(last);
     }
@@ -692,16 +502,12 @@ export class StreetLayer {
    * Les coins de rue : les morceaux de rive qu'un carrefour ajoute entre deux
    * bouches consécutives.
    *
-   * Mêmes conditions qu'ailleurs (bourg, bâti, place disponible), posées au
-   * milieu du morceau — une seule règle, évaluée sur chaque morceau de la
-   * frontière de la chaussée, quel que soit ce qui le porte. Le devers n'y est
-   * pas mesuré : un carrefour n'a pas de pente en travers à lui, il tient ses
-   * cotes des bouches qui le bordent — d'où une bordure dressée sommet par
-   * sommet, sur les mêmes cotes que la dalle.
+   * Même qualification que les tronçons. Le caniveau lit les cotes de la
+   * dalle sommet par sommet ; le béton lit celles du support.
    *
    * @returns {number} coins posés.
    */
-  _buildCorners(buffer, bands, { here, builtUp, fabric, roadIndex, areas, matrix }) {
+  _buildCorners(buffer, bands, { here, builtUp, fabric, roadIndex, areas, urban }) {
     if (!areas || areas.length === 0) return 0;
     const streets = this.theme.streets;
     let built = 0;
@@ -717,12 +523,12 @@ export class StreetLayer {
         const points = edge.points;
         if (!Array.isArray(points) || points.length < 2) continue;
         const mid = points[Math.floor(points.length / 2)];
-        if (!pointInAreas(builtUp, mid.x, mid.z)) continue;
+        const inTown = !!urban?.covers(mid.x, mid.z);
+        if (!inTown && !pointInAreas(builtUp, mid.x, mid.z)) continue;
 
-        const probe = streets.gutterWidth + streets.kerbNose;
         const room = edgeClearance(
-          mid.x + edge.outward.x * probe,
-          mid.z + edge.outward.z * probe,
+          mid.x,
+          mid.z,
           {
             roadIndex,
             areas,
@@ -733,17 +539,15 @@ export class StreetLayer {
             ignoreArea: (other) => other === index,
           }
         );
-        const wanted = walkWidthAt(mid.x, mid.z, streets);
-        const walkWidth = walkWidthFor(room, wanted, streets);
-        if (walkWidth <= 0) continue;
+        if (!kerbFits(room, streets)) continue;
 
-        const buildings = fabric.countWithin(
+        const buildings = fabric?.countWithin(
           mid.x + edge.outward.x * STREET_PROBE_M,
           mid.z + edge.outward.z * STREET_PROBE_M,
           STREET_FABRIC_RADIUS_M,
           STREET_FABRIC_MIN
-        );
-        if (!kerbQualifies({ builtUp: true, buildings, crossSlope: 0 })) continue;
+        ) ?? 0;
+        if (!kerbQualifies({ builtUp: true, urban: inTown, buildings, crossSlope: 0 })) continue;
 
         const side = outwardSide(points, edge.outward);
         // Sommet par sommet, comme la dalle : sur un versant, un coin de rue
@@ -765,8 +569,6 @@ export class StreetLayer {
           halfWidth: 0,
           room,
           streets,
-          walkWidth,
-          matrix,
         });
         built++;
       }
@@ -775,32 +577,44 @@ export class StreetLayer {
     return built;
   }
 
-  /** Une portion continue de bordure et son trottoir. */
-  _appendKerb(
-    buffer,
-    bands,
-    { points, decks, frames, side, halfWidth, room, streets, walkWidth = null, matrix = null }
-  ) {
-    // Largeur et revêtement tirés au premier point de la portion (ancrés au
-    // sol) puis ramenés à ce qui tient dans la place disponible.
+  /** Le caniveau relie la chaussée au support, le béton reste affleurant. */
+  _appendKerb(buffer, bands, { points, decks, frames, side, halfWidth, room, streets }) {
+    if (!kerbFits(room, streets)) return;
     const anchor = points[0];
-    const width = walkWidth ?? walkWidthFor(room, walkWidthAt(anchor.x, anchor.z, streets), streets);
-    if (width <= 0) return;
-    const tones = streetSurfaceAt(anchor.x, anchor.z, streets, matrix);
-
-    appendProfile(buffer, {
-      path: points,
-      profile: kerbProfile({ halfWidth, walkWidth: width, side, tones }, streets),
-      sampleElevation: null,
-      baseHeights: decks,
-      lift: ROAD_LIFT_M,
-      frames,
-      // Déjà lissée par `collectRoadSegments` : relisser arrondirait la bordure aux carrefours.
-      smoothRadius: 0,
-    });
-
-    const band = pavementBand({ halfWidth, walkWidth: width, side }, streets);
+    const tones = streetSurfaceAt(anchor.x, anchor.z, streets);
+    const profile = kerbProfile({ halfWidth, side, tones }, streets);
     const used = frames || pathFrames(points);
+    const start = buffer.positions.length;
+    appendProfile(buffer, {
+      path: points, profile, baseHeights: decks, lift: 0,
+      frames: used, smoothRadius: 0,
+    });
+    for (let r = 0; r < points.length; r++) {
+      const pied = side * (halfWidth + streets.gutterWidth);
+      const supportPied = this.bubble.surfaceElevationAtLocal(
+        points[r].x + used[r * 4 + 2] * pied,
+        points[r].z + used[r * 4 + 3] * pied
+      ) * this.bubble.verticalScale + 0.003;
+      for (let c = 0; c < profile.length; c++) {
+        const at = start + (r * profile.length + c) * 3;
+        const vertex = profile[c];
+        const largeur = Math.abs(vertex.across) - halfWidth;
+        if (largeur <= streets.gutterWidth && vertex.up === 0) {
+          const t = largeur / streets.gutterWidth;
+          buffer.positions[at + 1] = (decks[r] + ROAD_LIFT_M) * (1 - t) + supportPied * t;
+        } else {
+          const ground = this.bubble.surfaceElevationAtLocal(
+            buffer.positions[at], buffer.positions[at + 2]
+          ) * this.bubble.verticalScale;
+          // Décollement millimétrique pour éviter la concurrence avec le support.
+          buffer.positions[at + 1] = ground + 0.003 + vertex.up;
+        }
+      }
+    }
+    ajouterJointsVoirie(buffer, {
+      debut: start, points, profil: profile, demiLargeur: halfWidth, style: streets, couleur: tones.joint,
+    });
+    const band = pavementBand({ halfWidth, side }, streets);
     bands.push({
       path: points.map((point, i) => ({
         x: point.x + used[i * 4 + 2] * band.offset,

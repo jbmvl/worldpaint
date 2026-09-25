@@ -1,5 +1,7 @@
 /* Les fleurs restent une strate distincte : leur couleur ne dépend pas de
- * celle du tapis d'herbe. Elles reprennent ses placements et ses exclusions. */
+ * celle du tapis d'herbe. Elles reprennent ses placements et ses exclusions,
+ * en conservant les instances des mailles communes à deux fenêtres. */
+import { ResidentInstances } from './residentInstances.js';
 import { Kit } from '../models/kit.js';
 import { createFoliageMaterial, advanceFoliageWind, setFoliageWind } from '../materials/foliageMaterial.js';
 import { COVER_ATTRIBUTE, installCoverTransition } from '../materials/coverTransition.js';
@@ -7,6 +9,7 @@ const CAPACITY = 8192;
 export class FlowerCover {
   constructor(THREE, scene, look) {
     this.scene = scene;
+    this.residents = [];
     this.material = createFoliageMaterial({ THREE, map: null, wind: true, windStrength: .1, cacheKey: 'flowers-v1' });
     installCoverTransition(this.material, THREE, { mode: 'alpha' });
     this.meshes = look.petals.map((color, variant) => {
@@ -30,22 +33,33 @@ export class FlowerCover {
       const mesh = new THREE.InstancedMesh(geometry, this.material, CAPACITY);
       mesh.count = 0; mesh.frustumCulled = false; mesh.receiveShadow = true;
       scene.add(mesh);
+      this.residents.push(new ResidentInstances([mesh.instanceMatrix, geometry.attributes[COVER_ATTRIBUTE]]));
       return mesh;
     });
   }
-  sync(source, variants, bands) {
-    for (const mesh of this.meshes) mesh.count = 0;
-    for (let i = 0; i < source.count; i++) {
-      const mesh = this.meshes[variants[i] - 1];
-      if (!mesh || mesh.count >= CAPACITY) continue;
-      mesh.instanceMatrix.array.set(source.instanceMatrix.array.subarray(i * 16, i * 16 + 16), mesh.count * 16);
-      for (const column of [0, 2]) for (let row=0; row<3; row++) mesh.instanceMatrix.array[mesh.count*16+column*4+row] *= .5;
-      mesh.geometry.attributes[COVER_ATTRIBUTE].array.set(bands.subarray(i * 4, i * 4 + 4), mesh.count * 4);
-      mesh.count++;
+  syncCells(cells) {
+    const wanted = this.meshes.map(() => []);
+    for (const cell of cells) {
+      if (!cell.flowers) {
+        cell.flowers = [];
+        for (let i = 0; i < cell.count; i++) {
+          const variant = cell.data[4][i] - 1;
+          if (this.meshes[variant]) cell.flowers.push({ cell, index: i, variant });
+        }
+      }
+      for (const flower of cell.flowers) {
+        const list = wanted[flower.variant];
+        if (list.length < CAPACITY) list.push(flower);
+      }
     }
-    for (const mesh of this.meshes) {
-      mesh.instanceMatrix.needsUpdate = true;
-      mesh.geometry.attributes[COVER_ATTRIBUTE].needsUpdate = true;
+    for (let variant = 0; variant < this.meshes.length; variant++) {
+      const mesh = this.meshes[variant];
+      mesh.count = this.residents[variant].sync(wanted[variant], ({ cell, index }, slot) => {
+        const matrix = mesh.instanceMatrix.array;
+        matrix.set(cell.data[0].subarray(index * 16, (index + 1) * 16), slot * 16);
+        for (const column of [0, 2]) for (let row = 0; row < 3; row++) matrix[slot * 16 + column * 4 + row] *= .5;
+        mesh.geometry.attributes[COVER_ATTRIBUTE].array.set(cell.data[2].subarray(index * 4, (index + 1) * 4), slot * 4);
+      });
     }
   }
   update(x, z) { this.material.userData.coverObserver.value.set(x, z); }
@@ -54,5 +68,6 @@ export class FlowerCover {
   dispose() {
     for (const mesh of this.meshes) { this.scene.remove(mesh); mesh.geometry.dispose(); mesh.dispose(); }
     this.material.dispose();
+    for (const resident of this.residents) resident.clear();
   }
 }

@@ -1,3 +1,5 @@
+import { GenerationBudget } from './core/generationBudget.js';
+import { PlantSupportAtlas } from './terrain/plantSupportAtlas.js';
 import { GenerationMetrics } from './inspect/generationMetrics.js';
 /*
  * worldComposer — l'orchestrateur du décor. Toutes les couches dépendent les
@@ -38,6 +40,9 @@ import { GenerationMetrics } from './inspect/generationMetrics.js';
  * jouer. C'est la seule façon d'avoir du mouvement dans un décor par ailleurs
  * entièrement figé sans payer une reconstruction par image.
  *
+ * La génération rend la main entre les étapes après son budget CPU. Les
+ * couches sont publiées progressivement dans cet ordre ; les semis par image
+ * attendent la fin pour ne pas lire des emprises en cours de reconstruction.
  * Une couche qui manque ne casse rien : elle se contente de ne rien poser.
  *
  * ## Le profil de paysage
@@ -234,6 +239,8 @@ export class WorldComposer {
     });
     this.vegetation.setMaxAnisotropy(maxAnisotropy);
     this.grass = new GroundCover({
+      terrainSupport: THREE.DataTexture && bubble.materials.grainUniforms
+        ? new PlantSupportAtlas(THREE, bubble.materials.grainUniforms) : null,
       THREE,
       scene,
       bubble,
@@ -282,6 +289,13 @@ export class WorldComposer {
       [this.furniture,'rebuild','mobilier'], [this.groundClass,'rebuild','carteSol'],
       [this.vegetation,'_build','forets'], [this.grass,'_scatter','herbe'],
       [this.crops,'_scatter','cultures'], [this.fauna,'advance','animationFaune'],
+      [this.vegetation.volumes,'update','volumesArbres'],
+      [this.grass.terrainSupport,'sync','appuiPlantes'],
+      [this.grass.terrainSupport,'prepare','preparationAppuisGPU'],
+      [this.grass._resident,'sync','instancesHerbe'], [this.grass.flowers,'syncCells','fleurs'],
+      [this.vegetation,'_scatterThicket','sousEtage'],
+      [this.bridges,'rebuild','ponts'], [this.railways,'rebuild','rails'],
+      [this.streets,'rebuild','rues'], [this.gardens,'rebuild','jardins'],
     ]) this.metrics.watch(object,method,label);
   }
 
@@ -315,6 +329,7 @@ export class WorldComposer {
 
   /** Déplace la bulle de terrain. @returns {Promise<boolean>} vrai si elle a bougé. */
   setCenter(lng, lat) {
+    if (this._refreshTask) return this._refreshTask.then(() => this.bubble.setCenter(lng, lat));
     return this.bubble.setCenter(lng, lat);
   }
 
@@ -328,7 +343,14 @@ export class WorldComposer {
    *        changement d'observateur).
    * @returns {Promise<boolean>} vrai si une reconstruction a eu lieu.
    */
-  async refresh(lng, lat, { force = false } = {}) {
+  async refresh(lng, lat, options = {}) {
+    if (this._refreshTask) return false;
+    const task = this._refresh(lng, lat, options);
+    this._refreshTask = task;
+    try { return await task; } finally { this._refreshTask = null; }
+  }
+
+  async _refresh(lng, lat, { force = false } = {}) {
     if (this.disposed || this._refreshing || !this.vectorTiles || !this.bubble.frame) return false;
 
     const here = this.bubble.frame.toLocal(lng, lat);
@@ -359,26 +381,57 @@ export class WorldComposer {
     // La végétation suit les tuiles de la bulle, pas le vectoriel : se resynchronise même sans autre changement.
     this.vegetation.sync();
 
+    force ||= this._incompleteRefresh === true;
     const classStale = this.groundClass.needsRebuild(here.x, here.z, this.bubble.frame);
-    const stale =
-      classStale ||
-      // Changer de pays change ce qu'il y a à poser, pas seulement où : le
-      // décor est aussi périmé que s'il avait glissé de deux cent cinquante
-      // mètres.
-      regionChanged ||
-      this.roads.needsRebuild(here.x, here.z) ||
-      this.buildings.needsRebuild(here.x, here.z) ||
-      this.railways.needsRebuild(here.x, here.z) ||
-      this.cliffs.needsRebuild(here.x, here.z) ||
-      this.furniture.needsRebuild(here.x, here.z) ||
-      // Une tuile absente du cache a échoué : il faut réessayer, sinon un incident réseau laisse un trou de décor.
-      this.vectorTiles.missing(wanted) > 0;
-    if (!force && !stale) return false;
+    const roadStale = this.roads.needsRebuild(here.x, here.z);
+    const buildingStale = this.buildings.needsRebuild(here.x, here.z);
+    const railwayStale = this.railways.needsRebuild(here.x, here.z);
+    const cliffStale = this.cliffs.needsRebuild(here.x, here.z);
+    const furnitureStale = this.furniture.needsRebuild(here.x, here.z);
+    const stale = classStale || regionChanged || roadStale || buildingStale ||
+      railwayStale || cliffStale || furnitureStale;
+    if (!force && !stale && this.vectorTiles.missing(wanted) === 0) return false;
 
     this._refreshing = true;
     try {
-      await Promise.all(wanted.map((t) => this.vectorTiles.load(t.x, t.y, undefined)));
+      const entries = await Promise.all(wanted.map((t) => this.vectorTiles.load(t.x, t.y, undefined)));
+      const dataChanged = !this._vectorSnapshot || wanted.length !== this._vectorSnapshot.length ||
+        wanted.some((t, i) => {
+          const previous = this._vectorSnapshot[i];
+          return !previous || previous.x !== t.x || previous.y !== t.y || previous.entry !== entries[i];
+        });
+      if (!force && !stale && !dataChanged) return false;
       if (this.disposed || this.bubble.disposed) return false;
+      this._incompleteRefresh = true;
+      this._building = true;
+      const budget = new GenerationBudget();
+      const frame = this.bubble.frame;
+      const checkpoint = async () => {
+        await budget.checkpoint();
+        return !this.disposed && !this.bubble.disposed && this.bubble.frame === frame;
+      };
+      const rebuild = async (layer, label, ...args) => {
+        if (!layer.rebuildSteps) { layer.rebuild(...args); return true; }
+        const steps = layer.rebuildSteps(...args);
+        let cpu = 0;
+        try {
+          while (true) {
+            const measured = this.metrics?.enabled;
+            const start = measured ? performance.now() : 0;
+            const result = steps.next();
+            if (measured) {
+              const ms = performance.now() - start;
+              cpu += ms;
+              this.metrics.record(`${label}Etape`, ms);
+            }
+            if (result.done) return true;
+            if (!await checkpoint()) return false;
+          }
+        } finally {
+          steps.return?.();
+          this.metrics?.record(label, cpu);
+        }
+      };
 
       // 0. « Sommes-nous en ville ? » — avant tout le monde, parce que la carte
       //    du sol y peint son trottoir et que les chaussées en dépendent (voies
@@ -387,64 +440,88 @@ export class WorldComposer {
       //    question chacun de leur côté.
       const { builtUp, places, urban } = readSettlement(this.vectorTiles, wanted, this.bubble.frame);
 
+      if (!await checkpoint()) return false;
+
       // 0 bis. Falaises — avant tout le monde. Elles façonnent le relief
       //    naturel que les chaussées entailleront ensuite (une route taillée
       //    dans la rampe que la marche supprime se retrouverait en l'air), et
       //    la carte du sol a besoin de leurs bandes pour y peindre la roche.
-      const cliffsChanged = this.cliffs.needsRebuild(here.x, here.z) || force;
+      const cliffsChanged = cliffStale || dataChanged || force;
+      const classesChanged = classStale || regionChanged || cliffsChanged || dataChanged || force;
+      const roadsChanged = roadStale || classesChanged;
+      const railwaysChanged = railwayStale || roadsChanged;
+      const buildingsChanged = buildingStale || roadsChanged;
+      const streetsChanged = roadsChanged || buildingsChanged;
+      const furnitureChanged = furnitureStale || streetsChanged || railwaysChanged;
       if (cliffsChanged) this.cliffs.rebuild(this.vectorTiles, wanted, here);
+
+      if (!await checkpoint()) return false;
 
       // 1. Occupation du sol — tout le reste la lit. Rasterisation coûteuse : refaite seulement si elle a glissé.
       const wasReady = this.groundClass.ready;
       // La région repeint la carte au même titre qu'un glissement : ce qui y
       // était semé l'a été avec l'assolement d'une autre région.
-      if (classStale || regionChanged || force) {
+      if (classesChanged) {
         this.groundClass.rebuild(this.vectorTiles, wanted, here, this.bubble.frame, { urban });
         this.bubble.materials.syncGroundClass();
       }
       const classArrived = !wasReady && this.groundClass.ready;
 
+      if (!await checkpoint()) return false;
+
       // 2. Chaussées — publient l'index et déclenchent le déblai du terrain.
       //    L'occupation du sol leur est passée : une travée doit sortir de
       //    l'eau qu'elle franchit (voir `roadWorks.levelWorkSpans`).
-      const hasRoads = this.roads.rebuild(this.vectorTiles, wanted, here, {
+      if (roadsChanged && !await rebuild(this.roads, 'routes', this.vectorTiles, wanted, here, {
         groundClass: this.groundClass,
         urban,
-      });
+      })) return false;
+
+      if (!await checkpoint()) return false;
 
       // 2 bis. Ouvrages d'art — après les chaussées, dont ils habillent les
       //    travées et les têtes de tunnel.
-      this.bridges.rebuild(this.roads.roadSegments, here);
-      this.bubble.materials.setTunnelMouths?.(this.bridges.tunnelMouths ?? []);
+      if (roadsChanged) {
+        this.bridges.rebuild(this.roads.roadSegments, here);
+        this.bubble.materials.setTunnelMouths?.(this.bridges.tunnelMouths ?? []);
+      }
+
+      if (!await checkpoint()) return false;
 
       // 2 ter. Voie ferrée — ne dépend de rien, ne publie rien.
-      this.railways.rebuild(this.vectorTiles, wanted, here);
+      if (railwaysChanged) this.railways.rebuild(this.vectorTiles, wanted, here);
+
+      if (!await checkpoint()) return false;
 
       // 4. Bâti — après les chaussées, dont l'emprise rabote ce qu'une
       //    empreinte pose sur la voie (la donnée en pose : le tracé de la route
       //    et le contour du bâti viennent de deux relevés différents).
-      this.buildings.rebuild(this.vectorTiles, wanted, here, { roadIndex: this.roads.index, builtUp });
+      if (buildingsChanged && !await rebuild(this.buildings, 'batiments', this.vectorTiles, wanted, here, { roadIndex: this.roads.index, builtUp })) return false;
+
+      if (!await checkpoint()) return false;
 
       // 4 bis. Voirie — après chaussées et bâti.
-      const fabric = new FabricIndex(this.buildings.footprints);
-      this.streets.rebuild(this.roads.roadSegments, here, {
+      const fabric = streetsChanged || furnitureChanged ? new FabricIndex(this.buildings.footprints) : null;
+      if (streetsChanged) this.streets.rebuild(this.roads.roadSegments, here, {
         builtUp,
         fabric,
-        // Le dessus du trottoir est celui du sol de la ville, et le sol tire sa
-        // teinte du pays : les deux doivent lire la même (`pavementTone`).
-        matrix: region?.matrix ?? null,
+        urban,
         roadIndex: this.roads.index,
         // Les surfaces de carrefour : elles arrêtent les rives de tronçon et
         // portent les coins de rue.
         areas: this.roads.junctionAreas,
       });
 
+      if (!await checkpoint()) return false;
+
       // 4 ter. Jardins — après le bâti (maisons) et la voirie (bande revêtue).
-      this.gardens.rebuild(this.buildings.houses, here, this.streets.index);
+      if (streetsChanged) this.gardens.rebuild(this.buildings.houses, here, this.streets.index);
+
+      if (!await checkpoint()) return false;
 
       // 5. Mobilier — tronçons et index des chaussées, compte de bâtiments
       //    (`fabric`), emprise ferroviaire, lieux nommés (`places`).
-      this.furniture.rebuild(
+      if (furnitureChanged && !await rebuild(this.furniture, 'mobilier',
         this.vectorTiles,
         wanted,
         here,
@@ -462,7 +539,9 @@ export class WorldComposer {
           // Maisons du bâti déjà posé — voir `furniture/domesticFauna.js`.
           houses: this.buildings.houses,
         }
-      );
+      )) return false;
+
+      if (!await checkpoint()) return false;
 
       // 6. Arbres — après les chaussées, dont l'emprise décide où le semis
       //    s'interrompt. `sync` remet en file les tuiles semées quand l'index
@@ -472,37 +551,50 @@ export class WorldComposer {
       this.vegetation.sync({ replant: classArrived || regionChanged });
       // Le sous-étage, lui, se refait d'un bloc : l'emprise vient de changer.
       this.vegetation.update(here.x, here.z, {
-        force: hasRoads || classStale || regionChanged || force,
+        force: roadsChanged || classesChanged || streetsChanged,
       });
 
+      if (!await checkpoint()) return false;
+
       // 7. Herbe — l'index des chaussées vient peut-être de changer.
-      if (hasRoads || classStale || regionChanged || force) {
+      if (roadsChanged || classesChanged || streetsChanged) {
         this.grass.update(here.x, here.z, { force: true });
       }
 
+      if (!await checkpoint()) return false;
+
       // 8. Cultures — même carte que le sol.
-      if (classStale || regionChanged || force) this.crops.invalidate();
+      if (classesChanged) this.crops.invalidate();
       this.crops.update(here.x, here.z, {
-        force: hasRoads || classStale || regionChanged || force,
+        force: roadsChanged || classesChanged || streetsChanged,
       });
+
+      if (!await checkpoint()) return false;
 
       // 9. Cheminées à faire fumer, bêtes et tracteurs à faire vivre. Publiés
       //    par le mobilier (fermes, labours) et le bâti (toits de ville), qui
       //    seuls ont lu les tuiles : ce sont les endroits où une couche
       //    animée par image reprend le travail d'une couche reconstruite
       //    tous les 250 mètres.
-      this.life.setChimneys([...this.furniture.chimneys, ...this.buildings.chimneys], here);
-      this.fauna.setAnimals(this.furniture.fauna, here);
-      this.tractors.setTractors(this.furniture.tractors, here);
+      if (furnitureChanged || buildingsChanged) {
+        this.life.setChimneys([...this.furniture.chimneys, ...this.buildings.chimneys], here);
+      }
+      if (furnitureChanged) {
+        this.fauna.setAnimals(this.furniture.fauna, here);
+        this.tractors.setTractors(this.furniture.tractors, here);
+      }
 
       // Maillages neufs : ils naissent éteints, il faut leur repasser l'heure.
-      this._night = null;
+      if (buildingsChanged || furnitureChanged) this._night = null;
+      this._vectorSnapshot = wanted.map((t, i) => ({ x: t.x, y: t.y, entry: entries[i] }));
+      this._incompleteRefresh = false;
       return true;
     } catch (e) {
       console.warn('[world] décor partiel', e?.message || e);
       return false;
     } finally {
       this._refreshing = false;
+      this._building = false;
     }
   }
 
@@ -603,16 +695,18 @@ export class WorldComposer {
 
   advance(delta, at) {
     if (this.disposed) return;
-    this.vegetation.processQueue();
-    this.bubble.processRebuildQueue();
+    if (!this._building) {
+      this.vegetation.processQueue();
+      this.bubble.processRebuildQueue();
+    }
     // Les rides de l'eau vivent dans le shader de terrain, avec elle.
     this.bubble.materials.advanceWater(delta);
     this.grass.advance(delta);
-    this.grass.update(at.x, at.z);
+    if (!this._building) this.grass.update(at.x, at.z);
     this.vegetation.advance(delta);
-    this.vegetation.update(at.x, at.z);
+    if (!this._building) this.vegetation.update(at.x, at.z);
     this.crops.advance(delta);
-    this.crops.update(at.x, at.z);
+    if (!this._building) this.crops.update(at.x, at.z);
     this.life.advance(delta, at);
     // La position sert à `faunaLayer` pour n'oublier une traversée déclenchée
     // qu'une fois l'observateur passé au large, et pour faire fuir une bête

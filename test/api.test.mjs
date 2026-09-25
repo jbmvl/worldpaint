@@ -123,11 +123,11 @@ test('roadPositionAt suit la plate-forme d’une chaussée, le terrain sinon', (
   composer.roads = { elevationIndex: new RoadIndex([segment], { includeWorks: true }) };
   const world = new World({ composer, environment: null, elevation: null, ownsElevation: false });
 
-  const onRoad = world.roadPositionAt(5, 0, 0.14);
-  assert.ok(Math.abs(onRoad.y - 5.14) < 1e-9, 'sur la chaussée, la plate-forme l’emporte sur le terrain');
+  const onRoad = world.roadPositionAt(5, 0, api.ROAD_LIFT_M);
+  assert.ok(Math.abs(onRoad.y - (5 + api.ROAD_LIFT_M)) < 1e-9, 'sur la chaussée, la plate-forme l’emporte sur le terrain');
 
-  const offRoad = world.roadPositionAt(50, 50, 0.14);
-  assert.ok(Math.abs(offRoad.y - 1.14) < 1e-9, 'hors chaussée, retombe sur le terrain');
+  const offRoad = world.roadPositionAt(50, 50, api.ROAD_LIFT_M);
+  assert.ok(Math.abs(offRoad.y - (1 + api.ROAD_LIFT_M)) < 1e-9, 'hors chaussée, retombe sur le terrain');
 });
 
 test('sans ciel, updateSky ne rend rien et n’allume rien', () => {

@@ -1,5 +1,5 @@
 /* Le semis doit toucher la surface triangulée, pas une surface bilinéaire
- * différente, ni un relief rocheux appliqué aux prairies par défaut. */
+ * différente. Le modelé procédural reste actif dans les prairies. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
@@ -37,7 +37,7 @@ test('chaque racine se recale sur son triangle sans modifier les autres instance
  assert.deepEqual(cover.mesh.instanceMatrix.array,before);
  cover.dispose();g.dispose();
 });
-test('les sols agricoles n’héritent pas du grain rocheux',()=>{
- for(const kind of ['grass','farmland','settled']) assert.equal(defaultTheme.surfaces[kind].grainAmplitudeM,0);
+test('les sols agricoles conservent leurs bosses procédurales',()=>{
+ for(const kind of ['grass','farmland','settled']) assert.equal(defaultTheme.surfaces[kind].grainAmplitudeM,1.4);
  assert.ok(defaultTheme.surfaces.heath.grainAmplitudeM>0,'la lande garde son modelé');
 });

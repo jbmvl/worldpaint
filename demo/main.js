@@ -32,6 +32,8 @@ import {
   LABEL_FAUNA,
 } from '../src/index.js';
 import { createShowcase } from './showcase.js';
+import { PerformanceProbe } from './performanceProbe.js';
+const performanceProbe = new PerformanceProbe();
 
 // --- Réglages ---------------------------------------------------------------
 
@@ -1579,6 +1581,7 @@ refreshWeatherLabels();
  * fuseau dans une démo.
  */
 function currentDate() {
+  if (performanceProbe.requested) return performanceProbe.date;
   if (realTimeCheckbox.checked) return new Date();
   const hour = Number(hourInput.value);
   const date = new Date();
@@ -1593,6 +1596,7 @@ function loop(timestamp) {
   timer.update(timestamp);
   const delta = Math.min(timer.getDelta(), 0.1); // évite un bond si l'onglet était en arrière-plan
 
+  performanceProbe.begin(timestamp, camera, world);
   updateMovement(delta);
 
   // Le mode afficheur suspend le monde (aucune raison de le reconstruire ou
@@ -1673,6 +1677,7 @@ function loop(timestamp) {
   coordsEl.textContent = `${where}  alt ${camera.position.y.toFixed(0)} m  cap ${bearingDeg.toFixed(0)}°  incl ${pitchDeg.toFixed(0)}°${pays}`;
 
   renderer.render(scene, camera);
+  performanceProbe.end(renderer);
   if (profileToggle.checked && timestamp-lastProfileUpdate>500) {
     lastProfileUpdate=timestamp;
     const lines=Object.entries(world?.generationStats ?? {}).map(([name,v])=>`${name}: ${v.lastMs.toFixed(1)} ms / max ${v.maxMs.toFixed(1)} ms`);

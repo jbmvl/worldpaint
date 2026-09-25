@@ -81,6 +81,31 @@ falaise qu'aucun contributeur n'a tracée reste la rampe du MNT. Un ressaut de
 moins de cinq mètres est ignoré : OSM pose `natural=cliff` jusque sur des
 talus d'un mètre, que le MNT ne distingue pas de son propre bruit.
 
+## Les chaussées parallèles
+
+`roadBundles` retire avant le graphe certaines voies urbaines de desserte
+(`lane`, `minor`) longeant des voies de rang supérieur sur au moins 75 % de
+leur longueur. Les pistes cyclables, les voies de même rang et les ouvrages
+restent distincts. L'absorption mesure un voisinage, pas une identité OSM :
+elle ne garantit pas la conservation des raccordements d'une desserte retirée.
+
+Après le graphe, `roadWidths` réduit proportionnellement les largeurs des
+chaînes revêtues dont les rubans se chevauchent sur un longement d'au moins
+15 m hors des surfaces de carrefour, avec un écart dont le minimum reste
+au moins égal à 80 % du maximum. Un axe entrant dans la largeur nominale de
+l'autre voie rend la paire ambiguë : aucune réduction n'en est déduite,
+même si une autre portion de cette paire semble parallèle. Les convergences
+et les axes presque confondus ne donnent pas le gabarit de toute une route.
+Les axes et les valeurs du thème ne changent pas. Chaque chaîne garde
+une largeur constante, également transmise aux bouches des carrefours, aux
+index et au terrassement : une contrainte locale peut donc réduire toute la
+chaîne. Une chaîne portant un pont ou un tunnel, deux niveaux distincts,
+des axes qui se croisent ou partagent un sommet sont exclus du partage.
+
+Les intervalles positifs restants relèvent du comblement de `roadBundles` ;
+les îlots restent du terrain. Les courbes serrées, les raccordements et les
+superpositions exclues du partage demandent un contrôle dans la démo.
+
 ## Le sol
 
 Les matières du sol, décrites en détail dans `docs/surfaces.md`. En résumé :
@@ -346,11 +371,33 @@ voûte (24 entrées simultanées au maximum). Une limite de tuile ne crée pas d
 
 ### Le trottoir (`streetLayer`)
 
-**Déduit**, et à trois conditions cumulées : la voie est dans un périmètre
-`landuse` bâti, **au moins deux bâtiments** sont relevés dans les 30 m, et le
-terrain en travers est presque plat (moins de 14 % de dévers). Le premier
-critère est un droit, le deuxième un fait : une rue ne se compose que là où les
-deux concordent. Longueur minimale d'une composition : 12 m.
+**Déduit** sur les chaussées de desserte et de traversée (`major`, `minor`,
+`lane`). En ville, le masque urbain autorise les deux rives sans exiger des
+bâtiments proches à chaque point. Hors de ce masque, une emprise habitée,
+au moins deux bâtiments dans le disque de 30 m du côté examiné et un dévers
+inférieur à 14 % restent nécessaires.
+
+La chaussée conserve 2 cm de marge technique au-dessus de sa plate-forme
+pour les écarts d’interpolation du terrain. Le déblai couvre au moins la
+diagonale d’une maille afin qu’un triangle oblique ne traverse pas la route. Les marquages, raccords de
+carrefour et ouvrages suivent cette cote commune. Les plates-formes de pont
+et de remblai restent distinctes du terrain naturel.
+
+La géométrie se limite à un caniveau de 32 cm et une bordure en béton de
+section 20 × 20 cm. Son dessus suit le support (avec 3 mm de décollement
+technique) ; le caniveau incliné le rejoint depuis la rive de la chaussée.
+Le caniveau gris pierre porte des joints tous les 60 cm ; le béton gris neutre,
+tous les mètres. Les joints de 8 mm suivent l'abscisse du réseau et la pente
+du caniveau. Une ligne sombre de 2,5 cm marque le contact entre les deux.
+Le support urbain utilise des gris chauds, déclinés selon la région.
+Le reste du trottoir est le support lui-même, revêtu ou enherbé : aucune dalle,
+contre-pente ni jupe arrière n'est ajoutée. L'index d'exclusion ne couvre que
+le caniveau et le béton.
+
+Les petites portions sont conservées. Les interruptions correspondent aux
+bouches de carrefour, aux ouvrages, à la limite de portée (450 m), aux critères
+de lieu ou à une place libre inférieure aux 52 cm de la section. Les coins de
+rue utilisent la même section et la même règle urbaine.
 
 ### Le mobilier de bord de route
 
@@ -798,11 +845,15 @@ bâti relevé, borné par un disque autour d'une agglomération nommée.
 Les neuf variantes adultes du peuplement ont un prototype volumétrique
 facetté dans `models/treeKit.js`. La sélection continue de lire les essences
 et peuplements régionaux existants. Le même prototype est projeté dans
-l'atlas lointain. Entre 120 et 190 mètres, un fondu de transparence passe du volume aux
-plans croisés sans modifier le placement, la taille ou la teinte de l'arbre.
+l'atlas lointain. Entre 120 et 190 mètres, un fondu par découpe passe du volume aux
+plans croisés en conservant l’écriture de profondeur, sans modifier le placement,
+la taille ou la teinte de l'arbre.
+Au plus 2 048 volumes sont affichés, les plus proches en priorité ; les autres
+placements conservent leur silhouette en plans, y compris quand le budget est atteint.
 Les petits végétaux du sous-étage gardent leurs silhouettes spécifiques.
 Leur présence et leur taille ne sont pas recalculées selon la distance ; seul
-leur fondu de visibilité change.
+leur fondu de visibilité change. En forêt dense, la frontière du budget peut
+remplacer directement un volume par ses plans lors d’un déplacement.
 
 ### Vent et feuilles emportées
 

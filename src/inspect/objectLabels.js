@@ -48,7 +48,7 @@ export const LABEL_EXACT = {
   buildings: 'bâtiment',
   'building-windows': 'fenêtres allumées',
   gardens: 'jardin (clôture et buissons)',
-  streets: 'voirie (caniveau, bordure, trottoir)',
+  streets: 'voirie (caniveau, bordure)',
   water: 'eau',
   railway: 'voie ferrée',
   bridge: 'ouvrage d’art (tablier, piles, tête de tunnel)',

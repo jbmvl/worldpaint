@@ -1,4 +1,7 @@
+import { finishGeneration } from '../core/generationSteps.js';
 /*
+ * La reconstruction expose des étapes entre tronçons et carrefours. Le
+ * compositeur fixe les pauses ; index et maillages sont publiés ensemble.
  * roadNetwork — le réseau routier, pas seulement la route de l'observateur.
  * Les chaussées viennent de la couche `transportation` (`class` pour la
  * largeur et le revêtement, `brunnel` pour tunnels et ponts, `layer` pour le
@@ -65,13 +68,17 @@
  *   - les **voies redondantes** (`roadBundles.absorbParallelLines`), celles
  *     qui longent une voie de rang supérieur et sont déjà dans sa largeur.
  *
- * Hors ville, rien de tout cela ne se produit : un sentier reste un sentier, et
+ * Les chaînes revêtues conservées partagent ensuite leur largeur disponible
+ * (`roadWidths`), en ville comme en campagne, avant les surfaces de carrefour.
+ *
+ * Hors ville, aucune suppression ne se produit : un sentier reste un sentier, et
  * une contre-allée de campagne est un objet du paysage.
  */
 
 import { RoadContinuity } from './roadContinuity.js';
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { absorbParallelLines } from './roadBundles.js';
+import { fitParallelRoadWidths } from './roadWidths.js';
 import {
   mergeRoadLines,
   RoadIndex,
@@ -323,8 +330,8 @@ export const ROAD_SAMPLE_M = 5;
 export const ROAD_RADIUS_M = 900;
 /** Déplacement de l'observateur avant reconstruction, en mètres. */
 export const ROAD_REBUILD_M = 250;
-/** Décollement au-dessus de la surface, en mètres. */
-export const ROAD_LIFT_M = 0.14;
+/** Marge contre les écarts d’interpolation entre la maille du terrain et le profil routier. */
+export const ROAD_LIFT_M = 0.02;
 /**
  * Décollement d'un chemin non revêtu, en mètres : au-dessus du marquage. Un
  * chemin ne fait pas carrefour avec une route (`roadGraph.collectJunctions`),
@@ -908,6 +915,7 @@ export function collectRoadSegments(
     });
   }
   const { chains, junctions } = mergeRoadLines(lines);
+  fitParallelRoadWidths(chains.filter((chain) => isPaved(roads.profiles[chain.profile])), junctions);
   // Les carrefours deviennent des surfaces, en plan, avant tout le reste : ce
   // sont elles qui diront où chaque ruban s'arrête. Les chaînes, elles, ne sont
   // plus coupées — la chaussée traverse le carrefour dans les données, et seul
@@ -1119,7 +1127,9 @@ export class RoadNetwork {
    *        à savoir où est l'eau (elle en est la matière du sol) : un pont doit
    *        s'en dégager.
    */
-  rebuild(source, tiles, here, { groundClass = null, urban = null } = {}) {
+  rebuild(...args) { return finishGeneration(this.rebuildSteps(...args)); }
+
+  *rebuildSteps(source, tiles, here, { groundClass = null, urban = null } = {}) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
 
     const { bubble } = this;
@@ -1154,6 +1164,7 @@ export class RoadNetwork {
     // laissée à sa valeur par défaut, l'entaille finirait en marche verticale.
     // Le fond plat est celui que la maille du terrain tient (`cutBenchM`), et
     // non la seule emprise : c'est lui que `terrainBubble` interrogera.
+    yield;
     const index = new RoadIndex(collected, { margin: bubble.cutBenchM + ROAD_CUT_BLEND_M });
     stitchPlatforms(collected, index);
     // Même marge, tabliers compris : `platformPositionAt` doit pouvoir lire
@@ -1172,6 +1183,7 @@ export class RoadNetwork {
 
     const profiles = this.theme.roads.profiles;
     for (const segment of collected) {
+      yield;
       const spec = profiles[segment.profile];
       if (!buffers[segment.profile]) buffers[segment.profile] = createRibbonBuffer({ tips: spec.ragged > 0 });
       const continued = (point) =>
@@ -1212,6 +1224,7 @@ export class RoadNetwork {
     // (toutes hors de portée) n'est simplement pas posée.
     const junctionBuffers = {};
     for (const area of areas.areas) {
+      yield;
       const decks = area.mouths.map((mouth) => {
         const deck = index.deckAt(index.query(mouth.centre.x, mouth.centre.z, 1));
         return deck == null ? NaN : deck;
@@ -1317,7 +1330,8 @@ export class RoadNetwork {
 
     // Le pictogramme que porte la classe, s'il y en a un (aujourd'hui le seul :
     // le vélo d'une piste cyclable — voir l'en-tête de `roadMarkings`).
-    if (spec.symbol === 'cycle') {
+    if (spec.symbol === 'cycle' && CYCLE_GLYPH.every((polygon) =>
+      polygon.every((point) => Math.abs(point.across) <= segment.halfWidth))) {
       laid += appendMarkingSymbols(buffer, {
         path,
         decks: platform,
@@ -1332,7 +1346,8 @@ export class RoadNetwork {
     // La flèche de sens unique : posée là où la donnée l'affirme (`oneway`),
     // pas là où la classe le permettrait. Une chaussée à double sens, ou dont
     // le sens est resté ambigu d'une tuile à l'autre, n'en reçoit aucune.
-    if (spec.directionArrows) {
+    if (spec.directionArrows && DIRECTION_GLYPH.every((polygon) =>
+      polygon.every((point) => Math.abs(point.across) <= segment.halfWidth))) {
       laid += appendMarkingArrows(buffer, {
         path,
         decks: platform,

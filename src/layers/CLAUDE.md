@@ -19,7 +19,8 @@ son état.
 | `railwayLayer.js` | la voie ferrée, qui publie sa propre emprise |
 | `cliffLayer.js` | les falaises relevées : la marche du terrain, la bande peinte en roche, et la nappe de paroi — les sommets qu'un champ de hauteurs ne peut pas porter sur une face verticale |
 | `buildingLayer.js`, `roofGeometry.js` | le bâti et ses toitures |
-| `streetLayer.js`, `gardenLayer.js` | trottoirs et coins de rue, clôtures et buissons de maison |
+| `streetLayer.js`, `streetMasonry.js` | bordures, caniveaux et joints des rues et des carrefours |
+| `gardenLayer.js` | clôtures et buissons de maison |
 | `vegetationLayer.js`, `groundCover.js`, `cropLayer.js` | arbres, herbe, cultures |
 | `furnitureLayer.js` + `furniture/` | tout le mobilier — voir ci-dessous |
 | `faunaLayer.js`, `faunaMotion.js`, `faunaCrossing.js`, `lifeLayer.js`, `tractorLayer.js` | ce qui bouge |

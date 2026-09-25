@@ -719,7 +719,7 @@ export const STONE_LOOK = {
  */
 export const SURFACE_LOOK = {
   // --- Le végétal ordinaire -------------------------------------------------
-  grass: { albedo: [0.051, 0.135, 0.017], wash: 'grass', grainCellM: 6, grainAmplitudeM: 0 },
+  grass: { albedo: [0.051, 0.135, 0.017], wash: 'grass', grainCellM: 6, grainAmplitudeM: 1.4 },
   // Un sol de forêt est une litière, pas un pré : brune, jamais verte — c'est
   // ce qui la distingue d'une prairie à l'ombre. Le pays ne le lave pas — une
   // hêtraie se ressemble d'un bout à l'autre.
@@ -732,11 +732,11 @@ export const SURFACE_LOOK = {
     grainCellM: 2,
     grainAmplitudeM: 0.22,
   },
-  farmland: { albedo: [0.431, 0.331, 0.08], wash: 'farmland', grainCellM: 6, grainAmplitudeM: 0 },
+  farmland: { albedo: [0.431, 0.331, 0.08], wash: 'farmland', grainCellM: 6, grainAmplitudeM: 1.4 },
   // Lotissement : pelouses tondues et allées, plus claires et plus franchement
   // vertes qu'une prairie de rase campagne — l'entretien, pas l'herbe elle-même.
   // Un aplat, pas un terrain qui varie.
-  settled: { albedo: [0.12, 0.205, 0.08], wash: 'grass', macro: 0.3, grainCellM: 6, grainAmplitudeM: 0 },
+  settled: { albedo: [0.12, 0.205, 0.08], wash: 'grass', macro: 0.3, grainCellM: 6, grainAmplitudeM: 1.4 },
 
   // --- Les couvertures végétales --------------------------------------------
   // Bruyère et molinie sèche : brun-pourpre, la couleur d'un moor. Rase, dense,
@@ -903,15 +903,9 @@ export const SURFACE_LOOK = {
   },
 
   // --- Les deux matières à part ---------------------------------------------
-  // Le revêtement urbain. Sa couleur ne vient pas d'ici mais de la voirie
-  // (`townStyle.pavementTone`), pour qu'une bordure de trottoir et le sol
-  // qu'elle borde ne puissent pas diverger : l'albédo posé ici n'est qu'un
-  // repli. Elle assourdissait le grain, seule de la table — sans objet depuis
-  // que plus aucune matière n'en a.
+  // Le revêtement urbain lit `townStyle.pavementTone` ; cet albédo sert de repli.
   pavement: {
-    // Gris froid (bleu ≥ vert ≥ rouge) : même dérive que `townStyle.pavement`,
-    // sans quoi la bordure et le sol qu'elle borde divergeraient de teinte.
-    albedo: [0.3, 0.345, 0.395],
+    albedo: srgb('#908b7f'),
 
     wash: 'pavement',
     grassDensity: 0,
@@ -1364,62 +1358,24 @@ export const WORKS_STYLES = [
 ];
 
 // --- La voirie -----------------------------------------------------------------
-/**
- * La section d'une rue, côté trottoir : caniveau, bordure, trottoir
- * légèrement surélevé, dans cet ordre depuis la chaussée. Cotes du terrain,
- * volontairement basses (le trottoir doit se lire comme une marche, pas un
- * quai). `surfaces` varie par bourg (`streetSurfaceAt`), pas par trottoir.
- */
+/** Bordure affleurante de section 20 × 20 cm et caniveau incliné vers le support. */
 export const STREET_LOOK = {
-  /** Largeur du caniveau, en mètres, et sa profondeur sous la chaussée. */
   gutterWidth: 0.32,
-  gutterDepth: 0.035,
-  /** Vue de la bordure, en mètres, et le chanfrein de son nez. */
   kerbHeight: 0.2,
-  kerbNose: 0.055,
-  /** Largeur du trottoir : tirée dans cet écart, par portion. */
-  walkWidth: [0.8, 1.4],
-  /** Contre-pente du trottoir vers le caniveau, en mètres sur sa largeur. */
-  walkFall: 0.025,
-  /** Jupe arrière : de quoi enterrer le bord au lieu de le laisser en l'air. */
-  skirtWidth: 0.35,
-  skirtDepth: 0.3,
-  /** Fond de caniveau : plus sombre que la chaussée, l'eau y stagne. */
-  gutter: '#403e3b',
-  /**
-   * Le **rebord**, un par bourg : `kerb` la bordure, `joint` le bord arrière —
-   * toujours plus sombre, parce qu'il est à l'ombre du mur ou de la haie qui le
-   * suit. Du ciment, dans les quatre cas : une commune coule ses bordures d'un
-   * coup, et une bordure est du béton à peu près partout.
-   *
-   * Le **dessus** du trottoir n'est plus ici, et c'est le lot : il vient de
-   * `pavement`, par matrice. Un trottoir de ville se prolonge maintenant dans le
-   * sol lui-même (couverture `pavement` de `groundClassMap`), et le sol est
-   * peint par un shader qui n'a qu'un albédo par couverture pour toute la
-   * bulle. Une teinte tirée par bourg, sur une maille de 1400 m, se lirait donc
-   * comme une frontière au milieu de la ville. Ce que le pays change, en
-   * revanche, le shader sait le dire.
-   */
+  kerbWidth: 0.2,
+  gutter: '#92928b',
+  joint: '#494b43',
+  contactWidth: 0.025,
+  gutterSlabLength: 0.6,
+  kerbBlockLength: 1,
+  jointWidth: 0.008,
+  /** Béton choisi par bourg ; le sol piéton relève du support. */
   surfaces: [
-    { name: 'béton balayé', kerb: '#bdbcb7', joint: '#948d80' },
-    { name: 'enrobé clair', kerb: '#b4b4b0', joint: '#797570' },
-    { name: 'pavé de grès', kerb: '#b7b6ae', joint: '#847b6c' },
-    { name: 'béton désactivé', kerb: '#c0beb6', joint: '#8b8374' },
+    { name: 'béton balayé', kerb: '#92948d' },
+    { name: 'enrobé clair', kerb: '#888c87' },
+    { name: 'pavé de grès', kerb: '#99988d' },
+    { name: 'béton désactivé', kerb: '#93968d' },
   ],
-  /**
-   * Le dessus du trottoir, par matrice (`region.matrix`) — et, par la même valeur, le
-   * sol revêtu de la ville entière (voir `townStyle.pavementTone`).
-   *
-   * Une seule table pour les deux, parce qu'il n'y a pas deux surfaces : la
-   * bordure borde le sol, elle ne borde pas un ruban de trottoir posé sur un
-   * autre sol. Deux valeurs divergentes se liraient comme une bande de couleur
-   * le long de chaque bordure.
-   *
-   * Ce que le pays change n'est pas un caprice : le nord pose du béton gris,
-   * le Midi de la pierre claire qui blanchit au soleil, la steppe et le désert
-   * un enrobé qui prend la poussière. `default` est le bocage atlantique, sur
-   * lequel le reste du thème est réglé.
-   */
   /**
    * Force du grain du revêtement, de 0 (aplat) à 1 (le grain du sol qu'il
    * remplace). Une dalle n'est pas lisse — elle garde quelque chose du grain
@@ -1428,19 +1384,19 @@ export const STREET_LOOK = {
    */
   pavementGrain: 0.55,
   pavement: {
-    default: '#3d464f',
-    hedgerow_meadow: '#3d464f',
-    moor_heath: '#39424b',
-    garrigue: '#444d56',
-    dry_scrub: '#3e4750',
-    terraced_slope: '#3d464f',
-    dry_steppe: '#424b54',
-    desert_stone: '#475059',
-    desert_sand: '#475059',
-    openfield_cropland: '#3c454e',
-    boreal_taiga: '#343d46',
-    alpine_pasture: '#3a434c',
-    bare_rock: '#363f48',
+    default: '#908b7f',
+    hedgerow_meadow: '#908b7f',
+    moor_heath: '#77796f',
+    garrigue: '#928b78',
+    dry_scrub: '#898371',
+    terraced_slope: '#908b7f',
+    dry_steppe: '#938b77',
+    desert_stone: '#a09680',
+    desert_sand: '#a09680',
+    openfield_cropland: '#807d70',
+    boreal_taiga: '#73786f',
+    alpine_pasture: '#83857b',
+    bare_rock: '#7d8077',
   },
 };
 
@@ -1794,7 +1750,8 @@ export const defaultTheme = Object.freeze({
   grass: {
     bladeWidth: 0.08,
     bladeBend: 0.24,
-    bladeColors: { root: [0.051, 0.135, 0.017], tip: [0.051, 0.135, 0.017] },
+    bladeColors: { root: [0.074, 0.18, 0.020], tip: [0.074, 0.18, 0.020],
+      palette: [[0.074, 0.18, 0.020], [0.10, 0.23, 0.030], [0.060, 0.16, 0.016]] },
     flowers: { stem: [0.051, 0.135, 0.017], petals: [srgb("#f4f1db"), srgb("#efc627"), srgb("#d63824")], centres: [srgb("#d1a621"), srgb("#c89419"), srgb("#282320")] },
     minHeight: GRASS_MIN_HEIGHT,
     maxHeight: GRASS_MAX_HEIGHT,

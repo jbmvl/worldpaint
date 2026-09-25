@@ -1,13 +1,15 @@
 import { installGrassRoots } from '../materials/grassRoots.js';
 import { FlowerCover } from './flowerCover.js';
 import { InstanceCells } from './instanceCells.js';
+import { ResidentGrass } from './residentGrass.js';
 import { COVER_ATTRIBUTE, installCoverTransition, paddedCoverBands } from '../materials/coverTransition.js';
 import { createGrassBlade } from './grassGeometry.js';
 /*
  * Couverture herbacée : une trame de brins facettés indépendants, répartis
  * dans chaque maille du sol. La matière du terrain porte la continuité au
  * loin ; les brins gardent leur taille et disparaissent progressivement dans
- * le shader. La caméra n'intervient jamais dans leur identité.
+ * le shader. La caméra n'intervient jamais dans leur identité ; les mailles
+ * conservées gardent leurs instances et seuls les ajouts/retraits sont écrits.
  */
 
 import {
@@ -478,6 +480,7 @@ export class GroundCover {
     scene,
     bubble,
     groundClass,
+    terrainSupport = null,
     roads = null,
     streets = null,
     count = GRASS_COUNT,
@@ -487,6 +490,7 @@ export class GroundCover {
     this.theme = theme;
     this.scene = scene;
     this.bubble = bubble;
+    this.terrainSupport = terrainSupport;
     this.groundClass = groundClass;
     this.roads = roads;
     this.streets = streets;
@@ -507,7 +511,7 @@ export class GroundCover {
     this._unclassified = theme.terrain.unclassified;
     this.disposed = false;
     this._anchor = null;
-    this._instanceCells = new InstanceCells();
+    this._instanceCells = new InstanceCells({ resident: true });
     this._frame = null;
     this._bands = [coverBand({ from: 0, to: 55, cell: 2.2, perCell: 16, fadeOut: 20, salt: 0 })];
     this._cells = coverBandRing(paddedCoverBands(this._bands, GRASS_REBUILD_M));
@@ -548,13 +552,15 @@ export class GroundCover {
       coverage: false,
       coverageRange: GRASS_COVERAGE_RANGE,
       coverageGain: GRASS_COVERAGE_GAIN,
-      groundLowPoly: true,
+      groundLowPoly: !terrainSupport,
       groundGrainPerInstance: true,
       cacheKey: 'foliage-grass-cover-v6-lowpoly-par-matiere',
     });
 
     installCoverTransition(this.material, THREE);
     installGrassRoots(this.material);
+    terrainSupport?.install(this.material, { roots: true });
+    terrainSupport?.install(this.flowers.material);
 
     this.mesh = new THREE.InstancedMesh(this.geometry, this.material, count);
     this.mesh.name = 'ground-cover';
@@ -564,6 +570,19 @@ export class GroundCover {
     this.mesh.frustumCulled = false; // toujours autour de la caméra
     this.mesh.receiveShadow = true; // reçoit l'ombre, n'en projette pas
     scene.add(this.mesh);
+    this._residentAttributes = [this.mesh.instanceMatrix, this.mesh.instanceColor,
+      this.geometry.attributes[COVER_ATTRIBUTE], this.geometry.attributes[GROUND_GRAIN_ATTRIBUTE],
+      new THREE.InstancedBufferAttribute(this._flowerVariants, 1),
+      ...[0,1,2].map(i => this.geometry.attributes[`aRootLift${i}`])];
+    this._resident = new ResidentGrass(this._residentAttributes);
+    this._scratch = this._residentAttributes.map(a => new Float32Array(widest * a.itemSize));
+    this._staging = {
+      instanceMatrix: { count, array: this._scratch[0] },
+      instanceColor: { array: this._scratch[1] },
+      setMatrixAt: (i, matrix) => matrix.toArray(this._scratch[0], i * 16),
+      setColorAt: (i, color) => color.toArray(this._scratch[1], i * 3),
+    };
+
 
     this._matrix = new THREE.Matrix4();
     this._position = new THREE.Vector3();
@@ -617,25 +636,31 @@ export class GroundCover {
   update(x, z, { force = false } = {}) {
     if (this.disposed || !this.bubble?.frame) return false;
 
+    this.terrainSupport?.sync(this.bubble.plantSupportTiles(x,z,80), this.bubble.surfaceGeneration);
     this.material.userData.coverObserver.value.set(x, z);
     this.flowers.update(x, z);
     const frameChanged = this._frame !== this.bubble.frame;
     const surfaceChanged = this._surfaceGeneration !== this.bubble.surfaceGeneration;
-    if (!force && !frameChanged && !surfaceChanged && this._anchor) {
+    const supportChanged = this._supportComplete !== this.terrainSupport?.complete;
+    if (!force && !frameChanged && !surfaceChanged && !supportChanged && this._anchor) {
       if (Math.hypot(x - this._anchor.x, z - this._anchor.z) < GRASS_REBUILD_M) return false;
     }
 
-    this._instanceCells.begin(this.bubble.frame, this.bubble.surfaceGeneration, this.roads?.index, force);
+    this._instanceCells.begin(this.bubble.frame, this.bubble.surfaceGeneration, this.roads?.index, force || supportChanged);
     this._scatter(x, z);
     this._anchor = { x, z };
     this._frame = this.bubble.frame;
     this._surfaceGeneration = this.bubble.surfaceGeneration;
+    this._supportComplete = this.terrainSupport?.complete;
     return true;
   }
 
   /** Sème la couverture, bande par bande et maille par maille. */
   _scatter(centerX, centerZ) {
-    const { bubble, groundClass, roads, streets, mesh } = this;
+    const { bubble, groundClass, roads, streets } = this;
+    const mesh = this._staging;
+    const coverBands = this._scratch[2], grainParams = this._scratch[3], flowerVariants = this._scratch[4];
+    const rootOffsets = this._scratch.slice(5);
     const capacity = mesh.instanceMatrix.count;
     const index = roads?.index || null;
     const pavement = streets?.index || null;
@@ -651,7 +676,7 @@ export class GroundCover {
     // que les deux brouillent la limite sur la même largeur.
     const fringeM = this.theme.terrain.edgeWarpM ?? 0;
     let placed = 0;
-    const streams = [[mesh.instanceMatrix.array,16],[mesh.instanceColor.array,3],[this._coverBands,4],[this._grainParams,2],[this._flowerVariants,1], ...this._rootOffsets.map(a=>[a,3])];
+    const streams = this._scratch.map((array, i) => [array, this._residentAttributes[i].itemSize]);
 
     for (const cell of this._cells) {
       if (placed >= capacity) break;
@@ -681,12 +706,12 @@ export class GroundCover {
       );
       // Échantillon brut (pas élargi) : la verdure de la touffe ne doit rien à une culture à 5 m de là.
       const { green, shade } = grassGreenFor(sample, this.theme.grass.woodFloor);
-      if (green < GRASS_GREEN_MIN) continue;
+      if (green < GRASS_GREEN_MIN) { this._instanceCells.write(cacheKey, streams, placed, placed); continue; }
 
       const edgeSample = widenFieldEdge(groundClass, readX, readZ, sample);
 
       const crop = groundClass?.cropAt?.(readX, readZ) ?? null;
-      if (grassBlockedByCrop(edgeSample, crop)) continue;
+      if (grassBlockedByCrop(edgeSample, crop)) { this._instanceCells.write(cacheKey, streams, placed, placed); continue; }
 
       // L'eau et l'herbe suivent désormais la même vérité : rien ne pousse au
       // milieu d'une flaque, et la bordure — les derniers mètres avant l'eau
@@ -696,7 +721,7 @@ export class GroundCover {
       let poolEdge = 0;
       if (standing > 0) {
         const pool = poolShareAt(readX, readZ, standing, this.theme.terrain.poolScaleM);
-        if (pool > 0.5) continue;
+        if (pool > 0.5) { this._instanceCells.write(cacheKey, streams, placed, placed); continue; }
         poolEdge = poolEdgeGain(pool);
       }
 
@@ -732,6 +757,7 @@ export class GroundCover {
         if (inCorridor(index, x, z, GRASS_ROAD_MARGIN_M + band.cell / 4 * Math.SQRT1_2)) continue;
         if (pavement?.covers(x, z, band.cell / 4 * Math.SQRT1_2)) continue;
 
+        const slot = placed - cellStart;
         const tint = tufts[at + 5];
         const height =
           (grass.minHeight + tufts[at + 3] * (grass.maxHeight - grass.minHeight)) *
@@ -757,14 +783,20 @@ export class GroundCover {
         const m = this._matrix.elements;
         m[1] = slopeX * m[0] + slopeZ * m[2];
         m[9] = slopeX * m[8] + slopeZ * m[10];
-        for (let blade=0; blade<this.geometry.userData.roots.length; blade++) {
-          const [rx,rz] = this.geometry.userData.roots[blade];
-          const wx=x+m[0]*rx+m[8]*rz, wz=z+m[2]*rx+m[10]*rz;
-          const rootSupport=bubble.renderedSupportAtLocal?.(wx,wz,this._rootSupport);
-          const baseY=y+m[1]*rx+m[9]*rz;
-          this._rootOffsets[Math.floor(blade/3)][placed*3+blade%3] = (rootSupport?.y ?? baseY)-baseY;
+        // Le shader recale déjà chaque racine couverte : sa correction CPU
+        // serait ajoutée puis soustraite. Aux bords de l’atlas, garder le repli.
+        if (this.terrainSupport?.coversPatch(x, z, width * Math.SQRT1_2)) {
+          for (const offsets of rootOffsets) offsets.fill(0, slot * 3, slot * 3 + 3);
+        } else {
+          for (let blade=0; blade<this.geometry.userData.roots.length; blade++) {
+            const [rx,rz] = this.geometry.userData.roots[blade];
+            const wx=x+m[0]*rx+m[8]*rz, wz=z+m[2]*rx+m[10]*rz;
+            const rootSupport=bubble.renderedSupportAtLocal?.(wx,wz,this._rootSupport);
+            const baseY=y+m[1]*rx+m[9]*rz;
+            rootOffsets[Math.floor(blade/3)][slot*3+blade%3] = (rootSupport?.y ?? baseY)-baseY;
+          }
         }
-        mesh.setMatrixAt(placed, this._matrix);
+        mesh.setMatrixAt(slot, this._matrix);
         // Fleurissement décidé par le sol, pas par un tirage libre ; survit au
         // changement d'échelle. Tiré **avant** la teinte, qui en dépend : voir
         // `FLOWERING_VARIANTS`.
@@ -773,7 +805,7 @@ export class GroundCover {
             ? 0
             : grassVariantFor(edgeSample, tufts[at + 6], this.theme.grass);
         if (cell.band > 0) variant = grassMassVariant(variant, tufts[at + 5]);
-        this._flowerVariants[placed] = variant;
+        flowerVariants[slot] = variant;
 
         const dry = (1 - green) * 0.5 + tint * 0.35;
         const wash = isFloweringVariant(variant) ? COVER_GRASS_NEUTRAL.tint : this._wash.grass;
@@ -782,34 +814,32 @@ export class GroundCover {
           (0.96 + tint * 0.09) * coverLook.tint[1] * floorLook.tint[1] * wash[1],
           (0.74 - dry * 0.2) * coverLook.tint[2] * floorLook.tint[2] * wash[2]
         );
-        mesh.setColorAt(placed, this._color);
+        mesh.setColorAt(slot, this._color);
 
-        this._coverBands.set([band.from, band.to, band.fadeIn, band.fadeOut], placed * 4);
-        this._grainParams[placed * 2] = grain.cellM;
-        this._grainParams[placed * 2 + 1] = grain.amplitudeM;
+        coverBands.set([band.from, band.to, band.fadeIn, band.fadeOut], slot * 4);
+        grainParams[slot * 2] = grain.cellM;
+        grainParams[slot * 2 + 1] = grain.amplitudeM;
         placed++;
       }
-      if (placed < capacity) this._instanceCells.write(cacheKey, streams, cellStart, placed);
+      this._instanceCells.write(cacheKey, streams, 0, placed - cellStart, placed < capacity);
     }
 
     this._instanceCells.end();
-    this.geometry.getAttribute(COVER_ATTRIBUTE).needsUpdate = true;
-    mesh.count = placed;
-    this.flowers.sync(mesh, this._flowerVariants, this._coverBands);
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    this.geometry.getAttribute(GROUND_GRAIN_ATTRIBUTE).needsUpdate = true;
-    for(let i=0;i<3;i++) this.geometry.getAttribute(`aRootLift${i}`).needsUpdate = true;
+    this.mesh.count = this._resident.sync(this._instanceCells.selected);
+    this.flowers.syncCells(this._instanceCells.selected);
+
   }
 
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
     this._instanceCells.clear();
+    this._resident.clear();
     this.scene.remove(this.mesh);
     this.mesh.dispose?.();
     this.geometry.dispose();
     this.material.dispose();
+    this.terrainSupport?.dispose();
     this.flowers.dispose();
   }
 }
