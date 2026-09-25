@@ -54,6 +54,7 @@ import {
   inCorridor,
 } from './roadCorridor.js';
 import { CombinedIndex } from './roadGraph.js';
+import { VergeStrips } from './vergeStrips.js';
 import {
   Kit,
   createFurnitureGeometries,
@@ -304,6 +305,8 @@ export class FurnitureLayer {
      * @type {Array<Object>}
      */
     this.tractors = [];
+    /** Bandes entre chaussée et haie de bas-côté, publiées pour `cropLayer`. */
+    this.verges = new VergeStrips();
     /** Nuancier des robes, une liste par espèce (voir `theme.fauna.coats`). */
     this._coats = theme.fauna?.coats || {};
     /**
@@ -480,6 +483,7 @@ export class FurnitureLayer {
       this._signals = [];
       this.fauna = [];
       this.tractors = [];
+      this.verges = new VergeStrips();
 
       try {
         // Les emprises habitées viennent de `worldComposer` quand il les a déjà
@@ -765,7 +769,7 @@ export class FurnitureLayer {
    * replanterait tout ce qui la suit.
    */
   _appendHedgerow(buffer, kind, path, sampleElevation, options = {}) {
-    const { offset = 0, own = null, startDistance = 0, openGround = false } = options;
+    const { offset = 0, own = null, startDistance = 0, openGround = false, verge = false } = options;
     const crossings = own
       ? this._clipOffRoad(path, { offset, minLength: BOUNDARY_MIN_LENGTH_M, own })
       : [path];
@@ -776,6 +780,7 @@ export class FurnitureLayer {
       // lisière aussi souvent qu'un champ, et le couper là l'effacerait.
       const runs = openGround ? this._clipOpenGround(crossed, { offset }) : [crossed];
       for (const run of runs) {
+        if (verge) this.verges.add(run, offset, hedgeStyleFor(kind, this.theme.furniture.hedges).acrossM[1]);
         this._appendHedgerowRun(buffer, kind, run, sampleElevation, {
           ...options,
           startDistance: startDistance + FurnitureLayer._distanceAlong(path, run[0]),
@@ -1458,6 +1463,7 @@ export class FurnitureLayer {
     this._signals = [];
     this.fauna = [];
     this.tractors = [];
+    this.verges = new VergeStrips();
 
     for (const geometry of Object.values(this.geometries)) geometry.dispose();
     this.geometries = {};

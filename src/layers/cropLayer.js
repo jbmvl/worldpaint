@@ -254,6 +254,7 @@ export class CropLayer {
     this.bubble = bubble;
     this.groundClass = groundClass;
     this.roads = roads;
+    this.verges = null;
     /**
      * Matrice de paysage du lieu, ou `null`. Elle ne décide pas *quelle*
      * culture pousse — ça, c'est `cropFor`, dans la carte de classes — mais de
@@ -359,6 +360,14 @@ export class CropLayer {
   }
 
   /**
+   * Pose les bandes de bas-côté publiées par le mobilier (`VergeStrips`) : la
+   * culture reste derrière la haie.
+   */
+  setVerges(verges) {
+    this.verges = verges || null;
+  }
+
+  /**
    * Redistribue les touffes si l'observateur s'est assez éloigné.
    * @returns {boolean} vrai si une redistribution a eu lieu.
    */
@@ -382,6 +391,7 @@ export class CropLayer {
     const { bubble, roads, mesh } = this;
     const capacity = mesh.instanceMatrix.count;
     const index = roads?.index || null;
+    const verges = this.verges;
     const bands = this._bands;
     // Un centre arrondi **par bande** : chaque grille garde son propre pas, donc
     // les mailles retenues ne dépendent que du sol.
@@ -438,6 +448,7 @@ export class CropLayer {
         // choisie ici : c'est l'emprise routière (`roadCorridor`), commune à
         // l'herbe, aux haies, aux clôtures et aux jardins.
         if (inCorridor(index, x, z)) continue;
+        if (verges?.covers(x, z)) continue;
 
         const height = look.height * (0.82 + tufts[at + 3] * 0.36) * heightFade * band.rise;
         // Élargi, pas élevé : c'est la largeur qui ferme les trous entre masses.

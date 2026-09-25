@@ -527,6 +527,7 @@ export function applyRoadsidePlan(layer, {
       here,
       startDistance: spacing.startDistance,
       openGround: true,
+      verge: true,
       own: segment,
     });
   }
@@ -543,6 +544,7 @@ export function applyRoadsidePlan(layer, {
       here,
       startDistance: spacing.startDistance,
       openGround: true,
+      verge: true,
       own: segment,
     });
   }

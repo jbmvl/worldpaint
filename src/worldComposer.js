@@ -571,8 +571,10 @@ export class WorldComposer {
 
       // 8. Cultures — même carte que le sol.
       if (classesChanged) this.crops.invalidate();
+      // Les haies de bas-côté, posées par le mobilier, bornent le champ.
+      if (furnitureChanged) this.crops.setVerges(this.furniture.verges);
       this.crops.update(here.x, here.z, {
-        force: roadsChanged || classesChanged || streetsChanged,
+        force: roadsChanged || classesChanged || streetsChanged || furnitureChanged,
       });
 
       if (!await checkpoint()) return false;
