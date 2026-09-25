@@ -484,6 +484,15 @@ export function ringCentroid(ring) {
   return [x / n, y / n];
 }
 
+/**
+ * Vrai pour un contour dont les parties (`building:part`) sont publiées à part
+ * dans la même couche : extrudé, il doublerait chacune d'elles — et avec lui sa
+ * devanture, son enseigne et sa terrasse.
+ */
+export function isHiddenOutline(properties) {
+  return properties?.hide_3d === true || properties?.hide_3d === 'true';
+}
+
 /** Extrait les anneaux extérieurs d'une géométrie GeoJSON de bâtiment. */
 export function outerRings(geometry) {
   if (!geometry) return [];
@@ -1231,6 +1240,7 @@ export class BuildingLayer {
     const candidates = [];
 
     source.forEachFeature(BUILDING_SOURCE_LAYER, tiles, (geometry, properties) => {
+      if (isHiddenOutline(properties)) return;
       for (const ring of outerRings(geometry)) {
         if (!Array.isArray(ring) || ring.length < 4) continue;
 

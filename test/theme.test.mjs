@@ -33,7 +33,7 @@ import { kerbProfile } from '../src/layers/streetLayer.js';
 import { roofRise } from '../src/layers/roofGeometry.js';
 import { waterwayStyleFor, SURFACE_KINDS } from '../src/terrain/groundClassMap.js';
 import { grassVariantFor } from '../src/layers/groundCover.js';
-import { windowGrid } from '../src/layers/buildingLayer.js';
+import { windowGrid, isHiddenOutline } from '../src/layers/buildingLayer.js';
 import { forestTypeAt, variantsFor } from '../src/layers/vegetationLayer.js';
 import { roadStyleFor } from '../src/layers/roadNetwork.js';
 import { furnitureSpecsFor, FURNITURE_BUILDERS } from '../src/layers/furnitureKit.js';
@@ -604,4 +604,11 @@ test('le brouillard de jour prend la lumière du ciel et la teinte de la palette
   const chaude = tintByPalette(sky, [0.9, 0.7, 0.5]);
   assert.ok(Math.abs(lum(chaude) - lum(sky)) < 1e-9, 'même lumière que le ciel');
   assert.ok(chaude[0] / chaude[2] > sky[0] / sky[2], 'réchauffée par la palette');
+});
+
+test('un contour qui a ses parties à part n’est pas extrudé une seconde fois', () => {
+  assert.equal(isHiddenOutline({ hide_3d: true }), true);
+  assert.equal(isHiddenOutline({ hide_3d: 'true' }), true);
+  assert.equal(isHiddenOutline({ hide_3d: false }), false);
+  assert.equal(isHiddenOutline({ render_height: 9 }), false);
 });
