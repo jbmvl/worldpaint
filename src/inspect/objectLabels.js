@@ -61,7 +61,6 @@ export const LABEL_EXACT = {
   'tractor-dust': 'poussière de tracteur',
   trains: 'train',
   'train-lights': 'train (phares et baies éclairées)',
-  'chimney-smoke': 'fumée',
   'furniture-lamp-glow': 'halo de lampadaire',
   'furniture-lamp-pool': 'nappe de lumière',
   'traffic-lens': 'feu (lentille)',

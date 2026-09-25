@@ -38,6 +38,7 @@ test('chaque racine se recale sur son triangle sans modifier les autres instance
  cover.dispose();g.dispose();
 });
 test('les sols agricoles conservent leurs bosses procédurales',()=>{
- for(const kind of ['grass','farmland','settled']) assert.equal(defaultTheme.surfaces[kind].grainAmplitudeM,1.4);
+ for(const kind of ['grass','farmland']) assert.equal(defaultTheme.surfaces[kind].grainAmplitudeM,1.4);
+ for(const kind of ['settled','pavement']) assert.equal(defaultTheme.surfaces[kind].grainAmplitudeM,0,`${kind} : le sol du bâti reste plan`);
  assert.ok(defaultTheme.surfaces.heath.grainAmplitudeM>0,'la lande garde son modelé');
 });

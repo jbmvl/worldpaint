@@ -526,6 +526,16 @@ export function onewayFor(properties = {}) {
 }
 
 /**
+ * Le profil d'une chaussée selon qu'elle porte un sens ou les deux : à sens
+ * unique, les clés de `profile.oneway` remplacent celles du profil.
+ *
+ * Fonction pure.
+ */
+export function carriagewayProfile(profile, oneway) {
+  return oneway && profile?.oneway ? { ...profile, ...profile.oneway } : profile;
+}
+
+/**
  * Style de chaussée d'une entité, ou `null` si elle ne doit pas être dessinée.
  * `subclass` affine `class` : piste cyclable, sentier et escalier partagent la
  * même classe `path`.
@@ -544,14 +554,15 @@ export function roadStyleFor(properties = {}, profiles = defaultTheme.roads.prof
 
   const profile = key ? profiles[key] : null;
   if (!profile) return null;
+  const oneway = onewayFor(properties);
 
   return {
     profile: key,
-    halfWidth: profile.width / 2,
+    halfWidth: carriagewayProfile(profile, oneway).width / 2,
     paved: isPaved(profile),
     works: workCodeFor(properties.brunnel),
     level: roadLevelFor(properties),
-    oneway: onewayFor(properties),
+    oneway,
   };
 }
 
@@ -1312,7 +1323,10 @@ export class RoadNetwork {
    * @returns {number} traits posés.
    */
   _appendMarkings(buffer, segment, run, areas, paint) {
-    const spec = this.theme.roads.profiles[segment.profile];
+    const spec = carriagewayProfile(
+      this.theme.roads.profiles[segment.profile],
+      segment.oneway?.some((sense) => sense !== 0)
+    );
     // Rien de peint sur une chaussée qui ne l'est pas : la terre ne porte pas
     // de marquage, et un chemin d'exploitation n'en a jamais eu.
     if (!spec || !isPaved(spec)) return 0;

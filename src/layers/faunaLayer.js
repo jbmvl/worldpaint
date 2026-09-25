@@ -32,8 +32,7 @@
  * - quatre flottants — où en est la foulée, de combien elle ouvre, de combien
  *   l'encolure est rabattue, et si la bête trotte ou bondit.
  *
- * Soit, au plafond (`FAUNA_ANIMATED_MAX`), l'ordre de grandeur du budget déjà
- * consenti à la fumée des cheminées. Ce qui coûte, dans une bête, ce n'est
+ * Ce qui coûte, dans une bête, ce n'est
  * pas de l'animer : c'est de la placer — et ça, `furnitureLayer` le fait une
  * fois tous les 250 mètres, avec le reste du décor.
  *

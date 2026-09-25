@@ -9,7 +9,7 @@
  * ligne peinte au sol et par le panneau posé ici.
  */
 
-import { branchYields } from '../roadJunctions.js';
+import { branchYields, isForkJunction } from '../roadJunctions.js';
 import { MARKING_BAR_M, MOUTH_CROSSING_M } from '../roadMarkings.js';
 import { pointInAreas } from '../settlement.js';
 import { roadsideFurnitureFor, roadsideYaw, randomAt, PRIORITY_SIGN_PROFILES } from '../furniturePlacement.js';
@@ -63,6 +63,8 @@ export function buildCrossings(layer, context, junctions, roadIndex, builtUp) {
     if (placed >= FURNITURE_LIMITS.trafficLights) break;
     if (Math.hypot(junction.x - here.x, junction.z - here.z) > FURNITURE_RADIUS_M) continue;
     if (!pointInAreas(builtUp, junction.x, junction.z)) continue;
+    // Un giratoire se passe de feux, et une fourche ne croise rien.
+    if (junction.roundabout || isForkJunction(junction)) continue;
     if (!roadsideFurnitureFor(junction.profile, { builtUp: true }).trafficLight) continue;
 
     // La branche la plus large : c'est celle dont le feu règle l'accès, et

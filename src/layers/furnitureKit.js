@@ -64,6 +64,12 @@ export const CEMETERY_GATE_SPAN_M = 3;
  */
 export const LAMP_ARC = { shaft: 7.2, radius: 1.35, sweep: 0.92, lantern: 0.3 };
 
+/** Verre de la lanterne du lampadaire de style : pied, hauteur, rayons bas et haut. */
+const LAMP_CLASSIC_LANTERN = { glassY: 3.72, glassH: 0.5, glassBottom: 0.14, glassTop: 0.23 };
+
+/** Hauteur du cœur de cette lanterne, au-dessus du pied du mât. */
+export const LAMP_CLASSIC_HEAD_M = LAMP_CLASSIC_LANTERN.glassY + LAMP_CLASSIC_LANTERN.glassH / 2;
+
 /**
  * Point de la crosse au paramètre `t` ∈ [0, 1], dans le plan (y, z).
  * Fonction pure : c'est elle qui garantit que les tronçons se touchent et que
@@ -127,31 +133,37 @@ export const FURNITURE_BUILDERS = {
   },
 
   /**
-   * Lampadaire traditionnel : base à collerette, fût galbé, lanterne à pans
-   * en fer forgé — le style d'un centre ancien, pas d'une avenue neuve. Même
-   * crosse que `streetLamp` (`LAMP_ARC`) : la tête reste au même point, donc
-   * le halo et la nappe de lumière (`furnitureLayer._lampHeads`) n'ont pas à
-   * savoir de quel modèle il s'agit.
+   * Lampadaire de style : lanterne à pans sur une colonne en fonte, sans
+   * crosse — la tête est au-dessus du pied (`LAMP_CLASSIC_HEAD_M`). Socle
+   * évasé, fût fin, verre qui s'ouvre vers le haut, chapeau en pagode.
    */
   streetLampClassic(C = DEFAULT_COLORS) {
     const k = new Kit(C);
     const iron = C.black;
-    k.cylinder({ radiusBottom: 0.32, radiusTop: 0.26, height: 0.22, radial: 10, color: iron });
-    k.cylinder({ radiusBottom: 0.22, radiusTop: 0.16, height: 0.3, y: 0.22, radial: 10, color: iron });
-    k.cylinder({ radiusBottom: 0.13, radiusTop: 0.075, height: LAMP_ARC.shaft - 0.52, y: 0.52, radial: 10, color: iron });
+    k.cylinder({ radiusBottom: 0.27, radiusTop: 0.24, height: 0.1, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.22, radiusTop: 0.1, height: 0.55, y: 0.1, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.12, radiusTop: 0.12, height: 0.05, y: 0.65, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.08, radiusTop: 0.06, height: 2.8, y: 0.7, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.1, radiusTop: 0.1, height: 0.06, y: 3.5, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.05, radiusTop: 0.13, height: 0.12, y: 3.56, radial: 6, color: iron });
 
-    const steps = 5;
-    for (let i = 0; i < steps; i++) {
-      k.strutYZ({ from: lampArcAt(i / steps), to: lampArcAt((i + 1) / steps), width: 0.075, color: iron });
+    const { glassY, glassH, glassBottom, glassTop } = LAMP_CLASSIC_LANTERN;
+    k.cylinder({ radiusBottom: glassBottom + 0.015, radiusTop: glassBottom + 0.015, height: 0.04, y: glassY - 0.04, radial: 6, color: iron });
+    k.cylinder({ radiusBottom: glassBottom, radiusTop: glassTop, height: glassH, y: glassY, radial: 6, color: C.lampWarm });
+    // Montants aux arêtes du verre : sans eux, la lanterne se lit comme un
+    // cône lumineux et non comme une cage vitrée.
+    const lean = Math.atan2(glassTop - glassBottom, glassH);
+    for (let i = 0; i < 6; i++) {
+      const yaw = Math.PI / 2 - (i / 6) * Math.PI * 2;
+      const r = glassBottom + 0.008;
+      k.box({ width: 0.025, height: glassH / Math.cos(lean), depth: 0.025,
+        x: Math.sin(yaw) * r, y: glassY, z: Math.cos(yaw) * r, tilt: lean, yaw, color: iron });
     }
-
-    // Lanterne à pans : collerette sombre, globe chaud, pointe — pas le
-    // capot-vasque du modèle moderne.
-    const head = lampArcAt(1);
-    const z = head.z + LAMP_ARC.lantern;
-    k.cylinder({ radiusBottom: 0.2, radiusTop: 0.15, height: 0.08, y: head.y + 0.02, z, radial: 8, color: iron });
-    k.cylinder({ radiusBottom: 0.155, radiusTop: 0.155, height: 0.24, y: head.y - 0.22, z, radial: 8, color: C.lampWarm });
-    k.cylinder({ radiusBottom: 0.16, radiusTop: 0, height: 0.14, y: head.y - 0.36, z, radial: 8, color: iron });
+    const roofY = glassY + glassH;
+    k.cylinder({ radiusBottom: glassTop + 0.03, radiusTop: glassTop + 0.03, height: 0.04, y: roofY, radial: 6, color: iron });
+    k.cylinder({ radiusBottom: glassTop + 0.05, radiusTop: 0.05, height: 0.22, y: roofY + 0.04, radial: 6, color: iron });
+    k.cylinder({ radiusBottom: 0.025, radiusTop: 0.02, height: 0.12, y: roofY + 0.26, radial: 6, color: iron });
+    k.cylinder({ radiusBottom: 0.045, radiusTop: 0, height: 0.08, y: roofY + 0.38, radial: 6, color: iron });
     return k;
   },
 
@@ -680,43 +692,52 @@ export const FURNITURE_BUILDERS = {
   },
 
   /**
-   * Fontaine de grande ville : colonne en fonte sur quatre montants galbés
-   * sous un dôme, sans vasque — l'esprit d'une fontaine Wallace parisienne
-   * sur le trottoir d'un centre-ville, sans en copier le décor.
+   * Fontaine Wallace : socle octogonal à corniche, quatre cariatides dos à
+   * dos qui portent un dôme à pointe, le tout en fonte verte — 2,70 m, la
+   * cote de l'original.
    */
   fountainWallace(C = DEFAULT_COLORS) {
     const k = new Kit(C);
-    const iron = C.black;
-    k.cylinder({ radiusBottom: 0.32, radiusTop: 0.3, height: 0.12, radial: 8, color: C.stoneDark });
-    k.cylinder({ radiusBottom: 0.1, radiusTop: 0.08, height: 1.73, y: 0.12, radial: 8, color: iron });
-    k.box({ width: 0.16, height: 0.05, depth: 0.05, x: 0.1, y: 0.55, color: C.galvanised });
+    const iron = C.wallaceGreen;
+    // Socle : plinthe, pied mouluré, fût légèrement cintré, corniche.
+    k.cylinder({ radiusBottom: 0.42, radiusTop: 0.4, height: 0.1, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.36, radiusTop: 0.3, height: 0.12, y: 0.1, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.29, radiusTop: 0.26, height: 0.48, y: 0.22, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.26, radiusTop: 0.29, height: 0.42, y: 0.7, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.3, radiusTop: 0.37, height: 0.09, y: 1.12, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.37, radiusTop: 0.37, height: 0.05, y: 1.21, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.33, radiusTop: 0.31, height: 0.08, y: 1.26, radial: 8, color: iron });
 
-    const baseY = 0.12;
-    const topY = 1.85;
-    const dy = topY - baseY;
-    const baseR = 0.55;
-    const topR = 0.14;
+    // Cariatides : chacune regarde vers l'extérieur (`yaw`), bras levés
+    // jusqu'à l'entablement. Une robe qui s'évase, un buste, une tête.
+    const footY = 1.34;
+    const ring = 0.22;
+    const at = (yaw, lx, lz) => ({
+      x: Math.sin(yaw) * (ring + lz) + Math.cos(yaw) * lx,
+      z: Math.cos(yaw) * (ring + lz) - Math.sin(yaw) * lx,
+    });
     for (let i = 0; i < 4; i++) {
-      const angle = (i / 4) * Math.PI * 2 + Math.PI / 4;
-      const x0 = Math.sin(angle) * baseR;
-      const z0 = Math.cos(angle) * baseR;
-      const dx = Math.sin(angle) * topR - x0;
-      const dz = Math.cos(angle) * topR - z0;
-      const run = Math.hypot(dx, dy, dz);
-      k.box({
-        width: 0.06,
-        height: run,
-        depth: 0.06,
-        x: x0,
-        y: baseY,
-        z: z0,
-        tilt: Math.atan2(dz, dy),
-        roll: -Math.atan2(dx, dy),
-        color: iron,
-      });
+      const yaw = Math.PI / 4 + (i / 4) * Math.PI * 2;
+      k.taper({ width: 0.14, depth: 0.1, widthTop: 0.085, depthTop: 0.07, height: 0.52,
+        ...at(yaw, 0, 0), y: footY, yaw, color: iron });
+      k.taper({ width: 0.085, depth: 0.07, widthTop: 0.12, depthTop: 0.08, height: 0.24,
+        ...at(yaw, 0, 0), y: footY + 0.52, yaw, color: iron });
+      k.cylinder({ radiusBottom: 0.045, radiusTop: 0.04, height: 0.11,
+        ...at(yaw, 0, 0.01), y: footY + 0.78, radial: 6, color: iron });
+      for (const side of [-1, 1]) {
+        k.box({ width: 0.03, height: 0.2, depth: 0.035,
+          ...at(yaw, side * 0.07, -0.005), y: footY + 0.72, yaw, color: iron });
+      }
     }
-    k.cylinder({ radiusBottom: 0.32, radiusTop: 0.2, height: 0.16, y: topY, radial: 8, color: iron });
-    k.cylinder({ radiusBottom: 0.2, radiusTop: 0, height: 0.22, y: topY + 0.16, radial: 8, color: iron });
+
+    // Entablement et dôme à écailles, rendu en trois gradins, puis la pointe.
+    const topY = footY + 0.92;
+    k.cylinder({ radiusBottom: 0.36, radiusTop: 0.39, height: 0.1, y: topY, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.35, radiusTop: 0.33, height: 0.06, y: topY + 0.1, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.33, radiusTop: 0.27, height: 0.1, y: topY + 0.16, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.27, radiusTop: 0.15, height: 0.08, y: topY + 0.26, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.15, radiusTop: 0.05, height: 0.05, y: topY + 0.34, radial: 8, color: iron });
+    k.cylinder({ radiusBottom: 0.05, radiusTop: 0.015, height: 0.1, y: topY + 0.39, radial: 6, color: iron });
     return k;
   },
 
@@ -1123,10 +1144,7 @@ export const FURNITURE_BUILDERS = {
   },
 
   /**
-   * Cheminée d'usine : fût effilé, bande de balisage. Publie un point de
-   * fumée comme celle de la ferme (`furniture/parcels.js`) — c'est
-   * la couche appelante qui pousse le point dans `chimneys`, cette pièce ne
-   * fait que porter la forme.
+   * Cheminée d'usine : fût effilé, bande de balisage.
    */
   factoryChimney(C = DEFAULT_COLORS) {
     const k = new Kit(C);
@@ -2036,6 +2054,12 @@ export function advanceFurnitureRotor(material, delta, force) {
 /** Hauteur et avancée de la lanterne, déduites de la crosse (changer `LAMP_ARC` déplace du même coup le halo et la nappe). */
 export const LAMP_HEAD_HEIGHT_M = lampArcAt(1).y - 0.16;
 export const LAMP_HEAD_REACH_M = lampArcAt(1).z + LAMP_ARC.lantern;
+
+/** Où accrocher halo et nappe selon le modèle : hauteur, et avancée vers la chaussée. */
+export function lampHeadFor(kind) {
+  if (kind === 'streetLampClassic') return { height: LAMP_CLASSIC_HEAD_M, reach: 0 };
+  return { height: LAMP_HEAD_HEIGHT_M, reach: LAMP_HEAD_REACH_M };
+}
 
 /** Quadrilatère du halo d'un point lumineux (un panneau, pas une sphère : un halo est atmosphérique, sans volume, toujours face caméra). */
 export function createGlowGeometry(THREE) {

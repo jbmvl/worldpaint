@@ -144,11 +144,6 @@ export function buildParcels(layer, context, builtUp) {
             z: centre.z,
             yaw: randomAt(centre.x, centre.z, 191) * Math.PI * 2,
           });
-          // Fumée : publiée comme celle de la ferme (`placeFarmstead`),
-          // près du sommet du fût (`factoryChimney`, 28 m).
-          if (placed && urbanKind === 'factoryChimney') {
-            layer.chimneys.push({ x: placed.x, y: placed.y + 26, z: placed.z });
-          }
           // La croix posée plus haut ne marquait le site que d'un seul
           // repère ; ce qui suit l'habille — mur, portail, tombes, robinet.
           if (placed && urbanKind === 'cemeteryCross') {
@@ -811,16 +806,6 @@ export function placeFarmstead(layer, placements, ring, centre) {
         });
       }
     }
-  }
-
-  // Cheminée : au faîtage de la grange, du côté du pignon. La fumée elle-même
-  // est animée par `lifeLayer` — ici on ne publie que le point d'émission.
-  if (barn) {
-    layer.chimneys.push({
-      x: barn.x - Math.sin(yaw) * 5.5,
-      y: barn.y + 8.6,
-      z: barn.z - Math.cos(yaw) * 5.5,
-    });
   }
 
   // Fil à linge, au vent, derrière la grange.

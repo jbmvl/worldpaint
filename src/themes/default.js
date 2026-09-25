@@ -426,12 +426,10 @@ export const WOODLAND_FLOOR = {
   green: 0.55,
   height: 0.5,
   density: 0.7,
-  // Le même déplacement que l'albédo de `wood`, et il n'a pas le choix : les
-  // deux peignent le même sol, l'un au loin et l'autre sous le nez. `wood` est
-  // une litière brune (rouge dominant) : le vert recule bien plus que le
-  // rouge, sans quoi la touffe resterait verte alors que le sol qu'elle
-  // couvre a viré au brun.
-  tint: [0.98, 0.55, 0.45],
+  // Le même déplacement que l'albédo de `wood` (un quart de litière brune),
+  // et il n'a pas le choix : les deux peignent le même sol, l'un au loin et
+  // l'autre sous le nez.
+  tint: [0.995, 0.89, 0.86],
 };
 
 // --- Les cultures --------------------------------------------------------------
@@ -720,11 +718,11 @@ export const STONE_LOOK = {
 export const SURFACE_LOOK = {
   // --- Le végétal ordinaire -------------------------------------------------
   grass: { albedo: [0.051, 0.135, 0.017], wash: 'grass', grainCellM: 6, grainAmplitudeM: 1.4 },
-  // Un sol de forêt est une litière, pas un pré : brune, jamais verte — c'est
-  // ce qui la distingue d'une prairie à l'ombre. Le pays ne le lave pas — une
-  // hêtraie se ressemble d'un bout à l'autre.
+  // Un sol de forêt est une litière mêlée d'herbe : trois parts de prairie
+  // pour une de brun, assombries pour rester lisibles comme sous-bois. Le pays
+  // ne le lave pas — une hêtraie se ressemble d'un bout à l'autre.
   wood: {
-    albedo: [0.099, 0.062, 0.01],
+    albedo: [0.04, 0.074, 0.01],
     wash: null,
     // Racines, souches, monticules de feuilles : un sol de forêt n'est jamais
     // plan. Cellule courte, amplitude modeste — c'est un désordre de détail,
@@ -736,7 +734,9 @@ export const SURFACE_LOOK = {
   // Lotissement : pelouses tondues et allées, plus claires et plus franchement
   // vertes qu'une prairie de rase campagne — l'entretien, pas l'herbe elle-même.
   // Un aplat, pas un terrain qui varie.
-  settled: { albedo: [0.12, 0.205, 0.08], wash: 'grass', macro: 0.3, grainCellM: 6, grainAmplitudeM: 1.4 },
+  // Pas de grain : le bâti lit une altitude sans bosse, et une bosse de
+  // plus d'un mètre enterrerait les ouvertures du rez-de-chaussée.
+  settled: { albedo: [0.12, 0.205, 0.08], wash: 'grass', macro: 0.3, grainCellM: 6, grainAmplitudeM: 0 },
 
   // --- Les couvertures végétales --------------------------------------------
   // Bruyère et molinie sèche : brun-pourpre, la couleur d'un moor. Rase, dense,
@@ -911,6 +911,9 @@ export const SURFACE_LOOK = {
     grassDensity: 0,
     bushes: 0,
     macro: 0.3,
+    // Le sol de la ville est plan, pour la même raison que `settled`.
+    grainCellM: 6,
+    grainAmplitudeM: 0,
   },
   // L'eau, et c'est la seule matière que le shader traite à part : elle ne se
   // mélange pas aux autres, elle les remplace, et ce qui la fait lire est son
@@ -1232,6 +1235,9 @@ export const WINDOW_HEIGHT_M = 1.15;
 /** Hauteur d'un niveau, et hauteur d'allège du premier. */
 export const WINDOW_LEVEL_M = 3.2;
 export const WINDOW_SILL_M = 1.1;
+/** Porte d'entrée, en mètres : peinte dans le ton des volets du bourg. */
+export const DOOR_WIDTH_M = 1.0;
+export const DOOR_HEIGHT_M = 2.15;
 /** Part des fenêtres allumées. Un village endormi n'est pas un village éteint. */
 export const WINDOW_LIT_SHARE = 0.34;
 
@@ -1252,6 +1258,12 @@ export const WINDOW_LIT_SHARE = 0.34;
  * défaut. Une desserte ou un chemin n'en portent pas : trop étroits pour que
  * le sens s'y peigne, à supposer que la donnée le dise.
  *
+ * `oneway` dit ce que devient la classe quand la donnée la dit à sens unique :
+ * une chaussée qui ne porte qu'un sens, le plus souvent l'une des deux moitiés
+ * d'une route dédoublée. Ses clés remplacent celles du profil. Une voie rapide
+ * n'en a pas : la donnée la relève toujours chaussée par chaussée, sa largeur
+ * est déjà celle d'un sens.
+ *
  * `ragged` est la profondeur, en mètres, sur laquelle le sol ronge le bord du
  * ruban (`createRoadEdgeCanvas`). Elle ne vaut que pour ce qui n'a pas de
  * rive : un chemin de terre est large de ce que les pas ont tassé, et cette
@@ -1260,8 +1272,14 @@ export const WINDOW_LIT_SHARE = 0.34;
  */
 export const ROAD_PROFILES = {
   express: { width: 12, shoulder: 1.2, edgeLines: true, centerDash: true, directionArrows: true, texture: 256 },
-  major: { width: 8.5, shoulder: 0, edgeLines: true, centerDash: true, directionArrows: true, texture: 128 },
-  minor: { width: 5, shoulder: 0, edgeLines: true, centerDash: false, directionArrows: true, texture: 128 },
+  major: {
+    width: 8.5, shoulder: 0, edgeLines: true, centerDash: true, directionArrows: true, texture: 128,
+    oneway: { width: 5, centerDash: false },
+  },
+  minor: {
+    width: 5, shoulder: 0, edgeLines: true, centerDash: false, directionArrows: true, texture: 128,
+    oneway: { width: 3.6 },
+  },
   lane: { width: 3.6, shoulder: 0, edgeLines: false, centerDash: false, texture: 64 },
   // `symbol` dit ce que la classe porte **peint au sol**, au même titre
   // qu'`edgeLines` : le vélo n'est pas une décoration, c'est la seule chose
@@ -1419,17 +1437,15 @@ export const WATERWAY_CLASSES = {
 
 // --- Ce qui vit ----------------------------------------------------------------
 /**
- * Les deux seules couleurs de la couche vivante. L'oiseau est une silhouette
- * (indépendante de l'éclairage) ; la fumée est donnée telle qu'elle sort du
- * shader, sans conversion.
+ * Couleurs de la couche vivante. L'oiseau est une silhouette
+ * (indépendante de l'éclairage).
  */
 export const LIFE_COLORS = {
   bird: '#2b2f36',
   // Silhouette du rapace qui remplace le corvidé en pays de montagne — même
   // principe (une teinte plus sombre que le ciel, quelle que soit l'heure).
   raptor: '#332821',
-  smoke: [0.86, 0.85, 0.83],
-  // Poussière soulevée derrière un tracteur : terre sèche, plus chaude que la fumée.
+  // Poussière soulevée derrière un tracteur : terre sèche.
   dust: [0.74, 0.66, 0.54],
   // Osier du panier de nacelle.
   balloonBasket: srgb('#7a5c3c'),
@@ -1569,6 +1585,7 @@ export const FURNITURE_COLORS = {
   signalGreen: srgb('#2f8a4a'),
   signalAmber: srgb('#d09a2a'),
   black: srgb('#22262b'),
+  wallaceGreen: srgb('#2d4a3c'), // fonte peinte des fontaines Wallace
 
   // Verres de feu tricolore au repos (couleur assombrie derrière le verre, pas noir).
   redDark: srgb('#3a1f1e'),
@@ -1774,6 +1791,8 @@ export const defaultTheme = Object.freeze({
     heightM: WINDOW_HEIGHT_M,
     levelM: WINDOW_LEVEL_M,
     sillM: WINDOW_SILL_M,
+    doorWidthM: DOOR_WIDTH_M,
+    doorHeightM: DOOR_HEIGHT_M,
     litShare: WINDOW_LIT_SHARE,
   },
   shopfront: {
