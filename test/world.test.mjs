@@ -62,6 +62,7 @@ import {
   branchSection,
   branchYields,
   junctionArea,
+  JUNCTION_FORK_REACH_M,
   junctionBoundaryAt,
   junctionCentreDeck,
   junctionCorner,
@@ -7124,6 +7125,29 @@ test('une branche publie la chaussée telle qu’elle part, et sa direction sur 
   close(branch.path[branch.path.length - 1].z, 20, 1e-6, 'suivie jusqu’au bout de la branche');
 });
 
+test('une fourche suit ses branches aussi loin qu’elle cherche leur séparation', () => {
+  // Deux sens uniques qui s'écartent puis filent parallèles, sommet tous les
+  // cinq mètres : prolongée en ligne droite au-delà de quelques dizaines de
+  // mètres, la polyligne les séparerait trop tôt.
+  const half = (s) => Array.from({ length: 41 }, (_, i) => ({ x: s * 2.8 * Math.tanh((i * 5) / 30), z: -i * 5 }));
+  const { junctions } = mergeRoadLines([
+    { profile: 'minor', halfWidth: 4.25, points: [{ x: 0, z: 200 }, { x: 0, z: 0 }] },
+    { profile: 'minor', halfWidth: 2.5, points: half(-1) },
+    { profile: 'minor', halfWidth: 2.5, points: half(1).reverse() },
+  ]);
+
+  const legs = junctions[0].branches.filter((b) => b.z < 0);
+  for (const leg of legs) {
+    assert.ok(-leg.path[leg.path.length - 1].z >= JUNCTION_FORK_REACH_M, 'suivie jusqu’à la portée de la fourche');
+  }
+  const area = junctionArea(junctions[0]);
+  assert.ok(area.fork);
+  for (const mouth of area.mouths.slice(1)) {
+    const { x, z } = mouth.centre;
+    close(Math.abs(x), 2.8 * Math.tanh(-z / 30), 0.05, 'la bouche est posée sur la chaussée, pas sur son prolongement');
+  }
+});
+
 test('le morceau qu’une tuile voisine livre d’une branche ne l’arrête pas', () => {
   // La tuile voisine coupe la desserte au bord de sa marge (z = 30), sur
   // l'arête que la tuile d'origine porte entière : le sommet partagé (z = 20)
@@ -8126,6 +8150,27 @@ test('le ruban s’arrête pile sur le contour, et reprend de l’autre côté',
   // La plate-forme suit : un sommet inventé à la bouche doit porter une altitude.
   assert.ok(Number.isFinite(runs[0].platform[runs[0].platform.length - 1]));
   assert.equal(runs[0].platform.length, runs[0].path.length);
+});
+
+test('entre deux carrefours voisins, la chaussée qui les sépare est dessinée', () => {
+  // Deux T assez proches pour prendre deux lignes consécutives sans se toucher :
+  // aucune ligne libre entre eux, et pourtant un bout de chaussée.
+  const first = teeJunction();
+  const reach = Math.max(...junctionArea(first).outline.map((p) => p.x));
+  const offset = 2 * reach + 1;
+  const areas = new JunctionAreas([first, { ...teeJunction(), x: offset }]);
+  const rows = 41;
+  const path = Array.from({ length: rows }, (_, i) => ({ x: -100 + i * 5, z: 0, distance: i * 5 }));
+  const segment = { path, platform: new Float32Array(rows).fill(7), levels: new Int8Array(rows) };
+  segment.junction = markJunctionRows(segment, areas);
+  const inBetween = path.filter((p) => p.x > reach && p.x < offset - reach);
+  assert.equal(inBetween.length, 0, 'le cas étudié : aucune ligne dans l’intervalle');
+
+  const runs = junctionRibbonRuns(segment, areas, [{ from: 0, to: rows - 1 }]);
+  const bridge = runs.find((run) => run.head >= 0 && run.tail >= 0);
+  assert.ok(bridge, 'un morceau va d’un carrefour à l’autre');
+  close(bridge.path[0].x, reach, 0.01, 'il part du contour du premier');
+  close(bridge.path[bridge.path.length - 1].x, offset - reach, 0.01, 'et finit sur celui du second');
 });
 
 test('une section peut emprunter les repères de la rive qu’elle borde', () => {

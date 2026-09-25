@@ -1389,6 +1389,24 @@ export function junctionRibbonRuns(segment, areas, runs, { steps = JUNCTION_BISE
     });
   };
 
+  // Deux carrefours voisins peuvent prendre deux lignes consécutives sans se
+  // toucher : la chaussée qui les sépare n'a alors aucune ligne libre, et le
+  // sol passerait en travers de la route.
+  const bridge = (a, b) => {
+    const ia = areaAt(a);
+    const ib = areaAt(b);
+    if (ia < 0 || ib < 0 || ia === ib) return;
+    const exit = boundaryTowards(path, platform, b, a, areas.areas[ia], steps);
+    const entry = boundaryTowards(path, platform, a, b, areas.areas[ib], steps);
+    if (entry.point.distance - exit.point.distance < 1e-3) return;
+    out.push({
+      path: [exit.point, entry.point],
+      platform: Float32Array.of(exit.deck, entry.deck),
+      head: ia,
+      tail: ib,
+    });
+  };
+
   for (const run of runs || []) {
     let start = -1;
     for (let r = run.from; r <= run.to + 1; r++) {
@@ -1398,6 +1416,7 @@ export function junctionRibbonRuns(segment, areas, runs, { steps = JUNCTION_BISE
         emit(start, r - 1);
         start = -1;
       }
+      if (r < run.to) bridge(r, r + 1);
     }
   }
 
