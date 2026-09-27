@@ -913,7 +913,12 @@ export function platformPositionAt(roads, x, z, ahead = null, margin = ROAD_INDE
  *          `{profile, halfWidth, path, startDistance, anchor, platform, edges,
  *          works, oneway}` et carrefours dans la portée demandée.
  */
-export function collectRoadSegments(
+export function collectRoadSegments(...args) {
+  return finishGeneration(collectRoadSegmentsSteps(...args));
+}
+
+/** `collectRoadSegments` en étapes : une par chaîne et par ouvrage. */
+export function* collectRoadSegmentsSteps(
   source,
   tiles,
   here,
@@ -936,8 +941,11 @@ export function collectRoadSegments(
       where: (x, z) => urban.covers(x, z),
     });
   }
+  yield;
   const { chains, junctions } = mergeRoadLines(lines);
+  yield;
   fitParallelRoadWidths(chains.filter((chain) => isPaved(roads.profiles[chain.profile])), junctions);
+  yield;
   // Les carrefours deviennent des surfaces, en plan, avant tout le reste : ce
   // sont elles qui diront où chaque ruban s'arrête. Les chaînes, elles, ne sont
   // plus coupées — la chaussée traverse le carrefour dans les données, et seul
@@ -945,6 +953,7 @@ export function collectRoadSegments(
   const areas = new JunctionAreas(junctions);
 
   for (const chain of chains) {
+    yield;
     const stable = continuity?.resolve(chain);
     const { distance: sinceAnchor, anchorIndex } = stable ?? anchorDistances(chain.points, chain.anchors);
 
@@ -1028,6 +1037,7 @@ export function collectRoadSegments(
   // Les lignes prises par un carrefour, une fois les tronçons ré-échantillonnés.
   // Le ruban les sautera ; tout le reste (emprise, déblai, couture, mobilier,
   // trottoirs) continue de lire une route entière.
+  yield;
   if (areas.length > 0) {
     for (const segment of out) {
       segment.junction = markJunctionRows(segment, areas);
@@ -1061,6 +1071,7 @@ export function collectRoadSegments(
     for (let si = 0; si < out.length; si++) {
       const segment = out[si];
       if (!segment.works.some((code) => code !== 0)) continue;
+      yield;
       const own = [];
       levelWorkSpans(segment.path, segment.platform, segment.works, {
         clearanceAt: crossedDeckAt(grade, segment, si),
@@ -1069,6 +1080,7 @@ export function collectRoadSegments(
       });
       for (const abutment of own) abutments.push({ segment: si, ...abutment });
     }
+    yield;
     raiseApproaches(out, abutments, { centres: areas?.areas });
   }
 
@@ -1180,7 +1192,7 @@ export class RoadNetwork {
       return ground + bridgeFreeboardFor(span);
     };
 
-    const { segments: collected, junctions, areas } = collectRoadSegments(
+    const { segments: collected, junctions, areas } = yield* collectRoadSegmentsSteps(
       source,
       tiles,
       here,
@@ -1196,7 +1208,9 @@ export class RoadNetwork {
     // non la seule emprise : c'est lui que `terrainBubble` interrogera.
     yield;
     const index = new RoadIndex(collected, { margin: bubble.cutBenchM + ROAD_CUT_BLEND_M });
+    yield;
     stitchPlatforms(collected, index);
+    yield;
     // Même marge, tabliers compris : `platformPositionAt` doit pouvoir lire
     // l'altitude d'un pont ou d'un tunnel, ce que `index` refuse par construction.
     const elevationIndex = new RoadIndex(collected, {

@@ -8,6 +8,7 @@
  * chaque côté. Les bouches interrompent les bordures, les coins les prolongent.
  * Les traversées lisent les deux rives ; les comblements lisent leur emprise.
  */
+import { finishGeneration } from '../core/generationSteps.js';
 import { appendProfile, createProfileBuffer, pathFrames, toColoredGeometry } from './ribbonGeometry.js';
 import { ajouterJointsVoirie } from './streetMasonry.js';
 import { ROAD_LIFT_M } from './roadNetwork.js';
@@ -152,7 +153,10 @@ export class StreetLayer {
    * @param {Object} [context.urban] Masque urbain publié par la composition.
    * @returns {boolean} vrai si de la voirie a été posée.
    */
-  rebuild(
+  rebuild(...args) { return finishGeneration(this.rebuildSteps(...args)); }
+
+  /** `rebuild` en étapes : une par tronçon et par carrefour, maillages publiés à la fin. */
+  *rebuildSteps(
     roadSegments = [],
     here = { x: 0, z: 0 },
     { builtUp = [], fabric = null, roadIndex = null, areas = null, urban = null } = {}
@@ -173,14 +177,16 @@ export class StreetLayer {
       for (const segment of roadSegments) {
         if (!STREET_PROFILES.has(segment.profile)) continue;
         built += this._buildSegment(buffer, bands, segment, context);
+        yield;
       }
       // Les coins de rue, après les tronçons : ils bordent la même rive, mais
       // le morceau que porte le carrefour, pas celui que porte une chaussée.
-      built += this._buildCorners(buffer, bands, context);
+      built += yield* this._buildCorners(buffer, bands, context);
     }
 
     // Les traversées, une fois les deux rives connues.
     this.crossings = this._buildCrossings(marks, mouths, areas);
+    yield;
 
     // La bande revêtue est publiée avant le comblement, parce que le
     // comblement l'interroge : là où un trottoir tient, il vaut mieux qu'un
@@ -190,6 +196,7 @@ export class StreetLayer {
     // Les vides de faisceau, partout — un longement de piste cyclable n'attend
     // pas d'être en bourg pour laisser deux mètres d'herbe au milieu du bitume.
     this.fills = this._buildFills(buffer, roadSegments, here, roadIndex, areas);
+    yield;
 
     this.count = built;
     this._apply(buffer);
@@ -507,7 +514,7 @@ export class StreetLayer {
    *
    * @returns {number} coins posés.
    */
-  _buildCorners(buffer, bands, { here, builtUp, fabric, roadIndex, areas, urban }) {
+  *_buildCorners(buffer, bands, { here, builtUp, fabric, roadIndex, areas, urban }) {
     if (!areas || areas.length === 0) return 0;
     const streets = this.theme.streets;
     let built = 0;
@@ -572,6 +579,7 @@ export class StreetLayer {
         });
         built++;
       }
+      yield;
     }
 
     return built;

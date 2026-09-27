@@ -70,7 +70,8 @@ test('une fenêtre identique ne transfère ni l’herbe ni les fleurs', () => {
   const versions = attributes.map(a => a.version);
   for (const a of attributes) a.clearUpdateRanges();
   cover._instanceCells.begin(cover.bubble.frame, 0, undefined, false);
-  cover._scatter(0, 0);
+  cover._startScatter(0, 0);
+  cover._scatter();
   assert.deepEqual(attributes.map(a => a.version), versions);
   assert.ok(attributes.every(a => a.updateRanges.length === 0));
   cover.dispose();
@@ -187,4 +188,22 @@ test('les racines couvertes par l’atlas ne sondent pas neuf fois le terrain CP
   assert.equal(reads, cover.mesh.count);
   assert.ok(cover._rootOffsets.every(a => a.every(value => value === 0)));
   cover.dispose();
+});
+
+test('un semis d’herbe étalé sur plusieurs appels rend le même semis qu’une passe unique', () => {
+  const options = { THREE, scene: new THREE.Scene(), bubble: bulle(), groundClass: null, count: 60000 };
+  const spread = new GroundCover({ ...options, scatterBudgetMs: 0 });
+  spread.update(0, 0);
+  let calls = 1;
+  while (spread.pending) { spread.update(0, 0); calls++; }
+  spread.update(9, 0);
+  const shown = valeurs(spread);
+  assert.ok(!spread.update(9, 0) && spread.pending, 'l’herbe affichée reste l’ancienne tant que la passe court');
+  assert.deepEqual(valeurs(spread), shown);
+  while (spread.pending) spread.update(9, 0);
+  const fresh = new GroundCover({ ...options, scene: new THREE.Scene() });
+  fresh.update(9, 0);
+  assert.ok(calls > 10);
+  assert.deepEqual(valeurs(spread), valeurs(fresh));
+  spread.dispose(); fresh.dispose();
 });

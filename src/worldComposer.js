@@ -95,6 +95,9 @@ export const WORLD_ATTRIBUTION =
 
 export { FAUNA_CROSS_AHEAD_M } from './layers/faunaCrossing.js';
 
+/** Temps CPU d'herbe semée par image : la passe s'étale sur les suivantes. */
+const GRASS_SCATTER_BUDGET_MS = 3;
+
 export class WorldComposer {
   /**
    * @param {Object} options
@@ -249,6 +252,7 @@ export class WorldComposer {
       roads: this._infra,
       streets: this.streets,
       theme,
+      scatterBudgetMs: GRASS_SCATTER_BUDGET_MS,
     });
     this.grass.setMaxAnisotropy(maxAnisotropy);
 
@@ -287,7 +291,7 @@ export class WorldComposer {
       : null;
     this.metrics = new GenerationMetrics();
     for (const [object,method,label] of [
-      [this.bubble,'_buildMesh','terrain'], [this.cliffs,'rebuild','falaises'],
+      [this.bubble,'processRebuildQueue','terrain'], [this.cliffs,'rebuild','falaises'],
       [this.roads,'rebuild','routes'], [this.buildings,'rebuild','batiments'],
       [this.furniture,'rebuild','mobilier'], [this.groundClass,'rebuild','carteSol'],
       [this.vegetation,'_build','forets'], [this.grass,'_scatter','herbe'],
@@ -467,7 +471,7 @@ export class WorldComposer {
       // La région repeint la carte au même titre qu'un glissement : ce qui y
       // était semé l'a été avec l'assolement d'une autre région.
       if (classesChanged) {
-        this.groundClass.rebuild(this.vectorTiles, wanted, here, this.bubble.frame, { urban });
+        if (!await rebuild(this.groundClass, 'carteSol', this.vectorTiles, wanted, here, this.bubble.frame, { urban })) return false;
         this.bubble.materials.syncGroundClass();
       }
       const classArrived = !wasReady && this.groundClass.ready;
@@ -510,7 +514,7 @@ export class WorldComposer {
 
       // 4 bis. Voirie — après chaussées et bâti.
       const fabric = streetsChanged || furnitureChanged ? new FabricIndex(this.buildings.footprints) : null;
-      if (streetsChanged) this.streets.rebuild(this.roads.roadSegments, here, {
+      if (streetsChanged && !await rebuild(this.streets, 'rues', this.roads.roadSegments, here, {
         builtUp,
         fabric,
         urban,
@@ -518,7 +522,7 @@ export class WorldComposer {
         // Les surfaces de carrefour : elles arrêtent les rives de tronçon et
         // portent les coins de rue.
         areas: this.roads.junctionAreas,
-      });
+      })) return false;
 
       if (!await checkpoint()) return false;
 
@@ -569,7 +573,11 @@ export class WorldComposer {
 
       // 7. Herbe — l'index des chaussées vient peut-être de changer.
       if (roadsChanged || classesChanged || streetsChanged) {
-        this.grass.update(here.x, here.z, { force: true });
+        let done = this.grass.update(here.x, here.z, { force: true });
+        while (!done && this.grass.pending) {
+          if (!await checkpoint()) return false;
+          done = this.grass.update(here.x, here.z);
+        }
       }
 
       if (!await checkpoint()) return false;
