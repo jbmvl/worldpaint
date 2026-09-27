@@ -1147,6 +1147,7 @@ export const BUILDING_PERSONALITIES = {
   retail: { wall: '#d8d4cb', roof: '#71767b', shape: 'flat' },
   bakery: { front: '#7d4a2a' }, // bois verni foncé
   shop: { front: '#3f5560' }, // se lit à sa valeur, pas sa teinte
+  fuel: { front: '#b3352f' }, // rouge d'enseigne, jamais confondu avec un commerce quelconque
 };
 
 /**
@@ -1189,6 +1190,7 @@ export const SHOPFRONT_EMOJI = {
   music: '🎵',
   post: '📮',
   grocery: '🛒',
+  fuel: '⛽',
 };
 /** Repli d'une classe non répertoriée, ou d'un commerce sans point d'intérêt
  *  matché (`class` absent) : la façade, sans autre indice. */
@@ -1215,6 +1217,16 @@ export const AWNING_MARGIN_M = 0.35;
 export const TERRACE_DEPTH_M = 1.9;
 export const TERRACE_SPACING_M = 2.3;
 export const TERRACE_CLEARANCE_M = 0.9;
+
+/**
+ * Pompes d'une station-service (`buildingLayer._appendPumps`) : même rôle que
+ * `TERRACE_*` pour un commerce à tables, un autre mobilier posé le long du
+ * même pan de façade. Un îlot de pompe est plus large qu'une table, donc plus
+ * reculé et plus espacé.
+ */
+export const PUMP_DEPTH_M = 2.4;
+export const PUMP_SPACING_M = 3.2;
+export const PUMP_CLEARANCE_M = 1.1;
 
 // --- Les toits -----------------------------------------------------------------
 /**
@@ -1774,6 +1786,9 @@ export const defaultTheme = Object.freeze({
     terraceDepthM: TERRACE_DEPTH_M,
     terraceSpacingM: TERRACE_SPACING_M,
     terraceClearanceM: TERRACE_CLEARANCE_M,
+    pumpDepthM: PUMP_DEPTH_M,
+    pumpSpacingM: PUMP_SPACING_M,
+    pumpClearanceM: PUMP_CLEARANCE_M,
   },
   roads: {
     profiles: ROAD_PROFILES,

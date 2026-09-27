@@ -54,6 +54,7 @@ const SHOPFRONT_CLASSES = new Set([
   'cafe',
   'clothing_store',
   'fast_food',
+  'fuel',
   'grocery',
   'hairdresser',
   'ice_cream',
@@ -83,12 +84,18 @@ export function buildingPersonalityFor(properties = {}) {
   if (klass === 'hospital') return 'hospital';
   if (RETAIL_SUBCLASSES.has(subclass)) return 'retail';
   if (klass === 'bakery') return 'bakery';
+  // Sa propre personnalité, comme la boulangerie : une devanture générique
+  // porterait la couleur d'un commerce quelconque, pas les pompes en façade.
+  if (klass === 'fuel') return 'fuel';
   if (SHOPFRONT_CLASSES.has(klass)) return 'shop';
   return null;
 }
 
 /** Classes brutes de point d'intérêt qui reçoivent un auvent et une terrasse (`appendAwning`, `_appendTerrace`) — la salle déborde sur la rue, une boutique non. */
 const AWNING_CLASSES = new Set(['restaurant', 'bar', 'cafe']);
+
+/** Classes brutes de point d'intérêt qui reçoivent des pompes en façade (`_appendPumps`) plutôt qu'une terrasse — même position en devanture, un autre mobilier. */
+const FUEL_CLASSES = new Set(['fuel']);
 
 /** Rang d'une personnalité quand il faut en écarter, petit d'abord (un clocher se voit de loin, une devanture se compte par milliers). */
 export const BUILDING_PERSONALITY_RANK = {
@@ -98,6 +105,7 @@ export const BUILDING_PERSONALITY_RANK = {
   retail: 2,
   bakery: 3,
   shop: 4,
+  fuel: 4,
 };
 
 /**
@@ -1354,6 +1362,32 @@ function buildTerraceKit(dressed, colors) {
   return kit;
 }
 
+/**
+ * Une pompe à essence, radialement symétrique comme `buildTerraceKit` —
+ * aucune orientation à lui donner, un îlot dessert deux véhicules de part et
+ * d'autre. Corps blanc sur un socle sombre, bandeau rouge à hauteur
+ * d'afficheur, une buse sur chacun des deux flancs opposés.
+ *
+ * @param {Object} colors `theme.furniture.colors`.
+ */
+function buildPumpKit(colors) {
+  const kit = new Kit(colors);
+
+  kit.box({ width: 0.42, height: 0.12, depth: 0.42, color: colors.steelDark });
+  kit.box({ width: 0.32, height: 0.92, depth: 0.32, y: 0.12, color: colors.white });
+  kit.box({ width: 0.33, height: 0.22, depth: 0.33, y: 0.55, color: colors.red });
+  kit.box({ width: 0.36, height: 0.06, depth: 0.36, y: 1.04, color: colors.steelDark });
+
+  // Une buse sur chaque flanc opposé, pas un seul côté « rue » : un îlot se
+  // dessert des deux bords, il n'a pas de face arrière à cacher.
+  for (const side of [1, -1]) {
+    kit.cylinder({ radiusBottom: 0.045, radiusTop: 0.045, height: 0.3, radial: 6, color: colors.galvanised, x: side * 0.2, y: 0.2 });
+    kit.box({ width: 0.06, height: 0.18, depth: 0.16, color: colors.steelDark, x: side * 0.2, y: 0.5 });
+  }
+
+  return kit;
+}
+
 export class BuildingLayer {
   /**
    * @param {Object} options
@@ -1942,6 +1976,11 @@ export class BuildingLayer {
           if (AWNING_CLASSES.has(personalityClass)) {
             appendAwning(walls, a, b, nx, nz, shopfrontTop, look.front, this.theme.shopfront);
             this._appendTerrace(walls, a, b, nx, nz, groundAt, minHeight, personalityClass === 'restaurant');
+          } else if (FUEL_CLASSES.has(personalityClass)) {
+            // Même devanture qu'un commerce quelconque, mais ce qui déborde sur
+            // la rue n'est pas une salle : ce sont des pompes, pas de toile
+            // tendue au-dessus — voir `FUEL_CLASSES`.
+            this._appendPumps(walls, a, b, nx, nz, groundAt, minHeight);
           }
         }
       }
@@ -2219,6 +2258,41 @@ export class BuildingLayer {
       const x = a.x + ux * along + nx * theme.terraceDepthM;
       const z = a.y + uz * along + nz * theme.terraceDepthM;
       if (this._roadIndex && this._roadIndex.query(x, z, theme.terraceClearanceM)) continue;
+      this._pushKitAt(walls, kit, x, groundAt(x, z) + minHeight, z);
+    }
+  }
+
+  /**
+   * Pompes d'une station-service, réparties le long du pan de façade comme
+   * `_appendTerrace` — même position en devanture, un autre mobilier : voir
+   * `FUEL_CLASSES`. Reculées de `pumpDepthM`, espacées de `pumpSpacingM`,
+   * sautées plutôt que déplacées si elles empiéteraient sur la chaussée
+   * (`pumpClearanceM`), pour ne pas rompre l'alignement du reste de la rangée.
+   *
+   * @param {Object} walls Accumulateur de la géométrie opaque.
+   * @param {{x:number,y:number}} a Début du pan de façade.
+   * @param {{x:number,y:number}} b Fin du pan.
+   * @param {number} nx Normale sortante, composante x.
+   * @param {number} nz Normale sortante, composante z.
+   * @param {(x:number, z:number) => number} groundAt Altitude du sol : chaque pompe se pose sur le sien.
+   * @param {number} minHeight Hauteur du dessous (surplomb).
+   */
+  _appendPumps(walls, a, b, nx, nz, groundAt, minHeight) {
+    const theme = this.theme.shopfront;
+    const length = Math.hypot(b.x - a.x, b.y - a.y);
+    const ux = (b.x - a.x) / length;
+    const uz = (b.y - a.y) / length;
+
+    const count = Math.max(1, Math.round(length / theme.pumpSpacingM));
+    const span = (count - 1) * theme.pumpSpacingM;
+    const start = length / 2 - span / 2;
+    const kit = buildPumpKit(this.theme.furniture.colors);
+
+    for (let i = 0; i < count; i++) {
+      const along = start + i * theme.pumpSpacingM;
+      const x = a.x + ux * along + nx * theme.pumpDepthM;
+      const z = a.y + uz * along + nz * theme.pumpDepthM;
+      if (this._roadIndex && this._roadIndex.query(x, z, theme.pumpClearanceM)) continue;
       this._pushKitAt(walls, kit, x, groundAt(x, z) + minHeight, z);
     }
   }

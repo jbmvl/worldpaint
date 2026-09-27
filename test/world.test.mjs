@@ -1389,6 +1389,10 @@ test('la personnalité d’un bâtiment suit le point d’intérêt qui tombe de
   // La boulangerie a sa propre classe : `class: 'shop'` ne l'a jamais portée.
   assert.equal(buildingPersonalityFor({ class: 'bakery', subclass: 'bakery' }), 'bakery');
 
+  // La station-service aussi : une devanture générique porterait la couleur
+  // d'un commerce quelconque, pas les pompes que `FUEL_CLASSES` y pose.
+  assert.equal(buildingPersonalityFor({ class: 'fuel', subclass: 'fuel' }), 'fuel');
+
   // Devanture générique : commerce, café, banque, coiffeur.
   assert.equal(buildingPersonalityFor({ class: 'shop', subclass: 'clothes' }), 'shop');
   assert.equal(buildingPersonalityFor({ class: 'grocery', subclass: 'greengrocer' }), 'shop');
@@ -1437,6 +1441,10 @@ test('l’habillage d’une personnalité ne remplace que ce qu’il nomme', () 
   const shop = personalityLookFor('shop');
   assert.ok(Array.isArray(shop.front), 'le commerce ne porte qu’une devanture');
   assert.equal(shop.wall, null, 'repeindre l’immeuble entier faisait virer tout un centre ancien');
+
+  const fuel = personalityLookFor('fuel');
+  assert.ok(Array.isArray(fuel.front), 'la station-service ne porte qu’une devanture, comme un commerce');
+  assert.notDeepEqual(fuel.front, shop.front, 'jamais confondue avec un commerce quelconque');
 
   const hospital = personalityLookFor('hospital');
   assert.ok(Array.isArray(hospital.wall) && hospital.shape === 'flat');
@@ -13044,6 +13052,7 @@ test('labelFontPxForCellHeight retrouve la fonte qui a produit une case de cette
 test('shopfrontEmojiFor retrouve le pictogramme de la classe, ou le repli générique', () => {
   assert.equal(shopfrontEmojiFor('bakery'), SHOPFRONT_EMOJI.bakery);
   assert.equal(shopfrontEmojiFor('cafe'), SHOPFRONT_EMOJI.cafe);
+  assert.equal(shopfrontEmojiFor('fuel'), SHOPFRONT_EMOJI.fuel);
   assert.equal(shopfrontEmojiFor('inconnu'), SHOPFRONT_EMOJI_DEFAULT);
   assert.equal(shopfrontEmojiFor(null), SHOPFRONT_EMOJI_DEFAULT);
 });
