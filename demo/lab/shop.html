@@ -67,8 +67,9 @@ const buildings = [
   // Maison voisine, et bâtiment de cour sans rue devant : son bar ne pose rien.
   { ring: rect(6, -14, 16, -6) },
   { ring: rect(24, -14, 38, -6), poi: { x: 31, z: -10, class: 'bar', name: 'Au Fond' } },
-  // Rive ouest : boutique en long pan.
+  // Rive ouest : boutique en long pan, et hôtel.
   { ring: rect(-18, -8, -6, 2), poi: { x: -12, z: -3, class: 'bakery', name: 'Fournil' } },
+  { ring: rect(-18, 8, -6, 20), poi: { x: -12, z: 14, class: 'lodging', name: 'Hôtel du Centre' } },
 ];
 
 const source = {

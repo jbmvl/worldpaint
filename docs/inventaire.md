@@ -330,7 +330,7 @@ l'empreinte qui le contient.
 | `hospital` | murs clairs, toit plat |
 | `mall`, `department_store`, `supermarket` | grande surface, toit plat |
 | `bakery` | devanture en bois verni |
-| dix-huit classes de commerce | devanture au rez-de-chaussée, avec enseigne et pictogramme |
+| dix-neuf classes de commerce (dont `lodging`, l'hôtel) | devanture au rez-de-chaussée, avec enseigne et pictogramme |
 
 Devanture, enseigne, auvent et terrasse se posent sur le pan qui **fait face à
 une chaussée** (la plus proche, à moins de 20 m de son axe) ; un commerce sans

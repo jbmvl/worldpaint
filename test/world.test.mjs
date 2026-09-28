@@ -1399,6 +1399,7 @@ test('la personnalité d’un bâtiment suit le point d’intérêt qui tombe de
   assert.equal(buildingPersonalityFor({ class: 'grocery', subclass: 'greengrocer' }), 'shop');
   assert.equal(buildingPersonalityFor({ class: 'cafe', subclass: 'cafe' }), 'shop');
   assert.equal(buildingPersonalityFor({ class: 'bank', subclass: 'bank' }), 'shop');
+  assert.equal(buildingPersonalityFor({ class: 'lodging', subclass: 'hotel' }), 'shop');
 
   // Pas de façade sur rue : un cabinet, un bureau, une école n'en ont pas.
   assert.equal(buildingPersonalityFor({ class: 'doctors', subclass: 'doctors' }), null);
@@ -13084,6 +13085,7 @@ test('shopfrontEmojiFor retrouve le pictogramme de la classe, ou le repli géné
   assert.equal(shopfrontEmojiFor('bakery'), SHOPFRONT_EMOJI.bakery);
   assert.equal(shopfrontEmojiFor('cafe'), SHOPFRONT_EMOJI.cafe);
   assert.equal(shopfrontEmojiFor('fuel'), SHOPFRONT_EMOJI.fuel);
+  assert.equal(shopfrontEmojiFor('lodging'), SHOPFRONT_EMOJI.lodging);
   assert.equal(shopfrontEmojiFor('inconnu'), SHOPFRONT_EMOJI_DEFAULT);
   assert.equal(shopfrontEmojiFor(null), SHOPFRONT_EMOJI_DEFAULT);
 });

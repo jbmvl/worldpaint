@@ -1187,6 +1187,7 @@ export const SHOPFRONT_EMOJI = {
   clothing_store: '👕',
   ice_cream: '🍦',
   laundry: '🧺',
+  lodging: '🏨',
   music: '🎵',
   post: '📮',
   grocery: '🛒',
