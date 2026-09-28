@@ -113,6 +113,10 @@ export { srgb } from './core/color.js';
 // poser un objet du décor sans passer par une couche entière — voir l'afficheur.
 export { createFurnitureGeometries, createFurnitureMaterial } from './layers/furnitureKit.js';
 
+// La montgolfière du ciel, pour qui veut en poser une à un endroit précis
+// plutôt qu'en vol libre ; le profil permet d'y ceinturer une banderole.
+export { createBalloonGeometry, balloonRadiusAt } from './layers/lifeLayer.js';
+
 // La couverture du sol et les cultures, pour qui veut semer une seule matière
 // sur une tuile sans monter tout le décor — voir l'afficheur (`demo/showcase.js`).
 export { GroundCover } from './layers/groundCover.js';

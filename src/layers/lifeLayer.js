@@ -271,7 +271,7 @@ const BALLOON_PROFILE = [
 ];
 
 /** Rayon relatif du profil à une hauteur relative donnée. Fonction pure. */
-function balloonRadiusAt(t) {
+export function balloonRadiusAt(t) {
   let i = 0;
   while (i < BALLOON_PROFILE.length - 2 && BALLOON_PROFILE[i + 1].y < t) i++;
   const a = BALLOON_PROFILE[i];

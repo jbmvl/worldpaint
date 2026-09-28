@@ -38,6 +38,8 @@ const CONTRACT = [
   'ROAD_LIFT_M',
   'createGlowGeometry',
   'createGlowMaterial',
+  'createBalloonGeometry',
+  'balloonRadiusAt',
 ];
 
 test('la surface publique expose tout ce qui est annoncé', () => {
