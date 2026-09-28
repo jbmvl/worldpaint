@@ -130,6 +130,33 @@ test('roadPositionAt suit la plate-forme d’une chaussée, le terrain sinon', (
   assert.ok(Math.abs(offRoad.y - (1 + api.ROAD_LIFT_M)) < 1e-9, 'hors chaussée, retombe sur le terrain');
 });
 
+test('roadsideAt pose au bord, sur la plate-forme si elle y est encore, au terrain sinon', () => {
+  const bubble = { frame: { toLocal: (lng, lat) => ({ x: lng, z: lat }) } };
+  const segment = {
+    profile: 'minor',
+    halfWidth: 2.5,
+    path: [
+      { x: 0, z: 0 },
+      { x: 10, z: 0 },
+    ],
+    platform: new Float32Array([5, 5]),
+  };
+  const composer = fakeComposer();
+  composer.bubble = bubble;
+  composer.roads = { elevationIndex: new RoadIndex([segment], { includeWorks: true }) };
+  composer.groundElevationAt = () => 1;
+  const world = new World({ composer, environment: null, elevation: null, ownsElevation: false });
+
+  const edge = world.roadsideAt(5, 0, { side: 1, aheadLng: 6, aheadLat: 0, heightAboveGround: 2 });
+  assert.equal(edge.z, 2.5, 'à droite en allant vers l’est : au sud');
+  assert.equal(edge.y, 7, 'au bord, la plate-forme porte encore');
+  assert.equal(edge.profile, 'minor');
+
+  const far = world.roadsideAt(5, 0, { side: -1, offset: 10 });
+  assert.equal(far.y, 1, 'loin du bord, le terrain');
+  assert.equal(world.roadsideAt(5, 100), null, 'hors de portée, rien');
+});
+
 test('sans ciel, updateSky ne rend rien et n’allume rien', () => {
   const composer = fakeComposer();
   const world = new World({ composer, environment: null, elevation: null, ownsElevation: false });

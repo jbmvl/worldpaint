@@ -13,15 +13,21 @@
  * construit ni n'avance rien — il déclenche un événement (voir
  * `WorldComposer.crossFauna`).
  *
- * `roadPositionAt` et `roadSnapAt` ne sont ni l'un ni l'autre : des questions,
- * pas des actions — à quelle altitude passe la chaussée sous ce point (remblai,
- * pont) plutôt que le terrain nu que suit déjà `bubble.toScenePosition`, et où
- * est son axe pour qui doit y rester.
+ * `roadPositionAt`, `roadSnapAt` et `roadsideAt` ne sont ni l'un ni l'autre :
+ * des questions, pas des actions — à quelle altitude passe la chaussée sous ce
+ * point (remblai, pont) plutôt que le terrain nu que suit déjà
+ * `bubble.toScenePosition`, où est son axe pour qui doit y rester, et où est
+ * son bord pour qui pose un objet à côté.
  */
 
 import { ElevationField } from './core/elevationField.js';
 import { WorldComposer, WORLD_ATTRIBUTION, FAUNA_CROSS_AHEAD_M } from './worldComposer.js';
-import { platformPositionAt, platformSnapAt, ROAD_SNAP_RADIUS_M } from './layers/roadNetwork.js';
+import {
+  platformPositionAt,
+  platformSideAt,
+  platformSnapAt,
+  ROAD_SNAP_RADIUS_M,
+} from './layers/roadNetwork.js';
 import {
   SceneEnvironment,
   SKY_RADIUS,
@@ -265,6 +271,60 @@ export class World {
     if (!hit) return null;
     const at = bubble.frame.toLngLat(hit.x, hit.z);
     return { lng: at.lng, lat: at.lat, distanceM: hit.distance };
+  }
+
+  /**
+   * Point du bord de la chaussée la plus proche, en unités de scène, avec
+   * l'orientation de la route — de quoi poser un objet de l'application à côté
+   * de la route, tourné vers elle. Voir `platformSideAt` pour `side` et
+   * `offset`. L'altitude est celle de la plate-forme si le point y tombe
+   * encore (remblai, pont), celle du terrain sinon.
+   *
+   * @param {number} lng
+   * @param {number} lat
+   * @param {Object} [options]
+   * @param {number} [options.side] `1` à droite du sens de marche, `-1` à
+   *        gauche, `0` (défaut) du côté où se trouve le point demandé.
+   * @param {number} [options.offset] Mètres au-delà du bord de la chaussée.
+   * @param {number} [options.heightAboveGround]
+   * @param {number} [options.aheadLng] Point visé : fixe le sens de marche.
+   * @param {number} [options.aheadLat]
+   * @param {number} [options.radius] Portée de la recherche, en mètres.
+   * @returns {{x:number, y:number, z:number, tangent:{x:number, z:number},
+   *            normal:{x:number, z:number}, halfWidth:number, profile:string,
+   *            distanceM:number}|null} `normal` va de la route vers le point.
+   *          `null` hors de portée de toute chaussée.
+   */
+  roadsideAt(
+    lng,
+    lat,
+    { side = 0, offset = 0, heightAboveGround = 0, aheadLng, aheadLat, radius = ROAD_SNAP_RADIUS_M } = {}
+  ) {
+    const bubble = this.composer.bubble;
+    if (!bubble?.frame) return null;
+
+    const here = bubble.frame.toLocal(lng, lat);
+    let ahead = null;
+    if (aheadLng != null && aheadLat != null) {
+      const there = bubble.frame.toLocal(aheadLng, aheadLat);
+      ahead = { x: there.x - here.x, z: there.z - here.z };
+    }
+
+    const roads = this.composer.roads;
+    const edge = platformSideAt(roads, here.x, here.z, { side, offset, ahead, radius });
+    if (!edge) return null;
+    const deck = platformPositionAt(roads, edge.x, edge.z, edge.tangent);
+    const ground = deck ?? this.composer.groundElevationAt(edge.x, edge.z);
+    return {
+      x: edge.x,
+      y: ground + heightAboveGround,
+      z: edge.z,
+      tangent: edge.tangent,
+      normal: edge.normal,
+      halfWidth: edge.halfWidth,
+      profile: edge.profile,
+      distanceM: edge.distance,
+    };
   }
 
   /** Couleur de fond à donner au renderer, ou `null` sans ciel. */

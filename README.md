@@ -195,6 +195,20 @@ the one the caller means, and the one it passes over or under. `aheadLng`/
 the tie in favour of whichever road's own direction matches; without them the
 nearest one wins.
 
+```js
+world.roadsideAt(lng, lat, { side, offset, heightAboveGround, aheadLng, aheadLat });
+```
+
+`roadsideAt` answers the question of an object placed *beside* the road — a
+sign, a banner, a spectator: the point on the edge of the nearest rendered
+road, `offset` metres beyond it, in scene units. `side` is `1` for the right of
+the direction of travel given by `aheadLng`/`aheadLat`, `-1` for the left, and
+`0` (default) for whichever side the queried point lies on. The result carries
+the road's `tangent` (along travel) and `normal` (from the road towards the
+point) so the object can face the road; its height is the road platform while
+the point still falls on it (embankment, bridge), the terrain otherwise. It
+returns `null` when no road is within `radius`.
+
 ### Weather
 
 Weather is **state, not art direction**: it changes as you go, so it travels

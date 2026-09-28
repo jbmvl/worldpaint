@@ -812,23 +812,88 @@ const SNAP_ALIGNMENT_COS = 0.35;
 export function platformSnapAt(roads, x, z, ahead = null, radius = ROAD_SNAP_RADIUS_M) {
   const index = roads?.elevationIndex;
   if (!index) return null;
+  const hit = index.nearestWithin(x, z, radius, alignedWith(ahead));
+  return hit ? { x: hit.x, z: hit.z, distance: hit.distance } : null;
+}
 
-  let accept = null;
-  if (ahead && (ahead.x !== 0 || ahead.z !== 0)) {
-    const length = Math.hypot(ahead.x, ahead.z);
-    const dirX = ahead.x / length;
-    const dirZ = ahead.z / length;
-    accept = (segment, row) => {
-      const a = segment.path[row];
-      const b = segment.path[row + 1];
-      const rowLength = Math.hypot(b.x - a.x, b.z - a.z) || 1;
-      const alignment = ((b.x - a.x) / rowLength) * dirX + ((b.z - a.z) / rowLength) * dirZ;
-      return Math.abs(alignment) >= SNAP_ALIGNMENT_COS;
-    };
+/** Filtre `nearestWithin` : les lignes qui vont dans la direction `ahead`. */
+function alignedWith(ahead) {
+  if (!ahead || (ahead.x === 0 && ahead.z === 0)) return null;
+  const length = Math.hypot(ahead.x, ahead.z);
+  const dirX = ahead.x / length;
+  const dirZ = ahead.z / length;
+  return (segment, row) => {
+    const a = segment.path[row];
+    const b = segment.path[row + 1];
+    const rowLength = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+    const alignment = ((b.x - a.x) / rowLength) * dirX + ((b.z - a.z) / rowLength) * dirZ;
+    return Math.abs(alignment) >= SNAP_ALIGNMENT_COS;
+  };
+}
+
+/**
+ * Point du bord de la chaussée la plus proche de `(x, z)`, en mètres locaux,
+ * avec l'orientation de la route à cet endroit — ce qu'il faut pour poser un
+ * objet **à côté** de la route (panneau, banderole, spectateur) sans le
+ * planter sur le bitume ni le laisser tourné au hasard.
+ *
+ * Le côté se compte dans le sens de `ahead` : `1` à droite, `-1` à gauche,
+ * comme `planFaunaCrossing`. `0` prend le côté où se trouve `(x, z)`. Sans
+ * `ahead`, le sens est celui du tracé, arbitraire pour une route à double sens.
+ *
+ * @param {RoadNetwork} roads
+ * @param {number} x
+ * @param {number} z
+ * @param {Object} [options]
+ * @param {number} [options.side] `1`, `-1` ou `0`.
+ * @param {number} [options.offset] Mètres au-delà du bord ; négatif, en deçà.
+ * @param {{x:number, z:number}|null} [options.ahead]
+ * @param {number} [options.radius] Portée de la recherche de la chaussée.
+ * @returns {{x:number, z:number, axis:{x:number, z:number},
+ *            tangent:{x:number, z:number}, normal:{x:number, z:number},
+ *            halfWidth:number, profile:string, distance:number}|null}
+ *          `tangent` suit le sens de marche, `normal` va de l'axe vers le
+ *          point posé ; `distance` est celle de `(x, z)` à l'axe. `null` si
+ *          aucune chaussée n'est à portée.
+ */
+export function platformSideAt(
+  roads,
+  x,
+  z,
+  { side = 0, offset = 0, ahead = null, radius = ROAD_SNAP_RADIUS_M } = {}
+) {
+  const index = roads?.elevationIndex;
+  if (!index) return null;
+  const hit = index.nearestWithin(x, z, radius, alignedWith(ahead));
+  if (!hit) return null;
+
+  const a = hit.segment.path[hit.row];
+  const b = hit.segment.path[hit.row + 1];
+  const length = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+  let tx = (b.x - a.x) / length;
+  let tz = (b.z - a.z) / length;
+  if (ahead && tx * ahead.x + tz * ahead.z < 0) {
+    tx = -tx;
+    tz = -tz;
   }
 
-  const hit = index.nearestWithin(x, z, radius, accept);
-  return hit ? { x: hit.x, z: hit.z, distance: hit.distance } : null;
+  // x vers l'est, z vers le sud : la droite du sens de marche est (-tz, tx).
+  let sign = Math.sign(side);
+  if (sign === 0) sign = (x - hit.x) * -tz + (z - hit.z) * tx < 0 ? -1 : 1;
+  const nx = -tz * sign;
+  const nz = tx * sign;
+  const reach = hit.segment.halfWidth + offset;
+
+  return {
+    x: hit.x + nx * reach,
+    z: hit.z + nz * reach,
+    axis: { x: hit.x, z: hit.z },
+    tangent: { x: tx, z: tz },
+    normal: { x: nx, z: nz },
+    halfWidth: hit.segment.halfWidth,
+    profile: hit.segment.profile,
+    distance: hit.distance,
+  };
 }
 
 /**

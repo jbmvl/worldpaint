@@ -220,6 +220,7 @@ import {
   ROAD_GRADE_CUT_STEEP_M,
   ROAD_GRADE_FILL_STEEP_M,
   platformPositionAt,
+  platformSideAt,
   platformSnapAt,
   ROAD_SNAP_RADIUS_M,
 } from '../src/layers/roadNetwork.js';
@@ -8902,6 +8903,36 @@ test('platformSnapAt ignore la rue qu’on croise et garde celle qu’on suit', 
   const snapped = platformSnapAt(roads, 50, 6, { x: 1, z: 0 });
   close(snapped.z, 0, 1e-9);
   close(snapped.distance, 6, 1e-9);
+});
+
+test('platformSideAt pose au bord de la chaussée, du côté demandé', () => {
+  // Route est-ouest de trois mètres de demi-largeur. x vers l'est, z vers le
+  // sud : en roulant vers l'est, la droite est au sud (z > 0).
+  const roads = { elevationIndex: new RoadIndex([fakeSegment(straight(0, 100, 10), 3, 5)]) };
+  const east = { x: 1, z: 0 };
+
+  const right = platformSideAt(roads, 50, 0, { side: 1, ahead: east });
+  close(right.x, 50, 1e-9);
+  close(right.z, 3, 1e-9, 'à droite, juste au bord');
+  assert.deepEqual(right.tangent, { x: 1, z: 0 }, 'la tangente suit le sens de marche');
+  close(right.normal.z, 1, 1e-9, 'la normale va de l’axe vers le point posé');
+  assert.equal(right.halfWidth, 3);
+
+  const left = platformSideAt(roads, 50, 0, { side: -1, ahead: east, offset: 1.5 });
+  close(left.z, -4.5, 1e-9, 'à gauche, un mètre et demi au-delà du bord');
+
+  const west = platformSideAt(roads, 50, 0, { side: 1, ahead: { x: -1, z: 0 } });
+  close(west.z, -3, 1e-9, 'en roulant vers l’ouest, la droite passe au nord');
+  close(west.tangent.x, -1, 1e-9);
+});
+
+test('platformSideAt sans côté prend celui du point demandé', () => {
+  const roads = { elevationIndex: new RoadIndex([fakeSegment(straight(0, 100, 10), 3, 5)]) };
+  close(platformSideAt(roads, 50, -10).z, -3, 1e-9, 'point au nord, bord nord');
+  close(platformSideAt(roads, 50, 10).z, 3, 1e-9, 'point au sud, bord sud');
+  close(platformSideAt(roads, 50, 10).distance, 10, 1e-9);
+  assert.equal(platformSideAt(roads, 50, 400), null, 'hors de portée, rien');
+  assert.equal(platformSideAt(null, 50, 0), null, 'sans réseau construit, rien ne casse');
 });
 
 test('la portée de platformSnapAt borne la recherche', () => {
