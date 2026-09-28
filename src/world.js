@@ -11,7 +11,7 @@
  * Cinq verbes : setCenter, refresh, advance, updateSky (seulement si un ciel
  * a été demandé), dispose. Plus un sixième, à part : `crossFauna`, qui ne
  * construit ni n'avance rien — il déclenche un événement (voir
- * `WorldComposer.crossFauna`).
+ * `WorldComposer.crossFauna`). `cheer` est son pendant au bord de la route.
  *
  * `roadPositionAt`, `roadSnapAt` et `roadsideAt` ne sont ni l'un ni l'autre :
  * des questions, pas des actions — à quelle altitude passe la chaussée sous ce
@@ -385,6 +385,36 @@ export class World {
    */
   crossFauna(options) {
     return this.composer.crossFauna(options);
+  }
+
+  /**
+   * Range un groupe de spectateurs qui encouragent au bord de la route la plus
+   * proche de `(lng, lat)`, face à la chaussée. Un événement, comme
+   * `crossFauna` : il s'oublie une fois l'observateur passé au large, sans
+   * qu'il faille le retirer. Voir `WorldComposer.cheer`.
+   *
+   * @param {number} lng
+   * @param {number} lat
+   * @param {Object} [options]
+   * @param {number} [options.count] Spectateurs, 24 au plus.
+   * @param {number} [options.side] `1` à droite du sens de marche, `-1` à
+   *        gauche, `0` (défaut) des deux côtés.
+   * @param {number} [options.spreadM] Longueur de route occupée, en mètres.
+   * @param {number} [options.aheadLng] Point visé : fixe le sens de marche.
+   * @param {number} [options.aheadLat]
+   * @returns {Object|null} Le groupe (`composer.spectators.cancel` pour
+   *          l'interrompre), ou `null` sans chaussée à portée.
+   */
+  cheer(lng, lat, { aheadLng, aheadLat, ...options } = {}) {
+    const frame = this.composer.bubble?.frame;
+    if (!frame) return null;
+    const at = frame.toLocal(lng, lat);
+    let ahead = null;
+    if (aheadLng != null && aheadLat != null) {
+      const there = frame.toLocal(aheadLng, aheadLat);
+      ahead = { x: there.x - at.x, z: there.z - at.z };
+    }
+    return this.composer.cheer({ ...options, at, ahead });
   }
 
   /**

@@ -1475,6 +1475,20 @@ export const LIFE_COLORS = {
     [srgb('#1c8c86'), srgb('#f4ead0')],
     [srgb('#b3352f'), srgb('#e9e6df')],
   ],
+  /**
+   * Nuancier des spectateurs (`models/people.js`) : chaque tenue y pioche une
+   * peau, un haut, un bas et une chevelure. Des hauts francs, parce qu'on
+   * s'habille pour être vu au bord d'une course.
+   */
+  people: {
+    skins: [srgb('#f1c7a5'), srgb('#d9a07a'), srgb('#a86d4a'), srgb('#6e4430'), srgb('#e8b896')],
+    tops: [
+      srgb('#d8392b'), srgb('#f2c230'), srgb('#2f6fb3'), srgb('#f4f1ea'),
+      srgb('#2e8b57'), srgb('#e5731f'), srgb('#1f2430'),
+    ],
+    bottoms: [srgb('#2d3a4f'), srgb('#3b3b3b'), srgb('#6b5a45'), srgb('#1e2a3a'), srgb('#8c8c86')],
+    hair: [srgb('#2a1d15'), srgb('#5a3a22'), srgb('#b08850'), srgb('#1a1a1a'), srgb('#9a9590')],
+  },
 };
 
 // --- Les bêtes -----------------------------------------------------------------

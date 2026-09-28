@@ -618,12 +618,13 @@ d'acier, plus sommaire, hors agglomération.
 | --- | --- | --- |
 | bêtes au sol | 240 animées au plus | haltes et trajets sur un circuit fermé, jusqu'à 8 traversées de route en cours |
 | tracteurs | 12 animés au plus | aller-retour sur un passage de labour, 1,1 à 1,8 m/s |
+| spectateurs | 96 au plus, 24 par groupe | seulement sur demande de l'application (`world.cheer`) : rangés sur l'accotement face à la chaussée, sautillent et agitent les bras ; un groupe s'oublie à 600 m de l'observateur |
 | trains | 4 en circulation au plus, une locomotive et 3 voitures | naît à 350 m en amont de l'observateur sur une voie à moins de 500 m, roule à 22 m/s jusqu'au bout de la voie ou à 1,4 km de l'observateur |
 | oiseaux | 22 | dérivent entre 16 et 52 m au-dessus de l'observateur, 3 à 9 m/s |
 | montgolfières | 5 | dérivent entre 90 et 240 m au-dessus de l'observateur, 0,5 à 1,6 m/s, chacune avec ses deux couleurs propres |
 | poussière de tracteur | 16 bouffées par tracteur animé | levée à l'arrière, monte à 0,3 m/s, dérive au vent à 0,9 m/s, s'étale de 1,6 à 11 m en 9 s |
 
-Les bêtes, les tracteurs et les trains sont les seules choses posées au sol
+Les bêtes, les tracteurs, les trains et les spectateurs sont les seules choses posées au sol
 qui bougent d'une image à l'autre ; tout le reste du décor est reconstruit tous les 250 m
 et immobile entre deux reconstructions. Un tracteur n'est pas une bête
 (`tractorLayer`, pas `faunaLayer`) : rien en lui n'est articulé, il ne fait

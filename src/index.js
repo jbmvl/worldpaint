@@ -117,6 +117,10 @@ export { createFurnitureGeometries, createFurnitureMaterial } from './layers/fur
 // plutôt qu'en vol libre ; le profil permet d'y ceinturer une banderole.
 export { createBalloonGeometry, balloonRadiusAt } from './layers/lifeLayer.js';
 
+// La silhouette des spectateurs de `world.cheer`, pour qui veut en poser ailleurs.
+export { createPersonBodyGeometry, createPersonArmGeometry, composeOutfits, SHOULDER } from './models/people.js';
+export { CHEER_MAX } from './layers/spectatorPlacement.js';
+
 // La couverture du sol et les cultures, pour qui veut semer une seule matière
 // sur une tuile sans monter tout le décor — voir l'afficheur (`demo/showcase.js`).
 export { GroundCover } from './layers/groundCover.js';

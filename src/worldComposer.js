@@ -77,6 +77,7 @@ import { CropLayer } from './layers/cropLayer.js';
 import { FurnitureLayer } from './layers/furnitureLayer.js';
 import { LifeLayer } from './layers/lifeLayer.js';
 import { FaunaLayer } from './layers/faunaLayer.js';
+import { SpectatorLayer } from './layers/spectatorLayer.js';
 import { TractorLayer } from './layers/tractorLayer.js';
 import { TrainLayer } from './layers/trainLayer.js';
 import { VectorTileSource, coveringTiles, VECTOR_ZOOM } from './core/vectorTileSource.js';
@@ -84,6 +85,7 @@ import { lngLatToTile } from './core/tileMath.js';
 import { landscapeAt } from './core/landscape.js';
 import { regionById } from './core/region.js';
 import { planFaunaCrossing } from './layers/faunaCrossing.js';
+import { planCheer } from './layers/spectatorPlacement.js';
 import { defaultTheme } from './themes/default.js';
 
 /**
@@ -280,6 +282,9 @@ export class WorldComposer {
     // Les tracteurs au travail : posés par le mobilier, ancrés au sol comme
     // la faune, mais rien en eux n'est articulé — voir `tractorLayer.js`.
     this.tractors = new TractorLayer({ THREE, scene, theme });
+    // Les spectateurs : un événement comme la traversée de bête, rangé au bord
+    // de la route plutôt qu'à travers — voir `spectatorPlacement.js`.
+    this.spectators = new SpectatorLayer({ THREE, scene, theme });
     // Les trains : la voie publiée par `railwayLayer`, parcourue par image.
     this.trains = new TrainLayer({ THREE, scene, theme });
 
@@ -700,6 +705,34 @@ export class WorldComposer {
   }
 
   /**
+   * Range un groupe de spectateurs qui encouragent au bord de la route la plus
+   * proche de `at`. Comme `crossFauna`, c'est un événement : il ne dépend pas
+   * du lieu, et s'oublie une fois l'observateur passé au large.
+   *
+   * @param {Object} options Voir `planCheer` : `at`, `ahead`, `count`, `side`, `spreadM`.
+   * @returns {Object|null} Le groupe (à repasser à `spectators.cancel`), ou
+   *          `null` sans chaussée à portée.
+   */
+  cheer({ at, ...options } = {}) {
+    const frame = this.bubble?.frame;
+    if (this.disposed || !frame || !at) return null;
+    // Graine tirée du lieu, au dix-millième de degré : le même carrefour
+    // rassemble les mêmes spectateurs, quel que soit l'instant de la demande.
+    const here = frame.toLngLat(at.x, at.z);
+    const seed = Math.imul(Math.round(here.lng * 1e4), 73856093) ^ Math.imul(Math.round(here.lat * 1e4), 19349663);
+    const people = planCheer({
+      ...options,
+      roads: this.roads,
+      groundAt: (x, z) => this.groundElevationAt(x, z),
+      x: at.x,
+      z: at.z,
+      seed,
+      outfits: this.spectators.outfitCount,
+    });
+    return this.spectators.addGroup(people, frame);
+  }
+
+  /**
    * Travail d'une image : les files étalées et ce qui bouge (une tuile
    * plantée, une tuile de terrain recousue par image au plus, pour éviter l'à-coup).
    *
@@ -731,6 +764,7 @@ export class WorldComposer {
     // est nécessaire pour tracer cette fuite (voir `faunaLayer._checkFlee`).
     this.fauna.advance(delta, at, (x, z) => this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale);
     this.tractors.advance(delta);
+    this.spectators.advance(delta, at, this.bubble.frame);
     this.trains.advance(delta, at);
     this.bridges.lighting?.update(at);
     // Ce que le mobilier a d'animé : les feux, et les deux lampes qui suivent l'observateur.
@@ -800,6 +834,7 @@ export class WorldComposer {
     this.disposed = true;
     this.life.dispose();
     this.fauna.dispose();
+    this.spectators.dispose();
     this.tractors.dispose();
     this.trains.dispose();
     this.furniture.dispose();
