@@ -21,6 +21,7 @@
  * piloté depuis la console ou par `scripts/sky-shot.mjs`.
  *
  *   skyLab.set({ sunDeg: 8, lookDeg: 180, pitchDeg: 5, weather: { haze: 0.3 } })
+ *   skyLab.set({ pixelRatio: 2 })  — un écran Retina, quel que soit le vôtre
  *
  * `lookDeg` est l'écart de cap avec le soleil (0 = face à lui).
  */
@@ -29,6 +30,7 @@ import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { SceneEnvironment } from '/src/environment/sceneEnvironment.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(devicePixelRatio);
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -105,6 +107,10 @@ window.skyLab = {
   set(options = {}) {
     Object.assign(state, options);
     if ('weather' in options) state.weather = options.weather;
+    if ('pixelRatio' in options) {
+      renderer.setPixelRatio(options.pixelRatio);
+      renderer.setSize(innerWidth, innerHeight);
+    }
     return render();
   },
   state,

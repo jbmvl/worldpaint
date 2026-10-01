@@ -8,6 +8,14 @@
  * tampon (alloué une fois au maximum). Positions tirées d'un générateur
  * graine plutôt que `Math.random`, pour un semis reproductible.
  *
+ * Une goutte est un ruban face caméra, jamais plus fin que `MIN_WIDTH_CSS_PX`
+ * pixels CSS : plus fine, elle garde ce plancher et perd en opacité ce
+ * qu'elle perd en largeur (« wire antialiasing », Persson). Une `LINES` WebGL
+ * fait un pixel physique, soit un demi-pixel sur un écran Retina. Le
+ * viewport et le `pixelRatio` sont lus sur le renderer qui dessine
+ * (`onBeforeRender`) : worldpaint ne crée pas le renderer et n'a rien à
+ * demander à l'hôte.
+ *
  * Délibérément absent : éclairage, brouillard de scène, rebond. Teintées par
  * `setTint` (l'ambiance) pour qu'une averse de nuit soit sombre.
  */
@@ -24,6 +32,12 @@ const MAX_DROPS = 7000;
 const MAX_FLAKES = 2600;
 /** Longueur du filet d'une goutte, en mètres. C'est lui qui donne la vitesse à l'œil. */
 const STREAK_M = 1.2;
+/** Largeur apparente d'un filet (flou de chute compris), en mètres. Valeur provisoire. */
+const DROP_WIDTH_M = 0.03;
+/** Largeur minimale d'un filet à l'écran, en pixels CSS. Valeur provisoire. */
+const MIN_WIDTH_CSS_PX = 1.25;
+/** Opacité de la queue du filet, relative à la tête. Valeur provisoire. */
+const TAIL_ALPHA = 0.6;
 /** Vitesse de chute, en m/s. La pluie tombe vite, la neige flotte. */
 const RAIN_SPEED = 26;
 const SNOW_SPEED = 1.6;
@@ -39,30 +53,43 @@ function seeded(seed) {
   };
 }
 
-/** Deux sommets par goutte (tête et queue du filet), même position de base. `aTail` dit lequel des deux on est. */
+/** Sommets d'un ruban : (tête 0 / queue 1, côté -1 / +1). */
+const RIBBON_CORNERS = [
+  [0, -1],
+  [0, 1],
+  [1, -1],
+  [1, 1],
+];
+
+/** Quatre sommets par goutte, même position de base ; `aCorner` dit lequel. */
 function rainGeometry(THREE) {
   const random = seeded(0x9e3779b9);
-  const base = new Float32Array(MAX_DROPS * 2 * 3);
-  const tail = new Float32Array(MAX_DROPS * 2);
+  const base = new Float32Array(MAX_DROPS * 4 * 3);
+  const corner = new Float32Array(MAX_DROPS * 4 * 2);
+  const index = new Uint32Array(MAX_DROPS * 6);
 
   for (let i = 0; i < MAX_DROPS; i++) {
     const x = (random() * 2 - 1) * SPREAD_M;
     const y = random() * HEIGHT_M;
     const z = (random() * 2 - 1) * SPREAD_M;
-    for (let v = 0; v < 2; v++) {
-      const o = (i * 2 + v) * 3;
+    for (let v = 0; v < 4; v++) {
+      const o = (i * 4 + v) * 3;
       base[o] = x;
       base[o + 1] = y;
       base[o + 2] = z;
-      tail[i * 2 + v] = v;
+      corner[(i * 4 + v) * 2] = RIBBON_CORNERS[v][0];
+      corner[(i * 4 + v) * 2 + 1] = RIBBON_CORNERS[v][1];
     }
+    const k = i * 4;
+    index.set([k, k + 2, k + 1, k + 1, k + 2, k + 3], i * 6);
   }
 
   const geometry = new THREE.BufferGeometry();
   // `position` doit exister (three s'en sert pour la sphère englobante), laissée nulle.
   geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(base.length), 3));
   geometry.setAttribute('aBase', new THREE.BufferAttribute(base, 3));
-  geometry.setAttribute('aTail', new THREE.BufferAttribute(tail, 1));
+  geometry.setAttribute('aCorner', new THREE.BufferAttribute(corner, 2));
+  geometry.setIndex(new THREE.BufferAttribute(index, 1));
   return geometry;
 }
 
@@ -95,6 +122,9 @@ function sharedUniforms(THREE) {
     uWind: { value: new THREE.Vector2(0, 0) },
     uTint: { value: new THREE.Color(1, 1, 1) },
     uOpacity: { value: 0.5 },
+    /** Taille en pixels de la cible en cours de rendu, et `pixelRatio` du renderer. */
+    uViewport: { value: new THREE.Vector2(1, 1) },
+    uPixelRatio: { value: 1 },
   };
 }
 
@@ -110,27 +140,57 @@ function rainMaterial(THREE, uniforms) {
     uniforms,
     transparent: true,
     depthWrite: false, // pas d'ordre entre gouttes : écrire la profondeur ferait clignoter
+    side: THREE.DoubleSide, // le ruban tourne avec le filet à l'écran : son sens d'enroulement aussi
     vertexShader: `
       attribute vec3 aBase;
-      attribute float aTail;
+      attribute vec2 aCorner;
       uniform float uTime;
       uniform float uSpeed;
       uniform float uHeight;
       uniform vec2 uWind;
+      uniform vec2 uViewport;
+      uniform float uPixelRatio;
+      varying float vAcross;
+      varying float vAlpha;
       ${FALL_CHUNK}
       void main() {
-        vec3 p = vec3(aBase.x, fallHeight(aBase, uTime, uSpeed, uHeight), aBase.z);
+        vec3 head = vec3(aBase.x, fallHeight(aBase, uTime, uSpeed, uHeight), aBase.z);
         // Le filet est tiré vers l'amont de la chute : c'est l'inclinaison qui dit qu'il y a du vent.
         vec3 dir = normalize(vec3(uWind.x, -1.0, uWind.y));
-        p -= dir * ${STREAK_M.toFixed(2)} * aTail;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+        vec4 clipHead = projectionMatrix * modelViewMatrix * vec4(head, 1.0);
+        vec4 clipTail = projectionMatrix * modelViewMatrix * vec4(head - dir * ${STREAK_M.toFixed(2)}, 1.0);
+
+        // Une extrémité derrière l'œil n'a pas de projection : la goutte est sortie du cadre.
+        if (clipHead.w < 0.05 || clipTail.w < 0.05) {
+          gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+          return;
+        }
+
+        vec2 halfViewport = 0.5 * uViewport;
+        vec2 axis = (clipHead.xy / clipHead.w - clipTail.xy / clipTail.w) * halfViewport;
+        vec2 along = length(axis) > 1e-4 ? normalize(axis) : vec2(0.0, 1.0);
+        vec2 normal = vec2(-along.y, along.x);
+
+        vec4 clip = aCorner.x < 0.5 ? clipHead : clipTail;
+        float truePx = ${DROP_WIDTH_M.toFixed(4)} * projectionMatrix[1][1] * halfViewport.y / clip.w;
+        float widthPx = max(truePx, ${MIN_WIDTH_CSS_PX.toFixed(2)} * uPixelRatio);
+        clip.xy += normal * aCorner.y * 0.5 * widthPx / halfViewport * clip.w;
+        gl_Position = clip;
+
+        vAcross = aCorner.y;
+        vAlpha = (truePx / widthPx) * mix(1.0, ${TAIL_ALPHA.toFixed(2)}, aCorner.x);
       }
     `,
     fragmentShader: `
       uniform vec3 uTint;
       uniform float uOpacity;
+      varying float vAcross;
+      varying float vAlpha;
       void main() {
-        gl_FragColor = vec4(uTint, uOpacity);
+        // Profil arrondi en travers : un bord net crénèlerait un ruban d'un pixel.
+        float a2 = vAcross * vAcross;
+        float profile = 1.0 - a2 * a2;
+        gl_FragColor = vec4(uTint, uOpacity * vAlpha * profile);
       }
     `,
   });
@@ -148,6 +208,7 @@ function snowMaterial(THREE, uniforms) {
       uniform float uSpeed;
       uniform float uHeight;
       uniform vec2 uWind;
+      uniform float uPixelRatio;
       ${FALL_CHUNK}
       void main() {
         float y = fallHeight(aBase, uTime, uSpeed, uHeight);
@@ -159,8 +220,8 @@ function snowMaterial(THREE, uniforms) {
           aBase.z + cos(uTime * 0.55 + aPhase * 1.7) * flutter + uWind.y * 2.0
         );
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
-        // Taille en perspective, sinon la neige forme un voile uniforme.
-        gl_PointSize = clamp(90.0 / max(-mv.z, 1.0), 1.0, 9.0);
+        // Taille en perspective, sinon la neige forme un voile uniforme ; en pixels CSS.
+        gl_PointSize = clamp(90.0 / max(-mv.z, 1.0), 1.0, 9.0) * uPixelRatio;
         gl_Position = projectionMatrix * mv;
       }
     `,
@@ -198,7 +259,7 @@ export class Precipitation {
     // Recentrée à chaque image sur la caméra : pas de culling frustum.
     this.group.frustumCulled = false;
 
-    this.rain = new THREE.LineSegments(rainGeometry(THREE), rainMaterial(THREE, this.uniforms));
+    this.rain = new THREE.Mesh(rainGeometry(THREE), rainMaterial(THREE, this.uniforms));
     this.rain.name = 'rain';
     this.rain.frustumCulled = false;
     this.rain.visible = false;
@@ -209,6 +270,15 @@ export class Precipitation {
     this.snow.frustumCulled = false;
     this.snow.visible = false;
     this.snow.renderOrder = 10;
+
+    const viewport = new THREE.Vector4();
+    const readRenderer = (renderer) => {
+      renderer.getCurrentViewport(viewport);
+      this.uniforms.uViewport.value.set(viewport.z, viewport.w);
+      this.uniforms.uPixelRatio.value = renderer.getPixelRatio();
+    };
+    this.rain.onBeforeRender = readRenderer;
+    this.snow.onBeforeRender = readRenderer;
 
     this.group.add(this.rain);
     this.group.add(this.snow);
@@ -233,7 +303,7 @@ export class Precipitation {
     const max = snowing ? MAX_FLAKES : MAX_DROPS;
     // Racine carrée : le compte visible croît plus vite que l'impression de pluie.
     const count = Math.round(max * Math.sqrt(intensity));
-    mesh.geometry.setDrawRange(0, snowing ? count : count * 2);
+    mesh.geometry.setDrawRange(0, snowing ? count : count * 6);
 
     const drift = weather.wind * (snowing ? 2.2 : 1.1);
     const [wx, wz] = windAxis([drift * 0.85, drift * 0.35], weather);
@@ -242,7 +312,7 @@ export class Precipitation {
       (snowing ? SNOW_SPEED : RAIN_SPEED) * (1 + weather.wind * (snowing ? 0.4 : 0.5));
     this.uniforms.uOpacity.value = snowing
       ? 0.35 + intensity * 0.5
-      : 0.16 + intensity * 0.28;
+      : 0.24 + intensity * 0.42;
   }
 
   /**

@@ -253,6 +253,9 @@ function fakeTHREE() {
     setDrawRange(start, count) {
       this.drawRange = { start, count };
     }
+    setIndex(index) {
+      this.index = index;
+    }
     dispose() {}
   }
   class Object3D {
@@ -284,6 +287,9 @@ function fakeTHREE() {
       set(x, y) { this.x = x; this.y = y; return this; }
       // `length` sert au test, pas au module.
       length() { return Math.hypot(this.x, this.y); }
+    },
+    Vector4: class {
+      set(x, y, z, w) { Object.assign(this, { x, y, z, w }); return this; }
     },
     Color: class {
       constructor(r = 1, g = 1, b = 1) { Object.assign(this, { r, g, b }); }
@@ -346,6 +352,19 @@ test('l’intensité tire plus de gouttes du même tampon', () => {
     allocated,
     'sans jamais réallouer le tampon GPU'
   );
+});
+
+test('la largeur des gouttes se règle sur le renderer qui dessine, sans rien demander à l’hôte', () => {
+  const { field } = mountPrecipitation();
+  const retina = {
+    getCurrentViewport: (target) => target.set(0, 0, 2880, 1800),
+    getPixelRatio: () => 2,
+  };
+  field.rain.onBeforeRender(retina);
+  assert.equal(field.uniforms.uViewport.value.x, 2880);
+  assert.equal(field.uniforms.uViewport.value.y, 1800);
+  assert.equal(field.uniforms.uPixelRatio.value, 2);
+  assert.equal(field.snow.onBeforeRender, field.rain.onBeforeRender, 'la neige lit la même chose');
 });
 
 test('le temps de chute se replie au lieu de croître indéfiniment', () => {
