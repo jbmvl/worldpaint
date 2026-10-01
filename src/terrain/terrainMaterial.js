@@ -63,31 +63,30 @@ import { installTunnelMouths } from './tunnelMouths.js';
  * sur la matière dominante : un texel à cheval sur deux matières marbre selon
  * leur mélange, pas selon celle qui l'emporte.
  *
- * Deux choses tiennent les **limites** entre surfaces, dont le défaut commun
+ * Trois choses tiennent les **limites** entre surfaces, dont le défaut commun
  * est le carreau de 2,7 m de la carte du sol, lisible en marches d'escalier
  * dès que deux matières contrastent. C'est là que tout se joue : quand une
  * surface est un aplat, ce qu'on regarde est son contour.
  *
- * - le **contour est interpolé, puis tranché** (`surfaceAt`). Ce qui
- *   s'interpole est l'appartenance de chaque texel à une matière — un ou zéro,
- *   un identifiant ne s'interpolant pas —, sur seize texels et par une cubique
- *   de Catmull-Rom : le champ est C¹, donc son contour n'a plus d'angle. Sur
- *   quatre texels, un lissage bilinéaire n'a pas cette propriété et ses
- *   cassures retombent sur la grille. Puis on tranche : la matière la plus
- *   forte l'emporte, sur la largeur d'un pixel d'écran, sans dégradé. Ce que
- *   l'interpolation ne redresse pas, c'est l'ondulation d'un quart de texel
- *   autour du tracé réel : la carte ne dit pas où passe le polygone dans un
- *   texel, et aucun noyau ne l'invente ;
+ * - le **trait** : la carte arrive avec ses limites déjà redessinées
+ *   (`surfaceContours.js`) — chaque texel porte sa distance au trait le plus
+ *   proche et la matière d'en face. `surfaceAt` interpole cette distance,
+ *   signée par la matière, sur seize texels par une cubique de Catmull-Rom :
+ *   elle reproduit exactement un trait droit, et garde continu un filet d'eau
+ *   d'un texel qui ne se touche que par les coins. Puis on tranche : la
+ *   matière la plus forte l'emporte, sur la largeur d'un pixel d'écran ;
+ * - les **segments** : la lecture de la carte est déplacée par `edgeWarp`, un
+ *   champ de vecteurs linéaire dans chaque triangle d'un réseau fixe au monde
+ *   (`edgeStepM`, `edgeJitterM` du thème). Un trait droit lu à travers lui
+ *   reste droit dans chaque triangle et casse à chaque arête : le contour
+ *   devient une suite de segments de deux mètres, à quelques décimètres du
+ *   tracé. Parce que le déplacement est linéaire par morceaux et appliqué à
+ *   un trait déjà dessiné, il casse le trait sans le denteler ; et parce qu'il
+ *   déplace la lecture plutôt que le trait, les deux berges d'un ruisseau
+ *   bougent ensemble ;
  * - la **rive** : le sol au contact de l'eau est mouillé, du même film d'eau
  *   que la pluie y met (`wetGround`). C'est ce qui fait une berge plutôt
  *   qu'une découpe.
- *
- * Ont été essayés et retirés, parce qu'ils travaillaient à côté du défaut : un
- * **bruit de lisière** qui déplaçait la lecture du sol de quelques mètres et
- * repondérait les matières voisines par son grain. Le contour y gagnait une
- * dentelure, jamais une courbe, et les deux mécanismes s'annulaient dans le
- * filtrage dès que leur champ passait sous le pixel. Le contour ne se brouille
- * pas, il se dessine.
  *
  * Greffé sur `MeshLambertMaterial` via `onBeforeCompile` plutôt qu'écrit en
  * shader complet, pour garder l'éclairage/brouillard/tone mapping de three.
@@ -129,10 +128,13 @@ import {
   WATER_ID,
   PAVEMENT_ID,
   CLASS_PIXELS,
+  CROP_LABEL_BASE,
+  FARMLAND_ID,
   POOL_NOISE_STRETCH,
   POOL_SCALE_RATIO,
   POOL_EDGE_SOFTNESS,
 } from './groundClassMap.js';
+import { CONTOUR_REACH_TEXELS } from './surfaceContours.js';
 import { pavementTone } from '../layers/townStyle.js';
 import { createWaterNormalCanvas } from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
@@ -350,6 +352,9 @@ export class TerrainMaterialFactory {
       uPoolScale: { value: look.poolScaleM },
       // Matière retenue là où la donnée se tait.
       uUnclassified: { value: Math.max(0, SURFACE_KINDS.indexOf(look.unclassified)) + 1 },
+      // (côté du réseau triangulaire, amplitude) du déplacement des limites.
+      // Un trait droit croise en moyenne une arête du réseau tous les 0,45 côté.
+      uEdgeJitter: { value: new THREE.Vector2(look.edgeStepM / 0.4535, look.edgeJitterM) },
       uSurfaceMap: { value: this.groundClass ? this.groundClass.texture : null },
       uSurfaceOrigin: { value: new THREE.Vector2(0, 0) },
       uSurfaceSize: { value: 1 },
@@ -452,6 +457,7 @@ export class TerrainMaterialFactory {
            uniform float uSurfaceSize;
            uniform float uSurfaceEnabled;
            uniform float uUnclassified;
+           uniform vec2 uEdgeJitter;
            uniform vec3 uCropAlbedo[${CROP_KINDS.length}];
            uniform float uCropWater[${CROP_KINDS.length}];
            uniform vec3 uSurfaceAlbedo[${SURFACE_KINDS.length}];
@@ -487,34 +493,86 @@ export class TerrainMaterialFactory {
            }
 
            /*
-            * Identifiant de matière porté par un texel, ou celui du repli là
-            * où la donnée se tait.
+            * Etiquette d'un texel : sa matiere, ou CROP_BASE + culture pour un
+            * champ cultive (voir drawSurfaceContoursSteps). Le repli la ou la
+            * donnee se tait.
             */
-           float surfaceIdAt(vec2 texel) {
-             float id = floor(
-               texture2D(uSurfaceMap, (texel + 0.5) / ${CLASS_PIXELS}.0).r * 255.0
-                 / ${SURFACE_ID_STEP}.0 + 0.5
-             );
-             return id < 0.5 ? uUnclassified : id;
+           float surfaceLabel(vec4 texel) {
+             float id = floor(texel.r * 255.0 / ${SURFACE_ID_STEP}.0 + 0.5);
+             float crop = floor(texel.g * 255.0 / ${CROP_ID_STEP}.0 + 0.5);
+             if (id < 0.5) return uUnclassified;
+             return id == ${FARMLAND_ID}.0 && crop > 0.5 ? ${CROP_LABEL_BASE}.0 + crop : id;
            }
 
-           /* Les quatre texels d'une ligne du voisinage, dans l'ordre des poids. */
-           vec4 surfaceRow(vec2 corner, float row) {
-             return vec4(
-               surfaceIdAt(corner + vec2(-1.0, row)),
-               surfaceIdAt(corner + vec2(0.0, row)),
-               surfaceIdAt(corner + vec2(1.0, row)),
-               surfaceIdAt(corner + vec2(2.0, row))
-             );
+           /* Etiquette d'en face portee par l'alpha, -1 si aucun trait n'est a portee. */
+           float acrossLabel(vec4 texel) {
+             float label = floor(texel.a * 255.0 + 0.5) - 1.0;
+             return label == 0.0 ? uUnclassified : label;
+           }
+
+           /* Ce qu'une etiquette met au sol. */
+           void labelLook(
+             float label, out vec3 albedo, out float isWater, out float standing,
+             out float macroAmp, out float macroNear
+           ) {
+             float id = label >= ${CROP_LABEL_BASE}.0 ? ${FARMLAND_ID}.0 : label;
+             for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
+               if (float(i) == id) {
+                 albedo = uSurfaceAlbedo[i - 1];
+                 standing = uSurfaceWater[i - 1];
+                 macroAmp = uSurfaceMacro[i - 1];
+                 macroNear = uSurfaceMacroNear[i - 1];
+               }
+             }
+             // La culture remplace la couleur de la terre labouree et sa lame
+             // d'eau, et elles seules.
+             for (int i = 0; i < ${CROP_KINDS.length}; i++) {
+               if (float(i + 1) == label - ${CROP_LABEL_BASE}.0) {
+                 albedo = uCropAlbedo[i];
+                 standing = uCropWater[i];
+               }
+             }
+             isWater = id == ${WATER_ID}.0 ? 1.0 : 0.0;
            }
 
            /*
-            * Poids d'une cubique de Catmull-Rom pour une position entre les
-            * deux points du milieu. Interpolante, et c'est ce qui la fait
-            * preferer a une B-spline : au centre d'un texel elle rend sa
-            * valeur exacte, donc un ruisseau ou un sentier large d'un seul
-            * texel survit. Une approximante les effacerait.
+            * Deplacement de la lecture de la carte, en metres : un vecteur tire
+            * au hasard dans un disque a chaque noeud d'un reseau equilateral
+            * fixe au monde, interpole lineairement dans chaque triangle. Une
+            * limite droite, lue a travers lui, reste droite dans chaque
+            * triangle et casse a chaque arete : une suite de segments. Les
+            * deux berges d'un ruisseau bougent ensemble, sa largeur reste.
             */
+           vec2 edgeNodeValue(vec2 node) {
+             uvec2 q = uvec2(ivec2(node) + 65536);
+             uint h = q.x * 1597334677u ^ q.y * 3812015801u;
+             h ^= h >> 16;
+             h *= 2246822519u;
+             h ^= h >> 13;
+             uint g = h * 3266489917u;
+             g ^= g >> 15;
+             float angle = float(h >> 8) / 16777216.0 * 6.2831853;
+             float radius = sqrt(float(g >> 8) / 16777216.0);
+             return radius * vec2(cos(angle), sin(angle));
+           }
+
+           vec2 edgeWarp(vec2 p) {
+             // Biais du reseau triangulaire (celui du bruit simplexe) ; un
+             // pas de 0.8165 dans le repere biaise fait un cote de 1.
+             vec2 q = p * (0.81649658 / uEdgeJitter.x);
+             q += (q.x + q.y) * 0.36602540;
+             vec2 cell = floor(q);
+             vec2 f = q - cell;
+             vec2 middle = f.x > f.y ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+             vec3 w = f.x > f.y
+               ? vec3(1.0 - f.x, f.x - f.y, f.y)
+               : vec3(1.0 - f.y, f.y - f.x, f.x);
+             return (w.x * edgeNodeValue(cell)
+                   + w.y * edgeNodeValue(cell + middle)
+                   + w.z * edgeNodeValue(cell + 1.0)) * uEdgeJitter.y;
+           }
+
+           /* Poids de Catmull-Rom entre les deux points du milieu. */
            vec4 splineWeights(float t) {
              float t2 = t * t;
              float t3 = t2 * t;
@@ -526,127 +584,111 @@ export class TerrainMaterialFactory {
              );
            }
 
+           vec4 surfaceTexel(vec2 corner, vec2 offset) {
+             return texture2D(uSurfaceMap, (corner + offset + 0.5) / ${CLASS_PIXELS}.0);
+           }
+
            /*
-            * Part d'une matiere dans le voisinage : son appartenance texel par
-            * texel — un ou zero —, pesee par les seize poids de la spline.
+            * Distance signee d'une etiquette sur une ligne du voisinage :
+            * positive dans les texels de cette etiquette, negative ailleurs.
             */
-           float splineShare(
-             float id, vec4 r0, vec4 r1, vec4 r2, vec4 r3, vec4 wx, vec4 wz
-           ) {
-             return wz.x * dot(step(abs(r0 - id), vec4(0.5)), wx)
-                  + wz.y * dot(step(abs(r1 - id), vec4(0.5)), wx)
-                  + wz.z * dot(step(abs(r2 - id), vec4(0.5)), wx)
-                  + wz.w * dot(step(abs(r3 - id), vec4(0.5)), wx);
+           float rowScore(float label, vec4 own, vec4 reach, vec4 wx) {
+             return dot(wx, mix(-reach, reach, vec4(equal(own, vec4(label)))));
            }
 
            /*
             * Ce que la carte dit en un point : la couleur du sol, et la part
             * d'eau.
             *
-            * Une matiere est un **identifiant**, relu au plus proche : sans
-            * quoi l'interpolation inventerait une matiere entre deux, et entre
-            * le sable et l'eau il n'y a rien. Ce qui s'interpole est
-            * l'**appartenance** — chaque texel est d'une matiere ou d'une
-            * autre, et ce sont ces un et ces zero qu'on lisse.
+            * Chaque texel porte sa matiere, sa distance au trait le plus
+            * proche et la matiere d'en face (surfaceContours.js). La distance,
+            * signee par la matiere, s'interpole sur seize texels par une
+            * cubique de Catmull-Rom : elle reproduit exactement une fonction
+            * lineaire, donc un trait droit, sans rien de la grille ; et
+            * contrairement a l'interpolation bilineaire, elle garde continu un
+            * filet d'eau d'un texel qui ne se touche que par les coins. Les
+            * deux matieres les plus fortes se partagent le point.
             *
-            * Sur quatre texels, ce lissage est bilineaire : sa derivee saute a
-            * chaque bord de texel, et le contour qui en sort est une ligne
-            * brisee, dont les cassures retombent sur la grille. Sur seize, par
-            * une cubique, le champ est C1 : le contour n'a plus d'angle, c'est
-            * une courbe continue.
-            *
-            * Ce qu'il ne fait pas, et qu'aucun filtre ne peut faire : redresser
-            * le trait. La carte ne dit pas ou passe le polygone dans un texel,
-            * donc le contour ondule d'environ un quart de texel autour de sa
-            * vraie place, quel que soit le noyau. Ce qui disparait est l'angle
-            * droit, pas l'ondulation. Un noyau approximant (B-spline) la
-            * reduirait d'un tiers, mais effacerait au passage un texel isole,
-            * et c'est ce qui l'a fait ecarter.
-            *
-            * C'est le seul mecanisme de lisiere : ni bruit, ni deplacement de
-            * la lecture, ni degrade entre deux couleurs.
-            *
-            * Le contour est **tranche**, pas fondu : on ne garde que la
-            * matiere la plus forte, sur la largeur d'un pixel d'ecran. C'est
-            * la seule derivee d'ecran du shader et elle ne fourmille pas — le
-            * champ sous elle est lisse et fixe dans le monde, elle ne fait
-            * qu'en donner l'epaisseur du trait. Sans elle, le contour
-            * crenellerait au loin, ou il faudrait le fondre sur des metres.
-            *
-            * L'eau est tenue a part : elle ne se melange pas, elle remplace.
-            *
-            * Limite assumee : le contour ne peut pas retrouver la position du
-            * polygone **dans** un texel. Ce qui disparait ici est la forme de
-            * la grille, pas son pas.
+            * Le contour est tranche, pas fondu : sur la largeur d'un pixel
+            * d'ecran, seule derivee d'ecran du shader.
             *
             * Pas d'accent grave ni d'accent sur les majuscules dans ce bloc :
             * il vit dans un litteral de gabarit.
             */
            void surfaceAt(
-             vec2 uv, vec3 farmAlbedo, float cropWater, out vec3 albedo, out float water,
+             vec2 uv, out vec3 albedo, out float water,
              out float standing, out float macroAmp, out float macroNear
            ) {
              vec2 grid = uv * ${CLASS_PIXELS}.0 - 0.5;
              vec2 corner = floor(grid);
              vec2 f = grid - corner;
+             float texelM = uSurfaceSize / ${CLASS_PIXELS}.0;
+             float reachM = ${CONTOUR_REACH_TEXELS}.0 * texelM;
 
-             vec4 r0 = surfaceRow(corner, -1.0);
-             vec4 r1 = surfaceRow(corner, 0.0);
-             vec4 r2 = surfaceRow(corner, 1.0);
-             vec4 r3 = surfaceRow(corner, 2.0);
+             vec4 own[4];
+             vec4 reach[4];
+             vec4 across = vec4(-1.0);
+             for (int j = 0; j < 4; j++) {
+               vec4 a = surfaceTexel(corner, vec2(-1.0, float(j - 1)));
+               vec4 b = surfaceTexel(corner, vec2(0.0, float(j - 1)));
+               vec4 c = surfaceTexel(corner, vec2(1.0, float(j - 1)));
+               vec4 d = surfaceTexel(corner, vec2(2.0, float(j - 1)));
+               own[j] = vec4(surfaceLabel(a), surfaceLabel(b), surfaceLabel(c), surfaceLabel(d));
+               reach[j] = vec4(a.b, b.b, c.b, d.b) * reachM;
+               if (j == 1) { across.x = acrossLabel(b); across.y = acrossLabel(c); }
+               if (j == 2) { across.z = acrossLabel(b); across.w = acrossLabel(c); }
+             }
              vec4 wx = splineWeights(f.x);
              vec4 wz = splineWeights(f.y);
 
-             // Les candidats sont les quatre matieres du carre central : une
-             // matiere qui n'est que dans l'anneau exterieur n'est pas ici,
-             // elle est a cote.
-             vec4 ids = vec4(r1.y, r1.z, r2.y, r2.z);
-             vec4 share = vec4(
-               splineShare(ids.x, r0, r1, r2, r3, wx, wz),
-               splineShare(ids.y, r0, r1, r2, r3, wx, wz),
-               splineShare(ids.z, r0, r1, r2, r3, wx, wz),
-               splineShare(ids.w, r0, r1, r2, r3, wx, wz)
-             );
-
-             // L'epaisseur du trait : un pixel d'ecran, mesure en texels. Le
-             // plancher garde un raccord de quelques centimetres au pied de
-             // l'observateur, le plafond empeche un texel entier de se fondre
-             // quand la carte passe sous le pixel.
-             float aa = clamp(max(fwidth(grid.x), fwidth(grid.y)), 0.04, 1.0);
-             float peak = max(max(share.x, share.y), max(share.z, share.w));
-             vec4 lifted = smoothstep(-aa, 0.0, share - peak);
-             lifted /= max(lifted.x + lifted.y + lifted.z + lifted.w, 1e-4);
-
-             // L'eau est tenue hors du melange, et les parts sont rapportees a
-             // ce qui n'est **pas** de l'eau. Elle n'est pas une matiere de
-             // plus mais une surface qui remplace le sol, reprise plus bas avec
-             // sa rive : peindre sa couleur ici ferait aller la berge d'une eau
-             // texturee vers une eau lisse au lieu d'aller de la terre a l'eau.
-             // Et sans le rapport, une plage se denaturerait en gravier a
-             // l'approche de la mer, faute de sable dans les texels mouilles.
-             water = dot(step(abs(ids - ${WATER_ID}.0), vec4(0.5)), lifted);
-             float land = max(1.0 - water, 1e-4);
-
-             albedo = vec3(0.0);
-             standing = 0.0;
-             macroAmp = 0.0;
-             macroNear = 0.0;
-             for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
-               if (i != ${WATER_ID}) {
-                 vec4 hit = step(abs(ids - float(i)), vec4(0.5));
-                 float share = dot(hit, lifted) / land;
-                 // La culture remplace la couleur de la terre labouree, et elle
-                 // seule : c'est un second axe, pas une matiere de plus. La
-                 // lame d'eau du riz suit la meme substitution : farmland ne
-                 // porte pas d'eau propre, donc la remplacer ne perd rien.
-                 bool isFarmland = i == ${SURFACE_KINDS.indexOf('farmland') + 1};
-                 vec3 tone = isFarmland ? farmAlbedo : uSurfaceAlbedo[i - 1];
-                 albedo += tone * share;
-                 standing += (isFarmland ? cropWater : uSurfaceWater[i - 1]) * share;
-                 macroAmp += uSurfaceMacro[i - 1] * share;
-                 macroNear += uSurfaceMacroNear[i - 1] * share;
+             // Les deux etiquettes de plus forte distance signee, parmi celles
+             // du carre central et celles d'en face : une matiere qui n'est
+             // que dans l'anneau exterieur n'est pas ici, elle est a cote.
+             float first = -1.0;
+             float firstScore = -1e6;
+             float second = -1.0;
+             float secondScore = -1e6;
+             for (int k = 0; k < 8; k++) {
+               float label = k < 2 ? own[1][k + 1] : k < 4 ? own[2][k - 1] : across[k - 4];
+               if (label < 0.0 || label == first || label == second) continue;
+               float score = wz.x * rowScore(label, own[0], reach[0], wx)
+                           + wz.y * rowScore(label, own[1], reach[1], wx)
+                           + wz.z * rowScore(label, own[2], reach[2], wx)
+                           + wz.w * rowScore(label, own[3], reach[3], wx);
+               if (score > firstScore) {
+                 second = first;
+                 secondScore = firstScore;
+                 first = label;
+                 firstScore = score;
+               } else if (score > secondScore) {
+                 second = label;
+                 secondScore = score;
                }
              }
+
+             float isWater;
+             labelLook(first, albedo, isWater, standing, macroAmp, macroNear);
+             water = isWater;
+             if (second < 0.0) return;
+
+             vec3 albedoB;
+             float isWaterB, standingB, macroAmpB, macroNearB;
+             labelLook(second, albedoB, isWaterB, standingB, macroAmpB, macroNearB);
+             float edge = 0.5 * (firstScore - secondScore);
+             float keep = smoothstep(-1.0, 1.0, edge / clamp(0.5 * fwidth(edge), 0.005, 0.5 * texelM));
+
+             // L'eau est tenue hors du melange : elle ne se teinte pas, elle
+             // remplace le sol, reprise plus bas avec sa rive. Ce qui n'est
+             // pas de l'eau garde la couleur de la terre seule.
+             water = mix(isWaterB, isWater, keep);
+             float landA = keep * (1.0 - isWater);
+             float landB = (1.0 - keep) * (1.0 - isWaterB);
+             if (landA + landB < 1e-4) { landA = keep; landB = 1.0 - keep; }
+             float land = landA + landB;
+             albedo = (albedo * landA + albedoB * landB) / land;
+             standing = (standing * landA + standingB * landB) / land;
+             macroAmp = (macroAmp * landA + macroAmpB * landB) / land;
+             macroNear = (macroNear * landA + macroNearB * landB) / land;
            }`
         )
         .replace(
@@ -679,40 +721,18 @@ export class TerrainMaterialFactory {
              // sur un sol lointain.
              float macro = texture2D(uMacroMap, vScenePos.xz / uMacro.x).r;
 
-             // La culture : un second axe, qui remplace la couleur de la terre
-             // labouree la ou il est peint. Lu au plus proche, d'ou l'arrondi
-             // et non un seuil — une valeur interpolee n'aurait aucun sens.
-             // L'indexation passe par une boucle a bornes constantes, seule
-             // forme d'acces a un tableau d'uniformes que toutes les versions
-             // de GLSL acceptent.
-             vec3 farmAlbedo = uSurfaceAlbedo[${SURFACE_KINDS.indexOf('farmland')}];
-             // Lame d'eau d'une culture — le riz, et lui seul aujourd'hui —
-             // zero partout ou une matiere n'a pas encore ete peinte de riz.
-             // Meme substitution que l'albedo, meme boucle : un axe de plus
-             // dans le meme tableau d'uniformes, pas un canal de plus.
-             float cropWater = 0.0;
-             if (inMap > 0.5) {
-               int crop = int(
-                 floor(texture2D(uSurfaceMap, surfaceUv).g * 255.0 / ${CROP_ID_STEP}.0 + 0.5)
-               ) - 1;
-               for (int i = 0; i < ${CROP_KINDS.length}; i++) {
-                 if (i == crop) {
-                   farmAlbedo = uCropAlbedo[i];
-                   cropWater = uCropWater[i];
-                 }
-               }
-             }
-
-             // Tout le sol en un appel : la couleur, et la part d'eau. C'etaient
-             // trois mecanismes — un melange de quatre poids, une boucle de
-             // couvertures, une substitution de culture — pour une seule
-             // question.
+             // Tout le sol en un appel : la couleur, et la part d'eau.
              vec3 albedo = uSurfaceAlbedo[${SURFACE_KINDS.indexOf('grass')}];
              float standing = 0.0;
              float macroAmp = 1.0;
              float macroNear = 0.0;
              if (inMap > 0.5) {
-               surfaceAt(surfaceUv, farmAlbedo, cropWater, albedo, gWater, standing, macroAmp, macroNear);
+               // Lue a travers le deplacement des limites (edgeWarp) : c'est lui qui
+               // casse le trait en segments.
+               surfaceAt(
+                 surfaceUv + edgeWarp(vScenePos.xz) / uSurfaceSize,
+                 albedo, gWater, standing, macroAmp, macroNear
+               );
              } else {
                // Hors carte : la matiere de repli.
                for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {

@@ -82,6 +82,7 @@ import {
   advanceFoliageWind,
   setFoliageWind,
 } from '../materials/foliageMaterial.js';
+import { createSightline, installSightlineClearing, setSightline } from '../materials/sightlineClearing.js';
 import { stableStand } from './stableStand.js';
 import { defaultTheme } from '../themes/default.js';
 import { filterByWords } from '../core/regionInterpretation.js';
@@ -595,6 +596,10 @@ export class VegetationLayer {
     this.depthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
     this.depthMaterial.onBeforeCompile = this.material.onBeforeCompile;
     this.depthMaterial.customProgramCacheKey = () => 'tree-volume-depth-v3';
+    // Après la matière d'ombre, qui ne doit pas en hériter.
+    this.sightline = createSightline(THREE);
+    installSightlineClearing(this.material, this.sightline);
+    installSightlineClearing(this.understoryMaterial, this.sightline);
     /** @type {Map<string, Object[]>} maillages du peuplement, par clé de tuile */
     this.meshes = new Map();
     /** Tuiles construites, y compris celles où rien n'a poussé (sinon reclassée à chaque image en rase campagne). @type {Set<string>} */
@@ -637,6 +642,11 @@ export class VegetationLayer {
   setWind(field) {
     setFoliageWind(this.material, field);
     setFoliageWind(this.understoryMaterial, field);
+  }
+
+  /** Voir `WorldComposer.setSightline`. */
+  setSightline(from, to, options) {
+    setSightline(this.sightline, from, to, options);
   }
 
   /**
@@ -854,6 +864,7 @@ export class VegetationLayer {
           // Le bois ne s'arrête pas au bord de la route : c'est ici, pas dans la
           // carte de classes, qu'on refuse l'emprise. Écarter ce candidat n'en
           // déplace aucun autre (voir l'en-tête, décision 1).
+          if (groundClass.onWater?.(x, z)) continue;
           if (inCorridor(index, x, z)) continue;
 
           describeTree(tree, seed, base, type, lowPart, variants, cellStrata, false, 0, this.theme.trees.variants);
@@ -1042,6 +1053,7 @@ export class VegetationLayer {
           if (standDraw(seed, slot + SLOT_PRESENCE) >= share) continue;
           const x = cellX + standDraw(seed, slot + SLOT_X) * cellSize;
           const z = cellZ + standDraw(seed, slot + SLOT_Z) * cellSize;
+          if (groundClass.onWater?.(x, z)) continue;
           if (inCorridor(index, x, z)) continue;
 
           describeTree(tree, seed, slot, type, lowPart, variants, cellStrata, true, edge, this.theme.trees.variants);

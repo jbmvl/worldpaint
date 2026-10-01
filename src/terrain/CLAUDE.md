@@ -9,6 +9,7 @@
 | `roadCut.js` | l'entaille du terrain sous une chaussée |
 | `cliffCut.js` | la marche du terrain sous une falaise relevée |
 | `groundClassMap.js` | la carte des matières et des cultures, rasterisée pour toute la scène |
+| `surfaceContours.js` | les limites de la carte redessinées en traits : chaînes, simplification, distance au trait |
 | `surfaceClassification.js` | ce qu'une entité de tuile **dit** du sol |
 
 ## Avant de modifier `groundClassMap.js` (~1000 lignes)
@@ -21,6 +22,13 @@ légère — peindre (`rebuild`, `_paintPavement`), encoder et réparer
 (`surfaceAt`, `shareOf`, `woodAt`, `cropAt`…). La signature et la réparation
 sont l'une la raison d'être de l'autre : elles défont le lissage du canevas, et
 les lire séparément ne veut rien dire.
+
+Une fois réparée, la carte passe par `surfaceContours.js`, qui ne connaît que
+des étiquettes entières : il retrace chaque limite en trait et écrit la distance
+au trait (bleu) et la matière d'en face (alpha), là où étaient la signature et
+l'alpha plein du canevas. Le shader interpole cette distance signée, puis casse
+le trait en segments de `edgeStepM` (`edgeWarp`). Le détail est dans
+`docs/surfaces.md`, « le pas de la carte ».
 
 À part de la carte elle-même : `poolShareAt`, le pendant CPU du bruit de
 flaque que `terrainMaterial.js` découpe en GLSL — même champ, mêmes constantes
@@ -51,7 +59,7 @@ Deux pièges :
   de sa pente, quelle que soit la matière lue.
 - **la carte des matières est plane, et ne peut rien dire d'une paroi
   verticale.** Un texel fait 2,67 m ; une falaise de quarante mètres n'occupe
-  que trois mètres d'emprise au sol, soit un liseré que la cubique du contour
+  que trois mètres d'emprise au sol, soit un liseré que le tracé du contour
   noie dans ce qui l'entoure — et toute la hauteur de la paroi se texture
   depuis ce liseré, donc s'étire. Ce qu'une surface raide doit porter se décide
   par la **pente** (`slopeStart`, `slopeEnd` dans le thème), qui la décrit

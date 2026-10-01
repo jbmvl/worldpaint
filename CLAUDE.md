@@ -43,6 +43,13 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   plat ; `roundaboutLab.set({ radius, branches, splitDeg, splitLength, axes,
   view, span })`, ou `node scripts/roundabout-shot.mjs`.
 
+- `demo/lab/contours.html` — les limites entre matières : la vraie
+  `GroundClassMap` et le vrai matériau de terrain sur un sol plat, avec un
+  champ à bord de pente faible, une parcelle à angles vifs, un étang, un bois
+  à lisière courbe et un ruisseau d'un texel ; `contoursLab.set({ x, z,
+  yawDeg, pitchDeg, distance, jitter, step })` (`jitter`, `step` remplacent
+  `edgeJitterM`, `edgeStepM`) et `contoursLab.info()` (durée de la relecture).
+
 - `demo/lab/shop.html` — le bâti seul le long d'une rue plate, avec des
   commerces en pignon, en long pan ou sans rue devant ;
   `shopLab.set({ yawDeg, pitchDeg, distance })`, ou

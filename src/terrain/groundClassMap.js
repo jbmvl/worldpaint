@@ -8,7 +8,8 @@
  *
  *   R = identifiant de matière (`SURFACE_KINDS`)   0 = la donnée se tait
  *   G = identifiant de culture (`CROP_KINDS`)      0 = rien ne pousse
- *   alpha = toujours plein
+ *   B = distance au trait le plus proche            (une fois réparée)
+ *   A = matière d'en face + 1, 0 = aucun trait       (une fois réparée)
  *
  * Il y en avait **deux**, et c'est la simplification de ce lot. Une carte
  * portait quatre poids interpolés linéairement (herbe, bois, culture, sol nu),
@@ -31,12 +32,11 @@
  * - une texture au lieu de deux (9,4 Mo au lieu de 18,9), une rasterisation au
  *   lieu de deux, et quatre lectures par pixel au lieu de six.
  *
- * Le fondu des lisières, que le filtrage linéaire donnait gratuitement, est
- * reconstruit là où il est lu : le shader et `shareOf` lisent les **quatre
- * texels voisins** et mélangent leurs appartenances. Un identifiant ne
- * s'interpole pas — entre le sable et l'eau il n'y a rien — mais
- * l'appartenance à une matière, si. C'est ce que le shader faisait déjà pour
- * les couvertures ; c'est devenu le cas général.
+ * Un identifiant ne s'interpole pas — entre le sable et l'eau il n'y a rien.
+ * La limite entre deux matières est donc redessinée en trait
+ * (`drawSurfaceContoursSteps`, `surfaceContours.js`), et c'est la distance à ce
+ * trait, signée par la matière, que le shader interpole. `shareOf`, côté CPU,
+ * mélange les appartenances des quatre texels voisins.
  *
  * Le fond est **peint** et non effacé : un canevas transparent ferait porter
  * aux pixels de bord un alpha partiel, donc des canaux prémultipliés, donc un
@@ -61,8 +61,8 @@
  *   la matière dont il est le plus proche — c'est-à-dire à celle qui couvre
  *   plus de la moitié de sa surface.
  *
- * La carte réparée est renvoyée au canevas : le shader lit la texture, la
- * végétation lit la copie, et les deux disent la même chose.
+ * La carte réparée et redessinée est la texture elle-même : le shader et la
+ * végétation lisent le même tableau.
  *
  * L'eau est une matière comme les autres, et c'est la seule description de
  * l'eau dans la scène : il n'y a pas de plan d'eau posé sur le terrain, le sol
@@ -112,6 +112,7 @@ import {
   surfaceFor,
   classPolygons,
 } from './surfaceClassification.js';
+import { contourSurfaceSteps, CONTOUR_REACH_TEXELS } from './surfaceContours.js';
 
 /*
  * Ce que dit une entité de tuile reste lisible depuis ici : la carte du sol est
@@ -375,7 +376,7 @@ export function repairSurfaceEdges(data, pixels = CLASS_PIXELS) {
   return finishGeneration(repairSurfaceEdgesSteps(data, pixels));
 }
 
-/** Lignes réparées entre deux étapes de `repairSurfaceEdgesSteps`. */
+/** Lignes réparées (ou réécrites par `drawSurfaceContoursSteps`) entre deux étapes. */
 const REPAIR_ROWS_PER_STEP = 256;
 
 /** `repairSurfaceEdges` en étapes, par bandes de lignes ; la première passe reste entière. */
@@ -442,6 +443,49 @@ export function* repairSurfaceEdgesSteps(data, pixels = CLASS_PIXELS) {
 
   return repaired;
 }
+/**
+ * Étiquette d'un texel pour le tracé des limites : la matière, ou la culture
+ * pour un champ cultivé — deux parcelles de cultures différentes ont une
+ * limite à elles. Lue par le shader sous la même forme (canal alpha).
+ */
+export const CROP_LABEL_BASE = 32;
+/** Rang des terres cultivées, à partir de 1. */
+export const FARMLAND_ID = SURFACE_KINDS.indexOf('farmland') + 1;
+
+/**
+ * Redessine les limites de la carte réparée (`surfaceContours.js`) et les
+ * écrit dans ses deux canaux libres :
+ *
+ *   B = distance au trait le plus proche, de 0 à `CONTOUR_REACH_TEXELS`
+ *   A = étiquette d'en face + 1, 0 si aucun trait n'est à portée
+ *
+ * La signature du bleu n'a servi qu'à la réparation, qui est passée. Un texel
+ * dont le centre tombe de l'autre côté du trait en prend la matière : le rouge
+ * et le vert disent la même chose que le contour, pour le shader comme pour
+ * ceux qui relisent la carte au texel.
+ */
+export function* drawSurfaceContoursSteps(data, pixels = CLASS_PIXELS) {
+  const total = pixels * pixels;
+  const labels = new Uint8Array(total);
+  for (let p = 0; p < total; p++) {
+    if (p % (pixels * REPAIR_ROWS_PER_STEP) === 0 && p > 0) yield;
+    const id = Math.round(data[p * 4] / SURFACE_ID_STEP);
+    const crop = Math.round(data[p * 4 + 1] / CROP_ID_STEP);
+    labels[p] = id === FARMLAND_ID && crop > 0 ? CROP_LABEL_BASE + crop : id;
+  }
+  yield;
+  const { distance, other } = yield* contourSurfaceSteps(labels, pixels);
+  for (let p = 0; p < total; p++) {
+    if (p % (pixels * REPAIR_ROWS_PER_STEP) === 0) yield;
+    const i = p * 4;
+    const crop = labels[p] >= CROP_LABEL_BASE;
+    data[i] = (crop ? FARMLAND_ID : labels[p]) * SURFACE_ID_STEP;
+    data[i + 1] = crop ? (labels[p] - CROP_LABEL_BASE) * CROP_ID_STEP : 0;
+    data[i + 2] = Math.round((distance[p] / CONTOUR_REACH_TEXELS) * 255);
+    data[i + 3] = other[p] + 1;
+  }
+}
+
 function createCanvas(width, height) {
   if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(width, height);
   return Object.assign(document.createElement('canvas'), { width, height });
@@ -464,17 +508,21 @@ export class GroundClassMap {
      * pays doit arriver — pas dans `cropLayer`, qui ne fait que relire.
      */
     this.region = null;
-    // Une seule carte, un seul repère, un seul filtrage. Elle portait des
-    // poids interpolés linéairement dans une carte et des identifiants relus au
-    // plus proche dans une autre ; ce sont désormais deux canaux du même texel,
-    // tous deux des identifiants, tous deux au plus proche. Le fondu des
-    // lisières que le filtrage linéaire donnait gratuitement est reconstruit
-    // par le shader, qui lit les quatre voisins et mélange leurs
-    // appartenances — ce qu'il faisait déjà pour les couvertures.
+    // Une seule carte, un seul repère, un seul filtrage : matière et culture
+    // sont deux canaux du même texel, tous deux relus au plus proche.
     this.canvas = createCanvas(CLASS_PIXELS, CLASS_PIXELS);
     this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
 
-    this.texture = new THREE.CanvasTexture(this.canvas);
+    // Une texture de données, pas le canevas : le bleu et l'alpha y portent la
+    // distance au trait et la matière d'en face (`drawSurfaceContoursSteps`),
+    // qu'un canevas prémultiplierait.
+    this.texture = new THREE.DataTexture(
+      new Uint8Array(CLASS_PIXELS * CLASS_PIXELS * 4),
+      CLASS_PIXELS,
+      CLASS_PIXELS,
+      THREE.RGBAFormat,
+      THREE.UnsignedByteType
+    );
     this.texture.colorSpace = THREE.NoColorSpace; // les canaux portent des identifiants, pas une couleur
     // Sans ce réglage, three retourne l'image et la carte serait en miroir nord-sud.
     this.texture.flipY = false;
@@ -626,6 +674,11 @@ export class GroundClassMap {
   /** Part de bois en un point, de 0 à 1. */
   woodAt(x, z) {
     return this.shareOf('wood', x, z);
+  }
+
+  /** Vrai si le sol est de l'eau en ce point (faux hors carte). */
+  onWater(x, z) {
+    return this.surfaceAt(x, z) === 'water';
   }
 
   /**
@@ -1049,22 +1102,7 @@ export class GroundClassMap {
     for (const path of permanent) ctx.fill(path, 'evenodd');
     yield;
 
-    // Relecture unique, à la rasterisation (un `getImageData` par appel serait
-    // ruineux) — et c'est aussi le seul moment où l'on peut défaire le lissage
-    // du canevas, qui inventerait sinon une matière tout le long de chaque
-    // limite (voir `repairSurfaceEdges`). La carte est renvoyée au canevas :
-    // le shader lit la texture, pas cette copie, et les deux doivent dire la
-    // même chose.
-    let image = null;
-    try {
-      image = ctx.getImageData(0, 0, CLASS_PIXELS, CLASS_PIXELS);
-    } catch (e) {
-      console.warn('[groundClassMap] relecture impossible', e?.message || e);
-    }
-    yield;
-    this.repaired = image ? yield* repairSurfaceEdgesSteps(image.data) : 0;
-    if (this.repaired > 0) ctx.putImageData(image, 0, 0);
-    this._data = image?.data ?? null;
+    yield* this.readBackSteps();
     this.count = painted;
     this.revision++;
     this.origin.set(originX, originZ);
@@ -1072,6 +1110,32 @@ export class GroundClassMap {
     this._anchor = { x: here.x, z: here.z };
     this._frame = frame;
     return painted > 0;
+  }
+
+  /**
+   * Relit le canevas peint et publie la carte : réparée, ses limites
+   * redessinées, envoyée à la texture.
+   *
+   * Relecture unique (un `getImageData` par appel serait ruineux) — et c'est
+   * aussi le seul moment où l'on peut défaire le lissage du canevas, qui
+   * inventerait sinon une matière tout le long de chaque limite (voir
+   * `repairSurfaceEdges`). Le shader lit la texture, la végétation la copie,
+   * et les deux sont le même tableau.
+   */
+  *readBackSteps() {
+    let image = null;
+    try {
+      image = this.ctx.getImageData(0, 0, CLASS_PIXELS, CLASS_PIXELS);
+    } catch (e) {
+      console.warn('[groundClassMap] relecture impossible', e?.message || e);
+    }
+    yield;
+    this.repaired = image ? yield* repairSurfaceEdgesSteps(image.data) : 0;
+    if (image) {
+      yield* drawSurfaceContoursSteps(image.data);
+      this.texture.image.data = new Uint8Array(image.data.buffer);
+    }
+    this._data = image?.data ?? null;
   }
 
   dispose() {

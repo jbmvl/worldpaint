@@ -3019,9 +3019,9 @@ test('un cours d’eau linéaire porte de l’eau, et son ourlet ne l’efface p
     LinearFilter: 2,
     NearestFilter: 3,
     NoColorSpace: '',
-    CanvasTexture: class {
-      constructor(canvas) {
-        this.image = canvas;
+    DataTexture: class {
+      constructor(data, width, height) {
+        this.image = { data, width, height };
       }
     },
     Vector2: class {
@@ -12711,36 +12711,24 @@ test('le contour de l’eau se fond, sans que les identifiants cessent d’être
   // rate son ancrage ne casse rien, elle ne fait rien.
   const source = readFileSync('src/terrain/terrainMaterial.js', 'utf8');
 
-  // Une seule carte, un seul appel : la couleur et l'eau viennent des quatre
-  // mêmes relevés. C'étaient trois mécanismes — un mélange de quatre poids
-  // interpolés linéairement, une boucle de couvertures, une substitution de
-  // culture — pour une seule question.
-  assert.match(
-    source,
-    /surfaceAt\(surfaceUv, farmAlbedo, cropWater, albedo, gWater, standing, macroAmp, macroNear\);/
-  );
+  // Une seule carte, un seul appel : la couleur et l'eau viennent des mêmes
+  // seize relevés, lus à travers le déplacement des limites.
+  assert.match(source, /surfaceAt\(\s*surfaceUv \+ edgeWarp\(vScenePos\.xz\) \/ uSurfaceSize,/);
   assert.ok(!/uClassMap|uCropMap/.test(source), 'les deux cartes ont fusionné');
 
-  // Ce qui est interpolé est l'**appartenance**, pas l'identifiant : chaque
-  // relevé vise un centre de texel, là où le filtrage au plus proche rend la
-  // valeur peinte et rien d'autre.
-  assert.match(source, /texture2D\(uSurfaceMap, \(texel \+ 0\.5\) \/ \$\{CLASS_PIXELS\}\.0\)/);
-  assert.equal(
-    (source.match(/surfaceIdAt\(corner/g) || []).length,
-    4,
-    'quatre texels par ligne du voisinage'
-  );
+  // Chaque relevé vise un centre de texel, là où le filtrage au plus proche
+  // rend la valeur écrite et rien d'autre.
+  assert.match(source, /texture2D\(uSurfaceMap, \(corner \+ offset \+ 0\.5\) \/ \$\{CLASS_PIXELS\}\.0\)/);
 
   // Et la berge est un fondu, pas une substitution.
   assert.match(source, /base = mix\(base, water, gWater\);/);
 
-  // L'eau ne doit pas être peinte deux fois : écartée du mélange, sans quoi le
-  // sol sous le fondu serait déjà de l'eau.
-  assert.match(source, /if \(i != \$\{WATER_ID\}\)/);
-  assert.match(source, /water = dot\(step\(abs\(ids - \$\{WATER_ID\}\.0\), vec4\(0\.5\)\), lifted\);/);
-  // Et les parts sont rapportées à ce qui n'est pas de l'eau, sans quoi une
-  // plage tournerait au gravier à l'approche de la mer.
-  assert.match(source, /float land = max\(1\.0 - water, 1e-4\);/);
+  // L'eau ne doit pas être peinte deux fois : tenue hors du mélange des
+  // couleurs, sans quoi le sol sous le fondu serait déjà de l'eau — et ce qui
+  // n'en est pas garde la couleur de la terre seule, sans quoi une plage
+  // tournerait au gravier à l'approche de la mer.
+  assert.match(source, /water = mix\(isWaterB, isWater, keep\);/);
+  assert.match(source, /float landA = keep \* \(1\.0 - isWater\);/);
 });
 
 test('le halo lit la couleur d’instance sans la redéclarer', () => {
@@ -13372,42 +13360,42 @@ test('les limites de surfaces : la frange, les matières interpolées et la rive
   factory.material.onBeforeCompile(shader);
   const source = shader.fragmentShader;
 
-  // Rien ne déplace plus la lecture : le contour vient de l'interpolation, et
-  // d'elle seule. Ni frange, ni bruit, ni largeur de fondu.
-  assert.ok(!/edgeWarp|uEdgeNoise|uBlendWidth|uSurfaceNoise/.test(source), 'le bruit de lisière');
+  // Pas de bruit de lisière : le seul déplacement de la lecture est celui des
+  // limites, réglé par le thème.
+  assert.ok(!/uEdgeNoise|uBlendWidth|uSurfaceNoise/.test(source), 'le bruit de lisière');
   assert.match(source, /surfaceUv = \(vScenePos\.xz - uSurfaceOrigin\)/);
   for (const key of ['blendWidth', 'edgeNoiseScaleM', 'edgeWarpScaleM']) {
     assert.equal(defaultTheme.terrain[key], undefined, `${key} n'a plus d'objet`);
   }
-
-  // Le contour : l'appartenance de seize texels, lissée par une cubique.
-  // Quatre ne suffisent pas — un champ bilinéaire casse à chaque bord de
-  // texel, et sa ligne brisée redessine la grille qu'on veut effacer.
-  assert.match(source, /out vec3 albedo, out float water/);
-  assert.equal(
-    (source.match(/surfaceIdAt\(corner/g) || []).length,
-    4,
-    'quatre par ligne, appelées sur les quatre lignes du voisinage'
+  assert.equal(shader.uniforms.uEdgeJitter.value.y, defaultTheme.terrain.edgeJitterM);
+  assert.ok(
+    Math.abs(shader.uniforms.uEdgeJitter.value.x * 0.4535 - defaultTheme.terrain.edgeStepM) < 1e-9,
+    'le côté du réseau donne le pas voulu entre deux sommets du tracé'
   );
+
+  // Le contour : la distance signée de seize texels, lissée par une cubique —
+  // elle rend une droite exactement, et garde continu un filet d'un texel.
+  assert.match(source, /out vec3 albedo, out float water/);
+  assert.match(source, /for \(int j = 0; j < 4; j\+\+\) \{/);
   assert.equal(
-    (source.match(/surfaceRow\(corner, /g) || []).length,
+    (source.match(/surfaceTexel\(corner, vec2\(/g) || []).length,
     4,
-    'les quatre lignes du voisinage 4 × 4'
+    'quatre relevés par ligne, sur les quatre lignes du voisinage'
   );
   assert.match(source, /vec4 splineWeights\(float t\)/);
   assert.equal(
-    (source.match(/splineShare\(ids\./g) || []).length,
+    (source.match(/rowScore\(label, own\[\d\], reach\[\d\], wx\)/g) || []).length,
     4,
-    'une part par candidat, et les candidats sont le carré central'
+    'une distance signée par ligne du voisinage'
   );
 
   // Tranché, pas fondu : la matière la plus forte l'emporte sur la largeur
   // d'un pixel.
-  assert.match(source, /smoothstep\(-aa, 0\.0, share - peak\)/);
+  assert.match(source, /float keep = smoothstep\(-1\.0, 1\.0, edge \/ clamp\(0\.5 \* fwidth\(edge\)/);
   assert.equal(
     (source.match(/fwidth\(/g) || []).length,
-    2,
-    'la largeur du trait, en x et en z, et rien d’autre'
+    1,
+    'la largeur du trait, et rien d’autre'
   );
   // La dérivée d'écran est revenue, mais pour la raison inverse de celle qui
   // l'avait fait bannir : la position est **réellement** bosselée au sommet
@@ -13639,11 +13627,11 @@ test('la variation macro du sol dépend de la matière : amplitude et plancher d
   factory.material.onBeforeCompile(shader);
   const source = shader.fragmentShader;
 
-  // Accumulés par part, dans la même boucle que l'eau — jamais tranchés sur
-  // la matière dominante.
+  // Mélangés par part entre les deux matières d'une limite, comme la couleur —
+  // jamais tranchés sur la matière dominante.
   assert.match(
     source,
-    /standing \+= \(isFarmland \? cropWater : uSurfaceWater\[i - 1\]\) \* share;\s*\n\s*macroAmp \+= uSurfaceMacro\[i - 1\] \* share;\s*\n\s*macroNear \+= uSurfaceMacroNear\[i - 1\] \* share;/
+    /macroAmp = \(macroAmp \* landA \+ macroAmpB \* landB\) \/ land;\s*\n\s*macroNear = \(macroNear \* landA \+ macroNearB \* landB\) \/ land;/
   );
   assert.match(
     source,

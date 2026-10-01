@@ -813,6 +813,18 @@ export class WorldComposer {
     this.streets.setWetness(value);
   }
 
+  /**
+   * Efface par tramage les arbres entre la caméra et le sujet suivi. Seul le
+   * rendu change : ombres et semis restent ceux du lieu.
+   * @param {{x:number,y:number,z:number}|null} from Caméra ; `null` désactive.
+   * @param {{x:number,y:number,z:number}|null} to Sujet.
+   * @param {{fromRadius?:number, toRadius?:number}} [options] Rayons, en mètres.
+   */
+  setSightline(from, to, options) {
+    if (this.disposed) return;
+    this.vegetation.setSightline(from, to, options);
+  }
+
   dispose() {
     if (this.disposed) return;
     this.disposed = true;

@@ -63,6 +63,13 @@ export const TERRAIN_LOOK = {
    */
   unclassified: 'grass',
   /**
+   * Le dessin d'une limite entre deux matières : une suite de segments
+   * d'environ `edgeStepM` mètres, chaque sommet écarté du tracé d'au plus
+   * `edgeJitterM` mètres de part et d'autre. Fixe au monde, tiré une fois.
+   */
+  edgeStepM: 2,
+  edgeJitterM: 0.5,
+  /**
    * Albédo par culture, dans l'ordre de `CROP_KINDS`. Une culture n'est pas une
    * matière : c'est un second axe, qui remplace la couleur de `farmland` là où
    * il est peint. Il a son propre canal, et il marche — on n'y touche pas.

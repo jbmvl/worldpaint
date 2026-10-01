@@ -726,6 +726,11 @@ export class FurnitureLayer {
     return Math.hypot(east - here, south - here) / span;
   }
 
+  /** Vrai si le point est sur l'eau : rien de ce qui pousse ou se dresse n'y va. */
+  _onWater(x, z) {
+    return this.groundClass?.onWater?.(x, z) ?? false;
+  }
+
   /**
    * Vrai si le sol n'est pas déjà boisé.
    *
@@ -901,7 +906,7 @@ export class FurnitureLayer {
     // mobilier réglementaire, lui, est posé au ras de la rive, donc dans
     // l'emprise, et c'est sa place : une glissière hors de l'emprise ne
     // protège rien.
-    if (offRoad && this._onRoad(x, z, own)) return null;
+    if (offRoad && (this._onRoad(x, z, own) || this._onWater(x, z))) return null;
     // `openGround` : ce qui n'a pas de sens sous un couvert déjà planté. La
     // question se pose **là où l'objet se pose**, et non une fois pour toute
     // une portion — un point pris au milieu du tronçon rendu se déplace avec

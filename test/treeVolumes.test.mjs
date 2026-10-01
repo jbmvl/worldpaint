@@ -191,3 +191,24 @@ test('les pommes sont des facettes du prototype, sans instances supplémentaires
   assert.deepEqual(layer.meshes.get('verger').map(m => m.count), [1]);
   layer.dispose();
 });
+
+test('la ligne de mire efface les arbres entre caméra et sujet, jamais leur ombre', () => {
+  const layer = couche();
+  const shader = { uniforms: {}, vertexShader: THREE.ShaderLib.lambert.vertexShader, fragmentShader: THREE.ShaderLib.lambert.fragmentShader };
+  layer.material.onBeforeCompile(shader);
+  assert.ok(shader.vertexShader.includes('vSightPoint = (modelMatrix * instanceMatrix'));
+  assert.ok(shader.fragmentShader.includes('if (sightKeep <= sightNoise) discard;'));
+  assert.equal(shader.uniforms.uSightRadius.value.z, 0, 'inactive tant que personne ne la pose');
+  const depth = { uniforms: {}, vertexShader: THREE.ShaderLib.depth.vertexShader, fragmentShader: THREE.ShaderLib.depth.fragmentShader };
+  layer.depthMaterial.onBeforeCompile(depth);
+  assert.equal(depth.fragmentShader.includes('sightKeep'), false);
+  layer.setSightline({ x: 0, y: 5, z: 16 }, { x: 0, y: 1.6, z: 0 }, { fromRadius: 4 });
+  assert.deepEqual(shader.uniforms.uSightTo.value.toArray(), [0, 1.6, 0]);
+  assert.deepEqual(shader.uniforms.uSightRadius.value.toArray(), [4, 1.2, 1]);
+  const under = { uniforms: {}, vertexShader: THREE.ShaderLib.lambert.vertexShader, fragmentShader: THREE.ShaderLib.lambert.fragmentShader };
+  layer.understoryMaterial.onBeforeCompile(under);
+  assert.equal(under.uniforms.uSightFrom, shader.uniforms.uSightFrom, 'sous-étage et peuplement partagent la même ligne');
+  layer.setSightline(null, null);
+  assert.equal(shader.uniforms.uSightRadius.value.z, 0);
+  layer.dispose();
+});

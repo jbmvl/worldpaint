@@ -134,6 +134,8 @@ export class TerrainBubble {
 
     /** Index des chaussées construites (`RoadIndex`), ou `null` — voir `setRoadCut`. */
     this._roadCut = null;
+    /** Index des chemins de terre, grain éteint sans déblai — voir `setRoadCut`. */
+    this._unpaved = null;
     /** Dalles de carrefour (`JunctionAreas`), ou `null` — elles s'entaillent aussi. */
     this._junctions = null;
     /** Incrémenté à chaque publication d'index : périme les mailles déjà creusées. */
@@ -419,10 +421,13 @@ export class TerrainBubble {
    * @param {Object|null} index Instance `RoadIndex`, ou `null` pour ne rien creuser.
    * @param {Object|null} [areas] Instance `JunctionAreas`, cotes posées.
    * @param {Object|null} [earthworks] Terrassements des franchissements.
+   * @param {Object|null} [unpavedIndex] `RoadIndex` des chemins de terre : le
+   *        sol n'y est pas entaillé, seul le grain low poly s'y éteint.
    */
-  setRoadCut(index, areas = null, earthworks = null) {
+  setRoadCut(index, areas = null, earthworks = null, unpavedIndex = null) {
     if (this.disposed) return;
     this._roadCut = index || null;
+    this._unpaved = unpavedIndex || null;
     this._earthworks = earthworks;
     this._junctions = (index && areas) || null;
     this._cutGeneration++;
@@ -505,8 +510,13 @@ export class TerrainBubble {
    * sommet ; `_roadCutAt` s'appuie dessus pour garder sa propre signature.
    */
   _roadCutWithMask(x, z, raw) {
-    const earth = this._earthworks?.sample(x, z, raw) ?? { elevation: raw, mask: 0 };
+    let earth = this._earthworks?.sample(x, z, raw) ?? { elevation: raw, mask: 0 };
     raw = earth.elevation;
+    const unpaved = this._unpaved?.query(x, z, this.cutBenchM + ROAD_CUT_BLEND_M);
+    if (unpaved) {
+      const mask = roadCutMaskAt(unpaved.distance, unpaved.segment.halfWidth, this.cutBenchM);
+      earth = { ...earth, mask: Math.max(earth.mask, mask) };
+    }
     const index = this._roadCut;
     if (!index) return earth;
 
@@ -674,7 +684,7 @@ export class TerrainBubble {
     // Le déblai ne s'applique qu'aux tuiles proches (au-delà, la requête
     // d'index ne rendrait rien). La falaise, elle, se voit de loin : elle
     // taille tous les anneaux.
-    const carving = !!this._roadCut && tile.ring <= ROAD_CUT_MAX_RING;
+    const carving = !!(this._roadCut || this._unpaved) && tile.ring <= ROAD_CUT_MAX_RING;
     // Tranché une fois pour la tuile entière : sans ça, chaque sommet
     // interrogeait l'index cinq fois pour s'entendre dire qu'il n'y a pas de
     // falaise ici, soit deux cent mille requêtes inutiles par tuile.
@@ -837,6 +847,7 @@ export class TerrainBubble {
     this.disposed = true;
     this._abort.abort();
     this._roadCut = null;
+    this._unpaved = null;
     this._junctions = null;
     this._rebuildQueue.length = 0;
     this._clearTiles();

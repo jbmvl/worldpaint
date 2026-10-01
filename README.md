@@ -142,6 +142,7 @@ application already uses) rather than leaving it at the default.
 | `setCenter(lng, lat)` | move the terrain bubble |
 | `refresh(lng, lat, {force})` | rebuild everything that comes from vector data |
 | `advance(delta, at)` | one frame of work: planting queues, grass, animation |
+| `setSightline(from, to, {fromRadius, toRadius})` | dither away the trees between the camera and the followed subject; call every frame, `null` turns it off |
 | `updateSky({camera, date, lng, lat, weather})` | advance the hour and the weather; returns the night mix, the wetness and the clear colour |
 | `dispose()` | release everything that was allocated |
 

@@ -207,6 +207,7 @@ export function buildLandmarks(layer, context, builtUp) {
       // qui s'efface quand on arrive dessus n'en est plus un.
       if (layer._onRoad(px, pz)) continue;
       if (layer._fabric?.countWithin(px, pz, LANDMARK_CLEARANCE_M, 1) > 0) continue;
+      if (layer._onWater(px, pz)) continue;
       if (!isHighPoint(layer, px, pz)) continue;
 
       const item = draw < 0.08 ? 'windTurbine' : 'pylon';
@@ -256,7 +257,7 @@ export function buildRidgeTrees(layer, context, builtUp) {
       // disent déjà où l'arbre ne va pas, sans distance à l'observateur.
       if (layer._onRoad(px, pz)) continue;
       if (layer._fabric?.countWithin(px, pz, RIDGE_TREE_CLEARANCE_M, 1) > 0) continue;
-      if (!layer._openGround(px, pz)) continue;
+      if (!layer._openGround(px, pz) || layer._onWater(px, pz)) continue;
       if (!isHighPoint(layer, px, pz)) continue;
 
       const conifer = randomAt(px, pz, 184) < 0.35;

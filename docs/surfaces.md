@@ -15,14 +15,14 @@ sa densité (`groundCover`), la végétation ses arbustes (`vegetationLayer`).
 | --- | --- |
 | R | identifiant de **matière** (`SURFACE_KINDS`), 0 = la donnée se tait |
 | G | identifiant de **culture** (`CROP_KINDS`), 0 = rien ne pousse |
-| B | **signature** de la matière — voir « le bord d'un tracé ment » |
-| alpha | toujours plein — le fond est peint, pas effacé |
+| B | à la peinture, **signature** de la matière — voir « le bord d'un tracé ment » ; une fois réparée, **distance au trait** le plus proche (`surfaceContours.js`) |
+| alpha | à la peinture, toujours plein — le fond est peint, pas effacé ; une fois réparée, matière **d'en face** + 1 (0 : aucun trait à portée) |
 
 Filtrage au plus proche : ce sont des identifiants, et interpoler un
 identifiant inventerait une matière entre deux (entre le sable et l'eau, il n'y
-a rien). Le fondu des lisières est reconstruit là où il est lu — le shader et
-`shareOf` lisent les **quatre texels voisins** et mélangent leurs
-appartenances. Une appartenance, elle, s'interpole.
+a rien). Ce qui s'interpole est la distance au trait, signée par la matière
+(voir « le pas de la carte ») ; côté CPU, `shareOf` mélange les appartenances
+des quatre texels voisins.
 
 ### Le bord d'un tracé ment, et on le lui reprend
 
@@ -288,66 +288,52 @@ c'est le repli en herbe qu'on voit.
 
 ## Le pas de la carte
 
-2,7 m par pixel. C'est la limite dure de tout contour, et sans précaution elle
-se lit à l'écran comme un escalier à 45° — la marche du carreau — dès que deux
-surfaces contrastent : le sable et l'herbe, l'eau et n'importe quoi. Les
-matières la masquent par le filtrage linéaire de leur carte ; les identifiants
-(culture, couverture) ne le peuvent pas, puisqu'interpoler un identifiant
-inventerait une matière entre deux.
-
-Quatre choses la traitent, dans trois fichiers :
+2,7 m par pixel. C'est la limite dure de tout contour, et lue telle quelle elle
+se voit comme un escalier — la marche du carreau — dès que deux surfaces
+contrastent. Aucun filtre ne le redresse : la carte ne dit pas où passe le
+polygone dans un texel, et un noyau, si large soit-il, ne fait qu'arrondir les
+marches. Les limites sont donc **redessinées en traits**, puis seulement
+cassées en segments. Cinq étapes, dans trois fichiers :
 
 1. **Le contour tombe au bon demi-texel** (`repairSurfaceEdges`, dans
    `groundClassMap.js`). Le lissage du canevas est défait après coup, et le
    seuil de reprise est celui de la couverture : un texel couvert à plus de la
-   moitié par une matière la prend. C'est la seule des quatre qui déplace la
-   limite plutôt que de la dessiner autrement.
-2. **L'appartenance s'interpole, l'identifiant non** (`surfaceAt`, dans
-   `terrainMaterial.js`). Chaque texel est d'une matière ou d'une autre — un ou
-   zéro —, et ce sont ces valeurs-là qu'on lisse, jamais l'identifiant. Sur
-   **seize** texels et par une cubique de Catmull-Rom : le champ est C¹, donc
-   son contour n'a plus d'angle — c'est une courbe. Quatre texels et un lissage
-   bilinéaire ne suffisent pas : la dérivée de ce champ-là saute à chaque bord
-   de texel, et les cassures du contour retombent sur la grille. La spline est
-   **interpolante** et non approximante : au centre d'un texel elle rend sa
-   valeur exacte, donc un ruisseau ou un sentier large d'un seul texel survit.
-
-   Ce qu'elle ne fait pas : redresser le trait. Mesuré sur une droite à 30°
-   rasterisée, le contour s'écarte de sa vraie place de 0,25 texel en écart
-   quadratique — 0,23 pour le bilinéaire, 0,17 pour une B-spline. La carte ne
-   dit pas où passe le polygone **dans** un texel, et aucun noyau ne l'invente :
-   ce qui disparaît est l'angle droit, pas l'ondulation. La B-spline la
-   réduirait d'un tiers au prix d'un texel isolé, qu'elle efface (0,44 contre
-   le 0,5 qu'il lui faudrait) — c'est ce qui l'a fait écarter.
-3. **Le contour est tranché, pas fondu** (même fonction). La matière la plus
-   forte l'emporte, sur la largeur d'un pixel d'écran (`fwidth`) : net de près,
-   sans créneler au loin, et sans dégradé de plusieurs mètres entre deux
-   couleurs.
-4. **La rive** (thème `shoreWet`). Le sol au contact de l'eau est mouillé — plus
-   sombre, plus saturé, du même film d'eau que la pluie y met. Une berge cesse
-   d'être une découpe entre deux couleurs.
+   moitié par une matière la prend.
+2. **L'escalier redevient un trait** (`surfaceContours.js`). Les arêtes entre
+   deux matières (deux cultures comptent pour deux matières) sont chaînées
+   d'une jonction à l'autre, simplifiées par Douglas-Peucker à un texel près,
+   et chaque morceau est réajusté par moindres carrés sur ses points : une
+   droite rasterisée redevient la droite, à un dixième de texel près ; un coin
+   de parcelle reste vif ; les virages doux sont arrondis. Un coin en damier
+   laisse passer en diagonale la matière la plus rare alentour, pour qu'un
+   filet d'eau d'un texel ne se coupe pas à chaque marche. Chaque texel proche
+   d'un trait reçoit sa distance au trait (bleu) et la matière d'en face
+   (alpha), et prend la matière du côté où tombe son centre.
+3. **La distance signée s'interpole** (`surfaceAt`, dans `terrainMaterial.js`),
+   sur seize texels par une cubique de Catmull-Rom. Elle reproduit exactement
+   une fonction linéaire, donc un trait droit ; et contrairement au bilinéaire,
+   elle garde continu un filet d'un texel qui ne se touche que par les coins.
+4. **Le trait est cassé en segments** (`edgeWarp`, même fichier). La lecture de
+   la carte est déplacée par un champ de vecteurs linéaire par triangle, sur un
+   réseau fixe au monde : un trait droit le reste dans chaque triangle et casse
+   à chaque arête, soit un sommet tous les `edgeStepM` (2 m) écarté d'au plus
+   `edgeJitterM` (50 cm) — thème, `terrain`. Les deux berges d'un ruisseau
+   bougent ensemble : sa largeur reste.
+5. **Le contour est tranché, pas fondu**, sur la largeur d'un pixel d'écran
+   (`fwidth`) ; et **la rive** (thème `shoreWet`) mouille le sol au contact de
+   l'eau, du même film d'eau que la pluie.
 
 L'herbe instanciée, elle, ne lit pas ce contour : chaque maille lit le sol à
 quelques mètres d'elle-même (`fringeOffset`, thème `edgeWarpM`, dans
 `groundCover.js`), et au bord une maille sur deux lit l'autre surface. Ce sont
-les petits points d'une lisière, et ils n'obéissent pas à la peinture.
+les petits points d'une lisière, et ils n'obéissent pas à la peinture. La
+végétation et `shareOf` lisent la carte au texel : ils suivent le trait à un
+demi-texel près, sans ses segments.
 
-Ce qui a été essayé et retiré : un **bruit de lisière** qui déplaçait la lecture
-du sol de quelques mètres et repondérait les matières voisines par son grain.
-Il dentelait, il ne courbait pas ; et son champ, plus fin que le pixel d'écran,
-était rendu à sa moyenne par le filtrage bien avant les distances où le carreau
-se voit — une moyenne ne déplace rien, et un grain commun à toutes les matières
-est un facteur commun que la normalisation annule. Le contour ne se brouille
-pas, il se dessine.
-
-Ce qui reste : le contour passe par les centres des carreaux, il ne retrouve pas
-la position exacte du polygone à l'intérieur de l'un d'eux. La couverture
-sous-texel existe pourtant, un instant : c'est **exactement** ce que porte la
-valeur d'antialiasing que `repairSurfaceEdges` écrase. La rendre au shader —
-α = (rouge − A) / (B − A), les deux voisins étant connus — placerait le contour
-au huitième de texel, soit trente centimètres au lieu de deux mètres soixante-
-dix, sans supersampling ni seconde rasterisation. Le canal bleu, libéré une fois
-la réparation faite, est là où elle irait. Ce n'est pas fait.
+Ce qui reste hors d'atteinte : un trait plus étroit qu'un demi-texel disparaît
+dès la réparation (un fossé de 1,2 m n'est peint que là où il couvre la moitié
+d'un texel), et un détail de moins d'un texel le long d'une limite est gommé
+par la simplification.
 
 ### Couverture proche et transitions
 

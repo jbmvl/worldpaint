@@ -29,7 +29,7 @@ import { Kit, seededUnit } from '../models/kit.js';
 /** Trains en circulation au plus. */
 export const TRAIN_MAX = 2;
 /** Part des apparitions de voie qui font naître un train (1 : à chaque fois). */
-export const TRAIN_SPAWN_CHANCE = 0.25;
+export const TRAIN_SPAWN_CHANCE = 0.1;
 /** Une voie plus loin que ça de l'observateur ne fait pas naître de train, en mètres. */
 export const TRAIN_SPAWN_SIGHT_M = 500;
 /** Recul de la naissance en amont du point le plus proche de l'observateur, en mètres. */

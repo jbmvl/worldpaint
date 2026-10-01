@@ -1264,6 +1264,10 @@ export class RoadNetwork {
     yield;
     const paved = collected.filter((segment) => segment.paved);
     const terrainIndex = new RoadIndex(paved, { margin: bubble.cutBenchM + ROAD_CUT_BLEND_M });
+    const unpavedIndex = new RoadIndex(
+      collected.filter((segment) => !segment.paved),
+      { margin: bubble.cutBenchM + ROAD_CUT_BLEND_M }
+    );
     const earthworks = new TransportEarthworks([...collected.filter(s => s.paved || s.tunnelAccess), ...railwaySegments], {
       bench: bubble.cutBenchM, scale: bubble.verticalScale,
     });
@@ -1387,7 +1391,7 @@ export class RoadNetwork {
     this.markings = markings;
     // L'emprise entaillée, c'est la chaussée entière : les rubans et les dalles
     // de carrefour, qui débordent d'eux.
-    this.bubble.setRoadCut(segments > 0 ? terrainIndex : null, areas, earthworks);
+    this.bubble.setRoadCut(segments > 0 ? terrainIndex : null, areas, earthworks, segments > 0 ? unpavedIndex : null);
     this.transportCrossings = crossings;
     this.earthworks = earthworks;
     // Tous les profils sont visités, y compris ceux sans géométrie cette fois : leur ancien maillage doit disparaître.

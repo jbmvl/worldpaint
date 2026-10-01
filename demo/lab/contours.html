@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Banc des limites</title>
+<style>html,body{margin:0;background:#9fb8cf}canvas{display:block}</style>
+<script type="importmap">
+{ "imports": { "three": "/node_modules/three/build/three.module.js" } }
+</script>
+</head>
+<body>
+<script type="module">
+/*
+ * Banc des limites — la vraie `GroundClassMap` et le vrai matériau de terrain
+ * sur un sol plat, sans tuile ni réseau. Des formes peintes dans le canevas
+ * comme le ferait la rasterisation : un champ de blé en biais à pente faible
+ * (l'escalier le plus visible), un étang rond, une parcelle de maïs à angles
+ * vifs contre le blé, un ruisseau de quatre mètres, un bois en courbe.
+ *
+ *   contoursLab.set({ x, z, yawDeg, pitchDeg, distance, jitter, step })
+ *   contoursLab.info()   // durée de la relecture, texels réparés
+ *
+ * `jitter` et `step` remplacent `edgeJitterM` et `edgeStepM` du thème.
+ */
+import * as THREE from 'three';
+import { GroundClassMap, CLASS_AREA_M, CLASS_PIXELS, surfaceFill } from '/src/terrain/groundClassMap.js';
+import { cropId } from '/src/layers/furniturePlacement.js';
+import { TerrainMaterialFactory } from '/src/terrain/terrainMaterial.js';
+import { finishGeneration } from '/src/core/generationSteps.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fb8cf);
+scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x4a5a30, 1.2));
+const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+sun.position.set(-40, 80, 30);
+scene.add(sun);
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.5, 5000);
+
+const groundClass = new GroundClassMap({ THREE });
+const factory = new TerrainMaterialFactory({ THREE, groundClass });
+factory.setRegion({ matrix: 'hedgerow_meadow' });
+
+// La carte couvre un carré centré sur l'origine ; on peint en mètres locaux.
+const perMeter = CLASS_PIXELS / CLASS_AREA_M;
+const origin = -CLASS_AREA_M / 2;
+const ctx = groundClass.ctx;
+const toPx = (x, z) => [(x - origin) * perMeter, (z - origin) * perMeter];
+const polygon = (fill, points) => {
+  const path = new Path2D();
+  points.forEach(([x, z], i) => (i ? path.lineTo(...toPx(x, z)) : path.moveTo(...toPx(x, z))));
+  path.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill(path, 'evenodd');
+};
+const circle = (fill, x, z, r) => {
+  const points = [];
+  for (let i = 0; i < 96; i++) points.push([x + r * Math.cos((i / 96) * Math.PI * 2), z + r * Math.sin((i / 96) * Math.PI * 2)]);
+  polygon(fill, points);
+};
+
+ctx.fillStyle = surfaceFill(null);
+ctx.fillRect(0, 0, CLASS_PIXELS, CLASS_PIXELS);
+polygon(surfaceFill('grass'), [[-400, -400], [400, -400], [400, 400], [-400, 400]]);
+// Le blé, limité au nord par une droite de pente 1/7 : l'escalier le plus long.
+polygon(surfaceFill('farmland', cropId('wheat')), [[-300, 20], [300, 20 - 600 / 7], [300, 300], [-300, 300]]);
+// Une parcelle de maïs à angles vifs, posée de biais dans le blé.
+polygon(surfaceFill('farmland', cropId('maize')), [[40, 120], [170, 80], [200, 190], [70, 230]]);
+// Un bois à lisière courbe.
+const wood = [];
+for (let x = -300; x <= -40; x += 5) wood.push([x, -40 - 60 * Math.sin((x + 300) / 90)]);
+polygon(surfaceFill('wood'), [...wood, [-40, -300], [-300, -300]]);
+circle(surfaceFill('water'), 120, -120, 38);
+// Un ruisseau de quatre mètres, à peine plus large qu'un texel.
+const brook = new Path2D();
+for (let z = -300; z <= 300; z += 5) {
+  const [px, pz] = toPx(-120 + 30 * Math.sin(z / 70), z);
+  z === -300 ? brook.moveTo(px, pz) : brook.lineTo(px, pz);
+}
+ctx.lineWidth = 4 * perMeter;
+ctx.strokeStyle = surfaceFill('water');
+ctx.stroke(brook);
+
+const started = performance.now();
+finishGeneration(groundClass.readBackSteps());
+const readBackMs = performance.now() - started;
+groundClass.origin.set(origin, origin);
+groundClass.texture.needsUpdate = true;
+factory.syncGroundClass();
+
+const SIZE = 900;
+const SEGMENTS = 900;
+const geometry = new THREE.PlaneGeometry(SIZE, SIZE, SEGMENTS, SEGMENTS).rotateX(-Math.PI / 2);
+geometry.setAttribute('roadMask', new THREE.BufferAttribute(new Float32Array(geometry.attributes.position.count), 1));
+scene.add(new THREE.Mesh(geometry, factory.material));
+
+const look = factory.look;
+const state = { x: 0, z: 0, yawDeg: 0, pitchDeg: 89, distance: 700, jitter: look.edgeJitterM, step: look.edgeStepM };
+
+function render() {
+  const { x, z, yawDeg, pitchDeg, distance } = state;
+  factory.grainUniforms.uEdgeJitter.value.set(state.step / 0.4535, state.jitter);
+  const yaw = (yawDeg * Math.PI) / 180;
+  const pitch = (pitchDeg * Math.PI) / 180;
+  camera.position.set(
+    x - Math.sin(yaw) * Math.cos(pitch) * distance,
+    Math.sin(pitch) * distance,
+    z + Math.cos(yaw) * Math.cos(pitch) * distance
+  );
+  camera.lookAt(x, 0, z);
+  renderer.render(scene, camera);
+  return { ...state };
+}
+
+window.contoursLab = {
+  set(options = {}) {
+    Object.assign(state, options);
+    return render();
+  },
+  info: () => ({ readBackMs: Math.round(readBackMs), repaired: groundClass.repaired }),
+  state,
+  groundClass,
+};
+window.contoursLabReady = true;
+render();
+</script>
+</body>
+</html>

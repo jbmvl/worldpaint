@@ -418,6 +418,15 @@ export class World {
   }
 
   /**
+   * Garde le sujet visible : les arbres entre `from` (la caméra) et `to`
+   * s'effacent par tramage. À rappeler à chaque image ; `null` désactive.
+   * Voir `WorldComposer.setSightline`.
+   */
+  setSightline(from, to, options) {
+    this.composer.setSightline(from, to, options);
+  }
+
+  /**
    * Avance l'heure du ciel et rend de quoi peindre le reste de l'image. Les
    * gestes vont dans cet ordre : dôme recalé sur la caméra, soleil replacé,
    * nuit propagée aux fenêtres/lampadaires, vent et mouillé propagés au
