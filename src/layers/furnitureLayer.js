@@ -94,7 +94,7 @@ import {
   buildRidgeTrees,
 } from './furniture/landmarks.js';
 import { buildBiomeDebris } from './furniture/biomeDebris.js';
-import { buildPointsOfInterest, collectChurches } from './furniture/pointsOfInterest.js';
+import { buildPointsOfInterest, collectChurches, publishFountains } from './furniture/pointsOfInterest.js';
 import { buildDomesticFauna } from './furniture/domesticFauna.js';
 import { buildOpenPastureFauna } from './furniture/parcelFauna.js';
 import {
@@ -212,6 +212,8 @@ export class FurnitureLayer {
     // même raison, voir `createFurnitureGreenhouseMaterial`.
     this.greenhouseMaterial = createFurnitureGreenhouseMaterial(THREE);
     this.trees = [];
+    /** Fontaines posées, repère de scène — voir `publishFountains`. */
+    this.fountains = [];
     this.geometries = createFurnitureGeometries(THREE, theme.furniture.colors);
 
     /** @type {Map<string, Object>} `InstancedMesh` par forme ponctuelle. */
@@ -531,6 +533,7 @@ export class FurnitureLayer {
           this._applyInstances(item, []);
         } else this._applyInstances(item, list);
       }
+      this.fountains = publishFountains(placements);
       this._applyGlow();
       this._applySignals();
       this._applyLabels();
@@ -1416,6 +1419,7 @@ export class FurnitureLayer {
     this._signals = [];
     this.fauna = [];
     this.tractors = [];
+    this.fountains = [];
     this.verges = new VergeStrips();
 
     for (const geometry of Object.values(this.geometries)) geometry.dispose();

@@ -17,6 +17,7 @@ import * as api from '../src/index.js';
 import { defaultTheme } from '../src/themes/default.js';
 import { World, createWorld, DEFAULT_VIEW } from '../src/world.js';
 import { RoadIndex } from '../src/layers/roadGraph.js';
+import { publishFountains } from '../src/layers/furniture/pointsOfInterest.js';
 
 /** Ce qu'une application a le droit d'attendre à la version 0.1. */
 const CONTRACT = [
@@ -197,6 +198,34 @@ test('shopfrontNear rend le pied de mur de la devanture la plus proche', () => {
   assert.equal(world.shopfrontNear(4, 100), null, 'hors de portée');
   composer.buildings._frame = { toLocal: frame.toLocal };
   assert.equal(world.shopfrontNear(4, 3), null, 'bâti d’un autre repère : rien');
+});
+
+test('fountainsNear rend les fontaines à portée, de la plus proche à la plus lointaine', () => {
+  const frame = { toLocal: (lng, lat) => ({ x: lng, z: lat }) };
+  const composer = fakeComposer();
+  composer.bubble = { frame };
+  composer.furniture = {
+    _frame: frame,
+    fountains: [30, 5, 100].map((x) => ({ x, y: 1, z: 0, kind: 'fountain', radiusM: 1.25 })),
+  };
+  const world = new World({ composer, environment: null, elevation: null, ownsElevation: false });
+
+  const near = world.fountainsNear(0, 0, 40);
+  assert.deepEqual(near.map((f) => f.distanceM), [5, 30]);
+  assert.equal(near[0].radiusM, 1.25);
+
+  composer.furniture._frame = { toLocal: frame.toLocal };
+  assert.deepEqual(world.fountainsNear(0, 0, 40), [], 'mobilier d’un autre repère : rien');
+});
+
+test('publishFountains reprend les deux formes de fontaine, rayon mis à l’échelle', () => {
+  const placements = new Map([
+    ['fountain', [{ x: 1, y: 2, z: 3, scale: 2 }]],
+    ['fountainWallace', [{ x: 4, y: 5, z: 6 }]],
+    ['busShelter', [{ x: 9, y: 9, z: 9 }]],
+  ]);
+  const found = publishFountains(placements);
+  assert.deepEqual(found.map((f) => [f.kind, f.radiusM]), [['fountain', 2.5], ['fountainWallace', 0.42]]);
 });
 
 test('sans ciel, updateSky ne rend rien et n’allume rien', () => {

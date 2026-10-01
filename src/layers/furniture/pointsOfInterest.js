@@ -34,6 +34,29 @@ import { FURNITURE_RADIUS_M } from './catalog.js';
 export const POI_CLEARANCE_M = 1.6;
 
 /**
+ * Rayon du bord de chaque fontaine, en mètres : ce qui sépare son centre de
+ * l'endroit où l'on peut se tenir contre elle (cf. `furnitureKit`).
+ */
+export const FOUNTAIN_RADIUS_M = { fountain: 1.25, fountainWallace: 0.42 };
+
+/**
+ * Fontaines posées, dans le repère de scène : de quoi y conduire un
+ * personnage de l'application (`world.fountainsNear`).
+ *
+ * @param {Map<string, Array<{x:number,y:number,z:number,scale:number}>>} placements
+ * @returns {Array<{x:number,y:number,z:number,kind:string,radiusM:number}>}
+ */
+export function publishFountains(placements) {
+  const found = [];
+  for (const [kind, radius] of Object.entries(FOUNTAIN_RADIUS_M)) {
+    for (const p of placements.get(kind) || []) {
+      found.push({ x: p.x, y: p.y, z: p.z, kind, radiusM: radius * (p.scale || 1) });
+    }
+  }
+  return found;
+}
+
+/**
  * Ce que la couche `poi` sait donner : arrêts de bus, fontaines, lavoirs.
  *
  * Ce sont les seuls objets de mobilier que le schéma OpenMapTiles porte

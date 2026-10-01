@@ -358,6 +358,33 @@ export class World {
   }
 
   /**
+   * Fontaines posées à moins de `radius` mètres de `(lng, lat)`, de la plus
+   * proche à la plus lointaine : de quoi conduire un personnage de
+   * l'application à son bord. `radiusM` est le rayon du bord, depuis le centre
+   * (la fontaine est de révolution : aucun côté n'est « devant »). Positions de
+   * scène ; `[]` tant que le mobilier n'a pas été construit dans le repère
+   * courant.
+   *
+   * @param {number} lng
+   * @param {number} lat
+   * @param {number} [radius]
+   * @returns {Array<{x:number, y:number, z:number, kind:string,
+   *          radiusM:number, distanceM:number}>}
+   */
+  fountainsNear(lng, lat, radius = 40) {
+    const furniture = this.composer.furniture;
+    const frame = this.composer.bubble?.frame;
+    if (!frame || !furniture?.fountains?.length || furniture._frame !== frame) return [];
+    const here = frame.toLocal(lng, lat);
+    const found = [];
+    for (const fountain of furniture.fountains) {
+      const distanceM = Math.hypot(fountain.x - here.x, fountain.z - here.z);
+      if (distanceM <= radius) found.push({ ...fountain, distanceM });
+    }
+    return found.sort((p, q) => p.distanceM - q.distanceM);
+  }
+
+  /**
    * Devanture de commerce la plus proche de `(lng, lat)`, à moins de `radius`
    * mètres : le point du pied de son mur le plus proche, la normale sortante
    * (vers la rue) et la direction du pan. De quoi adosser un objet de
