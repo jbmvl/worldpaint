@@ -329,6 +329,34 @@ export class World {
     };
   }
 
+  /**
+   * Tables de terrasse posées à moins de `radius` mètres de `(lng, lat)` —
+   * restaurant, bar ou café —, de la plus proche à la plus lointaine. De quoi
+   * attabler un personnage de l'application : chaque table vient avec ses
+   * chaises (centre de l'assise) et la normale sortante de la façade qui la
+   * porte. Positions de scène ; `[]` tant que le bâti n'a pas été construit
+   * dans le repère courant.
+   *
+   * @param {number} lng
+   * @param {number} lat
+   * @param {number} [radius]
+   * @returns {Array<{x:number, y:number, z:number, top:number, distanceM:number,
+   *          facing:{x:number, z:number}, kind:string,
+   *          chairs:Array<{x:number, y:number, z:number}>}>}
+   */
+  terracesNear(lng, lat, radius = 40) {
+    const buildings = this.composer.buildings;
+    const frame = this.composer.bubble?.frame;
+    if (!frame || !buildings?.terraces?.length || buildings._frame !== frame) return [];
+    const here = frame.toLocal(lng, lat);
+    const found = [];
+    for (const table of buildings.terraces) {
+      const distanceM = Math.hypot(table.x - here.x, table.z - here.z);
+      if (distanceM <= radius) found.push({ ...table, distanceM });
+    }
+    return found.sort((p, q) => p.distanceM - q.distanceM);
+  }
+
   /** Couleur de fond à donner au renderer, ou `null` sans ciel. */
   get clearColor() {
     return this.environment ? this.environment.clearColor : null;

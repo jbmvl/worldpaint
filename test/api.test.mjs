@@ -37,6 +37,8 @@ const CONTRACT = [
   'collectSceneLabels',
   'forestTypeAt',
   'ROAD_LIFT_M',
+  'TERRACE_SEAT_HEIGHT_M',
+  'TERRACE_TABLE_HEIGHT_M',
   'createGlowGeometry',
   'createGlowMaterial',
   'createBalloonGeometry',
@@ -161,6 +163,22 @@ test('roadsideAt pose au bord, sur la plate-forme si elle y est encore, au terra
   const far = world.roadsideAt(5, 0, { side: -1, offset: 10 });
   assert.equal(far.y, 1, 'loin du bord, le terrain');
   assert.equal(world.roadsideAt(5, 100), null, 'hors de portée, rien');
+});
+
+test('terracesNear rend les tables à portée, de la plus proche à la plus lointaine', () => {
+  const frame = { toLocal: (lng, lat) => ({ x: lng, z: lat }) };
+  const table = (x, z) => ({ x, y: 2, z, facing: { x: 0, z: 1 }, kind: 'cafe', chairs: [] });
+  const composer = fakeComposer();
+  composer.bubble = { frame };
+  composer.buildings = { _frame: frame, terraces: [table(30, 0), table(5, 0), table(100, 0)] };
+  const world = new World({ composer, environment: null, elevation: null, ownsElevation: false });
+
+  const near = world.terracesNear(0, 0, 40);
+  assert.deepEqual(near.map((t) => t.distanceM), [5, 30]);
+  assert.equal(near[0].kind, 'cafe');
+
+  composer.buildings._frame = { toLocal: frame.toLocal };
+  assert.deepEqual(world.terracesNear(0, 0, 40), [], 'bâti d’un autre repère : rien');
 });
 
 test('sans ciel, updateSky ne rend rien et n’allume rien', () => {

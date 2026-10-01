@@ -1343,9 +1343,27 @@ export function appendAwning(walls, a, b, nx, nz, shopfrontTop, color, theme = d
 }
 
 /** Rayon auquel les chaises entourent une table de terrasse, en mètres. */
-const TERRACE_CHAIR_RADIUS_M = 0.55;
+export const TERRACE_CHAIR_RADIUS_M = 0.55;
 /** Nombre de chaises par table — trois, pas quatre : une table de terrasse fait face à la rue, pas à elle-même. */
-const TERRACE_CHAIR_COUNT = 3;
+export const TERRACE_CHAIR_COUNT = 3;
+/** Hauteur de l'assise d'une chaise de terrasse (pied + galette), en mètres. */
+export const TERRACE_SEAT_HEIGHT_M = 0.49;
+/** Hauteur du plateau d'une table de terrasse, en mètres. */
+export const TERRACE_TABLE_HEIGHT_M = 0.76;
+
+/** Centres des assises autour d'une table posée en `(x, y, z)` — mêmes angles que `buildTerraceKit`. */
+export function terraceChairs(x, y, z) {
+  const chairs = [];
+  for (let i = 0; i < TERRACE_CHAIR_COUNT; i++) {
+    const angle = (i / TERRACE_CHAIR_COUNT) * Math.PI * 2;
+    chairs.push({
+      x: x + Math.cos(angle) * TERRACE_CHAIR_RADIUS_M,
+      y: y + TERRACE_SEAT_HEIGHT_M,
+      z: z + Math.sin(angle) * TERRACE_CHAIR_RADIUS_M,
+    });
+  }
+  return chairs;
+}
 
 /**
  * Une table de terrasse et ses chaises, radialement symétriques — aucune
@@ -1442,6 +1460,17 @@ export class BuildingLayer {
      * @type {Array<{x:number,z:number}>}
      */
     this.footprints = [];
+    /**
+     * Tables de terrasse posées à la dernière reconstruction (restaurant, bar,
+     * café), publiées pour qu'une application y installe un personnage : la
+     * table (pied au sol, `top` au plateau), ses chaises et la normale
+     * sortante de la façade qui les porte.
+     * Repère de `bubble.frame` au moment de la reconstruction.
+     * @type {Array<{x:number, y:number, z:number, top:number, facing:{x:number, z:number},
+     *               kind:string, chairs:Array<{x:number, y:number, z:number}>}>}
+     */
+    this.terraces = [];
+    this._terraceSink = null;
     /**
      * Index des chaussées de la dernière reconstruction, ou `null` — c'est lui
      * qui dit ce qu'une empreinte pose sur la voie. Posé par `rebuild`.
@@ -1551,6 +1580,8 @@ export class BuildingLayer {
     const lamps = { positions: [], normals: [], colors: [] };
     const labels = { positions: [], uvs: [] };
     const houses = [];
+    const terraces = [];
+    this._terraceSink = terraces;
     // Vidée avant d'être remplie : la géométrie qui référence ses cases
     // (`labels`, ci-dessus) est de toute façon intégralement refaite dans
     // cette même passe — voir l'en-tête de `LabelAtlas`.
@@ -1673,6 +1704,8 @@ export class BuildingLayer {
     this.windowCount = lamps.positions.length / 9;
     this.houses = houses;
     this.footprints = footprints;
+    this.terraces = terraces;
+    this._terraceSink = null;
     this.personalities = personalities;
     this._applyWindows(lamps);
     this._applyLabels(labels);
@@ -1976,7 +2009,7 @@ export class BuildingLayer {
           // terrasse, restaurant, bar ou café — voir `AWNING_CLASSES`.
           if (AWNING_CLASSES.has(personalityClass)) {
             appendAwning(walls, a, b, nx, nz, shopfrontTop, look.front, this.theme.shopfront);
-            this._appendTerrace(walls, a, b, nx, nz, groundAt, minHeight, personalityClass === 'restaurant');
+            this._appendTerrace(walls, a, b, nx, nz, groundAt, minHeight, personalityClass);
           } else if (FUEL_CLASSES.has(personalityClass)) {
             // Même devanture qu'un commerce quelconque, mais ce qui déborde sur
             // la rue n'est pas une salle : ce sont des pompes, pas de toile
@@ -2241,9 +2274,9 @@ export class BuildingLayer {
    * @param {number} nz Normale sortante, composante z.
    * @param {(x:number, z:number) => number} groundAt Altitude du sol : chaque table se pose sur le sien.
    * @param {number} minHeight Hauteur du dessous (surplomb).
-   * @param {boolean} dressed Vrai pour un restaurant (table dressée).
+   * @param {string} kind Classe du point d'intérêt — un restaurant dresse ses tables.
    */
-  _appendTerrace(walls, a, b, nx, nz, groundAt, minHeight, dressed) {
+  _appendTerrace(walls, a, b, nx, nz, groundAt, minHeight, kind) {
     const theme = this.theme.shopfront;
     const length = Math.hypot(b.x - a.x, b.y - a.y);
     const ux = (b.x - a.x) / length;
@@ -2252,14 +2285,16 @@ export class BuildingLayer {
     const count = Math.max(1, Math.round(length / theme.terraceSpacingM));
     const span = (count - 1) * theme.terraceSpacingM;
     const start = length / 2 - span / 2;
-    const kit = buildTerraceKit(dressed, this.theme.furniture.colors);
+    const kit = buildTerraceKit(kind === 'restaurant', this.theme.furniture.colors);
 
     for (let i = 0; i < count; i++) {
       const along = start + i * theme.terraceSpacingM;
       const x = a.x + ux * along + nx * theme.terraceDepthM;
       const z = a.y + uz * along + nz * theme.terraceDepthM;
       if (this._roadIndex && this._roadIndex.query(x, z, theme.terraceClearanceM)) continue;
-      this._pushKitAt(walls, kit, x, groundAt(x, z) + minHeight, z);
+      const y = groundAt(x, z) + minHeight;
+      this._pushKitAt(walls, kit, x, y, z);
+      this._terraceSink?.push({ x, y, z, top: y + TERRACE_TABLE_HEIGHT_M, facing: { x: nx, z: nz }, kind, chairs: terraceChairs(x, y, z) });
     }
   }
 

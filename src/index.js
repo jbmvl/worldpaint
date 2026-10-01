@@ -94,6 +94,10 @@ export {
 // posé sur la route par l'application, sous peine de s'enfoncer dans le bitume.
 export { ROAD_LIFT_M, ROAD_SNAP_RADIUS_M } from './layers/roadNetwork.js';
 
+// Le mobilier de terrasse, pour qu'une application attable un personnage à la
+// hauteur des chaises et des tables posées (`world.terracesNear`).
+export { TERRACE_SEAT_HEIGHT_M, TERRACE_TABLE_HEIGHT_M } from './layers/buildingLayer.js';
+
 // L'emprise routière (chaussée + accotement excavé), pour qu'une application
 // pose ses propres objets à la même frontière que l'herbe, les haies et les
 // jardins. `inCorridor(world.composer.roads.index, x, z)` est la question complète.
