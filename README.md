@@ -150,6 +150,21 @@ application already uses) rather than leaving it at the default.
 `updateSky` only exists if a sky was requested. Without one, the generator
 poses no light: the application lights the scene as it sees fit.
 
+### Showing the sky while the landscape builds
+
+The sky is ready as soon as `createWorld` returns; the landscape takes a few
+seconds of tiles. The dome also sits on `SKY_LAYER`, so a camera restricted to
+it sees the sky alone — never the terrain appearing piece by piece:
+
+```js
+camera.layers.set(SKY_LAYER);      // while setCenter/refresh run
+// … render frames with updateSky …
+camera.layers.set(0);              // landscape ready
+```
+
+When the vector source is not known yet, mount without `vector` and plug it
+in later with `world.setVector({ tiles, maxZoom })`, then `refresh(…, { force: true })`.
+
 ### Triggering an animal crossing
 
 Everything above is a function of place: the same data renders the same

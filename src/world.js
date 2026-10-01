@@ -32,6 +32,7 @@ import { tunnelAt } from './layers/transportTunnels.js';
 import {
   SceneEnvironment,
   SKY_RADIUS,
+  SKY_LAYER,
   SHADOW_LEAD_M,
   skyPaletteFor,
 } from './environment/sceneEnvironment.js';
@@ -338,7 +339,18 @@ export class World {
     return this.composer.setCenter(lng, lat);
   }
 
-  /** Refait le décor vectoriel autour d'un point. @returns {Promise<boolean>} */
+  /**
+   * Branche les tuiles vectorielles d'un monde monté sans elles — typiquement
+   * pour montrer le ciel avant que leur source soit connue. Sans effet si une
+   * source est déjà branchée. Le prochain `refresh` doit être forcé.
+   *
+   * @param {{tiles: string[], maxZoom?: number}} vector
+   * @returns {boolean} vrai si la source a été branchée.
+   */
+  setVector(vector) {
+    return this.composer.setVectorConfig(vector);
+  }
+
   /**
    * Impose une région au décor, ou rend la main à la géographie (`null`). Voir
    * `WorldComposer.setRegion` : le décor cesse alors de suivre le lieu, ce qui
@@ -359,6 +371,7 @@ export class World {
 
   resetGenerationStats() { this.composer.metrics.reset(); }
 
+  /** Refait le décor vectoriel autour d'un point. @returns {Promise<boolean>} */
   refresh(lng, lat, options) {
     return this.composer.refresh(lng, lat, options);
   }
@@ -504,4 +517,4 @@ export class World {
   }
 }
 
-export { SKY_RADIUS, SHADOW_LEAD_M, WORLD_ATTRIBUTION, FAUNA_CROSS_AHEAD_M };
+export { SKY_RADIUS, SKY_LAYER, SHADOW_LEAD_M, WORLD_ATTRIBUTION, FAUNA_CROSS_AHEAD_M };

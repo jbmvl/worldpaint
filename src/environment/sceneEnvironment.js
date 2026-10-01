@@ -76,6 +76,14 @@ export { DEFAULT_WEATHER, resolveWeather, PRECIPITATION_TYPES } from './weather.
 export const SKY_RADIUS = 8000;
 
 /**
+ * Calque three.js que le dôme occupe en plus du calque 0. Une caméra réglée sur
+ * lui seul (`camera.layers.set(SKY_LAYER)`) ne voit que le ciel : de quoi
+ * montrer un ciel juste pendant que le décor se construit, sans le voir
+ * apparaître morceau par morceau.
+ */
+export const SKY_LAYER = 31;
+
+/**
  * Le ciel de Preetham est forcé à rejoindre la couleur du brouillard au ras
  * de l'horizon (bande étroite, ~10° d'élévation, poids non total à 0,7 pour
  * laisser survivre le halo du soleil couchant).
@@ -291,6 +299,7 @@ export class SceneEnvironment {
     this.sky.scale.setScalar(SKY_RADIUS);
     this.sky.frustumCulled = false;
     this.sky.renderOrder = -1;
+    this.sky.layers.enable(SKY_LAYER);
     scene.add(this.sky);
 
     this.uniforms = this.sky.material.uniforms;

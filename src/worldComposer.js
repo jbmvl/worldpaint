@@ -340,6 +340,23 @@ export class WorldComposer {
     return true;
   }
 
+  /**
+   * Branche les tuiles vectorielles après coup, pour qui monte le monde (et
+   * son ciel) avant de connaître leur source. Une seule fois : le décor déjà
+   * bâti ne change pas de source en route.
+   *
+   * @param {{tiles: string[], maxZoom: number}} vectorConfig
+   * @returns {boolean} vrai si la source a été branchée.
+   */
+  setVectorConfig(vectorConfig) {
+    if (this.disposed || this.vectorTiles || !vectorConfig) return false;
+    this.vectorTiles = new VectorTileSource({
+      tiles: vectorConfig.tiles,
+      zoom: Math.min(VECTOR_ZOOM, vectorConfig.maxZoom),
+    });
+    return true;
+  }
+
   /** Déplace la bulle de terrain. @returns {Promise<boolean>} vrai si elle a bougé. */
   setCenter(lng, lat) {
     if (this._refreshTask) return this._refreshTask.then(() => this.bubble.setCenter(lng, lat));

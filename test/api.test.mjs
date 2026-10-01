@@ -30,6 +30,7 @@ const CONTRACT = [
   'VectorTileSource',
   'SceneEnvironment',
   'DEFAULT_SKY_PALETTE',
+  'SKY_LAYER',
   'lngLatToTile',
   'tileSizeMeters',
   'createLocalFrame',
@@ -77,6 +78,7 @@ function fakeComposer() {
     bubble: 'bubble',
     groundClass: 'groundClass',
     setCenter: (...a) => (calls.push(['setCenter', ...a]), true),
+    setVectorConfig: (...a) => (calls.push(['setVectorConfig', ...a]), true),
     refresh: (...a) => (calls.push(['refresh', ...a]), true),
     advance: (...a) => calls.push(['advance', ...a]),
     setNight: (...a) => calls.push(['setNight', ...a]),
@@ -94,11 +96,13 @@ test('la façade délègue sans rien ajouter', () => {
   assert.equal(world.bubble, 'bubble');
   assert.equal(world.groundClass, 'groundClass');
 
+  world.setVector({ tiles: ['t'] });
   world.setCenter(2.35, 48.85);
   world.refresh(2.35, 48.85, { force: true });
   world.advance(0.016, { x: 1, y: 2, z: 3 });
 
   assert.deepEqual(composer.calls, [
+    ['setVectorConfig', { tiles: ['t'] }],
     ['setCenter', 2.35, 48.85],
     ['refresh', 2.35, 48.85, { force: true }],
     ['advance', 0.016, { x: 1, y: 2, z: 3 }],
@@ -373,4 +377,63 @@ test('chaque palette de bourg propose deux ou trois formes de toit', () => {
       assert.match(palette[key], /^#[0-9a-f]{6}$/i, `${name} : un seul ton de ${key}`);
     }
   }
+});
+
+test('les tuiles vectorielles se branchent après coup, une seule fois', () => {
+  // Le ciel se montre avant que la source des tuiles soit connue : le monde
+  // est monté sans elle, puis la reçoit. Testé sur le prototype, sans WebGL.
+  const composer = { disposed: false, vectorTiles: null };
+  const plug = (config) => api.WorldComposer.prototype.setVectorConfig.call(composer, config);
+
+  assert.equal(plug(null), false, 'rien à brancher');
+  assert.equal(plug({ tiles: ['https://a/{z}/{x}/{y}.pbf'], maxZoom: 12 }), true);
+  assert.equal(composer.vectorTiles.zoom, 12, 'le zoom maximal de la source est respecté');
+
+  const first = composer.vectorTiles;
+  assert.equal(plug({ tiles: ['https://b/{z}/{x}/{y}.pbf'], maxZoom: 14 }), false);
+  assert.equal(composer.vectorTiles, first, 'le décor ne change pas de source en route');
+});
+
+test('le dôme occupe son propre calque, en plus du calque commun', async () => {
+  // Une caméra réglée sur `SKY_LAYER` seul ne voit que le ciel : c'est ce qui
+  // permet de le montrer pendant que le décor se construit.
+  const THREE = await import('three');
+  const { Sky } = await import('three/examples/jsm/objects/Sky.js');
+  const scene = new THREE.Scene();
+  const env = new api.SceneEnvironment({ THREE, Sky, scene, fogRadius: 1000 });
+
+  const skyOnly = new THREE.Layers();
+  skyOnly.set(api.SKY_LAYER);
+  assert.ok(env.sky.layers.test(skyOnly), 'visible d’une caméra « ciel seul »');
+  assert.ok(env.sky.layers.test(new THREE.Layers()), 'toujours visible d’une caméra ordinaire');
+  assert.ok(!env.sun.layers.test(skyOnly), 'le reste n’y figure pas');
+  env.dispose();
+});
+
+test('le ciel se peint avant le premier centrage, les tuiles se branchent ensuite', async () => {
+  // C'est ce qui permet de montrer un ciel juste pendant le chargement : rien
+  // dans `updateSky` ne doit supposer une bulle déjà posée ni un décor bâti.
+  const THREE = await import('three');
+  const { Sky } = await import('three/examples/jsm/objects/Sky.js');
+  // Les textures peintes au montage veulent un canevas : un 2D muet suffit.
+  const anything = () => new Proxy(function () {}, {
+    get: (_, key) => (key === Symbol.toPrimitive ? () => 0 : anything()),
+    apply: () => anything(),
+    set: () => true,
+  });
+  const hadDocument = 'document' in globalThis;
+  globalThis.document ??= {
+    createElement: () => ({ width: 0, height: 0, style: {}, getContext: () => anything() }),
+    createElementNS: () => ({ width: 0, height: 0, style: {}, getContext: () => anything() }),
+  };
+  const world = createWorld({ THREE, scene: new THREE.Scene(), sky: { Sky } });
+  const camera = new THREE.PerspectiveCamera(58, 1, 0.5, 20000);
+  camera.layers.set(api.SKY_LAYER);
+
+  assert.equal(world.frame, null);
+  const paint = world.updateSky({ camera, date: new Date('2026-07-01T12:00:00Z'), lng: 2, lat: 48 });
+  assert.ok(paint.nightMix < 0.5, 'midi en juillet à Paris');
+  assert.equal(world.setVector({ tiles: ['https://a/{z}/{x}/{y}.pbf'], maxZoom: 14 }), true);
+  world.dispose();
+  if (!hadDocument) delete globalThis.document;
 });

@@ -22,7 +22,7 @@ export { resolveTheme } from './themes/theme.js';
 // --- Les pièces, pour qui veut monter le décor à la main --------------------
 export { ElevationField, MAPTILER_TERRAIN_URL, DEM_TILE_PIXELS } from './core/elevationField.js';
 export { VectorTileSource, coveringTiles, VECTOR_ZOOM } from './core/vectorTileSource.js';
-export { SceneEnvironment, DEFAULT_SKY_PALETTE, SKY_RADIUS, SHADOW_LEAD_M, SHADOW_RADIUS_M, sunDirection } from './environment/sceneEnvironment.js';
+export { SceneEnvironment, DEFAULT_SKY_PALETTE, SKY_RADIUS, SKY_LAYER, SHADOW_LEAD_M, SHADOW_RADIUS_M, sunDirection } from './environment/sceneEnvironment.js';
 
 // --- La météo ---------------------------------------------------------------
 // Un état (change en cours de route), pas une direction artistique. `src/` ne
