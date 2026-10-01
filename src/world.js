@@ -357,6 +357,44 @@ export class World {
     return found.sort((p, q) => p.distanceM - q.distanceM);
   }
 
+  /**
+   * Devanture de commerce la plus proche de `(lng, lat)`, à moins de `radius`
+   * mètres : le point du pied de son mur le plus proche, la normale sortante
+   * (vers la rue) et la direction du pan. De quoi adosser un objet de
+   * l'application au mur d'une boutique. `null` sans devanture à portée ou
+   * tant que le bâti n'a pas été construit dans le repère courant.
+   *
+   * @param {number} lng
+   * @param {number} lat
+   * @param {number} [radius]
+   * @returns {{x:number, y:number, z:number, facing:{x:number, z:number},
+   *          tangent:{x:number, z:number}, length:number, along:number,
+   *          kind:string|null, distanceM:number}|null} `along` situe le point
+   *          sur le pan, depuis son début ; `length` est celle du pan.
+   */
+  shopfrontNear(lng, lat, radius = 40) {
+    const buildings = this.composer.buildings;
+    const frame = this.composer.bubble?.frame;
+    if (!frame || !buildings?.shopfronts?.length || buildings._frame !== frame) return null;
+    const here = frame.toLocal(lng, lat);
+    let best = null;
+    for (const front of buildings.shopfronts) {
+      const dx = front.b.x - front.a.x;
+      const dz = front.b.z - front.a.z;
+      const length = Math.hypot(dx, dz);
+      if (length < 1e-6) continue;
+      const tx = dx / length;
+      const tz = dz / length;
+      const along = Math.min(length, Math.max(0, (here.x - front.a.x) * tx + (here.z - front.a.z) * tz));
+      const x = front.a.x + tx * along;
+      const z = front.a.z + tz * along;
+      const distanceM = Math.hypot(here.x - x, here.z - z);
+      if (distanceM > radius || (best && distanceM >= best.distanceM)) continue;
+      best = { x, y: front.y, z, facing: front.facing, tangent: { x: tx, z: tz }, length, along, kind: front.kind, distanceM };
+    }
+    return best;
+  }
+
   /** Couleur de fond à donner au renderer, ou `null` sans ciel. */
   get clearColor() {
     return this.environment ? this.environment.clearColor : null;

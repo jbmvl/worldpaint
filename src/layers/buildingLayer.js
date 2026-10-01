@@ -1472,6 +1472,16 @@ export class BuildingLayer {
     this.terraces = [];
     this._terraceSink = null;
     /**
+     * Devantures posées à la dernière reconstruction : le pan de façade qui
+     * porte la vitrine et l'enseigne d'un commerce, sa normale sortante (vers
+     * la rue) et le sol à son pied. Publiées pour qu'une application adosse un
+     * objet au mur d'une boutique précise. Repère de `bubble.frame`.
+     * @type {Array<{a:{x:number, z:number}, b:{x:number, z:number},
+     *               facing:{x:number, z:number}, y:number, kind:string|null}>}
+     */
+    this.shopfronts = [];
+    this._shopfrontSink = null;
+    /**
      * Index des chaussées de la dernière reconstruction, ou `null` — c'est lui
      * qui dit ce qu'une empreinte pose sur la voie. Posé par `rebuild`.
      */
@@ -1582,6 +1592,8 @@ export class BuildingLayer {
     const houses = [];
     const terraces = [];
     this._terraceSink = terraces;
+    const shopfronts = [];
+    this._shopfrontSink = shopfronts;
     // Vidée avant d'être remplie : la géométrie qui référence ses cases
     // (`labels`, ci-dessus) est de toute façon intégralement refaite dans
     // cette même passe — voir l'en-tête de `LabelAtlas`.
@@ -1706,6 +1718,8 @@ export class BuildingLayer {
     this.footprints = footprints;
     this.terraces = terraces;
     this._terraceSink = null;
+    this.shopfronts = shopfronts;
+    this._shopfrontSink = null;
     this.personalities = personalities;
     this._applyWindows(lamps);
     this._applyLabels(labels);
@@ -1991,6 +2005,13 @@ export class BuildingLayer {
         // Enseigne en drapeau : indépendante de la devanture au sol — une
         // façade trop étroite pour une porte garde son pictogramme.
         if (i === shopIndex && shopfrontTop !== null) {
+          this._shopfrontSink?.push({
+            a: { x: a.x, z: a.y },
+            b: { x: b.x, z: b.y },
+            facing: { x: nx, z: nz },
+            y: frontFloor,
+            kind: personalityClass,
+          });
           appendShopSignBlade(
             walls,
             labels,

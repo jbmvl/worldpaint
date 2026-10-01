@@ -181,6 +181,24 @@ test('terracesNear rend les tables à portée, de la plus proche à la plus loin
   assert.deepEqual(world.terracesNear(0, 0, 40), [], 'bâti d’un autre repère : rien');
 });
 
+test('shopfrontNear rend le pied de mur de la devanture la plus proche', () => {
+  const frame = { toLocal: (lng, lat) => ({ x: lng, z: lat }) };
+  const front = (ax, bx, z, kind) => ({ a: { x: ax, z }, b: { x: bx, z }, facing: { x: 0, z: 1 }, y: 3, kind });
+  const composer = fakeComposer();
+  composer.bubble = { frame };
+  composer.buildings = { _frame: frame, shopfronts: [front(0, 10, 0, 'bakery'), front(0, 10, -20, 'cafe')] };
+  const world = new World({ composer, environment: null, elevation: null, ownsElevation: false });
+
+  const near = world.shopfrontNear(4, 3);
+  assert.equal(near.kind, 'bakery');
+  assert.deepEqual([near.x, near.y, near.z, near.distanceM, near.along], [4, 3, 0, 3, 4]);
+  assert.deepEqual(near.tangent, { x: 1, z: 0 });
+  assert.equal(world.shopfrontNear(14, 0).x, 10, 'borné au pan');
+  assert.equal(world.shopfrontNear(4, 100), null, 'hors de portée');
+  composer.buildings._frame = { toLocal: frame.toLocal };
+  assert.equal(world.shopfrontNear(4, 3), null, 'bâti d’un autre repère : rien');
+});
+
 test('sans ciel, updateSky ne rend rien et n’allume rien', () => {
   const composer = fakeComposer();
   const world = new World({ composer, environment: null, elevation: null, ownsElevation: false });
