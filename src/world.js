@@ -28,6 +28,7 @@ import {
   platformSnapAt,
   ROAD_SNAP_RADIUS_M,
 } from './layers/roadNetwork.js';
+import { tunnelAt } from './layers/transportTunnels.js';
 import {
   SceneEnvironment,
   SKY_RADIUS,
@@ -415,6 +416,15 @@ export class World {
       ahead = { x: there.x - at.x, z: there.z - at.z };
     }
     return this.composer.cheer({ ...options, at, ahead });
+  }
+
+  /**
+   * Chaussée et intrados de la voûte au point de scène `(x, z)`, ou `null`
+   * hors de tout tunnel ou passage couvert. Voir `tunnelAt`.
+   * @returns {{floor:number, roof:number, kind:string}|null}
+   */
+  tunnelAt(x, z) {
+    return tunnelAt(this.composer.roads?.roadSegments, x, z);
   }
 
   /**

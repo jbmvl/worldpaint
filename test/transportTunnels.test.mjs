@@ -147,3 +147,17 @@ test('un tunnel raccorde aussi un accès déjà corrigé par un autre ouvrage',(
   resolveTunnelProfiles([road],[rail],ground);
   assert.ok(Math.abs(road.platform[54]-road.platform[53])<.15,'aucune marche à la sortie de l’ouvrage');
 });
+
+test('tunnelAt rend la chaussée et la voûte sous l’ouvrage, rien à côté', async () => {
+  const { tunnelAt } = await import('../src/layers/transportTunnels.js');
+  const high=()=>80;
+  const road=tunnel(0,{length:120,height:50});
+  resolveTunnelProfiles([road],[],high);
+  const inside=tunnelAt([road],0,1);
+  assert.ok(inside);
+  assert.equal(inside.kind,'tunnel');
+  assert.ok(Math.abs(inside.floor-road.platform[50])<1e-6);
+  assert.ok(inside.roof>inside.floor+4 && inside.roof<high());
+  assert.equal(tunnelAt([road],0,20),null,'à côté de la voûte');
+  assert.equal(tunnelAt([road],150,0),null,'hors de la plage couverte');
+});

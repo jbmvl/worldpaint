@@ -10,7 +10,7 @@ import { RoadIndex } from './roadGraph.js';
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { pointInAreas } from './settlement.js';
 import { worksStyleAt } from './townStyle.js';
-import { vaultProfile } from './tunnelGeometry.js';
+import { vaultProfile, PORTAL_CLEARANCE_M } from './tunnelGeometry.js';
 import { defaultTheme } from '../themes/default.js';
 
 export function collectTunnelBuildings(source, tiles, frame) {
@@ -130,4 +130,34 @@ export function resolveTunnelProfiles(segments, rails, elevation, { buildings = 
   }
   raiseApproaches(segments,seeds,{centres,direction:-1});
   return groups.length;
+}
+
+/**
+ * Chaussée et intrados de la voûte au point `(x, z)`, ou `null` hors de tout
+ * ouvrage couvert. Ce que lit une caméra qui doit rester sous la voûte : le
+ * terrain au-dessus n'est plus un plancher.
+ * @returns {{floor:number, roof:number, kind:string}|null}
+ */
+export function tunnelAt(segments, x, z) {
+  let best = null;
+  let bestGap = Infinity;
+  for (const segment of segments ?? []) {
+    for (const s of segment.tunnelStructures ?? []) {
+      const reach = s.halfWidth + PORTAL_CLEARANCE_M;
+      for (let i = 1; i < s.path.length; i++) {
+        const a = s.path[i - 1], b = s.path[i];
+        const dx = b.x - a.x, dz = b.z - a.z;
+        const length2 = dx * dx + dz * dz;
+        if (!length2) continue;
+        const t = ((x - a.x) * dx + (z - a.z) * dz) / length2;
+        if (t < 0 || t > 1) continue;
+        const gap = Math.hypot(x - a.x - dx * t, z - a.z - dz * t);
+        if (gap > reach || gap >= bestGap) continue;
+        bestGap = gap;
+        const floor = lerp(s.platform[i - 1], s.platform[i], t);
+        best = { floor, roof: floor + s.roofHeight, kind: s.kind };
+      }
+    }
+  }
+  return best;
 }
