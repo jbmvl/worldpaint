@@ -358,10 +358,11 @@ export class World {
   }
 
   /**
-   * Fontaines posées à moins de `radius` mètres de `(lng, lat)`, de la plus
-   * proche à la plus lointaine : de quoi conduire un personnage de
+   * Points d'eau posés à moins de `radius` mètres de `(lng, lat)` — fontaines
+   * (`fountain`, `fountainWallace`) et robinets de cimetière (`cemeteryTap`) —,
+   * du plus proche au plus lointain : de quoi conduire un personnage de
    * l'application à son bord. `radiusM` est le rayon du bord, depuis le centre
-   * (la fontaine est de révolution : aucun côté n'est « devant »). Positions de
+   * (ils sont de révolution : aucun côté n'est « devant »). Positions de
    * scène ; `[]` tant que le mobilier n'a pas été construit dans le repère
    * courant.
    *

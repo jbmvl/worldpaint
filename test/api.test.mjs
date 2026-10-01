@@ -218,14 +218,15 @@ test('fountainsNear rend les fontaines à portée, de la plus proche à la plus 
   assert.deepEqual(world.fountainsNear(0, 0, 40), [], 'mobilier d’un autre repère : rien');
 });
 
-test('publishFountains reprend les deux formes de fontaine, rayon mis à l’échelle', () => {
+test('publishFountains reprend fontaines et robinet de cimetière, rayon mis à l’échelle', () => {
   const placements = new Map([
     ['fountain', [{ x: 1, y: 2, z: 3, scale: 2 }]],
     ['fountainWallace', [{ x: 4, y: 5, z: 6 }]],
+    ['cemeteryTap', [{ x: 7, y: 8, z: 9 }]],
     ['busShelter', [{ x: 9, y: 9, z: 9 }]],
   ]);
   const found = publishFountains(placements);
-  assert.deepEqual(found.map((f) => [f.kind, f.radiusM]), [['fountain', 2.5], ['fountainWallace', 0.42]]);
+  assert.deepEqual(found.map((f) => [f.kind, f.radiusM]), [['fountain', 2.5], ['fountainWallace', 0.42], ['cemeteryTap', 0.45]]);
 });
 
 test('sans ciel, updateSky ne rend rien et n’allume rien', () => {

@@ -34,13 +34,14 @@ import { FURNITURE_RADIUS_M } from './catalog.js';
 export const POI_CLEARANCE_M = 1.6;
 
 /**
- * Rayon du bord de chaque fontaine, en mètres : ce qui sépare son centre de
- * l'endroit où l'on peut se tenir contre elle (cf. `furnitureKit`).
+ * Rayon du bord de chaque point d'eau, en mètres : ce qui sépare son centre de
+ * l'endroit où l'on peut se tenir contre lui (cf. `furnitureKit`). Le robinet
+ * de cimetière (`cemetery.js`) en est un : colonne et arrosoirs au pied.
  */
-export const FOUNTAIN_RADIUS_M = { fountain: 1.25, fountainWallace: 0.42 };
+export const FOUNTAIN_RADIUS_M = { fountain: 1.25, fountainWallace: 0.42, cemeteryTap: 0.45 };
 
 /**
- * Fontaines posées, dans le repère de scène : de quoi y conduire un
+ * Points d'eau posés, dans le repère de scène : de quoi y conduire un
  * personnage de l'application (`world.fountainsNear`).
  *
  * @param {Map<string, Array<{x:number,y:number,z:number,scale:number}>>} placements
