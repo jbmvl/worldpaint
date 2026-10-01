@@ -27,6 +27,7 @@
  *   /demo/lab/place.html?lieu=montreuil-bellay
  *   placeLab.set({ lng: -0.1496, lat: 47.1300, yawDeg: 225, pitchDeg: 28, distance: 60 })
  *   placeLab.set({ x: 120, z: -40, ... })   // en mètres locaux
+ *   await placeLab.walk({ toX: 2000, step: 50 })  // ce qui se repeint sous 500 m
  *
  * `yawDeg` est le cap du regard (0 = vers le nord), `pitchDeg` la plongée,
  * `distance` le recul de la caméra sur le point visé, `hour` l'heure solaire.
@@ -35,6 +36,7 @@
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { createWorld } from '/src/index.js';
+import { muteAnimated, geometrySnapshot, compareSnapshots, readView, pixelChange } from '/demo/lab/nearStability.js';
 
 const params = new URLSearchParams(location.search);
 const name = params.get('lieu') || 'montreuil-bellay';
@@ -95,6 +97,115 @@ function render() {
   return { lieu: name, lng: +here.lng.toFixed(5), lat: +here.lat.toFixed(5), x: Math.round(x), z: Math.round(z) };
 }
 
+// --- La marche : ce qui se repeint à proximité --------------------------------
+// Voir `nearStability.js`. Chaque pas compare la vue prise du nouveau point
+// avec le décor de l'ancien, puis après mise à jour complète.
+const walkTarget = new THREE.WebGLRenderTarget(480, 300, { depthBuffer: true });
+const eye = new THREE.PerspectiveCamera(55, 480 / 300, 0.5, 500);
+const high = new THREE.PerspectiveCamera(55, 480 / 300, 0.5, 500);
+let longTasks = [];
+new PerformanceObserver((list) => { for (const e of list.getEntries()) longTasks.push(e.duration); })
+  .observe({ type: 'longtask', buffered: false });
+
+function aimWalk(x, z, dir) {
+  const ground = world.composer.groundElevationAt(x, z) ?? 0;
+  const ahead = (d, h) => [x + dir.x * d, (world.composer.groundElevationAt(x + dir.x * d, z + dir.z * d) ?? ground) + h, z + dir.z * d];
+  eye.position.set(x, ground + 2, z);
+  eye.lookAt(...ahead(120, 2));
+  high.position.set(x - dir.x * 60, ground + 45, z - dir.z * 60);
+  high.lookAt(...ahead(220, 0));
+  const here = world.frame.toLngLat(x, z);
+  const date = new Date(Date.UTC(2026, 5, 21, state.hour - Math.round(place.lng / 15), 0));
+  world.updateSky({ camera: eye, date, lng: here.lng, lat: here.lat, shadowAt: { x, y: ground, z } });
+  return { x, y: ground, z };
+}
+
+function views() {
+  return [readView(THREE, renderer, scene, eye, walkTarget), readView(THREE, renderer, scene, high, walkTarget)];
+}
+
+/** Vide les files de la bulle et des semis ; rend la plus longue image et le nombre d'images. */
+function pump(at) {
+  const composer = world.composer;
+  let worst = 0, frames = 0;
+  for (; frames < 3000; frames++) {
+    const t = performance.now();
+    world.advance(0, at);
+    worst = Math.max(worst, performance.now() - t);
+    const busy = composer.vegetation.pending || composer.bubble._rebuildQueue.length ||
+      composer.bubble._pendingBuild || composer.grass.pending;
+    if (!busy && frames > 2) break;
+  }
+  return { worst, frames };
+}
+
+/**
+ * Avance par pas de `step` mètres de (fromX, fromZ) vers (toX, toZ).
+ * `cover: false` éteint l'herbe, ses fleurs et les cultures, semées autour de
+ * l'observateur par conception.
+ * @returns {{steps:Array, summary:Object}}
+ */
+async function walk({ fromX = 0, fromZ = 0, toX = 2000, toZ = 0, step = 50, radius = 500, cover = false } = {}) {
+  const composer = world.composer;
+  const unmute = muteAnimated(composer.root);
+  const names = new Map(composer.grass.flowers.meshes.map((m) => [m, 'fleurs']));
+  const grassMeshes = [];
+  if (!cover) {
+    for (const o of [...composer.grass.flowers.meshes]) if (o.visible) { o.visible = false; grassMeshes.push(o); }
+    composer.root.traverse((o) => { if ((o.name === 'ground-cover' || o.name === 'crops') && o.visible) { o.visible = false; grassMeshes.push(o); } });
+  }
+  const length = Math.hypot(toX - fromX, toZ - fromZ);
+  const dir = { x: (toX - fromX) / length, z: (toZ - fromZ) / length };
+  const steps = [];
+  try {
+    let at = aimWalk(fromX, fromZ, dir);
+    let lngLat = world.frame.toLngLat(fromX, fromZ);
+    await world.setCenter(lngLat.lng, lngLat.lat);
+    await world.refresh(lngLat.lng, lngLat.lat);
+    pump(at);
+    for (let d = step; d <= length + 1e-6; d += step) {
+      const x = fromX + dir.x * d, z = fromZ + dir.z * d;
+      at = aimWalk(x, z, dir);
+      const [eyeBefore, highBefore] = views();
+      const before = geometrySnapshot(composer.root, x, z, radius, names);
+      longTasks = [];
+      lngLat = world.frame.toLngLat(x, z);
+      const t = performance.now();
+      const moved = await world.setCenter(lngLat.lng, lngLat.lat);
+      const rebuilt = await world.refresh(lngLat.lng, lngLat.lat);
+      const refreshMs = performance.now() - t;
+      const queues = pump(at);
+      aimWalk(x, z, dir);
+      const [eyeAfter, highAfter] = views();
+      const layers = compareSnapshots(before, geometrySnapshot(composer.root, x, z, radius, names));
+      steps.push({
+        d, x: Math.round(x), z: Math.round(z), moved, rebuilt,
+        eye: +pixelChange(eyeBefore, eyeAfter).toFixed(4),
+        high: +pixelChange(highBefore, highAfter).toFixed(4),
+        worstTaskMs: Math.round(Math.max(0, ...longTasks)),
+        worstFrameMs: Math.round(queues.worst),
+        refreshMs: Math.round(refreshMs),
+        layers,
+      });
+    }
+  } finally {
+    for (const o of grassMeshes) o.visible = true;
+    unmute();
+  }
+  const byLayer = {};
+  for (const s of steps) for (const k of Object.keys(s.layers)) byLayer[k] = (byLayer[k] ?? 0) + 1;
+  const summary = {
+    steps: steps.length,
+    stepsWithChange: steps.filter((s) => s.eye > 0 || s.high > 0 || Object.keys(s.layers).length).length,
+    meanEye: +(steps.reduce((a, s) => a + s.eye, 0) / steps.length).toFixed(4),
+    meanHigh: +(steps.reduce((a, s) => a + s.high, 0) / steps.length).toFixed(4),
+    worstTaskMs: Math.max(...steps.map((s) => s.worstTaskMs)),
+    worstFrameMs: Math.max(...steps.map((s) => s.worstFrameMs)),
+    layersChanged: byLayer,
+  };
+  return { steps, summary };
+}
+
 window.placeLab = {
   set(options = {}) {
     Object.assign(state, options);
@@ -105,6 +216,7 @@ window.placeLab = {
     }
     return render();
   },
+  walk,
   state,
   world,
   place,

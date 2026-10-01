@@ -1,6 +1,7 @@
 import { bindJunctionSeams, updateJunctionSeams } from './junctionSeams.js';
 import { collectTunnelBuildings, resolveTunnelProfiles } from './transportTunnels.js';
 import { finishGeneration } from '../core/generationSteps.js';
+import { DECOR_STEP_M } from '../core/decorReach.js';
 /*
  * La reconstruction expose des étapes entre tronçons et carrefours. Le
  * compositeur fixe les pauses ; index et maillages sont publiés ensemble.
@@ -337,8 +338,6 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
 export const ROAD_SAMPLE_M = 5;
 /** Portée du réseau autour de l'observateur, en mètres. */
 export const ROAD_RADIUS_M = 900;
-/** Déplacement de l'observateur avant reconstruction, en mètres. */
-export const ROAD_REBUILD_M = 250;
 /** Marge contre les écarts d’interpolation entre la maille du terrain et le profil routier. */
 export const ROAD_LIFT_M = 0.02;
 /**
@@ -1222,7 +1221,7 @@ export class RoadNetwork {
     // Une maille de terrain qui s'affine remonte sous une plate-forme dressée à l'ancienne résolution.
     if (this._surface !== this.bubble?.surfaceGeneration) return true;
     if (!this._anchor) return true;
-    return Math.hypot(x - this._anchor.x, z - this._anchor.z) >= ROAD_REBUILD_M;
+    return Math.hypot(x - this._anchor.x, z - this._anchor.z) >= DECOR_STEP_M;
   }
 
   /**

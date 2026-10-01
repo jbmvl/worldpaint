@@ -4,7 +4,7 @@
  * Le profil du lieu : la région naturelle (`core/region.js`), l'altitude et la
  * pente sous l'observateur. Ce n'est ni une couche ni un thème et ça ne pose
  * rien — c'est une **entrée**, lue par tout ce qui choisit un contenu dans une
- * liste : peuplements, palettes de bourg, cultures, bétail, couleur du sol.
+ * liste : peuplements, palette du bâti, cultures, bétail, couleur du sol.
  *
  * Les deux ne se mêlent pas : la région dit à quoi ressemble le pays, le relief
  * quelle forme a le terrain sous les pieds. Le second ne corrige pas la

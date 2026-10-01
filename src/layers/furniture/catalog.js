@@ -10,12 +10,10 @@
  * tant qu'elle n'est pas dans `POINT_ITEMS` (ou `LINEAR_KINDS` pour une
  * matière balayée), rien ne l'instancie.
  */
+import { DECOR_STABLE_RADIUS_M } from '../../core/decorReach.js';
 
-/** Portée du mobilier autour de l'observateur, en mètres. */
-export const FURNITURE_RADIUS_M = 700;
-
-/** Déplacement de l'observateur avant reconstruction, en mètres. */
-export const FURNITURE_REBUILD_M = 250;
+/** Portée du mobilier autour du point de reconstruction, en mètres. */
+export const FURNITURE_RADIUS_M = DECOR_STABLE_RADIUS_M;
 /** Pas de ré-échantillonnage des contours de parcelles, en mètres. */
 export const BOUNDARY_SAMPLE_M = 6;
 /**

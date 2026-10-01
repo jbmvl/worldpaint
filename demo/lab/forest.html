@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Banc de la forêt</title>
+<style>body{margin:0;background:#bccfd7}canvas{display:block}#info{position:absolute;top:12px;left:14px;font:13px system-ui;color:#172920;background:#ffffffdc;padding:8px 10px;white-space:pre}</style>
+<script src="/node_modules/suncalc/suncalc.js"></script>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","suncalc":"/demo/lab/suncalc-global.js"}}</script></head>
+<body><div id="info"></div><script type="module">
+/*
+ * Banc de la forêt — le coût d'une forêt pleine, hors réseau. Neuf tuiles de
+ * bulle (3 × 3, 834 m de côté) semées par la vraie `VegetationLayer` sur un
+ * sol plat dont la part de bois vaut `wood` partout : peuplement et sous-étage.
+ *
+ *   forestLab.set({ wood: 1, view: 'sol' | 'haut', x: 0 })
+ *   await forestLab.measure(60)   // ms par image (rendu + glFinish), appels, triangles
+ *
+ * `x` déplace l'observateur (et la caméra) le long de l'axe est-ouest. Les
+ * ombres suivent celles du ciel (`SHADOW_RADIUS_M` autour de l'observateur).
+ */
+import * as THREE from 'three';
+import { VegetationLayer } from '/src/layers/vegetationLayer.js';
+import { defaultTheme } from '/src/themes/default.js';
+import { SHADOW_RADIUS_M } from '/src/environment/shadowFrame.js';
+
+const TILE_M = 834;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+// Taille fixe : la mesure ne doit pas dépendre de la fenêtre (masquée, elle vaut 0 × 0).
+renderer.setSize(1600, 900, false);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#bccfd7');
+scene.fog = new THREE.Fog('#bccfd7', 600, 2400);
+const camera = new THREE.PerspectiveCamera(55, 16 / 9, 0.5, 4000);
+scene.add(new THREE.HemisphereLight(0xdce8ff, 0x637547, 1.5));
+const sun = new THREE.DirectionalLight(0xfff4db, 2);
+sun.castShadow = true;
+Object.assign(sun.shadow.camera, { left: -SHADOW_RADIUS_M, right: SHADOW_RADIUS_M, top: SHADOW_RADIUS_M, bottom: -SHADOW_RADIUS_M, near: 10, far: 1600 });
+sun.shadow.camera.updateProjectionMatrix();
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.6;
+scene.add(sun, sun.target);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(TILE_M * 3, TILE_M * 3).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x789250 }));
+ground.receiveShadow = true;
+scene.add(ground);
+
+const state = { wood: 1, view: 'sol', x: 0 };
+let layer = null;
+
+function build() {
+  layer?.dispose();
+  const tiles = new Map();
+  for (let ty = -1; ty <= 1; ty++) for (let tx = -1; tx <= 1; tx++) {
+    tiles.set(`${tx}:${ty}`, { key: `${tx}:${ty}`, x: tx, y: ty, ring: Math.max(Math.abs(tx), Math.abs(ty)) });
+  }
+  layer = new VegetationLayer({
+    THREE, scene,
+    bubble: { frame: { scale: TILE_M, origin: { x: 0.5, y: 0.5 } }, tiles, surfaceElevationAtLocal: () => 0, verticalScale: 1 },
+    groundClass: { woodAt: () => state.wood, coverageOf: () => 1 },
+  });
+  layer.setWind({ amplitude: 0, speed: 0 });
+  layer.sync();
+  while (layer.processQueue(Infinity));
+}
+
+function aim() {
+  if (state.view === 'haut') { camera.position.set(state.x, 60, 0); camera.lookAt(state.x, 0, -400); }
+  else { camera.position.set(state.x, 2, 0); camera.lookAt(state.x, 4, -100); }
+  layer.update(state.x, 0);
+  sun.position.set(camera.position.x - 300, 500, camera.position.z + 300);
+  sun.target.position.set(camera.position.x, 0, camera.position.z);
+}
+
+function render() {
+  aim();
+  renderer.render(scene, camera);
+}
+
+async function measure(frames = 60) {
+  const gl = renderer.getContext();
+  const times = [];
+  render();
+  gl.finish();
+  for (let i = 0; i < frames; i++) {
+    const t = performance.now();
+    renderer.render(scene, camera);
+    gl.finish();
+    times.push(performance.now() - t);
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  times.sort((a, b) => a - b);
+  const info = renderer.info.render;
+  let plants = 0, drawn = 0;
+  layer.group.traverse((m) => { if (m.isInstancedMesh) { plants += m.userData.full ?? m.instanceMatrix.count; drawn += m.visible ? m.count : 0; } });
+  const result = { ...state, plants, drawn, medianMs: +times[frames >> 1].toFixed(2), worstMs: +times[frames - 1].toFixed(2), calls: info.calls, triangles: info.triangles };
+  document.querySelector('#info').textContent = JSON.stringify(result, null, 1);
+  return result;
+}
+
+window.forestLab = {
+  set(options = {}) {
+    const rebuild = 'wood' in options && options.wood !== state.wood;
+    Object.assign(state, options);
+    if (rebuild) build();
+    render();
+    return { ...state };
+  },
+  measure,
+  /** Semis de chaque tuile (peuplement et sous-étage) : durée totale et plus longue étape, en ms. */
+  sowing() {
+    return [...layer.bubble.tiles.values()].map((tile) => {
+      let total = 0, step = 0;
+      const steps = layer._buildSteps(tile);
+      for (;;) {
+        const t = performance.now();
+        const done = steps.next().done;
+        const d = performance.now() - t;
+        total += d;
+        step = Math.max(step, d);
+        if (done) break;
+      }
+      return { total: +total.toFixed(1), step: +step.toFixed(1) };
+    });
+  },
+  renderer,
+  get layer() { return layer; },
+  gpu() {
+    const gl = renderer.getContext();
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+  },
+};
+build();
+render();
+window.forestLabReady = true;
+</script></body></html>

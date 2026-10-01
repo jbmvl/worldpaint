@@ -28,7 +28,11 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
 - `demo/lab/place.html?lieu=<lieu>` — un lieu réel rejoué par `createWorld`
   depuis ses tuiles enregistrées dans `demo/lab/places/<lieu>/` ;
   `placeLab.set({ lng, lat | x, z, yawDeg, pitchDeg, distance, hour })`, ou
-  `node scripts/place-shot.mjs <dossier> '<réglages JSON>' <lieu>`. Un lieu
+  `node scripts/place-shot.mjs <dossier> '<réglages JSON>' <lieu>`.
+  `await placeLab.walk({ toX, step })`, ou `node scripts/place-walk.mjs
+  '<réglages JSON>' <lieu>`, fait avancer l'observateur et mesure à chaque pas
+  ce qui se repeint à moins de 500 m de lui (pixels, couches) et la pire tâche.
+  Un lieu
   s'enregistre, réseau ouvert, par `node scripts/capture-place.mjs <lieu> <lng>
   <lat>` ; sans ses tuiles vectorielles, il se rejoue en relief nu.
 - `demo/lab/furniture.html` — des formes du catalogue de mobilier côte à côte,
@@ -43,6 +47,10 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   commerces en pignon, en long pan ou sans rue devant ;
   `shopLab.set({ yawDeg, pitchDeg, distance })`, ou
   `node scripts/shop-shot.mjs <dossier> '<réglages JSON>'`.
+- `demo/lab/forest.html` — une forêt pleine de neuf tuiles semée par la vraie
+  `VegetationLayer` (peuplement et sous-étage) ; `forestLab.set({ wood, view,
+  x })`, `await forestLab.measure()` (ms par image, appels, triangles) et
+  `forestLab.sowing()` (durée de semis par tuile et plus longue étape).
 - `demo/lab/crops.html` — la `CropLayer` réelle sur un champ plat traversé par
   une route sinueuse, avec une lisière entre deux cultures ;
   `cropLab.set({ crop, next, height, pitchDeg })` dans la console.

@@ -21,11 +21,10 @@ import { pushPanel } from './buildingLayer.js';
 import { srgb } from '../core/color.js';
 import { defaultTheme } from '../themes/default.js';
 import { inCorridor } from './roadCorridor.js';
+import { DECOR_STABLE_RADIUS_M } from '../core/decorReach.js';
 
-/** Portée des jardins, en mètres. Au-delà, un piquet ne fait pas un pixel. */
-export const GARDEN_RADIUS_M = 170;
-/** Nombre maximal de jardins par reconstruction. */
-export const GARDEN_MAX = 40;
+/** Portée des jardins autour du point de reconstruction, en mètres. */
+export const GARDEN_RADIUS_M = DECOR_STABLE_RADIUS_M;
 /** Part des maisons détachées qui reçoivent un jardin clos. */
 export const GARDEN_SHARE = 0.62;
 /** Recul de la clôture par rapport au mur, en mètres : tiré dans cet écart. */
@@ -313,11 +312,9 @@ export class GardenLayer {
     this.trees = [];
     let built = 0;
 
-    // Les plus proches d'abord : si le plafond mord, ce qui saute est au bord de la portée.
     const near = (houses || [])
       .map((house) => ({ house, distance: Math.hypot(house.x - here.x, house.z - here.z) }))
-      .filter((entry) => entry.distance <= GARDEN_RADIUS_M)
-      .sort((a, b) => a.distance - b.distance);
+      .filter((entry) => entry.distance <= GARDEN_RADIUS_M);
 
     const neighbours = houses || [];
     const index = this.roads?.index || null;
@@ -325,7 +322,6 @@ export class GardenLayer {
     const clear = (x, z) => !inCorridor(index, x, z) && !pavement?.covers(x, z, 0);
 
     for (const { house } of near) {
-      if (built >= GARDEN_MAX) break;
       if (randomAt(house.x, house.z, 211) >= GARDEN_SHARE) continue;
 
       const drawn =

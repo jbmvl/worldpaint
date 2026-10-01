@@ -44,7 +44,6 @@ const BOOST_FACTOR = 4.5;
 const LOOK_SENSITIVITY = 0.0032;
 const CLICK_MAX_MS = 350;
 const CLICK_MAX_DRAG_PX = 6;
-const RECENTER_MARGIN = 0.35; // fraction du rayon de la bulle
 const LABEL_INTERVAL_MS = 160;
 const RECENTER_INTERVAL_MS = 400;
 const MINIMAP_RANGE_M = 220; // rayon affiché autour de la caméra
@@ -391,17 +390,17 @@ function updateMovement(delta) {
   if (keys.down) camera.position.y -= speed * delta;
 }
 
+// Appelé à intervalle régulier : c'est le moteur qui décide s'il y a quelque
+// chose à refaire (pas de l'observateur, données nouvelles), pas la démo.
 async function recenterIfNeeded() {
   if (recentering || !world || !world.frame) return;
-  const distance = Math.hypot(camera.position.x, camera.position.z);
-  if (distance < world.bubble.radiusMeters * RECENTER_MARGIN) return;
 
   recentering = true;
-  setBusy(true);
   try {
     const prevFrame = world.frame;
     const { lng, lat } = prevFrame.toLngLat(camera.position.x, camera.position.z);
-    await world.setCenter(lng, lat);
+    const moved = await world.setCenter(lng, lat);
+    if (moved) setBusy(true);
     await world.refresh(lng, lat);
     if (world.frame !== prevFrame) {
       // Ré-ancrage rare (>20 km) : le repère local a changé d'origine, la

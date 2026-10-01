@@ -57,9 +57,10 @@ import { workRuns, WORK_BRIDGE, WORK_TUNNEL } from './roadWorks.js';
 import { worksStyleAt } from './townStyle.js';
 import { facetJitter } from './facetJitter.js';
 import { defaultTheme } from '../themes/default.js';
+import { DECOR_STABLE_RADIUS_M } from '../core/decorReach.js';
 
-/** Portée des ouvrages autour de l'observateur, en mètres (celle de la voirie). */
-export const BRIDGE_RADIUS_M = 450;
+/** Portée des ouvrages autour du point de reconstruction, en mètres (celle de la voirie). */
+export const BRIDGE_RADIUS_M = DECOR_STABLE_RADIUS_M;
 
 /** Hauteur en deçà de laquelle une travée ne mérite ni pile ni culée (un simple ponceau). */
 export const BRIDGE_MIN_RISE_M = 1.1;

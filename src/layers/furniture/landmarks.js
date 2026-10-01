@@ -15,7 +15,7 @@ import { lngToTileX, latToTileY } from '../../core/tileMath.js';
 import { resamplePath } from '../ribbonGeometry.js';
 import { WATER_SOURCE_LAYER } from '../../terrain/groundClassMap.js';
 import { pointInAreas } from '../settlement.js';
-import { rockKindFor, ringCentroid, randomAt } from '../furniturePlacement.js';
+import { rockKindFor, ringCentroid, randomAt, gridCellsAround } from '../furniturePlacement.js';
 import { FURNITURE_LIMITS, FURNITURE_RADIUS_M } from './catalog.js';
 
 /**
@@ -41,8 +41,8 @@ export const LANDMARK_CLEARANCE_M = 55;
 /** Même chose pour l'arbre de crête, qui tient moins de place. */
 export const RIDGE_TREE_CLEARANCE_M = 25;
 
-/** Portée des cailloux et blocs rocheux, en mètres. */
-export const ROCK_RADIUS_M = 220;
+/** Portée des cailloux et blocs rocheux, en mètres (celle du reste du mobilier). */
+export const ROCK_RADIUS_M = FURNITURE_RADIUS_M;
 /** Pas de la grille de semis des pierres, en mètres. */
 export const ROCK_CELL_M = 14;
 
@@ -128,39 +128,36 @@ export function buildVillageLandmarks(layer, context, builtUp) {
 export function buildRocks(layer, context, builtUp) {
   const { here, placements } = context;
   const step = ROCK_CELL_M;
-  const startX = Math.floor((here.x - ROCK_RADIUS_M) / step) * step;
-  const startZ = Math.floor((here.z - ROCK_RADIUS_M) / step) * step;
   let placed = 0;
 
-  for (let z = startZ; z <= here.z + ROCK_RADIUS_M && placed < FURNITURE_LIMITS.rocks; z += step) {
-    for (let x = startX; x <= here.x + ROCK_RADIUS_M && placed < FURNITURE_LIMITS.rocks; x += step) {
-      const px = x + (randomAt(x, z, 101) - 0.5) * step * 0.9;
-      const pz = z + (randomAt(x, z, 103) - 0.5) * step * 0.9;
-      if (Math.hypot(px - here.x, pz - here.z) > ROCK_RADIUS_M) continue;
-      if (pointInAreas(builtUp, px, pz)) continue;
-      // Un bloc erratique au milieu de la chaussée est le plus visible de
-      // tous les défauts d'emprise : il est opaque et il est haut.
-      if (layer._onRoad(px, pz)) continue;
+  for (const { x, z } of gridCellsAround(here, ROCK_RADIUS_M, step)) {
+    if (placed >= FURNITURE_LIMITS.rocks) break;
+    const px = x + (randomAt(x, z, 101) - 0.5) * step * 0.9;
+    const pz = z + (randomAt(x, z, 103) - 0.5) * step * 0.9;
+    if (Math.hypot(px - here.x, pz - here.z) > ROCK_RADIUS_M) continue;
+    if (pointInAreas(builtUp, px, pz)) continue;
+    // Un bloc erratique au milieu de la chaussée est le plus visible de
+    // tous les défauts d'emprise : il est opaque et il est haut.
+    if (layer._onRoad(px, pz)) continue;
 
-      const sample = layer.groundClass?.sampleAt?.(px, pz);
-      // Sans carte de classes, on ne devine pas un éboulis : la pente seule
-      // mettrait des rochers sur toutes les prairies de montagne.
-      if (!sample) continue;
-      const kind = rockKindFor({
-        bare: sample.bare,
-        steepness: layer._steepnessAt(px, pz),
-        variant: randomAt(px, pz, 107),
-      });
-      if (!kind) continue;
+    const sample = layer.groundClass?.sampleAt?.(px, pz);
+    // Sans carte de classes, on ne devine pas un éboulis : la pente seule
+    // mettrait des rochers sur toutes les prairies de montagne.
+    if (!sample) continue;
+    const kind = rockKindFor({
+      bare: sample.bare,
+      steepness: layer._steepnessAt(px, pz),
+      variant: randomAt(px, pz, 107),
+    });
+    if (!kind) continue;
 
-      layer._place(placements, kind.item, {
-        x: px,
-        z: pz,
-        yaw: randomAt(px, pz, 109) * Math.PI * 2,
-        scale: kind.scale,
-      });
-      placed++;
-    }
+    layer._place(placements, kind.item, {
+      x: px,
+      z: pz,
+      yaw: randomAt(px, pz, 109) * Math.PI * 2,
+      scale: kind.scale,
+    });
+    placed++;
   }
   layer.counts.rocks = placed;
 }

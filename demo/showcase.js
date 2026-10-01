@@ -94,11 +94,6 @@ function buildHouse(THREE, entry) {
   roof.position.y = 2;
   group.add(roof);
 
-  // Le côté que ce mot ne désigne pas, en gris neutre : un mot de mur ne dit
-  // rien du toit qui l'accompagnerait ailleurs, et l'inverse est vrai aussi —
-  // seul le côté que ce mot nomme vient du thème.
-  (entry.part === 'wall' ? roofMat : wallMat).color.set('#6b6f76');
-
   return group;
 }
 

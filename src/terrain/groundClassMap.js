@@ -137,8 +137,6 @@ export {
 export const CLASS_AREA_M = 4096;
 /** Côté de la carte, en pixels. ~2,7 m par pixel : une lisière n'est pas un trait. */
 export const CLASS_PIXELS = 1536;
-/** Déplacement de l'observateur avant re-rasterisation, en mètres. */
-export const CLASS_REBUILD_M = 400;
 
 
 /**
@@ -699,12 +697,6 @@ export class GroundClassMap {
     return Math.min(1, (overlapX * overlapZ) / area);
   }
 
-  needsRebuild(x, z, frame) {
-    if (this._frame !== frame) return true;
-    if (!this._anchor) return true;
-    return Math.hypot(x - this._anchor.x, z - this._anchor.z) >= CLASS_REBUILD_M;
-  }
-
   /**
    * Le sol revêtu de la ville : entre la chaussée et les façades, un
    * centre-ville n'a pas de sol nu ni d'herbe, il a du trottoir.
@@ -802,9 +794,11 @@ export class GroundClassMap {
 
     const { ctx } = this;
     const half = CLASS_AREA_M / 2;
-    const originX = here.x - half;
-    const originZ = here.z - half;
     const perMeter = CLASS_PIXELS / CLASS_AREA_M;
+    // Origine calée sur un texel entier : deux cartes faites de deux points
+    // voisins peignent la même chose aux mêmes texels là où elles se recouvrent.
+    const originX = Math.round((here.x - half) * perMeter) / perMeter;
+    const originZ = Math.round((here.z - half) * perMeter) / perMeter;
     const { origin, scale, zoom } = frame;
 
     // Le fond est **peint**, pas effacé : identifiant zéro, alpha plein. Un

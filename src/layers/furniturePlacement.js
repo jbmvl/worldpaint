@@ -36,6 +36,24 @@ export function randomAt(x, z, salt = 0) {
 }
 
 /**
+ * Coins des mailles d'une grille ancrée au monde (pas `step`) qui couvrent le
+ * disque de `radius` autour de `here`, du plus proche au plus lointain : un
+ * plafond atteint coupe alors au bord de la portée, jamais au hasard d'une
+ * rangée. Fonction pure.
+ */
+export function gridCellsAround(here, radius, step) {
+  const cells = [];
+  const startX = Math.floor((here.x - radius) / step) * step;
+  const startZ = Math.floor((here.z - radius) / step) * step;
+  for (let z = startZ; z <= here.z + radius; z += step) {
+    for (let x = startX; x <= here.x + radius; x += step) {
+      cells.push({ x, z, distance: Math.hypot(x + step / 2 - here.x, z + step / 2 - here.z) });
+    }
+  }
+  return cells.sort((a, b) => a.distance - b.distance || a.x - b.x || a.z - b.z);
+}
+
+/**
  * Répartit des points à pas constant le long d'une polyligne ré-échantillonnée.
  * `startDistance` est comptée depuis le dernier nœud d'ancrage (voir
  * `roadGraph.js`), pas depuis le tronçon découpé qui bouge avec l'observateur.

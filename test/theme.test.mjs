@@ -28,7 +28,7 @@ import { filterByWords, VOCABULARIES } from '../src/core/regionInterpretation.js
 import { REGIONS } from '../src/core/regions.js';
 import { skyPaletteFor } from '../src/environment/sceneEnvironment.js';
 import { resolveTheme } from '../src/themes/theme.js';
-import { townPaletteAt, buildingStyleAt, streetSurfaceAt } from '../src/layers/townStyle.js';
+import { townPaletteFor, buildingStyleAt, streetSurfaceAt } from '../src/layers/townStyle.js';
 import { kerbProfile } from '../src/layers/streetLayer.js';
 import { roofRise } from '../src/layers/roofGeometry.js';
 import { waterwayStyleFor, SURFACE_KINDS } from '../src/terrain/groundClassMap.js';
@@ -43,9 +43,9 @@ import { DEFAULT_SKY_PALETTE, twilightGlow, tintByPalette } from '../src/environ
 
 /** Un thème contraire au défaut sur chaque tranche qu'on sait lire. */
 const OTHER = resolveTheme({
-  towns: [
-    { name: 'béton', walls: ['#101010', '#202020'], roofs: ['#050505', '#060606'], roofShapes: ['flat', 'flat'] },
-  ],
+  towns: {
+    béton: { wall: '#101010', roof: '#050505', shutter: '#202020', roofShapes: ['flat', 'flat'] },
+  },
   roofs: { pitch: 0.2, maxRiseM: 1 },
   windows: { widthM: 2, heightM: 3, levelM: 6, sillM: 2, litShare: 1 },
   water: { waterways: { river: 40, stream: 20 } },
@@ -107,8 +107,8 @@ test('resolveTheme sans surcharge ne fabrique rien', () => {
 
 test('les palettes de bourg ne se mélangent pas entre deux thèmes', () => {
   const [a, b] = interleaved(
-    () => townPaletteAt(1200, 3400, DEFAULT.towns).name,
-    () => townPaletteAt(1200, 3400, OTHER.towns).name
+    () => townPaletteFor(DEFAULT.towns).name,
+    () => townPaletteFor(OTHER.towns).name
   );
   assert.notEqual(a, b);
   assert.equal(b, 'béton');
@@ -236,8 +236,8 @@ test('deux mondes gardent chacun leur thème, et aucun ne peut le changer', () =
   const second = new World({ composer: fakeComposer(), environment: null, elevation: null, ownsElevation: false, theme: OTHER });
 
   assert.notEqual(first.theme, second.theme);
-  assert.equal(first.theme.towns[0].name, 'calcaire');
-  assert.equal(second.theme.towns[0].name, 'béton');
+  assert.ok(first.theme.towns.light_stone_flat_tile);
+  assert.ok(second.theme.towns.béton);
 
   // Gelé : une couche qui tenterait d'écrire dedans échoue au lieu de repeindre
   // silencieusement le monde voisin.
@@ -245,7 +245,7 @@ test('deux mondes gardent chacun leur thème, et aucun ne peut le changer', () =
     'use strict';
     second.theme.roofs = null;
   });
-  assert.equal(first.theme.towns[0].name, 'calcaire', 'le premier monde est intact');
+  assert.ok(first.theme.towns.light_stone_flat_tile, 'le premier monde est intact');
 });
 
 test('le compositeur sert le thème à toutes les couches qu’il monte', () => {
@@ -411,20 +411,16 @@ test('la haie prend ses cotes du thème', () => {
  * du test des régions dit déjà ce qui manque.
  */
 test('chaque région trouve dans le thème un peuplement et une palette à elle', () => {
-  const rendu = (region, field) =>
-    region[field].filter((word) => !VOCABULARIES[field][word]?.unsupported);
-
   for (const region of REGIONS) {
     const forests = DEFAULT.forests.filter((type) =>
       type.species?.some((word) => region.trees.includes(word))
     );
     assert.ok(forests.length >= 1, `${region.id} : aucun peuplement`);
-
-    if (rendu(region, 'building').length === 0) continue;
-    const towns = DEFAULT.towns.filter((palette) =>
-      palette.materials?.some((word) => region.building.includes(word))
-    );
-    assert.ok(towns.length >= 1, `${region.id} : aucune palette de bourg`);
+    assert.ok(DEFAULT.towns[region.building], `${region.id} : aucune palette ${region.building}`);
+  }
+  // Et chaque clé du vocabulaire a sa palette, même si aucun pays ne la nomme encore.
+  for (const key of Object.keys(VOCABULARIES.building)) {
+    assert.ok(DEFAULT.towns[key], `${key} : clé de bâti sans palette`);
   }
 });
 
@@ -435,26 +431,18 @@ test('un pays que le thème ne connaît pas ne vide pas le décor', () => {
   assert.equal(pool.length, DEFAULT.forests.length);
 });
 
-test('la mémoire des palettes est indexée par nuancier ET par région', () => {
-  // Deux mémoires se superposent ici : la conversion en linéaire, et le
-  // filtrage par matériaux. Une seconde mal indexée peindrait un village
-  // andalou avec le bois d'un village finlandais, et seulement quand les deux
-  // sont demandés dans le même ordre.
-  const boreale = { id: 'test-nord', building: ['red_timber'] };
-  const andalouse = { id: 'test-sud', building: ['whitewash', 'flat_roof'] };
-  const [nord, sud] = interleaved(
-    () => townPaletteAt(4200, 1400, DEFAULT.towns, boreale).name,
-    () => townPaletteAt(4200, 1400, DEFAULT.towns, andalouse).name
+test('la mémoire des palettes est indexée par nuancier', () => {
+  // Une mémoire mal indexée peindrait un village andalou avec la palette d'un
+  // village breton, et seulement quand les deux sont demandés dans le même ordre.
+  const bretonne = { id: 'test-ouest', building: 'granite_slate' };
+  const andalouse = { id: 'test-sud', building: 'whitewash_terrace' };
+  const [ouest, sud] = interleaved(
+    () => townPaletteFor(DEFAULT.towns, bretonne).name,
+    () => townPaletteFor(DEFAULT.towns, andalouse).name
   );
-  assert.notEqual(nord, sud);
-  const cite = (name, region) =>
-    DEFAULT.towns
-      .find((p) => p.name === name)
-      .materials.some((word) => region.building.includes(word));
-  assert.ok(cite(nord, boreale), `${nord} est bâtie dans un matériau du nord`);
-  assert.ok(cite(sud, andalouse), `${sud} est bâtie dans un matériau du sud`);
-  // Et sans pays, on retrouve exactement le tirage d'avant les régions.
-  assert.equal(townPaletteAt(4200, 1400, DEFAULT.towns).name, townPaletteAt(4200, 1400).name);
+  assert.equal(ouest, 'granite_slate');
+  assert.equal(sud, 'whitewash_terrace');
+  assert.equal(townPaletteFor(OTHER.towns, bretonne).name, 'béton', 'repli sur le nuancier du thème');
 });
 
 /** Luminance perçue (Rec. 709), la même pondération que `wetGround` du shader. */

@@ -46,8 +46,8 @@ import {
 import { placeHerd, placeForestGame, placeFauna } from './parcelFauna.js';
 import { buildCemetery } from './cemetery.js';
 
-/** Portée des rangs de vigne, de lavande et de verger, en mètres. */
-export const ROW_CROP_RADIUS_M = 320;
+/** Portée des rangs de vigne, de lavande et de verger, en mètres (celle du reste du mobilier). */
+export const ROW_CROP_RADIUS_M = FURNITURE_RADIUS_M;
 /** Sel du facettage du feuillage de vigne (`hedgeGeometry.hedgeFacets`) : pas de `style` comme la haie, donc un sel dédié. */
 const VINE_ROW_FACET_SALT = 733;
 /** Sel du facettage du feuillage de lavande — distinct de celui de la vigne, sinon les deux rangs ondulent à l'identique. */
@@ -117,13 +117,12 @@ export function buildParcels(layer, context, builtUp) {
       }));
       if (local.length < 4) continue;
 
-      // Le mobilier de parcelle se pose **autour d'un centre** — bâtiments de
-      // ferme, rangs de vigne, bottes de foin —, donc la distance au
-      // centroïde est la bonne mesure. La culture, elle, ne passe plus par
-      // ici : elle est peinte dans la carte des cultures, qui couvre 4 km et
-      // ne connaît pas cette limite.
+      // Une parcelle entre dès qu'un de ses sommets est à portée : sa haie
+      // peut longer l'observateur quand son centre est au loin. La culture,
+      // elle, ne passe pas par ici : elle est peinte dans la carte des
+      // cultures, qui couvre 4 km et ne connaît pas cette limite.
       const centre = ringCentroid(local);
-      if (Math.hypot(centre.x - here.x, centre.z - here.z) > FURNITURE_RADIUS_M) continue;
+      if (!local.some((p) => Math.hypot(p.x - here.x, p.z - here.z) <= FURNITURE_RADIUS_M)) continue;
 
       // Repères urbains : un par emprise reconnue — cimetière, zone
       // industrielle, stade, champ de foire. Avant le filtre « hors zone

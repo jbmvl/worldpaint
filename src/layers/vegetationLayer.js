@@ -1,6 +1,5 @@
-import { TREE_NEAR_ATTRIBUTE, installTreeTransition } from '../materials/treeTransition.js';
-import { TreeVolumes } from './treeVolumes.js';
-import { COVER_ATTRIBUTE, installCoverTransition, paddedCoverBands } from '../materials/coverTransition.js';
+import { treePrototype } from '../models/treeKit.js';
+import { finishGeneration } from '../core/generationSteps.js';
 /*
  * vegetationLayer — les arbres, en instances. Poussent là où
  * `groundClassMap` dit « bois » — même donnée que le shader du terrain,
@@ -8,32 +7,35 @@ import { COVER_ATTRIBUTE, installCoverTransition, paddedCoverBands } from '../ma
  * traverse une route sans s'interrompre) : c'est cette couche qui refuse de
  * planter dans l'emprise (`roadCorridor`), comme l'herbe et les cultures.
  *
- * Arbres et buissons partagent un prototype pour leur volume proche et leur
- * atlas lointain, avec rotation, échelle et teinte propres à chaque instance. Les
- * plans restent présents tant que le budget proche ne fournit pas de volume ;
- * leur découpe écrit la profondeur, y compris dans le sous-étage. Le
+ * Arbres et buissons sont des volumes low poly, un prototype par silhouette
+ * (`treeKit`), avec rotation, échelle et teinte propres à chaque instance. Ils
+ * ont la même forme à toute distance : pas de plan lointain, pas de relève. Les
+ * instances sont rangées par bloc de `VEGETATION_BLOCK_M` et par silhouette,
+ * pour que l'élimination hors champ — celle de l'image comme celle de la passe
+ * d'ombre — écarte les blocs invisibles. Le
  * peuplement (`FOREST_TYPES`, ancré à une maille de terrain) décide des
  * essences, des hauteurs, de la densité ; la couleur dérive par bosquets de
  * quelques dizaines de mètres (`foliageTint`).
  *
- * ## Un bois, deux distances
+ * ## Un bois, deux semis
  *
- * Ce ne sont pas deux couches empilées mais deux échelles de lecture du même
- * bois, comme `coverBands` pour l'herbe :
+ * Les deux sont semés par tuile, une tuile par image, et ne dépendent jamais
+ * de la position de l'observateur :
  *
- *   - **le peuplement** — les arbres faits, semés par tuile, une tuile par
- *     image, statiques une fois posés. C'est la masse qui se lit de loin, et
- *     elle ne bouge jamais sous les yeux ;
- *   - **le sous-étage** — les tiges basses et les buissons, semés dans un
- *     anneau autour de l'observateur (`THICKET_BANDS`) et redistribués en
- *     marchant. À deux cents mètres il n'y a rien à y voir ; à vingt, c'est
- *     tout ce qui manque pour qu'un bois ne soit pas une colonnade. Sa densité
- *     suit la part de sous-bois du peuplement (`thicketDensityFor`) : une
- *     futaie se traverse à pied, un taillis non.
+ *   - **le peuplement** — les arbres faits. C'est la masse qui se lit de loin ;
+ *   - **le sous-étage** — les tiges basses et les buissons, ce qui manque pour
+ *     qu'un bois ne soit pas une colonnade. Sa densité suit la part de sous-bois
+ *     du peuplement (`thicketDensityFor`) : une futaie se traverse à pied, un
+ *     taillis non.
  *
  * Les deux lisent la même part de boisé, le même peuplement, la même emprise
  * routière ; ils ne se recouvrent pas (le peuplement plante des arbres faits,
  * le sous-étage des tiges qui montent vers eux sans les atteindre).
+ *
+ * Le sous-étage est complet à moins de `UNDERSTORY_FULL_M` et s'éclaircit
+ * au-delà, plante par plante, en ne gardant que celles de plus faible poids
+ * (`understoryWeight`) : un sous-étage plus clair est un sous-ensemble du même
+ * sous-étage complet, rien n'y est remplacé.
  *
  * ## Trois décisions à ne pas défaire
  *
@@ -73,26 +75,12 @@ import { COVER_ATTRIBUTE, installCoverTransition, paddedCoverBands } from '../ma
  * l'eau, plus dense sur la bordure (`poolEdgeGain`).
  */
 
-import {
-  createTreeAtlasCanvas,
-  TREE_ATLAS_OFFSETS,
-  TREE_ATLAS_COLS,
-} from '../materials/proceduralTextures.js';
 import { positionSeed, randomAt } from './furniturePlacement.js';
 import { inCorridor } from './roadCorridor.js';
 import {
-  coverBand,
-  coverBandRing,
-  coverMassDensity,
-  coverBandsRadius,
-} from './coverBands.js';
-import {
   createFoliageMaterial,
-  createFoliageDepthMaterial,
-  createCrossedQuads,
   advanceFoliageWind,
   setFoliageWind,
-  ATLAS_ATTRIBUTE,
 } from '../materials/foliageMaterial.js';
 import { stableStand } from './stableStand.js';
 import { defaultTheme } from '../themes/default.js';
@@ -159,6 +147,10 @@ export const MAX_TREES_PER_TILE = 7000;
 export const PLACEMENT_HARD_CAP = MAX_TREES_PER_TILE * 4;
 /** Anneau au-delà duquel on ne plante plus (le brouillard s'en charge). */
 export const VEGETATION_MAX_RING = 1;
+/** Temps de semis accordé par image, en millisecondes. */
+export const VEGETATION_BUILD_BUDGET_MS = 4;
+/** Côté d'un bloc de rendu, en mètres : l'unité de l'élimination hors champ. */
+export const VEGETATION_BLOCK_M = 250;
 /** En deçà de cette part de boisé, la maille ne reçoit aucun arbre. */
 export const WOOD_SCORE_MIN = 0.22;
 /** Exposant de la courbe de densité (au-dessus de 1, creuse la différence entre lisière et sous-bois). */
@@ -202,29 +194,63 @@ export function edgeLowPart(lowPart, edge) {
   return lowPart + (1 - lowPart) * edge * EDGE_LOW_GAIN;
 }
 
-// --- Le sous-étage : ce qui n'existe qu'à moins de deux cents mètres --------------
+// --- Le sous-étage ----------------------------------------------------------------
+/** Sel de graine du sous-étage : ses candidats ne sont pas ceux du peuplement. */
+export const UNDERSTORY_SALT = 401;
+/** Candidats du sous-étage par maille de peuplement. */
+export const UNDERSTORY_CANDIDATES = 160;
+/** Plafond du sous-étage par tuile, en plantes. */
+export const UNDERSTORY_MAX_PER_TILE = 40000;
+/** En deçà de cette distance d'un bloc, son sous-étage est complet. */
+export const UNDERSTORY_FULL_M = 500;
+/** Au-delà de cette distance d'un bloc, son sous-étage ne montre plus rien. */
+export const UNDERSTORY_FAR_M = 700;
+/** Déplacement de l'observateur avant de recompter l'éclaircie, en mètres. */
+export const UNDERSTORY_RECOUNT_M = 8;
+
+/** Clé des maillages du sous-étage d'une tuile. */
+const understoryKey = (key) => `${key}/sous-etage`;
+
+/** Part du sous-étage montrée à `distance`, de 0 à 1. Fonction pure. */
+export function understoryShare(distance) {
+  if (distance <= UNDERSTORY_FULL_M) return 1;
+  if (distance >= UNDERSTORY_FAR_M) return 0;
+  return 1 - (distance - UNDERSTORY_FULL_M) / (UNDERSTORY_FAR_M - UNDERSTORY_FULL_M);
+}
+
 /**
- * Les deux échelles du sous-étage. Même doctrine que `GRASS_BANDS` : la maille
- * double, les tirages s'effondrent, le panneau s'élargit pour que la masse
- * reste continue. Budgets d'images, donc du moteur, pas du thème.
+ * Poids d'éclaircie d'une plante du sous-étage, de 0 à 1 : son orientation,
+ * tirage indépendant que le shader relit dans la matrice d'instance. Une plante
+ * est montrée tant que son poids est sous `understoryShare` de sa distance.
  */
-export const THICKET_BANDS = [
-  coverBand({ from: 0, to: 72, cell: 6, perCell: 8, fadeOut: 14, salt: 401 }),
-  coverBand({
-    from: 60,
-    to: 180,
-    cell: 12,
-    perCell: 12,
-    spread: 1.35,
-    rise: 1.1,
-    massBias: 0.3,
-    fadeIn: 14,
-    fadeOut: 45,
-    salt: 419,
-  }),
-];
-/** Portée du sous-étage, en mètres — le bord de la dernière bande. */
-export const THICKET_RADIUS_M = coverBandsRadius(THICKET_BANDS);
+export function understoryWeight(plant) {
+  const turn = plant.rotation / (Math.PI * 2);
+  return turn - Math.floor(turn);
+}
+
+/** Replie, plante par plante, le sous-étage au-delà de sa part (même règle que `understoryShare`). */
+function installUnderstoryThinning(material, THREE) {
+  const observer = { value: new THREE.Vector2() };
+  material.userData.understoryObserver = observer;
+  const previous = material.onBeforeCompile;
+  material.onBeforeCompile = (shader) => {
+    previous?.(shader);
+    shader.uniforms.uUnderstoryObserver = observer;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+      uniform vec2 uUnderstoryObserver;`)
+      .replace('#include <project_vertex>', `{
+        vec3 understoryAxis = instanceMatrix[0].xyz;
+        float understoryWeight = fract(atan(-understoryAxis.z, understoryAxis.x) / 6.28318531);
+        float understoryDistance = distance(instanceMatrix[3].xz, uUnderstoryObserver);
+        float understoryShare = clamp(1.0 - (understoryDistance - ${UNDERSTORY_FULL_M.toFixed(1)}) / ${(UNDERSTORY_FAR_M - UNDERSTORY_FULL_M).toFixed(1)}, 0.0, 1.0);
+        if (understoryWeight >= understoryShare) transformed = vec3(0.0);
+      }
+      #include <project_vertex>`);
+  };
+  const key = material.customProgramCacheKey.bind(material);
+  material.customProgramCacheKey = () => `${key()}-understory-v1`;
+}
 /**
  * Tiges de sous-étage à l'hectare, pour un bois plein et un peuplement de
  * référence. **C'est le réglage de la densité de près** : le peuplement seul
@@ -239,10 +265,6 @@ export const THICKET_PER_HA = 500;
  * un taillis, lui, *est* son sous-bois.
  */
 export const UNDERSTORY_REF = 0.3;
-/** Plafond d'instances du sous-étage (bois le plus épais, anneau plein). */
-export const THICKET_COUNT = 12000;
-/** Déplacement de l'observateur avant redistribution, en mètres. */
-export const THICKET_REBUILD_M = 12;
 
 /** Tiges de sous-étage attendues dans une maille pleinement boisée. Fonction pure. */
 export function thicketPerCell(density, cell) {
@@ -553,42 +575,27 @@ export class VegetationLayer {
     this.group.name = 'vegetation';
     scene.add(this.group);
 
-    this.texture = new THREE.CanvasTexture(
-      createTreeAtlasCanvas(undefined, undefined, theme.trees.variants, theme.trees.volume)
-    );
-    this.texture.colorSpace = THREE.SRGBColorSpace;
-    this.texture.anisotropy = 4;
-
-    this.baseGeometry = createCrossedQuads(THREE);
-    this.material = createFoliageMaterial({
+    this.prototypes = theme.trees.variants.map((look, variant) => {
+      const geometry = treePrototype(look, variant, theme.trees.volume).toGeometry(THREE, 'tree-volume');
+      geometry.computeVertexNormals();
+      return geometry;
+    });
+    const foliage = () => createFoliageMaterial({
       THREE,
-      map: this.texture,
-      atlas: true,
-      tiles: TREE_ATLAS_COLS,
-      wind: true, // dix fois plus discret que dans l'herbe
-      // 0,05 × `TREE_ASPECT` : l'amplitude se mesure sur la hauteur de l'arbre
-      // et non sur la largeur de son panneau (voir `foliageMaterial`). Un arbre
-      // moyen bouge autant qu'avant ; une colonne étroite penche un peu plus,
-      // une masse de sous-étage élargie beaucoup moins.
+      map: null,
+      wind: true,
+      // L'amplitude se mesure sur la hauteur de l'arbre (voir `foliageMaterial`).
       windStrength: 0.05 * TREE_ASPECT,
-      cacheKey: 'foliage-atlas-wind-v4',
+      uprightNormals: true,
+      cacheKey: 'tree-volume-v3',
     });
-    this.standMaterial = this.material.clone();
-    this.standMaterial.onBeforeCompile = this.material.onBeforeCompile;
-    this.standMaterial.customProgramCacheKey = this.material.customProgramCacheKey;
-    installTreeTransition(this.standMaterial, THREE);
-    this.volumes = new TreeVolumes(THREE, this.group, theme);
-    this.depthMaterial = createFoliageDepthMaterial({
-      THREE,
-      map: this.texture,
-      tiles: TREE_ATLAS_COLS,
-      cacheKey: 'foliage-atlas-depth-v2',
-    });
-
-    this.depthMaterial.onBeforeCompile = this.standMaterial.onBeforeCompile;
-    this.depthMaterial.customProgramCacheKey = () => 'tree-stand-depth-wind-v1';
-
-    /** @type {Map<string, Object>} maillages du peuplement, par clé de tuile */
+    this.material = foliage();
+    this.understoryMaterial = foliage();
+    installUnderstoryThinning(this.understoryMaterial, THREE);
+    this.depthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+    this.depthMaterial.onBeforeCompile = this.material.onBeforeCompile;
+    this.depthMaterial.customProgramCacheKey = () => 'tree-volume-depth-v3';
+    /** @type {Map<string, Object[]>} maillages du peuplement, par clé de tuile */
     this.meshes = new Map();
     /** Tuiles construites, y compris celles où rien n'a poussé (sinon reclassée à chaque image en rase campagne). @type {Set<string>} */
     this._planted = new Set();
@@ -600,40 +607,14 @@ export class VegetationLayer {
     this._partial = new Map();
     /** Tuiles à resemer. Leur maillage reste en place jusqu'à la relève. @type {Set<string>} */
     this._stale = new Set();
-    /** @type {string[]} tuiles à traiter, une par image */
+    /** @type {string[]} tuiles à semer */
     this.queue = [];
+    /** Semis commencé : `{ key, steps }`, ou `null`. */
+    this._pendingBuild = null;
 
-    // Le sous-étage : un maillage jamais réalloué, `count` ajusté, comme l'herbe.
-    this._thicketCells = coverBandRing(paddedCoverBands(THICKET_BANDS, THICKET_REBUILD_M));
-    this._thicketAnchor = null;
-    this._thicketFrame = null;
+    /** Observateur du dernier compte de l'éclaircie. */
+    this._recountAt = null;
     this._tree = {};
-
-    this.thicketGeometry = this.baseGeometry.clone();
-    this._thicketOffsets = new Float32Array(THICKET_COUNT * 2);
-    this.thicketGeometry.setAttribute(
-      ATLAS_ATTRIBUTE,
-      new THREE.InstancedBufferAttribute(this._thicketOffsets, 2).setUsage(THREE.DynamicDrawUsage)
-    );
-    this._thicketBands = new Float32Array(THICKET_COUNT * 4);
-    this.thicketGeometry.setAttribute(COVER_ATTRIBUTE, new THREE.InstancedBufferAttribute(this._thicketBands, 4));
-    this.thicketMaterial = this.material.clone();
-    this.thicketMaterial.onBeforeCompile = this.material.onBeforeCompile;
-    this.thicketMaterial.customProgramCacheKey = this.material.customProgramCacheKey;
-    installCoverTransition(this.thicketMaterial, THREE, { mode: 'solid' });
-    installTreeTransition(this.thicketMaterial, THREE, { observer: this.standMaterial.userData.treeObserver });
-    this._thicketNear = new THREE.InstancedBufferAttribute(new Float32Array(THICKET_COUNT), 1).setUsage(THREE.DynamicDrawUsage);
-    this.thicketGeometry.setAttribute(TREE_NEAR_ATTRIBUTE, this._thicketNear);
-    this.thicket = new THREE.InstancedMesh(this.thicketGeometry, this.thicketMaterial, THICKET_COUNT);
-    this.thicket.name = 'vegetation-thicket';
-    this.thicket.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.thicket.count = 0;
-    this.thicket.frustumCulled = false; // toujours autour de la caméra
-    // Reçoit l'ombre, n'en projette pas : le sous-étage est déjà sous la houppe
-    // du peuplement, et la passe d'ombre est l'endroit où un semis de premier
-    // plan coûte le plus cher (même arbitrage que l'herbe).
-    this.thicket.receiveShadow = true;
-    this.group.add(this.thicket);
 
     this._matrix = new THREE.Matrix4();
     this._position = new THREE.Vector3();
@@ -643,15 +624,10 @@ export class VegetationLayer {
     this._color = new THREE.Color();
   }
 
-  setMaxAnisotropy(value) {
-    this.texture.anisotropy = Math.min(value || 4, 8);
-    this.texture.needsUpdate = true;
-  }
-
   /** Fait avancer le vent dans les houppes (l'ombre portée, elle, ne balance pas). */
   advance(delta) {
     advanceFoliageWind(this.material, delta);
-    this.volumes.advance(delta);
+    advanceFoliageWind(this.understoryMaterial, delta);
   }
 
   /**
@@ -660,7 +636,7 @@ export class VegetationLayer {
    */
   setWind(field) {
     setFoliageWind(this.material, field);
-    this.volumes.setWind(field);
+    setFoliageWind(this.understoryMaterial, field);
   }
 
   /**
@@ -675,7 +651,6 @@ export class VegetationLayer {
     const next = region || null;
     if (next === this.region) return false;
     this.region = next;
-    this._thicketAnchor = null; // le sous-étage est du même bois : il change d'essences aussi
     return true;
   }
 
@@ -687,8 +662,10 @@ export class VegetationLayer {
    *
    * @param {boolean} [replant] Vrai quand tout est à reprendre (changement de
    *        région, arrivée de la carte de classes).
+   * @param {boolean} [resettle] Vrai quand seul le sol a bougé (terrassement) :
+   *        chaque tuile est resemée à sa place, sans être retirée d'abord.
    */
-  sync({ replant = false } = {}) {
+  sync({ replant = false, resettle = false } = {}) {
     if (this.disposed || !this.bubble?.frame) return;
 
     for (const key of [...this._planted]) {
@@ -696,6 +673,10 @@ export class VegetationLayer {
       // Sortie de bulle, anneau devenu trop lointain, ou replantation forcée.
       if (replant || !tile || tile.ring > this.maxRing) {
         this.remove(key);
+        continue;
+      }
+      if (resettle) {
+        this._stale.add(key);
         continue;
       }
       // « Plus qu'alors », pas « incomplète » : sinon une tuile de coin, qui
@@ -713,31 +694,52 @@ export class VegetationLayer {
     }
   }
 
-  /** Sème au plus une tuile. À appeler une fois par image. */
-  processQueue() {
-    if (this.disposed || this.queue.length === 0) return false;
-    const key = this.queue.shift();
-    const tile = this.bubble.tiles.get(key);
-    if (!tile) return false;
-    if (this._planted.has(key) && !this._stale.has(key)) return false;
-    this._planted.add(key);
-    this._stale.delete(key);
-    try {
-      this._build(tile);
-    } catch (e) {
-      console.warn('[vegetation] tuile non semée', key, e?.message || e);
-    }
-    return true;
+  /** Vrai tant qu'une tuile attend son semis ou est en cours de semis. */
+  get pending() {
+    return this.queue.length > 0 || this._pendingBuild !== null;
+  }
+
+  /**
+   * Fait avancer le semis des tuiles en file dans la limite de `budgetMs`. Une
+   * tuile commencée garde son ancien maillage jusqu'à la relève. À appeler une
+   * fois par image.
+   * @returns {boolean} vrai s'il reste du travail.
+   */
+  processQueue(budgetMs = VEGETATION_BUILD_BUDGET_MS) {
+    if (this.disposed) return false;
+    const deadline = performance.now() + budgetMs;
+    do {
+      if (!this._pendingBuild) {
+        if (this.queue.length === 0) return false;
+        const key = this.queue.shift();
+        const tile = this.bubble.tiles.get(key);
+        if (!tile || (this._planted.has(key) && !this._stale.has(key))) continue;
+        this._planted.add(key);
+        this._stale.delete(key);
+        this._pendingBuild = { key, steps: this._buildSteps(tile) };
+      }
+      try {
+        if (this._pendingBuild.steps.next().done) this._pendingBuild = null;
+      } catch (e) {
+        console.warn('[vegetation] tuile non semée', this._pendingBuild.key, e?.message || e);
+        this._pendingBuild = null;
+      }
+    } while (performance.now() < deadline);
+    return this.pending;
   }
 
   /** Retire les instances d'une tuile. */
   remove(key) {
-    this.volumes.set(key, null);
+    if (this._pendingBuild?.key === key) {
+      this._pendingBuild.steps.return();
+      this._pendingBuild = null;
+    }
     this._descriptions.delete(key);
     this._planted.delete(key);
     this._partial.delete(key);
     this._stale.delete(key);
-    this._swap(key, null);
+    this._swap(key, []);
+    this._swap(understoryKey(key), []);
   }
 
   /**
@@ -745,18 +747,19 @@ export class VegetationLayer {
    * ensuite. L'ordre est la moitié du correctif : retirer d'abord laisserait la
    * forêt absente le temps que la file revienne à cette tuile.
    */
-  _swap(key, mesh) {
+  _swap(key, meshes) {
     const previous = this.meshes.get(key);
-    if (mesh) {
-      this.group.add(mesh);
-      this.meshes.set(key, mesh);
+    if (meshes.length) {
+      for (const mesh of meshes) this.group.add(mesh);
+      this.meshes.set(key, meshes);
     } else {
       this.meshes.delete(key);
     }
-    if (!previous) return;
-    this.group.remove(previous);
-    previous.geometry.dispose();
-    previous.dispose?.();
+    // La géométrie est le prototype partagé : seules les instances se libèrent.
+    for (const mesh of previous ?? []) {
+      this.group.remove(mesh);
+      mesh.dispose();
+    }
   }
 
   /**
@@ -779,7 +782,12 @@ export class VegetationLayer {
   }
 
   _build(tile) {
-    const { THREE, bubble, groundClass } = this;
+    finishGeneration(this._buildSteps(tile));
+  }
+
+  /** Semis d'une tuile, en étapes courtes ; les maillages ne changent qu'à la fin. */
+  *_buildSteps(tile) {
+    const { bubble, groundClass } = this;
     const frame = bubble.frame;
     if (!frame || !groundClass) return;
     const index = this.roads?.index || null;
@@ -852,7 +860,6 @@ export class VegetationLayer {
           collected.push({
             x,
             z,
-            y: bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale,
             // Un buisson garde sa taille : c'est la houppe qui descend, pas le sol.
             height: tree.height,
             aspect: tree.aspect,
@@ -865,57 +872,86 @@ export class VegetationLayer {
           });
         }
       }
+      yield;
     }
 
     const placements = stableStand(this._descriptions.get(tile.key), collected, MAX_TREES_PER_TILE, p => !inCorridor(index, p.x, p.z));
     this._descriptions.set(tile.key, placements);
-    for (const item of placements) item.color = foliageTint(item.hue, item.x, item.z, item.shade, item.jitter);
-    this.setPlants(tile.key, placements);
+    yield;
+    yield* this._settleSteps(placements);
+    const stand = yield* this._meshSteps(placements, this.material, `vegetation-${tile.key}`, true, false);
+
+    const candidates = yield* this._sowUnderstory(originX, originZ, cellSize, pool, index);
+    // Au-delà du plafond, seuls les plus faibles tirages restent : un
+    // sous-ensemble du même semis, quel que soit l'ordre de parcours.
+    const ceiling = UNDERSTORY_MAX_PER_TILE / candidates.length;
+    const understory = ceiling < 1 ? candidates.filter(p => p.thin < ceiling) : candidates;
+    yield* this._settleSteps(understory);
+    // Pas d'ombre portée : le sous-étage est sous la houppe du peuplement, et
+    // la passe d'ombre est l'endroit où un semis de premier plan coûte le plus.
+    const under = yield* this._meshSteps(understory, this.understoryMaterial, 'vegetation-understory', false, true);
+
+    this._swap(tile.key, stand);
+    this._swap(understoryKey(tile.key), under);
+  }
+
+  /** Altitude et teinte des plantes. L'altitude se relit même pour une plante retenue : le sol a pu être terrassé depuis. */
+  *_settleSteps(list) {
+    const { bubble } = this;
+    for (let i = 0; i < list.length; i++) {
+      const item = list[i];
+      item.y = bubble.surfaceElevationAtLocal(item.x, item.z) * bubble.verticalScale;
+      item.color = foliageTint(item.hue, item.x, item.z, item.shade, item.jitter);
+      if (i % 2000 === 1999) yield;
+    }
   }
 
   /** Représentations communes des semis et des plantations publiées par le compositeur. */
   setPlants(key, placements) {
-    const { THREE } = this;
-    if (placements.length === 0) {
-      this.volumes.set(key, null);
-      this._swap(key, null);
-      return;
+    this._swap(key, this._instances(placements, this.material, `vegetation-${key}`, true));
+  }
+
+  /**
+   * Un `InstancedMesh` par bloc de `VEGETATION_BLOCK_M` et par silhouette.
+   * `thinned` range les instances par poids croissant (`understoryWeight`) :
+   * le nombre d'instances dessinées d'un bloc suit alors son point le plus
+   * proche, et le shader écarte le reste plante par plante.
+   */
+  _instances(placements, material, name, castShadow, thinned = false) {
+    return finishGeneration(this._meshSteps(placements, material, name, castShadow, thinned));
+  }
+
+  *_meshSteps(placements, material, name, castShadow, thinned) {
+    const groups = new Map();
+    for (const item of placements) {
+      if (!this.prototypes[item.variant]) continue;
+      const id = `${Math.floor(item.x / VEGETATION_BLOCK_M)}:${Math.floor(item.z / VEGETATION_BLOCK_M)}:${item.variant}`;
+      let list = groups.get(id);
+      if (!list) groups.set(id, (list = []));
+      list.push(item);
     }
-
-    // Géométrie clonée par tuile : l'attribut d'atlas est une donnée d'instance.
-    const geometry = this.baseGeometry.clone();
-    const near = new THREE.InstancedBufferAttribute(new Float32Array(placements.length), 1).setUsage(THREE.DynamicDrawUsage);
-    geometry.setAttribute(TREE_NEAR_ATTRIBUTE, near);
-    this.volumes.set(key, placements, near);
-    const offsets = new Float32Array(placements.length * 2);
-    placements.forEach((item, index_) => {
-      const [u, v] = TREE_ATLAS_OFFSETS[item.variant];
-      offsets[index_ * 2] = u;
-      offsets[index_ * 2 + 1] = v;
-    });
-    geometry.setAttribute(ATLAS_ATTRIBUTE, new THREE.InstancedBufferAttribute(offsets, 2));
-
-    const mesh = new THREE.InstancedMesh(geometry, this.standMaterial, placements.length);
-    mesh.renderOrder = 1;
-    mesh.name = `vegetation-${key}`;
-    mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true; // un bois s'ombre lui-même
-    mesh.customDepthMaterial = this.depthMaterial;
-
-    placements.forEach((item, index_) => {
-      this._compose(item.x, item.y, item.z, item.height, item.aspect, item.rotation);
-      mesh.setMatrixAt(index_, this._matrix);
-      const [r, g, b] = item.color;
-      this._color.setRGB(r, g, b);
-      mesh.setColorAt(index_, this._color);
-    });
-
-    mesh.instanceMatrix.needsUpdate = true;
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    mesh.computeBoundingSphere();
-
-    this._swap(key, mesh);
+    const meshes = [];
+    for (const list of groups.values()) {
+      if (thinned) list.sort((a, b) => understoryWeight(a) - understoryWeight(b));
+      const mesh = new this.THREE.InstancedMesh(this.prototypes[list[0].variant], material, list.length);
+      mesh.name = name;
+      mesh.castShadow = castShadow;
+      mesh.receiveShadow = true; // un bois s'ombre lui-même
+      if (castShadow) mesh.customDepthMaterial = this.depthMaterial;
+      list.forEach((item, index) => {
+        mesh.setMatrixAt(index, this._compose(item.x, item.y, item.z, item.height, item.aspect, item.rotation));
+        this._color.setRGB(item.color[0], item.color[1], item.color[2]);
+        mesh.setColorAt(index, this._color);
+      });
+      mesh.computeBoundingSphere();
+      if (thinned) {
+        mesh.userData.full = list.length;
+        if (this._recountAt) this._recountMesh(mesh, this._recountAt.x, this._recountAt.z);
+      }
+      meshes.push(mesh);
+      yield;
+    }
+    return meshes;
   }
 
   /** Matrice d'une instance : rapport largeur/hauteur variable, sinon deux arbres de même hauteur sont la même image à l'échelle près. */
@@ -929,67 +965,57 @@ export class VegetationLayer {
   }
 
   /**
-   * Redistribue le sous-étage si l'observateur s'est assez éloigné. À appeler
-   * une fois par image, comme l'herbe.
+   * Pose l'observateur de l'éclaircie, et recompte les instances dessinées par
+   * bloc s'il s'est assez éloigné. À appeler une fois par image. Ne sème rien,
+   * et ne retire jamais une plante à moins de `UNDERSTORY_FULL_M`.
    *
    * @param {number} x Position locale de l'observateur.
    * @param {number} z
-   * @returns {boolean} vrai si une redistribution a eu lieu.
+   * @returns {boolean} vrai si l'éclaircie a été recomptée.
    */
   update(x, z, { force = false } = {}) {
     if (this.disposed || !this.bubble?.frame) return false;
-
-    this.volumes.update(x, z);
-    this.standMaterial.userData.treeObserver.value.set(x,z);
-    this.thicketMaterial.userData.coverObserver.value.set(x,z);
-    const frameChanged = this._thicketFrame !== this.bubble.frame;
-    if (!force && !frameChanged && this._thicketAnchor) {
-      if (Math.hypot(x - this._thicketAnchor.x, z - this._thicketAnchor.z) < THICKET_REBUILD_M) {
-        return false;
-      }
+    this.understoryMaterial.userData.understoryObserver.value.set(x, z);
+    const last = this._recountAt;
+    if (!force && last && Math.hypot(x - last.x, z - last.z) < UNDERSTORY_RECOUNT_M) return false;
+    this._recountAt = { x, z };
+    for (const meshes of this.meshes.values()) {
+      for (const mesh of meshes) if (mesh.userData.full) this._recountMesh(mesh, x, z);
     }
-
-    this._scatterThicket(x, z);
-    this._thicketAnchor = { x, z };
-    this._thicketFrame = this.bubble.frame;
     return true;
   }
 
-  /** Sème le sous-étage, bande par bande et maille par maille. */
-  _scatterThicket(centerX, centerZ) {
-    const { bubble, groundClass, thicket } = this;
-    const capacity = thicket.instanceMatrix.count;
-    const index = this.roads?.index || null;
-    const pool = filterByWords(this.theme.forests, 'species', this.region?.trees);
+  _recountMesh(mesh, x, z) {
+    const sphere = mesh.boundingSphere;
+    const distance = Math.max(0, Math.hypot(sphere.center.x - x, sphere.center.z - z) - sphere.radius);
+    // Une marge : le poids relu par le shader en simple précision peut différer d'un rien.
+    const share = understoryShare(distance);
+    mesh.count = share > 0 ? Math.min(mesh.userData.full, Math.ceil(mesh.userData.full * (share + 0.02))) : 0;
+    mesh.visible = mesh.count > 0;
+  }
+
+  /**
+   * Candidats du sous-étage d'une tuile, sur la grille du peuplement mais avec
+   * leurs propres tirages (`UNDERSTORY_SALT`).
+   */
+  *_sowUnderstory(originX, originZ, cellSize, pool, index) {
+    const { groundClass } = this;
     // De près, le tapis du sol s'ouvre : ronce, buisson bas.
     const strata = understoryStrata(this.theme.trees, true);
     const tree = this._tree;
-    // Un centre arrondi par bande : les mailles retenues ne dépendent que du sol.
-    const bases = THICKET_BANDS.map((band) => ({
-      x: Math.round(centerX / band.cell),
-      z: Math.round(centerZ / band.cell),
-    }));
-    let placed = 0;
-    const plants = [];
-
-    if (groundClass) {
-      for (const cell of this._thicketCells) {
-        if (placed >= capacity) break;
-
-        const band = THICKET_BANDS[cell.band];
-        const base = bases[cell.band];
-        const cellX = (base.x + cell.gx) * band.cell;
-        const cellZ = (base.z + cell.gz) * band.cell;
-        const centreX = cellX + band.cell * 0.5;
-        const centreZ = cellZ + band.cell * 0.5;
-
+    const out = [];
+    for (let cy = 0; cy < VEGETATION_CELLS; cy++) {
+      for (let cx = 0; cx < VEGETATION_CELLS; cx++) {
+        const cellX = originX + cx * cellSize;
+        const cellZ = originZ + cy * cellSize;
+        const centreX = cellX + cellSize * 0.5;
+        const centreZ = cellZ + cellSize * 0.5;
 
         const type = standTypeFrom(pool, centreX, centreZ);
-        const stems =
-          woodDensity(groundClass.woodAt(centreX, centreZ)) *
-          thicketPerCell(thicketDensityFor(type), band.cell);
-        // Même refus au milieu d'une flaque, même bordure plus dense qu'au
-        // premier plan (voir l'autre site d'appel, `_build`).
+        const stems = woodDensity(groundClass.woodAt(centreX, centreZ)) *
+          thicketPerCell(thicketDensityFor(type), cellSize);
+        // Même refus au milieu d'une flaque, même bordure plus dense que le
+        // fourré du peuplement (voir `_build`).
         const thickCover = groundClass.surfaceAt?.(centreX, centreZ) ?? null;
         const thickLook = coverBushesFor(thickCover, this.theme.surfaces);
         const thickStanding = thickCover ? this.theme.surfaces[thickCover]?.standingWater ?? 0 : 0;
@@ -1000,58 +1026,41 @@ export class VegetationLayer {
         const thick =
           thickPool > 0.5
             ? 0
-            : thickLook.density * thicketPerCell(1, band.cell) * (1 + poolEdgeGain(thickPool) * BUSH_POOL_EDGE_BOOST);
+            : thickLook.density * thicketPerCell(1, cellSize) * (1 + poolEdgeGain(thickPool) * BUSH_POOL_EDGE_BOOST);
         const expected = stems + thick;
         if (expected <= 0) continue;
 
-        const share = Math.min(1, expected / band.perCell);
+        const share = Math.min(1, expected / UNDERSTORY_CANDIDATES);
         const edge = groundClass.woodEdgeAt?.(centreX, centreZ) ?? 0;
         const lowPart = edgeLowPart((stems * lowStratumPart(type) + thick) / expected, edge);
-        // À distance, une instance représente plusieurs mètres carrés : la
-        // densité d'une bande large est relevée, son panneau élargi.
-        const keep = coverMassDensity(share, band);
         const variants = variantsFor(type, this.theme.trees.essences);
         const cellStrata = thickLook.essence ? essenceStrata(thickLook.essence, this.theme.trees) : strata;
-        const seed = positionSeed(cellX, cellZ, band.salt);
+        const seed = positionSeed(cellX, cellZ, UNDERSTORY_SALT);
 
-        for (let i = 0; i < band.perCell && placed < capacity; i++) {
+        for (let i = 0; i < UNDERSTORY_CANDIDATES; i++) {
           const slot = i * STAND_SLOTS;
-          if (standDraw(seed, slot + SLOT_PRESENCE) >= keep) continue;
-
-          const x = cellX + standDraw(seed, slot + SLOT_X) * band.cell;
-          const z = cellZ + standDraw(seed, slot + SLOT_Z) * band.cell;
+          if (standDraw(seed, slot + SLOT_PRESENCE) >= share) continue;
+          const x = cellX + standDraw(seed, slot + SLOT_X) * cellSize;
+          const z = cellZ + standDraw(seed, slot + SLOT_Z) * cellSize;
           if (inCorridor(index, x, z)) continue;
 
           describeTree(tree, seed, slot, type, lowPart, variants, cellStrata, true, edge, this.theme.trees.variants);
-          const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
-          const height = tree.height * band.rise;
-
-          this._compose(x, y, z, height, tree.aspect * band.spread, tree.rotation);
-          thicket.setMatrixAt(placed, this._matrix);
-          const [r, g, b] = foliageTint(type.tint, x, z, tree.shade, tree.jitter);
-          this._color.setRGB(r, g, b);
-          thicket.setColorAt(placed, this._color);
-          const [u, v] = TREE_ATLAS_OFFSETS[tree.variant];
-          this._thicketOffsets[placed * 2] = u;
-          this._thicketOffsets[placed * 2 + 1] = v;
-          this._thicketBands.set([band.from, band.to, band.fadeIn, band.fadeOut], placed * 4);
-          plants.push({ x, y, z, height, aspect: tree.aspect * band.spread,
-            rotation: tree.rotation, variant: tree.variant, color: [r, g, b],
-            band: [band.from, band.to, band.fadeIn, band.fadeOut] });
-          placed++;
+          out.push({
+            x, z,
+            height: tree.height,
+            aspect: tree.aspect,
+            rotation: tree.rotation,
+            variant: tree.variant,
+            shade: tree.shade,
+            jitter: tree.jitter,
+            thin: tree.thin,
+            hue: type.tint,
+          });
         }
       }
+      yield;
     }
-
-    this._thicketNear.array.fill(0);
-    this._thicketNear.needsUpdate = true;
-    this.volumes.set('sous-etage', plants, this._thicketNear);
-    this.volumes.update(centerX, centerZ);
-    thicket.count = placed;
-    thicket.instanceMatrix.needsUpdate = true;
-    if (thicket.instanceColor) thicket.instanceColor.needsUpdate = true;
-    this.thicketGeometry.getAttribute(ATLAS_ATTRIBUTE).needsUpdate = true;
-    this.thicketGeometry.getAttribute(COVER_ATTRIBUTE).needsUpdate = true;
+    return out;
   }
 
   dispose() {
@@ -1061,23 +1070,18 @@ export class VegetationLayer {
     this._planted.clear();
     this._partial.clear();
     this._stale.clear();
-    for (const mesh of this.meshes.values()) {
-      this.group.remove(mesh);
-      mesh.geometry.dispose();
-      mesh.dispose?.();
+    for (const meshes of this.meshes.values()) {
+      for (const mesh of meshes) {
+        this.group.remove(mesh);
+        mesh.dispose();
+      }
     }
     this.meshes.clear();
     this._descriptions.clear();
-    this.group.remove(this.thicket);
-    this.thicket.dispose?.();
-    this.thicketGeometry.dispose();
-    this.thicketMaterial.dispose();
     this.scene.remove(this.group);
-    this.baseGeometry.dispose();
-    this.volumes.dispose();
-    this.standMaterial.dispose();
+    for (const geometry of this.prototypes) geometry.dispose();
     this.material.dispose();
+    this.understoryMaterial.dispose();
     this.depthMaterial.dispose();
-    this.texture.dispose();
   }
 }

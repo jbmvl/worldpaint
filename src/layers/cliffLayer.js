@@ -70,9 +70,6 @@ const CLIFF_SAMPLE_M = 7;
 /** Au-delà, une falaise ne se lit plus : inutile de la tailler. */
 const CLIFF_RADIUS_M = 1400;
 
-/** Déplacement de l'observateur qui justifie une reconstruction. */
-const CLIFF_REBUILD_M = 160;
-
 /**
  * Longueur sur laquelle la marche s'estompe au-delà du bout d'un trait, en
  * mètres. Sans elle, la marche se prolongeait autour du bout jusqu'à la portée
@@ -370,13 +367,6 @@ export class CliffLayer {
     this.disposed = false;
     this._anchor = null;
     this._frame = null;
-  }
-
-  /** Vrai si l'observateur s'est assez éloigné pour justifier une reconstruction. */
-  needsRebuild(x, z) {
-    if (this._frame !== this.bubble?.frame) return true;
-    if (!this._anchor) return true;
-    return Math.hypot(x - this._anchor.x, z - this._anchor.z) >= CLIFF_REBUILD_M;
   }
 
   /**

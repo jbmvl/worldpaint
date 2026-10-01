@@ -26,7 +26,7 @@ import { defaultTheme } from '../themes/default.js';
 export const SHOWCASE_FIELDS = Object.freeze([
   { field: 'matrix', label: 'Terrain' },
   { field: 'stone', label: 'Couleur de pierre' },
-  { field: 'building', label: 'Bâti (mur, toit)' },
+  { field: 'building', label: 'Bâti' },
   { field: 'farming', label: 'Cultures' },
   { field: 'trees', label: 'Arbres' },
 ]);
@@ -85,25 +85,34 @@ const TRANSLATIONS = {
     loess: 'Lœss',
   },
   building: {
-    light_stone: 'Pierre claire',
-    dark_stone: 'Pierre sombre',
-    granite: 'Granit',
-    red_brick: 'Brique rouge',
-    pale_brick: 'Brique pâle',
-    half_timber: 'Colombage',
-    whitewash: 'Chaux blanchie',
-    rendered: 'Enduit',
-    timber: 'Bois',
-    red_timber: 'Bois rouge',
-    adobe: 'Torchis (adobe)',
-    slate_roof: "Toit d'ardoise",
-    flat_tile_roof: 'Toit de tuile plate',
-    curved_tile_roof: 'Toit de tuile canal',
-    stone_slab_roof: 'Toit de lauze',
-    flat_roof: 'Toit-terrasse',
-    thatch_roof: 'Toit de chaume',
-    shingle_roof: 'Toit de bardeaux',
-    metal_roof: 'Toit de tôle',
+    light_stone_flat_tile: 'Pierre claire, tuile plate',
+    light_stone_curved_tile: 'Pierre claire, tuile canal',
+    light_stone_slate: 'Pierre claire, ardoise',
+    light_stone_stone_slab: 'Pierre claire, lauze',
+    light_stone_thatch: 'Pierre claire, chaume',
+    light_stone_terrace: 'Pierre claire, toit-terrasse',
+    dark_stone_flat_tile: 'Pierre sombre, tuile plate',
+    dark_stone_curved_tile: 'Pierre sombre, tuile canal',
+    dark_stone_slate: 'Pierre sombre, ardoise',
+    dark_stone_stone_slab: 'Pierre sombre, lauze',
+    granite_flat_tile: 'Granit, tuile plate',
+    granite_curved_tile: 'Granit, tuile canal',
+    granite_slate: 'Granit, ardoise',
+    granite_stone_slab: 'Granit, lauze',
+    red_brick_flat_tile: 'Brique rouge, tuile plate',
+    red_brick_slate: 'Brique rouge, ardoise',
+    red_brick_thatch: 'Brique rouge, chaume',
+    pale_brick_flat_tile: 'Brique pâle, tuile plate',
+    pale_brick_curved_tile: 'Brique pâle, tuile canal',
+    half_timber_flat_tile: 'Colombage, tuile plate',
+    half_timber_curved_tile: 'Colombage, tuile canal',
+    whitewash_curved_tile: 'Chaux blanchie, tuile canal',
+    whitewash_slate: 'Chaux blanchie, ardoise',
+    whitewash_terrace: 'Chaux blanchie, toit-terrasse',
+    rendered_curved_tile: 'Enduit, tuile canal',
+    rendered_thatch: 'Enduit, chaume',
+    timber_stone_slab: 'Bois, lauze',
+    adobe_curved_tile: 'Torchis (adobe), tuile canal',
   },
   farming: {
     cereal: 'Céréale',
@@ -216,26 +225,18 @@ function stoneEntries(theme) {
   });
 }
 
-/** Le premier village dont la palette cite ce mot, ou le premier du nuancier à défaut. */
-function townFor(theme, word) {
-  const matching = theme.towns.filter((palette) => !palette.materials || palette.materials.includes(word));
-  return matching[0] || theme.towns[0];
-}
-
 function buildingEntries(theme) {
+  const first = Object.keys(theme.towns)[0];
   return Object.entries(VOCABULARIES.building).map(([value, def]) => {
-    const palette = townFor(theme, value);
+    const palette = theme.towns[value] || theme.towns[first];
     return {
       value,
       label: translate('building', value),
       unsupported: !!def.unsupported,
       note: def.unsupported || null,
       shape: 'house',
-      // Le vocabulaire ne marque pas mur/toit à part : `_roof` suffit, c'est
-      // la même convention que `regions.js` emploie déjà pour les nommer.
-      part: value.endsWith('_roof') ? 'roof' : 'wall',
-      wall: palette.walls[0],
-      roof: palette.roofs[0],
+      wall: palette.wall,
+      roof: palette.roof,
       roofShape: palette.roofShapes[0],
     };
   });

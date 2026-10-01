@@ -79,9 +79,9 @@ par identité d'arbre : âge, port, dissymétrie et inclinaison.
 
 ### 3.2 Moyenne distance : bouquets
 
-Regrouper les arbres du peuplement en bouquets avec les silhouettes d'atlas
+Regrouper les arbres du peuplement en bouquets avec les silhouettes
 existantes. Un bouquet a une composition et une teinte stables, plutôt qu'une
-succession de cartes indépendantes.
+succession d'arbres indépendants.
 
 ### 3.3 Horizon : imposteurs de masses forestières
 

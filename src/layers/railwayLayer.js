@@ -47,8 +47,6 @@ import { Kit } from '../models/kit.js';
 export const RAILWAY_SOURCE_LAYER = 'transportation';
 /** Portée maximale autour de l'observateur, en mètres. */
 export const RAILWAY_RADIUS_M = 900;
-/** Déplacement de l'observateur avant reconstruction, en mètres. */
-export const RAILWAY_REBUILD_M = 250;
 /** Pas de ré-échantillonnage le long d'une voie, en mètres. */
 export const RAILWAY_SAMPLE_M = 6;
 /** Demi-écartement des rails, en mètres — proche de la voie normale (1,435 m). */
@@ -300,13 +298,6 @@ export class RailwayLayer {
     if (this._frame !== this.bubble?.frame) return 0;
     const radius = Math.min(RAILWAY_RADIUS_M, this.bubble?.radiusMeters || RAILWAY_RADIUS_M);
     return knownCoverage(minX, minZ, maxX, maxZ, this._anchor, radius);
-  }
-
-  /** Vrai si l'observateur s'est assez éloigné pour justifier une reconstruction. */
-  needsRebuild(x, z) {
-    if (this._frame !== this.bubble?.frame) return true;
-    if (!this._anchor) return true;
-    return Math.hypot(x - this._anchor.x, z - this._anchor.z) >= RAILWAY_REBUILD_M;
   }
 
   /**

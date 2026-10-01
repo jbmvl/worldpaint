@@ -1,10 +1,12 @@
-/* Même description d'arbre, positions et couleur pour les deux distances. */
+/* Arbres et buissons : un prototype en volume par silhouette, rangé par bloc. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { treePrototype } from '../src/models/treeKit.js';
-import { TreeVolumes, TREE_VOLUME_BUDGET } from '../src/layers/treeVolumes.js';
+import { VegetationLayer, VEGETATION_BLOCK_M, understoryShare, understoryWeight, UNDERSTORY_FULL_M, UNDERSTORY_FAR_M } from '../src/layers/vegetationLayer.js';
+import { plantedTree } from '../src/layers/plantedTrees.js';
 import { defaultTheme } from '../src/themes/default.js';
+
 test('les prototypes sont déterministes, bornés et sans triangle dégénéré', () => {
   defaultTheme.trees.variants.forEach((v,i) => {
     const p=treePrototype(v,i);
@@ -17,141 +19,134 @@ test('les prototypes sont déterministes, bornés et sans triangle dégénéré'
     }
   });
 });
-test('le volume proche garde le placement du peuplement et libère ses lots', () => {
-  const group=new THREE.Group(); const volumes=new TreeVolumes(THREE,group,defaultTheme);
-  volumes.set('a',[{variant:0,x:20,y:3,z:0,height:14,aspect:.7,rotation:.4,color:[1,1,1]}]);
-  volumes.update(0,0);
-  assert.equal(volumes.batches[0].count,1);
-  assert.equal(volumes.batches[0].instanceMatrix.array[12],20);
-  volumes.update(500,0); assert.equal(volumes.batches[0].count,0);
-  volumes.dispose(); assert.equal(group.children.length,0);
-});
-
-test('la relève opaque conserve la profondeur et la découpe dans les ombres', () => {
-  const group=new THREE.Group(); const volumes=new TreeVolumes(THREE,group,defaultTheme);
-  const shader={uniforms:{},vertexShader:'#include <common>\n#include <begin_vertex>',fragmentShader:'#include <common>\n#include <alphatest_fragment>'};
-  volumes.material.onBeforeCompile(shader);
-  assert.equal(volumes.material.transparent, false);
-  assert.equal(volumes.material.depthWrite, true);
-  assert.ok(shader.fragmentShader.includes('vTreeVisible'));
-      assert.ok(!shader.fragmentShader.includes('coverThreshold'));
-  const depth = { uniforms: {}, vertexShader: THREE.ShaderLib.depth.vertexShader, fragmentShader: THREE.ShaderLib.depth.fragmentShader };
-  volumes.batches[0].customDepthMaterial.onBeforeCompile(depth);
-  assert.ok(depth.fragmentShader.includes('vTreeVisible'));
-  assert.equal(depth.uniforms.uCoverObserver, shader.uniforms.uCoverObserver);
-  const band=volumes.batches[0].geometry.attributes.aCoverBand.array;
-  assert.equal(band[1],1e7);
-  assert.equal(band[3],0);
-  volumes.dispose();
-});
-
-import { VegetationLayer } from '../src/layers/vegetationLayer.js';
-import { createTreeAtlasCanvas, TREE_ATLAS_OFFSETS, TREE_ATLAS_COLS } from '../src/materials/proceduralTextures.js';
-
-function canvasTemoin(action) {
-  const touched = new Set();
-  let cell = 0;
-  const stack = [];
-  const mark = () => touched.add(cell);
-  const ctx = {
-    save() { stack.push(cell); }, restore() { cell = stack.pop(); },
-    translate(x, y) { if (stack.length === 1) cell = x / 160 + y / 160 * TREE_ATLAS_COLS; },
-    beginPath() {}, closePath() {}, moveTo() {}, lineTo() {}, arc() {}, ellipse() {},
-    quadraticCurveTo() {}, scale() {}, rotate() {}, fill: mark, stroke: mark, fillRect: mark,
-  };
-  const previous = globalThis.OffscreenCanvas;
-  globalThis.OffscreenCanvas = class {
-    constructor(width, height) { Object.assign(this, { width, height }); }
-    getContext() { return ctx; }
-  };
-  try { action(touched); } finally { globalThis.OffscreenCanvas = previous; }
-}
-
 const placement = (variant, x, z = 0) => ({ variant, x, z, y: 0, height: 10, aspect: .7, rotation: 0, color: [1, 1, 1] });
-const bandes = count => {
-  const attribute = new THREE.InstancedBufferAttribute(new Float32Array(count), 1);
-  return attribute;
+const couche = (options = {}) => new VegetationLayer({ THREE, scene: new THREE.Scene(),
+  bubble: { frame: {}, surfaceElevationAtLocal: () => 0, verticalScale: 1 }, ...options });
+
+test('toutes les silhouettes des essences ont un volume', () => {
+  const layer = couche();
+  const plants = defaultTheme.trees.variants.map((_, i) => placement(i, 0));
+  layer.setPlants('essences', plants);
+  const variants = new Set(layer.meshes.get('essences').map(m => layer.prototypes.indexOf(m.geometry)));
+  for (const indices of Object.values(defaultTheme.trees.essences)) for (const i of indices) {
+    assert.ok(variants.has(i), `volume absent pour ${i}`);
+  }
+  layer.dispose();
+});
+
+test('un maillage par bloc et par silhouette, à la position du semis', () => {
+  const layer = couche();
+  const plants = [placement(0, 10), placement(0, 20), placement(0, VEGETATION_BLOCK_M + 10), placement(5, 10)];
+  layer.setPlants('t', plants);
+  const meshes = layer.meshes.get('t');
+  assert.deepEqual(meshes.map(m => m.count).sort(), [1, 1, 2]);
+  for (const mesh of meshes) {
+    assert.equal(mesh.frustumCulled, true, 'l’élimination hors champ travaille par bloc');
+    assert.ok(mesh.boundingSphere, 'sphère englobante du bloc');
+  }
+  const first = meshes.find(m => m.count === 2);
+  assert.equal(first.instanceMatrix.array[12], 10);
+  assert.equal(first.instanceMatrix.array[16 + 12], 20);
+  layer.dispose();
+});
+
+test('une relève retire les anciennes instances sans toucher au prototype partagé', () => {
+  const layer = couche();
+  layer.setPlants('t', [placement(0, 10)]);
+  const [previous] = layer.meshes.get('t');
+  let disposed = 0;
+  layer.prototypes[0].addEventListener('dispose', () => disposed++);
+  layer.setPlants('t', [placement(0, 12)]);
+  assert.equal(previous.parent, null);
+  assert.equal(layer.meshes.get('t')[0].geometry, layer.prototypes[0]);
+  layer.setPlants('t', []);
+  assert.equal(layer.meshes.has('t'), false);
+  assert.equal(disposed, 0);
+  layer.dispose();
+});
+
+test('un terrassement resème les bois à leur place sans les retirer d’abord', () => {
+  const tile = { key: 'k', ring: 0 };
+  const layer = new VegetationLayer({ THREE, scene: new THREE.Scene(),
+    bubble: { frame: {}, tiles: new Map([['k', tile]]) } });
+  layer._planted.add('k');
+  layer.setPlants('k', [placement(0, 10)]);
+  const meshes = layer.meshes.get('k');
+  layer.sync({ resettle: true });
+  assert.equal(layer.meshes.get('k'), meshes, 'le bois reste affiché tant qu’il n’est pas resemé');
+  assert.deepEqual(layer.queue, ['k']);
+  layer.dispose();
+});
+
+const bois = () => {
+  const tile = { key: 't', x: 0, y: 0, ring: 0 };
+  const layer = new VegetationLayer({ THREE, scene: new THREE.Scene(),
+    bubble: { frame: { scale: 834, origin: { x: 0, y: 0 } }, tiles: new Map([['t', tile]]),
+      surfaceElevationAtLocal: () => 0, verticalScale: 1 },
+    groundClass: { woodAt: () => 1, coverageOf: () => 1 } });
+  return { layer, tile };
 };
+const decrits = layer => layer.meshes.get('t/sous-etage').flatMap(m =>
+  Array.from({ length: m.userData.full }, (_, i) => `${m.instanceMatrix.array[i * 16 + 12].toFixed(3)}:${m.instanceMatrix.array[i * 16 + 14].toFixed(3)}:${layer.prototypes.indexOf(m.geometry)}`)).sort();
 
-test('les dix-sept variantes et toutes les essences ont un atlas et une représentation proche', () => {
-  canvasTemoin(touched => {
-    createTreeAtlasCanvas();
-    const volumes = new TreeVolumes(THREE, new THREE.Group(), defaultTheme);
-    const plants = defaultTheme.trees.variants.map((_, i) => placement(i, i));
-    const bands = bandes(plants.length);
-    volumes.set('essences', plants, bands);
-    volumes.update(0, 0);
-    assert.equal(plants.length, 17);
-    for (const indices of Object.values(defaultTheme.trees.essences)) for (const i of indices) {
-      assert.ok(touched.has(i), `atlas vide pour ${i}`);
-      assert.ok(TREE_ATLAS_OFFSETS[i].every(Number.isFinite));
-        assert.equal(volumes.batches[i].count, 1, `volume absent pour ${i}`);
-        assert.equal(bands.getX(i), 1);
-    }
-    volumes.dispose();
-  });
+test('le sous-étage est semé par tuile, sans dépendre de l’observateur', () => {
+  const { layer, tile } = bois();
+  layer.update(0, 0, { force: true });
+  layer._build(tile);
+  const avant = decrits(layer);
+  assert.ok(avant.length > 1000, `${avant.length} plantes`);
+  layer.update(300, 200, { force: true });
+  layer._build(tile);
+  assert.deepEqual(decrits(layer), avant);
+  const meshes = layer.meshes.get('t/sous-etage');
+  assert.ok(meshes.length > 0);
+  assert.ok(meshes.every(m => m.castShadow === false && m.receiveShadow));
+  layer.remove('t');
+  assert.equal(layer.meshes.has('t/sous-etage'), false);
+  layer.dispose();
 });
 
-test('les plans du peuplement et les buissons écrivent leur profondeur sans tri transparent', () => {
-  canvasTemoin(() => {
-    const layer = new VegetationLayer({ THREE, scene: new THREE.Scene(), bubble: {} });
-    for (const material of [layer.standMaterial, layer.thicketMaterial]) {
-      assert.equal(material.transparent, false);
-      assert.equal(material.depthWrite, true);
-      assert.equal(material.depthTest, true);
-      assert.equal(material.alphaTest, .5);
-      const shader = { uniforms: {}, vertexShader: THREE.ShaderLib.lambert.vertexShader, fragmentShader: THREE.ShaderLib.lambert.fragmentShader };
-      material.onBeforeCompile(shader);
-      assert.ok(shader.fragmentShader.includes('vTreeVisible'));
-      assert.ok(!shader.fragmentShader.includes('coverThreshold'));
-    }
-    layer.dispose();
-  });
+test('un bloc éclairci range ses plantes par poids, lu dans leur orientation', () => {
+  const layer = couche();
+  const turns = [0.7, 0.1, 0.9, 0.4];
+  const plants = turns.map((turn, i) => ({ ...placement(0, i), rotation: turn * Math.PI * 2 }));
+  plants.forEach((p, i) => assert.ok(Math.abs(understoryWeight(p) - turns[i]) < 1e-9));
+  const [mesh] = layer._instances(plants, layer.understoryMaterial, 'essai', false, true);
+  const xs = [0, 1, 2, 3].map(i => mesh.instanceMatrix.array[i * 16 + 12]);
+  assert.deepEqual(xs, [1, 3, 0, 2]);
+  // Le poids relu dans la matrice, comme le fait le shader.
+  for (let i = 0; i < 4; i++) {
+    const a = mesh.instanceMatrix.array;
+    const turn = Math.atan2(-a[i * 16 + 2], a[i * 16]) / (Math.PI * 2);
+    assert.ok(Math.abs((turn - Math.floor(turn)) - [0.1, 0.4, 0.7, 0.9][i]) < 1e-6);
+  }
+  const shader = { uniforms: {}, vertexShader: THREE.ShaderLib.lambert.vertexShader, fragmentShader: THREE.ShaderLib.lambert.fragmentShader };
+  layer.understoryMaterial.onBeforeCompile(shader);
+  assert.ok(shader.vertexShader.includes('if (understoryWeight >= understoryShare) transformed = vec3(0.0);'));
+  assert.ok(shader.vertexShader.includes(`${UNDERSTORY_FULL_M.toFixed(1)}`));
+  layer.dispose();
 });
 
-test('le budget conserve les plans excédentaires et privilégie les proches indépendamment des tuiles', () => {
-  const volumes = new TreeVolumes(THREE, new THREE.Group(), defaultTheme);
-  const plants = Array.from({ length: TREE_VOLUME_BUDGET + 20 }, (_, i) => placement(7, i / 100));
-  const bands = bandes(plants.length);
-  volumes.set('dense', plants.toReversed(), bands);
-  volumes.update(0, 0);
-  assert.equal(volumes.batches[7].count, TREE_VOLUME_BUDGET);
-  assert.equal(volumes.selected[0].p.x, 0);
-  assert.equal(bands.getX(0), 0);
-  assert.equal(bands.getX(plants.length - 1), 1);
-  assert.deepEqual(volumes.batches[7].instanceMatrix.updateRanges, [{ start: 0, count: TREE_VOLUME_BUDGET * 16 }]);
-  const positions = volumes.selected.map(entry => entry.p.x);
-  volumes.set('dense', null);
-  volumes.set('première', plants.slice(0, 1000));
-  volumes.set('seconde', plants.slice(1000));
-  volumes.update(0, 0);
-  assert.deepEqual(volumes.selected.map(entry => entry.p.x), positions);
-  volumes.update(500, 0);
-  assert.equal(volumes.batches[7].count, 0);
-  assert.ok(bands.array.every((v, i) => i % 4 !== 0 || v === 0));
-  volumes.dispose();
+test('l’éclaircie garde un sous-ensemble des mêmes plantes, jamais à moins de 500 m', () => {
+  assert.equal(understoryShare(0), 1);
+  assert.equal(understoryShare(UNDERSTORY_FULL_M), 1);
+  assert.equal(understoryShare(UNDERSTORY_FAR_M), 0);
+  const { layer, tile } = bois();
+  layer._build(tile);
+  const meshes = layer.meshes.get('t/sous-etage');
+  // L'observateur au centre de la tuile, puis au loin.
+  layer.update(417, 417, { force: true });
+  const proches = meshes.filter(m => Math.hypot(m.boundingSphere.center.x - 417, m.boundingSphere.center.z - 417) - m.boundingSphere.radius <= UNDERSTORY_FULL_M);
+  assert.ok(proches.length > 0);
+  assert.ok(proches.every(m => m.count === m.userData.full), 'complet sous 500 m');
+  layer.update(417 + 900, 417, { force: true });
+  assert.ok(meshes.some(m => m.count < m.userData.full), 'au loin, le sous-étage s’éclaircit');
+  layer.update(417, 417, { force: true });
+  assert.ok(proches.every(m => m.count === m.userData.full), 'le retour rend le même bloc complet');
+  layer.dispose();
 });
 
-test('une tuile lointaine n’est pas parcourue et un retrait invalide les volumes sans déplacement', () => {
-  const volumes = new TreeVolumes(THREE, new THREE.Group(), defaultTheme);
-  const far = placement(0, 1000);
-  volumes.set('loin', [far]);
-  Object.defineProperty(far, 'variant', { get() { throw new Error('placement lointain parcouru'); } });
-  volumes.set('près', [placement(0, 0)]);
-  volumes.update(0, 0);
-  assert.equal(volumes.batches[0].count, 1);
-  volumes.set('près', null);
-  volumes.update(0, 0);
-  assert.equal(volumes.batches[0].count, 0);
-  volumes.dispose();
-});
-
-import { plantedTree } from '../src/layers/plantedTrees.js';
-import { TREE_NEAR_FROM, TREE_NEAR_TO } from '../src/materials/treeTransition.js';
-
-test('la relève est deux fois plus lointaine et toutes les plantations ont une variante valide', () => {
-  assert.equal(TREE_NEAR_FROM, 240);
-  assert.equal(TREE_NEAR_TO, 380);
+test('toutes les plantations ont une variante valide et un tirage stable', () => {
   for (const kind of Object.keys(defaultTheme.trees.plantations)) {
     const p = { x: 31, y: 4, z: 12, scale: 1 };
     const a = plantedTree(kind, p, defaultTheme.trees);
@@ -160,49 +155,6 @@ test('la relève est deux fois plus lointaine et toutes les plantations ont une 
     assert.equal(a.y, p.y);
     assert.notDeepEqual(a, plantedTree(kind, { ...p, x: 32 }, defaultTheme.trees));
   }
-});
-
-test('le sous-étage transmet ses bandes aux volumes et reste visible après redistribution', () => {
-  canvasTemoin(() => {
-    const layer = new VegetationLayer({ THREE, scene: new THREE.Scene(),
-      bubble: { frame: {}, surfaceElevationAtLocal: () => 0, verticalScale: 1 }, groundClass: { woodAt: () => 1 } });
-    layer.update(0, 0, { force: true });
-    assert.ok(layer.thicket.count > 0);
-    const check = () => {
-      for (const entry of layer.volumes.selected) {
-        const { p } = entry;
-        const slot = layer.volumes.residents[p.variant].slots.get(entry);
-        const band = layer.volumes.batches[p.variant].geometry.getAttribute('aCoverBand');
-        assert.deepEqual(Array.from(band.array.slice(slot * 4, slot * 4 + 4)), p.band);
-        assert.equal(layer._thicketNear.getX(entry.index), 1);
-      }
-      for (let i = 0; i < layer.thicket.count; i++) {
-        if (layer._thicketNear.getX(i) === 1) assert.ok(layer.volumes.selected.some(e => e.index === i));
-      }
-    };
-    check();
-    layer.update(20, 0, { force: true });
-    check();
-    layer.dispose();
-  });
-});
-
-test('les bandes des buissons ne modifient jamais leur taille, en plan, en volume ou en ombre', () => {
-  canvasTemoin(() => {
-    const layer = new VegetationLayer({ THREE, scene: new THREE.Scene(), bubble: {} });
-    const materials = [layer.thicketMaterial, layer.volumes.material, layer.volumes.batches[7].customDepthMaterial];
-    for (const material of materials) {
-      const library = material.isMeshDepthMaterial ? THREE.ShaderLib.depth : THREE.ShaderLib.lambert;
-      const shader = { uniforms: {}, vertexShader: library.vertexShader, fragmentShader: library.fragmentShader };
-      material.onBeforeCompile(shader);
-      assert.ok(!/transformed\s*\*=/.test(shader.vertexShader), 'aucune réduction du végétal');
-      assert.ok(!shader.vertexShader.includes('smoothstep(0.0, 1.0, vCoverFade)'));
-      assert.ok(shader.fragmentShader.includes('if (vCoverFade < 0.5) discard;'), 'même seuil opaque dans chaque passe');
-      assert.ok(shader.fragmentShader.includes('vTreeVisible'), 'même relève plan/volume que les arbres');
-      assert.equal(material.transparent, false);
-    }
-    layer.dispose();
-  });
 });
 
 import { buildRows } from '../src/layers/furniture/parcels.js';
@@ -234,10 +186,8 @@ test('les pommes sont des facettes du prototype, sans instances supplémentaires
   const withoutFruit = treePrototype({ ...look, fruit: null }, variant);
   assert.equal(withFruit.positions.length - withoutFruit.positions.length,
     (look.volume.lobes ?? 5) * look.fruit.perLobe * 8 * 9);
-  const volumes = new TreeVolumes(THREE, new THREE.Group(), defaultTheme);
-  volumes.set('verger', [placement(variant, 0)], bandes(1));
-  volumes.update(0, 0);
-  assert.equal(volumes.selected.length, 1);
-  assert.equal(volumes.batches[variant].count, 1);
-  volumes.dispose();
+  const layer = couche();
+  layer.setPlants('verger', [placement(variant, 0)]);
+  assert.deepEqual(layer.meshes.get('verger').map(m => m.count), [1]);
+  layer.dispose();
 });

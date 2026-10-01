@@ -51,7 +51,7 @@ continent sans rien casser d'autre.
   anchors: [[-0.55, 47.45], [-0.15, 47.3]],
   matrix: 'hedgerow_meadow',
   stone: 'limestone',
-  building: ['light_stone', 'slate_roof'],
+  building: 'light_stone_slate',
   farming: ['cereal', 'vineyard', 'maize', 'orchard'],
   trees: ['oak', 'chestnut', 'beech'],
 }
@@ -65,8 +65,10 @@ continent sans rien casser d'autre.
   partout où elle se montre : la roche des fortes pentes, la dalle et
   l'éboulis, et ce qui est bâti dedans — muret de pierre sèche, mur de
   soutènement, paroi de déblai. Une seule.
-- **`building`** — un mur, puis un toit, dans cet ordre, deux mots au plus. Le
-  toit se lit de plus loin que le mur.
+- **`building`** — la palette du bâti, par sa clé `<mur>_<couverture>` dans
+  `TOWN_PALETTES`. Une seule : elle donne le mur, le toit, le volet et la pente
+  de toit de toutes les maisons du pays. Si aucune palette écrite ne convient,
+  on en ajoute une au thème et sa clé à `BUILDING_KINDS`.
 - **`farming`** — l'assolement, **du plus répandu au moins répandu**. Le rang
   est l'information : il n'y a aucun poids à écrire, et une liste dans le
   désordre fait une région couverte de vignes.
@@ -106,7 +108,7 @@ moteur.
 | Tranche | Ce qu'elle accroche | Comment |
 | --- | --- | --- |
 | `FOREST_TYPES` | les essences | un peuplement cite des `species` ; il est retenu si le pays en nomme une |
-| `TOWN_PALETTES` | le bâti | une palette cite des `materials` ; même règle |
+| `TOWN_PALETTES` | le bâti | une palette par clé : le pays nomme la sienne |
 | `SOIL_LOOK` | la matrice | une entrée par matrice : le lavage du sol, la densité et la hauteur des touffes |
 | `STONE_LOOK` | la pierre | une teinte par géologie, appliquée à la roche et aux ouvrages qui en sont faits |
 | `SKY_PALETTE.variants` | la matrice | une variante cite les matrices dont elle colore l'air |

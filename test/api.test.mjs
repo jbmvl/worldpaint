@@ -367,9 +367,10 @@ test('chaque famille d’ouvrage sait bâtir un pont entier et une tête de tunn
 test('chaque palette de bourg propose deux ou trois formes de toit', () => {
   // La règle est du moteur, le nombre est de la composition : un bourg qui
   // offre les cinq formes cesse d'être un bourg et devient un catalogue.
-  for (const palette of TOWN_PALETTES) {
-    assert.ok(palette.roofShapes.length >= 2 && palette.roofShapes.length <= 3, palette.name);
-    assert.ok(palette.walls.length >= 2, palette.name);
-    assert.ok(palette.roofs.length >= 2, palette.name);
+  for (const [name, palette] of Object.entries(TOWN_PALETTES)) {
+    assert.ok(palette.roofShapes.length >= 2 && palette.roofShapes.length <= 3, name);
+    for (const key of ['wall', 'roof', 'shutter']) {
+      assert.match(palette[key], /^#[0-9a-f]{6}$/i, `${name} : un seul ton de ${key}`);
+    }
   }
 });

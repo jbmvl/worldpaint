@@ -35,8 +35,8 @@
  *
  * `STONE_KINDS` et `BUILDING_KINDS` ne traduisent vers rien **ici**, et c'est
  * normal : ce qu'une pierre ou un mur vaut à l'œil est une couleur, donc une
- * affaire de thème. Les palettes de bourg citent les mots de bâti
- * (`materials`), et `STONE_LOOK` porte une teinte par géologie, que
+ * affaire de thème. Un mot de bâti est la clé d'une palette de
+ * `theme.towns`, et `STONE_LOOK` porte une teinte par géologie, que
  * `stoneTintFor` résout.
  *
  * Toutes les fonctions sont pures.
@@ -122,35 +122,41 @@ export const STONE_KINDS = Object.freeze({
 });
 
 /**
- * Le bâti : un mur, puis un toit.
+ * Le bâti : une palette de `theme.towns`, nommée par sa clé `<mur>_<couverture>`.
  *
- * Deux mots au plus, dans cet ordre. Le toit est le plus visible des deux à la
- * distance où le décor se regarde — sa pente se lit bien avant sa couleur — et
- * c'est pour ça qu'il a droit à un mot pour lui seul plutôt qu'à une nuance du
- * mur.
+ * Un seul mot, qui désigne une palette entière — mur, toit, volet, formes et
+ * pente de toit. Le toit se lit de plus loin que le mur : sa pente fait partie
+ * de la palette.
  */
 export const BUILDING_KINDS = Object.freeze({
-  // Murs.
-  light_stone: {},
-  dark_stone: {},
-  granite: {},
-  red_brick: {},
-  pale_brick: {},
-  half_timber: {},
-  whitewash: {},
-  rendered: {},
-  timber: {},
-  red_timber: {},
-  adobe: {},
-  // Toits.
-  slate_roof: {},
-  flat_tile_roof: {},
-  curved_tile_roof: {},
-  stone_slab_roof: {},
-  flat_roof: {},
-  thatch_roof: {},
-  shingle_roof: { unsupported: 'aucune couverture de bardeau' },
-  metal_roof: { unsupported: 'aucune couverture de tôle' },
+  light_stone_flat_tile: {},
+  light_stone_curved_tile: {},
+  light_stone_slate: {},
+  light_stone_stone_slab: {},
+  light_stone_thatch: {},
+  light_stone_terrace: {},
+  dark_stone_flat_tile: {},
+  dark_stone_curved_tile: {},
+  dark_stone_slate: {},
+  dark_stone_stone_slab: {},
+  granite_flat_tile: {},
+  granite_curved_tile: {},
+  granite_slate: {},
+  granite_stone_slab: {},
+  red_brick_flat_tile: {},
+  red_brick_slate: {},
+  red_brick_thatch: {},
+  pale_brick_flat_tile: {},
+  pale_brick_curved_tile: {},
+  half_timber_flat_tile: {},
+  half_timber_curved_tile: {},
+  whitewash_curved_tile: {},
+  whitewash_slate: {},
+  whitewash_terrace: {},
+  rendered_curved_tile: {},
+  rendered_thatch: {},
+  timber_stone_slab: {},
+  adobe_curved_tile: {},
 });
 
 /**
@@ -234,7 +240,7 @@ export const VOCABULARIES = Object.freeze({
 });
 
 /** Champs qui portent une liste de mots plutôt qu'un seul. */
-export const LIST_FIELDS = Object.freeze(['building', 'farming', 'trees']);
+export const LIST_FIELDS = Object.freeze(['farming', 'trees']);
 
 /**
  * Matière de `SURFACE_KINDS` que la matrice pose là où la carte se tait, ou
@@ -295,8 +301,8 @@ export function unsupportedWords(region) {
  *
  * C'est la **seule** mécanique de filtrage du projet, et elle est délibérément
  * pauvre : une entrée du thème porte une liste de mots (`species` pour un
- * peuplement, `materials` pour une palette de bourg), et elle est retenue si un
- * seul d'entre eux figure dans ceux du pays. Une entrée qui n'en porte pas est
+ * peuplement), et elle est retenue si un seul d'entre eux figure dans ceux du
+ * pays. Une entrée qui n'en porte pas est
  * retenue partout.
  *
  * **Le repli est la liste entière.** Un pays sans contenu dédié rend un décor
@@ -307,7 +313,7 @@ export function unsupportedWords(region) {
  *
  * Fonction pure.
  *
- * @param {Array<{species?: string[], materials?: string[]}>} items
+ * @param {Array<{species?: string[]}>} items
  * @param {string} key Nom du champ qui porte les mots dans une entrée.
  * @param {string[]|null} words Les mots du pays.
  */

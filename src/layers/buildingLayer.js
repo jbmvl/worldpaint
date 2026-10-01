@@ -31,6 +31,7 @@ import { clipPolygonOutsideCorridor } from './roadCorridor.js';
 import { Kit } from './furnitureKit.js';
 import { defaultTheme } from '../themes/default.js';
 import { LabelAtlas, pushLabelQuad, labelFontPxForCellHeight, LABEL_PX_PER_M } from '../materials/labelAtlas.js';
+import { DECOR_STABLE_RADIUS_M } from '../core/decorReach.js';
 
 /** Couche vectorielle portant les empreintes. */
 export const BUILDING_SOURCE_LAYER = 'building';
@@ -258,30 +259,29 @@ export function personalityLookFor(kind, personalities = defaultTheme.personalit
 
 /** Rayon autour de l'observateur au-delà duquel on ignore un bâtiment, en mètres (le brouillard a déjà fondu le décor dans l'horizon). */
 export const BUILDING_RADIUS_M = 1500;
-/** Déplacement de l'observateur avant reconstruction, en mètres. */
-export const BUILDING_REBUILD_M = 200;
 /** Hauteur retenue quand la donnée n'en porte aucune. */
 export const BUILDING_DEFAULT_HEIGHT = 7;
 /** Hauteur d'un niveau, quand seule `building:levels` est connue. */
 export const BUILDING_LEVEL_HEIGHT = 3.2;
 /** Plafond de sécurité : au-delà, la donnée est suspecte. */
 export const BUILDING_MAX_HEIGHT = 120;
-/** Nombre maximal de bâtiments retenus par reconstruction (protège le temps de reconstruction, appliqué après tri par distance). */
+/**
+ * Nombre maximal de bâtiments retenus par reconstruction (protège le temps de
+ * reconstruction, appliqué après tri par distance). Il ne retire jamais rien
+ * à moins de `DECOR_STABLE_RADIUS_M`.
+ */
 export const BUILDING_MAX_COUNT = 1500;
 
-/** Fenêtres allumées : portée, et plafond de panneaux émissifs (le seul éclairage qui ne coûte rien : pas de lumière, pas d'ombre). */
-export const WINDOW_RADIUS_M = 420;
-export const WINDOW_MAX_COUNT = 2600;
+/** Fenêtres allumées : portée (panneaux émissifs, le seul éclairage qui ne coûte rien : pas de lumière, pas d'ombre). */
+export const WINDOW_RADIUS_M = DECOR_STABLE_RADIUS_M;
 
 /**
- * Fenêtres de jour : portée, et plafond de baies. Couche différente de
- * celles de la nuit (une lumière, un panneau additif) : de jour une fenêtre
- * est un trou sombre dans le mur, et elles existent toutes. Vont dans la
- * géométrie opaque du bâti (éclairées par le soleil comme le mur, sans appel
- * de dessin de plus). Portée plus courte que la nuit : un contraste de jour compte moins qu'une lumière.
+ * Fenêtres de jour : portée. Couche différente de celles de la nuit (une
+ * lumière, un panneau additif) : de jour une fenêtre est un trou sombre dans
+ * le mur. Vont dans la géométrie opaque du bâti (éclairées par le soleil comme
+ * le mur, sans appel de dessin de plus).
  */
-export const PANE_RADIUS_M = 300;
-export const PANE_MAX_COUNT = 4200;
+export const PANE_RADIUS_M = DECOR_STABLE_RADIUS_M;
 
 /** Débord de l'encadrement autour de la baie, en mètres. */
 export const WINDOW_FRAME_M = 0.08;
@@ -898,7 +898,6 @@ export function appendOpenings(
       //    précisément ce qu'on voit d'une rue de village la nuit.
       const lit = openings.lit;
       if (!lit || closed) continue;
-      if (lit.positions.length / 9 >= WINDOW_MAX_COUNT) continue;
       const glow = at(along, WINDOW_LIFT_M.glass);
       if (windowDraw(glow.x, glow.z, level + 1) > look.litShare) continue;
 
@@ -1515,12 +1514,6 @@ export class BuildingLayer {
     this.region = region || null;
   }
 
-  needsRebuild(x, z) {
-    if (this._frame !== this.bubble?.frame) return true;
-    if (!this._anchor) return true;
-    return Math.hypot(x - this._anchor.x, z - this._anchor.z) >= BUILDING_REBUILD_M;
-  }
-
   /**
    * Reconstruit le bâti depuis les tuiles déjà décodées.
    * @param {Object} source Instance `VectorTileSource`.
@@ -1614,12 +1607,14 @@ export class BuildingLayer {
     // Le tri est ce qui rend le plafond acceptable : ce qui saute est toujours
     // le plus lointain, jamais ce qui est sous les yeux.
     candidates.sort((a, b) => a.distance - b.distance);
-    if (candidates.length > BUILDING_MAX_COUNT) {
+    const beyond = candidates.findIndex((c) => c.distance > DECOR_STABLE_RADIUS_M);
+    const ceiling = Math.max(BUILDING_MAX_COUNT, beyond === -1 ? candidates.length : beyond);
+    if (candidates.length > ceiling) {
       console.info(
         `[buildingLayer] ${candidates.length} empreintes dans ${BUILDING_RADIUS_M} m, ` +
-          `plafonnées à ${BUILDING_MAX_COUNT} — les plus lointaines sont écartées`
+          `plafonnées à ${ceiling} — les plus lointaines sont écartées`
       );
-      candidates.length = BUILDING_MAX_COUNT;
+      candidates.length = ceiling;
     }
 
     // Empreinte brute en mètres locaux, pour écarter les jumelles et attribuer
@@ -1653,14 +1648,8 @@ export class BuildingLayer {
       // qu'un contraste dans un mur, de nuit c'est une lumière dans le noir. La
       // seconde porte donc bien plus loin que la première.
       const openings =
-        candidate.distance <= PANE_RADIUS_M && panes < PANE_MAX_COUNT
-          ? {
-              panes: 0,
-              lit: candidate.distance <= WINDOW_RADIUS_M && lamps.positions.length / 9 < WINDOW_MAX_COUNT
-                ? lamps
-                : null,
-              budget: PANE_MAX_COUNT - panes,
-            }
+        candidate.distance <= PANE_RADIUS_M
+          ? { panes: 0, lit: candidate.distance <= WINDOW_RADIUS_M ? lamps : null, budget: Infinity }
           : null;
       if (
         this._appendBuilding(
@@ -1802,10 +1791,8 @@ export class BuildingLayer {
     const bottom = base + minHeight - 0.6; // un peu enterré : pas de jour sous les murs
     const top = crest + height;
 
-    // Couleur et forme du toit : celles du **bourg**, avec une variation par
-    // maison. Voir `townStyle` — les tuiles ne portent ni matériau ni forme de
-    // toit, mais la vraie régularité du bâti n'est pas à l'échelle de la maison,
-    // elle est à celle du pays.
+    // Couleur et forme du toit : celles de la palette du pays, avec une légère
+    // variation par maison. Voir `townStyle`.
     const footprint = ordered.map((p) => ({ x: p.x, z: p.y }));
     const box = orientedBox(footprint);
     const ground = ringArea(footprint);
@@ -1816,7 +1803,7 @@ export class BuildingLayer {
       this.theme.towns,
       this.region
     );
-    // Pente du bourg si sa palette en impose une, celle du thème sinon. L'objet
+    // Pente du pays si sa palette en impose une, celle du thème sinon. L'objet
     // n'est composé que dans le premier cas : une allocation par bâtiment pour
     // rien serait payée sur toute une ville.
     const roofs = style.pitch ? { ...this.theme.roofs, pitch: style.pitch } : this.theme.roofs;

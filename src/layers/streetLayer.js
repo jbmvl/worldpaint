@@ -27,12 +27,13 @@ import {
 import { srgb } from '../core/color.js';
 import { streetSurfaceAt } from './townStyle.js';
 import { defaultTheme } from '../themes/default.js';
+import { DECOR_STABLE_RADIUS_M } from '../core/decorReach.js';
 
 /** Chaussées qui peuvent porter un trottoir (dessertes ; pas de voie rapide, chemin, sentier ou piste cyclable). */
 export const STREET_PROFILES = new Set(['major', 'minor', 'lane']);
 
-/** Portée de la voirie, en mètres (doit dépasser la distance parcourue entre deux reconstructions, 250 m). */
-export const STREET_RADIUS_M = 450;
+/** Portée de la voirie autour du point de reconstruction, en mètres. */
+export const STREET_RADIUS_M = DECOR_STABLE_RADIUS_M;
 /** Décalage du disque de lecture du bâti, au-delà de la rive. */
 export const STREET_PROBE_M = 15;
 /** Rayon de ce disque. Un front bâti de village tient dans trente mètres. */

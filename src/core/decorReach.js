@@ -1,0 +1,17 @@
+/*
+ * decorReach — les distances qui règlent l'apparition du décor.
+ *
+ * Le décor se refait d'un bloc, toutes couches ensemble, à chaque pas de
+ * `DECOR_STEP_M` de l'observateur (`worldComposer`). Ce qui est peint à moins
+ * de `NEAR_M` ne doit pas changer à la relève : chaque couche construit donc
+ * son détail sur au moins `DECOR_STABLE_RADIUS_M` autour du point de
+ * reconstruction, et un plafond ne retire jamais rien en deçà. La même donnée
+ * reconstruite deux fois donnant le même résultat, la relève y est invisible.
+ */
+
+/** Zone proche : ce qui y est peint ne se repeint pas. */
+export const NEAR_M = 500;
+/** Déplacement de l'observateur avant de refaire le décor. */
+export const DECOR_STEP_M = 250;
+/** Portée minimale du détail de chaque couche (marge de 50 m pour l'observateur qui avance pendant la relève). */
+export const DECOR_STABLE_RADIUS_M = NEAR_M + DECOR_STEP_M + 50;

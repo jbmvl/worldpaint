@@ -2,12 +2,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { ResidentInstances } from '../src/layers/residentInstances.js';
 import { GroundCover } from '../src/layers/groundCover.js';
-import { TreeVolumes } from '../src/layers/treeVolumes.js';
 import { defaultTheme } from '../src/themes/default.js';
 import { GenerationBudget } from '../src/core/generationBudget.js';
 import { WorldComposer } from '../src/worldComposer.js';
+import { DECOR_STEP_M } from '../src/core/decorReach.js';
 
 const valeurs = (cover) => {
   const result = [];
@@ -18,33 +17,6 @@ const valeurs = (cover) => {
 const bulle = () => ({ frame: {}, surfaceGeneration: 0, verticalScale: 1,
   surfaceElevationAtLocal: () => 0,
   renderedSupportAtLocal: (x, z, out) => Object.assign(out, { y: x * .02 + z * .03, slopeX: .02, slopeZ: .03 }),
-});
-
-test('un changement d’ordre ne réécrit pas les instances conservées', () => {
-  const a = new THREE.InstancedBufferAttribute(new Float32Array(20), 2);
-  const resident = new ResidentInstances([a]);
-  let writes = 0;
-  const write = (key, slot) => { writes++; a.array.set([key, key * 2], slot * 2); };
-  resident.sync([1, 2, 3], write);
-  a.clearUpdateRanges(); const version = a.version;
-  resident.sync([3, 1, 2], write);
-  assert.equal(writes, 3); assert.equal(a.version, version);
-  assert.deepEqual(a.updateRanges, []);
-  resident.sync([1, 3, 4], write);
-  assert.equal(writes, 4);
-  assert.deepEqual(Array.from(a.array.slice(0, 6)), [1, 2, 3, 6, 4, 8]);
-  assert.ok(a.updateRanges.every(r => r.start >= 2));
-  resident.sync([], write); assert.equal(resident.keys.length, 0);
-});
-
-test('le stockage résident conserve chaque attribut après des retraits répétés', () => {
-  const a = new THREE.InstancedBufferAttribute(new Float32Array(20), 1);
-  const resident = new ResidentInstances([a]);
-  for (const wanted of [[1,2,3,4,5], [4,6,2], [7,4,8,9], [9], [], [2,1]]) {
-    assert.equal(resident.sync(wanted, (key, slot) => { a.array[slot] = key; }), wanted.length);
-    assert.deepEqual(Array.from(a.array.slice(0, wanted.length)).sort(), [...wanted].sort());
-    for (const key of wanted) assert.equal(a.array[resident.slots.get(key)], key);
-  }
 });
 
 for (const capacity of [2000, 60000]) test(`les ${capacity} places d’herbe retrouvent exactement un semis neuf après déplacement`, () => {
@@ -77,20 +49,6 @@ test('une fenêtre identique ne transfère ni l’herbe ni les fleurs', () => {
   cover.dispose();
 });
 
-test('les arbres gardent leurs matrices et leurs transitions quand seuls leurs rangs changent', () => {
-  const trees = new TreeVolumes(THREE, new THREE.Group(), defaultTheme);
-  const bands = new THREE.InstancedBufferAttribute(new Float32Array(2), 1);
-  trees.set('a', [0, 10].map(x => ({ variant: 0, x, z: 0, y: 0, height: 10, aspect: .7, rotation: .2, color: [1,1,1] })), bands);
-  trees.update(0, 0);
-  const matrix = trees.batches[0].instanceMatrix, version = matrix.version, bandVersion = bands.version;
-  matrix.clearUpdateRanges(); bands.clearUpdateRanges();
-  trees.update(9, 0);
-  assert.equal(trees.selected[0].p.x, 10);
-  assert.equal(matrix.version, version); assert.equal(bands.version, bandVersion);
-  assert.deepEqual(matrix.updateRanges, []); assert.deepEqual(bands.updateRanges, []);
-  trees.dispose();
-});
-
 test('le budget cède seulement après son seuil et repart après la pause', async () => {
   let now = 0, pauses = 0;
   const budget = new GenerationBudget({ now: () => now, pause: async () => { pauses++; now += 20; } });
@@ -101,38 +59,46 @@ test('le budget cède seulement après son seuil et repart après la pause', asy
 });
 
 function compositeur() {
-  const calls = [], stale = new Set();
-  const layer = name => ({ needsRebuild: () => stale.has(name), rebuild: () => { calls.push(name); },
+  const calls = [], here = { x: 0, z: 0 };
+  const layer = name => ({ rebuild: () => { calls.push(name); },
     setPlants() {}, update() {}, sync() {}, invalidate() {}, setRelief() {}, setAnimals() {}, setTractors() {}, setTracks() {}, setVerges() {} });
   const composer = Object.assign(Object.create(WorldComposer.prototype), {
     disposed: false, _refreshing: false, root: {}, landscape: { region: {} },
     _updateLandscape: () => false, _distributeRegion() {}, _wantedTiles: () => [{ x: 1, y: 2 }],
     vectorTiles: { missing: () => 0, load: async () => null, forEachFeature() {} },
-    bubble: { processRebuildQueue: () => false, frame: { toLocal: () => ({ x: 0, z: 0 }) }, materials: { syncGroundClass() {} } },
+    bubble: { processRebuildQueue: () => false, surfaceGeneration: 0, frame: { toLocal: () => ({ ...here }) }, materials: { syncGroundClass() {} } },
     groundClass: layer('sol'), cliffs: layer('falaises'), roads: layer('routes'), bridges: layer('ponts'),
     railways: layer('rails'), buildings: layer('bâti'), streets: layer('rues'), gardens: layer('jardins'),
     furniture: layer('mobilier'), vegetation: layer('arbres'), grass: layer('herbe'), crops: layer('cultures'),
     life: layer('vie'), fauna: layer('faune'), tractors: layer('tracteurs'), trains: layer('trains'),
   });
   composer.buildings.footprints = [];
-  return { composer, calls, stale };
+  return { composer, calls, here };
 }
 
-test('le mobilier périmé ne reconstruit pas les couches dont il dépend', async () => {
-  const { composer, calls, stale } = compositeur();
+const TOUT = ['falaises','sol','routes','ponts','rails','bâti','rues','jardins','mobilier'];
+
+test('le décor se refait d’un bloc, une fois par pas de l’observateur', async () => {
+  const { composer, calls, here } = compositeur();
   assert.equal(await composer.refresh(0, 0, { force: true }), true);
-  assert.deepEqual(calls, ['falaises','sol','routes','ponts','rails','bâti','rues','jardins','mobilier']);
-  calls.length = 0; stale.add('mobilier');
+  assert.deepEqual(calls, TOUT);
+  calls.length = 0;
+  here.x = DECOR_STEP_M - 1;
+  assert.equal(await composer.refresh(0, 0), false);
+  assert.deepEqual(calls, [], 'en deçà du pas, rien ne se refait');
+  here.x = DECOR_STEP_M;
   assert.equal(await composer.refresh(0, 0), true);
-  assert.deepEqual(calls, ['mobilier']);
+  assert.deepEqual(calls, TOUT, 'au pas, toutes les couches ensemble');
 });
 
-test('une falaise relue à l’identique ne relance pas le décor', async () => {
-  const { composer, calls, stale } = compositeur();
+test('une surface de terrain changée refait tout le décor', async () => {
+  const { composer, calls } = compositeur();
   await composer.refresh(0, 0, { force: true });
-  calls.length = 0; stale.add('falaises');
-  await composer.refresh(0, 0);
-  assert.deepEqual(calls, ['falaises']);
+  calls.length = 0;
+  assert.equal(await composer.refresh(0, 0), false);
+  composer.bubble.surfaceGeneration++;
+  assert.equal(await composer.refresh(0, 0), true);
+  assert.deepEqual(calls, TOUT);
 });
 
 test('une tentative réseau sans donnée nouvelle ne relance pas la génération', async () => {
@@ -218,7 +184,7 @@ test('le terrain finit avant les plantations et les arbres sont repris après te
   };
   composer.vegetation.sync = (options) => {
     if (!options) return;
-    assert.equal(options.replant, true);
+    assert.equal(options.resettle, true);
     calls.push('replantation');
   };
   assert.equal(await composer.refresh(0, 0, { force: true }), true);

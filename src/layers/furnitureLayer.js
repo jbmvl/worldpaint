@@ -78,7 +78,6 @@ import {
   DRY_STONE_WALL_SAMPLE_M,
   FLAT_SHADED_LINEAR_KINDS,
   FURNITURE_LIMITS,
-  FURNITURE_REBUILD_M,
   FURNITURE_SINK_M,
   LINEAR_KINDS,
   POINT_ITEMS,
@@ -116,7 +115,6 @@ export {
   BOUNDARY_SAMPLE_M,
   FURNITURE_LIMITS,
   FURNITURE_RADIUS_M,
-  FURNITURE_REBUILD_M,
   FURNITURE_SINK_M,
   LINEAR_KINDS,
   POINT_ITEMS,
@@ -365,12 +363,6 @@ export class FurnitureLayer {
       this.theme.furniture.colors,
       stoneTintFor(this.region?.stone ?? null, this.theme.stones)
     );
-  }
-
-  needsRebuild(x, z) {
-    if (this._frame !== this.bubble?.frame) return true;
-    if (!this._anchor) return true;
-    return Math.hypot(x - this._anchor.x, z - this._anchor.z) >= FURNITURE_REBUILD_M;
   }
 
   /**

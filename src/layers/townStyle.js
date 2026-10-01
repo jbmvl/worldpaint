@@ -4,104 +4,69 @@
  *
  * Les tuiles OpenMapTiles ne portent que `render_height`/`render_min_height`/
  * `hide_3d` sur le bâti : ni matériau, ni couleur de toit, ni forme n'y
- * survivent. On ne peut donc pas peindre chaque maison d'après sa vraie
- * couleur, mais la régularité du bâti français est de toute façon à l'échelle
- * du village, pas de la maison. D'où une palette par village (tirée d'une
- * maille de terrain, donc stable d'une reconstruction à l'autre) et une
- * variation par maison à l'intérieur.
+ * survivent. La palette du bâti est donc celle que le dossier de région
+ * nomme (`region.building`, clé de `theme.towns`) : une seule par pays, la
+ * même pour toutes ses maisons, qui ne varient entre elles que de quelques
+ * pour cent de clarté.
  *
  * Couleurs linéaires, prêtes pour les attributs de sommet, volontairement pastel.
  *
- * Le même geste sert trois fois — palette du bâti, rebord de voirie, famille
- * d'ouvrage d'art —, toujours sur la même maille (`TOWN_PATCH_M`) et avec une
- * graine distincte : ce qui se ressemble se rassemble par lieu, sans que les
- * trois tirages ne se copient l'un l'autre.
+ * Rebord de voirie et famille d'ouvrage d'art, eux, se tirent sur une maille
+ * de terrain (`TOWN_PATCH_M`), chacun avec sa graine.
  *
- * Une chose échappe à ce geste, et il faut dire pourquoi : le **dessus** du
- * trottoir (`pavementTone`) est tiré du **pays**, pas du bourg. Ce n'est plus
- * la couleur d'un objet mais celle du sol — en ville le revêtement va de la
- * chaussée aux façades (`groundClassMap`, couverture `pavement`) —, et le sol
- * est peint par un shader qui n'a qu'un albédo par couverture pour toute la
- * bulle. Un tirage sur la maille du bourg s'y lirait comme une frontière de
- * 1400 mètres au milieu de la ville. Le pays, lui, s'y lit sans couture.
+ * Le **dessus** du trottoir (`pavementTone`) est tiré du **pays**, pas de la
+ * maille. Ce n'est plus la couleur d'un objet mais celle du sol — en ville le
+ * revêtement va de la chaussée aux façades (`groundClassMap`, couverture
+ * `pavement`) —, et le sol est peint par un shader qui n'a qu'un albédo par
+ * couverture pour toute la bulle. Un tirage sur la maille s'y lirait comme une
+ * frontière de 1400 mètres au milieu de la ville.
  */
 
 import { srgb } from '../core/color.js';
 import { positionSeed, randomAt } from './furniturePlacement.js';
 import { defaultTheme } from '../themes/default.js';
-import { filterByWords } from '../core/regionInterpretation.js';
 
-/** Côté de la maille qui décide de la palette d'un bourg, en mètres. */
+/** Côté de la maille qui décide du rebord de voirie et de la famille d'ouvrage, en mètres. */
 export const TOWN_PATCH_M = 1400;
 
-/** Les palettes d'un thème, converties en couleurs linéaires (mémorisées par thème). */
+/** Les palettes d'un thème, couleurs converties en linéaire (mémorisées par thème). */
 const LINEAR_CACHE = new WeakMap();
 
 function linearTowns(towns) {
   let out = LINEAR_CACHE.get(towns);
   if (!out) {
-    out = towns.map((palette) => ({
-      name: palette.name,
-      walls: palette.walls.map(srgb),
-      roofs: palette.roofs.map(srgb),
-      // Repli sur les tons de mur si le thème ne porte pas de volets.
-      shutters: (palette.shutters || palette.walls).map(srgb),
-      roofShapes: palette.roofShapes,
-      // Recopiés tels quels : ce ne sont pas des couleurs, mais ils voyagent
-      // avec la palette jusqu'au bâtiment.
-      materials: palette.materials,
-      pitch: palette.pitch,
-    }));
+    out = {};
+    for (const [name, palette] of Object.entries(towns)) {
+      out[name] = {
+        name,
+        wall: srgb(palette.wall),
+        roof: srgb(palette.roof),
+        shutter: srgb(palette.shutter),
+        roofShapes: palette.roofShapes,
+        pitch: palette.pitch,
+      };
+    }
     LINEAR_CACHE.set(towns, out);
   }
   return out;
 }
 
 /**
- * Palettes converties **et** réduites aux matériaux du pays, mémorisées par
- * nuancier puis par région. Le filtrage rend un tableau neuf, et
- * `townPaletteAt` est appelée une fois par bâtiment : sans cette seconde
- * mémoire, chaque maison d'un bourg reconstruirait la liste.
+ * Palette du bâti d'un pays : celle que son dossier nomme. Sans pays, ou pour
+ * un thème qui ne porte pas cette clé, la première du nuancier — une palette
+ * entière, jamais un mélange.
  *
- * La seconde clé est le **dossier de région** lui-même : les dossiers sont
- * constants et partagés, donc comparables par référence, là où leur liste de
- * matériaux ne l'est pas.
+ * @param {Object} [towns] Tranche `theme.towns`.
+ * @param {Object|null} [region] Dossier de région.
  */
-const REGION_CACHE = new WeakMap();
-
-function palettesFor(towns, region) {
-  const all = linearTowns(towns);
-  if (!region) return all;
-  let byRegion = REGION_CACHE.get(towns);
-  if (!byRegion) {
-    byRegion = new WeakMap();
-    REGION_CACHE.set(towns, byRegion);
-  }
-  let pool = byRegion.get(region);
-  if (!pool) {
-    pool = filterByWords(all, 'materials', region.building);
-    byRegion.set(region, pool);
-  }
-  return pool;
+export function townPaletteFor(towns = defaultTheme.towns, region = null) {
+  const palettes = linearTowns(towns);
+  return palettes[region?.building] ?? palettes[Object.keys(palettes)[0]];
 }
 
 /**
- * Palette du bourg qui contient un point. Ancrée au lieu (stable en traversée).
- * Le pays réduit d'abord la liste : la pierre n'est pas la même en Andalousie
- * et en Bretagne.
- */
-export function townPaletteAt(x, z, towns = defaultTheme.towns, region = null) {
-  const palettes = palettesFor(towns, region);
-  const gx = Math.floor(x / TOWN_PATCH_M) * TOWN_PATCH_M;
-  const gz = Math.floor(z / TOWN_PATCH_M) * TOWN_PATCH_M;
-  const draw = randomAt(gx, gz, 149);
-  return palettes[Math.min(palettes.length - 1, Math.floor(draw * palettes.length))];
-}
-
-/**
- * Revêtement de voirie du bourg qui contient un point. Tiré sur la même
- * maille que la palette du bâti (une commune refait sa voirie d'un coup),
- * avec une graine distincte de celle des murs.
+ * Revêtement de voirie de la maille qui contient un point (une commune refait
+ * sa voirie d'un coup).
  *
  * @param {number} x
  * @param {number} z
@@ -154,10 +119,9 @@ function linearPavement(streets) {
 }
 
 /**
- * Habillage d'un bâtiment : ton de mur, ton de toit, ton de volet, forme de
- * toit, et sa nature de maison. Variation double : un ton tiré parmi ceux de
- * la palette, plus une modulation de quelques pour cent (volontairement
- * faible, sinon le village devient une collection).
+ * Habillage d'un bâtiment : les tons de la palette du pays, modulés de
+ * quelques pour cent par maison (volontairement peu, sinon le village devient
+ * une collection), la forme du toit et la nature de maison.
  *
  * `x`, `z` sont les coordonnées locales du bâtiment.
  *
@@ -178,17 +142,14 @@ export function buildingStyleAt(
   towns = defaultTheme.towns,
   region = null
 ) {
-  const palette = townPaletteAt(x, z, towns, region);
+  const palette = townPaletteFor(towns, region);
   const seed = positionSeed(x, z, 151);
-  const pickWall = palette.walls[seed % palette.walls.length];
-  const pickRoof = palette.roofs[(seed >>> 3) % palette.roofs.length];
-  const pickShutter = palette.shutters[(seed >>> 6) % palette.shutters.length];
 
   // Modulation tirée du lieu : ±6 % pour le crépi, ±3 % pour le volet peint (vieillit moins vite).
   const shade = 0.94 + randomAt(x, z, 157) * 0.12;
-  const wall = pickWall.map((c) => Math.min(1, c * shade));
-  const roof = pickRoof.map((c) => Math.min(1, c * (0.95 + randomAt(x, z, 163) * 0.1)));
-  const shutter = pickShutter.map((c) => Math.min(1, c * (0.97 + randomAt(x, z, 167) * 0.06)));
+  const wall = palette.wall.map((c) => Math.min(1, c * shade));
+  const roof = palette.roof.map((c) => Math.min(1, c * (0.95 + randomAt(x, z, 163) * 0.1)));
+  const shutter = palette.shutter.map((c) => Math.min(1, c * (0.97 + randomAt(x, z, 167) * 0.06)));
 
   const house = isHouse({ area, height });
   return {
@@ -196,9 +157,8 @@ export function buildingStyleAt(
     roof,
     shutter,
     shape: roofShapeFor(palette, { area, height, seed }),
-    // Pente propre au bourg, ou rien — auquel cas l'appelant garde celle du
-    // thème. La silhouette d'un toit se lit de plus loin que sa couleur : un
-    // toit-terrasse andalou et un pignon balte ne sont pas deux teintes.
+    // Pente propre au pays, ou rien — auquel cas l'appelant garde celle du
+    // thème. La silhouette d'un toit se lit de plus loin que sa couleur.
     pitch: palette.pitch,
     house,
     shutters: house && randomAt(x, z, 173) < SHUTTER_SHARE,
@@ -222,7 +182,7 @@ export const HOUSE_MAX_HEIGHT_M = 11.5;
 /** Au-delà, c'est une exploitation ou un équipement, pas une maison. */
 export const HOUSE_MAX_AREA_M2 = 320;
 
-/** Forme du toit, d'après la palette du bourg et la taille du bâtiment (la taille tranche avant le tirage). */
+/** Forme du toit, d'après la palette du pays et la taille du bâtiment (la taille tranche avant le tirage). */
 export function roofShapeFor(palette, { area = 100, height = 7, seed = 0 } = {}) {
   if (height > 16 || area > 900) return 'flat';
 
@@ -268,9 +228,9 @@ function linearWorks(works) {
  * Famille d'ouvrage d'art du pays qui contient un point : de quoi sont faits
  * ses ponts et ses têtes de tunnel.
  *
- * Ancrée au lieu, sur la maille du bourg : les deux culées d'un même pont
+ * Ancrée au lieu, sur la maille de terrain : les deux culées d'un même pont
  * tirent la même famille, et une reconstruction ne rebâtit pas l'ouvrage dans
- * un autre matériau. Graine distincte de celle des murs et de la voirie.
+ * un autre matériau. Graine distincte de celle de la voirie.
  *
  * @param {number} x
  * @param {number} z

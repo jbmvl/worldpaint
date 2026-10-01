@@ -64,7 +64,7 @@ test('chaque dossier de région est complet et n’emploie que le vocabulaire', 
     }
     assert.deepEqual(unknownWords(region), [], `mot hors vocabulaire : ${where}`);
 
-    assert.ok(region.building.length <= 2, `plus de deux mots de bâti : ${where}`);
+    assert.equal(typeof region.building, 'string', `une seule palette de bâti : ${where}`);
     assert.ok(region.farming.length >= 1 && region.farming.length <= 4, `assolement : ${where}`);
     assert.ok(region.trees.length >= 2 && region.trees.length <= 4, `essences : ${where}`);
   }

@@ -685,10 +685,19 @@ bougé tout seul » :
 
 | Ce qui est refait | Tous les |
 | --- | --- |
-| mobilier, bâti, chaussées, bêtes, tracteurs | 250 m |
-| carte du sol (matières et cultures) | 400 m |
-| fourrés du sous-bois | 12 m |
+| tout ce qui vient du vectoriel : carte du sol, falaises, chaussées, ponts, rails, bâti, voirie, jardins, mobilier, bêtes, tracteurs, arbres | 250 m (`DECOR_STEP_M`), d'un bloc |
+| éclaircie du sous-bois au-delà de 500 m | 8 m |
+| herbe et cultures, semées autour de l'observateur | 10 m |
 | oiseaux, montgolfières, pluie, vent | chaque image |
+
+Le décor se refait toutes couches ensemble, jamais une seule : quand
+l'observateur s'est éloigné de 250 m du dernier point de reconstruction, quand
+la région, le repère ou la surface affichée du terrain ont changé, ou quand
+des tuiles nouvelles sont arrivées (`core/decorReach.js`). Chaque couche
+construit son détail sur au moins 800 m autour de ce point, et aucun plafond
+n'y retire rien en deçà ; la carte du sol est calée sur une grille de texels
+fixe. Une reconstruction redonne donc, à moins de 500 m de l'observateur, ce
+qui y était déjà peint. Le banc `placeLab.walk()` le mesure.
 
 ## Les limites connues
 
@@ -826,8 +835,8 @@ de feuilles et non une coupe dans une futaie.
 **Litière** — le sol d'un bois : feuilles mortes et herbe rase, pas une prairie
 à l'ombre.
 
-**Maille** — une case d'une grille imaginaire posée sur le monde (1400 m pour la
-palette d'un bourg, 320 m pour les éoliennes, 1,6 m pour les touffes d'herbe).
+**Maille** — une case d'une grille imaginaire posée sur le monde (1400 m pour le
+rebord de voirie et les ponts, 320 m pour les éoliennes, 1,6 m pour les touffes d'herbe).
 Tout ce qui est tiré au sort l'est **par maille**, ce qui donne au tirage un
 ancrage au sol.
 
@@ -898,44 +907,44 @@ bâti relevé, borné par un disque autour d'une agglomération nommée.
 
 ### Représentations des arbres
 
-Les dix-sept variantes (arbres, buissons, tapis, palmier et pommier) partagent un prototype
-facetté dans `models/treeKit.js` et sa projection dans l'atlas. Le thème règle
-le port, la largeur, les teintes de feuillage, leurs variations et l'écorce.
-Les arbres isolés du mobilier et les buissons de jardin publient leurs
-placements ; `worldComposer` les transmet au même rendu que le peuplement.
-Rotation, taille et teinte varient selon un tirage ancré au sol. Les vergers
-emploient un pommier bas à couronne étalée, avec des pommes facettées intégrées
-au prototype et à l'atlas, sans objet ni instance par fruit. C'est une
+Les dix-sept variantes (arbres, buissons, tapis, palmier et pommier) sont des
+volumes facettés de `models/treeKit.js`, un prototype par silhouette. Le thème
+règle le port, la largeur, les teintes de feuillage, leurs variations et
+l'écorce. Les arbres isolés du mobilier et les buissons de jardin publient
+leurs placements ; `worldComposer` les transmet au même rendu que le
+peuplement. Rotation, taille et teinte varient selon un tirage ancré au sol.
+Les vergers emploient un pommier bas à couronne étalée, avec des pommes
+facettées intégrées au prototype, sans objet ni instance par fruit. C'est une
 représentation générique du verger : les données de parcelle ne précisent pas
 ici la variété fruitière et aucune saison de fructification n'est simulée.
 
-La relève est opaque, sans grain ni transparence : chaque plante a un seuil
-spatial fixe entre 240 et 380 mètres, identique pour son plan, son volume et
-son ombre. Le volume et le plan ne sont jamais effacés simultanément. La
-silhouette projetée ne reproduit toutefois pas tous les angles du volume ;
-une bascule de contour ou d'ombre reste perceptible, surtout à la frontière
-du budget dans un bois dense.
+Une plante a la même forme à toute distance : il n'y a ni plan lointain, ni
+relève, ni budget de volumes. Les instances sont rangées par bloc de 250 m
+(`VEGETATION_BLOCK_M`) et par silhouette ; l'élimination hors champ, celle de
+l'image comme celle de la passe d'ombre, écarte les blocs invisibles. Le
+peuplement projette son ombre, le sous-étage la reçoit seulement.
 
-Au plus 2 048 volumes sont attribués, les plus proches en priorité, toutes
-provenances confondues. Les autres plantes conservent leurs plans. Les
-instances résidentes et les transferts GPU partiels sont conservés. Les
-bandes du sous-étage activent ou masquent la plante entière à leur bord,
-sans réduction de taille ni découpe pointillée ; le même seuil accompagne
-son plan et son volume.
+Peuplement et sous-étage sont semés par tuile, sur la même grille ancrée au
+sol, et ne dépendent jamais de la position de l'observateur ; le semis d'une
+tuile est étalé sur plusieurs images (4 ms par image), l'ancien maillage
+restant affiché jusqu'à la relève. Le sous-étage est complet à moins de
+500 m de l'observateur et s'éclaircit jusqu'à disparaître à 700 m, plante par
+plante : chacune a un poids fixe (son orientation), et seules celles dont le
+poids est sous la part du moment restent dessinées. Une plante proche ne
+disparaît donc jamais, et une plante lointaine ne réapparaît qu'à sa place.
 
-Le banc hors réseau `demo/lab/trees.html` permet d'examiner chaque variante,
-les plantations et un peuplement dépassant le budget. `treesLab.set()` accepte
-`distance` (observateur du niveau de détail, indépendant de la caméra),
-`variant`, `angle`, `plantations`, `understory` et `dense`. Avec `band: true`
-et une `variant`, le banc isole une plante sur la bande de 60 à 180 mètres
-pour comparer sa taille à ses deux bords.
+Le banc hors réseau `demo/lab/trees.html` permet d'examiner chaque variante et
+les plantations ; `treesLab.set()` accepte `variant`, `angle`, `plantations` et
+`dense`. Le banc `demo/lab/forest.html` sème une forêt pleine par la vraie
+couche, peuplement et sous-étage, et en mesure le coût
+(`forestLab.measure()`, `forestLab.sowing()`).
 
 ### Vent et feuilles emportées
 
 Le vent du feuillage est directionnel en coordonnées du monde, indépendamment
 de la rotation des instances. Des rafales partagées traversent les masses
 végétales ; à vent nul, l'amplitude est nulle. Les ombres des arbres utilisent
-la même déformation et la même transition de distance.
+la même déformation.
 Les feuilles emportées sont des surfaces pliées de taille métrique
 (`theme.leaves`, 12 × 6,5 cm), dans une fenêtre de 120 m de côté. Leur déplacement
 est intégré dans le monde : recentrer la fenêtre ne déplace pas les feuilles.

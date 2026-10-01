@@ -353,7 +353,8 @@ import {
   STAND_SLOTS,
   STAND_CANDIDATES,
   TREES_PER_CELL,
-  THICKET_BANDS,
+  UNDERSTORY_CANDIDATES,
+  VEGETATION_CELLS,
   THICKET_PER_HA,
   SAPLING_MIN_HEIGHT,
   BUSH_MIN_HEIGHT,
@@ -411,7 +412,7 @@ import {
   CROP_MASS_ASPECT,
 } from '../src/materials/proceduralTextures.js';
 import {
-  townPaletteAt,
+  townPaletteFor,
   worksStyleAt,
   buildingStyleAt,
   roofShapeFor,
@@ -1198,26 +1199,14 @@ test('un candidat retenu est décrit par ses seuls tirages', () => {
   assert.ok(haut.height >= type.minHeight, `arbre fait de ${haut.height} m`);
 });
 
-test('le sous-étage se lit à deux échelles, et sa densité est celle d’un bois', () => {
-  const [proche, lointaine] = THICKET_BANDS;
-  assert.ok(lointaine.cell > proche.cell, 'la maille double avec la distance');
-  assert.ok(lointaine.from < proche.to, 'les bandes se recouvrent, sinon un anneau nu');
-  // Une maille demande ce que sa surface vaut : deux fois plus large, quatre
-  // fois plus de tiges.
-  close(
-    thicketPerCell(1, lointaine.cell) / thicketPerCell(1, proche.cell),
-    (lointaine.cell / proche.cell) ** 2,
-    1e-9,
-    'densité par surface'
-  );
+test('la densité du sous-étage est celle d’un bois, et ses candidats la portent', () => {
   close(thicketPerCell(1, 100), THICKET_PER_HA, 1e-9, 'un hectare de maille');
-  // Et chaque bande peut porter ce qu’un bois ordinaire lui demande.
-  for (const band of THICKET_BANDS) {
-    assert.ok(
-      thicketPerCell(1, band.cell) <= band.perCell,
-      `bande de ${band.cell} m : ${thicketPerCell(1, band.cell)} tiges pour ${band.perCell} candidats`
-    );
-  }
+  // La maille de peuplement la plus large : une tuile de zoom 15 à l'équateur.
+  const cell = 40075016 / 2 ** 15 / VEGETATION_CELLS;
+  assert.ok(
+    thicketPerCell(1, cell) <= UNDERSTORY_CANDIDATES,
+    `maille de ${cell.toFixed(0)} m : ${thicketPerCell(1, cell)} tiges pour ${UNDERSTORY_CANDIDATES} candidats`
+  );
 });
 
 test('le sous-étage suit la part de sous-bois du peuplement, pas seulement sa densité', () => {
@@ -10030,8 +10019,8 @@ test('le disque de culture est trié du centre vers le bord', () => {
 // --- Villages : couleur et toiture ------------------------------------------
 
 test('les ponts d’une vallée sortent du même bureau d’études', () => {
-  // Même maille que la palette du bourg : les deux culées d'un pont, et les
-  // deux ponts d'un village, tirent la même famille.
+  // Même maille pour les deux culées d'un pont, et pour les deux ponts d'un
+  // village : ils tirent la même famille.
   const a = worksStyleAt(10, 10);
   const b = worksStyleAt(10 + TOWN_PATCH_M * 0.4, 10);
   assert.equal(a.name, b.name, 'la maille tient sur toute la traversée');
@@ -10039,19 +10028,6 @@ test('les ponts d’une vallée sortent du même bureau d’études', () => {
   const names = new Set();
   for (let i = 0; i < 60; i++) names.add(worksStyleAt(i * TOWN_PATCH_M, 0).name);
   assert.ok(names.size >= 2, `plusieurs matériaux (${[...names].join(', ')})`);
-  // Graine distincte de celle des murs : deux pays qui bâtissent pareil ne
-  // font pas forcément leurs ponts pareil. On le montre en trouvant deux
-  // mailles de même palette et d'ouvrage différent.
-  const seen = new Map();
-  let independent = false;
-  for (let i = 0; i < 200 && !independent; i++) {
-    const at = i * TOWN_PATCH_M;
-    const palette = townPaletteAt(at, 0).name;
-    const works = worksStyleAt(at, 0).name;
-    if (seen.has(palette) && seen.get(palette) !== works) independent = true;
-    seen.set(palette, works);
-  }
-  assert.ok(independent, 'la famille d’ouvrage ne suit pas la palette du bourg');
 });
 
 test('un tablier est plus large que sa chaussée, et sa sous-face rentrante', () => {
@@ -10080,51 +10056,32 @@ test('une voûte de tunnel dégage la chaussée et se referme au sol', () => {
   assert.ok(Math.max(...vault.map((p) => p.up)) > 4, 'un camion passe dessous');
 });
 
-test('un village garde sa palette, et son voisin en a une autre', () => {
-  const a = townPaletteAt(10, 10);
-  const b = townPaletteAt(10 + TOWN_PATCH_M * 0.4, 10);
-  assert.equal(a.name, b.name, 'la maille tient sur toute la traversée');
-
-  const names = new Set();
-  for (let i = 0; i < 60; i++) names.add(townPaletteAt(i * TOWN_PATCH_M, 0).name);
-  assert.ok(names.size >= 4, `plusieurs pays (${[...names].join(', ')})`);
-});
-
-test('un village est bâti dans la pierre de son pays', () => {
-  // La palette d’un bourg est ce qu’on lit d’une traversée avant même de
-  // distinguer une maison : la même liste partout rendait la Baltique et
-  // l’Andalousie interchangeables.
-  const nordiques = new Set();
-  const arides = new Set();
-  const nord = { building: ['red_timber'] };
-  const sud = { building: ['whitewash', 'flat_roof'] };
+test('tout le bâti d’un pays prend la palette que son dossier nomme', () => {
+  const ouest = { building: 'granite_slate' };
   for (let i = 0; i < 60; i++) {
-    nordiques.add(townPaletteAt(i * TOWN_PATCH_M, 0, TOWN_PALETTES, nord).name);
-    arides.add(townPaletteAt(i * TOWN_PATCH_M, 0, TOWN_PALETTES, sud).name);
+    assert.equal(townPaletteFor(TOWN_PALETTES, ouest).name, 'granite_slate');
+    const style = buildingStyleAt(i * TOWN_PATCH_M * 0.7, i * 311, { area: 90, height: 7 }, TOWN_PALETTES, ouest);
+    assert.equal(style.palette, 'granite_slate', 'aucune maille ne change la palette');
   }
-  for (const name of nordiques) assert.ok(!arides.has(name), `${name} n’est pas des deux`);
-  assert.ok(nordiques.has('bois rouge'));
-  assert.ok(arides.has('badigeon'));
-
-  // La maille tient : le pays réduit la liste, il ne déplace pas le tirage.
-  const ouest = { building: ['granite', 'slate_roof'] };
-  assert.equal(
-    townPaletteAt(10, 10, TOWN_PALETTES, ouest).name,
-    townPaletteAt(10 + TOWN_PATCH_M * 0.4, 10, TOWN_PALETTES, ouest).name
-  );
+  assert.equal(townPaletteFor(TOWN_PALETTES, { building: 'whitewash_terrace' }).name, 'whitewash_terrace');
 });
 
-test('la pente du toit vient du bourg quand il en impose une', () => {
+test('sans pays, ou pour une clé absente du thème, la première palette entière', () => {
+  const first = Object.keys(TOWN_PALETTES)[0];
+  assert.equal(townPaletteFor(TOWN_PALETTES).name, first);
+  assert.equal(townPaletteFor(TOWN_PALETTES, { building: 'inconnue' }).name, first);
+});
+
+test('la pente du toit vient de la palette quand elle en impose une', () => {
   // La silhouette d’un toit se lit de plus loin que sa couleur : un
   // toit-terrasse andalou et un pignon balte ne sont pas deux teintes.
-  const plate = TOWN_PALETTES.find((p) => p.name === 'badigeon');
-  const raide = TOWN_PALETTES.find((p) => p.name === 'brique balte');
+  const plate = TOWN_PALETTES.whitewash_terrace;
+  const raide = TOWN_PALETTES.pale_brick_flat_tile;
   assert.ok(plate.pitch < DEFAULT_PITCH, 'le sud est plus plat que le défaut');
   assert.ok(raide.pitch > DEFAULT_PITCH, 'le nord est plus raide');
   // Un toit sans pente déclarée laisse celle du thème : `buildingStyleAt` rend
   // alors `undefined`, et l’appelant n’alloue rien.
-  const calcaire = TOWN_PALETTES.find((p) => p.name === 'calcaire');
-  assert.equal(calcaire.pitch, undefined);
+  assert.equal(TOWN_PALETTES.light_stone_flat_tile.pitch, undefined);
 });
 
 test('aucun mur de bourg ne tombe hors de la plage claire du nuancier', () => {
@@ -10133,18 +10090,16 @@ test('aucun mur de bourg ne tombe hors de la plage claire du nuancier', () => {
   // une palette ajoutée pouvait donc l’enfreindre sans que rien ne le dise.
   // La modulation par maison descend jusqu’à 0,94 : c’est ce cas-là qu’on
   // mesure.
-  for (const palette of TOWN_PALETTES) {
-    for (const wall of palette.walls) {
-      const value = Math.max(...srgb(wall)) * 0.94;
-      assert.ok(value > 0.4, `${palette.name} ${wall} : mur trop sombre (${value.toFixed(3)})`);
-    }
+  for (const [name, palette] of Object.entries(TOWN_PALETTES)) {
+    const value = Math.max(...srgb(palette.wall)) * 0.94;
+    assert.ok(value > 0.4, `${name} ${palette.wall} : mur trop sombre (${value.toFixed(3)})`);
   }
 });
 
 test('deux maisons d’un même bourg se ressemblent sans être identiques', () => {
   const a = buildingStyleAt(100, 100, { area: 90, height: 7 });
   const b = buildingStyleAt(118, 92, { area: 110, height: 8 });
-  assert.equal(a.palette, b.palette, 'même bourg');
+  assert.equal(a.palette, b.palette, 'même pays');
 
   // Les tons restent proches — c'est ce partage qui fait le village — mais pas
   // rigoureusement égaux, sinon on lit un aplat.
@@ -10177,10 +10132,10 @@ test('la forme du toit suit la taille avant le tirage', () => {
   assert.equal(roofShapeFor(palette, { height: 7, area: 80, seed: 0 }), 'pyramid');
 
   // Chaque palette du nuancier ne propose que des formes connues.
-  for (const p of TOWN_PALETTES) {
-    assert.ok(p.roofShapes.length >= 2 && p.roofShapes.length <= 3, `${p.name} : deux ou trois formes`);
+  for (const [name, p] of Object.entries(TOWN_PALETTES)) {
+    assert.ok(p.roofShapes.length >= 2 && p.roofShapes.length <= 3, `${name} : deux ou trois formes`);
     for (const shape of p.roofShapes) {
-      assert.ok(['gable', 'hip', 'pyramid', 'flat'].includes(shape), `${p.name} : ${shape}`);
+      assert.ok(['gable', 'hip', 'pyramid', 'flat'].includes(shape), `${name} : ${shape}`);
     }
   }
 });

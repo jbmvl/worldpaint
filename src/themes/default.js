@@ -932,201 +932,59 @@ export const SURFACE_LOOK = {
 
 // --- Les bourgs ----------------------------------------------------------------
 /**
- * Les palettes. Chacune porte deux ou trois tons de mur, deux tons de toit,
- * deux tons de volet, et les formes de toit admises (deux ou trois, jamais
- * plus). Le volet est le seul endroit du bâti où une vraie couleur est
- * admise (mur et toit varient peu, donnés par la carrière et la tuilerie du
- * coin) : le bleu de Provence, le rouge d'Alsace, le vert de Bretagne.
+ * Les palettes de bâti, une par clé de `region.building` : le dossier d'un pays
+ * nomme la sienne, et elle s'applique telle quelle à tout le bâti du pays.
  *
- * `materials` dit de quoi la palette est faite, et **un seul mot suffit** :
- * celui qui la nomme. Elle est retenue là où le pays le cite
- * (`region.building`), et sans ça un village breton et un village andalou sont
- * tirés dans la même liste. En citer un second, s'il est répandu — la tuile
- * canal, l'ardoise —, élargit la palette à tout pays qui le porte et ramène un
- * mur de granit en Anjou. Une palette sans `materials` reste tirée partout.
+ * Une palette, c'est un ton de mur, un ton de toit, un ton de volet et de
+ * porte — un seul de chaque. La seule variation d'une maison à l'autre est la
+ * modulation de clarté de `buildingStyleAt`. Le volet est le seul endroit du
+ * bâti où une vraie couleur est admise : le mur et le toit sont donnés par la
+ * carrière et la tuilerie du coin.
  *
- * `pitch` remplace la pente de toit par défaut pour ce bourg-là, et ce n'est
- * pas un détail : un toit-terrasse andalou, une tuile canal presque plate et
- * un pignon balte à quarante degrés ne sont pas trois teintes, ce sont trois
- * pays — et la silhouette se lit de plus loin que la couleur.
+ * `roofShapes` liste les formes admises (deux ou trois) ; la taille du
+ * bâtiment tranche avant le tirage (`roofShapeFor`). `pitch` remplace la pente
+ * par défaut, et c'est la couverture qui la décide : la tuile canal glisse
+ * au-delà de 0,42, l'ardoise se pose raide, la lauze pèse sur la charpente,
+ * le chaume ne pardonne pas la flaque, et le toit-terrasse n'a pas de pluie à
+ * évacuer.
+ *
+ * La clé est `<mur>_<couverture>`, dans le vocabulaire de `regions.js`.
  */
-export const TOWN_PALETTES = [
-  {
-    name: 'calcaire',
-    materials: ['light_stone'],
-    walls: ['#e6ddc9', '#dcd2bb', '#efe8d8'],
-    roofs: ['#b0654a', '#9c5a44'],
-    shutters: ['#93a6ab', '#c6bfab'],
-    roofShapes: ['gable', 'hip'],
-  },
-  {
-    name: 'ocre',
-    materials: ['rendered', 'curved_tile_roof'],
-    walls: ['#e8cfa8', '#dcbe94', '#f0dcc0'],
-    roofs: ['#c07b4c', '#ab6a45'],
-    shutters: ['#7d8fae', '#7c8a5c'],
-    roofShapes: ['gable', 'hip', 'flat'],
-    // Tuile canal : la pente la plus faible qui tienne encore une tuile.
-    pitch: 0.42,
-  },
-  {
-    name: 'granit',
-    materials: ['granite', 'dark_stone'],
-    walls: ['#cfcdc6', '#c0bfba', '#dcdad3'],
-    roofs: ['#6a6f78', '#585d66'],
-    shutters: ['#3f5a78', '#3d5a4a'],
-    roofShapes: ['gable', 'pyramid'],
-    // L'ardoise se pose raide : elle glisse, et il pleut.
-    pitch: 0.75,
-  },
-  {
-    name: 'brique',
-    materials: ['red_brick'],
-    walls: ['#d9a98e', '#c8977d', '#e4bda6'],
-    roofs: ['#8d5f4c', '#7a5041'],
-    shutters: ['#415c48', '#d5cab2'],
-    roofShapes: ['gable', 'hip'],
-    pitch: 0.7,
-  },
-  {
-    name: 'colombage',
-    materials: ['half_timber'],
-    walls: ['#efe6d4', '#e3d6c0', '#d8c8ae'],
-    roofs: ['#8a5a49', '#6f4b3f'],
-    shutters: ['#8e4034', '#405c3f'],
-    roofShapes: ['gable', 'gable', 'hip'],
-    pitch: 0.8,
-  },
-  {
-    name: 'chaux',
-    materials: ['whitewash'],
-    walls: ['#eeeae0', '#e3ded2', '#f4f1e9'],
-    roofs: ['#a9713f', '#8f6039'],
-    shutters: ['#9fb2b6', '#93a37c'],
-    roofShapes: ['gable', 'flat'],
-    pitch: 0.42,
-  },
-  {
-    name: 'ardoise',
-    materials: ['slate_roof'],
-    walls: ['#dfe0dd', '#d0d2cf', '#eceded'],
-    roofs: ['#5b626b', '#4c525a'],
-    shutters: ['#dbd8cf', '#6d7f92'],
-    roofShapes: ['gable', 'pyramid', 'hip'],
-    pitch: 0.75,
-  },
-  {
-    name: 'lauze',
-    materials: ['stone_slab_roof'],
-    walls: ['#d5cbb8', '#c5bba7', '#e0d7c6'],
-    roofs: ['#77726a', '#655f57'],
-    shutters: ['#6f5a42', '#4c5f4a'],
-    roofShapes: ['gable', 'hip'],
-    // La lauze est lourde : la charpente ne la porte pas en pente forte.
-    pitch: 0.6,
-  },
-  {
-    // Bois rouge de Scandinavie : rouge de Falun, encadrements blancs, toit
-    // sombre et raide. C'est le village nordique en une couleur.
-    name: 'bois rouge',
-    materials: ['red_timber'],
-    // Rouge de Falun **délavé**. Le vrai est bien plus sombre et plus saturé,
-    // mais la règle pastel de ce fichier (voir l'en-tête de `townStyle`) tient
-    // tout le nuancier ensemble, et un mur qui la casse fait basculer le décor
-    // du côté du jouet. C'est un arbitrage d'auteur, pas une approximation.
-    walls: ['#c07a63', '#b8705c', '#c98a70'],
-    roofs: ['#4a4f55', '#3f444a'],
-    shutters: ['#e8e4da', '#d8d2c4'],
-    roofShapes: ['gable', 'hip'],
-    // La neige doit glisser, sinon elle reste et le toit descend.
-    pitch: 0.85,
-  },
-  {
-    // Bois goudronné sombre : chalet d'altitude et ferme nordique. Le même
-    // matériau que le rouge de Falun, vieilli au lieu d'être peint.
-    name: 'bois vieilli',
-    materials: ['timber'],
-    // Bois gris de vieillissement plutôt que bois goudronné : même raison que
-    // ci-dessus, le goudron sort de la plage claire du nuancier.
-    walls: ['#bb9d74', '#c7aa83', '#b39468'],
-    roofs: ['#5d5f5a', '#4c4e4a'],
-    shutters: ['#e0d8c6', '#8c5b3a'],
-    roofShapes: ['gable', 'hip'],
-    pitch: 0.75,
-  },
-  {
-    // Badigeon andalou : chaux vive, toit presque plat, volets francs. Le seul
-    // endroit d'Europe où le mur est plus clair que le ciel.
-    name: 'badigeon',
-    materials: ['flat_roof'],
-    walls: ['#f4f2ea', '#eae7dc', '#faf8f2'],
-    roofs: ['#c07a4e', '#a96a45'],
-    shutters: ['#3f6f8e', '#2f5a4a'],
-    roofShapes: ['flat', 'gable'],
-    // Il ne pleut pas : le toit n'a presque pas besoin de pente.
-    pitch: 0.25,
-  },
-  {
-    // Brique et pignon droit : Baltique, Pologne, Prusse. Le pignon sur rue est
-    // ce qui distingue une ville hanséatique d'un bourg français.
-    name: 'brique balte',
-    materials: ['pale_brick'],
-    walls: ['#c08670', '#b87f66', '#cb9580'],
-    roofs: ['#6a4a3e', '#7b5747'],
-    shutters: ['#4a5f4a', '#d9d2c2'],
-    roofShapes: ['gable', 'hip'],
-    pitch: 0.85,
-  },
-  {
-    // Pierre grecque : moellon clair et tuile romaine, sur les montagnes du
-    // sud. Ni le blanc des Cyclades, ni l'ocre de Provence.
-    name: 'pierre grecque',
-    materials: ['flat_roof'],
-    walls: ['#ddd4c1', '#cfc5b0', '#e8e0d0'],
-    roofs: ['#b06a44', '#96593a'],
-    shutters: ['#3d6b86', '#7a6a4a'],
-    roofShapes: ['gable', 'hip'],
-    pitch: 0.45,
-  },
-  {
-    // Crépi alpin : mur clair, large débord, toit peu pentu chargé de pierres.
-    // Le contraire du chalet à pignon raide qu'on imagine.
-    name: 'crépi alpin',
-    materials: ['rendered'],
-    walls: ['#efe8d8', '#e2dac8', '#f5f0e4'],
-    roofs: ['#7a736a', '#66605a'],
-    shutters: ['#7d4a33', '#3f5a4a'],
-    roofShapes: ['gable', 'hip'],
-    pitch: 0.45,
-  },
-  {
-    // Torchis de terre crue : la Castille des greniers en pisé, montés à même
-    // la terre du champ voisin plutôt qu'importés d'une carrière.
-    name: 'terre crue',
-    materials: ['adobe'],
-    walls: ['#c9a876', '#bd9a68', '#d4b483'],
-    roofs: ['#a9754c', '#946440'],
-    shutters: ['#4a6b6a', '#8a6a45'],
-    roofShapes: ['gable', 'hip'],
-    // Tuile canal, comme partout où la terre cuite tient lieu de couverture.
-    pitch: 0.42,
-  },
-  {
-    // Chaumière anglaise : le toit l'emporte sur le mur, quel qu'il soit — la
-    // brique du New Forest, le crépi du Devon, la craie du Dorset. D'où un mur
-    // neutre plutôt qu'accordé à un des trois.
-    name: 'chaume',
-    materials: ['thatch_roof'],
-    walls: ['#e8e0cc', '#dcd3ba', '#f0e9d8'],
-    roofs: ['#b89a5c', '#a68a4e'],
-    shutters: ['#4a5f42', '#e0d8c4'],
-    // Ni pyramide ni toit plat : le chaume se pose sur une pente forte, à deux
-    // versants ou à croupe.
-    roofShapes: ['gable', 'hip'],
-    // Une pente forte pour évacuer l'eau : la paille ne pardonne pas la flaque.
-    pitch: 0.85,
-  },
-];
+export const TOWN_PALETTES = {
+  light_stone_flat_tile: { wall: '#e6ddc9', roof: '#b0654a', shutter: '#93a6ab', roofShapes: ['gable', 'hip'] },
+  light_stone_curved_tile: { wall: '#e6ddc9', roof: '#c07b4c', shutter: '#93a6ab', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42 },
+  light_stone_slate: { wall: '#e6ddc9', roof: '#5b626b', shutter: '#93a6ab', roofShapes: ['gable', 'pyramid', 'hip'], pitch: 0.75 },
+  light_stone_stone_slab: { wall: '#e6ddc9', roof: '#77726a', shutter: '#93a6ab', roofShapes: ['gable', 'hip'], pitch: 0.6 },
+  light_stone_thatch: { wall: '#e6ddc9', roof: '#b89a5c', shutter: '#93a6ab', roofShapes: ['gable', 'hip'], pitch: 0.85 },
+  // Moellon clair et toit presque plat des plateaux secs.
+  light_stone_terrace: { wall: '#ddd4c1', roof: '#b06a44', shutter: '#3d6b86', roofShapes: ['gable', 'hip'], pitch: 0.45 },
+  dark_stone_flat_tile: { wall: '#cfcdc6', roof: '#b0654a', shutter: '#3f5a78', roofShapes: ['gable', 'hip'] },
+  dark_stone_curved_tile: { wall: '#cfcdc6', roof: '#c07b4c', shutter: '#3f5a78', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42 },
+  dark_stone_slate: { wall: '#cfcdc6', roof: '#5b626b', shutter: '#3f5a78', roofShapes: ['gable', 'pyramid', 'hip'], pitch: 0.75 },
+  dark_stone_stone_slab: { wall: '#cfcdc6', roof: '#77726a', shutter: '#3f5a78', roofShapes: ['gable', 'hip'], pitch: 0.6 },
+  granite_flat_tile: { wall: '#cfcdc6', roof: '#b0654a', shutter: '#3f5a78', roofShapes: ['gable', 'hip'] },
+  granite_curved_tile: { wall: '#cfcdc6', roof: '#c07b4c', shutter: '#3f5a78', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42 },
+  granite_slate: { wall: '#cfcdc6', roof: '#6a6f78', shutter: '#3f5a78', roofShapes: ['gable', 'pyramid'], pitch: 0.75 },
+  granite_stone_slab: { wall: '#cfcdc6', roof: '#77726a', shutter: '#3f5a78', roofShapes: ['gable', 'hip'], pitch: 0.6 },
+  red_brick_flat_tile: { wall: '#d9a98e', roof: '#8d5f4c', shutter: '#415c48', roofShapes: ['gable', 'hip'], pitch: 0.7 },
+  red_brick_slate: { wall: '#d9a98e', roof: '#5b626b', shutter: '#415c48', roofShapes: ['gable', 'pyramid', 'hip'], pitch: 0.75 },
+  red_brick_thatch: { wall: '#d9a98e', roof: '#b89a5c', shutter: '#415c48', roofShapes: ['gable', 'hip'], pitch: 0.85 },
+  pale_brick_flat_tile: { wall: '#c08670', roof: '#6a4a3e', shutter: '#4a5f4a', roofShapes: ['gable', 'hip'], pitch: 0.85 },
+  pale_brick_curved_tile: { wall: '#c08670', roof: '#c07b4c', shutter: '#4a5f4a', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42 },
+  half_timber_flat_tile: { wall: '#efe6d4', roof: '#8a5a49', shutter: '#8e4034', roofShapes: ['gable', 'gable', 'hip'], pitch: 0.8 },
+  half_timber_curved_tile: { wall: '#efe6d4', roof: '#c07b4c', shutter: '#8e4034', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42 },
+  whitewash_curved_tile: { wall: '#eeeae0', roof: '#a9713f', shutter: '#9fb2b6', roofShapes: ['gable', 'flat'], pitch: 0.42 },
+  whitewash_slate: { wall: '#eeeae0', roof: '#5b626b', shutter: '#9fb2b6', roofShapes: ['gable', 'pyramid', 'hip'], pitch: 0.75 },
+  // Badigeon andalou : le seul endroit d'Europe où le mur est plus clair que le ciel.
+  whitewash_terrace: { wall: '#f4f2ea', roof: '#c07a4e', shutter: '#3f6f8e', roofShapes: ['flat', 'gable'], pitch: 0.25 },
+  rendered_curved_tile: { wall: '#e8cfa8', roof: '#c07b4c', shutter: '#7d8fae', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42 },
+  rendered_thatch: { wall: '#e8cfa8', roof: '#b89a5c', shutter: '#7d8fae', roofShapes: ['gable', 'hip'], pitch: 0.85 },
+  // Bois gris de vieillissement plutôt que goudronné : le goudron sort de la
+  // plage claire du nuancier (voir l'en-tête de `townStyle`).
+  timber_stone_slab: { wall: '#bb9d74', roof: '#77726a', shutter: '#e0d8c6', roofShapes: ['gable', 'hip'], pitch: 0.6 },
+  // Pisé de Castille, monté avec la terre du champ voisin.
+  adobe_curved_tile: { wall: '#c9a876', roof: '#a9754c', shutter: '#4a6b6a', roofShapes: ['gable', 'hip'], pitch: 0.42 },
+};
 
 // --- Les bâtiments qui ont une fonction ----------------------------------------
 /**
@@ -1134,7 +992,7 @@ export const TOWN_PALETTES = [
  * de la couche `poi`, nommée par `buildingLayer.buildingPersonalityFor`).
  *
  * Trois registres qui ne se mélangent pas : `wall`/`roof`/`shape`
- * remplacent la palette du bourg (bâti hors matériau du pays — hôpital,
+ * remplacent la palette du pays (bâti hors matériau du pays — hôpital,
  * grande surface) ; `front` ne remplace rien, c'est le bandeau de
  * rez-de-chaussée d'un commerce ; `spire`/`dome`/`minaret` sont des volumes
  * ajoutés à l'empreinte. Une personnalité peut n'en porter qu'un (une église
@@ -1337,11 +1195,9 @@ export const ROAD_MARKING_COLOR = '#e9e7de';
 // --- Les ouvrages d'art ---------------------------------------------------------
 /**
  * Les familles d'ouvrage : de quoi sont faits les ponts et les têtes de tunnel
- * d'un pays. Même principe que `TOWN_PALETTES` — le bâti d'une région est
- * régulier, et un pont l'est plus encore qu'une maison : les ouvrages d'une
- * vallée sortent du même bureau d'études et de la même carrière. La famille se
- * tire donc sur la même maille que la palette du bourg (`worksStyleAt`), pas
- * par ouvrage.
+ * d'un pays. Les ouvrages d'une vallée sortent du même bureau d'études et de
+ * la même carrière : la famille se tire donc sur une maille de terrain
+ * (`worksStyleAt`, `TOWN_PATCH_M`), pas par ouvrage.
  *
  * Trois registres, qui se lisent de loin à leur silhouette plus qu'à leur
  * couleur : la maçonnerie porte épais sur des piles trapues, le béton porte

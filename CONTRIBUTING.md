@@ -77,6 +77,14 @@ Breaking one of these needs a very good reason, stated in the PR description.
 - **Deterministic spatial generation.** No `Math.random()`: every seed derives
   from a quantised ground position, never from traversal order or the viewpoint.
 
+- **What is painted near the viewer is never repainted.** The vector décor is
+  rebuilt in one block, all layers together, every `DECOR_STEP_M` (250 m) or
+  when new data arrives — never one layer on its own threshold. Every layer
+  builds its detail at least `DECOR_STABLE_RADIUS_M` (800 m) around the rebuild
+  point, a cap never removes anything inside that radius, and rasters sit on a
+  fixed texel grid, so a rebuild reproduces exactly what lies within `NEAR_M`
+  (500 m) of the viewer (`core/decorReach.js`, measured by `placeLab.walk`).
+
 - **No dependency on generation order** beyond what `worldComposer.js` declares.
   A layer reads what an earlier layer published — an index, a segment list — and
   never reaches into another layer's live state.
@@ -214,7 +222,7 @@ Breaking one of these needs a very good reason, stated in the PR description.
   `transportEarthworks` publie le relief final ; le déblai inférieur prime sur
   le remblai. La couture des routes précède ces corrections. Les chemins ne
   propagent aucune rampe et suivent le terrain final. La maille est reconstruite
-  avant la pose du décor ; les arbres sont replantés si les routes changent.
+  avant la pose du décor ; les arbres sont resemés à leur place quand le décor se refait.
 
   Platforms are laid on the **natural** terrain (`naturalElevationAtLocal`):
   the DEM with mapped cliffs stepped, road cut excluded. Only `cliffLayer`
