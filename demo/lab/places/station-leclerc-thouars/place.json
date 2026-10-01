@@ -1,0 +1,17 @@
+{
+  "name": "station-leclerc-thouars",
+  "label": "E.Leclerc Thouars",
+  "lng": -0.2075059,
+  "lat": 46.9968266,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "encoding": "terrain-rgb",
+    "extension": "webp",
+    "source": "api.maptiler.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  }
+}

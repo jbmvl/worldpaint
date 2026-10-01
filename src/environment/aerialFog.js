@@ -7,7 +7,8 @@
  * de la direction regardée (couleur de palette à l'horizontale, ciel plus
  * profond vers la voûte, teinte solaire vers le soleil) et l'extinction est
  * calculée par canal, pondérée par la diffusion de Rayleigh (∝ 1/λ⁴) — le
- * rouge s'efface avant le bleu, comme dans la nature. Aucune couleur n'est
+ * rouge s'efface avant le bleu, comme dans la nature. La brume neutralise
+ * cette pondération pour garder un voile blanc. Aucune couleur n'est
  * choisie ici : ciel haut et teinte solaire sont dérivés de l'ambiance
  * fournie par l'application (`aerialSkyColor`).
  *
@@ -241,8 +242,9 @@ export class AerialFog {
    * @param {[number,number,number]} state.sunColor Air dans l'axe du soleil, linéaire.
    * @param {{x:number,y:number,z:number}} state.sunDir Direction du soleil, repère monde.
    * @param {number} state.sunAmount Force du réchauffement, de 0 à 1.
+   * @param {number} [state.whiteness] Neutralité de la brume, de 0 à 1.
    */
-  update({ skyColor, sunColor, sunDir, sunAmount }) {
+  update({ skyColor, sunColor, sunDir, sunAmount, whiteness = 0 }) {
     this._write(this.uniforms.uFogSky.value, skyColor);
     this._write(this.uniforms.uFogSunColor.value, sunColor);
     const dir = this.uniforms.uFogSunDir.value;
@@ -250,6 +252,10 @@ export class AerialFog {
     dir.y = sunDir.y;
     dir.z = sunDir.z;
     this.uniforms.uFogSunAmount.value = sunAmount;
+    const channel = this.uniforms.uFogChannel.value;
+    channel.x = 1 + (RAYLEIGH[0] - 1) * RAYLEIGH_STRENGTH * (1 - whiteness);
+    channel.y = 1 + (RAYLEIGH[1] - 1) * RAYLEIGH_STRENGTH * (1 - whiteness);
+    channel.z = 1 + (RAYLEIGH[2] - 1) * RAYLEIGH_STRENGTH * (1 - whiteness);
   }
 
   /**

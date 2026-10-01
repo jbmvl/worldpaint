@@ -26,9 +26,12 @@
  * parcelles ou végétation, absents des tuiles.
  */
 import * as THREE from 'three';
+import { TreeVolumes } from '/src/layers/treeVolumes.js';
 import { TerrainBubble } from '/src/terrain/terrainBubble.js';
 import { ElevationField } from '/src/core/elevationField.js';
 import { RoadNetwork, createRoadMaterials } from '/src/layers/roadNetwork.js';
+import { RailwayLayer } from '/src/layers/railwayLayer.js';
+import { collectCrossingRails } from '/src/layers/transportCrossings.js';
 import { BridgeLayer } from '/src/layers/bridgeLayer.js';
 import { FurnitureLayer } from '/src/layers/furnitureLayer.js';
 import { CliffLayer } from '/src/layers/cliffLayer.js';
@@ -94,9 +97,10 @@ const way = (properties, ...points) => ({
 /*
  * Toutes les scènes vivent dans le même monde, à portée du mobilier.
  *
- * « pont » : une primaire franchit une secondaire (niveau 1, `brunnel`) et
- * redescend en remblai ; une voie étroite s'y branche en T à huit mètres de la
- * culée, et une autre coupe le remblai en X plus loin.
+ * « pont » : une primaire franchit une secondaire creusée ; les carrefours
+ * proches de sa culée conservent leurs accès.
+ * « rail », « passage » : tranchée sous un pont et passage à niveau voisin.
+ * « autoroute » : léger déblai inférieur et remblai supérieur dans le terrain.
  * « pont-large » : la route du pont est la plus étroite ; la branche, plus
  * large, commande le carrefour.
  * « classe » : la route change de classe sur son remblai — deux chaînes.
@@ -109,6 +113,29 @@ const way = (properties, ...points) => ({
  * sentier qui y monte dans la pente — sans terrassement ni talus.
  */
 const FEATURES = [
+  way({ class: 'minor' }, [470,250], [550,250], [553,250], [560,258], [600,285]),
+  way({ class: 'minor' }, [550,250], [550,185]),
+
+  ...[330, 336].flatMap((z,i) => [
+    way({ class: i ? 'cycleway' : 'minor' }, [-350,z], [-260,z]),
+    way({ class: i ? 'cycleway' : 'minor', brunnel: 'tunnel', layer: -1 }, [-260,z], [-140,z]),
+    way({ class: i ? 'cycleway' : 'minor' }, [-140,z], [-60,z]),
+  ]),
+  way({ class: 'rail' }, [-220,100], [-220,230]),
+  way({ class: 'minor' }, [-350,160], [-232,160]),
+  way({ class: 'minor', brunnel: 'tunnel', layer: -1 }, [-232,160], [-208,160]),
+  way({ class: 'minor' }, [-208,160], [-60,160]),
+  way({ class: 'rail' }, [-180, -420], [-180, -40]),
+  way({ class: 'minor' }, [-340, -220], [-194, -220]),
+  way({ class: 'minor', brunnel: 'bridge', layer: 1 }, [-194, -220], [-166, -220]),
+  way({ class: 'minor' }, [-166, -220], [-40, -220]),
+  way({ class: 'minor' }, [-240, -100], [-120, -100]),
+  way({ class: 'motorway' }, [100, -430], [100, -70]),
+  way({ class: 'minor' }, [10, -260], [82, -260]),
+  way({ class: 'minor', brunnel: 'bridge', layer: 1 }, [82, -260], [118, -260]),
+  way({ class: 'minor' }, [118, -260], [240, -260]),
+  way({ class: 'path' }, [30, -250], [75, -250]),
+
   way({ class: 'secondary' }, [0, -350], [0, 800]),
 
   way({ class: 'primary' }, [-250, 0], [-12, 0]),
@@ -144,6 +171,12 @@ const FEATURES = [
 const CLIFFS = [way({ class: 'cliff' }, [-330, -450], [-70, -450])];
 
 const SCENES = {
+  couture: { x: 550, z: 250, yawDeg: 225, pitchDeg: 30, distance: 50 },
+  tunnels: { x: -260, z: 333, yawDeg: 90, pitchDeg: 18, distance: 90 },
+  souterrain: { x: -208, z: 160, yawDeg: 90, pitchDeg: 18, distance: 70 },
+  rail: { x: -180, z: -220, yawDeg: 225, pitchDeg: 32, distance: 105 },
+  passage: { x: -180, z: -100, yawDeg: 225, pitchDeg: 32, distance: 70 },
+  autoroute: { x: 100, z: -260, yawDeg: 215, pitchDeg: 28, distance: 115 },
   pont: { x: 30, z: 0, yawDeg: 215, pitchDeg: 28, distance: 90 },
   'pont-large': { x: 20, z: 500, yawDeg: 215, pitchDeg: 28, distance: 75 },
   classe: { x: 30, z: 250, yawDeg: 215, pitchDeg: 28, distance: 75 },
@@ -197,15 +230,29 @@ const bridges = new BridgeLayer({ THREE, scene, bubble });
 // Tant que la maille est reprise, la plate-forme se redresse : on reconstruit
 // jusqu'à ce que le réseau ne demande plus rien, comme le fait le compositeur.
 for (let pass = 0; pass < 4 && roads.needsRebuild(here.x, here.z); pass++) {
-  roads.rebuild(source, [], here);
+  roads.rebuild(source, [], here, { railwaySegments: collectCrossingRails(source, [], frame,
+    (x, z) => bubble.naturalElevationAtLocal(x, z, 0) * bubble.verticalScale) });
   while (bubble.processRebuildQueue());
 }
-bridges.rebuild(roads.roadSegments, here);
+bridges.rebuild(roads.roadSegments, here, { earthworks: roads.earthworks });
+bubble.materials.setTunnelMouths(bridges.tunnelMouths);
+const railways = new RailwayLayer({ THREE, scene, bubble });
+railways.rebuild(source, [], here);
 const furniture = new FurnitureLayer({ THREE, scene, bubble });
 furniture.rebuild(source, [], here, roads.roadSegments, roads.index, roads.junctions, null, null, null, [], {
   areas: roads.junctionAreas,
   cliffs: cliffs.index,
 });
+
+// Témoins de pose sur le remblai et sur les deux rives de la tranchée.
+const trees = new TreeVolumes(THREE, scene, defaultTheme);
+const treePoints = [[55, -247], [65, -235], [140, -245], [155, -235], [-195, -190], [-164, -190]];
+const planted = treePoints.map(([x, z]) => ({ x, z,
+  y: bubble.surfaceElevationAtLocal(x, z, 0) * bubble.verticalScale,
+  variant: 0, height: 7, aspect: .7, rotation: 0, color: [1, 1, 1],
+}));
+trees.set('temoins-relief', planted);
+trees.update(0, 0);
 
 const state = { scene: 'pont', ...SCENES.pont };
 
@@ -235,9 +282,12 @@ function info() {
   const decks = best?.area.decks.map((v) => +v.toFixed(2)) ?? [];
   return {
     scene: state.scene,
+    franchissements: roads.transportCrossings.map(({ x, z, reason, lift, cut }) => ({ x, z, reason, lift, cut })),
     segments: roads.segments,
     crossings: roads.crossings,
     bridges: bridges.counts,
+    arbres: planted.map((p) => ({ x: p.x, z: p.z,
+      ecartSol: +(p.y - bubble.renderedSupportAtLocal(p.x, p.z).y).toFixed(3) })),
     decks,
     spread: decks.length ? +(Math.max(...decks) - Math.min(...decks)).toFixed(2) : null,
   };

@@ -1,3 +1,4 @@
+import { treePrototype as treePrototypeForTest } from '../src/models/treeKit.js';
 /*
  * Tests unitaires de la géométrie de la bulle 3D.
  * Aucune dépendance navigateur : `npm test`.
@@ -309,8 +310,10 @@ import {
   sortPersonalities,
   personalityLookFor,
   shopfrontTopFor,
+  shopfrontEaves,
   streetFacadeIndex,
   SHOPFRONT_HEIGHT_M,
+  SHOPFRONT_CLEARANCE_M,
   towerSide,
   towerRise,
   towerFoot,
@@ -1468,6 +1471,17 @@ test('la devanture occupe la place du soubassement, pas le mur entier', () => {
   assert.equal(shopfrontTopFor(100, 0, 103.5), null, 'mur trop bas');
   // Sous un passage couvert, il n'y a pas de rez-de-chaussée à habiller.
   assert.equal(shopfrontTopFor(100, 4, 115), null, 'surplomb');
+});
+
+test('un commerce bas sous un comble relève son égout pour garder sa devanture', () => {
+  // Kiosque de 5 m sous une croupe : l'égout tombe à 3,5 m du sol de la façade.
+  const eaves = shopfrontEaves(103.5, 100, 0);
+  assert.notEqual(shopfrontTopFor(100, 0, eaves), null, 'la devanture tient');
+  close(eaves - 100, SHOPFRONT_HEIGHT_M + SHOPFRONT_CLEARANCE_M, 1e-9, 'relevé du strict nécessaire');
+  // Un égout déjà assez haut ne bouge pas.
+  assert.equal(shopfrontEaves(112, 100, 0), 112);
+  // Sous un surplomb, pas de devanture : rien à relever.
+  assert.equal(shopfrontEaves(103.5, 100, 4), 103.5);
 });
 
 test('la devanture regarde la rue, pas la cour ni le pignon', () => {
@@ -2787,10 +2801,10 @@ test('chaque essence de biome tient une silhouette propre, dans le catalogue', (
   assert.ok(fernVariant >= 0, 'la fougère existe au catalogue');
   assert.ok(floor.includes(fernVariant), 'la fougère pousse dans le tapis du sous-bois');
 
-  // Le peintre de chaque nouvelle essence existe (source, pas d’exécution).
-  const source = readFileSync('src/materials/proceduralTextures.js', 'utf8');
   for (const kind of ['gorse', 'thornyScrub', 'fern', 'marram']) {
-    assert.match(source, new RegExp(`${kind}: draw`));
+    const index = TREE_VARIANTS.findIndex(v => v.kind === kind);
+    const prototype = treePrototypeForTest(TREE_VARIANTS[index], index);
+    assert.ok(prototype.positions.length > 0, `${kind} : prototype commun au plan et au volume`);
   }
 });
 
@@ -2809,8 +2823,8 @@ test('le semis de biome sème l’essence de sa matière, pas celle du peuplemen
       .length,
     1
   );
-  assert.match(source, /describeTree\(tree, seed, base, type, lowPart, variants, cellStrata\);/);
-  assert.match(source, /describeTree\(tree, seed, slot, type, lowPart, variants, cellStrata, true, edge\);/);
+  assert.match(source, /describeTree\(tree, seed, base, type, lowPart, variants, cellStrata, false, 0, this\.theme\.trees\.variants\);/);
+  assert.match(source, /describeTree\(tree, seed, slot, type, lowPart, variants, cellStrata, true, edge, this\.theme\.trees\.variants\);/);
 });
 
 test('le sol d’un bois porte une litière, pas une prairie à l’ombre', () => {
@@ -9045,10 +9059,7 @@ test('sur un versant, l’aplanissement et la travée se passent le relais', () 
   assert.ok(Math.max(...steps) < 3, `aucune marche dans le profil (${Math.max(...steps).toFixed(2)} m)`);
 });
 
-test('de la tuile au tablier : un pont sort de l’eau qu’il franchit', () => {
-  // Le chemin complet, tel qu'il tourne en scène : une route coupée en trois
-  // morceaux par la tuile (route, pont, route), une nappe d'eau sous la travée,
-  // et la plate-forme qui doit finir au-dessus de la nappe, pas dedans.
+test('de la tuile au tablier : l’eau ne relève ni le pont ni ses accès', () => {
   const frame = createLocalFrame(2.35, 48.85, 15);
   const at = (dx) => [2.35 + dx * 0.0006, 48.85];
 
@@ -9074,8 +9085,7 @@ test('de la tuile au tablier : un pont sort de l’eau qu’il franchit', () => 
     () => water,
     900,
     undefined,
-    // Le plancher que `RoadNetwork.rebuild` construit au-dessus d'une nappe.
-    { floorAt: () => water + BRIDGE_FREEBOARD_M }
+    {}
   );
 
   assert.equal(segments.length, 1, 'les trois morceaux ne font qu’un tronçon');
@@ -9087,10 +9097,7 @@ test('de la tuile au tablier : un pont sort de l’eau qu’il franchit', () => 
 
   assert.ok(bridged.length > 3, `la travée est retrouvée (${bridged.length} lignes)`);
   for (const height of bridged) {
-    assert.ok(height >= water + BRIDGE_FREEBOARD_M - 1e-3, `le tablier passe au-dessus de l’eau (${height})`);
-    // Et pas plus haut : une revanche n'est pas un gabarit, le pont d'une
-    // rivière de campagne ne monte pas sur ses culées pour rien.
-    assert.ok(height <= water + BRIDGE_FREEBOARD_M + 0.5, `sans se percher (${height})`);
+    close(height, water, 1e-3, 'le pont conserve ses appuis sans revanche');
   }
   // Et la chaussée d'approche, elle, redescend au terrain.
   close(segment.platform[0], water, 1e-3, 'la route retrouve son sol');
@@ -9147,12 +9154,10 @@ test('un pont de pré ne se perche pas, mais un viaduc dégage la route qu’il 
     })
   );
   for (const height of spanOf(crossed)) {
-    close(height, BRIDGE_CLEARANCE_M, 1e-3, 'le viaduc dégage le gabarit');
+    close(height, 0, 1e-3, 'le pont conserve le niveau de ses accès');
   }
-  // Et la chaussée du dessous n'a pas bougé d'un pouce : c'est le pont qui
-  // monte, jamais la route qu'il enjambe.
   const under = crossed.find((segment) => !segment.works.some((code) => code === WORK_BRIDGE));
-  for (const height of under.platform) close(height, 0, 1e-3, 'la route du dessous reste au sol');
+  assert.ok(Math.min(...under.platform) <= -BRIDGE_CLEARANCE_M + 1e-3, 'la tranchée libère le gabarit sous le pont');
 });
 
 /**
@@ -9209,6 +9214,7 @@ function stubBubble(elevation = 0) {
     frame: {},
     verticalScale: 1,
     naturalElevationAtLocal: () => elevation,
+    surfaceElevationAtLocal: () => elevation,
   };
 }
 
@@ -9307,7 +9313,7 @@ test('sur un versant, un voile de pile se fonde sur son propre terrain', () => {
   const layer = new BridgeLayer({
     THREE: stubWorksTHREE(),
     scene,
-    bubble: { frame: {}, verticalScale: 1, naturalElevationAtLocal: slope },
+    bubble: { frame: {}, verticalScale: 1, naturalElevationAtLocal: slope, surfaceElevationAtLocal: slope },
   });
 
   const rows = 21;
@@ -15120,4 +15126,22 @@ test('vigne, verger et lavande portent des rangs, les cultures de `CropLayer` au
     if (rowed.includes(entry.value)) assert.ok(entry.rows, `${entry.value} : des rangs`);
     else assert.equal(entry.rows, null, `${entry.value} : rien à ajouter, CropLayer sème déjà`);
   }
+});
+
+test('les culées rejoignent le front de tranchée sans barrer les voies inférieures', () => {
+  const bubble = stubBubble(10);
+  bubble.surfaceElevationAtLocal = (x) => x < 20 || x > 80 ? 10 : 0;
+  const layer = new BridgeLayer({ THREE: stubWorksTHREE(), scene: { add() {}, remove() {} }, bubble });
+  const segment = { profile: 'minor', halfWidth: 2.5,
+    path: Array.from({ length: 21 }, (_, i) => ({ x: i * 5, z: 0, distance: i * 5 })),
+    platform: new Float32Array(21).fill(10), works: new Uint8Array(21).fill(WORK_BRIDGE) };
+  const earthworks = { index: { queryAll: (x) => x > 40 && x < 60 ? [{ segment: { delta: [-8] }, row: 0 }] : [] } };
+  layer.rebuild([segment], { x: 50, z: 0 }, { earthworks });
+  const p = layer.mesh.geometry.attributes.position.array;
+  const feet = [];
+  for (let i = 0; i < p.length; i += 3) if (p[i + 1] < 1) feet.push(p[i]);
+  assert.ok(feet.some((x) => Math.abs(x - 20) < 2), 'culée côté entrée du creux');
+  assert.ok(feet.some((x) => Math.abs(x - 80) < 2), 'culée côté sortie du creux');
+  assert.ok(feet.every((x) => x <= 40 || x >= 60), 'passage inférieur libre');
+  layer.dispose();
 });

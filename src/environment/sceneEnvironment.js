@@ -52,6 +52,7 @@ import {
   castsShadow,
   fogScale,
   fogColorFor,
+  hazeWhiteness,
   overcastOf,
   windField,
 } from './weather.js';
@@ -81,8 +82,8 @@ export const SKY_RADIUS = 8000;
  *
  * Sous ciel bouché ou dans la brume, il n'y a plus de halo à préserver, et
  * les nuages natifs s'effacent sous ~0,2 d'élévation : le raccord devient
- * total et monte au-dessus de ce fondu, sinon une bande de ciel clair
- * subsiste entre le lointain gris et la couche nuageuse.
+ * total et monte au-dessus de ce fondu. La brume blanche remonte plus haut
+ * encore, pour rester visible quand le regard se lève.
  */
 const HORIZON_BLEND = 0.7;
 
@@ -95,6 +96,7 @@ const HORIZON_BLEND = 0.7;
 const SKY_GAIN = 0.4;
 const HORIZON_BAND = 0.18;
 const MURKY_HORIZON_BAND = 0.3;
+const HAZE_HORIZON_BAND = 0.8;
 
 /**
  * Palette d'ambiance : les trois seules couleurs que ce module attend d'une
@@ -571,8 +573,13 @@ export class SceneEnvironment {
     const nightHorizon = hexToLinear(this.palette.nightHorizon);
     const sky = weatherSkyParameters(skyParameters(dir.y), this.weather);
     this._skyGain = SKY_GAIN * skyAdaptation(dir.y);
-    const murk = Math.max(overcastOf(this.weather), this.weather.haze);
-    const horizonBand = mix(HORIZON_BAND, MURKY_HORIZON_BAND, murk);
+    const overcast = overcastOf(this.weather);
+    const hazeWhite = hazeWhiteness(this.weather);
+    const murk = Math.max(overcast, hazeWhite);
+    const horizonBand = Math.max(
+      mix(HORIZON_BAND, MURKY_HORIZON_BAND, overcast),
+      mix(HORIZON_BAND, HAZE_HORIZON_BAND, hazeWhite)
+    );
     const paletteFog = hexToLinear(this.palette.fog);
     const weatheredFog = fogColorFor(paletteFog, this.weather);
     const dayFogColor = fogColorFor(
@@ -683,6 +690,7 @@ export class SceneEnvironment {
       sunColor: aerialSunColor(this._sunwardSky || dayFog, sunRgb),
       sunDir,
       sunAmount: sunTintAmount(overcastOf(this.weather), nightMix),
+      whiteness: hazeWhiteness(this.weather),
     });
   }
 

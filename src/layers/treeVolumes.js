@@ -9,8 +9,8 @@ import { ResidentInstances } from './residentInstances.js';
 import { treePrototype } from '../models/treeKit.js';
 import { createFoliageMaterial, advanceFoliageWind, setFoliageWind } from '../materials/foliageMaterial.js';
 import { COVER_ATTRIBUTE, installCoverTransition } from '../materials/coverTransition.js';
-export const TREE_NEAR_FROM = 120;
-export const TREE_NEAR_TO = 190;
+import { TREE_NEAR_FROM, TREE_NEAR_TO, installTreeTransition } from '../materials/treeTransition.js';
+export { TREE_NEAR_FROM, TREE_NEAR_TO };
 export const TREE_VOLUME_BUDGET = 2048;
 const RANGE = TREE_NEAR_TO + 12;
 
@@ -22,14 +22,15 @@ export class TreeVolumes {
     this.batches = [];
     this.selected = [];
     this.residents = [];
-    this.material = createFoliageMaterial({ THREE, map: null, wind: true, windStrength: .028, uprightNormals: false, cacheKey: 'tree-volume-v2' });
-    installCoverTransition(this.material, THREE);
-    for (let variant = 0; variant < Math.min(9, theme.trees.variants.length); variant++) {
+    this.material = createFoliageMaterial({ THREE, map: null, wind: true, windStrength: .036, uprightNormals: true, cacheKey: 'tree-volume-v2' });
+    installCoverTransition(this.material, THREE, { mode: 'solid' });
+    installTreeTransition(this.material, THREE, { volume: true });
+    for (let variant = 0; variant < theme.trees.variants.length; variant++) {
       const geometry = treePrototype(theme.trees.variants[variant], variant, theme.trees.volume).toGeometry(THREE, 'tree-volume');
       geometry.computeVertexNormals();
       const bands = new Float32Array(TREE_VOLUME_BUDGET * 4);
-      for (let i = 0; i < TREE_VOLUME_BUDGET; i++) bands.set([0, TREE_NEAR_TO, 0, TREE_NEAR_TO - TREE_NEAR_FROM], i * 4);
-      geometry.setAttribute(COVER_ATTRIBUTE, new THREE.InstancedBufferAttribute(bands, 4));
+      for (let i = 0; i < TREE_VOLUME_BUDGET; i++) bands.set([0, 1e7, 0, 0], i * 4);
+      geometry.setAttribute(COVER_ATTRIBUTE, new THREE.InstancedBufferAttribute(bands, 4).setUsage(THREE.DynamicDrawUsage));
       const mesh = new THREE.InstancedMesh(geometry, this.material, TREE_VOLUME_BUDGET);
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.count = 0;
@@ -43,7 +44,7 @@ export class TreeVolumes {
       this.batches.push(mesh);
       mesh.setColorAt(0, new THREE.Color());
       mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
-      this.residents.push(new ResidentInstances([mesh.instanceMatrix, mesh.instanceColor]));
+      this.residents.push(new ResidentInstances([mesh.instanceMatrix, mesh.instanceColor, geometry.getAttribute(COVER_ATTRIBUTE)]));
     }
     this.matrix = new THREE.Matrix4();
     this.position = new THREE.Vector3();
@@ -71,6 +72,7 @@ export class TreeVolumes {
 
   update(x, z) {
     this.material.userData.coverObserver.value.set(x, z);
+    this.material.userData.treeObserver.value.set(x, z);
     if (this.anchor && Math.hypot(x - this.anchor.x, z - this.anchor.z) < 8) return;
     this.anchor = { x, z };
     const candidates = [];
@@ -83,7 +85,8 @@ export class TreeVolumes {
         const p = tile.placements[index];
         if (!this.batches[p.variant]) continue;
         const distance = (p.x - x) ** 2 + (p.z - z) ** 2;
-        if (distance <= RANGE * RANGE) {
+        if (distance <= RANGE * RANGE && (!p.band ||
+          (distance >= p.band[0] ** 2 && distance <= p.band[1] ** 2))) {
           const entry = tile.entries[index];
           entry.distance = distance;
           candidates.push(entry);
@@ -98,8 +101,8 @@ export class TreeVolumes {
     const setBand = (entry, near) => {
       const { tile, index } = entry;
       if (!tile.bands) return;
-      tile.bands.array.set(near ? [TREE_NEAR_FROM, 1e7, TREE_NEAR_TO - TREE_NEAR_FROM, 0] : [0, 1e7, 0, 0], index * 4);
-      tile.bands.addUpdateRange(index * 4, 4);
+      tile.bands.setX(index, near ? 1 : 0);
+      tile.bands.addUpdateRange(index, 1);
       bandsChanged.add(tile.bands);
     };
     for (const entry of previous) if (!next.has(entry)) setBand(entry, false);
@@ -117,6 +120,7 @@ export class TreeVolumes {
         mesh.setMatrixAt(slot, this.matrix);
         this.color.setRGB(...p.color);
         mesh.setColorAt(slot, this.color);
+        mesh.geometry.getAttribute(COVER_ATTRIBUTE).array.set(p.band || [0, 1e7, 0, 0], slot * 4);
       });
     }
   }

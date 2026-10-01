@@ -21,10 +21,12 @@ import { finishGeneration } from '../core/generationSteps.js';
  * d'en face (`_onOtherPavement`).
  *
  * Ce qui bouge n'est pas posé ici : le mobilier publie les bêtes (`fauna`)
- * pour `faunaLayer`, qui les anime
+ * pour `faunaLayer`, et les arbres (`trees`) pour `vegetationLayer`. Le
+ * compositeur transmet ces listes ; chaque rendu les anime
  * par image — cette couche, elle, ne se refait que tous les 250 m.
  */
 
+import { plantedTree } from './plantedTrees.js';
 import { defaultTheme } from '../themes/default.js';
 import { stoneTintFor } from '../core/regionInterpretation.js';
 import {
@@ -211,6 +213,7 @@ export class FurnitureLayer {
     // Matériau à part pour la seule pièce qui doit se voir au travers —
     // même raison, voir `createFurnitureGreenhouseMaterial`.
     this.greenhouseMaterial = createFurnitureGreenhouseMaterial(THREE);
+    this.trees = [];
     this.geometries = createFurnitureGeometries(THREE, theme.furniture.colors);
 
     /** @type {Map<string, Object>} `InstancedMesh` par forme ponctuelle. */
@@ -529,7 +532,13 @@ export class FurnitureLayer {
       }
 
       for (const kind of LINEAR_KINDS) this._applyLinear(kind, buffers[kind]);
-      for (const [item, list] of placements) this._applyInstances(item, list);
+      this.trees = [];
+      for (const [item, list] of placements) {
+        if (this.theme.trees.plantations[item]) {
+          for (const p of list) this.trees.push(plantedTree(p.plantation || item, p, this.theme.trees));
+          this._applyInstances(item, []);
+        } else this._applyInstances(item, list);
+      }
       this._applyGlow();
       this._applySignals();
       this._applyLabels();

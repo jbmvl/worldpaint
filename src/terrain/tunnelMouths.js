@@ -5,15 +5,19 @@ const MAX_MOUTHS=24;
 export function installTunnelMouths(THREE, material) {
   const origins={value:Array.from({length:MAX_MOUTHS},()=>new THREE.Vector4())};
   const directions={value:Array.from({length:MAX_MOUTHS},()=>new THREE.Vector4())};
+  const aprons={value:new Float32Array(MAX_MOUTHS)};
+  const roofs={value:new Float32Array(MAX_MOUTHS)};
   const count={value:0};
   const compile=material.onBeforeCompile;
   material.onBeforeCompile=shader=>{
     compile(shader);
-    Object.assign(shader.uniforms,{uTunnelOrigins:origins,uTunnelDirections:directions,uTunnelCount:count});
+    Object.assign(shader.uniforms,{uTunnelOrigins:origins,uTunnelDirections:directions,uTunnelCount:count,uTunnelRoofs:roofs,uTunnelAprons:aprons});
     shader.fragmentShader=shader.fragmentShader.replace('#include <common>',`#include <common>
       uniform vec4 uTunnelOrigins[${MAX_MOUTHS}];
       uniform vec4 uTunnelDirections[${MAX_MOUTHS}];
-      uniform int uTunnelCount;`)
+      uniform int uTunnelCount;
+      uniform float uTunnelRoofs[${MAX_MOUTHS}];
+      uniform float uTunnelAprons[${MAX_MOUTHS}];`)
       .replace('#include <clipping_planes_fragment>',`#include <clipping_planes_fragment>
       for(int i=0;i<${MAX_MOUTHS};i++) {
         if(i>=uTunnelCount) break;
@@ -29,15 +33,16 @@ export function installTunnelMouths(THREE, material) {
         vec2 left=vec2(cos(a),sin(a))*origin.w;
         vec2 right=vec2(cos(a+stepAngle),sin(a+stepAngle))*origin.w;
         float roof=1.0+0.85*mix(left.y,right.y,clamp((lateral-left.x)/(right.x-left.x),0.0,1.0));
-        if(along>-6.0 && along<18.0 && across<origin.w && height>-.2 && height<roof) discard;
+        if(uTunnelRoofs[i]>0.0) roof=uTunnelRoofs[i];
+        if(along>-uTunnelAprons[i] && along<18.0 && across<origin.w && height>0.02 && height<roof) discard;
       }`);
   };
   const key=material.customProgramCacheKey.bind(material);
-  material.customProgramCacheKey=()=>`${key()}-tunnel-mouths-v1`;
+  material.customProgramCacheKey=()=>`${key()}-tunnel-mouths-v2`;
   return mouths=>{
     count.value=Math.min(MAX_MOUTHS,mouths.length);
     for(let i=0;i<count.value;i++) {
-      const m=mouths[i];origins.value[i].set(m.x,m.y,m.z,m.radius);
+      const m=mouths[i];aprons.value[i]=m.apron??6;roofs.value[i]=m.roofHeight??0;origins.value[i].set(m.x,m.y,m.z,m.radius);
       directions.value[i].set(m.dx,m.dz,m.slope,m.steps ?? 7);
     }
   };

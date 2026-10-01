@@ -1,3 +1,4 @@
+import { collectCrossingRails } from './layers/transportCrossings.js';
 import { GenerationBudget } from './core/generationBudget.js';
 import { PlantSupportAtlas } from './terrain/plantSupportAtlas.js';
 import { GenerationMetrics } from './inspect/generationMetrics.js';
@@ -15,11 +16,12 @@ import { GenerationMetrics } from './inspect/generationMetrics.js';
  * ni une couche ni un thème, un prédicat de lieu, lu par la carte du sol qui y
  * peint son trottoir et par les chaussées qui y retranchent voies piétonnes et
  * voies redondantes) → occupation du sol (tout le monde la lit — l'eau en
- * fait partie, c'est une matière du sol) → chaussées (entaillent le terrain,
+ * fait partie, c'est une matière du sol) → profils ferroviaires naturels
+ * → chaussées (calculent les franchissements et façonnent le terrain,
  * posent la surface des carrefours, publient l'emprise routière que le reste
  * du décor ne franchit pas) → ouvrages d'art (tabliers, piles, têtes de
- * tunnel : ne lisent que les tronçons publiés par les chaussées) → voie ferrée
- * (indépendante, suit le terrain sans l'entailler, voir `railwayLayer.js`) →
+ * tunnel : lisent les tronçons et le terrain final) → voie ferrée
+ * (suit le terrain corrigé, voir `railwayLayer.js`) →
  * bâti (lit l'emprise, qui rabote ce qu'une empreinte pose sur la voie, et
  * l'emprise habitée, qui distingue une maison de ville — balcon, cheminée de
  * toit — d'une maison isolée ; publie maisons et empreintes) → voirie (après
@@ -28,8 +30,9 @@ import { GenerationMetrics } from './inspect/generationMetrics.js';
  * vaut mieux qu'un zébra ; publie sa bande revêtue) → jardins (tirent clôtures et buissons des
  * maisons, lisent emprise et bande revêtue) → mobilier (tronçons + index des
  * chaussées, compte de bâtiments, emprise ferroviaire, lieux nommés) →
- * arbres (après la carte de classes et les chaussées : une tuile semée hors de
- * portée de l'index des chaussées se resème quand il va jusqu'à elle) → herbe
+ * arbres (reçoivent aussi les plantations publiées par mobilier et jardins ;
+ * une tuile semée hors de portée de l'index des chaussées se resème quand il
+ * va jusqu'à elle) → herbe
  * (après l'index des chaussées) → cheminées, bêtes et tracteurs (publiés par
  * le mobilier et le bâti, animés par `lifeLayer`, `faunaLayer` et
  * `tractorLayer`).
@@ -484,25 +487,34 @@ export class WorldComposer {
       if (!await checkpoint()) return false;
 
       // 2. Chaussées — publient l'index et déclenchent le déblai du terrain.
-      //    L'occupation du sol leur est passée : une travée doit sortir de
-      //    l'eau qu'elle franchit (voir `roadWorks.levelWorkSpans`).
+      //    Les profils ferroviaires naturels participent aux franchissements ;
+      //    le terrain corrigé est publié avant toute pose du décor.
       if (roadsChanged && !await rebuild(this.roads, 'routes', this.vectorTiles, wanted, here, {
-        groundClass: this.groundClass,
         urban,
+        railwaySegments: collectCrossingRails(this.vectorTiles, wanted, this.bubble.frame,
+          (x, z) => this.bubble.naturalElevationAtLocal(x, z, 0) * this.bubble.verticalScale),
       })) return false;
 
       if (!await checkpoint()) return false;
 
+      // L'herbe lit les triangles affichés : leur correction doit être terminée
+      // avant toute pose. Chaque étape garde le budget du terrain.
+      if (roadsChanged) {
+        while (this.bubble.processRebuildQueue()) {
+          if (!await checkpoint()) return false;
+        }
+      }
+
       // 2 bis. Ouvrages d'art — après les chaussées, dont ils habillent les
       //    travées et les têtes de tunnel.
       if (roadsChanged) {
-        this.bridges.rebuild(this.roads.roadSegments, here);
+        this.bridges.rebuild(this.roads.roadSegments, here, { earthworks: this.roads.earthworks });
         this.bubble.materials.setTunnelMouths?.(this.bridges.tunnelMouths ?? []);
       }
 
       if (!await checkpoint()) return false;
 
-      // 2 ter. Voie ferrée — ne dépend de rien ; publie son emprise et les voies des trains.
+      // 2 ter. Voie ferrée — lit le terrain corrigé, publie son emprise et les voies des trains.
       if (railwaysChanged) {
         this.railways.rebuild(this.vectorTiles, wanted, here);
         this.trains.setTracks(this.railways.tracks, here);
@@ -565,10 +577,11 @@ export class WorldComposer {
 
       // 6. Arbres — après les chaussées, dont l'emprise décide où le semis
       //    s'interrompt. `sync` remet en file les tuiles semées quand l'index
-      //    n'allait pas jusqu'à elles ; seuls l'arrivée de la carte de classes
-      //    et un changement de région justifient de tout reprendre (ce qui est
-      //    planté l'aurait été avec les essences d'une autre région).
-      this.vegetation.sync({ replant: classArrived || regionChanged });
+      //    n'allait pas jusqu'à elles. Une modification du terrain impose aussi
+      //    de reprendre les altitudes des plantations.
+      this.vegetation.sync({ replant: classArrived || regionChanged || roadsChanged });
+      if (furnitureChanged) this.vegetation.setPlants('plantations-mobilier', this.furniture.trees);
+      if (streetsChanged) this.vegetation.setPlants('plantations-jardins', this.gardens.trees);
       // Le sous-étage, lui, se refait d'un bloc : l'emprise vient de changer.
       this.vegetation.update(here.x, here.z, {
         force: roadsChanged || classesChanged || streetsChanged,

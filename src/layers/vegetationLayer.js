@@ -1,3 +1,4 @@
+import { TREE_NEAR_ATTRIBUTE, installTreeTransition } from '../materials/treeTransition.js';
 import { TreeVolumes } from './treeVolumes.js';
 import { COVER_ATTRIBUTE, installCoverTransition, paddedCoverBands } from '../materials/coverTransition.js';
 /*
@@ -7,8 +8,8 @@ import { COVER_ATTRIBUTE, installCoverTransition, paddedCoverBands } from '../ma
  * traverse une route sans s'interrompre) : c'est cette couche qui refuse de
  * planter dans l'emprise (`roadCorridor`), comme l'herbe et les cultures.
  *
- * Chaque arbre adulte possède un volume proche et des plans croisés lointains, neuf
- * silhouettes d'atlas, rotation/échelle/teinte propres à chaque instance. Les
+ * Arbres et buissons partagent un prototype pour leur volume proche et leur
+ * atlas lointain, avec rotation, échelle et teinte propres à chaque instance. Les
  * plans restent présents tant que le budget proche ne fournit pas de volume ;
  * leur découpe écrit la profondeur, y compris dans le sous-étage. Le
  * peuplement (`FOREST_TYPES`, ancré à une maille de terrain) décide des
@@ -242,8 +243,6 @@ export const UNDERSTORY_REF = 0.3;
 export const THICKET_COUNT = 12000;
 /** Déplacement de l'observateur avant redistribution, en mètres. */
 export const THICKET_REBUILD_M = 12;
-/** Plancher de la taille en bord de bande : une tige entre en poussant, elle n'apparaît pas. */
-export const THICKET_HEIGHT_FADE_FLOOR = 0.45;
 
 /** Tiges de sous-étage attendues dans une maille pleinement boisée. Fonction pure. */
 export function thicketPerCell(density, cell) {
@@ -487,7 +486,7 @@ export function essenceStrata(essence, trees = defaultTheme.trees) {
  * @param {boolean} [sapling] Vrai pour le sous-étage.
  * @param {number} [edge] Présence de lisière : le sous-étage y reste arbustif.
  */
-export function describeTree(out, seed, base, type, lowPart, variants, strata, sapling = false, edge = 0) {
+export function describeTree(out, seed, base, type, lowPart, variants, strata, sapling = false, edge = 0, silhouettes = defaultTheme.trees.variants) {
   const low = (sapling && edge > 0) || standDraw(seed, base + SLOT_STRATUM) < lowPart;
   const draw = standDraw(seed, base + SLOT_HEIGHT);
   const pick = standDraw(seed, base + SLOT_VARIANT);
@@ -503,7 +502,7 @@ export function describeTree(out, seed, base, type, lowPart, variants, strata, s
     out.height = sapling
       ? saplingHeight(type, draw)
       : treeHeight(type, draw, standDraw(seed, base + SLOT_EMERGENT));
-    out.aspect = TREE_ASPECT + (standDraw(seed, base + SLOT_ASPECT) - 0.5) * 2 * TREE_ASPECT_JITTER;
+    out.aspect = (silhouettes[out.variant]?.aspect ?? TREE_ASPECT) * (1 + (standDraw(seed, base + SLOT_ASPECT) - 0.5) * 2 * TREE_ASPECT_JITTER / TREE_ASPECT);
   }
   out.rotation = standDraw(seed, base + SLOT_ROTATION) * Math.PI * 2;
   // Strate basse plus sombre : elle est à l'ombre des houppes.
@@ -577,7 +576,7 @@ export class VegetationLayer {
     this.standMaterial = this.material.clone();
     this.standMaterial.onBeforeCompile = this.material.onBeforeCompile;
     this.standMaterial.customProgramCacheKey = this.material.customProgramCacheKey;
-    installCoverTransition(this.standMaterial, THREE);
+    installTreeTransition(this.standMaterial, THREE);
     this.volumes = new TreeVolumes(THREE, this.group, theme);
     this.depthMaterial = createFoliageDepthMaterial({
       THREE,
@@ -621,7 +620,10 @@ export class VegetationLayer {
     this.thicketMaterial = this.material.clone();
     this.thicketMaterial.onBeforeCompile = this.material.onBeforeCompile;
     this.thicketMaterial.customProgramCacheKey = this.material.customProgramCacheKey;
-    installCoverTransition(this.thicketMaterial, THREE);
+    installCoverTransition(this.thicketMaterial, THREE, { mode: 'solid' });
+    installTreeTransition(this.thicketMaterial, THREE, { observer: this.standMaterial.userData.treeObserver });
+    this._thicketNear = new THREE.InstancedBufferAttribute(new Float32Array(THICKET_COUNT), 1).setUsage(THREE.DynamicDrawUsage);
+    this.thicketGeometry.setAttribute(TREE_NEAR_ATTRIBUTE, this._thicketNear);
     this.thicket = new THREE.InstancedMesh(this.thicketGeometry, this.thicketMaterial, THICKET_COUNT);
     this.thicket.name = 'vegetation-thicket';
     this.thicket.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -846,7 +848,7 @@ export class VegetationLayer {
           // déplace aucun autre (voir l'en-tête, décision 1).
           if (inCorridor(index, x, z)) continue;
 
-          describeTree(tree, seed, base, type, lowPart, variants, cellStrata);
+          describeTree(tree, seed, base, type, lowPart, variants, cellStrata, false, 0, this.theme.trees.variants);
           collected.push({
             x,
             z,
@@ -868,18 +870,23 @@ export class VegetationLayer {
     const placements = stableStand(this._descriptions.get(tile.key), collected, MAX_TREES_PER_TILE, p => !inCorridor(index, p.x, p.z));
     this._descriptions.set(tile.key, placements);
     for (const item of placements) item.color = foliageTint(item.hue, item.x, item.z, item.shade, item.jitter);
+    this.setPlants(tile.key, placements);
+  }
+
+  /** Représentations communes des semis et des plantations publiées par le compositeur. */
+  setPlants(key, placements) {
+    const { THREE } = this;
     if (placements.length === 0) {
-      this.volumes.set(tile.key, null);
-      this._swap(tile.key, null);
+      this.volumes.set(key, null);
+      this._swap(key, null);
       return;
     }
 
     // Géométrie clonée par tuile : l'attribut d'atlas est une donnée d'instance.
     const geometry = this.baseGeometry.clone();
-    const coverBands = new Float32Array(placements.length * 4);
-    for (let i = 0; i < placements.length; i++) coverBands.set([0, 1e7, 0, 0], i * 4);
-    geometry.setAttribute(COVER_ATTRIBUTE, new THREE.InstancedBufferAttribute(coverBands, 4).setUsage(THREE.DynamicDrawUsage));
-    this.volumes.set(tile.key, placements, geometry.getAttribute(COVER_ATTRIBUTE));
+    const near = new THREE.InstancedBufferAttribute(new Float32Array(placements.length), 1).setUsage(THREE.DynamicDrawUsage);
+    geometry.setAttribute(TREE_NEAR_ATTRIBUTE, near);
+    this.volumes.set(key, placements, near);
     const offsets = new Float32Array(placements.length * 2);
     placements.forEach((item, index_) => {
       const [u, v] = TREE_ATLAS_OFFSETS[item.variant];
@@ -890,7 +897,7 @@ export class VegetationLayer {
 
     const mesh = new THREE.InstancedMesh(geometry, this.standMaterial, placements.length);
     mesh.renderOrder = 1;
-    mesh.name = `vegetation-${tile.key}`;
+    mesh.name = `vegetation-${key}`;
     mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
     mesh.castShadow = true;
     mesh.receiveShadow = true; // un bois s'ombre lui-même
@@ -899,7 +906,7 @@ export class VegetationLayer {
     placements.forEach((item, index_) => {
       this._compose(item.x, item.y, item.z, item.height, item.aspect, item.rotation);
       mesh.setMatrixAt(index_, this._matrix);
-      const [r, g, b] = foliageTint(item.hue, item.x, item.z, item.shade, item.jitter);
+      const [r, g, b] = item.color;
       this._color.setRGB(r, g, b);
       mesh.setColorAt(index_, this._color);
     });
@@ -908,7 +915,7 @@ export class VegetationLayer {
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.computeBoundingSphere();
 
-    this._swap(tile.key, mesh);
+    this._swap(key, mesh);
   }
 
   /** Matrice d'une instance : rapport largeur/hauteur variable, sinon deux arbres de même hauteur sont la même image à l'échelle près. */
@@ -933,7 +940,7 @@ export class VegetationLayer {
     if (this.disposed || !this.bubble?.frame) return false;
 
     this.volumes.update(x, z);
-    this.standMaterial.userData.coverObserver.value.set(x,z);
+    this.standMaterial.userData.treeObserver.value.set(x,z);
     this.thicketMaterial.userData.coverObserver.value.set(x,z);
     const frameChanged = this._thicketFrame !== this.bubble.frame;
     if (!force && !frameChanged && this._thicketAnchor) {
@@ -963,6 +970,7 @@ export class VegetationLayer {
       z: Math.round(centerZ / band.cell),
     }));
     let placed = 0;
+    const plants = [];
 
     if (groundClass) {
       for (const cell of this._thicketCells) {
@@ -1014,7 +1022,7 @@ export class VegetationLayer {
           const z = cellZ + standDraw(seed, slot + SLOT_Z) * band.cell;
           if (inCorridor(index, x, z)) continue;
 
-          describeTree(tree, seed, slot, type, lowPart, variants, cellStrata, true, edge);
+          describeTree(tree, seed, slot, type, lowPart, variants, cellStrata, true, edge, this.theme.trees.variants);
           const y = bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
           const height = tree.height * band.rise;
 
@@ -1027,11 +1035,18 @@ export class VegetationLayer {
           this._thicketOffsets[placed * 2] = u;
           this._thicketOffsets[placed * 2 + 1] = v;
           this._thicketBands.set([band.from, band.to, band.fadeIn, band.fadeOut], placed * 4);
+          plants.push({ x, y, z, height, aspect: tree.aspect * band.spread,
+            rotation: tree.rotation, variant: tree.variant, color: [r, g, b],
+            band: [band.from, band.to, band.fadeIn, band.fadeOut] });
           placed++;
         }
       }
     }
 
+    this._thicketNear.array.fill(0);
+    this._thicketNear.needsUpdate = true;
+    this.volumes.set('sous-etage', plants, this._thicketNear);
+    this.volumes.update(centerX, centerZ);
     thicket.count = placed;
     thicket.instanceMatrix.needsUpdate = true;
     if (thicket.instanceColor) thicket.instanceColor.needsUpdate = true;

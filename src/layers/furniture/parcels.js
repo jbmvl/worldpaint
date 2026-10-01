@@ -442,7 +442,7 @@ export function buildRows(layer, context, ring, centre, crop, here) {
           }
         } else {
           for (const tree of spacedAlongPath(path, 6, { margin: 1 })) {
-            layer._place(placements, 'treeBroad', {
+            const planted = layer._place(placements, 'treeBroad', {
               x: tree.x,
               z: tree.z,
               yaw: randomAt(tree.x, tree.z, 67) * Math.PI * 2,
@@ -450,6 +450,7 @@ export function buildRows(layer, context, ring, centre, crop, here) {
               // c'est exactement ce qui le distingue d'un bois.
               scale: 0.55 + randomAt(tree.x, tree.z, 68) * 0.12,
             });
+            if (planted) planted.plantation = 'treeApple';
           }
         }
         layer.counts.rows++;

@@ -3,6 +3,9 @@
  * Chaussées, cours d'eau, haies, murs et glissières ont le même problème
  * géométrique ; seules la section et la source des polylignes changent.
  *
+ * Une section canonique portée par un point impose ses sommets et son repère ;
+ * la découpe d’un axe ne doit pas la reconstruire avec une autre tangente.
+ *
  * Trois exigences : plusieurs colonnes en travers (sinon un côté en l'air sur
  * un devers), altitude prise sur la surface affichée (le MNT continu n'est
  * échantillonné que tous les 18 m), lissage longitudinal (le MNT est bruité
@@ -307,7 +310,8 @@ export function slicePath(path, platform, from, to, stops = []) {
     const b = path[row + 1];
     const span = b.distance - a.distance;
     const t = span > 0 ? Math.min(1, Math.max(0, (distance - a.distance) / span)) : 0;
-    points.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, distance });
+    const section=Math.abs(distance-a.distance)<1e-8 ? a.section : Math.abs(distance-b.distance)<1e-8 ? b.section : undefined;
+    points.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, distance, ...(section ? {section} : {}) });
     decks.push(platform[row] + (platform[row + 1] - platform[row]) * t);
   }
 
@@ -426,6 +430,13 @@ export function pathFrames(path) {
   const out = new Float64Array(rows * 4);
 
   for (let r = 0; r < rows; r++) {
+    if (path[r].section) {
+      const {left,right}=path[r].section;
+      const width=Math.hypot(left.x-right.x,left.z-right.z);
+      const px=(left.x-right.x)/width,pz=(left.z-right.z)/width;
+      out.set([-pz,px,px,pz],r*4);
+      continue;
+    }
     const prev = path[Math.max(0, r - 1)];
     const next = path[Math.min(rows - 1, r + 1)];
     let tx = next.x - prev.x;
@@ -515,6 +526,8 @@ export function createProfileBuffer() {
  *        suivante.
  * @returns {boolean} vrai si de la géométrie a été produite.
  */
+export const RIBBON_COLUMNS = 5;
+
 export function appendRibbon(
   buffer,
   {
@@ -523,7 +536,7 @@ export function appendRibbon(
     sampleElevation,
     lift = 0,
     textureLength = 12,
-    columns = 5,
+    columns = RIBBON_COLUMNS,
     smoothRadius = 2,
     level = true,
     platform = null,
@@ -550,12 +563,14 @@ export function appendRibbon(
     for (let c = 0; c < columns; c++) {
       const u = c / (columns - 1);
       const offset = (u - 0.5) * 2 * halfWidth;
-      const x = path[r].x + px * offset;
-      const z = path[r].z + pz * offset;
+      const section=path[r].section;
+      const vertex=section?.vertices?.length===columns ? section.vertices[c] : null;
+      const x = vertex ? vertex.x : section ? section.right.x+(section.left.x-section.right.x)*u : path[r].x + px * offset;
+      const z = vertex ? vertex.z : section ? section.right.z+(section.left.z-section.right.z)*u : path[r].z + pz * offset;
       const index = r * columns + c;
       points[index * 2] = x;
       points[index * 2 + 1] = z;
-      heights[index] = (level ? deck : sampleElevation(x, z)) + lift;
+      heights[index] = (vertex && Number.isFinite(vertex.y) ? vertex.y : level ? deck : sampleElevation(x, z)) + lift;
     }
   }
 

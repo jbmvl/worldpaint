@@ -1,3 +1,7 @@
+import { appendTunnelSeams } from './tunnelSeams.js';
+import { vaultProfile, PORTAL_ARC_STEPS, PORTAL_CLEARANCE_M } from './tunnelGeometry.js';
+export { vaultProfile, PORTAL_ARC_STEPS, PORTAL_CLEARANCE_M } from './tunnelGeometry.js';
+import { ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
 import { TunnelLighting } from './tunnelLighting.js';
 /*
  * bridgeLayer — ce qui porte la chaussée quand le terrain ne la porte plus :
@@ -7,7 +11,11 @@ import { TunnelLighting } from './tunnelLighting.js';
  * `roadNetwork` — leur tracé, leur plate-forme et leurs drapeaux d'ouvrage —,
  * exactement comme `streetLayer` lit les mêmes tronçons pour ses trottoirs. Il
  * n'y a donc qu'un seul endroit qui décide où passe un pont : le réseau. Ici
- * on ne fait que l'habiller.
+ * on ne fait que l'habiller. Les appuis lisent le terrain final et laissent
+ * libres les corridors inférieurs publiés par les terrassements. Les tunnels
+ * lisent les enveloppes communes publiées par transportTunnels ; leurs
+ * ouvertures et leur éclairage ne sont jamais dupliqués par chaussée. Les
+ * coutures des portails suivent les triangles du terrain final publié.
  *
  * ## L'ouvrage n'est pas une route de plus
  *
@@ -22,7 +30,7 @@ import { TunnelLighting } from './tunnelLighting.js';
  *   - les **parapets**, de part et d'autre, seule protection de la travée ;
  *   - les **têtes de tunnel** : deux piédroits, un linteau, et une voûte sombre
  *     enfoncée de quelques mètres — sans quoi la chaussée s'arrêterait net au
- *     pied de la colline, ce qu'elle faisait jusqu'ici.
+ *     pied de la colline.
  *
  * Tout est balayé avec `appendVariableWall` (hauteur variable : une pile fait
  * douze mètres au milieu du gave et deux à la culée) sauf le tablier et la
@@ -59,11 +67,6 @@ export const BRIDGE_MIN_RISE_M = 1.1;
 /** Profondeur de la voûte enfoncée derrière une tête de tunnel, en mètres. */
 export const PORTAL_DEPTH_M = 18;
 
-/** Sommets de l'arc d'une voûte de tunnel (au-delà, on ne gagne plus rien de visible). */
-export const PORTAL_ARC_STEPS = 7;
-
-/** Jeu entre la rive de la chaussée et le piédroit d'une tête de tunnel, en mètres. */
-export const PORTAL_CLEARANCE_M = 0.7;
 
 /** Sel du grain d'un parapet plein (`facetJitter`). */
 const PARAPET_SEED = 6143;
@@ -100,31 +103,6 @@ export function deckProfile(halfWidth, deck) {
   ];
 }
 
-/**
- * Section ouverte d'une voûte : piédroits et arc, sans radier ni bouchon.
- *
- * @param {number} halfWidth Demi-largeur de la chaussée.
- * @param {Object} portal Tranche `portal` d'une famille (couleurs linéaires).
- * @param {number} [steps]
- */
-export function vaultProfile(halfWidth, portal, steps = PORTAL_ARC_STEPS) {
-  const radius = halfWidth + PORTAL_CLEARANCE_M;
-  const out = [];
-  for (let i = 0; i <= steps; i++) {
-    // De la gauche vers la droite, comme les autres sections fermées.
-    const angle = Math.PI * (1 - i / steps);
-    out.push({
-      across: radius * Math.cos(angle),
-      // Piédroits droits sur le premier mètre, voûte au-dessus : un demi-cercle
-      // pur pincerait la chaussée à ses deux rives.
-      up: 1 + radius * Math.sin(angle) * 0.85,
-      color: portal.arch,
-    });
-  }
-  out.unshift({ across: -radius, up: 0, color: portal.arch });
-  out.push({ across: radius, up: 0, color: portal.arch });
-  return out;
-}
 
 export class BridgeLayer {
   /**
@@ -163,13 +141,13 @@ export class BridgeLayer {
    * @param {{x:number,z:number}} here Position locale de l'observateur.
    * @returns {boolean} vrai si quelque chose a été posé.
    */
-  rebuild(roadSegments, here) {
+  rebuild(roadSegments, here, { earthworks = null } = {}) {
     if (this.disposed || !this.bubble?.frame) return false;
 
     const bubble = this.bubble;
-    // Terrain naturel : une pile se fonde sur le sol, pas sur le déblai d'une
-    // chaussée voisine, qui la ferait flotter.
-    const sampleElevation = (x, z) => bubble.naturalElevationAtLocal(x, z, 0) * bubble.verticalScale;
+    // Les appuis rejoignent le terrain final, sans barrer le passage creusé.
+    this._earthworks = earthworks;
+    const sampleElevation = (x, z) => bubble.surfaceElevationAtLocal(x, z, 0) * bubble.verticalScale;
 
     const buffer = createProfileBuffer();
     this.counts = { spans: 0, piers: 0, portals: 0 };
@@ -188,7 +166,11 @@ export class BridgeLayer {
         if (!inReach(run)) continue;
         this._buildSpan(buffer, segment, run, sampleElevation);
       }
-      for (const run of workRuns(segment.works, WORK_TUNNEL)) {
+      for (const structure of segment.tunnelStructures ?? []) {
+        if (!structure.path.some(p => Math.hypot(p.x-here.x,p.z-here.z)<=BRIDGE_RADIUS_M)) continue;
+        this._buildTunnelHeads(buffer, structure, { from: 0, to: structure.path.length-1 }, sampleElevation);
+      }
+      for (const run of segment.tunnelStructures ? [] : workRuns(segment.works, WORK_TUNNEL)) {
         if (!inReach(run)) continue;
         this._buildTunnelHeads(buffer, segment, run, sampleElevation);
       }
@@ -306,6 +288,15 @@ export class BridgeLayer {
         { x: path[i].x + px * reach, z: path[i].z + pz * reach },
         { x: path[i].x - px * reach, z: path[i].z - pz * reach },
       ];
+      if (this._earthworks) {
+        const [a, b] = across;
+        const steps = Math.ceil(Math.hypot(b.x - a.x, b.z - a.z));
+        for (let j = 0; j <= steps; j++) {
+          const t = steps ? j / steps : 0;
+          const hits = this._earthworks.index.queryAll(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t, 1);
+          if (hits.some((hit) => hit.segment.delta[hit.row] < -0.001)) return false;
+        }
+      }
       // Sous-face du tablier, prise dans le même repère que lui : `surface`,
       // pas la plate-forme (le tablier est arasé sur la chaussée).
       const crown = surface[i] - deck.thickness;
@@ -333,9 +324,18 @@ export class BridgeLayer {
       });
     };
 
-    // Culées : aux deux extrémités, sur toute la largeur du tablier.
-    for (const i of [0, path.length - 1]) {
-      if (blade(i, 1, abutment.thickness, abutment.colorFoot, abutment.colorTop)) this.counts.piers++;
+    // La culée est au front du creux : le bout cartographié du pont peut
+    // encore reposer sur la rive. On avance jusqu'au premier appui visible.
+    const middle = (path.length - 1) / 2;
+    for (const side of [1, -1]) {
+      const start = side > 0 ? 0 : path.length - 1;
+      for (let i = start; side > 0 ? i < middle : i > middle; i += side) {
+        if (blade(i, 1, abutment.thickness, abutment.colorFoot, abutment.colorTop)) {
+          this.counts.piers++;
+          break;
+        }
+        if (!this._earthworks) break;
+      }
     }
 
     // Piles : à intervalle régulier entre les deux culées. Une travée trop
@@ -366,12 +366,21 @@ export class BridgeLayer {
     const style=worksStyleAt(path[0].x,path[0].z,this.theme.works);
     const surface=new Float32Array(path.map((_,i)=>segment.platform[run.from+i]+ROAD_LIFT_M));
     const spacing = (this.theme.tunnelLights ?? defaultTheme.tunnelLights).spacingM;
-    const lampHeight = Math.max(...vaultProfile(halfWidth, style.portal).map(p=>p.up)) - .18;
+    const profile = segment.kind === 'underpass' ? [
+      { across: -halfWidth-PORTAL_CLEARANCE_M, up: 0, color: style.portal.arch },
+      { across: -halfWidth-PORTAL_CLEARANCE_M, up: segment.roofHeight, color: style.portal.arch },
+      { across: halfWidth+PORTAL_CLEARANCE_M, up: segment.roofHeight, color: style.portal.arch },
+      { across: halfWidth+PORTAL_CLEARANCE_M, up: 0, color: style.portal.arch },
+    ] : vaultProfile(halfWidth, style.portal);
+    const lampHeight = Math.max(...profile.map(p=>p.up)) - .18;
+    const total = path.at(-1).distance;
+    const apron = Math.max(6,(this.bubble.cutBenchM??0)+ROAD_CUT_BLEND_M);
     let distance = path[0].distance ?? 0;
     for (let i = 1; i < path.length; i++) {
       const a = path[i-1], b = path[i];
       const length = Math.hypot(b.x-a.x,b.z-a.z);
       for (let d = Math.ceil(distance / spacing) * spacing; d < distance + length; d += spacing) {
+        if (segment.kind === 'building' || d < spacing || d > total-spacing) continue;
         const t = length ? (d-distance)/length : 0;
         this.tunnelFixtures.push({x:a.x+(b.x-a.x)*t,z:a.z+(b.z-a.z)*t,
           y:surface[i-1]+(surface[i]-surface[i-1])*t+lampHeight});
@@ -379,22 +388,41 @@ export class BridgeLayer {
       distance += length;
     }
     // Profil ouvert : aucune face ne bouche l'entrée ou la sortie.
-    appendProfile(buffer,{path,profile:vaultProfile(halfWidth,style.portal),sampleElevation,baseHeights:surface,closed:false,smoothRadius:0});
+    appendProfile(buffer,{path,profile,sampleElevation,baseHeights:surface,closed:false,smoothRadius:0});
+    // Le radier ferme aussi le dégagement du masque devant les seuils.
+    const floorPath=path.map(p=>({...p,distance:p.distance+apron}));
+    const floorHeights=Array.from(surface,h=>h-ROAD_LIFT_M);
+    for(const end of [0,1]) {
+      if (segment.tunnelPortals ? !segment.tunnelPortals[end] : end ? run.to===segment.path.length-1 : run.from===0) continue;
+      const i=end?path.length-1:0,j=end?i-1:1;
+      const length=Math.hypot(path[i].x-path[j].x,path[i].z-path[j].z);
+      if(!length) continue;
+      const p={x:path[i].x+(path[i].x-path[j].x)*apron/length,z:path[i].z+(path[i].z-path[j].z)*apron/length,
+        distance:end?total+2*apron:0};
+      const h=surface[i]-ROAD_LIFT_M+(surface[i]-surface[j])*apron/length;
+      if(end){floorPath.push(p);floorHeights.push(h);}else{floorPath.unshift(p);floorHeights.unshift(h);}
+    }
+    appendProfile(buffer, { path:floorPath, profile: [
+      { across: -halfWidth-PORTAL_CLEARANCE_M, up: 0, color: style.portal.arch },
+      { across: halfWidth+PORTAL_CLEARANCE_M, up: 0, color: style.portal.arch },
+    ], sampleElevation, baseHeights: Float32Array.from(floorHeights), closed:false, smoothRadius:0 });
     for(const mouth of [run.from,run.to]) {
       // Une limite de streaming n'est pas une entrée de tunnel.
-      if(mouth===0 || mouth===segment.path.length-1)continue;
+      if (segment.tunnelPortals ? !segment.tunnelPortals[mouth===run.from?0:1] : mouth===0 || mouth===segment.path.length-1) continue;
       const inward=mouth===run.from?1:-1;
       const p=segment.path[mouth], q=segment.path[mouth+inward];
       const length=Math.hypot(q.x-p.x,q.z-p.z);
       if(!length)continue;
-      this.tunnelMouths.push({x:p.x,z:p.z,y:segment.platform[mouth]+ROAD_LIFT_M,radius:halfWidth+PORTAL_CLEARANCE_M,steps:PORTAL_ARC_STEPS,dx:(q.x-p.x)/length,dz:(q.z-p.z)/length,slope:(segment.platform[mouth+inward]-segment.platform[mouth])/length});
-      this._buildPortalFace(buffer,path,surface,halfWidth,style,mouth===run.from?0:path.length-1,sampleElevation);
+      const opening = {x:p.x,z:p.z,y:segment.platform[mouth]+ROAD_LIFT_M,radius:halfWidth+PORTAL_CLEARANCE_M,steps:PORTAL_ARC_STEPS,apron,roofHeight:segment.kind==='underpass'?segment.roofHeight:0,dx:(q.x-p.x)/length,dz:(q.z-p.z)/length,slope:(segment.platform[mouth+inward]-segment.platform[mouth])/length};
+      this.tunnelMouths.push(opening);
+      appendTunnelSeams(buffer, opening, profile, this.bubble.plantSupportTiles?.(p.x,p.z,apron+halfWidth+PORTAL_CLEARANCE_M) ?? [], ROAD_LIFT_M);
+      this._buildPortalFace(buffer,path,surface,halfWidth,style,mouth===run.from?0:path.length-1,sampleElevation,profile);
       this.counts.portals++;
     }
   }
 
   /** Le front d'une tête : deux piédroits et le linteau qui les relie. */
-  _buildPortalFace(buffer, path, surface, halfWidth, style, at, sampleElevation) {
+  _buildPortalFace(buffer, path, surface, halfWidth, style, at, sampleElevation, profile = vaultProfile(halfWidth, style.portal)) {
     const { portal } = style;
     const frames = pathFrames(path);
     const px = frames[at * 4 + 2];
@@ -408,7 +436,7 @@ export class BridgeLayer {
       sampleElevation(path[at].x, path[at].z),
       base + opening + portal.crown + 3
     );
-    const crest = Math.max(base + opening + portal.crown, above);
+    const crest = Math.max(base + Math.max(...profile.map(p=>p.up)) + portal.crown, above);
 
     const at2 = (a, b) => [
       { x: path[at].x + px * a, z: path[at].z + pz * a },
@@ -431,7 +459,7 @@ export class BridgeLayer {
     }
 
     // Remplit aussi les écoinçons entre l'arc et le front rectangulaire.
-    const arc = vaultProfile(halfWidth, portal).slice(1, -1);
+    const arc = profile.slice(1, -1);
     for (let i = 1; i < arc.length; i++) {
       const a = arc[i-1], b = arc[i];
       appendVariableWall(buffer, {

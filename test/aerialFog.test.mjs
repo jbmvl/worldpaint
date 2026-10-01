@@ -189,4 +189,9 @@ test('update() écrit dans les uniforms partagés', () => {
   assert.deepEqual(shared.uFogSunColor.value, { x: 0.4, y: 0.5, z: 0.6 });
   assert.deepEqual(shared.uFogSunDir.value, { x: 0, y: 0.5, z: -1 });
   assert.equal(shared.uFogSunAmount.value, 0.42);
+  fog.update({
+    skyColor: [0.1, 0.2, 0.3], sunColor: [0.4, 0.5, 0.6],
+    sunDir: { x: 0, y: 0.5, z: -1 }, sunAmount: 0.42, whiteness: 1,
+  });
+  assert.deepEqual(shared.uFogChannel.value, { x: 1, y: 1, z: 1 }, 'la brume éteint la dominante bleue');
 });

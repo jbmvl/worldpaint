@@ -146,6 +146,10 @@ Breaking one of these needs a very good reason, stated in the PR description.
   horizontal**, one height per mouth (`outlineDeckAt`), or a crossroads on a
   slope steps against every ribbon. The terrain cut reads that slab too
   (`TerrainBubble.setRoadCut`).
+  La triangulation est commune au rendu et aux lectures d’altitude
+  (`junctionTriangulation`). Un contour concave non visible depuis le nœud
+  est découpé en oreilles. Les rubans reprennent la cote de cette même surface
+  à leur frontière ; un éventail ne doit pas traverser un creux du contour.
 
 - **A junction interrupts a ribbon, not a road.** Corridor, terrain cut,
   platform stitching, spaced furniture and kerbs keep reading one whole chain;
@@ -196,11 +200,21 @@ Breaking one of these needs a very good reason, stated in the PR description.
   never carve the terrain down to a tunnel slab, nor stitch a road up to the
   viaduct flying over it.
 
-  A raised span's approach embankment belongs to the **network**, not to the
-  bridge's chain: `raiseApproaches` spreads the lift along graph distance —
-  rows, junction areas, chain ends that touch — with a bounded grade
-  (`rampLengthFor`). A branch on the embankment, or a road changing class on
-  it, rises with it whatever its width.
+  Les franchissements sont calculés ensemble par `transportCrossings`, avant
+  les maillages : tranchée ferroviaire sous un pont routier, déblai inférieur
+  privilégié autour des carrefours, déblai limité et remblai supérieur sur une
+  autoroute isolée. Un passage à niveau ne déclenche aucun terrassement et
+  ancre le raccord ferroviaire. L'eau n'impose aucune revanche.
+
+  `transportTunnels` conserve le sens des passages inférieurs et mesure leur
+  couverture. Les galeries parallèles compatibles partagent une enveloppe,
+  sans fusionner les chaussées. Leurs accès seuls sont excavés à ciel ouvert.
+
+  Les remblais des accès font partie du terrain et portent ses matières.
+  `transportEarthworks` publie le relief final ; le déblai inférieur prime sur
+  le remblai. La couture des routes précède ces corrections. Les chemins ne
+  propagent aucune rampe et suivent le terrain final. La maille est reconstruite
+  avant la pose du décor ; les arbres sont replantés si les routes changent.
 
   Platforms are laid on the **natural** terrain (`naturalElevationAtLocal`):
   the DEM with mapped cliffs stepped, road cut excluded. Only `cliffLayer`

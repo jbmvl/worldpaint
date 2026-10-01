@@ -1,28 +1,12 @@
+import { junctionLinks, junctionLinkArea } from './junctionLinks.js';
+import { seamIntervals, seamBoundary, seamRibbonRuns } from './junctionSeams.js';
+import { junctionTriangles } from './junctionTriangulation.js';
 /*
  * roadJunctions — un carrefour est une **surface**, pas un point.
  *
- * ## Ce qui se passait avant
- *
- * Le graphe savait depuis toujours où sont les carrefours (`collectJunctions`,
- * un nœud de degré trois), mais il n'en tirait qu'un rayon de coupe : la voie
- * la plus étroite s'arrêtait sur un **cercle** centré sur le nœud, cinquante
- * centimètres en deçà de la rive de la plus large, et rentrait donc sous elle.
- * La surface du carrefour n'était construite nulle part : c'était le
- * recouvrement de deux rubans, départagé par deux centimètres de décollement
- * et un ordre de dessin.
- *
- * Trois défauts en découlaient directement, et aucun n'était corrigeable là où
- * il se voyait :
- *
- *   - deux voies de **même largeur** ne se rognaient pas du tout (il n'y avait
- *     pas de dominante), donc leurs deux rubans se superposaient entièrement ;
- *   - un cercle coupe une rive courbe en deux points différents : l'extrémité
- *     du ruban étroit était une arête droite en travers d'une rive oblique,
- *     d'où les pointes et les triangles ;
- *   - il n'y avait aucun raccord d'angle. Une branche arrivant à vingt degrés
- *     produisait un coin en lame de couteau.
- *
- * ## Ce que fait ce module
+ * La frontière porte les cotes communes aux rubans, à la dalle et au terrain.
+ * Sa triangulation conserve les arêtes du contour, y compris lorsqu'un
+ * carrefour concave n'est pas visible en entier depuis son nœud.
  *
  * Il construit, en plan, le **contour** de la chaussée d'un carrefour à partir
  * des branches qui y participent — leur direction sortante et leur
@@ -41,31 +25,13 @@
  *      c'est vrai de **toutes** les branches, la plus large comprise.
  *
  * Le contour est donc : bouche, arc, bouche, arc… en tournant. Il est fermé,
- * convexe par construction en dehors des arcs, et il n'y a plus un seul ruban
- * qui en recouvre un autre.
+ * sa triangulation conserve les subdivisions des bouches.
  *
- * ## Une branche n'est pas un rayon
- *
- * Un carrefour couvre une dizaine de mètres le long de chaque branche — bien
- * davantage quand deux branches se quittent sous un angle fermé, parce que
- * leurs rives ne se coupent que loin. Or une route oblique, et souvent bien
- * avant d'en sortir. Construite sur le seul rayon sortant, sa bouche se posait
- * alors à plusieurs mètres à côté de son ruban : une fente d'un côté, la dalle
- * débordant sur le pré de l'autre, et la cote de la bouche relevée là où il n'y
- * a pas de chaussée.
- *
- * Le partage est donc celui-ci, et il tient en une phrase : **les coins se
- * calculent sur les rayons, les bouches se posent sur la chaussée**. Le rayon
- * reste ce qui rend un coin calculable (deux droites se coupent, deux courbes
- * demanderaient tout autre chose) et ce qui dit la profondeur du carrefour ;
- * mais à cette profondeur, `branchSection` va chercher la branche là où elle
- * est vraiment, sur la polyligne que le graphe publie avec elle
- * (`roadGraph.branchPath`). L'écart ainsi rattrapé est **en travers** — la
- * profondeur, elle, se mesure toujours le long du rayon —, ce qui garde la
- * bouche au-delà des raccords d'angle et le contour sans repli. L'arc qui
- * relie deux bouches glisse avec elles, en passant de l'écart de l'une à celui
- * de l'autre comme il passe de leurs cotes : sans quoi la rive ferait un
- * décroché à chaque coin de rue.
+ * Les rayons donnent la profondeur initiale ; les bouches et les coins
+ * suivent les tangentes des branches à cette profondeur. Une liaison courte
+ * borne la profondeur à sa moitié pour conserver une chaussée entre nœuds.
+ * `junctionSeams` rattache chaque bouche à son arête de graphe et publie les
+ * mêmes sommets XYZ pour le ruban, la dalle, les bordures et les marquages.
  *
  * ## La fourche
  *
@@ -94,8 +60,7 @@
  *
  * Il ne coupe pas les chaînes. La chaussée **continue** de traverser le
  * carrefour dans les données — c'est son ruban seul qui s'arrête à la bouche,
- * exactement comme le ruban saute un tunnel alors que la route continue sous
- * la colline (`roadWorks.drawableRuns`). C'est ce qui fait que l'emprise, le
+ * y compris sous les tunnels. C'est ce qui fait que l'emprise, le
  * déblai du terrain, la couture des plate-formes, l'espacement du mobilier et
  * les trottoirs continuent de lire une route entière : le carrefour ajoute une
  * surface, il ne perce pas de trou dans le réseau.
@@ -210,8 +175,9 @@ export function junctionCorner(node, a, b, { steps = JUNCTION_ARC_STEPS } = {}) 
   const pb = { x: b.z, z: -b.x };
 
   // Rive droite de `a` (côté du secteur), rive gauche de `b`.
-  const a0 = { x: node.x - pa.x * a.halfWidth, z: node.z - pa.z * a.halfWidth };
-  const b0 = { x: node.x + pb.x * b.halfWidth, z: node.z + pb.z * b.halfWidth };
+  const originA = a.origin ?? node, originB = b.origin ?? node;
+  const a0 = { x: originA.x - pa.x * a.halfWidth, z: originA.z - pa.z * a.halfWidth };
+  const b0 = { x: originB.x + pb.x * b.halfWidth, z: originB.z + pb.z * b.halfWidth };
 
   const hit = intersectLines(a0.x, a0.z, a.x, a.z, b0.x, b0.z, b.x, b.z);
   const reach = (a.halfWidth + b.halfWidth) * JUNCTION_CORNER_REACH;
@@ -223,6 +189,8 @@ export function junctionCorner(node, a, b, { steps = JUNCTION_ARC_STEPS } = {}) 
     return { points: [mid], ta: 0, tb: 0 };
   }
 
+  if (a.origin && (hit.ta>(a.mouthLimit ?? Infinity) || hit.tb>(b.mouthLimit ?? Infinity)))
+    return { points: [], ta: hit.ta, tb: hit.tb };
   const corner = { x: hit.x, z: hit.z };
   const cos = a.x * b.x + a.z * b.z;
 
@@ -231,10 +199,13 @@ export function junctionCorner(node, a, b, { steps = JUNCTION_ARC_STEPS } = {}) 
 
   const angle = Math.acos(Math.min(1, Math.max(-1, cos)));
   const half = angle / 2;
-  const radius = Math.min(
+  const radius = Math.max(0, Math.min(
+    ((a.mouthLimit ?? Infinity)-hit.ta-JUNCTION_MOUTH_MARGIN_M)*Math.tan(half),
+    ((b.mouthLimit ?? Infinity)-hit.tb-JUNCTION_MOUTH_MARGIN_M)*Math.tan(half),
     JUNCTION_CORNER_MAX_M,
     Math.max(JUNCTION_CORNER_MIN_M, Math.min(a.halfWidth, b.halfWidth) * JUNCTION_CORNER_RATIO)
-  );
+  ));
+  if (radius < 1e-6) return { points: [corner], ta: hit.ta, tb: hit.tb };
 
   const tangent = radius / Math.tan(half);
   const sin = Math.sin(half);
@@ -346,6 +317,7 @@ export function branchSection(node, branch, depth) {
  *          que le carrefour ajoute entre deux bouches consécutives.
  */
 export function junctionArea(junction, options = {}) {
+  if (junction?.link) return junctionLinkArea(junction, branchSection, options.margin ?? JUNCTION_MOUTH_MARGIN_M, j=>junctionArea(j,options));
   if (junction?.roundabout) return roundaboutArea(junction, options);
   const { margin = JUNCTION_MOUTH_MARGIN_M } = options;
   const raw = junction?.branches;
@@ -381,27 +353,24 @@ export function junctionArea(junction, options = {}) {
     if (corner.tb > reach[next]) reach[next] = corner.tb;
   }
 
-  // Chaque bouche d'abord : sa profondeur, où la chaussée passe vraiment à
-  // cette profondeur, et de combien elle s'y est écartée du rayon (`drift`).
-  // Ce dernier écart n'est pas propre à la bouche — il vaut pour tout le
-  // morceau de carrefour que la branche commande, arc de raccordement compris,
-  // faute de quoi la rive ferait un décroché entre les deux.
   const sections = new Array(count);
-  const drifts = new Array(count);
   for (let i = 0; i < count; i++) {
     const branch = branches[i];
     // La bouche se pose au-delà du plus lointain de ses deux raccords : c'est
     // la seule façon qu'elle ne coupe aucun des deux.
-    const t = Math.max(reach[i], branch.halfWidth * 0.5) + margin;
-    // La bouche est posée sur la chaussée telle qu'elle part, pas sur le rayon
-    // qui l'approche : une branche qui oblique avant la fin de l'aire y était
-    // sinon coupée en biais, à côté de son ruban.
+    const t = Math.min(branch.mouthLimit ?? Infinity, Math.max(reach[i], branch.halfWidth * 0.5) + margin);
     const section = branchSection(node, branch, t);
     sections[i] = { ...section, t };
-    drifts[i] = {
-      x: section.centre.x - (node.x + branch.x * t),
-      z: section.centre.z - (node.z + branch.z * t),
+  }
+  for (let i=0;i<count;i++) {
+    const tangent = k => {
+      const section=sections[k];
+      return { ...branches[k], ...section.direction, mouthLimit:section.t,
+        origin:{x:section.centre.x-section.direction.x*section.t,z:section.centre.z-section.direction.z*section.t} };
     };
+    corners[i]=junctionCorner(node,tangent(i),tangent((i+1)%count),options);
+    if (corners[i].points.some(p=>sections.some(s=>(p.x-s.centre.x)*s.direction.x+(p.z-s.centre.z)*s.direction.z>1e-6)))
+      corners[i].points=[];
   }
 
   const outline = [];
@@ -440,11 +409,6 @@ export function junctionArea(junction, options = {}) {
       arc[k].from = i;
       arc[k].to = next;
       arc[k].blend = (k + 1) / (arc.length + 1);
-      // Le raccord glisse avec les deux chaussées qu'il relie, comme leurs
-      // bouches : il passe de l'écart de l'une à celui de l'autre en tournant,
-      // exactement comme il passe de leurs cotes.
-      arc[k].x += drifts[i].x + (drifts[next].x - drifts[i].x) * arc[k].blend;
-      arc[k].z += drifts[i].z + (drifts[next].z - drifts[i].z) * arc[k].blend;
       outline.push(arc[k]);
     }
 
@@ -455,6 +419,7 @@ export function junctionArea(junction, options = {}) {
     corner.push({ from: i, to: next, arc, right });
 
     mouths.push({
+      edge: branch.edge,
       profile: branch.profile,
       halfWidth: branch.halfWidth,
       // Celle de la chaussée à la bouche, et non le rayon de la branche : ce
@@ -596,6 +561,7 @@ export function forkArea(junction, { trunk, a, b }, { margin = JUNCTION_MOUTH_MA
     const p = left(direction);
     const w = branch.halfWidth;
     return {
+      edge: branch.edge,
       profile: branch.profile,
       halfWidth: w,
       direction,
@@ -751,6 +717,7 @@ export function roundaboutArea(junction) {
     const p = { x: direction.z, z: -direction.x };
     const w = branch.halfWidth;
     mouths.push({
+      edge: branch.edge,
       profile: branch.profile,
       halfWidth: w,
       direction,
@@ -872,9 +839,9 @@ export function outlineDeckAt(point, decks) {
 /**
  * Cote de la dalle d'un carrefour en un point qu'elle couvre.
  *
- * La dalle est un éventail depuis le nœud : le point tombe donc dans un
- * triangle (nœud, sommet, sommet suivant), et sa cote s'y interpole en
- * coordonnées barycentriques. Exacte sur le contour comme au nœud, c'est ce qui
+ * La dalle lit la triangulation partagée avec son maillage : le point tombe dans un
+ * triangle, et sa cote s'y interpole en
+ * coordonnées barycentriques. Exacte sur les triangles du rendu, c'est ce qui
  * permet au déblai du terrain de descendre **sous la dalle** et non sous la
  * plus basse de ses bouches, ce qui creuserait une marche au ras d'un
  * carrefour de versant.
@@ -892,40 +859,32 @@ export function junctionDeckAt(area, decks, x, z) {
   const outline = area?.outline;
   if (!Number.isFinite(centre) || !Array.isArray(outline) || outline.length < 3) return centre;
 
-  const cx = area.x;
-  const cz = area.z;
-  const px = x - cx;
-  const pz = z - cz;
-
-  for (let i = 0; i < outline.length; i++) {
-    const a = outline[i];
-    const b = outline[(i + 1) % outline.length];
-    const ax = a.x - cx;
-    const az = a.z - cz;
-    const bx = b.x - cx;
-    const bz = b.z - cz;
-    const area2 = ax * bz - az * bx;
-    if (Math.abs(area2) < 1e-9) continue;
-    // Poids du sommet `b`, puis de `a` : le reste revient au nœud.
-    const wb = (ax * pz - az * px) / area2;
-    const wa = (px * bz - pz * bx) / area2;
-    if (wa < 0 || wb < 0 || wa + wb > 1) continue;
-    const da = outlineDeckAt(a, decks);
-    const db = outlineDeckAt(b, decks);
-    return (
-      centre * (1 - wa - wb) +
-      (Number.isFinite(da) ? da : centre) * wa +
-      (Number.isFinite(db) ? db : centre) * wb
-    );
+  const {vertices,triangles}=junctionTriangles(area);
+  const height=p=>p===vertices[0]?centre:outlineDeckAt(p,decks);
+  for(const [ci,ai,bi] of triangles) {
+    const c=vertices[ci],a=vertices[ai],b=vertices[bi];
+    const ax=a.x-c.x,az=a.z-c.z,bx=b.x-c.x,bz=b.z-c.z;
+    const px=x-c.x,pz=z-c.z,det=ax*bz-az*bx;
+    if(Math.abs(det)<1e-9)continue;
+    const wa=(px*bz-pz*bx)/det,wb=(ax*pz-az*px)/det;
+    if(wa>=-1e-8 && wb>=-1e-8 && wa+wb<=1+1e-8) return height(c)*(1-wa-wb)+height(a)*wa+height(b)*wb;
   }
-
-  return centre;
+  // La dichotomie d'un ruban peut tomber juste dehors : on lit sa frontière,
+  // jamais la cote du centre à plusieurs mètres de cette bouche.
+  let nearest=Infinity, boundary=centre;
+  for(let i=0;i<outline.length;i++) {
+    const a=outline[i],b=outline[(i+1)%outline.length],dx=b.x-a.x,dz=b.z-a.z;
+    const t=Math.max(0,Math.min(1,((x-a.x)*dx+(z-a.z)*dz)/(dx*dx+dz*dz||1)));
+    const distance=(x-a.x-t*dx)**2+(z-a.z-t*dz)**2;
+    if(distance<nearest){nearest=distance;boundary=height(a)*(1-t)+height(b)*t;}
+  }
+  return boundary;
 }
 
 /**
  * Cote la plus basse de la dalle à moins de `radius` d'un point.
  *
- * L'éventail est plié à chaque rayon, et sur un versant ces plis sont souvent
+ * La dalle est pliée aux arêtes de ses triangles ; sur un versant ces plis sont souvent
  * en creux : un triangle de terrain dont les sommets sont posés sur la dalle
  * la survole entre eux. Un sommet de terrain qui ne dépasse pas la dalle dans
  * tout le rayon d'une maille garde toute corde qui en part sous elle.
@@ -970,17 +929,18 @@ export function lowestDeckAround(area, x, z, radius) {
     }
   };
 
-  const cx = area.x;
-  const cz = area.z;
-  if ((cx - x) ** 2 + (cz - z) ** 2 <= r2) keep(centre);
-  for (let i = 0; i < outline.length; i++) {
-    const a = outline[i];
-    const b = outline[(i + 1) % outline.length];
+  const {vertices,triangles}=junctionTriangles(area);
+  for (const [ci,ai,bi] of triangles) {
+    const c=vertices[ci],a=vertices[ai],b=vertices[bi];
+    const cx=c.x,cz=c.z,ch=ci===0?centre:outlineDeckAt(c,decks);
+    if ((cx-x)**2+(cz-z)**2<=r2) keep(ch);
     const ah = outlineDeckAt(a, decks);
     const bh = outlineDeckAt(b, decks);
     if (!Number.isFinite(ah) || !Number.isFinite(bh)) continue;
     if ((a.x - x) ** 2 + (a.z - z) ** 2 <= r2) keep(ah);
-    crossings(cx, cz, centre, a.x, a.z, ah);
+    crossings(cx, cz, ch, a.x, a.z, ah);
+    crossings(b.x, b.z, bh, cx, cz, ch);
+    if ((b.x-x)**2+(b.z-z)**2<=r2) keep(bh);
     crossings(a.x, a.z, ah, b.x, b.z, bh);
 
     // Le point du cercle qui descend la pente du triangle, s'il y tombe.
@@ -990,15 +950,18 @@ export function lowestDeckAround(area, x, z, radius) {
     const vz = b.z - cz;
     const det = ux * vz - uz * vx;
     if (Math.abs(det) < 1e-9) continue;
-    const gx = ((ah - centre) * vz - (bh - centre) * uz) / det;
-    const gz = ((bh - centre) * ux - (ah - centre) * vx) / det;
+    const gx = ((ah - ch) * vz - (bh - ch) * uz) / det;
+    const gz = ((bh - ch) * ux - (ah - ch) * vx) / det;
     const slope = Math.hypot(gx, gz);
+    const mx=x-cx,mz=z-cz;
+    const ma=(mx*vz-mz*vx)/det,mb=(ux*mz-uz*mx)/det;
+    if(ma>=0 && mb>=0 && ma+mb<=1)keep(ch+(ah-ch)*ma+(bh-ch)*mb);
     if (slope < 1e-12) continue;
     const px = x - (gx / slope) * radius - cx;
     const pz = z - (gz / slope) * radius - cz;
     const wa = (px * vz - pz * vx) / det;
     const wb = (ux * pz - uz * px) / det;
-    if (wa >= 0 && wb >= 0 && wa + wb <= 1) keep(centre + (ah - centre) * wa + (bh - centre) * wb);
+    if (wa >= 0 && wb >= 0 && wa + wb <= 1) keep(ch + (ah - ch) * wa + (bh - ch) * wb);
   }
   return lowest;
 }
@@ -1183,10 +1146,11 @@ export class JunctionAreas {
      */
     this.feeders = [];
 
-    for (const junction of junctions) {
+    for (const junction of junctionLinks(junctions)) {
       const area = junctionArea(junction, options);
       if (!area) continue;
       const index = this.areas.length;
+      area.ringEdges = junction.ringEdges;
       this.areas.push(area);
       this.feeders.push(new Set());
 
@@ -1344,6 +1308,13 @@ export function markJunctionRows(segment, areas) {
   const out = new Int32Array(rows).fill(-1);
   if (!areas || areas.length === 0) return out;
 
+  if (segment.junctionSeams) {
+    for (const cut of seamIntervals(segment)) for (let r=0;r<rows;r++) {
+      if (segment.path[r].distance>=cut.from && segment.path[r].distance<=cut.to)
+        out[r]=cut.index ?? (cut.left ?? cut.right).index;
+    }
+    return out;
+  }
   for (let r = 0; r < rows; r++) {
     const level = segment.levels?.[r] ?? LEVEL_GROUND;
     out[r] = areas.indexAt(segment.path[r].x, segment.path[r].z, level);
@@ -1383,7 +1354,9 @@ function boundaryTowards(path, platform, keep, drop, area, steps) {
     if (areaCovers(area, x, z)) hi = mid;
     else lo = mid;
   }
-  return between(path, platform, keep, drop, (lo + hi) / 2);
+  const boundary = between(path, platform, keep, drop, (lo + hi) / 2);
+  if (area.decks) boundary.deck = junctionDeckAt(area,area.decks,boundary.point.x,boundary.point.z);
+  return boundary;
 }
 
 /**
@@ -1406,6 +1379,12 @@ export function junctionBoundaryAt(segment, areas, keep, drop, { steps = JUNCTIO
   if (keep < 0 || drop < 0 || keep >= rows || drop >= rows) return null;
   const index = segment.junction?.[drop] ?? -1;
   if (index < 0 || !areas?.areas?.[index]) return null;
+  if (segment.junctionSeams) {
+    const seam=segment.junctionSeams.find(s=>s.index===index &&
+      s.distance>=Math.min(segment.path[keep].distance,segment.path[drop].distance)-1e-8 &&
+      s.distance<=Math.max(segment.path[keep].distance,segment.path[drop].distance)+1e-8);
+    return seam ? seamBoundary(seam) : null;
+  }
   return boundaryTowards(segment.path, segment.platform, keep, drop, areas.areas[index], steps);
 }
 
@@ -1426,6 +1405,7 @@ export function junctionBoundaryAt(segment, areas, keep, drop, { steps = JUNCTIO
  *          donnent le rang de l'aire qui borne chaque bout, `-1` s'il est libre.
  */
 export function junctionRibbonRuns(segment, areas, runs, { steps = JUNCTION_BISECT_STEPS } = {}) {
+  if (segment.junctionSeams) return seamRibbonRuns(segment, runs);
   const { path, platform } = segment;
   const junction = segment.junction;
   const out = [];
@@ -1509,20 +1489,8 @@ export function junctionRibbonRuns(segment, areas, runs, { steps = JUNCTION_BISE
 }
 
 /**
- * Triangule le contour d'un carrefour en éventail depuis son nœud.
- *
- * L'éventail suffit et n'a pas besoin d'être défendu par une triangulation
- * générale : le contour est étoilé vu du nœud par construction — chaque bouche
- * lui fait face, et les arcs bombent vers l'extérieur.
- *
- * **La dalle n'est pas horizontale.** Elle l'a été, posée d'un bloc à la cote
- * relevée au nœud, et c'était faux dès qu'un carrefour est sur un versant : à
- * huit pour cent de pente, les rubans s'arrêtent quarante centimètres au-dessus
- * de la dalle en amont et autant en dessous en aval. La marche se voit, le
- * terrain entaillé à la cote du ruban passe par-dessus la dalle en amont, et le
- * carrefour disparaît sous le sol. Chaque sommet prend donc la cote de la
- * ou des branches dont il tient (`outlineDeckAt`) : le contour est un
- * gauche, la dalle épouse ses bouches, et il n'y a plus de marche nulle part.
+ * Triangule la dalle en conservant ses bouches et leurs cotes. La topologie
+ * est partagée avec les sondages du terrain, y compris sur un contour concave.
  *
  * @param {Object} area   Aire rendue par `junctionArea`.
  * @param {number|Array<number>} deck Altitude de la chaussée du carrefour :
@@ -1553,24 +1521,13 @@ export function junctionSurface(area, deck, { textureLength = 12, base = 0 } = {
   const island = area.island;
   if (Array.isArray(island) && island.length === outline.length) {
     // Une couronne : un quadrilatère par côté du contour, jusqu'à l'îlot.
-    const inner = base + 1 + outline.length;
     for (const point of island) {
       const height = decks ? outlineDeckAt(point, decks) : centre;
       positions.push(point.x, Number.isFinite(height) ? height : centre, point.z);
       uvs.push(point.x / textureLength, point.z / textureLength);
     }
-    for (let i = 0; i < outline.length; i++) {
-      const next = (i + 1) % outline.length;
-      indices.push(inner + i, base + 1 + next, base + 1 + i);
-      indices.push(inner + i, inner + next, base + 1 + next);
-    }
-    return { positions, uvs, indices };
   }
-
-  for (let i = 0; i < outline.length; i++) {
-    const next = (i + 1) % outline.length;
-    indices.push(base, base + 1 + next, base + 1 + i);
-  }
+  for(const triangle of junctionTriangles(area).triangles) indices.push(...triangle.map(i=>base+i));
 
   return { positions, uvs, indices };
 }

@@ -164,6 +164,7 @@ export function buildRoadside(layer, context, roadSegments, builtUp) {
       const turn = pathTurn(path, r);
       rowsInfo.push({
         r,
+        terrainFill: segment.terrainSupport?.[r] || (segment.crossingBase && Math.abs(platform[r] - segment.crossingBase[r]) > 0.001),
         x: path[r].x,
         z: path[r].z,
         distance: path[r].distance,

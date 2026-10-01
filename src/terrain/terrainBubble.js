@@ -13,7 +13,8 @@ import { finishGeneration } from '../core/generationSteps.js';
  * après le budget CPU ; les changements de finesse passent par la file.
  *
  * Deux choses perturbent le relief lu, dans cet ordre : la marche des falaises
- * (`setCliffCut`, qui comprime en paroi la rampe que le MNT étale), puis le
+ * (`setCliffCut`, qui comprime en paroi la rampe que le MNT étale), puis les
+ * terrassements locaux des franchissements (remblais et tranchées), puis le
  * déblai des chaussées (`setRoadCut` — une route est taillée dans le versant,
  * pas posée dessus). La falaise façonne le terrain naturel, la route entaille
  * ce qu'elle trouve. Les deux sont des fonctions pures de la position au sol,
@@ -417,10 +418,12 @@ export class TerrainBubble {
    *
    * @param {Object|null} index Instance `RoadIndex`, ou `null` pour ne rien creuser.
    * @param {Object|null} [areas] Instance `JunctionAreas`, cotes posées.
+   * @param {Object|null} [earthworks] Terrassements des franchissements.
    */
-  setRoadCut(index, areas = null) {
+  setRoadCut(index, areas = null, earthworks = null) {
     if (this.disposed) return;
     this._roadCut = index || null;
+    this._earthworks = earthworks;
     this._junctions = (index && areas) || null;
     this._cutGeneration++;
     for (const tile of this.tiles.values()) {
@@ -502,8 +505,10 @@ export class TerrainBubble {
    * sommet ; `_roadCutAt` s'appuie dessus pour garder sa propre signature.
    */
   _roadCutWithMask(x, z, raw) {
+    const earth = this._earthworks?.sample(x, z, raw) ?? { elevation: raw, mask: 0 };
+    raw = earth.elevation;
     const index = this._roadCut;
-    if (!index) return { elevation: raw, mask: 0 };
+    if (!index) return earth;
 
     // La plate-forme est en unités de scène (déjà multipliée par l'exagération
     // verticale) ; `raw` est en unités de MNT. On compare dans le même espace.
@@ -511,13 +516,13 @@ export class TerrainBubble {
     const bench = this.cutBenchM;
     const reach = bench + ROAD_CUT_BLEND_M;
     let elevation = raw;
-    let mask = 0;
+    let mask = earth.mask;
 
     const hit = index.query(x, z, reach);
     const deck = hit && index.deckAt(hit);
     if (deck != null) {
       elevation = cutElevationAt(raw, deck / scale, hit.distance, hit.segment.halfWidth, bench);
-      mask = roadCutMaskAt(hit.distance, hit.segment.halfWidth, bench);
+      mask = Math.max(mask, roadCutMaskAt(hit.distance, hit.segment.halfWidth, bench));
     }
 
     // Une dalle n'a pas de demi-largeur : son fond plat se mesure depuis son
@@ -533,6 +538,7 @@ export class TerrainBubble {
       mask = Math.max(mask, roadCutMaskAt(slab.distance, 0, bench));
     }
 
+    if (earth.supported) elevation = Math.max(elevation, earth.elevation);
     return { elevation, mask };
   }
 

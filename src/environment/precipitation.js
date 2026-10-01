@@ -23,7 +23,7 @@ const MAX_DROPS = 7000;
 /** Nombre maximal de flocons. Un flocon est plus gros et plus lent : il en faut moins. */
 const MAX_FLAKES = 2600;
 /** Longueur du filet d'une goutte, en mètres. C'est lui qui donne la vitesse à l'œil. */
-const STREAK_M = 0.75;
+const STREAK_M = 1.2;
 /** Vitesse de chute, en m/s. La pluie tombe vite, la neige flotte. */
 const RAIN_SPEED = 26;
 const SNOW_SPEED = 1.6;

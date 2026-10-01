@@ -12,7 +12,8 @@
  * une planche n'a pas d'épaisseur modélisée mais se voit des deux côtés.
  *
  * Tirages ancrés au lieu : un jardin garde sa clôture, sa porte et ses
- * buissons d'une reconstruction à l'autre.
+ * buissons d'une reconstruction à l'autre. Ils sont publiés dans `trees` ;
+ * le compositeur les transmet au rendu commun de végétation.
  */
 
 import { randomAt } from './furniturePlacement.js';
@@ -286,6 +287,7 @@ export class GardenLayer {
     this.mesh = null;
     this.geometry = null;
     this.count = 0;
+    this.trees = [];
 
     // `DoubleSide` : une planche n'a pas d'épaisseur, et une facette de buisson mal orientée doit rester visible.
     this.material = new THREE.MeshLambertMaterial({
@@ -308,6 +310,7 @@ export class GardenLayer {
     if (this.disposed || !this.bubble?.frame) return false;
 
     const buffer = { positions: [], normals: [], colors: [] };
+    this.trees = [];
     let built = 0;
 
     // Les plus proches d'abord : si le plafond mord, ce qui saute est au bord de la portée.
@@ -452,15 +455,12 @@ export class GardenLayer {
 
       const radius =
         BUSH_RADIUS_M[0] + randomAt(x, z, 251) * (BUSH_RADIUS_M[1] - BUSH_RADIUS_M[0]);
-      appendBush(buffer, {
-        x,
-        y: ground(x, z) - 0.1,
-        z,
-        radius,
-        height: radius * (1.15 + randomAt(x, z, 257) * 0.7),
-        seed: 260 + i,
-        colors: this.theme.furniture.colors,
-      });
+      const height = radius * (1.15 + randomAt(x, z, 257) * 0.7);
+      const variants = this.theme.trees.essences.bushy;
+      const shade = .88 + randomAt(x, z, 263) * .24;
+      this.trees.push({ x, y: ground(x, z) - .1, z, height, aspect: radius * 2 / height,
+        variant: variants[Math.floor(randomAt(x, z, 269) * variants.length)],
+        rotation: randomAt(x, z, 271) * Math.PI * 2, color: [shade, shade, shade] });
       placed++;
     }
   }

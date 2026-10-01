@@ -1,5 +1,6 @@
 /* Transitions de couverture continues : la caméra ne modifie jamais le semis.
- * Le bruit est attaché à la surface, pour éviter un motif qui nage à l'écran.
+ * Le bruit est attaché à la surface ; le mode solid bascule la plante entière
+ * sans toucher à ses dimensions, pour les bandes du sous-étage.
  */
 export const COVER_ATTRIBUTE = 'aCoverBand';
 export function installCoverTransition(material, THREE, { mode = 'dither' } = {}) {
@@ -26,7 +27,7 @@ export function installCoverTransition(material, THREE, { mode = 'dither' } = {}
       varying float vCoverFade;
       varying vec3 vCoverPoint;`)
       .replace('#include <alphatest_fragment>', `#include <alphatest_fragment>
-      ${mode === 'alpha' ? `
+      ${mode === 'solid' ? 'if (vCoverFade < 0.5) discard;' : mode === 'alpha' ? `
       #ifdef DEPTH_PACKING
         if (vCoverFade < 0.5) discard;
       #else

@@ -167,44 +167,43 @@ export const TERRAIN_LOOK = {
 
 // --- Les arbres ----------------------------------------------------------------
 /**
- * Les onze silhouettes, décrites une fois. `hue` module la teinte de base
- * (peu saturée, la variation finale venant de la couleur d'instance).
- * `crownBase` fixe où commence la houppe (tronc dégagé d'une futaie vs
- * taillis qui part du sol) ; `trunk` à zéro, il n'y a pas de tronc du tout.
- *
- * Les deux dernières sont le **tapis du sous-bois**, et elles portent deux
- * champs que les arbres n'ont pas : `heightM`, la taille réelle de la plante,
- * et `aspect`, sa largeur en part de sa hauteur. Un arbre tire sa hauteur de
- * son peuplement ; une ronce, elle, fait ce qu'elle fait — sans ça, la
- * fourchette commune des buissons lui donnait trois mètres.
+ * Silhouettes communes au volume et à sa projection dans l'atlas. `hue`,
+ * `bark` et `volume` règlent les couleurs, le port et les facettes ; `aspect`
+ * donne la largeur rapportée à la hauteur. Les petites plantes ont leur
+ * propre `heightM`, les arbres tirent leur hauteur du peuplement.
  */
 export const TREE_VARIANTS = [
-  { kind: 'broadleaf', hue: { r: 0.62, g: 1, b: 0.46 }, trunk: 0.075, crownBase: 0.6, spread: 0.34 },
-  { kind: 'broadleaf', hue: { r: 0.5, g: 1, b: 0.4 }, trunk: 0.095, crownBase: 0.68, spread: 0.36 },
-  { kind: 'broadleaf', hue: { r: 0.72, g: 1, b: 0.5 }, trunk: 0.06, crownBase: 0.55, spread: 0.28 },
-  { kind: 'column', hue: { r: 0.56, g: 1, b: 0.42 }, trunk: 0.05, crownBase: 0.9, spread: 0.16 },
-  { kind: 'column', hue: { r: 0.68, g: 1, b: 0.52 }, trunk: 0.045, crownBase: 0.88, spread: 0.13 },
-  { kind: 'conifer', hue: { r: 0.44, g: 1, b: 0.5 }, trunk: 0.06, crownBase: 0.86, spread: 0.3 },
-  { kind: 'conifer', hue: { r: 0.38, g: 1, b: 0.44 }, trunk: 0.055, crownBase: 0.9, spread: 0.24 },
-  { kind: 'bushy', hue: { r: 0.6, g: 1, b: 0.4 }, trunk: 0.05, crownBase: 0.86, spread: 0.4 },
-  { kind: 'bushy', hue: { r: 0.74, g: 1, b: 0.46 }, trunk: 0.04, crownBase: 0.9, spread: 0.44 },
+  { aspect: 0.8, kind: 'broadleaf', hue: { r: 0.62, g: 1, b: 0.46 }, trunk: 0.075, crownBase: 0.6, spread: 0.34, volume: { crownY: .59, spread: 1.2, rise: .85, colorVariation: .09 }, bark: [.105, .068, .035] },
+  { aspect: 0.95, kind: 'broadleaf', hue: { r: 0.5, g: 1, b: 0.4 }, trunk: 0.095, crownBase: 0.68, spread: 0.36, volume: { crownY: .55, spread: 1.35, rise: .75, colorVariation: .11 }, bark: [.15, .12, .08] },
+  { aspect: 0.58, kind: 'broadleaf', hue: { r: 0.72, g: 1, b: 0.5 }, trunk: 0.06, crownBase: 0.55, spread: 0.28, volume: { crownY: .68, spread: .8, rise: 1.15, colorVariation: .06 }, bark: [.38, .36, .3] },
+  { aspect: 0.3, kind: 'column', hue: { r: 0.56, g: 1, b: 0.42 }, trunk: 0.05, crownBase: 0.9, spread: 0.16, volume: { rise: 1.15, colorVariation: .06 }, bark: [.18, .16, .12] },
+  { aspect: 0.24, kind: 'column', hue: { r: 0.68, g: 1, b: 0.52 }, trunk: 0.045, crownBase: 0.88, spread: 0.13, volume: { rise: 1.3, colorVariation: .04 }, bark: [.12, .09, .06] },
+  { aspect: 0.52, kind: 'conifer', hue: { r: 0.44, g: 1, b: 0.5 }, trunk: 0.06, crownBase: 0.86, spread: 0.3 },
+  { aspect: 0.43, kind: 'conifer', hue: { r: 0.38, g: 1, b: 0.44 }, trunk: 0.055, crownBase: 0.9, spread: 0.24 },
+  { aspect: 1.15, kind: 'bushy', hue: { r: 0.6, g: 1, b: 0.4 }, trunk: 0.05, crownBase: 0.86, spread: 0.4, volume: { trunkHeight: .25, crownY: .3, spread: 1.15 } },
+  { aspect: 1.25, kind: 'bushy', hue: { r: 0.74, g: 1, b: 0.46 }, trunk: 0.04, crownBase: 0.9, spread: 0.44, volume: { trunkHeight: .25, crownY: .3, spread: 1.15 } },
   // Le tapis : ni tronc, ni houppe, et sa taille lui appartient.
   { kind: 'bramble', hue: { r: 0.46, g: 0.94, b: 0.42 }, trunk: 0, crownBase: 1, spread: 0.25,
-    heightM: [0.7, 1.6], aspect: 1.7 },
+    heightM: [0.7, 1.6], aspect: 1.7, volume: { lobes: 7 } },
   { kind: 'lowShrub', hue: { r: 0.36, g: 0.88, b: 0.4 }, trunk: 0, crownBase: 1, spread: 0.4,
-    heightM: [1.2, 2.4], aspect: 1 },
+    heightM: [1.2, 2.4], aspect: 1, volume: { lobes: 3 } },
   // Ajonc, genêt : le buisson d'une lande, compact et fleuri de jaune.
   { kind: 'gorse', hue: { r: 0.66, g: 1, b: 0.32 }, trunk: 0, crownBase: 1, spread: 0.4,
-    heightM: [0.5, 1.3], aspect: 1.3 },
+    heightM: [0.5, 1.3], aspect: 1.3, volume: { tipColor: [.5, .42, .035] } },
   // Le buisson épineux d'un maquis : étalé, plus de vide que de feuille.
   { kind: 'thornyScrub', hue: { r: 0.7, g: 1, b: 0.42 }, trunk: 0, crownBase: 1, spread: 0.5,
-    heightM: [0.5, 1.5], aspect: 1.6 },
+    heightM: [0.5, 1.5], aspect: 1.6, volume: { lobes: 3 } },
   // La fougère d'un sous-bois : des frondes qui rayonnent, pas une canne.
   { kind: 'fern', hue: { r: 0.42, g: 1, b: 0.4 }, trunk: 0, crownBase: 1, spread: 0.35,
-    heightM: [0.35, 0.8], aspect: 1.4 },
+    heightM: [0.35, 0.8], aspect: 1.4, volume: { bladeWidth: .09, fronds: 7 } },
   // L'oyat d'une dune : une touffe de lames, presque sans masse.
   { kind: 'marram', hue: { r: 0.58, g: 1, b: 0.56 }, trunk: 0, crownBase: 1, spread: 0.35,
-    heightM: [0.35, 0.7], aspect: 0.8 },
+    heightM: [0.35, 0.7], aspect: 0.8, volume: { bladeWidth: .015, fronds: 13 } },
+  { kind: 'palm', hue: { r: .65, g: 1, b: .45 }, trunk: .06, crownBase: .3, spread: .45,
+    volume: { trunkHeight: .75, fronds: 9, bladeWidth: .06 }, bark: [.24, .17, .095] },
+  { kind: 'apple', aspect: 1.15, hue: { r: .65, g: 1, b: .42 }, trunk: .09,
+    bark: [.16, .105, .055], volume: { trunkHeight: .5, crownY: .46, spread: 1.2, rise: .8 },
+    fruit: { perLobe: 4, radius: .02, color: [.65, .025, .008] } },
 ];
 /**
  * Les essences, par indices de variantes. C'est ce que lit `vegetationLayer`
@@ -228,6 +227,7 @@ export const TREE_ESSENCES = {
   gorse: [11],
   thornyScrub: [12],
   marram: [14],
+  palm: [15],
 };
 
 // --- Les peuplements -----------------------------------------------------------
@@ -1750,7 +1750,15 @@ export const HEDGE_SHAPES = {
  */
 export const defaultTheme = Object.freeze({
   terrain: TERRAIN_LOOK,
-  trees: { variants: TREE_VARIANTS, essences: TREE_ESSENCES, volume: { bark: [0.105, 0.068, 0.035], leaf: [0.19, 0.25, 0.13] } },
+  trees: { variants: TREE_VARIANTS, essences: TREE_ESSENCES, plantations: {
+    treeApple: { variants: [16], height: 6, aspect: 1.15 },
+    treeBroad: { variants: [0, 1], height: 6, aspect: 1 },
+    treeRound: { variants: [0, 1], height: 5, aspect: .9 },
+    treeOval: { variants: [1, 2], height: 5, aspect: 1.3 },
+    treeColumnar: { variants: [3, 4], height: 9, aspect: .3 },
+    treeConifer: { variants: [5, 6], height: 9, aspect: .55 },
+    treePalm: { variants: [15], height: 8, aspect: .7 },
+  }, volume: { bark: [0.105, 0.068, 0.035], leaf: [0.19, 0.25, 0.13] } },
   forests: FOREST_TYPES,
   tunnelLights: { color: srgb("#ffe3a1"), intensity: 55, reachM: 35, spacingM: 18 },
   leaves: { lengthM: 0.12, widthM: 0.065, foldM: 0.012 },

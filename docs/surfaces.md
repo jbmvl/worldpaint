@@ -380,3 +380,67 @@ est chargé avec une réserve autour de la portée visible. Le fondu est
 calculé à chaque image depuis la position de l'observateur : ni la taille
 nominale ni la présence d'un candidat ne dépendent de ce fondu. Le découpage
 tramé est ancré à la surface, sans transparence triée.
+
+
+### Terrain des franchissements
+
+`transportCrossings` décide des profils avant les maillages. Les tranchées
+ferroviaires restent locales aux ponts routiers ; leurs raccords préservent
+les passages à niveau. Les routes inférieures peuvent être creusées ; sur une
+autoroute isolée, le dégagement est partagé avec un remblai des accès supérieurs.
+Deux carrefours atteints à moins de 100 m le long du réseau supérieur font
+privilégier le déblai inférieur. Les rivières n'imposent aucune surélévation.
+
+`transportEarthworks` déforme la maille commune et conserve les matières du
+lieu. Le remblai se raccorde doucement au relief ; la tranchée a une rive plus
+franche. Le fond plat tient compte de la résolution de la maille, comme le
+déblai routier. Une route voisine conserve un appui dans ce terrain : la
+tranchée ne la déchausse pas. Une branche qui rejoint une culée se raccorde au
+tablier ; elle ne compte pas comme passage inférieur. Les chemins lisent le terrain final sans le terrasser. Les
+mailles sont reconstruites avant le décor et les plantations sont reprises
+après modification, afin de ne pas conserver les anciennes altitudes.
+
+### Tunnels et accès
+
+`transportTunnels` distingue les passages courts dans une emprise bâtie, les
+passages inférieurs courts sous une chaussée ou un rail, et les galeries sous
+le relief. La longueur seule ne transforme pas un tunnel en franchissement.
+Le sens dessus/dessous reste celui de la donnée. Les passages inférieurs ont
+un plafond plat ; les galeries conservent leur voûte. Les bâtiments traversés
+ne déclenchent pas de tranchée.
+
+La couverture se mesure sur le terrain naturel. Si elle manque, la plateforme
+et ses accès sont abaissés ensemble, avec un raccord progressif. Les passages
+courts utilisent un raccord plus resserré que les galeries longues. Un tunnel
+ancre le profil de la voie ferrée qui le surplombe : une tranchée voisine ne
+peut s’y prolonger. Le terrain
+reste au-dessus de la galerie ; l'excavation des accès s'arrête à son seuil.
+Les remblais et déblais intégrés ne reçoivent pas un second relief décoratif.
+
+Deux tunnels proches partagent une enveloppe si leurs tracés sont parallèles,
+leurs entrées concordent et leurs niveaux sont compatibles. Les chaussées ne
+fusionnent pas : seuls la voûte, les portails et l'éclairage sont communs.
+Une galerie courbe, incomplète dans les tuiles chargées, ou à un autre niveau
+reste indépendante. Les passages bâtis n'ont pas d'éclairage ; ailleurs, une
+marge d'un espacement de lampe reste libre à chaque entrée.
+
+### Coutures des chaussées et des portails
+
+Le carrefour publie une triangulation commune au rendu, à la lecture des
+altitudes et au déblai. Un contour concave que le nœud ne voit pas entièrement
+est triangulé par découpage en oreilles, en conservant ses arêtes ; les autres
+carrefours gardent leur éventail et les giratoires leur couronne. Un contour
+dégénéré que le découpage ne termine pas conserve un éventail complet ; la
+réparation topologique des contours auto-croisés reste distincte. Les rubans
+adoptent l’altitude de cette surface à leur point de raccord, y compris quand
+ils atteignent un bord entre deux bouches.
+
+Le dégagement devant un portail reçoit des parois découpées contre les
+triangles du terrain affiché. Leur limite suit l’intersection géométrique des
+surfaces ; les parties au-dessus du sol sont retirées. Le plancher ferme le
+bas de l’ouverture. Ce raccord ne dépend pas d’un pas de sondage du relief.
+
+Référence pour la triangulation : David Eberly,
+[Triangulation by Ear Clipping](https://www.geometrictools.com/Documentation/TriangulationByEarClipping.pdf).
+Le découpage des parois procède par demi-plans successifs, selon le principe
+de Sutherland–Hodgman.

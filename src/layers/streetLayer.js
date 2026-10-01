@@ -404,6 +404,11 @@ export class StreetLayer {
     for (let i = 0; i < rows.length; i++) {
       for (let k = 0; k < 4; k++) out[i * 4 + k] = frames[rows[i] * 4 + k];
     }
+    for (const [i,edge] of [[0,head],[points.length-1,tail]]) if(edge?.point.section) {
+      const {left,right}=edge.point.section, width=segment.halfWidth*2;
+      const px=(left.x-right.x)/width,pz=(left.z-right.z)/width;
+      out.set([-pz,px,px,pz],i*4);
+    }
     return { points, decks: Float32Array.from(decks), frames: out };
   }
 
@@ -475,12 +480,13 @@ export class StreetLayer {
 
       // S'éloigner du carrefour, c'est aller vers la ligne gardée.
       const sign = keep < drop ? -1 : 1;
+      const mouthFrame = edge.point.section ? pathFrames([edge.point]) : null;
       const near = {
         x: edge.point.x,
         z: edge.point.z,
         deck: edge.deck,
-        px: segment.frames[keep * 4 + 2],
-        pz: segment.frames[keep * 4 + 3],
+        px: mouthFrame?.[2] ?? segment.frames[keep * 4 + 2],
+        pz: mouthFrame?.[3] ?? segment.frames[keep * 4 + 3],
       };
       const far = sectionAtDistance(
         segment.path,

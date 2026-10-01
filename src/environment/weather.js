@@ -142,11 +142,14 @@ export function fogScale(weather) {
   return 1 + overcast * 0.4 + weather.precipitation * 1.3 + weather.haze * 18;
 }
 
+/** Blancheur de la brume, proche du blanc avant que sa densité atteigne 1. */
+export function hazeWhiteness(weather) {
+  return 1 - (1 - weather.haze) ** 4;
+}
+
 /**
- * Couleur de brouillard corrigée par la météo, en linéaire. Désature vers sa
- * propre luminance plutôt que vers un gris arbitraire, pour que la teinte du
- * décor s'éteigne sans changer (un ciel bouché bleu clair serait l'erreur la
- * plus visible ici).
+ * Couleur de brouillard corrigée par la météo, en linéaire. Le couvert
+ * désature vers la luminance de la palette ; la brume blanchit l'air.
  *
  * @param {[number,number,number]} rgb Couleur de la palette, linéaire.
  * @param {Object} weather État résolu.
@@ -154,19 +157,14 @@ export function fogScale(weather) {
  */
 export function fogColorFor(rgb, weather) {
   const overcast = overcastOf(weather);
-  // Brume et couvert désaturent chacun indépendamment ; max plutôt qu'addition
-  // pour ne pas empiler deux brouillards en un gris trop profond.
-  const grey = Math.max(overcast * 0.75, weather.haze * 0.85);
-  if (grey <= 0) return [rgb[0], rgb[1], rgb[2]];
+  const grey = overcast * 0.75;
+  if (grey <= 0 && weather.haze <= 0) return [rgb[0], rgb[1], rgb[2]];
 
   const luma = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
-  // Assombrissement léger, et seulement depuis le couvert (une brume seule ne noircit pas).
+  // Assombrissement léger, et seulement depuis le couvert.
   const shade = mix(1, 0.72, overcast * clamp01(0.4 + weather.precipitation * 0.6));
-  return [
-    mix(rgb[0], luma, grey) * shade,
-    mix(rgb[1], luma, grey) * shade,
-    mix(rgb[2], luma, grey) * shade,
-  ];
+  const white = hazeWhiteness(weather);
+  return rgb.map((channel) => mix(mix(channel, luma, grey) * shade, 1, white));
 }
 
 /**

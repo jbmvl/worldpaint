@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Banc des arbres</title>
+<style>body{margin:0;background:#bccfd7}canvas{display:block}#info{position:absolute;top:12px;left:14px;font:14px system-ui;color:#172920;background:#ffffffdc;padding:10px}</style>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js"}}</script></head>
+<body><div id="info"></div><script type="module">
+/* Banc hors réseau : l'observateur du niveau de détail peut être éloigné de
+ * la caméra pour examiner à taille égale plans, relève et volumes. */
+import * as THREE from 'three';
+import { VegetationLayer } from '/src/layers/vegetationLayer.js';
+import { defaultTheme } from '/src/themes/default.js';
+import { TREE_ATLAS_OFFSETS } from '/src/materials/proceduralTextures.js';
+import { plantedTree } from '/src/layers/plantedTrees.js';
+const renderer = new THREE.WebGLRenderer({antialias:true, preserveDrawingBuffer:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFShadowMap;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#bccfd7');
+const camera = new THREE.PerspectiveCamera(45,innerWidth/innerHeight,.1,3000);
+scene.add(new THREE.HemisphereLight(0xdce8ff,0x637547,1.5));
+const sun = new THREE.DirectionalLight(0xfff4db,2); sun.position.set(-30,60,30);sun.castShadow=true;
+sun.shadow.bias=-.0004;sun.shadow.normalBias=.6;sun.shadow.camera.left=-80;sun.shadow.camera.right=80;sun.shadow.camera.top=60;sun.shadow.camera.bottom=-60;sun.shadow.mapSize.set(2048,2048);scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(3000,3000).rotateX(-Math.PI/2),new THREE.MeshLambertMaterial({color:0x789250}));ground.receiveShadow=true;scene.add(ground);
+const layer = new VegetationLayer({THREE,scene,bubble:{frame:{},surfaceElevationAtLocal:()=>0,verticalScale:1}});
+layer.setWind({amplitude:0,speed:0});
+const state = {distance:420,variant:-1,angle:0,dense:false,plantations:false,understory:false,band:false};
+function render(){
+ const plants=[];
+ if(state.plantations){for(const [i,item] of Object.keys(defaultTheme.trees.plantations).entries()) for(let j=0;j<3;j++) plants.push(plantedTree(item,{x:(i-2.5)*14,z:j*14,y:0,scale:1},defaultTheme.trees));}
+ else if(state.dense){for(let i=0;i<2100;i++) plants.push({variant:i%16,x:(i%50-25)*3,z:-Math.floor(i/50)*3,y:0,height:8,aspect:.7,rotation:i*.71,color:[1,1,1]});}
+ else for(let i=0;i<defaultTheme.trees.variants.length;i++){
+   if(state.variant>=0 && i!==state.variant)continue;
+   const v=defaultTheme.trees.variants[i];
+   plants.push({variant:i,x:state.variant>=0?0:(i%8-3.5)*13,z:state.variant>=0?0:-Math.floor(i/8)*25,y:0,height:v.heightM?v.heightM[1]:v.kind==='apple'?3.6:12,aspect:v.aspect||.72,rotation:state.angle,color:[1,1,1]});
+ }
+ layer.setPlants('banc',state.band?[]:plants);
+ layer.thicket.count=0;
+ if(state.band){
+   const p=plants[0];p.band=[60,180,14,45];
+   layer.thicket.count=1;
+   layer.thicket.setMatrixAt(0,layer._compose(p.x,p.y,p.z,p.height,p.aspect,p.rotation));
+   layer.thicket.setColorAt(0,new THREE.Color(...p.color));
+   layer.thicketGeometry.getAttribute('aAtlasOffset').setXY(0,...TREE_ATLAS_OFFSETS[p.variant]);
+   layer.thicketGeometry.getAttribute('aCoverBand').array.set(p.band);
+   layer._thicketNear.setX(0,0);
+   layer.volumes.set('banc',[p],layer._thicketNear);
+   layer.thicket.instanceMatrix.needsUpdate=true;
+   layer.thicket.instanceColor.needsUpdate=true;
+   for(const name of ['aAtlasOffset','aCoverBand','aTreeNear'])layer.thicketGeometry.getAttribute(name).needsUpdate=true;
+ }
+ layer.thicketMaterial.userData.coverObserver.value.set(0,state.distance);
+ if(state.understory){layer.groundClass={woodAt:()=>1};layer.update(0,0,{force:true});}
+ layer.volumes.update(0,state.distance);
+ layer.standMaterial.userData.treeObserver.value.set(0,state.distance);
+ const single=state.variant>=0&&!state.dense;
+ const h=single?plants[0].height:12;
+ const d=single?h*2.7:115*Math.max(1,1.5/camera.aspect);
+ camera.position.set(Math.sin(state.angle)*d,single?h*.6:35,Math.cos(state.angle)*d);camera.lookAt(0,single?h*.5:3,single?0:-12);
+ if(state.understory){camera.position.set(0,3,15);camera.lookAt(0,1,0);}
+ renderer.render(scene,camera);
+ document.querySelector('#info').textContent=`Arbres — distance LOD ${state.distance} m · ${single?defaultTheme.trees.variants[state.variant].kind:'catalogue'} · ${layer.volumes.selected.length} volumes attribués`;
+ return {state:{...state},selected:layer.volumes.selected.length,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles};
+}
+window.treesLab={set(options={}){Object.assign(state,options);return render()},layer,renderer};
+const query=new URLSearchParams(location.search);for(const key of ['distance','variant','angle'])if(query.has(key))state[key]=Number(query.get(key));state.dense=query.has('dense');state.plantations=query.has('plantations');state.understory=query.has('understory');state.band=query.has('band');render();window.treesLabReady=true;
+</script></body></html>

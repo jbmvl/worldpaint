@@ -409,7 +409,12 @@ La chaussée conserve 2 cm de marge technique au-dessus de sa plate-forme
 pour les écarts d’interpolation du terrain. Le déblai couvre au moins la
 diagonale d’une maille afin qu’un triangle oblique ne traverse pas la route. Les marquages, raccords de
 carrefour et ouvrages suivent cette cote commune. Les plates-formes de pont
-et de remblai restent distinctes du terrain naturel.
+restent distinctes du terrain naturel. Les remblais des accès aux ponts sont
+intégrés au terrain, avec ses matières et un raccord doux, sans talus rapporté.
+Sous un pont routier, les rails reçoivent une tranchée locale ; un passage à
+niveau reste un croisement au sol. Sur autoroute, le dégagement combine un
+léger déblai et un remblai supérieur, sauf lorsque les carrefours du réseau
+supérieur imposent de conserver ses accès. L'eau ne relève pas les ponts.
 
 La géométrie se limite à un caniveau de 32 cm et une bordure en béton de
 section 20 × 20 cm. Son dessus suit le support (avec 3 mm de décollement
@@ -893,20 +898,37 @@ bâti relevé, borné par un disque autour d'une agglomération nommée.
 
 ### Représentations des arbres
 
-Les neuf variantes adultes du peuplement ont un prototype volumétrique
-facetté dans `models/treeKit.js`. Les sommets des houppiers sont désalignés,
-leurs diagonales variées et chaque lobe reçoit une orientation propre.
-Les arbres sont orientés sur un tour complet par un tirage spatial déterministe. La sélection continue de lire les essences
-et peuplements régionaux existants. Le même prototype est projeté dans
-l'atlas lointain. Entre 120 et 190 mètres, un fondu par découpe passe du volume aux
-plans croisés en conservant l’écriture de profondeur, sans modifier le placement,
-la taille ou la teinte de l'arbre.
-Au plus 2 048 volumes sont affichés, les plus proches en priorité ; les autres
-placements conservent leur silhouette en plans, y compris quand le budget est atteint.
-Les petits végétaux du sous-étage gardent leurs silhouettes spécifiques.
-Leur présence et leur taille ne sont pas recalculées selon la distance ; seul
-leur fondu de visibilité change. En forêt dense, la frontière du budget peut
-remplacer directement un volume par ses plans lors d’un déplacement.
+Les dix-sept variantes (arbres, buissons, tapis, palmier et pommier) partagent un prototype
+facetté dans `models/treeKit.js` et sa projection dans l'atlas. Le thème règle
+le port, la largeur, les teintes de feuillage, leurs variations et l'écorce.
+Les arbres isolés du mobilier et les buissons de jardin publient leurs
+placements ; `worldComposer` les transmet au même rendu que le peuplement.
+Rotation, taille et teinte varient selon un tirage ancré au sol. Les vergers
+emploient un pommier bas à couronne étalée, avec des pommes facettées intégrées
+au prototype et à l'atlas, sans objet ni instance par fruit. C'est une
+représentation générique du verger : les données de parcelle ne précisent pas
+ici la variété fruitière et aucune saison de fructification n'est simulée.
+
+La relève est opaque, sans grain ni transparence : chaque plante a un seuil
+spatial fixe entre 240 et 380 mètres, identique pour son plan, son volume et
+son ombre. Le volume et le plan ne sont jamais effacés simultanément. La
+silhouette projetée ne reproduit toutefois pas tous les angles du volume ;
+une bascule de contour ou d'ombre reste perceptible, surtout à la frontière
+du budget dans un bois dense.
+
+Au plus 2 048 volumes sont attribués, les plus proches en priorité, toutes
+provenances confondues. Les autres plantes conservent leurs plans. Les
+instances résidentes et les transferts GPU partiels sont conservés. Les
+bandes du sous-étage activent ou masquent la plante entière à leur bord,
+sans réduction de taille ni découpe pointillée ; le même seuil accompagne
+son plan et son volume.
+
+Le banc hors réseau `demo/lab/trees.html` permet d'examiner chaque variante,
+les plantations et un peuplement dépassant le budget. `treesLab.set()` accepte
+`distance` (observateur du niveau de détail, indépendant de la caméra),
+`variant`, `angle`, `plantations`, `understory` et `dense`. Avec `band: true`
+et une `variant`, le banc isole une plante sur la bande de 60 à 180 mètres
+pour comparer sa taille à ses deux bords.
 
 ### Vent et feuilles emportées
 
@@ -945,3 +967,9 @@ anneaux sur leurs deux faces, les bottes rectangulaires des liens ; les granges
 ont encadrement et contreventement de porte. Les souches ont cinq racines et
 une coupe à deux tons. Ces détails font partie de la géométrie instanciée,
 sans matériau ni appel de dessin supplémentaire.
+
+Les tunnels sont interprétés par `transportTunnels` : plafond plat sous une
+voie pour les passages courts, voûte sous le relief, passage bâti sans déblai.
+Des galeries parallèles proches et de même niveau peuvent partager une seule
+entrée et leur enveloppe. Les passages courts restent sans lampes, avec une
+marge non éclairée devant chaque entrée des galeries longues.

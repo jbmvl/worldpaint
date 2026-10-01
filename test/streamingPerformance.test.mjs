@@ -79,7 +79,7 @@ test('une fenêtre identique ne transfère ni l’herbe ni les fleurs', () => {
 
 test('les arbres gardent leurs matrices et leurs transitions quand seuls leurs rangs changent', () => {
   const trees = new TreeVolumes(THREE, new THREE.Group(), defaultTheme);
-  const bands = new THREE.InstancedBufferAttribute(new Float32Array(8), 4);
+  const bands = new THREE.InstancedBufferAttribute(new Float32Array(2), 1);
   trees.set('a', [0, 10].map(x => ({ variant: 0, x, z: 0, y: 0, height: 10, aspect: .7, rotation: .2, color: [1,1,1] })), bands);
   trees.update(0, 0);
   const matrix = trees.batches[0].instanceMatrix, version = matrix.version, bandVersion = bands.version;
@@ -103,12 +103,12 @@ test('le budget cède seulement après son seuil et repart après la pause', asy
 function compositeur() {
   const calls = [], stale = new Set();
   const layer = name => ({ needsRebuild: () => stale.has(name), rebuild: () => { calls.push(name); },
-    update() {}, sync() {}, invalidate() {}, setRelief() {}, setAnimals() {}, setTractors() {}, setTracks() {}, setVerges() {} });
+    setPlants() {}, update() {}, sync() {}, invalidate() {}, setRelief() {}, setAnimals() {}, setTractors() {}, setTracks() {}, setVerges() {} });
   const composer = Object.assign(Object.create(WorldComposer.prototype), {
     disposed: false, _refreshing: false, root: {}, landscape: { region: {} },
     _updateLandscape: () => false, _distributeRegion() {}, _wantedTiles: () => [{ x: 1, y: 2 }],
     vectorTiles: { missing: () => 0, load: async () => null, forEachFeature() {} },
-    bubble: { frame: { toLocal: () => ({ x: 0, z: 0 }) }, materials: { syncGroundClass() {} } },
+    bubble: { processRebuildQueue: () => false, frame: { toLocal: () => ({ x: 0, z: 0 }) }, materials: { syncGroundClass() {} } },
     groundClass: layer('sol'), cliffs: layer('falaises'), roads: layer('routes'), bridges: layer('ponts'),
     railways: layer('rails'), buildings: layer('bâti'), streets: layer('rues'), gardens: layer('jardins'),
     furniture: layer('mobilier'), vegetation: layer('arbres'), grass: layer('herbe'), crops: layer('cultures'),
@@ -206,4 +206,23 @@ test('un semis d’herbe étalé sur plusieurs appels rend le même semis qu’u
   assert.ok(calls > 10);
   assert.deepEqual(valeurs(spread), valeurs(fresh));
   spread.dispose(); fresh.dispose();
+});
+
+
+test('le terrain finit avant les plantations et les arbres sont repris après terrassement', async () => {
+  const { composer, calls } = compositeur();
+  let pending = 3;
+  composer.bubble.processRebuildQueue = () => {
+    calls.push('terrain');
+    return pending-- > 0;
+  };
+  composer.vegetation.sync = (options) => {
+    if (!options) return;
+    assert.equal(options.replant, true);
+    calls.push('replantation');
+  };
+  assert.equal(await composer.refresh(0, 0, { force: true }), true);
+  assert.ok(calls.indexOf('routes') < calls.indexOf('terrain'));
+  assert.ok(calls.lastIndexOf('terrain') < calls.indexOf('bâti'));
+  assert.ok(calls.lastIndexOf('terrain') < calls.indexOf('replantation'));
 });

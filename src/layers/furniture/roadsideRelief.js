@@ -208,7 +208,7 @@ export function buildRoadsideRelief(layer, context, segment, rowsInfo) {
 
   const fill = layer.specs.wallSpecs.fill;
   const holds = (row) =>
-    row.slope >= STEEP_CROSS_SLOPE && groundRoomOn(row, -row.uphill) >= fill.thickness + RELIEF_MIN_ROOM_M;
+    !row.terrainFill && row.slope >= STEEP_CROSS_SLOPE && groundRoomOn(row, -row.uphill) >= fill.thickness + RELIEF_MIN_ROOM_M;
   for (const run of contiguousRuns(rowsInfo, holds, 5)) {
     const side = run[Math.floor(run.length / 2)].uphill;
     // Distances ramenées à zéro : un tronçon extrait au kilomètre 3 doit
@@ -316,7 +316,7 @@ export function buildRockCut(layer, context, segment, rowsInfo) {
   // tronçon : le versant peut changer de main au passage d'un col, et la
   // paroi se retrouverait alors à sonder le vide en aval.
   const uphill = (row, wanted) =>
-    row.uphill === wanted && row.rise >= ROCK_CUT_MIN_RISE_M && groundRoomOn(row, wanted) >= cutBench + spec.minReach;
+    !row.terrainFill && row.uphill === wanted && row.rise >= ROCK_CUT_MIN_RISE_M && groundRoomOn(row, wanted) >= cutBench + spec.minReach;
   for (const side of [1, -1]) {
     for (const run of contiguousRuns(rowsInfo, (row) => uphill(row, side), 5)) {
       const rows = run.length;
@@ -517,7 +517,7 @@ export function buildEmbankment(layer, context, segment, rowsInfo, walled) {
     [(row) => row.perch, (row) => row.uphill],
   ]) {
     const keep = (row) =>
-      dropOf(row) >= EMBANKMENT_MIN_DROP_M && !walled.has(row.r) && fillRoomOn(row, sideOf(row)) >= RELIEF_MIN_ROOM_M;
+      !row.terrainFill && dropOf(row) >= EMBANKMENT_MIN_DROP_M && !walled.has(row.r) && fillRoomOn(row, sideOf(row)) >= RELIEF_MIN_ROOM_M;
     for (const run of contiguousRuns(rowsInfo, keep, 4)) {
       const side = sideOf(run[Math.floor(run.length / 2)]);
       const path = run.map((row) => ({ x: row.x, z: row.z, distance: row.distance }));

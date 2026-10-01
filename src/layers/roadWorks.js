@@ -1,10 +1,9 @@
 /*
  * roadWorks — les ouvrages d'art de la chaussée : ponts et tunnels.
  *
- * Une tuile vectorielle dit `brunnel` sur chaque tronçon `transportation`.
- * Jusqu'ici la chaussée n'en tirait qu'une chose : jeter les tunnels. Un pont
- * était donc une route ordinaire, dressée sur le MNT brut — c'est-à-dire
- * posée au fond de la vallée qu'elle est censée franchir.
+ * Les drapeaux d'ouvrage suivent les chaînes de chaussée et leurs lignes.
+ * Le calcul conjoint du passage supérieur et inférieur est dans
+ * `transportCrossings` ; ce module fournit les cordes et raccords de profil.
  *
  * Ce module est le seul endroit où l'on sait ce qu'est un ouvrage :
  *
@@ -39,26 +38,11 @@
  * sur la route d'approche — ce que ferait un simple maximum, en posant un
  * tablier sur cinquante mètres de remblai.
  *
- * ## Ce qu'une travée dégage, et ce qu'elle ne dégage pas
- *
- * Une travée est portée par ses appuis : son altitude est celle de la corde,
- * pas une hauteur au-dessus du sol. Le terrain qu'elle survole ne lui commande
- * donc **rien** — un pont qui traverse un pré reste au niveau du pré. Ce qui
- * la relève, ce sont les deux seules choses qui ne se contournent pas :
- *
- *   - un **obstacle à gabarit** (`clearanceAt`) : une chaussée croisée, sous
- *     laquelle il faut laisser passer un camion. `clearance` mètres au-dessus ;
- *   - un **plancher** (`floorAt`) : l'altitude sous laquelle la plate-forme
- *     n'a pas le droit de descendre — le terrain naturel (un tablier enterré
- *     n'est pas un tablier) et l'eau augmentée de sa revanche. Aucune garde
- *     au-dessus : on s'y pose, on ne le survole pas. Cette revanche-là suit la
- *     **portée** de l'ouvrage (`bridgeFreeboardFor`) : rien dans les tuiles ne
- *     dit le débit d'un cours d'eau, mais un tablier de dix mètres passe un
- *     fossé et un tablier de deux cents passe un fleuve.
- *
- * Confondre les deux — relever de cinq mètres au-dessus de tout ce qui passe
- * sous la travée, terrain compris — jetait chaque pont de rase campagne en
- * l'air, sur des culées de la hauteur d'une maison.
+ * `levelWorkSpans` accepte des contraintes explicites de gabarit et de
+ * plancher pour les appels isolés. Le réseau courant résout ses franchissements
+ * conjointement et n'impose aucune revanche au-dessus de l'eau.
+ * `raiseApproaches` propage une correction positive ou négative dans le graphe,
+ * avec une pente bornée ; les chemins n'entrent pas dans ce graphe de terrassement.
  *
  * Module pur : aucun `three`, testable sous Node.
  */
@@ -525,18 +509,19 @@ export const APPROACH_WELD_M = 1.5;
  * @param {Array<{path:Array, platform:Float32Array, works?:Uint8Array,
  *        levels?:Int8Array, junction?:Int32Array}>} segments Plate-formes
  *        modifiées sur place.
- * @param {Array<{segment:number, row:number, lift:number}>} abutments
+ * @param {Array<{segment:number, row:number, lift:number, reach?:number, followChain?:boolean}>} abutments
  * @param {Object} [options]
  * @param {Array<{x:number,z:number}>} [options.centres] Centre de chaque aire
  *        de carrefour, dans l'ordre des indices de `junction`.
  * @param {number} [options.ramp] Longueur minimale du remblai.
  * @param {number} [options.weld]
+ * @param {number} [options.direction] 1 pour remonter, -1 pour creuser.
  * @returns {number} lignes relevées.
  */
 export function raiseApproaches(
   segments,
   abutments,
-  { centres = null, ramp = BRIDGE_RAMP_M, weld = APPROACH_WELD_M } = {}
+  { centres = null, ramp = BRIDGE_RAMP_M, weld = APPROACH_WELD_M, direction = 1 } = {}
 ) {
   if (!Array.isArray(segments) || !abutments?.length) return 0;
 
@@ -622,9 +607,9 @@ export function raiseApproaches(
   const best = new Float32Array(total);
   const distance = new Float64Array(total + (members.size ? Math.max(...members.keys()) + 1 : 0));
 
-  for (const { segment: s0, row: r0, lift } of abutments) {
+  for (const { segment: s0, row: r0, lift, reach: localReach, followChain = false } of abutments) {
     if (!(lift > 0) || !segments[s0]) continue;
-    const reach = rampLengthFor(lift, ramp);
+    const reach = localReach ?? rampLengthFor(lift, ramp);
     const start = offsets[s0] + r0;
     distance.fill(Infinity);
     distance[start] = 0;
@@ -660,8 +645,8 @@ export function raiseApproaches(
       for (const r2 of [r - 1, r + 1]) {
         if (r2 < 0 || r2 >= path.length || isWork(s, r2)) continue;
         // Le tablier porte le niveau de l'ouvrage, son approche celui du sol :
-        // seul un changement de niveau entre deux lignes au sol arrête le remblai.
-        if (!isWork(s, r) && levelOf(s, r2) !== levelOf(s, r)) continue;
+        // un accès de tunnel reste continu quand son tag layer revient au sol.
+        if (!isWork(s, r) && levelOf(s, r2) !== levelOf(s, r) && !(followChain && s === s0)) continue;
         visit(node + (r2 - r), Math.abs(path[r2].distance - path[r].distance));
       }
       const area = segments[s].junction?.[r] ?? -1;
@@ -679,7 +664,7 @@ export function raiseApproaches(
     for (let r = 0; r < platform.length; r++) {
       const lift = best[offsets[s] + r];
       if (lift > 0) {
-        platform[r] += lift;
+        platform[r] += direction * lift;
         raised++;
       }
     }

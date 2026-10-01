@@ -86,7 +86,8 @@
  * pour ça.
  */
 
-import { WORK_NONE, LEVEL_GROUND } from './roadWorks.js';
+// Les arêtes publiées rattachent bouches et chaînes sans recherche de voisinage.
+import { WORK_NONE, WORK_TUNNEL, LEVEL_GROUND } from './roadWorks.js';
 import { roundCorners } from './ribbonGeometry.js';
 import { findRoundabouts } from './roadRoundabouts.js';
 
@@ -883,7 +884,7 @@ function assembleChains(chains, partner) {
   const merged = [];
 
   const walk = (startEnd) => {
-    const out = { points: [], anchors: [], works: [], levels: [], oneway: [] };
+    const out = { points: [], anchors: [], works: [], levels: [], oneway: [], graphEdges: new Set() };
     let end = startEnd;
 
     for (;;) {
@@ -892,6 +893,7 @@ function assembleChains(chains, partner) {
       if (visited[c]) break;
       visited[c] = 1;
       const chain = chains[c];
+      for (const edge of chain.graphEdges || []) out.graphEdges.add(edge);
       // Entrer par le bout `at` revient à parcourir la chaîne dans ce sens-là.
       const flip = (array) => (at === 0 ? array : array.slice().reverse());
       // Le sens de circulation change de signe en même temps que d'ordre : lui
@@ -916,6 +918,7 @@ function assembleChains(chains, partner) {
         profile: chains[startEnd >> 1].profile,
         halfWidth: chains[startEnd >> 1].halfWidth,
         points: out.points,
+        graphEdges: out.graphEdges,
         anchors: out.anchors,
         works: out.works,
         levels: out.levels,
@@ -971,17 +974,24 @@ export const BRANCH_HEADING_M = 8;
  */
 function branchPath({ edges, adjacency }, nodes, node, first, rank, sight, degreeOf) {
   const points = [{ x: nodes.xs[node], z: nodes.zs[node] }];
+  points.edges = new Set();
   const visited = new Set([node]);
   let previous = node;
   let current = first;
   let travelled = 0;
 
   for (;;) {
+    const edgeIndex=(adjacency.get(adjacencyKey(previous,rank)) || []).find(index=>{
+      const edge=edges[index];return edge.a===current || edge.b===current;
+    });
+    if (edgeIndex!==undefined) points.edges.add(edges[edgeIndex]);
     travelled += Math.hypot(
       nodes.xs[current] - nodes.xs[previous],
       nodes.zs[current] - nodes.zs[previous]
     );
     points.push({ x: nodes.xs[current], z: nodes.zs[current] });
+    points.endDegree = degreeOf(current);
+    if (points.endDegree >= 3) points.junctionEnd = true;
     if (travelled >= sight || visited.has(current)) break;
     visited.add(current);
     if (degreeOf(current) !== 2) break;
@@ -1098,9 +1108,8 @@ function collectJunctions(
       // La branche est arrondie comme la chaîne qu'elle décrit : c'est sur elle
       // que la bouche du carrefour va chercher la chaussée, et les deux doivent
       // parler du même tracé.
-      const { points: path } = roundCorners(
-        branchPath(graph, nodes, node, other, edge.rank, sight, (n) => degreeOf(n, paved))
-      );
+      const rawPath = branchPath(graph, nodes, node, other, edge.rank, sight, (n) => degreeOf(n, paved));
+      const { points: path } = roundCorners(rawPath);
       // La corde sur une longueur de rue, et non la première arête : voir
       // `BRANCH_HEADING_M`.
       const ahead = pointAlong(path, headingAt);
@@ -1119,6 +1128,7 @@ function collectJunctions(
           halfWidth: 0,
           profile: null,
           branches: [],
+          ringEdges: ring.edges,
           roundabout: { inner: ring.inner, outer: ring.outer, halfWidth: ring.halfWidth, profile: ring.profile },
         };
         byNode.set(key, junction);
@@ -1137,7 +1147,13 @@ function collectJunctions(
         };
         byNode.set(node, junction);
       }
+      const length = path.slice(1).reduce((sum,p,i)=>sum+Math.hypot(p.x-path[i].x,p.z-path[i].z),0);
+      const middle = pointAlong(path, Math.max(0,length/2-.01));
       junction.branches.push({
+        edges: rawPath.edges,
+        endDegree: rawPath.endDegree,
+        mouthLimit: rawPath.junctionEnd ? (middle.x-nodes.xs[node])*heading.x+(middle.z-nodes.zs[node])*heading.z : Infinity,
+        edge,
         x: heading.x,
         z: heading.z,
         halfWidth: edge.halfWidth,
@@ -1264,6 +1280,7 @@ export function mergeRoadLines(lines, options = {}) {
     }
 
     chains.push({
+      graphEdges: new Set(ids.slice(1).map((id, i) => edges[seen.get(edgeKey(ids[i], id, edge.rank))])),
       profile: edge.profile,
       halfWidth: edge.halfWidth,
       works,
@@ -1370,6 +1387,16 @@ export function distanceToSegment(x, z, ax, az, bx, bz) {
   return { distance: Math.hypot(x - px, z - pz), t };
 }
 
+// L'emprise d'un accès s'arrête au plan du portail : sa terminaison ronde
+// ne doit pas excaver le toit ni la voie portée au-dessus.
+function beyondTunnel(segment, row, x, z) {
+  const a = segment.path[row], b = segment.path[row+1];
+  const along = (x-a.x)*(b.x-a.x)+(z-a.z)*(b.z-a.z);
+  if (segment.works?.[row] === WORK_TUNNEL && !segment.works[row+1]) return along < 0;
+  if (segment.works?.[row+1] === WORK_TUNNEL && !segment.works[row]) return along > (b.x-a.x)**2+(b.z-a.z)**2;
+  return false;
+}
+
 /**
  * Index spatial des chaussées construites. Deux usages : savoir si un point
  * tombe sur une chaussée (herbe), et retrouver l'altitude qui y passe
@@ -1400,6 +1427,7 @@ export class RoadIndex {
     { cell = ROAD_INDEX_CELL_M, margin = ROAD_INDEX_MARGIN_M, includeWorks = false } = {}
   ) {
     this.segments = segments || [];
+    this.includeWorks = includeWorks;
     this.cell = cell;
     this.margin = margin;
     /** @type {Map<number, number[]>} paires (tronçon, ligne) mises à plat. */
@@ -1460,7 +1488,8 @@ export class RoadIndex {
       const hit = distanceToSegment(x, z, a.x, a.z, b.x, b.z);
       if (hit.distance > segment.halfWidth + reach) continue;
       if (best && hit.distance >= best.distance) continue;
-      best = { segment, index, row, t: hit.t, distance: hit.distance };
+      best = { segment, index, row, t: hit.t, distance: hit.distance,
+        ...(!this.includeWorks && beyondTunnel(segment,row,x,z) ? { covered: true } : {}) };
     }
     return best;
   }
@@ -1495,7 +1524,8 @@ export class RoadIndex {
       const b = segment.path[row + 1];
       const hit = distanceToSegment(x, z, a.x, a.z, b.x, b.z);
       if (hit.distance > segment.halfWidth + reach) continue;
-      hits.push({ segment, index, row, t: hit.t, distance: hit.distance });
+      hits.push({ segment, index, row, t: hit.t, distance: hit.distance,
+        ...(!this.includeWorks && beyondTunnel(segment,row,x,z) ? { covered: true } : {}) });
     }
     hits.sort((p, q) => p.distance - q.distance);
     return hits;
@@ -1632,7 +1662,7 @@ export class RoadIndex {
    * survole son carrefour.
    */
   deckAt(hit) {
-    if (!hit) return null;
+    if (!hit || hit.covered) return null;
     const { segment, row, t } = hit;
     const platform = segment.platform;
     if (!platform) return null;

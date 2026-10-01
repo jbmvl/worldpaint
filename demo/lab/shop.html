@@ -69,6 +69,8 @@ const buildings = [
   { ring: rect(24, -14, 38, -6), poi: { x: 31, z: -10, class: 'bar', name: 'Au Fond' } },
   // Rive ouest : boutique en long pan.
   { ring: rect(-18, -8, -6, 2), poi: { x: -12, z: -3, class: 'bakery', name: 'Fournil' } },
+  // Station-service en pignon sur rue : pompes en façade plutôt qu'auvent/terrasse.
+  { ring: rect(-24, 8, -8, 22), poi: { x: -16, z: 15, class: 'fuel', name: 'Station' } },
 ];
 
 const source = {
@@ -87,17 +89,17 @@ const roadIndex = new RoadIndex([{ halfWidth: HALF, path: [{ x: 0, y: 0, z: -100
 const layer = new BuildingLayer({ THREE, scene, bubble });
 layer.rebuild(source, [], { x: 0, z: 0 }, { roadIndex, builtUp: null });
 
-const state = { yawDeg: 60, pitchDeg: -28, distance: 50 };
+const state = { yawDeg: 60, pitchDeg: -28, distance: 50, targetX: 6, targetZ: 0 };
 function render() {
   const yaw = (state.yawDeg * Math.PI) / 180;
   const pitch = (state.pitchDeg * Math.PI) / 180;
   const d = state.distance;
   camera.position.set(
-    Math.sin(yaw) * Math.cos(pitch) * -d,
+    state.targetX + Math.sin(yaw) * Math.cos(pitch) * -d,
     -Math.sin(pitch) * d,
-    Math.cos(yaw) * Math.cos(pitch) * d
+    state.targetZ + Math.cos(yaw) * Math.cos(pitch) * d
   );
-  camera.lookAt(6, 0, 0);
+  camera.lookAt(state.targetX, 0, state.targetZ);
   renderer.render(scene, camera);
   return { built: layer.count };
 }

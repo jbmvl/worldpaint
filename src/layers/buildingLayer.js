@@ -487,11 +487,24 @@ export function plinthTopFor(base, minHeight, eaves) {
 /** Devanture : hauteur du bandeau de rez-de-chaussée d'un commerce (un niveau, ce qui distingue une vitrine d'un soubassement). */
 export const SHOPFRONT_HEIGHT_M = 3.05;
 
+/** Mur laissé entre le haut de la devanture et l'égout. */
+export const SHOPFRONT_CLEARANCE_M = 1;
+
 /** Cote haute de la devanture, ou `null` s'il n'y a pas de rez-de-chaussée à habiller (même garde que le soubassement, en plus large). */
 export function shopfrontTopFor(base, minHeight, eaves) {
   if (minHeight > 0.2) return null;
   const top = base + SHOPFRONT_HEIGHT_M;
-  return top < eaves - 1.2 ? top : null;
+  return top <= eaves - SHOPFRONT_CLEARANCE_M ? top : null;
+}
+
+/**
+ * Égout d'un commerce : relevé s'il le faut pour que la devanture tienne sous
+ * lui. Un comble pentu sur un bâtiment bas descendrait sinon sous la vitrine,
+ * et le commerce perdrait devanture, enseigne et mobilier. Pure.
+ */
+export function shopfrontEaves(eaves, frontFloor, minHeight) {
+  if (minHeight > 0.2) return eaves;
+  return Math.max(eaves, frontFloor + SHOPFRONT_HEIGHT_M + SHOPFRONT_CLEARANCE_M);
 }
 
 /** Portée à laquelle un pan cherche sa rue, depuis l'axe de la chaussée. */
@@ -1849,7 +1862,7 @@ export class BuildingLayer {
     // raisonnable — un bâtiment d'un seul niveau n'a pas de murs négatifs.
     const shape = look?.shape || (box && box.fill >= 0.62 ? style.shape : 'flat');
     const rise = shape === 'flat' ? 0 : roofRise(box.short, roofs);
-    const eaves = Math.max(bottom + 2.4, top - rise);
+    const roofEaves = Math.max(bottom + 2.4, top - rise);
 
     // Façade principale : le pan le plus long, qui reçoit la porte et le
     // balcon — et la devanture quand il n'y a pas d'index des chaussées pour
@@ -1872,6 +1885,7 @@ export class BuildingLayer {
     // Le sol le plus haut de la façade : une devanture s'y cale, sans quoi le
     // haut de la rue enterrerait ses baies.
     const frontFloor = Math.max(...profiles[shopIndex >= 0 ? shopIndex : frontIndex].y);
+    const eaves = look?.front ? shopfrontEaves(roofEaves, frontFloor, minHeight) : roofEaves;
 
     // Bandeau bas : soubassement d'ordinaire, **devanture** pour un commerce.
     // Les deux occupent la même place et ne se cumulent donc pas — une vitrine

@@ -21,10 +21,10 @@
  * Les tuiles ne disent pas si une ligne est électrifiée : toute voie hors
  * service en porte une.
  *
- * Simplification assumée : la voie n'entaille pas le terrain (pas de
- * plate-forme, déblai/remblai, mur) — le ballast suit le MNT point par point,
- * relevé de `RAILWAY_LIFT_M`, comme un cours d'eau linéaire. Lui donner les
- * mêmes ouvrages que `roadNetwork` reste à faire.
+ * Les rails lisent le terrain final : les ponts routiers peuvent y imposer
+ * une tranchée locale, calculée sur les tracés naturels avant les maillages.
+ * Les passages à niveau ne déclenchent aucun déblai. Les ouvrages propres
+ * aux voies ferrées restent hors de cette couche.
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';

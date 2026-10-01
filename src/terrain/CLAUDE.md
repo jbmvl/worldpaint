@@ -5,6 +5,7 @@
 | `terrainBubble.js` | la bulle de terrain : maillage, anneaux, marche des falaises et déblai de la chaussée |
 | `terrainMaterial.js` | le shader du sol — il lit la carte des matières |
 | `lowPolyGrain.js` | le grain low poly géométrique du sol (bruit, fondu de distance, bosse le long de la normale) — câblé par matière dans `terrainMaterial.js`, réglages dans `SURFACE_LOOK` |
+| `transportEarthworks.js` | remblais doux et tranchées des franchissements, dans le terrain commun |
 | `roadCut.js` | l'entaille du terrain sous une chaussée |
 | `cliffCut.js` | la marche du terrain sous une falaise relevée |
 | `groundClassMap.js` | la carte des matières et des cultures, rasterisée pour toute la scène |
@@ -58,9 +59,9 @@ Deux pièges :
 
 ## Ce qui déforme le relief lu
 
-Deux choses seulement, et dans cet ordre : la **marche** d'une falaise relevée
-(`cliffCut`, publiée par `layers/cliffLayer`), puis le **déblai** d'une
-chaussée (`roadCut`). La falaise façonne le terrain naturel, la route entaille
+Dans cet ordre : la **marche** d'une falaise relevée (`cliffCut`), les
+**terrassements des franchissements** (`transportEarthworks`), puis le
+**déblai** des chaussées (`roadCut`). La falaise façonne le terrain naturel, la route entaille
 ce qu'elle trouve — l'ordre inverse taillerait la chaussée dans une rampe que
 la marche vient de supprimer.
 
@@ -72,7 +73,7 @@ le relief de rive ; la **surface affichée** (`surfaceElevationAtLocal`), tout
 compris, pour le reste du décor. Une plate-forme dressée sur le MNT brut
 flotterait au pied d'une falaise et s'enfoncerait à son arase.
 
-Les deux déformations sont des fonctions **pures de la position au sol** : c'est ce qui
+Ces déformations sont des fonctions **pures de la position au sol** : c'est ce qui
 permet à deux tuiles voisines de s'accorder au bord sans se consulter. Une
 déformation qui dépendrait de la tuile courante, de l'ordre de parcours ou de
 la position de l'observateur ouvrirait une crevasse à chaque jointure.

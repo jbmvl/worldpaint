@@ -90,6 +90,7 @@ function render() {
   camera.position.set(0, state.height, 0);
   camera.lookAt(Math.sin(yaw) * Math.cos(pitch), state.height + Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
   env.followCamera(camera);
+  env.advance(0, camera.position);
   env.followShadow({ x: 0, y: 0, z: 0 });
   renderer.setClearColor(env.clearColor, 1);
   renderer.render(scene, camera);
