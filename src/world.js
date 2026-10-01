@@ -559,11 +559,13 @@ export class World {
    * @param {Object} [options.palette] Change la direction artistique en vol.
    * @param {Object} [options.weather] Change le temps qu'il fait en vol. Omis,
    *        le dernier reçu est reconduit.
+   * @param {number} [options.dayForNight] Nuit américaine, de 0 à 1 — voir
+   *        `SceneEnvironment.update`. Omise, la dernière valeur est reconduite.
    * @returns {{nightMix: number, wetness: number, weather: Object, clearColor: Object}|null}
    *        `null` sans ciel. Rendu pour que l'application applique la même
    *        mesure à ses propres objets (phares, véhicule, enseigne).
    */
-  updateSky({ camera, date, lng, lat, shadowAt = null, palette = undefined, weather = undefined }) {
+  updateSky({ camera, date, lng, lat, shadowAt = null, palette = undefined, weather = undefined, dayForNight = undefined }) {
     const env = this.environment;
     if (!env) return null;
     env.followCamera(camera);
@@ -571,7 +573,7 @@ export class World {
     // atlantique, chaud et poussiéreux en Castille, presque transparent en
     // altitude. C'est la couleur la plus déterminante du décor, donc elle suit
     // le pays — sauf si l'application en impose une, ici ou au montage.
-    env.update({ palette: palette ?? this._regionSky(), date, lat, lng, weather });
+    env.update({ palette: palette ?? this._regionSky(), date, lat, lng, weather, dayForNight });
     this.composer.setNight(env.nightMix);
     this.composer.setWind(env.wind, env.weather);
     this.composer.setWetness(env.wetness);

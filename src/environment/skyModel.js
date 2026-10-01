@@ -128,6 +128,8 @@ export function acesFilmic(rgb, exposure) {
 const NIGHT_SUN_Y = -0.1;
 const NIGHT_LIGHT = { sun: 0.3, ambient: 0.62 };
 const NOON_LIGHT = { sun: 1.75, ambient: 1.2 };
+/** Nuit américaine : éclairage de nuit relevé, pour qui veut voir le décor plutôt que la nuit. */
+const DAY_FOR_NIGHT_LIGHT = { sun: 1.05, ambient: 0.8 };
 /** Part de l'adaptation du ciel reprise par l'éclairage du relief, et son plafond. */
 const LIGHT_ADAPT_EXPONENT = 0.5;
 const LIGHT_ADAPT_MAX = 2.5;
@@ -141,20 +143,27 @@ const LIGHT_ADAPT_MAX = 2.5;
  * nuit : un basculement net tomberait à une heure qui dépend de la vitesse de
  * descente du soleil, donc de la saison et de la latitude.
  *
+ * `dayForNight` (0 à 1) relève l'éclairage de nuit pleine vers
+ * `DAY_FOR_NIGHT_LIGHT` sans rien changer de jour : la nuit américaine.
+ *
  * @param {number} sunY
+ * @param {number} [dayForNight]
  * @returns {{sun:number, ambient:number, warmth:number, night:boolean, nightBlend:number}}
  *          `nightBlend` va de 0 (soleil levé) à 1 (nuit pleine).
  */
-export function lightingFor(sunY) {
+export function lightingFor(sunY, dayForNight = 0) {
   const elevation = Math.max(sunY, 0);
   const daylight = Math.min(1, elevation * 3);
   const nightBlend = smoothstep(0, NIGHT_SUN_Y, sunY);
   // Même adaptation que le ciel, en plus doux, et jamais au-delà de midi :
   // sinon le relief s'éteint une heure avant le coucher sous un ciel encore clair.
   const adapt = Math.min(LIGHT_ADAPT_MAX, Math.pow(skyAdaptation(sunY), LIGHT_ADAPT_EXPONENT));
+  const d = clamp01(Number(dayForNight) || 0);
+  const nightSun = mix(NIGHT_LIGHT.sun, DAY_FOR_NIGHT_LIGHT.sun, d);
+  const nightAmbient = mix(NIGHT_LIGHT.ambient, DAY_FOR_NIGHT_LIGHT.ambient, d);
   return {
-    sun: mix(Math.min(NOON_LIGHT.sun, (0.25 + daylight * 1.5) * adapt), NIGHT_LIGHT.sun, nightBlend),
-    ambient: mix(Math.min(NOON_LIGHT.ambient, (0.5 + daylight * 0.7) * adapt), NIGHT_LIGHT.ambient, nightBlend),
+    sun: mix(Math.min(NOON_LIGHT.sun, (0.25 + daylight * 1.5) * adapt), nightSun, nightBlend),
+    ambient: mix(Math.min(NOON_LIGHT.ambient, (0.5 + daylight * 0.7) * adapt), nightAmbient, nightBlend),
     // 1 au ras de l'horizon, 0 quand le soleil est haut.
     warmth: 1 - Math.min(1, elevation * 2.5),
     night: sunY <= NIGHT_SUN_Y,
@@ -173,4 +182,28 @@ export function sunlightColor(warmth, night = 0) {
   const n = Number(night) || 0;
   const day = [1, 0.95 - warmth * 0.3, 0.85 - warmth * 0.45];
   return [mix(day[0], 0.5, n), mix(day[1], 0.6, n), mix(day[2], 0.85, n)];
+}
+
+/** Luminances linéaires visées par la nuit américaine : voûte bleu ardoise, horizon un cran plus clair. */
+export const DAY_FOR_NIGHT_ZENITH_LUMINANCE = 0.035;
+export const DAY_FOR_NIGHT_HORIZON_LUMINANCE = 0.06;
+
+/**
+ * Éclaircit une couleur de nuit (linéaire) jusqu'à une luminance, en gardant
+ * sa teinte : la palette de l'application décide de la couleur, la nuit
+ * américaine seulement de la quantité de lumière. Jamais assombrie.
+ *
+ * @param {[number,number,number]} rgb
+ * @param {number} targetLuminance
+ * @param {number} amount Part de nuit américaine, de 0 à 1.
+ * @returns {[number,number,number]}
+ */
+export function liftNightColor(rgb, targetLuminance, amount) {
+  const lum = rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+  const a = clamp01(Number(amount) || 0);
+  if (a === 0 || lum >= targetLuminance) return rgb;
+  // Une palette noire n'a pas de teinte à garder : on part d'un gris.
+  const gain = lum > 1e-6 ? targetLuminance / lum : 0;
+  const lifted = lum > 1e-6 ? rgb.map((c) => c * gain) : [targetLuminance, targetLuminance, targetLuminance];
+  return rgb.map((c, i) => mix(c, lifted[i], a));
 }

@@ -44,6 +44,9 @@ import {
   preethamRadiance,
   acesFilmic,
   skyAdaptation,
+  liftNightColor,
+  DAY_FOR_NIGHT_ZENITH_LUMINANCE,
+  DAY_FOR_NIGHT_HORIZON_LUMINANCE,
 } from './skyModel.js';
 import {
   resolveWeather,
@@ -157,6 +160,15 @@ const TWILIGHT_ANTISOLAR = 0.6;
 
 /** Hauteur de soleil où la nuit commence à gagner le ciel. */
 const NIGHT_START_Y = 0.06;
+
+/** Part des étoiles éteinte par la nuit américaine : un ciel éclairci les noie. */
+const DAY_FOR_NIGHT_STAR_FADE = 0.6;
+/**
+ * Hauteur de soleil sur laquelle la lumière directe s'efface au passage
+ * soleil → lune, en nuit américaine : sans ce creux, l'éclairage du relief
+ * basculerait d'un côté à l'autre d'une image à la suivante.
+ */
+const DAY_FOR_NIGHT_HANDOVER_Y = 0.05;
 
 /** Échelle du bruit de nuages (la valeur par défaut de three, 0,0002, couvre tout le ciel d'une seule valeur : aucun nuage n'apparaît). */
 const CLOUD_SCALE = 0.0015;
@@ -289,6 +301,8 @@ export class SceneEnvironment {
     this._shadowCenter = { x: 0, y: 0, z: 0 };
     /** Part de nuit, de 0 (plein jour) à 1. Lue par tout l'éclairage artificiel. */
     this.nightMix = 0;
+    /** Part de nuit américaine, de 0 à 1 : voir `update()`. */
+    this.dayForNight = 0;
     /** Ce que le vent fait au feuillage, publié pour les couches végétales — même raison que `nightMix`. @type {{amplitude:number, speed:number}} */
     this.wind = windField(this.weather);
     /** Part de sol mouillé, de 0 à 1. Lue par le terrain, la chaussée, la voirie. */
@@ -315,6 +329,7 @@ export class SceneEnvironment {
     this.uniforms.uTwilightZenith = { value: new THREE.Color(0, 0, 0) };
     // À l'opposé du soleil (pas la vraie position, mais elle se lève quand il se couche).
     this.uniforms.uMoonDirection = { value: new THREE.Vector3(0, 1, 0) };
+    this.uniforms.uStarGain = { value: 1 };
     this.uniforms.cloudScale.value = CLOUD_SCALE;
     this.uniforms.cloudSpeed.value = CLOUD_SPEED;
     this._sunPosition = new THREE.Vector3(0, 1, 0);
@@ -338,7 +353,8 @@ export class SceneEnvironment {
          uniform float uTwilight;
          uniform vec3 uTwilightHorizon;
          uniform vec3 uTwilightZenith;
-         uniform vec3 uMoonDirection;`
+         uniform vec3 uMoonDirection;
+         uniform float uStarGain;`
       )
       .replace(
         'cloudColor *= vSunE * 0.00002;',
@@ -398,7 +414,7 @@ export class SceneEnvironment {
          float starPresence = step(0.9935, starSeed);
          float starVeil = (1.0 - cloudCoverage * cloudDensity * 0.85) * (1.0 - uTwilight);
          float starMask = smoothstep(0.05, 0.35, direction.y);
-         night += vec3(starPresence * starPoint * starVeil * starMask); // éclat fixe, pas de scintillement
+         night += vec3(starPresence * starPoint * starVeil * starMask * uStarGain); // éclat fixe, pas de scintillement
 
          // Étoile filante : point net en tête, traînée qui s'amincit vers la
          // queue (pas une bande uniforme). Tirage par tranche de temps, sans réalité astronomique.
@@ -527,7 +543,7 @@ export class SceneEnvironment {
   followShadow(point) {
     this._shadowCenter = snapToShadowTexels(
       point,
-      this._sunDir || { x: 0, y: 1, z: 0 },
+      this._lightDir || this._sunDir || { x: 0, y: 1, z: 0 },
       SHADOW_RADIUS_M,
       this.shadowMapSize
     );
@@ -541,7 +557,7 @@ export class SceneEnvironment {
    * la caméra d'ombres, qui, elle, doit rester collée à ce qu'on regarde.
    */
   _placeSun() {
-    const dir = this._sunDir;
+    const dir = this._lightDir || this._sunDir;
     if (!dir) return;
     const c = this._shadowCenter;
     this.sun.position.set(
@@ -562,10 +578,16 @@ export class SceneEnvironment {
    * @param {number} options.lat
    * @param {number} options.lng
    * @param {Object} [options.weather] Change le temps qu'il fait en vol. Omis, le dernier reçu est reconduit.
+   * @param {number} [options.dayForNight] Nuit américaine, de 0 à 1 : la nuit
+   *        reste la nuit (voûte, lune, fenêtres, `nightMix` inchangé), mais le
+   *        décor y est éclairé par la lune, avec ses ombres, et le ciel
+   *        éclairci. Sans effet de jour. Omis, la dernière valeur est reconduite.
    */
-  update({ palette, date, lat, lng, weather = undefined }) {
+  update({ palette, date, lat, lng, weather = undefined, dayForNight = undefined }) {
     if (palette) this.palette = palette;
     if (weather !== undefined) this.setWeather(weather);
+    if (dayForNight !== undefined) this.dayForNight = Math.min(1, Math.max(0, Number(dayForNight) || 0));
+    const americanNight = this.dayForNight;
 
     const dir = sunDirection(date, lat, lng);
     this._sunDir = dir;
@@ -577,9 +599,19 @@ export class SceneEnvironment {
     this.nightMix = nightMix;
     this.uniforms.uNightMix.value = nightMix;
     this.uniforms.uMoonDirection.value.set(-dir.x, -dir.y, -dir.z);
+    this.uniforms.uStarGain.value = 1 - DAY_FOR_NIGHT_STAR_FADE * americanNight;
 
-    const nightZenith = hexToLinear(this.palette.nightZenith);
-    const nightHorizon = hexToLinear(this.palette.nightHorizon);
+    const nightZenith = liftNightColor(
+      hexToLinear(this.palette.nightZenith),
+      DAY_FOR_NIGHT_ZENITH_LUMINANCE,
+      americanNight
+    );
+    const nightHorizon = liftNightColor(
+      hexToLinear(this.palette.nightHorizon),
+      DAY_FOR_NIGHT_HORIZON_LUMINANCE,
+      americanNight
+    );
+    this._nightZenith = nightZenith;
     const sky = weatherSkyParameters(skyParameters(dir.y), this.weather);
     this._skyGain = SKY_GAIN * skyAdaptation(dir.y);
     const overcast = overcastOf(this.weather);
@@ -639,12 +671,18 @@ export class SceneEnvironment {
 
     // Soleil rasant : l'ombre d'un arbre dépasserait la boîte et se coupe net.
     // Ciel entièrement bouché : plus de disque solaire pour un contour net.
-    this.sun.castShadow = dir.y > SHADOW_MIN_SUN_Y && castsShadow(this.weather);
+    // En nuit américaine, la lumière directe passe à la lune une fois le soleil
+    // couché, et porte ses ombres : c'est l'éclairage franc et froid qui fait
+    // lire la scène comme une nuit plutôt que comme un jour terne.
+    const moonlit = americanNight > 0 && dir.y < 0;
+    this._lightDir = moonlit ? { x: -dir.x, y: -dir.y, z: -dir.z } : dir;
+    this.sun.castShadow = this._lightDir.y > SHADOW_MIN_SUN_Y && castsShadow(this.weather);
 
-    const light = weatherLighting(lightingFor(dir.y), this.weather);
+    const light = weatherLighting(lightingFor(dir.y, americanNight), this.weather);
     const [r, g, b] = sunlightColor(light.warmth, light.nightBlend);
     this.sun.color.setRGB(r, g, b);
-    this.sun.intensity = light.sun;
+    const handover = smoothstep(0, DAY_FOR_NIGHT_HANDOVER_Y, Math.abs(dir.y));
+    this.sun.intensity = light.sun * mix(1, handover, americanNight);
     this.ambient.intensity = light.ambient;
 
     // La perspective aérienne lit la couleur de jour, pas déjà mélangée à la
@@ -653,7 +691,7 @@ export class SceneEnvironment {
 
     // L'ombre s'efface en opacité avant de s'éteindre en tout ou rien (sinon un nuage ferait tout disparaître d'un coup).
     if (this.sun.shadow && 'intensity' in this.sun.shadow) {
-      this.sun.shadow.intensity = light.shadow;
+      this.sun.shadow.intensity = light.shadow * (moonlit ? americanNight : 1);
     }
 
     // La pluie prend la couleur de la lumière qui la traverse, avec un second
@@ -688,7 +726,7 @@ export class SceneEnvironment {
    * @param {number} nightMix Part de nuit, de 0 à 1.
    */
   _publishAerialFog(dayFog, sunRgb, sunDir, nightMix) {
-    const nightZenith = hexToLinear(this.palette.nightZenith);
+    const nightZenith = this._nightZenith || hexToLinear(this.palette.nightZenith);
     const sky = aerialSkyColor(dayFog);
     const glow = this._twilightGlow?.zenith || [0, 0, 0];
     const nightSky = acesFilmic([0, 1, 2].map((i) => nightZenith[i] + glow[i]), this.exposure);
