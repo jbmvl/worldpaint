@@ -28,6 +28,7 @@
  *   placeLab.set({ lng: -0.1496, lat: 47.1300, yawDeg: 225, pitchDeg: 28, distance: 60 })
  *   placeLab.set({ x: 120, z: -40, ... })   // en mètres locaux
  *   await placeLab.walk({ toX: 2000, step: 50 })  // ce qui se repeint sous 500 m
+ *   await placeLab.set({ word: ['matrix', 'conifer_forest'] })  // un mot imposé (afficheur), `null` pour le retirer
  *
  * `yawDeg` est le cap du regard (0 = vers le nord), `pitchDeg` la plongée,
  * `distance` le recul de la caméra sur le point visé, `hour` l'heure solaire.
@@ -94,7 +95,9 @@ function render() {
   world.advance(0, { x, y, z });
   renderer.render(scene, camera);
   const here = world.frame.toLngLat(x, z);
-  return { lieu: name, lng: +here.lng.toFixed(5), lat: +here.lat.toFixed(5), x: Math.round(x), z: Math.round(z) };
+  const region = world.composer.landscape?.region;
+  return { lieu: name, lng: +here.lng.toFixed(5), lat: +here.lat.toFixed(5), x: Math.round(x), z: Math.round(z),
+    region: region ? { id: region.id, matrix: region.matrix, stone: region.stone, building: region.building, farming: region.farming, trees: region.trees } : null };
 }
 
 // --- La marche : ce qui se repeint à proximité --------------------------------
@@ -207,13 +210,14 @@ async function walk({ fromX = 0, fromZ = 0, toX = 2000, toZ = 0, step = 50, radi
 }
 
 window.placeLab = {
-  set(options = {}) {
+  set({ word, ...options } = {}) {
     Object.assign(state, options);
     if (Number.isFinite(options.lng) && Number.isFinite(options.lat)) {
       const p = world.frame.toLocal(options.lng, options.lat);
       state.x = p.x;
       state.z = p.z;
     }
+    if (word !== undefined && world.setRegionWord(...(word ?? [null]))) return settle().then(render);
     return render();
   },
   walk,

@@ -61,8 +61,7 @@ export {
 export { forestTypeAt } from './layers/vegetationLayer.js';
 
 // --- Mise au point : isoler une valeur possible du vocabulaire de région ----
-// Pas un pays, un mot : « à quoi ressemble `granite` », sans y rouler.
-export { showcaseEntries, SHOWCASE_FIELDS, TILE_FIELDS, uniformGroundSample } from './inspect/showcase.js';
+export { showcaseEntries, SHOWCASE_FIELDS } from './inspect/showcase.js';
 
 // --- Mise au point : voir le réseau routier tel qu'il est compris -----------
 // Rend des paires de points colorées, en mètres du repère local : à
@@ -79,7 +78,7 @@ export {
 // --- Les régions naturelles -------------------------------------------------
 // Même question que le décor se pose : dans quel pays sommes-nous, à cette
 // longitude et cette latitude. Pure, synchrone, sans réseau.
-export { regionAt, regionById, MAX_REACH_KM } from './core/region.js';
+export { regionAt, regionById, regionWithWord, MAX_REACH_KM } from './core/region.js';
 export { REGIONS } from './core/regions.js';
 export {
   MATRIX_KINDS,
@@ -114,7 +113,7 @@ export { createGlowGeometry, createGlowMaterial } from './layers/furnitureKit.js
 export { srgb } from './core/color.js';
 
 // Le catalogue de formes isolées (mobilier, arbres de crête…), pour qui veut
-// poser un objet du décor sans passer par une couche entière — voir l'afficheur.
+// poser un objet du décor sans passer par une couche entière.
 export { createFurnitureGeometries, createFurnitureMaterial } from './layers/furnitureKit.js';
 
 // La montgolfière du ciel, pour qui veut en poser une à un endroit précis
@@ -126,6 +125,6 @@ export { createPersonBodyGeometry, createPersonArmGeometry, composeOutfits, SHOU
 export { CHEER_MAX } from './layers/spectatorPlacement.js';
 
 // La couverture du sol et les cultures, pour qui veut semer une seule matière
-// sur une tuile sans monter tout le décor — voir l'afficheur (`demo/showcase.js`).
+// sur une tuile sans monter tout le décor.
 export { GroundCover } from './layers/groundCover.js';
 export { CropLayer } from './layers/cropLayer.js';

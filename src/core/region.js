@@ -47,6 +47,7 @@
  */
 
 import { REGIONS } from './regions.js';
+import { VOCABULARIES } from './regionInterpretation.js';
 
 /**
  * Distance au-delà de laquelle aucune ancre ne compte, en kilomètres.
@@ -112,4 +113,19 @@ export function regionAt(lng, lat) {
  */
 export function regionById(id) {
   return REGIONS.find((region) => region.id === id) ?? null;
+}
+
+/**
+ * Le dossier `region` avec un seul mot changé : `field` ne vaut plus que
+ * `value`, tout le reste du pays tient. Un champ à liste (cultures, essences)
+ * devient une liste d'un seul mot, pour qu'il soit le seul tiré.
+ *
+ * @param {Object} region
+ * @param {'matrix'|'stone'|'building'|'farming'|'trees'} field
+ * @param {string} value Un mot de `VOCABULARIES[field]`.
+ * @returns {Object|null} `null` si le mot n'est pas du vocabulaire fermé.
+ */
+export function regionWithWord(region, field, value) {
+  if (!region || !Object.hasOwn(VOCABULARIES[field] ?? {}, value)) return null;
+  return { ...region, [field]: Array.isArray(region[field]) ? [value] : value };
 }

@@ -27,7 +27,7 @@ const SPREAD_M = 26;
 /** Hauteur de la boîte, en mètres. C'est la période de la boucle de chute. */
 const HEIGHT_M = 34;
 /** Nombre maximal de gouttes de pluie. Atteint à `precipitation = 1`. */
-const MAX_DROPS = 7000;
+const MAX_DROPS = 4500;
 /** Nombre maximal de flocons. Un flocon est plus gros et plus lent : il en faut moins. */
 const MAX_FLAKES = 2600;
 /** Longueur du filet d'une goutte, en mètres. C'est lui qui donne la vitesse à l'œil. */
@@ -40,6 +40,8 @@ const MIN_WIDTH_CSS_PX = 1.25;
 const TAIL_ALPHA = 0.6;
 /** Vitesse de chute, en m/s. La pluie tombe vite, la neige flotte. */
 const RAIN_SPEED = 26;
+/** Écart de vitesse entre gouttes (fraction, ±la moitié). Valeur provisoire. */
+const RAIN_SPEED_SPREAD = 0.3;
 const SNOW_SPEED = 1.6;
 
 /** Générateur graine, façon mulberry32 (constante, pas l'horloge, pour un rendu reproductible). */
@@ -154,11 +156,15 @@ function rainMaterial(THREE, uniforms) {
       varying float vAlpha;
       ${FALL_CHUNK}
       void main() {
-        vec3 head = vec3(aBase.x, fallHeight(aBase, uTime, uSpeed, uHeight), aBase.z);
+        // Vitesse propre à chaque goutte, tirée de sa position : sans elle, l'averse avance en bloc.
+        float pace = 1.0 + ${RAIN_SPEED_SPREAD.toFixed(2)} * (fract(sin(dot(aBase.xz, vec2(12.9898, 78.233))) * 43758.5453) - 0.5);
+        float y = fallHeight(aBase, uTime, uSpeed * pace, uHeight);
+        // La goutte suit son filet : elle dérive sous le vent d'autant qu'elle descend.
+        vec3 head = vec3(aBase.x - uWind.x * y, y, aBase.z - uWind.y * y);
         // Le filet est tiré vers l'amont de la chute : c'est l'inclinaison qui dit qu'il y a du vent.
         vec3 dir = normalize(vec3(uWind.x, -1.0, uWind.y));
         vec4 clipHead = projectionMatrix * modelViewMatrix * vec4(head, 1.0);
-        vec4 clipTail = projectionMatrix * modelViewMatrix * vec4(head - dir * ${STREAK_M.toFixed(2)}, 1.0);
+        vec4 clipTail = projectionMatrix * modelViewMatrix * vec4(head - dir * ${STREAK_M.toFixed(2)} * pace, 1.0);
 
         // Une extrémité derrière l'œil n'a pas de projection : la goutte est sortie du cadre.
         if (clipHead.w < 0.05 || clipTail.w < 0.05) {

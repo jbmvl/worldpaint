@@ -111,7 +111,7 @@ export const TERRAIN_LOOK = {
   cropStandingWater: {
     rice: 0.55,
   },
-  /** Teinte de roche sur les fortes pentes, avant la géologie (`STONE_LOOK`). */
+  /** Teinte de roche sur les fortes pentes, posée sur la matière `rock` déjà teintée par la géologie. */
   rockColor: [0.72, 0.68, 0.62],
   slopeStart: 0.22,
   slopeEnd: 0.62,
@@ -211,6 +211,12 @@ export const TREE_VARIANTS = [
   { kind: 'apple', aspect: 1.15, hue: { r: .65, g: 1, b: .42 }, trunk: .09,
     bark: [.16, .105, .055], volume: { trunkHeight: .5, crownY: .46, spread: 1.2, rise: .8 },
     fruit: { perLobe: 4, radius: .02, color: [.65, .025, .008] } },
+  // Pin parasol, pin d'Alep : un fût nu, une cime large et plate.
+  { aspect: 1.05, kind: 'broadleaf', hue: { r: 0.42, g: 0.9, b: 0.4 }, trunk: 0.07, crownBase: 0.72, spread: 0.42,
+    volume: { trunkHeight: .78, crownY: .84, spread: 1.45, rise: .42, colorVariation: .05 }, bark: [.3, .17, .1] },
+  // Pin maritime, pin sylvestre adulte : un long fût, une cime haute et étroite.
+  { aspect: 0.55, kind: 'broadleaf', hue: { r: 0.4, g: 0.88, b: 0.42 }, trunk: 0.055, crownBase: 0.8, spread: 0.26,
+    volume: { trunkHeight: .8, crownY: .85, spread: 1.05, rise: .38, lobes: 5, colorVariation: .06 }, bark: [.32, .2, .12] },
 ];
 /**
  * Les essences, par indices de variantes. C'est ce que lit `vegetationLayer`
@@ -235,6 +241,8 @@ export const TREE_ESSENCES = {
   thornyScrub: [12],
   marram: [14],
   palm: [15],
+  umbrellaPine: [17],
+  tallPine: [18],
 };
 
 // --- Les peuplements -----------------------------------------------------------
@@ -271,7 +279,7 @@ export const FOREST_TYPES = [
     // plantation de pin maritime ou sylvestre, pas un bois spontané.
     name: 'pinede',
     species: ['maritime_pine', 'scots_pine'],
-    essences: ['conifer', 'conifer', 'conifer', 'column'],
+    essences: ['tallPine', 'tallPine', 'conifer'],
     minHeight: 11,
     maxHeight: 19,
     density: 1.45,
@@ -309,7 +317,7 @@ export const FOREST_TYPES = [
     // pinède landaise — l'ombre y est trouée, pas continue.
     name: 'pinède méditerranéenne',
     species: ['aleppo_pine', 'stone_pine'],
-    essences: ['conifer', 'conifer', 'bushy'],
+    essences: ['umbrellaPine', 'umbrellaPine', 'bushy'],
     minHeight: 7,
     maxHeight: 14,
     density: 0.85,
@@ -401,6 +409,17 @@ export const FOREST_TYPES = [
     density: 0.85,
     understory: 0.5,
     tint: [0.95, 1, 0.82],
+  },
+  {
+    // Palmeraie : des stipes clairsemés au-dessus d'un fourré bas.
+    name: 'palmeraie',
+    species: ['palm'],
+    essences: ['palm', 'palm', 'bushy'],
+    minHeight: 6,
+    maxHeight: 12,
+    density: 0.6,
+    understory: 0.35,
+    tint: [1, 1, 0.85],
   },
 ];
 
@@ -531,6 +550,14 @@ export const SOIL_LOOK = {
     grassDensity: 0.85,
     grassHeight: 0.7,
   },
+  /** Prairie humide : herbe haute et drue, d'un vert plus frais que le bocage. */
+  wet_grassland: {
+    grass: [0.9, 1.06, 1.02],
+    bare: [0.82, 0.86, 0.88],
+    farmland: [0.94, 0.98, 0.98],
+    grassDensity: 1.0,
+    grassHeight: 1.0,
+  },
   /** Openfield : terre travaillée, noire, et l'herbe du bocage. */
   openfield_cropland: {
     grass: [1.02, 1.0, 0.94],
@@ -615,10 +642,10 @@ export const SOIL_LOOK = {
 /**
  * Ce que la géologie fait à la couleur de la pierre, par `region.stone`.
  *
- * Trois choses la montrent, et elles doivent s'accorder : la roche qui affleure
- * sur les fortes pentes (`rockColor`), les matières minérales du sol (celles
- * que `SURFACE_LOOK` marque `stone`), et ce qui est **bâti** dedans — muret de
- * pierre sèche, mur de soutènement, paroi de déblai. Un causse blanc dont les
+ * Deux choses la montrent, et elles doivent s'accorder : les matières minérales
+ * du sol (celles que `SURFACE_LOOK` marque `stone`), que les fortes pentes et
+ * les falaises reprennent, et ce qui est **bâti** dedans ou posé dessus —
+ * muret de pierre sèche, mur de soutènement, paroi de déblai, rochers. Un causse blanc dont les
  * murets seraient gris se lirait comme deux pays superposés.
  *
  * ## Des facteurs, pas des couleurs
@@ -635,7 +662,7 @@ export const SOIL_LOOK = {
  * ## Comment elles ont été choisies
  *
  * Chaque ligne vise une couleur de roche mouillée de lumière du jour, et le
- * facteur en est déduit par division. La base étant beige (0,72 / 0,68 / 0,62),
+ * facteur en est déduit par division. La base étant beige (la matière `rock`),
  * un gris **neutre** demande un facteur qui monte vers le bleu : c'est pourquoi
  * le granit n'est pas [0,9 0,9 0,9]. Le plafond utile est 1,6 : au-delà, une
  * dalle claire part au blanc avant que la lumière rasante ne la modèle.
@@ -650,14 +677,14 @@ export const STONE_LOOK = {
   chalk: [1.19, 1.28, 1.39],
   /** Gypse : blanc à peine rosé, Bardenas, Monegros, Tabernas. */
   gypsum: [1.22, 1.25, 1.29],
-  /** Granit : gris franc, sans jaune — Bretagne, Massif central, Gredos. */
-  granite: [0.86, 0.91, 1.0],
+  /** Granit : gris moyen à peine chaud — Bretagne, Massif central, Gredos. */
+  granite: [0.74, 0.73, 0.74],
   /** Schiste : gris bleuté sombre, Ardenne, Cévennes, Alpujarra. */
   schist: [0.52, 0.57, 0.68],
   /** Basalte : la roche la plus sombre, Auvergne, Aubrac. */
-  basalt: [0.4, 0.43, 0.49],
+  basalt: [0.27, 0.28, 0.31],
   /** Grès : ocre rouge, Vosges, Fontainebleau, Somontano. */
-  sandstone: [1.08, 0.88, 0.68],
+  sandstone: [1.0, 0.74, 0.6],
   /** Argile et marne : brun ocre, terres lourdes du nord et des campiñas. */
   clay: [0.92, 0.82, 0.68],
   /** Alluvions : galets et graves, gris beige clair. */
@@ -746,18 +773,18 @@ export const SURFACE_LOOK = {
   settled: { albedo: [0.12, 0.205, 0.08], wash: 'grass', macro: 0.3, grainCellM: 6, grainAmplitudeM: 0 },
 
   // --- Les couvertures végétales --------------------------------------------
-  // Bruyère et molinie sèche : brun-pourpre, la couleur d'un moor. Rase, dense,
+  // Bruyère et molinie sèche : brun-olive, la couleur d'un moor. Rase, dense,
   // et elle ne porte quasiment pas d'arbre.
   heath: {
-    // Pourpre-brun franc (rouge nettement dominant) : c'est la teinte de la
-    // bruyère et de la molinie sèche, et ce qui distingue une lande d'un maquis
-    // olive ou d'une prairie verte.
-    albedo: [0.174, 0.109, 0.044],
+    // Brun-olive sourd : bruyère hors floraison, molinie et fougère mêlées,
+    // la teinte d'une lande dix mois sur douze. Plus sombre et plus vert
+    // qu'une terre nue, pour ne pas se lire comme un labour.
+    albedo: [0.15, 0.12, 0.035],
 
     wash: null,
     grassHeight: 0.45,
     grassDensity: 0.95,
-    grassTint: [1.02, 0.84, 0.76],
+    grassTint: [0.95, 0.9, 0.72],
     bushes: 0.3,
     // Le buisson d'une lande, nommé : voir TREE_ESSENCES.
     bush: 'gorse',
@@ -964,20 +991,20 @@ export const TOWN_PALETTES = {
   light_stone_stone_slab: { wall: '#e6ddc9', roof: '#77726a', shutter: '#93a6ab', roofShapes: ['gable', 'hip'], pitch: 0.6 },
   light_stone_thatch: { wall: '#e6ddc9', roof: '#b89a5c', shutter: '#93a6ab', roofShapes: ['gable', 'hip'], pitch: 0.85 },
   // Moellon clair et toit presque plat des plateaux secs.
-  light_stone_terrace: { wall: '#ddd4c1', roof: '#b06a44', shutter: '#3d6b86', roofShapes: ['gable', 'hip'], pitch: 0.45 },
-  dark_stone_flat_tile: { wall: '#cfcdc6', roof: '#b0654a', shutter: '#3f5a78', roofShapes: ['gable', 'hip'] },
-  dark_stone_curved_tile: { wall: '#cfcdc6', roof: '#c07b4c', shutter: '#3f5a78', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42 },
-  dark_stone_slate: { wall: '#cfcdc6', roof: '#5b626b', shutter: '#3f5a78', roofShapes: ['gable', 'pyramid', 'hip'], pitch: 0.75 },
-  dark_stone_stone_slab: { wall: '#cfcdc6', roof: '#77726a', shutter: '#3f5a78', roofShapes: ['gable', 'hip'], pitch: 0.6 },
-  granite_flat_tile: { wall: '#cfcdc6', roof: '#b0654a', shutter: '#3f5a78', roofShapes: ['gable', 'hip'] },
-  granite_curved_tile: { wall: '#cfcdc6', roof: '#c07b4c', shutter: '#3f5a78', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42 },
-  granite_slate: { wall: '#cfcdc6', roof: '#6a6f78', shutter: '#3f5a78', roofShapes: ['gable', 'pyramid'], pitch: 0.75 },
-  granite_stone_slab: { wall: '#cfcdc6', roof: '#77726a', shutter: '#3f5a78', roofShapes: ['gable', 'hip'], pitch: 0.6 },
-  red_brick_flat_tile: { wall: '#d9a98e', roof: '#8d5f4c', shutter: '#415c48', roofShapes: ['gable', 'hip'], pitch: 0.7 },
-  red_brick_slate: { wall: '#d9a98e', roof: '#5b626b', shutter: '#415c48', roofShapes: ['gable', 'pyramid', 'hip'], pitch: 0.75 },
-  red_brick_thatch: { wall: '#d9a98e', roof: '#b89a5c', shutter: '#415c48', roofShapes: ['gable', 'hip'], pitch: 0.85 },
-  pale_brick_flat_tile: { wall: '#c08670', roof: '#6a4a3e', shutter: '#4a5f4a', roofShapes: ['gable', 'hip'], pitch: 0.85 },
-  pale_brick_curved_tile: { wall: '#c08670', roof: '#c07b4c', shutter: '#4a5f4a', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42 },
+  light_stone_terrace: { wall: '#ddd4c1', roof: '#b06a44', shutter: '#3d6b86', roofShapes: ['flat', 'flat', 'gable'], pitch: 0.45 },
+  dark_stone_flat_tile: { wall: '#b4ada3', roof: '#b0654a', shutter: '#3f5a78', roofShapes: ['gable', 'hip'] },
+  dark_stone_curved_tile: { wall: '#b4ada3', roof: '#c07b4c', shutter: '#3f5a78', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42 },
+  dark_stone_slate: { wall: '#b4ada3', roof: '#5b626b', shutter: '#3f5a78', roofShapes: ['gable', 'pyramid', 'hip'], pitch: 0.75 },
+  dark_stone_stone_slab: { wall: '#b4ada3', roof: '#77726a', shutter: '#3f5a78', roofShapes: ['gable', 'hip'], pitch: 0.6 },
+  granite_flat_tile: { wall: '#bdbcb8', roof: '#b0654a', shutter: '#3f5a78', roofShapes: ['gable', 'hip'] },
+  granite_curved_tile: { wall: '#bdbcb8', roof: '#c07b4c', shutter: '#3f5a78', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42 },
+  granite_slate: { wall: '#bdbcb8', roof: '#6a6f78', shutter: '#3f5a78', roofShapes: ['gable', 'pyramid'], pitch: 0.75 },
+  granite_stone_slab: { wall: '#bdbcb8', roof: '#77726a', shutter: '#3f5a78', roofShapes: ['gable', 'hip'], pitch: 0.6 },
+  red_brick_flat_tile: { wall: '#b86a52', roof: '#8d5f4c', shutter: '#415c48', roofShapes: ['gable', 'hip'], pitch: 0.7 },
+  red_brick_slate: { wall: '#b86a52', roof: '#5b626b', shutter: '#415c48', roofShapes: ['gable', 'pyramid', 'hip'], pitch: 0.75 },
+  red_brick_thatch: { wall: '#b86a52', roof: '#b89a5c', shutter: '#415c48', roofShapes: ['gable', 'hip'], pitch: 0.85 },
+  pale_brick_flat_tile: { wall: '#d4b08f', roof: '#6a4a3e', shutter: '#4a5f4a', roofShapes: ['gable', 'hip'], pitch: 0.85 },
+  pale_brick_curved_tile: { wall: '#d4b08f', roof: '#c07b4c', shutter: '#4a5f4a', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42 },
   half_timber_flat_tile: { wall: '#efe6d4', roof: '#8a5a49', shutter: '#8e4034', roofShapes: ['gable', 'gable', 'hip'], pitch: 0.8 },
   half_timber_curved_tile: { wall: '#efe6d4', roof: '#c07b4c', shutter: '#8e4034', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42 },
   whitewash_curved_tile: { wall: '#eeeae0', roof: '#a9713f', shutter: '#9fb2b6', roofShapes: ['gable', 'flat'], pitch: 0.42 },
@@ -1032,45 +1059,48 @@ export const SHOPFRONT_FASCIA_GAP_M = 0.14;
 /**
  * Pictogramme de l'enseigne perpendiculaire (`buildingLayer.appendShopSignBlade`),
  * par classe brute de point d'intérêt (`properties.class`, pas le `kind` déjà
- * agrégé de `buildingPersonalityFor`). Un émoji en un seul point de code
- * chacun : `materials/labelAtlas.js` ne sait pas recomposer une séquence à
- * variateur ou à jointure.
+ * agrégé de `buildingPersonalityFor`) : un nom d'icône Tabler (contour). Seules
+ * les icônes extraites dans `materials/shopIcons.js` se dessinent — après un
+ * ajout ici, relancer `node scripts/shop-icons.mjs`.
  */
-export const SHOPFRONT_EMOJI = {
-  bakery: '🥖',
-  alcohol_shop: '🍷',
-  bar: '🍺',
-  beer: '🍺',
-  butcher: '🥩',
-  cafe: '☕',
-  restaurant: '🍽',
-  fast_food: '🍔',
-  hairdresser: '💇',
-  pharmacy: '💊',
-  bank: '🏦',
-  bicycle: '🚲',
-  clothing_store: '👕',
-  ice_cream: '🍦',
-  laundry: '🧺',
-  music: '🎵',
-  post: '📮',
-  grocery: '🛒',
-  fuel: '⛽',
+export const SHOPFRONT_ICONS = {
+  bakery: 'bread',
+  alcohol_shop: 'glass-full',
+  bar: 'beer',
+  beer: 'beer',
+  butcher: 'meat',
+  cafe: 'coffee',
+  restaurant: 'tools-kitchen-2',
+  fast_food: 'burger',
+  hairdresser: 'scissors',
+  pharmacy: 'pill',
+  bank: 'building-bank',
+  bicycle: 'bike',
+  clothing_store: 'shirt',
+  ice_cream: 'ice-cream',
+  laundry: 'wash-machine',
+  music: 'music',
+  post: 'mail',
+  grocery: 'shopping-cart',
+  fuel: 'gas-station',
 };
 /** Repli d'une classe non répertoriée, ou d'un commerce sans point d'intérêt
  *  matché (`class` absent) : la façade, sans autre indice. */
-export const SHOPFRONT_EMOJI_DEFAULT = '🏪';
+export const SHOPFRONT_ICON_DEFAULT = 'building-store';
 
 /**
  * Auvent de restaurant, de bar ou de café (`buildingLayer.appendAwning`) : une retombée
  * tendue depuis le bandeau d'enseigne, en couleur unie. `awningDropM` fixe sa
  * pente (chute verticale sur `awningDepthM` de saillie) ; `awningMarginM` le
- * retire des deux bouts du pan, comme la devanture elle-même.
+ * retire du bout du pan opposé à l'enseigne en drapeau, qu'il ne touche pas.
  */
 export const AWNING_DEPTH_M = 1.3;
 export const AWNING_DROP_M = 0.5;
 export const AWNING_THICKNESS_M = 0.06;
 export const AWNING_MARGIN_M = 0.35;
+/** Toiles d'auvent, une par bâtiment tirée de sa position : jamais la teinte du
+ *  bandeau, contre lequel l'auvent se perdrait vu de face. */
+export const AWNING_COLORS = ['#9b2d2a', '#2f6b45', '#b8862f', '#7a2340'];
 
 /**
  * Terrasse d'un restaurant, d'un bar ou d'un café (`buildingLayer._appendTerrace`) :
@@ -1662,12 +1692,13 @@ export const defaultTheme = Object.freeze({
     sillM: SHOPFRONT_SILL_M,
     fasciaHeightM: SHOPFRONT_FASCIA_HEIGHT_M,
     fasciaGapM: SHOPFRONT_FASCIA_GAP_M,
-    emoji: SHOPFRONT_EMOJI,
-    emojiDefault: SHOPFRONT_EMOJI_DEFAULT,
+    icons: SHOPFRONT_ICONS,
+    iconDefault: SHOPFRONT_ICON_DEFAULT,
     awningDepthM: AWNING_DEPTH_M,
     awningDropM: AWNING_DROP_M,
     awningThicknessM: AWNING_THICKNESS_M,
     awningMarginM: AWNING_MARGIN_M,
+    awningColors: AWNING_COLORS,
     terraceDepthM: TERRACE_DEPTH_M,
     terraceSpacingM: TERRACE_SPACING_M,
     terraceClearanceM: TERRACE_CLEARANCE_M,

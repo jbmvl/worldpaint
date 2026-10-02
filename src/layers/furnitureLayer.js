@@ -68,7 +68,8 @@ import {
   createLightPoolGeometry,
   createLightPoolMaterial,
   furnitureSpecsFor,
-  furnitureSpecsForStone,
+  furnitureColorsForStone,
+  stoneFurnitureItems,
   LAMP_HEAD_HEIGHT_M,
   TRAFFIC_LENS_REACH_M,
 } from './furnitureKit.js';
@@ -215,6 +216,8 @@ export class FurnitureLayer {
     /** Fontaines posées, repère de scène — voir `publishFountains`. */
     this.fountains = [];
     this.geometries = createFurnitureGeometries(THREE, theme.furniture.colors);
+    /** Nuancier dont les formes en pierre de `geometries` sont faites (`setRegion`). */
+    this._stoneColors = theme.furniture.colors;
 
     /** @type {Map<string, Object>} `InstancedMesh` par forme ponctuelle. */
     this.instanced = new Map();
@@ -354,17 +357,31 @@ export class FurnitureLayer {
   /**
    * Pose la région du lieu. Le mobilier se refait quand elle change (le
    * compositeur périme le décor), donc il n'y a rien à invalider ici — hormis
-   * les sections balayées, dont la couleur de pierre est cuite dans la
-   * géométrie et doit donc être prête avant la reconstruction.
+   * les sections balayées et les formes du catalogue en pierre, dont la
+   * couleur est cuite dans la géométrie et doit donc être prête avant la reconstruction.
    *
    * @param {Object|null} region
    */
   setRegion(region) {
     this.region = region || null;
-    this.specs = furnitureSpecsForStone(
+    const colors = furnitureColorsForStone(
       this.theme.furniture.colors,
       stoneTintFor(this.region?.stone ?? null, this.theme.stones)
     );
+    this.specs = furnitureSpecsFor(colors);
+    if (colors === this._stoneColors || this.disposed) return;
+    this._stoneColors = colors;
+    const stoned = createFurnitureGeometries(
+      this.THREE,
+      colors,
+      stoneFurnitureItems(this.theme.furniture.colors)
+    );
+    for (const [item, geometry] of Object.entries(stoned)) {
+      this.geometries[item]?.dispose();
+      this.geometries[item] = geometry;
+      const mesh = this.instanced.get(item);
+      if (mesh) mesh.geometry = geometry;
+    }
   }
 
   /**

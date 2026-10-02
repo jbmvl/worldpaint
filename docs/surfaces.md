@@ -251,6 +251,11 @@ Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
    couvertes la question ne se pose plus : le décor s'éteint. **À l'intérieur
    d'une région, en revanche, la matrice est le seul recours** — un désert que
    la carte ne trace pas n'existe que si la matrice le dit.
+   Une matrice boisée (`plantedSurfaceForMatrix`) ne passe pas par ce repli :
+   la carte du sol la peint elle-même dans ses trous, pour que la végétation y
+   plante de vrais arbres. Elle s'arrête au-dessus de `PLANTED_CEILING_M`
+   (2000 m), dans les emprises habitées et à `PLANTED_BUILDING_CLEARANCE_M`
+   (15 m) de chaque bâtiment ; ces trous-là prennent le repli du thème.
 2. **Un marais n'a qu'une forme.** Les tuiles servies ne transmettent presque
    jamais la sous-classe d'une zone humide. Relevé au z14 sur la Camargue, la
    Brière, le lac de Grand-Lieu, la baie de l'Aiguillon, le delta du Danube, le

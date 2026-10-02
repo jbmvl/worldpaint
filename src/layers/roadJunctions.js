@@ -78,7 +78,6 @@ import { junctionTriangles } from './junctionTriangulation.js';
  */
 
 import { LEVEL_GROUND } from './roadWorks.js';
-import { distanceToSegment } from './roadGraph.js';
 
 /**
  * Rayon de raccordement d'un coin, en part de la plus étroite des deux
@@ -861,8 +860,12 @@ export function junctionDeckAt(area, decks, x, z) {
 
   const {vertices,triangles}=junctionTriangles(area);
   const height=p=>p===vertices[0]?centre:outlineDeckAt(p,decks);
+  // La marge couvre la tolérance barycentrique d'un point posé sur une arête.
+  const slack=1e-5;
   for(const [ci,ai,bi] of triangles) {
     const c=vertices[ci],a=vertices[ai],b=vertices[bi];
+    if(x<Math.min(c.x,a.x,b.x)-slack || x>Math.max(c.x,a.x,b.x)+slack ||
+      z<Math.min(c.z,a.z,b.z)-slack || z>Math.max(c.z,a.z,b.z)+slack) continue;
     const ax=a.x-c.x,az=a.z-c.z,bx=b.x-c.x,bz=b.z-c.z;
     const px=x-c.x,pz=z-c.z,det=ax*bz-az*bx;
     if(Math.abs(det)<1e-9)continue;
@@ -923,15 +926,20 @@ export function lowestDeckAround(area, x, z, radius) {
     const qb = 2 * (fx * dx + fz * dz);
     const disc = qb * qb - 4 * qa * (fx * fx + fz * fz - r2);
     if (disc < 0) return;
-    for (const sign of [-1, 1]) {
-      const t = (-qb + sign * Math.sqrt(disc)) / (2 * qa);
-      if (t >= 0 && t <= 1) keep(ah + (bh - ah) * t);
-    }
+    const root = Math.sqrt(disc);
+    const t0 = (-qb - root) / (2 * qa);
+    const t1 = (-qb + root) / (2 * qa);
+    if (t0 >= 0 && t0 <= 1) keep(ah + (bh - ah) * t0);
+    if (t1 >= 0 && t1 <= 1) keep(ah + (bh - ah) * t1);
   };
 
   const {vertices,triangles}=junctionTriangles(area);
   for (const [ci,ai,bi] of triangles) {
     const c=vertices[ci],a=vertices[ai],b=vertices[bi];
+    if (
+      Math.min(c.x, a.x, b.x) > x + radius || Math.max(c.x, a.x, b.x) < x - radius ||
+      Math.min(c.z, a.z, b.z) > z + radius || Math.max(c.z, a.z, b.z) < z - radius
+    ) continue;
     const cx=c.x,cz=c.z,ch=ci===0?centre:outlineDeckAt(c,decks);
     if ((cx-x)**2+(cz-z)**2<=r2) keep(ch);
     const ah = outlineDeckAt(a, decks);
@@ -1088,6 +1096,21 @@ export function pointInOutline(outline, x, z) {
   return inside;
 }
 
+// Boîte du contour, gardée sur l'aire ; les coutures (`junctionSeams.js`) l'allongent après coup.
+function outlineBounds(area) {
+  const outline = area.outline;
+  if (area.bounds?.count === outline.length) return area.bounds;
+  const box = { count: outline.length, minX: Infinity, minZ: Infinity, maxX: -Infinity, maxZ: -Infinity };
+  area.bounds = box;
+  for (const p of outline) {
+    if (p.x < box.minX) box.minX = p.x;
+    if (p.x > box.maxX) box.maxX = p.x;
+    if (p.z < box.minZ) box.minZ = p.z;
+    if (p.z > box.maxZ) box.maxZ = p.z;
+  }
+  return box;
+}
+
 /**
  * Distance d'un point au bord d'un contour, vers l'extérieur, et le point du
  * bord qui lui fait face. Zéro dedans. Fonction pure.
@@ -1101,19 +1124,26 @@ export function outlineDistance(outline, x, z) {
   if (!Array.isArray(outline) || outline.length < 3) return { distance: Infinity, x, z };
   if (pointInOutline(outline, x, z)) return { distance: 0, x, z };
 
-  let best = { distance: Infinity, x, z };
+  // Lu pour chaque sommet de terrain proche d'un carrefour : pas d'objet par arête.
+  let bestSq = Infinity;
+  let bestX = x;
+  let bestZ = z;
   for (let i = 0, j = outline.length - 1; i < outline.length; j = i++) {
     const a = outline[i];
-    const b = outline[j];
-    const hit = distanceToSegment(x, z, a.x, a.z, b.x, b.z);
-    if (hit.distance >= best.distance) continue;
-    best = {
-      distance: hit.distance,
-      x: a.x + (b.x - a.x) * hit.t,
-      z: a.z + (b.z - a.z) * hit.t,
-    };
+    const dx = outline[j].x - a.x;
+    const dz = outline[j].z - a.z;
+    const lengthSq = dx * dx + dz * dz;
+    let t = lengthSq > 0 ? ((x - a.x) * dx + (z - a.z) * dz) / lengthSq : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const px = a.x + dx * t;
+    const pz = a.z + dz * t;
+    const distanceSq = (x - px) ** 2 + (z - pz) ** 2;
+    if (distanceSq >= bestSq) continue;
+    bestSq = distanceSq;
+    bestX = px;
+    bestZ = pz;
   }
-  return best;
+  return { distance: Math.sqrt(bestSq), x: bestX, z: bestZ };
 }
 
 /**
@@ -1278,6 +1308,8 @@ export class JunctionAreas {
     for (const index of bucket) {
       const area = this.areas[index];
       if (area.level !== level || !area.decks) continue;
+      const box = outlineBounds(area);
+      if (x < box.minX - reach || x > box.maxX + reach || z < box.minZ - reach || z > box.maxZ + reach) continue;
       const near = outlineDistance(area.outline, x, z);
       if (near.distance > reach) continue;
       if (best && near.distance >= best.distance) continue;

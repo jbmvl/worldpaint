@@ -458,6 +458,19 @@ export class World {
     return this.composer.setRegion(id);
   }
 
+  /**
+   * Remplace un seul mot de la région en vigueur, ou la rend entière
+   * (`null`). Voir `WorldComposer.setRegionWord`. Le prochain `refresh` doit
+   * être forcé.
+   *
+   * @param {string|null} field Un champ de `VOCABULARIES` (`matrix`, `stone`…).
+   * @param {string} [value] Un mot de ce champ.
+   * @returns {boolean} vrai si l'intention a changé.
+   */
+  setRegionWord(field, value) {
+    return this.composer.setRegionWord(field, value);
+  }
+
   /** Active les mesures CPU par couche ; le rendu GPU reste à mesurer par le renderer. */
   setProfiling(enabled = true) { this.composer.metrics.enabled = enabled; }
 

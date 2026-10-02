@@ -1387,6 +1387,14 @@ export function distanceToSegment(x, z, ax, az, bx, bz) {
   return { distance: Math.hypot(x - px, z - pz), t };
 }
 
+// Hors de la boîte de `[a, b]` élargie de `margin` : trop loin, sans calculer la distance.
+function outsideBox(x, z, a, b, margin) {
+  return (
+    x < Math.min(a.x, b.x) - margin || x > Math.max(a.x, b.x) + margin ||
+    z < Math.min(a.z, b.z) - margin || z > Math.max(a.z, b.z) + margin
+  );
+}
+
 // L'emprise d'un accès s'arrête au plan du portail : sa terminaison ronde
 // ne doit pas excaver le toit ni la voie portée au-dessus.
 function beyondTunnel(segment, row, x, z) {
@@ -1485,8 +1493,10 @@ export class RoadIndex {
 
       const a = segment.path[row];
       const b = segment.path[row + 1];
+      const limit = segment.halfWidth + reach;
+      if (outsideBox(x, z, a, b, limit)) continue;
       const hit = distanceToSegment(x, z, a.x, a.z, b.x, b.z);
-      if (hit.distance > segment.halfWidth + reach) continue;
+      if (hit.distance > limit) continue;
       if (best && hit.distance >= best.distance) continue;
       best = { segment, index, row, t: hit.t, distance: hit.distance,
         ...(!this.includeWorks && beyondTunnel(segment,row,x,z) ? { covered: true } : {}) };
@@ -1522,8 +1532,10 @@ export class RoadIndex {
       const segment = this.segments[index];
       const a = segment.path[row];
       const b = segment.path[row + 1];
+      const limit = segment.halfWidth + reach;
+      if (outsideBox(x, z, a, b, limit)) continue;
       const hit = distanceToSegment(x, z, a.x, a.z, b.x, b.z);
-      if (hit.distance > segment.halfWidth + reach) continue;
+      if (hit.distance > limit) continue;
       hits.push({ segment, index, row, t: hit.t, distance: hit.distance,
         ...(!this.includeWorks && beyondTunnel(segment,row,x,z) ? { covered: true } : {}) });
     }

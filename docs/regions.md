@@ -131,9 +131,9 @@ Trois choses à savoir avant d'y toucher :
 - **`STONE_LOOK` porte des facteurs, comme `SOIL_LOOK`**, et pour la même
   raison : la pierre est peinte par le shader du sol *et* par la géométrie des
   ouvrages, et deux palettes les feraient diverger. Le calcaire est la
-  référence et n'a pas d'entrée. Les formes du catalogue — calvaire, moulin,
-  château — gardent leur pierre neutre : elles sont instanciées une fois pour
-  toutes.
+  référence et n'a pas d'entrée. Les formes du catalogue en pierre — calvaire,
+  lavoir, moulin, château, rochers (`stoneFurnitureItems`) — sont refaites dans
+  la pierre du pays. Le bâti, lui, ne lit pas la géologie.
 
 Trois tables ne sont pas de la direction artistique mais des règles de
 plausibilité, et elles vivent dans les couches : la trame des limites de

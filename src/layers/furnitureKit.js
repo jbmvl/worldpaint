@@ -1836,26 +1836,60 @@ const SPECS_CACHE = new WeakMap();
  */
 const STONED_CACHE = new WeakMap();
 
+/** Tons du nuancier qui sont la pierre ou la roche du pays, donc teintés par sa géologie. */
+const STONE_TONES = ['stone', 'stoneDark', 'rock', 'rockPale', 'rockDark'];
+
+/** Formes du catalogue faites de pierre, par nuancier (`stoneFurnitureItems`). */
+const STONE_ITEMS_CACHE = new WeakMap();
+
 /**
- * Les mêmes sections balayées, dans la pierre du pays.
+ * Les formes du catalogue qui emploient un ton de pierre ou de roche : celles
+ * que `furnitureColorsForStone` change. Relevées en construisant chaque forme
+ * sur un nuancier espion plutôt que listées à la main — une forme nouvelle en
+ * pierre suit la géologie sans qu'on y pense.
  *
- * Seuls les deux tons de pierre du nuancier bougent, donc seuls les ouvrages
- * qui en sont faits changent : le muret de pierre sèche, le mur de soutènement
- * et la paroi de déblai. Les formes du catalogue, elles, sont instanciées une
- * fois pour toutes et gardent leur pierre neutre — recolorier un calvaire et un
- * moulin à chaque changement de pays coûterait tout le catalogue pour deux
- * objets qu'on croise rarement.
+ * @param {Object} [colors] Nuancier du thème.
+ * @returns {string[]}
+ */
+export function stoneFurnitureItems(colors = defaultTheme.furniture.colors) {
+  let items = STONE_ITEMS_CACHE.get(colors);
+  if (!items) {
+    const tones = new Set(STONE_TONES);
+    items = Object.keys(FURNITURE_BUILDERS).filter((name) => {
+      let used = false;
+      const spy = new Proxy(colors, {
+        get(target, key) {
+          if (tones.has(key)) used = true;
+          return target[key];
+        },
+      });
+      FURNITURE_BUILDERS[name](spy);
+      return used;
+    });
+    STONE_ITEMS_CACHE.set(colors, items);
+  }
+  return items;
+}
+
+/**
+ * Le nuancier dans la pierre du pays.
+ *
+ * Seuls les tons de pierre et de roche bougent (`STONE_TONES`), la mousse non :
+ * les sections balayées qui en sont faites (muret de pierre sèche, mur de
+ * soutènement, paroi de déblai) et les formes du catalogue en pierre
+ * (`stoneFurnitureItems` : calvaire, lavoir, moulin, rochers…) changent. Le
+ * bâti ne lit pas la géologie.
  *
  * La teinte vient de `stoneTintFor`, la même que le shader de terrain applique
- * à la roche : un causse blanc porte des murets blancs.
+ * à la roche : un causse blanc porte des murets, des calvaires et des rochers
+ * blancs.
  *
  * @param {Object} colors Nuancier du thème (`theme.furniture.colors`).
  * @param {number[]} tint Facteur par canal, en espace linéaire.
+ * @returns {Object} le même nuancier quand la teinte est neutre.
  */
-export function furnitureSpecsForStone(colors, tint) {
-  if (!Array.isArray(tint) || tint.every((factor) => factor === 1)) {
-    return furnitureSpecsFor(colors);
-  }
+export function furnitureColorsForStone(colors, tint) {
+  if (!Array.isArray(tint) || tint.every((factor) => factor === 1)) return colors;
   let byTint = STONED_CACHE.get(colors);
   if (!byTint) {
     byTint = new Map();
@@ -1864,14 +1898,18 @@ export function furnitureSpecsForStone(colors, tint) {
   const key = tint.join(',');
   let stoned = byTint.get(key);
   if (!stoned) {
-    stoned = {
-      ...colors,
-      stone: colors.stone.map((channel, i) => channel * tint[i]),
-      stoneDark: colors.stoneDark.map((channel, i) => channel * tint[i]),
-    };
+    stoned = { ...colors };
+    for (const tone of STONE_TONES) {
+      if (colors[tone]) stoned[tone] = colors[tone].map((channel, i) => channel * tint[i]);
+    }
     byTint.set(key, stoned);
   }
-  return furnitureSpecsFor(stoned);
+  return stoned;
+}
+
+/** Les sections balayées, dans la pierre du pays (`furnitureColorsForStone`). */
+export function furnitureSpecsForStone(colors, tint) {
+  return furnitureSpecsFor(furnitureColorsForStone(colors, tint));
 }
 
 export function furnitureSpecsFor(colors = defaultTheme.furniture.colors) {
@@ -1892,15 +1930,20 @@ export function furnitureSpecsFor(colors = defaultTheme.furniture.colors) {
 }
 
 /**
- * Construit le catalogue une fois pour toutes.
+ * Construit le catalogue, ou les seules formes nommées.
  * @param {Object} THREE
  * @param {Object} [colors] Nuancier du thème.
+ * @param {string[]} [names] Formes à construire ; toutes par défaut.
  * @returns {Record<string, Object>} géométrie par nom.
  */
-export function createFurnitureGeometries(THREE, colors = defaultTheme.furniture.colors) {
+export function createFurnitureGeometries(
+  THREE,
+  colors = defaultTheme.furniture.colors,
+  names = Object.keys(FURNITURE_BUILDERS)
+) {
   const out = {};
-  for (const [name, build] of Object.entries(FURNITURE_BUILDERS)) {
-    out[name] = build(colors).toGeometry(THREE, `furniture-${name}`);
+  for (const name of names) {
+    out[name] = FURNITURE_BUILDERS[name](colors).toGeometry(THREE, `furniture-${name}`);
   }
   return out;
 }

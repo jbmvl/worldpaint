@@ -21,13 +21,14 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   changement de classe sur un remblai, carrefour en pente, route à flanc de
   versant, falaise longée au pied et à l'arase et franchie par une rampe,
   chemin et sentier sur un versant ;
-  `roadsLab.set({ scene, yawDeg, pitchDeg, distance })` et `roadsLab.info()`
+  `roadsLab.set({ scene, yawDeg, pitchDeg, distance, stone })` et `roadsLab.info()`
   (cotes des bouches), ou `node scripts/roads-shot.mjs <dossier> '<réglages
   JSON>'`. Le mobilier de rase campagne y est posé (talus, murs, glissières,
   alignements), pas le bâti ni les parcelles.
 - `demo/lab/place.html?lieu=<lieu>` — un lieu réel rejoué par `createWorld`
   depuis ses tuiles enregistrées dans `demo/lab/places/<lieu>/` ;
-  `placeLab.set({ lng, lat | x, z, yawDeg, pitchDeg, distance, hour })`, ou
+  `placeLab.set({ lng, lat | x, z, yawDeg, pitchDeg, distance, hour, word })`
+  (`word: ['matrix', 'conifer_forest']` impose un mot comme l'afficheur), ou
   `node scripts/place-shot.mjs <dossier> '<réglages JSON>' <lieu>`.
   `await placeLab.walk({ toX, step })`, ou `node scripts/place-walk.mjs
   '<réglages JSON>' <lieu>`, fait avancer l'observateur et mesure à chaque pas
@@ -37,7 +38,7 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   <lat>` ; sans ses tuiles vectorielles, il se rejoue en relief nu.
 - `demo/lab/furniture.html` — des formes du catalogue de mobilier côte à côte,
   à côté d'un gabarit humain de 1,75 m ; `furnitureLab.set({ kinds, yawDeg,
-  pitchDeg, distance, target })`, ou `node scripts/furniture-shot.mjs`.
+  pitchDeg, distance, target, stone })`, ou `node scripts/furniture-shot.mjs`.
 - `demo/lab/roundabout.html` — un giratoire synthétique (anneau à sens unique,
   branches simples ou dédoublées) passé tel quel dans `RoadNetwork` sur un sol
   plat ; `roundaboutLab.set({ radius, branches, splitDeg, splitLength, axes,
@@ -52,7 +53,7 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
 
 - `demo/lab/shop.html` — le bâti seul le long d'une rue plate, avec des
   commerces en pignon, en long pan ou sans rue devant ;
-  `shopLab.set({ yawDeg, pitchDeg, distance })`, ou
+  `shopLab.set({ yawDeg, pitchDeg, distance, night })`, ou
   `node scripts/shop-shot.mjs <dossier> '<réglages JSON>'`.
 - `demo/lab/forest.html` — une forêt pleine de neuf tuiles semée par la vraie
   `VegetationLayer` (peuplement et sous-étage) ; `forestLab.set({ wood, view,

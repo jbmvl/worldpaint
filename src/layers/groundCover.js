@@ -23,7 +23,7 @@ import {
   GROUND_GRAIN_ATTRIBUTE,
 } from '../materials/foliageMaterial.js';
 import { makeRandom } from '../materials/proceduralTextures.js';
-import { soilWashFor, surfaceForMatrix } from '../core/regionInterpretation.js';
+import { soilWashFor, gapSurfaceForMatrix } from '../core/regionInterpretation.js';
 import { CORRIDOR_MARGIN_M, inCorridor } from './roadCorridor.js';
 import {
   coverBand,
@@ -609,7 +609,7 @@ export class GroundCover {
     if (next === this.matrix) return false;
     this.matrix = next;
     this._wash = soilWashFor(next, this.theme.soils);
-    this._unclassified = surfaceForMatrix(next) ?? this.theme.terrain.unclassified;
+    this._unclassified = gapSurfaceForMatrix(next) ?? this.theme.terrain.unclassified;
     return true;
   }
 

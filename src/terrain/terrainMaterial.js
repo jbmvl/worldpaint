@@ -139,7 +139,7 @@ import { pavementTone } from '../layers/townStyle.js';
 import { createWaterNormalCanvas } from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
 import { LOW_POLY_GRAIN_GLSL, LOW_POLY_GRAIN_DEFAULTS } from './lowPolyGrain.js';
-import { soilWashFor, surfaceForMatrix, stoneTintFor } from '../core/regionInterpretation.js';
+import { soilWashFor, gapSurfaceForMatrix, stoneTintFor } from '../core/regionInterpretation.js';
 
 /** Couleur d'une matière qu'un thème ne décrit pas : un gris de terre neutre. */
 const FALLBACK_ALBEDO = [0.18, 0.17, 0.15];
@@ -176,8 +176,9 @@ export class TerrainMaterialFactory {
     this.surfaces = surfaces || defaultTheme.surfaces;
     this.streets = streets || defaultTheme.streets;
     this.groundClass = groundClass || null;
-    /** Matrice appliquée aux albédos. `null` = aucune correction. */
+    /** Matrice et géologie appliquées aux albédos. `null` = aucune correction. */
     this._matrix = null;
+    this._stone = null;
 
     // Bruit et variation (pas de couleur) : espace linéaire.
     const repeated = (canvas) => {
@@ -246,7 +247,8 @@ export class TerrainMaterialFactory {
    *   facteur : voir `SOIL_LOOK` sur pourquoi c'est un facteur et pas une
    *   palette ;
    * - la **teinte de la géologie** (`stoneTintFor`) sur la roche du socle —
-   *   celle qui affleure en pente, la dalle et l'éboulis. Le mobilier bâti en
+   *   la dalle et l'éboulis, que la pente reprend sur les parois. Une seule
+   *   fois : `uRockColor` module la matière déjà teintée et reste neutre. Le mobilier bâti en
    *   pierre lit le même facteur, sans quoi un causse blanc porterait des
    *   murets gris.
    *
@@ -257,22 +259,20 @@ export class TerrainMaterialFactory {
    */
   setRegion(region) {
     const matrix = region?.matrix ?? null;
-    if (!this._uniforms || matrix === this._matrix) return;
+    const stoneKind = region?.stone ?? null;
+    if (!this._uniforms || (matrix === this._matrix && stoneKind === this._stone)) return;
     this._matrix = matrix;
+    this._stone = stoneKind;
 
     // Ce que le pays met là où la carte se tait. C'est la lecture la plus
     // lourde de conséquences du dossier de région : en rase campagne, le
     // vectoriel se tait sur la plus grande part du sol.
-    const fill = surfaceForMatrix(matrix) ?? this.look.unclassified;
+    const fill = gapSurfaceForMatrix(matrix) ?? this.look.unclassified;
     this._uniforms.uUnclassified.value = Math.max(0, SURFACE_KINDS.indexOf(fill)) + 1;
 
     const wash = soilWashFor(this._matrix, this.soils);
-    const stone = stoneTintFor(region?.stone ?? null, this.stones);
+    const stone = stoneTintFor(stoneKind, this.stones);
     const scale = (albedo, by) => albedo.map((v, i) => v * by[i]);
-
-    // La roche qui perce les fortes pentes : même géologie que la dalle et
-    // l'éboulis d'à côté, donc même facteur.
-    this._uniforms.uRockColor.value.set(...scale(this.look.rockColor, stone));
 
     // Une matière déclare le lavage qu'elle prend, ou aucun. C'était quatre
     // affectations nommées, plus un cas particulier pour le trottoir ; c'est

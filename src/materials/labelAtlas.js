@@ -8,7 +8,11 @@
  *
  * Le fond de l'atlas reste transparent : la texture se pose par-dessus une
  * géométrie déjà colorée (panneau, bandeau), qui reste visible tout autour.
+ * Seule exception, la carte d'enseigne (`placeSign`) peint son propre fond :
+ * c'est toute la face du drapeau qui luit la nuit, pas seulement son encre.
  */
+
+import { SHOP_ICONS, SHOP_ICON_VIEWBOX, SHOP_ICON_STROKE } from './shopIcons.js';
 
 /** Police du texte peint (chasse étroite pour tenir un nom de ville large sur un panneau étroit). */
 export const LABEL_FONT_FAMILY = "'Arial Narrow', 'Helvetica Neue', Arial, sans-serif";
@@ -98,6 +102,33 @@ function drawSpacedText(ctx, text, x, y, letterSpacingPx) {
     ctx.fillText(glyph, cursor, y);
     cursor += ctx.measureText(glyph).width + letterSpacingPx;
   }
+}
+
+/** Marge intérieure d'une carte d'enseigne, en part de sa largeur. */
+export const SIGN_CARD_MARGIN_RATIO = 0.1;
+/** Part de la hauteur utile laissée au nom, sous le pictogramme. */
+export const SIGN_CARD_NAME_RATIO = 0.24;
+/** Rayon des coins de la carte, en part de sa largeur. */
+export const SIGN_CARD_CORNER_RATIO = 0.08;
+
+/**
+ * Découpe d'une carte d'enseigne : le pictogramme, carré, en haut, et le nom
+ * dessous sur toute la largeur utile. Sans nom, le pictogramme se centre.
+ * Fonction pure, en pixels de la carte.
+ *
+ * @returns {{icon:{x:number,y:number,size:number}, name:{x:number,y:number,width:number,height:number}|null}}
+ */
+export function signCardLayout(widthPx, heightPx, hasName) {
+  const margin = widthPx * SIGN_CARD_MARGIN_RATIO;
+  const innerW = widthPx - margin * 2;
+  const innerH = heightPx - margin * 2;
+  const nameH = hasName ? innerH * SIGN_CARD_NAME_RATIO : 0;
+  const size = Math.min(innerW, innerH - nameH - (hasName ? margin / 2 : 0));
+  const iconY = hasName ? margin : (heightPx - size) / 2;
+  return {
+    icon: { x: (widthPx - size) / 2, y: iconY, size },
+    name: hasName ? { x: margin, y: heightPx - margin - nameH, width: innerW, height: nameH } : null,
+  };
 }
 
 /**
@@ -212,15 +243,9 @@ export class LabelAtlas {
     const cellW = Math.ceil(fit.widthPx) + LABEL_PADDING_PX * 2;
     const cellH = Math.ceil(fit.fontPx * LABEL_LINE_HEIGHT_RATIO) + LABEL_PADDING_PX * 2;
 
-    if (this._cursorX + cellW > this.width) {
-      this._cursorX = 0;
-      this._cursorY += this._rowHeight;
-      this._rowHeight = 0;
-    }
-    if (this._cursorY + cellH > this.height) return null;
-
-    const x0 = this._cursorX;
-    const y0 = this._cursorY;
+    const cell = this._reserve(cellW, cellH);
+    if (!cell) return null;
+    const { x0, y0 } = cell;
 
     this.ctx.font = `${LABEL_FONT_WEIGHT} ${fit.fontPx}px ${LABEL_FONT_FAMILY}`;
     this.ctx.fillStyle = color;
@@ -229,9 +254,105 @@ export class LabelAtlas {
     const baselineY = y0 + LABEL_PADDING_PX + fit.fontPx * LABEL_BASELINE_RATIO;
     drawSpacedText(this.ctx, text, x0 + LABEL_PADDING_PX, baselineY, fit.letterSpacingPx);
 
+    const uv = {
+      u0: x0 / this.width,
+      v0: y0 / this.height,
+      u1: (x0 + cellW) / this.width,
+      v1: (y0 + cellH) / this.height,
+      widthPx: cellW,
+      heightPx: cellH,
+    };
+    this._cache.set(key, uv);
+    return uv;
+  }
+
+  /**
+   * Réserve une case libre de l'étagère courante, ou `null` si l'atlas est plein.
+   */
+  _reserve(cellW, cellH) {
+    if (this._cursorX + cellW > this.width) {
+      this._cursorX = 0;
+      this._cursorY += this._rowHeight;
+      this._rowHeight = 0;
+    }
+    if (this._cursorY + cellH > this.height) return null;
+    const cell = { x0: this._cursorX, y0: this._cursorY };
     this._cursorX += cellW;
     this._rowHeight = Math.max(this._rowHeight, cellH);
     this._dirty = true;
+    return cell;
+  }
+
+  /**
+   * Peint une carte d'enseigne pleine : fond arrondi, pictogramme Tabler
+   * (`materials/shopIcons.js`) et, dessous, le nom. Mémorisée comme `place`.
+   *
+   * @param {Object} options
+   * @param {string} options.icon Nom d'icône présent dans `SHOP_ICONS` ; une
+   *        icône absente laisse la carte sans pictogramme.
+   * @param {string|null} [options.name]
+   * @param {number} options.widthPx
+   * @param {number} options.heightPx
+   * @param {string} options.background Couleur CSS du fond.
+   * @param {string} options.ink Couleur CSS du trait et du texte.
+   * @returns {{u0:number,v0:number,u1:number,v1:number,widthPx:number,heightPx:number}|null}
+   */
+  placeSign({ icon, name = null, widthPx, heightPx, background, ink }) {
+    const cellW = Math.ceil(widthPx);
+    const cellH = Math.ceil(heightPx);
+    const key = `sign ${icon} ${name} ${cellW} ${cellH} ${background} ${ink}`;
+    const cached = this._cache.get(key);
+    if (cached) return cached;
+
+    const cell = this._reserve(cellW, cellH);
+    if (!cell) return null;
+    const { x0, y0 } = cell;
+    const ctx = this.ctx;
+    const layout = signCardLayout(cellW, cellH, !!name);
+
+    ctx.save();
+    ctx.fillStyle = background;
+    ctx.beginPath();
+    // Retrait d'un pixel : le filtrage linéaire ne bave pas sur la case voisine.
+    const corner = cellW * SIGN_CARD_CORNER_RATIO;
+    ctx.roundRect(x0 + 1, y0 + 1, cellW - 2, cellH - 2, corner);
+    ctx.fill();
+
+    const paths = SHOP_ICONS[icon];
+    if (paths && typeof Path2D !== 'undefined') {
+      const scale = layout.icon.size / SHOP_ICON_VIEWBOX;
+      ctx.save();
+      ctx.translate(x0 + layout.icon.x, y0 + layout.icon.y);
+      ctx.scale(scale, scale);
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = SHOP_ICON_STROKE;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      for (const d of paths) ctx.stroke(new Path2D(d));
+      ctx.restore();
+    }
+
+    if (layout.name) {
+      const box = layout.name;
+      const maxFontPx = Math.max(1, box.height / LABEL_LINE_HEIGHT_RATIO);
+      const measure = (t, fontPx) => {
+        ctx.font = `${LABEL_FONT_WEIGHT} ${fontPx}px ${LABEL_FONT_FAMILY}`;
+        return ctx.measureText(t).width;
+      };
+      const fit = fitLabelText({ text: name, maxWidthPx: box.width, maxFontPx, minFontPx: Math.min(8, maxFontPx), measure });
+      ctx.font = `${LABEL_FONT_WEIGHT} ${fit.fontPx}px ${LABEL_FONT_FAMILY}`;
+      ctx.fillStyle = ink;
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      // Un nom trop long pour le plancher de fonte est rogné à la carte, pas
+      // laissé déborder sur la case voisine.
+      ctx.beginPath();
+      ctx.rect(x0 + box.x, y0 + box.y, box.width, box.height);
+      ctx.clip();
+      const left = x0 + box.x + Math.max(0, (box.width - fit.widthPx) / 2);
+      drawSpacedText(ctx, name, left, y0 + box.y + box.height / 2, fit.letterSpacingPx);
+    }
+    ctx.restore();
 
     const uv = {
       u0: x0 / this.width,

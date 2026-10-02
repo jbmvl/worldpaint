@@ -1120,20 +1120,22 @@ export function appendShopfront(
     if (openings) openings.panes++;
   }
 
-  // L'enseigne : peinte sur le bandeau déjà en place au-dessus des baies —
-  // voir l'en-tête de `theme.shopfront`, il n'y a pas de panneau séparé à
-  // ajouter, la couleur de la devanture couvre déjà toute la hauteur.
+  // L'enseigne : peinte sur le bandeau déjà en place au-dessus des baies,
+  // hors de la colonne du drapeau (`shopfrontFreeSpan`) qui la couperait.
   if (atlas && labels && name) {
-    const availableWidthM = length - theme.marginM * 2;
+    const free = shopfrontFreeSpan(length, theme.marginM);
+    const availableWidthM = free.end - free.start;
     const maxWidthPx = Math.max(1, availableWidthM * LABEL_PX_PER_M);
     const maxFontPx = labelFontPxForCellHeight(SHOPFRONT_LABEL_HEIGHT_M * LABEL_PX_PER_M);
     const minFontPx = labelFontPxForCellHeight(SHOPFRONT_LABEL_MIN_HEIGHT_M * LABEL_PX_PER_M);
-    const uv = atlas.place(name, { maxWidthPx, maxFontPx, minFontPx, color: SHOPFRONT_LABEL_INK });
+    const uv = availableWidthM > 0 ? atlas.place(name, { maxWidthPx, maxFontPx, minFontPx, color: SHOPFRONT_LABEL_INK }) : null;
     if (uv) {
-      const halfWidth = uv.widthPx / LABEL_PX_PER_M / 2;
+      // Au plancher de fonte, un nom long déborde sa case : on le borne à la
+      // portion libre plutôt que de le laisser passer sous le drapeau.
+      const halfWidth = Math.min(uv.widthPx / LABEL_PX_PER_M, availableWidthM) / 2;
       const textHeight = uv.heightPx / LABEL_PX_PER_M;
       const fasciaMid = shopfrontTop - theme.fasciaHeightM / 2;
-      const centre = at(length / 2, WINDOW_LIFT_M.glass);
+      const centre = at((free.start + free.end) / 2, WINDOW_LIFT_M.glass);
       pushLabelQuad(
         labels,
         { x: centre.x - ux * halfWidth, y: centre.z - uz * halfWidth },
@@ -1148,41 +1150,57 @@ export function appendShopfront(
   return true;
 }
 
-/** Pictogramme d'une classe `poi` brute, ou le repli générique. Fonction pure. */
-export function shopfrontEmojiFor(klass, theme = defaultTheme.shopfront) {
-  return theme.emoji[klass] || theme.emojiDefault;
+/** Icône Tabler d'une classe `poi` brute, ou le repli générique. Fonction pure. */
+export function shopfrontIconFor(klass, theme = defaultTheme.shopfront) {
+  return theme.icons[klass] || theme.iconDefault;
 }
 
-/**
- * Côté du panneau, en mètres — le petit carré collé au mur, et le pictogramme
- * qui y est peint.
- */
-export const BLADE_SIGN_SIZE_M = 0.9;
+/** Largeur du panneau, du mur vers la rue, en mètres. */
+export const BLADE_SIGN_WIDTH_M = 0.9;
+/** Hauteur du panneau, en mètres : le pictogramme, et le nom dessous. */
+export const BLADE_SIGN_PANEL_HEIGHT_M = 1.15;
 /** Distance du mur au centre du panneau, en mètres — la longueur du bras. */
 export const BLADE_SIGN_REACH_M = 0.55;
-/** Hauteur du centre du panneau au-dessus du sol, en mètres — dégagement piéton. */
-export const BLADE_SIGN_HEIGHT_M = 2.55;
+/** Hauteur du bas du panneau au-dessus du sol, en mètres — dégagement piéton. */
+export const BLADE_SIGN_BOTTOM_M = 2.2;
 /** Décalage du panneau depuis le bord du pan, en mètres. */
 export const BLADE_SIGN_INSET_M = 0.9;
-/** Hauteur de casse visée pour le pictogramme, en mètres. */
-export const BLADE_SIGN_ICON_HEIGHT_M = 0.8;
 /** Épaisseur du panneau, en mètres (deux faces réellement séparées, pas doublées sans épaisseur — l'arête se voit de biais). */
 export const BLADE_SIGN_THICKNESS_M = 0.1;
 /** Hauteur d'une tige de fixation, en mètres — un plat, pas une tringle ronde. */
 export const BLADE_SIGN_ROD_HEIGHT_M = 0.05;
 /** Retrait d'une tige depuis le bord haut ou bas du panneau, en mètres. */
 export const BLADE_SIGN_ROD_INSET_M = 0.08;
+/** Écart laissé entre le drapeau et ce qui longe le mur (nom peint, auvent), en mètres. */
+export const BLADE_SIGN_CLEARANCE_M = 0.3;
 /** Métal galvanisé des tiges — le même ton que le mobilier, voir
  *  `theme.furniture.colors.galvanised`. */
 const BLADE_SIGN_ROD_COLOR = srgb('#b8bcc0');
 
+/** Abscisse du drapeau le long du pan, depuis `a`. Fonction pure. */
+export function bladeSignInset(length) {
+  return Math.min(BLADE_SIGN_INSET_M, length / 2);
+}
+
 /**
- * Enseigne en drapeau : un petit panneau planté perpendiculairement au mur,
- * porté par deux tiges. Lisible par qui remonte le trottoir, pas par qui
- * fait face à la devanture ; porte un pictogramme (`shopfrontEmojiFor`)
- * plutôt qu'un nom, illisible à cet angle. Posée près d'un bout du pan, pas
- * en son centre, pour ne pas bloquer l'entrée. Panneau, tiges et pictogramme
- * doublés (enroulement inversé) pour se lire des deux sens de marche.
+ * Portion du pan, comptée depuis `a`, que le drapeau laisse libre : le nom
+ * peint et l'auvent s'y tiennent, sans quoi le panneau, planté en travers,
+ * les couperait. `end` garde `endMarginM` du bout opposé. Fonction pure.
+ */
+export function shopfrontFreeSpan(length, endMarginM) {
+  return {
+    start: bladeSignInset(length) + BLADE_SIGN_THICKNESS_M / 2 + BLADE_SIGN_CLEARANCE_M,
+    end: length - endMarginM,
+  };
+}
+
+/**
+ * Enseigne en drapeau : un panneau planté perpendiculairement au mur, porté
+ * par deux tiges, lisible par qui remonte le trottoir. Chaque face porte une
+ * carte peinte (`LabelAtlas.placeSign`) — fond à la couleur de la devanture,
+ * icône Tabler (`shopfrontIconFor`) et nom dessous — qui, comme le nom au
+ * mur, n'est pas éclairée et luit donc la nuit. Posée près d'un bout du pan
+ * (`bladeSignInset`), pas en son centre, pour ne pas bloquer l'entrée.
  *
  * Ne dépend pas d'`appendShopfront` : une façade trop étroite pour une porte
  * garde son enseigne en drapeau.
@@ -1196,39 +1214,41 @@ const BLADE_SIGN_ROD_COLOR = srgb('#b8bcc0');
  * @param {number} nz Normale sortante, composante z.
  * @param {number} base Sol de la façade (le plus haut, sur une pente) : le dégagement piéton se compte depuis lui.
  * @param {number} minHeight Hauteur du dessous (surplomb).
- * @param {string|null} klass Classe brute du point d'intérêt (`shopfrontEmojiFor`).
- * @param {Object} [theme] `theme.shopfront` — sa table `emoji`/`emojiDefault`.
+ * @param {string|null} klass Classe brute du point d'intérêt (`shopfrontIconFor`).
+ * @param {string|null} name Nom du commerce, ou `null` : la carte ne porte alors que l'icône.
+ * @param {string} front Couleur CSS de la devanture, fond du panneau.
+ * @param {Object} [theme] `theme.shopfront` — sa table `icons`/`iconDefault`.
  */
-export function appendShopSignBlade(walls, labels, atlas, a, b, nx, nz, base, minHeight, klass, theme = defaultTheme.shopfront) {
+export function appendShopSignBlade(walls, labels, atlas, a, b, nx, nz, base, minHeight, klass, name, front, theme = defaultTheme.shopfront) {
   const length = Math.hypot(b.x - a.x, b.y - a.y);
-  const inset = Math.min(BLADE_SIGN_INSET_M, length / 2);
+  const inset = bladeSignInset(length);
   if (inset <= 0) return;
 
   const ux = (b.x - a.x) / length;
   const uz = (b.y - a.y) / length;
   const mountX = a.x + ux * inset;
   const mountZ = a.y + uz * inset;
-  const mountY = base + minHeight + BLADE_SIGN_HEIGHT_M;
+  const bottom = base + minHeight + BLADE_SIGN_BOTTOM_M;
+  const top = bottom + BLADE_SIGN_PANEL_HEIGHT_M;
 
-  const half = BLADE_SIGN_SIZE_M / 2;
+  const half = BLADE_SIGN_WIDTH_M / 2;
   const inner = { x: mountX + nx * (BLADE_SIGN_REACH_M - half), y: mountZ + nz * (BLADE_SIGN_REACH_M - half) };
   const outer = { x: mountX + nx * (BLADE_SIGN_REACH_M + half), y: mountZ + nz * (BLADE_SIGN_REACH_M + half) };
-  const bottom = mountY - half;
-  const top = mountY + half;
 
   // Le panneau de fond : deux vraies faces, décollées le long de la tangente
   // du mur (`ux, uz`) — c'est cet axe-là que la normale géométrique de
   // chaque face regarde (voir la note de `pushLabelQuad`), donc c'est lui
   // qui donne l'épaisseur, pas la normale du mur (`nx, nz`), qui donne la
   // portée du bras.
+  const panelColor = srgb(front);
   const halfThickness = BLADE_SIGN_THICKNESS_M / 2;
   const offset = (p, sign) => ({ x: p.x + ux * sign * halfThickness, y: p.y + uz * sign * halfThickness });
   const innerFront = offset(inner, -1);
   const outerFront = offset(outer, -1);
   const innerBack = offset(inner, 1);
   const outerBack = offset(outer, 1);
-  pushPanel(walls, innerFront, outerFront, bottom, top, nx, nz, WINDOW_FRAME_TINT, WINDOW_FRAME_TINT);
-  pushPanel(walls, outerBack, innerBack, bottom, top, -nx, -nz, WINDOW_FRAME_TINT, WINDOW_FRAME_TINT);
+  pushPanel(walls, innerFront, outerFront, bottom, top, nx, nz, panelColor, panelColor);
+  pushPanel(walls, outerBack, innerBack, bottom, top, -nx, -nz, panelColor, panelColor);
 
   // Deux tiges, du mur à la face intérieure du panneau, une près de chaque
   // bord — un plat fin plutôt qu'un rond, pour rester une paire de
@@ -1262,42 +1282,34 @@ export function appendShopSignBlade(walls, labels, atlas, a, b, nx, nz, base, mi
 
   if (!atlas || !labels) return;
 
-  const emoji = shopfrontEmojiFor(klass, theme);
-  const maxFontPx = labelFontPxForCellHeight(BLADE_SIGN_ICON_HEIGHT_M * LABEL_PX_PER_M);
-  const uv = atlas.place(emoji, { maxWidthPx: maxFontPx * 2, maxFontPx, minFontPx: maxFontPx });
+  const uv = atlas.placeSign({
+    icon: shopfrontIconFor(klass, theme),
+    name,
+    widthPx: BLADE_SIGN_WIDTH_M * LABEL_PX_PER_M,
+    heightPx: BLADE_SIGN_PANEL_HEIGHT_M * LABEL_PX_PER_M,
+    background: front,
+    ink: SHOPFRONT_LABEL_INK,
+  });
   if (!uv) return;
 
-  // Centré sur la largeur du panneau (`BLADE_SIGN_REACH_M`), à sa propre
-  // taille mesurée — pas à celle du panneau : un pictogramme carré étiré sur
-  // un panneau plus large que haut se déformerait en ovale.
-  const iconHalf = uv.widthPx / LABEL_PX_PER_M / 2;
-  const iconHalfHeight = uv.heightPx / LABEL_PX_PER_M / 2;
-  const iconInner = {
-    x: mountX + nx * (BLADE_SIGN_REACH_M - iconHalf),
-    y: mountZ + nz * (BLADE_SIGN_REACH_M - iconHalf),
-  };
-  const iconOuter = {
-    x: mountX + nx * (BLADE_SIGN_REACH_M + iconHalf),
-    y: mountZ + nz * (BLADE_SIGN_REACH_M + iconHalf),
-  };
-
-  // Décollé de chaque face du panneau — plus loin que son épaisseur, sans
-  // quoi le pictogramme se disputerait le pixel avec la face qu'il recouvre,
+  // Décollée de chaque face du panneau — plus loin que son épaisseur, sans
+  // quoi la carte se disputerait le pixel avec la face qu'elle recouvre,
   // même raison que `WINDOW_LIFT_M` ailleurs.
   const lift = halfThickness + 0.01;
-  const iconInnerFront = { x: iconInner.x - ux * lift, y: iconInner.y - uz * lift };
-  const iconOuterFront = { x: iconOuter.x - ux * lift, y: iconOuter.y - uz * lift };
-  const iconInnerBack = { x: iconInner.x + ux * lift, y: iconInner.y + uz * lift };
-  const iconOuterBack = { x: iconOuter.x + ux * lift, y: iconOuter.y + uz * lift };
+  const cardInnerFront = { x: inner.x - ux * lift, y: inner.y - uz * lift };
+  const cardOuterFront = { x: outer.x - ux * lift, y: outer.y - uz * lift };
+  const cardInnerBack = { x: inner.x + ux * lift, y: inner.y + uz * lift };
+  const cardOuterBack = { x: outer.x + ux * lift, y: outer.y + uz * lift };
 
-  pushLabelQuad(labels, iconInnerFront, iconOuterFront, mountY - iconHalfHeight, mountY + iconHalfHeight, uv);
-  pushLabelQuad(labels, iconOuterBack, iconInnerBack, mountY - iconHalfHeight, mountY + iconHalfHeight, uv);
+  pushLabelQuad(labels, cardInnerFront, cardOuterFront, bottom, top, uv);
+  pushLabelQuad(labels, cardOuterBack, cardInnerBack, bottom, top, uv);
 }
 
 /**
  * Auvent d'un restaurant, d'un bar ou d'un café (`AWNING_CLASSES`) : une retombée en
- * couleur unie — celle de la devanture — tendue depuis le bas du bandeau
- * d'enseigne (`appendShopfront` peint le nom juste au-dessus). Un pan mince,
+ * couleur unie (`theme.shopfront.awningColors`) tendue depuis le bas du bandeau
+ * d'enseigne (`appendShopfront` peint le nom juste au-dessus), sur la portion
+ * que le drapeau laisse libre (`shopfrontFreeSpan`). Un pan mince,
  * penché vers la rue, fermé par-dessus, par-dessous et sur sa rive avant pour
  * rester lisible qu'on le voie d'en dessous (le cas courant, un piéton) ou
  * de plus haut.
@@ -1308,17 +1320,18 @@ export function appendShopSignBlade(walls, labels, atlas, a, b, nx, nz, base, mi
  * @param {number} nx Normale sortante, composante x.
  * @param {number} nz Normale sortante, composante z.
  * @param {number} shopfrontTop Cote haute de la devanture (`shopfrontTopFor`).
- * @param {number[]} color Couleur de la devanture (`look.front`).
+ * @param {number[]} color Couleur de la toile, linéaire.
  * @param {Object} [theme] `theme.shopfront`.
  */
 export function appendAwning(walls, a, b, nx, nz, shopfrontTop, color, theme = defaultTheme.shopfront) {
   const length = Math.hypot(b.x - a.x, b.y - a.y);
-  const span = length - theme.awningMarginM * 2;
+  const free = shopfrontFreeSpan(length, theme.awningMarginM);
+  const span = free.end - free.start;
   if (span <= 0.6) return;
 
   const ux = (b.x - a.x) / length;
   const uz = (b.y - a.y) / length;
-  const centre = length / 2;
+  const centre = (free.start + free.end) / 2;
   const half = span / 2;
   const at = (along, lift, y) => ({ x: a.x + ux * along + nx * lift, y, z: a.y + uz * along + nz * lift });
 
@@ -1863,7 +1876,7 @@ export class BuildingLayer {
     let personalityName = null;
     // Classe brute du point d'intérêt (`properties.class`, pas le `kind`
     // agrégé de `buildingPersonalityFor`) — c'est elle qui choisit le
-    // pictogramme de l'enseigne perpendiculaire (`shopfrontEmojiFor`) : une
+    // pictogramme de l'enseigne perpendiculaire (`shopfrontIconFor`) : une
     // boulangerie et un bar sont tous deux `kind: 'shop'`, mais pas la même
     // enseigne.
     let personalityClass = null;
@@ -2023,13 +2036,17 @@ export class BuildingLayer {
             frontFloor,
             minHeight,
             personalityClass,
+            personalityName,
+            this.theme.personalities[personality].front,
             this.theme.shopfront
           );
 
-          // Salle qui déborde sur la rue : auvent coloré à l'enseigne et
-          // terrasse, restaurant, bar ou café — voir `AWNING_CLASSES`.
+          // Salle qui déborde sur la rue : auvent et terrasse, restaurant,
+          // bar ou café — voir `AWNING_CLASSES`.
           if (AWNING_CLASSES.has(personalityClass)) {
-            appendAwning(walls, a, b, nx, nz, shopfrontTop, look.front, this.theme.shopfront);
+            const cloths = this.theme.shopfront.awningColors;
+            const awning = srgb(cloths[Math.floor(randomAt(box.cx, box.cz, 437) * cloths.length) % cloths.length]);
+            appendAwning(walls, a, b, nx, nz, shopfrontTop, awning, this.theme.shopfront);
             this._appendTerrace(walls, a, b, nx, nz, groundAt, minHeight, personalityClass);
           } else if (FUEL_CLASSES.has(personalityClass)) {
             // Même devanture qu'un commerce quelconque, mais ce qui déborde sur

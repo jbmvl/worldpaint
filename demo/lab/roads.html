@@ -18,6 +18,7 @@
  * piloté depuis la console ou par `scripts/roads-shot.mjs`.
  *
  *   roadsLab.set({ scene: 'pont', yawDeg: 200, pitchDeg: 30, distance: 70 })
+ *   roadsLab.set({ scene: 'falaise', stone: 'schist' })  // géologie du pays
  *   roadsLab.info()  // cotes des bouches du carrefour de la scène
  *
  * Les scènes sont des endroits d'un même monde ; `yawDeg` est le cap du regard
@@ -239,10 +240,17 @@ bubble.materials.setTunnelMouths(bridges.tunnelMouths);
 const railways = new RailwayLayer({ THREE, scene, bubble });
 railways.rebuild(source, [], here);
 const furniture = new FurnitureLayer({ THREE, scene, bubble });
-furniture.rebuild(source, [], here, roads.roadSegments, roads.index, roads.junctions, null, null, null, [], {
-  areas: roads.junctionAreas,
-  cliffs: cliffs.index,
-});
+/** Pose la pierre du pays (`region.stone`) sur le terrain et le mobilier, comme le compositeur. */
+function setStone(stone) {
+  const region = { stone: stone ?? null };
+  bubble.materials.setRegion(region);
+  furniture.setRegion(region);
+  furniture.rebuild(source, [], here, roads.roadSegments, roads.index, roads.junctions, null, null, null, [], {
+    areas: roads.junctionAreas,
+    cliffs: cliffs.index,
+  });
+}
+setStone(null);
 
 // Témoins de pose sur le remblai et sur les deux rives de la tranchée.
 const trees = new TreeVolumes(THREE, scene, defaultTheme);
@@ -254,7 +262,7 @@ const planted = treePoints.map(([x, z]) => ({ x, z,
 trees.set('temoins-relief', planted);
 trees.update(0, 0);
 
-const state = { scene: 'pont', ...SCENES.pont };
+const state = { scene: 'pont', stone: null, ...SCENES.pont };
 
 function render() {
   const { x, z, yawDeg, pitchDeg, distance } = state;
@@ -296,6 +304,7 @@ function info() {
 window.roadsLab = {
   set(options = {}) {
     if (options.scene && SCENES[options.scene]) Object.assign(state, SCENES[options.scene]);
+    if ('stone' in options && options.stone !== state.stone) setStone(options.stone);
     Object.assign(state, options);
     return render();
   },

@@ -30,8 +30,9 @@ import {
   REGIONS,
   FAUNA_KINDS,
   LABEL_FAUNA,
+  SHOWCASE_FIELDS,
+  showcaseEntries,
 } from '../src/index.js';
-import { createShowcase } from './showcase.js';
 import { PerformanceProbe } from './performanceProbe.js';
 const performanceProbe = new PerformanceProbe();
 
@@ -88,7 +89,6 @@ const bigMinimapCanvas = document.getElementById('minimapBig');
 const bigMinimapCtx = bigMinimapCanvas.getContext('2d');
 const showcaseToggle = document.getElementById('showcaseToggle');
 const showcaseFieldSelect = document.getElementById('showcaseField');
-const showcaseWordField = document.getElementById('showcaseWordField');
 const showcaseWordSelect = document.getElementById('showcaseWord');
 
 function setBusy(busy) {
@@ -168,6 +168,8 @@ async function boot() {
     vector,
     sky: { Sky },
   });
+
+  if (showcaseToggle.checked) world.setRegionWord(showcaseFieldSelect.value, showcaseWordSelect.value);
 
   setStatus(`Centrage sur ${START.label}…`);
   await world.setCenter(START.lng, START.lat);
@@ -1518,64 +1520,39 @@ writeRegionHint();
 /*
  * --- Mode afficheur -----------------------------------------------------------
  *
- * Une seconde scène, à côté de celle du monde : elle pose côte à côte tous
- * les mots d'un champ de région (`showcase.js`), et `loop` choisit laquelle
- * rendre. Ce n'est pas le sélecteur de région ci-dessus — celui-là compare un
- * pays entier sur le même terrain, celui-ci isole un mot du vocabulaire pour
- * voir à quoi il ressemble sans savoir dans quel pays le trouver.
+ * Impose un seul mot à la région en vigueur (celle du lieu, ou celle du
+ * sélecteur ci-dessus) et reconstruit le vrai monde sur place : même relief,
+ * mêmes tuiles, mêmes couches, seul ce mot change.
  */
-const showcase = createShowcase(THREE);
-for (const { field, label } of showcase.fields) {
+for (const { field, label } of SHOWCASE_FIELDS) {
   showcaseFieldSelect.append(new Option(label, field));
 }
 
-/** Position et regard d'avant l'afficheur, pour les retrouver en sortant. */
-let savedCamera = null;
-
-/** Bascule le champ affiché, repeuple le sélecteur de mot s'il y a lieu, et cadre la caméra. */
-function applyShowcaseField(field) {
-  const entries = showcase.setField(field);
-  const isTile = showcase.isTileField(field);
-  showcaseWordField.hidden = !isTile;
-  showcaseWordSelect.disabled = !isTile;
-  if (isTile) {
-    showcaseWordSelect.replaceChildren();
-    for (const entry of entries) {
-      showcaseWordSelect.append(new Option(entry.unsupported ? `${entry.label} ⚠` : entry.label, entry.value));
-    }
-    // Debout au milieu de la tuile : c'est une étendue de plusieurs dizaines
-    // de mètres (le même rayon que l'herbe et les cultures du monde réel),
-    // pas une vignette qu'on regarde de loin.
-    camera.position.set(0, EYE_HEIGHT_M, -18);
-    camera.lookAt(0, 0.5, 30);
-  } else {
-    // Face à la grille, assez reculé pour voir plusieurs rangées d'un coup.
-    camera.position.set(0, 3.2, -7);
-    camera.lookAt(0, 1.3, 12);
+function fillShowcaseWords(field) {
+  showcaseWordSelect.replaceChildren();
+  for (const entry of showcaseEntries(field)) {
+    showcaseWordSelect.append(new Option(entry.unsupported ? `${entry.label} ⚠` : entry.label, entry.value));
   }
 }
+fillShowcaseWords(showcaseFieldSelect.value);
 
-showcaseToggle.addEventListener('change', () => {
+function applyShowcase() {
   const active = showcaseToggle.checked;
-  document.body.classList.toggle('showcase-mode', active);
   showcaseFieldSelect.disabled = !active;
-  if (active) {
-    savedCamera = { position: camera.position.clone(), quaternion: camera.quaternion.clone() };
-    applyShowcaseField(showcaseFieldSelect.value);
-  } else if (savedCamera) {
-    camera.position.copy(savedCamera.position);
-    camera.quaternion.copy(savedCamera.quaternion);
-    savedCamera = null;
-  }
-});
+  showcaseWordSelect.disabled = !active;
+  if (!world) return;
+  const changed = active
+    ? world.setRegionWord(showcaseFieldSelect.value, showcaseWordSelect.value)
+    : world.setRegionWord(null);
+  if (changed) rebuildHere(active ? 'Changement de mot…' : 'Retour à la région entière…');
+}
 
+showcaseToggle.addEventListener('change', applyShowcase);
 showcaseFieldSelect.addEventListener('change', () => {
-  if (showcaseToggle.checked) applyShowcaseField(showcaseFieldSelect.value);
+  fillShowcaseWords(showcaseFieldSelect.value);
+  applyShowcase();
 });
-
-showcaseWordSelect.addEventListener('change', () => {
-  if (showcaseToggle.checked) showcase.setWord(showcaseWordSelect.value);
-});
+showcaseWordSelect.addEventListener('change', applyShowcase);
 
 hourInput.addEventListener('input', refreshWeatherLabels);
 realTimeCheckbox.addEventListener('change', () => {
@@ -1608,14 +1585,6 @@ function loop(timestamp) {
 
   performanceProbe.begin(timestamp, camera, world);
   updateMovement(delta);
-
-  // Le mode afficheur suspend le monde (aucune raison de le reconstruire ou
-  // de l'animer pendant qu'on regarde une grille d'échantillons) et rend sa
-  // propre scène : la caméra continue de voler, c'est tout ce qu'ils partagent.
-  if (showcaseToggle.checked) {
-    renderer.render(showcase.scene, camera);
-    return;
-  }
 
   if (world) {
     // `advance` situe la pluie et les feuilles au sol au point observé, pas à
@@ -1683,7 +1652,10 @@ function loop(timestamp) {
   // Hors couverture, le décor est éteint : il faut le dire, sinon un écran
   // vide se lit comme une panne de chargement.
   const region = world?.composer?.landscape?.region;
-  const pays = region ? `  ${region.name} (${region.matrix})` : '  hors couverture';
+  const word = world?.composer?.regionWord;
+  const pays = region
+    ? `  ${region.name} (${region.matrix})${word ? `  afficheur : ${showcaseWordSelect.selectedOptions[0]?.text ?? word.value}` : ''}`
+    : '  hors couverture';
   coordsEl.textContent = `${where}  alt ${camera.position.y.toFixed(0)} m  cap ${bearingDeg.toFixed(0)}°  incl ${pitchDeg.toFixed(0)}°${pays}`;
 
   renderer.render(scene, camera);

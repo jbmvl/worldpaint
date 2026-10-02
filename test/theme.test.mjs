@@ -495,7 +495,7 @@ test('l’échelle de luminance végétale vise les valeurs de la fiche, à 0,00
     wood: 0.066,
     wetland: 0.091,
     grass: 0.109,
-    heath: 0.118,
+    heath: 0.12,
     saltmarsh: 0.143,
     settled: 0.172,
     scrub: 0.2,
@@ -518,7 +518,7 @@ test('chaque matière retouchée porte la dominante de sa fiche de biome', () =>
   const b = (kind) => defaultTheme.surfaces[kind].albedo[2];
   assert.ok(g('wood') >= r('wood') && r('wood') >= 0.45 * g('wood'), 'bois : vert mêlé d’un quart de brun, vert ≥ rouge ≥ 0,45 × vert');
   assert.ok(r('wetland') >= 0.65 * g('wetland'), 'marais : olive profond, rouge ≥ 0,65 × vert');
-  assert.ok(r('heath') >= 1.4 * g('heath'), 'lande : pourpre-brun, rouge ≥ 1,40 × vert');
+  assert.ok(r('heath') >= g('heath') && r('heath') < 1.4 * g('heath'), 'lande : brun-olive, vert ≤ rouge < 1,40 × vert — pas un labour pourpre');
   assert.ok(g('saltmarsh') >= r('saltmarsh'), 'pré salé : gris froid, vert ≥ rouge');
   assert.ok(r('mud') >= 1.25 * b('mud'), 'vasière : chaude, rouge ≥ 1,25 × bleu');
   assert.ok(r('bare') >= g('bare') && g('bare') >= b('bare'), 'sol nu : plus terreux, rouge ≥ vert ≥ bleu');

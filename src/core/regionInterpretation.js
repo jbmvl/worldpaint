@@ -250,6 +250,29 @@ export function surfaceForMatrix(matrix) {
   return MATRIX_KINDS[matrix]?.surface ?? null;
 }
 
+/**
+ * Matières qu'une matrice ne laisse pas au shader : la carte du sol les plante
+ * elle-même dans ses trous (`GroundClassMap`), pour que la végétation, l'herbe
+ * et le sol lisent la même chose. Un bois peint sans arbres serait pire que
+ * pas de bois.
+ */
+export const PLANTED_MATRIX_SURFACES = Object.freeze(new Set(['wood']));
+
+/** Matière qu'une matrice plante dans la carte du sol, ou `null`. */
+export function plantedSurfaceForMatrix(matrix) {
+  const surface = surfaceForMatrix(matrix);
+  return PLANTED_MATRIX_SURFACES.has(surface) ? surface : null;
+}
+
+/**
+ * Matière des trous que la carte du sol laisse encore, ou `null` pour le repli
+ * du thème. Une matrice plantée a déjà rempli les siens ; ce qui reste (bâti,
+ * haute altitude) n'est pas sa matière.
+ */
+export function gapSurfaceForMatrix(matrix) {
+  return plantedSurfaceForMatrix(matrix) ? null : surfaceForMatrix(matrix);
+}
+
 /** Style de limite de parcelle appelé par la matrice, ou `null`. */
 export function boundaryForMatrix(matrix) {
   return MATRIX_KINDS[matrix]?.boundary ?? null;

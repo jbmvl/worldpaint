@@ -20,7 +20,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { REGIONS } from '../src/core/regions.js';
-import { regionAt, regionById, MAX_REACH_KM } from '../src/core/region.js';
+import { regionAt, regionById, regionWithWord, MAX_REACH_KM } from '../src/core/region.js';
 import {
   VOCABULARIES,
   MATRIX_KINDS,
@@ -28,6 +28,8 @@ import {
   TREE_KINDS,
   BOUNDARY_STYLES,
   surfaceForMatrix,
+  plantedSurfaceForMatrix,
+  gapSurfaceForMatrix,
   boundaryForMatrix,
   cropForFarming,
   essenceForTree,
@@ -133,4 +135,33 @@ test('les mots non rendus sont inventoriés, pas oubliés', () => {
   }
   const lines = [...counts].sort((a, b) => b[1] - a[1]).map(([key, n]) => `${key} (${n})`);
   console.log(`  mots employés mais pas encore rendus : ${lines.join(', ') || 'aucun'}`);
+});
+
+test('un mot imposé ne change que son champ, le reste du pays tient', () => {
+  const base = REGIONS[0];
+  const worded = regionWithWord(base, 'matrix', 'broadleaf_woodland');
+  assert.equal(worded.matrix, 'broadleaf_woodland');
+  assert.equal(worded.stone, base.stone);
+  assert.deepEqual(worded.trees, base.trees);
+});
+
+test('un mot imposé à un champ à liste en devient le seul tirage', () => {
+  const worded = regionWithWord(REGIONS[0], 'trees', 'larch');
+  assert.deepEqual(worded.trees, ['larch']);
+});
+
+test('un mot hors du vocabulaire fermé n’est pas imposé', () => {
+  assert.equal(regionWithWord(REGIONS[0], 'matrix', 'jungle_imaginaire'), null);
+  assert.equal(regionWithWord(REGIONS[0], 'couleur', 'oak'), null);
+  assert.equal(regionWithWord(null, 'matrix', 'marsh'), null);
+});
+
+test('une matrice boisée se plante dans la carte du sol et ne laisse pas sa matière aux trous', () => {
+  for (const matrix of ['broadleaf_woodland', 'conifer_forest', 'boreal_taiga']) {
+    assert.equal(plantedSurfaceForMatrix(matrix), 'wood', matrix);
+    assert.equal(gapSurfaceForMatrix(matrix), null, matrix);
+  }
+  assert.equal(plantedSurfaceForMatrix('hedgerow_meadow'), null);
+  assert.equal(gapSurfaceForMatrix('hedgerow_meadow'), 'grass');
+  assert.equal(gapSurfaceForMatrix('inconnu'), null);
 });

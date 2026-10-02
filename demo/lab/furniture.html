@@ -16,12 +16,15 @@
  * Aucun réseau : piloté depuis la console ou par `scripts/furniture-shot.mjs`.
  *
  *   furnitureLab.set({ kinds: ['fountainWallace'], yawDeg: 30, pitchDeg: 8, distance: 6 })
+ *   furnitureLab.set({ kinds: ['lavoir', 'cemeteryCross'], stone: 'schist' })  // géologie du pays
  *
  * `yawDeg` tourne autour de la rangée, `pitchDeg` lève le regard, `target`
  * est la hauteur visée.
  */
 import * as THREE from 'three';
-import { FURNITURE_BUILDERS, createFurnitureMaterial } from '/src/layers/furnitureKit.js';
+import { FURNITURE_BUILDERS, createFurnitureMaterial, furnitureColorsForStone } from '/src/layers/furnitureKit.js';
+import { stoneTintFor } from '/src/core/regionInterpretation.js';
+import { defaultTheme } from '/src/themes/default.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setSize(innerWidth, innerHeight);
@@ -48,7 +51,7 @@ const man = new THREE.Mesh(
 const row = new THREE.Group();
 scene.add(row);
 
-const state = { kinds: ['fountainWallace', 'streetLampClassic'], yawDeg: 20, pitchDeg: 6, distance: 9, target: 1.5, spacing: 2.5 };
+const state = { kinds: ['fountainWallace', 'streetLampClassic'], yawDeg: 20, pitchDeg: 6, distance: 9, target: 1.5, spacing: 2.5, stone: null };
 
 function render() {
   // Taille relue à chaque rendu : une page ouverte cachée naît à 0 × 0.
@@ -56,8 +59,9 @@ function render() {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   row.clear();
+  const colors = furnitureColorsForStone(defaultTheme.furniture.colors, stoneTintFor(state.stone, defaultTheme.stones));
   state.kinds.forEach((kind, i) => {
-    const mesh = new THREE.Mesh(FURNITURE_BUILDERS[kind]().toGeometry(THREE, kind), material);
+    const mesh = new THREE.Mesh(FURNITURE_BUILDERS[kind](colors).toGeometry(THREE, kind), material);
     mesh.position.x = (i - (state.kinds.length - 1) / 2) * state.spacing;
     row.add(mesh);
   });
@@ -72,7 +76,7 @@ function render() {
   );
   camera.lookAt(0, state.target, 0);
   renderer.render(scene, camera);
-  return { kinds: state.kinds };
+  return { kinds: state.kinds, stone: state.stone };
 }
 
 window.furnitureLab = { set(options = {}) { Object.assign(state, options); return render(); }, state };

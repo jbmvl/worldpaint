@@ -17,6 +17,7 @@
  * `scripts/shop-shot.mjs`.
  *
  *   shopLab.set({ yawDeg: 60, pitchDeg: -25, distance: 45 })
+ *   shopLab.set({ night: true })   // lumières baissées : ce qui luit reste vif
  *
  * La rue est l'axe x = 0 (chaussée grise de 7 m) ; la caméra vise l'origine.
  */
@@ -33,7 +34,8 @@ document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x9cb8d0);
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.5, 2000);
-scene.add(new THREE.HemisphereLight(0xdde8f0, 0x6a6458, 1.6));
+const sky = new THREE.HemisphereLight(0xdde8f0, 0x6a6458, 1.6);
+scene.add(sky);
 const sun = new THREE.DirectionalLight(0xfff4e0, 1.8);
 sun.position.set(-40, 80, 30);
 scene.add(sun);
@@ -89,8 +91,11 @@ const roadIndex = new RoadIndex([{ halfWidth: HALF, path: [{ x: 0, y: 0, z: -100
 const layer = new BuildingLayer({ THREE, scene, bubble });
 layer.rebuild(source, [], { x: 0, z: 0 }, { roadIndex, builtUp: null });
 
-const state = { yawDeg: 60, pitchDeg: -28, distance: 50, targetX: 6, targetZ: 0 };
+const state = { yawDeg: 60, pitchDeg: -28, distance: 50, targetX: 6, targetZ: 0, night: false };
 function render() {
+  sky.intensity = state.night ? 0.08 : 1.6;
+  sun.intensity = state.night ? 0 : 1.8;
+  scene.background.set(state.night ? 0x0b1020 : 0x9cb8d0);
   const yaw = (state.yawDeg * Math.PI) / 180;
   const pitch = (state.pitchDeg * Math.PI) / 180;
   const d = state.distance;

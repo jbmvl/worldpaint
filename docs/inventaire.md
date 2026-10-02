@@ -130,8 +130,9 @@ Les matières du sol, décrites en détail dans `docs/surfaces.md`. En résumé 
 Le pays ne lave que quatre d'entre elles (`grass`, `farmland`, `bare`,
 `pavement`) : une lande ou un maquis disent déjà leur pays. La dalle et
 l'éboulis prennent un autre axe, la **géologie** (`STONE_LOOK`), qui teinte
-aussi la roche des fortes pentes et tout ce qui est bâti en pierre — muret de
-pierre sèche, mur de soutènement, paroi de déblai.
+aussi la roche des fortes pentes et des falaises, les rochers posés, et le
+mobilier en pierre — muret de pierre sèche, mur de soutènement, paroi de
+déblai, calvaire, lavoir, moulin. Pas le bâti.
 
 ### Les cultures
 
@@ -162,7 +163,10 @@ le mobilier).
 ### Les arbres (`vegetationLayer`)
 
 Ils poussent là où la carte du sol dit « bois », et nulle part ailleurs — même
-donnée que le shader, donc jamais de contradiction. Le **peuplement** est tiré
+donnée que le shader, donc jamais de contradiction. Dans un pays dont la
+matrice est boisée, la carte dit « bois » partout où le vectoriel se tait,
+sauf au-dessus de 2000 m, dans les emprises habitées et à 15 m d'un bâtiment
+(voir `docs/surfaces.md`). Le **peuplement** est tiré
 sur une maille de terrain, parmi les types dont la liste `species` cite une
 essence du pays :
 
@@ -180,6 +184,11 @@ essence du pays :
 | pessière subalpine | mélèze, sapin | 8–16 m | 1,2 | 0,16 |
 | bosquet sec | genévrier, pin d'Alep | 3–8 m | 0,55 | 0,55 |
 | bois rabougri | bouleau | 3–7 m | 0,85 | 0,5 |
+| palmeraie | palmier | 6–12 m | 0,6 | 0,35 |
+
+La pinède et la pinède méditerranéenne ont leurs propres silhouettes : un long
+fût sous une cime haute (pin maritime, pin sylvestre adulte) et une cime en
+parasol (pin parasol, pin d'Alep).
 
 La **lisière** conserve la hauteur des arbres adultes et augmente la part de
 strate basse (+55 %). Son sous-étage ne porte que des buissons, sans jeunes arbres.
@@ -330,11 +339,21 @@ l'empreinte qui le contient.
 | `hospital` | murs clairs, toit plat |
 | `mall`, `department_store`, `supermarket` | grande surface, toit plat |
 | `bakery` | devanture en bois verni |
-| dix-huit classes de commerce | devanture au rez-de-chaussée, avec enseigne et pictogramme |
+| dix-huit classes de commerce | devanture au rez-de-chaussée, avec enseigne et drapeau (icône et nom) |
 
 Devanture, enseigne, auvent et terrasse se posent sur le pan qui **fait face à
 une chaussée** (la plus proche, à moins de 20 m de son axe) ; un commerce sans
 rue en face garde ses couleurs mais ne porte ni enseigne ni terrasse.
+
+L'enseigne est double : le nom peint sur le bandeau, et un drapeau planté en
+travers du mur près d'un bout du pan, qui porte une icône Tabler (une par
+classe, `theme.shopfront.icons`) et le nom dessous. Le nom au mur et l'auvent
+s'arrêtent avant la colonne du drapeau. Les deux enseignes ne sont pas
+éclairées par la scène : elles luisent la nuit. L'auvent (restaurant, bar,
+café) prend une toile tirée de la position du bâtiment, jamais la teinte de la
+devanture. Les tracés des icônes sont extraits du paquet `@tabler/icons` dans
+`src/materials/shopIcons.js` par `node scripts/shop-icons.mjs`, à relancer
+après un changement de nom d'icône dans le thème.
 
 Château, monument, tour, moulin et grande roue restent du mobilier posé à part :
 ce sont de grandes structures qu'une empreinte ordinaire ne recouvre pas.

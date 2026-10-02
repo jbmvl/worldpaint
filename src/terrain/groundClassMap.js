@@ -101,6 +101,8 @@ import {
   CROP_ID_STEP,
 } from '../layers/furniturePlacement.js';
 import { URBAN_GREEN_LANDUSE } from '../layers/settlement.js';
+import { BUILDING_SOURCE_LAYER } from '../layers/buildingLayer.js';
+import { plantedSurfaceForMatrix } from '../core/regionInterpretation.js';
 import { defaultTheme } from '../themes/default.js';
 import { macroNoiseField } from '../materials/proceduralTextures.js';
 import {
@@ -138,6 +140,13 @@ export {
 export const CLASS_AREA_M = 4096;
 /** Côté de la carte, en pixels. ~2,7 m par pixel : une lisière n'est pas un trait. */
 export const CLASS_PIXELS = 1536;
+
+/** Au-dessus, une matrice boisée ne plante plus : la limite de la forêt. */
+export const PLANTED_CEILING_M = 2000;
+/** Marge laissée autour d'un bâtiment hors emprise habitée : cour, jardin, accès. */
+export const PLANTED_BUILDING_CLEARANCE_M = 15;
+/** Pas de lecture de l'altitude pour la limite de la forêt. */
+const PLANTED_CEILING_CELL_M = 16;
 
 
 /**
@@ -825,6 +834,64 @@ export class GroundClassMap {
   }
 
   /**
+   * Le fond d'une matrice plantée (un pays de bois) : sa matière partout, puis
+   * rendue au trou là où elle n'a rien à faire — au-dessus de
+   * `PLANTED_CEILING_M`, dans les emprises habitées et autour de chaque
+   * bâtiment. Peinte avant tout le vectoriel, qui garde le dernier mot.
+   */
+  *_plantMatrixSteps(surface, source, tiles, frame, originX, originZ, perMeter, { builtUp, elevationAt }) {
+    const { ctx } = this;
+    const { origin, scale, zoom } = frame;
+    ctx.fillStyle = surfaceFill(surface);
+    ctx.fillRect(0, 0, CLASS_PIXELS, CLASS_PIXELS);
+    ctx.fillStyle = surfaceFill(null);
+
+    if (elevationAt) {
+      const cellPx = PLANTED_CEILING_CELL_M * perMeter;
+      for (let cz = 0; cz < CLASS_AREA_M; cz += PLANTED_CEILING_CELL_M) {
+        for (let cx = 0; cx < CLASS_AREA_M; cx += PLANTED_CEILING_CELL_M) {
+          const h = elevationAt(originX + cx + PLANTED_CEILING_CELL_M / 2, originZ + cz + PLANTED_CEILING_CELL_M / 2);
+          if (Number.isFinite(h) && h >= PLANTED_CEILING_M) ctx.fillRect(cx * perMeter, cz * perMeter, cellPx, cellPx);
+        }
+      }
+      yield;
+    }
+
+    for (const ring of builtUp || []) {
+      if (!Array.isArray(ring) || ring.length < 3) continue;
+      const path = new Path2D();
+      ring.forEach((p, i) => path[i ? 'lineTo' : 'moveTo']((p.x - originX) * perMeter, (p.z - originZ) * perMeter));
+      path.closePath();
+      ctx.fill(path);
+    }
+    yield;
+
+    ctx.save();
+    ctx.strokeStyle = surfaceFill(null);
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = PLANTED_BUILDING_CLEARANCE_M * 2 * perMeter;
+    for (const tile of tiles) {
+      source.forEachFeature(BUILDING_SOURCE_LAYER, [tile], (geometry) => {
+        for (const rings of classPolygons(geometry)) {
+          const ring = rings?.[0];
+          if (!Array.isArray(ring) || ring.length < 3) continue;
+          const path = new Path2D();
+          ring.forEach(([lng, lat], i) => {
+            const px = ((lngToTileX(lng, zoom) - origin.x) * scale - originX) * perMeter;
+            const pz = ((latToTileY(lat, zoom) - origin.y) * scale - originZ) * perMeter;
+            path[i ? 'lineTo' : 'moveTo'](px, pz);
+          });
+          path.closePath();
+          ctx.fill(path);
+          ctx.stroke(path);
+        }
+      });
+      yield;
+    }
+    ctx.restore();
+  }
+
+  /**
    * Re-rasterise la carte autour d'un point.
    * @param {Object} source Instance `VectorTileSource`.
    * @param {Array} tiles   Tuiles à parcourir.
@@ -842,7 +909,7 @@ export class GroundClassMap {
    * `rebuild` en étapes : une par tuile et par couche source. Carte relue,
    * origine et texture ne changent qu'à la dernière.
    */
-  *rebuildSteps(source, tiles, here, frame, { urban = null, cliffs = null } = {}) {
+  *rebuildSteps(source, tiles, here, frame, { urban = null, cliffs = null, builtUp = null, elevationAt = null } = {}) {
     if (this.disposed || !source || !frame) return false;
 
     const { ctx } = this;
@@ -862,6 +929,12 @@ export class GroundClassMap {
     ctx.fillRect(0, 0, CLASS_PIXELS, CLASS_PIXELS);
 
     let painted = 0;
+
+    const planted = plantedSurfaceForMatrix(this.region?.matrix);
+    if (planted) {
+      yield* this._plantMatrixSteps(planted, source, tiles, frame, originX, originZ, perMeter, { builtUp, elevationAt });
+      painted++;
+    }
 
     // L'ordre compte, et il compte maintenant à trois temps :
     //

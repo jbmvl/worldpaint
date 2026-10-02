@@ -87,7 +87,7 @@ import { TrainLayer } from './layers/trainLayer.js';
 import { VectorTileSource, coveringTiles, VECTOR_ZOOM } from './core/vectorTileSource.js';
 import { lngLatToTile } from './core/tileMath.js';
 import { landscapeAt } from './core/landscape.js';
-import { regionById } from './core/region.js';
+import { regionById, regionWithWord } from './core/region.js';
 import { planFaunaCrossing } from './layers/faunaCrossing.js';
 import { planCheer } from './layers/spectatorPlacement.js';
 import { defaultTheme } from './themes/default.js';
@@ -163,6 +163,12 @@ export class WorldComposer {
      * réglage de décor mais un **outil** : voir `setRegion`.
      */
     this.regionOverride = null;
+    /** Mot imposé à un seul champ de la région en vigueur (`setRegionWord`), ou `null`. */
+    this.regionWord = null;
+    /** Région du lieu ou imposée, avant le mot : c'est elle qui reste en place d'une lecture à l'autre. */
+    this._baseRegion = null;
+    /** Dernière région avec mot, gardée pour que la même demande rende le même objet. */
+    this._wordedRegion = null;
     /** Dernière part de nuit appliquée. `null` force la prochaine à passer. */
     this._night = null;
     /** Dernier vent appliqué, pour ne pas réécrire des uniformes inchangés. */
@@ -341,6 +347,36 @@ export class WorldComposer {
   }
 
   /**
+   * Remplace un seul mot de la région en vigueur (`field` ← `value`), ou rend
+   * la région entière (`null`). C'est l'outil de l'afficheur : juger un mot
+   * sur le vrai lieu, par les vraies couches, le reste du pays inchangé. Comme
+   * `setRegion`, il pose l'intention ; le décor se refait au prochain
+   * `refresh` forcé.
+   *
+   * @param {string|null} field Un champ de `VOCABULARIES`.
+   * @param {string} [value] Un mot de ce champ.
+   * @returns {boolean} vrai si l'intention a changé.
+   */
+  setRegionWord(field, value) {
+    const next = field ? { field, value } : null;
+    if (next && !regionWithWord({}, field, value)) return false;
+    if (next?.field === this.regionWord?.field && next?.value === this.regionWord?.value) return false;
+    this.regionWord = next;
+    return true;
+  }
+
+  /** La région de base portant le mot imposé ; le même objet tant que rien ne change. */
+  _withRegionWord(base) {
+    const word = this.regionWord;
+    if (!base || !word) return base;
+    const cached = this._wordedRegion;
+    if (cached?.base === base && cached.word === word) return cached.region;
+    const region = regionWithWord(base, word.field, word.value);
+    this._wordedRegion = { base, word, region };
+    return region;
+  }
+
+  /**
    * Branche les tuiles vectorielles après coup, pour qui monte le monde (et
    * son ciel) avant de connaître leur source. Une seule fois : le décor déjà
    * bâti ne change pas de source en route.
@@ -374,10 +410,20 @@ export class WorldComposer {
    * @returns {Promise<boolean>} vrai si une reconstruction a eu lieu.
    */
   async refresh(lng, lat, options = {}) {
-    if (this._refreshTask) return false;
+    if (this._refreshTask) {
+      // Une demande forcée pendant une construction (région, mot imposé) n'est
+      // pas perdue : elle repasse dès que la construction en cours finit.
+      if (options.force) this._forcedRefresh = { lng, lat };
+      return false;
+    }
     const task = this._refresh(lng, lat, options);
     this._refreshTask = task;
-    try { return await task; } finally { this._refreshTask = null; }
+    try { return await task; } finally {
+      this._refreshTask = null;
+      const next = this._forcedRefresh;
+      this._forcedRefresh = null;
+      if (next && !this.disposed) this.refresh(next.lng, next.lat, { force: true });
+    }
   }
 
   async _refresh(lng, lat, { force = false } = {}) {
@@ -482,7 +528,11 @@ export class WorldComposer {
 
       // 1. Occupation du sol — tout le reste la lit.
       const wasReady = this.groundClass.ready;
-      if (!await rebuild(this.groundClass, 'carteSol', this.vectorTiles, wanted, here, this.bubble.frame, { urban })) return false;
+      if (!await rebuild(this.groundClass, 'carteSol', this.vectorTiles, wanted, here, this.bubble.frame, {
+        urban,
+        builtUp,
+        elevationAt: (x, z) => this.bubble.surfaceElevationAtLocal(x, z, NaN),
+      })) return false;
       this.bubble.materials.syncGroundClass();
       const classArrived = !wasReady && this.groundClass.ready;
 
@@ -662,9 +712,11 @@ export class WorldComposer {
     const before = this.landscape?.region ?? null;
     this.landscape = landscapeAt(lng, lat, here, {
       bubble: this.bubble,
-      override: this.regionOverride || (this._landscapeFrame === this.bubble.frame ? before : null),
+      override: this.regionOverride || (this._landscapeFrame === this.bubble.frame ? this._baseRegion : null),
     });
     this._landscapeFrame = this.bubble.frame;
+    this._baseRegion = this.landscape?.region ?? null;
+    if (this.landscape && this.regionWord) this.landscape.region = this._withRegionWord(this._baseRegion);
     return (this.landscape?.region ?? null) !== before;
   }
 

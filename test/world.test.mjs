@@ -192,6 +192,8 @@ import {
   FURNITURE_BUILDERS,
   furnitureSpecsFor,
   furnitureSpecsForStone,
+  furnitureColorsForStone,
+  stoneFurnitureItems,
   lampArcAt,
   LAMP_ARC,
   LAMP_HEAD_HEIGHT_M,
@@ -532,7 +534,7 @@ import {
   soilWashFor,
 } from '../src/core/regionInterpretation.js';
 import { REGIONS } from '../src/core/regions.js';
-import { showcaseEntries, SHOWCASE_FIELDS, TILE_FIELDS, uniformGroundSample } from '../src/inspect/showcase.js';
+import { showcaseEntries, SHOWCASE_FIELDS } from '../src/inspect/showcase.js';
 import {
   surfaceFor,
   surfaceId,
@@ -651,9 +653,12 @@ import {
   shopfrontLayout,
   appendShopfront,
   appendShopSignBlade,
-  shopfrontEmojiFor,
-  BLADE_SIGN_SIZE_M,
-  BLADE_SIGN_HEIGHT_M,
+  shopfrontIconFor,
+  shopfrontFreeSpan,
+  bladeSignInset,
+  BLADE_SIGN_WIDTH_M,
+  BLADE_SIGN_PANEL_HEIGHT_M,
+  BLADE_SIGN_BOTTOM_M,
   BLADE_SIGN_REACH_M,
   BLADE_SIGN_THICKNESS_M,
 } from '../src/layers/buildingLayer.js';
@@ -663,7 +668,9 @@ import {
   labelFontPxForCellHeight,
   LABEL_PADDING_PX,
   LABEL_LINE_HEIGHT_RATIO,
+  signCardLayout,
 } from '../src/materials/labelAtlas.js';
+import { SHOP_ICONS } from '../src/materials/shopIcons.js';
 import {
   srgb,
 } from '../src/core/color.js';
@@ -681,8 +688,8 @@ import {
   ROOF_PITCH as DEFAULT_PITCH,
   WINDOW_LIT_SHARE,
   WINDOW_WIDTH_M,
-  SHOPFRONT_EMOJI,
-  SHOPFRONT_EMOJI_DEFAULT,
+  SHOPFRONT_ICONS,
+  SHOPFRONT_ICON_DEFAULT,
   defaultTheme,
 } from '../src/themes/default.js';
 
@@ -2179,11 +2186,10 @@ test('un pays sec laisse voir sa terre entre les touffes', () => {
 });
 
 test('la pierre d’un pays est la même partout où elle se montre', () => {
-  // La roche est peinte à trois endroits — la teinte de pente et les matières
-  // minérales dans le shader, les ouvrages balayés dans le mobilier. Une seule
-  // source, sinon un causse blanc porte des murets gris.
+  // La roche est peinte à deux endroits — les matières minérales dans le
+  // shader, les ouvrages balayés dans le mobilier. Une seule source, sinon un
+  // causse blanc porte des murets gris.
   const tint = stoneTintFor('granite', defaultTheme.stones);
-  const pente = defaultTheme.terrain.rockColor.map((c, i) => c * tint[i]);
   const dalle = defaultTheme.surfaces.rock.albedo.map((c, i) => c * tint[i]);
 
   const neutres = furnitureSpecsFor(defaultTheme.furniture.colors);
@@ -2193,7 +2199,6 @@ test('la pierre d’un pays est la même partout où elle se montre', () => {
 
   // Le même rapport, canal par canal, de la pente au muret.
   for (let i = 0; i < 3; i++) {
-    close(pente[i] / defaultTheme.terrain.rockColor[i], tint[i], 1e-9, `pente ${i}`);
     close(dalle[i] / defaultTheme.surfaces.rock.albedo[i], tint[i], 1e-9, `dalle ${i}`);
     close(murGranit[i] / murNeutre[i], tint[i], 1e-9, `muret ${i}`);
   }
@@ -2203,11 +2208,65 @@ test('la pierre d’un pays est la même partout où elle se montre', () => {
   const profilNeutre = neutres.profiles.dryStoneWall;
   close(profil[1].color[2] / profilNeutre[1].color[2], tint[2], 1e-9, 'muret de pierre sèche');
 
+  // La paroi de déblai et les rochers sont de la roche : même rapport. La
+  // mousse qui coiffe un affleurement n'est pas de la pierre.
+  close(
+    granitiques.rockCut.colorBreak[2] / neutres.rockCut.colorBreak[2],
+    tint[2],
+    1e-9,
+    'paroi de déblai'
+  );
+  const colors = defaultTheme.furniture.colors;
+  const rocheGranit = furnitureColorsForStone(colors, tint);
+  for (const tone of ['rock', 'rockPale', 'rockDark']) {
+    close(rocheGranit[tone][2] / colors[tone][2], tint[2], 1e-9, tone);
+  }
+  assert.equal(rocheGranit.rockMoss, colors.rockMoss);
+
+  // Les formes du catalogue en pierre suivent, et elles seules.
+  const enPierre = stoneFurnitureItems(colors);
+  for (const item of ['fountain', 'lavoir', 'cemeteryCross', 'windmill', 'rockSmall']) {
+    assert.ok(enPierre.includes(item), item);
+  }
+  assert.ok(!enPierre.includes('windTurbine'));
+
   // Une pierre de référence ne dérive rien : même objet, donc même cache.
   assert.equal(
     furnitureSpecsForStone(defaultTheme.furniture.colors, [1, 1, 1]),
     furnitureSpecsFor(defaultTheme.furniture.colors)
   );
+});
+
+test('la roche du terrain suit la géologie même quand la matrice ne change pas', () => {
+  // L'afficheur impose un mot de pierre sans toucher la matrice, et deux pays
+  // voisins partagent souvent la même : la falaise doit changer de pierre.
+  const previousCanvas = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      Object.assign(this, { width, height });
+    }
+    getContext() {
+      return paintingCanvasContext();
+    }
+  };
+  let factory;
+  try {
+    factory = new TerrainMaterialFactory({ THREE: terrainThreeStub() });
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+  }
+
+  const vec = ({ x, y, z }) => [x, y, z];
+  const rock = () => vec(factory._uniforms.uSurfaceAlbedo.value[SURFACE_KINDS.indexOf('rock')]);
+  factory.setRegion({ matrix: 'bocage', stone: 'limestone' });
+  const calcaire = rock();
+  factory.setRegion({ matrix: 'bocage', stone: 'schist' });
+  const schiste = rock();
+  const tint = stoneTintFor('schist', defaultTheme.stones);
+  for (let i = 0; i < 3; i++) close(schiste[i] / calcaire[i], tint[i], 1e-6, `canal ${i}`);
+  // La teinte ne se pose qu'une fois : la couleur de pente reste celle du thème.
+  assert.deepEqual(vec(factory._uniforms.uRockColor.value), defaultTheme.terrain.rockColor);
 });
 
 test('chaque géologie a une teinte lisible, et le calcaire est la référence', () => {
@@ -2283,6 +2342,57 @@ test('hors de toute région, le décor s’éteint et rien n’est chargé', asy
   WorldComposer.prototype.setRegion.call(composer, 'anjou');
   WorldComposer.prototype._updateLandscape.call(composer, -74, 40.7, { x: 0, z: 0 });
   assert.equal(composer.landscape.region.id, 'anjou');
+});
+
+test('une reconstruction forcée demandée en pleine construction repasse ensuite', async () => {
+  const { WorldComposer } = await import('../src/worldComposer.js');
+  const calls = [];
+  let release;
+  const composer = {
+    disposed: false,
+    _refresh(lng, lat, options) {
+      calls.push({ lng, options });
+      return calls.length === 1 ? new Promise((r) => { release = r; }) : Promise.resolve(true);
+    },
+  };
+  composer.refresh = WorldComposer.prototype.refresh;
+  const first = composer.refresh(1, 1);
+  assert.equal(await composer.refresh(2, 2), false, 'non forcée : ignorée');
+  assert.equal(await composer.refresh(3, 3, { force: true }), false, 'forcée : différée');
+  release(true);
+  await first;
+  await new Promise((r) => setTimeout(r, 0));
+  assert.deepEqual(calls.map((c) => c.lng), [1, 3]);
+  assert.equal(calls[1].options.force, true);
+});
+
+test('un mot imposé change la région du lieu sans la quitter', async () => {
+  const { WorldComposer } = await import('../src/worldComposer.js');
+  const composer = {
+    bubble: { frame: {}, surfaceElevationAtLocal: () => 40 },
+    landscape: null,
+    regionOverride: null,
+    regionWord: null,
+    _withRegionWord: WorldComposer.prototype._withRegionWord,
+  };
+  const update = () =>
+    WorldComposer.prototype._updateLandscape.call(composer, -0.55, 47.47, { x: 0, z: 0 });
+  const setWord = (field, value) => WorldComposer.prototype.setRegionWord.call(composer, field, value);
+
+  update();
+  const anjou = composer.landscape.region;
+  assert.equal(setWord('matrix', 'jungle_imaginaire'), false, 'hors vocabulaire');
+  assert.equal(setWord('matrix', 'conifer_forest'), true);
+  assert.equal(setWord('matrix', 'conifer_forest'), false, 'idempotent');
+  assert.equal(update(), true, 'la région a changé');
+  assert.equal(composer.landscape.region.id, 'anjou');
+  assert.equal(composer.landscape.region.matrix, 'conifer_forest');
+  assert.equal(composer.landscape.region.stone, anjou.stone);
+  assert.equal(update(), false, 'même mot, même région : rien à refaire');
+
+  assert.equal(setWord(null), true);
+  assert.equal(update(), true);
+  assert.equal(composer.landscape.region, anjou);
 });
 
 test('une région imposée ne suit plus le lieu', async () => {
@@ -13027,49 +13137,64 @@ test('labelFontPxForCellHeight retrouve la fonte qui a produit une case de cette
   assert.ok(labelFontPxForCellHeight(0) > 0, 'jamais une fonte nulle ou négative');
 });
 
-// --- L'enseigne en drapeau : un pictogramme lisible depuis le trottoir -----
+// --- L'enseigne en drapeau : icône et nom lisibles depuis le trottoir ------
 
-test('shopfrontEmojiFor retrouve le pictogramme de la classe, ou le repli générique', () => {
-  assert.equal(shopfrontEmojiFor('bakery'), SHOPFRONT_EMOJI.bakery);
-  assert.equal(shopfrontEmojiFor('cafe'), SHOPFRONT_EMOJI.cafe);
-  assert.equal(shopfrontEmojiFor('fuel'), SHOPFRONT_EMOJI.fuel);
-  assert.equal(shopfrontEmojiFor('inconnu'), SHOPFRONT_EMOJI_DEFAULT);
-  assert.equal(shopfrontEmojiFor(null), SHOPFRONT_EMOJI_DEFAULT);
+test('shopfrontIconFor retrouve l’icône de la classe, ou le repli générique', () => {
+  assert.equal(shopfrontIconFor('bakery'), SHOPFRONT_ICONS.bakery);
+  assert.equal(shopfrontIconFor('cafe'), SHOPFRONT_ICONS.cafe);
+  assert.equal(shopfrontIconFor('fuel'), SHOPFRONT_ICONS.fuel);
+  assert.equal(shopfrontIconFor('inconnu'), SHOPFRONT_ICON_DEFAULT);
+  assert.equal(shopfrontIconFor(null), SHOPFRONT_ICON_DEFAULT);
 });
 
-test('la table des pictogrammes ne porte que des émojis à un seul point de code', () => {
-  // `LabelAtlas.place`/`drawSpacedText` (materials/labelAtlas.js) peignent
-  // glyphe par glyphe via `for (const glyph of text)` : une séquence à
-  // variateur (️, U+FE0F) ou à jointure (‍, U+200D) s'y couperait en
-  // plusieurs glyphes mal alignés au lieu d'un seul pictogramme.
-  for (const [klass, emoji] of Object.entries(SHOPFRONT_EMOJI)) {
-    assert.equal([...emoji].length, 1, `${klass} : "${emoji}"`);
+test('chaque icône nommée par le thème a ses tracés extraits dans shopIcons.js', () => {
+  // Sans quoi la carte se peindrait sans pictogramme : relancer
+  // `node scripts/shop-icons.mjs` après un changement de nom dans le thème.
+  for (const name of [...Object.values(SHOPFRONT_ICONS), SHOPFRONT_ICON_DEFAULT]) {
+    assert.ok(SHOP_ICONS[name]?.length > 0, name);
   }
-  assert.equal([...SHOPFRONT_EMOJI_DEFAULT].length, 1);
+});
+
+test('signCardLayout : l’icône en haut et le nom dessous, sans chevauchement ; seule, l’icône se centre', () => {
+  const named = signCardLayout(108, 138, true);
+  assert.ok(named.icon.y + named.icon.size <= named.name.y, 'le nom sous l’icône');
+  assert.ok(named.name.y + named.name.height <= 138, 'le nom dans la carte');
+  assert.ok(named.icon.x >= 0 && named.icon.x + named.icon.size <= 108);
+  const alone = signCardLayout(108, 138, false);
+  assert.equal(alone.name, null);
+  close(alone.icon.y * 2 + alone.icon.size, 138, 1e-9, 'icône centrée en hauteur');
+});
+
+test('shopfrontFreeSpan laisse la colonne du drapeau au nom et à l’auvent', () => {
+  const free = shopfrontFreeSpan(8, 0.45);
+  assert.ok(free.start > bladeSignInset(8) + BLADE_SIGN_THICKNESS_M / 2, 'commence au-delà du panneau');
+  close(free.end, 8 - 0.45, 1e-9);
 });
 
 test('appendShopSignBlade pose un panneau des deux côtés, avec son pictogramme', () => {
   const walls = { positions: [], normals: [], colors: [] };
   const labels = { positions: [], uvs: [] };
-  const atlas = { place: (text) => (text ? { u0: 0, v0: 0, u1: 1, v1: 1, widthPx: 40, heightPx: 40 } : null) };
+  const cards = [];
+  const atlas = { placeSign: (card) => (cards.push(card), { u0: 0, v0: 0, u1: 1, v1: 1, widthPx: 108, heightPx: 138 }) };
 
-  appendShopSignBlade(walls, labels, atlas, { x: 0, y: 0 }, { x: 6, y: 0 }, 0, -1, 100, 0, 'bakery');
+  appendShopSignBlade(walls, labels, atlas, { x: 0, y: 0 }, { x: 6, y: 0 }, 0, -1, 100, 0, 'bakery', 'Fournil', '#7d4a2a');
 
   // Panneau de fond (deux faces) + deux tiges (deux faces chacune), six
   // sommets par face.
   assert.equal(walls.positions.length / 3, 36, 'panneau et tiges, des deux côtés');
-  // Pictogramme : deux passes également.
+  // Carte peinte : deux passes également, icône et nom du commerce.
   assert.equal(labels.positions.length / 3, 12, 'deux faces peintes');
+  assert.equal(cards[0].icon, SHOPFRONT_ICONS.bakery);
+  assert.equal(cards[0].name, 'Fournil');
+  assert.equal(cards[0].background, '#7d4a2a');
 
-  // Rien ne flotte au-dessus du toit ni sous le sol : tout reste autour de
-  // `BLADE_SIGN_HEIGHT_M`, à une demi-largeur de panneau près.
-  const centre = 100 + BLADE_SIGN_HEIGHT_M;
-  const reach = BLADE_SIGN_SIZE_M / 2 + 1e-6;
-  for (let i = 1; i < walls.positions.length; i += 3) {
-    assert.ok(
-      Math.abs(walls.positions[i] - centre) <= reach,
-      'autour de la hauteur de pose'
-    );
+  // Tout reste entre le dégagement piéton et le haut du panneau.
+  const bottom = 100 + BLADE_SIGN_BOTTOM_M;
+  const top = bottom + BLADE_SIGN_PANEL_HEIGHT_M;
+  for (const positions of [walls.positions, labels.positions]) {
+    for (let i = 1; i < positions.length; i += 3) {
+      assert.ok(positions[i] >= bottom - 1e-9 && positions[i] <= top + 1e-9, 'dans la hauteur du panneau');
+    }
   }
 });
 
@@ -13077,7 +13202,7 @@ test('appendShopSignBlade : sans atlas, seul le panneau de fond se pose', () => 
   const walls = { positions: [], normals: [], colors: [] };
   const labels = { positions: [], uvs: [] };
 
-  appendShopSignBlade(walls, labels, null, { x: 0, y: 0 }, { x: 6, y: 0 }, 0, -1, 100, 0, 'bakery');
+  appendShopSignBlade(walls, labels, null, { x: 0, y: 0 }, { x: 6, y: 0 }, 0, -1, 100, 0, 'bakery', null, '#7d4a2a');
 
   assert.equal(walls.positions.length / 3, 36, 'le panneau et ses tiges ne dépendent pas de l’atlas');
   assert.equal(labels.positions.length, 0, 'rien à peindre sans atlas');
@@ -13086,7 +13211,7 @@ test('appendShopSignBlade : sans atlas, seul le panneau de fond se pose', () => 
 test('appendShopSignBlade : pan trop court pour le décalage, rien ne se pose', () => {
   const walls = { positions: [], normals: [], colors: [] };
   const labels = { positions: [], uvs: [] };
-  appendShopSignBlade(walls, labels, null, { x: 0, y: 0 }, { x: 0, y: 0 }, 0, -1, 100, 0, 'bakery');
+  appendShopSignBlade(walls, labels, null, { x: 0, y: 0 }, { x: 0, y: 0 }, 0, -1, 100, 0, 'bakery', null, '#7d4a2a');
   assert.equal(walls.positions.length, 0);
 });
 
@@ -13095,7 +13220,7 @@ test('appendShopSignBlade a une vraie épaisseur et deux tiges qui le lient au m
   const labels = { positions: [], uvs: [] };
   // Pan le long de x, mur au nord (nz = -1) : le panneau doit pousser vers
   // z négatif depuis le mur (z = 0), à l'inset (0,9 m) du bord.
-  appendShopSignBlade(walls, labels, null, { x: 0, y: 0 }, { x: 6, y: 0 }, 0, -1, 100, 0, 'bakery');
+  appendShopSignBlade(walls, labels, null, { x: 0, y: 0 }, { x: 6, y: 0 }, 0, -1, 100, 0, 'bakery', null, '#7d4a2a');
 
   // Deux faces réellement écartées : les six premiers sommets (face avant) et
   // les six suivants (face arrière) ne partagent aucun x — l'épaisseur porte
@@ -13110,7 +13235,7 @@ test('appendShopSignBlade a une vraie épaisseur et deux tiges qui le lient au m
   // Deux tiges (quatre passes, deux par tige) après les deux faces du
   // panneau : chacune touche le mur (z = 0, à l’inset près sur x) d’un côté,
   // et la face intérieure du panneau de l’autre — le bras moins la demi-largeur.
-  const innerZ = -(BLADE_SIGN_REACH_M - BLADE_SIGN_SIZE_M / 2);
+  const innerZ = -(BLADE_SIGN_REACH_M - BLADE_SIGN_WIDTH_M / 2);
   const rodPositions = walls.positions.slice(36);
   assert.equal(rodPositions.length / 18, 4, 'quatre passes de tige (deux tiges, deux faces chacune)');
   const zs = rodPositions.filter((_, i) => i % 3 === 2);
@@ -13118,7 +13243,7 @@ test('appendShopSignBlade a une vraie épaisseur et deux tiges qui le lient au m
   assert.ok(zs.some((z) => Math.abs(z - innerZ) < 1e-9), 'une tige atteint la face intérieure du panneau');
 });
 
-test('les deux faces du panneau et de son pictogramme se font face, pas dos à dos', () => {
+test('les deux faces du panneau et de sa carte se font face, pas dos à dos', () => {
   // Reproduit la géométrie de deux commerces posés sur des pans d'orientations
   // différentes, et vérifie que chaque face du pictogramme regarde exactement
   // dans le même sens que sa face de fond correspondante — sans quoi les deux
@@ -13140,8 +13265,8 @@ test('les deux faces du panneau et de son pictogramme se font face, pas dos à d
   ]) {
     const walls = { positions: [], normals: [], colors: [] };
     const labels = { positions: [], uvs: [] };
-    const atlas = { place: (text) => (text ? { u0: 0, v0: 0, u1: 1, v1: 1, widthPx: 40, heightPx: 40 } : null) };
-    appendShopSignBlade(walls, labels, atlas, a, b, nx, nz, 100, 0, 'bakery');
+    const atlas = { placeSign: () => ({ u0: 0, v0: 0, u1: 1, v1: 1, widthPx: 108, heightPx: 138 }) };
+    appendShopSignBlade(walls, labels, atlas, a, b, nx, nz, 100, 0, 'bakery', 'Fournil', '#7d4a2a');
 
     const backing1 = normalOfFirstTri(walls.positions.slice(0, 18));
     const backing2 = normalOfFirstTri(walls.positions.slice(18, 36));
@@ -14991,7 +15116,7 @@ test('une branche non marquée n’interrompt pas la rive de celle qui l’est',
   assert.equal(bare.positions.length, 0, 'et rien n’est écrit');
 });
 
-test('l’afficheur couvre les cinq champs, chacun avec une couleur ou un alignement', () => {
+test('l’afficheur couvre les cinq champs du vocabulaire fermé', () => {
   assert.equal(SHOWCASE_FIELDS.length, 5);
   for (const { field } of SHOWCASE_FIELDS) {
     const entries = showcaseEntries(field);
@@ -14999,14 +15124,6 @@ test('l’afficheur couvre les cinq champs, chacun avec une couleur ou un aligne
     for (const entry of entries) {
       assert.equal(typeof entry.value, 'string');
       assert.equal(typeof entry.unsupported, 'boolean');
-      if (entry.shape === 'tree') {
-        assert.equal(typeof entry.alignment, 'string', `${field}/${entry.value} : un alignement`);
-      } else if (entry.shape === 'house') {
-        assert.match(entry.wall, /^#[0-9a-f]{6}$/i, `${field}/${entry.value} : un mur`);
-        assert.match(entry.roof, /^#[0-9a-f]{6}$/i, `${field}/${entry.value} : un toit`);
-      } else {
-        assert.equal(entry.albedo.length, 3, `${field}/${entry.value} : un albédo`);
-      }
     }
   }
 });
@@ -15015,60 +15132,6 @@ test('un mot non rendu de l’afficheur porte sa raison', () => {
   const rice = showcaseEntries('matrix').find((e) => e.value === 'rice_terrace');
   assert.equal(rice.unsupported, true);
   assert.ok(rice.note && rice.note.length > 0);
-});
-
-test('l’afficheur sème une matière uniforme comme le ferait une vraie carte de classes', () => {
-  assert.deepEqual(uniformGroundSample('grass'), { grass: 1, wood: 0, farmland: 0, bare: 0 });
-  assert.deepEqual(uniformGroundSample('heath'), { grass: 1, wood: 0, farmland: 0, bare: 0 });
-  assert.deepEqual(uniformGroundSample('wood'), { grass: 0, wood: 1, farmland: 0, bare: 0 });
-  assert.deepEqual(uniformGroundSample('farmland'), { grass: 0, wood: 0, farmland: 1, bare: 0 });
-  assert.deepEqual(uniformGroundSample('rock'), { grass: 0, wood: 0, farmland: 0, bare: 1 });
-  assert.deepEqual(uniformGroundSample(null), { grass: 0, wood: 0, farmland: 0, bare: 1 });
-});
-
-test('terrain et cultures sont les champs à tuile pleine, le reste reste une grille', () => {
-  assert.ok(TILE_FIELDS.has('matrix'));
-  assert.ok(TILE_FIELDS.has('farming'));
-  assert.ok(!TILE_FIELDS.has('stone'));
-  assert.ok(!TILE_FIELDS.has('building'));
-  assert.ok(!TILE_FIELDS.has('trees'));
-});
-
-test('chaque mot de terrain porte la matière que sèmerait une vraie carte de classes', () => {
-  for (const entry of showcaseEntries('matrix')) {
-    assert.equal(typeof entry.surface, 'string', `${entry.value} : une matière`);
-  }
-});
-
-test('chaque mot de culture porte le nom du motif que `CropLayer` y sèmerait', () => {
-  for (const entry of showcaseEntries('farming')) {
-    assert.equal(typeof entry.crop, 'string', `${entry.value} : une culture`);
-  }
-});
-
-test('chaque mot de l’afficheur porte une traduction française distincte du mot brut', () => {
-  for (const { field } of SHOWCASE_FIELDS) {
-    for (const entry of showcaseEntries(field)) {
-      assert.equal(typeof entry.label, 'string', `${field}/${entry.value} : un intitulé`);
-      assert.ok(entry.label.length > 0, `${field}/${entry.value} : non vide`);
-    }
-  }
-});
-
-test('les mots boisés de terrain portent un couvert isolé, les autres aucun', () => {
-  const entries = showcaseEntries('matrix');
-  for (const entry of entries) {
-    if (entry.surface === 'wood') assert.equal(typeof entry.canopy, 'string', `${entry.value} : un couvert`);
-    else assert.equal(entry.canopy, null, `${entry.value} : pas de couvert hors matière boisée`);
-  }
-});
-
-test('vigne, verger et lavande portent des rangs, les cultures de `CropLayer` aucun', () => {
-  const rowed = ['vineyard', 'orchard', 'olive', 'almond', 'lavender', 'tea', 'coffee', 'oil_palm'];
-  for (const entry of showcaseEntries('farming')) {
-    if (rowed.includes(entry.value)) assert.ok(entry.rows, `${entry.value} : des rangs`);
-    else assert.equal(entry.rows, null, `${entry.value} : rien à ajouter, CropLayer sème déjà`);
-  }
 });
 
 test('les culées rejoignent le front de tranchée sans barrer les voies inférieures', () => {
