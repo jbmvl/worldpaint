@@ -23,6 +23,7 @@ import {
   MOUNTAIN_CLIMATE_FAMILIES,
 } from '../furniturePlacement.js';
 import { FURNITURE_RADIUS_M } from './catalog.js';
+import { reachedRadius } from '../../core/decorReach.js';
 
 /**
  * Dégagement d'un point d'intérêt au-delà de l'emprise routière, en mètres.
@@ -76,7 +77,7 @@ export function buildPointsOfInterest(layer, context, roadSegments, builtUp = nu
 
     const x = (lngToTileX(lng, zoom) - origin.x) * scale;
     const z = (latToTileY(lat, zoom) - origin.y) * scale;
-    if (Math.hypot(x - here.x, z - here.z) > FURNITURE_RADIUS_M) return;
+    if (Math.hypot(x - here.x, z - here.z) > reachedRadius(FURNITURE_RADIUS_M, layer.bubble)) return;
 
     let item = poiItem(properties);
     if (!item) return;

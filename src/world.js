@@ -78,6 +78,11 @@ export const DEFAULT_ELEVATION_ZOOM = 14;
  * @param {{tiles: string[], maxZoom?: number}|null} [options.vector]
  *        Tuiles vectorielles OpenMapTiles. Absentes, le décor se réduit au relief nu.
  * @param {Object} [options.view] Voir `DEFAULT_VIEW`.
+ * @param {number} [options.reach] Portée du décor, en mètres. Chaque couche limite
+ *        son rayon à cette valeur (jamais au-delà du sien), les tuiles vectorielles
+ *        se réduisent à celles qui la touchent, et le brouillard s'y cale. Pour une
+ *        scène fixe (départ, arrivée, rejeu) : monter avec `mountAt`. Absente,
+ *        le comportement est celui de toujours.
  * @param {Object|null} [options.theme] Direction artistique — tranches
  *        entières qui remplacent celles de `defaultTheme`, voir `resolveTheme`.
  * @param {Object|null} [options.sky] Ciel, soleil et brouillard. `null` (le
@@ -101,6 +106,7 @@ export function createWorld({
   elevation = {},
   vector = null,
   view = {},
+  reach = null,
   theme = null,
   sky = null,
 }) {
@@ -129,6 +135,7 @@ export function createWorld({
     vectorConfig: vector,
     maxAnisotropy: settings.maxAnisotropy,
     theme: resolved,
+    reach: Number.isFinite(reach) && reach > 0 ? reach : Infinity,
   });
 
   let environment = null;
@@ -139,7 +146,11 @@ export function createWorld({
       Sky: sky.Sky,
       scene,
       fogRadius:
-        sky.fogRadius ?? (settings.blockSize / 2) * tileSizeMeters(settings.zoom, latitude),
+        sky.fogRadius ??
+        Math.min(
+          (settings.blockSize / 2) * tileSizeMeters(settings.zoom, latitude),
+          Number.isFinite(reach) && reach > 0 ? reach : Infinity
+        ),
       shadowMapSize: sky.shadowMapSize,
       toneMappingExposure: sky.toneMappingExposure,
       cloudCoverage: sky.cloudCoverage,
@@ -481,6 +492,19 @@ export class World {
   /** Refait le décor vectoriel autour d'un point. @returns {Promise<boolean>} */
   refresh(lng, lat, options) {
     return this.composer.refresh(lng, lat, options);
+  }
+
+  /**
+   * Monte le décor d'une scène fixe, en un appel : centre la bulle puis refait
+   * tout, d'office. Pas de recentrage ensuite — le décor ne suit personne. À
+   * associer à `reach` pour ne bâtir que ce qui est proche (départ, arrivée,
+   * rejeu d'un évènement). Les files de terrain se vident ensuite dans `update`.
+   *
+   * @returns {Promise<boolean>} vrai si le décor a été bâti.
+   */
+  async mountAt(lng, lat) {
+    await this.composer.setCenter(lng, lat);
+    return this.composer.refresh(lng, lat, { force: true });
   }
 
   /**

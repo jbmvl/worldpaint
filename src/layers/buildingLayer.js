@@ -31,7 +31,7 @@ import { clipPolygonOutsideCorridor } from './roadCorridor.js';
 import { Kit } from './furnitureKit.js';
 import { defaultTheme } from '../themes/default.js';
 import { LabelAtlas, pushLabelQuad, labelFontPxForCellHeight, LABEL_PX_PER_M } from '../materials/labelAtlas.js';
-import { DECOR_STABLE_RADIUS_M } from '../core/decorReach.js';
+import { DECOR_STABLE_RADIUS_M, reachedRadius } from '../core/decorReach.js';
 
 /** Couche vectorielle portant les empreintes. */
 export const BUILDING_SOURCE_LAYER = 'building';
@@ -1598,6 +1598,7 @@ export class BuildingLayer {
     const { THREE, bubble } = this;
     const frame = bubble.frame;
     const { origin, scale, zoom } = frame;
+    const radius = reachedRadius(BUILDING_RADIUS_M, bubble);
 
     const walls = { positions: [], normals: [], colors: [] };
     const lamps = { positions: [], normals: [], colors: [] };
@@ -1627,7 +1628,7 @@ export class BuildingLayer {
         const x = (lngToTileX(cLng, zoom) - origin.x) * scale;
         const z = (latToTileY(cLat, zoom) - origin.y) * scale;
         const distance = Math.hypot(x - here.x, z - here.z);
-        if (distance > BUILDING_RADIUS_M) continue;
+        if (distance > radius) continue;
 
         const key = `${Math.round(x * 2)},${Math.round(z * 2)},${ring.length}`;
         if (seen.has(key)) continue;
@@ -1654,7 +1655,7 @@ export class BuildingLayer {
       const x = (lngToTileX(lng, zoom) - origin.x) * scale;
       const z = (latToTileY(lat, zoom) - origin.y) * scale;
       const distance = Math.hypot(x - here.x, z - here.z);
-      if (distance > BUILDING_RADIUS_M) return;
+      if (distance > radius) return;
       collected.push({ x, z, kind, distance, name: properties.name || null, class: properties.class || null });
     });
     yield;
@@ -1704,8 +1705,8 @@ export class BuildingLayer {
       // qu'un contraste dans un mur, de nuit c'est une lumière dans le noir. La
       // seconde porte donc bien plus loin que la première.
       const openings =
-        candidate.distance <= PANE_RADIUS_M
-          ? { panes: 0, lit: candidate.distance <= WINDOW_RADIUS_M ? lamps : null, budget: Infinity }
+        candidate.distance <= Math.min(PANE_RADIUS_M, radius)
+          ? { panes: 0, lit: candidate.distance <= Math.min(WINDOW_RADIUS_M, radius) ? lamps : null, budget: Infinity }
           : null;
       if (
         this._appendBuilding(

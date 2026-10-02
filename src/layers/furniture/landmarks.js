@@ -17,6 +17,7 @@ import { WATER_SOURCE_LAYER } from '../../terrain/groundClassMap.js';
 import { pointInAreas } from '../settlement.js';
 import { rockKindFor, ringCentroid, randomAt, gridCellsAround } from '../furniturePlacement.js';
 import { FURNITURE_LIMITS, FURNITURE_RADIUS_M } from './catalog.js';
+import { reachedRadius } from '../../core/decorReach.js';
 
 /**
  * Seuils de taille d'un bourg, en bâtiments comptés autour de son centroïde
@@ -69,7 +70,7 @@ export function buildVillageLandmarks(layer, context, builtUp) {
   for (const ring of builtUp) {
     if (!Array.isArray(ring) || ring.length < 3) continue;
     const centre = ringCentroid(ring);
-    if (Math.hypot(centre.x - here.x, centre.z - here.z) > FURNITURE_RADIUS_M) continue;
+    if (Math.hypot(centre.x - here.x, centre.z - here.z) > reachedRadius(FURNITURE_RADIUS_M, layer.bubble)) continue;
 
     let reach = 0;
     for (const p of ring) reach = Math.max(reach, Math.hypot(p.x - centre.x, p.z - centre.z));
@@ -130,11 +131,11 @@ export function buildRocks(layer, context, builtUp) {
   const step = ROCK_CELL_M;
   let placed = 0;
 
-  for (const { x, z } of gridCellsAround(here, ROCK_RADIUS_M, step)) {
+  for (const { x, z } of gridCellsAround(here, reachedRadius(ROCK_RADIUS_M, layer.bubble), step)) {
     if (placed >= FURNITURE_LIMITS.rocks) break;
     const px = x + (randomAt(x, z, 101) - 0.5) * step * 0.9;
     const pz = z + (randomAt(x, z, 103) - 0.5) * step * 0.9;
-    if (Math.hypot(px - here.x, pz - here.z) > ROCK_RADIUS_M) continue;
+    if (Math.hypot(px - here.x, pz - here.z) > reachedRadius(ROCK_RADIUS_M, layer.bubble)) continue;
     if (pointInAreas(builtUp, px, pz)) continue;
     // Un bloc erratique au milieu de la chaussée est le plus visible de
     // tous les défauts d'emprise : il est opaque et il est haut.
@@ -180,7 +181,7 @@ export function buildRocks(layer, context, builtUp) {
  */
 export function buildLandmarks(layer, context, builtUp) {
   const { here, placements } = context;
-  const radius = Math.min(LANDMARK_RADIUS_M, layer.bubble.radiusMeters || LANDMARK_RADIUS_M);
+  const radius = reachedRadius(Math.min(LANDMARK_RADIUS_M, layer.bubble.radiusMeters || LANDMARK_RADIUS_M), layer.bubble);
   const step = 320;
   let placed = 0;
   // Reconstituée à chaque reconstruction ; `setWindDirection` la relit donc
@@ -236,7 +237,7 @@ export function buildLandmarks(layer, context, builtUp) {
  */
 export function buildRidgeTrees(layer, context, builtUp) {
   const { here, placements } = context;
-  const radius = Math.min(LANDMARK_RADIUS_M, layer.bubble.radiusMeters || LANDMARK_RADIUS_M);
+  const radius = reachedRadius(Math.min(LANDMARK_RADIUS_M, layer.bubble.radiusMeters || LANDMARK_RADIUS_M), layer.bubble);
   const step = 140;
   let placed = 0;
 

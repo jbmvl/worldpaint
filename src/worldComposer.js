@@ -85,7 +85,7 @@ import { SpectatorLayer } from './layers/spectatorLayer.js';
 import { TractorLayer } from './layers/tractorLayer.js';
 import { TrainLayer } from './layers/trainLayer.js';
 import { VectorTileSource, coveringTiles, VECTOR_ZOOM } from './core/vectorTileSource.js';
-import { lngLatToTile } from './core/tileMath.js';
+import { lngLatToTile, tileSizeMeters } from './core/tileMath.js';
 import { landscapeAt } from './core/landscape.js';
 import { regionById, regionWithWord } from './core/region.js';
 import { planFaunaCrossing } from './layers/faunaCrossing.js';
@@ -100,6 +100,10 @@ export const WORLD_ATTRIBUTION =
   '© OpenStreetMap contributors — relief AWS Terrain Tiles';
 
 export { FAUNA_CROSS_AHEAD_M } from './layers/faunaCrossing.js';
+
+/** Marge des tuiles chargées autour de la portée : facteur, puis mètres. */
+const REACH_TILE_MARGIN = 1.25;
+const REACH_TILE_MARGIN_M = 60;
 
 /** Temps CPU d'herbe semée par image : la passe s'étale sur les suivantes. */
 const GRASS_SCATTER_BUDGET_MS = 3;
@@ -117,6 +121,7 @@ export class WorldComposer {
    *        Source des tuiles vectorielles : gabarits d'URL `{z}/{x}/{y}` et
    *        zoom maximal servi. Absente, le décor se réduit au relief nu.
    * @param {number} [options.maxAnisotropy] Capacité du renderer.
+   * @param {number} [options.reach] Portée du décor en mètres. Absente, chaque couche garde son rayon.
    * @param {Object} [options.theme] Direction artistique, déjà résolue par
    *        `resolveTheme`. Le compositeur la distribue sans la lire.
    */
@@ -130,6 +135,7 @@ export class WorldComposer {
     vectorConfig = null,
     maxAnisotropy = 4,
     theme = defaultTheme,
+    reach = Infinity,
   }) {
     this.THREE = THREE;
     this.theme = theme;
@@ -188,6 +194,7 @@ export class WorldComposer {
       blockSize,
       segmentsByRing,
       theme,
+      reach,
     });
     this.bubble.setMaxAnisotropy(maxAnisotropy);
 
@@ -724,13 +731,36 @@ export class WorldComposer {
   _wantedTiles(lng, lat) {
     const center = lngLatToTile(lng, lat, this.bubble.zoom);
     const half = Math.floor(this.bubble.blockSize / 2);
-    return coveringTiles(
+    const tiles = coveringTiles(
       Math.floor(center.x),
       Math.floor(center.y),
       half,
       this.bubble.zoom,
       this.vectorTiles.zoom
     );
+    return Number.isFinite(this.bubble.reachMeters) ? this._tilesWithinReach(tiles, lng, lat) : tiles;
+  }
+
+  /**
+   * Ne garde des tuiles du bloc que celles qui touchent la portée du décor
+   * (marge comprise : la carte du sol lit un peu au-delà de ce qui est bâti).
+   * Une scène de quelques dizaines de mètres ne charge ainsi que la tuile où
+   * elle se trouve, et sa voisine si elle est tout près du bord.
+   */
+  _tilesWithinReach(tiles, lng, lat) {
+    if (!tiles.length) return tiles;
+    const zoom = tiles[0].z;
+    const here = lngLatToTile(lng, lat, zoom);
+    const span = this.bubble.reachMeters * REACH_TILE_MARGIN + REACH_TILE_MARGIN_M;
+    const r = span / tileSizeMeters(zoom, lat);
+    const kept = tiles.filter((t) => {
+      const dx = Math.min(Math.abs(here.x - t.x), Math.abs(here.x - (t.x + 1)));
+      const dy = Math.min(Math.abs(here.y - t.y), Math.abs(here.y - (t.y + 1)));
+      const inX = here.x >= t.x && here.x <= t.x + 1;
+      const inY = here.y >= t.y && here.y <= t.y + 1;
+      return (inX || dx <= r) && (inY || dy <= r);
+    });
+    return kept.length ? kept : tiles;
   }
 
   /**

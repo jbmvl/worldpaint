@@ -27,7 +27,7 @@ import {
 import { srgb } from '../core/color.js';
 import { streetSurfaceAt } from './townStyle.js';
 import { defaultTheme } from '../themes/default.js';
-import { DECOR_STABLE_RADIUS_M } from '../core/decorReach.js';
+import { DECOR_STABLE_RADIUS_M, reachedRadius } from '../core/decorReach.js';
 
 /** Chaussées qui peuvent porter un trottoir (dessertes ; pas de voie rapide, chemin, sentier ou piste cyclable). */
 export const STREET_PROFILES = new Set(['major', 'minor', 'lane']);
@@ -154,6 +154,9 @@ export class StreetLayer {
    * @param {Object} [context.urban] Masque urbain publié par la composition.
    * @returns {boolean} vrai si de la voirie a été posée.
    */
+  /** Portée des rues : la leur, ou celle du décor si elle est plus courte. */
+  _radius() { return reachedRadius(STREET_RADIUS_M, this.bubble); }
+
   rebuild(...args) { return finishGeneration(this.rebuildSteps(...args)); }
 
   /** `rebuild` en étapes : une par tronçon et par carrefour, maillages publiés à la fin. */
@@ -230,7 +233,7 @@ export class StreetLayer {
     const nearby = (segment) => {
       const path = segment.path;
       for (let r = 0; r < path.length; r += 10) {
-        if (Math.hypot(path[r].x - here.x, path[r].z - here.z) <= STREET_RADIUS_M) return true;
+        if (Math.hypot(path[r].x - here.x, path[r].z - here.z) <= this._radius()) return true;
       }
       return false;
     };
@@ -280,7 +283,7 @@ export class StreetLayer {
     for (let r = 0; r < rows; r++) {
       const point = path[r];
       // Hors de portée, on ne lit rien (le lancer de rayon sur les emprises coûte trop cher).
-      const inReach = Math.hypot(point.x - here.x, point.z - here.z) <= STREET_RADIUS_M;
+      const inReach = Math.hypot(point.x - here.x, point.z - here.z) <= this._radius();
       shared.push({
         r,
         x: point.x,
@@ -531,7 +534,7 @@ export class StreetLayer {
       // Sans cote, l'aire est hors de portée du réseau : rien n'y est posé.
       if (!Number.isFinite(area.deck)) continue;
       if (!STREET_PROFILES.has(area.profile)) continue;
-      if (Math.hypot(area.x - here.x, area.z - here.z) > STREET_RADIUS_M) continue;
+      if (Math.hypot(area.x - here.x, area.z - here.z) > this._radius()) continue;
 
       for (const edge of area.edges || []) {
         const points = edge.points;

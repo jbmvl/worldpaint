@@ -21,7 +21,7 @@ import { pushPanel } from './buildingLayer.js';
 import { srgb } from '../core/color.js';
 import { defaultTheme } from '../themes/default.js';
 import { inCorridor } from './roadCorridor.js';
-import { DECOR_STABLE_RADIUS_M } from '../core/decorReach.js';
+import { DECOR_STABLE_RADIUS_M, reachedRadius } from '../core/decorReach.js';
 
 /** Portée des jardins autour du point de reconstruction, en mètres. */
 export const GARDEN_RADIUS_M = DECOR_STABLE_RADIUS_M;
@@ -314,7 +314,7 @@ export class GardenLayer {
 
     const near = (houses || [])
       .map((house) => ({ house, distance: Math.hypot(house.x - here.x, house.z - here.z) }))
-      .filter((entry) => entry.distance <= GARDEN_RADIUS_M);
+      .filter((entry) => entry.distance <= reachedRadius(GARDEN_RADIUS_M, this.bubble));
 
     const neighbours = houses || [];
     const index = this.roads?.index || null;

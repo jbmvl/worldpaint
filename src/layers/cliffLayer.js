@@ -46,6 +46,7 @@
 import { resamplePath, pathFrames, smoothColumns } from './ribbonGeometry.js';
 import { cliffProfileAt } from '../terrain/cliffCut.js';
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
+import { reachedRadius } from '../core/decorReach.js';
 import { cellKey } from './roadGraph.js';
 import { collectRoadLines } from './roadNetwork.js';
 import { WORK_NONE, LEVEL_GROUND } from './roadWorks.js';
@@ -443,7 +444,7 @@ export class CliffLayer {
           });
         }
         if (local.length < 2) continue;
-        if (!local.some((p) => Math.hypot(p.x - here.x, p.z - here.z) <= CLIFF_RADIUS_M)) continue;
+        if (!local.some((p) => Math.hypot(p.x - here.x, p.z - here.z) <= reachedRadius(CLIFF_RADIUS_M, this.bubble))) continue;
 
         const path = resamplePath(local, CLIFF_SAMPLE_M);
         if (path.length >= 2) {

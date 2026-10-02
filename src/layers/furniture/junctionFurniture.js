@@ -14,6 +14,7 @@ import { MARKING_BAR_M, MOUTH_CROSSING_M } from '../roadMarkings.js';
 import { pointInAreas } from '../settlement.js';
 import { roadsideFurnitureFor, roadsideYaw, randomAt, PRIORITY_SIGN_PROFILES } from '../furniturePlacement.js';
 import { FURNITURE_LIMITS, FURNITURE_RADIUS_M } from './catalog.js';
+import { reachedRadius } from '../../core/decorReach.js';
 
 /** Recul d'un feu tricolore en amont du nœud de carrefour, en mètres. */
 const TRAFFIC_LIGHT_SETBACK_M = 10;
@@ -61,7 +62,7 @@ export function buildCrossings(layer, context, junctions, roadIndex, builtUp) {
 
   for (const junction of junctions) {
     if (placed >= FURNITURE_LIMITS.trafficLights) break;
-    if (Math.hypot(junction.x - here.x, junction.z - here.z) > FURNITURE_RADIUS_M) continue;
+    if (Math.hypot(junction.x - here.x, junction.z - here.z) > reachedRadius(FURNITURE_RADIUS_M, layer.bubble)) continue;
     if (!pointInAreas(builtUp, junction.x, junction.z)) continue;
     // Un giratoire se passe de feux, et une fourche ne croise rien.
     if (junction.roundabout || isForkJunction(junction)) continue;
@@ -141,7 +142,7 @@ export function buildJunctionSigns(layer, context, areas, roadIndex, builtUp) {
   const { placements, here } = context;
 
   for (const area of areas.areas) {
-    if (Math.hypot(area.x - here.x, area.z - here.z) > FURNITURE_RADIUS_M) continue;
+    if (Math.hypot(area.x - here.x, area.z - here.z) > reachedRadius(FURNITURE_RADIUS_M, layer.bubble)) continue;
     // Le nœud d'un feu et celui de son aire sont le **même** point, repris
     // tel quel par `junctionArea` : l'écart toléré ne couvre que le calcul
     // flottant, il n'élargit rien.

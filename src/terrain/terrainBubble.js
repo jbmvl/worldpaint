@@ -84,6 +84,7 @@ export class TerrainBubble {
     verticalScale = 1,
     groundClass = null,
     theme = defaultTheme,
+    reach = Infinity,
   }) {
     this.THREE = THREE;
     this.scene = scene;
@@ -94,6 +95,8 @@ export class TerrainBubble {
     this.blockSize = blockSize % 2 === 0 ? blockSize + 1 : blockSize;
     this.segmentsByRing = segmentsByRing;
     this.verticalScale = verticalScale;
+    /** Portée du décor autour de l'observateur, en mètres (`createWorld({ reach })`). */
+    this._reach = Number.isFinite(reach) && reach > 0 ? reach : Infinity;
 
     this.group = new THREE.Group();
     this.group.name = 'terrain-bubble';
@@ -192,6 +195,14 @@ export class TerrainBubble {
     if (!this._surfaceDirty || this._rebuildQueue.length > 0) return;
     this._surfaceDirty = false;
     this._surfaceGeneration++;
+  }
+
+  /**
+   * Portée demandée au décor, en mètres, ou `Infinity` : les couches la
+   * combinent à leur propre rayon par `Math.min`, sans jamais l'étendre.
+   */
+  get reachMeters() {
+    return this._reach;
   }
 
   /** Rayon approximatif de la bulle, en mètres. */

@@ -27,6 +27,7 @@ import {
 } from '../furniturePlacement.js';
 import { pointInAreas } from '../settlement.js';
 import { FURNITURE_LIMITS } from './catalog.js';
+import { reachedRadius } from '../../core/decorReach.js';
 
 /**
  * Part des pâtures qu'on laisse vides. Descendue de 0,2 à 0,12 : les prés ne
@@ -357,14 +358,15 @@ function grazingSquare(x, z, half) {
 export function buildOpenPastureFauna(layer, context, builtUp) {
   if (!layer.groundClass) return;
   const { here } = context;
+  const radius = reachedRadius(OPEN_PASTURE_RADIUS_M, layer.bubble);
   const step = OPEN_PASTURE_CELL_M;
   const cellHa = (step * step) / 10000;
-  const startX = Math.floor((here.x - OPEN_PASTURE_RADIUS_M) / step) * step;
-  const startZ = Math.floor((here.z - OPEN_PASTURE_RADIUS_M) / step) * step;
+  const startX = Math.floor((here.x - radius) / step) * step;
+  const startZ = Math.floor((here.z - radius) / step) * step;
   let placed = 0;
 
-  for (let z = startZ; z <= here.z + OPEN_PASTURE_RADIUS_M; z += step) {
-    for (let x = startX; x <= here.x + OPEN_PASTURE_RADIUS_M; x += step) {
+  for (let z = startZ; z <= here.z + radius; z += step) {
+    for (let x = startX; x <= here.x + radius; x += step) {
       if (layer.fauna.length >= FURNITURE_LIMITS.fauna) {
         layer.counts.openPasture = placed;
         return;
@@ -372,7 +374,7 @@ export function buildOpenPastureFauna(layer, context, builtUp) {
 
       const px = x + (randomAt(x, z, 491) - 0.5) * step * 0.8;
       const pz = z + (randomAt(x, z, 499) - 0.5) * step * 0.8;
-      if (Math.hypot(px - here.x, pz - here.z) > OPEN_PASTURE_RADIUS_M) continue;
+      if (Math.hypot(px - here.x, pz - here.z) > radius) continue;
       if (pointInAreas(builtUp, px, pz)) continue;
       if (layer._onRoad(px, pz)) continue;
 

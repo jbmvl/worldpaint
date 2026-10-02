@@ -41,6 +41,7 @@ import {
 import { createRoadCanvas, ROAD_TEXTURE_LENGTH } from '../materials/proceduralTextures.js';
 import { RoadIndex, ROAD_INDEX_MARGIN_M, knownCoverage, mergeRoadLines } from './roadGraph.js';
 import { defaultTheme } from '../themes/default.js';
+import { reachedRadius } from '../core/decorReach.js';
 import { Kit } from '../models/kit.js';
 
 /** Couche source des tuiles vectorielles — celle des chaussées aussi. */
@@ -296,7 +297,7 @@ export class RailwayLayer {
    */
   knownCoverageOf(minX, minZ, maxX, maxZ) {
     if (this._frame !== this.bubble?.frame) return 0;
-    const radius = Math.min(RAILWAY_RADIUS_M, this.bubble?.radiusMeters || RAILWAY_RADIUS_M);
+    const radius = reachedRadius(Math.min(RAILWAY_RADIUS_M, this.bubble?.radiusMeters || RAILWAY_RADIUS_M), this.bubble);
     return knownCoverage(minX, minZ, maxX, maxZ, this._anchor, radius);
   }
 
@@ -307,7 +308,7 @@ export class RailwayLayer {
   rebuild(source, tiles, here) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
 
-    const radius = Math.min(RAILWAY_RADIUS_M, this.bubble.radiusMeters || RAILWAY_RADIUS_M);
+    const radius = reachedRadius(Math.min(RAILWAY_RADIUS_M, this.bubble.radiusMeters || RAILWAY_RADIUS_M), this.bubble);
     const { origin, scale, zoom } = this.bubble.frame;
     const sampleElevation = (x, z) =>
       this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale + RAILWAY_LIFT_M;

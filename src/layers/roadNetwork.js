@@ -1,7 +1,7 @@
 import { bindJunctionSeams, updateJunctionSeams } from './junctionSeams.js';
 import { collectTunnelBuildings, resolveTunnelProfiles } from './transportTunnels.js';
 import { finishGeneration } from '../core/generationSteps.js';
-import { DECOR_STEP_M } from '../core/decorReach.js';
+import { DECOR_STEP_M, reachedRadius } from '../core/decorReach.js';
 /*
  * La reconstruction expose des étapes entre tronçons et carrefours. Le
  * compositeur fixe les pauses ; index et maillages sont publiés ensemble.
@@ -1212,7 +1212,12 @@ export class RoadNetwork {
    */
   knownCoverageOf(minX, minZ, maxX, maxZ) {
     if (this._frame !== this.bubble?.frame) return 0;
-    return knownCoverage(minX, minZ, maxX, maxZ, this._anchor, ROAD_RADIUS_M);
+    return knownCoverage(minX, minZ, maxX, maxZ, this._anchor, this._radius());
+  }
+
+  /** Rayon des chaussées bâties : le leur, ou la portée du décor si elle est plus courte. */
+  _radius() {
+    return reachedRadius(ROAD_RADIUS_M, this.bubble);
   }
 
   /** Vrai si l'observateur s'est assez éloigné pour justifier une reconstruction. */
@@ -1251,7 +1256,7 @@ export class RoadNetwork {
       here,
       bubble.frame,
       sampleElevation,
-      ROAD_RADIUS_M,
+      this._radius(),
       this.theme.roads,
       { urban, continuity: this._continuity, railwaySegments, bench: bubble.cutBenchM, tunnelTheme: this.theme }
     );

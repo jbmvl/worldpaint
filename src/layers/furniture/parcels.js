@@ -43,6 +43,7 @@ import {
   FURNITURE_RADIUS_M,
   FURNITURE_SINK_M,
 } from './catalog.js';
+import { reachedRadius } from '../../core/decorReach.js';
 import { placeHerd, placeForestGame, placeFauna } from './parcelFauna.js';
 import { buildCemetery } from './cemetery.js';
 
@@ -122,7 +123,7 @@ export function buildParcels(layer, context, builtUp) {
       // elle, ne passe pas par ici : elle est peinte dans la carte des
       // cultures, qui couvre 4 km et ne connaît pas cette limite.
       const centre = ringCentroid(local);
-      if (!local.some((p) => Math.hypot(p.x - here.x, p.z - here.z) <= FURNITURE_RADIUS_M)) continue;
+      if (!local.some((p) => Math.hypot(p.x - here.x, p.z - here.z) <= reachedRadius(FURNITURE_RADIUS_M, layer.bubble))) continue;
 
       // Repères urbains : un par emprise reconnue — cimetière, zone
       // industrielle, stade, champ de foire. Avant le filtre « hors zone
@@ -331,7 +332,7 @@ export function appendParcelBoundary(layer, buffers, placements, kind, ring, bou
  * boîte englobante.
  */
 export function buildRows(layer, context, ring, centre, crop, here) {
-  if (Math.hypot(centre.x - here.x, centre.z - here.z) > ROW_CROP_RADIUS_M) return;
+  if (Math.hypot(centre.x - here.x, centre.z - here.z) > reachedRadius(ROW_CROP_RADIUS_M, layer.bubble)) return;
   if (layer.counts.rows >= FURNITURE_LIMITS.vineRows) return;
 
   const { buffers, placements, sampleElevation } = context;
@@ -508,7 +509,7 @@ export const TRACTOR_SPEED_MAX_MS = 1.8;
  */
 export function placeTractor(layer, context, ring, centre, crop, here) {
   if (!crop || crop === 'orchard') return;
-  if (Math.hypot(centre.x - here.x, centre.z - here.z) > TRACTOR_RADIUS_M) return;
+  if (Math.hypot(centre.x - here.x, centre.z - here.z) > reachedRadius(TRACTOR_RADIUS_M, layer.bubble)) return;
   if (!layer.tractors || layer.tractors.length >= FURNITURE_LIMITS.vehicles) return;
   if (randomAt(centre.x, centre.z, TRACTOR_SALT) >= TRACTOR_SHARE) return;
 

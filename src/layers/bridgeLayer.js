@@ -57,7 +57,7 @@ import { workRuns, WORK_BRIDGE, WORK_TUNNEL } from './roadWorks.js';
 import { worksStyleAt } from './townStyle.js';
 import { facetJitter } from './facetJitter.js';
 import { defaultTheme } from '../themes/default.js';
-import { DECOR_STABLE_RADIUS_M } from '../core/decorReach.js';
+import { DECOR_STABLE_RADIUS_M, reachedRadius } from '../core/decorReach.js';
 
 /** Portée des ouvrages autour du point de reconstruction, en mètres (celle de la voirie). */
 export const BRIDGE_RADIUS_M = DECOR_STABLE_RADIUS_M;
@@ -155,20 +155,20 @@ export class BridgeLayer {
     this.tunnelMouths = [];
     this.tunnelFixtures = [];
 
+    const radius = reachedRadius(BRIDGE_RADIUS_M, bubble);
     for (const segment of roadSegments || []) {
       if (!segment?.works || !segment.path || segment.path.length < 2) continue;
       const inReach = (run) =>
-        Math.hypot(segment.path[run.from].x - here.x, segment.path[run.from].z - here.z) <=
-          BRIDGE_RADIUS_M ||
-        Math.hypot(segment.path[run.to].x - here.x, segment.path[run.to].z - here.z) <= BRIDGE_RADIUS_M ||
-        segment.path.slice(run.from,run.to+1).some(p=>Math.hypot(p.x-here.x,p.z-here.z)<=BRIDGE_RADIUS_M);
+        Math.hypot(segment.path[run.from].x - here.x, segment.path[run.from].z - here.z) <= radius ||
+        Math.hypot(segment.path[run.to].x - here.x, segment.path[run.to].z - here.z) <= radius ||
+        segment.path.slice(run.from,run.to+1).some(p=>Math.hypot(p.x-here.x,p.z-here.z)<=radius);
 
       for (const run of workRuns(segment.works, WORK_BRIDGE)) {
         if (!inReach(run)) continue;
         this._buildSpan(buffer, segment, run, sampleElevation);
       }
       for (const structure of segment.tunnelStructures ?? []) {
-        if (!structure.path.some(p => Math.hypot(p.x-here.x,p.z-here.z)<=BRIDGE_RADIUS_M)) continue;
+        if (!structure.path.some(p => Math.hypot(p.x-here.x,p.z-here.z)<=radius)) continue;
         this._buildTunnelHeads(buffer, structure, { from: 0, to: structure.path.length-1 }, sampleElevation);
       }
       for (const run of segment.tunnelStructures ? [] : workRuns(segment.works, WORK_TUNNEL)) {

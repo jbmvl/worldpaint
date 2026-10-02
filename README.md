@@ -250,6 +250,25 @@ sees exactly the landscape it saw before the feature existed.
 `three` is a peer dependency and is **injected**, never imported: two copies
 of three in one page share neither their constants nor their prototypes.
 
+### A fixed, close-up scene (`reach`)
+
+For a start line, a finish, or the replay of an event, nothing needs to be built
+beyond a few dozen metres. `reach` caps every layer's radius (it never extends
+one), loads only the vector tiles that touch the disc, and sets the fog radius
+to match. `mountAt` centres the bubble and builds everything in one call; there
+is no re-centring afterwards, since nothing follows the viewer.
+
+```js
+const world = createWorld({ THREE, scene, reach: 120, sky: { Sky } });
+world.setVector({ tiles, maxZoom: 14 });
+await world.mountAt(lng, lat);
+```
+
+Without `reach`, behaviour is unchanged. The terrain mesh and the elevation tiles
+are still those of the bubble (`view.blockSize`, `view.zoom`); only the generated
+decor, the vector tiles and the fog shrink. Grass and crops are scattered around
+the camera each frame and are not capped yet: the fog hides them.
+
 ### Art direction
 
 Everything that decides what things *look* like — palettes, tree

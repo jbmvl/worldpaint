@@ -33,6 +33,7 @@ import {
 } from '../furniturePlacement.js';
 import { churchWithin } from './pointsOfInterest.js';
 import { FURNITURE_RADIUS_M } from './catalog.js';
+import { reachedRadius } from '../../core/decorReach.js';
 import { alignmentShapeForTree, sharesFor } from '../../core/regionInterpretation.js';
 import {
   buildRoadsideRelief,
@@ -201,7 +202,7 @@ export function buildRoadside(layer, context, roadSegments, builtUp) {
     // `bridgeLayer` avec son tablier.
     const paved = isPaved(layer.theme.roads.profiles[segment.profile]);
     const inReach = (row) =>
-      !row.work && Math.hypot(row.x - here.x, row.z - here.z) <= FURNITURE_RADIUS_M;
+      !row.work && Math.hypot(row.x - here.x, row.z - here.z) <= reachedRadius(FURNITURE_RADIUS_M, layer.bubble);
     for (const near of contiguousRuns(rowsInfo, inReach, 4)) {
       measureRoom(layer, segment, near);
       const walled = buildRoadsideRelief(layer, context, segment, near);
