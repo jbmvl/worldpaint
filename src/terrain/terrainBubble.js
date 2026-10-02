@@ -41,7 +41,9 @@ import {
   tilesCovering,
   tileKey,
   lngLatToTile,
+  tileSizeMeters,
 } from '../core/tileMath.js';
+import { REACH_MARGIN, REACH_MARGIN_M } from '../core/decorReach.js';
 import { DEM_TILE_PIXELS } from '../core/elevationField.js';
 import { TerrainMaterialFactory } from './terrainMaterial.js';
 import { defaultTheme } from '../themes/default.js';
@@ -98,6 +100,8 @@ export class TerrainBubble {
     this.verticalScale = verticalScale;
     /** Portée du décor autour de l'observateur, en mètres (`createWorld({ reach })`). */
     this._reach = Number.isFinite(reach) && reach > 0 ? reach : Infinity;
+    /** Disque de la portée autour du dernier centre, `null` sans portée : le déblai s'y limite. */
+    this._reachDisc = null;
 
     this.group = new THREE.Group();
     this.group.name = 'terrain-bubble';
@@ -215,9 +219,14 @@ export class TerrainBubble {
   /**
    * Positionne (ou repositionne) la bulle autour d'un point géographique.
    * Idempotent : ne fait rien tant que l'observateur reste dans la tuile centrale.
+   * @param {Object} [options]
+   * @param {boolean} [options.meshes] Faux : les tuiles neuves attendent dans
+   *        la file au lieu d'être maillées tout de suite — pour qui refait le
+   *        décor aussitôt, dont le déblai les remaillerait de toute façon.
+   * @param {number} [options.budgetMs] Temps CPU entre deux pauses.
    * @returns {Promise<boolean>} vrai si la bulle a bougé.
    */
-  async setCenter(lng, lat) {
+  async setCenter(lng, lat, { meshes = true, budgetMs } = {}) {
     if (this.disposed) return false;
 
     const t = lngLatToTile(lng, lat, this.zoom);
@@ -225,18 +234,22 @@ export class TerrainBubble {
     const cy = Math.floor(t.y);
 
     const needsFrame = !this.frame || this._frameTooFar(lng, lat);
-    if (!needsFrame && this._centerTile && this._centerTile.x === cx && this._centerTile.y === cy) {
-      return false;
-    }
-
     if (needsFrame) {
       this._clearTiles();
       this.frame = createLocalFrame(lng, lat, this.zoom);
     }
+    if (Number.isFinite(this._reach)) {
+      const here = this.frame.toLocal(lng, lat);
+      const radius = this._reach * REACH_MARGIN + REACH_MARGIN_M;
+      this._reachDisc = { x: here.x, z: here.z, radius2: radius * radius };
+    }
+    if (!needsFrame && this._centerTile && this._centerTile.x === cx && this._centerTile.y === cy) {
+      return false;
+    }
     this._centerTile = { x: cx, y: cy };
 
     const generation = ++this._generation;
-    const wanted = tilesAround(t.x, t.y, this.blockSize, this.zoom);
+    const wanted = this._withinReach(tilesAround(t.x, t.y, this.blockSize, this.zoom), t, lat);
     const wantedKeys = new Set(wanted.map((w) => tileKey(w.z, w.x, w.y)));
 
     // Démonte ce qui sort de la bulle.
@@ -278,8 +291,12 @@ export class TerrainBubble {
     // seule la finesse a changé garde la sienne et passe par la file.
     this._rebuildQueue.length = 0;
     this._cancelPendingBuild();
-    const budget = new GenerationBudget();
+    const budget = new GenerationBudget(budgetMs ? { milliseconds: budgetMs } : undefined);
     for (const tile of this.tiles.values()) {
+      if (!meshes) {
+        this._rebuildQueue.push(tile.key);
+        continue;
+      }
       const now = !tile.mesh || (tile.edgeIncomplete && this._neighboursLoaded(tile.x, tile.y));
       if (!now && this._meshOutdated(tile)) this._rebuildQueue.push(tile.key);
       for (const _ of now ? this._buildMeshSteps(tile) : []) {
@@ -294,6 +311,29 @@ export class TerrainBubble {
     this._settleSurface();
 
     return true;
+  }
+
+  /**
+   * Une scène figée (`reach`) ne monte que les tuiles de terrain qui touchent
+   * sa portée, marge comprise : au-delà, le brouillard les cache déjà. Le
+   * maillage d'une tuile ne lit que le MNT de ses voisines, pas leur maillage.
+   * La tuile centrale reste toujours.
+   */
+  _withinReach(wanted, t, lat) {
+    if (!Number.isFinite(this._reach)) return wanted;
+    const span = (this._reach * REACH_MARGIN + REACH_MARGIN_M) / tileSizeMeters(this.zoom, lat);
+    const world = Math.pow(2, this.zoom);
+    const cx = Math.floor(t.x);
+    const cy = Math.floor(t.y);
+    const delta = (a, b) => ((((a - b) % world) + world + world / 2) % world) - world / 2;
+    const gap = (offset, at) => Math.max(offset - at, at - (offset + 1), 0);
+    return wanted.filter((w) => {
+      const fx = t.x - cx;
+      const fy = t.y - cy;
+      const dx = delta(w.x, cx);
+      const dy = w.y - cy;
+      return (dx === 0 && dy === 0) || Math.hypot(gap(dx, fx), gap(dy, fy)) <= span;
+    });
   }
 
   _frameTooFar(lng, lat) {
@@ -521,6 +561,9 @@ export class TerrainBubble {
    * sommet ; `_roadCutAt` s'appuie dessus pour garder sa propre signature.
    */
   _roadCutWithMask(x, z, raw) {
+    // Au-delà de la portée, aucune chaussée n'est posée : rien à creuser.
+    const disc = this._reachDisc;
+    if (disc && (x - disc.x) ** 2 + (z - disc.z) ** 2 > disc.radius2) return { elevation: raw, mask: 0 };
     let earth = this._earthworks?.sample(x, z, raw) ?? { elevation: raw, mask: 0 };
     raw = earth.elevation;
     const unpaved = this._unpaved?.query(x, z, this.cutBenchM + ROAD_CUT_BLEND_M);

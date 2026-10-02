@@ -147,3 +147,138 @@ test('createWorld passe la portée à la bulle et cale le brouillard dessus', as
     far.dispose();
   }
 });
+
+test('la végétation ne sème que les tuiles et cellules à portée', async () => {
+  const { VegetationLayer } = await import('../src/layers/vegetationLayer.js');
+  const frame = { origin: { x: 0, y: 0 }, scale: 800 };
+  const tiles = new Map(
+    [[0, 0], [1, 0], [0, 1], [1, 1]].map(([x, y]) => [`${x}:${y}`, { key: `${x}:${y}`, x, y, ring: 0 }])
+  );
+  const layer = Object.create(VegetationLayer.prototype);
+  Object.assign(layer, {
+    disposed: false,
+    maxRing: 1,
+    bubble: { frame, tiles },
+    queue: [],
+    _planted: new Set(),
+    _stale: new Set(),
+    _partial: new Map(),
+  });
+
+  layer.sync();
+  assert.equal(layer.queue.length, 4, 'sans portée, toutes les tuiles');
+
+  // Observateur dans la tuile (0,0), à 100 m de ses bords haut et gauche : 120 m ne touchent qu'elle.
+  layer.setReach({ x: 100, z: 100 }, 120);
+  layer.sync();
+  assert.deepEqual(layer.queue, ['0:0']);
+  assert.equal(layer._beyondReach(100, 100, 25), false);
+  assert.equal(layer._beyondReach(600, 600, 25), true);
+
+  layer.setReach(null, Infinity);
+  layer.sync();
+  assert.equal(layer.queue.length, 4, 'la limite se lève');
+});
+
+/** Bulle de terrain réduite à `setCenter` et ce qu'il lit avant de charger le relief. */
+function terrainWith(reach, blockSize = 3) {
+  const bubble = Object.create(TerrainBubble.prototype);
+  Object.assign(bubble, { _reach: reach, zoom: 15, blockSize });
+  return bubble;
+}
+const tilesAroundPoint = (fx, fy, reach) => {
+  const lat = tileYToLat(11200 + fy, 15);
+  const t = { x: 8000 + fx, y: 11200 + fy };
+  const all = [];
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) all.push({ x: 8000 + dx, y: 11200 + dy, ring: Math.max(Math.abs(dx), Math.abs(dy)) });
+  }
+  return terrainWith(reach)._withinReach(all, t, lat).map((w) => `${w.x - 8000},${w.y - 11200}`).sort();
+};
+
+test('le terrain d’une scène figée ne monte que les tuiles qui touchent la portée', () => {
+  assert.equal(terrainWith(Infinity)._withinReach(['tout'], {}, 0)[0], 'tout', 'sans portée, rien ne change');
+  assert.deepEqual(tilesAroundPoint(0.5, 0.5, 100), ['0,0'], 'au milieu de sa tuile : une seule');
+  assert.deepEqual(tilesAroundPoint(0.8, 0.5, 160), ['0,0', '1,0'], 'près d’un bord : la voisine');
+  assert.deepEqual(tilesAroundPoint(0.9, 0.9, 160), ['0,0', '0,1', '1,0', '1,1'], 'près d’un coin : quatre');
+  assert.equal(tilesAroundPoint(0.5, 0.5, 5000).length, 9, 'portée immense : tout le bloc');
+});
+
+test('la carte du sol ne relit qu’une fenêtre autour de la portée, au même pas de texel', async () => {
+  const { GroundClassMap, CLASS_PIXELS, CLASS_AREA_M, surfaceSignature } = await import('../src/terrain/groundClassMap.js');
+  const { finishGeneration } = await import('../src/core/generationSteps.js');
+  const perMeter = CLASS_PIXELS / CLASS_AREA_M;
+  const mapWith = (reach) => {
+    const map = new GroundClassMap({ THREE, reach });
+    map.texture.dispose();
+    return map;
+  };
+
+  assert.deepEqual(mapWith(undefined)._windowAround(768, 768, perMeter), { x: 0, y: 0, size: CLASS_PIXELS });
+  const near = mapWith(120)._windowAround(768, 768, perMeter);
+  assert.ok(near.size < CLASS_PIXELS / 4, `fenêtre de ${near.size} texels`);
+  assert.ok(near.size / perMeter >= 2 * 120, 'la fenêtre couvre la portée');
+  assert.ok(Math.abs(near.x + near.size / 2 - 768) <= 1, 'centrée sur l’observateur');
+  const corner = mapWith(120)._windowAround(5, CLASS_PIXELS - 5, perMeter);
+  assert.equal(corner.x, 0);
+  assert.equal(corner.y + corner.size, CLASS_PIXELS, 'au bord, la fenêtre reste dans la carte');
+
+  // Une fenêtre muette : la carte entière doit l'être, fenêtre et pourtour confondus.
+  const map = mapWith(120);
+  map._window = near;
+  const silent = new Uint8ClampedArray(near.size * near.size * 4);
+  for (let p = 0; p < near.size * near.size; p++) silent.set([0, 0, surfaceSignature(0), 255], p * 4);
+  map.ctx = { getImageData: (x, y, w, h) => {
+    assert.deepEqual([x, y, w, h], [near.x, near.y, near.size, near.size]);
+    return { data: silent };
+  } };
+  finishGeneration(map.readBackSteps());
+  assert.equal(map._data.length, CLASS_PIXELS * CLASS_PIXELS * 4);
+  const first = map._data.slice(0, 4).join();
+  const inside = ((near.y + 3) * CLASS_PIXELS + near.x + 3) * 4;
+  assert.equal(map._data.slice(inside, inside + 4).join(), first, 'le pourtour porte ce que la fenêtre muette porte');
+  assert.equal(map._data[0], 0, 'matière muette');
+});
+
+test('au-delà de la portée, le terrain n’est pas creusé', () => {
+  const bubble = Object.create(TerrainBubble.prototype);
+  let sampled = 0;
+  Object.assign(bubble, {
+    _reachDisc: { x: 0, z: 0, radius2: 200 * 200 },
+    _earthworks: { sample: (x, z, raw) => { sampled++; return { elevation: raw - 1, mask: 1 }; } },
+    _unpaved: null,
+    _roadCut: null,
+  });
+  assert.deepEqual(bubble._roadCutWithMask(300, 0, 10), { elevation: 10, mask: 0 });
+  assert.equal(sampled, 0, 'aucun terrassement lu hors portée');
+  assert.equal(bubble._roadCutWithMask(50, 0, 10).elevation, 9, 'à portée, le terrassement s’applique');
+  bubble._reachDisc = null;
+  assert.equal(bubble._roadCutWithMask(300, 0, 10).elevation, 9, 'sans portée, partout');
+});
+
+test('mountAt maille le terrain une seule fois, après le décor, et rend une scène achevée', async () => {
+  const calls = [];
+  const composer = Object.create(WorldComposer.prototype);
+  let queue = 2;
+  let seeds = 3;
+  Object.assign(composer, {
+    _refreshTask: null,
+    bubble: {
+      setCenter: async (lng, lat, options) => { calls.push(['setCenter', options.meshes]); },
+      processRebuildQueue: (budget) => { calls.push(['maille', budget]); return queue-- > 0; },
+    },
+    vegetation: {
+      get pending() { return seeds > 0; },
+      processQueue: () => { seeds--; },
+    },
+    refresh: async (lng, lat, options) => { calls.push(['refresh', options.force, options.budgetMs]); return true; },
+  });
+  assert.equal(await composer.mountAt(1, 2), true);
+  assert.deepEqual(calls[0], ['setCenter', false], 'pas de maille avant le déblai');
+  assert.equal(calls[1][0], 'refresh');
+  assert.equal(calls[1][1], true);
+  assert.ok(calls[1][2] >= 50, 'le décor se monte sans pauses à chaque image');
+  assert.ok(calls.slice(2).every(([name, budget]) => name === 'maille' && budget === Infinity));
+  assert.equal(queue, -1, 'la file des mailles est vide');
+  assert.equal(seeds, 0, 'le semis est achevé');
+});

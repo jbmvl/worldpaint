@@ -325,6 +325,21 @@
   <pre id="profileStats" hidden style="font-size:10px;white-space:pre-wrap"></pre>
   <h1><span class="dot" id="dot"></span> WorldPaint — démo</h1>
 
+  <div class="section">Scène figée</div>
+  <div class="help" style="margin-bottom: 6px">
+    Départ, arrivée, rejeu : <code>createWorld({ reach })</code> ne bâtit que
+    ce qui est à quelques dizaines de mètres, en un seul <code>mountAt</code>,
+    sans recentrage. Recharge la page.
+  </div>
+  <label class="check" style="margin-bottom: 6px">
+    <input type="checkbox" id="reachToggle" />
+    Portée limitée
+  </label>
+  <div class="field">
+    <input type="number" id="reachInput" min="20" max="1000" step="10" value="160" style="width:80px" /> m
+  </div>
+  <pre id="mountStats" style="font-size:10px;white-space:pre-wrap;margin:6px 0"></pre>
+
   <div class="section">Afficheur</div>
   <div class="help" style="margin-bottom: 6px">
     Remplace un mot de la région en vigueur et reconstruit le décor sur place.

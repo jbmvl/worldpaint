@@ -3,7 +3,9 @@
 État des lieux de l'occupation du sol, à jour de la branche courante. Tout ce
 qui suit est décidé dans `src/terrain/groundClassMap.js` — une fonction pure
 (`surfaceFor`) et **un** raster de 4096 m de côté à 1536 px, soit **2,7 m par
-pixel**.
+pixel**. Une scène figée (`createWorld({ reach })`) n'en relit, répare et
+contourne qu'un carré autour de sa portée, au même pas ; le pourtour porte la
+matière muette, sous le brouillard.
 
 Le reste du décor ne fait que relire cette carte : le shader de terrain y prend
 la couleur du sol jusqu'à l'horizon (`terrainMaterial`), l'herbe sa hauteur et

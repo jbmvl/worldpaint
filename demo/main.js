@@ -156,6 +156,57 @@ profileToggle.addEventListener('change', () => {
   world?.resetGenerationStats();
 });
 
+// --- Scène figée (`?reach=160`) ------------------------------------------------
+// Même monde, décor limité à `reach` mètres et monté d'un seul `mountAt` : c'est
+// ce que fait une scène de départ, d'arrivée ou de rejeu. Pas de recentrage —
+// rien ne suit le visiteur. Le chronomètre vaut pour les deux modes, pour
+// comparer à armes égales (recharger deux fois : la seconde, les tuiles sont en cache).
+const REACH_M = (() => {
+  const value = Number(new URLSearchParams(location.search).get('reach'));
+  return Number.isFinite(value) && value > 0 ? value : null;
+})();
+const reachToggle = document.getElementById('reachToggle');
+const reachInput = document.getElementById('reachInput');
+const mountStats = document.getElementById('mountStats');
+reachToggle.checked = REACH_M !== null;
+if (REACH_M !== null) reachInput.value = String(REACH_M);
+const applyReach = () => {
+  const url = new URL(location.href);
+  if (reachToggle.checked) url.searchParams.set('reach', String(Math.max(20, Number(reachInput.value) || 160)));
+  else url.searchParams.delete('reach');
+  location.href = url.href;
+};
+reachToggle.addEventListener('change', applyReach);
+reachInput.addEventListener('change', () => reachToggle.checked && applyReach());
+
+/** Monte le décor autour d'un point et chronomètre : tuiles + génération, hors rendu. */
+async function mountScene(lng, lat) {
+  world.setProfiling(true);
+  world.resetGenerationStats();
+  const t0 = performance.now();
+  // Bulle complète : terrain puis décor, chronométrés à part. Portée : `mountAt`
+  // seul, qui maille le terrain après le décor, donc un seul total.
+  let tCentered = null;
+  if (REACH_M !== null) {
+    await world.mountAt(lng, lat);
+  } else {
+    await world.setCenter(lng, lat);
+    tCentered = performance.now();
+    await world.refresh(lng, lat, { force: true });
+  }
+  const t1 = performance.now();
+  const mode = REACH_M !== null ? `portée ${REACH_M} m (mountAt, ${world.bubble.tiles.size} tuile(s) de terrain)` : 'bulle complète';
+  const layers = Object.entries(world.generationStats)
+    .filter(([name]) => !name.endsWith('Etape'))
+    .sort((a, b) => b[1].lastMs - a[1].lastMs)
+    .slice(0, 8)
+    .map(([name, v]) => `  ${name}: ${v.lastMs.toFixed(0)} ms`);
+  const split = tCentered ? ` (terrain ${(tCentered - t0).toFixed(0)} ms, décor ${(t1 - tCentered).toFixed(0)} ms)` : '';
+  mountStats.textContent = `Montage : ${(t1 - t0).toFixed(0)} ms${split} — ${mode}\n${layers.join('\n')}`;
+  console.info(`[worldpaint demo] montage ${(t1 - t0).toFixed(0)} ms — ${mode}`, world.generationStats);
+  world.setProfiling(profileToggle.checked);
+}
+
 async function boot() {
   setBusy(true);
   setStatus('Chargement des tuiles…');
@@ -167,13 +218,13 @@ async function boot() {
     scene,
     vector,
     sky: { Sky },
+    ...(REACH_M !== null ? { reach: REACH_M } : {}),
   });
 
   if (showcaseToggle.checked) world.setRegionWord(showcaseFieldSelect.value, showcaseWordSelect.value);
 
   setStatus(`Centrage sur ${START.label}…`);
-  await world.setCenter(START.lng, START.lat);
-  await world.refresh(START.lng, START.lat, { force: true });
+  await mountScene(START.lng, START.lat);
 
   const local = world.frame.toLocal(START.lng, START.lat);
   const ground = sampleGroundHeight(local.x, local.z) ?? 0;
@@ -395,7 +446,7 @@ function updateMovement(delta) {
 // Appelé à intervalle régulier : c'est le moteur qui décide s'il y a quelque
 // chose à refaire (pas de l'observateur, données nouvelles), pas la démo.
 async function recenterIfNeeded() {
-  if (recentering || !world || !world.frame) return;
+  if (recentering || !world || !world.frame || REACH_M !== null) return;
 
   recentering = true;
   try {
@@ -971,8 +1022,7 @@ async function goToSearch() {
     const place = await geocode(query);
     setStatus(`Déplacement vers ${place.label.split(',')[0]}…`);
 
-    await world.setCenter(place.lng, place.lat);
-    await world.refresh(place.lng, place.lat, { force: true });
+    await mountScene(place.lng, place.lat);
 
     const local = world.frame.toLocal(place.lng, place.lat);
     const ground = sampleGroundHeight(local.x, local.z) ?? 0;

@@ -551,13 +551,18 @@ export class World {
    * Monte le décor d'une scène fixe, en un appel : centre la bulle puis refait
    * tout, d'office. Pas de recentrage ensuite — le décor ne suit personne. À
    * associer à `reach` pour ne bâtir que ce qui est proche (départ, arrivée,
-   * rejeu d'un évènement). Les files de terrain se vident ensuite dans `update`.
+   * rejeu d'un évènement). Mailles et semis sont achevés quand la promesse se
+   * résout : la première image est complète.
    *
+   * @param {number} lng
+   * @param {number} lat
+   * @param {Object} [options]
+   * @param {number} [options.budgetMs] Temps CPU entre deux pauses (100 ms par
+   *        défaut) ; `Infinity` monte sans rendre la main.
    * @returns {Promise<boolean>} vrai si le décor a été bâti.
    */
-  async mountAt(lng, lat) {
-    await this.composer.setCenter(lng, lat);
-    return this.composer.refresh(lng, lat, { force: true });
+  mountAt(lng, lat, options) {
+    return this.composer.mountAt(lng, lat, options);
   }
 
   /**

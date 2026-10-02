@@ -199,7 +199,13 @@ export class ElevationField {
 
     const tx = Math.floor(wrappedX / size);
     const ty = Math.floor(gy / size);
-    const tile = this.tiles.get(tileKey(this.zoom, tx, ty));
+    // Quatre pixels par altitude, presque toujours dans la même tuile : la
+    // clé texte et la `Map` coûtaient plus que l'interpolation.
+    let last = this._last;
+    if (!last || last.tx !== tx || last.ty !== ty || last.revision !== this.revision) {
+      last = this._last = { tx, ty, revision: this.revision, tile: this.tiles.get(tileKey(this.zoom, tx, ty)) };
+    }
+    const tile = last.tile;
     if (!tile) return null;
 
     return tile[(gy - ty * size) * size + (wrappedX - tx * size)];
@@ -207,6 +213,7 @@ export class ElevationField {
 
   dispose() {
     this.disposed = true;
+    this._last = null;
     this.tiles.clear();
     this.pending.clear();
   }

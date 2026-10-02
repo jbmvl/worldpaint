@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Banc du montage</title>
+<style>html,body{margin:0;background:#000}canvas{display:block}</style>
+<script src="/node_modules/suncalc/suncalc.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "/node_modules/three/build/three.module.js",
+  "three/examples/jsm/objects/Sky.js": "/node_modules/three/examples/jsm/objects/Sky.js",
+  "suncalc": "/demo/lab/suncalc-global.js",
+  "pbf": "/node_modules/pbf/index.js",
+  "@mapbox/vector-tile": "/node_modules/@mapbox/vector-tile/index.js",
+  "@mapbox/point-geometry": "/node_modules/@mapbox/point-geometry/index.js"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+/*
+ * Banc du montage — chronomètre une scène figée (`createWorld({ reach })` +
+ * `mountAt`) sur un lieu enregistré, de la création du monde à la première
+ * image complète. Les tuiles viennent du disque : le temps réseau n'y est pas.
+ *
+ *   await mountLab.run({ reach: 120, lieu: 'station-montreuil-bellay' })
+ *   await mountLab.run({ reach: null })   // la bulle complète, pour comparer
+ *
+ * Rend les temps par phase (création, `mountAt`, files vidées image par image,
+ * premier rendu), les couches les plus lentes, et ce qui a été bâti.
+ */
+import * as THREE from 'three';
+import { Sky } from 'three/examples/jsm/objects/Sky.js';
+import { createWorld } from '/src/index.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 20000);
+
+let current = null;
+
+async function run({ reach = 120, lieu = 'station-montreuil-bellay', lng = null, lat = null, yawDeg = 225, pitchDeg = 12, distance = 40, budgetMs } = {}) {
+  current?.world.dispose();
+  current = null;
+  const base = `/demo/lab/places/${lieu}`;
+  const place = await (await fetch(`${base}/place.json`)).json();
+  const at = { lng: lng ?? place.lng, lat: lat ?? place.lat };
+
+  const scene = new THREE.Scene();
+  const t0 = performance.now();
+  const world = createWorld({
+    THREE,
+    scene,
+    elevation: { zoom: place.zoom, url: `${base}/dem/{z}/{x}/{y}.${place.elevation.extension}`, encoding: place.elevation.encoding },
+    vector: place.vector ? { tiles: [`${location.origin}${base}/vector/{z}/{x}/{y}.pbf`], maxZoom: place.vector.maxZoom } : null,
+    sky: { Sky },
+    ...(reach ? { reach } : {}),
+  });
+  world.setProfiling(true);
+  const t1 = performance.now();
+  await world.mountAt(at.lng, at.lat, { budgetMs });
+  const t2 = performance.now();
+
+  // Les files (semis des arbres, mailles de terrain) se vident image par image.
+  const c = world.composer;
+  const busy = () => c.vegetation.pending || c.bubble._rebuildQueue.length > 0 || c.bubble._pendingBuild;
+  let frames = 0;
+  while (busy() && frames < 2000) {
+    world.advance(1 / 60, { x: 0, y: 0, z: 0 });
+    frames++;
+  }
+  const t3 = performance.now();
+
+  const x = 0, z = 0;
+  const y = c.groundElevationAt(x, z) ?? 0;
+  const yaw = (yawDeg * Math.PI) / 180, pitch = (pitchDeg * Math.PI) / 180;
+  camera.position.set(x - Math.sin(yaw) * Math.cos(pitch) * distance, y + 1.7 + Math.sin(pitch) * distance, z + Math.cos(yaw) * Math.cos(pitch) * distance);
+  camera.lookAt(x, y + 1.7, z);
+  const date = new Date(Date.UTC(2026, 5, 21, 15 - Math.round(at.lng / 15), 0));
+  const paint = world.updateSky({ camera, date, lng: at.lng, lat: at.lat, shadowAt: { x, y, z } });
+  if (paint) renderer.setClearColor(paint.clearColor, 1);
+  world.advance(0, { x, y, z });
+  renderer.render(scene, camera);
+  renderer.getContext().finish();
+  const t4 = performance.now();
+  renderer.render(scene, camera);
+  renderer.getContext().finish();
+  const t5 = performance.now();
+
+  current = { world, scene };
+  const layers = Object.entries(world.generationStats)
+    .filter(([name]) => !name.endsWith('Etape'))
+    .sort((a, b) => b[1].lastMs - a[1].lastMs)
+    .slice(0, 10)
+    .map(([name, v]) => `${name} ${Math.round(v.lastMs)}`);
+  let meshes = 0, triangles = 0;
+  scene.traverse((o) => {
+    if (!o.isMesh || !o.visible) return;
+    meshes++;
+    const g = o.geometry;
+    const n = g.index ? g.index.count : g.attributes.position?.count ?? 0;
+    triangles += (n / 3) * (o.isInstancedMesh ? o.count : 1);
+  });
+  return {
+    lieu, reach,
+    createMs: Math.round(t1 - t0),
+    mountMs: Math.round(t2 - t1),
+    queuesMs: Math.round(t3 - t2), frames,
+    firstRenderMs: Math.round(t4 - t3),
+    renderMs: Math.round(t5 - t4),
+    totalMs: Math.round(t4 - t0),
+    terrainTiles: c.bubble.tiles.size,
+    vectorTiles: c._lastWanted?.length ?? null,
+    meshes, triangles: Math.round(triangles),
+    calls: renderer.info.render.calls,
+    layers,
+  };
+}
+
+window.mountLab = { run };
+window.mountLabReady = true;
+</script>
+</body>
+</html>

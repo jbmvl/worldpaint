@@ -1,6 +1,6 @@
 import { collectCrossingRails } from './layers/transportCrossings.js';
 import { GenerationBudget } from './core/generationBudget.js';
-import { DECOR_STEP_M } from './core/decorReach.js';
+import { DECOR_STEP_M, REACH_MARGIN, REACH_MARGIN_M } from './core/decorReach.js';
 import { PlantSupportAtlas } from './terrain/plantSupportAtlas.js';
 import { GenerationMetrics } from './inspect/generationMetrics.js';
 /*
@@ -102,9 +102,12 @@ export const WORLD_ATTRIBUTION =
 
 export { FAUNA_CROSS_AHEAD_M } from './layers/faunaCrossing.js';
 
-/** Marge des tuiles chargées autour de la portée : facteur, puis mètres. */
-const REACH_TILE_MARGIN = 1.25;
-const REACH_TILE_MARGIN_M = 60;
+/**
+ * Temps CPU entre deux pauses du montage d'une scène figée. Assez long pour que
+ * les pauses (une image chacune) ne coûtent plus rien, assez court pour qu'un
+ * indicateur de chargement reste animé.
+ */
+const MOUNT_BUDGET_MS = 100;
 
 /** Temps CPU d'herbe semée par image : la passe s'étale sur les suivantes. */
 const GRASS_SCATTER_BUDGET_MS = 3;
@@ -184,7 +187,7 @@ export class WorldComposer {
     this._wetness = null;
 
     // La carte de classes précède la bulle : les matériaux de terrain la reçoivent à leur construction.
-    this.groundClass = new GroundClassMap({ THREE, theme });
+    this.groundClass = new GroundClassMap({ THREE, theme, reach });
 
     this.bubble = new TerrainBubble({
       THREE,
@@ -408,6 +411,25 @@ export class WorldComposer {
   }
 
   /**
+   * Monte une scène figée d'un trait : bulle, décor, puis les files (mailles,
+   * semis) vidées avant de rendre la main. Les mailles ne se construisent
+   * qu'une fois, après le déblai des chaussées.
+   *
+   * @param {Object} [options]
+   * @param {number} [options.budgetMs] Temps CPU entre deux pauses ; une
+   *        scène qu'on n'affiche qu'une fois prête n'a pas à en faire.
+   * @returns {Promise<boolean>} vrai si le décor a été bâti.
+   */
+  async mountAt(lng, lat, { budgetMs = MOUNT_BUDGET_MS } = {}) {
+    if (this._refreshTask) await this._refreshTask;
+    await this.bubble.setCenter(lng, lat, { meshes: false, budgetMs });
+    const built = await this.refresh(lng, lat, { force: true, budgetMs });
+    while (this.bubble.processRebuildQueue(Infinity));
+    while (this.vegetation.pending) this.vegetation.processQueue(Infinity);
+    return built;
+  }
+
+  /**
    * Refait le décor autour d'un point si quelque chose l'exige.
    *
    * @param {number} lng
@@ -434,10 +456,12 @@ export class WorldComposer {
     }
   }
 
-  async _refresh(lng, lat, { force = false } = {}) {
+  async _refresh(lng, lat, { force = false, budgetMs } = {}) {
     if (this.disposed || this._refreshing || !this.vectorTiles || !this.bubble.frame) return false;
 
     const here = this.bubble.frame.toLocal(lng, lat);
+    // Les arbres se sèment à part (file par tuile) : ils doivent connaître la portée avant `sync`.
+    this.vegetation?.setReach?.(Number.isFinite(this.bubble.reachMeters) ? here : null, this.bubble.reachMeters);
     // Le profil se prend avant tout le reste, et même quand rien n'est périmé :
     // il ne coûte qu'une lecture de tableau et cinq altitudes, et ce qui le lit
     // le lit à la construction de son propre contenu.
@@ -488,7 +512,7 @@ export class WorldComposer {
       if (this.disposed || this.bubble.disposed) return false;
       this._incompleteRefresh = true;
       this._building = true;
-      const budget = new GenerationBudget();
+      const budget = new GenerationBudget(budgetMs ? { milliseconds: budgetMs } : undefined);
       const frame = this.bubble.frame;
       const checkpoint = async () => {
         await budget.checkpoint();
@@ -561,7 +585,7 @@ export class WorldComposer {
 
       // L'herbe lit les triangles affichés : leur correction doit être terminée
       // avant toute pose. Chaque étape garde le budget du terrain.
-      while (this.bubble.processRebuildQueue()) {
+      while (this.bubble.processRebuildQueue(budgetMs)) {
         if (!await checkpoint()) return false;
       }
 
@@ -754,7 +778,7 @@ export class WorldComposer {
     if (!tiles.length) return tiles;
     const zoom = tiles[0].z;
     const here = lngLatToTile(lng, lat, zoom);
-    const span = this.bubble.reachMeters * REACH_TILE_MARGIN + REACH_TILE_MARGIN_M;
+    const span = this.bubble.reachMeters * REACH_MARGIN + REACH_MARGIN_M;
     const r = span / tileSizeMeters(zoom, lat);
     const kept = tiles.filter((t) => {
       const dx = Math.min(Math.abs(here.x - t.x), Math.abs(here.x - (t.x + 1)));

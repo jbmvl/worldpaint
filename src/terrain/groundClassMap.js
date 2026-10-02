@@ -92,6 +92,7 @@
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { finishGeneration } from '../core/generationSteps.js';
+import { REACH_MARGIN, REACH_MARGIN_M } from '../core/decorReach.js';
 import {
   cropFor,
   cropId,
@@ -495,6 +496,32 @@ export function* drawSurfaceContoursSteps(data, pixels = CLASS_PIXELS) {
   }
 }
 
+/**
+ * Texel d'un fond muet, tel que réparation et contour le rendent : ce que
+ * porte la carte hors de la fenêtre relue. Rendu par les mêmes passes sur un
+ * carré minuscule, jamais recopié à la main.
+ */
+function silentTexel() {
+  const side = 4;
+  const data = new Uint8ClampedArray(side * side * 4);
+  const fill = [0, 0, surfaceSignature(0), 255];
+  for (let p = 0; p < side * side; p++) data.set(fill, p * 4);
+  finishGeneration(repairSurfaceEdgesSteps(data, side));
+  finishGeneration(drawSurfaceContoursSteps(data, side));
+  return data.slice(0, 4);
+}
+
+/** La carte entière : la fenêtre relue à sa place, le fond muet autour. */
+function embedWindow(window, x, y, size) {
+  const data = new Uint8ClampedArray(CLASS_PIXELS * CLASS_PIXELS * 4);
+  const background = new Uint32Array(silentTexel().buffer)[0];
+  new Uint32Array(data.buffer).fill(background);
+  for (let row = 0; row < size; row++) {
+    data.set(window.subarray(row * size * 4, (row + 1) * size * 4), ((y + row) * CLASS_PIXELS + x) * 4);
+  }
+  return data;
+}
+
 function createCanvas(width, height) {
   if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(width, height);
   return Object.assign(document.createElement('canvas'), { width, height });
@@ -507,10 +534,16 @@ export class GroundClassMap {
    * @param {Object} [options.theme] Fournit `theme.water.waterways` (largeur
    *        des cours d'eau) et `theme.water.riparianBufferM` (largeur de la
    *        ripisylve) — voir `rebuild`.
+   * @param {number} [options.reach] Portée du décor, en mètres : seule une
+   *        fenêtre de la carte autour d'elle est relue et contournée, le reste
+   *        garde la matière muette. Le pas du texel ne change pas.
    */
-  constructor({ THREE, theme = defaultTheme }) {
+  constructor({ THREE, theme = defaultTheme, reach = Infinity }) {
     this.THREE = THREE;
     this.theme = theme;
+    this._windowM = Number.isFinite(reach) && reach > 0 ? reach * REACH_MARGIN + REACH_MARGIN_M : null;
+    /** Carré relu, en texels `{ x, y, size }` : toute la carte sans portée. */
+    this._window = { x: 0, y: 0, size: CLASS_PIXELS };
     /**
      * Dossier de région du lieu, ou `null`. La carte des cultures est le seul
      * endroit où une culture est tirée (voir `cropFor`), donc c'est ici que le
@@ -848,8 +881,11 @@ export class GroundClassMap {
 
     if (elevationAt) {
       const cellPx = PLANTED_CEILING_CELL_M * perMeter;
-      for (let cz = 0; cz < CLASS_AREA_M; cz += PLANTED_CEILING_CELL_M) {
-        for (let cx = 0; cx < CLASS_AREA_M; cx += PLANTED_CEILING_CELL_M) {
+      const { x, y, size } = this._window;
+      const from = (texel) => Math.floor(texel / perMeter / PLANTED_CEILING_CELL_M) * PLANTED_CEILING_CELL_M;
+      const to = (texel) => Math.min(CLASS_AREA_M, (texel + size) / perMeter);
+      for (let cz = from(y); cz < to(y); cz += PLANTED_CEILING_CELL_M) {
+        for (let cx = from(x); cx < to(x); cx += PLANTED_CEILING_CELL_M) {
           const h = elevationAt(originX + cx + PLANTED_CEILING_CELL_M / 2, originZ + cz + PLANTED_CEILING_CELL_M / 2);
           if (Number.isFinite(h) && h >= PLANTED_CEILING_M) ctx.fillRect(cx * perMeter, cz * perMeter, cellPx, cellPx);
         }
@@ -920,6 +956,7 @@ export class GroundClassMap {
     const originX = Math.round((here.x - half) * perMeter) / perMeter;
     const originZ = Math.round((here.z - half) * perMeter) / perMeter;
     const { origin, scale, zoom } = frame;
+    this._window = this._windowAround((here.x - originX) * perMeter, (here.z - originZ) * perMeter, perMeter);
 
     // Le fond est **peint**, pas effacé : identifiant zéro, alpha plein. Un
     // canevas transparent ferait porter aux pixels de bord d'un tracé un alpha
@@ -1196,19 +1233,30 @@ export class GroundClassMap {
    * et les deux sont le même tableau.
    */
   *readBackSteps() {
+    const { x, y, size } = this._window;
     let image = null;
     try {
-      image = this.ctx.getImageData(0, 0, CLASS_PIXELS, CLASS_PIXELS);
+      image = this.ctx.getImageData(x, y, size, size);
     } catch (e) {
       console.warn('[groundClassMap] relecture impossible', e?.message || e);
     }
     yield;
-    this.repaired = image ? yield* repairSurfaceEdgesSteps(image.data) : 0;
+    this.repaired = image ? yield* repairSurfaceEdgesSteps(image.data, size) : 0;
+    let data = image?.data ?? null;
     if (image) {
-      yield* drawSurfaceContoursSteps(image.data);
-      this.texture.image.data = new Uint8Array(image.data.buffer);
+      yield* drawSurfaceContoursSteps(image.data, size);
+      if (size < CLASS_PIXELS) data = embedWindow(image.data, x, y, size);
+      this.texture.image.data = new Uint8Array(data.buffer);
     }
-    this._data = image?.data ?? null;
+    this._data = data;
+  }
+
+  /** Fenêtre carrée relue autour d'un texel, toute la carte sans portée. */
+  _windowAround(px, pz, perMeter) {
+    if (this._windowM === null) return { x: 0, y: 0, size: CLASS_PIXELS };
+    const size = Math.min(CLASS_PIXELS, 2 * Math.ceil(this._windowM * perMeter) + 2);
+    const clamp = (v) => Math.max(0, Math.min(CLASS_PIXELS - size, Math.round(v - size / 2)));
+    return { x: clamp(px), y: clamp(pz), size };
   }
 
   dispose() {

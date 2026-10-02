@@ -46,6 +46,12 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   plat ; `roundaboutLab.set({ radius, branches, splitDeg, splitLength, axes,
   view, span })`, ou `node scripts/roundabout-shot.mjs`.
 
+- `demo/lab/mount.html` — chronomètre une scène figée (`createWorld({ reach })`
+  + `mountAt`) sur un lieu enregistré, de la création à la première image ;
+  `await mountLab.run({ reach, lieu, budgetMs })` rend les temps par phase,
+  les couches les plus lentes et ce qui a été bâti (`reach: null` : la bulle
+  complète, pour comparer).
+
 - `demo/lab/contours.html` — les limites entre matières : la vraie
   `GroundClassMap` et le vrai matériau de terrain sur un sol plat, avec un
   champ à bord de pente faible, une parcelle à angles vifs, un étang, un bois

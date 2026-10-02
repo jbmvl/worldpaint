@@ -665,6 +665,38 @@ export class VegetationLayer {
   }
 
   /**
+   * Limite le semis au disque `{ x, z, radius }` (mètres locaux) : une scène
+   * figée n'a pas besoin des arbres de toute la bulle. `null` lève la limite.
+   * Les cellules gardées sont celles qu'on aurait semées de toute façon — le
+   * tirage ne dépend que de leur position.
+   */
+  setReach(center, radius) {
+    this._reach = center && Number.isFinite(radius)
+      ? { x: center.x, z: center.z, radius }
+      : null;
+  }
+
+  /** Vrai si la cellule, ou la tuile, est hors de la portée posée par `setReach`. */
+  _beyondReach(minX, minZ, size) {
+    const reach = this._reach;
+    if (!reach) return false;
+    const dx = Math.max(minX - reach.x, 0, reach.x - (minX + size));
+    const dz = Math.max(minZ - reach.z, 0, reach.z - (minZ + size));
+    return Math.hypot(dx, dz) > reach.radius;
+  }
+
+  /** Tuile hors portée : rien à y semer. */
+  _tileBeyondReach(tile) {
+    if (!this._reach) return false;
+    const frame = this.bubble.frame;
+    return this._beyondReach(
+      (tile.x - frame.origin.x) * frame.scale,
+      (tile.y - frame.origin.y) * frame.scale,
+      frame.scale
+    );
+  }
+
+  /**
    * Accorde le peuplement sur l'état de la bulle : met en file les tuiles
    * proches pas encore semées et celles qui en savent maintenant plus qu'en
    * semant, retire celles qui sont sorties. Idempotent, et assez bon marché
@@ -681,7 +713,7 @@ export class VegetationLayer {
     for (const key of [...this._planted]) {
       const tile = this.bubble.tiles.get(key);
       // Sortie de bulle, anneau devenu trop lointain, ou replantation forcée.
-      if (replant || !tile || tile.ring > this.maxRing) {
+      if (replant || !tile || tile.ring > this.maxRing || this._tileBeyondReach(tile)) {
         this.remove(key);
         continue;
       }
@@ -699,7 +731,7 @@ export class VegetationLayer {
 
     this.queue.length = 0;
     for (const tile of this.bubble.tiles.values()) {
-      if (tile.ring > this.maxRing) continue;
+      if (tile.ring > this.maxRing || this._tileBeyondReach(tile)) continue;
       if (!this._planted.has(tile.key) || this._stale.has(tile.key)) this.queue.push(tile.key);
     }
   }
@@ -823,6 +855,7 @@ export class VegetationLayer {
         const cellZ = originZ + cy * cellSize;
         const centreX = cellX + cellSize * 0.5;
         const centreZ = cellZ + cellSize * 0.5;
+        if (this._beyondReach(cellX, cellZ, cellSize)) continue;
 
         const type = standTypeFrom(pool, centreX, centreZ);
         const stems = woodDensity(groundClass.woodAt(centreX, centreZ)) * standTreesPerCell(type);
@@ -1021,6 +1054,7 @@ export class VegetationLayer {
         const cellZ = originZ + cy * cellSize;
         const centreX = cellX + cellSize * 0.5;
         const centreZ = cellZ + cellSize * 0.5;
+        if (this._beyondReach(cellX, cellZ, cellSize)) continue;
 
         const type = standTypeFrom(pool, centreX, centreZ);
         const stems = woodDensity(groundClass.woodAt(centreX, centreZ)) *

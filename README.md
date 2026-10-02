@@ -281,10 +281,20 @@ world.setVector({ tiles, maxZoom: 14 });
 await world.mountAt(lng, lat);
 ```
 
-Without `reach`, behaviour is unchanged. The terrain mesh and the elevation tiles
-are still those of the bubble (`view.blockSize`, `view.zoom`); only the generated
-decor, the vector tiles and the fog shrink. Grass and crops are scattered around
-the camera each frame and are not capped yet: the fog hides them.
+Without `reach`, behaviour is unchanged. With it, the terrain keeps only the
+bubble tiles that touch the reach, and is carved for roads only inside it; the
+ground map is read back only around it; trees are sown only within it. The
+terrain is meshed once, after the roads have carved it, and the returned promise
+resolves on a complete scene: tiles meshed, trees sown. `mountAt(lng, lat,
+{ budgetMs })` yields to the browser every `budgetMs` (100 ms by default;
+`Infinity` never yields). Grass and crops are still scattered around the camera
+each frame; the fog hides what lies beyond.
+
+On a recorded place (`demo/lab/mount.html`), a 120 m scene takes about half a
+second from `createWorld` to the first frame in headless Chrome, against four
+seconds for the full bubble. Shader compilation, on the first render, is a large
+share of that: an application that knows it will mount a scene can warm it with
+`renderer.compileAsync`.
 
 ### Art direction
 

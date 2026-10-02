@@ -16,6 +16,10 @@ export const DECOR_STEP_M = 250;
 /** Portée minimale du détail de chaque couche (marge de 50 m pour l'observateur qui avance pendant la relève). */
 export const DECOR_STABLE_RADIUS_M = NEAR_M + DECOR_STEP_M + 50;
 
+/** Marge du terrain, des tuiles vectorielles et du sol autour de la portée : facteur, puis mètres. */
+export const REACH_MARGIN = 1.25;
+export const REACH_MARGIN_M = 60;
+
 /**
  * Rayon d'une couche, plafonné à la portée du décor (`createWorld({ reach })`).
  * Sans portée, ou face à une bulle qui n'en déclare pas, le rayon propre de
