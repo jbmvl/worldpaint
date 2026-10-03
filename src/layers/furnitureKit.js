@@ -40,6 +40,10 @@ const DEFAULT_COLORS = defaultTheme.furniture.colors;
  */
 export const WIND_TURBINE_HUB_M = 78;
 
+/** Hauteur de la tour du phare, et du cœur de sa lanterne — où `lighthouseLight` accroche le feu. */
+const LIGHTHOUSE_TOWER_M = 20;
+export const LIGHTHOUSE_LANTERN_M = LIGHTHOUSE_TOWER_M + 1.55;
+
 /**
  * Gabarit authentique de la serre — la longueur que porte la géométrie avant
  * mise à l'échelle. `furniture/parcels.js` étire l'instance jusqu'à
@@ -431,7 +435,7 @@ export const FURNITURE_BUILDERS = {
    */
   lighthouse(C = DEFAULT_COLORS) {
     const k = new Kit(C);
-    const height = 20;
+    const height = LIGHTHOUSE_TOWER_M;
     k.cylinder({ radiusBottom: 2.3, radiusTop: 1.7, height, radial: 10, color: C.white });
     k.cylinder({
       radiusBottom: 2.06,

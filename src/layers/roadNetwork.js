@@ -216,16 +216,27 @@ export function junctionSurfaces(roads = defaultTheme.roads) {
  * découpée par les carrefours sans règle supplémentaire. D'où une troisième
  * matière, sans texture : celle de la peinture.
  */
+/** Paliers de décalage de profondeur entre revêtements, et leur pas (voir `createRoadMaterials`). */
+const PAVED_LIFT_STEPS = 7;
+const PAVED_LIFT_STEP = 0.25;
+
 export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
   const entries = {};
   const junctions = {};
   // Chaussée et terrain quasi coplanaires : sans décalage de profondeur, la
   // route clignote. Un chemin en prend un plus faible : il gagne contre le
   // terrain, mais perd contre la chaussée revêtue, sous laquelle il passe.
-  const depthOffset = (spec) =>
-    isPaved(spec)
-      ? { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }
-      : { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 };
+  // Entre revêtements, le décalage croît avec le rang, et la dalle de
+  // carrefour les domine tous : deux rubans qui se recouvrent à plat ne se
+  // disputent plus les pixels, le plus large l'emporte. Le marquage (-4)
+  // reste au-dessus de tous.
+  const pavedOffset = (lift) => ({ polygonOffset: true, polygonOffsetFactor: -2 - lift, polygonOffsetUnits: -4 - 2 * lift });
+  const depthOffset = (spec, key = null) => {
+    if (!isPaved(spec)) return { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 };
+    if (key == null) return pavedOffset(PAVED_LIFT_STEPS * PAVED_LIFT_STEP);
+    const rank = ROAD_PROFILE_ORDER.indexOf(key);
+    return pavedOffset(rank < 0 ? 0 : Math.max(0, PAVED_LIFT_STEPS - 1 - rank) * PAVED_LIFT_STEP);
+  };
 
   for (const surface of junctionSurfaces(roads)) {
     const texture = new THREE.CanvasTexture(
@@ -248,7 +259,7 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
     texture.wrapS = THREE.ClampToEdgeWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     texture.anisotropy = 8;
-    const material = new THREE.MeshLambertMaterial({ map: texture, ...depthOffset(profile) });
+    const material = new THREE.MeshLambertMaterial({ map: texture, ...depthOffset(profile, key) });
     material.name = `road-${key}`;
     // Un escalier a des contremarches verticales : vues de dos (en descendant
     // une pente qui monte derrière soi), une face simple les rendrait invisibles.

@@ -93,8 +93,19 @@ test('raffiner les triangles ne change pas la surface du raccord',()=>{
 });
 
 
-test('un contour avec un sommet répété est invalide, sans éventail de secours',()=>{
+test('un contour avec un sommet répété perd sa boucle repliée, sans éventail de secours',()=>{
   const area={x:1,z:1,outline:[[0,0],[4,0],[4,4],[0,4],[4,0]].map(([x,z])=>({x,z}))};
-  assert.equal(junctionTriangles(area).valid,false);
-  assert.equal(junctionTriangles(area).triangles.length,0);
+  const { valid, triangles }=junctionTriangles(area);
+  assert.equal(valid,true);
+  assert.deepEqual(triangles.flat().sort(),[2,3,4],'la boucle (4,0) (4,4) (0,4) seule');
+  assert.ok(triangles.every(t=>!t.includes(0)),'aucun triangle ne part du nœud');
+});
+
+test('un contour qui se recoupe garde sa plus grande boucle',()=>{
+  // Un carré dont un coin replie une petite oreille par-dessus son bord.
+  const area={x:5,z:5,outline:[[0,0],[10,0],[10,10],[4,10],[6,11],[5,9],[0,10]].map(([x,z])=>({x,z}))};
+  const { valid, triangles, vertices }=junctionTriangles(area);
+  assert.equal(valid,true);
+  const surface=triangles.reduce((sum,[a,b,c])=>sum+Math.abs((vertices[b].x-vertices[a].x)*(vertices[c].z-vertices[a].z)-(vertices[b].z-vertices[a].z)*(vertices[c].x-vertices[a].x))/2,0);
+  assert.ok(surface>90 && surface<=101,`surface ${surface}`);
 });

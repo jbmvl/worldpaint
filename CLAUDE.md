@@ -14,7 +14,8 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
 - `demo/lab/sky.html` — ciel, soleil et brouillard seuls sur un sol plat semé
   de blocs ; `skyLab.set({ sunDeg, lookDeg, pitchDeg, weather })` dans la
   console, ou `node scripts/sky-shot.mjs <dossier> '<réglages JSON>'` pour une
-  image par réglage.
+  image par réglage. `birds: 'corvid' | 'raptor' | 'gull'` y fait voler une
+  espèce de `LifeLayer`, à l'instant `time`.
 - `demo/lab/roads.html` — chaussées, ponts, carrefours et falaises construits
   par les vraies couches sur un relief et des tuiles synthétiques : pont relevé
   avec un T et un X sur son remblai, pont dont la branche est plus large,
@@ -39,6 +40,7 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
 - `demo/lab/furniture.html` — des formes du catalogue de mobilier côte à côte,
   à côté d'un gabarit humain de 1,75 m ; `furnitureLab.set({ kinds, yawDeg,
   pitchDeg, distance, target, stone })`, ou `node scripts/furniture-shot.mjs`.
+  `night` et `beamDeg` y allument le feu d'un `lighthouse` et l'orientent.
 - `demo/lab/roundabout.html` — un giratoire synthétique (anneau à sens unique,
   branches simples ou dédoublées) passé tel quel dans `RoadNetwork` sur un sol
   plat ; `roundaboutLab.set({ radius, branches, splitDeg, splitLength, axes,

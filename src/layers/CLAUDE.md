@@ -32,6 +32,8 @@ son état.
 | `vergeStrips.js` | la bande entre une chaussée et sa haie de bas-côté : publiée par le mobilier, le champ n'y pousse pas |
 | `furnitureLayer.js` + `furniture/` | tout le mobilier — voir ci-dessous |
 | `faunaLayer.js`, `faunaMotion.js`, `faunaCrossing.js`, `lifeLayer.js`, `tractorLayer.js`, `trainLayer.js` | ce qui bouge |
+| `lighthouseLight.js` | le feu d'un phare : halo et faisceaux tournants, alimentés et avancés par `furnitureLayer` |
+| `coast.js` | la distance à la mer (nappes `ocean`) — c'est elle qui met des mouettes dans le ciel |
 | `settlement.js` | l'habitat : emprises habitées, lieux nommés, `UrbanMask`, `FabricIndex` |
 
 ## Le mobilier

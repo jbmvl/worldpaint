@@ -49,6 +49,7 @@ import {
   cutElevationAt,
   cutBenchAt,
   roadCutMaskAt,
+  ROAD_CUT_M,
   ROAD_CUT_BLEND_M,
   ROAD_CUT_MAX_RING,
 } from './roadCut.js';
@@ -504,10 +505,9 @@ export class TerrainBubble {
   /**
    * Creuse le déblai d'une chaussée. Profil dans `cutElevationAt`, pur et testé.
    *
-   * Deux choses peuvent être dessinées au même endroit — le ruban d'un tronçon
-   * et la dalle d'un carrefour, qui déborde des rubans qui l'alimentent. Le
-   * terrain doit passer sous les deux, donc on retient la plus basse des deux
-   * entailles plutôt que de s'arrêter à la première trouvée.
+   * Plusieurs chaussées et dalles peuvent porter sur un même sommet. Le
+   * terrain doit passer sous toutes, donc on retient la plus basse des
+   * entailles à portée plutôt que de s'arrêter à la plus proche.
    */
   _roadCutAt(x, z, raw) {
     return this._roadCutWithMask(x, z, raw).elevation;
@@ -539,27 +539,45 @@ export class TerrainBubble {
     let elevation = raw;
     let mask = earth.mask;
 
-    const hit = index.query(x, z, reach);
-    const deck = hit && index.deckAt(hit);
-    if (deck != null) {
-      elevation = cutElevationAt(raw, deck / scale, hit.distance, hit.segment.halfWidth, bench);
+    // Toutes les chaussées à portée, pas la plus proche : en ville, le sommet
+    // le plus proche d'une rue tombe souvent dans le fond plat de sa voisine,
+    // plus basse, et la corde du terrain passait par-dessus celle-ci. Un
+    // sommet dans l'emprise d'une chaussée (`ROAD_CUT_M`) ou dans une dalle
+    // ne descend pourtant pas sous elle — sa bordure y est posée : il ne
+    // retient que ce qui le recouvre.
+    // La dalle n'a pas de demi-largeur : son fond plat se mesure depuis son
+    // contour, à sa cote la plus basse sur une diagonale de maille (`bench`),
+    // sans quoi la corde du terrain passe au-dessus de ses plis.
+    const slab = this._junctions?.deckNear(x, z, reach, undefined, bench);
+    const hits = index.queryAll(x, z, reach);
+    const within = (hit) => hit.distance <= hit.segment.halfWidth + ROAD_CUT_M;
+    const inSlab = slab?.distance === 0;
+    let under = inSlab;
+    for (const hit of hits) {
+      if (within(hit) && index.deckAt(hit) != null) under = true;
+    }
+    const cuts = [];
+    for (const hit of hits) {
+      if (under && !within(hit)) continue;
+      const deck = index.deckAt(hit);
+      if (deck == null) continue;
+      const base = hit.segment.crossingBase;
+      const lowered = !!base && deck < base[hit.row] + (base[Math.min(base.length - 1, hit.row + 1)] - base[hit.row]) * hit.t - 0.001;
+      cuts.push({ deck: deck / scale, distance: hit.distance, halfWidth: hit.segment.halfWidth, lowered });
       mask = Math.max(mask, roadCutMaskAt(hit.distance, hit.segment.halfWidth, bench));
     }
-
-    // Une dalle n'a pas de demi-largeur : son fond plat se mesure depuis son
-    // contour, et le raccord part de là. Le sol doit passer sous les deux
-    // entailles là où elles se recouvrent, donc on retient la plus basse —
-    // et l'emprise la plus large, pour que le grain s'éteigne sur les deux.
-    // La cote est la plus basse de la dalle à une diagonale de maille
-    // (`bench`) : sinon la corde du terrain passe au-dessus de ses plis.
-    const slab = this._junctions?.deckNear(x, z, reach, undefined, bench);
-    if (slab) {
-      const slabElevation = cutElevationAt(raw, slab.deck / scale, slab.distance, 0, bench);
-      if (slabElevation < elevation) elevation = slabElevation;
+    if (slab && (!under || inSlab)) {
+      cuts.push({ deck: slab.deck / scale, distance: slab.distance, halfWidth: 0 });
       mask = Math.max(mask, roadCutMaskAt(slab.distance, 0, bench));
     }
+    const lowest = (ground, keep = () => true) =>
+      cuts.reduce((low, c) => (keep(c) ? Math.min(low, cutElevationAt(ground, c.deck, c.distance, c.halfWidth, bench)) : low), ground);
+    elevation = lowest(elevation);
 
-    if (earth.supported) elevation = Math.max(elevation, earth.elevation);
+    // L'appui qu'un franchissement rend à une chaussée voisine ne remonte pas
+    // le sol par-dessus une chaussée plus basse ; celle qu'il a lui-même
+    // abaissée sous l'ouvrage (`crossingBase`) garde son arbitrage.
+    if (earth.supported) elevation = Math.max(elevation, lowest(earth.elevation, (c) => !c.lowered));
     return { elevation, mask };
   }
 

@@ -44,6 +44,13 @@ export const RIDGE_TREE_CLEARANCE_M = 25;
 
 /** Portée des cailloux et blocs rocheux, en mètres (celle du reste du mobilier). */
 export const ROCK_RADIUS_M = FURNITURE_RADIUS_M;
+/**
+ * Portée, vers l'intérieur des terres, où un phare cherche son point haut, et
+ * pas de cette recherche, en mètres.
+ */
+export const LIGHTHOUSE_CLIMB_M = 120;
+const LIGHTHOUSE_CLIMB_STEP_M = 12;
+
 /** Pas de la grille de semis des pierres, en mètres. */
 export const ROCK_CELL_M = 14;
 
@@ -325,6 +332,9 @@ export function buildPeakLandmarks(layer, context, builtUp) {
  * côté « terre » n'est pas supposé à partir de l'enroulement : il est
  * **mesuré**, en comparant l'altitude de part et d'autre du tracé et en
  * gardant le côté le plus haut.
+ *
+ * Le phare ne reste pas au ras de l'eau : il remonte ce côté-là jusqu'au point
+ * le plus haut à portée (`LIGHTHOUSE_CLIMB_M`), là où son feu porte.
  */
 export function buildCoastalLandmarks(layer, context, builtUp) {
   const { source, tiles, here, placements, sampleElevation } = context;
@@ -374,16 +384,25 @@ export function buildCoastalLandmarks(layer, context, builtUp) {
         const reach = 9;
         const a = sampleElevation(p.x + nx * reach, p.z + nz * reach);
         const b = sampleElevation(p.x - nx * reach, p.z - nz * reach);
-        const land =
-          (Number.isFinite(a) ? a : -Infinity) > (Number.isFinite(b) ? b : -Infinity)
-            ? { x: p.x + nx * reach, z: p.z + nz * reach, h: a }
-            : { x: p.x - nx * reach, z: p.z - nz * reach, h: b };
-        // Le seuil écarte un candidat encore sous l'eau — bruit de tuile ou
-        // presqu'île trop étroite pour porter quoi que ce soit.
-        if (!Number.isFinite(land.h) || land.h < 0.6) continue;
-        if (pointInAreas(builtUp, land.x, land.z)) continue;
+        const side = (Number.isFinite(a) ? a : -Infinity) > (Number.isFinite(b) ? b : -Infinity) ? 1 : -1;
 
-        layer._place(placements, 'lighthouse', { x: land.x, z: land.z, yaw: randomAt(p.x, p.z, 143) * Math.PI * 2 });
+        let site = null;
+        for (let d = reach; d <= LIGHTHOUSE_CLIMB_M; d += LIGHTHOUSE_CLIMB_STEP_M) {
+          const x = p.x + nx * side * d;
+          const z = p.z + nz * side * d;
+          const h = sampleElevation(x, z);
+          // Le seuil écarte un candidat encore sous l'eau — bruit de tuile ou
+          // presqu'île trop étroite pour porter quoi que ce soit — et arrête
+          // la montée à l'eau suivante.
+          if (!Number.isFinite(h) || h < 0.6) break;
+          if (site && h <= site.h) continue;
+          if (pointInAreas(builtUp, x, z) || layer._onRoad(x, z)) continue;
+          site = { x, z, h };
+        }
+        if (!site) continue;
+
+        const entry = layer._place(placements, 'lighthouse', { x: site.x, z: site.z, yaw: randomAt(p.x, p.z, 143) * Math.PI * 2 });
+        if (entry) layer._lighthouses.push(entry);
         placed++;
       }
     }

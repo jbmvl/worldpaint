@@ -1,0 +1,17 @@
+{
+  "name": "nantes",
+  "label": "Nantes",
+  "lng": -1.556,
+  "lat": 47.213,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "encoding": "terrain-rgb",
+    "extension": "webp",
+    "source": "api.maptiler.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  }
+}

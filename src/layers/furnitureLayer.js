@@ -56,6 +56,7 @@ import {
 } from './roadCorridor.js';
 import { CombinedIndex } from './roadGraph.js';
 import { VergeStrips } from './vergeStrips.js';
+import { LighthouseLight } from './lighthouseLight.js';
 import {
   Kit,
   createFurnitureGeometries,
@@ -228,6 +229,9 @@ export class FurnitureLayer {
      * @type {Array<{x:number,y:number,z:number,yaw:number,scale:number}>}
      */
     this._turbines = [];
+    /** Phares de la dernière reconstruction, et leur feu — voir `lighthouseLight`. */
+    this._lighthouses = [];
+    this.lighthouseLight = new LighthouseLight({ THREE, group: this.group, theme });
     this._windDirection = 0;
     this._windForce = 0;
     /** @type {Map<string, Object>} maillage fusionné par matière linéaire. */
@@ -497,6 +501,7 @@ export class FurnitureLayer {
         rows: 0,
       };
       this._lampHeads = [];
+      this._lighthouses = [];
       this._signals = [];
       this.fauna = [];
       this.tractors = [];
@@ -553,6 +558,7 @@ export class FurnitureLayer {
       this.fountains = publishFountains(placements);
       this._applyGlow();
       this._applySignals();
+      this.lighthouseLight.set(this._lighthouses);
       this._applyLabels();
 
       this._anchor = { x: here.x, z: here.z };
@@ -1375,6 +1381,15 @@ export class FurnitureLayer {
   }
 
   /**
+   * Fait tourner le feu des phares. À appeler une fois par image.
+   * @param {number} delta Secondes écoulées.
+   */
+  advanceLighthouses(delta) {
+    if (this.disposed) return;
+    this.lighthouseLight.advance(delta);
+  }
+
+  /**
    * Règle l'éclairage nocturne du mobilier.
    * @param {number} mix 0 en plein jour, 1 en pleine nuit.
    */
@@ -1386,6 +1401,7 @@ export class FurnitureLayer {
     this.signalGlowMaterial.uniforms.uOpacity.value = 0.55 + value * 0.35;
     if (this.glowMesh) this.glowMesh.visible = value > 0.01;
     if (this.poolMesh) this.poolMesh.visible = value > 0.01;
+    this.lighthouseLight.setNight(value);
     for (const light of this.lampLights) light.intensity *= value > 0.01 ? 1 : 0;
   }
 
@@ -1421,6 +1437,8 @@ export class FurnitureLayer {
     this.labelAtlas.dispose();
     this._labelQuads = [];
 
+    this.lighthouseLight.dispose();
+    this._lighthouses = [];
     this.glowGeometry.dispose();
     this.glowMaterial.dispose();
     this.poolGeometry.dispose();

@@ -156,7 +156,9 @@ Breaking one of these needs a very good reason, stated in the PR description.
   (`TerrainBubble.setRoadCut`).
   La triangulation est commune au rendu et aux lectures d’altitude
   (`junctionTriangulation`). Un contour concave non visible depuis le nœud
-  est découpé en oreilles. Les rubans reprennent la cote de cette même surface
+  est découpé en oreilles ; un contour qui se recoupe y perd d'abord sa plus
+  petite boucle, et une couronne de giratoire se tend toujours de l'îlot au bord.
+  Les rubans reprennent la cote de cette même surface
   à leur frontière ; un éventail ne doit pas traverser un creux du contour.
 
 - **A junction interrupts a ribbon, not a road.** Corridor, terrain cut,

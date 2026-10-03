@@ -73,6 +73,8 @@ export const RELIEF_MIN_ROOM_M = 0.5;
  * ruban, pas assez pour enjamber la bordure d'une dalle voisine.
  */
 const ROOM_PROBE_M = 0.25;
+/** Pas de la marche qui cherche une dalle le long de la normale d'une rive. */
+const ROOM_RAY_STEP_M = 0.5;
 /**
  * Où l'on cherche une falaise relevée au-delà de la rive, en mètres : jusqu'à
  * l'arrière d'une falaise de déblai (fond plat et raccord), là où le relief de
@@ -111,6 +113,19 @@ export function measureRoom(layer, segment, rows) {
       const offset = side * (segment.halfWidth + beyond);
       return { x: row.x + px * offset, z: row.z + pz * offset };
     };
+    // `edgeClearance` ne voit une dalle que s'il est dedans : le long de la
+    // normale, la dalle d'en face borne aussi la place. Un îlot — la dalle
+    // qu'on vient de quitter, retrouvée de l'autre côté — n'en a aucune.
+    const freeAlong = (side, from, room, island = -1) => {
+      if (!areas || areas.length === 0) return room;
+      for (let beyond = from + ROOM_RAY_STEP_M; beyond - from <= room; beyond += ROOM_RAY_STEP_M) {
+        const p = at(side, beyond);
+        const hit = areas.indexAt(p.x, p.z, level);
+        if (hit === island) return 0;
+        if (hit >= 0) return Math.max(0, beyond - from - ROOM_RAY_STEP_M);
+      }
+      return room;
+    };
     row.room = {};
     row.fill = {};
     row.cliff = {};
@@ -130,23 +145,22 @@ export function measureRoom(layer, segment, rows) {
         ignoreRow: underSlab,
         reach: RELIEF_ROOM_REACH_M,
       });
+      if (row.room[side] > 0) row.room[side] = freeAlong(side, ROOM_PROBE_M, row.room[side]);
       if (area < 0 || row.room[side] > 0 || !areas) continue;
 
       for (let beyond = ROOM_PROBE_M; beyond <= RELIEF_ROOM_REACH_M; beyond += ROOM_PROBE_M) {
         const p = at(side, beyond);
         if (areas.indexAt(p.x, p.z, level) === area) continue;
-        row.fill[side] = {
-          offset: beyond,
-          room: edgeClearance(p.x, p.z, {
-            roadIndex: layer._roadIndex,
-            areas,
-            level,
-            ignore: own,
-            ignoreRow: underSlab,
-            ignoreArea: (other) => other === area,
-            reach: RELIEF_ROOM_REACH_M,
-          }),
-        };
+        const room = edgeClearance(p.x, p.z, {
+          roadIndex: layer._roadIndex,
+          areas,
+          level,
+          ignore: own,
+          ignoreRow: underSlab,
+          ignoreArea: (other) => other === area,
+          reach: RELIEF_ROOM_REACH_M,
+        });
+        row.fill[side] = { offset: beyond, room: freeAlong(side, beyond, room, area) };
         break;
       }
     }

@@ -24,10 +24,15 @@
  *   skyLab.set({ pixelRatio: 2 })  — un écran Retina, quel que soit le vôtre
  *
  * `lookDeg` est l'écart de cap avec le soleil (0 = face à lui).
+ *
+ *   skyLab.set({ birds: 'gull', time: 20, pitchDeg: 25 })  — le vol de `LifeLayer`
+ *
+ * `birds` impose l'espèce (`corvid`, `raptor`, `gull`), `time` l'instant du vol.
  */
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { SceneEnvironment } from '/src/environment/sceneEnvironment.js';
+import { LifeLayer, GULL_SEA_DISTANCE_M } from '/src/layers/lifeLayer.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(devicePixelRatio);
@@ -80,7 +85,10 @@ function dateForElevation(deg) {
   return new Date(hi);
 }
 
-const state = { sunDeg: 30, lookDeg: 90, pitchDeg: 4, height: 40, weather: null };
+const state = { sunDeg: 30, lookDeg: 90, pitchDeg: 4, height: 40, weather: null, birds: null, time: 0 };
+const life = new LifeLayer({ THREE, scene, bubble: null });
+for (const mesh of life._balloonMeshes) mesh.visible = false;
+life._balloonsVisible = false;
 
 function render() {
   const date = dateForElevation(state.sunDeg);
@@ -94,6 +102,13 @@ function render() {
   env.followCamera(camera);
   env.advance(0, camera.position);
   env.followShadow({ x: 0, y: 0, z: 0 });
+  life.birds.visible = !!state.birds;
+  if (state.birds) {
+    life.setRelief(state.birds === 'raptor' ? { elevation: 2000, slope: 0 } : null);
+    life.setSeaDistance(state.birds === 'gull' ? 0 : GULL_SEA_DISTANCE_M * 2);
+    life.time = state.time;
+    life.advance(0, camera.position);
+  }
   renderer.setClearColor(env.clearColor, 1);
   renderer.render(scene, camera);
   return {

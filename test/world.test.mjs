@@ -610,7 +610,11 @@ import {
   createRaptorGeometry,
   RAPTOR_SLOPE_THRESHOLD,
   RAPTOR_ELEVATION_M,
+  birdSpeciesFor,
+  GULL_SEA_DISTANCE_M,
 } from '../src/layers/lifeLayer.js';
+import { seaDistance } from '../src/layers/coast.js';
+import { lighthouseAngle } from '../src/layers/lighthouseLight.js';
 import {
   FAUNA_BUILDERS,
   FAUNA_KINDS,
@@ -6608,6 +6612,30 @@ test('un relief de montagne, et seulement lui, fait voler un rapace', () => {
   assert.ok(montane(1800, 0.05), 'altitude alpine, pente douce');
   assert.ok(montane(200, 0.2), 'rebord venteux, altitude modeste');
   assert.ok(!montane(50, 0.02), 'plaine');
+});
+
+test('au bord de la mer la mouette remplace le corvidé comme le rapace', () => {
+  assert.equal(birdSpeciesFor({ elevation: 50, slope: 0.02 }, Infinity), 'corvid');
+  assert.equal(birdSpeciesFor({ elevation: 1800, slope: 0.05 }, Infinity), 'raptor');
+  assert.equal(birdSpeciesFor({ elevation: 5, slope: 0.01 }, GULL_SEA_DISTANCE_M - 1), 'gull');
+  assert.equal(birdSpeciesFor({ elevation: 80, slope: 0.4 }, 200), 'gull', 'une falaise côtière porte des mouettes');
+  assert.equal(birdSpeciesFor({ elevation: 5, slope: 0.01 }, GULL_SEA_DISTANCE_M + 1), 'corvid');
+  assert.equal(birdSpeciesFor(null), 'corvid');
+});
+
+test('la distance à la mer se mesure au rivage, et vaut zéro sur l’eau', () => {
+  const sea = [{ x: 0, z: 0 }, { x: 1000, z: 0 }, { x: 1000, z: 1000 }, { x: 0, z: 1000 }];
+  close(seaDistance([sea], { x: -300, z: 500 }), 300, 1e-9, 'face à un bord');
+  close(seaDistance([sea], { x: -300, z: -400 }), 500, 1e-9, 'face à un coin');
+  assert.equal(seaDistance([sea], { x: 500, z: 500 }), 0);
+  assert.equal(seaDistance([], { x: 0, z: 0 }), Infinity);
+});
+
+test('le feu d’un phare fait un tour par période et reste dans un tour', () => {
+  close(lighthouseAngle(0, 3, 12), Math.PI / 2, 1e-9, 'un quart de tour au quart de la période');
+  const wrapped = lighthouseAngle(Math.PI * 1.5, 9, 12);
+  assert.ok(wrapped >= 0 && wrapped < Math.PI * 2, `replié dans un tour (${wrapped})`);
+  assert.equal(lighthouseAngle(1, NaN, 12), 1);
 });
 
 test('la silhouette de rapace ajoute une queue en éventail aux deux ailes', () => {

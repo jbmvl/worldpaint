@@ -579,7 +579,7 @@ qui la rend habitée — du linge qui sèche, des poules.
 | **éolienne** | inventé | maille de 320 m, 8 % — hors bâti, hors route, sur un point haut |
 | **pylône** | inventé | mêmes conditions, 6 % |
 | **antenne de sommet** | relevé | sur un `mountain_peak` réel, un sur trois |
-| **phare** | relevé | sur le trait de côte d'une nappe `ocean`, un point sur quarante (~2,5 km) |
+| **phare** | relevé | sur le trait de côte d'une nappe `ocean`, un point sur quarante (~2,5 km), remonté au point le plus haut à moins de 120 m du rivage ; la nuit, un halo à la lanterne et deux faisceaux qui tournent (`lighthouseLight`) |
 | **arbre de crête** | inventé | maille de 140 m, 3,5 %, sur un point haut dégagé — résineux une fois sur trois |
 | **moulin à vent** | inventé | hameau (moins de 20 bâtiments), 10 % |
 | **moulin à eau** | inventé | hameau, 6 % |
@@ -676,11 +676,12 @@ voisine laisse libre — aucun sur une voie médiane de faisceau ; un fil de
 contact à 5,5 m au-dessus du rail, un porteur à 6,7 m aux appuis qui pend de
 0,9 m à mi-portée.
 
-L'**oiseau** change d'espèce avec le pays : un corvidé qui dérive au vent
-partout, un rapace qui tourne en rond au-dessus d'un pays de montagne ou de
-lande (`alpine_pasture`, `bare_rock`, `terraced_slope`, `moor_heath` —
-`lifeLayer.setRegion`).
-C'est un remplacement, jamais les deux à la fois.
+L'**oiseau** change d'espèce avec le lieu : un corvidé qui dérive au vent
+partout, un rapace qui tourne en rond au-dessus d'un relief de montagne
+(pente ou altitude — `lifeLayer.setRelief`), une mouette qui tourne à moins
+d'un kilomètre d'une nappe `ocean` (`layers/coast.js`,
+`lifeLayer.setSeaDistance`). La mer passe avant le relief.
+C'est un remplacement, jamais deux espèces à la fois.
 
 ## Le ciel et le temps
 

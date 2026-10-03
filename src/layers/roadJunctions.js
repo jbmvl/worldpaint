@@ -835,6 +835,12 @@ export function outlineDeckAt(point, decks) {
   return from + (to - from) * (point.blend || 0);
 }
 
+/** Cote d'un sommet de dalle telle que `junctionSurface` la pose : le centre faute de bouche cotée. */
+function slabVertexDeck(point, decks, centre) {
+  const height = outlineDeckAt(point, decks);
+  return Number.isFinite(height) ? height : centre;
+}
+
 /**
  * Cote de la dalle d'un carrefour en un point qu'elle couvre.
  *
@@ -859,7 +865,7 @@ export function junctionDeckAt(area, decks, x, z) {
   if (!Number.isFinite(centre) || !Array.isArray(outline) || outline.length < 3) return centre;
 
   const {vertices,triangles}=junctionTriangles(area);
-  const height=p=>p===vertices[0]?centre:outlineDeckAt(p,decks);
+  const height=p=>p===vertices[0]?centre:slabVertexDeck(p,decks,centre);
   // La marge couvre la tolérance barycentrique d'un point posé sur une arête.
   const slack=1e-5;
   for(const [ci,ai,bi] of triangles) {
@@ -940,10 +946,10 @@ export function lowestDeckAround(area, x, z, radius) {
       Math.min(c.x, a.x, b.x) > x + radius || Math.max(c.x, a.x, b.x) < x - radius ||
       Math.min(c.z, a.z, b.z) > z + radius || Math.max(c.z, a.z, b.z) < z - radius
     ) continue;
-    const cx=c.x,cz=c.z,ch=ci===0?centre:outlineDeckAt(c,decks);
+    const cx=c.x,cz=c.z,ch=ci===0?centre:slabVertexDeck(c,decks,centre);
     if ((cx-x)**2+(cz-z)**2<=r2) keep(ch);
-    const ah = outlineDeckAt(a, decks);
-    const bh = outlineDeckAt(b, decks);
+    const ah = slabVertexDeck(a, decks, centre);
+    const bh = slabVertexDeck(b, decks, centre);
     if (!Number.isFinite(ah) || !Number.isFinite(bh)) continue;
     if ((a.x - x) ** 2 + (a.z - z) ** 2 <= r2) keep(ah);
     crossings(cx, cz, ch, a.x, a.z, ah);

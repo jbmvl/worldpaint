@@ -1340,6 +1340,9 @@ export const WATERWAY_CLASSES = {
   ditch: 1.2,
 };
 
+/** Feu du phare : teinte, opacité du faisceau en pleine nuit, durée d'un tour en secondes. */
+export const LIGHTHOUSE_LIGHT = { color: [1, 0.93, 0.74], beamOpacity: 0.16, periodS: 12 };
+
 // --- Ce qui vit ----------------------------------------------------------------
 /**
  * Couleurs de la couche vivante. L'oiseau est une silhouette
@@ -1350,6 +1353,9 @@ export const LIFE_COLORS = {
   // Silhouette du rapace qui remplace le corvidé en pays de montagne — même
   // principe (une teinte plus sombre que le ciel, quelle que soit l'heure).
   raptor: '#332821',
+  // La mouette du littoral : grise et non blanche — à contre-jour sur un ciel
+  // clair, une silhouette blanche ne se voit pas.
+  gull: '#5d646d',
   // Poussière soulevée derrière un tracteur : terre sèche.
   dust: [0.74, 0.66, 0.54],
   // Osier du panier de nacelle.
@@ -1715,7 +1721,7 @@ export const defaultTheme = Object.freeze({
   works: WORKS_STYLES,
   streets: STREET_LOOK,
   water: { waterways: WATERWAY_CLASSES, riparianBufferM: RIPARIAN_BUFFER_M },
-  furniture: { colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES },
+  furniture: { colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES, lighthouse: LIGHTHOUSE_LIGHT },
   life: LIFE_COLORS,
   fauna: { colors: FAUNA_COLORS, coats: FAUNA_COATS },
   sky: SKY_PALETTE,

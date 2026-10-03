@@ -75,6 +75,7 @@ import { BuildingLayer } from './layers/buildingLayer.js';
 import { GardenLayer } from './layers/gardenLayer.js';
 import { StreetLayer } from './layers/streetLayer.js';
 import { FabricIndex, readSettlement } from './layers/settlement.js';
+import { seaDistanceAt } from './layers/coast.js';
 import { VegetationLayer } from './layers/vegetationLayer.js';
 import { GroundCover } from './layers/groundCover.js';
 import { CropLayer } from './layers/cropLayer.js';
@@ -456,8 +457,8 @@ export class WorldComposer {
     if (!region) return false;
 
     this._distributeRegion(region);
-    // Le relief n'est pas la région (voir `core/region.js`) : c'est lui, et
-    // lui seul, qui dit si le rapace remplace le corvidé.
+    // Le relief n'est pas la région (voir `core/region.js`) : c'est lui qui
+    // dit si le rapace remplace le corvidé.
     this.life.setRelief(this.landscape?.relief ?? null);
     const wanted = this._wantedTiles(lng, lat);
 
@@ -522,6 +523,8 @@ export class WorldComposer {
       //    ici, puis passé à la voirie et au mobilier, qui posaient la même
       //    question chacun de leur côté.
       const { builtUp, places, urban } = readSettlement(this.vectorTiles, wanted, this.bubble.frame);
+      // Et « sommes-nous au bord de la mer ? » : la mouette y remplace tout autre oiseau.
+      this.life.setSeaDistance(seaDistanceAt(this.vectorTiles, wanted, this.bubble.frame, here));
 
       if (!await checkpoint()) return false;
 
@@ -854,6 +857,7 @@ export class WorldComposer {
     this.furniture.advanceSignals(delta);
     this.furniture.advanceLamps(at);
     this.furniture.advanceRotor(delta);
+    this.furniture.advanceLighthouses(delta);
   }
 
   /**
