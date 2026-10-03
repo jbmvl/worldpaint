@@ -900,6 +900,76 @@ export function platformSideAt(
 }
 
 /**
+ * Section en travers de la chaussée la plus proche de `(x, z)`, telle qu'elle
+ * est rendue : ce qu'il faut à un mobile pour se ranger **sur** la route sans
+ * en déborder ni rouler sur l'axe.
+ *
+ * Les largeurs sont celles du ruban, accotement exclu (ce n'est pas de la
+ * chaussée). `divided` vaut quand l'axe porte un marquage : la route est alors
+ * partagée en deux voies, et `laneWidth` n'en est qu'une. À sens unique ou
+ * sans marquage d'axe, la voie est la chaussée entière. Le profil lu est celui
+ * de `_appendMarkings` : la réponse dit ce qui est peint, pas plus.
+ *
+ * `oneway` se compte dans le sens de `ahead` : `1` avec la circulation, `-1`
+ * à contresens, `0` à double sens ou sans avis de la donnée.
+ *
+ * @param {RoadNetwork} roads
+ * @param {number} x
+ * @param {number} z
+ * @param {Object} [options]
+ * @param {{x:number, z:number}|null} [options.ahead]
+ * @param {number} [options.radius]
+ * @returns {{axis:{x:number, z:number}, tangent:{x:number, z:number},
+ *            right:{x:number, z:number}, offset:number, distance:number,
+ *            halfWidth:number, carriagewayWidth:number, laneWidth:number,
+ *            divided:boolean, oneway:number, paved:boolean,
+ *            profile:string}|null} `offset` : position de `(x, z)` en
+ *          travers depuis l'axe, positive à droite du sens de marche.
+ */
+export function platformLaneAt(roads, x, z, { ahead = null, radius = ROAD_SNAP_RADIUS_M } = {}) {
+  const index = roads?.elevationIndex;
+  if (!index) return null;
+  const hit = index.nearestWithin(x, z, radius, alignedWith(ahead));
+  if (!hit) return null;
+
+  const segment = hit.segment;
+  const a = segment.path[hit.row];
+  const b = segment.path[hit.row + 1];
+  const length = Math.hypot(b.x - a.x, b.z - a.z) || 1;
+  let tx = (b.x - a.x) / length;
+  let tz = (b.z - a.z) / length;
+  let sense = 1;
+  if (ahead && tx * ahead.x + tz * ahead.z < 0) {
+    tx = -tx;
+    tz = -tz;
+    sense = -1;
+  }
+
+  const isOneway = !!segment.oneway?.some((s) => s !== 0);
+  const profiles = (roads.theme ?? defaultTheme).roads.profiles;
+  const spec = carriagewayProfile(profiles[segment.profile], isOneway) ?? {};
+  const carriageHalf = Math.max(0, segment.halfWidth - (spec.shoulder || 0));
+  const divided = !!spec.centerDash && !isOneway;
+  const rx = -tz;
+  const rz = tx;
+
+  return {
+    axis: { x: hit.x, z: hit.z },
+    tangent: { x: tx, z: tz },
+    right: { x: rx, z: rz },
+    offset: (x - hit.x) * rx + (z - hit.z) * rz,
+    distance: hit.distance,
+    halfWidth: segment.halfWidth,
+    carriagewayWidth: 2 * carriageHalf,
+    laneWidth: divided ? carriageHalf : 2 * carriageHalf,
+    divided,
+    oneway: (segment.oneway?.[hit.row] ?? 0) * sense,
+    paved: isPaved(spec),
+    profile: segment.profile,
+  };
+}
+
+/**
  * Altitude de plate-forme au point `(x, z)`, remblai et tablier de pont
  * compris — c'est la question qu'un consommateur externe se pose pour poser
  * quelque chose *sur* la chaussée plutôt que sur le terrain qu'elle surplombe

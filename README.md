@@ -226,6 +226,20 @@ point) so the object can face the road; its height is the road platform while
 the point still falls on it (embankment, bridge), the terrain otherwise. It
 returns `null` when no road is within `radius`.
 
+```js
+world.roadLaneAt(lng, lat, { aheadLng, aheadLat });
+```
+
+`roadLaneAt` answers the question of a mobile riding *on* the road: the cross
+section of the nearest rendered road, as painted. `carriagewayWidth` excludes
+the shoulder; `divided` is true when the centre line is marked, in which case
+`laneWidth` is one half of the carriageway — otherwise (one-way, or no centre
+line) the lane is the whole carriageway. `oneway` is `1` along the direction of
+travel, `-1` against it, `0` two-way or unknown; `offsetM` is the queried
+point's distance from the axis, positive to the right of travel; `axis` is the
+nearest axis point in lng/lat. It returns `null` when no road is within
+`radius`.
+
 ### Weather
 
 Weather is **state, not art direction**: it changes as you go, so it travels

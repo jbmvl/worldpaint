@@ -13,17 +13,19 @@
  * construit ni n'avance rien — il déclenche un événement (voir
  * `WorldComposer.crossFauna`). `cheer` est son pendant au bord de la route.
  *
- * `roadPositionAt`, `roadSnapAt` et `roadsideAt` ne sont ni l'un ni l'autre :
- * des questions, pas des actions — à quelle altitude passe la chaussée sous ce
- * point (remblai, pont) plutôt que le terrain nu que suit déjà
- * `bubble.toScenePosition`, où est son axe pour qui doit y rester, et où est
- * son bord pour qui pose un objet à côté.
+ * `roadPositionAt`, `roadSnapAt`, `roadLaneAt` et `roadsideAt` ne sont ni l'un
+ * ni l'autre : des questions, pas des actions — à quelle altitude passe la
+ * chaussée sous ce point (remblai, pont) plutôt que le terrain nu que suit déjà
+ * `bubble.toScenePosition`, où est son axe pour qui doit y rester, quelle
+ * largeur on y a pour se ranger, et où est son bord pour qui pose un objet à
+ * côté.
  */
 
 import { ElevationField } from './core/elevationField.js';
 import { WorldComposer, WORLD_ATTRIBUTION, FAUNA_CROSS_AHEAD_M } from './worldComposer.js';
 import {
   platformPositionAt,
+  platformLaneAt,
   platformSideAt,
   platformSnapAt,
   ROAD_SNAP_RADIUS_M,
@@ -337,6 +339,51 @@ export class World {
       halfWidth: edge.halfWidth,
       profile: edge.profile,
       distanceM: edge.distance,
+    };
+  }
+
+  /**
+   * Section en travers de la chaussée la plus proche : largeur de chaussée et
+   * de la voie, marquage d'axe, sens unique — de quoi ranger un mobile sur sa
+   * voie sans déborder de la route. Voir `platformLaneAt`.
+   *
+   * @param {number} lng
+   * @param {number} lat
+   * @param {Object} [options]
+   * @param {number} [options.aheadLng] Point visé : fixe le sens de marche.
+   * @param {number} [options.aheadLat]
+   * @param {number} [options.radius] Portée de la recherche, en mètres.
+   * @returns {{axis:{lng:number, lat:number}, offsetM:number, distanceM:number,
+   *            halfWidth:number, carriagewayWidth:number, laneWidth:number,
+   *            divided:boolean, oneway:number, paved:boolean,
+   *            profile:string}|null} `offsetM` : position du point demandé
+   *          depuis l'axe, positive à droite du sens de marche. `null` hors de
+   *          portée de toute chaussée.
+   */
+  roadLaneAt(lng, lat, { aheadLng, aheadLat, radius = ROAD_SNAP_RADIUS_M } = {}) {
+    const bubble = this.composer.bubble;
+    if (!bubble?.frame) return null;
+
+    const here = bubble.frame.toLocal(lng, lat);
+    let ahead = null;
+    if (aheadLng != null && aheadLat != null) {
+      const there = bubble.frame.toLocal(aheadLng, aheadLat);
+      ahead = { x: there.x - here.x, z: there.z - here.z };
+    }
+
+    const lane = platformLaneAt(this.composer.roads, here.x, here.z, { ahead, radius });
+    if (!lane) return null;
+    return {
+      axis: bubble.frame.toLngLat(lane.axis.x, lane.axis.z),
+      offsetM: lane.offset,
+      distanceM: lane.distance,
+      halfWidth: lane.halfWidth,
+      carriagewayWidth: lane.carriagewayWidth,
+      laneWidth: lane.laneWidth,
+      divided: lane.divided,
+      oneway: lane.oneway,
+      paved: lane.paved,
+      profile: lane.profile,
     };
   }
 

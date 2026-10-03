@@ -223,6 +223,7 @@ import {
   ROAD_GRADE_CUT_STEEP_M,
   ROAD_GRADE_FILL_STEEP_M,
   platformPositionAt,
+  platformLaneAt,
   platformSideAt,
   platformSnapAt,
   ROAD_SNAP_RADIUS_M,
@@ -9046,6 +9047,41 @@ test('platformSideAt sans côté prend celui du point demandé', () => {
   close(platformSideAt(roads, 50, 10).distance, 10, 1e-9);
   assert.equal(platformSideAt(roads, 50, 400), null, 'hors de portée, rien');
   assert.equal(platformSideAt(null, 50, 0), null, 'sans réseau construit, rien ne casse');
+});
+
+test('platformLaneAt dit la largeur de la voie et si l’axe la partage', () => {
+  // Route est-ouest : en roulant vers l'est, la droite est au sud (z > 0).
+  const segment = (profile, halfWidth, oneway) => ({
+    ...fakeSegment(straight(0, 100, 10), halfWidth),
+    profile,
+    ...(oneway ? { oneway: new Int8Array(10).fill(oneway) } : {}),
+  });
+  const east = { x: 1, z: 0 };
+  const west = { x: -1, z: 0 };
+  const laneOf = (s, ahead, z = 1) => platformLaneAt({ elevationIndex: new RoadIndex([s]) }, 50, z, { ahead });
+
+  const major = laneOf(segment('major', 4.25), east);
+  assert.equal(major.divided, true, 'axe marqué : deux voies');
+  close(major.carriagewayWidth, 8.5, 1e-9);
+  close(major.laneWidth, 4.25, 1e-9, 'une voie, la moitié');
+  assert.equal(major.oneway, 0);
+  close(major.offset, 1, 1e-9, 'au sud en allant vers l’est : à droite');
+  close(laneOf(segment('major', 4.25), west).offset, -1, 1e-9, 'vers l’ouest, à gauche');
+
+  const minor = laneOf(segment('minor', 2.5), east);
+  assert.equal(minor.divided, false, 'sans axe, une seule voie');
+  close(minor.laneWidth, 5, 1e-9);
+
+  const split = laneOf(segment('major', 2.5, 1), east);
+  assert.equal(split.divided, false, 'à sens unique, la voie est toute la chaussée');
+  close(split.laneWidth, 5, 1e-9);
+  assert.equal(split.oneway, 1, 'dans le sens de la circulation');
+  assert.equal(laneOf(segment('major', 2.5, 1), west).oneway, -1, 'à contresens');
+
+  const express = laneOf(segment('express', 6), east);
+  close(express.carriagewayWidth, 9.6, 1e-9, 'l’accotement n’est pas de la chaussée');
+  assert.equal(laneOf(segment('track', 1.5), east).paved, false);
+  assert.equal(platformLaneAt(null, 50, 0), null, 'sans réseau construit, rien ne casse');
 });
 
 test('la portée de platformSnapAt borne la recherche', () => {

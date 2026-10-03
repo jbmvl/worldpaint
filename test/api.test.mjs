@@ -166,6 +166,30 @@ test('roadsideAt pose au bord, sur la plate-forme si elle y est encore, au terra
   assert.equal(world.roadsideAt(5, 100), null, 'hors de portée, rien');
 });
 
+test('roadLaneAt rend la section en travers, axe en lng/lat', () => {
+  const frame = { toLocal: (lng, lat) => ({ x: lng, z: lat }), toLngLat: (x, z) => ({ lng: x, lat: z }) };
+  const segment = {
+    profile: 'major',
+    halfWidth: 4.25,
+    path: [
+      { x: 0, z: 0 },
+      { x: 10, z: 0 },
+    ],
+    platform: new Float32Array([0, 0]),
+  };
+  const composer = fakeComposer();
+  composer.bubble = { frame };
+  composer.roads = { elevationIndex: new RoadIndex([segment], { includeWorks: true }) };
+  const world = new World({ composer, environment: null, elevation: null, ownsElevation: false });
+
+  const lane = world.roadLaneAt(5, 1, { aheadLng: 6, aheadLat: 1 });
+  assert.deepEqual(lane.axis, { lng: 5, lat: 0 });
+  assert.equal(lane.offsetM, 1, 'au sud en allant vers l’est : à droite');
+  assert.equal(lane.divided, true);
+  assert.equal(lane.laneWidth, 4.25);
+  assert.equal(world.roadLaneAt(5, 100), null, 'hors de portée, rien');
+});
+
 test('terracesNear rend les tables à portée, de la plus proche à la plus lointaine', () => {
   const frame = { toLocal: (lng, lat) => ({ x: lng, z: lat }) };
   const table = (x, z) => ({ x, y: 2, z, facing: { x: 0, z: 1 }, kind: 'cafe', chairs: [] });
