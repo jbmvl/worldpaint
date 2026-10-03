@@ -45,11 +45,49 @@ export const RIDGE_TREE_CLEARANCE_M = 25;
 /** Portée des cailloux et blocs rocheux, en mètres (celle du reste du mobilier). */
 export const ROCK_RADIUS_M = FURNITURE_RADIUS_M;
 /**
- * Portée, vers l'intérieur des terres, où un phare cherche son point haut, et
- * pas de cette recherche, en mètres.
+ * Rayon où un phare cherche son point haut autour du point de côte tiré,
+ * distance au rivage qu'il ne dépasse pas, et pas de la grille de recherche,
+ * en mètres.
  */
-export const LIGHTHOUSE_CLIMB_M = 120;
-const LIGHTHOUSE_CLIMB_STEP_M = 12;
+export const LIGHTHOUSE_SEARCH_M = 500;
+export const LIGHTHOUSE_SHORE_M = 120;
+export const LIGHTHOUSE_GRID_M = 25;
+
+/**
+ * Le point le plus haut à portée d'un point de côte, sans s'éloigner du
+ * rivage. Fonction pure.
+ *
+ * La recherche couvre un disque et non la seule normale au trait de côte : au
+ * fond d'une anse, la hauteur est sur les côtés — les falaises qui encadrent
+ * la plage —, pas derrière elle. La grille est ancrée au monde : deux points
+ * de côte voisins trouvent le même sommet.
+ *
+ * @param {{x:number,z:number}} p Point de côte tiré.
+ * @param {Array<{x:number,z:number}>} shore Trait de côte rééchantillonné.
+ * @param {Object} options
+ * @param {(x:number,z:number)=>number} options.elevationAt
+ * @param {(x:number,z:number)=>boolean} [options.blocked] Bâti, chaussée, eau.
+ * @returns {{x:number,z:number,h:number}|null}
+ */
+export function lighthouseSite(p, shore, { elevationAt, blocked = () => false }) {
+  const reach = LIGHTHOUSE_SEARCH_M + LIGHTHOUSE_SHORE_M;
+  const near = shore.filter((s) => Math.abs(s.x - p.x) <= reach && Math.abs(s.z - p.z) <= reach);
+  const step = LIGHTHOUSE_GRID_M;
+  const start = (v) => Math.ceil((v - LIGHTHOUSE_SEARCH_M) / step) * step;
+  let site = null;
+  for (let z = start(p.z); z <= p.z + LIGHTHOUSE_SEARCH_M; z += step) {
+    for (let x = start(p.x); x <= p.x + LIGHTHOUSE_SEARCH_M; x += step) {
+      if (Math.hypot(x - p.x, z - p.z) > LIGHTHOUSE_SEARCH_M) continue;
+      const h = elevationAt(x, z);
+      // Le seuil écarte un candidat encore sous l'eau.
+      if (!Number.isFinite(h) || h < 0.6 || (site && h <= site.h)) continue;
+      if (!near.some((s) => Math.hypot(s.x - x, s.z - z) <= LIGHTHOUSE_SHORE_M)) continue;
+      if (blocked(x, z)) continue;
+      site = { x, z, h };
+    }
+  }
+  return site;
+}
 
 /** Pas de la grille de semis des pierres, en mètres. */
 export const ROCK_CELL_M = 14;
@@ -327,14 +365,9 @@ export function buildPeakLandmarks(layer, context, builtUp) {
  * nappe `water` de classe `ocean` en fait un, une rivière ou un lac n'en
  * portent pas.
  *
- * Le contour d'une nappe `ocean` n'a pas d'orientation garantie (elle peut
- * sortir de plusieurs tuiles recousues dans n'importe quel sens), donc le
- * côté « terre » n'est pas supposé à partir de l'enroulement : il est
- * **mesuré**, en comparant l'altitude de part et d'autre du tracé et en
- * gardant le côté le plus haut.
- *
- * Le phare ne reste pas au ras de l'eau : il remonte ce côté-là jusqu'au point
- * le plus haut à portée (`LIGHTHOUSE_CLIMB_M`), là où son feu porte.
+ * Le trait de côte dit **où** il y a un phare, pas à quel endroit exact : il
+ * monte au point le plus haut des environs resté près du rivage
+ * (`lighthouseSite`), là où son feu porte.
  */
 export function buildCoastalLandmarks(layer, context, builtUp) {
   const { source, tiles, here, placements, sampleElevation } = context;
@@ -372,36 +405,15 @@ export function buildCoastalLandmarks(layer, context, builtUp) {
         // les deux kilomètres et demi, pas un tous les soixante mètres.
         if (randomAt(p.x, p.z, 141) > 0.025) continue;
 
-        const prev = path[i - 1];
-        const next = path[i + 1];
-        let tx = next.x - prev.x;
-        let tz = next.z - prev.z;
-        const len = Math.hypot(tx, tz) || 1;
-        tx /= len;
-        tz /= len;
-        const nx = tz;
-        const nz = -tx;
-        const reach = 9;
-        const a = sampleElevation(p.x + nx * reach, p.z + nz * reach);
-        const b = sampleElevation(p.x - nx * reach, p.z - nz * reach);
-        const side = (Number.isFinite(a) ? a : -Infinity) > (Number.isFinite(b) ? b : -Infinity) ? 1 : -1;
-
-        let site = null;
-        for (let d = reach; d <= LIGHTHOUSE_CLIMB_M; d += LIGHTHOUSE_CLIMB_STEP_M) {
-          const x = p.x + nx * side * d;
-          const z = p.z + nz * side * d;
-          const h = sampleElevation(x, z);
-          // Le seuil écarte un candidat encore sous l'eau — bruit de tuile ou
-          // presqu'île trop étroite pour porter quoi que ce soit — et arrête
-          // la montée à l'eau suivante.
-          if (!Number.isFinite(h) || h < 0.6) break;
-          if (site && h <= site.h) continue;
-          if (pointInAreas(builtUp, x, z) || layer._onRoad(x, z)) continue;
-          site = { x, z, h };
-        }
+        const site = lighthouseSite(p, path, {
+          elevationAt: sampleElevation,
+          blocked: (x, z) => pointInAreas(builtUp, x, z) || layer._onRoad(x, z) || layer._onWater(x, z),
+        });
         if (!site) continue;
+        // Deux points de côte voisins montent au même sommet : un seul phare.
+        if (layer._lighthouses.some((l) => Math.hypot(l.x - site.x, l.z - site.z) < LIGHTHOUSE_SEARCH_M)) continue;
 
-        const entry = layer._place(placements, 'lighthouse', { x: site.x, z: site.z, yaw: randomAt(p.x, p.z, 143) * Math.PI * 2 });
+        const entry = layer._place(placements, 'lighthouse', { x: site.x, z: site.z, yaw: randomAt(site.x, site.z, 143) * Math.PI * 2 });
         if (entry) layer._lighthouses.push(entry);
         placed++;
       }

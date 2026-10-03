@@ -48,6 +48,7 @@ import { facetJitter } from './facetJitter.js';
 import { edgeClearance } from './roadEdges.js';
 import { LEVEL_GROUND } from './roadWorks.js';
 import { collectBuiltUpAreas, collectPlaceNames } from './settlement.js';
+import { installSightlineClearing } from '../materials/sightlineClearing.js';
 import { LabelAtlas, pushLabelQuad, labelFontPxForCellHeight, LABEL_PX_PER_M } from '../materials/labelAtlas.js';
 import {
   clipOutsideCorridor,
@@ -178,7 +179,7 @@ export class FurnitureLayer {
    * @param {Object} [options.groundClass] Instance `GroundClassMap` — sert à ne
    *        pas planter d'alignement au milieu d'un bois déjà planté.
    */
-  constructor({ THREE, scene, bubble, groundClass = null, theme = defaultTheme }) {
+  constructor({ THREE, scene, bubble, groundClass = null, theme = defaultTheme, sightline = null }) {
     this.THREE = THREE;
     this.theme = theme;
     /**
@@ -207,6 +208,7 @@ export class FurnitureLayer {
     scene.add(this.group);
 
     this.material = createFurnitureMaterial(THREE);
+    if (sightline) installSightlineClearing(this.material, sightline);
     // Matériau à part pour la seule pièce qui tourne — voir son en-tête dans
     // `furnitureKit.js` sur pourquoi il n'est pas une option du précédent.
     this.rotorMaterial = createFurnitureRotorMaterial(THREE);

@@ -38,6 +38,7 @@ import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { createWorld } from '/src/index.js';
 import { muteAnimated, geometrySnapshot, compareSnapshots, readView, pixelChange } from '/demo/lab/nearStability.js';
+import { auditRoads } from '/demo/lab/roadAudit.js';
 
 const params = new URLSearchParams(location.search);
 const name = params.get('lieu') || 'montreuil-bellay';
@@ -77,6 +78,7 @@ async function settle() {
 await settle();
 
 const state = { x: 0, z: 0, yawDeg: 225, pitchDeg: 28, distance: 80, hour: 15 };
+const diagnosticVisibility = new Map();
 
 function render() {
   const { x, z, yawDeg, pitchDeg, distance } = state;
@@ -93,6 +95,16 @@ function render() {
   const paint = world.updateSky({ camera, date, lng: place.lng, lat: place.lat, shadowAt: { x, y, z } });
   if (paint) renderer.setClearColor(paint.clearColor, 1);
   world.advance(0, { x, y, z });
+  world.composer.root.traverse(object => {
+    if (!object.isMesh) return;
+    if (state.roadsOnly) {
+      if (!diagnosticVisibility.has(object)) diagnosticVisibility.set(object, object.visible);
+      object.visible = diagnosticVisibility.get(object) && /^(road-|terrain-|streets|street-markings|bridge|rail)/.test(object.name);
+    } else if (diagnosticVisibility.has(object)) {
+      object.visible = diagnosticVisibility.get(object);
+      diagnosticVisibility.delete(object);
+    }
+  });
   renderer.render(scene, camera);
   const here = world.frame.toLngLat(x, z);
   const region = world.composer.landscape?.region;
@@ -221,6 +233,7 @@ window.placeLab = {
     return render();
   },
   walk,
+  auditRoads: options => auditRoads(world, options),
   state,
   world,
   place,

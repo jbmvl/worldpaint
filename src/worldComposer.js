@@ -79,6 +79,7 @@ import { seaDistanceAt } from './layers/coast.js';
 import { VegetationLayer } from './layers/vegetationLayer.js';
 import { GroundCover } from './layers/groundCover.js';
 import { CropLayer } from './layers/cropLayer.js';
+import { createSightline, setSightline } from './materials/sightlineClearing.js';
 import { FurnitureLayer } from './layers/furnitureLayer.js';
 import { LifeLayer } from './layers/lifeLayer.js';
 import { FaunaLayer } from './layers/faunaLayer.js';
@@ -256,8 +257,11 @@ export class WorldComposer {
     // La voirie non plus : tronçons de chaussée, emprises habitées, empreintes du bâti.
     this.streets = new StreetLayer({ THREE, scene, bubble, theme });
 
+    // Une seule ligne de mire pour toutes les couches qui s'effacent devant la caméra.
+    this.sightline = createSightline(THREE);
     this.vegetation = new VegetationLayer({
       THREE,
+      sightline: this.sightline,
       scene,
       bubble,
       groundClass: this.groundClass,
@@ -281,6 +285,7 @@ export class WorldComposer {
     // Les cultures sèment sur la même carte que celle qui colore le sol : dépendent de `groundClass`, comme l'herbe.
     this.crops = new CropLayer({
       THREE,
+      sightline: this.sightline,
       scene,
       bubble,
       groundClass: this.groundClass,
@@ -291,6 +296,7 @@ export class WorldComposer {
 
     this.furniture = new FurnitureLayer({
       THREE,
+      sightline: this.sightline,
       scene,
       bubble,
       groundClass: this.groundClass,
@@ -949,7 +955,7 @@ export class WorldComposer {
    */
   setSightline(from, to, options) {
     if (this.disposed) return;
-    this.vegetation.setSightline(from, to, options);
+    setSightline(this.sightline, from, to, options);
   }
 
   dispose() {

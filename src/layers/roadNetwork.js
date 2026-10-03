@@ -61,7 +61,7 @@ import { DECOR_STEP_M, reachedRadius } from '../core/decorReach.js';
  * Tout dessiner donne un tas de rubans qui se chevauchent, sans marquage
  * lisible, et il n'y a aucun réglage de largeur qui en sorte.
  *
- * Ce module reçoit donc un `UrbanMask` (`settlement`) et retranche deux fois,
+ * Ce module reçoit donc un `UrbanMask` (`settlement`) et retranche
  * **avant le graphe** — ce qui n'est pas dessiné ne crée ni nœud, ni carrefour,
  * ni numérotation de mobilier :
  *
@@ -73,12 +73,15 @@ import { DECOR_STEP_M, reachedRadius } from '../core/decorReach.js';
  *     que `UrbanMask.covers` en retire le vert urbain ;
  *   - les **voies redondantes** (`roadBundles.absorbParallelLines`), celles
  *     qui longent une voie de rang supérieur et sont déjà dans sa largeur.
+ * Les trottoirs et traversées explicites sont exclus partout. À portée d'une
+ * ville, un `footway` qui longe une rue sur 90 % de sa longueur relève aussi
+ * du sol, même au bord d'un parc (`roadPedestrians`). Ses allées indépendantes,
+ * ses escaliers, ses ouvrages et ses pistes cyclables restent distincts.
  *
  * Les chaînes revêtues conservées partagent ensuite leur largeur disponible
  * (`roadWidths`), en ville comme en campagne, avant les surfaces de carrefour.
  *
- * Hors ville, aucune suppression ne se produit : un sentier reste un sentier, et
- * une contre-allée de campagne est un objet du paysage.
+ * Hors ville, les sentiers et les contre-allées restent des objets du paysage.
  */
 
 import { resolveTransportCrossings } from './transportCrossings.js';
@@ -87,6 +90,7 @@ import { cutElevationAt } from '../terrain/roadCut.js';
 import { RoadContinuity } from './roadContinuity.js';
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { absorbParallelLines } from './roadBundles.js';
+import { removeRoadsideFootways } from './roadPedestrians.js';
 import { fitParallelRoadWidths } from './roadWidths.js';
 import {
   mergeRoadLines,
@@ -500,7 +504,7 @@ export const ROAD_CLASSES = {
  * un trottoir, une traversée, un cheminement. Le sentier de randonnée
  * (`path` sans sous-classe) n'en est pas — c'est un chemin de campagne.
  */
-export const PEDESTRIAN_SUBCLASSES = new Set(['footway', 'sidewalk', 'crossing']);
+export const PEDESTRIAN_SUBCLASSES = new Set(['footway', 'sidewalk', 'crossing', 'pedestrian']);
 
 /** Profils qui ne se dessinent pas en ville, parcs urbains exceptés. */
 export const URBAN_EXCLUDED_PROFILES = new Set(['track', 'path']);
@@ -656,6 +660,8 @@ export function collectRoadLines(source, tiles, frame, roads = defaultTheme.road
   source.forEachFeature('transportation', tiles, (geometry, properties) => {
     const style = roadStyleFor(properties, roads.profiles);
     if (!style) return;
+    if (properties.subclass === 'sidewalk' || properties.subclass === 'crossing' ||
+      properties.footway === 'sidewalk' || properties.footway === 'crossing') return;
     const notInTown =
       urban?.any && (isPedestrianWay(properties) || URBAN_EXCLUDED_PROFILES.has(style.profile));
 
@@ -683,11 +689,12 @@ export function collectRoadLines(source, tiles, frame, roads = defaultTheme.road
         works: style.works,
         level: style.level,
         oneway: style.oneway,
+        footway: isPedestrianWay(properties) && style.profile === 'path',
       });
     }
   });
 
-  return lines;
+  return removeRoadsideFootways(lines, urban);
 }
 
 /**

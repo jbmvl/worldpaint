@@ -2,8 +2,9 @@
  * Deux nœuds peuvent borner une minuscule boucle entièrement couverte par
  * leurs chaussées. Ses deux branches ne s'écartent jamais : les prolonger
  * pour fabriquer une fourche inventerait un îlot au-delà du nœud suivant.
- * La surface conserve les deux rives extérieures et les deux bouches libres,
- * sans modifier les connexions du graphe ni la largeur des chaussées.
+ * La surface conserve les deux rives extérieures et toutes les bouches libres,
+ * même lorsqu'il n'en reste que deux. Les connexions du graphe et la largeur
+ * des chaussées restent celles des branches.
  */
 import { pathFrames, subdividePath } from './ribbonGeometry.js';
 
@@ -48,8 +49,9 @@ export function junctionLinks(junctions) {
 
 export function junctionLinkArea(junction, sectionAt, margin, buildArea) {
   const {nodes,branches,back}=junction.link;
-  const area=buildArea({...nodes[1],branches:[back,...junction.branches.slice(1)]});
+  const area=buildArea({...nodes[1],extremiteLiaison:true,branches:[back,...junction.branches.slice(1)]});
   if (!area) return null;
+  area.noeuds=nodes;
   const at=area.mouths.findIndex(m=>m.edge===back.edge);
   if(at<0)return null;
   const old=area.mouths[at],branch=junction.branches[0];

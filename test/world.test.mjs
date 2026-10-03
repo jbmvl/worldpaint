@@ -615,6 +615,7 @@ import {
 } from '../src/layers/lifeLayer.js';
 import { seaDistance } from '../src/layers/coast.js';
 import { lighthouseAngle } from '../src/layers/lighthouseLight.js';
+import { lighthouseSite, LIGHTHOUSE_SHORE_M } from '../src/layers/furniture/landmarks.js';
 import {
   FAUNA_BUILDERS,
   FAUNA_KINDS,
@@ -6629,6 +6630,20 @@ test('la distance à la mer se mesure au rivage, et vaut zéro sur l’eau', () 
   close(seaDistance([sea], { x: -300, z: -400 }), 500, 1e-9, 'face à un coin');
   assert.equal(seaDistance([sea], { x: 500, z: 500 }), 0);
   assert.equal(seaDistance([], { x: 0, z: 0 }), Infinity);
+});
+
+test('au fond d’une anse, le phare monte sur la falaise d’à côté et reste près du rivage', () => {
+  // Rivage le long de z = 0, mer au sud. Une plage basse autour de x = 0, une
+  // falaise à partir de x = 300, et un plateau plus haut encore loin du rivage.
+  const shore = [];
+  for (let x = -900; x <= 900; x += 60) shore.push({ x, z: 0 });
+  const elevationAt = (x, z) => (z > 0 ? 0 : z < -300 ? 200 : x >= 300 ? 80 : 3);
+  const site = lighthouseSite({ x: 0, z: 0 }, shore, { elevationAt });
+  assert.equal(site.h, 80, 'sur la falaise, pas sur la plage');
+  assert.ok(-site.z <= LIGHTHOUSE_SHORE_M, `près du rivage (${site.z})`);
+  const town = lighthouseSite({ x: 0, z: 0 }, shore, { elevationAt, blocked: (x) => x >= 300 });
+  assert.equal(town.h, 3, 'la falaise bâtie est écartée');
+  assert.equal(lighthouseSite({ x: 0, z: 0 }, shore, { elevationAt: () => 0 }), null);
 });
 
 test('le feu d’un phare fait un tour par période et reste dans un tour', () => {

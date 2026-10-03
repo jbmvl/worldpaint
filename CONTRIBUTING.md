@@ -131,6 +131,10 @@ Breaking one of these needs a very good reason, stated in the PR description.
   the legs' actual paths up to where their axes are a sum of half-widths apart;
   that point is the nose of the island. Nobody yields at a fork, and it carries
   no traffic light.
+  Si cette surface atteint un carrefour voisin, `junctionUnions` peut réunir
+  leurs contours sans changer les nœuds. L'union conserve toutes ses bouches
+  extérieures entières, retrouve leurs vrais axes et n'efface aucun îlot.
+  Les cas où ces conditions échouent gardent leurs surfaces distinctes.
 
   A one-way carriageway is one direction of a road, not the whole road: a
   profile's `oneway` keys (theme) replace its own when the data says one-way,
@@ -160,6 +164,9 @@ Breaking one of these needs a very good reason, stated in the PR description.
   petite boucle, et une couronne de giratoire se tend toujours de l'îlot au bord.
   Les rubans reprennent la cote de cette même surface
   à leur frontière ; un éventail ne doit pas traverser un creux du contour.
+  Deux nœuds qui bornent une boucle entièrement couverte partagent une surface
+  (`junctionLinks`), même lorsqu'il ne reste que deux bouches libres. Le graphe
+  conserve ses deux nœuds et les deux chaussées intérieures.
 
 - **A junction interrupts a ribbon, not a road.** Corridor, terrain cut,
   platform stitching, spaced furniture and kerbs keep reading one whole chain;

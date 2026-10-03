@@ -1,4 +1,5 @@
 import { InstanceCells } from './instanceCells.js';
+import { installSightlineClearing } from '../materials/sightlineClearing.js';
 import { COVER_ATTRIBUTE, installCoverTransition, paddedCoverBands } from '../materials/coverTransition.js';
 /*
  * Les cultures lisent l'assolement de la carte du sol. Chaque bande possède
@@ -247,6 +248,7 @@ export class CropLayer {
     roads = null,
     count = CROP_COUNT,
     theme = defaultTheme,
+    sightline = null,
   }) {
     this.THREE = THREE;
     this.theme = theme;
@@ -297,6 +299,7 @@ export class CropLayer {
       groundLowPoly: true,
       cacheKey: 'foliage-crop-cover-v4-lowpoly',
     });
+    if (sightline) installSightlineClearing(this.material, sightline);
 
     installCoverTransition(this.material, THREE);
 

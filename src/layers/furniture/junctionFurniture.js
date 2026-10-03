@@ -7,6 +7,8 @@
  * en cherchant où deux rubans se recouvrent. La priorité, elle, est décidée une
  * fois au carrefour (`roadJunctions.branchYields`) et lue deux fois : par la
  * ligne peinte au sol et par le panneau posé ici.
+ * Des nœuds partageant une dalle ne portent qu'un feu, sur une bouche
+ * extérieure de cette dalle ; leurs branches intérieures ne sont pas des accès.
  */
 
 import { branchYields, isForkJunction } from '../roadJunctions.js';
@@ -59,8 +61,14 @@ export function buildCrossings(layer, context, junctions, roadIndex, builtUp) {
   if (!roadIndex || !Array.isArray(junctions)) return;
   const { placements, here } = context;
   let placed = 0;
+  const communes=new Map();
+  for(const area of layer._areas?.areas || [])for(const node of area.noeuds || [])communes.set(node,area);
 
-  for (const junction of junctions) {
+  for (const node of junctions) {
+    const commune=communes.get(node);
+    if(commune && (node!==commune.noeuds[0] || commune.mouths.length<3 ||
+      commune.noeuds.every(n=>n.roundabout || isForkJunction(n))))continue;
+    const junction=commune ? {...commune,branches:commune.mouths.map(m=>({...m,x:m.direction.x,z:m.direction.z}))} : node;
     if (placed >= FURNITURE_LIMITS.trafficLights) break;
     if (Math.hypot(junction.x - here.x, junction.z - here.z) > reachedRadius(FURNITURE_RADIUS_M, layer.bubble)) continue;
     if (!pointInAreas(builtUp, junction.x, junction.z)) continue;
@@ -80,8 +88,8 @@ export function buildCrossings(layer, context, junctions, roadIndex, builtUp) {
     // c'est la position française. `branch` sort du carrefour, donc reculer
     // le long de la branche veut dire avancer dans son sens.
     const back = TRAFFIC_LIGHT_SETBACK_M;
-    const px = junction.x + branch.x * back;
-    const pz = junction.z + branch.z * back;
+    const px = (commune ? branch.centre.x : junction.x) + branch.x * back;
+    const pz = (commune ? branch.centre.z : junction.z) + branch.z * back;
     // Sens de la marche : celui du trafic qui arrive au feu, donc l'inverse
     // de la direction sortante de la branche.
     const tx = -branch.x;
@@ -177,4 +185,3 @@ export function buildJunctionSigns(layer, context, areas, roadIndex, builtUp) {
     }
   }
 }
-

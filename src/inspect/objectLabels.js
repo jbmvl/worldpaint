@@ -64,6 +64,7 @@ export const LABEL_EXACT = {
   'furniture-lamp-glow': 'halo de lampadaire',
   'lighthouse-beam': 'faisceau de phare',
   'lighthouse-glow': 'halo de phare',
+  'lighthouse-lantern': 'lanterne de phare',
   'furniture-lamp-pool': 'nappe de lumière',
   'traffic-lens': 'feu (lentille)',
 };

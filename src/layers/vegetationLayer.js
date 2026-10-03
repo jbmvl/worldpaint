@@ -555,6 +555,7 @@ export class VegetationLayer {
     roads = null,
     maxRing = VEGETATION_MAX_RING,
     theme = defaultTheme,
+    sightline = createSightline(THREE),
   }) {
     this.THREE = THREE;
     this.theme = theme;
@@ -597,7 +598,7 @@ export class VegetationLayer {
     this.depthMaterial.onBeforeCompile = this.material.onBeforeCompile;
     this.depthMaterial.customProgramCacheKey = () => 'tree-volume-depth-v3';
     // Après la matière d'ombre, qui ne doit pas en hériter.
-    this.sightline = createSightline(THREE);
+    this.sightline = sightline;
     installSightlineClearing(this.material, this.sightline);
     installSightlineClearing(this.understoryMaterial, this.sightline);
     /** @type {Map<string, Object[]>} maillages du peuplement, par clé de tuile */

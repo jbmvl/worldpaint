@@ -21,6 +21,8 @@ import { finishGeneration } from '../core/generationSteps.js';
  * donc les tuiles voisines s'accordent au bord sans se consulter.
  * Le fond plat du déblai ne peut pas être plus étroit qu'une maille, sans quoi
  * aucun sommet n'y tombe et le triangle enjambe la chaussée (`cutBenchM`).
+ * Toutes les rues et dalles voisines participent au déblai ; leurs plis
+ * imposent la cote basse à portée de la maille, même sous une rue plus haute.
  * Chaque sommet porte aussi l'emprise routière (`roadMask`, `roadCutMaskAt`) :
  * ce que `terrainMaterial.js` ajoute après coup à la position — le grain low
  * poly — doit s'y éteindre, sans quoi il recreuserait par-dessus une chaussée
@@ -49,6 +51,7 @@ import { TerrainMaterialFactory } from './terrainMaterial.js';
 import { defaultTheme } from '../themes/default.js';
 import {
   cutElevationAt,
+  lowestRoadDeckAt,
   cutBenchAt,
   roadCutMaskAt,
   ROAD_CUT_M,
@@ -584,43 +587,29 @@ export class TerrainBubble {
 
     // Toutes les chaussées à portée, pas la plus proche : en ville, le sommet
     // le plus proche d'une rue tombe souvent dans le fond plat de sa voisine,
-    // plus basse, et la corde du terrain passait par-dessus celle-ci. Un
-    // sommet dans l'emprise d'une chaussée (`ROAD_CUT_M`) ou dans une dalle
-    // ne descend pourtant pas sous elle — sa bordure y est posée : il ne
-    // retient que ce qui le recouvre.
+    // plus basse, et la corde du terrain passerait par-dessus celle-ci.
+    // Être sous une chaussée ne dispense pas de creuser pour sa voisine :
+    // les mêmes sommets portent les triangles qui traversent les deux.
     // La dalle n'a pas de demi-largeur : son fond plat se mesure depuis son
     // contour, à sa cote la plus basse sur une diagonale de maille (`bench`),
     // sans quoi la corde du terrain passe au-dessus de ses plis.
-    const slab = this._junctions?.deckNear(x, z, reach, undefined, bench);
+    const slabs = this._junctions?.deckSamplesNear?.(x, z, reach, undefined, bench) ??
+      [this._junctions?.deckNear(x, z, reach, undefined, bench)].filter(Boolean);
     const hits = index.queryAll(x, z, reach);
-    const within = (hit) => hit.distance <= hit.segment.halfWidth + ROAD_CUT_M;
-    const inSlab = slab?.distance === 0;
-    let under = inSlab;
-    for (const hit of hits) {
-      if (within(hit) && index.deckAt(hit) != null) under = true;
-    }
     const cuts = [];
     for (const hit of hits) {
-      if (under && !within(hit)) continue;
-      const deck = index.deckAt(hit);
-      if (deck == null) continue;
-      const base = hit.segment.crossingBase;
-      const lowered = !!base && deck < base[hit.row] + (base[Math.min(base.length - 1, hit.row + 1)] - base[hit.row]) * hit.t - 0.001;
-      cuts.push({ deck: deck / scale, distance: hit.distance, halfWidth: hit.segment.halfWidth, lowered });
+      const at = index.deckAt(hit);
+      if (at == null) continue;
+      const deck = Math.min(at, lowestRoadDeckAt(hit, bench));
+      cuts.push({ deck: deck / scale, distance: hit.distance, halfWidth: hit.segment.halfWidth });
       mask = Math.max(mask, roadCutMaskAt(hit.distance, hit.segment.halfWidth, bench));
     }
-    if (slab && (!under || inSlab)) {
+    for (const slab of slabs) {
       cuts.push({ deck: slab.deck / scale, distance: slab.distance, halfWidth: 0 });
       mask = Math.max(mask, roadCutMaskAt(slab.distance, 0, bench));
     }
-    const lowest = (ground, keep = () => true) =>
-      cuts.reduce((low, c) => (keep(c) ? Math.min(low, cutElevationAt(ground, c.deck, c.distance, c.halfWidth, bench)) : low), ground);
-    elevation = lowest(elevation);
-
-    // L'appui qu'un franchissement rend à une chaussée voisine ne remonte pas
-    // le sol par-dessus une chaussée plus basse ; celle qu'il a lui-même
-    // abaissée sous l'ouvrage (`crossingBase`) garde son arbitrage.
-    if (earth.supported) elevation = Math.max(elevation, lowest(earth.elevation, (c) => !c.lowered));
+    elevation = cuts.reduce((low, c) => Math.min(low,
+      cutElevationAt(raw, c.deck, c.distance, c.halfWidth, bench)), elevation);
     return { elevation, mask };
   }
 

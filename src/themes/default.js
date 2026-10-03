@@ -1340,8 +1340,8 @@ export const WATERWAY_CLASSES = {
   ditch: 1.2,
 };
 
-/** Feu du phare : teinte, opacité du faisceau en pleine nuit, durée d'un tour en secondes. */
-export const LIGHTHOUSE_LIGHT = { color: [1, 0.93, 0.74], beamOpacity: 0.16, periodS: 12 };
+/** Feu du phare : teinte, blanc de la lanterne allumée, opacité du faisceau en pleine nuit, durée d'un tour en secondes. */
+export const LIGHTHOUSE_LIGHT = { color: [1, 0.93, 0.74], lantern: '#ffffff', beamOpacity: 0.16, periodS: 12 };
 
 // --- Ce qui vit ----------------------------------------------------------------
 /**

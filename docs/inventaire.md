@@ -89,6 +89,12 @@ leur longueur. Les pistes cyclables, les voies de même rang et les ouvrages
 restent distincts. L'absorption mesure un voisinage, pas une identité OSM :
 elle ne garantit pas la conservation des raccordements d'une desserte retirée.
 
+Les trottoirs et traversées piétonnes explicitement relevés ne dessinent
+aucun ruban. Les `footway` proches d'une ville et longeant une rue sur au
+moins 90 % de leur longueur restent portés par le sol, même au bord du vert
+urbain. Les allées indépendantes, les ouvrages piétons, les escaliers et les
+pistes cyclables conservent leur tracé.
+
 Après le graphe, `roadWidths` réduit proportionnellement les largeurs des
 chaînes revêtues dont les rubans se chevauchent sur un longement d'au moins
 15 m hors des surfaces de carrefour, avec un écart dont le minimum reste
@@ -579,7 +585,7 @@ qui la rend habitée — du linge qui sèche, des poules.
 | **éolienne** | inventé | maille de 320 m, 8 % — hors bâti, hors route, sur un point haut |
 | **pylône** | inventé | mêmes conditions, 6 % |
 | **antenne de sommet** | relevé | sur un `mountain_peak` réel, un sur trois |
-| **phare** | relevé | sur le trait de côte d'une nappe `ocean`, un point sur quarante (~2,5 km), remonté au point le plus haut à moins de 120 m du rivage ; la nuit, un halo à la lanterne et deux faisceaux qui tournent (`lighthouseLight`) |
+| **phare** | relevé | sur le trait de côte d'une nappe `ocean`, un point sur quarante (~2,5 km), monté au point le plus haut dans un rayon de 500 m, à moins de 120 m du rivage ; la nuit, un halo à la lanterne et deux faisceaux qui tournent (`lighthouseLight`) |
 | **arbre de crête** | inventé | maille de 140 m, 3,5 %, sur un point haut dégagé — résineux une fois sur trois |
 | **moulin à vent** | inventé | hameau (moins de 20 bâtiments), 10 % |
 | **moulin à eau** | inventé | hameau, 6 % |
@@ -998,7 +1004,10 @@ une coupe à deux tons. Ces détails font partie de la géométrie instanciée,
 sans matériau ni appel de dessin supplémentaire.
 
 Les tunnels sont interprétés par `transportTunnels` : plafond plat sous une
-voie pour les passages courts, voûte sous le relief, passage bâti sans déblai.
+voie au sol pour les passages courts, voûte sous le relief, passage bâti sans
+déblai. Un passage court sous un pont explicite conserve le gabarit libre
+sous son tablier, sans ajouter de galerie ni de portail ; le terrain y est
+excavé comme sous une chaussée à ciel ouvert.
 Des galeries parallèles proches et de même niveau peuvent partager une seule
 entrée et leur enveloppe. Les passages courts restent sans lampes, avec une
 marge non éclairée devant chaque entrée des galeries longues.

@@ -1,6 +1,7 @@
 /*
- * lighthouseLight — le feu d'un phare : un halo à la lanterne et deux
- * faisceaux opposés qui balaient l'horizon.
+ * lighthouseLight — le feu d'un phare : une lanterne blanche que l'éclairage
+ * de la scène ne touche pas, son halo, et deux faisceaux opposés qui balaient
+ * l'horizon.
  *
  * La tour est du mobilier ordinaire (`furnitureKit.lighthouse`), le feu non :
  * il est additif, sans profondeur ni brouillard, et il tourne à chaque image.
@@ -27,6 +28,9 @@ const BEAM_NEAR_RADIUS_M = 0.6;
 const BEAM_FAR_RADIUS_M = 13;
 /** Pans du cône : assez pour qu'il ne se lise pas comme une lame vu de côté. */
 const BEAM_SIDES = 6;
+/** Verrière allumée : rayon (au ras de celle de la tour, juste devant) et hauteur, en mètres. */
+const LANTERN_RADIUS_M = 1.34;
+const LANTERN_HEIGHT_M = 2.3;
 /** Diamètre du halo de la lanterne, en mètres. */
 const LANTERN_GLOW_M = 16;
 
@@ -124,6 +128,17 @@ export class LighthouseLight {
     this.beamMaterial = createLighthouseBeamMaterial(THREE, { color: look.color });
     this.glowGeometry = createGlowGeometry(THREE);
     this.glowMaterial = createGlowMaterial(THREE, { color: look.color });
+    this.lanternGeometry = new THREE.CylinderGeometry(LANTERN_RADIUS_M, LANTERN_RADIUS_M, LANTERN_HEIGHT_M, 8, 1, true);
+    this.lanternGeometry.name = 'lighthouse-lantern';
+    this.lanternMaterial = new THREE.MeshBasicMaterial({
+      color: look.lantern,
+      transparent: true,
+      opacity: 0,
+      fog: false,
+      toneMapped: false,
+    });
+    this.lanternMaterial.name = 'lighthouse-lantern';
+    this.lanternMesh = null;
     this.beamMesh = null;
     this.glowMesh = null;
     this._angle = 0;
@@ -160,8 +175,11 @@ export class LighthouseLight {
     if (count === 0) {
       if (this.beamMesh) this.beamMesh.count = 0;
       if (this.glowMesh) this.glowMesh.count = 0;
+      if (this.lanternMesh) this.lanternMesh.count = 0;
       return;
     }
+    this.lanternMesh = this._mesh(this.lanternMesh, this.lanternGeometry, this.lanternMaterial, 'lighthouse-lantern', count);
+    this.lanternMesh.renderOrder = 0;
     this.beamMesh = this._mesh(this.beamMesh, this.beamGeometry, this.beamMaterial, 'lighthouse-beam', count);
     this.glowMesh = this._mesh(this.glowMesh, this.glowGeometry, this.glowMaterial, 'lighthouse-glow', count);
 
@@ -172,13 +190,14 @@ export class LighthouseLight {
       this._scale.setScalar(scale);
       this._matrix.compose(this._position, this._quaternion, this._scale);
       this.beamMesh.setMatrixAt(index, this._matrix);
+      this.lanternMesh.setMatrixAt(index, this._matrix);
       // Le halo relit son rayon dans l'échelle de l'instance.
       this._quaternion.identity();
       this._scale.setScalar(LANTERN_GLOW_M * scale);
       this._matrix.compose(this._position, this._quaternion, this._scale);
       this.glowMesh.setMatrixAt(index, this._matrix);
     });
-    for (const mesh of [this.beamMesh, this.glowMesh]) {
+    for (const mesh of [this.beamMesh, this.glowMesh, this.lanternMesh]) {
       mesh.count = count;
       mesh.instanceMatrix.needsUpdate = true;
     }
@@ -196,17 +215,21 @@ export class LighthouseLight {
     this._night = Math.min(1, Math.max(0, Number(mix) || 0));
     this.beamMaterial.uniforms.uOpacity.value = this._night * this.beamOpacity;
     this.glowMaterial.uniforms.uOpacity.value = this._night;
-    for (const mesh of [this.beamMesh, this.glowMesh]) if (mesh) mesh.visible = this._night > 0.01;
+    this.lanternMaterial.opacity = this._night;
+    for (const mesh of [this.beamMesh, this.glowMesh, this.lanternMesh]) if (mesh) mesh.visible = this._night > 0.01;
   }
 
   dispose() {
-    for (const mesh of [this.beamMesh, this.glowMesh]) {
+    for (const mesh of [this.beamMesh, this.glowMesh, this.lanternMesh]) {
       if (!mesh) continue;
       this.group.remove(mesh);
       mesh.dispose?.();
     }
     this.beamMesh = null;
     this.glowMesh = null;
+    this.lanternMesh = null;
+    this.lanternGeometry.dispose();
+    this.lanternMaterial.dispose();
     this.beamGeometry.dispose();
     this.beamMaterial.dispose();
     this.glowGeometry.dispose();

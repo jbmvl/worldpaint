@@ -1,4 +1,5 @@
 import { junctionLinks, junctionLinkArea } from './junctionLinks.js';
+import { unirAiresFourches } from './junctionUnions.js';
 import { seamIntervals, seamBoundary, seamRibbonRuns } from './junctionSeams.js';
 import { junctionTriangles } from './junctionTriangulation.js';
 /*
@@ -32,6 +33,8 @@ import { junctionTriangles } from './junctionTriangulation.js';
  * borne la profondeur à sa moitié pour conserver une chaussée entre nœuds.
  * `junctionSeams` rattache chaque bouche à son arête de graphe et publie les
  * mêmes sommets XYZ pour le ruban, la dalle, les bordures et les marquages.
+ * L'extrémité provisoire d'une liaison couverte peut porter deux bouches :
+ * `junctionLinks` prolonge ensuite son contour jusqu'à l'autre nœud.
  *
  * ## La fourche
  *
@@ -39,6 +42,8 @@ import { junctionTriangles } from './junctionTriangulation.js';
  * de rue : les deux rubans se recouvrent jusqu'à ce que leurs axes s'écartent.
  * `forkArea` couvre ce recouvrement en suivant leurs tracés, et pose la pointe
  * de l'îlot là où ils se séparent.
+ * Lorsqu'elle atteint un voisin du graphe, `junctionUnions` réunit leurs
+ * contours si toutes les bouches extérieures restent entières et sans îlot.
  *
  * ## Le giratoire
  *
@@ -320,7 +325,8 @@ export function junctionArea(junction, options = {}) {
   if (junction?.roundabout) return roundaboutArea(junction, options);
   const { margin = JUNCTION_MOUTH_MARGIN_M } = options;
   const raw = junction?.branches;
-  if (!Array.isArray(raw) || raw.length < 3) return null;
+  const minimum = junction?.extremiteLiaison ? 2 : 3;
+  if (!Array.isArray(raw) || raw.length < minimum) return null;
 
   // Triées par azimut : c'est ce qui rend « la branche suivante » bien définie,
   // et donc la construction indépendante du nombre de branches.
@@ -334,10 +340,9 @@ export function junctionArea(junction, options = {}) {
     if (area) return area;
   }
   const branches = mergeParallelBranches(sorted);
-  // Moins de trois bouches : ce n'est pas un carrefour mais un embranchement
-  // rasant, où deux voies repartent ensemble. Il n'y a pas de surface à
-  // construire, et prétendre le contraire poserait un polygone replié.
-  if (branches.length < 3) return null;
+  // Hors extrémité d'une liaison, deux bouches ne suffisent pas à décrire un
+  // carrefour : des voies repartant ensemble replieraient son contour.
+  if (branches.length < minimum) return null;
 
   const node = { x: junction.x, z: junction.z };
   const count = branches.length;
@@ -1182,11 +1187,15 @@ export class JunctionAreas {
      */
     this.feeders = [];
 
+    const entrees=[];
     for (const junction of junctionLinks(junctions)) {
       const area = junctionArea(junction, options);
       if (!area) continue;
-      const index = this.areas.length;
       area.ringEdges = junction.ringEdges;
+      entrees.push({junction,area});
+    }
+    for (const area of unirAiresFourches(entrees)) {
+      const index = this.areas.length;
       this.areas.push(area);
       this.feeders.push(new Set());
 
@@ -1306,11 +1315,15 @@ export class JunctionAreas {
    * @returns {{deck:number, distance:number}|null}
    */
   deckNear(x, z, margin, level = LEVEL_GROUND, spread = 0) {
+    return this.deckSamplesNear(x, z, margin, level, spread).sort((a,b)=>a.distance-b.distance)[0] ?? null;
+  }
+
+  deckSamplesNear(x, z, margin, level = LEVEL_GROUND, spread = 0) {
     const reach = Math.min(margin, JUNCTION_REACH_M);
     const bucket = this.buckets.get(cellKey(Math.floor(x / this.cell), Math.floor(z / this.cell)));
-    if (!bucket) return null;
+    if (!bucket) return [];
 
-    let best = null;
+    const samples = [];
     for (const index of bucket) {
       const area = this.areas[index];
       if (area.level !== level || !area.decks) continue;
@@ -1318,13 +1331,12 @@ export class JunctionAreas {
       if (x < box.minX - reach || x > box.maxX + reach || z < box.minZ - reach || z > box.maxZ + reach) continue;
       const near = outlineDistance(area.outline, x, z);
       if (near.distance > reach) continue;
-      if (best && near.distance >= best.distance) continue;
       let deck = junctionDeckAt(area, area.decks, near.x, near.z);
       if (spread > near.distance) deck = Math.min(deck, lowestDeckAround(area, x, z, spread));
       if (!Number.isFinite(deck)) continue;
-      best = { deck, distance: near.distance };
+      samples.push({ deck, distance: near.distance });
     }
-    return best;
+    return samples;
   }
 }
 

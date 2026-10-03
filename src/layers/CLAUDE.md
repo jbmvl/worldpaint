@@ -15,6 +15,7 @@ son état.
 | `roadJunctions.js` | la surface d'un carrefour, ses bouches, qui cède le passage — et les deux formes à part : la fourche et la couronne du giratoire |
 | `junctionSeams.js` | propriétaires de graphe, frontières XYZ et intervalles des rubans ; cotes finales après les ouvrages |
 | `junctionLinks.js` | surface commune des petites boucles reconvergentes sans îlot découvert, sans changer le graphe |
+| `junctionUnions.js` | contour commun d'une fourche et de ses voisins atteints, avec bouches extérieures entières et sans effacer d'îlot |
 | `junctionTriangulation.js` | triangles partagés entre rendu, altitude et déblai ; découpage en oreilles des contours concaves |
 | `roadRoundabouts.js` | reconnaît un giratoire (une face du graphe petite et ronde) : il est publié comme **un** carrefour, dont `roadJunctions` fait une couronne |
 | `roadEdges.js`, `roadCorridor.js` | la rive de la chaussée, et l'emprise que le décor ne franchit pas |

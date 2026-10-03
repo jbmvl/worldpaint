@@ -39,6 +39,34 @@ test('un passage inférieur court dégage le rail sans relever sa plateforme',()
   layer.dispose();
 });
 
+test('un passage sous un pont garde son dégagement sans galerie ni portail',()=>{
+  const lower=tunnel(0,{length:24});
+  const upper={path:[{x:0,z:-20,distance:0},{x:0,z:20,distance:40}],halfWidth:3,
+    platform:Float32Array.of(50,50),works:Uint8Array.of(1,1),levels:Int8Array.of(1,1)};
+  resolveTunnelProfiles([lower,upper],[],ground);
+  assert.deepEqual(lower.tunnelStructures,[]);
+  assert.ok(lower.works.every(code=>code===0),'le sol est excavé sous le passage');
+  assert.ok(lower.platform[50]<=44.5,'le tablier conserve son gabarit');
+  assert.deepEqual([...upper.platform],[50,50]);
+  assert.ok(new TransportEarthworks([lower]).sample(0,0,50).elevation<=44.5);
+  for(let r=1;r<lower.path.length;r++) assert.ok(Math.abs(lower.platform[r]-lower.platform[r-1])/4<.121);
+  const layer=render([lower]);
+  assert.equal(layer.counts.portals,0);
+  assert.equal(layer.tunnelMouths.length,0);
+  assert.equal(layer.tunnelFixtures.length,0);
+  layer.dispose();
+});
+
+test('un pont déjà assez haut laisse le passage inférieur au niveau naturel',()=>{
+  const lower=tunnel(0,{length:24});
+  const upper={path:[{x:0,z:-20,distance:0},{x:0,z:20,distance:40}],halfWidth:3,
+    platform:Float32Array.of(60,60),works:Uint8Array.of(1,1),levels:Int8Array.of(1,1)};
+  resolveTunnelProfiles([lower,upper],[],ground);
+  assert.ok(lower.platform.every(h=>h===50));
+  assert.ok(lower.works.every(code=>code===0));
+  assert.deepEqual(lower.tunnelStructures,[]);
+});
+
 test('deux tunnels parallèles voisins reçoivent une enveloppe et deux entrées communes',()=>{
   const segments=[tunnel(0),tunnel(7,{width:1,reverse:true})];
   resolveTunnelProfiles(segments,[],ground);
