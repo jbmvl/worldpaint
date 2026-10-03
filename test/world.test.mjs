@@ -9078,6 +9078,16 @@ test('platformLaneAt dit la largeur de la voie et si l’axe la partage', () => 
   assert.equal(split.oneway, 1, 'dans le sens de la circulation');
   assert.equal(laneOf(segment('major', 2.5, 1), west).oneway, -1, 'à contresens');
 
+  // Plages comptées depuis le point demandé (un mètre à droite de l'axe).
+  close(major.own.inner, 0.06 - 1, 1e-9, 'la voie commence au bord du trait axial');
+  close(major.own.outer, major.usable - 1, 1e-9);
+  assert.ok(major.usable < 4.25 - 0.35, 'en deçà de la ligne de rive');
+  assert.equal(major.opposite, null, 'trait axial : la voie d’en face est interdite');
+  close(minor.own.inner, -1, 1e-9, 'sans trait, la voie s’arrête à l’axe');
+  close(minor.opposite.inner, -minor.usable - 1, 1e-9, 'et celle d’en face reste ouverte');
+  close(split.own.inner, -split.usable - 1, 1e-9, 'à sens unique, toute la chaussée');
+  assert.equal(split.opposite, null);
+
   const express = laneOf(segment('express', 6), east);
   close(express.carriagewayWidth, 9.6, 1e-9, 'l’accotement n’est pas de la chaussée');
   assert.equal(laneOf(segment('track', 1.5), east).paved, false);

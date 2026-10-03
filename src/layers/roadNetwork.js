@@ -107,6 +107,7 @@ import {
 import {
   MARKING_BAR_M,
   MARKING_LIFT_M,
+  MARKING_WIDTH_M,
   MOUTH_CROSSING_M,
   approachLane,
   appendMarkingArrows,
@@ -901,17 +902,21 @@ export function platformSideAt(
 
 /**
  * Section en travers de la chaussée la plus proche de `(x, z)`, telle qu'elle
- * est rendue : ce qu'il faut à un mobile pour se ranger **sur** la route sans
- * en déborder ni rouler sur l'axe.
+ * est rendue et peinte : ce qu'il faut à un mobile pour se ranger **sur** la
+ * route sans en déborder ni rouler sur l'axe.
  *
- * Les largeurs sont celles du ruban, accotement exclu (ce n'est pas de la
- * chaussée). `divided` vaut quand l'axe porte un marquage : la route est alors
- * partagée en deux voies, et `laneWidth` n'en est qu'une. À sens unique ou
- * sans marquage d'axe, la voie est la chaussée entière. Le profil lu est celui
- * de `_appendMarkings` : la réponse dit ce qui est peint, pas plus.
+ * `usable` est la demi-largeur roulable : jusqu'au bord intérieur de la ligne
+ * de rive quand il y en a une, jusqu'au bord de la chaussée (accotement exclu)
+ * sinon. `divided` vaut quand l'axe porte un marquage : la route est alors
+ * partagée en deux voies et `laneWidth` n'en est qu'une ; à sens unique ou
+ * sans marquage, la voie est la chaussée entière. Le profil lu est celui de
+ * `_appendMarkings` : la réponse dit ce qui est peint, pas plus.
  *
- * `oneway` se compte dans le sens de `ahead` : `1` avec la circulation, `-1`
- * à contresens, `0` à double sens ou sans avis de la donnée.
+ * `own` et `opposite` sont des plages en travers **comptées depuis `(x, z)`**,
+ * positives à droite du sens de `ahead` : la voie du mobile, et celle d'en face
+ * quand rien ne l'interdit (double sens sans marquage d'axe), `null` sinon.
+ * `oneway` : `1` avec la circulation, `-1` à contresens, `0` à double sens ou
+ * sans avis de la donnée.
  *
  * @param {RoadNetwork} roads
  * @param {number} x
@@ -921,10 +926,12 @@ export function platformSideAt(
  * @param {number} [options.radius]
  * @returns {{axis:{x:number, z:number}, tangent:{x:number, z:number},
  *            right:{x:number, z:number}, offset:number, distance:number,
- *            halfWidth:number, carriagewayWidth:number, laneWidth:number,
- *            divided:boolean, oneway:number, paved:boolean,
+ *            halfWidth:number, usable:number, carriagewayWidth:number,
+ *            laneWidth:number, divided:boolean, oneway:number, paved:boolean,
+ *            own:{inner:number, outer:number},
+ *            opposite:{inner:number, outer:number}|null,
  *            profile:string}|null} `offset` : position de `(x, z)` en
- *          travers depuis l'axe, positive à droite du sens de marche.
+ *          travers depuis l'axe rendu, positive à droite.
  */
 export function platformLaneAt(roads, x, z, { ahead = null, radius = ROAD_SNAP_RADIUS_M } = {}) {
   const index = roads?.elevationIndex;
@@ -948,23 +955,35 @@ export function platformLaneAt(roads, x, z, { ahead = null, radius = ROAD_SNAP_R
   const isOneway = !!segment.oneway?.some((s) => s !== 0);
   const profiles = (roads.theme ?? defaultTheme).roads.profiles;
   const spec = carriagewayProfile(profiles[segment.profile], isOneway) ?? {};
+  const paved = isPaved(spec);
   const carriageHalf = Math.max(0, segment.halfWidth - (spec.shoulder || 0));
   const divided = !!spec.centerDash && !isOneway;
+  const edge = paved
+    ? markingLinesFor(spec, segment.halfWidth).find((line) => line.offset > 0 && !line.dash)
+    : null;
+  const usable = edge ? edge.offset - MARKING_WIDTH_M / 2 : carriageHalf;
   const rx = -tz;
   const rz = tx;
+  const offset = (x - hit.x) * rx + (z - hit.z) * rz;
+
+  const centre = divided ? MARKING_WIDTH_M / 2 : 0;
+  const span = (inner, outer) => ({ inner: inner - offset, outer: outer - offset });
 
   return {
     axis: { x: hit.x, z: hit.z },
     tangent: { x: tx, z: tz },
     right: { x: rx, z: rz },
-    offset: (x - hit.x) * rx + (z - hit.z) * rz,
+    offset,
     distance: hit.distance,
     halfWidth: segment.halfWidth,
+    usable,
     carriagewayWidth: 2 * carriageHalf,
     laneWidth: divided ? carriageHalf : 2 * carriageHalf,
     divided,
     oneway: (segment.oneway?.[hit.row] ?? 0) * sense,
-    paved: isPaved(spec),
+    paved,
+    own: isOneway ? span(-usable, usable) : span(centre, usable),
+    opposite: isOneway || divided ? null : span(-usable, 0),
     profile: segment.profile,
   };
 }

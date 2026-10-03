@@ -343,9 +343,10 @@ export class World {
   }
 
   /**
-   * Section en travers de la chaussée la plus proche : largeur de chaussée et
-   * de la voie, marquage d'axe, sens unique — de quoi ranger un mobile sur sa
-   * voie sans déborder de la route. Voir `platformLaneAt`.
+   * Section en travers de la chaussée la plus proche : demi-largeur roulable,
+   * largeur de la voie, marquage d'axe, sens unique, et les plages de sa voie
+   * et de celle d'en face comptées depuis le point demandé — de quoi ranger un
+   * mobile sur sa voie sans déborder de la route. Voir `platformLaneAt`.
    *
    * @param {number} lng
    * @param {number} lat
@@ -353,12 +354,13 @@ export class World {
    * @param {number} [options.aheadLng] Point visé : fixe le sens de marche.
    * @param {number} [options.aheadLat]
    * @param {number} [options.radius] Portée de la recherche, en mètres.
-   * @returns {{axis:{lng:number, lat:number}, offsetM:number, distanceM:number,
-   *            halfWidth:number, carriagewayWidth:number, laneWidth:number,
-   *            divided:boolean, oneway:number, paved:boolean,
-   *            profile:string}|null} `offsetM` : position du point demandé
-   *          depuis l'axe, positive à droite du sens de marche. `null` hors de
-   *          portée de toute chaussée.
+   * @returns {{axis:{lng:number, lat:number}, offsetM:number, distance:number,
+   *            halfWidth:number, usable:number, carriagewayWidth:number,
+   *            laneWidth:number, divided:boolean, oneway:number,
+   *            paved:boolean, own:{inner:number, outer:number},
+   *            opposite:{inner:number, outer:number}|null,
+   *            profile:string}|null} Écarts en mètres, positifs à droite du
+   *          sens de marche. `null` hors de portée de toute chaussée.
    */
   roadLaneAt(lng, lat, { aheadLng, aheadLat, radius = ROAD_SNAP_RADIUS_M } = {}) {
     const bubble = this.composer.bubble;
@@ -376,16 +378,20 @@ export class World {
     return {
       axis: bubble.frame.toLngLat(lane.axis.x, lane.axis.z),
       offsetM: lane.offset,
-      distanceM: lane.distance,
+      distance: lane.distance,
       halfWidth: lane.halfWidth,
+      usable: lane.usable,
       carriagewayWidth: lane.carriagewayWidth,
       laneWidth: lane.laneWidth,
       divided: lane.divided,
       oneway: lane.oneway,
       paved: lane.paved,
+      own: lane.own,
+      opposite: lane.opposite,
       profile: lane.profile,
     };
   }
+
 
   /**
    * Tables de terrasse posées à moins de `radius` mètres de `(lng, lat)` —

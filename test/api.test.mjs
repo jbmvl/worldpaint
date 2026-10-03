@@ -187,6 +187,8 @@ test('roadLaneAt rend la section en travers, axe en lng/lat', () => {
   assert.equal(lane.offsetM, 1, 'au sud en allant vers l’est : à droite');
   assert.equal(lane.divided, true);
   assert.equal(lane.laneWidth, 4.25);
+  assert.ok(Math.abs(lane.own.outer - (lane.usable - 1)) < 1e-9, 'plages depuis le point demandé');
+  assert.equal(lane.opposite, null);
   assert.equal(world.roadLaneAt(5, 100), null, 'hors de portée, rien');
 });
 

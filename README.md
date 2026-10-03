@@ -231,14 +231,17 @@ world.roadLaneAt(lng, lat, { aheadLng, aheadLat });
 ```
 
 `roadLaneAt` answers the question of a mobile riding *on* the road: the cross
-section of the nearest rendered road, as painted. `carriagewayWidth` excludes
-the shoulder; `divided` is true when the centre line is marked, in which case
-`laneWidth` is one half of the carriageway — otherwise (one-way, or no centre
-line) the lane is the whole carriageway. `oneway` is `1` along the direction of
-travel, `-1` against it, `0` two-way or unknown; `offsetM` is the queried
-point's distance from the axis, positive to the right of travel; `axis` is the
-nearest axis point in lng/lat. It returns `null` when no road is within
-`radius`.
+section of the nearest rendered road, as painted. `usable` is the rideable
+half-width (to the inner edge of the edge line, or the carriageway edge);
+`carriagewayWidth` excludes the shoulder; `divided` is true when the centre
+line is marked, and `laneWidth` is then one half of the carriageway —
+otherwise (one-way, or no centre line) the whole of it. `own` and `opposite`
+are lateral ranges `{ inner, outer }` measured from the queried point, positive
+to the right of travel: the mobile's own lane, and the oncoming one when
+nothing forbids it (two-way without centre line), `null` otherwise. `oneway` is
+`1` along travel, `-1` against it, `0` two-way or unknown; `offsetM` is the
+queried point's offset from the rendered axis; `distance` its distance to it.
+It returns `null` when no road is within `radius`.
 
 ### Weather
 
