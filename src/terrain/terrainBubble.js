@@ -91,6 +91,7 @@ export class TerrainBubble {
     groundClass = null,
     theme = defaultTheme,
     reach = Infinity,
+    decorRadius = Infinity,
   }) {
     this.THREE = THREE;
     this.scene = scene;
@@ -103,6 +104,8 @@ export class TerrainBubble {
     this.verticalScale = verticalScale;
     /** Portée du décor autour de l'observateur, en mètres (`createWorld({ reach })`). */
     this._reach = Number.isFinite(reach) && reach > 0 ? reach : Infinity;
+    /** Rayon du détail (`detail.radius`) : plafonne les couches, pas le relief ni les tuiles. */
+    this._decorRadius = Number.isFinite(decorRadius) && decorRadius > 0 ? decorRadius : Infinity;
     /** Disque de la portée autour du dernier centre, `null` sans portée : le déblai s'y limite. */
     this._reachDisc = null;
 
@@ -213,6 +216,11 @@ export class TerrainBubble {
    */
   get reachMeters() {
     return this._reach;
+  }
+
+  /** Portée des couches du décor : la plus courte de la portée et du rayon du détail. */
+  get decorReachMeters() {
+    return Math.min(this._reach, this._decorRadius);
   }
 
   /** Rayon approximatif de la bulle, en mètres. */

@@ -21,14 +21,14 @@ export const REACH_MARGIN = 1.25;
 export const REACH_MARGIN_M = 60;
 
 /**
- * Rayon d'une couche, plafonné à la portée du décor (`createWorld({ reach })`).
- * Sans portée, ou face à une bulle qui n'en déclare pas, le rayon propre de
- * la couche reste intact : la portée ne rallonge jamais rien.
+ * Rayon d'une couche, plafonné à la portée du décor (`createWorld({ reach })`
+ * ou `detail.radius`). Sans portée, ou face à une bulle qui n'en déclare pas,
+ * le rayon propre de la couche reste intact : la portée ne rallonge jamais rien.
  *
  * @param {number} radius Rayon propre de la couche, en mètres.
- * @param {{reachMeters?: number}|null} [bubble]
+ * @param {{reachMeters?: number, decorReachMeters?: number}|null} [bubble]
  */
 export function reachedRadius(radius, bubble) {
-  const reach = bubble?.reachMeters;
+  const reach = bubble?.decorReachMeters ?? bubble?.reachMeters;
   return Number.isFinite(reach) && reach > 0 ? Math.min(radius, reach) : radius;
 }

@@ -126,3 +126,12 @@ export function coverBandsRadius(bands) {
   for (const band of bands) if (band.to > radius) radius = band.to;
   return radius;
 }
+
+/**
+ * Bandes éclaircies pour un appareil modeste (`detail.density`, 0..1) : moins
+ * de tirages par maille, au moins un. Le semis reste déterministe à densité égale.
+ */
+export function thinnedCoverBands(bands, density = 1) {
+  if (!(density > 0) || density >= 1) return bands;
+  return bands.map((band) => ({ ...band, perCell: Math.max(1, Math.round(band.perCell * density)) }));
+}

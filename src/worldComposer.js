@@ -140,6 +140,7 @@ export class WorldComposer {
    * @param {number} [options.reach] Portée du décor en mètres. Absente, chaque couche garde son rayon.
    * @param {Object} [options.theme] Direction artistique, déjà résolue par
    *        `resolveTheme`. Le compositeur la distribue sans la lire.
+   * @param {{radius?: number, density?: number}} [options.detail] Voir `createWorld`.
    */
   constructor({
     THREE,
@@ -152,6 +153,7 @@ export class WorldComposer {
     maxAnisotropy = 4,
     theme = defaultTheme,
     reach = Infinity,
+    detail = {},
   }) {
     this.THREE = THREE;
     this.theme = theme;
@@ -211,6 +213,7 @@ export class WorldComposer {
       segmentsByRing,
       theme,
       reach,
+      decorRadius: detail.radius,
     });
     this.bubble.setMaxAnisotropy(maxAnisotropy);
 
@@ -292,6 +295,7 @@ export class WorldComposer {
       streets: this.streets,
       theme,
       scatterBudgetMs: GRASS_SCATTER_BUDGET_MS,
+      density: detail.density,
     });
     this.grass.setMaxAnisotropy(maxAnisotropy);
 
@@ -304,6 +308,7 @@ export class WorldComposer {
       groundClass: this.groundClass,
       roads: this._infra,
       theme,
+      density: detail.density,
     });
     this.crops.setMaxAnisotropy(maxAnisotropy);
 

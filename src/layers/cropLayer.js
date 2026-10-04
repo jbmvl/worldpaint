@@ -33,6 +33,7 @@ import {
   coverHeightFade,
   coverMassDensity,
   coverBandsRadius,
+  thinnedCoverBands,
 } from './coverBands.js';
 
 /**
@@ -249,6 +250,7 @@ export class CropLayer {
     count = CROP_COUNT,
     theme = defaultTheme,
     sightline = null,
+    density = 1,
   }) {
     this.THREE = THREE;
     this.theme = theme;
@@ -268,7 +270,7 @@ export class CropLayer {
     this._anchor = null;
     this._instanceCells = new InstanceCells();
     this._frame = null;
-    this._bands = CROP_BANDS;
+    this._bands = thinnedCoverBands(CROP_BANDS, density);
     this._cells = coverBandRing(paddedCoverBands(this._bands, CROP_REBUILD_M));
     // Une seule allocation, dimensionnée sur la bande la plus fournie.
     const widest = Math.max(...this._bands.map((band) => band.perCell));

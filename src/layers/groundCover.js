@@ -31,6 +31,7 @@ import {
   coverHeightFade,
   coverMassDensity,
   coverBandsRadius,
+  thinnedCoverBands,
 } from './coverBands.js';
 import { SETTLED_GRASS, VEGETAL_SURFACES, poolShareAt, poolEdgeGain } from '../terrain/groundClassMap.js';
 import { LOW_POLY_GRAIN_DEFAULTS } from '../terrain/lowPolyGrain.js';
@@ -486,6 +487,7 @@ export class GroundCover {
     count = GRASS_COUNT,
     theme = defaultTheme,
     scatterBudgetMs = Infinity,
+    density = 1,
   }) {
     this.THREE = THREE;
     this.theme = theme;
@@ -518,7 +520,7 @@ export class GroundCover {
     this._pass = null;
     this._instanceCells = new InstanceCells({ resident: true });
     this._frame = null;
-    this._bands = [coverBand({ from: 0, to: 55, cell: 2.2, perCell: 16, fadeOut: 20, salt: 0 })];
+    this._bands = thinnedCoverBands([coverBand({ from: 0, to: 55, cell: 2.2, perCell: 16, fadeOut: 20, salt: 0 })], density);
     this._cells = coverBandRing(paddedCoverBands(this._bands, GRASS_REBUILD_M));
     // Une seule allocation, dimensionnée sur la bande la plus fournie.
     const widest = Math.max(...this._bands.map((band) => band.perCell));

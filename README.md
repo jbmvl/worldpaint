@@ -297,6 +297,29 @@ seconds for the full bubble. Shader compilation, on the first render, is a large
 share of that: an application that knows it will mount a scene can warm it with
 `renderer.compileAsync`.
 
+### A lighter scene for modest devices (`detail`)
+
+A phone pays for the decor twice: building it on a slow CPU, then drawing it.
+`detail` lightens a moving scene without fixing it in place:
+
+```js
+const world = createWorld({
+  THREE, scene, sky: { Sky, fogRadius: 720 },
+  detail: { radius: 400, density: 0.4 },
+  view: { segmentsByRing: [96, 48, 24] },
+});
+```
+
+`radius` caps every layer's radius, like `reach`, but the terrain, the vector
+tiles and the ground map keep the whole bubble, so the scene still follows the
+viewer and the landscape beyond stays coloured. Trees are not capped. `density`
+(0..1) thins grass and crops. Draw the fog in to hide the edge of the detail.
+
+On `demo/lab/mount.html` (`await mountLab.run({ reach: null, lieu: 'angers',
+detail: { radius: 400, density: 0.4 }, view: { segmentsByRing: [96, 48, 24] } })`),
+a town centre builds about three to four times faster than the full bubble,
+with about a third of its triangles.
+
 ### Art direction
 
 Everything that decides what things *look* like — palettes, tree

@@ -86,6 +86,10 @@ export const DEFAULT_ELEVATION_ZOOM = 14;
  *        la bulle (`sky.fogRadius` pour le rapprocher). Pour une
  *        scène fixe (départ, arrivée, rejeu) : monter avec `mountAt`. Absente,
  *        le comportement est celui de toujours.
+ * @param {Object} [options.detail] Allègement pour un appareil modeste, sans
+ *        figer la scène : `radius` plafonne en mètres le rayon des couches (bâti,
+ *        rues, chaussées, mobilier…) mais pas le relief, les tuiles ni les arbres ;
+ *        `density` (0..1) éclaircit l'herbe et les cultures. Défaut : tout le détail.
  * @param {Object|null} [options.theme] Direction artistique — tranches
  *        entières qui remplacent celles de `defaultTheme`, voir `resolveTheme`.
  * @param {Object|null} [options.sky] Ciel, soleil et brouillard. `null` (le
@@ -110,6 +114,7 @@ export function createWorld({
   vector = null,
   view = {},
   reach = null,
+  detail = null,
   theme = null,
   sky = null,
 }) {
@@ -139,6 +144,7 @@ export function createWorld({
     maxAnisotropy: settings.maxAnisotropy,
     theme: resolved,
     reach: Number.isFinite(reach) && reach > 0 ? reach : Infinity,
+    detail: detail || {},
   });
 
   let environment = null;

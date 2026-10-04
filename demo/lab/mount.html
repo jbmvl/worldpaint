@@ -25,6 +25,7 @@
  *
  *   await mountLab.run({ reach: 120, lieu: 'station-montreuil-bellay' })
  *   await mountLab.run({ reach: null })   // la bulle complète, pour comparer
+ *   await mountLab.run({ reach: null, detail: { radius: 400, density: 0.4 } })   // décor allégé
  *
  * Rend les temps par phase (création, `mountAt`, files vidées image par image,
  * premier rendu), les couches les plus lentes, et ce qui a été bâti.
@@ -41,7 +42,7 @@ const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 20
 
 let current = null;
 
-async function run({ reach = 120, lieu = 'station-montreuil-bellay', lng = null, lat = null, yawDeg = 225, pitchDeg = 12, distance = 40, budgetMs } = {}) {
+async function run({ detail = null, view = null, reach = 120, lieu = 'station-montreuil-bellay', lng = null, lat = null, yawDeg = 225, pitchDeg = 12, distance = 40, budgetMs } = {}) {
   current?.world.dispose();
   current = null;
   const base = `/demo/lab/places/${lieu}`;
@@ -57,6 +58,8 @@ async function run({ reach = 120, lieu = 'station-montreuil-bellay', lng = null,
     vector: place.vector ? { tiles: [`${location.origin}${base}/vector/{z}/{x}/{y}.pbf`], maxZoom: place.vector.maxZoom } : null,
     sky: { Sky },
     ...(reach ? { reach } : {}),
+    ...(detail ? { detail } : {}),
+    ...(view ? { view } : {}),
   });
   world.setProfiling(true);
   const t1 = performance.now();
