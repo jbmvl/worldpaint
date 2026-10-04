@@ -31,8 +31,8 @@ couches sont ouvertes, et **elles seules** :
 | --- | --- | --- |
 | `landcover` | `groundClassMap`, `furnitureLayer` | matière du sol, cultures, contours de parcelle |
 | `landuse` | `groundClassMap`, `settlement`, `furnitureLayer` | occupation, zones bâties, vert urbain |
-| `water` | `groundClassMap`, `furnitureLayer` | lacs, fleuves larges, mer, trait de côte |
-| `waterway` | `groundClassMap` | ruisseaux, canaux, fossés, et leur ripisylve |
+| `water` | `waterFeatures`, `waterPlacement`, `groundClassMap`, `furnitureLayer` | lacs, fleuves larges, mer, trait de côte |
+| `waterway` | `waterFeatures`, `waterPlacement`, `groundClassMap` | ruisseaux, canaux, fossés, et leur ripisylve |
 | `transportation` | `roadNetwork`, `railwayLayer` | chaussées, voies ferrées, ponts et tunnels |
 | `building` | `buildingLayer`, `settlement` | empreintes bâties, densité du tissu |
 | `poi` | `buildingLayer`, `furnitureLayer` | fonction d'un bâtiment, abribus, fontaines, châteaux |
@@ -83,11 +83,15 @@ talus d'un mètre, que le MNT ne distingue pas de son propre bruit.
 
 ## Les chaussées parallèles
 
-`roadBundles` retire avant le graphe certaines voies urbaines de desserte
-(`lane`, `minor`) longeant des voies de rang supérieur sur au moins 75 % de
-leur longueur. Les pistes cyclables, les voies de même rang et les ouvrages
-restent distincts. L'absorption mesure un voisinage, pas une identité OSM :
-elle ne garantit pas la conservation des raccordements d'une desserte retirée.
+Les routes de desserte et pistes cyclables conservent leurs axes, même
+lorsqu'elles longent une avenue. La proximité et le rang ne prouvent pas une
+identité : supprimer une de ces voies pourrait supprimer son raccordement.
+
+Les trottoirs et traversées piétonnes explicitement relevés ne dessinent
+aucun ruban, sauf si la voie est désignée cyclable. Les `footway` proches d'une ville et longeant une rue sur au
+moins 90 % de leur longueur restent portés par le sol, même au bord du vert
+urbain. Les allées indépendantes, les ouvrages piétons, les escaliers et les
+pistes cyclables conservent leur tracé.
 
 Les trottoirs et traversées piétonnes explicitement relevés ne dessinent
 aucun ruban. Les `footway` proches d'une ville et longeant une rue sur au
@@ -131,7 +135,7 @@ Les matières du sol, décrites en détail dans `docs/surfaces.md`. En résumé 
 | `ice` | `landcover class=ice` (glacier, ice_shelf) |
 | `sand` | `landcover class=sand` (beach, sand, dune) |
 | `pavement` | **déduit** : bâti ∩ disque urbain, moins le vert urbain |
-| `water` | polygones `water` permanents, traits `waterway` élargis |
+| `water` | index précis des surfaces permanentes résolues ; peinture des polygones et traits en repli |
 
 Le pays ne lave que quatre d'entre elles (`grass`, `farmland`, `bare`,
 `pavement`) : une lande ou un maquis disent déjà leur pays. La dalle et
@@ -750,9 +754,11 @@ Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
    cherche : ce n'est pas une couverture mais une **polyligne** de la couche
    `mountain_peak`, servie à partir du zoom 13 aux côtés de `ridge` et `arete`.
    C'est elle que lit `cliffLayer`.
-6. **Un cours d'eau plus étroit qu'un texel** (2,7 m) ne peut pas être rasterisé
-   proprement : le drain (1,6 m) et le fossé (1,2 m) se rendent en pointillé.
-   Voir `docs/surfaces.md`.
+6. **Une eau sans profil validé garde la peinture de repli**, avec diagnostic :
+   composante ouverte, MNT absent, contraintes de rive incompatibles ou axe
+   fluvial inexploitable. Un drain (1,6 m) ou un fossé (1,2 m) en repli peut
+   être discontinu dans le raster ; les rubans résolus gardent leur largeur
+   réelle et leur continuité. Voir `docs/surfaces.md`.
 7. Le dispatch des points d'intérêt au-delà des trois premières lignes
    (abribus, fontaine, lavoir) suit le schéma `poi.yaml` **sans avoir été
    vérifié** sur les tuiles réellement servies.

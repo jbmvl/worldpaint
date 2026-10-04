@@ -124,6 +124,9 @@ Breaking one of these needs a very good reason, stated in the PR description.
   node on it folds into a single junction centred on the ring. Its surface is
   a crown — outer edge pierced by one mouth per branch, island left as
   terrain — and every branch yields on entering.
+  Une entrée courbe reste dans cette dalle jusqu'à son raccord avec l'anneau.
+  Son enveloppe radiale conserve une couronne sans secteur replié ; les voies
+  extérieures et l'îlot restent distincts.
 
   A **fork** — three branches, two of them leaving at a closed angle (a two-way
   road splitting into two one-way legs, a slip road leaving a carriageway) — is
@@ -171,6 +174,9 @@ Breaking one of these needs a very good reason, stated in the PR description.
 - **A junction interrupts a ribbon, not a road.** Corridor, terrain cut,
   platform stitching, spaced furniture and kerbs keep reading one whole chain;
   only the ribbon is laid in pieces at junctions. Tunnel carriageways remain continuous.
+  Une bouche seule coupe jusqu’au nœud et à la surface qui la porte, jamais
+  jusqu’au bout distant de la chaîne. Un îlot conserve les portions d’axe
+  qui le traversent hors de la couronne.
 
 - **The carriageway has one edge**, and it is a single object
   (`layers/roadEdges.js`) covering ribbons and junction surfaces alike. A kerb
@@ -193,6 +199,9 @@ Breaking one of these needs a very good reason, stated in the PR description.
   to their available spacing, only across stable gaps outside junction areas.
   A pair whose axis enters the other's nominal carriageway is ambiguous and
   imposes no width constraint. Junction mouths read the retained widths.
+  Une desserte ou une piste cyclable conserve son axe : le longement ne
+  prouve aucune redondance de saisie. Seuls les cheminements explicitement
+  piétons relèvent du filtrage des trottoirs.
   Width stays constant per chain. Works, shared vertices and crossing axes
   are excluded. An area enclosed by carriageways is
   an island, not a bundle — it stays terrain, with its trees.
@@ -226,12 +235,17 @@ Breaking one of these needs a very good reason, stated in the PR description.
   `transportTunnels` conserve le sens des passages inférieurs et mesure leur
   couverture. Les galeries parallèles compatibles partagent une enveloppe,
   sans fusionner les chaussées. Leurs accès seuls sont excavés à ciel ouvert.
+  Un accès direct de galerie à pont reste un intervalle ouvert ; le portail
+  borne sa couverture même sans ligne intermédiaire au sol.
 
   Les remblais des accès font partie du terrain et portent ses matières.
   `transportEarthworks` publie le relief final ; le déblai inférieur prime sur
   le remblai. La couture des routes précède ces corrections. Les chemins ne
   propagent aucune rampe et suivent le terrain final. La maille est reconstruite
   avant la pose du décor ; les arbres sont resemés à leur place quand le décor se refait.
+
+  Le relief qui relève un pont est sondé dans l’emprise de son tablier.
+  Une berge ou un versant voisin n’impose aucune rampe supplémentaire.
 
   Platforms are laid on the **natural** terrain (`naturalElevationAtLocal`):
   the DEM with mapped cliffs stepped, road cut excluded. Only `cliffLayer`
@@ -251,9 +265,11 @@ Breaking one of these needs a very good reason, stated in the PR description.
 - **Avoid unnecessary abstraction.** A new interface, base class or plugin point
   needs two real call sites before it is worth adding.
 
-- **Water is a ground material, not a surface.** Elevation data already gives a
-  lake's surface as the ground height, so water is painted into the ground-class
-  map like heath or scree. There is no water sheet, and no water level to pick.
+- **L'eau permanente résolue remplace les triangles du terrain.** Son index
+  précis porte le rendu, les découpes et les exclusions du décor. Les niveaux
+  viennent du MNT natif strict, jamais du LOD. La grille régulière de support
+  reste complète. Les objets incomplets ou incohérents gardent la peinture
+  `water` avec diagnostic ; les flaques, marais et rizières gardent leur matière.
 
 ## Submitting a PR
 

@@ -13,6 +13,7 @@ son état.
 | `roadGraph.js` | recoud les chaussées, arrondit leurs brisures, relève les carrefours (un carrefour est un **nœud**, pas une image) |
 | `roadNetwork.js` | les rubans de chaussée, leur plate-forme, l'index publié |
 | `roadJunctions.js` | la surface d'un carrefour, ses bouches, qui cède le passage — et les deux formes à part : la fourche et la couronne du giratoire |
+| `roundaboutEntries.js` | enveloppe des entrées courbes jusqu'à leur raccord à l'anneau, sans replier la couronne |
 | `junctionSeams.js` | propriétaires de graphe, frontières XYZ et intervalles des rubans ; cotes finales après les ouvrages |
 | `junctionLinks.js` | surface commune des petites boucles reconvergentes sans îlot découvert, sans changer le graphe |
 | `junctionUnions.js` | contour commun d'une fourche et de ses voisins atteints, avec bouches extérieures entières et sans effacer d'îlot |
@@ -23,7 +24,8 @@ son état.
 | `tunnelSeams.js` | fermeture des dégagements des portails par intersection avec les triangles du terrain publié |
 | `transportTunnels.js`, `tunnelGeometry.js` | interprétation des passages, regroupement des galeries voisines et section de voûte partagée |
 | `roadWorks.js`, `bridgeLayer.js` | ponts et tunnels : un état de la chaussée, pas une classe de route |
-| `roadMarkings.js`, `roadBundles.js` | marquage au sol, voies qui se longent |
+| `roadMarkings.js`, `roadBundles.js` | marquage au sol, interstices des voies qui se longent |
+| `roadPedestrians.js` | trottoirs cartographiés et cheminements piétons longeant une rue, sans supprimer rues ni pistes cyclables |
 | `railwayLayer.js` | la voie ferrée et sa caténaire ; publie sa propre emprise et les voies que parcourent les trains |
 | `cliffLayer.js` | les falaises relevées : la marche du terrain, la bande peinte en roche, et la nappe de paroi — les sommets qu'un champ de hauteurs ne peut pas porter sur une face verticale |
 | `buildingLayer.js`, `roofGeometry.js` | le bâti et ses toitures |
@@ -34,8 +36,16 @@ son état.
 | `furnitureLayer.js` + `furniture/` | tout le mobilier — voir ci-dessous |
 | `faunaLayer.js`, `faunaMotion.js`, `faunaCrossing.js`, `lifeLayer.js`, `tractorLayer.js`, `trainLayer.js` | ce qui bouge |
 | `lighthouseLight.js` | le feu d'un phare : halo et faisceaux tournants, alimentés et avancés par `furnitureLayer` |
+| `waterPlacement.js` | partition de l’eau, protections et `WaterSurfaceIndex` partagé par rendu, découpe et exclusions |
+| `waterProtections.js` | contours bâtis, corridors routiers et ferroviaires au sol, surfaces publiées des carrefours |
+| `waterLayer.js` | construction, publication, animation et libération des maillages d’eau préparés |
 | `coast.js` | la distance à la mer (nappes `ocean`) — c'est elle qui met des mouettes dans le ciel |
 | `settlement.js` | l'habitat : emprises habitées, lieux nommés, `UrbanMask`, `FabricIndex` |
+
+L’eau reçoit ses profils natifs depuis `core/waterPreparation.js`. Le
+compositeur transmet les protections : `roads.index` au sol et les contours
+sources hors de sa couverture. Un pont laisse l’eau continue. Les couleurs,
+rides et écume sont dans `theme.water` ; le temps persiste entre les lots.
 
 ## Le mobilier
 

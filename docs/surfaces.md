@@ -174,13 +174,15 @@ Source : [schéma `park`](https://github.com/openmaptiles/openmaptiles/blob/mast
 
 ### `water` et `waterway` — l'eau
 
-L'eau n'est pas une surface posée sur le terrain : le sol *est* l'eau là où la
-carte le dit (couverture `water`). Deux entrées :
+L’eau permanente résolue est une surface opaque qui remplace les triangles
+du terrain dans son emprise. `WaterSurfaceIndex` décrit les mêmes triangles
+pour le rendu, la découpe et les exclusions CPU. Le raster conserve la
+matière sous-jacente ; les replis incomplets ou incohérents restent peints en
+`water`. Deux entrées :
 
 - les **polygones** de la couche `water` (lacs, fleuves larges, mer), sauf les
   piscines et les tunnels. Un polygone `intermittent` — un étang qui s'assèche,
-  une lagune de Camargue — est peint en vasière (`mud`), et l'eau permanente
-  est peinte après lui ;
+  une lagune de Camargue — est peint en vasière (`mud`) ;
 - les **traits** de la couche `waterway`, élargis par la largeur de thème
   (`WATERWAY_CLASSES` : rivière 9 m, canal 6 m, ruisseau 3 m, drain 1,6 m,
   fossé 1,2 m). Un cours d'eau souterrain ou intermittent n'a pas de surface.
@@ -193,12 +195,30 @@ carte le dit (couverture `water`). Deux entrées :
   moindre chaussée assainie, le fossé d'une route étant très souvent un
   `waterway=drain` dans OSM. Leur lit reste, lui : c'est un fait de la carte.
 
-  Attention : un trait plus étroit qu'un texel ne peut pas être rasterisé
-  proprement. Le drain (1,6 m) et le fossé (1,2 m) couvrent moins de la moitié
-  des texels qu'ils traversent, et se rendent donc en **pointillé** plutôt qu'en
-  trait continu. Les faire disparaître (les retirer de `WATERWAY_CLASSES`) ou
-  leur donner une largeur plancher d'un texel sont deux décisions d'auteur,
-  pas des correctifs.
+  Un ruban résolu garde sa largeur réelle et reste continu même sans sommet
+  de terrain dans le lit. La peinture de repli peut rester discontinue pour
+  un drain ou un fossé plus étroit qu’un texel.
+
+Les métadonnées GeoJSON identifient les fragments ; les marges MVT sont
+retirées avant assemblage. Les vraies rives sont distinctes des coupes de
+tuile et des protections. Un lac fermé reçoit une cote constante, médiane
+intérieure du MNT natif, bornée par ses rives. La collecte des fragments est
+limitée à 64 tuiles par objet ; une composante ouverte reste en repli. La mer
+prend la référence moteur de 0 m. Les lignes sont sondées tous les 4 m au
+plus, lissées et contraintes par leurs ancres partagées et leurs rives. Un
+polygone fluvial exige un axe exploitable et des sections locales couvrantes.
+L’écart de réparation maximal de 2 m est un garde-fou, pas une mesure
+hydrologique. MNT absent, conflit ou raccord incompatible au terrain affiché
+produisent un diagnostic et conservent le repli.
+
+La grille régulière reste la référence des appuis. Les fragments terrestres
+et berges interpolent les sommets sources après leur déplacement par le grain
+GPU ; aucun terrain extérieur n’est déplacé. Le temps d’animation et les
+phases géographiques persistent entre les reconstructions. La mer porte deux
+ondes et une subdivision commune aux tuiles ; les lacs restent horizontaux.
+Les rubans dirigent leurs rides vers l’aval seulement si le profil établit le
+sens. L’écume est une bande intérieure aux vraies rives, intégrée à la même
+surface : mer, et cours d’eau au-dessus du seuil de pente du thème.
 
 ### L'eau qui affleure — marais, pré salé, vasière
 
@@ -387,20 +407,31 @@ privilégier le déblai inférieur. Les rivières n'imposent aucune surélévati
 `transportEarthworks` déforme la maille commune et conserve les matières du
 lieu. Le remblai se raccorde doucement au relief ; la tranchée a une rive plus
 franche. Le fond plat tient compte de la résolution de la maille, comme le
-déblai routier. Une route voisine conserve un appui dans ce terrain : la
-tranchée ne la déchausse pas. Une branche qui rejoint une culée se raccorde au
-tablier ; elle ne compte pas comme passage inférieur. Les chemins lisent le terrain final sans le terrasser. Les
+déblai routier. Tous les rubans et dalles à portée de la maille imposent leur
+cote basse, y compris le long des plis : un appui routier voisin ne relève
+pas les triangles qui traversent la chaussée inférieure. Le rail supérieur
+conserve son appui prescrit au droit d'une galerie. La corde d'un pont
+dégage aussi le terrain naturel de son emprise ; un remblai voisin ne monte
+pas à travers son tablier. Une branche qui rejoint une culée se raccorde au
+tablier ; elle ne compte pas comme passage inférieur. Les chemins lisent
+le terrain final sans le terrasser. Les
 mailles sont reconstruites avant le décor et les plantations sont reprises
 après modification, afin de ne pas conserver les anciennes altitudes.
+Le niveau OSM reste une information de connexion : une dalle ouverte à un
+niveau négatif participe aussi au déblai ; seules les dalles couvertes par
+un ouvrage conservent le terrain au-dessus.
 
 ### Tunnels et accès
 
 `transportTunnels` distingue les passages courts dans une emprise bâtie, les
-passages inférieurs courts sous une chaussée ou un rail, et les galeries sous
+passages ouverts sous un pont explicite, les passages inférieurs courts sous
+une chaussée ou un rail, et les galeries sous
 le relief. La longueur seule ne transforme pas un tunnel en franchissement.
 Le sens dessus/dessous reste celui de la donnée. Les passages inférieurs ont
 un plafond plat ; les galeries conservent leur voûte. Les bâtiments traversés
-ne déclenchent pas de tranchée.
+ne déclenchent pas de tranchée. Sous un pont explicite, le tablier porte déjà
+la couverture : aucun portail, plafond ou éclairage de tunnel n'est ajouté.
+La voie inférieure et ses accès gardent leur gabarit et le déblai reste ouvert.
 
 La couverture se mesure sur le terrain naturel. Si elle manque, la plateforme
 et ses accès sont abaissés ensemble, avec un raccord progressif. Les passages
@@ -423,8 +454,10 @@ Le carrefour publie une triangulation commune au rendu, à la lecture des
 altitudes et au déblai. Un contour concave que le nœud ne voit pas entièrement
 est triangulé par découpage en oreilles, en conservant ses arêtes ; les autres
 carrefours gardent leur éventail et les giratoires leur couronne. Un contour
-dégénéré que le découpage ne termine pas conserve un éventail complet ; la
-réparation topologique des contours auto-croisés reste distincte. Les rubans
+dégénéré est réparé en retirant la plus petite boucle auto-croisée ; une
+triangulation invalide ne produit pas d'éventail de secours. Les petites
+boucles routières entièrement couvertes et les fourches atteignant un nœud
+voisin peuvent partager un contour sans modifier le graphe. Les rubans
 adoptent l’altitude de cette surface à leur point de raccord, y compris quand
 ils atteignent un bord entre deux bouches.
 

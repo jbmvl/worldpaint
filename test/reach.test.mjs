@@ -131,14 +131,14 @@ test('au bord d’une tuile, la voisine reste demandée', () => {
   assert.ok(near.length >= 2, `une tuile voisine à quelques mètres : ${near.length}`);
 });
 
-test('createWorld passe la portée à la bulle et cale le brouillard dessus', async () => {
+test('createWorld passe la portée à la bulle et laisse le brouillard au rayon de la bulle', async () => {
   const { createWorld } = await import('../src/world.js');
   const { Sky } = await import('three/examples/jsm/objects/Sky.js');
   const near = createWorld({ THREE, scene: new THREE.Scene(), reach: 150, sky: { Sky } });
   const far = createWorld({ THREE, scene: new THREE.Scene(), sky: { Sky } });
   try {
     assert.equal(near.bubble.reachMeters, 150);
-    assert.equal(near.environment.fogRadius, 150);
+    assert.equal(near.environment.fogRadius, far.environment.fogRadius);
     assert.equal(far.bubble.reachMeters, Infinity);
     assert.ok(far.environment.fogRadius > 150, 'sans portée, le brouillard suit la bulle');
     assert.equal(typeof near.mountAt, 'function');

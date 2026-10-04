@@ -271,8 +271,7 @@ of three in one page share neither their constants nor their prototypes.
 
 For a start line, a finish, or the replay of an event, nothing needs to be built
 beyond a few dozen metres. `reach` caps every layer's radius (it never extends
-one), loads only the vector tiles that touch the disc, and sets the fog radius
-to match. `mountAt` centres the bubble and builds everything in one call; there
+one) and loads only the vector tiles that touch the disc. `mountAt` centres the bubble and builds everything in one call; there
 is no re-centring afterwards, since nothing follows the viewer.
 
 ```js
@@ -283,12 +282,14 @@ await world.mountAt(lng, lat);
 
 Without `reach`, behaviour is unchanged. With it, the terrain keeps only the
 bubble tiles that touch the reach, and is carved for roads only inside it; the
-ground map is read back only around it; trees are sown only within it. The
+ground map is read back only around it, and water is laid only inside that same
+square; trees are sown only within it. The
 terrain is meshed once, after the roads have carved it, and the returned promise
 resolves on a complete scene: tiles meshed, trees sown. `mountAt(lng, lat,
 { budgetMs })` yields to the browser every `budgetMs` (100 ms by default;
 `Infinity` never yields). Grass and crops are still scattered around the camera
-each frame; the fog hides what lies beyond.
+each frame. The fog keeps the bubble's radius: pass `sky.fogRadius` to draw it
+in and hide what lies beyond the reach.
 
 On a recorded place (`demo/lab/mount.html`), a 120 m scene takes about half a
 second from `createWorld` to the first frame in headless Chrome, against four

@@ -7,7 +7,7 @@ import { bindJunctionSeams, updateJunctionSeams } from '../src/layers/junctionSe
 import { junctionTriangles } from '../src/layers/junctionTriangulation.js';
 import { appendRibbon, createRibbonBuffer, subdividePath } from '../src/layers/ribbonGeometry.js';
 
-const voie = points => ({ profile: 'minor', halfWidth: 2.5, points: points.map(([x,z]) => ({x,z})) });
+const voie = (points,works=0) => ({ profile: 'minor', halfWidth: 2.5, works, level:works?-1:0, points: points.map(([x,z]) => ({x,z})) });
 const cle = point => point.map(value => Math.round(value * 1000)).join(':');
 const arete = (a,b) => [cle(a),cle(b)].sort().join('/');
 
@@ -75,4 +75,61 @@ for (const sortie of [[95,0],[70,40],[30,80],[10,40]]) {
 
 test('deux branches ordinaires ne créent pas un carrefour', () => {
   assert.equal(junctionArea({x:0,z:0,branches:[{x:-1,z:0,halfWidth:2.5},{x:1,z:0,halfWidth:2.5}]}),null);
+});
+
+test('une boucle souterraine conserve ses sorties sans fourche extrapolée',()=>{
+  const {chains,junctions}=mergeRoadLines([voie([[-80,0],[0,0]],2),voie([[0,0],[3,0]],2),
+    voie([[0,0],[1.5,-1],[3,0]],2),voie([[3,0],[60,0]],2)]);
+  const areas=new JunctionAreas(junctions);
+  const segments=chains.map(chain=>({...chain,path:subdividePath(chain.points,3),
+    platform:Float32Array.from(subdividePath(chain.points,3),()=>17)}));
+  bindJunctionSeams(segments,areas);updateJunctionSeams(areas);
+  assert.equal(areas.length,1);
+  assert.equal(areas.areas[0].mouths.length,2);
+  assert.ok(areas.areas[0].mouths.every(m=>m.seam));
+  assert.ok(areas.areas[0].outline.every(p=>p.x>-5 && p.x<8));
+});
+
+test('une sortie en impasse de trois mètres porte une couture à son extrémité',()=>{
+  const {chains,junctions}=mergeRoadLines([voie([[-80,0],[0,0]]),voie([[0,0],[80,0]]),voie([[0,0],[0,3]])]);
+  const areas=new JunctionAreas(junctions);
+  const segments=chains.map(chain=>({...chain,path:subdividePath(chain.points,3),
+    platform:Float32Array.from(subdividePath(chain.points,3),()=>17)}));
+  bindJunctionSeams(segments,areas);
+  assert.ok(areas.areas[0].mouths.every(m=>m.seam));
+});
+
+test('une bouche de fourche retrouve la continuation après une coupure de chaîne',()=>{
+  const {chains,junctions}=mergeRoadLines([voie([[-80,0],[0,0],[10,0],[80,0]]),
+    voie([[0,0],[10,1],[80,20]])]);
+  const branch=junctions[0].branches.find(b=>b.path.at(-1).x===80 && b.path.at(-1).z===0);
+  const last=[...branch.edges].at(-1),segments=[];
+  let continuation;
+  for(const chain of chains) {
+    const path=subdividePath(chain.points,3);
+    if(chain.graphEdges.has(last)) {
+      const split=path.findIndex(p=>p.x===10 && p.z===0);
+      assert.ok(split>0);
+      segments.push({...chain,graphEdges:new Set([...chain.graphEdges].filter(e=>e!==last)),path:path.slice(0,split+1),platform:new Float32Array(split+1).fill(17)});
+      continuation={...chain,graphEdges:new Set([last]),path:path.slice(split),platform:new Float32Array(path.length-split).fill(17)};
+      segments.push(continuation);
+    } else segments.push({...chain,path,platform:new Float32Array(path.length).fill(17)});
+  }
+  const areas=new JunctionAreas(junctions);bindJunctionSeams(segments,areas);
+  const mouth=areas.areas[0].mouths.find(m=>m.edge===branch.edge);
+  assert.equal(mouth.seam?.segment,continuation);
+});
+
+test('une fourche qui atteint un changement de classe ferme sa bouche sur le vrai axe',()=>{
+  const express=points=>({...voie(points),profile:'express',halfWidth:6});
+  const lines=[express([[160,-140],[0,0]]),express([[0,0],[-5,1.5],[-15,8],[-35,17]]),
+    express([[0,0],[-28,24],[-140,120]]),voie([[-35,17],[-70,17]]),voie([[-35,17],[-35,-35]])];
+  for(const input of [lines,lines.slice().reverse()]) {
+    const {chains,junctions}=mergeRoadLines(input);
+    const segments=chains.map(chain=>({...chain,path:subdividePath(chain.points,3),
+      platform:Float32Array.from(subdividePath(chain.points,3),()=>17)}));
+    const areas=new JunctionAreas(junctions);bindJunctionSeams(segments,areas);updateJunctionSeams(areas);
+    assert.ok(areas.areas.every(a=>a.mouths.every(m=>m.seam)));
+    assert.ok(areas.areas.every(a=>a.decks.every(Number.isFinite)));
+  }
 });

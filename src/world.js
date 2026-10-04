@@ -81,8 +81,9 @@ export const DEFAULT_ELEVATION_ZOOM = 14;
  *        Tuiles vectorielles OpenMapTiles. Absentes, le décor se réduit au relief nu.
  * @param {Object} [options.view] Voir `DEFAULT_VIEW`.
  * @param {number} [options.reach] Portée du décor, en mètres. Chaque couche limite
- *        son rayon à cette valeur (jamais au-delà du sien), les tuiles vectorielles
- *        se réduisent à celles qui la touchent, et le brouillard s'y cale. Pour une
+ *        son rayon à cette valeur (jamais au-delà du sien) et les tuiles vectorielles
+ *        se réduisent à celles qui la touchent. Le brouillard garde le rayon de
+ *        la bulle (`sky.fogRadius` pour le rapprocher). Pour une
  *        scène fixe (départ, arrivée, rejeu) : monter avec `mountAt`. Absente,
  *        le comportement est celui de toujours.
  * @param {Object|null} [options.theme] Direction artistique — tranches
@@ -147,12 +148,7 @@ export function createWorld({
       THREE,
       Sky: sky.Sky,
       scene,
-      fogRadius:
-        sky.fogRadius ??
-        Math.min(
-          (settings.blockSize / 2) * tileSizeMeters(settings.zoom, latitude),
-          Number.isFinite(reach) && reach > 0 ? reach : Infinity
-        ),
+      fogRadius: sky.fogRadius ?? (settings.blockSize / 2) * tileSizeMeters(settings.zoom, latitude),
       shadowMapSize: sky.shadowMapSize,
       toneMappingExposure: sky.toneMappingExposure,
       cloudCoverage: sky.cloudCoverage,

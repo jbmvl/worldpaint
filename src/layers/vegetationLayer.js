@@ -864,7 +864,7 @@ export class VegetationLayer {
         // a pas de bois, donc il ne peut pas être conditionné aux tiges. Rien
         // au milieu d'une flaque, plus dense sur sa bordure (`poolEdgeGain`) :
         // l'eau et le fourré suivent désormais la même vérité.
-        const bushCover = groundClass.surfaceAt?.(centreX, centreZ) ?? null;
+        const bushCover = groundClass.coverAt?.(centreX, centreZ) ?? groundClass.surfaceAt?.(centreX, centreZ) ?? null;
         const bushLook = coverBushesFor(bushCover, this.theme.surfaces);
         const bushStanding = bushCover ? this.theme.surfaces[bushCover]?.standingWater ?? 0 : 0;
         const bushPool =
@@ -1062,7 +1062,7 @@ export class VegetationLayer {
           thicketPerCell(thicketDensityFor(type), cellSize);
         // Même refus au milieu d'une flaque, même bordure plus dense que le
         // fourré du peuplement (voir `_build`).
-        const thickCover = groundClass.surfaceAt?.(centreX, centreZ) ?? null;
+        const thickCover = groundClass.coverAt?.(centreX, centreZ) ?? groundClass.surfaceAt?.(centreX, centreZ) ?? null;
         const thickLook = coverBushesFor(thickCover, this.theme.surfaces);
         const thickStanding = thickCover ? this.theme.surfaces[thickCover]?.standingWater ?? 0 : 0;
         const thickPool =

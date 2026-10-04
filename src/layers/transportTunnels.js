@@ -44,6 +44,7 @@ function compatible(a, b) {
 }
 
 export function resolveTunnelProfiles(segments, rails, elevation, { buildings = [], centres = [], theme = defaultTheme } = {}) {
+  for (const rail of rails) rail.tunnelSupports=[];
   for (const segment of segments) segment.tunnelStructures = [];
   const tunnels = segments.filter(s=>s.works?.includes(WORK_TUNNEL));
   if (!tunnels.length) return 0;
@@ -62,8 +63,14 @@ export function resolveTunnelProfiles(segments, rails, elevation, { buildings = 
           if (upper===segment || upper.works?.[row]===WORK_TUNNEL || upper.works?.[row+1]===WORK_TUNNEL) return;
           if ((upper.levels?.[row]??0)<(segment.levels?.[r]??-1)) return;
           const hit=intersection(p,q,upper.path[row],upper.path[row+1]);
-          if (hit) crossings.push({ height:lerp(upper.platform[row],upper.platform[row+1],hit.u),
-            bridge:upper.works?.[row]===WORK_BRIDGE || upper.works?.[row+1]===WORK_BRIDGE, ...hit });
+          if (hit) {
+            crossings.push({ height:lerp(upper.platform[row],upper.platform[row+1],hit.u),
+              bridge:upper.works?.[row]===WORK_BRIDGE || upper.works?.[row+1]===WORK_BRIDGE, ...hit });
+            if (rails.includes(upper)) upper.tunnelSupports.push({
+              distance:lerp(upper.path[row].distance,upper.path[row+1].distance,hit.u),
+              halfWidth:segment.halfWidth, sin:Math.max(.1,hit.sin),
+            });
+          }
         });
       }
       const middle=segment.path[Math.floor((run.from+run.to)/2)];

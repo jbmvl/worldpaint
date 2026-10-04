@@ -217,6 +217,9 @@ export const TREE_VARIANTS = [
   // Pin maritime, pin sylvestre adulte : un long fût, une cime haute et étroite.
   { aspect: 0.55, kind: 'broadleaf', hue: { r: 0.4, g: 0.88, b: 0.42 }, trunk: 0.055, crownBase: 0.8, spread: 0.26,
     volume: { trunkHeight: .8, crownY: .85, spread: 1.05, rise: .38, lobes: 5, colorVariation: .06 }, bark: [.32, .2, .12] },
+  // La bruyère d'une lande : un coussin bas et large, fleuri sur le dessus.
+  { kind: 'heather', hue: { r: 0.6, g: 0.9, b: 0.5 }, trunk: 0, crownBase: 1, spread: 0.5,
+    heightM: [0.25, 0.55], aspect: 2.2, volume: { tipColor: [.3, .07, .26] } },
 ];
 /**
  * Les essences, par indices de variantes. C'est ce que lit `vegetationLayer`
@@ -238,6 +241,8 @@ export const TREE_ESSENCES = {
   // `coverBushesFor` (vegetationLayer.js) — une lande et un maquis ne sèment
   // plus le même buisson.
   gorse: [11],
+  // La lande mêle les deux : deux coussins de bruyère pour un ajonc.
+  moorland: [19, 19, 11],
   thornyScrub: [12],
   marram: [14],
   palm: [15],
@@ -773,21 +778,24 @@ export const SURFACE_LOOK = {
   settled: { albedo: [0.12, 0.205, 0.08], wash: 'grass', macro: 0.3, grainCellM: 6, grainAmplitudeM: 0 },
 
   // --- Les couvertures végétales --------------------------------------------
-  // Bruyère et molinie sèche : brun-olive, la couleur d'un moor. Rase, dense,
+  // Bruyère et molinie sèche : vert olive terne, la couleur d'un moor. Rase, dense,
   // et elle ne porte quasiment pas d'arbre.
   heath: {
-    // Brun-olive sourd : bruyère hors floraison, molinie et fougère mêlées,
-    // la teinte d'une lande dix mois sur douze. Plus sombre et plus vert
-    // qu'une terre nue, pour ne pas se lire comme un labour.
-    albedo: [0.15, 0.12, 0.035],
+    // Vert olive sourd, le vert dominant : bruyère hors floraison, molinie et
+    // fougère mêlées, la teinte d'une lande dix mois sur douze. Plus terne
+    // qu'un pré, jamais brune : une lande brune se lit comme un labour.
+    albedo: [0.108, 0.128, 0.036],
+    // La bruyère en fleur : des nappes mauves sur le fond vert, jamais un
+    // mélange — c'est le mélange qui donne un brun.
+    patch: { albedo: [0.16, 0.075, 0.125], strength: 0.75 },
 
     wash: null,
     grassHeight: 0.45,
     grassDensity: 0.95,
-    grassTint: [0.95, 0.9, 0.72],
+    grassTint: [0.92, 0.94, 0.72],
     bushes: 0.3,
     // Le buisson d'une lande, nommé : voir TREE_ESSENCES.
-    bush: 'gorse',
+    bush: 'moorland',
     // Le tapis d'une lande est marbré fort, et ça doit se voir à portée
     // d'observation, pas seulement à l'horizon.
     macro: 2,
@@ -1720,7 +1728,20 @@ export const defaultTheme = Object.freeze({
   },
   works: WORKS_STYLES,
   streets: STREET_LOOK,
-  water: { waterways: WATERWAY_CLASSES, riparianBufferM: RIPARIAN_BUFFER_M },
+  water: {
+    waterways: WATERWAY_CLASSES, riparianBufferM: RIPARIAN_BUFFER_M,
+    profiles: {
+      ocean: {scaleAlong:12,scaleAcross:8,normalStrength:0.18,speed:0,amplitudeM:0.18,wavelengths:[48,72],foamWidthM:1.5},
+      lake: {scaleAlong:12,scaleAcross:8,normalStrength:0.09,speed:0,amplitudeM:0,foamWidthM:0},
+      pond: {scaleAlong:8,scaleAcross:5,normalStrength:0.08,speed:0,amplitudeM:0,foamWidthM:0},
+      reservoir: {scaleAlong:12,scaleAcross:8,normalStrength:0.09,speed:0,amplitudeM:0,foamWidthM:0},
+      river: {scaleAlong:8,scaleAcross:3,normalStrength:0.14,speed:0.6,amplitudeM:0,foamWidthM:0.4,foamSlope:0.015},
+      stream: {scaleAlong:5,scaleAcross:2,normalStrength:0.12,speed:0.45,amplitudeM:0,foamWidthM:0.25,foamSlope:0.02},
+      canal: {scaleAlong:10,scaleAcross:4,normalStrength:0.06,speed:0.15,amplitudeM:0,foamWidthM:0},
+      drain: {scaleAlong:3,scaleAcross:1,normalStrength:0.05,speed:0.2,amplitudeM:0,foamWidthM:0},
+      ditch: {scaleAlong:3,scaleAcross:1,normalStrength:0.04,speed:0.15,amplitudeM:0,foamWidthM:0},
+    },
+  },
   furniture: { colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES, lighthouse: LIGHTHOUSE_LIGHT },
   life: LIFE_COLORS,
   fauna: { colors: FAUNA_COLORS, coats: FAUNA_COATS },

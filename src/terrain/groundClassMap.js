@@ -1,3 +1,5 @@
+import { paintWaterFallbacks } from './waterFallbackPaint.js';
+import { waterFeatureKey } from '../core/waterFeatures.js';
 /*
  * groundClassMap — l'occupation du sol, rasterisée pour toute la scène.
  * Source unique de ce dont le sol est fait : le shader de terrain
@@ -103,7 +105,7 @@ import {
 } from '../layers/furniturePlacement.js';
 import { URBAN_GREEN_LANDUSE } from '../layers/settlement.js';
 import { BUILDING_SOURCE_LAYER } from '../layers/buildingLayer.js';
-import { plantedSurfaceForMatrix } from '../core/regionInterpretation.js';
+import { plantedSurfaceForMatrix, gapSurfaceForMatrix } from '../core/regionInterpretation.js';
 import { defaultTheme } from '../themes/default.js';
 import { macroNoiseField } from '../materials/proceduralTextures.js';
 import {
@@ -623,12 +625,26 @@ export class GroundClassMap {
    * @param {number} z
    * @returns {string|null} Un nom de `SURFACE_KINDS`.
    */
+  setWaterSurface(index) { this._waterSurface = index; }
+
   surfaceAt(x, z) {
+    if (this._waterSurface?.sample(x,z)) return 'water';
     const data = this._data;
     if (!data) return null;
     const i = this._texelAt(x, z);
     if (i < 0) return null;
     return surfaceFromId(data[i]);
+  }
+
+  /**
+   * Ce qui couvre le sol en un point : la matière de la carte, ou, là où elle
+   * se tait, celle que le pays y met — la même que peint le shader. `null`
+   * hors carte.
+   */
+  coverAt(x, z) {
+    const surface = this.surfaceAt(x, z);
+    if (surface || !this.hasDataAt(x, z)) return surface;
+    return gapSurfaceForMatrix(this.region?.matrix) ?? this.theme.terrain.unclassified;
   }
 
   /**
@@ -646,6 +662,7 @@ export class GroundClassMap {
    * @returns {number} de 0 à 1, ou 0 hors carte.
    */
   shareOf(kind, x, z) {
+    if (this._waterSurface?.sample(x,z)) return kind === 'water' ? 1 : 0;
     const data = this._data;
     if (!data) return 0;
     const wanted = surfaceId(kind) * SURFACE_ID_STEP;
@@ -689,6 +706,7 @@ export class GroundClassMap {
    * @returns {{grass:number, wood:number, farmland:number, bare:number}|null}
    */
   sampleAt(x, z) {
+    if (this._waterSurface?.sample(x,z)) return {grass:0,wood:0,farmland:0,bare:1};
     if (!this._data) return null;
     if (this._texelAt(x, z) < 0) return null;
 
@@ -757,6 +775,7 @@ export class GroundClassMap {
    * @returns {string|null}
    */
   cropAt(x, z) {
+    if (this._waterSurface?.sample(x,z)) return null;
     const data = this._data;
     if (!data) return null;
     const i = this._texelAt(x, z);
@@ -945,7 +964,7 @@ export class GroundClassMap {
    * `rebuild` en étapes : une par tuile et par couche source. Carte relue,
    * origine et texture ne changent qu'à la dernière.
    */
-  *rebuildSteps(source, tiles, here, frame, { urban = null, cliffs = null, builtUp = null, elevationAt = null } = {}) {
+  *rebuildSteps(source, tiles, here, frame, { urban = null, cliffs = null, builtUp = null, elevationAt = null, resolvedWaterKeys = new Set(), waterFallbacks = null, deferPublish = false } = {}) {
     if (this.disposed || !source || !frame) return false;
 
     const { ctx } = this;
@@ -1107,7 +1126,7 @@ export class GroundClassMap {
       ctx.lineJoin = 'round';
 
       for (const tile of tiles) {
-        source.forEachFeature(WATERWAY_SOURCE_LAYER, [tile], (geometry, properties) => {
+        source.forEachFeature(WATERWAY_SOURCE_LAYER, [tile], (geometry, properties, bounds, metadata = {}) => {
           const style = waterwayStyleFor(properties, waterways);
           if (!style) return;
           const width = style.halfWidth * 2;
@@ -1156,9 +1175,11 @@ export class GroundClassMap {
               ctx.stroke(path);
             }
 
-            ctx.strokeStyle = surfaceFill('water');
-            ctx.lineWidth = width * perMeter;
-            ctx.stroke(path);
+            if (waterFallbacks === null && !resolvedWaterKeys.has(waterFeatureKey('waterway',metadata.id??null,geometry))) {
+              ctx.strokeStyle = surfaceFill('water');
+              ctx.lineWidth = width * perMeter;
+              ctx.stroke(path);
+            }
             painted++;
           }
         });
@@ -1178,9 +1199,10 @@ export class GroundClassMap {
     // s'assèche ne recouvre pas celui qui ne s'assèche jamais.
     const permanent = [];
     for (const tile of tiles) {
-      source.forEachFeature(WATER_SOURCE_LAYER, [tile], (geometry, properties) => {
+      source.forEachFeature(WATER_SOURCE_LAYER, [tile], (geometry, properties, bounds, metadata = {}) => {
         const kind = waterSurfaceFor(properties);
         if (!kind) return;
+        if (kind === 'water' && (waterFallbacks !== null || resolvedWaterKeys.has(waterFeatureKey('water',metadata.id??null,geometry)))) return;
         for (const rings of classPolygons(geometry)) {
           if (!Array.isArray(rings) || rings.length === 0) continue;
 
@@ -1210,9 +1232,11 @@ export class GroundClassMap {
     }
     ctx.fillStyle = surfaceFill('water');
     for (const path of permanent) ctx.fill(path, 'evenodd');
+    if (waterFallbacks) painted += paintWaterFallbacks(ctx,waterFallbacks,frame,originX,originZ,perMeter,surfaceFill('water'),this.theme.water.waterways);
     yield;
 
-    yield* this.readBackSteps();
+    const result = yield* this.readBackSteps(deferPublish);
+    if (deferPublish) return { ...result, painted, originX, originZ, here, frame };
     this.count = painted;
     this.revision++;
     this.origin.set(originX, originZ);
@@ -1232,7 +1256,7 @@ export class GroundClassMap {
    * `repairSurfaceEdges`). Le shader lit la texture, la végétation la copie,
    * et les deux sont le même tableau.
    */
-  *readBackSteps() {
+  *readBackSteps(deferPublish = false) {
     const { x, y, size } = this._window;
     let image = null;
     try {
@@ -1246,9 +1270,21 @@ export class GroundClassMap {
     if (image) {
       yield* drawSurfaceContoursSteps(image.data, size);
       if (size < CLASS_PIXELS) data = embedWindow(image.data, x, y, size);
-      this.texture.image.data = new Uint8Array(data.buffer);
+      if (!deferPublish) this.texture.image.data = new Uint8Array(data.buffer);
     }
-    this._data = data;
+    if (!deferPublish) this._data = data;
+    return {data};
+  }
+
+  publishPrepared(result) {
+    this._data = result.data;
+    if (result.data) this.texture.image.data = new Uint8Array(result.data.buffer);
+    this.count = result.painted;
+    this.revision++;
+    this.origin.set(result.originX,result.originZ);
+    this.texture.needsUpdate = true;
+    this._anchor = {x:result.here.x,z:result.here.z};
+    this._frame = result.frame;
   }
 
   /** Fenêtre carrée relue autour d'un texel, toute la carte sans portée. */

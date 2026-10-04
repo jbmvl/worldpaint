@@ -53,6 +53,10 @@ import { installTunnelMouths } from './tunnelMouths.js';
  * c'est la lame d'eau d'une rizière, indépendante de la matière `farmland`
  * qu'elle recouvre.
  *
+ * Une matière peut en outre porter des **plaques** d'une seconde couleur
+ * (`patch: { albedo, strength }`) — la bruyère en fleur d'une lande —, découpées
+ * par le bruit des flaques à une échelle de quelques dizaines de mètres.
+ *
  * Cette variation macro n'est pas la même partout (`macro`, `macroNear` de
  * `SURFACE_LOOK`) : un stade tondu n'est pas aussi marbré qu'une tourbière.
  * `macro` multiplie l'amplitude par matière ; `macroNear` relève le plancher
@@ -140,6 +144,9 @@ import { createWaterNormalCanvas } from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
 import { LOW_POLY_GRAIN_GLSL, LOW_POLY_GRAIN_DEFAULTS } from './lowPolyGrain.js';
 import { soilWashFor, gapSurfaceForMatrix, stoneTintFor } from '../core/regionInterpretation.js';
+
+/** Période du bruit des plaques (`patch` d'une matière), en mètres. */
+const PATCH_SCALE_M = 38;
 
 /** Couleur d'une matière qu'un thème ne décrit pas : un gris de terre neutre. */
 const FALLBACK_ALBEDO = [0.18, 0.17, 0.15];
@@ -307,6 +314,19 @@ export class TerrainMaterialFactory {
 
   get grainUniforms() { return this._uniforms; }
 
+  /** Même shader et mêmes uniformes ; seuls les sommets de coupe changent. */
+  get fragmentMaterial() {
+    if (!this._fragmentMaterial) {
+      const material = this.material.clone();
+      material.defines = { ...material.defines, WATER_TERRAIN_FRAGMENT: 1 };
+      material.onBeforeCompile = this.material.onBeforeCompile;
+      material.customProgramCacheKey = () => 'terrain-water-barycentriques-v1';
+      material.side = this.THREE.DoubleSide;
+      this._fragmentMaterial = material;
+    }
+    return this._fragmentMaterial;
+  }
+
   _create() {
     const { THREE, look } = this;
     const material = new THREE.MeshLambertMaterial({ color: 0xffffff });
@@ -336,6 +356,14 @@ export class TerrainMaterialFactory {
       },
       uSurfaceMacroNear: {
         value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.macroNear ?? 0),
+      },
+      // Plaques d'une seconde couleur dans une matière (`patch`) : la couleur,
+      // et dans w sa force (0 = aucune plaque).
+      uSurfacePatch: {
+        value: SURFACE_KINDS.map((kind) => {
+          const patch = this.surfaces[kind]?.patch;
+          return new THREE.Vector4(...(patch?.albedo ?? [0, 0, 0]), patch?.strength ?? 0);
+        }),
       },
       // Grain low poly par matière (`lowPolyGrain.js`) : une matière que
       // `SURFACE_LOOK` ne couvre pas reprend le réglage de repli.
@@ -431,12 +459,28 @@ export class TerrainMaterialFactory {
            varying float vGrain;
            varying float vSteep;
            attribute float roadMask;
+           #ifdef WATER_TERRAIN_FRAGMENT
+           attribute vec3 sourceA, sourceB, sourceC;
+           attribute vec3 sourceNormalA, sourceNormalB, sourceNormalC;
+           attribute vec3 sourceWeights, sourceRoadMasks;
+           attribute float waterSide;
+           #endif
            ${TERRAIN_GRAIN_GLSL}`
         )
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
+           #ifdef WATER_TERRAIN_FRAGMENT
+           float sa, sb, sc, ga, gb, gc;
+           vec3 pa = terrainDisplaced(sourceA, sourceNormalA, sourceRoadMasks.x, sa, ga);
+           vec3 pb = terrainDisplaced(sourceB, sourceNormalB, sourceRoadMasks.y, sb, gb);
+           vec3 pc = terrainDisplaced(sourceC, sourceNormalC, sourceRoadMasks.z, sc, gc);
+           transformed = mix(pa*sourceWeights.x + pb*sourceWeights.y + pc*sourceWeights.z, position, waterSide);
+           vSteep = dot(vec3(sa,sb,sc),sourceWeights);
+           vGrain = dot(vec3(ga,gb,gc),sourceWeights)*(1.0-waterSide);
+           #else
            transformed = terrainDisplaced(transformed, objectNormal, roadMask, vSteep, vGrain);
+           #endif
            vScenePos = (modelMatrix * vec4(transformed, 1.0)).xyz;
            vSceneNormal = normalize(mat3(modelMatrix) * objectNormal);`
         );
@@ -464,6 +508,9 @@ export class TerrainMaterialFactory {
            uniform float uSurfaceWater[${SURFACE_KINDS.length}];
            uniform float uSurfaceMacro[${SURFACE_KINDS.length}];
            uniform float uSurfaceMacroNear[${SURFACE_KINDS.length}];
+           uniform vec4 uSurfacePatch[${SURFACE_KINDS.length}];
+           // Part de plaque au fragment, decidee une fois avant de lire le sol.
+           float gPatch = 0.0;
            uniform float uPoolScale;
            uniform vec3 uRockColor;
            uniform vec2 uSlopeRange;
@@ -518,7 +565,7 @@ export class TerrainMaterialFactory {
              float id = label >= ${CROP_LABEL_BASE}.0 ? ${FARMLAND_ID}.0 : label;
              for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
                if (float(i) == id) {
-                 albedo = uSurfaceAlbedo[i - 1];
+                 albedo = mix(uSurfaceAlbedo[i - 1], uSurfacePatch[i - 1].rgb, uSurfacePatch[i - 1].a * gPatch);
                  standing = uSurfaceWater[i - 1];
                  macroAmp = uSurfaceMacro[i - 1];
                  macroNear = uSurfaceMacroNear[i - 1];
@@ -721,6 +768,13 @@ export class TerrainMaterialFactory {
              // sur un sol lointain.
              float macro = texture2D(uMacroMap, vScenePos.xz / uMacro.x).r;
 
+             // Les plaques : deux lectures du meme bruit a des echelles
+             // incommensurables, axes permutes, comme les flaques.
+             gPatch = smoothstep(0.46, 0.52, 0.5 + ${POOL_NOISE_STRETCH} * (
+               texture2D(uMacroMap, vScenePos.xz / ${PATCH_SCALE_M}.0).r -
+               texture2D(uMacroMap, vScenePos.zx / ${Math.round(PATCH_SCALE_M * 1.7)}.0).r
+             ));
+
              // Tout le sol en un appel : la couleur, et la part d'eau.
              vec3 albedo = uSurfaceAlbedo[${SURFACE_KINDS.indexOf('grass')}];
              float standing = 0.0;
@@ -737,7 +791,7 @@ export class TerrainMaterialFactory {
                // Hors carte : la matiere de repli.
                for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
                  if (float(i) == uUnclassified) {
-                   albedo = uSurfaceAlbedo[i - 1];
+                   albedo = mix(uSurfaceAlbedo[i - 1], uSurfacePatch[i - 1].rgb, uSurfacePatch[i - 1].a * gPatch);
                    standing = uSurfaceWater[i - 1];
                    macroAmp = uSurfaceMacro[i - 1];
                    macroNear = uSurfaceMacroNear[i - 1];
@@ -825,7 +879,7 @@ export class TerrainMaterialFactory {
                // change l'angle.
                vec3 toEye = normalize(cameraPosition - vScenePos);
                vec3 ripple = texture2D(uWaterRipples, vScenePos.xz / uWaterRipple.x + uWaterFlow).xyz * 2.0 - 1.0;
-               vec3 wavy = normalize(vSceneNormal + vec3(ripple.x, 0.0, ripple.z) * uWaterRipple.y);
+               vec3 wavy = normalize(vSceneNormal + vec3(ripple.x, 0.0, ripple.y) * uWaterRipple.y);
                float grazing = 1.0 - clamp(dot(wavy, toEye), 0.0, 1.0);
                float sheen = pow(grazing, 3.0) * uWaterSheen;
                vec3 water = mix(uWaterAlbedo, uWaterSheenColor, clamp(sheen, 0.0, 1.0));
@@ -861,7 +915,7 @@ export class TerrainMaterialFactory {
              }
              vec3 a = texture2D(uWaterRipples, vScenePos.xz / uWaterRipple.x + uWaterFlow).xyz * 2.0 - 1.0;
              vec3 b = texture2D(uWaterRipples, vScenePos.zx / (uWaterRipple.x * 0.6) - uWaterFlow * 1.7).xyz * 2.0 - 1.0;
-             vec3 wavy = normalize(worldNormal + vec3(a.x + b.x, 0.0, a.z + b.z) * uWaterRipple.y);
+             vec3 wavy = normalize(worldNormal + vec3(a.x + b.y, 0.0, a.y + b.x) * uWaterRipple.y);
 
              normal = normalize((viewMatrix * vec4(mix(worldNormal, wavy, gWater), 0.0)).xyz);
            }`
@@ -875,6 +929,7 @@ export class TerrainMaterialFactory {
 
   dispose() {
     this.material.dispose();
+    this._fragmentMaterial?.dispose();
     for (const texture of this.textures) texture.dispose();
   }
 }

@@ -1,3 +1,13 @@
+import { WaterFeatureCollector } from './core/waterFeatures.js';
+import { prepareWater, rejectWaterObjects, waterFallbacks } from './core/waterPreparation.js';
+import { waterSurfaceFor, waterwayStyleFor } from './terrain/surfaceClassification.js';
+import { placeWater, addWaterBands } from './layers/waterPlacement.js';
+import { waterProtectionTriangles } from './layers/waterProtections.js';
+import { WaterLayer } from './layers/waterLayer.js';
+import { corridorContours } from './layers/roadCorridor.js';
+import { junctionTriangles } from './layers/junctionTriangulation.js';
+import { RoadIndex } from './layers/roadGraph.js';
+import { boundsOf } from './core/waterGeometry.js';
 import { collectCrossingRails } from './layers/transportCrossings.js';
 import { GenerationBudget } from './core/generationBudget.js';
 import { DECOR_STEP_M, REACH_MARGIN, REACH_MARGIN_M } from './core/decorReach.js';
@@ -16,13 +26,14 @@ import { GenerationMetrics } from './inspect/generationMetrics.js';
  * Ordre de génération : « sommes-nous en ville ? » (`settlement.UrbanMask` :
  * ni une couche ni un thème, un prédicat de lieu, lu par la carte du sol qui y
  * peint son trottoir et par les chaussées qui y retranchent voies piétonnes et
- * voies redondantes) → occupation du sol (tout le monde la lit — l'eau en
- * fait partie, c'est une matière du sol) → profils ferroviaires naturels
+ * voies redondantes) → collecte et profils d'eau MNT → occupation du sol
+ * (matières sous-jacentes, ripisylves et replis) → profils ferroviaires naturels
  * → chaussées (calculent les franchissements et façonnent le terrain,
  * posent la surface des carrefours, publient l'emprise routière que le reste
  * du décor ne franchit pas) → ouvrages d'art (tabliers, piles, têtes de
  * tunnel : lisent les tronçons et le terrain final) → voie ferrée
- * (suit le terrain corrigé, voir `railwayLayer.js`) →
+ * (suit le terrain corrigé, voir `railwayLayer.js`) → protections et emprise
+ * finale d'eau → échange atomique des surfaces et découpes →
  * bâti (lit l'emprise, qui rabote ce qu'une empreinte pose sur la voie, et
  * l'emprise habitée, qui distingue une maison de ville — balcon, cheminée de
  * toit — d'une maison isolée ; publie maisons et empreintes) → voirie (après
@@ -66,7 +77,7 @@ import { GenerationMetrics } from './inspect/generationMetrics.js';
 
 import { TerrainBubble } from './terrain/terrainBubble.js';
 import { GroundClassMap } from './terrain/groundClassMap.js';
-import { RoadNetwork, createRoadMaterials } from './layers/roadNetwork.js';
+import { RoadNetwork, createRoadMaterials, collectRoadLines } from './layers/roadNetwork.js';
 import { RailwayLayer } from './layers/railwayLayer.js';
 import { CliffLayer } from './layers/cliffLayer.js';
 import { BridgeLayer } from './layers/bridgeLayer.js';
@@ -204,6 +215,8 @@ export class WorldComposer {
     this.bubble.setMaxAnisotropy(maxAnisotropy);
 
     const bubble = this.bubble;
+    this.waterFeatures = new WaterFeatureCollector({waterSurfaceFor,waterwayStyleFor,waterways:theme.water.waterways});
+    this.water = new WaterLayer({THREE,scene,theme});
     this.roadMaterials = createRoadMaterials(THREE, theme.roads);
     this.roadMaterials.setMaxAnisotropy(maxAnisotropy);
     this.roads = new RoadNetwork({
@@ -566,11 +579,28 @@ export class WorldComposer {
 
       if (!await checkpoint()) return false;
 
+      let preparedWater = null;
+      if (this.waterFeatures) {
+        if (this.water.frame && this.water.frame !== frame) {
+          this.water.clear(); this.groundClass.setWaterSurface(null);
+        }
+        const features = await this.waterFeatures.collect(this.vectorTiles,wanted,frame,
+          () => !this.disposed && this.bubble.frame === frame);
+        if (!features || !await checkpoint()) return false;
+        preparedWater = prepareWater(features, {
+          frame, sampleDem:(lng,lat) => this.bubble.getElevation(lng,lat,NaN,{strict:true}),
+          grid:{zoom:this.bubble.elevation.zoom,pixels:this.bubble.elevation.tilePixels},
+          waterways:this.theme.water.waterways,triangulateShape:this.THREE.ShapeUtils.triangulateShape,
+        });
+      }
+
       // 1. Occupation du sol — tout le reste la lit.
       const wasReady = this.groundClass.ready;
       if (!await rebuild(this.groundClass, 'carteSol', this.vectorTiles, wanted, here, this.bubble.frame, {
         urban,
         builtUp,
+        resolvedWaterKeys: preparedWater?.resolvedKeys ?? new Set(),
+        waterFallbacks: preparedWater ? waterFallbacks(preparedWater) : null,
         elevationAt: (x, z) => this.bubble.surfaceElevationAtLocal(x, z, NaN),
       })) return false;
       this.bubble.materials.syncGroundClass();
@@ -607,6 +637,68 @@ export class WorldComposer {
       this.trains.setTracks(this.railways.tracks, here);
 
       if (!await checkpoint()) return false;
+
+      let waterChanged = false;
+      if (preparedWater) {
+        const points = [...preparedWater.polygons.flatMap(p=>p.shapes.flat(2)),...preparedWater.lines.flatMap(l=>l.points)];
+        const extent = points.length ? boundsOf(points) : {minX:0,maxX:0,minZ:0,maxZ:0};
+        // Sous une portée, l'eau n'est posée et protégée que dans le carré que la carte du sol relit.
+        const reachBounds = this._reachBounds(here);
+        const bounds = reachBounds ? {
+          minX:Math.max(extent.minX,reachBounds.minX),maxX:Math.min(extent.maxX,reachBounds.maxX),
+          minZ:Math.max(extent.minZ,reachBounds.minZ),maxZ:Math.min(extent.maxZ,reachBounds.maxZ),
+        } : extent;
+        const sourceSegments = collectRoadLines(this.vectorTiles,wanted,frame,this.theme.roads,{urban})
+          .filter(line=>!line.works).map(line=>({...line,path:line.points}));
+        const protections = waterProtectionTriangles({
+          buildings:preparedWater.buildings,frame,
+          roadContours:corridorContours(this.roads.index,bounds),
+          railContours:corridorContours(this.railways.index,bounds),
+          sourceContours:corridorContours(new RoadIndex(sourceSegments),bounds),
+          junctionTriangles:(this.roads.junctionAreas?.areas??[]).flatMap(area=> {
+            const result=junctionTriangles(area);return result.triangles.map(t=>t.map(i=>result.vertices[i]));
+          }),
+          knownCoverage:(...args)=>this.roads.knownCoverageOf(...args),
+          bounds:reachBounds,
+        },this.THREE.ShapeUtils.triangulateShape);
+        let committed = false, cuts = null, surface = null, index = null, painted = null;
+        const drain = async (steps) => {
+          try {
+            while (true) {
+              const result=steps.next();if(result.done)return result.value;
+              if (!await checkpoint()) return null;
+            }
+          } finally {steps.return?.();}
+        };
+        try {
+          for (;;) {
+            index = addWaterBands(placeWater(preparedWater,protections,this.THREE.ShapeUtils.triangulateShape,{profiles:this.theme.water?.profiles,bounds:reachBounds}),this.theme.water?.profiles);
+            cuts = await drain(this.bubble.prepareWaterSurfaceSteps(index));
+            if (!cuts) return false;
+            const conflicts=cuts.flatMap(entry=>entry.prepared.conflicts??[]);
+            if (!conflicts.length) break;
+            this.bubble.discardWaterSurface(cuts);cuts=null;
+            rejectWaterObjects(preparedWater,conflicts);
+            // La liste finale de replis repeint le sol sans rebâtir la voirie.
+            painted = await drain(this.groundClass.rebuildSteps(this.vectorTiles,wanted,here,frame, {
+              urban,builtUp,resolvedWaterKeys:preparedWater.resolvedKeys,waterFallbacks:waterFallbacks(preparedWater),deferPublish:true,
+              elevationAt:(x,z)=>this.bubble.surfaceElevationAtLocal(x,z,NaN),
+            }));
+            if (!painted) return false;
+          }
+          surface = this.water.prepare(index,frame,this.bubble.verticalScale);
+          if (!await checkpoint()) return false;
+          // Aucun yield entre la carte finale, l'ouverture et la surface qui la ferme.
+          if (painted) {this.groundClass.publishPrepared(painted);this.bubble.materials.syncGroundClass();}
+          this.bubble.setWaterSurface(index,cuts);
+          this.groundClass.setWaterSurface(index);
+          this.water.publish(surface);
+          this.water.diagnostics = preparedWater.diagnostics;
+          waterChanged = true; committed = true;
+        } finally {
+          if (!committed) {if(surface)this.water.discard(surface);if(cuts)this.bubble.discardWaterSurface(cuts);}
+        }
+      }
 
       // 4. Bâti — après les chaussées, dont l'emprise rabote ce qu'une
       //    empreinte pose sur la voie (la donnée en pose : le tracé de la route
@@ -665,7 +757,7 @@ export class WorldComposer {
       //    s'interrompt. Chaque tuile est resemée à sa place, sans rien
       //    retirer : l'emprise et le terrain ont pu changer. Seuls l'arrivée de
       //    la carte du sol et un changement de région font tout replanter.
-      this.vegetation.sync({ replant: classArrived || regionChanged, resettle: true });
+      this.vegetation.sync({ replant: classArrived || regionChanged || waterChanged, resettle: true });
       this.vegetation.setPlants('plantations-mobilier', this.furniture.trees);
       this.vegetation.setPlants('plantations-jardins', this.gardens.trees);
       this.vegetation.update(here.x, here.z);
@@ -774,6 +866,13 @@ export class WorldComposer {
     return Number.isFinite(this.bubble.reachMeters) ? this._tilesWithinReach(tiles, lng, lat) : tiles;
   }
 
+  /** Carré de la portée du décor autour d'un point local, marge comprise ; `null` sans portée. */
+  _reachBounds(here) {
+    if (!Number.isFinite(this.bubble.reachMeters)) return null;
+    const span = this.bubble.reachMeters * REACH_MARGIN + REACH_MARGIN_M;
+    return { minX: here.x - span, maxX: here.x + span, minZ: here.z - span, maxZ: here.z + span };
+  }
+
   /**
    * Ne garde des tuiles du bloc que celles qui touchent la portée du décor
    * (marge comprise : la carte du sol lit un peu au-delà de ce qui est bâti).
@@ -865,8 +964,9 @@ export class WorldComposer {
       this.vegetation.processQueue();
       this.bubble.processRebuildQueue();
     }
-    // Les rides de l'eau vivent dans le shader de terrain, avec elle.
+    // Les flaques restent animées par le terrain ; les surfaces ont leur temps propre.
     this.bubble.materials.advanceWater(delta);
+    this.water?.advance(delta);
     this.grass.advance(delta);
     if (!this._building) this.grass.update(at.x, at.z);
     this.vegetation.advance(delta);
@@ -978,6 +1078,8 @@ export class WorldComposer {
     this.cliffs.dispose(); // avant la bulle : retire sa marche en partant
     this.roads.dispose(); // avant la bulle : retire son déblai en partant
     this.roadMaterials.dispose();
+    this.water?.dispose();
+    this.waterFeatures?.clear();
     this.vectorTiles?.dispose();
     this.groundClass.dispose();
     this.bubble.dispose();

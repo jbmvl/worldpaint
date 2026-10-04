@@ -482,3 +482,20 @@ export function clipPolygonOutsideCorridor(
   if (Math.abs(ringArea2(out)) < before * minArea) return null;
   return out;
 }
+
+/** Contours conservateurs de la même emprise que inCorridor. Les capsules
+ * circonscrites débordent d'au plus errorM ; les lignes en ouvrage restent
+ * absentes comme dans l'index au sol. */
+export function corridorContours(index,bounds,{margin=CORRIDOR_MARGIN_M,errorM=0.02}={}) {
+  const contours=[];
+  index?.forEachNear?.(bounds.minX,bounds.minZ,bounds.maxX,bounds.maxZ,(segment,row)=> {
+    if(segment.works?.[row] && segment.works[row+1])return;
+    const a=segment.path[row],b=segment.path[row+1],r=segment.halfWidth+Math.min(margin,index.margin??margin);
+    const angle=Math.atan2(b.z-a.z,b.x-a.x),steps=Math.max(8,Math.ceil(Math.PI/Math.acos(r/(r+errorM)))),radius=r/Math.cos(Math.PI/(2*steps)),ring=[];
+    for(const [center,start] of [[b,angle-Math.PI/2],[a,angle+Math.PI/2]])for(let i=0;i<=steps;i++) {
+      const theta=start+i*Math.PI/steps;ring.push({x:center.x+Math.cos(theta)*radius,z:center.z+Math.sin(theta)*radius});
+    }
+    contours.push(ring);
+  });
+  return contours;
+}

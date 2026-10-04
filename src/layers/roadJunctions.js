@@ -1,7 +1,8 @@
 import { junctionLinks, junctionLinkArea } from './junctionLinks.js';
 import { unirAiresFourches } from './junctionUnions.js';
 import { seamIntervals, seamBoundary, seamRibbonRuns } from './junctionSeams.js';
-import { junctionTriangles } from './junctionTriangulation.js';
+import { junctionTriangles, junctionDistance } from './junctionTriangulation.js';
+import { enveloppesEntrees } from './roundaboutEntries.js';
 /*
  * roadJunctions — un carrefour est une **surface**, pas un point.
  *
@@ -33,6 +34,8 @@ import { junctionTriangles } from './junctionTriangulation.js';
  * borne la profondeur à sa moitié pour conserver une chaussée entre nœuds.
  * `junctionSeams` rattache chaque bouche à son arête de graphe et publie les
  * mêmes sommets XYZ pour le ruban, la dalle, les bordures et les marquages.
+ * Les tangentes parallèles relient les bouches directement : un coin
+ * extrapolé pourrait replier le contour et perdre un accès.
  * L'extrémité provisoire d'une liaison couverte peut porter deux bouches :
  * `junctionLinks` prolonge ensuite son contour jusqu'à l'autre nœud.
  *
@@ -51,6 +54,8 @@ import { junctionTriangles } from './junctionTriangulation.js';
  * (voir `roadRoundabouts`). Son aire est une couronne (`roundaboutArea`) : le
  * cercle extérieur percé d'une bouche par branche, et un îlot (`island`) que
  * `areaCovers` exclut — l'herbe et les arbres y restent.
+ * L'entrée suit le ruban courbe jusqu'à l'anneau ; son enveloppe radiale
+ * conserve une couronne sans secteur replié.
  *
  * ## Qui cède le passage
  *
@@ -189,6 +194,7 @@ export function junctionCorner(node, a, b, { steps = JUNCTION_ARC_STEPS } = {}) 
   // Rives parallèles : les deux branches se prolongent (une route droite qu'une
   // troisième aborde). La rive continue tout droit, et il n'y a pas de coin.
   if (!hit || !Number.isFinite(hit.ta) || Math.abs(hit.ta) > reach || Math.abs(hit.tb) > reach) {
+    if(a.origin)return {points:[],ta:0,tb:0};
     const mid = { x: (a0.x + b0.x) / 2, z: (a0.z + b0.z) / 2 };
     return { points: [mid], ta: 0, tb: 0 };
   }
@@ -424,6 +430,8 @@ export function junctionArea(junction, options = {}) {
 
     mouths.push({
       edge: branch.edge,
+      graphEdges: branch.edges,
+      origin: branch.path?.[0] ?? node,
       profile: branch.profile,
       halfWidth: branch.halfWidth,
       // Celle de la chaussée à la bouche, et non le rayon de la branche : ce
@@ -559,13 +567,21 @@ export function forkArea(junction, { trunk, a, b }, { margin = JUNCTION_MOUTH_MA
 
   const legDepth = separation + margin;
   const trunkDepth = trunk.halfWidth * 0.5 + margin;
+  if ([a,b].some(branch=>branch.boundedEnd && legDepth>branch.mouthLimit) ||
+      trunk.boundedEnd && trunkDepth>trunk.mouthLimit) return null;
   const left = (dir) => ({ x: dir.z, z: -dir.x });
   const mouthOf = (branch, depth) => {
+    if(branch.endDegree>=3 && branch.path?.length) {
+      const end=branch.path.at(-1);
+      depth=Math.min(depth,(end.x-node.x)*branch.x+(end.z-node.z)*branch.z);
+    }
     const { centre, direction } = branchSection(node, branch, depth);
     const p = left(direction);
     const w = branch.halfWidth;
     return {
       edge: branch.edge,
+      graphEdges: branch.edges,
+      origin: branch.path?.[0] ?? node,
       profile: branch.profile,
       halfWidth: w,
       direction,
@@ -586,17 +602,18 @@ export function forkArea(junction, { trunk, a, b }, { margin = JUNCTION_MOUTH_MA
   // sa bouche exclue ; sa demi-largeur passe de celle du tronc à la sienne.
   const rive = (branch, rank, side) => {
     const points = [];
-    for (let d = 0; d < legDepth - 1e-6; d += JUNCTION_FORK_STEP_M) {
+    const depth=mouths[rank].distance;
+    for (let d = 0; d < depth - 1e-6; d += JUNCTION_FORK_STEP_M) {
       const { centre, direction } = branchSection(node, branch, d);
       const p = left(direction);
-      const k = Math.min(1, d / separation);
+      const k = Math.min(1, d / Math.min(separation,depth));
       const w = trunk.halfWidth + (branch.halfWidth - trunk.halfWidth) * k;
       points.push({
         x: centre.x + side * p.x * w,
         z: centre.z + side * p.z * w,
         from: 0,
         to: rank,
-        blend: d / legDepth,
+        blend: d / depth,
         normal: { x: side * p.x, z: side * p.z },
       });
     }
@@ -672,8 +689,8 @@ const ROUNDABOUT_ARC_STEP = (10 * Math.PI) / 180;
 
 /**
  * Où la branche franchit le cercle de rayon `reach` autour de `centre`, et la
- * direction qu'elle y suit. Au-delà de sa polyligne, on prolonge sa dernière
- * direction.
+ * direction qu'elle y suit. Une branche courte se ferme à son bout réel,
+ * sans inventer un prolongement au-delà de sa polyligne.
  */
 function branchCrossing(centre, branch, reach) {
   const path = Array.isArray(branch.path) && branch.path.length >= 2 ? branch.path : null;
@@ -694,8 +711,7 @@ function branchCrossing(centre, branch, reach) {
   }
   const last = path[path.length - 1];
   const direction = heading(path[path.length - 2], last);
-  const gap = reach - radial(last);
-  return { centre: { x: last.x + direction.x * gap, z: last.z + direction.z * gap }, direction };
+  return { centre: { x:last.x,z:last.z }, direction };
 }
 
 /**
@@ -722,6 +738,8 @@ export function roundaboutArea(junction) {
     const w = branch.halfWidth;
     mouths.push({
       edge: branch.edge,
+      graphEdges: branch.edges,
+      origin: branch.path?.[0] ?? node,
       profile: branch.profile,
       halfWidth: w,
       direction,
@@ -734,6 +752,7 @@ export function roundaboutArea(junction) {
   }
   if (mouths.length === 0) return null;
   mouths.sort((a, b) => a.angle - b.angle);
+  const entrees=enveloppesEntrees(node,ring.outer,mouths,junction.branches);
 
   const angleOf = (p) => Math.atan2(p.z - node.z, p.x - node.x);
   const outline = [];
@@ -752,14 +771,20 @@ export function roundaboutArea(junction) {
     if (count === 1 && sweep < Math.PI) sweep += Math.PI * 2;
     const steps = Math.max(1, Math.ceil(sweep / ROUNDABOUT_ARC_STEP));
     const arc = [];
-    for (let k = 1; k < steps; k++) {
-      const at = start + (sweep * k) / steps;
+    const angles=Array.from({length:steps-1},(_,k)=>start+sweep*(k+1)/steps);
+    for(let at of entrees?.angles ?? []) {
+      while(at<=start)at+=Math.PI*2;
+      if(at<start+sweep-1e-6)angles.push(at);
+    }
+    const azimuts=angles.sort((a,b)=>a-b).filter((a,i,l)=>!i || a-l[i-1]>1e-6);
+    for (const at of azimuts) {
+      const rayon=entrees?.rayonA(at) ?? ring.outer;
       arc.push({
-        x: node.x + Math.cos(at) * ring.outer,
-        z: node.z + Math.sin(at) * ring.outer,
+        x: node.x + Math.cos(at) * rayon,
+        z: node.z + Math.sin(at) * rayon,
         from: i,
         to: next,
-        blend: k / steps,
+        blend: (at-start)/sweep,
       });
     }
     outline.push(...arc);
@@ -815,8 +840,7 @@ export function roundaboutArea(junction) {
  * son îlot s'il en a un.
  */
 export function areaCovers(area, x, z) {
-  if (!pointInOutline(area.outline, x, z)) return false;
-  return !(area.island && pointInOutline(area.island, x, z));
+  return junctionDistance(area,x,z).distance===0;
 }
 
 /**
@@ -1326,10 +1350,10 @@ export class JunctionAreas {
     const samples = [];
     for (const index of bucket) {
       const area = this.areas[index];
-      if (area.level !== level || !area.decks) continue;
+      if (!area.decks || (level===null ? area.terrainCovered : area.level!==level)) continue;
       const box = outlineBounds(area);
       if (x < box.minX - reach || x > box.maxX + reach || z < box.minZ - reach || z > box.maxZ + reach) continue;
-      const near = outlineDistance(area.outline, x, z);
+      const near = junctionDistance(area, x, z);
       if (near.distance > reach) continue;
       let deck = junctionDeckAt(area, area.decks, near.x, near.z);
       if (spread > near.distance) deck = Math.min(deck, lowestDeckAround(area, x, z, spread));

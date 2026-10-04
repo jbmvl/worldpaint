@@ -58,35 +58,13 @@
  * l'autre convexe. Un îlot triangulaire entre deux branches qui divergent n'a
  * aucune rive courbe, et se remplit — ce qui est bien ce qu'on en fait.
  *
- * ## L'absorption : ce qu'on ne dessine pas du tout
+ * ## Les cheminements piétons
  *
- * Peindre le vide ne suffisait pas, et en ville c'était même le contraire d'un
- * remède. Un boulevard urbain est relevé dans OSM en cinq ou six voies
- * parallèles — la contre-allée, la desserte, la voie de bus, chaque sens —, et
- * les dessiner toutes donne un tas de rubans qui se chevauchent, hachuré de
- * zébras dans chaque interstice. Le paysage n'y gagne aucune information : ces
- * voies **sont** la même chaussée.
- *
- * D'où une seconde réponse, posée bien plus tôt — sur les **lignes**, avant
- * que le graphe n'en fasse des chaînes, donc sans toucher ni aux nœuds ni au
- * mobilier : une voie de rang inférieur qui longe une voie de rang supérieur
- * sur l'essentiel de sa longueur n'est pas dessinée (`absorbParallelLines`).
- * Elle est déjà là, dans la largeur de l'autre.
- *
- * Deux garde-fous, et ils disent tout ce que l'absorption n'est pas :
- *
- *   - seuls les **profils absorbables** le sont (`ABSORBABLE_PROFILES`). Une
- *     piste cyclable n'en fait pas partie, et c'est délibéré : on veut
- *     précisément la voir. Un chemin non plus — un chemin de terre le long
- *     d'une route est un objet du paysage, pas une redondance de saisie ;
- *   - le rang doit être **strictement** supérieur. Deux chaussées de même
- *     profil qui se longent sont les deux sens d'une même route : aucune des
- *     deux n'est de trop, et c'est le comblement qui les réunit — en
- *     revêtement plein, pas en zébra (voir `gapIsSeam`).
- *
- * L’absorption sonde les intervalles, au même niveau et hors ouvrages.
- * Les rubans conservés qui se chevauchent relèvent de `roadWidths` ;
- * le comblement ne traite que les écarts positifs entre leurs rives.
+ * `absorbParallelLines` sonde les intervalles au même niveau et hors ouvrages.
+ * `roadPedestrians` l'applique aux seuls cheminements piétons qui longent une
+ * rue urbaine ; les axes des rues de desserte et des pistes cyclables restent
+ * distincts. Les rubans conservés partagent leur largeur par `roadWidths`.
+ * Le comblement ne traite que les écarts positifs entre leurs rives.
  *
  * Module pur : aucun `three`, testable sous Node.
  */

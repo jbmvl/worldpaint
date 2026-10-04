@@ -8,7 +8,9 @@
 | `transportEarthworks.js` | remblais doux et tranchées des franchissements, dans le terrain commun |
 | `roadCut.js` | l'entaille du terrain sous une chaussée |
 | `cliffCut.js` | la marche du terrain sous une falaise relevée |
-| `groundClassMap.js` | la carte des matières et des cultures, rasterisée pour toute la scène |
+| `groundClassMap.js` | la carte des matières et des cultures, avec exclusions précises par l’index d’eau |
+| `waterTerrainCut.js` | remplacement des triangles par l’eau, fragments barycentriques et raccords de berge |
+| `waterFallbackPaint.js` | peinture des objets d’eau explicitement en repli |
 | `surfaceContours.js` | les limites de la carte redessinées en traits : chaînes, simplification, distance au trait |
 | `surfaceClassification.js` | ce qu'une entité de tuile **dit** du sol |
 
@@ -41,14 +43,19 @@ Ce qui en est sorti, parce que c'est de la lecture pure et qu'on y va souvent :
 `landcover` peint au sol, quelle eau compte, ou ce qu'un cours d'eau pose,
 c'est là — pas dans la carte. Les fonctions y sont pures et testables seules.
 
-Deux pièges :
+Les invariants :
 
 - **l'ordre de `SURFACE_KINDS` est gravé** : l'identifiant est peint dans un
   canal 8 bits et relu par le shader comme par les couches. Le changer repeint
   une lande en éboulis. Ajouter une matière veut dire : une ligne ici, une
   ligne dans `SURFACE_LOOK` (thème), et une signature qui tient le test d'écart.
-- **l'eau est une matière du sol**, pas une surface posée dessus. Il n'y a pas
-  de plan d'eau dans la scène.
+- **L'eau permanente résolue remplace localement les triangles affichés.**
+  `supportGeometry` conserve la grille régulière complète pour les appuis,
+  les tunnels et les reconstructions. Les fragments et berges interpolent les
+  trois sommets sources après le grain GPU, avec les mêmes uniformes. Une
+  génération d'eau distincte évite de relancer les terrassements. Peinture,
+  index et maillages préparés sont publiés ensemble ; les replis gardent `water`.
+  Les flaques, marais et rizières restent des matières du terrain.
 - **la rugosité d'une matière est géométrique**, pas une texture : le sommet
   est bosselé le long de sa normale (`lowPolyGrain`), et la facette qui en
   résulte est lue par dérivées d'écran. Une matière se règle par
@@ -73,7 +80,10 @@ Dans cet ordre : la **marche** d'une falaise relevée (`cliffCut`), les
 ce qu'elle trouve — l'ordre inverse taillerait la chaussée dans une rampe que
 la marche vient de supprimer.
 
-Trois lectures en découlent, et chacune a son lecteur : le **MNT brut**
+Les niveaux d’eau utilisent `getElevation(lng, lat, NaN, {strict:true})` :
+les quatre pixels natifs nécessaires doivent être présents et finis.
+
+Trois lectures en découlent, et chacune a son lecteur : le **relief brut rééchantillonné selon le LOD**
 (`rawSurfaceElevationAtLocal`), sur lequel seule la couche des falaises mesure
 la marche ; le **terrain naturel** (`naturalElevationAtLocal`), falaises
 comprises et déblai exclu, sur lequel se dressent les plates-formes et que lit
@@ -104,3 +114,9 @@ largeur du fond plat changerait avec l'anneau, donc avec la caméra.
 borde une chaussée la lit là : l'index des routes (`roadNetwork`) pour sa
 marge, la falaise du déblai (`roadsideRelief`) pour le pied de sa paroi, le
 masque du grain low poly (`roadCutMaskAt`) pour son emprise.
+
+Une maille près de plusieurs rues lit toutes leurs cotes, et la cote basse
+de chaque profil en long à portée de sa diagonale. Être sous la rue haute
+ne dispense pas de creuser pour sa voisine basse. Les dalles publient cette
+même lecture par `deckSamplesNear` ; seul l'appui ferroviaire prescrit
+au-dessus d'une galerie peut conserver une cote supérieure.

@@ -190,6 +190,15 @@ export class ElevationField {
     return top + (bottom - top) * fy;
   }
 
+  /** Référence hydrologique : aucun voisin absent ne peut fabriquer une cote. */
+  sampleTileStrict(tx, ty) {
+    const px = tx * this.tilePixels - 0.5, py = ty * this.tilePixels - 0.5;
+    const x = Math.floor(px), y = Math.floor(py), fx = px-x, fy = py-y;
+    const values = [this._pixel(x,y), this._pixel(x+1,y), this._pixel(x,y+1), this._pixel(x+1,y+1)];
+    if (values.some(v => v == null || !Number.isFinite(v))) return NaN;
+    return (values[0]*(1-fx)+values[1]*fx)*(1-fy)+(values[2]*(1-fx)+values[3]*fx)*fy;
+  }
+
   /** Lit un pixel en espace global. `null` si sa tuile n'est pas chargée. */
   _pixel(gx, gy) {
     const size = this.tilePixels;

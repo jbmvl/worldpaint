@@ -27,6 +27,9 @@
  *   /demo/lab/place.html?lieu=montreuil-bellay
  *   placeLab.set({ lng: -0.1496, lat: 47.1300, yawDeg: 225, pitchDeg: 28, distance: 60 })
  *   placeLab.set({ x: 120, z: -40, ... })   // en mètres locaux
+ *   placeLab.set({ roadsOnly: true })       // terrain et transports seuls
+ *   placeLab.auditRoads({ radius: 700 })    // triangles, recouvrements et coutures
+ *   node scripts/road-audit.mjs /tmp/routes nantes,angers
  *   await placeLab.walk({ toX: 2000, step: 50 })  // ce qui se repeint sous 500 m
  *   await placeLab.set({ word: ['matrix', 'conifer_forest'] })  // un mot imposé (afficheur), `null` pour le retirer
  *

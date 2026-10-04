@@ -29,12 +29,9 @@
  * angle. `splitCrossings` fait de même pour deux axes qui se traversent en X
  * sans sommet commun.
  *
- * Ce module ne rogne plus rien. Il l'a fait — la voie la plus étroite
- * s'arrêtait sur un cercle centré sur le nœud —, et c'était la mauvaise
- * réponse à la bonne question : deux voies de même largeur ne se rognaient
- * pas du tout, un cercle coupe une rive courbe de travers, et rien ne
- * construisait la surface du carrefour. Elle se construit maintenant à partir
- * des branches, et les chaînes ressortent d'ici entières.
+ * Les chaînes restent entières ; seules les surfaces de carrefour découpent
+ * leurs rubans. Une branche s'arrête aux mêmes coudes que sa chaîne et borne
+ * sa bouche au bout réel, ou à mi-distance du carrefour suivant.
  *
  * Un carrefour est publié avec, pour chaque branche, sa direction sortante
  * **et sa polyligne** sur quelques dizaines de mètres. La direction se mesure
@@ -765,7 +762,7 @@ function splitCrossings(state, nodes, { skewCos = GRAFT_SKEW_COS, unpaved = null
  * n'est accepté que si les deux bouts se font franchement face et restent
  * alignés — sinon on recoudrait deux routes parallèles.
  */
-function joinLooseEnds(chains, { join, offset, collinearCos }) {
+function joinLooseEnds(chains, { join, offset, collinearCos, fixed }) {
   const count = chains.length;
   const partner = new Int32Array(count * 2).fill(-1);
   if (count < 2) return chains;
@@ -832,7 +829,7 @@ function joinLooseEnds(chains, { join, offset, collinearCos }) {
     partner[best] = i;
   }
 
-  return assembleChains(chains, partner);
+  return assembleChains(chains, partner, fixed);
 }
 
 /**
@@ -844,7 +841,7 @@ function joinLooseEnds(chains, { join, offset, collinearCos }) {
  * même découpage : ils voyagent groupés plutôt qu'en arguments séparés, sans
  * quoi en ajouter un revient à retoucher chaque appel.
  */
-function appendChain(out, run) {
+function appendChain(out, run, fixed) {
   const { points, anchors, works, levels, oneway } = run;
 
   const copy = (from) => {
@@ -869,6 +866,7 @@ function appendChain(out, run) {
   if (heading) {
     while (
       start < points.length - 2 &&
+      !fixed.has(`${points[start].x}:${points[start].z}`) &&
       (points[start].x - head.x) * heading.x + (points[start].z - head.z) * heading.z <= 0.25
     ) {
       start++;
@@ -879,7 +877,7 @@ function appendChain(out, run) {
 }
 
 /** Suit les appariements de bouts libres et concatène ce qui va ensemble. */
-function assembleChains(chains, partner) {
+function assembleChains(chains, partner, fixed) {
   const visited = new Uint8Array(chains.length);
   const merged = [];
 
@@ -905,7 +903,7 @@ function assembleChains(chains, partner) {
         works: flip(chain.works),
         levels: flip(chain.levels),
         oneway: flipDirected(chain.oneway),
-      });
+      }, fixed);
 
       const exit = c * 2 + (1 - at);
       const next = partner[exit];
@@ -972,7 +970,7 @@ export const BRANCH_HEADING_M = 8;
  *
  * @returns {Array<{x:number,z:number}>} du nœud vers l'extérieur, nœud compris.
  */
-function branchPath({ edges, adjacency }, nodes, node, first, rank, sight, degreeOf) {
+function branchPath({ edges, adjacency }, nodes, node, first, rank, sight, degreeOf, continueCos) {
   const points = [{ x: nodes.xs[node], z: nodes.zs[node] }];
   points.edges = new Set();
   const visited = new Set([node]);
@@ -994,10 +992,10 @@ function branchPath({ edges, adjacency }, nodes, node, first, rank, sight, degre
     if (points.endDegree >= 3) points.junctionEnd = true;
     if (travelled >= sight || visited.has(current)) break;
     visited.add(current);
-    if (degreeOf(current) !== 2) break;
+    if (degreeOf(current) !== 2) { points.chainEnd = true; break; }
 
     const candidates = adjacency.get(adjacencyKey(current, rank));
-    if (!candidates) break;
+    if (!candidates) { points.chainEnd = true; break; }
     let next = -1;
     for (const index of candidates) {
       const edge = edges[index];
@@ -1009,7 +1007,12 @@ function branchPath({ edges, adjacency }, nodes, node, first, rank, sight, degre
       if (next >= 0) return points;
       next = other;
     }
-    if (next < 0) break;
+    if (next < 0) { points.chainEnd = true; break; }
+    const incoming=direction(nodes.xs[previous],nodes.zs[previous],nodes.xs[current],nodes.zs[current]);
+    const outgoing=direction(nodes.xs[current],nodes.zs[current],nodes.xs[next],nodes.zs[next]);
+    if (!incoming || !outgoing || incoming.x*outgoing.x+incoming.z*outgoing.z<=continueCos) {
+      points.chainEnd = true; break;
+    }
     previous = current;
     current = next;
   }
@@ -1076,7 +1079,7 @@ function pointAlong(points, distance) {
 function collectJunctions(
   graph,
   nodes,
-  { sight = BRANCH_SIGHT_M, headingAt = BRANCH_HEADING_M, unpaved = null, rings = [] } = {}
+  { sight = BRANCH_SIGHT_M, headingAt = BRANCH_HEADING_M, unpaved = null, rings = [], continueCos = CONTINUE_COS } = {}
 ) {
   const { edges, degree } = graph;
   const byNode = new Map();
@@ -1108,7 +1111,7 @@ function collectJunctions(
       // La branche est arrondie comme la chaîne qu'elle décrit : c'est sur elle
       // que la bouche du carrefour va chercher la chaussée, et les deux doivent
       // parler du même tracé.
-      const rawPath = branchPath(graph, nodes, node, other, edge.rank, sight, (n) => degreeOf(n, paved));
+      const rawPath = branchPath(graph, nodes, node, other, edge.rank, sight, (n) => degreeOf(n, paved), continueCos);
       const { points: path } = roundCorners(rawPath);
       // La corde sur une longueur de rue, et non la première arête : voir
       // `BRANCH_HEADING_M`.
@@ -1149,10 +1152,12 @@ function collectJunctions(
       }
       const length = path.slice(1).reduce((sum,p,i)=>sum+Math.hypot(p.x-path[i].x,p.z-path[i].z),0);
       const middle = pointAlong(path, Math.max(0,length/2-.01));
+      const limit = rawPath.junctionEnd ? middle : rawPath.chainEnd ? path.at(-1) : null;
       junction.branches.push({
         edges: rawPath.edges,
         endDegree: rawPath.endDegree,
-        mouthLimit: rawPath.junctionEnd ? (middle.x-nodes.xs[node])*heading.x+(middle.z-nodes.zs[node])*heading.z : Infinity,
+        boundedEnd: rawPath.chainEnd && !rawPath.junctionEnd,
+        mouthLimit: limit ? (limit.x-nodes.xs[node])*heading.x+(limit.z-nodes.zs[node])*heading.z : Infinity,
         edge,
         x: heading.x,
         z: heading.z,
@@ -1304,8 +1309,9 @@ export function mergeRoadLines(lines, options = {}) {
     });
   }
 
-  const junctions = collectJunctions(graph, nodes, { unpaved, rings: findRoundabouts(edges, nodes, { unpaved }) });
-  const joined = joinLooseEnds(chains, { join, offset, collinearCos });
+  const junctions = collectJunctions(graph, nodes, { unpaved, continueCos, rings: findRoundabouts(edges, nodes, { unpaved }) });
+  const fixed = new Set(junctions.filter(j=>!j.roundabout).map(j=>`${j.x}:${j.z}`));
+  const joined = joinLooseEnds(chains, { join, offset, collinearCos, fixed });
 
   // Orientation canonique : deux reconstructions successives doivent parcourir
   // la même chaîne dans le même sens, sinon tout ce qui dépend du côté de la
@@ -1327,7 +1333,7 @@ export function mergeRoadLines(lines, options = {}) {
     }
   }
 
-  for (const chain of joined) smoothChain(chain);
+  for (const chain of joined) smoothChain(chain, fixed);
 
   return { chains: joined, junctions };
 }
@@ -1337,7 +1343,7 @@ export function mergeRoadLines(lines, options = {}) {
  * carrefour tourne au carrefour, pas dix mètres avant — et les deux bouts d'un
  * ouvrage, dont la ligne porte le passage du sol au tablier.
  */
-function rigidVertices(chain) {
+function rigidVertices(chain, fixed) {
   const count = chain.points.length;
   const rigid = new Array(count);
   for (let i = 0; i < count; i++) {
@@ -1345,6 +1351,7 @@ function rigidVertices(chain) {
     const after = Math.min(count - 1, i + 1);
     rigid[i] =
       Boolean(chain.anchors[i]) ||
+      fixed.has(`${chain.points[i].x}:${chain.points[i].z}`) ||
       chain.works[i] !== chain.works[before] ||
       chain.works[i] !== chain.works[after] ||
       chain.levels[i] !== chain.levels[before] ||
@@ -1357,8 +1364,8 @@ function rigidVertices(chain) {
  * Arrondit une chaîne, tableaux parallèles compris : une ligne d'arc hérite de
  * l'état du sommet qu'elle remplace.
  */
-function smoothChain(chain) {
-  const { points, source } = roundCorners(chain.points, { keep: rigidVertices(chain) });
+function smoothChain(chain, fixed) {
+  const { points, source } = roundCorners(chain.points, { keep: rigidVertices(chain, fixed) });
   const carry = (values) => Array.from(source, (i) => values[i]);
   chain.anchors = carry(chain.anchors);
   chain.works = carry(chain.works);
@@ -1400,8 +1407,8 @@ function outsideBox(x, z, a, b, margin) {
 function beyondTunnel(segment, row, x, z) {
   const a = segment.path[row], b = segment.path[row+1];
   const along = (x-a.x)*(b.x-a.x)+(z-a.z)*(b.z-a.z);
-  if (segment.works?.[row] === WORK_TUNNEL && !segment.works[row+1]) return along < 0;
-  if (segment.works?.[row+1] === WORK_TUNNEL && !segment.works[row]) return along > (b.x-a.x)**2+(b.z-a.z)**2;
+  if (segment.works?.[row] === WORK_TUNNEL && segment.works[row+1] !== WORK_TUNNEL) return along < 0;
+  if (segment.works?.[row+1] === WORK_TUNNEL && segment.works[row] !== WORK_TUNNEL) return along > (b.x-a.x)**2+(b.z-a.z)**2;
   return false;
 }
 
@@ -1418,6 +1425,8 @@ function beyondTunnel(segment, row, x, z) {
  * le terrain ne se creuse ni jusqu'à la dalle de l'un ni jusqu'au tablier de
  * l'autre. Une seule arête reste inscrite à chaque culée — celle qui joint le
  * sol à l'ouvrage —, pour que l'emprise ne s'interrompe pas avant le pont.
+ * Un intervalle qui joint une galerie à un pont reste également ouvert :
+ * le portail termine la couverture même sans ligne intermédiaire au sol.
  */
 export class RoadIndex {
   /**
@@ -1449,7 +1458,7 @@ export class RoadIndex {
       const works = segment.works;
 
       for (let r = 0; r < path.length - 1; r++) {
-        if (!includeWorks && works?.[r] && works[r + 1]) continue;
+        if (!includeWorks && works?.[r] && works[r] === works[r + 1]) continue;
         const a = path[r];
         const b = path[r + 1];
         const minX = Math.floor((Math.min(a.x, b.x) - reach) / cell);

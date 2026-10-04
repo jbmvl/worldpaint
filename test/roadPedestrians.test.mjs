@@ -55,3 +55,14 @@ test('la suppression des trottoirs ne dépend pas de l’ordre des lignes',()=>{
   const lines=[line('minor',0),line('path',4,{footway:true}),line('path',12,{footway:true})];
   assert.deepEqual(removeRoadsideFootways(lines,town),removeRoadsideFootways(lines.slice().reverse(),town).reverse());
 });
+
+test('une traversée cyclable désignée conserve sa chaussée malgré son tag piéton',()=>{
+  const frame=createLocalFrame(0,0,14),urban={any:true,covers:()=>true,nearCity:()=>true};
+  const source={forEachFeature(layer,tiles,callback){
+    for(const subclass of ['crossing','sidewalk','footway','pedestrian'])
+      callback({type:'LineString',coordinates:[[0,0],[.0001,0]]},{class:'path',subclass,bicycle:'designated'});
+  }};
+  const lines=collectRoadLines(source,[],frame,undefined,{urban});
+  assert.equal(lines.length,4);
+  assert.ok(lines.every(l=>l.profile==='cycleway'));
+});

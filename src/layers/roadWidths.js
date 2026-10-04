@@ -9,6 +9,9 @@
  * Le partage exige un écart stable hors des surfaces de carrefour. Si un axe
  * pénètre la largeur nominale de l'autre, la paire est ambiguë et conservée :
  * une convergence ou un doublon ne donne pas la largeur d'une chaîne entière.
+ * Sous une portée (`near`), seules les chaînes qui l'atteignent reçoivent leur
+ * largeur : une paire n'est parcourue que si l'une des deux en est, et ces
+ * chaînes-là sortent avec la même largeur que sans portée.
  */
 import { JunctionAreas } from './roadJunctions.js';
 import { RoadIndex, distanceToSegment } from './roadGraph.js';
@@ -17,7 +20,48 @@ import { BUNDLE_MIN_LENGTH_M, BUNDLE_PARALLEL_COS } from './roadBundles.js';
 const PAS_M = 5;
 // Un écart qui varie de plus de 20 % décrit une convergence, pas un gabarit.
 const STABILITE_ECART = 0.8;
+// Au-delà du rayon : l'emprise d'un carrefour posé juste dehors.
+const MARGE_PORTEE_M = 30;
 const clePoint = (p) => `${p.x},${p.z}`;
+
+function atteint(points, { x, z, radius }) {
+  const portee = radius + MARGE_PORTEE_M;
+  for (let r = 0; r + 1 < points.length; r++) {
+    const a = points[r], b = points[r + 1];
+    if (distanceToSegment(x, z, a.x, a.z, b.x, b.z).distance <= portee) return true;
+  }
+  return false;
+}
+
+function emprise(points) {
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const p of points) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.z < minZ) minZ = p.z;
+    if (p.z > maxZ) maxZ = p.z;
+  }
+  return { minX, maxX, minZ, maxZ };
+}
+
+/**
+ * Chaînes à parcourir sous une portée : celles qui l'atteignent, et celles
+ * dont un échantillon peut encore contraindre l'une d'elles.
+ */
+function chainesUtiles(chains, near) {
+  const utiles = chains.map((chain) => atteint(chain.points, near));
+  const boites = chains.map((chain) => emprise(chain.points));
+  const large = chains.reduce((max, chain) => Math.max(max, chain.halfWidth), 0);
+  const parcourues = chains.map((chain, i) => {
+    if (utiles[i]) return true;
+    // Écart le plus grand qu'une contrainte accepte (`facteur < 1`), cellule comprise.
+    const marge = (chain.halfWidth + large) / BUNDLE_PARALLEL_COS + PAS_M;
+    const a = boites[i];
+    return boites.some((b, j) => utiles[j] &&
+      a.minX - marge <= b.maxX && a.maxX + marge >= b.minX && a.minZ - marge <= b.maxZ && a.maxZ + marge >= b.minZ);
+  });
+  return { utiles, parcourues };
+}
 
 function seCroisent(a, b, c, d) {
   const ux = b.x - a.x, uz = b.z - a.z;
@@ -30,7 +74,12 @@ function seCroisent(a, b, c, d) {
   return t >= 0 && t <= 1 && u >= 0 && u <= 1;
 }
 
-export function fitParallelRoadWidths(chains, junctions = []) {
+/**
+ * @param {Array} chains Chaînes revêtues ; leur `halfWidth` est réduite sur place.
+ * @param {Array} [junctions] Carrefours du même graphe.
+ * @param {{x:number,z:number,radius:number}|null} [near] Portée des chaussées bâties.
+ */
+export function fitParallelRoadWidths(chains, junctions = [], near = null) {
   const segments = chains.map((chain) => ({ ...chain, path: chain.works?.some(Boolean) ? [] : chain.points }));
   const index = new RoadIndex(segments, { margin: 0 });
   const facteurs = chains.map(() => 1);
@@ -40,6 +89,7 @@ export function fitParallelRoadWidths(chains, junctions = []) {
   const clePaire = (i, j) => `${Math.min(i, j)}:${Math.max(i, j)}`;
   const sommets = chains.map((chain) => new Set(chain.points.map(clePoint)));
   const voisins = new Map();
+  const portee = near ? chainesUtiles(chains, near) : null;
   const raccordes = (i, j) => {
     const cle = clePaire(i, j);
     if (!voisins.has(cle)) {
@@ -52,6 +102,7 @@ export function fitParallelRoadWidths(chains, junctions = []) {
   };
 
   for (let i = 0; i < segments.length; i++) {
+    if (portee && !portee.parcourues[i]) continue;
     const route = segments[i];
     let actifs = new Map();
     const terminer = (j, plage) => {
@@ -73,7 +124,7 @@ export function fitParallelRoadWidths(chains, junctions = []) {
         if (!route.works?.[r] && !route.works?.[r + 1]) {
           const h = route.halfWidth;
           index.forEachNear(x - h, z - h, x + h, z + h, (autre, s, j) => {
-            if (j === i || raccordes(i, j)) return;
+            if (j === i || (portee && !portee.utiles[i] && !portee.utiles[j]) || raccordes(i, j)) return;
             if (autre.works?.[s] || autre.works?.[s + 1]) return;
             if ((route.levels?.[r] ?? 0) !== (autre.levels?.[s] ?? 0)) return;
             const c = autre.path[s], d = autre.path[s + 1];

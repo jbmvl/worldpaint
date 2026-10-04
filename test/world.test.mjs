@@ -2847,7 +2847,7 @@ test('la couverture règle l’herbe et le fourré, jamais leur présence', () =
   assert.equal(coverBushesFor('scree').density, 0, 'rien ne pousse dans un éboulis');
 
   // Une lande et un maquis ne sèment plus le même buisson.
-  assert.equal(coverBushesFor('heath').essence, 'gorse');
+  assert.equal(coverBushesFor('heath').essence, 'moorland');
   assert.equal(coverBushesFor('scrub').essence, 'thornyScrub');
   assert.equal(coverBushesFor('sand').essence, 'marram');
   assert.notEqual(coverBushesFor('heath').essence, coverBushesFor('scrub').essence);

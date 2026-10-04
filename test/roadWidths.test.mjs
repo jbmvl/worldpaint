@@ -158,3 +158,22 @@ test('une convergence invalide aussi une portion parallèle antérieure de la m�
     assert.deepEqual(routes.map((route) => route.halfWidth), [4, 4]);
   }
 });
+
+test('sous une portée, les chaînes qui l\'atteignent gardent la largeur du calcul complet', () => {
+  const decalee = (x, z) => ({ profile: 'major', halfWidth: 4, points: [{ x, z }, { x: x + 100, z }] });
+  const jeu = () => [
+    voie(0), voie(6),
+    // Atteint la portée par un bout, et se trouve contrainte bien plus loin par une chaîne qui ne l'atteint pas.
+    { profile: 'major', halfWidth: 4, points: [{ x: 0, z: 40 }, { x: 600, z: 40 }] },
+    decalee(450, 46),
+    // Paire entièrement hors de portée.
+    decalee(2000, 0), decalee(2000, 6),
+  ];
+  const complet = jeu(), borne = jeu();
+  fitParallelRoadWidths(complet);
+  fitParallelRoadWidths(borne, [], { x: 50, z: 0, radius: 100 });
+  assert.deepEqual(borne.slice(0, 3).map((r) => r.halfWidth), complet.slice(0, 3).map((r) => r.halfWidth));
+  assert.ok(complet[2].halfWidth < 4);
+  assert.deepEqual(complet.slice(4).map((r) => r.halfWidth), [3, 3]);
+  assert.deepEqual(borne.slice(4).map((r) => r.halfWidth), [4, 4]);
+});

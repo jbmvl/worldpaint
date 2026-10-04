@@ -27,7 +27,7 @@
  * parcelles ou végétation, absents des tuiles.
  */
 import * as THREE from 'three';
-import { TreeVolumes } from '/src/layers/treeVolumes.js';
+import { VegetationLayer } from '/src/layers/vegetationLayer.js';
 import { TerrainBubble } from '/src/terrain/terrainBubble.js';
 import { ElevationField } from '/src/core/elevationField.js';
 import { RoadNetwork, createRoadMaterials } from '/src/layers/roadNetwork.js';
@@ -131,7 +131,9 @@ const FEATURES = [
   way({ class: 'minor', brunnel: 'bridge', layer: 1 }, [-194, -220], [-166, -220]),
   way({ class: 'minor' }, [-166, -220], [-40, -220]),
   way({ class: 'minor' }, [-240, -100], [-120, -100]),
-  way({ class: 'motorway' }, [100, -430], [100, -70]),
+  way({ class: 'motorway' }, [100, -430], [100, -272]),
+  way({ class: 'motorway', brunnel: 'tunnel', layer: -1 }, [100, -272], [100, -248]),
+  way({ class: 'motorway' }, [100, -248], [100, -70]),
   way({ class: 'minor' }, [10, -260], [82, -260]),
   way({ class: 'minor', brunnel: 'bridge', layer: 1 }, [82, -260], [118, -260]),
   way({ class: 'minor' }, [118, -260], [240, -260]),
@@ -178,6 +180,7 @@ const SCENES = {
   rail: { x: -180, z: -220, yawDeg: 225, pitchDeg: 32, distance: 105 },
   passage: { x: -180, z: -100, yawDeg: 225, pitchDeg: 32, distance: 70 },
   autoroute: { x: 100, z: -260, yawDeg: 215, pitchDeg: 28, distance: 115 },
+  'sous-pont': { x: 100, z: -260, yawDeg: 215, pitchDeg: 20, distance: 65 },
   pont: { x: 30, z: 0, yawDeg: 215, pitchDeg: 28, distance: 90 },
   'pont-large': { x: 20, z: 500, yawDeg: 215, pitchDeg: 28, distance: 75 },
   classe: { x: 30, z: 250, yawDeg: 215, pitchDeg: 28, distance: 75 },
@@ -253,14 +256,13 @@ function setStone(stone) {
 setStone(null);
 
 // Témoins de pose sur le remblai et sur les deux rives de la tranchée.
-const trees = new TreeVolumes(THREE, scene, defaultTheme);
+const trees = new VegetationLayer({THREE,scene,bubble,theme:defaultTheme});
 const treePoints = [[55, -247], [65, -235], [140, -245], [155, -235], [-195, -190], [-164, -190]];
 const planted = treePoints.map(([x, z]) => ({ x, z,
   y: bubble.surfaceElevationAtLocal(x, z, 0) * bubble.verticalScale,
   variant: 0, height: 7, aspect: .7, rotation: 0, color: [1, 1, 1],
 }));
-trees.set('temoins-relief', planted);
-trees.update(0, 0);
+trees.setPlants('temoins-relief', planted);
 
 const state = { scene: 'pont', stone: null, ...SCENES.pont };
 

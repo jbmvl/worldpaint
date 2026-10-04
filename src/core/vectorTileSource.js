@@ -141,8 +141,8 @@ export class VectorTileSource {
 
   /**
    * Parcourt les entités d'une couche source, sur les tuiles données.
-   * `callback(geometry, properties, bounds)` reçoit la géométrie en
-   * longitude/latitude et l'emprise de la tuile d'origine.
+   * `callback(geometry, properties, bounds, metadata)` reçoit la géométrie en
+   * longitude/latitude, l'emprise et l'ID GeoJSON, la tuile et son extent.
    *
    * Les entités sont découpées par tuile (une même route ou bâtisse revient
    * d'une tuile à l'autre) : à l'appelant de dédoublonner et d'écarter les
@@ -161,12 +161,16 @@ export class VectorTileSource {
 
       for (let i = 0; i < layer.length; i++) {
         let geojson;
+        let feature;
         try {
-          geojson = layer.feature(i).toGeoJSON(entry.x, entry.y, entry.z);
+          feature = layer.feature(i);
+          geojson = feature.toGeoJSON(entry.x, entry.y, entry.z);
         } catch (e) {
           continue;
         }
-        if (geojson?.geometry) callback(geojson.geometry, geojson.properties || {}, bounds);
+        if (geojson?.geometry) callback(geojson.geometry, geojson.properties || {}, bounds, {
+          id: geojson.id ?? null, tile: { x: entry.x, y: entry.y, z: entry.z }, extent: feature.extent,
+        });
       }
     }
   }

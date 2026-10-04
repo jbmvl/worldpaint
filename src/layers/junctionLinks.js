@@ -7,6 +7,7 @@
  * des chaussées restent celles des branches.
  */
 import { pathFrames, subdividePath } from './ribbonGeometry.js';
+import { WORK_TUNNEL } from './roadWorks.js';
 
 const same=(a,b)=>Math.hypot(a.x-b.x,a.z-b.z)<1e-6;
 const near=(point,path)=>{
@@ -36,7 +37,8 @@ export function junctionLinks(junctions) {
       if(back.length!==2)continue;
       const paths=[a,b].map(branch=>subdividePath(branch.path,.5));
       if(paths.some((path,k)=>path.some(p=>near(p,paths[1-k])>=a.halfWidth+b.halfWidth)))continue;
-      if([a,b].some(branch=>[...(branch.edges || [])].some(edge=>edge.works)))continue;
+      const ouvrages=[a,b].flatMap(branch=>[...(branch.edges || [])].map(edge=>edge.works || 0));
+      if(ouvrages.some(work=>work!==0) && !ouvrages.every(work=>work===WORK_TUNNEL))continue;
       const free=[branches.find(branch=>branch!==a && branch!==b),...other.branches.filter(branch=>!back.includes(branch))];
       link={...node,branches:free,link:{nodes:[node,other],branches:[a,b],back:back[0]},
         ringEdges:new Set([...(a.edges || []),...(b.edges || [])])};
@@ -58,7 +60,7 @@ export function junctionLinkArea(junction, sectionAt, margin, buildArea) {
   const distance=branch.halfWidth*.5+margin;
   const {centre,direction}=sectionAt(nodes[0],branch,distance),w=branch.halfWidth;
   const point=side=>({x:centre.x+side*direction.z*w,z:centre.z-side*direction.x*w,from:at,to:at,blend:0});
-  const mouth={edge:branch.edge,profile:branch.profile,halfWidth:w,centre,direction,distance,left:point(1),right:point(-1)};
+  const mouth={edge:branch.edge,origin:nodes[0],profile:branch.profile,halfWidth:w,centre,direction,distance,left:point(1),right:point(-1)};
   const dx=nodes[1].x-nodes[0].x,dz=nodes[1].z-nodes[0].z;
   const side=branch=>branch.path.reduce((sum,p)=>sum+dx*(p.z-nodes[0].z)-dz*(p.x-nodes[0].x),0)/branch.path.length;
   const sorted=branches.slice().sort((a,b)=>side(a)-side(b));
