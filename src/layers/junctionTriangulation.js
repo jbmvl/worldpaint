@@ -104,22 +104,3 @@ export function junctionTriangles(area) {
   const result={vertices,triangles,valid,outlineLength:n};
   cache.set(area,result);return result;
 }
-
-/** Distance à la surface triangulée, îlots et réparations du contour compris. */
-export function junctionDistance(area,x,z) {
-  const {vertices,triangles}=junctionTriangles(area);
-  let distance2=Infinity,px=x,pz=z;
-  for(const ids of triangles) {
-    const [a,b,c]=ids.map(i=>vertices[i]);
-    const sign=cross(a,b,c)<0?-1:1,p={x,z};
-    if(sign*cross(a,b,p)>=-1e-9 && sign*cross(b,c,p)>=-1e-9 && sign*cross(c,a,p)>=-1e-9)
-      return {distance:0,x,z};
-    for(const [u,v] of [[a,b],[b,c],[c,a]]) {
-      const dx=v.x-u.x,dz=v.z-u.z,l=dx*dx+dz*dz;
-      const t=l ? Math.max(0,Math.min(1,((x-u.x)*dx+(z-u.z)*dz)/l)) : 0;
-      const qx=u.x+t*dx,qz=u.z+t*dz,d=(x-qx)**2+(z-qz)**2;
-      if(d<distance2) {distance2=d;px=qx;pz=qz;}
-    }
-  }
-  return {distance:Math.sqrt(distance2),x:px,z:pz};
-}

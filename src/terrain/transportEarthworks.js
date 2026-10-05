@@ -4,12 +4,9 @@
  * sont absolues et issues du relief naturel ; les reconstructions ne cumulent
  * jamais les corrections. Le fond du passage inférieur reste libre ; les
  * chaussées voisines gardent un appui de terrain à leur propre altitude.
- * Un remblai voisin ne monte pas à travers un tablier. L'appui du rail
- * au-dessus d'une galerie est publié séparément et limité au franchissement.
  */
 import { RoadIndex } from '../layers/roadGraph.js';
-import { ROAD_CUT_BLEND_M, ROAD_CUT_M, roadCutMaskAt, lowestRoadDeckAt, cutElevationAt } from './roadCut.js';
-import { WORK_BRIDGE } from '../layers/roadWorks.js';
+import { ROAD_CUT_BLEND_M, ROAD_CUT_M, roadCutMaskAt } from './roadCut.js';
 
 const smooth = (t) => { const u = Math.max(0, Math.min(1, t)); return u * u * (3 - 2 * u); };
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -32,9 +29,6 @@ export class TransportEarthworks {
     }
     this.index = new RoadIndex(this.segments, { margin: this.reach });
     this.supports = new RoadIndex(segments.filter((s) => s.paved || s.profile === 'rail'), { margin: bench + ROAD_CUT_BLEND_M });
-    this.bridges = new RoadIndex(segments.filter(s=>s.works?.includes(WORK_BRIDGE)), {
-      margin:bench+ROAD_CUT_BLEND_M,includeWorks:true,
-    });
   }
 
   sample(x, z, raw) {
@@ -59,7 +53,7 @@ export class TransportEarthworks {
       }
       mask = Math.max(mask, roadCutMaskAt(distance, s.halfWidth, this.bench));
     }
-    let elevation = Math.min(fill, cut), supported = false, railSupport = -Infinity;
+    let elevation = Math.min(fill, cut), supported = false;
     if (cut < raw) {
       const seen = new Set();
       for (const hit of this.supports.queryAll(x, z, this.bench + ROAD_CUT_BLEND_M)) {
@@ -76,18 +70,9 @@ export class TransportEarthworks {
         const edge = s.halfWidth + (rail ? ROAD_CUT_M : Math.min(this.bench, lowerRoom / 2));
         const weight = (1 - smooth((distance - edge) / ROAD_CUT_BLEND_M)) * (rail ? 1 : smooth(lowerRoom / this.bench));
         const target = lerp(Math.min(fill, cut), deck / this.scale, weight);
-        const along=lerp(s.path[r].distance,s.path[r+1].distance,t);
-        if (rail && distance <= s.halfWidth + ROAD_CUT_M && s.tunnelSupports?.some(support=>
-          Math.abs(along-support.distance)<=(support.halfWidth+this.bench)/support.sin))
-          railSupport = Math.max(railSupport, target);
         if (target > elevation + 0.001) { elevation = target; supported = true; }
       }
     }
-    if(elevation>raw)for(const hit of this.bridges.queryAll(x,z,this.bench+ROAD_CUT_BLEND_M)) {
-      if(hit.segment.works[hit.row]!==WORK_BRIDGE || hit.segment.works[hit.row+1]!==WORK_BRIDGE)continue;
-      const deck=lowestRoadDeckAt(hit,this.bench)/this.scale;
-      elevation=Math.max(raw,cutElevationAt(elevation,deck,hit.distance,hit.segment.halfWidth,this.bench));
-    }
-    return { elevation, mask, supported, railSupport };
+    return { elevation, mask, supported };
   }
 }

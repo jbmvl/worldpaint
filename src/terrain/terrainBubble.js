@@ -1,4 +1,3 @@
-import { cutWaterTerrain, terrainFragmentGeometry } from './waterTerrainCut.js';
 import { GenerationBudget } from '../core/generationBudget.js';
 import { finishGeneration } from '../core/generationSteps.js';
 /*
@@ -22,15 +21,13 @@ import { finishGeneration } from '../core/generationSteps.js';
  * donc les tuiles voisines s'accordent au bord sans se consulter.
  * Le fond plat du déblai ne peut pas être plus étroit qu'une maille, sans quoi
  * aucun sommet n'y tombe et le triangle enjambe la chaussée (`cutBenchM`).
- * Toutes les rues et dalles voisines participent au déblai ; leurs plis
- * imposent la cote basse à portée de la maille, même sous une rue plus haute.
  * Chaque sommet porte aussi l'emprise routière (`roadMask`, `roadCutMaskAt`) :
  * ce que `terrainMaterial.js` ajoute après coup à la position — le grain low
  * poly — doit s'y éteindre, sans quoi il recreuserait par-dessus une chaussée
  * qu'on vient de tailler pour elle.
  *
- * L'eau remplace seulement le rendu dans son emprise. La grille complète
- * reste le support des appuis et des tunnels ; les niveaux viennent du MNT.
+ * L'eau, elle, ne touche pas au relief : c'est une matière du sol, pas une
+ * surface (`groundClassMap`).
  *
  * Le MNT porte son propre zoom, réglé sur la résolution de sa source et non
  * sur la finesse de la maille. La bulle convertit donc ses coordonnées de
@@ -52,9 +49,9 @@ import { TerrainMaterialFactory } from './terrainMaterial.js';
 import { defaultTheme } from '../themes/default.js';
 import {
   cutElevationAt,
-  lowestRoadDeckAt,
   cutBenchAt,
   roadCutMaskAt,
+  ROAD_CUT_M,
   ROAD_CUT_BLEND_M,
   ROAD_CUT_MAX_RING,
 } from './roadCut.js';
@@ -133,8 +130,6 @@ export class TerrainBubble {
      * monter localement, recouvrant une nappe calculée sur l'ancienne résolution.
      */
     this._surfaceGeneration = 0;
-    this._waterGeneration = 0;
-    this._waterSurface = null;
     /** Vrai dès qu'une maille a changé de finesse, tant que la file n'est pas vide. */
     this._surfaceDirty = false;
 
@@ -381,9 +376,9 @@ export class TerrainBubble {
   }
 
   /** Altitude brute du MNT sous un point géographique, en mètres. */
-  getElevation(lng, lat, fallback = 0, { strict = false } = {}) {
+  getElevation(lng, lat, fallback = 0) {
     const t = lngLatToTile(lng, lat, this.zoom);
-    return strict ? this.elevation.sampleTileStrict(t.x * this._demScale, t.y * this._demScale) : this._sample(t.x, t.y, fallback);
+    return this._sample(t.x, t.y, fallback);
   }
 
   /**
@@ -421,7 +416,7 @@ export class TerrainBubble {
   plantSupportTiles(x, z, radius) {
     const selected = [];
     for (const tile of this.tiles.values()) {
-      const geometry = tile.supportGeometry ?? tile.mesh?.geometry;
+      const geometry = tile.mesh?.geometry;
       if (!geometry) continue;
       const p = geometry.attributes.position.array;
       const size = p[tile.segments * 3] - p[0];
@@ -436,7 +431,7 @@ export class TerrainBubble {
     const { origin, scale } = this.frame;
     const tx = Math.floor(origin.x + x / scale), tz = Math.floor(origin.y + z / scale);
     const tile = this.tiles.get(tileKey(this.zoom, tx, tz));
-    return meshSupport(tile?.supportGeometry ?? tile?.mesh?.geometry, tile?.segments,
+    return meshSupport(tile?.mesh?.geometry, tile?.segments,
       (tx-origin.x)*scale, (tz-origin.y)*scale, scale, x, z, out);
   }
 
@@ -597,35 +592,43 @@ export class TerrainBubble {
 
     // Toutes les chaussées à portée, pas la plus proche : en ville, le sommet
     // le plus proche d'une rue tombe souvent dans le fond plat de sa voisine,
-    // plus basse, et la corde du terrain passerait par-dessus celle-ci.
-    // Être sous une chaussée ne dispense pas de creuser pour sa voisine :
-    // les mêmes sommets portent les triangles qui traversent les deux.
+    // plus basse, et la corde du terrain passait par-dessus celle-ci. Un
+    // sommet dans l'emprise d'une chaussée (`ROAD_CUT_M`) ou dans une dalle
+    // ne descend pourtant pas sous elle — sa bordure y est posée : il ne
+    // retient que ce qui le recouvre.
     // La dalle n'a pas de demi-largeur : son fond plat se mesure depuis son
     // contour, à sa cote la plus basse sur une diagonale de maille (`bench`),
     // sans quoi la corde du terrain passe au-dessus de ses plis.
-    const slabs = this._junctions?.deckSamplesNear?.(x, z, reach, null, bench) ??
-      [this._junctions?.deckNear(x, z, reach, undefined, bench)].filter(Boolean);
+    const slab = this._junctions?.deckNear(x, z, reach, undefined, bench);
     const hits = index.queryAll(x, z, reach);
+    const within = (hit) => hit.distance <= hit.segment.halfWidth + ROAD_CUT_M;
+    const inSlab = slab?.distance === 0;
+    let under = inSlab;
+    for (const hit of hits) {
+      if (within(hit) && index.deckAt(hit) != null) under = true;
+    }
     const cuts = [];
     for (const hit of hits) {
-      // Un sommet au-delà du seuil appartient aussi aux triangles de l'accès,
-      // dans le dégagement du portail ; la galerie elle-même reste exclue.
-      const at = index.deckAt(hit) ?? (hit.covered ?
-        hit.segment.platform[hit.row]+(hit.segment.platform[hit.row+1]-hit.segment.platform[hit.row])*hit.t : null);
-      if (at == null) continue;
-      const deck = Math.min(at, lowestRoadDeckAt(hit, bench));
-      cuts.push({ deck: deck / scale, distance: hit.distance, halfWidth: hit.segment.halfWidth });
+      if (under && !within(hit)) continue;
+      const deck = index.deckAt(hit);
+      if (deck == null) continue;
+      const base = hit.segment.crossingBase;
+      const lowered = !!base && deck < base[hit.row] + (base[Math.min(base.length - 1, hit.row + 1)] - base[hit.row]) * hit.t - 0.001;
+      cuts.push({ deck: deck / scale, distance: hit.distance, halfWidth: hit.segment.halfWidth, lowered });
       mask = Math.max(mask, roadCutMaskAt(hit.distance, hit.segment.halfWidth, bench));
     }
-    for (const slab of slabs) {
+    if (slab && (!under || inSlab)) {
       cuts.push({ deck: slab.deck / scale, distance: slab.distance, halfWidth: 0 });
       mask = Math.max(mask, roadCutMaskAt(slab.distance, 0, bench));
     }
-    elevation = cuts.reduce((low, c) => Math.min(low,
-      cutElevationAt(raw, c.deck, c.distance, c.halfWidth, bench)), elevation);
-    // Le rail supérieur garde son appui prescrit au-dessus d’une galerie.
-    // Un appui routier ne peut pas relever les triangles de la rue basse.
-    if (Number.isFinite(earth.railSupport)) elevation = Math.max(elevation, earth.railSupport);
+    const lowest = (ground, keep = () => true) =>
+      cuts.reduce((low, c) => (keep(c) ? Math.min(low, cutElevationAt(ground, c.deck, c.distance, c.halfWidth, bench)) : low), ground);
+    elevation = lowest(elevation);
+
+    // L'appui qu'un franchissement rend à une chaussée voisine ne remonte pas
+    // le sol par-dessus une chaussée plus basse ; celle qu'il a lui-même
+    // abaissée sous l'ouvrage (`crossingBase`) garde son arbitrage.
+    if (earth.supported) elevation = Math.max(elevation, lowest(earth.elevation, (c) => !c.lowered));
     return { elevation, mask };
   }
 
@@ -667,7 +670,6 @@ export class TerrainBubble {
   _meshOutdated(tile) {
     if (!tile.mesh || !tile.edgeSegments) return true;
     const n = this.segmentsForTile(tile.x, tile.y);
-    if (tile.waterGeneration !== this._waterGeneration && (tile.hadWater || this._waterTouches(tile))) return true;
     if (tile.segments !== n) return true;
     // Un nouvel index de chaussées périme le terrassement déjà creusé.
     if (tile.ring <= ROAD_CUT_MAX_RING && tile.cutGeneration !== this._cutGeneration) return true;
@@ -723,7 +725,7 @@ export class TerrainBubble {
 
   /** Ce dont dépend une maille en cours : s'il change, elle est à reprendre. */
   _buildState() {
-    return `${this._cutGeneration}:${this._cliffGeneration}:${this._waterGeneration}:${this._generation}:${this.elevation?.revision}`;
+    return `${this._cutGeneration}:${this._cliffGeneration}:${this.elevation?.revision}`;
   }
 
   _cancelPendingBuild() {
@@ -836,8 +838,8 @@ export class TerrainBubble {
     }
 
     if (!cached && revision != null) tile.demCache = { signature, samples, source: this.elevation };
-    const previousGeometry = tile.supportGeometry ?? tile.mesh?.geometry;
-    const reuse = (previousGeometry?.getAttribute?.('position') ?? previousGeometry?.attributes?.position)?.count === count;
+    const previousGeometry = tile.mesh?.geometry;
+    const reuse = previousGeometry?.getAttribute('position').count === count;
     const indices = reuse ? previousGeometry.index.array : new (count > 65535 ? Uint32Array : Uint16Array)(n * n * 6);
     let k = 0;
     if (!reuse) for (let j = 0; j < n; j++) {
@@ -856,30 +858,33 @@ export class TerrainBubble {
       }
     }
 
-    const geometry = new THREE.BufferGeometry();
-    {
+    const geometry = reuse ? previousGeometry : new THREE.BufferGeometry();
+    if (!reuse) {
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
     geometry.setAttribute('roadMask', new THREE.BufferAttribute(roadMask, 1));
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+    } else {
+      geometry.getAttribute('position').array = positions;
+      geometry.getAttribute('normal').array = normals;
+      geometry.getAttribute('roadMask').array = roadMask;
+      for (const name of ['position', 'normal', 'roadMask']) geometry.getAttribute(name).needsUpdate = true;
     }
     geometry.computeBoundingSphere();
 
-    const prepared = this._prepareWaterTile(tile, geometry, this._waterSurface);
-    if (reuse) {
-      for (const name of ['position', 'normal', 'roadMask']) {
-        previousGeometry.getAttribute(name).array = geometry.getAttribute(name).array;
-        previousGeometry.getAttribute(name).needsUpdate = true;
-      }
-      previousGeometry.computeBoundingSphere();
-      geometry.attributes = {};
-      geometry.setIndex(null);
-      geometry.dispose();
-      if (prepared.render === geometry) prepared.render = previousGeometry;
-      prepared.support = previousGeometry;
-      for (const name of ['position', 'normal', 'roadMask']) prepared.render.setAttribute(name, previousGeometry.getAttribute(name));
+    if (tile.mesh) {
+      if (!reuse) tile.mesh.geometry.dispose();
+      tile.mesh.geometry = geometry;
+    } else {
+      const mesh = new THREE.Mesh(geometry, this.materials.material);
+      mesh.name = `terrain-${tile.key}`;
+      mesh.matrixAutoUpdate = false;
+      // Reçoit les ombres mais n'en projette pas (des mailles de 18 m s'auto-ombreraient en rayures).
+      mesh.receiveShadow = true;
+      mesh.updateMatrix();
+      tile.mesh = mesh;
+      this.group.add(mesh);
     }
-    this._publishWaterTile(tile, prepared);
     // Une maille qui change de finesse déplace la surface ; un simple recreusement
     // non, sinon chaussées → entaille → surface → chaussées tourne sans fin.
     const previousEdge = tile.edgeSegments;
@@ -903,104 +908,11 @@ export class TerrainBubble {
     this.materials.setMaxAnisotropy(value);
   }
 
-  get waterGeneration() { return this._waterGeneration; }
-
-  _waterTouches(tile, index = this._waterSurface) {
-    if (!index || !this.frame) return false;
-    const a = this.frame.tileToLocal(tile.x, tile.y), b = this.frame.tileToLocal(tile.x+1, tile.y+1);
-    return index.trianglesInBounds({ minX:a.x, minZ:a.z, maxX:b.x, maxZ:b.z }).length > 0;
-  }
-
-  _prepareWaterTile(tile, support, index) {
-    if (!this._waterTouches(tile,index)) return {support,render:support,fragments:null,hadWater:false};
-    const cut = cutWaterTerrain(support, index, this.verticalScale);
-    const render = new this.THREE.BufferGeometry();
-    for (const name of ['position', 'normal', 'roadMask']) render.setAttribute(name, support.getAttribute(name));
-    const Type = support.getAttribute('position').count > 65535 ? Uint32Array : Uint16Array;
-    render.setIndex(new this.THREE.BufferAttribute(new Type(cut.intact), 1));
-    render.boundingSphere = support.boundingSphere;
-    const uniforms = this.materials.grainUniforms;
-    const amplitude = 2*Math.max(0,...(uniforms?.uSurfaceGrainAmplitude?.value??[]),uniforms?.uRockGrain?.value?.y??0);
-    const fragments = cut.fragments.length || cut.banks.length ? terrainFragmentGeometry(this.THREE,cut,amplitude) : null;
-    return { support, render, fragments, conflicts:cut.conflicts, hadWater: this._waterTouches(tile,index) };
-  }
-
-  _disposeRender(geometry) {
-    // Le support possède les attributs partagés ; seul l'index est libéré ici.
-    geometry.attributes = {};
-    geometry.dispose();
-  }
-
-  _publishWaterTile(tile, prepared) {
-    const { THREE } = this;
-    if (tile.mesh) {
-      if (tile.mesh.geometry !== tile.supportGeometry && tile.mesh.geometry !== prepared.support) this._disposeRender(tile.mesh.geometry);
-      if (tile.supportGeometry && tile.supportGeometry !== prepared.support) tile.supportGeometry.dispose();
-      tile.mesh.geometry = prepared.render;
-    } else {
-      tile.mesh = new THREE.Mesh(prepared.render,this.materials.material);
-      tile.mesh.name = `terrain-${tile.key}`;
-      tile.mesh.matrixAutoUpdate = false;
-      tile.mesh.receiveShadow = true;
-      tile.mesh.updateMatrix();
-      this.group.add(tile.mesh);
-    }
-    if (tile.waterFragments) {
-      this.group.remove(tile.waterFragments);
-      tile.waterFragments.geometry.dispose();
-      tile.waterFragments = null;
-    }
-    if (prepared.fragments) {
-      tile.waterFragments = new THREE.Mesh(prepared.fragments,this.materials.fragmentMaterial);
-      tile.waterFragments.name = `berges-${tile.key}`;
-      tile.waterFragments.receiveShadow = true;
-      this.group.add(tile.waterFragments);
-    }
-    tile.supportGeometry = prepared.support;
-    tile.hadWater = prepared.hadWater;
-    tile.waterGeneration = this._waterGeneration;
-  }
-
-  /** Prépare tout le lot sans ouvrir de trou ; return() libère un lot annulé. */
-  *prepareWaterSurfaceSteps(index) {
-    const entries = []; let completed = false;
-    try {
-      for (const tile of this.tiles.values()) {
-        if (!tile.supportGeometry || !(tile.hadWater || this._waterTouches(tile,index))) continue;
-        entries.push({ tile, prepared:this._prepareWaterTile(tile,tile.supportGeometry,index) });
-        yield;
-      }
-      completed = true;
-      return entries;
-    } finally {
-      if (!completed) this.discardWaterSurface(entries);
-    }
-  }
-
-  discardWaterSurface(entries) {
-    for (const {prepared} of entries) { if (prepared.render !== prepared.support) this._disposeRender(prepared.render); prepared.fragments?.dispose(); }
-  }
-
-  setWaterSurface(index, prepared = null) {
-    if (this.disposed) return;
-    const previous = this._waterSurface;
-    this._waterSurface = index;
-    this._waterGeneration++;
-    if (prepared) for (const entry of prepared) this._publishWaterTile(entry.tile,entry.prepared);
-    else for (const tile of this.tiles.values()) if (tile.hadWater || this._waterTouches(tile,index) || this._waterTouches(tile,previous)) {
-      if (!this._rebuildQueue.includes(tile.key)) this._rebuildQueue.push(tile.key);
-    }
-  }
-
   _disposeTile(tile) {
     tile.demCache = null;
     if (!tile.mesh) return;
     this.group.remove(tile.mesh);
-    if (tile.mesh.geometry !== tile.supportGeometry) this._disposeRender(tile.mesh.geometry);
-    (tile.supportGeometry ?? tile.mesh.geometry).dispose();
-    if (tile.waterFragments) {this.group.remove(tile.waterFragments);tile.waterFragments.geometry.dispose();}
-    tile.waterFragments = null;
-    tile.supportGeometry = null;
+    tile.mesh.geometry.dispose();
     tile.mesh = null;
   }
 
@@ -1008,8 +920,6 @@ export class TerrainBubble {
     this._cancelPendingBuild();
     for (const tile of this.tiles.values()) this._disposeTile(tile);
     this.tiles.clear();
-    this._waterSurface = null;
-    this._waterGeneration++;
   }
 
   dispose() {

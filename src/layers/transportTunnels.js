@@ -3,10 +3,8 @@
  * sous le relief. Les chaussées restent distinctes dans une enveloppe commune
  * lorsque leurs entrées, directions et niveaux concordent. La couverture se
  * mesure sur le terrain naturel ; seuls les accès sont excavés à ciel ouvert.
- * Sous un pont explicite, le tablier porte déjà le plafond : le passage
- * inférieur reste à ciel ouvert dans le terrain, sans galerie ni portail.
  */
-import { WORK_BRIDGE, WORK_TUNNEL, workRuns, raiseApproaches, BRIDGE_CLEARANCE_M } from './roadWorks.js';
+import { WORK_TUNNEL, workRuns, raiseApproaches, BRIDGE_CLEARANCE_M } from './roadWorks.js';
 import { intersection } from './transportCrossings.js';
 import { RoadIndex } from './roadGraph.js';
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
@@ -44,7 +42,6 @@ function compatible(a, b) {
 }
 
 export function resolveTunnelProfiles(segments, rails, elevation, { buildings = [], centres = [], theme = defaultTheme } = {}) {
-  for (const rail of rails) rail.tunnelSupports=[];
   for (const segment of segments) segment.tunnelStructures = [];
   const tunnels = segments.filter(s=>s.works?.includes(WORK_TUNNEL));
   if (!tunnels.length) return 0;
@@ -63,19 +60,11 @@ export function resolveTunnelProfiles(segments, rails, elevation, { buildings = 
           if (upper===segment || upper.works?.[row]===WORK_TUNNEL || upper.works?.[row+1]===WORK_TUNNEL) return;
           if ((upper.levels?.[row]??0)<(segment.levels?.[r]??-1)) return;
           const hit=intersection(p,q,upper.path[row],upper.path[row+1]);
-          if (hit) {
-            crossings.push({ height:lerp(upper.platform[row],upper.platform[row+1],hit.u),
-              bridge:upper.works?.[row]===WORK_BRIDGE || upper.works?.[row+1]===WORK_BRIDGE, ...hit });
-            if (rails.includes(upper)) upper.tunnelSupports.push({
-              distance:lerp(upper.path[row].distance,upper.path[row+1].distance,hit.u),
-              halfWidth:segment.halfWidth, sin:Math.max(.1,hit.sin),
-            });
-          }
+          if (hit) crossings.push({ height:lerp(upper.platform[row],upper.platform[row+1],hit.u), ...hit });
         });
       }
       const middle=segment.path[Math.floor((run.from+run.to)/2)];
-      const kind=length<=40 && inBuilding(buildings,middle) ? 'building' : length<=80 && crossings.length
-        ? crossings.every(c=>c.bridge) ? 'bridge' : 'underpass' : 'tunnel';
+      const kind=length<=40 && inBuilding(buildings,middle) ? 'building' : length<=80 && crossings.length ? 'underpass' : 'tunnel';
       records.push({segment,run,a,b,length,dx:(b.x-a.x)/length,dz:(b.z-a.z)/length,kind,crossings,
         level:segment.levels?.[run.from]??-1,complete:run.from>0 && run.to<segment.path.length-1});
     }
@@ -114,10 +103,9 @@ export function resolveTunnelProfiles(segments, rails, elevation, { buildings = 
     }));
     const platform=Float32Array.from(path,floorAt);
     const style=worksStyleAt(path[0].x,path[0].z,theme.works);
-    const passage=ref.kind==='underpass' || ref.kind==='bridge';
-    const roofHeight=passage ? BRIDGE_CLEARANCE_M-style.deck.thickness : Math.max(...vaultProfile(halfWidth,style.portal).map(p=>p.up));
+    const roofHeight=ref.kind==='underpass' ? BRIDGE_CLEARANCE_M-style.deck.thickness : Math.max(...vaultProfile(halfWidth,style.portal).map(p=>p.up));
     let depth=0;
-    if (passage) {
+    if (ref.kind==='underpass') {
       for(const member of group) for(const crossing of member.crossings) depth=Math.max(depth,floorAt(crossing)+roofHeight+style.deck.thickness-crossing.height);
     } else if (ref.kind==='tunnel' && total>30 && ref.complete) {
       for(let i=1;i<path.length-1;i++) depth=Math.max(depth,platform[i]+roofHeight+.5-elevation(path[i].x,path[i].z));
@@ -133,17 +121,14 @@ export function resolveTunnelProfiles(segments, rails, elevation, { buildings = 
         const lift=Math.max(0,before.get(s)[row]-s.platform[row]);
         // Un passage court rejoint rapidement ses rives ; le smoothstep
         // limite sa pente de pointe à 12 %, sans étendre toute la dépression.
-        const reach=passage ? Math.max(12,1.5*lift/.12) : undefined;
+        const reach=ref.kind==='underpass' ? Math.max(12,1.5*lift/.12) : undefined;
         seeds.push({segment:segments.indexOf(s),row,lift,reach,followChain:true});
       }
     }
-    if (ref.kind!=='bridge') ref.segment.tunnelStructures.push({path,platform,halfWidth,kind:ref.kind,roofHeight,members:group.length,
+    ref.segment.tunnelStructures.push({path,platform,halfWidth,kind:ref.kind,roofHeight,members:group.length,
       tunnelPortals:[group.every(m=>m.run.from>0),group.every(m=>m.run.to<m.segment.path.length-1)]});
   }
   raiseApproaches(segments,seeds,{centres,direction:-1});
-  for(const record of records) if(record.kind==='bridge') {
-    record.segment.works.fill(0,record.run.from,record.run.to+1);
-  }
   return groups.length;
 }
 

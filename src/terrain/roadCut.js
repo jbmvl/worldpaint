@@ -46,21 +46,6 @@ export const ROAD_CUT_BLEND_M = 5;
 /** Anneau de tuiles au-delà duquel on ne creuse plus (le réseau ne porte qu'à `ROAD_RADIUS_M`). */
 export const ROAD_CUT_MAX_RING = 1;
 
-/** La cote basse à portée de la maille protège aussi les plis du ruban. */
-export function lowestRoadDeckAt(hit, spread) {
-  const { segment, row } = hit;
-  const a=segment.path[row],b=segment.path[row+1];
-  const dx=b.x-a.x,dz=b.z-a.z,length=Math.hypot(dx,dz);
-  const heights=segment.platform;
-  if (!(length>0)) return heights[row];
-  const radius=segment.halfWidth+spread;
-  // Le disque autour du sommet est élargi de la largeur de la chaussée.
-  const along=Math.sqrt(Math.max(0,radius*radius-hit.distance*hit.distance))/length;
-  const start=Math.max(0,hit.t-along),end=Math.min(1,hit.t+along);
-  const delta=heights[row+1]-heights[row];
-  return heights[row]+delta*(delta<0?end:start);
-}
-
 /**
  * Altitude du terrain entaillé, à `distance` de l'axe d'une chaussée : plate
  * sous la chaussée, intacte au-delà du raccord, en `smoothstep` entre les

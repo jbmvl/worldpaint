@@ -2,12 +2,10 @@
  * Deux nœuds peuvent borner une minuscule boucle entièrement couverte par
  * leurs chaussées. Ses deux branches ne s'écartent jamais : les prolonger
  * pour fabriquer une fourche inventerait un îlot au-delà du nœud suivant.
- * La surface conserve les deux rives extérieures et toutes les bouches libres,
- * même lorsqu'il n'en reste que deux. Les connexions du graphe et la largeur
- * des chaussées restent celles des branches.
+ * La surface conserve les deux rives extérieures et les deux bouches libres,
+ * sans modifier les connexions du graphe ni la largeur des chaussées.
  */
 import { pathFrames, subdividePath } from './ribbonGeometry.js';
-import { WORK_TUNNEL } from './roadWorks.js';
 
 const same=(a,b)=>Math.hypot(a.x-b.x,a.z-b.z)<1e-6;
 const near=(point,path)=>{
@@ -37,8 +35,7 @@ export function junctionLinks(junctions) {
       if(back.length!==2)continue;
       const paths=[a,b].map(branch=>subdividePath(branch.path,.5));
       if(paths.some((path,k)=>path.some(p=>near(p,paths[1-k])>=a.halfWidth+b.halfWidth)))continue;
-      const ouvrages=[a,b].flatMap(branch=>[...(branch.edges || [])].map(edge=>edge.works || 0));
-      if(ouvrages.some(work=>work!==0) && !ouvrages.every(work=>work===WORK_TUNNEL))continue;
+      if([a,b].some(branch=>[...(branch.edges || [])].some(edge=>edge.works)))continue;
       const free=[branches.find(branch=>branch!==a && branch!==b),...other.branches.filter(branch=>!back.includes(branch))];
       link={...node,branches:free,link:{nodes:[node,other],branches:[a,b],back:back[0]},
         ringEdges:new Set([...(a.edges || []),...(b.edges || [])])};
@@ -51,16 +48,15 @@ export function junctionLinks(junctions) {
 
 export function junctionLinkArea(junction, sectionAt, margin, buildArea) {
   const {nodes,branches,back}=junction.link;
-  const area=buildArea({...nodes[1],extremiteLiaison:true,branches:[back,...junction.branches.slice(1)]});
+  const area=buildArea({...nodes[1],branches:[back,...junction.branches.slice(1)]});
   if (!area) return null;
-  area.noeuds=nodes;
   const at=area.mouths.findIndex(m=>m.edge===back.edge);
   if(at<0)return null;
   const old=area.mouths[at],branch=junction.branches[0];
   const distance=branch.halfWidth*.5+margin;
   const {centre,direction}=sectionAt(nodes[0],branch,distance),w=branch.halfWidth;
   const point=side=>({x:centre.x+side*direction.z*w,z:centre.z-side*direction.x*w,from:at,to:at,blend:0});
-  const mouth={edge:branch.edge,origin:nodes[0],profile:branch.profile,halfWidth:w,centre,direction,distance,left:point(1),right:point(-1)};
+  const mouth={edge:branch.edge,profile:branch.profile,halfWidth:w,centre,direction,distance,left:point(1),right:point(-1)};
   const dx=nodes[1].x-nodes[0].x,dz=nodes[1].z-nodes[0].z;
   const side=branch=>branch.path.reduce((sum,p)=>sum+dx*(p.z-nodes[0].z)-dz*(p.x-nodes[0].x),0)/branch.path.length;
   const sorted=branches.slice().sort((a,b)=>side(a)-side(b));

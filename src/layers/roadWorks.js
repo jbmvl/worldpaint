@@ -4,8 +4,6 @@
  * Les drapeaux d'ouvrage suivent les chaînes de chaussée et leurs lignes.
  * Le calcul conjoint du passage supérieur et inférieur est dans
  * `transportCrossings` ; ce module fournit les cordes et raccords de profil.
- * Le relief naturel sondé appartient au tablier ; une berge voisine ne
- * relève ni sa travée ni les rues qui y aboutissent.
  *
  * Ce module est le seul endroit où l'on sait ce qu'est un ouvrage :
  *
@@ -42,8 +40,7 @@
  *
  * `levelWorkSpans` accepte des contraintes explicites de gabarit et de
  * plancher pour les appels isolés. Le réseau courant résout ses franchissements
- * conjointement et n'impose aucune revanche au-dessus de l'eau. La corde
- * d'un pont reste au-dessus des triangles du terrain naturel dans son emprise.
+ * conjointement et n'impose aucune revanche au-dessus de l'eau.
  * `raiseApproaches` propage une correction positive ou négative dans le graphe,
  * avec une pente bornée ; les chemins n'entrent pas dans ce graphe de terrassement.
  *
@@ -418,8 +415,6 @@ function resampleCodes(points, codes, path, out) {
  *        dépend (`bridgeFreeboardFor`) : un ruisseau et un fleuve ne se
  *        franchissent pas à la même hauteur.
  * @param {number} [options.clearance] Garde au-dessus d'un obstacle à gabarit.
- * @param {Function} [options.terrainAt] Relief naturel à dégager dans l'emprise.
- * @param {number} [options.halfWidth] Demi-largeur du tablier.
  * @param {number} [options.maxSpan]
  * @param {Array|null} [options.abutments] Reçoit les deux lignes de rive de
  *        chaque travée relevée, avec son relevage (`{row, lift}`) : c'est de
@@ -433,8 +428,6 @@ export function levelWorkSpans(
   {
     clearanceAt = null,
     floorAt = null,
-    terrainAt = null,
-    halfWidth = 0,
     clearance = BRIDGE_CLEARANCE_M,
     maxSpan = BRIDGE_MAX_SPAN_M,
     abutments = null,
@@ -467,20 +460,11 @@ export function levelWorkSpans(
       }
       levelled++;
 
-      if (code !== WORK_BRIDGE || (!clearanceAt && !floorAt && !terrainAt)) continue;
+      if (code !== WORK_BRIDGE || (!clearanceAt && !floorAt)) continue;
 
       // Relevage d'un bloc : le plus exigeant des deux, sur toute la travée.
       let lift = 0;
       for (let r = run.from; r <= run.to; r++) {
-        if (terrainAt) {
-          const a=path[Math.max(0,r-1)],b=path[Math.min(rows-1,r+1)];
-          const length=Math.hypot(b.x-a.x,b.z-a.z) || 1;
-          const nx=(b.z-a.z)/length,nz=-(b.x-a.x)/length;
-          for (const offset of [-halfWidth,-halfWidth/2,0,halfWidth/2,halfWidth]) {
-            const floor=terrainAt(path[r].x+nx*offset,path[r].z+nz*offset);
-            if (Number.isFinite(floor)) lift=Math.max(lift,floor-platform[r]);
-          }
-        }
         if (clearanceAt) {
           const gauge = clearanceAt(path[r].x, path[r].z, r);
           if (Number.isFinite(gauge)) lift = Math.max(lift, gauge + clearance - platform[r]);

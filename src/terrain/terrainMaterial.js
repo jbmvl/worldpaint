@@ -314,19 +314,6 @@ export class TerrainMaterialFactory {
 
   get grainUniforms() { return this._uniforms; }
 
-  /** Même shader et mêmes uniformes ; seuls les sommets de coupe changent. */
-  get fragmentMaterial() {
-    if (!this._fragmentMaterial) {
-      const material = this.material.clone();
-      material.defines = { ...material.defines, WATER_TERRAIN_FRAGMENT: 1 };
-      material.onBeforeCompile = this.material.onBeforeCompile;
-      material.customProgramCacheKey = () => 'terrain-water-barycentriques-v1';
-      material.side = this.THREE.DoubleSide;
-      this._fragmentMaterial = material;
-    }
-    return this._fragmentMaterial;
-  }
-
   _create() {
     const { THREE, look } = this;
     const material = new THREE.MeshLambertMaterial({ color: 0xffffff });
@@ -459,28 +446,12 @@ export class TerrainMaterialFactory {
            varying float vGrain;
            varying float vSteep;
            attribute float roadMask;
-           #ifdef WATER_TERRAIN_FRAGMENT
-           attribute vec3 sourceA, sourceB, sourceC;
-           attribute vec3 sourceNormalA, sourceNormalB, sourceNormalC;
-           attribute vec3 sourceWeights, sourceRoadMasks;
-           attribute float waterSide;
-           #endif
            ${TERRAIN_GRAIN_GLSL}`
         )
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
-           #ifdef WATER_TERRAIN_FRAGMENT
-           float sa, sb, sc, ga, gb, gc;
-           vec3 pa = terrainDisplaced(sourceA, sourceNormalA, sourceRoadMasks.x, sa, ga);
-           vec3 pb = terrainDisplaced(sourceB, sourceNormalB, sourceRoadMasks.y, sb, gb);
-           vec3 pc = terrainDisplaced(sourceC, sourceNormalC, sourceRoadMasks.z, sc, gc);
-           transformed = mix(pa*sourceWeights.x + pb*sourceWeights.y + pc*sourceWeights.z, position, waterSide);
-           vSteep = dot(vec3(sa,sb,sc),sourceWeights);
-           vGrain = dot(vec3(ga,gb,gc),sourceWeights)*(1.0-waterSide);
-           #else
            transformed = terrainDisplaced(transformed, objectNormal, roadMask, vSteep, vGrain);
-           #endif
            vScenePos = (modelMatrix * vec4(transformed, 1.0)).xyz;
            vSceneNormal = normalize(mat3(modelMatrix) * objectNormal);`
         );
@@ -879,7 +850,7 @@ export class TerrainMaterialFactory {
                // change l'angle.
                vec3 toEye = normalize(cameraPosition - vScenePos);
                vec3 ripple = texture2D(uWaterRipples, vScenePos.xz / uWaterRipple.x + uWaterFlow).xyz * 2.0 - 1.0;
-               vec3 wavy = normalize(vSceneNormal + vec3(ripple.x, 0.0, ripple.y) * uWaterRipple.y);
+               vec3 wavy = normalize(vSceneNormal + vec3(ripple.x, 0.0, ripple.z) * uWaterRipple.y);
                float grazing = 1.0 - clamp(dot(wavy, toEye), 0.0, 1.0);
                float sheen = pow(grazing, 3.0) * uWaterSheen;
                vec3 water = mix(uWaterAlbedo, uWaterSheenColor, clamp(sheen, 0.0, 1.0));
@@ -915,7 +886,7 @@ export class TerrainMaterialFactory {
              }
              vec3 a = texture2D(uWaterRipples, vScenePos.xz / uWaterRipple.x + uWaterFlow).xyz * 2.0 - 1.0;
              vec3 b = texture2D(uWaterRipples, vScenePos.zx / (uWaterRipple.x * 0.6) - uWaterFlow * 1.7).xyz * 2.0 - 1.0;
-             vec3 wavy = normalize(worldNormal + vec3(a.x + b.y, 0.0, a.y + b.x) * uWaterRipple.y);
+             vec3 wavy = normalize(worldNormal + vec3(a.x + b.x, 0.0, a.z + b.z) * uWaterRipple.y);
 
              normal = normalize((viewMatrix * vec4(mix(worldNormal, wavy, gWater), 0.0)).xyz);
            }`
@@ -929,7 +900,6 @@ export class TerrainMaterialFactory {
 
   dispose() {
     this.material.dispose();
-    this._fragmentMaterial?.dispose();
     for (const texture of this.textures) texture.dispose();
   }
 }

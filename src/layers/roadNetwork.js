@@ -1,4 +1,4 @@
-import { boundJunctionBranches, bindJunctionSeams, updateJunctionSeams } from './junctionSeams.js';
+import { bindJunctionSeams, updateJunctionSeams } from './junctionSeams.js';
 import { collectTunnelBuildings, resolveTunnelProfiles } from './transportTunnels.js';
 import { finishGeneration } from '../core/generationSteps.js';
 import { DECOR_STEP_M, reachedRadius } from '../core/decorReach.js';
@@ -54,15 +54,31 @@ import { DECOR_STEP_M, reachedRadius } from '../core/decorReach.js';
  *
  * ## Ce que la ville retranche
  *
- * Les rues de desserte et pistes cyclables conservent leurs axes : un
- * longement ne prouve pas qu'une voie est un doublon. `roadWidths` partage
- * la largeur disponible entre rubans avant les surfaces de carrefour.
- * Les trottoirs et traversées explicitement piétons relèvent du sol. À portée
- * d'une ville, un `footway` longeant une rue sur 90 % de sa longueur relève
- * aussi du sol (`roadPedestrians`). Une désignation cyclable prime sur ces
- * tags piétons ; allées indépendantes, escaliers et ouvrages restent distincts.
- * Les chemins de terre dans le bâti sont exclus ; le vert urbain les garde.
-
+ * Le réseau d'un centre-ville n'est pas le réseau de campagne avec plus de
+ * rues : c'est le même réseau relevé beaucoup plus finement. Un boulevard y
+ * arrive en cinq ou six voies parallèles — chaque sens, la contre-allée, la
+ * voie de bus —, et chaque trottoir y arrive comme une voie à part entière.
+ * Tout dessiner donne un tas de rubans qui se chevauchent, sans marquage
+ * lisible, et il n'y a aucun réglage de largeur qui en sorte.
+ *
+ * Ce module reçoit donc un `UrbanMask` (`settlement`) et retranche deux fois,
+ * **avant le graphe** — ce qui n'est pas dessiné ne crée ni nœud, ni carrefour,
+ * ni numérotation de mobilier :
+ *
+ *   - les **voies piétonnes** (`isPedestrianWay`), qui n'ont jamais été des
+ *     chaussées. Le sol de la ville les porte en entier (`groundClassMap`,
+ *     couverture `pavement`) ;
+ *   - les **chemins** (`URBAN_EXCLUDED_PROFILES`) : un sentier ou un chemin de
+ *     terre n'a pas sa place dans le bâti. Le parc de ville les garde, parce
+ *     que `UrbanMask.covers` en retire le vert urbain ;
+ *   - les **voies redondantes** (`roadBundles.absorbParallelLines`), celles
+ *     qui longent une voie de rang supérieur et sont déjà dans sa largeur.
+ *
+ * Les chaînes revêtues conservées partagent ensuite leur largeur disponible
+ * (`roadWidths`), en ville comme en campagne, avant les surfaces de carrefour.
+ *
+ * Hors ville, aucune suppression ne se produit : un sentier reste un sentier, et
+ * une contre-allée de campagne est un objet du paysage.
  */
 
 import { resolveTransportCrossings } from './transportCrossings.js';
@@ -70,7 +86,7 @@ import { TransportEarthworks } from '../terrain/transportEarthworks.js';
 import { cutElevationAt } from '../terrain/roadCut.js';
 import { RoadContinuity } from './roadContinuity.js';
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
-import { removeRoadsideFootways } from './roadPedestrians.js';
+import { absorbParallelLines } from './roadBundles.js';
 import { fitParallelRoadWidths } from './roadWidths.js';
 import {
   mergeRoadLines,
@@ -484,7 +500,7 @@ export const ROAD_CLASSES = {
  * un trottoir, une traversée, un cheminement. Le sentier de randonnée
  * (`path` sans sous-classe) n'en est pas — c'est un chemin de campagne.
  */
-export const PEDESTRIAN_SUBCLASSES = new Set(['footway', 'sidewalk', 'crossing', 'pedestrian']);
+export const PEDESTRIAN_SUBCLASSES = new Set(['footway', 'sidewalk', 'crossing']);
 
 /** Profils qui ne se dessinent pas en ville, parcs urbains exceptés. */
 export const URBAN_EXCLUDED_PROFILES = new Set(['track', 'path']);
@@ -640,10 +656,8 @@ export function collectRoadLines(source, tiles, frame, roads = defaultTheme.road
   source.forEachFeature('transportation', tiles, (geometry, properties) => {
     const style = roadStyleFor(properties, roads.profiles);
     if (!style) return;
-    if (style.profile !== 'cycleway' && (properties.subclass === 'sidewalk' || properties.subclass === 'crossing' ||
-      properties.footway === 'sidewalk' || properties.footway === 'crossing')) return;
     const notInTown =
-      urban?.any && style.profile !== 'cycleway' && (isPedestrianWay(properties) || URBAN_EXCLUDED_PROFILES.has(style.profile));
+      urban?.any && (isPedestrianWay(properties) || URBAN_EXCLUDED_PROFILES.has(style.profile));
 
     for (const line of roadLines(geometry)) {
       if (!Array.isArray(line) || line.length < 2) continue;
@@ -669,12 +683,11 @@ export function collectRoadLines(source, tiles, frame, roads = defaultTheme.road
         works: style.works,
         level: style.level,
         oneway: style.oneway,
-        footway: isPedestrianWay(properties) && style.profile === 'path',
       });
     }
   });
 
-  return removeRoadsideFootways(lines, urban);
+  return lines;
 }
 
 /**
@@ -1058,9 +1071,9 @@ export function platformPositionAt(roads, x, z, ahead = null, margin = ROAD_INDE
  *        Une travée s'y pose sans garde : elle ne descend pas
  *        dessous, mais rien ne la relève au-dessus. Absente, les travées
  *        restent exactement tendues entre leurs appuis.
- * @param {Object|null} [options.urban] `UrbanMask` : en ville, les chemins
- *        piétons qui longent les rues restent portés par le sol. Les axes
- *        des chaussées et pistes cyclables sont conservés.
+ * @param {Object|null} [options.urban] `UrbanMask` : en ville, les voies
+ *        piétonnes ne sont pas dessinées et les voies redondantes sont
+ *        absorbées. Absent, le réseau est celui de la campagne.
  *
  * Les carrefours sortent d'ici avec les tronçons (ils viennent du même graphe).
  *
@@ -1085,7 +1098,17 @@ export function* collectRoadSegmentsSteps(
 ) {
   const out = [];
   let anyWorks = false; // vrai dès qu'un tronçon porte un ouvrage
-  const lines = collectRoadLines(source, tiles, frame, roads, { urban });
+  let lines = collectRoadLines(source, tiles, frame, roads, { urban });
+  // L'absorption se pose ici, sur les lignes, et pas plus tard : ce qui n'est
+  // pas dessiné ne doit pas entrer dans le graphe (voir `roadBundles`). Elle
+  // n'a lieu qu'en ville — un boulevard relevé en six voies est un fait
+  // urbain, une contre-allée de campagne est un objet du paysage.
+  if (urban?.any) {
+    lines = absorbParallelLines(lines, {
+      order: ROAD_PROFILE_ORDER,
+      where: (x, z) => urban.covers(x, z),
+    });
+  }
   yield;
   const { chains, junctions } = mergeRoadLines(lines);
   yield;
@@ -1095,6 +1118,7 @@ export function* collectRoadSegmentsSteps(
   // sont elles qui diront où chaque ruban s'arrête. Les chaînes, elles, ne sont
   // plus coupées — la chaussée traverse le carrefour dans les données, et seul
   // son ruban s'interrompt (voir l'en-tête de `roadJunctions`).
+  const areas = new JunctionAreas(junctions);
 
   for (const chain of chains) {
     yield;
@@ -1184,8 +1208,6 @@ export function* collectRoadSegmentsSteps(
   // Le ruban les sautera ; tout le reste (emprise, déblai, couture, mobilier,
   // trottoirs) continue de lire une route entière.
   yield;
-  boundJunctionBranches(junctions,out);
-  const areas = new JunctionAreas(junctions);
   bindJunctionSeams(out, areas);
   if (areas.length > 0) {
     for (const segment of out) {
@@ -1212,9 +1234,7 @@ export function* collectRoadSegmentsSteps(
     for (const segment of out) {
       yield;
       const own = [];
-      levelWorkSpans(segment.path, segment.platform, segment.works, {
-        floorAt, terrainAt:sampleElevation, halfWidth:segment.halfWidth, abutments:own,
-      });
+      levelWorkSpans(segment.path, segment.platform, segment.works, { floorAt, abutments: own });
       const si = paved.indexOf(segment);
       if (si >= 0) for (const seed of own) abutments.push({ segment: si, ...seed });
     }
