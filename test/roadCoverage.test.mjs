@@ -4,8 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { collectRoadSegments } from '../src/layers/roadNetwork.js';
 import { createLocalFrame } from '../src/core/tileMath.js';
-import { updateJunctionSeams } from '../src/layers/junctionSeams.js';
-import { areaCovers, junctionRibbonRuns, junctionSurface, markJunctionRows } from '../src/layers/roadJunctions.js';
+import { areaCovers, junctionRibbonRuns, junctionSurface } from '../src/layers/roadJunctions.js';
 import { appendRibbon, createRibbonBuffer } from '../src/layers/ribbonGeometry.js';
 
 const donnees = JSON.parse(readFileSync(new URL('./fixtures/junctions-nantes.json', import.meta.url)));
@@ -33,9 +32,8 @@ for (const inverse of [false,true]) test(`Nantes : axes dessinés, ordre ${inver
   }} : source;
   const { lng,lat,zoom } = donnees.centre;
   const {segments,areas} = collectRoadSegments(lecture,[],{x:0,z:0},createLocalFrame(lng,lat,zoom),()=>30,2000);
-  updateJunctionSeams(areas);
-  for(const segment of segments)segment.junction=markJunctionRows(segment,areas);
-  const tampons = areas.areas.map(a=>junctionSurface(a,a.decks));
+  areas.updateDecks();
+  const tampons = areas.areas.map(a=>junctionSurface(a,0));
   for (const segment of segments) if (segment.paved) {
     for (const plage of junctionRibbonRuns(segment,areas,[{from:0,to:segment.path.length-1}])) {
       const tampon = createRibbonBuffer();

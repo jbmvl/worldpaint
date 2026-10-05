@@ -83,7 +83,17 @@ export function fitParallelRoadWidths(chains, junctions = [], near = null) {
   const segments = chains.map((chain) => ({ ...chain, path: chain.works?.some(Boolean) ? [] : chain.points }));
   const index = new RoadIndex(segments, { margin: 0 });
   const facteurs = chains.map(() => 1);
-  const aires = new JunctionAreas(junctions);
+  // Les surfaces se construisent sur des tracés métrés ; ceux-ci sont jetés
+  // une fois la place des carrefours connue.
+  const traces = chains.map((chain) => {
+    let distance = 0;
+    const path = chain.points.map((p, k) => {
+      if (k > 0) distance += Math.hypot(p.x - chain.points[k - 1].x, p.z - chain.points[k - 1].z);
+      return { x: p.x, z: p.z, distance };
+    });
+    return { path, halfWidth: chain.halfWidth, profile: chain.profile, graphEdges: chain.graphEdges, levels: chain.levels };
+  });
+  const aires = new JunctionAreas(junctions, traces);
   const contraintes = [];
   const ambigues = new Set();
   const clePaire = (i, j) => `${Math.min(i, j)}:${Math.max(i, j)}`;

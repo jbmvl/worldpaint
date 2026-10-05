@@ -8,7 +8,7 @@ html,body{margin:0;background:#3d5a32}canvas{display:block}
 #info{position:fixed;left:8px;bottom:8px;font:12px/1.4 monospace;color:#fff;background:#0008;padding:4px 8px;white-space:pre}
 </style>
 <script type="importmap">
-{ "imports": { "three": "/node_modules/three/build/three.module.js" } }
+{ "imports": { "three": "/node_modules/three/build/three.module.js", "pbf": "/node_modules/pbf/index.js", "@mapbox/vector-tile": "/node_modules/@mapbox/vector-tile/index.js", "@mapbox/point-geometry": "/node_modules/@mapbox/point-geometry/index.js" } }
 </script>
 </head>
 <body>
@@ -69,6 +69,7 @@ const bubble = {
   cutBenchM: 0,
   surfaceGeneration: 0,
   rawSurfaceElevationAtLocal: () => 0,
+  naturalElevationAtLocal: () => 0,
   setRoadCut() {},
 };
 const network = new RoadNetwork({ THREE, scene, bubble, materials: createRoadMaterials(THREE) });

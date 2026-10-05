@@ -38,7 +38,7 @@
  * côtés, sans discontinuité.
  *
  * `appendMarkingBorder` la pose, le long des **morceaux de contour** que le
- * carrefour publie déjà (`roadJunctions.junctionArea.edges` — ceux-là mêmes que
+ * carrefour publie déjà (`area.edges` de `roadJunctions` — ceux-là mêmes que
  * suit la bordure de trottoir). Ces morceaux commencent et finissent exactement
  * là où les rives de ruban s'arrêtent : un retrait constant les raccorde sans
  * qu'aucun des deux bouts ait à connaître l'autre.
@@ -359,7 +359,7 @@ export function borderInsetFor(spec) {
  * l'intérieur.
  *
  * C'est ce qui prolonge une ligne de rive au travers d'un carrefour : le
- * contour d'une aire (`roadJunctions.junctionArea`) n'est pas une chaussée — il
+ * contour d'une surface de carrefour (`roadJunctions`) n'est pas une chaussée — il
  * n'a ni axe ni largeur — mais c'est exactement la rive que les rubans
  * quittent et retrouvent, sommet pour sommet. Une ligne posée en retrait
  * constant de ce contour tombe donc pile dans le prolongement de celle du
@@ -376,10 +376,8 @@ export function borderInsetFor(spec) {
  * tout, et il n'y a pas de rive à prolonger : rien n'est posé.
  *
  * De quel côté est « l'intérieur » n'est pas déduit d'un sens de rotation
- * supposé : le contour tourne dans le sens que lui donne le tri des branches
- * par azimut, et la perpendiculaire de `pathFrames` en hérite. On le **mesure**
- * donc contre la normale sortante que le morceau publie — même règle que la
- * bordure de trottoir, qui borde le même contour.
+ * supposé : on le **mesure** contre la normale sortante que le morceau publie
+ * — même règle que la bordure de trottoir, qui borde le même contour.
  *
  * @param {Object} buffer Tampon `createProfileBuffer()`.
  * @param {Object} options
@@ -390,11 +388,14 @@ export function borderInsetFor(spec) {
  * @param {number[]} options.color
  * @param {number} [options.width]
  * @param {number} [options.lift]
+ * @param {Function|null} [options.deckAt] `(x, z) => cote` de la surface que
+ *        le trait borde : posé dessus là où il est peint, et non à la cote du
+ *        contour qu'il suit en retrait.
  * @returns {number} traits posés.
  */
 export function appendMarkingBorder(
   buffer,
-  { points, decks, insets, outward, color, width = MARKING_WIDTH_M, lift = 0 }
+  { points, decks, insets, outward, color, width = MARKING_WIDTH_M, lift = 0, deckAt = null }
 ) {
   const rows = points?.length ?? 0;
   if (rows < 2 || !decks || !insets || !outward || !color) return 0;
@@ -428,7 +429,32 @@ export function appendMarkingBorder(
     const z = points[i].z + frames[i * 4 + 3] * shift;
     if (i > 0) distance += Math.hypot(x - path[i - 1].x, z - path[i - 1].z);
     path.push({ x, z, distance });
-    platform.push(decks[i]);
+    const surface = deckAt ? deckAt(x, z) : NaN;
+    platform.push(Number.isFinite(surface) ? surface : decks[i]);
+  }
+
+  // Posé sur la surface, le trait la suit pas à pas : une corde plus longue
+  // passerait sous ses plis.
+  if (deckAt) {
+    const fine = [path[0]];
+    const decks = [platform[0]];
+    for (let i = 1; i < path.length; i++) {
+      const a = path[i - 1];
+      const b = path[i];
+      const steps = Math.ceil((b.distance - a.distance) / BORDER_STEP_M);
+      for (let k = 1; k < steps; k++) {
+        const t = k / steps;
+        const x = a.x + (b.x - a.x) * t;
+        const z = a.z + (b.z - a.z) * t;
+        const surface = deckAt(x, z);
+        fine.push({ x, z, distance: a.distance + (b.distance - a.distance) * t });
+        decks.push(Number.isFinite(surface) ? surface : platform[i - 1] + (platform[i] - platform[i - 1]) * t);
+      }
+      fine.push(b);
+      decks.push(platform[i]);
+    }
+    path.splice(0, path.length, ...fine);
+    platform.splice(0, platform.length, ...decks);
   }
 
   return appendMarkingLine(buffer, {
@@ -441,6 +467,9 @@ export function appendMarkingBorder(
     dash: 0,
   });
 }
+
+/** Pas maximal d'un trait posé sur une surface de carrefour, en mètres. */
+const BORDER_STEP_M = 0.3;
 
 /**
  * Une ligne en travers, entre deux sections voisines.

@@ -1,12 +1,11 @@
-import { boundJunctionBranches, bindJunctionSeams, updateJunctionSeams } from './junctionSeams.js';
 import { collectTunnelBuildings, resolveTunnelProfiles } from './transportTunnels.js';
 import { finishGeneration } from '../core/generationSteps.js';
 import { DECOR_STEP_M, reachedRadius } from '../core/decorReach.js';
 /*
  * La reconstruction expose des étapes entre tronçons et carrefours. Le
  * compositeur fixe les pauses ; index et maillages sont publiés ensemble.
- * Les bouches sont rattachées avant les plateformes ; leurs cotes finales
- * sont publiées après les ouvrages, sans relancer la couture des plateformes.
+ * Les surfaces de carrefour se construisent en plan sur les tracés ; leurs
+ * cotes sont relues après les ouvrages, sans relancer la couture.
  * roadNetwork — le réseau routier, pas seulement la route de l'observateur.
  * Les chaussées viennent de la couche `transportation` (`class` pour la
  * largeur et le revêtement, `brunnel` pour tunnels et ponts, `layer` pour le
@@ -82,11 +81,9 @@ import {
 import {
   JunctionAreas,
   branchYields,
-  markJunctionRows,
-  junctionCentreDeck,
+  junctionDeckAt,
   junctionRibbonRuns,
   junctionSurface,
-  outlineDeckAt,
 } from './roadJunctions.js';
 import {
   MARKING_BAR_M,
@@ -1091,10 +1088,6 @@ export function* collectRoadSegmentsSteps(
   yield;
   fitParallelRoadWidths(chains.filter((chain) => isPaved(roads.profiles[chain.profile])), junctions, { x: here.x, z: here.z, radius });
   yield;
-  // Les carrefours deviennent des surfaces, en plan, avant tout le reste : ce
-  // sont elles qui diront où chaque ruban s'arrête. Les chaînes, elles, ne sont
-  // plus coupées — la chaussée traverse le carrefour dans les données, et seul
-  // son ruban s'interrompt (voir l'en-tête de `roadJunctions`).
 
   for (const chain of chains) {
     yield;
@@ -1180,29 +1173,11 @@ export function* collectRoadSegmentsSteps(
     }
   }
 
-  // Les lignes prises par un carrefour, une fois les tronçons ré-échantillonnés.
-  // Le ruban les sautera ; tout le reste (emprise, déblai, couture, mobilier,
-  // trottoirs) continue de lire une route entière.
+  // Les lignes prises par un carrefour, une fois les tronçons ré-échantillonnés
+  // (`segment.junction`). Le ruban les sautera ; tout le reste (emprise,
+  // déblai, couture, mobilier, trottoirs) continue de lire une route entière.
   yield;
-  boundJunctionBranches(junctions,out);
-  const areas = new JunctionAreas(junctions);
-  bindJunctionSeams(out, areas);
-  if (areas.length > 0) {
-    for (const segment of out) {
-      segment.junction = markJunctionRows(segment, areas);
-      // Un chemin passe sous le carrefour d'une route : son ruban ne s'y
-      // interrompt pas.
-      if (!isPaved(roads.profiles[segment.profile])) {
-        const rows = segment.junction;
-        for (let r = 0; r < rows.length; r++) {
-          if (rows[r] >= 0 && isPaved(roads.profiles[areas.areas[rows[r]].profile])) rows[r] = -1;
-        }
-      }
-      // De quelles chaussées chaque aire est faite : ce qui borde un coin de
-      // rue ne doit pas compter les branches du carrefour comme un obstacle.
-      areas.noteFeeder(segment);
-    }
-  }
+  const areas = new JunctionAreas(junctions, out);
 
   // La couture précède les franchissements : elle ne peut annuler leur déblai.
   const paved = out.filter((segment) => segment.paved);
@@ -1392,7 +1367,7 @@ export class RoadNetwork {
     let markings = 0;
 
     const profiles = this.theme.roads.profiles;
-    updateJunctionSeams(areas);
+    areas.updateDecks();
     for (const segment of collected) {
       yield;
       const spec = profiles[segment.profile];
@@ -1428,34 +1403,21 @@ export class RoadNetwork {
       }
     }
 
-    // Les surfaces de carrefour, une fois les plate-formes cousues : un
-    // carrefour prend l'altitude des chaussées qui y aboutissent, il n'en a pas
-    // à lui. Une cote par bouche, relevée là où le ruban s'arrête : c'est ce
-    // qui fait que la dalle et les rubans se rejoignent sans marche, sur un
-    // versant comme à plat. Une aire dont aucune bouche ne porte d'altitude
-    // (toutes hors de portée) n'est simplement pas posée.
+    // Les surfaces de carrefour, une fois les plate-formes cousues : chaque
+    // sommet tient sa cote des chaussées dont il vient (`updateDecks`). Une
+    // surface sans cote (hors de portée) n'est pas posée.
     const junctionBuffers = {};
     for (const area of areas.areas) {
       yield;
-      const decks = area.decks;
-      const centre = area.deck;
-      if (!Number.isFinite(centre)) continue;
-      // Retenues sur l'aire, sans le décollement : la voirie borde ce carrefour
-      // et doit s'aligner sur les mêmes cotes, comme un trottoir de tronçon
-      // s'aligne sur sa plate-forme. `deck` reste la cote du nœud — ce qui n'a
-      // qu'un point à poser s'en contente ; `decks` sert à qui suit une rive.
-      area.decks = decks;
-      area.deck = centre;
-      // La rive fait le tour de la dalle : elle est posée ici, avec les cotes
-      // qu'on vient de relever, et non dans `_appendMarkings` — celui-ci ne
-      // connaît qu'une plage de ruban, et un contour de carrefour n'en est pas
-      // une.
-      markings += this._appendJunctionEdges(markingBuffer, area, decks, centre, paint);
+      if (!Number.isFinite(area.deck)) continue;
+      // La rive fait le tour de la surface : posée ici, et non dans
+      // `_appendMarkings`, qui ne connaît qu'une plage de ruban.
+      markings += this._appendJunctionEdges(markingBuffer, area, paint);
       const surface = this._surfaceOf(area.profile);
       if (!junctionBuffers[surface]) junctionBuffers[surface] = createRibbonBuffer();
       const buffer = junctionBuffers[surface];
       const lift = roadLiftFor(this.theme.roads.profiles[area.profile]);
-      const piece = junctionSurface(area, decks.map((deck) => deck + lift), {
+      const piece = junctionSurface(area, lift, {
         textureLength: ROAD_TEXTURE_LENGTH,
         base: buffer.positions.length / 3,
       });
@@ -1618,42 +1580,45 @@ export class RoadNetwork {
    *
    * Un ruban s'arrête à la bouche, et sa rive avec lui : sans ce prolongement,
    * une ligne continue s'interrompt à chaque croisée. Elle est reprise ici sur
-   * les morceaux de contour entre deux bouches — trois pour un carrefour en T,
-   * quatre pour une croisée — dont les extrémités sont **exactement** les
-   * sommets où les rives de ruban s'arrêtent (`junctionArea.edges`).
+   * les morceaux de contour entre deux bouches (`area.edges`), dont les
+   * extrémités sont **exactement** les sommets où les rives de ruban
+   * s'arrêtent.
    *
    * Une seule condition, et c'est celle du thème : **au moins une** des deux
-   * branches que le morceau relie porte une ligne de rive. Une rue qui débouche
-   * sur une sortie de garage garde donc sa rive jusqu'au bout du coin, au lieu
-   * de la voir s'interrompre parce que la desserte d'en face n'est pas marquée
-   * — sur le terrain, la ligne de la rue fait bien le tour. Le morceau prend
-   * alors le retrait de la branche marquée sur toute sa longueur : le retrait
-   * de l'autre n'existe pas, il n'y a rien à interpoler. Un carrefour dont
-   * aucune branche n'est marquée — trois allées de service, deux chemins —
-   * reste nu, et c'est le bon résultat.
+   * bouches que le morceau relie porte une ligne de rive. Le morceau passe
+   * alors du retrait de l'une à celui de l'autre ; une bouche sans ligne prend
+   * celui de sa voisine. Un bord sans bouche (un îlot) prend le retrait du
+   * profil dominant. Un carrefour dont aucune branche n'est marquée reste nu.
    *
    * Rien d'autre n'est repris au carrefour — ni axe, ni ligne d'effet à égalité
    * de largeur : voir l'en-tête de `roadMarkings`.
    *
    * @returns {number} traits posés.
    */
-  _appendJunctionEdges(buffer, area, decks, centre, paint) {
+  _appendJunctionEdges(buffer, area, paint) {
     const profiles = this.theme.roads.profiles;
     const insets = area.mouths.map((mouth) => borderInsetFor(profiles[mouth.profile]));
+    const own = borderInsetFor(profiles[area.profile]);
 
     let laid = 0;
     for (const edge of area.edges || []) {
+      let from = edge.from >= 0 ? insets[edge.from] : own;
+      let to = edge.to >= 0 ? insets[edge.to] : own;
+      if (!Number.isFinite(from)) from = to;
+      if (!Number.isFinite(to)) to = from;
+      const lengths = [0];
+      for (let i = 1; i < edge.points.length; i++) {
+        const a = edge.points[i - 1];
+        const b = edge.points[i];
+        lengths.push(lengths[i - 1] + Math.hypot(b.x - a.x, b.z - a.z));
+      }
+      const total = lengths[lengths.length - 1] || 1;
       laid += appendMarkingBorder(buffer, {
         points: edge.points,
-        // Mêmes cotes et même interpolation que la dalle qu'elle borde : un
-        // sommet d'arc tient de deux branches, et passe de l'une à l'autre en
-        // tournant. `outlineDeckAt` fait ce mélange-là ; il sert ici deux fois,
-        // pour la hauteur et pour le retrait, parce que c'est le même mélange.
-        decks: edge.points.map((point) => {
-          const height = outlineDeckAt(point, decks);
-          return Number.isFinite(height) ? height : centre;
-        }),
-        insets: edge.points.map((point) => outlineDeckAt(point, insets)),
+        // Mêmes cotes que la surface qu'elle borde, sommet par sommet.
+        decks: edge.points.map((point) => (Number.isFinite(point.y) ? point.y : area.deck)),
+        insets: lengths.map((length) => from + (to - from) * (length / total)),
+        deckAt: (x, z) => junctionDeckAt(area, x, z),
         outward: edge.outward,
         color: paint,
         lift: ROAD_LIFT_M + MARKING_LIFT_M,

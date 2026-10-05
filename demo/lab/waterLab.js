@@ -15,7 +15,6 @@ import {WaterLayer} from '/src/layers/waterLayer.js';
 import {corridorContours} from '/src/layers/roadCorridor.js';
 import {RoadNetwork,createRoadMaterials} from '/src/layers/roadNetwork.js';
 import {BridgeLayer} from '/src/layers/bridgeLayer.js';
-import {junctionTriangles} from '/src/layers/junctionTriangulation.js';
 import {finishGeneration} from '/src/core/generationSteps.js';
 import {area} from '/src/core/waterGeometry.js';
 import {subdividePath,pathFrames} from '/src/layers/ribbonGeometry.js';
@@ -66,7 +65,7 @@ function build() {
   ground.rebuild(source,tiles,{x:0,z:0},frame,{resolvedWaterKeys:prepared.resolvedKeys,waterFallbacks:waterFallbacks(prepared)});bubble.materials.syncGroundClass();
   const roadMaterials=createRoadMaterials(THREE,defaultTheme.roads),roads=new RoadNetwork({THREE,scene,bubble,materials:roadMaterials,theme:defaultTheme});roads.rebuild(source,tiles,{x:0,z:0});while(bubble.processRebuildQueue(1000)){}
   const bridges=new BridgeLayer({THREE,scene,bubble,theme:defaultTheme});bridges.rebuild(roads.roadSegments,{x:0,z:0});
-  const protections=waterProtectionTriangles({buildings:collected.buildings,frame,roadContours:corridorContours(roads.index,{minX:-110,maxX:110,minZ:-110,maxZ:110}),junctionTriangles:(roads.junctionAreas?.areas??[]).flatMap(a=>{const t=junctionTriangles(a);return t.triangles.map(is=>is.map(i=>t.vertices[i]));})},THREE.ShapeUtils.triangulateShape);
+  const protections=waterProtectionTriangles({buildings:collected.buildings,frame,roadContours:corridorContours(roads.index,{minX:-110,maxX:110,minZ:-110,maxZ:110}),junctionTriangles:(roads.junctionAreas?.areas??[]).flatMap(a=>a.triangles.map(is=>is.map(i=>a.vertices[i])))},THREE.ShapeUtils.triangulateShape);
   const index=addWaterBands(placeWater(prepared,protections,THREE.ShapeUtils.triangulateShape,{profiles:defaultTheme.water.profiles}),defaultTheme.water.profiles),water=new WaterLayer({THREE,scene,theme:defaultTheme});const meshes=water.prepare(index,frame,bubble.verticalScale),cuts=finishGeneration(bubble.prepareWaterSurfaceSteps(index));bubble.setWaterSurface(index,cuts);ground.setWaterSurface(index);water.publish(meshes);water.setTime(state.time);bubble.materials.advanceWater(state.time);
   const boxes=[];if(['protections','pont'].includes(state.case)){const mesh=new THREE.Mesh(new THREE.BoxGeometry(14,8,16),new THREE.MeshLambertMaterial({color:0xa49582}));mesh.position.set(-17,5,12);scene.add(mesh);boxes.push(mesh);}
   world={bubble,water,ground,roads,bridges,roadMaterials,index,prepared,boxes};

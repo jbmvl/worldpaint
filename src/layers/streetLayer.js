@@ -16,7 +16,7 @@ import { RoadIndex } from './roadGraph.js';
 import { contiguousRuns, crossSlope, STEEP_CROSS_SLOPE } from './furniturePlacement.js';
 import { pointInAreas } from './settlement.js';
 import { edgeClearance, outwardSide, polylineLength } from './roadEdges.js';
-import { junctionBoundaryAt, outlineDeckAt } from './roadJunctions.js';
+import { junctionBoundaryAt } from './roadJunctions.js';
 import { appendGapSurface, appendZebra, collectRoadGaps, gapIsSeam } from './roadBundles.js';
 import {
   MARKING_LIFT_M,
@@ -570,12 +570,9 @@ export class StreetLayer {
         // Sommet par sommet, comme la dalle : sur un versant, un coin de rue
         // relie deux bouches qui ne sont pas à la même hauteur, et une bordure
         // posée à plat y ferait une marche contre l'une des deux.
-        const decks = Float32Array.from(points, (point) => {
-          const deck = area.decks ? outlineDeckAt(point, area.decks) : area.deck;
-          // Une branche hors de portée du réseau n'a pas de cote : le coin
-          // retombe sur celle du nœud plutôt que de porter un `NaN`.
-          return Number.isFinite(deck) ? deck : area.deck;
-        });
+        // Un sommet sans cote (branche hors de portée) retombe sur celle de
+        // la surface plutôt que de porter un `NaN`.
+        const decks = Float32Array.from(points, (point) => (Number.isFinite(point.y) ? point.y : area.deck));
         this._appendKerb(buffer, bands, {
           points,
           decks,

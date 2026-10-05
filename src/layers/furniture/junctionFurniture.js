@@ -62,12 +62,12 @@ export function buildCrossings(layer, context, junctions, roadIndex, builtUp) {
   const { placements, here } = context;
   let placed = 0;
   const communes=new Map();
-  for(const area of layer._areas?.areas || [])for(const node of area.noeuds || [])communes.set(node,area);
+  for(const area of layer._areas?.areas || [])if(area.nodes?.length>1)for(const node of area.nodes)communes.set(node,area);
 
   for (const node of junctions) {
     const commune=communes.get(node);
-    if(commune && (node!==commune.noeuds[0] || commune.mouths.length<3 ||
-      commune.noeuds.every(n=>n.roundabout || isForkJunction(n))))continue;
+    if(commune && (node!==commune.nodes[0] || commune.mouths.length<3 ||
+      commune.nodes.every(n=>n.roundabout || isForkJunction(n))))continue;
     const junction=commune ? {...commune,branches:commune.mouths.map(m=>({...m,x:m.direction.x,z:m.direction.z}))} : node;
     if (placed >= FURNITURE_LIMITS.trafficLights) break;
     if (Math.hypot(junction.x - here.x, junction.z - here.z) > reachedRadius(FURNITURE_RADIUS_M, layer.bubble)) continue;
@@ -152,7 +152,7 @@ export function buildJunctionSigns(layer, context, areas, roadIndex, builtUp) {
   for (const area of areas.areas) {
     if (Math.hypot(area.x - here.x, area.z - here.z) > reachedRadius(FURNITURE_RADIUS_M, layer.bubble)) continue;
     // Le nœud d'un feu et celui de son aire sont le **même** point, repris
-    // tel quel par `junctionArea` : l'écart toléré ne couvre que le calcul
+    // tel quel par `JunctionAreas` : l'écart toléré ne couvre que le calcul
     // flottant, il n'élargit rien.
     if (layer._signalled?.some((j) => Math.hypot(j.x - area.x, j.z - area.z) < 0.5)) continue;
 

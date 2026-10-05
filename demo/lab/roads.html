@@ -5,7 +5,7 @@
 <title>Banc de la voirie</title>
 <style>html,body{margin:0;background:#9fb8cc}canvas{display:block}</style>
 <script type="importmap">
-{ "imports": { "three": "/node_modules/three/build/three.module.js" } }
+{ "imports": { "three": "/node_modules/three/build/three.module.js", "pbf": "/node_modules/pbf/index.js", "@mapbox/vector-tile": "/node_modules/@mapbox/vector-tile/index.js", "@mapbox/point-geometry": "/node_modules/@mapbox/point-geometry/index.js" } }
 </script>
 </head>
 <body>
@@ -287,9 +287,9 @@ function info() {
   let best = null;
   for (const area of roads.junctionAreas?.areas ?? []) {
     const d = Math.hypot(area.x - state.x, area.z - state.z);
-    if (area.decks && (!best || d < best.d)) best = { d, area };
+    if (Number.isFinite(area.deck) && (!best || d < best.d)) best = { d, area };
   }
-  const decks = best?.area.decks.map((v) => +v.toFixed(2)) ?? [];
+  const decks = best?.area.mouths.map((m) => +m.left.y.toFixed(2)) ?? [];
   return {
     scene: state.scene,
     franchissements: roads.transportCrossings.map(({ x, z, reason, lift, cut }) => ({ x, z, reason, lift, cut })),

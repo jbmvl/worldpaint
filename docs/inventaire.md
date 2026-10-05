@@ -408,7 +408,11 @@ chaque couture. Le tracé en ressort **arrondi** : la tuile rend un virage par
 deux ou trois brisures franches, un arc est inscrit dans chacune, et tout ce qui
 suit la chaussée — bordure, trottoir, marquage — le suit. Restent francs le
 carrefour, où la route tourne vraiment, et la culée d'un pont. Les carrefours
-sont des **surfaces**, pas des points. Un anneau petit et rond est un
+sont des **surfaces**, pas des points : la chaussée des routes qui s'y
+rencontrent, réunie, avec un rayon de bordure dans chaque angle. Deux
+carrefours dont les surfaces se touchent n'en font qu'une ; dans un échangeur
+dense, les courtes liaisons entre nœuds sont prises dans la place, sans
+marquage. Un anneau petit et rond est un
 **giratoire** : un seul carrefour en couronne, une bouche par branche, un
 cédez-le-passage à chaque entrée, l'îlot laissé au terrain, jamais de feu.
 Une route qui se dédouble est une **fourche** : la surface suit les deux

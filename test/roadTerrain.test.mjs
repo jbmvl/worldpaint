@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TerrainBubble } from '../src/terrain/terrainBubble.js';
 import { RoadIndex } from '../src/layers/roadGraph.js';
-import { JunctionAreas } from '../src/layers/roadJunctions.js';
+import { networkOfJunctions } from './junctionWorld.mjs';
 import { lowestRoadDeckAt } from '../src/terrain/roadCut.js';
 
 const road=(z,height)=>({path:[{x:-20,z},{x:20,z}],halfWidth:2,paved:true,
@@ -29,10 +29,12 @@ test('le déblai tient compte du profil en long à portée de la maille',()=>{
 });
 
 test('toutes les dalles voisines participent au déblai, pas seulement la plus proche',()=>{
-  const tee=z=>({x:0,z,level:0,profile:'minor',halfWidth:2,degree:3,
-    branches:[{x:1,z:0},{x:-1,z:0},{x:0,z:1}].map(d=>({...d,halfWidth:2,profile:'minor'}))});
-  const junctions=[tee(0),tee(5)],areas=new JunctionAreas(junctions);
-  for(const [i,a] of areas.areas.entries()) {a.decks=a.mouths.map(()=>i?3:10);a.deck=i?3:10;}
+  // Deux T voisins, dos à dos : l'un à 10 m, l'autre à 3 m.
+  const tee=(z,side)=>({x:0,z,level:0,profile:'minor',halfWidth:2,degree:3,
+    branches:[{x:1,z:0},{x:-1,z:0},{x:0,z:side}].map(d=>({...d,halfWidth:2,profile:'minor',
+      path:[{x:0,z},{x:d.x*30,z:z+d.z*30}]}))});
+  const {areas}=networkOfJunctions([tee(0,-1),tee(5,1)],{deck:(x,z)=>z<2.5?10:3});
+  assert.equal(areas.length,2);
   assert.equal(areas.deckNear(0,0,9).deck,10,'la lecture de proximité garde son contrat');
   assert.equal(areas.deckSamplesNear(0,0,9).length,2);
   assert.equal(cut(context([road(0,10)],areas),0,0),3);
@@ -65,23 +67,24 @@ test('la sortie de galerie vers un pont reste dégagée dans les deux sens',()=>
   }
 });
 
-test('un déblai mesure la surface effectivement triangulée après réparation du contour',async()=>{
-  const {junctionTriangles,junctionDistance}=await import('../src/layers/junctionTriangulation.js');
-  const area={x:0,z:0,outline:[[-10,-10],[10,-10],[-6,-3],[6,3],[10,10],[-10,10],[6,-3],[-6,3]]
-    .map(([x,z])=>({x,z,from:0,to:0,blend:0})),decks:[3]};
-  const mesh=junctionTriangles(area);
-  assert.ok(mesh.valid);
-  for(const ids of mesh.triangles) {
-    const vertices=ids.map(i=>mesh.vertices[i]);
+test('un déblai mesure la surface effectivement triangulée',()=>{
+  const {areas}=networkOfJunctions([{x:0,z:0,level:0,profile:'minor',halfWidth:2,degree:4,
+    branches:[{x:1,z:0},{x:-1,z:0},{x:0,z:1},{x:0,z:-1}].map(d=>({...d,halfWidth:2,profile:'minor',
+      path:[{x:0,z:0},{x:d.x*30,z:d.z*30}]}))}],{deck:()=>3});
+  const area=areas.areas[0];
+  for(const ids of area.triangles) {
+    const vertices=ids.map(i=>area.vertices[i]);
     const x=vertices.reduce((sum,p)=>sum+p.x,0)/3,z=vertices.reduce((sum,p)=>sum+p.z,0)/3;
-    assert.equal(junctionDistance(area,x,z).distance,0);
+    assert.equal(areas.deckNear(x,z,9).distance,0);
   }
 });
 
 test('un carrefour ouvert sous pont excave aussi le sol malgré son niveau OSM négatif',()=>{
-  const areas=new JunctionAreas([{x:0,z:0,level:-1,profile:'minor',halfWidth:2,degree:3,
-    branches:[{x:1,z:0},{x:-1,z:0},{x:0,z:1}].map(d=>({...d,halfWidth:2,profile:'minor'}))}]);
-  const area=areas.areas[0];area.decks=area.mouths.map(()=>3);area.deck=3;area.terrainCovered=false;
+  const {areas}=networkOfJunctions([{x:0,z:0,level:-1,profile:'minor',halfWidth:2,degree:3,
+    branches:[{x:1,z:0},{x:-1,z:0},{x:0,z:1}].map(d=>({...d,halfWidth:2,profile:'minor',
+      path:[{x:0,z:0},{x:d.x*30,z:d.z*30}]}))}],{deck:()=>3});
+  const area=areas.areas[0];
+  assert.equal(area.terrainCovered,false);
   assert.equal(areas.deckNear(0,0,9),null,'la lecture par niveau conserve son contrat');
   assert.equal(cut(context([road(0,10)],areas),0,0),3);
   area.terrainCovered=true;

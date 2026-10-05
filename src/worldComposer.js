@@ -5,7 +5,6 @@ import { placeWater, addWaterBands } from './layers/waterPlacement.js';
 import { waterProtectionTriangles } from './layers/waterProtections.js';
 import { WaterLayer } from './layers/waterLayer.js';
 import { corridorContours } from './layers/roadCorridor.js';
-import { junctionTriangles } from './layers/junctionTriangulation.js';
 import { RoadIndex } from './layers/roadGraph.js';
 import { boundsOf } from './core/waterGeometry.js';
 import { collectCrossingRails } from './layers/transportCrossings.js';
@@ -660,9 +659,8 @@ export class WorldComposer {
           roadContours:corridorContours(this.roads.index,bounds),
           railContours:corridorContours(this.railways.index,bounds),
           sourceContours:corridorContours(new RoadIndex(sourceSegments),bounds),
-          junctionTriangles:(this.roads.junctionAreas?.areas??[]).flatMap(area=> {
-            const result=junctionTriangles(area);return result.triangles.map(t=>t.map(i=>result.vertices[i]));
-          }),
+          junctionTriangles:(this.roads.junctionAreas?.areas??[]).flatMap(area=>
+            area.triangles.map(t=>t.map(i=>area.vertices[i]))),
           knownCoverage:(...args)=>this.roads.knownCoverageOf(...args),
           bounds:reachBounds,
         },this.THREE.ShapeUtils.triangulateShape);

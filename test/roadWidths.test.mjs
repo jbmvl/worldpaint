@@ -137,15 +137,20 @@ test('des axes presque confondus ne constituent pas deux chaussées à rétréci
 });
 
 test('une zone de carrefour seule ne justifie pas un partage des largeurs', () => {
-  const routes = [voie(0, 4, 'major', 20), voie(6, 4, 'major', 20)];
+  // Un très large carrefour en croix, dont la surface couvre les deux voies.
+  const [est, ouest, nord, sud] = [{}, {}, {}, {}];
+  const routes = [
+    { ...voie(0, 4, 'major', 20), graphEdges: new Set([est, ouest]) },
+    voie(6, 4, 'major', 20),
+    { profile: 'major', halfWidth: 20, points: [{ x: 10, z: -50 }, { x: 10, z: 0 }, { x: 10, z: 50 }], graphEdges: new Set([nord, sud]) },
+  ];
   const junctions = [{ x: 10, z: 0, level: 0, halfWidth: 20, profile: 'major',
-    branches: [[1, 0], [0, 1], [-1, 0], [0, -1]].map(([x, z]) => ({
-      x, z, halfWidth: 20, profile: 'major',
-      path: [{ x: 10, z: 0 }, { x: 10 + x * 50, z: z * 50 }],
+    branches: [[1, 0, est], [0, 1, nord], [-1, 0, ouest], [0, -1, sud]].map(([x, z, edge]) => ({
+      x, z, halfWidth: 20, profile: 'major', edge,
     })),
   }];
   fitParallelRoadWidths(routes, junctions);
-  assert.deepEqual(routes.map((route) => route.halfWidth), [4, 4]);
+  assert.deepEqual(routes.slice(0, 2).map((route) => route.halfWidth), [4, 4]);
 });
 
 test('une convergence invalide aussi une portion parallèle antérieure de la même paire', () => {
