@@ -56,6 +56,8 @@ export const JUNCTION_CORNER_MIN_M = 1.2;
 export const JUNCTION_CORNER_MAX_M = 7;
 /** Côtés d'un arc de raccordement. */
 export const JUNCTION_ARC_STEPS = 4;
+/** Longueur d'un biseau entre deux rives qui se longent, en part de leur écart. */
+export const JUNCTION_TAPER_RATIO = 6;
 /** Recul de la bouche au-delà de la première section dégagée, en mètres. */
 export const JUNCTION_MOUTH_MARGIN_M = 0.4;
 /** Angle de coin en deçà duquel deux rives gardent leur pointe (une fourche). */
@@ -467,7 +469,7 @@ function fillet(a, b) {
       };
     }
   }
-  if (!hit) return taper(a, ea, b, eb) ?? taper(b, eb, a, ea);
+  if (!hit) return taper(a, ea, b, eb) ?? taper(b, eb, a, ea) ?? splay(a, ea, b, eb) ?? splay(b, eb, a, ea);
   const cos = hit.da.x * hit.db.x + hit.da.z * hit.db.z;
   if (cos > Math.cos(JUNCTION_FORK_ANGLE) || cos < STRAIGHT_COS) return null;
 
@@ -544,15 +546,35 @@ function taper(a, ea, b, eb) {
     const t = (wx * dz - wz * dx) / denom;
     const u = (wx * rz - wz * rx) / denom;
     if (t < 0 || t > 1 || u < 0.05 || u > limit) continue;
-    const length = p.length + (q.length - p.length) * t;
-    const at = alongEdge(ea, length);
-    const ring = [vertex(ea[0].x, ea[0].z, [refOf(a, 0)])];
-    for (const point of between(ea, 0, length)) ring.push(vertex(point.x, point.z, [refOf(a, point.along)]));
-    ring.push(vertex(at.x, at.z, [refOf(a, at.along)]), vertex(corner.x, corner.z, [refOf(b, 0)]));
-    a.minimum = Math.max(a.minimum, at.along);
-    return ring;
+    return wedge(a, ea, b, corner, p.length + (q.length - p.length) * t);
   }
   return null;
+}
+
+/**
+ * Le biseau entre deux bras de largeurs inégales dont les rives se longent
+ * sans se rejoindre : du coin du plus large à la rive du plus étroit, sur une
+ * longueur proportionnée à leur écart.
+ */
+function splay(a, ea, b, eb) {
+  const corner = eb[0];
+  const cap = nodeCap(a);
+  const offset = (corner.x - cap.centre.x) * cap.px + (corner.z - cap.centre.z) * cap.pz;
+  const side = (ea[0].x - cap.centre.x) * cap.px + (ea[0].z - cap.centre.z) * cap.pz;
+  const gap = Math.abs(offset) - a.halfWidth;
+  if (offset * side <= 0 || gap < 0.05) return null;
+  const length = Math.min(gap * JUNCTION_TAPER_RATIO, ea[ea.length - 1].length - JUNCTION_MOUTH_MARGIN_M);
+  return length > 0.05 ? wedge(a, ea, b, corner, length) : null;
+}
+
+/** L'anneau d'un biseau : la rive de `a` jusqu'à `length`, refermée sur le coin de `b`. */
+function wedge(a, ea, b, corner, length) {
+  const at = alongEdge(ea, length);
+  const ring = [vertex(ea[0].x, ea[0].z, [refOf(a, 0)])];
+  for (const point of between(ea, 0, length)) ring.push(vertex(point.x, point.z, [refOf(a, point.along)]));
+  ring.push(vertex(at.x, at.z, [refOf(a, at.along)]), vertex(corner.x, corner.z, [refOf(b, 0)]));
+  a.minimum = Math.max(a.minimum, at.along);
+  return ring;
 }
 
 /**
@@ -906,31 +928,41 @@ export class JunctionAreas {
         if (a === b) continue;
         let sector = b.angle - a.angle;
         while (sector <= 0) sector += Math.PI * 2;
-        const ring = sector < Math.PI ? fillet(a, b) : joint(a, b);
-        if (!ring) continue;
-        const piece = { ring, box: boxOf(ring), level: a.level, junction: a.junction };
-        (sector < Math.PI ? fillets : joints).push(piece);
+        const add = (ring, list) => ring && list.push({ ring, box: boxOf(ring), level: a.level, junction: a.junction });
+        if (sector < Math.PI) add(fillet(a, b), fillets);
+        else {
+          add(joint(a, b), joints);
+          // Deux bras presque alignés de largeurs inégales : le joint ne comble
+          // pas la marche entre leurs rives.
+          if (sector < Math.PI + JUNCTION_FORK_ANGLE) {
+            const ea = armEdge(a, 1);
+            const eb = armEdge(b, -1);
+            add(splay(a, ea, b, eb) ?? splay(b, eb, a, ea), fillets);
+          }
+        }
       }
     }
 
     // La bouche de chaque bras, contre tout ce qui n'est pas son propre tronçon.
     const grid = new Map();
-    const cellsOf = (box) => {
-      const out = [];
+    const eachCell = (box, visit) => {
       for (let cx = Math.floor(box.minX / cell); cx <= Math.floor(box.maxX / cell); cx++) {
-        for (let cz = Math.floor(box.minZ / cell); cz <= Math.floor(box.maxZ / cell); cz++) out.push(cellKey(cx, cz));
-      }
-      return out;
-    };
-    const file = (item, box) => {
-      for (const key of cellsOf(box)) {
-        if (!grid.has(key)) grid.set(key, []);
-        grid.get(key).push(item);
+        for (let cz = Math.floor(box.minZ / cell); cz <= Math.floor(box.maxZ / cell); cz++) visit(cellKey(cx, cz));
       }
     };
+    const file = (item, box) => eachCell(box, (key) => {
+      const bucket = grid.get(key);
+      if (bucket) bucket.push(item);
+      else grid.set(key, [item]);
+    });
+    /** Les voisins d'une boîte, cellule par cellule : un même voisin peut revenir. */
+    const eachNear = (box, visit) => eachCell(box, (key) => {
+      const bucket = grid.get(key);
+      if (bucket) for (const item of bucket) visit(item);
+    });
     const around = (box) => {
       const found = new Set();
-      for (const key of cellsOf(box)) for (const item of grid.get(key) ?? []) found.add(item);
+      eachNear(box, (item) => found.add(item));
       return found;
     };
     for (const arm of arms) file(arm, arm.box);
@@ -964,15 +996,21 @@ export class JunctionAreas {
     // Une bouche dont la section ne borde pas la surface (un morceau voisin la
     // recouvre) avance d'un pas, et la surface est refaite.
     let surfaces = [];
+    const unions = new Map();
+    const tags = new Map();
     for (let pass = 0; pass <= MOUTH_PASSES; pass++) {
       spans = mergeSpans(spans);
-      surfaces = this._surfaces(spans, fillets, joints, order, { grid, file, around });
+      surfaces = this._surfaces(spans, fillets, joints, order, { grid, file, eachNear, unions, tags });
       const buried = [];
-      for (const { outline, holes, spans: mine } of surfaces) {
+      for (const { outline, holes, spans: mine, outer } of surfaces) {
+        // Une union reprise telle quelle a déjà toutes ses bouches au contour.
+        if (outer.open) continue;
+        const before = buried.length;
         for (const span of mine) {
           if (span.head && !findMouth([outline, ...holes], span.head)) buried.push([span, -1]);
           if (span.tail && !findMouth([outline, ...holes], span.tail)) buried.push([span, 1]);
         }
+        outer.open = buried.length === before;
       }
       if (buried.length === 0 || pass === MOUTH_PASSES) break;
       for (const [span, side] of buried) {
@@ -985,7 +1023,7 @@ export class JunctionAreas {
   }
 
   /** Les surfaces d'un jeu de plages : bandes, arrondis et joints réunis par groupe. */
-  _surfaces(spans, fillets, joints, order, { grid, file, around }) {
+  _surfaces(spans, fillets, joints, order, { grid, file, eachNear, unions, tags }) {
     // Une bande par plage, coupée à chaque nœud qu'elle traverse : au nœud,
     // chaque morceau s'arrête sur la section de son bras (`nodeCap`).
     const strips = [];
@@ -1007,6 +1045,8 @@ export class JunctionAreas {
         strips.push({
           segment,
           span,
+          from: ends[k - 1],
+          to: ends[k],
           ring,
           box: boxOf(ring),
           level: arms[0].level,
@@ -1030,9 +1070,9 @@ export class JunctionAreas {
       file(piece, piece.box);
     });
     for (const piece of pieces) {
-      for (const other of around(piece.box)) {
-        if (other !== piece && other.level === piece.level && boxesMeet(piece.box, other.box)) join(piece.rank, other.rank);
-      }
+      eachNear(piece.box, (other) => {
+        if (other.rank > piece.rank && other.level === piece.level && boxesMeet(piece.box, other.box)) join(piece.rank, other.rank);
+      });
     }
     const byJunction = new Map();
     pieces.forEach((piece, i) => {
@@ -1048,24 +1088,36 @@ export class JunctionAreas {
       clusters.get(r).push(piece);
     });
 
+    const tag = (item) => {
+      if (!tags.has(item)) tags.set(item, tags.size);
+      return tags.get(item);
+    };
     const surfaces = [];
     for (const group of [...clusters.values()].sort((a, b) => a[0].rank - b[0].rank)) {
       const owned = group.filter((piece) => piece.segment);
-      const covering = (outline) => [...new Set(owned.map((piece) => piece.span))].filter((span) => {
+      const lent = [...new Set(owned.map((piece) => piece.span))];
+      const covering = (outline) => lent.filter((span) => {
         const p = pointAt(span.segment, (span.from + span.to) / 2);
         return windingAt([outline], p.x, p.z) !== 0;
       });
-      // Une union qui n'aboutit pas retombe sur les seules bandes : mieux vaut
-      // un coin franc qu'un carrefour sans surface.
-      let outers = unionRings(group.map((piece) => piece.ring), blend, { minHole: JUNCTION_ISLAND_MIN_M2 });
-      if (owned.some((piece) => !outers.some(({ outline }) => covering(outline).includes(piece.span)))) {
-        outers = unionRings(owned.map((piece) => piece.ring), blend, { minHole: JUNCTION_ISLAND_MIN_M2 });
+      // Un groupe dont aucune bouche n'a bougé depuis la passe précédente rend
+      // la même union : elle n'est pas refaite.
+      const key = group.map((piece) => (piece.segment ? `${tag(piece.segment)}:${piece.from}:${piece.to}` : tag(piece))).join('|');
+      let outers = unions.get(key);
+      if (!outers) {
+        // Une union qui n'aboutit pas retombe sur les seules bandes : mieux
+        // vaut un coin franc qu'un carrefour sans surface.
+        outers = unionRings(group.map((piece) => piece.ring), blend, { minHole: JUNCTION_ISLAND_MIN_M2 });
+        if (owned.some((piece) => !outers.some(({ outline }) => covering(outline).includes(piece.span)))) {
+          outers = unionRings(owned.map((piece) => piece.ring), blend, { minHole: JUNCTION_ISLAND_MIN_M2 });
+        }
+        unions.set(key, outers);
       }
       const members = [...new Set(group.flatMap((piece) => [...(piece.junctions ?? [piece.junction])]))]
         .sort((a, b) => order.get(a) - order.get(b));
-      for (const { outline, holes } of outers) {
-        const mine = covering(outline);
-        if (mine.length > 0) surfaces.push({ outline, holes, spans: mine, members });
+      for (const outer of outers) {
+        const mine = covering(outer.outline);
+        if (mine.length > 0) surfaces.push({ outline: outer.outline, holes: outer.holes, spans: mine, members, outer });
       }
     }
     return surfaces;

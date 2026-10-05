@@ -179,6 +179,23 @@ test('une fourche se ferme sur la pointe de son îlot', () => {
   assert.equal(areaCovers(area, 40, 0), false, 'l’îlot reste dehors');
 });
 
+test('un tronc large qui se partage en voies plus étroites ne garde pas de marche à leur rive', () => {
+  for (const sign of [1, -1]) {
+    const { areas } = networkOf([
+      voie([[-80, 0], [0, 0]], 4.25),
+      voie([[0, 0], [30, sign], [90, 4 * sign]], 3),
+      voie(Array.from({ length: 16 }, (_, i) => [i * 6, -sign * (0.05 * i * 6 + 0.002 * (i * 6) ** 2)]), 3),
+    ]);
+    assert.equal(areas.length, 1);
+    const { outline } = areas.areas[0];
+    const marches = outline.filter((p, i) => {
+      const q = outline[(i + 1) % outline.length];
+      return Math.max(p.x, q.x) < 5 && Math.min(p.x, q.x) > -0.3 && Math.abs(q.z - p.z) > 0.5 && Math.abs(q.x - p.x) < Math.abs(q.z - p.z);
+    });
+    assert.equal(marches.length, 0, `marche en travers de la rive (${sign})`);
+  }
+});
+
 test('un giratoire garde son îlot et ne dessine plus son anneau', () => {
   const { areas, segments } = maillage(matrice.giratoire, 3, 0);
   assert.equal(areas.length, 1);
