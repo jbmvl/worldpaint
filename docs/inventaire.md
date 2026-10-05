@@ -81,6 +81,29 @@ falaise qu'aucun contributeur n'a tracée reste la rampe du MNT. Un ressaut de
 moins de cinq mètres est ignoré : OSM pose `natural=cliff` jusque sur des
 talus d'un mètre, que le MNT ne distingue pas de son propre bruit.
 
+## Le relief lointain
+
+Au-delà de la bulle (1,3 km), `terrain/farRelief` pose une nappe de quinze
+tuiles de côté — 6,5 km de rayon — lue dans un MNT seize fois plus grossier,
+à 54 m de maille. Elle n'a **qu'une couleur** : celle de la matière que le
+pays met là où la carte se tait, telle que le matériau du terrain l'a lavée.
+Ni bois, ni roche, ni route, ni arbre : c'est une silhouette, que la
+perspective aérienne bleuit.
+
+Elle ne se monte que **là où il y a du relief à voir** : l'amplitude des
+altitudes lues sous la nappe doit dépasser 200 m (`FAR_RELIEF_MIN_M`). Entre
+200 et 500 m, le brouillard s'écarte en proportion, du bord de la bulle au
+bord de la nappe ; en plaine il ne bouge pas, et rien n'est maillé. Une
+application qui fixe `sky.fogRadius` garde son brouillard.
+
+La nappe est trouée sous les tuiles maillées de la bulle. À son bord elle
+prend la cote du terrain affiché, trois mètres dessous, puis plonge d'une
+maille sous la bulle : le raccord est fermé, pas cousu, et une arête de la
+bulle peut dépasser de la nappe de quelques mètres.
+
+`createWorld({ view: { farBlockSize } })` règle son côté, zéro la retire. Une
+scène figée (`reach`) n'en a pas.
+
 ## Les chaussées parallèles
 
 `roadBundles` retire avant le graphe certaines voies urbaines de desserte
@@ -398,7 +421,11 @@ chaque couture. Le tracé en ressort **arrondi** : la tuile rend un virage par
 deux ou trois brisures franches, un arc est inscrit dans chacune, et tout ce qui
 suit la chaussée — bordure, trottoir, marquage — le suit. Restent francs le
 carrefour, où la route tourne vraiment, et la culée d'un pont. Les carrefours
-sont des **surfaces**, pas des points. Un anneau petit et rond est un
+sont des **surfaces**, pas des points : la chaussée des routes qui s'y
+rencontrent, réunie, avec un rayon de bordure dans chaque angle. Deux
+carrefours dont les surfaces se touchent n'en font qu'une ; dans un échangeur
+dense, les courtes liaisons entre nœuds sont prises dans la place, sans
+marquage. Un anneau petit et rond est un
 **giratoire** : un seul carrefour en couronne, une bouche par branche, un
 cédez-le-passage à chaque entrée, l'îlot laissé au terrain, jamais de feu.
 Une route qui se dédouble est une **fourche** : la surface suit les deux
@@ -705,7 +732,7 @@ bougé tout seul » :
 
 | Ce qui est refait | Tous les |
 | --- | --- |
-| tout ce qui vient du vectoriel : carte du sol, falaises, chaussées, ponts, rails, bâti, voirie, jardins, mobilier, bêtes, tracteurs, arbres | 250 m (`DECOR_STEP_M`), d'un bloc |
+| tout ce qui vient du vectoriel : carte du sol, falaises, chaussées, ponts, rails, bâti, voirie, jardins, mobilier, bêtes, tracteurs, arbres | 250 m (`DECOR_STEP_M`), d'un bloc ; moins en ville, voir plus bas |
 | éclaircie du sous-bois au-delà de 500 m | 8 m |
 | herbe et cultures, semées autour de l'observateur | 10 m |
 | oiseaux, montgolfières, pluie, vent | chaque image |
@@ -718,6 +745,16 @@ construit son détail sur au moins 800 m autour de ce point, et aucun plafond
 n'y retire rien en deçà ; la carte du sol est calée sur une grille de texels
 fixe. Une reconstruction redonne donc, à moins de 500 m de l'observateur, ce
 qui y était déjà peint. Le banc `placeLab.walk()` le mesure.
+
+En ville, le détail se resserre. Avant chaque reconstruction, les murs bâtis
+sont comptés par couronne de 50 m autour de l'observateur ; le rayon de toutes
+les couches (bâti, voirie, chaussées, jardins, mobilier) s'arrête là où leur
+cumul dépasse 60 km (`DETAIL_WALL_BUDGET_M`), jamais sous 300 m. Au-delà, rien
+n'est posé : il reste le relief, la carte du sol et les arbres. Les trois
+distances gardent leurs proportions — pour un rayon de 400 m, la relève a lieu
+tous les 117 m et rien ne se repeint à moins de 233 m. Un village n'atteint pas
+le budget et garde toute sa portée. `createWorld({ detail: { budget } })` le
+règle, `Infinity` le retire.
 
 ## Les limites connues
 

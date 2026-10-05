@@ -23,6 +23,8 @@ import {
   collectCropLabels,
   collectPlaceLabels,
   collectBuildingLabels,
+  forestTypeAt,
+  labelForForestType,
   CORRIDOR_MARGIN_M,
   collectRoadDebug,
   ROAD_DEBUG_RADIUS_M,
@@ -120,7 +122,7 @@ renderer.toneMappingExposure = 0.5; // valeur de l'exemple officiel three pour c
 
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.5, 9000);
+const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.5, 20000);
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -179,30 +181,30 @@ const applyReach = () => {
 reachToggle.addEventListener('change', applyReach);
 reachInput.addEventListener('change', () => reachToggle.checked && applyReach());
 
+/** Vrai pendant un montage : le recentrage périodique ne doit pas déplacer la bulle sous lui. */
+let mounting = false;
+
 /** Monte le décor autour d'un point et chronomètre : tuiles + génération, hors rendu. */
 async function mountScene(lng, lat) {
   world.setProfiling(true);
   world.resetGenerationStats();
   const t0 = performance.now();
-  // Bulle complète : terrain puis décor, chronométrés à part. Portée : `mountAt`
-  // seul, qui maille le terrain après le décor, donc un seul total.
-  let tCentered = null;
-  if (REACH_M !== null) {
+  // `mountAt` dans les deux modes : le terrain n'est maillé qu'une fois, après
+  // le déblai des chaussées, et les pauses sont celles d'un écran de chargement.
+  mounting = true;
+  try {
     await world.mountAt(lng, lat);
-  } else {
-    await world.setCenter(lng, lat);
-    tCentered = performance.now();
-    await world.refresh(lng, lat, { force: true });
+  } finally {
+    mounting = false;
   }
   const t1 = performance.now();
-  const mode = REACH_M !== null ? `portée ${REACH_M} m (mountAt, ${world.bubble.tiles.size} tuile(s) de terrain)` : 'bulle complète';
+  const mode = REACH_M !== null ? `portée ${REACH_M} m (${world.bubble.tiles.size} tuile(s) de terrain)` : 'bulle complète';
   const layers = Object.entries(world.generationStats)
     .filter(([name]) => !name.endsWith('Etape'))
-    .sort((a, b) => b[1].lastMs - a[1].lastMs)
+    .sort((a, b) => b[1].totalMs - a[1].totalMs)
     .slice(0, 8)
-    .map(([name, v]) => `  ${name}: ${v.lastMs.toFixed(0)} ms`);
-  const split = tCentered ? ` (terrain ${(tCentered - t0).toFixed(0)} ms, décor ${(t1 - tCentered).toFixed(0)} ms)` : '';
-  mountStats.textContent = `Montage : ${(t1 - t0).toFixed(0)} ms${split} — ${mode}\n${layers.join('\n')}`;
+    .map(([name, v]) => `  ${name}: ${v.totalMs.toFixed(0)} ms`);
+  mountStats.textContent = `Montage : ${(t1 - t0).toFixed(0)} ms — ${mode}\n${layers.join('\n')}`;
   console.info(`[worldpaint demo] montage ${(t1 - t0).toFixed(0)} ms — ${mode}`, world.generationStats);
   world.setProfiling(profileToggle.checked);
 }
@@ -446,7 +448,7 @@ function updateMovement(delta) {
 // Appelé à intervalle régulier : c'est le moteur qui décide s'il y a quelque
 // chose à refaire (pas de l'observateur, données nouvelles), pas la démo.
 async function recenterIfNeeded() {
-  if (recentering || !world || !world.frame || REACH_M !== null) return;
+  if (recentering || mounting || !world || !world.frame || REACH_M !== null) return;
 
   recentering = true;
   try {
@@ -486,7 +488,21 @@ function updateLabels() {
     return;
   }
 
-  const items = collectSceneLabels({ root: scene, eye: camera.position, skip: LABEL_SKIP });
+  const region = world.composer?.landscape?.region ?? null;
+  const items = collectSceneLabels({
+    root: scene,
+    eye: camera.position,
+    skip: LABEL_SKIP,
+    rename: (name, point) => {
+      if (!name.startsWith('vegetation-')) return null;
+      const forests = world.composer?.theme?.forests;
+      return labelForForestType(
+        forestTypeAt(point.x, point.z, forests, region),
+        forests,
+        region
+      );
+    },
+  });
 
   // Les cultures, les emprises et les bâtiments spéciaux se lisent
   // directement dans la donnée déjà chargée pour le décor — aucune requête de

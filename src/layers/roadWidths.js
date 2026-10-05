@@ -12,6 +12,10 @@
  * Sous une portée (`near`), seules les chaînes qui l'atteignent reçoivent leur
  * largeur : une paire n'est parcourue que si l'une des deux en est, et ces
  * chaînes-là sortent avec la même largeur que sans portée.
+ * Les surfaces de carrefour consultées sont celles de tout le réseau lu, pas
+ * de la seule portée : elles ne dépendent pas de l'observateur, et
+ * `WidthAreasMemo` les garde d'une reconstruction à l'autre tant que les
+ * lignes ne changent pas.
  */
 import { JunctionAreas } from './roadJunctions.js';
 import { RoadIndex, distanceToSegment } from './roadGraph.js';
@@ -23,6 +27,55 @@ const STABILITE_ECART = 0.8;
 // Au-delà du rayon : l'emprise d'un carrefour posé juste dehors.
 const MARGE_PORTEE_M = 30;
 const clePoint = (p) => `${p.x},${p.z}`;
+
+const estListe = (v) => Array.isArray(v) || ArrayBuffer.isView(v);
+
+/** Égalité de contenu de données simples (objets littéraux, listes, nombres) ; tout autre objet ne vaut que lui-même. */
+function memesDonnees(a, b) {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (a.constructor !== b.constructor) return false;
+  if (estListe(a)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (!memesDonnees(a[i], b[i])) return false;
+    return true;
+  }
+  if (Object.getPrototypeOf(a) !== Object.prototype) return false;
+  const cles = Object.keys(a);
+  if (cles.length !== Object.keys(b).length) return false;
+  for (const cle of cles) if (!(cle in b) || !memesDonnees(a[cle], b[cle])) return false;
+  return true;
+}
+
+function copieDonnees(v) {
+  if (typeof v !== 'object' || v === null) return v;
+  if (estListe(v)) return Array.isArray(v) ? v.map(copieDonnees) : v.slice();
+  if (Object.getPrototypeOf(v) !== Object.prototype) return v;
+  const copie = {};
+  for (const cle of Object.keys(v)) copie[cle] = copieDonnees(v[cle]);
+  return copie;
+}
+
+/**
+ * Les surfaces de carrefour du partage, gardées tant que les lignes dont
+ * sortent chaînes et carrefours restent les mêmes. Les lignes sont comparées
+ * par leur contenu, sur une copie : rien de ce qui les modifie ensuite ne
+ * fausse la comparaison.
+ */
+export class WidthAreasMemo {
+  constructor() {
+    this._lines = null;
+    /** @type {JunctionAreas|null} */
+    this.areas = null;
+  }
+
+  /** À appeler avec les lignes du réseau avant chaque partage. */
+  follow(lines) {
+    if (memesDonnees(this._lines, lines)) return;
+    this._lines = copieDonnees(lines);
+    this.areas = null;
+  }
+}
 
 function atteint(points, { x, z, radius }) {
   const portee = radius + MARGE_PORTEE_M;
@@ -78,12 +131,24 @@ function seCroisent(a, b, c, d) {
  * @param {Array} chains Chaînes revêtues ; leur `halfWidth` est réduite sur place.
  * @param {Array} [junctions] Carrefours du même graphe.
  * @param {{x:number,z:number,radius:number}|null} [near] Portée des chaussées bâties.
+ * @param {WidthAreasMemo|null} [memo] Surfaces de carrefour à reprendre, ou à y déposer.
  */
-export function fitParallelRoadWidths(chains, junctions = [], near = null) {
+export function fitParallelRoadWidths(chains, junctions = [], near = null, memo = null) {
   const segments = chains.map((chain) => ({ ...chain, path: chain.works?.some(Boolean) ? [] : chain.points }));
   const index = new RoadIndex(segments, { margin: 0 });
   const facteurs = chains.map(() => 1);
-  const aires = new JunctionAreas(junctions);
+  // Les surfaces se construisent sur des tracés métrés ; ceux-ci sont jetés
+  // une fois la place des carrefours connue.
+  const traces = chains.map((chain) => {
+    let distance = 0;
+    const path = chain.points.map((p, k) => {
+      if (k > 0) distance += Math.hypot(p.x - chain.points[k - 1].x, p.z - chain.points[k - 1].z);
+      return { x: p.x, z: p.z, distance };
+    });
+    return { path, halfWidth: chain.halfWidth, profile: chain.profile, graphEdges: chain.graphEdges, levels: chain.levels };
+  });
+  const aires = memo?.areas ?? new JunctionAreas(junctions, traces);
+  if (memo) memo.areas = aires;
   const contraintes = [];
   const ambigues = new Set();
   const clePaire = (i, j) => `${Math.min(i, j)}:${Math.max(i, j)}`;

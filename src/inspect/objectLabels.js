@@ -270,10 +270,48 @@ export function sourceForMeshName(name) {
   return LABEL_SOURCE_GENERATED;
 }
 
-/** Nom lisible d'un peuplement forestier (`vegetationLayer.forestTypeAt`). */
-export function labelForForestType(type, forests = defaultTheme.forests) {
+/** Nom français des essences de `TREE_KINDS`. */
+export const LABEL_TREE_SPECIES = {
+  oak: 'chêne',
+  beech: 'hêtre',
+  chestnut: 'châtaignier',
+  ash: 'frêne',
+  hornbeam: 'charme',
+  alder: 'aulne',
+  holm_oak: 'chêne vert',
+  cork_oak: 'chêne-liège',
+  birch: 'bouleau',
+  poplar: 'peuplier',
+  eucalyptus: 'eucalyptus',
+  scots_pine: 'pin sylvestre',
+  maritime_pine: 'pin maritime',
+  black_pine: 'pin noir',
+  spruce: 'épicéa',
+  fir: 'sapin',
+  larch: 'mélèze',
+  aleppo_pine: "pin d'Alep",
+  stone_pine: 'pin parasol',
+  olive: 'olivier',
+  juniper: 'genévrier',
+  acacia: 'acacia',
+  palm: 'palmier',
+};
+
+/**
+ * Nom lisible d'un peuplement forestier (`vegetationLayer.forestTypeAt`), avec
+ * les essences qu'il peut porter dans ce pays : l'arbre isolé n'est pas
+ * identifiable, le peuplement l'est.
+ */
+export function labelForForestType(type, forests = defaultTheme.forests, region = null) {
   const known = forests.find((t) => t.name === type?.name);
-  return known ? `arbres — ${known.name}` : 'arbres';
+  if (!known) return 'arbres';
+  const allowed = region?.trees;
+  const kept = Array.isArray(allowed) && allowed.length > 0
+    ? known.species?.filter((word) => allowed.includes(word))
+    : known.species;
+  const names = (kept?.length ? kept : known.species ?? [])
+    .map((word) => LABEL_TREE_SPECIES[word] || word);
+  return names.length ? `arbres — ${known.name} (${names.join(', ')})` : `arbres — ${known.name}`;
 }
 
 /** Nom lisible d'une culture. */

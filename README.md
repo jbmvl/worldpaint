@@ -297,6 +297,17 @@ seconds for the full bubble. Shader compilation, on the first render, is a large
 share of that: an application that knows it will mount a scene can warm it with
 `renderer.compileAsync`.
 
+### Seeing further in the mountains (`view.farBlockSize`)
+
+Beyond the bubble, a coarse sheet of relief — 15 bubble tiles wide by default,
+about 6.5 km of radius, one flat colour, no decor — carries the silhouette of
+the slopes. It is only built where the elevations under it span more than
+200 m, and the fog then moves out towards its edge (fully from 500 m of
+relief); on flat land nothing is built and the fog stays on the bubble. Pass
+`view: { farBlockSize: 0 }` to remove it, or `sky.fogRadius` to keep the fog
+where you put it. A fixed scene (`reach`) has none. The camera's far plane
+must reach the sheet.
+
 ### A lighter scene for modest devices (`detail`)
 
 A phone pays for the decor twice: building it on a slow CPU, then drawing it.
@@ -314,6 +325,12 @@ const world = createWorld({
 tiles and the ground map keep the whole bubble, so the scene still follows the
 viewer and the landscape beyond stays coloured. Trees are not capped. `density`
 (0..1) thins grass and crops. Draw the fog in to hide the edge of the detail.
+
+Without any setting, the detail already tightens in towns: the layers' radius
+stops where the built walls around the viewer add up to `detail.budget` metres
+(60 km by default, never under 300 m), and the rebuild step shrinks with it. A
+village never reaches the budget and keeps its full reach. `budget: Infinity`
+turns this off.
 
 On `demo/lab/mount.html` (`await mountLab.run({ reach: null, lieu: 'angers',
 detail: { radius: 400, density: 0.4 }, view: { segmentsByRing: [96, 48, 24] } })`),

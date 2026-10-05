@@ -26,9 +26,11 @@
  *   await mountLab.run({ reach: 120, lieu: 'station-montreuil-bellay' })
  *   await mountLab.run({ reach: null })   // la bulle complète, pour comparer
  *   await mountLab.run({ reach: null, detail: { radius: 400, density: 0.4 } })   // décor allégé
+ *   await mountLab.run({ reach: null, detail: { budget: Infinity } })   // sans resserrement en ville
  *
  * Rend les temps par phase (création, `mountAt`, files vidées image par image,
- * premier rendu), les couches les plus lentes, et ce qui a été bâti.
+ * premier rendu), les couches les plus lentes, ce qui a été bâti, et le rayon
+ * et le pas de relève que la densité du lieu laisse au détail.
  */
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
@@ -95,9 +97,9 @@ async function run({ detail = null, view = null, reach = 120, lieu = 'station-mo
   current = { world, scene };
   const layers = Object.entries(world.generationStats)
     .filter(([name]) => !name.endsWith('Etape'))
-    .sort((a, b) => b[1].lastMs - a[1].lastMs)
+    .sort((a, b) => b[1].totalMs - a[1].totalMs)
     .slice(0, 10)
-    .map(([name, v]) => `${name} ${Math.round(v.lastMs)}`);
+    .map(([name, v]) => `${name} ${Math.round(v.totalMs)}`);
   let meshes = 0, triangles = 0;
   scene.traverse((o) => {
     if (!o.isMesh || !o.visible) return;
@@ -114,6 +116,7 @@ async function run({ detail = null, view = null, reach = 120, lieu = 'station-mo
     firstRenderMs: Math.round(t4 - t3),
     renderMs: Math.round(t5 - t4),
     totalMs: Math.round(t4 - t0),
+    decorRadius: c.bubble.decorReachMeters, decorStep: c.bubble.decorStepMeters,
     terrainTiles: c.bubble.tiles.size,
     vectorTiles: c._lastWanted?.length ?? null,
     meshes, triangles: Math.round(triangles),

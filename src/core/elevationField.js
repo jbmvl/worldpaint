@@ -83,6 +83,11 @@ export class ElevationField {
     this.revision = 0;
   }
 
+  /** Un champ de la même source à un autre zoom, avec son propre cache. */
+  atZoom(zoom) {
+    return new this.constructor({ zoom, url: this.url, encoding: this.encoding, maxTiles: this.maxTiles });
+  }
+
   /** Nombre de pixels sur un côté du monde, au zoom courant. */
   get worldPixels() {
     return Math.pow(2, this.zoom) * this.tilePixels;

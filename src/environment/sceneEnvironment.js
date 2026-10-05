@@ -759,6 +759,14 @@ export class SceneEnvironment {
     return this.fog.color;
   }
 
+  /** Change la distance de disparition : le brouillard suit ce qu'il y a à voir. */
+  setFogRadius(radius) {
+    if (!(radius > 0) || radius === this.fogRadius) return;
+    this.fogRadius = radius;
+    this.baseFogDensity = 1.7 / radius;
+    this.fog.density = this.baseFogDensity * fogScale(this.weather);
+  }
+
   dispose() {
     this.precipitation.dispose();
     this.debris.dispose();

@@ -114,6 +114,48 @@ export function cellKey(cx, cz) {
   return (cx + CELL_BIAS) * 32768 + (cz + CELL_BIAS);
 }
 
+/** Au-delà, une grille pleine coûterait plus de mémoire qu'elle n'épargne de lectures. */
+const DENSE_CELLS_MAX = 1 << 22;
+
+/**
+ * Grille pleine des cellules d'un index rangé par `cellKey` : la lecture d'un
+ * point y est un accès de tableau. Faite pour les index interrogés par sommet
+ * de terrain, où la `Map` pèse plus que le calcul qu'elle sert.
+ *
+ * @param {Map<number, Array>} buckets
+ * @returns {{at:(cx:number, cz:number) => Array|undefined}}
+ */
+export function denseCells(buckets) {
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const key of buckets.keys()) {
+    const cx = Math.floor(key / 32768);
+    const cz = key - cx * 32768;
+    if (cx < minX) minX = cx;
+    if (cx > maxX) maxX = cx;
+    if (cz < minZ) minZ = cz;
+    if (cz > maxZ) maxZ = cz;
+  }
+  const width = maxX - minX + 1;
+  const height = maxZ - minZ + 1;
+  if (!(width * height <= DENSE_CELLS_MAX)) {
+    return { at: buckets.size ? (cx, cz) => buckets.get(cellKey(cx, cz)) : () => undefined };
+  }
+  const cells = new Array(width * height).fill(undefined);
+  for (const [key, bucket] of buckets) {
+    const cx = Math.floor(key / 32768);
+    cells[(cx - minX) * height + (key - cx * 32768 - minZ)] = bucket;
+  }
+  const offsetX = minX - CELL_BIAS;
+  const offsetZ = minZ - CELL_BIAS;
+  return {
+    at(cx, cz) {
+      const i = cx - offsetX;
+      const j = cz - offsetZ;
+      return i >= 0 && i < width && j >= 0 && j < height ? cells[i * height + j] : undefined;
+    },
+  };
+}
+
 /**
  * Index de nœuds soudés : deux sommets distants de moins que la tolérance
  * **et au même niveau** sont le même nœud (le premier arrivé impose sa
@@ -1371,6 +1413,8 @@ function smoothChain(chain) {
 export const ROAD_INDEX_MARGIN_M = 3;
 /** Côté d'une cellule de l'index, en mètres. */
 export const ROAD_INDEX_CELL_M = 12;
+/** Jeu des boîtes d'arête de l'index, rangées en simple précision : elles n'écartent jamais à tort. */
+const BOX_SLACK_M = 0.01;
 
 /** Distance d'un point au segment `[a, b]`, et abscisse du projeté. Pure. */
 export function distanceToSegment(x, z, ax, az, bx, bz) {
@@ -1389,20 +1433,31 @@ export function distanceToSegment(x, z, ax, az, bx, bz) {
 
 // Hors de la boîte de `[a, b]` élargie de `margin` : trop loin, sans calculer la distance.
 function outsideBox(x, z, a, b, margin) {
+  const ax = a.x, bx = b.x, az = a.z, bz = b.z;
   return (
-    x < Math.min(a.x, b.x) - margin || x > Math.max(a.x, b.x) + margin ||
-    z < Math.min(a.z, b.z) - margin || z > Math.max(a.z, b.z) + margin
+    x < (ax < bx ? ax : bx) - margin || x > (ax > bx ? ax : bx) + margin ||
+    z < (az < bz ? az : bz) - margin || z > (az > bz ? az : bz) + margin
   );
 }
 
 // L'emprise d'un accès s'arrête au plan du portail : sa terminaison ronde
 // ne doit pas excaver le toit ni la voie portée au-dessus.
 function beyondTunnel(segment, row, x, z) {
+  const works = segment.works;
+  if (!works) return false;
   const a = segment.path[row], b = segment.path[row+1];
   const along = (x-a.x)*(b.x-a.x)+(z-a.z)*(b.z-a.z);
-  if (segment.works?.[row] === WORK_TUNNEL && !segment.works[row+1]) return along < 0;
-  if (segment.works?.[row+1] === WORK_TUNNEL && !segment.works[row]) return along > (b.x-a.x)**2+(b.z-a.z)**2;
+  if (works[row] === WORK_TUNNEL && !works[row+1]) return along < 0;
+  if (works[row+1] === WORK_TUNNEL && !works[row]) return along > (b.x-a.x)**2+(b.z-a.z)**2;
   return false;
+}
+
+function growHits(hits) {
+  for (const key of ['rows', 'ts', 'distances', 'decks']) {
+    const grown = new hits[key].constructor(hits[key].length * 2);
+    grown.set(hits[key]);
+    hits[key] = grown;
+  }
 }
 
 /**
@@ -1438,8 +1493,17 @@ export class RoadIndex {
     this.includeWorks = includeWorks;
     this.cell = cell;
     this.margin = margin;
-    /** @type {Map<number, number[]>} paires (tronçon, ligne) mises à plat. */
+    /** @type {Map<number, number[]>} triplets (tronçon, ligne, arête) mis à plat. */
     this.buckets = new Map();
+
+    let edges = 0;
+    for (const segment of this.segments) {
+      if (Array.isArray(segment?.path)) edges += Math.max(0, segment.path.length - 1);
+    }
+    // Boîte de chaque arête élargie de sa demi-largeur, à plat : une cellule
+    // écarte ses arêtes trop lointaines sans relire leur tracé.
+    const boxes = (this._boxes = new Float32Array(edges * 4));
+    let e = 0;
 
     for (let s = 0; s < this.segments.length; s++) {
       const segment = this.segments[s];
@@ -1448,10 +1512,15 @@ export class RoadIndex {
       const reach = segment.halfWidth + margin;
       const works = segment.works;
 
-      for (let r = 0; r < path.length - 1; r++) {
+      for (let r = 0; r < path.length - 1; r++, e++) {
         if (!includeWorks && works?.[r] && works[r + 1]) continue;
         const a = path[r];
         const b = path[r + 1];
+        const slack = segment.halfWidth + BOX_SLACK_M;
+        boxes[e * 4] = Math.min(a.x, b.x) - slack;
+        boxes[e * 4 + 1] = Math.max(a.x, b.x) + slack;
+        boxes[e * 4 + 2] = Math.min(a.z, b.z) - slack;
+        boxes[e * 4 + 3] = Math.max(a.z, b.z) + slack;
         const minX = Math.floor((Math.min(a.x, b.x) - reach) / cell);
         const maxX = Math.floor((Math.max(a.x, b.x) + reach) / cell);
         const minZ = Math.floor((Math.min(a.z, b.z) - reach) / cell);
@@ -1461,12 +1530,20 @@ export class RoadIndex {
           for (let cz = minZ; cz <= maxZ; cz++) {
             const key = cellKey(cx, cz);
             const bucket = this.buckets.get(key);
-            if (bucket) bucket.push(s, r);
-            else this.buckets.set(key, [s, r]);
+            if (bucket) bucket.push(s, r, e);
+            else this.buckets.set(key, [s, r, e]);
           }
         }
       }
     }
+    this._cells = denseCells(this.buckets);
+    this.found = {
+      segments: [],
+      rows: new Int32Array(32),
+      ts: new Float64Array(32),
+      distances: new Float64Array(32),
+      decks: new Float64Array(32),
+    };
   }
 
   /**
@@ -1481,11 +1558,14 @@ export class RoadIndex {
    */
   query(x, z, margin = 0, accept = null) {
     const reach = Math.min(margin, this.margin);
-    const bucket = this.buckets.get(cellKey(Math.floor(x / this.cell), Math.floor(z / this.cell)));
+    const bucket = this._cells.at(Math.floor(x / this.cell), Math.floor(z / this.cell));
     if (!bucket) return null;
 
     let best = null;
-    for (let i = 0; i < bucket.length; i += 2) {
+    const boxes = this._boxes;
+    for (let i = 0; i < bucket.length; i += 3) {
+      const e = bucket[i + 2] * 4;
+      if (x < boxes[e] - reach || x > boxes[e + 1] + reach || z < boxes[e + 2] - reach || z > boxes[e + 3] + reach) continue;
       const index = bucket[i];
       const row = bucket[i + 1];
       const segment = this.segments[index];
@@ -1495,11 +1575,19 @@ export class RoadIndex {
       const b = segment.path[row + 1];
       const limit = segment.halfWidth + reach;
       if (outsideBox(x, z, a, b, limit)) continue;
-      const hit = distanceToSegment(x, z, a.x, a.z, b.x, b.z);
-      if (hit.distance > limit) continue;
-      if (best && hit.distance >= best.distance) continue;
-      best = { segment, index, row, t: hit.t, distance: hit.distance,
-        ...(!this.includeWorks && beyondTunnel(segment,row,x,z) ? { covered: true } : {}) };
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const lengthSq = dx * dx + dz * dz;
+      let t = 0;
+      if (lengthSq > 0) {
+        t = ((x - a.x) * dx + (z - a.z) * dz) / lengthSq;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+      }
+      const distance = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
+      if (distance > limit) continue;
+      if (best && distance >= best.distance) continue;
+      best = { segment, index, row, t, distance };
+      if (!this.includeWorks && beyondTunnel(segment, row, x, z)) best.covered = true;
     }
     return best;
   }
@@ -1522,11 +1610,14 @@ export class RoadIndex {
    */
   queryAll(x, z, margin = 0) {
     const reach = Math.min(margin, this.margin);
-    const bucket = this.buckets.get(cellKey(Math.floor(x / this.cell), Math.floor(z / this.cell)));
+    const bucket = this._cells.at(Math.floor(x / this.cell), Math.floor(z / this.cell));
     if (!bucket) return [];
 
     const hits = [];
-    for (let i = 0; i < bucket.length; i += 2) {
+    const boxes = this._boxes;
+    for (let i = 0; i < bucket.length; i += 3) {
+      const e = bucket[i + 2] * 4;
+      if (x < boxes[e] - reach || x > boxes[e + 1] + reach || z < boxes[e + 2] - reach || z > boxes[e + 3] + reach) continue;
       const index = bucket[i];
       const row = bucket[i + 1];
       const segment = this.segments[index];
@@ -1534,13 +1625,75 @@ export class RoadIndex {
       const b = segment.path[row + 1];
       const limit = segment.halfWidth + reach;
       if (outsideBox(x, z, a, b, limit)) continue;
-      const hit = distanceToSegment(x, z, a.x, a.z, b.x, b.z);
-      if (hit.distance > limit) continue;
-      hits.push({ segment, index, row, t: hit.t, distance: hit.distance,
-        ...(!this.includeWorks && beyondTunnel(segment,row,x,z) ? { covered: true } : {}) });
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const lengthSq = dx * dx + dz * dz;
+      let t = 0;
+      if (lengthSq > 0) {
+        t = ((x - a.x) * dx + (z - a.z) * dz) / lengthSq;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+      }
+      const distance = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
+      if (distance > limit) continue;
+      const hit = { segment, index, row, t, distance };
+      if (!this.includeWorks && beyondTunnel(segment, row, x, z)) hit.covered = true;
+      hits.push(hit);
     }
-    hits.sort((p, q) => p.distance - q.distance);
+    if (hits.length > 1) hits.sort((p, q) => p.distance - q.distance);
     return hits;
+  }
+
+  /**
+   * Les mêmes chaussées que `queryAll`, rangées à plat dans `this.found` et
+   * sans ordre : `segments`, `rows`, `ts`, `distances`, et `decks` (`NaN` là
+   * où `deckAt` rendrait `null`). Pour qui interroge l'index à chaque sommet
+   * du terrain et ne retient qu'un minimum : la réserve est réécrite à
+   * l'appel suivant.
+   *
+   * @returns {number} nombre de chaussées trouvées.
+   */
+  collect(x, z, margin = 0) {
+    const into = this.found;
+    const reach = Math.min(margin, this.margin);
+    const bucket = this._cells.at(Math.floor(x / this.cell), Math.floor(z / this.cell));
+    if (!bucket) return 0;
+
+    let count = 0;
+    const boxes = this._boxes;
+    for (let i = 0; i < bucket.length; i += 3) {
+      const e = bucket[i + 2] * 4;
+      if (x < boxes[e] - reach || x > boxes[e + 1] + reach || z < boxes[e + 2] - reach || z > boxes[e + 3] + reach) continue;
+      const row = bucket[i + 1];
+      const segment = this.segments[bucket[i]];
+      const a = segment.path[row];
+      const b = segment.path[row + 1];
+      const limit = segment.halfWidth + reach;
+      if (outsideBox(x, z, a, b, limit)) continue;
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const lengthSq = dx * dx + dz * dz;
+      let t = 0;
+      if (lengthSq > 0) {
+        t = ((x - a.x) * dx + (z - a.z) * dz) / lengthSq;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+      }
+      const distance = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
+      if (distance > limit) continue;
+      if (count === into.rows.length) growHits(into);
+      const platform = segment.platform;
+      let deck = NaN;
+      if (platform && (this.includeWorks || !beyondTunnel(segment, row, x, z))) {
+        const h = platform[row];
+        deck = h + (platform[Math.min(platform.length - 1, row + 1)] - h) * t;
+      }
+      into.segments[count] = segment;
+      into.rows[count] = row;
+      into.ts[count] = t;
+      into.distances[count] = distance;
+      into.decks[count] = deck;
+      count++;
+    }
+    return count;
   }
 
   /**
@@ -1569,7 +1722,7 @@ export class RoadIndex {
       for (let cz = cz0; cz <= cz1; cz++) {
         const bucket = this.buckets.get(cellKey(cx, cz));
         if (!bucket) continue;
-        for (let i = 0; i < bucket.length; i += 2) {
+        for (let i = 0; i < bucket.length; i += 3) {
           const index = bucket[i];
           const row = bucket[i + 1];
           const key = index * 1048576 + row;
@@ -1614,7 +1767,7 @@ export class RoadIndex {
       for (let iz = cz - span; iz <= cz + span; iz++) {
         const bucket = this.buckets.get(cellKey(ix, iz));
         if (!bucket) continue;
-        for (let i = 0; i < bucket.length; i += 2) {
+        for (let i = 0; i < bucket.length; i += 3) {
           const index = bucket[i];
           const row = bucket[i + 1];
           const segment = this.segments[index];

@@ -171,6 +171,19 @@ export class VectorTileSource {
     }
   }
 
+  /**
+   * Tuiles en cache de la liste, telles que décodées (`{ tile, x, y, z }`) :
+   * pour qui lit une couche en coordonnées de tuile, sans la convertir.
+   */
+  entriesOf(tiles) {
+    const entries = [];
+    for (const { x, y } of tiles) {
+      const entry = this.tiles.get(tileKey(this.zoom, x, y));
+      if (entry) entries.push(entry);
+    }
+    return entries;
+  }
+
   dispose() {
     this.disposed = true;
     this.tiles.clear();

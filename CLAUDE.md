@@ -59,6 +59,11 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   yawDeg, pitchDeg, distance, jitter, step })` (`jitter`, `step` remplacent
   `edgeJitterM`, `edgeStepM`) et `contoursLab.info()` (durée de la relecture).
 
+- `demo/lab/far.html` — le relief lointain et le brouillard qui le suit, par
+  `createWorld` sur un relief calculé (vallée de montagne, collines, plaine) ;
+  `await farLab.set({ relief, far, x, z, yawDeg, pitchDeg, height, dx, dz,
+  matrix })` et `farLab.info()` (amplitude, part du lointain, rayon du
+  brouillard, durée du recalage).
 - `demo/lab/shop.html` — le bâti seul le long d'une rue plate, avec des
   commerces en pignon, en long pan ou sans rue devant ;
   `shopLab.set({ yawDeg, pitchDeg, distance, night })`, ou

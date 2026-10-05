@@ -43,7 +43,7 @@ import {
   lngLatToTile,
   tileSizeMeters,
 } from '../core/tileMath.js';
-import { REACH_MARGIN, REACH_MARGIN_M } from '../core/decorReach.js';
+import { REACH_MARGIN, REACH_MARGIN_M, decorStepFor } from '../core/decorReach.js';
 import { DEM_TILE_PIXELS } from '../core/elevationField.js';
 import { TerrainMaterialFactory } from './terrainMaterial.js';
 import { defaultTheme } from '../themes/default.js';
@@ -76,6 +76,9 @@ export class TerrainBubble {
    * @param {number} [options.verticalScale] Exagération du relief (1 = réel).
    * @param {Object} [options.groundClass] Instance `GroundClassMap`, transmise
    *        au matériau : c'est elle qui décide la matière du sol.
+   * @param {boolean} [options.edgeVisible] Vrai quand le brouillard ne cache plus
+   *        le bord du bloc (relief lointain) : le MNT se charge alors jusqu'à
+   *        ce que lisent les normales de ce bord.
    */
   constructor({
     THREE,
@@ -89,8 +92,11 @@ export class TerrainBubble {
     theme = defaultTheme,
     reach = Infinity,
     decorRadius = Infinity,
+    edgeVisible = false,
   }) {
     this.THREE = THREE;
+    /** Marge de MNT chargée autour du bloc, en tuiles : celle que lisent les normales de son bord. */
+    this._demMargin = edgeVisible ? 2 / (DEM_TILE_PIXELS * Math.pow(2, elevation.zoom - zoom)) : 0;
     this.scene = scene;
     this.elevation = elevation;
     this.zoom = zoom;
@@ -103,6 +109,8 @@ export class TerrainBubble {
     this._reach = Number.isFinite(reach) && reach > 0 ? reach : Infinity;
     /** Rayon du détail (`detail.radius`) : plafonne les couches, pas le relief ni les tuiles. */
     this._decorRadius = Number.isFinite(decorRadius) && decorRadius > 0 ? decorRadius : Infinity;
+    /** Rayon du détail que laisse la densité du lieu (`setDetailBudgetRadius`). */
+    this._budgetRadius = Infinity;
     /** Disque de la portée autour du dernier centre, `null` sans portée : le déblai s'y limite. */
     this._reachDisc = null;
 
@@ -213,9 +221,24 @@ export class TerrainBubble {
     return this._reach;
   }
 
-  /** Portée des couches du décor : la plus courte de la portée et du rayon du détail. */
+  /** Portée des couches du décor : la plus courte de la portée, du rayon du détail et de celui du budget. */
   get decorReachMeters() {
-    return Math.min(this._reach, this._decorRadius);
+    return Math.min(this._reach, this._decorRadius, this._budgetRadius);
+  }
+
+  /** Rayon que la densité du lieu laisse au détail (`budgetedRadius`), posé avant chaque reconstruction du décor. */
+  setDetailBudgetRadius(radius) {
+    this._budgetRadius = radius > 0 ? radius : Infinity;
+  }
+
+  /** Déplacement de l'observateur avant de refaire le décor : il se resserre avec le rayon du budget. */
+  get decorStepMeters() {
+    return decorStepFor(this._budgetRadius);
+  }
+
+  /** Tuile sous l'observateur `{ x, y }`, ou `null` avant le premier centrage. */
+  get centerTile() {
+    return this._centerTile;
   }
 
   /** Rayon approximatif de la bulle, en mètres. */
@@ -285,7 +308,8 @@ export class TerrainBubble {
     // `tilesAround`, qui sert d'abord ce que l'observateur a sous les roues.
     const demTiles = new Map();
     for (const w of wanted) {
-      for (const d of this._demTiles(w.x, w.y)) {
+      const m = this._demMargin;
+      for (const d of this._demTiles(w.x - m, w.y - m, 1 + 2 * m)) {
         const key = tileKey(d.z, d.x, d.y);
         if (!demTiles.has(key)) demTiles.set(key, d);
       }
@@ -574,21 +598,15 @@ export class TerrainBubble {
     if (disc && (x - disc.x) ** 2 + (z - disc.z) ** 2 > disc.radius2) return { elevation: raw, mask: 0 };
     let earth = this._earthworks?.sample(x, z, raw) ?? { elevation: raw, mask: 0 };
     raw = earth.elevation;
-    const unpaved = this._unpaved?.query(x, z, this.cutBenchM + ROAD_CUT_BLEND_M);
+    const bench = this.cutBenchM;
+    const reach = bench + ROAD_CUT_BLEND_M;
+    const unpaved = this._unpaved?.query(x, z, reach);
     if (unpaved) {
-      const mask = roadCutMaskAt(unpaved.distance, unpaved.segment.halfWidth, this.cutBenchM);
+      const mask = roadCutMaskAt(unpaved.distance, unpaved.segment.halfWidth, bench);
       earth = { ...earth, mask: Math.max(earth.mask, mask) };
     }
     const index = this._roadCut;
     if (!index) return earth;
-
-    // La plate-forme est en unités de scène (déjà multipliée par l'exagération
-    // verticale) ; `raw` est en unités de MNT. On compare dans le même espace.
-    const scale = this.verticalScale || 1;
-    const bench = this.cutBenchM;
-    const reach = bench + ROAD_CUT_BLEND_M;
-    let elevation = raw;
-    let mask = earth.mask;
 
     // Toutes les chaussées à portée, pas la plus proche : en ville, le sommet
     // le plus proche d'une rue tombe souvent dans le fond plat de sa voisine,
@@ -599,36 +617,50 @@ export class TerrainBubble {
     // La dalle n'a pas de demi-largeur : son fond plat se mesure depuis son
     // contour, à sa cote la plus basse sur une diagonale de maille (`bench`),
     // sans quoi la corde du terrain passe au-dessus de ses plis.
-    const slab = this._junctions?.deckNear(x, z, reach, undefined, bench);
-    const hits = index.queryAll(x, z, reach);
-    const within = (hit) => hit.distance <= hit.segment.halfWidth + ROAD_CUT_M;
+    const count = index.collect(x, z, reach);
+    const { segments, rows, ts, distances, decks } = index.found;
+    let under = false;
+    for (let i = 0; i < count && !under; i++) {
+      under = distances[i] <= segments[i].halfWidth + ROAD_CUT_M && decks[i] === decks[i];
+    }
+    // Sous une chaussée, une dalle ne compte que si elle recouvre le point :
+    // inutile de mesurer la distance à celles d'à côté.
+    const slab = under
+      ? this._junctions?.deckUnder(x, z, undefined, bench)
+      : this._junctions?.deckNear(x, z, reach, undefined, bench);
+    if (count === 0 && !slab) return earth;
+
+    // La plate-forme est en unités de scène (déjà multipliée par l'exagération
+    // verticale) ; `raw` est en unités de MNT. On compare dans le même espace.
+    const scale = this.verticalScale || 1;
     const inSlab = slab?.distance === 0;
-    let under = inSlab;
-    for (const hit of hits) {
-      if (within(hit) && index.deckAt(hit) != null) under = true;
-    }
-    const cuts = [];
-    for (const hit of hits) {
-      if (under && !within(hit)) continue;
-      const deck = index.deckAt(hit);
-      if (deck == null) continue;
-      const base = hit.segment.crossingBase;
-      const lowered = !!base && deck < base[hit.row] + (base[Math.min(base.length - 1, hit.row + 1)] - base[hit.row]) * hit.t - 0.001;
-      cuts.push({ deck: deck / scale, distance: hit.distance, halfWidth: hit.segment.halfWidth, lowered });
-      mask = Math.max(mask, roadCutMaskAt(hit.distance, hit.segment.halfWidth, bench));
-    }
-    if (slab && (!under || inSlab)) {
-      cuts.push({ deck: slab.deck / scale, distance: slab.distance, halfWidth: 0 });
-      mask = Math.max(mask, roadCutMaskAt(slab.distance, 0, bench));
-    }
-    const lowest = (ground, keep = () => true) =>
-      cuts.reduce((low, c) => (keep(c) ? Math.min(low, cutElevationAt(ground, c.deck, c.distance, c.halfWidth, bench)) : low), ground);
-    elevation = lowest(elevation);
+    under ||= inSlab;
 
     // L'appui qu'un franchissement rend à une chaussée voisine ne remonte pas
     // le sol par-dessus une chaussée plus basse ; celle qu'il a lui-même
     // abaissée sous l'ouvrage (`crossingBase`) garde son arbitrage.
-    if (earth.supported) elevation = Math.max(elevation, lowest(earth.elevation, (c) => !c.lowered));
+    let mask = earth.mask;
+    let elevation = raw;
+    let propped = raw;
+    for (let i = 0; i < count; i++) {
+      const segment = segments[i];
+      const distance = distances[i];
+      if (decks[i] !== decks[i] || (under && distance > segment.halfWidth + ROAD_CUT_M)) continue;
+      const row = rows[i];
+      const base = segment.crossingBase;
+      const lowered = !!base && decks[i] < base[row] + (base[Math.min(base.length - 1, row + 1)] - base[row]) * ts[i] - 0.001;
+      const cut = cutElevationAt(raw, decks[i] / scale, distance, segment.halfWidth, bench);
+      elevation = Math.min(elevation, cut);
+      if (!lowered) propped = Math.min(propped, cut);
+      mask = Math.max(mask, roadCutMaskAt(distance, segment.halfWidth, bench));
+    }
+    if (slab && (!under || inSlab)) {
+      const low = cutElevationAt(raw, slab.deck / scale, slab.distance, 0, bench);
+      elevation = Math.min(elevation, low);
+      propped = Math.min(propped, low);
+      mask = Math.max(mask, roadCutMaskAt(slab.distance, 0, bench));
+    }
+    if (earth.supported) elevation = Math.max(elevation, propped);
     return { elevation, mask };
   }
 

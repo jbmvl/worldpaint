@@ -12,11 +12,9 @@ son état.
 | --- | --- |
 | `roadGraph.js` | recoud les chaussées, arrondit leurs brisures, relève les carrefours (un carrefour est un **nœud**, pas une image) |
 | `roadNetwork.js` | les rubans de chaussée, leur plate-forme, l'index publié |
-| `roadJunctions.js` | la surface d'un carrefour, ses bouches, qui cède le passage — et les deux formes à part : la fourche et la couronne du giratoire |
-| `junctionSeams.js` | propriétaires de graphe, frontières XYZ et intervalles des rubans ; cotes finales après les ouvrages |
-| `junctionLinks.js` | surface commune des petites boucles reconvergentes sans îlot découvert, sans changer le graphe |
-| `junctionTriangulation.js` | triangles partagés entre rendu, altitude et déblai ; découpage en oreilles des contours concaves |
-| `roadRoundabouts.js` | reconnaît un giratoire (une face du graphe petite et ronde) : il est publié comme **un** carrefour, dont `roadJunctions` fait une couronne |
+| `roadJunctions.js` | la surface d'un carrefour : les bandes de ses bras, leurs arrondis et joints, réunis ; ses bouches, la découpe des rubans, ses cotes, qui cède le passage |
+| `junctionPolygons.js` | géométrie plane des surfaces : union d'anneaux (îlots compris) et triangulation de Delaunay |
+| `roadRoundabouts.js` | reconnaît un giratoire (une face du graphe petite et ronde) : il est publié comme **un** carrefour, dont l'anneau entier entre dans la surface |
 | `roadEdges.js`, `roadCorridor.js` | la rive de la chaussée, et l'emprise que le décor ne franchit pas |
 | `transportCrossings.js` | profils routiers et ferroviaires aux franchissements ; préserve les accès et les passages à niveau |
 | `tunnelSeams.js` | fermeture des dégagements des portails par intersection avec les triangles du terrain publié |

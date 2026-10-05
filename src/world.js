@@ -39,6 +39,7 @@ import {
   skyPaletteFor,
 } from './environment/sceneEnvironment.js';
 import { tileSizeMeters } from './core/tileMath.js';
+import { FAR_DEM_ZOOM_DROP } from './terrain/farRelief.js';
 import { resolveTheme } from './themes/theme.js';
 import { defaultTheme } from './themes/default.js';
 
@@ -49,13 +50,29 @@ import { defaultTheme } from './themes/default.js';
  * Les anneaux entaillés font exception et gardent la maille fine : c'est le plus
  * grossier d'entre eux qui fixe la largeur du fond plat du déblai
  * (`roadCut.cutBenchAt`), et un fond plat large se lit comme une terrasse.
+ *
+ * `farBlockSize` est le côté, en tuiles, du relief lointain (`farRelief.js`) :
+ * il ne se monte qu'en pays de relief, et le brouillard s'écarte alors au-delà
+ * de son bord (`FAR_FOG_REACH`), sauf si l'application a fixé `sky.fogRadius`.
+ * Zéro le retire.
  */
 export const DEFAULT_VIEW = {
   zoom: 15,
   blockSize: 3,
+  farBlockSize: 31,
   segmentsByRing: [192, 192, 48],
   maxAnisotropy: 4,
 };
+
+/**
+ * Rayon du brouillard en pays de relief, en part du demi-côté du relief
+ * lointain. Au-delà de 1 : un sommet au bord de la nappe se lit encore, le
+ * brouillard n'effaçant presque tout qu'à son propre rayon.
+ */
+const FAR_FOG_REACH = 1.6;
+
+/** Temps que met le brouillard à rejoindre le rayon que le relief lointain lui donne, en secondes. */
+const FOG_FOLLOW_S = 1.5;
 
 /**
  * Zoom des tuiles du MNT, distinct de celui de la bulle : c'est le zoom
@@ -83,13 +100,17 @@ export const DEFAULT_ELEVATION_ZOOM = 14;
  * @param {number} [options.reach] Portée du décor, en mètres. Chaque couche limite
  *        son rayon à cette valeur (jamais au-delà du sien) et les tuiles vectorielles
  *        se réduisent à celles qui la touchent. Le brouillard garde le rayon de
- *        la bulle (`sky.fogRadius` pour le rapprocher). Pour une
+ *        la bulle (`sky.fogRadius` pour le rapprocher), sans relief lointain. Pour une
  *        scène fixe (départ, arrivée, rejeu) : monter avec `mountAt`. Absente,
  *        le comportement est celui de toujours.
  * @param {Object} [options.detail] Allègement pour un appareil modeste, sans
  *        figer la scène : `radius` plafonne en mètres le rayon des couches (bâti,
  *        rues, chaussées, mobilier…) mais pas le relief, les tuiles ni les arbres ;
- *        `density` (0..1) éclaircit l'herbe et les cultures. Défaut : tout le détail.
+ *        `density` (0..1) éclaircit l'herbe et les cultures. `budget` est la longueur
+ *        de murs bâtis, en mètres, que le détail s'autorise autour de l'observateur
+ *        (`DETAIL_WALL_BUDGET_M` par défaut) : en ville le rayon des couches se
+ *        resserre jusqu'à le tenir, jamais sous 300 m, et la relève se rapproche
+ *        d'autant ; `Infinity` garde partout tout le détail.
  * @param {Object|null} [options.theme] Direction artistique — tranches
  *        entières qui remplacent celles de `defaultTheme`, voir `resolveTheme`.
  * @param {Object|null} [options.sky] Ciel, soleil et brouillard. `null` (le
@@ -97,7 +118,8 @@ export const DEFAULT_ELEVATION_ZOOM = 14;
  *        `three/examples/jsm/objects/Sky.js`.
  * @param {Object} [options.sky.Sky]
  * @param {{fog: string, nightZenith: string, nightHorizon: string}} [options.sky.palette]
- * @param {number} [options.sky.fogRadius] Défaut : le demi-côté de la bulle.
+ * @param {number} [options.sky.fogRadius] Défaut : le demi-côté de la bulle, que
+ *        le relief lointain écarte en pays de relief. Fixé, il ne bouge plus.
  * @param {number} [options.sky.shadowMapSize]
  * @param {number} [options.sky.toneMappingExposure] Celle du renderer (ACES). Défaut : 0,5.
  * @param {Object} [options.sky.weather] Temps qu'il fait au montage (voir
@@ -145,6 +167,12 @@ export function createWorld({
     theme: resolved,
     reach: Number.isFinite(reach) && reach > 0 ? reach : Infinity,
     detail: detail || {},
+    far: settings.farBlockSize > settings.blockSize && !Number.isFinite(reach)
+      ? {
+          elevation: field.atZoom(Math.min(field.zoom, Math.max(0, settings.zoom - FAR_DEM_ZOOM_DROP))),
+          blockSize: settings.farBlockSize,
+        }
+      : null,
   });
 
   let environment = null;
@@ -176,6 +204,7 @@ export function createWorld({
     // Le pays n'a le droit de teinter l'air que si l'application n'a pas
     // choisi sa propre palette : entre le pays et l'auteur, c'est l'auteur.
     skyFollowsRegion: !sky?.palette,
+    fogFollowsFar: !Number.isFinite(sky?.fogRadius),
   });
 }
 
@@ -191,8 +220,11 @@ export class World {
     ownsElevation,
     theme = defaultTheme,
     skyFollowsRegion = true,
+    fogFollowsFar = true,
   }) {
     this.composer = composer;
+    /** Rayon de brouillard de la bulle seule : celui d'où le relief lointain l'écarte. */
+    this._nearFogRadius = fogFollowsFar ? environment?.fogRadius ?? null : null;
     this._skyFollowsRegion = skyFollowsRegion;
     /** Matrice pour laquelle `_skyPalette` a été composée. */
     this._skyMatrix = undefined;
@@ -576,6 +608,18 @@ export class World {
     this.composer.advance(delta, at);
     // Animée en temps réel écoulé, contrairement à `updateSky` qui ne connaît qu'une date.
     this.environment?.advance(delta, at, (x, z) => this.composer.groundElevationAt(x, z));
+    this._followFar(delta);
+  }
+
+  /** Écarte le brouillard vers le relief lointain, à la mesure du relief, sans à-coup. */
+  _followFar(delta) {
+    const far = this.composer.far;
+    const near = this._nearFogRadius;
+    if (!far || !near || !this.environment) return;
+    const target = near + Math.max(0, far.radiusMeters * FAR_FOG_REACH - near) * far.farness;
+    const now = this.environment.fogRadius;
+    const next = now + (target - now) * (1 - Math.exp(-delta / FOG_FOLLOW_S));
+    this.environment.setFogRadius(Math.abs(target - next) < 1 ? target : next);
   }
 
   /**

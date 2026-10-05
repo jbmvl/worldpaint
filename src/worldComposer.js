@@ -1,6 +1,6 @@
 import { collectCrossingRails } from './layers/transportCrossings.js';
 import { GenerationBudget } from './core/generationBudget.js';
-import { DECOR_STEP_M, REACH_MARGIN, REACH_MARGIN_M } from './core/decorReach.js';
+import { DECOR_STEP_M, DETAIL_WALL_BUDGET_M, REACH_MARGIN, REACH_MARGIN_M, budgetedRadius } from './core/decorReach.js';
 import { PlantSupportAtlas } from './terrain/plantSupportAtlas.js';
 import { GenerationMetrics } from './inspect/generationMetrics.js';
 /*
@@ -44,6 +44,10 @@ import { GenerationMetrics } from './inspect/generationMetrics.js';
  * jouer. C'est la seule façon d'avoir du mouvement dans un décor par ailleurs
  * entièrement figé sans payer une reconstruction par image.
  *
+ * Avant la première couche, le compositeur pose le rayon du détail d'après la
+ * densité bâtie du lieu (`core/decorReach.js`) : en ville il se resserre, et
+ * le pas de relève avec lui.
+ *
  * La génération rend la main entre les étapes après son budget CPU. Les
  * couches sont publiées progressivement dans cet ordre ; les semis par image
  * attendent la fin pour ne pas lire des emprises en cours de reconstruction.
@@ -66,6 +70,7 @@ import { GenerationMetrics } from './inspect/generationMetrics.js';
 
 import { TerrainBubble } from './terrain/terrainBubble.js';
 import { GroundClassMap } from './terrain/groundClassMap.js';
+import { FarRelief } from './terrain/farRelief.js';
 import { RoadNetwork, createRoadMaterials } from './layers/roadNetwork.js';
 import { RailwayLayer } from './layers/railwayLayer.js';
 import { CliffLayer } from './layers/cliffLayer.js';
@@ -74,7 +79,7 @@ import { CombinedIndex } from './layers/roadGraph.js';
 import { BuildingLayer } from './layers/buildingLayer.js';
 import { GardenLayer } from './layers/gardenLayer.js';
 import { StreetLayer } from './layers/streetLayer.js';
-import { FabricIndex, readSettlement } from './layers/settlement.js';
+import { FabricIndex, readSettlement, wallLengthsByDistance } from './layers/settlement.js';
 import { seaDistanceAt } from './layers/coast.js';
 import { VegetationLayer } from './layers/vegetationLayer.js';
 import { GroundCover } from './layers/groundCover.js';
@@ -129,7 +134,9 @@ export class WorldComposer {
    * @param {number} [options.reach] Portée du décor en mètres. Absente, chaque couche garde son rayon.
    * @param {Object} [options.theme] Direction artistique, déjà résolue par
    *        `resolveTheme`. Le compositeur la distribue sans la lire.
-   * @param {{radius?: number, density?: number}} [options.detail] Voir `createWorld`.
+   * @param {{radius?: number, density?: number, budget?: number}} [options.detail] Voir `createWorld`.
+   * @param {{elevation: Object, blockSize: number}|null} [options.far] Relief lointain :
+   *        son `ElevationField` et son côté en tuiles. Absent, rien au-delà de la bulle.
    */
   constructor({
     THREE,
@@ -143,11 +150,14 @@ export class WorldComposer {
     theme = defaultTheme,
     reach = Infinity,
     detail = {},
+    far = null,
   }) {
     this.THREE = THREE;
     this.theme = theme;
     this.disposed = false;
     this._refreshing = false;
+    /** Murs bâtis que le détail s'autorise autour de l'observateur, en mètres (`detail.budget`). */
+    this._detailBudget = detail.budget ?? DETAIL_WALL_BUDGET_M;
 
     /**
      * La racine du décor. Toutes les couches et le relief y sont posés, et pas
@@ -203,8 +213,11 @@ export class WorldComposer {
       theme,
       reach,
       decorRadius: detail.radius,
+      edgeVisible: !!far,
     });
     this.bubble.setMaxAnisotropy(maxAnisotropy);
+    this.far = far ? new FarRelief({ THREE, scene, bubble: this.bubble, ...far }) : null;
+    this.far?.setColor(this.bubble.materials.gapAlbedo);
 
     const bubble = this.bubble;
     this.roadMaterials = createRoadMaterials(THREE, theme.roads);
@@ -417,8 +430,20 @@ export class WorldComposer {
 
   /** Déplace la bulle de terrain. @returns {Promise<boolean>} vrai si elle a bougé. */
   setCenter(lng, lat) {
-    if (this._refreshTask) return this._refreshTask.then(() => this.bubble.setCenter(lng, lat));
-    return this.bubble.setCenter(lng, lat);
+    if (this._refreshTask) return this._refreshTask.then(() => this._center(lng, lat));
+    return this._center(lng, lat);
+  }
+
+  /**
+   * Recentre la bulle et garde en vue tous les recentrages en vol : le décor
+   * ne se bâtit pas sur un relief encore en chargement (`_refresh` les attend).
+   */
+  _center(lng, lat, options) {
+    const task = this.bubble.setCenter(lng, lat, options);
+    const pending = Promise.allSettled([this._centerTask, task]);
+    this._centerTask = pending;
+    pending.then(() => { if (this._centerTask === pending) this._centerTask = null; });
+    return task;
   }
 
   /**
@@ -433,10 +458,11 @@ export class WorldComposer {
    */
   async mountAt(lng, lat, { budgetMs = MOUNT_BUDGET_MS } = {}) {
     if (this._refreshTask) await this._refreshTask;
-    await this.bubble.setCenter(lng, lat, { meshes: false, budgetMs });
+    await this._center(lng, lat, { meshes: false, budgetMs });
     const built = await this.refresh(lng, lat, { force: true, budgetMs });
     while (this.bubble.processRebuildQueue(Infinity));
     while (this.vegetation.pending) this.vegetation.processQueue(Infinity);
+    this.far?.sync();
     return built;
   }
 
@@ -450,25 +476,31 @@ export class WorldComposer {
    *        changement d'observateur).
    * @returns {Promise<boolean>} vrai si une reconstruction a eu lieu.
    */
-  async refresh(lng, lat, options = {}) {
+  refresh(lng, lat, options = {}) {
     if (this._refreshTask) {
-      // Une demande forcée pendant une construction (région, mot imposé) n'est
-      // pas perdue : elle repasse dès que la construction en cours finit.
-      if (options.force) this._forcedRefresh = { lng, lat };
-      return false;
+      if (!options.force) return Promise.resolve(false);
+      // Une demande forcée (montage, région, mot imposé) interrompt la
+      // construction en cours et prend sa suite : la laisser finir bâtirait le
+      // décor deux fois. Sa promesse ne se résout qu'une fois son décor bâti.
+      this._forcedRefresh = { lng, lat, options };
+      this._superseded = true;
+      this._forcedTask ??= this._refreshTask.then(() => {
+        const next = this._forcedRefresh;
+        this._forcedRefresh = this._forcedTask = null;
+        return this.disposed ? false : this.refresh(next.lng, next.lat, next.options);
+      });
+      return this._forcedTask;
     }
-    const task = this._refresh(lng, lat, options);
+    this._superseded = false;
+    const settle = () => { if (this._refreshTask === task) this._refreshTask = null; };
+    const task = this._refresh(lng, lat, options).finally(settle);
     this._refreshTask = task;
-    try { return await task; } finally {
-      this._refreshTask = null;
-      const next = this._forcedRefresh;
-      this._forcedRefresh = null;
-      if (next && !this.disposed) this.refresh(next.lng, next.lat, { force: true });
-    }
+    return task;
   }
 
   async _refresh(lng, lat, { force = false, budgetMs } = {}) {
-    if (this.disposed || this._refreshing || !this.vectorTiles || !this.bubble.frame) return false;
+    while (this._centerTask) await this._centerTask;
+    if (this.disposed || this._refreshing || this._superseded || !this.vectorTiles || !this.bubble.frame) return false;
 
     const here = this.bubble.frame.toLocal(lng, lat);
     // Les arbres se sèment à part (file par tuile) : ils doivent connaître la portée avant `sync`.
@@ -501,14 +533,14 @@ export class WorldComposer {
     this.vegetation.sync();
 
     // Une seule règle pour tout le décor : il se refait d'un bloc quand
-    // l'observateur s'est éloigné de `DECOR_STEP_M` de l'ancre, quand le repère,
+    // l'observateur s'est éloigné du pas de relève de l'ancre, quand le repère,
     // la région ou la surface affichée du terrain ont changé, ou quand des
     // données nouvelles sont arrivées. Jamais une couche seule.
     force ||= this._incompleteRefresh === true;
     const anchor = this._decorAnchor;
     const stale = regionChanged || !anchor || anchor.frame !== this.bubble.frame ||
       anchor.surface !== this.bubble.surfaceGeneration ||
-      Math.hypot(here.x - anchor.x, here.z - anchor.z) >= DECOR_STEP_M;
+      Math.hypot(here.x - anchor.x, here.z - anchor.z) >= (this.bubble.decorStepMeters ?? DECOR_STEP_M);
     if (!force && !stale && this.vectorTiles.missing(wanted) === 0) return false;
 
     this._refreshing = true;
@@ -520,14 +552,14 @@ export class WorldComposer {
           return !previous || previous.x !== t.x || previous.y !== t.y || previous.entry !== entries[i];
         });
       if (!force && !stale && !dataChanged) return false;
-      if (this.disposed || this.bubble.disposed) return false;
+      if (this.disposed || this.bubble.disposed || this._superseded) return false;
       this._incompleteRefresh = true;
       this._building = true;
       const budget = new GenerationBudget(budgetMs ? { milliseconds: budgetMs } : undefined);
       const frame = this.bubble.frame;
       const checkpoint = async () => {
         await budget.checkpoint();
-        return !this.disposed && !this.bubble.disposed && this.bubble.frame === frame;
+        return !this.disposed && !this.bubble.disposed && this.bubble.frame === frame && !this._superseded;
       };
       const rebuild = async (layer, label, ...args) => {
         if (!layer.rebuildSteps) { layer.rebuild(...args); return true; }
@@ -551,6 +583,12 @@ export class WorldComposer {
           this.metrics?.record(label, cpu);
         }
       };
+
+      // Le rayon du détail suit la densité du lieu, et toutes les couches le
+      // lisent : il se pose avant la première.
+      this.bubble.setDetailBudgetRadius?.(
+        budgetedRadius(wallLengthsByDistance(this.vectorTiles, wanted, frame, here), this._detailBudget)
+      );
 
       // 0. « Sommes-nous en ville ? » — avant tout le monde, parce que la carte
       //    du sol y peint son trottoir et que les chaussées en dépendent (voies
@@ -738,6 +776,7 @@ export class WorldComposer {
     this.groundClass.setRegion(region);
     this.furniture.setRegion(region);
     this.bubble.materials.setRegion(region);
+    this.far?.setColor(this.bubble.materials.gapAlbedo);
     this.grass.setRegion(region);
     this.crops.setRegion(region);
   }
@@ -878,6 +917,7 @@ export class WorldComposer {
       this.vegetation.processQueue();
       this.bubble.processRebuildQueue();
     }
+    this.far?.sync();
     // Les rides de l'eau vivent dans le shader de terrain, avec elle.
     this.bubble.materials.advanceWater(delta);
     this.grass.advance(delta);
@@ -993,6 +1033,7 @@ export class WorldComposer {
     this.roadMaterials.dispose();
     this.vectorTiles?.dispose();
     this.groundClass.dispose();
+    this.far?.dispose();
     this.bubble.dispose();
     this._scene?.remove(this.root);
   }

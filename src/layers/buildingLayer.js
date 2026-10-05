@@ -386,19 +386,15 @@ export function pushFacetQuad(buffer, p0, p1, p2, p3, color) {
 }
 
 export function pushPanel(buffer, a, b, bottom, top, nx, nz, low, high) {
-  const corners = [
-    [a.x, bottom, a.y, low],
-    [b.x, top, b.y, high],
-    [b.x, bottom, b.y, low],
-    [a.x, bottom, a.y, low],
-    [a.x, top, a.y, high],
-    [b.x, top, b.y, high],
-  ];
-  for (const [x, y, z, color] of corners) {
-    buffer.positions.push(x, y, z);
-    buffer.normals.push(nx, 0, nz);
-    buffer.colors.push(color[0], color[1], color[2]);
-  }
+  buffer.positions.push(
+    a.x, bottom, a.y, b.x, top, b.y, b.x, bottom, b.y,
+    a.x, bottom, a.y, a.x, top, a.y, b.x, top, b.y
+  );
+  buffer.normals.push(nx, 0, nz, nx, 0, nz, nx, 0, nz, nx, 0, nz, nx, 0, nz, nx, 0, nz);
+  buffer.colors.push(
+    low[0], low[1], low[2], high[0], high[1], high[2], low[0], low[1], low[2],
+    low[0], low[1], low[2], high[0], high[1], high[2], high[0], high[1], high[2]
+  );
 }
 
 /**
@@ -407,19 +403,13 @@ export function pushPanel(buffer, a, b, bottom, top, nx, nz, low, high) {
  * mur, la normale ne change donc pas.
  */
 export function pushBand(buffer, a, b, bottomA, bottomB, topA, topB, nx, nz, color) {
-  const corners = [
-    [a.x, bottomA, a.y],
-    [b.x, topB, b.y],
-    [b.x, bottomB, b.y],
-    [a.x, bottomA, a.y],
-    [a.x, topA, a.y],
-    [b.x, topB, b.y],
-  ];
-  for (const [x, y, z] of corners) {
-    buffer.positions.push(x, y, z);
-    buffer.normals.push(nx, 0, nz);
-    buffer.colors.push(color[0], color[1], color[2]);
-  }
+  const r = color[0], g = color[1], k = color[2];
+  buffer.positions.push(
+    a.x, bottomA, a.y, b.x, topB, b.y, b.x, bottomB, b.y,
+    a.x, bottomA, a.y, a.x, topA, a.y, b.x, topB, b.y
+  );
+  buffer.normals.push(nx, 0, nz, nx, 0, nz, nx, 0, nz, nx, 0, nz, nx, 0, nz, nx, 0, nz);
+  buffer.colors.push(r, g, k, r, g, k, r, g, k, r, g, k, r, g, k, r, g, k);
 }
 
 /** Pas du relevé du sol au pied d'un mur, en mètres — de l'ordre d'une baie. */

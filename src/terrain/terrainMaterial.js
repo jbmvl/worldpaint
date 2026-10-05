@@ -314,6 +314,12 @@ export class TerrainMaterialFactory {
 
   get grainUniforms() { return this._uniforms; }
 
+  /** Albédo de la matière posée là où la carte se tait, tel que `setRegion` l'a lavé. */
+  get gapAlbedo() {
+    const uniforms = this._uniforms;
+    return uniforms ? uniforms.uSurfaceAlbedo.value[uniforms.uUnclassified.value - 1] : null;
+  }
+
   _create() {
     const { THREE, look } = this;
     const material = new THREE.MeshLambertMaterial({ color: 0xffffff });

@@ -16,7 +16,7 @@ import { RoadIndex } from './roadGraph.js';
 import { contiguousRuns, crossSlope, STEEP_CROSS_SLOPE } from './furniturePlacement.js';
 import { pointInAreas } from './settlement.js';
 import { edgeClearance, outwardSide, polylineLength } from './roadEdges.js';
-import { junctionBoundaryAt, outlineDeckAt } from './roadJunctions.js';
+import { junctionBoundaryAt } from './roadJunctions.js';
 import { appendGapSurface, appendZebra, collectRoadGaps, gapIsSeam } from './roadBundles.js';
 import {
   MARKING_LIFT_M,
@@ -570,12 +570,9 @@ export class StreetLayer {
         // Sommet par sommet, comme la dalle : sur un versant, un coin de rue
         // relie deux bouches qui ne sont pas à la même hauteur, et une bordure
         // posée à plat y ferait une marche contre l'une des deux.
-        const decks = Float32Array.from(points, (point) => {
-          const deck = area.decks ? outlineDeckAt(point, area.decks) : area.deck;
-          // Une branche hors de portée du réseau n'a pas de cote : le coin
-          // retombe sur celle du nœud plutôt que de porter un `NaN`.
-          return Number.isFinite(deck) ? deck : area.deck;
-        });
+        // Un sommet sans cote (branche hors de portée) retombe sur celle de
+        // la surface plutôt que de porter un `NaN`.
+        const decks = Float32Array.from(points, (point) => (Number.isFinite(point.y) ? point.y : area.deck));
         this._appendKerb(buffer, bands, {
           points,
           decks,
@@ -607,12 +604,23 @@ export class StreetLayer {
       path: points, profile, baseHeights: decks, lift: 0,
       frames: used, smoothRadius: 0,
     });
+    // Les faces verticales de la bordure reposent deux sommets sur le même
+    // point du sol : il n'est lu qu'une fois.
+    let lastX = NaN, lastZ = NaN, lastGround = 0;
+    const groundAt = (x, z) => {
+      if (x !== lastX || z !== lastZ) {
+        lastGround = this.bubble.surfaceElevationAtLocal(x, z) * this.bubble.verticalScale;
+        lastX = x;
+        lastZ = z;
+      }
+      return lastGround;
+    };
     for (let r = 0; r < points.length; r++) {
       const pied = side * (halfWidth + streets.gutterWidth);
-      const supportPied = this.bubble.surfaceElevationAtLocal(
+      const supportPied = groundAt(
         points[r].x + used[r * 4 + 2] * pied,
         points[r].z + used[r * 4 + 3] * pied
-      ) * this.bubble.verticalScale + 0.003;
+      ) + 0.003;
       for (let c = 0; c < profile.length; c++) {
         const at = start + (r * profile.length + c) * 3;
         const vertex = profile[c];
@@ -621,9 +629,7 @@ export class StreetLayer {
           const t = largeur / streets.gutterWidth;
           buffer.positions[at + 1] = (decks[r] + ROAD_LIFT_M) * (1 - t) + supportPied * t;
         } else {
-          const ground = this.bubble.surfaceElevationAtLocal(
-            buffer.positions[at], buffer.positions[at + 2]
-          ) * this.bubble.verticalScale;
+          const ground = groundAt(buffer.positions[at], buffer.positions[at + 2]);
           // Décollement millimétrique pour éviter la concurrence avec le support.
           buffer.positions[at + 1] = ground + 0.003 + vertex.up;
         }

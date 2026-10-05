@@ -29,6 +29,12 @@ lors des retraits sont transférés au GPU. Les cultures recopient leurs
 cellules communes. Les caches sont invalidés par un changement de repère,
 de surface ou d’emprise routière.
 
+Le partage des largeurs de chaussée (`roadWidths`) consulte les surfaces de
+carrefour de tout le réseau lu, pas de la seule portée. Elles ne dépendent
+pas de l'observateur : `WidthAreasMemo` les garde d'une reconstruction à
+l'autre tant que les lignes lues sont les mêmes, et elles ne sont refaites
+qu'à l'arrivée de nouvelles tuiles.
+
 Mesure locale de référence du banc : médiane chaude autour de 41 ms avant
 cache, autour de 2 ms après, sans changement des 73 728 triangles. Les
 lectures DEM passent de 2 239 548 à 186 629 sur les douze reconstructions.
@@ -71,7 +77,9 @@ calcul direct reste utilisé. Les ressources sont libérées avec l’atlas.
 
 La reconstruction vectorielle se fait d'un bloc, toutes couches ensemble, à
 chaque pas de 250 m de l'observateur ou à l'arrivée de données nouvelles
-(`core/decorReach.js`). Une tentative de téléchargement sans nouvelle donnée
+(`core/decorReach.js`). En ville, le rayon du détail est borné par un budget
+de murs bâtis (60 km) et le pas de relève se resserre avec lui : le coût d'une
+reconstruction suit la densité du lieu, pas sa seule étendue. Une tentative de téléchargement sans nouvelle donnée
 ne relance pas la génération. Le compositeur cède après un
 budget CPU de 8 ms, entre couches et entre étapes des routes, bâtiments et
 familles de mobilier. Les étapes publient les maillages à la fin de leur
@@ -105,3 +113,11 @@ Le contrôle `/test/browser/plant-support.html`, servi par le serveur de démo,
 compare numériquement les appuis directs et préparés, sur les deux triangles,
 plusieurs distances, changements de relief et de paramètres : 144 points
 comparés. Il vérifie les calculs GPU sans évaluer le paysage.
+
+Le relief lointain (`terrain/farRelief.js`) se recale quand la tuile centrale
+de la bulle change ou qu'une de ses tuiles vient d'être maillée, jamais par
+image. Sur le banc `demo/lab/far.html`, la lecture des 58 081 altitudes prend
+4 à 7 ms et le maillage (111 000 triangles, un seul appel de dessin) 2 à 8 ms.
+Il charge une à quatre tuiles de MNT au zoom 11, et la bulle une marge de MNT
+autour de son bloc — jusqu'à cinq tuiles de plus au zoom 14 — pour que les
+normales de son bord, que le brouillard ne cache plus, soient justes.

@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Banc du relief lointain</title>
+<style>html,body{margin:0;background:#000}canvas{display:block}</style>
+<script src="/node_modules/suncalc/suncalc.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "/node_modules/three/build/three.module.js",
+  "three/examples/jsm/objects/Sky.js": "/node_modules/three/examples/jsm/objects/Sky.js",
+  "suncalc": "/demo/lab/suncalc-global.js",
+  "pbf": "/node_modules/pbf/index.js",
+  "@mapbox/vector-tile": "/node_modules/@mapbox/vector-tile/index.js",
+  "@mapbox/point-geometry": "/node_modules/@mapbox/point-geometry/index.js"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+/*
+ * Banc du relief lointain — `createWorld` sur un relief calculé, sans tuiles
+ * vectorielles : la bulle nue, la nappe lointaine (`farRelief.js`) et le
+ * brouillard qui la suit.
+ *
+ *   await farLab.set({ relief: 'montagne', yawDeg: 40, pitchDeg: 4, height: 30 })
+ *   await farLab.set({ relief: 'plaine' })          // la nappe ne se monte pas
+ *   await farLab.set({ far: 0 })                    // sans le lointain, pour comparer
+ *   await farLab.set({ x: 900 })                    // l'observateur change de tuile
+ *   await farLab.set({ matrix: 'garrigue' })        // couleur du pays
+ *   farLab.info()
+ *
+ * `relief` : 'montagne' (vallée entre deux chaînes, 1 800 m d'amplitude),
+ * 'collines' (350 m), 'plaine' (40 m) ou 'ventoux' (un sommet de 1 910 m à
+ * 11,7 km à l'est d'un piémont à 340 m). `yawDeg` est le cap du regard
+ * (0 = nord), `pitchDeg` la plongée, `height` la hauteur de l'œil au-dessus du sol ;
+ * `dx`, `dz` écartent l'œil de l'observateur sans déplacer la bulle, pour aller
+ * voir son bord.
+ */
+import * as THREE from 'three';
+import { Sky } from 'three/examples/jsm/objects/Sky.js';
+import { createWorld } from '/src/index.js';
+import { ElevationField } from '/src/core/elevationField.js';
+import { createLocalFrame, tileXToLng, tileYToLat } from '/src/core/tileMath.js';
+
+const LNG = 6.4;
+const LAT = 45.2;
+const frame = createLocalFrame(LNG, LAT, 15);
+
+/** Amplitude du relief, en mètres, par nom. */
+const RELIEFS = { montagne: 1800, collines: 350, plaine: 40, ventoux: 0 };
+let amplitude = RELIEFS.montagne;
+
+/**
+ * Un piémont à 340 m et, 11,7 km à l'est, un sommet de 1 910 m au bout d'une
+ * longue crête est-ouest : ce qu'on voit du Ventoux depuis Malaucène.
+ */
+function ventouxAt(x, z) {
+  const along = Math.max(0, 1 - Math.abs(x - 11700) / (x < 11700 ? 10500 : 14000));
+  const across = Math.exp(-((z + 300) / 3200) ** 2);
+  const foothills = 60 * (Math.sin(x / 900) * Math.sin(z / 700) + 1);
+  return 340 + foothills + 1570 * along ** 0.8 * across;
+}
+
+/** Relief en mètres locaux : une vallée nord-sud sinueuse entre deux chaînes découpées. */
+function heightAt(x, z) {
+  if (state.relief === 'ventoux') return ventouxAt(x, z);
+  const axis = 700 * Math.sin(z / 2600);
+  const across = Math.abs(x - axis) / 4200;
+  const flank = Math.min(1, across) ** 1.4;
+  const crest = 0.5 + 0.5 * Math.sin(z / 1300 + Math.sin(x / 1700) * 2);
+  const spur = 0.5 + 0.5 * Math.sin(x / 520 + z / 910) * Math.sin(z / 640 - x / 1500);
+  return 900 + amplitude * flank * (0.62 + 0.25 * crest + 0.13 * spur);
+}
+
+/** MNT tiré de `heightAt`, à n'importe quel zoom : les tuiles se calculent. */
+class SyntheticElevation extends ElevationField {
+  async load(x, y) {
+    const key = `${this.zoom}/${x}/${y}`;
+    if (this.tiles.has(key)) return this.tiles.get(key);
+    const size = this.tilePixels;
+    const heights = new Float32Array(size * size);
+    for (let j = 0; j < size; j++) {
+      const lat = tileYToLat(y + (j + 0.5) / size, this.zoom);
+      for (let i = 0; i < size; i++) {
+        const p = frame.toLocal(tileXToLng(x + (i + 0.5) / size, this.zoom), lat);
+        heights[j * size + i] = heightAt(p.x, p.z);
+      }
+    }
+    this._store(key, heights);
+    return heights;
+  }
+}
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.5, 40000);
+
+const state = { relief: 'montagne', far: 31, x: 0, z: 0, yawDeg: 40, pitchDeg: 4, height: 30, hour: 15, matrix: null, dx: 0, dz: 0 };
+let world = null;
+let scene = null;
+let built = null;
+let syncMs = null;
+
+async function build() {
+  world?.dispose();
+  amplitude = RELIEFS[state.relief] ?? RELIEFS.montagne;
+  scene = new THREE.Scene();
+  world = createWorld({
+    THREE,
+    scene,
+    elevation: new SyntheticElevation({ zoom: 14, maxTiles: 256 }),
+    view: { farBlockSize: state.far },
+    sky: { Sky },
+  });
+  built = `${state.relief}/${state.far}`;
+}
+
+async function set(patch = {}) {
+  Object.assign(state, patch);
+  if (built !== `${state.relief}/${state.far}`) await build();
+  const c = world.composer;
+  const at = frame.toLngLat(state.x, state.z);
+  await world.setCenter(at.lng, at.lat);
+  while (c.bubble.processRebuildQueue(Infinity));
+  if (c.far) {
+    const t0 = performance.now();
+    await c.far.sync();
+    syncMs = +(performance.now() - t0).toFixed(1);
+  }
+  if (state.matrix) {
+    c.bubble.materials.setRegion({ matrix: state.matrix });
+    c.far?.setColor(c.bubble.materials.gapAlbedo);
+  }
+
+  const here = c.bubble.frame.toLocal(at.lng, at.lat);
+  here.x += state.dx;
+  here.z += state.dz;
+  const y = c.groundElevationAt(here.x, here.z) + state.height;
+  const yaw = (state.yawDeg * Math.PI) / 180;
+  const pitch = (state.pitchDeg * Math.PI) / 180;
+  camera.position.set(here.x, y, here.z);
+  camera.lookAt(here.x + Math.sin(yaw) * Math.cos(pitch), y - Math.sin(pitch), here.z - Math.cos(yaw) * Math.cos(pitch));
+  const date = new Date(Date.UTC(2026, 5, 21, state.hour - Math.round(LNG / 15), 0));
+  // Le brouillard rejoint son rayon en quelques secondes : on les laisse passer.
+  for (let i = 0; i < 20; i++) world.advance(1, { x: here.x, y, z: here.z });
+  const paint = world.updateSky({ camera, date, lng: at.lng, lat: at.lat, shadowAt: { x: here.x, y, z: here.z } });
+  if (paint) renderer.setClearColor(paint.clearColor, 1);
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.render(scene, camera);
+  return info();
+}
+
+function info() {
+  const far = world.composer.far;
+  return {
+    relief: state.relief,
+    amplitude: far ? Math.round(far.amplitude) : null,
+    farness: far ? +far.farness.toFixed(2) : null,
+    monte: far?.mesh.visible ?? false,
+    triangles: far?.mesh.visible ? far.mesh.geometry.index.count / 3 : 0,
+    rayonLointain: far ? Math.round(far.radiusMeters) : null,
+    rayonBrouillard: Math.round(world.environment.fogRadius),
+    syncMs,
+    appels: renderer.info.render.calls,
+  };
+}
+
+window.farLab = { set, info, get world() { return world; } };
+await set();
+window.farLabReady = true;
+</script>
+</body>
+</html>

@@ -32,7 +32,64 @@
  */
 
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
+import { DETAIL_RING_M } from '../core/decorReach.js';
 import { BUILT_UP_CLASSES } from './furniturePlacement.js';
+
+/** Anneaux bâtis par tuile décodée : lus une fois, relus à chaque relève. */
+const wallsByTile = new WeakMap();
+
+/** Premier sommet et périmètre de chaque anneau `building` d'une tuile, en unités de tuile. */
+function tileWalls(entry) {
+  let walls = wallsByTile.get(entry);
+  if (walls) return walls;
+  const layer = entry.tile.layers?.building;
+  const flat = [];
+  for (let i = 0; i < (layer?.length ?? 0); i++) {
+    let rings;
+    try {
+      rings = layer.feature(i).loadGeometry();
+    } catch (e) {
+      continue;
+    }
+    for (const ring of rings) {
+      if (ring.length < 4) continue;
+      let length = 0;
+      for (let k = 1; k < ring.length; k++) length += Math.hypot(ring[k].x - ring[k - 1].x, ring[k].y - ring[k - 1].y);
+      flat.push(entry.x + ring[0].x / layer.extent, entry.y + ring[0].y / layer.extent, length / layer.extent);
+    }
+  }
+  walls = Float64Array.from(flat);
+  wallsByTile.set(entry, walls);
+  return walls;
+}
+
+/**
+ * Longueur de murs bâtis par couronne de `DETAIL_RING_M` autour d'un point :
+ * la densité du lieu, telle que `budgetedRadius` la lit pour resserrer le
+ * détail. Une mesure, pas un décompte : un anneau compte entier dans la
+ * couronne de son premier sommet, et une bâtisse coupée par deux tuiles y
+ * revient deux fois.
+ *
+ * @param {Object} source Instance `VectorTileSource`.
+ * @param {Array} tiles   Tuiles à parcourir.
+ * @param {Object} frame  Repère local de la bulle.
+ * @param {{x:number, z:number}} here Point de reconstruction, en mètres locaux.
+ * @returns {number[]} Mètres de murs par couronne, de la plus proche à la plus lointaine.
+ */
+export function wallLengthsByDistance(source, tiles, frame, here) {
+  const rings = [];
+  for (const entry of source?.entriesOf?.(tiles) ?? []) {
+    const walls = tileWalls(entry);
+    const toFrame = Math.pow(2, frame.zoom - entry.z);
+    for (let i = 0; i < walls.length; i += 3) {
+      const x = (walls[i] * toFrame - frame.origin.x) * frame.scale;
+      const z = (walls[i + 1] * toFrame - frame.origin.y) * frame.scale;
+      const ring = Math.floor(Math.hypot(x - here.x, z - here.z) / DETAIL_RING_M);
+      rings[ring] = (rings[ring] || 0) + walls[i + 2] * toFrame * frame.scale;
+    }
+  }
+  return rings;
+}
 
 /**
  * Emprises habitées d'un jeu de tuiles, en anneaux métriques.
@@ -190,8 +247,8 @@ export class UrbanMask {
     // en ville. Ce qui reste tient en quelques dizaines.
     this.builtUp = keepNearDiscs(builtUp, this.discs);
     this.greens = keepNearDiscs(greens, this.discs);
-    this._builtUpBoxes = this.builtUp.map(ringBox);
-    this._greenBoxes = this.greens.map(ringBox);
+    this._builtUpCells = cellsOfRings(this.builtUp);
+    this._greenCells = cellsOfRings(this.greens);
   }
 
   /** Vrai si la fenêtre porte au moins une agglomération de rang urbain. */
@@ -212,14 +269,15 @@ export class UrbanMask {
    * emprise bâtie, et hors du vert urbain.
    *
    * Les trois termes sont posés dans l'ordre de leur coût : quelques disques,
-   * puis les emprises bâties, puis le vert — et chaque anneau est écarté par sa
-   * boîte avant qu'on n'y lance un rayon.
+   * puis les emprises bâties, puis le vert — et seuls les anneaux de la maille
+   * du point sont éprouvés, chacun écarté par sa boîte avant qu'on n'y lance un
+   * rayon.
    */
   covers(x, z) {
     if (this.discs.length === 0) return false;
     if (!this.nearCity(x, z)) return false;
-    if (!inBoxedRings(this.builtUp, this._builtUpBoxes, x, z)) return false;
-    return !inBoxedRings(this.greens, this._greenBoxes, x, z);
+    if (!inCelledRings(this._builtUpCells, x, z)) return false;
+    return !inCelledRings(this._greenCells, x, z);
   }
 }
 
@@ -254,12 +312,35 @@ function keepNearDiscs(rings, discs) {
   });
 }
 
-/** `pointInAreas`, mais chaque anneau est écarté par sa boîte d'abord. */
-function inBoxedRings(rings, boxes, x, z) {
-  for (let i = 0; i < rings.length; i++) {
-    const box = boxes[i];
+/** Côté d'une maille de rangement des anneaux du masque urbain, en mètres. */
+const URBAN_CELL_M = 128;
+
+/** Range des anneaux par maille, avec leur boîte : `inCelledRings` n'en lit qu'une. */
+function cellsOfRings(rings) {
+  const cells = new Map();
+  for (const ring of rings) {
+    const entry = { ring, box: ringBox(ring) };
+    const { minX, minZ, maxX, maxZ } = entry.box;
+    for (let cx = Math.floor(minX / URBAN_CELL_M); cx <= Math.floor(maxX / URBAN_CELL_M); cx++) {
+      for (let cz = Math.floor(minZ / URBAN_CELL_M); cz <= Math.floor(maxZ / URBAN_CELL_M); cz++) {
+        const key = cx * 65536 + cz;
+        const bucket = cells.get(key);
+        if (bucket) bucket.push(entry);
+        else cells.set(key, [entry]);
+      }
+    }
+  }
+  return cells;
+}
+
+/** Vrai si le point tombe dans l'un des anneaux rangés par `cellsOfRings`. */
+function inCelledRings(cells, x, z) {
+  const bucket = cells.get(Math.floor(x / URBAN_CELL_M) * 65536 + Math.floor(z / URBAN_CELL_M));
+  if (!bucket) return false;
+  for (let i = 0; i < bucket.length; i++) {
+    const { ring, box } = bucket[i];
     if (x < box.minX || x > box.maxX || z < box.minZ || z > box.maxZ) continue;
-    if (pointInAreas([rings[i]], x, z)) return true;
+    if (pointInRing(ring, x, z)) return true;
   }
   return false;
 }
@@ -346,18 +427,22 @@ export function ringsOf(geometry) {
 export function pointInAreas(areas, x, z) {
   if (!areas) return false;
   for (const ring of areas) {
-    let inside = false;
-    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-      const zi = ring[i].z;
-      const zj = ring[j].z;
-      if (zi > z !== zj > z) {
-        const t = (z - zi) / (zj - zi || 1);
-        if (x < ring[i].x + t * (ring[j].x - ring[i].x)) inside = !inside;
-      }
-    }
-    if (inside) return true;
+    if (pointInRing(ring, x, z)) return true;
   }
   return false;
+}
+
+function pointInRing(ring, x, z) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const zi = ring[i].z;
+    const zj = ring[j].z;
+    if (zi > z !== zj > z) {
+      const t = (z - zi) / (zj - zi || 1);
+      if (x < ring[i].x + t * (ring[j].x - ring[i].x)) inside = !inside;
+    }
+  }
+  return inside;
 }
 
 /** Côté d'une maille de l'index, en mètres. */

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mergeRoadLines } from '../src/layers/roadGraph.js';
-import { JunctionAreas, junctionSurface, branchYields, pointInOutline } from '../src/layers/roadJunctions.js';
+import { junctionSurface, branchYields, areaCovers } from '../src/layers/roadJunctions.js';
+import { networkOf } from './junctionWorld.mjs';
 import { roadStyleFor } from '../src/layers/roadNetwork.js';
 
 const RAYON = 20;
@@ -40,8 +41,7 @@ test('un pâté de maisons carré n’est pas un giratoire', () => {
 });
 
 test('l’aire d’un giratoire est une couronne : l’îlot n’en est pas', () => {
-  const { junctions } = mergeRoadLines(giratoire());
-  const aires = new JunctionAreas(junctions);
+  const { areas: aires } = networkOf(giratoire());
   assert.equal(aires.length, 1);
   const [aire] = aires.areas;
   assert.equal(aire.mouths.length, 3);
@@ -55,7 +55,7 @@ test('l’aire d’un giratoire est une couronne : l’îlot n’en est pas', ()
 });
 
 test('la dalle d’un giratoire ne couvre pas son îlot', () => {
-  const [aire] = new JunctionAreas(mergeRoadLines(giratoire()).junctions).areas;
+  const [aire] = networkOf(giratoire()).areas.areas;
   const dalle = junctionSurface(aire, 0);
   const { positions, indices } = dalle;
   for (let t = 0; t < indices.length; t += 3) {
@@ -109,8 +109,7 @@ test('une route qui se dédouble : les chaînes s’arrêtent à la fourche, cha
 });
 
 test('la fourche couvre les jambes jusqu’à leur séparation, sur leur tracé courbe', () => {
-  const { junctions } = mergeRoadLines(dedoublement());
-  const aires = new JunctionAreas(junctions);
+  const { areas: aires } = networkOf(dedoublement());
   assert.equal(aires.length, 1);
   const [aire] = aires.areas;
   assert.equal(aire.mouths.length, 3);
@@ -126,5 +125,5 @@ test('la fourche couvre les jambes jusqu’à leur séparation, sur leur tracé 
   // Les deux jambes sont couvertes avant la séparation, l'îlot après ne l'est pas.
   assert.ok(aires.covers(10, jambeZ(10)));
   assert.ok(aires.covers(10, -jambeZ(10)));
-  assert.equal(pointInOutline(aire.outline, 40, 0), false, 'îlot');
+  assert.equal(areaCovers(aire, 40, 0), false, 'îlot');
 });

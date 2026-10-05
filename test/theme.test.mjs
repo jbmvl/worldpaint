@@ -261,6 +261,8 @@ test('le compositeur sert le thème à toutes les couches qu’il monte', () => 
     // d'occupation du sol, la source vectorielle un cache de tuiles, le masque
     // urbain un prédicat de lieu (« sommes-nous en ville ? »).
     if (name === 'GroundClassMap' || name === 'VectorTileSource' || name === 'UrbanMask') continue;
+    // Le relief lointain ne choisit pas sa couleur : il reçoit celle du matériau du terrain.
+    if (name === 'FarRelief') continue;
     assert.ok(/\btheme\b/.test(call), `${name} est monté sans thème`);
   }
 });

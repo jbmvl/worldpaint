@@ -84,6 +84,8 @@ Breaking one of these needs a very good reason, stated in the PR description.
   point, a cap never removes anything inside that radius, and rasters sit on a
   fixed texel grid, so a rebuild reproduces exactly what lies within `NEAR_M`
   (500 m) of the viewer (`core/decorReach.js`, measured by `placeLab.walk`).
+  Where the wall budget tightens the detail radius in a town, the step and the
+  stable zone shrink in the same proportions (`decorStepFor`).
 
 - **No dependency on generation order** beyond what `worldComposer.js` declares.
   A layer reads what an earlier layer published — an index, a segment list — and
@@ -122,15 +124,14 @@ Breaking one of these needs a very good reason, stated in the PR description.
   A roundabout is the one exception to "one node, one junction": its ring is
   a small, round face of the graph (`layers/roadRoundabouts.js`), and every
   node on it folds into a single junction centred on the ring. Its surface is
-  a crown — outer edge pierced by one mouth per branch, island left as
-  terrain — and every branch yields on entering.
+  a crown — the whole ring, one mouth per branch, island left as terrain —
+  and every branch yields on entering.
 
   A **fork** — three branches, two of them leaving at a closed angle (a two-way
-  road splitting into two one-way legs, a slip road leaving a carriageway) — is
-  its own kind of junction (`roadJunctions.forkArea`). Its surface runs along
-  the legs' actual paths up to where their axes are a sum of half-widths apart;
-  that point is the nose of the island. Nobody yields at a fork, and it carries
-  no traffic light.
+  road splitting into two one-way legs, a slip road leaving a carriageway) —
+  needs no shape of its own: its legs' mouths simply wait until the legs have
+  separated, and their inner edges meet at the nose of the island. Nobody
+  yields at a fork, and it carries no traffic light.
 
   A one-way carriageway is one direction of a road, not the whole road: a
   profile's `oneway` keys (theme) replace its own when the data says one-way,
@@ -149,17 +150,26 @@ Breaking one of these needs a very good reason, stated in the PR description.
   Two paved axes that cross in an X with no vertex near the crossing are cut
   there by `splitCrossings`, under the same guards.
 
-  The picture is built from the node in `roadJunctions.js`: branches give an
-  outline, ribbons stop on it, and it is drawn as one surface — **not
-  horizontal**, one height per mouth (`outlineDeckAt`), or a crossroads on a
-  slope steps against every ribbon. The terrain cut reads that slab too
-  (`TerrainBubble.setRoadCut`).
-  La triangulation est commune au rendu et aux lectures d’altitude
-  (`junctionTriangulation`). Un contour concave non visible depuis le nœud
-  est découpé en oreilles ; un contour qui se recoupe y perd d'abord sa plus
-  petite boucle, et une couronne de giratoire se tend toujours de l'îlot au bord.
-  Les rubans reprennent la cote de cette même surface
-  à leur frontière ; un éventail ne doit pas traverser un creux du contour.
+  The picture is built in `roadJunctions.js` from the **arms** of each node —
+  every carriageway leaving it — and nothing else. An arm lends the junction
+  the strip of its own ribbon, from the node to its **mouth**; the mouth is
+  the first section that touches neither another arm's strip nor a corner
+  fillet. Between neighbouring arms a re-entrant sector gets a kerb fillet, a
+  salient one the joint filling the notch between two ends cut at the node,
+  and two edges that never meet ahead of the node a straight taper. The
+  surface is the **union** of those pieces (`junctionPolygons.js`): junctions
+  whose pieces touch share one surface, the graph keeping its nodes, and a
+  hole of the union is an island. Nothing depends on how the graph chained
+  its lines: an arm ends at the next node of its carriageway, and its strip
+  starts on a section square to its first step (`nodeCap`).
+
+  The ribbon stops on the very section the strip ends on (`capAt`), and every
+  vertex of the surface takes its height from the platforms it comes from,
+  read once the platforms are stitched and raised (`updateDecks`). The surface
+  is **not horizontal**, or a crossroads on a slope steps against every
+  ribbon: its interior vertices are the carriageways' own axes. Render,
+  height reads and the terrain cut (`TerrainBubble.setRoadCut`) share one
+  Delaunay triangulation.
 
 - **A junction interrupts a ribbon, not a road.** Corridor, terrain cut,
   platform stitching, spaced furniture and kerbs keep reading one whole chain;
