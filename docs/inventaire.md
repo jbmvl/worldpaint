@@ -980,8 +980,11 @@ facettées intégrées au prototype, sans objet ni instance par fruit. C'est une
 représentation générique du verger : les données de parcelle ne précisent pas
 ici la variété fruitière et aucune saison de fructification n'est simulée.
 
-Une plante a la même forme à toute distance : il n'y a ni plan lointain, ni
-relève, ni budget de volumes. Les instances sont rangées par bloc de 250 m
+Les plantes restent en volume à toute distance. Les blocs éloignés emploient
+deux géométries simplifiées des mêmes lobes, au-delà de 600 et 1000 m du point
+le plus proche de leur sphère, avec une marge de 60 m entre aller et retour.
+Le volume complet est conservé sous 500 m ; les semis, couleurs et matrices
+ne changent pas avec le niveau de détail. Les instances sont rangées par bloc de 250 m
 (`VEGETATION_BLOCK_M`) et par silhouette ; l'élimination hors champ, celle de
 l'image comme celle de la passe d'ombre, écarte les blocs invisibles. Le
 peuplement projette son ombre, le sous-étage la reçoit seulement.

@@ -51,11 +51,19 @@ Le tapis dense utilise neuf brins à trois triangles par maille (27 triangles),
 sans ombres projetées. Sur un plan intégralement herbeux, sa fenêtre et sa
 réserve représentent environ 47 000 mailles, soit 1,27 million de triangles,
 auxquels s'ajoutent les fleurs. La portée visible est limitée à 55 m.
-Arbres et buissons sont tous en volume, à toute distance, rangés par bloc de
-250 m pour l'élimination hors champ. Une forêt pleine (neuf tuiles de bois
-plein, peuplement et sous-étage) sème environ 380 000 plantes, dont 140 000
-dessinées une fois le sous-étage éclairci au-delà de 500 m : environ
-12 millions de triangles en 500 appels (`demo/lab/forest.html`). Le semis
+Arbres et buissons restent en volume, rangés par bloc de 250 m pour
+l'élimination hors champ. Au-delà de 600 puis 1000 m du point le plus proche
+du bloc, deux prototypes simplifiés reprennent les sommets des mêmes lobes ;
+une marge de 60 m empêche les bascules répétées. Positions, couleurs, matrices
+et densités restent identiques. Sous 500 m, le prototype complet est garanti.
+Le bouton **Comparer les maillages** du banc de forêt compare volume complet
+et détail automatique à cadrage identique ; `?view=haut` prend de la hauteur. Une forêt pleine (neuf tuiles de bois plein, peuplement et sous-étage) sème
+environ 390 000 plantes, dont 132 478 instances visibles pour la couche après
+éclaircie, avant élimination exacte par la caméra. Le banc
+`demo/lab/forest.html?view=haut` compte 10 668 984 triangles avec les volumes
+complets, 9 037 116 avec le détail automatique, dans les deux cas 467 appels.
+Ces compteurs incluent les ombres et ne prédisent pas les FPS sur téléphone.
+Le semis
 d'une telle tuile coûte 20 à 40 ms, étalés par étapes de quelques
 millisecondes. Les lanternes utilisent deux lumières ponctuelles
 sans ombres. Le coût GPU est à contrôler sur les appareils cibles, il n'est

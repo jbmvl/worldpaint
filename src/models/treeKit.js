@@ -2,12 +2,15 @@
  * mêmes volumes. Les lobes ont des sommets désalignés et une orientation
  * propre. Les fruits font partie de la même géométrie et de sa projection,
  * sans instance supplémentaire ; le peuplement choisit la variante et sa rotation spatiale.
+ * Les niveaux lointains échantillonnent les mêmes lobes et gardent le repère
+ * normalisé du volume complet ; aucun nouveau tirage ne déplace une houppe.
  */
 import { Kit, seededUnit } from './kit.js';
 import { defaultTheme } from '../themes/default.js';
 
-export function treePrototype(variant, index = 0, look = defaultTheme.trees.volume) {
+export function treePrototype(variant, index = 0, look = defaultTheme.trees.volume, detail = 0) {
   const kit = new Kit();
+  const reduced = detail > 0 ? new Kit() : null;
   const random = seededUnit(7901 + index * 131);
   const hue = variant.hue;
   const bark = variant.bark || look.bark;
@@ -19,6 +22,7 @@ export function treePrototype(variant, index = 0, look = defaultTheme.trees.volu
   const fronds = ['fern', 'marram', 'palm'].includes(variant.kind);
   const trunk = bush ? .18 : conifer ? .23 : column ? .3 : .4;
   if (variant.trunk > 0) kit.cylinder({radiusBottom: variant.trunk * .45, radiusTop: variant.trunk * .24, height: profile.trunkHeight ?? .7, radial: 6, color: bark});
+  if (reduced && variant.trunk > 0) reduced.cylinder({radiusBottom: variant.trunk * .45, radiusTop: variant.trunk * .24, height: profile.trunkHeight ?? .7, radial: 4, color: bark});
   if (fronds) {
     const base = variant.kind === 'palm' ? .7 : .02;
     for (let i = 0; i < (profile.fronds ?? 9); i++) {
@@ -31,10 +35,15 @@ export function treePrototype(variant, index = 0, look = defaultTheme.trees.volu
       const right = [middle[0] + Math.sin(angle) * width, middle[1], middle[2] - Math.cos(angle) * width];
       kit.tri([0, base, 0], left, right, leaf);
       kit.tri(left, tip, right, leaf.map(v => v * 1.12));
+      if (reduced) {
+        reduced.tri([0, base, 0], left, right, leaf);
+        reduced.tri(left, tip, right, leaf.map(v => v * 1.12));
+      }
     }
   } else if (conifer) {
     for (let i=0; i<4; i++) {
       kit.cylinder({radiusBottom: .43-i*.085, radiusTop: .025, height: .4-i*.035, radial: 7, y: .16+i*.15, color: leaf, colorTop: leaf.map(v=>v*1.15)});
+      if (reduced) reduced.cylinder({radiusBottom: .43-i*.085, radiusTop: .025, height: .4-i*.035, radial: detail === 1 ? 5 : 3, y: .16+i*.15, color: leaf, colorTop: leaf.map(v=>v*1.15)});
     }
   } else {
     const lobes = profile.lobes ?? (column ? 3 : 5);
@@ -78,6 +87,16 @@ export function treePrototype(variant, index = 0, look = defaultTheme.trees.volu
           if(r<rings-1) kit.tri(points[r][b],points[r+1][a],points[r+1][b],color);
         }
       }
+      if (reduced) {
+        const rows = detail === 1 ? [0, 1, 3, 4] : [0, 2, 4];
+        const columns = detail === 1 ? [0, 1, 3, 4, 6] : [0, 2, 4, 6];
+        for (let r = 0; r < rows.length - 1; r++) for (let a = 0; a < columns.length; a++) {
+          const b = (a + 1) % columns.length;
+          const color = (profile.tipColor && r === rows.length - 2 ? profile.tipColor : leaf).map(v => v * (1 + (rows[r] - 2) * (profile.colorVariation ?? .07)));
+          if (r > 0) reduced.tri(points[rows[r]][columns[a]], points[rows[r + 1]][columns[a]], points[rows[r]][columns[b]], color);
+          if (r < rows.length - 2) reduced.tri(points[rows[r]][columns[b]], points[rows[r + 1]][columns[a]], points[rows[r + 1]][columns[b]], color);
+        }
+      }
       if (variant.fruit) {
         const fruit = variant.fruit;
         for (let n = 0; n < fruit.perLobe; n++) {
@@ -86,6 +105,7 @@ export function treePrototype(variant, index = 0, look = defaultTheme.trees.volu
         }
       }
       if(variant.trunk > 0 && !column && j>0) kit.strutYZ({from:{y:trunk,z:0},to:{y:cy,z:cz},width:.025,color:bark});
+      if(reduced && detail === 1 && variant.trunk > 0 && !column && j>0) reduced.strutYZ({from:{y:trunk,z:0},to:{y:cy,z:cz},width:.025,color:bark});
     }
   }
   // Même boîte pour la projection et le volume, sans rognage de la houppe.
@@ -95,10 +115,11 @@ export function treePrototype(variant, index = 0, look = defaultTheme.trees.volu
     height=Math.max(height,kit.positions[i+1]);
     bottom=Math.min(bottom,kit.positions[i+1]);
   }
-  for(let i=0;i<kit.positions.length;i+=3) {
-    kit.positions[i]/=width/.94; kit.positions[i+1]=.005+(kit.positions[i+1]-bottom)/(height-bottom)*.975; kit.positions[i+2]/=width/.94;
+  const result = reduced || kit;
+  for(let i=0;i<result.positions.length;i+=3) {
+    result.positions[i]/=width/.94; result.positions[i+1]=.005+(result.positions[i+1]-bottom)/(height-bottom)*.975; result.positions[i+2]/=width/.94;
   }
-  return kit;
+  return result;
 }
 
 function appendFruit(kit, [x, y, z], radius, color) {

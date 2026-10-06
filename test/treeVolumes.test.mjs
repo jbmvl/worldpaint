@@ -87,7 +87,7 @@ const bois = () => {
   return { layer, tile };
 };
 const decrits = layer => layer.meshes.get('t/sous-etage').flatMap(m =>
-  Array.from({ length: m.userData.full }, (_, i) => `${m.instanceMatrix.array[i * 16 + 12].toFixed(3)}:${m.instanceMatrix.array[i * 16 + 14].toFixed(3)}:${layer.prototypes.indexOf(m.geometry)}`)).sort();
+  Array.from({ length: m.userData.full }, (_, i) => `${m.instanceMatrix.array[i * 16 + 12].toFixed(3)}:${m.instanceMatrix.array[i * 16 + 14].toFixed(3)}:${m.userData.treeVariant}`)).sort();
 
 test('le sous-étage est semé par tuile, sans dépendre de l’observateur', () => {
   const { layer, tile } = bois();

@@ -3,7 +3,7 @@
 <style>body{margin:0;background:#bccfd7}canvas{display:block}#info{position:absolute;top:12px;left:14px;font:13px system-ui;color:#172920;background:#ffffffdc;padding:8px 10px;white-space:pre}</style>
 <script src="/node_modules/suncalc/suncalc.js"></script>
 <script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","suncalc":"/demo/lab/suncalc-global.js"}}</script></head>
-<body><div id="info"></div><script type="module">
+<body><div id="info"><button id="compare" disabled>Comparer les maillages</button><label> Détail <select id="detail"><option value="auto">automatique</option><option value="full">complet</option></select></label><pre id="results">Chargement…</pre></div><script type="module">
 /*
  * Banc de la forêt — le coût d'une forêt pleine, hors réseau. Neuf tuiles de
  * bulle (3 × 3, 834 m de côté) semées par la vraie `VegetationLayer` sur un
@@ -20,18 +20,24 @@ import { VegetationLayer } from '/src/layers/vegetationLayer.js';
 import { defaultTheme } from '/src/themes/default.js';
 import { SHADOW_RADIUS_M } from '/src/environment/shadowFrame.js';
 
+const params = new URLSearchParams(location.search);
+const width = params.has('mobile') ? 360 : 1600;
+const height = params.has('mobile') ? 640 : 900;
 const TILE_M = 834;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 // Taille fixe : la mesure ne doit pas dépendre de la fenêtre (masquée, elle vaut 0 × 0).
-renderer.setSize(1600, 900, false);
+renderer.setSize(width, height, false);
+renderer.setPixelRatio(params.has('mobile') ? 2 : 1);
+renderer.domElement.style.width = width + 'px';
+renderer.domElement.style.height = height + 'px';
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 document.body.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#bccfd7');
 scene.fog = new THREE.Fog('#bccfd7', 600, 2400);
-const camera = new THREE.PerspectiveCamera(55, 16 / 9, 0.5, 4000);
+const camera = new THREE.PerspectiveCamera(55, width / height, 0.5, 4000);
 scene.add(new THREE.HemisphereLight(0xdce8ff, 0x637547, 1.5));
 const sun = new THREE.DirectionalLight(0xfff4db, 2);
 sun.castShadow = true;
@@ -45,7 +51,7 @@ const ground = new THREE.Mesh(new THREE.PlaneGeometry(TILE_M * 3, TILE_M * 3).ro
 ground.receiveShadow = true;
 scene.add(ground);
 
-const state = { wood: 1, view: 'sol', x: 0 };
+const state = { wood: 1, view: params.get('view') || 'sol', x: 0, detail: 'auto' };
 let layer = null;
 
 function build() {
@@ -67,7 +73,10 @@ function build() {
 function aim() {
   if (state.view === 'haut') { camera.position.set(state.x, 60, 0); camera.lookAt(state.x, 0, -400); }
   else { camera.position.set(state.x, 2, 0); camera.lookAt(state.x, 4, -100); }
-  layer.update(state.x, 0);
+  layer.update(state.x, 0, { force: true });
+  if (state.detail === 'full') layer.group.traverse(mesh => {
+    if (mesh.isInstancedMesh) mesh.geometry = layer.prototypes[mesh.userData.treeVariant];
+  });
   sun.position.set(camera.position.x - 300, 500, camera.position.z + 300);
   sun.target.position.set(camera.position.x, 0, camera.position.z);
 }
@@ -94,7 +103,7 @@ async function measure(frames = 60) {
   let plants = 0, drawn = 0;
   layer.group.traverse((m) => { if (m.isInstancedMesh) { plants += m.userData.full ?? m.instanceMatrix.count; drawn += m.visible ? m.count : 0; } });
   const result = { ...state, plants, drawn, medianMs: +times[frames >> 1].toFixed(2), worstMs: +times[frames - 1].toFixed(2), calls: info.calls, triangles: info.triangles };
-  document.querySelector('#info').textContent = JSON.stringify(result, null, 1);
+  document.querySelector('#results').textContent = JSON.stringify(result, null, 1);
   return result;
 }
 
@@ -134,4 +143,24 @@ window.forestLab = {
 build();
 render();
 window.forestLabReady = true;
+const compare = document.querySelector('#compare');
+compare.disabled = false;
+document.querySelector('#results').textContent = 'Prêt — détail lointain automatique';
+document.querySelector('#detail').onchange = event => {
+  forestLab.set({ detail: event.target.value });
+  document.querySelector('#results').textContent = 'Détail : ' + event.target.selectedOptions[0].text;
+};
+compare.onclick = async () => {
+  compare.disabled = true;
+  document.querySelector('#detail').disabled = true;
+  const results = [];
+  try {
+    for (const detail of ['full', 'auto']) {
+      forestLab.set({ detail });
+      const result = await measure(60);
+      results.push(result);
+      document.querySelector('#results').textContent = JSON.stringify(results, null, 1);
+    }
+  } finally { compare.disabled = false; document.querySelector('#detail').disabled = false; document.querySelector('#detail').value = state.detail; }
+};
 </script></body></html>

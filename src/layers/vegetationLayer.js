@@ -1,4 +1,5 @@
 import { treePrototype } from '../models/treeKit.js';
+import { vegetationDetail } from './vegetationDetail.js';
 import { finishGeneration } from '../core/generationSteps.js';
 /*
  * vegetationLayer — les arbres, en instances. Poussent là où
@@ -9,7 +10,8 @@ import { finishGeneration } from '../core/generationSteps.js';
  *
  * Arbres et buissons sont des volumes low poly, un prototype par silhouette
  * (`treeKit`), avec rotation, échelle et teinte propres à chaque instance. Ils
- * ont la même forme à toute distance : pas de plan lointain, pas de relève. Les
+ * gardent leurs volumes proches ; les blocs lointains utilisent deux maillages
+ * simplifiés des mêmes houppes, sans plan orienté vers la caméra. Les
  * instances sont rangées par bloc de `VEGETATION_BLOCK_M` et par silhouette,
  * pour que l'élimination hors champ — celle de l'image comme celle de la passe
  * d'ombre — écarte les blocs invisibles. Le
@@ -582,6 +584,11 @@ export class VegetationLayer {
       geometry.computeVertexNormals();
       return geometry;
     });
+    this.detailPrototypes = [this.prototypes, ...[1, 2].map(detail => theme.trees.variants.map((look, variant) => {
+      const geometry = treePrototype(look, variant, theme.trees.volume, detail).toGeometry(THREE, 'tree-volume');
+      geometry.computeVertexNormals();
+      return geometry;
+    }))];
     const foliage = () => createFoliageMaterial({
       THREE,
       map: null,
@@ -989,10 +996,13 @@ export class VegetationLayer {
         mesh.setColorAt(index, this._color);
       });
       mesh.computeBoundingSphere();
+      mesh.userData.treeVariant = list[0].variant;
+      mesh.userData.treeDetail = 0;
       if (thinned) {
         mesh.userData.full = list.length;
         if (this._recountAt) this._recountMesh(mesh, this._recountAt.x, this._recountAt.z);
       }
+      if (this._recountAt) this._updateDetail(mesh, this._recountAt.x, this._recountAt.z);
       meshes.push(mesh);
       yield;
     }
@@ -1025,7 +1035,10 @@ export class VegetationLayer {
     if (!force && last && Math.hypot(x - last.x, z - last.z) < UNDERSTORY_RECOUNT_M) return false;
     this._recountAt = { x, z };
     for (const meshes of this.meshes.values()) {
-      for (const mesh of meshes) if (mesh.userData.full) this._recountMesh(mesh, x, z);
+      for (const mesh of meshes) {
+        if (mesh.userData.full) this._recountMesh(mesh, x, z);
+        this._updateDetail(mesh, x, z);
+      }
     }
     return true;
   }
@@ -1037,6 +1050,14 @@ export class VegetationLayer {
     const share = understoryShare(distance);
     mesh.count = share > 0 ? Math.min(mesh.userData.full, Math.ceil(mesh.userData.full * (share + 0.02))) : 0;
     mesh.visible = mesh.count > 0;
+  }
+
+  _updateDetail(mesh, x, z) {
+    const sphere = mesh.boundingSphere;
+    const distance = Math.max(0, Math.hypot(sphere.center.x - x, sphere.center.z - z) - sphere.radius);
+    const detail = vegetationDetail(distance, mesh.userData.treeDetail);
+    mesh.userData.treeDetail = detail;
+    mesh.geometry = this.detailPrototypes[detail][mesh.userData.treeVariant];
   }
 
   /**
@@ -1126,7 +1147,7 @@ export class VegetationLayer {
     this.meshes.clear();
     this._descriptions.clear();
     this.scene.remove(this.group);
-    for (const geometry of this.prototypes) geometry.dispose();
+    for (const geometries of this.detailPrototypes) for (const geometry of geometries) geometry.dispose();
     this.material.dispose();
     this.understoryMaterial.dispose();
     this.depthMaterial.dispose();
