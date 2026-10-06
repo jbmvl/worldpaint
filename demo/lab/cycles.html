@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Banc des marquages cyclables</title>
+<style>
+html,body{margin:0;background:#a2b48e;font:14px system-ui}canvas{display:block}
+p{position:fixed;bottom:0;left:12px;right:12px;padding:12px;background:#ffffffdf;border-radius:8px}
+</style>
+<script type="importmap">
+{"imports":{"three":"/node_modules/three/build/three.module.js"}}
+</script>
+</head>
+<body>
+<p>De gauche à droite : double sens · sens unique vers le fond · sens unique vers vous.</p>
+<script type="module">
+/* Banc hors réseau : le vrai marquage de RoadNetwork sur trois pistes de
+ * 2,2 m, dont les deux sens uniques sont opposés. Pas de tuiles ni de relief.
+ */
+import * as THREE from 'three';
+import { RoadNetwork } from '/src/layers/roadNetwork.js';
+import { createProfileBuffer, toColoredGeometry } from '/src/layers/ribbonGeometry.js';
+import { defaultTheme } from '/src/themes/default.js';
+import { srgb } from '/src/core/color.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#a2b48e');
+const aspect = innerWidth / innerHeight;
+const camera = new THREE.OrthographicCamera(-7, 7, 7 / aspect, -7 / aspect, 0.1, 200);
+camera.position.set(0, 18, 10);
+camera.lookAt(0, 0, 26);
+
+for (const [i, oneway] of [0, 1, -1].entries()) {
+  const x = (1 - i) * 4.2;
+  const surface = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 78),
+    new THREE.MeshBasicMaterial({ color: defaultTheme.roads.profiles.cycleway.tint }));
+  surface.rotation.x = -Math.PI / 2;
+  surface.position.set(x, 0, 39);
+  scene.add(surface);
+  const path = Array.from({ length: 40 }, (_, row) => ({ x, z: row * 2, distance: row * 2 }));
+  const segment = { path, profile: 'cycleway', halfWidth: 1.1, oneway: path.map(() => oneway) };
+  const run = { path, platform: path.map(() => 0), head: -1, tail: -1 };
+  const buffer = createProfileBuffer();
+  RoadNetwork.prototype._appendMarkings.call({ theme: defaultTheme }, buffer,
+    segment, run, null, srgb(defaultTheme.roads.markingColor));
+  scene.add(new THREE.Mesh(toColoredGeometry(THREE, buffer),
+    new THREE.MeshBasicMaterial({ vertexColors: true })));
+}
+renderer.render(scene, camera);
+</script>
+</body>
+</html>

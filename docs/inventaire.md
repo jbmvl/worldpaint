@@ -405,6 +405,11 @@ Six profils, tirés de `transportation.class` :
 | path | path | 1,4 m, terre, bord rongé |
 | cycleway | cycleway, `bicycle=designated` | 2,2 m, avec pictogramme au sol |
 
+Sur une piste cyclable, le vélo peint se lit face au cycliste, roues en
+travers de la marche. À double sens, deux vélos occupent les deux moitiés
+droites dans des sens opposés ; à sens unique, un seul vélo centré se lit
+dans le sens porté par `oneway`, même s'il est contraire au tracé.
+
 Les deux profils en terre sont les seuls dont le **bord est rongé** : un chemin
 n'a pas de rive, sa largeur est celle que les pas ont tassée, et elle varie d'un
 mètre à l'autre. Un masque à part (`createRoadEdgeCanvas`) mange le ruban sur

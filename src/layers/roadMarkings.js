@@ -59,23 +59,13 @@
  * le dit, `markingLinesFor`), ni quelle branche cède le passage (c'est le
  * carrefour qui le dit, `roadJunctions.branchYields`).
  *
- * ## Le pictogramme, et pourquoi il y en a un maintenant
+ * ## Les pictogrammes et leurs sens
  *
- * Ce module refusait tout pictogramme — flèche de rabattement, symbole
- * cycliste — au motif que la donnée ne porte ni nombre de voies ni affectation
- * de voie : en poser serait les inventer. L'argument tombe pour le vélo : sur
- * une entité de classe `cycleway`, ce n'est pas *une voie parmi d'autres* qui
- * est cyclable, c'est la chaussée entière. Le pictogramme ne dit alors rien
- * que la donnée ne dise déjà, et sans lui une piste cyclable ne se distingue
- * d'une allée de service que par vingt centimètres de largeur — c'est-à-dire
- * pas du tout.
- *
- * Il tombe aussi pour la flèche de sens unique, mais pour une autre raison :
- * ce n'est pas une voie qu'elle affecte, c'est un sens de circulation que la
- * donnée porte déjà (`oneway`, lu par `roadGraph.mergeRoadLines` et reporté
- * chaîne par chaîne). La flèche de rabattement, elle, resterait une
- * invention — la donnée ne dit toujours pas quelle voie va où — et ce module
- * n'en pose pas.
+ * Sur une piste `cycleway`, le vélo se lit face au cycliste : deux dessins
+ * opposés sur les moitiés droites à double sens, un seul centré à sens unique.
+ * Le sens vient de `oneway`, reporté par le graphe sur chaque ligne de chaîne.
+ * Les flèches ne se posent que là où ce sens est affirmé. Aucune affectation
+ * de voie ni flèche de rabattement n'est déduite d'une donnée absente.
  *
  * Un pictogramme est décrit en coordonnées **(le long, en travers)**, en
  * mètres, et posé par `appendMarkingSymbols` (ou `appendMarkingArrows` pour la
@@ -618,13 +608,9 @@ export function glyphRing(along, across, radius, thickness = GLYPH_STROKE_M, sid
 }
 
 /**
- * Le vélo, vu de côté et couché sur la chaussée : deux roues, un cadre, une
- * selle et un guidon. Environ 1,55 m dans le sens de la marche pour 0,55 m en
- * travers — les cotes du pictogramme peint en France.
- *
- * Le sens de la marche est celui du **tracé**, faute de mieux : la donnée ne
- * dit pas dans quel sens on roule sur une piste, et une piste bidirectionnelle
- * n'aurait de toute façon pas de réponse.
+ * Le vélo se lit face au cycliste : les roues sont en travers de sa marche,
+ * la selle et le guidon plus loin devant lui. Le dessin garde son emprise
+ * longitudinale et latérale pour tenir dans une moitié de piste.
  *
  * @returns {Array<Array<{along:number, across:number}>>} polygones convexes.
  */
@@ -635,7 +621,7 @@ export function cycleGlyph() {
   const saddle = { along: -0.2, across: 0.42 };
   const stem = { along: 0.3, across: 0.42 };
 
-  return [
+  const polygons = [
     ...glyphRing(rear.along, rear.across, 0.28),
     ...glyphRing(front.along, front.across, 0.28),
     glyphBar(rear, bracket), // base
@@ -647,6 +633,17 @@ export function cycleGlyph() {
     glyphBar({ along: -0.33, across: 0.44 }, { along: -0.09, across: 0.48 }, 0.09), // selle
     glyphBar({ along: 0.22, across: 0.5 }, { along: 0.38, across: 0.36 }, 0.07), // guidon
   ].filter((polygon) => polygon.length >= 3);
+
+  const vertices = polygons.flat();
+  const alongs = vertices.map((v) => v.along);
+  const acrosses = vertices.map((v) => v.across);
+  const length = Math.max(...alongs) - Math.min(...alongs);
+  const width = Math.max(...acrosses) - Math.min(...acrosses);
+  const middle = (Math.max(...acrosses) + Math.min(...acrosses)) / 2;
+  return polygons.map((polygon) => polygon.map((v) => ({
+    along: (v.across - middle) * length / width,
+    across: -v.along * width / length,
+  })));
 }
 
 /**
@@ -696,7 +693,7 @@ export function directionGlyph() {
 }
 
 /**
- * Le même pictogramme, tourné de 180° : la flèche de sens contraire.
+ * Le même pictogramme, tourné de 180° pour le sens contraire.
  *
  * @param {Array<Array<{along:number, across:number}>>} polygons
  * @returns {Array<Array<{along:number, across:number}>>}
@@ -774,6 +771,8 @@ export function appendMarkingGlyph(
 
 /**
  * Les pictogrammes d'une plage dessinable, espacés le long de la chaîne.
+ * Les deux sens occupent chacun leur moitié droite ; un sens unique reçoit
+ * un seul pictogramme centré, tourné selon le sens porté par le tracé.
  *
  * La phase se tire de l'abscisse de la chaîne (`startDistance`) et non du rang
  * dans la boucle : même invariant que les pointillés et que les hachures de
@@ -786,6 +785,9 @@ export function appendMarkingGlyph(
  * @param {ArrayLike<number>} options.decks
  * @param {ArrayLike<number>} [options.frames]
  * @param {Array<Array<{along:number, across:number}>>} options.polygons
+ * @param {Int8Array|number[]} [options.oneway] Un sens par ligne du tracé.
+ * @param {Array<{distance:number}>} [options.onewayPath] Tracé portant les sens.
+ * @param {number} [options.halfWidth] Demi-largeur : deux pictogrammes à double sens.
  * @param {number[]} options.color
  * @param {number} [options.spacing]
  * @param {number} [options.lift]
@@ -799,6 +801,9 @@ export function appendMarkingSymbols(
     decks,
     frames = null,
     polygons,
+    oneway = null,
+    onewayPath = path,
+    halfWidth = 0,
     color,
     spacing = MARKING_SYMBOL_SPACING_M,
     lift = 0,
@@ -807,22 +812,34 @@ export function appendMarkingSymbols(
 ) {
   const rows = path?.length ?? 0;
   if (rows < 2 || !decks || !(spacing > 0)) return 0;
+  if (!Array.isArray(polygons) || polygons.length === 0 || !color) return 0;
   const used = frames || pathFrames(path);
+  const backward = mirrorDirection(polygons);
 
   const first = startDistance + path[0].distance;
   const last = startDistance + path[rows - 1].distance;
   let laid = 0;
 
   for (let k = Math.ceil(first / spacing); k * spacing <= last; k++) {
-    laid += appendMarkingGlyph(buffer, {
-      path,
-      decks,
-      frames: used,
-      at: k * spacing - startDistance,
-      polygons,
-      color,
-      lift,
-    });
+    const at = k * spacing - startDistance;
+    const sign = onewayAt(onewayPath, oneway, at);
+    const directions = sign ? [sign] : halfWidth > 0 ? [1, -1] : [1];
+    const paired = directions.length === 2;
+    const room = paired ? halfWidth / 2 : halfWidth;
+    if (room > 0 && polygons.some((polygon) =>
+      polygon.some((point) => Math.abs(point.across) > room))) continue;
+    for (const direction of directions) {
+      laid += appendMarkingGlyph(buffer, {
+        path,
+        decks,
+        frames: used,
+        at,
+        polygons: direction > 0 ? polygons : backward,
+        side: paired ? -direction * halfWidth / 2 : 0,
+        color,
+        lift,
+      });
+    }
   }
 
   return laid;
