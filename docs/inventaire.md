@@ -730,6 +730,14 @@ s'éteignent dès qu'il pleut.
 
 ---
 
+Le ciel nocturne porte des étoiles filantes fines et brèves, des satellites
+ponctuels à lumière constante et des avions lents à feux rouge/vert et doubles
+éclats blancs. `environment/nightTraffic.js` calcule leurs trajectoires sur la
+sphère, sans dépendre de la caméra. Ils avancent en secondes réelles via
+`advance()`, même si la date simulée est figée ; crépuscule, horizon et couverture
+nuageuse les effacent. Le thème `sky.nightTraffic` règle dimensions et couleurs.
+Le banc `demo/lab/sky.html` les fige avec `time`.
+
 ## Les cadences
 
 Savoir à quel rythme chaque chose est refaite explique la plupart des « ça a

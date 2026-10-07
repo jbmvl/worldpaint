@@ -361,6 +361,7 @@ test('le ciel est une tranche du thème', () => {
   assert.deepEqual(Object.keys(DEFAULT.sky).sort(), [
     'fog',
     'nightHorizon',
+    'nightTraffic',
     'nightZenith',
     'variants',
   ]);

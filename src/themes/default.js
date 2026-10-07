@@ -1568,6 +1568,18 @@ export const SKY_PALETTE = {
 
   nightHorizon: '#1c2c4c',
 
+  nightTraffic: {
+    // Rayons angulaires : météore, satellite, feu d'avion, demi-envergure.
+    sizes: [0.00065, 0.00115, 0.0013, 0.0024],
+    colors: {
+      uMeteorColor: [2.6, 2.8, 3.0],
+      uSatelliteColor: [0.72, 0.78, 0.88],
+      uPlaneWhite: [2.3, 2.3, 2.2],
+      uPlaneRed: [0.8, 0.035, 0.02],
+      uPlaneGreen: [0.02, 0.42, 0.12],
+    },
+  },
+
   /**
    * L'air d'un pays.
    *

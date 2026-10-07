@@ -27,7 +27,8 @@
  *
  *   skyLab.set({ birds: 'gull', time: 20, pitchDeg: 25 })  — le vol de `LifeLayer`
  *
- * `birds` impose l'espèce (`corvid`, `raptor`, `gull`), `time` l'instant du vol.
+ * `birds` impose l'espèce (`corvid`, `raptor`, `gull`), `time` fige les vols
+ * et les passages nocturnes à la seconde choisie.
  */
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
@@ -100,6 +101,7 @@ function render() {
   camera.position.set(0, state.height, 0);
   camera.lookAt(Math.sin(yaw) * Math.cos(pitch), state.height + Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
   env.followCamera(camera);
+  env._trafficTime = state.time;
   env.advance(0, camera.position);
   env.followShadow({ x: 0, y: 0, z: 0 });
   life.birds.visible = !!state.birds;

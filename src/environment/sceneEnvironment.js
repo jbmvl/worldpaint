@@ -16,14 +16,9 @@
  * L'application donne l'heure et la palette (forme `{ fog, nightZenith,
  * nightHorizon }`) ; elle seule sait d'où vient sa direction artistique.
  *
- * La nuit porte une lune (croissant stylisé, pas une vraie phase), des
- * étoiles (semis fixe de points) et une étoile filante occasionnelle — aucun
- * réalisme visé, juste un repère de nuit qui n'est ni un noir uni ni un
- * planétarium. Le hachage des étoiles se fait dans la projection
- * équirectangulaire `uv` (pas `direction.xz`, qui s'effondre près du zénith).
- * Chaque étoile est un point rond, pas une cellule entière allumée par
- * seuil ; l'étoile filante s'amincit vers la queue plutôt que de garder une
- * largeur uniforme.
+ * La nuit porte une lune, des étoiles fixes et les passages de nightTraffic.js.
+ * Ceux-ci sont calculés sur la sphère (sans couture UV) et avancent en temps
+ * réel, indépendamment de l'heure simulée. Leur finesse tient compte du pixel.
  *
  * Entre le coucher et la fin du crépuscule nautique, une lueur (`twilightGlow`)
  * éclaire ce ciel de nuit et le brouillard, et masque les étoiles : Preetham
@@ -69,6 +64,7 @@ import {
   SHADOW_DISTANCE_M,
   SHADOW_MIN_SUN_Y,
 } from './shadowFrame.js';
+import { NIGHT_TRAFFIC_GLSL, updateNightTraffic } from './nightTraffic.js';
 import { defaultTheme } from '../themes/default.js';
 
 // Ré-exportés pour que la scène n'ait qu'un seul point d'entrée sur l'ambiance.
@@ -330,6 +326,18 @@ export class SceneEnvironment {
     // À l'opposé du soleil (pas la vraie position, mais elle se lève quand il se couche).
     this.uniforms.uMoonDirection = { value: new THREE.Vector3(0, 1, 0) };
     this.uniforms.uStarGain = { value: 1 };
+    const traffic = { ...defaultTheme.sky.nightTraffic, ...palette.nightTraffic };
+    this.uniforms.uTrafficSize = { value: new THREE.Vector4(...traffic.sizes) };
+    for (const [name, color] of Object.entries(traffic.colors)) {
+      this.uniforms[name] = { value: new THREE.Color().setRGB(...color) };
+    }
+    for (const name of ['uMeteor', 'uSatellite', 'uPlane']) {
+      this.uniforms[name] = { value: new THREE.Vector4(0, 1, 0, 0) };
+    }
+    this.uniforms.uMeteorTail = { value: new THREE.Vector3(0, 1, 0) };
+    this.uniforms.uPlaneRight = { value: new THREE.Vector3(1, 0, 0) };
+    this.uniforms.uPlaneFlash = { value: 0 };
+    this._trafficTime = 0;
     this.uniforms.cloudScale.value = CLOUD_SCALE;
     this.uniforms.cloudSpeed.value = CLOUD_SPEED;
     this._sunPosition = new THREE.Vector3(0, 1, 0);
@@ -354,7 +362,8 @@ export class SceneEnvironment {
          uniform vec3 uTwilightHorizon;
          uniform vec3 uTwilightZenith;
          uniform vec3 uMoonDirection;
-         uniform float uStarGain;`
+         uniform float uStarGain;
+         ${NIGHT_TRAFFIC_GLSL}`
       )
       .replace(
         'cloudColor *= vSunE * 0.00002;',
@@ -416,28 +425,11 @@ export class SceneEnvironment {
          float starMask = smoothstep(0.05, 0.35, direction.y);
          night += vec3(starPresence * starPoint * starVeil * starMask * uStarGain); // éclat fixe, pas de scintillement
 
-         // Étoile filante : point net en tête, traînée qui s'amincit vers la
-         // queue (pas une bande uniforme). Tirage par tranche de temps, sans réalité astronomique.
-         float meteorSlot = floor(time / 9.0);
-         float meteorRoll = hash(vec2(meteorSlot, 4.7));
-         float meteorProgress = fract(time / 9.0);
-         if (meteorRoll > 0.55 && meteorProgress < 0.22 && direction.y > 0.05) {
-           vec2 meteorStart = vec2(hash(vec2(meteorSlot, 1.3)), hash(vec2(meteorSlot, 8.1)) * 0.5 + 0.05);
-           vec2 meteorDir = normalize(vec2(hash(vec2(meteorSlot, 2.9)) - 0.5, hash(vec2(meteorSlot, 6.6)) * 0.3 - 0.15));
-           float t = meteorProgress / 0.22;
-           vec2 meteorHead = meteorStart + meteorDir * 0.12 * t;
-           vec2 meteorTail = meteorHead - meteorDir * 0.045;
-           vec2 seg = meteorHead - meteorTail;
-           float segLen = max(length(seg), 1e-5);
-           vec2 segDir = seg / segLen;
-           float along = clamp(dot(uv - meteorTail, segDir), 0.0, segLen) / segLen;
-           vec2 closest = meteorTail + segDir * along * segLen;
-           float meteorDist = length(uv - closest);
-           // Largeur et intensité décroissent vers la queue (along → 0).
-           float meteorWidth = mix(0.0015, 0.006, along);
-           float meteorStreak = smoothstep(meteorWidth, 0.0, meteorDist) * mix(0.15, 1.0, along);
-           float meteorFade = smoothstep(0.0, 0.15, t) * smoothstep(1.0, 0.6, t);
-           night += vec3(1.0, 0.97, 0.92) * meteorStreak * meteorFade * 2.0;
+         // Les dérivées restent hors des branches : finesse stable à toute résolution.
+         float trafficPixel = max(length(fwidth(direction)), 0.0001);
+         if (uNightMix > 0.0 && direction.y > 0.02) {
+           float clearSky = 1.0 - smoothstep(0.15, 0.85, cloudCoverage * cloudDensity);
+           night += nightTraffic(direction, trafficPixel) * clearSky * (1.0 - uTwilight) * starMask * uStarGain;
          }
 
          texColor = mix( texColor, night, uNightMix );
@@ -519,12 +511,14 @@ export class SceneEnvironment {
   }
 
   /**
-   * Fait tomber la pluie et recentre sa boîte. Séparé d'`update()` : la chute
-   * avance en temps réel écoulé, l'heure du ciel peut être simulée ou figée.
+   * Anime les passages nocturnes, la pluie et les débris en temps réel.
+   * Séparé d'`update()` : l'heure du ciel peut être simulée ou figée.
    * @param {number} delta Secondes écoulées.
    * @param {{x:number,y:number,z:number}} at Position de l'observateur.
    */
   advance(delta, at, sampleGround) {
+    if (Number.isFinite(delta) && delta > 0) this._trafficTime += delta;
+    updateNightTraffic(this.uniforms, this._trafficTime);
     this.precipitation.advance(delta);
     if (at) this.precipitation.follow(at);
     this.debris.advance(delta);
