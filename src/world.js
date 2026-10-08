@@ -18,7 +18,7 @@
  * chaussée sous ce point (remblai, pont) plutôt que le terrain nu que suit déjà
  * `bubble.toScenePosition`, où est son axe pour qui doit y rester, quelle
  * largeur on y a pour se ranger, et où est son bord pour qui pose un objet à
- * côté.
+ * côté. `ambienceAt` aussi : ce qu'on entend en un point.
  */
 
 import { ElevationField } from './core/elevationField.js';
@@ -38,6 +38,8 @@ import {
   SHADOW_LEAD_M,
   skyPaletteFor,
 } from './environment/sceneEnvironment.js';
+import { resolveWeather } from './environment/weather.js';
+import { surroundingsAt, ambienceMix } from './environment/soundscape.js';
 import { tileSizeMeters } from './core/tileMath.js';
 import { FAR_DEM_ZOOM_DROP } from './terrain/farRelief.js';
 import { resolveTheme } from './themes/theme.js';
@@ -725,6 +727,25 @@ export class World {
       weather: env.weather,
       clearColor: env.clearColor,
     };
+  }
+
+  /**
+   * Niveaux des nappes sonores pour une oreille placée en `position` (mètres
+   * de la scène) — ce que `Soundscape.update` attend. Sans ciel, le temps
+   * ordinaire et le plein jour.
+   *
+   * @param {{x:number, y:number, z:number}} position
+   * @returns {{wind:number, rain:number, leaves:number, water:number, town:number}}
+   */
+  ambienceAt({ x, y, z }) {
+    const bubble = this.composer.bubble;
+    const ground = bubble?.frame ? bubble.surfaceElevationAtLocal(x, z, NaN) * bubble.verticalScale : NaN;
+    return ambienceMix({
+      weather: this.environment?.weather ?? resolveWeather(),
+      nightMix: this.environment?.nightMix ?? 0,
+      surroundings: surroundingsAt(this.composer.groundClass, x, z),
+      aboveGround: Number.isFinite(ground) ? y - ground : 0,
+    });
   }
 
   /**

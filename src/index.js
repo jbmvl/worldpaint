@@ -29,6 +29,11 @@ export { SceneEnvironment, DEFAULT_SKY_PALETTE, SKY_RADIUS, SKY_LAYER, SHADOW_LE
 // fait aucune requête réseau : brancher un service météo est à l'application.
 export { DEFAULT_WEATHER, PRECIPITATION_TYPES, resolveWeather } from './environment/weather.js';
 
+// --- Le son -----------------------------------------------------------------
+// Synthétisé, sans fichier. L'application crée l'`AudioContext` (après un
+// geste de l'utilisateur) et nourrit `Soundscape.update` avec `world.ambienceAt`.
+export { Soundscape, AMBIENCE_CHANNELS, ambienceMix, surroundingsAt } from './environment/soundscape.js';
+
 // --- Géographie : passer de lng/lat aux mètres de la scène ------------------
 export {
   lngLatToTile,

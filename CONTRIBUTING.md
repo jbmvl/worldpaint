@@ -31,7 +31,7 @@ src/
                 kit.js assembles volumes, animalKit.js adds articulation,
                 fauna/ holds one file per family of animal
   materials/    procedural textures and shared materials
-  environment/  sky, sun, shadows, fog
+  environment/  sky, sun, shadows, fog, weather, ambient sound
   inspect/      debug helpers for labelling what's on screen
   themes/       the art direction — see below
   worldComposer.js   orchestrates the layers in a fixed build order

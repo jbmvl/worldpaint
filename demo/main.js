@@ -34,6 +34,7 @@ import {
   LABEL_FAUNA,
   SHOWCASE_FIELDS,
   showcaseEntries,
+  Soundscape,
 } from '../src/index.js';
 import { PerformanceProbe } from './performanceProbe.js';
 const performanceProbe = new PerformanceProbe();
@@ -75,6 +76,7 @@ const presetsRoot = document.getElementById('presets');
 const menuToggle = document.getElementById('menuToggle');
 const panel = document.getElementById('panel');
 const weatherBtn = document.getElementById('weatherBtn');
+const soundBtn = document.getElementById('soundBtn');
 const upBtn = document.getElementById('upBtn');
 const downBtn = document.getElementById('downBtn');
 const faunaKindSelect = document.getElementById('faunaKind');
@@ -1478,6 +1480,20 @@ weatherBtn.addEventListener('click', () => {
   weatherBtn.textContent = PRESETS[buttons.indexOf(next)].label.split(' ')[0];
 });
 
+// Le navigateur ne laisse le son démarrer qu'après un geste : le contexte
+// naît au premier clic, puis le bouton suspend et reprend.
+let soundscape = null;
+soundBtn.addEventListener('click', async () => {
+  if (!soundscape) {
+    soundscape = new Soundscape({ context: new AudioContext() });
+  } else if (soundscape.context.state === 'running') {
+    await soundscape.context.suspend();
+  } else {
+    await soundscape.context.resume();
+  }
+  soundBtn.textContent = soundscape.context.state === 'running' ? '🔊' : '🔇';
+});
+
 /*
  * --- Choix de la région naturelle --------------------------------------------
  *
@@ -1679,6 +1695,7 @@ function loop(timestamp) {
     });
     weatherDirty = false;
     if (paint) renderer.setClearColor(paint.clearColor, 1);
+    if (soundscape) soundscape.update(world.ambienceAt(camera.position));
   }
 
   recenterAcc += delta * 1000;

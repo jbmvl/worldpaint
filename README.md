@@ -76,7 +76,8 @@ src/
                 crops, road furniture, the road corridor every other layer
                 stops at, and the geometry helpers they share
   materials/    procedural textures and shared materials
-  environment/  sky, sun, shadows, fog, weather — the optional lighting rig
+  environment/  sky, sun, shadows, fog, weather — the optional lighting rig —
+                and the synthesised ambient sound
   inspect/      debug helpers for labelling what's on screen
   themes/       the art direction: palettes, silhouettes, profiles — the one
                 file a fork changes to look different
@@ -145,10 +146,16 @@ application already uses) rather than leaving it at the default.
 | `tunnelAt(x, z)` | road floor and vault crown at a scene point, or `null` outside any covered structure — what a chase camera needs to stay under the roof |
 | `setSightline(from, to, {fromRadius, toRadius})` | dither away the trees between the camera and the followed subject; call every frame, `null` turns it off |
 | `updateSky({camera, date, lng, lat, weather})` | advance the hour and the weather; returns the night mix, the wetness and the clear colour |
+| `ambienceAt({x, y, z})` | levels of the ambient sound layers (wind, rain, leaves, water, town) for an ear at that point — feed them to `Soundscape.update` |
 | `dispose()` | release everything that was allocated |
 
 `updateSky` only exists if a sky was requested. Without one, the generator
 poses no light: the application lights the scene as it sees fit.
+
+Sound is synthesised from filtered noise — no audio file, no request. The
+application owns the `AudioContext` (browsers only start one after a user
+gesture): `const sound = new Soundscape({ context })`, then
+`sound.update(world.ambienceAt(camera.position))` each frame.
 
 ### Showing the sky while the landscape builds
 
