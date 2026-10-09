@@ -107,6 +107,7 @@ export function buildCrossings(layer, context, junctions, roadIndex, builtUp) {
       y: deck,
       yaw,
       exactY: deck != null,
+      grounded: true,
     });
     // Le feu publie son point d'allumage : `advanceSignals` y pose la
     // lentille vive et son halo. La phase est tirée du **lieu**, donc deux
@@ -181,6 +182,7 @@ export function buildJunctionSigns(layer, context, areas, roadIndex, builtUp) {
         y: deck,
         yaw: roadsideYaw(tx, tz, offset, 'traffic'),
         exactY: deck != null,
+      grounded: true,
       });
     }
   }

@@ -692,10 +692,11 @@ export class SceneEnvironment {
     // facteur pour la nuit (le brouillard ne s'assombrit pas seul au coucher).
     // `RAIN_GREY_LINEAR` est un plancher, pas une teinte fixe.
     const glow = 1 - this.nightMix * 0.72;
+    const rainGlow = mix(1, this.palette.precipitationNightTint ?? DEFAULT_SKY_PALETTE.precipitationNightTint, this.nightMix);
     this.precipitation.setTint({
-      r: Math.max(RAIN_GREY_LINEAR[0], Math.min(1, fogColor[0] + 0.18)) * glow,
-      g: Math.max(RAIN_GREY_LINEAR[1], Math.min(1, fogColor[1] + 0.18)) * glow,
-      b: Math.max(RAIN_GREY_LINEAR[2], Math.min(1, fogColor[2] + 0.2)) * glow,
+      r: Math.max(RAIN_GREY_LINEAR[0], Math.min(1, fogColor[0] + 0.18)) * rainGlow,
+      g: Math.max(RAIN_GREY_LINEAR[1], Math.min(1, fogColor[1] + 0.18)) * rainGlow,
+      b: Math.max(RAIN_GREY_LINEAR[2], Math.min(1, fogColor[2] + 0.2)) * rainGlow,
     });
 
     // Même assombrissement nocturne, sans le rapprochement vers le brouillard (une feuille n'est pas de l'eau).

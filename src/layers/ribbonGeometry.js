@@ -902,6 +902,7 @@ export function appendVariableWall(
     lateralJitter = null,
     batter = null,
     flat = false,
+    frames = null,
   }
 ) {
   const rows = path?.length ?? 0;
@@ -911,15 +912,15 @@ export function appendVariableWall(
   for (let r = 0; r < rows; r++) tallest = Math.max(tallest, top[r] - base[r]);
   if (tallest < minHeight) return false;
 
-  const frames = pathFrames(path);
+  const framesUsed = frames ?? pathFrames(path);
   const start = buffer.positions.length / 3;
   const firstIndex = buffer.indices.length;
   const colors = [colorFoot, colorTop, colorTop, colorTop, colorTop, colorFoot];
   const cols = colors.length;
 
   for (let r = 0; r < rows; r++) {
-    const px = frames[r * 4 + 2];
-    const pz = frames[r * 4 + 3];
+    const px = framesUsed[r * 4 + 2];
+    const pz = framesUsed[r * 4 + 3];
     const off = offset + (lateralJitter ? lateralJitter[r] : 0);
     const ax = path[r].x + px * off;
     const az = path[r].z + pz * off;

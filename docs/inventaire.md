@@ -456,6 +456,29 @@ bâtiments proches à chaque point. Hors de ce masque, une emprise habitée,
 au moins deux bâtiments dans le disque de 30 m du côté examiné et un dévers
 inférieur à 14 % restent nécessaires.
 
+Le profil affiché est lissé et vise une pente maximale de 12 %. Il ne descend
+pas sous le profil terrassé : le terrain conserve ses cotes et sa triangulation.
+Le calcul lit les chaînes disponibles entières avant de limiter le rendu au
+disque de voirie. Les tunnels et les chaussées inférieures des
+franchissements gardent leurs altitudes ; un pont peut monter sans perdre son
+dégagement. Une contrainte incompatible reste
+publiée dans `roads.profileConstraints.constrained`.
+
+Une portion revêtue qui domine le sol de 2,5 m sur au moins 15 m reçoit un
+tablier, des piles et des parapets, même sans `brunnel=bridge`. Ces supports
+sont publiés par `segment.supports`, séparément des drapeaux cartographiques ;
+ils ne commandent aucun terrassement. Les piles évitent les chaussées
+inférieures publiées par le réseau. Les dalles de carrefour suspendues ont
+une sous-face commune ; leurs bouches restent ouvertes. Le mobilier de rive
+et les trottoirs au sol s'interrompent sur ces portions. Une simple corniche,
+encaissée côté amont, garde son soutènement au lieu de devenir un pont.
+
+Les rebords utilisent les repères et les altitudes de la chaussée, sans second
+lissage du profil imposé. Le pied d'un talus rejoint le terrain à son aplomb.
+Un lampadaire ou panneau posé à la cote de la route exige un sol affiché à
+moins de 35 cm : sinon, il est omis. Les objets au sol lisent le support
+triangulé lorsqu'il est disponible.
+
 La chaussée conserve 2 cm de marge technique au-dessus de sa plate-forme
 pour les écarts d’interpolation du terrain. Le déblai couvre au moins la
 diagonale d’une maille afin qu’un triangle oblique ne traverse pas la route. Les marquages, raccords de

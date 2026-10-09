@@ -319,7 +319,7 @@ export class StreetLayer {
       };
 
       const qualifies = (row) => {
-        if (!row.inReach || (!row.builtUp && !row.urban) || row.inJunction || segment.works?.[row.r]) return false;
+        if (!row.inReach || (!row.builtUp && !row.urban) || row.inJunction || (segment.works?.[row.r] || segment.supports?.[row.r])) return false;
         if (!row.urban && Math.abs(row.slope) > STREET_MAX_CROSS_SLOPE) return false;
 
         const px = frames[row.r * 4 + 2];
@@ -531,6 +531,7 @@ export class StreetLayer {
 
     for (let index = 0; index < areas.areas.length; index++) {
       const area = areas.areas[index];
+      if (area.supported) continue;
       // Sans cote, l'aire est hors de portée du réseau : rien n'y est posé.
       if (!Number.isFinite(area.deck)) continue;
       if (!STREET_PROFILES.has(area.profile)) continue;

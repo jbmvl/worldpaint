@@ -179,3 +179,25 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
 Un client de production. Pas de réessai réseau élaboré, pas de gestion
 d'erreur exhaustive — juste assez de code applicatif pour que le moteur soit
 *reviewable on its own*, comme le demande le CONTRIBUTING.
+
+## Voirie en montagne, hors réseau
+
+Les tuiles de Briançon et Saint-Gervais-les-Bains sont enregistrées dans
+`demo/lab/places/`. Le banc des lieux utilise le moteur complet, le bâti et
+le relief réels :
+
+- `/demo/lab/place.html?lieu=briancon`
+- `/demo/lab/place.html?lieu=saint-gervais`
+
+`demo/lab/roads.html` ajoute les scènes `montagne` et `montagne-carrefour` :
+un réseau sur un versant à 32 %, avec un vallon et plusieurs carrefours.
+La caméra vise la chaussée pour montrer aussi les tabliers relevés.
+
+```sh
+node scripts/roads-shot.mjs /tmp/voirie '[{"scene":"montagne","pitchDeg":32},{"scene":"montagne-carrefour","pitchDeg":28},{"scene":"devers"},{"scene":"pont"}]'
+node scripts/place-shot.mjs /tmp/briancon '[{"yawDeg":225,"pitchDeg":30,"distance":120}]' briancon
+node scripts/place-shot.mjs /tmp/saint-gervais '[{"yawDeg":70,"pitchDeg":28,"distance":100}]' saint-gervais
+```
+
+Le lissage strict d'une pente longue peut créer un viaduc très haut au-dessus
+du bâti : ces deux villes servent aussi à juger cette conséquence visuelle.

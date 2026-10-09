@@ -640,7 +640,7 @@ export class WorldComposer {
 
       // 2 bis. Ouvrages d'art — après les chaussées, dont ils habillent les
       //    travées et les têtes de tunnel.
-      this.bridges.rebuild(this.roads.roadSegments, here, { earthworks: this.roads.earthworks });
+      this.bridges.rebuild(this.roads.roadSegments, here, { earthworks: this.roads.earthworks, areas: this.roads.junctionAreas, roadIndex: this.roads.elevationIndex });
       this.bubble.materials.setTunnelMouths?.(this.bridges.tunnelMouths ?? []);
 
       if (!await checkpoint()) return false;

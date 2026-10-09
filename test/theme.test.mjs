@@ -363,6 +363,7 @@ test('le ciel est une tranche du thème', () => {
     'nightHorizon',
     'nightTraffic',
     'nightZenith',
+    'precipitationNightTint',
     'variants',
   ]);
   assert.equal(DEFAULT.sky.fog, '#e8eef3');

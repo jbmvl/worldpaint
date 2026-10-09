@@ -233,7 +233,7 @@ export function buildRoadsideRelief(layer, context, segment, rowsInfo) {
 
     // --- Aval : le parement du remblai, et la glissière dessus ------------
     const offset = -side * (halfWidth + fill.thickness / 2);
-    const frames = pathFrames(runPath);
+    const frames = reliefFrames(segment, run);
     const grain = facetJitter(runPath, FILL_WALL_SEED, fill.grain);
     const fillBase = new Float32Array(run.length);
     // L'arase affleure la **surface** de la chaussée, pas sa plate-forme : le
@@ -273,6 +273,7 @@ export function buildRoadsideRelief(layer, context, segment, rowsInfo) {
     }
     appendVariableWall(buffers.fillWall, {
       path: runPath,
+      frames,
       base: fillBase,
       top: fillTop,
       offset,
@@ -336,7 +337,7 @@ export function buildRockCut(layer, context, segment, rowsInfo) {
       const rows = run.length;
       const origin = run[0].distance;
       const runPath = run.map((row) => ({ x: row.x, z: row.z, distance: row.distance - origin }));
-      const frames = pathFrames(runPath);
+      const frames = reliefFrames(segment, run);
       const deck = new Float32Array(run.map((row) => platform[row.r]));
 
       const crest = new Float32Array(rows);
@@ -477,6 +478,8 @@ export function buildParapets(layer, context, segment, rowsInfo) {
           sampleElevation,
           offset,
           baseHeights: deck,
+          frames: reliefFrames(segment, run),
+          smoothRadius: 0,
           closed: true,
         });
       }
@@ -487,11 +490,11 @@ export function buildParapets(layer, context, segment, rowsInfo) {
         // Le poteau se pose sur la plate-forme, pas sur le terrain : la rive
         // aval surplombe le vide, et un poteau posé au sol pendrait sous la
         // lisse.
-        const row = Math.min(deck.length - 1, Math.max(0, p.row));
+        const row = Math.min(deck.length - 1, Math.max(0, p.fromRow ?? p.row));
         layer._place(placements, post, {
           x: p.x + p.tz * offset,
           z: p.z - p.tx * offset,
-          y: deck[row],
+          y: deck[row] * (1 - (p.t ?? 0)) + deck[Math.min(deck.length - 1, row + 1)] * (p.t ?? 0),
           yaw: roadsideYaw(p.tx, p.tz, offset),
           exactY: true,
         });
@@ -545,8 +548,11 @@ export function buildEmbankment(layer, context, segment, rowsInfo, walled) {
       smoothColumns(drop, run.length, 1, 2);
       // Étalement de la section unitaire, en mètres par unité d'échelle.
       const spreadOf = layer.specs.embankmentProfile(1, side).reduce((m, v) => Math.max(m, Math.abs(v.across)), 0);
+      const first = buffers.embankment.positions.length;
       appendProfile(buffers.embankment, {
         path,
+        frames: reliefFrames(segment, run),
+        smoothRadius: 0,
         // La section descend du côté où elle est posée : sur la rive gauche,
         // une section orientée à droite repartirait par-dessus la chaussée.
         profile: layer.specs.embankmentProfile(1, side),
@@ -559,6 +565,12 @@ export function buildEmbankment(layer, context, segment, rowsInfo, walled) {
         scaleAcross: grain.across.map((across, i) => Math.min(across * drop[i], fillRoomOn(run[i], side) / spreadOf)),
         lateralJitter: new Float32Array(run.map((row) => side * (row.fill?.[side]?.offset ?? 0))),
       });
+      const positions = buffers.embankment.positions;
+      const cols = layer.specs.embankmentProfile(1, side).length;
+      for (let r = 0; r < run.length; r++) {
+        const foot = first + (r * cols + cols - 1) * 3;
+        positions[foot + 1] = Math.min(positions[foot + 1], sampleElevation(positions[foot], positions[foot + 2]));
+      }
     }
   }
 }
@@ -566,4 +578,9 @@ export function buildEmbankment(layer, context, segment, rowsInfo, walled) {
 /** Les profils assez larges pour porter une glissière réglementaire. */
 export function profileTakesGuardrail(profile) {
   return profile === 'express' || profile === 'major' || profile === 'minor';
+}
+
+function reliefFrames(segment, rows) {
+  const frames = segment.frames ?? pathFrames(segment.path);
+  return Float64Array.from(rows.flatMap(row => Array.from(frames.slice(row.r * 4, row.r * 4 + 4))));
 }

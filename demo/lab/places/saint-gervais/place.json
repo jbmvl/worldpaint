@@ -1,0 +1,17 @@
+{
+  "name": "saint-gervais",
+  "label": "Saint-Gervais-les-Bains — coteaux",
+  "lng": 6.7115,
+  "lat": 45.8923,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "encoding": "terrarium",
+    "extension": "png",
+    "source": "s3.amazonaws.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  }
+}

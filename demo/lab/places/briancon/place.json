@@ -1,0 +1,17 @@
+{
+  "name": "briancon",
+  "label": "Briançon — vieille ville",
+  "lng": 6.643,
+  "lat": 44.9,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "encoding": "terrarium",
+    "extension": "png",
+    "source": "s3.amazonaws.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  }
+}

@@ -313,7 +313,11 @@
 
 <div id="searchBar">
   <div class="search-row">
-    <input id="search" type="text" placeholder="Rechercher un lieu…" autocomplete="off" />
+    <input id="search" list="steepCities" type="text" placeholder="Rechercher un lieu…" autocomplete="off" />
+    <datalist id="steepCities">
+      <option value="Briançon, France"></option>
+      <option value="Saint-Gervais-les-Bains, France"></option>
+    </datalist>
     <button id="go">Aller</button>
   </div>
   <div id="status"></div>

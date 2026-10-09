@@ -11,6 +11,7 @@ son état.
 | Fichier | Ce qu'il fait |
 | --- | --- |
 | `roadGraph.js` | recoud les chaussées, arrondit leurs brisures, relève les carrefours (un carrefour est un **nœud**, pas une image) |
+| `roadProfile.js` | lisse le profil affiché, borne sa pente sous les contraintes des ouvrages et publie les portions suspendues sans modifier le terrassement |
 | `roadNetwork.js` | les rubans de chaussée, leur plate-forme, l'index publié |
 | `roadJunctions.js` | la surface d'un carrefour : les bandes de ses bras, leurs arrondis et joints, réunis ; ses bouches, la découpe des rubans, ses cotes, qui cède le passage |
 | `junctionPolygons.js` | géométrie plane des surfaces : union d'anneaux (îlots compris) et triangulation de Delaunay |

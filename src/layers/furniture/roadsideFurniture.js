@@ -13,7 +13,7 @@
  * chaussée d'en face (`_onOtherPavement`).
  */
 
-import { appendProfile } from '../ribbonGeometry.js';
+import { appendProfile, pathFrames } from '../ribbonGeometry.js';
 import { LEVEL_GROUND } from '../roadWorks.js';
 import { isPaved } from '../roadNetwork.js';
 import { nearestNamedPlace, pointInAreas } from '../settlement.js';
@@ -156,16 +156,21 @@ export function buildRoadside(layer, context, roadSegments, builtUp) {
     if (rows < 4) continue;
 
     const rowsInfo = [];
+    const frames = segment.frames ?? pathFrames(path);
     for (let r = 0; r < rows; r++) {
       const { slope, uphill } = crossSlope(edges[r * 2], edges[r * 2 + 1], probeSpan);
       // Terrain de part et d'autre, à quatre mètres au-delà de la rive : c'est
       // lui qui dit jusqu'où monte le mur amont et jusqu'où descend l'aval.
       const uphillGround = uphill > 0 ? edges[r * 2] : edges[r * 2 + 1];
-      const downhillGround = uphill > 0 ? edges[r * 2 + 1] : edges[r * 2];
       const turn = pathTurn(path, r);
+      const offset = uphill * probeSpan / 2;
+      const dx = frames[r * 4 + 2] * offset, dz = frames[r * 4 + 3] * offset;
+      const highSupport = context.sampleElevation(path[r].x + dx, path[r].z + dz);
+      const lowSupport = context.sampleElevation(path[r].x - dx, path[r].z - dz);
+      const followsEarth = Math.abs(platform[r] - (segment.terrainPlatform?.[r] ?? platform[r])) < .001;
       rowsInfo.push({
         r,
-        terrainFill: segment.terrainSupport?.[r] || (segment.crossingBase && Math.abs(platform[r] - segment.crossingBase[r]) > 0.001),
+        terrainFill: followsEarth && (segment.terrainSupport?.[r] || (segment.crossingBase && Math.abs((segment.terrainPlatform?.[r] ?? platform[r]) - segment.crossingBase[r]) > 0.001)),
         x: path[r].x,
         z: path[r].z,
         distance: path[r].distance,
@@ -178,19 +183,19 @@ export function buildRoadside(layer, context, roadSegments, builtUp) {
         curvature: Math.abs(turn),
         turn: Math.sign(turn),
         // Surplomb de la rive aval : c'est lui qui appelle le mur ou le talus.
-        drop: platform[r] - downhillGround,
+        drop: platform[r] - lowSupport,
         // Surplomb de la rive **amont**. Négatif sur un versant — le terrain
         // y domine la route —, positif quand la plate-forme est au-dessus du
         // sol des deux côtés : ce n'est plus une route de versant, c'est un
         // remblai en pleine terre, et il lui faut un talus de chaque côté. La
         // rampe d'accès d'un pont est exactement ce cas-là.
-        perch: platform[r] - uphillGround,
+        perch: platform[r] - highSupport,
         // Hauteur du terrain au-dessus de la plate-forme, côté amont : la
         // tranchée que le déblai a creusée, et que le mur doit habiller.
         rise: uphillGround - platform[r],
         // Ouvrage d'art (`roadWorks.js`) : la plate-forme n'y est plus posée
         // sur le terrain.
-        work: segment.works?.[r] || 0,
+        work: segment.works?.[r] || segment.supports?.[r] || 0,
       });
     }
 

@@ -13,6 +13,8 @@ import { finishGeneration } from '../core/generationSteps.js';
  * seule géométrie fusionnée par matière ; le ponctuel (lampadaires, poteaux,
  * panneaux, bornes, bâtiments agricoles) est instancié, un `InstancedMesh` par
  * forme. Une famille n'écrit jamais ailleurs que dans ces accumulateurs.
+ * Une pose qui exige du sol vérifie le support affiché ; une cote de
+ * chaussée seule ne peut porter un objet au-dessus du vide.
  *
  * Rien ne se pose sur la chaussée ni la voie ferrée (`RailwayLayer` publie
  * son propre `RoadIndex`, comme les routes) — `_onRoad` et `_clipOffRoad`
@@ -944,21 +946,30 @@ export class FurnitureLayer {
 
     let y = null;
     if (onPlatform && platform?.length) {
-      y = platform[Math.min(platform.length - 1, Math.max(0, point.row ?? 0))];
+      const r = Math.min(platform.length - 1, Math.max(0, point.fromRow ?? point.row ?? 0));
+      const t = point.t ?? 0;
+      y = platform[r] * (1 - t) + platform[Math.min(platform.length - 1, r + 1)] * t;
     }
 
-    return this._place(placements, item, { x, z, y, yaw, scale, exactY: y != null });
+    return this._place(placements, item, { x, z, y, yaw, scale, exactY: y != null, grounded: onPlatform });
   }
 
   /** @returns {{x:number,y:number,z:number}|null} l'objet posé, ou `null`. */
-  _place(placements, item, { x, z, y = null, yaw = 0, scale = 1, scaleX = null, scaleZ = null, exactY = false }) {
+  _place(placements, item, { x, z, y = null, yaw = 0, scale = 1, scaleX = null, scaleZ = null, exactY = false, grounded = false }) {
     const list = placements.get(item);
     if (!list || list.length >= FURNITURE_LIMITS.points) return null;
 
+    if (grounded && y != null) {
+      const support = this.bubble.renderedSupportAtLocal?.(x, z)?.y ??
+        this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale;
+      if (!Number.isFinite(support) || Math.abs(y - support) > .35) return null;
+      y = support;
+    }
     const ground =
       exactY && y != null
         ? y
-        : this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale;
+        : (this.bubble.renderedSupportAtLocal?.(x, z)?.y ??
+          this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale);
     if (!Number.isFinite(ground)) return null;
 
     const placed = { x, y: ground - FURNITURE_SINK_M, z, yaw, scale };

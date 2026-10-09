@@ -10,7 +10,9 @@ import { TunnelLighting } from './tunnelLighting.js';
  * Cette couche ne lit **aucune tuile**. Elle lit les tronçons publiés par
  * `roadNetwork` — leur tracé, leur plate-forme et leurs drapeaux d'ouvrage —,
  * exactement comme `streetLayer` lit les mêmes tronçons pour ses trottoirs. Il
- * n'y a donc qu'un seul endroit qui décide où passe un pont : le réseau. Ici
+ * n'y a donc qu'un seul endroit qui décide où passe un pont : le réseau.
+ * Ses portions suspendues non cartographiées portent aussi un tablier ; les
+ * dalles de carrefour ont une sous-face commune et des bouches ouvertes. Ici
  * on ne fait que l'habiller. Les appuis lisent le terrain final et laissent
  * libres les corridors inférieurs publiés par les terrassements. Les tunnels
  * lisent les enveloppes communes publiées par transportTunnels ; leurs
@@ -52,6 +54,7 @@ import {
   toColoredGeometry,
   pathFrames,
 } from './ribbonGeometry.js';
+import { junctionRibbonRuns, junctionSurface, junctionDeckAt } from './roadJunctions.js';
 import { ROAD_LIFT_M } from './roadNetwork.js';
 import { workRuns, WORK_BRIDGE, WORK_TUNNEL } from './roadWorks.js';
 import { worksStyleAt } from './townStyle.js';
@@ -142,12 +145,13 @@ export class BridgeLayer {
    * @param {{x:number,z:number}} here Position locale de l'observateur.
    * @returns {boolean} vrai si quelque chose a été posé.
    */
-  rebuild(roadSegments, here, { earthworks = null } = {}) {
+  rebuild(roadSegments, here, { earthworks = null, areas = null, roadIndex = null } = {}) {
     if (this.disposed || !this.bubble?.frame) return false;
 
     const bubble = this.bubble;
     // Les appuis rejoignent le terrain final, sans barrer le passage creusé.
     this._earthworks = earthworks;
+    this._roadIndex = roadIndex;
     const sampleElevation = (x, z) => bubble.surfaceElevationAtLocal(x, z, 0) * bubble.verticalScale;
 
     const buffer = createProfileBuffer();
@@ -167,6 +171,26 @@ export class BridgeLayer {
         if (!inReach(run)) continue;
         this._buildSpan(buffer, segment, run, sampleElevation);
       }
+      for (const run of workRuns(segment.supports, WORK_BRIDGE)) {
+        if (!inReach(run)) continue;
+        const pieces = areas ? junctionRibbonRuns(segment, areas, [run]) : [{
+          path: segment.path.slice(run.from, run.to + 1), platform: segment.platform.slice(run.from, run.to + 1),
+        }];
+        for (const piece of pieces) {
+          const origin = piece.path[0].distance;
+          const frames = pathFrames(piece.path);
+          let row = 0;
+          piece.path.forEach((p, r) => {
+            while (row + 1 < segment.path.length && segment.path[row].distance < p.distance - .000001) row++;
+            if (!p.section && segment.frames && Math.abs(segment.path[row].distance - p.distance) < .000001) {
+              frames.set(segment.frames.subarray(row * 4, row * 4 + 4), r * 4);
+            }
+          });
+          const path = piece.path.map(p => ({ ...p, distance: p.distance - origin }));
+          this._buildSpan(buffer, { ...segment, path, platform: piece.platform, frames },
+            { from: 0, to: path.length - 1 }, sampleElevation);
+        }
+      }
       for (const structure of segment.tunnelStructures ?? []) {
         if (!structure.path.some(p => Math.hypot(p.x-here.x,p.z-here.z)<=radius)) continue;
         this._buildTunnelHeads(buffer, structure, { from: 0, to: structure.path.length-1 }, sampleElevation);
@@ -177,6 +201,10 @@ export class BridgeLayer {
       }
     }
 
+    for (const area of areas?.areas ?? []) {
+      if (!area.supported || Math.hypot(area.x - here.x, area.z - here.z) > radius) continue;
+      this._buildJunctionSupport(buffer, area, sampleElevation);
+    }
     this._apply(buffer);
     this.lighting?.rebuild(this.tunnelFixtures);
     this.lighting?.update(here);
@@ -188,7 +216,7 @@ export class BridgeLayer {
     const origin = segment.path[run.from].distance;
     const out = [];
     for (let r = run.from; r <= run.to; r++) {
-      out.push({ x: segment.path[r].x, z: segment.path[r].z, distance: segment.path[r].distance - origin });
+      out.push({ ...segment.path[r], distance: segment.path[r].distance - origin });
     }
     return out;
   }
@@ -211,21 +239,44 @@ export class BridgeLayer {
       profile: deckProfile(halfWidth, style.deck),
       sampleElevation,
       baseHeights: surface,
+      frames: segment.frames?.slice(run.from * 4, (run.to + 1) * 4),
       closed: true,
       // Déjà tendue par `levelWorkSpans` : relisser courberait le tablier.
       smoothRadius: 0,
     });
     this.counts.spans++;
 
-    this._buildParapets(buffer, path, surface, halfWidth, style);
+    this._buildParapets(buffer, path, surface, halfWidth, style, segment.frames?.slice(run.from * 4, (run.to + 1) * 4));
     this._buildSupports(buffer, path, surface, halfWidth, style, sampleElevation);
+  }
+
+  _buildJunctionSupport(buffer, area, sampleElevation) {
+    const style = worksStyleAt(area.x, area.z, this.theme.works);
+    const slab = junctionSurface(area, ROAD_LIFT_M - style.deck.thickness, { base: buffer.positions.length / 3 });
+    if (!slab) return;
+    buffer.positions.push(...slab.positions);
+    for (let i = 0; i < slab.positions.length / 3; i++) buffer.colors.push(...style.deck.color);
+    buffer.indices.push(...slab.indices);
+    for (const edge of area.edges) {
+      const path = edge.points.map((p, i) => ({ ...p, distance: i ? Math.hypot(p.x - edge.points[0].x, p.z - edge.points[0].z) : 0 }));
+      const surface = Float32Array.from(path, p => p.y + ROAD_LIFT_M);
+      appendVariableWall(buffer, { path, base: surface.map(y => y - style.deck.thickness), top: surface,
+        thickness: style.parapet.thickness, coping: 0, colorFoot: style.deck.color, colorTop: style.deck.edge });
+      appendVariableWall(buffer, { path, base: surface, top: surface.map(y => y + style.parapet.height),
+        thickness: style.parapet.thickness, coping: style.parapet.coping,
+        colorFoot: style.parapet.color, colorTop: style.parapet.colorTop });
+    }
+    const path = [{ x: area.x - 1, z: area.z, distance: 0 }, { x: area.x + 1, z: area.z, distance: 2 }];
+    const surface = Float32Array.from(path, p => (junctionDeckAt(area, p.x, p.z) ?? area.deck) + ROAD_LIFT_M);
+    this._buildSupports(buffer, path, surface, 1, style, sampleElevation);
+    this.counts.spans++;
   }
 
   /**
    * Les deux parapets. Ils remplacent la glissière que `furnitureLayer` ne pose
    * plus ici : sur une travée, c'est le seul garde-corps qu'il y ait.
    */
-  _buildParapets(buffer, path, surface, halfWidth, style) {
+  _buildParapets(buffer, path, surface, halfWidth, style, frames = null) {
     const { parapet, deck } = style;
     // Le couronnement déborde de part et d'autre : l'axe recule d'autant, pour
     // que la face extérieure du parapet affleure la corniche du tablier.
@@ -248,6 +299,7 @@ export class BridgeLayer {
       }
       appendVariableWall(buffer, {
         path,
+        frames,
         base: surface,
         top,
         offset: side * offset,
@@ -289,6 +341,15 @@ export class BridgeLayer {
         { x: path[i].x + px * reach, z: path[i].z + pz * reach },
         { x: path[i].x - px * reach, z: path[i].z - pz * reach },
       ];
+      if (this._roadIndex) {
+        const [a, b] = across;
+        const steps = Math.ceil(Math.hypot(b.x - a.x, b.z - a.z));
+        for (let j = 0; j <= steps; j++) {
+          const t = steps ? j / steps : 0;
+          const hits = this._roadIndex.queryAll(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t, 1);
+          if (hits.some(hit => this._roadIndex.deckAt(hit) < surface[i] - deck.thickness - 1)) return false;
+        }
+      }
       if (this._earthworks) {
         const [a, b] = across;
         const steps = Math.ceil(Math.hypot(b.x - a.x, b.z - a.z));

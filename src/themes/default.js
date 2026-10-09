@@ -1563,6 +1563,8 @@ export const FURNITURE_COLORS = {
  * `nightZenith`/`nightHorizon` remplacent Preetham sous l'horizon.
  */
 export const SKY_PALETTE = {
+  /** Part de la teinte des précipitations conservée en pleine nuit. */
+  precipitationNightTint: 0.55,
   fog: '#e8eef3',
   nightZenith: '#0d1428', // une nuit sombre, pas noire (voir sceneEnvironment.js)
 

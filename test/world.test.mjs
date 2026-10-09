@@ -4366,13 +4366,13 @@ test('le talus suit le surplomb ligne par ligne, d’un seul pan', () => {
   const { layer, context, segment, rowsInfo, buffers } = roadsideHarness();
   const half = Math.floor(rowsInfo.length / 2);
   const remblai = rowsInfo.map((row, i) => ({ ...row, drop: i < half ? 0.5 : 4, perch: -1, uphill: 1 }));
-  const platform = new Float32Array(segment.platform.length).fill(102);
+  const platform = Float32Array.from(remblai, row => 100 + row.drop);
   buildEmbankment(layer, context, { ...segment, platform }, remblai, new Set());
 
   assert.equal(FURNITURE_SPECS.embankmentProfile(1).length, 2, 'la rive et le pied, sans épaulement');
   const positions = buffers.embankment.positions;
   const rows = positions.length / 3 / 2;
-  const depth = (r) => 102 - positions[(r * 2 + 1) * 3 + 1];
+  const depth = (r) => platform[r] - positions[(r * 2 + 1) * 3 + 1];
   const { up } = FURNITURE_SPECS.embankmentGrain;
   assert.ok(depth(0) <= 0.5 * up[1] + 1e-4, `pied du bas de rampe : ${depth(0).toFixed(2)} m`);
   assert.ok(depth(rows - 1) >= 4 - 1e-4, `pied du haut de rampe : ${depth(rows - 1).toFixed(2)} m`);

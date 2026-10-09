@@ -27,7 +27,7 @@
  * parcelles ou végétation, absents des tuiles.
  */
 import * as THREE from 'three';
-import { TreeVolumes } from '/src/layers/treeVolumes.js';
+import { VegetationLayer } from '/src/layers/vegetationLayer.js';
 import { TerrainBubble } from '/src/terrain/terrainBubble.js';
 import { ElevationField } from '/src/core/elevationField.js';
 import { RoadNetwork, createRoadMaterials } from '/src/layers/roadNetwork.js';
@@ -61,6 +61,8 @@ function heightAt(x, z) {
   let h = 50 + 0.09 * softRamp(x - 250);
   h += 0.25 * softRamp(-350 - x, 20);
   h += 12 * sig((-450 - z) / 4) * sig((x + 350) / 10) * sig((-50 - x) / 10);
+  h += .32 * softRamp(x - 420, 20) * sig((z - 375) / 15);
+  h -= 14 * Math.exp(-(((x - 565) / 45) ** 2)) * sig((z - 375) / 15);
   return h;
 }
 
@@ -105,6 +107,8 @@ const way = (properties, ...points) => ({
  * « pont-large » : la route du pont est la plus étroite ; la branche, plus
  * large, commande le carrefour.
  * « classe » : la route change de classe sur son remblai — deux chaînes.
+ * « montagne » : des rues à 32 % traversent un vallon ; leurs carrefours
+ * partagent les cotes et leurs tabliers laissent les bouches ouvertes.
  * « pente » : un carrefour en croix sur le versant à 9 %.
  * « devers » : une route à flanc de versant à 25 %, en mur côté aval, et une
  * branche qui en descend.
@@ -114,6 +118,8 @@ const way = (properties, ...points) => ({
  * sentier qui y monte dans la pente — sans terrassement ni talus.
  */
 const FEATURES = [
+  ...[430, 500, 570].map(z => way({ class: 'minor' }, [390,z], [490,z], [590,z], [700,z])),
+  ...[490, 590].map(x => way({ class: 'minor' }, [x,390], [x,430], [x,500], [x,570], [x,610])),
   way({ class: 'minor' }, [470,250], [550,250], [553,250], [560,258], [600,285]),
   way({ class: 'minor' }, [550,250], [550,185]),
 
@@ -172,6 +178,8 @@ const FEATURES = [
 const CLIFFS = [way({ class: 'cliff' }, [-330, -450], [-70, -450])];
 
 const SCENES = {
+  montagne: { x: 565, z: 500, yawDeg: 245, pitchDeg: 22, distance: 180 },
+  'montagne-carrefour': { x: 490, z: 500, yawDeg: 225, pitchDeg: 22, distance: 65 },
   couture: { x: 550, z: 250, yawDeg: 225, pitchDeg: 30, distance: 50 },
   tunnels: { x: -260, z: 333, yawDeg: 90, pitchDeg: 18, distance: 90 },
   souterrain: { x: -208, z: 160, yawDeg: 90, pitchDeg: 18, distance: 70 },
@@ -235,7 +243,7 @@ for (let pass = 0; pass < 4 && roads.needsRebuild(here.x, here.z); pass++) {
     (x, z) => bubble.naturalElevationAtLocal(x, z, 0) * bubble.verticalScale) });
   while (bubble.processRebuildQueue());
 }
-bridges.rebuild(roads.roadSegments, here, { earthworks: roads.earthworks });
+bridges.rebuild(roads.roadSegments, here, { earthworks: roads.earthworks, areas: roads.junctionAreas, roadIndex: roads.elevationIndex });
 bubble.materials.setTunnelMouths(bridges.tunnelMouths);
 const railways = new RailwayLayer({ THREE, scene, bubble });
 railways.rebuild(source, [], here);
@@ -253,20 +261,22 @@ function setStone(stone) {
 setStone(null);
 
 // Témoins de pose sur le remblai et sur les deux rives de la tranchée.
-const trees = new TreeVolumes(THREE, scene, defaultTheme);
+const trees = new VegetationLayer({ THREE, scene, bubble, theme: defaultTheme });
 const treePoints = [[55, -247], [65, -235], [140, -245], [155, -235], [-195, -190], [-164, -190]];
 const planted = treePoints.map(([x, z]) => ({ x, z,
   y: bubble.surfaceElevationAtLocal(x, z, 0) * bubble.verticalScale,
   variant: 0, height: 7, aspect: .7, rotation: 0, color: [1, 1, 1],
 }));
-trees.set('temoins-relief', planted);
+trees.setPlants('temoins-relief', planted);
 trees.update(0, 0);
 
 const state = { scene: 'pont', stone: null, ...SCENES.pont };
 
 function render() {
   const { x, z, yawDeg, pitchDeg, distance } = state;
-  const y = bubble.surfaceElevationAtLocal(x, z, 0) * bubble.verticalScale;
+  const ground = bubble.surfaceElevationAtLocal(x, z, 0) * bubble.verticalScale;
+  const hit = roads.elevationIndex.query(x, z, 0);
+  const y = Math.max(ground, hit ? roads.elevationIndex.deckAt(hit) : ground);
   const yaw = (yawDeg * Math.PI) / 180;
   const pitch = (pitchDeg * Math.PI) / 180;
   // Le regard porte vers `yaw` : la caméra se tient derrière, en retrait.
@@ -294,6 +304,10 @@ function info() {
     segments: roads.segments,
     crossings: roads.crossings,
     bridges: bridges.counts,
+    profilContraint: roads.profileConstraints,
+    penteMax: Math.max(...roads.roadSegments.filter(s => s.paved).flatMap(s => s.path.slice(1).map((p, i) =>
+      Math.abs(s.platform[i + 1] - s.platform[i]) / Math.hypot(p.x - s.path[i].x, p.z - s.path[i].z)))),
+    porteesAjoutees: roads.roadSegments.filter(s => s.supports?.some(Boolean)).length,
     arbres: planted.map((p) => ({ x: p.x, z: p.z,
       ecartSol: +(p.y - bubble.renderedSupportAtLocal(p.x, p.z).y).toFixed(3) })),
     decks,

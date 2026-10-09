@@ -100,6 +100,8 @@ export function spacedAlongPath(path, spacing, { startDistance = 0, phase = 0, m
       // (la plate-forme, la courbure) : le pas du tracé n'étant pas constant,
       // elle ne se retrouve pas en divisant une distance.
       row: t < 0.5 ? cursor - 1 : cursor,
+      fromRow: cursor - 1,
+      t,
     });
   }
   return out;
