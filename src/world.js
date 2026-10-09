@@ -38,7 +38,7 @@ import {
   SHADOW_LEAD_M,
   skyPaletteFor,
 } from './environment/sceneEnvironment.js';
-import { tileSizeMeters } from './core/tileMath.js';
+import { tileSizeMeters, lngLatToTile } from './core/tileMath.js';
 import { FAR_DEM_ZOOM_DROP } from './terrain/farRelief.js';
 import { resolveTheme } from './themes/theme.js';
 import { defaultTheme } from './themes/default.js';
@@ -285,7 +285,15 @@ export class World {
     }
 
     const deck = platformPositionAt(this.composer.roads, here.x, here.z, ahead);
-    if (deck == null) return bubble.toScenePosition(lng, lat, heightAboveGround);
+    if (deck == null) {
+      const tile = lngLatToTile(lng, lat, bubble.zoom);
+      const near = [...(bubble.tiles?.values() || [])].some(t => t.mesh && t.x === Math.floor(tile.x) && t.y === Math.floor(tile.y));
+      if (!near) {
+        const far = this.composer.far?.positionAt(here.x, here.z, heightAboveGround);
+        if (far) return far;
+      }
+      return bubble.toScenePosition(lng, lat, heightAboveGround);
+    }
     return { x: here.x, y: deck + heightAboveGround, z: here.z };
   }
 
