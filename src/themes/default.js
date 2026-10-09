@@ -1087,6 +1087,7 @@ export const SHOPFRONT_ICONS = {
   clothing_store: 'shirt',
   ice_cream: 'ice-cream',
   laundry: 'wash-machine',
+  lodging: 'bed',
   music: 'music',
   post: 'mail',
   grocery: 'shopping-cart',

@@ -60,6 +60,7 @@ const SHOPFRONT_CLASSES = new Set([
   'hairdresser',
   'ice_cream',
   'laundry',
+  'lodging',
   'music',
   'pharmacy',
   'post',

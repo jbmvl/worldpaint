@@ -1396,6 +1396,7 @@ test('la personnalité d’un bâtiment suit le point d’intérêt qui tombe de
   assert.equal(buildingPersonalityFor({ class: 'grocery', subclass: 'greengrocer' }), 'shop');
   assert.equal(buildingPersonalityFor({ class: 'cafe', subclass: 'cafe' }), 'shop');
   assert.equal(buildingPersonalityFor({ class: 'bank', subclass: 'bank' }), 'shop');
+  assert.equal(buildingPersonalityFor({ class: 'lodging', subclass: 'hotel' }), 'shop');
 
   // Pas de façade sur rue : un cabinet, un bureau, une école n'en ont pas.
   assert.equal(buildingPersonalityFor({ class: 'doctors', subclass: 'doctors' }), null);
