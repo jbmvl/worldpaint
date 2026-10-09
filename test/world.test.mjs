@@ -13167,6 +13167,7 @@ test('shopfrontIconFor retrouve l’icône de la classe, ou le repli générique
   assert.equal(shopfrontIconFor('bakery'), SHOPFRONT_ICONS.bakery);
   assert.equal(shopfrontIconFor('cafe'), SHOPFRONT_ICONS.cafe);
   assert.equal(shopfrontIconFor('fuel'), SHOPFRONT_ICONS.fuel);
+  assert.equal(shopfrontIconFor('lodging'), 'bed');
   assert.equal(shopfrontIconFor('inconnu'), SHOPFRONT_ICON_DEFAULT);
   assert.equal(shopfrontIconFor(null), SHOPFRONT_ICON_DEFAULT);
 });
