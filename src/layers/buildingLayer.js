@@ -759,6 +759,8 @@ export function outerRings(geometry) {
  * @param {number[]|null} [options.door] Couleur de la porte d'entrée, ou
  *        `null` pour ne pas en percer. Elle prend la place d'une fenêtre du
  *        rez-de-chaussée, la plus centrale où elle tient sous l'étage.
+ * @param {Array|null} [options.sink] Reçoit le centre de chaque fenêtre
+ *        posée : `{x, y, z, level}`, sur le nu du mur.
  */
 export function appendOpenings(
   openings,
@@ -772,7 +774,7 @@ export function appendOpenings(
   minHeight,
   style,
   look = defaultTheme.windows,
-  { skipGroundLevel = false, ground = null, clearAbove = -Infinity, door = null } = {}
+  { skipGroundLevel = false, ground = null, clearAbove = -Infinity, door = null, sink = null } = {}
 ) {
   const length = Math.hypot(b.x - a.x, b.y - a.y);
   const storeys = height - minHeight;
@@ -884,6 +886,7 @@ export function appendOpenings(
       }
 
       openings.panes++;
+      sink?.push({ x: anchor.x, y: (sill + head) / 2, z: anchor.z, level });
 
       // 4. La lumière. Une fenêtre aux volets clos ne s'allume pas : c'est
       //    précisément ce qu'on voit d'une rue de village la nuit.
@@ -1480,8 +1483,10 @@ export class BuildingLayer {
      * porte la vitrine et l'enseigne d'un commerce, sa normale sortante (vers
      * la rue) et le sol à son pied. Publiées pour qu'une application adosse un
      * objet au mur d'une boutique précise. Repère de `bubble.frame`.
+     * `windows` : le centre des fenêtres du même pan (`{x, y, z, level}`).
      * @type {Array<{a:{x:number, z:number}, b:{x:number, z:number},
-     *               facing:{x:number, z:number}, y:number, kind:string|null}>}
+     *               facing:{x:number, z:number}, y:number, kind:string|null,
+     *               windows:Array<{x:number, y:number, z:number, level:number}>}>}
      */
     this.shopfronts = [];
     this._shopfrontSink = null;
@@ -2000,11 +2005,13 @@ export class BuildingLayer {
             this.theme.shopfront,
             profile
           );
+        const shopWindows = [];
         appendOpenings(openings, walls, a, b, nx, nz, base, eaves - base, minHeight, style, this.theme.windows, {
           skipGroundLevel: devanture,
           ground: profile,
           clearAbove: devanture ? shopfrontTop : -Infinity,
           door: i === frontIndex && !devanture ? style.shutter : null,
+          sink: i === shopIndex && shopfrontTop !== null ? shopWindows : null,
         });
 
         // Enseigne en drapeau : indépendante de la devanture au sol — une
@@ -2016,6 +2023,7 @@ export class BuildingLayer {
             facing: { x: nx, z: nz },
             y: frontFloor,
             kind: personalityClass,
+            windows: shopWindows,
           });
           appendShopSignBlade(
             walls,

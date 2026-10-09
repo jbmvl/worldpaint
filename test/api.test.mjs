@@ -220,6 +220,7 @@ test('shopfrontNear rend le pied de mur de la devanture la plus proche', () => {
   assert.equal(near.kind, 'bakery');
   assert.deepEqual([near.x, near.y, near.z, near.distanceM, near.along], [4, 3, 0, 3, 4]);
   assert.deepEqual(near.tangent, { x: 1, z: 0 });
+  assert.deepEqual(near.windows, [], 'sans fenêtre relevée : liste vide');
   assert.equal(world.shopfrontNear(14, 0).x, 10, 'borné au pan');
   assert.equal(world.shopfrontNear(4, 100), null, 'hors de portée');
   composer.buildings._frame = { toLocal: frame.toLocal };

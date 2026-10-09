@@ -495,8 +495,10 @@ export class World {
    * @param {number} [radius]
    * @returns {{x:number, y:number, z:number, facing:{x:number, z:number},
    *          tangent:{x:number, z:number}, length:number, along:number,
-   *          kind:string|null, distanceM:number}|null} `along` situe le point
-   *          sur le pan, depuis son début ; `length` est celle du pan.
+   *          kind:string|null, distanceM:number,
+   *          windows:Array<{x:number, y:number, z:number, level:number}>}|null}
+   *          `along` situe le point sur le pan, depuis son début ; `length`
+   *          est celle du pan ; `windows`, le centre de ses fenêtres.
    */
   shopfrontNear(lng, lat, radius = 40) {
     const buildings = this.composer.buildings;
@@ -516,7 +518,7 @@ export class World {
       const z = front.a.z + tz * along;
       const distanceM = Math.hypot(here.x - x, here.z - z);
       if (distanceM > radius || (best && distanceM >= best.distanceM)) continue;
-      best = { x, y: front.y, z, facing: front.facing, tangent: { x: tx, z: tz }, length, along, kind: front.kind, distanceM };
+      best = { x, y: front.y, z, facing: front.facing, tangent: { x: tx, z: tz }, length, along, kind: front.kind, distanceM, windows: front.windows ?? [] };
     }
     return best;
   }

@@ -6853,9 +6853,13 @@ test('une façade percée de jour : encadrement, verre, volets', () => {
     palette: 'test',
   };
   // Un pan de 20 m, 8 m sous l’égout : deux niveaux de baies.
-  appendOpenings(openings, walls, { x: 0, y: 0 }, { x: 20, y: 0 }, 0, -1, 100, 8, 0, style);
+  const sink = [];
+  appendOpenings(openings, walls, { x: 0, y: 0 }, { x: 20, y: 0 }, 0, -1, 100, 8, 0, style, undefined, { sink });
 
   assert.ok(openings.panes > 0, 'des baies');
+  assert.equal(sink.length, openings.panes, 'chaque baie publie son centre');
+  assert.ok(sink.every((w) => w.z === 0 && w.y > 100 && w.y < 108 && w.x > 0 && w.x < 20), 'sur le nu du mur');
+  assert.ok(sink.some((w) => w.level === 1), 'étage compris');
   // Encadrement + verre + deux volets ; les volets fermés remplacent le verre,
   // donc quatre quadrilatères au plus par baie et trois au moins.
   const quads = walls.positions.length / 18;
