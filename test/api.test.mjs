@@ -543,3 +543,15 @@ test('le ciel se peint avant le premier centrage, les tuiles se branchent ensuit
   world.dispose();
   if (!hadDocument) delete globalThis.document;
 });
+
+test('roadPositionAt pose un mobile sur le relief lointain hors bulle', () => {
+  const composer = fakeComposer();
+  composer.bubble = {
+    zoom: 15, tiles: new Map(), frame: { toLocal: (lng, lat) => ({ x: lng, z: lat }) },
+    toScenePosition: () => ({ x: 10, y: 0, z: 20 }),
+  };
+  composer.roads = null;
+  composer.far = { positionAt: (x, z, lift) => ({ x, y: 500 + lift, z }) };
+  const world = new World({ composer, environment: null, elevation: null, ownsElevation: false });
+  assert.deepEqual(world.roadPositionAt(10, 20, 0.1), { x: 10, y: 500.1, z: 20 });
+});

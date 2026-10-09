@@ -152,3 +152,30 @@ test('la couleur est celle qu on lui passe, en linéaire', () => {
   far.setColor({ x: 0.1, y: 0.2, z: 0.05 });
   assert.deepEqual(far.material.color.toArray().map((v) => +v.toFixed(3)), [0.1, 0.2, 0.05]);
 });
+
+test('la pose lointaine interpole les triangles affichés, puis disparaît avec la nappe', async () => {
+  const { far } = farWith(8000, bubbleAt(-1));
+  await far.sync();
+  const positions = far.mesh.geometry.attributes.position;
+  const side = far.blockSize * FAR_CELLS_PER_TILE + 1;
+  const a = 2 * side + 2, b = a + 1, c = a + side, d = c + 1;
+  for (const [u, v] of [[0.2, 0.3], [0.8, 0.7]]) {
+    const x = positions.getX(a) * (1-u) + positions.getX(b) * u;
+    const z = positions.getZ(a) * (1-v) + positions.getZ(c) * v;
+    const y = u+v <= 1
+      ? positions.getY(a)*(1-u-v) + positions.getY(b)*u + positions.getY(c)*v
+      : positions.getY(b)*(1-v) + positions.getY(c)*(1-u) + positions.getY(d)*(u+v-1);
+    assert.ok(Math.abs(far.positionAt(x, z, 0.2).y - y - 0.2) < 0.001);
+  }
+  assert.equal(far.positionAt(1e9, 1e9), null);
+  far.dispose();
+  assert.equal(far.positionAt(0, 0), null);
+});
+
+test('la pose lointaine ignore les trous maillés par la bulle et la nappe cachée', async () => {
+  const { far } = farWith(8000);
+  await far.sync();
+  assert.equal(far.positionAt(0, 0), null);
+  far.mesh.visible = false;
+  assert.equal(far.positionAt(5000, 5000), null);
+});

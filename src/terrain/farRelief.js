@@ -221,6 +221,12 @@ export class FarRelief {
       }
     }
 
+    const activeCells = new Uint8Array(n * n);
+    for (let k = 0; k < index.length; k += 6) {
+      const a = index[k];
+      activeCells[Math.floor(a / side) * n + a % side] = 1;
+    }
+    this._surface = { x: origin.x, z: origin.z, step, n, cells: activeCells, positions };
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     geometry.setIndex(new THREE.BufferAttribute(index, 1));
@@ -229,9 +235,26 @@ export class FarRelief {
     mesh.geometry = geometry;
   }
 
+  /** Appui sur les triangles affichés, sans relire ni charger le MNT. */
+  positionAt(x, z, lift = 0) {
+    const grid = this._surface;
+    if (!this.mesh.visible || !grid) return null;
+    const gx = (x - grid.x) / grid.step, gz = (z - grid.z) / grid.step;
+    const i = Math.floor(gx), j = Math.floor(gz);
+    if (i < 0 || j < 0 || i >= grid.n || j >= grid.n || !grid.cells[j * grid.n + i]) return null;
+    const u = gx - i, v = gz - j;
+    const a = j * (grid.n + 1) + i, b = a + 1, c = a + grid.n + 1, d = c + 1;
+    const h = (k) => grid.positions[k * 3 + 1];
+    const y = u + v <= 1
+      ? h(a) * (1 - u - v) + h(b) * u + h(c) * v
+      : h(b) * (1 - v) + h(c) * (1 - u) + h(d) * (u + v - 1);
+    return { x, y: y + lift, z };
+  }
+
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this._surface = null;
     this._abort.abort();
     this.mesh.parent?.remove(this.mesh);
     this.mesh.geometry.dispose();
