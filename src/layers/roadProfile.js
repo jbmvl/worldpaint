@@ -5,6 +5,7 @@
  * tunnels et les passages inférieurs conservent leurs cotes. Les ponts
  * peuvent monter mais jamais perdre leur dégagement.
  * Les portions durablement suspendues publient des appuis pour BridgeLayer,
+ * prolongés jusqu'au contact avec le sol, même sous le seuil de déclenchement,
  * sans changer les drapeaux OSM ni les hauteurs utilisées par le terrain.
  */
 import { pathFrames } from './ribbonGeometry.js';
@@ -106,21 +107,24 @@ export function findRoadSupports(segments, groundAt, areas = null) {
     const mask = segment.supports = new Uint8Array(path.length);
     if (!segment.paved) continue;
     const frames = segment.frames ?? pathFrames(path);
-    const suspended = path.map((p, r) => {
-      if (segment.works?.[r]) return false;
+    const ecartsSol = path.map((p, r) => {
       const px = frames[r * 4 + 2], pz = frames[r * 4 + 3];
       const left = platform[r] - groundAt(p.x + px * halfWidth, p.z + pz * halfWidth);
       const right = platform[r] - groundAt(p.x - px * halfWidth, p.z - pz * halfWidth);
       const centre = platform[r] - groundAt(p.x, p.z);
-      return centre >= ROAD_SUPPORT_DROP_M || Math.min(left, right) >= ROAD_SUPPORT_DROP_M;
+      return Math.max(centre, Math.min(left, right));
     });
+    const suspended = ecartsSol.map((ecart, r) => !segment.works?.[r] && ecart >= ROAD_SUPPORT_DROP_M);
     for (let r = 0; r < path.length;) {
       if (!suspended[r]) { r++; continue; }
       const from = r;
       while (r + 1 < path.length && suspended[r + 1]) r++;
       const to = r++;
       if (path[to].distance - path[from].distance < ROAD_SUPPORT_LENGTH_M) continue;
-      const a = Math.max(0, from - 1), b = Math.min(path.length - 1, to + 1);
+      let a = from, b = to;
+      // Le seuil choisit l'ouvrage ; seul le retour au sol termine ses accès.
+      while (a > 0 && !segment.works?.[a] && ecartsSol[a] > .0001) a--;
+      while (b + 1 < path.length && !segment.works?.[b] && ecartsSol[b] > .0001) b++;
       for (let i = a; i <= b; i++) if (!segment.works?.[i]) mask[i] = 1;
     }
   }

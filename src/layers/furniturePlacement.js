@@ -974,24 +974,21 @@ export const CURVE_RAIL_CURVATURE = 0.012;
 
 /**
  * Le parapet d'une rive, et de quelle matière — ou `null` s'il n'en faut pas.
- * Une glissière protège d'un vide, pas d'une pente : exige à la fois un vrai
- * surplomb (`drop`) et un versant franc ou une courbe (le MNT bruite le
- * devers de quelques pour cent partout, donc la seule pente ne suffit pas).
- * Matière suit la route : acier sur les grands axes, bois sur les petites.
- *
- * En montagne (`alpine`, `glacial`), le vide se protège plus tôt : un
- * surplomb ou une courbe qu'on laisserait nus ailleurs y bordent déjà un
- * lacet ou un ravin, ce que le devers seul ne dit pas.
+ * L'extérieur d'une courbe se protège même sur terrain plat ; une ligne
+ * droite exige un surplomb et un versant franc. Les voies de desserte et
+ * pistes gardent l'exigence du surplomb, même en courbe.
+ * En climat alpin ou glacial, les seuils de courbure et de vide sont abaissés.
  *
  * @returns {'steel'|'wood'|null}
  */
 export function guardrailStyleFor({ profile = 'minor', slope = 0, curvature = 0, drop = 0, climate = null } = {}) {
   const mountain = climate === 'alpine' || climate === 'glacial';
   const minDrop = mountain ? GUARDRAIL_MIN_DROP_M * 0.5 : GUARDRAIL_MIN_DROP_M;
-  if (drop < minDrop) return null;
   const curveThreshold = mountain ? CURVE_RAIL_CURVATURE * 0.6 : CURVE_RAIL_CURVATURE;
-  const exposed = slope >= STEEP_CROSS_SLOPE || curvature >= curveThreshold;
-  if (!exposed) return null;
+  const curve = curvature >= curveThreshold;
+  const ravine = drop >= minDrop && slope >= STEEP_CROSS_SLOPE;
+  const smallRoad = profile === 'lane' || profile === 'track';
+  if (!(ravine || (curve && (!smallRoad || drop >= minDrop)))) return null;
   if (profile === 'express' || profile === 'major') return 'steel';
   if (profile === 'minor') return drop > 2.5 ? 'steel' : 'wood';
   if (profile === 'lane' || profile === 'track') return 'wood';

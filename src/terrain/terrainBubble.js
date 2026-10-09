@@ -12,8 +12,9 @@ import { finishGeneration } from '../core/generationSteps.js';
  * tuile à l'autre. Les tuiles neuves rendent la main entre deux maillages
  * après le budget CPU ; les changements de finesse passent par la file.
  *
- * Deux choses perturbent le relief lu, dans cet ordre : la marche des falaises
- * (`setCliffCut`, qui comprime en paroi la rampe que le MNT étale), puis les
+ * Le relief lu reçoit, dans cet ordre : la marche des falaises
+ * (`setCliffCut`, qui comprime en paroi la rampe que le MNT étale), les niveaux
+ * de l’eau (`setWaterRelief`), puis les
  * terrassements locaux des franchissements (remblais et tranchées), puis le
  * déblai des chaussées (`setRoadCut` — une route est taillée dans le versant,
  * pas posée dessus). La falaise façonne le terrain naturel, la route entaille
@@ -21,13 +22,14 @@ import { finishGeneration } from '../core/generationSteps.js';
  * donc les tuiles voisines s'accordent au bord sans se consulter.
  * Le fond plat du déblai ne peut pas être plus étroit qu'une maille, sans quoi
  * aucun sommet n'y tombe et le triangle enjambe la chaussée (`cutBenchM`).
- * Chaque sommet porte aussi l'emprise routière (`roadMask`, `roadCutMaskAt`) :
+ * Chaque sommet porte aussi le masque du relief contraint (`roadMask`) :
  * ce que `terrainMaterial.js` ajoute après coup à la position — le grain low
  * poly — doit s'y éteindre, sans quoi il recreuserait par-dessus une chaussée
- * qu'on vient de tailler pour elle.
+ * qu'on vient de tailler pour elle, ou rebosseler une nappe d’eau.
  *
- * L'eau, elle, ne touche pas au relief : c'est une matière du sol, pas une
- * surface (`groundClassMap`).
+ * Les niveaux de l’eau corrigent le terrain naturel après les falaises et
+ * avant les terrassements. La matière reste portée par le terrain commun ;
+ * les lectures CPU et les sommets partagent la même correction (`waterRelief`).
  *
  * Le MNT porte son propre zoom, réglé sur la résolution de sa source et non
  * sur la finesse de la maille. La bulle convertit donc ses coordonnées de
@@ -164,6 +166,8 @@ export class TerrainBubble {
     this._cliffCut = null;
     /** Même rôle que `_cutGeneration`, pour la marche des falaises. */
     this._cliffGeneration = 0;
+    this._waterRelief = null;
+    this._waterGeneration = 0;
   }
 
   /**
@@ -268,6 +272,7 @@ export class TerrainBubble {
     if (needsFrame) {
       this._clearTiles();
       this.frame = createLocalFrame(lng, lat, this.zoom);
+      this._waterRelief = null;
     }
     if (Number.isFinite(this._reach)) {
       const here = this.frame.toLocal(lng, lat);
@@ -481,13 +486,13 @@ export class TerrainBubble {
   }
 
   /**
-   * Terrain naturel : le MNT, falaises comprises, **avant** déblai. C'est sur
+   * Terrain naturel : le MNT, falaises et niveaux d’eau compris, **avant** déblai. C'est sur
    * lui que se dressent les plates-formes : au pied d'une falaise, une route
    * posée sur la rampe que le MNT étale flotterait au-dessus du sol affiché.
    */
   naturalElevationAtLocal(x, z, fallback = 0) {
     const raw = this.rawSurfaceElevationAtLocal(x, z, fallback);
-    return this._cliffCut ? this._cliffCut.elevationAt(x, z, raw) : raw;
+    return this._naturalAt(x, z, raw);
   }
 
   /**
@@ -536,7 +541,33 @@ export class TerrainBubble {
     // entaille ensuite. L'ordre inverse taillerait la route dans la rampe que
     // la marche vient de supprimer.
     const stepped = this._cliffCut ? this._cliffCut.elevationAt(x, z, raw) : raw;
-    return this._roadCutAt(x, z, stepped);
+    const water = this._waterRelief?.sample(x, z, stepped);
+    const earth = this._roadCutAt(x, z, water?.elevation ?? stepped);
+    return water?.inWater ? water.elevation : earth;
+  }
+
+  _naturalAt(x, z, raw) {
+    const stepped = this._cliffCut ? this._cliffCut.elevationAt(x, z, raw) : raw;
+    return this._waterRelief?.elevationAtPoint(x, z, stepped) ?? stepped;
+  }
+
+  setWaterRelief(index) {
+    if (this.disposed) return;
+    const previous = this._waterRelief;
+    if (!previous && !index) return;
+    this._waterRelief = index;
+    this._waterGeneration++;
+    for (const tile of this.tiles.values()) {
+      if (!tile.hadWater && !this._waterTouches(tile)) continue;
+      if (!this._rebuildQueue.includes(tile.key)) this._rebuildQueue.push(tile.key);
+    }
+  }
+
+  _waterTouches(tile) {
+    if (!this._waterRelief || !this.frame) return false;
+    const a = this.frame.tileToLocal(tile.x, tile.y);
+    const b = this.frame.tileToLocal(tile.x + 1, tile.y + 1);
+    return this._waterRelief.touches(a.x, a.z, b.x, b.z);
   }
 
   /**
@@ -713,6 +744,7 @@ export class TerrainBubble {
     ) {
       return true;
     }
+    if (tile.waterGeneration !== this._waterGeneration && (tile.hadWater || this._waterTouches(tile))) return true;
     const wanted = this._edgeSegmentsFor(tile, n);
     return (
       wanted.north !== tile.edgeSegments.north ||
@@ -757,7 +789,7 @@ export class TerrainBubble {
 
   /** Ce dont dépend une maille en cours : s'il change, elle est à reprendre. */
   _buildState() {
-    return `${this._cutGeneration}:${this._cliffGeneration}:${this.elevation?.revision}`;
+    return `${this._cutGeneration}:${this._cliffGeneration}:${this._waterGeneration}:${this.elevation?.revision}`;
   }
 
   _cancelPendingBuild() {
@@ -801,22 +833,14 @@ export class TerrainBubble {
     // interrogeait l'index cinq fois pour s'entendre dire qu'il n'y a pas de
     // falaise ici, soit deux cent mille requêtes inutiles par tuile.
     const stepping = this._cliffTouches(tile);
-    // Gradient pris sur le terrain façonné, sinon l'éclairage du fond du
-    // déblai — ou de la paroi — serait celui du versant.
-    const cut =
-      carving || stepping
-        ? (x, z, raw) => {
-            const stepped = stepping ? this._cliffCut.elevationAt(x, z, raw) : raw;
-            return carving ? this._roadCutAt(x, z, stepped) : stepped;
-          }
-        : (x, z, raw) => raw;
-    const cutWithMask =
-      carving || stepping
-        ? (x, z, raw) => {
-            const stepped = stepping ? this._cliffCut.elevationAt(x, z, raw) : raw;
-            return carving ? this._roadCutWithMask(x, z, stepped) : { elevation: stepped, mask: 0 };
-          }
-        : (x, z, raw) => ({ elevation: raw, mask: 0 });
+    const watering = this._waterTouches(tile);
+    const cutWithMask = (x, z, raw) => {
+      const stepped = stepping ? this._cliffCut.elevationAt(x, z, raw) : raw;
+      const water = watering ? this._waterRelief.sample(x, z, stepped) : { elevation: stepped, mask: 0 };
+      const earth = carving ? this._roadCutWithMask(x, z, water.elevation) : water;
+      return { elevation: water.inWater ? water.elevation : earth.elevation, mask: Math.max(water.mask, earth.mask) };
+    };
+    const cut = (x, z, raw) => cutWithMask(x, z, raw).elevation;
 
     for (let j = 0; j <= n; j++) {
       const v = j / n;
@@ -932,6 +956,8 @@ export class TerrainBubble {
     tile.cutGeneration = this._cutGeneration;
     tile.cliffGeneration = this._cliffGeneration;
     tile.hadCliff = stepping;
+    tile.waterGeneration = this._waterGeneration;
+    tile.hadWater = watering;
     tile.edgeIncomplete = !this._neighboursLoaded(tile.x, tile.y);
   }
 
@@ -961,6 +987,7 @@ export class TerrainBubble {
     this._roadCut = null;
     this._unpaved = null;
     this._junctions = null;
+    this._waterRelief = null;
     this._rebuildQueue.length = 0;
     this._clearTiles();
     this.materials.dispose();

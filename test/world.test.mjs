@@ -12855,7 +12855,7 @@ test('le contour de l’eau se fond, sans que les identifiants cessent d’être
   assert.match(source, /texture2D\(uSurfaceMap, \(corner \+ offset \+ 0\.5\) \/ \$\{CLASS_PIXELS\}\.0\)/);
 
   // Et la berge est un fondu, pas une substitution.
-  assert.match(source, /base = mix\(base, water, gWater\);/);
+  assert.match(source, /base = mix\(base, uWaterAlbedo, gWater\);/);
 
   // L'eau ne doit pas être peinte deux fois : tenue hors du mélange des
   // couleurs, sans quoi le sol sous le fondu serait déjà de l'eau — et ce qui

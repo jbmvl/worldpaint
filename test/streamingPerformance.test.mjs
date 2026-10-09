@@ -63,10 +63,10 @@ function compositeur() {
   const layer = name => ({ rebuild: () => { calls.push(name); },
     setPlants() {}, update() {}, sync() {}, invalidate() {}, setRelief() {}, setSeaDistance() {}, setAnimals() {}, setTractors() {}, setTracks() {}, setVerges() {} });
   const composer = Object.assign(Object.create(WorldComposer.prototype), {
-    disposed: false, _refreshing: false, root: {}, landscape: { region: {} },
+    disposed: false, _refreshing: false, root: {}, theme: defaultTheme, landscape: { region: {} },
     _updateLandscape: () => false, _distributeRegion() {}, _wantedTiles: () => [{ x: 1, y: 2 }],
     vectorTiles: { missing: () => 0, load: async () => null, forEachFeature() {} },
-    bubble: { processRebuildQueue: () => false, surfaceGeneration: 0, frame: { toLocal: () => ({ ...here }) }, materials: { syncGroundClass() {} } },
+    bubble: { processRebuildQueue: () => false, setWaterRelief: () => calls.push('eau'), surfaceGeneration: 0, frame: { origin: {x:0,y:0}, scale:1, toLocal: () => ({ ...here }) }, materials: { syncGroundClass() {} } },
     groundClass: layer('sol'), cliffs: layer('falaises'), roads: layer('routes'), bridges: layer('ponts'),
     railways: layer('rails'), buildings: layer('bâti'), streets: layer('rues'), gardens: layer('jardins'),
     furniture: layer('mobilier'), vegetation: layer('arbres'), grass: layer('herbe'), crops: layer('cultures'),
@@ -76,7 +76,7 @@ function compositeur() {
   return { composer, calls, here };
 }
 
-const TOUT = ['falaises','sol','routes','ponts','rails','bâti','rues','jardins','mobilier'];
+const TOUT = ['falaises','eau','sol','routes','ponts','rails','bâti','rues','jardins','mobilier'];
 
 test('le décor se refait d’un bloc, une fois par pas de l’observateur', async () => {
   const { composer, calls, here } = compositeur();

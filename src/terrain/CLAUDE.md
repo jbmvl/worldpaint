@@ -8,6 +8,7 @@
 | `lowPolyGrain.js` | le grain low poly géométrique du sol (bruit, fondu de distance, bosse le long de la normale) — câblé par matière dans `terrainMaterial.js`, réglages dans `SURFACE_LOOK` |
 | `transportEarthworks.js` | remblais doux et tranchées des franchissements, dans le terrain commun |
 | `roadCut.js` | l'entaille du terrain sous une chaussée |
+| `waterRelief.js` | niveaux des lacs, profil des rivières et raccord terrestre des berges |
 | `cliffCut.js` | la marche du terrain sous une falaise relevée |
 | `groundClassMap.js` | la carte des matières et des cultures, rasterisée pour toute la scène |
 | `surfaceContours.js` | les limites de la carte redessinées en traits : chaînes, simplification, distance au trait |
@@ -69,7 +70,7 @@ Deux pièges :
 ## Ce qui déforme le relief lu
 
 Dans cet ordre : la **marche** d'une falaise relevée (`cliffCut`), les
-**terrassements des franchissements** (`transportEarthworks`), puis le
+**niveaux d’eau** (`waterRelief`), les **terrassements des franchissements** (`transportEarthworks`), puis le
 **déblai** des chaussées (`roadCut`). La falaise façonne le terrain naturel, la route entaille
 ce qu'elle trouve — l'ordre inverse taillerait la chaussée dans une rampe que
 la marche vient de supprimer.
@@ -77,10 +78,12 @@ la marche vient de supprimer.
 Trois lectures en découlent, et chacune a son lecteur : le **MNT brut**
 (`rawSurfaceElevationAtLocal`), sur lequel seule la couche des falaises mesure
 la marche ; le **terrain naturel** (`naturalElevationAtLocal`), falaises
-comprises et déblai exclu, sur lequel se dressent les plates-formes et que lit
+et niveaux d’eau compris, déblai exclu, sur lequel se dressent les plates-formes et que lit
 le relief de rive ; la **surface affichée** (`surfaceElevationAtLocal`), tout
 compris, pour le reste du décor. Une plate-forme dressée sur le MNT brut
 flotterait au pied d'une falaise et s'enfoncerait à son arase.
+
+Dans l’emprise de l’eau, sa cote prime aussi sur un terrassement voisin.
 
 Ces déformations sont des fonctions **pures de la position au sol** : c'est ce qui
 permet à deux tuiles voisines de s'accorder au bord sans se consulter. Une

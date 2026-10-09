@@ -20,6 +20,7 @@
  *   roadsLab.set({ scene: 'pont', yawDeg: 200, pitchDeg: 30, distance: 70 })
  *   roadsLab.set({ scene: 'falaise', stone: 'schist' })  // géologie du pays
  *   roadsLab.info()  // cotes des bouches du carrefour de la scène
+ *   ?scene=montagne  // vue initiale sans ouvrir la console
  *
  * Les scènes sont des endroits d'un même monde ; `yawDeg` est le cap du regard
  * (0 = vers le nord), `pitchDeg` la plongée. Le mobilier est celui de rase
@@ -109,6 +110,8 @@ const way = (properties, ...points) => ({
  * « classe » : la route change de classe sur son remblai — deux chaînes.
  * « montagne » : des rues à 32 % traversent un vallon ; leurs carrefours
  * partagent les cotes et leurs tabliers laissent les bouches ouvertes.
+ * « virage », « virage-desserte » : même courbe à plat, sur une route puis
+ * une voie de desserte, pour comparer leurs protections de rive.
  * « pente » : un carrefour en croix sur le versant à 9 %.
  * « devers » : une route à flanc de versant à 25 %, en mur côté aval, et une
  * branche qui en descend.
@@ -118,6 +121,11 @@ const way = (properties, ...points) => ({
  * sentier qui y monte dans la pente — sans terrassement ni talus.
  */
 const FEATURES = [
+  ...[['secondary', 350], ['service', 630]].map(([classe, z]) =>
+    way({ class: classe }, ...Array.from({ length: 17 }, (_, i) => {
+      const a = i * Math.PI / 32;
+      return [150 + 50 * Math.sin(a), z + 50 * (1 - Math.cos(a))];
+    }))),
   ...[430, 500, 570].map(z => way({ class: 'minor' }, [390,z], [490,z], [590,z], [700,z])),
   ...[490, 590].map(x => way({ class: 'minor' }, [x,390], [x,430], [x,500], [x,570], [x,610])),
   way({ class: 'minor' }, [470,250], [550,250], [553,250], [560,258], [600,285]),
@@ -178,8 +186,11 @@ const FEATURES = [
 const CLIFFS = [way({ class: 'cliff' }, [-330, -450], [-70, -450])];
 
 const SCENES = {
+  virage: { x: 180, z: 370, yawDeg: 215, pitchDeg: 18, distance: 100 },
+  'virage-desserte': { x: 180, z: 650, yawDeg: 215, pitchDeg: 18, distance: 100 },
   montagne: { x: 565, z: 500, yawDeg: 245, pitchDeg: 22, distance: 180 },
   'montagne-carrefour': { x: 490, z: 500, yawDeg: 225, pitchDeg: 22, distance: 65 },
+  'montagne-raccord': { x: 680, z: 570, yawDeg: 245, pitchDeg: 18, distance: 100 },
   couture: { x: 550, z: 250, yawDeg: 225, pitchDeg: 30, distance: 50 },
   tunnels: { x: -260, z: 333, yawDeg: 90, pitchDeg: 18, distance: 90 },
   souterrain: { x: -208, z: 160, yawDeg: 90, pitchDeg: 18, distance: 70 },
@@ -326,10 +337,11 @@ window.roadsLab = {
   state,
   scenes: Object.keys(SCENES),
   roads,
+  furniture,
   bubble,
 };
 window.roadsLabReady = true;
-render();
+window.roadsLab.set({ scene: new URLSearchParams(location.search).get('scene') || 'pont' });
 </script>
 </body>
 </html>

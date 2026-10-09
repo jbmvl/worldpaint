@@ -7,6 +7,9 @@
  * Les nuages sont ceux, natifs, du `Sky.js` de three (uniforms écrits, pas de
  * shader maison), disponibles depuis three 0.183.0.
  *
+ * Les couleurs du ciel et la lumière solaire sont aussi publiées pour le
+ * reflet de l’eau ; le terrain ne relit pas les objets de l’environnement.
+ *
  * Le brouillard fond la bordure du terrain dans l'horizon (sinon la bulle se
  * voit), coloré par une palette fournie par l'application ; le ciel est forcé
  * à converger vers cette même couleur au ras de l'horizon, sinon la couture
@@ -725,11 +728,22 @@ export class SceneEnvironment {
     const sky = aerialSkyColor(dayFog);
     const glow = this._twilightGlow?.zenith || [0, 0, 0];
     const nightSky = acesFilmic([0, 1, 2].map((i) => nightZenith[i] + glow[i]), this.exposure);
+    const skyColor = [0, 1, 2].map((i) => mix(sky[i], nightSky[i], nightMix));
+    const sunColor = aerialSunColor(this._sunwardSky || dayFog, sunRgb);
+    this.waterLight = {
+      horizon: [this.fog.color.r, this.fog.color.g, this.fog.color.b],
+      zenith: skyColor,
+      sunward: sunColor,
+      sunAmount: sunTintAmount(overcastOf(this.weather), nightMix),
+      sunDirection: sunDir,
+      sunColor: sunRgb,
+      sunIntensity: sunDir.y > 0 ? this.sun.intensity * (1 - overcastOf(this.weather)) : 0,
+    };
     this.aerialFog.update({
-      skyColor: [0, 1, 2].map((i) => mix(sky[i], nightSky[i], nightMix)),
+      skyColor,
       // Luminance du ciel face au soleil, pas du brouillard : sinon le lointain
       // à contre-jour sort plus sombre que le ciel qui le surmonte.
-      sunColor: aerialSunColor(this._sunwardSky || dayFog, sunRgb),
+      sunColor,
       sunDir,
       sunAmount: sunTintAmount(overcastOf(this.weather), nightMix),
       whiteness: hazeWhiteness(this.weather),

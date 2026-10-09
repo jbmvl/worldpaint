@@ -258,9 +258,12 @@ Breaking one of these needs a very good reason, stated in the PR description.
 - **Avoid unnecessary abstraction.** A new interface, base class or plugin point
   needs two real call sites before it is worth adding.
 
-- **Water is a ground material, not a surface.** Elevation data already gives a
-  lake's surface as the ground height, so water is painted into the ground-class
-  map like heath or scree. There is no water sheet, and no water level to pick.
+- **L’eau reste une matière du terrain commun.** `terrain/waterRelief.js`
+  corrige les altitudes avant les routes et le décor : cote commune des lacs
+  entièrement connus, profil longitudinal lissé des rivières reporté en
+  travers du lit, mer à zéro. Les berges se raccordent côté terre. Un morceau
+  de tuile ne choisit jamais seul le niveau d’un lac. Les lectures d’altitude
+  et le maillage utilisent les mêmes cotes ; aucun plan d’eau séparé n’est posé.
 
 ## Submitting a PR
 

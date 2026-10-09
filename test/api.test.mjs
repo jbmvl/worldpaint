@@ -87,6 +87,7 @@ function fakeComposer() {
     setNight: (...a) => calls.push(['setNight', ...a]),
     setWind: (...a) => calls.push(['setWind', ...a]),
     setWetness: (...a) => calls.push(['setWetness', ...a]),
+    setWaterLight: (...a) => calls.push(['setWaterLight', ...a]),
     dispose: () => calls.push(['dispose']),
   };
 }
@@ -273,6 +274,7 @@ test('avec un ciel, updateSky recale le dôme avant de propager la nuit', () => 
     wind: { amplitude: 1, speed: 1 },
     weather: 'météo',
     clearColor: 'bleu',
+    waterLight: 'reflet du ciel',
     followCamera: () => order.push('followCamera'),
     update: (o) => order.push(['update', o.lat, o.lng]),
     followShadow: (p) => order.push(['followShadow', p]),
@@ -308,6 +310,7 @@ test('avec un ciel, updateSky recale le dôme avant de propager la nuit', () => 
     // et les oiseaux si — voir `WorldComposer.setWind`.
     ['setWind', { amplitude: 1, speed: 1 }, 'météo'],
     ['setWetness', 0.25],
+    ['setWaterLight', 'reflet du ciel'],
   ]);
 });
 
@@ -526,6 +529,16 @@ test('le ciel se peint avant le premier centrage, les tuiles se branchent ensuit
   assert.equal(world.frame, null);
   const paint = world.updateSky({ camera, date: new Date('2026-07-01T12:00:00Z'), lng: 2, lat: 48 });
   assert.ok(paint.nightMix < 0.5, 'midi en juillet à Paris');
+  const water = world.composer.bubble.materials.grainUniforms;
+  assert.ok(water.uWaterSunIntensity.value > 0, 'le soleil éclaire les rides le jour');
+  assert.deepEqual(water.uWaterSheenColor.value.toArray(), world.environment.waterLight.horizon);
+  const dayReflection = water.uWaterZenith.value.length();
+  world.updateSky({ camera, date: new Date('2026-07-01T12:00:00Z'), lng: 2, lat: 48,
+    weather: { cloudCover: 1, cloudDensity: 1 } });
+  assert.equal(water.uWaterSunIntensity.value, 0, 'le couvert masque la traînée solaire');
+  world.updateSky({ camera, date: new Date('2026-07-01T00:00:00Z'), lng: 2, lat: 48 });
+  assert.equal(water.uWaterSunIntensity.value, 0, 'aucune traînée solaire la nuit');
+  assert.ok(water.uWaterZenith.value.length() < dayReflection, 'le reflet suit l’obscurité du ciel');
   assert.equal(world.setVector({ tiles: ['https://a/{z}/{x}/{y}.pbf'], maxZoom: 14 }), true);
   world.dispose();
   if (!hadDocument) delete globalThis.document;

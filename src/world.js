@@ -720,6 +720,7 @@ export class World {
     this.composer.setNight(env.nightMix);
     this.composer.setWind(env.wind, env.weather);
     this.composer.setWetness(env.wetness);
+    this.composer.setWaterLight(env.waterLight);
     env.followShadow(shadowAt || camera.position);
     return {
       nightMix: env.nightMix,

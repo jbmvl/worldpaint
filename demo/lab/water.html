@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><title>Banc de l’eau</title>
+<style>body{margin:0;background:#b6c9d7}canvas{display:block}#label{position:absolute;left:20px;top:16px;font:16px system-ui;color:#182d35;background:#ffffffdd;padding:10px 14px;border-radius:6px}</style>
+<script src="/node_modules/suncalc/suncalc.js"></script>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/examples/jsm/objects/Sky.js":"/node_modules/three/examples/jsm/objects/Sky.js","suncalc":"/demo/lab/suncalc-global.js"}}</script></head>
+<body><div id="label"><span id="status"></span> · <select id="kind"><option value="lake">Lac</option><option value="river">Rivière</option></select> <select id="light"><option value="30">Jour</option><option value="18">Soleil rasant</option><option value="3">Couchant</option><option value="-12">Nuit</option></select> <label><input id="animate" type="checkbox" checked> Animer</label></div><script type="module">
+/* Eau hors réseau : le vrai terrain reçoit un MNT synthétique bosselé.
+ * waterLab.set({kind:'lake'|'river', corrected:true, pitchDeg:25, distance:310})
+ * permet de comparer exactement la même donnée et la même caméra.
+ */
+import * as THREE from 'three';
+import { Sky } from 'three/examples/jsm/objects/Sky.js';
+import { SceneEnvironment } from '/src/environment/sceneEnvironment.js';
+import { TerrainBubble } from '/src/terrain/terrainBubble.js';
+import { GroundClassMap } from '/src/terrain/groundClassMap.js';
+import { WaterRelief } from '/src/terrain/waterRelief.js';
+import { defaultTheme } from '/src/themes/default.js';
+import { createLocalFrame, tileXToLng, tileYToLat } from '/src/core/tileMath.js';
+
+const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
+renderer.setSize(innerWidth,innerHeight);document.body.appendChild(renderer.domElement);
+renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=0.5;
+const scene=new THREE.Scene();
+const env=new SceneEnvironment({THREE,Sky,scene,fogRadius:900});
+const camera=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,0.5,5000);
+const zoom=15,lng=tileXToLng(16384.5,zoom),lat=tileYToLat(16384.5,zoom);
+const frame=createLocalFrame(lng,lat,zoom);
+const state={kind:'lake',corrected:true,pitchDeg:18,distance:250,lookDeg:0,sunDeg:30,weather:null,time:0,animate:true};
+const ground=(x,z)=>state.kind==='lake'
+  ? 20+9*Math.exp(-((x-12)**2+(z+5)**2)/1000)+0.035*x+Math.max(0,Math.hypot(x,z)-85)*0.12
+  : 20+0.015*x+12*Math.exp(-((x-10)**2+z*z)/800)+0.0018*z*z;
+const elevation={zoom,tilePixels:256,revision:0,has:()=>true,load:async()=>true,
+  sampleTile:(tx,ty)=>ground((tx-frame.origin.x)*frame.scale,(ty-frame.origin.y)*frame.scale)};
+const map=new GroundClassMap({THREE,reach:450});
+const bubble=new TerrainBubble({THREE,scene,elevation,zoom,blockSize:1,segmentsByRing:[192],groundClass:map});
+await bubble.setCenter(lng,lat);
+const geo=points=>points.map(([x,z])=>{const p=frame.toLngLat(x,z);return [p.lng,p.lat];});
+function source() {
+  const ring=state.kind==='lake'
+    ? Array.from({length:65},(_,i)=>[100*Math.cos(i*Math.PI/32),85*Math.sin(i*Math.PI/32)])
+    : [[-600,-65],[600,-65],[600,65],[-600,65],[-600,-65]];
+  return {forEachFeature(layer,tiles,fn) {
+    if(layer==='water') fn({type:'Polygon',coordinates:[geo(ring)]},{class:state.kind,id:1});
+    if(layer==='waterway' && state.kind==='river') fn({type:'LineString',coordinates:geo([[-650,0],[650,0]])},{class:'river'});
+    if(layer==='landcover') fn({type:'Polygon',coordinates:[geo([[-650,-650],[650,-650],[650,650],[-650,650],[-650,-650]])]},{class:'grass'});
+  }};
+}
+function dateForElevation(deg) {
+  let lo=Date.UTC(2026,5,21)-4*3600e3,hi=Date.UTC(2026,5,21)+12*3600e3;
+  for(let i=0;i<50;i++) {
+    const mid=(lo+hi)/2;
+    if(window.SunCalc.getPosition(new Date(mid),45,0).altitude<deg*Math.PI/180) lo=mid;else hi=mid;
+  }
+  return new Date(hi);
+}
+function lighting() {
+  env.update({date:dateForElevation(state.sunDeg),lat:45,lng:0,weather:state.weather});
+  bubble.materials.setWaterLight?.(env.waterLight);
+}
+function render() {
+  const pitch=state.pitchDeg*Math.PI/180;
+  const yaw=Math.atan2(env._sunDir.x,-env._sunDir.z)+state.lookDeg*Math.PI/180;
+  camera.position.set(-Math.sin(yaw)*Math.cos(pitch)*state.distance,20+Math.sin(pitch)*state.distance,Math.cos(yaw)*Math.cos(pitch)*state.distance);
+  camera.lookAt(0,20,0);env.followCamera(camera);env.followShadow({x:0,y:20,z:0});
+  const flow=bubble.materials.grainUniforms.uWaterFlow.value;
+  flow.set(state.time*0.013%1,state.time*0.021%1);
+  renderer.setClearColor(env.clearColor,1);renderer.render(scene,camera);
+  document.getElementById('status').textContent=state.corrected?'Relief corrigé':'Relief brut';
+}
+
+async function set(options={}) {
+  const rebuild=!window.waterLabReady || options.kind && options.kind!==state.kind || options.corrected!==undefined && options.corrected!==state.corrected;
+  Object.assign(state,options);
+  if(rebuild) {
+  elevation.revision++;
+  const data=source();
+  map.rebuild(data,[{}],{x:0,z:0},frame);bubble.materials.syncGroundClass();
+  const relief=new WaterRelief({source:data,tiles:[{}],frame,elevationAt:ground,waterways:defaultTheme.water.waterways,benchM:bubble.cutBenchM});
+  bubble.setWaterRelief(state.corrected?relief:null);
+  for(const tile of bubble.tiles.values()) for(const _ of bubble._buildMeshSteps(tile)) {}
+  bubble._rebuildQueue.length=0;
+  }
+  document.getElementById('kind').value=state.kind;
+  document.getElementById('light').value=String(state.sunDeg);
+  document.getElementById('animate').checked=state.animate;
+  lighting();render();
+  const samples=[-50,0,50].map(z=>({z,raw:ground(0,z),corrected:bubble.surfaceElevationAtLocal(0,z)}));
+  return {...state,samples};
+}
+window.waterLab={set,state,bubble,map,env};await set();window.waterLabReady=true;
+document.getElementById('kind').onchange=e=>set({kind:e.target.value});
+document.getElementById('light').onchange=e=>set({sunDeg:Number(e.target.value)});
+document.getElementById('animate').onchange=e=>set({animate:e.target.checked});
+let last=performance.now();
+function animate(now) {
+  if(state.animate) {state.time+=Math.min(0.1,(now-last)/1000);render();}
+  last=now;requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
+</script></body></html>

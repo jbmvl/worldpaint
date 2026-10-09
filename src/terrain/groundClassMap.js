@@ -64,9 +64,8 @@
  * La carte réparée et redessinée est la texture elle-même : le shader et la
  * végétation lisent le même tableau.
  *
- * L'eau est une matière comme les autres, et c'est la seule description de
- * l'eau dans la scène : il n'y a pas de plan d'eau posé sur le terrain, le sol
- * *est* l'eau là où la carte le dit.
+ * L’eau est une matière du terrain commun : cette carte en décrit l’emprise,
+ * `waterRelief` en corrige les altitudes. Aucun plan d’eau séparé n’est posé.
  *
  * ## Le sol de la ville
  *

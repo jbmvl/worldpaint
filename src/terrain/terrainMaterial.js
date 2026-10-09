@@ -92,6 +92,10 @@ import { installTunnelMouths } from './tunnelMouths.js';
  *   que la pluie y met (`wetGround`). C'est ce qui fait une berge plutôt
  *   qu'une découpe.
  *
+ * L’eau combine un fond éclairé, le reflet du ciel fourni par le compositeur
+ * et une traînée solaire. Le reflet est composé après exposition, avant le
+ * brouillard ; les rides partagent leur normale entre ces trois lectures.
+ *
  * Greffé sur `MeshLambertMaterial` via `onBeforeCompile` plutôt qu'écrit en
  * shader complet, pour garder l'éclairage/brouillard/tone mapping de three.
  *
@@ -203,8 +207,6 @@ export class TerrainMaterialFactory {
     // ne peuvent tomber sur le même texel que si aucune des deux n'inverse
     // l'axe vertical à sa manière.
     this.macroTexture.flipY = false;
-    // Rides : la même carte que celle qui servait la nappe d'eau, du temps où
-    // l'eau était une surface posée sur le terrain.
     this.waterRippleTexture = repeated(createWaterNormalCanvas());
 
     this.material = this._create();
@@ -228,6 +230,19 @@ export class TerrainMaterialFactory {
     if (!flow) return;
     flow.x = (flow.x + seconds * 0.013) % 1;
     flow.y = (flow.y + seconds * 0.021) % 1;
+  }
+
+  /** Couleurs du ciel après exposition, lumière directe avant exposition. */
+  setWaterLight(light) {
+    if (!light) return;
+    const u = this._uniforms;
+    u.uWaterSheenColor.value.set(...light.horizon);
+    u.uWaterZenith.value.set(...light.zenith);
+    u.uWaterSunward.value.set(...light.sunward);
+    u.uWaterSunAmount.value = light.sunAmount;
+    u.uWaterSunDirection.value.set(light.sunDirection.x, light.sunDirection.y, light.sunDirection.z);
+    u.uWaterSunColor.value.set(...light.sunColor);
+    u.uWaterSunIntensity.value = light.sunIntensity;
   }
 
   /** Recale les uniformes sur la carte de classes après une re-rasterisation. */
@@ -398,6 +413,13 @@ export class TerrainMaterialFactory {
       },
       uWaterSheenColor: { value: new THREE.Vector3(...look.waterSheenColor) },
       uWaterSheen: { value: look.waterSheen },
+      uWaterZenith: { value: new THREE.Vector3(...look.waterSheenColor) },
+      uWaterSunward: { value: new THREE.Vector3(...look.waterSheenColor) },
+      uWaterSunAmount: { value: 0 },
+      uWaterSunDirection: { value: new THREE.Vector3(0, 1, 0) },
+      uWaterSunColor: { value: new THREE.Vector3(1, 1, 1) },
+      uWaterSunIntensity: { value: 0 },
+      uWaterGlint: { value: new THREE.Vector2(look.waterGlintStrength, look.waterGlintPower) },
       uWaterRipples: { value: this.waterRippleTexture },
       uWaterRipple: { value: new THREE.Vector2(look.waterRippleM, look.waterRippleRelief) },
       /** La rive : part de sol mouillé au contact de l'eau. */
@@ -495,10 +517,24 @@ export class TerrainMaterialFactory {
            uniform float uWetness;
            uniform vec3 uWaterAlbedo;
            uniform vec3 uWaterSheenColor;
+           uniform vec3 uWaterZenith;
+           uniform vec3 uWaterSunward;
+           uniform float uWaterSunAmount;
+           uniform vec3 uWaterSunDirection;
+           uniform vec3 uWaterSunColor;
+           uniform float uWaterSunIntensity;
+           uniform vec2 uWaterGlint;
            uniform float uWaterSheen;
            uniform sampler2D uWaterRipples;
            uniform vec2 uWaterRipple;
            uniform vec2 uWaterFlow;
+
+           vec3 waterNormal(vec3 baseNormal, vec2 point) {
+             vec2 a = texture2D(uWaterRipples, point / uWaterRipple.x + uWaterFlow).xy * 2.0 - 1.0;
+             vec2 b = texture2D(uWaterRipples, point.yx / (uWaterRipple.x * 0.6) - uWaterFlow * 1.7).yx * 2.0 - 1.0;
+             vec2 slope = (a + b * 0.5) * uWaterRipple.y;
+             return normalize(baseNormal + vec3(slope.x, 0.0, slope.y));
+           }
            uniform float uShoreWet;
            uniform float uGrainCellM;
            uniform float uGrainAmplitudeM;
@@ -722,6 +758,9 @@ export class TerrainMaterialFactory {
            // dans la perturbation de normale — la ride de l'eau est le seul
            // relief qui reste au sol.
            float gWater = 0.0;
+           float waterFresnel = 0.0;
+           float waterGlint = 0.0;
+           vec3 waterReflection = vec3(0.0);
            {
              // La carte porte un identifiant de matiere par texel, et celui de
              // la culture dans le canal voisin. Lue a l'endroit exact : c'est
@@ -848,22 +887,17 @@ export class TerrainMaterialFactory {
              if (shore > 0.0) base = wetGround(base, shore);
 
              if (gWater > 0.001) {
-               // Ce qui fait lire un plan d'eau, ce n'est pas sa couleur
-               // propre — elle est presque noire — c'est qu'il **renvoie le
-               // ciel d'autant plus qu'on le regarde de biais**. D'où un
-               // Fresnel sur la normale ridée : sombre à l'aplomb, clair au
-               // ras, et scintillant entre les deux parce que chaque ride
-               // change l'angle.
                vec3 toEye = normalize(cameraPosition - vScenePos);
-               vec3 ripple = texture2D(uWaterRipples, vScenePos.xz / uWaterRipple.x + uWaterFlow).xyz * 2.0 - 1.0;
-               vec3 wavy = normalize(vSceneNormal + vec3(ripple.x, 0.0, ripple.z) * uWaterRipple.y);
+               vec3 wavy = waterNormal(normalize(vSceneNormal), vScenePos.xz);
+               vec3 reflected = reflect(-toEye, wavy);
                float grazing = 1.0 - clamp(dot(wavy, toEye), 0.0, 1.0);
-               float sheen = pow(grazing, 3.0) * uWaterSheen;
-               vec3 water = mix(uWaterAlbedo, uWaterSheenColor, clamp(sheen, 0.0, 1.0));
-               // Fondu et non remplacement : c'est la berge. gWater vaut 1
-               // dès le second carreau, donc le plan d'eau lui-même n'est pas
-               // mélangé — seule sa bordure l'est.
-               base = mix(base, water, gWater);
+               waterFresnel = clamp((0.02 + 0.98 * pow(grazing, 5.0)) * uWaterSheen, 0.0, 1.0);
+               waterReflection = mix(uWaterSheenColor, uWaterZenith, sqrt(clamp(reflected.y, 0.0, 1.0)));
+               float sunward = pow(max(dot(reflected, uWaterSunDirection), 0.0), 6.0) * uWaterSunAmount;
+               waterReflection = mix(waterReflection, uWaterSunward, sunward);
+               waterGlint = pow(max(dot(reflected, uWaterSunDirection), 0.0), uWaterGlint.y)
+                 * uWaterSunIntensity * uWaterGlint.x;
+               base = mix(base, uWaterAlbedo, gWater);
              }
 
              diffuseColor.rgb = max(base, vec3(0.0));
@@ -890,17 +924,25 @@ export class TerrainMaterialFactory {
                if (dot(flatNormal, vSceneNormal) < 0.0) flatNormal = -flatNormal;
                worldNormal = normalize(mix(vSceneNormal, flatNormal, grainFade));
              }
-             vec3 a = texture2D(uWaterRipples, vScenePos.xz / uWaterRipple.x + uWaterFlow).xyz * 2.0 - 1.0;
-             vec3 b = texture2D(uWaterRipples, vScenePos.zx / (uWaterRipple.x * 0.6) - uWaterFlow * 1.7).xyz * 2.0 - 1.0;
-             vec3 wavy = normalize(worldNormal + vec3(a.x + b.x, 0.0, a.z + b.z) * uWaterRipple.y);
+             vec3 wavy = waterNormal(normalize(worldNormal), vScenePos.xz);
 
              normal = normalize((viewMatrix * vec4(mix(worldNormal, wavy, gWater), 0.0)).xyz);
            }`
-        );
+        )
+        .replace('#include <shadowmap_pars_fragment>', '#include <shadowmap_pars_fragment>\n#include <shadowmask_pars_fragment>')
+        .replace('#include <opaque_fragment>', `
+          if (gWater > 0.001 && waterGlint > 0.0) {
+            outgoingLight += gWater * waterGlint * uWaterSunColor * getShadowMask();
+          }
+          #include <opaque_fragment>`)
+        .replace('#include <colorspace_fragment>', `
+          // Le ciel fourni a deja son exposition : le reflet ne la subit pas deux fois.
+          gl_FragColor.rgb = mix(gl_FragColor.rgb, waterReflection, gWater * waterFresnel);
+          #include <colorspace_fragment>`);
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v19-cliff-grain';
+    material.customProgramCacheKey = () => 'terrain-bubble-v20-water-reflection';
     return material;
   }
 

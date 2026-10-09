@@ -200,6 +200,57 @@ carte le dit (couverture `water`). Deux entrées :
   leur donner une largeur plancher d'un texel sont deux décisions d'auteur,
   pas des correctifs.
 
+### L’aspect de l’eau
+
+Le fond garde son albédo sombre. Deux lectures animées d’une carte de normales
+font varier le reflet selon l’angle de vue. Le compositeur transmet les
+couleurs de l’horizon, du ciel haut et du côté solaire depuis l’environnement :
+le reflet suit l’heure, la météo et la palette du lieu. Il est composé après
+exposition et avant brouillard, pour ne pas éclairer une seconde fois le ciel
+renvoyé. La traînée solaire suit les rides et les ombres ; elle s’éteint sous
+un ciel couvert et la nuit. Les bâtiments et les arbres ne sont pas réfléchis.
+
+`theme.terrain` règle l’intensité du reflet (`waterSheen`), l’échelle et
+l’amplitude des rides (`waterRippleM`, `waterRippleRelief`), la force et la
+concentration de l’éclat (`waterGlintStrength`, `waterGlintPower`). Sans ciel,
+`waterSheenColor` fournit la couleur de repli. Le banc d’eau expose le lac,
+la rivière, l’heure solaire et l’animation ; `sunDeg`, `lookDeg`, `weather`
+et `time` permettent de reproduire une vue depuis `waterLab.set()`.
+
+### Les niveaux de l’eau et les berges
+
+`terrain/waterRelief.js` corrige les altitudes du terrain commun, entre les
+falaises et la construction des routes. La mer est à zéro. Les morceaux d’un
+lac ou d’un étang sont regroupés par identifiant cartographique ; leur cote
+commune est le quartile inférieur des altitudes sondées dans la nappe sur une
+grille fixe de 16 m. Les trous des polygones restent des îles.
+
+Une rivière lit son axe `waterway`. Des sondes suivent le lit jusqu’à 256 m
+de part et d’autre ; une régression en conserve la pente et le quartile
+inférieur des résidus écarte les bosses isolées. Ce champ, interpolé sur une
+grille de 32 m, est lu à la projection sur l’axe : une section transversale
+partage la même hauteur. Les réseaux disjoints ne mélangent pas leurs cotes.
+Les sondes lisent le MNT brut, sans les terrassements ni la résolution de la
+maille affichée.
+
+La cote se prolonge côté terre sur la largeur nécessaire à la maille, puis
+rejoint le relief sur 16 m. Ce raccord évite que la pente d’un triangle de
+berge déborde dans l’eau. Le masque du relief contraint éteint le déplacement
+procédural sur cette emprise. Dans le lit, un remblai voisin ne peut relever
+la surface ; les lectures CPU et les sommets appliquent la même priorité.
+
+Un lac tronqué par la limite des tuiles disponibles conserve son relief tant
+que son contour n’est pas complet : une cote calculée sur un fragment
+changerait avec la fenêtre chargée. Une rivière surfacique sans axe reconnu
+conserve également son relief. Les eaux intermittentes, piscines et cours
+d’eau souterrains ne participent pas à cette correction. Les cascades, seuils
+et écluses ne sont pas reconstruits par ce profil lissé.
+
+Le banc hors réseau `demo/lab/water.html` compare le terrain brut et corrigé
+sur un lac et une rivière synthétiques :
+`waterLab.set({ kind: 'river', corrected: true, pitchDeg: 25, distance: 310 })`.
+Le banc des lieux permet le contrôle sur les tuiles réelles enregistrées.
+
 ### L'eau qui affleure — marais, pré salé, vasière
 
 Trois matières portent une part d'eau libre (`standingWater`, dans

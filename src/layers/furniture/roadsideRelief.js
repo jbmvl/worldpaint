@@ -1,12 +1,12 @@
 /*
  * roadsideRelief — les ouvrages que le relief impose à une chaussée : la
  * falaise du déblai en amont, le mur de soutènement en aval, la glissière ou
- * le garde-corps qui borde le vide, et le talus de remblai.
+ * le garde-corps qui borde le vide ou l’extérieur d’un virage, et le talus
+ * de remblai.
  *
- * Rien ici n'est décidé par le type de route : c'est le relief lu dans le MNT
- * — devers, surplomb, courbure — qui déclenche chaque ouvrage. Seule la
- * largeur du profil dit si la chaussée est aménagée au point d'en porter
- * (`profileTakesGuardrail`).
+ * Le dévers, le surplomb et la courbure déclenchent les protections de rive.
+ * Les toutes petites routes ne portent un parapet qu'en présence de vide ;
+ * les murs restent réservés aux profils aménagés (`profileTakesGuardrail`).
  *
  * Les lignes d'ouvrage d'art (pont, tunnel) n'arrivent pas jusqu'ici :
  * `buildRoadside` les a déjà écartées, un tablier n'a ni talus ni mur.
@@ -121,7 +121,7 @@ export function measureRoom(layer, segment, rows) {
       for (let beyond = from + ROOM_RAY_STEP_M; beyond - from <= room; beyond += ROOM_RAY_STEP_M) {
         const p = at(side, beyond);
         const hit = areas.indexAt(p.x, p.z, level);
-        if (hit === island) return 0;
+        if (island >= 0 && hit === island) return 0;
         if (hit >= 0) return Math.max(0, beyond - from - ROOM_RAY_STEP_M);
       }
       return room;
@@ -213,11 +213,8 @@ export function buildRoadsideRelief(layer, context, segment, rowsInfo) {
   const { platform, halfWidth, profile } = segment;
   const walled = new Set();
 
-  // Ouvrages et glissière ne concernent que les chaussées aménagées : un
-  // sentier de montagne n'a ni l'un ni l'autre, il passe.
-  if (!profileTakesGuardrail(profile)) return walled;
-
   buildParapets(layer, context, segment, rowsInfo);
+  if (!profileTakesGuardrail(profile)) return walled;
   buildRockCut(layer, context, segment, rowsInfo);
 
   const fill = layer.specs.wallSpecs.fill;
@@ -433,42 +430,32 @@ export function buildRockCut(layer, context, segment, rowsInfo) {
 }
 
 /**
- * Les parapets : glissière métallique ou garde-corps de bois, là où la rive
- * aval surplombe vraiment quelque chose.
- *
- * ## Pourquoi ils sont séparés des murs
- *
- * Ce n'est pas la même question : un mur tient la **plate-forme**, un parapet
- * protège d'un **vide**. Un devers seul ne suffit donc pas — au bruit d'un MNT
- * à trente mètres, il y en a sur des kilomètres de plaine. Ils ont leurs
- * propres tronçons, et leur propre règle
- * (`guardrailStyleFor`), qui exige un surplomb réel et, en plus, soit un
- * versant franc, soit une courbe.
- *
- * ## Deux matières
- *
- * L'acier sur les grands axes, le bois sur les petites routes et les chemins
- * de montagne — là où une glissière métallique fait autoroute. Le garde-corps
- * de bois est fait de deux lisses et de piquets, la glissière d'une lisse en W
- * et de poteaux galvanisés.
+ * Protège chaque rive exposée : extérieur d'une courbe, ou versant avec vide.
+ * Les tronçons sont séparés par côté pour suivre les changements de dévers
+ * sans traverser la chaussée. La place libre interrompt les lisses aux bouches.
  */
 export function buildParapets(layer, context, segment, rowsInfo) {
   const { buffers, placements, sampleElevation } = context;
   const { platform, halfWidth, profile } = segment;
 
-  const styleOf = (row) =>
-    guardrailStyleFor({ profile, slope: row.slope, curvature: row.curvature, drop: row.drop, climate: layer.climate });
+  const styleOf = (row, side) => guardrailStyleFor({
+    profile,
+    slope: row.slope,
+    curvature: row.turn === side ? row.curvature : 0,
+    drop: side === -row.uphill ? row.drop : row.perch,
+    climate: layer.climate,
+  });
 
   // Un tronçon par matière : mélanger acier et bois sur la même longueur
   // produirait un raccord au milieu de la courbe, qu'on ne voit nulle part.
-  for (const family of ['steel', 'wood']) {
-    const fits = (row) => styleOf(row) === family && roomOn(row, -row.uphill) >= RELIEF_MIN_ROOM_M;
-    for (const run of contiguousRuns(rowsInfo, fits, 6)) {
-      const side = run[Math.floor(run.length / 2)].uphill;
+  for (const side of [-1, 1]) for (const family of ['steel', 'wood']) {
+    const fits = (row) => styleOf(row, side) === family && roomOn(row, side) >= RELIEF_MIN_ROOM_M;
+    // Le pas varie dans les arcs : six lignes ne mesurent pas une longueur.
+    for (const run of contiguousRuns(rowsInfo, fits, 2)) {
       const origin = run[0].distance;
       const runPath = run.map((row) => ({ x: row.x, z: row.z, distance: row.distance - origin }));
       const deck = new Float32Array(run.map((row) => platform[row.r]));
-      const offset = -side * (halfWidth + 0.35);
+      const offset = side * (halfWidth + 0.35);
 
       const rails = family === 'steel' ? ['guardrailBeam'] : ['woodRail', 'woodRailTop'];
       for (const rail of rails) {

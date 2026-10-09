@@ -178,10 +178,9 @@ export function createMacroCanvas(size = 128, seed = 40213) {
 }
 
 /**
- * Carte de normales de rides, cyclable. C'est le reflet qui fait lire une
- * surface comme de l'eau (sans réflexion d'environnement, la ride reste le
- * seul moyen de faire accrocher le soleil). Normales dérivées du gradient
- * d'un bruit fractal cyclique, convention habituelle.
+ * Carte de normales de rides, cyclable, dérivée d’un bruit fractal.
+ * Rouge et vert portent les deux pentes tangentes ; bleu porte la normale
+ * sortante. Le shader emploie les deux pentes pour déformer le reflet.
  */
 export function createWaterNormalCanvas(size = 256, seed = 33107) {
   const height = fractalNoise(size, [8, 16, 32, 64], seed);

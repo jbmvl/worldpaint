@@ -126,19 +126,16 @@ export const TERRAIN_LOOK = {
    */
   cliff: { batter: 0.075, minReach: 1.2, maxReach: 9 },
 
-  /**
-   * L'eau, quand le sol en est fait (couverture `water`). Trois réglages, et
-   * c'est le second qui fait qu'on lit de l'eau : un plan d'eau est sombre vu
-   * du dessus et clair vu de biais, parce qu'il renvoie le ciel d'autant plus
-   * qu'on le regarde rasant.
-   */
+  /** Couleur de reflet de repli pour une scène sans environnement. */
   waterSheenColor: [0.42, 0.52, 0.6],
-  /** Force du ciel renvoyé au ras (Fresnel). */
+  /** Part du ciel renvoyée au ras de l’eau. */
   waterSheen: 1.0,
   /** Mètres couverts par un cycle de rides. */
   waterRippleM: 9,
-  /** Amplitude du relief de rides — c'est elle qui fait scintiller. */
-  waterRippleRelief: 0.35,
+  waterRippleRelief: 0.22,
+  /** Intensité et concentration de la traînée solaire sur les rides. */
+  waterGlintStrength: 0.8,
+  waterGlintPower: 420,
   /**
    * La rive : part de sol mouillé au contact de l'eau, de 0 (rien) à 1.
    *

@@ -150,6 +150,11 @@ Les matières du sol, décrites en détail dans `docs/surfaces.md`. En résumé 
 | `pavement` | **déduit** : bâti ∩ disque urbain, moins le vert urbain |
 | `water` | polygones `water` permanents, traits `waterway` élargis |
 
+Les altitudes de l’eau sont corrigées par `terrain/waterRelief.js` : niveau
+commun des lacs complets, profil des rivières reporté en travers du lit, mer à
+zéro et raccord des berges côté terre. Voir `docs/surfaces.md`, « Les niveaux
+de l’eau et les berges », pour les données nécessaires et les limites.
+
 Le pays ne lave que quatre d'entre elles (`grass`, `farmland`, `bare`,
 `pavement`) : une lande ou un maquis disent déjà leur pays. La dalle et
 l'éboulis prennent un autre axe, la **géologie** (`STONE_LOOK`), qui teinte
@@ -465,7 +470,9 @@ dégagement. Une contrainte incompatible reste
 publiée dans `roads.profileConstraints.constrained`.
 
 Une portion revêtue qui domine le sol de 2,5 m sur au moins 15 m reçoit un
-tablier, des piles et des parapets, même sans `brunnel=bridge`. Ces supports
+tablier, des piles et des parapets, même sans `brunnel=bridge`. Le tablier et
+ses parapets suivent les rampes jusqu'au premier échantillon au contact du
+sol, même lorsque leur hauteur passe sous le seuil de 2,5 m. Ces supports
 sont publiés par `segment.supports`, séparément des drapeaux cartographiques ;
 ils ne commandent aucun terrassement. Les piles évitent les chaussées
 inférieures publiées par le réseau. Les dalles de carrefour suspendues ont
@@ -536,9 +543,15 @@ danger ou une balise ; en agglomération, passage piéton (30 %), limitation
 (42 %), danger ; sur grand axe, priorité (30 %), interdiction de dépasser
 (28 %), limitation (24 %), danger.
 
-La **glissière** exige un vrai vide : au moins 90 cm de surplomb **et** un
-versant franc (14 %) ou une courbe. Acier sur les grands axes, bois sur les
-petites routes.
+La **glissière** protège l'extérieur des virages (courbure ≥ 0,012 rad/m),
+même sur terrain plat, et chaque rive qui combine au moins 90 cm de surplomb
+et un versant franc (14 %). Les voies de desserte (`lane`) et pistes (`track`)
+exigent ce surplomb même en virage : elles sont donc moins souvent équipées.
+En climat alpin ou glacial, le seuil de surplomb est divisé par deux et celui
+de courbure multiplié par 0,6. Les sentiers restent sans parapet.
+Acier sur les grands axes ; sur `minor`, bois jusqu'à 2,5 m de surplomb,
+acier au-delà ; bois sur les voies de desserte et pistes. Les protections
+s'interrompent aux bouches des carrefours et devant une chaussée voisine.
 
 Le **talus enherbé** garnit un bas-côté sur trois environ (34 %), d'un seul
 côté, hors agglomération.

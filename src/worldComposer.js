@@ -16,7 +16,7 @@ import { GenerationMetrics } from './inspect/generationMetrics.js';
  * Ordre de génération : « sommes-nous en ville ? » (`settlement.UrbanMask` :
  * ni une couche ni un thème, un prédicat de lieu, lu par la carte du sol qui y
  * peint son trottoir et par les chaussées qui y retranchent voies piétonnes et
- * voies redondantes) → occupation du sol (tout le monde la lit — l'eau en
+ * voies redondantes) → falaises → niveaux d’eau → occupation du sol (tout le monde la lit — l'eau en
  * fait partie, c'est une matière du sol) → profils ferroviaires naturels
  * → chaussées (calculent les franchissements et façonnent le terrain,
  * posent la surface des carrefours, publient l'emprise routière que le reste
@@ -69,6 +69,7 @@ import { GenerationMetrics } from './inspect/generationMetrics.js';
  */
 
 import { TerrainBubble } from './terrain/terrainBubble.js';
+import { WaterRelief } from './terrain/waterRelief.js';
 import { GroundClassMap } from './terrain/groundClassMap.js';
 import { FarRelief } from './terrain/farRelief.js';
 import { RoadNetwork, createRoadMaterials } from './layers/roadNetwork.js';
@@ -609,6 +610,16 @@ export class WorldComposer {
 
       if (!await checkpoint()) return false;
 
+      // Les cotes d’eau précèdent les routes et tout ce qui prend appui au sol.
+      const waterRelief = new WaterRelief({
+        source: this.vectorTiles, tiles: wanted, frame,
+        waterways: this.theme.water.waterways,
+        benchM: this.bubble.cutBenchM,
+        elevationAt: (x, z) => this.bubble._sample(
+          frame.origin.x + x / frame.scale, frame.origin.y + z / frame.scale, NaN),
+      });
+      this.bubble.setWaterRelief(waterRelief.count ? waterRelief : null);
+
       // 1. Occupation du sol — tout le reste la lit.
       const wasReady = this.groundClass.ready;
       if (!await rebuild(this.groundClass, 'carteSol', this.vectorTiles, wanted, here, this.bubble.frame, {
@@ -955,6 +966,10 @@ export class WorldComposer {
     this.life.setNight(mix);
     this.tractors.setNight(mix);
     this.trains.setNight(mix);
+  }
+
+  setWaterLight(light) {
+    if (!this.disposed) this.bubble.materials.setWaterLight(light);
   }
 
   /**

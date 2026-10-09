@@ -70,6 +70,46 @@ test('un simple dévers ne transforme pas la corniche en pont', () => {
   findRoadSupports([s],(x,z)=>z*2);assert.ok(s.supports.every(v=>v===0));
 });
 
+test('le tablier et ses parapets suivent les rampes jusqu’au premier contact au sol', () => {
+  const hauteur = x => Math.max(0, Math.min(6, (x - 15) * .1, (165 - x) * .1));
+  const s = line([{x:0,z:0},{x:180,z:0}], hauteur);
+  const initial = s.platform.slice();
+  findRoadSupports([s], () => 0);
+  for (let r = 0; r < s.path.length; r++) {
+    assert.equal(s.supports[r], s.path[r].x >= 15 && s.path[r].x <= 165 ? 1 : 0);
+  }
+  assert.deepEqual(s.platform, initial);
+  assert.ok(s.works.every(v => v === 0));
+  const layer = new BridgeLayer({THREE, scene:new THREE.Scene(),
+    bubble:{frame:{}, verticalScale:1, surfaceElevationAtLocal:() => 0}});
+  layer.rebuild([s], {x:90,z:0});
+  assert.equal(layer.counts.spans, 1);
+  const positions = layer.geometry.attributes.position.array;
+  for (const x of [15, 30, 150, 165]) {
+    const hauteurs = [];
+    for (let i = 0; i < positions.length; i += 3) {
+      if (Math.abs(positions[i] - x) < .001) hauteurs.push(positions[i + 1]);
+    }
+    assert.ok(Math.min(...hauteurs) < hauteur(x), `sous-face à ${x} m`);
+    assert.ok(Math.max(...hauteurs) > hauteur(x) + .5, `parapet à ${x} m`);
+  }
+  layer.dispose();
+});
+
+test('une faible suspension isolée ne déclenche pas de pont', () => {
+  const s = line([{x:0,z:0},{x:90,z:0}], () => 2);
+  findRoadSupports([s], () => 0);
+  assert.ok(s.supports.every(v => v === 0));
+});
+
+test('les accès portés sont identiques lorsque le tracé est inversé', () => {
+  const points = [{x:0,z:0},{x:180,z:0}];
+  const hauteur = x => Math.max(0, Math.min(6, (x - 15) * .1, (165 - x) * .1));
+  const a = line(points, hauteur), b = line(points.toReversed(), hauteur);
+  findRoadSupports([a,b], () => 0);
+  assert.deepEqual(a.supports, b.supports.slice().reverse());
+});
+
 test('une route suspendue porte ses piles sur le sol final', () => {
   const s=line([{x:0,z:0},{x:90,z:0}],()=>9);findRoadSupports([s],()=>0);
   const bubble={frame:{},verticalScale:1,surfaceElevationAtLocal:()=>0};
