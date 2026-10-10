@@ -9,8 +9,10 @@ import { finishGeneration } from '../core/generationSteps.js';
  * La couche `building` ne porte que des hauteurs, pas la fonction : elle
  * vient de la couche `poi`. Un point d'intérêt ne pose jamais de volume à
  * côté de l'empreinte : il transforme celle qui le contient (couleur, forme
- * de toit, devanture) et lui greffe au besoin un clocher ou un minaret. Voir
- * `buildingPersonalityFor`, `sortPersonalities`, `theme.personalities`.
+ * de toit, baies, devanture) et lui greffe au besoin des tours ou un minaret. Voir
+ * `buildingPersonalityFor`, `sortPersonalities`, `theme.personalities`. Les
+ * longues bandes étroites sans fonction connue sont des murs pleins, même
+ * lorsque les tuiles ont perdu leur tag (`buildingInterpretation`).
  *
  * Une empreinte est rabotée de ce qu'elle pose sur une chaussée
  * (`roadCorridor.clipPolygonOutsideCorridor`) avant d'être extrudée. La donnée
@@ -24,11 +26,13 @@ import { finishGeneration } from '../core/generationSteps.js';
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
 import { srgb } from '../core/color.js';
 import { buildingStyleAt } from './townStyle.js';
+import { isWallFootprint, facadeThickness, isTransitStop, isTransitShelter } from './buildingInterpretation.js';
 import { orientedBox, roofTriangles, roofRise, ringArea } from './roofGeometry.js';
 import { pointInRing, randomAt } from './furniturePlacement.js';
 import { pointInAreas } from './settlement.js';
 import { clipPolygonOutsideCorridor } from './roadCorridor.js';
 import { Kit } from './furnitureKit.js';
+import { appendChurchWindows, castleTowers, appendRetailSign } from './buildingCharacterGeometry.js';
 import { defaultTheme } from '../themes/default.js';
 import { LabelAtlas, pushLabelQuad, labelFontPxForCellHeight, LABEL_PX_PER_M } from '../materials/labelAtlas.js';
 import { DECOR_STABLE_RADIUS_M, reachedRadius } from '../core/decorReach.js';
@@ -76,15 +80,18 @@ const SHOPFRONT_CLASSES = new Set([
  *
  * `class` est déjà l'agrégat relevé sur les tuiles réellement servies
  * (OpenFreeMap, OpenMapTiles z14) : `subclass` ne sert qu'à distinguer la
- * religion et la grande surface. Château, monument, tour, moulin, cheminée
+ * religion et la grande surface. Monument, tour, moulin, cheminée
  * d'usine et stade restent du mobilier posé à part (`furnitureLayer`).
  */
 export function buildingPersonalityFor(properties = {}) {
   const klass = properties.class;
   const subclass = properties.subclass;
-  if (klass === 'place_of_worship') return subclass === 'muslim' ? 'mosque' : 'church';
+  if (['city_wall', 'citywalls', 'castle_wall', 'town_wall', 'rampart', 'wall'].some(tag => [klass, subclass, properties.historic, properties.building, properties.barrier].includes(tag))) return 'rampart';
+  if ((klass === 'castle' && subclass !== 'ruins') || subclass === 'castle' || properties.historic === 'castle' || properties.building === 'castle') return 'castle';
+  if (['church', 'cathedral', 'chapel'].includes(klass) || ['church', 'cathedral', 'chapel'].includes(properties.building)) return 'church';
+  if (klass === 'place_of_worship' || properties.amenity === 'place_of_worship') return (subclass || properties.religion) === 'muslim' ? 'mosque' : 'church';
   if (klass === 'hospital') return 'hospital';
-  if (RETAIL_SUBCLASSES.has(subclass)) return 'retail';
+  if (RETAIL_SUBCLASSES.has(subclass) || RETAIL_SUBCLASSES.has(klass) || RETAIL_SUBCLASSES.has(properties.shop)) return 'retail';
   if (klass === 'bakery') return 'bakery';
   // Sa propre personnalité, comme la boulangerie : une devanture générique
   // porterait la couleur d'un commerce quelconque, pas les pompes en façade.
@@ -101,6 +108,8 @@ const FUEL_CLASSES = new Set(['fuel']);
 
 /** Rang d'une personnalité quand il faut en écarter, petit d'abord (un clocher se voit de loin, une devanture se compte par milliers). */
 export const BUILDING_PERSONALITY_RANK = {
+  rampart: 0,
+  castle: 0,
   mosque: 0,
   church: 0,
   hospital: 1,
@@ -158,26 +167,41 @@ export function mergeTwinPersonalities(list, radius = PERSONALITY_TWIN_RADIUS_M)
  * Donne à chaque point d'intérêt un seul bâtiment : le plus grand de ceux qui
  * le contiennent. Deux empreintes superposées (contour et partie, fragments)
  * porteraient sinon chacune la devanture. Un bâtiment n'a qu'une
- * personnalité : la première de `personalities` qui le choisit. Pure.
+ * personnalité : la première de `personalities` qui le choisit. Un édifice
+ * religieux ou un château transmet son style à ses parties contenues ;
+ * seul son volume principal porte le clocher. Pure.
  *
  * @param {Array<{footprint:Array<{x:number,z:number}>|null,area:number,x:number,z:number,
  *        minX:number,maxX:number,minZ:number,maxZ:number}>} candidates
  * @param {Array<{x:number,z:number}>} personalities Déjà triées par rang.
  * @returns {Map<Object,Object>} candidat → point d'intérêt.
  */
-export function assignPersonalities(candidates, personalities) {
+export function assignPersonalities(candidates, personalities, outlines = []) {
   const owners = new Map();
   const taken = new Set();
+  const available = [...candidates, ...outlines];
   for (const p of personalities) {
     let best = null;
-    for (const c of candidates) {
+    for (const c of available) {
       if (!c.footprint || p.x < c.minX || p.x > c.maxX || p.z < c.minZ || p.z > c.maxZ) continue;
       if (!pointInRing(c.footprint, p.x, p.z)) continue;
       if (!best || c.area > best.area || (c.area === best.area && (c.x - best.x || c.z - best.z) < 0)) best = c;
     }
     if (best && !taken.has(best)) {
       taken.add(best);
-      owners.set(best, p);
+      const structural = ['church', 'mosque', 'castle', 'rampart'].includes(p.kind);
+      const contains = (q) => pointInRing(best.footprint, q.x, q.z) || best.footprint.some((a, i, ring) => {
+        const b = ring[(i + 1) % ring.length];
+        const dx = b.x - a.x, dz = b.z - a.z;
+        const t = Math.max(0, Math.min(1, ((q.x - a.x) * dx + (q.z - a.z) * dz) / (dx * dx + dz * dz || 1)));
+        return Math.hypot(q.x - a.x - t * dx, q.z - a.z - t * dz) < 0.05;
+      });
+      const members = candidates.filter(c => c === best || (structural || outlines.includes(best)) && c.footprint && c.footprint.every(contains));
+      members.sort((a, b) => b.area - a.area || a.x - b.x || a.z - b.z);
+      if (!structural) members.length = Math.min(1, members.length);
+      for (const [i, c] of members.entries()) {
+        if (!owners.has(c)) owners.set(c, i === 0 ? p : { ...p, secondary: true });
+      }
     }
   }
   return owners;
@@ -247,6 +271,11 @@ export function personalityLookFor(kind, personalities = defaultTheme.personalit
         wall: look.wall ? srgb(look.wall) : null,
         roof: look.roof ? srgb(look.roof) : null,
         shape: look.shape || null,
+        minHeightM: look.minHeightM || 0,
+        windows: look.windows ?? null,
+        sign: look.sign || null,
+        towers: look.towers || null,
+        frontWithoutStreet: look.frontWithoutStreet || false,
         front: look.front ? srgb(look.front) : null,
         spire: look.spire ? { wall: srgb(look.spire.wall), roof: srgb(look.spire.roof) } : null,
         dome: look.dome ? srgb(look.dome) : null,
@@ -328,7 +357,7 @@ export function windowDraw(x, z, salt) {
  * @returns {{columns:number, levels:number, spacing:number}}
  */
 export function windowGrid(length, height, windows = defaultTheme.windows) {
-  const spacing = windows.widthM * 2.6;
+  const spacing = windows.spacingM ?? windows.widthM * 2.6;
   // Marge d'un demi-entraxe à chaque bout : une fenêtre n'est jamais au ras de l'angle du mur.
   const columns = Math.floor((length - spacing) / spacing);
   const levels = Math.floor((height - windows.sillM - windows.heightM) / windows.levelM) + 1;
@@ -774,7 +803,7 @@ export function appendOpenings(
   minHeight,
   style,
   look = defaultTheme.windows,
-  { skipGroundLevel = false, ground = null, clearAbove = -Infinity, door = null, sink = null } = {}
+  { skipGroundLevel = false, ground = null, clearAbove = -Infinity, door = null, sink = null, allowAt = null } = {}
 ) {
   const length = Math.hypot(b.x - a.x, b.y - a.y);
   const storeys = height - minHeight;
@@ -804,6 +833,7 @@ export function appendOpenings(
 
   for (let c = 0; c < grid.columns; c++) {
     const along = grid.spacing * (c + 1);
+    if (allowAt && !allowAt(along)) continue;
 
     for (let level = startLevel; level < grid.levels; level++) {
       if (openings.panes >= openings.budget) return;
@@ -1614,9 +1644,9 @@ export class BuildingLayer {
     // centre arrondi, pas une silhouette.
     const seen = new Set();
     const candidates = [];
+    const outlines = [];
 
     source.forEachFeature(BUILDING_SOURCE_LAYER, tiles, (geometry, properties) => {
-      if (isHiddenOutline(properties)) return;
       for (const ring of outerRings(geometry)) {
         if (!Array.isArray(ring) || ring.length < 4) continue;
 
@@ -1626,30 +1656,33 @@ export class BuildingLayer {
         const distance = Math.hypot(x - here.x, z - here.z);
         if (distance > radius) continue;
 
-        const key = `${Math.round(x * 2)},${Math.round(z * 2)},${ring.length}`;
+        const key = `${Math.round(x * 2)},${Math.round(z * 2)},${ring.length},${isHiddenOutline(properties)}`;
         if (seen.has(key)) continue;
         seen.add(key);
 
-        candidates.push({ ring, properties, distance, x, z });
+        (isHiddenOutline(properties) ? outlines : candidates).push({ ring, properties, distance, x, z });
       }
     });
 
-    // Points d'intérêt classés : voir `buildingPersonalityFor`. Collectés une
-    // fois pour toute la reconstruction — chaque empreinte les relit ensuite
-    // pour savoir si l'un d'eux tombe dedans (voir `_appendBuilding`).
+    // L’association porte sur les empreintes brutes : la découpe routière
+    // ne doit pas détacher un lieu de son bâtiment.
     //
     // Tous les points à portée sont ramassés, puis triés et coupés : c'est le
     // tri qui décide de ce qui saute, jamais l'ordre des tuiles. Voir
     // `sortPersonalities`.
     const collected = [];
+    const stops = [];
     source.forEachFeature(BUILDING_POI_SOURCE_LAYER, tiles, (geometry, properties) => {
       if (geometry.type !== 'Point') return;
+      const stop = isTransitStop(properties);
       const kind = buildingPersonalityFor(properties);
-      if (!kind) return;
+      if (!kind && !stop) return;
       const [lng, lat] = geometry.coordinates;
       if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
       const x = (lngToTileX(lng, zoom) - origin.x) * scale;
       const z = (latToTileY(lat, zoom) - origin.y) * scale;
+      if (stop) stops.push({ x, z });
+      if (!kind) return;
       const distance = Math.hypot(x - here.x, z - here.z);
       if (distance > radius) return;
       collected.push({ x, z, kind, distance, name: properties.name || null, class: properties.class || null });
@@ -1672,7 +1705,7 @@ export class BuildingLayer {
 
     // Empreinte brute en mètres locaux, pour écarter les jumelles et attribuer
     // les personnalités : `_appendBuilding` refait la sienne, rabotée par la voirie.
-    for (const candidate of candidates) {
+    for (const candidate of [...candidates, ...outlines]) {
       const footprint = [];
       for (const [lng, lat] of candidate.ring) {
         if (!Number.isFinite(lng) || !Number.isFinite(lat)) break;
@@ -1686,10 +1719,10 @@ export class BuildingLayer {
       candidate.minZ = Math.min(...footprint.map((q) => q.z));
       candidate.maxZ = Math.max(...footprint.map((q) => q.z));
     }
-    const kept = dropTwinFootprints(candidates);
+    const kept = dropTwinFootprints(candidates).filter((candidate) => !isTransitShelter(candidate, stops));
     candidates.length = 0;
     candidates.push(...kept);
-    const owners = assignPersonalities(candidates, personalities);
+    const owners = assignPersonalities(candidates, personalities, outlines);
     yield;
 
     let built = 0;
@@ -1843,16 +1876,22 @@ export class BuildingLayer {
     }
     if (!Number.isFinite(base)) return false;
 
-    const height = buildingHeight(properties);
+    const footprint = ordered.map((p) => ({ x: p.x, z: p.y }));
+    const box = orientedBox(footprint);
+    const ground = ringArea(footprint);
+    const assigned = personalities?.[0];
+    const kind = assigned?.kind || buildingPersonalityFor(properties);
+    const personality = (!kind || kind === 'castle') && isWallFootprint(footprint, box) ? 'rampart' : kind;
+    const personalityName = assigned?.name || properties.name || null;
+    const personalityClass = assigned?.class || properties.class || properties.shop || null;
+    const look = personalityLookFor(personality, this.theme.personalities);
+    const height = Math.max(buildingHeight(properties), look?.minHeightM || 0);
     const minHeight = buildingMinHeight(properties);
     const bottom = base + minHeight - 0.6; // un peu enterré : pas de jour sous les murs
     const top = crest + height;
 
     // Couleur et forme du toit : celles de la palette du pays, avec une légère
     // variation par maison. Voir `townStyle`.
-    const footprint = ordered.map((p) => ({ x: p.x, z: p.y }));
-    const box = orientedBox(footprint);
-    const ground = ringArea(footprint);
     const style = buildingStyleAt(
       footprint[0].x,
       footprint[0].z,
@@ -1865,29 +1904,6 @@ export class BuildingLayer {
     // rien serait payée sur toute une ville.
     const roofs = style.pitch ? { ...this.theme.roofs, pitch: style.pitch } : this.theme.roofs;
 
-    // Personnalité : celle qu'`assignPersonalities` a donnée à ce bâtiment.
-    let personality = null;
-    // Nom du point d'intérêt qui a donné sa personnalité au bâtiment — utile
-    // seulement pour un commerce (voir `appendShopfront`), mais capturé ici
-    // pour tous : c'est le même point, et le coût de garder son nom est nul.
-    let personalityName = null;
-    // Classe brute du point d'intérêt (`properties.class`, pas le `kind`
-    // agrégé de `buildingPersonalityFor`) — c'est elle qui choisit le
-    // pictogramme de l'enseigne perpendiculaire (`shopfrontIconFor`) : une
-    // boulangerie et un bar sont tous deux `kind: 'shop'`, mais pas la même
-    // enseigne.
-    let personalityClass = null;
-    for (const p of (box && personalities) || []) {
-      if (pointInRing(footprint, p.x, p.z)) {
-        personality = p.kind;
-        personalityName = p.name || null;
-        personalityClass = p.class || null;
-        break;
-      }
-    }
-    const look = personalityLookFor(personality, this.theme.personalities);
-    // Un habillage de fonction ne remplace que ce qu'il nomme : une église
-    // garde les murs de son bourg, seul le clocher la désigne.
     const wallColor = look?.wall || style.wall;
     const roofColor = look?.roof || style.roof;
 
@@ -1896,7 +1912,7 @@ export class BuildingLayer {
     // l'empreinte, l'assise et le rectangle orienté existent en même temps.
     // Rien n'est branché : `worldComposer` passe la liste, comme il passe les
     // cheminées du mobilier à `lifeLayer`.
-    if (houses && box && style.house) {
+    if (houses && box && style.house && !(look?.wall || look?.spire || look?.dome || look?.minaret)) {
       houses.push({ x: box.cx, z: box.cz, box });
     }
 
@@ -1922,10 +1938,9 @@ export class BuildingLayer {
         frontIndex = i;
       }
     }
-    // Devanture, enseigne et terrasse vont sur le pan qui donne sur la rue ;
-    // sans rue en face, elles ne se posent pas du tout.
+    // Une grande surface peut ouvrir sur son parking, au-delà de la rue.
     const streetIndex = !look?.front ? -1 : this._roadIndex ? streetFacadeIndex(ordered, this._roadIndex) : null;
-    const shopIndex = streetIndex ?? frontIndex;
+    const shopIndex = streetIndex === -1 && look?.frontWithoutStreet ? frontIndex : streetIndex ?? frontIndex;
     // Le sol le plus haut de la façade : une devanture s'y cale, sans quoi le
     // haut de la rue enterrerait ses baies.
     const frontFloor = Math.max(...profiles[shopIndex >= 0 ? shopIndex : frontIndex].y);
@@ -2001,18 +2016,24 @@ export class BuildingLayer {
             base,
             shopfrontTop,
             minHeight,
-            personalityName,
+            personality === 'retail' ? null : personalityName,
             this.theme.shopfront,
             profile
           );
         const shopWindows = [];
-        appendOpenings(openings, walls, a, b, nx, nz, base, eaves - base, minHeight, style, this.theme.windows, {
-          skipGroundLevel: devanture,
-          ground: profile,
-          clearAbove: devanture ? shopfrontTop : -Infinity,
-          door: i === frontIndex && !devanture ? style.shutter : null,
-          sink: i === shopIndex && shopfrontTop !== null ? shopWindows : null,
-        });
+        if (personality === 'church' && look?.windows) {
+          appendChurchWindows(openings, walls, a, b, nx, nz, base, eaves, profile, look.windows);
+        } else if (look?.windows !== false) {
+          appendOpenings(openings, walls, a, b, nx, nz, base, eaves - base, minHeight,
+            look?.wall ? { ...style, shutters: false } : style,
+            look?.windows ? { ...this.theme.windows, ...look.windows } : this.theme.windows, {
+              skipGroundLevel: devanture, ground: profile,
+              allowAt: kind === 'castle' ? along => facadeThickness(footprint, footprint[i], footprint[(i+1)%footprint.length], along / length) > 3.2 : null,
+              clearAbove: devanture ? shopfrontTop : -Infinity,
+              door: i === frontIndex && !devanture ? style.shutter : null,
+              sink: i === shopIndex && shopfrontTop !== null ? shopWindows : null,
+            });
+        }
 
         // Enseigne en drapeau : indépendante de la devanture au sol — une
         // façade trop étroite pour une porte garde son pictogramme.
@@ -2025,7 +2046,9 @@ export class BuildingLayer {
             kind: personalityClass,
             windows: shopWindows,
           });
-          appendShopSignBlade(
+          if (personality === 'retail') {
+            appendRetailSign(walls, labels, this.labelAtlas, a, b, nx, nz, frontFloor, personalityName, look);
+          } else appendShopSignBlade(
             walls,
             labels,
             this.labelAtlas,
@@ -2097,7 +2120,10 @@ export class BuildingLayer {
 
     // Clocher, coupole, minaret : des volumes ajoutés à la **vraie** empreinte
     // plutôt que des objets posés à côté — voir `buildingPersonalityFor`.
-    if (box && look) {
+    if (box && look && !assigned?.secondary) {
+      if (look.towers) {
+        for (const tower of castleTowers(footprint, box, base, top, look)) this._pushKitAt(walls, tower.kit, tower.x, base, tower.z);
+      }
       if (look.spire) this._appendSteeple(walls, look.spire, box, base, top);
       if (look.dome || look.minaret) this._appendDomeAndMinaret(walls, look, box, base, eaves);
     }
@@ -2116,30 +2142,7 @@ export class BuildingLayer {
     return true;
   }
 
-  /**
-   * Clocher : une tour carrée coiffée d'une flèche, greffée sur une empreinte
-   * déjà bâtie.
-   *
-   * Trois choses le font tenir, et la version précédente les ratait toutes :
-   *
-   * 1. **il est dimensionné sur le bâtiment.** Une tour de 3,2 m de côté et de
-   *    15 m de haut pour toutes les églises donnait un mât sur une chapelle et
-   *    une allumette sur une collégiale. Côté et hauteur se lisent donc sur le
-   *    rectangle englobant ;
-   * 2. **il est orienté comme le bâtiment.** Une boîte non tournée sur une nef
-   *    en biais se voit immédiatement, arêtes contre arêtes ;
-   * 3. **la flèche tourne sur son axe.** `roll` bascule la pyramide de 45° dans
-   *    le plan vertical — elle partait de travers. C'est `yaw` qu'il faut, et de
-   *    45° pour poser les arêtes de la pyramide sur les angles de la tour.
-   *
-   * Le lacet vaut `-box.angle` : `Kit.transform` envoie le `+x` local sur
-   * `(cos θ, −sin θ)` dans le plan `(x, z)`, et le grand axe du bâtiment est
-   * `(cos angle, sin angle)`.
-   *
-   * Décalé vers un bout du grand axe plutôt que posé au centre du toit, qui se
-   * lirait comme une cheminée. `Kit` (`furnitureKit.js`) est réutilisé plutôt
-   * que de réécrire des primitives boîte/cylindre déjà éprouvées.
-   */
+  /** Tour orientée sur le grand axe, dimensionnée sur l’empreinte et décalée vers son extrémité. */
   _appendSteeple(walls, spire, box, base, top) {
     const side = towerSide(box);
     const height = Math.max(6, top - base) + towerRise(box);

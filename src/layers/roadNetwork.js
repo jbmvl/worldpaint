@@ -82,14 +82,14 @@ import { DECOR_STEP_M, reachedRadius } from '../core/decorReach.js';
  * une contre-allée de campagne est un objet du paysage.
  */
 
-import { smoothRoadProfiles, findRoadSupports, ROAD_MAX_GRADE } from './roadProfile.js';
+import { smoothRoadProfiles, findRoadSupports, findEarthFills } from './roadProfile.js';
 import { resolveTransportCrossings } from './transportCrossings.js';
 import { TransportEarthworks } from '../terrain/transportEarthworks.js';
-import { cutElevationAt } from '../terrain/roadCut.js';
+import { cutElevationAt, fillElevationAt } from '../terrain/roadCut.js';
 import { RoadContinuity } from './roadContinuity.js';
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
-import { absorbParallelLines } from './roadBundles.js';
-import { WidthAreasMemo, fitParallelRoadWidths } from './roadWidths.js';
+import { absorbParallelLines, levelBundlePlatforms } from './roadBundles.js';
+import { fitParallelRoadWidths } from './roadWidths.js';
 import {
   mergeRoadLines,
   RoadIndex,
@@ -134,6 +134,8 @@ import {
   drawableRuns,
   BRIDGE_CROSSING_COS,
   LEVEL_GROUND,
+  DECK_SHADOW_MARGIN_M,
+  isDeckRow,
 } from './roadWorks.js';
 import {
   subdividePath,
@@ -1074,9 +1076,6 @@ export function platformPositionAt(roads, x, z, ahead = null, margin = ROAD_INDE
  * @param {Object|null} [options.urban] `UrbanMask` : en ville, les voies
  *        piétonnes ne sont pas dessinées et les voies redondantes sont
  *        absorbées. Absent, le réseau est celui de la campagne.
- * @param {Object|null} [options.widthAreas] `WidthAreasMemo` : les surfaces
- *        de carrefour du partage des largeurs, reprises tant que les lignes
- *        lues ne changent pas.
  *
  * Les carrefours sortent d'ici avec les tronçons (ils viennent du même graphe).
  *
@@ -1097,7 +1096,7 @@ export function* collectRoadSegmentsSteps(
   sampleElevation,
   radius = ROAD_RADIUS_M,
   roads = defaultTheme.roads,
-  { floorAt = null, urban = null, continuity = null, widthAreas = null, railwaySegments = [], bench = 0, tunnelTheme = defaultTheme } = {}
+  { floorAt = null, urban = null, continuity = null, railwaySegments = [], bench = 0, tunnelTheme = defaultTheme } = {}
 ) {
   const out = [];
   let anyWorks = false; // vrai dès qu'un tronçon porte un ouvrage
@@ -1113,10 +1112,9 @@ export function* collectRoadSegmentsSteps(
     });
   }
   yield;
-  widthAreas?.follow(lines);
   const { chains, junctions } = mergeRoadLines(lines);
   yield;
-  fitParallelRoadWidths(chains.filter((chain) => isPaved(roads.profiles[chain.profile])), junctions, { x: here.x, z: here.z, radius }, widthAreas);
+  fitParallelRoadWidths(chains.filter((chain) => isPaved(roads.profiles[chain.profile])), junctions, { x: here.x, z: here.z, radius });
   yield;
 
   for (const chain of chains) {
@@ -1211,7 +1209,10 @@ export function* collectRoadSegmentsSteps(
 
   // La couture précède les franchissements : elle ne peut annuler leur déblai.
   const paved = out.filter((segment) => segment.paved);
-  stitchPlatforms(paved, new RoadIndex(paved));
+  const pavedIndex = new RoadIndex(paved);
+  // Le plan commun d'abord : la couture raccorde ensuite les voies qui s'y jettent.
+  levelBundlePlatforms(paved, pavedIndex);
+  stitchPlatforms(paved, pavedIndex);
   if (anyWorks) {
     const abutments = [];
     for (const segment of out) {
@@ -1281,6 +1282,8 @@ export class RoadNetwork {
      * @type {RoadIndex|null}
      */
     this.elevationIndex = null;
+    /** Les seules arêtes portées (`isDeckRow`) : le plafond de ce qui pousse dessous. @type {RoadIndex|null} */
+    this.deckIndex = null;
     this.profileConstraints = { constrained: 0 };
     this.transportCrossings = [];
     this.earthworks = null;
@@ -1331,11 +1334,9 @@ export class RoadNetwork {
       this._continuity = new RoadContinuity();
       this._continuityFrame = bubble.frame;
     }
-    this._widthAreas ??= new WidthAreasMemo();
     // Terrain naturel, déblai exclu : la plate-forme décide de l'entaille, elle ne peut pas en dépendre.
     const sampleElevation = (x, z) => bubble.naturalElevationAtLocal(x, z, 0) * bubble.verticalScale;
 
-    const profileRails = railwaySegments.map(s => ({ ...s, platform: s.platform.slice() }));
     const { segments: collected, junctions, areas, crossings } = yield* collectRoadSegmentsSteps(
       source,
       tiles,
@@ -1344,7 +1345,7 @@ export class RoadNetwork {
       sampleElevation,
       this._radius(),
       this.theme.roads,
-      { urban, continuity: this._continuity, widthAreas: this._widthAreas, railwaySegments, bench: bubble.cutBenchM, tunnelTheme: this.theme }
+      { urban, continuity: this._continuity, railwaySegments, bench: bubble.cutBenchM, tunnelTheme: this.theme }
     );
     // La marge doit couvrir toute la portée du déblai, raccord compris ;
     // laissée à sa valeur par défaut, l'entaille finirait en marche verticale.
@@ -1369,7 +1370,12 @@ export class RoadNetwork {
       let ground = earth.elevation;
       const hit = terrainIndex.query(x, z, bubble.cutBenchM + ROAD_CUT_BLEND_M);
       const deck = hit && terrainIndex.deckAt(hit);
-      if (deck != null) ground = cutElevationAt(ground, deck / bubble.verticalScale, hit.distance, hit.segment.halfWidth, bubble.cutBenchM);
+      if (deck != null) {
+        const fills = hit.segment.earthFill;
+        const share = fills ? fills[hit.row] + (fills[Math.min(fills.length - 1, hit.row + 1)] - fills[hit.row]) * hit.t : 0;
+        if (share) ground += (fillElevationAt(ground, deck / bubble.verticalScale, hit.distance, hit.segment.halfWidth, bubble.cutBenchM) - ground) * share;
+        ground = cutElevationAt(ground, deck / bubble.verticalScale, hit.distance, hit.segment.halfWidth, bubble.cutBenchM);
+      }
       if (earth.supported) ground = Math.max(ground, earth.elevation);
       return ground * bubble.verticalScale;
     };
@@ -1388,28 +1394,18 @@ export class RoadNetwork {
     // Même marge, tabliers compris : `platformPositionAt` doit pouvoir lire
     // l'altitude d'un pont ou d'un tunnel, ce que `index` refuse par construction.
     for (const segment of collected) segment.terrainPlatform = segment.platform.slice();
-    const steep = collected.some(s => s.paved && s.path.some((p, r) => r &&
-      Math.abs(s.platform[r] - s.platform[r - 1]) > ROAD_MAX_GRADE * Math.hypot(p.x - s.path[r - 1].x, p.z - s.path[r - 1].z) + .0001));
-    if (steep) {
-      // Le bord du disque de rendu ne doit pas commander une rampe visible.
-      const complete = yield* collectRoadSegmentsSteps(source, tiles, { x: 0, z: 0 }, bubble.frame,
-        sampleElevation, Infinity, this.theme.roads, { urban, railwaySegments: profileRails, bench: bubble.cutBenchM, tunnelTheme: this.theme });
-      smoothRoadProfiles(complete.segments, { crossings: complete.crossings });
-      const heights = new Map();
-      const profileKey = (s, r) => `${Math.round(s.path[r].x * 1000)}:${Math.round(s.path[r].z * 1000)}:${s.levels?.[r] ?? 0}`;
-      for (const s of complete.segments) if (s.paved) s.path.forEach((p, r) => heights.set(profileKey(s, r), s.platform[r]));
-      for (const s of collected) if (s.paved) s.path.forEach((p, r) => {
-        if (s.works?.[r] === 2) return;
-        s.platform[r] = Math.max(s.platform[r], heights.get(profileKey(s, r)) ?? s.platform[r]);
-      });
-    }
     this.profileConstraints = smoothRoadProfiles(collected, { crossings });
     areas.updateDecks();
     findRoadSupports(collected, finalElevation, areas);
+    // Après les appuis, qui se mesurent sur le sol non remblayé : une portion
+    // suspendue garde son tablier, le terrain ne monte pas la rejoindre.
+    findEarthFills(collected);
+    collected.forEach((segment, i) => { terrainSegments[i].earthFill = segment.earthFill; });
     const elevationIndex = new RoadIndex(collected, {
       margin: ROAD_CUT_M + ROAD_CUT_BLEND_M,
       includeWorks: true,
     });
+    const deckIndex = new RoadIndex(collected, { margin: DECK_SHADOW_MARGIN_M, keep: isDeckRow });
 
     const buffers = {};
     const markingBuffer = createProfileBuffer();
@@ -1485,6 +1481,7 @@ export class RoadNetwork {
     this.junctionAreas = areas;
     this.index = index;
     this.elevationIndex = elevationIndex;
+    this.deckIndex = deckIndex;
     this.segments = segments;
     this.crossings = junctionsDrawn;
     this.markings = markings;
@@ -1799,11 +1796,11 @@ export class RoadNetwork {
     this.roadSegments = [];
     this.index = null;
     this.elevationIndex = null;
+    this.deckIndex = null;
     this.profileConstraints = { constrained: 0 };
     this.transportCrossings = [];
     this.earthworks = null;
     this.junctionAreas = null;
-    this._widthAreas = null;
     this.bubble?.setRoadCut?.(null); // sinon un changement d'observateur laisse des tranchées vides
     for (const store of [this.meshes, this.junctionMeshes]) {
       for (const key of Object.keys(store)) {

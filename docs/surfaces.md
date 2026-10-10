@@ -122,9 +122,11 @@ Son rang dans l'ordre de peinture **est** la règle des parcs :
 
 Elle recouvre le 66 % d'herbe d'un quartier d'habitation, et se fait recouvrir
 par tout ce qui décrit du vert — cimetière, stade et terrain de jeu au troisième
-temps, parc, bois et prairie par `landcover`. Le vert est en outre **retiré en
-trous** au moment de peindre le revêtement, et pas seulement recouvert après :
-sinon la couverture resterait sous le parc, et le parc se peindrait en dalle.
+temps, parc, bois et prairie par `landcover`. Matière et couverture tiennent
+dans le même texel : ce qui repeint le vert en retire la dalle du même geste.
+Le vert n'est **retiré en trous** du revêtement que sous une emprise bâtie
+unique ; dès qu'une ville en compte plusieurs, il est revêtu avec elles puis
+rendu à sa matière par ces deux temps-là.
 
 Un village n'est donc jamais pavé : sans `place` de rang urbain dans la fenêtre,
 la passe ne pose rien.

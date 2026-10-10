@@ -102,14 +102,6 @@ import { buildBiomeDebris } from './furniture/biomeDebris.js';
 import { buildPointsOfInterest, collectChurches, publishFountains } from './furniture/pointsOfInterest.js';
 import { buildDomesticFauna } from './furniture/domesticFauna.js';
 import { buildOpenPastureFauna } from './furniture/parcelFauna.js';
-import {
-  SIGN_PLACE_NAME_TEXT_WIDTH_M,
-  SIGN_PLACE_NAME_LABEL_HEIGHT_M,
-  SIGN_PLACE_NAME_LABEL_MIN_HEIGHT_M,
-  SIGN_PLACE_NAME_LABEL_Y_M,
-  SIGN_PLACE_NAME_LABEL_Z_M,
-  SIGN_PLACE_NAME_LABEL_INK,
-} from './furniture/roadsideFurniture.js';
 
 /*
  * Ré-exports : le mobilier reste une seule adresse vue de l'extérieur, quelle
@@ -184,6 +176,7 @@ export class FurnitureLayer {
   constructor({ THREE, scene, bubble, groundClass = null, theme = defaultTheme, sightline = null }) {
     this.THREE = THREE;
     this.theme = theme;
+    this._placeNameSign = theme.furniture.placeNameSign || defaultTheme.furniture.placeNameSign;
     /**
      * Dossier de région du lieu, ou `null`. Posé par le compositeur. Il décide
      * de quatre choses ici : le bétail d'une pâture, le traitement de ses
@@ -220,7 +213,7 @@ export class FurnitureLayer {
     this.trees = [];
     /** Fontaines posées, repère de scène — voir `publishFountains`. */
     this.fountains = [];
-    this.geometries = createFurnitureGeometries(THREE, theme.furniture.colors);
+    this.geometries = createFurnitureGeometries(THREE, theme.furniture.colors, undefined, this._placeNameSign);
     /** Nuancier dont les formes en pierre de `geometries` sont faites (`setRegion`). */
     this._stoneColors = theme.furniture.colors;
 
@@ -1168,22 +1161,20 @@ export class FurnitureLayer {
    * pourquoi un texte par instance ne peut pas passer par la géométrie
    * partagée de `signPlaceName` (`Kit`, instanciée par `_applyInstances`).
    *
-   * Le repère local du texte sur la lame (`SIGN_PLACE_NAME_LABEL_Y_M`,
-   * `SIGN_PLACE_NAME_LABEL_Z_M`) est recopié de `signPlaceName`
-   * (`furnitureKit.js`) : les deux doivent rester d'accord, sans quoi le nom
-   * se peint à côté de la lame plutôt que dessus. Seuls x et z tournent avec
-   * le lacet de l'instance (`Kit.transform`) — y ne bouge pas sous un lacet.
+   * La lame et le texte lisent le même gabarit du thème. Seuls x et z tournent
+   * avec le lacet de l'instance ; y reste la hauteur au-dessus du pied.
    */
   _applyLabels() {
     const { THREE } = this;
     const labels = { positions: [], uvs: [] };
+    const style = this._placeNameSign;
 
     for (const quad of this._labelQuads) {
       const uv = this.labelAtlas.place(quad.name, {
-        maxWidthPx: Math.max(1, SIGN_PLACE_NAME_TEXT_WIDTH_M * LABEL_PX_PER_M),
-        maxFontPx: labelFontPxForCellHeight(SIGN_PLACE_NAME_LABEL_HEIGHT_M * LABEL_PX_PER_M),
-        minFontPx: labelFontPxForCellHeight(SIGN_PLACE_NAME_LABEL_MIN_HEIGHT_M * LABEL_PX_PER_M),
-        color: SIGN_PLACE_NAME_LABEL_INK,
+        maxWidthPx: Math.max(1, style.textWidthM * LABEL_PX_PER_M),
+        maxFontPx: labelFontPxForCellHeight(style.labelHeightM * LABEL_PX_PER_M),
+        minFontPx: labelFontPxForCellHeight(style.labelMinHeightM * LABEL_PX_PER_M),
+        color: style.ink,
       });
       if (!uv) continue;
 
@@ -1193,10 +1184,10 @@ export class FurnitureLayer {
       // `Kit.transform`), donc c'est lui qu'il faut passer en premier à
       // `pushLabelQuad` — voir sa note : le premier point est le côté droit
       // du texte. Les inverser laisse le texte lisible... à l'envers.
-      const left = Kit.transform([-halfWidth, 0, SIGN_PLACE_NAME_LABEL_Z_M], { yaw: quad.yaw });
-      const right = Kit.transform([halfWidth, 0, SIGN_PLACE_NAME_LABEL_Z_M], { yaw: quad.yaw });
-      const bottom = quad.y + SIGN_PLACE_NAME_LABEL_Y_M - halfHeight;
-      const top = quad.y + SIGN_PLACE_NAME_LABEL_Y_M + halfHeight;
+      const left = Kit.transform([-halfWidth, 0, style.labelZM], { yaw: quad.yaw });
+      const right = Kit.transform([halfWidth, 0, style.labelZM], { yaw: quad.yaw });
+      const bottom = quad.y + style.centerYM - halfHeight;
+      const top = quad.y + style.centerYM + halfHeight;
       pushLabelQuad(
         labels,
         { x: quad.x + right[0], y: quad.z + right[2] },

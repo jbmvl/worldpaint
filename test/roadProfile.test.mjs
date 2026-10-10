@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { smoothRoadProfiles, findRoadSupports, ROAD_MAX_GRADE } from '../src/layers/roadProfile.js';
+import { smoothRoadProfiles, findRoadSupports, findEarthFills, ROAD_MAX_GRADE } from '../src/layers/roadProfile.js';
 import { segmentOf, networkOf, buffersOf, trianglesOf, heightIn } from './junctionWorld.mjs';
 import { RoadNetwork } from '../src/layers/roadNetwork.js';
 import { BridgeLayer } from '../src/layers/bridgeLayer.js';
@@ -12,12 +12,13 @@ import { createLocalFrame } from '../src/core/tileMath.js';
 const grade = s => Math.max(...s.path.slice(1).map((p, i) => Math.abs(s.platform[i + 1] - s.platform[i]) / Math.hypot(p.x-s.path[i].x,p.z-s.path[i].z)));
 const line = (points, deck) => segmentOf(points, 3, { deck });
 
-test('une rampe à 35 % devient une chaussée à pente bornée sans enfoncement', () => {
+test('une rue à 35 % garde son assise et publie la pente incompatible', () => {
   const s = line([{x:0,z:0},{x:120,z:0}], x=>x*.35);
   const initial = s.platform.slice();
-  assert.equal(smoothRoadProfiles([s]).constrained, 0);
-  assert.ok(grade(s) <= ROAD_MAX_GRADE + 1e-5);
-  s.platform.forEach((h,r)=>assert.ok(h >= initial[r]));
+  assert.ok(smoothRoadProfiles([s]).constrained > 0);
+  assert.deepEqual(s.platform, initial);
+  findRoadSupports([s], x => x * .35);
+  assert.ok(s.supports.every(v => v === 0));
 });
 
 test('le profil borné reste identique lorsque le réseau et ses tracés sont inversés', () => {
@@ -32,8 +33,9 @@ test('un carrefour en forte pente garde ses bouches cousues aux rubans', () => {
   const lines=[{points:[{x:-80,z:0},{x:0,z:0},{x:80,z:0}],profile:'minor',halfWidth:3},
     {points:[{x:0,z:-70},{x:0,z:0},{x:0,z:70}],profile:'minor',halfWidth:3}];
   const network=networkOf(lines,{deck:(x,z)=>30+x*.3+z*.2});
+  const initial = network.segments.map(s => s.platform.slice());
   smoothRoadProfiles(network.segments);network.areas.updateDecks();
-  for(const s of network.segments) assert.ok(grade(s)<=ROAD_MAX_GRADE+1e-5);
+  network.segments.forEach((s, i) => assert.deepEqual(s.platform, initial[i]));
   const geometry=buffersOf(network);
   for(const area of network.areas.areas) for(const mouth of area.mouths) {
     for(const p of [mouth.left,mouth.right]) {
@@ -128,7 +130,7 @@ test('un lampadaire décalé de trois mètres du sol est rejeté', () => {
   assert.ok(layer._place(placements,'streetLamp',{x:0,z:0,y:2.1,exactY:true,grounded:true}));
 });
 
-test('le réseau transmet au terrain ses profils initiaux, distincts du profil affiché', () => {
+test('le réseau conserve les cotes terrassées sans fabriquer de viaduc', () => {
   const frame=createLocalFrame(0,45,15);
   const coords=[{x:0,z:0},{x:150,z:0}].map(p=>{const q=frame.toLngLat(p.x,p.z);return[q.lng,q.lat];});
   const source={forEachFeature:(layer,tiles,fn)=>{if(layer==='transportation')fn({type:'LineString',coordinates:coords},{class:'minor'});}};
@@ -139,8 +141,8 @@ test('le réseau transmet au terrain ses profils initiaux, distincts du profil a
   const roads=new RoadNetwork({THREE,scene:new THREE.Scene(),bubble,materials});
   roads.rebuild(source,[],{x:0,z:0});
   const s=roads.roadSegments[0], original=terrain.index.segments[0];
-  assert.notEqual(s.platform,original.platform);assert.ok(s.platform[0]>original.platform[0]+10);
-  assert.ok(grade(s)<=ROAD_MAX_GRADE+1e-5);assert.ok(grade(original)>.3);
+  assert.notEqual(s.platform,original.platform);assert.deepEqual(s.platform,original.platform);
+  assert.ok(roads.profileConstraints.constrained > 0);assert.ok(grade(original)>.3);
   assert.equal(terrain.earthworks.supports.segments[0],original);
   const before=original.platform.slice();s.platform.fill(99);assert.deepEqual(original.platform,before);
   roads.dispose();
@@ -230,4 +232,49 @@ test('le calcul du profil complet ne réécrit pas le terrassement ferroviaire',
   assert.ok(rail.crossingBase.every(h=>h===10),'la référence reste le rail naturel');
   assert.ok(Math.min(...rail.platform)<10,'le franchissement a bien corrigé le rail');
   roads.dispose();
+});
+
+
+test('une rue haute ne suspend pas les rues basses qui la rejoignent', () => {
+  const slope = line([{x:0,z:0},{x:90,z:0}], x => x * .35);
+  const street = line([{x:0,z:0},{x:0,z:90}], () => 0);
+  const initial = [slope.platform.slice(), street.platform.slice()];
+  smoothRoadProfiles([slope, street]);
+  [slope, street].forEach((s, i) => assert.deepEqual(s.platform, initial[i]));
+  findRoadSupports([slope, street], x => x * .35);
+  assert.ok([slope, street].every(s => s.supports.every(v => v === 0)));
+});
+
+test('un pont conserve son lissage et son dégagement', () => {
+  const bridge = line([{x:0,z:0},{x:120,z:0}], x => 8 + x * .35);
+  bridge.works.fill(1);
+  const initial = bridge.platform.slice();
+  assert.equal(smoothRoadProfiles([bridge]).constrained, 0);
+  assert.ok(grade(bridge) <= ROAD_MAX_GRADE + 1e-5);
+  bridge.platform.forEach((h, r) => assert.ok(h >= initial[r]));
+});
+
+test('le terrain porte le remblai partout où ni mur ni tablier ne tient la chaussée', () => {
+  const avec = (devers, extra = {}) => {
+    const s = { ...line([{x:0,z:0},{x:60,z:0}], () => 10), probeSpan: 14, ...extra };
+    s.edges = Float32Array.from(s.path.flatMap((p) => { const d = devers(p.x) * 7; return [10 + d, 10 - d]; }));
+    return s;
+  };
+  const plat = avec(() => 0.05);
+  // Versant franc du mètre 15 au mètre 45 : assez long pour un mur.
+  const versant = avec((x) => (x >= 15 && x <= 45 ? 0.3 : 0.05));
+  // Trois lignes seulement : trop court pour un mur, la terre le garde.
+  const bref = avec((x) => (x >= 27 && x <= 33 ? 0.3 : 0.05));
+  const desserte = avec(() => 0.3, { profile: 'lane' });
+  const chemin = avec(() => 0.05, { paved: false });
+  const pont = avec(() => 0.05);
+  pont.supports = new Uint8Array(pont.path.length).fill(1);
+  findEarthFills([plat, versant, bref, desserte, chemin, pont]);
+
+  assert.ok(plat.earthFill.every((v) => v === 1), 'rase campagne : tout en terre');
+  versant.path.forEach((p, r) => assert.equal(versant.earthFill[r], p.x >= 15 && p.x <= 45 ? 0 : 1, `versant, x = ${p.x}`));
+  assert.ok(bref.earthFill.every((v) => v === 1), 'versant trop court pour un mur');
+  assert.ok(desserte.earthFill.every((v) => v === 1), 'profil sans mur : la terre porte aussi le versant');
+  assert.ok(chemin.earthFill.every((v) => v === 0), 'un chemin est sur le sol');
+  assert.ok(pont.earthFill.every((v) => v === 0), 'une portion suspendue garde son tablier');
 });

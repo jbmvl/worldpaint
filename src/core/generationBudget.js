@@ -14,15 +14,18 @@ function pauseGeneration() {
   });
 }
 export class GenerationBudget {
-  constructor({ milliseconds = 8, now = () => performance.now(), pause = pauseGeneration } = {}) {
+  constructor({ milliseconds = 8, now = () => performance.now(), pause = pauseGeneration, onPause } = {}) {
     this.milliseconds = milliseconds;
     this.now = now;
     this.pause = pause;
+    this.onPause = onPause;
     this.start = now();
   }
   async checkpoint() {
     if (this.now() - this.start < this.milliseconds) return;
+    const start = this.onPause ? this.now() : 0;
     await this.pause();
+    this.onPause?.(this.now() - start);
     this.start = this.now();
   }
 }

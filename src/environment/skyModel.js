@@ -126,10 +126,10 @@ export function acesFilmic(rgb, exposure) {
 
 /** Hauteur de soleil sous laquelle l'éclairage est entièrement nocturne. */
 const NIGHT_SUN_Y = -0.1;
-const NIGHT_LIGHT = { sun: 0.3, ambient: 0.62 };
+const NIGHT_LIGHT = { sun: 0.42, ambient: 0.78 };
 const NOON_LIGHT = { sun: 1.75, ambient: 1.2 };
 /** Nuit américaine : éclairage de nuit relevé, pour qui veut voir le décor plutôt que la nuit. */
-const DAY_FOR_NIGHT_LIGHT = { sun: 1.05, ambient: 0.8 };
+const DAY_FOR_NIGHT_LIGHT = { sun: 1.35, ambient: 1.0 };
 /** Part de l'adaptation du ciel reprise par l'éclairage du relief, et son plafond. */
 const LIGHT_ADAPT_EXPONENT = 0.5;
 const LIGHT_ADAPT_MAX = 2.5;
@@ -185,8 +185,8 @@ export function sunlightColor(warmth, night = 0) {
 }
 
 /** Luminances linéaires visées par la nuit américaine : voûte bleu ardoise, horizon un cran plus clair. */
-export const DAY_FOR_NIGHT_ZENITH_LUMINANCE = 0.035;
-export const DAY_FOR_NIGHT_HORIZON_LUMINANCE = 0.06;
+export const DAY_FOR_NIGHT_ZENITH_LUMINANCE = 0.06;
+export const DAY_FOR_NIGHT_HORIZON_LUMINANCE = 0.1;
 
 /**
  * Éclaircit une couleur de nuit (linéaire) jusqu'à une luminance, en gardant

@@ -1484,13 +1484,16 @@ export class RoadIndex {
    *        (`RoadNetwork.index`, l'usage par défaut) doit au contraire les
    *        ignorer pour laisser l'herbe et les arbres au paysage qu'ils
    *        survolent ou traversent.
+   * @param {Function|null} [options.keep] `(segment, row) => boolean` : n'inscrit
+   *        que ces arêtes, ouvrages compris. C'est l'index des seuls tabliers
+   *        (`RoadNetwork.deckIndex`), presque vide, donc presque gratuit à lire.
    */
   constructor(
     segments,
-    { cell = ROAD_INDEX_CELL_M, margin = ROAD_INDEX_MARGIN_M, includeWorks = false } = {}
+    { cell = ROAD_INDEX_CELL_M, margin = ROAD_INDEX_MARGIN_M, includeWorks = false, keep = null } = {}
   ) {
     this.segments = segments || [];
-    this.includeWorks = includeWorks;
+    this.includeWorks = includeWorks || !!keep;
     this.cell = cell;
     this.margin = margin;
     /** @type {Map<number, number[]>} triplets (tronçon, ligne, arête) mis à plat. */
@@ -1513,7 +1516,7 @@ export class RoadIndex {
       const works = segment.works;
 
       for (let r = 0; r < path.length - 1; r++, e++) {
-        if (!includeWorks && works?.[r] && works[r + 1]) continue;
+        if (keep ? !keep(segment, r) : !includeWorks && works?.[r] && works[r + 1]) continue;
         const a = path[r];
         const b = path[r + 1];
         const slack = segment.halfWidth + BOX_SLACK_M;

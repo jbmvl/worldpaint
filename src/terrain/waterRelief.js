@@ -4,6 +4,11 @@
  * un champ d'altitude lissé sur leur axe, puis le reportent en travers du lit.
  * Le MNT brut reste la seule source de hauteur. Ni le déblai routier, ni la
  * finesse de la maille, ni l'observateur ne participent à cette estimation.
+ * Les segments de berge sont indexés dans leur bande de raccord : une sonde
+ * ne projette pas sur tout le contour d'une nappe pour trouver sa rive.
+ * Le terrain sonde ce module cinq fois par sommet : l'appartenance à une nappe
+ * ne lit que les arêtes de sa bande de latitude, et l'axe le plus proche se
+ * cherche de proche en proche dans une grille, pas dans toute la rivière.
  * Une nappe tronquée sans cote connue attend son contour complet : choisir
  * un niveau sur le seul fragment visible ferait monter le lac en avançant.
  */
@@ -12,9 +17,11 @@ import { classPolygons, waterSurfaceFor, waterwayStyleFor } from './surfaceClass
 const CELL = 128;
 const PROFILE_STEP = 32;
 const BANK_BLEND = 16;
+const BAND = 8;
 const clamp = t => Math.max(0, Math.min(1, t));
 const smooth = t => t * t * (3 - 2 * t);
-const key = (x, z) => `${x},${z}`;
+// Clé entière d'une cellule : exacte tant que |z| < 2^25.
+const key = (x, z) => x * 67108864 + z;
 
 function projection(x, z, a, b) {
   const dx = b.x - a.x, dz = b.z - a.z;
@@ -23,11 +30,29 @@ function projection(x, z, a, b) {
   return { x: px, z: pz, distance: Math.hypot(x-px, z-pz) };
 }
 
-function inside(x, z, rings) {
-  let yes = false;
+/** Arêtes d'un contour rangées par bande de z : seules celles-là peuvent couper le rayon d'une sonde. */
+function edgeBands(rings) {
+  const bands = new Map();
   for (const ring of rings) for (let i=0, j=ring.length-1; i<ring.length; j=i++) {
     const a=ring[i], b=ring[j];
-    if ((a.z>z)!==(b.z>z) && x<(b.x-a.x)*(z-a.z)/(b.z-a.z)+a.x) yes=!yes;
+    if (a.z===b.z) continue;
+    const last=Math.floor(Math.max(a.z,b.z)/BAND);
+    for (let row=Math.floor(Math.min(a.z,b.z)/BAND); row<=last; row++) {
+      let edges=bands.get(row);
+      if (!edges) bands.set(row, edges=[]);
+      edges.push(a.x,a.z,b.x,b.z);
+    }
+  }
+  return bands;
+}
+
+function inside(x, z, bands) {
+  const edges = bands.get(Math.floor(z/BAND));
+  if (!edges) return false;
+  let yes = false;
+  for (let k=0; k<edges.length; k+=4) {
+    const ax=edges[k], az=edges[k+1], bz=edges[k+3];
+    if ((az>z)!==(bz>z) && x<(edges[k+2]-ax)*(z-az)/(bz-az)+ax) yes=!yes;
   }
   return yes;
 }
@@ -45,6 +70,18 @@ function nearBox(x,z,b,margin=0) {
   return x>=b.minX-margin && x<=b.maxX+margin && z>=b.minZ-margin && z<=b.maxZ+margin;
 }
 
+/** Grille des axes d'une rivière, sans marge, et son emprise en cellules. */
+function axisCells(axes) {
+  const cells=new Map();
+  let minX=Infinity, minZ=Infinity, maxX=-Infinity, maxZ=-Infinity;
+  for(const axis of axes) {
+    addToGrid(cells,axis,axis.box,0);
+    minX=Math.min(minX,Math.floor(axis.box.minX/CELL)); maxX=Math.max(maxX,Math.floor(axis.box.maxX/CELL));
+    minZ=Math.min(minZ,Math.floor(axis.box.minZ/CELL)); maxZ=Math.max(maxZ,Math.floor(axis.box.maxZ/CELL));
+  }
+  return {cells,minX,minZ,maxX,maxZ};
+}
+
 function quantile(values, part) {
   values.sort((a,b)=>a-b);
   return values.length ? values[Math.floor((values.length-1)*part)] : NaN;
@@ -53,8 +90,10 @@ function quantile(values, part) {
 function addToGrid(grid, item, box, margin) {
   for(let z=Math.floor((box.minZ-margin)/CELL);z<=Math.floor((box.maxZ+margin)/CELL);z++)
     for(let x=Math.floor((box.minX-margin)/CELL);x<=Math.floor((box.maxX+margin)/CELL);x++) {
-      const k=key(x,z), entries=grid.get(k) || [];
-      entries.push(item); grid.set(k,entries);
+      const k=key(x,z);
+      let entries=grid.get(k);
+      if(!entries) grid.set(k,entries=[]);
+      entries.push(item);
     }
 }
 
@@ -63,6 +102,7 @@ export class WaterRelief {
     this.benchM=benchM;
     this.grid=new Map();
     this.axisGrid=new Map();
+    this.axisCells=new WeakMap();
     this.elevationAt=elevationAt;
     // La grille de sondage reste ancrée au monde quand le repère est recentré.
     this.originX=frame.origin.x*frame.scale;
@@ -82,7 +122,12 @@ export class WaterRelief {
           group={kind:properties.class, pieces:[], axes:[], level:NaN};
           groups.set(id,group);
         }
-        const piece={rings,box:b,group};
+        const banks=new Map();
+        for(const ring of rings) for(let i=0,j=ring.length-1;i<ring.length;j=i++) {
+          const edge={a:ring[j],b:ring[i]};
+          addToGrid(banks,edge,bounds([edge.a,edge.b]),benchM+BANK_BLEND);
+        }
+        const piece={rings,box:b,group,banks,bands:edgeBands(rings)};
         group.pieces.push(piece);
       }
       if(tileBounds) {
@@ -131,7 +176,7 @@ export class WaterRelief {
         group.axes=axes.filter(axis=>group.pieces.some(p=>{
           for(const t of [0,0.5,1]) {
             const x=axis.a.x+(axis.b.x-axis.a.x)*t, z=axis.a.z+(axis.b.z-axis.a.z)*t;
-            if(nearBox(x,z,p.box) && inside(x,z,p.rings)) return true;
+            if(nearBox(x,z,p.box) && inside(x,z,p.bands)) return true;
           }
           return false;
         }));
@@ -156,7 +201,7 @@ export class WaterRelief {
       for(let gz=Math.ceil((b.minZ+this.originZ)/16);gz*16-this.originZ<b.maxZ;gz++)
         for(let gx=Math.ceil((b.minX+this.originX)/16);gx*16-this.originX<b.maxX;gx++) {
           const k=key(gx,gz),x=gx*16-this.originX,z=gz*16-this.originZ;
-          if(seen.has(k) || !inside(x,z,p.rings)) continue;
+          if(seen.has(k) || !inside(x,z,p.bands)) continue;
           seen.add(k);
           const h=this.elevationAt(x,z);
           if(!Number.isFinite(h)) return NaN;
@@ -223,27 +268,47 @@ export class WaterRelief {
   }
 
   axisLevel(x,z,axes) {
+    let index=this.axisCells.get(axes);
+    if(!index) this.axisCells.set(axes,index=axisCells(axes));
+    const {cells}=index;
+    const cx=Math.floor(x/CELL), cz=Math.floor(z/CELL);
+    const reach=Math.max(cx-index.minX,index.maxX-cx,cz-index.minZ,index.maxZ-cz);
+    // Marge du point dans sa cellule : un axe absent des anneaux déjà lus est au moins à cette distance, plus un anneau.
+    const margin=Math.min(x-cx*CELL,(cx+1)*CELL-x,z-cz*CELL,(cz+1)*CELL-z);
     let best=null;
-    for(const axis of axes) {
-      const hit=projection(x,z,axis.a,axis.b);
-      if(!best || hit.distance<best.distance-1e-7 || (Math.abs(hit.distance-best.distance)<1e-7 && (hit.x<best.x || (hit.x===best.x && hit.z<best.z)))) best={...hit,axis};
+    const visit=(ix,iz)=>{
+      const list=cells.get(key(ix,iz));
+      if(!list) return;
+      for(const axis of list) {
+        if(best && !nearBox(x,z,axis.box,best.distance+1e-7)) continue;
+        const hit=projection(x,z,axis.a,axis.b);
+        if(!best || hit.distance<best.distance-1e-7 || (Math.abs(hit.distance-best.distance)<1e-7 && (hit.x<best.x || (hit.x===best.x && hit.z<best.z)))) best={...hit,axis};
+      }
+    };
+    for(let ring=0;ring<=reach;ring++) {
+      if(best && best.distance+1e-7<margin+(ring-1)*CELL) break;
+      if(ring===0) { visit(cx,cz); continue; }
+      for(let i=-ring;i<=ring;i++) { visit(cx+i,cz-ring); visit(cx+i,cz+ring); }
+      for(let j=1-ring;j<ring;j++) { visit(cx-ring,cz+j); visit(cx+ring,cz+j); }
     }
     return best ? this.profileAt(best.x,best.z,best.axis.component) : NaN;
   }
 
   sample(x,z,raw) {
-    const entries=this.grid.get(key(Math.floor(x/CELL),Math.floor(z/CELL)));
+    const cell=key(Math.floor(x/CELL),Math.floor(z/CELL));
+    const entries=this.grid.get(cell);
     if(!entries) return {elevation:raw,mask:0};
     let height=Infinity,weight=0,insideWater=false,inWater=false;
     for(const {piece,group,axis} of entries) {
       let distance,level;
       if(piece) {
         if(!nearBox(x,z,piece.box,this.benchM+BANK_BLEND)) continue;
-        if(inside(x,z,piece.rings)) distance=0;
+        if(inside(x,z,piece.bands)) distance=0;
         else {
           distance=Infinity;
-          for(const ring of piece.rings) for(let i=0,j=ring.length-1;i<ring.length;j=i++)
-            distance=Math.min(distance,projection(x,z,ring[j],ring[i]).distance);
+          const banks=piece.banks.get(cell) || [];
+          for(const edge of banks)
+            distance=Math.min(distance,projection(x,z,edge.a,edge.b).distance);
         }
         if(distance>this.benchM+BANK_BLEND) continue;
         level=Number.isFinite(group.level) ? group.level : this.axisLevel(x,z,group.axes);

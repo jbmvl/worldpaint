@@ -1,0 +1,17 @@
+{
+  "name": "lyon",
+  "label": "Lyon — Presqu’île, Fourvière et Croix-Rousse",
+  "lng": 4.832,
+  "lat": 45.764,
+  "zoom": 14,
+  "tiles": 25,
+  "elevation": {
+    "encoding": "terrarium",
+    "extension": "png",
+    "source": "s3.amazonaws.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  }
+}

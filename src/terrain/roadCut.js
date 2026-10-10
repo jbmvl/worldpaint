@@ -49,8 +49,8 @@ export const ROAD_CUT_MAX_RING = 1;
 /**
  * Altitude du terrain entaillé, à `distance` de l'axe d'une chaussée : plate
  * sous la chaussée, intacte au-delà du raccord, en `smoothstep` entre les
- * deux. Ne fait jamais monter le terrain (un remblai se tient par un mur, pas
- * par une bosse de terrain).
+ * deux. Ne fait jamais monter le terrain : le remblai a son propre profil
+ * (`fillElevationAt`), et ne se pose que là où aucun ouvrage ne tient la rive.
  *
  * @param {number} raw       Altitude naturelle.
  * @param {number} platform  Altitude de la plate-forme de la chaussée.
@@ -70,6 +70,46 @@ export function cutElevationAt(raw, platform, distance, halfWidth, bench = ROAD_
   const eased = t * t * (3 - 2 * t);
   return platform + (raw - platform) * eased;
 }
+
+/**
+ * Altitude du terrain remblayé, à `distance` de l'axe d'une chaussée : le
+ * pendant de `cutElevationAt` quand la plate-forme domine le sol. Même fond
+ * plat, pour la même raison — plus étroit, aucun sommet de la maille n'y
+ * tombe et la corde du terrain passe sous la chaussée, qui flotte.
+ *
+ * Ne fait jamais descendre le terrain. Le remblai est en terre : il prend la
+ * matière du sol qu'il relève, et n'existe que sur les lignes que le réseau
+ * désigne (`roadProfile.findEarthFills`) — un versant franc garde son mur.
+ *
+ * @param {number} raw       Altitude naturelle.
+ * @param {number} platform  Altitude de la plate-forme de la chaussée.
+ * @param {number} distance  Distance du point à l'axe de la chaussée, en mètres.
+ * @param {number} halfWidth Demi-largeur de la chaussée, en mètres.
+ * @param {number} [bench]   Largeur du fond plat (`cutBenchAt`).
+ * @returns {number} altitude retenue.
+ */
+export function fillElevationAt(raw, platform, distance, halfWidth, bench = ROAD_CUT_M) {
+  if (!(platform > raw)) return raw;
+
+  const edge = halfWidth + bench;
+  if (distance <= edge) return platform;
+
+  const t = Math.min(1, (distance - edge) / ROAD_CUT_BLEND_M);
+  const eased = t * t * (3 - 2 * t);
+  return platform + (raw - platform) * eased;
+}
+
+/**
+ * Sur une chaussée en terre, portée le long du tracé des arêtes dont le sol
+ * retient la plus basse, en mètres, autour de la plus proche.
+ *
+ * Entre deux sommets de la maille le terrain est une corde ; pour qu'elle ne
+ * perce nulle part la chaussée, chaque sommet devrait descendre à la cote la
+ * plus basse sur une maille entière, et la chaussée d'une rampe flotte alors
+ * de sa pente fois cette portée. Plus court, le sol colle à la route et la
+ * marge du ruban (`ROAD_LIFT_M`) absorbe ce qui reste.
+ */
+export const EARTH_ROAD_WINDOW_M = 5;
 
 /**
  * Part d'emprise routière à `distance` de l'axe d'une chaussée : 1 sous la

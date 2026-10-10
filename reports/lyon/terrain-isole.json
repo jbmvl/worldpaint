@@ -1,0 +1,8 @@
+{
+  "case": "tuile 192×192, 12 reconstructions, DEM fixe",
+  "firstMs": 40.358,
+  "medianWarmMs": 2.5734999999999957,
+  "demSamples": 186629,
+  "vertices": 37249,
+  "triangles": 73728
+}

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { WidthAreasMemo, fitParallelRoadWidths } from '../src/layers/roadWidths.js';
+import { fitParallelRoadWidths } from '../src/layers/roadWidths.js';
 import { absorbParallelLines } from '../src/layers/roadBundles.js';
 import { mergeRoadLines } from '../src/layers/roadGraph.js';
 
@@ -153,25 +153,26 @@ test('une zone de carrefour seule ne justifie pas un partage des largeurs', () =
   assert.deepEqual(routes.slice(0, 2).map((route) => route.halfWidth), [4, 4]);
 });
 
-test('les surfaces de carrefour du partage sont reprises tant que les lignes ne changent pas', () => {
-  const lignes = () => [voie(0, 4, 'major', 20), voie(6, 4, 'major', 20)];
-  const memo = new WidthAreasMemo();
-  memo.follow(lignes());
-  const routes = lignes();
-  fitParallelRoadWidths(routes, [], null, memo);
-  const aires = memo.areas;
-  assert.ok(aires, 'les surfaces sont déposées');
+test('le disque d’un carrefour écarte ses abords, pas le longement au-delà ni un autre niveau', () => {
+  const carrefour = (level) => [{ x: 50, z: 0, level, halfWidth: 4, profile: 'major', branches: [{ x: 1, z: 0, halfWidth: 4, profile: 'major' }] }];
+  // Rayon 1,5 × 4 + 3 = 9 m : tout le longement de 16 m y tient, celui de 100 m en sort.
+  const courtes = [
+    { profile: 'major', halfWidth: 4, points: [{ x: 42, z: -3 }, { x: 58, z: -3 }] },
+    { profile: 'major', halfWidth: 4, points: [{ x: 42, z: 3 }, { x: 58, z: 3 }] },
+  ];
+  const sansCarrefour = courtes.map((route) => ({ ...route }));
+  fitParallelRoadWidths(sansCarrefour);
+  assert.ok(sansCarrefour[0].halfWidth < 4, 'sans carrefour, la paire courte est partagée');
+  fitParallelRoadWidths(courtes, carrefour(0));
+  assert.deepEqual(courtes.map((route) => route.halfWidth), [4, 4]);
 
-  memo.follow(lignes());
-  assert.equal(memo.areas, aires, 'mêmes lignes : mêmes surfaces');
-  const encore = lignes();
-  fitParallelRoadWidths(encore, [], null, memo);
-  assert.deepEqual(encore.map((r) => r.halfWidth), routes.map((r) => r.halfWidth));
+  const longues = [voie(-3), voie(3)];
+  fitParallelRoadWidths(longues, carrefour(0));
+  assert.deepEqual(longues.map((route) => route.halfWidth), [3, 3]);
 
-  const autres = lignes();
-  autres[1].points[1].z = 7;
-  memo.follow(autres);
-  assert.equal(memo.areas, null, 'un point déplacé : surfaces à refaire');
+  const dessous = courtes.map((route) => ({ ...route, halfWidth: 4 }));
+  fitParallelRoadWidths(dessous, carrefour(1));
+  assert.deepEqual(dessous.map((route) => route.halfWidth), sansCarrefour.map((route) => route.halfWidth));
 });
 
 test('une convergence invalide aussi une portion parallèle antérieure de la même paire', () => {

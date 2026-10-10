@@ -1,0 +1,8 @@
+{
+  "appels": 40,
+  "instances": 47232,
+  "medianeMs": 4.1337500000000205,
+  "maxMs": 6.783999999999992,
+  "totalMs": 165.84399999999985,
+  "octetsParMiseAJour": 3311219.2
+}

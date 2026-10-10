@@ -5,7 +5,12 @@
 <title>Banc du mobilier</title>
 <style>html,body{margin:0;background:#cfd8de}canvas{display:block}</style>
 <script type="importmap">
-{ "imports": { "three": "/node_modules/three/build/three.module.js" } }
+{ "imports": {
+  "three": "/node_modules/three/build/three.module.js",
+  "pbf": "/node_modules/pbf/index.js",
+  "@mapbox/vector-tile": "/node_modules/@mapbox/vector-tile/index.js",
+  "@mapbox/point-geometry": "/node_modules/@mapbox/point-geometry/index.js"
+} }
 </script>
 </head>
 <body>
@@ -15,6 +20,7 @@
  * sur un sol gris, à côté d'un gabarit d'homme de 1,75 m, sous un soleil fixe.
  * Aucun réseau : piloté depuis la console ou par `scripts/furniture-shot.mjs`.
  *
+ *   furnitureLab.set({ kinds: ['signPlaceName', 'signPlaceName'], names: ['LYON', 'SAINT-MARTIN-D’HÈRES'], spacing: 4, distance: 12, yawDeg: 0 })
  *   furnitureLab.set({ kinds: ['fountainWallace'], yawDeg: 30, pitchDeg: 8, distance: 6 })
  *   furnitureLab.set({ kinds: ['lavoir', 'cemeteryCross'], stone: 'schist' })  // géologie du pays
  *   furnitureLab.set({ kinds: ['lighthouse'], night: 1, beamDeg: 60, distance: 90, target: 16 })  // feu du phare
@@ -26,6 +32,8 @@ import * as THREE from 'three';
 import { FURNITURE_BUILDERS, createFurnitureMaterial, furnitureColorsForStone } from '/src/layers/furnitureKit.js';
 import { stoneTintFor } from '/src/core/regionInterpretation.js';
 import { defaultTheme } from '/src/themes/default.js';
+import { FurnitureLayer } from '/src/layers/furnitureLayer.js';
+import { LabelAtlas } from '/src/materials/labelAtlas.js';
 import { LighthouseLight } from '/src/layers/lighthouseLight.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -56,14 +64,21 @@ scene.add(row);
 
 const lighthouseLight = new LighthouseLight({ THREE, group: scene });
 
-const state = { kinds: ['fountainWallace', 'streetLampClassic'], yawDeg: 20, pitchDeg: 6, distance: 9, target: 1.5, spacing: 2.5, stone: null, night: 0, beamDeg: 0 };
+const labelAtlas = new LabelAtlas({ THREE, width: 1024, height: 256 });
+const labelMaterial = new THREE.MeshBasicMaterial({ map: labelAtlas.texture, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+let labelGeometry = null;
+
+const state = { names: ['LYON'], kinds: ['fountainWallace', 'streetLampClassic'], yawDeg: 20, pitchDeg: 6, distance: 9, target: 1.5, spacing: 2.5, stone: null, night: 0, beamDeg: 0 };
 
 function render() {
   // Taille relue à chaque rendu : une page ouverte cachée naît à 0 × 0.
   renderer.setSize(innerWidth, innerHeight);
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
+  labelGeometry?.dispose();
   row.clear();
+  labelAtlas.reset();
+  const labelQuads = [];
   const day = 1 - 0.92 * state.night;
   ambient.intensity = 1.4 * day;
   sun.intensity = 2.2 * day;
@@ -73,9 +88,13 @@ function render() {
   state.kinds.forEach((kind, i) => {
     const mesh = new THREE.Mesh(FURNITURE_BUILDERS[kind](colors).toGeometry(THREE, kind), material);
     mesh.position.x = (i - (state.kinds.length - 1) / 2) * state.spacing;
+    if (kind === 'signPlaceName') labelQuads.push({ x: mesh.position.x, y: 0, z: 0, yaw: 0, name: state.names[i % state.names.length] });
     if (kind === 'lighthouse') towers.push({ x: mesh.position.x, y: 0, z: 0, yaw: 0, scale: 1 });
     row.add(mesh);
   });
+  const labels = { THREE, theme: defaultTheme, _placeNameSign: defaultTheme.furniture.placeNameSign, labelAtlas, labelMaterial, _labelQuads: labelQuads, group: row };
+  FurnitureLayer.prototype._applyLabels.call(labels);
+  labelGeometry = labels.labelGeometry;
   man.position.x = ((state.kinds.length + 1) / 2) * state.spacing - state.spacing / 2 + 0.8;
   row.add(man);
   const yaw = (state.yawDeg * Math.PI) / 180;
@@ -95,6 +114,7 @@ function render() {
 
 window.furnitureLab = { set(options = {}) { Object.assign(state, options); return render(); }, state };
 window.furnitureLabReady = true;
+Object.assign(state, JSON.parse(new URLSearchParams(location.search).get('settings') || '{}'));
 render();
 </script>
 </body>

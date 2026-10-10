@@ -161,7 +161,6 @@ export const LABEL_FURNITURE = {
   guardrailBeam: 'glissière',
   woodRail: 'clôture de bois',
   woodRailTop: 'clôture de bois (lisse haute)',
-  embankment: 'talus',
   wire: 'câble',
 };
 

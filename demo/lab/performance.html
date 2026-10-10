@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="fr"><meta charset="utf-8"><title>Coût de génération d’un lieu</title>
+<style>html,body{margin:0;background:#000}canvas{display:block}</style>
+<script src="/node_modules/suncalc/suncalc.js"></script>
+<script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js","three/examples/jsm/objects/Sky.js":"/node_modules/three/examples/jsm/objects/Sky.js","suncalc":"/demo/lab/suncalc-global.js","pbf":"/node_modules/pbf/index.js","@mapbox/vector-tile":"/node_modules/@mapbox/vector-tile/index.js","@mapbox/point-geometry":"/node_modules/@mapbox/point-geometry/index.js"}}</script>
+<script type="module">
+/* Banc de coût CPU sur tuiles enregistrées : mêmes paramètres que le banc
+ * des lieux, instrumentation locale sans modification du moteur. Les mesures
+ * imbriquées sont des sous-totaux ; elles ne s’additionnent pas aux couches. */
+import * as THREE from 'three';
+import { Sky } from 'three/examples/jsm/objects/Sky.js';
+import { createWorld } from '/src/index.js';
+import { installReport } from './performanceReport.js';
+const params=new URLSearchParams(location.search);
+const name = params.get('lieu') || 'lyon';
+const detail=params.get('budget')==='0'?{budget:0}:{};
+const base = `/demo/lab/places/${name}`;
+const place = await (await fetch(`${base}/place.json`)).json();
+const renderer = new THREE.WebGLRenderer({antialias:true, preserveDrawingBuffer:true});
+renderer.setSize(innerWidth,innerHeight); renderer.shadowMap.enabled=true;
+document.body.appendChild(renderer.domElement);
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,.5,20000);
+const start=performance.now();
+const world=createWorld({THREE,scene,detail,sky:{Sky}, elevation:{zoom:place.zoom,url:`${base}/dem/{z}/{x}/{y}.${place.elevation.extension}`,encoding:place.elevation.encoding},vector:{tiles:[`${location.origin}${base}/vector/{z}/{x}/{y}.pbf`],maxZoom:place.vector.maxZoom}});
+const constructionMs=performance.now()-start;
+const report=installReport(world,renderer,scene,camera,place);
+window.performanceLab={world,renderer,scene,camera,place,report};
+const cold=await report.capture('démarrage', async()=>{await world.setCenter(place.lng,place.lat);await world.refresh(place.lng,place.lat);await report.settle({x:0,z:0});});
+window.performanceLab.cold={constructionMs,...cold};
+report.view({x:0,z:0,distance:1800,pitchDeg:38,yawDeg:270});
+window.performanceLabReady=true;
+</script></html>

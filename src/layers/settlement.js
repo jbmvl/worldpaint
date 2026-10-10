@@ -409,6 +409,27 @@ export function nearestNamedPlace(places, x, z, maxDistance) {
   return best ? { name: best.name, distance: bestDistance, class: best.class } : null;
 }
 
+/**
+ * Nom d'entrée : le bourg ou la ville à portée prime sur un lieu périphérique.
+ * Sans rang urbain connu, un village-centre à 1,2 km prime sur un hameau.
+ * Les tuiles ne donnent pas les limites communales : ces portées sont celles
+ * du masque urbain, pas une preuve d'appartenance administrative.
+ */
+export function settlementNameAt(places, x, z, localRadius = 450) {
+  const urban = (places || []).filter((place) => {
+    const radius = URBAN_PLACE_RADIUS_M[place.class];
+    return radius && Math.hypot(place.x - x, place.z - z) <= radius;
+  });
+  const villages = (places || []).filter((place) => place.class === 'village');
+  const local = (places || []).filter((place) => SETTLEMENT_PLACE_CLASSES.has(place.class));
+  // À distance égale, le nom puis les coordonnées rendent le choix indépendant des tuiles.
+  const ordered = (list) => list.slice().sort((a, b) =>
+    (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) || a.x - b.x || a.z - b.z);
+  return nearestNamedPlace(ordered(urban), x, z, Infinity)
+    || nearestNamedPlace(ordered(villages), x, z, URBAN_PLACE_RADIUS_M.town)
+    || nearestNamedPlace(ordered(local), x, z, localRadius);
+}
+
 /** Anneaux extérieurs d'une géométrie surfacique GeoJSON. Fonction pure. */
 export function ringsOf(geometry) {
   if (!geometry) return [];

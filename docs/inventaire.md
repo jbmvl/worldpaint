@@ -129,6 +129,12 @@ Les intervalles positifs restants relèvent du comblement de `roadBundles` ;
 les îlots restent du terrain. Les courbes serrées, les raccordements et les
 superpositions exclues du partage demandent un contrôle dans la démo.
 
+Les voies qui se longent à moins de 4 m de rive à rive partagent un seul
+plan : la cote la plus basse de leur profil en travers
+(`roadBundles.levelBundlePlatforms`), rendue en rampe sur quatre lignes là où
+le longement cesse. Le surplomb d'une
+rive se lit au bout de sa place libre (`roadsideRelief.boundOverhang`).
+
 ## Le sol
 
 Les matières du sol, décrites en détail dans `docs/surfaces.md`. En résumé :
@@ -359,19 +365,37 @@ l'empreinte, sous l'égout, jamais au-dessus.
 ### La fonction, quand la donnée la dit
 
 Un point d'intérêt ne pose jamais un modèle à côté : il **transforme**
-l'empreinte qui le contient.
+l'empreinte qui le contient. Les parties contenues d’un château ou
+d’un édifice religieux partagent son style ; seul le volume principal porte
+le clocher. Les contours `hide_3d` servent à cette association sans être extrudés.
+Lorsque le tag d’un mur a disparu des tuiles, une bande droite d’au plus
+2,5 m d’épaisseur et d’au moins 25 m de long reste un mur plein. Un tracé
+sinueux exige au moins 40 m de demi-périmètre, une largeur moyenne `2A/P`
+d’au plus 2,5 m et une emprise remplissant moins de 50 % de sa boîte orientée.
+Une bande ponctuée de volumes plus larges exige 80 m, une largeur moyenne
+d’au plus 3,2 m et un remplissage inférieur à 30 %.
+Cette déduction ne remplace pas une fonction connue, sauf les bandes d’un
+château. Dans une empreinte mixte de château, chaque baie est aussi écartée
+lorsque l’épaisseur intérieure du pan à sa position ne dépasse pas 3,2 m. Elle n’invente pas de créneaux sur un mur dont la fonction est inconnue.
+
+Une grande surface garde une entrée sur son plus long pan lorsque son parking
+la sépare de la rue.
 
 | `poi` | Effet |
 | --- | --- |
-| `place_of_worship` | clocher (pierre + ardoise), ou minaret et coupole si `subclass=muslim` |
+| `place_of_worship` | murs de pierre, comble de nef, hautes baies en pointe et clocher ; minaret et coupole si `subclass=muslim` |
+| `castle` | murs de pierre, comble, baies étroites et tours coiffées aux angles de l’empreinte |
+| `city_wall`, `citywalls`, `castle_wall`, `town_wall`, `rampart`, `barrier=wall` | mur plein de pierre, sommet plat, sans fenêtres ni comble |
 | `hospital` | murs clairs, toit plat |
-| `mall`, `department_store`, `supermarket` | grande surface, toit plat |
+| `mall`, `department_store`, `supermarket` | grande surface, toit plat, entrée vitrée et enseigne, sans fenêtres résidentielles |
 | `bakery` | devanture en bois verni |
 | dix-neuf classes de commerce (dont `lodging`, l’hôtel) | devanture au rez-de-chaussée, avec enseigne et drapeau (icône et nom) |
 
 Devanture, enseigne, auvent et terrasse se posent sur le pan qui **fait face à
 une chaussée** (la plus proche, à moins de 20 m de son axe) ; un commerce sans
-rue en face garde ses couleurs mais ne porte ni enseigne ni terrasse.
+rue en face garde ses couleurs mais ne porte ni enseigne ni terrasse, sauf
+une grande surface qui peut ouvrir sur son parking. Son nom est porté par
+une large enseigne en façade, sans drapeau de boutique.
 
 L'enseigne est double : le nom peint sur le bandeau, et un drapeau planté en
 travers du mur près d'un bout du pan, qui porte une icône Tabler (une par
@@ -461,13 +485,12 @@ bâtiments proches à chaque point. Hors de ce masque, une emprise habitée,
 au moins deux bâtiments dans le disque de 30 m du côté examiné et un dévers
 inférieur à 14 % restent nécessaires.
 
-Le profil affiché est lissé et vise une pente maximale de 12 %. Il ne descend
-pas sous le profil terrassé : le terrain conserve ses cotes et sa triangulation.
-Le calcul lit les chaînes disponibles entières avant de limiter le rendu au
-disque de voirie. Les tunnels et les chaussées inférieures des
-franchissements gardent leurs altitudes ; un pont peut monter sans perdre son
-dégagement. Une contrainte incompatible reste
-publiée dans `roads.profileConstraints.constrained`.
+Les chaussées au sol gardent les cotes de leur assise terrassée, y compris
+lorsque la pente dépasse la cible de 12 %. Cette cible ne relève pas les
+rues ni leurs carrefours pour fabriquer des viaducs. Les ponts peuvent être
+lissés sans perdre leur dégagement ; leurs accès, les tunnels et les
+chaussées inférieures des franchissements gardent leurs altitudes. Une
+contrainte incompatible reste publiée dans `roads.profileConstraints.constrained`.
 
 Une portion revêtue qui domine le sol de 2,5 m sur au moins 15 m reçoit un
 tablier, des piles et des parapets, même sans `brunnel=bridge`. Le tablier et
@@ -481,7 +504,7 @@ et les trottoirs au sol s'interrompent sur ces portions. Une simple corniche,
 encaissée côté amont, garde son soutènement au lieu de devenir un pont.
 
 Les rebords utilisent les repères et les altitudes de la chaussée, sans second
-lissage du profil imposé. Le pied d'un talus rejoint le terrain à son aplomb.
+lissage du profil imposé.
 Un lampadaire ou panneau posé à la cote de la route exige un sol affiché à
 moins de 35 cm : sinon, il est omis. Les objets au sol lisent le support
 triangulé lorsqu'il est disponible.
@@ -492,6 +515,15 @@ diagonale d’une maille afin qu’un triangle oblique ne traverse pas la route.
 carrefour et ouvrages suivent cette cote commune. Les plates-formes de pont
 restent distinctes du terrain naturel. Les remblais des accès aux ponts sont
 intégrés au terrain, avec ses matières et un raccord doux, sans talus rapporté.
+Il en va de même de tout remblai en terre : là où ni mur de soutènement ni
+tablier ne porte une chaussée revêtue, le terrain se relève jusqu'à sa
+plate-forme, sur le même fond plat et le même raccord que le déblai
+(`roadCut.fillElevationAt`), sans jamais recouvrir une chaussée voisine. Un
+versant franc (14 % en travers) long d'au moins cinq lignes garde son mur sur
+les profils qui en portent un (`roadProfile.findEarthFills`). Dans une rampe,
+le sol retient la cote la plus basse à 5 m le long du tracé
+(`EARTH_ROAD_WINDOW_M`) : la chaussée y domine encore son sol de sa pente fois
+cette portée, ce que la maille du terrain impose pour ne pas la percer.
 Sous un pont routier, les rails reçoivent une tranchée locale ; un passage à
 niveau reste un croisement au sol. Sur autoroute, le dégagement combine un
 léger déblai et un remblai supérieur, sauf lorsque les carrefours du réseau
@@ -543,14 +575,25 @@ danger ou une balise ; en agglomération, passage piéton (30 %), limitation
 (42 %), danger ; sur grand axe, priorité (30 %), interdiction de dépasser
 (28 %), limitation (24 %), danger.
 
+Le **panneau d’entrée** exige une portion hors bâti d’au moins 150 m avant
+la portion habitée et au moins un bâtiment à 80 m. Son nom vient d’abord du
+lieu `city` ou `town` le plus proche dans sa portée urbaine (3 km ou 1,2 km),
+puis, à défaut, du village-centre le plus proche à 1,2 km et enfin du hameau
+local à 450 m. Les quartiers
+sont exclus. Ces portées ne remplacent pas les limites communales absentes
+des tuiles ; un centre non chargé ne peut pas fournir son nom.
+La lame et le texte partagent le gabarit `theme.furniture.placeNameSign` :
+3,2 × 0,8 m, avec une case de texte haute de 0,56 m, réduite pour les noms longs.
+
 La **glissière** protège l'extérieur des virages (courbure ≥ 0,012 rad/m),
 même sur terrain plat, et chaque rive qui combine au moins 90 cm de surplomb
 et un versant franc (14 %). Les voies de desserte (`lane`) et pistes (`track`)
 exigent ce surplomb même en virage : elles sont donc moins souvent équipées.
 En climat alpin ou glacial, le seuil de surplomb est divisé par deux et celui
 de courbure multiplié par 0,6. Les sentiers restent sans parapet.
-Acier sur les grands axes ; sur `minor`, bois jusqu'à 2,5 m de surplomb,
-acier au-delà ; bois sur les voies de desserte et pistes. Les protections
+L’acier est le matériau par défaut, y compris sur les routes `minor`.
+Le bois est réservé aux dessertes et pistes (`lane`, `track`) hors agglomération
+ou dans une région d’estive alpine. Sans contexte connu, l’acier est retenu. Les protections
 s'interrompent aux bouches des carrefours et devant une chaussée voisine.
 
 Le **talus enherbé** garnit un bas-côté sur trois environ (34 %), d'un seul
@@ -686,9 +729,14 @@ l'un lit la pente, l'autre le nom de la matière.
 Ce sont les seuls objets de mobilier que le schéma porte nommément, donc les
 seuls qui soient à leur vraie place : abribus (`bus`, `bus_stop`), fontaine
 (`drinking_water`, `fountain`), lavoir (`wash_house`, `watermill`), monument,
-château, tour, grande roue (`theme_park`). L'abribus est repoussé hors de
+tour, grande roue (`theme_park`). Les châteaux habillent leur empreinte bâtie. L'abribus est repoussé hors de
 l'emprise routière — il est souvent porté par le tracé de la voie elle-même —
 et tourné vers la chaussée.
+
+L'abri qu'OSM relève comme un bâtiment n'est pas extrudé : une emprise de
+15 m² au plus, à moins de 25 m d'un arrêt de bus ou de tramway, est écartée
+du bâti (`buildingInterpretation.isTransitShelter`). Les tuiles ne portent pas
+le type de la construction ; la taille et l'arrêt voisin en tiennent lieu.
 
 La **fontaine** posée dépend du lieu (`furniturePlacement.fountainKindFor`) :
 fontaine Wallace (socle octogonal, quatre cariatides sous un dôme, fonte
@@ -864,7 +912,7 @@ du dossier de région, ordonnée du plus répandu au moins répandu.
 
 **Balayage** (`appendProfile`) — construire un volume en promenant une section
 constante le long d'une ligne. C'est ainsi que sont faits les haies, les murets,
-les glissières et les talus : une forme en travers, répétée tout du long.
+les glissières et les murs : une forme en travers, répétée tout du long.
 
 **Bocage / openfield** — les deux trames agraires opposées. Le bocage
 compartimente l'horizon en chambres closes de haies ; l'openfield le laisse
@@ -903,7 +951,7 @@ n'est dans aucune n'existe pas pour nous.
 
 **Dévers** — la pente du terrain **en travers** d'une route, par opposition à la
 pente dans son axe. C'est ce qui décide si une chaussée mérite un mur de
-soutènement, un talus ou une glissière.
+soutènement ou une glissière.
 
 **Emprise** (routière) — la bande que la chaussée occupe réellement : le bitume
 plus son accotement creusé. Rien n'a le droit de la franchir — ni haie, ni
@@ -966,7 +1014,7 @@ parmi les types dont une essence figure dans celles du pays.
 
 **Plate-forme** — l'assise horizontale sur laquelle une route est posée, une
 fois le terrain entaillé ou remblayé. Une route ne suit pas le terrain brut :
-elle se creuse une plate-forme, et c'est ce qui produit les talus.
+elle se creuse une plate-forme, et le terrain s'y raccorde de part et d'autre.
 
 **Profil** — la catégorie d'une chaussée pour nous (express, major, minor, lane,
 track, path, cycleway), déduite de sa classe OSM. Il donne la largeur, le

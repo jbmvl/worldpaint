@@ -55,15 +55,6 @@ export const SIGN_ITEMS = [
 ];
 
 /**
- * Panneau d'entrée d'agglomération : à quelle distance il va chercher son
- * nom (`settlement.nearestNamedPlace`), et à quelle distance il exige une
- * vraie grappe de bâtiments (`FabricIndex.countWithin`) avant de se
- * planter — les deux conditions sont nécessaires, sinon ce panneau se posait
- * à l'entrée de n'importe quel `landuse=residential` (un périmètre
- * administratif, pas une agglomération).
- */
-
-/**
  * Plafonds. Ils ne sont pas décoratifs : une commune de bocage dense peut
  * offrir plusieurs centaines de contours dans la bulle, et rien n'oblige à les
  * dessiner tous pour que le paysage se lise.
@@ -198,7 +189,6 @@ export const LINEAR_KINDS = [
   'guardrailBeam',
   'woodRail',
   'woodRailTop',
-  'embankment',
   'wire',
 ];
 
@@ -215,7 +205,6 @@ export const FLAT_SHADED_LINEAR_KINDS = new Set([
   'dryStoneWall',
   'rockCut',
   'fillWall',
-  'embankment',
 ]);
 
 /**

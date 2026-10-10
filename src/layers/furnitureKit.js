@@ -589,14 +589,15 @@ export const FURNITURE_BUILDERS = {
   },
 
   /** Entrée d'agglomération : lame blanche bordée de rouge, posée bas. */
-  signPlaceName(C = DEFAULT_COLORS) {
+  signPlaceName(C = DEFAULT_COLORS, style = defaultTheme.furniture.placeNameSign) {
     const k = new Kit(C);
     for (const x of [-0.62, 0.62]) {
       k.cylinder({ radiusBottom: 0.045, radiusTop: 0.045, height: 1.75, radial: 5, x, color: C.galvanised });
     }
-    const lame = [[-0.9, -0.28], [0.9, -0.28], [0.9, 0.28], [-0.9, 0.28]];
-    k.panel({ points: lame, color: C.signRed, y: 1.85, thickness: 0.06 });
-    k.face([[-0.82, -0.2], [0.82, -0.2], [0.82, 0.2], [-0.82, 0.2]], C.signWhite, { y: 1.85, plane: 0.04 });
+    const w = style.widthM / 2, h = style.heightM / 2;
+    const wi = w - style.borderM, hi = h - style.borderM;
+    k.panel({ points: [[-w, -h], [w, -h], [w, h], [-w, h]], color: C.signRed, y: style.centerYM, thickness: 0.06 });
+    k.face([[-wi, -hi], [wi, -hi], [wi, hi], [-wi, hi]], C.signWhite, { y: style.centerYM, plane: 0.04 });
     return k;
   },
 
@@ -1745,8 +1746,7 @@ const wallSpecsFor = (C) => ({
  *
  * `batter` est ce fruit : le recul de l'arase par mètre de hauteur. À 0,22, une
  * paroi de quatre mètres recule de quatre-vingt-dix centimètres — un rocher
- * taillé se tient presque droit, contrairement à un talus de terre
- * (`embankmentFor`, 3 pour 2).
+ * taillé se tient presque droit.
  */
 const rockCutFor = (C) => ({
   batter: 0.22,
@@ -1790,38 +1790,6 @@ const rockCutFor = (C) => ({
   colorBreak: C.rock,
   colorTop: C.rockPale,
 });
-
-/**
- * Section d'un talus de remblai, engendrée à la demande : sa profondeur
- * dépend de la hauteur dont la plate-forme surplombe le terrain. Fruit d'un
- * remblai courant (3 de base pour 2 de hauteur).
- *
- * `outward` dit de quel côté la section descend, dans le repère de
- * `appendProfile` (positif à gauche de la marche). Il n'existait pas : la
- * section descendait toujours vers la droite, si bien qu'un talus posé sur la
- * rive gauche repartait **par-dessus la chaussée**. Le défaut n'apparaissait
- * qu'un versant sur deux, selon le côté où penche le terrain.
- *
- * @param {number} drop Hauteur à combler, en mètres.
- * @param {number} [outward] Sens de la descente : `-1` à droite, `+1` à gauche.
- * @returns {Array<{across:number, up:number, color:number[]}>}
- */
-const embankmentFor = (C) => (drop, outward = -1) => {
-  const run = Math.max(0.4, drop * 1.5) * (outward >= 0 ? 1 : -1);
-  // Un seul pan, de la rive au pied : un talus de terre n'a pas d'épaulement.
-  return [
-    { across: 0, up: 0, color: C.stoneDark },
-    { across: run, up: -Math.max(0.15, drop), color: C.stone },
-  ];
-};
-
-/**
- * Grain low poly du talus de remblai (`facetJitter`) : facteurs de sa
- * profondeur et de son étalement. La profondeur ne tire que vers le bas :
- * moins profond, le pied décollerait du terrain plat d'un remblai en pleine
- * terre.
- */
-const EMBANKMENT_GRAIN = { up: [1, 1.35], across: [0.7, 1.35] };
 
 /**
  * Grain low poly du muret de pierre sèche (`facetJitter`) : hauteur et
@@ -1924,8 +1892,6 @@ export function furnitureSpecsFor(colors = defaultTheme.furniture.colors) {
       wallSpecs: wallSpecsFor(colors),
       rockCut: rockCutFor(colors),
       trafficLenses: trafficLensesFor(colors),
-      embankmentProfile: embankmentFor(colors),
-      embankmentGrain: EMBANKMENT_GRAIN,
       dryStoneWallGrain: DRY_STONE_WALL_GRAIN,
     });
     SPECS_CACHE.set(colors, specs);
@@ -1938,16 +1904,18 @@ export function furnitureSpecsFor(colors = defaultTheme.furniture.colors) {
  * @param {Object} THREE
  * @param {Object} [colors] Nuancier du thème.
  * @param {string[]} [names] Formes à construire ; toutes par défaut.
+ * @param {Object} [placeNameSign] Gabarit du panneau d’entrée, partagé avec son texte.
  * @returns {Record<string, Object>} géométrie par nom.
  */
 export function createFurnitureGeometries(
   THREE,
   colors = defaultTheme.furniture.colors,
-  names = Object.keys(FURNITURE_BUILDERS)
+  names = Object.keys(FURNITURE_BUILDERS),
+  placeNameSign = defaultTheme.furniture.placeNameSign
 ) {
   const out = {};
   for (const name of names) {
-    out[name] = FURNITURE_BUILDERS[name](colors).toGeometry(THREE, `furniture-${name}`);
+    out[name] = FURNITURE_BUILDERS[name](colors, name === 'signPlaceName' ? placeNameSign : undefined).toGeometry(THREE, `furniture-${name}`);
   }
   return out;
 }

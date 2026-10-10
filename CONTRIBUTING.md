@@ -170,9 +170,10 @@ Breaking one of these needs a very good reason, stated in the PR description.
   ribbon: its interior vertices are the carriageways' own axes. Render,
   height reads and the terrain cut (`TerrainBubble.setRoadCut`) share one
   Delaunay triangulation. Le terrassement conserve ses cotes propres lorsque
-  `roadProfile` relève le profil affiché pour borner sa pente : les surfaces
-  restent identiques en plan et un carrefour suspendu reçoit une sous-face
-  portée. Les drapeaux `supports` ne sont pas des niveaux ni des `brunnel` et
+  `roadProfile` conserve les cotes des chaussées au sol, même lorsque la
+  pente cible est impossible, et ne lisse que les ponts sous les contraintes
+  de leurs accès. Les surfaces restent identiques en plan et un carrefour
+  réellement suspendu reçoit une sous-face portée. Les drapeaux `supports` ne sont pas des niveaux ni des `brunnel` et
   ne modifient pas le terrain.
 
 - **A junction interrupts a ribbon, not a road.** Corridor, terrain cut,
@@ -184,10 +185,11 @@ Breaking one of these needs a very good reason, stated in the PR description.
   run ends where its ribbon ends (`junctionBoundaryAt`), a street corner is
   bordered from `area.edges`, and room beyond an edge is a **width**
   (`edgeClearance`), never a yes/no probe — the gutter and concrete kerb must fit without narrowing their section.
-  Roadside relief (embankment, retaining wall, rock cut, guardrail) asks the
+  Roadside relief (retaining wall, rock cut, guardrail) asks the
   same question row by row (`roadsideRelief.measureRoom`): it never extends
-  over another carriageway or across a junction mouth, and inside a junction
-  the embankment starts at the slab outline, in its own road's direction. A
+  over another carriageway or across a junction mouth. An earth embankment is
+  not roadside relief: the terrain itself rises to the platform
+  (`roadCut.fillElevationAt`) on the rows `roadProfile.findEarthFills` names. A
   side bordered by a mapped cliff carries no ground relief — the cliff is the
   wall.
 

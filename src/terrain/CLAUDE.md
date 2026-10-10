@@ -7,7 +7,7 @@
 | `terrainMaterial.js` | le shader du sol — il lit la carte des matières |
 | `lowPolyGrain.js` | le grain low poly géométrique du sol (bruit, fondu de distance, bosse le long de la normale) — câblé par matière dans `terrainMaterial.js`, réglages dans `SURFACE_LOOK` |
 | `transportEarthworks.js` | remblais doux et tranchées des franchissements, dans le terrain commun |
-| `roadCut.js` | l'entaille du terrain sous une chaussée |
+| `roadCut.js` | l'entaille du terrain sous une chaussée, et son remblai en terre |
 | `waterRelief.js` | niveaux des lacs, profil des rivières et raccord terrestre des berges |
 | `cliffCut.js` | la marche du terrain sous une falaise relevée |
 | `groundClassMap.js` | la carte des matières et des cultures, rasterisée pour toute la scène |
@@ -71,7 +71,8 @@ Deux pièges :
 
 Dans cet ordre : la **marche** d'une falaise relevée (`cliffCut`), les
 **niveaux d’eau** (`waterRelief`), les **terrassements des franchissements** (`transportEarthworks`), puis le
-**déblai** des chaussées (`roadCut`). La falaise façonne le terrain naturel, la route entaille
+**remblai** et le **déblai** des chaussées (`roadCut`). Le remblai passe avant : le déblai de toute chaussée
+voisine le reprend, il ne recouvre jamais une voie. La falaise façonne le terrain naturel, la route entaille
 ce qu'elle trouve — l'ordre inverse taillerait la chaussée dans une rampe que
 la marche vient de supprimer.
 

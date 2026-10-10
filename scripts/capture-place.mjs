@@ -12,7 +12,8 @@
  * lieu reste utilisable avec ce qu'on a : un relief nu vaut mieux que rien.
  *
  * Couvre `--tuiles` tuiles de zoom 14 autour du point (défaut 1, soit 3×3) :
- * au moins ce que la bulle de la démo charge autour du point de départ.
+ * au moins ce que la bulle de la démo charge autour du point de départ. Le MNT
+ * du relief lointain est enregistré avec, à son zoom, sur toute la nappe.
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -59,24 +60,39 @@ async function fetchBytes(url) {
 }
 
 /** Enregistre toutes les tuiles d'une source ; rend le nombre écrit. */
-async function capture(kind, template, extension) {
+async function capture(kind, template, extension, list = tiles, zoom = ZOOM) {
   let written = 0;
-  for (const { x, y } of tiles) {
-    const url = fill(template, ZOOM, x, y);
+  for (const { x, y } of list) {
+    const url = fill(template, zoom, x, y);
     try {
       const bytes = await fetchBytes(url);
-      const dir = join(root, kind, String(ZOOM), String(x));
+      const dir = join(root, kind, String(zoom), String(x));
       mkdirSync(dir, { recursive: true });
       writeFileSync(join(dir, `${y}.${extension}`), bytes);
       written++;
     } catch (err) {
-      console.warn(`[${kind}] ${ZOOM}/${x}/${y} : ${err.message}`);
+      console.warn(`[${kind}] ${zoom}/${x}/${y} : ${err.message}`);
     }
   }
   return written;
 }
 
 const manifest = { name, label, lng, lat, zoom: ZOOM, tiles: tiles.length };
+
+// Le relief lointain lit un MNT plus grossier (`farRelief.js`), sur toute sa
+// nappe : les tuiles de ce zoom qui couvrent `farBlockSize` tuiles de la bulle.
+const VIEW_ZOOM = 15;
+const FAR_ZOOM = VIEW_ZOOM - 5;
+const FAR_BLOCK = 31;
+const farTiles = [];
+{
+  const c = tileOf(lng, lat, VIEW_ZOOM);
+  const k = 2 ** (VIEW_ZOOM - FAR_ZOOM);
+  const half = (FAR_BLOCK - 1) / 2;
+  for (let y = Math.floor((c.y - half - ring * 2) / k); y <= Math.floor((c.y + half + ring * 2 + 1) / k); y++) {
+    for (let x = Math.floor((c.x - half - ring * 2) / k); x <= Math.floor((c.x + half + ring * 2 + 1) / k); x++) farTiles.push({ x, y });
+  }
+}
 
 // --- MNT ------------------------------------------------------------------
 const DEM_SOURCES = [
@@ -96,6 +112,8 @@ for (const source of DEM_SOURCES) {
   if (written === 0) continue;
   manifest.elevation = { encoding: source.encoding, extension: source.extension, source: new URL(source.url).host };
   console.log(`MNT : ${written}/${tiles.length} tuiles (${manifest.elevation.source})`);
+  const far = await capture('dem', source.url, source.extension, farTiles, FAR_ZOOM);
+  console.log(`MNT lointain : ${far}/${farTiles.length} tuiles de zoom ${FAR_ZOOM}`);
   break;
 }
 if (!manifest.elevation) console.warn('MNT : aucune source joignable — le lieu sera plat.');

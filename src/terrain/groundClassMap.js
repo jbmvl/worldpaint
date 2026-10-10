@@ -808,13 +808,17 @@ export class GroundClassMap {
    *
    * Trois termes, ceux du masque urbain (voir `settlement.UrbanMask`) : le
    * **disque** d'agglomération borne la portée et sert de découpe ; les
-   * emprises **bâties** donnent la forme ; le **vert urbain** est retiré, et
-   * l'est ici en trous d'un remplissage pair-impair plutôt qu'en effacement —
-   * effacer creuserait aussi l'occupation du sol déjà peinte dessous.
+   * emprises **bâties** donnent la forme ; le **vert urbain** n'est pas
+   * effacé — effacer creuserait aussi l'occupation du sol déjà peinte dessous.
+   * Sous une emprise unique il reste en trous d'un remplissage pair-impair ;
+   * sous plusieurs il est revêtu avec elles, et c'est son propre tracé, rejoué
+   * juste après, qui lui rend sa matière.
    *
    * Une emprise à la fois, et non toutes en un tracé : deux emprises bâties
    * qui se recouvrent (un quartier dans une commune) s'annuleraient en
-   * pair-impair, et la ville aurait un trou là où elle est le plus dense.
+   * pair-impair, et la ville aurait un trou là où elle est le plus dense. Le
+   * vert, lui, se remplit une seule fois : rejoué dans chaque emprise, tout le
+   * vert de la ville serait rastérisé autant de fois qu'elle a de quartiers.
    *
    * Le revêtement s'écrit dans les deux cartes : sol nu dans celle des
    * matières (ni herbe ni semis n'y poussent, gratuitement), couverture
@@ -864,13 +868,16 @@ export class GroundClassMap {
     ctx.fillStyle = surfaceFill('pavement');
     let painted = 0;
 
-    for (const ring of urban.builtUp) {
-      if (!Array.isArray(ring) || ring.length < 3) continue;
-      const path = ringPath(ring);
+    const rings = urban.builtUp.filter((ring) => Array.isArray(ring) && ring.length >= 3);
+    if (rings.length === 1) {
+      const path = ringPath(rings[0]);
       path.addPath(greens);
       ctx.fill(path, 'evenodd');
-      painted++;
+    } else {
+      for (const ring of rings) ctx.fill(ringPath(ring), 'evenodd');
+      ctx.fill(greens, 'evenodd');
     }
+    painted += rings.length;
 
     ctx.restore();
     return painted;

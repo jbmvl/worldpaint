@@ -25,6 +25,7 @@
  * réseau : piloté depuis la console ou par `scripts/place-shot.mjs`.
  *
  *   /demo/lab/place.html?lieu=montreuil-bellay
+ *   `settings` accepte les réglages en JSON ; `panels=1` imprime les noms et positions des panneaux.
  *   placeLab.set({ lng: -0.1496, lat: 47.1300, yawDeg: 225, pitchDeg: 28, distance: 60 })
  *   placeLab.set({ x: 120, z: -40, ... })   // en mètres locaux
  *   await placeLab.walk({ toX: 2000, step: 50 })  // ce qui se repeint sous 500 m
@@ -73,6 +74,13 @@ async function settle() {
     await world.refresh(place.lng, place.lat, { force: pass === 0 });
     for (let frame = 0; frame < 400; frame++) world.advance(1 / 30, { x: 0, y: 0, z: 0 });
   }
+  // Le relief lointain se recale hors image, et le brouillard le suit ensuite.
+  const far = world.composer.far;
+  for (let wait = 0; far && wait < 200 && (far._pending || !far._signature); wait++) {
+    far.sync();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  for (let frame = 0; frame < 20; frame++) world.advance(1, { x: 0, y: 0, z: 0 });
 }
 await settle();
 
@@ -93,6 +101,9 @@ function render() {
   const paint = world.updateSky({ camera, date, lng: place.lng, lat: place.lat, shadowAt: { x, y, z } });
   if (paint) renderer.setClearColor(paint.clearColor, 1);
   world.advance(0, { x, y, z });
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
   renderer.render(scene, camera);
   const here = world.frame.toLngLat(x, z);
   const region = world.composer.landscape?.region;
@@ -226,7 +237,8 @@ window.placeLab = {
   place,
 };
 window.placeLabReady = true;
-render();
+if (params.has('panels')) console.log('Panneaux du banc', JSON.stringify(world.composer.furniture._labelQuads));
+window.placeLab.set(JSON.parse(params.get('settings') || '{}'));
 </script>
 </body>
 </html>

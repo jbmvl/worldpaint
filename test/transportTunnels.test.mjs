@@ -141,6 +141,22 @@ test('le déblai ordinaire ne recreuse pas l’appui conservé sous un rail sup�
   assert.equal(sample.elevation,50);
 });
 
+test('le terrain porte le remblai d’une chaussée en terre, sans recouvrir sa voisine',async()=>{
+  const { TerrainBubble }=await import('../src/terrain/terrainBubble.js');
+  const { RoadIndex }=await import('../src/layers/roadGraph.js');
+  const route=(x,deck,earth)=>{
+    const path=Array.from({length:41},(_,r)=>({x,z:-100+r*5,distance:r*5}));
+    return {profile:'minor',paved:true,halfWidth:3,path,platform:new Float32Array(41).fill(deck),earthFill:earth?new Uint8Array(41).fill(1):undefined};
+  };
+  const at=(roads,x)=>TerrainBubble.prototype._roadCutWithMask.call({_roadCut:new RoadIndex(roads,{margin:11}),verticalScale:1,cutBenchM:6},x,0,98).elevation;
+  assert.equal(at([route(0,100,true)],0),100,'relevé sous l’axe');
+  assert.equal(at([route(0,100,true)],8),100,'fond plat de la maille');
+  assert.equal(at([route(0,100,true)],14),98,'terrain naturel au bout du raccord');
+  assert.equal(at([route(0,100,false)],0),98,'sans désignation, le sol ne monte pas');
+  // Une voie plus basse à dix mètres : son emprise garde sa cote.
+  assert.equal(at([route(0,100,true),route(10,98,true)],8),98,'la voisine n’est pas recouverte');
+});
+
 test('un tunnel raccorde aussi un accès déjà corrigé par un autre ouvrage',()=>{
   const road=tunnel(0,{length:24,height:55});road.crossingBase=new Float32Array(road.path.length).fill(50);
   const rail={path:[{x:0,z:-100,distance:0},{x:0,z:100,distance:200}],halfWidth:1.75,platform:Float32Array.of(50,50)};

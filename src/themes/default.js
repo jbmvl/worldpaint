@@ -1034,14 +1034,30 @@ export const TOWN_PALETTES = {
  * remplacent la palette du pays (bâti hors matériau du pays — hôpital,
  * grande surface) ; `front` ne remplace rien, c'est le bandeau de
  * rez-de-chaussée d'un commerce ; `spire`/`dome`/`minaret` sont des volumes
- * ajoutés à l'empreinte. Une personnalité peut n'en porter qu'un (une église
- * garde les murs de son bourg, ne se reconnaît qu'à son clocher).
+ * ajoutés à l'empreinte. `windows` règle les baies propres à la fonction,
+ * `minHeightM` son volume minimal, `towers` les tours d'un château.
+ * `frontWithoutStreet` permet une entrée au-delà d'un parking ; `sign`
+ * dimensionne l’enseigne de grande surface.
  */
 export const BUILDING_PERSONALITIES = {
-  church: { spire: { wall: '#d3ccba', roof: '#4f555d' } }, // pierre de taille et ardoise, autre matériau que les maisons autour
+  rampart: { wall: '#d3ccba', roof: '#d3ccba', shape: 'flat', windows: false },
+  church: {
+    wall: '#d3ccba', roof: '#4f555d', shape: 'gable', minHeightM: 10,
+    windows: { widthM: 1.4, heightM: 4, sillM: 2, spacingM: 6, glass: '#536b80' },
+    spire: { wall: '#d3ccba', roof: '#4f555d' },
+  },
+  castle: {
+    wall: '#d3ccba', roof: '#4f555d', shape: 'hip', minHeightM: 9,
+    windows: { widthM: 0.65, heightM: 1.5, sillM: 1.8, levelM: 3.5, spacingM: 5 },
+    towers: { radiusRatio: 0.22, minRadiusM: 1.4, maxRadiusM: 3, riseM: 3, roofRatio: 2 },
+  },
   mosque: { shape: 'flat', dome: '#4f8792', minaret: '#efe9db' }, // coupole sur terrasse, flotterait sur un rampant
   hospital: { wall: '#eceff0', roof: '#c2c8ca', shape: 'flat' },
-  retail: { wall: '#d8d4cb', roof: '#71767b', shape: 'flat' },
+  retail: {
+    wall: '#d8d4cb', roof: '#71767b', shape: 'flat', front: '#3f5560',
+    windows: false, frontWithoutStreet: true,
+    sign: { widthM: 14, heightM: 1.5, bottomM: 3.25, ink: '#f2eee4' },
+  },
   bakery: { front: '#7d4a2a' }, // bois verni foncé
   shop: { front: '#3f5560' }, // se lit à sa valeur, pas sa teinte
   fuel: { front: '#b3352f' }, // rouge d'enseigne, jamais confondu avec un commerce quelconque
@@ -1469,6 +1485,13 @@ export const FAUNA_COATS = mapCoats({
 });
 
 // --- Le mobilier ---------------------------------------------------------------
+/** Panneau d'entrée et case du nom, en mètres ; l'encre reste devant la face blanche. */
+export const PLACE_NAME_SIGN = {
+  widthM: 3.2, heightM: 0.8, borderM: 0.08, centerYM: 1.85,
+  textWidthM: 2.95, labelHeightM: 0.56, labelMinHeightM: 0.22,
+  labelZM: 0.05, ink: '#1c1c1c',
+};
+
 /** Nuancier du mobilier. Un seul endroit à toucher pour changer une matière. */
 export const FURNITURE_COLORS = {
   steel: srgb('#9aa0a6'),
@@ -1564,9 +1587,9 @@ export const SKY_PALETTE = {
   /** Part de la teinte des précipitations conservée en pleine nuit. */
   precipitationNightTint: 0.55,
   fog: '#e8eef3',
-  nightZenith: '#0d1428', // une nuit sombre, pas noire (voir sceneEnvironment.js)
+  nightZenith: '#141d38', // une nuit sombre, pas noire (voir sceneEnvironment.js)
 
-  nightHorizon: '#1c2c4c',
+  nightHorizon: '#273a62',
 
   nightTraffic: {
     // Rayons angulaires : météore, satellite, feu d'avion, demi-envergure.
@@ -1615,7 +1638,7 @@ export const SKY_PALETTE = {
       fog: '#efe6d6',
       // Une nuit de pays sec est plus chaude et plus claire : il n'y a pas de
       // couche d'eau pour l'éteindre.
-      nightHorizon: '#2a2b40',
+      nightHorizon: '#383950',
     },
     {
       name: 'continental',
@@ -1626,7 +1649,7 @@ export const SKY_PALETTE = {
       name: 'boréal',
       matrix: ['boreal_taiga'],
       fog: '#e6edf2',
-      nightZenith: '#0b1226',
+      nightZenith: '#111a34',
     },
     {
       name: 'altitude',
@@ -1741,7 +1764,7 @@ export const defaultTheme = Object.freeze({
   works: WORKS_STYLES,
   streets: STREET_LOOK,
   water: { waterways: WATERWAY_CLASSES, riparianBufferM: RIPARIAN_BUFFER_M },
-  furniture: { colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES, lighthouse: LIGHTHOUSE_LIGHT },
+  furniture: { placeNameSign: PLACE_NAME_SIGN, colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES, lighthouse: LIGHTHOUSE_LIGHT },
   life: LIFE_COLORS,
   fauna: { colors: FAUNA_COLORS, coats: FAUNA_COATS },
   sky: SKY_PALETTE,

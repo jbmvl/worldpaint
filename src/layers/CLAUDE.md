@@ -11,7 +11,7 @@ son état.
 | Fichier | Ce qu'il fait |
 | --- | --- |
 | `roadGraph.js` | recoud les chaussées, arrondit leurs brisures, relève les carrefours (un carrefour est un **nœud**, pas une image) |
-| `roadProfile.js` | lisse le profil affiché, borne sa pente sous les contraintes des ouvrages et publie les portions suspendues sans modifier le terrassement |
+| `roadProfile.js` | conserve les chaussées au sol, lisse les ponts sous les contraintes de leurs accès, publie les portions suspendues sans modifier le terrassement, et les lignes dont le terrain porte le remblai (`earthFill`) |
 | `roadNetwork.js` | les rubans de chaussée, leur plate-forme, l'index publié |
 | `roadJunctions.js` | la surface d'un carrefour : les bandes de ses bras, leurs arrondis et joints, réunis ; ses bouches, la découpe des rubans, ses cotes, qui cède le passage |
 | `junctionPolygons.js` | géométrie plane des surfaces : union d'anneaux (îlots compris) et triangulation de Delaunay |
@@ -24,7 +24,7 @@ son état.
 | `roadMarkings.js`, `roadBundles.js` | marquage au sol, voies qui se longent |
 | `railwayLayer.js` | la voie ferrée et sa caténaire ; publie sa propre emprise et les voies que parcourent les trains |
 | `cliffLayer.js` | les falaises relevées : la marche du terrain, la bande peinte en roche, et la nappe de paroi — les sommets qu'un champ de hauteurs ne peut pas porter sur une face verticale |
-| `buildingLayer.js`, `roofGeometry.js` | le bâti et ses toitures |
+| `buildingLayer.js`, `buildingInterpretation.js`, `roofGeometry.js`, `buildingCharacterGeometry.js` | le bâti, la reconnaissance des murailles, les toitures, les baies religieuses et les tours de château |
 | `streetLayer.js`, `streetMasonry.js` | bordures, caniveaux et joints des rues et des carrefours |
 | `gardenLayer.js` | clôtures et buissons de maison |
 | `vegetationLayer.js`, `groundCover.js`, `cropLayer.js` | arbres, herbe, cultures |
@@ -48,7 +48,7 @@ identifie d'abord sa famille :
 
 | Module | Sa question |
 | --- | --- |
-| `furniture/roadsideRelief.js` | ce que le **relief** impose à une chaussée : falaise de déblai, mur de soutènement, glissière et garde-corps, talus |
+| `furniture/roadsideRelief.js` | ce que le **relief** impose à une chaussée : falaise de déblai, mur de soutènement, glissière et garde-corps |
 | `furniture/roadsideFurniture.js` | ce qui accompagne une chaussée sur sa **longueur** : éclairage, poteaux et ligne aérienne, bornes, panneaux, balises, entrée d'agglomération, alignements, haies de bas-côté |
 | `furniture/junctionFurniture.js` | ce qu'un **carrefour** porte : feu tricolore, panneau de priorité |
 | `furniture/parcels.js` | ce qui se lit sur une **parcelle** : contour (haie, muret, clôture), semis, rangs de vigne, cour de ferme, repères d'emprise urbaine |
@@ -56,7 +56,7 @@ identifie d'abord sa famille :
 | `furniture/cemetery.js` | l'habillage d'un cimetière : mur, portail, tombes, robinet |
 | `furniture/landmarks.js` | les **repères** : moulin et château d'eau d'un bourg, pierres, éoliennes, pylônes, antennes de sommet, phares, arbres de crête |
 | `furniture/biomeDebris.js` | ce qu'une **matière du sol** laisse traîner : blocs de lande et de maquis, souches de bois, joncs de marais, bois flotté — semé par nom de matière, pas par pente |
-| `furniture/pointsOfInterest.js` | ce que la couche `poi` porte nommément : abribus, fontaine, lavoir, monument, château, tour |
+| `furniture/pointsOfInterest.js` | ce que la couche `poi` porte nommément : abribus, fontaine, lavoir, monument, tour |
 | `furniture/catalog.js` | les listes et les plafonds : `POINT_ITEMS`, `LINEAR_KINDS`, `FURNITURE_LIMITS`, les portées partagées |
 
 Chaque module exporte des fonctions qui prennent la couche en premier argument

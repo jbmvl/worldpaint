@@ -975,8 +975,11 @@ export class VegetationLayer {
 
   *_meshSteps(placements, material, name, castShadow, thinned) {
     const groups = new Map();
+    const roads = this.roads;
     for (const item of placements) {
       if (!this.prototypes[item.variant]) continue;
+      // Sous un pont, seul ce qui tient sous le tablier pousse.
+      if (roads?.ceilingAt && item.y + item.height > roads.ceilingAt(item.x, item.z, item.height * item.aspect / 2)) continue;
       const id = `${Math.floor(item.x / VEGETATION_BLOCK_M)}:${Math.floor(item.z / VEGETATION_BLOCK_M)}:${item.variant}`;
       let list = groups.get(id);
       if (!list) groups.set(id, (list = []));

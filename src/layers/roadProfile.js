@@ -1,24 +1,32 @@
 /*
  * Profil vertical des chaussées affichées, indépendant du terrassement.
- * Une enveloppe à pente bornée relève les creux sans enfoncer le ruban dans
- * le sol. Les sommets communs du graphe gardent une cote commune ; les
- * tunnels et les passages inférieurs conservent leurs cotes. Les ponts
- * peuvent monter mais jamais perdre leur dégagement.
- * Les portions durablement suspendues publient des appuis pour BridgeLayer,
- * prolongés jusqu'au contact avec le sol, même sous le seuil de déclenchement,
+ * Les chaussées au sol gardent leur assise terrassée, même quand sa pente
+ * dépasse la cible : une contrainte de pente ne justifie pas un viaduc.
+ * Les ponts peuvent être lissés sans perdre leur dégagement ; leurs accès,
+ * les tunnels et les passages inférieurs conservent leurs cotes.
+ * Les portions réellement suspendues publient des appuis pour BridgeLayer,
  * sans changer les drapeaux OSM ni les hauteurs utilisées par le terrain.
+ * Les lignes dont le remblai est en terre sont publiées de même
+ * (`findEarthFills`) : le terrain s'y relève sous la chaussée, et nulle part
+ * où un mur, un tablier ou un profil lissé la porte déjà.
  */
 import { pathFrames } from './ribbonGeometry.js';
+import {
+  contiguousRuns,
+  crossSlope,
+  profileTakesGuardrail,
+  STEEP_CROSS_SLOPE,
+  FILL_WALL_MIN_ROWS,
+} from './furniturePlacement.js';
 
 export const ROAD_MAX_GRADE = 0.12;
 export const ROAD_SUPPORT_DROP_M = 2.5;
 export const ROAD_SUPPORT_LENGTH_M = 15;
 
 export function smoothRoadProfiles(segments, { maxGrade = ROAD_MAX_GRADE, crossings = [] } = {}) {
-  const paved = segments.filter(s => s.paved);
   const fixedRows = new Map();
   for (const crossing of crossings) {
-    const lower = paved[crossing.lower];
+    const lower = segments[crossing.lower];
     if (crossing.rail || !lower) continue;
     if (!fixedRows.has(lower)) fixedRows.set(lower, new Set());
     fixedRows.get(lower).add(crossing.row).add(crossing.row + 1);
@@ -30,7 +38,7 @@ export function smoothRoadProfiles(segments, { maxGrade = ROAD_MAX_GRADE, crossi
     for (let r = 0; r < segment.path.length; r++) {
       const p = segment.path[r];
       const floor = segment.terrainPlatform?.[r] ?? segment.platform[r];
-      const fixed = segment.works?.[r] === 2 || fixedRows.get(segment)?.has(r);
+      const fixed = segment.works?.[r] !== 1 || fixedRows.get(segment)?.has(r);
       const key = `${Math.round(p.x * 1000)}:${Math.round(p.z * 1000)}:${segment.levels?.[r] ?? 0}`;
       let id = shared.get(key);
       if (id == null) {
@@ -134,6 +142,27 @@ export function findRoadSupports(segments, groundAt, areas = null) {
     for (const segment of segments) segment.junction?.forEach((a, r) => {
       if (areas.areas[a] === area && !segment.works?.[r]) segment.supports[r] = 1;
     });
+  }
+}
+
+/**
+ * Pose sur chaque tronçon `earthFill` : 1 sur les lignes où le terrain porte
+ * le remblai de la chaussée. Tout ce qui est au sol, sauf les versants francs
+ * assez longs pour un mur de soutènement — même pente et même longueur que
+ * `roadsideRelief`, pour que mur et terre ne se disputent aucune ligne.
+ */
+export function findEarthFills(segments) {
+  for (const segment of segments) {
+    const { path, platform, edges, probeSpan } = segment;
+    const fills = (segment.earthFill = new Uint8Array(path.length));
+    if (!segment.paved) continue;
+    const onEarth = (r) =>
+      !segment.works?.[r] && !segment.supports?.[r] && Math.abs(platform[r] - (segment.terrainPlatform?.[r] ?? platform[r])) < 0.001;
+    const rows = Array.from(path, (_, r) => r);
+    for (const r of rows) if (onEarth(r)) fills[r] = 1;
+    if (!edges || !profileTakesGuardrail(segment.profile)) continue;
+    const steep = (r) => onEarth(r) && crossSlope(edges[r * 2], edges[r * 2 + 1], probeSpan).slope >= STEEP_CROSS_SLOPE;
+    for (const run of contiguousRuns(rows, steep, FILL_WALL_MIN_ROWS)) for (const r of run) fills[r] = 0;
   }
 }
 

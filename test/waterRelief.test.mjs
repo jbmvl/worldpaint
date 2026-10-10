@@ -131,3 +131,42 @@ test('le profil d’une confluence ne dépend pas de l’ordre ni du sens de ses
   const b=relief([...lines].reverse().map(line=>river([...line].reverse())),ground);
   for(const p of [[0,0],[-10,0],[10,0],[0,10],[0,50]]) close(height(a,...p),height(b,...p));
 });
+
+test('l’index des berges conserve exactement les sondes, y compris les îles et les bords de cellule',()=>{
+  const contour=[];
+  for(let i=0;i<160;i++) {
+    const angle=i*Math.PI*2/160;
+    contour.push([520*Math.cos(angle),370*Math.sin(angle)]);
+  }
+  contour.push(contour[0]);
+  const features=[lake([contour,rect(-65,-65,65,65)])];
+  const indexed=relief(features,()=>12),exhaustive=relief(features,()=>12);
+  for(const entries of exhaustive.grid.values()) for(const {piece} of entries) {
+    if(!piece) continue;
+    const edges=piece.rings.flatMap(ring=>ring.map((b,i)=>({a:ring[(i+ring.length-1)%ring.length],b})));
+    piece.banks={get:()=>edges};
+  }
+  for(let z=-420;z<=420;z+=7) for(let x=-560;x<=560;x+=11)
+    assert.deepEqual(indexed.sample(x,z,45),exhaustive.sample(x,z,45));
+});
+
+test('le filtrage des axes conserve la projection la plus proche et les égalités',()=>{
+  const r=relief([],()=>10);
+  r.profileAt=(x,z)=>({x,z});
+  const axes=[];
+  for(let x=-600;x<=600;x+=40) {
+    const a={x,z:-300},b={x:x+25,z:300};
+    axes.push({a,b,box:{minX:x,maxX:x+25,minZ:-300,maxZ:300}});
+  }
+  for(let z=-320;z<=320;z+=32) for(let x=-620;x<=620;x+=20) {
+    let best=null;
+    for(const {a,b} of axes) {
+      const dx=b.x-a.x,dz=b.z-a.z;
+      const t=Math.max(0,Math.min(1,((x-a.x)*dx+(z-a.z)*dz)/(dx*dx+dz*dz)));
+      const hit={x:a.x+dx*t,z:a.z+dz*t};
+      hit.distance=Math.hypot(x-hit.x,z-hit.z);
+      if(!best || hit.distance<best.distance-1e-7 || (Math.abs(hit.distance-best.distance)<1e-7 && (hit.x<best.x || (hit.x===best.x && hit.z<best.z)))) best=hit;
+    }
+    assert.deepEqual(r.axisLevel(x,z,axes),{x:best.x,z:best.z});
+  }
+});

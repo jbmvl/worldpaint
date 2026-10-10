@@ -15,8 +15,7 @@
 
 import { appendProfile, pathFrames } from '../ribbonGeometry.js';
 import { LEVEL_GROUND } from '../roadWorks.js';
-import { isPaved } from '../roadNetwork.js';
-import { nearestNamedPlace, pointInAreas } from '../settlement.js';
+import { settlementNameAt, pointInAreas } from '../settlement.js';
 import { lampHeadFor } from '../furnitureKit.js';
 import {
   spacedAlongPath,
@@ -28,6 +27,7 @@ import {
   streetLampKindFor,
   crossSlope,
   contiguousRuns,
+  profileTakesGuardrail,
   runsByValue,
   randomAt,
 } from '../furniturePlacement.js';
@@ -37,9 +37,8 @@ import { reachedRadius } from '../../core/decorReach.js';
 import { alignmentShapeForTree, sharesFor } from '../../core/regionInterpretation.js';
 import {
   buildRoadsideRelief,
-  buildEmbankment,
   measureRoom,
-  profileTakesGuardrail,
+  boundOverhang,
 } from './roadsideRelief.js';
 
 export const SIGN_PLACE_NAME_MAX_M = 450;
@@ -76,21 +75,6 @@ export function isSettlementEdgeRun(previous, minGapM = SIGN_PLACE_NAME_MIN_GAP_
   const gap = previous.rows[previous.rows.length - 1].distance - previous.rows[0].distance;
   return gap >= minGapM;
 }
-/** Largeur de texte utilisable sur la lame blanche du panneau, en mètres —
- *  voir `signPlaceName` dans `furnitureKit.js` (face large de 1,64 m). */
-export const SIGN_PLACE_NAME_TEXT_WIDTH_M = 1.5;
-/** Hauteur de case visée pour le nom peint, en mètres, et son plancher (marge de part et d'autre sur la lame de 0,4 m). */
-export const SIGN_PLACE_NAME_LABEL_HEIGHT_M = 0.36;
-export const SIGN_PLACE_NAME_LABEL_MIN_HEIGHT_M = 0.16;
-/** Repère local du texte sur la lame — voir `signPlaceName` (`y: 1.85`, face
- *  avant à `plane: 0.04`) : un centimètre devant elle, pour ne pas se
- *  disputer le pixel avec le blanc peint qu'il recouvre. */
-export const SIGN_PLACE_NAME_LABEL_Y_M = 1.85;
-export const SIGN_PLACE_NAME_LABEL_Z_M = 0.05;
-/** Encre du nom peint : noir légèrement adouci, comme la lettre d'un vrai
- *  panneau EB10 sur fond blanc. */
-export const SIGN_PLACE_NAME_LABEL_INK = '#1c1c1c';
-
 /**
  * Essences plantables en alignement de route, avec leur part du tirage.
  *
@@ -136,10 +120,9 @@ function alignmentTreeSpeciesFor(x, z, trees = null) {
 /**
  * Le mobilier qui accompagne la chaussée.
  *
- * Trois passes sur chaque portion : le relief d'abord, qui décide des deux
+ * Deux passes sur chaque portion : le relief d'abord, qui décide des deux
  * murs et de la glissière ; le contexte ensuite, qui décide de l'éclairage,
- * des poteaux, des bornes, des panneaux, de l'alignement et de la haie ; le
- * talus enfin, qui comble ce que le mur n'a pas pris.
+ * des poteaux, des bornes, des panneaux, de l'alignement et de la haie.
  *
  * La portée se mesure ligne par ligne et non au milieu du tronçon. Depuis que
  * les chaussées sont fusionnées, une chaîne traverse la bulle de part en part :
@@ -174,6 +157,7 @@ export function buildRoadside(layer, context, roadSegments, builtUp) {
         x: path[r].x,
         z: path[r].z,
         distance: path[r].distance,
+        rural: !pointInAreas(builtUp, path[r].x, path[r].z),
         slope,
         uphill,
         // Courbure locale : c'est elle, autant que la pente, qui décide d'un
@@ -182,13 +166,12 @@ export function buildRoadside(layer, context, roadSegments, builtUp) {
         // posent les balises.
         curvature: Math.abs(turn),
         turn: Math.sign(turn),
-        // Surplomb de la rive aval : c'est lui qui appelle le mur ou le talus.
+        // Surplomb de la rive aval : c'est lui qui appelle le mur et la glissière.
         drop: platform[r] - lowSupport,
         // Surplomb de la rive **amont**. Négatif sur un versant — le terrain
         // y domine la route —, positif quand la plate-forme est au-dessus du
         // sol des deux côtés : ce n'est plus une route de versant, c'est un
-        // remblai en pleine terre, et il lui faut un talus de chaque côté. La
-        // rampe d'accès d'un pont est exactement ce cas-là.
+        // remblai en pleine terre.
         perch: platform[r] - highSupport,
         // Hauteur du terrain au-dessus de la plate-forme, côté amont : la
         // tranchée que le déblai a creusée, et que le mur doit habiller.
@@ -201,19 +184,17 @@ export function buildRoadside(layer, context, roadSegments, builtUp) {
 
     // Une ligne d'ouvrage ne porte aucun mobilier de bord de route : ni
     // falaise de déblai (on n'entaille pas la colline au-dessus d'un
-    // tunnel), ni mur de soutènement, ni talus (il n'y a pas de terrain à
-    // retenir sous un tablier), ni haie, ni poteau, ni alignement d'arbres à
+    // tunnel), ni mur de soutènement (il n'y a pas de terrain à retenir
+    // sous un tablier), ni haie, ni poteau, ni alignement d'arbres à
     // cinquante mètres du sol. Le pont a ses propres garde-corps, posés par
     // `bridgeLayer` avec son tablier.
-    const paved = isPaved(layer.theme.roads.profiles[segment.profile]);
     const inReach = (row) =>
       !row.work && Math.hypot(row.x - here.x, row.z - here.z) <= reachedRadius(FURNITURE_RADIUS_M, layer.bubble);
     for (const near of contiguousRuns(rowsInfo, inReach, 4)) {
       measureRoom(layer, segment, near);
-      const walled = buildRoadsideRelief(layer, context, segment, near);
+      boundOverhang(context, segment, near);
+      buildRoadsideRelief(layer, context, segment, near);
       buildRoadsideContext(layer, context, segment, near, builtUp);
-      // Un chemin est sur le sol : pas de talus à ses rives.
-      if (paved) buildEmbankment(layer, context, segment, near, walled);
     }
   }
 
@@ -468,18 +449,11 @@ export function applyRoadsidePlan(layer, {
   }
 
 
-  // Entrée d'agglomération : un seul panneau, au tout début de la portion
-  // bâtie — et seulement là où un vrai lieu nommé est à portée
-  // (`nearestNamedPlace`), où `FabricIndex` confirme que des bâtiments
-  // réels s'y trouvent déjà, et où `isSettlementEdge` dit que ce début est
-  // une vraie entrée et non un artefact du découpage des `landuse` (voir
-  // `SIGN_PLACE_NAME_MIN_GAP_M`). Un `landuse=residential` n'est qu'un
-  // périmètre administratif (voir l'en-tête de `settlement.js`) : sans les
-  // trois conditions, ce panneau se plantait à l'entrée de n'importe quel
-  // pâté de maisons, jamais forcément une ville — et sans nom à y peindre.
+  // Une vraie coupure du bâti et des maisons relevées sont nécessaires ;
+  // le nom urbain prime sur les lieux périphériques proches.
   if (inTown && isSettlementEdge && path.length > 4 && plan.lamp) {
     const start = path[1];
-    const place = nearestNamedPlace(layer._places, start.x, start.z, SIGN_PLACE_NAME_MAX_M);
+    const place = settlementNameAt(layer._places, start.x, start.z, SIGN_PLACE_NAME_MAX_M);
     const hasFabric =
       place &&
       layer._fabric &&
@@ -492,7 +466,7 @@ export function applyRoadsidePlan(layer, {
         placements,
         'signPlaceName',
         { x: start.x, z: start.z, tx: tx / length, tz: tz / length, distance: start.distance },
-        -(halfWidth + 1.4),
+        -(halfWidth + layer._placeNameSign.widthM / 2 + 0.5),
         platform,
         { facing: 'traffic', onPlatform: true, atKerb: true, own: segment, level }
       );

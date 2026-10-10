@@ -1,0 +1,17 @@
+{
+  "name": "saint-jean-cap-ferrat",
+  "label": "Saint-Jean-Cap-Ferrat",
+  "lng": 7.3335,
+  "lat": 43.6885,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "encoding": "terrain-rgb",
+    "extension": "webp",
+    "source": "api.maptiler.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  }
+}

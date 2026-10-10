@@ -1,0 +1,24 @@
+{
+  "avant": {
+    "tests": 1097,
+    "pass": 1095,
+    "fail": 2,
+    "skipped": 0,
+    "cancelled": 0
+  },
+  "apres": {
+    "tests": 1097,
+    "pass": 1095,
+    "fail": 2,
+    "skipped": 0,
+    "cancelled": 0
+  },
+  "echecs": [
+    "roadCoverage.test.mjs : fixture junctions-nantes.json absente",
+    "roadTerrain.test.mjs : export lowestRoadDeckAt absent"
+  ],
+  "modules": [
+    "src/index.js",
+    "demo/lab/performanceReport.js"
+  ]
+}

@@ -16,9 +16,9 @@ import { finishGeneration } from '../core/generationSteps.js';
  * (`setCliffCut`, qui comprime en paroi la rampe que le MNT étale), les niveaux
  * de l’eau (`setWaterRelief`), puis les
  * terrassements locaux des franchissements (remblais et tranchées), puis le
- * déblai des chaussées (`setRoadCut` — une route est taillée dans le versant,
- * pas posée dessus). La falaise façonne le terrain naturel, la route entaille
- * ce qu'elle trouve. Les deux sont des fonctions pures de la position au sol,
+ * terrassement des chaussées (`setRoadCut` — une route est taillée dans le
+ * versant, et son remblai relevé sous elle là où aucun mur ne la tient). La
+ * falaise façonne le terrain naturel, la route entaille ce qu'elle trouve. Les deux sont des fonctions pures de la position au sol,
  * donc les tuiles voisines s'accordent au bord sans se consulter.
  * Le fond plat du déblai ne peut pas être plus étroit qu'une maille, sans quoi
  * aucun sommet n'y tombe et le triangle enjambe la chaussée (`cutBenchM`).
@@ -51,6 +51,8 @@ import { TerrainMaterialFactory } from './terrainMaterial.js';
 import { defaultTheme } from '../themes/default.js';
 import {
   cutElevationAt,
+  fillElevationAt,
+  EARTH_ROAD_WINDOW_M,
   cutBenchAt,
   roadCutMaskAt,
   ROAD_CUT_M,
@@ -63,6 +65,9 @@ const REANCHOR_DISTANCE_M = 20000;
 /** Temps CPU par image accordé à la reconstruction d'une tuile en file. */
 const TERRAIN_REBUILD_BUDGET_MS = 4;
 
+
+/** Marque d'une arête remplacée par sa voisine plus proche (`_roadCutWithMask`). */
+const SKIPPED = -1e9;
 
 export class TerrainBubble {
   /**
@@ -670,17 +675,67 @@ export class TerrainBubble {
     // L'appui qu'un franchissement rend à une chaussée voisine ne remonte pas
     // le sol par-dessus une chaussée plus basse ; celle qu'il a lui-même
     // abaissée sous l'ouvrage (`crossingBase`) garde son arbitrage.
+    // Une chaussée en terre (`earthFill`) pose le sol à la cote de ses arêtes
+    // les plus proches, déblai comme remblai (`EARTH_ROAD_WINDOW_M`) : celles
+    // d'au-delà, plus basses dans une rampe, ne le reprennent pas — c'est ce
+    // qui la ferait flotter. Passé une portée le long du tracé, c'est une
+    // autre branche du même lacet, et elle compte comme une autre chaussée.
+    // `own` : cote retenue sur l'arête la plus proche, `SKIPPED` sur celles
+    // qu'elle remplace, `NaN` ailleurs.
+    const own = this._ownHits?.length >= count ? this._ownHits : (this._ownHits = new Float32Array(Math.max(32, count * 2)));
+    for (let i = 0; i < count; i++) {
+      own[i] = NaN;
+      const segment = segments[i];
+      const fills = segment.earthFill;
+      if (!fills || decks[i] !== decks[i]) continue;
+      let nearest = i;
+      for (let j = 0; j < count; j++) {
+        if (segments[j] === segment && (distances[j] < distances[nearest] || (distances[j] === distances[nearest] && j < nearest))) nearest = j;
+      }
+      const row = rows[nearest];
+      if (!(fills[row] || fills[Math.min(fills.length - 1, row + 1)])) continue;
+      const along = Math.abs(segment.path[rows[i]].distance - segment.path[row].distance);
+      if (i !== nearest) {
+        if (along <= segment.halfWidth + reach) own[i] = SKIPPED;
+        continue;
+      }
+      let level = decks[i];
+      for (let j = 0; j < count; j++) {
+        if (segments[j] !== segment || decks[j] !== decks[j]) continue;
+        if (Math.abs(segment.path[rows[j]].distance - segment.path[row].distance) <= EARTH_ROAD_WINDOW_M) level = Math.min(level, decks[j]);
+      }
+      own[i] = level;
+    }
+
+    // Le remblai d'abord : l'entaille de toute autre chaussée à portée le
+    // reprend ensuite, il ne recouvre jamais la voie d'à côté.
+    for (let i = 0, natural = raw; i < count; i++) {
+      if (own[i] !== own[i] || own[i] === SKIPPED) continue;
+      const fills = segments[i].earthFill;
+      const row = rows[i];
+      const share = fills[row] + (fills[Math.min(fills.length - 1, row + 1)] - fills[row]) * ts[i];
+      let filled = fillElevationAt(natural, own[i] / scale, distances[i], segments[i].halfWidth, bench);
+      // Toutes les autres chaussées à portée, sans l'exception de l'emprise :
+      // un sol qu'on relève ne passe par-dessus aucune d'elles.
+      for (let j = 0; j < count && filled > natural; j++) {
+        if (segments[j] === segments[i] || decks[j] !== decks[j]) continue;
+        filled = Math.max(natural, Math.min(filled, cutElevationAt(filled, decks[j] / scale, distances[j], segments[j].halfWidth, bench)));
+      }
+      if (slab && filled > natural) filled = Math.max(natural, Math.min(filled, cutElevationAt(filled, slab.deck / scale, slab.distance, 0, bench)));
+      raw = Math.max(raw, natural + (filled - natural) * share);
+    }
+
     let mask = earth.mask;
     let elevation = raw;
     let propped = raw;
     for (let i = 0; i < count; i++) {
       const segment = segments[i];
       const distance = distances[i];
-      if (decks[i] !== decks[i] || (under && distance > segment.halfWidth + ROAD_CUT_M)) continue;
+      if (decks[i] !== decks[i] || own[i] === SKIPPED || (under && distance > segment.halfWidth + ROAD_CUT_M)) continue;
       const row = rows[i];
       const base = segment.crossingBase;
       const lowered = !!base && decks[i] < base[row] + (base[Math.min(base.length - 1, row + 1)] - base[row]) * ts[i] - 0.001;
-      const cut = cutElevationAt(raw, decks[i] / scale, distance, segment.halfWidth, bench);
+      const cut = cutElevationAt(raw, (own[i] === own[i] ? own[i] : decks[i]) / scale, distance, segment.halfWidth, bench);
       elevation = Math.min(elevation, cut);
       if (!lowered) propped = Math.min(propped, cut);
       mask = Math.max(mask, roadCutMaskAt(distance, segment.halfWidth, bench));

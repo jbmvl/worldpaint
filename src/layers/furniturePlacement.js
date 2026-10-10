@@ -978,20 +978,21 @@ export const CURVE_RAIL_CURVATURE = 0.012;
  * droite exige un surplomb et un versant franc. Les voies de desserte et
  * pistes gardent l'exigence du surplomb, même en courbe.
  * En climat alpin ou glacial, les seuils de courbure et de vide sont abaissés.
+ * L’acier est la règle ; le bois est réservé aux dessertes et pistes en
+ * campagne ou en montagne. Sans contexte explicite, la protection est en acier.
  *
  * @returns {'steel'|'wood'|null}
  */
-export function guardrailStyleFor({ profile = 'minor', slope = 0, curvature = 0, drop = 0, climate = null } = {}) {
-  const mountain = climate === 'alpine' || climate === 'glacial';
-  const minDrop = mountain ? GUARDRAIL_MIN_DROP_M * 0.5 : GUARDRAIL_MIN_DROP_M;
-  const curveThreshold = mountain ? CURVE_RAIL_CURVATURE * 0.6 : CURVE_RAIL_CURVATURE;
+export function guardrailStyleFor({ profile = 'minor', slope = 0, curvature = 0, drop = 0, climate = null, rural = false, mountain = false } = {}) {
+  const alpine = climate === 'alpine' || climate === 'glacial';
+  const minDrop = alpine ? GUARDRAIL_MIN_DROP_M * 0.5 : GUARDRAIL_MIN_DROP_M;
+  const curveThreshold = alpine ? CURVE_RAIL_CURVATURE * 0.6 : CURVE_RAIL_CURVATURE;
   const curve = curvature >= curveThreshold;
   const ravine = drop >= minDrop && slope >= STEEP_CROSS_SLOPE;
   const smallRoad = profile === 'lane' || profile === 'track';
   if (!(ravine || (curve && (!smallRoad || drop >= minDrop)))) return null;
-  if (profile === 'express' || profile === 'major') return 'steel';
-  if (profile === 'minor') return drop > 2.5 ? 'steel' : 'wood';
-  if (profile === 'lane' || profile === 'track') return 'wood';
+  if (profile === 'express' || profile === 'major' || profile === 'minor') return 'steel';
+  if (smallRoad) return rural || mountain || alpine ? 'wood' : 'steel';
   return null;
 }
 
@@ -1061,8 +1062,13 @@ export function crossSlope(left, right, span) {
 
 /** Pente en travers à partir de laquelle mur et glissière apparaissent. */
 export const STEEP_CROSS_SLOPE = 0.14;
-/** Surplomb de la plate-forme au-delà duquel un talus est nécessaire, en mètres. */
-export const EMBANKMENT_MIN_DROP_M = 0.3;
+/** Longueur minimale d'un mur de soutènement, en lignes : plus court, le versant franc reste en terre. */
+export const FILL_WALL_MIN_ROWS = 5;
+
+/** Les profils assez larges pour porter une glissière réglementaire, et un mur de soutènement. */
+export function profileTakesGuardrail(profile) {
+  return profile === 'express' || profile === 'major' || profile === 'minor';
+}
 
 /**
  * Découpe une suite de lignes en tronçons contigus où un prédicat est vrai.

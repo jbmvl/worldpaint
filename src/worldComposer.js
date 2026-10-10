@@ -76,6 +76,7 @@ import { RoadNetwork, createRoadMaterials } from './layers/roadNetwork.js';
 import { RailwayLayer } from './layers/railwayLayer.js';
 import { CliffLayer } from './layers/cliffLayer.js';
 import { BridgeLayer } from './layers/bridgeLayer.js';
+import { deckCeilingAt } from './layers/roadWorks.js';
 import { CombinedIndex } from './layers/roadGraph.js';
 import { BuildingLayer } from './layers/buildingLayer.js';
 import { GardenLayer } from './layers/gardenLayer.js';
@@ -259,6 +260,10 @@ export class WorldComposer {
        * deux le sont). La végétation s'en sert pour resemer une tuile qu'elle
        * avait semée hors de portée de l'index — voir `knownCoverage`.
        */
+      /** Dessous du tablier qui surplombe le point, ou `Infinity` — voir `deckCeilingAt`. */
+      ceilingAt(x, z, margin) {
+        return deckCeilingAt(composer.roads.deckIndex, x, z, margin);
+      },
       knownCoverageOf(minX, minZ, maxX, maxZ) {
         return Math.min(
           composer.roads.knownCoverageOf(minX, minZ, maxX, maxZ),
@@ -546,7 +551,9 @@ export class WorldComposer {
 
     this._refreshing = true;
     try {
+      const loadStart = performance.now();
       const entries = await Promise.all(wanted.map((t) => this.vectorTiles.load(t.x, t.y, undefined)));
+      this.metrics?.record('chargementVectoriel', performance.now() - loadStart);
       const dataChanged = !this._vectorSnapshot || wanted.length !== this._vectorSnapshot.length ||
         wanted.some((t, i) => {
           const previous = this._vectorSnapshot[i];
@@ -556,7 +563,11 @@ export class WorldComposer {
       if (this.disposed || this.bubble.disposed || this._superseded) return false;
       this._incompleteRefresh = true;
       this._building = true;
-      const budget = new GenerationBudget(budgetMs ? { milliseconds: budgetMs } : undefined);
+      const budgetOptions = {
+        ...(budgetMs ? { milliseconds: budgetMs } : {}),
+        onPause: ms => this.metrics?.record('attenteGeneration', ms),
+      };
+      const budget = new GenerationBudget(budgetOptions);
       const frame = this.bubble.frame;
       const checkpoint = async () => {
         await budget.checkpoint();
@@ -587,6 +598,7 @@ export class WorldComposer {
 
       // Le rayon du détail suit la densité du lieu, et toutes les couches le
       // lisent : il se pose avant la première.
+      const placeStart = performance.now();
       this.bubble.setDetailBudgetRadius?.(
         budgetedRadius(wallLengthsByDistance(this.vectorTiles, wanted, frame, here), this._detailBudget)
       );
@@ -599,6 +611,7 @@ export class WorldComposer {
       const { builtUp, places, urban } = readSettlement(this.vectorTiles, wanted, this.bubble.frame);
       // Et « sommes-nous au bord de la mer ? » : la mouette y remplace tout autre oiseau.
       this.life.setSeaDistance(seaDistanceAt(this.vectorTiles, wanted, this.bubble.frame, here));
+      this.metrics?.record('preparationLieu', performance.now() - placeStart);
 
       if (!await checkpoint()) return false;
 
@@ -611,6 +624,7 @@ export class WorldComposer {
       if (!await checkpoint()) return false;
 
       // Les cotes d’eau précèdent les routes et tout ce qui prend appui au sol.
+      const waterStart = performance.now();
       const waterRelief = new WaterRelief({
         source: this.vectorTiles, tiles: wanted, frame,
         waterways: this.theme.water.waterways,
@@ -619,6 +633,7 @@ export class WorldComposer {
           frame.origin.x + x / frame.scale, frame.origin.y + z / frame.scale, NaN),
       });
       this.bubble.setWaterRelief(waterRelief.count ? waterRelief : null);
+      this.metrics?.record('preparationEau', performance.now() - waterStart);
 
       // 1. Occupation du sol — tout le reste la lit.
       const wasReady = this.groundClass.ready;

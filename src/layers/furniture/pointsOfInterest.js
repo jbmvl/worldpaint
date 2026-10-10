@@ -1,13 +1,13 @@
 /*
  * pointsOfInterest — les seuls objets de mobilier que le schéma OpenMapTiles
  * porte nommément : arrêts de bus, fontaines, lavoirs, et les grandes
- * structures visibles de loin (monument, château, tour).
+ * structures visibles de loin (monument, tour).
  *
  * Ils sont donc à leur vraie place, à ceci près qu'un arrêt de bus est très
  * souvent porté par le tracé de la route elle-même : on le repousse au bord
  * plutôt que de le retirer, et on l'oriente vers la chaussée la plus proche.
  *
- * Église, commerce et hôpital n'en sont plus : c'est
+ * Église, château, commerce et hôpital sont des bâtiments : c'est
  * `buildingLayer.buildingPersonalityFor` qui donne sa silhouette au bâtiment
  * qui existe réellement à cet endroit, au lieu d'en poser un second dessus.
  */
@@ -117,26 +117,7 @@ export function buildPointsOfInterest(layer, context, roadSegments, builtUp = nu
   });
 }
 
-/**
- * Forme du catalogue correspondant à un point d'intérêt, ou `null`.
- *
- * Église, mosquée, hôpital, boulangerie, commerce et centre commercial n'en
- * sont pas : un modèle posé à leurs coordonnées tombe **à côté** du vrai
- * bâtiment, qui finit par le recouvrir. C'est
- * `buildingLayer.buildingPersonalityFor` qui les traite, en donnant sa
- * silhouette au bâtiment réellement présent.
- *
- * Château, monument et tour restent ici : ce sont de grandes structures
- * visibles de loin, pas des bâtiments qu'une empreinte ordinaire recouvre.
- *
- * ## Ce qui est vérifié, et ce qui ne l'est pas
- *
- * Les trois premières lignes sont éprouvées : elles tournaient déjà avant ce
- * chantier. Le reste suit le schéma OpenMapTiles habituel (`poi.yaml`) tel
- * qu'on peut le reconstituer sans accès aux tuiles réellement servies par ce
- * projet — à vérifier, une fois posé sur un vrai monument ou un vrai
- * château, avant de considérer ce dispatch comme acquis.
- */
+/** Les édifices habillent leur empreinte dans `buildingLayer` ; seuls les objets autonomes sont du mobilier. */
 export function poiItem(properties = {}) {
   const klass = properties.class;
   const subclass = properties.subclass;
@@ -144,7 +125,6 @@ export function poiItem(properties = {}) {
   if (subclass === 'drinking_water' || subclass === 'water_point' || subclass === 'fountain') return 'fountain';
   if (subclass === 'wash_house' || subclass === 'watermill') return 'lavoir';
   if (klass === 'monument' || subclass === 'monument' || subclass === 'memorial') return 'monument';
-  if (klass === 'castle' || subclass === 'castle') return 'castle';
   if (klass === 'tower' || subclass === 'tower' || subclass === 'observation_tower') return 'tower';
   if (subclass === 'theme_park') return 'ferrisWheel';
   return null;

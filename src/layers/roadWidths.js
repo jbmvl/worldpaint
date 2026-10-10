@@ -6,18 +6,17 @@
  * Les chaînes qui partagent un sommet, les ouvrages et les niveaux distincts
  * restent hors de ce partage ; leurs rencontres relèvent du graphe.
  * Une chaîne portant un ouvrage est exclue entière pour conserver son gabarit.
- * Le partage exige un écart stable hors des surfaces de carrefour. Si un axe
+ * Le partage exige un écart stable hors des carrefours. Si un axe
  * pénètre la largeur nominale de l'autre, la paire est ambiguë et conservée :
  * une convergence ou un doublon ne donne pas la largeur d'une chaîne entière.
  * Sous une portée (`near`), seules les chaînes qui l'atteignent reçoivent leur
  * largeur : une paire n'est parcourue que si l'une des deux en est, et ces
  * chaînes-là sortent avec la même largeur que sans portée.
- * Les surfaces de carrefour consultées sont celles de tout le réseau lu, pas
- * de la seule portée : elles ne dépendent pas de l'observateur, et
- * `WidthAreasMemo` les garde d'une reconstruction à l'autre tant que les
- * lignes ne changent pas.
+ * Un carrefour est ici un disque autour de son nœud, pas sa surface dessinée :
+ * il ne dépend que du nœud et de sa branche la plus large, donc ni de
+ * l'observateur ni des carrefours voisins, et ne demande aucune union de
+ * polygones sur tout le réseau lu.
  */
-import { JunctionAreas } from './roadJunctions.js';
 import { RoadIndex, distanceToSegment } from './roadGraph.js';
 import { BUNDLE_MIN_LENGTH_M, BUNDLE_PARALLEL_COS } from './roadBundles.js';
 
@@ -28,53 +27,34 @@ const STABILITE_ECART = 0.8;
 const MARGE_PORTEE_M = 30;
 const clePoint = (p) => `${p.x},${p.z}`;
 
-const estListe = (v) => Array.isArray(v) || ArrayBuffer.isView(v);
+// Rayon du disque d'un carrefour : part de sa demi-largeur dominante, plus une marge.
+const RAYON_CARREFOUR = 1.5;
+const MARGE_CARREFOUR_M = 3;
+const CELLULE_CARREFOUR_M = 64;
+const cleCellule = (cx, cz) => cx * 67108864 + cz;
 
-/** Égalité de contenu de données simples (objets littéraux, listes, nombres) ; tout autre objet ne vaut que lui-même. */
-function memesDonnees(a, b) {
-  if (Object.is(a, b)) return true;
-  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
-  if (a.constructor !== b.constructor) return false;
-  if (estListe(a)) {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) if (!memesDonnees(a[i], b[i])) return false;
-    return true;
+/** Rend `(x, z, niveau) → vrai` dans le disque d'un carrefour de ce niveau. */
+function disquesDeCarrefour(junctions) {
+  const cellules = new Map();
+  for (const junction of junctions) {
+    const rayon = junction.roundabout
+      ? junction.roundabout.outer + junction.roundabout.halfWidth
+      : RAYON_CARREFOUR * junction.halfWidth + MARGE_CARREFOUR_M;
+    const disque = { x: junction.x, z: junction.z, rayon2: rayon * rayon, niveau: junction.level ?? 0 };
+    for (let cx = Math.floor((junction.x - rayon) / CELLULE_CARREFOUR_M); cx <= Math.floor((junction.x + rayon) / CELLULE_CARREFOUR_M); cx++) {
+      for (let cz = Math.floor((junction.z - rayon) / CELLULE_CARREFOUR_M); cz <= Math.floor((junction.z + rayon) / CELLULE_CARREFOUR_M); cz++) {
+        const cle = cleCellule(cx, cz);
+        const liste = cellules.get(cle);
+        if (liste) liste.push(disque);
+        else cellules.set(cle, [disque]);
+      }
+    }
   }
-  if (Object.getPrototypeOf(a) !== Object.prototype) return false;
-  const cles = Object.keys(a);
-  if (cles.length !== Object.keys(b).length) return false;
-  for (const cle of cles) if (!(cle in b) || !memesDonnees(a[cle], b[cle])) return false;
-  return true;
-}
-
-function copieDonnees(v) {
-  if (typeof v !== 'object' || v === null) return v;
-  if (estListe(v)) return Array.isArray(v) ? v.map(copieDonnees) : v.slice();
-  if (Object.getPrototypeOf(v) !== Object.prototype) return v;
-  const copie = {};
-  for (const cle of Object.keys(v)) copie[cle] = copieDonnees(v[cle]);
-  return copie;
-}
-
-/**
- * Les surfaces de carrefour du partage, gardées tant que les lignes dont
- * sortent chaînes et carrefours restent les mêmes. Les lignes sont comparées
- * par leur contenu, sur une copie : rien de ce qui les modifie ensuite ne
- * fausse la comparaison.
- */
-export class WidthAreasMemo {
-  constructor() {
-    this._lines = null;
-    /** @type {JunctionAreas|null} */
-    this.areas = null;
-  }
-
-  /** À appeler avec les lignes du réseau avant chaque partage. */
-  follow(lines) {
-    if (memesDonnees(this._lines, lines)) return;
-    this._lines = copieDonnees(lines);
-    this.areas = null;
-  }
+  return (x, z, niveau) => {
+    const liste = cellules.get(cleCellule(Math.floor(x / CELLULE_CARREFOUR_M), Math.floor(z / CELLULE_CARREFOUR_M)));
+    if (liste) for (const d of liste) if (d.niveau === niveau && (x - d.x) ** 2 + (z - d.z) ** 2 <= d.rayon2) return true;
+    return false;
+  };
 }
 
 function atteint(points, { x, z, radius }) {
@@ -131,24 +111,12 @@ function seCroisent(a, b, c, d) {
  * @param {Array} chains Chaînes revêtues ; leur `halfWidth` est réduite sur place.
  * @param {Array} [junctions] Carrefours du même graphe.
  * @param {{x:number,z:number,radius:number}|null} [near] Portée des chaussées bâties.
- * @param {WidthAreasMemo|null} [memo] Surfaces de carrefour à reprendre, ou à y déposer.
  */
-export function fitParallelRoadWidths(chains, junctions = [], near = null, memo = null) {
+export function fitParallelRoadWidths(chains, junctions = [], near = null) {
   const segments = chains.map((chain) => ({ ...chain, path: chain.works?.some(Boolean) ? [] : chain.points }));
   const index = new RoadIndex(segments, { margin: 0 });
   const facteurs = chains.map(() => 1);
-  // Les surfaces se construisent sur des tracés métrés ; ceux-ci sont jetés
-  // une fois la place des carrefours connue.
-  const traces = chains.map((chain) => {
-    let distance = 0;
-    const path = chain.points.map((p, k) => {
-      if (k > 0) distance += Math.hypot(p.x - chain.points[k - 1].x, p.z - chain.points[k - 1].z);
-      return { x: p.x, z: p.z, distance };
-    });
-    return { path, halfWidth: chain.halfWidth, profile: chain.profile, graphEdges: chain.graphEdges, levels: chain.levels };
-  });
-  const aires = memo?.areas ?? new JunctionAreas(junctions, traces);
-  if (memo) memo.areas = aires;
+  const enCarrefour = disquesDeCarrefour(junctions);
   const contraintes = [];
   const ambigues = new Set();
   const clePaire = (i, j) => `${Math.min(i, j)}:${Math.max(i, j)}`;
@@ -211,7 +179,7 @@ export function fitParallelRoadWidths(chains, junctions = [], near = null, memo 
             const niveau = route.levels?.[r] ?? 0;
             const qx = c.x + projection * (d.x - c.x);
             const qz = c.z + projection * (d.z - c.z);
-            if (aires.covers(x, z, niveau) || aires.covers(qx, qz, niveau)) return;
+            if (enCarrefour(x, z, niveau) || enCarrefour(qx, qz, niveau)) return;
             const facteur = ecart * cos / (h + autre.halfWidth);
             if (!(facteur > 0 && facteur < 1)) return;
             const precedent = rencontres.get(j);

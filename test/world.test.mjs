@@ -452,7 +452,6 @@ import {
 import {
   buildRoadsideRelief,
   buildRockCut,
-  buildEmbankment,
   measureRoom,
   RELIEF_ROOM_REACH_M,
 } from '../src/layers/furniture/roadsideRelief.js';
@@ -585,6 +584,7 @@ import { streetSurfaceAt } from '../src/layers/townStyle.js';
 import { CROP_KINDS, CROP_ID_STEP, cropId, cropFromId } from '../src/layers/furniturePlacement.js';
 import {
   cutElevationAt,
+  fillElevationAt,
   cutBenchAt,
   roadCutMaskAt,
   ROAD_CUT_M,
@@ -1403,9 +1403,8 @@ test('la personnalité d’un bâtiment suit le point d’intérêt qui tombe de
   assert.equal(buildingPersonalityFor({ class: 'office', subclass: 'lawyer' }), null);
   assert.equal(buildingPersonalityFor({ class: 'school', subclass: 'school' }), null);
 
-  // Château, monument, tour : ce ne sont pas des personnalités de bâtiment —
-  // ils restent du mobilier autonome (`furnitureLayer._poiItem`).
-  assert.equal(buildingPersonalityFor({ class: 'castle', subclass: 'castle' }), null);
+  // Le château habille son empreinte ; le monument reste autonome.
+  assert.equal(buildingPersonalityFor({ class: 'castle', subclass: 'castle' }), 'castle');
   assert.equal(buildingPersonalityFor({ class: 'monument', subclass: 'monument' }), null);
   assert.equal(buildingPersonalityFor({}), null);
 });
@@ -1434,8 +1433,8 @@ test('le plafond des points d’intérêt tombe sur le lointain, pas sur le cloc
 test('l’habillage d’une personnalité ne remplace que ce qu’il nomme', () => {
   const church = personalityLookFor('church');
   assert.ok(church.spire, 'l’église porte un clocher');
-  assert.equal(church.wall, null, 'et garde les murs de son bourg');
-  assert.equal(church.shape, null, 'et la forme de toit de son bourg');
+  assert.ok(Array.isArray(church.wall));
+  assert.equal(church.shape, 'gable');
 
   const shop = personalityLookFor('shop');
   assert.ok(Array.isArray(shop.front), 'le commerce ne porte qu’une devanture');
@@ -3593,9 +3592,27 @@ test('le raccord du déblai est monotone et sans arête', () => {
   close(slopeAt(edge + ROAD_CUT_BLEND_M - 0.02), 0, 0.15, 'tangente à la fin');
 });
 
+test('le remblai relève le terrain sous la chaussée et le rend au-delà', () => {
+  const raw = 98;
+  const deck = 100;
+  const halfWidth = 3;
+  close(fillElevationAt(raw, deck, 0, halfWidth), 100, 1e-9, 'sous l’axe');
+  close(fillElevationAt(raw, deck, halfWidth + ROAD_CUT_M, halfWidth), 100, 1e-9, 'fond plat');
+  close(fillElevationAt(raw, deck, halfWidth + 9, halfWidth, 9), 100, 1e-9, 'fond plat de la maille');
+  close(fillElevationAt(raw, deck, halfWidth + ROAD_CUT_M + ROAD_CUT_BLEND_M, halfWidth), 98, 1e-9, 'terrain naturel retrouvé');
+  let previous = Infinity;
+  for (let d = 0; d <= 20; d += 0.1) {
+    const h = fillElevationAt(raw, deck, d, halfWidth);
+    assert.ok(h <= previous + 1e-9 && h >= raw - 1e-9 && h <= deck + 1e-9, `descente monotone et bornée à ${d.toFixed(1)} m`);
+    previous = h;
+  }
+  // En déblai, ce profil-ci ne touche à rien : c’est l’affaire de `cutElevationAt`.
+  close(fillElevationAt(110, 100, 0, halfWidth), 110, 1e-9, 'le remblai ne creuse pas');
+});
+
 test('le déblai ne remblaie jamais : côté aval, le terrain ne bouge pas', () => {
-  // La plate-forme domine le sol : c’est un remblai, et il se tient par un mur,
-  // pas par une bosse de terrain qui sortirait de nulle part.
+  // La plate-forme domine le sol : le remblai a son propre profil
+  // (`fillElevationAt`), posé seulement là où le réseau le désigne.
   close(cutElevationAt(95, 100, 0, 3), 95, 1e-9, 'sous la chaussée');
   close(cutElevationAt(95, 100, 4, 3), 95, 1e-9, 'au ras de la rive');
   close(cutElevationAt(100, 100, 1, 3), 100, 1e-9, 'à niveau, rien à creuser');
@@ -4337,48 +4354,6 @@ test('le mur de soutènement a du grain côté vide, et tient la rive côté cha
   assert.ok(feet.size > rows / 3, `${feet.size} pieds distincts sur ${rows} lignes`);
 });
 
-test('le talus a du grain sans quitter la rive ni remonter au-dessus de sa section', () => {
-  const { layer, context, segment, rowsInfo, buffers } = roadsideHarness();
-  const remblai = rowsInfo.map((row) => ({ ...row, drop: 2, perch: -1, uphill: 1 }));
-  const platform = new Float32Array(segment.platform.length).fill(102);
-  buildEmbankment(layer, context, { ...segment, platform }, remblai, new Set());
-
-  assert.ok(FLAT_SHADED_LINEAR_KINDS.has('embankment'), 'ombré à plat');
-  const positions = buffers.embankment.positions;
-  const cols = FURNITURE_SPECS.embankmentProfile(1).length;
-  const foot = cols - 1;
-  const rows = positions.length / 3 / cols;
-  assert.ok(rows > 0, 'un talus est bien posé');
-  const at = (r, c, k) => positions[(r * cols + c) * 3 + k];
-  const reaches = new Set();
-  for (let r = 0; r < rows; r++) {
-    close(at(r, 0, 2), segment.halfWidth, 1e-4, `arête sur la rive, ligne ${r}`);
-    close(at(r, 0, 1), 102, 1e-4, `arête au niveau de la plate-forme, ligne ${r}`);
-    // Jamais moins profond que la section : sur un remblai plat, le pied décollerait.
-    assert.ok(at(r, foot, 1) <= 100 + 1e-4, `pied de la ligne ${r}`);
-    reaches.add(at(r, foot, 2).toFixed(3));
-  }
-  assert.ok(reaches.size > rows / 3, `${reaches.size} étalements distincts sur ${rows} lignes`);
-});
-
-test('le talus suit le surplomb ligne par ligne, d’un seul pan', () => {
-  // Au pied d'une rampe d'accès, le remblai ne fait plus que quelques
-  // décimètres : une section taillée sur le plus haut débordait dans le pré.
-  const { layer, context, segment, rowsInfo, buffers } = roadsideHarness();
-  const half = Math.floor(rowsInfo.length / 2);
-  const remblai = rowsInfo.map((row, i) => ({ ...row, drop: i < half ? 0.5 : 4, perch: -1, uphill: 1 }));
-  const platform = Float32Array.from(remblai, row => 100 + row.drop);
-  buildEmbankment(layer, context, { ...segment, platform }, remblai, new Set());
-
-  assert.equal(FURNITURE_SPECS.embankmentProfile(1).length, 2, 'la rive et le pied, sans épaulement');
-  const positions = buffers.embankment.positions;
-  const rows = positions.length / 3 / 2;
-  const depth = (r) => platform[r] - positions[(r * 2 + 1) * 3 + 1];
-  const { up } = FURNITURE_SPECS.embankmentGrain;
-  assert.ok(depth(0) <= 0.5 * up[1] + 1e-4, `pied du bas de rampe : ${depth(0).toFixed(2)} m`);
-  assert.ok(depth(rows - 1) >= 4 - 1e-4, `pied du haut de rampe : ${depth(rows - 1).toFixed(2)} m`);
-});
-
 /** Une chaussée qui coupe celle du harnais en travers, en `x = 200`. */
 function crossingRoad(halfWidth = 3) {
   const path = resamplePath([{ x: 200, z: -60 }, { x: 200, z: 60 }], 5);
@@ -4396,24 +4371,6 @@ test('la place libre d’une rive s’arrête à la chaussée d’à côté', ()
   for (const side of [1, -1]) {
     close(at(200).room[side], 0, 1e-9, `en travers de l’autre chaussée, rien (côté ${side})`);
     close(at(100).room[side], RELIEF_ROOM_REACH_M, 1e-9, `loin d’elle, toute la portée (côté ${side})`);
-  }
-});
-
-test('un talus ne se pose pas sur la chaussée qu’il croise', () => {
-  const { layer, context, segment, rowsInfo, buffers } = roadsideHarness();
-  const other = crossingRoad();
-  layer._roadIndex = new RoadIndex([segment, other], { margin: 0 });
-  layer._areas = null;
-  const remblai = rowsInfo.map((row) => ({ ...row, drop: 3, perch: 3, uphill: 1 }));
-  measureRoom(layer, segment, remblai);
-  const platform = new Float32Array(segment.platform.length).fill(103);
-  buildEmbankment(layer, context, { ...segment, platform }, remblai, new Set());
-
-  const positions = buffers.embankment.positions;
-  assert.ok(positions.length > 0, 'des talus de part et d’autre du croisement');
-  for (let i = 0; i < positions.length; i += 3) {
-    const onOther = Math.abs(positions[i] - 200) < other.halfWidth - 1e-3 && Math.abs(positions[i + 2]) > segment.halfWidth + 1e-3;
-    assert.ok(!onOther, `sommet de talus sur l’autre chaussée : x=${positions[i].toFixed(2)} z=${positions[i + 2].toFixed(2)}`);
   }
 });
 
@@ -6320,79 +6277,6 @@ test('le rail de voie ferrée est symétrique et tient dans le ballast', () => {
   for (let i = 0; i < sorted.length; i++) {
     close(sorted[i], -sorted[sorted.length - 1 - i], 1e-9, `symétrie du sommet ${i}`);
   }
-});
-
-test('le talus de remblai s’approfondit avec le surplomb', () => {
-  const shallow = FURNITURE_SPECS.embankmentProfile(0.5);
-  const deep = FURNITURE_SPECS.embankmentProfile(4);
-  const depthOf = (p) => Math.abs(Math.min(...p.map((v) => v.up)));
-  const reachOf = (p) => Math.abs(Math.min(...p.map((v) => v.across)));
-
-  assert.ok(depthOf(deep) > depthOf(shallow), 'plus le vide est grand, plus le talus descend');
-  assert.ok(reachOf(deep) > reachOf(shallow), 'et plus il s’étale');
-  // Même sans surplomb mesurable, le talus garde une amorce : sans elle, la
-  // rive de la chaussée serait une arête franche en l’air.
-  assert.ok(depthOf(FURNITURE_SPECS.embankmentProfile(0)) > 0);
-
-  // Le talus descend du côté où il est posé. Il descendait toujours vers la
-  // droite : sur la rive gauche, il repartait par-dessus la chaussée — un
-  // versant sur deux, selon le côté où penche le terrain.
-  const droite = FURNITURE_SPECS.embankmentProfile(2, -1);
-  const gauche = FURNITURE_SPECS.embankmentProfile(2, 1);
-  assert.ok(Math.min(...droite.map((v) => v.across)) < 0, 'à droite de la marche');
-  assert.ok(Math.max(...gauche.map((v) => v.across)) > 0, 'à gauche de la marche');
-  // Miroir exact : c'est le même talus, du côté opposé.
-  gauche.forEach((v, i) => close(v.across, -droite[i].across, 1e-9, `sommet ${i}`));
-  gauche.forEach((v, i) => close(v.up, droite[i].up, 1e-9, `hauteur du sommet ${i}`));
-  // Sans rien préciser, c'est le talus d'avant, au bit près.
-  assert.deepEqual(FURNITURE_SPECS.embankmentProfile(2), droite);
-});
-
-test('une route en remblai porte un talus de chaque côté, pas d’un seul', () => {
-  // Une route de versant est encaissée en amont et portée en aval : un talus
-  // d'un seul côté suffit. Une plate-forme qui domine le terrain **des deux
-  // côtés** est autre chose — un remblai en pleine terre —, et c'est
-  // exactement ce qu'est la rampe d'accès d'un pont, que la travée relève sur
-  // trente mètres. Sans le second talus, la route montait vers son ouvrage en
-  // ruban volant, l'air visible dessous.
-  const { layer, context, segment, rowsInfo, buffers } = roadsideHarness();
-  // Le terrain est plat, la plate-forme relevée de deux mètres : les deux
-  // rives surplombent d'autant.
-  const remblai = rowsInfo.map((row) => ({ ...row, drop: 2, perch: 2, uphill: 1 }));
-  const platform = new Float32Array(segment.platform.length).fill(102);
-
-  buildEmbankment(layer, context, { ...segment, platform }, remblai, new Set());
-
-  const zs = [];
-  for (let i = 2; i < buffers.embankment.positions.length; i += 3) {
-    zs.push(buffers.embankment.positions[i]);
-  }
-  assert.ok(zs.length > 0, 'un talus est bien posé');
-  assert.ok(Math.max(...zs) > segment.halfWidth, 'une rive');
-  assert.ok(Math.min(...zs) < -segment.halfWidth, 'et l’autre');
-  // Et chacun s'écarte de la chaussée : aucun sommet ne revient dessus.
-  for (const z of zs) {
-    assert.ok(Math.abs(z) >= segment.halfWidth - 1e-6, `sommet de talus à ${z.toFixed(2)}`);
-  }
-
-  // Sur un vrai versant — le terrain domine en amont —, un seul talus.
-  const versant = rowsInfo.map((row) => ({ ...row, drop: 2, perch: -1.5, uphill: 1 }));
-  const seul = createProfileBuffer();
-  buildEmbankment(
-    layer,
-    { ...context, buffers: { ...buffers, embankment: seul } },
-    { ...segment, platform },
-    versant,
-    new Set()
-  );
-  const cotes = [];
-  for (let i = 2; i < seul.positions.length; i += 3) cotes.push(seul.positions[i]);
-  assert.ok(cotes.length > 0, 'le talus aval est bien là');
-  // Une seule rive : tous les sommets du même côté de l'axe.
-  assert.ok(
-    cotes.every((z) => z >= segment.halfWidth - 1e-6),
-    `et lui seul : cotes de ${Math.min(...cotes).toFixed(2)} à ${Math.max(...cotes).toFixed(2)}`
-  );
 });
 
 /** Le seul bout de `THREE` dont `createFurnitureRotorMaterial` a besoin. */
@@ -9705,8 +9589,8 @@ test('un parapet demande un vide, pas seulement une pente', () => {
 
   // Versant franc et vraie hauteur : acier sur les grands axes.
   assert.equal(guardrailStyleFor({ profile: 'major', slope: 0.3, curvature: 0, drop: 3 }), 'steel');
-  // Virage et petite route : bois.
-  assert.equal(guardrailStyleFor({ profile: 'lane', slope: 0, curvature: 0.03, drop: 1.5 }), 'wood');
+  // Virage et petite route en campagne : bois.
+  assert.equal(guardrailStyleFor({ profile: 'lane', slope: 0, curvature: 0.03, drop: 1.5, rural: true }), 'wood');
   // Une petite route au-dessus d'un vrai à-pic reprend de l'acier.
   assert.equal(guardrailStyleFor({ profile: 'minor', slope: 0.3, curvature: 0, drop: 4 }), 'steel');
   // Un sentier n'a jamais de parapet.

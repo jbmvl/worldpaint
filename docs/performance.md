@@ -29,11 +29,10 @@ lors des retraits sont transférés au GPU. Les cultures recopient leurs
 cellules communes. Les caches sont invalidés par un changement de repère,
 de surface ou d’emprise routière.
 
-Le partage des largeurs de chaussée (`roadWidths`) consulte les surfaces de
-carrefour de tout le réseau lu, pas de la seule portée. Elles ne dépendent
-pas de l'observateur : `WidthAreasMemo` les garde d'une reconstruction à
-l'autre tant que les lignes lues sont les mêmes, et elles ne sont refaites
-qu'à l'arrivée de nouvelles tuiles.
+Le partage des largeurs de chaussée (`roadWidths`) écarte les abords d'un
+carrefour par un disque autour de son nœud, pas par sa surface dessinée : il
+ne construit aucune surface de carrefour sur le réseau lu, et son résultat ne
+dépend ni de l'observateur ni des carrefours voisins.
 
 Mesure locale de référence du banc : médiane chaude autour de 41 ms avant
 cache, autour de 2 ms après, sans changement des 73 728 triangles. Les
@@ -129,3 +128,15 @@ image. Sur le banc `demo/lab/far.html`, la lecture des 58 081 altitudes prend
 Il charge une à quatre tuiles de MNT au zoom 11, et la bulle une marge de MNT
 autour de son bloc — jusqu'à cinq tuiles de plus au zoom 14 — pour que les
 normales de son bord, que le brouillard ne cache plus, soient justes.
+
+Le banc `demo/lab/performance.html?lieu=lyon` détaille les étapes des routes,
+du bâti et des familles de mobilier sur les tuiles enregistrées du lieu.
+`?lieu=lyon&budget=0` emploie les rayons propres aux couches sans le budget
+de murs. `node scripts/benchmark-place.mjs <dossier> lyon courant` conserve
+les mesures brutes et les vues prises après chaque reconstruction ; `etendu`
+remplace `courant` pour le second scénario. Playwright est requis par le
+script, avec `PLAYWRIGHT_MODULE` et `CHROMIUM_PATH` pour une installation
+externe ; `SOFTWARE_RENDER=0` emploie le rendu matériel. Le relevé distingue
+CPU, pauses, buffers et compteurs de dessin sans mesurer le temps GPU.
+Voir [le rapport lyonnais](../reports/lyon/rapport.md) pour les paramètres,
+les sous-totaux et les limites de cette mesure.

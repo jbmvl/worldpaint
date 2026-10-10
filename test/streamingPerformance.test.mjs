@@ -192,3 +192,12 @@ test('le terrain finit avant les plantations et les arbres sont repris après te
   assert.ok(calls.lastIndexOf('terrain') < calls.indexOf('bâti'));
   assert.ok(calls.lastIndexOf('terrain') < calls.indexOf('replantation'));
 });
+
+test('le profilage des pauses mesure l’attente seule, sans le travail CPU', async () => {
+  let now=0;
+  const waits=[];
+  const budget=new GenerationBudget({milliseconds:8,now:()=>now,pause:async()=>{now+=20;},onPause:ms=>waits.push(ms)});
+  now=7;await budget.checkpoint();assert.deepEqual(waits,[]);
+  now=9;await budget.checkpoint();assert.deepEqual(waits,[20]);
+  now=38;await budget.checkpoint();assert.deepEqual(waits,[20,20]);
+});

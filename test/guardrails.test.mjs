@@ -30,8 +30,8 @@ test('les routes protègent les courbes sans exiger de ravin, les dessertes et p
   }
   for (const profile of ['lane', 'track']) {
     assert.equal(guardrailStyleFor({ profile, curvature: .02 }), null);
-    assert.equal(guardrailStyleFor({ profile, curvature: .02, drop: 1 }), 'wood');
-    assert.equal(guardrailStyleFor({ profile, slope: .3, drop: 2 }), 'wood');
+    assert.equal(guardrailStyleFor({ profile, curvature: .02, drop: 1 }), 'steel');
+    assert.equal(guardrailStyleFor({ profile, slope: .3, drop: 2 }), 'steel');
   }
   assert.equal(guardrailStyleFor({ profile: 'path', curvature: .1, slope: 1, drop: 10 }), null);
 });
@@ -84,7 +84,7 @@ test('la construction du relief laisse les petites routes recevoir leur garde-co
   for (const profile of ['lane', 'track']) {
     const b = banc({ profile });
     buildRoadsideRelief(b.layer, b.context, b.segment, b.rows.map(p => ({ ...p, slope: .3, drop: 2, perch: -1 })));
-    assert.ok(b.context.buffers.woodRail.positions.length > 0, profile);
+    assert.ok(b.context.buffers.guardrailBeam.positions.length > 0, profile);
     assert.ok(b.context.placements.length > 0, profile);
   }
 });
@@ -100,4 +100,37 @@ test('hors des carrefours, la place libre ne devient pas un îlot fermé', () =>
   }
   buildParapets(b.layer, b.context, b.segment, b.rows);
   assert.ok(b.context.buffers.guardrailBeam.positions.length > 0);
+});
+
+
+test('les routes ordinaires portent de l’acier quel que soit le surplomb ou le contexte', () => {
+  for (const profile of ['express', 'major', 'minor']) {
+    for (const rural of [false, true]) for (const mountain of [false, true]) {
+      for (const drop of [0, 1, 4]) {
+        assert.equal(guardrailStyleFor({ profile, curvature: .03, drop, rural, mountain }), 'steel');
+      }
+    }
+  }
+});
+
+test('le bois exige une petite route et un contexte rural ou montagnard', () => {
+  for (const profile of ['lane', 'track']) {
+    const danger = { profile, slope: .3, drop: 2 };
+    assert.equal(guardrailStyleFor(danger), 'steel');
+    assert.equal(guardrailStyleFor({ ...danger, rural: true }), 'wood');
+    assert.equal(guardrailStyleFor({ ...danger, mountain: true }), 'wood');
+    assert.equal(guardrailStyleFor({ ...danger, climate: 'alpine' }), 'wood');
+  }
+});
+
+test('la géométrie et les poteaux suivent le matériau choisi à chaque endroit', () => {
+  for (const [rural, matrix, bois] of [[false, 'openfield_cropland', false], [true, 'openfield_cropland', true], [false, 'alpine_pasture', true]]) {
+    const b = banc({ profile: 'lane' });
+    b.layer.region = { matrix };
+    buildParapets(b.layer, b.context, b.segment, b.rows.map(p => ({ ...p, rural, slope: .3, drop: 2, perch: -1 })));
+    assert.equal(b.context.buffers.woodRail.positions.length > 0, bois);
+    assert.equal(b.context.buffers.guardrailBeam.positions.length > 0, !bois);
+    assert.ok(b.context.placements.length > 0);
+    assert.ok(b.context.placements.every(p => p.kind === (bois ? 'fencePostWood' : 'guardrailPost')));
+  }
 });

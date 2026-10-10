@@ -715,3 +715,48 @@ class MinHeap {
     return top;
   }
 }
+
+/**
+ * Marge de l'index des tabliers (`RoadNetwork.deckIndex`), en mètres : le
+ * rayon de la plus large des houppes qu'on lui présente.
+ */
+export const DECK_SHADOW_MARGIN_M = 6;
+
+/**
+ * Ce qu'un tablier occupe sous la plate-forme, en mètres : la dalle la plus
+ * épaisse du thème et un peu d'air. Rien ne monte plus haut sous un pont.
+ */
+export const DECK_UNDERSIDE_M = 1.6;
+
+/** Vrai si l'arête `row → row + 1` est portée : pont déclaré, ou chaussée suspendue (`findRoadSupports`). */
+export function isDeckRow(segment, row) {
+  const { works, supports } = segment;
+  return (
+    (works?.[row] === WORK_BRIDGE && works[row + 1] === WORK_BRIDGE) ||
+    !!(supports?.[row] && supports[row + 1])
+  );
+}
+
+/**
+ * Altitude sous laquelle doit tenir ce qui se dresse en `(x, z)` : le dessous
+ * du tablier le plus bas qui le surplombe, ou `Infinity` à ciel ouvert.
+ *
+ * Le sol sous un ouvrage reste au paysage (voir `RoadIndex`) — c'est sa
+ * hauteur qui ne l'est plus : un saule de rive ne traverse pas le pont.
+ *
+ * @param {Object|null} index `RoadNetwork.deckIndex`, ou `null`.
+ * @param {number} x Mètres locaux.
+ * @param {number} z
+ * @param {number} [margin] Débord autour du point (le rayon d'une houppe).
+ * @returns {number}
+ */
+export function deckCeilingAt(index, x, z, margin = 0) {
+  if (!index) return Infinity;
+  const count = index.collect(x, z, margin);
+  let lowest = Infinity;
+  for (let i = 0; i < count; i++) {
+    const deck = index.found.decks[i];
+    if (deck < lowest) lowest = deck;
+  }
+  return lowest - DECK_UNDERSIDE_M;
+}

@@ -24,7 +24,7 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   chemin et sentier sur un versant ;
   `roadsLab.set({ scene, yawDeg, pitchDeg, distance, stone })` et `roadsLab.info()`
   (cotes des bouches), ou `node scripts/roads-shot.mjs <dossier> '<réglages
-  JSON>'`. Le mobilier de rase campagne y est posé (talus, murs, glissières,
+  JSON>'`. Le mobilier de rase campagne y est posé (murs, glissières,
   alignements), pas le bâti ni les parcelles.
 - `demo/lab/place.html?lieu=<lieu>` — un lieu réel rejoué par `createWorld`
   depuis ses tuiles enregistrées dans `demo/lab/places/<lieu>/` ;
