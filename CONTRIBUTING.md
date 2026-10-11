@@ -169,11 +169,13 @@ Breaking one of these needs a very good reason, stated in the PR description.
   is **not horizontal**, or a crossroads on a slope steps against every
   ribbon: its interior vertices are the carriageways' own axes. Render,
   height reads and the terrain cut (`TerrainBubble.setRoadCut`) share one
-  Delaunay triangulation. Le terrassement conserve ses cotes propres lorsque
-  `roadProfile` conserve les cotes des chaussées au sol, même lorsque la
-  pente cible est impossible, et ne lisse que les ponts sous les contraintes
-  de leurs accès. Les surfaces restent identiques en plan et un carrefour
-  réellement suspendu reçoit une sous-face portée. Les drapeaux `supports` ne sont pas des niveaux ni des `brunnel` et
+  Delaunay triangulation, and one set of heights: a row has a single height,
+  graded on the whole graph within the consented earthwork
+  (`roadProfile.gradeRoadNetwork`), so a shared node needs no stitching and
+  lanes running alongside settle on a common plane. `roadProfile` conserve
+  ensuite les cotes des chaussées au sol, même lorsque la pente cible est
+  impossible, et ne lisse que les ponts sous les contraintes de leurs accès.
+  Un carrefour réellement suspendu reçoit une sous-face portée. Les drapeaux `supports` ne sont pas des niveaux ni des `brunnel` et
   ne modifient pas le terrain.
 
 - **A junction interrupts a ribbon, not a road.** Corridor, terrain cut,

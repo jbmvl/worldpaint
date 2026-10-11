@@ -113,81 +113,93 @@ function seCroisent(a, b, c, d) {
  * @param {{x:number,z:number,radius:number}|null} [near] Portée des chaussées bâties.
  */
 export function fitParallelRoadWidths(chains, junctions = [], near = null) {
-  const segments = chains.map((chain) => ({ ...chain, path: chain.works?.some(Boolean) ? [] : chain.points }));
+  const portee = near ? chainesUtiles(chains, near) : null;
+  // Une chaîne hors parcours ne rencontre aucune chaîne parcourue : elle reste hors de l'index.
+  const segments = chains.map((chain, i) => ({
+    ...chain,
+    path: (portee && !portee.parcourues[i]) || chain.works?.some(Boolean) ? [] : chain.points,
+  }));
   const index = new RoadIndex(segments, { margin: 0 });
   const facteurs = chains.map(() => 1);
   const enCarrefour = disquesDeCarrefour(junctions);
   const contraintes = [];
   const ambigues = new Set();
-  const clePaire = (i, j) => `${Math.min(i, j)}:${Math.max(i, j)}`;
-  const sommets = chains.map((chain) => new Set(chain.points.map(clePoint)));
+  const clePaire = (i, j) => Math.min(i, j) * chains.length + Math.max(i, j);
+  const cles = chains.map((chain) => chain.points.map(clePoint));
+  const sommets = cles.map((liste) => new Set(liste));
   const voisins = new Map();
-  const portee = near ? chainesUtiles(chains, near) : null;
   const raccordes = (i, j) => {
     const cle = clePaire(i, j);
     if (!voisins.has(cle)) {
       const a = chains[i].points, b = chains[j].points;
-      const rencontre = a.some((p, r) => sommets[j].has(clePoint(p)) ||
+      const rencontre = a.some((p, r) => sommets[j].has(cles[i][r]) ||
         (r + 1 < a.length && b.some((q, s) => s + 1 < b.length && seCroisent(p, a[r + 1], q, b[s + 1]))));
       voisins.set(cle, rencontre);
     }
     return voisins.get(cle);
   };
 
-  for (let i = 0; i < segments.length; i++) {
+  // Une seule fermeture et une seule table pour tous les échantillons : il y
+  // en a un tous les cinq mètres de réseau lu, à chaque reconstruction.
+  let i = 0, r = 0, x = 0, z = 0, tx = 0, tz = 0, pas = 0, h = 0, route = null;
+  const rencontres = new Map();
+  const visiter = (autre, s, j) => {
+    if (j === i || (portee && !portee.utiles[i] && !portee.utiles[j]) || raccordes(i, j)) return;
+    if (autre.works?.[s] || autre.works?.[s + 1]) return;
+    if ((route.levels?.[r] ?? 0) !== (autre.levels?.[s] ?? 0)) return;
+    const c = autre.path[s], d = autre.path[s + 1];
+    const taille = Math.hypot(d.x - c.x, d.z - c.z);
+    if (!(taille > 0)) return;
+    const ux = (d.x - c.x) / taille, uz = (d.z - c.z) / taille;
+    const cos = Math.abs(tx * ux + tz * uz);
+    if (cos < BUNDLE_PARALLEL_COS) return;
+    const projection = ((x - c.x) * ux + (z - c.z) * uz) / taille;
+    if (projection < 0 || projection > 1) return;
+    const lateral = (x - c.x) * uz - (z - c.z) * ux;
+    // La borne couvre toute la cellule, pas seulement son milieu.
+    const ecart = Math.abs(lateral) - Math.abs(tx * uz - tz * ux) * pas / 2;
+    // Une paire ambiguë invalide aussi ses plages reconnues plus tôt.
+    if (ecart < Math.max(h, autre.halfWidth)) {
+      ambigues.add(clePaire(i, j));
+      return;
+    }
+    const niveau = route.levels?.[r] ?? 0;
+    const qx = c.x + projection * (d.x - c.x);
+    const qz = c.z + projection * (d.z - c.z);
+    if (enCarrefour(x, z, niveau) || enCarrefour(qx, qz, niveau)) return;
+    const facteur = ecart * cos / (h + autre.halfWidth);
+    if (!(facteur > 0 && facteur < 1)) return;
+    const precedent = rencontres.get(j);
+    if (!precedent || facteur < precedent.facteur) {
+      rencontres.set(j, { facteur, ecart, cote: Math.sign(lateral) });
+    }
+  };
+  const terminer = (j, plage) => {
+    if (plage.longueur < BUNDLE_MIN_LENGTH_M) return;
+    if (plage.ecartMin < STABILITE_ECART * plage.ecartMax) return;
+    contraintes.push({ i, j, facteur: plage.facteur });
+  };
+
+  for (i = 0; i < segments.length; i++) {
     if (portee && !portee.parcourues[i]) continue;
-    const route = segments[i];
+    route = segments[i];
+    h = route.halfWidth;
     let actifs = new Map();
-    const terminer = (j, plage) => {
-      if (plage.longueur < BUNDLE_MIN_LENGTH_M) return;
-      if (plage.ecartMin < STABILITE_ECART * plage.ecartMax) return;
-      contraintes.push({ i, j, facteur: plage.facteur });
-    };
-    for (let r = 0; r < route.path.length - 1; r++) {
+    for (r = 0; r < route.path.length - 1; r++) {
       const a = route.path[r], b = route.path[r + 1];
       const longueur = Math.hypot(b.x - a.x, b.z - a.z);
       if (!(longueur > 0)) continue;
-      const tx = (b.x - a.x) / longueur, tz = (b.z - a.z) / longueur;
+      tx = (b.x - a.x) / longueur;
+      tz = (b.z - a.z) / longueur;
       const nombre = Math.ceil(longueur / PAS_M);
-      const pas = longueur / nombre;
+      pas = longueur / nombre;
+      const ouvrage = route.works?.[r] || route.works?.[r + 1];
       for (let k = 0; k < nombre; k++) {
-        const x = a.x + tx * (k + 0.5) * pas;
-        const z = a.z + tz * (k + 0.5) * pas;
-        const rencontres = new Map();
-        if (!route.works?.[r] && !route.works?.[r + 1]) {
-          const h = route.halfWidth;
-          index.forEachNear(x - h, z - h, x + h, z + h, (autre, s, j) => {
-            if (j === i || (portee && !portee.utiles[i] && !portee.utiles[j]) || raccordes(i, j)) return;
-            if (autre.works?.[s] || autre.works?.[s + 1]) return;
-            if ((route.levels?.[r] ?? 0) !== (autre.levels?.[s] ?? 0)) return;
-            const c = autre.path[s], d = autre.path[s + 1];
-            const taille = Math.hypot(d.x - c.x, d.z - c.z);
-            if (!(taille > 0)) return;
-            const ux = (d.x - c.x) / taille, uz = (d.z - c.z) / taille;
-            const cos = Math.abs(tx * ux + tz * uz);
-            if (cos < BUNDLE_PARALLEL_COS) return;
-            const projection = ((x - c.x) * ux + (z - c.z) * uz) / taille;
-            if (projection < 0 || projection > 1) return;
-            const lateral = (x - c.x) * uz - (z - c.z) * ux;
-            // La borne couvre toute la cellule, pas seulement son milieu.
-            const ecart = Math.abs(lateral) - Math.abs(tx * uz - tz * ux) * pas / 2;
-            // Une paire ambiguë invalide aussi ses plages reconnues plus tôt.
-            if (ecart < Math.max(h, autre.halfWidth)) {
-              ambigues.add(clePaire(i, j));
-              return;
-            }
-            const niveau = route.levels?.[r] ?? 0;
-            const qx = c.x + projection * (d.x - c.x);
-            const qz = c.z + projection * (d.z - c.z);
-            if (enCarrefour(x, z, niveau) || enCarrefour(qx, qz, niveau)) return;
-            const facteur = ecart * cos / (h + autre.halfWidth);
-            if (!(facteur > 0 && facteur < 1)) return;
-            const precedent = rencontres.get(j);
-            if (!precedent || facteur < precedent.facteur) {
-              rencontres.set(j, { facteur, ecart, cote: Math.sign(lateral) });
-            }
-          });
-        }
+        x = a.x + tx * (k + 0.5) * pas;
+        z = a.z + tz * (k + 0.5) * pas;
+        rencontres.clear();
+        if (!ouvrage) index.forEachNear(x - h, z - h, x + h, z + h, visiter);
+        if (rencontres.size === 0 && actifs.size === 0) continue;
         const suivants = new Map();
         for (const [j, rencontre] of rencontres) {
           const precedent = actifs.get(j);
@@ -215,14 +227,17 @@ export function fitParallelRoadWidths(chains, junctions = [], near = null) {
   }
   for (let i = 0; i < chains.length; i++) chains[i].halfWidth *= facteurs[i];
   // Les bouches doivent lire la même largeur que la chaîne qui les alimente.
+  const reduites = [];
+  for (let i = 0; i < chains.length; i++) if (facteurs[i] !== 1) reduites.push(i);
   for (const junction of junctions) {
+    const cle = reduites.length ? clePoint(junction) : '';
     for (const branche of junction.branches) {
       const p = branche.path?.[1];
       if (!p) continue;
       let largeur = branche.halfWidth;
-      for (let i = 0; i < chains.length; i++) {
-        if (facteurs[i] === 1 || chains[i].profile !== branche.profile) continue;
-        if (!sommets[i].has(clePoint(junction))) continue;
+      for (const i of reduites) {
+        if (chains[i].profile !== branche.profile) continue;
+        if (!sommets[i].has(cle)) continue;
         const points = chains[i].points;
         if (points.some((a, r) => r + 1 < points.length &&
           distanceToSegment(p.x, p.z, a.x, a.z, points[r + 1].x, points[r + 1].z).distance < 1e-5)) {

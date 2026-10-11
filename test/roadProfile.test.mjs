@@ -140,11 +140,13 @@ test('le réseau conserve les cotes terrassées sans fabriquer de viaduc', () =>
   const materials={byProfile:{minor:new THREE.MeshBasicMaterial()},junctions:{}};
   const roads=new RoadNetwork({THREE,scene:new THREE.Scene(),bubble,materials});
   roads.rebuild(source,[],{x:0,z:0});
-  const s=roads.roadSegments[0], original=terrain.index.segments[0];
-  assert.notEqual(s.platform,original.platform);assert.deepEqual(s.platform,original.platform);
-  assert.ok(roads.profileConstraints.constrained > 0);assert.ok(grade(original)>.3);
-  assert.equal(terrain.earthworks.supports.segments[0],original);
-  const before=original.platform.slice();s.platform.fill(99);assert.deepEqual(original.platform,before);
+  const s=roads.roadSegments[0];
+  // Le terrain et l'affichage lisent les mêmes tronçons et les mêmes surfaces : une seule cote par ligne.
+  assert.equal(terrain.index.segments[0],s);assert.equal(terrain.areas,roads.junctionAreas);
+  assert.equal(terrain.earthworks.supports.segments[0],s);
+  assert.deepEqual(s.platform,s.terrainPlatform);
+  assert.ok(roads.profileConstraints.constrained > 0);assert.ok(grade(s)>.3);
+  assert.ok(s.supports.every(v=>v===0));
   roads.dispose();
 });
 
@@ -163,6 +165,15 @@ test('le déplacement du disque de rendu ne relève pas une rue déjà visible',
     assert.ok(Math.abs(read(a)-read(b))<.0001);
   }
   a.dispose();b.dispose();
+});
+
+test('un carrefour posé sur un versant n’est pas porté', () => {
+  const versant=(x,z)=>30+Math.max(0,z)*1.5;
+  const network=networkOf([{points:[{x:-60,z:0},{x:0,z:0},{x:60,z:0}],profile:'minor',halfWidth:3},
+    {points:[{x:0,z:0},{x:0,z:60}],profile:'minor',halfWidth:3}],{deck:versant});
+  findRoadSupports(network.segments,versant,network.areas);
+  assert.equal(network.areas.areas[0].supported,false);
+  assert.ok(network.segments.every(s=>s.supports.every(v=>v===0)));
 });
 
 test('un carrefour suspendu reçoit une dalle commune avec ses bouches ouvertes', () => {

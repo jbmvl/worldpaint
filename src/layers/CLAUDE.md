@@ -11,7 +11,8 @@ son état.
 | Fichier | Ce qu'il fait |
 | --- | --- |
 | `roadGraph.js` | recoud les chaussées, arrondit leurs brisures, relève les carrefours (un carrefour est un **nœud**, pas une image) |
-| `roadProfile.js` | conserve les chaussées au sol, lisse les ponts sous les contraintes de leurs accès, publie les portions suspendues sans modifier le terrassement, et les lignes dont le terrain porte le remblai (`earthFill`) |
+| `roadProfile.js` | le profil en long : aplanit le réseau au sol comme un seul graphe (`gradeRoadNetwork` — un nœud partagé n'a qu'une cote, les voies qui se longent un plan commun), lisse les ponts sous les contraintes de leurs accès, publie les portions suspendues et les lignes dont le terrain porte le remblai (`earthFill`) |
+| `roadGraphMemo.js` | le graphe d'un jeu de tuiles gardé d'une reconstruction à la suivante : seul ce qui dépend de l'observateur se recalcule |
 | `roadNetwork.js` | les rubans de chaussée, leur plate-forme, l'index publié |
 | `roadJunctions.js` | la surface d'un carrefour : les bandes de ses bras, leurs arrondis et joints, réunis ; ses bouches, la découpe des rubans, ses cotes, qui cède le passage |
 | `junctionPolygons.js` | géométrie plane des surfaces : union d'anneaux (îlots compris) et triangulation de Delaunay |
@@ -27,6 +28,7 @@ son état.
 | `buildingLayer.js`, `buildingInterpretation.js`, `roofGeometry.js`, `buildingCharacterGeometry.js` | le bâti, la reconnaissance des murailles, les toitures, les baies religieuses et les tours de château |
 | `streetLayer.js`, `streetMasonry.js` | bordures, caniveaux et joints des rues et des carrefours |
 | `gardenLayer.js` | clôtures et buissons de maison |
+| `facetBuffers.js` | les tampons des maillages fusionnés à facettes (bâti, fenêtres, jardins, voirie de rue) : accumulés en tableaux typés, normale sur un octet et couleur sur seize bits, pans indexés, copie côté page rendue après l'envoi au GPU — donc **illisibles ensuite** |
 | `vegetationLayer.js`, `groundCover.js`, `cropLayer.js` | arbres, herbe, cultures |
 | `vergeStrips.js` | la bande entre une chaussée et sa haie de bas-côté : publiée par le mobilier, le champ n'y pousse pas |
 | `furnitureLayer.js` + `furniture/` | tout le mobilier — voir ci-dessous |

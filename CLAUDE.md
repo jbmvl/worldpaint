@@ -34,6 +34,9 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   `await placeLab.walk({ toX, step })`, ou `node scripts/place-walk.mjs
   '<réglages JSON>' <lieu>`, fait avancer l'observateur et mesure à chaque pas
   ce qui se repeint à moins de 500 m de lui (pixels, couches) et la pire tâche.
+  `placeLab.roads()`, ou `node scripts/roads-audit.mjs [lieu ...]` (Chrome sans
+  tête, aucune dépendance), mesure le réseau du lieu : pentes, marches,
+  terrassement, bouches, chaussées superposées, empreinte.
   Un lieu
   s'enregistre, réseau ouvert, par `node scripts/capture-place.mjs <lieu> <lng>
   <lat>` ; sans ses tuiles vectorielles, il se rejoue en relief nu.

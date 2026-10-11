@@ -1,3 +1,4 @@
+import { RoadGraphMemo } from './roadGraphMemo.js';
 import { collectTunnelBuildings, resolveTunnelProfiles } from './transportTunnels.js';
 import { finishGeneration } from '../core/generationSteps.js';
 import { DECOR_STEP_M, reachedRadius } from '../core/decorReach.js';
@@ -29,7 +30,7 @@ import { DECOR_STEP_M, reachedRadius } from '../core/decorReach.js';
  *
  *   - la plate-forme d'une travée est tendue entre ses appuis
  *     (`levelWorkSpans`) au lieu d'épouser le fond de vallée. Elle passe après
- *     l'aplanissement du profil en long (`flattenGrade`) et non avant : les
+ *     l'aplanissement du profil en long (`gradeRoadNetwork`) et non avant : les
  *     appuis d'un pont sont la route telle qu'elle sera vraiment, terrassement
  *     compris. C'est tout ce qu'il faut pour que les deux systèmes s'entendent
  *     — le terrassier tend la pente dans la bande qu'un ouvrage rattrape, le
@@ -82,13 +83,13 @@ import { DECOR_STEP_M, reachedRadius } from '../core/decorReach.js';
  * une contre-allée de campagne est un objet du paysage.
  */
 
-import { smoothRoadProfiles, findRoadSupports, findEarthFills } from './roadProfile.js';
+import { gradeRoadNetwork, smoothRoadProfiles, findRoadSupports, findEarthFills } from './roadProfile.js';
 import { resolveTransportCrossings } from './transportCrossings.js';
 import { TransportEarthworks } from '../terrain/transportEarthworks.js';
 import { cutElevationAt, fillElevationAt } from '../terrain/roadCut.js';
 import { RoadContinuity } from './roadContinuity.js';
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
-import { absorbParallelLines, levelBundlePlatforms } from './roadBundles.js';
+import { absorbParallelLines, facingRows } from './roadBundles.js';
 import { fitParallelRoadWidths } from './roadWidths.js';
 import {
   mergeRoadLines,
@@ -148,7 +149,6 @@ import {
   toColoredGeometry,
   pathFrames,
   levelRow,
-  flattenGrade,
 } from './ribbonGeometry.js';
 import { srgb } from '../core/color.js';
 import {
@@ -412,7 +412,7 @@ export function unpavedRun(segment, run, continued) {
 }
 
 /**
- * Terrassement consenti pour aplanir le profil en long (`flattenGrade`), en
+ * Terrassement consenti pour aplanir le profil en long (`gradeRoadNetwork`), en
  * mètres : ce dont la plate-forme s'autorise à s'écarter du terrain dressé
  * section par section.
  *
@@ -1052,7 +1052,7 @@ export function platformPositionAt(roads, x, z, ahead = null, margin = ROAD_INDE
  * Extrait les tronçons de chaussée d'un jeu de tuiles, ré-échantillonnés et
  * dressés de niveau. Contrat entre la chaussée et son mobilier : les deux ont
  * besoin exactement des mêmes tronçons. `platform` porte l'altitude de
- * plate-forme, déjà aplanie en long (`flattenGrade`) puis tendue sur les
+ * plate-forme, déjà aplanie en long (`gradeRoadNetwork`) puis tendue sur les
  * travées (`levelWorkSpans`) — c'est elle, et non le terrain, que suivent la
  * falaise du déblai, le mur de soutènement et le tablier d'un pont.
  * `anchor`/`startDistance` se comptent depuis le dernier nœud d'ancrage, pas
@@ -1096,23 +1096,26 @@ export function* collectRoadSegmentsSteps(
   sampleElevation,
   radius = ROAD_RADIUS_M,
   roads = defaultTheme.roads,
-  { floorAt = null, urban = null, continuity = null, railwaySegments = [], bench = 0, tunnelTheme = defaultTheme } = {}
+  { floorAt = null, urban = null, continuity = null, railwaySegments = [], bench = 0, tunnelTheme = defaultTheme, memo = new RoadGraphMemo() } = {}
 ) {
   const out = [];
+  const bands = new Map();
   let anyWorks = false; // vrai dès qu'un tronçon porte un ouvrage
-  let lines = collectRoadLines(source, tiles, frame, roads, { urban });
-  // L'absorption se pose ici, sur les lignes, et pas plus tard : ce qui n'est
-  // pas dessiné ne doit pas entrer dans le graphe (voir `roadBundles`). Elle
-  // n'a lieu qu'en ville — un boulevard relevé en six voies est un fait
-  // urbain, une contre-allée de campagne est un objet du paysage.
-  if (urban?.any) {
-    lines = absorbParallelLines(lines, {
-      order: ROAD_PROFILE_ORDER,
-      where: (x, z) => urban.covers(x, z),
-    });
-  }
-  yield;
-  const { chains, junctions } = mergeRoadLines(lines);
+  const read = [source, tiles, frame, roads, urban];
+  const { chains, junctions } = memo.graph(read, () => {
+    let lines = collectRoadLines(source, tiles, frame, roads, { urban });
+    // L'absorption se pose ici, sur les lignes, et pas plus tard : ce qui n'est
+    // pas dessiné ne doit pas entrer dans le graphe (voir `roadBundles`). Elle
+    // n'a lieu qu'en ville — un boulevard relevé en six voies est un fait
+    // urbain, une contre-allée de campagne est un objet du paysage.
+    if (urban?.any) {
+      lines = absorbParallelLines(lines, {
+        order: ROAD_PROFILE_ORDER,
+        where: (x, z) => urban.covers(x, z),
+      });
+    }
+    return mergeRoadLines(lines);
+  });
   yield;
   fitParallelRoadWidths(chains.filter((chain) => isPaved(roads.profiles[chain.profile])), junctions, { x: here.x, z: here.z, radius });
   yield;
@@ -1160,25 +1163,19 @@ export function* collectRoadSegmentsSteps(
         edges[r * 2] = wide.left;
         edges[r * 2 + 1] = wide.right;
       }
-      // Aplanissement du profil en long, borné par ce que l'ouvrage tient à
-      // cet endroit : le devers dit s'il y a un versant, donc une falaise et
-      // un mur, pour rattraper l'écart au terrain. Un chemin n'est pas
-      // terrassé : il reste sur le sol, section par section.
+      // Terrassement consenti à l'aplanissement du profil en long : le devers
+      // dit s'il y a un versant, donc une falaise et un mur, pour rattraper
+      // l'écart au terrain. Un chemin n'est pas terrassé : il reste sur le
+      // sol, section par section.
+      let band = null;
       if (isPaved(roads.profiles[chain.profile])) {
-        const maxCut = new Float32Array(rows);
-        const maxFill = new Float32Array(rows);
+        band = { maxCut: new Float32Array(rows), maxFill: new Float32Array(rows) };
         for (let r = 0; r < rows; r++) {
           const slope = Math.abs(edges[r * 2] - edges[r * 2 + 1]) / (probe * 2);
           const allowance = gradeAllowance(slope);
-          maxCut[r] = allowance.cut;
-          maxFill[r] = allowance.fill;
+          band.maxCut[r] = allowance.cut;
+          band.maxFill[r] = allowance.fill;
         }
-        // Rien à retrancher à la bande de terrassement sur une ligne d'ouvrage :
-        // ce que l'aplanissement y calcule est de toute façon réécrit par la
-        // seconde passe, et chaque ligne étant bornée autour de son propre
-        // terrain, une ligne de pont n'entraîne pas ses voisines au fond de la
-        // vallée.
-        flattenGrade(platform, { maxCut, maxFill });
       }
       if (!anyWorks && runWorks.some((code) => code !== 0)) anyWorks = true;
 
@@ -1198,6 +1195,7 @@ export function* collectRoadSegmentsSteps(
         oneway: runOneway,
         probeSpan: probe * 2,
       });
+      if (band) bands.set(out[out.length - 1], band);
     }
   }
 
@@ -1210,8 +1208,8 @@ export function* collectRoadSegmentsSteps(
   // La couture précède les franchissements : elle ne peut annuler leur déblai.
   const paved = out.filter((segment) => segment.paved);
   const pavedIndex = new RoadIndex(paved);
-  // Le plan commun d'abord : la couture raccorde ensuite les voies qui s'y jettent.
-  levelBundlePlatforms(paved, pavedIndex);
+  gradeRoadNetwork(paved, paved.map((segment) => bands.get(segment)), { facing: facingRows(paved, pavedIndex) });
+  // Ce qui se recouvre sans partager de nœud : la voie étroite épouse la large.
   stitchPlatforms(paved, pavedIndex);
   if (anyWorks) {
     const abutments = [];
@@ -1227,7 +1225,7 @@ export function* collectRoadSegmentsSteps(
   yield;
   const crossings = resolveTransportCrossings(paved, railwaySegments, { centres: areas.areas, bench });
   if (anyWorks) resolveTunnelProfiles(out, railwaySegments, sampleElevation, {
-    buildings: collectTunnelBuildings(source, tiles, frame), centres: areas.areas, theme: tunnelTheme,
+    buildings: memo.tunnelBuildings(read, () => collectTunnelBuildings(source, tiles, frame)), centres: areas.areas, theme: tunnelTheme,
   });
 
   return {
@@ -1287,6 +1285,7 @@ export class RoadNetwork {
     this.profileConstraints = { constrained: 0 };
     this.transportCrossings = [];
     this.earthworks = null;
+    this._graphMemo = new RoadGraphMemo();
     /** Carrefours de la dernière reconstruction (un feu n'a de sens qu'à un carrefour). @type {Array<Object>} */
     this.junctions = [];
   }
@@ -1345,7 +1344,7 @@ export class RoadNetwork {
       sampleElevation,
       this._radius(),
       this.theme.roads,
-      { urban, continuity: this._continuity, railwaySegments, bench: bubble.cutBenchM, tunnelTheme: this.theme }
+      { urban, continuity: this._continuity, railwaySegments, bench: bubble.cutBenchM, tunnelTheme: this.theme, memo: this._graphMemo }
     );
     // La marge doit couvrir toute la portée du déblai, raccord compris ;
     // laissée à sa valeur par défaut, l'entaille finirait en marche verticale.
@@ -1354,15 +1353,12 @@ export class RoadNetwork {
     yield;
     const index = new RoadIndex(collected, { margin: bubble.cutBenchM + ROAD_CUT_BLEND_M });
     yield;
-    const terrainSegments = collected.map(segment => ({ ...segment, platform: segment.platform.slice() }));
-    const terrainAreas = new JunctionAreas(junctions, terrainSegments);
-    terrainAreas.updateDecks();
-    const terrainIndex = new RoadIndex(terrainSegments.filter(segment => segment.paved), { margin: bubble.cutBenchM + ROAD_CUT_BLEND_M });
+    const terrainIndex = new RoadIndex(collected.filter(segment => segment.paved), { margin: bubble.cutBenchM + ROAD_CUT_BLEND_M });
     const unpavedIndex = new RoadIndex(
       collected.filter((segment) => !segment.paved),
       { margin: bubble.cutBenchM + ROAD_CUT_BLEND_M }
     );
-    const earthworks = new TransportEarthworks([...terrainSegments.filter(s => s.paved || s.tunnelAccess), ...railwaySegments], {
+    const earthworks = new TransportEarthworks([...collected.filter(s => s.paved || s.tunnelAccess), ...railwaySegments], {
       bench: bubble.cutBenchM, scale: bubble.verticalScale,
     });
     const finalElevation = (x, z) => {
@@ -1400,7 +1396,6 @@ export class RoadNetwork {
     // Après les appuis, qui se mesurent sur le sol non remblayé : une portion
     // suspendue garde son tablier, le terrain ne monte pas la rejoindre.
     findEarthFills(collected);
-    collected.forEach((segment, i) => { terrainSegments[i].earthFill = segment.earthFill; });
     const elevationIndex = new RoadIndex(collected, {
       margin: ROAD_CUT_M + ROAD_CUT_BLEND_M,
       includeWorks: true,
@@ -1415,7 +1410,6 @@ export class RoadNetwork {
     let markings = 0;
 
     const profiles = this.theme.roads.profiles;
-    areas.updateDecks();
     for (const segment of collected) {
       yield;
       const spec = profiles[segment.profile];
@@ -1487,7 +1481,7 @@ export class RoadNetwork {
     this.markings = markings;
     // L'emprise entaillée, c'est la chaussée entière : les rubans et les dalles
     // de carrefour, qui débordent d'eux.
-    this.bubble.setRoadCut(segments > 0 ? terrainIndex : null, terrainAreas, earthworks, segments > 0 ? unpavedIndex : null);
+    this.bubble.setRoadCut(segments > 0 ? terrainIndex : null, areas, earthworks, segments > 0 ? unpavedIndex : null);
     this.transportCrossings = crossings;
     this.earthworks = earthworks;
     // Tous les profils sont visités, y compris ceux sans géométrie cette fois : leur ancien maillage doit disparaître.

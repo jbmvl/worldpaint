@@ -1,0 +1,17 @@
+{
+  "name": "saint-michel-de-maurienne",
+  "label": "Saint-Michel-de-Maurienne",
+  "lng": 6.47334,
+  "lat": 45.21458,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "encoding": "terrain-rgb",
+    "extension": "webp",
+    "source": "api.maptiler.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  }
+}

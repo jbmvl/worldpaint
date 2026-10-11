@@ -129,10 +129,10 @@ Les intervalles positifs restants relèvent du comblement de `roadBundles` ;
 les îlots restent du terrain. Les courbes serrées, les raccordements et les
 superpositions exclues du partage demandent un contrôle dans la démo.
 
-Les voies qui se longent à moins de 4 m de rive à rive partagent un seul
-plan : la cote la plus basse de leur profil en travers
-(`roadBundles.levelBundlePlatforms`), rendue en rampe sur quatre lignes là où
-le longement cesse. Le surplomb d'une
+Les voies qui se longent à moins de 4 m de rive à rive se rejoignent sur un
+plan commun : le profil en long les lie en travers (`roadBundles.facingRows`,
+`roadProfile.gradeRoadNetwork`), chacune dans la limite de son terrassement
+consenti — deux rues en terrasse sur un versant restent deux rues. Le surplomb d'une
 rive se lit au bout de sa place libre (`roadsideRelief.boundOverhang`).
 
 ## Le sol

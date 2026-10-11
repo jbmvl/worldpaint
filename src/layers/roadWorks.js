@@ -386,7 +386,7 @@ function resampleCodes(points, codes, path, out) {
  * Une travée n'est plus commandée par le terrain : ses deux extrémités le
  * sont — la dernière ligne posée au sol de chaque côté — et tout ce qu'il y a
  * entre les deux s'interpole. Ces appuis sont lus **après** l'aplanissement du
- * profil en long (`ribbonGeometry.flattenGrade`), jamais avant : ce que le
+ * profil en long (`roadProfile.gradeRoadNetwork`), jamais avant : ce que le
  * tablier rejoint est la route telle qu'elle sera, terrassement compris, et
  * non le terrain brut que le terrassier vient de quitter. Si la corde ne dégage pas le gabarit au-dessus
  * de ce qu'elle franchit, on relève **toute** la travée d'un bloc (un tablier

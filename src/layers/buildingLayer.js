@@ -36,6 +36,7 @@ import { appendChurchWindows, castleTowers, appendRetailSign } from './buildingC
 import { defaultTheme } from '../themes/default.js';
 import { LabelAtlas, pushLabelQuad, labelFontPxForCellHeight, LABEL_PX_PER_M } from '../materials/labelAtlas.js';
 import { DECOR_STABLE_RADIUS_M, reachedRadius } from '../core/decorReach.js';
+import { createFacetBuffer, facetGeometry } from './facetBuffers.js';
 
 /** Couche vectorielle portant les empreintes. */
 export const BUILDING_SOURCE_LAYER = 'building';
@@ -1626,8 +1627,8 @@ export class BuildingLayer {
     const { origin, scale, zoom } = frame;
     const radius = reachedRadius(BUILDING_RADIUS_M, bubble);
 
-    const walls = { positions: [], normals: [], colors: [] };
-    const lamps = { positions: [], normals: [], colors: [] };
+    const walls = createFacetBuffer(this._wallValues);
+    const lamps = createFacetBuffer(this._lampValues);
     const labels = { positions: [], uvs: [] };
     const houses = [];
     const terraces = [];
@@ -1771,11 +1772,9 @@ export class BuildingLayer {
       return;
     }
 
-    const geometryBuffer = new THREE.BufferGeometry();
-    geometryBuffer.setAttribute('position', new THREE.Float32BufferAttribute(walls.positions, 3));
-    geometryBuffer.setAttribute('normal', new THREE.Float32BufferAttribute(walls.normals, 3));
-    geometryBuffer.setAttribute('color', new THREE.Float32BufferAttribute(walls.colors, 3));
-    geometryBuffer.computeBoundingSphere();
+    this._wallValues = walls.positions.length;
+    this._lampValues = lamps.positions.length;
+    const geometryBuffer = facetGeometry(THREE, walls);
 
     if (this.mesh) {
       this.geometry.dispose();
@@ -2383,11 +2382,7 @@ export class BuildingLayer {
       return;
     }
 
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(windows.positions, 3));
-    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(windows.normals, 3));
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(windows.colors, 3));
-    geometry.computeBoundingSphere();
+    const geometry = facetGeometry(THREE, windows);
 
     if (this.windowMesh) {
       this.windowGeometry?.dispose();

@@ -28,6 +28,7 @@ import { srgb } from '../core/color.js';
 import { streetSurfaceAt } from './townStyle.js';
 import { defaultTheme } from '../themes/default.js';
 import { DECOR_STABLE_RADIUS_M, reachedRadius } from '../core/decorReach.js';
+import { createProfileStore, drainProfileBuffer, profileStoreGeometry } from './facetBuffers.js';
 
 /** Chaussées qui peuvent porter un trottoir (dessertes ; pas de voie rapide, chemin, sentier ou piste cyclable). */
 export const STREET_PROFILES = new Set(['major', 'minor', 'lane']);
@@ -167,7 +168,9 @@ export class StreetLayer {
   ) {
     if (this.disposed || !this.bubble?.frame) return false;
 
+    // `buffer` ne porte que le lot en cours : il est versé dans `store` à chaque étape.
     const buffer = createProfileBuffer();
+    const store = createProfileStore(this._storeSize);
     const marks = createProfileBuffer();
     const bands = [];
     // Les bouches atteintes par un trottoir, côté par côté : une traversée se
@@ -177,10 +180,11 @@ export class StreetLayer {
 
     // Le masque urbain reste utilisable même si le relevé du bâti est incomplet.
     if (builtUp.length > 0 || urban?.any) {
-      const context = { here, builtUp, fabric, roadIndex, areas, mouths, urban };
+      const context = { here, builtUp, fabric, roadIndex, areas, mouths, urban, store };
       for (const segment of roadSegments) {
         if (!STREET_PROFILES.has(segment.profile)) continue;
         built += this._buildSegment(buffer, bands, segment, context);
+        drainProfileBuffer(store, buffer);
         yield;
       }
       // Les coins de rue, après les tronçons : ils bordent la même rive, mais
@@ -200,10 +204,12 @@ export class StreetLayer {
     // Les vides de faisceau, partout — un longement de piste cyclable n'attend
     // pas d'être en bourg pour laisser deux mètres d'herbe au milieu du bitume.
     this.fills = this._buildFills(buffer, roadSegments, here, roadIndex, areas);
+    drainProfileBuffer(store, buffer);
     yield;
 
     this.count = built;
-    this._apply(buffer);
+    this._storeSize = { positions: { length: store.positions.length }, indices: { length: store.indices.length } };
+    this._apply(store);
     this._applyMarkings(marks);
     return built > 0 || this.fills > 0;
   }
@@ -524,7 +530,7 @@ export class StreetLayer {
    *
    * @returns {number} coins posés.
    */
-  *_buildCorners(buffer, bands, { here, builtUp, fabric, roadIndex, areas, urban }) {
+  *_buildCorners(buffer, bands, { here, builtUp, fabric, roadIndex, areas, urban, store }) {
     if (!areas || areas.length === 0) return 0;
     const streets = this.theme.streets;
     let built = 0;
@@ -587,6 +593,7 @@ export class StreetLayer {
         });
         built++;
       }
+      drainProfileBuffer(store, buffer);
       yield;
     }
 
@@ -649,9 +656,9 @@ export class StreetLayer {
     });
   }
 
-  _apply(buffer) {
+  _apply(store) {
     const { THREE } = this;
-    const geometry = toColoredGeometry(THREE, buffer);
+    const geometry = profileStoreGeometry(THREE, store);
 
     if (!geometry) {
       if (this.mesh) {

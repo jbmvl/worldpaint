@@ -22,12 +22,16 @@ const clamp = t => Math.max(0, Math.min(1, t));
 const smooth = t => t * t * (3 - 2 * t);
 // Clé entière d'une cellule : exacte tant que |z| < 2^25.
 const key = (x, z) => x * 67108864 + z;
+/** Réserve de `elevationAtPoint`, lue aussitôt écrite. */
+const POINT = { elevation: 0, mask: 0, inWater: false };
 
 function projection(x, z, a, b) {
   const dx = b.x - a.x, dz = b.z - a.z;
   const t = clamp(((x-a.x)*dx + (z-a.z)*dz) / (dx*dx + dz*dz || 1));
   const px = a.x + t*dx, pz = a.z + t*dz;
-  return { x: px, z: pz, distance: Math.hypot(x-px, z-pz) };
+  // `Math.sqrt` : `Math.hypot` alloue à chaque appel, et celui-ci se fait par sommet de terrain.
+  const ex = x-px, ez = z-pz;
+  return { x: px, z: pz, distance: Math.sqrt(ex*ex + ez*ez) };
 }
 
 /** Arêtes d'un contour rangées par bande de z : seules celles-là peuvent couper le rayon d'une sonde. */
@@ -294,10 +298,11 @@ export class WaterRelief {
     return best ? this.profileAt(best.x,best.z,best.axis.component) : NaN;
   }
 
-  sample(x,z,raw) {
+  /** `out`, s'il est fourni, reçoit le résultat : un appelant par sommet de terrain y passe sa réserve. */
+  sample(x,z,raw,out={}) {
     const cell=key(Math.floor(x/CELL),Math.floor(z/CELL));
     const entries=this.grid.get(cell);
-    if(!entries) return {elevation:raw,mask:0};
+    if(!entries) {out.elevation=raw;out.mask=0;out.inWater=false;return out;}
     let height=Infinity,weight=0,insideWater=false,inWater=false;
     for(const {piece,group,axis} of entries) {
       let distance,level;
@@ -330,10 +335,11 @@ export class WaterRelief {
         if(w>0) {height=Math.min(height,h);weight=Math.max(weight,w);}
       }
     }
-    return {elevation:weight ? height : raw,mask:weight,inWater};
+    out.elevation=weight ? height : raw;out.mask=weight;out.inWater=inWater;
+    return out;
   }
 
-  elevationAtPoint(x,z,raw) { return this.sample(x,z,raw).elevation; }
+  elevationAtPoint(x,z,raw) { return this.sample(x,z,raw,POINT).elevation; }
 
   touches(minX,minZ,maxX,maxZ) {
     for(let z=Math.floor(minZ/CELL);z<=Math.floor(maxZ/CELL);z++)

@@ -188,6 +188,7 @@ le relief réels :
 
 - `/demo/lab/place.html?lieu=briancon`
 - `/demo/lab/place.html?lieu=saint-gervais`
+- `/demo/lab/place.html?lieu=saint-michel-de-maurienne` — un échangeur, et une rue qui débouche à la sortie d'un passage sous l'autoroute
 
 `demo/lab/roads.html` ajoute les scènes `montagne` et `montagne-carrefour` :
 un réseau sur un versant à 32 %, avec un vallon et plusieurs carrefours.

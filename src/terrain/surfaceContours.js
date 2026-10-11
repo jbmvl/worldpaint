@@ -473,7 +473,7 @@ function measureSegment(segments, s, pixels, distance, side, across, facing) {
       const t = Math.max(0, Math.min(1, along));
       const ex = px - t * dx;
       const ey = py - t * dy;
-      const d = Math.hypot(ex, ey);
+      const d = Math.sqrt(ex * ex + ey * ey);
       const p = ty * pixels + tx;
       if (d >= distance[p]) continue;
       distance[p] = d;

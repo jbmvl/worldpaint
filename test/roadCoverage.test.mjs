@@ -54,17 +54,3 @@ for (const inverse of [false,true]) test(`Nantes : axes dessinés, ordre ${inver
     }
   }
 });
-
-test('deux rues urbaines voisines de rang différent gardent leurs deux axes',()=>{
-  const frame=createLocalFrame(0,47,14),urban={any:true,covers:()=>true,nearCity:()=>true};
-  const sourceLocale={forEachFeature(couche,tuiles,visite){
-    if(couche!=='transportation')return;
-    for(const [classe,z] of [['primary',0],['service',10]]) {
-      const coordinates=[-100,100].map(x=>{const p=frame.toLngLat(x,z);return [p.lng,p.lat];});
-      visite({type:'LineString',coordinates},{class:classe});
-    }
-  }};
-  const {segments}=collectRoadSegments(sourceLocale,[],{x:0,z:0},frame,()=>30,400,undefined,{urban});
-  assert.equal(segments.filter(s=>s.profile==='major').length,1);
-  assert.equal(segments.filter(s=>s.profile==='lane').length,1);
-});

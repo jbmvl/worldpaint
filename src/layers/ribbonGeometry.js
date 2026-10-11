@@ -24,10 +24,6 @@
  * `appendRockCut` la falaise du déblai, qui n'est pas un mur et n'a donc ni
  * appareillage ni couronnement.
  *
- * Le profil en long, lui, ne se lisse pas comme le reste : `flattenGrade`
- * l'aplanit dans la limite du terrassement consenti, parce qu'une chaussée
- * dressée section par section suit le bruit du MNT au lieu de tendre une pente.
- *
  * En plan, le tracé demande la même chose : ce qui arrive des tuiles est une
  * ligne brisée, et cette brisure se lit sur tout ce qui suit la chaussée — la
  * rive, la bordure, le marquage. `roundCorners` y inscrit l'arc qui raccorde
@@ -347,72 +343,6 @@ export function smoothColumns(heights, rows, cols, radius = 2) {
   return heights;
 }
 
-
-/**
- * Aplanit le profil en long d'une plate-forme, dans la limite du terrassement
- * consenti.
- *
- * Dressée section par section (`levelRow`), une chaussée épouse le bruit du
- * MNT : le long d'une côte, d'une rive de lac ou d'une gorge, les deux rives
- * sondées sautent d'un échantillon à l'autre et la plate-forme ondule. Un
- * terrassier fait l'inverse — il tend une pente et laisse l'ouvrage rattraper
- * la différence : l'entaille en amont, le mur en aval.
- *
- * Diffusion répétée (chaque ligne tirée vers la moyenne de ses voisines),
- * chaque passe ramenée dans la bande autorisée autour du profil d'origine.
- * C'est la bande qui décide de tout : nulle, la route colle au sol comme
- * avant ; large, elle s'en détache et l'ouvrage suit. La diffusion efface les
- * ondulations courtes sans toucher à la pente d'ensemble — mesuré à `strength`
- * 0,5 et quarante passes, sur un pas de 5 m : il reste 0 % d'une vague de
- * 40 m, 21 % d'une vague de 80 m, 94 % d'une pente de 400 m et 98 % d'une
- * pente de 800 m.
- *
- * Les deux extrémités ne bougent pas d'un pouce. Un tronçon finit soit à un
- * carrefour — où `stitchPlatforms` va le recoudre sur l'altitude de la voie
- * qu'il rejoint —, soit au bord de la portée, dans le brouillard, contre un
- * autre découpage du même tracé. Dans les deux cas il doit repartir de
- * l'altitude que le terrain lui donne, et un bord libre les ferait dériver
- * tous les deux vers l'horizontale.
- *
- * L'influence de ce bord s'éteint vite, mais pas instantanément : mesurée sur
- * un profil bruité redécoupé ailleurs, elle vaut 0,53 m à dix mètres du bord,
- * 0,11 m à trente, 0,01 m à cinquante et rien au-delà. Un redécoupage — qui
- * n'arrive qu'à la limite de la portée du réseau, à neuf cents mètres — ne
- * peut donc déplacer que cette frange, déjà noyée dans le brouillard.
- *
- * @param {Float32Array|number[]} heights Altitudes, une par ligne. Modifiées sur place.
- * @param {Object} options
- * @param {number|Float32Array|number[]} options.maxCut  Enfoncement toléré sous
- *        le profil d'origine, en mètres — scalaire ou une valeur par ligne.
- * @param {number|Float32Array|number[]} options.maxFill Exhaussement toléré au-dessus.
- * @param {number} [options.iterations]
- * @param {number} [options.strength] Part du chemin parcouru vers la moyenne, par passe.
- * @returns {Float32Array|number[]} `heights`, aplani.
- */
-export function flattenGrade(heights, { maxCut = 0, maxFill = 0, iterations = 40, strength = 0.5 } = {}) {
-  const rows = heights?.length ?? 0;
-  if (rows < 3 || iterations <= 0) return heights;
-
-  const raw = Float32Array.from(heights);
-  const next = new Float32Array(rows);
-  const bound = (v, r) => (typeof v === 'number' ? v : v?.[r] ?? 0);
-
-  for (let k = 0; k < iterations; k++) {
-    // Passe de Jacobi (toutes les lignes lues dans le même état) : en
-    // Gauss-Seidel, le profil dériverait dans le sens du parcours.
-    next[0] = heights[0];
-    next[rows - 1] = heights[rows - 1];
-    for (let r = 1; r < rows - 1; r++) {
-      const eased = heights[r] + strength * ((heights[r - 1] + heights[r + 1]) * 0.5 - heights[r]);
-      const floor = raw[r] - bound(maxCut, r);
-      const ceiling = raw[r] + bound(maxFill, r);
-      next[r] = Math.min(ceiling, Math.max(floor, eased));
-    }
-    for (let r = 0; r < rows; r++) heights[r] = next[r];
-  }
-
-  return heights;
-}
 
 /**
  * Repères de balayage le long d'une polyligne : tangente unitaire et

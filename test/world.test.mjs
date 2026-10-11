@@ -1,4 +1,5 @@
 import { treePrototype as treePrototypeForTest } from '../src/models/treeKit.js';
+import { gradeRoadNetwork } from '../src/layers/roadProfile.js';
 /*
  * Tests unitaires de la géométrie de la bulle 3D.
  * Aucune dépendance navigateur : `npm test`.
@@ -127,7 +128,6 @@ import {
   appendRockCut,
   appendSteps,
   STEP_RISE_M,
-  flattenGrade,
   slicePath,
 } from '../src/layers/ribbonGeometry.js';
 import {
@@ -3370,6 +3370,13 @@ test('un mur sans hauteur nulle part n’est pas engendré', () => {
 
 // --- Profil en long : l’aplanissement du terrassier -------------------------
 
+/** L’aplanissement du réseau, sur un seul profil rectiligne au pas de 5 m. */
+function flattenGrade(heights, band) {
+  const path = Array.from(heights, (_, r) => ({ x: r * 5, z: 0 }));
+  gradeRoadNetwork([{ path, platform: heights }], [band]);
+  return heights;
+}
+
 /** Profil ondulé : une pente régulière de 4 %, plus une vague de 40 m d’un mètre. */
 function wavyProfile(rows, spacing = 5) {
   return Float32Array.from({ length: rows }, (_, r) =>
@@ -3986,7 +3993,7 @@ function meshHarness({ segments = 192, slope = 0.6, theta = Math.PI / 5, halfWid
   const frames = pathFrames(path);
   const platform = new Float32Array(path.length);
   for (let r = 0; r < path.length; r++) platform[r] = levelRow(path, r, frames, halfWidth, rawAt).deck;
-  flattenGrade(platform, { maxCut: 4, maxFill: 3 });
+  gradeRoadNetwork([{ path, platform }], [{ maxCut: 4, maxFill: 3 }]);
 
   const segment = { path, frames, platform, halfWidth, works: new Uint8Array(path.length), profile: 'minor' };
   bubble._roadCut = new RoadIndex([segment], { margin: bubble.cutBenchM + ROAD_CUT_BLEND_M });
@@ -7384,6 +7391,24 @@ test('deux axes qui se traversent sans sommet commun font un carrefour', () => {
   assert.equal(over.junctions.length, 0, 'ce qui survole ne rencontre pas');
   const path = mergeRoadLines([lines[0], { ...lines[1], profile: 'path', paved: false }]);
   assert.equal(path.junctions.length, 0, 'un chemin se pose sur la route');
+});
+
+test('une rue qui débouche à la sortie d’un tunnel y fait carrefour', () => {
+  // La route change de niveau au sommet même où la rue arrive.
+  const { junctions, chains } = mergeRoadLines([
+    { profile: 'major', halfWidth: 4.25, points: [{ x: -60, z: 0 }, { x: -30, z: 0 }, { x: 0, z: 0 }], works: WORK_TUNNEL, level: -1 },
+    { profile: 'major', halfWidth: 4.25, points: [{ x: 0, z: 0 }, { x: 30, z: 0 }, { x: 60, z: 0 }] },
+    { profile: 'minor', halfWidth: 2.5, points: [{ x: 0, z: 60 }, { x: 0, z: 30 }, { x: 0, z: 0 }] },
+  ]);
+  assert.equal(junctions.length, 1);
+  assert.equal(junctions[0].degree, 3);
+  assert.equal(junctions[0].level, 0, 'le nœud est au niveau le plus proche du sol');
+  const route = chains.find((chain) => chain.profile === 'major');
+  assert.deepEqual(
+    route.points.map((p, i) => [p.x, route.levels[i]]).sort((a, b) => a[0] - b[0]),
+    [[-60, -1], [-30, -1], [0, 0], [30, 0], [60, 0]],
+    'la route reste une chaîne, et seul le tunnel est sous le sol'
+  );
 });
 
 test('deux moitiés d’une même route qui se recouvrent ne font pas un carrefour', () => {
@@ -12291,7 +12316,10 @@ test('la reconstruction urbaine borde les rues et les coins sans relevé du bât
   const layer = Object.create(StreetLayer.prototype);
   layer.theme = defaultTheme;
   layer.bubble = { frame: {}, verticalScale: 1, surfaceElevationAtLocal: () => 0 };
-  layer._apply = (buffer) => { assert.ok(buffer.positions.every(Number.isFinite)); };
+  layer._apply = (store) => {
+    assert.ok(store.positions.length > 0);
+    assert.ok(store.positions.data.subarray(0, store.positions.length).every(Number.isFinite));
+  };
   layer._applyMarkings = () => {};
   const road = fakeRoad([{ x: 20, z: 0 }, { x: 25, z: 0 }], 2.5);
   road.edges = new Float32Array(4);

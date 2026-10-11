@@ -69,6 +69,8 @@ export function geometrySnapshot(root, x, z, radius, names = new Map()) {
     }
     const m = o.matrixWorld.elements;
     const arr = position.array, stride = position.itemSize;
+    // Tampons rendus après l'envoi au GPU (`facetBuffers`) : seule la comparaison des pixels les couvre.
+    if (!arr) return;
     const range = o.geometry.drawRange;
     const end = Math.min(position.count, range.start + (Number.isFinite(range.count) ? range.count : position.count));
     for (let i = range.start; i < end; i++) {

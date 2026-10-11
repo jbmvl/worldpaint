@@ -43,9 +43,15 @@ export class TransportEarthworks {
     this.supports = new RoadIndex(segments.filter((s) => s.paved || s.profile === 'rail'), { margin: bench + ROAD_CUT_BLEND_M });
   }
 
-  sample(x, z, raw) {
+  /** `out`, s'il est fourni, reçoit le résultat : un appelant par sommet de terrain y passe sa réserve. */
+  sample(x, z, raw, out = {}) {
     const count = this.index.collect(x, z, this.reach);
-    if (count === 0) return { elevation: raw, mask: 0, supported: false };
+    if (count === 0) {
+      out.elevation = raw;
+      out.mask = 0;
+      out.supported = false;
+      return out;
+    }
     const { segments, rows, ts, distances, decks } = this.index.found;
     let fill = raw, cut = Infinity, mask = 0, lowerRoom = Infinity;
     for (let i = 0; i < count; i++) {
@@ -86,6 +92,9 @@ export class TransportEarthworks {
         if (target > elevation + 0.001) { elevation = target; supported = true; }
       }
     }
-    return { elevation, mask, supported };
+    out.elevation = elevation;
+    out.mask = mask;
+    out.supported = supported;
+    return out;
   }
 }

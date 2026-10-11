@@ -88,8 +88,9 @@
  *
  * Les voies conservées d'un faisceau ne dressent pas chacune leur cote : un
  * dévers du relief mettrait une marche, un talus et une glissière entre les
- * deux sens d'un boulevard. `levelBundlePlatforms` leur donne la cote la plus
- * basse du profil en travers, avant la couture des carrefours.
+ * deux sens d'un boulevard. `facingRows` relève leurs vis-à-vis, et le profil
+ * en long les rapproche dans la limite du terrassement consenti à chacune :
+ * deux rues en terrasse sur un versant restent deux rues.
  *
  * L’absorption sonde les intervalles, au même niveau et hors ouvrages.
  * Les rubans conservés qui se chevauchent relèvent de `roadWidths` ;
@@ -694,35 +695,21 @@ export function absorbParallelLines(
   return dropped.size === 0 ? lines : lines.filter((_, li) => !dropped.has(li));
 }
 
-/** Passes de mise en commun : une par voie que la cote doit traverser dans un boulevard. */
-const LEVEL_PASSES = 4;
-
-/** Lignes sur lesquelles une voie quitte la cote du faisceau pour retrouver la sienne. */
-export const LEVEL_RAMP_ROWS = 4;
-
 /**
- * Met les voies d'un faisceau sur un seul plan : chaque ligne qui en longe une
- * autre prend la cote commune du profil en travers, et la rend en rampe là où
- * le longement cesse. Sans cela chaque voie dresse sa plate-forme sur son
- * propre axe, et un dévers du relief devient une marche entre deux sens d'un
- * même boulevard.
+ * Vis-à-vis de chaque ligne : les lignes des voies qui la longent au même
+ * niveau, hors ouvrage, à moins de `gapMax` de rive à rive. C'est ce que le
+ * profil en long relie en travers (`roadProfile.gradeRoadNetwork`) : sans ce
+ * lien chaque voie dresse sa plate-forme sur son propre axe, et un dévers du
+ * relief devient une marche entre deux sens d'un même boulevard.
  *
- * La cote commune est la plus basse du profil en travers : le terrain ne
- * monte jamais sous une chaussée (`roadCut`), et une moyenne laisserait les
- * voies d'aval en l'air au-dessus de leur talus. Elle se propage de voisine en
- * voisine sur une copie : le résultat ne dépend pas de l'ordre des tronçons.
- *
- * @param {Array<Object>} segments Tronçons revêtus, dont les `platform` sont modifiées.
+ * @param {Array<Object>} segments Tronçons revêtus.
  * @param {Object} roadIndex `RoadIndex` bâti sur ces mêmes tronçons.
  * @param {Object} [options]
- * @returns {number} nombre de tronçons retouchés.
+ * @returns {Array<Array<number[]|null>|null>} par tronçon puis par ligne, des
+ *          triplets à plat `(tronçon, arête, abscisse sur l'arête)`, ou `null`.
  */
-export function levelBundlePlatforms(
-  segments,
-  roadIndex,
-  { gapMax = BUNDLE_GAP_MAX_M, parallelCos = BUNDLE_PARALLEL_COS, rampRows = LEVEL_RAMP_ROWS } = {}
-) {
-  if (!Array.isArray(segments) || segments.length === 0 || !roadIndex) return 0;
+export function facingRows(segments, roadIndex, { gapMax = BUNDLE_GAP_MAX_M, parallelCos = BUNDLE_PARALLEL_COS } = {}) {
+  if (!Array.isArray(segments) || segments.length === 0 || !roadIndex) return [];
   const order = new Map(segments.map((segment, i) => [segment, i]));
 
   // Vis-à-vis de chaque ligne : (tronçon, arête, abscisse sur l'arête), à plat.
@@ -766,57 +753,5 @@ export function levelBundlePlatforms(
     if (any) links[si] = own;
   }
 
-  const target = segments.map((segment, si) => (links[si] ? Float32Array.from(segment.platform) : segment.platform));
-  for (let pass = 0; pass < LEVEL_PASSES; pass++) {
-    const next = target.map((heights, si) => (links[si] ? heights.slice() : heights));
-    for (let si = 0; si < segments.length; si++) {
-      const own = links[si];
-      if (!own) continue;
-      for (let r = 0; r < own.length; r++) {
-        const facing = own[r];
-        if (!facing) continue;
-        let lowest = target[si][r];
-        for (let i = 0; i < facing.length; i += 3) {
-          const heights = target[facing[i]];
-          const row = facing[i + 1];
-          lowest = Math.min(lowest, heights[row] + (heights[row + 1] - heights[row]) * facing[i + 2]);
-        }
-        next[si][r] = lowest;
-      }
-    }
-    for (let si = 0; si < segments.length; si++) target[si] = next[si];
-  }
-
-  let touched = 0;
-  for (let si = 0; si < segments.length; si++) {
-    const own = links[si];
-    if (!own) continue;
-    const { platform, works } = segments[si];
-    const rows = own.length;
-    // Écart à la cote commune de la ligne liée la plus proche, dans les deux sens.
-    const nearest = new Int32Array(rows).fill(-1);
-    const distance = new Int32Array(rows).fill(rows);
-    for (let r = 0; r < rows; r++) {
-      if (own[r]) {
-        nearest[r] = r;
-        distance[r] = 0;
-      } else if (r > 0 && nearest[r - 1] >= 0) {
-        nearest[r] = nearest[r - 1];
-        distance[r] = distance[r - 1] + 1;
-      }
-    }
-    for (let r = rows - 2; r >= 0; r--) {
-      if (nearest[r + 1] >= 0 && distance[r + 1] + 1 < distance[r]) {
-        nearest[r] = nearest[r + 1];
-        distance[r] = distance[r + 1] + 1;
-      }
-    }
-    const delta = target[si].map((height, r) => height - platform[r]);
-    for (let r = 0; r < rows; r++) {
-      if (works?.[r] || nearest[r] < 0 || distance[r] > rampRows) continue;
-      platform[r] += delta[nearest[r]] * (1 - distance[r] / (rampRows + 1));
-    }
-    touched++;
-  }
-  return touched;
+  return links;
 }

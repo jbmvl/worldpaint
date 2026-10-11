@@ -246,7 +246,7 @@ function nearestOn(segment, x, z, lo = -Infinity, hi = Infinity) {
     const t = Math.min(t1, Math.max(t0, raw));
     const qx = a.x + dx * t;
     const qz = a.z + dz * t;
-    const error = Math.hypot(x - qx, z - qz);
+    const error = Math.sqrt((x - qx) ** 2 + (z - qz) ** 2);
     if (!best || error < best.error) {
       const end = (r === first && raw < t0) || (b.distance >= to - 1e-9 && raw > t1);
       best = { error, distance: a.distance + span * t, row: r, end };
@@ -1478,7 +1478,7 @@ export function lowestDeckAround(area, x, z, radius) {
     }
     const gx = ((b.y - a.y) * vz - (c.y - a.y) * uz) / det;
     const gz = ((c.y - a.y) * ux - (b.y - a.y) * vx) / det;
-    const slope = Math.hypot(gx, gz);
+    const slope = Math.sqrt(gx * gx + gz * gz);
     if (slope < 1e-12) continue;
     const px = x - (gx / slope) * radius;
     const pz = z - (gz / slope) * radius;

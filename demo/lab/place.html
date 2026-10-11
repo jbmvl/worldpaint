@@ -39,6 +39,7 @@ import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { createWorld } from '/src/index.js';
 import { muteAnimated, geometrySnapshot, compareSnapshots, readView, pixelChange } from '/demo/lab/nearStability.js';
+import { auditRoads } from '/demo/lab/roadAudit.js';
 
 const params = new URLSearchParams(location.search);
 const name = params.get('lieu') || 'montreuil-bellay';
@@ -232,6 +233,7 @@ window.placeLab = {
     return render();
   },
   walk,
+  roads: () => auditRoads(world.composer),
   state,
   world,
   place,

@@ -22,6 +22,7 @@ import { srgb } from '../core/color.js';
 import { defaultTheme } from '../themes/default.js';
 import { inCorridor } from './roadCorridor.js';
 import { DECOR_STABLE_RADIUS_M, reachedRadius } from '../core/decorReach.js';
+import { createFacetBuffer, facetGeometry } from './facetBuffers.js';
 
 /** Portée des jardins autour du point de reconstruction, en mètres. */
 export const GARDEN_RADIUS_M = DECOR_STABLE_RADIUS_M;
@@ -308,7 +309,7 @@ export class GardenLayer {
   rebuild(houses, here, pavement = null) {
     if (this.disposed || !this.bubble?.frame) return false;
 
-    const buffer = { positions: [], normals: [], colors: [] };
+    const buffer = createFacetBuffer(this._bufferValues);
     this.trees = [];
     let built = 0;
 
@@ -469,11 +470,8 @@ export class GardenLayer {
       return;
     }
 
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(buffer.positions, 3));
-    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(buffer.normals, 3));
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(buffer.colors, 3));
-    geometry.computeBoundingSphere();
+    this._bufferValues = buffer.positions.length;
+    const geometry = facetGeometry(THREE, buffer);
 
     if (this.mesh) {
       this.geometry.dispose();

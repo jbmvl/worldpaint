@@ -180,7 +180,7 @@ function groundRoomOn(row, side) {
  * ## La géométrie, et pourquoi les deux rives ne se ressemblent pas
  *
  * La plate-forme est dressée **à mi-hauteur** de la section (`levelRow`) et
- * aplanie en long (`flattenGrade`), c'est-à-dire là où un terrassier la met :
+ * aplanie en long (`gradeRoadNetwork`), c'est-à-dire là où un terrassier la met :
  * le déblai d'un côté paie le remblai de l'autre, et la pente se tend au lieu
  * de suivre le sol. La chaussée est donc à la fois encaissée et portée — mais
  * les deux rives n'appellent pas le même ouvrage :
@@ -282,7 +282,7 @@ export function buildRoadsideRelief(layer, context, segment, rowsInfo) {
  *
  * Le devers ne dit rien du déblai : une route qui coupe une croupe est en
  * tranchée des deux côtés sans qu'aucune section ne soit en travers d'un
- * versant, et l'aplanissement du profil en long (`flattenGrade`) ne fait
+ * versant, et l'aplanissement du profil en long (`gradeRoadNetwork`) ne fait
  * qu'accentuer le cas. Le déclencheur est donc la seule hauteur dont le
  * terrain domine la plate-forme (`ROCK_CUT_MIN_RISE_M`).
  *

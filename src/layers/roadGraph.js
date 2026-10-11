@@ -76,11 +76,17 @@
  * d'être transporté : il décide de la **soudure des nœuds** (`NodeIndex`).
  * Deux sommets ne deviennent le même nœud que s'ils sont au même niveau.
  *
+ * Une exception, le **bout de ligne** : là où des lignes se terminent ensemble
+ * à des niveaux différents, la route change de niveau — la sortie d'un tunnel,
+ * la culée d'un pont — et ne croise rien. Ces bouts partagent un seul nœud, au
+ * niveau le plus proche du sol (`endLevels`), et la rue qui débouche là y fait
+ * carrefour.
+ *
  * C'est ce qui manquait pour distinguer les quatre situations que le plan
  * confondait en une (voir l'en-tête de `roadWorks.js`) : proximité XY,
- * croisement XY, connexion routière, séparation verticale. Le graphe ne
- * contient donc plus jamais de nœud à cheval sur deux niveaux, et tout ce qui
- * le lit — carrefours, rognage, couture d'altitude, feux — hérite de la
+ * croisement XY, connexion routière, séparation verticale. Hors de ces bouts,
+ * le graphe ne contient donc jamais de nœud à cheval sur deux niveaux, et tout
+ * ce qui le lit — carrefours, rognage, couture d'altitude, feux — hérite de la
  * distinction sans avoir à porter de filtre. Un passage supérieur sans
  * `bridge` cesse d'être un carrefour, et il n'a pas fallu quatre exceptions
  * pour ça.
@@ -1217,6 +1223,29 @@ function collectJunctions(
 }
 
 /**
+ * Niveau du nœud d'un bout de ligne : le plus proche du sol parmi ceux des
+ * lignes qui se terminent là, le plus haut à égalité.
+ *
+ * @returns {(x:number, z:number) => number}
+ */
+function endLevels(lines, weld) {
+  const ends = new NodeIndex(weld);
+  const levels = [];
+  for (const line of lines || []) {
+    const points = line?.points;
+    if (!Array.isArray(points) || points.length < 2) continue;
+    const level = line.level || LEVEL_GROUND;
+    for (const tip of [points[0], points[points.length - 1]]) {
+      const id = ends.idFor(tip.x, tip.z);
+      const known = levels[id];
+      const nearer = Math.abs(level - LEVEL_GROUND) - Math.abs(known - LEVEL_GROUND);
+      if (known === undefined || nearer < 0 || (nearer === 0 && level > known)) levels[id] = level;
+    }
+  }
+  return (x, z) => levels[ends.idFor(x, z)];
+}
+
+/**
  * Fusionne des polylignes de chaussée en chaînes continues, et relève les
  * carrefours du graphe au passage (une propriété du graphe — nœud de degré
  * trois — qui n'existe qu'ici).
@@ -1251,6 +1280,7 @@ export function mergeRoadLines(lines, options = {}) {
   };
 
   const unpaved = new Set();
+  const endLevel = endLevels(lines, weld);
   for (const line of lines || []) {
     const points = line?.points;
     if (!Array.isArray(points) || points.length < 2) continue;
@@ -1258,9 +1288,10 @@ export function mergeRoadLines(lines, options = {}) {
     const works = line.works || WORK_NONE;
     const level = line.level || LEVEL_GROUND;
     const oneway = line.oneway || 0;
-    let previous = nodes.idFor(points[0].x, points[0].z, level);
+    const last = points.length - 1;
+    let previous = nodes.idFor(points[0].x, points[0].z, endLevel(points[0].x, points[0].z));
     for (let i = 1; i < points.length; i++) {
-      const id = nodes.idFor(points[i].x, points[i].z, level);
+      const id = nodes.idFor(points[i].x, points[i].z, i === last ? endLevel(points[i].x, points[i].z) : level);
       addEdge(state, previous, id, line.profile, line.halfWidth, works, level, oneway);
       previous = id;
     }
@@ -1293,10 +1324,8 @@ export function mergeRoadLines(lines, options = {}) {
     // les deux extrémités d'un pont sont marquées pont, et `resampleWorks`
     // retrouve l'arête exacte en reprenant le minimum par intervalle.
     const works = new Array(ids.length).fill(WORK_NONE);
-    // Une chaîne brute ne peut pas enjamber deux niveaux : ses nœuds sont
-    // séparés par niveau. Le tableau n'a de raison d'être que parce que
-    // `joinLooseEnds` recoud ensuite une culée à sa route d'approche, et que
-    // la chaîne qui en sort, elle, en traverse deux.
+    // Une chaîne ne change de niveau qu'à un bout de ligne (`endLevels`) ; le
+    // sommet porte le maximum de ses arêtes, comme pour les ouvrages.
     const levels = new Array(ids.length).fill(edge.level ?? LEVEL_GROUND);
     // Le sens de circulation, lui, n'est affirmé que si les deux arêtes qui
     // rejoignent un sommet s'accordent : ce n'est pas un état qui s'aggrave
@@ -1310,6 +1339,8 @@ export function mergeRoadLines(lines, options = {}) {
       if (code > works[i]) works[i] = code;
 
       if (between) {
+        if (i === 1 || between.level > levels[i - 1]) levels[i - 1] = between.level;
+        levels[i] = between.level;
         // Le sens porté par l'arête est compté de `between.a` vers
         // `between.b` : il se lit à l'endroit si la chaîne la parcourt dans
         // ce sens-là, à l'envers sinon.
@@ -1428,7 +1459,7 @@ export function distanceToSegment(x, z, ax, az, bx, bz) {
   }
   const px = ax + dx * t;
   const pz = az + dz * t;
-  return { distance: Math.hypot(x - px, z - pz), t };
+  return { distance: Math.sqrt((x - px) ** 2 + (z - pz) ** 2), t };
 }
 
 // Hors de la boîte de `[a, b]` élargie de `margin` : trop loin, sans calculer la distance.
@@ -1496,8 +1527,6 @@ export class RoadIndex {
     this.includeWorks = includeWorks || !!keep;
     this.cell = cell;
     this.margin = margin;
-    /** @type {Map<number, number[]>} triplets (tronçon, ligne, arête) mis à plat. */
-    this.buckets = new Map();
 
     let edges = 0;
     for (const segment of this.segments) {
@@ -1506,6 +1535,9 @@ export class RoadIndex {
     // Boîte de chaque arête élargie de sa demi-largeur, à plat : une cellule
     // écarte ses arêtes trop lointaines sans relire leur tracé.
     const boxes = (this._boxes = new Float32Array(edges * 4));
+    // Plage de cellules de chaque arête ; vide (`min > max`) si elle n'est pas inscrite.
+    const spans = new Int32Array(edges * 4);
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
     let e = 0;
 
     for (let s = 0; s < this.segments.length; s++) {
@@ -1516,6 +1548,7 @@ export class RoadIndex {
       const works = segment.works;
 
       for (let r = 0; r < path.length - 1; r++, e++) {
+        spans[e * 4] = 1;
         if (keep ? !keep(segment, r) : !includeWorks && works?.[r] && works[r + 1]) continue;
         const a = path[r];
         const b = path[r + 1];
@@ -1524,22 +1557,71 @@ export class RoadIndex {
         boxes[e * 4 + 1] = Math.max(a.x, b.x) + slack;
         boxes[e * 4 + 2] = Math.min(a.z, b.z) - slack;
         boxes[e * 4 + 3] = Math.max(a.z, b.z) + slack;
-        const minX = Math.floor((Math.min(a.x, b.x) - reach) / cell);
-        const maxX = Math.floor((Math.max(a.x, b.x) + reach) / cell);
-        const minZ = Math.floor((Math.min(a.z, b.z) - reach) / cell);
-        const maxZ = Math.floor((Math.max(a.z, b.z) + reach) / cell);
+        const x0 = (spans[e * 4] = Math.floor((Math.min(a.x, b.x) - reach) / cell));
+        const x1 = (spans[e * 4 + 1] = Math.floor((Math.max(a.x, b.x) + reach) / cell));
+        const z0 = (spans[e * 4 + 2] = Math.floor((Math.min(a.z, b.z) - reach) / cell));
+        const z1 = (spans[e * 4 + 3] = Math.floor((Math.max(a.z, b.z) + reach) / cell));
+        if (x0 < minX) minX = x0;
+        if (x1 > maxX) maxX = x1;
+        if (z0 < minZ) minZ = z0;
+        if (z1 > maxZ) maxZ = z1;
+      }
+    }
 
-        for (let cx = minX; cx <= maxX; cx++) {
-          for (let cz = minZ; cz <= maxZ; cz++) {
-            const key = cellKey(cx, cz);
-            const bucket = this.buckets.get(key);
-            if (bucket) bucket.push(s, r, e);
-            else this.buckets.set(key, [s, r, e]);
+    // Les cellules à plat : `_starts[c]` ouvre, dans `_entries`, les triplets
+    // (tronçon, ligne, arête) de la cellule `c`, rangés dans l'ordre des
+    // tronçons. Deux tableaux typés pour tout l'index, comptés avant d'être
+    // remplis : il est rebâti plusieurs fois par reconstruction, et une liste
+    // par cellule laissait autant de déchets que de cellules.
+    const empty = minX > maxX;
+    this._minX = empty ? 0 : minX;
+    this._minZ = empty ? 0 : minZ;
+    this._width = empty ? 0 : maxX - minX + 1;
+    this._height = empty ? 0 : maxZ - minZ + 1;
+    // Au-delà, une grille pleine coûterait plus qu'elle n'épargne : les cellules occupées seules.
+    const sparse = (this._sparse = this._width * this._height <= DENSE_CELLS_MAX ? null : new Map());
+    const height = this._height;
+    const slotOf = sparse
+      ? (cx, cz) => {
+          const key = cellKey(cx, cz);
+          let slot = sparse.get(key);
+          if (slot === undefined) sparse.set(key, (slot = sparse.size));
+          return slot;
+        }
+      : (cx, cz) => (cx - minX) * height + (cz - minZ);
+    if (sparse) {
+      for (let i = 0; i < edges * 4; i += 4) {
+        for (let cx = spans[i]; cx <= spans[i + 1]; cx++) {
+          for (let cz = spans[i + 2]; cz <= spans[i + 3]; cz++) slotOf(cx, cz);
+        }
+      }
+    }
+    const starts = (this._starts = new Int32Array((sparse ? sparse.size : this._width * height) + 1));
+    for (let i = 0; i < edges * 4; i += 4) {
+      for (let cx = spans[i]; cx <= spans[i + 1]; cx++) {
+        for (let cz = spans[i + 2]; cz <= spans[i + 3]; cz++) starts[slotOf(cx, cz) + 1] += 3;
+      }
+    }
+    for (let c = 1; c < starts.length; c++) starts[c] += starts[c - 1];
+    const entries = (this._entries = new Int32Array(starts[starts.length - 1]));
+    const cursor = starts.slice(0, -1);
+    e = 0;
+    for (let s = 0; s < this.segments.length; s++) {
+      const path = this.segments[s]?.path;
+      if (!Array.isArray(path) || path.length < 2) continue;
+      for (let r = 0; r < path.length - 1; r++, e++) {
+        for (let cx = spans[e * 4]; cx <= spans[e * 4 + 1]; cx++) {
+          for (let cz = spans[e * 4 + 2]; cz <= spans[e * 4 + 3]; cz++) {
+            const slot = slotOf(cx, cz);
+            const at = cursor[slot];
+            entries[at] = s;
+            entries[at + 1] = r;
+            entries[at + 2] = e;
+            cursor[slot] = at + 3;
           }
         }
       }
     }
-    this._cells = denseCells(this.buckets);
     this.found = {
       segments: [],
       rows: new Int32Array(32),
@@ -1547,6 +1629,21 @@ export class RoadIndex {
       distances: new Float64Array(32),
       decks: new Float64Array(32),
     };
+  }
+
+  /** Rang de la cellule dans `_starts`, ou -1 si elle ne porte aucune arête. */
+  _slot(cx, cz) {
+    let slot;
+    if (this._sparse) {
+      slot = this._sparse.get(cellKey(cx, cz));
+      if (slot === undefined) return -1;
+    } else {
+      const i = cx - this._minX;
+      const j = cz - this._minZ;
+      if (!(i >= 0 && i < this._width && j >= 0 && j < this._height)) return -1;
+      slot = i * this._height + j;
+    }
+    return this._starts[slot + 1] > this._starts[slot] ? slot : -1;
   }
 
   /**
@@ -1561,12 +1658,13 @@ export class RoadIndex {
    */
   query(x, z, margin = 0, accept = null) {
     const reach = Math.min(margin, this.margin);
-    const bucket = this._cells.at(Math.floor(x / this.cell), Math.floor(z / this.cell));
-    if (!bucket) return null;
+    const slot = this._slot(Math.floor(x / this.cell), Math.floor(z / this.cell));
+    if (slot < 0) return null;
 
     let best = null;
     const boxes = this._boxes;
-    for (let i = 0; i < bucket.length; i += 3) {
+    const bucket = this._entries;
+    for (let i = this._starts[slot], end = this._starts[slot + 1]; i < end; i += 3) {
       const e = bucket[i + 2] * 4;
       if (x < boxes[e] - reach || x > boxes[e + 1] + reach || z < boxes[e + 2] - reach || z > boxes[e + 3] + reach) continue;
       const index = bucket[i];
@@ -1586,7 +1684,10 @@ export class RoadIndex {
         t = ((x - a.x) * dx + (z - a.z) * dz) / lengthSq;
         t = t < 0 ? 0 : t > 1 ? 1 : t;
       }
-      const distance = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
+      const ex = x - (a.x + dx * t);
+      const ez = z - (a.z + dz * t);
+      // `Math.sqrt` : `Math.hypot` alloue à chaque appel, et l'index est lu par sommet de terrain.
+      const distance = Math.sqrt(ex * ex + ez * ez);
       if (distance > limit) continue;
       if (best && distance >= best.distance) continue;
       best = { segment, index, row, t, distance };
@@ -1613,12 +1714,13 @@ export class RoadIndex {
    */
   queryAll(x, z, margin = 0) {
     const reach = Math.min(margin, this.margin);
-    const bucket = this._cells.at(Math.floor(x / this.cell), Math.floor(z / this.cell));
-    if (!bucket) return [];
+    const slot = this._slot(Math.floor(x / this.cell), Math.floor(z / this.cell));
+    if (slot < 0) return [];
 
     const hits = [];
     const boxes = this._boxes;
-    for (let i = 0; i < bucket.length; i += 3) {
+    const bucket = this._entries;
+    for (let i = this._starts[slot], end = this._starts[slot + 1]; i < end; i += 3) {
       const e = bucket[i + 2] * 4;
       if (x < boxes[e] - reach || x > boxes[e + 1] + reach || z < boxes[e + 2] - reach || z > boxes[e + 3] + reach) continue;
       const index = bucket[i];
@@ -1636,7 +1738,9 @@ export class RoadIndex {
         t = ((x - a.x) * dx + (z - a.z) * dz) / lengthSq;
         t = t < 0 ? 0 : t > 1 ? 1 : t;
       }
-      const distance = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
+      const ex = x - (a.x + dx * t);
+      const ez = z - (a.z + dz * t);
+      const distance = Math.sqrt(ex * ex + ez * ez);
       if (distance > limit) continue;
       const hit = { segment, index, row, t, distance };
       if (!this.includeWorks && beyondTunnel(segment, row, x, z)) hit.covered = true;
@@ -1658,12 +1762,13 @@ export class RoadIndex {
   collect(x, z, margin = 0) {
     const into = this.found;
     const reach = Math.min(margin, this.margin);
-    const bucket = this._cells.at(Math.floor(x / this.cell), Math.floor(z / this.cell));
-    if (!bucket) return 0;
+    const slot = this._slot(Math.floor(x / this.cell), Math.floor(z / this.cell));
+    if (slot < 0) return 0;
 
     let count = 0;
     const boxes = this._boxes;
-    for (let i = 0; i < bucket.length; i += 3) {
+    const bucket = this._entries;
+    for (let i = this._starts[slot], end = this._starts[slot + 1]; i < end; i += 3) {
       const e = bucket[i + 2] * 4;
       if (x < boxes[e] - reach || x > boxes[e + 1] + reach || z < boxes[e + 2] - reach || z > boxes[e + 3] + reach) continue;
       const row = bucket[i + 1];
@@ -1680,7 +1785,9 @@ export class RoadIndex {
         t = ((x - a.x) * dx + (z - a.z) * dz) / lengthSq;
         t = t < 0 ? 0 : t > 1 ? 1 : t;
       }
-      const distance = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
+      const ex = x - (a.x + dx * t);
+      const ez = z - (a.z + dz * t);
+      const distance = Math.sqrt(ex * ex + ez * ez);
       if (distance > limit) continue;
       if (count === into.rows.length) growHits(into);
       const platform = segment.platform;
@@ -1719,22 +1826,36 @@ export class RoadIndex {
     const cx1 = Math.floor(maxX / this.cell);
     const cz0 = Math.floor(minZ / this.cell);
     const cz1 = Math.floor(maxZ / this.cell);
-    const seen = new Set();
+    // Une marque par arête, sans rien allouer : la question est posée à chaque
+    // pas d'un tracé. Un `visit` qui interroge le même index pendant le
+    // parcours garde sa propre table, pour ne pas brouiller les marques.
+    const stamps = this._walking ? null : (this._stamps ??= new Uint32Array(this._boxes.length / 4));
+    const seen = stamps ? null : new Set();
+    const stamp = stamps ? (this._stamp = (this._stamp || 0) + 1) : 0;
+    if (stamps) this._walking = true;
+    const bucket = this._entries;
 
     for (let cx = cx0; cx <= cx1; cx++) {
       for (let cz = cz0; cz <= cz1; cz++) {
-        const bucket = this.buckets.get(cellKey(cx, cz));
-        if (!bucket) continue;
-        for (let i = 0; i < bucket.length; i += 3) {
+        const slot = this._slot(cx, cz);
+        if (slot < 0) continue;
+        for (let i = this._starts[slot], end = this._starts[slot + 1]; i < end; i += 3) {
           const index = bucket[i];
           const row = bucket[i + 1];
-          const key = index * 1048576 + row;
-          if (seen.has(key)) continue;
-          seen.add(key);
+          if (stamps) {
+            const edge = bucket[i + 2];
+            if (stamps[edge] === stamp) continue;
+            stamps[edge] = stamp;
+          } else {
+            const key = index * 1048576 + row;
+            if (seen.has(key)) continue;
+            seen.add(key);
+          }
           visit(this.segments[index], row, index);
         }
       }
     }
+    if (stamps) this._walking = false;
   }
 
   /**
@@ -1766,11 +1887,12 @@ export class RoadIndex {
     const cz = Math.floor(z / this.cell);
 
     let best = null;
+    const bucket = this._entries;
     for (let ix = cx - span; ix <= cx + span; ix++) {
       for (let iz = cz - span; iz <= cz + span; iz++) {
-        const bucket = this.buckets.get(cellKey(ix, iz));
-        if (!bucket) continue;
-        for (let i = 0; i < bucket.length; i += 3) {
+        const slot = this._slot(ix, iz);
+        if (slot < 0) continue;
+        for (let i = this._starts[slot], end = this._starts[slot + 1]; i < end; i += 3) {
           const index = bucket[i];
           const row = bucket[i + 1];
           const segment = this.segments[index];
@@ -1814,7 +1936,7 @@ export class RoadIndex {
     const cz1 = Math.floor(maxZ / this.cell);
     for (let cx = cx0; cx <= cx1; cx++) {
       for (let cz = cz0; cz <= cz1; cz++) {
-        if (this.buckets.has(cellKey(cx, cz))) return true;
+        if (this._slot(cx, cz) >= 0) return true;
       }
     }
     return false;
@@ -1961,12 +2083,13 @@ function dominates(a, indexA, b, indexB) {
 }
 
 /**
- * Recoud les plate-formes entre elles aux carrefours. Chaque chaussée dresse
- * sa plate-forme pour son compte, donc deux voies qui se croisent
- * n'aboutissent pas à la même altitude sans ce raccord. La plus large
- * commande : une départementale épouse le profil de la nationale sur ses
- * derniers mètres, en rampe sur quelques lignes. Au-delà de
- * `STITCH_MAX_STEP_M`, ce n'est pas un carrefour mais un pont ou un souterrain.
+ * Recoud les plate-formes là où une chaussée entre dans la largeur d'une
+ * autre. Deux voies qui partagent un nœud y ont déjà la même cote
+ * (`roadProfile.gradeRoadNetwork`) ; restent les lignes de la plus étroite
+ * prises dans la largeur de l'autre, aux abords du nœud ou le long d'un
+ * tracé qui la recouvre. La plus large commande : l'étroite épouse son profil,
+ * en rampe sur quelques lignes. Au-delà de `STITCH_MAX_STEP_M`, ce n'est pas
+ * une rencontre mais un pont ou un souterrain.
  *
  * Une ligne d'ouvrage ne se recoud jamais, dans aucun des deux sens : ni la
  * bretelle d'échangeur sur l'autoroute qu'elle survole (elle redescendrait s'y

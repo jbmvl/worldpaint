@@ -68,6 +68,10 @@ const TERRAIN_REBUILD_BUDGET_MS = 4;
 
 /** Marque d'une arête remplacée par sa voisine plus proche (`_roadCutWithMask`). */
 const SKIPPED = -1e9;
+/** Réserves des lectures par point, lues aussitôt écrites : le terrain en fait cinq par sommet. */
+const WATER_AT = { elevation: 0, mask: 0, inWater: false };
+const EARTH_AT = { elevation: 0, mask: 0, supported: false };
+const CUT_AT = { elevation: 0, mask: 0 };
 
 export class TerrainBubble {
   /**
@@ -546,9 +550,10 @@ export class TerrainBubble {
     // entaille ensuite. L'ordre inverse taillerait la route dans la rampe que
     // la marche vient de supprimer.
     const stepped = this._cliffCut ? this._cliffCut.elevationAt(x, z, raw) : raw;
-    const water = this._waterRelief?.sample(x, z, stepped);
-    const earth = this._roadCutAt(x, z, water?.elevation ?? stepped);
-    return water?.inWater ? water.elevation : earth;
+    const water = this._waterRelief?.sample(x, z, stepped, WATER_AT);
+    const level = water ? water.elevation : stepped;
+    if (water?.inWater) return level;
+    return this._roadCutAt(x, z, level);
   }
 
   _naturalAt(x, z, raw) {
@@ -618,7 +623,7 @@ export class TerrainBubble {
    * entailles à portée plutôt que de s'arrêter à la plus proche.
    */
   _roadCutAt(x, z, raw) {
-    return this._roadCutWithMask(x, z, raw).elevation;
+    return this._roadCutWithMask(x, z, raw, CUT_AT).elevation;
   }
 
   /**
@@ -628,21 +633,25 @@ export class TerrainBubble {
    * fois la chaussée à la main. Une seule interrogation de l'index par
    * sommet ; `_roadCutAt` s'appuie dessus pour garder sa propre signature.
    */
-  _roadCutWithMask(x, z, raw) {
+  _roadCutWithMask(x, z, raw, out = {}) {
+    out.elevation = raw;
+    out.mask = 0;
     // Au-delà de la portée, aucune chaussée n'est posée : rien à creuser.
     const disc = this._reachDisc;
-    if (disc && (x - disc.x) ** 2 + (z - disc.z) ** 2 > disc.radius2) return { elevation: raw, mask: 0 };
-    let earth = this._earthworks?.sample(x, z, raw) ?? { elevation: raw, mask: 0 };
-    raw = earth.elevation;
+    if (disc && (x - disc.x) ** 2 + (z - disc.z) ** 2 > disc.radius2) return out;
+    let supported = false;
+    if (this._earthworks) {
+      const earth = this._earthworks.sample(x, z, raw, EARTH_AT);
+      raw = out.elevation = earth.elevation;
+      out.mask = earth.mask;
+      supported = earth.supported;
+    }
     const bench = this.cutBenchM;
     const reach = bench + ROAD_CUT_BLEND_M;
     const unpaved = this._unpaved?.query(x, z, reach);
-    if (unpaved) {
-      const mask = roadCutMaskAt(unpaved.distance, unpaved.segment.halfWidth, bench);
-      earth = { ...earth, mask: Math.max(earth.mask, mask) };
-    }
+    if (unpaved) out.mask = Math.max(out.mask, roadCutMaskAt(unpaved.distance, unpaved.segment.halfWidth, bench));
     const index = this._roadCut;
-    if (!index) return earth;
+    if (!index) return out;
 
     // Toutes les chaussées à portée, pas la plus proche : en ville, le sommet
     // le plus proche d'une rue tombe souvent dans le fond plat de sa voisine,
@@ -664,7 +673,7 @@ export class TerrainBubble {
     const slab = under
       ? this._junctions?.deckUnder(x, z, undefined, bench)
       : this._junctions?.deckNear(x, z, reach, undefined, bench);
-    if (count === 0 && !slab) return earth;
+    if (count === 0 && !slab) return out;
 
     // La plate-forme est en unités de scène (déjà multipliée par l'exagération
     // verticale) ; `raw` est en unités de MNT. On compare dans le même espace.
@@ -725,7 +734,7 @@ export class TerrainBubble {
       raw = Math.max(raw, natural + (filled - natural) * share);
     }
 
-    let mask = earth.mask;
+    let mask = out.mask;
     let elevation = raw;
     let propped = raw;
     for (let i = 0; i < count; i++) {
@@ -746,8 +755,10 @@ export class TerrainBubble {
       propped = Math.min(propped, low);
       mask = Math.max(mask, roadCutMaskAt(slab.distance, 0, bench));
     }
-    if (earth.supported) elevation = Math.max(elevation, propped);
-    return { elevation, mask };
+    if (supported) elevation = Math.max(elevation, propped);
+    out.elevation = elevation;
+    out.mask = mask;
+    return out;
   }
 
   /** Position dans le repère local, posée sur la surface affichée. */
@@ -889,11 +900,28 @@ export class TerrainBubble {
     // falaise ici, soit deux cent mille requêtes inutiles par tuile.
     const stepping = this._cliffTouches(tile);
     const watering = this._waterTouches(tile);
+    // Réserves propres à cette construction : elle s'étale sur plusieurs images.
+    const water = { elevation: 0, mask: 0, inWater: false };
+    const earth = { elevation: 0, mask: 0 };
+    const atVertex = { elevation: 0, mask: 0 };
     const cutWithMask = (x, z, raw) => {
-      const stepped = stepping ? this._cliffCut.elevationAt(x, z, raw) : raw;
-      const water = watering ? this._waterRelief.sample(x, z, stepped) : { elevation: stepped, mask: 0 };
-      const earth = carving ? this._roadCutWithMask(x, z, water.elevation) : water;
-      return { elevation: water.inWater ? water.elevation : earth.elevation, mask: Math.max(water.mask, earth.mask) };
+      let level = stepping ? this._cliffCut.elevationAt(x, z, raw) : raw;
+      let mask = 0;
+      let inWater = false;
+      if (watering) {
+        this._waterRelief.sample(x, z, level, water);
+        level = water.elevation;
+        mask = water.mask;
+        inWater = water.inWater;
+      }
+      if (carving) {
+        this._roadCutWithMask(x, z, level, earth);
+        if (!inWater) level = earth.elevation;
+        mask = Math.max(mask, earth.mask);
+      }
+      atVertex.elevation = level;
+      atVertex.mask = mask;
+      return atVertex;
     };
     const cut = (x, z, raw) => cutWithMask(x, z, raw).elevation;
 
@@ -906,6 +934,8 @@ export class TerrainBubble {
         const idx = j * (n + 1) + i;
 
         const local = this.frame.tileToLocal(tx, ty);
+        const localX = local.x;
+        const localZ = local.z;
 
         // Bords recousus sur la résolution du voisin.
         let raw;
@@ -924,23 +954,23 @@ export class TerrainBubble {
           samples[idx * 5 + 4] = this._sample(tx, ty - this._gradientStep);
         }
         // Le déblai est une fonction du seul point du sol, donc la couture des bords reste exacte.
-        const atVertex = cutWithMask(local.x, local.z, raw);
+        cutWithMask(localX, localZ, raw);
         const h = atVertex.elevation * this.verticalScale;
 
-        positions[idx * 3] = local.x;
+        positions[idx * 3] = localX;
         positions[idx * 3 + 1] = h;
-        positions[idx * 3 + 2] = local.z;
+        positions[idx * 3 + 2] = localZ;
         roadMask[idx] = atVertex.mask;
 
         // Gradient central : continu au travers des frontières de tuiles.
-        const hE = cut(local.x + stepMeters, local.z, samples[idx * 5 + 1]) * this.verticalScale;
-        const hW = cut(local.x - stepMeters, local.z, samples[idx * 5 + 2]) * this.verticalScale;
-        const hS = cut(local.x, local.z + stepMeters, samples[idx * 5 + 3]) * this.verticalScale;
-        const hN = cut(local.x, local.z - stepMeters, samples[idx * 5 + 4]) * this.verticalScale;
+        const hE = cut(localX + stepMeters, localZ, samples[idx * 5 + 1]) * this.verticalScale;
+        const hW = cut(localX - stepMeters, localZ, samples[idx * 5 + 2]) * this.verticalScale;
+        const hS = cut(localX, localZ + stepMeters, samples[idx * 5 + 3]) * this.verticalScale;
+        const hN = cut(localX, localZ - stepMeters, samples[idx * 5 + 4]) * this.verticalScale;
 
         let nx = -(hE - hW) / (2 * stepMeters);
         let nz = -(hS - hN) / (2 * stepMeters);
-        const len = Math.hypot(nx, 1, nz) || 1;
+        const len = Math.sqrt(nx * nx + 1 + nz * nz);
         normals[idx * 3] = nx / len;
         normals[idx * 3 + 1] = 1 / len;
         normals[idx * 3 + 2] = nz / len;

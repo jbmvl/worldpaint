@@ -1,11 +1,16 @@
 /*
- * Profil vertical des chaussées affichées, indépendant du terrassement.
- * Les chaussées au sol gardent leur assise terrassée, même quand sa pente
+ * Profil vertical des chaussées. Une ligne n'a qu'une cote, lue par le
+ * terrain comme par l'affichage.
+ * `gradeRoadNetwork` aplanit le réseau au sol comme un seul graphe, dans la
+ * limite du terrassement consenti : un nœud partagé n'a qu'une cote, et les
+ * voies qui se longent se rejoignent sur un plan commun.
+ * Les chaussées au sol gardent ensuite cette assise, même quand sa pente
  * dépasse la cible : une contrainte de pente ne justifie pas un viaduc.
  * Les ponts peuvent être lissés sans perdre leur dégagement ; leurs accès,
- * les tunnels et les passages inférieurs conservent leurs cotes.
+ * les tunnels et les passages inférieurs conservent leurs cotes, et le
+ * terrain ne lit pas la cote d'un tablier.
  * Les portions réellement suspendues publient des appuis pour BridgeLayer,
- * sans changer les drapeaux OSM ni les hauteurs utilisées par le terrain.
+ * sans changer les drapeaux OSM.
  * Les lignes dont le remblai est en terre sont publiées de même
  * (`findEarthFills`) : le terrain s'y relève sous la chaussée, et nulle part
  * où un mur, un tablier ou un profil lissé la porte déjà.
@@ -23,6 +28,131 @@ export const ROAD_MAX_GRADE = 0.12;
 export const ROAD_SUPPORT_DROP_M = 2.5;
 export const ROAD_SUPPORT_LENGTH_M = 15;
 
+/**
+ * Aplanit le profil en long du réseau revêtu, dans la limite du terrassement
+ * consenti. Dressée section par section, une chaussée épouse le bruit du MNT ;
+ * un terrassier tend une pente et laisse l'ouvrage rattraper l'écart.
+ *
+ * Le réseau est un graphe de lignes. Deux chaussées qui partagent un point au
+ * même niveau y partagent une cote, et se raccordent donc sans couture ; deux
+ * voies qui se longent (`facing`) sont liées en travers, ligne à ligne, et se
+ * rejoignent sur un plan commun. Chaque ligne est tirée vers la moyenne de ses
+ * voisines, puis ramenée dans sa bande autour du relief relevé — nulle, la
+ * route colle au sol ; large, elle s'en détache et le déblai, le mur ou le
+ * remblai suivent. Deux rues en terrasse, que leurs bandes ne réconcilient
+ * pas, restent chacune à sa cote.
+ *
+ * À `strength` 0,5 et quarante passes, sur un pas de 5 m, il reste 0 % d'une
+ * vague de 40 m, 21 % d'une vague de 80 m et 94 % d'une pente de 400 m.
+ *
+ * Un bout libre ne bouge pas : il finit au bord de la portée, contre un autre
+ * découpage du même tracé, et doit repartir de la cote du terrain. Son
+ * influence s'éteint en cinquante mètres.
+ *
+ * Passes de Jacobi (toutes les lignes lues dans le même état) et bandes
+ * réunies sans ordre : ni le sens des tracés ni le rang des tronçons ne
+ * décident du résultat.
+ *
+ * @param {Array<Object>} segments Tronçons revêtus : `path`, `levels`, et
+ *        `platform`, le relief relevé, remplacé par le profil aplani.
+ * @param {Array<{maxCut:Float32Array|number, maxFill:Float32Array|number}>} bands
+ *        Enfoncement et exhaussement tolérés, par tronçon puis par ligne.
+ * @param {Object} [options]
+ * @param {Array} [options.facing] Vis-à-vis des voies qui se longent (`roadBundles.facingRows`).
+ */
+export function gradeRoadNetwork(segments, bands, { facing = null, iterations = 40, strength = 0.5 } = {}) {
+  const ids = new Map();
+  const rowsOf = [];
+  const low = [];
+  const high = [];
+  const least = [];
+  const most = [];
+  // Voisines le long du tracé, puis en travers : rang et poids, à plat.
+  const along = [];
+  const across = [];
+  const bound = (v, r) => (typeof v === 'number' ? v : v?.[r] ?? 0);
+  segments.forEach((segment, si) => {
+    const { path, platform, levels } = segment;
+    const rows = new Int32Array(path.length);
+    for (let r = 0; r < path.length; r++) {
+      const p = path[r];
+      const key = `${Math.round(p.x * 1000)}:${Math.round(p.z * 1000)}:${levels?.[r] ?? 0}`;
+      const floor = platform[r] - bound(bands[si]?.maxCut, r);
+      const ceiling = platform[r] + bound(bands[si]?.maxFill, r);
+      let id = ids.get(key);
+      if (id === undefined) {
+        id = low.length;
+        ids.set(key, id);
+        low.push(floor);
+        high.push(ceiling);
+        least.push(platform[r]);
+        most.push(platform[r]);
+        along.push([]);
+        across.push(null);
+      } else {
+        low[id] = Math.max(low[id], floor);
+        high[id] = Math.min(high[id], ceiling);
+        least[id] = Math.min(least[id], platform[r]);
+        most[id] = Math.max(most[id], platform[r]);
+      }
+      rows[r] = id;
+      if (r && rows[r - 1] !== id) {
+        along[id].push(rows[r - 1]);
+        along[rows[r - 1]].push(id);
+      }
+    }
+    rowsOf.push(rows);
+  });
+  facing?.forEach((own, si) => {
+    own?.forEach((links, r) => {
+      if (!links) return;
+      const list = (across[rowsOf[si][r]] ??= []);
+      for (let i = 0; i < links.length; i += 3) {
+        const other = rowsOf[links[i]];
+        const row = links[i + 1];
+        const t = links[i + 2];
+        list.push(other[row], 1 - t, other[Math.min(other.length - 1, row + 1)], t);
+      }
+    });
+  });
+
+  const count = low.length;
+  let heights = new Float64Array(count);
+  let next = new Float64Array(count);
+  for (let id = 0; id < count; id++) {
+    // Deux relevés du même point que leurs bandes ne réconcilient pas : le milieu.
+    if (low[id] > high[id]) low[id] = high[id] = (low[id] + high[id]) / 2;
+    heights[id] = Math.min(high[id], Math.max(low[id], (least[id] + most[id]) / 2));
+  }
+
+  for (let k = 0; k < iterations; k++) {
+    for (let id = 0; id < count; id++) {
+      const around = along[id];
+      if (around.length < 2) {
+        next[id] = heights[id];
+        continue;
+      }
+      let sum = 0;
+      let weight = around.length;
+      for (let n = 0; n < around.length; n++) sum += heights[around[n]];
+      const beside = across[id];
+      if (beside) {
+        for (let n = 0; n < beside.length; n += 2) {
+          sum += heights[beside[n]] * beside[n + 1];
+          weight += beside[n + 1];
+        }
+      }
+      const eased = heights[id] + strength * (sum / weight - heights[id]);
+      next[id] = Math.min(high[id], Math.max(low[id], eased));
+    }
+    [heights, next] = [next, heights];
+  }
+
+  segments.forEach((segment, si) => {
+    rowsOf[si].forEach((id, r) => { segment.platform[r] = heights[id]; });
+  });
+}
+
 export function smoothRoadProfiles(segments, { maxGrade = ROAD_MAX_GRADE, crossings = [] } = {}) {
   const fixedRows = new Map();
   for (const crossing of crossings) {
@@ -31,10 +161,13 @@ export function smoothRoadProfiles(segments, { maxGrade = ROAD_MAX_GRADE, crossi
     if (!fixedRows.has(lower)) fixedRows.set(lower, new Set());
     fixedRows.get(lower).add(crossing.row).add(crossing.row + 1);
   }
-  const nodes = [], shared = new Map(), ids = new Map();
+  const nodes = [], shared = new Map(), ids = new Map(), seats = new Map();
   for (const segment of segments) {
     if (!segment.paved) continue;
     const rows = [];
+    // L'assise des lignes au sol : chacune garde la sienne, même au point qu'elle partage avec un tablier relevé.
+    const seat = new Float64Array(segment.path.length).fill(NaN);
+    seats.set(segment, seat);
     for (let r = 0; r < segment.path.length; r++) {
       const p = segment.path[r];
       const floor = segment.terrainPlatform?.[r] ?? segment.platform[r];
@@ -52,6 +185,7 @@ export function smoothRoadProfiles(segments, { maxGrade = ROAD_MAX_GRADE, crossi
         nodes[id].fixed ||= fixed;
       }
       rows.push(id);
+      if (fixed) seat[r] = floor;
       if (r) {
         const before = rows[r - 1];
         const length = Math.hypot(p.x - segment.path[r - 1].x, p.z - segment.path[r - 1].z);
@@ -96,10 +230,11 @@ export function smoothRoadProfiles(segments, { maxGrade = ROAD_MAX_GRADE, crossi
   raised = envelope(raised);
   let constrained = 0;
   for (const [segment, rows] of ids) {
+    const seat = seats.get(segment);
     rows.forEach((id, r) => {
       const n = nodes[id];
       const wanted = Math.min(raised[id], -ceiling[id]);
-      segment.platform[r] = n.fixed ? n.pin : Math.max(n.floor, wanted);
+      segment.platform[r] = seat[r] === seat[r] ? seat[r] : n.fixed ? n.pin : Math.max(n.floor, wanted);
     });
     for (let r = 1; r < rows.length; r++) {
       const d = Math.hypot(segment.path[r].x - segment.path[r - 1].x, segment.path[r].z - segment.path[r - 1].z);
@@ -137,7 +272,11 @@ export function findRoadSupports(segments, groundAt, areas = null) {
     }
   }
   for (const area of areas?.areas ?? []) {
-    area.supported = !area.terrainCovered && area.deck - groundAt(area.x, area.z) >= ROAD_SUPPORT_DROP_M;
+    // Chaque sommet contre le sol qu'il surplombe : la cote moyenne d'une
+    // surface en pente ne dit rien du vide sous un de ses points.
+    const ecarts = area.vertices.filter(p => Number.isFinite(p.y)).map(p => p.y - groundAt(p.x, p.z));
+    const ecart = ecarts.length ? ecarts.reduce((somme, e) => somme + e, 0) / ecarts.length : area.deck - groundAt(area.x, area.z);
+    area.supported = !area.terrainCovered && ecart >= ROAD_SUPPORT_DROP_M;
     if (!area.supported) continue;
     for (const segment of segments) segment.junction?.forEach((a, r) => {
       if (areas.areas[a] === area && !segment.works?.[r]) segment.supports[r] = 1;
