@@ -692,7 +692,7 @@ export class GroundCover {
         pass.placed = placed;
         return false;
       }
-      const cell = cells[pass.next];
+      const cell = cells.at(pass.next);
       const band = bands[cell.band];
       const cacheKey = `${cell.band}:${cell.id}:${cell.row}`;
       const retained = this._instanceCells.read(cacheKey, streams, placed, capacity);

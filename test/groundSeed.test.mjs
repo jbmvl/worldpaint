@@ -10,6 +10,7 @@ import {
   cellRandomAt,
   worldCellsIn,
   worldCellsAround,
+  uniformWorldGrid,
   hash32,
   randomStream,
 } from '../src/core/groundSeed.js';
@@ -166,4 +167,26 @@ test('le hachage commun mélange chacun de ses arguments', () => {
   assert.notEqual(hash32(1, 2, 3), hash32(2, 1, 3));
   assert.notEqual(hash32(1, 2, 3), hash32(1, 2, 4));
   assert.notEqual(hash32(0, 0, 0), hash32(0, 0, 1));
+});
+
+test('la grille uniforme et le parcours complet rendent les mêmes mailles', () => {
+  const frame = FRAMES[0];
+  const step = 2.2;
+  const grid = uniformWorldGrid(frame, -60, 60, step);
+  assert.ok(grid, 'grille uniforme au départ de la démo');
+  const viaGrid = new Map();
+  for (let J = grid.line(-50); J <= grid.line(50); J++) {
+    for (let I = grid.column(-50); I <= grid.column(50); I++) {
+      const c = grid.cell(I, J);
+      viaGrid.set(`${c.id}:${c.row}`, c);
+    }
+  }
+  let compared = 0;
+  for (const c of worldCellsIn(frame, -40, -40, 40, 40, step)) {
+    const same = viaGrid.get(`${c.id}:${c.row}`);
+    assert.ok(same, `${c.id}:${c.row}`);
+    assert.ok(Math.abs(same.x - c.x) < 1e-6 && Math.abs(same.z - c.z) < 1e-6);
+    compared++;
+  }
+  assert.ok(compared > 1000);
 });

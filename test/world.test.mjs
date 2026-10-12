@@ -9429,7 +9429,7 @@ test('une bretelle d’échangeur ne redescend pas se coller à l’autoroute qu
 // --- L'herbe du premier plan ------------------------------------------------
 
 test('les mailles d’herbe tiennent dans le disque, les plus proches d’abord', () => {
-  const cells = coverBandCells(testFrame, [coverBand({ from: 0, to: 20, cell: 2, perCell: 0 })], 0, 0);
+  const cells = [...coverBandCells(testFrame, [coverBand({ from: 0, to: 20, cell: 2, perCell: 0 })], 0, 0)];
   assert.ok(cells.length > 100, `assez de mailles (${cells.length})`);
   for (const cell of cells) assert.ok(cell.distance <= 20, 'dans le disque');
   for (let i = 1; i < cells.length; i++) {
@@ -10069,7 +10069,7 @@ test('une maille de culture rend toujours les mêmes touffes', () => {
 });
 
 test('le disque de culture est trié du centre vers le bord', () => {
-  const cells = coverBandCells(testFrame, [coverBand({ from: 0, to: 20, cell: 2.5, perCell: 0 })], 0, 0);
+  const cells = [...coverBandCells(testFrame, [coverBand({ from: 0, to: 20, cell: 2.5, perCell: 0 })], 0, 0)];
   assert.ok(cells.length > 0);
   for (let i = 1; i < cells.length; i++) {
     assert.ok(cells[i].distance >= cells[i - 1].distance, 'les plus proches d’abord');

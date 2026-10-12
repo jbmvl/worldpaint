@@ -94,23 +94,22 @@ function cellsPerTile(tileY, zoom, step) {
 }
 
 /**
- * Mailles mondiales de côté voisin de `step` mètres qui recoupent le
- * rectangle local [minX, maxX] × [minZ, maxZ]. Chaque tuile (z15, ou plus
+ * Visite les mailles mondiales de côté voisin de `step` mètres qui recoupent
+ * le rectangle local [minX, maxX] × [minZ, maxZ]. Chaque tuile (z15, ou plus
  * grande pour un grand pas) en porte `round(côté / step)` par côté : la grille
  * ne dépend que du sol.
  *
- * @returns {Array<{id:number, row:number, x:number, z:number, size:number}>}
- *          `id`, `row` identifient la maille dans le monde (à passer à
- *          `hash32`) ; `x`, `z` est son coin nord-ouest dans le repère ;
- *          `size` son côté local.
+ * @param {(id:number, row:number, x:number, z:number, size:number) => void} visit
+ *        `id`, `row` identifient la maille dans le monde (à passer à
+ *        `hash32`) ; `x`, `z` est son coin nord-ouest dans le repère ;
+ *        `size` son côté local.
  */
-export function worldCellsIn(frame, minX, minZ, maxX, maxZ, step) {
+export function eachWorldCell(frame, minX, minZ, maxX, maxZ, step, visit) {
   latticeOf(frame);
   const zoom = latticeZoom(step);
   const toTile = 2 ** (zoom - frame.zoom);
   const tileMeters = frame.scale / toTile;
   const ox = frame.origin.x * toTile, oz = frame.origin.y * toTile;
-  const cells = [];
   const tx0 = Math.floor(ox + minX / tileMeters), tx1 = Math.floor(ox + maxX / tileMeters);
   const ty0 = Math.floor(oz + minZ / tileMeters), ty1 = Math.floor(oz + maxZ / tileMeters);
   for (let ty = ty0; ty <= ty1; ty++) {
@@ -123,11 +122,49 @@ export function worldCellsIn(frame, minX, minZ, maxX, maxZ, step) {
       const i0 = Math.max(0, Math.floor((minX - colX) / size)), i1 = Math.min(n - 1, Math.floor((maxX - colX) / size));
       for (let j = j0; j <= j1; j++) {
         for (let i = i0; i <= i1; i++) {
-          cells.push({ id: tx * MAX_CELLS_PER_TILE + i, row: ty * MAX_CELLS_PER_TILE + j, x: colX + i * size, z: rowZ + j * size, size });
+          visit(tx * MAX_CELLS_PER_TILE + i, ty * MAX_CELLS_PER_TILE + j, colX + i * size, rowZ + j * size, size);
         }
       }
     }
   }
+}
+
+/**
+ * La grille de `eachWorldCell` sur une bande de rangées [minZ, maxZ], quand
+ * toutes ses tuiles portent le même nombre de mailles : leurs indices (I, J)
+ * se suivent alors d'une tuile à l'autre. `null` sinon (une rangée de tuiles
+ * change de compte, ce qui arrive tous les quelques kilomètres).
+ */
+export function uniformWorldGrid(frame, minZ, maxZ, step) {
+  latticeOf(frame);
+  const zoom = latticeZoom(step);
+  const toTile = 2 ** (zoom - frame.zoom);
+  const tileMeters = frame.scale / toTile;
+  const ox = frame.origin.x * toTile, oz = frame.origin.y * toTile;
+  const ty0 = Math.floor(oz + minZ / tileMeters), ty1 = Math.floor(oz + maxZ / tileMeters);
+  const n = cellsPerTile(ty0, zoom, step);
+  for (let ty = ty0 + 1; ty <= ty1; ty++) if (cellsPerTile(ty, zoom, step) !== n) return null;
+  const size = tileMeters / n;
+  return {
+    size,
+    column: (x) => Math.floor((ox + x / tileMeters) * n),
+    line: (z) => Math.floor((oz + z / tileMeters) * n),
+    cell(I, J) {
+      const tx = Math.floor(I / n), ty = Math.floor(J / n);
+      const i = I - tx * n, j = J - ty * n;
+      return { id: tx * MAX_CELLS_PER_TILE + i, row: ty * MAX_CELLS_PER_TILE + j, x: (tx - ox) * tileMeters + i * size, z: (ty - oz) * tileMeters + j * size, size };
+    },
+  };
+}
+
+/**
+ * Les mailles de `eachWorldCell`, en liste.
+ *
+ * @returns {Array<{id:number, row:number, x:number, z:number, size:number}>}
+ */
+export function worldCellsIn(frame, minX, minZ, maxX, maxZ, step) {
+  const cells = [];
+  eachWorldCell(frame, minX, minZ, maxX, maxZ, step, (id, row, x, z, size) => cells.push({ id, row, x, z, size }));
   return cells;
 }
 

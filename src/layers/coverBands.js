@@ -17,7 +17,7 @@
  * et `cropLayer`.
  */
 
-import { worldCellsIn } from '../core/groundSeed.js';
+import { eachWorldCell, uniformWorldGrid } from '../core/groundSeed.js';
 
 /**
  * Fabrique une bande.
@@ -52,28 +52,69 @@ export function coverBand({
   return { from, to, cell, perCell, spread, rise, massBias, fadeIn, fadeOut, salt };
 }
 
+const rings = new WeakMap();
+
+/** Décalages de mailles de toutes les bandes, triés par distance au centre de la maille de base ; calculés une fois. */
+function ringOf(bands) {
+  let ring = rings.get(bands);
+  if (ring) return ring;
+  ring = [];
+  for (let band = 0; band < bands.length; band++) {
+    const { from, to, cell } = bands[band];
+    const span = Math.ceil(to / cell);
+    for (let dj = -span; dj <= span; dj++) {
+      for (let di = -span; di <= span; di++) {
+        const distance = Math.hypot(di * cell, dj * cell);
+        if (distance >= from && distance < to) ring.push({ di, dj, distance, band });
+      }
+    }
+  }
+  ring.sort((a, b) => a.distance - b.distance || a.band - b.band || a.dj - b.dj || a.di - b.di);
+  rings.set(bands, ring);
+  return ring;
+}
+
 /**
  * Mailles mondiales de toutes les bandes autour de (`centerX`, `centerZ`),
  * triées de la plus proche à la plus lointaine (si le plafond d'instances est
- * atteint, ce qui se perd doit être au bord).
+ * atteint, ce qui se perd doit être au bord). La distance se compte depuis la
+ * maille qui contient le centre, dans chaque bande.
  *
  * @param {Object} frame Repère local.
  * @param {Array} bands Bandes, telles que rendues par `coverBand`.
- * @returns {Array<{id:number, row:number, x:number, z:number, size:number, distance:number, band:number}>}
- *          maille mondiale (voir `worldCellsIn`), distance de son centre au
- *          point, et bande d'origine.
+ * @returns {{length:number, at:(k:number)=>Object}} Itérable de mailles
+ *          `{id, row, x, z, size, distance, band}` : maille mondiale (voir
+ *          `eachWorldCell`), distance, et bande d'origine.
  */
 export function coverBandCells(frame, bands, centerX, centerZ) {
+  const grids = bands.map((b) => uniformWorldGrid(frame, centerZ - b.to - 2 * b.cell, centerZ + b.to + 2 * b.cell, b.cell));
+  if (grids.every(Boolean)) {
+    const bases = grids.map((g) => [g.column(centerX), g.line(centerZ)]);
+    const ring = ringOf(bands);
+    // Liste paresseuse : une passe interrompue par son budget ne paie que les
+    // mailles qu'elle a atteintes.
+    const at = (k) => {
+      const { di, dj, distance, band } = ring[k];
+      const cell = grids[band].cell(bases[band][0] + di, bases[band][1] + dj);
+      cell.distance = distance;
+      cell.band = band;
+      return cell;
+    };
+    return {
+      length: ring.length,
+      at,
+      *[Symbol.iterator]() { for (let k = 0; k < ring.length; k++) yield at(k); },
+    };
+  }
+  // Une rangée de tuiles change de compte de mailles sous le disque : la grille
+  // n'y est plus uniforme, on la parcourt telle quelle.
   const out = [];
   for (let band = 0; band < bands.length; band++) {
     const { from, to, cell } = bands[band];
-    for (const c of worldCellsIn(frame, centerX - to, centerZ - to, centerX + to, centerZ + to, cell)) {
-      const distance = Math.hypot(c.x + c.size / 2 - centerX, c.z + c.size / 2 - centerZ);
-      if (distance < from || distance >= to) continue;
-      c.distance = distance;
-      c.band = band;
-      out.push(c);
-    }
+    eachWorldCell(frame, centerX - to, centerZ - to, centerX + to, centerZ + to, cell, (id, row, x, z, size) => {
+      const distance = Math.hypot(x + size / 2 - centerX, z + size / 2 - centerZ);
+      if (distance >= from && distance < to) out.push({ id, row, x, z, size, distance, band });
+    });
   }
   return out.sort((a, b) => a.distance - b.distance || a.band - b.band || a.row - b.row || a.id - b.id);
 }
