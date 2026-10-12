@@ -608,10 +608,22 @@ export class World {
    * @param {Object} [options]
    * @param {number} [options.budgetMs] Temps CPU entre deux pauses (100 ms par
    *        défaut) ; `Infinity` monte sans rendre la main.
+   * @param {number} [options.near] Portée provisoire, en mètres : seul le
+   *        proche est bâti, pour une première image rapide, et `widen()` rend
+   *        ensuite la portée du monde. Sans effet sur un monde déjà borné plus court.
    * @returns {Promise<boolean>} vrai si le décor a été bâti.
    */
   mountAt(lng, lat, options) {
     return this.composer.mountAt(lng, lat, options);
+  }
+
+  /**
+   * Après un `mountAt({ near })` : rend la portée du monde et bâtit le reste
+   * de la bulle, avec les pauses d'une relève ordinaire (on rend pendant ce temps).
+   * @returns {Promise<boolean>} vrai si le décor a été rebâti.
+   */
+  widen(lng, lat) {
+    return this.composer.widen(lng, lat);
   }
 
   /**

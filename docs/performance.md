@@ -157,3 +157,32 @@ premier usage d'un programme (`getProgramInfoLog`). La démo appelle donc
 maillages déjà publiés partent compiler pendant que le reste se construit, au
 lieu d'attendre la première image. Une application qui monte le monde
 derrière un écran de chargement a intérêt à faire de même.
+
+`--cpu 3` ralentit le processeur par le protocole DevTools : la génération y
+prend à peu près ce qu'un iPhone en économie d'énergie met à monter le même
+lieu. `--near 0` monte la bulle d'un trait au lieu du proche d'abord.
+
+### Le proche d'abord
+
+`mountAt(lng, lat, { near })` ne bâtit que ce qui tient dans `near` mètres,
+puis `widen(lng, lat)` rend la portée du monde et bâtit le reste comme une
+relève ordinaire, avec ses pauses : on rend pendant ce temps. La démo monte
+ainsi à 300 m. Le reste de la bulle coûte plus cher qu'un montage d'un trait
+(le proche est bâti deux fois), mais la main est rendue bien plus tôt.
+
+La bulle élargie n'est pas identique à la bulle montée d'un trait :
+`RoadContinuity` garde l'origine des routes déjà vues, et l'élargissement est
+pour elle une extension de fenêtre, comme un déplacement. Haies, poteaux et
+panneaux le long des routes peuvent donc se poser un peu autrement.
+
+### Ce qui pèse sur un téléphone
+
+- **Le GPU.** Une campagne compte plus de quatre millions de triangles, dont
+  plus d'un million projette une ombre et se dessine donc deux fois. La démo
+  abaisse sa résolution quand la médiane des intervalles entre images passe
+  40 ms, puis ne refait la carte d'ombres qu'une image sur deux. Safari
+  plafonne à 30 images/s en économie d'énergie : 33 ms n'y est pas un échec.
+- **La mémoire.** Safari ferme un onglet WebGL qui dépasse sa limite, sans
+  `webglcontextlost` ni erreur. Les maillages fusionnés qu'on ne relit plus
+  (bâti, voirie, mobilier linéaire) sont resserrés (`facetBuffers.js`) et
+  leur copie côté page est rendue après l'envoi au GPU.

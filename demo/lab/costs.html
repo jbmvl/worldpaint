@@ -25,7 +25,7 @@
  * ajoute ce que la page ne voit pas : tas après GC (CDP) et mémoire des
  * processus.
  *
- *   await costsLab.mount()      // génération : création → mountAt → files → 1re image
+ *   await costsLab.mount()      // génération : création → mountAt (proche) → 1re image → bulle complète
  *   await costsLab.move()       // fluidité : tour sur place puis trajet en ligne droite
  *
  * Les images du trajet sont cadencées par le banc (pas fixe de 1/60 s, une
@@ -50,6 +50,8 @@ document.body.appendChild(renderer.domElement);
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 20000);
 const scene = new THREE.Scene();
 const EYE_M = 1.75, RECENTER_MS = 400;
+// Portée du premier montage, comme la démo (`?near=0` : la bulle d'un trait).
+const near = Number(params.get('near') ?? 300);
 
 // Pic du tas JS, relevé entre deux tranches de travail.
 let heapPeak = 0;
@@ -94,7 +96,7 @@ async function mount() {
   // pendant que le montage continue (`?precompile=0` pour s'en passer).
   const precompile = params.get('precompile') !== '0'
     ? setInterval(() => renderer.compile(scene, camera), 200) : null;
-  await world.mountAt(at.lng, at.lat);
+  await world.mountAt(at.lng, at.lat, near ? { near } : {});
   clearInterval(precompile);
   const t2 = performance.now();
   const c = world.composer;
@@ -107,6 +109,27 @@ async function mount() {
   frame(0);
   renderer.getContext().finish();
   const t4 = performance.now();
+  // Comme la démo : le reste de la bulle se bâtit pendant qu'on rend. La durée
+  // jusqu'à la bulle complète ne compte pas le rendu (SwiftShader y noierait tout).
+  const widenFrames = [];
+  let widenRenderMs = 0, widenDoneAt = null;
+  if (near && world.widen) {
+    let done = false;
+    world.widen(at.lng, at.lat).finally(() => { done = true; });
+    let last = performance.now();
+    for (let i = 0; (!done || busy(c)) && i < 20000; i++) {
+      const f = frame(1 / 60, i % 60 === 0);
+      if (done && widenDoneAt == null) widenDoneAt = i;
+      await pause();
+      const now = performance.now();
+      if (!Number.isNaN(f.renderMs)) widenRenderMs += f.renderMs;
+      widenFrames.push(now - last - (Number.isNaN(f.renderMs) ? 0 : f.renderMs));
+      last = now;
+    }
+  }
+  const t5 = performance.now();
+  // Une image de plus : tout ce qui a été bâti est envoyé au GPU avant l'inventaire.
+  if (widenFrames.length) frame(0);
   sampleHeap();
   const layers = Object.entries(world.generationStats)
     .filter(([name]) => !name.endsWith('Etape'))
@@ -114,9 +137,16 @@ async function mount() {
     .map(([name, v]) => [name, Math.round(v.totalMs)]);
   return {
     createMs: t1 - t0, mountMs: t2 - t1, queuesMs: t3 - t2, queueFrames: frames,
-    firstFrameMs: t4 - t3, totalMs: t4 - t0, heapPeakBytes: heapPeak, layers,
+    firstFrameMs: t4 - t3, totalMs: t4 - t0, fullMs: t5 - t0 - widenRenderMs, heapPeakBytes: heapPeak, layers,
+    widen: widenFrames.length ? { ...framesStat(widenFrames), refreshFrames: widenDoneAt } : null,
     ...inventory(),
   };
+}
+
+function framesStat(values) {
+  const v = [...values].sort((a, b) => a - b);
+  const q = (x) => v[Math.min(v.length - 1, Math.floor(v.length * x))];
+  return { frames: v.length, p50: q(0.5), p95: q(0.95), max: v[v.length - 1], over50: v.filter((t) => t > 50).length };
 }
 
 function inventory() {

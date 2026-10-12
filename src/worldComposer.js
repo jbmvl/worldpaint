@@ -471,14 +471,28 @@ export class WorldComposer {
    *        scène qu'on n'affiche qu'une fois prête n'a pas à en faire.
    * @returns {Promise<boolean>} vrai si le décor a été bâti.
    */
-  async mountAt(lng, lat, { budgetMs = MOUNT_BUDGET_MS } = {}) {
+  async mountAt(lng, lat, { budgetMs = MOUNT_BUDGET_MS, near = null } = {}) {
     if (this._refreshTask) await this._refreshTask;
+    if (near > 0 && near < this.bubble.reachMeters) {
+      this._widerReach ??= this.bubble.reachMeters;
+      this.bubble.setReach(near);
+    }
     await this._center(lng, lat, { meshes: false, budgetMs });
     const built = await this.refresh(lng, lat, { force: true, budgetMs });
     while (this.bubble.processRebuildQueue(Infinity));
     while (this.vegetation.pending) this.vegetation.processQueue(Infinity);
     this.far?.sync();
     return built;
+  }
+
+  /** Rend la portée qu'un `mountAt({ near })` avait raccourcie, et bâtit le reste. */
+  async widen(lng, lat) {
+    if (this._widerReach == null || this.disposed) return false;
+    this.bubble.setReach(this._widerReach);
+    this._widerReach = null;
+    // Les tuiles gagnées attendent le déblai, qui les remaillerait de toute façon.
+    await this._center(lng, lat, { meshes: false });
+    return this.refresh(lng, lat, { force: true });
   }
 
   /**

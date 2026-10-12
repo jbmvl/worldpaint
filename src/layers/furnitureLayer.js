@@ -31,6 +31,7 @@ import { finishGeneration } from '../core/generationSteps.js';
 import { plantedTree } from './plantedTrees.js';
 import { defaultTheme } from '../themes/default.js';
 import { stoneTintFor } from '../core/regionInterpretation.js';
+import { packColoredGeometry } from './facetBuffers.js';
 import {
   createProfileBuffer,
   appendProfile,
@@ -986,7 +987,8 @@ export class FurnitureLayer {
 
   _applyLinear(kind, buffer) {
     const { THREE } = this;
-    const geometry = toColoredGeometry(THREE, buffer, { flat: FLAT_SHADED_LINEAR_KINDS.has(kind) });
+    const built = toColoredGeometry(THREE, buffer, { flat: FLAT_SHADED_LINEAR_KINDS.has(kind) });
+    const geometry = built && packColoredGeometry(THREE, built);
     const existing = this.linear.get(kind);
 
     if (!geometry) {

@@ -28,7 +28,7 @@ son état.
 | `buildingLayer.js`, `buildingInterpretation.js`, `roofGeometry.js`, `buildingCharacterGeometry.js` | le bâti, la reconnaissance des murailles, les toitures, les baies religieuses et les tours de château |
 | `streetLayer.js`, `streetMasonry.js` | bordures, caniveaux et joints des rues et des carrefours |
 | `gardenLayer.js` | clôtures et buissons de maison |
-| `facetBuffers.js` | les tampons des maillages fusionnés à facettes (bâti, fenêtres, jardins, voirie de rue) : accumulés en tableaux typés, normale sur un octet et couleur sur seize bits, pans indexés, copie côté page rendue après l'envoi au GPU — donc **illisibles ensuite** |
+| `facetBuffers.js` | les tampons des maillages fusionnés à facettes (bâti, fenêtres, jardins, voirie de rue) : accumulés en tableaux typés, normale sur un octet et couleur sur seize bits, pans indexés, copie côté page rendue après l'envoi au GPU — donc **illisibles ensuite** ; le mobilier linéaire (haies, vignes, murets) y passe aussi par `packColoredGeometry` |
 | `vegetationLayer.js`, `groundCover.js`, `cropLayer.js` | arbres, herbe, cultures |
 | `vergeStrips.js` | la bande entre une chaussée et sa haie de bas-côté : publiée par le mobilier, le champ n'y pousse pas |
 | `furnitureLayer.js` + `furniture/` | tout le mobilier — voir ci-dessous |

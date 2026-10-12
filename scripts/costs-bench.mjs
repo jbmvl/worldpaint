@@ -5,7 +5,7 @@
  *
  *   node scripts/costs-bench.mjs [--root <dépôt>] [--lieu station-montreuil-bellay]
  *        [--runs 3] [--out reports/costs.json] [--lng … --lat …] [--move 0]
- *        [--latence 100 --debit 20]
+ *        [--latence 100 --debit 20] [--cpu 3] [--near 0]
  *
  * `--root` désigne une autre copie du dépôt (un `git worktree` d'un commit
  * ancien) : la page du banc et le lieu y sont copiés s'ils manquent, et
@@ -32,6 +32,8 @@ const lng = flag('lng', null), lat = flag('lat', null);
 const withMove = flag('move', '1') !== '0';
 // Réseau simulé (CDP) : latence en ms et débit descendant en Mbit/s, pour les tuiles comme en ligne.
 const latency = Number(flag('latence', 0)), mbps = Number(flag('debit', 0));
+// Ralentissement du CPU (CDP), pour approcher un téléphone : 3 rend à peu près un iPhone en économie d'énergie.
+const cpuRate = Number(flag('cpu', 1));
 const port = Number(process.env.PORT) || 4300 + Math.floor(Math.random() * 500);
 
 if (root !== here) {
@@ -100,6 +102,7 @@ try {
         await cdp.send('Network.enable');
         await cdp.send('Network.emulateNetworkConditions', { offline: false, latency, downloadThroughput: mbps ? mbps * 125000 : -1, uploadThroughput: -1 });
       }
+      if (cpuRate > 1) await cdp.send('Emulation.setCPUThrottlingRate', { rate: cpuRate });
       let tileBytes = 0, tileCount = 0;
       page.on('requestfinished', async (r) => { if (!/\/places\//.test(r.url())) return; tileCount++; tileBytes += (await r.sizes().catch(() => ({ responseBodySize: 0 }))).responseBodySize; });
       const heapAfterGc = async () => {
@@ -107,14 +110,14 @@ try {
         await cdp.send('HeapProfiler.collectGarbage');
         return (await cdp.send('Runtime.getHeapUsage')).usedSize;
       };
-      const query = new URLSearchParams({ lieu, ...(lng ? { lng } : {}), ...(lat ? { lat } : {}), ...(flag('precompile', null) ? { precompile: flag('precompile') } : {}) });
+      const query = new URLSearchParams({ lieu, ...(lng ? { lng } : {}), ...(lat ? { lat } : {}), ...(flag('precompile', null) ? { precompile: flag('precompile') } : {}), ...(flag('near', null) ? { near: flag('near') } : {}) });
       await page.goto(`http://localhost:${port}/demo/lab/costs.html?${query}`);
       await page.waitForFunction(() => window.costsLabReady, null, { timeout: 120000 });
       const baseline = { heap: await heapAfterGc(), pss: pss(pid) };
       peak = 0;
       const mount = await page.evaluate(() => window.costsLab.mount());
       mount.pssPeakBytes = peak;
-      console.error(`  génération ${Math.round(mount.totalMs)} ms (mountAt ${Math.round(mount.mountMs)} ms)`);
+      console.error(`  première image ${Math.round(mount.totalMs)} ms (mountAt ${Math.round(mount.mountMs)} ms), bulle complète ${Math.round(mount.fullMs ?? mount.totalMs)} ms`);
       mount.heapRetainedBytes = await heapAfterGc();
       mount.pssBytes = pss(pid);
       let move = null;
@@ -141,7 +144,7 @@ const MB = (b) => (b == null ? null : Math.round(b / 2 ** 20));
 const ms = (v) => (v == null ? null : Math.round(v * 10) / 10);
 const pick = (f) => median(passes.map((p) => { try { return f(p); } catch { return null; } }));
 const summary = {
-  root, lieu, runs, date: new Date().toISOString(), reseau: { latenceMs: latency, debitMbps: mbps, tuiles: passes[0]?.tiles },
+  root, lieu, runs, date: new Date().toISOString(), cpu: cpuRate, reseau: { latenceMs: latency, debitMbps: mbps, tuiles: passes[0]?.tiles },
   machine: { cpu: os.cpus()[0].model, cores: os.cpus().length, node: process.version, webgl: passes[0]?.webgl },
   ram: {
     tasRetenuApresMontageMo: MB(pick((p) => p.mount.heapRetainedBytes)),
@@ -159,6 +162,9 @@ const summary = {
     mountAtMs: Math.round(pick((p) => p.mount.mountMs)),
     filesMs: Math.round(pick((p) => p.mount.queuesMs)),
     premiereImageMs: Math.round(pick((p) => p.mount.firstFrameMs)),
+    bulleCompleteMs: Math.round(pick((p) => p.mount.fullMs ?? p.mount.totalMs)),
+    elargissementImageP95Ms: ms(pick((p) => p.mount.widen?.p95)),
+    elargissementImagesPlusDe50Ms: pick((p) => p.mount.widen?.over50),
     passesMs: passes.map((p) => Math.round(p.mount.totalMs)),
     couches: passes[Math.floor((passes.length - 1) / 2)]?.mount.layers,
   },

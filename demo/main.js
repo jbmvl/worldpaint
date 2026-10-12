@@ -110,7 +110,10 @@ menuToggle.addEventListener('click', () => panel.classList.toggle('open'));
 // --- Scène three.js ----------------------------------------------------------
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+// Résolution imposée par `?dpr=1.5`, sinon celle de l'écran (2 au plus), que
+// `adaptQuality` abaisse quand les images ne suivent plus.
+const FORCED_DPR = Number(new URLSearchParams(location.search).get('dpr')) || null;
+renderer.setPixelRatio(FORCED_DPR ?? Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -123,6 +126,46 @@ renderer.toneMappingExposure = 0.5; // valeur de l'exemple officiel three pour c
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.5, 20000);
+
+// Qualité qui suit la machine : un téléphone, surtout en économie d'énergie,
+// ne tient pas l'écran entier à pleine résolution. On ne regarde que la médiane
+// des intervalles entre images, hors montage (un à-coup de génération n'y pèse pas) : au-delà
+// de 40 ms on descend d'un cran, sous 20 ms tenus longtemps on remonte. Safari
+// plafonne à 30 images/s en économie d'énergie : 33 ms n'y est pas un échec.
+// Les crans : résolution abaissée, puis carte d'ombres refaite une image sur deux.
+const QUALITY_STEPS = [
+  { dpr: Math.min(window.devicePixelRatio || 1, 2), shadowEvery: 1 },
+  { dpr: Math.min(window.devicePixelRatio || 1, 1.5), shadowEvery: 1 },
+  { dpr: Math.min(window.devicePixelRatio || 1, 1.25), shadowEvery: 1 },
+  { dpr: 1, shadowEvery: 1 },
+  { dpr: 1, shadowEvery: 2 },
+  { dpr: 0.75, shadowEvery: 2 },
+];
+const quality = { step: 0, intervals: [], last: 0, slowFor: 0, fastFor: 0, frame: 0 };
+function adaptQuality(timestamp, busy) {
+  quality.frame++;
+  const { shadowEvery } = QUALITY_STEPS[quality.step];
+  renderer.shadowMap.autoUpdate = shadowEvery === 1;
+  if (shadowEvery > 1 && quality.frame % shadowEvery === 0) renderer.shadowMap.needsUpdate = true;
+  const interval = timestamp - quality.last;
+  quality.last = timestamp;
+  if (FORCED_DPR || busy || !(interval > 0 && interval < 500)) return;
+  quality.intervals.push(interval);
+  if (quality.intervals.length < 45) return;
+  const median = [...quality.intervals].sort((a, b) => a - b)[22];
+  quality.intervals.length = 0;
+  quality.slowFor = median > 40 ? quality.slowFor + 1 : 0;
+  quality.fastFor = median < 20 ? quality.fastFor + 1 : 0;
+  let next = quality.step;
+  if (quality.slowFor >= 1 && next < QUALITY_STEPS.length - 1) next++;
+  else if (quality.fastFor >= 6 && next > 0) next--;
+  if (next === quality.step) return;
+  quality.step = next;
+  quality.slowFor = quality.fastFor = 0;
+  renderer.setPixelRatio(QUALITY_STEPS[next].dpr);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  console.info(`[worldpaint demo] qualité ${next} : résolution ${QUALITY_STEPS[next].dpr}, ombres une image sur ${QUALITY_STEPS[next].shadowEvery}`);
+}
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -183,6 +226,10 @@ reachInput.addEventListener('change', () => reachToggle.checked && applyReach())
 
 /** Vrai pendant un montage : le recentrage périodique ne doit pas déplacer la bulle sous lui. */
 let mounting = false;
+/** Portée du premier montage, avant que `widen` ne bâtisse le reste de la bulle. */
+const NEAR_M = 300;
+/** L'élargissement en cours après un montage, `null` une fois la bulle complète. */
+let widening = null;
 
 /** Monte le décor autour d'un point et chronomètre : tuiles + génération, hors rendu. */
 async function mountScene(lng, lat) {
@@ -196,19 +243,31 @@ async function mountScene(lng, lat) {
   // pendant que le montage continue, au lieu de bloquer la première image.
   const precompile = setInterval(() => renderer.compile(scene, camera), 200);
   try {
-    await world.mountAt(lng, lat);
+    // Le proche d'abord, pour rendre la main vite ; le reste de la bulle se
+    // bâtit ensuite pendant qu'on rend (`widen`). Une scène figée n'en a pas besoin.
+    await world.mountAt(lng, lat, REACH_M === null ? { near: NEAR_M } : {});
   } finally {
     clearInterval(precompile);
     mounting = false;
   }
   const t1 = performance.now();
+  if (REACH_M === null) {
+    const task = world.widen(lng, lat).then(() => {
+      if (widening !== task) return;
+      widening = null;
+      const t2 = performance.now();
+      mountStats.textContent += `\nBulle complète : ${(t2 - t0).toFixed(0)} ms`;
+      console.info(`[worldpaint demo] bulle complète ${(t2 - t0).toFixed(0)} ms`);
+    });
+    widening = task;
+  }
   const mode = REACH_M !== null ? `portée ${REACH_M} m (${world.bubble.tiles.size} tuile(s) de terrain)` : 'bulle complète';
   const layers = Object.entries(world.generationStats)
     .filter(([name]) => !name.endsWith('Etape'))
     .sort((a, b) => b[1].totalMs - a[1].totalMs)
     .slice(0, 8)
     .map(([name, v]) => `  ${name}: ${v.totalMs.toFixed(0)} ms`);
-  mountStats.textContent = `Montage : ${(t1 - t0).toFixed(0)} ms — ${mode}\n${layers.join('\n')}`;
+  mountStats.textContent = `Montage : ${(t1 - t0).toFixed(0)} ms — ${REACH_M === null ? `proche (${NEAR_M} m), puis bulle complète` : mode}\n${layers.join('\n')}`;
   console.info(`[worldpaint demo] montage ${(t1 - t0).toFixed(0)} ms — ${mode}`, world.generationStats);
   world.setProfiling(profileToggle.checked);
 }
@@ -1728,12 +1787,13 @@ function loop(timestamp) {
     : '  hors couverture';
   coordsEl.textContent = `${where}  alt ${camera.position.y.toFixed(0)} m  cap ${bearingDeg.toFixed(0)}°  incl ${pitchDeg.toFixed(0)}°${pays}`;
 
+  adaptQuality(timestamp, mounting);
   renderer.render(scene, camera);
   performanceProbe.end(renderer);
   if (profileToggle.checked && timestamp-lastProfileUpdate>500) {
     lastProfileUpdate=timestamp;
     const lines=Object.entries(world?.generationStats ?? {}).map(([name,v])=>`${name}: ${v.lastMs.toFixed(1)} ms / max ${v.maxMs.toFixed(1)} ms`);
-    profileStats.textContent=`Rendu: ${renderer.info.render.calls} appels, ${renderer.info.render.triangles} triangles\nMémoire: ${renderer.info.memory.geometries} géométries, ${renderer.info.memory.textures} textures\n${lines.join('\n')}`;
+    profileStats.textContent=`Qualité: cran ${quality.step}, résolution ${renderer.getPixelRatio()}\nRendu: ${renderer.info.render.calls} appels, ${renderer.info.render.triangles} triangles\nMémoire: ${renderer.info.memory.geometries} géométries, ${renderer.info.memory.textures} textures\n${lines.join('\n')}`;
   }
 }
 

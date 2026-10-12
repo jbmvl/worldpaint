@@ -234,6 +234,16 @@ export class TerrainBubble {
     return this._reach;
   }
 
+  /**
+   * Change la portée ; le prochain `setCenter` remonte les tuiles qu'elle
+   * gagne, même sans changer de tuile centrale.
+   */
+  setReach(reach) {
+    this._reach = Number.isFinite(reach) && reach > 0 ? reach : Infinity;
+    if (!Number.isFinite(this._reach)) this._reachDisc = null;
+    this._centerTile = null;
+  }
+
   /** Portée des couches du décor : la plus courte de la portée, du rayon du détail et de celui du budget. */
   get decorReachMeters() {
     return Math.min(this._reach, this._decorRadius, this._budgetRadius);

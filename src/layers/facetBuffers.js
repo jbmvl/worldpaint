@@ -215,6 +215,18 @@ export function facetGeometry(THREE, buffer) {
   return releaseAfterUpload(geometry);
 }
 
+/**
+ * Resserre une géométrie colorée faite ailleurs, comme celles d'ici : normale
+ * sur un octet, couleur sur seize bits tant qu'elle tient dans [0, 1], copie
+ * rendue après l'envoi au GPU.
+ */
+export function packColoredGeometry(THREE, geometry) {
+  const { normal, color } = geometry.attributes;
+  if (normal) geometry.setAttribute('normal', encoded(THREE, normal, Int8Array, NORMAL_SCALE));
+  if (color && color.array.every((v) => v >= 0 && v <= 1)) geometry.setAttribute('color', encoded(THREE, color, Uint16Array, COLOR_SCALE));
+  return releaseAfterUpload(geometry);
+}
+
 function encoded(THREE, attribute, Type, scale) {
   const source = attribute.array;
   const min = Type === Int8Array ? -scale : 0;
