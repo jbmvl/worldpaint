@@ -96,10 +96,10 @@ import {
   cropFor,
   cropId,
   cropFromId,
-  randomAt,
   CROP_KINDS,
   CROP_ID_STEP,
 } from '../layers/furniturePlacement.js';
+import { randomAt } from '../core/groundSeed.js';
 import { URBAN_GREEN_LANDUSE } from '../layers/settlement.js';
 import { BUILDING_SOURCE_LAYER } from '../layers/buildingLayer.js';
 import { plantedSurfaceForMatrix, gapSurfaceForMatrix } from '../core/regionInterpretation.js';
@@ -1047,7 +1047,7 @@ export class GroundClassMap {
             const crop =
               kind === 'farmland' && counted > 0
                 ? cropId(
-                    cropFor(properties, randomAt(sumX / counted, sumZ / counted, 43), this.region?.farming)
+                    cropFor(properties, randomAt(frame, sumX / counted, sumZ / counted, 43), this.region?.farming)
                   )
                 : 0;
 

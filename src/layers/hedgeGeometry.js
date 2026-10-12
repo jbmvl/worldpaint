@@ -207,11 +207,12 @@ export const HEDGE_FACETS = { up: [0.91, 1.09], across: [0.91, 1.09], lateral: [
 /**
  * Bruit indépendant par ligne du balayage d'une haie, ou d'un rang qui en a
  * la section (vigne, lavande).
+ * @param {Object} frame Repère local.
  * @param {Array<{x:number,z:number}>} path Polyligne ré-échantillonnée.
  * @param {number} salt Sel de la haie ou du rang appelant (`style.salt`, ou un
  *        sel dédié pour un mobilier qui n'a pas de style).
  * @returns {{up: Float32Array, across: Float32Array, lateral: Float32Array}}
  */
-export function hedgeFacets(path, salt) {
-  return facetJitter(path, salt + FACET_SALT_OFFSET, HEDGE_FACETS);
+export function hedgeFacets(frame, path, salt) {
+  return facetJitter(frame, path, salt + FACET_SALT_OFFSET, HEDGE_FACETS);
 }

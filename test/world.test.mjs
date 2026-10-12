@@ -173,9 +173,12 @@ import {
   pointInRing,
   scatterInRing,
   coatFor,
-  positionSeed,
-  randomAt,
 } from '../src/layers/furniturePlacement.js';
+import { positionSeed, randomAt, worldCellsIn } from '../src/core/groundSeed.js';
+import { testFrame } from './testFrame.mjs';
+
+/** Maille d'indices (gx, gz) et de côté `size`, au format de `worldCellsIn`. */
+const maille = (gx, gz, size = 1) => ({ id: gx, row: gz, x: gx * size, z: gz * size, size });
 import {
   Kit,
   createGlowMaterial,
@@ -267,7 +270,6 @@ import {
 } from '../src/layers/roadCorridor.js';
 import { fittedGardenMargin, gardenOutlineClear } from '../src/layers/gardenLayer.js';
 import {
-  grassCellRing,
   grassEdgeFade,
   fillGrassCell,
   fringeOffset,
@@ -377,7 +379,6 @@ import {
   WOODLAND_FLOWER_MAX,
 } from '../src/layers/groundCover.js';
 import {
-  cropCellRing,
   fillCropCell,
   cropEdgeFade,
   cropHeightFade,
@@ -391,7 +392,7 @@ import {
   CROP_COUNT,
   CROP_MASS_SPREAD,
 } from '../src/layers/cropLayer.js';
-import { coverBandRing, coverBandFade, coverBandDistance, coverMassDensity } from '../src/layers/coverBands.js';
+import { coverBand, coverBandCells, coverBandFade, coverBandDistance, coverMassDensity } from '../src/layers/coverBands.js';
 import { createFoliageMaterial } from '../src/materials/foliageMaterial.js';
 import {
   atlasOffsets,
@@ -647,7 +648,6 @@ import {
 } from '../src/layers/faunaLayer.js';
 import {
   windowGrid,
-  windowDraw,
   shopfrontLayout,
   appendShopfront,
   appendShopSignBlade,
@@ -1305,26 +1305,26 @@ test('la strate basse porte sa taille, et le tapis du sol ne pousse que de près
 
 test('la teinte d’un feuillage dérive par bosquet, et reste ancrée au lieu', () => {
   const hue = [0.92, 1, 0.86];
-  const a = foliageTint(hue, 1200, -800, 1, 0.5);
-  const b = foliageTint(hue, 1200 + 3, -800 - 4, 1, 0.5);
+  const a = foliageTint(testFrame, hue, 1200, -800, 1, 0.5);
+  const b = foliageTint(testFrame, hue, 1200 + 3, -800 - 4, 1, 0.5);
   assert.deepEqual(a, b, 'deux arbres du même bosquet portent le même vert de fond');
 
   // Deux bosquets éloignés ne portent pas le même : c’est tout l’objet.
   const greens = new Set();
   for (let i = 0; i < 30; i++) {
-    greens.add(foliageTint(hue, i * CLUMP_TINT_M, 0, 1, 0.5).join(','));
+    greens.add(foliageTint(testFrame, hue, i * CLUMP_TINT_M, 0, 1, 0.5).join(','));
   }
   assert.ok(greens.size > 20, `${greens.size} teintes de bosquet sur 30`);
 
   // La dérive est chaude-froide : rouge et bleu partent en sens contraires,
   // sinon on ne fait que monter et descendre la clarté.
   for (let i = 0; i < 30; i++) {
-    const [r, , bl] = foliageTint([1, 1, 1], i * CLUMP_TINT_M, 500, 1, 0.5);
+    const [r, , bl] = foliageTint(testFrame, [1, 1, 1], i * CLUMP_TINT_M, 500, 1, 0.5);
     close(r + bl, 2, 1e-9, 'la dérive ne déplace pas la moyenne');
   }
 
   // Les canaux restent dans une plage utilisable.
-  const extreme = foliageTint([1.2, 1.2, 1.2], 400, 400, 1.12, 0.999);
+  const extreme = foliageTint(testFrame, [1.2, 1.2, 1.2], 400, 400, 1.12, 0.999);
   assert.ok(extreme.every((v) => v >= 0 && v <= 1.25), 'canaux bornés');
 });
 
@@ -1529,17 +1529,17 @@ test('le clocher est dimensionné et posé sur le bâtiment qui le porte', () =>
 
 test('la cheminée de toit reste sur le faîtage, décalée du centre', () => {
   const box = { cx: 100, cz: -50, angle: 0, long: 8, short: 4 };
-  const foot = chimneyFootFor(box);
+  const foot = chimneyFootFor(testFrame, box);
   assert.ok(Math.abs(foot.x - box.cx) <= box.long * 0.5 + 1e-9, 'reste sur le faîtage en long');
   assert.ok(Math.abs(foot.z - box.cz) <= box.short * 0.35 + 1e-9, 'reste sur le faîtage en travers');
   assert.ok(foot.side > 0 && foot.height > 0);
 
   // Ancrée au lieu : la même empreinte rend toujours la même cheminée.
-  const again = chimneyFootFor(box);
+  const again = chimneyFootFor(testFrame, box);
   assert.deepEqual(foot, again);
 
   // Tournée avec le bâtiment.
-  const tourne = chimneyFootFor({ ...box, angle: Math.PI / 2 });
+  const tourne = chimneyFootFor(testFrame, { ...box, angle: Math.PI / 2 });
   assert.ok(Math.abs(tourne.x - box.cx) <= box.short * 0.35 + 1e-9, 'le long axe a tourné');
 
   assert.ok(CHIMNEY_SHARE > 0 && CHIMNEY_SHARE < 1, 'une minorité de toits, pas tous');
@@ -1561,13 +1561,13 @@ test('un décalage de balcon suit la normale sortante de sa façade', () => {
 test('le gabarit d’un balcon reste sous l’égout et dans la largeur de la façade', () => {
   const base = 100;
   const eaves = base + 7.5; // deux étages et demi
-  const { width, depth, level } = balconyGeometryFor(10, 20, 6, base, eaves);
+  const { width, depth, level } = balconyGeometryFor(testFrame, 10, 20, 6, base, eaves);
   assert.ok(width > 0 && width <= 3, 'largeur bornée');
   assert.ok(depth > 0 && depth < 2, 'profondeur bornée, ce n’est pas une terrasse');
   assert.ok(level > base && level < eaves, 'entre le sol et l’égout, jamais au-dessus');
 
   // Une façade étroite borne aussi la largeur du balcon.
-  const narrow = balconyGeometryFor(10, 20, 2, base, eaves);
+  const narrow = balconyGeometryFor(testFrame, 10, 20, 2, base, eaves);
   assert.ok(narrow.width <= 1, 'ne déborde pas d’une façade étroite');
 
   assert.ok(BALCONY_MIN_WALL_M >= 4, 'exige au moins un étage de mur');
@@ -2084,7 +2084,7 @@ test('un saut d’un pays à l’autre repose la question de la région', async 
   // ce test.
   const { WorldComposer } = await import('../src/worldComposer.js');
   const composer = {
-    bubble: { frame: { repere: 'Angers' }, surfaceElevationAtLocal: () => 40 },
+    bubble: { frame: { ...testFrame, repere: 'Angers' }, surfaceElevationAtLocal: () => 40 },
     landscape: null,
   };
   const update = (...args) => WorldComposer.prototype._updateLandscape.apply(composer, args);
@@ -2370,7 +2370,7 @@ test('une reconstruction forcée demandée en pleine construction prend sa suite
 test('un mot imposé change la région du lieu sans la quitter', async () => {
   const { WorldComposer } = await import('../src/worldComposer.js');
   const composer = {
-    bubble: { frame: {}, surfaceElevationAtLocal: () => 40 },
+    bubble: { frame: testFrame, surfaceElevationAtLocal: () => 40 },
     landscape: null,
     regionOverride: null,
     regionWord: null,
@@ -2402,7 +2402,7 @@ test('une région imposée ne suit plus le lieu', async () => {
   // change aussi le tracé et la pente, et on ne sait plus ce qui vient du pays.
   const { WorldComposer } = await import('../src/worldComposer.js');
   const composer = {
-    bubble: { frame: {}, surfaceElevationAtLocal: () => 40 },
+    bubble: { frame: testFrame, surfaceElevationAtLocal: () => 40 },
     landscape: null,
     regionOverride: null,
   };
@@ -4124,10 +4124,11 @@ test('la section se dilate en travers sans quitter son axe', () => {
  */
 function roadsideHarness({ profile = 'minor', here = { x: 200, z: 0 } } = {}) {
   const layer = Object.create(FurnitureLayer.prototype);
+  layer.bubble = { frame: testFrame };
   layer.theme = defaultTheme;
   layer.specs = furnitureSpecsFor(defaultTheme.furniture.colors);
   layer.counts = { points: 0, boundaries: 0, landmarks: 0, rocks: 0, rows: 0 };
-  layer.bubble = { surfaceElevationAtLocal: () => 100, verticalScale: 1 };
+  layer.bubble = { frame: testFrame, surfaceElevationAtLocal: () => 100, verticalScale: 1 };
   layer.groundClass = { woodAt: () => 0, cropAt: () => null };
   layer._signals = [];
   layer._lampHeads = [];
@@ -4158,6 +4159,7 @@ function roadsideHarness({ profile = 'minor', here = { x: 200, z: 0 } } = {}) {
  */
 function rockCutHarness({ rise = 4, slope = 0.35, cutBench = ROAD_CUT_M } = {}) {
   const layer = Object.create(FurnitureLayer.prototype);
+  layer.bubble = { frame: testFrame };
   layer.specs = furnitureSpecsFor(defaultTheme.furniture.colors);
 
   const path = resamplePath([{ x: 0, z: 0 }, { x: 200, z: 0 }], 5);
@@ -4309,7 +4311,7 @@ test('la falaise du déblai se dresse au bord du fond plat, si large soit-il', (
 test('le grain facetté tire chaque canal dans son intervalle, ancré au sol', () => {
   const path = resamplePath([{ x: 0, z: 0 }, { x: 60, z: 0 }], 5);
   const ranges = { up: [1, 1.35], lateral: [-0.2, 0.2] };
-  const grain = facetJitter(path, 17, ranges);
+  const grain = facetJitter(testFrame, path, 17, ranges);
   for (const [name, [low, high]] of Object.entries(ranges)) {
     assert.equal(grain[name].length, path.length);
     for (const v of grain[name]) assert.ok(v >= low - 1e-6 && v <= high + 1e-6, `${name} : ${v}`);
@@ -4317,17 +4319,17 @@ test('le grain facetté tire chaque canal dans son intervalle, ancré au sol', (
   }
   // Un tronçon redécoupé garde le grain de ses lignes, et un canal ajouté à la
   // fin ne retire pas ceux d’avant.
-  facetJitter(path.slice(4), 17, ranges).up.forEach((v, i) => assert.equal(v, grain.up[i + 4]));
-  assert.deepEqual(facetJitter(path, 17, { ...ranges, extra: [0, 1] }).up, grain.up);
+  facetJitter(testFrame, path.slice(4), 17, ranges).up.forEach((v, i) => assert.equal(v, grain.up[i + 4]));
+  assert.deepEqual(facetJitter(testFrame, path, 17, { ...ranges, extra: [0, 1] }).up, grain.up);
 });
 
 test('le grain de la haie : ±9 % en hauteur et en largeur, ±5 cm d’axe, tirés au sol', () => {
   const path = resamplePath([{ x: 3, z: 7 }, { x: 40, z: 19 }], HEDGE_SAMPLE_M);
-  const facets = hedgeFacets(path, 11);
+  const facets = hedgeFacets(testFrame, path, 11);
   path.forEach(({ x, z }, r) => {
-    close(facets.up[r], 1 + (randomAt(x, z, 41) - 0.5) * 2 * 0.09, 1e-6, `hauteur, ligne ${r}`);
-    close(facets.across[r], 1 + (randomAt(x, z, 42) - 0.5) * 2 * 0.09, 1e-6, `largeur, ligne ${r}`);
-    close(facets.lateral[r], (randomAt(x, z, 43) - 0.5) * 2 * 0.05, 1e-6, `axe, ligne ${r}`);
+    close(facets.up[r], 1 + (randomAt(testFrame, x, z, 41) - 0.5) * 2 * 0.09, 1e-6, `hauteur, ligne ${r}`);
+    close(facets.across[r], 1 + (randomAt(testFrame, x, z, 42) - 0.5) * 2 * 0.09, 1e-6, `largeur, ligne ${r}`);
+    close(facets.lateral[r], (randomAt(testFrame, x, z, 43) - 0.5) * 2 * 0.05, 1e-6, `axe, ligne ${r}`);
   });
 });
 
@@ -4383,6 +4385,7 @@ test('la place libre d’une rive s’arrête à la chaussée d’à côté', ()
 
 test('un muret de pierre est facetté sur un pas fin, sans raccourcir', () => {
   const layer = Object.create(FurnitureLayer.prototype);
+  layer.bubble = { frame: testFrame };
   layer.specs = furnitureSpecsFor(defaultTheme.furniture.colors);
   const path = [{ x: 0, z: 0 }, { x: 31, z: 0 }, { x: 31, z: 23.3 }];
   const buffer = createProfileBuffer();
@@ -4623,11 +4626,11 @@ test('l’espacement respecte les marges et rend une tangente unitaire', () => {
 });
 
 test('une graine de position ne dépend que du lieu, pas de l’ordre d’appel', () => {
-  const a = positionSeed(123.4, -567.8);
-  const b = positionSeed(123.4, -567.8);
+  const a = positionSeed(testFrame, 123.4, -567.8);
+  const b = positionSeed(testFrame, 123.4, -567.8);
   assert.equal(a, b, 'même lieu, même graine');
-  assert.notEqual(a, positionSeed(123.4, -567.3), 'lieux distincts, graines distinctes');
-  const value = randomAt(10, 20);
+  assert.notEqual(a, positionSeed(testFrame, 123.4, -567.3), 'lieux distincts, graines distinctes');
+  const value = randomAt(testFrame, 10, 20);
   assert.ok(value >= 0 && value < 1, 'tirage dans [0, 1[');
 });
 
@@ -4975,6 +4978,7 @@ test('les carnassiers se tirent à part du gibier, et restent rares', () => {
 test('un tas de bois se range le long de la lisière', () => {
   // Bois dans le demi-plan x < 0 : sa lisière court donc selon Z.
   const layer = Object.create(FurnitureLayer.prototype);
+  layer.bubble = { frame: testFrame };
   layer.groundClass = { woodAt: (x) => (x < 0 ? 1 : 0) };
   const yaw = woodEdgeYaw(layer, 0, 0);
 
@@ -4986,6 +4990,7 @@ test('un tas de bois se range le long de la lisière', () => {
 
   // Une lisière tournée d'un quart de tour tourne la pile d'autant.
   const autre = Object.create(FurnitureLayer.prototype);
+  autre.bubble = { frame: testFrame };
   autre.groundClass = { woodAt: (x, z) => (z < 0 ? 1 : 0) };
   const [ax, , az] = Kit.transform([0, 0, 1], { yaw: woodEdgeYaw(autre, 0, 0) });
   close(Math.abs(ax), 1, 1e-9, 'lisière est-ouest');
@@ -4994,6 +4999,7 @@ test('un tas de bois se range le long de la lisière', () => {
   // Sans pente lisible, le cap est tiré au lieu : sinon toutes les piles d'une
   // clairière ronde s'aligneraient sur le même axe.
   const plat = Object.create(FurnitureLayer.prototype);
+  plat.bubble = { frame: testFrame };
   plat.groundClass = { woodAt: () => 1 };
   assert.notEqual(woodEdgeYaw(plat, 0, 0, 0.3), woodEdgeYaw(plat, 0, 0, 0.7));
 });
@@ -5596,7 +5602,7 @@ test('la traversée ne se déclenche que près d’une route, et rarement', () =
 });
 
 test('un circuit se referme : au bout d’une période, la bête est revenue', () => {
-  const circuit = buildCircuit({
+  const circuit = buildCircuit({ frame: testFrame,
     behaviour: 'amble',
     x: 120,
     z: -40,
@@ -5618,7 +5624,7 @@ test('un circuit se referme : au bout d’une période, la bête est revenue', (
 });
 
 test('le chemin parcouru ne recule jamais, et vaut zéro à l’arrêt', () => {
-  const circuit = buildCircuit({
+  const circuit = buildCircuit({ frame: testFrame,
     behaviour: 'graze',
     x: -300,
     z: 88,
@@ -5640,7 +5646,7 @@ test('le chemin parcouru ne recule jamais, et vaut zéro à l’arrêt', () => {
 
 test('la tête ne se baisse qu’à l’arrêt', () => {
   for (const behaviour of ['graze', 'amble', 'sniff', 'peck']) {
-    const circuit = buildCircuit({
+    const circuit = buildCircuit({ frame: testFrame,
       behaviour,
       x: 41,
       z: 17,
@@ -5662,7 +5668,7 @@ test('la tête ne se baisse qu’à l’arrêt', () => {
 });
 
 test('une bête qui guette ne bouge pas d’un pouce', () => {
-  const circuit = buildCircuit({
+  const circuit = buildCircuit({ frame: testFrame,
     behaviour: 'watch',
     x: 5,
     z: 5,
@@ -5691,7 +5697,7 @@ test('un circuit ne pose aucune station sur la chaussée', () => {
   // pose une bête que sur un point déjà filtré (`_filterOffInfra`), et le
   // repli de dernier recours d'une station est justement de revenir dessus.
   const onRoad = (x) => Math.abs(x) < 6;
-  const circuit = buildCircuit({
+  const circuit = buildCircuit({ frame: testFrame,
     behaviour: 'amble',
     x: 20,
     z: 0,
@@ -5711,7 +5717,7 @@ test('un circuit ne pose aucune station sur la chaussée', () => {
   // Le nombre de haltes ne change pas selon ce qui est refusé : une station
   // rejetée est ramenée, jamais retirée. Sinon la période du circuit
   // changerait et la bête sauterait à chaque reconstruction.
-  const free = buildCircuit({ behaviour: 'amble', x: 20, z: 0, walkMS: 1, runMS: 4, sampleY: flatGround });
+  const free = buildCircuit({ frame: testFrame, behaviour: 'amble', x: 20, z: 0, walkMS: 1, runMS: 4, sampleY: flatGround });
   assert.equal(
     circuit.stations.filter((s) => s.dwell > 0).length,
     free.stations.filter((s) => s.dwell > 0).length,
@@ -5720,7 +5726,7 @@ test('un circuit ne pose aucune station sur la chaussée', () => {
 });
 
 test('une traversée franchit vraiment la route, de bas-côté à bas-côté', () => {
-  const circuit = buildCircuit({
+  const circuit = buildCircuit({ frame: testFrame,
     behaviour: 'cross',
     x: 200,
     z: 300,
@@ -5751,7 +5757,7 @@ test('un long trajet suit le terrain au lieu de le traverser', () => {
   // station à l'autre : une bête qui traverse trente mètres de pré vallonné
   // passe sous la butte du milieu.
   const hill = (x, z) => 100 + 8 * Math.sin(x / 20) * Math.cos(z / 20);
-  const circuit = buildCircuit({
+  const circuit = buildCircuit({ frame: testFrame,
     behaviour: 'run',
     x: 0,
     z: 0,
@@ -5781,8 +5787,8 @@ test('deux passages au même endroit rendent la même bête', () => {
   // Le déterminisme spatial est un invariant dur du projet : la conduite, le
   // circuit et la robe se tirent du lieu, jamais de l'ordre de parcours.
   const build = () =>
-    buildCircuit({
-      behaviour: behaviourFor({ family: 'grazer', variant: randomAt(77, -13, 227), crossDraw: 1 }),
+    buildCircuit({ frame: testFrame,
+      behaviour: behaviourFor({ family: 'grazer', variant: randomAt(testFrame, 77, -13, 227), crossDraw: 1 }),
       x: 77,
       z: -13,
       walkMS: 1,
@@ -5807,7 +5813,7 @@ test('deux bêtes voisines ne sont pas synchrones', () => {
   // en même temps.
   const offsets = new Set();
   for (let i = 0; i < 12; i++) {
-    const circuit = buildCircuit({
+    const circuit = buildCircuit({ frame: testFrame,
       behaviour: 'graze',
       x: 500 + i * 2.3,
       z: 500 - i * 1.7,
@@ -5887,7 +5893,7 @@ test('le tampon d’animation porte quatre flottants par bête', () => {
 // --- La traversée déclenchée -------------------------------------------------
 
 test('une traversée déclenchée va d’un bord à l’autre, une fois, et s’arrête', () => {
-  const circuit = buildCircuit({
+  const circuit = buildCircuit({ frame: testFrame,
     behaviour: 'dash',
     x: 0,
     z: 0,
@@ -5929,7 +5935,7 @@ test('une traversée déclenchée va d’un bord à l’autre, une fois, et s’
 test('une traversée déclenchée regarde là où elle va dès son apparition', () => {
   // Le cap d'une halte est celui de l'arrivée : sur un circuit ouvert, la
   // première station n'en a pas, et une bête déboucherait de biais.
-  const circuit = buildCircuit({
+  const circuit = buildCircuit({ frame: testFrame,
     behaviour: 'dash',
     x: 10,
     z: -5,
@@ -5946,7 +5952,7 @@ test('une traversée déclenchée regarde là où elle va dès son apparition', 
 test('la demi-longueur d’une traversée se règle depuis l’extérieur', () => {
   // Une traversée du décor est vue de profil et de près, une traversée
   // déclenchée de face et de loin : elles n'ont pas la même longueur.
-  const circuit = buildCircuit({
+  const circuit = buildCircuit({ frame: testFrame,
     behaviour: 'dash',
     x: 0,
     z: 0,
@@ -5981,7 +5987,7 @@ test('la traversée du décor se court, et n’est jamais tirée pour une bête 
 
 test('la couche du vivant joue une traversée déclenchée, puis l’oublie', () => {
   const layer = new FaunaLayer({ THREE: fakeSceneTHREE(), scene: fakeScene(), theme: defaultTheme });
-  const circuit = buildCircuit({
+  const circuit = buildCircuit({ frame: testFrame,
     behaviour: 'dash',
     x: 0,
     z: 0,
@@ -5993,7 +5999,7 @@ test('la couche du vivant joue une traversée déclenchée, puis l’oublie', ()
 
   // Le décor d'abord : la traversée doit s'y ajouter, pas s'y substituer.
   layer.setAnimals(
-    [{ kind: 'cow', x: 3, z: 3, circuit: buildCircuit({ behaviour: 'graze', x: 3, z: 3, walkMS: 1, runMS: 3, sampleY: flatGround }), tint: [1, 1, 1], scale: 1 }],
+    [{ kind: 'cow', x: 3, z: 3, circuit: buildCircuit({ frame: testFrame, behaviour: 'graze', x: 3, z: 3, walkMS: 1, runMS: 3, sampleY: flatGround }), tint: [1, 1, 1], scale: 1 }],
     { x: 0, z: 0 }
   );
   assert.equal(layer.animals.get('cow').length, 1);
@@ -6022,7 +6028,7 @@ test('une reconstruction du décor n’efface pas une traversée en cours', () =
   // Le décor se refait tous les 250 mètres ; un événement déclenché par
   // l'application n'a aucune raison d'en dépendre.
   const layer = new FaunaLayer({ THREE: fakeSceneTHREE(), scene: fakeScene(), theme: defaultTheme });
-  const circuit = buildCircuit({
+  const circuit = buildCircuit({ frame: testFrame,
     behaviour: 'dash',
     x: 0,
     z: 0,
@@ -6041,7 +6047,7 @@ test('une reconstruction du décor n’efface pas une traversée en cours', () =
 
 test('les traversées déclenchées sont plafonnées', () => {
   const layer = new FaunaLayer({ THREE: fakeSceneTHREE(), scene: fakeScene(), theme: defaultTheme });
-  const circuit = buildCircuit({
+  const circuit = buildCircuit({ frame: testFrame,
     behaviour: 'dash',
     x: 0,
     z: 0,
@@ -6065,7 +6071,7 @@ test('l’encolure se baisse et se relève vite', () => {
   // repos, c'est vingt têtes qui montent et descendent.
   assert.ok(HEAD_RAMP_S <= 0.5, `montée d’encolure vive (${HEAD_RAMP_S} s)`);
 
-  const circuit = buildCircuit({
+  const circuit = buildCircuit({ frame: testFrame,
     behaviour: 'graze',
     x: 12,
     z: 34,
@@ -6156,14 +6162,14 @@ test('l’index des chaussées sait dire où est la route la plus proche', () =>
 test('la robe d’une bête est tirée du lieu, et jamais absente', () => {
   const coats = defaultTheme.fauna.coats;
   for (const kind of FAUNA_KINDS) {
-    const tint = coatFor(coats, kind, 111, -222);
-    assert.deepEqual(tint, coatFor(coats, kind, 111, -222), `${kind} : même lieu, même robe`);
+    const tint = coatFor(testFrame, coats, kind, 111, -222);
+    assert.deepEqual(tint, coatFor(testFrame, coats, kind, 111, -222), `${kind} : même lieu, même robe`);
     assert.ok(coats[kind].includes(tint), `${kind} : tirée dans son nuancier`);
   }
   // Une espèce sans nuancier rend un blanc neutre : le matériau multiplie la
   // teinte d'instance dans la robe, et une bête sans teinte serait en plâtre.
-  assert.deepEqual(coatFor(coats, 'licorne', 0, 0), [1, 1, 1]);
-  assert.deepEqual(coatFor(null, 'cow', 0, 0), [1, 1, 1]);
+  assert.deepEqual(coatFor(testFrame, coats, 'licorne', 0, 0), [1, 1, 1]);
+  assert.deepEqual(coatFor(testFrame, null, 'cow', 0, 0), [1, 1, 1]);
 });
 
 test('chaque bête a un nom lisible et un nuancier de robes', () => {
@@ -6525,12 +6531,12 @@ test('au fond d’une anse, le phare monte sur la falaise d’à côté et reste
   const shore = [];
   for (let x = -900; x <= 900; x += 60) shore.push({ x, z: 0 });
   const elevationAt = (x, z) => (z > 0 ? 0 : z < -300 ? 200 : x >= 300 ? 80 : 3);
-  const site = lighthouseSite({ x: 0, z: 0 }, shore, { elevationAt });
+  const site = lighthouseSite({ x: 0, z: 0 }, shore, { frame: testFrame, elevationAt });
   assert.equal(site.h, 80, 'sur la falaise, pas sur la plage');
   assert.ok(-site.z <= LIGHTHOUSE_SHORE_M, `près du rivage (${site.z})`);
-  const town = lighthouseSite({ x: 0, z: 0 }, shore, { elevationAt, blocked: (x) => x >= 300 });
+  const town = lighthouseSite({ x: 0, z: 0 }, shore, { frame: testFrame, elevationAt, blocked: (x) => x >= 300 });
   assert.equal(town.h, 3, 'la falaise bâtie est écartée');
-  assert.equal(lighthouseSite({ x: 0, z: 0 }, shore, { elevationAt: () => 0 }), null);
+  assert.equal(lighthouseSite({ x: 0, z: 0 }, shore, { frame: testFrame, elevationAt: () => 0 }), null);
 });
 
 test('le feu d’un phare fait un tour par période et reste dans un tour', () => {
@@ -6601,21 +6607,29 @@ test('placeTractor n’agit que sur une vraie culture, hors verger, à portée',
   const context = { sampleElevation: () => 100 };
 
   const orchard = Object.create(FurnitureLayer.prototype);
+
+  orchard.bubble = { frame: testFrame };
   orchard.tractors = [];
   placeTractor(orchard, context, ring, centre, 'orchard', centre);
   assert.equal(orchard.tractors.length, 0, 'un verger, avec ses arbres, ne travaille pas au tracteur');
 
   const noCrop = Object.create(FurnitureLayer.prototype);
+
+  noCrop.bubble = { frame: testFrame };
   noCrop.tractors = [];
   placeTractor(noCrop, context, ring, centre, null, centre);
   assert.equal(noCrop.tractors.length, 0, 'sans culture, pas de tracteur');
 
   const tooFar = Object.create(FurnitureLayer.prototype);
+
+  tooFar.bubble = { frame: testFrame };
   tooFar.tractors = [];
   placeTractor(tooFar, context, ring, centre, 'plough', { x: centre.x + TRACTOR_RADIUS_M + 50, z: centre.z });
   assert.equal(tooFar.tractors.length, 0, 'hors de portée, on ne pose rien');
 
   const full = Object.create(FurnitureLayer.prototype);
+
+  full.bubble = { frame: testFrame };
   full.tractors = new Array(FURNITURE_LIMITS.vehicles).fill({});
   placeTractor(full, context, ring, centre, 'plough', centre);
   assert.equal(full.tractors.length, FURNITURE_LIMITS.vehicles, 'le plafond n’est pas dépassé');
@@ -6631,6 +6645,7 @@ test('un tracteur posé reste dans le champ, sur un passage borné, à vitesse p
   for (let i = 0; i < 400 && !placed; i++) {
     const centre = { x: 50 + i, z: 50 };
     const layer = Object.create(FurnitureLayer.prototype);
+    layer.bubble = { frame: testFrame };
     layer.tractors = [];
     placeTractor(layer, context, ring, centre, 'plough', centre);
     if (layer.tractors.length > 0) placed = layer.tractors[0];
@@ -6671,16 +6686,16 @@ test('les fenêtres allumées ne changent pas d’une reconstruction à l’autr
   // Le tirage ne dépend que du lieu et du rang : le village garde les mêmes
   // fenêtres allumées, là où un tirage libre les ferait clignoter tous les
   // 200 mètres parcourus.
-  assert.equal(windowDraw(12.5, -37.25, 2), windowDraw(12.5, -37.25, 2));
-  assert.notEqual(windowDraw(12.5, -37.25, 2), windowDraw(12.5, -37.25, 3), 'niveaux distincts');
-  assert.notEqual(windowDraw(12.5, -37.25, 2), windowDraw(13.5, -37.25, 2), 'lieux distincts');
+  assert.equal(randomAt(testFrame, 12.5, -37.25, 2), randomAt(testFrame, 12.5, -37.25, 2));
+  assert.notEqual(randomAt(testFrame, 12.5, -37.25, 2), randomAt(testFrame, 12.5, -37.25, 3), 'niveaux distincts');
+  assert.notEqual(randomAt(testFrame, 12.5, -37.25, 2), randomAt(testFrame, 13.5, -37.25, 2), 'lieux distincts');
 
   // Et la part allumée est bien celle annoncée : un village endormi n’est ni
   // éteint ni illuminé.
   let lit = 0;
   const total = 4000;
   for (let i = 0; i < total; i++) {
-    if (windowDraw(i * 0.37, i * -0.73, (i % 4) + 1) <= WINDOW_LIT_SHARE) lit++;
+    if (randomAt(testFrame, i * 0.37, i * -0.73, (i % 4) + 1) <= WINDOW_LIT_SHARE) lit++;
   }
   close(lit / total, WINDOW_LIT_SHARE, 0.04, 'part de fenêtres allumées');
 });
@@ -6745,7 +6760,7 @@ test('une façade percée de jour : encadrement, verre, volets', () => {
   };
   // Un pan de 20 m, 8 m sous l’égout : deux niveaux de baies.
   const sink = [];
-  appendOpenings(openings, walls, { x: 0, y: 0 }, { x: 20, y: 0 }, 0, -1, 100, 8, 0, style, undefined, { sink });
+  appendOpenings(openings, walls, { x: 0, y: 0 }, { x: 20, y: 0 }, 0, -1, 100, 8, 0, style, undefined, { frame: testFrame, sink });
 
   assert.ok(openings.panes > 0, 'des baies');
   assert.equal(sink.length, openings.panes, 'chaque baie publie son centre');
@@ -6772,7 +6787,7 @@ test('une façade percée de jour : encadrement, verre, volets', () => {
     ...style,
     house: false,
     shutters: false,
-  });
+  }, undefined, { frame: testFrame });
   assert.equal(bareBudget.panes, openings.panes, 'autant de baies');
   assert.ok(bare.positions.length < walls.positions.length, 'un immeuble n’a pas de volets');
 });
@@ -6781,7 +6796,7 @@ test('le budget de baies borne ce qui est posé', () => {
   const walls = { positions: [], normals: [], colors: [] };
   const openings = { panes: 0, budget: 3, lit: null };
   const style = { shutter: [0, 0, 0], house: true, shutters: false };
-  appendOpenings(openings, walls, { x: 0, y: 0 }, { x: 60, y: 0 }, 0, -1, 0, 12, 0, style);
+  appendOpenings(openings, walls, { x: 0, y: 0 }, { x: 60, y: 0 }, 0, -1, 0, 12, 0, style, undefined, { frame: testFrame });
   assert.equal(openings.panes, 3, 'pas une baie de plus que le budget');
 });
 
@@ -6816,7 +6831,7 @@ test('appendOpenings : aucune baie enterrée par la pente, la porte descend vers
   const ground = wallGroundProfile(a, b, (x) => x * 0.1);
   const walls = { positions: [], normals: [], colors: [] };
   const openings = { panes: 0, budget: 100, lit: null };
-  appendOpenings(openings, walls, a, b, 0, -1, 0, 9, 0, style, look, { ground, door: [0.5, 0.1, 0.1] });
+  appendOpenings(openings, walls, a, b, 0, -1, 0, 9, 0, style, look, { frame: testFrame, ground, door: [0.5, 0.1, 0.1] });
   assert.ok(openings.panes > 0);
 
   // Chaque sommet de baie (hors porte, qui part du sol) reste au-dessus du
@@ -6917,7 +6932,7 @@ test('une maison mitoyenne n’a pas de jardin clos', () => {
 
 test('un buisson est fermé, posé au sol, et différent de son voisin', () => {
   const buffer = { positions: [], normals: [], colors: [] };
-  appendBush(buffer, { x: 3, y: 50, z: -7, radius: 0.8, height: 1.1, seed: 11, sides: 7 });
+  appendBush(buffer, { frame: testFrame, x: 3, y: 50, z: -7, radius: 0.8, height: 1.1, seed: 11, sides: 7 });
 
   // Deux couronnes et une pointe : trois triangles par secteur.
   assert.equal(buffer.positions.length / 9, 7 * 3, 'trois triangles par secteur');
@@ -6934,7 +6949,7 @@ test('un buisson est fermé, posé au sol, et différent de son voisin', () => {
   // Le bruitage par sommet : deux buissons de même taille n’ont pas la même
   // silhouette, sinon un jardin est une rangée de clones.
   const other = { positions: [], normals: [], colors: [] };
-  appendBush(other, { x: 9, y: 50, z: 2, radius: 0.8, height: 1.1, seed: 11, sides: 7 });
+  appendBush(other, { frame: testFrame, x: 9, y: 50, z: 2, radius: 0.8, height: 1.1, seed: 11, sides: 7 });
   assert.notDeepEqual(
     buffer.positions.slice(0, 3).map((v, i) => v - [3, 50, -7][i]),
     other.positions.slice(0, 3).map((v, i) => v - [9, 50, 2][i]),
@@ -8695,7 +8710,7 @@ test('le terrain naturel porte la marche des falaises, le MNT brut non', () => {
   // brut, elles flottaient au pied d'une falaise, sur la rampe que la marche
   // a supprimée du sol affiché.
   const bubble = Object.create(TerrainBubble.prototype);
-  bubble.frame = { origin: { x: 0, y: 0 }, scale: 1 };
+  bubble.frame = { origin: { x: 0, y: 0 }, scale: 1, zoom: 15 };
   bubble.surfaceElevationAtTile = () => 53.4;
   bubble._cliffCut = { elevationAt: (x, z, raw) => Math.min(raw, 50) };
   close(bubble.rawSurfaceElevationAtLocal(0, 0), 53.4, 1e-9, 'le MNT, pour mesurer la marche');
@@ -9244,7 +9259,7 @@ function stubWorksTHREE() {
 /** Bulle de fortune : un terrain plat à l'altitude demandée. */
 function stubBubble(elevation = 0) {
   return {
-    frame: {},
+    frame: testFrame,
     verticalScale: 1,
     naturalElevationAtLocal: () => elevation,
     surfaceElevationAtLocal: () => elevation,
@@ -9346,7 +9361,7 @@ test('sur un versant, un voile de pile se fonde sur son propre terrain', () => {
   const layer = new BridgeLayer({
     THREE: stubWorksTHREE(),
     scene,
-    bubble: { frame: {}, verticalScale: 1, naturalElevationAtLocal: slope, surfaceElevationAtLocal: slope },
+    bubble: { frame: testFrame, verticalScale: 1, naturalElevationAtLocal: slope, surfaceElevationAtLocal: slope },
   });
 
   const rows = 21;
@@ -9414,7 +9429,7 @@ test('une bretelle d’échangeur ne redescend pas se coller à l’autoroute qu
 // --- L'herbe du premier plan ------------------------------------------------
 
 test('les mailles d’herbe tiennent dans le disque, les plus proches d’abord', () => {
-  const cells = grassCellRing(20, 2);
+  const cells = coverBandCells(testFrame, [coverBand({ from: 0, to: 20, cell: 2, perCell: 0 })], 0, 0);
   assert.ok(cells.length > 100, `assez de mailles (${cells.length})`);
   for (const cell of cells) assert.ok(cell.distance <= 20, 'dans le disque');
   for (let i = 1; i < cells.length; i++) {
@@ -9528,20 +9543,20 @@ test('une maille d’herbe rend toujours les mêmes touffes', () => {
   // C'est l'invariant qui empêche l'herbe de se redistribuer entièrement tous
   // les quelques mètres : la graine ne dépend que de la maille, et le nombre de
   // tirages consommés est constant.
-  const a = fillGrassCell(new Float32Array(GRASS_PER_CELL * GRASS_TUFT_STRIDE), 12, -7);
+  const a = fillGrassCell(new Float32Array(GRASS_PER_CELL * GRASS_TUFT_STRIDE), maille(12, -7, GRASS_CELL_M));
   // Des mailles voisines tirées entre les deux appels : l'état du générateur ne
   // doit pas fuir d'une maille à l'autre.
-  fillGrassCell(new Float32Array(GRASS_PER_CELL * GRASS_TUFT_STRIDE), 13, -7);
-  const b = fillGrassCell(new Float32Array(GRASS_PER_CELL * GRASS_TUFT_STRIDE), 12, -7);
+  fillGrassCell(new Float32Array(GRASS_PER_CELL * GRASS_TUFT_STRIDE), maille(13, -7, GRASS_CELL_M));
+  const b = fillGrassCell(new Float32Array(GRASS_PER_CELL * GRASS_TUFT_STRIDE), maille(12, -7, GRASS_CELL_M));
   assert.deepEqual([...a], [...b], 'même maille, mêmes touffes');
 
-  const other = fillGrassCell(new Float32Array(GRASS_PER_CELL * GRASS_TUFT_STRIDE), 13, -7);
+  const other = fillGrassCell(new Float32Array(GRASS_PER_CELL * GRASS_TUFT_STRIDE), maille(13, -7, GRASS_CELL_M));
   assert.notDeepEqual([...a], [...other], 'deux mailles ne portent pas la même touffe');
 });
 
 test('les touffes d’une maille restent dans leur maille', () => {
   for (const [gx, gz] of [[0, 0], [-4, 9], [312, -77]]) {
-    const tufts = fillGrassCell(new Float32Array(GRASS_PER_CELL * GRASS_TUFT_STRIDE), gx, gz);
+    const tufts = fillGrassCell(new Float32Array(GRASS_PER_CELL * GRASS_TUFT_STRIDE), maille(gx, gz, GRASS_CELL_M));
     for (let i = 0; i < GRASS_PER_CELL; i++) {
       const at = i * GRASS_TUFT_STRIDE;
       const dx = tufts[at] - gx * GRASS_CELL_M;
@@ -9757,6 +9772,7 @@ test('le semis de biome est déterministe, et son plafond n’arrête que lui-m�
     const placed = [];
     return {
       counts: {},
+      bubble: { frame: testFrame },
       groundClass: { surfaceAt },
       _onRoad: () => false,
       _place(_placements, item, opts) {
@@ -9803,6 +9819,7 @@ test('le semis de biome ne pose que ce que la matière de la fiche autorise', ()
     const placed = [];
     return {
       counts: {},
+      bubble: { frame: testFrame },
       groundClass: { surfaceAt },
       _onRoad: () => false,
       _place(_placements, item, opts) {
@@ -9827,13 +9844,13 @@ test('le semis de biome ne pose que ce que la matière de la fiche autorise', ()
 // --- Peuplements forestiers -------------------------------------------------
 
 test('un bois garde ses essences quand la bulle se déplace', () => {
-  const a = forestTypeAt(1234, -5678);
-  const b = forestTypeAt(1234 + 3, -5678 - 4);
+  const a = forestTypeAt(testFrame, 1234, -5678);
+  const b = forestTypeAt(testFrame, 1234 + 3, -5678 - 4);
   assert.equal(a.name, b.name, 'la maille tient');
 
   // Et des mailles éloignées ne donnent pas toutes le même peuplement.
   const names = new Set();
-  for (let i = 0; i < 40; i++) names.add(forestTypeAt(i * FOREST_PATCH_M, 0).name);
+  for (let i = 0; i < 40; i++) names.add(forestTypeAt(testFrame, i * FOREST_PATCH_M, 0).name);
   assert.ok(names.size >= 3, `plusieurs peuplements (${[...names].join(', ')})`);
 });
 
@@ -9845,8 +9862,8 @@ test('un bois ne pousse que là où son essence pousse vraiment', () => {
   const provence = { trees: ['holm_oak', 'aleppo_pine', 'juniper'] };
   const taiga = { trees: ['spruce', 'birch'] };
   for (let i = 0; i < 60; i++) {
-    midi.add(forestTypeAt(i * FOREST_PATCH_M, 0, FOREST_TYPES, provence).name);
-    nord.add(forestTypeAt(i * FOREST_PATCH_M, 0, FOREST_TYPES, taiga).name);
+    midi.add(forestTypeAt(testFrame, i * FOREST_PATCH_M, 0, FOREST_TYPES, provence).name);
+    nord.add(forestTypeAt(testFrame, i * FOREST_PATCH_M, 0, FOREST_TYPES, taiga).name);
   }
   assert.ok(midi.size >= 2, `plusieurs peuplements (${[...midi].join(', ')})`);
   for (const name of midi) assert.ok(!nord.has(name), `${name} n’est pas des deux`);
@@ -9856,8 +9873,8 @@ test('un bois ne pousse que là où son essence pousse vraiment', () => {
   // tirage.
   const bocage = { trees: ['oak', 'beech'] };
   assert.equal(
-    forestTypeAt(1234, -5678, FOREST_TYPES, bocage).name,
-    forestTypeAt(1234 + 3, -5678 - 4, FOREST_TYPES, bocage).name
+    forestTypeAt(testFrame, 1234, -5678, FOREST_TYPES, bocage).name,
+    forestTypeAt(testFrame, 1234 + 3, -5678 - 4, FOREST_TYPES, bocage).name
   );
 });
 
@@ -9866,7 +9883,7 @@ test('un peuplement sans essence déclarée pousse partout', () => {
   // s’il n’y avait pas de pays.
   const ancien = [{ name: 'sans-espèce', essences: ['broadleaf'], minHeight: 5, maxHeight: 9, density: 1, understory: 0.2, tint: [1, 1, 1] }];
   for (const trees of [['spruce'], ['olive'], ['oak', 'beech']]) {
-    assert.equal(forestTypeAt(500, 500, ancien, { trees }).name, 'sans-espèce', trees.join('+'));
+    assert.equal(forestTypeAt(testFrame, 500, 500, ancien, { trees }).name, 'sans-espèce', trees.join('+'));
   }
   // Et un pays sans aucun contenu retombe sur la liste entière plutôt que de
   // rendre un décor vide : lever ici emporterait toutes les couches suivantes.
@@ -10036,11 +10053,11 @@ test('le coquelicot pousse en lisière de culture, pas au milieu du pré', () =>
 
 test('une maille de culture rend toujours les mêmes touffes', () => {
   const size = CROP_PER_CELL * CROP_TUFT_STRIDE;
-  const a = fillCropCell(new Float32Array(size), 4, -9);
-  fillCropCell(new Float32Array(size), 5, -9);
-  const b = fillCropCell(new Float32Array(size), 4, -9);
+  const a = fillCropCell(new Float32Array(size), maille(4, -9, CROP_CELL_M));
+  fillCropCell(new Float32Array(size), maille(5, -9, CROP_CELL_M));
+  const b = fillCropCell(new Float32Array(size), maille(4, -9, CROP_CELL_M));
   assert.deepEqual([...a], [...b]);
-  assert.notDeepEqual([...a], [...fillCropCell(new Float32Array(size), 5, -9)]);
+  assert.notDeepEqual([...a], [...fillCropCell(new Float32Array(size), maille(5, -9, CROP_CELL_M))]);
 
   for (let i = 0; i < CROP_PER_CELL; i++) {
     const at = i * CROP_TUFT_STRIDE;
@@ -10052,7 +10069,7 @@ test('une maille de culture rend toujours les mêmes touffes', () => {
 });
 
 test('le disque de culture est trié du centre vers le bord', () => {
-  const cells = cropCellRing(20, 2.5);
+  const cells = coverBandCells(testFrame, [coverBand({ from: 0, to: 20, cell: 2.5, perCell: 0 })], 0, 0);
   assert.ok(cells.length > 0);
   for (let i = 1; i < cells.length; i++) {
     assert.ok(cells[i].distance >= cells[i - 1].distance, 'les plus proches d’abord');
@@ -10065,17 +10082,17 @@ test('le disque de culture est trié du centre vers le bord', () => {
 test('les ponts d’une vallée sortent du même bureau d’études', () => {
   // Même maille pour les deux culées d'un pont, et pour les deux ponts d'un
   // village : ils tirent la même famille.
-  const a = worksStyleAt(10, 10);
-  const b = worksStyleAt(10 + TOWN_PATCH_M * 0.4, 10);
+  const a = worksStyleAt(testFrame, 10, 10);
+  const b = worksStyleAt(testFrame, 10 + TOWN_PATCH_M * 0.4, 10);
   assert.equal(a.name, b.name, 'la maille tient sur toute la traversée');
 
   const names = new Set();
-  for (let i = 0; i < 60; i++) names.add(worksStyleAt(i * TOWN_PATCH_M, 0).name);
+  for (let i = 0; i < 60; i++) names.add(worksStyleAt(testFrame, i * TOWN_PATCH_M, 0).name);
   assert.ok(names.size >= 2, `plusieurs matériaux (${[...names].join(', ')})`);
 });
 
 test('un tablier est plus large que sa chaussée, et sa sous-face rentrante', () => {
-  const style = worksStyleAt(10, 10);
+  const style = worksStyleAt(testFrame, 10, 10);
   const profile = deckProfile(4.25, style.deck);
   const rim = Math.max(...profile.map((p) => p.across));
 
@@ -10089,7 +10106,7 @@ test('un tablier est plus large que sa chaussée, et sa sous-face rentrante', ()
 });
 
 test('une voûte de tunnel dégage la chaussée et se referme au sol', () => {
-  const style = worksStyleAt(10, 10);
+  const style = worksStyleAt(testFrame, 10, 10);
   const halfWidth = 4.25;
   const vault = vaultProfile(halfWidth, style.portal);
 
@@ -10104,7 +10121,7 @@ test('tout le bâti d’un pays prend la palette que son dossier nomme', () => {
   const ouest = { building: 'granite_slate' };
   for (let i = 0; i < 60; i++) {
     assert.equal(townPaletteFor(TOWN_PALETTES, ouest).name, 'granite_slate');
-    const style = buildingStyleAt(i * TOWN_PATCH_M * 0.7, i * 311, { area: 90, height: 7 }, TOWN_PALETTES, ouest);
+    const style = buildingStyleAt(testFrame, i * TOWN_PATCH_M * 0.7, i * 311, { area: 90, height: 7 }, TOWN_PALETTES, ouest);
     assert.equal(style.palette, 'granite_slate', 'aucune maille ne change la palette');
   }
   assert.equal(townPaletteFor(TOWN_PALETTES, { building: 'whitewash_terrace' }).name, 'whitewash_terrace');
@@ -10141,8 +10158,8 @@ test('aucun mur de bourg ne tombe hors de la plage claire du nuancier', () => {
 });
 
 test('deux maisons d’un même bourg se ressemblent sans être identiques', () => {
-  const a = buildingStyleAt(100, 100, { area: 90, height: 7 });
-  const b = buildingStyleAt(118, 92, { area: 110, height: 8 });
+  const a = buildingStyleAt(testFrame, 100, 100, { area: 90, height: 7 });
+  const b = buildingStyleAt(testFrame, 118, 92, { area: 110, height: 8 });
   assert.equal(a.palette, b.palette, 'même pays');
 
   // Les tons restent proches — c'est ce partage qui fait le village — mais pas
@@ -10152,7 +10169,7 @@ test('deux maisons d’un même bourg se ressemblent sans être identiques', () 
 
   let identical = 0;
   for (let i = 0; i < 40; i++) {
-    const s = buildingStyleAt(100 + i * 7, 100, { area: 90, height: 7 });
+    const s = buildingStyleAt(testFrame, 100 + i * 7, 100, { area: 90, height: 7 });
     if (s.wall.every((c, k) => c === a.wall[k])) identical++;
   }
   assert.ok(identical < 30, `les maisons ne sont pas toutes de la même teinte (${identical}/40)`);
@@ -10353,12 +10370,12 @@ function semisComplet(bands, fill, stride, densite) {
   const parBande = bands.map(() => 0);
   let total = 0;
 
-  for (const cell of coverBandRing(bands)) {
+  for (const cell of coverBandCells(testFrame, bands, 0, 0)) {
     const band = bands[cell.band];
     const fade = coverBandFade(cell.distance, band);
     if (fade <= 0.02) continue;
     const seuil = coverMassDensity(densite, band) * fade;
-    fill(buffer, cell.gx, cell.gz, band.cell, band.perCell, band.salt);
+    fill(buffer, cell, band.perCell, band.salt);
     for (let i = 0; i < band.perCell; i++) {
       if (buffer[i * stride + 2] <= seuil) {
         total++;
@@ -10470,14 +10487,14 @@ test('deux bandes ne sèment pas les mêmes touffes à la même maille', () => {
   );
 
   const taille = 10 * GRASS_TUFT_STRIDE;
-  const bande0 = [...fillGrassCell(new Float32Array(taille), 5, -3, 1.6, 10, 0)];
-  const bande1 = [...fillGrassCell(new Float32Array(taille), 5, -3, 1.6, 10, 1)];
+  const bande0 = [...fillGrassCell(new Float32Array(taille), maille(5, -3, 1.6), 10, 0)];
+  const bande1 = [...fillGrassCell(new Float32Array(taille), maille(5, -3, 1.6), 10, 1)];
   assert.notDeepEqual(bande0, bande1, 'un sel différent donne des touffes différentes');
 
   // Le sel par défaut ne change rien : la bande de détail sème exactement ce
   // qu'elle semait avant les bandes.
   assert.deepEqual(
-    [...fillGrassCell(new Float32Array(taille), 5, -3)],
+    [...fillGrassCell(new Float32Array(taille), maille(5, -3, GRASS_CELL_M))],
     bande0,
     'sans sel, le semis d’origine'
   );
@@ -10489,11 +10506,11 @@ test('une maille de bande lointaine reste ancrée au sol', () => {
   // sinon la moyenne distance se met à grouiller.
   const band = GRASS_BANDS[GRASS_BANDS.length - 1];
   const taille = band.perCell * GRASS_TUFT_STRIDE;
-  const a = fillGrassCell(new Float32Array(taille), 7, 11, band.cell, band.perCell, band.salt);
+  const a = fillGrassCell(new Float32Array(taille), maille(7, 11, band.cell), band.perCell, band.salt);
   // Des mailles voisines tirées entre les deux appels : l'état du générateur ne
   // doit pas fuir d'une maille à l'autre.
-  fillGrassCell(new Float32Array(taille), 8, 11, band.cell, band.perCell, band.salt);
-  const b = fillGrassCell(new Float32Array(taille), 7, 11, band.cell, band.perCell, band.salt);
+  fillGrassCell(new Float32Array(taille), maille(8, 11, band.cell), band.perCell, band.salt);
+  const b = fillGrassCell(new Float32Array(taille), maille(7, 11, band.cell), band.perCell, band.salt);
   assert.deepEqual([...a], [...b], 'même maille, même masse');
 
   // Et les positions tombent bien dans la maille de **cette** bande.
@@ -11731,6 +11748,7 @@ function squareRing(side) {
 /** Instance minimale de `FurnitureLayer`, juste assez pour `looksLikeFarmstead`. */
 function farmsteadHarness(fabric) {
   const layer = Object.create(FurnitureLayer.prototype);
+  layer.bubble = { frame: testFrame };
   layer._fabric = fabric;
   return layer;
 }
@@ -11879,7 +11897,7 @@ test('greenhouseAnchorFor renonce plutôt que deviner sur une culture qui couvre
 /** Instance de `FurnitureLayer` juste assez armée pour poser du mobilier ponctuel. */
 function farmsteadPlacementHarness() {
   const layer = Object.create(FurnitureLayer.prototype);
-  layer.bubble = { surfaceElevationAtLocal: () => 100, verticalScale: 1 };
+  layer.bubble = { frame: testFrame, surfaceElevationAtLocal: () => 100, verticalScale: 1 };
   // Les poules de la cour ne sont plus du mobilier : elles partent dans
   // `fauna`, que la couche publie pour `faunaLayer`.
   layer.fauna = [];
@@ -12114,7 +12132,7 @@ test('la voirie ne lit que les anneaux extérieurs', () => {
 
 test('le béton a une section de vingt centimètres et aucun dessus de trottoir', () => {
   const streets = defaultTheme.streets;
-  const tones = streetSurfaceAt(0, 0, streets);
+  const tones = streetSurfaceAt(testFrame, 0, 0, streets);
   const section = kerbProfile({ halfWidth: 2.5, side: 1, tones }, streets);
   const top = section.filter((v) => v.color === tones.kerb && v.up === 0);
   assert.equal(top.length, 2);
@@ -12127,7 +12145,7 @@ test('le béton a une section de vingt centimètres et aucun dessus de trottoir'
 
 test('le caniveau rejoint la chaussée et le béton suit le support sur les deux rives', () => {
   const layer = Object.create(StreetLayer.prototype);
-  layer.bubble = { verticalScale: 2, surfaceElevationAtLocal: (x, z) => 10 + x * 0.02 + z * 0.01 };
+  layer.bubble = { frame: testFrame, verticalScale: 2, surfaceElevationAtLocal: (x, z) => 10 + x * 0.02 + z * 0.01 };
   const points = [{ x: 0, z: 0 }, { x: 5, z: 0 }];
   const decks = new Float32Array([19.8, 20]);
   for (const side of [1, -1]) {
@@ -12138,7 +12156,7 @@ test('le caniveau rejoint la chaussée et le béton suit le support sur les deux
       room: 1, streets: defaultTheme.streets,
     });
     assert.equal(bands.length, 1);
-    const profile = kerbProfile({ halfWidth: 2.5, side, tones: streetSurfaceAt(0, 0) });
+    const profile = kerbProfile({ halfWidth: 2.5, side, tones: streetSurfaceAt(testFrame, 0, 0) });
     for (let r = 0; r < 2; r++) {
       for (let c = 0; c < profile.length; c++) {
         const at = (r * profile.length + c) * 3;
@@ -12175,15 +12193,16 @@ test('la bande publiée couvre seulement le caniveau et la bordure', () => {
 test('le béton d’une rue est tiré du lieu', () => {
   // Le revêtement est celui du **bourg** : deux points de la même maille le
   // partagent, ce qui est ce qui fait qu’une traversée se lit comme un lieu.
-  const here = streetSurfaceAt(10, 10);
-  assert.equal(streetSurfaceAt(TOWN_PATCH_M * 0.4, TOWN_PATCH_M * 0.3).name, here.name);
+  const [cell] = worldCellsIn(testFrame, 10, 10, 10, 10, TOWN_PATCH_M);
+  const here = streetSurfaceAt(testFrame, cell.x + cell.size * 0.1, cell.z + cell.size * 0.1);
+  assert.equal(streetSurfaceAt(testFrame, cell.x + cell.size * 0.9, cell.z + cell.size * 0.8).name, here.name);
   for (const key of ['kerb', 'gutter']) {
     assert.ok(here[key].every((c) => c >= 0 && c <= 1), `${key} : composantes valides`);
   }
 
   // Et les quatre revêtements du thème sortent bien tous, sur assez de mailles.
   const seen = new Set();
-  for (let i = 0; i < 200; i++) seen.add(streetSurfaceAt(i * TOWN_PATCH_M, 0).name);
+  for (let i = 0; i < 200; i++) seen.add(streetSurfaceAt(testFrame, i * TOWN_PATCH_M, 0).name);
   assert.equal(seen.size, defaultTheme.streets.surfaces.length);
 });
 
@@ -12298,7 +12317,7 @@ test('la bordure tient dans cinquante-deux centimètres sans se rétrécir', () 
 test('une rue urbaine courte garde ses deux bordures sans bâtiments proches', () => {
   const layer = Object.create(StreetLayer.prototype);
   layer.theme = defaultTheme;
-  layer.bubble = { verticalScale: 1, surfaceElevationAtLocal: () => 0 };
+  layer.bubble = { frame: testFrame, verticalScale: 1, surfaceElevationAtLocal: () => 0 };
   const road = fakeRoad([{ x: 0, z: 0 }, { x: 5, z: 0 }], 2.5);
   road.edges = new Float32Array([0, 4, 0, 4]);
   road.probeSpan = 10;
@@ -12315,7 +12334,7 @@ test('une rue urbaine courte garde ses deux bordures sans bâtiments proches', (
 test('la reconstruction urbaine borde les rues et les coins sans relevé du bâti', () => {
   const layer = Object.create(StreetLayer.prototype);
   layer.theme = defaultTheme;
-  layer.bubble = { frame: {}, verticalScale: 1, surfaceElevationAtLocal: () => 0 };
+  layer.bubble = { frame: testFrame, verticalScale: 1, surfaceElevationAtLocal: () => 0 };
   layer._apply = (store) => {
     assert.ok(store.positions.length > 0);
     assert.ok(store.positions.data.subarray(0, store.positions.length).every(Number.isFinite));
@@ -12998,7 +13017,7 @@ test('appendOpenings : skipGroundLevel laisse le rez-de-chaussée à la devantur
   const openings = { panes: 0, budget: 100, lit: null };
   const style = { shutter: [0.2, 0.3, 0.45], house: false, shutters: false };
 
-  appendOpenings(openings, walls, { x: 0, y: 0 }, { x: 20, y: 0 }, 0, -1, 100, 8, 0, style, undefined, {
+  appendOpenings(openings, walls, { x: 0, y: 0 }, { x: 20, y: 0 }, 0, -1, 100, 8, 0, style, undefined, { frame: testFrame,
     skipGroundLevel: true,
   });
 
@@ -13936,15 +13955,15 @@ test('la frange déplace la lecture du sol, sans dépendre du parcours ni sortir
 
   // Déterminisme spatial : la même maille lit toujours le même point, quel que
   // soit l'ordre dans lequel on la rencontre.
-  const first = fringeOffset(12, -7, 0, reach);
-  assert.deepEqual(fringeOffset(12, -7, 0, reach), first);
+  const first = fringeOffset(maille(12, -7), 0, reach);
+  assert.deepEqual(fringeOffset(maille(12, -7), 0, reach), first);
 
   // Bornée : une touffe ne peut pas emprunter le sol d'une parcelle lointaine.
   let outside = 0;
   let sumRadius = 0;
   const samples = 400;
   for (let i = 0; i < samples; i++) {
-    const offset = fringeOffset(i, i * 3 - 11, i % 3, reach);
+    const offset = fringeOffset(maille(i, i * 3 - 11), i % 3, reach);
     const radius = Math.hypot(offset.x, offset.z);
     if (radius > reach + 1e-9) outside++;
     sumRadius += radius;
@@ -13960,12 +13979,12 @@ test('la frange déplace la lecture du sol, sans dépendre du parcours ni sortir
 
   // Deux mailles voisines ne lisent pas le même point : c'est ce qui brouille
   // la limite au lieu de la déplacer en bloc.
-  const a = fringeOffset(4, 4, 0, reach);
-  const b = fringeOffset(5, 4, 0, reach);
+  const a = fringeOffset(maille(4, 4), 0, reach);
+  const b = fringeOffset(maille(5, 4), 0, reach);
   assert.ok(Math.hypot(a.x - b.x, a.z - b.z) > 0.2, 'des voisines tirent des décalages distincts');
 
   // Portée nulle : aucun décalage (un thème peut éteindre la frange).
-  assert.deepEqual(fringeOffset(3, 9, 1, 0), { x: 0, z: 0 });
+  assert.deepEqual(fringeOffset(maille(3, 9), 1, 0), { x: 0, z: 0 });
 });
 
 // --- Lot F : le marquage est de la géométrie ---------------------------------
@@ -14890,7 +14909,7 @@ test('le revêtement urbain dépend du pays et le béton du bourg', () => {
 
   // Le rebord, lui, reste tiré du bourg : deux mailles éloignées ne donnent pas
   // forcément la même bordure, mais aucune ne donne le dessus.
-  const here = streetSurfaceAt(0, 0);
+  const here = streetSurfaceAt(testFrame, 0, 0);
   assert.ok(Array.isArray(here.kerb) && here.kerb.length === 3);
   assert.ok(Array.isArray(here.gutter));
 });

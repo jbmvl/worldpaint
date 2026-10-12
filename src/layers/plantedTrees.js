@@ -2,12 +2,12 @@
  * de placement ; les dimensions et variantes viennent du thème. Le compositeur
  * transmet ces descriptions au rendu commun des arbres et du sous-bois.
  */
-import { randomAt } from './furniturePlacement.js';
+import { randomAt } from '../core/groundSeed.js';
 
-export function plantedTree(item, p, trees) {
+export function plantedTree(frame, item, p, trees) {
   const look = trees.plantations[item];
   if (!look) return null;
-  const draw = salt => randomAt(p.x, p.z, salt);
+  const draw = salt => randomAt(frame, p.x, p.z, salt);
   const variant = look.variants[Math.floor(draw(1201) * look.variants.length)];
   const shade = .88 + draw(1213) * .24;
   return { x: p.x, y: p.y, z: p.z, variant,

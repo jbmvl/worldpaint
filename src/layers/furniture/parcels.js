@@ -30,8 +30,6 @@ import {
   ringCentroid,
   scatterInRing,
   pointInRing,
-  randomAt,
-  positionSeed,
   ROW_CROPS,
   WOOD_PILE_EDGE_MIN,
   farmingWordFor,
@@ -46,6 +44,7 @@ import {
 import { reachedRadius } from '../../core/decorReach.js';
 import { placeHerd, placeForestGame, placeFauna } from './parcelFauna.js';
 import { buildCemetery } from './cemetery.js';
+import { positionSeed, randomAt } from '../../core/groundSeed.js';
 
 /** Portée des rangs de vigne, de lavande et de verger, en mètres (celle du reste du mobilier). */
 export const ROW_CROP_RADIUS_M = FURNITURE_RADIUS_M;
@@ -103,8 +102,9 @@ export const GREENHOUSE_SPACING_M = 6;
  * foin, bosquets et bâtiments de ferme.
  */
 export function buildParcels(layer, context, builtUp) {
+  const { frame } = layer.bubble;
   const { source, tiles, here, sampleElevation, buffers, placements } = context;
-  const { origin, scale, zoom } = layer.bubble.frame;
+  const { origin, scale, zoom } = frame;
   let boundaries = 0;
   let scattered = 0;
   let farmBuildings = 0;
@@ -142,7 +142,7 @@ export function buildParcels(layer, context, builtUp) {
           const placed = layer._place(placements, urbanKind, {
             x: centre.x,
             z: centre.z,
-            yaw: randomAt(centre.x, centre.z, 191) * Math.PI * 2,
+            yaw: randomAt(frame, centre.x, centre.z, 191) * Math.PI * 2,
           });
           // La croix posée plus haut ne marquait le site que d'un seul
           // repère ; ce qui suit l'habille — mur, portail, tombes, robinet.
@@ -156,7 +156,7 @@ export function buildParcels(layer, context, builtUp) {
       if (pointInAreas(builtUp, centre.x, centre.z)) continue;
 
       const steepness = layer._steepnessAt(centre.x, centre.z);
-      const variant = randomAt(centre.x, centre.z, 7);
+      const variant = randomAt(frame, centre.x, centre.z, 7);
       // La culture n'est **pas tirée ici** : elle est lue dans la carte des
       // cultures, qui l'a tirée une fois pour toutes et que lisent aussi le
       // shader de terrain et `cropLayer`. Le mobilier s'en sert pour savoir
@@ -173,7 +173,7 @@ export function buildParcels(layer, context, builtUp) {
       if (crop === 'plough' && layer.region?.farming?.includes('greenhouse')) {
         const word = farmingWordFor(
           properties,
-          randomAt(centre.x, centre.z, GREENHOUSE_FIELD_SALT),
+          randomAt(frame, centre.x, centre.z, GREENHOUSE_FIELD_SALT),
           layer.region.farming
         );
         if (word === 'greenhouse') crop = 'greenhouse';
@@ -186,7 +186,7 @@ export function buildParcels(layer, context, builtUp) {
       if (
         farmBuildings < FURNITURE_LIMITS.farmBuildings &&
         looksLikeFarmstead(layer, properties, local, centre) &&
-        randomAt(centre.x, centre.z, FARMSTEAD_SALT) < FARMSTEAD_SHARE
+        randomAt(frame, centre.x, centre.z, FARMSTEAD_SALT) < FARMSTEAD_SHARE
       ) {
         farmBuildings += placeFarmstead(layer, placements, local, centre);
       }
@@ -332,6 +332,7 @@ export function appendParcelBoundary(layer, buffers, placements, kind, ring, bou
  * boîte englobante.
  */
 export function buildRows(layer, context, ring, centre, crop, here) {
+  const { frame } = layer.bubble;
   if (Math.hypot(centre.x - here.x, centre.z - here.z) > reachedRadius(ROW_CROP_RADIUS_M, layer.bubble)) return;
   if (layer.counts.rows >= FURNITURE_LIMITS.vineRows) return;
 
@@ -342,7 +343,7 @@ export function buildRows(layer, context, ring, centre, crop, here) {
   // Une parcelle de vigne conduite sans échalas l'est sur toute sa
   // longueur — pas rang par rang, ce qui ferait alterner cep et sans-cep dans
   // le même champ.
-  const vineUnstaked = crop === 'vineyard' && randomAt(centre.x, centre.z, VINE_UNSTAKED_SALT) < VINE_UNSTAKED_SHARE;
+  const vineUnstaked = crop === 'vineyard' && randomAt(frame, centre.x, centre.z, VINE_UNSTAKED_SALT) < VINE_UNSTAKED_SHARE;
   // Perpendiculaire : c'est le long d'elle que les rangs s'échelonnent.
   const spacing =
     crop === 'vineyard' ? 2.4 : crop === 'lavender' ? 1.4 : crop === 'greenhouse' ? GREENHOUSE_SPACING_M : 7;
@@ -386,7 +387,7 @@ export function buildRows(layer, context, ring, centre, crop, here) {
           // arêtes facettées, comme pour une haie.
           const fine = resamplePath(path, HEDGE_SAMPLE_M);
           const dense = fine.length >= 2 ? fine : path;
-          const facets = hedgeFacets(dense, VINE_ROW_FACET_SALT);
+          const facets = hedgeFacets(frame, dense, VINE_ROW_FACET_SALT);
           appendProfile(buffers.vineRow, {
             path: dense,
             profile: layer.specs.profiles.vineRow,
@@ -411,7 +412,7 @@ export function buildRows(layer, context, ring, centre, crop, here) {
           // lavande, pas un pied isolé — voir `lavenderRow`.
           const fine = resamplePath(path, HEDGE_SAMPLE_M);
           const dense = fine.length >= 2 ? fine : path;
-          const facets = hedgeFacets(dense, LAVENDER_ROW_FACET_SALT);
+          const facets = hedgeFacets(frame, dense, LAVENDER_ROW_FACET_SALT);
           appendProfile(buffers.lavenderRow, {
             path: dense,
             profile: layer.specs.profiles.lavenderRow,
@@ -445,10 +446,10 @@ export function buildRows(layer, context, ring, centre, crop, here) {
             const planted = layer._place(placements, 'treeBroad', {
               x: tree.x,
               z: tree.z,
-              yaw: randomAt(tree.x, tree.z, 67) * Math.PI * 2,
+              yaw: randomAt(frame, tree.x, tree.z, 67) * Math.PI * 2,
               // Un verger est planté d'arbres taillés bas et de taille égale :
               // c'est exactement ce qui le distingue d'un bois.
-              scale: 0.55 + randomAt(tree.x, tree.z, 68) * 0.12,
+              scale: 0.55 + randomAt(frame, tree.x, tree.z, 68) * 0.12,
             });
             if (planted) planted.plantation = 'treeApple';
           }
@@ -508,10 +509,11 @@ export const TRACTOR_SPEED_MAX_MS = 1.8;
  * la graine vient du centre de la parcelle, jamais de l'ordre de parcours.
  */
 export function placeTractor(layer, context, ring, centre, crop, here) {
+  const { frame } = layer.bubble;
   if (!crop || crop === 'orchard') return;
   if (Math.hypot(centre.x - here.x, centre.z - here.z) > reachedRadius(TRACTOR_RADIUS_M, layer.bubble)) return;
   if (!layer.tractors || layer.tractors.length >= FURNITURE_LIMITS.vehicles) return;
-  if (randomAt(centre.x, centre.z, TRACTOR_SALT) >= TRACTOR_SHARE) return;
+  if (randomAt(frame, centre.x, centre.z, TRACTOR_SALT) >= TRACTOR_SHARE) return;
 
   const { sampleElevation } = context;
   const angle = principalAngle(ring);
@@ -554,14 +556,15 @@ export function placeTractor(layer, context, ring, centre, crop, here) {
   const b = { x: end.x, y: sampleElevation(end.x, end.z), z: end.z };
   const headingForward = Math.atan2(b.x - a.x, b.z - a.z);
   const speed =
-    TRACTOR_SPEED_MIN_MS + randomAt(centre.x, centre.z, TRACTOR_SALT + 1) * (TRACTOR_SPEED_MAX_MS - TRACTOR_SPEED_MIN_MS);
-  const phase = randomAt(centre.x, centre.z, TRACTOR_SALT + 2) * 60;
+    TRACTOR_SPEED_MIN_MS + randomAt(frame, centre.x, centre.z, TRACTOR_SALT + 1) * (TRACTOR_SPEED_MAX_MS - TRACTOR_SPEED_MIN_MS);
+  const phase = randomAt(frame, centre.x, centre.z, TRACTOR_SALT + 2) * 60;
 
   layer.tractors.push({ a, b, headingForward, speed, phase });
 }
 
 /** Sème l'intérieur d'une parcelle. @returns {number} objets posés. */
 export function scatterInside(layer, placements, properties, ring, centre, variant, steepness = 0, crop = null) {
+  const { frame } = layer.bubble;
   const rule = scatterFurnitureFor(properties, { crop });
   if (!rule) return 0;
 
@@ -574,11 +577,11 @@ export function scatterInside(layer, placements, properties, ring, centre, varia
   // espérance de 0,55 bête : avec un tirage ancré au lieu en jitter, il en
   // porte une un peu plus d'une fois sur deux, au lieu de jamais.
   const expected = hectares * rule.perHectare;
-  const jitter = randomAt(centre.x, centre.z, 45);
+  const jitter = randomAt(frame, centre.x, centre.z, 45);
   const count = Math.min(24, Math.floor(expected + jitter));
   if (count <= 0) return 0;
 
-  const seed = positionSeed(centre.x, centre.z, 41);
+  const seed = positionSeed(frame, centre.x, centre.z, 41);
   let placed = 0;
 
   if (rule.item === 'herd') return placeHerd(layer, ring, centre, variant, steepness, count);
@@ -625,7 +628,7 @@ export function placeWoodPiles(layer, placements, ring, centre, count) {
   const groundClass = layer.groundClass;
   if (!groundClass?.woodEdgeAt) return 0;
 
-  const seed = positionSeed(centre.x, centre.z, 71);
+  const seed = positionSeed(layer.bubble.frame, centre.x, centre.z, 71);
   let placed = 0;
   // Ni sur la chaussée ni sur le ballast, comme les bottes et le bétail.
   for (const spot of layer._filterOffInfra(scatterInRing(ring, count, seed))) {
@@ -756,8 +759,9 @@ export function greenhouseAnchorFor(layer, ring, base, perpX, perpZ) {
  * le catalogue.
  */
 export function placeFarmstead(layer, placements, ring, centre) {
-  const yaw = randomAt(centre.x, centre.z, 13) * Math.PI * 2;
-  const draw = randomAt(centre.x, centre.z, 17);
+  const { frame } = layer.bubble;
+  const yaw = randomAt(frame, centre.x, centre.z, 13) * Math.PI * 2;
+  const draw = randomAt(frame, centre.x, centre.z, 17);
 
   const barn = layer._place(placements, 'barn', { x: centre.x, z: centre.z, yaw });
   const offX = Math.cos(yaw) * 24;
@@ -778,7 +782,7 @@ export function placeFarmstead(layer, placements, ring, centre) {
   // exploitation ne cumule pas systématiquement les deux. Le tirage est
   // délibérément généreux : une exploitation elle-même reste rare
   // (`looksLikeFarmstead`), inutile d'empiler une seconde rareté dessus.
-  if (randomAt(centre.x, centre.z, 31) < 0.4) {
+  if (randomAt(frame, centre.x, centre.z, 31) < 0.4) {
     // Un rang, dans le sens de la ferme (même axe que la grange et le
     // hangar) — pas un semis : un maraîchage réel aligne ses tunnels côte à
     // côte, tous parallèles à l'allée qui les dessert. Chaque tunnel court
@@ -791,7 +795,7 @@ export function placeFarmstead(layer, placements, ring, centre) {
     // voir `greenhouseAnchorFor`.
     const anchor = greenhouseAnchorFor(layer, ring, base, perpX, perpZ);
     if (anchor) {
-      const rowCount = randomAt(centre.x, centre.z, 37) < 0.55 ? 2 : 3;
+      const rowCount = randomAt(frame, centre.x, centre.z, 37) < 0.55 ? 2 : 3;
       const length = greenhouseLengthFor(ring, centre, yaw);
       const scaleZ = length / GREENHOUSE_BASE_LENGTH_M;
 
@@ -813,14 +817,14 @@ export function placeFarmstead(layer, placements, ring, centre) {
   layer._place(placements, 'laundryLine', { x: lineX, z: lineZ, yaw: yaw + Math.PI / 2 });
 
   // Poules dans la cour : elles ne s'éloignent jamais beaucoup du bâtiment.
-  const hens = 4 + Math.floor(randomAt(centre.x, centre.z, 19) * 5);
+  const hens = 4 + Math.floor(randomAt(frame, centre.x, centre.z, 19) * 5);
   for (let i = 0; i < hens; i++) {
-    const angle = randomAt(centre.x + i * 3.1, centre.z, 23) * Math.PI * 2;
-    const radius = 6 + randomAt(centre.x, centre.z + i * 3.1, 29) * 7;
+    const angle = randomAt(frame, centre.x + i * 3.1, centre.z, 23) * Math.PI * 2;
+    const radius = 6 + randomAt(frame, centre.x, centre.z + i * 3.1, 29) * 7;
     placeFauna(layer, 'chicken', {
       x: centre.x + Math.cos(angle) * radius,
       z: centre.z + Math.sin(angle) * radius,
-      scale: 0.9 + randomAt(centre.x, centre.z + i * 5.3, 31) * 0.25,
+      scale: 0.9 + randomAt(frame, centre.x, centre.z + i * 5.3, 31) * 0.25,
     });
   }
 

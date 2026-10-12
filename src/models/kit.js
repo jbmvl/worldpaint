@@ -19,6 +19,7 @@
  */
 
 import { defaultTheme } from '../themes/default.js';
+import { randomStream } from '../core/groundSeed.js';
 
 /** Nom de l'attribut de sommet qui marque les pales d'éolienne. */
 export const ROTOR_SPIN_ATTRIBUTE = 'aSpin';
@@ -29,13 +30,7 @@ export const ROTOR_SPIN_ATTRIBUTE = 'aSpin';
  * d'un même rocher partagent la même silhouette, une géométrie unique.
  */
 export function seededUnit(seed) {
-  let a = (seed >>> 0) || 1;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+  return randomStream((seed >>> 0) || 1);
 }
 
 /**

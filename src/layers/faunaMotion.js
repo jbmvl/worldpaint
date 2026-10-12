@@ -48,7 +48,7 @@
  * chaque image coûterait plus cher que tout le reste de l'animation.
  */
 
-import { randomAt } from './furniturePlacement.js';
+import { randomAt } from '../core/groundSeed.js';
 
 /** Demi-longueur du trajet de traversée, en mètres — de bas-côté à bas-côté. */
 export const CROSS_SPAN_M = 9;
@@ -241,6 +241,7 @@ export function behaviourFor({ family, variant = 0, nearRoad = false, crossDraw 
  * reconstruction, c'est-à-dire une bête qui saute.
  *
  * @param {Object} options
+ * @param {Object} options.frame Repère local, qui ancre les tirages au sol.
  * @param {string} options.behaviour Clé de `FAUNA_BEHAVIOURS`.
  * @param {number} options.x Point de pose.
  * @param {number} options.z Point de pose.
@@ -266,6 +267,7 @@ export function behaviourFor({ family, variant = 0, nearRoad = false, crossDraw 
  *          referme pas, et `null` quand il se referme.
  */
 export function buildCircuit({
+  frame,
   behaviour,
   x,
   z,
@@ -319,9 +321,9 @@ export function buildCircuit({
   } else {
     const count = Math.max(1, rule.stations);
     for (let i = 0; i < count; i++) {
-      const turn = (i / count) * Math.PI * 2 + randomAt(x, z, 211) * Math.PI * 2;
+      const turn = (i / count) * Math.PI * 2 + randomAt(frame, x, z, 211) * Math.PI * 2;
       // Rayon bruité par station : c'est ce qui casse le manège.
-      const wobble = 0.45 + randomAt(x + i * 3.7, z - i * 2.9, 213) * 0.9;
+      const wobble = 0.45 + randomAt(frame, x + i * 3.7, z - i * 2.9, 213) * 0.9;
       const radius = rule.radiusM * roam * wobble;
       const spot = place(x + Math.cos(turn) * radius, z + Math.sin(turn) * radius);
       if (!spot) return null;
@@ -331,7 +333,7 @@ export function buildCircuit({
 
   const halts = points.map((p) => ({
     ...p,
-    dwell: rule.dwellS[0] + randomAt(p.x, p.z, 217) * Math.max(0, rule.dwellS[1] - rule.dwellS[0]),
+    dwell: rule.dwellS[0] + randomAt(frame, p.x, p.z, 217) * Math.max(0, rule.dwellS[1] - rule.dwellS[0]),
     heading: 0,
   }));
 
@@ -364,7 +366,7 @@ export function buildCircuit({
   }
   // Circuit à une seule station : rien ne tourne, le cap est tiré au lieu.
   if (stations.length === 1) {
-    stations[0].heading = randomAt(x, z, 219) * Math.PI * 2;
+    stations[0].heading = randomAt(frame, x, z, 219) * Math.PI * 2;
     legs.length = 0;
   }
   // Circuit ouvert : la première station n'hérite d'aucun cap d'arrivée, elle
@@ -391,7 +393,7 @@ export function buildCircuit({
     // Décalage propre à la bête : deux vaches voisines qui lèvent la tête
     // ensemble se repèrent instantanément. Un circuit ouvert n'en a pas : il
     // est joué du début, à l'instant où on le demande.
-    offset: closed ? randomAt(x, z, 223) * Math.max(1, period) : 0,
+    offset: closed ? randomAt(frame, x, z, 223) * Math.max(1, period) : 0,
     period: Math.max(0.1, period),
   };
 }
@@ -414,9 +416,10 @@ export function buildCircuit({
  * @param {Function} options.sampleY `(x, z) => altitude`.
  * @returns {Object|null} Circuit ouvert, voir `buildCircuit`.
  */
-export function buildFleeCircuit({ x, z, away, walkMS, runMS, sampleY }) {
+export function buildFleeCircuit({ frame, x, z, away, walkMS, runMS, sampleY }) {
   const half = FLEE_SPAN_M / 2;
   return buildCircuit({
+    frame,
     behaviour: 'flee',
     x: x + away.x * half,
     z: z + away.z * half,

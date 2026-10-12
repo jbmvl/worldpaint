@@ -4,18 +4,15 @@
  * aléatoire par image. Le météore décroît derrière sa tête, le satellite reste
  * ponctuel, l'avion se reconnaît à ses feux. Le thème porte leurs dimensions.
  */
+import { hashUnit } from '../core/groundSeed.js';
+
 const TAU = Math.PI * 2;
 const mix = (a, b, t) => a + (b - a) * t;
 const smooth = (a, b, x) => {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 };
-const noise = (slot, salt) => {
-  let n = Math.imul(slot + salt * 1013, 1597334677);
-  n = Math.imul(n ^ (n >>> 16), 2246822519);
-  return (n ^ (n >>> 13)) >>> 0;
-};
-const roll = (slot, salt) => noise(slot, salt) / 4294967296;
+const roll = (slot, salt) => hashUnit(slot, salt);
 
 function trajectory(slot, salt, progress, elevation, slope, travel) {
   const yaw = roll(slot, salt) * TAU;

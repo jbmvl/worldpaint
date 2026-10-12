@@ -9,49 +9,13 @@
  * `highway=milestone` — mais sa présence se déduit de ce qui l'est).
  *
  * Le second régime doit être déterministe et ancré au sol : toutes les
- * graines dérivent d'une position absolue quantifiée (`positionSeed`), tous
+ * graines dérivent d'une position au sol (`core/groundSeed.js`), tous
  * les espacements se comptent depuis le premier sommet de la ligne d'origine
  * (pas depuis le tronçon découpé, qui bouge avec l'observateur).
  */
 
-import { makeRandom } from '../materials/proceduralTextures.js';
+import { randomAt, randomStream } from '../core/groundSeed.js';
 import { cropForFarming, sharesFor } from '../core/regionInterpretation.js';
-
-/** Pas de quantification des graines de position, en mètres. */
-export const SEED_GRID_M = 0.5;
-
-/** Graine déterministe attachée à un point du sol (indépendante de l'ordre de parcours). */
-export function positionSeed(x, z, salt = 0) {
-  const gx = Math.round(x / SEED_GRID_M) | 0;
-  const gz = Math.round(z / SEED_GRID_M) | 0;
-  let h = (gx * 73856093) ^ (gz * 19349663) ^ ((salt | 0) * 83492791);
-  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
-  h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
-  return (h ^ (h >>> 15)) >>> 0;
-}
-
-/** Tirage dans [0, 1[ attaché à un point du sol. Fonction pure. */
-export function randomAt(x, z, salt = 0) {
-  return positionSeed(x, z, salt) / 4294967296;
-}
-
-/**
- * Coins des mailles d'une grille ancrée au monde (pas `step`) qui couvrent le
- * disque de `radius` autour de `here`, du plus proche au plus lointain : un
- * plafond atteint coupe alors au bord de la portée, jamais au hasard d'une
- * rangée. Fonction pure.
- */
-export function gridCellsAround(here, radius, step) {
-  const cells = [];
-  const startX = Math.floor((here.x - radius) / step) * step;
-  const startZ = Math.floor((here.z - radius) / step) * step;
-  for (let z = startZ; z <= here.z + radius; z += step) {
-    for (let x = startX; x <= here.x + radius; x += step) {
-      cells.push({ x, z, distance: Math.hypot(x + step / 2 - here.x, z + step / 2 - here.z) });
-    }
-  }
-  return cells.sort((a, b) => a.distance - b.distance || a.x - b.x || a.z - b.z);
-}
 
 /**
  * Répartit des points à pas constant le long d'une polyligne ré-échantillonnée.
@@ -542,16 +506,17 @@ export function herdFor({ steepness = 0, variant = 0, matrix = null } = {}) {
  *
  * Fonction pure.
  *
+ * @param {Object} frame Repère local (voir `core/groundSeed.js`).
  * @param {Object} coats Nuanciers par espèce.
  * @param {string} kind Espèce.
  * @param {number} x
  * @param {number} z
  * @returns {number[]} Triplet linéaire.
  */
-export function coatFor(coats, kind, x, z) {
+export function coatFor(frame, coats, kind, x, z) {
   const list = coats?.[kind];
   if (!Array.isArray(list) || list.length === 0) return [1, 1, 1];
-  return list[Math.min(list.length - 1, Math.floor(randomAt(x, z, 233) * list.length))];
+  return list[Math.min(list.length - 1, Math.floor(randomAt(frame, x, z, 233) * list.length))];
 }
 
 /**
@@ -1206,7 +1171,7 @@ export function scatterInRing(ring, count, seed, { cluster = 0, focus = null, re
     if (p.z > maxZ) maxZ = p.z;
   }
 
-  const random = makeRandom(seed);
+  const random = randomStream(seed);
   const attempts = count * 8;
   // Regroupement : les tirages se resserrent autour d'un point plutôt que couvrir toute la boîte (un troupeau se tient ensemble).
   const wandering = cluster > 0 ? { x: minX + random() * (maxX - minX), z: minZ + random() * (maxZ - minZ) } : null;

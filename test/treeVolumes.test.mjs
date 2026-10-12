@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { treePrototype } from '../src/models/treeKit.js';
 import { VegetationLayer, VEGETATION_BLOCK_M, understoryShare, understoryWeight, UNDERSTORY_FULL_M, UNDERSTORY_FAR_M } from '../src/layers/vegetationLayer.js';
 import { plantedTree } from '../src/layers/plantedTrees.js';
+import { testFrame } from './testFrame.mjs';
 import { defaultTheme } from '../src/themes/default.js';
 
 test('les prototypes sont déterministes, bornés et sans triangle dégénéré', () => {
@@ -21,7 +22,7 @@ test('les prototypes sont déterministes, bornés et sans triangle dégénéré'
 });
 const placement = (variant, x, z = 0) => ({ variant, x, z, y: 0, height: 10, aspect: .7, rotation: 0, color: [1, 1, 1] });
 const couche = (options = {}) => new VegetationLayer({ THREE, scene: new THREE.Scene(),
-  bubble: { frame: {}, surfaceElevationAtLocal: () => 0, verticalScale: 1 }, ...options });
+  bubble: { frame: testFrame, surfaceElevationAtLocal: () => 0, verticalScale: 1 }, ...options });
 
 test('toutes les silhouettes des essences ont un volume', () => {
   const layer = couche();
@@ -68,7 +69,7 @@ test('une relève retire les anciennes instances sans toucher au prototype parta
 test('un terrassement resème les bois à leur place sans les retirer d’abord', () => {
   const tile = { key: 'k', ring: 0 };
   const layer = new VegetationLayer({ THREE, scene: new THREE.Scene(),
-    bubble: { frame: {}, tiles: new Map([['k', tile]]) } });
+    bubble: { frame: testFrame, tiles: new Map([['k', tile]]) } });
   layer._planted.add('k');
   layer.setPlants('k', [placement(0, 10)]);
   const meshes = layer.meshes.get('k');
@@ -81,7 +82,7 @@ test('un terrassement resème les bois à leur place sans les retirer d’abord'
 const bois = () => {
   const tile = { key: 't', x: 0, y: 0, ring: 0 };
   const layer = new VegetationLayer({ THREE, scene: new THREE.Scene(),
-    bubble: { frame: { scale: 834, origin: { x: 0, y: 0 } }, tiles: new Map([['t', tile]]),
+    bubble: { frame: { zoom: 15, scale: 834, origin: { x: 0, y: 0 } }, tiles: new Map([['t', tile]]),
       surfaceElevationAtLocal: () => 0, verticalScale: 1 },
     groundClass: { woodAt: () => 1, coverageOf: () => 1 } });
   return { layer, tile };
@@ -149,11 +150,11 @@ test('l’éclaircie garde un sous-ensemble des mêmes plantes, jamais à moins 
 test('toutes les plantations ont une variante valide et un tirage stable', () => {
   for (const kind of Object.keys(defaultTheme.trees.plantations)) {
     const p = { x: 31, y: 4, z: 12, scale: 1 };
-    const a = plantedTree(kind, p, defaultTheme.trees);
-    assert.deepEqual(a, plantedTree(kind, p, defaultTheme.trees));
+    const a = plantedTree(testFrame, kind, p, defaultTheme.trees);
+    assert.deepEqual(a, plantedTree(testFrame, kind, p, defaultTheme.trees));
     assert.ok(defaultTheme.trees.variants[a.variant]);
     assert.equal(a.y, p.y);
-    assert.notDeepEqual(a, plantedTree(kind, { ...p, x: 32 }, defaultTheme.trees));
+    assert.notDeepEqual(a, plantedTree(testFrame, kind, { ...p, x: 32 }, defaultTheme.trees));
   }
 });
 
@@ -162,6 +163,7 @@ import { buildRows } from '../src/layers/furniture/parcels.js';
 test('les rangs de verger publient des pommiers sans changer les arbres isolés', () => {
   const plants = [];
   const layer = {
+    bubble: { frame: testFrame },
     counts: { rows: 0 },
     _clipOffRoad: path => [path],
     _place(placements, item, p) { const plant = { ...p, y: 0, item }; plants.push(plant); return plant; },
@@ -171,10 +173,10 @@ test('les rangs de verger publient des pommiers sans changer les arbres isolés'
   assert.ok(plants.length > 0);
   for (const p of plants) {
     assert.equal(p.plantation, 'treeApple');
-    const fruitier = plantedTree(p.plantation, p, defaultTheme.trees);
+    const fruitier = plantedTree(testFrame, p.plantation, p, defaultTheme.trees);
     assert.equal(defaultTheme.trees.variants[fruitier.variant].kind, 'apple');
-    assert.deepEqual(fruitier, plantedTree(p.plantation, p, defaultTheme.trees));
-    const isole = plantedTree(p.item, p, defaultTheme.trees);
+    assert.deepEqual(fruitier, plantedTree(testFrame, p.plantation, p, defaultTheme.trees));
+    const isole = plantedTree(testFrame, p.item, p, defaultTheme.trees);
     assert.equal(defaultTheme.trees.variants[isole.variant].fruit, undefined);
   }
 });

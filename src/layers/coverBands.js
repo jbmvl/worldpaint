@@ -6,9 +6,9 @@
  * loin) : le nombre d'instances par anneau reste à peu près constant avec la
  * distance, au lieu de croître comme la surface.
  *
- * Chaque bande a sa propre grille ancrée au sol (graine = maille + sel propre
- * à la bande, pour ne pas semer deux fois la même touffe). Les bandes se
- * recouvrent et le passage de l'une à l'autre est un fondu de *densité*,
+ * Chaque bande a sa propre grille mondiale (`core/groundSeed.worldCellsIn` ;
+ * graine = maille + sel propre à la bande, pour ne pas semer deux fois la même
+ * touffe). Les bandes se recouvrent et le passage de l'une à l'autre est un fondu de *densité*,
  * jamais de taille — une touffe lointaine n'est pas une touffe proche en plus
  * petit.
  *
@@ -16,6 +16,8 @@
  * l'espace. Ce qui pousse dans chaque maille est l'affaire de `groundCover`
  * et `cropLayer`.
  */
+
+import { worldCellsIn } from '../core/groundSeed.js';
 
 /**
  * Fabrique une bande.
@@ -51,32 +53,29 @@ export function coverBand({
 }
 
 /**
- * Mailles de toutes les bandes, triées de la plus proche à la plus lointaine
- * (si le plafond d'instances est atteint, ce qui se perd doit être au bord).
+ * Mailles mondiales de toutes les bandes autour de (`centerX`, `centerZ`),
+ * triées de la plus proche à la plus lointaine (si le plafond d'instances est
+ * atteint, ce qui se perd doit être au bord).
  *
+ * @param {Object} frame Repère local.
  * @param {Array} bands Bandes, telles que rendues par `coverBand`.
- * @returns {Array<{gx:number, gz:number, distance:number, band:number}>}
- *          indices de maille **dans la grille de leur bande** (à multiplier par
- *          `bands[band].cell`), distance au centre, et bande d'origine.
+ * @returns {Array<{id:number, row:number, x:number, z:number, size:number, distance:number, band:number}>}
+ *          maille mondiale (voir `worldCellsIn`), distance de son centre au
+ *          point, et bande d'origine.
  */
-export function coverBandRing(bands) {
+export function coverBandCells(frame, bands, centerX, centerZ) {
   const out = [];
   for (let band = 0; band < bands.length; band++) {
     const { from, to, cell } = bands[band];
-    const span = Math.ceil(to / cell);
-    for (let gz = -span; gz <= span; gz++) {
-      for (let gx = -span; gx <= span; gx++) {
-        // Distance au centre de la maille : c'est là que la couverture est lue.
-        const dx = (gx + 0.5) * cell;
-        const dz = (gz + 0.5) * cell;
-        const distance = Math.hypot(dx, dz);
-        if (distance < from || distance >= to) continue;
-        out.push({ gx, gz, distance, band });
-      }
+    for (const c of worldCellsIn(frame, centerX - to, centerZ - to, centerX + to, centerZ + to, cell)) {
+      const distance = Math.hypot(c.x + c.size / 2 - centerX, c.z + c.size / 2 - centerZ);
+      if (distance < from || distance >= to) continue;
+      c.distance = distance;
+      c.band = band;
+      out.push(c);
     }
   }
-  out.sort((a, b) => a.distance - b.distance);
-  return out;
+  return out.sort((a, b) => a.distance - b.distance || a.band - b.band || a.row - b.row || a.id - b.id);
 }
 
 /**
@@ -95,9 +94,9 @@ export function coverBandFade(distance, band) {
 /**
  * Distance d'une maille au véritable observateur.
  *
- * La liste des mailles est dressée autour d'un centre arrondi, pour que son
- * contenu reste ancré au sol. Le fondu, lui, ne doit pas hériter de cet arrondi
- * : entre deux redistributions, une même masse doit occuper le même niveau de
+ * La liste des mailles est dressée autour de l'observateur au début d'une
+ * passe. Le fondu, lui, ne doit pas hériter de ce centre figé : entre deux
+ * redistributions, une même masse doit occuper le même niveau de
  * détail pour sa distance réelle à l'observateur, pas pour sa place dans une
  * fenêtre discrète devenue périmée.
  */

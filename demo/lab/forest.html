@@ -62,7 +62,7 @@ function build() {
   }
   layer = new VegetationLayer({
     THREE, scene,
-    bubble: { frame: { scale: TILE_M, origin: { x: 0.5, y: 0.5 } }, tiles, surfaceElevationAtLocal: () => 0, verticalScale: 1 },
+    bubble: { frame: { zoom: 15, scale: TILE_M, origin: { x: 0.5, y: 0.5 } }, tiles, surfaceElevationAtLocal: () => 0, verticalScale: 1 },
     groundClass: { woodAt: () => state.wood, coverageOf: () => 1 },
   });
   layer.setWind({ amplitude: 0, speed: 0 });

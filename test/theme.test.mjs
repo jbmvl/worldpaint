@@ -116,8 +116,8 @@ test('les palettes de bourg ne se mélangent pas entre deux thèmes', () => {
 
 test('l’habillage d’un bâtiment suit le thème qu’on lui donne', () => {
   const [a, b] = interleaved(
-    () => buildingStyleAt(500, 500, { area: 120, height: 8 }, DEFAULT.towns),
-    () => buildingStyleAt(500, 500, { area: 120, height: 8 }, OTHER.towns)
+    () => buildingStyleAt(testFrame, 500, 500, { area: 120, height: 8 }, DEFAULT.towns),
+    () => buildingStyleAt(testFrame, 500, 500, { area: 120, height: 8 }, OTHER.towns)
   );
   assert.equal(b.palette, 'béton');
   assert.equal(b.shape, 'flat');
@@ -165,8 +165,8 @@ test('la trame des fenêtres suit le thème', () => {
 
 test('les peuplements suivent le thème', () => {
   const [a, b] = interleaved(
-    () => forestTypeAt(800, -400, DEFAULT.forests).name,
-    () => forestTypeAt(800, -400, OTHER.forests).name
+    () => forestTypeAt(testFrame, 800, -400, DEFAULT.forests).name,
+    () => forestTypeAt(testFrame, 800, -400, OTHER.forests).name
   );
   assert.notEqual(a, b);
   assert.equal(b, 'palmeraie');
@@ -228,6 +228,7 @@ test('le catalogue de mobilier se construit dans le nuancier qu’on lui donne',
  */
 
 import { World } from '../src/world.js';
+import { testFrame } from './testFrame.mjs';
 
 const fakeComposer = () => ({ dispose() {} });
 
@@ -339,17 +340,17 @@ test('la voirie ne mélange pas les revêtements de deux thèmes', () => {
   // tranche, donc une mémoire mal indexée peindrait le second bourg avec le
   // béton du premier.
   const [a, b] = interleaved(
-    () => streetSurfaceAt(1200, 3400, DEFAULT.streets).name,
-    () => streetSurfaceAt(1200, 3400, OTHER.streets).name
+    () => streetSurfaceAt(testFrame, 1200, 3400, DEFAULT.streets).name,
+    () => streetSurfaceAt(testFrame, 1200, 3400, OTHER.streets).name
   );
   assert.notEqual(a, b);
   assert.equal(b, 'quai');
 });
 
 test('la section d’une rue est celle du thème qu’on lui donne', () => {
-  const tones = streetSurfaceAt(0, 0, OTHER.streets);
+  const tones = streetSurfaceAt(testFrame, 0, 0, OTHER.streets);
   const [a, b] = interleaved(
-    () => kerbProfile({ halfWidth: 3, side: 1, tones: streetSurfaceAt(0, 0, DEFAULT.streets) }, DEFAULT.streets).map((v) => v.up),
+    () => kerbProfile({ halfWidth: 3, side: 1, tones: streetSurfaceAt(testFrame, 0, 0, DEFAULT.streets) }, DEFAULT.streets).map((v) => v.up),
     () => kerbProfile({ halfWidth: 3, side: 1, tones }, OTHER.streets).map((v) => v.up)
   );
   assert.notDeepEqual(a, b);

@@ -14,9 +14,10 @@
 import { branchYields, isForkJunction } from '../roadJunctions.js';
 import { MARKING_BAR_M, MOUTH_CROSSING_M } from '../roadMarkings.js';
 import { pointInAreas } from '../settlement.js';
-import { roadsideFurnitureFor, roadsideYaw, randomAt, PRIORITY_SIGN_PROFILES } from '../furniturePlacement.js';
+import { roadsideFurnitureFor, roadsideYaw, PRIORITY_SIGN_PROFILES } from '../furniturePlacement.js';
 import { FURNITURE_LIMITS, FURNITURE_RADIUS_M } from './catalog.js';
 import { reachedRadius } from '../../core/decorReach.js';
+import { randomAt } from '../../core/groundSeed.js';
 
 /** Recul d'un feu tricolore en amont du nœud de carrefour, en mètres. */
 const TRAFFIC_LIGHT_SETBACK_M = 10;
@@ -119,7 +120,7 @@ export function buildCrossings(layer, context, junctions, roadIndex, builtUp) {
         y: post.y,
         z: post.z,
         yaw,
-        phase: randomAt(post.x, post.z, 97) * TRAFFIC_CYCLE_S,
+        phase: randomAt(layer.bubble.frame, post.x, post.z, 97) * TRAFFIC_CYCLE_S,
       });
     }
     layer._signalled.push(junction);

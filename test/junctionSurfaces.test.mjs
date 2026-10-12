@@ -25,6 +25,7 @@ import {
   segmentsOf,
   trianglesOf,
 } from './junctionWorld.mjs';
+import { testFrame } from './testFrame.mjs';
 
 const voie = (points, width = 2.5, extra = {}) => ({
   profile: 'minor', halfWidth: width, points: points.map(([x, z]) => ({ x, z })), ...extra,
@@ -265,7 +266,7 @@ test('une fourche puis un T : une surface, quatre bouches extérieures, un seul 
   sansRecouvrement({ ...network, buffers });
 
   const positions = [];
-  const layer = { _areas: areas, _signals: [], _place: (_p, item, at) => { positions.push({ item, ...at }); return at; } };
+  const layer = { bubble: { frame: testFrame }, _areas: areas, _signals: [], _place: (_p, item, at) => { positions.push({ item, ...at }); return at; } };
   const index = {
     query: (x, z) => {
       assert.equal(areaCovers(areas.areas[0], x, z), false, 'le feu se trouve en amont d’une bouche extérieure');

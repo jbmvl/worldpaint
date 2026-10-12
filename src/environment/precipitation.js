@@ -21,6 +21,7 @@
  */
 
 import { windAxis } from './weather.js';
+import { randomStream } from '../core/groundSeed.js';
 
 /** Demi-côté de la boîte, en mètres. Au-delà, une goutte fait moins d'un pixel. */
 const SPREAD_M = 26;
@@ -44,17 +45,6 @@ const RAIN_SPEED = 26;
 const RAIN_SPEED_SPREAD = 0.3;
 const SNOW_SPEED = 1.6;
 
-/** Générateur graine, façon mulberry32 (constante, pas l'horloge, pour un rendu reproductible). */
-function seeded(seed) {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 /** Sommets d'un ruban : (tête 0 / queue 1, côté -1 / +1). */
 const RIBBON_CORNERS = [
   [0, -1],
@@ -65,7 +55,7 @@ const RIBBON_CORNERS = [
 
 /** Quatre sommets par goutte, même position de base ; `aCorner` dit lequel. */
 function rainGeometry(THREE) {
-  const random = seeded(0x9e3779b9);
+  const random = randomStream(0x9e3779b9);
   const base = new Float32Array(MAX_DROPS * 4 * 3);
   const corner = new Float32Array(MAX_DROPS * 4 * 2);
   const index = new Uint32Array(MAX_DROPS * 6);
@@ -96,7 +86,7 @@ function rainGeometry(THREE) {
 }
 
 function snowGeometry(THREE) {
-  const random = seeded(0x85ebca6b);
+  const random = randomStream(0x85ebca6b);
   const base = new Float32Array(MAX_FLAKES * 3);
   const phase = new Float32Array(MAX_FLAKES);
 

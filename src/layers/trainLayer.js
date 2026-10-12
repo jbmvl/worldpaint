@@ -24,7 +24,8 @@
  */
 
 import { defaultTheme } from '../themes/default.js';
-import { Kit, seededUnit } from '../models/kit.js';
+import { Kit } from '../models/kit.js';
+import { hash32, randomStream, worldCellsIn } from '../core/groundSeed.js';
 
 /** Trains en circulation au plus. */
 export const TRAIN_MAX = 2;
@@ -114,15 +115,14 @@ function trainOn(points, head) {
  * Le sens et le tirage viennent du point de la voie le plus proche,
  * quantifié. Fonction pure.
  */
-export function spawnTrain(track, here, chance = TRAIN_SPAWN_CHANCE) {
+export function spawnTrain(frame, track, here, chance = TRAIN_SPAWN_CHANCE) {
   if (!Array.isArray(track) || track.length < 2) return null;
   const distances = cumulate(track);
   const near = projectOnPath(track, distances, here.x, here.z);
   if (near.gap > TRAIN_SPAWN_SIGHT_M) return null;
   const p = pointAlong(track, distances, near.s);
-  const random = seededUnit(
-    ((Math.floor(p.x / SPAWN_CELL_M) * 73856093) ^ (Math.floor(p.z / SPAWN_CELL_M) * 19349663)) >>> 0
-  );
+  const [cell] = worldCellsIn(frame, p.x, p.z, p.x, p.z, SPAWN_CELL_M);
+  const random = randomStream(hash32(cell.id, cell.row));
   if (random() >= chance) return null;
 
   const forward = random() < 0.5;
@@ -370,18 +370,19 @@ export class TrainLayer {
   /**
    * Reçoit les voies reconstruites : remet chaque train sur sa voie, puis en
    * fait naître un sur chaque voie proche qui n'en porte pas.
+   * @param {Object} frame Repère local de la bulle.
    * @param {Array<Array<{x,y,z}>>} tracks Publiées par `railwayLayer.tracks`.
    * @param {{x:number,z:number}} here Position locale de l'observateur.
    * @param {number} [chance] Part des voies qui font naître un train.
    */
-  setTracks(tracks, here, chance = TRAIN_SPAWN_CHANCE) {
+  setTracks(frame, tracks, here, chance = TRAIN_SPAWN_CHANCE) {
     if (this.disposed) return;
     this._tracks = Array.isArray(tracks) ? tracks : [];
     this._trains = this._trains.map((train) => reattachTrain(train, this._tracks));
     for (const track of this._tracks) {
       if (this._trains.length >= TRAIN_MAX) break;
       if (this._trains.some((train) => this._runsOn(train, track))) continue;
-      const train = spawnTrain(track, here, chance);
+      const train = spawnTrain(frame, track, here, chance);
       if (train) this._trains.push(train);
     }
     this._writeFrame();

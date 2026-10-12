@@ -9,7 +9,6 @@ import { COVER_ATTRIBUTE, installCoverTransition, paddedCoverBands } from '../ma
  */
 
 import {
-  makeRandom,
   createCropAtlasCanvas,
   CROP_ATLAS_COLS,
   CROP_ATLAS_OFFSETS,
@@ -23,11 +22,12 @@ import {
   ATLAS_ATTRIBUTE,
 } from '../materials/foliageMaterial.js';
 import { defaultTheme } from '../themes/default.js';
+import { hash32, randomStream } from '../core/groundSeed.js';
 import { soilWashFor } from '../core/regionInterpretation.js';
 import { CORRIDOR_MARGIN_M, inCorridor } from './roadCorridor.js';
 import {
   coverBand,
-  coverBandRing,
+  coverBandCells,
   coverBandFade,
   coverBandDistance,
   coverHeightFade,
@@ -181,29 +181,18 @@ export function cropHeightFade(
 }
 
 /**
- * Mailles d'un disque d'une seule échelle, de la plus proche à la plus
- * lointaine — le semis d'avant les bandes. Comme `grassCellRing`, délègue à
- * `coverBandRing` plutôt que de garder un second parcours. Fonction pure.
- */
-export function cropCellRing(radius, cell) {
-  return coverBandRing([coverBand({ from: 0, to: radius * (1 + 1e-12), cell, perCell: 0 })]);
-}
-
-/**
- * Remplit le tampon d'une maille. Même invariant que l'herbe : la graine ne
- * dépend que de la maille, et le nombre de tirages consommés est constant.
+ * Remplit le tampon d'une maille mondiale (`worldCellsIn`). Même invariant
+ * que l'herbe : la graine ne dépend que de la maille, et le nombre de tirages consommés est constant.
  * Le **sel** distingue les bandes, sans quoi deux échelles sèmeraient les mêmes
  * tiges aux mêmes endroits. Fonction pure.
  */
-export function fillCropCell(out, gx, gz, cell = CROP_CELL_M, perCell = CROP_PER_CELL, salt = 0) {
-  const random = makeRandom((gx * 83492791) ^ (gz * 19349663) ^ (salt * 2654435761));
-  const originX = gx * cell;
-  const originZ = gz * cell;
+export function fillCropCell(out, cell, perCell = CROP_PER_CELL, salt = 0) {
+  const random = randomStream(hash32(cell.id, cell.row, salt));
 
   for (let i = 0; i < perCell; i++) {
     const at = i * CROP_TUFT_STRIDE;
-    out[at] = originX + random() * cell;
-    out[at + 1] = originZ + random() * cell;
+    out[at] = cell.x + random() * cell.size;
+    out[at + 1] = cell.z + random() * cell.size;
     out[at + 2] = random(); // présence
     out[at + 3] = random(); // taille
     out[at + 4] = random(); // rotation
@@ -271,7 +260,7 @@ export class CropLayer {
     this._instanceCells = new InstanceCells();
     this._frame = null;
     this._bands = thinnedCoverBands(CROP_BANDS, density);
-    this._cells = coverBandRing(paddedCoverBands(this._bands, CROP_REBUILD_M));
+    this._ringBands = paddedCoverBands(this._bands, CROP_REBUILD_M);
     // Une seule allocation, dimensionnée sur la bande la plus fournie.
     const widest = Math.max(...this._bands.map((band) => band.perCell));
     this._tufts = new Float32Array(widest * CROP_TUFT_STRIDE);
@@ -398,29 +387,20 @@ export class CropLayer {
     const index = roads?.index || null;
     const verges = this.verges;
     const bands = this._bands;
-    // Un centre arrondi **par bande** : chaque grille garde son propre pas, donc
-    // les mailles retenues ne dépendent que du sol.
-    const bases = bands.map((band) => ({
-      x: Math.round(centerX / band.cell),
-      z: Math.round(centerZ / band.cell),
-    }));
     const tufts = this._tufts;
     let placed = 0;
     const streams = [[mesh.instanceMatrix.array,16],[mesh.instanceColor.array,3],[this._coverBands,4],[this._atlasOffsets,2]];
 
-    for (const cell of this._cells) {
+    for (const cell of coverBandCells(bubble.frame, this._ringBands, centerX, centerZ)) {
       if (placed >= capacity) break;
 
       const band = bands[cell.band];
-      const base = bases[cell.band];
-      const gx = base.x + cell.gx;
-      const gz = base.z + cell.gz;
-      const cacheKey = `${cell.band}:${gx}:${gz}`;
+      const cacheKey = `${cell.band}:${cell.id}:${cell.row}`;
       const retained = this._instanceCells.read(cacheKey, streams, placed, capacity);
       if (retained !== null) { placed += retained; continue; }
       const cellStart = placed;
-      const cellX = (gx + 0.5) * band.cell;
-      const cellZ = (gz + 0.5) * band.cell;
+      const cellX = cell.x + cell.size / 2;
+      const cellZ = cell.z + cell.size / 2;
       const crop = this.groundClass.cropAt(cellX, cellZ);
       if (!crop) continue;
       const look = this.theme.crops[crop];
@@ -437,7 +417,7 @@ export class CropLayer {
       // qu'un champ de blé reste plein.
       const density = coverMassDensity(look.density, band);
 
-      fillCropCell(tufts, gx, gz, band.cell, band.perCell, band.salt);
+      fillCropCell(tufts, cell, band.perCell, band.salt);
       // Passé la bande de détail, c'est la **masse** de la culture qui est
       // tirée : un champ de maïs reste identifiable comme du maïs.
       const atlas = cell.band > 0 ? `${look.atlas}Mass` : look.atlas;

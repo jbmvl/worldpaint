@@ -34,17 +34,7 @@
 
 import { treePrototype, paintTreePrototype } from '../models/treeKit.js';
 import { defaultTheme } from '../themes/default.js';
-
-/** Générateur pseudo-aléatoire déterministe (mulberry32). */
-export function makeRandom(seed) {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+import { randomStream } from '../core/groundSeed.js';
 
 const smoothstep = (t) => t * t * (3 - 2 * t);
 
@@ -56,7 +46,7 @@ const smoothstep = (t) => t * t * (3 - 2 * t);
  * @returns {Float32Array} valeurs dans [0, 1], longueur size².
  */
 export function tileableValueNoise(size, lattice, seed) {
-  const random = makeRandom(seed);
+  const random = randomStream(seed);
   const grid = new Float32Array(lattice * lattice);
   for (let i = 0; i < grid.length; i++) grid[i] = random();
 
@@ -437,7 +427,7 @@ export function createGrassAtlasCanvas(cell = 128, seed = 3313) {
     ctx.translate(col * cell, row * cell);
     // Une graine par case : deux touffes voisines de variantes différentes ne
     // doivent pas être la même touffe repeinte.
-    const random = makeRandom(seed + index * 977);
+    const random = randomStream(seed + index * 977);
     const flowers = grassFlowerKind(variant);
 
     if (variant.startsWith('clump')) {
@@ -739,7 +729,7 @@ export function createCropAtlasCanvas(cell = 256, seed = 6607) {
     const base = variant.endsWith('Mass') ? variant.slice(0, -4) : variant;
     ctx.save();
     ctx.translate(col * cell, row * cell);
-    const random = makeRandom(seed + index * 1289);
+    const random = randomStream(seed + index * 1289);
     if (variant.endsWith('Mass')) {
       drawMass(ctx, cell, random, CROP_PAINTERS[base], CROP_MASS_PASSES[base], CROP_MASS_ASPECT[base]);
     } else {

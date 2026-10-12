@@ -5,6 +5,7 @@
 
 import { defaultTheme } from '../themes/default.js';
 import { windAxis } from './weather.js';
+import { randomStream } from '../core/groundSeed.js';
 
 export const DEBRIS_SPREAD_M = 60;
 const SPREAD_M = DEBRIS_SPREAD_M;
@@ -14,19 +15,8 @@ const HEIGHT_M = 3.2;
 export const MAX_DEBRIS = 180;
 export const DEBRIS_WIND_START = 0.3;
 
-/** Générateur graine, façon mulberry32 — voir `precipitation.js`. */
-function seeded(seed) {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 function debrisGeometry(THREE, look) {
-  const random = seeded(0xc2b2ae35);
+  const random = randomStream(0xc2b2ae35);
   const base=[], phase=[], positions=[];
   const { lengthM, widthM, foldM } = look;
   const a=[0,0,-lengthM/2], b=[widthM/2,0,0], c=[0,0,lengthM/2], d=[-widthM/2,0,0], e=[0,foldM,0];

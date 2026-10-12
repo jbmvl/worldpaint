@@ -26,6 +26,7 @@ import { FurnitureLayer } from '/src/layers/furnitureLayer.js';
 import { furnitureSpecsFor } from '/src/layers/furnitureKit.js';
 import { createProfileBuffer, toColoredGeometry } from '/src/layers/ribbonGeometry.js';
 import { defaultTheme } from '/src/themes/default.js';
+import { createLocalFrame } from '/src/core/tileMath.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setSize(innerWidth, innerHeight);
@@ -51,6 +52,7 @@ scene.add(
 const layer = Object.create(FurnitureLayer.prototype);
 layer.theme = defaultTheme;
 layer.specs = furnitureSpecsFor(defaultTheme.furniture.colors);
+layer.bubble = { frame: createLocalFrame(-0.145, 47.131, 15) };
 const flat = () => 0;
 
 const hedges = [

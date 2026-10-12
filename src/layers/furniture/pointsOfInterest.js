@@ -17,13 +17,13 @@ import { pushPointOutsideCorridor, CORRIDOR_MARGIN_M } from '../roadCorridor.js'
 import { pointInAreas } from '../settlement.js';
 import {
   roadsideYaw,
-  randomAt,
   fountainKindFor,
   busShelterKindFor,
   MOUNTAIN_CLIMATE_FAMILIES,
 } from '../furniturePlacement.js';
 import { FURNITURE_RADIUS_M } from './catalog.js';
 import { reachedRadius } from '../../core/decorReach.js';
+import { randomAt } from '../../core/groundSeed.js';
 
 /**
  * Dégagement d'un point d'intérêt au-delà de l'emprise routière, en mètres.
@@ -204,7 +204,7 @@ export function facingRoad(layer, x, z, roadSegments) {
     }
   }
 
-  if (!bestSegment) return randomAt(x, z, 5) * Math.PI * 2;
+  if (!bestSegment) return randomAt(layer.bubble.frame, x, z, 5) * Math.PI * 2;
 
   const path = bestSegment.path;
   const from = Math.max(0, bestRow - 4);

@@ -213,7 +213,7 @@ export function buildRoadsideRelief(layer, context, segment, rowsInfo) {
     // --- Aval : le parement du remblai, et la glissière dessus ------------
     const offset = -side * (halfWidth + fill.thickness / 2);
     const frames = reliefFrames(segment, run);
-    const grain = facetJitter(runPath, FILL_WALL_SEED, fill.grain);
+    const grain = facetJitter(layer.bubble.frame, runPath, FILL_WALL_SEED, fill.grain);
     const fillBase = new Float32Array(run.length);
     // L'arase affleure la **surface** de la chaussée, pas sa plate-forme : le
     // ruban est décollé de `ROAD_LIFT_M`, et une arase posée sur la plate-forme
@@ -330,7 +330,7 @@ export function buildRockCut(layer, context, segment, rowsInfo) {
       const offset = side * (halfWidth + cutBench);
       const capReach = ROAD_CUT_BLEND_M;
 
-      const grain = facetJitter(runPath, ROCK_CUT_SEED + 1, spec.grain);
+      const grain = facetJitter(layer.bubble.frame, runPath, ROCK_CUT_SEED + 1, spec.grain);
       const along = (i, distance) => ({
         x: runPath[i].x + frames[i * 4 + 2] * (offset + side * distance),
         z: runPath[i].z + frames[i * 4 + 3] * (offset + side * distance),

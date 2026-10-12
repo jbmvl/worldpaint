@@ -10,7 +10,8 @@
 
 import { resamplePath } from '../ribbonGeometry.js';
 import { CEMETERY_GATE_SPAN_M } from '../furnitureKit.js';
-import { pointInRing, randomAt } from '../furniturePlacement.js';
+import { pointInRing } from '../furniturePlacement.js';
+import { randomAt } from '../../core/groundSeed.js';
 
 /**
  * Pas de ré-échantillonnage du mur d'enceinte d'un cimetière, en mètres — plus
@@ -39,6 +40,7 @@ export const CEMETERY_WALL_SAMPLE_M = 2;
  * dans une heure.
  */
 export function buildCemetery(layer, context, ring, centre) {
+  const { frame } = layer.bubble;
   const { buffers, placements, sampleElevation } = context;
 
   // L'anneau GeoJSON est déjà fermé (premier sommet répété en fin de
@@ -55,7 +57,7 @@ export function buildCemetery(layer, context, ring, centre) {
   // Angle du portail dans la brèche : tiré une fois pour tout le site,
   // jamais recalculé au passage — c'est l'invariant qui garantit que deux
   // reconstructions percent le même mur au même endroit.
-  const gateAngle = randomAt(centre.x, centre.z, 211) * Math.PI * 2;
+  const gateAngle = randomAt(frame, centre.x, centre.z, 211) * Math.PI * 2;
   let gateIndex = 0;
   let bestDiff = Infinity;
   for (let i = 0; i < wallPath.length; i++) {
@@ -117,7 +119,7 @@ export function buildCemetery(layer, context, ring, centre) {
   // site (`heading`) ; ses deux axes sont calés sur les cotes de la tombe
   // elle-même (`cemeteryTomb`, 0,95 × 2,05 m), au pas près du plot voisin,
   // pas au petit bonheur d'un rejet aléatoire dans la boîte englobante.
-  const heading = randomAt(centre.x, centre.z, 223) * Math.PI * 2;
+  const heading = randomAt(frame, centre.x, centre.z, 223) * Math.PI * 2;
   const alongX = Math.cos(heading);
   const alongZ = Math.sin(heading);
   // Perpendiculaire à `heading`, direct : c'est l'axe de profondeur de la
@@ -164,12 +166,12 @@ export function buildCemetery(layer, context, ring, centre) {
       if (Math.hypot(x - gatePoint.x, z - gatePoint.z) < gateClearance) continue;
       if (!pointInRing(ring, x, z)) continue;
       if (layer._onRoad(x, z)) continue;
-      if (randomAt(x, z, 239) < tombGapChance) continue;
+      if (randomAt(frame, x, z, 239) < tombGapChance) continue;
 
       // Deux pierres plutôt qu'une répétée à l'identique — voir
       // `cemeteryTombFlat`. Le tirage est ancré à la position du plot, donc
       // stable d'une reconstruction à l'autre.
-      const draw = randomAt(x, z, 227);
+      const draw = randomAt(frame, x, z, 227);
       layer._place(placements, draw < 0.65 ? 'cemeteryTomb' : 'cemeteryTombFlat', {
         x,
         z,
@@ -183,7 +185,7 @@ export function buildCemetery(layer, context, ring, centre) {
   // Robinet : posé près du portail, à l'écart du passage — jamais loin de
   // l'entrée dans un vrai cimetière, et la clairière ci-dessus lui garantit
   // une place libre.
-  const tapYaw = randomAt(centre.x, centre.z, 233) * Math.PI * 2;
+  const tapYaw = randomAt(frame, centre.x, centre.z, 233) * Math.PI * 2;
   const tapX = gatePoint.x - nx * 2.4 + tx * 2.6;
   const tapZ = gatePoint.z - nz * 2.4 + tz * 2.6;
   if (pointInRing(ring, tapX, tapZ) && !layer._onRoad(tapX, tapZ)) {

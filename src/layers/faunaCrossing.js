@@ -73,6 +73,7 @@ export function planFaunaCrossing({
   const axis = { x: -ahead.z * Math.sign(side || 1), z: ahead.x * Math.sign(side || 1) };
 
   const circuit = buildCircuit({
+    frame: bubble.frame,
     behaviour: 'dash',
     x: anchor.x,
     z: anchor.z,
@@ -91,7 +92,7 @@ export function planFaunaCrossing({
     x: anchor.x,
     z: anchor.z,
     circuit,
-    tint: coatFor(coats, kind, anchor.x, anchor.z),
+    tint: coatFor(bubble.frame, coats, kind, anchor.x, anchor.z),
     scale,
   };
 }

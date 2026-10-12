@@ -15,9 +15,10 @@ import { lngToTileX, latToTileY } from '../../core/tileMath.js';
 import { resamplePath } from '../ribbonGeometry.js';
 import { WATER_SOURCE_LAYER } from '../../terrain/groundClassMap.js';
 import { pointInAreas } from '../settlement.js';
-import { rockKindFor, ringCentroid, randomAt, gridCellsAround } from '../furniturePlacement.js';
+import { rockKindFor, ringCentroid } from '../furniturePlacement.js';
 import { FURNITURE_LIMITS, FURNITURE_RADIUS_M } from './catalog.js';
 import { reachedRadius } from '../../core/decorReach.js';
+import { randomAt, worldCellsAround, worldCellsIn } from '../../core/groundSeed.js';
 
 /**
  * Seuils de taille d'un bourg, en bâtiments comptés autour de son centroïde
@@ -65,26 +66,24 @@ export const LIGHTHOUSE_GRID_M = 25;
  * @param {{x:number,z:number}} p Point de côte tiré.
  * @param {Array<{x:number,z:number}>} shore Trait de côte rééchantillonné.
  * @param {Object} options
+ * @param {Object} options.frame Repère local, qui ancre la grille au monde.
  * @param {(x:number,z:number)=>number} options.elevationAt
  * @param {(x:number,z:number)=>boolean} [options.blocked] Bâti, chaussée, eau.
  * @returns {{x:number,z:number,h:number}|null}
  */
-export function lighthouseSite(p, shore, { elevationAt, blocked = () => false }) {
+export function lighthouseSite(p, shore, { frame, elevationAt, blocked = () => false }) {
   const reach = LIGHTHOUSE_SEARCH_M + LIGHTHOUSE_SHORE_M;
   const near = shore.filter((s) => Math.abs(s.x - p.x) <= reach && Math.abs(s.z - p.z) <= reach);
-  const step = LIGHTHOUSE_GRID_M;
-  const start = (v) => Math.ceil((v - LIGHTHOUSE_SEARCH_M) / step) * step;
+  const R = LIGHTHOUSE_SEARCH_M;
   let site = null;
-  for (let z = start(p.z); z <= p.z + LIGHTHOUSE_SEARCH_M; z += step) {
-    for (let x = start(p.x); x <= p.x + LIGHTHOUSE_SEARCH_M; x += step) {
-      if (Math.hypot(x - p.x, z - p.z) > LIGHTHOUSE_SEARCH_M) continue;
-      const h = elevationAt(x, z);
-      // Le seuil écarte un candidat encore sous l'eau.
-      if (!Number.isFinite(h) || h < 0.6 || (site && h <= site.h)) continue;
-      if (!near.some((s) => Math.hypot(s.x - x, s.z - z) <= LIGHTHOUSE_SHORE_M)) continue;
-      if (blocked(x, z)) continue;
-      site = { x, z, h };
-    }
+  for (const { x, z } of worldCellsIn(frame, p.x - R, p.z - R, p.x + R, p.z + R, LIGHTHOUSE_GRID_M)) {
+    if (Math.hypot(x - p.x, z - p.z) > R) continue;
+    const h = elevationAt(x, z);
+    // Le seuil écarte un candidat encore sous l'eau.
+    if (!Number.isFinite(h) || h < 0.6 || (site && h <= site.h)) continue;
+    if (!near.some((s) => Math.hypot(s.x - x, s.z - z) <= LIGHTHOUSE_SHORE_M)) continue;
+    if (blocked(x, z)) continue;
+    site = { x, z, h };
   }
   return site;
 }
@@ -109,6 +108,7 @@ export const ROCK_CELL_M = 14;
  * que d'en semer un partout par défaut.
  */
 export function buildVillageLandmarks(layer, context, builtUp) {
+  const { frame } = layer.bubble;
   const { here, placements } = context;
   if (!layer._fabric || !builtUp) return;
 
@@ -131,7 +131,7 @@ export function buildVillageLandmarks(layer, context, builtUp) {
 
     // Un seul repère par bourg, et pas dans tous les bourgs : sur le
     // tirage propre au lieu, la plupart n'en portent aucun.
-    const draw = randomAt(centre.x, centre.z, 151);
+    const draw = randomAt(frame, centre.x, centre.z, 151);
     let item = null;
     if (count < VILLAGE_HAMLET_MAX_BUILDINGS) {
       if (draw < 0.1) item = 'windmill';
@@ -141,7 +141,7 @@ export function buildVillageLandmarks(layer, context, builtUp) {
     }
     if (!item) continue;
 
-    const angle = randomAt(centre.x, centre.z, 153) * Math.PI * 2;
+    const angle = randomAt(frame, centre.x, centre.z, 153) * Math.PI * 2;
     const x = centre.x + Math.cos(angle) * reach * 1.25;
     const z = centre.z + Math.sin(angle) * reach * 1.25;
     // Le point tiré peut retomber dans le périmètre bâti voisin d'un hameau
@@ -151,7 +151,7 @@ export function buildVillageLandmarks(layer, context, builtUp) {
     if (pointInAreas(builtUp, x, z)) continue;
     if (layer._onRoad(x, z)) continue;
 
-    layer._place(placements, item, { x, z, yaw: randomAt(x, z, 157) * Math.PI * 2 });
+    layer._place(placements, item, { x, z, yaw: randomAt(frame, x, z, 157) * Math.PI * 2 });
   }
 }
 
@@ -172,14 +172,15 @@ export function buildVillageLandmarks(layer, context, builtUp) {
  * apparaît ou disparaît.
  */
 export function buildRocks(layer, context, builtUp) {
+  const { frame } = layer.bubble;
   const { here, placements } = context;
   const step = ROCK_CELL_M;
   let placed = 0;
 
-  for (const { x, z } of gridCellsAround(here, reachedRadius(ROCK_RADIUS_M, layer.bubble), step)) {
+  for (const { x, z } of worldCellsAround(frame, here, reachedRadius(ROCK_RADIUS_M, layer.bubble), step)) {
     if (placed >= FURNITURE_LIMITS.rocks) break;
-    const px = x + (randomAt(x, z, 101) - 0.5) * step * 0.9;
-    const pz = z + (randomAt(x, z, 103) - 0.5) * step * 0.9;
+    const px = x + (randomAt(frame, x, z, 101) - 0.5) * step * 0.9;
+    const pz = z + (randomAt(frame, x, z, 103) - 0.5) * step * 0.9;
     if (Math.hypot(px - here.x, pz - here.z) > reachedRadius(ROCK_RADIUS_M, layer.bubble)) continue;
     if (pointInAreas(builtUp, px, pz)) continue;
     // Un bloc erratique au milieu de la chaussée est le plus visible de
@@ -193,14 +194,14 @@ export function buildRocks(layer, context, builtUp) {
     const kind = rockKindFor({
       bare: sample.bare,
       steepness: layer._steepnessAt(px, pz),
-      variant: randomAt(px, pz, 107),
+      variant: randomAt(frame, px, pz, 107),
     });
     if (!kind) continue;
 
     layer._place(placements, kind.item, {
       x: px,
       z: pz,
-      yaw: randomAt(px, pz, 109) * Math.PI * 2,
+      yaw: randomAt(frame, px, pz, 109) * Math.PI * 2,
       scale: kind.scale,
     });
     placed++;
@@ -225,6 +226,7 @@ export function buildRocks(layer, context, builtUp) {
  * au sol — donc ils ne bougent pas d'une reconstruction à l'autre.
  */
 export function buildLandmarks(layer, context, builtUp) {
+  const { frame } = layer.bubble;
   const { here, placements } = context;
   const radius = reachedRadius(Math.min(LANDMARK_RADIUS_M, layer.bubble.radiusMeters || LANDMARK_RADIUS_M), layer.bubble);
   const step = 320;
@@ -235,35 +237,31 @@ export function buildLandmarks(layer, context, builtUp) {
 
   // Grille ancrée sur le monde, pas sur l'observateur : les mailles visitées
   // changent, les tirages de chaque maille non.
-  const startX = Math.floor((here.x - radius) / step) * step;
-  const startZ = Math.floor((here.z - radius) / step) * step;
+  for (const { x, z } of worldCellsAround(frame, here, radius, step)) {
+    if (placed >= FURNITURE_LIMITS.landmarks) break;
+    const draw = randomAt(frame, x, z, 91);
+    if (draw > 0.14) continue;
 
-  for (let z = startZ; z <= here.z + radius && placed < FURNITURE_LIMITS.landmarks; z += step) {
-    for (let x = startX; x <= here.x + radius && placed < FURNITURE_LIMITS.landmarks; x += step) {
-      const draw = randomAt(x, z, 91);
-      if (draw > 0.14) continue;
+    // Décalage dans la maille : une grille régulière se lit comme une grille.
+    const px = x + (randomAt(frame, x, z, 92) - 0.5) * step * 0.8;
+    const pz = z + (randomAt(frame, x, z, 93) - 0.5) * step * 0.8;
+    if (Math.hypot(px - here.x, pz - here.z) > radius) continue;
+    if (pointInAreas(builtUp, px, pz)) continue;
+    // Ni sur une chaussée, ni au fond d'un jardin. Jamais une distance
+    // minimale à l'observateur : un repère qu'on voit à deux kilomètres et
+    // qui s'efface quand on arrive dessus n'en est plus un.
+    if (layer._onRoad(px, pz)) continue;
+    if (layer._fabric?.countWithin(px, pz, LANDMARK_CLEARANCE_M, 1) > 0) continue;
+    if (layer._onWater(px, pz)) continue;
+    if (!isHighPoint(layer, px, pz)) continue;
 
-      // Décalage dans la maille : une grille régulière se lit comme une grille.
-      const px = x + (randomAt(x, z, 92) - 0.5) * step * 0.8;
-      const pz = z + (randomAt(x, z, 93) - 0.5) * step * 0.8;
-      if (Math.hypot(px - here.x, pz - here.z) > radius) continue;
-      if (pointInAreas(builtUp, px, pz)) continue;
-      // Ni sur une chaussée, ni au fond d'un jardin. Jamais une distance
-      // minimale à l'observateur : un repère qu'on voit à deux kilomètres et
-      // qui s'efface quand on arrive dessus n'en est plus un.
-      if (layer._onRoad(px, pz)) continue;
-      if (layer._fabric?.countWithin(px, pz, LANDMARK_CLEARANCE_M, 1) > 0) continue;
-      if (layer._onWater(px, pz)) continue;
-      if (!isHighPoint(layer, px, pz)) continue;
-
-      const item = draw < 0.08 ? 'windTurbine' : 'pylon';
-      // Une éolienne s'oriente face au vent, pas au hasard de sa position ;
-      // un pylône, lui, n'a pas de face — le tirage précédent lui reste.
-      const yaw = item === 'windTurbine' ? layer._turbineYaw() : randomAt(px, pz, 94) * Math.PI * 2;
-      const entry = layer._place(placements, item, { x: px, z: pz, yaw });
-      if (item === 'windTurbine' && entry) layer._turbines.push(entry);
-      placed++;
-    }
+    const item = draw < 0.08 ? 'windTurbine' : 'pylon';
+    // Une éolienne s'oriente face au vent, pas au hasard de sa position ;
+    // un pylône, lui, n'a pas de face — le tirage précédent lui reste.
+    const yaw = item === 'windTurbine' ? layer._turbineYaw() : randomAt(frame, px, pz, 94) * Math.PI * 2;
+    const entry = layer._place(placements, item, { x: px, z: pz, yaw });
+    if (item === 'windTurbine' && entry) layer._turbines.push(entry);
+    placed++;
   }
   layer.counts.landmarks = placed;
 }
@@ -281,40 +279,37 @@ export function buildLandmarks(layer, context, builtUp) {
  * nécessairement sur l'arête exacte.
  */
 export function buildRidgeTrees(layer, context, builtUp) {
+  const { frame } = layer.bubble;
   const { here, placements } = context;
   const radius = reachedRadius(Math.min(LANDMARK_RADIUS_M, layer.bubble.radiusMeters || LANDMARK_RADIUS_M), layer.bubble);
   const step = 140;
   let placed = 0;
 
-  const startX = Math.floor((here.x - radius) / step) * step;
-  const startZ = Math.floor((here.z - radius) / step) * step;
+  for (const { x, z } of worldCellsAround(frame, here, radius, step)) {
+    if (placed >= FURNITURE_LIMITS.ridgeTrees) break;
+    // Rare : un arbre de crête toutes les vingt à trente mailles environ,
+    // jamais un par maille — sans quoi la grille se verrait.
+    if (randomAt(frame, x, z, 181) > 0.035) continue;
 
-  for (let z = startZ; z <= here.z + radius && placed < FURNITURE_LIMITS.ridgeTrees; z += step) {
-    for (let x = startX; x <= here.x + radius && placed < FURNITURE_LIMITS.ridgeTrees; x += step) {
-      // Rare : un arbre de crête toutes les vingt à trente mailles environ,
-      // jamais un par maille — sans quoi la grille se verrait.
-      if (randomAt(x, z, 181) > 0.035) continue;
+    const px = x + (randomAt(frame, x, z, 182) - 0.5) * step * 0.8;
+    const pz = z + (randomAt(frame, x, z, 183) - 0.5) * step * 0.8;
+    if (Math.hypot(px - here.x, pz - here.z) > radius) continue;
+    if (pointInAreas(builtUp, px, pz)) continue;
+    // Même chose que pour les éoliennes : l'emprise routière et le bâti
+    // disent déjà où l'arbre ne va pas, sans distance à l'observateur.
+    if (layer._onRoad(px, pz)) continue;
+    if (layer._fabric?.countWithin(px, pz, RIDGE_TREE_CLEARANCE_M, 1) > 0) continue;
+    if (!layer._openGround(px, pz) || layer._onWater(px, pz)) continue;
+    if (!isHighPoint(layer, px, pz)) continue;
 
-      const px = x + (randomAt(x, z, 182) - 0.5) * step * 0.8;
-      const pz = z + (randomAt(x, z, 183) - 0.5) * step * 0.8;
-      if (Math.hypot(px - here.x, pz - here.z) > radius) continue;
-      if (pointInAreas(builtUp, px, pz)) continue;
-      // Même chose que pour les éoliennes : l'emprise routière et le bâti
-      // disent déjà où l'arbre ne va pas, sans distance à l'observateur.
-      if (layer._onRoad(px, pz)) continue;
-      if (layer._fabric?.countWithin(px, pz, RIDGE_TREE_CLEARANCE_M, 1) > 0) continue;
-      if (!layer._openGround(px, pz) || layer._onWater(px, pz)) continue;
-      if (!isHighPoint(layer, px, pz)) continue;
-
-      const conifer = randomAt(px, pz, 184) < 0.35;
-      layer._place(placements, conifer ? 'treeConifer' : 'treeBroad', {
-        x: px,
-        z: pz,
-        yaw: randomAt(px, pz, 185) * Math.PI * 2,
-        scale: 0.9 + randomAt(px, pz, 186) * 0.5,
-      });
-      placed++;
-    }
+    const conifer = randomAt(frame, px, pz, 184) < 0.35;
+    layer._place(placements, conifer ? 'treeConifer' : 'treeBroad', {
+      x: px,
+      z: pz,
+      yaw: randomAt(frame, px, pz, 185) * Math.PI * 2,
+      scale: 0.9 + randomAt(frame, px, pz, 186) * 0.5,
+    });
+    placed++;
   }
 }
 
@@ -336,8 +331,9 @@ export function isHighPoint(layer, x, z) {
  * donnée, un sommet en a une : on le lit, on ne l'invente pas.
  */
 export function buildPeakLandmarks(layer, context, builtUp) {
+  const { frame } = layer.bubble;
   const { source, tiles, here, placements } = context;
-  const { origin, scale, zoom } = layer.bubble.frame;
+  const { origin, scale, zoom } = frame;
   let placed = 0;
 
   source.forEachFeature('mountain_peak', tiles, (geometry, properties) => {
@@ -353,9 +349,9 @@ export function buildPeakLandmarks(layer, context, builtUp) {
 
     // Un sommet sur trois environ, tiré sur sa position : les équiper tous
     // ferait une forêt de mâts, ce qu'aucune ligne de crête ne porte.
-    if (randomAt(x, z, 131) > 0.35) return;
+    if (randomAt(frame, x, z, 131) > 0.35) return;
 
-    layer._place(placements, 'radioMast', { x, z, yaw: randomAt(x, z, 133) * Math.PI * 2 });
+    layer._place(placements, 'radioMast', { x, z, yaw: randomAt(frame, x, z, 133) * Math.PI * 2 });
     placed++;
   });
 }
@@ -403,9 +399,10 @@ export function buildCoastalLandmarks(layer, context, builtUp) {
 
         // Un point de trait de côte sur quarante environ : un phare tous
         // les deux kilomètres et demi, pas un tous les soixante mètres.
-        if (randomAt(p.x, p.z, 141) > 0.025) continue;
+        if (randomAt(layer.bubble.frame, p.x, p.z, 141) > 0.025) continue;
 
         const site = lighthouseSite(p, path, {
+          frame: layer.bubble.frame,
           elevationAt: sampleElevation,
           blocked: (x, z) => pointInAreas(builtUp, x, z) || layer._onRoad(x, z) || layer._onWater(x, z),
         });
@@ -413,7 +410,7 @@ export function buildCoastalLandmarks(layer, context, builtUp) {
         // Deux points de côte voisins montent au même sommet : un seul phare.
         if (layer._lighthouses.some((l) => Math.hypot(l.x - site.x, l.z - site.z) < LIGHTHOUSE_SEARCH_M)) continue;
 
-        const entry = layer._place(placements, 'lighthouse', { x: site.x, z: site.z, yaw: randomAt(site.x, site.z, 143) * Math.PI * 2 });
+        const entry = layer._place(placements, 'lighthouse', { x: site.x, z: site.z, yaw: randomAt(layer.bubble.frame, site.x, site.z, 143) * Math.PI * 2 });
         if (entry) layer._lighthouses.push(entry);
         placed++;
       }

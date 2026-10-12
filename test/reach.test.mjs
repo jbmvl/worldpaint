@@ -150,7 +150,7 @@ test('createWorld passe la portée à la bulle et laisse le brouillard au rayon 
 
 test('la végétation ne sème que les tuiles et cellules à portée', async () => {
   const { VegetationLayer } = await import('../src/layers/vegetationLayer.js');
-  const frame = { origin: { x: 0, y: 0 }, scale: 800 };
+  const frame = { origin: { x: 0, y: 0 }, scale: 800, zoom: 15 };
   const tiles = new Map(
     [[0, 0], [1, 0], [0, 1], [1, 1]].map(([x, y]) => [`${x}:${y}`, { key: `${x}:${y}`, x, y, ring: 0 }])
   );

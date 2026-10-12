@@ -22,8 +22,9 @@
 
 import { nearestNamedPlace } from '../settlement.js';
 import { placeFauna } from './parcelFauna.js';
-import { randomAt } from '../furniturePlacement.js';
+
 import { FURNITURE_LIMITS } from './catalog.js';
+import { randomAt } from '../../core/groundSeed.js';
 
 /** Portée de recherche du lieu nommé le plus proche d'une maison, en mètres. */
 export const PET_PLACE_REACH_M = 900;
@@ -101,6 +102,7 @@ export function circuitClear(circuit, blocked, step = PET_PATH_STEP_M) {
  * @returns {number} Bêtes posées.
  */
 export function buildDomesticFauna(layer, houses) {
+  const { frame } = layer.bubble;
   if (!Array.isArray(houses) || houses.length === 0) return 0;
   let placed = 0;
 
@@ -112,11 +114,11 @@ export function buildDomesticFauna(layer, houses) {
 
     let kind;
     if (place.class === 'town') {
-      if (randomAt(house.x, house.z, 331) >= TOWN_CAT_ODDS) continue;
+      if (randomAt(frame, house.x, house.z, 331) >= TOWN_CAT_ODDS) continue;
       kind = 'cat';
     } else if (place.class === 'hamlet') {
-      if (randomAt(house.x, house.z, 331) >= HAMLET_PET_ODDS) continue;
-      kind = randomAt(house.x, house.z, 337) < HAMLET_DOG_SHARE ? 'dog' : 'cat';
+      if (randomAt(frame, house.x, house.z, 331) >= HAMLET_PET_ODDS) continue;
+      kind = randomAt(frame, house.x, house.z, 337) < HAMLET_DOG_SHARE ? 'dog' : 'cat';
     } else {
       continue;
     }
@@ -126,9 +128,9 @@ export function buildDomesticFauna(layer, houses) {
     const box = house.box;
     const angle = box?.angle || 0;
     const [minM, maxM] = PET_DOORSTEP_M;
-    const across = (box?.short || 4) + minM + randomAt(house.x, house.z, 347) * (maxM - minM);
-    const along = (randomAt(house.x, house.z, 341) * 2 - 1) * (box?.long || 4);
-    const side = randomAt(house.x, house.z, 343) < 0.5 ? -1 : 1;
+    const across = (box?.short || 4) + minM + randomAt(frame, house.x, house.z, 347) * (maxM - minM);
+    const along = (randomAt(frame, house.x, house.z, 341) * 2 - 1) * (box?.long || 4);
+    const side = randomAt(frame, house.x, house.z, 343) < 0.5 ? -1 : 1;
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
     const px = house.x + along * cos - side * across * sin;
@@ -136,8 +138,8 @@ export function buildDomesticFauna(layer, houses) {
     if (layer._onRoad(px, pz)) continue;
     if (insideAnyHouse(houses, px, pz)) continue;
 
-    const flee = kind === 'cat' && randomAt(house.x, house.z, 353) < PET_FLEE_ODDS;
-    const scale = 0.85 + randomAt(house.x, house.z, 359) * 0.3;
+    const flee = kind === 'cat' && randomAt(frame, house.x, house.z, 353) < PET_FLEE_ODDS;
+    const scale = 0.85 + randomAt(frame, house.x, house.z, 359) * 0.3;
     const keepOut = (sx, sz) => insideAnyHouse(houses, sx, sz);
     if (!placeFauna(layer, kind, { x: px, z: pz, scale, flee, keepOut })) continue;
     // `keepOut` ne voit que les stations : un trajet qui les relie peut encore

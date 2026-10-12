@@ -361,11 +361,12 @@ export class FaunaLayer {
    *        la fuite d'une bête surprise (voir `_checkFlee`). Omis, aucune
    *        fuite ne se déclenche — le terrain n'est lisible que là où
    *        `worldComposer` a la bulle sous la main.
+   * @param {Object} [frame] Repère local de la bulle, qui ancre les tirages de la fuite.
    */
-  advance(delta, at = null, sampleY = null) {
+  advance(delta, at = null, sampleY = null, frame = null) {
     if (this.disposed || !Number.isFinite(delta)) return;
     this.time += delta;
-    this._checkFlee(at, sampleY);
+    this._checkFlee(at, sampleY, frame);
     // Une population qui change remet aussi les maillages d'accord, et
     // `_regroup` écrit l'image : inutile de l'écrire deux fois.
     if (this._forgetCrossings(at)) this._regroup();
@@ -383,8 +384,8 @@ export class FaunaLayer {
    * circuit ouvert qui se fige à l'arrivée plutôt que de reprendre le
    * pâturage en boucle.
    */
-  _checkFlee(at, sampleY) {
-    if (!at || typeof sampleY !== 'function') return;
+  _checkFlee(at, sampleY, frame) {
+    if (!at || typeof sampleY !== 'function' || !frame) return;
     for (const animal of this.decor) {
       if (!animal.flee || animal._fled) continue;
       const dx = animal.x - at.x;
@@ -396,6 +397,7 @@ export class FaunaLayer {
       if (!spec) continue;
       const away = dist > 1e-3 ? { x: dx / dist, z: dz / dist } : { x: 0, z: 1 };
       const circuit = buildFleeCircuit({
+        frame,
         x: animal.x,
         z: animal.z,
         away,

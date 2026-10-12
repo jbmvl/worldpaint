@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildDomesticFauna, circuitClear, insideAnyHouse } from '../src/layers/furniture/domesticFauna.js';
+import { testFrame } from './testFrame.mjs';
 
 /** Un hameau serré : des longères en biais, mitoyennes à trois mètres. */
 function hamlet() {
@@ -22,7 +23,7 @@ function fakeLayer() {
     _places: [{ name: 'Le Hameau', x: 120, z: 90, class: 'hamlet' }],
     _onRoad: () => false,
     _coatFor: () => [1, 1, 1],
-    bubble: { surfaceElevationAtLocal: () => 0, verticalScale: 1 },
+    bubble: { frame: testFrame, surfaceElevationAtLocal: () => 0, verticalScale: 1 },
   };
 }
 
