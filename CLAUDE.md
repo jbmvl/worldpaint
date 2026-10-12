@@ -11,13 +11,27 @@ qui pèsent autant l'un que l'autre. Gagner sur l'un en perdant sur un autre
 n'est pas une optimisation : c'est un échange, et il se signale avant d'être
 livré.
 
-| Critère | Mesure | Où |
-| --- | --- | --- |
-| RAM | tas JS (`performance.memory.usedJSHeapSize`, ou CDP `Performance.getMetrics`) et `report.inventory().bufferBytes` après `settle` | `demo/lab/performance.html` |
-| génération initiale | `cold.elapsedMs` (de `setCenter` à la bulle posée) et couches les plus lentes | `node scripts/benchmark-place.mjs`, `demo/lab/mount.html` |
-| fluidité au mouvement | ms par image (moyenne et pire) pendant un déplacement de caméra, reconstructions de bulle comprises | `world.advance` le long d'un trajet, `demo/lab/performance.html` |
+Un seul banc mesure les trois, dans les conditions de la démo (bulle
+complète, `mountAt`, recentrage toutes les 400 ms) :
 
-- Un lieu de **campagne** fait partie de chaque mesure (`montreuil-bellay`),
+```
+node scripts/costs-bench.mjs --runs 3 --lng -0.145 --lat 47.131 --out <fichier>
+node scripts/costs-bench.mjs --root <worktree du commit d'avant> …   # l'avant
+```
+
+| Critère | Ce que le banc rend |
+| --- | --- |
+| RAM | tas JS retenu après GC forcé (CDP), pic du tas pendant le travail, PSS des processus Chromium (pic et après montage), octets de géométrie |
+| génération initiale | création → `mountAt` → files → première image, médiane des passes, couches les plus lentes |
+| fluidité au mouvement | temps du fil principal par image (p50, p95, p99, max, images > 16 ms et > 50 ms) pendant un tour sur place puis un trajet de 1,5 km |
+
+Le banc tourne sous SwiftShader : le temps GPU n'y est pas, et le rendu n'est
+chronométré qu'une image sur dix, file GPU vidée avant. `--move 0` saute le
+trajet (génération et RAM seules, une minute par passe) ; `--latence`,
+`--debit` simulent le réseau. Les tuiles de `station-montreuil-bellay`
+couvrent le départ de la démo.
+
+- Un lieu de **campagne** fait partie de chaque mesure (`station-montreuil-bellay`),
   pas seulement une ville : c'est là que la génération doit tendre vers 2 s,
   faute de contenu qui justifie davantage.
 - Même machine, même lieu, mêmes réglages avant et après ; chiffres bruts,
@@ -71,6 +85,10 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   branches simples ou dédoublées) passé tel quel dans `RoadNetwork` sur un sol
   plat ; `roundaboutLab.set({ radius, branches, splitDeg, splitLength, axes,
   view, span })`, ou `node scripts/roundabout-shot.mjs`.
+
+- `demo/lab/costs.html` — les trois coûts (voir la règle absolue ci-dessus) ;
+  `await costsLab.mount()`, `await costsLab.move({ turnFrames, runFrames,
+  speed, height })`, ou `node scripts/costs-bench.mjs`.
 
 - `demo/lab/mount.html` — chronomètre une scène figée (`createWorld({ reach })`
   + `mountAt`) sur un lieu enregistré, de la création à la première image ;

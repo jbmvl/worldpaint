@@ -5,6 +5,7 @@
  *
  *   node scripts/costs-bench.mjs [--root <dépôt>] [--lieu station-montreuil-bellay]
  *        [--runs 3] [--out reports/costs.json] [--lng … --lat …] [--move 0]
+ *        [--latence 100 --debit 20]
  *
  * `--root` désigne une autre copie du dépôt (un `git worktree` d'un commit
  * ancien) : la page du banc et le lieu y sont copiés s'ils manquent, et
@@ -29,6 +30,8 @@ const runs = Number(flag('runs', 3));
 const out = flag('out', null);
 const lng = flag('lng', null), lat = flag('lat', null);
 const withMove = flag('move', '1') !== '0';
+// Réseau simulé (CDP) : latence en ms et débit descendant en Mbit/s, pour les tuiles comme en ligne.
+const latency = Number(flag('latence', 0)), mbps = Number(flag('debit', 0));
 const port = Number(process.env.PORT) || 4300 + Math.floor(Math.random() * 500);
 
 if (root !== here) {
@@ -93,12 +96,18 @@ try {
       page.on('response', (r) => { if (r.status() >= 400) missing.push(new URL(r.url()).pathname); });
       await page.route('**/*', (r) => (new URL(r.request().url()).hostname === 'localhost' ? r.continue() : r.abort()));
       const cdp = await page.context().newCDPSession(page);
+      if (latency || mbps) {
+        await cdp.send('Network.enable');
+        await cdp.send('Network.emulateNetworkConditions', { offline: false, latency, downloadThroughput: mbps ? mbps * 125000 : -1, uploadThroughput: -1 });
+      }
+      let tileBytes = 0, tileCount = 0;
+      page.on('requestfinished', async (r) => { if (!/\/places\//.test(r.url())) return; tileCount++; tileBytes += (await r.sizes().catch(() => ({ responseBodySize: 0 }))).responseBodySize; });
       const heapAfterGc = async () => {
         await cdp.send('HeapProfiler.collectGarbage');
         await cdp.send('HeapProfiler.collectGarbage');
         return (await cdp.send('Runtime.getHeapUsage')).usedSize;
       };
-      const query = new URLSearchParams({ lieu, ...(lng ? { lng } : {}), ...(lat ? { lat } : {}) });
+      const query = new URLSearchParams({ lieu, ...(lng ? { lng } : {}), ...(lat ? { lat } : {}), ...(flag('precompile', null) ? { precompile: flag('precompile') } : {}) });
       await page.goto(`http://localhost:${port}/demo/lab/costs.html?${query}`);
       await page.waitForFunction(() => window.costsLabReady, null, { timeout: 120000 });
       const baseline = { heap: await heapAfterGc(), pss: pss(pid) };
@@ -117,7 +126,7 @@ try {
         move.pssBytes = pss(pid);
       }
       const webgl = await page.evaluate(() => { const gl = window.costsLab.renderer.getContext(); const e = gl.getExtension('WEBGL_debug_renderer_info'); return e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : null; });
-      passes.push({ baseline, mount, move, errors, missing, webgl });
+      passes.push({ baseline, mount, move, errors, missing, webgl, tiles: { count: tileCount, bytes: tileBytes } });
       console.error(`passe ${run + 1}/${runs} : génération ${Math.round(mount.totalMs)} ms, tas retenu ${(mount.heapRetainedBytes / 2 ** 20).toFixed(0)} Mo, image (trajet) p95 ${move?.run.frame.p95.toFixed(1) ?? '—'} ms${errors.length ? `, erreurs : ${errors.join(' | ')}` : ''}`);
     } finally {
       clearInterval(sampler);
@@ -132,7 +141,7 @@ const MB = (b) => (b == null ? null : Math.round(b / 2 ** 20));
 const ms = (v) => (v == null ? null : Math.round(v * 10) / 10);
 const pick = (f) => median(passes.map((p) => { try { return f(p); } catch { return null; } }));
 const summary = {
-  root, lieu, runs, date: new Date().toISOString(),
+  root, lieu, runs, date: new Date().toISOString(), reseau: { latenceMs: latency, debitMbps: mbps, tuiles: passes[0]?.tiles },
   machine: { cpu: os.cpus()[0].model, cores: os.cpus().length, node: process.version, webgl: passes[0]?.webgl },
   ram: {
     tasRetenuApresMontageMo: MB(pick((p) => p.mount.heapRetainedBytes)),

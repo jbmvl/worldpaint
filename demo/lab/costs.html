@@ -90,7 +90,12 @@ async function mount() {
   });
   world.setProfiling(true);
   const t1 = performance.now();
+  // Comme la démo : les shaders des maillages déjà publiés partent compiler
+  // pendant que le montage continue (`?precompile=0` pour s'en passer).
+  const precompile = params.get('precompile') !== '0'
+    ? setInterval(() => renderer.compile(scene, camera), 200) : null;
   await world.mountAt(at.lng, at.lat);
+  clearInterval(precompile);
   const t2 = performance.now();
   const c = world.composer;
   let frames = 0;

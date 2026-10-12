@@ -192,9 +192,13 @@ async function mountScene(lng, lat) {
   // `mountAt` dans les deux modes : le terrain n'est maillé qu'une fois, après
   // le déblai des chaussées, et les pauses sont celles d'un écran de chargement.
   mounting = true;
+  // Les shaders des maillages déjà publiés compilent dans le processus GPU
+  // pendant que le montage continue, au lieu de bloquer la première image.
+  const precompile = setInterval(() => renderer.compile(scene, camera), 200);
   try {
     await world.mountAt(lng, lat);
   } finally {
+    clearInterval(precompile);
     mounting = false;
   }
   const t1 = performance.now();

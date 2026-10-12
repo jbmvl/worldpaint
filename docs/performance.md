@@ -140,3 +140,20 @@ externe ; `SOFTWARE_RENDER=0` emploie le rendu matériel. Le relevé distingue
 CPU, pauses, buffers et compteurs de dessin sans mesurer le temps GPU.
 Voir [le rapport lyonnais](../reports/lyon/rapport.md) pour les paramètres,
 les sous-totaux et les limites de cette mesure.
+
+## Les trois coûts
+
+`node scripts/costs-bench.mjs` mesure ensemble la RAM, la génération initiale
+et la fluidité au mouvement, sur un lieu enregistré et dans les conditions de
+la démo (`demo/lab/costs.html`). La règle d'emploi est dans `CLAUDE.md`. La
+RAM y est lue par le protocole DevTools (`HeapProfiler.collectGarbage` puis
+`Runtime.getHeapUsage`) et dans `/proc` pour la PSS des processus ; la
+fluidité est le temps du fil principal par image, sur un trajet cadencé par le
+banc pour que la trajectoire soit la même d'une version à l'autre.
+
+Les shaders compilent dans le processus GPU, et three.js ne bloque qu'au
+premier usage d'un programme (`getProgramInfoLog`). La démo appelle donc
+`renderer.compile(scene, camera)` toutes les 200 ms pendant `mountAt` : les
+maillages déjà publiés partent compiler pendant que le reste se construit, au
+lieu d'attendre la première image. Une application qui monte le monde
+derrière un écran de chargement a intérêt à faire de même.
