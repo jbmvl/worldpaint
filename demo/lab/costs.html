@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Banc des trois coûts</title>
+<style>html,body{margin:0;background:#000}canvas{display:block}</style>
+<script src="/node_modules/suncalc/suncalc.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "/node_modules/three/build/three.module.js",
+  "three/examples/jsm/objects/Sky.js": "/node_modules/three/examples/jsm/objects/Sky.js",
+  "suncalc": "/demo/lab/suncalc-global.js",
+  "pbf": "/node_modules/pbf/index.js",
+  "@mapbox/vector-tile": "/node_modules/@mapbox/vector-tile/index.js",
+  "@mapbox/point-geometry": "/node_modules/@mapbox/point-geometry/index.js"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+/*
+ * Banc des trois coûts — RAM, génération initiale, fluidité au mouvement, sur
+ * un lieu enregistré, dans les conditions de la démo (bulle complète, `mountAt`,
+ * recentrage toutes les 400 ms). Piloté par `scripts/costs-bench.mjs`, qui
+ * ajoute ce que la page ne voit pas : tas après GC (CDP) et mémoire des
+ * processus.
+ *
+ *   await costsLab.mount()      // génération : création → mountAt → files → 1re image
+ *   await costsLab.move()       // fluidité : tour sur place puis trajet en ligne droite
+ *
+ * Les images du trajet sont cadencées par le banc (pas fixe de 1/60 s, une
+ * pause entre deux) : la trajectoire est la même d'une version à l'autre, et
+ * le temps mesuré est celui du fil principal, ce qu'un vrai GPU ne rattrape
+ * pas. Le temps GPU de SwiftShader n'en fait pas partie.
+ */
+import * as THREE from 'three';
+import { Sky } from 'three/examples/jsm/objects/Sky.js';
+import { createWorld } from '/src/index.js';
+
+const params = new URLSearchParams(location.search);
+const lieu = params.get('lieu') || 'station-montreuil-bellay';
+const base = `/demo/lab/places/${lieu}`;
+const place = await (await fetch(`${base}/place.json`)).json();
+const at = { lng: Number(params.get('lng') ?? place.lng), lat: Number(params.get('lat') ?? place.lat) };
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+document.body.appendChild(renderer.domElement);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 20000);
+const scene = new THREE.Scene();
+const EYE_M = 1.75, RECENTER_MS = 400;
+
+// Pic du tas JS, relevé entre deux tranches de travail.
+let heapPeak = 0;
+const sampleHeap = () => { heapPeak = Math.max(heapPeak, performance.memory?.usedJSHeapSize ?? 0); };
+setInterval(sampleHeap, 5);
+
+let world = null;
+const pause = () => new Promise((r) => setTimeout(r, 0));
+const busy = (c) => c.vegetation?.pending || c.bubble._rebuildQueue?.length > 0 || c.bubble._pendingBuild;
+const groundAt = (x, z) => world.composer.groundElevationAt(x, z) ?? 0;
+const date = new Date(Date.UTC(2026, 5, 21, 13));
+
+// Le rendu n'est chronométré qu'une image sur RENDER_EVERY, file GPU vidée
+// avant : sous SwiftShader, l'attente du GPU émulé noierait le temps CPU.
+const RENDER_EVERY = 10;
+function frame(delta, draw = true) {
+  const p = camera.position;
+  const t0 = performance.now();
+  world.advance(delta, { x: p.x, y: groundAt(p.x, p.z), z: p.z });
+  const here = world.frame.toLngLat(p.x, p.z);
+  const paint = world.updateSky({ camera, date, lng: here.lng, lat: here.lat });
+  if (paint) renderer.setClearColor(paint.clearColor, 1);
+  const advanceMs = performance.now() - t0;
+  if (!draw) return { advanceMs, renderMs: NaN };
+  renderer.getContext().finish();
+  const t1 = performance.now();
+  renderer.render(scene, camera);
+  return { advanceMs, renderMs: performance.now() - t1 };
+}
+
+async function mount() {
+  heapPeak = 0;
+  const t0 = performance.now();
+  world = createWorld({
+    THREE, scene, sky: { Sky },
+    elevation: { zoom: place.zoom, url: `${base}/dem/{z}/{x}/{y}.${place.elevation.extension}`, encoding: place.elevation.encoding },
+    vector: place.vector ? { tiles: [`${location.origin}${base}/vector/{z}/{x}/{y}.pbf`], maxZoom: place.vector.maxZoom } : null,
+  });
+  world.setProfiling(true);
+  const t1 = performance.now();
+  await world.mountAt(at.lng, at.lat);
+  const t2 = performance.now();
+  const c = world.composer;
+  let frames = 0;
+  while (busy(c) && frames < 4000) { world.advance(1 / 60, { x: 0, y: groundAt(0, 0), z: 0 }); frames++; }
+  const t3 = performance.now();
+  const local = world.frame.toLocal(at.lng, at.lat);
+  camera.position.set(local.x, groundAt(local.x, local.z) + EYE_M, local.z);
+  camera.rotation.set(0, 0, 0);
+  frame(0);
+  renderer.getContext().finish();
+  const t4 = performance.now();
+  sampleHeap();
+  const layers = Object.entries(world.generationStats)
+    .filter(([name]) => !name.endsWith('Etape'))
+    .sort((a, b) => b[1].totalMs - a[1].totalMs).slice(0, 12)
+    .map(([name, v]) => [name, Math.round(v.totalMs)]);
+  return {
+    createMs: t1 - t0, mountMs: t2 - t1, queuesMs: t3 - t2, queueFrames: frames,
+    firstFrameMs: t4 - t3, totalMs: t4 - t0, heapPeakBytes: heapPeak, layers,
+    ...inventory(),
+  };
+}
+
+function inventory() {
+  const buffers = new Set();
+  let bytes = 0, meshes = 0, triangles = 0;
+  scene.traverse((o) => {
+    if (!o.isMesh) return;
+    meshes++;
+    const g = o.geometry;
+    triangles += ((g.index?.count ?? g.attributes.position?.count ?? 0) / 3) * (o.isInstancedMesh ? o.count : 1);
+    for (const a of [...Object.values(g.attributes), g.index, o.instanceMatrix, o.instanceColor]) {
+      const b = a && (a.isInterleavedBufferAttribute ? a.data.array : a.array)?.buffer;
+      if (!b || buffers.has(b)) continue;
+      buffers.add(b);
+      bytes += b.byteLength;
+    }
+  });
+  return { meshes, triangles: Math.round(triangles), bufferBytes: bytes, calls: renderer.info.render.calls, gpu: { ...renderer.info.memory } };
+}
+
+/** Tour sur place (`turnFrames`), puis trajet droit à `speed` m/s (`runFrames`), recentrage comme la démo. */
+async function move({ turnFrames = 240, runFrames = 1500, speed = 40, height = 30 } = {}) {
+  heapPeak = 0;
+  const p = camera.position;
+  p.y = groundAt(p.x, p.z) + height;
+  const delta = 1 / 60;
+  const frames = [];
+  let recentering = false, sinceRecenter = 0, recenters = 0;
+  let refreshDone = 0;
+  const recenter = async () => {
+    recentering = true;
+    try {
+      const { lng, lat } = world.frame.toLngLat(p.x, p.z);
+      const prev = world.frame;
+      await world.setCenter(lng, lat);
+      if (await world.refresh(lng, lat)) refreshDone++;
+      if (world.frame !== prev) { const l = world.frame.toLocal(lng, lat); p.x = l.x; p.z = l.z; }
+    } finally { recentering = false; }
+  };
+  let last = performance.now();
+  for (let i = 0; i < turnFrames + runFrames; i++) {
+    if (i < turnFrames) camera.rotation.set(-0.15, (i / turnFrames) * Math.PI * 2, 0, 'YXZ');
+    else { p.x += speed * delta; p.y = groundAt(p.x, p.z) + height; camera.rotation.set(-0.15, -Math.PI / 2, 0, 'YXZ'); }
+    const f = frame(delta, i % RENDER_EVERY === 0);
+    sinceRecenter += delta * 1000;
+    if (sinceRecenter > RECENTER_MS && !recentering) { sinceRecenter = 0; recenters++; recenter(); }
+    await pause();
+    const now = performance.now();
+    // Temps du fil principal hors rendu : l'image et ce qui a tourné avant la suivante.
+    frames.push({ ...f, frameMs: now - last - (Number.isNaN(f.renderMs) ? 0 : f.renderMs) });
+    last = now;
+  }
+  while (recentering) await pause();
+  sampleHeap();
+  const stat = (key, from = 0, to = frames.length) => {
+    const v = frames.slice(from, to).map((f) => f[key]).filter((t) => !Number.isNaN(t)).sort((a, b) => a - b);
+    const q = (x) => v[Math.min(v.length - 1, Math.floor(v.length * x))];
+    return { p50: q(0.5), p95: q(0.95), p99: q(0.99), max: v[v.length - 1], over16: v.filter((t) => t > 16.7).length, over50: v.filter((t) => t > 50).length };
+  };
+  return {
+    turn: { frame: stat('frameMs', 0, turnFrames), advance: stat('advanceMs', 0, turnFrames), render: stat('renderMs', 0, turnFrames) },
+    run: { frame: stat('frameMs', turnFrames), advance: stat('advanceMs', turnFrames), render: stat('renderMs', turnFrames) },
+    recenters, refreshDone, heapPeakBytes: heapPeak, ...inventory(),
+  };
+}
+
+window.costsLab = { mount, move, inventory, renderer };
+window.costsLabReady = true;
+</script>
+</body>
+</html>
