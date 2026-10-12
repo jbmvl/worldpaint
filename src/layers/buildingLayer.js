@@ -1687,7 +1687,7 @@ export class BuildingLayer {
       const distance = Math.hypot(x - here.x, z - here.z);
       if (distance > radius) return;
       collected.push({ x, z, kind, distance, name: properties.name || null, class: properties.class || null });
-    });
+    }, (properties) => isTransitStop(properties) || !!buildingPersonalityFor(properties));
     yield;
     const personalities = sortPersonalities(mergeTwinPersonalities(collected));
 

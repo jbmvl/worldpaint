@@ -207,8 +207,12 @@ export class ElevationField {
     // Quatre pixels par altitude, presque toujours dans la même tuile : la
     // clé texte et la `Map` coûtaient plus que l'interpolation.
     let last = this._last;
-    if (!last || last.tx !== tx || last.ty !== ty || last.revision !== this.revision) {
-      last = this._last = { tx, ty, revision: this.revision, tile: this.tiles.get(tileKey(this.zoom, tx, ty)) };
+    if (!last) last = this._last = { tx: NaN, ty: NaN, revision: NaN, tile: null };
+    if (last.tx !== tx || last.ty !== ty || last.revision !== this.revision) {
+      last.tx = tx;
+      last.ty = ty;
+      last.revision = this.revision;
+      last.tile = this.tiles.get(tileKey(this.zoom, tx, ty));
     }
     const tile = last.tile;
     if (!tile) return null;

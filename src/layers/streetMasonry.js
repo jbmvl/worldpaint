@@ -56,7 +56,7 @@ export function ajouterJointsVoirie(tampon, { debut, points, profil, demiLargeur
           const origine = tampon.positions.length / 3;
           for (let i = 0; i < nombre; i++) {
             tampon.positions.push(APRES_HAUT[i * 4 + 1], APRES_HAUT[i * 4 + 2] + 0.001, APRES_HAUT[i * 4 + 3]);
-            tampon.colors.push(...couleur);
+            tampon.colors.push(couleur[0], couleur[1], couleur[2]);
           }
           for (let i = 1; i < nombre - 1; i++) {
             tampon.indices.push(origine, origine + i, origine + i + 1);

@@ -243,6 +243,11 @@ export class World {
     return this.composer.frame;
   }
 
+  /** Vrai tant que le décor se construit ou s'achève image par image — voir `WorldComposer.settling`. */
+  get settling() {
+    return this.composer.settling;
+  }
+
   /** La bulle de terrain : altitudes du sol, conversion lng/lat ↔ scène. */
   get bubble() {
     return this.composer.bubble;

@@ -377,7 +377,7 @@ export class RailwayLayer {
           mainLines.push({ profile: 'rail', halfWidth: RAILWAY_BALLAST_HALF_M, points: local });
         }
       }
-    });
+    }, (properties) => properties.class === 'rail' && properties.brunnel !== 'tunnel');
 
     // Plafond à la construction ; la marge réelle se choisit par requête (voir `RoadIndex.query`).
     this.index = segments.length > 0 ? new RoadIndex(segments, { margin: ROAD_INDEX_MARGIN_M }) : null;

@@ -32,7 +32,7 @@ export function collectCrossingRails(source, tiles, frame, elevation) {
       }));
       if (points.length > 1) lines.push({ points, profile: 'rail', halfWidth: 1.75, level: roadLevelFor(properties) });
     }
-  });
+  }, (properties) => properties.class === 'rail' && !properties.brunnel);
   return mergeRoadLines(lines).chains.map((chain) => {
     const path = subdividePath(chain.points, 4);
     return { path, halfWidth: chain.halfWidth, profile: 'rail',

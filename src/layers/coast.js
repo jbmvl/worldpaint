@@ -73,6 +73,6 @@ export function seaDistanceAt(source, tiles, frame, here) {
         }))
       );
     }
-  });
+  }, (properties) => properties.class === 'ocean');
   return seaDistance(rings, here);
 }

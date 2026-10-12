@@ -439,11 +439,10 @@ export class TerrainBubble {
     const fx = gx - i0;
     const fy = gy - j0;
 
-    const sample = (i, j) => this._sample(i / n, j / n, fallback);
-    const a = sample(i0, j0);
-    const b = sample(i0 + 1, j0);
-    const c = sample(i0, j0 + 1);
-    const d = sample(i0 + 1, j0 + 1);
+    const a = this._sample(i0 / n, j0 / n, fallback);
+    const b = this._sample((i0 + 1) / n, j0 / n, fallback);
+    const c = this._sample(i0 / n, (j0 + 1) / n, fallback);
+    const d = this._sample((i0 + 1) / n, (j0 + 1) / n, fallback);
 
     const top = a + (b - a) * fx;
     const bottom = c + (d - c) * fx;
@@ -853,6 +852,11 @@ export class TerrainBubble {
     return true;
   }
 
+  /** Vrai tant qu'une maille est en reconstruction ou en attente de l'être. */
+  get rebuilding() {
+    return this._pendingBuild !== null || this._rebuildQueue.length > 0;
+  }
+
   /** Ce dont dépend une maille en cours : s'il change, elle est à reprendre. */
   _buildState() {
     return `${this._cutGeneration}:${this._cliffGeneration}:${this._waterGeneration}:${this.elevation?.revision}`;
@@ -877,7 +881,8 @@ export class TerrainBubble {
     const revision = this.elevation?.revision;
     const signature = `${n}:${edge.north}:${edge.south}:${edge.west}:${edge.east}:${revision}:${this._gradientStep}`;
     const cached = revision != null && tile.demCache?.signature === signature && tile.demCache.source === this.elevation;
-    const samples = cached ? tile.demCache.samples : new Float64Array(count * 5);
+    // Simple précision, comme le MNT lu : la première construction relit ce qu'elle a rangé, et le cache rend la même maille.
+    const samples = cached ? tile.demCache.samples : new Float32Array(count * 5);
 
     // Tampons neufs, même quand la géométrie est reprise : ceux de la tuile
     // affichée sont lus (appuis des plantes) tant que celle-ci n'est pas finie.
@@ -938,21 +943,20 @@ export class TerrainBubble {
         const localZ = local.z;
 
         // Bords recousus sur la résolution du voisin.
-        let raw;
-        if (cached) raw = samples[idx * 5];
-        else if (j === 0) raw = this._edgeElevation(u, edge.north, (a) => this._sample(tile.x + a, tile.y));
-        else if (j === n) raw = this._edgeElevation(u, edge.south, (a) => this._sample(tile.x + a, tile.y + 1));
-        else if (i === 0) raw = this._edgeElevation(v, edge.west, (a) => this._sample(tile.x, tile.y + a));
-        else if (i === n) raw = this._edgeElevation(v, edge.east, (a) => this._sample(tile.x + 1, tile.y + a));
-        else raw = this._sample(tx, ty);
-
         if (!cached) {
+          let raw;
+          if (j === 0) raw = this._edgeElevation(u, edge.north, (a) => this._sample(tile.x + a, tile.y));
+          else if (j === n) raw = this._edgeElevation(u, edge.south, (a) => this._sample(tile.x + a, tile.y + 1));
+          else if (i === 0) raw = this._edgeElevation(v, edge.west, (a) => this._sample(tile.x, tile.y + a));
+          else if (i === n) raw = this._edgeElevation(v, edge.east, (a) => this._sample(tile.x + 1, tile.y + a));
+          else raw = this._sample(tx, ty);
           samples[idx * 5] = raw;
           samples[idx * 5 + 1] = this._sample(tx + this._gradientStep, ty);
           samples[idx * 5 + 2] = this._sample(tx - this._gradientStep, ty);
           samples[idx * 5 + 3] = this._sample(tx, ty + this._gradientStep);
           samples[idx * 5 + 4] = this._sample(tx, ty - this._gradientStep);
         }
+        const raw = samples[idx * 5];
         // Le déblai est une fonction du seul point du sol, donc la couture des bords reste exacte.
         cutWithMask(localX, localZ, raw);
         const h = atVertex.elevation * this.verticalScale;

@@ -24,14 +24,33 @@ const smooth = t => t * t * (3 - 2 * t);
 const key = (x, z) => x * 67108864 + z;
 /** Réserve de `elevationAtPoint`, lue aussitôt écrite. */
 const POINT = { elevation: 0, mask: 0, inWater: false };
+/** Réserves des sondes par sommet : rien n'est alloué d'un appel à l'autre. */
+const HIT = { x: 0, z: 0, distance: 0 };
+const BEST = { x: 0, z: 0, distance: Infinity, axis: null };
+const NEAR = { x: 0, z: 0, distance: Infinity, axis: null };
+const ACROSS = { x: 0, z: 0, distance: Infinity, axis: null };
+/** Sondes en travers du lit (`_profileNode`) : abscisse, cote, cote redressée. */
+const PROFILE_PROBES = 17;
+const PROBE_T = new Float64Array(PROFILE_PROBES);
+const PROBE_H = new Float64Array(PROFILE_PROBES);
+const PROBE_LEVEL = new Float64Array(PROFILE_PROBES);
 
-function projection(x, z, a, b) {
+/** Projeté du point sur le segment, écrit dans `out` (lu aussitôt écrit). */
+function projection(x, z, a, b, out = HIT) {
   const dx = b.x - a.x, dz = b.z - a.z;
   const t = clamp(((x-a.x)*dx + (z-a.z)*dz) / (dx*dx + dz*dz || 1));
   const px = a.x + t*dx, pz = a.z + t*dz;
   // `Math.sqrt` : `Math.hypot` alloue à chaque appel, et celui-ci se fait par sommet de terrain.
   const ex = x-px, ez = z-pz;
-  return { x: px, z: pz, distance: Math.sqrt(ex*ex + ez*ez) };
+  out.x = px; out.z = pz; out.distance = Math.sqrt(ex*ex + ez*ez);
+  return out;
+}
+
+/** Retient `hit` dans `best` s'il est plus proche, à égalité le plus à l'ouest puis au nord. */
+function closer(best, hit, axis) {
+  if (!best.axis || hit.distance<best.distance-1e-7 || (Math.abs(hit.distance-best.distance)<1e-7 && (hit.x<best.x || (hit.x===best.x && hit.z<best.z)))) {
+    best.x = hit.x; best.z = hit.z; best.distance = hit.distance; best.axis = axis;
+  }
 }
 
 /** Arêtes d'un contour rangées par bande de z : seules celles-là peuvent couper le rayon d'une sonde. */
@@ -59,6 +78,15 @@ function inside(x, z, bands) {
     if ((az>z)!==(bz>z) && x<(edges[k+2]-ax)*(z-az)/(bz-az)+ax) yes=!yes;
   }
   return yes;
+}
+
+/** Axes d'une cellule de la grille, retenus dans `best` s'ils sont plus proches. */
+function visitAxes(list,x,z,best) {
+  if(!list) return;
+  for(const axis of list) {
+    if(best.axis && !nearBox(x,z,axis.box,best.distance+1e-7)) continue;
+    closer(best,projection(x,z,axis.a,axis.b),axis);
+  }
 }
 
 function bounds(points) {
@@ -138,7 +166,7 @@ export class WaterRelief {
         const a=frame.toLocal(tileBounds.west,tileBounds.north), b=frame.toLocal(tileBounds.east,tileBounds.south);
         coverage.push(bounds([a,b]));
       }
-    });
+    }, properties=>waterSurfaceFor(properties)==='water');
     source.forEachFeature('waterway',tiles,(geometry,properties)=>{
       const style=waterwayStyleFor(properties,waterways);
       if(!style) return;
@@ -152,7 +180,7 @@ export class WaterRelief {
           axes.push({a,b,halfWidth:style.halfWidth,box:bounds([a,b])});
         }
       }
-    });
+    }, properties=>!!waterwayStyleFor(properties,waterways));
     axes.sort((a,b)=>a.a.x-b.a.x || a.a.z-b.a.z || a.b.x-b.b.x || a.b.z-b.b.z || a.halfWidth-b.halfWidth);
     for (const axis of axes) {
       axis.parent=axis;
@@ -223,52 +251,59 @@ export class WaterRelief {
   }
 
   profileAt(x,z,component) {
-    const profiles=component.profiles;
     const gx=(x+this.originX)/PROFILE_STEP, gz=(z+this.originZ)/PROFILE_STEP;
     const ix=Math.floor(gx), iz=Math.floor(gz), tx=gx-ix, tz=gz-iz;
-    const sample=(i,j)=>{
-      const k=key(i,j);
-      if(profiles.has(k)) return profiles.get(k);
-      const x=i*PROFILE_STEP-this.originX, z=j*PROFILE_STEP-this.originZ;
-      const near=this.nearestAxis(x,z,component);
-      if(!near) return NaN;
-      const {a,b}=near.axis;
-      const length=Math.hypot(b.x-a.x,b.z-a.z), dx=(b.x-a.x)/length, dz=(b.z-a.z)/length;
-      const samples=[];
-      // Le profil sonde le lit : une moyenne autour du lit lirait ses talus.
-      for(let d=-256;d<=256;d+=32) {
-        const hit=this.nearestAxis(near.x+dx*d,near.z+dz*d,component);
-        if(!hit) return NaN;
-        const elevation=this.elevationAt(hit.x,hit.z);
-        if(!Number.isFinite(elevation)) return NaN;
-        const t=(hit.x-near.x)*dx+(hit.z-near.z)*dz;
-        samples.push({t,elevation});
-      }
-      const meanT=samples.reduce((sum,p)=>sum+p.t,0)/samples.length;
-      const meanH=samples.reduce((sum,p)=>sum+p.elevation,0)/samples.length;
-      let numerator=0,denominator=0;
-      for(const p of samples) {
-        numerator+=(p.t-meanT)*(p.elevation-meanH);
-        denominator+=(p.t-meanT)**2;
-      }
-      const slope=denominator ? numerator/denominator : 0;
-      const h=quantile(samples.map(p=>p.elevation-slope*p.t),0.25);
-      profiles.set(k,h);
-      return h;
-    };
-    const a=sample(ix,iz),b=sample(ix+1,iz),c=sample(ix,iz+1),d=sample(ix+1,iz+1);
+    const a=this._profileNode(ix,iz,component),b=this._profileNode(ix+1,iz,component);
+    const c=this._profileNode(ix,iz+1,component),d=this._profileNode(ix+1,iz+1,component);
     return (a+(b-a)*tx)*(1-tz)+(c+(d-c)*tx)*tz;
   }
 
-  nearestAxis(x,z,component) {
-    const axes=this.axisGrid.get(key(Math.floor(x/CELL),Math.floor(z/CELL))) || [];
-    let best=null;
+  /** Cote du lit au nœud `(i, j)` de la grille des profils, calculée une fois par rivière. */
+  _profileNode(i,j,component) {
+    const profiles=component.profiles;
+    const k=key(i,j);
+    const known=profiles.get(k);
+    if(known!==undefined) return known;
+    const x=i*PROFILE_STEP-this.originX, z=j*PROFILE_STEP-this.originZ;
+    const near=this.nearestAxis(x,z,component,NEAR);
+    // Sans axe à portée, le nœud n'en aura jamais : on le retient, sinon chaque sonde le recherche.
+    if(!near) { profiles.set(k,NaN); return NaN; }
+    const {a,b}=near.axis;
+    const length=Math.hypot(b.x-a.x,b.z-a.z), dx=(b.x-a.x)/length, dz=(b.z-a.z)/length;
+    // Le profil sonde le lit : une moyenne autour du lit lirait ses talus.
+    for(let n=0,d=-256;d<=256;d+=32,n++) {
+      const hit=this.nearestAxis(near.x+dx*d,near.z+dz*d,component,ACROSS);
+      if(!hit) { profiles.set(k,NaN); return NaN; }
+      const elevation=this.elevationAt(hit.x,hit.z);
+      if(!Number.isFinite(elevation)) return NaN;
+      PROBE_T[n]=(hit.x-near.x)*dx+(hit.z-near.z)*dz;
+      PROBE_H[n]=elevation;
+    }
+    let sumT=0,sumH=0;
+    for(let n=0;n<PROFILE_PROBES;n++) { sumT+=PROBE_T[n]; sumH+=PROBE_H[n]; }
+    const meanT=sumT/PROFILE_PROBES, meanH=sumH/PROFILE_PROBES;
+    let numerator=0,denominator=0;
+    for(let n=0;n<PROFILE_PROBES;n++) {
+      numerator+=(PROBE_T[n]-meanT)*(PROBE_H[n]-meanH);
+      denominator+=(PROBE_T[n]-meanT)**2;
+    }
+    const slope=denominator ? numerator/denominator : 0;
+    for(let n=0;n<PROFILE_PROBES;n++) PROBE_LEVEL[n]=PROBE_H[n]-slope*PROBE_T[n];
+    const h=quantile(PROBE_LEVEL,0.25);
+    profiles.set(k,h);
+    return h;
+  }
+
+  /** Axe le plus proche dans la cellule du point, écrit dans `best` s'il est fourni. */
+  nearestAxis(x,z,component,best={x:0,z:0,distance:Infinity,axis:null}) {
+    const axes=this.axisGrid.get(key(Math.floor(x/CELL),Math.floor(z/CELL)));
+    if(!axes) return null;
+    best.axis=null;
     for(const axis of axes) {
       if(component && axis.component!==component) continue;
-      const hit=projection(x,z,axis.a,axis.b);
-      if(!best || hit.distance<best.distance-1e-7 || (Math.abs(hit.distance-best.distance)<1e-7 && (hit.x<best.x || (hit.x===best.x && hit.z<best.z)))) best={...hit,axis};
+      closer(best,projection(x,z,axis.a,axis.b),axis);
     }
-    return best;
+    return best.axis ? best : null;
   }
 
   axisLevel(x,z,axes) {
@@ -279,23 +314,15 @@ export class WaterRelief {
     const reach=Math.max(cx-index.minX,index.maxX-cx,cz-index.minZ,index.maxZ-cz);
     // Marge du point dans sa cellule : un axe absent des anneaux déjà lus est au moins à cette distance, plus un anneau.
     const margin=Math.min(x-cx*CELL,(cx+1)*CELL-x,z-cz*CELL,(cz+1)*CELL-z);
-    let best=null;
-    const visit=(ix,iz)=>{
-      const list=cells.get(key(ix,iz));
-      if(!list) return;
-      for(const axis of list) {
-        if(best && !nearBox(x,z,axis.box,best.distance+1e-7)) continue;
-        const hit=projection(x,z,axis.a,axis.b);
-        if(!best || hit.distance<best.distance-1e-7 || (Math.abs(hit.distance-best.distance)<1e-7 && (hit.x<best.x || (hit.x===best.x && hit.z<best.z)))) best={...hit,axis};
-      }
-    };
+    const best=BEST;
+    best.axis=null;
     for(let ring=0;ring<=reach;ring++) {
-      if(best && best.distance+1e-7<margin+(ring-1)*CELL) break;
-      if(ring===0) { visit(cx,cz); continue; }
-      for(let i=-ring;i<=ring;i++) { visit(cx+i,cz-ring); visit(cx+i,cz+ring); }
-      for(let j=1-ring;j<ring;j++) { visit(cx-ring,cz+j); visit(cx+ring,cz+j); }
+      if(best.axis && best.distance+1e-7<margin+(ring-1)*CELL) break;
+      if(ring===0) { visitAxes(cells.get(key(cx,cz)),x,z,best); continue; }
+      for(let i=-ring;i<=ring;i++) { visitAxes(cells.get(key(cx+i,cz-ring)),x,z,best); visitAxes(cells.get(key(cx+i,cz+ring)),x,z,best); }
+      for(let j=1-ring;j<ring;j++) { visitAxes(cells.get(key(cx-ring,cz+j)),x,z,best); visitAxes(cells.get(key(cx+ring,cz+j)),x,z,best); }
     }
-    return best ? this.profileAt(best.x,best.z,best.axis.component) : NaN;
+    return best.axis ? this.profileAt(best.x,best.z,best.axis.component) : NaN;
   }
 
   /** `out`, s'il est fourni, reçoit le résultat : un appelant par sommet de terrain y passe sa réserve. */
@@ -311,8 +338,8 @@ export class WaterRelief {
         if(inside(x,z,piece.bands)) distance=0;
         else {
           distance=Infinity;
-          const banks=piece.banks.get(cell) || [];
-          for(const edge of banks)
+          const banks=piece.banks.get(cell);
+          if(banks) for(const edge of banks)
             distance=Math.min(distance,projection(x,z,edge.a,edge.b).distance);
         }
         if(distance>this.benchM+BANK_BLEND) continue;

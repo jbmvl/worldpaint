@@ -119,7 +119,7 @@ export function collectBuiltUpAreas(source, tiles, frame) {
       }
       if (local.length >= 3) areas.push(local);
     }
-  });
+  }, (properties) => BUILT_UP_CLASSES.has(properties.class));
 
   return areas;
 }
@@ -170,7 +170,7 @@ export function collectUrbanGreens(source, tiles, frame) {
         }
         if (local.length >= 3) areas.push(local);
       }
-    });
+    }, (properties) => accept(properties.class));
   };
 
   take('landuse', (klass) => URBAN_GREEN_LANDUSE.has(klass));
@@ -380,7 +380,7 @@ export function collectPlaceNames(source, tiles, frame) {
       name,
       class: properties.class,
     });
-  });
+  }, (properties) => SETTLEMENT_PLACE_CLASSES.has(properties.class));
 
   return places;
 }

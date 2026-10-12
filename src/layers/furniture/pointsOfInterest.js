@@ -114,7 +114,7 @@ export function buildPointsOfInterest(layer, context, roadSegments, builtUp = nu
     // la place définitive, pas à celle que la donnée annonçait.
     const yaw = facingRoad(layer, at.x, at.z, roadSegments);
     layer._place(placements, item, { x: at.x, z: at.z, yaw });
-  });
+  }, (properties) => poiItem(properties) !== null);
 }
 
 /** Les édifices habillent leur empreinte dans `buildingLayer` ; seuls les objets autonomes sont du mobilier. */
@@ -156,7 +156,7 @@ export function collectChurches(source, tiles, frame) {
       x: (lngToTileX(lng, zoom) - origin.x) * scale,
       z: (latToTileY(lat, zoom) - origin.y) * scale,
     });
-  });
+  }, (properties) => properties.class === 'place_of_worship');
 
   return churches;
 }

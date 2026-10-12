@@ -1064,7 +1064,7 @@ export class GroundClassMap {
             ctx.fill(path, 'evenodd'); // anneaux intérieurs = trous
             painted++;
           }
-        });
+        }, (properties) => !!surfaceFor(sourceLayer, properties));
         yield;
       }
 
@@ -1178,7 +1178,7 @@ export class GroundClassMap {
             ctx.stroke(path);
             painted++;
           }
-        });
+        }, (properties) => !!waterwayStyleFor(properties, waterways));
         yield;
       }
 
@@ -1222,7 +1222,7 @@ export class GroundClassMap {
           ctx.fillStyle = surfaceFill(kind);
           ctx.fill(path, 'evenodd');
         }
-      });
+      }, (properties) => !!waterSurfaceFor(properties));
       yield;
     }
     ctx.fillStyle = surfaceFill('water');

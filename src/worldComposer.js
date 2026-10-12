@@ -365,6 +365,15 @@ export class WorldComposer {
   }
 
   /**
+   * Vrai tant que le décor se construit ou s'achève image par image (mailles
+   * du terrain, semis des arbres et de l'herbe) : les images de cette période
+   * portent un travail CPU qui ne dit rien de ce que coûte le rendu.
+   */
+  get settling() {
+    return this._refreshing || this.bubble.rebuilding || this.vegetation.pending || this.grass.pending;
+  }
+
+  /**
    * Impose une région, ou rend la main à la géographie (`null`).
    *
    * Le décor ne suit alors plus le lieu : c'est délibéré, et c'est le seul

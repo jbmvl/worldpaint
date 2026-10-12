@@ -147,8 +147,12 @@ export class VectorTileSource {
    * Les entités sont découpées par tuile (une même route ou bâtisse revient
    * d'une tuile à l'autre) : à l'appelant de dédoublonner et d'écarter les
    * bords de découpe via `bounds` si besoin.
+   *
+   * `keep(properties)`, s'il est donné, écarte une entité avant que sa
+   * géométrie ne soit décodée : une couche `poi` de ville en compte des
+   * dizaines de milliers, dont on ne garde que quelques classes.
    */
-  forEachFeature(sourceLayer, tiles, callback) {
+  forEachFeature(sourceLayer, tiles, callback, keep = null) {
     for (const { x, y } of tiles) {
       const entry = this.tiles.get(tileKey(this.zoom, x, y));
       if (!entry) continue;
@@ -162,7 +166,9 @@ export class VectorTileSource {
       for (let i = 0; i < layer.length; i++) {
         let geojson;
         try {
-          geojson = layer.feature(i).toGeoJSON(entry.x, entry.y, entry.z);
+          const feature = layer.feature(i);
+          if (keep && !keep(feature.properties || {})) continue;
+          geojson = feature.toGeoJSON(entry.x, entry.y, entry.z);
         } catch (e) {
           continue;
         }
