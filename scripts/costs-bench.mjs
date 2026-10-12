@@ -4,7 +4,7 @@
  * RAM, génération initiale, fluidité au mouvement (`demo/lab/costs.html`).
  *
  *   node scripts/costs-bench.mjs [--root <dépôt>] [--lieu station-montreuil-bellay]
- *        [--runs 3] [--out reports/costs.json] [--lng … --lat …]
+ *        [--runs 3] [--out reports/costs.json] [--lng … --lat …] [--move 0]
  *
  * `--root` désigne une autre copie du dépôt (un `git worktree` d'un commit
  * ancien) : la page du banc et le lieu y sont copiés s'ils manquent, et
@@ -28,6 +28,7 @@ const lieu = flag('lieu', 'station-montreuil-bellay');
 const runs = Number(flag('runs', 3));
 const out = flag('out', null);
 const lng = flag('lng', null), lat = flag('lat', null);
+const withMove = flag('move', '1') !== '0';
 const port = Number(process.env.PORT) || 4300 + Math.floor(Math.random() * 500);
 
 if (root !== here) {
@@ -87,8 +88,9 @@ try {
     const sampler = setInterval(() => { if (pid) peak = Math.max(peak, pss(pid)); }, 100);
     try {
       const page = await browser.newPage({ viewport: { width: 480, height: 300 } });
-      const errors = [];
+      const errors = [], missing = [];
       page.on('pageerror', (e) => errors.push(e.message));
+      page.on('response', (r) => { if (r.status() >= 400) missing.push(new URL(r.url()).pathname); });
       await page.route('**/*', (r) => (new URL(r.request().url()).hostname === 'localhost' ? r.continue() : r.abort()));
       const cdp = await page.context().newCDPSession(page);
       const heapAfterGc = async () => {
@@ -106,14 +108,17 @@ try {
       console.error(`  génération ${Math.round(mount.totalMs)} ms (mountAt ${Math.round(mount.mountMs)} ms)`);
       mount.heapRetainedBytes = await heapAfterGc();
       mount.pssBytes = pss(pid);
-      peak = 0;
-      const move = await page.evaluate(() => window.costsLab.move());
-      move.pssPeakBytes = peak;
-      move.heapRetainedBytes = await heapAfterGc();
-      move.pssBytes = pss(pid);
+      let move = null;
+      if (withMove) {
+        peak = 0;
+        move = await page.evaluate(() => window.costsLab.move());
+        move.pssPeakBytes = peak;
+        move.heapRetainedBytes = await heapAfterGc();
+        move.pssBytes = pss(pid);
+      }
       const webgl = await page.evaluate(() => { const gl = window.costsLab.renderer.getContext(); const e = gl.getExtension('WEBGL_debug_renderer_info'); return e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : null; });
-      passes.push({ baseline, mount, move, errors, webgl });
-      console.error(`passe ${run + 1}/${runs} : génération ${Math.round(mount.totalMs)} ms, tas retenu ${(mount.heapRetainedBytes / 2 ** 20).toFixed(0)} Mo, image (trajet) p95 ${move.run.frame.p95.toFixed(1)} ms${errors.length ? `, erreurs : ${errors.join(' | ')}` : ''}`);
+      passes.push({ baseline, mount, move, errors, missing, webgl });
+      console.error(`passe ${run + 1}/${runs} : génération ${Math.round(mount.totalMs)} ms, tas retenu ${(mount.heapRetainedBytes / 2 ** 20).toFixed(0)} Mo, image (trajet) p95 ${move?.run.frame.p95.toFixed(1) ?? '—'} ms${errors.length ? `, erreurs : ${errors.join(' | ')}` : ''}`);
     } finally {
       clearInterval(sampler);
       await browser.close();
@@ -125,7 +130,7 @@ try {
 
 const MB = (b) => (b == null ? null : Math.round(b / 2 ** 20));
 const ms = (v) => (v == null ? null : Math.round(v * 10) / 10);
-const pick = (f) => median(passes.map(f));
+const pick = (f) => median(passes.map((p) => { try { return f(p); } catch { return null; } }));
 const summary = {
   root, lieu, runs, date: new Date().toISOString(),
   machine: { cpu: os.cpus()[0].model, cores: os.cpus().length, node: process.version, webgl: passes[0]?.webgl },
@@ -156,6 +161,7 @@ const summary = {
   }])),
   scene: { appels: pick((p) => p.mount.calls), triangles: pick((p) => p.mount.triangles), maillages: pick((p) => p.mount.meshes), recentrages: pick((p) => p.move.recenters), relevesFaites: pick((p) => p.move.refreshDone) },
   erreurs: [...new Set(passes.flatMap((p) => p.errors))],
+  tuilesManquantes: [...new Set(passes.flatMap((p) => p.missing))],
 };
 if (out) { mkdirSync(dirname(resolve(out)), { recursive: true }); writeFileSync(resolve(out), JSON.stringify({ summary, passes }, null, 2) + '\n'); }
 console.log(JSON.stringify(summary, null, 2));
