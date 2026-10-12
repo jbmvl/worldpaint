@@ -4,6 +4,29 @@ Ce fichier complète `CONTRIBUTING.md`, qui reste la référence sur la structur
 du projet, la frontière thème/moteur et les invariants d'architecture. Ce qui
 suit est ce qu'un assistant doit savoir **en plus**.
 
+## Règle absolue : les trois coûts, avant et après
+
+Toute modification du moteur se mesure, **avant et après**, sur trois critères
+qui pèsent autant l'un que l'autre. Gagner sur l'un en perdant sur un autre
+n'est pas une optimisation : c'est un échange, et il se signale avant d'être
+livré.
+
+| Critère | Mesure | Où |
+| --- | --- | --- |
+| RAM | tas JS (`performance.memory.usedJSHeapSize`, ou CDP `Performance.getMetrics`) et `report.inventory().bufferBytes` après `settle` | `demo/lab/performance.html` |
+| génération initiale | `cold.elapsedMs` (de `setCenter` à la bulle posée) et couches les plus lentes | `node scripts/benchmark-place.mjs`, `demo/lab/mount.html` |
+| fluidité au mouvement | ms par image (moyenne et pire) pendant un déplacement de caméra, reconstructions de bulle comprises | `world.advance` le long d'un trajet, `demo/lab/performance.html` |
+
+- Un lieu de **campagne** fait partie de chaque mesure (`montreuil-bellay`),
+  pas seulement une ville : c'est là que la génération doit tendre vers 2 s,
+  faute de contenu qui justifie davantage.
+- Même machine, même lieu, mêmes réglages avant et après ; chiffres bruts,
+  sans arrondi flatteur.
+- Une régression sur un critère, même pour un gain ailleurs, se dit en tête du
+  compte rendu et la décision revient à l'auteur.
+- Si un critère n'a pas pu être mesuré, dire lequel et pourquoi — jamais le
+  passer sous silence. S'il manque un banc pour le mesurer, l'écrire.
+
 ## Vérification visuelle
 
 Un changement qui touche l'image se regarde, et c'est à toi de le faire —
@@ -210,5 +233,7 @@ ils décrivent l'état actuel, pour quelqu'un qui arrive dans six mois.
 ## Ce qu'on attend en fin de tâche
 
 Reste sobre. On évite de consommer des token inutilement.
-1. ce qui a été délibérément laissé hors périmètre, et pourquoi ;
-2. ce qui a été regardé sur un banc, et ce qui reste à contrôler dans la démo.
+1. le tableau avant/après des trois coûts (RAM, génération initiale, fluidité),
+   lieu de campagne compris ;
+2. ce qui a été délibérément laissé hors périmètre, et pourquoi ;
+3. ce qui a été regardé sur un banc, et ce qui reste à contrôler dans la démo.
