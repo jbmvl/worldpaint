@@ -540,7 +540,7 @@ export class GroundClassMap {
   constructor({ THREE, theme = defaultTheme, reach = Infinity }) {
     this.THREE = THREE;
     this.theme = theme;
-    this._windowM = Number.isFinite(reach) && reach > 0 ? reach * REACH_MARGIN + REACH_MARGIN_M : null;
+    this.setReach(reach);
     /** Carré relu, en texels `{ x, y, size }` : toute la carte sans portée. */
     this._window = { x: 0, y: 0, size: CLASS_PIXELS };
     /**
@@ -1266,6 +1266,11 @@ export class GroundClassMap {
       this.texture.image.data = new Uint8Array(data.buffer);
     }
     this._data = data;
+  }
+
+  /** Change la portée : la prochaine relecture prend la fenêtre qui lui correspond. */
+  setReach(reach) {
+    this._windowM = Number.isFinite(reach) && reach > 0 ? reach * REACH_MARGIN + REACH_MARGIN_M : null;
   }
 
   /** Fenêtre carrée relue autour d'un texel, toute la carte sans portée. */

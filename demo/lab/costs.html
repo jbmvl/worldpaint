@@ -96,7 +96,8 @@ async function mount() {
   // pendant que le montage continue (`?precompile=0` pour s'en passer).
   const precompile = params.get('precompile') !== '0'
     ? setInterval(() => renderer.compile(scene, camera), 200) : null;
-  await world.mountAt(at.lng, at.lat, near ? { near } : {});
+  if (near) world.setReach(near);
+  await world.mountAt(at.lng, at.lat);
   clearInterval(precompile);
   const t2 = performance.now();
   const c = world.composer;
@@ -113,9 +114,10 @@ async function mount() {
   // jusqu'à la bulle complète ne compte pas le rendu (SwiftShader y noierait tout).
   const widenFrames = [];
   let widenRenderMs = 0, widenDoneAt = null;
-  if (near && world.widen) {
+  if (near) {
     let done = false;
-    world.widen(at.lng, at.lat).finally(() => { done = true; });
+    world.setReach(null);
+    world.refresh(at.lng, at.lat, { force: true }).finally(() => { done = true; });
     let last = performance.now();
     for (let i = 0; (!done || busy(c)) && i < 20000; i++) {
       const f = frame(1 / 60, i % 60 === 0);

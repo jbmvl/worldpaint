@@ -97,16 +97,14 @@ export const DEFAULT_ELEVATION_ZOOM = 14;
  * @param {{tiles: string[], maxZoom?: number}|null} [options.vector]
  *        Tuiles vectorielles OpenMapTiles. Absentes, le décor se réduit au relief nu.
  * @param {Object} [options.view] Voir `DEFAULT_VIEW`.
- * @param {number} [options.reach] Portée du décor, en mètres. Chaque couche limite
- *        son rayon à cette valeur (jamais au-delà du sien) et les tuiles vectorielles
- *        se réduisent à celles qui la touchent. Le brouillard garde le rayon de
- *        la bulle (`sky.fogRadius` pour le rapprocher), sans relief lointain. Pour une
- *        scène fixe (départ, arrivée, rejeu) : monter avec `mountAt`. Absente,
- *        le comportement est celui de toujours.
- * @param {Object} [options.detail] Allègement pour un appareil modeste, sans
- *        figer la scène : `radius` plafonne en mètres le rayon des couches (bâti,
- *        rues, chaussées, mobilier…) mais pas le relief, les tuiles ni les arbres ;
- *        `density` (0..1) éclaircit l'herbe et les cultures. `budget` est la longueur
+ * @param {number} [options.reach] Portée du monde, en mètres : la seule option
+ *        qui restreint ce qui est bâti. Tout s'y borne autour de l'observateur —
+ *        tuiles de terrain et vectorielles, carte du sol, arbres, et le rayon de
+ *        chaque couche (jamais au-delà du sien) — et la suit quand il avance. Le
+ *        relief lointain n'est à l'image que sans portée, et le brouillard reste
+ *        à l'application (`sky.fogRadius`, `environment.setFogRadius`). Absente, la
+ *        bulle entière. Elle se change en cours de route : voir `World.setReach`.
+ * @param {Object} [options.detail] `budget` est la longueur
  *        de murs bâtis, en mètres, que le détail s'autorise autour de l'observateur
  *        (`DETAIL_WALL_BUDGET_M` par défaut) : en ville le rayon des couches se
  *        resserre jusqu'à le tenir, jamais sous 300 m, et la relève se rapproche
@@ -167,7 +165,7 @@ export function createWorld({
     theme: resolved,
     reach: Number.isFinite(reach) && reach > 0 ? reach : Infinity,
     detail: detail || {},
-    far: settings.farBlockSize > settings.blockSize && !Number.isFinite(reach)
+    far: settings.farBlockSize > settings.blockSize
       ? {
           elevation: field.atZoom(Math.min(field.zoom, Math.max(0, settings.zoom - FAR_DEM_ZOOM_DROP))),
           blockSize: settings.farBlockSize,
@@ -597,33 +595,42 @@ export class World {
   }
 
   /**
-   * Monte le décor d'une scène fixe, en un appel : centre la bulle puis refait
-   * tout, d'office. Pas de recentrage ensuite — le décor ne suit personne. À
-   * associer à `reach` pour ne bâtir que ce qui est proche (départ, arrivée,
-   * rejeu d'un évènement). Mailles et semis sont achevés quand la promesse se
-   * résout : la première image est complète.
+   * Portée du monde, en mètres ; `null` : la bulle entière. Prend effet au
+   * prochain `refresh` ou `mountAt`.
+   *
+   * Une seule option pour tous les mondes restreints : une scène fixe (petite
+   * portée, montée une fois), un observateur suivi de près (petite portée,
+   * recentrée comme une bulle), ou le proche d'abord — monter avec une portée
+   * courte pour une première image rapide, puis `setReach(null)` et `refresh` :
+   * le reste se bâtit pendant qu'on rend.
+   *
+   * @param {number|null} reach
+   * @returns {boolean} vrai si la portée a changé.
+   */
+  setReach(reach) {
+    return this.composer.setReach(reach);
+  }
+
+  /** Portée du monde, en mètres ; `Infinity` sans portée. */
+  get reach() {
+    return this.composer.bubble.reachMeters;
+  }
+
+  /**
+   * Monte le décor en un appel : centre la bulle puis refait tout, d'office.
+   * Mailles et semis sont achevés quand la promesse se résout : la première
+   * image est complète. Suffit à une scène fixe ; un observateur qui avance
+   * recentre ensuite (`setCenter`, `refresh`).
    *
    * @param {number} lng
    * @param {number} lat
    * @param {Object} [options]
    * @param {number} [options.budgetMs] Temps CPU entre deux pauses (100 ms par
    *        défaut) ; `Infinity` monte sans rendre la main.
-   * @param {number} [options.near] Portée provisoire, en mètres : seul le
-   *        proche est bâti, pour une première image rapide, et `widen()` rend
-   *        ensuite la portée du monde. Sans effet sur un monde déjà borné plus court.
    * @returns {Promise<boolean>} vrai si le décor a été bâti.
    */
   mountAt(lng, lat, options) {
     return this.composer.mountAt(lng, lat, options);
-  }
-
-  /**
-   * Après un `mountAt({ near })` : rend la portée du monde et bâtit le reste
-   * de la bulle, avec les pauses d'une relève ordinaire (on rend pendant ce temps).
-   * @returns {Promise<boolean>} vrai si le décor a été rebâti.
-   */
-  widen(lng, lat) {
-    return this.composer.widen(lng, lat);
   }
 
   /**
@@ -643,7 +650,7 @@ export class World {
     const far = this.composer.far;
     const near = this._nearFogRadius;
     if (!far || !near || !this.environment) return;
-    const target = near + Math.max(0, far.radiusMeters * FAR_FOG_REACH - near) * far.farness;
+    const target = near + Math.max(0, far.radiusMeters * FAR_FOG_REACH - near) * (far.shown ? far.farness : 0);
     const now = this.environment.fogRadius;
     const next = now + (target - now) * (1 - Math.exp(-delta / FOG_FOLLOW_S));
     this.environment.setFogRadius(Math.abs(target - next) < 1 ? target : next);

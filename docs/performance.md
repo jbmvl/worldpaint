@@ -164,9 +164,10 @@ lieu. `--near 0` monte la bulle d'un trait au lieu du proche d'abord.
 
 ### Le proche d'abord
 
-`mountAt(lng, lat, { near })` ne bâtit que ce qui tient dans `near` mètres,
-puis `widen(lng, lat)` rend la portée du monde et bâtit le reste comme une
-relève ordinaire, avec ses pauses : on rend pendant ce temps. La démo monte
+`setReach(300)` avant `mountAt(lng, lat)` ne bâtit que ce qui tient dans
+300 mètres, puis `setReach(null)` et `refresh(lng, lat, { force: true })`
+bâtissent le reste comme une relève ordinaire, avec ses pauses : on rend
+pendant ce temps. C'est la portée du monde, la même option qu'une scène figée. La démo monte
 ainsi à 300 m. Le reste de la bulle coûte plus cher qu'un montage d'un trait
 (le proche est bâti deux fois), mais la main est rendue bien plus tôt.
 

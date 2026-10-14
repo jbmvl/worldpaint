@@ -133,12 +133,13 @@ export class WorldComposer {
    *        Source des tuiles vectorielles : gabarits d'URL `{z}/{x}/{y}` et
    *        zoom maximal servi. Absente, le décor se réduit au relief nu.
    * @param {number} [options.maxAnisotropy] Capacité du renderer.
-   * @param {number} [options.reach] Portée du décor en mètres. Absente, chaque couche garde son rayon.
+   * @param {number} [options.reach] Portée du monde en mètres (`setReach`). Absente, chaque couche garde son rayon.
    * @param {Object} [options.theme] Direction artistique, déjà résolue par
    *        `resolveTheme`. Le compositeur la distribue sans la lire.
-   * @param {{radius?: number, density?: number, budget?: number}} [options.detail] Voir `createWorld`.
+   * @param {{budget?: number}} [options.detail] Voir `createWorld`.
    * @param {{elevation: Object, blockSize: number}|null} [options.far] Relief lointain :
    *        son `ElevationField` et son côté en tuiles. Absent, rien au-delà de la bulle.
+   *        Il n'est à l'image que sans portée.
    */
   constructor({
     THREE,
@@ -214,7 +215,6 @@ export class WorldComposer {
       segmentsByRing,
       theme,
       reach,
-      decorRadius: detail.radius,
       edgeVisible: !!far,
     });
     this.bubble.setMaxAnisotropy(maxAnisotropy);
@@ -301,7 +301,6 @@ export class WorldComposer {
       streets: this.streets,
       theme,
       scatterBudgetMs: GRASS_SCATTER_BUDGET_MS,
-      density: detail.density,
     });
     this.grass.setMaxAnisotropy(maxAnisotropy);
 
@@ -314,7 +313,6 @@ export class WorldComposer {
       groundClass: this.groundClass,
       roads: this._infra,
       theme,
-      density: detail.density,
     });
     this.crops.setMaxAnisotropy(maxAnisotropy);
 
@@ -462,37 +460,53 @@ export class WorldComposer {
   }
 
   /**
-   * Monte une scène figée d'un trait : bulle, décor, puis les files (mailles,
-   * semis) vidées avant de rendre la main. Les mailles ne se construisent
-   * qu'une fois, après le déblai des chaussées.
+   * Portée du monde, en mètres ; `null` ou `Infinity` : la bulle entière. Elle
+   * borne tout ce qui se bâtit autour de l'observateur — tuiles de terrain et
+   * vectorielles, carte du sol, arbres, couches — et le suit : terrain à
+   * chaque `setCenter`, décor à chaque relève. Le relief lointain n'est à
+   * l'image que sans portée.
+   *
+   * Prend effet au prochain `refresh` ou `mountAt` : la bulle y est recentrée
+   * sur la nouvelle portée et le décor refait, même si l'observateur n'a pas bougé.
+   *
+   * @returns {boolean} vrai si la portée a changé.
+   */
+  setReach(reach) {
+    const next = Number.isFinite(reach) && reach > 0 ? reach : Infinity;
+    if (this.disposed || next === this.bubble.reachMeters) return false;
+    this.bubble.setReach(next);
+    this.groundClass.setReach(next);
+    this._reachChanged = true;
+    this._incompleteRefresh = true;
+    return true;
+  }
+
+  /**
+   * Monte le monde d'un trait : bulle, décor, puis les files (mailles, semis)
+   * vidées avant de rendre la main. Les mailles ne se construisent qu'une
+   * fois, après le déblai des chaussées.
    *
    * @param {Object} [options]
    * @param {number} [options.budgetMs] Temps CPU entre deux pauses ; une
    *        scène qu'on n'affiche qu'une fois prête n'a pas à en faire.
    * @returns {Promise<boolean>} vrai si le décor a été bâti.
    */
-  async mountAt(lng, lat, { budgetMs = MOUNT_BUDGET_MS, near = null } = {}) {
+  async mountAt(lng, lat, { budgetMs = MOUNT_BUDGET_MS } = {}) {
     if (this._refreshTask) await this._refreshTask;
-    if (near > 0 && near < this.bubble.reachMeters) {
-      this._widerReach ??= this.bubble.reachMeters;
-      this.bubble.setReach(near);
-    }
+    // Les tuiles attendent le déblai, qui les remaillerait de toute façon.
     await this._center(lng, lat, { meshes: false, budgetMs });
     const built = await this.refresh(lng, lat, { force: true, budgetMs });
     while (this.bubble.processRebuildQueue(Infinity));
     while (this.vegetation.pending) this.vegetation.processQueue(Infinity);
-    this.far?.sync();
+    this._syncFar();
     return built;
   }
 
-  /** Rend la portée qu'un `mountAt({ near })` avait raccourcie, et bâtit le reste. */
-  async widen(lng, lat) {
-    if (this._widerReach == null || this.disposed) return false;
-    this.bubble.setReach(this._widerReach);
-    this._widerReach = null;
-    // Les tuiles gagnées attendent le déblai, qui les remaillerait de toute façon.
-    await this._center(lng, lat, { meshes: false });
-    return this.refresh(lng, lat, { force: true });
+  /** Le relief lointain n'accompagne que la bulle entière : une portée le retire de l'image. */
+  _syncFar() {
+    if (!this.far) return;
+    if (Number.isFinite(this.bubble.reachMeters)) this.far.hide();
+    else this.far.sync();
   }
 
   /**
@@ -528,12 +542,17 @@ export class WorldComposer {
   }
 
   async _refresh(lng, lat, { force = false, budgetMs } = {}) {
+    if (this._reachChanged && !this.disposed) {
+      this._reachChanged = false;
+      // Les tuiles gagnées attendent le déblai, qui les remaillerait de toute façon.
+      this._center(lng, lat, { meshes: false, budgetMs });
+    }
     while (this._centerTask) await this._centerTask;
     if (this.disposed || this._refreshing || this._superseded || !this.vectorTiles || !this.bubble.frame) return false;
 
     const here = this.bubble.frame.toLocal(lng, lat);
     // Les arbres se sèment à part (file par tuile) : ils doivent connaître la portée avant `sync`.
-    this.vegetation?.setReach?.(Number.isFinite(this.bubble.reachMeters) ? here : null, this.bubble.reachMeters);
+    this.vegetation?.setReach?.(Number.isFinite(this.bubble.reachMeters) ? here : null, this.bubble.reachMeters, this.bubble.decorStepMeters);
     // Le profil se prend avant tout le reste, et même quand rien n'est périmé :
     // il ne coûte qu'une lecture de tableau et cinq altitudes, et ce qui le lit
     // le lit à la construction de son propre contenu.
@@ -966,7 +985,7 @@ export class WorldComposer {
       this.vegetation.processQueue();
       this.bubble.processRebuildQueue();
     }
-    this.far?.sync();
+    this._syncFar();
     // Les rides de l'eau vivent dans le shader de terrain, avec elle.
     this.bubble.materials.advanceWater(delta);
     this.grass.advance(delta);

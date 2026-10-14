@@ -267,29 +267,43 @@ sees exactly the landscape it saw before the feature existed.
 `three` is a peer dependency and is **injected**, never imported: two copies
 of three in one page share neither their constants nor their prototypes.
 
-### A fixed, close-up scene (`reach`)
+### A smaller world (`reach`)
 
-For a start line, a finish, or the replay of an event, nothing needs to be built
-beyond a few dozen metres. `reach` caps every layer's radius (it never extends
-one) and loads only the vector tiles that touch the disc. `mountAt` centres the bubble and builds everything in one call; there
-is no re-centring afterwards, since nothing follows the viewer.
+`reach` is the one option that restricts what is built: a radius in metres
+around the viewer. Everything is bounded by it — the terrain tiles and the
+vector tiles that touch it, the road carving, the ground map, the trees, and
+every layer's radius (it never extends one). It follows the viewer, and it can
+change at any time with `world.setReach(metres | null)`, which takes effect on
+the next `refresh` or `mountAt`. WorldPaint does not know why the world is
+small: the application decides, and uses the same option in every case.
 
 ```js
-const world = createWorld({ THREE, scene, reach: 120, sky: { Sky } });
+// A fixed scene — a start line, a finish, the replay of an event.
+const world = createWorld({ THREE, scene, reach: 120, sky: { Sky, fogRadius: 120 } });
 world.setVector({ tiles, maxZoom: 14 });
 await world.mountAt(lng, lat);
+
+// A small world that follows someone: recentre it like a full bubble.
+await world.setCenter(lng, lat);
+await world.refresh(lng, lat);
+
+// Near first: a quick first frame, then the rest while rendering.
+world.setReach(300);
+await world.mountAt(lng, lat);
+world.setReach(null);
+world.refresh(lng, lat, { force: true });
 ```
 
-Without `reach`, behaviour is unchanged. With it, the terrain keeps only the
-bubble tiles that touch the reach, and is carved for roads only inside it; the
-ground map is read back only around it, and water is laid only inside that same
-square; trees are sown only within it. The
-terrain is meshed once, after the roads have carved it, and the returned promise
-resolves on a complete scene: tiles meshed, trees sown. `mountAt(lng, lat,
-{ budgetMs })` yields to the browser every `budgetMs` (100 ms by default;
-`Infinity` never yields). Grass and crops are still scattered around the camera
-each frame. The fog keeps the bubble's radius: pass `sky.fogRadius` to draw it
-in and hide what lies beyond the reach.
+Without `reach`, the whole bubble is built. `mountAt` meshes the terrain once,
+after the roads have carved it, and the returned promise resolves on a complete
+scene: tiles meshed, trees sown. `mountAt(lng, lat, { budgetMs })` yields to the
+browser every `budgetMs` (100 ms by default; `Infinity` never yields). With a
+reach, the décor is rebuilt at a shorter step so the viewer never nears its
+edge. Grass and crops are still scattered around the camera each frame. The
+far relief is only shown without a reach. The fog is the application's: pass
+`sky.fogRadius`, or call `world.environment.setFogRadius`, to hide what lies
+beyond the reach. Building near first costs more in total than one full mount
+(the near part is built twice), but the first frame comes much sooner.
 
 On a recorded place (`demo/lab/mount.html`), a 120 m scene takes about half a
 second from `createWorld` to the first frame in headless Chrome, against four
@@ -305,37 +319,16 @@ the slopes. It is only built where the elevations under it span more than
 200 m, and the fog then moves out towards its edge (fully from 500 m of
 relief); on flat land nothing is built and the fog stays on the bubble. Pass
 `view: { farBlockSize: 0 }` to remove it, or `sky.fogRadius` to keep the fog
-where you put it. A fixed scene (`reach`) has none. The camera's far plane
+where you put it. It is only shown without a `reach`. The camera's far plane
 must reach the sheet.
 
-### A lighter scene for modest devices (`detail`)
+### Towns (`detail.budget`)
 
-A phone pays for the decor twice: building it on a slow CPU, then drawing it.
-`detail` lightens a moving scene without fixing it in place:
-
-```js
-const world = createWorld({
-  THREE, scene, sky: { Sky, fogRadius: 720 },
-  detail: { radius: 400, density: 0.4 },
-  view: { segmentsByRing: [96, 48, 24] },
-});
-```
-
-`radius` caps every layer's radius, like `reach`, but the terrain, the vector
-tiles and the ground map keep the whole bubble, so the scene still follows the
-viewer and the landscape beyond stays coloured. Trees are not capped. `density`
-(0..1) thins grass and crops. Draw the fog in to hide the edge of the detail.
-
-Without any setting, the detail already tightens in towns: the layers' radius
-stops where the built walls around the viewer add up to `detail.budget` metres
+Without any setting, the detail tightens in towns: the layers' radius stops
+where the built walls around the viewer add up to `detail.budget` metres
 (60 km by default, never under 300 m), and the rebuild step shrinks with it. A
 village never reaches the budget and keeps its full reach. `budget: Infinity`
 turns this off.
-
-On `demo/lab/mount.html` (`await mountLab.run({ reach: null, lieu: 'angers',
-detail: { radius: 400, density: 0.4 }, view: { segmentsByRing: [96, 48, 24] } })`),
-a town centre builds about three to four times faster than the full bubble,
-with about a third of its triangles.
 
 ### Art direction
 

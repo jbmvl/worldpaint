@@ -673,15 +673,37 @@ export class VegetationLayer {
   }
 
   /**
-   * Limite le semis au disque `{ x, z, radius }` (mètres locaux) : une scène
-   * figée n'a pas besoin des arbres de toute la bulle. `null` lève la limite.
+   * Limite le semis au disque `{ x, z, radius }` (mètres locaux) : un monde
+   * borné n'a pas besoin des arbres de toute la bulle. `null` lève la limite.
    * Les cellules gardées sont celles qu'on aurait semées de toute façon — le
    * tirage ne dépend que de leur position.
+   *
+   * Le disque suit l'observateur par pas de `step` mètres, comme le décor : en
+   * deçà il ne bouge pas. Quand il change, les tuiles qu'il coupait ou qu'il
+   * coupe sont resemées à la prochaine `sync`.
    */
-  setReach(center, radius) {
-    this._reach = center && Number.isFinite(radius)
-      ? { x: center.x, z: center.z, radius }
-      : null;
+  setReach(center, radius, step = 0) {
+    const previous = this._reach;
+    const next = center && Number.isFinite(radius) ? { x: center.x, z: center.z, radius } : null;
+    if (!previous && !next) return;
+    if (previous && next && previous.radius === next.radius &&
+      Math.hypot(next.x - previous.x, next.z - previous.z) < step) return;
+    this._reach = next;
+    for (const key of this._planted) {
+      const tile = this.bubble.tiles.get(key);
+      if (tile && (this._tileCutBy(tile, previous) || this._tileCutBy(tile, next))) this._stale.add(key);
+    }
+  }
+
+  /** Vrai si le disque ne couvre pas toute la tuile : son semis dépend de lui. */
+  _tileCutBy(tile, reach) {
+    if (!reach) return false;
+    const frame = this.bubble.frame;
+    const minX = (tile.x - frame.origin.x) * frame.scale;
+    const minZ = (tile.y - frame.origin.y) * frame.scale;
+    const dx = Math.max(reach.x - minX, minX + frame.scale - reach.x);
+    const dz = Math.max(reach.z - minZ, minZ + frame.scale - reach.z);
+    return Math.hypot(dx, dz) > reach.radius;
   }
 
   /** Vrai si la cellule, ou la tuile, est hors de la portée posée par `setReach`. */

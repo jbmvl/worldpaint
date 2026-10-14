@@ -25,8 +25,9 @@
  *
  *   await mountLab.run({ reach: 120, lieu: 'station-montreuil-bellay' })
  *   await mountLab.run({ reach: null })   // la bulle complète, pour comparer
- *   await mountLab.run({ reach: null, detail: { radius: 400, density: 0.4 } })   // décor allégé
  *   await mountLab.run({ reach: null, detail: { budget: Infinity } })   // sans resserrement en ville
+ *   await mountLab.move({ dx: 400, steps: 8 })     // la portée suit l'observateur
+ *   await mountLab.move({ reach: null })           // le monde s'ouvre sans se remonter
  *
  * Rend les temps par phase (création, `mountAt`, files vidées image par image,
  * premier rendu), les couches les plus lentes, ce qui a été bâti, et le rayon
@@ -43,6 +44,25 @@ document.body.appendChild(renderer.domElement);
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 20000);
 
 let current = null;
+
+/** Maillages visibles et triangles de la scène, et leur répartition par nom de maillage. */
+function census(scene) {
+  let meshes = 0, triangles = 0;
+  const byName = {};
+  scene.traverse((o) => {
+    if (!o.isMesh || !o.visible) return;
+    meshes++;
+    const g = o.geometry;
+    const n = g.index ? g.index.count : g.attributes.position?.count ?? 0;
+    const count = Math.round((n / 3) * (o.isInstancedMesh ? o.count : 1));
+    triangles += count;
+    const name = o.name || o.parent?.name || '(sans nom)';
+    const entry = (byName[name] ??= { meshes: 0, triangles: 0 });
+    entry.meshes++;
+    entry.triangles += count;
+  });
+  return { meshes, triangles, byName };
+}
 
 async function run({ detail = null, view = null, reach = 120, lieu = 'station-montreuil-bellay', lng = null, lat = null, yawDeg = 225, pitchDeg = 12, distance = 40, budgetMs } = {}) {
   current?.world.dispose();
@@ -100,14 +120,7 @@ async function run({ detail = null, view = null, reach = 120, lieu = 'station-mo
     .sort((a, b) => b[1].totalMs - a[1].totalMs)
     .slice(0, 10)
     .map(([name, v]) => `${name} ${Math.round(v.totalMs)}`);
-  let meshes = 0, triangles = 0;
-  scene.traverse((o) => {
-    if (!o.isMesh || !o.visible) return;
-    meshes++;
-    const g = o.geometry;
-    const n = g.index ? g.index.count : g.attributes.position?.count ?? 0;
-    triangles += (n / 3) * (o.isInstancedMesh ? o.count : 1);
-  });
+  const { meshes, triangles, byName } = census(scene);
   return {
     lieu, reach,
     createMs: Math.round(t1 - t0),
@@ -119,13 +132,54 @@ async function run({ detail = null, view = null, reach = 120, lieu = 'station-mo
     decorRadius: c.bubble.decorReachMeters, decorStep: c.bubble.decorStepMeters,
     terrainTiles: c.bubble.tiles.size,
     vectorTiles: c._lastWanted?.length ?? null,
-    meshes, triangles: Math.round(triangles),
+    meshes, triangles: Math.round(triangles), byName,
     calls: renderer.info.render.calls,
     layers,
   };
 }
 
-window.mountLab = { run };
+/**
+ * Déplace l'observateur du monde monté et, au besoin, change sa portée : la
+ * portée suit, ou s'ouvre (`reach: null`) sans remonter le monde. Rend ce qui
+ * est bâti au point d'arrivée, à comparer à un `run` fait directement là.
+ */
+async function move({ reach, dx = 0, dz = 0, steps = 1, yawDeg = 225, pitchDeg = 12, distance = 40 } = {}) {
+  if (!current) throw new Error('mountLab.move : aucun monde monté');
+  const { world, scene } = current;
+  const c = world.composer;
+  if (reach !== undefined) world.setReach(reach);
+  const from = current.at ?? { x: 0, z: 0 };
+  let lngLat = null;
+  for (let i = 1; i <= steps; i++) {
+    const x = from.x + (dx * i) / steps, z = from.z + (dz * i) / steps;
+    lngLat = world.frame.toLngLat(x, z);
+    await world.setCenter(lngLat.lng, lngLat.lat);
+    await world.refresh(lngLat.lng, lngLat.lat);
+    for (let f = 0; f < 2000 && (c.vegetation.pending || c.bubble._rebuildQueue.length > 0 || c.bubble._pendingBuild); f++) {
+      world.advance(1 / 60, { x, y: 0, z });
+    }
+  }
+  const x = from.x + dx, z = from.z + dz;
+  current.at = { x, z };
+  const y = c.groundElevationAt(x, z) ?? 0;
+  const yaw = (yawDeg * Math.PI) / 180, pitch = (pitchDeg * Math.PI) / 180;
+  camera.position.set(x - Math.sin(yaw) * Math.cos(pitch) * distance, y + 1.7 + Math.sin(pitch) * distance, z + Math.cos(yaw) * Math.cos(pitch) * distance);
+  camera.lookAt(x, y + 1.7, z);
+  world.advance(0, { x, y, z });
+  renderer.render(scene, camera);
+  renderer.getContext().finish();
+  const { meshes, triangles, byName } = census(scene);
+  return {
+    reach: world.reach, at: lngLat,
+    decorRadius: c.bubble.decorReachMeters, decorStep: c.bubble.decorStepMeters,
+    terrainTiles: c.bubble.tiles.size,
+    farShown: !!c.far?.shown,
+    meshes, triangles: Math.round(triangles), byName,
+    calls: renderer.info.render.calls,
+  };
+}
+
+window.mountLab = { run, move };
 window.mountLabReady = true;
 </script>
 </body>

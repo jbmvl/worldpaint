@@ -226,7 +226,7 @@ reachInput.addEventListener('change', () => reachToggle.checked && applyReach())
 
 /** Vrai pendant un montage : le recentrage périodique ne doit pas déplacer la bulle sous lui. */
 let mounting = false;
-/** Portée du premier montage, avant que `widen` ne bâtisse le reste de la bulle. */
+/** Portée du premier montage, avant que le reste de la bulle ne se bâtisse. */
 const NEAR_M = 300;
 /** L'élargissement en cours après un montage, `null` une fois la bulle complète. */
 let widening = null;
@@ -244,15 +244,17 @@ async function mountScene(lng, lat) {
   const precompile = setInterval(() => renderer.compile(scene, camera), 200);
   try {
     // Le proche d'abord, pour rendre la main vite ; le reste de la bulle se
-    // bâtit ensuite pendant qu'on rend (`widen`). Une scène figée n'en a pas besoin.
-    await world.mountAt(lng, lat, REACH_M === null ? { near: NEAR_M } : {});
+    // bâtit ensuite pendant qu'on rend. Une scène figée n'en a pas besoin.
+    if (REACH_M === null) world.setReach(NEAR_M);
+    await world.mountAt(lng, lat);
   } finally {
     clearInterval(precompile);
     mounting = false;
   }
   const t1 = performance.now();
   if (REACH_M === null) {
-    const task = world.widen(lng, lat).then(() => {
+    world.setReach(null);
+    const task = world.refresh(lng, lat, { force: true }).then(() => {
       if (widening !== task) return;
       widening = null;
       const t2 = performance.now();

@@ -1,6 +1,7 @@
 /*
- * `createWorld({ reach })` : le décor d'une scène fixe ne bâtit que ce qui est
- * à portée, et rien ne change quand la portée est absente.
+ * La portée du monde (`createWorld({ reach })`, `world.setReach`) : seul ce qui
+ * est à portée de l'observateur est bâti, elle le suit, elle se change en
+ * cours de route, et rien ne change quand elle est absente.
  */
 
 import test from 'node:test';
@@ -281,4 +282,149 @@ test('mountAt maille le terrain une seule fois, après le décor, et rend une sc
   assert.ok(calls.slice(2).every(([name, budget]) => name === 'maille' && budget === Infinity));
   assert.equal(queue, -1, 'la file des mailles est vide');
   assert.equal(seeds, 0, 'le semis est achevé');
+});
+
+/** Bulle réduite à ce que `setCenter` touche, sans relief ni maillage. */
+function followingBubble(reach) {
+  const bubble = Object.create(TerrainBubble.prototype);
+  Object.assign(bubble, {
+    disposed: false,
+    zoom: 15,
+    blockSize: 3,
+    frame: null,
+    tiles: new Map(),
+    _reach: reach,
+    _reachDisc: null,
+    _centerTile: null,
+    _generation: 0,
+    _demMargin: 0,
+    _rebuildQueue: [],
+    _abort: { signal: null },
+    elevation: { load: async () => {} },
+    _frameTooFar: () => false,
+    _clearTiles: () => {},
+    _disposeTile: () => {},
+    _demTiles: () => [],
+    _cancelPendingBuild: () => {},
+    _settleSurface: () => {},
+  });
+  return bubble;
+}
+const keysOf = (bubble) => [...bubble.tiles.values()].map((t) => `${t.x - 8000},${t.y - 11200}`).sort();
+const lngLatIn = (fx, fy) => ({ lng: tileXToLng(8000 + fx, 15), lat: tileYToLat(11200 + fy, 15) });
+
+test('la portée suit l’observateur dans sa tuile : les tuiles gagnées montent, les perdues tombent', async () => {
+  const bubble = followingBubble(120);
+  const middle = lngLatIn(0.5, 0.5);
+  assert.equal(await bubble.setCenter(middle.lng, middle.lat, { meshes: false }), true);
+  assert.deepEqual(keysOf(bubble), ['0,0']);
+  assert.equal(await bubble.setCenter(middle.lng, middle.lat, { meshes: false }), false, 'sans bouger, rien');
+
+  const edge = lngLatIn(0.97, 0.5);
+  assert.equal(await bubble.setCenter(edge.lng, edge.lat, { meshes: false }), true, 'même tuile centrale, portée déplacée');
+  assert.deepEqual(keysOf(bubble), ['0,0', '1,0']);
+
+  assert.equal(await bubble.setCenter(middle.lng, middle.lat, { meshes: false }), true);
+  assert.deepEqual(keysOf(bubble), ['0,0'], 'la voisine sortie de portée est démontée');
+});
+
+test('sans portée, la bulle ne bouge pas tant que la tuile centrale est la même', async () => {
+  const bubble = followingBubble(Infinity);
+  const middle = lngLatIn(0.5, 0.5);
+  const edge = lngLatIn(0.97, 0.5);
+  assert.equal(await bubble.setCenter(middle.lng, middle.lat, { meshes: false }), true);
+  assert.equal(bubble.tiles.size, 9);
+  assert.equal(await bubble.setCenter(edge.lng, edge.lat, { meshes: false }), false);
+});
+
+test('setReach change la portée en route : la bulle s’élargit puis se resserre sans changer de tuile', async () => {
+  const bubble = followingBubble(120);
+  const middle = lngLatIn(0.5, 0.5);
+  await bubble.setCenter(middle.lng, middle.lat, { meshes: false });
+  assert.equal(bubble.tiles.size, 1);
+  bubble.setReach(null);
+  assert.equal(await bubble.setCenter(middle.lng, middle.lat, { meshes: false }), true);
+  assert.equal(bubble.tiles.size, 9, 'la bulle entière');
+  bubble.setReach(120);
+  assert.equal(await bubble.setCenter(middle.lng, middle.lat, { meshes: false }), true);
+  assert.equal(bubble.tiles.size, 1);
+});
+
+test('world.setReach borne terrain, carte du sol et couches, et force la prochaine relève', async () => {
+  const { createWorld } = await import('../src/world.js');
+  const world = createWorld({ THREE, scene: new THREE.Scene() });
+  try {
+    assert.equal(world.reach, Infinity);
+    assert.equal(world.setReach(300), true);
+    assert.equal(world.setReach(300), false, 'la même portée ne refait rien');
+    assert.equal(world.reach, 300);
+    assert.equal(world.bubble.decorReachMeters, 300);
+    assert.notEqual(world.composer.groundClass._windowM, null, 'la carte du sol ne relit qu’une fenêtre');
+    assert.equal(world.composer._incompleteRefresh, true, 'le décor est refait même sans bouger');
+    assert.ok(world.bubble.decorStepMeters < 250, 'la relève se resserre avec la portée');
+    assert.equal(world.setReach(null), true);
+    assert.equal(world.composer.groundClass._windowM, null);
+  } finally {
+    world.dispose();
+  }
+});
+
+test('le relief lointain existe avec ou sans portée, mais n’est à l’image que sans', async () => {
+  const { createWorld } = await import('../src/world.js');
+  const world = createWorld({ THREE, scene: new THREE.Scene(), reach: 150 });
+  try {
+    const far = world.composer.far;
+    assert.ok(far, 'une portée à la création ne le retire plus');
+    let synced = 0;
+    far.sync = () => { synced++; };
+    far.mesh.visible = true;
+    world.composer._syncFar();
+    assert.equal(far.shown, false);
+    assert.equal(synced, 0, 'rien n’est chargé pour un monde borné');
+    world.setReach(null);
+    world.composer._syncFar();
+    assert.equal(synced, 1);
+  } finally {
+    world.dispose();
+  }
+});
+
+test('les arbres suivent la portée par pas : les tuiles coupées sont resemées, les couvertes non', async () => {
+  const { VegetationLayer } = await import('../src/layers/vegetationLayer.js');
+  const frame = { origin: { x: 0, y: 0 }, scale: 800 };
+  const tiles = new Map(
+    [[0, 0], [1, 0]].map(([x, y]) => [`${x}:${y}`, { key: `${x}:${y}`, x, y, ring: 0 }])
+  );
+  const layer = Object.create(VegetationLayer.prototype);
+  Object.assign(layer, {
+    disposed: false,
+    maxRing: 1,
+    bubble: { frame, tiles },
+    queue: [],
+    _planted: new Set(['0:0', '1:0']),
+    _stale: new Set(),
+    _partial: new Map(),
+    remove(key) { this._planted.delete(key); },
+  });
+
+  // Sans portée jusque-là : tout était semé en entier. Une portée de 300 m coupe les deux tuiles.
+  layer.setReach({ x: 700, z: 400 }, 300, 100);
+  assert.deepEqual([...layer._stale].sort(), ['0:0', '1:0']);
+  layer._stale.clear();
+
+  layer.setReach({ x: 750, z: 400 }, 300, 100);
+  assert.equal(layer._reach.x, 700, 'en deçà du pas, le disque ne bouge pas');
+  assert.equal(layer._stale.size, 0);
+
+  layer.setReach({ x: 820, z: 400 }, 300, 100);
+  assert.equal(layer._reach.x, 820);
+  assert.deepEqual([...layer._stale].sort(), ['0:0', '1:0'], 'le disque a bougé : ses tuiles sont reprises');
+  layer._stale.clear();
+
+  // Une portée qui couvre tout : les tuiles coupées jusque-là sont complétées, puis plus rien.
+  layer.setReach({ x: 800, z: 400 }, 5000, 100);
+  assert.equal(layer._stale.size, 2);
+  layer._stale.clear();
+  layer.setReach({ x: 1200, z: 400 }, 5000, 100);
+  assert.equal(layer._stale.size, 0, 'des tuiles couvertes en entier avant et après ne sont pas resemées');
 });

@@ -14,7 +14,7 @@
  * RAM : tas JS retenu après GC forcé (CDP `HeapProfiler.collectGarbage` puis
  * `Runtime.getHeapUsage`), pic du tas pendant le travail (`performance.memory`
  * précis), et PSS cumulée des processus Chromium (pic et après GC), lue dans
- * `/proc` — Linux seulement. Les médianes des passes sont rendues.
+ * `/proc` — Linux seulement (0 ailleurs). Les médianes des passes sont rendues.
  */
 import { spawn } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -47,8 +47,12 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
   .catch(() => import('/opt/node-tools/node_modules/playwright/index.js'))
   .then((m) => m.default ?? m);
 
+/** `/proc` n'existe que sous Linux : ailleurs la PSS n'est pas mesurée (0). */
+const HAS_PROC = existsSync('/proc');
+
 /** Le processus principal du navigateur, reconnu à un drapeau propre à la passe. */
 function browserPid(marker) {
+  if (!HAS_PROC) return 0;
   const pids = readdirSync('/proc').filter((d) => /^\d+$/.test(d)).filter((d) => {
     try { return readFileSync(`/proc/${d}/cmdline`, 'utf8').split('\0').includes(marker); } catch { return false; }
   }).map(Number);
@@ -57,6 +61,7 @@ function browserPid(marker) {
 
 /** PSS cumulée (octets) du processus et de ses descendants. */
 function pss(pid) {
+  if (!HAS_PROC) return 0;
   const children = new Map();
   for (const d of readdirSync('/proc')) {
     if (!/^\d+$/.test(d)) continue;

@@ -62,7 +62,8 @@ export function budgetedRadius(rings, budget = DETAIL_WALL_BUDGET_M) {
  */
 export function decorStepFor(radius) {
   if (!(radius < DECOR_STABLE_RADIUS_M)) return DECOR_STEP_M;
-  return Math.max(DETAIL_RING_M, (radius - RELIEF_MARGIN_M) * DECOR_STEP_M / (NEAR_M + DECOR_STEP_M));
+  // Une portée plus courte que deux couronnes : la moitié du rayon, pour ne jamais en sortir.
+  return Math.max(Math.min(DETAIL_RING_M, radius / 2), (radius - RELIEF_MARGIN_M) * DECOR_STEP_M / (NEAR_M + DECOR_STEP_M));
 }
 
 /** Marge du terrain, des tuiles vectorielles et du sol autour de la portée : facteur, puis mètres. */
@@ -70,8 +71,8 @@ export const REACH_MARGIN = 1.25;
 export const REACH_MARGIN_M = 60;
 
 /**
- * Rayon d'une couche, plafonné à la portée du décor (`createWorld({ reach })`
- * ou `detail.radius`). Sans portée, ou face à une bulle qui n'en déclare pas,
+ * Rayon d'une couche, plafonné à la portée du monde (`createWorld({ reach })`,
+ * `setReach`) et au rayon du budget de murs. Sans portée, ou face à une bulle qui n'en déclare pas,
  * le rayon propre de la couche reste intact : la portée ne rallonge jamais rien.
  *
  * @param {number} radius Rayon propre de la couche, en mètres.

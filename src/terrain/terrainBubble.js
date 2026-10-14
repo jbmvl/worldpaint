@@ -102,7 +102,6 @@ export class TerrainBubble {
     groundClass = null,
     theme = defaultTheme,
     reach = Infinity,
-    decorRadius = Infinity,
     edgeVisible = false,
   }) {
     this.THREE = THREE;
@@ -116,10 +115,8 @@ export class TerrainBubble {
     this.blockSize = blockSize % 2 === 0 ? blockSize + 1 : blockSize;
     this.segmentsByRing = segmentsByRing;
     this.verticalScale = verticalScale;
-    /** Portée du décor autour de l'observateur, en mètres (`createWorld({ reach })`). */
+    /** Portée du monde autour de l'observateur, en mètres (`createWorld({ reach })`, `setReach`). */
     this._reach = Number.isFinite(reach) && reach > 0 ? reach : Infinity;
-    /** Rayon du détail (`detail.radius`) : plafonne les couches, pas le relief ni les tuiles. */
-    this._decorRadius = Number.isFinite(decorRadius) && decorRadius > 0 ? decorRadius : Infinity;
     /** Rayon du détail que laisse la densité du lieu (`setDetailBudgetRadius`). */
     this._budgetRadius = Infinity;
     /** Disque de la portée autour du dernier centre, `null` sans portée : le déblai s'y limite. */
@@ -235,8 +232,8 @@ export class TerrainBubble {
   }
 
   /**
-   * Change la portée ; le prochain `setCenter` remonte les tuiles qu'elle
-   * gagne, même sans changer de tuile centrale.
+   * Change la portée ; le prochain `setCenter` monte les tuiles qu'elle gagne
+   * et démonte celles qu'elle perd, même sans changer de tuile centrale.
    */
   setReach(reach) {
     this._reach = Number.isFinite(reach) && reach > 0 ? reach : Infinity;
@@ -244,9 +241,9 @@ export class TerrainBubble {
     this._centerTile = null;
   }
 
-  /** Portée des couches du décor : la plus courte de la portée, du rayon du détail et de celui du budget. */
+  /** Portée des couches du décor : la plus courte de la portée et du rayon du budget. */
   get decorReachMeters() {
-    return Math.min(this._reach, this._decorRadius, this._budgetRadius);
+    return Math.min(this._reach, this._budgetRadius);
   }
 
   /** Rayon que la densité du lieu laisse au détail (`budgetedRadius`), posé avant chaque reconstruction du décor. */
@@ -254,9 +251,9 @@ export class TerrainBubble {
     this._budgetRadius = radius > 0 ? radius : Infinity;
   }
 
-  /** Déplacement de l'observateur avant de refaire le décor : il se resserre avec le rayon du budget. */
+  /** Déplacement de l'observateur avant de refaire le décor : il se resserre avec la portée des couches. */
   get decorStepMeters() {
-    return decorStepFor(this._budgetRadius);
+    return decorStepFor(this.decorReachMeters);
   }
 
   /** Tuile sous l'observateur `{ x, y }`, ou `null` avant le premier centrage. */
@@ -298,14 +295,17 @@ export class TerrainBubble {
       const radius = this._reach * REACH_MARGIN + REACH_MARGIN_M;
       this._reachDisc = { x: here.x, z: here.z, radius2: radius * radius };
     }
-    if (!needsFrame && this._centerTile && this._centerTile.x === cx && this._centerTile.y === cy) {
+    const sameTile = !needsFrame && this._centerTile && this._centerTile.x === cx && this._centerTile.y === cy;
+    // Sans portée, le bloc ne dépend que de la tuile centrale ; avec, il suit l'observateur dans sa tuile.
+    if (sameTile && !Number.isFinite(this._reach)) return false;
+    const wanted = this._withinReach(tilesAround(t.x, t.y, this.blockSize, this.zoom), t, lat);
+    const wantedKeys = new Set(wanted.map((w) => tileKey(w.z, w.x, w.y)));
+    if (sameTile && wantedKeys.size === this.tiles.size && wanted.every((w) => this.tiles.has(tileKey(w.z, w.x, w.y)))) {
       return false;
     }
     this._centerTile = { x: cx, y: cy };
 
     const generation = ++this._generation;
-    const wanted = this._withinReach(tilesAround(t.x, t.y, this.blockSize, this.zoom), t, lat);
-    const wantedKeys = new Set(wanted.map((w) => tileKey(w.z, w.x, w.y)));
 
     // Démonte ce qui sort de la bulle.
     for (const [key, tile] of this.tiles) {
@@ -332,7 +332,8 @@ export class TerrainBubble {
     // `tilesAround`, qui sert d'abord ce que l'observateur a sous les roues.
     const demTiles = new Map();
     for (const w of wanted) {
-      const m = this._demMargin;
+      // Borné par une portée, le bord du bloc est hors champ : pas de marge.
+      const m = Number.isFinite(this._reach) ? 0 : this._demMargin;
       for (const d of this._demTiles(w.x - m, w.y - m, 1 + 2 * m)) {
         const key = tileKey(d.z, d.x, d.y);
         if (!demTiles.has(key)) demTiles.set(key, d);
@@ -370,7 +371,7 @@ export class TerrainBubble {
   }
 
   /**
-   * Une scène figée (`reach`) ne monte que les tuiles de terrain qui touchent
+   * Un monde borné (`reach`) ne monte que les tuiles de terrain qui touchent
    * sa portée, marge comprise : au-delà, le brouillard les cache déjà. Le
    * maillage d'une tuile ne lit que le MNT de ses voisines, pas leur maillage.
    * La tuile centrale reste toujours.

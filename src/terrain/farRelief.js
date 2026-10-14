@@ -121,6 +121,18 @@ export class FarRelief {
     this._heightsKey = null;
   }
 
+  /** Vrai tant que la nappe est à l'image. */
+  get shown() {
+    return this.mesh.visible;
+  }
+
+  /** Retire la nappe de l'image (monde borné par une portée) ; `sync` la remonte. */
+  hide() {
+    this.mesh.visible = false;
+    this._signature = null;
+    this._pending = null;
+  }
+
   /** Demi-côté de la nappe, en mètres. */
   get radiusMeters() {
     return this.bubble.frame ? (this.blockSize / 2) * this.bubble.frame.scale : 0;

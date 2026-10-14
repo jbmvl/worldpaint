@@ -1,7 +1,6 @@
 /*
- * `createWorld({ detail })` : un décor allégé pour un appareil modeste. Le rayon
- * plafonne les couches sans figer la scène (relief et tuiles intacts), la
- * densité éclaircit herbe et cultures ; sans `detail`, rien ne change.
+ * Le budget de murs (`createWorld({ detail: { budget } })`) : en ville le rayon
+ * des couches et le pas de relève se resserrent avec la densité du lieu.
  */
 
 import test from 'node:test';
@@ -13,7 +12,6 @@ import {
   DECOR_STEP_M, DECOR_STABLE_RADIUS_M, DETAIL_MIN_RADIUS_M, DETAIL_RING_M,
 } from '../src/core/decorReach.js';
 import { wallLengthsByDistance } from '../src/layers/settlement.js';
-import { coverBand, thinnedCoverBands } from '../src/layers/coverBands.js';
 
 const anything = () => new Proxy(function () {}, {
   get: (_, key) => (key === Symbol.toPrimitive ? () => 0 : anything()),
@@ -29,35 +27,6 @@ test('reachedRadius lit la portée du décor avant celle de la scène', () => {
   assert.equal(reachedRadius(900, { reachMeters: Infinity, decorReachMeters: 400 }), 400);
   assert.equal(reachedRadius(300, { reachMeters: Infinity, decorReachMeters: 400 }), 300);
   assert.equal(reachedRadius(900, { reachMeters: 120, decorReachMeters: 120 }), 120);
-});
-
-test('thinnedCoverBands réduit les tirages par maille, jamais sous un, et rien à pleine densité', () => {
-  const bands = [coverBand({ from: 0, to: 55, cell: 2.2, perCell: 16 }), coverBand({ from: 50, to: 90, cell: 4, perCell: 2 })];
-  assert.equal(thinnedCoverBands(bands, 1), bands);
-  assert.equal(thinnedCoverBands(bands, undefined), bands);
-  const thin = thinnedCoverBands(bands, 0.4);
-  assert.deepEqual(thin.map((b) => b.perCell), [6, 1]);
-  assert.equal(thin[0].cell, 2.2);
-  assert.equal(bands[0].perCell, 16, 'les bandes d’origine ne sont pas touchées');
-});
-
-test('createWorld : le rayon du détail plafonne le décor, pas la portée de la scène', async () => {
-  const { createWorld } = await import('../src/world.js');
-  const light = createWorld({ THREE, scene: new THREE.Scene(), detail: { radius: 400, density: 0.4 } });
-  const full = createWorld({ THREE, scene: new THREE.Scene() });
-  const fixed = createWorld({ THREE, scene: new THREE.Scene(), reach: 120, detail: { radius: 400 } });
-  try {
-    assert.equal(light.bubble.reachMeters, Infinity, 'relief et tuiles restent ceux de la bulle');
-    assert.equal(light.bubble.decorReachMeters, 400);
-    assert.equal(full.bubble.decorReachMeters, Infinity);
-    assert.equal(fixed.bubble.decorReachMeters, 120);
-    assert.ok(light.composer.grass._bands[0].perCell < full.composer.grass._bands[0].perCell);
-    assert.ok(light.composer.crops._bands[0].perCell < full.composer.crops._bands[0].perCell);
-  } finally {
-    light.dispose();
-    full.dispose();
-    fixed.dispose();
-  }
 });
 
 test('budgetedRadius : le rayon s’arrête à la couronne qui dépasse le budget, jamais sous le minimum', () => {
@@ -76,6 +45,8 @@ test('decorStepFor : le pas de relève se resserre avec le rayon, jamais au-del�
   assert.equal(decorStepFor(350), 100);
   // L'observateur atteint le pas à (rayon − pas) du bord : la zone stable garde deux pas.
   for (const radius of [300, 400, 600]) assert.ok(radius - decorStepFor(radius) >= 2 * decorStepFor(radius));
+  assert.equal(decorStepFor(100), 50);
+  assert.equal(decorStepFor(60), 30, 'une portée très courte : jamais plus de la moitié du rayon');
 });
 
 test('wallLengthsByDistance range le périmètre des anneaux bâtis par couronne, une lecture par tuile', () => {
@@ -100,15 +71,18 @@ test('wallLengthsByDistance range le périmètre des anneaux bâtis par couronne
 
 test('la bulle resserre portée et pas de relève au rayon du budget', async () => {
   const { createWorld } = await import('../src/world.js');
-  const world = createWorld({ THREE, scene: new THREE.Scene(), detail: { radius: 600 } });
+  const world = createWorld({ THREE, scene: new THREE.Scene() });
   try {
     assert.equal(world.bubble.decorStepMeters, DECOR_STEP_M);
     world.bubble.setDetailBudgetRadius(350);
     assert.equal(world.bubble.decorReachMeters, 350);
     assert.equal(world.bubble.decorStepMeters, 100);
     world.bubble.setDetailBudgetRadius(Infinity);
-    assert.equal(world.bubble.decorReachMeters, 600);
+    assert.equal(world.bubble.decorReachMeters, Infinity);
     assert.equal(world.bubble.decorStepMeters, DECOR_STEP_M);
+    world.setReach(200);
+    world.bubble.setDetailBudgetRadius(350);
+    assert.equal(world.bubble.decorReachMeters, 200, 'la portée du monde passe avant un budget plus large');
   } finally {
     world.dispose();
   }

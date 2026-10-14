@@ -101,8 +101,8 @@ prend la cote du terrain affiché, trois mètres dessous, puis plonge d'une
 maille sous la bulle : le raccord est fermé, pas cousu, et une arête de la
 bulle peut dépasser de la nappe de quelques mètres.
 
-`createWorld({ view: { farBlockSize } })` règle son côté, zéro la retire. Une
-scène figée (`reach`) n'en a pas.
+`createWorld({ view: { farBlockSize } })` règle son côté, zéro la retire. Elle
+n'est à l'image que sans portée (`reach`, `setReach`).
 
 ## Les chaussées parallèles
 
