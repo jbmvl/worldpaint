@@ -23,6 +23,7 @@
 import * as THREE from 'three';
 import { CropLayer } from '/src/layers/cropLayer.js';
 import { VergeStrips } from '/src/layers/vergeStrips.js';
+import { createLocalFrame } from '/src/core/tileMath.js';
 
 const HALF_WIDTH = 2.5;
 const CORRIDOR = HALF_WIDTH + 1.2;
@@ -64,7 +65,7 @@ const roads = {
 };
 const state = { crop: 'wheat', hedge: true, lookDeg: 0, pitchDeg: -12, height: 1.7, x: -1.2 };
 const groundClass = { cropReady: true, cropAt: () => state.crop };
-const bubble = { frame: {}, surfaceGeneration: 0, surfaceElevationAtLocal: () => 0, verticalScale: 1 };
+const bubble = { frame: createLocalFrame(-0.145, 47.131, 15), surfaceGeneration: 0, surfaceElevationAtLocal: () => 0, verticalScale: 1 };
 const crops = new CropLayer({ THREE, scene, bubble, groundClass, roads });
 
 function render() {

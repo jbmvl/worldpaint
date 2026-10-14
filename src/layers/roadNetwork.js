@@ -1225,6 +1225,7 @@ export function* collectRoadSegmentsSteps(
   yield;
   const crossings = resolveTransportCrossings(paved, railwaySegments, { centres: areas.areas, bench });
   if (anyWorks) resolveTunnelProfiles(out, railwaySegments, sampleElevation, {
+    frame,
     buildings: memo.tunnelBuildings(read, () => collectTunnelBuildings(source, tiles, frame)), centres: areas.areas, theme: tunnelTheme,
   });
 

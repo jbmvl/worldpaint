@@ -227,7 +227,7 @@ export class BridgeLayer {
     if (path.length < 2) return;
 
     const { halfWidth } = segment;
-    const style = worksStyleAt(path[0].x, path[0].z, this.theme.works);
+    const style = worksStyleAt(this.bubble.frame, path[0].x, path[0].z, this.theme.works);
     // Surface de la chaussée : le ruban est décollé de `ROAD_LIFT_M` au-dessus
     // de la plate-forme, et une corniche arasée sur la plate-forme laisserait
     // une saignée le long de la rive.
@@ -251,7 +251,7 @@ export class BridgeLayer {
   }
 
   _buildJunctionSupport(buffer, area, sampleElevation) {
-    const style = worksStyleAt(area.x, area.z, this.theme.works);
+    const style = worksStyleAt(this.bubble.frame, area.x, area.z, this.theme.works);
     const slab = junctionSurface(area, ROAD_LIFT_M - style.deck.thickness, { base: buffer.positions.length / 3 });
     if (!slab) return;
     buffer.positions.push(...slab.positions);
@@ -285,7 +285,7 @@ export class BridgeLayer {
 
     for (const side of [1, -1]) {
       // Un sel par rive, sinon les deux parapets se répondraient en miroir.
-      const grain = parapet.grain ? facetJitter(path, PARAPET_SEED + (side > 0 ? 0 : 50), parapet.grain) : null;
+      const grain = parapet.grain ? facetJitter(this.bubble.frame, path, PARAPET_SEED + (side > 0 ? 0 : 50), parapet.grain) : null;
       const top = new Float32Array(rows);
       const lateral = new Float32Array(rows);
       const batter = new Float32Array(rows);
@@ -425,7 +425,7 @@ export class BridgeLayer {
     const { halfWidth }=segment;
     const path=this._runPath(segment,run);
     if(path.length<2)return;
-    const style=worksStyleAt(path[0].x,path[0].z,this.theme.works);
+    const style=worksStyleAt(this.bubble.frame,path[0].x,path[0].z,this.theme.works);
     const surface=new Float32Array(path.map((_,i)=>segment.platform[run.from+i]+ROAD_LIFT_M));
     const spacing = (this.theme.tunnelLights ?? defaultTheme.tunnelLights).spacingM;
     const profile = segment.kind === 'underpass' ? [

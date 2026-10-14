@@ -17,9 +17,10 @@
  */
 
 import { pointInAreas } from '../settlement.js';
-import { biomeDebrisKindFor, randomAt, gridCellsAround } from '../furniturePlacement.js';
+import { biomeDebrisKindFor } from '../furniturePlacement.js';
 import { FURNITURE_LIMITS, FURNITURE_RADIUS_M, BIOME_DEBRIS } from './catalog.js';
 import { reachedRadius } from '../../core/decorReach.js';
+import { randomAt, worldCellsAround } from '../../core/groundSeed.js';
 
 /** Portée du semis, en mètres (celle du reste du mobilier). */
 export const BIOME_DEBRIS_RADIUS_M = FURNITURE_RADIUS_M;
@@ -29,14 +30,15 @@ export const BIOME_DEBRIS_CELL_M = 22;
 const CELL_HA = (BIOME_DEBRIS_CELL_M * BIOME_DEBRIS_CELL_M) / 10000;
 
 export function buildBiomeDebris(layer, context, builtUp) {
+  const { frame } = layer.bubble;
   const { here, placements } = context;
   const step = BIOME_DEBRIS_CELL_M;
   let placed = 0;
 
-  for (const { x, z } of gridCellsAround(here, reachedRadius(BIOME_DEBRIS_RADIUS_M, layer.bubble), step)) {
+  for (const { x, z } of worldCellsAround(frame, here, reachedRadius(BIOME_DEBRIS_RADIUS_M, layer.bubble), step)) {
     if (placed >= FURNITURE_LIMITS.biomeDebris) break;
-    const px = x + (randomAt(x, z, 461) - 0.5) * step * 0.9;
-    const pz = z + (randomAt(x, z, 463) - 0.5) * step * 0.9;
+    const px = x + (randomAt(frame, x, z, 461) - 0.5) * step * 0.9;
+    const pz = z + (randomAt(frame, x, z, 463) - 0.5) * step * 0.9;
     if (Math.hypot(px - here.x, pz - here.z) > reachedRadius(BIOME_DEBRIS_RADIUS_M, layer.bubble)) continue;
     if (pointInAreas(builtUp, px, pz)) continue;
     if (layer._onRoad(px, pz)) continue;
@@ -45,13 +47,13 @@ export function buildBiomeDebris(layer, context, builtUp) {
     const table = kind ? BIOME_DEBRIS[kind] : null;
     if (!table) continue;
 
-    const chosen = biomeDebrisKindFor(table, CELL_HA * table.perHa, randomAt(px, pz, 467));
+    const chosen = biomeDebrisKindFor(table, CELL_HA * table.perHa, randomAt(frame, px, pz, 467));
     if (!chosen) continue;
 
     layer._place(placements, chosen.item, {
       x: px,
       z: pz,
-      yaw: randomAt(px, pz, 469) * Math.PI * 2,
+      yaw: randomAt(frame, px, pz, 469) * Math.PI * 2,
       scale: chosen.scale,
     });
     placed++;

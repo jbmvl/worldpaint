@@ -8,6 +8,7 @@ import {readFileSync} from 'node:fs';
 import {isWallFootprint,facadeThickness,isTransitStop,isTransitShelter} from '../src/layers/buildingInterpretation.js';
 import {buildingPersonalityFor,appendOpenings,personalityLookFor} from '../src/layers/buildingLayer.js';
 import {createLocalFrame} from '../src/core/tileMath.js';
+import { testFrame } from './testFrame.mjs';
 
 const rectangle=(width,length)=>[{x:0,z:0},{x:length,z:0},{x:length,z:width},{x:0,z:width}];
 test('les tags de murailles donnent un mur plein sans toit de maison',()=>{
@@ -43,7 +44,7 @@ test('l’épaisseur locale sépare le mur et la salle dans une même empreinte'
 });
 test('une baie de château n’est pas posée dans un pan mince',()=>{
   const ring=rectangle(2,40),walls={positions:[],normals:[],colors:[]},openings={panes:0,budget:Infinity};
-  appendOpenings(openings,walls,{x:0,y:0},{x:40,y:0},0,-1,0,8,0,{shutters:false},undefined,{allowAt:along=>facadeThickness(ring,ring[0],ring[1],along/40)>3.2});
+  appendOpenings(openings,walls,{x:0,y:0},{x:40,y:0},0,-1,0,8,0,{shutters:false},undefined,{frame:testFrame,allowAt:along=>facadeThickness(ring,ring[0],ring[1],along/40)>3.2});
   assert.equal(openings.panes,0);assert.equal(walls.positions.length,0);
 });
 test('une petite emprise au bord d’un arrêt est son abri, pas un bâtiment',()=>{

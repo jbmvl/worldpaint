@@ -29,7 +29,6 @@ import {
   contiguousRuns,
   profileTakesGuardrail,
   runsByValue,
-  randomAt,
 } from '../furniturePlacement.js';
 import { churchWithin } from './pointsOfInterest.js';
 import { FURNITURE_RADIUS_M } from './catalog.js';
@@ -40,6 +39,7 @@ import {
   measureRoom,
   boundOverhang,
 } from './roadsideRelief.js';
+import { randomAt } from '../../core/groundSeed.js';
 
 export const SIGN_PLACE_NAME_MAX_M = 450;
 export const SIGN_PLACE_NAME_FABRIC_RADIUS_M = 80;
@@ -110,11 +110,11 @@ const DEFAULT_ALIGNMENT_SPECIES = [
  * `treeOval` l'olivier comme le bouleau, `treePalm` le seul mot qui la porte.
  * Sans région, c'est le mélange par défaut.
  */
-function alignmentTreeSpeciesFor(x, z, trees = null) {
+function alignmentTreeSpeciesFor(frame, x, z, trees = null) {
   const mix = trees?.length
     ? sharesFor(trees).map(([word, share]) => [alignmentShapeForTree(word), share])
     : DEFAULT_ALIGNMENT_SPECIES;
-  return pickShare(mix, randomAt(x, z, 37));
+  return pickShare(mix, randomAt(frame, x, z, 37));
 }
 
 /**
@@ -291,6 +291,7 @@ export function applyRoadsidePlan(layer, {
   segment,
   here = null,
 }) {
+  const { frame } = layer.bubble;
   // Le niveau de croisement de cette portion : ce qui la borde s'y heurte aux
   // chaussées du même niveau, pas à celle qui passe dessous.
   const level = segment?.levels?.[rows?.[0]?.r] ?? LEVEL_GROUND;
@@ -329,7 +330,7 @@ export function applyRoadsidePlan(layer, {
   }
 
   if (plan.utilityPole) {
-    const poleSide = randomAt(side.x, side.z, 11) < 0.5 ? 1 : -1;
+    const poleSide = randomAt(frame, side.x, side.z, 11) < 0.5 ? 1 : -1;
     const offset = poleSide * (halfWidth + 2.2);
     const standing = [];
     for (const p of spacedAlongPath(path, plan.utilityPole, spacing)) {
@@ -396,7 +397,7 @@ export function applyRoadsidePlan(layer, {
         curvature: row?.curvature ?? 0,
         builtUp: inTown,
         profile,
-        variant: randomAt(p.x, p.z, 71),
+        variant: randomAt(frame, p.x, p.z, 71),
       });
       layer._placeBeside(placements, item, p, -(halfWidth + 1.1), platform, {
         facing: 'traffic',
@@ -481,15 +482,15 @@ export function applyRoadsidePlan(layer, {
   // Alignement d'arbres : pas systématique. Une route sur trois environ n'en
   // porte pas, ce qui évite qu'une route majeure hors agglomération en soit
   // toujours bordée sur toute sa longueur.
-  if (plan.alignmentTree && randomAt(side.x, side.z, 47) < 0.7) {
+  if (plan.alignmentTree && randomAt(frame, side.x, side.z, 47) < 0.7) {
     // L'essence est tirée **une fois pour la chaîne** : un alignement mêlant
     // platanes et sapins n'existe pas, c'est le propre d'un alignement d'être
     // planté le même jour.
-    const species = alignmentTreeSpeciesFor(side.x, side.z, layer.region?.trees);
+    const species = alignmentTreeSpeciesFor(frame, side.x, side.z, layer.region?.trees);
     for (const p of spacedAlongPath(path, plan.alignmentTree, spacing)) {
       const row = p.index % 2 === 0 ? 1 : -1;
       layer._placeBeside(placements, species, p, row * (halfWidth + 3.2), platform, {
-        scale: 1.05 + randomAt(p.x, p.z, 3) * 0.5,
+        scale: 1.05 + randomAt(frame, p.x, p.z, 3) * 0.5,
         // Un platane pousse au bord de la route qu'il borde — donc celle-ci
         // ne le gêne pas — mais pas au milieu de celle qui la croise.
         offRoad: true,
@@ -506,7 +507,7 @@ export function applyRoadsidePlan(layer, {
   // Bas-côté : haie basse, haie de bocage. Le motif n'est donné qu'à une
   // portion sur trois environ : appliqué partout, il transforme la
   // campagne en circuit.
-  const verge = roadsideVergeFor(profile, { builtUp: inTown, variant: randomAt(side.x, side.z, 83) });
+  const verge = roadsideVergeFor(profile, { builtUp: inTown, variant: randomAt(frame, side.x, side.z, 83) });
   if (verge.verge) {
     layer._appendHedgerow(buffers.lowHedge, 'lowHedge', path, sampleElevation, {
       offset: verge.vergeSide * (halfWidth + 2.6),
@@ -519,10 +520,10 @@ export function applyRoadsidePlan(layer, {
   // La haie de bocage le long de la route reste, mais elle n'est plus
   // systématique : une petite route sur deux seulement en porte une, et
   // jamais du côté où court déjà la haie basse du bas-côté.
-  if (plan.hedge && randomAt(side.x, side.z, 29) < 0.5) {
+  if (plan.hedge && randomAt(frame, side.x, side.z, 29) < 0.5) {
     const hedgeSide = verge.verge
       ? -verge.vergeSide
-      : randomAt(side.x, side.z, 23) < 0.5 ? 1 : -1;
+      : randomAt(frame, side.x, side.z, 23) < 0.5 ? 1 : -1;
     layer._appendHedgerow(buffers.hedge, 'hedge', path, sampleElevation, {
       offset: hedgeSide * (halfWidth + 1.8),
       openGround: true,

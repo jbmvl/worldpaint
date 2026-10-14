@@ -87,4 +87,6 @@ ce qui y est invariant, et pourquoi une règle qu'on croit libre ne l'est pas.
   exception avale tout ce qui devait être construit après elle.
 - Tout ce qui décide de l'apparence (couleur, silhouette, profil) se lit dans
   le thème, jamais en dur.
-- Une position au sol quantifiée est la seule source de graine admise.
+- Une position au sol quantifiée est la seule source de graine admise, et elle
+  se tire par `core/groundSeed.js`, repère à l'appui ; une grille de semis se
+  prend dans `worldCellsIn`, jamais en arrondissant des mètres locaux.

@@ -562,7 +562,7 @@ function updateLabels() {
       if (!name.startsWith('vegetation-')) return null;
       const forests = world.composer?.theme?.forests;
       return labelForForestType(
-        forestTypeAt(point.x, point.z, forests, region),
+        forestTypeAt(world.composer.bubble.frame, point.x, point.z, forests, region),
         forests,
         region
       );

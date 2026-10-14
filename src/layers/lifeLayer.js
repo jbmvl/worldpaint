@@ -44,6 +44,7 @@
 
 import { defaultTheme } from '../themes/default.js';
 import { Kit } from '../models/kit.js';
+import { hashUnit } from '../core/groundSeed.js';
 
 /** Oiseaux dans le vol. */
 export const BIRD_COUNT = 22;
@@ -409,12 +410,7 @@ export function balloonAt(balloon, time, centre, windDirection = 0) {
   return { x, y, z, spin: time * BALLOON_SPIN_RAD_S + balloon.phase };
 }
 
-/** Tirage déterministe dans [0, 1[ à partir d'un entier. Fonction pure. */
-function draw(seed) {
-  let h = Math.imul(seed ^ 0x9e3779b9, 0x85ebca6b);
-  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-}
+const draw = (seed) => hashUnit(seed);
 
 export class LifeLayer {
   /**

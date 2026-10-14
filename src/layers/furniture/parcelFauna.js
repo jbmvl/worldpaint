@@ -22,12 +22,11 @@ import {
   PREDATOR_MAX,
   scatterInRing,
   pointInRing,
-  randomAt,
-  positionSeed,
 } from '../furniturePlacement.js';
 import { pointInAreas } from '../settlement.js';
 import { FURNITURE_LIMITS } from './catalog.js';
 import { reachedRadius } from '../../core/decorReach.js';
+import { positionSeed, randomAt, worldCellsAround } from '../../core/groundSeed.js';
 
 /**
  * Part des pâtures qu'on laisse vides. Descendue de 0,2 à 0,12 : les prés ne
@@ -89,10 +88,11 @@ export const CROSS_PROBE_STEPS = 8;
  * pas tous occupés le même jour, et le décor y gagne en respiration.
  */
 export function placeHerd(layer, ring, centre, variant, steepness, count) {
-  if (randomAt(centre.x, centre.z, 53) < HERD_EMPTY_ODDS) return 0;
+  const { frame } = layer.bubble;
+  if (randomAt(frame, centre.x, centre.z, 53) < HERD_EMPTY_ODDS) return 0;
 
   const { item, spread } = herdFor({ steepness, variant, matrix: layer.region?.matrix ?? null });
-  const seed = positionSeed(centre.x, centre.z, 61);
+  const seed = positionSeed(frame, centre.x, centre.z, 61);
   const focus = roadwardFocus(layer, ring, centre);
   let placed = 0;
 
@@ -128,16 +128,17 @@ export function placeHerd(layer, ring, centre, variant, steepness, count) {
  * façon.
  */
 export function placeForestGame(layer, ring, centre, variant, hectares) {
-  if (randomAt(centre.x, centre.z, 83) < FOREST_GAME_EMPTY_ODDS) return 0;
+  const { frame } = layer.bubble;
+  if (randomAt(frame, centre.x, centre.z, 83) < FOREST_GAME_EMPTY_ODDS) return 0;
 
   const game = forestGameFor({
     variant,
-    predatorDraw: randomAt(centre.x, centre.z, 97),
+    predatorDraw: randomAt(frame, centre.x, centre.z, 97),
     matrix: layer.region?.matrix ?? null,
   });
   if (!game) return 0;
 
-  const jitter = randomAt(centre.x, centre.z, 87);
+  const jitter = randomAt(frame, centre.x, centre.z, 87);
   // Un carnassier ne se compte pas à l'hectare : il y en a un, ou deux.
   const ceiling = game.solitary ? PREDATOR_MAX : 6;
   const count = game.solitary
@@ -145,7 +146,7 @@ export function placeForestGame(layer, ring, centre, variant, hectares) {
     : Math.min(ceiling, Math.floor(hectares * FOREST_GAME_PER_HECTARE + jitter));
   if (count <= 0) return 0;
 
-  const seed = positionSeed(centre.x, centre.z, 91);
+  const seed = positionSeed(frame, centre.x, centre.z, 91);
   // Le gibier aussi se tient du côté de la route : c'est en lisière qu'on le
   // voit, et la lisière qui compte est celle qu'on longe.
   const focus = roadwardFocus(layer, ring, centre);
@@ -226,15 +227,16 @@ export function placeFauna(layer, kind, { x, z, ring = null, scale = 1, flee = f
   const crossing = crossingAt(layer, x, z);
   const behaviour = behaviourFor({
     family: spec.family,
-    variant: randomAt(x, z, 227),
+    variant: randomAt(layer.bubble.frame, x, z, 227),
     nearRoad: crossing !== null,
     // Tirage distinct : sinon une bête proche d'une route traverserait ou
     // brouterait selon le même nombre, et les deux seraient corrélés.
-    crossDraw: randomAt(x, z, 229),
+    crossDraw: randomAt(layer.bubble.frame, x, z, 229),
   });
 
   const anchor = behaviour === 'cross' && crossing ? crossing.centre : { x, z };
   const circuit = buildCircuit({
+    frame: layer.bubble.frame,
     behaviour,
     x: anchor.x,
     z: anchor.z,
@@ -356,43 +358,40 @@ function grazingSquare(x, z, half) {
  * rien ne justifierait tant que la portée reste modeste.
  */
 export function buildOpenPastureFauna(layer, context, builtUp) {
+  const { frame } = layer.bubble;
   if (!layer.groundClass) return;
   const { here } = context;
   const radius = reachedRadius(OPEN_PASTURE_RADIUS_M, layer.bubble);
   const step = OPEN_PASTURE_CELL_M;
   const cellHa = (step * step) / 10000;
-  const startX = Math.floor((here.x - radius) / step) * step;
-  const startZ = Math.floor((here.z - radius) / step) * step;
   let placed = 0;
 
-  for (let z = startZ; z <= here.z + radius; z += step) {
-    for (let x = startX; x <= here.x + radius; x += step) {
-      if (layer.fauna.length >= FURNITURE_LIMITS.fauna) {
-        layer.counts.openPasture = placed;
-        return;
-      }
-
-      const px = x + (randomAt(x, z, 491) - 0.5) * step * 0.8;
-      const pz = z + (randomAt(x, z, 499) - 0.5) * step * 0.8;
-      if (Math.hypot(px - here.x, pz - here.z) > radius) continue;
-      if (pointInAreas(builtUp, px, pz)) continue;
-      if (layer._onRoad(px, pz)) continue;
-
-      const kind = layer.groundClass.surfaceAt?.(px, pz);
-      if (!kind || !OPEN_PASTURE_KINDS.has(kind)) continue;
-
-      // La rareté du semis, avant tout tirage propre à `placeHerd` : une
-      // maille qualifiée sur beaucoup ne pose rien, et c'est voulu.
-      if (randomAt(px, pz, 503) > cellHa * OPEN_PASTURE_PER_HA) continue;
-
-      const variant = randomAt(px, pz, 509);
-      const steepness = layer._steepnessAt(px, pz);
-      const sizeDraw = randomAt(px, pz, 521);
-      const count = OPEN_PASTURE_GROUP[0] + Math.floor(sizeDraw * (OPEN_PASTURE_GROUP[1] - OPEN_PASTURE_GROUP[0] + 1));
-
-      const ring = grazingSquare(px, pz, OPEN_PASTURE_HALF_M);
-      if (placeHerd(layer, ring, { x: px, z: pz }, variant, steepness, count) > 0) placed++;
+  for (const { x, z } of worldCellsAround(frame, here, radius, step)) {
+    if (layer.fauna.length >= FURNITURE_LIMITS.fauna) {
+      layer.counts.openPasture = placed;
+      return;
     }
+
+    const px = x + (randomAt(frame, x, z, 491) - 0.5) * step * 0.8;
+    const pz = z + (randomAt(frame, x, z, 499) - 0.5) * step * 0.8;
+    if (Math.hypot(px - here.x, pz - here.z) > radius) continue;
+    if (pointInAreas(builtUp, px, pz)) continue;
+    if (layer._onRoad(px, pz)) continue;
+
+    const kind = layer.groundClass.surfaceAt?.(px, pz);
+    if (!kind || !OPEN_PASTURE_KINDS.has(kind)) continue;
+
+    // La rareté du semis, avant tout tirage propre à `placeHerd` : une
+    // maille qualifiée sur beaucoup ne pose rien, et c'est voulu.
+    if (randomAt(frame, px, pz, 503) > cellHa * OPEN_PASTURE_PER_HA) continue;
+
+    const variant = randomAt(frame, px, pz, 509);
+    const steepness = layer._steepnessAt(px, pz);
+    const sizeDraw = randomAt(frame, px, pz, 521);
+    const count = OPEN_PASTURE_GROUP[0] + Math.floor(sizeDraw * (OPEN_PASTURE_GROUP[1] - OPEN_PASTURE_GROUP[0] + 1));
+
+    const ring = grazingSquare(px, pz, OPEN_PASTURE_HALF_M);
+    if (placeHerd(layer, ring, { x: px, z: pz }, variant, steepness, count) > 0) placed++;
   }
   layer.counts.openPasture = placed;
 }

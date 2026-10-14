@@ -23,7 +23,7 @@
  */
 
 import { srgb } from '../core/color.js';
-import { positionSeed, randomAt } from './furniturePlacement.js';
+import { cellRandomAt, positionSeed, randomAt } from '../core/groundSeed.js';
 import { defaultTheme } from '../themes/default.js';
 
 /** Côté de la maille qui décide du rebord de voirie et de la famille d'ouvrage, en mètres. */
@@ -68,16 +68,15 @@ export function townPaletteFor(towns = defaultTheme.towns, region = null) {
  * Revêtement de voirie de la maille qui contient un point (une commune refait
  * sa voirie d'un coup).
  *
+ * @param {Object} frame Repère local.
  * @param {number} x
  * @param {number} z
  * @param {Object} [streets] Tranche `theme.streets`.
  * @returns {{name:string, kerb:number[], gutter:number[], joint:number[]}}
  */
-export function streetSurfaceAt(x, z, streets = defaultTheme.streets) {
+export function streetSurfaceAt(frame, x, z, streets = defaultTheme.streets) {
   const surfaces = linearStreets(streets);
-  const gx = Math.floor(x / TOWN_PATCH_M) * TOWN_PATCH_M;
-  const gz = Math.floor(z / TOWN_PATCH_M) * TOWN_PATCH_M;
-  const draw = randomAt(gx, gz, 191);
+  const draw = cellRandomAt(frame, x, z, TOWN_PATCH_M, 191);
   const rebord = surfaces[Math.min(surfaces.length - 1, Math.floor(draw * surfaces.length))];
   return rebord;
 }
@@ -125,6 +124,7 @@ function linearPavement(streets) {
  *
  * `x`, `z` sont les coordonnées locales du bâtiment.
  *
+ * @param {Object} frame Repère local.
  * @param {number} x
  * @param {number} z
  * @param {Object} [context]
@@ -136,6 +136,7 @@ function linearPavement(streets) {
  *           palette:string}}
  */
 export function buildingStyleAt(
+  frame,
   x,
   z,
   { area = 100, height = 7 } = {},
@@ -143,13 +144,13 @@ export function buildingStyleAt(
   region = null
 ) {
   const palette = townPaletteFor(towns, region);
-  const seed = positionSeed(x, z, 151);
+  const seed = positionSeed(frame, x, z, 151);
 
   // Modulation tirée du lieu : ±6 % pour le crépi, ±3 % pour le volet peint (vieillit moins vite).
-  const shade = 0.94 + randomAt(x, z, 157) * 0.12;
+  const shade = 0.94 + randomAt(frame, x, z, 157) * 0.12;
   const wall = palette.wall.map((c) => Math.min(1, c * shade));
-  const roof = palette.roof.map((c) => Math.min(1, c * (0.95 + randomAt(x, z, 163) * 0.1)));
-  const shutter = palette.shutter.map((c) => Math.min(1, c * (0.97 + randomAt(x, z, 167) * 0.06)));
+  const roof = palette.roof.map((c) => Math.min(1, c * (0.95 + randomAt(frame, x, z, 163) * 0.1)));
+  const shutter = palette.shutter.map((c) => Math.min(1, c * (0.97 + randomAt(frame, x, z, 167) * 0.06)));
 
   const house = isHouse({ area, height });
   return {
@@ -161,7 +162,7 @@ export function buildingStyleAt(
     // thème. La silhouette d'un toit se lit de plus loin que sa couleur.
     pitch: palette.pitch,
     house,
-    shutters: house && randomAt(x, z, 173) < SHUTTER_SHARE,
+    shutters: house && randomAt(frame, x, z, 173) < SHUTTER_SHARE,
     palette: palette.name,
   };
 }
@@ -232,15 +233,14 @@ function linearWorks(works) {
  * tirent la même famille, et une reconstruction ne rebâtit pas l'ouvrage dans
  * un autre matériau. Graine distincte de celle de la voirie.
  *
+ * @param {Object} frame Repère local.
  * @param {number} x
  * @param {number} z
  * @param {Array<Object>} [works] Tranche `theme.works`.
  * @returns {Object} La famille, couleurs en linéaire.
  */
-export function worksStyleAt(x, z, works = defaultTheme.works) {
+export function worksStyleAt(frame, x, z, works = defaultTheme.works) {
   const styles = linearWorks(works);
-  const gx = Math.floor(x / TOWN_PATCH_M) * TOWN_PATCH_M;
-  const gz = Math.floor(z / TOWN_PATCH_M) * TOWN_PATCH_M;
-  const draw = randomAt(gx, gz, 233);
+  const draw = cellRandomAt(frame, x, z, TOWN_PATCH_M, 233);
   return styles[Math.min(styles.length - 1, Math.floor(draw * styles.length))];
 }

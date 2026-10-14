@@ -20,6 +20,7 @@
  */
 import * as THREE from 'three';
 import { CropLayer } from '/src/layers/cropLayer.js';
+import { createLocalFrame } from '/src/core/tileMath.js';
 
 const ROAD_HALF_M = 3;
 const FIELD_EDGE_M = 90;
@@ -57,7 +58,7 @@ roadGeometry.setIndex(roadIndex);
 scene.add(new THREE.Mesh(roadGeometry, new THREE.MeshBasicMaterial({ color: 0x1b1c22, side: THREE.DoubleSide })));
 
 const state = { crop: 'maize', next: 'wheat', height: 12, pitchDeg: -14, z: 0 };
-const bubble = { frame: 1, surfaceGeneration: 1, verticalScale: 1, surfaceElevationAtLocal: () => 0 };
+const bubble = { frame: createLocalFrame(-0.145, 47.131, 15), surfaceGeneration: 1, verticalScale: 1, surfaceElevationAtLocal: () => 0 };
 // La carte des cultures ignore la route, comme une tuile qui en garde la trace.
 const groundClass = {
   cropReady: true,

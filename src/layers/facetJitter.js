@@ -13,24 +13,25 @@
  * réordonne pas, sans quoi tout le grain est retiré au sort.
  */
 
-import { randomAt } from './furniturePlacement.js';
+import { randomAt } from '../core/groundSeed.js';
 
 /**
  * Un tirage uniforme par ligne et par canal, dans l'intervalle du canal.
  *
+ * @param {Object} frame Repère local (voir `core/groundSeed.js`).
  * @param {Array<{x:number,z:number}>} path Tracé ; son pas fixe l'espacement des arêtes.
  * @param {number} salt Sel de l'appelant ; le canal de rang `k` tire sur `salt + k`.
  * @param {Record<string, [number, number]>} ranges Intervalle `[bas, haut]` de chaque canal.
  * @returns {Record<string, Float32Array>} un tableau par canal, une valeur par ligne.
  */
-export function facetJitter(path, salt, ranges) {
+export function facetJitter(frame, path, salt, ranges) {
   const rows = path?.length ?? 0;
   const out = {};
   let channel = 0;
   for (const [name, [low, high]] of Object.entries(ranges)) {
     const values = new Float32Array(rows);
     for (let r = 0; r < rows; r++) {
-      values[r] = low + randomAt(path[r].x, path[r].z, salt + channel) * (high - low);
+      values[r] = low + randomAt(frame, path[r].x, path[r].z, salt + channel) * (high - low);
     }
     out[name] = values;
     channel++;

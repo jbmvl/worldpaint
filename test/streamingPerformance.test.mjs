@@ -7,6 +7,7 @@ import { defaultTheme } from '../src/themes/default.js';
 import { GenerationBudget } from '../src/core/generationBudget.js';
 import { WorldComposer } from '../src/worldComposer.js';
 import { DECOR_STEP_M } from '../src/core/decorReach.js';
+import { testFrame } from './testFrame.mjs';
 
 const valeurs = (cover) => {
   const result = [];
@@ -14,7 +15,7 @@ const valeurs = (cover) => {
     Array.from(a.array.subarray(i * a.itemSize, (i + 1) * a.itemSize))).join(','));
   return result.sort();
 };
-const bulle = () => ({ frame: {}, surfaceGeneration: 0, verticalScale: 1,
+const bulle = () => ({ frame:testFrame, surfaceGeneration: 0, verticalScale: 1,
   surfaceElevationAtLocal: () => 0,
   renderedSupportAtLocal: (x, z, out) => Object.assign(out, { y: x * .02 + z * .03, slopeX: .02, slopeZ: .03 }),
 });
@@ -66,7 +67,7 @@ function compositeur() {
     disposed: false, _refreshing: false, root: {}, theme: defaultTheme, landscape: { region: {} },
     _updateLandscape: () => false, _distributeRegion() {}, _wantedTiles: () => [{ x: 1, y: 2 }],
     vectorTiles: { missing: () => 0, load: async () => null, forEachFeature() {} },
-    bubble: { processRebuildQueue: () => false, setWaterRelief: () => calls.push('eau'), surfaceGeneration: 0, frame: { origin: {x:0,y:0}, scale:1, toLocal: () => ({ ...here }) }, materials: { syncGroundClass() {} } },
+    bubble: { processRebuildQueue: () => false, setWaterRelief: () => calls.push('eau'), surfaceGeneration: 0, frame: { ...testFrame, toLocal: () => ({ ...here }) }, materials: { syncGroundClass() {} } },
     groundClass: layer('sol'), cliffs: layer('falaises'), roads: layer('routes'), bridges: layer('ponts'),
     railways: layer('rails'), buildings: layer('bâti'), streets: layer('rues'), gardens: layer('jardins'),
     furniture: layer('mobilier'), vegetation: layer('arbres'), grass: layer('herbe'), crops: layer('cultures'),

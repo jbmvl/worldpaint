@@ -76,6 +76,11 @@ Breaking one of these needs a very good reason, stated in the PR description.
 
 - **Deterministic spatial generation.** No `Math.random()`: every seed derives
   from a quantised ground position, never from traversal order or the viewpoint.
+  Scene coordinates depend on where the viewer started (the local frame is
+  centred there), so seeds and seeding grids go through `core/groundSeed.js`
+  with the frame (`randomAt(frame, x, z, salt)`, `worldCellsIn`), which
+  quantises absolute Web Mercator coordinates. `test/groundSeed.test.mjs`
+  checks that two frames give the same draws for the same ground.
 
 - **What is painted near the viewer is never repainted.** The vector décor is
   rebuilt in one block, all layers together, every `DECOR_STEP_M` (250 m) or

@@ -549,7 +549,7 @@ export class FurnitureLayer {
       this.trees = [];
       for (const [item, list] of placements) {
         if (this.theme.trees.plantations[item]) {
-          for (const p of list) this.trees.push(plantedTree(p.plantation || item, p, this.theme.trees));
+          for (const p of list) this.trees.push(plantedTree(this.bubble.frame, p.plantation || item, p, this.theme.trees));
           this._applyInstances(item, []);
         } else this._applyInstances(item, list);
       }
@@ -723,7 +723,7 @@ export class FurnitureLayer {
 
   /** Robe d'une bête, tirée dans le nuancier de son espèce. Ancrée au lieu. */
   _coatFor(kind, x, z) {
-    return coatFor(this._coats, kind, x, z);
+    return coatFor(this.bubble.frame, this._coats, kind, x, z);
   }
 
   /**
@@ -821,7 +821,7 @@ export class FurnitureLayer {
     // saut indépendant par ligne — c'est lui, combiné à l'ombrage plat de
     // `_applyLinear`, qui casse le tube de près.
     const modulation = hedgeModulation(dense, { offset });
-    const facets = hedgeFacets(dense, style.salt);
+    const facets = hedgeFacets(this.bubble.frame, dense, style.salt);
     // Le bout arrondi vient **après** le facettage, et le multiplie : sinon un
     // tirage haut au ras de la pointe ressortirait de l'arrondi, et le bout
     // redeviendrait une coupe franche.
@@ -873,7 +873,7 @@ export class FurnitureLayer {
     if (tail > DRY_STONE_WALL_SAMPLE_M * 0.25) dense.push(closing);
     else if (tail > 0) dense[dense.length - 1] = closing;
 
-    const grain = facetJitter(dense, DRY_STONE_WALL_SEED, this.specs.dryStoneWallGrain);
+    const grain = facetJitter(this.bubble.frame, dense, DRY_STONE_WALL_SEED, this.specs.dryStoneWallGrain);
     appendProfile(buffer, {
       path: dense,
       profile: this.specs.profiles.dryStoneWall,

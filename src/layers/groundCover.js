@@ -22,12 +22,12 @@ import {
   setFoliageWind,
   GROUND_GRAIN_ATTRIBUTE,
 } from '../materials/foliageMaterial.js';
-import { makeRandom } from '../materials/proceduralTextures.js';
+import { hash32, randomStream } from '../core/groundSeed.js';
 import { soilWashFor, gapSurfaceForMatrix } from '../core/regionInterpretation.js';
 import { CORRIDOR_MARGIN_M, inCorridor } from './roadCorridor.js';
 import {
   coverBand,
-  coverBandRing,
+  coverBandCells,
   coverHeightFade,
   coverMassDensity,
   coverBandsRadius,
@@ -155,21 +155,6 @@ export function grassMassVariant(variant, draw) {
   return GRASS_VARIANTS.indexOf(mass);
 }
 
-/**
- * Mailles d'un disque d'une seule échelle, de la plus proche à la plus
- * lointaine. `coverBandRing` en est la généralisation, employée par la
- * couche ; celle-ci délègue plutôt que garder un second parcours à tenir d'accord.
- *
- * @param {number} radius Rayon, en mètres.
- * @param {number} cell   Côté d'une maille, en mètres.
- * @returns {Array<{gx:number, gz:number, distance:number}>} indices de maille
- *          absolus (à multiplier par `cell`) et distance au centre.
- */
-export function grassCellRing(radius, cell) {
-  // Epsilon relatif pour inclure la maille qui tombait pile sur le rayon (borne haute exclusive de `coverBandRing`).
-  return coverBandRing([coverBand({ from: 0, to: radius * (1 + 1e-12), cell, perCell: 0 })]);
-}
-
 /** Nombre de valeurs décrivant une touffe dans le tampon de maille. */
 export const GRASS_TUFT_STRIDE = 7;
 
@@ -178,28 +163,25 @@ export const GRASS_TUFT_STRIDE = 7;
  * rotation, teinte.
  *
  * Invariant : le nombre de tirages consommés est constant, et la graine ne
- * dépend que des coordonnées de la maille — une maille rend toujours
+ * dépend que de la maille mondiale — une maille rend toujours
  * exactement les mêmes touffes. Écrit dans un tampon fourni (pas d'objets
  * jetables par redistribution). Le sel distingue les bandes, sinon deux
  * échelles superposeraient les mêmes touffes à la même maille.
  *
  * @param {Float32Array} out Longueur `perCell × GRASS_TUFT_STRIDE`.
- * @param {number} gx Indice de maille (absolu, pas relatif à l'observateur).
- * @param {number} gz
- * @param {number} [cell] Côté de la maille, en mètres.
+ * @param {{id:number, row:number, x:number, z:number, size:number}} cell
+ *        Maille mondiale (`worldCellsIn`).
  * @param {number} [perCell] Touffes tirées.
  * @param {number} [salt] Sel de graine propre à la bande.
  * @returns {Float32Array} le tampon fourni.
  */
-export function fillGrassCell(out, gx, gz, cell = GRASS_CELL_M, perCell = GRASS_PER_CELL, salt = 0) {
-  const random = makeRandom((gx * 73856093) ^ (gz * 19349663) ^ (salt * 2654435761));
-  const originX = gx * cell;
-  const originZ = gz * cell;
+export function fillGrassCell(out, cell, perCell = GRASS_PER_CELL, salt = 0) {
+  const random = randomStream(hash32(cell.id, cell.row, salt));
 
   for (let i = 0; i < perCell; i++) {
     const at = i * GRASS_TUFT_STRIDE;
-    out[at] = originX + random() * cell;
-    out[at + 1] = originZ + random() * cell;
+    out[at] = cell.x + random() * cell.size;
+    out[at + 1] = cell.z + random() * cell.size;
     out[at + 2] = random(); // présence
     out[at + 3] = random(); // taille
     out[at + 4] = random(); // rotation
@@ -413,15 +395,14 @@ const FRINGE_SALT = 0x5eed;
  * touffes ne suivent pas la même limite au mètre près, elles la brouillent
  * chacune de son côté, sur la même largeur.
  *
- * @param {number} gx Indice de maille.
- * @param {number} gz
+ * @param {{id:number, row:number}} cell Maille mondiale.
  * @param {number} salt Sel de la bande (les bandes n'ont pas la même maille).
  * @param {number} reach Amplitude, en mètres.
  * @returns {{x:number, z:number}} Décalage à ajouter au point lu.
  */
-export function fringeOffset(gx, gz, salt, reach) {
+export function fringeOffset(cell, salt, reach) {
   if (!(reach > 0)) return { x: 0, z: 0 };
-  const random = makeRandom((gx * 73856093) ^ (gz * 19349663) ^ ((salt + FRINGE_SALT) * 2654435761));
+  const random = randomStream(hash32(cell.id, cell.row, salt + FRINGE_SALT));
   const angle = random() * Math.PI * 2;
   // Racine du tirage : sans elle le décalage se masse au centre du disque, et
   // la frange serait plus étroite que son amplitude ne l'annonce.
@@ -519,7 +500,7 @@ export class GroundCover {
     this._instanceCells = new InstanceCells({ resident: true });
     this._frame = null;
     this._bands = [coverBand({ from: 0, to: 55, cell: 2.2, perCell: 16, fadeOut: 20, salt: 0 })];
-    this._cells = coverBandRing(paddedCoverBands(this._bands, GRASS_REBUILD_M));
+    this._ringBands = paddedCoverBands(this._bands, GRASS_REBUILD_M);
     // Une seule allocation, dimensionnée sur la bande la plus fournie.
     const widest = Math.max(...this._bands.map((band) => band.perCell));
     this._tufts = new Float32Array(widest * GRASS_TUFT_STRIDE);
@@ -670,12 +651,8 @@ export class GroundCover {
 
   /** Ouvre une passe de semis centrée sur l'observateur. */
   _startScatter(centerX, centerZ) {
-    // Un centre arrondi par bande : les mailles retenues ne dépendent que du sol.
-    const bases = this._bands.map((band) => ({
-      x: Math.round(centerX / band.cell),
-      z: Math.round(centerZ / band.cell),
-    }));
-    this._pass = { bases, next: 0, placed: 0 };
+    const cells = coverBandCells(this.bubble.frame, this._ringBands, centerX, centerZ);
+    this._pass = { cells, next: 0, placed: 0 };
   }
 
   /**
@@ -696,7 +673,7 @@ export class GroundCover {
     const index = roads?.index || null;
     const pavement = streets?.index || null;
     const bands = this._bands;
-    const bases = pass.bases;
+    const { cells } = pass;
     const tufts = this._tufts;
     const grass = this.theme.grass;
     // Amplitude de la frange : la même valeur que le shader de terrain, pour
@@ -706,33 +683,28 @@ export class GroundCover {
     let sown = false;
     const streams = this._scratch.map((array, i) => [array, this._residentAttributes[i].itemSize]);
 
-    for (; pass.next < this._cells.length; pass.next++) {
+    for (; pass.next < cells.length; pass.next++) {
       if (placed >= capacity) break;
       // Au moins une maille neuve par appel, pour que la passe avance toujours.
       if (sown && performance.now() >= deadline) {
         pass.placed = placed;
         return false;
       }
-      const cell = this._cells[pass.next];
-
+      const cell = cells.at(pass.next);
       const band = bands[cell.band];
-      const base = bases[cell.band];
-      const gx = base.x + cell.gx;
-      const gz = base.z + cell.gz;
-
-      const cacheKey = `${cell.band}:${gx}:${gz}`;
+      const cacheKey = `${cell.band}:${cell.id}:${cell.row}`;
       const retained = this._instanceCells.read(cacheKey, streams, placed, capacity);
       if (retained !== null) { placed += retained; continue; }
       sown = deadline !== Infinity;
       const cellStart = placed;
-      const cellX = (gx + 0.5) * band.cell;
-      const cellZ = (gz + 0.5) * band.cell;
+      const cellX = cell.x + cell.size / 2;
+      const cellZ = cell.z + cell.size / 2;
       // Le sol se lit à la frange, pas au centre de la maille : c'est ce qui
       // fait déborder l'herbe sur la surface voisine (voir `fringeOffset`).
       // Les trois lectures — matière, culture, couverture — partagent le même
       // point, sinon une touffe pousserait sur une matière et prendrait la
       // taille d'une autre.
-      const fringe = fringeOffset(gx, gz, band.salt, fringeM);
+      const fringe = fringeOffset(cell, band.salt, fringeM);
       const readX = cellX + fringe.x;
       const readZ = cellZ + fringe.z;
       const sample = grassSampleFallback(
@@ -781,14 +753,14 @@ export class GroundCover {
         this._wash.grassDensity *
         (1 + poolEdge * POOL_EDGE_DENSITY_BOOST);
 
-      fillGrassCell(tufts, gx, gz, band.cell, band.perCell, band.salt);
+      fillGrassCell(tufts, cell, band.perCell, band.salt);
 
       for (let i = 0; i < band.perCell && placed < capacity; i++) {
         const at = i * GRASS_TUFT_STRIDE;
         if (tufts[at + 2] > density) continue;
 
-        const x = gx * band.cell + (i % 4 + 0.2 + (tufts[at] / band.cell - gx) * 0.6) * band.cell / 4;
-        const z = gz * band.cell + (Math.floor(i / 4) + 0.2 + (tufts[at + 1] / band.cell - gz) * 0.6) * band.cell / 4;
+        const x = cell.x + (i % 4 + 0.2 + ((tufts[at] - cell.x) / cell.size) * 0.6) * cell.size / 4;
+        const z = cell.z + (Math.floor(i / 4) + 0.2 + ((tufts[at + 1] - cell.z) / cell.size) * 0.6) * cell.size / 4;
         if (inCorridor(index, x, z, GRASS_ROAD_MARGIN_M + band.cell / 4 * Math.SQRT1_2)) continue;
         if (pavement?.covers(x, z, band.cell / 4 * Math.SQRT1_2)) continue;
 

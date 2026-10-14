@@ -77,7 +77,7 @@ import { finishGeneration } from '../core/generationSteps.js';
  * l'eau, plus dense sur la bordure (`poolEdgeGain`).
  */
 
-import { positionSeed, randomAt } from './furniturePlacement.js';
+import { cellRandomAt, hashUnit, positionSeed } from '../core/groundSeed.js';
 import { inCorridor } from './roadCorridor.js';
 import {
   createFoliageMaterial,
@@ -120,9 +120,7 @@ export const STAND_SLOTS = 12;
  * @param {number} k    Rang du tirage (`indice du candidat × STAND_SLOTS + rang`).
  */
 export function standDraw(seed, k) {
-  let h = Math.imul(seed ^ Math.imul(k | 0, 0x9e3779b1), 0x85ebca6b);
-  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  return hashUnit(seed, k);
 }
 
 // --- Le peuplement : ce qui se lit de loin ---------------------------------------
@@ -337,6 +335,7 @@ export const TREE_TINT_SPREAD = 0.13;
  * arbre, ancrée au lieu. La dérive de bosquet joue sur l'axe chaud-froid
  * (rouge et bleu en sens contraires) pour parcourir le vert sans le désaturer.
  *
+ * @param {Object} frame Repère local.
  * @param {number[]} hue Teinte du peuplement, trois canaux.
  * @param {number} x Mètres locaux.
  * @param {number} z
@@ -344,10 +343,8 @@ export const TREE_TINT_SPREAD = 0.13;
  * @param {number} jitter Tirage uniforme dans [0, 1[, propre à l'arbre.
  * @returns {number[]} trois canaux, à multiplier par la texture.
  */
-export function foliageTint(hue, x, z, shade, jitter) {
-  const gx = Math.floor(x / CLUMP_TINT_M) * CLUMP_TINT_M;
-  const gz = Math.floor(z / CLUMP_TINT_M) * CLUMP_TINT_M;
-  const drift = (randomAt(gx, gz, 197) - 0.5) * 2;
+export function foliageTint(frame, hue, x, z, shade, jitter) {
+  const drift = (cellRandomAt(frame, x, z, CLUMP_TINT_M, 197) - 0.5) * 2;
   const spread = (jitter - 0.5) * 2 * TREE_TINT_SPREAD;
   const warm = drift * CLUMP_TINT_SPREAD;
   return [
@@ -415,10 +412,8 @@ export const FOREST_PATCH_M = 420;
  * C'est cette forme-là que les semis appellent, maille après maille : le
  * filtrage alloue, et il n'a rien à faire dans une boucle chaude.
  */
-export function standTypeFrom(pool, x, z) {
-  const gx = Math.floor(x / FOREST_PATCH_M) * FOREST_PATCH_M;
-  const gz = Math.floor(z / FOREST_PATCH_M) * FOREST_PATCH_M;
-  const draw = randomAt(gx, gz, 131);
+export function standTypeFrom(frame, pool, x, z) {
+  const draw = cellRandomAt(frame, x, z, FOREST_PATCH_M, 131);
   return pool[Math.min(pool.length - 1, Math.floor(draw * pool.length))];
 }
 
@@ -427,8 +422,8 @@ export function standTypeFrom(pool, x, z) {
  * à ce qui pousse ici, ce qui empêche un pin d'Alep en Finlande ; sans région,
  * la liste entière est ouverte.
  */
-export function forestTypeAt(x, z, forests = defaultTheme.forests, region = null) {
-  return standTypeFrom(filterByWords(forests, 'species', region?.trees), x, z);
+export function forestTypeAt(frame, x, z, forests = defaultTheme.forests, region = null) {
+  return standTypeFrom(frame, filterByWords(forests, 'species', region?.trees), x, z);
 }
 
 /** Variantes d'atlas ouvertes à un peuplement, dans l'ordre de ses essences. */
@@ -887,7 +882,7 @@ export class VegetationLayer {
         const centreZ = cellZ + cellSize * 0.5;
         if (this._beyondReach(cellX, cellZ, cellSize)) continue;
 
-        const type = standTypeFrom(pool, centreX, centreZ);
+        const type = standTypeFrom(frame, pool, centreX, centreZ);
         const stems = woodDensity(groundClass.woodAt(centreX, centreZ)) * standTreesPerCell(type);
         // Fourré de couverture — voir `coverBushesFor`. Il se sème là où il n'y
         // a pas de bois, donc il ne peut pas être conditionné aux tiges. Rien
@@ -916,7 +911,7 @@ export class VegetationLayer {
         // qui nomme son propre buisson (lande, maquis) sème le sien à la
         // place — jamais les deux mélangés au hasard de la maille.
         const cellStrata = bushLook.essence ? essenceStrata(bushLook.essence, this.theme.trees) : strata;
-        const seed = positionSeed(cellX, cellZ, STAND_SALT);
+        const seed = positionSeed(frame, cellX, cellZ, STAND_SALT);
 
         for (let i = 0; i < STAND_CANDIDATES; i++) {
           const base = i * STAND_SLOTS;
@@ -972,10 +967,11 @@ export class VegetationLayer {
   /** Altitude et teinte des plantes. L'altitude se relit même pour une plante retenue : le sol a pu être terrassé depuis. */
   *_settleSteps(list) {
     const { bubble } = this;
+    const { frame } = bubble;
     for (let i = 0; i < list.length; i++) {
       const item = list[i];
       item.y = bubble.surfaceElevationAtLocal(item.x, item.z) * bubble.verticalScale;
-      item.color = foliageTint(item.hue, item.x, item.z, item.shade, item.jitter);
+      item.color = foliageTint(frame, item.hue, item.x, item.z, item.shade, item.jitter);
       if (i % 2000 === 1999) yield;
     }
   }
@@ -1091,6 +1087,7 @@ export class VegetationLayer {
    */
   *_sowUnderstory(originX, originZ, cellSize, pool, index) {
     const { groundClass } = this;
+    const { frame } = this.bubble;
     // De près, le tapis du sol s'ouvre : ronce, buisson bas.
     const strata = understoryStrata(this.theme.trees, true);
     const tree = this._tree;
@@ -1103,7 +1100,7 @@ export class VegetationLayer {
         const centreZ = cellZ + cellSize * 0.5;
         if (this._beyondReach(cellX, cellZ, cellSize)) continue;
 
-        const type = standTypeFrom(pool, centreX, centreZ);
+        const type = standTypeFrom(frame, pool, centreX, centreZ);
         const stems = woodDensity(groundClass.woodAt(centreX, centreZ)) *
           thicketPerCell(thicketDensityFor(type), cellSize);
         // Même refus au milieu d'une flaque, même bordure plus dense que le
@@ -1127,7 +1124,7 @@ export class VegetationLayer {
         const lowPart = edgeLowPart((stems * lowStratumPart(type) + thick) / expected, edge);
         const variants = variantsFor(type, this.theme.trees.essences);
         const cellStrata = thickLook.essence ? essenceStrata(thickLook.essence, this.theme.trees) : strata;
-        const seed = positionSeed(cellX, cellZ, UNDERSTORY_SALT);
+        const seed = positionSeed(frame, cellX, cellZ, UNDERSTORY_SALT);
 
         for (let i = 0; i < UNDERSTORY_CANDIDATES; i++) {
           const slot = i * STAND_SLOTS;

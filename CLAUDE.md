@@ -230,7 +230,10 @@ ils décrivent l'état actuel, pour quelqu'un qui arrive dans six mois.
 - **Le mobilier de rive est dans l'emprise, et c'est sa place.** Ce qui pousse
   n'y est pas. Les deux questions ne se posent pas avec la même fonction.
 - **Une graine vient d'une position au sol quantifiée**, jamais d'un indice de
-  boucle ni de la position de l'observateur.
+  boucle ni de la position de l'observateur — et elle passe par le repère
+  (`core/groundSeed.js` : `randomAt(frame, x, z, sel)`, `worldCellsIn`). Les
+  coordonnées de scène dépendent du point de départ ; une graine tirée d'elles
+  seules change avec lui.
 - **Un plafond atteint ne doit pas arrêter le parcours** : il arrête ce qu'il
   plafonne, sinon l'ordre des tuiles décide à la place de la distance.
 - **Un gros fichier n'est pas une invitation à y ajouter une ligne de plus** :

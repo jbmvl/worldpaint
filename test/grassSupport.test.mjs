@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { meshSupport } from '../src/terrain/meshSupport.js';
 import { GroundCover } from '../src/layers/groundCover.js';
 import { defaultTheme } from '../src/themes/default.js';
+import { testFrame } from './testFrame.mjs';
 const geometry = () => new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute([0,0,0,1,0,0,0,0,1,1,2,1],3));
 test('l’appui respecte les deux triangles et leur arête commune',()=>{
  const g=geometry();
@@ -17,7 +18,7 @@ test('l’appui respecte les deux triangles et leur arête commune',()=>{
 });
 test('chaque racine se recale sur son triangle sans modifier les autres instances',()=>{
  const g=geometry(),scene=new THREE.Scene();
- const bubble={frame:{},surfaceGeneration:0,verticalScale:1,surfaceElevationAtLocal:()=>-10,
+ const bubble={frame:testFrame,surfaceGeneration:0,verticalScale:1,surfaceElevationAtLocal:()=>-10,
    renderedSupportAtLocal:(x,z,out)=>meshSupport(g,1,0,0,1,(x%1+1)%1,(z%1+1)%1,out)};
  const cover=new GroundCover({THREE,scene,bubble,groundClass:null,count:2000});
  cover.update(0,0);

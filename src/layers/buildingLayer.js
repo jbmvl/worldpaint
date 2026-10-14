@@ -28,7 +28,8 @@ import { srgb } from '../core/color.js';
 import { buildingStyleAt } from './townStyle.js';
 import { isWallFootprint, facadeThickness, isTransitStop, isTransitShelter } from './buildingInterpretation.js';
 import { orientedBox, roofTriangles, roofRise, ringArea } from './roofGeometry.js';
-import { pointInRing, randomAt } from './furniturePlacement.js';
+import { pointInRing } from './furniturePlacement.js';
+import { randomAt } from '../core/groundSeed.js';
 import { pointInAreas } from './settlement.js';
 import { clipPolygonOutsideCorridor } from './roadCorridor.js';
 import { Kit } from './furnitureKit.js';
@@ -340,14 +341,6 @@ export const WINDOW_LIFT_M = { frame: 0.04, glass: 0.075, shutter: 0.11 };
 export const PLINTH_HEIGHT_M = 0.62;
 export const PLINTH_SHADE = 0.72;
 
-/** Tirage déterministe dans [0, 1[ attaché à un lieu et à un rang. Pure. */
-export function windowDraw(x, z, salt) {
-  let h = (Math.round(x * 4) * 73856093) ^ (Math.round(z * 4) * 19349663) ^ ((salt | 0) * 83492791);
-  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d);
-  h = Math.imul(h ^ (h >>> 12), 0x297a2d39);
-  return ((h ^ (h >>> 15)) >>> 0) / 4294967296;
-}
-
 /**
  * Grille de fenêtres d'un pan de mur : rangs et niveaux effectivement
  * posables. Séparée pour que ce soit le seul endroit où une erreur
@@ -619,16 +612,16 @@ export const CHIMNEY_SHARE = 0.22;
  * @param {{cx:number,cz:number,angle:number,long:number,short:number}} box
  * @returns {{x:number,z:number,side:number,height:number}}
  */
-export function chimneyFootFor(box) {
-  const along = (randomAt(box.cx, box.cz, 423) * 2 - 1) * box.long * 0.5;
-  const across = (randomAt(box.cx, box.cz, 427) * 2 - 1) * box.short * 0.35;
+export function chimneyFootFor(frame, box) {
+  const along = (randomAt(frame, box.cx, box.cz, 423) * 2 - 1) * box.long * 0.5;
+  const across = (randomAt(frame, box.cx, box.cz, 427) * 2 - 1) * box.short * 0.35;
   const cos = Math.cos(box.angle);
   const sin = Math.sin(box.angle);
   return {
     x: box.cx + cos * along - sin * across,
     z: box.cz + sin * along + cos * across,
-    side: 0.5 + randomAt(box.cx, box.cz, 433) * 0.25,
-    height: 1.1 + randomAt(box.cx, box.cz, 439) * 0.6,
+    side: 0.5 + randomAt(frame, box.cx, box.cz, 433) * 0.25,
+    height: 1.1 + randomAt(frame, box.cx, box.cz, 439) * 0.6,
   };
 }
 
@@ -665,10 +658,10 @@ export function balconyLocalToWorld(along, out, yaw) {
  * @param {number} eaves Égout du toit.
  * @returns {{width:number,depth:number,level:number}}
  */
-export function balconyGeometryFor(mx, mz, length, base, eaves) {
+export function balconyGeometryFor(frame, mx, mz, length, base, eaves) {
   return {
-    width: Math.min(length * 0.5, 1.7 + randomAt(mx, mz, 443) * 1.1),
-    depth: 0.9 + randomAt(mx, mz, 449) * 0.5,
+    width: Math.min(length * 0.5, 1.7 + randomAt(frame, mx, mz, 443) * 1.1),
+    depth: 0.9 + randomAt(frame, mx, mz, 449) * 0.5,
     // Le dernier étage entier sous l'égout, jamais plus haut : un balcon ne
     // flotte pas au-dessus du toit.
     level: Math.max(base + BALCONY_MIN_WALL_M - 2.6, eaves - 2.8),
@@ -776,6 +769,7 @@ export function outerRings(geometry) {
  * @param {Object} style    Habillage rendu par `buildingStyleAt`.
  * @param {Object} [look]   Dimensions de fenêtre du thème (`theme.windows`).
  * @param {Object} [options]
+ * @param {Object} options.frame Repère local, qui ancre les tirages des baies.
  * @param {boolean} [options.skipGroundLevel] Vrai si le rez-de-chaussée a déjà
  *        reçu sa propre devanture (`appendShopfront`) : le niveau 0 de la
  *        grille générique ne se pose alors pas par-dessus, seuls les étages
@@ -804,7 +798,7 @@ export function appendOpenings(
   minHeight,
   style,
   look = defaultTheme.windows,
-  { skipGroundLevel = false, ground = null, clearAbove = -Infinity, door = null, sink = null, allowAt = null } = {}
+  { frame, skipGroundLevel = false, ground = null, clearAbove = -Infinity, door = null, sink = null, allowAt = null } = {}
 ) {
   const length = Math.hypot(b.x - a.x, b.y - a.y);
   const storeys = height - minHeight;
@@ -851,16 +845,16 @@ export function appendOpenings(
       const frameBottom = sill - WINDOW_FRAME_M;
       if (frameBottom < clearAbove) continue;
       if (ground && frameBottom < floorUnder(along - frameHalf, along + frameHalf) + PLINTH_HEIGHT_M) continue;
-      const closed = style.shutters && windowDraw(anchor.x, anchor.z, level + 71) < SHUTTER_CLOSED_SHARE;
+      const closed = style.shutters && randomAt(frame, anchor.x, anchor.z, level + 71) < SHUTTER_CLOSED_SHARE;
 
       // 1. L'encadrement : une bande claire tout autour de la baie. Sans lui,
       //    une fenêtre est un rectangle sombre collé sur un mur ; avec lui,
       //    c'est un percement. Il coûte un quadrilatère.
-      const frame = at(along, WINDOW_LIFT_M.frame);
+      const casing = at(along, WINDOW_LIFT_M.frame);
       pushPanel(
         walls,
-        { x: frame.x - ux * frameHalf, y: frame.z - uz * frameHalf },
-        { x: frame.x + ux * frameHalf, y: frame.z + uz * frameHalf },
+        { x: casing.x - ux * frameHalf, y: casing.z - uz * frameHalf },
+        { x: casing.x + ux * frameHalf, y: casing.z + uz * frameHalf },
         sill - WINDOW_FRAME_M,
         head + WINDOW_FRAME_M,
         nx,
@@ -924,11 +918,11 @@ export function appendOpenings(
       const lit = openings.lit;
       if (!lit || closed) continue;
       const glow = at(along, WINDOW_LIFT_M.glass);
-      if (windowDraw(glow.x, glow.z, level + 1) > look.litShare) continue;
+      if (randomAt(frame, glow.x, glow.z, level + 1) > look.litShare) continue;
 
       // Teinte de l'ampoule : du blanc froid au jaune franc, tirée par
       // fenêtre. Toutes de la même couleur, un village ressemble à un écran.
-      const warmth = windowDraw(glow.x, glow.z, level + 41);
+      const warmth = randomAt(frame, glow.x, glow.z, level + 41);
       const color = [0.95, 0.78 + warmth * 0.16, 0.42 + warmth * 0.3];
       pushPanel(
         lit,
@@ -1892,6 +1886,7 @@ export class BuildingLayer {
     // Couleur et forme du toit : celles de la palette du pays, avec une légère
     // variation par maison. Voir `townStyle`.
     const style = buildingStyleAt(
+      this.bubble.frame,
       footprint[0].x,
       footprint[0].z,
       { area: ground, height },
@@ -1963,7 +1958,7 @@ export class BuildingLayer {
       frontLength >= BALCONY_MIN_FACADE_M &&
       eaves - base >= BALCONY_MIN_WALL_M &&
       pointInAreas(this._builtUp, box.cx, box.cz) &&
-      randomAt(box.cx, box.cz, 431) < BALCONY_SHARE;
+      randomAt(this.bubble.frame, box.cx, box.cz, 431) < BALCONY_SHARE;
 
     for (let i = 0; i < ordered.length; i++) {
       const a = ordered[i];
@@ -2026,7 +2021,7 @@ export class BuildingLayer {
           appendOpenings(openings, walls, a, b, nx, nz, base, eaves - base, minHeight,
             look?.wall ? { ...style, shutters: false } : style,
             look?.windows ? { ...this.theme.windows, ...look.windows } : this.theme.windows, {
-              skipGroundLevel: devanture, ground: profile,
+              frame: this.bubble.frame, skipGroundLevel: devanture, ground: profile,
               allowAt: kind === 'castle' ? along => facadeThickness(footprint, footprint[i], footprint[(i+1)%footprint.length], along / length) > 3.2 : null,
               clearAbove: devanture ? shopfrontTop : -Infinity,
               door: i === frontIndex && !devanture ? style.shutter : null,
@@ -2067,7 +2062,7 @@ export class BuildingLayer {
           // bar ou café — voir `AWNING_CLASSES`.
           if (AWNING_CLASSES.has(personalityClass)) {
             const cloths = this.theme.shopfront.awningColors;
-            const awning = srgb(cloths[Math.floor(randomAt(box.cx, box.cz, 437) * cloths.length) % cloths.length]);
+            const awning = srgb(cloths[Math.floor(randomAt(this.bubble.frame, box.cx, box.cz, 437) * cloths.length) % cloths.length]);
             appendAwning(walls, a, b, nx, nz, shopfrontTop, awning, this.theme.shopfront);
             this._appendTerrace(walls, a, b, nx, nz, groundAt, minHeight, personalityClass);
           } else if (FUEL_CLASSES.has(personalityClass)) {
@@ -2133,7 +2128,7 @@ export class BuildingLayer {
       shape !== 'flat' &&
       style.house &&
       !look &&
-      randomAt(box.cx, box.cz, 421) < CHIMNEY_SHARE
+      randomAt(this.bubble.frame, box.cx, box.cz, 421) < CHIMNEY_SHARE
     ) {
       this._appendChimney(walls, box, top);
     }
@@ -2227,7 +2222,7 @@ export class BuildingLayer {
    *
    */
   _appendChimney(walls, box, top) {
-    const foot = chimneyFootFor(box);
+    const foot = chimneyFootFor(this.bubble.frame, box);
     const colors = this.theme.furniture.colors;
 
     const kit = new Kit(colors);
@@ -2272,7 +2267,7 @@ export class BuildingLayer {
     // du repère non tourné — voir la note ci-dessus.
     const toWorld = (along, out) => balconyLocalToWorld(along, out, yaw);
 
-    const { width, depth, level } = balconyGeometryFor(mx, mz, length, base, eaves);
+    const { width, depth, level } = balconyGeometryFor(this.bubble.frame, mx, mz, length, base, eaves);
     const railHeight = 0.95;
     const slab = 0.1;
     const colors = this.theme.furniture.colors;

@@ -4,10 +4,11 @@ import * as THREE from 'three';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 import { defaultTheme } from '../src/themes/default.js';
+import { createLocalFrame } from '../src/core/tileMath.js';
 const source = process.argv[2] ? pathToFileURL(resolve(process.argv[2])).href : '../src/layers/groundCover.js';
 const { GroundCover } = await import(source);
 const bubble = {
-  frame: {}, surfaceGeneration: 0, verticalScale: 1, surfaceElevationAtLocal: () => 0,
+  frame: createLocalFrame(-0.145, 47.131, 15), surfaceGeneration: 0, verticalScale: 1, surfaceElevationAtLocal: () => 0,
   renderedSupportAtLocal: (x, z, out) => Object.assign(out, { y: 0, slopeX: 0, slopeZ: 0 }),
 };
 const cover = new GroundCover({ THREE, scene: new THREE.Scene(), bubble, groundClass: null, theme: defaultTheme });

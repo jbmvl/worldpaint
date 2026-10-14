@@ -41,7 +41,7 @@ function compatible(a, b) {
   return heights(a).every((h,i) => Math.abs(h-heights(b)[i]) <= 1.5);
 }
 
-export function resolveTunnelProfiles(segments, rails, elevation, { buildings = [], centres = [], theme = defaultTheme } = {}) {
+export function resolveTunnelProfiles(segments, rails, elevation, { frame, buildings = [], centres = [], theme = defaultTheme } = {}) {
   for (const segment of segments) segment.tunnelStructures = [];
   const tunnels = segments.filter(s=>s.works?.includes(WORK_TUNNEL));
   if (!tunnels.length) return 0;
@@ -102,7 +102,7 @@ export function resolveTunnelProfiles(segments, rails, elevation, { buildings = 
       return lerp(...ends.get(m),t);
     }));
     const platform=Float32Array.from(path,floorAt);
-    const style=worksStyleAt(path[0].x,path[0].z,theme.works);
+    const style=worksStyleAt(frame,path[0].x,path[0].z,theme.works);
     const roofHeight=ref.kind==='underpass' ? BRIDGE_CLEARANCE_M-style.deck.thickness : Math.max(...vaultProfile(halfWidth,style.portal).map(p=>p.up));
     let depth=0;
     if (ref.kind==='underpass') {

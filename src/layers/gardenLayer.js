@@ -16,7 +16,7 @@
  * le compositeur les transmet au rendu commun de végétation.
  */
 
-import { randomAt } from './furniturePlacement.js';
+import { randomAt } from '../core/groundSeed.js';
 import { pushPanel } from './buildingLayer.js';
 import { srgb } from '../core/color.js';
 import { defaultTheme } from '../themes/default.js';
@@ -236,17 +236,18 @@ function pushTriangle(buffer, a, b, c, color, normal = null) {
  * ressemble à son voisin.
  *
  * @param {Object} options
+ * @param {Object} options.frame Repère local, qui ancre les tirages au sol.
  * @param {Object} [options.colors] Feuillage du thème (`theme.furniture.colors`).
  */
-export function appendBush(buffer, { x, y, z, radius, height, seed = 1, sides = 7, colors = defaultTheme.furniture.colors }) {
-  const base = blend(colors.leafDeep, colors.leafBlue, randomAt(x, z, seed + 3));
-  const crown = blend(colors.leafOlive, colors.leafSpring, randomAt(x, z, seed + 5));
+export function appendBush(buffer, { frame, x, y, z, radius, height, seed = 1, sides = 7, colors = defaultTheme.furniture.colors }) {
+  const base = blend(colors.leafDeep, colors.leafBlue, randomAt(frame, x, z, seed + 3));
+  const crown = blend(colors.leafOlive, colors.leafSpring, randomAt(frame, x, z, seed + 5));
 
   const ring = (r, h, jitterSalt) => {
     const points = [];
     for (let i = 0; i < sides; i++) {
       const angle = (i / sides) * Math.PI * 2;
-      const noise = 0.78 + randomAt(x + Math.cos(angle) * r, z + Math.sin(angle) * r, jitterSalt) * 0.44;
+      const noise = 0.78 + randomAt(frame, x + Math.cos(angle) * r, z + Math.sin(angle) * r, jitterSalt) * 0.44;
       points.push([x + Math.cos(angle) * r * noise, y + h, z + Math.sin(angle) * r * noise]);
     }
     return points;
@@ -323,10 +324,10 @@ export class GardenLayer {
     const clear = (x, z) => !inCorridor(index, x, z) && !pavement?.covers(x, z, 0);
 
     for (const { house } of near) {
-      if (randomAt(house.x, house.z, 211) >= GARDEN_SHARE) continue;
+      if (randomAt(this.bubble.frame, house.x, house.z, 211) >= GARDEN_SHARE) continue;
 
       const drawn =
-        GARDEN_MARGIN_M[0] + randomAt(house.x, house.z, 217) * (GARDEN_MARGIN_M[1] - GARDEN_MARGIN_M[0]);
+        GARDEN_MARGIN_M[0] + randomAt(this.bubble.frame, house.x, house.z, 217) * (GARDEN_MARGIN_M[1] - GARDEN_MARGIN_M[0]);
       // Rabattement avant le test de voisinage : c'est le recul réellement posé qui doit tenir libre.
       const margin = fittedGardenMargin(house.box, drawn, clear);
       if (margin == null) continue;
@@ -345,12 +346,12 @@ export class GardenLayer {
   _appendGarden(buffer, house, margin) {
     const { bubble } = this;
     const ground = (x, z) => bubble.surfaceElevationAtLocal(x, z) * bubble.verticalScale;
-    const tone = FENCE_TONES[Math.floor(randomAt(house.x, house.z, 223) * FENCE_TONES.length)];
+    const tone = FENCE_TONES[Math.floor(randomAt(bubble.frame, house.x, house.z, 223) * FENCE_TONES.length)];
     const railTone = tone.map((c) => c * 0.88); // la lisse est derrière, plus sombre
 
     const corners = gardenCorners(house.box, margin);
     // Portillon sur un seul côté, tiré une fois pour tout le jardin.
-    const gateSide = Math.floor(randomAt(house.x, house.z, 229) * 4);
+    const gateSide = Math.floor(randomAt(bubble.frame, house.x, house.z, 229) * 4);
 
     for (let side = 0; side < 4; side++) {
       const a = corners[side];
@@ -367,7 +368,7 @@ export class GardenLayer {
 
       const gate =
         side === gateSide
-          ? GATE_WIDTH_M + randomAt(a.x, a.z, 233) * Math.max(0, length - GATE_WIDTH_M * 2)
+          ? GATE_WIDTH_M + randomAt(bubble.frame, a.x, a.z, 233) * Math.max(0, length - GATE_WIDTH_M * 2)
           : null;
 
       const pickets = picketOffsets(length, PICKET_SPACING_M, gate);
@@ -438,7 +439,7 @@ export class GardenLayer {
       [long - inset, 0],
     ];
 
-    const wanted = BUSH_MIN + Math.floor(randomAt(house.x, house.z, 239) * (BUSH_MAX - BUSH_MIN + 1));
+    const wanted = BUSH_MIN + Math.floor(randomAt(bubble.frame, house.x, house.z, 239) * (BUSH_MAX - BUSH_MIN + 1));
     let placed = 0;
     for (let i = 0; i < spots.length && placed < wanted; i++) {
       const [u, v] = spots[i];
@@ -446,18 +447,18 @@ export class GardenLayer {
 
       const x = box.cx + u * cos - v * sin;
       const z = box.cz + u * sin + v * cos;
-      if (randomAt(x, z, 241) < 0.25) continue;
+      if (randomAt(bubble.frame, x, z, 241) < 0.25) continue;
       // Un angle de jardin peut encore mordre sur un trottoir en biais.
       if (inCorridor(this.roads?.index || null, x, z)) continue;
 
       const radius =
-        BUSH_RADIUS_M[0] + randomAt(x, z, 251) * (BUSH_RADIUS_M[1] - BUSH_RADIUS_M[0]);
-      const height = radius * (1.15 + randomAt(x, z, 257) * 0.7);
+        BUSH_RADIUS_M[0] + randomAt(bubble.frame, x, z, 251) * (BUSH_RADIUS_M[1] - BUSH_RADIUS_M[0]);
+      const height = radius * (1.15 + randomAt(bubble.frame, x, z, 257) * 0.7);
       const variants = this.theme.trees.essences.bushy;
-      const shade = .88 + randomAt(x, z, 263) * .24;
+      const shade = .88 + randomAt(bubble.frame, x, z, 263) * .24;
       this.trees.push({ x, y: ground(x, z) - .1, z, height, aspect: radius * 2 / height,
-        variant: variants[Math.floor(randomAt(x, z, 269) * variants.length)],
-        rotation: randomAt(x, z, 271) * Math.PI * 2, color: [shade, shade, shade] });
+        variant: variants[Math.floor(randomAt(bubble.frame, x, z, 269) * variants.length)],
+        rotation: randomAt(bubble.frame, x, z, 271) * Math.PI * 2, color: [shade, shade, shade] });
       placed++;
     }
   }

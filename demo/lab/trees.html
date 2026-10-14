@@ -9,6 +9,8 @@ import * as THREE from 'three';
 import { VegetationLayer } from '/src/layers/vegetationLayer.js';
 import { defaultTheme } from '/src/themes/default.js';
 import { plantedTree } from '/src/layers/plantedTrees.js';
+import { createLocalFrame } from '/src/core/tileMath.js';
+const frame = createLocalFrame(-0.145, 47.131, 15);
 const renderer = new THREE.WebGLRenderer({antialias:true, preserveDrawingBuffer:true});
 renderer.setSize(innerWidth,innerHeight);
 renderer.shadowMap.enabled = true;
@@ -20,12 +22,12 @@ scene.add(new THREE.HemisphereLight(0xdce8ff,0x637547,1.5));
 const sun = new THREE.DirectionalLight(0xfff4db,2); sun.position.set(-30,60,30);sun.castShadow=true;
 sun.shadow.bias=-.0004;sun.shadow.normalBias=.6;sun.shadow.camera.left=-80;sun.shadow.camera.right=80;sun.shadow.camera.top=60;sun.shadow.camera.bottom=-60;sun.shadow.mapSize.set(2048,2048);scene.add(sun);
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(3000,3000).rotateX(-Math.PI/2),new THREE.MeshLambertMaterial({color:0x789250}));ground.receiveShadow=true;scene.add(ground);
-const layer = new VegetationLayer({THREE,scene,bubble:{frame:{},surfaceElevationAtLocal:()=>0,verticalScale:1}});
+const layer = new VegetationLayer({THREE,scene,bubble:{frame,surfaceElevationAtLocal:()=>0,verticalScale:1}});
 layer.setWind({amplitude:0,speed:0});
 const state = {variant:-1,angle:0,dense:false,plantations:false};
 function render(){
  const plants=[];
- if(state.plantations){for(const [i,item] of Object.keys(defaultTheme.trees.plantations).entries()) for(let j=0;j<3;j++) plants.push(plantedTree(item,{x:(i-2.5)*14,z:j*14,y:0,scale:1},defaultTheme.trees));}
+ if(state.plantations){for(const [i,item] of Object.keys(defaultTheme.trees.plantations).entries()) for(let j=0;j<3;j++) plants.push(plantedTree(frame,item,{x:(i-2.5)*14,z:j*14,y:0,scale:1},defaultTheme.trees));}
  else if(state.dense){for(let i=0;i<2100;i++) plants.push({variant:i%16,x:(i%50-25)*3,z:-Math.floor(i/50)*3,y:0,height:8,aspect:.7,rotation:i*.71,color:[1,1,1]});}
  else for(let i=0;i<defaultTheme.trees.variants.length;i++){
    if(state.variant>=0 && i!==state.variant)continue;

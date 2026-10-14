@@ -4,9 +4,10 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { GroundCover } from '../src/layers/groundCover.js';
 import { paddedCoverBands } from '../src/materials/coverTransition.js';
+import { testFrame } from './testFrame.mjs';
 test('le tapis garde ses matrices entre deux chargements et suit la caméra par uniforme', () => {
   const scene = new THREE.Scene();
-  const cover = new GroundCover({ THREE, scene, bubble: { frame: {}, verticalScale: 1, surfaceElevationAtLocal: () => 0 }, groundClass: null });
+  const cover = new GroundCover({ THREE, scene, bubble: { frame:testFrame, verticalScale: 1, surfaceElevationAtLocal: () => 0 }, groundClass: null });
   cover.update(0,0);
   const matrices = cover.mesh.instanceMatrix.array.slice();
   assert.ok(cover.mesh.count > 20000);
@@ -43,7 +44,7 @@ test('la maille d’herbe porte neuf racines distinctes et aucune rampe de coule
 
 test('les racines réparties suivent une pente sans coucher les brins', () => {
   const scene=new THREE.Scene();
-  const cover=new GroundCover({THREE,scene,bubble:{frame:{},verticalScale:1,surfaceElevationAtLocal:(x,z)=>x*.2+z*.1},groundClass:null});
+  const cover=new GroundCover({THREE,scene,bubble:{frame:testFrame,verticalScale:1,surfaceElevationAtLocal:(x,z)=>x*.2+z*.1},groundClass:null});
   cover.update(0,0);
   const matrix=new THREE.Matrix4();cover.mesh.getMatrixAt(0,matrix);
   const pos=cover.geometry.attributes.position;
@@ -58,7 +59,7 @@ test('les racines réparties suivent une pente sans coucher les brins', () => {
 
 test('les coquelicots restent présents au bord des cultures', () => {
   const scene=new THREE.Scene();
-  const cover=new GroundCover({THREE,scene,bubble:{frame:{},verticalScale:1,surfaceElevationAtLocal:()=>0},
+  const cover=new GroundCover({THREE,scene,bubble:{frame:testFrame,verticalScale:1,surfaceElevationAtLocal:()=>0},
     groundClass:{sampleAt:()=>({grass:.6,wood:0,farmland:.4,bare:0})}});
   cover.update(0,0);
   assert.ok(cover.flowers.meshes[2].count>0);

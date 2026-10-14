@@ -100,6 +100,7 @@ import { regionById, regionWithWord } from './core/region.js';
 import { planFaunaCrossing } from './layers/faunaCrossing.js';
 import { planCheer } from './layers/spectatorPlacement.js';
 import { defaultTheme } from './themes/default.js';
+import { hash32 } from './core/groundSeed.js';
 
 /**
  * Crédit des données affichées. Le décor vient d'OpenStreetMap via les tuiles
@@ -715,7 +716,7 @@ export class WorldComposer {
 
       // 2 ter. Voie ferrée — lit le terrain corrigé, publie son emprise et les voies des trains.
       this.railways.rebuild(this.vectorTiles, wanted, here);
-      this.trains.setTracks(this.railways.tracks, here);
+      this.trains.setTracks(this.bubble.frame, this.railways.tracks, here);
 
       if (!await checkpoint()) return false;
 
@@ -955,7 +956,7 @@ export class WorldComposer {
     // Graine tirée du lieu, au dix-millième de degré : le même carrefour
     // rassemble les mêmes spectateurs, quel que soit l'instant de la demande.
     const here = frame.toLngLat(at.x, at.z);
-    const seed = Math.imul(Math.round(here.lng * 1e4), 73856093) ^ Math.imul(Math.round(here.lat * 1e4), 19349663);
+    const seed = hash32(Math.round(here.lng * 1e4), Math.round(here.lat * 1e4));
     const people = planCheer({
       ...options,
       roads: this.roads,
@@ -999,7 +1000,7 @@ export class WorldComposer {
     // qu'une fois l'observateur passé au large, et pour faire fuir une bête
     // marquée `flee` qui le voit approcher ; l'échantillonnage du relief lui
     // est nécessaire pour tracer cette fuite (voir `faunaLayer._checkFlee`).
-    this.fauna.advance(delta, at, (x, z) => this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale);
+    this.fauna.advance(delta, at, (x, z) => this.bubble.surfaceElevationAtLocal(x, z, 0) * this.bubble.verticalScale, this.bubble.frame);
     this.tractors.advance(delta);
     this.spectators.advance(delta, at, this.bubble.frame);
     this.trains.advance(delta, at);

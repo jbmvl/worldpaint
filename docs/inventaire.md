@@ -18,8 +18,9 @@ la première chose à savoir devant un objet qui surprend.
 | **Inventé** | tiré au sort, sous conditions | un lampadaire, une haie, un troupeau, une éolienne, un panneau |
 
 Le troisième régime obéit à un **invariant dur** : toute graine dérive d'une
-position au sol quantifiée à 50 cm (`positionSeed`), jamais de l'ordre de
-parcours ni de la position de l'observateur. La même donnée rend donc le même
+position au sol quantifiée en coordonnées Web Mercator absolues
+(`core/groundSeed.js`), jamais de l'ordre de parcours ni de la position de
+l'observateur — ni du point de départ, dont dépend le repère local. La même donnée rend donc le même
 paysage, et repasser au même endroit y retrouve la même vache.
 
 ## Ce qu'on lit

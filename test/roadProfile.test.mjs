@@ -8,6 +8,7 @@ import { RoadNetwork } from '../src/layers/roadNetwork.js';
 import { BridgeLayer } from '../src/layers/bridgeLayer.js';
 import { FurnitureLayer } from '../src/layers/furnitureLayer.js';
 import { createLocalFrame } from '../src/core/tileMath.js';
+import { testFrame } from './testFrame.mjs';
 
 const grade = s => Math.max(...s.path.slice(1).map((p, i) => Math.abs(s.platform[i + 1] - s.platform[i]) / Math.hypot(p.x-s.path[i].x,p.z-s.path[i].z)));
 const line = (points, deck) => segmentOf(points, 3, { deck });
@@ -83,7 +84,7 @@ test('le tablier et ses parapets suivent les rampes jusqu’au premier contact a
   assert.deepEqual(s.platform, initial);
   assert.ok(s.works.every(v => v === 0));
   const layer = new BridgeLayer({THREE, scene:new THREE.Scene(),
-    bubble:{frame:{}, verticalScale:1, surfaceElevationAtLocal:() => 0}});
+    bubble:{frame:testFrame, verticalScale:1, surfaceElevationAtLocal:() => 0}});
   layer.rebuild([s], {x:90,z:0});
   assert.equal(layer.counts.spans, 1);
   const positions = layer.geometry.attributes.position.array;
@@ -114,7 +115,7 @@ test('les accès portés sont identiques lorsque le tracé est inversé', () => 
 
 test('une route suspendue porte ses piles sur le sol final', () => {
   const s=line([{x:0,z:0},{x:90,z:0}],()=>9);findRoadSupports([s],()=>0);
-  const bubble={frame:{},verticalScale:1,surfaceElevationAtLocal:()=>0};
+  const bubble={frame:testFrame,verticalScale:1,surfaceElevationAtLocal:()=>0};
   const layer=new BridgeLayer({THREE,scene:new THREE.Scene(),bubble});
   assert.ok(layer.rebuild([s],{x:0,z:0}));assert.ok(layer.counts.piers>=2);
   const p=layer.geometry.attributes.position.array;
@@ -181,7 +182,7 @@ test('un carrefour suspendu reçoit une dalle commune avec ses bouches ouvertes'
     {points:[{x:0,z:-60},{x:0,z:0},{x:0,z:60}],profile:'minor',halfWidth:3}],{deck:()=>10});
   findRoadSupports(network.segments,()=>0,network.areas);
   assert.ok(network.areas.areas[0].supported);
-  const layer=new BridgeLayer({THREE,scene:new THREE.Scene(),bubble:{frame:{},verticalScale:1,surfaceElevationAtLocal:()=>0}});
+  const layer=new BridgeLayer({THREE,scene:new THREE.Scene(),bubble:{frame:testFrame,verticalScale:1,surfaceElevationAtLocal:()=>0}});
   layer.rebuild(network.segments,{x:0,z:0},{areas:network.areas});
   assert.equal(layer.counts.spans,5,'quatre bras et une dalle de carrefour');
   assert.ok(Array.from(layer.geometry.attributes.position.array).every(Number.isFinite));
@@ -218,7 +219,7 @@ test('le relevage d’un pont ne réduit pas le dégagement du passage inférieu
 test('les piles d’une portion suspendue laissent libre la chaussée inférieure', () => {
   const upper=line([{x:-60,z:0},{x:60,z:0}],()=>10);upper.supports=new Uint8Array(upper.path.length).fill(1);
   const lower=line([{x:0,z:-60},{x:0,z:60}],()=>0);
-  const layer=new BridgeLayer({THREE,scene:new THREE.Scene(),bubble:{frame:{},verticalScale:1,surfaceElevationAtLocal:()=>0}});
+  const layer=new BridgeLayer({THREE,scene:new THREE.Scene(),bubble:{frame:testFrame,verticalScale:1,surfaceElevationAtLocal:()=>0}});
   const roadIndex={queryAll:(x,z)=>Math.abs(x)<5&&Math.abs(z)<60?[{segment:lower}]:[],deckAt:()=>0};
   layer.rebuild([upper],{x:0,z:0},{roadIndex});
   const p=layer.geometry.attributes.position.array;

@@ -604,7 +604,7 @@ export class StreetLayer {
   _appendKerb(buffer, bands, { points, decks, frames, side, halfWidth, room, streets }) {
     if (!kerbFits(room, streets)) return;
     const anchor = points[0];
-    const tones = streetSurfaceAt(anchor.x, anchor.z, streets);
+    const tones = streetSurfaceAt(this.bubble.frame, anchor.x, anchor.z, streets);
     const profile = kerbProfile({ halfWidth, side, tones }, streets);
     const used = frames || pathFrames(points);
     const start = buffer.positions.length;
