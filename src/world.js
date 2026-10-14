@@ -94,7 +94,7 @@ export const DEFAULT_ELEVATION_ZOOM = 14;
  *        (tuiles Terrarium d'AWS Open Data, sans clé, au `DEFAULT_ELEVATION_ZOOM`).
  *        Une instance déjà construite est utilisée telle quelle et n'est pas
  *        libérée par `dispose()`.
- * @param {{tiles: string[], maxZoom?: number}|null} [options.vector]
+ * @param {{tiles: string[], maxZoom?: number, fetchTile?: Function}|null} [options.vector]
  *        Tuiles vectorielles OpenMapTiles. Absentes, le décor se réduit au relief nu.
  * @param {Object} [options.view] Voir `DEFAULT_VIEW`.
  * @param {number} [options.reach] Portée du monde, en mètres : la seule option

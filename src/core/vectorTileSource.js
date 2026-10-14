@@ -1,7 +1,7 @@
 /*
  * vectorTileSource — tuiles vectorielles chargées pour la bulle. Le chargement
- * est piloté par la bulle ; l'application ne fournit qu'un gabarit d'URL et un
- * zoom maximal. Décodage via `@mapbox/vector-tile`, dont `toGeoJSON` rend
+ * est piloté par la bulle ; l'application fournit les URL, le zoom maximal et
+ * peut partager son transport. Décodage via `@mapbox/vector-tile`, dont `toGeoJSON` rend
  * directement la géométrie en longitude/latitude.
  */
 
@@ -10,6 +10,7 @@
 import { PbfReader } from 'pbf';
 import { VectorTile } from '@mapbox/vector-tile';
 import { tileKey, fillTileUrl, tileXToLng, tileYToLat } from './tileMath.js';
+import { tileRequest } from './tileRequest.js';
 
 /** Zoom visé. 14 est le maximum servi par la plupart des jeux OpenMapTiles. */
 export const VECTOR_ZOOM = 14;
@@ -66,8 +67,10 @@ export class VectorTileSource {
    * @param {string[]} options.tiles   Gabarits d'URL.
    * @param {number} options.zoom      Zoom des tuiles à charger.
    * @param {number} [options.maxTiles] Cache LRU.
+   * @param {Function} [options.fetchTile] Transport compatible fetch, partagé par l'application.
+   * @param {number} [options.timeoutMs] Délai réseau maximal.
    */
-  constructor({ tiles, zoom = VECTOR_ZOOM, maxTiles = 24 }) {
+  constructor({ tiles, zoom = VECTOR_ZOOM, maxTiles = 24, fetchTile = (...args) => fetch(...args), timeoutMs = 15000 }) {
     this.templates = tiles;
     this.zoom = zoom;
     this.maxTiles = maxTiles;
@@ -75,10 +78,14 @@ export class VectorTileSource {
     this.tiles = new Map();
     this.pending = new Map();
     this.disposed = false;
+    this.fetchTile = fetchTile;
+    this.timeoutMs = timeoutMs;
+    this._abort = new AbortController();
   }
 
   /** Charge une tuile. Résout `null` si elle est indisponible (trou toléré). */
   async load(x, y, signal) {
+    if (this.disposed || signal?.aborted) return null;
     const key = tileKey(this.zoom, x, y);
     if (this.tiles.has(key)) {
       const cached = this.tiles.get(key);
@@ -90,12 +97,14 @@ export class VectorTileSource {
 
     const template = this.templates[Math.abs(x + y) % this.templates.length];
     const task = (async () => {
+      const request = tileRequest({ signal, lifetime: this._abort.signal, timeoutMs: this.timeoutMs });
       try {
-        const res = await fetch(fillTileUrl(template, this.zoom, x, y), {
-          signal,
+        const res = await this.fetchTile(fillTileUrl(template, this.zoom, x, y), {
+          signal: request.signal,
           mode: 'cors',
           credentials: 'omit',
         });
+        if (this.disposed || request.signal.aborted) return null;
         // 404 = tuile sans donnée, normal, mis en cache ; tout autre code est
         // un incident passager qu'on ne veut pas figer en cache.
         if (!res.ok) {
@@ -114,6 +123,7 @@ export class VectorTileSource {
         }
         return null;
       } finally {
+        request.release();
         this.pending.delete(key);
       }
     })();
@@ -192,6 +202,7 @@ export class VectorTileSource {
 
   dispose() {
     this.disposed = true;
+    this._abort.abort();
     this.tiles.clear();
     this.pending.clear();
   }
