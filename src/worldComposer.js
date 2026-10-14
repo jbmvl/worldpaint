@@ -340,6 +340,7 @@ export class WorldComposer {
       ? new VectorTileSource({
           tiles: vectorConfig.tiles,
           zoom: Math.min(VECTOR_ZOOM, vectorConfig.maxZoom),
+          fetchTile: vectorConfig.fetchTile,
         })
       : null;
     this.metrics = new GenerationMetrics();
@@ -437,6 +438,7 @@ export class WorldComposer {
     this.vectorTiles = new VectorTileSource({
       tiles: vectorConfig.tiles,
       zoom: Math.min(VECTOR_ZOOM, vectorConfig.maxZoom),
+      fetchTile: vectorConfig.fetchTile,
     });
     return true;
   }

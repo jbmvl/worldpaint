@@ -137,6 +137,13 @@ application already uses) rather than leaving it at the default.
 
 ### The five verbs
 
+Le transport vectoriel peut être fourni par `vector.fetchTile(url, options)`,
+compatible avec `fetch` et renvoyant une `Response`. Une application peut ainsi
+partager les octets et les requêtes en cours avec sa carte, sans coupler le
+générateur à celle-ci. Ce transport doit respecter `options.signal`.
+Les loaders de tuiles annulent leurs lectures à `dispose()` et après 15 secondes ;
+le cache de données décodées reste propre à chaque source.
+
 | | |
 |---|---|
 | `setCenter(lng, lat)` | move the terrain bubble |
@@ -254,7 +261,7 @@ sways harder and faster, roads and ground darken when wet, and rain or snow
 falls in a box that follows the viewpoint. See `src/environment/weather.js` for
 what each coefficient does and why.
 
-The engine never *fetches* the weather: `src/` makes no network request and
+The engine never *fetches* the weather: it only fetches terrain and vector tiles, and
 knows no service. Where the state comes from — a real forecast, a simulation, a
 player setting — is the application's business. The demo drives it from
 sliders; a real application might use a free, keyless source such as

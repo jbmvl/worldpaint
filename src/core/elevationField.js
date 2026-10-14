@@ -11,6 +11,7 @@
  */
 
 import { decodeTerrarium, decodeTerrainRgb, tileKey, fillTileUrl } from './tileMath.js';
+import { tileRequest } from './tileRequest.js';
 
 /** Résolution supposée d'une tuile tant qu'aucune n'a été décodée. */
 export const DEM_TILE_PIXELS = 256;
@@ -68,11 +69,14 @@ export class ElevationField {
     url = MAPTILER_TERRAIN_URL,
     encoding = 'terrain-rgb',
     maxTiles = 64,
+    timeoutMs = 15000,
   } = {}) {
     this.zoom = zoom;
     this.url = url;
     this.encoding = encoding;
     this.maxTiles = maxTiles;
+    this.timeoutMs = timeoutMs;
+    this._abort = new AbortController();
     /** Relevée sur la première tuile décodée, jamais supposée ensuite. */
     this.tilePixels = DEM_TILE_PIXELS;
     /** @type {Map<string, Float32Array>} tuiles décodées (ordre = récence LRU) */
@@ -85,7 +89,7 @@ export class ElevationField {
 
   /** Un champ de la même source à un autre zoom, avec son propre cache. */
   atZoom(zoom) {
-    return new this.constructor({ zoom, url: this.url, encoding: this.encoding, maxTiles: this.maxTiles });
+    return new this.constructor({ zoom, url: this.url, encoding: this.encoding, maxTiles: this.maxTiles, timeoutMs: this.timeoutMs });
   }
 
   /** Nombre de pixels sur un côté du monde, au zoom courant. */
@@ -99,6 +103,7 @@ export class ElevationField {
 
   /** Charge une tuile (idempotent). Résout `null` si la tuile est indisponible. */
   async load(x, y, signal) {
+    if (this.disposed || signal?.aborted) return null;
     const key = tileKey(this.zoom, x, y);
     const cached = this.tiles.get(key);
     if (cached) {
@@ -110,9 +115,10 @@ export class ElevationField {
     if (this.pending.has(key)) return this.pending.get(key);
 
     const task = (async () => {
+      const request = tileRequest({ signal, lifetime: this._abort.signal, timeoutMs: this.timeoutMs });
       try {
         const res = await fetch(fillTileUrl(this.url, this.zoom, x, y), {
-          signal,
+          signal: request.signal,
           mode: 'cors',
           credentials: 'omit',
         });
@@ -127,7 +133,7 @@ export class ElevationField {
         }
         const blob = await res.blob();
         const bitmap = await createImageBitmap(blob);
-        if (this.disposed) {
+        if (this.disposed || request.signal.aborted) {
           bitmap.close?.();
           return null;
         }
@@ -142,6 +148,7 @@ export class ElevationField {
         }
         return null;
       } finally {
+        request.release();
         this.pending.delete(key);
       }
     })();
@@ -243,6 +250,7 @@ export class ElevationField {
 
   dispose() {
     this.disposed = true;
+    this._abort.abort();
     this._last = null;
     this.tiles.clear();
     this.pending.clear();
