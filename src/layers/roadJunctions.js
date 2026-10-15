@@ -597,7 +597,8 @@ function joint(a, b) {
   const start = Math.atan2(from.z - centre.z, from.x - centre.x);
   let sweep = Math.atan2(to.z - centre.z, to.x - centre.x) - start;
   while (sweep < 0) sweep += Math.PI * 2;
-  if (sweep < 0.02 || sweep > Math.PI) return null;
+  // Même un joint très fermé comble l’encoche jusqu’au nœud.
+  if (sweep <= 0 || sweep > Math.PI) return null;
   const steps = Math.max(1, Math.ceil(sweep / JOIN_STEP));
   const ring = [centre, from];
   for (let k = 1; k < steps; k++) {
