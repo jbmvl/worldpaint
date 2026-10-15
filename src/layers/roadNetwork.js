@@ -1,5 +1,7 @@
+import { visitFeatures } from '../core/featureSteps.js';
+import { coloredProfileGeometrySteps, ribbonProfileGeometrySteps } from './profileGeometry.js';
 import { RoadGraphMemo } from './roadGraphMemo.js';
-import { collectTunnelBuildings, resolveTunnelProfiles } from './transportTunnels.js';
+import { collectTunnelBuildingsSteps, resolveTunnelProfiles } from './transportTunnels.js';
 import { finishGeneration } from '../core/generationSteps.js';
 import { DECOR_STEP_M, reachedRadius } from '../core/decorReach.js';
 /*
@@ -83,16 +85,16 @@ import { DECOR_STEP_M, reachedRadius } from '../core/decorReach.js';
  * une contre-allée de campagne est un objet du paysage.
  */
 
-import { gradeRoadNetwork, smoothRoadProfiles, findRoadSupports, findEarthFills } from './roadProfile.js';
+import { gradeRoadNetwork, smoothRoadProfilesSteps, findRoadSupportsSteps, findEarthFillsSteps } from './roadProfile.js';
 import { resolveTransportCrossings } from './transportCrossings.js';
 import { TransportEarthworks } from '../terrain/transportEarthworks.js';
 import { cutElevationAt, fillElevationAt } from '../terrain/roadCut.js';
 import { RoadContinuity } from './roadContinuity.js';
 import { lngToTileX, latToTileY } from '../core/tileMath.js';
-import { absorbParallelLines, facingRows } from './roadBundles.js';
-import { fitParallelRoadWidths } from './roadWidths.js';
+import { absorbParallelLinesSteps, facingRows } from './roadBundles.js';
+import { fitParallelRoadWidthsSteps } from './roadWidths.js';
 import {
-  mergeRoadLines,
+  mergeRoadLinesSteps,
   RoadIndex,
   ROAD_INDEX_MARGIN_M,
   knownCoverage,
@@ -145,7 +147,6 @@ import {
   createProfileBuffer,
   appendRibbon,
   appendSteps,
-  toGeometry,
   toColoredGeometry,
   pathFrames,
   levelRow,
@@ -651,11 +652,13 @@ export function clipToRadius(points, centerX, centerZ, radius) {
  *        lancer de rayon par mètre de trottoir.
  * @returns {Array<{profile:string, halfWidth:number, points:Array}>}
  */
-export function collectRoadLines(source, tiles, frame, roads = defaultTheme.roads, { urban = null } = {}) {
+export function collectRoadLines(...args) { return finishGeneration(collectRoadLinesSteps(...args)); }
+
+export function* collectRoadLinesSteps(source, tiles, frame, roads = defaultTheme.roads, { urban = null } = {}) {
   const { origin, scale, zoom } = frame;
   const lines = [];
 
-  source.forEachFeature('transportation', tiles, (geometry, properties) => {
+  yield* visitFeatures(source, 'transportation', tiles, (geometry, properties) => {
     const style = roadStyleFor(properties, roads.profiles);
     if (!style) return;
     const notInTown =
@@ -1102,22 +1105,23 @@ export function* collectRoadSegmentsSteps(
   const bands = new Map();
   let anyWorks = false; // vrai dès qu'un tronçon porte un ouvrage
   const read = [source, tiles, frame, roads, urban];
-  const { chains, junctions } = memo.graph(read, () => {
-    let lines = collectRoadLines(source, tiles, frame, roads, { urban });
+  const { chains, junctions } = yield* memo.graphSteps(read, function* () {
+    let lines = yield* collectRoadLinesSteps(source, tiles, frame, roads, { urban });
     // L'absorption se pose ici, sur les lignes, et pas plus tard : ce qui n'est
     // pas dessiné ne doit pas entrer dans le graphe (voir `roadBundles`). Elle
     // n'a lieu qu'en ville — un boulevard relevé en six voies est un fait
     // urbain, une contre-allée de campagne est un objet du paysage.
     if (urban?.any) {
-      lines = absorbParallelLines(lines, {
+      lines = yield* absorbParallelLinesSteps(lines, {
         order: ROAD_PROFILE_ORDER,
         where: (x, z) => urban.covers(x, z),
       });
     }
-    return mergeRoadLines(lines);
+    yield;
+    return yield* mergeRoadLinesSteps(lines);
   });
   yield;
-  fitParallelRoadWidths(chains.filter((chain) => isPaved(roads.profiles[chain.profile])), junctions, { x: here.x, z: here.z, radius });
+  yield* fitParallelRoadWidthsSteps(chains.filter((chain) => isPaved(roads.profiles[chain.profile])), junctions, { x: here.x, z: here.z, radius });
   yield;
 
   for (const chain of chains) {
@@ -1158,6 +1162,7 @@ export function* collectRoadSegmentsSteps(
       const edges = new Float32Array(rows * 2);
 
       for (let r = 0; r < rows; r++) {
+        if (r % 128 === 0) yield;
         platform[r] = levelRow(path, r, frames, chain.halfWidth, sampleElevation).deck;
         const wide = levelRow(path, r, frames, probe, sampleElevation);
         edges[r * 2] = wide.left;
@@ -1203,7 +1208,8 @@ export function* collectRoadSegmentsSteps(
   // (`segment.junction`). Le ruban les sautera ; tout le reste (emprise,
   // déblai, couture, mobilier, trottoirs) continue de lire une route entière.
   yield;
-  const areas = new JunctionAreas(junctions, out);
+  const areas = new JunctionAreas([], [], { defer: true });
+  yield* areas.buildSteps(junctions, out);
 
   // La couture précède les franchissements : elle ne peut annuler leur déblai.
   const paved = out.filter((segment) => segment.paved);
@@ -1224,10 +1230,11 @@ export function* collectRoadSegmentsSteps(
   }
   yield;
   const crossings = resolveTransportCrossings(paved, railwaySegments, { centres: areas.areas, bench });
-  if (anyWorks) resolveTunnelProfiles(out, railwaySegments, sampleElevation, {
-    frame,
-    buildings: memo.tunnelBuildings(read, () => collectTunnelBuildings(source, tiles, frame)), centres: areas.areas, theme: tunnelTheme,
-  });
+  if (anyWorks) {
+    const buildings = yield* memo.tunnelBuildingsSteps(read, () => collectTunnelBuildingsSteps(source, tiles, frame));
+    yield;
+    resolveTunnelProfiles(out, railwaySegments, sampleElevation, { frame, buildings, centres: areas.areas, theme: tunnelTheme });
+  }
 
   return {
     segments: out,
@@ -1355,10 +1362,12 @@ export class RoadNetwork {
     const index = new RoadIndex(collected, { margin: bubble.cutBenchM + ROAD_CUT_BLEND_M });
     yield;
     const terrainIndex = new RoadIndex(collected.filter(segment => segment.paved), { margin: bubble.cutBenchM + ROAD_CUT_BLEND_M });
+    yield;
     const unpavedIndex = new RoadIndex(
       collected.filter((segment) => !segment.paved),
       { margin: bubble.cutBenchM + ROAD_CUT_BLEND_M }
     );
+    yield;
     const earthworks = new TransportEarthworks([...collected.filter(s => s.paved || s.tunnelAccess), ...railwaySegments], {
       bench: bubble.cutBenchM, scale: bubble.verticalScale,
     });
@@ -1377,8 +1386,10 @@ export class RoadNetwork {
       return ground * bubble.verticalScale;
     };
     for (const segment of collected) {
+      yield;
       segment.terrainSupport = new Uint8Array(segment.path.length);
       for (let r = 0; r < segment.path.length; r++) {
+        if (r % 64 === 0) yield;
         const p = segment.path[r];
         if (segment.paved) {
           segment.terrainSupport[r] = earthworks.sample(p.x, p.z, sampleElevation(p.x, p.z) / bubble.verticalScale).supported ? 1 : 0;
@@ -1391,16 +1402,19 @@ export class RoadNetwork {
     // Même marge, tabliers compris : `platformPositionAt` doit pouvoir lire
     // l'altitude d'un pont ou d'un tunnel, ce que `index` refuse par construction.
     for (const segment of collected) segment.terrainPlatform = segment.platform.slice();
-    this.profileConstraints = smoothRoadProfiles(collected, { crossings });
+    this.profileConstraints = yield* smoothRoadProfilesSteps(collected, { crossings });
+    yield;
     areas.updateDecks();
-    findRoadSupports(collected, finalElevation, areas);
+    yield;
+    yield* findRoadSupportsSteps(collected, finalElevation, areas);
     // Après les appuis, qui se mesurent sur le sol non remblayé : une portion
     // suspendue garde son tablier, le terrain ne monte pas la rejoindre.
-    findEarthFills(collected);
+    yield* findEarthFillsSteps(collected);
     const elevationIndex = new RoadIndex(collected, {
       margin: ROAD_CUT_M + ROAD_CUT_BLEND_M,
       includeWorks: true,
     });
+    yield;
     const deckIndex = new RoadIndex(collected, { margin: DECK_SHADOW_MARGIN_M, keep: isDeckRow });
 
     const buffers = {};
@@ -1487,12 +1501,14 @@ export class RoadNetwork {
     this.earthworks = earthworks;
     // Tous les profils sont visités, y compris ceux sans géométrie cette fois : leur ancien maillage doit disparaître.
     for (const profile of ROAD_PROFILE_ORDER) {
-      this._applyBuffer(profile, buffers[profile] || createRibbonBuffer());
+      yield* this._applyBufferSteps(profile, buffers[profile] || createRibbonBuffer());
+      yield;
     }
     for (const surface of Object.keys(this.materials.junctions || {})) {
-      this._applyJunctionBuffer(surface, junctionBuffers[surface] || createRibbonBuffer());
+      yield* this._applyJunctionBufferSteps(surface, junctionBuffers[surface] || createRibbonBuffer());
+      yield;
     }
-    this._applyMarkings(markingBuffer);
+    yield* this._applyMarkingsSteps(markingBuffer);
     this._anchor = { x: here.x, z: here.z };
     this._frame = this.bubble.frame;
     this._surface = this.bubble.surfaceGeneration;
@@ -1676,9 +1692,11 @@ export class RoadNetwork {
   }
 
   /** Le marquage au sol, en un maillage : une seule matière pour tout le réseau. */
-  _applyMarkings(buffer) {
+  _applyMarkings(buffer) { return finishGeneration(this._applyMarkingsSteps(buffer)); }
+
+  *_applyMarkingsSteps(buffer) {
     const { THREE } = this;
-    const geometry = toColoredGeometry(THREE, buffer);
+    const geometry = yield* coloredProfileGeometrySteps(THREE, buffer);
 
     if (!geometry) {
       if (this.markingMesh) {
@@ -1718,9 +1736,11 @@ export class RoadNetwork {
    * Les surfaces de carrefour d'un revêtement, en un maillage. Séparé des
    * rubans parce que la matière l'est : un carrefour n'a pas de marquage peint.
    */
-  _applyJunctionBuffer(surface, buffer) {
+  _applyJunctionBuffer(surface, buffer) { return finishGeneration(this._applyJunctionBufferSteps(surface, buffer)); }
+
+  *_applyJunctionBufferSteps(surface, buffer) {
     const { THREE } = this;
-    const geometry = toGeometry(THREE, buffer);
+    const geometry = yield* ribbonProfileGeometrySteps(THREE, buffer);
     const existing = this.junctionMeshes[surface];
 
     if (!geometry) {
@@ -1751,9 +1771,11 @@ export class RoadNetwork {
     this.junctionMeshes[surface] = mesh;
   }
 
-  _applyBuffer(profile, buffer) {
+  _applyBuffer(profile, buffer) { return finishGeneration(this._applyBufferSteps(profile, buffer)); }
+
+  *_applyBufferSteps(profile, buffer) {
     const { THREE } = this;
-    const geometry = toGeometry(THREE, buffer);
+    const geometry = yield* ribbonProfileGeometrySteps(THREE, buffer);
     const existing = this.meshes[profile];
 
     if (!geometry) {

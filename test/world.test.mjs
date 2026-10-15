@@ -12335,7 +12335,7 @@ test('la reconstruction urbaine borde les rues et les coins sans relevé du bât
   const layer = Object.create(StreetLayer.prototype);
   layer.theme = defaultTheme;
   layer.bubble = { frame: testFrame, verticalScale: 1, surfaceElevationAtLocal: () => 0 };
-  layer._apply = (store) => {
+  layer._applySteps = function* (store) {
     assert.ok(store.positions.length > 0);
     assert.ok(store.positions.data.subarray(0, store.positions.length).every(Number.isFinite));
   };

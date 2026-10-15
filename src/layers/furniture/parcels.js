@@ -1,3 +1,4 @@
+import { finishGeneration } from '../../core/generationSteps.js';
 /*
  * parcels — ce qui se lit sur une parcelle : son contour (haie, muret,
  * clôture), ce qu'on y sème (bottes, tas de bois, bêtes), les rangs d'une
@@ -102,6 +103,10 @@ export const GREENHOUSE_SPACING_M = 6;
  * foin, bosquets et bâtiments de ferme.
  */
 export function buildParcels(layer, context, builtUp) {
+  return finishGeneration(buildParcelsSteps(layer, context, builtUp));
+}
+
+export function* buildParcelsSteps(layer, context, builtUp) {
   const { frame } = layer.bubble;
   const { source, tiles, here, sampleElevation, buffers, placements } = context;
   const { origin, scale, zoom } = frame;
@@ -110,8 +115,9 @@ export function buildParcels(layer, context, builtUp) {
   let farmBuildings = 0;
   let urbanPlaced = 0;
 
-  const handle = (geometry, properties, bounds) => {
+  function* handle(geometry, properties, bounds) {
     for (const ring of ringsOf(geometry)) {
+      yield;
       const local = ring.map(([lng, lat]) => ({
         x: (lngToTileX(lng, zoom) - origin.x) * scale,
         z: (latToTileY(lat, zoom) - origin.y) * scale,
@@ -191,7 +197,7 @@ export function buildParcels(layer, context, builtUp) {
         farmBuildings += placeFarmstead(layer, placements, local, centre);
       }
 
-      if (crop && ROW_CROPS.has(crop)) buildRows(layer, context, local, centre, crop, here);
+      if (crop && ROW_CROPS.has(crop)) yield* buildRowsSteps(layer, context, local, centre, crop, here);
       if (crop && crop !== 'orchard') placeTractor(layer, context, local, centre, crop, here);
 
       // Le budget de contours ne coupe **que** les contours : les parcelles
@@ -208,7 +214,7 @@ export function buildParcels(layer, context, builtUp) {
             })
           : null;
       if (kind) {
-        boundaries += appendParcelBoundary(layer, buffers, placements, kind, ring, bounds, sampleElevation);
+        boundaries += yield* appendParcelBoundarySteps(layer, buffers, placements, kind, ring, bounds, sampleElevation);
       }
 
       if (scattered < FURNITURE_LIMITS.scatter) {
@@ -217,8 +223,11 @@ export function buildParcels(layer, context, builtUp) {
     }
   };
 
-  source.forEachFeature('landcover', tiles, handle);
-  source.forEachFeature('landuse', tiles, handle);
+  const features = [];
+  const collect = (...feature) => features.push(feature);
+  source.forEachFeature('landcover', tiles, collect);
+  source.forEachFeature('landuse', tiles, collect);
+  for (const feature of features) yield* handle(...feature);
   layer.counts.boundaries = boundaries;
 }
 
@@ -243,9 +252,14 @@ export function urbanLanduseKind(klass) {
  * @returns {number} nombre de tronçons posés.
  */
 export function appendParcelBoundary(layer, buffers, placements, kind, ring, bounds, sampleElevation) {
+  return finishGeneration(appendParcelBoundarySteps(layer, buffers, placements, kind, ring, bounds, sampleElevation));
+}
+
+export function* appendParcelBoundarySteps(layer, buffers, placements, kind, ring, bounds, sampleElevation) {
   let placed = 0;
 
   for (const run of realBoundaryRuns(ring, bounds)) {
+    yield;
     const { origin, scale, zoom } = layer.bubble.frame;
     const local = run.map(([lng, lat]) => ({
       x: (lngToTileX(lng, zoom) - origin.x) * scale,
@@ -332,6 +346,10 @@ export function appendParcelBoundary(layer, buffers, placements, kind, ring, bou
  * boîte englobante.
  */
 export function buildRows(layer, context, ring, centre, crop, here) {
+  return finishGeneration(buildRowsSteps(layer, context, ring, centre, crop, here));
+}
+
+export function* buildRowsSteps(layer, context, ring, centre, crop, here) {
   const { frame } = layer.bubble;
   if (Math.hypot(centre.x - here.x, centre.z - here.z) > reachedRadius(ROW_CROP_RADIUS_M, layer.bubble)) return;
   if (layer.counts.rows >= FURNITURE_LIMITS.vineRows) return;
@@ -364,6 +382,7 @@ export function buildRows(layer, context, ring, centre, crop, here) {
   if (!Number.isFinite(minU) || maxU - minU < spacing * 2) return;
 
   for (let v = minV + spacing * 0.5; v <= maxV && layer.counts.rows < FURNITURE_LIMITS.vineRows; v += spacing) {
+    yield;
     const samples = [];
     for (let u = minU; u <= maxU; u += step) {
       samples.push({

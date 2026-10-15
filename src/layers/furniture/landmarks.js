@@ -1,3 +1,4 @@
+import { finishGeneration } from '../../core/generationSteps.js';
 /*
  * landmarks — les repères : ce qu'un bourg porte (moulin, château d'eau), les
  * pierres d'un sol minéral, et ce qui donne à l'horizon son échelle verticale
@@ -171,13 +172,16 @@ export function buildVillageLandmarks(layer, context, builtUp) {
  * résultat : sans ça, une pierre changerait de place dès qu'une voisine
  * apparaît ou disparaît.
  */
-export function buildRocks(layer, context, builtUp) {
+export function buildRocks(...args) { return finishGeneration(buildRocksSteps(...args)); }
+
+export function* buildRocksSteps(layer, context, builtUp) {
   const { frame } = layer.bubble;
   const { here, placements } = context;
   const step = ROCK_CELL_M;
-  let placed = 0;
+  let placed = 0, visited = 0;
 
   for (const { x, z } of worldCellsAround(frame, here, reachedRadius(ROCK_RADIUS_M, layer.bubble), step)) {
+    if (++visited % 32 === 0) yield;
     if (placed >= FURNITURE_LIMITS.rocks) break;
     const px = x + (randomAt(frame, x, z, 101) - 0.5) * step * 0.9;
     const pz = z + (randomAt(frame, x, z, 103) - 0.5) * step * 0.9;

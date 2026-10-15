@@ -304,13 +304,26 @@ world.refresh(lng, lat, { force: true });
 Without `reach`, the whole bubble is built. `mountAt` meshes the terrain once,
 after the roads have carved it, and the returned promise resolves on a complete
 scene: tiles meshed, trees sown. `mountAt(lng, lat, { budgetMs })` yields to the
-browser every `budgetMs` (100 ms by default; `Infinity` never yields). With a
+browser every `budgetMs` (8 ms by default; `Infinity` never yields). With a
 reach, the décor is rebuilt at a shorter step so the viewer never nears its
 edge. Grass and crops are still scattered around the camera each frame. The
 far relief is only shown without a reach. The fog is the application's: pass
 `sky.fogRadius`, or call `world.environment.setFogRadius`, to hide what lies
 beyond the reach. Building near first costs more in total than one full mount
 (the near part is built twice), but the first frame comes much sooner.
+
+`world.setGenerationPaused(true)` suspends cooperative construction and terrain
+preparation at the next checkpoint. Existing geometry stays available to render;
+resuming with `false` continues the same generator and queues, without rebuilding
+completed layers. `world.generationPaused` reads that state. Disposal releases
+pending waits. Rendering and animation remain under the application's control.
+Use this when a menu covers the scene or the document is hidden.
+
+Geometry conversion, road graph/junction/profile processing and furniture
+placement and dense vector-feature visits yield within their work. The budget schedules checkpoints; it is not
+a hard bound on browser canvas readbacks, shader compilation or GPU uploads.
+Prefer one cooperative full mount when interface responsiveness matters: a near
+mount followed by a full rebuild repeats work in the area already built.
 
 On a recorded place (`demo/lab/mount.html`), a 120 m scene takes about half a
 second from `createWorld` to the first frame in headless Chrome, against four

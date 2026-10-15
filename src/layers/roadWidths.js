@@ -1,3 +1,4 @@
+import { finishGeneration } from '../core/generationSteps.js';
 /*
  * roadWidths — partage l'espace des chaussées qui se longent après le graphe.
  * La largeur reste constante par chaîne, comme celle des rubans et des index.
@@ -81,18 +82,21 @@ function emprise(points) {
  * Chaînes à parcourir sous une portée : celles qui l'atteignent, et celles
  * dont un échantillon peut encore contraindre l'une d'elles.
  */
-function chainesUtiles(chains, near) {
+function* chainesUtiles(chains, near) {
   const utiles = chains.map((chain) => atteint(chain.points, near));
   const boites = chains.map((chain) => emprise(chain.points));
   const large = chains.reduce((max, chain) => Math.max(max, chain.halfWidth), 0);
-  const parcourues = chains.map((chain, i) => {
-    if (utiles[i]) return true;
+  const parcourues = [];
+  for (let i = 0; i < chains.length; i++) {
+    if (i % 32 === 0) yield;
+    const chain = chains[i];
+    if (utiles[i]) { parcourues.push(true); continue; }
     // Écart le plus grand qu'une contrainte accepte (`facteur < 1`), cellule comprise.
     const marge = (chain.halfWidth + large) / BUNDLE_PARALLEL_COS + PAS_M;
     const a = boites[i];
-    return boites.some((b, j) => utiles[j] &&
-      a.minX - marge <= b.maxX && a.maxX + marge >= b.minX && a.minZ - marge <= b.maxZ && a.maxZ + marge >= b.minZ);
-  });
+    parcourues.push(boites.some((b, j) => utiles[j] &&
+      a.minX - marge <= b.maxX && a.maxX + marge >= b.minX && a.minZ - marge <= b.maxZ && a.maxZ + marge >= b.minZ));
+  }
   return { utiles, parcourues };
 }
 
@@ -112,8 +116,10 @@ function seCroisent(a, b, c, d) {
  * @param {Array} [junctions] Carrefours du même graphe.
  * @param {{x:number,z:number,radius:number}|null} [near] Portée des chaussées bâties.
  */
-export function fitParallelRoadWidths(chains, junctions = [], near = null) {
-  const portee = near ? chainesUtiles(chains, near) : null;
+export function fitParallelRoadWidths(...args) { return finishGeneration(fitParallelRoadWidthsSteps(...args)); }
+
+export function* fitParallelRoadWidthsSteps(chains, junctions = [], near = null) {
+  const portee = near ? yield* chainesUtiles(chains, near) : null;
   // Une chaîne hors parcours ne rencontre aucune chaîne parcourue : elle reste hors de l'index.
   const segments = chains.map((chain, i) => ({
     ...chain,
@@ -181,11 +187,13 @@ export function fitParallelRoadWidths(chains, junctions = [], near = null) {
   };
 
   for (i = 0; i < segments.length; i++) {
+    yield;
     if (portee && !portee.parcourues[i]) continue;
     route = segments[i];
     h = route.halfWidth;
     let actifs = new Map();
     for (r = 0; r < route.path.length - 1; r++) {
+      if (r % 32 === 0) yield;
       const a = route.path[r], b = route.path[r + 1];
       const longueur = Math.hypot(b.x - a.x, b.z - a.z);
       if (!(longueur > 0)) continue;

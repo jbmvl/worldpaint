@@ -1,3 +1,4 @@
+import { visitFeatures } from '../core/featureSteps.js';
 import { finishGeneration } from '../core/generationSteps.js';
 /*
  * La génération cède entre les bâtiments ; les maillages sont publiés à la
@@ -1641,7 +1642,7 @@ export class BuildingLayer {
     const candidates = [];
     const outlines = [];
 
-    source.forEachFeature(BUILDING_SOURCE_LAYER, tiles, (geometry, properties) => {
+    yield* visitFeatures(source, BUILDING_SOURCE_LAYER, tiles, (geometry, properties) => {
       for (const ring of outerRings(geometry)) {
         if (!Array.isArray(ring) || ring.length < 4) continue;
 
@@ -1667,7 +1668,7 @@ export class BuildingLayer {
     // `sortPersonalities`.
     const collected = [];
     const stops = [];
-    source.forEachFeature(BUILDING_POI_SOURCE_LAYER, tiles, (geometry, properties) => {
+    yield* visitFeatures(source, BUILDING_POI_SOURCE_LAYER, tiles, (geometry, properties) => {
       if (geometry.type !== 'Point') return;
       const stop = isTransitStop(properties);
       const kind = buildingPersonalityFor(properties);

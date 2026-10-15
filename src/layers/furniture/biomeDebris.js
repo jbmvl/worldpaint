@@ -1,3 +1,4 @@
+import { finishGeneration } from '../../core/generationSteps.js';
 /*
  * biomeDebris — ce qui traîne sur un biome : blocs de lande, souches de bois,
  * joncs de marais, bois flotté de vasière et de sable.
@@ -30,12 +31,17 @@ export const BIOME_DEBRIS_CELL_M = 22;
 const CELL_HA = (BIOME_DEBRIS_CELL_M * BIOME_DEBRIS_CELL_M) / 10000;
 
 export function buildBiomeDebris(layer, context, builtUp) {
+  return finishGeneration(buildBiomeDebrisSteps(layer, context, builtUp));
+}
+
+export function* buildBiomeDebrisSteps(layer, context, builtUp) {
   const { frame } = layer.bubble;
   const { here, placements } = context;
   const step = BIOME_DEBRIS_CELL_M;
-  let placed = 0;
+  let placed = 0, visited = 0;
 
   for (const { x, z } of worldCellsAround(frame, here, reachedRadius(BIOME_DEBRIS_RADIUS_M, layer.bubble), step)) {
+    if (++visited % 32 === 0) yield;
     if (placed >= FURNITURE_LIMITS.biomeDebris) break;
     const px = x + (randomAt(frame, x, z, 461) - 0.5) * step * 0.9;
     const pz = z + (randomAt(frame, x, z, 463) - 0.5) * step * 0.9;

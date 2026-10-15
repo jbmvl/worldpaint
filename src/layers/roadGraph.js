@@ -1,3 +1,4 @@
+import { finishGeneration } from '../core/generationSteps.js';
 /*
  * roadGraph — recoudre les chaussées entre elles avant de les dessiner. Une
  * tuile vectorielle livre des morceaux (découpés à la frontière de tuile et à
@@ -509,7 +510,7 @@ function dropClippedSpurs(state, nodes, weld) {
  * @param {Object} [options]
  * @returns {Object} le graphe, arêtes coupées et bouts amenés à leur place.
  */
-function graftLooseNodes(state, nodes, { reach = GRAFT_REACH_M, skewCos = GRAFT_SKEW_COS } = {}) {
+function* graftLooseNodes(state, nodes, { reach = GRAFT_REACH_M, skewCos = GRAFT_SKEW_COS } = {}) {
   const { edges, degree } = state;
   if (!(reach > 0) || edges.length === 0) return state;
 
@@ -522,6 +523,7 @@ function graftLooseNodes(state, nodes, { reach = GRAFT_REACH_M, skewCos = GRAFT_
   const grid = new Map();
 
   for (let i = 0; i < edges.length; i++) {
+    if (i % 128 === 0) yield;
     const edge = edges[i];
     for (const node of [edge.a, edge.b]) {
       if ((degree.get(node) || 0) > 2) continue;
@@ -555,6 +557,7 @@ function graftLooseNodes(state, nodes, { reach = GRAFT_REACH_M, skewCos = GRAFT_
   const decided = new Map();
 
   for (const node of [...loose.keys()].sort((a, b) => a - b)) {
+    yield;
     const own = loose.get(node);
     // Un sommet **intérieur** ne se déplace que de la tolérance de soudure :
     // au-delà, ce n'est plus le même point, et le tracé y prendrait un coude.
@@ -675,6 +678,7 @@ function graftLooseNodes(state, nodes, { reach = GRAFT_REACH_M, skewCos = GRAFT_
   const at = (node) => (merged.has(node) ? merged.get(node) : node);
 
   for (let i = 0; i < edges.length; i++) {
+    if (i % 128 === 0) yield;
     const edge = edges[i];
     const cuts = splits.get(i);
     if (!cuts) {
@@ -713,11 +717,12 @@ function graftLooseNodes(state, nodes, { reach = GRAFT_REACH_M, skewCos = GRAFT_
  * @param {Object} [options]
  * @returns {Object} le graphe, arêtes coupées à leurs croisements.
  */
-function splitCrossings(state, nodes, { skewCos = GRAFT_SKEW_COS, unpaved = null } = {}) {
+function* splitCrossings(state, nodes, { skewCos = GRAFT_SKEW_COS, unpaved = null } = {}) {
   const { edges } = state;
   const cell = ROAD_INDEX_CELL_M;
   const grid = new Map();
   for (let i = 0; i < edges.length; i++) {
+    if (i % 128 === 0) yield;
     const edge = edges[i];
     if (edge.works !== WORK_NONE || unpaved?.has(edge.profile)) continue;
     const minX = Math.floor(Math.min(nodes.xs[edge.a], nodes.xs[edge.b]) / cell);
@@ -737,6 +742,7 @@ function splitCrossings(state, nodes, { skewCos = GRAFT_SKEW_COS, unpaved = null
   const weld = nodes.tolerance;
   const found = [];
   for (const [key, bucket] of grid) {
+    yield;
     for (let m = 0; m < bucket.length; m++) {
       const p = edges[bucket[m]];
       for (let n = m + 1; n < bucket.length; n++) {
@@ -793,6 +799,7 @@ function splitCrossings(state, nodes, { skewCos = GRAFT_SKEW_COS, unpaved = null
     ranks: state.ranks,
   };
   for (let i = 0; i < edges.length; i++) {
+    if (i % 128 === 0) yield;
     const edge = edges[i];
     let from = edge.a;
     for (const { node } of (splits.get(i) || []).sort((f, g) => f.t - g.t)) {
@@ -1121,7 +1128,7 @@ function pointAlong(points, distance) {
  *          Carrefours, direction sortante unitaire par branche. `halfWidth` et
  *          `profile` sont ceux de la branche dominante — la plus large.
  */
-function collectJunctions(
+function* collectJunctions(
   graph,
   nodes,
   { sight = BRANCH_SIGHT_M, headingAt = BRANCH_HEADING_M, unpaved = null, rings = [] } = {}
@@ -1135,7 +1142,9 @@ function collectJunctions(
   }
 
   const pavedDegree = new Map();
+  let visited = 0;
   for (const edge of edges) {
+    if (++visited % 64 === 0) yield;
     if (unpaved?.has(edge.profile)) continue;
     for (const node of [edge.a, edge.b]) pavedDegree.set(node, (pavedDegree.get(node) || 0) + 1);
   }
@@ -1145,6 +1154,7 @@ function collectJunctions(
   };
 
   for (const edge of edges) {
+    if (++visited % 64 === 0) yield;
     const paved = !unpaved?.has(edge.profile);
     for (const node of [edge.a, edge.b]) {
       if (paved !== pavedDegree.has(node)) continue;
@@ -1259,7 +1269,9 @@ function endLevels(lines, weld) {
  *          `chains[].anchors[i]` marque les sommets qui peuvent servir
  *          d'origine stable : carrefours, culs-de-sac, extrémités.
  */
-export function mergeRoadLines(lines, options = {}) {
+export function mergeRoadLines(lines, options = {}) { return finishGeneration(mergeRoadLinesSteps(lines, options)); }
+
+export function* mergeRoadLinesSteps(lines, options = {}) {
   const {
     weld = NODE_WELD_M,
     join = LOOSE_JOIN_M,
@@ -1282,6 +1294,7 @@ export function mergeRoadLines(lines, options = {}) {
   const unpaved = new Set();
   const endLevel = endLevels(lines, weld);
   for (const line of lines || []) {
+    yield;
     const points = line?.points;
     if (!Array.isArray(points) || points.length < 2) continue;
     if (line.paved === false) unpaved.add(line.profile);
@@ -1300,16 +1313,17 @@ export function mergeRoadLines(lines, options = {}) {
   // Les sommets qui débouchent sur une chaussée y sont greffés avant tout le
   // reste : un carrefour que la donnée porte sans le dire doit exister dans le
   // graphe comme les autres, sans quoi rien de ce qui le lit ne le verra.
-  const grafted = graftLooseNodes(dropClippedSpurs(state, nodes, weld), nodes, {
+  const grafted = yield* graftLooseNodes(dropClippedSpurs(state, nodes, weld), nodes, {
     reach: graft,
     skewCos: graftSkewCos,
   });
-  const graph = splitCrossings(grafted, nodes, { skewCos: graftSkewCos, unpaved });
+  const graph = yield* splitCrossings(grafted, nodes, { skewCos: graftSkewCos, unpaved });
   const { edges, adjacency, degree, seen } = graph;
   const used = new Uint8Array(edges.length);
   const chains = [];
 
   for (let e = 0; e < edges.length; e++) {
+    if (e % 128 === 0) yield;
     if (used[e]) continue;
     used[e] = 1;
     const edge = edges[e];
@@ -1377,13 +1391,14 @@ export function mergeRoadLines(lines, options = {}) {
     });
   }
 
-  const junctions = collectJunctions(graph, nodes, { unpaved, rings: findRoundabouts(edges, nodes, { unpaved }) });
+  const junctions = yield* collectJunctions(graph, nodes, { unpaved, rings: findRoundabouts(edges, nodes, { unpaved }) });
   const joined = joinLooseEnds(chains, { join, offset, collinearCos });
 
   // Orientation canonique : deux reconstructions successives doivent parcourir
   // la même chaîne dans le même sens, sinon tout ce qui dépend du côté de la
   // marche — la haie, la ligne téléphonique — changerait de bord.
   for (const chain of joined) {
+    yield;
     const first = chain.points[0];
     const last = chain.points[chain.points.length - 1];
     if (first.x > last.x || (first.x === last.x && first.z > last.z)) {

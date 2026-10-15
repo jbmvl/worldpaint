@@ -1,3 +1,4 @@
+import { finishGeneration } from './generationSteps.js';
 /*
  * vectorTileSource — tuiles vectorielles chargées pour la bulle. Le chargement
  * est piloté par la bulle ; l'application fournit les URL, le zoom maximal et
@@ -163,7 +164,9 @@ export class VectorTileSource {
    * géométrie ne soit décodée : une couche `poi` de ville en compte des
    * dizaines de milliers, dont on ne garde que quelques classes.
    */
-  forEachFeature(sourceLayer, tiles, callback, keep = null) {
+  forEachFeature(...args) { return finishGeneration(this.forEachFeatureSteps(...args)); }
+
+  *forEachFeatureSteps(sourceLayer, tiles, callback, keep = null) {
     for (const { x, y } of tiles) {
       const entry = this.tiles.get(tileKey(this.zoom, x, y));
       if (!entry) continue;
@@ -175,6 +178,7 @@ export class VectorTileSource {
       const bounds = tileBounds(entry.x, entry.y, entry.z);
 
       for (let i = 0; i < layer.length; i++) {
+        if (i % 4 === 0) yield;
         let geojson;
         try {
           const feature = layer.feature(i);

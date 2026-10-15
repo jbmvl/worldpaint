@@ -1,3 +1,4 @@
+import { finishGeneration } from '../core/generationSteps.js';
 /*
  * roadBundles — le faisceau : des voies qui vont ensemble, et le vide qui
  * reste entre elles.
@@ -570,7 +571,9 @@ const ABSORB_CELL_M = 24;
  *        s'applique. Absente, partout.
  * @returns {Array<Object>} les lignes conservées, dans leur ordre d'origine.
  */
-export function absorbParallelLines(
+export function absorbParallelLines(...args) { return finishGeneration(absorbParallelLinesSteps(...args)); }
+
+export function* absorbParallelLinesSteps(
   lines,
   {
     order = [],
@@ -594,6 +597,7 @@ export function absorbParallelLines(
   const key = (cx, cz) => cx * 73856093 + cz * 19349663;
   const maxHalfWidth = lines.reduce((max, line) => Math.max(max, line.halfWidth || 0), 0);
   for (let li = 0; li < lines.length; li++) {
+    if (li % 32 === 0) yield;
     const points = lines[li].points;
     if (!Array.isArray(points) || points.length < 2) continue;
     for (let i = 1; i < points.length; i++) {
@@ -616,11 +620,13 @@ export function absorbParallelLines(
   const dropped = new Set();
   const candidates = [];
   for (let li = 0; li < lines.length; li++) {
+    if (li % 32 === 0) yield;
     if (!lines[li].works && absorbable.has(lines[li].profile) && lines[li].points?.length >= 2) candidates.push(li);
   }
   candidates.sort((a, b) => rankOf(lines[a].profile) - rankOf(lines[b].profile));
 
   for (const li of candidates) {
+    yield;
     const line = lines[li];
     const mine = rankOf(line.profile);
     const level = line.level ?? LEVEL_GROUND;

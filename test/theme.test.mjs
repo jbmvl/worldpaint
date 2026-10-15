@@ -264,6 +264,8 @@ test('le compositeur sert le thème à toutes les couches qu’il monte', () => 
     if (name === 'GroundClassMap' || name === 'VectorTileSource' || name === 'UrbanMask') continue;
     // Le relief lointain ne choisit pas sa couleur : il reçoit celle du matériau du terrain.
     if (name === 'FarRelief') continue;
+    // Le budget ordonnance le CPU, sans choisir aucune apparence.
+    if (name === 'GenerationBudget') continue;
     assert.ok(/\btheme\b/.test(call), `${name} est monté sans thème`);
   }
 });

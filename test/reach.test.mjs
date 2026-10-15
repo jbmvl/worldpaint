@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import { reachedRadius } from '../src/core/decorReach.js';
 import { createLocalFrame, tileXToLng, tileYToLat } from '../src/core/tileMath.js';
 import { TerrainBubble } from '../src/terrain/terrainBubble.js';
+import { GenerationGate } from '../src/core/generationGate.js';
 import { WorldComposer } from '../src/worldComposer.js';
 import { BuildingLayer, BUILDING_RADIUS_M, BUILDING_SOURCE_LAYER } from '../src/layers/buildingLayer.js';
 import { BRIDGE_RADIUS_M } from '../src/layers/bridgeLayer.js';
@@ -278,8 +279,8 @@ test('mountAt maille le terrain une seule fois, après le décor, et rend une sc
   assert.deepEqual(calls[0], ['setCenter', false], 'pas de maille avant le déblai');
   assert.equal(calls[1][0], 'refresh');
   assert.equal(calls[1][1], true);
-  assert.ok(calls[1][2] >= 50, 'le décor se monte sans pauses à chaque image');
-  assert.ok(calls.slice(2).every(([name, budget]) => name === 'maille' && budget === Infinity));
+  assert.ok(calls[1][2] <= 8, 'le montage conserve un budget interactif');
+  assert.ok(calls.slice(2).every(([name, budget]) => name === 'maille' && budget <= 8));
   assert.equal(queue, -1, 'la file des mailles est vide');
   assert.equal(seeds, 0, 'le semis est achevé');
 });
@@ -427,4 +428,23 @@ test('les arbres suivent la portée par pas : les tuiles coupées sont resemées
   layer._stale.clear();
   layer.setReach({ x: 1200, z: 400 }, 5000, 100);
   assert.equal(layer._stale.size, 0, 'des tuiles couvertes en entier avant et après ne sont pas resemées');
+});
+
+test('mountAt suspend puis reprend la même file, sans nouveau centrage', async () => {
+  const generation=new GenerationGate();
+  const composer=Object.create(WorldComposer.prototype);
+  let centers=0, seeds=0;
+  Object.assign(composer,{
+    generation,
+    bubble:{setCenter:async()=>{centers++;},processRebuildQueue:()=>false},
+    refresh:async()=>true,
+    vegetation:{get pending(){return seeds<3;},processQueue(){seeds++;if(seeds===1)generation.setPaused(true);}},
+  });
+  const mounting=composer.mountAt(1,2);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(seeds,1);assert.equal(centers,1);
+  assert.equal(generation.waiters.size,1);
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(seeds,1);
+  generation.setPaused(false);await mounting;
+  assert.equal(seeds,3);assert.equal(centers,1);
 });
