@@ -228,6 +228,23 @@ test('shopfrontNear rend le pied de mur de la devanture la plus proche', () => {
   assert.equal(world.shopfrontNear(4, 3), null, 'bâti d’un autre repère : rien');
 });
 
+test('placeNameNear rend le nom d’agglomération des lieux de la bulle', () => {
+  const frame = { toLocal: (lng, lat) => ({ x: lng, z: lat }) };
+  const composer = fakeComposer();
+  composer.bubble = { frame };
+  composer.places = [
+    { name: 'Les Écarts', class: 'hamlet', x: 30, z: 0 },
+    { name: 'Limoges', class: 'city', x: 2200, z: 0 },
+  ];
+  composer._placesFrame = frame;
+  const world = new World({ composer, environment: null, elevation: null, ownsElevation: false });
+
+  assert.deepEqual(world.placeNameNear(0, 0), { name: 'Limoges', class: 'city', distanceM: 2200 });
+  assert.equal(world.placeNameNear(20000, 0, 500), null, 'hors de portée');
+  composer._placesFrame = { toLocal: frame.toLocal };
+  assert.equal(world.placeNameNear(0, 0), null, 'lieux d’un autre repère : rien');
+});
+
 test('fountainsNear rend les fontaines à portée, de la plus proche à la plus lointaine', () => {
   const frame = { toLocal: (lng, lat) => ({ x: lng, z: lat }) };
   const composer = fakeComposer();

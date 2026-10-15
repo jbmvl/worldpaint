@@ -186,6 +186,12 @@ export class WorldComposer {
      */
     this.landscape = null;
     /**
+     * Lieux nommés de la bulle (`settlement.collectPlaceNames`), lus par
+     * `readSettlement` à chaque reconstruction, avec leur repère.
+     */
+    this.places = null;
+    this._placesFrame = null;
+    /**
      * Région imposée, ou `null` pour suivre la géographie. Ce n'est pas un
      * réglage de décor mais un **outil** : voir `setRegion`.
      */
@@ -654,6 +660,8 @@ export class WorldComposer {
       //    ici, puis passé à la voirie et au mobilier, qui posaient la même
       //    question chacun de leur côté.
       const { builtUp, places, urban } = readSettlement(this.vectorTiles, wanted, this.bubble.frame);
+      this.places = places;
+      this._placesFrame = this.bubble.frame;
       // Et « sommes-nous au bord de la mer ? » : la mouette y remplace tout autre oiseau.
       this.life.setSeaDistance(seaDistanceAt(this.vectorTiles, wanted, this.bubble.frame, here));
       this.metrics?.record('preparationLieu', performance.now() - placeStart);
