@@ -70,3 +70,41 @@ test('la lecture réelle découpe routes et bâtiments, sans toucher aux autres 
   assert.equal(rivers[0], geometry);
   source.dispose();
 });
+
+test('Le Marius aux Riceys : le fragment du tampon nord ne double plus la façade', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { createLocalFrame } = await import('../src/core/tileMath.js');
+  const { ringArea } = await import('../src/layers/roofGeometry.js');
+  const { outerRings, dropTwinFootprints } = await import('../src/layers/buildingLayer.js');
+  const data = JSON.parse(readFileSync(new URL('./fixtures/building-marius-tiles.json', import.meta.url)));
+  const frame = createLocalFrame(...data.centre, 14);
+  const candidate = ring => {
+    const footprint = ring.slice(0, -1).map(p => frame.toLocal(...p));
+    return {
+      footprint, area: ringArea(footprint),
+      x: footprint.reduce((s,p) => s+p.x, 0)/footprint.length,
+      z: footprint.reduce((s,p) => s+p.z, 0)/footprint.length,
+    };
+  };
+  const raw = data.entries.map(entry => candidate(entry.buildings[0].geometry.coordinates[0]));
+  assert.equal(dropTwinFootprints(raw).length, 2, 'le filtre par aire laisse passer les deux versions');
+  assert.ok(raw[1].area < raw[0].area * 0.3, 'la copie du tampon ne contient qu’une petite partie du bâtiment');
+
+  const source = new VectorTileSource({ tiles: [], zoom: 14 });
+  for (const entry of data.entries) {
+    const features = entry.buildings;
+    const layer = { length: features.length, feature: i => ({
+      properties: features[i].properties, toGeoJSON: () => features[i],
+    }) };
+    source.tiles.set(`14/${entry.x}/${entry.y}`, { ...entry, tile: { layers: { building: layer } } });
+  }
+  for (const entries of [data.entries, data.entries.slice().reverse()]) {
+    const kept = [];
+    source.forEachFeature('building', entries, geometry => {
+      for (const ring of outerRings(geometry)) kept.push(candidate(ring));
+    });
+    assert.equal(kept.length, 1, 'une seule empreinte, quel que soit l’ordre des tuiles');
+    assert.ok(Math.abs(kept[0].area - raw[0].area) < 1e-6, 'l’empreinte complète du restaurant est conservée');
+  }
+  source.dispose();
+});
