@@ -31,7 +31,6 @@ import {
   ROAD_SNAP_RADIUS_M,
 } from './layers/roadNetwork.js';
 import { tunnelAt } from './layers/transportTunnels.js';
-import { settlementNameAt } from './layers/settlement.js';
 import {
   SceneEnvironment,
   SKY_RADIUS,
@@ -533,27 +532,6 @@ export class World {
       best = { x, y: front.y, z, facing: front.facing, tangent: { x: tx, z: tz }, length, along, kind: front.kind, distanceM, windows: front.windows ?? [] };
     }
     return best;
-  }
-
-  /**
-   * Nom de l'agglomération d'un point : la même règle que le panneau d'entrée
-   * (`settlement.settlementNameAt` — la ville ou le bourg à portée prime sur un
-   * hameau plus proche), sur les lieux nommés déjà lus pour la bulle. `null`
-   * sans lieu à portée ou tant que la bulle n'a pas été construite dans le
-   * repère courant.
-   *
-   * @param {number} lng
-   * @param {number} lat
-   * @param {number} [radius] Portée d'un village ou d'un hameau hors masque urbain, en mètres.
-   * @returns {{name:string, class:string, distanceM:number}|null}
-   */
-  placeNameNear(lng, lat, radius = 2000) {
-    const { places, bubble } = this.composer;
-    const frame = bubble?.frame;
-    if (!frame || !places?.length || this.composer._placesFrame !== frame) return null;
-    const here = frame.toLocal(lng, lat);
-    const place = settlementNameAt(places, here.x, here.z, radius);
-    return place ? { name: place.name, class: place.class, distanceM: place.distance } : null;
   }
 
   /** Couleur de fond à donner au renderer, ou `null` sans ciel. */
