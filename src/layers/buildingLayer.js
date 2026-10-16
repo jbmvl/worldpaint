@@ -179,11 +179,14 @@ export function mergeTwinPersonalities(list, radius = PERSONALITY_TWIN_RADIUS_M)
  * @param {Array<{x:number,z:number}>} personalities Déjà triées par rang.
  * @returns {Map<Object,Object>} candidat → point d'intérêt.
  */
-export function assignPersonalities(candidates, personalities, outlines = []) {
+export function assignPersonalities(...args) { return finishGeneration(assignPersonalitiesSteps(...args)); }
+
+export function* assignPersonalitiesSteps(candidates, personalities, outlines = []) {
   const owners = new Map();
   const taken = new Set();
   const available = [...candidates, ...outlines];
   for (const p of personalities) {
+    yield;
     let best = null;
     for (const c of available) {
       if (!c.footprint || p.x < c.minX || p.x > c.maxX || p.z < c.minZ || p.z > c.maxZ) continue;
@@ -223,10 +226,14 @@ export const FOOTPRINT_TWIN_AREA_RATIO = 0.8;
  * @param {Array<{footprint:Array<{x:number,z:number}>|null,area:number,x:number,z:number}>} candidates
  * @returns {Array} les candidats gardés, dans leur ordre.
  */
-export function dropTwinFootprints(candidates, cellM = 25) {
+export function dropTwinFootprints(...args) { return finishGeneration(dropTwinFootprintsSteps(...args)); }
+
+export function* dropTwinFootprintsSteps(candidates, cellM = 25) {
   const cells = new Map();
   const kept = [];
+  let visited = 0;
   for (const c of candidates) {
+    if (++visited % 32 === 0) yield;
     const cx = Math.floor(c.x / cellM);
     const cz = Math.floor(c.z / cellM);
     let twin = false;
@@ -1701,7 +1708,9 @@ export class BuildingLayer {
 
     // Empreinte brute en mètres locaux, pour écarter les jumelles et attribuer
     // les personnalités : `_appendBuilding` refait la sienne, rabotée par la voirie.
+    let visited = 0;
     for (const candidate of [...candidates, ...outlines]) {
+      if (++visited % 32 === 0) yield;
       const footprint = [];
       for (const [lng, lat] of candidate.ring) {
         if (!Number.isFinite(lng) || !Number.isFinite(lat)) break;
@@ -1715,10 +1724,10 @@ export class BuildingLayer {
       candidate.minZ = Math.min(...footprint.map((q) => q.z));
       candidate.maxZ = Math.max(...footprint.map((q) => q.z));
     }
-    const kept = dropTwinFootprints(candidates).filter((candidate) => !isTransitShelter(candidate, stops));
+    const kept = (yield* dropTwinFootprintsSteps(candidates)).filter((candidate) => !isTransitShelter(candidate, stops));
     candidates.length = 0;
     candidates.push(...kept);
-    const owners = assignPersonalities(candidates, personalities, outlines);
+    const owners = yield* assignPersonalitiesSteps(candidates, personalities, outlines);
     yield;
 
     let built = 0;

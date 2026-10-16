@@ -178,7 +178,7 @@ export class VectorTileSource {
       const bounds = tileBounds(entry.x, entry.y, entry.z);
 
       for (let i = 0; i < layer.length; i++) {
-        if (i % 4 === 0) yield;
+        yield;
         let geojson;
         try {
           const feature = layer.feature(i);

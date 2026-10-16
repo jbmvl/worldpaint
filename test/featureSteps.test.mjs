@@ -13,7 +13,7 @@ test('une tuile dense se visite par lots, dans le même ordre et avec le même f
   source.forEachFeature('poi',[{x:0,y:0}],(g,p,b)=>expected.push([g,p,b]),keep);
   const steps=source.forEachFeatureSteps('poi',[{x:0,y:0}],(g,p,b)=>actual.push([g,p,b]),keep);
   assert.equal(steps.next().done,false);assert.equal(actual.length,0);
-  assert.equal(steps.next().done,false);assert.equal(actual.length,2);
+  assert.equal(steps.next().done,false);assert.equal(actual.length,1);
   finishGeneration(steps);assert.deepEqual(actual,expected);
 });
 test('la collecte urbaine exécute aussi les étapes d’absorption', () => {
