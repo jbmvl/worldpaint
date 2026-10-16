@@ -200,7 +200,7 @@ still moves diagonally.
 ### Reading the road, not just the ground
 
 ```js
-world.roadPositionAt(lng, lat, heightAboveGround, { aheadLng, aheadLat });
+world.roadPositionAt(lng, lat, heightAboveGround, { aheadLng, aheadLat, y });
 ```
 
 `world.bubble.toScenePosition(lng, lat, heightAboveGround)` always answers on
@@ -224,6 +224,15 @@ the one the caller means, and the one it passes over or under. `aheadLng`/
 `aheadLat`, a point a few metres ahead along the direction of travel, sets
 aside the roads that do not run in that direction; among the rest, the one the
 point is furthest inside wins, exactly as without them.
+
+Heading alone cannot tell a bridge from a road it crosses at a skew: below
+seventy degrees, the road underneath also runs "ahead". `y`, the vehicle's own
+scene height (the answer of the previous frame, `heightAboveGround` included),
+keeps it on its level: a road more than a metre above or below it only wins
+when nothing is at its level, and among the roads that are, the edge rule
+stays the only judge — the answer remains continuous. A vehicle that reads its
+wheels around a main point should pass them that point's `y` as well, so all
+of them read the same level.
 
 ```js
 world.roadsideAt(lng, lat, { side, offset, heightAboveGround, aheadLng, aheadLat });

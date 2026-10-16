@@ -1025,31 +1025,30 @@ export function platformLaneAt(roads, x, z, { ahead = null, radius = ROAD_SNAP_R
  * classe pas : deux arêtes d'une même route n'ont pas le même cap, et les
  * départager par l'alignement ferait sauter la cote à chaque sommet.
  *
+ * Le cap ne suffit pas à un pont qui franchit une route en biais : à moins de
+ * soixante-dix degrés, la route du dessous va « dans la même direction », et
+ * la plus enveloppante l'emporte — le mobile tombe sous le tablier le temps de
+ * la traverser. `y`, l'altitude de scène de la chaussée qu'il suit (celle lue
+ * à l'image précédente), tranche alors : une chaussée à plus d'un niveau
+ * (`STACKED_DECK_GAP_M`) de lui ne passe qu'après celles qui sont à son étage,
+ * et parmi celles-ci le critère du bord reste seul juge, donc continu.
+ *
  * @param {RoadNetwork} roads
  * @param {number} x
  * @param {number} z
  * @param {{x:number, z:number}|null} [ahead]
  * @param {number} [margin]
+ * @param {number|null} [y] Altitude de scène de la chaussée suivie.
  * @returns {number|null}
  */
-export function platformPositionAt(roads, x, z, ahead = null, margin = ROAD_INDEX_MARGIN_M) {
+export function platformPositionAt(roads, x, z, ahead = null, margin = ROAD_INDEX_MARGIN_M, y = null) {
   const index = roads?.elevationIndex;
   if (!index) return null;
   const hits = index.queryAll(x, z, margin);
   if (hits.length === 0) return null;
 
   const follows = alignedWith(ahead);
-  let hit = null;
-  let best = Infinity;
-  for (const candidate of hits) {
-    if (follows && !follows(candidate.segment, candidate.row)) continue;
-    const outside = candidate.distance - candidate.segment.halfWidth;
-    if (outside < best) {
-      best = outside;
-      hit = candidate;
-    }
-  }
-  hit ??= hits[0];
+  const hit = pickPlatform(index, hits, follows, y) ?? pickPlatform(index, hits, null, y);
 
   const level = hit.segment.levels?.[hit.row] ?? LEVEL_GROUND;
   const junction = roads.junctionAreas?.deckAt(x, z, level);
@@ -1071,6 +1070,31 @@ export function platformPositionAt(roads, x, z, ahead = null, margin = ROAD_INDE
 
 /** Écart au-delà duquel deux chaussées superposées sont deux niveaux, pas une même surface. */
 const STACKED_DECK_GAP_M = 1;
+
+/**
+ * La chaussée qui porte le mobile parmi `hits` : celle de son étage d'abord
+ * (`y`), puis celle dont le bord est le plus loin. `null` si `follows` les
+ * écarte toutes.
+ */
+function pickPlatform(index, hits, follows, y) {
+  const hinted = y != null && Number.isFinite(y);
+  let hit = null;
+  let bestStorey = Infinity;
+  let best = Infinity;
+  for (const candidate of hits) {
+    if (follows && !follows(candidate.segment, candidate.row)) continue;
+    // Écart au-delà du jeu d'une même surface : 0 pour tout ce qui est à l'étage du mobile.
+    const deck = hinted ? index.deckAt(candidate) : null;
+    const storey = deck == null ? 0 : Math.max(0, Math.abs(deck - y) - STACKED_DECK_GAP_M);
+    const outside = candidate.distance - candidate.segment.halfWidth;
+    if (storey < bestStorey || (storey === bestStorey && outside < best)) {
+      bestStorey = storey;
+      best = outside;
+      hit = candidate;
+    }
+  }
+  return hit;
+}
 
 /**
  * Extrait les tronçons de chaussée d'un jeu de tuiles, ré-échantillonnés et

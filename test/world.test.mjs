@@ -9062,6 +9062,30 @@ test('platformPositionAt ne fait pas sauter la cote d’une arête à l’autre 
   close(platformPositionAt(roads, 52, 0.5, { x: 1, z: 0 }), platformPositionAt(roads, 52, 0.5), 1e-6);
 });
 
+test('platformPositionAt garde le tablier d’un pont qui franchit une route en biais, à l’altitude du mobile', () => {
+  // À 45°, la route du dessous va encore « devant » : le cap ne l'écarte pas.
+  // Sans altitude, le mobile qui en est plus loin du bord tombe dessus ; avec
+  // la sienne, il reste sur le tablier.
+  const bridge = fakeSegment(straight(-60, 60, 30), 3.5, 6);
+  const under = fakeSegment(straight(-60, 60, 30).map((p) => ({ x: p.x * Math.SQRT1_2, z: p.x * Math.SQRT1_2 })), 3.5, 0);
+  const roads = { elevationIndex: new RoadIndex([bridge, under], { includeWorks: true }) };
+  const ahead = { x: 1, z: 0 };
+  close(platformPositionAt(roads, 1, 1.8, ahead), 0, 1e-6, 'sans altitude, la route du dessous');
+  for (let x = -10; x <= 10; x += 0.25) {
+    close(platformPositionAt(roads, x, 1.8, ahead, undefined, 6.02), 6, 1e-6, `tablier à x = ${x}`);
+  }
+  close(platformPositionAt(roads, 1, 1.8, ahead, undefined, 0.1), 0, 1e-6, 'qui roule dessous y reste');
+});
+
+test('l’altitude du mobile ne départage pas deux arêtes d’une même surface', () => {
+  // Une rampe : la cote change de plus d'un niveau le long de la route, mais
+  // une seule chaussée est là — elle répond, quelle que soit l'altitude donnée.
+  const ramp = fakeSegment(straight(0, 100, 10), 3);
+  ramp.platform = Float32Array.from(ramp.path, (p) => p.x * 0.1);
+  const roads = { elevationIndex: new RoadIndex([ramp], { includeWorks: true }) };
+  close(platformPositionAt(roads, 50, 1, null, undefined, 0), 5, 1e-6);
+});
+
 test('sur un versant, l’aplanissement et la travée se passent le relais', () => {
   // Les deux systèmes se rencontrent exactement ici. Le terrassier aplanit le
   // profil en long dans la bande qu'un ouvrage peut rattraper (`flattenGrade`),

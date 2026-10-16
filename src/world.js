@@ -274,13 +274,18 @@ export class World {
    * suit. Parmi les autres, ou sans eux, celle sur laquelle le point est le
    * plus avant l'emporte ; sur un carrefour, c'est la dalle qui répond.
    *
+   * Un pont qui franchit une route en biais, elle aussi « devant » : `y`,
+   * l'altitude de scène du mobile (la réponse de l'image précédente,
+   * `heightAboveGround` compris), garde la chaussée de son étage. Voir
+   * `platformPositionAt`.
+   *
    * @param {number} lng
    * @param {number} lat
    * @param {number} [heightAboveGround]
-   * @param {{aheadLng?: number, aheadLat?: number}} [options]
+   * @param {{aheadLng?: number, aheadLat?: number, y?: number}} [options]
    * @returns {{x:number, y:number, z:number}}
    */
-  roadPositionAt(lng, lat, heightAboveGround = 0, { aheadLng, aheadLat } = {}) {
+  roadPositionAt(lng, lat, heightAboveGround = 0, { aheadLng, aheadLat, y } = {}) {
     const bubble = this.composer.bubble;
     if (!bubble?.frame) return { x: 0, y: heightAboveGround, z: 0 };
 
@@ -291,7 +296,8 @@ export class World {
       ahead = { x: there.x - here.x, z: there.z - here.z };
     }
 
-    const deck = platformPositionAt(this.composer.roads, here.x, here.z, ahead);
+    const level = y != null && Number.isFinite(y) ? y - heightAboveGround : null;
+    const deck = platformPositionAt(this.composer.roads, here.x, here.z, ahead, undefined, level);
     if (deck == null) {
       const tile = lngLatToTile(lng, lat, bubble.zoom);
       const near = [...(bubble.tiles?.values() || [])].some(t => t.mesh && t.x === Math.floor(tile.x) && t.y === Math.floor(tile.y));
@@ -721,7 +727,7 @@ export class World {
     const roads = this.composer.roads;
     const vault = tunnelAt(roads?.roadSegments, x, z, y);
     if (!vault) return null;
-    const deck = platformPositionAt(roads, x, z);
+    const deck = platformPositionAt(roads, x, z, null, undefined, y);
     if (deck != null && deck > vault.floor - TUNNEL_FLOOR_MATCH_M && deck < vault.roof) vault.floor = deck;
     return vault;
   }

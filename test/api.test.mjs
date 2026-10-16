@@ -140,6 +140,25 @@ test('roadPositionAt suit la plate-forme d’une chaussée, le terrain sinon', (
   assert.ok(Math.abs(offRoad.y - (1 + api.ROAD_LIFT_M)) < 1e-9, 'hors chaussée, retombe sur le terrain');
 });
 
+test('roadPositionAt garde l’étage de l’altitude donnée, décollement déduit', () => {
+  const bubble = {
+    frame: { toLocal: (lng, lat) => ({ x: lng, z: lat }) },
+    toScenePosition: (lng, lat, height) => ({ x: lng, y: height, z: lat }),
+  };
+  const line = (from, to) => Array.from({ length: 31 }, (_, i) => ({ x: from.x + ((to.x - from.x) * i) / 30, z: from.z + ((to.z - from.z) * i) / 30 }));
+  const segment = (path, deck) => ({ profile: 'minor', halfWidth: 3.5, path, platform: new Float32Array(path.length).fill(deck) });
+  const bridge = segment(line({ x: -60, z: 0 }, { x: 60, z: 0 }), 6);
+  const under = segment(line({ x: -40, z: -40 }, { x: 40, z: 40 }), 0);
+  const composer = fakeComposer();
+  composer.bubble = bubble;
+  composer.roads = { elevationIndex: new RoadIndex([bridge, under], { includeWorks: true }) };
+  const world = new World({ composer, environment: null, elevation: null, ownsElevation: false });
+
+  const onward = { aheadLng: 4, aheadLat: 1.8 };
+  assert.equal(world.roadPositionAt(1, 1.8, 0.5, onward).y, 0.5, 'sans altitude, la route du dessous');
+  assert.equal(world.roadPositionAt(1, 1.8, 0.5, { ...onward, y: 6.5 }).y, 6.5, 'à l’altitude du tablier, le tablier');
+});
+
 test('roadsideAt pose au bord, sur la plate-forme si elle y est encore, au terrain sinon', () => {
   const bubble = { frame: { toLocal: (lng, lat) => ({ x: lng, z: lat }) } };
   const segment = {
