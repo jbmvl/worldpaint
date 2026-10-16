@@ -1,3 +1,4 @@
+import { storedProfileGeometrySteps } from './profileGeometry.js';
 /*
  * streetLayer — bordures en béton et caniveaux des rues habitées.
  * Le support porte tout le sol piéton : aucune dalle ni jupe ne le recouvre.
@@ -28,7 +29,7 @@ import { srgb } from '../core/color.js';
 import { streetSurfaceAt } from './townStyle.js';
 import { defaultTheme } from '../themes/default.js';
 import { DECOR_STABLE_RADIUS_M, reachedRadius } from '../core/decorReach.js';
-import { createProfileStore, drainProfileBuffer, profileStoreGeometry } from './facetBuffers.js';
+import { createProfileStore, drainProfileBuffer } from './facetBuffers.js';
 
 /** Chaussées qui peuvent porter un trottoir (dessertes ; pas de voie rapide, chemin, sentier ou piste cyclable). */
 export const STREET_PROFILES = new Set(['major', 'minor', 'lane']);
@@ -209,7 +210,7 @@ export class StreetLayer {
 
     this.count = built;
     this._storeSize = { positions: { length: store.positions.length }, indices: { length: store.indices.length } };
-    this._apply(store);
+    yield* this._applySteps(store);
     this._applyMarkings(marks);
     return built > 0 || this.fills > 0;
   }
@@ -656,9 +657,11 @@ export class StreetLayer {
     });
   }
 
-  _apply(store) {
+  _apply(store) { return finishGeneration(this._applySteps(store)); }
+
+  *_applySteps(store) {
     const { THREE } = this;
-    const geometry = profileStoreGeometry(THREE, store);
+    const geometry = yield* storedProfileGeometrySteps(THREE, store);
 
     if (!geometry) {
       if (this.mesh) {

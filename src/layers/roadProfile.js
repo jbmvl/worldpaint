@@ -1,3 +1,4 @@
+import { finishGeneration } from '../core/generationSteps.js';
 /*
  * Profil vertical des chaussées. Une ligne n'a qu'une cote, lue par le
  * terrain comme par l'affichage.
@@ -154,6 +155,10 @@ export function gradeRoadNetwork(segments, bands, { facing = null, iterations = 
 }
 
 export function smoothRoadProfiles(segments, { maxGrade = ROAD_MAX_GRADE, crossings = [] } = {}) {
+  return finishGeneration(smoothRoadProfilesSteps(segments, { maxGrade, crossings }));
+}
+
+export function* smoothRoadProfilesSteps(segments, { maxGrade = ROAD_MAX_GRADE, crossings = [] } = {}) {
   const fixedRows = new Map();
   for (const crossing of crossings) {
     const lower = segments[crossing.lower];
@@ -163,6 +168,7 @@ export function smoothRoadProfiles(segments, { maxGrade = ROAD_MAX_GRADE, crossi
   }
   const nodes = [], shared = new Map(), ids = new Map(), seats = new Map();
   for (const segment of segments) {
+    yield;
     if (!segment.paved) continue;
     const rows = [];
     // L'assise des lignes au sol : chacune garde la sienne, même au point qu'elle partage avec un tablier relevé.
@@ -195,11 +201,13 @@ export function smoothRoadProfiles(segments, { maxGrade = ROAD_MAX_GRADE, crossi
     }
     ids.set(segment, rows);
   }
-  const envelope = (initial) => {
+  function* envelope(initial) {
     const heights = Float64Array.from(initial);
     const queue = new ProfileQueue();
     heights.forEach((h, id) => { if (Number.isFinite(h)) queue.push(h, id); });
+    let visited = 0;
     while (queue.size) {
+      if (++visited % 512 === 0) yield;
       const [height, id] = queue.pop();
       if (height < heights[id]) continue;
       for (const [next, cost] of nodes[id].links) {
@@ -211,9 +219,10 @@ export function smoothRoadProfiles(segments, { maxGrade = ROAD_MAX_GRADE, crossi
     }
     return heights;
   };
-  let raised = envelope(nodes.map(n => n.height));
-  const ceiling = envelope(nodes.map(n => n.fixed ? -n.pin : -Infinity));
+  let raised = yield* envelope(nodes.map(n => n.height));
+  const ceiling = yield* envelope(nodes.map(n => n.fixed ? -n.pin : -Infinity));
   for (let pass = 0; pass < 12; pass++) {
+    yield;
     const next = raised.slice();
     nodes.forEach((node, id) => {
       if (node.fixed || !node.links.length) return;
@@ -227,7 +236,7 @@ export function smoothRoadProfiles(segments, { maxGrade = ROAD_MAX_GRADE, crossi
     });
     raised = next;
   }
-  raised = envelope(raised);
+  raised = yield* envelope(raised);
   let constrained = 0;
   for (const [segment, rows] of ids) {
     const seat = seats.get(segment);
@@ -245,18 +254,26 @@ export function smoothRoadProfiles(segments, { maxGrade = ROAD_MAX_GRADE, crossi
 }
 
 export function findRoadSupports(segments, groundAt, areas = null) {
+  return finishGeneration(findRoadSupportsSteps(segments, groundAt, areas));
+}
+
+export function* findRoadSupportsSteps(segments, groundAt, areas = null) {
   for (const segment of segments) {
+    yield;
     const { path, platform, halfWidth } = segment;
     const mask = segment.supports = new Uint8Array(path.length);
     if (!segment.paved) continue;
     const frames = segment.frames ?? pathFrames(path);
-    const ecartsSol = path.map((p, r) => {
+    const ecartsSol = [];
+    for (let r = 0; r < path.length; r++) {
+      if (r % 64 === 0) yield;
+      const p = path[r];
       const px = frames[r * 4 + 2], pz = frames[r * 4 + 3];
       const left = platform[r] - groundAt(p.x + px * halfWidth, p.z + pz * halfWidth);
       const right = platform[r] - groundAt(p.x - px * halfWidth, p.z - pz * halfWidth);
       const centre = platform[r] - groundAt(p.x, p.z);
-      return Math.max(centre, Math.min(left, right));
-    });
+      ecartsSol.push(Math.max(centre, Math.min(left, right)));
+    }
     const suspended = ecartsSol.map((ecart, r) => !segment.works?.[r] && ecart >= ROAD_SUPPORT_DROP_M);
     for (let r = 0; r < path.length;) {
       if (!suspended[r]) { r++; continue; }
@@ -272,6 +289,7 @@ export function findRoadSupports(segments, groundAt, areas = null) {
     }
   }
   for (const area of areas?.areas ?? []) {
+    yield;
     // Chaque sommet contre le sol qu'il surplombe : la cote moyenne d'une
     // surface en pente ne dit rien du vide sous un de ses points.
     const ecarts = area.vertices.filter(p => Number.isFinite(p.y)).map(p => p.y - groundAt(p.x, p.z));
@@ -291,7 +309,12 @@ export function findRoadSupports(segments, groundAt, areas = null) {
  * `roadsideRelief`, pour que mur et terre ne se disputent aucune ligne.
  */
 export function findEarthFills(segments) {
+  return finishGeneration(findEarthFillsSteps(segments));
+}
+
+export function* findEarthFillsSteps(segments) {
   for (const segment of segments) {
+    yield;
     const { path, platform, edges, probeSpan } = segment;
     const fills = (segment.earthFill = new Uint8Array(path.length));
     if (!segment.paved) continue;

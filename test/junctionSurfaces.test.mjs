@@ -161,6 +161,31 @@ for (const [nom, lignes] of Object.entries(matrice)) {
   });
 }
 
+test('un raccord presque aligné ferme la rive sans biseau vers le nœud', () => {
+  for (const angle of [0.1, 0.5, 1, 1.2, 2]) {
+    for (const sign of [-1, 1]) {
+      for (const inverse of [false, true]) {
+        const z = sign * 80 * Math.tan(angle * Math.PI / 180);
+        const network = maillage([
+          voie([[-80, 0], [0, 0], [80, z]], 4),
+          voie([[0, 0], [0, sign * 80]], 4),
+        ], 3, 0.12, inverse);
+        assert.equal(network.areas.length, 1);
+        const area = network.areas.areas[0];
+        assert.equal(area.mouths.length, 3);
+        // La corde du joint reste à la rive, même sous un degré de déviation.
+        for (const point of area.outline) {
+          assert.ok(Math.hypot(point.x, point.z) > 3.99,
+            `encoche à ${angle}° : ${point.x}, ${point.z}`);
+        }
+        faces(network.buffers);
+        coutures(network);
+        sansRecouvrement(network);
+      }
+    }
+  }
+});
+
 test('deux carrefours très proches partagent une surface, sans ruban entre eux', () => {
   const { areas, segments } = maillage(matrice.tresProches, 3, 0);
   assert.equal(areas.length, 1);

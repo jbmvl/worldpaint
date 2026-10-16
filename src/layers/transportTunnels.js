@@ -1,3 +1,5 @@
+import { visitFeatures } from '../core/featureSteps.js';
+import { finishGeneration } from '../core/generationSteps.js';
 /*
  * Interprétation des tunnels : passage bâti, passage inférieur court ou galerie
  * sous le relief. Les chaussées restent distinctes dans une enveloppe commune
@@ -13,9 +15,11 @@ import { worksStyleAt } from './townStyle.js';
 import { vaultProfile, PORTAL_CLEARANCE_M } from './tunnelGeometry.js';
 import { defaultTheme } from '../themes/default.js';
 
-export function collectTunnelBuildings(source, tiles, frame) {
+export function collectTunnelBuildings(...args) { return finishGeneration(collectTunnelBuildingsSteps(...args)); }
+
+export function* collectTunnelBuildingsSteps(source, tiles, frame) {
   const polygons = [];
-  source.forEachFeature('building', tiles, geometry => {
+  yield* visitFeatures(source, 'building', tiles, geometry => {
     const parts = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.type === 'MultiPolygon' ? geometry.coordinates : [];
     for (const rings of parts) polygons.push(rings.map(ring => ring.map(([lng, lat]) => ({
       x: (lngToTileX(lng, frame.zoom) - frame.origin.x) * frame.scale,

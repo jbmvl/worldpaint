@@ -69,6 +69,22 @@ export class RoadGraphMemo {
     return { chains: chains.map(copyChain), junctions: junctions.map(copyJunction) };
   }
 
+  *graphSteps(context, build) {
+    let graph;
+    if (!this._recognise(...context)) graph = yield* build();
+    else {
+      if (!this._kept.has('graph')) this._kept.set('graph', yield* build());
+      graph = this._kept.get('graph');
+    }
+    return { chains: graph.chains.map(copyChain), junctions: graph.junctions.map(copyJunction) };
+  }
+
+  *tunnelBuildingsSteps(context, build) {
+    if (!this._recognise(...context)) return yield* build();
+    if (!this._kept.has('tunnelBuildings')) this._kept.set('tunnelBuildings', yield* build());
+    return this._kept.get('tunnelBuildings');
+  }
+
   /** Emprises bâties lues pour les tunnels : jamais modifiées, rendues telles quelles. */
   tunnelBuildings(context, build) {
     return this._keep('tunnelBuildings', context, build);

@@ -1,4 +1,5 @@
 import { collectCrossingRails } from './layers/transportCrossings.js';
+import { GenerationGate } from './core/generationGate.js';
 import { GenerationBudget } from './core/generationBudget.js';
 import { DECOR_STEP_M, DETAIL_WALL_BUDGET_M, REACH_MARGIN, REACH_MARGIN_M, budgetedRadius } from './core/decorReach.js';
 import { PlantSupportAtlas } from './terrain/plantSupportAtlas.js';
@@ -112,11 +113,9 @@ export const WORLD_ATTRIBUTION =
 export { FAUNA_CROSS_AHEAD_M } from './layers/faunaCrossing.js';
 
 /**
- * Temps CPU entre deux pauses du montage d'une scène figée. Assez long pour que
- * les pauses (une image chacune) ne coûtent plus rien, assez court pour qu'un
- * indicateur de chargement reste animé.
+ * Temps CPU entre deux pauses du montage, même avant la première image.
  */
-const MOUNT_BUDGET_MS = 100;
+const MOUNT_BUDGET_MS = 8;
 
 /** Temps CPU d'herbe semée par image : la passe s'étale sur les suivantes. */
 const GRASS_SCATTER_BUDGET_MS = 3;
@@ -206,7 +205,9 @@ export class WorldComposer {
     // La carte de classes précède la bulle : les matériaux de terrain la reçoivent à leur construction.
     this.groundClass = new GroundClassMap({ THREE, theme, reach });
 
+    this.generation = new GenerationGate();
     this.bubble = new TerrainBubble({
+      generation: this.generation,
       THREE,
       scene,
       elevation,
@@ -454,7 +455,9 @@ export class WorldComposer {
    * Recentre la bulle et garde en vue tous les recentrages en vol : le décor
    * ne se bâtit pas sur un relief encore en chargement (`_refresh` les attend).
    */
-  _center(lng, lat, options) {
+  async _center(lng, lat, options) {
+    await this.generation?.wait();
+    if (this.disposed) return false;
     const task = this.bubble.setCenter(lng, lat, options);
     const pending = Promise.allSettled([this._centerTask, task]);
     this._centerTask = pending;
@@ -490,8 +493,7 @@ export class WorldComposer {
    * fois, après le déblai des chaussées.
    *
    * @param {Object} [options]
-   * @param {number} [options.budgetMs] Temps CPU entre deux pauses ; une
-   *        scène qu'on n'affiche qu'une fois prête n'a pas à en faire.
+   * @param {number} [options.budgetMs] Temps CPU entre deux pauses (8 ms).
    * @returns {Promise<boolean>} vrai si le décor a été bâti.
    */
   async mountAt(lng, lat, { budgetMs = MOUNT_BUDGET_MS } = {}) {
@@ -499,8 +501,12 @@ export class WorldComposer {
     // Les tuiles attendent le déblai, qui les remaillerait de toute façon.
     await this._center(lng, lat, { meshes: false, budgetMs });
     const built = await this.refresh(lng, lat, { force: true, budgetMs });
-    while (this.bubble.processRebuildQueue(Infinity));
-    while (this.vegetation.pending) this.vegetation.processQueue(Infinity);
+    const budget = new GenerationBudget({ milliseconds: budgetMs, gate: this.generation });
+    while (!this.disposed && this.bubble.processRebuildQueue(budgetMs)) await budget.checkpoint();
+    while (!this.disposed && this.vegetation.pending) {
+      await budget.checkpoint();
+      if (!this.disposed) this.vegetation.processQueue(budgetMs);
+    }
     this._syncFar();
     return built;
   }
@@ -545,10 +551,12 @@ export class WorldComposer {
   }
 
   async _refresh(lng, lat, { force = false, budgetMs } = {}) {
+    await this.generation?.wait();
+    if (this.disposed) return false;
     if (this._reachChanged && !this.disposed) {
       this._reachChanged = false;
       // Les tuiles gagnées attendent le déblai, qui les remaillerait de toute façon.
-      this._center(lng, lat, { meshes: false, budgetMs });
+      await this._center(lng, lat, { meshes: false, budgetMs });
     }
     while (this._centerTask) await this._centerTask;
     if (this.disposed || this._refreshing || this._superseded || !this.vectorTiles || !this.bubble.frame) return false;
@@ -609,6 +617,7 @@ export class WorldComposer {
       this._incompleteRefresh = true;
       this._building = true;
       const budgetOptions = {
+        gate: this.generation,
         ...(budgetMs ? { milliseconds: budgetMs } : {}),
         onPause: ms => this.metrics?.record('attenteGeneration', ms),
       };
@@ -624,6 +633,7 @@ export class WorldComposer {
         let cpu = 0;
         try {
           while (true) {
+            if (!await checkpoint()) return false;
             const measured = this.metrics?.enabled;
             const start = measured ? performance.now() : 0;
             const result = steps.next();
@@ -1089,6 +1099,7 @@ export class WorldComposer {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.generation?.dispose();
     this.life.dispose();
     this.fauna.dispose();
     this.spectators.dispose();

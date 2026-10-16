@@ -31,12 +31,11 @@ import { finishGeneration } from '../core/generationSteps.js';
 import { plantedTree } from './plantedTrees.js';
 import { defaultTheme } from '../themes/default.js';
 import { stoneTintFor } from '../core/regionInterpretation.js';
-import { packColoredGeometry } from './facetBuffers.js';
+import { coloredProfileGeometrySteps } from './profileGeometry.js';
 import {
   createProfileBuffer,
   appendProfile,
   pathFrames,
-  toColoredGeometry,
   resamplePath,
 } from './ribbonGeometry.js';
 import {
@@ -88,18 +87,18 @@ import {
   LINEAR_KINDS,
   POINT_ITEMS,
 } from './furniture/catalog.js';
-import { buildRoadside } from './furniture/roadsideFurniture.js';
+import { buildRoadsideSteps } from './furniture/roadsideFurniture.js';
 import { buildCrossings, buildJunctionSigns, trafficPhaseAt } from './furniture/junctionFurniture.js';
-import { buildParcels } from './furniture/parcels.js';
+import { buildParcelsSteps } from './furniture/parcels.js';
 import {
   buildVillageLandmarks,
-  buildRocks,
+  buildRocksSteps,
   buildLandmarks,
   buildPeakLandmarks,
   buildCoastalLandmarks,
   buildRidgeTrees,
 } from './furniture/landmarks.js';
-import { buildBiomeDebris } from './furniture/biomeDebris.js';
+import { buildBiomeDebrisSteps } from './furniture/biomeDebris.js';
 import { buildPointsOfInterest, collectChurches, publishFountains } from './furniture/pointsOfInterest.js';
 import { buildDomesticFauna } from './furniture/domesticFauna.js';
 import { buildOpenPastureFauna } from './furniture/parcelFauna.js';
@@ -510,13 +509,13 @@ export class FurnitureLayer {
         // lues pour la voirie : c'est la même question posée une seule fois. En
         // leur absence, la couche les relit — elle ne dépend de personne.
         const builtUp = builtUpAreas || collectBuiltUpAreas(source, tiles, this.bubble.frame);
-        buildRoadside(this, context, roadSegments, builtUp);
+        yield* buildRoadsideSteps(this, context, roadSegments, builtUp);
         yield;
         buildCrossings(this, context, junctions, roadIndex, builtUp);
         yield;
         buildJunctionSigns(this, context, areas, roadIndex, builtUp);
         yield;
-        buildParcels(this, context, builtUp);
+        yield* buildParcelsSteps(this, context, builtUp);
         yield;
         buildDomesticFauna(this, houses);
         yield;
@@ -526,9 +525,9 @@ export class FurnitureLayer {
         yield;
         buildPointsOfInterest(this, context, roadSegments, builtUp);
         yield;
-        buildRocks(this, context, builtUp);
+        yield* buildRocksSteps(this, context, builtUp);
         yield;
-        buildBiomeDebris(this, context, builtUp);
+        yield* buildBiomeDebrisSteps(this, context, builtUp);
         yield;
         buildLandmarks(this, context, builtUp);
         yield;
@@ -545,13 +544,17 @@ export class FurnitureLayer {
         console.warn('[furniture] mobilier partiel', e?.stack || e?.message || e);
       }
 
-      for (const kind of LINEAR_KINDS) this._applyLinear(kind, buffers[kind]);
+      for (const kind of LINEAR_KINDS) {
+        yield* this._applyLinearSteps(kind, buffers[kind]);
+        yield;
+      }
       this.trees = [];
       for (const [item, list] of placements) {
         if (this.theme.trees.plantations[item]) {
           for (const p of list) this.trees.push(plantedTree(this.bubble.frame, p.plantation || item, p, this.theme.trees));
           this._applyInstances(item, []);
         } else this._applyInstances(item, list);
+        yield;
       }
       this.fountains = publishFountains(placements);
       this._applyGlow();
@@ -985,10 +988,11 @@ export class FurnitureLayer {
 
   // --- Rendu ---------------------------------------------------------------
 
-  _applyLinear(kind, buffer) {
+  _applyLinear(kind, buffer) { return finishGeneration(this._applyLinearSteps(kind, buffer)); }
+
+  *_applyLinearSteps(kind, buffer) {
     const { THREE } = this;
-    const built = toColoredGeometry(THREE, buffer, { flat: FLAT_SHADED_LINEAR_KINDS.has(kind) });
-    const geometry = built && packColoredGeometry(THREE, built);
+    const geometry = yield* coloredProfileGeometrySteps(THREE, buffer, { flat: FLAT_SHADED_LINEAR_KINDS.has(kind), packed: true });
     const existing = this.linear.get(kind);
 
     if (!geometry) {

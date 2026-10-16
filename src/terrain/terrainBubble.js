@@ -103,7 +103,9 @@ export class TerrainBubble {
     theme = defaultTheme,
     reach = Infinity,
     edgeVisible = false,
+    generation = null,
   }) {
+    this.generation = generation;
     this.THREE = THREE;
     /** Marge de MNT chargée autour du bloc, en tuiles : celle que lisent les normales de son bord. */
     this._demMargin = edgeVisible ? 2 / (DEM_TILE_PIXELS * Math.pow(2, elevation.zoom - zoom)) : 0;
@@ -348,7 +350,7 @@ export class TerrainBubble {
     // seule la finesse a changé garde la sienne et passe par la file.
     this._rebuildQueue.length = 0;
     this._cancelPendingBuild();
-    const budget = new GenerationBudget(budgetMs ? { milliseconds: budgetMs } : undefined);
+    const budget = new GenerationBudget({ ...(budgetMs ? { milliseconds: budgetMs } : {}), gate: this.generation });
     for (const tile of this.tiles.values()) {
       if (!meshes) {
         this._rebuildQueue.push(tile.key);

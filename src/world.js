@@ -586,6 +586,11 @@ export class World {
     return this.composer.setRegionWord(field, value);
   }
 
+  /** Suspend la construction aux checkpoints, sans abandonner les couches en cours. */
+  setGenerationPaused(paused) { this.composer.generation.setPaused(paused); }
+
+  get generationPaused() { return this.composer.generation.paused; }
+
   /** Active les mesures CPU par couche ; le rendu GPU reste à mesurer par le renderer. */
   setProfiling(enabled = true) { this.composer.metrics.enabled = enabled; }
 
@@ -629,7 +634,7 @@ export class World {
    * @param {number} lng
    * @param {number} lat
    * @param {Object} [options]
-   * @param {number} [options.budgetMs] Temps CPU entre deux pauses (100 ms par
+   * @param {number} [options.budgetMs] Temps CPU entre deux pauses (8 ms par
    *        défaut) ; `Infinity` monte sans rendre la main.
    * @returns {Promise<boolean>} vrai si le décor a été bâti.
    */

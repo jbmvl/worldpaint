@@ -296,7 +296,10 @@ l'herbe et le shader lisent désormais la même eau.
 
 ### Le volume
 
-Empreintes relevées (`building`), extrudées à leur hauteur réelle. Une empreinte
+Empreintes relevées (`building`), extrudées à leur hauteur réelle.
+La lecture vectorielle limite routes et bâtiments à l’emprise de chaque tuile :
+leurs marges de débordement ne sont pas construites deux fois. Les bâtiments
+traversant une couture restent découpés ; aucune fusion des empreintes n’est faite. Une empreinte
 est d'abord **rabotée** de ce qu'elle pose sur une chaussée : le tracé de la
 voie et le contour du bâti viennent de deux relevés que rien ne réconcilie.
 

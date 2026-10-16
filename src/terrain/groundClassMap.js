@@ -1,3 +1,4 @@
+import { visitFeatures } from '../core/featureSteps.js';
 /*
  * groundClassMap — l'occupation du sol, rasterisée pour toute la scène.
  * Source unique de ce dont le sol est fait : le shader de terrain
@@ -902,6 +903,7 @@ export class GroundClassMap {
       const from = (texel) => Math.floor(texel / perMeter / PLANTED_CEILING_CELL_M) * PLANTED_CEILING_CELL_M;
       const to = (texel) => Math.min(CLASS_AREA_M, (texel + size) / perMeter);
       for (let cz = from(y); cz < to(y); cz += PLANTED_CEILING_CELL_M) {
+        yield;
         for (let cx = from(x); cx < to(x); cx += PLANTED_CEILING_CELL_M) {
           const h = elevationAt(originX + cx + PLANTED_CEILING_CELL_M / 2, originZ + cz + PLANTED_CEILING_CELL_M / 2);
           if (Number.isFinite(h) && h >= PLANTED_CEILING_M) ctx.fillRect(cx * perMeter, cz * perMeter, cellPx, cellPx);
@@ -924,7 +926,7 @@ export class GroundClassMap {
     ctx.lineJoin = 'round';
     ctx.lineWidth = PLANTED_BUILDING_CLEARANCE_M * 2 * perMeter;
     for (const tile of tiles) {
-      source.forEachFeature(BUILDING_SOURCE_LAYER, [tile], (geometry) => {
+      yield* visitFeatures(source, BUILDING_SOURCE_LAYER, [tile], (geometry) => {
         for (const rings of classPolygons(geometry)) {
           const ring = rings?.[0];
           if (!Array.isArray(ring) || ring.length < 3) continue;
@@ -1009,7 +1011,7 @@ export class GroundClassMap {
     yield;
     for (const sourceLayer of CLASS_SOURCE_LAYERS) {
       for (const tile of tiles) {
-        source.forEachFeature(sourceLayer, [tile], (geometry, properties) => {
+        yield* visitFeatures(source, sourceLayer, [tile], (geometry, properties) => {
           const kind = surfaceFor(sourceLayer, properties);
           if (!kind) return;
           const green = sourceLayer === 'landuse' && URBAN_GREEN_LANDUSE.has(properties.class);
@@ -1124,7 +1126,7 @@ export class GroundClassMap {
       ctx.lineJoin = 'round';
 
       for (const tile of tiles) {
-        source.forEachFeature(WATERWAY_SOURCE_LAYER, [tile], (geometry, properties) => {
+        yield* visitFeatures(source, WATERWAY_SOURCE_LAYER, [tile], (geometry, properties) => {
           const style = waterwayStyleFor(properties, waterways);
           if (!style) return;
           const width = style.halfWidth * 2;
@@ -1195,7 +1197,7 @@ export class GroundClassMap {
     // s'assèche ne recouvre pas celui qui ne s'assèche jamais.
     const permanent = [];
     for (const tile of tiles) {
-      source.forEachFeature(WATER_SOURCE_LAYER, [tile], (geometry, properties) => {
+      yield* visitFeatures(source, WATER_SOURCE_LAYER, [tile], (geometry, properties) => {
         const kind = waterSurfaceFor(properties);
         if (!kind) return;
         for (const rings of classPolygons(geometry)) {

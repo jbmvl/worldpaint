@@ -1,3 +1,4 @@
+import { finishGeneration } from '../../core/generationSteps.js';
 /*
  * roadsideFurniture — ce qui accompagne une chaussée sur sa longueur :
  * éclairage, poteaux et ligne aérienne, bornes, panneaux, balises de virage,
@@ -131,9 +132,14 @@ function alignmentTreeSpeciesFor(frame, x, z, trees = null) {
  * de l'observateur mais dont le milieu tombe au loin.
  */
 export function buildRoadside(layer, context, roadSegments, builtUp) {
+  return finishGeneration(buildRoadsideSteps(layer, context, roadSegments, builtUp));
+}
+
+export function* buildRoadsideSteps(layer, context, roadSegments, builtUp) {
   const { placements, here } = context;
 
   for (const segment of roadSegments) {
+    yield;
     const { path, platform, edges, probeSpan } = segment;
     const rows = path.length;
     if (rows < 4) continue;
@@ -141,6 +147,7 @@ export function buildRoadside(layer, context, roadSegments, builtUp) {
     const rowsInfo = [];
     const frames = segment.frames ?? pathFrames(path);
     for (let r = 0; r < rows; r++) {
+      if (r % 64 === 0) yield;
       const { slope, uphill } = crossSlope(edges[r * 2], edges[r * 2 + 1], probeSpan);
       // Terrain de part et d'autre, à quatre mètres au-delà de la rive : c'est
       // lui qui dit jusqu'où monte le mur amont et jusqu'où descend l'aval.
@@ -191,6 +198,7 @@ export function buildRoadside(layer, context, roadSegments, builtUp) {
     const inReach = (row) =>
       !row.work && Math.hypot(row.x - here.x, row.z - here.z) <= reachedRadius(FURNITURE_RADIUS_M, layer.bubble);
     for (const near of contiguousRuns(rowsInfo, inReach, 4)) {
+      yield;
       measureRoom(layer, segment, near);
       boundOverhang(context, segment, near);
       buildRoadsideRelief(layer, context, segment, near);

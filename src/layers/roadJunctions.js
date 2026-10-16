@@ -1,3 +1,4 @@
+import { finishGeneration } from '../core/generationSteps.js';
 /*
  * roadJunctions — un carrefour est une surface : la chaussée des routes qui s'y
  * rencontrent, réunie.
@@ -597,7 +598,8 @@ function joint(a, b) {
   const start = Math.atan2(from.z - centre.z, from.x - centre.x);
   let sweep = Math.atan2(to.z - centre.z, to.x - centre.x) - start;
   while (sweep < 0) sweep += Math.PI * 2;
-  if (sweep < 0.02 || sweep > Math.PI) return null;
+  // Même un joint très fermé comble l’encoche jusqu’au nœud.
+  if (sweep <= 0 || sweep > Math.PI) return null;
   const steps = Math.max(1, Math.ceil(sweep / JOIN_STEP));
   const ring = [centre, from];
   for (let k = 1; k < steps; k++) {
@@ -876,11 +878,16 @@ export class JunctionAreas {
    *        `halfWidth`, `profile`, `graphEdges`, `levels`.
    * @param {Object} [options]
    */
-  constructor(junctions = [], segments = [], { cell = JUNCTION_CELL_M } = {}) {
+  constructor(junctions = [], segments = [], { cell = JUNCTION_CELL_M, defer = false } = {}) {
     this.cell = cell;
     this.areas = [];
     this.feeders = [];
     this.buckets = new Map();
+    if (!defer) finishGeneration(this.buildSteps(junctions, segments));
+  }
+
+  *buildSteps(junctions, segments) {
+    const cell = this.cell;
     for (const segment of segments) {
       segment.junction = new Int32Array(segment.path?.length ?? 0).fill(-1);
       segment.junctionCuts = [];
@@ -895,17 +902,19 @@ export class JunctionAreas {
     }
 
     const nodes = [];
-    for (const junction of junctions) nodes.push(...armsOf(junction, owners));
+    for (const junction of junctions) { nodes.push(...armsOf(junction, owners)); yield; }
     const arms = nodes.flatMap((node) => node.arms);
     // Un bras s'arrête au nœud suivant de sa chaussée : au-delà, la route est
     // à l'autre carrefour, quelle que soit la façon dont le graphe a recousu
     // les lignes.
     const bySegment = new Map();
     for (const arm of arms) {
+      yield;
       if (!bySegment.has(arm.segment)) bySegment.set(arm.segment, []);
       bySegment.get(arm.segment).push(arm);
     }
     for (const arm of arms) {
+      yield;
       for (const other of bySegment.get(arm.segment)) {
         const gap = (other.at - arm.at) * arm.sign;
         if (gap > 1e-6 && gap < arm.reach) arm.reach = gap;
@@ -914,6 +923,7 @@ export class JunctionAreas {
       arm.hi = Math.max(arm.at, arm.at + arm.sign * arm.reach);
     }
     for (const arm of arms) {
+      yield;
       const points = [];
       for (let d = 0; d <= arm.reach; d += Math.max(1, arm.reach / 16)) points.push(pointAt(arm.segment, arm.at + arm.sign * d));
       points.push(pointAt(arm.segment, arm.at + arm.sign * arm.reach));
@@ -923,6 +933,7 @@ export class JunctionAreas {
     const fillets = [];
     const joints = [];
     for (const { arms: around } of nodes) {
+      yield;
       for (let i = 0; i < around.length; i++) {
         const a = around[i];
         const b = around[(i + 1) % around.length];
@@ -969,6 +980,7 @@ export class JunctionAreas {
     for (const arm of arms) file(arm, arm.box);
     for (const piece of fillets) file(piece, piece.box);
     for (const arm of arms) {
+      yield;
       const rivals = [];
       const corners = [];
       // Les arrondis d'un voisin ne repoussent pas une bouche : sa surface la
@@ -1001,7 +1013,7 @@ export class JunctionAreas {
     const tags = new Map();
     for (let pass = 0; pass <= MOUTH_PASSES; pass++) {
       spans = mergeSpans(spans);
-      surfaces = this._surfaces(spans, fillets, joints, order, { grid, file, eachNear, unions, tags });
+      surfaces = yield* this._surfacesSteps(spans, fillets, joints, order, { grid, file, eachNear, unions, tags });
       const buried = [];
       for (const { outline, holes, spans: mine, outer } of surfaces) {
         // Une union reprise telle quelle a déjà toutes ses bouches au contour.
@@ -1020,15 +1032,16 @@ export class JunctionAreas {
         else span.to = Math.min(path[path.length - 1].distance, span.to + MOUTH_STEP_M);
       }
     }
-    for (const { outline, holes, spans: mine, members } of surfaces) this._addArea(outline, holes, mine, members);
+    for (const { outline, holes, spans: mine, members } of surfaces) { this._addArea(outline, holes, mine, members); yield; }
   }
 
   /** Les surfaces d'un jeu de plages : bandes, arrondis et joints réunis par groupe. */
-  _surfaces(spans, fillets, joints, order, { grid, file, eachNear, unions, tags }) {
+  *_surfacesSteps(spans, fillets, joints, order, { grid, file, eachNear, unions, tags }) {
     // Une bande par plage, coupée à chaque nœud qu'elle traverse : au nœud,
     // chaque morceau s'arrête sur la section de son bras (`nodeCap`).
     const strips = [];
     for (const span of spans) {
+      yield;
       const { segment, arms } = span;
       if (!(span.to - span.from > 1e-6)) continue;
       const capOf = (d, sign) => {
@@ -1071,6 +1084,7 @@ export class JunctionAreas {
       file(piece, piece.box);
     });
     for (const piece of pieces) {
+      yield;
       eachNear(piece.box, (other) => {
         if (other.rank > piece.rank && other.level === piece.level && boxesMeet(piece.box, other.box)) join(piece.rank, other.rank);
       });
@@ -1095,6 +1109,7 @@ export class JunctionAreas {
     };
     const surfaces = [];
     for (const group of [...clusters.values()].sort((a, b) => a[0].rank - b[0].rank)) {
+      yield;
       const owned = group.filter((piece) => piece.segment);
       const lent = [...new Set(owned.map((piece) => piece.span))];
       const covering = (outline) => lent.filter((span) => {

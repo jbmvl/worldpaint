@@ -1,8 +1,10 @@
+import { finishGeneration } from './generationSteps.js';
 /*
  * vectorTileSource — tuiles vectorielles chargées pour la bulle. Le chargement
  * est piloté par la bulle ; l'application fournit les URL, le zoom maximal et
  * peut partager son transport. Décodage via `@mapbox/vector-tile`, dont `toGeoJSON` rend
- * directement la géométrie en longitude/latitude.
+ * directement la géométrie en longitude/latitude. Les marges des routes et
+ * bâtiments sont retirées pour ne pas construire deux fois leurs surfaces.
  */
 
 // pbf 5 et @mapbox/vector-tile 3 sont des modules ESM à exports nommés : pas
@@ -11,6 +13,7 @@ import { PbfReader } from 'pbf';
 import { VectorTile } from '@mapbox/vector-tile';
 import { tileKey, fillTileUrl, tileXToLng, tileYToLat } from './tileMath.js';
 import { tileRequest } from './tileRequest.js';
+import { geometryInTile } from './tileGeometry.js';
 
 /** Zoom visé. 14 est le maximum servi par la plupart des jeux OpenMapTiles. */
 export const VECTOR_ZOOM = 14;
@@ -154,15 +157,16 @@ export class VectorTileSource {
    * `callback(geometry, properties, bounds)` reçoit la géométrie en
    * longitude/latitude et l'emprise de la tuile d'origine.
    *
-   * Les entités sont découpées par tuile (une même route ou bâtisse revient
-   * d'une tuile à l'autre) : à l'appelant de dédoublonner et d'écarter les
-   * bords de découpe via `bounds` si besoin.
+   * Routes et bâtiments sont limités à l’emprise de leur tuile. Les autres
+   * couches conservent leur marge ; `bounds` permet d’écarter les bords de découpe.
    *
    * `keep(properties)`, s'il est donné, écarte une entité avant que sa
    * géométrie ne soit décodée : une couche `poi` de ville en compte des
    * dizaines de milliers, dont on ne garde que quelques classes.
    */
-  forEachFeature(sourceLayer, tiles, callback, keep = null) {
+  forEachFeature(...args) { return finishGeneration(this.forEachFeatureSteps(...args)); }
+
+  *forEachFeatureSteps(sourceLayer, tiles, callback, keep = null) {
     for (const { x, y } of tiles) {
       const entry = this.tiles.get(tileKey(this.zoom, x, y));
       if (!entry) continue;
@@ -174,6 +178,7 @@ export class VectorTileSource {
       const bounds = tileBounds(entry.x, entry.y, entry.z);
 
       for (let i = 0; i < layer.length; i++) {
+        yield;
         let geojson;
         try {
           const feature = layer.feature(i);
@@ -182,7 +187,10 @@ export class VectorTileSource {
         } catch (e) {
           continue;
         }
-        if (geojson?.geometry) callback(geojson.geometry, geojson.properties || {}, bounds);
+        if (!geojson?.geometry) continue;
+        const geometry = sourceLayer === 'transportation' || sourceLayer === 'building'
+          ? geometryInTile(geojson.geometry, bounds) : geojson.geometry;
+        if (geometry) callback(geometry, geojson.properties || {}, bounds);
       }
     }
   }

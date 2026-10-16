@@ -14,7 +14,8 @@ function pauseGeneration() {
   });
 }
 export class GenerationBudget {
-  constructor({ milliseconds = 8, now = () => performance.now(), pause = pauseGeneration, onPause } = {}) {
+  constructor({ milliseconds = 8, now = () => performance.now(), pause = pauseGeneration, onPause, gate = null } = {}) {
+    this.gate = gate;
     this.milliseconds = milliseconds;
     this.now = now;
     this.pause = pause;
@@ -22,9 +23,11 @@ export class GenerationBudget {
     this.start = now();
   }
   async checkpoint() {
+    if (this.gate?.paused) { await this.gate.wait(); this.start = this.now(); }
     if (this.now() - this.start < this.milliseconds) return;
     const start = this.onPause ? this.now() : 0;
     await this.pause();
+    if (this.gate?.paused) await this.gate.wait();
     this.onPause?.(this.now() - start);
     this.start = this.now();
   }
