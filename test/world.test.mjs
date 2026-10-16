@@ -9024,6 +9024,44 @@ test('platformPositionAt départage un croisement en dénivelé par le sens du d
   );
 });
 
+test('platformPositionAt rend la dalle d’un carrefour, pas la plate-forme d’une de ses branches', () => {
+  const road = fakeSegment(straight(0, 100, 10), 3, 5);
+  const roads = {
+    elevationIndex: new RoadIndex([road], { includeWorks: true }),
+    junctionAreas: { deckAt: (x) => (x > 40 && x < 60 ? 5.3 : null) },
+  };
+  close(platformPositionAt(roads, 50, 1), 5.3, 1e-6, 'sur la dalle, sa cote');
+  close(platformPositionAt(roads, 20, 1), 5, 1e-6, 'hors de la dalle, la plate-forme');
+});
+
+test('platformPositionAt retient la chaussée dont on est le plus loin du bord, pas le plus près de l’axe', () => {
+  // Un coureur à 2,6 m de l'axe d'une route large est à 0,4 m de l'axe d'un
+  // sentier qui la longe : c'est sur la route qu'il roule.
+  const road = fakeSegment(straight(0, 100, 10), 4, 5);
+  const path = fakeSegment(straight(0, 100, 10, 3), 0.7, 4.6);
+  const roads = { elevationIndex: new RoadIndex([road, path], { includeWorks: true }) };
+  close(platformPositionAt(roads, 50, 2.6), 5, 1e-6);
+});
+
+test('platformPositionAt pose la roue sur la plus haute de deux chaussées croisées à niveau', () => {
+  // Un chemin suit le terrain à travers une route qui ne le connaît pas : la
+  // route le recouvre, c'est elle qu'on voit et sur elle qu'on roule.
+  const road = fakeSegment(straight(0, 100, 10), 3, 5);
+  const track = fakeSegment(straight(-50, 50, 10).map((p) => ({ x: 50, z: p.x })), 0.7, 4.7);
+  const roads = { elevationIndex: new RoadIndex([road, track], { includeWorks: true }) };
+  close(platformPositionAt(roads, 50, 2.5), 5, 1e-6, 'sur le chemin, mais sous le bitume');
+  close(platformPositionAt(roads, 50, 10), 4.7, 1e-6, 'hors de la route, le chemin');
+});
+
+test('platformPositionAt ne fait pas sauter la cote d’une arête à l’autre quand on lui donne le cap', () => {
+  // À une brisure, l'arête la mieux alignée sur le cap n'est pas celle sur
+  // laquelle on roule : le cap écarte les transversales, il ne classe pas.
+  const bent = fakeSegment([{ x: 0, z: 0 }, { x: 50, z: 0 }, { x: 100, z: 17 }], 3);
+  bent.platform = Float32Array.of(0, 5, 10);
+  const roads = { elevationIndex: new RoadIndex([bent], { includeWorks: true }) };
+  close(platformPositionAt(roads, 52, 0.5, { x: 1, z: 0 }), platformPositionAt(roads, 52, 0.5), 1e-6);
+});
+
 test('sur un versant, l’aplanissement et la travée se passent le relais', () => {
   // Les deux systèmes se rencontrent exactement ici. Le terrassier aplanit le
   // profil en long dans la bande qu'un ouvrage peut rattraper (`flattenGrade`),

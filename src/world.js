@@ -74,6 +74,9 @@ const FAR_FOG_REACH = 1.6;
 /** Temps que met le brouillard à rejoindre le rayon que le relief lointain lui donne, en secondes. */
 const FOG_FOLLOW_S = 1.5;
 
+/** Jeu sous le plancher d'une voûte dans lequel la chaussée lue est encore celle qu'elle abrite. */
+const TUNNEL_FLOOR_MATCH_M = 1;
+
 /**
  * Zoom des tuiles du MNT, distinct de celui de la bulle : c'est le zoom
  * maximal que sert la source qui le décide, pas la finesse de la maille.
@@ -268,7 +271,8 @@ export class World {
    * point en plan. `aheadLng`/`aheadLat` — un point à quelques mètres, dans
    * le sens du déplacement — départage en faveur de celle dont le tracé va
    * dans cette direction : l'autre est celle qu'on franchit, pas celle qu'on
-   * suit. Sans eux, la plus proche l'emporte.
+   * suit. Parmi les autres, ou sans eux, celle sur laquelle le point est le
+   * plus avant l'emporte ; sur un carrefour, c'est la dalle qui répond.
    *
    * @param {number} lng
    * @param {number} lat
@@ -702,11 +706,19 @@ export class World {
 
   /**
    * Chaussée et intrados de la voûte au point de scène `(x, z)`, ou `null`
-   * hors de tout tunnel ou passage couvert. Voir `tunnelAt`.
+   * hors de tout tunnel ou passage couvert. `y`, l'altitude de scène du
+   * sujet, choisit l'étage là où deux ouvrages se superposent. La chaussée
+   * est celle que lit `roadPositionAt`, pour que coureur et caméra s'accordent
+   * sur le même plancher. Voir `tunnelAt`.
    * @returns {{floor:number, roof:number, kind:string}|null}
    */
-  tunnelAt(x, z) {
-    return tunnelAt(this.composer.roads?.roadSegments, x, z);
+  tunnelAt(x, z, y = null) {
+    const roads = this.composer.roads;
+    const vault = tunnelAt(roads?.roadSegments, x, z, y);
+    if (!vault) return null;
+    const deck = platformPositionAt(roads, x, z);
+    if (deck != null && deck > vault.floor - TUNNEL_FLOOR_MATCH_M && deck < vault.roof) vault.floor = deck;
+    return vault;
   }
 
   /**

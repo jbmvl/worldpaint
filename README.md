@@ -149,7 +149,7 @@ le cache de données décodées reste propre à chaque source.
 | `setCenter(lng, lat)` | move the terrain bubble |
 | `refresh(lng, lat, {force})` | rebuild everything that comes from vector data |
 | `advance(delta, at)` | one frame of work: planting queues, grass, animation |
-| `tunnelAt(x, z)` | road floor and vault crown at a scene point, or `null` outside any covered structure — what a chase camera needs to stay under the roof |
+| `tunnelAt(x, z, y)` | road floor and vault crown at a scene point, or `null` outside any covered structure — what a chase camera needs to stay under the roof. The floor is the road `roadPositionAt` reads; `y`, the subject's scene height, picks the level where two structures overlap |
 | `setSightline(from, to, {fromRadius, toRadius})` | dither away the trees between the camera and the followed subject; call every frame, `null` turns it off |
 | `updateSky({camera, date, lng, lat, weather})` | advance the hour and the weather; returns the night mix, the wetness and the clear colour |
 | `dispose()` | release everything that was allocated |
@@ -213,11 +213,17 @@ way. The rendered paved surface adds the technical offset `ROAD_LIFT_M`
 (2 cm) above that platform. To place an object exactly on the asphalt, add
 this exported constant to its height instead of hardcoding an offset.
 
+The answer is the rendered surface, and it is continuous: on a junction it is
+the junction slab itself, not the platform of one of the roads that meet there;
+where a track crosses a road at grade without a junction, it is the higher of
+the two. A vehicle can therefore read its pitch and roll from a few points
+under its wheels without the seams between roads showing up as jolts.
+
 At a grade-separated crossing two roads can cover the same point in plan —
 the one the caller means, and the one it passes over or under. `aheadLng`/
-`aheadLat`, a point a few metres ahead along the direction of travel, breaks
-the tie in favour of whichever road's own direction matches; without them the
-nearest one wins.
+`aheadLat`, a point a few metres ahead along the direction of travel, sets
+aside the roads that do not run in that direction; among the rest, the one the
+point is furthest inside wins, exactly as without them.
 
 ```js
 world.roadsideAt(lng, lat, { side, offset, heightAboveGround, aheadLng, aheadLat });

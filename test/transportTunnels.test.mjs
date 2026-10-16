@@ -178,3 +178,21 @@ test('tunnelAt rend la chaussée et la voûte sous l’ouvrage, rien à côté',
   assert.equal(tunnelAt([road],0,20),null,'à côté de la voûte');
   assert.equal(tunnelAt([road],150,0),null,'hors de la plage couverte');
 });
+
+test('tunnelAt reste sous la voûte au côté extérieur d’une brisure, et s’arrête aux portails', async () => {
+  const { tunnelAt } = await import('../src/layers/transportTunnels.js');
+  const vault = { path: [{ x: 0, z: 0 }, { x: 50, z: 0 }, { x: 50, z: 50 }], platform: [10, 10, 10], halfWidth: 3, roofHeight: 5, kind: 'tunnel' };
+  const road = { tunnelStructures: [vault] };
+  assert.ok(tunnelAt([road], 52, -1), 'le point ne se projette sur aucune des deux arêtes');
+  assert.equal(tunnelAt([road], -4, 0), null, 'avant le portail d’entrée');
+  assert.equal(tunnelAt([road], 50, 54), null, 'après le portail de sortie');
+});
+
+test('tunnelAt choisit l’étage par l’altitude du sujet', async () => {
+  const { tunnelAt } = await import('../src/layers/transportTunnels.js');
+  const level = (floor, z) => ({ path: [{ x: 0, z }, { x: 100, z }], platform: [floor, floor], halfWidth: 3, roofHeight: 5, kind: 'tunnel' });
+  const road = { tunnelStructures: [level(10, 0), level(30, 0.5)] };
+  assert.equal(tunnelAt([road], 50, 0.4, 31).floor, 30, 'le sujet roule dans la galerie du haut');
+  assert.equal(tunnelAt([road], 50, 0.4, 10.5).floor, 10, 'puis dans celle du bas');
+  assert.equal(tunnelAt([road], 50, 0.4).floor, 30, 'sans altitude, la plus proche en plan');
+});

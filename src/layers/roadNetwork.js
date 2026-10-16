@@ -1007,11 +1007,20 @@ export function platformLaneAt(roads, x, z, { ahead = null, radius = ROAD_SNAP_R
  * quelque chose *sur* la chaussée plutôt que sur le terrain qu'elle surplombe
  * ou entaille. `null` hors chaussée : au terrain de répondre alors.
  *
+ * La réponse est celle du sol **rendu**, et doit être continue : un mobile
+ * en tire son assiette sur un empattement d'un mètre, où dix centimètres de
+ * saut font six degrés. Sur un carrefour, c'est donc la dalle qui répond, pas
+ * la plate-forme d'une des chaussées qui s'y rejoignent ; ailleurs, la
+ * chaussée retenue est celle dont le **bord** est le plus proche — sur sa
+ * propre chaussée, on est plus près du bord de celle-ci que de celui d'une
+ * voisine.
+ *
  * À un croisement en dénivelé, deux chaussées peuvent recouvrir le même
  * point en plan. `ahead` — un vecteur, pas forcément unitaire, pris dans le
- * sens du déplacement — départage en faveur de celle dont le tracé va dans
- * cette direction : l'autre est celle qu'on franchit, pas celle qu'on suit.
- * Sans lui, la plus proche l'emporte, comme `RoadIndex.query`.
+ * sens du déplacement — écarte celles qui ne vont pas dans cette direction :
+ * l'autre est celle qu'on franchit, pas celle qu'on suit. Il écarte, il ne
+ * classe pas : deux arêtes d'une même route n'ont pas le même cap, et les
+ * départager par l'alignement ferait sauter la cote à chaque sommet.
  *
  * @param {RoadNetwork} roads
  * @param {number} x
@@ -1026,27 +1035,39 @@ export function platformPositionAt(roads, x, z, ahead = null, margin = ROAD_INDE
   const hits = index.queryAll(x, z, margin);
   if (hits.length === 0) return null;
 
-  let hit = hits[0];
-  if (hits.length > 1 && ahead && (ahead.x !== 0 || ahead.z !== 0)) {
-    const length = Math.hypot(ahead.x, ahead.z);
-    const dirX = ahead.x / length;
-    const dirZ = ahead.z / length;
-    let bestAlignment = -Infinity;
-    for (const candidate of hits) {
-      const a = candidate.segment.path[candidate.row];
-      const b = candidate.segment.path[candidate.row + 1];
-      const rowLength = Math.hypot(b.x - a.x, b.z - a.z) || 1;
-      const alignment = Math.abs(
-        ((b.x - a.x) / rowLength) * dirX + ((b.z - a.z) / rowLength) * dirZ
-      );
-      if (alignment > bestAlignment) {
-        bestAlignment = alignment;
-        hit = candidate;
-      }
+  const follows = alignedWith(ahead);
+  let hit = null;
+  let best = Infinity;
+  for (const candidate of hits) {
+    if (follows && !follows(candidate.segment, candidate.row)) continue;
+    const outside = candidate.distance - candidate.segment.halfWidth;
+    if (outside < best) {
+      best = outside;
+      hit = candidate;
     }
   }
-  return index.deckAt(hit);
+  hit ??= hits[0];
+
+  const level = hit.segment.levels?.[hit.row] ?? LEVEL_GROUND;
+  const junction = roads.junctionAreas?.deckAt(x, z, level);
+  if (junction != null) return junction;
+
+  // Deux chaussées qui se croisent à niveau sans carrefour (un chemin sur une
+  // route) : la roue porte sur la plus haute, celle qui recouvre l'autre.
+  let deck = index.deckAt(hit);
+  if (deck == null) return null;
+  const base = deck;
+  for (const candidate of hits) {
+    if (candidate.segment === hit.segment || candidate.distance > candidate.segment.halfWidth) continue;
+    if (follows && !follows(candidate.segment, candidate.row)) continue;
+    const other = index.deckAt(candidate);
+    if (other != null && other > deck && other - base < STACKED_DECK_GAP_M) deck = other;
+  }
+  return deck;
 }
+
+/** Écart au-delà duquel deux chaussées superposées sont deux niveaux, pas une même surface. */
+const STACKED_DECK_GAP_M = 1;
 
 /**
  * Extrait les tronçons de chaussée d'un jeu de tuiles, ré-échantillonnés et

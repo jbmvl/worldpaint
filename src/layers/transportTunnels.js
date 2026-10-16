@@ -135,27 +135,42 @@ export function resolveTunnelProfiles(segments, rails, elevation, { frame, build
 /**
  * Chaussée et intrados de la voûte au point `(x, z)`, ou `null` hors de tout
  * ouvrage couvert. Ce que lit une caméra qui doit rester sous la voûte : le
- * terrain au-dessus n'est plus un plancher.
+ * terrain au-dessus n'est plus un plancher : un `null` d'une seule image
+ * renvoie la caméra au-dessus de la montagne. Seuls les portails bornent
+ * l'ouvrage ; le côté extérieur d'une brisure, qui ne se projette sur aucune
+ * des deux arêtes, reste sous la voûte.
+ *
+ * `y` (altitude de scène du sujet), quand il est donné, départage deux
+ * ouvrages superposés en plan : celui dont la voûte l'abrite, sinon celui
+ * dont la chaussée est la plus proche de lui. Sans `y`, le plus proche en plan.
  * @returns {{floor:number, roof:number, kind:string}|null}
  */
-export function tunnelAt(segments, x, z) {
+export function tunnelAt(segments, x, z, y = null) {
+  const vertical = Number.isFinite(y);
   let best = null;
-  let bestGap = Infinity;
+  let bestScore = Infinity;
   for (const segment of segments ?? []) {
     for (const s of segment.tunnelStructures ?? []) {
       const reach = s.halfWidth + PORTAL_CLEARANCE_M;
-      for (let i = 1; i < s.path.length; i++) {
+      const last = s.path.length - 1;
+      for (let i = 1; i <= last; i++) {
         const a = s.path[i - 1], b = s.path[i];
         const dx = b.x - a.x, dz = b.z - a.z;
         const length2 = dx * dx + dz * dz;
         if (!length2) continue;
-        const t = ((x - a.x) * dx + (z - a.z) * dz) / length2;
-        if (t < 0 || t > 1) continue;
+        let t = ((x - a.x) * dx + (z - a.z) * dz) / length2;
+        if ((t < 0 && i === 1) || (t > 1 && i === last)) continue;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
         const gap = Math.hypot(x - a.x - dx * t, z - a.z - dz * t);
-        if (gap > reach || gap >= bestGap) continue;
-        bestGap = gap;
+        if (gap > reach) continue;
         const floor = lerp(s.platform[i - 1], s.platform[i], t);
-        best = { floor, roof: floor + s.roofHeight, kind: s.kind };
+        const roof = floor + s.roofHeight;
+        // En plan, un écart sous la largeur de l'ouvrage ; en hauteur, un
+        // sujet abrité passe avant tout autre.
+        const score = vertical ? (y >= floor - 1 && y <= roof ? 0 : 1e3) + Math.abs(y - floor) + gap * 1e-3 : gap;
+        if (score >= bestScore) continue;
+        bestScore = score;
+        best = { floor, roof, kind: s.kind };
       }
     }
   }
