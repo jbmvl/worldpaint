@@ -187,3 +187,21 @@ panneaux le long des routes peuvent donc se poser un peu autrement.
   `webglcontextlost` ni erreur. Les maillages fusionnés qu'on ne relit plus
   (bâti, voirie, mobilier linéaire) sont resserrés (`facetBuffers.js`) et
   leur copie côté page est rendue après l'envoi au GPU.
+
+### Les objets dans un rayon fixe (`detail.radius`)
+
+`detail: { radius: 375 }` borne voirie, bâti, mobilier et arbres sans toucher
+au terrain, à la carte du sol ni au relief lointain. Relevé du banc des trois
+coûts (SwiftShader, `--near 0`, médianes de 2 à 3 passes), bulle complète →
+rayon de 375 m :
+
+| Lieu | génération initiale | triangles | appels | tas retenu |
+| --- | --- | --- | --- | --- |
+| station-montreuil-bellay (campagne) | 7 882 → 6 903 ms | 2,37 M → 1,75 M | 168 → 100 | 28 → 26 Mo |
+| saint-gervais (forêt, montagne) | 11 844–12 212 → 6 230–6 485 ms | 15,1 M → 3,3 M | 593 → 146 | 53 → 29 Mo |
+| lyon (ville, déjà resserrée par le budget de murs) | 8 533–8 916 → 8 292–8 645 ms | 4,1 M → 1,5 M | 95 → 61 | 45 → 42 Mo |
+
+Fluidité au mouvement (fil principal, campagne) inchangée : p95 11,9 → 12,4 ms,
+p99 26,4 → 24,4 ms. Le gain de génération suit ce que le lieu a d'objets au-delà
+du rayon (forêts surtout) ; ce qui reste est fixe : pauses de la génération
+coopérative (2,2 à 2,8 s), terrain (0,9 s), carte du sol (0,4 s).

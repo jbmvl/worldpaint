@@ -121,6 +121,8 @@ export class TerrainBubble {
     this._reach = Number.isFinite(reach) && reach > 0 ? reach : Infinity;
     /** Rayon du détail que laisse la densité du lieu (`setDetailBudgetRadius`). */
     this._budgetRadius = Infinity;
+    /** Rayon fixe des objets, choisi par l'application (`detail.radius`) : le terrain n'y est pas borné. */
+    this._detailRadius = Infinity;
     /** Disque de la portée autour du dernier centre, `null` sans portée : le déblai s'y limite. */
     this._reachDisc = null;
 
@@ -243,9 +245,27 @@ export class TerrainBubble {
     this._centerTile = null;
   }
 
-  /** Portée des couches du décor : la plus courte de la portée et du rayon du budget. */
+  /** Portée des couches du décor : la plus courte de la portée, du rayon du budget et du rayon fixe des objets. */
   get decorReachMeters() {
-    return Math.min(this._reach, this._budgetRadius);
+    return Math.min(this._reach, this._budgetRadius, this._detailRadius);
+  }
+
+  /**
+   * Portée du semis des arbres : la portée et le rayon fixe des objets, pas le
+   * budget de murs, qui ne compte que le bâti.
+   */
+  get sowingReachMeters() {
+    return Math.min(this._reach, this._detailRadius);
+  }
+
+  /** Rayon fixe des objets (`detail.radius`), `Infinity` sans. */
+  get detailRadiusMeters() {
+    return this._detailRadius;
+  }
+
+  /** Pose le rayon fixe des objets ; `null` le lève. Prend effet à la prochaine relève du décor. */
+  setDetailRadius(radius) {
+    this._detailRadius = Number.isFinite(radius) && radius > 0 ? radius : Infinity;
   }
 
   /** Rayon que la densité du lieu laisse au détail (`budgetedRadius`), posé avant chaque reconstruction du décor. */

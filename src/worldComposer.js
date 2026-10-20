@@ -136,7 +136,7 @@ export class WorldComposer {
    * @param {number} [options.reach] Portée du monde en mètres (`setReach`). Absente, chaque couche garde son rayon.
    * @param {Object} [options.theme] Direction artistique, déjà résolue par
    *        `resolveTheme`. Le compositeur la distribue sans la lire.
-   * @param {{budget?: number}} [options.detail] Voir `createWorld`.
+   * @param {{budget?: number, radius?: number}} [options.detail] Voir `createWorld`.
    * @param {{elevation: Object, blockSize: number}|null} [options.far] Relief lointain :
    *        son `ElevationField` et son côté en tuiles. Absent, rien au-delà de la bulle.
    *        Il n'est à l'image que sans portée.
@@ -220,6 +220,7 @@ export class WorldComposer {
       edgeVisible: !!far,
     });
     this.bubble.setMaxAnisotropy(maxAnisotropy);
+    this.bubble.setDetailRadius(detail.radius);
     this.far = far ? new FarRelief({ THREE, scene, bubble: this.bubble, ...far }) : null;
     this.far?.setColor(this.bubble.materials.gapAlbedo);
 
@@ -563,7 +564,8 @@ export class WorldComposer {
 
     const here = this.bubble.frame.toLocal(lng, lat);
     // Les arbres se sèment à part (file par tuile) : ils doivent connaître la portée avant `sync`.
-    this.vegetation?.setReach?.(Number.isFinite(this.bubble.reachMeters) ? here : null, this.bubble.reachMeters, this.bubble.decorStepMeters);
+    const sowing = this.bubble.sowingReachMeters;
+    this.vegetation?.setReach?.(Number.isFinite(sowing) ? here : null, sowing, this.bubble.decorStepMeters);
     // Le profil se prend avant tout le reste, et même quand rien n'est périmé :
     // il ne coûte qu'une lecture de tableau et cinq altitudes, et ce qui le lit
     // le lit à la construction de son propre contenu.
@@ -587,6 +589,9 @@ export class WorldComposer {
     // dit si le rapace remplace le corvidé.
     this.life.setRelief(this.landscape?.relief ?? null);
     const wanted = this._wantedTiles(lng, lat);
+    // Tuiles des couches d'objets : celles qui touchent leur rayon (`detail.radius`).
+    // La carte du sol et les cotes d'eau gardent toute la bulle.
+    const near = this._tilesWithin(wanted, lng, lat, this.bubble.sowingReachMeters);
 
     // La végétation suit les tuiles de la bulle, pas le vectoriel : se resynchronise même sans autre changement.
     this.vegetation.sync();
@@ -655,7 +660,7 @@ export class WorldComposer {
       // lisent : il se pose avant la première.
       const placeStart = performance.now();
       this.bubble.setDetailBudgetRadius?.(
-        budgetedRadius(wallLengthsByDistance(this.vectorTiles, wanted, frame, here), this._detailBudget)
+        budgetedRadius(wallLengthsByDistance(this.vectorTiles, near, frame, here), this._detailBudget)
       );
 
       // 0. « Sommes-nous en ville ? » — avant tout le monde, parce que la carte
@@ -674,7 +679,7 @@ export class WorldComposer {
       //    naturel que les chaussées entailleront ensuite (une route taillée
       //    dans la rampe que la marche supprime se retrouverait en l'air), et
       //    la carte du sol a besoin de leurs bandes pour y peindre la roche.
-      this.cliffs.rebuild(this.vectorTiles, wanted, here);
+      this.cliffs.rebuild(this.vectorTiles, near, here);
 
       if (!await checkpoint()) return false;
 
@@ -705,9 +710,9 @@ export class WorldComposer {
       // 2. Chaussées — publient l'index et déclenchent le déblai du terrain.
       //    Les profils ferroviaires naturels participent aux franchissements ;
       //    le terrain corrigé est publié avant toute pose du décor.
-      if (!await rebuild(this.roads, 'routes', this.vectorTiles, wanted, here, {
+      if (!await rebuild(this.roads, 'routes', this.vectorTiles, near, here, {
         urban,
-        railwaySegments: collectCrossingRails(this.vectorTiles, wanted, this.bubble.frame,
+        railwaySegments: collectCrossingRails(this.vectorTiles, near, this.bubble.frame,
           (x, z) => this.bubble.naturalElevationAtLocal(x, z, 0) * this.bubble.verticalScale),
       })) return false;
 
@@ -727,7 +732,7 @@ export class WorldComposer {
       if (!await checkpoint()) return false;
 
       // 2 ter. Voie ferrée — lit le terrain corrigé, publie son emprise et les voies des trains.
-      this.railways.rebuild(this.vectorTiles, wanted, here);
+      this.railways.rebuild(this.vectorTiles, near, here);
       this.trains.setTracks(this.bubble.frame, this.railways.tracks, here);
 
       if (!await checkpoint()) return false;
@@ -736,7 +741,7 @@ export class WorldComposer {
       // 4. Bâti — après les chaussées, dont l'emprise rabote ce qu'une
       //    empreinte pose sur la voie (la donnée en pose : le tracé de la route
       //    et le contour du bâti viennent de deux relevés différents).
-      if (!await rebuild(this.buildings, 'batiments', this.vectorTiles, wanted, here, { roadIndex: this.roads.index, builtUp })) return false;
+      if (!await rebuild(this.buildings, 'batiments', this.vectorTiles, near, here, { roadIndex: this.roads.index, builtUp })) return false;
 
       if (!await checkpoint()) return false;
 
@@ -763,7 +768,7 @@ export class WorldComposer {
       //    (`fabric`), emprise ferroviaire, lieux nommés (`places`).
       if (!await rebuild(this.furniture, 'mobilier',
         this.vectorTiles,
-        wanted,
+        near,
         here,
         this.roads.roadSegments,
         this.roads.index,
@@ -897,7 +902,7 @@ export class WorldComposer {
       this.bubble.zoom,
       this.vectorTiles.zoom
     );
-    return Number.isFinite(this.bubble.reachMeters) ? this._tilesWithinReach(tiles, lng, lat) : tiles;
+    return this._tilesWithin(tiles, lng, lat, this.bubble.reachMeters);
   }
 
   /** Carré de la portée du décor autour d'un point local, marge comprise ; `null` sans portée. */
@@ -908,16 +913,17 @@ export class WorldComposer {
   }
 
   /**
-   * Ne garde des tuiles du bloc que celles qui touchent la portée du décor
-   * (marge comprise : la carte du sol lit un peu au-delà de ce qui est bâti).
+   * Ne garde des tuiles du bloc que celles qui touchent le disque de `radius`
+   * (marge comprise : la carte du sol lit un peu au-delà de ce qui est bâti) :
+   * la portée du monde, ou le rayon des objets pour leurs couches.
    * Une scène de quelques dizaines de mètres ne charge ainsi que la tuile où
    * elle se trouve, et sa voisine si elle est tout près du bord.
    */
-  _tilesWithinReach(tiles, lng, lat) {
-    if (!tiles.length) return tiles;
+  _tilesWithin(tiles, lng, lat, radius) {
+    if (!tiles.length || !Number.isFinite(radius)) return tiles;
     const zoom = tiles[0].z;
     const here = lngLatToTile(lng, lat, zoom);
-    const span = this.bubble.reachMeters * REACH_MARGIN + REACH_MARGIN_M;
+    const span = radius * REACH_MARGIN + REACH_MARGIN_M;
     const r = span / tileSizeMeters(zoom, lat);
     const kept = tiles.filter((t) => {
       const dx = Math.min(Math.abs(here.x - t.x), Math.abs(here.x - (t.x + 1)));

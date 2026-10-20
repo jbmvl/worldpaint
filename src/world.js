@@ -111,7 +111,10 @@ export const DEFAULT_ELEVATION_ZOOM = 14;
  *        de murs bâtis, en mètres, que le détail s'autorise autour de l'observateur
  *        (`DETAIL_WALL_BUDGET_M` par défaut) : en ville le rayon des couches se
  *        resserre jusqu'à le tenir, jamais sous 300 m, et la relève se rapproche
- *        d'autant ; `Infinity` garde partout tout le détail.
+ *        d'autant ; `Infinity` garde partout tout le détail. `radius` borne en
+ *        outre, partout, les objets (voirie, bâti, mobilier, arbres) à ce rayon,
+ *        en mètres : contrairement à `reach`, le terrain, la carte du sol et le
+ *        relief lointain gardent toute la bulle. La relève se rapproche d'autant.
  * @param {Object|null} [options.theme] Direction artistique — tranches
  *        entières qui remplacent celles de `defaultTheme`, voir `resolveTheme`.
  * @param {Object|null} [options.sky] Ciel, soleil et brouillard. `null` (le

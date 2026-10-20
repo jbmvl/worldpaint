@@ -52,6 +52,8 @@ const scene = new THREE.Scene();
 const EYE_M = 1.75, RECENTER_MS = 400;
 // Portée du premier montage, comme la démo (`?near=0` : la bulle d'un trait).
 const near = Number(params.get('near') ?? 300);
+// Rayon fixe des objets (`detail.radius`), absent par défaut : `?detail=375`.
+const detailRadius = Number(params.get('detail')) || null;
 
 // Pic du tas JS, relevé entre deux tranches de travail.
 let heapPeak = 0;
@@ -89,6 +91,7 @@ async function mount() {
     THREE, scene, sky: { Sky },
     elevation: { zoom: place.zoom, url: `${base}/dem/{z}/{x}/{y}.${place.elevation.extension}`, encoding: place.elevation.encoding },
     vector: place.vector ? { tiles: [`${location.origin}${base}/vector/{z}/{x}/{y}.pbf`], maxZoom: place.vector.maxZoom } : null,
+    ...(detailRadius ? { detail: { radius: detailRadius } } : {}),
   });
   world.setProfiling(true);
   const t1 = performance.now();

@@ -370,6 +370,42 @@ test('world.setReach borne terrain, carte du sol et couches, et force la prochai
   }
 });
 
+test('detail.radius borne les objets sans borner terrain, carte du sol ni relief lointain', async () => {
+  const { createWorld } = await import('../src/world.js');
+  const world = createWorld({ THREE, scene: new THREE.Scene(), detail: { radius: 375 } });
+  try {
+    const { bubble, composer } = world;
+    assert.equal(world.reach, Infinity, 'pas une portée');
+    assert.equal(bubble.detailRadiusMeters, 375);
+    assert.equal(bubble.decorReachMeters, 375);
+    assert.equal(bubble.sowingReachMeters, 375);
+    assert.equal(RoadNetwork.prototype._radius.call({ bubble }), 375);
+    assert.ok(bubble.decorStepMeters < 250, 'la relève se resserre avec le rayon');
+    assert.equal(composer.groundClass._windowM, null, 'la carte du sol couvre toute la bulle');
+    let synced = 0;
+    composer.far.sync = () => { synced++; };
+    composer._syncFar();
+    assert.equal(synced, 1, 'le relief lointain reste à l’image');
+    bubble.setDetailBudgetRadius(300);
+    assert.equal(bubble.decorReachMeters, 300, 'le budget de murs resserre encore');
+    assert.equal(bubble.sowingReachMeters, 375, 'le budget de murs ne touche pas aux arbres');
+  } finally {
+    world.dispose();
+  }
+});
+
+test('sans detail.radius, rien ne change', async () => {
+  const { createWorld } = await import('../src/world.js');
+  const world = createWorld({ THREE, scene: new THREE.Scene() });
+  try {
+    assert.equal(world.bubble.detailRadiusMeters, Infinity);
+    assert.equal(world.bubble.decorReachMeters, Infinity);
+    assert.equal(world.bubble.sowingReachMeters, Infinity);
+  } finally {
+    world.dispose();
+  }
+});
+
 test('le relief lointain existe avec ou sans portée, mais n’est à l’image que sans', async () => {
   const { createWorld } = await import('../src/world.js');
   const world = createWorld({ THREE, scene: new THREE.Scene(), reach: 150 });

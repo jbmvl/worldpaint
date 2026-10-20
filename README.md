@@ -365,6 +365,15 @@ where the built walls around the viewer add up to `detail.budget` metres
 village never reaches the budget and keeps its full reach. `budget: Infinity`
 turns this off.
 
+### Objects within a fixed radius (`detail.radius`)
+
+`createWorld({ detail: { radius: 375 } })` bounds the objects — roads,
+buildings, furniture, trees — to that radius everywhere, and the rebuild step
+shrinks with it. Unlike `reach`, the terrain, the ground map (fields, woods,
+water painted on the ground) and the far relief keep the whole bubble: the
+landscape stays on the horizon, only the costly generation is bounded. The wall
+budget still tightens buildings further in towns.
+
 ### Art direction
 
 Everything that decides what things *look* like — palettes, tree
