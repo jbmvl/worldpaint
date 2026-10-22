@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="fr">
+<meta charset="utf-8">
+<title>Banc des repères de sommet</title>
+<style>body{margin:0;background:#cfd8de}canvas{display:block}#legende{position:absolute;top:16px;left:16px;color:#fff;background:#14202dcc;padding:12px;font:14px sans-serif;line-height:1.5;pointer-events:none}</style>
+<script type="importmap">
+{"imports":{"three":"/node_modules/three/build/three.module.js","pbf":"/node_modules/pbf/index.js","@mapbox/vector-tile":"/node_modules/@mapbox/vector-tile/index.js","@mapbox/point-geometry":"/node_modules/@mapbox/point-geometry/index.js"}}
+</script>
+<div id="legende">Relief synthétique : deux sommets et un col<br>Points orange : donnée de départ · Antennes : pose sur le relief</div>
+<script type="module">
+/*
+ * Banc des repères : la vraie règle de pose et les vrais lots du mobilier sur
+ * deux collines séparées par un col. Le point nommé du sommet est décalé du
+ * maximum du relief. Aucune tuile ni bibliothèque ne vient du réseau.
+ * landmarksLab.set({ night: 1, seconds: 0.15, distance: 900, yawDeg: 0 })
+ * landmarksLab.advance(1) fait avancer les balises et le rotor sans reconstruire.
+ */
+import * as THREE from 'three';
+import { createLocalFrame } from '/src/core/tileMath.js';
+import { randomAt } from '/src/core/groundSeed.js';
+import { FurnitureLayer } from '/src/layers/furnitureLayer.js';
+import { buildPeakLandmarks } from '/src/layers/furniture/landmarks.js';
+
+const frame = createLocalFrame(-0.145, 47.131, 15);
+const relief = (x, z) => 35 + 115 * Math.exp(-((x + 215) ** 2 + z * z) / 18000) + 135 * Math.exp(-((x - 215) ** 2 + z * z) / 18000);
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.append(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 8000);
+const ambient = new THREE.HemisphereLight(0xdfe8f0, 0x6b6558, 1.4);
+const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);
+sun.position.set(-300, 700, 500); scene.add(ambient, sun);
+const geometry = new THREE.PlaneGeometry(1600, 1200, 160, 120).rotateX(-Math.PI / 2);
+const positions = geometry.attributes.position;
+for (let i = 0; i < positions.count; i++) positions.setY(i, relief(positions.getX(i), positions.getZ(i)));
+geometry.computeVertexNormals();
+scene.add(new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ color: 0x839768, flatShading: true })));
+
+const bubble = { frame, verticalScale: 1, naturalElevationAtLocal: relief, surfaceElevationAtLocal: relief };
+const furniture = new FurnitureLayer({ THREE, scene, bubble });
+const points = [{ x: -250, z: 25, classe: 'peak' }, { x: 180, z: -20, classe: 'peak' }, { x: 0, z: 0, classe: 'saddle' }];
+for (const p of points) {
+  while (randomAt(frame, p.x, p.z, 131) > 0.35) p.x += 0.5;
+  const { lng, lat } = frame.toLngLat(p.x, p.z);
+  p.geometry = { type: 'Point', coordinates: [lng, lat] };
+  p.properties = { class: p.classe };
+  scene.add(new THREE.Mesh(new THREE.SphereGeometry(2.5, 8, 6), new THREE.MeshBasicMaterial({ color: 0xffad36 })).translateX(p.x).translateY(relief(p.x, p.z) + 3).translateZ(p.z));
+}
+const source = { forEachFeature(name, tiles, visit) { if (name === 'mountain_peak') for (const p of points) visit(p.geometry, p.properties); } };
+const placements = new Map([['radioMast', []], ['windTurbine', []]]);
+buildPeakLandmarks(furniture, { source, tiles: [], here: { x: 0, z: 0 }, placements }, []);
+for (const [x, z] of [[-350, -40], [335, -100]]) furniture._place(placements, 'windTurbine', { x, z, yaw: 0 });
+furniture._mastsForLights = placements.get('radioMast');
+furniture._turbines = placements.get('windTurbine');
+for (const [kind, entries] of placements) furniture._applyInstances(kind, entries);
+furniture.obstacleLights.set(furniture._mastsForLights, furniture._turbines);
+
+const state = { night: 0, seconds: 0.15, distance: 1100, yawDeg: 0, pitchDeg: 8, windDirection: 0, wind: 0.3 };
+function render() {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  const jour = 1 - 0.92 * state.night;
+  scene.background = new THREE.Color(0xcfd8de).multiplyScalar(jour);
+  ambient.intensity = 1.4 * jour; sun.intensity = 2.2 * jour;
+  const angle = state.yawDeg * Math.PI / 180, pente = state.pitchDeg * Math.PI / 180;
+  camera.position.set(Math.sin(angle) * Math.cos(pente) * state.distance, 125 + Math.sin(pente) * state.distance, Math.cos(angle) * Math.cos(pente) * state.distance);
+  camera.lookAt(0, 125, 0);
+  renderer.render(scene, camera);
+  return { antennes: placements.get('radioMast').map((p) => ({ x: p.x, z: p.z })), balises: furniture.obstacleLights.mesh?.count };
+}
+window.landmarksLab = {
+  state, scene, camera, furniture,
+  set(options = {}) {
+    Object.assign(state, options);
+    furniture.setWindDirection(state.windDirection, state.wind);
+    furniture.setNight(state.night);
+    furniture.obstacleLights._seconds = 0;
+    furniture.advanceObstacleLights(state.seconds);
+    return render();
+  },
+  advance(delta) { furniture.advanceObstacleLights(delta); furniture.advanceRotor(delta); return render(); },
+};
+window.landmarksLab.set(JSON.parse(new URLSearchParams(location.search).get('settings') || '{}'));
+window.landmarksLabReady = true;
+</script>
+</html>

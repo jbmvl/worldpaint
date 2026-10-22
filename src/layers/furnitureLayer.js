@@ -13,6 +13,7 @@ import { finishGeneration } from '../core/generationSteps.js';
  * seule géométrie fusionnée par matière ; le ponctuel (lampadaires, poteaux,
  * panneaux, bornes, bâtiments agricoles) est instancié, un `InstancedMesh` par
  * forme. Une famille n'écrit jamais ailleurs que dans ces accumulateurs.
+ * Les feux des phares et les balises d'obstacle ont leurs lots animés propres.
  * Une pose qui exige du sol vérifie le support affiché ; une cote de
  * chaussée seule ne peut porter un objet au-dessus du vide.
  *
@@ -60,6 +61,7 @@ import {
 import { CombinedIndex } from './roadGraph.js';
 import { VergeStrips } from './vergeStrips.js';
 import { LighthouseLight } from './lighthouseLight.js';
+import { ObstacleLights } from './obstacleLights.js';
 import {
   Kit,
   createFurnitureGeometries,
@@ -213,7 +215,7 @@ export class FurnitureLayer {
     this.trees = [];
     /** Fontaines posées, repère de scène — voir `publishFountains`. */
     this.fountains = [];
-    this.geometries = createFurnitureGeometries(THREE, theme.furniture.colors, undefined, this._placeNameSign);
+    this.geometries = createFurnitureGeometries(THREE, theme.furniture.colors, undefined, this._placeNameSign, theme.furniture);
     /** Nuancier dont les formes en pierre de `geometries` sont faites (`setRegion`). */
     this._stoneColors = theme.furniture.colors;
 
@@ -226,9 +228,11 @@ export class FurnitureLayer {
      * @type {Array<{x:number,y:number,z:number,yaw:number,scale:number}>}
      */
     this._turbines = [];
+    this._mastsForLights = [];
     /** Phares de la dernière reconstruction, et leur feu — voir `lighthouseLight`. */
     this._lighthouses = [];
     this.lighthouseLight = new LighthouseLight({ THREE, group: this.group, theme });
+    this.obstacleLights = new ObstacleLights({ THREE, group: this.group, theme });
     this._windDirection = 0;
     this._windForce = 0;
     /** @type {Map<string, Object>} maillage fusionné par matière linéaire. */
@@ -560,6 +564,8 @@ export class FurnitureLayer {
       this._applyGlow();
       this._applySignals();
       this.lighthouseLight.set(this._lighthouses);
+      this._mastsForLights = placements.get('radioMast') || [];
+      this.obstacleLights.set(this._mastsForLights, this._turbines);
       this._applyLabels();
 
       this._anchor = { x: here.x, z: here.z };
@@ -1379,6 +1385,8 @@ export class FurnitureLayer {
     const yaw = this._turbineYaw();
     for (const t of this._turbines) t.yaw = yaw;
     this._applyInstances('windTurbine', this._turbines);
+    // La balise est décentrée sur la nacelle et suit donc son lacet.
+    this.obstacleLights.set(this._mastsForLights || [], this._turbines);
   }
 
   /**
@@ -1399,6 +1407,10 @@ export class FurnitureLayer {
     this.lighthouseLight.advance(delta);
   }
 
+  advanceObstacleLights(delta) {
+    if (!this.disposed) this.obstacleLights.advance(delta);
+  }
+
   /**
    * Règle l'éclairage nocturne du mobilier.
    * @param {number} mix 0 en plein jour, 1 en pleine nuit.
@@ -1412,6 +1424,7 @@ export class FurnitureLayer {
     if (this.glowMesh) this.glowMesh.visible = value > 0.01;
     if (this.poolMesh) this.poolMesh.visible = value > 0.01;
     this.lighthouseLight.setNight(value);
+    this.obstacleLights.setNight(value);
     for (const light of this.lampLights) light.intensity *= value > 0.01 ? 1 : 0;
   }
 
@@ -1448,6 +1461,7 @@ export class FurnitureLayer {
     this._labelQuads = [];
 
     this.lighthouseLight.dispose();
+    this.obstacleLights.dispose();
     this._lighthouses = [];
     this.glowGeometry.dispose();
     this.glowMaterial.dispose();
@@ -1473,6 +1487,7 @@ export class FurnitureLayer {
     this.rotorMaterial.dispose();
     this.greenhouseMaterial.dispose();
     this._turbines = [];
+    this._mastsForLights = [];
     this.scene.remove(this.group);
   }
 }

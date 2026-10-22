@@ -5,7 +5,8 @@ import { finishGeneration } from '../../core/generationSteps.js';
  * (éoliennes, pylônes, antennes de sommet, phares, arbres de crête).
  *
  * Deux origines, et elles ne se valent pas. Ce qui est **lu** dans la donnée —
- * un sommet, un trait de côte, un périmètre habité — est à sa vraie place. Ce
+ * un sommet, un trait de côte, un périmètre habité — ancre la recherche. Une
+ * antenne rejoint le point haut du relief voisin ; un col n'en porte pas. Ce
  * qui est **semé** sur une grille — éolienne, pylône, pierre, arbre de crête —
  * ne prétend pas l'être : la grille est ancrée au monde et non à l'observateur,
  * de sorte qu'un repère ne bouge pas d'une reconstruction à l'autre, et ne
@@ -328,36 +329,65 @@ export function isHighPoint(layer, x, z) {
   return higher === 0;
 }
 
-/**
- * Antennes de sommet : posées sur les vrais sommets relevés dans les tuiles
- * (`mountain_peak`), et non devinés sur une grille comme les éoliennes et
- * les pylônes de `buildLandmarks` — ceux-ci n'ont aucune existence dans la
- * donnée, un sommet en a une : on le lit, on ne l'invente pas.
- */
+/** Recherche bornée autour du sommet nommé, sur une grille mondiale de 10 m. */
+export const PEAK_SEARCH_M = 100;
+
+export function peakMastSite(p, { frame, elevationAt, blocked = () => false }) {
+  let site = null;
+  for (const { x, z } of worldCellsIn(frame, p.x - PEAK_SEARCH_M, p.z - PEAK_SEARCH_M,
+    p.x + PEAK_SEARCH_M, p.z + PEAK_SEARCH_M, 10)) {
+    const distance = Math.hypot(x - p.x, z - p.z);
+    if (distance > PEAK_SEARCH_M) continue;
+    const h = elevationAt(x, z);
+    if (!Number.isFinite(h)) continue;
+    if (!site || h > site.h || (h === site.h && distance < site.distance)) site = { x, z, h, distance };
+  }
+  if (!site || blocked(site.x, site.z)) return null;
+  // Le maximum d'un disque en pente est son bord, pas un sommet.
+  for (const r of [20, 60, 140]) {
+    for (let i = 0; i < 16; i++) {
+      const angle = i * Math.PI / 8;
+      const h = elevationAt(site.x + Math.cos(angle) * r, site.z + Math.sin(angle) * r);
+      if (!Number.isFinite(h) || h > site.h + 1) return null;
+    }
+  }
+  return { x: site.x, z: site.z, h: site.h };
+}
+
+/** Antennes : seuls les points `class=peak` ancrent une pose, jamais les cols. */
 export function buildPeakLandmarks(layer, context, builtUp) {
   const { frame } = layer.bubble;
   const { source, tiles, here, placements } = context;
   const { origin, scale, zoom } = frame;
-  let placed = 0;
+  const sites = [];
 
   source.forEachFeature('mountain_peak', tiles, (geometry, properties) => {
-    if (placed >= FURNITURE_LIMITS.peakLandmarks) return;
-    if (geometry.type !== 'Point') return;
+    if (geometry.type !== 'Point' || properties.class !== 'peak') return;
     const [lng, lat] = geometry.coordinates;
     if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
 
     const x = (lngToTileX(lng, zoom) - origin.x) * scale;
     const z = (latToTileY(lat, zoom) - origin.y) * scale;
     if (Math.hypot(x - here.x, z - here.z) > LANDMARK_RADIUS_M) return;
-    if (pointInAreas(builtUp, x, z)) return;
-
     // Un sommet sur trois environ, tiré sur sa position : les équiper tous
     // ferait une forêt de mâts, ce qu'aucune ligne de crête ne porte.
     if (randomAt(frame, x, z, 131) > 0.35) return;
 
-    layer._place(placements, 'radioMast', { x, z, yaw: randomAt(frame, x, z, 133) * Math.PI * 2 });
-    placed++;
+    const site = peakMastSite({ x, z }, {
+      frame,
+      elevationAt: (px, pz) => layer.bubble.naturalElevationAtLocal(px, pz, NaN),
+      blocked: (px, pz) => pointInAreas(builtUp, px, pz) || layer._onRoad(px, pz) || layer._onWater(px, pz) ||
+        layer._fabric?.countWithin(px, pz, LANDMARK_CLEARANCE_M, 1) > 0,
+    });
+    if (!site || Math.hypot(site.x - here.x, site.z - here.z) > LANDMARK_RADIUS_M) return;
+    sites.push(site);
   });
+  sites.sort((a, b) => b.h - a.h || a.x - b.x || a.z - b.z);
+  const uniques = sites.filter((site, i) => !sites.slice(0, i).some((s) => Math.hypot(s.x - site.x, s.z - site.z) < 20));
+  uniques.sort((a, b) => Math.hypot(a.x - here.x, a.z - here.z) - Math.hypot(b.x - here.x, b.z - here.z) || a.x - b.x || a.z - b.z);
+  for (const { x, z } of uniques.slice(0, FURNITURE_LIMITS.peakLandmarks)) {
+    layer._place(placements, 'radioMast', { x, z, yaw: randomAt(frame, x, z, 133) * Math.PI * 2 });
+  }
 }
 
 /**

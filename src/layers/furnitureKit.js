@@ -15,7 +15,7 @@
  * Pas de modèles importés : l'instanciation demande une géométrie unique
  * partagée, et un lot de glTF doublerait le coût d'entrée d'un décor qui se
  * construit en entier à la volée. Ce qui doit être détaillé l'est en code,
- * dans son propre fichier.
+ * dans son propre fichier (`models/radioMast.js` pour le relais).
  *
  * Les primitives d'assemblage sont dans `src/models/kit.js` ; ce module les
  * réexporte pour ne pas casser ce qui les importait d'ici.
@@ -27,6 +27,7 @@
 import { srgb } from '../core/color.js';
 import { defaultTheme } from '../themes/default.js';
 import { Kit, polygonPoints, ROTOR_SPIN_ATTRIBUTE } from '../models/kit.js';
+import { radioMast } from '../models/radioMast.js';
 
 export { Kit, polygonPoints, ROTOR_SPIN_ATTRIBUTE };
 
@@ -39,6 +40,9 @@ const DEFAULT_COLORS = defaultTheme.furniture.colors;
  * restent d'accord sans qu'on recopie la valeur.
  */
 export const WIND_TURBINE_HUB_M = 78;
+
+/** Pied de la balise, sur le toit de la nacelle : elle ne suit pas le rotor. */
+export const WIND_TURBINE_BEACON = { x: 0, y: WIND_TURBINE_HUB_M + 1.5, z: 3 };
 
 /** Hauteur de la tour du phare, et du cœur de sa lanterne — où `lighthouseLight` accroche le feu. */
 const LIGHTHOUSE_TOWER_M = 20;
@@ -271,125 +275,7 @@ export const FURNITURE_BUILDERS = {
     return k;
   },
 
-  /**
-   * Antenne relais : mât treillis à trois montants, deux paraboles, feu de
-   * balisage. Elle se distingue du pylône électrique (`pylon`) par sa
-   * silhouette — plus fin, plus haut, sans consoles porteuses — parce qu'elle
-   * ne porte pas de ligne : c'est un relais, posé au sommet pour l'antenne,
-   * pas pour ce qu'il transporte.
-   *
-   * Les traverses horizontales ne passent pas par `Kit.box` avec un couple
-   * roulis/tangage : ce sont des segments **horizontaux** entre deux montants
-   * disposés en cercle, une géométrie que ni `strutYZ` (plan (y, z) à x fixe)
-   * ni la diagonale du pylône (un seul axe) ne couvrent. `ring` ci-dessous
-   * calcule directement le cap qui pose l'axe « hauteur » de la boîte à
-   * l'horizontale, dans la direction voulue.
-   */
-  radioMast(C = DEFAULT_COLORS) {
-    const k = new Kit(C);
-    const height = 40;
-    const legs = 3;
-    const stages = 7;
-    const spread = (t) => 1.7 - t * 1.25; // rayon de la triangulation au fil de la montée
-
-    /** Barre horizontale entre deux points du plan (x, z), à `y` fixe. */
-    const ring = (x0, z0, x1, z1, y, color) => {
-      const dx = x1 - x0;
-      const dz = z1 - z0;
-      const run = Math.hypot(dx, dz);
-      if (run <= 1e-6) return;
-      k.box({
-        width: 0.08,
-        height: run,
-        depth: 0.08,
-        x: (x0 + x1) / 2,
-        y,
-        z: (z0 + z1) / 2,
-        tilt: Math.PI / 2,
-        yaw: Math.atan2(dx, dz),
-        color,
-      });
-    };
-
-    for (let s = 0; s < stages; s++) {
-      const t0 = s / stages;
-      const t1 = (s + 1) / stages;
-      const y0 = t0 * height;
-      const y1 = t1 * height;
-      const r0 = spread(t0);
-      const r1 = spread(t1);
-      const points0 = [];
-      const points1 = [];
-
-      for (let leg = 0; leg < legs; leg++) {
-        const angle = (leg / legs) * Math.PI * 2;
-        const x0 = Math.cos(angle) * r0;
-        const z0 = Math.sin(angle) * r0;
-        const x1 = Math.cos(angle) * r1;
-        const z1 = Math.sin(angle) * r1;
-        points0.push([x0, z0]);
-        points1.push([x1, z1]);
-        const dx = x1 - x0;
-        const dz = z1 - z0;
-        const run = Math.hypot(dx, y1 - y0, dz);
-        k.box({
-          width: 0.1,
-          height: run,
-          depth: 0.1,
-          x: x0 + dx / 2,
-          y: y0,
-          z: z0 + dz / 2,
-          tilt: Math.atan2(dz, y1 - y0),
-          roll: -Math.atan2(dx, y1 - y0),
-          color: C.galvanised,
-        });
-      }
-      // Un cerclage tous les deux étages : c'est lui qui lit « treillis »
-      // plutôt qu'un trépied posé là.
-      if (s % 2 === 1) {
-        for (let leg = 0; leg < legs; leg++) {
-          const [x0, z0] = points1[leg];
-          const [x1, z1] = points1[(leg + 1) % legs];
-          ring(x0, z0, x1, z1, y1, C.steelDark);
-        }
-      }
-    }
-
-    // Deux paraboles, à des hauteurs et des orientations différentes : deux
-    // relais qui pointent le même point du ciel est le genre de détail qui
-    // trahit un décor procédural une fois remarqué.
-    for (const [y, facing, r] of [[height * 0.55, 0.6, 0.55], [height * 0.72, 2.3, 0.4]]) {
-      k.cylinder({
-        radiusBottom: r,
-        radiusTop: r,
-        height: 0.16,
-        radial: 10,
-        y,
-        x: Math.sin(facing) * (spread(y / height) + 0.1),
-        z: Math.cos(facing) * (spread(y / height) + 0.1),
-        yaw: facing,
-        tilt: Math.PI / 2,
-        color: C.white,
-        colorTop: C.steelDark,
-      });
-    }
-
-    // Fouets d'antenne et feu de balisage, au sommet.
-    for (const angle of [0.4, 2.6]) {
-      k.cylinder({
-        radiusBottom: 0.025,
-        radiusTop: 0.01,
-        height: 2.4,
-        radial: 4,
-        x: Math.cos(angle) * 0.15,
-        y: height,
-        z: Math.sin(angle) * 0.15,
-        color: C.galvanised,
-      });
-    }
-    k.box({ width: 0.22, height: 0.22, depth: 0.22, y: height + 2.3, color: C.signRed });
-    return k;
-  },
+  radioMast,
 
   /**
    * Éolienne : tour effilée, nacelle, trois pales.
@@ -400,12 +286,16 @@ export const FURNITURE_BUILDERS = {
    * pivot. Rien d'autre dans la pièce ne porte ce flag : le mât et la nacelle
    * restent immobiles.
    */
-  windTurbine(C = DEFAULT_COLORS) {
+  windTurbine(C = DEFAULT_COLORS, look = defaultTheme.furniture) {
     const k = new Kit(C);
     const hub = WIND_TURBINE_HUB_M;
+    const feu = look.obstacleLight ?? defaultTheme.furniture.obstacleLight;
     k.cylinder({ radiusBottom: 2.2, radiusTop: 1.1, height: hub, radial: 12, color: C.white });
     k.box({ width: 3, height: 3, depth: 9, y: hub - 1.5, color: C.white });
     k.cylinder({ radiusBottom: 1.1, radiusTop: 0.6, height: 1.4, radial: 8, y: hub, z: -5.4, tilt: -Math.PI / 2, color: C.white });
+
+    k.box({ width: feu.lensM, height: feu.lensM, depth: feu.lensM,
+      y: WIND_TURBINE_BEACON.y, z: WIND_TURBINE_BEACON.z, color: C.signRed });
 
     // Trois pales de 38 m, vrillées d'un tiers de tour l'une de l'autre autour
     // de l'axe du rotor — lequel est horizontal, d'où le roulis puis le tangage.
@@ -1905,17 +1795,19 @@ export function furnitureSpecsFor(colors = defaultTheme.furniture.colors) {
  * @param {Object} [colors] Nuancier du thème.
  * @param {string[]} [names] Formes à construire ; toutes par défaut.
  * @param {Object} [placeNameSign] Gabarit du panneau d’entrée, partagé avec son texte.
+ * @param {Object} [furniture] Gabarits et balises de la tranche mobilier du thème.
  * @returns {Record<string, Object>} géométrie par nom.
  */
 export function createFurnitureGeometries(
   THREE,
   colors = defaultTheme.furniture.colors,
   names = Object.keys(FURNITURE_BUILDERS),
-  placeNameSign = defaultTheme.furniture.placeNameSign
+  placeNameSign = defaultTheme.furniture.placeNameSign,
+  furniture = defaultTheme.furniture
 ) {
   const out = {};
   for (const name of names) {
-    out[name] = FURNITURE_BUILDERS[name](colors, name === 'signPlaceName' ? placeNameSign : undefined).toGeometry(THREE, `furniture-${name}`);
+    out[name] = FURNITURE_BUILDERS[name](colors, name === 'signPlaceName' ? placeNameSign : furniture).toGeometry(THREE, `furniture-${name}`);
   }
   return out;
 }

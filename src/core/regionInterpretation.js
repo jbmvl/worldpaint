@@ -154,6 +154,7 @@ export const BUILDING_KINDS = Object.freeze({
   whitewash_slate: {},
   whitewash_terrace: {},
   rendered_curved_tile: {},
+  rendered_flat_tile: {},
   rendered_thatch: {},
   timber_stone_slab: {},
   adobe_curved_tile: {},

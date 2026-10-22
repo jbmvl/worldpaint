@@ -693,7 +693,7 @@ qui la rend habitée — du linge qui sèche, des poules.
 | --- | --- | --- |
 | **éolienne** | inventé | maille de 320 m, 8 % — hors bâti, hors route, sur un point haut |
 | **pylône** | inventé | mêmes conditions, 6 % |
-| **antenne de sommet** | relevé | sur un `mountain_peak` réel, un sur trois |
+| **antenne de sommet** | relevé | sur un `mountain_peak` de classe `peak`, un sur trois ; recalée sur le maximum du relief naturel à moins de 100 m, contrôlé tout autour jusqu'à 140 m ; ni col, ni route, ni eau, ni bâti |
 | **phare** | relevé | sur le trait de côte d'une nappe `ocean`, un point sur quarante (~2,5 km), monté au point le plus haut dans un rayon de 500 m, à moins de 120 m du rivage ; la nuit, un halo à la lanterne et deux faisceaux qui tournent (`lighthouseLight`) |
 | **arbre de crête** | inventé | maille de 140 m, 3,5 %, sur un point haut dégagé — résineux une fois sur trois |
 | **moulin à vent** | inventé | hameau (moins de 20 bâtiments), 10 % |
@@ -702,6 +702,11 @@ qui la rend habitée — du linge qui sèche, des poules.
 | **rocher** | inventé | sol minéral (> 55 %) et pente, ou pente > 28 % — trois tailles |
 
 Une éolienne s'oriente **face au vent** courant, pas au hasard.
+Les antennes ont un treillis triangulé, une galerie, des panneaux et deux
+paraboles. La nuit, leur pointe et le toit des nacelles d'éoliennes portent
+un feu rouge : un flash de 0,3 seconde toutes les deux secondes, avec un halo
+visible au loin mais occulté par le relief (`obstacleLights`). Les feux suivent
+la part de nuit du ciel et s'éteignent le jour.
 
 Les repères de bourg sont posés **hors** du périmètre bâti, à 1,25 fois son
 rayon : si le point tiré retombe dans un bâti voisin ou sur une route, on

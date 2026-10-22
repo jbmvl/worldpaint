@@ -26,10 +26,27 @@ dans `index.html` — la démo n'a pas de `node_modules/three` à installer.
 `demo/lab/` rassemble des pages plus petites que la démo, sans réseau
 (`three` pris dans `node_modules`), pilotées depuis la console ou par script :
 
+- `lab/regions.html` — atlas des régions naturelles : couverture calculée par
+  `regionAt`, repères de grandes villes, recherche, filtre par paysage et dossiers au clic. Le fond
+  Natural Earth est embarqué, sans requête externe. `regionsLab.choisir('anjou')`
+  centre la carte sur une région ; `regionsLab.cadrer()` rétablit la vue globale.
+
 - `lab/sky.html` — ciel, soleil et brouillard sur un sol plat semé de blocs.
   `skyLab.set({ sunDeg: 8, lookDeg: 180, weather: { haze: 0.3 } })` dans la
   console ; `node scripts/sky-shot.mjs <dossier> '[{"sunDeg":8}]'` en fait une
   image par réglage (Chromium en rendu logiciel, `CHROMIUM_PATH` si besoin).
+
+- `lab/furniture.html` — formes du catalogue, gabarit humain et feux nocturnes.
+  `furnitureLab.set({ kinds: ['radioMast', 'windTurbine'], spacing: 100,
+  distance: 240, target: 48, night: 1, seconds: 0.15 })` montre le flash ;
+  `seconds: 1` montre son extinction. `scripts/furniture-shot.mjs` photographie
+  une série de réglages.
+
+- `lab/landmarks.html` — deux collines et un col synthétiques, vraie règle de
+  pose des antennes, éoliennes et balises. `landmarksLab.set({ night: 1,
+  seconds: 0.15 })`, puis `landmarksLab.advance(1)` pour avancer le flash et le
+  rotor sans reconstruire. `yawDeg: 90, pitchDeg: -1` vérifie l'occultation
+  par la colline au premier plan.
 
 ## Ce que ça montre
 

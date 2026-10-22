@@ -2154,15 +2154,15 @@ export class BuildingLayer {
 
     const kit = new Kit();
     kit.box({ width: side, height, depth: side, color: spire.wall, yaw });
-    kit.cylinder({
-      radiusBottom: side * 0.78,
-      radiusTop: 0,
-      height: side * 1.5,
-      radial: 4,
-      y: height,
-      yaw: yaw + Math.PI / 4,
-      color: spire.roof,
+    // Pans sortants et fond tourné vers le sol : vu d'en haut, seul le dessus
+    // de la tour ferme la base ; vu d'en bas, le fond bouche le débord.
+    const rim = Array.from({ length: 4 }, (_, i) => {
+      const angle = i * Math.PI / 2;
+      return Kit.transform([Math.cos(angle) * side * 0.78, height, Math.sin(angle) * side * 0.78], { yaw: yaw + Math.PI / 4 });
     });
+    const tip = [0, height + side * 1.5, 0];
+    for (let i = 0; i < rim.length; i++) kit.tri(rim[(i + 1) % rim.length], rim[i], tip, spire.roof);
+    kit.quad(rim[0], rim[1], rim[2], rim[3], spire.roof);
 
     const { x, z } = towerFoot(box, side);
     this._pushKitAt(walls, kit, x, base, z);

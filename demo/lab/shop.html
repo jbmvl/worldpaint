@@ -18,6 +18,7 @@
  *
  *   shopLab.set({ yawDeg: 60, pitchDeg: -25, distance: 45 })
  *   shopLab.set({ night: true })   // lumières baissées : ce qui luit reste vif
+ *   shopLab.set({ building: 'rendered_flat_tile' })   // palette de bâti imposée
  *
  * La rue est l'axe x = 0 (chaussée grise de 7 m) ; la caméra vise l'origine.
  */
@@ -92,7 +93,7 @@ const roadIndex = new RoadIndex([{ halfWidth: HALF, path: [{ x: 0, y: 0, z: -100
 const layer = new BuildingLayer({ THREE, scene, bubble });
 layer.rebuild(source, [], { x: 0, z: 0 }, { roadIndex, builtUp: null });
 
-const state = { yawDeg: 60, pitchDeg: -28, distance: 50, targetX: 6, targetZ: 0, night: false };
+const state = { yawDeg: 60, pitchDeg: -28, distance: 50, targetX: 6, targetZ: 0, night: false, building: null };
 function render() {
   sky.intensity = state.night ? 0.08 : 1.6;
   sun.intensity = state.night ? 0 : 1.8;
@@ -112,6 +113,10 @@ function render() {
 
 window.shopLab = {
   set(options = {}) {
+    if ('building' in options && options.building !== state.building) {
+      layer.setRegion(options.building ? { building: options.building } : null);
+      layer.rebuild(source, [], { x: 0, z: 0 }, { roadIndex, builtUp: null });
+    }
     Object.assign(state, options);
     return render();
   },

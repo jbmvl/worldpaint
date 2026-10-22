@@ -1028,6 +1028,7 @@ export class WorldComposer {
     this.furniture.advanceLamps(at);
     this.furniture.advanceRotor(delta);
     this.furniture.advanceLighthouses(delta);
+    this.furniture.advanceObstacleLights(delta);
   }
 
   /**

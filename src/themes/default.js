@@ -1017,6 +1017,8 @@ export const TOWN_PALETTES = {
   // Badigeon andalou : le seul endroit d'Europe où le mur est plus clair que le ciel.
   whitewash_terrace: { wall: '#f4f2ea', roof: '#c07a4e', shutter: '#3f6f8e', roofShapes: ['flat', 'gable'], pitch: 0.25 },
   rendered_curved_tile: { wall: '#e8cfa8', roof: '#c07b4c', shutter: '#7d8fae', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42 },
+  // Tuile plate en queue de castor, posée raide, des bourgs d'Europe centrale.
+  rendered_flat_tile: { wall: '#e8cfa8', roof: '#a85d45', shutter: '#7d8fae', roofShapes: ['gable', 'gable', 'hip'], pitch: 0.85 },
   rendered_thatch: { wall: '#e8cfa8', roof: '#b89a5c', shutter: '#7d8fae', roofShapes: ['gable', 'hip'], pitch: 0.85 },
   // Bois gris de vieillissement plutôt que goudronné : le goudron sort de la
   // plage claire du nuancier (voir l'en-tête de `townStyle`).
@@ -1364,6 +1366,22 @@ export const WATERWAY_CLASSES = {
 
 /** Feu du phare : teinte, blanc de la lanterne allumée, opacité du faisceau en pleine nuit, durée d'un tour en secondes. */
 export const LIGHTHOUSE_LIGHT = { color: [1, 0.93, 0.74], lantern: '#ffffff', beamOpacity: 0.16, periodS: 12 };
+
+/** Antenne triangulée : gabarit en mètres, proportions des équipements le long du fût. */
+export const RADIO_MAST = {
+  heightM: 40, footRadiusM: 1.7, headRadiusM: 0.45, stages: 10,
+  legM: 0.14, braceM: 0.075, spireM: 2.4, spireRadiusM: 0.09,
+  footingM: 0.65, footingHeightM: 0.35,
+  platformAt: 0.8, platformRadiusM: 1.25, platformThicknessM: 0.12, railHeightM: 0.85,
+  panelAt: 0.89, panelHeightM: 2.4, panelWidthM: 0.32, panelDepthM: 0.18,
+  dishes: [{ at: 0.55, yaw: 0.6, radiusM: 0.55 }, { at: 0.7, yaw: 2.3, radiusM: 0.4 }],
+};
+
+/** Balises d'obstacle : lentille rouge, halo lisible au loin et flash commun aux deux familles. */
+export const OBSTACLE_LIGHT = {
+  color: srgb('#ff3524'), lensM: 0.22, diameterM: 5, minPixels: 5,
+  periodS: 2, flashS: 0.3, fadeS: 0.06,
+};
 
 // --- Ce qui vit ----------------------------------------------------------------
 /**
@@ -1764,7 +1782,7 @@ export const defaultTheme = Object.freeze({
   works: WORKS_STYLES,
   streets: STREET_LOOK,
   water: { waterways: WATERWAY_CLASSES, riparianBufferM: RIPARIAN_BUFFER_M },
-  furniture: { placeNameSign: PLACE_NAME_SIGN, colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES, lighthouse: LIGHTHOUSE_LIGHT },
+  furniture: { placeNameSign: PLACE_NAME_SIGN, colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES, lighthouse: LIGHTHOUSE_LIGHT, radioMast: RADIO_MAST, obstacleLight: OBSTACLE_LIGHT },
   life: LIFE_COLORS,
   fauna: { colors: FAUNA_COLORS, coats: FAUNA_COATS },
   sky: SKY_PALETTE,

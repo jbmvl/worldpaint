@@ -110,7 +110,7 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   brouillard, durée du recalage).
 - `demo/lab/shop.html` — le bâti seul le long d'une rue plate, avec des
   commerces en pignon, en long pan ou sans rue devant ;
-  `shopLab.set({ yawDeg, pitchDeg, distance, night })`, ou
+  `shopLab.set({ yawDeg, pitchDeg, distance, night, building })`, ou
   `node scripts/shop-shot.mjs <dossier> '<réglages JSON>'`.
 - `demo/lab/forest.html` — une forêt pleine de neuf tuiles semée par la vraie
   `VegetationLayer` (peuplement et sous-étage) ; `forestLab.set({ wood, view,

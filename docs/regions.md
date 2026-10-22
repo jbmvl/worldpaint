@@ -42,6 +42,15 @@ Conséquences pratiques quand on écrit :
 L'ordre est `[longitude, latitude]`. Inverser les deux déplace une région d'un
 continent sans rien casser d'autre.
 
+## Voir la couverture
+
+L’atlas local `/demo/lab/regions.html` (avec `npm run demo`) montre tous les
+dossiers de `REGIONS` et la couverture échantillonnée de `regionAt`, avec
+les grandes villes comme repères. Les ancres sont consultables dans les fiches. Recherche et filtre par matrice permettent d’isoler une famille ;
+un clic ouvre le dossier. Le fond Natural Earth est embarqué et indépendant du
+moteur. Les couleurs débordent en mer comme la règle de proximité ; elles ne
+constituent pas des contours officiels et ne changent aucune donnée régionale.
+
 ## Le dossier
 
 ```js

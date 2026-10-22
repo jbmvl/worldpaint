@@ -78,6 +78,11 @@
     font-size: 14px; margin: 0 0 8px; font-weight: 600; color: #fff;
     display: flex; align-items: center; gap: 6px;
   }
+  #panel .atlas-link {
+    display: inline-block; margin: 0 0 12px; color: #a8c9ff;
+    font-size: 11px; text-decoration: none;
+  }
+  #panel .atlas-link:hover { text-decoration: underline; }
   #panel h1 .dot { width: 8px; height: 8px; border-radius: 50%; background: #6fd17a; display: inline-block; }
   #panel h1 .dot.busy { background: #e6b455; animation: pulse 1s infinite ease-in-out; }
   @keyframes pulse { 50% { opacity: 0.35; } }
@@ -328,6 +333,7 @@
   <label class="check"><input id="profileToggle" type="checkbox"> Mesures de performance</label>
   <pre id="profileStats" hidden style="font-size:10px;white-space:pre-wrap"></pre>
   <h1><span class="dot" id="dot"></span> WorldPaint — démo</h1>
+  <a class="atlas-link" href="lab/regions.html">Ouvrir l’atlas des régions naturelles →</a>
 
   <div class="section">Scène figée</div>
   <div class="help" style="margin-bottom: 6px">

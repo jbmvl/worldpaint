@@ -24,6 +24,7 @@
  *   furnitureLab.set({ kinds: ['fountainWallace'], yawDeg: 30, pitchDeg: 8, distance: 6 })
  *   furnitureLab.set({ kinds: ['lavoir', 'cemeteryCross'], stone: 'schist' })  // géologie du pays
  *   furnitureLab.set({ kinds: ['lighthouse'], night: 1, beamDeg: 60, distance: 90, target: 16 })  // feu du phare
+ *   furnitureLab.set({ kinds: ['radioMast', 'windTurbine'], spacing: 85, night: 1, seconds: 0.15, distance: 220, target: 50 })
  *
  * `yawDeg` tourne autour de la rangée, `pitchDeg` lève le regard, `target`
  * est la hauteur visée.
@@ -35,6 +36,7 @@ import { defaultTheme } from '/src/themes/default.js';
 import { FurnitureLayer } from '/src/layers/furnitureLayer.js';
 import { LabelAtlas } from '/src/materials/labelAtlas.js';
 import { LighthouseLight } from '/src/layers/lighthouseLight.js';
+import { ObstacleLights } from '/src/layers/obstacleLights.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setSize(innerWidth, innerHeight);
@@ -63,12 +65,13 @@ const row = new THREE.Group();
 scene.add(row);
 
 const lighthouseLight = new LighthouseLight({ THREE, group: scene });
+const obstacleLights = new ObstacleLights({ THREE, group: scene });
 
 const labelAtlas = new LabelAtlas({ THREE, width: 1024, height: 256 });
 const labelMaterial = new THREE.MeshBasicMaterial({ map: labelAtlas.texture, transparent: true, depthWrite: false, side: THREE.DoubleSide });
 let labelGeometry = null;
 
-const state = { names: ['LYON'], kinds: ['fountainWallace', 'streetLampClassic'], yawDeg: 20, pitchDeg: 6, distance: 9, target: 1.5, spacing: 2.5, stone: null, night: 0, beamDeg: 0 };
+const state = { names: ['LYON'], kinds: ['fountainWallace', 'streetLampClassic'], yawDeg: 20, pitchDeg: 6, distance: 9, target: 1.5, spacing: 2.5, stone: null, night: 0, beamDeg: 0, seconds: 0.15 };
 
 function render() {
   // Taille relue à chaque rendu : une page ouverte cachée naît à 0 × 0.
@@ -84,12 +87,16 @@ function render() {
   sun.intensity = 2.2 * day;
   scene.background.set(0xcfd8de).multiplyScalar(day);
   const towers = [];
+  const masts = [], turbines = [];
   const colors = furnitureColorsForStone(defaultTheme.furniture.colors, stoneTintFor(state.stone, defaultTheme.stones));
   state.kinds.forEach((kind, i) => {
     const mesh = new THREE.Mesh(FURNITURE_BUILDERS[kind](colors).toGeometry(THREE, kind), material);
     mesh.position.x = (i - (state.kinds.length - 1) / 2) * state.spacing;
     if (kind === 'signPlaceName') labelQuads.push({ x: mesh.position.x, y: 0, z: 0, yaw: 0, name: state.names[i % state.names.length] });
     if (kind === 'lighthouse') towers.push({ x: mesh.position.x, y: 0, z: 0, yaw: 0, scale: 1 });
+    if (kind === 'radioMast' || kind === 'windTurbine') {
+      (kind === 'radioMast' ? masts : turbines).push({ x: mesh.position.x, y: 0, z: 0, yaw: 0, scale: 1 });
+    }
     row.add(mesh);
   });
   const labels = { THREE, theme: defaultTheme, _placeNameSign: defaultTheme.furniture.placeNameSign, labelAtlas, labelMaterial, _labelQuads: labelQuads, group: row };
@@ -108,6 +115,10 @@ function render() {
   lighthouseLight.set(towers);
   lighthouseLight.setNight(state.night);
   lighthouseLight.beamMaterial.uniforms.uAngle.value = (state.beamDeg * Math.PI) / 180;
+  obstacleLights.set(masts, turbines);
+  obstacleLights.setNight(state.night);
+  obstacleLights._seconds = 0;
+  obstacleLights.advance(state.seconds);
   renderer.render(scene, camera);
   return { kinds: state.kinds, stone: state.stone };
 }

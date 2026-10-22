@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atlas des régions — WorldPaint</title>
+<link rel="stylesheet" href="regions.css">
+</head>
+<body>
+<header><a href="../">WorldPaint <span>/ atlas</span></a><p>Les paysages du projet</p><span id="totaux"></span></header>
+<main>
+<aside>
+  <div class="intro"><span class="surtitre">GÉOGRAPHIE DU DÉCOR</span><h1>Régions<br> naturelles.</h1><p>Explorer les pays qui donnent leur caractère aux paysages.</p></div>
+  <label for="recherche">Trouver une région</label>
+  <input id="recherche" type="search" placeholder="Anjou, Highlands, Alpujarra…">
+  <label for="matrice">Paysage dominant</label>
+  <select id="matrice"><option value="">Tous les paysages</option></select>
+  <div class="entete-liste"><span id="compte" aria-live="polite"></span><button id="effacer" type="button">Effacer les filtres</button></div>
+  <nav id="liste" aria-label="Régions naturelles"></nav>
+</aside>
+<section class="carte" aria-label="Carte des régions">
+  <canvas id="carte" aria-label="Carte interactive : glisser pour déplacer, molette pour zoomer. Les régions sont aussi accessibles dans la liste."></canvas>
+  <div class="outils"><button id="plus" aria-label="Zoom avant">+</button><button id="moins" aria-label="Zoom arrière">−</button><button id="cadrer">Vue d’ensemble</button></div>
+  <label class="villes"><input id="villes" type="checkbox" checked> Grandes villes</label>
+  <div id="survol" hidden></div>
+  <article id="fiche" hidden aria-live="polite"></article>
+  <div class="legende"><strong>Le paysage là où la carte se tait</strong><div id="legende"></div></div>
+  <div class="bas-carte"><span id="position">Glisser pour explorer · molette pour zoomer</span><span>Fond : Natural Earth · domaine public</span></div>
+</section>
+</main>
+<footer><strong>Un découpage par proximité.</strong> Chaque point prend la région de l’ancre la plus proche, dans un rayon de <span id="portee"></span> km. Les couleurs montrent la couverture du moteur, y compris en mer ; les traits séparent les régions et les points repèrent les grandes villes. Hors couverture, aucune région. Ce ne sont pas des limites officielles.</footer>
+<script type="module" src="regions.js"></script>
+</body>
+</html>
