@@ -53,6 +53,9 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   console, ou `node scripts/sky-shot.mjs <dossier> '<réglages JSON>'` pour une
   image par réglage. `birds: 'corvid' | 'raptor' | 'gull'` y fait voler une
   espèce de `LifeLayer`, à l'instant `time`.
+  `night: 'bats' | 'fireflies'` et `starlings: <secondes après l'envol>`
+  montrent les bêtes de nuit et le vol d'étourneaux (le sol y est tout entier
+  un bois) ; `aim` (`'bats'`, `'fireflies'`, `'starlings'`) vise leur centre.
 - `demo/lab/roads.html` — chaussées, ponts, carrefours et falaises construits
   par les vraies couches sur un relief et des tuiles synthétiques : pont relevé
   avec un T et un X sur son remblai, pont dont la branche est plus large,

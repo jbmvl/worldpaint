@@ -16,6 +16,14 @@
  *   mer (`setSeaDistance`, `GULL_SEA_DISTANCE_M`) ;
  * - des **montgolfières**, plus haut et bien plus lentement, chacune avec ses
  *   deux couleurs propres ;
+ * - la nuit, des passages de **chauves-souris** (`batFlight.js`), qui suivent
+ *   l'observateur comme les oiseaux, et des **lucioles** dans les bois
+ *   (`fireflies.js`), ancrées au sol ;
+ * - le jour, un vol d'**étourneaux** qui sort d'un bois quand on s'en approche
+ *   (`starlings.js`), d'un dortoir ancré au sol.
+ *
+ * Ce qui est ancré au sol lit la part de bois et la cote du sol que
+ * `worldComposer` passe à `advance` ; sans elles, il ne paraît pas.
  *
  * Les bêtes ont leur propre couche (`faunaLayer`), et pas par commodité : un
  * oiseau suit l'observateur et personne ne peut le vérifier, une vache est
@@ -45,6 +53,16 @@
 import { defaultTheme } from '../themes/default.js';
 import { Kit } from '../models/kit.js';
 import { hashUnit } from '../core/groundSeed.js';
+import { batAt, batPassAt, buildBats, createBatGeometry } from './batFlight.js';
+import { fireflyAt, sowFireflies, FIREFLY_MAX, FIREFLY_RESOW_M } from './fireflies.js';
+import { buildStarlings, launchFlock, roostNear, starlingAt, STARLING_COUNT, STARLING_FLIGHT_S, STARLING_REST_S } from './starlings.js';
+
+/** Part de nuit au-delà de laquelle les oiseaux se posent et les bêtes de nuit sortent. */
+const NIGHT_FLIGHT = 0.45;
+/** Pleine nuit : les lucioles ne se voient pas au crépuscule. */
+const FIREFLY_NIGHT = 0.6;
+/** Pas entre deux recherches de dortoir, en secondes. */
+const ROOST_CHECK_S = 0.5;
 
 /** Oiseaux dans le vol. */
 export const BIRD_COUNT = 22;
@@ -511,6 +529,47 @@ export class LifeLayer {
       });
     }
 
+    // --- Chauves-souris, lucioles, étourneaux ----------------------------------
+    const life = theme.life;
+    const darkMaterial = (color, name) => {
+      const material = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide, fog: false, transparent: true, opacity: 0.9 });
+      material.name = name;
+      return material;
+    };
+    const instanced = (geometry, material, count, name) => {
+      const mesh = new THREE.InstancedMesh(geometry, material, count);
+      mesh.name = name;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.frustumCulled = false;
+      mesh.count = 0;
+      this.group.add(mesh);
+      return mesh;
+    };
+    this._bats = buildBats();
+    this.batMaterial = darkMaterial(life.bat ?? defaultTheme.life.bat, 'bat');
+    this.bats = instanced(createBatGeometry(THREE), this.batMaterial, this._bats.length, 'bats');
+
+    this.fireflyMaterial = new THREE.MeshBasicMaterial({
+      color: life.firefly ?? defaultTheme.life.firefly,
+      fog: false,
+      toneMapped: false,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    this.fireflyMaterial.name = 'firefly';
+    this.fireflies = instanced(new THREE.OctahedronGeometry(0.5, 0), this.fireflyMaterial, FIREFLY_MAX, 'fireflies');
+    this._fireflies = [];
+    this._sownAt = null;
+
+    this._starlings = buildStarlings();
+    this.starlingMaterial = darkMaterial(life.starling ?? defaultTheme.life.starling, 'starling');
+    this.starlings = instanced(createBirdGeometry(THREE), this.starlingMaterial, STARLING_COUNT, 'starlings');
+    this._starlingFlock = null;
+    this._roostsRaised = new Map();
+    this._roostCheck = 0;
+    this._wallClock = 0;
+
     this._matrix = new THREE.Matrix4();
     this._position = new THREE.Vector3();
     this._quaternion = new THREE.Quaternion();
@@ -609,8 +668,12 @@ export class LifeLayer {
     // Les oiseaux ne volent pas la nuit, et un vol en silhouette sur un ciel
     // sombre ne se verrait de toute façon pas. Une montgolfière vole à la
     // même heure — c'est un vol à vue.
-    this.birds.visible = this._night < 0.45;
-    this._balloonsVisible = this._night < 0.45;
+    const day = this._night < NIGHT_FLIGHT;
+    this.birds.visible = day;
+    this._balloonsVisible = day;
+    this.starlings.visible = day;
+    this.bats.visible = !day;
+    this.fireflies.visible = this._night >= FIREFLY_NIGHT;
     for (const mesh of this._balloonMeshes) mesh.visible = this._balloonsVisible;
   }
 
@@ -620,14 +683,92 @@ export class LifeLayer {
    * @param {{x:number,y:number,z:number}} at Point observé, dans la scène :
    *        les oiseaux tournent autour de lui. C'est l'application qui le
    *        fournit — le décor ne sait pas ce qui l'occupe.
+   * @param {{frame:Object, woodAt:Function, elevationAt:Function}} [ground]
+   *        Le sol, pour ce qui y est ancré (lucioles, dortoirs d'étourneaux).
    */
-  advance(delta, at) {
+  advance(delta, at, ground = null) {
     if (this.disposed || !Number.isFinite(delta) || !at) return;
     // Remis dans une plage courte : un temps qui croît indéfiniment finit par
     // perdre sa précision, et les orbites se mettent à saccader.
     this.time = (this.time + delta) % 3600;
+    this._wallClock += delta;
     this._advanceBirds(at);
     this._advanceBalloons(at);
+    this._advanceBats(at);
+    this._advanceFireflies(at, ground);
+    this._advanceStarlings(delta, at, ground);
+  }
+
+  _setInstance(mesh, index, x, y, z, heading, sx, sy, sz) {
+    this._position.set(x, y, z);
+    this._euler.set(0, heading, 0);
+    this._quaternion.setFromEuler(this._euler);
+    this._scale.set(sx, sy, sz);
+    this._matrix.compose(this._position, this._quaternion, this._scale);
+    mesh.setMatrixAt(index, this._matrix);
+  }
+
+  _advanceBats(at) {
+    if (!this.bats.visible) return;
+    const pass = batPassAt(this.time);
+    if (!pass) { this.bats.count = 0; return; }
+    this._bats.forEach((bat, index) => {
+      const s = batAt(bat, pass, this.time, at);
+      this._setInstance(this.bats, index, s.x, s.y, s.z, s.heading, bat.scale * s.flap, bat.scale, bat.scale);
+    });
+    this.bats.count = this._bats.length;
+    this.bats.instanceMatrix.needsUpdate = true;
+  }
+
+  _advanceFireflies(at, ground) {
+    if (!this.fireflies.visible || !ground?.frame) { this.fireflies.count = 0; return; }
+    const sown = this._sownAt;
+    if (!sown || sown.frame !== ground.frame || Math.hypot(at.x - sown.x, at.z - sown.z) >= FIREFLY_RESOW_M) {
+      this._fireflies = sowFireflies(ground.frame, at, ground.woodAt, ground.elevationAt);
+      this._sownAt = { frame: ground.frame, x: at.x, z: at.z };
+    }
+    let count = 0;
+    for (const fly of this._fireflies) {
+      const s = fireflyAt(fly, this.time);
+      if (s.glow <= 0.02) continue;
+      const size = fly.size * s.glow;
+      this._setInstance(this.fireflies, count++, s.x, s.y, s.z, 0, size, size, size);
+    }
+    this.fireflies.count = count;
+    this.fireflies.instanceMatrix.needsUpdate = true;
+  }
+
+  _advanceStarlings(delta, at, ground) {
+    const flock = this._starlingFlock;
+    if (flock && (this.time < flock.start || this.time - flock.start >= STARLING_FLIGHT_S || flock.frame !== ground?.frame)) {
+      this._starlingFlock = null;
+      this.starlings.count = 0;
+    }
+    if (!this.starlings.visible || !ground?.frame) return;
+    if (!this._starlingFlock) {
+      this._roostCheck -= delta;
+      if (this._roostCheck > 0) return;
+      this._roostCheck = ROOST_CHECK_S;
+      const roost = roostNear(ground.frame, at, ground.woodAt);
+      // `this.time` repart à zéro toutes les heures : le repos d'un dortoir se compte sur une horloge sans repli.
+      const now = this._wallClock;
+      const raised = roost && this._roostsRaised.get(roost.key);
+      if (!roost || (raised !== undefined && now - raised < STARLING_REST_S)) return;
+      const floor = ground.elevationAt(roost.x, roost.z);
+      if (!Number.isFinite(floor)) return;
+      this._roostsRaised.set(roost.key, now);
+      this._starlingFlock = { ...launchFlock(roost, floor, at, this.time), frame: ground.frame };
+    }
+    const current = this._starlingFlock;
+    let count = 0;
+    for (const bird of this._starlings) {
+      const s = starlingAt(bird, current, this.time);
+      if (!s) continue;
+      const k = bird.scale * s.size;
+      this._setInstance(this.starlings, count++, s.x, s.y, s.z, s.heading, k * s.flap, k, k);
+    }
+    this.starlings.count = count;
+    this.starlings.instanceMatrix.needsUpdate = true;
   }
 
   _advanceBirds(at) {
@@ -675,6 +816,12 @@ export class LifeLayer {
       mesh.geometry.dispose();
     }
     this.balloonMaterial.dispose();
+    for (const mesh of [this.bats, this.fireflies, this.starlings]) {
+      this.group.remove(mesh);
+      mesh.geometry.dispose();
+      mesh.material.dispose();
+      mesh.dispose?.();
+    }
     this._balloonMeshes = [];
     this._balloons = [];
     this.scene.remove(this.group);

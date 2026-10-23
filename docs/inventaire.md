@@ -771,6 +771,9 @@ d'acier, plus sommaire, hors agglomération.
 | trains | 4 en circulation au plus, une locomotive et 3 voitures | naît à 350 m en amont de l'observateur sur une voie à moins de 500 m, roule à 22 m/s jusqu'au bout de la voie ou à 1,4 km de l'observateur |
 | oiseaux | 22 | dérivent entre 16 et 52 m au-dessus de l'observateur, 3 à 9 m/s |
 | montgolfières | 5 | dérivent entre 90 et 240 m au-dessus de l'observateur, 0,5 à 1,6 m/s, chacune avec ses deux couleurs propres |
+| chauves-souris | 6, de nuit | un passage de 13 s dans 60 % des fenêtres de 40 s, en troupe à 3–9 m au-dessus de l'observateur et à moins de 10 m de lui, vol heurté |
+| lucioles | 180 au plus, de nuit | une maille de 4 m sur 2,5 dans le bois (part ≥ 0,5), à moins de 45 m de l'observateur, ancrées au sol ; un bref éclat toutes les 2,5 à 6 s |
+| étourneaux | 48, de jour | un dortoir par maille de 40 m sur 5 dans le bois, ancré au sol ; levé quand l'observateur passe à moins de 45 m, le vol fuit en montant pendant 14 s ; le même dortoir se repose 10 min |
 | poussière de tracteur | 16 bouffées par tracteur animé | levée à l'arrière, monte à 0,3 m/s, dérive au vent à 0,9 m/s, s'étale de 1,6 à 11 m en 9 s |
 
 Les bêtes, les tracteurs, les trains et les spectateurs sont les seules choses posées au sol
@@ -808,6 +811,13 @@ d'un kilomètre d'une nappe `ocean` (`layers/coast.js`,
 `lifeLayer.setSeaDistance`). La mer passe avant le relief.
 C'est un remplacement, jamais deux espèces à la fois.
 
+Les **chauves-souris**, les **lucioles** et les **étourneaux** s'y ajoutent sans
+rien remplacer (`batFlight.js`, `fireflies.js`, `starlings.js`, animés par
+`lifeLayer`). Les chauves-souris suivent l'observateur comme les oiseaux ; les
+lucioles et les dortoirs d'étourneaux sont tirés de la grille mondiale et de la
+part de bois de la carte du sol (`GroundClassMap.woodAt`), que `worldComposer`
+passe à `lifeLayer.advance`.
+
 ## Le ciel et le temps
 
 Le ciel suit le modèle de Preetham, avec les nuages natifs de three : rien n'y
@@ -841,7 +851,8 @@ bougé tout seul » :
 | tout ce qui vient du vectoriel : carte du sol, falaises, chaussées, ponts, rails, bâti, voirie, jardins, mobilier, bêtes, tracteurs, arbres | 250 m (`DECOR_STEP_M`), d'un bloc ; moins en ville, voir plus bas |
 | éclaircie du sous-bois au-delà de 500 m | 8 m |
 | herbe et cultures, semées autour de l'observateur | 10 m |
-| oiseaux, montgolfières, pluie, vent | chaque image |
+| oiseaux, montgolfières, chauves-souris, étourneaux, pluie, vent | chaque image |
+| lucioles, semées autour de l'observateur | 4 m |
 
 Le décor se refait toutes couches ensemble, jamais une seule : quand
 l'observateur s'est éloigné de 250 m du dernier point de reconstruction, quand
