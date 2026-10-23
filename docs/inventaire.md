@@ -708,6 +708,12 @@ un feu rouge : un flash de 0,3 seconde toutes les deux secondes, avec un halo
 visible au loin mais occulté par le relief (`obstacleLights`). Les feux suivent
 la part de nuit du ciel et s'éteignent le jour.
 
+Un cimetière sur cinq (tirage au centroïde du site) est **hanté** : un à trois
+fantômes blancs, dôme et ourlet ondulé, yeux sombres, flottent au-dessus des
+tombes (`cemeteryGhosts`). Ils ne paraissent qu'en pleine nuit (part de nuit
+au-delà de 0,6), et chacun n'est visible que 45 % d'un cycle de 45 secondes.
+Un site sans tombe n'en porte pas.
+
 Les repères de bourg sont posés **hors** du périmètre bâti, à 1,25 fois son
 rayon : si le point tiré retombe dans un bâti voisin ou sur une route, on
 renonce plutôt que de le déplacer — un repère qui bouge d'une reconstruction à

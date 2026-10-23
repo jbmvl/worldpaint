@@ -62,6 +62,7 @@ import { CombinedIndex } from './roadGraph.js';
 import { VergeStrips } from './vergeStrips.js';
 import { LighthouseLight } from './lighthouseLight.js';
 import { ObstacleLights } from './obstacleLights.js';
+import { CemeteryGhosts } from './cemeteryGhosts.js';
 import {
   Kit,
   createFurnitureGeometries,
@@ -233,6 +234,9 @@ export class FurnitureLayer {
     this._lighthouses = [];
     this.lighthouseLight = new LighthouseLight({ THREE, group: this.group, theme });
     this.obstacleLights = new ObstacleLights({ THREE, group: this.group, theme });
+    /** Fantômes des cimetières hantés de la dernière reconstruction — voir `cemeteryGhosts`. */
+    this._ghosts = [];
+    this.ghosts = new CemeteryGhosts({ THREE, group: this.group, theme });
     this._windDirection = 0;
     this._windForce = 0;
     /** @type {Map<string, Object>} maillage fusionné par matière linéaire. */
@@ -503,6 +507,7 @@ export class FurnitureLayer {
       };
       this._lampHeads = [];
       this._lighthouses = [];
+      this._ghosts = [];
       this._signals = [];
       this.fauna = [];
       this.tractors = [];
@@ -566,6 +571,7 @@ export class FurnitureLayer {
       this.lighthouseLight.set(this._lighthouses);
       this._mastsForLights = placements.get('radioMast') || [];
       this.obstacleLights.set(this._mastsForLights, this._turbines);
+      this.ghosts.set(this._ghosts);
       this._applyLabels();
 
       this._anchor = { x: here.x, z: here.z };
@@ -1411,6 +1417,10 @@ export class FurnitureLayer {
     if (!this.disposed) this.obstacleLights.advance(delta);
   }
 
+  advanceGhosts(delta) {
+    if (!this.disposed) this.ghosts.advance(delta);
+  }
+
   /**
    * Règle l'éclairage nocturne du mobilier.
    * @param {number} mix 0 en plein jour, 1 en pleine nuit.
@@ -1425,6 +1435,7 @@ export class FurnitureLayer {
     if (this.poolMesh) this.poolMesh.visible = value > 0.01;
     this.lighthouseLight.setNight(value);
     this.obstacleLights.setNight(value);
+    this.ghosts.setNight(value);
     for (const light of this.lampLights) light.intensity *= value > 0.01 ? 1 : 0;
   }
 
@@ -1462,6 +1473,8 @@ export class FurnitureLayer {
 
     this.lighthouseLight.dispose();
     this.obstacleLights.dispose();
+    this.ghosts.dispose();
+    this._ghosts = [];
     this._lighthouses = [];
     this.glowGeometry.dispose();
     this.glowMaterial.dispose();

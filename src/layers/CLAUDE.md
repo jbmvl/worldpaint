@@ -35,6 +35,7 @@ son état.
 | `faunaLayer.js`, `faunaMotion.js`, `faunaCrossing.js`, `lifeLayer.js`, `tractorLayer.js`, `trainLayer.js` | ce qui bouge |
 | `lighthouseLight.js` | le feu d'un phare : halo et faisceaux tournants, alimentés et avancés par `furnitureLayer` |
 | `obstacleLights.js` | les balises rouges nocturnes des antennes et éoliennes : flash commun, halos occultés par le relief, alimentés et avancés par `furnitureLayer` |
+| `cemeteryGhosts.js` | les fantômes nocturnes des cimetières hantés : quads face caméra dessinés dans le shader, flottement sans réécriture de matrice, alimentés et avancés par `furnitureLayer` |
 | `coast.js` | la distance à la mer (nappes `ocean`) — c'est elle qui met des mouettes dans le ciel |
 | `settlement.js` | l'habitat : emprises habitées, lieux nommés, `UrbanMask`, `FabricIndex` |
 
@@ -56,7 +57,7 @@ identifie d'abord sa famille :
 | `furniture/junctionFurniture.js` | ce qu'un **carrefour** porte : feu tricolore, panneau de priorité |
 | `furniture/parcels.js` | ce qui se lit sur une **parcelle** : contour (haie, muret, clôture), semis, rangs de vigne, cour de ferme, repères d'emprise urbaine |
 | `furniture/parcelFauna.js` | qui **vit** dans une parcelle : troupeau, gibier, carnassier — et le circuit qu'il suit ; et qui vit **hors** parcelle, sur les matières ouvertes (lande, pré salé, estive) qu'aucun contour ne ferme |
-| `furniture/cemetery.js` | l'habillage d'un cimetière : mur, portail, tombes, robinet |
+| `furniture/cemetery.js` | l'habillage d'un cimetière : mur, portail, tombes, robinet, et ses fantômes s'il est hanté |
 | `furniture/landmarks.js` | les **repères** : moulin et château d'eau d'un bourg, pierres, éoliennes, pylônes, antennes de sommet, phares, arbres de crête |
 | `furniture/biomeDebris.js` | ce qu'une **matière du sol** laisse traîner : blocs de lande et de maquis, souches de bois, joncs de marais, bois flotté — semé par nom de matière, pas par pente |
 | `furniture/pointsOfInterest.js` | ce que la couche `poi` porte nommément : abribus, fontaine, lavoir, monument, tour |

@@ -1,6 +1,7 @@
 /*
  * cemetery — l'habillage d'un site `landuse=cemetery` : le mur d'enceinte, le
- * portail qui le perce, le carré de tombes et le robinet d'entretien. La croix
+ * portail qui le perce, le carré de tombes, le robinet d'entretien et, sur un
+ * site hanté (rare), ses fantômes nocturnes. La croix
  * centrale, elle, est posée par `parcels` comme repère du site.
  *
  * Tout est ancré au **centroïde du site**, jamais à l'ordre des sommets de
@@ -190,5 +191,35 @@ export function buildCemetery(layer, context, ring, centre) {
   const tapZ = gatePoint.z - nz * 2.4 + tz * 2.6;
   if (pointInRing(ring, tapX, tapZ) && !layer._onRoad(tapX, tapZ)) {
     layer._place(placements, 'cemeteryTap', { x: tapX, z: tapZ, yaw: tapYaw });
+  }
+
+  hauntSite(layer, ring, centre, tombs, sampleElevation);
+}
+
+/**
+ * Un site sur `hauntedChance` est hanté : un à `maxPerSite` fantômes, posés
+ * sur des points tirés dans le carré de tombes. Rien n'est posé sur un site
+ * sans tombe.
+ */
+function hauntSite(layer, ring, centre, tombs, sampleElevation) {
+  const look = layer.theme?.furniture?.ghost;
+  if (!look || tombs === 0 || !Array.isArray(layer._ghosts)) return;
+  const { frame } = layer.bubble;
+  if (randomAt(frame, centre.x, centre.z, 241) >= look.hauntedChance) return;
+  const count = 1 + Math.floor(randomAt(frame, centre.x, centre.z, 251) * look.maxPerSite);
+  for (let k = 0, tries = 0; k < count && tries < count * 6; tries++) {
+    const angle = randomAt(frame, centre.x, centre.z, 257 + tries) * Math.PI * 2;
+    const reach = 3 + randomAt(frame, centre.x, centre.z, 263 + tries) * 12;
+    const x = centre.x + Math.cos(angle) * reach;
+    const z = centre.z + Math.sin(angle) * reach;
+    if (!pointInRing(ring, x, z)) continue;
+    layer._ghosts.push({
+      x,
+      y: sampleElevation(x, z),
+      z,
+      phase: randomAt(frame, x, z, 269),
+      scale: 0.85 + randomAt(frame, x, z, 271) * 0.3,
+    });
+    k++;
   }
 }
