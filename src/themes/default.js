@@ -1383,6 +1383,18 @@ export const OBSTACLE_LIGHT = {
   periodS: 2, flashS: 0.3, fadeS: 0.06,
 };
 
+/**
+ * Fantômes de cimetière : blanc bleuté du corps, yeux sombres, gabarit en mètres,
+ * part de nuit à partir de laquelle ils paraissent, part d'un cycle où chacun est
+ * visible, et chance qu'un cimetière soit hanté.
+ */
+export const CEMETERY_GHOST = {
+  body: srgb('#eef6ff'), eyes: srgb('#1c2440'),
+  heightM: 1.5, floatM: 0.6, bobM: 0.25, roundM: 1.6,
+  fromNight: 0.6, cycleS: 45, shownShare: 0.45,
+  hauntedChance: 0.2, maxPerSite: 3,
+};
+
 // --- Ce qui vit ----------------------------------------------------------------
 /**
  * Couleurs de la couche vivante. L'oiseau est une silhouette
@@ -1786,7 +1798,7 @@ export const defaultTheme = Object.freeze({
   works: WORKS_STYLES,
   streets: STREET_LOOK,
   water: { waterways: WATERWAY_CLASSES, riparianBufferM: RIPARIAN_BUFFER_M },
-  furniture: { placeNameSign: PLACE_NAME_SIGN, colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES, lighthouse: LIGHTHOUSE_LIGHT, radioMast: RADIO_MAST, obstacleLight: OBSTACLE_LIGHT },
+  furniture: { placeNameSign: PLACE_NAME_SIGN, colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES, lighthouse: LIGHTHOUSE_LIGHT, radioMast: RADIO_MAST, obstacleLight: OBSTACLE_LIGHT, ghost: CEMETERY_GHOST },
   life: LIFE_COLORS,
   fauna: { colors: FAUNA_COLORS, coats: FAUNA_COATS },
   sky: SKY_PALETTE,
