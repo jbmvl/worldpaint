@@ -29,11 +29,19 @@
  *
  * `birds` impose l'espèce (`corvid`, `raptor`, `gull`), `time` fige les vols
  * et les passages nocturnes à la seconde choisie.
+ *
+ *   skyLab.set({ night: 'bats', sunDeg: -10, time: 30, pitchDeg: 20 })
+ *   skyLab.set({ night: 'fireflies', sunDeg: -12, height: 1.7, time: 3 })
+ *   skyLab.set({ starlings: 4, pitchDeg: 15, height: 1.7 })
+ *
+ * `night` montre une bête de nuit (le sol plat y est tout entier un bois),
+ * `starlings` le vol levé d'un dortoir à 40 m, `starlings` secondes après l'envol.
  */
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { SceneEnvironment } from '/src/environment/sceneEnvironment.js';
 import { LifeLayer, GULL_SEA_DISTANCE_M } from '/src/layers/lifeLayer.js';
+import { launchFlock } from '/src/layers/starlings.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(devicePixelRatio);
@@ -86,10 +94,15 @@ function dateForElevation(deg) {
   return new Date(hi);
 }
 
-const state = { sunDeg: 30, lookDeg: 90, pitchDeg: 4, height: 40, weather: null, birds: null, time: 0 };
+const state = { sunDeg: 30, lookDeg: 90, pitchDeg: 4, height: 40, weather: null, birds: null, time: 0, night: null, starlings: null, aim: null };
 const life = new LifeLayer({ THREE, scene, bubble: null });
 for (const mesh of life._balloonMeshes) mesh.visible = false;
 life._balloonsVisible = false;
+const labGround = {
+  frame: { zoom: 14, scale: 2445, origin: { x: 8000, y: 5800 } },
+  woodAt: () => 1,
+  elevationAt: () => 0,
+};
 
 function render() {
   const date = dateForElevation(state.sunDeg);
@@ -111,12 +124,38 @@ function render() {
     life.time = state.time;
     life.advance(0, camera.position);
   }
+  life.setNight(state.night ? 1 : 0);
+  life.birds.visible = !!state.birds;
+  life.bats.visible = state.night === 'bats';
+  life.fireflies.visible = state.night === 'fireflies';
+  life.starlings.visible = state.starlings !== null;
+  life.bats.count = life.fireflies.count = life.starlings.count = 0;
+  if (state.night || state.starlings !== null) {
+    life.time = state.time;
+    life._starlingFlock = state.starlings === null ? null : {
+      ...launchFlock({ x: 0, z: -40, seed: 0.5 }, 0, { x: 0, z: 0 }, state.time - state.starlings),
+      frame: labGround.frame,
+    };
+    life._roostCheck = Infinity;
+    const at = { x: camera.position.x, y: 0, z: camera.position.z };
+    life._advanceBats(at);
+    life._advanceFireflies(at, labGround);
+    life._advanceStarlings(0, at, labGround);
+  }
+  if (state.aim) {
+    // Vise le centre de ce qui vole, pour le regarder de près.
+    const mesh = life[state.aim];
+    const c = new THREE.Vector3(), p = new THREE.Vector3(), m = new THREE.Matrix4();
+    for (let i = 0; i < mesh.count; i++) { mesh.getMatrixAt(i, m); c.add(p.setFromMatrixPosition(m)); }
+    if (mesh.count) camera.lookAt(c.divideScalar(mesh.count));
+  }
   renderer.setClearColor(env.clearColor, 1);
   renderer.render(scene, camera);
   return {
     sunDeg: state.sunDeg,
     fog: '#' + env.fog.color.getHexString(THREE.SRGBColorSpace),
     nightMix: env.nightMix,
+    life: { bats: life.bats.count, fireflies: life.fireflies.count, starlings: life.starlings.count },
   };
 }
 

@@ -328,6 +328,13 @@ export class WorldComposer {
       theme,
     });
     this.life = new LifeLayer({ THREE, scene, bubble, theme });
+    // Le sol de ce que la couche du ciel ancre à terre : lucioles et dortoirs d'étourneaux.
+    const self = this;
+    this._lifeGround = {
+      get frame() { return self.groundClass.ready ? self.bubble.frame : null; },
+      woodAt: (x, z) => this.groundClass.woodAt(x, z),
+      elevationAt: (x, z) => this.groundElevationAt(x, z),
+    };
     // Le vivant au sol : posé par le mobilier, animé ici (voir `faunaLayer`).
     this.fauna = new FaunaLayer({ THREE, scene, theme });
     // Les tracteurs au travail : posés par le mobilier, ancrés au sol comme
@@ -1013,7 +1020,7 @@ export class WorldComposer {
     if (!this._building) this.vegetation.update(at.x, at.z);
     this.crops.advance(delta);
     if (!this._building) this.crops.update(at.x, at.z);
-    this.life.advance(delta, at);
+    this.life.advance(delta, at, this._lifeGround);
     // La position sert à `faunaLayer` pour n'oublier une traversée déclenchée
     // qu'une fois l'observateur passé au large, et pour faire fuir une bête
     // marquée `flee` qui le voit approcher ; l'échantillonnage du relief lui

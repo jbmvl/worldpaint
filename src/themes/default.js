@@ -1396,6 +1396,10 @@ export const LIFE_COLORS = {
   // La mouette du littoral : grise et non blanche — à contre-jour sur un ciel
   // clair, une silhouette blanche ne se voit pas.
   gull: '#5d646d',
+  bat: '#08070b',
+  starling: '#23272d',
+  // Éclat d'une luciole : vert-jaune, ajouté à ce qu'il y a derrière.
+  firefly: '#d6ff7a',
   // Poussière soulevée derrière un tracteur : terre sèche.
   dust: [0.74, 0.66, 0.54],
   // Osier du panier de nacelle.
