@@ -32,7 +32,6 @@ import { townPaletteFor, buildingStyleAt, streetSurfaceAt } from '../src/layers/
 import { kerbProfile } from '../src/layers/streetLayer.js';
 import { roofRise } from '../src/layers/roofGeometry.js';
 import { waterwayStyleFor, SURFACE_KINDS } from '../src/terrain/groundClassMap.js';
-import { grassVariantFor } from '../src/layers/groundCover.js';
 import { windowGrid, isHiddenOutline, mergeTwinPersonalities, assignPersonalities, dropTwinFootprints } from '../src/layers/buildingLayer.js';
 import { forestTypeAt, variantsFor } from '../src/layers/vegetationLayer.js';
 import { roadStyleFor } from '../src/layers/roadNetwork.js';
@@ -49,7 +48,6 @@ const OTHER = resolveTheme({
   roofs: { pitch: 0.2, maxRiseM: 1 },
   windows: { widthM: 2, heightM: 3, levelM: 6, sillM: 2, litShare: 1 },
   water: { waterways: { river: 40, stream: 20 } },
-  grass: { minHeight: 5, maxHeight: 6, aspect: 2, flowerShare: 1, poppyShare: 1 },
   forests: [{ name: 'palmeraie', essences: ['column'], minHeight: 30, maxHeight: 40, density: 0.1, tint: [1, 1, 1] }],
   trees: { variants: defaultTheme.trees.variants, essences: { column: [7, 8] } },
   roads: {
@@ -142,16 +140,6 @@ test('les largeurs de cours d’eau suivent le thème', () => {
   // Une classe retirée du thème n'est plus dessinée : c'est bien le thème qui
   // décide, pas une liste que le moteur garderait par-devers lui.
   assert.equal(waterwayStyleFor({ class: 'ditch' }, OTHER.water.waterways), null);
-});
-
-test('la part de fleurs suit le thème', () => {
-  const meadow = { grass: 1, farmland: 0 };
-  const [a, b] = interleaved(
-    () => grassVariantFor(meadow, 0.5, DEFAULT.grass),
-    () => grassVariantFor(meadow, 0.5, OTHER.grass)
-  );
-  assert.equal(a, 0, 'au défaut, un tirage à 0,5 ne fleurit pas');
-  assert.notEqual(b, 0, 'à 100 % de fleurs, il fleurit');
 });
 
 test('la trame des fenêtres suit le thème', () => {
@@ -271,19 +259,18 @@ test('le compositeur sert le thème à toutes les couches qu’il monte', () => 
 });
 
 test('le sol et ce qui y pousse lisent le même facteur', () => {
-  // Le sol lointain est peint par le shader, le premier plan par des touffes
-  // et des tiges instanciées, et les trois doivent bouger du même rapport
+  // Le sol est peint par le shader, le premier plan des champs par des tiges
+  // instanciées, et les deux doivent bouger du même rapport
   // quand on change de pays — sinon on voit un disque de couleur différente
   // autour de l'observateur, ce qui est le défaut que le calage des albédos
   // (`TERRAIN_LOOK.grassAlbedo`) existe pour éviter.
   //
-  // On ne peut pas le vérifier en montant les trois (il faudrait WebGL et un
+  // On ne peut pas le vérifier en montant les deux (il faudrait WebGL et un
   // canevas), mais on peut vérifier qu'il n'y a **qu'une** source : chacun
   // passe par `soilWashFor`, et aucun ne va lire la tranche du thème
   // lui-même.
   for (const file of [
     'src/terrain/terrainMaterial.js',
-    'src/layers/groundCover.js',
     'src/layers/cropLayer.js',
   ]) {
     const source = readFileSync(file, 'utf8');

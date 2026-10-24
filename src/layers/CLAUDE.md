@@ -29,7 +29,7 @@ son état.
 | `streetLayer.js`, `streetMasonry.js` | bordures, caniveaux et joints des rues et des carrefours |
 | `gardenLayer.js` | clôtures et buissons de maison |
 | `facetBuffers.js` | les tampons des maillages fusionnés à facettes (bâti, fenêtres, jardins, voirie de rue) : accumulés en tableaux typés, normale sur un octet et couleur sur seize bits, pans indexés, copie côté page rendue après l'envoi au GPU — donc **illisibles ensuite** ; le mobilier linéaire (haies, vignes, murets) y passe aussi par `packColoredGeometry` |
-| `vegetationLayer.js`, `groundCover.js`, `cropLayer.js` | arbres, herbe, cultures |
+| `vegetationLayer.js`, `cropLayer.js` | arbres, cultures |
 | `vergeStrips.js` | la bande entre une chaussée et sa haie de bas-côté : publiée par le mobilier, le champ n'y pousse pas |
 | `furnitureLayer.js` + `furniture/` | tout le mobilier — voir ci-dessous |
 | `faunaLayer.js`, `faunaMotion.js`, `faunaCrossing.js`, `lifeLayer.js` (+ `batFlight.js`, `fireflies.js`, `starlings.js`), `tractorLayer.js`, `trainLayer.js` | ce qui bouge |

@@ -116,7 +116,8 @@ export const CROP_CELL_M = CROP_BANDS[0].cell;
 /** Touffes tirées par maille de détail. */
 export const CROP_PER_CELL = CROP_BANDS[0].perCell;
 /**
- * Nombre maximal de touffes. Voir `GRASS_COUNT` : c'est un garde-fou.
+ * Nombre maximal de touffes : un garde-fou, ce qui se perd s'il est atteint
+ * est au bord du champ, où une instance de moins ne se voit pas.
  *
  * Le pire cas est le blé, seule culture à `density: 1` — mesuré à 13 452 sur
  * champ plein, pour une portée de cent quarante mètres.
@@ -130,14 +131,14 @@ export const CROP_REBUILD_M = 10;
  */
 export const CROP_FADE_FROM = 1 - CROP_BANDS[CROP_BANDS.length - 1].fadeOut / CROP_RADIUS_M;
 /**
- * Plancher de hauteur en bord de bande, en part de la hauteur nominale —
- * même correctif que `GRASS_HEIGHT_FADE_FLOOR` : la présence continue de se
+ * Plancher de hauteur en bord de bande, en part de la hauteur nominale : la
+ * présence continue de se
  * raréfier, mais les tiges qui restent ne rapetissent plus jusqu'à s'éteindre.
  */
 export const CROP_HEIGHT_FADE_FLOOR = 0.6;
 /**
- * Amplitude du vent dans un champ. Plus fort que dans les arbres, plus faible
- * que dans l'herbe : un champ de blé ondule, c'est même le seul mouvement d'un
+ * Amplitude du vent dans un champ. Plus fort que dans les arbres : un champ de
+ * blé ondule, c'est même le seul mouvement d'un
  * paysage d'été.
  *
  * C'était 0,26, exprimé en part de la **largeur** du panneau. Depuis que
@@ -148,7 +149,7 @@ export const CROP_HEIGHT_FADE_FLOOR = 0.6;
  */
 export const CROP_WIND_STRENGTH = 0.21;
 
-/** Compensation d'alpha à distance — voir `GRASS_COVERAGE_RANGE`. */
+/** Distances entre lesquelles la compensation d'alpha monte, et son gain — voir `createFoliageMaterial`. */
 export const CROP_COVERAGE_RANGE = [26, 115];
 export const CROP_COVERAGE_GAIN = 2.2;
 
@@ -157,7 +158,7 @@ export const CROP_TUFT_STRIDE = 5;
 
 /**
  * Rétrécissement d'une touffe selon sa distance à l'observateur — pilote
- * combien de tiges restent. Même formule que `grassEdgeFade`. Fonction pure.
+ * combien de tiges restent. Fonction pure.
  */
 export function cropEdgeFade(distance, radius = CROP_RADIUS_M, from = CROP_FADE_FROM) {
   const start = radius * from;
@@ -167,8 +168,8 @@ export function cropEdgeFade(distance, radius = CROP_RADIUS_M, from = CROP_FADE_
 }
 
 /**
- * Rétrécissement de la **hauteur** seule, avec un plancher — voir
- * `grassHeightFade`. Fonction pure.
+ * Rétrécissement de la **hauteur** seule, avec un plancher
+ * (`CROP_HEIGHT_FADE_FLOOR`). Fonction pure.
  */
 export function cropHeightFade(
   distance,

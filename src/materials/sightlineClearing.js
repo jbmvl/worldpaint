@@ -34,6 +34,22 @@ export function setSightline(sightline, from, to, { fromRadius = SIGHTLINE_FROM_
   sightline.radius.value.set(fromRadius, toRadius, 1);
 }
 
+/**
+ * Vrai si la ligne active passe à portée d'une sphère (centre et rayon, repère
+ * de la scène) : ce qu'elle englobe peut avoir à s'effacer. Ligne éteinte : faux.
+ */
+export function sightlineCrosses(sightline, sphere) {
+  if (!sightline || sightline.radius.value.z <= 0.5) return false;
+  const a = sightline.from.value;
+  const b = sightline.to.value;
+  const reach = Math.max(sightline.radius.value.x, sightline.radius.value.y);
+  const abx = b.x - a.x, aby = b.y - a.y, abz = b.z - a.z;
+  const ab2 = abx * abx + aby * aby + abz * abz || 1e-6;
+  const c = sphere.center;
+  const t = Math.min(1, Math.max(0, ((c.x - a.x) * abx + (c.y - a.y) * aby + (c.z - a.z) * abz) / ab2));
+  return Math.hypot(c.x - (a.x + abx * t), c.y - (a.y + aby * t), c.z - (a.z + abz * t)) <= sphere.radius + reach;
+}
+
 export function installSightlineClearing(material, sightline) {
   const previous = material.onBeforeCompile;
   material.onBeforeCompile = shader => {

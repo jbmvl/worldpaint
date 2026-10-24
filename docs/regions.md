@@ -134,9 +134,6 @@ Trois choses à savoir avant d'y toucher :
   pendant que le sol continue de foncer, donc les deux divergent. Une matrice
   absente vaut « pas de correction » — c'est le cas du bocage atlantique, sur
   lequel le reste du thème a été réglé ;
-- **`grassDensity` fait autant que la couleur.** Un sol jauni couvert d'une
-  prairie continue reste une prairie jaunie ; ce qui fait une steppe, c'est la
-  terre qu'on voit entre les touffes ;
 - **`STONE_LOOK` porte des facteurs, comme `SOIL_LOOK`**, et pour la même
   raison : la pierre est peinte par le shader du sol *et* par la géométrie des
   ouvrages, et deux palettes les feraient diverger. Le calcaire est la

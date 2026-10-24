@@ -149,7 +149,7 @@ function pump(at) {
     world.advance(0, at);
     worst = Math.max(worst, performance.now() - t);
     const busy = composer.vegetation.pending || composer.bubble._rebuildQueue.length ||
-      composer.bubble._pendingBuild || composer.grass.pending;
+      composer.bubble._pendingBuild;
     if (!busy && frames > 2) break;
   }
   return { worst, frames };
@@ -157,18 +157,17 @@ function pump(at) {
 
 /**
  * Avance par pas de `step` mètres de (fromX, fromZ) vers (toX, toZ).
- * `cover: false` éteint l'herbe, ses fleurs et les cultures, semées autour de
- * l'observateur par conception.
+ * `cover: false` éteint les cultures, semées autour de l'observateur par
+ * conception.
  * @returns {{steps:Array, summary:Object}}
  */
 async function walk({ fromX = 0, fromZ = 0, toX = 2000, toZ = 0, step = 50, radius = 500, cover = false } = {}) {
   const composer = world.composer;
   const unmute = muteAnimated(composer.root);
-  const names = new Map(composer.grass.flowers.meshes.map((m) => [m, 'fleurs']));
-  const grassMeshes = [];
+  const names = new Map();
+  const coverMeshes = [];
   if (!cover) {
-    for (const o of [...composer.grass.flowers.meshes]) if (o.visible) { o.visible = false; grassMeshes.push(o); }
-    composer.root.traverse((o) => { if ((o.name === 'ground-cover' || o.name === 'crops') && o.visible) { o.visible = false; grassMeshes.push(o); } });
+    composer.root.traverse((o) => { if (o.name === 'crops' && o.visible) { o.visible = false; coverMeshes.push(o); } });
   }
   const length = Math.hypot(toX - fromX, toZ - fromZ);
   const dir = { x: (toX - fromX) / length, z: (toZ - fromZ) / length };
@@ -205,7 +204,7 @@ async function walk({ fromX = 0, fromZ = 0, toX = 2000, toZ = 0, step = 50, radi
       });
     }
   } finally {
-    for (const o of grassMeshes) o.visible = true;
+    for (const o of coverMeshes) o.visible = true;
     unmute();
   }
   const byLayer = {};

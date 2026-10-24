@@ -35,7 +35,7 @@ le trait en segments de `edgeStepM` (`edgeWarp`). Le détail est dans
 À part de la carte elle-même : `poolShareAt`, le pendant CPU du bruit de
 flaque que `terrainMaterial.js` découpe en GLSL — même champ, mêmes constantes
 partagées (`POOL_NOISE_STRETCH`, `POOL_SCALE_RATIO`, `POOL_EDGE_SOFTNESS`),
-pour que `groundCover` et `vegetationLayer` sachent où l'eau affleure sans
+pour que `vegetationLayer` sache où l'eau affleure sans
 relire une seconde vérité.
 
 Ce qui en est sorti, parce que c'est de la lecture pure et qu'on y va souvent :

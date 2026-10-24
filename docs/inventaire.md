@@ -274,21 +274,8 @@ Là où la matière porte de l'eau libre (marais, pré salé, vasière), rien ne
 sème au milieu d'une flaque (`poolShareAt`, `groundClassMap.js`), et le fourré
 se densifie sur les derniers mètres qui la bordent (`poolEdgeGain`).
 
-### L'herbe (`groundCover`)
-
-Trois échelles selon la distance (la plante, la touffe, la masse). La quantité
-est le produit de trois choses : la part de végétal lue dans la carte, la ligne
-de la matière (une lande est rase et dense, un maquis clairsemé), et la matrice
-du pays (`grassDensity` de 1,0 en bocage à **0,15 en désert** — c'est la terre
-visible entre les touffes qui fait une steppe, pas la couleur).
-
-16 % des touffes portent des fleurs en pleine prairie, 42 % en lisière de
-culture (le coquelicot). Sous les arbres, ce n'est plus une prairie mais une
-litière : moitié moins haute, 30 % moins dense, réchauffée vers le brun.
-
-Sur une matière où l'eau affleure, une touffe refuse le milieu d'une flaque et
-pousse plus haut et plus dense sur sa bordure (`poolShareAt`, `poolEdgeGain`) :
-l'herbe et le shader lisent désormais la même eau.
+Le sol entre les objets est la seule matière du terrain : aucun tapis de brins
+n'y est semé.
 
 ---
 
@@ -856,7 +843,7 @@ bougé tout seul » :
 | --- | --- |
 | tout ce qui vient du vectoriel : carte du sol, falaises, chaussées, ponts, rails, bâti, voirie, jardins, mobilier, bêtes, tracteurs, arbres | 250 m (`DECOR_STEP_M`), d'un bloc ; moins en ville, voir plus bas |
 | éclaircie du sous-bois au-delà de 500 m | 8 m |
-| herbe et cultures, semées autour de l'observateur | 10 m |
+| cultures, semées autour de l'observateur | 10 m |
 | oiseaux, montgolfières, chauves-souris, étourneaux, pluie, vent | chaque image |
 | lucioles, semées autour de l'observateur | 4 m |
 
@@ -963,7 +950,7 @@ presque pas.
 points couvrant 4 km de côté autour de l'observateur, où l'on peint l'occupation
 du sol avant de l'afficher. Chaque point y porte un numéro de matière et un
 numéro de culture. Tout le reste du décor la relit : le sol y prend sa couleur,
-l'herbe sa densité, la forêt ses arbres. C'est la source unique — d'où le fait
+la forêt ses arbres. C'est la source unique — d'où le fait
 que rien ne peut se contredire.
 
 **Classe / sous-classe** — les deux attributs par lesquels une tuile décrit une
@@ -1000,7 +987,7 @@ sans ça, chaque reconstruction redistribuerait tout le décor.
 
 **Instance** — une même forme dessinée des milliers de fois avec une position,
 une taille et une teinte différentes, en un seul ordre donné à la carte
-graphique. Les touffes d'herbe, les arbres et les lampadaires sont des instances
+graphique. Les tiges de culture, les arbres et les lampadaires sont des instances
 — c'est ce qui rend leur nombre abordable.
 
 **Région naturelle** — un pays au sens paysager (l'Anjou, la Mancha, les
@@ -1016,7 +1003,7 @@ de feuilles et non une coupe dans une futaie.
 à l'ombre.
 
 **Maille** — une case d'une grille imaginaire posée sur le monde (1400 m pour le
-rebord de voirie et les ponts, 320 m pour les éoliennes, 1,6 m pour les touffes d'herbe).
+rebord de voirie et les ponts, 320 m pour les éoliennes).
 Tout ce qui est tiré au sort l'est **par maille**, ce qui donne au tirage un
 ancrage au sol.
 
@@ -1102,9 +1089,10 @@ Les plantes restent en volume à toute distance. Les blocs éloignés emploient
 deux géométries simplifiées des mêmes lobes, au-delà de 600 et 1000 m du point
 le plus proche de leur sphère, avec une marge de 60 m entre aller et retour.
 Le volume complet est conservé sous 500 m ; les semis, couleurs et matrices
-ne changent pas avec le niveau de détail. Les instances sont rangées par bloc de 250 m
+ne changent pas avec le niveau de détail. Les instances sont rangées par bloc de 125 m
 (`VEGETATION_BLOCK_M`) et par silhouette ; l'élimination hors champ, celle de
-l'image comme celle de la passe d'ombre, écarte les blocs invisibles. Le
+l'image comme celle de la passe d'ombre, écarte les blocs invisibles. Un bloc
+plus grand que la boîte d'ombre (220 m) y ferait entrer tous ses arbres. Le
 peuplement projette son ombre, le sous-étage la reçoit seulement.
 
 Peuplement et sous-étage sont semés par tuile, sur la même grille ancrée au

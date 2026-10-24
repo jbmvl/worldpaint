@@ -1,54 +1,11 @@
 /* Les économies portent sur le travail effectué, jamais sur la sélection. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import * as THREE from 'three';
-import { GroundCover } from '../src/layers/groundCover.js';
 import { defaultTheme } from '../src/themes/default.js';
 import { GenerationBudget } from '../src/core/generationBudget.js';
 import { WorldComposer } from '../src/worldComposer.js';
 import { DECOR_STEP_M } from '../src/core/decorReach.js';
 import { testFrame } from './testFrame.mjs';
-
-const valeurs = (cover) => {
-  const result = [];
-  for (let i = 0; i < cover.mesh.count; i++) result.push(cover._residentAttributes.flatMap(a =>
-    Array.from(a.array.subarray(i * a.itemSize, (i + 1) * a.itemSize))).join(','));
-  return result.sort();
-};
-const bulle = () => ({ frame:testFrame, surfaceGeneration: 0, verticalScale: 1,
-  surfaceElevationAtLocal: () => 0,
-  renderedSupportAtLocal: (x, z, out) => Object.assign(out, { y: x * .02 + z * .03, slopeX: .02, slopeZ: .03 }),
-});
-
-for (const capacity of [2000, 60000]) test(`les ${capacity} places d’herbe retrouvent exactement un semis neuf après déplacement`, () => {
-  const options = { THREE, scene: new THREE.Scene(), bubble: bulle(), groundClass: null, count: capacity };
-  const moving = new GroundCover(options);
-  moving.update(0, 0);
-  moving.update(9, 0);
-  moving.update(-9, 12);
-  const fresh = new GroundCover({ ...options, scene: new THREE.Scene() });
-  fresh.update(-9, 12);
-  assert.equal(moving.mesh.count, fresh.mesh.count);
-  assert.deepEqual(valeurs(moving), valeurs(fresh));
-  const expected = valeurs(fresh);
-  moving.update(-9, 12, { force: true });
-  assert.deepEqual(valeurs(moving), expected);
-  moving.dispose(); fresh.dispose();
-});
-
-test('une fenêtre identique ne transfère ni l’herbe ni les fleurs', () => {
-  const cover = new GroundCover({ THREE, scene: new THREE.Scene(), bubble: bulle(), groundClass: null, count: 60000 });
-  cover.update(0, 0);
-  const attributes = [...cover._residentAttributes, ...cover.flowers.meshes.flatMap(m => [m.instanceMatrix, m.geometry.attributes.aCoverBand])];
-  const versions = attributes.map(a => a.version);
-  for (const a of attributes) a.clearUpdateRanges();
-  cover._instanceCells.begin(cover.bubble.frame, 0, undefined, false);
-  cover._startScatter(0, 0);
-  cover._scatter();
-  assert.deepEqual(attributes.map(a => a.version), versions);
-  assert.ok(attributes.every(a => a.updateRanges.length === 0));
-  cover.dispose();
-});
 
 test('le budget cède seulement après son seuil et repart après la pause', async () => {
   let now = 0, pauses = 0;
@@ -70,7 +27,7 @@ function compositeur() {
     bubble: { processRebuildQueue: () => false, setWaterRelief: () => calls.push('eau'), surfaceGeneration: 0, frame: { ...testFrame, toLocal: () => ({ ...here }) }, materials: { syncGroundClass() {} } },
     groundClass: layer('sol'), cliffs: layer('falaises'), roads: layer('routes'), bridges: layer('ponts'),
     railways: layer('rails'), buildings: layer('bâti'), streets: layer('rues'), gardens: layer('jardins'),
-    furniture: layer('mobilier'), vegetation: layer('arbres'), grass: layer('herbe'), crops: layer('cultures'),
+    furniture: layer('mobilier'), vegetation: layer('arbres'), crops: layer('cultures'),
     life: layer('vie'), fauna: layer('faune'), tractors: layer('tracteurs'), trains: layer('trains'),
   });
   composer.buildings.footprints = [];
@@ -142,39 +99,6 @@ test('le compositeur ferme une couche suspendue avant de poursuivre après destr
   assert.equal(closed, true); assert.equal(published, false);
   assert.equal(composer._building, false); assert.equal(composer._incompleteRefresh, true);
 });
-
-test('les racines couvertes par l’atlas ne sondent pas neuf fois le terrain CPU', () => {
-  let reads = 0;
-  const bubble = bulle();
-  const sample = bubble.renderedSupportAtLocal;
-  bubble.renderedSupportAtLocal = (...args) => { reads++; return sample(...args); };
-  bubble.plantSupportTiles = () => [];
-  const terrainSupport = { sync() {}, install() {}, coversPatch: () => true, dispose() {} };
-  const cover = new GroundCover({ THREE, scene: new THREE.Scene(), bubble, terrainSupport, groundClass: null, count: 2000 });
-  cover.update(0, 0);
-  assert.equal(reads, cover.mesh.count);
-  assert.ok(cover._rootOffsets.every(a => a.every(value => value === 0)));
-  cover.dispose();
-});
-
-test('un semis d’herbe étalé sur plusieurs appels rend le même semis qu’une passe unique', () => {
-  const options = { THREE, scene: new THREE.Scene(), bubble: bulle(), groundClass: null, count: 60000 };
-  const spread = new GroundCover({ ...options, scatterBudgetMs: 0 });
-  spread.update(0, 0);
-  let calls = 1;
-  while (spread.pending) { spread.update(0, 0); calls++; }
-  spread.update(9, 0);
-  const shown = valeurs(spread);
-  assert.ok(!spread.update(9, 0) && spread.pending, 'l’herbe affichée reste l’ancienne tant que la passe court');
-  assert.deepEqual(valeurs(spread), shown);
-  while (spread.pending) spread.update(9, 0);
-  const fresh = new GroundCover({ ...options, scene: new THREE.Scene() });
-  fresh.update(9, 0);
-  assert.ok(calls > 10);
-  assert.deepEqual(valeurs(spread), valeurs(fresh));
-  spread.dispose(); fresh.dispose();
-});
-
 
 test('le terrain finit avant les plantations et les arbres sont repris après terrassement', async () => {
   const { composer, calls } = compositeur();

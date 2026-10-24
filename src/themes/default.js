@@ -152,22 +152,6 @@ export const TERRAIN_LOOK = {
    * huitième à la moitié.
    */
   poolScaleM: 60,
-  /**
-   * Rayon dans lequel une touffe d'herbe lit le sol autour d'elle, en mètres —
-   * la « frange » du semis (`groundCover.fringeOffset`).
-   *
-   * La carte du sol a un pas de 2,7 m : lue au centre de la maille, elle
-   * arrête l'herbe net sur la ligne du carreau. Chaque maille lit donc à
-   * quelques mètres de là, et au bord une maille sur deux lit l'autre surface :
-   * l'herbe déborde sur le sable, le sable mord dans l'herbe. Ce sont les
-   * petits points de la lisière, et ils sont propres au semis — la peinture du
-   * sol, elle, tient son contour d'une interpolation (`terrainMaterial`) et ne
-   * déplace aucune lecture.
-   *
-   * Au-delà de trois mètres environ, une touffe emprunte le sol d'une parcelle
-   * qui n'est plus la sienne.
-   */
-  edgeWarpM: 2.4,
 };
 
 // --- Les arbres ----------------------------------------------------------------
@@ -426,41 +410,6 @@ export const FOREST_TYPES = [
   },
 ];
 
-// --- L’herbe et les fleurs -----------------------------------------------------
-/** Hauteur des touffes, en mètres (une prairie non fauchée monte au genou). */
-export const GRASS_MIN_HEIGHT = 0.22;
-export const GRASS_MAX_HEIGHT = 0.48;
-/** Largeur d'une touffe, en part de sa hauteur. */
-export const GRASS_ASPECT = 0.62;
-/** Part des touffes qui portent des fleurs, en pleine prairie (volontairement basse : un pré n'est pas un parterre). */
-export const FLOWER_SHARE = 0.16;
-/** Part de fleurs en lisière de culture, où poussent les coquelicots (lue directement dans la carte de classes filtrée). */
-export const POPPY_SHARE = 0.42;
-
-/**
- * Ce que devient l'herbe **sous les arbres**. Un sol de forêt n'est pas une
- * prairie plus sombre : c'est une litière où pousse une herbe rase, clairsemée
- * et sans éclat, parce que la lumière ne descend pas jusque-là.
- *
- * - `green` : ce qu'un bois plein vaut de végétal pour `groundCover`. Sans lui,
- *   la part de bois ne comptait pour rien et le sol d'un bois restait la seule
- *   texture du terrain, jusque sous le nez de l'observateur ;
- * - `height` et `density` multiplient la taille et le nombre des touffes ;
- * - `tint` multiplie leur couleur, canal par canal — assombrie et réchauffée
- *   vers la litière. C'est le raccord avec l'albédo de `wood`, qui peint le même sol
- *   au loin, qui décide de ces trois nombres : ils se règlent à l'œil, sur
- *   place, en regardant le sol entre les troncs.
- */
-export const WOODLAND_FLOOR = {
-  green: 0.55,
-  height: 0.5,
-  density: 0.7,
-  // Le même déplacement que l'albédo de `wood` (un quart de litière brune),
-  // et il n'a pas le choix : les deux peignent le même sol, l'un au loin et
-  // l'autre sous le nez.
-  tint: [0.995, 0.89, 0.86],
-};
-
 // --- Les cultures --------------------------------------------------------------
 /**
  * Hauteur et silhouette de chaque culture. `atlas` désigne la case de
@@ -502,24 +451,9 @@ export const CROP_LOOK = {
  *
  * Trois facteurs, canal par canal, en espace linéaire :
  *
- * - `grass` — la prairie, sol **et** touffes. Une fleur, elle, garde sa
- *   couleur : un coquelicot d'Andalousie est rouge, pas rouge fois trois ;
+ * - `grass` — la prairie ;
  * - `bare` — la terre nue et le minéral non couvert ;
  * - `farmland` — les champs, sol, albédo par culture **et** tiges.
- *
- * Et deux nombres, qui ne sont pas des couleurs mais qui font autant :
- *
- * - `grassDensity` — combien de touffes restent. C'est **ce qui rend un pays
- *   sec nu**. Un sol jauni couvert d'une prairie continue reste une prairie
- *   jaunie ; ce qui fait une steppe, c'est la terre qu'on voit entre les
- *   touffes, et rien d'autre ne la montre ;
- * - `grassHeight` — leur taille. Une pelouse d'altitude et une friche
- *   atlantique n'ont pas la même couleur, mais elles se distinguent d'abord à
- *   la hauteur.
- *
- * Ces deux-là multiplient ce que la couverture du sol décide déjà
- * (`SURFACE_LOOK`) : une lande écossaise est rase parce que c'est une lande,
- * *et* un peu plus rase parce qu'elle est en pays venté.
  *
  * Les matières relevées ne sont pas touchées (colonne `wash` à `null`) : une lande, un maquis
  * ou un éboulis disent déjà leur pays, les teinter une seconde fois le dirait
@@ -550,94 +484,70 @@ export const SOIL_LOOK = {
     grass: [0.92, 0.95, 1.02],
     bare: [0.78, 0.8, 0.86],
     farmland: [0.95, 0.97, 1.0],
-    grassDensity: 0.85,
-    grassHeight: 0.7,
   },
   /** Prairie humide : herbe haute et drue, d'un vert plus frais que le bocage. */
   wet_grassland: {
     grass: [0.9, 1.06, 1.02],
     bare: [0.82, 0.86, 0.88],
     farmland: [0.94, 0.98, 0.98],
-    grassDensity: 1.0,
-    grassHeight: 1.0,
   },
   /** Openfield : terre travaillée, noire, et l'herbe du bocage. */
   openfield_cropland: {
     grass: [1.02, 1.0, 0.94],
     bare: [0.8, 0.74, 0.66],
     farmland: [0.95, 0.9, 0.82],
-    grassDensity: 1.0,
-    grassHeight: 1.0,
   },
   /** Taïga : podzol gris, granite, prairie froide. */
   boreal_taiga: {
     grass: [0.9, 0.96, 0.98],
     bare: [0.85, 0.86, 0.9],
     farmland: [0.92, 0.94, 0.95],
-    grassDensity: 0.8,
-    grassHeight: 0.8,
   },
   /** Provence, Grèce, Italie : le pré est jaune huit mois sur douze. */
   garrigue: {
     grass: [2.2, 1.35, 2.6],
     bare: [1.5, 1.25, 0.95],
     farmland: [1.25, 1.1, 0.85],
-    grassDensity: 0.55,
-    grassHeight: 0.7,
   },
   /** Matorral, maquis d'arrière-pays : la même chose de moitié. */
   dry_scrub: {
     grass: [1.6, 1.2, 1.8],
     bare: [1.3, 1.15, 0.95],
     farmland: [1.12, 1.05, 0.92],
-    grassDensity: 0.75,
-    grassHeight: 0.85,
   },
   /** Terrasses sèches : karst pâle, pelouse brûlée. */
   terraced_slope: {
     grass: [1.8, 1.25, 2.0],
     bare: [1.45, 1.35, 1.2],
     farmland: [1.15, 1.08, 0.95],
-    grassDensity: 0.6,
-    grassHeight: 0.65,
   },
   /** Èbre, Castille, Murcie : la steppe. */
   dry_steppe: {
     grass: [2.8, 1.5, 3.2],
     bare: [1.7, 1.4, 1.0],
     farmland: [1.35, 1.15, 0.8],
-    grassDensity: 0.3,
-    grassHeight: 0.55,
   },
   /** Tabernas, Bardenas : plus d'herbe verte du tout. */
   desert_stone: {
     grass: [3.0, 1.55, 3.4],
     bare: [1.85, 1.5, 1.05],
     farmland: [1.4, 1.18, 0.8],
-    grassDensity: 0.15,
-    grassHeight: 0.45,
   },
   /** Alpage : pelouse rase jaune-vert, roche claire. */
   alpine_pasture: {
     grass: [1.35, 1.1, 1.5],
     bare: [1.3, 1.3, 1.35],
-    grassDensity: 0.5,
-    grassHeight: 0.4,
   },
   /** Roche nue, névé et moraine. */
   bare_rock: {
     grass: [1.2, 1.15, 1.3],
     bare: [2.2, 2.3, 2.5],
-    grassDensity: 0.1,
-    grassHeight: 0.35,
   },
   /** Erg : le sable ne se lave pas autrement que le reg. */
   desert_sand: {
     grass: [3.0, 1.55, 3.4],
     bare: [1.85, 1.5, 1.05],
     farmland: [1.4, 1.18, 0.8],
-    grassDensity: 0.15,
-    grassHeight: 0.45,
   },
 };
 
@@ -724,13 +634,12 @@ export const STONE_LOOK = {
  * - `wash` : quel lavage de pays s'applique (`SOIL_LOOK`), ou `null`. Une
  *   lande, un maquis, un éboulis disent déjà leur pays ; les teinter une
  *   seconde fois le dirait deux fois ;
- * - `grassHeight`, `grassDensity`, `grassTint` multiplient la taille, le
- *   nombre et la teinte des touffes (`groundCover`) ; `bushes` est une densité
+ * - `bushes` est une densité
  *   d'arbustes semés hors des bois par `vegetationLayer` — c'est ce qui fait
  *   exister un maquis, ni prairie ni forêt mais un fourré bas ;
  * - `standingWater` : part du sol sous l'eau, de 0 à 1 — les flaques d'un
  *   marais ou d'une vasière, découpées par le shader de terrain et relues côté
- *   CPU par `poolShareAt` (`groundClassMap.js`) : l'herbe et les arbustes s'en
+ *   CPU par `poolShareAt` (`groundClassMap.js`) : les arbustes s'en
  *   écartent au lieu de sortir de l'eau, et la bordent en plus haut et plus
  *   dense sur les derniers mètres avant la flaque (`poolEdgeGain`).
  * - `macro` : multiplicateur de l'amplitude de la variation macro du terrain
@@ -741,9 +650,7 @@ export const STONE_LOOK = {
  * - `grainCellM`, `grainAmplitudeM` : taille et hauteur du grain low poly du
  *   sol (`terrain/lowPolyGrain.js`), en mètres. Absents, la matière prend le
  *   réglage de repli (`LOW_POLY_GRAIN_DEFAULTS`, taillé pour une paroi
- *   rocheuse) — c'est le cas de tout ce qui n'est pas listé ici. L'herbe qui
- *   pousse dessus (`groundCover.js`) lit la même paire, pour ne pas flotter
- *   au-dessus du sol qu'elle recouvre. Sur `rock` uniquement, `grain: { cellM,
+ *   rocheuse) — c'est le cas de tout ce qui n'est pas listé ici. Sur `rock` uniquement, `grain: { cellM,
  *   amplitudeM }` porte un second réglage : celui qu'une forte pente impose
  *   (`uRockGrain`) à toute matière sur une paroi, là où la carte du sol,
  *   plane, ne peut rien dire d'une verticale.
@@ -788,9 +695,6 @@ export const SURFACE_LOOK = {
     patch: { albedo: [0.16, 0.075, 0.125], strength: 0.75 },
 
     wash: null,
-    grassHeight: 0.45,
-    grassDensity: 0.95,
-    grassTint: [0.92, 0.94, 0.72],
     bushes: 0.3,
     // Le buisson d'une lande, nommé : voir TREE_ESSENCES.
     bush: 'moorland',
@@ -810,9 +714,6 @@ export const SURFACE_LOOK = {
     albedo: [0.235, 0.195, 0.08],
 
     wash: null,
-    grassHeight: 0.55,
-    grassDensity: 0.4,
-    grassTint: [1.04, 0.94, 0.7],
     bushes: 0.9,
     // Le buisson épineux d'un maquis, distinct de celui d'une lande.
     bush: 'thornyScrub',
@@ -830,9 +731,6 @@ export const SURFACE_LOOK = {
     albedo: [0.071, 0.099, 0.075],
 
     wash: null,
-    grassHeight: 1.4,
-    grassDensity: 1,
-    grassTint: [0.86, 1.04, 0.82],
     bushes: 0.08,
     standingWater: 0.3,
     // Touffes de jonc, sur la part qui n'est pas déjà de l'eau.
@@ -846,9 +744,6 @@ export const SURFACE_LOOK = {
     // d'une lande ou d'une vasière, chaudes l'une comme l'autre.
     albedo: [0.118, 0.148, 0.17],
     wash: null,
-    grassHeight: 0.5,
-    grassDensity: 0.85,
-    grassTint: [0.96, 0.98, 0.86],
     bushes: 0.12,
     standingWater: 0.15,
     // Salicorne et obione, rases : un grain discret.
@@ -860,9 +755,6 @@ export const SURFACE_LOOK = {
     albedo: [0.205, 0.254, 0.107],
    
     wash: null,
-    grassHeight: 0.4,
-    grassDensity: 0.9,
-    grassTint: [0.94, 1.02, 0.78],
     bushes: 0.04,
     // Les colinettes d'un pré alpin : une échelle bien plus large que le
     // grain d'une lande, avec une amplitude qui reste modérée.
@@ -878,7 +770,6 @@ export const SURFACE_LOOK = {
   mud: {
     albedo: [0.155, 0.147, 0.097],
     wash: null,
-    grassDensity: 0,
     bushes: 0,
     standingWater: 0.35,
     macro: 1.6,
@@ -895,9 +786,6 @@ export const SURFACE_LOOK = {
     albedo: [0.323, 0.292, 0.254],
     wash: null,
     stone: true,
-    grassHeight: 0.3,
-    grassDensity: 0.06,
-    grassTint: [1, 0.96, 0.88],
     bushes: 0,
     macro: 2.2,
     // Un jumelage de blocs, cellule courte et amplitude marquée.
@@ -909,9 +797,6 @@ export const SURFACE_LOOK = {
     wash: null,
     stone: true,
     grain: { cellM: 6, amplitudeM: 1.4 },
-    grassHeight: 0.35,
-    grassDensity: 0.1,
-    grassTint: [1, 0.96, 0.88],
     bushes: 0.02,
     // La dalle : des blocs plus larges que l'éboulis, moins chaotiques.
     grainCellM: 4.5,
@@ -921,7 +806,6 @@ export const SURFACE_LOOK = {
   ice: {
     albedo: [0.6, 0.66, 0.72],
     wash: null,
-    grassDensity: 0,
     bushes: 0,
     // Un léger modelé, pas le poli d'un billard.
     grainCellM: 6,
@@ -931,9 +815,6 @@ export const SURFACE_LOOK = {
     albedo: [0.624, 0.539, 0.361],
 
     wash: null,
-    grassHeight: 0.6,
-    grassDensity: 0.08,
-    grassTint: [1.06, 0.98, 0.72],
     bushes: 0.05,
     // L'oyat d'une dune, jamais le buisson d'une lande ou d'un maquis.
     bush: 'marram',
@@ -948,7 +829,6 @@ export const SURFACE_LOOK = {
     albedo: srgb('#908b7f'),
 
     wash: 'pavement',
-    grassDensity: 0,
     bushes: 0,
     macro: 0.3,
     // Le sol de la ville est plan, pour la même raison que `settled`.
@@ -964,8 +844,6 @@ export const SURFACE_LOOK = {
     albedo: [0.021, 0.045, 0.06],
    
     wash: null,
-    grassHeight: 0,
-    grassDensity: 0,
     bushes: 0,
   },
 };
@@ -1739,19 +1617,6 @@ export const defaultTheme = Object.freeze({
   forests: FOREST_TYPES,
   tunnelLights: { color: srgb("#ffe3a1"), intensity: 55, reachM: 35, spacingM: 18 },
   leaves: { lengthM: 0.12, widthM: 0.065, foldM: 0.012 },
-  grass: {
-    bladeWidth: 0.08,
-    bladeBend: 0.24,
-    bladeColors: { root: [0.074, 0.18, 0.020], tip: [0.074, 0.18, 0.020],
-      palette: [[0.074, 0.18, 0.020], [0.10, 0.23, 0.030], [0.060, 0.16, 0.016]] },
-    flowers: { stem: [0.051, 0.135, 0.017], petals: [srgb("#f4f1db"), srgb("#efc627"), srgb("#d63824")], centres: [srgb("#d1a621"), srgb("#c89419"), srgb("#282320")] },
-    minHeight: GRASS_MIN_HEIGHT,
-    maxHeight: GRASS_MAX_HEIGHT,
-    aspect: GRASS_ASPECT,
-    flowerShare: FLOWER_SHARE,
-    poppyShare: POPPY_SHARE,
-    woodFloor: WOODLAND_FLOOR,
-  },
   crops: CROP_LOOK,
   surfaces: SURFACE_LOOK,
   soils: SOIL_LOOK,

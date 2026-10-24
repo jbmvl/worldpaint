@@ -99,8 +99,8 @@ export { ROAD_LIFT_M, ROAD_SNAP_RADIUS_M } from './layers/roadNetwork.js';
 export { TERRACE_SEAT_HEIGHT_M, TERRACE_TABLE_HEIGHT_M } from './layers/buildingLayer.js';
 
 // L'emprise routière (chaussée + accotement excavé), pour qu'une application
-// pose ses propres objets à la même frontière que l'herbe, les haies et les
-// jardins. `inCorridor(world.composer.roads.index, x, z)` est la question complète.
+// pose ses propres objets à la même frontière que les cultures, les haies et
+// les jardins. `inCorridor(world.composer.roads.index, x, z)` est la question complète.
 export {
   CORRIDOR_MARGIN_M,
   inCorridor,
@@ -125,7 +125,6 @@ export { createBalloonGeometry, balloonRadiusAt } from './layers/lifeLayer.js';
 export { createPersonBodyGeometry, createPersonArmGeometry, composeOutfits, SHOULDER } from './models/people.js';
 export { CHEER_MAX } from './layers/spectatorPlacement.js';
 
-// La couverture du sol et les cultures, pour qui veut semer une seule matière
+// Les cultures, pour qui veut semer une seule matière
 // sur une tuile sans monter tout le décor.
-export { GroundCover } from './layers/groundCover.js';
 export { CropLayer } from './layers/cropLayer.js';

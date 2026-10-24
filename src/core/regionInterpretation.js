@@ -380,16 +380,14 @@ export const SOIL_WASH_NEUTRAL = Object.freeze({
   grass: Object.freeze([1, 1, 1]),
   bare: Object.freeze([1, 1, 1]),
   farmland: Object.freeze([1, 1, 1]),
-  grassDensity: 1,
-  grassHeight: 1,
 });
 
 /**
  * Ce que la matrice fait au sol, toujours complet.
  *
- * Le shader de terrain, les touffes d'herbe et les tiges de culture lisent
- * **cette** fonction et pas la tranche du thème directement : c'est ce qui
- * garantit qu'ils appliquent le même facteur. Trois lectures indépendantes d'un
+ * Le shader de terrain et les tiges de culture lisent **cette** fonction et
+ * pas la tranche du thème directement : c'est ce qui garantit qu'ils
+ * appliquent le même facteur. Deux lectures indépendantes d'un
  * tableau à trous divergeraient à la première matrice qui n'en décrit que deux,
  * et l'écart se verrait exactement là où il est le plus visible — à la jointure
  * entre le premier plan instancié et la teinte lointaine.
@@ -406,8 +404,6 @@ export function soilWashFor(matrix, soils = null) {
     grass: look.grass || SOIL_WASH_NEUTRAL.grass,
     bare: look.bare || SOIL_WASH_NEUTRAL.bare,
     farmland: look.farmland || SOIL_WASH_NEUTRAL.farmland,
-    grassDensity: look.grassDensity ?? 1,
-    grassHeight: look.grassHeight ?? 1,
   };
 }
 

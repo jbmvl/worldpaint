@@ -269,15 +269,6 @@ import {
   clipPolygonOutsideCorridor,
 } from '../src/layers/roadCorridor.js';
 import { fittedGardenMargin, gardenOutlineClear } from '../src/layers/gardenLayer.js';
-import {
-  grassEdgeFade,
-  fillGrassCell,
-  fringeOffset,
-  GRASS_PER_CELL,
-  GRASS_TUFT_STRIDE,
-  GRASS_CELL_M,
-  isFloweringVariant,
-} from '../src/layers/groundCover.js';
 import { coveringTiles } from '../src/core/vectorTileSource.js';
 import {
   tileableValueNoise,
@@ -361,24 +352,6 @@ import {
 } from '../src/layers/vegetationLayer.js';
 import { TREE_ESSENCES } from '../src/themes/default.js';
 import {
-  grassVariantFor,
-  grassSampleFallback,
-  grassBlockedByCrop,
-  grassHeightFade,
-  grassMassVariant,
-  GRASS_BANDS,
-  GRASS_RADIUS_M,
-  GRASS_COUNT,
-  GRASS_FADE_FROM,
-  GRASS_HEIGHT_FADE_FLOOR,
-  GRASS_GREEN_MIN,
-  coverGrassFor,
-  coverGrainFor,
-  grassGreenFor,
-  woodFloorFor,
-  WOODLAND_FLOWER_MAX,
-} from '../src/layers/groundCover.js';
-import {
   fillCropCell,
   cropEdgeFade,
   cropHeightFade,
@@ -396,11 +369,7 @@ import { coverBand, coverBandCells, coverBandFade, coverBandDistance, coverMassD
 import { createFoliageMaterial } from '../src/materials/foliageMaterial.js';
 import {
   atlasOffsets,
-  createGrassAtlasCanvas,
   createCropAtlasCanvas,
-  GRASS_ATLAS_COLS,
-  GRASS_ATLAS_ROWS,
-  GRASS_ATLAS_OFFSETS,
   CROP_ATLAS_COLS,
   CROP_ATLAS_ROWS,
   CROP_ATLAS_OFFSETS,
@@ -503,7 +472,6 @@ import {
 } from '../src/layers/hedgeGeometry.js';
 import {
   TREE_ATLAS_OFFSETS,
-  GRASS_VARIANTS,
   createTreeAtlasCanvas,
   createRoadCanvas,
   macroNoiseField,
@@ -680,7 +648,6 @@ import {
   FOREST_TYPES,
   CROP_LOOK,
   TERRAIN_LOOK,
-  WOODLAND_FLOOR,
   TOWN_PALETTES,
   TREE_VARIANTS,
   ROOF_PITCH as DEFAULT_PITCH,
@@ -2101,36 +2068,6 @@ test('un saut d’un pays à l’autre repose la question de la région', async 
   assert.equal(update(-5.98, 37.39, { x: 100, z: 0 }), false, 'même région');
 });
 
-test('la correction de sol est toujours complète', () => {
-  // Trois facteurs, toujours les trois : le shader, les touffes et les tiges
-  // les lisent séparément, et une matrice qui n'en décrirait que deux ferait
-  // diverger celui qui manque.
-  const complete = (wash) => {
-    for (const key of ['grass', 'bare', 'farmland']) {
-      assert.ok(Array.isArray(wash[key]) && wash[key].length === 3, key);
-    }
-  };
-
-  complete(soilWashFor(null, defaultTheme.soils));
-  complete(soilWashFor('pays-inconnu', defaultTheme.soils));
-  // L'alpage ne décrit pas ses champs — il n'en a guère : le facteur manquant
-  // doit valoir « pas de correction », pas `undefined`.
-  const alpage = soilWashFor('alpine_pasture', defaultTheme.soils);
-  complete(alpage);
-  assert.deepEqual(alpage.farmland, [1, 1, 1]);
-  assert.notDeepEqual(alpage.bare, [1, 1, 1], 'la roche claire, elle, est décrite');
-
-  // Sans tranche de thème, tout est neutre : un thème d'avant les sols se
-  // comporte comme avant.
-  assert.deepEqual(soilWashFor('garrigue', null), {
-    grass: [1, 1, 1],
-    bare: [1, 1, 1],
-    farmland: [1, 1, 1],
-    grassDensity: 1,
-    grassHeight: 1,
-  });
-});
-
 test('un pays sec éclaircit et jaunit son herbe', () => {
   // La seule propriété qu'on peut vérifier sans regarder : une herbe sèche
   // réfléchit plus qu'une herbe grasse, et son rouge monte plus vite que son
@@ -2161,25 +2098,6 @@ test('aucune correction de sol ne sature la touffe du premier plan', () => {
         assert.ok(value > 0 && value <= 3.5, `${matrix}.${key} = ${value}`);
       }
     }
-  }
-});
-
-test('un pays sec laisse voir sa terre entre les touffes', () => {
-  // C'est ce qui fait une steppe, et la couleur seule ne le fait pas : un sol
-  // jauni couvert d'une prairie continue reste une prairie jaunie. La densité
-  // doit donc décroître avec la sécheresse, et la hauteur avec elle.
-  const densite = (matrix) => soilWashFor(matrix, defaultTheme.soils).grassDensity;
-  assert.equal(densite('hedgerow_meadow'), 1, 'la référence garde sa prairie');
-  assert.ok(densite('garrigue') < densite('hedgerow_meadow'));
-  assert.ok(densite('dry_steppe') < densite('garrigue'));
-  assert.ok(densite('desert_stone') < densite('dry_steppe'));
-
-  // Aucune matrice ne va jusqu'à supprimer l'herbe : un sol nu partout se lit
-  // comme un décor qui n'a pas fini de charger.
-  for (const matrix of Object.keys(MATRIX_KINDS)) {
-    const { grassDensity, grassHeight } = soilWashFor(matrix, defaultTheme.soils);
-    assert.ok(grassDensity > 0 && grassDensity <= 1, `${matrix} densité`);
-    assert.ok(grassHeight > 0.3 && grassHeight <= 1, `${matrix} hauteur`);
   }
 });
 
@@ -2290,16 +2208,6 @@ test('chaque géologie a une teinte lisible, et le calcaire est la référence',
   for (const region of REGIONS) {
     assert.ok(defaultTheme.stones[region.stone] || region.stone === 'limestone',
       `${region.id} : ${region.stone} n’a pas de teinte`);
-  }
-});
-
-test('une fleur garde sa couleur, l’herbe autour prend celle du pays', () => {
-  const flowering = ['white', 'yellow', 'poppy', 'clumpWhite', 'clumpYellow', 'clumpPoppy'];
-  for (const name of flowering) {
-    assert.ok(isFloweringVariant(GRASS_VARIANTS.indexOf(name)), name);
-  }
-  for (const name of ['plain', 'clump', 'clumpAlt']) {
-    assert.equal(isFloweringVariant(GRASS_VARIANTS.indexOf(name)), false, name);
   }
 });
 
@@ -2747,24 +2655,6 @@ test('la bordure d’une flaque monte puis retombe, sans jamais sortir de [0, 1]
   }
 });
 
-test('l’herbe et le fourré refusent le milieu d’une flaque, et la bordent plus dense', () => {
-  // Ce que le shader dessine et ce que l'herbe sème doivent partager la même
-  // vérité : pas de comptage séparé de flaques, une seule lecture (`poolShareAt`).
-  const groundCoverSource = readFileSync('src/layers/groundCover.js', 'utf8');
-  assert.match(groundCoverSource, /import \{ SETTLED_GRASS, VEGETAL_SURFACES, poolShareAt, poolEdgeGain \}/);
-  assert.match(groundCoverSource, /if \(pool > 0\.5\) \{[^}]*continue; \}/);
-  assert.match(groundCoverSource, /\(1 \+ poolEdge \* POOL_EDGE_DENSITY_BOOST\)/);
-  assert.match(groundCoverSource, /\(1 \+ poolEdge \* POOL_EDGE_HEIGHT_BOOST\)/);
-
-  const vegetationSource = readFileSync('src/layers/vegetationLayer.js', 'utf8');
-  assert.match(vegetationSource, /import \{ poolShareAt, poolEdgeGain \} from '\.\.\/terrain\/groundClassMap\.js';/);
-  assert.equal(
-    (vegetationSource.match(/> 0\.5\s*\n\s*\?\s*0\s*\n\s*: \w+Look\.density/g) || []).length,
-    2,
-    'les deux sites d’appel de coverBushesFor refusent le milieu d’une flaque'
-  );
-});
-
 test('la part d’une matière s’interpole, là où son identifiant ne le peut pas', () => {
   // Un identifiant ne se mélange pas — entre le sable et l'eau il n'y a rien —
   // mais l'appartenance à une matière, si. C'est ce que le filtrage linéaire
@@ -2822,55 +2712,6 @@ test('la part d’une matière s’interpole, là où son identifiant ne le peut
   );
 });
 
-test('la couverture règle l’herbe et le fourré, jamais leur présence', () => {
-  // Le cas par défaut est l’identité : une prairie pousse exactement comme
-  // avant que les couvertures existent.
-  const prairie = coverGrassFor(null);
-  assert.deepEqual(prairie, { height: 1, density: 1, tint: [1, 1, 1] });
-  assert.deepEqual(coverGrassFor('couverture-inconnue'), prairie);
-  assert.equal(coverBushesFor(null).density, 0);
-  assert.equal(coverBushesFor(null).essence, null);
-
-  // Une lande est rase, un marais est haut : c’est ce qui les distingue à
-  // hauteur d’homme, la couleur du sol ne le dit pas.
-  assert.ok(coverGrassFor('heath').height < 1, 'la lande est rase');
-  assert.ok(coverGrassFor('wetland').height > 1, 'la roselière monte');
-  // Un maquis est surtout du vide entre des arbustes : peu d’herbe, beaucoup
-  // de buissons — l’inverse exact d’un pré.
-  assert.ok(coverGrassFor('scrub').density < coverGrassFor('heath').density);
-  assert.ok(coverBushesFor('scrub').density > coverBushesFor('heath').density);
-  assert.equal(coverBushesFor('scree').density, 0, 'rien ne pousse dans un éboulis');
-
-  // Une lande et un maquis ne sèment plus le même buisson.
-  assert.equal(coverBushesFor('heath').essence, 'moorland');
-  assert.equal(coverBushesFor('scrub').essence, 'thornyScrub');
-  assert.equal(coverBushesFor('sand').essence, 'marram');
-  assert.notEqual(coverBushesFor('heath').essence, coverBushesFor('scrub').essence);
-});
-
-test('le grain d’une touffe suit celui du sol, matière par matière', () => {
-  // Une matière absente de la table reprend le réglage de repli — le même
-  // que `terrainMaterial.js` applique par défaut.
-  const repli = coverGrainFor(null);
-  assert.deepEqual(repli, {
-    cellM: LOW_POLY_GRAIN_DEFAULTS.cellM,
-    amplitudeM: LOW_POLY_GRAIN_DEFAULTS.amplitudeM,
-  });
-  assert.deepEqual(coverGrainFor('couverture-inconnue'), repli);
-  assert.deepEqual(coverGrainFor('grass'), {cellM:6,amplitudeM:1.4}, 'la prairie conserve son modelé procédural');
-
-  // Une lande porte de petites touffes serrées, un pré alpin de larges
-  // colinettes : les deux divergent du repli et l’un de l’autre.
-  const heath = coverGrainFor('heath');
-  const alpine = coverGrainFor('alpine');
-  assert.deepEqual(heath, {
-    cellM: defaultTheme.surfaces.heath.grainCellM,
-    amplitudeM: defaultTheme.surfaces.heath.grainAmplitudeM,
-  });
-  assert.notEqual(heath.cellM, repli.cellM);
-  assert.ok(alpine.cellM > heath.cellM, 'les colinettes d’un pré alpin sont plus larges');
-});
-
 test('une matière sans essence propre replie sur le tapis générique', () => {
   // grass, wood, wetland… n'ont pas de champ `bush` : le repli est le
   // comportement actuel, jamais une essence inventée.
@@ -2925,67 +2766,6 @@ test('le semis de biome sème l’essence de sa matière, pas celle du peuplemen
   );
   assert.match(source, /describeTree\(tree, seed, base, type, lowPart, variants, cellStrata, false, 0, this\.theme\.trees\.variants\);/);
   assert.match(source, /describeTree\(tree, seed, slot, type, lowPart, variants, cellStrata, true, edge, this\.theme\.trees\.variants\);/);
-});
-
-test('le sol d’un bois porte une litière, pas une prairie à l’ombre', () => {
-  const bois = { grass: 0, wood: 1, farmland: 0, bare: 0 };
-  const pre = { grass: 1, wood: 0, farmland: 0, bare: 0 };
-  const nu = { grass: 0, wood: 0, farmland: 0, bare: 1 };
-
-  // Le défaut : la part de bois ne comptait pour rien, donc une forêt n’avait
-  // pas une touffe — `grass` vaut zéro sous un couvert d’arbres.
-  const sousBois = grassGreenFor(bois);
-  assert.ok(sousBois.green > GRASS_GREEN_MIN, `un bois est du végétal (${sousBois.green})`);
-  assert.equal(sousBois.shade, 1, 'et tout ce vert-là est du sous-bois');
-  // Mais moins qu’un pré : c’est ce qui garde le pire cas d’instances sur la
-  // prairie pleine, celle sur laquelle `GRASS_COUNT` est mesuré.
-  assert.ok(sousBois.green < grassGreenFor(pre).green, 'un bois vaut moins qu’un pré');
-  assert.equal(grassGreenFor(pre).shade, 0, 'un pré n’est l’ombre de personne');
-  assert.equal(grassGreenFor(nu).green, 0, 'un sol nu reste nu');
-
-  // Une lisière mêle les deux, et la part d’ombre suit.
-  const lisiere = grassGreenFor({ grass: 0.5, wood: 0.5, farmland: 0 });
-  assert.ok(lisiere.shade > 0 && lisiere.shade < 1, `part d’ombre en lisière : ${lisiere.shade}`);
-  assert.ok(lisiere.green > sousBois.green, 'la lisière est plus verte que le sous-bois');
-
-  // Ce qui y pousse : rase, clairsemée, assombrie — et le neutre exact hors
-  // des bois, sinon toute prairie du monde changerait de couleur.
-  assert.deepEqual(woodFloorFor(0), { height: 1, density: 1, tint: [1, 1, 1] });
-  const litiere = woodFloorFor(1);
-  assert.ok(litiere.height < 0.7, `herbe rase (${litiere.height})`);
-  assert.ok(litiere.density < 1, 'clairsemée');
-  assert.ok(litiere.tint[1] < 1 && litiere.tint[2] < litiere.tint[1], 'assombrie et réchauffée');
-  // Et la transition est continue : à mi-ombre, on est à mi-chemin.
-  const demi = woodFloorFor(0.5);
-  close(demi.height, (1 + litiere.height) / 2, 1e-9, 'fondu de hauteur');
-  close(demi.tint[2], (1 + litiere.tint[2]) / 2, 1e-9, 'fondu de teinte');
-
-  // Sous un couvert fermé, rien ne fleurit : les fleurs de l’atlas sont des
-  // fleurs de plein soleil.
-  assert.ok(WOODLAND_FLOWER_MAX > 0 && WOODLAND_FLOWER_MAX < 1);
-  assert.ok(sousBois.shade > WOODLAND_FLOWER_MAX, 'un vrai bois passe le seuil');
-});
-
-test('un sol de forêt est un vert mêlé de brun, jamais un trou noir', () => {
-  // Un sous-bois n'est pas un pré à l'ombre : c'est une litière mêlée d'herbe
-  // (vert dominant, rouge ≥ 0,45 × vert), et plus sombre qu'une prairie sans tomber
-  // dans le noir.
-  const woodAlbedo = defaultTheme.surfaces.wood.albedo;
-  const grassAlbedo = defaultTheme.surfaces.grass.albedo;
-  const luma = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  assert.ok(luma(woodAlbedo) < luma(grassAlbedo), 'un sous-bois reste plus sombre qu’un pré');
-  assert.ok(luma(woodAlbedo) > 0.02, 'jamais un trou noir');
-  assert.ok(
-    woodAlbedo[1] >= woodAlbedo[0] && woodAlbedo[0] >= woodAlbedo[1] * 0.45,
-    `la litière est verte mêlée de brun : ${woodAlbedo}`
-  );
-
-  // Les touffes qui poussent dessus suivent le même déplacement : le vert y
-  // recule un peu plus que le rouge.
-  assert.ok(
-    WOODLAND_FLOOR.tint[0] > WOODLAND_FLOOR.tint[1],
-    `le rouge doit reculer moins que le vert : ${WOODLAND_FLOOR.tint}`
-  );
 });
 
 test('la carte de classes sait où s’arrête un bois', () => {
@@ -9502,36 +9282,6 @@ test('les mailles d’herbe tiennent dans le disque, les plus proches d’abord'
   assert.ok(cells[0].distance < cells[cells.length - 1].distance);
 });
 
-test('le disque d’herbe se termine en fondu, pas au couteau', () => {
-  close(grassEdgeFade(0, 40, 0.6), 1, 1e-9, 'au centre');
-  close(grassEdgeFade(24, 40, 0.6), 1, 1e-9, 'jusqu’au début du fondu');
-  close(grassEdgeFade(32, 40, 0.6), 0.5, 1e-9, 'à mi-fondu');
-  close(grassEdgeFade(40, 40, 0.6), 0, 1e-9, 'au bord');
-  close(grassEdgeFade(60, 40, 0.6), 0, 1e-9, 'au-delà');
-});
-
-test('la hauteur de l’herbe ne suit plus le fondu jusqu’à zéro', () => {
-  // Le plancher garde une touffe perceptible même là où plus aucune ne sera
-  // retenue par `grassEdgeFade` — c'est tout l'objet du correctif.
-  close(grassHeightFade(0, 40, 0.6), 1, 1e-9, 'au centre : pleine hauteur');
-  close(
-    grassHeightFade(40, 40, 0.6),
-    GRASS_HEIGHT_FADE_FLOOR,
-    1e-9,
-    'au bord : plancher, pas zéro'
-  );
-  close(
-    grassHeightFade(60, 40, 0.6),
-    GRASS_HEIGHT_FADE_FLOOR,
-    1e-9,
-    'au-delà : toujours le plancher'
-  );
-  assert.ok(
-    grassHeightFade(40, 40, 0.6) > grassEdgeFade(40, 40, 0.6),
-    'la hauteur rapetisse moins vite que la présence en bord de disque'
-  );
-});
-
 test('les cultures ont le même plancher de hauteur que l’herbe', () => {
   close(cropHeightFade(0, CROP_RADIUS_M, CROP_FADE_FROM), 1, 1e-9, 'au centre');
   close(
@@ -9543,93 +9293,6 @@ test('les cultures ont le même plancher de hauteur que l’herbe', () => {
   // La présence, elle, continue de tomber à zéro : seule la hauteur est
   // planchée, la densité par distance n'est pas touchée.
   close(cropEdgeFade(CROP_RADIUS_M, CROP_RADIUS_M, CROP_FADE_FROM), 0, 1e-9, 'présence : zéro au bord');
-});
-
-test('une zone non classée reçoit le même repli que le terrain : de l’herbe', () => {
-  // Le shader de terrain peint le non-classé avec `unclassified` — par défaut
-  // de l'herbe. Avant ce correctif, `groundCover` recevait `null` de `sampleAt`
-  // et ne semait rien : sol vert, aucune touffe. Les deux replis doivent rester
-  // le même, sinon la peinture du sol et les touffes se contredisent.
-  const allGrass = grassSampleFallback(null, 'grass');
-  assert.equal(allGrass.grass, 1);
-  assert.equal(allGrass.farmland, 0);
-  assert.equal(defaultTheme.terrain.unclassified, 'grass', 'le repli du thème est bien de l’herbe');
-
-  // C'était quatre poids, c'est un nom de matière : un thème qui déciderait un
-  // autre repli doit se refléter ici aussi.
-  assert.equal(grassSampleFallback(null, 'wood').wood, 1);
-  assert.equal(grassSampleFallback(null, 'farmland').farmland, 1);
-
-  // Une couverture végétale pousse comme de l'herbe — c'est sa ligne de
-  // `SURFACE_LOOK` qui dit ensuite de quelle taille et de quelle teinte.
-  for (const kind of VEGETAL_SURFACES) {
-    assert.equal(grassSampleFallback(null, kind).grass, 1, `${kind} porte de l’herbe`);
-  }
-  // Le minéral n'en porte pas.
-  for (const kind of ['bare', 'scree', 'rock', 'sand', 'pavement', 'water']) {
-    assert.equal(grassSampleFallback(null, kind).bare, 1, `${kind} ne porte rien`);
-  }
-  // Et un lotissement porte sa part, celle qu'il peignait dans la carte.
-  assert.equal(grassSampleFallback(null, 'settled').grass, SETTLED_GRASS);
-
-  // Un échantillon réel n'est jamais remplacé par le repli.
-  const real = { grass: 0.9, wood: 0, farmland: 0, bare: 0.1 };
-  assert.equal(grassSampleFallback(real, 'grass'), real);
-});
-
-test('une vraie culture efface l’herbe générique, mais pas la lisière', () => {
-  // Champ en culture reconnue : pas d'herbe générique dessus.
-  const inField = { grass: 0, farmland: 1 };
-  assert.equal(grassBlockedByCrop(inField, 'wheat'), true);
-
-  // Champ labouré : `cropAt` rend aussi une culture (`plough`) — même règle.
-  assert.equal(grassBlockedByCrop(inField, 'plough'), true);
-
-  // Pas de culture ici : l'herbe générique reste.
-  assert.equal(grassBlockedByCrop(inField, null), false);
-
-  // Bord de champ : herbe et culture mêlées dans la carte de classes. C'est
-  // là, et seulement là, que la lisière (coquelicot compris, voir
-  // `grassVariantFor`) doit continuer à pousser malgré une culture reconnue.
-  const edge = { grass: 0.5, farmland: 0.5 };
-  assert.equal(grassBlockedByCrop(edge, 'wheat'), false);
-
-  // Prairie pure à côté d'un champ nommé par erreur (ne devrait pas arriver,
-  // mais la fonction ne regarde que `crop` et `sample`, pas la cohérence des
-  // deux) : sans mélange, pas de lisière, donc bloqué.
-  const meadow = { grass: 1, farmland: 0 };
-  assert.equal(grassBlockedByCrop(meadow, 'wheat'), true);
-});
-
-test('une maille d’herbe rend toujours les mêmes touffes', () => {
-  // C'est l'invariant qui empêche l'herbe de se redistribuer entièrement tous
-  // les quelques mètres : la graine ne dépend que de la maille, et le nombre de
-  // tirages consommés est constant.
-  const a = fillGrassCell(new Float32Array(GRASS_PER_CELL * GRASS_TUFT_STRIDE), maille(12, -7, GRASS_CELL_M));
-  // Des mailles voisines tirées entre les deux appels : l'état du générateur ne
-  // doit pas fuir d'une maille à l'autre.
-  fillGrassCell(new Float32Array(GRASS_PER_CELL * GRASS_TUFT_STRIDE), maille(13, -7, GRASS_CELL_M));
-  const b = fillGrassCell(new Float32Array(GRASS_PER_CELL * GRASS_TUFT_STRIDE), maille(12, -7, GRASS_CELL_M));
-  assert.deepEqual([...a], [...b], 'même maille, mêmes touffes');
-
-  const other = fillGrassCell(new Float32Array(GRASS_PER_CELL * GRASS_TUFT_STRIDE), maille(13, -7, GRASS_CELL_M));
-  assert.notDeepEqual([...a], [...other], 'deux mailles ne portent pas la même touffe');
-});
-
-test('les touffes d’une maille restent dans leur maille', () => {
-  for (const [gx, gz] of [[0, 0], [-4, 9], [312, -77]]) {
-    const tufts = fillGrassCell(new Float32Array(GRASS_PER_CELL * GRASS_TUFT_STRIDE), maille(gx, gz, GRASS_CELL_M));
-    for (let i = 0; i < GRASS_PER_CELL; i++) {
-      const at = i * GRASS_TUFT_STRIDE;
-      const dx = tufts[at] - gx * GRASS_CELL_M;
-      const dz = tufts[at + 1] - gz * GRASS_CELL_M;
-      assert.ok(dx >= 0 && dx <= GRASS_CELL_M, `x dans la maille (${dx})`);
-      assert.ok(dz >= 0 && dz <= GRASS_CELL_M, `z dans la maille (${dz})`);
-      for (let k = 2; k < GRASS_TUFT_STRIDE; k++) {
-        assert.ok(tufts[at + k] >= 0 && tufts[at + k] < 1, 'tirages normalisés');
-      }
-    }
-  }
 });
 
 test('à largeur égale, c’est toujours la même voie qui s’incline', () => {
@@ -10094,25 +9757,6 @@ test('chaque silhouette tient dans sa case, pose au sol et la remplit', () => {
 
 // --- Fleurs et cultures -----------------------------------------------------
 
-test('le coquelicot pousse en lisière de culture, pas au milieu du pré', () => {
-  const poppy = GRASS_VARIANTS.indexOf('poppy');
-  // Herbe **et** culture au même endroit : le filtrage linéaire de la carte de
-  // classes ne donne ça qu'au bord d'un champ.
-  assert.equal(grassVariantFor({ grass: 0.5, farmland: 0.5 }, 0.1), poppy);
-  // En plein pré, jamais.
-  for (const draw of [0, 0.1, 0.5, 0.99]) {
-    assert.notEqual(grassVariantFor({ grass: 1, farmland: 0 }, draw), poppy);
-  }
-  // Et l'immense majorité des touffes reste de l'herbe nue.
-  let flowered = 0;
-  for (let i = 0; i < 100; i++) {
-    if (grassVariantFor({ grass: 1, farmland: 0 }, i / 100) !== 0) flowered++;
-  }
-  assert.ok(flowered > 5 && flowered < 30, `un pré n'est pas un parterre (${flowered} %)`);
-  // Sans donnée, pas de fleur inventée.
-  assert.equal(grassVariantFor(null, 0.01), 0);
-});
-
 test('une maille de culture rend toujours les mêmes touffes', () => {
   const size = CROP_PER_CELL * CROP_TUFT_STRIDE;
   const a = fillCropCell(new Float32Array(size), maille(4, -9, CROP_CELL_M));
@@ -10407,19 +10051,6 @@ test('le halo du lampadaire de style est au-dessus du mât, dans sa lanterne', (
   assert.ok(classic.height > 3 && classic.height < top, 'le cœur de la lanterne est sous le sommet du lampadaire');
 });
 
-test('le semis des cultures a la densité de celui de l’herbe', () => {
-  // « Il faut faire comme l'herbe » : même maille, donc même densité au mètre
-  // carré à `density: 1`. C'est ce rapport, et non un nombre absolu, qui décide
-  // qu'un champ de blé se lit comme un champ.
-  const parMetreCarre = CROP_PER_CELL / CROP_CELL_M ** 2;
-  const herbeParMetreCarre = GRASS_PER_CELL / GRASS_CELL_M ** 2;
-  assert.ok(
-    parMetreCarre >= herbeParMetreCarre * 0.8,
-    `blé ${parMetreCarre.toFixed(2)}/m² contre herbe ${herbeParMetreCarre.toFixed(2)}/m²`
-  );
-
-});
-
 /**
  * Rejoue le semis d'une couverture — toutes bandes confondues — et rend le
  * nombre d'instances posées, ainsi que le détail par bande. C'est la boucle de
@@ -10448,81 +10079,6 @@ function semisComplet(bands, fill, stride, densite) {
   return { total, parBande };
 }
 
-test('le plafond de touffes couvre le pire cas, sinon la couverture rétrécit en douce', () => {
-  // Un plafond atteint ne casse rien — les mailles sont semées de la plus
-  // proche à la plus lointaine — mais il raccourcit la couverture sans le dire,
-  // et d'une quantité qui dépend de la culture. On préfère le savoir ici.
-  const prairie = semisComplet(GRASS_BANDS, fillGrassCell, GRASS_TUFT_STRIDE, 1);
-  assert.ok(
-    prairie.total <= GRASS_COUNT,
-    `prairie pleine : ${prairie.total} touffes pour ${GRASS_COUNT}`
-  );
-
-  for (const [nom, look] of Object.entries(CROP_LOOK)) {
-    const champ = semisComplet(CROP_BANDS, fillCropCell, CROP_TUFT_STRIDE, look.density);
-    assert.ok(champ.total <= CROP_COUNT, `${nom} : ${champ.total} touffes pour ${CROP_COUNT}`);
-  }
-});
-
-test('l’agrégation tient sa promesse : plus loin, sans exploser le nombre d’instances', () => {
-  // Le pari des bandes est celui-ci et pas un autre : si une bande lointaine
-  // coûtait autant qu'une bande proche, autant garder un disque uniforme et
-  // l'agrandir. Chaque bande doit donc poser **moins** d'instances que la
-  // précédente, alors qu'elle couvre une surface bien plus grande.
-  for (const [nom, bands, fill, stride, densite] of [
-    ['herbe', GRASS_BANDS, fillGrassCell, GRASS_TUFT_STRIDE, 1],
-    ['blé', CROP_BANDS, fillCropCell, CROP_TUFT_STRIDE, 1],
-  ]) {
-    const { parBande } = semisComplet(bands, fill, stride, densite);
-    for (let i = 1; i < parBande.length; i++) {
-      const surface = Math.PI * (bands[i].to ** 2 - bands[i].from ** 2);
-      const precedente = Math.PI * (bands[i - 1].to ** 2 - bands[i - 1].from ** 2);
-      assert.ok(
-        surface > precedente,
-        `${nom} : la bande ${i} doit couvrir plus de surface que la ${i - 1}`
-      );
-      assert.ok(
-        parBande[i] < parBande[i - 1],
-        `${nom} : bande ${i} pose ${parBande[i]} instances contre ${parBande[i - 1]} pour la ${i - 1}`
-      );
-    }
-  }
-});
-
-test('les bandes se relaient sans creuser la couverture', () => {
-  // Le passage d'une échelle à l'autre est un fondu de **densité** : dans la
-  // zone commune, la bande intérieure perd ses instances pendant que
-  // l'extérieure gagne les siennes. Si les deux fondus ne se compensaient pas,
-  // il resterait un anneau clairsemé autour de l'observateur — le défaut que
-  // les bandes sont censées corriger, réintroduit à une autre distance.
-  for (const [nom, bands] of [
-    ['herbe', GRASS_BANDS],
-    ['cultures', CROP_BANDS],
-  ]) {
-    for (let i = 1; i < bands.length; i++) {
-      const dedans = bands[i - 1];
-      const dehors = bands[i];
-      assert.ok(
-        dehors.from < dedans.to,
-        `${nom} : les bandes ${i - 1} et ${i} doivent se recouvrir`
-      );
-      // Sur toute la zone commune, la somme des deux parts reste proche de 1.
-      for (let d = dehors.from; d <= dedans.to; d += 0.25) {
-        const somme = coverBandFade(d, dedans) + coverBandFade(d, dehors);
-        assert.ok(
-          somme > 0.9 && somme < 1.1,
-          `${nom} : à ${d.toFixed(2)} m les bandes ${i - 1} et ${i} totalisent ${somme.toFixed(3)}`
-        );
-      }
-    }
-    // Et la couverture ne s'arrête jamais au couteau : la dernière bande sort
-    // en fondu.
-    const derniere = bands[bands.length - 1];
-    assert.ok(derniere.fadeOut > 0, `${nom} : la dernière bande doit sortir en fondu`);
-    close(coverBandFade(derniere.to, derniere), 0, 1e-9, `${nom} : nulle au bord`);
-  }
-});
-
 test('le fondu des bandes suit la position réelle de l’observateur', () => {
   const band = { from: 60, to: 140, fadeIn: 16, fadeOut: 63 };
   const cell = { x: 100, z: 0 };
@@ -10533,87 +10089,6 @@ test('le fondu des bandes suit la position réelle de l’observateur', () => {
   const initial = coverBandFade(coverBandDistance(0, 0, cell.x, cell.z), band);
   const advanced = coverBandFade(coverBandDistance(12, 0, cell.x, cell.z), band);
   assert.ok(advanced > initial, 'la même maille entre dans la bande quand le cycliste avance');
-});
-
-test('deux bandes ne sèment pas les mêmes touffes à la même maille', () => {
-  // Chaque bande a sa propre grille, mais rien n'empêche deux grilles d'avoir
-  // une maille de mêmes indices. Sans le sel, les deux échelles tireraient
-  // alors exactement les mêmes touffes au même endroit : elles se
-  // superposeraient au lieu de se relayer.
-  const sels = GRASS_BANDS.map((band) => band.salt);
-  assert.equal(new Set(sels).size, sels.length, 'les sels des bandes sont distincts');
-  assert.equal(
-    new Set(CROP_BANDS.map((band) => band.salt)).size,
-    CROP_BANDS.length,
-    'idem pour les cultures'
-  );
-
-  const taille = 10 * GRASS_TUFT_STRIDE;
-  const bande0 = [...fillGrassCell(new Float32Array(taille), maille(5, -3, 1.6), 10, 0)];
-  const bande1 = [...fillGrassCell(new Float32Array(taille), maille(5, -3, 1.6), 10, 1)];
-  assert.notDeepEqual(bande0, bande1, 'un sel différent donne des touffes différentes');
-
-  // Le sel par défaut ne change rien : la bande de détail sème exactement ce
-  // qu'elle semait avant les bandes.
-  assert.deepEqual(
-    [...fillGrassCell(new Float32Array(taille), maille(5, -3, GRASS_CELL_M))],
-    bande0,
-    'sans sel, le semis d’origine'
-  );
-});
-
-test('une maille de bande lointaine reste ancrée au sol', () => {
-  // Le déterminisme spatial vaut pour toutes les bandes, pas seulement la
-  // première : une masse doit rester à sa place quand l'observateur avance,
-  // sinon la moyenne distance se met à grouiller.
-  const band = GRASS_BANDS[GRASS_BANDS.length - 1];
-  const taille = band.perCell * GRASS_TUFT_STRIDE;
-  const a = fillGrassCell(new Float32Array(taille), maille(7, 11, band.cell), band.perCell, band.salt);
-  // Des mailles voisines tirées entre les deux appels : l'état du générateur ne
-  // doit pas fuir d'une maille à l'autre.
-  fillGrassCell(new Float32Array(taille), maille(8, 11, band.cell), band.perCell, band.salt);
-  const b = fillGrassCell(new Float32Array(taille), maille(7, 11, band.cell), band.perCell, band.salt);
-  assert.deepEqual([...a], [...b], 'même maille, même masse');
-
-  // Et les positions tombent bien dans la maille de **cette** bande.
-  for (let i = 0; i < band.perCell; i++) {
-    const at = i * GRASS_TUFT_STRIDE;
-    assert.ok(a[at] >= 7 * band.cell && a[at] < 8 * band.cell, 'x dans la maille');
-    assert.ok(a[at + 1] >= 11 * band.cell && a[at + 1] < 12 * band.cell, 'z dans la maille');
-  }
-});
-
-test('une masse garde le fleurissement et la culture qu’elle représente', () => {
-  // C'est ce qui distingue cette agrégation d'une silhouette de masse unique :
-  // un pré de coquelicots reste un pré de coquelicots à quatre-vingts mètres,
-  // et un champ de maïs reste identifiable comme du maïs.
-  for (const nom of ['white', 'yellow', 'poppy']) {
-    const detail = GRASS_VARIANTS.indexOf(nom);
-    const masse = grassMassVariant(detail, 0.5);
-    assert.notEqual(masse, detail, `${nom} : la masse est une autre case`);
-    assert.ok(
-      GRASS_VARIANTS[masse].toLowerCase().includes(nom),
-      `${nom} : la masse porte le même fleurissement (${GRASS_VARIANTS[masse]})`
-    );
-  }
-
-  // L'herbe nue, cas de loin le plus fréquent, dispose de deux silhouettes :
-  // une seule répétée sur des hectares se lirait comme un motif.
-  const plain = GRASS_VARIANTS.indexOf('plain');
-  const masses = new Set([grassMassVariant(plain, 0.1), grassMassVariant(plain, 0.9)]);
-  assert.equal(masses.size, 2, 'deux masses d’herbe nue');
-  for (const masse of masses) assert.ok(GRASS_VARIANTS[masse].startsWith('clump'));
-
-  // Toute case de masse existe réellement dans l'atlas, et son décalage aussi.
-  for (let i = 0; i < GRASS_VARIANTS.length; i++) {
-    assert.ok(GRASS_ATLAS_OFFSETS[i], `case ${GRASS_VARIANTS[i]} sans décalage`);
-  }
-  for (const look of Object.values(CROP_LOOK)) {
-    const masse = `${look.atlas}Mass`;
-    const at = CROP_VARIANTS.indexOf(masse);
-    assert.ok(at >= 0, `${masse} manque à l’atlas des cultures`);
-    assert.ok(CROP_ATLAS_OFFSETS[at], `${masse} sans décalage`);
-  }
 });
 
 /**
@@ -10678,65 +10153,6 @@ function atlasProbe(cell, cols, rows) {
   };
   return { ctx, touched };
 }
-
-test('chaque case des atlas de couverture reçoit un dessin', () => {
-  const CELL = 16;
-  for (const [nom, cols, rows, variants, paint] of [
-    ['herbe', GRASS_ATLAS_COLS, GRASS_ATLAS_ROWS, GRASS_VARIANTS, createGrassAtlasCanvas],
-    ['cultures', CROP_ATLAS_COLS, CROP_ATLAS_ROWS, CROP_VARIANTS, createCropAtlasCanvas],
-  ]) {
-    const probe = atlasProbe(CELL, cols, rows);
-    // `createCanvas` n'est appelé qu'ici, jamais au chargement du module : un
-    // `OffscreenCanvas` bouchonné le temps de l'appel suffit.
-    const previous = globalThis.OffscreenCanvas;
-    globalThis.OffscreenCanvas = class {
-      constructor(width, height) {
-        Object.assign(this, { width, height });
-      }
-      getContext() {
-        return probe.ctx;
-      }
-    };
-    try {
-      // Ne doit pas lever : un peintre de masse qui casse rend la couche
-      // entière inconstructible.
-      paint(CELL, 1234);
-    } finally {
-      globalThis.OffscreenCanvas = previous;
-    }
-
-    for (let i = 0; i < variants.length; i++) {
-      assert.ok(probe.touched.has(i), `${nom} : la case ${i} (${variants[i]}) reste vide`);
-    }
-  }
-});
-
-test('les décalages d’atlas suivent la taille de la grille', () => {
-  // Une table écrite à la main et une grille agrandie donnent une végétation
-  // qui échantillonne la case du voisin — un défaut qu'on ne voit qu'en
-  // roulant. Les deux atlas de couverture sont carrés : le shader ne divise
-  // l'UV que par un seul scalaire.
-  assert.equal(GRASS_ATLAS_COLS, GRASS_ATLAS_ROWS, 'atlas d’herbe carré');
-  assert.equal(CROP_ATLAS_COLS, CROP_ATLAS_ROWS, 'atlas de cultures carré');
-  assert.ok(GRASS_VARIANTS.length <= GRASS_ATLAS_COLS * GRASS_ATLAS_ROWS);
-  assert.ok(CROP_VARIANTS.length <= CROP_ATLAS_COLS * CROP_ATLAS_ROWS);
-
-  // La convention de cases n'a pas bougé : sur une grille 2 × 2, la table
-  // dérivée est exactement celle qui était écrite à la main.
-  assert.deepEqual(atlasOffsets(2, 2), [
-    [0, 0.5],
-    [0.5, 0.5],
-    [0, 0],
-    [0.5, 0],
-  ]);
-  // Aucune case ne tombe hors de [0, 1[, et aucune ne se répète.
-  const vues = new Set();
-  for (const [u, v] of atlasOffsets(3, 3)) {
-    assert.ok(u >= 0 && u < 1 && v >= 0 && v < 1, 'décalage dans la texture');
-    vues.add(`${u.toFixed(6)},${v.toFixed(6)}`);
-  }
-  assert.equal(vues.size, 9, 'neuf cases distinctes');
-});
 
 test('l’identifiant de culture fait l’aller-retour par le canal rouge', () => {
   // Cet identifiant est le pont entre les trois lecteurs de la carte : le
@@ -12802,35 +12218,6 @@ test('le grain low poly suivi par une instance vient d’un réglage unique, ou 
   );
 });
 
-test('le vent se mesure sur la hauteur de la plante, pas sur la largeur du panneau', () => {
-  // Le déplacement est écrit dans le quadrilatère unité, puis mis à l'échelle
-  // par la matrice d'instance : sans correction, son amplitude réelle était
-  // celle de la **largeur** du panneau. Comme le niveau de détail élargit les
-  // masses lointaines d'un facteur trois, un champ de tournesols ondulait de
-  // plusieurs mètres à cent mètres et de dix centimètres à dix — l'inverse de
-  // ce qu'on voit.
-  const source = readFileSync('src/materials/foliageMaterial.js', 'utf8');
-  assert.match(
-    source,
-    /float slim = length\(instanceMatrix\[1\]\.xyz\) \/ max\(length\(instanceMatrix\[0\]\.xyz\), 1e-4\);/
-  );
-  assert.match(source, /float bend = transformed\.y \* transformed\.y \* uWindStrength \* slim;/);
-  // Sans instanciation, il n'y a pas de matrice à lire : le rapport vaut un.
-  assert.match(source, /float slim = 1\.0;/);
-
-  // Les couches qui l'appellent ont vu leur amplitude ramenée à leur élancement
-  // de près : c'est ce qui garde le premier plan tel quel.
-  assert.match(
-    readFileSync('src/layers/groundCover.js', 'utf8'),
-    /windStrength: 0\.35 \* theme\.grass\.aspect,/
-  );
-  assert.match(
-    readFileSync('src/layers/vegetationLayer.js', 'utf8'),
-    /windStrength: 0\.05 \* TREE_ASPECT,/
-  );
-  assert.match(readFileSync('src/layers/cropLayer.js', 'utf8'), /windStrength: CROP_WIND_STRENGTH,/);
-});
-
 test('le contour de l’eau se fond, sans que les identifiants cessent d’être lus au plus proche', () => {
   // Le shader de terrain ne se monte pas sous `node` (il fabrique des canevas
   // de grain), donc c'est sa **source** qu'on lit — comme pour la
@@ -14011,44 +13398,6 @@ test('la lame d’eau d’une culture : le riz en porte une, les autres aucune',
   assert.match(shader.fragmentShader, /uniform float uCropWater\[\d+\];/);
 });
 
-test('la frange déplace la lecture du sol, sans dépendre du parcours ni sortir de sa portée', () => {
-  const reach = defaultTheme.terrain.edgeWarpM;
-  assert.ok(reach > 0 && reach <= 3, 'au-delà de trois mètres, un bord droit ondule');
-
-  // Déterminisme spatial : la même maille lit toujours le même point, quel que
-  // soit l'ordre dans lequel on la rencontre.
-  const first = fringeOffset(maille(12, -7), 0, reach);
-  assert.deepEqual(fringeOffset(maille(12, -7), 0, reach), first);
-
-  // Bornée : une touffe ne peut pas emprunter le sol d'une parcelle lointaine.
-  let outside = 0;
-  let sumRadius = 0;
-  const samples = 400;
-  for (let i = 0; i < samples; i++) {
-    const offset = fringeOffset(maille(i, i * 3 - 11), i % 3, reach);
-    const radius = Math.hypot(offset.x, offset.z);
-    if (radius > reach + 1e-9) outside++;
-    sumRadius += radius;
-  }
-  assert.equal(outside, 0, 'aucun décalage au-delà de la portée');
-  // Tirage en surface (racine du rayon) : la moyenne d'un disque uniforme vaut
-  // deux tiers du rayon. Sans la racine, elle vaudrait la moitié — la frange
-  // serait plus étroite qu'annoncée.
-  assert.ok(
-    Math.abs(sumRadius / samples - (2 / 3) * reach) < 0.15 * reach,
-    `rayon moyen ${(sumRadius / samples).toFixed(2)} m, attendu ~${((2 / 3) * reach).toFixed(2)} m`
-  );
-
-  // Deux mailles voisines ne lisent pas le même point : c'est ce qui brouille
-  // la limite au lieu de la déplacer en bloc.
-  const a = fringeOffset(maille(4, 4), 0, reach);
-  const b = fringeOffset(maille(5, 4), 0, reach);
-  assert.ok(Math.hypot(a.x - b.x, a.z - b.z) > 0.2, 'des voisines tirent des décalages distincts');
-
-  // Portée nulle : aucun décalage (un thème peut éteindre la frange).
-  assert.deepEqual(fringeOffset(maille(3, 9), 1, 0), { x: 0, z: 0 });
-});
-
 // --- Lot F : le marquage est de la géométrie ---------------------------------
 
 test('la texture de chaussée ne porte plus une seule ligne', () => {
@@ -15148,4 +14497,153 @@ test('les culées rejoignent le front de tranchée sans barrer les voies inféri
   assert.ok(feet.some((x) => Math.abs(x - 80) < 2), 'culée côté sortie du creux');
   assert.ok(feet.every((x) => x <= 40 || x >= 60), 'passage inférieur libre');
   layer.dispose();
+});
+
+test('la correction de sol est toujours complète', () => {
+  // Trois facteurs, toujours les trois : le shader et les tiges les lisent
+  // séparément, et une matrice qui n'en décrirait que deux ferait diverger
+  // celui qui manque.
+  const complete = (wash) => {
+    for (const key of ['grass', 'bare', 'farmland']) {
+      assert.ok(Array.isArray(wash[key]) && wash[key].length === 3, key);
+    }
+  };
+  complete(soilWashFor(null, defaultTheme.soils));
+  complete(soilWashFor('pays-inconnu', defaultTheme.soils));
+  // L'alpage ne décrit pas ses champs : le facteur manquant vaut « pas de correction ».
+  const alpage = soilWashFor('alpine_pasture', defaultTheme.soils);
+  complete(alpage);
+  assert.deepEqual(alpage.farmland, [1, 1, 1]);
+  assert.notDeepEqual(alpage.bare, [1, 1, 1], 'la roche claire, elle, est décrite');
+  assert.deepEqual(soilWashFor('garrigue', null), { grass: [1, 1, 1], bare: [1, 1, 1], farmland: [1, 1, 1] });
+});
+
+test('le fourré refuse le milieu d’une flaque, et la borde plus dense', () => {
+  // Ce que le shader dessine et ce que la végétation sème partagent une seule lecture (`poolShareAt`).
+  const vegetationSource = readFileSync('src/layers/vegetationLayer.js', 'utf8');
+  assert.match(vegetationSource, /import \{ poolShareAt, poolEdgeGain \} from '\.\.\/terrain\/groundClassMap\.js';/);
+  assert.equal(
+    (vegetationSource.match(/> 0\.5\s*\n\s*\?\s*0\s*\n\s*: \w+Look\.density/g) || []).length,
+    2,
+    'les deux sites d’appel de coverBushesFor refusent le milieu d’une flaque'
+  );
+});
+
+test('la couverture règle le fourré, jamais sa présence', () => {
+  assert.equal(coverBushesFor(null).density, 0);
+  assert.equal(coverBushesFor(null).essence, null);
+  // Un maquis est surtout du vide entre des arbustes : plus de buissons qu'une lande.
+  assert.ok(coverBushesFor('scrub').density > coverBushesFor('heath').density);
+  assert.equal(coverBushesFor('scree').density, 0, 'rien ne pousse dans un éboulis');
+  assert.equal(coverBushesFor('heath').essence, 'moorland');
+  assert.equal(coverBushesFor('scrub').essence, 'thornyScrub');
+  assert.equal(coverBushesFor('sand').essence, 'marram');
+});
+
+test('un sol de forêt est un vert mêlé de brun, jamais un trou noir', () => {
+  const woodAlbedo = defaultTheme.surfaces.wood.albedo;
+  const grassAlbedo = defaultTheme.surfaces.grass.albedo;
+  const luma = ([r, g, b]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  assert.ok(luma(woodAlbedo) < luma(grassAlbedo), 'un sous-bois reste plus sombre qu’un pré');
+  assert.ok(luma(woodAlbedo) > 0.02, 'jamais un trou noir');
+  assert.ok(
+    woodAlbedo[1] >= woodAlbedo[0] && woodAlbedo[0] >= woodAlbedo[1] * 0.45,
+    `la litière est verte mêlée de brun : ${woodAlbedo}`
+  );
+});
+
+test('le plafond de tiges couvre le pire cas, sinon le champ rétrécit en douce', () => {
+  for (const [nom, look] of Object.entries(CROP_LOOK)) {
+    const champ = semisComplet(CROP_BANDS, fillCropCell, CROP_TUFT_STRIDE, look.density);
+    assert.ok(champ.total <= CROP_COUNT, `${nom} : ${champ.total} touffes pour ${CROP_COUNT}`);
+  }
+});
+
+test('l’agrégation des cultures pose moins d’instances au loin sur plus de surface', () => {
+  const { parBande } = semisComplet(CROP_BANDS, fillCropCell, CROP_TUFT_STRIDE, 1);
+  for (let i = 1; i < parBande.length; i++) {
+    const surface = Math.PI * (CROP_BANDS[i].to ** 2 - CROP_BANDS[i].from ** 2);
+    const precedente = Math.PI * (CROP_BANDS[i - 1].to ** 2 - CROP_BANDS[i - 1].from ** 2);
+    assert.ok(surface > precedente, `la bande ${i} doit couvrir plus de surface que la ${i - 1}`);
+    assert.ok(parBande[i] < parBande[i - 1], `bande ${i} : ${parBande[i]} instances contre ${parBande[i - 1]}`);
+  }
+});
+
+test('les bandes de cultures se relaient sans creuser le champ', () => {
+  for (let i = 1; i < CROP_BANDS.length; i++) {
+    const dedans = CROP_BANDS[i - 1];
+    const dehors = CROP_BANDS[i];
+    assert.ok(dehors.from < dedans.to, `les bandes ${i - 1} et ${i} doivent se recouvrir`);
+    for (let d = dehors.from; d <= dedans.to; d += 0.25) {
+      const somme = coverBandFade(d, dedans) + coverBandFade(d, dehors);
+      assert.ok(somme > 0.9 && somme < 1.1, `à ${d.toFixed(2)} m les bandes ${i - 1} et ${i} totalisent ${somme.toFixed(3)}`);
+    }
+  }
+  const derniere = CROP_BANDS[CROP_BANDS.length - 1];
+  assert.ok(derniere.fadeOut > 0, 'la dernière bande sort en fondu');
+  close(coverBandFade(derniere.to, derniere), 0, 1e-9, 'nulle au bord');
+});
+
+test('deux bandes de cultures ne sèment pas les mêmes tiges à la même maille', () => {
+  assert.equal(new Set(CROP_BANDS.map((band) => band.salt)).size, CROP_BANDS.length);
+  const taille = 10 * CROP_TUFT_STRIDE;
+  const bande0 = [...fillCropCell(new Float32Array(taille), maille(5, -3, 1.6), 10, 0)];
+  const bande1 = [...fillCropCell(new Float32Array(taille), maille(5, -3, 1.6), 10, 1)];
+  assert.notDeepEqual(bande0, bande1, 'un sel différent donne des tiges différentes');
+});
+
+test('une maille de bande lointaine reste ancrée au sol', () => {
+  const band = CROP_BANDS[CROP_BANDS.length - 1];
+  const taille = band.perCell * CROP_TUFT_STRIDE;
+  const a = fillCropCell(new Float32Array(taille), maille(7, 11, band.cell), band.perCell, band.salt);
+  fillCropCell(new Float32Array(taille), maille(8, 11, band.cell), band.perCell, band.salt);
+  const b = fillCropCell(new Float32Array(taille), maille(7, 11, band.cell), band.perCell, band.salt);
+  assert.deepEqual([...a], [...b], 'même maille, même masse');
+  for (let i = 0; i < band.perCell; i++) {
+    const at = i * CROP_TUFT_STRIDE;
+    assert.ok(a[at] >= 7 * band.cell && a[at] < 8 * band.cell, 'x dans la maille');
+    assert.ok(a[at + 1] >= 11 * band.cell && a[at + 1] < 12 * band.cell, 'z dans la maille');
+  }
+});
+
+test('une masse garde la culture qu’elle représente', () => {
+  for (const look of Object.values(CROP_LOOK)) {
+    const masse = `${look.atlas}Mass`;
+    const at = CROP_VARIANTS.indexOf(masse);
+    assert.ok(at >= 0, `${masse} manque à l’atlas des cultures`);
+    assert.ok(CROP_ATLAS_OFFSETS[at], `${masse} sans décalage`);
+  }
+});
+
+test('chaque case de l’atlas des cultures reçoit un dessin', () => {
+  const CELL = 16;
+  const probe = atlasProbe(CELL, CROP_ATLAS_COLS, CROP_ATLAS_ROWS);
+  const previous = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) { Object.assign(this, { width, height }); }
+    getContext() { return probe.ctx; }
+  };
+  try { createCropAtlasCanvas(CELL, 1234); } finally { globalThis.OffscreenCanvas = previous; }
+  for (let i = 0; i < CROP_VARIANTS.length; i++) assert.ok(probe.touched.has(i), `la case ${i} (${CROP_VARIANTS[i]}) reste vide`);
+});
+
+test('les décalages d’atlas suivent la taille de la grille', () => {
+  assert.equal(CROP_ATLAS_COLS, CROP_ATLAS_ROWS, 'atlas de cultures carré');
+  assert.ok(CROP_VARIANTS.length <= CROP_ATLAS_COLS * CROP_ATLAS_ROWS);
+  assert.deepEqual(atlasOffsets(2, 2), [[0, 0.5], [0.5, 0.5], [0, 0], [0.5, 0]]);
+  const vues = new Set();
+  for (const [u, v] of atlasOffsets(3, 3)) {
+    assert.ok(u >= 0 && u < 1 && v >= 0 && v < 1, 'décalage dans la texture');
+    vues.add(`${u.toFixed(6)},${v.toFixed(6)}`);
+  }
+  assert.equal(vues.size, 9, 'neuf cases distinctes');
+});
+
+test('le vent se mesure sur la hauteur de la plante, pas sur la largeur du panneau', () => {
+  const source = readFileSync('src/materials/foliageMaterial.js', 'utf8');
+  assert.match(source, /float slim = length\(instanceMatrix\[1\]\.xyz\) \/ max\(length\(instanceMatrix\[0\]\.xyz\), 1e-4\);/);
+  assert.match(source, /float bend = transformed\.y \* transformed\.y \* uWindStrength \* slim;/);
+  assert.match(source, /float slim = 1\.0;/);
+  assert.match(readFileSync('src/layers/vegetationLayer.js', 'utf8'), /windStrength: 0\.05 \* TREE_ASPECT,/);
+  assert.match(readFileSync('src/layers/cropLayer.js', 'utf8'), /windStrength: CROP_WIND_STRENGTH,/);
 });

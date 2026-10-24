@@ -115,10 +115,9 @@ import { installTunnelMouths } from './tunnelMouths.js';
  * réglage de repli (`LOW_POLY_GRAIN_DEFAULTS`). L'identifiant est relu au
  * texel le plus proche, sans le lissage de `surfaceAt` : c'est un
  * déplacement géométrique, pas un contour, une marche à la limite de deux
- * matières n'y a pas besoin d'être adoucie. L'herbe (`groundCover.js`) lit la
- * même paire par instance, à l'endroit où elle pousse ; les cultures
- * (`cropLayer.js`) et le mobilier n'existent que sur des matières non
- * branchées ici et suivent le réglage de repli. Les arbres n'en tiennent pas
+ * matières n'y a pas besoin d'être adoucie. Les cultures (`cropLayer.js`) et
+ * le mobilier n'existent que sur des matières non branchées ici et suivent le
+ * réglage de repli. Les arbres n'en tiennent pas
  * compte.
  *
  * Éteint aussi dans l'emprise routière (`roadMask`, un attribut par sommet

@@ -53,7 +53,6 @@ export const LABEL_EXACT = {
   railway: 'voie ferrée',
   'railway-catenary': 'caténaire (poteaux et potences)',
   bridge: 'ouvrage d’art (tablier, piles, tête de tunnel)',
-  'ground-cover': 'herbe',
   crops: 'cultures (semis)',
   birds: 'oiseaux',
   balloon: 'montgolfière',
@@ -412,7 +411,7 @@ const distance2 = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2 + (a.z - b.z) **
  *
  * On lit les translations directement dans `instanceMatrix.array` : composer
  * un `Matrix4` par exemplaire coûterait une allocation par lampadaire, et il y
- * a seize mille touffes d'herbe. Un pas d'échantillonnage borne le coût sur les
+ * a des dizaines de milliers de tiges de culture. Un pas d'échantillonnage borne le coût sur les
  * couches semées, où mille exemplaires de plus ne changent pas la réponse.
  *
  * Fonction pure.

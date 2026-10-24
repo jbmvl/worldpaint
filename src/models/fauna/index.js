@@ -56,8 +56,8 @@ export const FAUNA_KINDS = Object.keys(FAUNA_BUILDERS);
 
 /**
  * Hauteur à laquelle le museau doit descendre pour qu'on lise « elle broute »,
- * en mètres. Pas zéro : l'herbe du décor fait dix à vingt centimètres
- * (`theme.grass`), un museau au ras du sol s'y enfonce.
+ * en mètres. Pas zéro : le museau d'une bête qui broute ne touche pas le sol,
+ * et au ras du terrain il s'y enfoncerait.
  */
 export const GRAZE_TARGET_M = 0.09;
 

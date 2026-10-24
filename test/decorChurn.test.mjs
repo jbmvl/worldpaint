@@ -57,10 +57,9 @@ test('le pixel du MNT suit le changement de tuile et de révision sans réalloue
 
 test('settling : vrai tant que le décor se construit ou s’achève image par image', () => {
   const settling = Object.getOwnPropertyDescriptor(WorldComposer.prototype, 'settling').get;
-  const calm = { _refreshing: false, bubble: { rebuilding: false }, vegetation: { pending: false }, grass: { pending: false } };
+  const calm = { _refreshing: false, bubble: { rebuilding: false }, vegetation: { pending: false } };
   assert.equal(settling.call(calm), false);
   assert.equal(settling.call({ ...calm, _refreshing: true }), true);
   assert.equal(settling.call({ ...calm, bubble: { rebuilding: true } }), true);
   assert.equal(settling.call({ ...calm, vegetation: { pending: true } }), true);
-  assert.equal(settling.call({ ...calm, grass: { pending: true } }), true);
 });

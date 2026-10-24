@@ -693,7 +693,7 @@ export class GroundClassMap {
    * parmi d'autres — mais elles restent les seules que la strate basse
    * distingue : l'herbe pousse, la litière pousse à moitié, le champ selon la
    * saison, le minéral pas. La forme est conservée pour ses lecteurs
-   * (`grassGreenFor`, `woodEdgeAt`).
+   * (`woodEdgeAt`).
    *
    * @param {number} x Mètres locaux.
    * @param {number} z
@@ -711,17 +711,6 @@ export class GroundClassMap {
     const wood = this.shareOf('wood', x, z);
     const farmland = this.shareOf('farmland', x, z);
     return { grass, wood, farmland, bare: Math.max(0, 1 - grass - wood - farmland) };
-  }
-
-  /**
-   * Part de végétal au sol, de 0 à 1, ou `null` si la donnée se tait —
-   * l'entrée de l'herbe et des alignements d'arbres. Une culture ne compte
-   * que pour moitié (herbe une partie de l'année seulement).
-   */
-  greenAt(x, z) {
-    const sample = this.sampleAt(x, z);
-    if (!sample) return null;
-    return Math.min(1, sample.grass + sample.farmland * 0.5);
   }
 
   /** Part de bois en un point, de 0 à 1. */

@@ -148,9 +148,9 @@ le cache de données décodées reste propre à chaque source.
 |---|---|
 | `setCenter(lng, lat)` | move the terrain bubble |
 | `refresh(lng, lat, {force})` | rebuild everything that comes from vector data |
-| `advance(delta, at)` | one frame of work: planting queues, grass, animation |
+| `advance(delta, at)` | one frame of work: planting queues, crops, animation |
 | `tunnelAt(x, z, y)` | road floor and vault crown at a scene point, or `null` outside any covered structure — what a chase camera needs to stay under the roof. The floor is the road `roadPositionAt` reads; `y`, the subject's scene height, picks the level where two structures overlap |
-| `setSightline(from, to, {fromRadius, toRadius})` | dither away the trees between the camera and the followed subject; call every frame, `null` turns it off |
+| `setSightline(from, to, {fromRadius, toRadius})` | dither away the trees between the camera and the followed subject; call every frame, `null` turns it off. Street furniture carries the dithering shader (a `discard`) only on meshes the line crosses |
 | `updateSky({camera, date, lng, lat, weather})` | advance the hour and the weather; returns the night mix, the wetness and the clear colour |
 | `dispose()` | release everything that was allocated |
 
@@ -333,6 +333,9 @@ resuming with `false` continues the same generator and queues, without rebuildin
 completed layers. `world.generationPaused` reads that state. Disposal releases
 pending waits. Rendering and animation remain under the application's control.
 Use this when a menu covers the scene or the document is hidden.
+`world.lastGenerationAt` is the `performance.now()` of the last construction
+step: a frame started before it may have waited for it, which an adaptive
+quality loop should not mistake for rendering cost.
 
 Geometry conversion, road graph/junction/profile processing and furniture
 placement and dense vector-feature visits yield within their work. The budget schedules checkpoints; it is not

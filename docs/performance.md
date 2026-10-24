@@ -108,19 +108,6 @@ Une pause de plus d’une seconde invalide le relevé. Garder l’onglet actif e
 ne pas naviguer pendant la mesure. Ce parcours ne remplace pas un essai sur
 iPhone et ne constitue pas une mesure du temps GPU.
 
-`node scripts/benchmark-instances.mjs` mesure quarante déplacements de 9 m
-sur un terrain CPU fixe, après chauffe, et compte les octets d’attributs
-marqués pour transfert. Un chemin de module optionnel permet de comparer
-un autre état avec le même thème. Relevé local : 47 232 instances dans les
-deux états ; médiane CPU de 31,55 ms à 11,31 ms et transferts d’herbe de
-10 200 000 à 1 096 269 octets en moyenne par déplacement. Les temps dépendent
-de la machine et de sa charge ; les octets ne mesurent pas le temps GPU.
-
-Le contrôle `/test/browser/plant-support.html`, servi par le serveur de démo,
-compare numériquement les appuis directs et préparés, sur les deux triangles,
-plusieurs distances, changements de relief et de paramètres : 144 points
-comparés. Il vérifie les calculs GPU sans évaluer le paysage.
-
 Le relief lointain (`terrain/farRelief.js`) se recale quand la tuile centrale
 de la bulle change ou qu'une de ses tuiles vient d'être maillée, jamais par
 image. Sur le banc `demo/lab/far.html`, la lecture des 58 081 altitudes prend

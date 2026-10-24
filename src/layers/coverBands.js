@@ -12,9 +12,8 @@
  * jamais de taille — une touffe lointaine n'est pas une touffe proche en plus
  * petit.
  *
- * Ce module ne dessine rien et ne connaît ni l'herbe ni le blé : il découpe
- * l'espace. Ce qui pousse dans chaque maille est l'affaire de `groundCover`
- * et `cropLayer`.
+ * Ce module ne dessine rien et ne connaît pas le blé : il découpe l'espace.
+ * Ce qui pousse dans chaque maille est l'affaire de `cropLayer`.
  */
 
 import { eachWorldCell, uniformWorldGrid } from '../core/groundSeed.js';

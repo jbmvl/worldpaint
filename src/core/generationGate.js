@@ -1,6 +1,6 @@
 // Une reconstruction suspendue garde son générateur, sans minuteur de polling.
 export class GenerationGate {
-  constructor() { this.paused = false; this.disposed = false; this.waiters = new Set(); }
+  constructor() { this.paused = false; this.disposed = false; this.waiters = new Set(); this.lastWorkAt = 0; }
   setPaused(paused) {
     this.paused = !!paused;
     if (!this.paused) this._release();

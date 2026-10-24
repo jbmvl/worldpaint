@@ -26,7 +26,7 @@ export function installReport(world, renderer, scene, camera, place) {
   watch(c.buildings,'_applyWindows','bâti : fenêtres nocturnes (inclus dans publication)');
   for(const [object,methods,label] of [
     [c.bubble,['_buildMesh'],'terrain'],[c.far,['_readHeights','_build'],'relief lointain'],
-    [c.vegetation,['update','advance'],'arbres'],[c.grass,['update','advance'],'herbe'],
+    [c.vegetation,['update','advance'],'arbres'],
     [c.crops,['update','advance'],'cultures'],[c.life,['advance'],'oiseaux et ballon'],
     [c.tractors,['advance','setTractors'],'tracteurs'],[c.trains,['advance','setTracks'],'trains'],
     [c.fauna,['setAnimals'],'faune'],[c.spectators,['advance'],'spectateurs'],
@@ -39,7 +39,7 @@ export function installReport(world, renderer, scene, camera, place) {
     let frames=0,worstMs=0;
     for(;frames<4000;frames++){
       const t=performance.now();world.advance(0,{...at,y:c.groundElevationAt(at.x,at.z)});worstMs=Math.max(worstMs,performance.now()-t);
-      if(frames>2&&!c.vegetation.pending&&!c.grass.pending&&!c.bubble._rebuildQueue.length&&!c.bubble._pendingBuild)break;
+      if(frames>2&&!c.vegetation.pending&&!c.bubble._rebuildQueue.length&&!c.bubble._pendingBuild)break;
       if(frames%20===0)await new Promise(r=>setTimeout(r,0));
     }
     if(frames===4000)throw Error('Files non vidées');

@@ -33,9 +33,9 @@
  *
  * Parce que l'animation coûte une écriture de matrice par image et par objet,
  * là où le mobilier n'en coûte qu'une par reconstruction. Vingt oiseaux, ce
- * sont vingt matrices par image : négligeable. Deux
- * mille brins d'herbe animés, ce serait la moitié du budget d'une image — d'où
- * le vent de `groundCover`, qui vit entièrement dans un shader.
+ * sont vingt matrices par image : négligeable. Deux mille tiges animées, ce
+ * serait la moitié du budget d'une image — d'où le vent des cultures, qui vit
+ * entièrement dans un shader.
  *
  * ## Pourquoi les oiseaux ne sont pas attachés au sol
  *

@@ -23,3 +23,10 @@ test('détruire une construction suspendue libère ses attentes', async () => {
   const gate=new GenerationGate();gate.setPaused(true);const pending=gate.wait();
   gate.dispose();assert.equal(await pending,false);assert.equal(gate.waiters.size,0);assert.equal(await gate.wait(),false);
 });
+test('chaque étape date le dernier travail sur la porte', async () => {
+  const gate=new GenerationGate();let clock=5;
+  const budget=new GenerationBudget({gate,milliseconds:Infinity,now:()=>clock});
+  assert.equal(gate.lastWorkAt,0);
+  clock=42;await budget.checkpoint();
+  assert.equal(gate.lastWorkAt,42);
+});

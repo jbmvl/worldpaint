@@ -8,8 +8,8 @@ contourne qu'un carré autour de sa portée, au même pas ; le pourtour porte la
 matière muette, sous le brouillard.
 
 Le reste du décor ne fait que relire cette carte : le shader de terrain y prend
-la couleur du sol jusqu'à l'horizon (`terrainMaterial`), l'herbe sa hauteur et
-sa densité (`groundCover`), la végétation ses arbustes (`vegetationLayer`).
+la couleur du sol jusqu'à l'horizon (`terrainMaterial`), la végétation ses
+arbustes (`vegetationLayer`).
 
 ## La carte
 
@@ -271,8 +271,8 @@ lectures ne puisse dériver de l'autre.
 
 **Le shader n'est plus le seul à voir les flaques.** `poolShareAt`
 (`groundClassMap.js`) relit le même champ de bruit côté CPU, sur le même
-calcul : `groundCover` et `vegetationLayer` s'en servent pour refuser de semer
-une touffe ou un fourré au milieu d'une flaque, et pour border l'eau plus haut
+calcul : `vegetationLayer` s'en sert pour refuser de semer un fourré au
+milieu d'une flaque, et pour border l'eau plus haut
 et plus dense sur les derniers mètres avant elle (`poolEdgeGain`) — une
 roselière borde l'eau plutôt que de la recouvrir. Ce que cette lecture ne fait
 pas, en revanche : suivre le shader jusqu'au mip. La texture que la carte
@@ -383,11 +383,7 @@ cassées en segments. Cinq étapes, dans trois fichiers :
    (`fwidth`) ; et **la rive** (thème `shoreWet`) mouille le sol au contact de
    l'eau, du même film d'eau que la pluie.
 
-L'herbe instanciée, elle, ne lit pas ce contour : chaque maille lit le sol à
-quelques mètres d'elle-même (`fringeOffset`, thème `edgeWarpM`, dans
-`groundCover.js`), et au bord une maille sur deux lit l'autre surface. Ce sont
-les petits points d'une lisière, et ils n'obéissent pas à la peinture. La
-végétation et `shareOf` lisent la carte au texel : ils suivent le trait à un
+La végétation et `shareOf` lisent la carte au texel : ils suivent le trait à un
 demi-texel près, sans ses segments.
 
 Ce qui reste hors d'atteinte : un trait plus étroit qu'un demi-texel disparaît

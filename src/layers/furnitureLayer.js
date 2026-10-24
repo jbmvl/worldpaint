@@ -51,7 +51,7 @@ import { facetJitter } from './facetJitter.js';
 import { edgeClearance } from './roadEdges.js';
 import { LEVEL_GROUND } from './roadWorks.js';
 import { collectBuiltUpAreas, collectPlaceNames } from './settlement.js';
-import { installSightlineClearing } from '../materials/sightlineClearing.js';
+import { installSightlineClearing, sightlineCrosses } from '../materials/sightlineClearing.js';
 import { LabelAtlas, pushLabelQuad, labelFontPxForCellHeight, LABEL_PX_PER_M } from '../materials/labelAtlas.js';
 import {
   clipOutsideCorridor,
@@ -206,7 +206,23 @@ export class FurnitureLayer {
     scene.add(this.group);
 
     this.material = createFurnitureMaterial(THREE);
-    if (sightline) installSightlineClearing(this.material, sightline);
+    // L'effacement sur la ligne de mire passe par un `discard`, qui prive le GPU
+    // (Apple surtout) de l'élimination des pixels cachés pour tout le maillage :
+    // seuls les maillages proches de la ligne le portent (`updateSightline`).
+    this.sightline = sightline;
+    this.clearingMaterial = null;
+    if (sightline) {
+      this.clearingMaterial = createFurnitureMaterial(THREE);
+      this.clearingMaterial.name = 'furniture-sightline';
+      installSightlineClearing(this.clearingMaterial, sightline);
+      // Compilé avec le décor, pas au premier passage de la caméra.
+      const warm = new THREE.Mesh(new THREE.BufferGeometry(), this.clearingMaterial);
+      warm.name = 'furniture-sightline-warmup';
+      warm.frustumCulled = false;
+      this.group.add(warm);
+      this._sightWarm = warm;
+      this._sightSphere = new THREE.Sphere();
+    }
     // Matériau à part pour la seule pièce qui tourne — voir son en-tête dans
     // `furnitureKit.js` sur pourquoi il n'est pas une option du précédent.
     this.rotorMaterial = createFurnitureRotorMaterial(THREE);
@@ -1439,6 +1455,24 @@ export class FurnitureLayer {
     for (const light of this.lampLights) light.intensity *= value > 0.01 ? 1 : 0;
   }
 
+  /**
+   * Donne le matériau d'effacement aux seuls maillages du mobilier que la
+   * ligne de mire traverse (sphère englobante contre le segment caméra–sujet).
+   * À appeler après chaque `setSightline`.
+   */
+  updateSightline() {
+    const clearing = this.clearingMaterial;
+    if (!clearing || this.disposed) return;
+    for (const mesh of this.group.children) {
+      if (mesh.material !== this.material && mesh.material !== clearing) continue;
+      const bounds = mesh.isInstancedMesh ? mesh.boundingSphere : mesh.geometry?.boundingSphere;
+      // Sans sphère connue (pas encore dessiné), on garde l'effacement : jamais de mobilier devant le coureur.
+      const crossed = !bounds || sightlineCrosses(this.sightline, this._sightSphere.copy(bounds).applyMatrix4(mesh.matrixWorld));
+      const wanted = crossed ? clearing : this.material;
+      if (mesh.material !== wanted) mesh.material = wanted;
+    }
+  }
+
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
@@ -1497,6 +1531,8 @@ export class FurnitureLayer {
     for (const geometry of Object.values(this.geometries)) geometry.dispose();
     this.geometries = {};
     this.material.dispose();
+    this.clearingMaterial?.dispose();
+    this._sightWarm?.geometry.dispose();
     this.rotorMaterial.dispose();
     this.greenhouseMaterial.dispose();
     this._turbines = [];

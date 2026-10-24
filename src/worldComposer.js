@@ -2,17 +2,16 @@ import { collectCrossingRails } from './layers/transportCrossings.js';
 import { GenerationGate } from './core/generationGate.js';
 import { GenerationBudget } from './core/generationBudget.js';
 import { DECOR_STEP_M, DETAIL_WALL_BUDGET_M, REACH_MARGIN, REACH_MARGIN_M, budgetedRadius } from './core/decorReach.js';
-import { PlantSupportAtlas } from './terrain/plantSupportAtlas.js';
 import { GenerationMetrics } from './inspect/generationMetrics.js';
 /*
  * worldComposer — l'orchestrateur du décor. Toutes les couches dépendent les
- * unes des autres (occupation du sol → terrain, arbres, herbe ; chaussée →
- * terrain, mobilier, herbe interdite) ; ce module est le seul endroit où
+ * unes des autres (occupation du sol → terrain, arbres, cultures ; chaussée →
+ * terrain, mobilier) ; ce module est le seul endroit où
  * l'ordre de construction est écrit, et n'expose que trois verbes :
  *
  *   setCenter(lng, lat)   déplace la bulle    (relief, tuiles montées)
  *   refresh(lng, lat)     refait le décor     (tout ce qui vient du vectoriel)
- *   advance(delta, at)    fait vivre l'image  (file de plantation, herbe, vie)
+ *   advance(delta, at)    fait vivre l'image  (file de plantation, cultures, vie)
  *
  * Ordre de génération : « sommes-nous en ville ? » (`settlement.UrbanMask` :
  * ni une couche ni un thème, un prédicat de lieu, lu par la carte du sol qui y
@@ -34,8 +33,7 @@ import { GenerationMetrics } from './inspect/generationMetrics.js';
  * chaussées, compte de bâtiments, emprise ferroviaire, lieux nommés) →
  * arbres (reçoivent aussi les plantations publiées par mobilier et jardins ;
  * une tuile semée hors de portée de l'index des chaussées se resème quand il
- * va jusqu'à elle) → herbe
- * (après l'index des chaussées) → cheminées, bêtes et tracteurs (publiés par
+ * va jusqu'à elle) → cultures → cheminées, bêtes et tracteurs (publiés par
  * le mobilier et le bâti, animés par `lifeLayer`, `faunaLayer` et
  * `tractorLayer`).
  *
@@ -85,7 +83,6 @@ import { StreetLayer } from './layers/streetLayer.js';
 import { FabricIndex, readSettlement, wallLengthsByDistance } from './layers/settlement.js';
 import { seaDistanceAt } from './layers/coast.js';
 import { VegetationLayer } from './layers/vegetationLayer.js';
-import { GroundCover } from './layers/groundCover.js';
 import { CropLayer } from './layers/cropLayer.js';
 import { createSightline, setSightline } from './materials/sightlineClearing.js';
 import { FurnitureLayer } from './layers/furnitureLayer.js';
@@ -117,8 +114,6 @@ export { FAUNA_CROSS_AHEAD_M } from './layers/faunaCrossing.js';
  */
 const MOUNT_BUDGET_MS = 8;
 
-/** Temps CPU d'herbe semée par image : la passe s'étale sur les suivantes. */
-const GRASS_SCATTER_BUDGET_MS = 3;
 
 export class WorldComposer {
   /**
@@ -250,7 +245,7 @@ export class WorldComposer {
     // creusée par le même grain que le reste du sol.
     this.cliffs = new CliffLayer({ THREE, scene, bubble, theme });
     // Façade d'emprise combinée (route + voie ferrée) pour les consommateurs
-    // de `roads.index` (jardins, végétation, herbe, cultures). Un `get`, pas
+    // de `roads.index` (jardins, végétation, cultures). Un `get`, pas
     // une valeur figée : les deux index sont réécrits à chaque reconstruction.
     const composer = this;
     this._infra = {
@@ -293,21 +288,8 @@ export class WorldComposer {
       roads: this._infra,
       theme,
     });
-    this.grass = new GroundCover({
-      terrainSupport: THREE.DataTexture && bubble.materials.grainUniforms
-        ? new PlantSupportAtlas(THREE, bubble.materials.grainUniforms) : null,
-      THREE,
-      scene,
-      bubble,
-      groundClass: this.groundClass,
-      roads: this._infra,
-      streets: this.streets,
-      theme,
-      scatterBudgetMs: GRASS_SCATTER_BUDGET_MS,
-    });
-    this.grass.setMaxAnisotropy(maxAnisotropy);
 
-    // Les cultures sèment sur la même carte que celle qui colore le sol : dépendent de `groundClass`, comme l'herbe.
+    // Les cultures sèment sur la même carte que celle qui colore le sol : dépendent de `groundClass`.
     this.crops = new CropLayer({
       THREE,
       sightline: this.sightline,
@@ -358,11 +340,8 @@ export class WorldComposer {
       [this.bubble,'processRebuildQueue','terrain'], [this.cliffs,'rebuild','falaises'],
       [this.roads,'rebuild','routes'], [this.buildings,'rebuild','batiments'],
       [this.furniture,'rebuild','mobilier'], [this.groundClass,'rebuild','carteSol'],
-      [this.vegetation,'processQueue','forets'], [this.grass,'_scatter','herbe'],
+      [this.vegetation,'processQueue','forets'],
       [this.crops,'_scatter','cultures'], [this.fauna,'advance','animationFaune'],
-      [this.grass.terrainSupport,'sync','appuiPlantes'],
-      [this.grass.terrainSupport,'prepare','preparationAppuisGPU'],
-      [this.grass._resident,'sync','instancesHerbe'], [this.grass.flowers,'syncCells','fleurs'],
       [this.bridges,'rebuild','ponts'], [this.railways,'rebuild','rails'],
       [this.streets,'rebuild','rues'], [this.gardens,'rebuild','jardins'],
     ]) this.metrics.watch(object,method,label);
@@ -375,11 +354,11 @@ export class WorldComposer {
 
   /**
    * Vrai tant que le décor se construit ou s'achève image par image (mailles
-   * du terrain, semis des arbres et de l'herbe) : les images de cette période
+   * du terrain, semis des arbres et des cultures) : les images de cette période
    * portent un travail CPU qui ne dit rien de ce que coûte le rendu.
    */
   get settling() {
-    return this._refreshing || this.bubble.rebuilding || this.vegetation.pending || this.grass.pending;
+    return this._refreshing || this.bubble.rebuilding || this.vegetation.pending;
   }
 
   /**
@@ -725,7 +704,7 @@ export class WorldComposer {
 
       if (!await checkpoint()) return false;
 
-      // L'herbe lit les triangles affichés : leur correction doit être terminée
+      // Le semis lit les triangles affichés : leur correction doit être terminée
       // avant toute pose. Chaque étape garde le budget du terrain.
       while (this.bubble.processRebuildQueue(budgetMs)) {
         if (!await checkpoint()) return false;
@@ -809,16 +788,7 @@ export class WorldComposer {
 
       if (!await checkpoint()) return false;
 
-      // 7. Herbe — l'index des chaussées vient peut-être de changer.
-      let done = this.grass.update(here.x, here.z, { force: true });
-      while (!done && this.grass.pending) {
-        if (!await checkpoint()) return false;
-        done = this.grass.update(here.x, here.z);
-      }
-
-      if (!await checkpoint()) return false;
-
-      // 8. Cultures — même carte que le sol.
+      // 7. Cultures — même carte que le sol.
       this.crops.invalidate();
       // Les haies de bas-côté, posées par le mobilier, bornent le champ.
       this.crops.setVerges(this.furniture.verges);
@@ -826,7 +796,7 @@ export class WorldComposer {
 
       if (!await checkpoint()) return false;
 
-      // 9. Bêtes et tracteurs à faire vivre. Publiés par le mobilier (fermes,
+      // 8. Bêtes et tracteurs à faire vivre. Publiés par le mobilier (fermes,
       //    labours), qui seul a lu les tuiles : c'est l'endroit où une couche
       //    animée par image reprend le travail d'une couche reconstruite
       //    tous les 250 mètres.
@@ -857,9 +827,9 @@ export class WorldComposer {
    * Chaque couche y prend ce qui la regarde — la matrice, les essences, les
    * matériaux — plutôt que de recevoir sept arguments dont elle ignore six.
    *
-   * La couleur du sol se pose à trois endroits qui doivent recevoir le **même**
-   * facteur (`soilWashFor`) : l'albédo lointain dans le shader, les touffes
-   * d'herbe et les tiges de culture du premier plan. La redistribution, elle,
+   * La couleur du sol se pose à deux endroits qui doivent recevoir le **même**
+   * facteur (`soilWashFor`) : l'albédo du sol dans le shader et les tiges de
+   * culture du premier plan. La redistribution, elle,
    * est déclenchée par `regionChanged` — la teinte est écrite dans les
    * instances.
    */
@@ -870,7 +840,6 @@ export class WorldComposer {
     this.furniture.setRegion(region);
     this.bubble.materials.setRegion(region);
     this.far?.setColor(this.bubble.materials.gapAlbedo);
-    this.grass.setRegion(region);
     this.crops.setRegion(region);
   }
 
@@ -1014,8 +983,6 @@ export class WorldComposer {
     this._syncFar();
     // Les rides de l'eau vivent dans le shader de terrain, avec elle.
     this.bubble.materials.advanceWater(delta);
-    this.grass.advance(delta);
-    if (!this._building) this.grass.update(at.x, at.z);
     this.vegetation.advance(delta);
     if (!this._building) this.vegetation.update(at.x, at.z);
     this.crops.advance(delta);
@@ -1079,7 +1046,6 @@ export class WorldComposer {
       force === this._wind.force;
     if (unchanged) return;
     this._wind = { amplitude: field.amplitude, speed: field.speed, direction, force };
-    this.grass.setWind(field);
     this.vegetation.setWind(field);
     this.crops.setWind(field);
     this.furniture.setWindDirection(direction, force);
@@ -1109,6 +1075,7 @@ export class WorldComposer {
   setSightline(from, to, options) {
     if (this.disposed) return;
     setSightline(this.sightline, from, to, options);
+    this.furniture.updateSightline();
   }
 
   dispose() {
@@ -1122,7 +1089,6 @@ export class WorldComposer {
     this.trains.dispose();
     this.furniture.dispose();
     this.crops.dispose();
-    this.grass.dispose();
     this.vegetation.dispose();
     this.gardens.dispose();
     this.streets.dispose();

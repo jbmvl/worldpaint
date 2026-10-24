@@ -23,6 +23,8 @@ export class GenerationBudget {
     this.start = now();
   }
   async checkpoint() {
+    // Une étape vient de tourner : l'application écarte les images qu'elle a retardées de ses mesures.
+    if (this.gate) this.gate.lastWorkAt = this.now();
     if (this.gate?.paused) { await this.gate.wait(); this.start = this.now(); }
     if (this.now() - this.start < this.milliseconds) return;
     const start = this.onPause ? this.now() : 0;

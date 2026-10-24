@@ -250,44 +250,6 @@ function rgb(r, g, b) {
 }
 
 /**
- * Touffe d'herbe, pour le tout premier plan. Un brin n'a pas une épaisseur
- * constante (part large, finit en pointe), est plus clair à la pointe qu'au
- * pied, et il en faut beaucoup (`alphaTest` supprime les brins clairsemés).
- * Vert moyen : la teinte définitive vient de la couleur d'instance.
- */
-function drawGrassTuft(ctx, size, random) {
-  const blades = 34;
-  for (let i = 0; i < blades; i++) {
-    // Les brins du bord sont plus courts : une touffe est bombée, pas taillée
-    // au carré.
-    const baseX = size * (0.1 + random() * 0.8);
-    const centred = 1 - Math.abs(baseX / size - 0.5) * 1.5;
-    const height = size * (0.3 + random() * 0.62) * (0.55 + centred * 0.45);
-    const lean = size * (random() - 0.5) * 0.55;
-    const width = size * (0.028 + random() * 0.03);
-    const tipX = baseX + lean;
-    const tipY = size - height;
-    const midX = baseX + lean * 0.3;
-    const midY = size - height * 0.62;
-
-    // Pied sombre, pointe claire : c'est ce dégradé qui donne du volume à une
-    // silhouette qui n'en a pas.
-    const shade = 0.72 + random() * 0.42;
-    const gradient = ctx.createLinearGradient(baseX, size, tipX, tipY);
-    gradient.addColorStop(0, rgb(46 * shade, 74 * shade, 32 * shade));
-    gradient.addColorStop(1, rgb(104 * shade, 148 * shade, 62 * shade));
-
-    ctx.fillStyle = gradient;
-    ctx.beginPath();
-    ctx.moveTo(baseX - width / 2, size);
-    ctx.quadraticCurveTo(midX - width * 0.34, midY, tipX, tipY);
-    ctx.quadraticCurveTo(midX + width * 0.34, midY, baseX + width / 2, size);
-    ctx.closePath();
-    ctx.fill();
-  }
-}
-
-/**
  * Décalages UV d'un atlas carré, dans l'ordre de dessin des cases (0 en haut
  * à gauche, puis vers la droite, puis vers le bas). Dérivé plutôt qu'écrit à
  * la main, pour rester d'accord avec un atlas qui change de taille.
@@ -303,8 +265,8 @@ export function atlasOffsets(cols, rows) {
 }
 
 /**
- * Répète un peintre de silhouette pour en faire une masse (au-delà de 30 m,
- * une touffe représente plusieurs mètres carrés). Rejoue le même peintre
+ * Répète un peintre de silhouette pour en faire une masse (au loin, une
+ * touffe représente plusieurs mètres carrés). Rejoue le même peintre
  * plusieurs fois côte à côte plutôt qu'un second jeu à garder d'accord avec
  * le premier ; les sous-touffes se recouvrent largement pour un contour plein.
  */
@@ -330,125 +292,8 @@ function drawMass(ctx, size, random, paint, passes = 5, aspect = 1) {
 }
 
 /**
- * Atlas des touffes : herbe nue, trois fleurissements, et leurs masses. Une
- * fleur pousse dedans l'herbe, pas à côté : quatre variantes tirées dans un
- * atlas par l'attribut d'instance déjà en place pour les arbres, sans appel
- * de rendu supplémentaire (`groundCover` choisit d'après la carte de
- * classes). Les cinq dernières cases sont les mêmes touffes agrégées
- * (`drawMass`) pour les bandes de distance, chaque fleurissement gardant la
- * sienne. `clumpAlt` est une seconde masse d'herbe nue, graine différente
- * (le cas le plus fréquent, pour ne pas se répéter en motif).
- */
-export const GRASS_ATLAS_COLS = 3;
-export const GRASS_ATLAS_ROWS = 3;
-
-/**
- * Les neuf variantes, dans l'ordre des cases de l'atlas. Les quatre premières
- * sont les touffes de détail, les cinq suivantes leurs masses — `groundCover`
- * passe des unes aux autres par `grassMassVariant`.
- */
-export const GRASS_VARIANTS = [
-  'plain',
-  'white',
-  'yellow',
-  'poppy',
-  'clump',
-  'clumpAlt',
-  'clumpWhite',
-  'clumpYellow',
-  'clumpPoppy',
-];
-
-/** Décalages UV des neuf cases. */
-export const GRASS_ATLAS_OFFSETS = atlasOffsets(GRASS_ATLAS_COLS, GRASS_ATLAS_ROWS);
-
-/** Fleurs par variante : couleur, cœur, nombre, hauteur relative. */
-const FLOWER_KINDS = {
-  // Marguerites : quelques corolles blanches à cœur jaune, portées haut.
-  white: { petal: '#f0efe6', heart: '#e2c25a', count: 7, radius: 0.055, reach: 0.72 },
-  // Boutons d'or : plus petits, plus nombreux, plus bas dans la touffe.
-  yellow: { petal: '#e8c94a', heart: '#c99f28', count: 9, radius: 0.042, reach: 0.55 },
-  // Coquelicots : rares, hauts, et c'est leur rareté qui les fait remarquer.
-  poppy: { petal: '#c4433a', heart: '#2a2320', count: 4, radius: 0.062, reach: 0.8 },
-};
-
-function drawFlowers(ctx, size, random, kind) {
-  const spec = FLOWER_KINDS[kind];
-  if (!spec) return;
-
-  for (let i = 0; i < spec.count; i++) {
-    const cx = size * (0.14 + random() * 0.72);
-    const cy = size * (1 - spec.reach * (0.55 + random() * 0.45));
-    const r = size * spec.radius * (0.8 + random() * 0.4);
-
-    // Tige : sans elle, la fleur flotte au-dessus de la touffe.
-    ctx.strokeStyle = 'rgb(76, 104, 52)';
-    ctx.lineWidth = Math.max(1, size * 0.008);
-    ctx.beginPath();
-    ctx.moveTo(cx, size);
-    ctx.quadraticCurveTo(cx + (random() - 0.5) * size * 0.06, (cy + size) / 2, cx, cy);
-    ctx.stroke();
-
-    // Corolle : cinq pétales, pas un disque — un disque se lit comme un point.
-    ctx.fillStyle = spec.petal;
-    for (let p = 0; p < 5; p++) {
-      const angle = (p / 5) * Math.PI * 2 + random() * 0.3;
-      ctx.beginPath();
-      ctx.ellipse(cx + Math.cos(angle) * r * 0.55, cy + Math.sin(angle) * r * 0.55, r * 0.6, r * 0.42, angle, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    ctx.fillStyle = spec.heart;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r * 0.3, 0, Math.PI * 2);
-    ctx.fill();
-  }
-}
-
-/**
- * Fleurissement porté par une case, ou `null` — le suffixe des masses est
- * retiré, une masse de marguerites reste faite de marguerites.
- */
-function grassFlowerKind(variant) {
-  if (variant === 'white' || variant === 'clumpWhite') return 'white';
-  if (variant === 'yellow' || variant === 'clumpYellow') return 'yellow';
-  if (variant === 'poppy' || variant === 'clumpPoppy') return 'poppy';
-  return null;
-}
-
-/** Atlas 3 × 3 des touffes et de leurs masses, fond transparent. */
-export function createGrassAtlasCanvas(cell = 128, seed = 3313) {
-  const canvas = createCanvas(cell * GRASS_ATLAS_COLS, cell * GRASS_ATLAS_ROWS);
-  const ctx = canvas.getContext('2d');
-
-  GRASS_VARIANTS.forEach((variant, index) => {
-    const col = index % GRASS_ATLAS_COLS;
-    const row = Math.floor(index / GRASS_ATLAS_COLS);
-    ctx.save();
-    ctx.translate(col * cell, row * cell);
-    // Une graine par case : deux touffes voisines de variantes différentes ne
-    // doivent pas être la même touffe repeinte.
-    const random = randomStream(seed + index * 977);
-    const flowers = grassFlowerKind(variant);
-
-    if (variant.startsWith('clump')) {
-      drawMass(ctx, cell, random, drawGrassTuft);
-      // Les fleurs sont posées **après** la masse, à l'échelle de la case : à
-      // l'intérieur de chaque sous-touffe elles seraient rétrécies au point de
-      // ne plus être qu'un grain de couleur.
-      if (flowers) drawFlowers(ctx, cell, random, flowers);
-    } else {
-      drawGrassTuft(ctx, cell, random);
-      if (flowers) drawFlowers(ctx, cell, random, flowers);
-    }
-    ctx.restore();
-  });
-
-  return canvas;
-}
-
-/**
  * Atlas des cultures : blé, maïs, tournesol, chaume, lavande, colza. Des
- * touffes comme l'herbe (panneaux croisés, même matériau, même vent), à
+ * touffes en panneaux croisés (même matériau et même vent que le feuillage), à
  * l'échelle de la plante — `cropLayer` applique la hauteur, ici on ne dessine
  * que la silhouette.
  */

@@ -15,7 +15,7 @@ import {
   randomStream,
 } from '../src/core/groundSeed.js';
 import { coverBandCells, coverBand } from '../src/layers/coverBands.js';
-import { fillGrassCell, GRASS_BANDS, GRASS_TUFT_STRIDE } from '../src/layers/groundCover.js';
+import { fillCropCell, CROP_BANDS, CROP_TUFT_STRIDE } from '../src/layers/cropLayer.js';
 import { buildBiomeDebris } from '../src/layers/furniture/biomeDebris.js';
 
 // Le départ de la démo, un départ à 3 km à l'est, un autre à 25 km au nord-ouest
@@ -100,16 +100,16 @@ test('les mailles d’une passe sont triées du plus proche au plus lointain', (
   for (let i = 1; i < cells.length; i++) assert.ok(cells[i].distance >= cells[i - 1].distance);
 });
 
-test('l’herbe pousse aux mêmes points du sol, d’où que l’on parte', () => {
+test('les cultures poussent aux mêmes points du sol, d’où que l’on parte', () => {
   // Repères alignés est-ouest : même échelle, donc même disque en mètres.
   const [a, b] = FRAMES;
-  const band = GRASS_BANDS[0];
+  const band = CROP_BANDS[0];
   const tufts = (frame) => {
     const c = local(frame, HOME);
     const out = new Map();
-    const buffer = new Float32Array(band.perCell * GRASS_TUFT_STRIDE);
+    const buffer = new Float32Array(band.perCell * CROP_TUFT_STRIDE);
     for (const cell of coverBandCells(frame, [coverBand({ ...band, to: 20 })], c.x, c.z)) {
-      fillGrassCell(buffer, cell, band.perCell, band.salt);
+      fillCropCell(buffer, cell, band.perCell, band.salt);
       const { lng, lat } = frame.toLngLat(buffer[0], buffer[1]);
       out.set(`${cell.id}:${cell.row}`, { lng, lat, size: buffer[3] });
     }

@@ -150,8 +150,14 @@ export const PLACEMENT_HARD_CAP = MAX_TREES_PER_TILE * 4;
 export const VEGETATION_MAX_RING = 1;
 /** Temps de semis accordé par image, en millisecondes. */
 export const VEGETATION_BUILD_BUDGET_MS = 4;
-/** Côté d'un bloc de rendu, en mètres : l'unité de l'élimination hors champ. */
-export const VEGETATION_BLOCK_M = 250;
+/**
+ * Côté d'un bloc de rendu, en mètres : l'unité de l'élimination hors champ et
+ * du niveau de détail, qui se lit au bord le plus proche du bloc. Assez petit
+ * pour que la boîte d'ombre (220 m) et le détail plein n'emportent pas des
+ * arbres lointains avec le bloc du coureur ; assez grand pour garder peu
+ * d'appels de dessin.
+ */
+export const VEGETATION_BLOCK_M = 125;
 /** En deçà de cette part de boisé, la maille ne reçoit aucun arbre. */
 export const WOOD_SCORE_MIN = 0.22;
 /** Exposant de la courbe de densité (au-dessus de 1, creuse la différence entre lisière et sous-bois). */

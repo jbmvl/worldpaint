@@ -600,6 +600,9 @@ export class World {
 
   get generationPaused() { return this.composer.generation.paused; }
 
+  /** Instant (`performance.now()`) de la dernière étape de génération : les images d'avant ont pu l'attendre. */
+  get lastGenerationAt() { return this.composer.generation.lastWorkAt; }
+
   /** Active les mesures CPU par couche ; le rendu GPU reste à mesurer par le renderer. */
   setProfiling(enabled = true) { this.composer.metrics.enabled = enabled; }
 
@@ -652,7 +655,7 @@ export class World {
   }
 
   /**
-   * Travail d'une image : files de plantation, herbe, animations.
+   * Travail d'une image : files de plantation, cultures, animations.
    * @param {number} delta Secondes écoulées.
    * @param {{x:number,y:number,z:number}} at Point observé, en unités de scène.
    */

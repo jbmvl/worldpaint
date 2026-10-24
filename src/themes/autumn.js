@@ -29,17 +29,6 @@ const trees = {
   variants: defaultTheme.trees.variants.map((v, i) => (AUTUMN_HUES[i] ? { ...v, hue: AUTUMN_HUES[i] } : v)),
 };
 
-const grass = {
-  ...defaultTheme.grass,
-  bladeColors: {
-    root: [0.09, 0.15, 0.022],
-    tip: [0.13, 0.16, 0.03],
-    palette: [[0.10, 0.16, 0.022], [0.14, 0.17, 0.032], [0.075, 0.13, 0.018]],
-  },
-  flowerShare: 0.03,
-  poppyShare: 0,
-};
-
 // Pré jauni et litière de feuilles : c'est le sol qui couvre l'image.
 const surfaces = {
   ...defaultTheme.surfaces,
@@ -70,7 +59,7 @@ const terrain = {
   },
 };
 
-export const autumnTheme = { trees, grass, surfaces, crops, terrain };
+export const autumnTheme = { trees, surfaces, crops, terrain };
 
 /**
  * La tranche de la saison d'une date, ou `null` (l'été par défaut). Seul
