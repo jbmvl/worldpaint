@@ -543,7 +543,7 @@ test('chaque matière retouchée porte la dominante de sa fiche de biome', () =>
 test('les matières non concernées par le chantier gardent leur couleur', () => {
   const unchanged = {
     grass: [0.051, 0.135, 0.017],
-    farmland: [0.431, 0.331, 0.08],
+    farmland: [0.22, 0.13, 0.06],
     alpine: [0.205, 0.254, 0.107],
     sand: [0.624, 0.539, 0.361],
     ice: [0.6, 0.66, 0.72],

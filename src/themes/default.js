@@ -82,13 +82,14 @@ export const TERRAIN_LOOK = {
    * `cropLayer` (rangs de vigne, de haies de lavande ou alignement d'arbres,
    * via `furnitureLayer`) : leur albédo est calé sur les mêmes couleurs de
    * feuillage. Le labour garde l'albédo de `farmland` (`SURFACE_LOOK`), repli
-   * de toute culture inconnue.
+   * de toute culture inconnue : son chaume est ras et clairsemé, c'est la terre
+   * entre les tiges qui fait la couleur, pas la paille.
    */
   cropAlbedo: {
     wheat: [0.566, 0.439, 0.092],
     maize: [0.123, 0.251, 0.027],
     sunflower: [0.258, 0.243, 0.022],
-    plough: [0.431, 0.331, 0.08],
+    plough: [0.22, 0.13, 0.06],
     vineyard: [0.168, 0.246, 0.069],
     orchard: [0.153, 0.219, 0.061],
     // Un champ de lavande vu de loin n'est pas violet vif : c'est un gris
@@ -766,7 +767,7 @@ export const SURFACE_LOOK = {
     grainCellM: 2,
     grainAmplitudeM: 0.22,
   },
-  farmland: { albedo: [0.431, 0.331, 0.08], wash: 'farmland', grainCellM: 6, grainAmplitudeM: 1.4 },
+  farmland: { albedo: [0.22, 0.13, 0.06], wash: 'farmland', grainCellM: 6, grainAmplitudeM: 1.4 },
   // Lotissement : pelouses tondues et allées, plus claires et plus franchement
   // vertes qu'une prairie de rase campagne — l'entretien, pas l'herbe elle-même.
   // Un aplat, pas un terrain qui varie.
