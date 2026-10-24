@@ -21,6 +21,8 @@
 import * as THREE from 'three';
 import { CropLayer } from '/src/layers/cropLayer.js';
 import { createLocalFrame } from '/src/core/tileMath.js';
+import { resolveTheme } from '/src/themes/theme.js';
+import { autumnTheme } from '/src/themes/autumn.js';
 
 const ROAD_HALF_M = 3;
 const FIELD_EDGE_M = 90;
@@ -67,10 +69,12 @@ const groundClass = {
 const index = {
   covers: (x, z, margin) => Math.abs(x - roadX(z)) * Math.cos(Math.atan(Math.cos(z / 45) * 10 / 45)) <= ROAD_HALF_M + margin,
 };
-const crops = new CropLayer({ THREE, scene, bubble, groundClass, roads: { index } });
+// `?saison=automne` : la tranche d'automne (`themes/autumn.js`).
+const theme = resolveTheme(new URLSearchParams(location.search).get('saison') === 'automne' ? autumnTheme : null);
+const crops = new CropLayer({ THREE, scene, bubble, groundClass, roads: { index }, theme });
 
 function render() {
-  bubble.frame++;
+  bubble.surfaceGeneration++;
   crops.update(roadX(state.z), state.z, { force: true });
   const x = roadX(state.z);
   camera.position.set(x, state.height, state.z);

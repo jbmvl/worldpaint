@@ -1,7 +1,8 @@
 /*
  * autumn — la tranche d'automne : feuillus roux, dorés ou cuivrés, herbe et
- * pré jaunis, litière brune sous bois, presque plus de fleurs. Résineux, pins
- * et persistants gardent leur vert : ce contraste fait lire la saison de loin.
+ * pré jaunis, litière brune sous bois, presque plus de fleurs, champs
+ * moissonnés ou secs. Résineux, pins et persistants gardent leur vert : ce
+ * contraste fait lire la saison de loin.
  *
  * Ce n'est qu'une surcharge de `defaultTheme` passée à `resolveTheme` ; aucune
  * couche ne sait quelle saison il fait. Les teintes multiplient `volume.leaf`,
@@ -46,7 +47,30 @@ const surfaces = {
   wood: { ...defaultTheme.surfaces.wood, albedo: [0.07, 0.058, 0.014] },
 };
 
-export const autumnTheme = { trees, grass, surfaces };
+// Fin octobre : blé et tournesol moissonnés, maïs sec sur pied, colza
+// semé fin août qui ne fait encore que des rosettes vertes au ras du sol.
+const crops = {
+  ...defaultTheme.crops,
+  wheat: { ...defaultTheme.crops.plough },
+  maize: { ...defaultTheme.crops.maize, tint: [1.45, 0.82, 0.42] },
+  sunflower: { ...defaultTheme.crops.plough, tint: [0.8, 0.7, 0.55] },
+  rapeseed: { ...defaultTheme.crops.rapeseed, atlas: 'rice', height: 0.25, tint: [0.9, 1.05, 0.8] },
+};
+
+const terrain = {
+  ...defaultTheme.terrain,
+  cropAlbedo: {
+    ...defaultTheme.terrain.cropAlbedo,
+    wheat: [0.36, 0.27, 0.07],
+    maize: [0.3, 0.22, 0.06],
+    sunflower: [0.2, 0.15, 0.05],
+    rapeseed: [0.075, 0.15, 0.025],
+    vineyard: [0.3, 0.2, 0.05],
+    orchard: [0.2, 0.18, 0.05],
+  },
+};
+
+export const autumnTheme = { trees, grass, surfaces, crops, terrain };
 
 /**
  * La tranche de la saison d'une date, ou `null` (l'été par défaut). Seul
