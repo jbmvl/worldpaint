@@ -235,9 +235,11 @@ let mounting = false;
 const NEAR_M = 300;
 /** L'élargissement en cours après un montage, `null` une fois la bulle complète. */
 let widening = null;
+/** Tranche de génération du premier montage : aucune image n'est dessinée avant lui. */
+const BOOT_BUDGET_MS = 50;
 
 /** Monte le décor autour d'un point et chronomètre : tuiles + génération, hors rendu. */
-async function mountScene(lng, lat) {
+async function mountScene(lng, lat, { budgetMs } = {}) {
   world.setProfiling(true);
   world.resetGenerationStats();
   const t0 = performance.now();
@@ -251,7 +253,7 @@ async function mountScene(lng, lat) {
     // Le proche d'abord, pour rendre la main vite ; le reste de la bulle se
     // bâtit ensuite pendant qu'on rend. Une scène figée n'en a pas besoin.
     if (REACH_M === null) world.setReach(NEAR_M);
-    await world.mountAt(lng, lat);
+    await world.mountAt(lng, lat, { budgetMs });
   } finally {
     clearInterval(precompile);
     mounting = false;
@@ -297,7 +299,7 @@ async function boot() {
   if (showcaseToggle.checked) world.setRegionWord(showcaseFieldSelect.value, showcaseWordSelect.value);
 
   setStatus(`Centrage sur ${START.label}…`);
-  await mountScene(START.lng, START.lat);
+  await mountScene(START.lng, START.lat, { budgetMs: BOOT_BUDGET_MS });
 
   const local = world.frame.toLocal(START.lng, START.lat);
   const ground = sampleGroundHeight(local.x, local.z) ?? 0;
