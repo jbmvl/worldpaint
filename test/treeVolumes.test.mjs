@@ -128,7 +128,7 @@ test('un bloc éclairci range ses plantes par poids, lu dans leur orientation', 
   layer.dispose();
 });
 
-test('l’éclaircie garde un sous-ensemble des mêmes plantes, jamais à moins de 500 m', () => {
+test('l’éclaircie garde un sous-ensemble des mêmes plantes, jamais à moins de UNDERSTORY_FULL_M', () => {
   assert.equal(understoryShare(0), 1);
   assert.equal(understoryShare(UNDERSTORY_FULL_M), 1);
   assert.equal(understoryShare(UNDERSTORY_FAR_M), 0);
@@ -139,7 +139,7 @@ test('l’éclaircie garde un sous-ensemble des mêmes plantes, jamais à moins 
   layer.update(417, 417, { force: true });
   const proches = meshes.filter(m => Math.hypot(m.boundingSphere.center.x - 417, m.boundingSphere.center.z - 417) - m.boundingSphere.radius <= UNDERSTORY_FULL_M);
   assert.ok(proches.length > 0);
-  assert.ok(proches.every(m => m.count === m.userData.full), 'complet sous 500 m');
+  assert.ok(proches.every(m => m.count === m.userData.full), 'complet sous UNDERSTORY_FULL_M');
   layer.update(417 + 900, 417, { force: true });
   assert.ok(meshes.some(m => m.count < m.userData.full), 'au loin, le sous-étage s’éclaircit');
   layer.update(417, 417, { force: true });

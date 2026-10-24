@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { treePrototype } from '../src/models/treeKit.js';
 import { defaultTheme } from '../src/themes/default.js';
 import { VegetationLayer } from '../src/layers/vegetationLayer.js';
-import { vegetationDetail } from '../src/layers/vegetationDetail.js';
+import { vegetationDetail, VEGETATION_DETAIL_M, VEGETATION_DETAIL_MARGIN_M } from '../src/layers/vegetationDetail.js';
 
 test('le détail lointain réduit les facettes sans déplacer les sommets des lobes', () => {
   defaultTheme.trees.variants.forEach((variant, i) => {
@@ -31,14 +31,18 @@ test('le détail lointain réduit les facettes sans déplacer les sommets des lo
 });
 
 test('les seuils gardent le détail proche et évitent les bascules répétées', () => {
-  assert.equal(vegetationDetail(500, 2), 0);
-  assert.equal(vegetationDetail(650, 0), 0);
-  assert.equal(vegetationDetail(670, 0), 1);
-  assert.equal(vegetationDetail(550, 1), 1);
-  assert.equal(vegetationDetail(530, 1), 0);
-  assert.equal(vegetationDetail(1070, 0), 2);
-  assert.equal(vegetationDetail(950, 2), 2);
-  assert.equal(vegetationDetail(930, 2), 1);
+  const [near, far] = VEGETATION_DETAIL_M;
+  const m = VEGETATION_DETAIL_MARGIN_M;
+  assert.equal(vegetationDetail(near - m - 1, 2), 0);
+  assert.equal(vegetationDetail(near + m - 1, 0), 0);
+  assert.equal(vegetationDetail(near + m + 1, 0), 1);
+  assert.equal(vegetationDetail(near - m + 1, 1), 1);
+  assert.equal(vegetationDetail(near - m - 1, 1), 0);
+  assert.equal(vegetationDetail(far + m + 1, 0), 2);
+  assert.equal(vegetationDetail(far - m + 1, 2), 2);
+  assert.equal(vegetationDetail(far - m - 1, 2), 1);
+  // Les seuils tiennent dans le rayon des objets : sans quoi le détail simplifié ne servirait jamais.
+  assert.ok(far + m < 375);
 });
 
 test('un aller-retour ne transfère ni matrices ni couleurs et restitue le volume proche', () => {
@@ -61,10 +65,12 @@ test('un aller-retour ne transfère ni matrices ni couleurs et restitue le volum
 
 test('un bloc dont une plante reste proche garde son volume complet', () => {
   const layer = new VegetationLayer({ THREE, scene: new THREE.Scene(), bubble: { frame: {} } });
-  layer.setPlants('t', [0, 240].map(x => ({ variant: 0, x, y: 0, z: 0, height: 10, aspect: .7, rotation: 0, color: [1, 1, 1] })));
+  layer.setPlants('t', [0, 120].map(x => ({ variant: 0, x, y: 0, z: 0, height: 10, aspect: .7, rotation: 0, color: [1, 1, 1] })));
   const mesh = layer.meshes.get('t')[0];
+  layer.update(-100, 0, { force: true });
+  assert.equal(mesh.userData.treeDetail, 0, 'la plante la plus proche décide');
   layer.update(-500, 0, { force: true });
-  assert.equal(mesh.userData.treeDetail, 0);
+  assert.equal(mesh.userData.treeDetail, 2);
   layer.dispose();
 });
 

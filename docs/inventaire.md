@@ -842,7 +842,7 @@ bougé tout seul » :
 | Ce qui est refait | Tous les |
 | --- | --- |
 | tout ce qui vient du vectoriel : carte du sol, falaises, chaussées, ponts, rails, bâti, voirie, jardins, mobilier, bêtes, tracteurs, arbres | 250 m (`DECOR_STEP_M`), d'un bloc ; moins en ville, voir plus bas |
-| éclaircie du sous-bois au-delà de 500 m | 8 m |
+| éclaircie du sous-bois au-delà de 150 m | 8 m |
 | cultures, semées autour de l'observateur | 10 m |
 | oiseaux, montgolfières, chauves-souris, étourneaux, pluie, vent | chaque image |
 | lucioles, semées autour de l'observateur | 4 m |
@@ -1086,9 +1086,9 @@ représentation générique du verger : les données de parcelle ne précisent p
 ici la variété fruitière et aucune saison de fructification n'est simulée.
 
 Les plantes restent en volume à toute distance. Les blocs éloignés emploient
-deux géométries simplifiées des mêmes lobes, au-delà de 600 et 1000 m du point
-le plus proche de leur sphère, avec une marge de 60 m entre aller et retour.
-Le volume complet est conservé sous 500 m ; les semis, couleurs et matrices
+deux géométries simplifiées des mêmes lobes, au-delà de 150 et 280 m du point
+le plus proche de leur sphère, avec une marge de 20 m entre aller et retour.
+Le volume complet est conservé sous 130 m ; les semis, couleurs et matrices
 ne changent pas avec le niveau de détail. Les instances sont rangées par bloc de 125 m
 (`VEGETATION_BLOCK_M`) et par silhouette ; l'élimination hors champ, celle de
 l'image comme celle de la passe d'ombre, écarte les blocs invisibles. Un bloc

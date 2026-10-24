@@ -208,10 +208,13 @@ export const UNDERSTORY_SALT = 401;
 export const UNDERSTORY_CANDIDATES = 160;
 /** Plafond du sous-étage par tuile, en plantes. */
 export const UNDERSTORY_MAX_PER_TILE = 40000;
-/** En deçà de cette distance d'un bloc, son sous-étage est complet. */
-export const UNDERSTORY_FULL_M = 500;
+/**
+ * En deçà de cette distance d'un bloc, son sous-étage est complet. Ronces et
+ * buissons bas : à plus de 150 m, sous les houppes, ils ne font plus un pixel.
+ */
+export const UNDERSTORY_FULL_M = 150;
 /** Au-delà de cette distance d'un bloc, son sous-étage ne montre plus rien. */
-export const UNDERSTORY_FAR_M = 700;
+export const UNDERSTORY_FAR_M = 250;
 /** Déplacement de l'observateur avant de recompter l'éclaircie, en mètres. */
 export const UNDERSTORY_RECOUNT_M = 8;
 
