@@ -37,7 +37,7 @@
  */
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
-import { createWorld } from '/src/index.js';
+import { createWorld, autumnTheme } from '/src/index.js';
 import { muteAnimated, geometrySnapshot, compareSnapshots, readView, pixelChange } from '/demo/lab/nearStability.js';
 import { auditRoads } from '/demo/lab/roadAudit.js';
 
@@ -65,6 +65,7 @@ const world = createWorld({
     : { zoom: place.zoom, url: `${base}/dem/{z}/{x}/{y}.absent` },
   vector: place.vector ? { tiles: [`${location.origin}${base}/vector/{z}/{x}/{y}.pbf`], maxZoom: place.vector.maxZoom } : null,
   sky: { Sky },
+  theme: params.get('saison') === 'automne' ? autumnTheme : null,
 });
 
 await world.setCenter(place.lng, place.lat);
