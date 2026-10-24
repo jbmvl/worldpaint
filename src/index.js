@@ -18,6 +18,7 @@ export { DASH_SPAN_M } from './layers/faunaMotion.js';
 // Une application donne ses tranches à `createWorld({ theme })`.
 export { defaultTheme } from './themes/default.js';
 export { resolveTheme } from './themes/theme.js';
+export { autumnTheme, seasonalTheme } from './themes/autumn.js';
 
 // --- Les pièces, pour qui veut monter le décor à la main --------------------
 export { ElevationField, MAPTILER_TERRAIN_URL, DEM_TILE_PIXELS } from './core/elevationField.js';

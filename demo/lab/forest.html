@@ -10,6 +10,7 @@
  * sol plat dont la part de bois vaut `wood` partout : peuplement et sous-étage.
  *
  *   forestLab.set({ wood: 1, view: 'sol' | 'haut', x: 0 })
+ *   ?saison=automne : la tranche d'automne (`themes/autumn.js`)
  *   await forestLab.measure(60)   // ms par image (rendu + glFinish), appels, triangles
  *
  * `x` déplace l'observateur (et la caméra) le long de l'axe est-ouest. Les
@@ -17,13 +18,15 @@
  */
 import * as THREE from 'three';
 import { VegetationLayer } from '/src/layers/vegetationLayer.js';
-import { defaultTheme } from '/src/themes/default.js';
+import { resolveTheme } from '/src/themes/theme.js';
+import { autumnTheme } from '/src/themes/autumn.js';
 import { SHADOW_RADIUS_M } from '/src/environment/shadowFrame.js';
 
 const params = new URLSearchParams(location.search);
 const width = params.has('mobile') ? 360 : 1600;
 const height = params.has('mobile') ? 640 : 900;
 const TILE_M = 834;
+const theme = resolveTheme(params.get('saison') === 'automne' ? autumnTheme : null);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 // Taille fixe : la mesure ne doit pas dépendre de la fenêtre (masquée, elle vaut 0 × 0).
@@ -64,6 +67,7 @@ function build() {
     THREE, scene,
     bubble: { frame: { zoom: 15, scale: TILE_M, origin: { x: 0.5, y: 0.5 } }, tiles, surfaceElevationAtLocal: () => 0, verticalScale: 1 },
     groundClass: { woodAt: () => state.wood, coverageOf: () => 1 },
+    theme,
   });
   layer.setWind({ amplitude: 0, speed: 0 });
   layer.sync();

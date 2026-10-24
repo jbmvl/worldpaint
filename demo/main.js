@@ -34,6 +34,8 @@ import {
   LABEL_FAUNA,
   SHOWCASE_FIELDS,
   showcaseEntries,
+  autumnTheme,
+  seasonalTheme,
 } from '../src/index.js';
 import { PerformanceProbe } from './performanceProbe.js';
 const performanceProbe = new PerformanceProbe();
@@ -112,6 +114,9 @@ menuToggle.addEventListener('click', () => panel.classList.toggle('open'));
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 // Résolution imposée par `?dpr=1.5`, sinon celle de l'écran (2 au plus), que
 // `adaptQuality` abaisse quand les images ne suivent plus.
+// `?saison=automne` ou `?saison=ete` force la saison ; sinon, la date du jour.
+const SEASON = new URLSearchParams(location.search).get('saison');
+const SEASON_THEME = SEASON === 'automne' ? autumnTheme : SEASON === 'ete' ? null : seasonalTheme();
 const FORCED_DPR = Number(new URLSearchParams(location.search).get('dpr')) || null;
 renderer.setPixelRatio(FORCED_DPR ?? Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -285,6 +290,7 @@ async function boot() {
     scene,
     vector,
     sky: { Sky },
+    theme: SEASON_THEME,
     ...(REACH_M !== null ? { reach: REACH_M } : {}),
   });
 
