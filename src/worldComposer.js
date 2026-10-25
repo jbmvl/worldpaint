@@ -310,12 +310,14 @@ export class WorldComposer {
       theme,
     });
     this.life = new LifeLayer({ THREE, scene, bubble, theme });
-    // Le sol de ce que la couche du ciel ancre à terre : lucioles et dortoirs d'étourneaux.
+    // Le sol de ce que la couche du ciel ancre à terre : lucioles, dortoirs
+    // d'étourneaux, hirondelles sur les lignes que le mobilier a tendues.
     const self = this;
     this._lifeGround = {
       get frame() { return self.groundClass.ready ? self.bubble.frame : null; },
       woodAt: (x, z) => this.groundClass.woodAt(x, z),
       elevationAt: (x, z) => this.groundElevationAt(x, z),
+      get wires() { return self.furniture.wireSpans; },
     };
     // Le vivant au sol : posé par le mobilier, animé ici (voir `faunaLayer`).
     this.fauna = new FaunaLayer({ THREE, scene, theme });

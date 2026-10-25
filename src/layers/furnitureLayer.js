@@ -230,6 +230,8 @@ export class FurnitureLayer {
     // même raison, voir `createFurnitureGreenhouseMaterial`.
     this.greenhouseMaterial = createFurnitureGreenhouseMaterial(THREE);
     this.trees = [];
+    /** Portées des lignes aériennes, repère de scène — voir `appendOverheadLine`. */
+    this.wireSpans = [];
     /** Fontaines posées, repère de scène — voir `publishFountains`. */
     this.fountains = [];
     this.geometries = createFurnitureGeometries(THREE, theme.furniture.colors, undefined, this._placeNameSign, theme.furniture);
@@ -522,6 +524,7 @@ export class FurnitureLayer {
         rows: 0,
       };
       this._lampHeads = [];
+      this.wireSpans = [];
       this._lighthouses = [];
       this._ghosts = [];
       this._signals = [];
@@ -1522,6 +1525,7 @@ export class FurnitureLayer {
     this.lampLights.length = 0;
 
     this._lampHeads = [];
+    this.wireSpans = [];
     this._signals = [];
     this.fauna = [];
     this.tractors = [];

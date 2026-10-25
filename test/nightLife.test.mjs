@@ -47,3 +47,31 @@ test('un vol d’étourneaux sort d’un dortoir boisé, puis disparaît', () =>
   assert.ok(mid.every((s) => s.x > roost.x - 10), 'il s’éloigne de l’observateur');
   assert.equal(birds.map((b) => starlingAt(b, flock, 100 + STARLING_FLIGHT_S)).filter(Boolean).length, 0);
 });
+
+test('les hirondelles se posent sur quelques portées, toujours les mêmes, et s’égaillent à l’approche', async () => {
+  const { perchesNear, flushes, swallowAt, SWALLOW_FLIGHT_S, SWALLOW_SPAN_ODDS } = await import('../src/layers/swallows.js');
+  const spans = [];
+  for (let i = 0; i < 400; i++) {
+    const x = (i % 20) * 7 - 70;
+    const z = Math.floor(i / 20) * 7 - 70;
+    spans.push({ ax: x, ay: 8, az: z, bx: x + 40, by: 8.5, bz: z, sag: 1.1 });
+  }
+  const a = perchesNear(frameAt(0), { x: 0, z: 0 }, spans);
+  assert.ok(a.length > 0 && a.length < spans.length * SWALLOW_SPAN_ODDS * 2, `${a.length}`);
+  // Même portée vue d'un repère décalé d'une tuile : mêmes oiseaux.
+  const shifted = frameAt(-1);
+  const moved = spans.map((s) => ({ ...s, ax: s.ax + shifted.scale, bx: s.bx + shifted.scale }));
+  const b = perchesNear(shifted, { x: shifted.scale, z: 0 }, moved);
+  assert.deepEqual(b.map((p) => p.key), a.map((p) => p.key));
+  // Sur le fil : entre ses appuis, sous la cote des appuis (la flèche).
+  for (const bird of a.flatMap((p) => p.birds)) assert.ok(bird.y <= 8.5 && bird.y > 6.5, `${bird.y}`);
+  const perch = a[0];
+  assert.equal(flushes(perch, { x: perch.x + 500, z: perch.z }), false);
+  assert.equal(flushes(perch, { x: perch.birds[0].x + 5, z: perch.birds[0].z }), true);
+  // Envolées, elles s'éloignent et montent, puis disparaissent.
+  const bird = perch.birds[0];
+  const s = swallowAt(bird, 0, 100, 104);
+  assert.equal(s.perched, false);
+  assert.ok(s.y > bird.y && Math.hypot(s.x - bird.x, s.z - bird.z) > 20);
+  assert.equal(swallowAt(bird, 0, 100, 100 + SWALLOW_FLIGHT_S), null);
+});

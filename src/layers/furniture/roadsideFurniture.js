@@ -542,7 +542,8 @@ export function applyRoadsidePlan(layer, {
 }
 
 /**
- * Câble de ligne aérienne entre poteaux consécutifs.
+ * Câble de ligne aérienne entre poteaux consécutifs, publié aussi dans
+ * `layer.wireSpans` (appuis et flèche) pour ce qui s'y pose.
  *
  * La flèche est une parabole — l'approximation classique de la caténaire pour
  * de petites portées, et la seule différence visible avec un segment droit,
@@ -569,6 +570,11 @@ export function appendOverheadLine(layer, buffer, poles, offset, sampleElevation
     if (span < 4 || span > 90) continue;
 
     const sag = Math.min(1.6, span * 0.028);
+    layer.wireSpans?.push({
+      ax, ay: sampleElevation(ax, az) + height, az,
+      bx, by: sampleElevation(bx, bz) + height, bz,
+      sag,
+    });
     const steps = 6;
     const curve = [];
     const heights = new Float32Array(steps + 1);
