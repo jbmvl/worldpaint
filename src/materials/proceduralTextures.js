@@ -607,7 +607,7 @@ export const ROAD_TEXTURE_ROWS = 512;
  * exception.
  *
  * **Le marquage n'est plus ici** non plus. Cette texture ne porte que le
- * revêtement, son accotement et ses ornières : les lignes de rive et l'axe sont
+ * revêtement et son accotement : les lignes de rive et l'axe sont
  * de la géométrie (`roadMarkings`), posée dans les mêmes morceaux que le
  * ruban. Peintes ici, elles ne pouvaient ni s'arrêter à une bouche de
  * carrefour, ni exister sur la surface d'un carrefour — qui n'a ni milieu ni
@@ -616,8 +616,7 @@ export const ROAD_TEXTURE_ROWS = 512;
  * @param {Object} profile
  * @param {number} profile.width       Largeur totale, accotements compris.
  * @param {number} [profile.shoulder]  Largeur d'un accotement en terre (0 = aucun).
- * @param {string} [profile.surface]   `asphalt` ou `dirt`.
- * @param {boolean} [profile.ruts]     Deux ornières claires (chemin d'exploitation).
+ * @param {string} [profile.surface]   Une clé de `roads.surfaces`.
  * @param {string} [profile.tint]      Remplace la couleur de base du revêtement.
  * @param {number} [profile.texture]   Côté horizontal de la texture, en pixels.
  */
@@ -626,7 +625,6 @@ export function createRoadCanvas(profile, roads = defaultTheme.roads) {
     width: meters,
     shoulder = 0,
     surface = 'asphalt',
-    ruts = false,
     tint = null,
     texture = 128,
   } = profile;
@@ -649,14 +647,6 @@ export function createRoadCanvas(profile, roads = defaultTheme.roads) {
   if (inset > 0) {
     ctx.fillStyle = pavement;
     ctx.fillRect(inset, 0, width - 2 * inset, height);
-  }
-
-  // Ornières d'un chemin d'exploitation : deux bandes tassées, plus claires.
-  if (ruts) {
-    ctx.fillStyle = 'rgba(168, 156, 128, 0.55)';
-    const rut = width * 0.16;
-    ctx.fillRect(width * 0.22, 0, rut, height);
-    ctx.fillRect(width * 0.62, 0, rut, height);
   }
 
   return canvas;

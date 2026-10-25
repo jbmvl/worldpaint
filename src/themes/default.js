@@ -1097,13 +1097,14 @@ export const ROAD_PROFILES = {
   cycleway: { width: 2.2, shoulder: 0, edgeLines: false, centerDash: false, symbol: 'cycle', tint: '#56565c', texture: 64 },
   // Les deux chemins de terre, et les seuls à bord rongé. Le sentier est
   // mangé moins profond que le chemin d'exploitation, mais bien davantage en
-  // part de sa largeur : c'est un passage, pas une voie.
-  track: { width: 3, shoulder: 0, surface: 'dirt', ruts: true, ragged: 0.3, texture: 64 },
-  path: { width: 1.4, shoulder: 0, surface: 'dirt', ragged: 0.2, texture: 64 },
+  // part de sa largeur : c'est un passage, pas une voie. Il a sa propre terre,
+  // plus brune : ses carrefours en prennent la couleur.
+  track: { width: 3, shoulder: 0, surface: 'dirt', ragged: 0.3, texture: 64 },
+  path: { width: 1.4, shoulder: 0, surface: 'trail', ragged: 0.2, texture: 64 },
   // Même gabarit que le sentier — c'en est un, en marches. `steps` dit à
   // `roadNetwork` de le balayer en contremarches (`appendSteps`) plutôt qu'en
   // ruban continu.
-  steps: { width: 1.4, shoulder: 0, surface: 'dirt', ragged: 0.2, texture: 64, steps: true },
+  steps: { width: 1.4, shoulder: 0, surface: 'trail', ragged: 0.2, texture: 64, steps: true },
 };
 /**
  * Revêtements : une couleur de base, et rien d'autre. Chacun portait aussi une
@@ -1114,6 +1115,7 @@ export const ROAD_PROFILES = {
 export const ROAD_SURFACES = {
   asphalt: { base: '#4a4a4e' },
   dirt: { base: '#8a7d63' },
+  trail: { base: '#76634a' },
   ballast: { base: '#847d70' },
 };
 /** Terre claire de l'accotement. */

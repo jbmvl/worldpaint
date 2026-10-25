@@ -13031,7 +13031,7 @@ test('le bord d’un chemin est rongé par le sol, et il l’est au seuil', () =
   // Une chaussée revêtue n'a pas de bord rongé : c'est ce qui la distingue.
   for (const [key, profile] of Object.entries(defaultTheme.roads.profiles)) {
     const ragged = (profile.ragged ?? 0) > 0;
-    assert.equal(ragged, profile.surface === 'dirt', `${key} : rongé si et seulement si en terre`);
+    assert.equal(ragged, (profile.surface || 'asphalt') !== 'asphalt', `${key} : rongé si et seulement si en terre`);
   }
 });
 
