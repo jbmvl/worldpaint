@@ -117,12 +117,10 @@ export class Kit {
     ny /= length;
     nz /= length;
 
-    for (const p of [a, b, c]) {
-      this.positions.push(p[0], p[1], p[2]);
-      this.normals.push(nx, ny, nz);
-      this.colors.push(color[0], color[1], color[2]);
-      this.spins.push(spin);
-    }
+    this.positions.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
+    this.normals.push(nx, ny, nz, nx, ny, nz, nx, ny, nz);
+    this.colors.push(color[0], color[1], color[2], color[0], color[1], color[2], color[0], color[1], color[2]);
+    this.spins.push(spin, spin, spin);
     return this;
   }
 
