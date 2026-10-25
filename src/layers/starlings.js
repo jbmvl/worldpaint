@@ -1,9 +1,10 @@
 /*
  * starlings — un vol d'étourneaux qui jaillit d'un bois quand on s'en approche.
  * -------------------------------------------------------------------------
- * Le dortoir est **ancré au sol** : une maille mondiale boisée sur quelques-unes
- * en porte un (`STARLING_ROOST_ODDS`), toujours la même. L'observateur ne fait
- * que le déclencher en passant à moins de `STARLING_TRIGGER_M` ; un dortoir
+ * Le dortoir est **ancré au sol** et composé par le mobilier
+ * (`furniture/roosts.js`) : à la lisière d'un bois, face à la route la plus
+ * proche. L'observateur ne fait que le déclencher en passant à moins de
+ * `STARLING_TRIGGER_M` du point de cette route qui lui fait face ; un dortoir
  * levé ne se relève pas avant `STARLING_REST_S`.
  *
  * Le vol lui-même est un centre qui s'éloigne de l'observateur en montant, et
@@ -12,12 +13,9 @@
  * oiseau à l'autre selon sa place, qui fait l'onde d'une murmuration.
  */
 
-import { cellRandomAt, hashUnit, randomAt, worldCellsAround } from '../core/groundSeed.js';
+import { hashUnit } from '../core/groundSeed.js';
 
 export const STARLING_COUNT = 48;
-export const STARLING_CELL_M = 40;
-export const STARLING_ROOST_ODDS = 0.2;
-export const STARLING_WOOD_MIN = 0.45;
 export const STARLING_TRIGGER_M = 45;
 export const STARLING_REST_S = 600;
 export const STARLING_FLIGHT_S = 14;
@@ -30,22 +28,21 @@ export const STARLING_FLAP_HZ = 11;
 const SALT = 9311;
 
 /**
- * Le dortoir le plus proche à portée de déclenchement, ou `null`. Pur, à
- * `woodAt` près.
- * @returns {{key:string, x:number, z:number, seed:number}|null}
+ * Le dortoir dont le point de route est le plus proche de `here`, à portée de
+ * déclenchement, ou `null`. Pur.
+ * @param {Array<{key:string, x:number, z:number, roadX:number, roadZ:number, seed:number}>} roosts
  */
-export function roostNear(frame, here, woodAt) {
-  for (const cell of worldCellsAround(frame, here, STARLING_TRIGGER_M + STARLING_CELL_M, STARLING_CELL_M)) {
-    const cx = cell.x + cell.size / 2;
-    const cz = cell.z + cell.size / 2;
-    if (cellRandomAt(frame, cx, cz, STARLING_CELL_M, SALT) >= STARLING_ROOST_ODDS) continue;
-    const x = cell.x + randomAt(frame, cx, cz, SALT + 1) * cell.size;
-    const z = cell.z + randomAt(frame, cx, cz, SALT + 2) * cell.size;
-    if (Math.hypot(x - here.x, z - here.z) > STARLING_TRIGGER_M) continue;
-    if (!(woodAt(x, z) >= STARLING_WOOD_MIN)) continue;
-    return { key: `${cell.row}:${cell.id}`, x, z, seed: randomAt(frame, cx, cz, SALT + 3) };
+export function roostNear(roosts, here) {
+  let best = null;
+  let bestDistance = STARLING_TRIGGER_M;
+  for (const roost of roosts ?? []) {
+    const d = Math.hypot(roost.roadX - here.x, roost.roadZ - here.z);
+    if (d <= bestDistance) {
+      best = roost;
+      bestDistance = d;
+    }
   }
-  return null;
+  return best;
 }
 
 /**

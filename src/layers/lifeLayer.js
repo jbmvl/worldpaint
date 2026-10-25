@@ -23,8 +23,9 @@
  *   (`starlings.js`), d'un dortoir ancré au sol, et des **hirondelles** sur
  *   les lignes aériennes, qui s'égaillent à l'approche (`swallows.js`).
  *
- * Ce qui est ancré au sol lit la part de bois, la cote du sol et les portées
- * de câble que `worldComposer` passe à `advance` ; sans elles, il ne paraît pas.
+ * Ce qui est ancré au sol lit la part de bois, la cote du sol, les dortoirs et
+ * les portées de câble que `worldComposer` passe à `advance` ; sans eux, il ne
+ * paraît pas.
  *
  * Les bêtes ont leur propre couche (`faunaLayer`), et pas par commodité : un
  * oiseau suit l'observateur et personne ne peut le vérifier, une vache est
@@ -695,7 +696,7 @@ export class LifeLayer {
    * @param {{x:number,y:number,z:number}} at Point observé, dans la scène :
    *        les oiseaux tournent autour de lui. C'est l'application qui le
    *        fournit — le décor ne sait pas ce qui l'occupe.
-   * @param {{frame:Object, woodAt:Function, elevationAt:Function}} [ground]
+   * @param {{frame:Object, woodAt:Function, elevationAt:Function, roosts:Array, wires:Array}} [ground]
    *        Le sol, pour ce qui y est ancré (lucioles, dortoirs d'étourneaux,
    *        portées des lignes aériennes `wires`).
    */
@@ -761,7 +762,7 @@ export class LifeLayer {
       this._roostCheck -= delta;
       if (this._roostCheck > 0) return;
       this._roostCheck = ROOST_CHECK_S;
-      const roost = roostNear(ground.frame, at, ground.woodAt);
+      const roost = roostNear(ground.roosts, at);
       // `this.time` repart à zéro toutes les heures : le repos d'un dortoir se compte sur une horloge sans repli.
       const now = this._wallClock;
       const raised = roost && this._roostsRaised.get(roost.key);

@@ -102,6 +102,7 @@ import {
   buildRidgeTrees,
 } from './furniture/landmarks.js';
 import { buildBiomeDebrisSteps } from './furniture/biomeDebris.js';
+import { buildRoosts } from './furniture/roosts.js';
 import { buildPointsOfInterest, collectChurches, publishFountains } from './furniture/pointsOfInterest.js';
 import { buildDomesticFauna } from './furniture/domesticFauna.js';
 import { buildOpenPastureFauna } from './furniture/parcelFauna.js';
@@ -232,6 +233,8 @@ export class FurnitureLayer {
     this.trees = [];
     /** Portées des lignes aériennes, repère de scène — voir `appendOverheadLine`. */
     this.wireSpans = [];
+    /** Dortoirs d'étourneaux, repère de scène — voir `furniture/roosts.js`. */
+    this.roosts = [];
     /** Fontaines posées, repère de scène — voir `publishFountains`. */
     this.fountains = [];
     this.geometries = createFurnitureGeometries(THREE, theme.furniture.colors, undefined, this._placeNameSign, theme.furniture);
@@ -525,6 +528,7 @@ export class FurnitureLayer {
       };
       this._lampHeads = [];
       this.wireSpans = [];
+      this.roosts = [];
       this._lighthouses = [];
       this._ghosts = [];
       this._signals = [];
@@ -556,6 +560,8 @@ export class FurnitureLayer {
         yield* buildRocksSteps(this, context, builtUp);
         yield;
         yield* buildBiomeDebrisSteps(this, context, builtUp);
+        yield;
+        buildRoosts(this, context);
         yield;
         buildLandmarks(this, context, builtUp);
         yield;
@@ -1526,6 +1532,7 @@ export class FurnitureLayer {
 
     this._lampHeads = [];
     this.wireSpans = [];
+    this.roosts = [];
     this._signals = [];
     this.fauna = [];
     this.tractors = [];
