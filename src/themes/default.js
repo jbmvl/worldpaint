@@ -1296,6 +1296,7 @@ export const LIFE_COLORS = {
   gull: '#5d646d',
   bat: '#08070b',
   starling: '#23272d',
+  swallow: '#1b2130',
   // Éclat d'une luciole : vert-jaune, ajouté à ce qu'il y a derrière.
   firefly: '#d6ff7a',
   // Poussière soulevée derrière un tracteur : terre sèche.

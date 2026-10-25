@@ -20,10 +20,11 @@
  *   l'observateur comme les oiseaux, et des **lucioles** dans les bois
  *   (`fireflies.js`), ancrées au sol ;
  * - le jour, un vol d'**étourneaux** qui sort d'un bois quand on s'en approche
- *   (`starlings.js`), d'un dortoir ancré au sol.
+ *   (`starlings.js`), d'un dortoir ancré au sol, et des **hirondelles** sur
+ *   les lignes aériennes, qui s'égaillent à l'approche (`swallows.js`).
  *
- * Ce qui est ancré au sol lit la part de bois et la cote du sol que
- * `worldComposer` passe à `advance` ; sans elles, il ne paraît pas.
+ * Ce qui est ancré au sol lit la part de bois, la cote du sol et les portées
+ * de câble que `worldComposer` passe à `advance` ; sans elles, il ne paraît pas.
  *
  * Les bêtes ont leur propre couche (`faunaLayer`), et pas par commodité : un
  * oiseau suit l'observateur et personne ne peut le vérifier, une vache est
@@ -56,6 +57,7 @@ import { hashUnit } from '../core/groundSeed.js';
 import { batAt, batPassAt, buildBats, createBatGeometry } from './batFlight.js';
 import { fireflyAt, sowFireflies, FIREFLY_MAX, FIREFLY_RESOW_M } from './fireflies.js';
 import { buildStarlings, launchFlock, roostNear, starlingAt, STARLING_COUNT, STARLING_FLIGHT_S, STARLING_REST_S } from './starlings.js';
+import { createPerchedSwallowGeometry, flushes, perchesNear, swallowAt, SWALLOW_MAX, SWALLOW_REST_S, SWALLOW_RESOW_M } from './swallows.js';
 
 /** Part de nuit au-delà de laquelle les oiseaux se posent et les bêtes de nuit sortent. */
 const NIGHT_FLIGHT = 0.45;
@@ -570,6 +572,14 @@ export class LifeLayer {
     this._roostCheck = 0;
     this._wallClock = 0;
 
+    this.swallowMaterial = darkMaterial(life.swallow ?? defaultTheme.life.swallow, 'swallow');
+    this.swallowsPerched = instanced(createPerchedSwallowGeometry(THREE), this.swallowMaterial, SWALLOW_MAX, 'swallows-perched');
+    this.swallowsFlying = instanced(createBirdGeometry(THREE), this.swallowMaterial, SWALLOW_MAX, 'swallows');
+    this._perches = [];
+    this._perchedAt = null;
+    /** Portées levées : clé → { start, away, wallClock } (l'horloge sans repli compte le repos). */
+    this._flushed = new Map();
+
     this._matrix = new THREE.Matrix4();
     this._position = new THREE.Vector3();
     this._quaternion = new THREE.Quaternion();
@@ -672,6 +682,8 @@ export class LifeLayer {
     this.birds.visible = day;
     this._balloonsVisible = day;
     this.starlings.visible = day;
+    this.swallowsPerched.visible = day;
+    this.swallowsFlying.visible = day;
     this.bats.visible = !day;
     this.fireflies.visible = this._night >= FIREFLY_NIGHT;
     for (const mesh of this._balloonMeshes) mesh.visible = this._balloonsVisible;
@@ -684,7 +696,8 @@ export class LifeLayer {
    *        les oiseaux tournent autour de lui. C'est l'application qui le
    *        fournit — le décor ne sait pas ce qui l'occupe.
    * @param {{frame:Object, woodAt:Function, elevationAt:Function}} [ground]
-   *        Le sol, pour ce qui y est ancré (lucioles, dortoirs d'étourneaux).
+   *        Le sol, pour ce qui y est ancré (lucioles, dortoirs d'étourneaux,
+   *        portées des lignes aériennes `wires`).
    */
   advance(delta, at, ground = null) {
     if (this.disposed || !Number.isFinite(delta) || !at) return;
@@ -697,6 +710,7 @@ export class LifeLayer {
     this._advanceBats(at);
     this._advanceFireflies(at, ground);
     this._advanceStarlings(delta, at, ground);
+    this._advanceSwallows(at, ground);
   }
 
   _setInstance(mesh, index, x, y, z, heading, sx, sy, sz) {
@@ -769,6 +783,51 @@ export class LifeLayer {
     this.starlings.instanceMatrix.needsUpdate = true;
   }
 
+  _advanceSwallows(at, ground) {
+    const perched = this.swallowsPerched;
+    const flying = this.swallowsFlying;
+    if (!perched.visible || !ground?.frame || !ground.wires?.length) { perched.count = 0; flying.count = 0; return; }
+    const sown = this._perchedAt;
+    // Le mobilier remplit sa liste au fil d'une reconstruction étalée : sa longueur compte autant que son identité.
+    if (!sown || sown.frame !== ground.frame || sown.wires !== ground.wires || sown.spans !== ground.wires.length ||
+      Math.hypot(at.x - sown.x, at.z - sown.z) >= SWALLOW_RESOW_M) {
+      this._perches = perchesNear(ground.frame, at, ground.wires);
+      this._perchedAt = { frame: ground.frame, wires: ground.wires, spans: ground.wires.length, x: at.x, z: at.z };
+    }
+    const now = this._wallClock;
+    let sitting = 0;
+    let flown = 0;
+    for (const perch of this._perches) {
+      let flight = this._flushed.get(perch.key);
+      if (flight && now - flight.wallClock >= SWALLOW_REST_S) {
+        this._flushed.delete(perch.key);
+        flight = undefined;
+      }
+      if (!flight && flushes(perch, at)) {
+        flight = { start: this.time, wallClock: now, away: Math.atan2(perch.x - at.x, perch.z - at.z) };
+        this._flushed.set(perch.key, flight);
+      }
+      for (const bird of perch.birds) {
+        // `this.time` se replie toutes les heures : un vol à cheval sur le repli s'achève là.
+        const s = flight ? (this.time >= flight.start ? swallowAt(bird, flight.away, flight.start, this.time) : null) : { perched: true, ...bird, heading: bird.facing };
+        if (!s) continue;
+        if (s.perched) {
+          if (sitting >= SWALLOW_MAX) continue;
+          const k = bird.scale * 0.5;
+          this._setInstance(perched, sitting++, s.x, s.y + 0.03, s.z, s.heading, k, k, k);
+        } else {
+          if (flown >= SWALLOW_MAX) continue;
+          const k = bird.scale * s.size;
+          this._setInstance(flying, flown++, s.x, s.y, s.z, s.heading, k * s.flap, k, k);
+        }
+      }
+    }
+    perched.count = sitting;
+    flying.count = flown;
+    perched.instanceMatrix.needsUpdate = true;
+    flying.instanceMatrix.needsUpdate = true;
+  }
+
   _advanceBirds(at) {
     if (!this.birds.visible) return;
     const centre = { x: at.x, y: at.y, z: at.z };
@@ -814,7 +873,7 @@ export class LifeLayer {
       mesh.geometry.dispose();
     }
     this.balloonMaterial.dispose();
-    for (const mesh of [this.bats, this.fireflies, this.starlings]) {
+    for (const mesh of [this.bats, this.fireflies, this.starlings, this.swallowsPerched, this.swallowsFlying]) {
       this.group.remove(mesh);
       mesh.geometry.dispose();
       mesh.material.dispose();

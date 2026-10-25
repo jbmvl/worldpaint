@@ -32,7 +32,7 @@ son état.
 | `vegetationLayer.js`, `cropLayer.js` | arbres, cultures |
 | `vergeStrips.js` | la bande entre une chaussée et sa haie de bas-côté : publiée par le mobilier, le champ n'y pousse pas |
 | `furnitureLayer.js` + `furniture/` | tout le mobilier — voir ci-dessous |
-| `faunaLayer.js`, `faunaMotion.js`, `faunaCrossing.js`, `lifeLayer.js` (+ `batFlight.js`, `fireflies.js`, `starlings.js`), `tractorLayer.js`, `trainLayer.js` | ce qui bouge |
+| `faunaLayer.js`, `faunaMotion.js`, `faunaCrossing.js`, `lifeLayer.js` (+ `batFlight.js`, `fireflies.js`, `starlings.js`, `swallows.js`), `tractorLayer.js`, `trainLayer.js` | ce qui bouge |
 | `lighthouseLight.js` | le feu d'un phare : halo et faisceaux tournants, alimentés et avancés par `furnitureLayer` |
 | `obstacleLights.js` | les balises rouges nocturnes des antennes et éoliennes : flash commun, halos occultés par le relief, alimentés et avancés par `furnitureLayer` |
 | `cemeteryGhosts.js` | les fantômes nocturnes des cimetières hantés : quads face caméra dessinés dans le shader, flottement sans réécriture de matrice, alimentés et avancés par `furnitureLayer` |

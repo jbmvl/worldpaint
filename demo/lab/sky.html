@@ -36,12 +36,20 @@
  *
  * `night` montre une bête de nuit (le sol plat y est tout entier un bois),
  * `starlings` le vol levé d'un dortoir à 40 m, `starlings` secondes après l'envol.
+ *
+ *   skyLab.set({ swallows: 'perched', height: 1.7, pitchDeg: 25 })
+ *   skyLab.set({ swallows: 1.5, height: 1.7, pitchDeg: 25 })
+ *
+ * `swallows` montre les hirondelles d'une ligne aérienne tendue à 15 m
+ * (portée de 40 m) : posées, ou `swallows` secondes après l'envol ;
+ * `aim: 'swallowsPerched'` ou `'swallowsFlying'` les vise.
  */
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { SceneEnvironment } from '/src/environment/sceneEnvironment.js';
 import { LifeLayer, GULL_SEA_DISTANCE_M } from '/src/layers/lifeLayer.js';
 import { launchFlock } from '/src/layers/starlings.js';
+import { perchesNear } from '/src/layers/swallows.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(devicePixelRatio);
@@ -94,7 +102,7 @@ function dateForElevation(deg) {
   return new Date(hi);
 }
 
-const state = { sunDeg: 30, lookDeg: 90, pitchDeg: 4, height: 40, weather: null, birds: null, time: 0, night: null, starlings: null, aim: null };
+const state = { sunDeg: 30, lookDeg: 90, pitchDeg: 4, height: 40, weather: null, birds: null, time: 0, night: null, starlings: null, swallows: null, aim: null };
 const life = new LifeLayer({ THREE, scene, bubble: null });
 for (const mesh of life._balloonMeshes) mesh.visible = false;
 life._balloonsVisible = false;
@@ -102,7 +110,33 @@ const labGround = {
   frame: { zoom: 14, scale: 2445, origin: { x: 8000, y: 5800 } },
   woodAt: () => 1,
   elevationAt: () => 0,
+  wires: [],
 };
+// La ligne des hirondelles : la portée telle que la publie le mobilier, et son câble.
+const wireSpan = { ax: -20, ay: 8.35, az: -15, bx: 20, by: 8.35, bz: -15, sag: 1.12 };
+// Glissée le long d'elle-même jusqu'à une portée habitée : une sur cinq ou six l'est.
+for (let dx = 0; !perchesNear(labGround.frame, { x: dx, z: 0 }, [wireSpan]).length; dx += 0.5) {
+  wireSpan.ax = -20 + dx;
+  wireSpan.bx = 20 + dx;
+}
+const wireShift = wireSpan.ax + 20;
+const wireLine = new THREE.Group();
+wireLine.position.x = wireShift;
+{
+  const points = [];
+  for (let i = 0; i <= 24; i++) {
+    const t = i / 24;
+    points.push(new THREE.Vector3(-20 + 40 * t, 8.35 - wireSpan.sag * 4 * t * (1 - t), -15));
+  }
+  wireLine.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(points), new THREE.LineBasicMaterial({ color: '#222' })));
+  for (const x of [-20, 20]) {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 8.6, 6), new THREE.MeshLambertMaterial({ color: '#5b4632' }));
+    pole.position.set(x, 4.3, -15);
+    wireLine.add(pole);
+  }
+  wireLine.visible = false;
+  scene.add(wireLine);
+}
 
 function render() {
   const date = dateForElevation(state.sunDeg);
@@ -130,6 +164,25 @@ function render() {
   life.fireflies.visible = state.night === 'fireflies';
   life.starlings.visible = state.starlings !== null;
   life.bats.count = life.fireflies.count = life.starlings.count = 0;
+  wireLine.visible = state.swallows !== null;
+  life.swallowsPerched.visible = life.swallowsFlying.visible = state.swallows !== null;
+  life.swallowsPerched.count = life.swallowsFlying.count = 0;
+  if (state.swallows !== null) {
+    life.time = state.time;
+    labGround.wires = [wireSpan];
+    life._perchedAt = null;
+    life._flushed.clear();
+    const at = { x: camera.position.x, y: 0, z: camera.position.z };
+    if (state.swallows === 'perched') {
+      // Vu de loin pour le moteur, qui sinon les lèverait : la caméra est à 15 m.
+      life._advanceSwallows({ ...at, z: at.z + 100 }, labGround);
+    } else {
+      for (const perch of perchesNear(labGround.frame, at, labGround.wires)) {
+        life._flushed.set(perch.key, { start: state.time - state.swallows, wallClock: life._wallClock, away: Math.atan2(perch.x - at.x, perch.z - at.z) });
+      }
+      life._advanceSwallows(at, labGround);
+    }
+  }
   if (state.night || state.starlings !== null) {
     life.time = state.time;
     life._starlingFlock = state.starlings === null ? null : {
@@ -155,7 +208,8 @@ function render() {
     sunDeg: state.sunDeg,
     fog: '#' + env.fog.color.getHexString(THREE.SRGBColorSpace),
     nightMix: env.nightMix,
-    life: { bats: life.bats.count, fireflies: life.fireflies.count, starlings: life.starlings.count },
+    life: { bats: life.bats.count, fireflies: life.fireflies.count, starlings: life.starlings.count,
+      swallowsPerched: life.swallowsPerched.count, swallowsFlying: life.swallowsFlying.count },
   };
 }
 

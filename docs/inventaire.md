@@ -767,6 +767,7 @@ d'acier, plus sommaire, hors agglomération.
 | chauves-souris | 6, de nuit | un passage de 13 s dans 60 % des fenêtres de 40 s, en troupe à 3–9 m au-dessus de l'observateur et à moins de 10 m de lui, vol heurté |
 | lucioles | 180 au plus, de nuit | une maille de 4 m sur 2,5 dans le bois (part ≥ 0,5), à moins de 45 m de l'observateur, ancrées au sol ; un bref éclat toutes les 2,5 à 6 s |
 | étourneaux | 48, de jour | un dortoir par maille de 40 m sur 5 dans le bois, ancré au sol ; levé quand l'observateur passe à moins de 45 m, le vol fuit en montant pendant 14 s ; le même dortoir se repose 10 min |
+| hirondelles | 48 posées et 48 en vol au plus, de jour | 3 à 10 en rangée sur une portée de ligne aérienne sur 5 à 6 (tirée de son milieu), à moins de 160 m de l'observateur ; levées quand il passe à moins de 30 m d'elles, chacune tombe du fil puis file à 12 m/s en zigzag à l'opposé, 6 s ; la portée reste vide 5 min |
 | poussière de tracteur | 16 bouffées par tracteur animé | levée à l'arrière, monte à 0,3 m/s, dérive au vent à 0,9 m/s, s'étale de 1,6 à 11 m en 9 s |
 
 Les bêtes, les tracteurs, les trains et les spectateurs sont les seules choses posées au sol
@@ -804,12 +805,14 @@ d'un kilomètre d'une nappe `ocean` (`layers/coast.js`,
 `lifeLayer.setSeaDistance`). La mer passe avant le relief.
 C'est un remplacement, jamais deux espèces à la fois.
 
-Les **chauves-souris**, les **lucioles** et les **étourneaux** s'y ajoutent sans
-rien remplacer (`batFlight.js`, `fireflies.js`, `starlings.js`, animés par
-`lifeLayer`). Les chauves-souris suivent l'observateur comme les oiseaux ; les
-lucioles et les dortoirs d'étourneaux sont tirés de la grille mondiale et de la
-part de bois de la carte du sol (`GroundClassMap.woodAt`), que `worldComposer`
-passe à `lifeLayer.advance`.
+Les **chauves-souris**, les **lucioles**, les **étourneaux** et les
+**hirondelles** s'y ajoutent sans rien remplacer (`batFlight.js`,
+`fireflies.js`, `starlings.js`, `swallows.js`, animés par `lifeLayer`). Les
+chauves-souris suivent l'observateur comme les oiseaux ; les lucioles et les
+dortoirs d'étourneaux sont tirés de la grille mondiale et de la part de bois
+de la carte du sol (`GroundClassMap.woodAt`), les hirondelles des portées de
+ligne aérienne que le mobilier publie (`furnitureLayer.wireSpans`) ;
+`worldComposer` passe l'un et l'autre à `lifeLayer.advance`.
 
 ## Le ciel et le temps
 
@@ -844,7 +847,7 @@ bougé tout seul » :
 | tout ce qui vient du vectoriel : carte du sol, falaises, chaussées, ponts, rails, bâti, voirie, jardins, mobilier, bêtes, tracteurs, arbres | 250 m (`DECOR_STEP_M`), d'un bloc ; moins en ville, voir plus bas |
 | éclaircie du sous-bois au-delà de 150 m | 8 m |
 | cultures, semées autour de l'observateur | 10 m |
-| oiseaux, montgolfières, chauves-souris, étourneaux, pluie, vent | chaque image |
+| oiseaux, montgolfières, chauves-souris, étourneaux, hirondelles, pluie, vent | chaque image |
 | lucioles, semées autour de l'observateur | 4 m |
 
 Le décor se refait toutes couches ensemble, jamais une seule : quand
