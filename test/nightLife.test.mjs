@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { batPassAt, BAT_PERIOD_S, BAT_PASS_S } from '../src/layers/batFlight.js';
 import { sowFireflies, fireflyAt, FIREFLY_MAX } from '../src/layers/fireflies.js';
 import { roostNear, launchFlock, buildStarlings, starlingAt, STARLING_FLIGHT_S } from '../src/layers/starlings.js';
+import { roostInCell } from '../src/layers/furniture/roosts.js';
 
 const frameAt = (ox) => ({ zoom: 14, scale: 2445, origin: { x: 8000 + ox, y: 5800 } });
 
@@ -34,12 +35,35 @@ test('les lucioles ne naissent que dans le bois, au même endroit du sol quel qu
   }
 });
 
+test('un dortoir se pose à la lisière qui fait face à la route, toujours le même', () => {
+  // Une route sur l'axe z = 0, un bois au-delà de z = 60.
+  const woodAt = (x, z) => (z > 60 ? 1 : 0);
+  const nearestRoad = (x, z, r) => (Math.abs(z) <= r ? { x, z: 0, distance: Math.abs(z) } : null);
+  const found = (frame, dx) => {
+    const roosts = [];
+    for (let x = -2000; x < 2000; x += 120) {
+      for (const z of [0, 120]) {
+        const cell = { x: x + dx, z, size: 120, row: 0, id: 0 };
+        const r = roostInCell(frame, cell, woodAt, nearestRoad);
+        if (r) roosts.push(r);
+      }
+    }
+    return roosts;
+  };
+  const roosts = found(frameAt(0), 0);
+  assert.ok(roosts.length > 0);
+  for (const r of roosts) {
+    assert.ok(r.z > 60 && r.z <= 64 + 1e-9, `lisière : ${r.z}`);
+    assert.equal(r.roadZ, 0);
+  }
+  assert.equal(roostInCell(frameAt(0), { x: 0, z: 120, size: 120 }, () => 0, nearestRoad), null);
+  assert.equal(roostInCell(frameAt(0), { x: 0, z: 120, size: 120 }, woodAt, () => null), null);
+});
+
 test('un vol d’étourneaux sort d’un dortoir boisé, puis disparaît', () => {
-  const frame = frameAt(0);
-  assert.equal(roostNear(frame, { x: 0, z: 0 }, () => 0), null);
-  let roost = null;
-  for (let x = 0; !roost && x < 4000; x += 30) roost = roostNear(frame, { x, z: 0 }, () => 1);
-  assert.ok(roost, 'un dortoir au moins sur 4 km de bois');
+  const roost = { key: 'a', x: 10, z: 80, roadX: 10, roadZ: 0, seed: 0.5 };
+  assert.equal(roostNear([roost], { x: 10, z: -100 }), null);
+  assert.equal(roostNear([roost], { x: 30, z: 0 }), roost);
   const flock = launchFlock(roost, 0, { x: roost.x - 30, z: roost.z }, 100);
   const birds = buildStarlings();
   const mid = birds.map((b) => starlingAt(b, flock, 105)).filter(Boolean);

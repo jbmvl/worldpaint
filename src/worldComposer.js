@@ -318,6 +318,7 @@ export class WorldComposer {
       woodAt: (x, z) => this.groundClass.woodAt(x, z),
       elevationAt: (x, z) => this.groundElevationAt(x, z),
       get wires() { return self.furniture.wireSpans; },
+      get roosts() { return self.furniture.roosts; },
     };
     // Le vivant au sol : posé par le mobilier, animé ici (voir `faunaLayer`).
     this.fauna = new FaunaLayer({ THREE, scene, theme });
