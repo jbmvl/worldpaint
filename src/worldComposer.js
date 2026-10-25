@@ -687,6 +687,7 @@ export class WorldComposer {
         urban,
         builtUp,
         elevationAt: (x, z) => this.bubble.surfaceElevationAtLocal(x, z, NaN),
+        roadTiles: near,
         roadRadius: reachedRadius(ROAD_RADIUS_M, this.bubble),
       })) return false;
       this.bubble.materials.syncGroundClass();

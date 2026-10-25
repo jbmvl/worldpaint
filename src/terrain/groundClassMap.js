@@ -116,8 +116,7 @@ import {
   classPolygons,
 } from './surfaceClassification.js';
 import { contourSurfaceSteps, CONTOUR_REACH_TEXELS } from './surfaceContours.js';
-import { collectRoadLinesSteps, clipToRadius, ROAD_PROFILE_ORDER, ROAD_RADIUS_M } from '../layers/roadNetwork.js';
-import { absorbParallelLinesSteps } from '../layers/roadBundles.js';
+import { roadStyleFor, roadLines, isPedestrianWay, URBAN_EXCLUDED_PROFILES, ROAD_RADIUS_M } from '../layers/roadNetwork.js';
 import { CORRIDOR_MARGIN_M } from '../layers/roadCorridor.js';
 
 /*
@@ -511,46 +510,86 @@ export function* drawSurfaceContoursSteps(data, pixels = CLASS_PIXELS) {
  *
  * @param {Uint8ClampedArray} data Fenêtre relue, quatre canaux par texel.
  * @param {number} pixels Côté de la fenêtre.
- * @param {Array<{halfWidth:number, points:Array<{x:number,z:number}>}>} lines
+ * @param {Float32Array|number[]} segments Cinq nombres par tronçon :
+ *        `ax, az, bx, bz, portée` (demi-largeur + marge), en mètres locaux.
  * @param {{left:number, top:number, perMeter:number}} at Coin de la fenêtre
  *        (mètres locaux) et texels par mètre.
- * @param {number} [marginM] Débord au-delà de la rive.
  * @returns {number} texels rendus à l'herbe.
  */
-export function paintRoadVerges(data, pixels, lines, { left, top, perMeter }, marginM = CORRIDOR_MARGIN_M) {
+export function paintRoadVerges(data, pixels, segments, { left, top, perMeter }) {
   const farmRed = FARMLAND_ID * SURFACE_ID_STEP;
   const grassId = surfaceId('grass');
   let turned = 0;
-  for (const line of lines || []) {
-    const reach = line.halfWidth + marginM;
-    const points = line.points;
-    for (let k = 1; k < points.length; k++) {
-      const a = points[k - 1];
-      const b = points[k];
-      const dx = b.x - a.x;
-      const dz = b.z - a.z;
-      const length2 = dx * dx + dz * dz;
-      const x0 = Math.max(0, Math.floor((Math.min(a.x, b.x) - reach - left) * perMeter));
-      const x1 = Math.min(pixels - 1, Math.floor((Math.max(a.x, b.x) + reach - left) * perMeter));
-      const y0 = Math.max(0, Math.floor((Math.min(a.z, b.z) - reach - top) * perMeter));
-      const y1 = Math.min(pixels - 1, Math.floor((Math.max(a.z, b.z) + reach - top) * perMeter));
-      for (let ty = y0; ty <= y1; ty++) {
-        const z = top + (ty + 0.5) / perMeter;
-        for (let tx = x0; tx <= x1; tx++) {
-          const i = (ty * pixels + tx) * 4;
-          if (data[i] !== farmRed) continue;
-          const x = left + (tx + 0.5) / perMeter;
-          const t = length2 > 0 ? Math.min(1, Math.max(0, ((x - a.x) * dx + (z - a.z) * dz) / length2)) : 0;
-          if (Math.hypot(x - a.x - t * dx, z - a.z - t * dz) > reach) continue;
-          data[i] = grassId * SURFACE_ID_STEP;
-          data[i + 1] = 0;
-          data[i + 2] = surfaceSignature(grassId);
-          turned++;
-        }
+  for (let k = 0; k + 4 < segments.length; k += 5) {
+    const ax = segments[k], az = segments[k + 1], bx = segments[k + 2], bz = segments[k + 3];
+    const reach = segments[k + 4];
+    const dx = bx - ax;
+    const dz = bz - az;
+    const length2 = dx * dx + dz * dz;
+    const x0 = Math.max(0, Math.floor((Math.min(ax, bx) - reach - left) * perMeter));
+    const x1 = Math.min(pixels - 1, Math.floor((Math.max(ax, bx) + reach - left) * perMeter));
+    const y0 = Math.max(0, Math.floor((Math.min(az, bz) - reach - top) * perMeter));
+    const y1 = Math.min(pixels - 1, Math.floor((Math.max(az, bz) + reach - top) * perMeter));
+    for (let ty = y0; ty <= y1; ty++) {
+      const z = top + (ty + 0.5) / perMeter;
+      for (let tx = x0; tx <= x1; tx++) {
+        const i = (ty * pixels + tx) * 4;
+        if (data[i] !== farmRed) continue;
+        const x = left + (tx + 0.5) / perMeter;
+        const t = length2 > 0 ? Math.min(1, Math.max(0, ((x - ax) * dx + (z - az) * dz) / length2)) : 0;
+        if (Math.hypot(x - ax - t * dx, z - az - t * dz) > reach) continue;
+        data[i] = grassId * SURFACE_ID_STEP;
+        data[i + 1] = 0;
+        data[i + 2] = surfaceSignature(grassId);
+        turned++;
       }
     }
   }
   return turned;
+}
+
+/**
+ * Les tronçons de chaussée dont l'emprise est rendue à l'herbe : ceux que
+ * `roadNetwork` dessine (mêmes classes, mêmes exclusions en ville), dans son
+ * rayon autour de l'observateur. Écrits à plat, cinq nombres par tronçon
+ * (voir `paintRoadVerges`), sans garder les lignes.
+ */
+export function* collectVergeSegmentsSteps(source, tiles, frame, profiles, { urban = null, here, radius, marginM = CORRIDOR_MARGIN_M }) {
+  const { origin, scale, zoom } = frame;
+  let out = new Float32Array(4096);
+  let n = 0;
+  const reachOf = (x, z) => Math.hypot(x - here.x, z - here.z) <= radius;
+  yield* visitFeatures(source, 'transportation', tiles, (geometry, properties) => {
+    const style = roadStyleFor(properties, profiles);
+    if (!style) return;
+    const notInTown = urban?.any && (isPedestrianWay(properties) || URBAN_EXCLUDED_PROFILES.has(style.profile));
+    const reach = style.halfWidth + marginM;
+    for (const line of roadLines(geometry)) {
+      if (!Array.isArray(line) || line.length < 2) continue;
+      if (notInTown) {
+        const [lng, lat] = line[Math.floor(line.length / 2)];
+        if (urban.covers((lngToTileX(lng, zoom) - origin.x) * scale, (latToTileY(lat, zoom) - origin.y) * scale)) continue;
+      }
+      let px = NaN;
+      let pz = NaN;
+      for (const [lng, lat] of line) {
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+        const x = (lngToTileX(lng, zoom) - origin.x) * scale;
+        const z = (latToTileY(lat, zoom) - origin.y) * scale;
+        if (Number.isFinite(px) && (reachOf(px, pz) || reachOf(x, z))) {
+          if (n + 5 > out.length) {
+            const grown = new Float32Array(out.length * 2);
+            grown.set(out);
+            out = grown;
+          }
+          out[n++] = px; out[n++] = pz; out[n++] = x; out[n++] = z; out[n++] = reach;
+        }
+        px = x;
+        pz = z;
+      }
+    }
+  }, (properties) => !!roadStyleFor(properties, profiles));
+  return out.subarray(0, n);
 }
 
 /**
@@ -1004,6 +1043,7 @@ export class GroundClassMap {
    * @param {Object|null} [options.urban] `UrbanMask` : le sol revêtu de la
    *        ville. Absent, aucune passe de revêtement — c'est le comportement de
    *        campagne, et celui d'avant ce lot.
+   * @param {Array} [options.roadTiles] Tuiles des chaussées dessinées.
    * @param {number} [options.roadRadius] Rayon des chaussées dessinées
    *        (`roadNetwork`) : l'emprise rendue à l'herbe n'en sort pas.
    * @returns {boolean} vrai si des surfaces ont été peintes.
@@ -1014,7 +1054,7 @@ export class GroundClassMap {
    * `rebuild` en étapes : une par tuile et par couche source. Carte relue,
    * origine et texture ne changent qu'à la dernière.
    */
-  *rebuildSteps(source, tiles, here, frame, { urban = null, cliffs = null, builtUp = null, elevationAt = null, roadRadius = ROAD_RADIUS_M } = {}) {
+  *rebuildSteps(source, tiles, here, frame, { urban = null, cliffs = null, builtUp = null, elevationAt = null, roadTiles = null, roadRadius = ROAD_RADIUS_M } = {}) {
     if (this.disposed || !source || !frame) return false;
 
     const { ctx } = this;
@@ -1281,15 +1321,13 @@ export class GroundClassMap {
     for (const path of permanent) ctx.fill(path, 'evenodd');
     yield;
 
-    // Les mêmes chaussées que celles que `roadNetwork` dessine, dans le même
-    // rayon : une emprise sans chaussée serait une bande d'herbe en plein champ.
-    let roads = yield* collectRoadLinesSteps(source, tiles, frame, this.theme.roads, { urban });
-    if (urban?.any) {
-      roads = yield* absorbParallelLinesSteps(roads, { order: ROAD_PROFILE_ORDER, where: (x, z) => urban.covers(x, z) });
-    }
-    roads = roads.flatMap((line) =>
-      clipToRadius(line.points, here.x, here.z, roadRadius).map((run) => ({ halfWidth: line.halfWidth, points: run.points }))
-    );
+    // Les tuiles des chaussées, pas toute la carte : une emprise sans chaussée
+    // serait une bande d'herbe en plein champ.
+    const roads = yield* collectVergeSegmentsSteps(source, roadTiles ?? tiles, frame, this.theme.roads.profiles, {
+      urban,
+      here,
+      radius: roadRadius,
+    });
     yield* this.readBackSteps({ roads, left: originX, top: originZ, perMeter });
     this.count = painted;
     this.revision++;

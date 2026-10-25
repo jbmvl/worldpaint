@@ -21,8 +21,8 @@ test("l'emprise d'une chaussée rend le champ à l'herbe, pas au-delà", () => {
   const pixels = 40;
   const data = fill(pixels, 'farmland', 8);
   // Route est-ouest au milieu, texels d'un mètre.
-  const lines = [{ halfWidth: 2.5, points: [{ x: 0, z: 20 }, { x: 40, z: 20 }] }];
-  const turned = paintRoadVerges(data, pixels, lines, { left: 0, top: 0, perMeter: 1 }, 1.2);
+  // Portée : 2,5 m de demi-largeur + 1,2 m d'emprise.
+  const turned = paintRoadVerges(data, pixels, [0, 20, 40, 20, 3.7], { left: 0, top: 0, perMeter: 1 });
   assert.ok(turned > 0);
   // Centre à 3,5 m de l'axe : dans l'emprise (2,5 + 1,2).
   assert.equal(idAt(data, pixels, 10, 23), surfaceId('grass'));
@@ -34,6 +34,6 @@ test("l'emprise d'une chaussée rend le champ à l'herbe, pas au-delà", () => {
 test("l'emprise ne repeint que les cultures", () => {
   const pixels = 20;
   const data = fill(pixels, 'wood');
-  paintRoadVerges(data, pixels, [{ halfWidth: 3, points: [{ x: 0, z: 10 }, { x: 20, z: 10 }] }], { left: 0, top: 0, perMeter: 1 });
+  paintRoadVerges(data, pixels, [0, 10, 20, 10, 4.2], { left: 0, top: 0, perMeter: 1 });
   assert.equal(idAt(data, pixels, 5, 10), surfaceId('wood'));
 });
