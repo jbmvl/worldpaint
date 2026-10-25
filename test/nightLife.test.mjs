@@ -26,7 +26,12 @@ test('les lucioles ne naissent que dans le bois, au même endroit du sol quel qu
   const set = new Set(a.map((f) => key(f, 0)));
   const common = b.filter((f) => set.has(key(f, shifted.scale))).length;
   assert.ok(common > a.length * 0.8, `${common} / ${a.length}`);
-  for (let t = 0; t < 10; t += 0.7) assert.ok(fireflyAt(a[0], t).glow >= 0);
+  // Lente : moins de 0,3 m/s, et toujours près de son point de semis.
+  for (let t = 0; t < 60; t += 0.5) {
+    const p = fireflyAt(a[0], t), q = fireflyAt(a[0], t + 0.5);
+    assert.ok(Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z) / 0.5 < 0.3);
+    assert.ok(Math.hypot(p.x - a[0].x, p.z - a[0].z) <= 1);
+  }
 });
 
 test('un vol d’étourneaux sort d’un dortoir boisé, puis disparaît', () => {

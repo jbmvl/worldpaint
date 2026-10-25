@@ -730,9 +730,7 @@ export class LifeLayer {
     let count = 0;
     for (const fly of this._fireflies) {
       const s = fireflyAt(fly, this.time);
-      if (s.glow <= 0.02) continue;
-      const size = fly.size * s.glow;
-      this._setInstance(this.fireflies, count++, s.x, s.y, s.z, 0, size, size, size);
+      this._setInstance(this.fireflies, count++, s.x, s.y, s.z, 0, fly.size, fly.size, fly.size);
     }
     this.fireflies.count = count;
     this.fireflies.instanceMatrix.needsUpdate = true;

@@ -55,8 +55,9 @@ export function sowFireflies(frame, here, woodAt, elevationAt) {
       x,
       z,
       y: ground + FIREFLY_HEIGHT_MIN + r(0) * (FIREFLY_HEIGHT_MAX - FIREFLY_HEIGHT_MIN),
-      period: 2.5 + r(1) * 3.5,
-      phase: r(2),
+      // Rythmes propres à chaque luciole : deux vols voisins ne se répètent pas.
+      slow: 0.07 + r(1) * 0.06,
+      quick: 0.19 + r(2) * 0.12,
       drift: r(3) * Math.PI * 2,
       size: FIREFLY_SIZE_M * (0.8 + r(4) * 0.4),
     });
@@ -66,18 +67,16 @@ export function sowFireflies(frame, here, woodAt, elevationAt) {
 }
 
 /**
- * Position et éclat d'une luciole. Pur.
- * L'éclat est un bref pic par période : une luciole est surtout éteinte.
- * @returns {{x:number,y:number,z:number,glow:number}}
+ * Position d'une luciole, toujours allumée. Pur.
+ * Deux ondes lentes de fréquences sans commune mesure par axe : une errance
+ * qui paraît au hasard, à quelques décimètres par seconde au plus.
+ * @returns {{x:number,y:number,z:number}}
  */
 export function fireflyAt(fly, time) {
-  const t = time + fly.drift * 3;
-  const cycle = (time / fly.period + fly.phase) % 1;
-  const pulse = cycle < 0.18 ? Math.sin((cycle / 0.18) * Math.PI) : 0;
+  const { slow, quick, drift } = fly;
   return {
-    x: fly.x + FIREFLY_WANDER_M * Math.sin(t * 0.37 + fly.drift),
-    y: fly.y + 0.35 * Math.sin(t * 0.53 + fly.drift * 2),
-    z: fly.z + FIREFLY_WANDER_M * Math.cos(t * 0.29 + fly.drift * 3),
-    glow: pulse,
+    x: fly.x + FIREFLY_WANDER_M * (0.65 * Math.sin(time * slow + drift) + 0.35 * Math.sin(time * quick * 1.13 + drift * 5)),
+    y: fly.y + 0.3 * Math.sin(time * quick * 0.61 + drift * 2),
+    z: fly.z + FIREFLY_WANDER_M * (0.65 * Math.cos(time * slow * 0.83 + drift * 3) + 0.35 * Math.sin(time * quick + drift * 7)),
   };
 }
