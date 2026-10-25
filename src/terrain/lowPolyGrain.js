@@ -28,6 +28,10 @@
  * (aujourd'hui : tout `furnitureKit.js`, les arbres de `vegetationLayer.js`)
  * ne suit pas la bosse et peut sembler flotter ou s'enfoncer à son pied.
  *
+ * Au sol, le sommet glisse aussi dans le plan (`grainShiftM`, thème
+ * `terrain`, appliqué dans `terrainGrainShader.js`) : sans ce décalage, les
+ * facettes s'alignent sur la grille régulière de la maille.
+ *
  * Éteint dans l'emprise routière (`roadMask`, écrit par `terrainBubble.js` à
  * partir de `roadCutMaskAt`) : la géométrie y est déjà l'entaille exacte de
  * la chaussée (`roadCut.js`), et le grain ajouté après coup la recouvrirait.

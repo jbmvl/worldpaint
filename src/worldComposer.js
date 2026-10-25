@@ -1,7 +1,7 @@
 import { collectCrossingRails } from './layers/transportCrossings.js';
 import { GenerationGate } from './core/generationGate.js';
 import { GenerationBudget } from './core/generationBudget.js';
-import { DECOR_STEP_M, DETAIL_WALL_BUDGET_M, REACH_MARGIN, REACH_MARGIN_M, budgetedRadius } from './core/decorReach.js';
+import { DECOR_STEP_M, DETAIL_WALL_BUDGET_M, REACH_MARGIN, REACH_MARGIN_M, budgetedRadius, reachedRadius } from './core/decorReach.js';
 import { GenerationMetrics } from './inspect/generationMetrics.js';
 /*
  * worldComposer — l'orchestrateur du décor. Toutes les couches dépendent les
@@ -71,7 +71,7 @@ import { TerrainBubble } from './terrain/terrainBubble.js';
 import { WaterRelief } from './terrain/waterRelief.js';
 import { GroundClassMap } from './terrain/groundClassMap.js';
 import { FarRelief } from './terrain/farRelief.js';
-import { RoadNetwork, createRoadMaterials } from './layers/roadNetwork.js';
+import { RoadNetwork, createRoadMaterials, ROAD_RADIUS_M } from './layers/roadNetwork.js';
 import { RailwayLayer } from './layers/railwayLayer.js';
 import { CliffLayer } from './layers/cliffLayer.js';
 import { BridgeLayer } from './layers/bridgeLayer.js';
@@ -687,6 +687,7 @@ export class WorldComposer {
         urban,
         builtUp,
         elevationAt: (x, z) => this.bubble.surfaceElevationAtLocal(x, z, NaN),
+        roadRadius: reachedRadius(ROAD_RADIUS_M, this.bubble),
       })) return false;
       this.bubble.materials.syncGroundClass();
       const classArrived = !wasReady && this.groundClass.ready;

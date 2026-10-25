@@ -116,6 +116,9 @@ import {
   classPolygons,
 } from './surfaceClassification.js';
 import { contourSurfaceSteps, CONTOUR_REACH_TEXELS } from './surfaceContours.js';
+import { collectRoadLinesSteps, clipToRadius, ROAD_PROFILE_ORDER, ROAD_RADIUS_M } from '../layers/roadNetwork.js';
+import { absorbParallelLinesSteps } from '../layers/roadBundles.js';
+import { CORRIDOR_MARGIN_M } from '../layers/roadCorridor.js';
 
 /*
  * Ce que dit une entité de tuile reste lisible depuis ici : la carte du sol est
@@ -497,6 +500,60 @@ export function* drawSurfaceContoursSteps(data, pixels = CLASS_PIXELS) {
 }
 
 /**
+ * L'emprise d'une chaussée en rase campagne est de l'herbe, jamais le champ
+ * qui la borde : tout texel de culture dont le centre tombe à moins de
+ * `demi-largeur + marge` de l'axe d'une chaussée devient de l'herbe, sans
+ * culture. Les autres matières (bois, lande, revêtement, eau) gardent la leur.
+ *
+ * Passée sur la carte réparée, avant le tracé des limites : la bande a ainsi
+ * son contour comme toute autre limite, et les cultures la lisent au même
+ * texel que le sol.
+ *
+ * @param {Uint8ClampedArray} data Fenêtre relue, quatre canaux par texel.
+ * @param {number} pixels Côté de la fenêtre.
+ * @param {Array<{halfWidth:number, points:Array<{x:number,z:number}>}>} lines
+ * @param {{left:number, top:number, perMeter:number}} at Coin de la fenêtre
+ *        (mètres locaux) et texels par mètre.
+ * @param {number} [marginM] Débord au-delà de la rive.
+ * @returns {number} texels rendus à l'herbe.
+ */
+export function paintRoadVerges(data, pixels, lines, { left, top, perMeter }, marginM = CORRIDOR_MARGIN_M) {
+  const farmRed = FARMLAND_ID * SURFACE_ID_STEP;
+  const grassId = surfaceId('grass');
+  let turned = 0;
+  for (const line of lines || []) {
+    const reach = line.halfWidth + marginM;
+    const points = line.points;
+    for (let k = 1; k < points.length; k++) {
+      const a = points[k - 1];
+      const b = points[k];
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const length2 = dx * dx + dz * dz;
+      const x0 = Math.max(0, Math.floor((Math.min(a.x, b.x) - reach - left) * perMeter));
+      const x1 = Math.min(pixels - 1, Math.floor((Math.max(a.x, b.x) + reach - left) * perMeter));
+      const y0 = Math.max(0, Math.floor((Math.min(a.z, b.z) - reach - top) * perMeter));
+      const y1 = Math.min(pixels - 1, Math.floor((Math.max(a.z, b.z) + reach - top) * perMeter));
+      for (let ty = y0; ty <= y1; ty++) {
+        const z = top + (ty + 0.5) / perMeter;
+        for (let tx = x0; tx <= x1; tx++) {
+          const i = (ty * pixels + tx) * 4;
+          if (data[i] !== farmRed) continue;
+          const x = left + (tx + 0.5) / perMeter;
+          const t = length2 > 0 ? Math.min(1, Math.max(0, ((x - a.x) * dx + (z - a.z) * dz) / length2)) : 0;
+          if (Math.hypot(x - a.x - t * dx, z - a.z - t * dz) > reach) continue;
+          data[i] = grassId * SURFACE_ID_STEP;
+          data[i + 1] = 0;
+          data[i + 2] = surfaceSignature(grassId);
+          turned++;
+        }
+      }
+    }
+  }
+  return turned;
+}
+
+/**
  * Texel d'un fond muet, tel que réparation et contour le rendent : ce que
  * porte la carte hors de la fenêtre relue. Rendu par les mêmes passes sur un
  * carré minuscule, jamais recopié à la main.
@@ -582,6 +639,8 @@ export class GroundClassMap {
     this.count = 0;
     /** Texels de bord rendus à leur matière à la dernière rasterisation (voir `repairSurfaceEdges`). */
     this.repaired = 0;
+    /** Texels de culture rendus à l'herbe dans l'emprise des chaussées (voir `paintRoadVerges`). */
+    this.verged = 0;
     /** Numéro de rasterisation, incrémenté à chaque repeinte (sert à qui garde ce qu'il a lu ici, ex. la végétation). */
     this.revision = 0;
 
@@ -945,6 +1004,8 @@ export class GroundClassMap {
    * @param {Object|null} [options.urban] `UrbanMask` : le sol revêtu de la
    *        ville. Absent, aucune passe de revêtement — c'est le comportement de
    *        campagne, et celui d'avant ce lot.
+   * @param {number} [options.roadRadius] Rayon des chaussées dessinées
+   *        (`roadNetwork`) : l'emprise rendue à l'herbe n'en sort pas.
    * @returns {boolean} vrai si des surfaces ont été peintes.
    */
   rebuild(...args) { return finishGeneration(this.rebuildSteps(...args)); }
@@ -953,7 +1014,7 @@ export class GroundClassMap {
    * `rebuild` en étapes : une par tuile et par couche source. Carte relue,
    * origine et texture ne changent qu'à la dernière.
    */
-  *rebuildSteps(source, tiles, here, frame, { urban = null, cliffs = null, builtUp = null, elevationAt = null } = {}) {
+  *rebuildSteps(source, tiles, here, frame, { urban = null, cliffs = null, builtUp = null, elevationAt = null, roadRadius = ROAD_RADIUS_M } = {}) {
     if (this.disposed || !source || !frame) return false;
 
     const { ctx } = this;
@@ -1220,7 +1281,16 @@ export class GroundClassMap {
     for (const path of permanent) ctx.fill(path, 'evenodd');
     yield;
 
-    yield* this.readBackSteps();
+    // Les mêmes chaussées que celles que `roadNetwork` dessine, dans le même
+    // rayon : une emprise sans chaussée serait une bande d'herbe en plein champ.
+    let roads = yield* collectRoadLinesSteps(source, tiles, frame, this.theme.roads, { urban });
+    if (urban?.any) {
+      roads = yield* absorbParallelLinesSteps(roads, { order: ROAD_PROFILE_ORDER, where: (x, z) => urban.covers(x, z) });
+    }
+    roads = roads.flatMap((line) =>
+      clipToRadius(line.points, here.x, here.z, roadRadius).map((run) => ({ halfWidth: line.halfWidth, points: run.points }))
+    );
+    yield* this.readBackSteps({ roads, left: originX, top: originZ, perMeter });
     this.count = painted;
     this.revision++;
     this.origin.set(originX, originZ);
@@ -1231,8 +1301,8 @@ export class GroundClassMap {
   }
 
   /**
-   * Relit le canevas peint et publie la carte : réparée, ses limites
-   * redessinées, envoyée à la texture.
+   * Relit le canevas peint et publie la carte : réparée, l'emprise des
+   * chaussées rendue à l'herbe, ses limites redessinées, envoyée à la texture.
    *
    * Relecture unique (un `getImageData` par appel serait ruineux) — et c'est
    * aussi le seul moment où l'on peut défaire le lissage du canevas, qui
@@ -1240,7 +1310,7 @@ export class GroundClassMap {
    * `repairSurfaceEdges`). Le shader lit la texture, la végétation la copie,
    * et les deux sont le même tableau.
    */
-  *readBackSteps() {
+  *readBackSteps(verges = null) {
     const { x, y, size } = this._window;
     let image = null;
     try {
@@ -1252,6 +1322,15 @@ export class GroundClassMap {
     this.repaired = image ? yield* repairSurfaceEdgesSteps(image.data, size) : 0;
     let data = image?.data ?? null;
     if (image) {
+      if (verges?.roads?.length) {
+        const { perMeter } = verges;
+        this.verged = paintRoadVerges(image.data, size, verges.roads, {
+          left: verges.left + x / perMeter,
+          top: verges.top + y / perMeter,
+          perMeter,
+        });
+        yield;
+      }
       yield* drawSurfaceContoursSteps(image.data, size);
       if (size < CLASS_PIXELS) data = embedWindow(image.data, x, y, size);
       this.texture.image.data = new Uint8Array(data.buffer);

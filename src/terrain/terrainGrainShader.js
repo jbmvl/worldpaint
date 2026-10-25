@@ -17,6 +17,7 @@ export const TERRAIN_GRAIN_GLSL = `
            uniform float uSurfaceGrainAmplitude[${SURFACE_KINDS.length}];
            uniform vec2 uSlopeRange;
            uniform vec2 uRockGrain;
+           uniform vec2 uGrainShift;
            ${LOW_POLY_GRAIN_GLSL}
 
            /* Identifiant de matière au texel le plus proche — pas de lissage :
@@ -74,7 +75,15 @@ vec3 terrainDisplacement(vec3 point, vec3 sourceNormal, float roadMask, out floa
            // de la scene : deux normales, deux reperes.
            vec3 grainAxis = normalize(sourceNormal);
            grain = grainAmplitudeM * (1.0 - roadMask);
-           return grainAxis * lowPolyBump(point, grainAxis, grainCellM, grainAmplitudeM) * (1.0 - roadMask);
+           vec3 bump = grainAxis * lowPolyBump(point, grainAxis, grainCellM, grainAmplitudeM);
+           // Le sommet glisse aussi dans le plan, d'un bruit à lui : les facettes
+           // ne suivent plus la grille de la maille. Pas sur une paroi, dont la
+           // marche est déjà le dessin.
+           if (uGrainShift.x > 0.0 && grainAmplitudeM > 0.0) {
+             vec2 q = point.xz / uGrainShift.x;
+             bump.xz += vec2(lowPolyNoise(q + 17.3), lowPolyNoise(q - 41.7)) * uGrainShift.y * (1.0 - steep);
+           }
+           return bump * (1.0 - roadMask);
 }
 vec3 terrainDisplaced(vec3 point, vec3 sourceNormal, float roadMask, out float steep, out float grain) {
   vec3 displacement = terrainDisplacement(point, sourceNormal, roadMask, steep, grain);

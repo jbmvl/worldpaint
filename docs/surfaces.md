@@ -131,6 +131,16 @@ rendu à sa matière par ces deux temps-là.
 Un village n'est donc jamais pavé : sans `place` de rang urbain dans la fenêtre,
 la passe ne pose rien.
 
+### L'emprise des chaussées — de l'herbe, jamais le champ
+
+Une culture ne touche pas la chaussée. Après la réparation de la carte et avant
+le tracé des limites, `paintRoadVerges` rend à l'herbe, sans culture, tout
+texel `farmland` dont le centre est à moins de `demi-largeur + CORRIDOR_MARGIN_M`
+de l'axe d'une chaussée — toutes classes, chemins et sentiers compris. C'est
+la même emprise que celle que le décor ne franchit pas (`roadCorridor`). Les
+autres matières gardent la leur. Le sol et les cultures lisent la bande au même
+texel ; un texel faisant 2,67 m, son bord tombe à un demi-texel près.
+
 ### Ce que `landcover` ne contient pas
 
 Notre `class` vient de la tuile, pas d'OSM : c'est OpenMapTiles qui range le

@@ -12941,7 +12941,7 @@ test('les limites de surfaces : la frange, les matières interpolées et la rive
   );
   assert.match(
     shader.vertexShader,
-    /return grainAxis \* lowPolyBump\(/,
+    /vec3 bump = grainAxis \* lowPolyBump\(/,
     'la bosse est géométrique, et pousse le long de la normale'
   );
   // La pente impose la roche là où la carte du sol ne le peut pas : elle est
@@ -13303,7 +13303,7 @@ test('le grain low poly du sol dépend de la matière au pied du sommet', () => 
   // de porter une paroi de falaise (voir lowPolyGrain.js).
   assert.match(
     source,
-    /return grainAxis \* lowPolyBump\(point, grainAxis, grainCellM, grainAmplitudeM\) \* \(1\.0 - roadMask\);/
+    /vec3 bump = grainAxis \* lowPolyBump\(point, grainAxis, grainCellM, grainAmplitudeM\);/
   );
 });
 
@@ -13340,10 +13340,7 @@ test('le grain low poly du sol s’éteint dans l’emprise routière', () => {
   assert.match(source, /attribute float roadMask;/);
   // Le fondu de distance et l'emprise routière se multiplient : la bosse est
   // nulle si l'un ou l'autre l'est, jamais recalculée à part.
-  assert.match(
-    source,
-    /return grainAxis \* lowPolyBump\([^;]+\* \(1\.0 - roadMask\);/
-  );
+  assert.match(source, /return bump \* \(1\.0 - roadMask\);/);
   assert.match(source, /return point \+ displacement \* fade;/);
   assert.match(source, /float fade = lowPolyFade\(/);
 });

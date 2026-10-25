@@ -390,6 +390,7 @@ export class TerrainMaterialFactory {
       // (côté du réseau triangulaire, amplitude) du déplacement des limites.
       // Un trait droit croise en moyenne une arête du réseau tous les 0,45 côté.
       uEdgeJitter: { value: new THREE.Vector2(look.edgeStepM / 0.4535, look.edgeJitterM) },
+      uGrainShift: { value: new THREE.Vector2(look.grainShiftCellM ?? 0, look.grainShiftM ?? 0) },
       uSurfaceMap: { value: this.groundClass ? this.groundClass.texture : null },
       uSurfaceOrigin: { value: new THREE.Vector2(0, 0) },
       uSurfaceSize: { value: 1 },
