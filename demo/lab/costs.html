@@ -54,6 +54,8 @@ const EYE_M = 1.75, RECENTER_MS = 400;
 const near = Number(params.get('near') ?? 300);
 // Rayon fixe des objets (`detail.radius`), absent par défaut : `?detail=375`.
 const detailRadius = Number(params.get('detail')) || null;
+// Tranche de génération du premier montage, comme la démo (`?budget=8` : celle des montages en visite).
+const mountBudget = Number(params.get('budget')) || 50;
 
 // Pic du tas JS, relevé entre deux tranches de travail.
 let heapPeak = 0;
@@ -100,7 +102,7 @@ async function mount() {
   const precompile = params.get('precompile') !== '0'
     ? setInterval(() => renderer.compile(scene, camera), 200) : null;
   if (near) world.setReach(near);
-  await world.mountAt(at.lng, at.lat);
+  await world.mountAt(at.lng, at.lat, { budgetMs: mountBudget });
   clearInterval(precompile);
   const t2 = performance.now();
   const c = world.composer;

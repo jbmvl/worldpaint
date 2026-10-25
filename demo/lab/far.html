@@ -57,7 +57,7 @@ let amplitude = RELIEFS.montagne;
  */
 function ventouxAt(x, z) {
   const along = Math.max(0, 1 - Math.abs(x - 11700) / (x < 11700 ? 10500 : 14000));
-  const across = Math.exp(-((z + 300) / 3200) ** 2);
+  const across = Math.exp(-(((z + 300) / 3200) ** 2));
   const foothills = 60 * (Math.sin(x / 900) * Math.sin(z / 700) + 1);
   return 340 + foothills + 1570 * along ** 0.8 * across;
 }

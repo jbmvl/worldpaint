@@ -115,7 +115,7 @@ try {
         await cdp.send('HeapProfiler.collectGarbage');
         return (await cdp.send('Runtime.getHeapUsage')).usedSize;
       };
-      const query = new URLSearchParams({ lieu, ...(lng ? { lng } : {}), ...(lat ? { lat } : {}), ...(flag('precompile', null) ? { precompile: flag('precompile') } : {}), ...(flag('near', null) ? { near: flag('near') } : {}), ...(flag('detail', null) ? { detail: flag('detail') } : {}) });
+      const query = new URLSearchParams({ lieu, ...(lng ? { lng } : {}), ...(lat ? { lat } : {}), ...(flag('precompile', null) ? { precompile: flag('precompile') } : {}), ...(flag('near', null) ? { near: flag('near') } : {}), ...(flag('detail', null) ? { detail: flag('detail') } : {}), ...(flag('budget', null) ? { budget: flag('budget') } : {}) });
       await page.goto(`http://localhost:${port}/demo/lab/costs.html?${query}`);
       await page.waitForFunction(() => window.costsLabReady, null, { timeout: 120000 });
       const baseline = { heap: await heapAfterGc(), pss: pss(pid) };
