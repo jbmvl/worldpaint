@@ -1098,7 +1098,7 @@ export const ROAD_PROFILES = {
   // Les deux chemins de terre, et les seuls à bord rongé. Le sentier est
   // mangé moins profond que le chemin d'exploitation, mais bien davantage en
   // part de sa largeur : c'est un passage, pas une voie.
-  track: { width: 3, shoulder: 0, surface: 'dirt', ruts: true, ragged: 0.3, texture: 64 },
+  track: { width: 3, shoulder: 0, surface: 'dirt', ragged: 0.3, texture: 64 },
   path: { width: 1.4, shoulder: 0, surface: 'dirt', ragged: 0.2, texture: 64 },
   // Même gabarit que le sentier — c'en est un, en marches. `steps` dit à
   // `roadNetwork` de le balayer en contremarches (`appendSteps`) plutôt qu'en
@@ -1113,7 +1113,7 @@ export const ROAD_PROFILES = {
  */
 export const ROAD_SURFACES = {
   asphalt: { base: '#4a4a4e' },
-  dirt: { base: '#8a7d63' },
+  dirt: { base: '#807056' },
   ballast: { base: '#847d70' },
 };
 /** Terre claire de l'accotement. */

@@ -421,7 +421,7 @@ Six profils, tirés de `transportation.class` :
 | major | primary, secondary, et les bretelles | 8,5 m |
 | minor | tertiary, unclassified, residential | 5 m |
 | lane | service, pedestrian | 3,6 m |
-| track | track | 3 m, terre, ornières, bord rongé |
+| track | track | 3 m, terre, bord rongé |
 | path | path | 1,4 m, terre, bord rongé |
 | cycleway | cycleway, `bicycle=designated` | 2,2 m, avec pictogramme au sol |
 

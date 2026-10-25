@@ -7037,14 +7037,13 @@ test('une piste cyclable revêtue reste une branche du carrefour', () => {
   assert.ok(junctions[0].branches.some((b) => b.profile === 'cycleway'));
 });
 
-test('des chemins qu’aucune route ne rejoint font carrefour entre eux', () => {
+test('des chemins ne font pas carrefour entre eux', () => {
   const track = (points) => ({ profile: 'track', halfWidth: 1.5, paved: false, points });
   const { junctions } = mergeRoadLines([
     track(straight(0, 200, 8)),
     track([{ x: 100, z: 0 }, { x: 100, z: 60 }]),
   ]);
-  assert.equal(junctions.length, 1);
-  assert.equal(junctions[0].profile, 'track');
+  assert.equal(junctions.length, 0);
 });
 
 test('une chaîne ressort du graphe arrondie, ses tableaux parallèles avec elle', () => {
@@ -13031,7 +13030,7 @@ test('le bord d’un chemin est rongé par le sol, et il l’est au seuil', () =
   // Une chaussée revêtue n'a pas de bord rongé : c'est ce qui la distingue.
   for (const [key, profile] of Object.entries(defaultTheme.roads.profiles)) {
     const ragged = (profile.ragged ?? 0) > 0;
-    assert.equal(ragged, profile.surface === 'dirt', `${key} : rongé si et seulement si en terre`);
+    assert.equal(ragged, (profile.surface || 'asphalt') !== 'asphalt', `${key} : rongé si et seulement si en terre`);
   }
 });
 

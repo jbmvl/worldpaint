@@ -195,12 +195,13 @@ function gnawTips(material) {
 }
 
 /**
- * Revêtements dont une surface de carrefour peut être faite : ceux que portent
- * les profils de chaussée. Le ballast n'en est pas — c'est une voie ferrée.
+ * Revêtements dont une surface de carrefour peut être faite : ceux des profils
+ * revêtus. Un chemin ne fait jamais carrefour (`roadGraph.collectJunctions`),
+ * et le ballast est une voie ferrée.
  */
 export function junctionSurfaces(roads = defaultTheme.roads) {
   const used = new Set();
-  for (const profile of Object.values(roads.profiles)) used.add(profile.surface || 'asphalt');
+  for (const profile of Object.values(roads.profiles)) if (isPaved(profile)) used.add(profile.surface || 'asphalt');
   return [...used].filter((surface) => roads.surfaces[surface]).sort();
 }
 

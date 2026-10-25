@@ -1111,9 +1111,10 @@ function pointAlong(points, distance) {
  * Un chemin ne fait pas carrefour avec une chaussée revêtue. À un nœud qu'une
  * revêtue atteint, seules les revêtues comptent : le chemin qui s'y embranche
  * ou la traverse n'ouvre ni bouche ni surface, il est dessiné dessous
- * (`roadNetwork.roadLiftFor`). Là où aucune revêtue n'arrive, les chemins font
- * carrefour entre eux. Une polyligne de branche suit la même règle : un chemin
- * qui la coupe ne l'arrête pas.
+ * (`roadNetwork.roadLiftFor`). Les chemins ne font pas carrefour entre eux
+ * non plus : d'une même terre, leurs rubans se recouvrent sans dalle. Une
+ * polyligne de branche suit la même règle : un chemin qui la coupe ne
+ * l'arrête pas.
  *
  * Un giratoire (`roadRoundabouts`) est publié comme **un** carrefour, centré
  * sur son anneau et portant `roundabout` : ses branches sont celles qui en
@@ -1133,7 +1134,7 @@ function* collectJunctions(
   nodes,
   { sight = BRANCH_SIGHT_M, headingAt = BRANCH_HEADING_M, unpaved = null, rings = [] } = {}
 ) {
-  const { edges, degree } = graph;
+  const { edges } = graph;
   const byNode = new Map();
   const ringAt = new Map();
   for (const ring of rings) {
@@ -1148,17 +1149,12 @@ function* collectJunctions(
     if (unpaved?.has(edge.profile)) continue;
     for (const node of [edge.a, edge.b]) pavedDegree.set(node, (pavedDegree.get(node) || 0) + 1);
   }
-  const degreeOf = (node, paved) => {
-    const count = pavedDegree.get(node) || 0;
-    return paved ? count : (degree.get(node) || 0) - count;
-  };
 
   for (const edge of edges) {
     if (++visited % 64 === 0) yield;
-    const paved = !unpaved?.has(edge.profile);
+    if (unpaved?.has(edge.profile)) continue;
     for (const node of [edge.a, edge.b]) {
-      if (paved !== pavedDegree.has(node)) continue;
-      const count = degreeOf(node, paved);
+      const count = pavedDegree.get(node);
       if (count < 3) continue;
       const onRing = ringAt.get(node);
       if (onRing?.ring.edges.has(edge)) continue;
@@ -1166,7 +1162,7 @@ function* collectJunctions(
       // La branche est arrondie comme la chaîne qu'elle décrit : c'est sur elle
       // que la bouche du carrefour va chercher la chaussée, et les deux doivent
       // parler du même tracé.
-      const rawPath = branchPath(graph, nodes, node, other, edge.rank, sight, (n) => degreeOf(n, paved));
+      const rawPath = branchPath(graph, nodes, node, other, edge.rank, sight, (n) => pavedDegree.get(n) || 0);
       const { points: path } = roundCorners(rawPath);
       // La corde sur une longueur de rue, et non la première arête : voir
       // `BRANCH_HEADING_M`.
