@@ -195,12 +195,13 @@ function gnawTips(material) {
 }
 
 /**
- * Revêtements dont une surface de carrefour peut être faite : ceux que portent
- * les profils de chaussée. Le ballast n'en est pas — c'est une voie ferrée.
+ * Revêtements dont une surface de carrefour peut être faite : ceux des profils
+ * revêtus. Un chemin ne fait jamais carrefour (`roadGraph.collectJunctions`),
+ * et le ballast est une voie ferrée.
  */
 export function junctionSurfaces(roads = defaultTheme.roads) {
   const used = new Set();
-  for (const profile of Object.values(roads.profiles)) used.add(profile.surface || 'asphalt');
+  for (const profile of Object.values(roads.profiles)) if (isPaved(profile)) used.add(profile.surface || 'asphalt');
   return [...used].filter((surface) => roads.surfaces[surface]).sort();
 }
 
@@ -235,7 +236,12 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
   // reste au-dessus de tous.
   const pavedOffset = (lift) => ({ polygonOffset: true, polygonOffsetFactor: -2 - lift, polygonOffsetUnits: -4 - 2 * lift });
   const depthOffset = (spec, key = null) => {
-    if (!isPaved(spec)) return { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 };
+    // Sans carrefour, deux chemins se recouvrent : le plus large l'emporte,
+    // toujours sous la plus basse des chaussées (-2, -4).
+    if (!isPaved(spec)) {
+      const wide = (spec.width ?? 0) >= 3;
+      return { polygonOffset: true, polygonOffsetFactor: wide ? -1.9 : -1, polygonOffsetUnits: wide ? -3.9 : -2 };
+    }
     if (key == null) return pavedOffset(PAVED_LIFT_STEPS * PAVED_LIFT_STEP);
     const rank = ROAD_PROFILE_ORDER.indexOf(key);
     return pavedOffset(rank < 0 ? 0 : Math.max(0, PAVED_LIFT_STEPS - 1 - rank) * PAVED_LIFT_STEP);

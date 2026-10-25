@@ -7037,14 +7037,13 @@ test('une piste cyclable revêtue reste une branche du carrefour', () => {
   assert.ok(junctions[0].branches.some((b) => b.profile === 'cycleway'));
 });
 
-test('des chemins qu’aucune route ne rejoint font carrefour entre eux', () => {
+test('des chemins ne font pas carrefour entre eux', () => {
   const track = (points) => ({ profile: 'track', halfWidth: 1.5, paved: false, points });
   const { junctions } = mergeRoadLines([
     track(straight(0, 200, 8)),
     track([{ x: 100, z: 0 }, { x: 100, z: 60 }]),
   ]);
-  assert.equal(junctions.length, 1);
-  assert.equal(junctions[0].profile, 'track');
+  assert.equal(junctions.length, 0);
 });
 
 test('une chaîne ressort du graphe arrondie, ses tableaux parallèles avec elle', () => {
