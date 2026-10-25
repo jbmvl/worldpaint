@@ -82,6 +82,14 @@ constituent pas des contours officiels et ne changent aucune donnée régionale.
   est l'information : il n'y a aucun poids à écrire, et une liste dans le
   désordre fait une région couverte de vignes.
 - **`trees`** — deux à quatre essences dominantes.
+- **`sparse`** — facultatif : ce que la carte relève mal dans ce pays, **mesuré**
+  et non supposé. Seul mot admis : `buildings`. Il autorise
+  `layers/buildingInfill.js` à semer des maisons dans les rues habitées où OSM
+  ne relève aucun bâtiment. Il est posé sur la Slovaquie, la Hongrie et la
+  Roumanie, où la part des bâtiments présents dans OSM tombe à 81 %, 40 % et
+  5 % en campagne (tirage de carrés de 1 km² comparé aux bâtiments d'Overture
+  Maps), contre 90 % en France. Avant de l'ajouter à un pays, mesurer de même ;
+  le semis se contrôle par `node scripts/buildings-audit.mjs`.
 
 Rien d'autre. Pas d'altitude, pas d'humidité, pas de score : ce qui existe
 réellement à un endroit est relevé par le vectoriel, et une région qui le

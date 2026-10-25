@@ -1,0 +1,17 @@
+{
+  "name": "village-roumain",
+  "label": "Village de plaine, Roumanie (Overture)",
+  "lng": 25.3785,
+  "lat": 44.7741,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "encoding": "terrarium",
+    "extension": "png",
+    "source": "s3.amazonaws.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "Overture Maps 2026-10-21.0, schéma OpenMapTiles approché, bâti OSM seul"
+  }
+}

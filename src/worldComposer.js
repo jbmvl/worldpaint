@@ -78,6 +78,7 @@ import { BridgeLayer } from './layers/bridgeLayer.js';
 import { deckCeilingAt } from './layers/roadWorks.js';
 import { CombinedIndex } from './layers/roadGraph.js';
 import { BuildingLayer } from './layers/buildingLayer.js';
+import { infillAllowed } from './layers/buildingInfill.js';
 import { GardenLayer } from './layers/gardenLayer.js';
 import { StreetLayer } from './layers/streetLayer.js';
 import { FabricIndex, readSettlement, wallLengthsByDistance } from './layers/settlement.js';
@@ -656,7 +657,7 @@ export class WorldComposer {
       //    piétonnes jetées, voies redondantes absorbées). Lu une seule fois
       //    ici, puis passé à la voirie et au mobilier, qui posaient la même
       //    question chacun de leur côté.
-      const { builtUp, places, urban } = readSettlement(this.vectorTiles, wanted, this.bubble.frame);
+      const { builtUp, builtUpClasses, places, greens, urban } = readSettlement(this.vectorTiles, wanted, this.bubble.frame);
       // Et « sommes-nous au bord de la mer ? » : la mouette y remplace tout autre oiseau.
       this.life.setSeaDistance(seaDistanceAt(this.vectorTiles, wanted, this.bubble.frame, here));
       this.metrics?.record('preparationLieu', performance.now() - placeStart);
@@ -731,7 +732,15 @@ export class WorldComposer {
       // 4. Bâti — après les chaussées, dont l'emprise rabote ce qu'une
       //    empreinte pose sur la voie (la donnée en pose : le tracé de la route
       //    et le contour du bâti viennent de deux relevés différents).
-      if (!await rebuild(this.buildings, 'batiments', this.vectorTiles, near, here, { roadIndex: this.roads.index, builtUp })) return false;
+      //    Là où le pays dit son bâti mal relevé, les parcelles vides des rues
+      //    habitées reçoivent des maisons (`buildingInfill`).
+      const infill = infillAllowed(region) ? {
+        streets: this.roads.roadSegments,
+        builtUpClasses,
+        greens,
+        blocked: (x, z) => { const surface = this.groundClass.surfaceAt(x, z); return surface === 'water' || surface === 'wetland'; },
+      } : null;
+      if (!await rebuild(this.buildings, 'batiments', this.vectorTiles, near, here, { roadIndex: this.roads.index, builtUp, infill })) return false;
 
       if (!await checkpoint()) return false;
 

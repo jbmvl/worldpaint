@@ -1,0 +1,611 @@
+{
+  "summary": {
+    "root": "/home/user/worldpaint",
+    "lieu": "village-roumain",
+    "runs": 3,
+    "date": "2026-10-25T20:21:19.970Z",
+    "cpu": 1,
+    "reseau": {
+      "latenceMs": 0,
+      "debitMbps": 0,
+      "tuiles": {
+        "count": 18,
+        "bytes": 518016
+      }
+    },
+    "machine": {
+      "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+      "cores": 4,
+      "node": "v22.22.0",
+      "webgl": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)"
+    },
+    "ram": {
+      "tasRetenuApresMontageMo": 25,
+      "tasPicMontageMo": 194,
+      "pssApresMontageMo": 493,
+      "pssPicMontageMo": 655,
+      "tasRetenuApresTrajetMo": 30,
+      "tasPicTrajetMo": 228,
+      "pssPicTrajetMo": 828,
+      "geometrieMo": 31
+    },
+    "generation": {
+      "totalMs": 1016,
+      "createMs": 162,
+      "mountAtMs": 505,
+      "filesMs": 0,
+      "premiereImageMs": 337,
+      "bulleCompleteMs": 3634,
+      "elargissementImageP95Ms": 21.3,
+      "elargissementImagesPlusDe50Ms": 2,
+      "passesMs": [
+        1008,
+        1050,
+        1016
+      ],
+      "couches": [
+        [
+          "attenteGeneration",
+          932
+        ],
+        [
+          "forets",
+          493
+        ],
+        [
+          "carteSol",
+          311
+        ],
+        [
+          "terrain",
+          283
+        ],
+        [
+          "routes",
+          252
+        ],
+        [
+          "rues",
+          122
+        ],
+        [
+          "mobilier",
+          118
+        ],
+        [
+          "batiments",
+          91
+        ],
+        [
+          "jardins",
+          69
+        ],
+        [
+          "cultures",
+          26
+        ],
+        [
+          "chargementVectoriel",
+          17
+        ],
+        [
+          "preparationEau",
+          11
+        ]
+      ]
+    },
+    "fluidite": {
+      "tour": {
+        "imageP50Ms": 4.4,
+        "imageP95Ms": 4.9,
+        "imageP99Ms": 6.8,
+        "imageMaxMs": 8.4,
+        "imagesPlusDe16Ms": 0,
+        "imagesPlusDe50Ms": 0,
+        "advanceP95Ms": 0.4,
+        "renderP95Ms": 19
+      },
+      "trajet": {
+        "imageP50Ms": 4.4,
+        "imageP95Ms": 14.6,
+        "imageP99Ms": 45.8,
+        "imageMaxMs": 109.3,
+        "imagesPlusDe16Ms": 50,
+        "imagesPlusDe50Ms": 13,
+        "advanceP95Ms": 4.4,
+        "renderP95Ms": 526.4
+      }
+    },
+    "scene": {
+      "appels": 648,
+      "triangles": 5111556,
+      "maillages": 2956,
+      "recentrages": 38,
+      "relevesFaites": 3
+    },
+    "erreurs": [],
+    "tuilesManquantes": []
+  },
+  "passes": [
+    {
+      "baseline": {
+        "heap": 3881720,
+        "pss": 229044224
+      },
+      "mount": {
+        "createMs": 166.09999999962747,
+        "mountMs": 504.8000000002794,
+        "queuesMs": 0,
+        "queueFrames": 0,
+        "firstFrameMs": 336.6999999997206,
+        "totalMs": 1007.5999999996275,
+        "fullMs": 3633.899999999907,
+        "heapPeakBytes": 200158538,
+        "layers": [
+          [
+            "attenteGeneration",
+            816
+          ],
+          [
+            "forets",
+            510
+          ],
+          [
+            "carteSol",
+            289
+          ],
+          [
+            "routes",
+            262
+          ],
+          [
+            "terrain",
+            226
+          ],
+          [
+            "mobilier",
+            165
+          ],
+          [
+            "rues",
+            130
+          ],
+          [
+            "batiments",
+            119
+          ],
+          [
+            "jardins",
+            59
+          ],
+          [
+            "cultures",
+            24
+          ],
+          [
+            "chargementVectoriel",
+            19
+          ],
+          [
+            "animationFaune",
+            11
+          ]
+        ],
+        "widen": {
+          "frames": 243,
+          "p50": 9.600000000093132,
+          "p95": 21.299999999813735,
+          "max": 63.89999999990687,
+          "over50": 2,
+          "refreshFrames": 167
+        },
+        "meshes": 2956,
+        "triangles": 5111556,
+        "bufferBytes": 32209594,
+        "calls": 648,
+        "gpu": {
+          "geometries": 85,
+          "textures": 10
+        },
+        "pssPeakBytes": 680387584,
+        "heapRetainedBytes": 26441200,
+        "pssBytes": 516736000
+      },
+      "move": {
+        "turn": {
+          "frame": {
+            "p50": 4.399999999906868,
+            "p95": 5.199999999720603,
+            "p99": 8.100000000093132,
+            "max": 8.5,
+            "over16": 0,
+            "over50": 0
+          },
+          "advance": {
+            "p50": 0.20000000018626451,
+            "p95": 0.40000000037252903,
+            "p99": 1.7999999998137355,
+            "max": 2.1000000000931323,
+            "over16": 0,
+            "over50": 0
+          },
+          "render": {
+            "p50": 12.100000000093132,
+            "p95": 13.900000000372529,
+            "p99": 13.900000000372529,
+            "max": 13.900000000372529,
+            "over16": 0,
+            "over50": 0
+          }
+        },
+        "run": {
+          "frame": {
+            "p50": 4.400000000372529,
+            "p95": 15.5,
+            "p99": 60.6999999997206,
+            "max": 260.10000000009313,
+            "over16": 58,
+            "over50": 20
+          },
+          "advance": {
+            "p50": 0.20000000018626451,
+            "p95": 5.600000000093132,
+            "p99": 42.60000000009313,
+            "max": 80,
+            "over16": 24,
+            "over50": 9
+          },
+          "render": {
+            "p50": 6.2000000001862645,
+            "p95": 1427.0999999996275,
+            "p99": 36540.39999999991,
+            "max": 36540.39999999991,
+            "over16": 3,
+            "over50": 2
+          }
+        },
+        "recenters": 42,
+        "refreshDone": 3,
+        "heapPeakBytes": 233377105,
+        "meshes": 2985,
+        "triangles": 2710604,
+        "bufferBytes": 56304473,
+        "calls": 46,
+        "gpu": {
+          "geometries": 94,
+          "textures": 12
+        },
+        "pssPeakBytes": 867910656,
+        "heapRetainedBytes": 31193008,
+        "pssBytes": 668939264
+      },
+      "errors": [],
+      "missing": [],
+      "webgl": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "tiles": {
+        "count": 18,
+        "bytes": 518016
+      }
+    },
+    {
+      "baseline": {
+        "heap": 3881996,
+        "pss": 229044224
+      },
+      "mount": {
+        "createMs": 157.20000000018626,
+        "mountMs": 493.59999999962747,
+        "queuesMs": 0.20000000018626451,
+        "queueFrames": 0,
+        "firstFrameMs": 398.70000000018626,
+        "totalMs": 1049.7000000001863,
+        "fullMs": 3753.7999999998137,
+        "heapPeakBytes": 203428200,
+        "layers": [
+          [
+            "attenteGeneration",
+            932
+          ],
+          [
+            "forets",
+            493
+          ],
+          [
+            "carteSol",
+            311
+          ],
+          [
+            "terrain",
+            283
+          ],
+          [
+            "routes",
+            252
+          ],
+          [
+            "rues",
+            122
+          ],
+          [
+            "mobilier",
+            118
+          ],
+          [
+            "batiments",
+            91
+          ],
+          [
+            "jardins",
+            69
+          ],
+          [
+            "cultures",
+            26
+          ],
+          [
+            "chargementVectoriel",
+            17
+          ],
+          [
+            "preparationEau",
+            11
+          ]
+        ],
+        "widen": {
+          "frames": 254,
+          "p50": 9.600000000093132,
+          "p95": 19.09999999962747,
+          "max": 72.29999999981374,
+          "over50": 2,
+          "refreshFrames": 183
+        },
+        "meshes": 2956,
+        "triangles": 5111556,
+        "bufferBytes": 32209594,
+        "calls": 648,
+        "gpu": {
+          "geometries": 85,
+          "textures": 10
+        },
+        "pssPeakBytes": 686623744,
+        "heapRetainedBytes": 26547824,
+        "pssBytes": 517557248
+      },
+      "move": {
+        "turn": {
+          "frame": {
+            "p50": 4.399999999906868,
+            "p95": 4.699999999720603,
+            "p99": 5.7999999998137355,
+            "max": 7.300000000279397,
+            "over16": 0,
+            "over50": 0
+          },
+          "advance": {
+            "p50": 0.20000000018626451,
+            "p95": 0.5,
+            "p99": 1.5,
+            "max": 2.400000000372529,
+            "over16": 0,
+            "over50": 0
+          },
+          "render": {
+            "p50": 13.199999999720603,
+            "p95": 20.299999999813735,
+            "p99": 20.299999999813735,
+            "max": 20.299999999813735,
+            "over16": 1,
+            "over50": 0
+          }
+        },
+        "run": {
+          "frame": {
+            "p50": 4.399999999906868,
+            "p95": 14.299999999813735,
+            "p99": 41.60000000009313,
+            "max": 79.6999999997206,
+            "over16": 50,
+            "over50": 12
+          },
+          "advance": {
+            "p50": 0.20000000018626451,
+            "p95": 4.399999999906868,
+            "p99": 20.600000000093132,
+            "max": 75.59999999962747,
+            "over16": 15,
+            "over50": 4
+          },
+          "render": {
+            "p50": 5.100000000093132,
+            "p95": 526.3999999999069,
+            "p99": 37847.5,
+            "max": 37847.5,
+            "over16": 4,
+            "over50": 2
+          }
+        },
+        "recenters": 38,
+        "refreshDone": 3,
+        "heapPeakBytes": 238698609,
+        "meshes": 536,
+        "triangles": 1521340,
+        "bufferBytes": 59794977,
+        "calls": 49,
+        "gpu": {
+          "geometries": 86,
+          "textures": 12
+        },
+        "pssPeakBytes": 865619968,
+        "heapRetainedBytes": 21303340,
+        "pssBytes": 636052480
+      },
+      "errors": [],
+      "missing": [],
+      "webgl": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "tiles": {
+        "count": 20,
+        "bytes": 712673
+      }
+    },
+    {
+      "baseline": {
+        "heap": 3881816,
+        "pss": 229322752
+      },
+      "mount": {
+        "createMs": 162.10000000009313,
+        "mountMs": 523.7000000001863,
+        "queuesMs": 0.10000000009313226,
+        "queueFrames": 0,
+        "firstFrameMs": 329.59999999962747,
+        "totalMs": 1015.5,
+        "fullMs": 3515.7000000001863,
+        "heapPeakBytes": 216434012,
+        "layers": [
+          [
+            "attenteGeneration",
+            767
+          ],
+          [
+            "forets",
+            507
+          ],
+          [
+            "carteSol",
+            291
+          ],
+          [
+            "terrain",
+            278
+          ],
+          [
+            "routes",
+            177
+          ],
+          [
+            "rues",
+            125
+          ],
+          [
+            "batiments",
+            122
+          ],
+          [
+            "mobilier",
+            110
+          ],
+          [
+            "jardins",
+            59
+          ],
+          [
+            "cultures",
+            23
+          ],
+          [
+            "chargementVectoriel",
+            20
+          ],
+          [
+            "preparationEau",
+            10
+          ]
+        ],
+        "widen": {
+          "frames": 239,
+          "p50": 9,
+          "p95": 21.300000000279397,
+          "max": 65.10000000009313,
+          "over50": 1,
+          "refreshFrames": 166
+        },
+        "meshes": 2956,
+        "triangles": 5111556,
+        "bufferBytes": 32209594,
+        "calls": 648,
+        "gpu": {
+          "geometries": 85,
+          "textures": 10
+        },
+        "pssPeakBytes": 691835904,
+        "heapRetainedBytes": 26339736,
+        "pssBytes": 515556352
+      },
+      "move": {
+        "turn": {
+          "frame": {
+            "p50": 4.400000000372529,
+            "p95": 4.899999999906868,
+            "p99": 6.800000000279397,
+            "max": 8.399999999906868,
+            "over16": 0,
+            "over50": 0
+          },
+          "advance": {
+            "p50": 0.2999999998137355,
+            "p95": 0.40000000037252903,
+            "p99": 1.099999999627471,
+            "max": 1.8999999999068677,
+            "over16": 0,
+            "over50": 0
+          },
+          "render": {
+            "p50": 18.299999999813735,
+            "p95": 19,
+            "p99": 19,
+            "max": 19,
+            "over16": 2,
+            "over50": 0
+          }
+        },
+        "run": {
+          "frame": {
+            "p50": 4.399999999906868,
+            "p95": 14.600000000093132,
+            "p99": 45.799999999813735,
+            "max": 109.29999999981374,
+            "over16": 47,
+            "over50": 13
+          },
+          "advance": {
+            "p50": 0.19999999972060323,
+            "p95": 4.300000000279397,
+            "p99": 24.399999999906868,
+            "max": 105,
+            "over16": 19,
+            "over50": 7
+          },
+          "render": {
+            "p50": 5.600000000093132,
+            "p95": 466.89999999990687,
+            "p99": 35502.5,
+            "max": 35502.5,
+            "over16": 3,
+            "over50": 2
+          }
+        },
+        "recenters": 38,
+        "refreshDone": 3,
+        "heapPeakBytes": 245988648,
+        "meshes": 2986,
+        "triangles": 2710655,
+        "bufferBytes": 61971172,
+        "calls": 46,
+        "gpu": {
+          "geometries": 87,
+          "textures": 12
+        },
+        "pssPeakBytes": 884594688,
+        "heapRetainedBytes": 31446936,
+        "pssBytes": 667513856
+      },
+      "errors": [],
+      "missing": [],
+      "webgl": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "tiles": {
+        "count": 18,
+        "bytes": 391143
+      }
+    }
+  ]
+}

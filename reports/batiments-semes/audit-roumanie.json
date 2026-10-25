@@ -1,0 +1,649 @@
+{
+ "total": {
+  "sites": 10,
+  "batimentsReels": 8195,
+  "batimentsOsm": 2948,
+  "batimentsSemes": 1828,
+  "maisonsPar100m": {
+   "verite": 2.31,
+   "osm": 1.08,
+   "osmEtSemis": 2.12
+  },
+  "semisHorsRueBatiePct": 33.2,
+  "rappelPct": 41,
+  "fantomesPct": 35,
+  "semisMsMax": 146
+ },
+ "rows": [
+  {
+   "site": "bourg-27.67-46.23",
+   "batimentsReels": 3703,
+   "batimentsOsm": 1349,
+   "batimentsSemes": 668,
+   "maisonsSemees": 481,
+   "annexesSemees": 187,
+   "rueBatieKm": 39.75,
+   "maisonsPar100m": {
+    "verite": 2.48,
+    "osm": 1.21,
+    "osmEtSemis": 1.84
+   },
+   "semisHorsRueBatiePct": 5,
+   "rappelPct": 42,
+   "fantomesPct": 12,
+   "maisonsFantomesPct": 13,
+   "maisonsFantomesSurRueBatiePct": 74,
+   "recul": {
+    "verite": [
+     5.1,
+     7.9,
+     12.1
+    ],
+    "semis": [
+     6.6,
+     9.5,
+     14.7
+    ]
+   },
+   "longueur": {
+    "verite": [
+     12.1,
+     16.1,
+     21.7
+    ],
+    "semis": [
+     10.7,
+     14,
+     19
+    ]
+   },
+   "largeur": {
+    "verite": [
+     7.9,
+     10.3,
+     13.2
+    ],
+    "semis": [
+     6.6,
+     9.1,
+     12.5
+    ]
+   },
+   "pignonPct": {
+    "verite": 46,
+    "semis": 43
+   },
+   "semisMs": 146,
+   "_rappel": 449,
+   "_manquantes": 1069,
+   "_fantomes": 81
+  },
+  {
+   "site": "village-23.8055-45.0481",
+   "batimentsReels": 372,
+   "batimentsOsm": 74,
+   "batimentsSemes": 205,
+   "maisonsSemees": 147,
+   "annexesSemees": 58,
+   "rueBatieKm": 3.15,
+   "maisonsPar100m": {
+    "verite": 2.14,
+    "osm": 0.95,
+    "osmEtSemis": 2.08
+   },
+   "semisHorsRueBatiePct": 53,
+   "rappelPct": 43,
+   "fantomesPct": 68,
+   "maisonsFantomesPct": 69,
+   "maisonsFantomesSurRueBatiePct": 26,
+   "recul": {
+    "verite": [
+     9.2,
+     13.4,
+     17.3
+    ],
+    "semis": [
+     6.8,
+     10.2,
+     15.4
+    ]
+   },
+   "longueur": {
+    "verite": [
+     9,
+     11,
+     13.4
+    ],
+    "semis": [
+     10.9,
+     13.3,
+     18.1
+    ]
+   },
+   "largeur": {
+    "verite": [
+     5.8,
+     7.9,
+     10
+    ],
+    "semis": [
+     6.6,
+     8.9,
+     11.6
+    ]
+   },
+   "pignonPct": {
+    "verite": 35,
+    "semis": 46
+   },
+   "semisMs": 22,
+   "_rappel": 35,
+   "_manquantes": 82,
+   "_fantomes": 140
+  },
+  {
+   "site": "village-24.013-44.7341",
+   "batimentsReels": 535,
+   "batimentsOsm": 273,
+   "batimentsSemes": 28,
+   "maisonsSemees": 21,
+   "annexesSemees": 7,
+   "rueBatieKm": 5.22,
+   "maisonsPar100m": {
+    "verite": 2.27,
+    "osm": 2.14,
+    "osmEtSemis": 2.25
+   },
+   "semisHorsRueBatiePct": 45,
+   "rappelPct": 8,
+   "fantomesPct": 79,
+   "maisonsFantomesPct": 76,
+   "maisonsFantomesSurRueBatiePct": 38,
+   "recul": {
+    "verite": [
+     6.1,
+     9.2,
+     15
+    ],
+    "semis": [
+     4.9,
+     8.4,
+     12.9
+    ]
+   },
+   "longueur": {
+    "verite": [
+     8.9,
+     11.3,
+     13.5
+    ],
+    "semis": [
+     11,
+     14.1,
+     17.2
+    ]
+   },
+   "largeur": {
+    "verite": [
+     5.7,
+     7.1,
+     8.7
+    ],
+    "semis": [
+     7.3,
+     8.8,
+     11.9
+    ]
+   },
+   "pignonPct": {
+    "verite": 47,
+    "semis": 32
+   },
+   "semisMs": 8,
+   "_rappel": 4,
+   "_manquantes": 53,
+   "_fantomes": 22
+  },
+  {
+   "site": "village-24.4022-47.0664",
+   "batimentsReels": 346,
+   "batimentsOsm": 0,
+   "batimentsSemes": 173,
+   "maisonsSemees": 119,
+   "annexesSemees": 54,
+   "rueBatieKm": 2.19,
+   "maisonsPar100m": {
+    "verite": 2.83,
+    "osm": 0,
+    "osmEtSemis": 2.58
+   },
+   "semisHorsRueBatiePct": 9,
+   "rappelPct": 71,
+   "fantomesPct": 25,
+   "maisonsFantomesPct": 22,
+   "maisonsFantomesSurRueBatiePct": 65,
+   "recul": {
+    "verite": [
+     8.2,
+     12,
+     16.2
+    ],
+    "semis": [
+     6.6,
+     9.9,
+     14.6
+    ]
+   },
+   "longueur": {
+    "verite": [
+     12.2,
+     14.5,
+     18.3
+    ],
+    "semis": [
+     11.3,
+     14.3,
+     19.2
+    ]
+   },
+   "largeur": {
+    "verite": [
+     8.4,
+     10.2,
+     12.4
+    ],
+    "semis": [
+     7.5,
+     10,
+     12.6
+    ]
+   },
+   "pignonPct": {
+    "verite": 37,
+    "semis": 40
+   },
+   "semisMs": 11,
+   "_rappel": 90,
+   "_manquantes": 126,
+   "_fantomes": 43
+  },
+  {
+   "site": "village-24.6511-45.2487",
+   "batimentsReels": 869,
+   "batimentsOsm": 530,
+   "batimentsSemes": 18,
+   "maisonsSemees": 12,
+   "annexesSemees": 6,
+   "rueBatieKm": 8.29,
+   "maisonsPar100m": {
+    "verite": 2.19,
+    "osm": 1.81,
+    "osmEtSemis": 1.86
+   },
+   "semisHorsRueBatiePct": 43,
+   "rappelPct": 2,
+   "fantomesPct": 72,
+   "maisonsFantomesPct": 83,
+   "maisonsFantomesSurRueBatiePct": 50,
+   "recul": {
+    "verite": [
+     7.1,
+     11.5,
+     16.2
+    ],
+    "semis": [
+     7.4,
+     9.6,
+     17.2
+    ]
+   },
+   "longueur": {
+    "verite": [
+     10.4,
+     12.6,
+     15.2
+    ],
+    "semis": [
+     10.5,
+     13.5,
+     17.3
+    ]
+   },
+   "largeur": {
+    "verite": [
+     6.5,
+     8.2,
+     9.8
+    ],
+    "semis": [
+     6.1,
+     8.2,
+     9.7
+    ]
+   },
+   "pignonPct": {
+    "verite": 52,
+    "semis": 36
+   },
+   "semisMs": 21,
+   "_rappel": 2,
+   "_manquantes": 82,
+   "_fantomes": 13
+  },
+  {
+   "site": "village-25.3785-44.7741",
+   "batimentsReels": 650,
+   "batimentsOsm": 6,
+   "batimentsSemes": 309,
+   "maisonsSemees": 212,
+   "annexesSemees": 97,
+   "rueBatieKm": 3.85,
+   "maisonsPar100m": {
+    "verite": 2.63,
+    "osm": 0.06,
+    "osmEtSemis": 2.58
+   },
+   "semisHorsRueBatiePct": 10,
+   "rappelPct": 63,
+   "fantomesPct": 26,
+   "maisonsFantomesPct": 25,
+   "maisonsFantomesSurRueBatiePct": 74,
+   "recul": {
+    "verite": [
+     9.2,
+     13.5,
+     18.2
+    ],
+    "semis": [
+     7.9,
+     11,
+     16
+    ]
+   },
+   "longueur": {
+    "verite": [
+     11.7,
+     14.9,
+     20
+    ],
+    "semis": [
+     10.9,
+     14.2,
+     18.6
+    ]
+   },
+   "largeur": {
+    "verite": [
+     7.4,
+     8.9,
+     11.5
+    ],
+    "semis": [
+     6.8,
+     9.6,
+     13.1
+    ]
+   },
+   "pignonPct": {
+    "verite": 47,
+    "semis": 47
+   },
+   "semisMs": 16,
+   "_rappel": 130,
+   "_manquantes": 206,
+   "_fantomes": 79
+  },
+  {
+   "site": "village-25.4282-45.1279",
+   "batimentsReels": 645,
+   "batimentsOsm": 281,
+   "batimentsSemes": 39,
+   "maisonsSemees": 26,
+   "annexesSemees": 13,
+   "rueBatieKm": 6.51,
+   "maisonsPar100m": {
+    "verite": 2.43,
+    "osm": 1.64,
+    "osmEtSemis": 1.77
+   },
+   "semisHorsRueBatiePct": 41,
+   "rappelPct": 3,
+   "fantomesPct": 67,
+   "maisonsFantomesPct": 73,
+   "maisonsFantomesSurRueBatiePct": 42,
+   "recul": {
+    "verite": [
+     6.7,
+     10.3,
+     14.3
+    ],
+    "semis": [
+     7.2,
+     11.2,
+     15.2
+    ]
+   },
+   "longueur": {
+    "verite": [
+     11.1,
+     14.2,
+     20
+    ],
+    "semis": [
+     11.1,
+     12.8,
+     17.5
+    ]
+   },
+   "largeur": {
+    "verite": [
+     7.4,
+     9.6,
+     12.2
+    ],
+    "semis": [
+     7,
+     9.3,
+     11.7
+    ]
+   },
+   "pignonPct": {
+    "verite": 48,
+    "semis": 52
+   },
+   "semisMs": 19,
+   "_rappel": 3,
+   "_manquantes": 113,
+   "_fantomes": 26
+  },
+  {
+   "site": "village-25.5688-45.4912",
+   "batimentsReels": 329,
+   "batimentsOsm": 255,
+   "batimentsSemes": 87,
+   "maisonsSemees": 63,
+   "annexesSemees": 24,
+   "rueBatieKm": 3.78,
+   "maisonsPar100m": {
+    "verite": 1.94,
+    "osm": 1.71,
+    "osmEtSemis": 1.89
+   },
+   "semisHorsRueBatiePct": 80,
+   "rappelPct": 5,
+   "fantomesPct": 97,
+   "maisonsFantomesPct": 98,
+   "maisonsFantomesSurRueBatiePct": 21,
+   "recul": {
+    "verite": [
+     6.1,
+     9.1,
+     14
+    ],
+    "semis": [
+     6.8,
+     9.9,
+     13.4
+    ]
+   },
+   "longueur": {
+    "verite": [
+     10,
+     12.7,
+     15.5
+    ],
+    "semis": [
+     11,
+     14.4,
+     18.5
+    ]
+   },
+   "largeur": {
+    "verite": [
+     7.8,
+     9.5,
+     11.6
+    ],
+    "semis": [
+     6.1,
+     8.1,
+     11.2
+    ]
+   },
+   "pignonPct": {
+    "verite": 43,
+    "semis": 42
+   },
+   "semisMs": 18,
+   "_rappel": 1,
+   "_manquantes": 20,
+   "_fantomes": 84
+  },
+  {
+   "site": "village-25.9961-45.0883",
+   "batimentsReels": 600,
+   "batimentsOsm": 180,
+   "batimentsSemes": 167,
+   "maisonsSemees": 118,
+   "annexesSemees": 49,
+   "rueBatieKm": 5.58,
+   "maisonsPar100m": {
+    "verite": 2.19,
+    "osm": 1.23,
+    "osmEtSemis": 2
+   },
+   "semisHorsRueBatiePct": 31,
+   "rappelPct": 30,
+   "fantomesPct": 56,
+   "maisonsFantomesPct": 56,
+   "maisonsFantomesSurRueBatiePct": 53,
+   "recul": {
+    "verite": [
+     8.9,
+     12.7,
+     18.4
+    ],
+    "semis": [
+     7.9,
+     11,
+     15.7
+    ]
+   },
+   "longueur": {
+    "verite": [
+     10.2,
+     12.8,
+     15.4
+    ],
+    "semis": [
+     10.4,
+     14.3,
+     18.1
+    ]
+   },
+   "largeur": {
+    "verite": [
+     6.9,
+     8.9,
+     10.7
+    ],
+    "semis": [
+     6.4,
+     8.4,
+     12.4
+    ]
+   },
+   "pignonPct": {
+    "verite": 48,
+    "semis": 45
+   },
+   "semisMs": 15,
+   "_rappel": 35,
+   "_manquantes": 116,
+   "_fantomes": 93
+  },
+  {
+   "site": "village-26.7946-45.9641",
+   "batimentsReels": 146,
+   "batimentsOsm": 0,
+   "batimentsSemes": 134,
+   "maisonsSemees": 90,
+   "annexesSemees": 44,
+   "rueBatieKm": 1.65,
+   "maisonsPar100m": {
+    "verite": 2.03,
+    "osm": 0,
+    "osmEtSemis": 2.39
+   },
+   "semisHorsRueBatiePct": 15,
+   "rappelPct": 67,
+   "fantomesPct": 39,
+   "maisonsFantomesPct": 36,
+   "maisonsFantomesSurRueBatiePct": 69,
+   "recul": {
+    "verite": [
+     6.6,
+     9.9,
+     14.8
+    ],
+    "semis": [
+     6.7,
+     9.8,
+     14.8
+    ]
+   },
+   "longueur": {
+    "verite": [
+     9.9,
+     14.5,
+     20
+    ],
+    "semis": [
+     10.4,
+     14.2,
+     18.2
+    ]
+   },
+   "largeur": {
+    "verite": [
+     6.5,
+     8.5,
+     13
+    ],
+    "semis": [
+     6.1,
+     8.3,
+     12.2
+    ]
+   },
+   "pignonPct": {
+    "verite": 54,
+    "semis": 55
+   },
+   "semisMs": 8,
+   "_rappel": 45,
+   "_manquantes": 67,
+   "_fantomes": 52
+  }
+ ]
+}
