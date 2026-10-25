@@ -1,0 +1,664 @@
+{
+  "summary": {
+    "root": "/home/user/worldpaint",
+    "lieu": "station-montreuil-bellay",
+    "runs": 3,
+    "date": "2026-10-25T20:16:15.863Z",
+    "cpu": 1,
+    "reseau": {
+      "latenceMs": 0,
+      "debitMbps": 0,
+      "tuiles": {
+        "count": 27,
+        "bytes": 369019
+      }
+    },
+    "machine": {
+      "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+      "cores": 4,
+      "node": "v22.22.0",
+      "webgl": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)"
+    },
+    "ram": {
+      "tasRetenuApresMontageMo": 27,
+      "tasPicMontageMo": 266,
+      "pssApresMontageMo": 576,
+      "pssPicMontageMo": 764,
+      "tasRetenuApresTrajetMo": 27,
+      "tasPicTrajetMo": 311,
+      "pssPicTrajetMo": 968,
+      "geometrieMo": 36
+    },
+    "generation": {
+      "totalMs": 1573,
+      "createMs": 162,
+      "mountAtMs": 1014,
+      "filesMs": 0,
+      "premiereImageMs": 397,
+      "bulleCompleteMs": 7112,
+      "elargissementImageP95Ms": 18.4,
+      "elargissementImagesPlusDe50Ms": 3,
+      "passesMs": [
+        1744,
+        1549,
+        1573
+      ],
+      "couches": [
+        [
+          "attenteGeneration",
+          2116
+        ],
+        [
+          "routes",
+          912
+        ],
+        [
+          "mobilier",
+          820
+        ],
+        [
+          "terrain",
+          530
+        ],
+        [
+          "batiments",
+          506
+        ],
+        [
+          "carteSol",
+          403
+        ],
+        [
+          "rues",
+          387
+        ],
+        [
+          "jardins",
+          134
+        ],
+        [
+          "forets",
+          66
+        ],
+        [
+          "rails",
+          64
+        ],
+        [
+          "chargementVectoriel",
+          45
+        ],
+        [
+          "preparationLieu",
+          32
+        ]
+      ]
+    },
+    "fluidite": {
+      "tour": {
+        "imageP50Ms": 4.3,
+        "imageP95Ms": 4.8,
+        "imageP99Ms": 6.8,
+        "imageMaxMs": 7.2,
+        "imagesPlusDe16Ms": 0,
+        "imagesPlusDe50Ms": 0,
+        "advanceP95Ms": 0.4,
+        "renderP95Ms": 9.5
+      },
+      "trajet": {
+        "imageP50Ms": 4.4,
+        "imageP95Ms": 13.3,
+        "imageP99Ms": 23,
+        "imageMaxMs": 101.9,
+        "imagesPlusDe16Ms": 36,
+        "imagesPlusDe50Ms": 4,
+        "advanceP95Ms": 0.3,
+        "renderP95Ms": 16
+      }
+    },
+    "scene": {
+      "appels": 298,
+      "triangles": 2269744,
+      "maillages": 1007,
+      "recentrages": 22,
+      "relevesFaites": 2
+    },
+    "erreurs": [],
+    "tuilesManquantes": [
+      "/demo/lab/places/station-montreuil-bellay/dem/14/8184/5752.webp",
+      "/demo/lab/places/station-montreuil-bellay/dem/14/8186/5752.webp",
+      "/demo/lab/places/station-montreuil-bellay/dem/14/8185/5752.webp",
+      "/demo/lab/places/station-montreuil-bellay/dem/10/511/359.webp",
+      "/demo/lab/places/station-montreuil-bellay/dem/10/512/359.webp",
+      "/demo/lab/places/station-montreuil-bellay/dem/10/511/360.webp",
+      "/demo/lab/places/station-montreuil-bellay/dem/10/512/360.webp"
+    ]
+  },
+  "passes": [
+    {
+      "baseline": {
+        "heap": 3893716,
+        "pss": 229355520
+      },
+      "mount": {
+        "createMs": 167.20000000018626,
+        "mountMs": 1102,
+        "queuesMs": 0,
+        "queueFrames": 0,
+        "firstFrameMs": 474.89999999990687,
+        "totalMs": 1744.1000000000931,
+        "fullMs": 7111.600000000093,
+        "heapPeakBytes": 278397975,
+        "layers": [
+          [
+            "attenteGeneration",
+            2096
+          ],
+          [
+            "routes",
+            917
+          ],
+          [
+            "mobilier",
+            884
+          ],
+          [
+            "terrain",
+            624
+          ],
+          [
+            "batiments",
+            481
+          ],
+          [
+            "rues",
+            462
+          ],
+          [
+            "carteSol",
+            314
+          ],
+          [
+            "jardins",
+            143
+          ],
+          [
+            "forets",
+            80
+          ],
+          [
+            "rails",
+            69
+          ],
+          [
+            "chargementVectoriel",
+            41
+          ],
+          [
+            "preparationLieu",
+            19
+          ]
+        ],
+        "widen": {
+          "frames": 557,
+          "p50": 8.899999999906868,
+          "p95": 19.700000000186265,
+          "max": 121.39999999990687,
+          "over50": 3,
+          "refreshFrames": 540
+        },
+        "meshes": 1007,
+        "triangles": 2269744,
+        "bufferBytes": 37849700,
+        "calls": 298,
+        "gpu": {
+          "geometries": 90,
+          "textures": 19
+        },
+        "pssPeakBytes": 794978304,
+        "heapRetainedBytes": 28405632,
+        "pssBytes": 603670528
+      },
+      "move": {
+        "turn": {
+          "frame": {
+            "p50": 4.399999999906868,
+            "p95": 5.100000000093132,
+            "p99": 6.100000000093132,
+            "max": 7.2000000001862645,
+            "over16": 0,
+            "over50": 0
+          },
+          "advance": {
+            "p50": 0.19999999972060323,
+            "p95": 0.39999999990686774,
+            "p99": 1.2000000001862645,
+            "max": 2.5,
+            "over16": 0,
+            "over50": 0
+          },
+          "render": {
+            "p50": 9.100000000093132,
+            "p95": 9.5,
+            "p99": 9.5,
+            "max": 9.5,
+            "over16": 0,
+            "over50": 0
+          }
+        },
+        "run": {
+          "frame": {
+            "p50": 4.399999999906868,
+            "p95": 13.299999999813735,
+            "p99": 22.99999999953434,
+            "max": 120.89999999990687,
+            "over16": 32,
+            "over50": 5
+          },
+          "advance": {
+            "p50": 0.10000000009313226,
+            "p95": 0.3000000002793968,
+            "p99": 4.199999999720603,
+            "max": 110.70000000018626,
+            "over16": 1,
+            "over50": 1
+          },
+          "render": {
+            "p50": 3.6999999997206032,
+            "p95": 12.700000000186265,
+            "p99": 15.300000000279397,
+            "max": 15.300000000279397,
+            "over16": 0,
+            "over50": 0
+          }
+        },
+        "recenters": 22,
+        "refreshDone": 2,
+        "heapPeakBytes": 326541206,
+        "meshes": 739,
+        "triangles": 1653080,
+        "bufferBytes": 80910993,
+        "calls": 42,
+        "gpu": {
+          "geometries": 86,
+          "textures": 19
+        },
+        "pssPeakBytes": 1027667968,
+        "heapRetainedBytes": 29799180,
+        "pssBytes": 767891456
+      },
+      "errors": [],
+      "missing": [
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8184/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8186/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8185/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/511/359.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/512/359.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/511/360.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/512/360.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8184/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8185/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8186/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/512/359.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/511/360.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/512/360.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/511/359.webp"
+      ],
+      "webgl": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "tiles": {
+        "count": 27,
+        "bytes": 369019
+      }
+    },
+    {
+      "baseline": {
+        "heap": 3881788,
+        "pss": 228204544
+      },
+      "mount": {
+        "createMs": 161.60000000009313,
+        "mountMs": 991.2999999998137,
+        "queuesMs": 0.10000000009313226,
+        "queueFrames": 0,
+        "firstFrameMs": 396.10000000009313,
+        "totalMs": 1549.1000000000931,
+        "fullMs": 6898.000000000466,
+        "heapPeakBytes": 283645251,
+        "layers": [
+          [
+            "attenteGeneration",
+            2116
+          ],
+          [
+            "routes",
+            912
+          ],
+          [
+            "mobilier",
+            820
+          ],
+          [
+            "terrain",
+            530
+          ],
+          [
+            "batiments",
+            506
+          ],
+          [
+            "carteSol",
+            403
+          ],
+          [
+            "rues",
+            387
+          ],
+          [
+            "jardins",
+            134
+          ],
+          [
+            "forets",
+            66
+          ],
+          [
+            "rails",
+            64
+          ],
+          [
+            "chargementVectoriel",
+            45
+          ],
+          [
+            "preparationLieu",
+            32
+          ]
+        ],
+        "widen": {
+          "frames": 547,
+          "p50": 9,
+          "p95": 18.399999999906868,
+          "max": 118,
+          "over50": 3,
+          "refreshFrames": 534
+        },
+        "meshes": 1007,
+        "triangles": 2269744,
+        "bufferBytes": 37849700,
+        "calls": 298,
+        "gpu": {
+          "geometries": 90,
+          "textures": 19
+        },
+        "pssPeakBytes": 818088960,
+        "heapRetainedBytes": 28564348,
+        "pssBytes": 603712512
+      },
+      "move": {
+        "turn": {
+          "frame": {
+            "p50": 4.300000000279397,
+            "p95": 4.800000000279397,
+            "p99": 7.2000000001862645,
+            "max": 11.399999999906868,
+            "over16": 0,
+            "over50": 0
+          },
+          "advance": {
+            "p50": 0.19999999972060323,
+            "p95": 0.39999999990686774,
+            "p99": 1.8999999999068677,
+            "max": 7.2000000001862645,
+            "over16": 0,
+            "over50": 0
+          },
+          "render": {
+            "p50": 4.899999999906868,
+            "p95": 6,
+            "p99": 6,
+            "max": 6,
+            "over16": 0,
+            "over50": 0
+          }
+        },
+        "run": {
+          "frame": {
+            "p50": 4.300000000279397,
+            "p95": 12.900000000372529,
+            "p99": 21.5,
+            "max": 88.70000000018626,
+            "over16": 36,
+            "over50": 4
+          },
+          "advance": {
+            "p50": 0.10000000009313226,
+            "p95": 0.3000000002793968,
+            "p99": 4.2999999998137355,
+            "max": 21.700000000186265,
+            "over16": 1,
+            "over50": 0
+          },
+          "render": {
+            "p50": 3.6999999997206032,
+            "p95": 16,
+            "p99": 17.799999999813735,
+            "max": 17.799999999813735,
+            "over16": 1,
+            "over50": 0
+          }
+        },
+        "recenters": 22,
+        "refreshDone": 2,
+        "heapPeakBytes": 326140039,
+        "meshes": 770,
+        "triangles": 1687840,
+        "bufferBytes": 83859134,
+        "calls": 42,
+        "gpu": {
+          "geometries": 86,
+          "textures": 19
+        },
+        "pssPeakBytes": 1014530048,
+        "heapRetainedBytes": 28111768,
+        "pssBytes": 792481792
+      },
+      "errors": [],
+      "missing": [
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8184/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8185/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8186/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/511/359.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/512/359.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/511/360.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/512/360.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8184/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8185/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8186/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/511/360.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/511/359.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/512/359.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/512/360.webp"
+      ],
+      "webgl": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "tiles": {
+        "count": 27,
+        "bytes": 360026
+      }
+    },
+    {
+      "baseline": {
+        "heap": 3881772,
+        "pss": 229256192
+      },
+      "mount": {
+        "createMs": 162,
+        "mountMs": 1014.1000000000931,
+        "queuesMs": 0.10000000009313226,
+        "queueFrames": 0,
+        "firstFrameMs": 396.60000000009313,
+        "totalMs": 1572.8000000002794,
+        "fullMs": 7259.399999999441,
+        "heapPeakBytes": 274917823,
+        "layers": [
+          [
+            "attenteGeneration",
+            2242
+          ],
+          [
+            "routes",
+            998
+          ],
+          [
+            "mobilier",
+            887
+          ],
+          [
+            "terrain",
+            507
+          ],
+          [
+            "batiments",
+            486
+          ],
+          [
+            "rues",
+            477
+          ],
+          [
+            "carteSol",
+            389
+          ],
+          [
+            "jardins",
+            131
+          ],
+          [
+            "forets",
+            109
+          ],
+          [
+            "rails",
+            66
+          ],
+          [
+            "animationFaune",
+            41
+          ],
+          [
+            "chargementVectoriel",
+            28
+          ]
+        ],
+        "widen": {
+          "frames": 582,
+          "p50": 9,
+          "p95": 17.399999999906868,
+          "max": 112.60000000009313,
+          "over50": 6,
+          "refreshFrames": 565
+        },
+        "meshes": 1007,
+        "triangles": 2269744,
+        "bufferBytes": 37849700,
+        "calls": 298,
+        "gpu": {
+          "geometries": 90,
+          "textures": 19
+        },
+        "pssPeakBytes": 801590272,
+        "heapRetainedBytes": 28487576,
+        "pssBytes": 600943616
+      },
+      "move": {
+        "turn": {
+          "frame": {
+            "p50": 4.2999999998137355,
+            "p95": 4.7999999998137355,
+            "p99": 6.800000000279397,
+            "max": 7.199999999720603,
+            "over16": 0,
+            "over50": 0
+          },
+          "advance": {
+            "p50": 0.19999999972060323,
+            "p95": 0.3000000002793968,
+            "p99": 1.2000000001862645,
+            "max": 3.1000000000931323,
+            "over16": 0,
+            "over50": 0
+          },
+          "render": {
+            "p50": 10.600000000093132,
+            "p95": 18.600000000093132,
+            "p99": 18.600000000093132,
+            "max": 18.600000000093132,
+            "over16": 1,
+            "over50": 0
+          }
+        },
+        "run": {
+          "frame": {
+            "p50": 4.399999999906868,
+            "p95": 14,
+            "p99": 24,
+            "max": 101.89999999990687,
+            "over16": 39,
+            "over50": 3
+          },
+          "advance": {
+            "p50": 0.19999999972060323,
+            "p95": 0.39999999990686774,
+            "p99": 4.7999999998137355,
+            "max": 10,
+            "over16": 0,
+            "over50": 0
+          },
+          "render": {
+            "p50": 3,
+            "p95": 22.5,
+            "p99": 26.799999999813735,
+            "max": 26.799999999813735,
+            "over16": 2,
+            "over50": 0
+          }
+        },
+        "recenters": 22,
+        "refreshDone": 2,
+        "heapPeakBytes": 326179478,
+        "meshes": 774,
+        "triangles": 1752938,
+        "bufferBytes": 84027207,
+        "calls": 41,
+        "gpu": {
+          "geometries": 86,
+          "textures": 19
+        },
+        "pssPeakBytes": 1011227648,
+        "heapRetainedBytes": 28275136,
+        "pssBytes": 790961152
+      },
+      "errors": [],
+      "missing": [
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8184/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8185/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8186/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/511/359.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/512/359.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/511/360.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/512/360.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8184/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8185/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/14/8186/5752.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/511/359.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/512/359.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/511/360.webp",
+        "/demo/lab/places/station-montreuil-bellay/dem/10/512/360.webp"
+      ],
+      "webgl": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+      "tiles": {
+        "count": 27,
+        "bytes": 287519
+      }
+    }
+  ]
+}

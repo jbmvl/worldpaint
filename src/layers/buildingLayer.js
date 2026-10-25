@@ -5,7 +5,9 @@ import { finishGeneration } from '../core/generationSteps.js';
  * fin. Le compositeur fixe les pauses, la sélection reste triée par distance.
  * buildingLayer — le bâti, extrudé depuis les tuiles vectorielles. Les
  * empreintes viennent de la couche `building`, chargées pour la bulle (pas
- * une carte 2D voisine) : la portée du décor ne dépend que du décor.
+ * une carte 2D voisine) : la portée du décor ne dépend que du décor. Là où le
+ * pays dit son bâti mal relevé, `buildingInfill` y ajoute des empreintes
+ * semées, traitées ensuite comme les autres.
  *
  * La couche `building` ne porte que des hauteurs, pas la fonction : elle
  * vient de la couche `poi`. Un point d'intérêt ne pose jamais de volume à
@@ -24,7 +26,8 @@ import { finishGeneration } from '../core/generationSteps.js';
  * l'emprise d'avant.
  */
 
-import { lngToTileX, latToTileY } from '../core/tileMath.js';
+import { lngToTileX, latToTileY, tileXToLng, tileYToLat } from '../core/tileMath.js';
+import { planInfillSteps } from './buildingInfill.js';
 import { srgb } from '../core/color.js';
 import { buildingStyleAt } from './townStyle.js';
 import { isWallFootprint, facadeThickness, isTransitStop, isTransitShelter } from './buildingInterpretation.js';
@@ -1607,14 +1610,18 @@ export class BuildingLayer {
    * @param {Array|null} [options.builtUp] Emprises habitées
    *        (`settlement.readSettlement`) — distingue une maison de ville d'une
    *        maison isolée pour le balcon. Absent, aucune maison n'en reçoit.
+   * @param {Object|null} [options.infill] Semis du bâti mal relevé
+   *        (`buildingInfill`) : `{streets, builtUpClasses, greens, blocked}`. Absent, seules
+   *        les empreintes des tuiles sont bâties.
    * @returns {boolean} vrai si des bâtiments ont été produits.
    */
   rebuild(...args) { return finishGeneration(this.rebuildSteps(...args)); }
 
-  *rebuildSteps(source, tiles, here, { roadIndex = null, builtUp = null } = {}) {
+  *rebuildSteps(source, tiles, here, { roadIndex = null, builtUp = null, infill = null } = {}) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
     this._roadIndex = roadIndex;
     this._builtUp = builtUp;
+    this._infill = infill;
     yield* this._buildSteps(source, tiles, here);
     this._anchor = { x: here.x, z: here.z };
     this._frame = this.bubble.frame;
@@ -1727,6 +1734,46 @@ export class BuildingLayer {
     const kept = (yield* dropTwinFootprintsSteps(candidates)).filter((candidate) => !isTransitShelter(candidate, stops));
     candidates.length = 0;
     candidates.push(...kept);
+    this.syntheticCount = 0;
+    if (this._infill) {
+      const synthetic = yield* planInfillSteps({
+        frame,
+        streets: this._infill.streets,
+        builtUp: this._builtUp ?? [],
+        builtUpClasses: this._infill.builtUpClasses,
+        greens: this._infill.greens,
+        blocked: this._infill.blocked,
+        real: [...candidates, ...outlines].filter((c) => c.footprint),
+        anchors: personalities,
+        roadIndex: this._roadIndex,
+        groundAt: (x, z) => bubble.surfaceElevationAtLocal(x, z),
+        here,
+        radius,
+      });
+      for (const item of synthetic) {
+        const ring = item.ring.map((p) => [tileXToLng(origin.x + p.x / scale, zoom), tileYToLat(origin.y + p.z / scale, zoom)]);
+        ring.push(ring[0]);
+        candidates.push({
+          ring,
+          // Une annexe de cour n'a qu'un niveau.
+          properties: item.kind === 'annex' ? { synthetic: true, infill: item.kind, levels: 1 } : { synthetic: true, infill: item.kind },
+          distance: Math.hypot(item.x - here.x, item.z - here.z),
+          x: item.x,
+          z: item.z,
+          footprint: item.ring,
+          area: ringArea(item.ring),
+          minX: Math.min(...item.ring.map((q) => q.x)),
+          maxX: Math.max(...item.ring.map((q) => q.x)),
+          minZ: Math.min(...item.ring.map((q) => q.z)),
+          maxZ: Math.max(...item.ring.map((q) => q.z)),
+        });
+      }
+      this.syntheticCount = synthetic.length;
+      if (candidates.length > ceiling) {
+        candidates.sort((a, b) => a.distance - b.distance);
+        candidates.length = ceiling;
+      }
+    }
     const owners = yield* assignPersonalitiesSteps(candidates, personalities, outlines);
     yield;
 
@@ -1916,7 +1963,7 @@ export class BuildingLayer {
     // l'empreinte, l'assise et le rectangle orienté existent en même temps.
     // Rien n'est branché : `worldComposer` passe la liste, comme il passe les
     // cheminées du mobilier à `lifeLayer`.
-    if (houses && box && style.house && !(look?.wall || look?.spire || look?.dome || look?.minaret)) {
+    if (houses && box && style.house && properties.infill !== 'annex' && !(look?.wall || look?.spire || look?.dome || look?.minaret)) {
       houses.push({ x: box.cx, z: box.cz, box });
     }
 

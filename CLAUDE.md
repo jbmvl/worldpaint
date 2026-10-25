@@ -101,6 +101,14 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   les couches les plus lentes et ce qui a été bâti (`reach: null` : la bulle
   complète, pour comparer).
 
+- `node scripts/buildings-audit.mjs [site ...]` — le semis du bâti
+  (`buildingInfill`) confronté au bâti réel de dix carrés roumains de
+  `demo/lab/infill/` (bâtiments OSM en entrée, OSM + bâtiments détectés en
+  vérité) : maisons par 100 m de rue, rappel, fantômes, recul, taille, pignon,
+  durée ; `--dims '<cotes JSON>'` essaie d'autres cotes. Le lieu
+  `village-roumain` le montre à l'œil sur `place.html` (tuiles tirées
+  d'Overture, bâti OSM seul).
+
 - `demo/lab/contours.html` — les limites entre matières : la vraie
   `GroundClassMap` et le vrai matériau de terrain sur un sol plat, avec un
   champ à bord de pente faible, une parcelle à angles vifs, un étang, un bois

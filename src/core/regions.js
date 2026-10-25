@@ -20,6 +20,9 @@
  *   farming  l'assolement, **du plus répandu au moins répandu** : le rang est
  *            l'information, il n'y a pas de poids à écrire
  *   trees    les essences dominantes, trois ou quatre
+ *   sparse   facultatif : ce que la carte relève mal dans ce pays, mesuré et
+ *            non supposé. `['buildings']` autorise le semis des maisons dans
+ *            les rues habitées sans bâti relevé (`layers/buildingInfill.js`).
  *
  * Rien d'autre. Pas d'altitude, pas d'humidité, pas de score : ce qui existe
  * réellement à un endroit est relevé par le vectoriel, et une région qui le
@@ -1653,6 +1656,7 @@ export const REGIONS = [
     building: 'rendered_flat_tile',
     farming: ['cereal', 'maize', 'sunflower', 'rapeseed'],
     trees: ['oak', 'poplar', 'ash'],
+    sparse: ['buildings'],
   },
   {
     id: 'carpates_slovaques',
@@ -1663,6 +1667,7 @@ export const REGIONS = [
     building: 'dark_stone_slate',
     farming: ['fallow', 'cereal', 'maize'],
     trees: ['beech', 'spruce', 'fir'],
+    sparse: ['buildings'],
   },
   {
     id: 'basses_terres_orientales_slovaques',
@@ -1673,6 +1678,7 @@ export const REGIONS = [
     building: 'rendered_flat_tile',
     farming: ['cereal', 'maize', 'sunflower', 'rapeseed'],
     trees: ['oak', 'poplar', 'ash'],
+    sparse: ['buildings'],
   },
   {
     id: 'zahorie',
@@ -1683,6 +1689,7 @@ export const REGIONS = [
     building: 'rendered_flat_tile',
     farming: ['cereal', 'maize', 'fallow'],
     trees: ['scots_pine', 'oak', 'birch'],
+    sparse: ['buildings'],
   },
   {
     id: 'petites_carpates',
@@ -1693,6 +1700,7 @@ export const REGIONS = [
     building: 'dark_stone_slate',
     farming: ['vineyard', 'cereal', 'fallow'],
     trees: ['oak', 'beech', 'hornbeam'],
+    sparse: ['buildings'],
   },
   {
     id: 'tatras',
@@ -1703,6 +1711,7 @@ export const REGIONS = [
     building: 'timber_stone_slab',
     farming: ['fallow'],
     trees: ['spruce', 'fir', 'larch'],
+    sparse: ['buildings'],
   },
   {
     id: 'montagnes_centrales_slovaques',
@@ -1713,6 +1722,7 @@ export const REGIONS = [
     building: 'dark_stone_slate',
     farming: ['fallow', 'cereal', 'maize'],
     trees: ['beech', 'oak', 'spruce'],
+    sparse: ['buildings'],
   },
   {
     id: 'monts_metalliferes_slovaques',
@@ -1723,6 +1733,7 @@ export const REGIONS = [
     building: 'dark_stone_slate',
     farming: ['fallow', 'cereal'],
     trees: ['beech', 'fir', 'spruce'],
+    sparse: ['buildings'],
   },
   {
     id: 'carpates_orientales_slovaques',
@@ -1733,6 +1744,7 @@ export const REGIONS = [
     building: 'dark_stone_slate',
     farming: ['fallow', 'cereal'],
     trees: ['beech', 'fir', 'spruce'],
+    sparse: ['buildings'],
   },
   // --------------------------------------------------------------- Hongrie --
   {
@@ -1744,6 +1756,7 @@ export const REGIONS = [
     building: 'pale_brick_flat_tile',
     farming: ['cereal', 'maize', 'sunflower', 'fallow'],
     trees: ['oak', 'poplar', 'black_pine'],
+    sparse: ['buildings'],
   },
   {
     id: 'petite_plaine_hongroise',
@@ -1754,6 +1767,7 @@ export const REGIONS = [
     building: 'pale_brick_flat_tile',
     farming: ['cereal', 'maize', 'rapeseed', 'sunflower'],
     trees: ['oak', 'poplar', 'ash'],
+    sparse: ['buildings'],
   },
   {
     id: 'transdanubie',
@@ -1764,6 +1778,7 @@ export const REGIONS = [
     building: 'light_stone_flat_tile',
     farming: ['cereal', 'vineyard', 'maize', 'sunflower'],
     trees: ['oak', 'beech', 'chestnut'],
+    sparse: ['buildings'],
   },
   {
     id: 'montagnes_du_nord_hongrois',
@@ -1774,6 +1789,7 @@ export const REGIONS = [
     building: 'dark_stone_flat_tile',
     farming: ['fallow', 'cereal', 'vineyard'],
     trees: ['beech', 'oak', 'hornbeam'],
+    sparse: ['buildings'],
   },
   {
     id: 'nyirseg',
@@ -1784,6 +1800,7 @@ export const REGIONS = [
     building: 'pale_brick_flat_tile',
     farming: ['cereal', 'maize', 'orchard', 'sunflower'],
     trees: ['black_pine', 'oak', 'acacia'],
+    sparse: ['buildings'],
   },
   {
     id: 'contreforts_alpins_hongrois',
@@ -1794,6 +1811,7 @@ export const REGIONS = [
     building: 'light_stone_flat_tile',
     farming: ['cereal', 'vineyard', 'fallow'],
     trees: ['beech', 'oak', 'chestnut'],
+    sparse: ['buildings'],
   },
   {
     id: 'hauts_de_balaton',
@@ -1804,6 +1822,7 @@ export const REGIONS = [
     building: 'light_stone_flat_tile',
     farming: ['vineyard', 'cereal', 'fallow'],
     trees: ['oak', 'chestnut', 'hornbeam'],
+    sparse: ['buildings'],
   },
   {
     id: 'montagnes_transdanubiennes',
@@ -1814,6 +1833,7 @@ export const REGIONS = [
     building: 'light_stone_flat_tile',
     farming: ['fallow', 'cereal', 'vineyard'],
     trees: ['beech', 'oak', 'hornbeam'],
+    sparse: ['buildings'],
   },
   // ------------------------------------------------------------- Roumanie --
   {
@@ -1825,6 +1845,7 @@ export const REGIONS = [
     building: 'rendered_flat_tile',
     farming: ['cereal', 'maize', 'sunflower', 'fallow'],
     trees: ['beech', 'oak', 'hornbeam'],
+    sparse: ['buildings'],
   },
   {
     id: 'sous_carpates_meridionales',
@@ -1835,6 +1856,7 @@ export const REGIONS = [
     building: 'dark_stone_slate',
     farming: ['fallow', 'cereal', 'maize'],
     trees: ['beech', 'fir', 'spruce'],
+    sparse: ['buildings'],
   },
   {
     id: 'plaine_roumaine',
@@ -1845,6 +1867,7 @@ export const REGIONS = [
     building: 'rendered_flat_tile',
     farming: ['cereal', 'maize', 'sunflower', 'rapeseed'],
     trees: ['oak', 'poplar', 'ash'],
+    sparse: ['buildings'],
   },
   {
     id: 'plateau_moldave',
@@ -1855,6 +1878,7 @@ export const REGIONS = [
     building: 'rendered_flat_tile',
     farming: ['cereal', 'maize', 'sunflower', 'vineyard'],
     trees: ['oak', 'beech', 'hornbeam'],
+    sparse: ['buildings'],
   },
   {
     id: 'dobroudja',
@@ -1865,6 +1889,7 @@ export const REGIONS = [
     building: 'whitewash_curved_tile',
     farming: ['cereal', 'sunflower', 'vineyard', 'fallow'],
     trees: ['oak', 'ash', 'hornbeam'],
+    sparse: ['buildings'],
   },
   {
     id: 'crisana',
@@ -1875,6 +1900,7 @@ export const REGIONS = [
     building: 'rendered_flat_tile',
     farming: ['cereal', 'maize', 'sunflower', 'fallow'],
     trees: ['oak', 'ash', 'poplar'],
+    sparse: ['buildings'],
   },
   {
     id: 'maramures',
@@ -1885,6 +1911,7 @@ export const REGIONS = [
     building: 'timber_stone_slab',
     farming: ['fallow', 'cereal', 'maize'],
     trees: ['beech', 'spruce', 'fir'],
+    sparse: ['buildings'],
   },
   {
     id: 'bucovine',
@@ -1895,6 +1922,7 @@ export const REGIONS = [
     building: 'dark_stone_slate',
     farming: ['fallow', 'cereal', 'maize'],
     trees: ['beech', 'spruce', 'fir'],
+    sparse: ['buildings'],
   },
   {
     id: 'carpates_orientales_roumaines',
@@ -1905,6 +1933,7 @@ export const REGIONS = [
     building: 'dark_stone_slate',
     farming: ['fallow', 'cereal'],
     trees: ['beech', 'fir', 'spruce'],
+    sparse: ['buildings'],
   },
   {
     id: 'carpates_meridionales',
@@ -1915,6 +1944,7 @@ export const REGIONS = [
     building: 'dark_stone_stone_slab',
     farming: ['fallow', 'cereal'],
     trees: ['beech', 'fir', 'spruce'],
+    sparse: ['buildings'],
   },
   {
     id: 'monts_apuseni',
@@ -1925,6 +1955,7 @@ export const REGIONS = [
     building: 'dark_stone_slate',
     farming: ['fallow', 'cereal'],
     trees: ['beech', 'oak', 'fir'],
+    sparse: ['buildings'],
   },
   {
     id: 'banat',
@@ -1935,6 +1966,7 @@ export const REGIONS = [
     building: 'rendered_flat_tile',
     farming: ['cereal', 'maize', 'sunflower', 'vineyard'],
     trees: ['oak', 'beech', 'hornbeam'],
+    sparse: ['buildings'],
   },
   {
     id: 'oltenie',
@@ -1945,6 +1977,7 @@ export const REGIONS = [
     building: 'rendered_flat_tile',
     farming: ['cereal', 'maize', 'sunflower', 'fallow'],
     trees: ['oak', 'poplar', 'ash'],
+    sparse: ['buildings'],
   },
   {
     id: 'baragan',
@@ -1955,6 +1988,7 @@ export const REGIONS = [
     building: 'whitewash_curved_tile',
     farming: ['cereal', 'sunflower', 'maize', 'fallow'],
     trees: ['poplar', 'acacia', 'ash'],
+    sparse: ['buildings'],
   },
   {
     id: 'delta_du_danube',
@@ -1965,6 +1999,7 @@ export const REGIONS = [
     building: 'rendered_thatch',
     farming: ['fallow', 'cereal'],
     trees: ['poplar', 'alder', 'ash'],
+    sparse: ['buildings'],
   },
   {
     id: 'plaine_de_louest_roumain',
@@ -1975,6 +2010,7 @@ export const REGIONS = [
     building: 'rendered_flat_tile',
     farming: ['cereal', 'maize', 'sunflower', 'rapeseed'],
     trees: ['oak', 'poplar', 'ash'],
+    sparse: ['buildings'],
   },
   {
     id: 'basses_terres_moldaves',
@@ -1985,6 +2021,7 @@ export const REGIONS = [
     building: 'rendered_flat_tile',
     farming: ['cereal', 'maize', 'sunflower', 'rapeseed'],
     trees: ['oak', 'poplar', 'ash'],
+    sparse: ['buildings'],
   },
   {
     id: 'sous_carpates_moldaves',
@@ -1995,6 +2032,7 @@ export const REGIONS = [
     building: 'dark_stone_flat_tile',
     farming: ['fallow', 'cereal', 'vineyard'],
     trees: ['beech', 'oak', 'hornbeam'],
+    sparse: ['buildings'],
   },
   {
     id: 'carpates_de_courbure',
@@ -2005,6 +2043,7 @@ export const REGIONS = [
     building: 'dark_stone_slate',
     farming: ['fallow', 'cereal'],
     trees: ['beech', 'fir', 'spruce'],
+    sparse: ['buildings'],
   },
   {
     id: 'monts_fagaras',
@@ -2015,6 +2054,7 @@ export const REGIONS = [
     building: 'dark_stone_stone_slab',
     farming: ['fallow'],
     trees: ['spruce', 'fir', 'larch'],
+    sparse: ['buildings'],
   },
   {
     id: 'monts_retezat',
@@ -2025,6 +2065,7 @@ export const REGIONS = [
     building: 'dark_stone_stone_slab',
     farming: ['fallow'],
     trees: ['spruce', 'fir', 'larch'],
+    sparse: ['buildings'],
   },
   {
     id: 'plateau_getique',
@@ -2035,5 +2076,6 @@ export const REGIONS = [
     building: 'rendered_flat_tile',
     farming: ['cereal', 'maize', 'sunflower', 'fallow'],
     trees: ['oak', 'hornbeam', 'chestnut'],
+    sparse: ['buildings'],
   },
 ];

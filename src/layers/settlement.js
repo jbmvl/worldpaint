@@ -99,9 +99,12 @@ export function wallLengthsByDistance(source, tiles, frame, here) {
  * @param {Object} source Instance `VectorTileSource`.
  * @param {Array} tiles   Tuiles à parcourir.
  * @param {Object} frame  Repère local de la bulle.
+ * @param {Array<string>|null} [classes] Reçoit la classe `landuse` de chaque
+ *        anneau, au même rang : un tableau à part, pour ne pas changer la forme
+ *        des anneaux que les boucles chaudes parcourent.
  * @returns {Array<Array<{x:number,z:number}>>}
  */
-export function collectBuiltUpAreas(source, tiles, frame) {
+export function collectBuiltUpAreas(source, tiles, frame, classes = null) {
   const areas = [];
   if (!source || !frame) return areas;
   const { origin, scale, zoom } = frame;
@@ -117,7 +120,9 @@ export function collectBuiltUpAreas(source, tiles, frame) {
           z: (latToTileY(lat, zoom) - origin.y) * scale,
         });
       }
-      if (local.length >= 3) areas.push(local);
+      if (local.length < 3) continue;
+      areas.push(local);
+      classes?.push(properties.class);
     }
   }, (properties) => BUILT_UP_CLASSES.has(properties.class));
 
@@ -212,13 +217,14 @@ export const URBAN_PLACE_RADIUS_M = { city: 3000, town: 1200 };
  * @param {Object} source Instance `VectorTileSource`.
  * @param {Array} tiles   Tuiles à parcourir.
  * @param {Object} frame  Repère local de la bulle.
- * @returns {{builtUp:Array, places:Array, urban:UrbanMask}}
+ * @returns {{builtUp:Array, builtUpClasses:Array<string>, places:Array, greens:Array, urban:UrbanMask}}
  */
 export function readSettlement(source, tiles, frame) {
-  const builtUp = collectBuiltUpAreas(source, tiles, frame);
+  const builtUpClasses = [];
+  const builtUp = collectBuiltUpAreas(source, tiles, frame, builtUpClasses);
   const places = collectPlaceNames(source, tiles, frame);
   const greens = collectUrbanGreens(source, tiles, frame);
-  return { builtUp, places, urban: new UrbanMask({ builtUp, greens, places }) };
+  return { builtUp, builtUpClasses, places, greens, urban: new UrbanMask({ builtUp, greens, places }) };
 }
 
 export class UrbanMask {

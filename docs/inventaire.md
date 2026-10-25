@@ -284,6 +284,22 @@ n'y est semé.
 ### Le volume
 
 Empreintes relevées (`building`), extrudées à leur hauteur réelle.
+
+**Inventées**, sous conditions, dans un pays dont le dossier de région porte
+`sparse: ['buildings']` (Slovaquie, Hongrie, Roumanie) : une maison, parfois
+une annexe d'un niveau au fond de la cour, dans une parcelle vide d'une rue
+`major` ou `minor` qui traverse une emprise résidentielle, commerciale ou de
+commerce — hors vert urbain, eau, marais et pente de plus de 3 m sous
+l'empreinte (`layers/buildingInfill.js`). Rien n'est semé à moins d'un
+intervalle de façade d'un bâtiment relevé, ni là où le quartier est déjà
+relevé (quatre bâtiments dans 60 m, ou 40 % du bâti attendu dans 200 m). Recul,
+taille, proportion, pignon sur rue et intervalle sont mesurés sur des villages
+roumains et contrôlés par `scripts/buildings-audit.mjs`. Un point d'intérêt
+`poi` sans empreinte (église, commerce, boulangerie, station-service, grande
+surface) reçoit la sienne à sa position — l'église axée est-ouest, le commerce
+façade sur rue — et la personnalité vient du point, comme pour un bâtiment
+relevé. Une maison semée ne reçoit jamais de fonction. Ces empreintes portent
+`synthetic: true`.
 La lecture vectorielle limite routes et bâtiments à l’emprise de chaque tuile :
 leurs marges de débordement ne sont pas construites deux fois. Les bâtiments
 traversant une couture restent découpés ; aucune fusion des empreintes n’est faite. Une empreinte
