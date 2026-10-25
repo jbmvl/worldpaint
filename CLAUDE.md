@@ -26,8 +26,10 @@ node scripts/costs-bench.mjs --root <worktree du commit d'avant> …   # l'avant
 | fluidité au mouvement | temps du fil principal par image (p50, p95, p99, max, images > 16 ms et > 50 ms) pendant un tour sur place puis un trajet de 1,5 km |
 
 Le banc tourne sous SwiftShader : le temps GPU n'y est pas, et le rendu n'est
-chronométré qu'une image sur dix, file GPU vidée avant. `--move 0` saute le
-trajet (génération et RAM seules, une minute par passe) ; `--latence`,
+chronométré qu'une image sur soixante, file GPU vidée avant (`--render-every`
+pour changer ce pas, le même avant et après). Une passe dure une quarantaine de
+secondes ; `--move 0` saute le trajet (génération et RAM seules, une dizaine de
+secondes par passe) ; `--latence`,
 `--debit` simulent le réseau. Les tuiles de `station-montreuil-bellay`
 couvrent le départ de la démo.
 

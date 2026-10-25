@@ -70,7 +70,7 @@ const date = new Date(Date.UTC(2026, 5, 21, 13));
 
 // Le rendu n'est chronométré qu'une image sur RENDER_EVERY, file GPU vidée
 // avant : sous SwiftShader, l'attente du GPU émulé noierait le temps CPU.
-const RENDER_EVERY = 10;
+const RENDER_EVERY = Number(params.get('renderEvery')) || 60;
 function frame(delta, draw = true) {
   const p = camera.position;
   const t0 = performance.now();

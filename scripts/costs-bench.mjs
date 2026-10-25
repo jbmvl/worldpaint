@@ -115,7 +115,7 @@ try {
         await cdp.send('HeapProfiler.collectGarbage');
         return (await cdp.send('Runtime.getHeapUsage')).usedSize;
       };
-      const query = new URLSearchParams({ lieu, ...(lng ? { lng } : {}), ...(lat ? { lat } : {}), ...(flag('precompile', null) ? { precompile: flag('precompile') } : {}), ...(flag('near', null) ? { near: flag('near') } : {}), ...(flag('detail', null) ? { detail: flag('detail') } : {}), ...(flag('budget', null) ? { budget: flag('budget') } : {}) });
+      const query = new URLSearchParams({ lieu, ...(lng ? { lng } : {}), ...(lat ? { lat } : {}), ...(flag('precompile', null) ? { precompile: flag('precompile') } : {}), ...(flag('near', null) ? { near: flag('near') } : {}), ...(flag('detail', null) ? { detail: flag('detail') } : {}), ...(flag('budget', null) ? { budget: flag('budget') } : {}), ...(flag('render-every', null) ? { renderEvery: flag('render-every') } : {}) });
       await page.goto(`http://localhost:${port}/demo/lab/costs.html?${query}`);
       await page.waitForFunction(() => window.costsLabReady, null, { timeout: 120000 });
       const baseline = { heap: await heapAfterGc(), pss: pss(pid) };
@@ -138,7 +138,9 @@ try {
       console.error(`passe ${run + 1}/${runs} : génération ${Math.round(mount.totalMs)} ms, tas retenu ${(mount.heapRetainedBytes / 2 ** 20).toFixed(0)} Mo, image (trajet) p95 ${move?.run.frame.p95.toFixed(1) ?? '—'} ms${errors.length ? `, erreurs : ${errors.join(' | ')}` : ''}`);
     } finally {
       clearInterval(sampler);
-      await browser.close();
+      // SwiftShader peut faire attendre la fermeture une vingtaine de secondes : la mesure est déjà prise.
+      await Promise.race([browser.close(), new Promise((ok) => setTimeout(ok, 2000))]);
+      if (pid) try { process.kill(pid, 'SIGKILL'); } catch { /* déjà fermé */ }
     }
   }
 } finally {
