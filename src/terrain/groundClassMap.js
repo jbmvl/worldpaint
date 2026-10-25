@@ -387,7 +387,7 @@ export function repairSurfaceEdges(data, pixels = CLASS_PIXELS) {
 }
 
 /** Lignes réparées (ou réécrites par `drawSurfaceContoursSteps`) entre deux étapes. */
-const REPAIR_ROWS_PER_STEP = 256;
+const REPAIR_ROWS_PER_STEP = 64;
 
 /** `repairSurfaceEdges` en étapes, par bandes de lignes ; la première passe reste entière. */
 export function* repairSurfaceEdgesSteps(data, pixels = CLASS_PIXELS) {
@@ -398,6 +398,7 @@ export function* repairSurfaceEdgesSteps(data, pixels = CLASS_PIXELS) {
   // Un texel est peint si son rouge tombe pile sur un identifiant, que son bleu
   // en porte la signature, et que son vert tombe pile sur une culture connue.
   for (let p = 0; p < total; p++) {
+    if (p % (pixels * REPAIR_ROWS_PER_STEP) === 0 && p > 0) yield;
     const i = p * 4;
     if (data[i + 2] === RED_TO_SIGNATURE[data[i]] && GREEN_IS_CROP[data[i + 1]] === 1) {
       painted[p] = 1;

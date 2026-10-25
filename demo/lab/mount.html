@@ -179,7 +179,7 @@ async function move({ reach, dx = 0, dz = 0, steps = 1, yawDeg = 225, pitchDeg =
   };
 }
 
-window.mountLab = { run, move };
+window.mountLab = { run, move, get world() { return current?.world; } };
 window.mountLabReady = true;
 </script>
 </body>

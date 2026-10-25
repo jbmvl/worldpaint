@@ -136,7 +136,7 @@ export function traceChains(labels, pixels) {
 }
 
 /** Lignes de coins parcourues entre deux étapes de `traceChainsSteps`. */
-const TRACE_ROWS_PER_STEP = 256;
+const TRACE_ROWS_PER_STEP = 64;
 
 export function* traceChainsSteps(labels, pixels) {
   const n = pixels;
@@ -145,11 +145,13 @@ export function* traceChainsSteps(labels, pixels) {
   const vertical = new Uint8Array(stride * stride);
   const horizontal = new Uint8Array(stride * stride);
   for (let y = 0; y < n; y++) {
+    if (y % TRACE_ROWS_PER_STEP === 0 && y > 0) yield;
     for (let x = 1; x < n; x++) {
       if (labels[y * n + x - 1] !== labels[y * n + x]) vertical[y * stride + x] = 1;
     }
   }
   for (let y = 1; y < n; y++) {
+    if (y % TRACE_ROWS_PER_STEP === 0) yield;
     for (let x = 0; x < n; x++) {
       if (labels[(y - 1) * n + x] !== labels[y * n + x]) horizontal[y * stride + x] = 1;
     }
