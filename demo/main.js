@@ -238,6 +238,24 @@ let widening = null;
 /** Tranche de génération du premier montage : aucune image n'est dessinée avant lui. */
 const BOOT_BUDGET_MS = 50;
 
+/**
+ * Compile en tâche de fond, toutes les 200 ms, les shaders que la scène a
+ * gagnés (`KHR_parallel_shader_compile`) : un programme encore en compilation
+ * bloquerait le rendu qui l'emploie. `stop()` attend que tout soit prêt.
+ */
+function precompileWhileBuilding() {
+  let pending = null;
+  const tick = () => { pending ??= renderer.compileAsync(scene, camera).finally(() => { pending = null; }); };
+  const timer = setInterval(tick, 200);
+  return {
+    async stop() {
+      clearInterval(timer);
+      await pending;
+      await renderer.compileAsync(scene, camera);
+    },
+  };
+}
+
 /** Monte le décor autour d'un point et chronomètre : tuiles + génération, hors rendu. */
 async function mountScene(lng, lat, { budgetMs } = {}) {
   world.setProfiling(true);
@@ -246,22 +264,22 @@ async function mountScene(lng, lat, { budgetMs } = {}) {
   // `mountAt` dans les deux modes : le terrain n'est maillé qu'une fois, après
   // le déblai des chaussées, et les pauses sont celles d'un écran de chargement.
   mounting = true;
-  // Les shaders des maillages déjà publiés compilent dans le processus GPU
-  // pendant que le montage continue, au lieu de bloquer la première image.
-  const precompile = setInterval(() => renderer.compile(scene, camera), 200);
+  const precompile = precompileWhileBuilding();
   try {
     // Le proche d'abord, pour rendre la main vite ; le reste de la bulle se
     // bâtit ensuite pendant qu'on rend. Une scène figée n'en a pas besoin.
     if (REACH_M === null) world.setReach(NEAR_M);
     await world.mountAt(lng, lat, { budgetMs });
+    await precompile.stop();
   } finally {
-    clearInterval(precompile);
+    precompile.stop();
     mounting = false;
   }
   const t1 = performance.now();
   if (REACH_M === null) {
     world.setReach(null);
-    const task = world.refresh(lng, lat, { force: true }).then(() => {
+    const widenCompile = precompileWhileBuilding();
+    const task = world.refresh(lng, lat, { force: true }).finally(() => { widenCompile.stop(); }).then(() => {
       if (widening !== task) return;
       widening = null;
       const t2 = performance.now();

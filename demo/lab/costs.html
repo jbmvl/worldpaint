@@ -86,6 +86,24 @@ function frame(delta, draw = true) {
   return { advanceMs, renderMs: performance.now() - t1 };
 }
 
+/**
+ * Compile en tâche de fond, toutes les 200 ms, les shaders que la scène a
+ * gagnés (`KHR_parallel_shader_compile`) : un programme encore en compilation
+ * bloquerait le rendu qui l'emploie. `stop()` attend que tout soit prêt.
+ */
+function precompileWhileBuilding() {
+  let pending = null;
+  const tick = () => { pending ??= renderer.compileAsync(scene, camera).finally(() => { pending = null; }); };
+  const timer = setInterval(tick, 200);
+  return {
+    async stop() {
+      clearInterval(timer);
+      await pending;
+      await renderer.compileAsync(scene, camera);
+    },
+  };
+}
+
 async function mount() {
   heapPeak = 0;
   const t0 = performance.now();
@@ -97,13 +115,12 @@ async function mount() {
   });
   world.setProfiling(true);
   const t1 = performance.now();
-  // Comme la démo : les shaders des maillages déjà publiés partent compiler
-  // pendant que le montage continue (`?precompile=0` pour s'en passer).
-  const precompile = params.get('precompile') !== '0'
-    ? setInterval(() => renderer.compile(scene, camera), 200) : null;
+  // Comme la démo (`?precompile=0` pour s'en passer).
+  const precompiling = params.get('precompile') !== '0';
+  const precompile = precompiling ? precompileWhileBuilding() : null;
   if (near) world.setReach(near);
   await world.mountAt(at.lng, at.lat, { budgetMs: mountBudget });
-  clearInterval(precompile);
+  await precompile?.stop();
   const t2 = performance.now();
   const c = world.composer;
   let frames = 0;
@@ -122,7 +139,8 @@ async function mount() {
   if (near) {
     let done = false;
     world.setReach(null);
-    world.refresh(at.lng, at.lat, { force: true }).finally(() => { done = true; });
+    const widenCompile = precompiling ? precompileWhileBuilding() : null;
+    world.refresh(at.lng, at.lat, { force: true }).finally(() => { done = true; widenCompile?.stop(); });
     let last = performance.now();
     for (let i = 0; (!done || busy(c)) && i < 20000; i++) {
       const f = frame(1 / 60, i % 60 === 0);
