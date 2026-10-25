@@ -1112,7 +1112,7 @@ function pointAlong(points, distance) {
  * revêtue atteint, seules les revêtues comptent : le chemin qui s'y embranche
  * ou la traverse n'ouvre ni bouche ni surface, il est dessiné dessous
  * (`roadNetwork.roadLiftFor`). Les chemins ne font pas carrefour entre eux
- * non plus : d'une terre unie, leurs rubans se recouvrent sans dalle. Une
+ * non plus : d'une même terre, leurs rubans se recouvrent sans dalle. Une
  * polyligne de branche suit la même règle : un chemin qui la coupe ne
  * l'arrête pas.
  *
