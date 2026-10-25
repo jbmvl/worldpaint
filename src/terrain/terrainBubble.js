@@ -963,6 +963,26 @@ export class TerrainBubble {
     };
     const cut = (x, z, raw) => cutWithMask(x, z, raw).elevation;
 
+    const normalAt = (idx, hE, hW, hS, hN, spanX, spanZ) => {
+      const nx = -(hE - hW) / spanX;
+      const nz = -(hS - hN) / spanZ;
+      const len = Math.sqrt(nx * nx + 1 + nz * nz);
+      normals[idx * 3] = nx / len;
+      normals[idx * 3 + 1] = 1 / len;
+      normals[idx * 3 + 2] = nz / len;
+    };
+    // Pente d'un sommet intérieur : différence centrée entre ses voisins de
+    // maille, déjà creusés. Un sommet de bord garde le pas fixe d'un pixel du
+    // MNT, seul à s'accorder avec la tuile voisine quelle que soit sa finesse.
+    const interiorNormals = (j) => {
+      for (let i = 1; i < n; i++) {
+        const idx = j * (n + 1) + i;
+        const e = (idx + 1) * 3, w = (idx - 1) * 3, s = (idx + n + 1) * 3, no = (idx - n - 1) * 3;
+        normalAt(idx, positions[e + 1], positions[w + 1], positions[s + 1], positions[no + 1],
+          positions[e] - positions[w], positions[s + 2] - positions[no + 2]);
+      }
+    };
+
     for (let j = 0; j <= n; j++) {
       const v = j / n;
       const ty = tile.y + v;
@@ -970,6 +990,7 @@ export class TerrainBubble {
         const u = i / n;
         const tx = tile.x + u;
         const idx = j * (n + 1) + i;
+        const border = i === 0 || i === n || j === 0 || j === n;
 
         const local = this.frame.tileToLocal(tx, ty);
         const localX = local.x;
@@ -984,10 +1005,12 @@ export class TerrainBubble {
           else if (i === n) raw = this._edgeElevation(v, edge.east, (a) => this._sample(tile.x + 1, tile.y + a));
           else raw = this._sample(tx, ty);
           samples[idx * 5] = raw;
-          samples[idx * 5 + 1] = this._sample(tx + this._gradientStep, ty);
-          samples[idx * 5 + 2] = this._sample(tx - this._gradientStep, ty);
-          samples[idx * 5 + 3] = this._sample(tx, ty + this._gradientStep);
-          samples[idx * 5 + 4] = this._sample(tx, ty - this._gradientStep);
+          if (border) {
+            samples[idx * 5 + 1] = this._sample(tx + this._gradientStep, ty);
+            samples[idx * 5 + 2] = this._sample(tx - this._gradientStep, ty);
+            samples[idx * 5 + 3] = this._sample(tx, ty + this._gradientStep);
+            samples[idx * 5 + 4] = this._sample(tx, ty - this._gradientStep);
+          }
         }
         const raw = samples[idx * 5];
         // Le déblai est une fonction du seul point du sol, donc la couture des bords reste exacte.
@@ -999,19 +1022,15 @@ export class TerrainBubble {
         positions[idx * 3 + 2] = localZ;
         roadMask[idx] = atVertex.mask;
 
-        // Gradient central : continu au travers des frontières de tuiles.
-        const hE = cut(localX + stepMeters, localZ, samples[idx * 5 + 1]) * this.verticalScale;
-        const hW = cut(localX - stepMeters, localZ, samples[idx * 5 + 2]) * this.verticalScale;
-        const hS = cut(localX, localZ + stepMeters, samples[idx * 5 + 3]) * this.verticalScale;
-        const hN = cut(localX, localZ - stepMeters, samples[idx * 5 + 4]) * this.verticalScale;
-
-        let nx = -(hE - hW) / (2 * stepMeters);
-        let nz = -(hS - hN) / (2 * stepMeters);
-        const len = Math.sqrt(nx * nx + 1 + nz * nz);
-        normals[idx * 3] = nx / len;
-        normals[idx * 3 + 1] = 1 / len;
-        normals[idx * 3 + 2] = nz / len;
+        if (border) {
+          const hE = cut(localX + stepMeters, localZ, samples[idx * 5 + 1]) * this.verticalScale;
+          const hW = cut(localX - stepMeters, localZ, samples[idx * 5 + 2]) * this.verticalScale;
+          const hS = cut(localX, localZ + stepMeters, samples[idx * 5 + 3]) * this.verticalScale;
+          const hN = cut(localX, localZ - stepMeters, samples[idx * 5 + 4]) * this.verticalScale;
+          normalAt(idx, hE, hW, hS, hN, 2 * stepMeters, 2 * stepMeters);
+        }
       }
+      if (j >= 2) interiorNormals(j - 1);
       yield;
     }
 
