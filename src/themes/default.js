@@ -70,6 +70,13 @@ export const TERRAIN_LOOK = {
   edgeStepM: 2,
   edgeJitterM: 0.5,
   /**
+   * Décalage horizontal des sommets du sol proche, au plus `grainShiftM`, tiré
+   * d'un bruit de `grainShiftCellM` : la maille est une grille régulière, et
+   * sans lui les facettes du grain low poly s'y alignent. Fixe au monde.
+   */
+  grainShiftCellM: 3,
+  grainShiftM: 1.4,
+  /**
    * Albédo par culture, dans l'ordre de `CROP_KINDS`. Une culture n'est pas une
    * matière : c'est un second axe, qui remplace la couleur de `farmland` là où
    * il est peint. Il a son propre canal, et il marche — on n'y touche pas.
@@ -661,7 +668,7 @@ export const STONE_LOOK = {
  */
 export const SURFACE_LOOK = {
   // --- Le végétal ordinaire -------------------------------------------------
-  grass: { albedo: [0.051, 0.135, 0.017], wash: 'grass', grainCellM: 6, grainAmplitudeM: 1.4 },
+  grass: { albedo: [0.051, 0.135, 0.017], wash: 'grass', grainCellM: 4, grainAmplitudeM: 1.4 },
   // Un sol de forêt est une litière mêlée d'herbe : trois parts de prairie
   // pour une de brun, assombries pour rester lisibles comme sous-bois. Le pays
   // ne le lave pas — une hêtraie se ressemble d'un bout à l'autre.
@@ -674,7 +681,7 @@ export const SURFACE_LOOK = {
     grainCellM: 2,
     grainAmplitudeM: 0.22,
   },
-  farmland: { albedo: [0.22, 0.13, 0.06], wash: 'farmland', grainCellM: 6, grainAmplitudeM: 1.4 },
+  farmland: { albedo: [0.22, 0.13, 0.06], wash: 'farmland', grainCellM: 4, grainAmplitudeM: 1.4 },
   // Lotissement : pelouses tondues et allées, plus claires et plus franchement
   // vertes qu'une prairie de rase campagne — l'entretien, pas l'herbe elle-même.
   // Un aplat, pas un terrain qui varie.
