@@ -88,9 +88,9 @@ export function* coloredProfileGeometrySteps(THREE, buffer, { flat = false, pack
       const ci = (flat ? i + 2 : index[i + 2]) * 3;
       a.fromArray(positions, ai); b.fromArray(positions, bi); c.fromArray(positions, ci);
       cb.subVectors(c, b); ab.subVectors(a, b); cb.cross(ab);
-      for (const at of [ai, bi, ci]) {
-        normals[at] += cb.x; normals[at + 1] += cb.y; normals[at + 2] += cb.z;
-      }
+      normals[ai] += cb.x; normals[ai + 1] += cb.y; normals[ai + 2] += cb.z;
+      normals[bi] += cb.x; normals[bi + 1] += cb.y; normals[bi + 2] += cb.z;
+      normals[ci] += cb.x; normals[ci + 1] += cb.y; normals[ci + 2] += cb.z;
     }
     yield;
   }

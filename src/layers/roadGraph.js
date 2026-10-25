@@ -1676,7 +1676,7 @@ export class RoadIndex {
     const slot = this._slot(Math.floor(x / this.cell), Math.floor(z / this.cell));
     if (slot < 0) return null;
 
-    let best = null;
+    let bestDistance = Infinity, bestSegment = null, bestIndex = -1, bestRow = -1, bestT = 0;
     const boxes = this._boxes;
     const bucket = this._entries;
     for (let i = this._starts[slot], end = this._starts[slot + 1]; i < end; i += 3) {
@@ -1704,10 +1704,12 @@ export class RoadIndex {
       // `Math.sqrt` : `Math.hypot` alloue à chaque appel, et l'index est lu par sommet de terrain.
       const distance = Math.sqrt(ex * ex + ez * ez);
       if (distance > limit) continue;
-      if (best && distance >= best.distance) continue;
-      best = { segment, index, row, t, distance };
-      if (!this.includeWorks && beyondTunnel(segment, row, x, z)) best.covered = true;
+      if (distance >= bestDistance) continue;
+      bestDistance = distance; bestSegment = segment; bestIndex = index; bestRow = row; bestT = t;
     }
+    if (!bestSegment) return null;
+    const best = { segment: bestSegment, index: bestIndex, row: bestRow, t: bestT, distance: bestDistance };
+    if (!this.includeWorks && beyondTunnel(bestSegment, bestRow, x, z)) best.covered = true;
     return best;
   }
 
