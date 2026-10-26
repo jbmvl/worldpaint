@@ -1,8 +1,11 @@
 /*
  * autumn — la tranche d'automne : feuillus roux, dorés ou cuivrés, herbe et
- * pré jaunis, litière brune sous bois, presque plus de fleurs, champs
- * moissonnés ou secs. Résineux, pins et persistants gardent leur vert : ce
- * contraste fait lire la saison de loin.
+ * pré jaunis, litière brune sous bois, presque plus de fleurs, haies qui virent
+ * par plages, champs moissonnés ou secs. Résineux, pins et persistants gardent
+ * leur vert : ce contraste fait lire la saison de loin.
+ *
+ * D'une parcelle à l'autre, une même culture n'en est pas au même point
+ * (`cropStages`) : un blé est labouré, en chaume ou déjà levé.
  *
  * Ce n'est qu'une surcharge de `defaultTheme` passée à `resolveTheme` ; aucune
  * couche ne sait quelle saison il fait. Les teintes multiplient `volume.leaf`,
@@ -38,6 +41,7 @@ const surfaces = {
 
 // Fin octobre : blé et tournesol moissonnés, maïs sec sur pied, colza
 // semé fin août qui ne fait encore que des rosettes vertes au ras du sol.
+// Le blé labouré a les tiges du labour ; ses autres états sont dans `cropStages`.
 const crops = {
   ...defaultTheme.crops,
   wheat: { ...defaultTheme.crops.plough },
@@ -50,7 +54,7 @@ const terrain = {
   ...defaultTheme.terrain,
   cropAlbedo: {
     ...defaultTheme.terrain.cropAlbedo,
-    wheat: [0.36, 0.27, 0.07],
+    wheat: [0.2, 0.125, 0.06],
     maize: [0.3, 0.22, 0.06],
     sunflower: [0.2, 0.15, 0.05],
     rapeseed: [0.075, 0.15, 0.025],
@@ -59,7 +63,24 @@ const terrain = {
   },
 };
 
-export const autumnTheme = { trees, surfaces, crops, terrain };
+const cropStages = {
+  wheat: [['wheat', 1 / 3], ['wheatStubble', 1 / 3], ['wheatSprouts', 1 / 3]],
+  sunflower: [['sunflower', 0.75], ['sunflowerResidue', 0.25]],
+};
+
+// Facteurs sur le feuillage des haies, par plage : vert olive, vert éteint,
+// jaune terne, et quelques touches orangées.
+const furniture = {
+  ...defaultTheme.furniture,
+  hedgeTints: [
+    [[1.12, 1.0, 0.55], 0.35],
+    [[0.95, 0.95, 0.8], 0.2],
+    [[1.5, 1.22, 0.45], 0.3],
+    [[1.85, 0.95, 0.32], 0.15],
+  ],
+};
+
+export const autumnTheme = { trees, surfaces, crops, cropStages, terrain, furniture };
 
 /**
  * La tranche de la saison d'une date, ou `null` (l'été par défaut). Seul

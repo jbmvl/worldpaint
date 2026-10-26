@@ -35,7 +35,7 @@
  */
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
-import { createWorld } from '/src/index.js';
+import { createWorld, autumnTheme } from '/src/index.js';
 
 const params = new URLSearchParams(location.search);
 const lieu = params.get('lieu') || 'station-montreuil-bellay';
@@ -112,6 +112,7 @@ async function mount() {
     elevation: { zoom: place.zoom, url: `${base}/dem/{z}/{x}/{y}.${place.elevation.extension}`, encoding: place.elevation.encoding },
     vector: place.vector ? { tiles: [`${location.origin}${base}/vector/{z}/{x}/{y}.pbf`], maxZoom: place.vector.maxZoom } : null,
     ...(detailRadius ? { detail: { radius: detailRadius } } : {}),
+    theme: params.get('saison') === 'automne' ? autumnTheme : null,
   });
   world.setProfiling(true);
   const t1 = performance.now();

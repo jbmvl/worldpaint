@@ -43,6 +43,7 @@ import {
   HEDGE_SAMPLE_M,
   hedgeStyleFor,
   hedgeModulation,
+  hedgeTints,
   hedgeFacets,
   hedgeNosePath,
   hedgeEndTaper,
@@ -887,6 +888,7 @@ export class FurnitureLayer {
       scaleUp,
       scaleAcross,
       lateralJitter: lateral,
+      rowTint: hedgeTints(this.bubble.frame, dense, this.theme.furniture.hedgeTints, style.salt),
       // Fenêtre de lissage du pied gardée à ~6 m de chaque côté (l'ancien
       // rayon par défaut, 2, au pas d'avant ce chantier, 3 m) : le pas plus
       // fin qui fait les arêtes du balayage ne doit pas aussi laisser

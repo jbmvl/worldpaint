@@ -109,6 +109,11 @@ export const TERRAIN_LOOK = {
     // casier ni de diguette (voir `CONTRIBUTING.md`), seulement le
     // feuillage — la lame d'eau, elle, est rendue à part (`cropStandingWater`).
     rice: [0.09, 0.183, 0.081],
+    // États de saison (`CROP_STAGE_OF`) : la paille d'un chaume ras, la terre
+    // que verdit une levée, la terre sombre sous des tiges brisées.
+    wheatStubble: [0.4, 0.3, 0.1],
+    wheatSprouts: [0.13, 0.17, 0.05],
+    sunflowerResidue: [0.19, 0.14, 0.07],
   },
   /**
    * Lame d'eau par culture, sur le modèle de `standingWater` (`SURFACE_LOOK`)
@@ -435,6 +440,10 @@ export const CROP_LOOK = {
   rapeseed: { atlas: 'rapeseed', height: 1.3, spread: 0.24, density: 0.85, tint: [1.02, 0.98, 0.56] },
   // Le riz : des touffes basses et serrées, sans épi visible à cette échelle.
   rice: { atlas: 'rice', height: 0.55, spread: 0.22, density: 0.9, tint: [0.86, 1.04, 0.82] },
+  // États de saison, peints seulement par un thème qui les nomme (`cropStages`).
+  wheatStubble: { atlas: 'stubble', height: 0.22, spread: 0.22, density: 0.9, tint: [1.22, 1.04, 0.62] },
+  wheatSprouts: { atlas: 'rice', height: 0.14, spread: 0.22, density: 0.8, tint: [0.92, 1.12, 0.68] },
+  sunflowerResidue: { atlas: 'stubble', height: 0.45, spread: 0.22, density: 0.35, tint: [0.62, 0.52, 0.4] },
 };
 
 // --- Le sol d'un pays ---------------------------------------------------------
@@ -1626,6 +1635,12 @@ export const defaultTheme = Object.freeze({
   tunnelLights: { color: srgb("#ffe3a1"), intensity: 55, reachM: 35, spacingM: 18 },
   leaves: { lengthM: 0.12, widthM: 0.065, foldM: 0.012 },
   crops: CROP_LOOK,
+  /**
+   * États d'une culture selon la saison, en parts cumulées par parcelle
+   * (`cropStageFor`) : `{ wheat: [['wheat', 0.5], ['wheatStubble', 0.5]] }`.
+   * Vide : chaque champ montre sa culture.
+   */
+  cropStages: {},
   surfaces: SURFACE_LOOK,
   soils: SOIL_LOOK,
   stones: STONE_LOOK,
@@ -1672,7 +1687,7 @@ export const defaultTheme = Object.freeze({
   works: WORKS_STYLES,
   streets: STREET_LOOK,
   water: { waterways: WATERWAY_CLASSES, riparianBufferM: RIPARIAN_BUFFER_M },
-  furniture: { placeNameSign: PLACE_NAME_SIGN, colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES, lighthouse: LIGHTHOUSE_LIGHT, radioMast: RADIO_MAST, obstacleLight: OBSTACLE_LIGHT, ghost: CEMETERY_GHOST },
+  furniture: { placeNameSign: PLACE_NAME_SIGN, colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES, hedgeTints: null, lighthouse: LIGHTHOUSE_LIGHT, radioMast: RADIO_MAST, obstacleLight: OBSTACLE_LIGHT, ghost: CEMETERY_GHOST },
   life: LIFE_COLORS,
   fauna: { colors: FAUNA_COLORS, coats: FAUNA_COATS },
   sky: SKY_PALETTE,

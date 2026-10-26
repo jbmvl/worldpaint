@@ -84,6 +84,7 @@ const faunaDistanceInput = document.getElementById('faunaDistance');
 const faunaDistanceVal = document.getElementById('faunaDistanceVal');
 const faunaCrossBtn = document.getElementById('faunaCross');
 const regionSelect = document.getElementById('region');
+const seasonSelect = document.getElementById('season');
 const regionHint = document.getElementById('regionHint');
 const streetViewBtn = document.getElementById('streetViewBtn');
 const mapOverlay = document.getElementById('mapOverlay');
@@ -115,8 +116,7 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 // Résolution imposée par `?dpr=1.5`, sinon celle de l'écran (2 au plus), que
 // `adaptQuality` abaisse quand les images ne suivent plus.
 // `?saison=automne` ou `?saison=ete` force la saison ; sinon, la date du jour.
-const SEASON = new URLSearchParams(location.search).get('saison');
-const SEASON_THEME = SEASON === 'automne' ? autumnTheme : SEASON === 'ete' ? null : seasonalTheme();
+const seasonTheme = (season) => (season === 'automne' ? autumnTheme : season === 'ete' ? null : seasonalTheme());
 const FORCED_DPR = Number(new URLSearchParams(location.search).get('dpr')) || null;
 renderer.setPixelRatio(FORCED_DPR ?? Math.min(window.devicePixelRatio || 1, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -299,22 +299,31 @@ async function mountScene(lng, lat, { budgetMs } = {}) {
   world.setProfiling(profileToggle.checked);
 }
 
+/** Source vectorielle résolue au démarrage, reprise quand le monde est refait. */
+let vectorSource = null;
+
+function buildWorld() {
+  const next = createWorld({
+    THREE,
+    scene,
+    vector: vectorSource,
+    sky: { Sky },
+    theme: seasonTheme(seasonSelect.value),
+    ...(REACH_M !== null ? { reach: REACH_M } : {}),
+  });
+  if (regionSelect.value) next.setRegion(regionSelect.value);
+  if (showcaseToggle.checked) next.setRegionWord(showcaseFieldSelect.value, showcaseWordSelect.value);
+  return next;
+}
+
 async function boot() {
   setBusy(true);
   setStatus('Chargement des tuiles…');
 
   const vector = await resolveVectorSource();
 
-  world = createWorld({
-    THREE,
-    scene,
-    vector,
-    sky: { Sky },
-    theme: SEASON_THEME,
-    ...(REACH_M !== null ? { reach: REACH_M } : {}),
-  });
-
-  if (showcaseToggle.checked) world.setRegionWord(showcaseFieldSelect.value, showcaseWordSelect.value);
+  vectorSource = vector;
+  world = buildWorld();
 
   setStatus(`Centrage sur ${START.label}…`);
   await mountScene(START.lng, START.lat, { budgetMs: BOOT_BUDGET_MS });
@@ -1673,6 +1682,44 @@ function writeRegionHint() {
     : 'La région est lue à l’ancre la plus proche de la caméra. Hors couverture, le décor s’éteint — choisir une région ci-dessus le rallume.';
 }
 writeRegionHint();
+
+/*
+ * --- Saison --------------------------------------------------------------------
+ *
+ * Le thème est lu par chaque couche à la construction : changer de saison, c'est
+ * refaire le monde entier au même endroit, caméra immobile.
+ */
+seasonSelect.value = new URLSearchParams(location.search).get('saison') ?? '';
+
+async function changeSeason() {
+  const url = new URL(location.href);
+  if (seasonSelect.value) url.searchParams.set('saison', seasonSelect.value);
+  else url.searchParams.delete('saison');
+  history.replaceState(null, '', url.href);
+
+  seasonSelect.disabled = true;
+  setBusy(true);
+  setStatus('Changement de saison…');
+  try {
+    while (mounting || !world?.frame) await new Promise((resolve) => setTimeout(resolve, 200));
+    const { lng, lat } = world.frame.toLngLat(camera.position.x, camera.position.z);
+    const aboveGround = camera.position.y - (sampleGroundHeight(camera.position.x, camera.position.z) ?? camera.position.y);
+    widening = null;
+    world.dispose();
+    world = buildWorld();
+    await mountScene(lng, lat);
+    const local = world.frame.toLocal(lng, lat);
+    const ground = sampleGroundHeight(local.x, local.z) ?? 0;
+    camera.position.set(local.x, ground + aboveGround, local.z);
+    setStatus('');
+  } catch (err) {
+    setStatus(err.message || 'Changement de saison interrompu', true);
+  } finally {
+    seasonSelect.disabled = false;
+    setBusy(false);
+  }
+}
+seasonSelect.addEventListener('change', changeSeason);
 
 /*
  * --- Mode afficheur -----------------------------------------------------------

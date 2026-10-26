@@ -3,8 +3,9 @@
  * Module pur, testable sous Node.
  *
  * Une haie de bas-côté clôt le champ : la culture est derrière elle, jamais
- * entre elle et la route. Le mobilier publie ces bandes, les cultures les
- * lisent ; ni l'un ni l'autre ne lit l'autre couche.
+ * entre elle et la route, et le sol y est de l'herbe jusqu'à la haie. Le
+ * mobilier publie ces bandes ; les cultures et la carte du sol les lisent
+ * (`GroundClassMap.paintVerges`), sans qu'aucune couche en lise une autre.
  *
  * Une bande est un tronçon de l'axe de la chaussée et un décalage signé,
  * celui de la haie (même convention que `appendProfile` : normale `(tz, -tx)`).
@@ -17,6 +18,8 @@ const VERGE_CELL_M = 8;
 export class VergeStrips {
   constructor() {
     this._cells = new Map();
+    /** Les tronçons, chacun une fois : la carte du sol les repeint en herbe. */
+    this.strips = [];
     this.size = 0;
   }
 
@@ -37,6 +40,7 @@ export class VergeStrips {
       const length = Math.hypot(dx, dz);
       if (length < 1e-6) continue;
       const strip = { ax: a.x, az: a.z, tx: dx / length, tz: dz / length, length, side, reach };
+      this.strips.push(strip);
       const x0 = Math.floor((Math.min(a.x, b.x) - reach) / VERGE_CELL_M);
       const x1 = Math.floor((Math.max(a.x, b.x) + reach) / VERGE_CELL_M);
       const z0 = Math.floor((Math.min(a.z, b.z) - reach) / VERGE_CELL_M);

@@ -323,6 +323,9 @@ export const LABEL_CROPS = {
   lavender: 'lavande',
   rapeseed: 'colza',
   rice: 'riz',
+  wheatStubble: 'chaume de blé',
+  wheatSprouts: 'blé levé',
+  sunflowerResidue: 'résidus de tournesol',
 };
 
 /**

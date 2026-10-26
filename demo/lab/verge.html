@@ -64,7 +64,7 @@ const roads = {
   index: { covers: (x, z, margin) => Math.abs(x) <= HALF_WIDTH + margin && Math.abs(z) <= 600 },
 };
 const state = { crop: 'wheat', hedge: true, lookDeg: 0, pitchDeg: -12, height: 1.7, x: -1.2 };
-const groundClass = { cropReady: true, cropAt: () => state.crop };
+const groundClass = { cropReady: true, cropAt: () => state.crop, cropLookAt: () => state.crop };
 const bubble = { frame: createLocalFrame(-0.145, 47.131, 15), surfaceGeneration: 0, surfaceElevationAtLocal: () => 0, verticalScale: 1 };
 const crops = new CropLayer({ THREE, scene, bubble, groundClass, roads });
 

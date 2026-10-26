@@ -34,6 +34,7 @@ import {
   ROW_CROPS,
   WOOD_PILE_EDGE_MIN,
   farmingWordFor,
+  statedCrop,
 } from '../furniturePlacement.js';
 import {
   BOUNDARY_SAMPLE_M,
@@ -168,8 +169,11 @@ export function* buildParcelsSteps(layer, context, builtUp) {
       // shader de terrain et `cropLayer`. Le mobilier s'en sert pour savoir
       // qu'un champ en culture ne se clôt pas et qu'on n'y sème pas de bottes
       // de foin — et il aurait été absurde qu'il en décide autrement que ce
-      // qui pousse effectivement dessus.
-      let crop = layer.groundClass?.cropAt?.(centre.x, centre.z) ?? null;
+      // qui pousse effectivement dessus. Le centre des sommets d'une grande
+      // parcelle concave tombe souvent hors d'elle : la carte se lit alors là
+      // où se tient l'observateur, s'il y est.
+      const probe = !pointInRing(local, centre.x, centre.z) && pointInRing(local, here.x, here.z) ? here : centre;
+      let crop = statedCrop(properties) ?? layer.groundClass?.cropAt?.(probe.x, probe.z) ?? null;
 
       // La serre n'a pas de case dans `CROP_KINDS` (déjà pleine) : un champ
       // qui y retombe en labour est retiré du tirage de l'assolement pour
@@ -197,7 +201,7 @@ export function* buildParcelsSteps(layer, context, builtUp) {
         farmBuildings += placeFarmstead(layer, placements, local, centre);
       }
 
-      if (crop && ROW_CROPS.has(crop)) yield* buildRowsSteps(layer, context, local, centre, crop, here);
+      if (crop && ROW_CROPS.has(crop)) rowParcels.push({ local, centre, crop, distance: ringDistance(local, here) });
       if (crop && crop !== 'orchard') placeTractor(layer, context, local, centre, crop, here);
 
       // Le budget de contours ne coupe **que** les contours : les parcelles
@@ -224,11 +228,28 @@ export function* buildParcelsSteps(layer, context, builtUp) {
   };
 
   const features = [];
+  const rowParcels = [];
   const collect = (...feature) => features.push(feature);
   source.forEachFeature('landcover', tiles, collect);
   source.forEachFeature('landuse', tiles, collect);
   for (const feature of features) yield* handle(...feature);
   layer.counts.boundaries = boundaries;
+
+  // Les rangs après le parcours, du plus proche au plus lointain : leur plafond
+  // coupe au loin, pas au hasard de l'ordre des tuiles.
+  rowParcels.sort((a, b) => a.distance - b.distance || a.centre.x - b.centre.x || a.centre.z - b.centre.z);
+  for (const { local, centre, crop } of rowParcels) {
+    if (layer.counts.rows >= FURNITURE_LIMITS.vineRows) break;
+    yield* buildRowsSteps(layer, context, local, centre, crop, here);
+  }
+}
+
+/** Distance d'un point à un anneau : zéro dedans, au plus proche sommet dehors. Fonction pure. */
+function ringDistance(ring, point) {
+  if (pointInRing(ring, point.x, point.z)) return 0;
+  let best = Infinity;
+  for (const p of ring) best = Math.min(best, Math.hypot(p.x - point.x, p.z - point.z));
+  return best;
 }
 
 /**
@@ -351,7 +372,6 @@ export function buildRows(layer, context, ring, centre, crop, here) {
 
 export function* buildRowsSteps(layer, context, ring, centre, crop, here) {
   const { frame } = layer.bubble;
-  if (Math.hypot(centre.x - here.x, centre.z - here.z) > reachedRadius(ROW_CROP_RADIUS_M, layer.bubble)) return;
   if (layer.counts.rows >= FURNITURE_LIMITS.vineRows) return;
 
   const { buffers, placements, sampleElevation } = context;
@@ -381,10 +401,25 @@ export function* buildRowsSteps(layer, context, ring, centre, crop, here) {
   }
   if (!Number.isFinite(minU) || maxU - minU < spacing * 2) return;
 
-  for (let v = minV + spacing * 0.5; v <= maxV && layer.counts.rows < FURNITURE_LIMITS.vineRows; v += spacing) {
+  // Les rangs restent sur la grille de la parcelle ; seuls ceux à portée sont
+  // posés, du plus proche au plus lointain, pour que le plafond coupe au loin.
+  const reach = reachedRadius(ROW_CROP_RADIUS_M, layer.bubble);
+  const uHere = (here.x - centre.x) * dirX + (here.z - centre.z) * dirZ;
+  const vHere = -(here.x - centre.x) * dirZ + (here.z - centre.z) * dirX;
+  const rows = [];
+  for (let v = minV + spacing * 0.5; v <= maxV; v += spacing) {
+    if (Math.abs(v - vHere) <= reach) rows.push(v);
+  }
+  rows.sort((a, b) => Math.abs(a - vHere) - Math.abs(b - vHere) || a - b);
+
+  for (const v of rows) {
+    if (layer.counts.rows >= FURNITURE_LIMITS.vineRows) break;
     yield;
+    const halfSpan = Math.sqrt(reach * reach - (v - vHere) * (v - vHere));
+    const fromU = minU + Math.max(0, Math.ceil((uHere - halfSpan - minU) / step)) * step;
+    const toU = Math.min(maxU, uHere + halfSpan);
     const samples = [];
-    for (let u = minU; u <= maxU; u += step) {
+    for (let u = fromU; u <= toU; u += step) {
       samples.push({
         x: centre.x + dirX * u - dirZ * v,
         z: centre.z + dirZ * u + dirX * v,

@@ -97,6 +97,8 @@ import {
   cropFor,
   cropId,
   cropFromId,
+  cropOf,
+  cropStageFor,
   CROP_KINDS,
   CROP_ID_STEP,
 } from '../layers/furniturePlacement.js';
@@ -550,6 +552,92 @@ export function paintRoadVerges(data, pixels, segments, { left, top, perMeter })
 }
 
 /**
+ * Rend à l'herbe le champ compris entre une chaussée et sa haie de bas-côté
+ * (les tronçons de `VergeStrips`), sur la carte déjà contournée.
+ *
+ * Pas de nouveau tracé : le bord de la bande est le dos de la haie, une droite
+ * connue par tronçon. Les texels de part et d'autre reçoivent leur distance à
+ * cette droite et la matière d'en face, comme le tracé l'aurait écrit. Aux
+ * bouts d'une haie, la limite reste au texel.
+ *
+ * @param {Uint8ClampedArray} data Carte entière, quatre canaux par texel.
+ * @param {number} pixels Côté de la carte.
+ * @param {Array} strips `VergeStrips.strips`.
+ * @param {{left:number, top:number, perMeter:number}} at Coin de la carte
+ *        (mètres locaux) et texels par mètre.
+ * @returns {number[]} indices des texels réécrits (un texel peut y figurer deux fois).
+ */
+export function paintVergeStrips(data, pixels, strips, { left, top, perMeter }) {
+  const grassId = surfaceId('grass');
+  const grassRed = grassId * SURFACE_ID_STEP;
+  const reachM = CONTOUR_REACH_TEXELS / perMeter;
+  const toBlue = (meters) => Math.round((Math.min(meters * perMeter, CONTOUR_REACH_TEXELS) / CONTOUR_REACH_TEXELS) * 255);
+  const labelAt = (i) => {
+    const id = Math.round(data[i] / SURFACE_ID_STEP);
+    const crop = Math.round(data[i + 1] / CROP_ID_STEP);
+    return id === FARMLAND_ID && crop > 0 ? CROP_LABEL_BASE + crop : id;
+  };
+  const isField = (label) => label === FARMLAND_ID || label >= CROP_LABEL_BASE;
+  const touched = [];
+  const inside = new Set();
+
+  const visit = (s, margin, fn) => {
+    const bx = s.ax + s.tx * s.length;
+    const bz = s.az + s.tz * s.length;
+    const ox = s.tz * s.side * (s.reach + margin);
+    const oz = -s.tx * s.side * (s.reach + margin);
+    const x0 = Math.max(0, Math.floor((Math.min(s.ax, bx, s.ax + ox, bx + ox) - left) * perMeter));
+    const x1 = Math.min(pixels - 1, Math.floor((Math.max(s.ax, bx, s.ax + ox, bx + ox) - left) * perMeter));
+    const y0 = Math.max(0, Math.floor((Math.min(s.az, bz, s.az + oz, bz + oz) - top) * perMeter));
+    const y1 = Math.min(pixels - 1, Math.floor((Math.max(s.az, bz, s.az + oz, bz + oz) - top) * perMeter));
+    for (let ty = y0; ty <= y1; ty++) {
+      const pz = top + (ty + 0.5) / perMeter - s.az;
+      for (let tx = x0; tx <= x1; tx++) {
+        const px = left + (tx + 0.5) / perMeter - s.ax;
+        const along = px * s.tx + pz * s.tz;
+        if (along < 0 || along > s.length) continue;
+        const lateral = (px * s.tz - pz * s.tx) * s.side;
+        if (lateral < 0 || lateral > s.reach + margin) continue;
+        fn((ty * pixels + tx) * 4, lateral - s.reach);
+      }
+    }
+  };
+
+  // Entre chaussée et haie : le champ devient herbe, l'herbe déjà là oublie
+  // le trait qui la séparait de lui.
+  for (const s of strips) {
+    visit(s, 0, (i, beyond) => {
+      const label = labelAt(i);
+      const blue = toBlue(-beyond);
+      if (isField(label)) {
+        data[i] = grassRed;
+        data[i + 1] = 0;
+        data[i + 3] = label + 1;
+      } else if (label !== grassId || !isField(data[i + 3] - 1)) {
+        return;
+      } else if (inside.has(i) && data[i + 2] <= blue) {
+        return;
+      }
+      data[i + 2] = blue;
+      inside.add(i);
+      touched.push(i);
+    });
+  }
+  // Derrière la haie : le champ voit le trait.
+  for (const s of strips) {
+    visit(s, reachM, (i, beyond) => {
+      if (beyond <= 0 || !isField(labelAt(i))) return;
+      const blue = toBlue(beyond);
+      if (blue >= data[i + 2]) return;
+      data[i + 2] = blue;
+      data[i + 3] = grassId + 1;
+      touched.push(i);
+    });
+  }
+  return touched;
+}
+
+/**
  * Les tronçons de chaussée dont l'emprise est rendue à l'herbe : ceux que
  * `roadNetwork` dessine (mêmes classes, mêmes exclusions en ville), dans son
  * rayon autour de l'observateur. Écrits à plat, cinq nombres par tronçon
@@ -683,6 +771,14 @@ export class GroundClassMap {
     this.verged = 0;
     /** Numéro de rasterisation, incrémenté à chaque repeinte (sert à qui garde ce qu'il a lu ici, ex. la végétation). */
     this.revision = 0;
+
+    /** Texels réécrits jusqu'aux haies de bas-côté à la dernière passe (voir `paintVerges`). */
+    this.hedgeVerged = 0;
+    /** Vrai entre une relecture et la passe des haies qui la suit. */
+    this._vergesPending = false;
+    /** Faux tant que la dernière relecture n'est pas partie au GPU. */
+    this._uploaded = false;
+    this.texture.onUpdate = () => { this._uploaded = true; };
 
     /** Copie CPU, relue par la végétation. `null` tant que rien n'a été peint. */
     this._data = null;
@@ -856,6 +952,16 @@ export class GroundClassMap {
    * @returns {string|null}
    */
   cropAt(x, z) {
+    return cropOf(this.cropLookAt(x, z));
+  }
+
+  /**
+   * Ce qui se voit d'une culture en un point : la culture, ou son état de
+   * saison (`CROP_STAGE_OF`). C'est la lecture des tiges et du sol, pas celle
+   * de qui raisonne en culture.
+   * @returns {string|null}
+   */
+  cropLookAt(x, z) {
     const data = this._data;
     if (!data) return null;
     const i = this._texelAt(x, z);
@@ -1140,7 +1246,11 @@ export class GroundClassMap {
             const crop =
               kind === 'farmland' && counted > 0
                 ? cropId(
-                    cropFor(properties, randomAt(frame, sumX / counted, sumZ / counted, 43), this.region?.farming)
+                    cropStageFor(
+                      cropFor(properties, randomAt(frame, sumX / counted, sumZ / counted, 43), this.region?.farming),
+                      randomAt(frame, sumX / counted, sumZ / counted, 44),
+                      this.theme.cropStages
+                    )
                   )
                 : 0;
 
@@ -1334,6 +1444,8 @@ export class GroundClassMap {
     this.revision++;
     this.origin.set(originX, originZ);
     this.texture.needsUpdate = true;
+    this._uploaded = false;
+    this._vergesPending = true;
     this._anchor = { x: here.x, z: here.z };
     this._frame = frame;
     return painted > 0;
@@ -1375,6 +1487,43 @@ export class GroundClassMap {
       this.texture.image.data = new Uint8Array(data.buffer);
     }
     this._data = data;
+  }
+
+  /**
+   * Rend à l'herbe le sol entre chaque chaussée et sa haie de bas-côté (voir
+   * `paintVergeStrips`). Les haies sont posées par le mobilier, qui lit cette
+   * carte : la bande ne peut être peinte qu'après lui, une fois par relecture.
+   * Si la relecture est déjà au GPU, seules les lignes touchées y repartent.
+   *
+   * @param {import('../layers/vergeStrips.js').VergeStrips|null} verges
+   * @returns {boolean} vrai si la carte a changé.
+   */
+  paintVerges(verges) {
+    if (this.disposed || !this._data || !this._vergesPending) return false;
+    this._vergesPending = false;
+    this.hedgeVerged = 0;
+    if (!verges?.strips?.length) return false;
+    const touched = paintVergeStrips(this._data, CLASS_PIXELS, verges.strips, {
+      left: this.origin.x,
+      top: this.origin.y,
+      perMeter: CLASS_PIXELS / CLASS_AREA_M,
+    });
+    if (!touched.length) return false;
+    this.hedgeVerged = touched.length;
+    if (this._uploaded) {
+      const rows = new Map();
+      for (const i of touched) {
+        const texel = i / 4;
+        const row = Math.floor(texel / CLASS_PIXELS);
+        const span = rows.get(row);
+        if (!span) rows.set(row, [texel, texel]);
+        else { span[0] = Math.min(span[0], texel); span[1] = Math.max(span[1], texel); }
+      }
+      for (const [first, last] of rows.values()) this.texture.addUpdateRange(first * 4, (last - first + 1) * 4);
+      this.texture.needsUpdate = true;
+    }
+    this.revision++;
+    return true;
   }
 
   /** Change la portée : la prochaine relecture prend la fenêtre qui lui correspond. */

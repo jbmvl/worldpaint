@@ -695,6 +695,8 @@ export function appendSteps(
  * @param {Float32Array|number[]} [options.lateralJitter] Décalage de
  *        `offset`, une valeur par ligne, en mètres — déplace l'axe lui-même
  *        (ondule en plan, pas seulement en coupe).
+ * @param {Float32Array} [options.rowTint] Facteur de couleur, trois valeurs
+ *        par ligne (une teinte qui change le long du tracé).
  * @param {Float64Array} [options.frames] Repères déjà connus (`pathFrames`),
  *        quatre nombres par ligne. À donner quand la section doit se poser
  *        **exactement** sur une rive déjà construite ailleurs : recalculés sur
@@ -716,6 +718,7 @@ export function appendProfile(
     scaleUp = null,
     scaleAcross = null,
     lateralJitter = null,
+    rowTint = null,
     frames = null,
   }
 ) {
@@ -755,11 +758,14 @@ export function appendProfile(
 
     const rise = scaleUp ? scaleUp[r] : 1;
     const spread = scaleAcross ? scaleAcross[r] : 1;
+    const tr = rowTint ? rowTint[r * 3] : 1;
+    const tg = rowTint ? rowTint[r * 3 + 1] : 1;
+    const tb = rowTint ? rowTint[r * 3 + 2] : 1;
     for (let c = 0; c < cols; c++) {
       const p = profile[c];
       const wide = p.across * spread;
       buffer.positions.push(ax + px * wide, ground[r] + p.up * rise, az + pz * wide);
-      buffer.colors.push(p.color[0], p.color[1], p.color[2]);
+      buffer.colors.push(p.color[0] * tr, p.color[1] * tg, p.color[2] * tb);
     }
   }
 

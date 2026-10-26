@@ -5,7 +5,7 @@
  *
  *   node scripts/costs-bench.mjs [--root <dépôt>] [--lieu station-montreuil-bellay]
  *        [--runs 3] [--out reports/costs.json] [--lng … --lat …] [--move 0]
- *        [--latence 100 --debit 20] [--cpu 3] [--near 0] [--detail 375]
+ *        [--latence 100 --debit 20] [--cpu 3] [--near 0] [--detail 375] [--saison automne]
  *
  * `--root` désigne une autre copie du dépôt (un `git worktree` d'un commit
  * ancien) : la page du banc et le lieu y sont copiés s'ils manquent, et
@@ -115,7 +115,7 @@ try {
         await cdp.send('HeapProfiler.collectGarbage');
         return (await cdp.send('Runtime.getHeapUsage')).usedSize;
       };
-      const query = new URLSearchParams({ lieu, ...(lng ? { lng } : {}), ...(lat ? { lat } : {}), ...(flag('precompile', null) ? { precompile: flag('precompile') } : {}), ...(flag('near', null) ? { near: flag('near') } : {}), ...(flag('detail', null) ? { detail: flag('detail') } : {}), ...(flag('budget', null) ? { budget: flag('budget') } : {}), ...(flag('render-every', null) ? { renderEvery: flag('render-every') } : {}) });
+      const query = new URLSearchParams({ lieu, ...(lng ? { lng } : {}), ...(lat ? { lat } : {}), ...(flag('precompile', null) ? { precompile: flag('precompile') } : {}), ...(flag('near', null) ? { near: flag('near') } : {}), ...(flag('detail', null) ? { detail: flag('detail') } : {}), ...(flag('budget', null) ? { budget: flag('budget') } : {}), ...(flag('render-every', null) ? { renderEvery: flag('render-every') } : {}), ...(flag('saison', null) ? { saison: flag('saison') } : {}) });
       await page.goto(`http://localhost:${port}/demo/lab/costs.html?${query}`);
       await page.waitForFunction(() => window.costsLabReady, null, { timeout: 120000 });
       const baseline = { heap: await heapAfterGc(), pss: pss(pid) };

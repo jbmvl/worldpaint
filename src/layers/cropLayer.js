@@ -210,10 +210,10 @@ export function fillCropCell(out, cell, perCell = CROP_PER_CELL, salt = 0) {
 export function cropMassFits(groundClass, index, crop, x, z, reach) {
   if (inCorridor(index, x, z, CORRIDOR_MARGIN_M + reach)) return false;
   return (
-    groundClass.cropAt(x + reach, z) === crop &&
-    groundClass.cropAt(x - reach, z) === crop &&
-    groundClass.cropAt(x, z + reach) === crop &&
-    groundClass.cropAt(x, z - reach) === crop
+    groundClass.cropLookAt(x + reach, z) === crop &&
+    groundClass.cropLookAt(x - reach, z) === crop &&
+    groundClass.cropLookAt(x, z + reach) === crop &&
+    groundClass.cropLookAt(x, z - reach) === crop
   );
 }
 
@@ -400,7 +400,7 @@ export class CropLayer {
       const cellStart = placed;
       const cellX = cell.x + cell.size / 2;
       const cellZ = cell.z + cell.size / 2;
-      const crop = this.groundClass.cropAt(cellX, cellZ);
+      const crop = this.groundClass.cropLookAt(cellX, cellZ);
       if (!crop) continue;
       const look = this.theme.crops[crop];
       if (!look) continue;

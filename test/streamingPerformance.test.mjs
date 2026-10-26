@@ -19,7 +19,7 @@ test('le budget cède seulement après son seuil et repart après la pause', asy
 function compositeur() {
   const calls = [], here = { x: 0, z: 0 };
   const layer = name => ({ rebuild: () => { calls.push(name); },
-    setPlants() {}, update() {}, sync() {}, invalidate() {}, setRelief() {}, setSeaDistance() {}, setAnimals() {}, setTractors() {}, setTracks() {}, setVerges() {} });
+    setPlants() {}, update() {}, sync() {}, invalidate() {}, setRelief() {}, setSeaDistance() {}, setAnimals() {}, setTractors() {}, setTracks() {}, setVerges() {}, paintVerges() {} });
   const composer = Object.assign(Object.create(WorldComposer.prototype), {
     disposed: false, _refreshing: false, root: {}, theme: defaultTheme, landscape: { region: {} },
     _updateLandscape: () => false, _distributeRegion() {}, _wantedTiles: () => [{ x: 1, y: 2 }],

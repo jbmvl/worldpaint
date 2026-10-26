@@ -65,6 +65,7 @@ const bubble = { frame: createLocalFrame(-0.145, 47.131, 15), surfaceGeneration:
 const groundClass = {
   cropReady: true,
   cropAt: (x, z) => (z < state.z + FIELD_EDGE_M ? state.crop : state.next),
+  cropLookAt: (x, z) => (z < state.z + FIELD_EDGE_M ? state.crop : state.next),
 };
 const index = {
   covers: (x, z, margin) => Math.abs(x - roadX(z)) * Math.cos(Math.atan(Math.cos(z / 45) * 10 / 45)) <= ROAD_HALF_M + margin,

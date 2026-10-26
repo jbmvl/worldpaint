@@ -26,6 +26,8 @@
  */
 
 import { facetJitter } from './facetJitter.js';
+import { pickShare } from './furniturePlacement.js';
+import { cellRandomAt } from '../core/groundSeed.js';
 import { defaultTheme } from '../themes/default.js';
 
 /**
@@ -215,4 +217,31 @@ export const HEDGE_FACETS = { up: [0.91, 1.09], across: [0.91, 1.09], lateral: [
  */
 export function hedgeFacets(frame, path, salt) {
   return facetJitter(frame, path, salt + FACET_SALT_OFFSET, HEDGE_FACETS);
+}
+
+/** Côté des plages de teinte d'une haie, en mètres : un buisson ou deux. */
+export const HEDGE_TINT_CELL_M = 6;
+
+/** Sel réservé aux plages de teinte, décalé du sel de la famille. */
+const TINT_SALT_OFFSET = 40;
+
+/**
+ * Teinte d'une haie, ligne par ligne : chaque maille mondiale de
+ * `HEDGE_TINT_CELL_M` tire une teinte de la palette du thème, si bien qu'une
+ * haie se lit par plages d'essences qui ne virent pas ensemble.
+ * @param {Object} frame Repère local.
+ * @param {Array<{x:number,z:number}>} path Polyligne ré-échantillonnée.
+ * @param {Array<[number[], number]>|null} palette Tranche
+ *        `theme.furniture.hedgeTints` : facteurs RVB et leurs parts cumulées.
+ * @param {number} salt Sel de la famille de haie.
+ * @returns {Float32Array|null} trois facteurs par ligne, `null` sans palette.
+ */
+export function hedgeTints(frame, path, palette, salt) {
+  if (!palette?.length) return null;
+  const tints = new Float32Array(path.length * 3);
+  for (let r = 0; r < path.length; r++) {
+    const tint = pickShare(palette, cellRandomAt(frame, path[r].x, path[r].z, HEDGE_TINT_CELL_M, salt + TINT_SALT_OFFSET));
+    tints.set(tint, r * 3);
+  }
+  return tints;
 }

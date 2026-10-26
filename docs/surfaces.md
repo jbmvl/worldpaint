@@ -141,6 +141,12 @@ la même emprise que celle que le décor ne franchit pas (`roadCorridor`). Les
 autres matières gardent la leur. Le sol et les cultures lisent la bande au même
 texel ; un texel faisant 2,67 m, son bord tombe à un demi-texel près.
 
+Là où le mobilier pose une haie de bas-côté, l'herbe va jusqu'au dos de la
+haie : une fois les haies posées, `paintVerges` repeint les bandes qu'il publie
+(`VergeStrips`) sur la carte déjà contournée. Le bord d'une bande étant une
+droite connue, les texels voisins reçoivent directement leur distance à elle,
+sans nouveau tracé ; aux bouts d'une haie, la limite reste au texel.
+
 ### Ce que `landcover` ne contient pas
 
 Notre `class` vient de la tuile, pas d'OSM : c'est OpenMapTiles qui range le

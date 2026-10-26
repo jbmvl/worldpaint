@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { cropMassFits } from '../src/layers/cropLayer.js';
 
 // Un champ de blé pour x < 10, rien au-delà.
-const groundClass = { cropAt: (x) => (x < 10 ? 'wheat' : null) };
+const groundClass = { cropLookAt: (x) => (x < 10 ? 'wheat' : null) };
 
 test('une masse de culture ne déborde pas du champ', () => {
   assert.equal(cropMassFits(groundClass, null, 'wheat', 0, 0, 3), true);

@@ -304,17 +304,22 @@ export function pickShare(mix, variant) {
  * @returns {'wheat'|'maize'|'sunflower'|'vineyard'|'orchard'|'plough'|'lavender'|'rapeseed'|null}
  */
 export function cropFor(properties = {}, variant = 0, farming = null) {
-  const klass = properties.class;
-  const subclass = properties.subclass;
-
-  if (subclass === 'vineyard') return 'vineyard';
-  if (subclass === 'orchard' || subclass === 'plant_nursery') return 'orchard';
-  if (klass !== 'farmland') return null;
+  const stated = statedCrop(properties);
+  if (stated) return stated;
+  if (properties.class !== 'farmland') return null;
 
   const mix = farming?.length
     ? sharesFor(farming).map(([word, share]) => [cropForFarming(word), share])
     : DEFAULT_CROP_MIX;
   return pickShare(mix, variant);
+}
+
+/** Culture que la donnée nomme (vigne, verger), sans tirage, ou `null`. Fonction pure. */
+export function statedCrop(properties = {}) {
+  const subclass = properties.subclass;
+  if (subclass === 'vineyard') return 'vineyard';
+  if (subclass === 'orchard' || subclass === 'plant_nursery') return 'orchard';
+  return null;
 }
 
 /**
@@ -366,17 +371,29 @@ export const CROP_KINDS = [
   'lavender',
   'rapeseed',
   'rice',
+  'wheatStubble',
+  'wheatSprouts',
+  'sunflowerResidue',
 ];
 
 /**
- * Pas entre deux identifiants dans le canal rouge.
- *
- * Il était de 40, ce qui plafonnait à six cultures (7 × 40 dépasse 255). Neuf
- * cultures tiennent à 28 (9 × 28 = 252), avec trois de marge à l'arrondi de la
- * texture — c'est la dernière place : un dixième identifiant exige de baisser
- * le pas.
+ * États d'une culture entre deux saisons (chaume, levée, résidus) : chacun a
+ * son identifiant, donc son albédo et ses tiges, mais reste la culture de sa
+ * parcelle pour qui raisonne en culture (`cropOf`) — clôture, serre,
+ * tracteur, étiquette. Seul un thème qui les nomme dans `cropStages` les peint.
  */
-export const CROP_ID_STEP = 28;
+export const CROP_STAGE_OF = {
+  wheatStubble: 'wheat',
+  wheatSprouts: 'wheat',
+  sunflowerResidue: 'sunflower',
+};
+
+/**
+ * Pas entre deux identifiants dans le canal vert : douze cultures tiennent à
+ * 21 (12 × 21 = 252), avec trois de marge à l'arrondi de la texture. Un
+ * treizième identifiant exige de baisser le pas.
+ */
+export const CROP_ID_STEP = 21;
 
 /** Identifiant d'une culture dans la carte, ou 0. Fonction pure. */
 export function cropId(crop) {
@@ -384,10 +401,29 @@ export function cropId(crop) {
   return index < 0 ? 0 : index + 1;
 }
 
-/** Culture portée par une valeur du canal rouge, ou `null`. Fonction pure. */
-export function cropFromId(red) {
-  const index = Math.round(red / CROP_ID_STEP) - 1;
+/** Culture ou état de culture porté par une valeur du canal vert, ou `null`. Fonction pure. */
+export function cropFromId(green) {
+  const index = Math.round(green / CROP_ID_STEP) - 1;
   return CROP_KINDS[index] || null;
+}
+
+/** La culture d'une parcelle, état de saison ôté (`CROP_STAGE_OF`). Fonction pure. */
+export function cropOf(kind) {
+  return CROP_STAGE_OF[kind] ?? kind;
+}
+
+/**
+ * L'état d'une culture selon la saison du thème : `stages` associe à une
+ * culture des parts cumulées d'états (la culture elle-même en est un). Une
+ * culture absente, ou un thème sans `cropStages`, garde sa culture. Fonction pure.
+ *
+ * @param {string|null} crop Culture tirée par `cropFor`.
+ * @param {number} variant Tirage dans [0, 1[ attaché à la parcelle, distinct de celui de `cropFor`.
+ * @param {Object<string, Array<[string, number]>>|null} [stages] Tranche `theme.cropStages`.
+ */
+export function cropStageFor(crop, variant, stages = null) {
+  const mix = crop ? stages?.[crop] : null;
+  return mix?.length ? pickShare(mix, variant) : crop;
 }
 
 /**

@@ -791,6 +791,11 @@ export class WorldComposer {
 
       if (!await checkpoint()) return false;
 
+      // 5 bis. Le sol entre une chaussée et sa haie de bas-côté : de l'herbe,
+      //    peinte sur la carte une fois les haies posées. Avant les arbres et
+      //    les cultures, qui la relisent.
+      this.groundClass.paintVerges(this.furniture.verges);
+
       // 6. Arbres — après les chaussées, dont l'emprise décide où le semis
       //    s'interrompt. Chaque tuile est resemée à sa place, sans rien
       //    retirer : l'emprise et le terrain ont pu changer. Seuls l'arrivée de

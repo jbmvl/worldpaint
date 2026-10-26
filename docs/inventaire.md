@@ -178,10 +178,17 @@ moins répandu**. Il n'y a pas de table intermédiaire : la part de chaque
 culture se déduit de son rang, à peu près la moitié pour la première, le quart
 pour la deuxième (`sharesFor`).
 
-Huit cultures existent (`CROP_KINDS`) : blé, maïs, tournesol, colza, vigne,
-verger, lavande, labour. Ce que le pays nomme passe par `cropForFarming` —
+Neuf cultures existent (`CROP_KINDS`) : blé, maïs, tournesol, colza, vigne,
+verger, lavande, riz, labour. Ce que le pays nomme passe par `cropForFarming` —
 l'olive et l'amande rendent un verger, le rang décide du reste. Sans région,
 c'est l'assolement français par défaut (`DEFAULT_CROP_MIX`).
+
+Un thème de saison peut montrer une culture à un autre stade, parcelle par
+parcelle (`cropStages`, tiré au centre de la parcelle par `cropStageFor`) : à
+l'automne, un blé est labouré, en chaume ou déjà levé, un tournesol en terre
+préparée ou couvert de ses tiges brisées. Ces stades ont leur identifiant
+(`CROP_STAGE_OF`), donc leur couleur et leurs tiges, mais la parcelle reste du
+blé ou du tournesol pour tout le reste (clôture, tracteur, étiquette).
 
 Deux sous-classes court-circuitent le tirage : `vineyard` donne une vigne,
 `orchard`/`plant_nursery` un verger. Ces deux-là, et la lavande avec elles,
