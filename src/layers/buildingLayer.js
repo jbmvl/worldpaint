@@ -112,6 +112,31 @@ const AWNING_CLASSES = new Set(['restaurant', 'bar', 'cafe']);
 /** Classes brutes de point d'intérêt qui reçoivent des pompes en façade (`_appendPumps`) plutôt qu'une terrasse — même position en devanture, un autre mobilier. */
 const FUEL_CLASSES = new Set(['fuel']);
 
+/** Personnalités qu'une caméra peut aller chercher au loin : elles signent le lieu. */
+export const LANDMARK_PERSONALITIES = new Set(['castle', 'church', 'mosque', 'rampart']);
+/** Au-delà de cette hauteur, un bâtiment sans personnalité se voit aussi de loin. */
+export const LANDMARK_MIN_HEIGHT_M = 25;
+
+/**
+ * Repère publié pour un bâtiment, ou `null` s'il n'en est pas un : une
+ * personnalité de `LANDMARK_PERSONALITIES`, ou un volume d'au moins
+ * `LANDMARK_MIN_HEIGHT_M`. `size` : plus grande demi-portée de l'emprise.
+ */
+export function buildingLandmark({ personality, name = null, box, base, top }) {
+  if (!box || !Number.isFinite(base) || !Number.isFinite(top)) return null;
+  const notable = LANDMARK_PERSONALITIES.has(personality);
+  if (!notable && top - base < LANDMARK_MIN_HEIGHT_M) return null;
+  return {
+    x: box.cx,
+    y: base,
+    z: box.cz,
+    top,
+    size: box.long,
+    kind: notable ? personality : 'tall',
+    name,
+  };
+}
+
 /** Rang d'une personnalité quand il faut en écarter, petit d'abord (un clocher se voit de loin, une devanture se compte par milliers). */
 export const BUILDING_PERSONALITY_RANK = {
   rampart: 0,
@@ -1527,6 +1552,13 @@ export class BuildingLayer {
     this.shopfronts = [];
     this._shopfrontSink = null;
     /**
+     * Repères bâtis de la dernière reconstruction (château, église, tour…),
+     * cf. `buildingLandmark`. Repère de `bubble.frame`.
+     * @type {Array<{x:number, y:number, z:number, top:number, size:number, kind:string, name:string|null}>}
+     */
+    this.landmarks = [];
+    this._landmarkSink = null;
+    /**
      * Index des chaussées de la dernière reconstruction, ou `null` — c'est lui
      * qui dit ce qu'une empreinte pose sur la voie. Posé par `rebuild`.
      */
@@ -1644,6 +1676,8 @@ export class BuildingLayer {
     this._terraceSink = terraces;
     const shopfronts = [];
     this._shopfrontSink = shopfronts;
+    const landmarks = [];
+    this._landmarkSink = landmarks;
     // Vidée avant d'être remplie : la géométrie qui référence ses cases
     // (`labels`, ci-dessus) est de toute façon intégralement refaite dans
     // cette même passe — voir l'en-tête de `LabelAtlas`.
@@ -1815,6 +1849,8 @@ export class BuildingLayer {
     this._terraceSink = null;
     this.shopfronts = shopfronts;
     this._shopfrontSink = null;
+    this.landmarks = landmarks;
+    this._landmarkSink = null;
     this.personalities = personalities;
     this._applyWindows(lamps);
     this._applyLabels(labels);
@@ -2188,6 +2224,11 @@ export class BuildingLayer {
       randomAt(this.bubble.frame, box.cx, box.cz, 421) < CHIMNEY_SHARE
     ) {
       this._appendChimney(walls, box, top);
+    }
+
+    if (!assigned?.secondary && this._landmarkSink) {
+      const landmark = buildingLandmark({ personality, name: personalityName, box, base, top });
+      if (landmark) this._landmarkSink.push(landmark);
     }
 
     return true;

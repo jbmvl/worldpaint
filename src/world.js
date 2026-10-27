@@ -480,6 +480,33 @@ export class World {
   }
 
   /**
+   * Repères bâtis à moins de `radius` mètres de `(lng, lat)` — château,
+   * église, mosquée, rempart, ou bâtiment très haut (`kind: 'tall'`) —, du
+   * plus proche au plus lointain : de quoi tourner une caméra vers ce qui
+   * signe le lieu. `(x, y, z)` : centre de l'emprise au pied, `top` : faîte,
+   * `size` : plus grande demi-portée de l'emprise. Positions de scène ; `[]`
+   * tant que le bâti n'a pas été construit dans le repère courant.
+   *
+   * @param {number} lng
+   * @param {number} lat
+   * @param {number} [radius]
+   * @returns {Array<{x:number, y:number, z:number, top:number, size:number,
+   *          kind:string, name:string|null, distanceM:number}>}
+   */
+  landmarksNear(lng, lat, radius = 300) {
+    const buildings = this.composer.buildings;
+    const frame = this.composer.bubble?.frame;
+    if (!frame || !buildings?.landmarks?.length || buildings._frame !== frame) return [];
+    const here = frame.toLocal(lng, lat);
+    const found = [];
+    for (const landmark of buildings.landmarks) {
+      const distanceM = Math.hypot(landmark.x - here.x, landmark.z - here.z);
+      if (distanceM <= radius) found.push({ ...landmark, distanceM });
+    }
+    return found.sort((p, q) => p.distanceM - q.distanceM);
+  }
+
+  /**
    * Points d'eau posés à moins de `radius` mètres de `(lng, lat)` — fontaines
    * (`fountain`, `fountainWallace`) et robinets de cimetière (`cemeteryTap`) —,
    * du plus proche au plus lointain : de quoi conduire un personnage de
