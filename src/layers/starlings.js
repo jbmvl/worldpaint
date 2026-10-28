@@ -7,13 +7,16 @@
  * `STARLING_TRIGGER_M` du point de cette route qui lui fait face ; un dortoir
  * levé ne se relève pas avant `STARLING_REST_S`.
  *
+ * Un vol peut aussi être **levé** par l'application (`treeToRaise`) d'une
+ * lisière devant l'observateur : un événement, oublié une fois le vol fini.
+ *
  * Le vol lui-même est un centre qui s'éloigne de l'observateur en montant, et
  * autour duquel chaque oiseau garde sa place dans un nuage aplati qui se
  * déploie à l'envol puis respire — c'est cette respiration, décalée d'un
  * oiseau à l'autre selon sa place, qui fait l'onde d'une murmuration.
  */
 
-import { hashUnit } from '../core/groundSeed.js';
+import { hashUnit, randomAt } from '../core/groundSeed.js';
 
 export const STARLING_COUNT = 48;
 export const STARLING_TRIGGER_M = 45;
@@ -43,6 +46,45 @@ export function roostNear(roosts, here) {
     }
   }
   return best;
+}
+
+/** Rayon où l'application va chercher un arbre d'où lever un vol. */
+export const STARLING_CALL_M = 450;
+const CALL_STEP_M = 10;
+const CALL_MIN_M = 35;
+
+/**
+ * Où lever un vol à la demande : le dortoir le plus proche s'il y en a un à
+ * portée, sinon la lisière boisée la plus proche, de préférence dans le regard
+ * (`forward`, à plat), sinon le bois le plus proche. `null` sans bois à portée.
+ * @param {(x:number, z:number) => number} woodAt Part de bois, de 0 à 1.
+ * @returns {{x:number, z:number, seed:number}|null}
+ */
+export function treeToRaise(frame, here, { woodAt, roosts, forward = null } = {}) {
+  let roost = null;
+  for (const r of roosts ?? []) {
+    const d = Math.hypot(r.x - here.x, r.z - here.z);
+    if (d >= CALL_MIN_M && d <= STARLING_CALL_M && (!roost || d < roost.d)) roost = { r, d };
+  }
+  if (roost) return { x: roost.r.x, z: roost.r.z, seed: roost.r.seed };
+  if (!woodAt) return null;
+  const length = forward ? Math.hypot(forward.x, forward.z) : 0;
+  let best = null;
+  for (let dx = -STARLING_CALL_M; dx <= STARLING_CALL_M; dx += CALL_STEP_M) {
+    for (let dz = -STARLING_CALL_M; dz <= STARLING_CALL_M; dz += CALL_STEP_M) {
+      const d = Math.hypot(dx, dz);
+      if (d < CALL_MIN_M || d > STARLING_CALL_M) continue;
+      const x = here.x + dx;
+      const z = here.z + dz;
+      if (!(woodAt(x, z) >= 0.5)) continue;
+      // Une lisière : un vol qui sort du cœur d'un bois ne se voit pas partir.
+      const edge = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([u, v]) => woodAt(x + u * 12, z + v * 12) < 0.2);
+      const ahead = length > 0 && (dx * forward.x + dz * forward.z) / (d * length) > 0.5;
+      const rank = (edge ? 0 : 2) + (ahead ? 0 : 1);
+      if (!best || rank < best.rank || (rank === best.rank && d < best.d)) best = { x, z, d, rank };
+    }
+  }
+  return best ? { x: best.x, z: best.z, seed: randomAt(frame, best.x, best.z, SALT) } : null;
 }
 
 /**

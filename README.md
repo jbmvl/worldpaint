@@ -193,6 +193,16 @@ application picks the species and the moment, the animal is not placed in the
 world, and coming back later will not find it. Use it for the random events of
 a game — something crossing the road in front of you.
 
+`world.perchSwallows(lng, lat)` is its counterpart on the overhead lines: it
+sets a row of swallows on the nearest wire span (poles only line rural main
+and secondary roads) and returns the middle of the row with its distance, or
+`null` when no line is strung nearby. They take off as the observer comes
+within 30 m, and are then forgotten.
+`world.raiseStarlings(lng, lat, { forward })` lifts a flock of starlings out
+of a treetop on the nearest wood edge (a roost if one is within 450 m, else
+preferably in the direction of `forward`), and returns where it starts from,
+or `null` with no wood nearby.
+
 Deer, goats and foxes bound; everything else trots. That is decided per species
 (`FAUNA_SPECIES[kind].bound`) and blended in with speed, so a walking deer
 still moves diagonally.

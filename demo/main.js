@@ -83,6 +83,8 @@ const faunaKindSelect = document.getElementById('faunaKind');
 const faunaDistanceInput = document.getElementById('faunaDistance');
 const faunaDistanceVal = document.getElementById('faunaDistanceVal');
 const faunaCrossBtn = document.getElementById('faunaCross');
+const swallowsPerchBtn = document.getElementById('swallowsPerch');
+const starlingsRaiseBtn = document.getElementById('starlingsRaise');
 const regionSelect = document.getElementById('region');
 const seasonSelect = document.getElementById('season');
 const regionHint = document.getElementById('regionHint');
@@ -1648,6 +1650,60 @@ window.addEventListener('keydown', (e) => {
   if (e.code !== 'KeyC' || isTypingTarget(document.activeElement)) return;
   e.preventDefault();
   crossFaunaAhead();
+});
+
+/** Où est un point de scène par rapport au regard de la caméra, en mots. */
+function sideOfView(x, z) {
+  camera.getWorldDirection(cameraDirection);
+  const dx = x - camera.position.x;
+  const dz = z - camera.position.z;
+  // Angle signé du regard vers le point : positif à droite.
+  const angle = Math.atan2(cameraDirection.x * dz - cameraDirection.z * dx, cameraDirection.x * dx + cameraDirection.z * dz);
+  const words = ['devant', 'devant à droite', 'à droite', 'derrière à droite', 'derrière', 'derrière à gauche', 'à gauche', 'devant à gauche'];
+  return words[(Math.round(angle / (Math.PI / 4)) + 8) % 8];
+}
+
+/** Pose une rangée d'hirondelles sur la ligne aérienne la plus proche, et dit où. */
+function perchSwallowsNear() {
+  if (!world?.frame) return;
+  const { lng, lat } = world.frame.toLngLat(camera.position.x, camera.position.z);
+  const row = world.perchSwallows(lng, lat);
+  setStatus(
+    row
+      ? `${row.count} hirondelles sur le fil, ${Math.round(row.distanceM)} m ${sideOfView(row.x, row.z)} — elles s’envolent à 30 m`
+      : 'Aucune ligne aérienne ici : les poteaux ne bordent que les routes principales et secondaires hors agglomération',
+    !row
+  );
+}
+
+swallowsPerchBtn.addEventListener('click', perchSwallowsNear);
+
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyH' || isTypingTarget(document.activeElement)) return;
+  e.preventDefault();
+  perchSwallowsNear();
+});
+
+/** Lève un vol d'étourneaux d'une lisière boisée, devant de préférence, et dit où. */
+function raiseStarlingsNear() {
+  if (!world?.frame) return;
+  const { lng, lat } = world.frame.toLngLat(camera.position.x, camera.position.z);
+  camera.getWorldDirection(cameraDirection);
+  const tree = world.raiseStarlings(lng, lat, { forward: { x: cameraDirection.x, z: cameraDirection.z } });
+  setStatus(
+    tree
+      ? `Étourneaux levés d’un arbre, ${Math.round(tree.distanceM)} m ${sideOfView(tree.x, tree.z)}`
+      : 'Aucun bois à moins de 450 m',
+    !tree
+  );
+}
+
+starlingsRaiseBtn.addEventListener('click', raiseStarlingsNear);
+
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyE' || isTypingTarget(document.activeElement)) return;
+  e.preventDefault();
+  raiseStarlingsNear();
 });
 
 /** Reconstruit le décor sur place, sans bouger la caméra. */

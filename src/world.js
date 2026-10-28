@@ -11,7 +11,8 @@
  * Cinq verbes : setCenter, refresh, advance, updateSky (seulement si un ciel
  * a été demandé), dispose. Plus un sixième, à part : `crossFauna`, qui ne
  * construit ni n'avance rien — il déclenche un événement (voir
- * `WorldComposer.crossFauna`). `cheer` est son pendant au bord de la route.
+ * `WorldComposer.crossFauna`). `cheer` est son pendant au bord de la route,
+ * `perchSwallows` sur la ligne aérienne, `raiseStarlings` à la lisière d'un bois.
  *
  * `roadPositionAt`, `roadSnapAt`, `roadLaneAt` et `roadsideAt` ne sont ni l'un
  * ni l'autre : des questions, pas des actions — à quelle altitude passe la
@@ -746,6 +747,41 @@ export class World {
       ahead = { x: there.x - at.x, z: there.z - at.z };
     }
     return this.composer.cheer({ ...options, at, ahead });
+  }
+
+  /**
+   * Lève un vol d'étourneaux de la cime d'une lisière boisée près de
+   * `(lng, lat)` — le dortoir le plus proche s'il y en a un à 450 m, sinon le
+   * bord de bois le plus proche, de préférence dans le regard. Un événement,
+   * comme `crossFauna` : le vol s'oublie une fois fini, et remplace celui qui
+   * serait déjà en l'air. Invisible la nuit.
+   *
+   * @param {Object} [options]
+   * @param {{x:number, z:number}} [options.forward] Regard à plat, en scène.
+   * @returns {{x:number, y:number, z:number, distanceM:number}|null} Le point
+   *          de cime d'où il part (position de scène), ou `null` sans bois à
+   *          portée.
+   */
+  raiseStarlings(lng, lat, { forward = null } = {}) {
+    const frame = this.composer.bubble?.frame;
+    if (!frame) return null;
+    return this.composer.raiseStarlings({ at: frame.toLocal(lng, lat), forward });
+  }
+
+  /**
+   * Pose une rangée d'hirondelles sur la ligne aérienne la plus proche de
+   * `(lng, lat)` — de préférence assez loin pour qu'elle ne s'envole pas
+   * aussitôt. Un événement, comme `crossFauna` : la rangée s'oublie une fois
+   * envolée. Invisible la nuit, comme toutes les hirondelles.
+   *
+   * @returns {{x:number, y:number, z:number, count:number, distanceM:number}|null}
+   *          Le milieu de la rangée (position de scène), ou `null` sans ligne
+   *          tendue dans le mobilier construit.
+   */
+  perchSwallows(lng, lat) {
+    const frame = this.composer.bubble?.frame;
+    if (!frame) return null;
+    return this.composer.perchSwallows({ at: frame.toLocal(lng, lat) });
   }
 
   /**

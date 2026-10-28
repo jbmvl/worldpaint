@@ -49,7 +49,7 @@ import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { SceneEnvironment } from '/src/environment/sceneEnvironment.js';
 import { LifeLayer, GULL_SEA_DISTANCE_M } from '/src/layers/lifeLayer.js';
 import { launchFlock } from '/src/layers/starlings.js';
-import { perchesNear } from '/src/layers/swallows.js';
+import { launchSwallows, perchesNear } from '/src/layers/swallows.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(devicePixelRatio);
@@ -114,7 +114,7 @@ const labGround = {
 };
 // La ligne des hirondelles : la portée telle que la publie le mobilier, et son câble.
 const wireSpan = { ax: -20, ay: 8.35, az: -15, bx: 20, by: 8.35, bz: -15, sag: 1.12 };
-// Glissée le long d'elle-même jusqu'à une portée habitée : une sur cinq ou six l'est.
+// Glissée le long d'elle-même jusqu'à une portée habitée : une sur vingt-huit environ l'est.
 for (let dx = 0; !perchesNear(labGround.frame, { x: dx, z: 0 }, [wireSpan]).length; dx += 0.5) {
   wireSpan.ax = -20 + dx;
   wireSpan.bx = 20 + dx;
@@ -178,7 +178,7 @@ function render() {
       life._advanceSwallows({ ...at, z: at.z + 100 }, labGround);
     } else {
       for (const perch of perchesNear(labGround.frame, at, labGround.wires)) {
-        life._flushed.set(perch.key, { start: state.time - state.swallows, wallClock: life._wallClock, away: Math.atan2(perch.x - at.x, perch.z - at.z) });
+        life._flushed.set(perch.key, launchSwallows(perch, at, state.time - state.swallows, life._wallClock));
       }
       life._advanceSwallows(at, labGround);
     }

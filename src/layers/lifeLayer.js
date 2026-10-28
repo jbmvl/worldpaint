@@ -57,8 +57,8 @@ import { Kit } from '../models/kit.js';
 import { hashUnit } from '../core/groundSeed.js';
 import { batAt, batPassAt, buildBats, createBatGeometry } from './batFlight.js';
 import { fireflyAt, sowFireflies, FIREFLY_MAX, FIREFLY_RESOW_M } from './fireflies.js';
-import { buildStarlings, launchFlock, roostNear, starlingAt, STARLING_COUNT, STARLING_FLIGHT_S, STARLING_REST_S } from './starlings.js';
-import { createPerchedSwallowGeometry, flushes, perchesNear, swallowAt, SWALLOW_MAX, SWALLOW_REST_S, SWALLOW_RESOW_M } from './swallows.js';
+import { buildStarlings, launchFlock, roostNear, starlingAt, treeToRaise, STARLING_CANOPY_M, STARLING_COUNT, STARLING_FLIGHT_S, STARLING_REST_S } from './starlings.js';
+import { createFlyingSwallowGeometry, createPerchedSwallowGeometry, flushes, launchSwallows, perchesNear, perchOnSpan, spanToCall, swallowAt, SWALLOW_FLIGHT_S, SWALLOW_MAX, SWALLOW_REST_S, SWALLOW_RESOW_M, SWALLOW_SPAN_M } from './swallows.js';
 
 /** Part de nuit au-delà de laquelle les oiseaux se posent et les bêtes de nuit sortent. */
 const NIGHT_FLIGHT = 0.45;
@@ -575,11 +575,14 @@ export class LifeLayer {
 
     this.swallowMaterial = darkMaterial(life.swallow ?? defaultTheme.life.swallow, 'swallow');
     this.swallowsPerched = instanced(createPerchedSwallowGeometry(THREE), this.swallowMaterial, SWALLOW_MAX, 'swallows-perched');
-    this.swallowsFlying = instanced(createBirdGeometry(THREE), this.swallowMaterial, SWALLOW_MAX, 'swallows');
+    this.swallowsFlying = instanced(createFlyingSwallowGeometry(THREE), this.swallowMaterial, SWALLOW_MAX, 'swallows');
     this._perches = [];
     this._perchedAt = null;
     /** Portées levées : clé → { start, away, wallClock } (l'horloge sans repli compte le repos). */
     this._flushed = new Map();
+    /** Rangées appelées par l'application, clé → rangée, dans le repère `_calledFrame`. */
+    this._called = new Map();
+    this._calledFrame = null;
 
     this._matrix = new THREE.Matrix4();
     this._position = new THREE.Vector3();
@@ -714,9 +717,10 @@ export class LifeLayer {
     this._advanceSwallows(at, ground);
   }
 
-  _setInstance(mesh, index, x, y, z, heading, sx, sy, sz) {
+  _setInstance(mesh, index, x, y, z, heading, sx, sy, sz, pitch = 0, roll = 0) {
     this._position.set(x, y, z);
-    this._euler.set(0, heading, 0);
+    // Cap, puis tangage (nez levé positif), puis roulis, dans le repère de l'oiseau.
+    this._euler.set(-pitch, heading, -roll, 'YXZ');
     this._quaternion.setFromEuler(this._euler);
     this._scale.set(sx, sy, sz);
     this._matrix.compose(this._position, this._quaternion, this._scale);
@@ -784,6 +788,49 @@ export class LifeLayer {
     this.starlings.instanceMatrix.needsUpdate = true;
   }
 
+  /**
+   * Lève un vol d'étourneaux d'une lisière boisée près de `at`, de préférence
+   * dans le regard `forward` — un événement, oublié une fois le vol fini. Il
+   * remplace un vol déjà en l'air.
+   * @returns {{x:number, y:number, z:number, distanceM:number}|null} Le point
+   *          de cime d'où il part, ou `null` sans bois à portée.
+   */
+  raiseStarlings(at, ground, forward = null) {
+    if (!at || !ground?.frame) return null;
+    const tree = treeToRaise(ground.frame, at, { woodAt: ground.woodAt, roosts: ground.roosts, forward });
+    if (!tree) return null;
+    const floor = ground.elevationAt(tree.x, tree.z);
+    if (!Number.isFinite(floor)) return null;
+    this._starlingFlock = { ...launchFlock(tree, floor, at, this.time), frame: ground.frame };
+    return { x: tree.x, y: floor + STARLING_CANOPY_M, z: tree.z, distanceM: Math.hypot(tree.x - at.x, tree.z - at.z) };
+  }
+
+  /**
+   * Appelle une rangée d'hirondelles sur la ligne aérienne la plus proche de
+   * `at` — un événement, oublié une fois la rangée envolée.
+   * @returns {{x:number, y:number, z:number, count:number, distanceM:number}|null}
+   *          Le milieu de la rangée, ou `null` sans ligne tendue.
+   */
+  perchSwallows(at, ground) {
+    if (!at || !ground?.frame) return null;
+    const span = spanToCall(ground.wires, at);
+    if (!span) return null;
+    const perch = perchOnSpan(ground.frame, span);
+    if (this._calledFrame !== ground.frame) this._called.clear();
+    this._calledFrame = ground.frame;
+    this._called.set(perch.key, perch);
+    // Rappeler une rangée envolée la repose.
+    this._flushed.delete(perch.key);
+    const middle = perch.birds[Math.floor(perch.birds.length / 2)];
+    return {
+      x: middle.x,
+      y: middle.y,
+      z: middle.z,
+      count: perch.birds.length,
+      distanceM: Math.hypot(middle.x - at.x, middle.z - at.z),
+    };
+  }
+
   _advanceSwallows(at, ground) {
     const perched = this.swallowsPerched;
     const flying = this.swallowsFlying;
@@ -795,31 +842,37 @@ export class LifeLayer {
       this._perches = perchesNear(ground.frame, at, ground.wires);
       this._perchedAt = { frame: ground.frame, wires: ground.wires, spans: ground.wires.length, x: at.x, z: at.z };
     }
+    if (this._calledFrame !== ground.frame) this._called.clear();
+    const perches = this._called.size
+      ? [...this._perches, ...[...this._called.values()].filter((c) => !this._perches.some((p) => p.key === c.key))]
+      : this._perches;
     const now = this._wallClock;
     let sitting = 0;
     let flown = 0;
-    for (const perch of this._perches) {
+    for (const perch of perches) {
       let flight = this._flushed.get(perch.key);
       if (flight && now - flight.wallClock >= SWALLOW_REST_S) {
         this._flushed.delete(perch.key);
         flight = undefined;
       }
       if (!flight && flushes(perch, at)) {
-        flight = { start: this.time, wallClock: now, away: Math.atan2(perch.x - at.x, perch.z - at.z) };
+        flight = launchSwallows(perch, at, this.time, now);
         this._flushed.set(perch.key, flight);
       }
+      if (flight && this._called.has(perch.key) && this.time - flight.start >= SWALLOW_FLIGHT_S) this._called.delete(perch.key);
       for (const bird of perch.birds) {
         // `this.time` se replie toutes les heures : un vol à cheval sur le repli s'achève là.
-        const s = flight ? (this.time >= flight.start ? swallowAt(bird, flight.away, flight.start, this.time) : null) : { perched: true, ...bird, heading: bird.facing };
+        const s = flight ? (this.time >= flight.start ? swallowAt(bird, flight, this.time) : null) : { perched: true, ...bird, heading: bird.facing };
         if (!s) continue;
         if (s.perched) {
           if (sitting >= SWALLOW_MAX) continue;
-          const k = bird.scale * 0.5;
-          this._setInstance(perched, sitting++, s.x, s.y + 0.03, s.z, s.heading, k, k, k);
+          const k = bird.scale / SWALLOW_SPAN_M;
+          // Pattes sur le dessus du câble, pas dans son axe.
+          this._setInstance(perched, sitting++, s.x, s.y + 0.02, s.z, s.heading, k, k, k, s.pitch ?? 0);
         } else {
           if (flown >= SWALLOW_MAX) continue;
           const k = bird.scale * s.size;
-          this._setInstance(flying, flown++, s.x, s.y, s.z, s.heading, k * s.flap, k, k);
+          this._setInstance(flying, flown++, s.x, s.y, s.z, s.heading, k * (1 - 0.2 * Math.abs(s.wing)), k * 3 * s.wing, k, s.pitch, s.roll);
         }
       }
     }

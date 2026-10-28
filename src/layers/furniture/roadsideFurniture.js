@@ -570,11 +570,6 @@ export function appendOverheadLine(layer, buffer, poles, offset, sampleElevation
     if (span < 4 || span > 90) continue;
 
     const sag = Math.min(1.6, span * 0.028);
-    layer.wireSpans?.push({
-      ax, ay: sampleElevation(ax, az) + height, az,
-      bx, by: sampleElevation(bx, bz) + height, bz,
-      sag,
-    });
     const steps = 6;
     const curve = [];
     const heights = new Float32Array(steps + 1);
@@ -586,6 +581,9 @@ export function appendOverheadLine(layer, buffer, poles, offset, sampleElevation
       // Parabole normalisée : nulle aux appuis, maximale à mi-portée.
       heights[s] = sampleElevation(x, z) + height - sag * 4 * t * (1 - t);
     }
+    // Le câble suit le relief sous lui, pas la corde entre ses appuis : ce
+    // qui s'y pose lit ces cotes-là (`heights`, une par pas régulier).
+    layer.wireSpans?.push({ ax, ay: heights[0], az, bx, by: heights[steps], bz, sag, heights });
 
     appendProfile(buffer, {
       path: curve,

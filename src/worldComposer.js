@@ -983,6 +983,24 @@ export class WorldComposer {
   }
 
   /**
+   * Lève un vol d'étourneaux d'une lisière près de `at`. Un événement, comme
+   * `crossFauna` ; voir `LifeLayer.raiseStarlings`.
+   */
+  raiseStarlings({ at, forward = null } = {}) {
+    if (this.disposed) return null;
+    return this.life.raiseStarlings(at, this._lifeGround, forward);
+  }
+
+  /**
+   * Pose une rangée d'hirondelles sur la ligne aérienne la plus proche de
+   * `at`. Un événement, comme `crossFauna` ; voir `LifeLayer.perchSwallows`.
+   */
+  perchSwallows({ at } = {}) {
+    if (this.disposed) return null;
+    return this.life.perchSwallows(at, this._lifeGround);
+  }
+
+  /**
    * Travail d'une image : les files étalées et ce qui bouge (une tuile
    * plantée, une tuile de terrain recousue par image au plus, pour éviter l'à-coup).
    *

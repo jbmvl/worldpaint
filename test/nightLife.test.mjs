@@ -73,7 +73,7 @@ test('un vol d’étourneaux sort d’un dortoir boisé, puis disparaît', () =>
 });
 
 test('les hirondelles se posent sur quelques portées, toujours les mêmes, et s’égaillent à l’approche', async () => {
-  const { perchesNear, flushes, swallowAt, SWALLOW_FLIGHT_S, SWALLOW_SPAN_ODDS } = await import('../src/layers/swallows.js');
+  const { perchesNear, flushes, launchSwallows, swallowAt, SWALLOW_FLIGHT_S, SWALLOW_SPAN_ODDS } = await import('../src/layers/swallows.js');
   const spans = [];
   for (let i = 0; i < 400; i++) {
     const x = (i % 20) * 7 - 70;
@@ -92,10 +92,80 @@ test('les hirondelles se posent sur quelques portées, toujours les mêmes, et s
   const perch = a[0];
   assert.equal(flushes(perch, { x: perch.x + 500, z: perch.z }), false);
   assert.equal(flushes(perch, { x: perch.birds[0].x + 5, z: perch.birds[0].z }), true);
-  // Envolées, elles s'éloignent et montent, puis disparaissent.
+  // Envolées, elles tombent du fil, s'éloignent et montent, puis disparaissent.
   const bird = perch.birds[0];
-  const s = swallowAt(bird, 0, 100, 104);
+  const flight = launchSwallows(perch, { x: perch.birds[0].x, z: perch.birds[0].z - 25 }, 100, 0);
+  const early = swallowAt(bird, flight, 100.3 + bird.delay);
+  assert.equal(early.perched, false);
+  assert.ok(early.y < bird.y, `${early.y} ${bird.y}`);
+  const s = swallowAt(bird, flight, 104);
   assert.equal(s.perched, false);
   assert.ok(s.y > bird.y && Math.hypot(s.x - bird.x, s.z - bird.z) > 20);
-  assert.equal(swallowAt(bird, 0, 100, 100 + SWALLOW_FLIGHT_S), null);
+  assert.ok(s.z > bird.z, 'à l’opposé de l’observateur');
+  assert.equal(swallowAt(bird, flight, 100 + SWALLOW_FLIGHT_S), null);
+  // En vague : le bout de la rangée le plus éloigné de l'observateur part après.
+  const row = a.find((p) => p.birds.length >= 5);
+  const wave = launchSwallows(row, { x: row.birds[0].x, z: row.birds[0].z - 25 }, 0, 0);
+  const last = row.birds[row.birds.length - 1];
+  const leftAt = (b) => { let t = 0; while (swallowAt(b, wave, t)?.perched) t += 0.01; return t; };
+  assert.ok(leftAt(last) - last.delay > leftAt(row.birds[0]) - row.birds[0].delay);
+});
+
+test('une rangée d’hirondelles appelée se pose sur la portée la plus proche hors d’envol, puis s’oublie une fois envolée', async () => {
+  const THREE = await import('three');
+  const { LifeLayer } = await import('../src/layers/lifeLayer.js');
+  const { spanToCall, perchesNear, SWALLOW_FLUSH_M, SWALLOW_FLIGHT_S } = await import('../src/layers/swallows.js');
+  const frame = frameAt(0);
+  // Une portée sous les pieds, une à 80 m, une à 300 m ; aucune n'est habitée d'elle-même.
+  const span = (x) => ({ ax: x - 20, ay: 8, az: 0, bx: x + 20, by: 8, bz: 0, sag: 1.1 });
+  const wires = [0, 80, 300].map(span).filter((s) => perchesNear(frame, { x: (s.ax + s.bx) / 2, z: 0 }, [s]).length === 0);
+  assert.equal(wires.length, 3, 'portées de l’essai habitées par le tirage : changer leurs abscisses');
+  assert.equal(spanToCall(wires, { x: 0, z: 0 }), wires[1]);
+  assert.equal(spanToCall([wires[0]], { x: 0, z: 0 }), wires[0]);
+  assert.equal(spanToCall([], { x: 0, z: 0 }), null);
+
+  const life = new LifeLayer({ THREE, scene: new THREE.Scene(), bubble: null });
+  const ground = { frame, wires, roosts: [], woodAt: () => false, elevationAt: () => 0 };
+  const here = { x: 0, y: 2, z: 0 };
+  life.advance(1 / 30, here, ground);
+  assert.equal(life.swallowsPerched.count, 0);
+  const row = life.perchSwallows(here, ground);
+  assert.ok(row && row.distanceM > SWALLOW_FLUSH_M && row.distanceM < 120, JSON.stringify(row));
+  life.advance(1 / 30, here, ground);
+  assert.equal(life.swallowsPerched.count, row.count);
+  // L'observateur s'approche : la rangée s'envole, puis ne revient pas.
+  const close = { x: row.x, y: 2, z: row.z };
+  life.advance(1 / 30, close, ground);
+  for (let t = 0; t <= SWALLOW_FLIGHT_S + 1; t += 0.5) life.advance(0.5, close, ground);
+  assert.equal(life.swallowsPerched.count + life.swallowsFlying.count, 0);
+  life.advance(1 / 30, here, ground);
+  assert.equal(life.swallowsPerched.count, 0);
+  life.dispose();
+});
+
+test('une hirondelle se pose sur le câble tel qu’il est dessiné, qui suit le relief', async () => {
+  const { perchOnSpan } = await import('../src/layers/swallows.js');
+  // Un câble qui enjambe une bosse : la corde entre appuis passe deux mètres plus bas.
+  const heights = [8, 9, 10, 10, 10, 9, 8];
+  const perch = perchOnSpan(frameAt(0), { ax: 0, ay: 8, az: 0, bx: 60, by: 8, bz: 0, sag: 0, heights });
+  for (const bird of perch.birds) {
+    const f = (bird.x / 60) * 6;
+    const i = Math.min(5, Math.floor(f));
+    assert.ok(Math.abs(bird.y - (heights[i] + (heights[i + 1] - heights[i]) * (f - i))) < 1e-9, `${bird.x} ${bird.y}`);
+  }
+});
+
+test('un vol d’étourneaux appelé part d’une lisière, devant de préférence, et rien sans bois', async () => {
+  const { treeToRaise } = await import('../src/layers/starlings.js');
+  const frame = frameAt(0);
+  // Deux bois : un derrière (z < -60), un devant (z > 90).
+  const woodAt = (x, z) => (z < -60 || z > 90 ? 1 : 0);
+  const ahead = treeToRaise(frame, { x: 0, z: 0 }, { woodAt, forward: { x: 0, z: 1 } });
+  assert.ok(ahead && ahead.z > 90 && ahead.z < 110, JSON.stringify(ahead));
+  const behind = treeToRaise(frame, { x: 0, z: 0 }, { woodAt, forward: { x: 0, z: -1 } });
+  assert.ok(behind && behind.z < -60 && behind.z > -80, JSON.stringify(behind));
+  assert.equal(treeToRaise(frame, { x: 0, z: 0 }, { woodAt: () => 0 }), null);
+  // Un dortoir à portée passe avant tout bois.
+  const roost = { x: 50, z: 50, roadX: 0, roadZ: 0, seed: 0.3, key: 'r' };
+  assert.deepEqual(treeToRaise(frame, { x: 0, z: 0 }, { woodAt, roosts: [roost] }), { x: 50, z: 50, seed: 0.3 });
 });

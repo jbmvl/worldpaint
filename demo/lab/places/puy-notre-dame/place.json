@@ -1,0 +1,17 @@
+{
+  "name": "puy-notre-dame",
+  "label": "Le Puy-Notre-Dame",
+  "lng": -0.2347,
+  "lat": 47.1258,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "encoding": "terrain-rgb",
+    "extension": "webp",
+    "source": "api.maptiler.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  }
+}
