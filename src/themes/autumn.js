@@ -39,22 +39,29 @@ const surfaces = {
   wood: { ...defaultTheme.surfaces.wood, albedo: [0.07, 0.058, 0.014] },
 };
 
-// Fin octobre : blé et tournesol moissonnés, maïs sec sur pied, colza
-// semé fin août qui ne fait encore que des rosettes vertes au ras du sol.
+// Fin octobre : blé moissonné, tournesol et maïs secs sur pied (le tournesol
+// garde sa silhouette, roussie), colza semé fin août qui ne fait encore que
+// des rosettes vertes au ras du sol.
 // Le blé labouré a les tiges du labour ; ses autres états sont dans `cropStages`.
 const crops = {
   ...defaultTheme.crops,
   wheat: { ...defaultTheme.crops.plough },
   maize: { ...defaultTheme.crops.maize, tint: [1.45, 0.82, 0.42] },
-  sunflower: { ...defaultTheme.crops.plough, tint: [0.8, 0.7, 0.55] },
+  sunflower: { ...defaultTheme.crops.sunflower, tint: [0.75, 0.58, 0.45] },
   rapeseed: { ...defaultTheme.crops.rapeseed, atlas: 'rice', height: 0.25, tint: [0.9, 1.05, 0.8] },
 };
+
+// Terre labourée à peine rougie ; le champ de blé moissonné ou en chaume a la
+// même couleur : un sol jaune ferait un désert.
+const PLOUGHED = [0.25, 0.125, 0.055];
 
 const terrain = {
   ...defaultTheme.terrain,
   cropAlbedo: {
     ...defaultTheme.terrain.cropAlbedo,
-    wheat: [0.2, 0.125, 0.06],
+    plough: PLOUGHED,
+    wheat: PLOUGHED,
+    wheatStubble: PLOUGHED,
     maize: [0.3, 0.22, 0.06],
     sunflower: [0.2, 0.15, 0.05],
     rapeseed: [0.075, 0.15, 0.025],
@@ -65,7 +72,6 @@ const terrain = {
 
 const cropStages = {
   wheat: [['wheat', 1 / 3], ['wheatStubble', 1 / 3], ['wheatSprouts', 1 / 3]],
-  sunflower: [['sunflower', 0.75], ['sunflowerResidue', 0.25]],
 };
 
 // Facteurs sur le feuillage des haies, par plage : vert olive, vert éteint,

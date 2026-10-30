@@ -29,7 +29,7 @@ test("à l'automne, le blé se partage entre labour, chaume et levée", () => {
   assert.equal(cropStageFor('wheat', 0.5, stages), 'wheatStubble');
   assert.equal(cropStageFor('wheat', 0.9, stages), 'wheatSprouts');
   assert.equal(cropStageFor('sunflower', 0.5, stages), 'sunflower');
-  assert.equal(cropStageFor('sunflower', 0.9, stages), 'sunflowerResidue');
+  assert.equal(cropStageFor('sunflower', 0.9, stages), 'sunflower');
   assert.equal(cropStageFor('maize', 0.9, stages), 'maize');
   const theme = resolveTheme(autumnTheme);
   for (const [, mix] of Object.entries(stages)) {
