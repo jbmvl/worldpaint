@@ -113,6 +113,9 @@ export const FURNITURE_LIMITS = {
   vehicles: 40,
 };
 
+/** Formes posées à même un champ, qui suivent le grain low poly du sol (`createFurnitureGroundedMaterial`). */
+export const GROUND_GRAIN_ITEMS = new Set(['pumpkin']);
+
 /** Formes ponctuelles du catalogue, dans l'ordre où on les instancie. */
 export const POINT_ITEMS = [
   'streetLamp',
@@ -137,6 +140,7 @@ export const POINT_ITEMS = [
   'lavoir',
   'hayBaleRound',
   'hayBaleSquare',
+  'pumpkin',
   'woodPile',
   'barn',
   'silo',

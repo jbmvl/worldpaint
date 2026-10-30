@@ -28,6 +28,7 @@ import { srgb } from '../core/color.js';
 import { defaultTheme } from '../themes/default.js';
 import { Kit, polygonPoints, ROTOR_SPIN_ATTRIBUTE } from '../models/kit.js';
 import { radioMast } from '../models/radioMast.js';
+import { installGroundGrain } from '../materials/foliageMaterial.js';
 
 export { Kit, polygonPoints, ROTOR_SPIN_ATTRIBUTE };
 
@@ -645,6 +646,31 @@ export const FURNITURE_BUILDERS = {
       k.box({ width: 0.16, height: 2.5, depth: 0.16, x, y: 0.55, z, color: C.wood });
     }
     k.gableRoof({ width: 5, depth: 3, height: 1.1, y: 3.05, color: C.tile, gableColor: C.tile });
+    return k;
+  },
+
+  /** Citrouille posée au sol : côtes en alternance de rayon, pédoncule court. */
+  pumpkin(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    const sides = 12;
+    const rings = [[0, 0.16], [0.08, 0.27], [0.2, 0.3], [0.32, 0.24], [0.38, 0.1]];
+    const grid = rings.map(([y, r]) =>
+      Array.from({ length: sides }, (_, i) => {
+        const angle = (i / sides) * Math.PI * 2;
+        const rib = i % 2 ? 0.86 : 1;
+        return [Math.cos(angle) * r * rib, y, Math.sin(angle) * r * rib];
+      })
+    );
+    for (let r = 0; r < rings.length - 1; r++) {
+      for (let i = 0; i < sides; i++) {
+        const j = (i + 1) % sides;
+        k.quad(grid[r][i], grid[r][j], grid[r + 1][j], grid[r + 1][i], i % 2 ? C.pumpkinDark : C.pumpkin);
+      }
+    }
+    const top = [0, 0.36, 0];
+    const last = grid[rings.length - 1];
+    for (let i = 0; i < sides; i++) k.tri(last[i], last[(i + 1) % sides], top, C.pumpkinDark);
+    k.cylinder({ radiusBottom: 0.035, radiusTop: 0.025, height: 0.1, radial: 5, y: 0.34, color: C.pumpkinStem });
     return k;
   },
 
@@ -1821,6 +1847,22 @@ export function createFurnitureGeometries(
 export function createFurnitureMaterial(THREE) {
   const material = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
   material.name = 'furniture';
+  return material;
+}
+
+/**
+ * Matériau des petites pièces posées à même un champ (`GROUND_GRAIN_ITEMS`) :
+ * elles suivent le grain low poly du sol, comme l'herbe, sans quoi la bosse du
+ * terrain les enterre à moitié. Cellule et amplitude de la matière sous elles.
+ * @param {Object} THREE
+ * @param {{grainCellM:number, grainAmplitudeM:number}} surface Entrée de `SURFACE_LOOK`.
+ */
+export function createFurnitureGroundedMaterial(THREE, surface) {
+  const material = createFurnitureMaterial(THREE);
+  material.name = 'furniture-grounded';
+  material.onBeforeCompile = (shader) =>
+    installGroundGrain(shader, THREE, { cellM: surface.grainCellM, amplitudeM: surface.grainAmplitudeM });
+  material.customProgramCacheKey = () => `furniture-grounded-${surface.grainCellM}-${surface.grainAmplitudeM}`;
   return material;
 }
 

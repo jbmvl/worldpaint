@@ -374,6 +374,7 @@ export const CROP_KINDS = [
   'wheatStubble',
   'wheatSprouts',
   'sunflowerResidue',
+  'coverCrop',
 ];
 
 /**
@@ -389,11 +390,11 @@ export const CROP_STAGE_OF = {
 };
 
 /**
- * Pas entre deux identifiants dans le canal vert : douze cultures tiennent à
- * 21 (12 × 21 = 252), avec trois de marge à l'arrondi de la texture. Un
- * treizième identifiant exige de baisser le pas.
+ * Pas entre deux identifiants dans le canal vert : treize cultures tiennent à
+ * 19 (13 × 19 = 247), avec huit de marge à l'arrondi de la texture. Un
+ * quatorzième identifiant exige de baisser le pas.
  */
-export const CROP_ID_STEP = 21;
+export const CROP_ID_STEP = 19;
 
 /** Identifiant d'une culture dans la carte, ou 0. Fonction pure. */
 export function cropId(crop) {
@@ -433,10 +434,22 @@ export function cropStageFor(crop, variant, stages = null) {
  *
  * @returns {{item:string, perHectare:number}|null}
  */
-export function scatterFurnitureFor(properties = {}, { crop = null } = {}) {
+export function scatterFurnitureFor(properties = {}, { crop = null, look = null, pumpkins = null } = {}) {
   const klass = properties.class;
   const subclass = properties.subclass;
 
+  // Citrouilles de saison (`theme.furniture.pumpkins`) : sur ce qui se voit au
+  // ras du sol, dans une petite parcelle (`maxHa`), et seulement au bord de la
+  // route (`roadsideM`), où on les voit et où on les vend.
+  if (pumpkins && klass === 'farmland' && pumpkins.looks.includes(look)) {
+    return {
+      item: 'pumpkin',
+      perHectare: pumpkins.perHectare,
+      maxHa: pumpkins.maxHa,
+      perParcel: pumpkins.perParcel,
+      roadsideM: pumpkins.roadsideM,
+    };
+  }
   if (klass === 'farmland' || crop) {
     // Un champ en culture n'a rien à semer par-dessus (couvert par `cropLayer`).
     if (crop && crop !== 'plough') return null;

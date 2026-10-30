@@ -111,6 +111,7 @@ export const LABEL_FURNITURE = {
   fountainWallace: 'fontaine (grande ville)',
   lavoir: 'lavoir',
   hayBaleRound: 'botte ronde',
+  pumpkin: 'citrouille',
   hayBaleSquare: 'botte carrée',
   woodPile: 'tas de bois',
   barn: 'grange',
@@ -326,6 +327,7 @@ export const LABEL_CROPS = {
   wheatStubble: 'chaume de blé',
   wheatSprouts: 'blé levé',
   sunflowerResidue: 'résidus de tournesol',
+  coverCrop: 'couvert végétal',
 };
 
 /**

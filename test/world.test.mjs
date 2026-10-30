@@ -10209,13 +10209,14 @@ test('une masse de culture est peinte pour l’élancement auquel elle sera vue'
 test('toute culture qu’un pays peut nommer sait se dessiner', () => {
   // Un pays se reconnaît d'abord à ce qu'il cultive : la lavande d'un plateau
   // de Sault et le colza d'une plaine picarde se voient d'un kilomètre. Mais
-  // rien ne doit être tiré qui ne sache se dessiner — une culture est soit
-  // semée en touffes (`CROP_LOOK`), soit balayée en rangs (`ROW_CROPS`).
+  // rien ne doit être tiré qui ne sache se dessiner — une culture est semée
+  // en touffes (`CROP_LOOK`), balayée en rangs (`ROW_CROPS`), ou n'est qu'une
+  // couleur de sol (`cropAlbedo`), comme le labour et le riz.
   for (const word of Object.keys(FARMING_KINDS)) {
     const crop = cropForFarming(word);
     assert.ok(
-      CROP_LOOK[crop] || ROW_CROPS.has(crop),
-      `${word} → ${crop} n’est ni semé ni balayé`
+      CROP_LOOK[crop] || ROW_CROPS.has(crop) || defaultTheme.terrain.cropAlbedo[crop],
+      `${word} → ${crop} n’est ni semé, ni balayé, ni peint`
     );
   }
 

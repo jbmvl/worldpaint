@@ -18,7 +18,7 @@ import { boundaryForMatrix } from '../../core/regionInterpretation.js';
 import { appendProfile, resamplePath } from '../ribbonGeometry.js';
 import { HEDGE_SAMPLE_M, hedgeFacets } from '../hedgeGeometry.js';
 import { pointInAreas, ringsOf } from '../settlement.js';
-import { clipOutsideCorridor, pushOutsideCorridor } from '../roadCorridor.js';
+import { clipOutsideCorridor, inCorridor, pushOutsideCorridor } from '../roadCorridor.js';
 import { BARBED_WIRE_HEIGHTS, GREENHOUSE_BASE_LENGTH_M } from '../furnitureKit.js';
 import { WOOD_EDGE_REACH_M } from '../../terrain/groundClassMap.js';
 import {
@@ -50,6 +50,8 @@ import { positionSeed, randomAt } from '../../core/groundSeed.js';
 
 /** Portée des rangs de vigne, de lavande et de verger, en mètres (celle du reste du mobilier). */
 export const ROW_CROP_RADIUS_M = FURNITURE_RADIUS_M;
+/** Sel de la taille des citrouilles. */
+const PUMPKIN_SCALE_SALT = 941;
 /** Sel du facettage du feuillage de vigne (`hedgeGeometry.hedgeFacets`) : pas de `style` comme la haie, donc un sel dédié. */
 const VINE_ROW_FACET_SALT = 733;
 /** Sel du facettage du feuillage de lavande — distinct de celui de la vigne, sinon les deux rangs ondulent à l'identique. */
@@ -174,6 +176,7 @@ export function* buildParcelsSteps(layer, context, builtUp) {
       // où se tient l'observateur, s'il y est.
       const probe = !pointInRing(local, centre.x, centre.z) && pointInRing(local, here.x, here.z) ? here : centre;
       let crop = statedCrop(properties) ?? layer.groundClass?.cropAt?.(probe.x, probe.z) ?? null;
+      const look = layer.groundClass?.cropLookAt?.(probe.x, probe.z) ?? null;
 
       // La serre n'a pas de case dans `CROP_KINDS` (déjà pleine) : un champ
       // qui y retombe en labour est retiré du tirage de l'assolement pour
@@ -222,7 +225,7 @@ export function* buildParcelsSteps(layer, context, builtUp) {
       }
 
       if (scattered < FURNITURE_LIMITS.scatter) {
-        scattered += scatterInside(layer, placements, properties, local, centre, variant, steepness, crop);
+        scattered += scatterInside(layer, placements, properties, local, centre, variant, steepness, crop, look);
       }
     }
   };
@@ -617,13 +620,13 @@ export function placeTractor(layer, context, ring, centre, crop, here) {
 }
 
 /** Sème l'intérieur d'une parcelle. @returns {number} objets posés. */
-export function scatterInside(layer, placements, properties, ring, centre, variant, steepness = 0, crop = null) {
+export function scatterInside(layer, placements, properties, ring, centre, variant, steepness = 0, crop = null, look = null) {
   const { frame } = layer.bubble;
-  const rule = scatterFurnitureFor(properties, { crop });
+  const rule = scatterFurnitureFor(properties, { crop, look, pumpkins: layer.theme?.furniture?.pumpkins });
   if (!rule) return 0;
 
   const hectares = ringAreaMeters(ring) / 10000;
-  if (hectares < 0.4) return 0;
+  if (hectares < 0.4 || hectares > (rule.maxHa ?? Infinity)) return 0;
   // Arrondi stochastique : sans lui,
   // `floor` renvoyait zéro pour **toute** parcelle sous le seuil d'un
   // exemplaire plein — pour un troupeau (1,1/ha), tout pré de moins de
@@ -632,13 +635,27 @@ export function scatterInside(layer, placements, properties, ring, centre, varia
   // porte une un peu plus d'une fois sur deux, au lieu de jamais.
   const expected = hectares * rule.perHectare;
   const jitter = randomAt(frame, centre.x, centre.z, 45);
-  const count = Math.min(24, Math.floor(expected + jitter));
+  const count = Math.min(rule.perParcel ?? 24, Math.floor(expected + jitter));
   if (count <= 0) return 0;
 
   const seed = positionSeed(frame, centre.x, centre.z, 41);
   let placed = 0;
 
   if (rule.item === 'herd') return placeHerd(layer, ring, centre, variant, steepness, count);
+  if (rule.item === 'pumpkin') {
+    for (const spot of layer._filterOffInfra(scatterInRing(ring, count, seed))) {
+      if (!inCorridor(layer._roadIndex, spot.x, spot.z, rule.roadsideM)) continue;
+      layer._place(placements, 'pumpkin', {
+        x: spot.x,
+        z: spot.z,
+        yaw: spot.variant * Math.PI * 2,
+        scale: 0.75 + randomAt(frame, spot.x, spot.z, PUMPKIN_SCALE_SALT) * 0.6,
+      });
+    }
+    // Hors du budget de semis : des centaines de citrouilles en bord de route
+    // priveraient de troupeaux les prés plus loin. Leur plafond est celui de la forme.
+    return 0;
+  }
   if (rule.item === 'woodland') {
     return (
       placeWoodPiles(layer, placements, ring, centre, count) +

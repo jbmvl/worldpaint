@@ -105,7 +105,7 @@ export const TERRAIN_LOOK = {
     // Le colza en fleur, en revanche, est la tache la plus saturée d'un
     // paysage de printemps — plus jaune encore qu'un blé mûr.
     rapeseed: [0.604, 0.522, 0.061],
-    // Vert soutenu de la feuille de riz, calé sur `drawRice` : pas de
+    // Vert soutenu de la feuille de riz : pas de
     // casier ni de diguette (voir `CONTRIBUTING.md`), seulement le
     // feuillage — la lame d'eau, elle, est rendue à part (`cropStandingWater`).
     rice: [0.09, 0.183, 0.081],
@@ -114,6 +114,8 @@ export const TERRAIN_LOOK = {
     wheatStubble: [0.4, 0.3, 0.1],
     wheatSprouts: [0.13, 0.17, 0.05],
     sunflowerResidue: [0.19, 0.14, 0.07],
+    // Couvert d'interculture : le vert d'un pré (`SURFACE_LOOK.grass`).
+    coverCrop: [0.051, 0.135, 0.017],
   },
   /**
    * Lame d'eau par culture, sur le modèle de `standingWater` (`SURFACE_LOOK`)
@@ -429,21 +431,17 @@ export const FOREST_TYPES = [
  * retenus — pas égale entre cultures : une touffe ne représente pas la même
  * chose selon la plante (l'atlas dessine 26 tiges de blé par case, contre 4
  * pieds de maïs), donc la densité est baissée d'autant.
+ *
+ * Une culture absente n'est qu'une couleur de sol (`cropAlbedo`) : ce qui est
+ * ras — labour, riz, chaume, levée — ne porte pas de touffes.
  */
 export const CROP_LOOK = {
   wheat: { atlas: 'wheat', height: 0.95, spread: 0.22, density: 1, tint: [1.02, 0.94, 0.62] },
   maize: { atlas: 'maize', height: 2.4, spread: 0.15, density: 0.22, tint: [0.82, 1, 0.62] },
   sunflower: { atlas: 'sunflower', height: 1.7, spread: 0.2, density: 0.3, tint: [0.96, 0.98, 0.6] },
-  plough: { atlas: 'stubble', height: 0.3, spread: 0.22, density: 0.72, tint: [1, 0.94, 0.74] },
   // Le colza : une masse serrée et haute, la seule culture dont la fleur, et
   // non le feuillage, fait la couleur du champ.
   rapeseed: { atlas: 'rapeseed', height: 1.3, spread: 0.24, density: 0.85, tint: [1.02, 0.98, 0.56] },
-  // Le riz : des touffes basses et serrées, sans épi visible à cette échelle.
-  rice: { atlas: 'rice', height: 0.55, spread: 0.22, density: 0.9, tint: [0.86, 1.04, 0.82] },
-  // États de saison, peints seulement par un thème qui les nomme (`cropStages`).
-  wheatStubble: { atlas: 'stubble', height: 0.22, spread: 0.22, density: 0.9, tint: [1.22, 1.04, 0.62] },
-  wheatSprouts: { atlas: 'rice', height: 0.14, spread: 0.22, density: 0.8, tint: [0.92, 1.12, 0.68] },
-  sunflowerResidue: { atlas: 'stubble', height: 0.45, spread: 0.22, density: 0.35, tint: [0.62, 0.52, 0.4] },
 };
 
 // --- Le sol d'un pays ---------------------------------------------------------
@@ -1438,6 +1436,9 @@ export const FURNITURE_COLORS = {
   plaster: srgb('#cdc4b4'),
   hay: srgb('#c9ac68'),
   hayDark: srgb('#9b8148'),
+  pumpkin: srgb('#d9731f'),
+  pumpkinDark: srgb('#a9521a'),
+  pumpkinStem: srgb('#6a6a32'),
   leaf: srgb('#4a6b34'),
   leafDark: srgb('#33502a'),
   leafPale: srgb('#63834a'),
@@ -1687,7 +1688,7 @@ export const defaultTheme = Object.freeze({
   works: WORKS_STYLES,
   streets: STREET_LOOK,
   water: { waterways: WATERWAY_CLASSES, riparianBufferM: RIPARIAN_BUFFER_M },
-  furniture: { placeNameSign: PLACE_NAME_SIGN, colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES, hedgeTints: null, lighthouse: LIGHTHOUSE_LIGHT, radioMast: RADIO_MAST, obstacleLight: OBSTACLE_LIGHT, ghost: CEMETERY_GHOST },
+  furniture: { placeNameSign: PLACE_NAME_SIGN, colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES, hedgeTints: null, pumpkins: null, lighthouse: LIGHTHOUSE_LIGHT, radioMast: RADIO_MAST, obstacleLight: OBSTACLE_LIGHT, ghost: CEMETERY_GHOST },
   life: LIFE_COLORS,
   fauna: { colors: FAUNA_COLORS, coats: FAUNA_COATS },
   sky: SKY_PALETTE,

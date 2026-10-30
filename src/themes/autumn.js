@@ -5,7 +5,8 @@
  * leur vert : ce contraste fait lire la saison de loin.
  *
  * D'une parcelle à l'autre, une même culture n'en est pas au même point
- * (`cropStages`) : un blé est labouré, en chaume ou déjà levé.
+ * (`cropStages`) : un blé moissonné est déjà levé, ou porte un couvert
+ * d'interculture.
  *
  * Ce n'est qu'une surcharge de `defaultTheme` passée à `resolveTheme` ; aucune
  * couche ne sait quelle saison il fait. Les teintes multiplient `volume.leaf`,
@@ -41,14 +42,13 @@ const surfaces = {
 
 // Fin octobre : blé moissonné, tournesol et maïs secs sur pied (le tournesol
 // garde sa silhouette, roussie), colza semé fin août qui ne fait encore que
-// des rosettes vertes au ras du sol.
-// Le blé labouré a les tiges du labour ; ses autres états sont dans `cropStages`.
+// des rosettes au ras du sol. Blé moissonné et colza n'ont donc pas de
+// touffes : ce sont des couleurs de sol.
+const { wheat: _wheat, rapeseed: _rapeseed, ...standing } = defaultTheme.crops;
 const crops = {
-  ...defaultTheme.crops,
-  wheat: { ...defaultTheme.crops.plough },
+  ...standing,
   maize: { ...defaultTheme.crops.maize, tint: [1.45, 0.82, 0.42] },
   sunflower: { ...defaultTheme.crops.sunflower, tint: [0.75, 0.58, 0.45] },
-  rapeseed: { ...defaultTheme.crops.rapeseed, atlas: 'rice', height: 0.25, tint: [0.9, 1.05, 0.8] },
 };
 
 // Terre labourée à peine rougie ; le champ de blé moissonné ou en chaume a la
@@ -65,19 +65,26 @@ const terrain = {
     maize: [0.3, 0.22, 0.06],
     sunflower: [0.2, 0.15, 0.05],
     rapeseed: [0.075, 0.15, 0.025],
-    vineyard: [0.3, 0.2, 0.05],
+    // Rangs jaunissants sur un inter-rang enherbé : un vert olive, pas l'ocre
+    // d'une feuille seule, qui couvrait de moutarde les pays de vigne.
+    vineyard: [0.1, 0.125, 0.03],
+    coverCrop: surfaces.grass.albedo,
     orchard: [0.2, 0.18, 0.05],
   },
 };
 
+// Le blé moissonné ne reste pas terre nue : couvert d'interculture ou levée.
+// Le labour reste celui des champs que l'assolement dit labourés.
 const cropStages = {
-  wheat: [['wheat', 1 / 3], ['wheatStubble', 1 / 3], ['wheatSprouts', 1 / 3]],
+  wheat: [['coverCrop', 2 / 3], ['wheatSprouts', 1 / 3]],
 };
 
 // Facteurs sur le feuillage des haies, par plage : vert olive, vert éteint,
-// jaune terne, et quelques touches orangées.
+// jaune terne, et quelques touches orangées. Des citrouilles dans les petites
+// parcelles au ras du sol, à moins de quarante mètres de la route.
 const furniture = {
   ...defaultTheme.furniture,
+  pumpkins: { maxHa: 1.5, perHectare: 120, perParcel: 180, roadsideM: 40, looks: ['coverCrop', 'plough', 'wheatSprouts'] },
   hedgeTints: [
     [[1.12, 1.0, 0.55], 0.35],
     [[0.95, 0.95, 0.8], 0.2],

@@ -292,7 +292,7 @@ function drawMass(ctx, size, random, paint, passes = 5, aspect = 1) {
 }
 
 /**
- * Atlas des cultures : blé, maïs, tournesol, chaume, lavande, colza. Des
+ * Atlas des cultures : blé, maïs, tournesol, lavande, colza. Des
  * touffes en panneaux croisés (même matériau et même vent que le feuillage), à
  * l'échelle de la plante — `cropLayer` applique la hauteur, ici on ne dessine
  * que la silhouette.
@@ -301,10 +301,9 @@ export const CROP_ATLAS_COLS = 4;
 export const CROP_ATLAS_ROWS = 4;
 
 /**
- * Les six cultures dessinées, puis leurs masses agrégées (`drawMass`,
- * `cropLayer`), pour rester identifiables à cent mètres. Douze cases pour une
- * grille 4×4 (les quatre dernières restent vides) ; le décalage d'atlas se lit
- * par `CROP_VARIANTS.indexOf`.
+ * Les cultures dessinées, puis leurs masses agrégées (`drawMass`,
+ * `cropLayer`), pour rester identifiables à cent mètres. Dix cases dans
+ * une grille 4×4 ; le décalage d'atlas se lit par `CROP_VARIANTS.indexOf`.
  *
  * Sans la lavande et le colza, une plaine de Beauce et un plateau de Sault
  * portent exactement les mêmes champs, et l'assolement du pays ne se voit
@@ -314,17 +313,13 @@ export const CROP_VARIANTS = [
   'wheat',
   'maize',
   'sunflower',
-  'stubble',
   'lavender',
   'rapeseed',
-  'rice',
   'wheatMass',
   'maizeMass',
   'sunflowerMass',
-  'stubbleMass',
   'lavenderMass',
   'rapeseedMass',
-  'riceMass',
 ];
 
 export const CROP_ATLAS_OFFSETS = atlasOffsets(CROP_ATLAS_COLS, CROP_ATLAS_ROWS);
@@ -416,20 +411,6 @@ function drawSunflower(ctx, size, random) {
   }
 }
 
-/** Chaume : ce qui reste après la moisson — des tiges coupées net. */
-function drawStubble(ctx, size, random) {
-  for (let i = 0; i < 30; i++) {
-    const x = size * random();
-    const height = size * (0.12 + random() * 0.16);
-    ctx.strokeStyle = `rgb(${182 + random() * 34 | 0}, ${162 + random() * 28 | 0}, ${104 + random() * 26 | 0})`;
-    ctx.lineWidth = Math.max(1, size * 0.012);
-    ctx.beginPath();
-    ctx.moveTo(x, size);
-    ctx.lineTo(x + (random() - 0.5) * size * 0.04, size - height);
-    ctx.stroke();
-  }
-}
-
 /**
  * Lavande : des touffes en dôme, gris-vert, d'où partent des hampes fines. La
  * couleur du champ tient tout entière aux épis — la touffe seule est un buis.
@@ -499,42 +480,16 @@ function drawRapeseed(ctx, size, random) {
   }
 }
 
-/**
- * Riz : des pieds repiqués en petites touffes, bien plus bas qu'un blé et sans
- * épi — c'est le vert soutenu de la feuille, pas une couleur de grain, qui
- * fait la rizière.
- */
-function drawRice(ctx, size, random) {
-  for (let i = 0; i < 9; i++) {
-    const baseX = size * (0.08 + random() * 0.84);
-    const baseY = size * (0.97 + random() * 0.03);
-
-    for (let b = 0; b < 6; b++) {
-      const height = size * (0.3 + random() * 0.24);
-      const lean = size * (random() - 0.5) * 0.2;
-
-      ctx.strokeStyle = `rgb(${64 + random() * 28 | 0}, ${146 + random() * 34 | 0}, ${64 + random() * 26 | 0})`;
-      ctx.lineWidth = Math.max(1, size * 0.008);
-      ctx.beginPath();
-      ctx.moveTo(baseX, baseY);
-      ctx.quadraticCurveTo(baseX + lean * 0.5, baseY - height * 0.6, baseX + lean, baseY - height);
-      ctx.stroke();
-    }
-  }
-}
-
 const CROP_PAINTERS = {
   wheat: drawWheat,
   maize: drawMaize,
   sunflower: drawSunflower,
-  stubble: drawStubble,
   lavender: drawLavender,
   rapeseed: drawRapeseed,
-  rice: drawRice,
 };
 
 /** Nombre de sous-touffes d'une masse, par culture (une case ne contient pas le même nombre de plantes selon la culture). */
-const CROP_MASS_PASSES = { wheat: 3, maize: 6, sunflower: 6, stubble: 3, lavender: 4, rapeseed: 3, rice: 4 };
+const CROP_MASS_PASSES = { wheat: 3, maize: 6, sunflower: 6, lavender: 4, rapeseed: 3 };
 
 /**
  * Élancement du panneau sur lequel chaque masse sera plaquée : la largeur que
@@ -550,10 +505,8 @@ export const CROP_MASS_ASPECT = {
   wheat: 2.8,
   maize: 1.9,
   sunflower: 2.6,
-  stubble: 2.8,
   lavender: 3.6,
   rapeseed: 3.1,
-  rice: 2.8,
 };
 
 /**

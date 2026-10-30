@@ -185,10 +185,19 @@ c'est l'assolement français par défaut (`DEFAULT_CROP_MIX`).
 
 Un thème de saison peut montrer une culture à un autre stade, parcelle par
 parcelle (`cropStages`, tiré au centre de la parcelle par `cropStageFor`) : à
-l'automne, un blé est labouré, en chaume ou déjà levé, un tournesol en terre
-préparée ou couvert de ses tiges brisées. Ces stades ont leur identifiant
-(`CROP_STAGE_OF`), donc leur couleur et leurs tiges, mais la parcelle reste du
-blé ou du tournesol pour tout le reste (clôture, tracteur, étiquette).
+l'automne, un blé moissonné est déjà levé, ou porte un couvert d'interculture
+du vert des prés. Les petites parcelles (moins d'un hectare et demi) au ras du
+sol — couvert, levée, labour — portent des citrouilles, seulement à moins de
+quarante mètres de la route (`theme.furniture.pumpkins`, semées par
+`scatterInside`). Un stade
+(`CROP_STAGE_OF` : chaume, levée, résidus) reste la culture de sa parcelle pour
+tout le reste (clôture, tracteur, étiquette) ; le couvert est une culture à
+part entière.
+
+Ce qui est ras n'a pas de touffes : labour, riz, chaume, levée, couvert, et à
+l'automne le blé moissonné et le colza, ne sont qu'une couleur de sol
+(`cropAlbedo`). Seules les cultures sur pied (`CROP_LOOK`) sont semées par
+`cropLayer`.
 
 Deux sous-classes court-circuitent le tirage : `vineyard` donne une vigne,
 `orchard`/`plant_nursery` un verger. Ces deux-là, et la lavande avec elles,

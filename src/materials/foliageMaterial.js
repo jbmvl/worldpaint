@@ -41,6 +41,88 @@ export const ATLAS_ATTRIBUTE = 'aAtlasOffset';
 export const GROUND_GRAIN_ATTRIBUTE = 'aGroundGrain';
 
 /**
+ * Fait suivre à un objet instancié posé au sol le grain low poly du terrain
+ * (`terrain/lowPolyGrain.js`) : l'instance entière se décale de la bosse lue à
+ * son ancrage, sans se déformer. À appeler dans `onBeforeCompile`, avant tout
+ * autre ajout à `begin_vertex`.
+ * @param {Object} shader Shader reçu par `onBeforeCompile`.
+ * @param {Object} THREE
+ * @param {Object} [options]
+ * @param {boolean} [options.perInstance] Lit cellule et amplitude dans
+ *        `GROUND_GRAIN_ATTRIBUTE` plutôt que dans un réglage unique.
+ * @param {number} [options.cellM]
+ * @param {number} [options.amplitudeM]
+ */
+export function installGroundGrain(
+  shader,
+  THREE,
+  { perInstance = false, cellM = LOW_POLY_GRAIN_DEFAULTS.cellM, amplitudeM = LOW_POLY_GRAIN_DEFAULTS.amplitudeM } = {}
+) {
+  shader.uniforms.uGroundGrainCellM = { value: cellM };
+  shader.uniforms.uGroundGrainAmplitudeM = { value: amplitudeM };
+  shader.uniforms.uGroundGrainFadeM = {
+    value: new THREE.Vector2(LOW_POLY_GRAIN_DEFAULTS.fadeStartM, LOW_POLY_GRAIN_DEFAULTS.fadeEndM),
+  };
+  // Câblé avant le vent : deux `.replace('#include <begin_vertex>', ...)`
+  // successifs s'empilent dans l'ordre inverse de leur appel (le dernier
+  // appelé se retrouve collé juste après l'inclusion, donc en tête). En
+  // le posant ici, ce bloc s'exécute **après** celui du vent dans le
+  // shader final, qui lit alors la hauteur d'origine du panneau — sans
+  // quoi le décalage de sol, ajouté à `transformed.y` avant le vent,
+  // changerait légèrement l'amplitude de balancement calculée sur `y²`.
+  shader.vertexShader = shader.vertexShader
+    .replace(
+      '#include <common>',
+      `#include <common>
+       uniform float uGroundGrainCellM;
+       uniform float uGroundGrainAmplitudeM;
+       uniform vec2 uGroundGrainFadeM;
+       ${perInstance ? `attribute vec2 ${GROUND_GRAIN_ATTRIBUTE};` : ''}
+       ${LOW_POLY_GRAIN_GLSL}`
+    )
+    .replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+       {
+         // Suit le grain low poly du sol (voir terrain/lowPolyGrain.js) :
+         // décalage lu à l'ancrage au sol de l'instance, pas sommet par
+         // sommet — le panneau se translate en bloc, il ne se déforme pas.
+         #ifdef USE_INSTANCING
+           vec2 groundAnchor = vec2(instanceMatrix[3][0], instanceMatrix[3][2]);
+           float groundScale = length(instanceMatrix[1].xyz);
+         #else
+           vec2 groundAnchor = vec2(0.0);
+           float groundScale = 1.0;
+         #endif
+         vec3 groundWorldPos = (modelMatrix * vec4(groundAnchor.x, 0.0, groundAnchor.y, 1.0)).xyz;
+         float groundFade = lowPolyFade(groundWorldPos, cameraPosition, uGroundGrainFadeM.x, uGroundGrainFadeM.y);
+         // Par instance (herbe) : la matière lue sous chaque touffe par
+         // l'appelant, au moment du semis — pas un second échantillonnage
+         // de la carte de classes ici. Sinon, le réglage unique du sol.
+         ${
+           perInstance
+             ? `vec2 groundGrain = ${GROUND_GRAIN_ATTRIBUTE};`
+             : `vec2 groundGrain = vec2(uGroundGrainCellM, uGroundGrainAmplitudeM);`
+         }
+         // Le bruit se lit dans le même repère local que le terrain. Sa
+         // signature choisit le plan de projection avec une normale : ici
+         // le sol est horizontal, donc le plan xz est retenu.
+         vec3 groundLocalPos = vec3(groundAnchor.x, 0.0, groundAnchor.y);
+         float groundOffset = lowPolyBump(
+           groundLocalPos,
+           vec3(0.0, 1.0, 0.0),
+           groundGrain.x,
+           groundGrain.y
+         ) * groundFade;
+         // Ramené à l'échelle de l'instance : le décalage voulu est en
+         // mètres du monde, transformed.y est en unité du panneau, et
+         // l'instance le remultiplie par sa propre hauteur.
+         transformed.y += groundOffset / max(groundScale, 1e-4);
+       }`
+    );
+}
+
+/**
  * Inclinaison de la normale du feuillage vers la caméra, pour les lampes
  * proches seulement. 0,85 vaut environ 40°.
  */
@@ -161,70 +243,7 @@ export function createFoliageMaterial({
   material.userData.wind = windUniforms;
 
   material.onBeforeCompile = (shader) => {
-    if (groundLowPoly) {
-      shader.uniforms.uGroundGrainCellM = { value: LOW_POLY_GRAIN_DEFAULTS.cellM };
-      shader.uniforms.uGroundGrainAmplitudeM = { value: LOW_POLY_GRAIN_DEFAULTS.amplitudeM };
-      shader.uniforms.uGroundGrainFadeM = {
-        value: new THREE.Vector2(LOW_POLY_GRAIN_DEFAULTS.fadeStartM, LOW_POLY_GRAIN_DEFAULTS.fadeEndM),
-      };
-      // Câblé avant le vent : deux `.replace('#include <begin_vertex>', ...)`
-      // successifs s'empilent dans l'ordre inverse de leur appel (le dernier
-      // appelé se retrouve collé juste après l'inclusion, donc en tête). En
-      // le posant ici, ce bloc s'exécute **après** celui du vent dans le
-      // shader final, qui lit alors la hauteur d'origine du panneau — sans
-      // quoi le décalage de sol, ajouté à `transformed.y` avant le vent,
-      // changerait légèrement l'amplitude de balancement calculée sur `y²`.
-      shader.vertexShader = shader.vertexShader
-        .replace(
-          '#include <common>',
-          `#include <common>
-           uniform float uGroundGrainCellM;
-           uniform float uGroundGrainAmplitudeM;
-           uniform vec2 uGroundGrainFadeM;
-           ${groundGrainPerInstance ? `attribute vec2 ${GROUND_GRAIN_ATTRIBUTE};` : ''}
-           ${LOW_POLY_GRAIN_GLSL}`
-        )
-        .replace(
-          '#include <begin_vertex>',
-          `#include <begin_vertex>
-           {
-             // Suit le grain low poly du sol (voir terrain/lowPolyGrain.js) :
-             // décalage lu à l'ancrage au sol de l'instance, pas sommet par
-             // sommet — le panneau se translate en bloc, il ne se déforme pas.
-             #ifdef USE_INSTANCING
-               vec2 groundAnchor = vec2(instanceMatrix[3][0], instanceMatrix[3][2]);
-               float groundScale = length(instanceMatrix[1].xyz);
-             #else
-               vec2 groundAnchor = vec2(0.0);
-               float groundScale = 1.0;
-             #endif
-             vec3 groundWorldPos = (modelMatrix * vec4(groundAnchor.x, 0.0, groundAnchor.y, 1.0)).xyz;
-             float groundFade = lowPolyFade(groundWorldPos, cameraPosition, uGroundGrainFadeM.x, uGroundGrainFadeM.y);
-             // Par instance (herbe) : la matière lue sous chaque touffe par
-             // l'appelant, au moment du semis — pas un second échantillonnage
-             // de la carte de classes ici. Sinon, le réglage unique du sol.
-             ${
-               groundGrainPerInstance
-                 ? `vec2 groundGrain = ${GROUND_GRAIN_ATTRIBUTE};`
-                 : `vec2 groundGrain = vec2(uGroundGrainCellM, uGroundGrainAmplitudeM);`
-             }
-             // Le bruit se lit dans le même repère local que le terrain. Sa
-             // signature choisit le plan de projection avec une normale : ici
-             // le sol est horizontal, donc le plan xz est retenu.
-             vec3 groundLocalPos = vec3(groundAnchor.x, 0.0, groundAnchor.y);
-             float groundOffset = lowPolyBump(
-               groundLocalPos,
-               vec3(0.0, 1.0, 0.0),
-               groundGrain.x,
-               groundGrain.y
-             ) * groundFade;
-             // Ramené à l'échelle de l'instance : le décalage voulu est en
-             // mètres du monde, transformed.y est en unité du panneau, et
-             // l'instance le remultiplie par sa propre hauteur.
-             transformed.y += groundOffset / max(groundScale, 1e-4);
-           }`
-        );
-    }
+    if (groundLowPoly) installGroundGrain(shader, THREE, { perInstance: groundGrainPerInstance });
     if (windUniforms) {
       shader.uniforms.uWindTime = windUniforms.uWindTime;
       shader.uniforms.uWindDirection = windUniforms.uWindDirection;

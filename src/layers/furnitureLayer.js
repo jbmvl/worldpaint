@@ -70,6 +70,7 @@ import {
   createFurnitureMaterial,
   createFurnitureRotorMaterial,
   createFurnitureGreenhouseMaterial,
+  createFurnitureGroundedMaterial,
   advanceFurnitureRotor,
   createGlowMaterial,
   createGlowGeometry,
@@ -90,6 +91,7 @@ import {
   FURNITURE_SINK_M,
   LINEAR_KINDS,
   POINT_ITEMS,
+  GROUND_GRAIN_ITEMS,
 } from './furniture/catalog.js';
 import { buildRoadsideSteps } from './furniture/roadsideFurniture.js';
 import { buildCrossings, buildJunctionSigns, trafficPhaseAt } from './furniture/junctionFurniture.js';
@@ -231,6 +233,7 @@ export class FurnitureLayer {
     // Matériau à part pour la seule pièce qui doit se voir au travers —
     // même raison, voir `createFurnitureGreenhouseMaterial`.
     this.greenhouseMaterial = createFurnitureGreenhouseMaterial(THREE);
+    this.groundedMaterial = createFurnitureGroundedMaterial(THREE, this.theme.surfaces.farmland);
     this.trees = [];
     /** Portées des lignes aériennes, repère de scène — voir `appendOverheadLine`. */
     this.wireSpans = [];
@@ -1084,7 +1087,13 @@ export class FurnitureLayer {
       // seule la serre porte le matériau translucide (`createFurnitureGreenhouseMaterial`)
       // — sa bâche, contrairement à toute autre pièce du catalogue, doit se voir au travers.
       const material =
-        item === 'windTurbine' ? this.rotorMaterial : item === 'greenhouse' ? this.greenhouseMaterial : this.material;
+        item === 'windTurbine'
+          ? this.rotorMaterial
+          : item === 'greenhouse'
+            ? this.greenhouseMaterial
+            : GROUND_GRAIN_ITEMS.has(item)
+              ? this.groundedMaterial
+              : this.material;
       mesh = new THREE.InstancedMesh(this.geometries[item], material, capacity);
       mesh.name = `furniture-${item}`;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -1548,6 +1557,7 @@ export class FurnitureLayer {
     this._sightWarm?.geometry.dispose();
     this.rotorMaterial.dispose();
     this.greenhouseMaterial.dispose();
+    this.groundedMaterial.dispose();
     this._turbines = [];
     this._mastsForLights = [];
     this.scene.remove(this.group);
