@@ -49,7 +49,7 @@ import { installTunnelMouths } from './tunnelMouths.js';
  * (`standingWater`) y gagne des flaques, découpées par un bruit et rendues comme
  * l'eau — le même bruit, relu côté CPU par `poolShareAt` (`groundClassMap.js`),
  * pour que l'herbe et le sous-bois sachent où elle affleure. Une culture peut
- * porter la même notion sur son propre axe (`cropStandingWater`, `uCropWater`) :
+ * porter la même notion sur son propre axe (`cropStandingWater`, w de `uCropLook`) :
  * c'est la lame d'eau d'une rizière, indépendante de la matière `farmland`
  * qu'elle recouvre.
  *
@@ -313,7 +313,9 @@ export class TerrainMaterialFactory {
 
     CROP_KINDS.forEach((kind, i) => {
       const base = this.look.cropAlbedo[kind] || this.surfaces.farmland.albedo;
-      this._uniforms.uCropAlbedo.value[i].set(...scale(base, wash.farmland));
+      const uniform = this._uniforms.uCropLook.value[i];
+      // La lame d'eau (w) ne dépend pas du pays : elle reste.
+      uniform.set(...scale(base, wash.farmland), uniform.w);
     });
   }
 
@@ -352,17 +354,21 @@ export class TerrainMaterialFactory {
           (kind) => new THREE.Vector3(...(this.surfaces[kind]?.albedo || FALLBACK_ALBEDO))
         ),
       },
-      // Part du sol sous l'eau, par matière, dans l'ordre des identifiants.
-      uSurfaceWater: {
-        value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.standingWater ?? 0),
-      },
-      // Amplitude de la variation macro par matière (1 = comportement neutre)
-      // et plancher de sa rampe de distance (0 = éteinte à portée d'un semis).
-      uSurfaceMacro: {
-        value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.macro ?? 1),
-      },
-      uSurfaceMacroNear: {
-        value: SURFACE_KINDS.map((kind) => this.surfaces[kind]?.macroNear ?? 0),
+      // Par matière, dans l'ordre des identifiants : (part du sol sous l'eau,
+      // amplitude de la variation macro — 1 = neutre —, plancher de sa rampe
+      // de distance — 0 = éteinte à portée d'un semis). Un seul vecteur par
+      // matière : chaque tableau de flottants coûte une ligne entière par
+      // entrée, et le fragment shader du sol frôle le plafond des GPU mobiles
+      // (256 vecteurs sur Adreno, lumières comprises).
+      uSurfaceTerms: {
+        value: SURFACE_KINDS.map(
+          (kind) =>
+            new THREE.Vector3(
+              this.surfaces[kind]?.standingWater ?? 0,
+              this.surfaces[kind]?.macro ?? 1,
+              this.surfaces[kind]?.macroNear ?? 0
+            )
+        ),
       },
       // Plaques d'une seconde couleur dans une matière (`patch`) : la couleur,
       // et dans w sa force (0 = aucune plaque).
@@ -395,16 +401,16 @@ export class TerrainMaterialFactory {
       uSurfaceOrigin: { value: new THREE.Vector2(0, 0) },
       uSurfaceSize: { value: 1 },
       uSurfaceEnabled: { value: this.groundClass ? 1 : 0 },
-      uCropAlbedo: {
+      // Par culture : l'albédo, et dans w la lame d'eau, sur le même principe
+      // que celle des matières mais pour le second axe — zéro partout sauf le riz.
+      uCropLook: {
         value: CROP_KINDS.map(
           (kind) =>
-            new THREE.Vector3(...(look.cropAlbedo[kind] || this.surfaces.farmland.albedo))
+            new THREE.Vector4(
+              ...(look.cropAlbedo[kind] || this.surfaces.farmland.albedo),
+              look.cropStandingWater?.[kind] ?? 0
+            )
         ),
-      },
-      // Lame d'eau par culture, sur le même principe que `uSurfaceWater` mais
-      // pour le second axe : zéro partout sauf le riz.
-      uCropWater: {
-        value: CROP_KINDS.map((kind) => look.cropStandingWater?.[kind] ?? 0),
       },
       // L'eau ne se mélange pas aux autres matières : là où la carte le dit,
       // elle remplace tout — couleur, grain, relief.
@@ -501,12 +507,9 @@ export class TerrainMaterialFactory {
            uniform float uSurfaceEnabled;
            uniform float uUnclassified;
            uniform vec2 uEdgeJitter;
-           uniform vec3 uCropAlbedo[${CROP_KINDS.length}];
-           uniform float uCropWater[${CROP_KINDS.length}];
+           uniform vec4 uCropLook[${CROP_KINDS.length}];
            uniform vec3 uSurfaceAlbedo[${SURFACE_KINDS.length}];
-           uniform float uSurfaceWater[${SURFACE_KINDS.length}];
-           uniform float uSurfaceMacro[${SURFACE_KINDS.length}];
-           uniform float uSurfaceMacroNear[${SURFACE_KINDS.length}];
+           uniform vec3 uSurfaceTerms[${SURFACE_KINDS.length}];
            uniform vec4 uSurfacePatch[${SURFACE_KINDS.length}];
            // Part de plaque au fragment, decidee une fois avant de lire le sol.
            float gPatch = 0.0;
@@ -579,17 +582,17 @@ export class TerrainMaterialFactory {
              for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
                if (float(i) == id) {
                  albedo = mix(uSurfaceAlbedo[i - 1], uSurfacePatch[i - 1].rgb, uSurfacePatch[i - 1].a * gPatch);
-                 standing = uSurfaceWater[i - 1];
-                 macroAmp = uSurfaceMacro[i - 1];
-                 macroNear = uSurfaceMacroNear[i - 1];
+                 standing = uSurfaceTerms[i - 1].x;
+                 macroAmp = uSurfaceTerms[i - 1].y;
+                 macroNear = uSurfaceTerms[i - 1].z;
                }
              }
              // La culture remplace la couleur de la terre labouree et sa lame
              // d'eau, et elles seules.
              for (int i = 0; i < ${CROP_KINDS.length}; i++) {
                if (float(i + 1) == label - ${CROP_LABEL_BASE}.0) {
-                 albedo = uCropAlbedo[i];
-                 standing = uCropWater[i];
+                 albedo = uCropLook[i].rgb;
+                 standing = uCropLook[i].a;
                }
              }
              isWater = id == ${WATER_ID}.0 ? 1.0 : 0.0;
@@ -808,9 +811,9 @@ export class TerrainMaterialFactory {
                for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
                  if (float(i) == uUnclassified) {
                    albedo = mix(uSurfaceAlbedo[i - 1], uSurfacePatch[i - 1].rgb, uSurfacePatch[i - 1].a * gPatch);
-                   standing = uSurfaceWater[i - 1];
-                   macroAmp = uSurfaceMacro[i - 1];
-                   macroNear = uSurfaceMacroNear[i - 1];
+                   standing = uSurfaceTerms[i - 1].x;
+                   macroAmp = uSurfaceTerms[i - 1].y;
+                   macroNear = uSurfaceTerms[i - 1].z;
                  }
                }
              }
@@ -942,12 +945,13 @@ export class TerrainMaterialFactory {
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v20-water-reflection';
+    material.customProgramCacheKey = () => 'terrain-bubble-v21-packed-uniforms';
     return material;
   }
 
   dispose() {
     this.material.dispose();
     for (const texture of this.textures) texture.dispose();
+    this.setTunnelMouths.texture?.dispose();
   }
 }

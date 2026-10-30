@@ -309,7 +309,7 @@ couverture, une culture peut porter sa propre lame d'eau
 (`cropStandingWater`, dans le thème). Seul le riz en a une aujourd'hui — une
 lame franche, assez haute pour se voir entre les rangs — et elle remplace
 celle de `farmland` au même texel, sur le même principe de substitution que
-l'albédo de la culture : un tableau d'uniformes de plus (`uCropWater`), pas un
+l'albédo de la culture : la quatrième composante de son albédo (`uCropLook`), pas un
 canal de plus dans la carte des matières.
 
 ## Ce qui n'est pas lu, et ce que ça donne à l'écran

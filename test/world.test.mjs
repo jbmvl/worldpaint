@@ -12788,6 +12788,15 @@ function terrainThreeStub() {
     Vector2: vector(2),
     Vector3: vector(3),
     Vector4: vector(4),
+    RGBAFormat: 'rgba',
+    FloatType: 'float',
+    NearestFilter: 'nearest',
+    DataTexture: class {
+      constructor(data, width, height) {
+        this.image = { data, width, height };
+      }
+      dispose() {}
+    },
     MeshLambertMaterial: class {
       constructor(options) {
         Object.assign(this, options);
@@ -12795,6 +12804,52 @@ function terrainThreeStub() {
     },
   };
 }
+
+test('le fragment shader du sol tient dans le plafond d’uniformes des GPU mobiles', () => {
+  // Les GPU Adreno plafonnent un fragment shader à 256 vecteurs d'uniformes,
+  // lumières de three.js comprises (une centaine avec le soleil, le ciel, sept
+  // projecteurs et six lumières ponctuelles). Au-delà, le programme ne se lie
+  // pas et le sol disparaît — sur ces téléphones seulement. Un tableau de
+  // flottants coûte une ligne entière par entrée : on regroupe en vecteurs.
+  const previousCanvas = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      Object.assign(this, { width, height });
+    }
+    getContext() {
+      return paintingCanvasContext();
+    }
+  };
+  let factory;
+  try {
+    factory = new TerrainMaterialFactory({ THREE: terrainThreeStub() });
+    factory.material.customProgramCacheKey ??= () => '';
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+  }
+  const shader = {
+    uniforms: {},
+    vertexShader: ['#include <common>', '#include <begin_vertex>'].join('\n'),
+    fragmentShader: [
+      '#include <common>',
+      '#include <clipping_planes_fragment>',
+      '#include <map_fragment>',
+      '#include <normal_fragment_begin>',
+    ].join('\n'),
+  };
+  factory.material.onBeforeCompile(shader);
+  const rows = { float: 1, int: 1, bool: 1, vec2: 1, vec3: 1, vec4: 1, mat3: 3, mat4: 4 };
+  let total = 0;
+  for (const [, type, size] of shader.fragmentShader.matchAll(
+    /uniform\s+(?:highp\s+|mediump\s+|lowp\s+)?(\w+)\s+\w+\s*(?:\[\s*(\d+)\s*\])?\s*;/g
+  )) {
+    if (type.startsWith('sampler')) continue;
+    assert.ok(type in rows, `type d'uniforme non compté : ${type}`);
+    total += rows[type] * (Number(size) || 1);
+  }
+  assert.ok(total <= 110, `${total} vecteurs d'uniformes propres au sol (budget 110)`);
+});
 
 test('tout ce que la greffe du sol nomme y est déclaré, étape par étape', () => {
   // Un uniforme employé sans être déclaré ne fait pas rater la greffe : il
@@ -13113,7 +13168,7 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   // Une matière = une couleur : le tableau d'albédos a exactement une entrée
   // par matière, et c'est tout ce qu'il faut pour en ajouter une.
   assert.equal(shader.uniforms.uSurfaceAlbedo.value.length, SURFACE_KINDS.length);
-  assert.equal(shader.uniforms.uSurfaceWater.value.length, SURFACE_KINDS.length, 'une part d’eau libre par matière');
+  assert.equal(shader.uniforms.uSurfaceTerms.value.length, SURFACE_KINDS.length, 'une part d’eau libre par matière');
 
   for (const key of ['detailScaleNear', 'detailScaleFar']) {
     assert.equal(defaultTheme.terrain[key], undefined, `${key} n'a plus d'objet`);
@@ -13168,13 +13223,12 @@ test('la variation macro du sol dépend de la matière : amplitude et plancher d
   );
 
   // Une ligne par matière, dans le même ordre que les autres tables.
-  assert.equal(shader.uniforms.uSurfaceMacro.value.length, SURFACE_KINDS.length);
-  assert.equal(shader.uniforms.uSurfaceMacroNear.value.length, SURFACE_KINDS.length);
+  assert.equal(shader.uniforms.uSurfaceTerms.value.length, SURFACE_KINDS.length);
   for (const kind of SURFACE_KINDS) {
     const i = SURFACE_KINDS.indexOf(kind);
-    assert.equal(shader.uniforms.uSurfaceMacro.value[i], defaultTheme.surfaces[kind]?.macro ?? 1);
+    assert.equal(shader.uniforms.uSurfaceTerms.value[i].y, defaultTheme.surfaces[kind]?.macro ?? 1);
     assert.equal(
-      shader.uniforms.uSurfaceMacroNear.value[i],
+      shader.uniforms.uSurfaceTerms.value[i].z,
       defaultTheme.surfaces[kind]?.macroNear ?? 0
     );
   }
@@ -13384,14 +13438,14 @@ test('la lame d’eau d’une culture : le riz en porte une, les autres aucune',
   };
   factory.material.onBeforeCompile(shader);
 
-  // Un tableau d'uniformes de plus, pas un canal de plus : même longueur que
-  // les albédos de culture, indexé dans le même ordre.
-  assert.equal(shader.uniforms.uCropWater.value.length, CROP_KINDS.length);
+  // La quatrième composante de l'albédo de culture, pas un canal de plus :
+  // indexée dans le même ordre que les cultures.
+  assert.equal(shader.uniforms.uCropLook.value.length, CROP_KINDS.length);
   CROP_KINDS.forEach((crop, i) => {
     const expected = defaultTheme.terrain.cropStandingWater?.[crop] ?? 0;
-    assert.equal(shader.uniforms.uCropWater.value[i], expected, crop);
+    assert.equal(shader.uniforms.uCropLook.value[i].w, expected, crop);
   });
-  assert.match(shader.fragmentShader, /uniform float uCropWater\[\d+\];/);
+  assert.match(shader.fragmentShader, /uniform vec4 uCropLook\[\d+\];/);
 });
 
 // --- Lot F : le marquage est de la géométrie ---------------------------------
