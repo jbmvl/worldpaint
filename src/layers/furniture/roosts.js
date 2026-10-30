@@ -17,7 +17,7 @@ import { reachedRadius } from '../../core/decorReach.js';
 import { FURNITURE_RADIUS_M } from './catalog.js';
 
 export const ROOST_CELL_M = 120;
-export const ROOST_ODDS = 0.35;
+export const ROOST_ODDS = 0.07;
 export const ROOST_WOOD_MIN = 0.45;
 /** Au-delà, le vol se lèverait trop loin pour être vu de la route. */
 export const ROOST_ROAD_REACH_M = 150;
