@@ -28,6 +28,7 @@ const CONTRACT = [
   'WORLD_ATTRIBUTION',
   'ElevationField',
   'MAPTILER_TERRAIN_URL',
+  'TERRARIUM_URL',
   'VectorTileSource',
   'SceneEnvironment',
   'DEFAULT_SKY_PALETTE',

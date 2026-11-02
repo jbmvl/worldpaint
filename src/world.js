@@ -93,9 +93,9 @@ export const DEFAULT_ELEVATION_ZOOM = 14;
  * @param {Object} options
  * @param {Object} options.THREE  Le module three de l'application (jamais importé ici).
  * @param {Object} options.scene  La scène qui recevra le décor.
- * @param {ElevationField|{zoom?: number, url?: string, encoding?: string, maxTiles?: number}} [options.elevation]
+ * @param {ElevationField|{zoom?: number, url?: string, encoding?: string, fallback?: Object|null, maxTiles?: number}} [options.elevation]
  *        Relief. Un objet de réglages monte un `ElevationField` par défaut
- *        (tuiles Terrarium d'AWS Open Data, sans clé, au `DEFAULT_ELEVATION_ZOOM`).
+ *        (Terrain RGB de MapTiler, repli Terrarium d'AWS, au `DEFAULT_ELEVATION_ZOOM`).
  *        Une instance déjà construite est utilisée telle quelle et n'est pas
  *        libérée par `dispose()`.
  * @param {{tiles: string[], maxZoom?: number, fetchTile?: Function}|null} [options.vector]

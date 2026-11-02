@@ -426,8 +426,14 @@ paint anything convinces nobody.
 
 ## Data sources
 
-- **Elevation**: [Mapzen Terrarium tiles hosted by AWS Open
-  Data](https://registry.opendata.aws/terrain-tiles/) — free, no key.
+- **Elevation**: [MapTiler Terrain RGB](https://docs.maptiler.com/schema-raster/terrain-rgb/)
+  by default, with a test key — pass yours with
+  `elevation: { url, encoding }`. As soon as it refuses to serve (401, 403,
+  429, or a blocked request), the whole field, far relief included, falls back
+  to [Mapzen Terrarium tiles hosted by AWS Open
+  Data](https://registry.opendata.aws/terrain-tiles/) — free, no key, coarser,
+  and sea at +3–9 m on SRTM coasts. `elevation.fallback` changes it, `null`
+  removes it. A tile that failed is not asked again for a minute.
 - **Vector tiles**: OpenMapTiles-schema tiles, which the application
   supplies — any provider, or your own.
 - **Natural regions**: a table of landscape profiles, **embedded** in the

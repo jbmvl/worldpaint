@@ -59,3 +59,110 @@ test('le DEM est annulé à la fermeture et son délai se propage au relief loin
   assert.equal(await distant.load(0, 0), null);
   distant.dispose();
 });
+
+/*
+ * Repli du MNT : une source qui refuse (clé, quota) passe la main à Terrarium,
+ * pour la bulle comme pour le relief lointain ; une tuile en échec n'est pas
+ * redemandée à chaque relève.
+ */
+const PRIMARY = 'https://primary/{z}/{x}/{y}.webp';
+const BACKUP = 'https://backup/{z}/{x}/{y}.png';
+
+/** Réseau simulé : `answer(url)` rend un statut, ou lève. Décodage factice à `size` pixels. */
+function fakeNetwork(t, answer, size = 4) {
+  const saved = {
+    fetch: globalThis.fetch,
+    createImageBitmap: globalThis.createImageBitmap,
+    OffscreenCanvas: globalThis.OffscreenCanvas,
+    warn: console.warn,
+  };
+  const calls = [];
+  const warnings = [];
+  globalThis.fetch = async (url) => {
+    calls.push(url);
+    const status = answer(url);
+    return new Response(status === 200 ? new Uint8Array([size]) : null, { status });
+  };
+  globalThis.createImageBitmap = async (blob) => ({ width: new Uint8Array(await blob.arrayBuffer())[0], close() {} });
+  globalThis.OffscreenCanvas = class {
+    constructor(w, h) { this.w = w; this.h = h; }
+    getContext() {
+      return { drawImage() {}, getImageData: () => ({ data: new Uint8ClampedArray(this.w * this.h * 4) }) };
+    }
+  };
+  console.warn = (...args) => warnings.push(args.join(' '));
+  t.after(() => {
+    globalThis.fetch = saved.fetch;
+    globalThis.createImageBitmap = saved.createImageBitmap;
+    globalThis.OffscreenCanvas = saved.OffscreenCanvas;
+    console.warn = saved.warn;
+  });
+  return { calls, warnings };
+}
+
+const fieldOf = (options = {}) => new ElevationField({
+  zoom: 14,
+  url: PRIMARY,
+  encoding: 'terrain-rgb',
+  fallback: { url: BACKUP, encoding: 'terrarium' },
+  ...options,
+});
+
+for (const status of [401, 403, 429]) {
+  test(`un ${status} de la source principale bascule sur le repli, relief lointain compris`, async (t) => {
+    const net = fakeNetwork(t, (url) => (url.startsWith('https://primary') ? status : 200));
+    const field = fieldOf();
+    const far = field.atZoom(9);
+    assert.ok(await field.load(1, 2));
+    assert.deepEqual(net.calls, ['https://primary/14/1/2.webp', 'https://backup/14/1/2.png']);
+    assert.equal(field.url, BACKUP);
+    assert.ok(await far.load(0, 0));
+    assert.deepEqual(net.calls.slice(2), ['https://backup/9/0/0.png']);
+    assert.equal(net.warnings.length, 1);
+    field.dispose();
+    far.dispose();
+  });
+}
+
+test('une requête bloquée (refus sans CORS) bascule aussi sur le repli', async (t) => {
+  const net = fakeNetwork(t, (url) => {
+    if (url.startsWith('https://primary')) throw new TypeError('Failed to fetch');
+    return 200;
+  });
+  const field = fieldOf();
+  assert.ok(await field.load(0, 0));
+  assert.equal(net.calls.at(-1), 'https://backup/14/0/0.png');
+  field.dispose();
+});
+
+test('un 404 ne fait pas basculer et la tuile n’est pas redemandée tout de suite', async (t) => {
+  const net = fakeNetwork(t, () => 404);
+  const field = fieldOf();
+  assert.equal(await field.load(3, 3), null);
+  assert.equal(await field.load(3, 3), null);
+  assert.deepEqual(net.calls, ['https://primary/14/3/3.webp']);
+  assert.equal(field.url, PRIMARY);
+  field.dispose();
+});
+
+test('sans repli, un refus rend null une fois sans boucler', async (t) => {
+  const net = fakeNetwork(t, () => 403);
+  const field = fieldOf({ fallback: null });
+  assert.equal(await field.load(0, 0), null);
+  assert.equal(await field.load(0, 0), null);
+  assert.equal(net.calls.length, 1);
+  field.dispose();
+});
+
+test('la bascule vide le cache : deux MNT ne se mêlent pas', async (t) => {
+  let refuse = false;
+  fakeNetwork(t, (url) => (url.startsWith('https://primary') ? (refuse ? 403 : 200) : 200));
+  const field = fieldOf();
+  assert.ok(await field.load(0, 0));
+  assert.equal(field.tilePixels, 4);
+  refuse = true;
+  assert.ok(await field.load(5, 5));
+  assert.equal(field.has(0, 0), false, 'la tuile de l’ancienne source est partie');
+  assert.equal(field.has(5, 5), true);
+  field.dispose();
+});

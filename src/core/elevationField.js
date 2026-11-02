@@ -23,10 +23,24 @@ export const DEM_TILE_PIXELS = 256;
 export const MAPTILER_TERRAIN_URL =
   'https://api.maptiler.com/tiles/terrain-rgb-v2/{z}/{x}/{y}.webp?key=Zx2mAQIInk7YylLgVH0R';
 
+/** Repli par défaut : Terrarium d'AWS Open Data, sans clé ni quota, mais ~30 m et mer à +3–9 m sur les côtes. */
+export const TERRARIUM_URL = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
+
+/**
+ * Réponses qui disent que la source ne servira plus (clé, quota) : on bascule
+ * sur le repli. Un 404 ne concerne qu'une tuile et ne fait pas basculer.
+ */
+const REFUSED = new Set([401, 403, 429]);
+
+/** Délai avant de redemander une tuile en échec : chaque relève la redemandait, quota épuisé ou non. */
+export const DEM_RETRY_MS = 60000;
+
 const DECODERS = {
   terrarium: decodeTerrarium,
   'terrain-rgb': decodeTerrainRgb,
 };
+
+const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 /**
  * Décode une image de tuile DEM en Float32Array d'altitudes (mètres), à la
@@ -60,6 +74,9 @@ export class ElevationField {
    *        décide, pas la finesse de la maille.
    * @param {string} [options.url]     Gabarit d'URL.
    * @param {string} [options.encoding] 'terrain-rgb' (défaut) ou 'terrarium'.
+   * @param {{url: string, encoding: string}|null} [options.fallback] Source
+   *        prise dès que la principale refuse de servir (401, 403, 429, ou
+   *        requête bloquée). Défaut : Terrarium. `null` : aucun repli.
    * @param {number} [options.maxTiles] Taille du cache LRU (défaut 64 tuiles,
    *        soit ~17 Mo : de quoi couvrir largement le bloc courant, le reste
    *        sert au recyclage quand l'observateur revient sur ses pas).
@@ -68,12 +85,22 @@ export class ElevationField {
     zoom,
     url = MAPTILER_TERRAIN_URL,
     encoding = 'terrain-rgb',
+    fallback = { url: TERRARIUM_URL, encoding: 'terrarium' },
     maxTiles = 64,
     timeoutMs = 15000,
+    _sources = null,
   } = {}) {
     this.zoom = zoom;
-    this.url = url;
-    this.encoding = encoding;
+    /**
+     * Sources dans l'ordre et celle en service, partagées avec les champs
+     * d'autres zooms (`atZoom`) : le relief lointain bascule avec la bulle.
+     */
+    this._sources = _sources || {
+      list: [{ url, encoding }, ...(fallback && fallback.url !== url ? [fallback] : [])],
+      index: 0,
+      warned: false,
+    };
+    this._sourceIndex = this._sources.index;
     this.maxTiles = maxTiles;
     this.timeoutMs = timeoutMs;
     this._abort = new AbortController();
@@ -83,13 +110,24 @@ export class ElevationField {
     this.tiles = new Map();
     /** @type {Map<string, Promise<Float32Array|null>>} chargements en vol */
     this.pending = new Map();
+    /** @type {Map<string, number>} tuiles en échec et l'instant de l'échec */
+    this.failed = new Map();
     this.disposed = false;
     this.revision = 0;
   }
 
+  /** Gabarit d'URL de la source en service. */
+  get url() {
+    return this._sources.list[this._sources.index].url;
+  }
+
+  get encoding() {
+    return this._sources.list[this._sources.index].encoding;
+  }
+
   /** Un champ de la même source à un autre zoom, avec son propre cache. */
   atZoom(zoom) {
-    return new this.constructor({ zoom, url: this.url, encoding: this.encoding, maxTiles: this.maxTiles, timeoutMs: this.timeoutMs });
+    return new this.constructor({ zoom, maxTiles: this.maxTiles, timeoutMs: this.timeoutMs, _sources: this._sources });
   }
 
   /** Nombre de pixels sur un côté du monde, au zoom courant. */
@@ -98,12 +136,14 @@ export class ElevationField {
   }
 
   has(x, y) {
+    this._adoptSource();
     return this.tiles.has(tileKey(this.zoom, x, y));
   }
 
   /** Charge une tuile (idempotent). Résout `null` si la tuile est indisponible. */
   async load(x, y, signal) {
     if (this.disposed || signal?.aborted) return null;
+    this._adoptSource();
     const key = tileKey(this.zoom, x, y);
     const cached = this.tiles.get(key);
     if (cached) {
@@ -113,37 +153,60 @@ export class ElevationField {
       return cached;
     }
     if (this.pending.has(key)) return this.pending.get(key);
+    const failedAt = this.failed.get(key);
+    if (failedAt !== undefined && now() - failedAt < DEM_RETRY_MS) return null;
 
     const task = (async () => {
       const request = tileRequest({ signal, lifetime: this._abort.signal, timeoutMs: this.timeoutMs });
       try {
-        const res = await fetch(fillTileUrl(this.url, this.zoom, x, y), {
-          signal: request.signal,
-          mode: 'cors',
-          credentials: 'omit',
-        });
-        // Un refus de la source rend un terrain plat, qui ne se lit pas comme
-        // une panne : on le dit une fois, avec le code qui l'explique.
-        if (!res.ok) {
-          if (!this._warned) {
-            this._warned = true;
-            console.warn('[elevationField] source DEM refusée', res.status, key);
+        // Une passe par source : la principale, puis le repli si elle refuse.
+        for (;;) {
+          const index = this._sources.index;
+          const { url, encoding } = this._sources.list[index];
+          let res;
+          try {
+            res = await fetch(fillTileUrl(url, this.zoom, x, y), {
+              signal: request.signal,
+              mode: 'cors',
+              credentials: 'omit',
+            });
+          } catch (e) {
+            // Un refus sans en-têtes CORS n'arrive que sous cette forme.
+            if (e?.name !== 'AbortError' && this._fallBack(index, e?.message || e)) continue;
+            throw e;
           }
-          return null;
-        }
-        const blob = await res.blob();
-        const bitmap = await createImageBitmap(blob);
-        if (this.disposed || request.signal.aborted) {
+          if (!res.ok) {
+            if (REFUSED.has(res.status) && this._fallBack(index, res.status)) continue;
+            this._fail(key);
+            // Un terrain plat ne se lit pas comme une panne : on le dit une fois.
+            if (!this._warned) {
+              this._warned = true;
+              console.warn('[elevationField] source DEM refusée', res.status, key);
+            }
+            return null;
+          }
+          const blob = await res.blob();
+          const bitmap = await createImageBitmap(blob);
+          if (this.disposed || request.signal.aborted) {
+            bitmap.close?.();
+            return null;
+          }
+          // Bascule pendant le téléchargement : la tuile vient de l'ancienne source.
+          if (index !== this._sources.index) {
+            bitmap.close?.();
+            continue;
+          }
+          this._adoptSource();
+          if (bitmap.width) this.tilePixels = bitmap.width;
+          const heights = decodeTile(bitmap, encoding, this.tilePixels);
           bitmap.close?.();
-          return null;
+          this.failed.delete(key);
+          this._store(key, heights);
+          return heights;
         }
-        if (bitmap.width) this.tilePixels = bitmap.width;
-        const heights = decodeTile(bitmap, this.encoding, this.tilePixels);
-        bitmap.close?.();
-        this._store(key, heights);
-        return heights;
       } catch (e) {
         if (e?.name !== 'AbortError') {
+          this._fail(key);
           console.warn('[elevationField] tuile DEM indisponible', key, e?.message || e);
         }
         return null;
@@ -155,6 +218,43 @@ export class ElevationField {
 
     this.pending.set(key, task);
     return task;
+  }
+
+  /**
+   * Passe à la source suivante si `index` est encore celle en service.
+   * Vrai s'il faut réessayer : bascule faite ici ou déjà faite ailleurs.
+   */
+  _fallBack(index, reason) {
+    const sources = this._sources;
+    if (sources.index !== index) return true;
+    if (index + 1 >= sources.list.length) return false;
+    sources.index = index + 1;
+    if (!sources.warned) {
+      sources.warned = true;
+      console.warn('[elevationField] source DEM refusée (' + reason + '), repli sur', sources.list[sources.index].url);
+    }
+    return true;
+  }
+
+  /**
+   * Une source à la place d'une autre : tout le cache part. Deux MNT n'ont ni
+   * la même résolution ni les mêmes cotes ; mêlés, ils se recoudraient en
+   * marches. Les mailles déjà construites gardent leur relief.
+   */
+  _adoptSource() {
+    if (this._sourceIndex === this._sources.index) return;
+    this._sourceIndex = this._sources.index;
+    this.tiles.clear();
+    this.failed.clear();
+    this.tilePixels = DEM_TILE_PIXELS;
+    this._last = null;
+    this.revision++;
+  }
+
+  _fail(key) {
+    this.failed.delete(key);
+    this.failed.set(key, now());
+    while (this.failed.size > this.maxTiles * 4) this.failed.delete(this.failed.keys().next().value);
   }
 
   _store(key, heights) {

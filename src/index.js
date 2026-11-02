@@ -21,7 +21,7 @@ export { resolveTheme } from './themes/theme.js';
 export { autumnTheme, seasonalTheme } from './themes/autumn.js';
 
 // --- Les pièces, pour qui veut monter le décor à la main --------------------
-export { ElevationField, MAPTILER_TERRAIN_URL, DEM_TILE_PIXELS } from './core/elevationField.js';
+export { ElevationField, MAPTILER_TERRAIN_URL, TERRARIUM_URL, DEM_TILE_PIXELS } from './core/elevationField.js';
 export { VectorTileSource, coveringTiles, VECTOR_ZOOM } from './core/vectorTileSource.js';
 export { SceneEnvironment, DEFAULT_SKY_PALETTE, SKY_RADIUS, SKY_LAYER, SHADOW_LEAD_M, SHADOW_RADIUS_M, sunDirection } from './environment/sceneEnvironment.js';
 
