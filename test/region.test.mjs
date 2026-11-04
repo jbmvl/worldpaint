@@ -114,6 +114,31 @@ test('la région se choisit par l’ancre la plus proche, et se tait au-delà', 
   assert.equal(regionById('nulle-part'), null);
 });
 
+test('les pays voisins se partagent leurs lieux de part et d’autre de la frontière', () => {
+  const lieux = [
+    [-9.14, 38.72, 'oeste'], [-8.61, 41.15, 'minho'], [-7.93, 37.02, 'litoral_algarve'],
+    [-16.92, 32.65, 'madeira'], [-25.67, 37.74, 'acores'],
+    [12.5, 41.9, 'campagna_romana'], [12.33, 45.44, 'laguna_veneta'],
+    [13.36, 38.12, 'conca_oro'], [9.11, 39.22, 'campidano'], [11.34, 44.49, 'pianura_emiliana'],
+    [14.51, 46.05, 'bassin_ljubljana'], [16.44, 43.51, 'dalmatie_centrale'],
+    [17.81, 43.34, 'basse_herzegovine'], [19.85, 45.26, 'backa'], [21.16, 42.66, 'plaine_kosovo'],
+    [19.26, 42.44, 'zeta_skadar'], [21.43, 42.0, 'bassin_skopje'],
+    // Les voisins déjà écrits gardent leurs villes de frontière.
+    [7.27, 43.7, 'maures'], [6.64, 44.9, 'alpes_sud'], [-6.97, 38.88, 'dehesa_extremena'],
+    [-8.72, 42.24, 'rias_baixas'], [9.16, 41.42, 'corse'], [21.23, 45.75, 'plaine_de_louest_roumain'],
+    [18.23, 46.07, 'transdanubie'],
+  ];
+  for (const [lng, lat, id] of lieux) assert.equal(regionAt(lng, lat)?.id, id, `${lng}, ${lat}`);
+});
+
+test('le semis du bâti suit la mesure, pays par pays', () => {
+  const seme = (id) => regionById(id).sparse?.includes('buildings') ?? false;
+  for (const id of ['minho', 'chianti', 'salento', 'kras', 'lika', 'bosnie_centrale', 'sumadija', 'plaine_kosovo', 'durmitor', 'pelagonie']) {
+    assert.equal(seme(id), true, id);
+  }
+  for (const id of ['pianura_lombarda', 'dolomiti', 'liguria', 'anjou']) assert.equal(seme(id), false, id);
+});
+
 test('aucune ancre n’est isolée au point de laisser un trou', () => {
   // Chaque région doit être atteignable depuis sa propre ancre : une ancre
   // avalée par une voisine est une région qui n'existe plus, en silence.

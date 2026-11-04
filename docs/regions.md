@@ -85,11 +85,17 @@ constituent pas des contours officiels et ne changent aucune donnée régionale.
 - **`sparse`** — facultatif : ce que la carte relève mal dans ce pays, **mesuré**
   et non supposé. Seul mot admis : `buildings`. Il autorise
   `layers/buildingInfill.js` à semer des maisons dans les rues habitées où OSM
-  ne relève aucun bâtiment. Il est posé sur la Slovaquie, la Hongrie et la
-  Roumanie, où la part des bâtiments présents dans OSM tombe à 81 %, 40 % et
-  5 % en campagne (tirage de carrés de 1 km² comparé aux bâtiments d'Overture
-  Maps), contre 90 % en France. Avant de l'ajouter à un pays, mesurer de même ;
-  le semis se contrôle par `node scripts/buildings-audit.mjs`.
+  ne relève aucun bâtiment. Mesure : carrés de 1 km² tirés au hasard dans le
+  pays, ceux de 5 à 400 bâtiments retenus, part d'OSM parmi les bâtiments
+  d'Overture Maps (version 2026-10-21.0). Le mot est posé sous 70 %, la part de
+  la Slovaquie, et pas au-dessus : France 87 %, Italie du Nord 82 %, Slovaquie
+  70 %, Slovénie 68 %, Hongrie 66 %, Monténégro 65 %, Italie du Centre 64 %,
+  Croatie 53 %, Bosnie-Herzégovine 51 %, Italie du Sud 47 %, Serbie 37 %,
+  Kosovo 35 %, Portugal 18 %, Roumanie 16 %, Macédoine du Nord 2 %. Overture ne
+  connaît pas tout le bâti : ces parts sont des ordres de grandeur. Pour l'Italie,
+  la limite suit la première ancre de la région, à 44° de latitude. Avant de
+  l'ajouter à un pays, mesurer de même ; le semis se contrôle par
+  `node scripts/buildings-audit.mjs`.
 
 Rien d'autre. Pas d'altitude, pas d'humidité, pas de score : ce qui existe
 réellement à un endroit est relevé par le vectoriel, et une région qui le

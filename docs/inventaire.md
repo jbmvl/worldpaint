@@ -46,10 +46,10 @@ nationaux), qui ne disent rien de la matière du sol. Voir `docs/surfaces.md`.
 
 **Relief** : tuiles Terrarium (Mapzen, hébergées par AWS Open Data).
 
-**Région naturelle** : une table de dossiers embarquée, couvrant la France et
-l'Espagne. Le pays d'un lieu est celui dont une ancre est la plus proche ;
-au-delà de 150 km de toute ancre, aucun pays n'est décidé et tout retombe sur
-les valeurs par défaut, qui sont celles du bocage atlantique. Le relief ne
+**Région naturelle** : une table de dossiers embarquée (liste des pays en tête
+de `src/core/regions.js`). Le pays d'un lieu est celui dont une ancre est la
+plus proche ; au-delà de 150 km de toute ancre, aucun pays n'est décidé et le
+décor s'éteint. Le relief ne
 corrige rien : ce qui pousse réellement en altitude est relevé par le
 vectoriel.
 
@@ -302,7 +302,7 @@ n'y est semé.
 Empreintes relevées (`building`), extrudées à leur hauteur réelle.
 
 **Inventées**, sous conditions, dans un pays dont le dossier de région porte
-`sparse: ['buildings']` (Slovaquie, Hongrie, Roumanie) : une maison, parfois
+`sparse: ['buildings']` (liste et mesures dans `docs/regions.md`) : une maison, parfois
 une annexe d'un niveau au fond de la cour, dans une parcelle vide d'une rue
 `major` ou `minor` qui traverse une emprise résidentielle, commerciale ou de
 commerce — hors vert urbain, eau, marais et pente de plus de 3 m sous
@@ -910,8 +910,8 @@ Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
 1. **Le non-classé est ce que le pays y met** (`matrix`). Un désert
    cartographié nulle part reste donc une prairie, à l'intérieur même d'une
    région qui ne le décrit pas.
-2. **La table des régions couvre la France, l'Espagne et le Royaume-Uni.**
-   Ailleurs, le décor s'éteint : rien n'est chargé ni posé, on voit le ciel et
+2. **La table des régions ne couvre que les pays listés en tête de
+   `src/core/regions.js`.** Ailleurs, le décor s'éteint : rien n'est chargé ni posé, on voit le ciel et
    rien dessous.
    Imposer une région (`world.setRegion`) le rallume n'importe où.
 3. **La ville est un disque**, pas un contour : sa portée se tire d'un point
