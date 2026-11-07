@@ -170,3 +170,11 @@ test('le filtrage des axes conserve la projection la plus proche et les égalit�
     assert.deepEqual(r.axisLevel(x,z,axes),{x:best.x,z:best.z});
   }
 });
+
+test('le bout d’un axe qui lit la rue au-dessus d’un tunnel ne soulève pas la rivière',()=>{
+  // Rivière à 5 m qui s'achève en x=100 sur un point de rue à 11 m : les sondes
+  // au-delà retombent toutes sur ce bout, qui ne doit compter qu'une fois.
+  const elevation=(x)=>x>=99 ? 11 : 5;
+  const r=relief([lake([rect(-300,-20,100,20)],7,'river'),river([[-300,0],[100,0]])],elevation);
+  for(const x of [-100,0,60,90]) assert.ok(height(r,x,0)<5.6,`cote ${height(r,x,0)} en x=${x}`);
+});

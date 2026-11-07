@@ -118,9 +118,11 @@ function linearPavement(streets) {
 }
 
 /**
- * Habillage d'un bâtiment : les tons de la palette du pays, modulés de
- * quelques pour cent par maison (volontairement peu, sinon le village devient
- * une collection), la forme du toit et la nature de maison.
+ * Habillage d'un bâtiment : les tons de la palette du pays, la forme du toit
+ * et la nature de maison. Le mur prend une des nuances du thème
+ * (`facadeTints`), toutes tirées de la couleur du pays — une rue se lit
+ * alors comme une suite de façades, sans que le village devienne une
+ * collection —, puis quelques pour cent de vieillissement.
  *
  * `x`, `z` sont les coordonnées locales du bâtiment.
  *
@@ -131,6 +133,7 @@ function linearPavement(streets) {
  * @param {number} [context.area]   Emprise au sol, en m².
  * @param {number} [context.height] Hauteur, en mètres.
  * @param {Object|null} [region] Dossier de région.
+ * @param {Array<number[]>|null} [tints] Nuances de façade, facteurs RVB linéaires.
  * @returns {{wall:number[], roof:number[], shutter:number[], shape:string,
  *           pitch:number|undefined, house:boolean, shutters:boolean,
  *           palette:string}}
@@ -141,14 +144,16 @@ export function buildingStyleAt(
   z,
   { area = 100, height = 7 } = {},
   towns = defaultTheme.towns,
-  region = null
+  region = null,
+  tints = defaultTheme.facadeTints
 ) {
   const palette = townPaletteFor(towns, region);
   const seed = positionSeed(frame, x, z, 151);
 
   // Modulation tirée du lieu : ±6 % pour le crépi, ±3 % pour le volet peint (vieillit moins vite).
   const shade = 0.94 + randomAt(frame, x, z, 157) * 0.12;
-  const wall = palette.wall.map((c) => Math.min(1, c * shade));
+  const tint = tints?.length ? tints[Math.floor(randomAt(frame, x, z, 159) * tints.length)] : null;
+  const wall = palette.wall.map((c, i) => Math.min(1, c * shade * (tint ? tint[i] : 1)));
   const roof = palette.roof.map((c) => Math.min(1, c * (0.95 + randomAt(frame, x, z, 163) * 0.1)));
   const shutter = palette.shutter.map((c) => Math.min(1, c * (0.97 + randomAt(frame, x, z, 167) * 0.06)));
 

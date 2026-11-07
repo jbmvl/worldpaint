@@ -10,6 +10,7 @@
 | `roadCut.js` | l'entaille du terrain sous une chaussée, et son remblai en terre |
 | `waterRelief.js` | niveaux des lacs, profil des rivières et raccord terrestre des berges |
 | `cliffCut.js` | la marche du terrain sous une falaise relevée |
+| `roofCut.js` | le sol rendu sous une emprise de bâtiment dont le MNT a gardé le toit |
 | `groundClassMap.js` | la carte des matières et des cultures, rasterisée pour toute la scène |
 | `surfaceContours.js` | les limites de la carte redessinées en traits : chaînes, simplification, distance au trait |
 | `surfaceClassification.js` | ce qu'une entité de tuile **dit** du sol |
@@ -69,7 +70,9 @@ Deux pièges :
 
 ## Ce qui déforme le relief lu
 
-Dans cet ordre : la **marche** d'une falaise relevée (`cliffCut`), les
+Dans cet ordre : le **sol sous un toit** que le MNT a gardé (`roofCut`, sous
+une emprise `building` d'OSM seulement : sans elle, une citadelle aux murs
+verticaux ne se distingue pas d'une tour), la **marche** d'une falaise relevée (`cliffCut`), les
 **niveaux d’eau** (`waterRelief`), les **terrassements des franchissements** (`transportEarthworks`), puis le
 **remblai** et le **déblai** des chaussées (`roadCut`). Le remblai passe avant : le déblai de toute chaussée
 voisine le reprend, il ne recouvre jamais une voie. La falaise façonne le terrain naturel, la route entaille
@@ -78,8 +81,8 @@ la marche vient de supprimer.
 
 Trois lectures en découlent, et chacune a son lecteur : le **MNT brut**
 (`rawSurfaceElevationAtLocal`), sur lequel seule la couche des falaises mesure
-la marche ; le **terrain naturel** (`naturalElevationAtLocal`), falaises
-et niveaux d’eau compris, déblai exclu, sur lequel se dressent les plates-formes et que lit
+la marche ; le **terrain naturel** (`naturalElevationAtLocal`), toits retirés,
+falaises et niveaux d’eau compris, déblai exclu, sur lequel se dressent les plates-formes et que lit
 le relief de rive ; la **surface affichée** (`surfaceElevationAtLocal`), tout
 compris, pour le reste du décor. Une plate-forme dressée sur le MNT brut
 flotterait au pied d'une falaise et s'enfoncerait à son arase.

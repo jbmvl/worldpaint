@@ -46,6 +46,7 @@ import {
 import { reachedRadius } from '../../core/decorReach.js';
 import { placeHerd, placeForestGame, placeFauna } from './parcelFauna.js';
 import { buildCemetery } from './cemetery.js';
+import { isPark, isYard, plantTownTrees, PARK_TREES, YARD_TREES } from './townTrees.js';
 import { positionSeed, randomAt } from '../../core/groundSeed.js';
 
 /** Portée des rangs de vigne, de lavande et de verger, en mètres (celle du reste du mobilier). */
@@ -162,6 +163,9 @@ export function* buildParcelsSteps(layer, context, builtUp) {
         }
       }
 
+      if (isPark(properties)) parks.push(local);
+      else if (isYard(properties)) yards.push(local);
+
       if (pointInAreas(builtUp, centre.x, centre.z)) continue;
 
       const steepness = layer._steepnessAt(centre.x, centre.z);
@@ -232,11 +236,16 @@ export function* buildParcelsSteps(layer, context, builtUp) {
 
   const features = [];
   const rowParcels = [];
+  const parks = [];
+  const yards = [];
   const collect = (...feature) => features.push(feature);
   source.forEachFeature('landcover', tiles, collect);
   source.forEachFeature('landuse', tiles, collect);
   for (const feature of features) yield* handle(...feature);
   layer.counts.boundaries = boundaries;
+  const reach = reachedRadius(FURNITURE_RADIUS_M, layer.bubble);
+  layer.counts.parkTrees = plantTownTrees(layer, placements, parks, here, reach, PARK_TREES);
+  layer.counts.yardTrees = plantTownTrees(layer, placements, yards, here, reach, YARD_TREES);
 
   // Les rangs après le parcours, du plus proche au plus lointain : leur plafond
   // coupe au loin, pas au hasard de l'ordre des tuiles.

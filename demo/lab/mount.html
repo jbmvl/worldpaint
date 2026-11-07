@@ -76,7 +76,7 @@ async function run({ detail = null, view = null, reach = 120, lieu = 'station-mo
   const world = createWorld({
     THREE,
     scene,
-    elevation: { zoom: place.zoom, url: `${base}/dem/{z}/{x}/{y}.${place.elevation.extension}`, encoding: place.elevation.encoding },
+    elevation: { zoom: place.elevation.zoom ?? place.zoom, url: `${base}/dem/{z}/{x}/{y}.${place.elevation.extension}`, encoding: place.elevation.encoding },
     vector: place.vector ? { tiles: [`${location.origin}${base}/vector/{z}/{x}/{y}.pbf`], maxZoom: place.vector.maxZoom } : null,
     sky: { Sky },
     ...(reach ? { reach } : {}),

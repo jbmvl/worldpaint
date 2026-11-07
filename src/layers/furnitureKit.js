@@ -578,6 +578,18 @@ export const FURNITURE_BUILDERS = {
   },
 
   /** Fontaine de village : vasque octogonale et colonne. */
+  /** Banc public : assise et dossier de lattes sur deux pieds de fonte, 1,8 m. Le dossier est du côté −z. */
+  bench(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.box({ width: 1.8, height: 0.05, depth: 0.42, y: 0.42, color: C.wood });
+    k.box({ width: 1.8, height: 0.3, depth: 0.05, y: 0.55, z: -0.21, color: C.wood });
+    for (const x of [-0.75, 0.75]) {
+      k.box({ width: 0.06, height: 0.42, depth: 0.4, x, color: C.steelDark });
+      k.box({ width: 0.06, height: 0.88, depth: 0.06, x, z: -0.21, color: C.steelDark });
+    }
+    return k;
+  },
+
   fountain(C = DEFAULT_COLORS) {
     const k = new Kit(C);
     k.cylinder({ radiusBottom: 1.25, radiusTop: 1.25, height: 0.62, radial: 8, color: C.stone });

@@ -426,14 +426,22 @@ paint anything convinces nobody.
 
 ## Data sources
 
-- **Elevation**: [MapTiler Terrain RGB](https://docs.maptiler.com/schema-raster/terrain-rgb/)
-  by default, with a test key — pass yours with
-  `elevation: { url, encoding }`. As soon as it refuses to serve (401, 403,
-  429, or a blocked request), the whole field, far relief included, falls back
-  to [Mapzen Terrarium tiles hosted by AWS Open
+- **Elevation**: [Mapterhorn](https://mapterhorn.com) by default — Terrarium
+  tiles, no key, assembled from national bare-earth terrain models (lidar at
+  0.5–5 m across most of Europe, the United States, Japan…) and Copernicus
+  GLO-30 elsewhere ([sources](https://mapterhorn.com/attribution)). A
+  surface model at 30 m mixes buildings, trees and the water level into the
+  ground, and riverside roads ripple by several metres on it. Where a source
+  stops short of the requested zoom (Mapterhorn serves zoom 12 where it only
+  has GLO-30), a missing tile is cut out of its parent from the same source.
+  As soon as the source refuses to serve (401, 403, 429, or a blocked
+  request), the whole field, far relief included, falls back to [MapTiler
+  Terrain RGB](https://docs.maptiler.com/schema-raster/terrain-rgb/) (test
+  key), then to [Mapzen Terrarium tiles hosted by AWS Open
   Data](https://registry.opendata.aws/terrain-tiles/) — free, no key, coarser,
-  and sea at +3–9 m on SRTM coasts. `elevation.fallback` changes it, `null`
-  removes it. A tile that failed is not asked again for a minute.
+  and sea at +3–9 m on SRTM coasts. `elevation: { url, encoding, fallback }`
+  changes them, `fallback: null` removes the fallbacks. A tile that failed is
+  not asked again for a minute.
 - **Vector tiles**: OpenMapTiles-schema tiles, which the application
   supplies — any provider, or your own.
 - **Natural regions**: a table of landscape profiles, **embedded** in the

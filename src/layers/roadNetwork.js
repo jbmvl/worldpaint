@@ -128,6 +128,7 @@ import {
 import { ROAD_CUT_M, ROAD_CUT_BLEND_M } from '../terrain/roadCut.js';
 import {
   workCodeFor,
+  WORK_TUNNEL,
   roadLevelFor,
   resampleWorks,
   resampleLevels,
@@ -507,7 +508,29 @@ export const ROAD_CLASSES = {
 export const PEDESTRIAN_SUBCLASSES = new Set(['footway', 'sidewalk', 'crossing']);
 
 /** Profils qui ne se dessinent pas en ville, parcs urbains exceptés. */
-export const URBAN_EXCLUDED_PROFILES = new Set(['track', 'path']);
+export const URBAN_EXCLUDED_PROFILES = new Set(['track', 'path', 'cycleway', 'steps']);
+
+/**
+ * Dessertes (`service`) que la ville ne dessine pas : allées de parking,
+ * entrées privées, ruelles. OSM les relève toutes et elles font, dans une
+ * grande ville, autant de linéaire que les rues ; le moteur veut une ville
+ * lisible, pas exhaustive.
+ */
+export const URBAN_HIDDEN_SERVICES = new Set(['parking_aisle', 'driveway', 'drive-through', 'alley']);
+
+/**
+ * Vrai si l'entité, une fois en ville, n'est pas dessinée : voie piétonne,
+ * profil exclu, desserte secondaire, ou tunnel — sous la ville, aucun ne se
+ * voit, et leurs portails percent des rues et des immeubles.
+ *
+ * Fonction pure ; le lieu (`UrbanMask.covers`) est jugé par l'appelant.
+ */
+export function hiddenInTown(properties, style) {
+  return isPedestrianWay(properties)
+    || URBAN_EXCLUDED_PROFILES.has(style.profile)
+    || style.works === WORK_TUNNEL
+    || (properties.class === 'service' && URBAN_HIDDEN_SERVICES.has(properties.service));
+}
 
 /**
  * Vrai si l'entité décrit une voie piétonne.
@@ -645,9 +668,8 @@ export function clipToRadius(points, centerX, centerZ, radius) {
  *
  * @param {Object} [roads] Tranche `theme.roads` (profils de chaussée).
  * @param {Object} [options]
- * @param {Object|null} [options.urban] `UrbanMask` : en ville, ni les voies
- *        piétonnes (voir `isPedestrianWay`) ni les chemins
- *        (`URBAN_EXCLUDED_PROFILES`) ne sont dessinés. Le lieu est jugé au
+ * @param {Object|null} [options.urban] `UrbanMask` : en ville, ce que
+ *        `hiddenInTown` écarte n'est pas dessiné. Le lieu est jugé au
  *        **milieu** de la ligne, une fois par entité : un trottoir ne change
  *        pas de nature en cours de route, et sonder chaque sommet coûterait un
  *        lancer de rayon par mètre de trottoir.
@@ -662,8 +684,7 @@ export function* collectRoadLinesSteps(source, tiles, frame, roads = defaultThem
   yield* visitFeatures(source, 'transportation', tiles, (geometry, properties) => {
     const style = roadStyleFor(properties, roads.profiles);
     if (!style) return;
-    const notInTown =
-      urban?.any && (isPedestrianWay(properties) || URBAN_EXCLUDED_PROFILES.has(style.profile));
+    const notInTown = urban?.any && hiddenInTown(properties, style);
 
     for (const line of roadLines(geometry)) {
       if (!Array.isArray(line) || line.length < 2) continue;

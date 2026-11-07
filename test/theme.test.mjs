@@ -254,6 +254,8 @@ test('le compositeur sert le thème à toutes les couches qu’il monte', () => 
     if (name === 'FarRelief') continue;
     // Le budget ordonnance le CPU, sans choisir aucune apparence.
     if (name === 'GenerationBudget') continue;
+    // La correction des toits pris pour du relief ne peint rien : elle corrige le MNT lu.
+    if (name === 'RoofCut') continue;
     assert.ok(/\btheme\b/.test(call), `${name} est monté sans thème`);
   }
 });
@@ -607,4 +609,17 @@ test('une même bâtisse lue deux fois n’est extrudée qu’une fois', () => {
   const neighbour = box(30, 60);
   const kept = dropTwinFootprints([first, twin, part, neighbour]);
   assert.deepEqual(kept, [first, part, neighbour]);
+});
+
+test('les parties empilées d’une tour ne sont pas des jumelles', () => {
+  // La tour de la gare de Nantes : socle 0–8 m, fût 7–37 m, étage 36–44 m, d'emprises voisines.
+  const part = (x1, min, height) => ({
+    footprint: [{ x: 0, z: 0 }, { x: x1, z: 0 }, { x: x1, z: 25 }, { x: 0, z: 25 }],
+    area: x1 * 25, x: x1 / 2, z: 12.5,
+    properties: { render_min_height: min, render_height: height },
+  });
+  const stack = [part(26, 0, 8), part(22.3, 7, 37), part(21.6, 36, 44)];
+  assert.equal(dropTwinFootprints(stack).length, 3);
+  // La même partie lue deux fois reste une jumelle.
+  assert.equal(dropTwinFootprints([part(22.3, 7, 37), part(22.1, 7, 37)]).length, 1);
 });

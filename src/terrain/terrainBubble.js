@@ -178,6 +178,9 @@ export class TerrainBubble {
     this._cliffGeneration = 0;
     this._waterRelief = null;
     this._waterGeneration = 0;
+    /** Toits pris pour du relief (`RoofCut`), ou `null` — voir `setRoofCut`. */
+    this._roofCut = null;
+    this._roofGeneration = 0;
   }
 
   /**
@@ -311,6 +314,7 @@ export class TerrainBubble {
       this._clearTiles();
       this.frame = createLocalFrame(lng, lat, this.zoom);
       this._waterRelief = null;
+      this._roofCut = null;
     }
     if (Number.isFinite(this._reach)) {
       const here = this.frame.toLocal(lng, lat);
@@ -578,10 +582,12 @@ export class TerrainBubble {
    * @param {number} raw Altitude naturelle, en mètres (échelle du MNT).
    */
   cutElevation(x, z, raw) {
-    // La falaise d'abord : elle façonne le relief naturel, que la chaussée
+    // Le toit pris pour du relief d'abord : c'est la donnée qu'on corrige.
+    // Puis la falaise : elle façonne le relief naturel, que la chaussée
     // entaille ensuite. L'ordre inverse taillerait la route dans la rampe que
     // la marche vient de supprimer.
-    const stepped = this._cliffCut ? this._cliffCut.elevationAt(x, z, raw) : raw;
+    const ground = this._roofCut ? this._roofCut.elevationAt(x, z, raw) : raw;
+    const stepped = this._cliffCut ? this._cliffCut.elevationAt(x, z, ground) : ground;
     const water = this._waterRelief?.sample(x, z, stepped, WATER_AT);
     const level = water ? water.elevation : stepped;
     if (water?.inWater) return level;
@@ -589,7 +595,8 @@ export class TerrainBubble {
   }
 
   _naturalAt(x, z, raw) {
-    const stepped = this._cliffCut ? this._cliffCut.elevationAt(x, z, raw) : raw;
+    const ground = this._roofCut ? this._roofCut.elevationAt(x, z, raw) : raw;
+    const stepped = this._cliffCut ? this._cliffCut.elevationAt(x, z, ground) : ground;
     return this._waterRelief?.elevationAtPoint(x, z, stepped) ?? stepped;
   }
 
@@ -610,6 +617,29 @@ export class TerrainBubble {
     const a = this.frame.tileToLocal(tile.x, tile.y);
     const b = this.frame.tileToLocal(tile.x + 1, tile.y + 1);
     return this._waterRelief.touches(a.x, a.z, b.x, b.z);
+  }
+
+  /**
+   * Publie les toits pris pour du relief (`RoofCut`), ou `null`. Comme pour
+   * les falaises, seules les tuiles touchées, avant ou après, sont périmées.
+   */
+  setRoofCut(index) {
+    if (this.disposed) return;
+    const previous = this._roofCut;
+    if (!previous && !index) return;
+    this._roofCut = index || null;
+    this._roofGeneration++;
+    for (const tile of this.tiles.values()) {
+      if (!tile.hadRoof && !this._roofTouches(tile)) continue;
+      if (!this._rebuildQueue.includes(tile.key)) this._rebuildQueue.push(tile.key);
+    }
+  }
+
+  _roofTouches(tile) {
+    if (!this._roofCut || !this.frame) return false;
+    const a = this.frame.tileToLocal(tile.x, tile.y);
+    const b = this.frame.tileToLocal(tile.x + 1, tile.y + 1);
+    return this._roofCut.touches(Math.min(a.x, b.x), Math.min(a.z, b.z), Math.max(a.x, b.x), Math.max(a.z, b.z));
   }
 
   /**
@@ -843,6 +873,7 @@ export class TerrainBubble {
       return true;
     }
     if (tile.waterGeneration !== this._waterGeneration && (tile.hadWater || this._waterTouches(tile))) return true;
+    if (tile.roofGeneration !== this._roofGeneration && (tile.hadRoof || this._roofTouches(tile))) return true;
     const wanted = this._edgeSegmentsFor(tile, n);
     return (
       wanted.north !== tile.edgeSegments.north ||
@@ -892,7 +923,7 @@ export class TerrainBubble {
 
   /** Ce dont dépend une maille en cours : s'il change, elle est à reprendre. */
   _buildState() {
-    return `${this._cutGeneration}:${this._cliffGeneration}:${this._waterGeneration}:${this.elevation?.revision}`;
+    return `${this._cutGeneration}:${this._cliffGeneration}:${this._waterGeneration}:${this._roofGeneration}:${this.elevation?.revision}`;
   }
 
   _cancelPendingBuild() {
@@ -936,6 +967,7 @@ export class TerrainBubble {
     // Tranché une fois pour la tuile entière : sans ça, chaque sommet
     // interrogeait l'index cinq fois pour s'entendre dire qu'il n'y a pas de
     // falaise ici, soit deux cent mille requêtes inutiles par tuile.
+    const roofing = this._roofTouches(tile);
     const stepping = this._cliffTouches(tile);
     const watering = this._waterTouches(tile);
     // Réserves propres à cette construction : elle s'étale sur plusieurs images.
@@ -943,7 +975,8 @@ export class TerrainBubble {
     const earth = { elevation: 0, mask: 0 };
     const atVertex = { elevation: 0, mask: 0 };
     const cutWithMask = (x, z, raw) => {
-      let level = stepping ? this._cliffCut.elevationAt(x, z, raw) : raw;
+      let level = roofing ? this._roofCut.elevationAt(x, z, raw) : raw;
+      if (stepping) level = this._cliffCut.elevationAt(x, z, level);
       let mask = 0;
       let inWater = false;
       if (watering) {
@@ -1099,6 +1132,8 @@ export class TerrainBubble {
     tile.hadCliff = stepping;
     tile.waterGeneration = this._waterGeneration;
     tile.hadWater = watering;
+    tile.roofGeneration = this._roofGeneration;
+    tile.hadRoof = roofing;
     tile.edgeIncomplete = !this._neighboursLoaded(tile.x, tile.y);
   }
 

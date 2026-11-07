@@ -69,6 +69,7 @@ import { GenerationMetrics } from './inspect/generationMetrics.js';
 
 import { TerrainBubble } from './terrain/terrainBubble.js';
 import { WaterRelief } from './terrain/waterRelief.js';
+import { RoofCut } from './terrain/roofCut.js';
 import { GroundClassMap } from './terrain/groundClassMap.js';
 import { FarRelief } from './terrain/farRelief.js';
 import { RoadNetwork, createRoadMaterials, ROAD_RADIUS_M } from './layers/roadNetwork.js';
@@ -103,10 +104,10 @@ import { hash32 } from './core/groundSeed.js';
 
 /**
  * Crédit des données affichées. Le décor vient d'OpenStreetMap via les tuiles
- * vectorielles de la carte, le relief des tuiles Terrarium.
+ * vectorielles de la carte, le relief de Mapterhorn et des MNT qu'il assemble.
  */
 export const WORLD_ATTRIBUTION =
-  '© OpenStreetMap contributors — relief AWS Terrain Tiles';
+  '© OpenStreetMap contributors — relief © Mapterhorn (mapterhorn.com/attribution)';
 
 export { FAUNA_CROSS_AHEAD_M } from './layers/faunaCrossing.js';
 
@@ -665,7 +666,16 @@ export class WorldComposer {
 
       if (!await checkpoint()) return false;
 
-      // 0 bis. Falaises — avant tout le monde. Elles façonnent le relief
+      // 0 bis. Toits que le MNT a pris pour du relief — avant les falaises et
+      //    l'eau, qui lisent le relief corrigé.
+      const roofCut = new RoofCut({
+        frame,
+        elevationAt: (x, z) => this.bubble._sample(frame.origin.x + x / frame.scale, frame.origin.y + z / frame.scale, NaN),
+      });
+      if (!await rebuild(roofCut, 'toits', this.vectorTiles, near)) return false;
+      this.bubble.setRoofCut?.(roofCut.count ? roofCut : null);
+
+      // 0 ter. Falaises — avant tout le monde. Elles façonnent le relief
       //    naturel que les chaussées entailleront ensuite (une route taillée
       //    dans la rampe que la marche supprime se retrouverait en l'air), et
       //    la carte du sol a besoin de leurs bandes pour y peindre la roche.
@@ -741,7 +751,11 @@ export class WorldComposer {
         greens,
         blocked: (x, z) => { const surface = this.groundClass.surfaceAt(x, z); return surface === 'water' || surface === 'wetland'; },
       } : null;
-      if (!await rebuild(this.buildings, 'batiments', this.vectorTiles, near, here, { roadIndex: this.roads.index, builtUp, infill })) return false;
+      if (!await rebuild(this.buildings, 'batiments', this.vectorTiles, near, here, {
+        roadIndex: this.roads.index, builtUp, infill,
+        // La famille des baies lit la matière sous le bâtiment : `pavement` en ville, `bare` en zone d'activité.
+        surfaceAt: (x, z) => this.groundClass.surfaceAt(x, z),
+      })) return false;
 
       if (!await checkpoint()) return false;
 

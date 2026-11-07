@@ -137,6 +137,7 @@ export const POINT_ITEMS = [
   'busShelterRural',
   'fountain',
   'fountainWallace',
+  'bench',
   'lavoir',
   'hayBaleRound',
   'hayBaleSquare',

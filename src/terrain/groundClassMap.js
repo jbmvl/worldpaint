@@ -118,7 +118,7 @@ import {
   classPolygons,
 } from './surfaceClassification.js';
 import { contourSurfaceSteps, CONTOUR_REACH_TEXELS } from './surfaceContours.js';
-import { roadStyleFor, roadLines, isPedestrianWay, URBAN_EXCLUDED_PROFILES, ROAD_RADIUS_M } from '../layers/roadNetwork.js';
+import { roadStyleFor, roadLines, hiddenInTown, ROAD_RADIUS_M } from '../layers/roadNetwork.js';
 import { CORRIDOR_MARGIN_M } from '../layers/roadCorridor.js';
 
 /*
@@ -651,7 +651,7 @@ export function* collectVergeSegmentsSteps(source, tiles, frame, profiles, { urb
   yield* visitFeatures(source, 'transportation', tiles, (geometry, properties) => {
     const style = roadStyleFor(properties, profiles);
     if (!style) return;
-    const notInTown = urban?.any && (isPedestrianWay(properties) || URBAN_EXCLUDED_PROFILES.has(style.profile));
+    const notInTown = urban?.any && hiddenInTown(properties, style);
     const reach = style.halfWidth + marginM;
     for (const line of roadLines(geometry)) {
       if (!Array.isArray(line) || line.length < 2) continue;

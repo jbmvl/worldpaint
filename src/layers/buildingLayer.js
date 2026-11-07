@@ -31,7 +31,8 @@ import { planInfillSteps } from './buildingInfill.js';
 import { srgb } from '../core/color.js';
 import { buildingStyleAt } from './townStyle.js';
 import { isWallFootprint, facadeThickness, isTransitStop, isTransitShelter } from './buildingInterpretation.js';
-import { orientedBox, roofTriangles, roofRise, ringArea } from './roofGeometry.js';
+import { orientedBox, roofTriangles, roofRise, ringArea, roofClutterFor, ridgeStacksFor } from './roofGeometry.js';
+import { windowFamilyFor, windowLookFor } from './windowFamilies.js';
 import { pointInRing } from './furniturePlacement.js';
 import { randomAt } from '../core/groundSeed.js';
 import { pointInAreas } from './settlement.js';
@@ -248,8 +249,9 @@ export const FOOTPRINT_TWIN_AREA_RATIO = 0.8;
  * Écarte les empreintes qui en répètent une déjà gardée : même bâtisse lue
  * dans deux tuiles, ou deux fois dans la donnée, avec des sommets qui ne
  * coïncident pas. Extrudées toutes deux, leurs murs se disputeraient le pixel.
- * Jumelles : aires voisines, et le centre de chacune dans l'autre. La
- * première de `candidates` est gardée. Pure.
+ * Jumelles : aires voisines, le centre de chacune dans l'autre, et le même
+ * dessous — les parties empilées d'une tour se superposent ainsi sans se
+ * répéter. La première de `candidates` est gardée. Pure.
  *
  * @param {Array<{footprint:Array<{x:number,z:number}>|null,area:number,x:number,z:number}>} candidates
  * @returns {Array} les candidats gardés, dans leur ordre.
@@ -271,6 +273,7 @@ export function* dropTwinFootprintsSteps(candidates, cellM = 25) {
           for (const k of cells.get(`${cx + i},${cz + j}`) || []) {
             if (
               Math.min(k.area, c.area) >= FOOTPRINT_TWIN_AREA_RATIO * Math.max(k.area, c.area) &&
+              Math.abs(buildingMinHeight(k.properties) - buildingMinHeight(c.properties)) < 1 &&
               pointInRing(k.footprint, c.x, c.z) &&
               pointInRing(c.footprint, k.x, k.z)
             ) {
@@ -388,11 +391,23 @@ export const PLINTH_SHADE = 0.72;
  */
 export function windowGrid(length, height, windows = defaultTheme.windows) {
   const spacing = windows.spacingM ?? windows.widthM * 2.6;
-  // Marge d'un demi-entraxe à chaque bout : une fenêtre n'est jamais au ras de l'angle du mur.
-  const columns = Math.floor((length - spacing) / spacing);
-  const levels = Math.floor((height - windows.sillM - windows.heightM) / windows.levelM) + 1;
-  return { columns: Math.max(0, columns), levels: Math.max(0, levels), spacing };
+  // Marge d'au moins un demi-entraxe à chaque bout : une fenêtre n'est jamais
+  // au ras de l'angle du mur. Les travées sont centrées sur le pan : une
+  // façade symétrique se lit dessinée, pas imprimée depuis un angle.
+  const columns = Math.max(0, Math.floor((length - spacing) / spacing));
+  const first = (length - spacing * (columns - 1)) / 2;
+  // Un rez-de-chaussée plus haut que les étages (`groundLevelM`) décale tout
+  // ce qui est au-dessus.
+  const ground = windows.groundLevelM ?? windows.levelM;
+  const room = height - windows.sillM - windows.heightM;
+  const levels = room < 0 ? 0 : room < ground ? 1 : 2 + Math.floor((room - ground) / windows.levelM);
+  return { columns, levels, spacing, first, ground, levelM: windows.levelM };
 }
+
+/** Position d'une travée le long du pan. */
+const gridAlong = (grid, column) => grid.first + column * grid.spacing;
+/** Cote d'un niveau au-dessus de l'allège du rez-de-chaussée. */
+const gridLevelOffset = (grid, level) => (level === 0 ? 0 : grid.ground + (level - 1) * grid.levelM);
 
 /**
  * Pousse un panneau vertical entre deux points au sol, dans un accumulateur.
@@ -661,6 +676,13 @@ export function chimneyFootFor(frame, box) {
   };
 }
 
+/** Antenne de toit : un mât et deux râteaux, assez épais pour se lire de la rue. */
+function appendAntenna(kit, yaw, colors, y = 0) {
+  kit.box({ width: 0.12, height: 3.2, depth: 0.12, y, color: colors.steelDark });
+  kit.box({ width: 1.6, height: 0.08, depth: 0.08, y: y + 2.9, yaw, color: colors.steelDark });
+  kit.box({ width: 1.1, height: 0.08, depth: 0.08, y: y + 2.4, yaw, color: colors.steelDark });
+}
+
 /** Hauteur de mur minimale pour qu'un balcon ait un sens — l'ordre d'un étage. */
 export const BALCONY_MIN_WALL_M = 5.4;
 /** Largeur de façade minimale pour y poser un balcon. */
@@ -855,6 +877,7 @@ export function appendOpenings(
   const half = look.widthM / 2;
   const frameHalf = half + WINDOW_FRAME_M;
   const shutterWidth = look.widthM * SHUTTER_WIDTH_RATIO;
+  const frameTint = look.frameTint ?? WINDOW_FRAME_TINT;
 
   // Un point du mur, décalé le long de lui et décollé de lui.
   const at = (along, lift) => ({
@@ -863,8 +886,12 @@ export function appendOpenings(
   });
 
   for (let c = 0; c < grid.columns; c++) {
-    const along = grid.spacing * (c + 1);
+    const along = gridAlong(grid, c);
     if (allowAt && !allowAt(along)) continue;
+    // Travée aveugle : un mur sans baie entre deux fenêtres, tiré par travée.
+    const blind = look.blindShare && grid.columns > 2 && doorAt?.column !== c &&
+      randomAt(frame, a.x + ux * along, a.y + uz * along, 97) < look.blindShare;
+    if (blind) continue;
 
     for (let level = startLevel; level < grid.levels; level++) {
       if (openings.panes >= openings.budget) return;
@@ -876,7 +903,7 @@ export function appendOpenings(
       }
 
       const anchor = at(along, 0);
-      const sill = base + minHeight + look.sillM + level * look.levelM;
+      const sill = base + minHeight + look.sillM + gridLevelOffset(grid, level);
       const head = sill + look.heightM;
       const frameBottom = sill - WINDOW_FRAME_M;
       if (frameBottom < clearAbove) continue;
@@ -895,8 +922,8 @@ export function appendOpenings(
         head + WINDOW_FRAME_M,
         nx,
         nz,
-        WINDOW_FRAME_TINT,
-        WINDOW_FRAME_TINT
+        frameTint,
+        frameTint
       );
 
       // 2. Le vitrage — sauf volets clos, où il n'y a rien à voir derrière.
@@ -913,6 +940,21 @@ export function appendOpenings(
           GLASS_DEEP,
           GLASS_SKY
         );
+        // Meneau : la croisée à deux vantaux, une bande d'encadrement au milieu.
+        if (look.mullion) {
+          const bar = at(along, WINDOW_LIFT_M.shutter);
+          pushPanel(
+            walls,
+            { x: bar.x - ux * WINDOW_FRAME_M * 0.5, y: bar.z - uz * WINDOW_FRAME_M * 0.5 },
+            { x: bar.x + ux * WINDOW_FRAME_M * 0.5, y: bar.z + uz * WINDOW_FRAME_M * 0.5 },
+            sill,
+            head,
+            nx,
+            nz,
+            frameTint,
+            frameTint
+          );
+        }
       }
 
       // 3. Les volets : deux battants, ouverts de part et d'autre de la baie,
@@ -976,6 +1018,95 @@ export function appendOpenings(
 }
 
 /**
+ * Vitrage continu d'un pan de mur, pour les familles qui ne sont pas une
+ * grille (`windowFamilies`) : une bande par étage (`ribbon`), un mur-rideau
+ * (`curtain`, la bande occupe l'étage), ou une seule bande haute sous la
+ * toiture et une porte de quai (`clerestory`). Chaque bande est un
+ * encadrement, un vitrage et des meneaux ; la nuit, elle s'allume par
+ * travée de meneaux.
+ */
+export function appendGlazing(
+  openings,
+  walls,
+  a,
+  b,
+  nx,
+  nz,
+  base,
+  height,
+  minHeight,
+  look,
+  { frame, skipGroundLevel = false, ground = null, clearAbove = -Infinity, door = null } = {}
+) {
+  const length = Math.hypot(b.x - a.x, b.y - a.y);
+  const from = look.marginM;
+  const to = length - look.marginM;
+  if (to - from < 1.5) return;
+  const ux = (b.x - a.x) / length;
+  const uz = (b.y - a.y) / length;
+  const at = (along, lift) => ({ x: a.x + ux * along + nx * lift, z: a.y + uz * along + nz * lift });
+  const frameTint = look.frameTint ?? WINDOW_FRAME_TINT;
+  const floor = base + minHeight;
+  const footing = ground ? profileHighest(ground, from, to) + PLINTH_HEIGHT_M : -Infinity;
+
+  const bands = [];
+  if (look.kind === 'clerestory') {
+    const head = base + height - look.topM;
+    if (head - look.heightM > floor + 2.5) bands.push({ sill: head - look.heightM, head, level: 0 });
+  } else {
+    for (let level = skipGroundLevel ? 1 : 0; ; level++) {
+      const sill = floor + look.sillM + level * look.levelM;
+      const head = sill + look.heightM;
+      if (head > base + height - 0.3) break;
+      bands.push({ sill, head, level });
+    }
+  }
+
+  const panel = (lift, left, right, bottom, top, low, high = low) => {
+    const p = at(0, lift);
+    pushPanel(walls, { x: p.x + ux * left, y: p.z + uz * left }, { x: p.x + ux * right, y: p.z + uz * right }, bottom, top, nx, nz, low, high);
+  };
+  const bays = Math.max(1, Math.round((to - from) / look.mullionM));
+  const step = (to - from) / bays;
+
+  for (const { sill, head, level } of bands) {
+    if (openings.panes >= openings.budget) return;
+    if (sill - WINDOW_FRAME_M < clearAbove || sill - WINDOW_FRAME_M < footing) continue;
+    panel(WINDOW_LIFT_M.frame, from - WINDOW_FRAME_M, to + WINDOW_FRAME_M, sill - WINDOW_FRAME_M, head + WINDOW_FRAME_M, frameTint);
+    panel(WINDOW_LIFT_M.glass, from, to, sill, head, GLASS_DEEP, GLASS_SKY);
+    for (let k = 1; k < bays; k++) {
+      const along = from + k * step;
+      panel(WINDOW_LIFT_M.shutter, along - WINDOW_FRAME_M * 0.5, along + WINDOW_FRAME_M * 0.5, sill, head, frameTint);
+    }
+    openings.panes++;
+
+    const lit = openings.lit;
+    if (!lit) continue;
+    for (let k = 0; k < bays; k++) {
+      const left = from + k * step;
+      const glow = at(left + step / 2, WINDOW_LIFT_M.glass);
+      if (randomAt(frame, glow.x, glow.z, level + 1) > look.litShare) continue;
+      const warmth = randomAt(frame, glow.x, glow.z, level + 41);
+      const color = [0.95, 0.78 + warmth * 0.16, 0.42 + warmth * 0.3];
+      const p = at(0, WINDOW_LIFT_M.glass);
+      pushPanel(lit, { x: p.x + ux * left, y: p.z + uz * left }, { x: p.x + ux * (left + step), y: p.z + uz * (left + step) }, sill, head, nx, nz, color, color);
+    }
+  }
+
+  // Porte de quai d'un atelier : au milieu du pan, si elle tient sous la bande.
+  if (door && look.kind === 'clerestory' && look.doorWidthM && length > look.doorWidthM + 2) {
+    const along = length / 2;
+    const half = look.doorWidthM / 2 + WINDOW_FRAME_M;
+    const threshold = Math.max(floor, ground ? profileHighest(ground, along - half, along + half) : floor);
+    const below = bands.length ? bands[0].sill - WINDOW_FRAME_M : base + height - 0.3;
+    if (threshold + look.doorHeightM + WINDOW_FRAME_M <= below) {
+      appendDoor(walls, at, along, ux, uz, nx, nz, threshold, look, door);
+      openings.panes++;
+    }
+  }
+}
+
+/**
  * Colonne de la porte d'entrée et cote de son seuil, ou `null` : la plus
  * centrale dont la porte, posée sur le sol, tient sous l'encadrement de
  * l'étage et sous l'égout. Sur une pente, c'est ce qui la fait glisser vers
@@ -983,13 +1114,13 @@ export function appendOpenings(
  */
 function pickDoor(grid, look, floorUnder, floor, eaves) {
   const half = look.doorWidthM / 2 + WINDOW_FRAME_M;
-  const ceiling = Math.min(floor + look.levelM + look.sillM - WINDOW_FRAME_M, eaves - 0.2);
+  const ceiling = Math.min(floor + (look.groundLevelM ?? look.levelM) + look.sillM - WINDOW_FRAME_M, eaves - 0.2);
   const middle = (grid.columns - 1) / 2;
   const order = Array.from({ length: grid.columns }, (_, c) => c).sort(
     (c1, c2) => Math.abs(c1 - middle) - Math.abs(c2 - middle) || c1 - c2
   );
   for (const column of order) {
-    const along = grid.spacing * (column + 1);
+    const along = gridAlong(grid, column);
     const threshold = Math.max(floor, floorUnder(along - half, along + half));
     if (threshold + look.doorHeightM + WINDOW_FRAME_M <= ceiling) return { column, threshold };
   }
@@ -1649,9 +1780,10 @@ export class BuildingLayer {
    */
   rebuild(...args) { return finishGeneration(this.rebuildSteps(...args)); }
 
-  *rebuildSteps(source, tiles, here, { roadIndex = null, builtUp = null, infill = null } = {}) {
+  *rebuildSteps(source, tiles, here, { roadIndex = null, builtUp = null, infill = null, surfaceAt = null } = {}) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
     this._roadIndex = roadIndex;
+    this._surfaceAt = surfaceAt;
     this._builtUp = builtUp;
     this._infill = infill;
     yield* this._buildSteps(source, tiles, here);
@@ -1835,7 +1967,7 @@ export class BuildingLayer {
         )
       ) {
         built++;
-        footprints.push({ x: candidate.x, z: candidate.z });
+        footprints.push({ x: candidate.x, z: candidate.z, ring: candidate.footprint ?? null });
       }
       if (openings) panes += openings.panes;
     }
@@ -1984,7 +2116,8 @@ export class BuildingLayer {
       footprint[0].z,
       { area: ground, height },
       this.theme.towns,
-      this.region
+      this.region,
+      this.theme.facadeTints
     );
     // Pente du pays si sa palette en impose une, celle du thème sinon. L'objet
     // n'est composé que dans le premier cas : une allocation par bâtiment pour
@@ -2009,6 +2142,28 @@ export class BuildingLayer {
     // raisonnable — un bâtiment d'un seul niveau n'a pas de murs négatifs.
     const shape = look?.shape || (box && box.fill >= 0.62 ? style.shape : 'flat');
     const rise = shape === 'flat' ? 0 : roofRise(box.short, roofs);
+    // Matière sous le bâtiment : `pavement` en ville, `bare` en zone d'activité.
+    const surface = this._surfaceAt?.(box?.cx ?? footprint[0].x, box?.cz ?? footprint[0].z) ?? null;
+    const inTown = surface === 'pavement';
+    // Baies : la famille du bâtiment, sauf si sa personnalité dit les siennes.
+    const windowLook = look?.windows
+      ? { ...this.theme.windows, ...look.windows }
+      : windowLookFor(
+          this.bubble.frame,
+          box?.cx ?? footprint[0].x,
+          box?.cz ?? footprint[0].z,
+          windowFamilyFor({
+            house: style.house,
+            height,
+            flat: shape === 'flat',
+            length: box?.long ?? 0,
+            surface,
+          }),
+          this.theme
+        );
+    const windowStyle = look?.wall || (windowLook.shutters === false)
+      ? { ...style, shutters: false }
+      : windowLook.shutters === true ? { ...style, shutters: true } : style;
     const roofEaves = Math.max(bottom + 2.4, top - rise);
 
     // Façade principale : le pan le plus long, qui reçoit la porte et le
@@ -2110,10 +2265,16 @@ export class BuildingLayer {
         const shopWindows = [];
         if (personality === 'church' && look?.windows) {
           appendChurchWindows(openings, walls, a, b, nx, nz, base, eaves, profile, look.windows);
+        } else if (look?.windows !== false && windowLook.kind) {
+          appendGlazing(openings, walls, a, b, nx, nz, base, eaves - base, minHeight, windowLook, {
+            frame: this.bubble.frame, skipGroundLevel: devanture, ground: profile,
+            clearAbove: devanture ? shopfrontTop : -Infinity,
+            door: i === frontIndex && !devanture ? this.theme.furniture.colors.galvanised : null,
+          });
         } else if (look?.windows !== false) {
           appendOpenings(openings, walls, a, b, nx, nz, base, eaves - base, minHeight,
-            look?.wall ? { ...style, shutters: false } : style,
-            look?.windows ? { ...this.theme.windows, ...look.windows } : this.theme.windows, {
+            windowStyle,
+            windowLook, {
               frame: this.bubble.frame, skipGroundLevel: devanture, ground: profile,
               allowAt: kind === 'castle' ? along => facadeThickness(footprint, footprint[i], footprint[(i+1)%footprint.length], along / length) > 3.2 : null,
               clearAbove: devanture ? shopfrontTop : -Infinity,
@@ -2215,16 +2376,22 @@ export class BuildingLayer {
       if (look.dome || look.minaret) this._appendDomeAndMinaret(walls, look, box, base, eaves);
     }
 
-    // Cheminée de toit : un comble, une maison, jamais une église ni un commerce.
+    // Cheminée de toit : un comble, une maison hors ville, jamais une église ni un commerce.
     if (
       box &&
       shape !== 'flat' &&
       style.house &&
+      !inTown &&
       !look &&
       randomAt(this.bubble.frame, box.cx, box.cz, 421) < CHIMNEY_SHARE
     ) {
       this._appendChimney(walls, box, top);
     }
+
+    if (box && shape === 'flat' && !look) this._appendRoofClutter(walls, box, footprint, eaves, wallColor);
+    // Un immeuble à toit pentu, ou tout bâtiment de ville, porte ses souches
+    // sur le faîtage ; une maison hors ville, sa seule cheminée (ci-dessus).
+    if (box && shape !== 'flat' && (!style.house || inTown) && !look) this._appendRidgeStacks(walls, box, shape, top, wallColor);
 
     if (!assigned?.secondary && this._landmarkSink) {
       const landmark = buildingLandmark({ personality, name: personalityName, box, base, top });
@@ -2309,6 +2476,41 @@ export class BuildingLayer {
 
       const { x, z } = towerFoot(box, side);
       this._pushKitAt(walls, kit, x, base, z);
+    }
+  }
+
+  /** Édicule, climatiseurs et antenne d'un toit-terrasse (`roofClutterFor`), dans le tampon du bâti. */
+  _appendRoofClutter(walls, box, footprint, eaves, wallColor) {
+    const colors = this.theme.furniture.colors;
+    for (const item of roofClutterFor(this.bubble.frame, box, randomAt)) {
+      if (!pointInAreas([footprint], item.x, item.z)) continue;
+      const kit = new Kit(colors);
+      if (item.kind === 'stair') {
+        kit.box({ width: 2.6, height: 2.4, depth: 2.2, yaw: item.yaw, color: wallColor.map((c) => c * 0.9) });
+        kit.box({ width: 2.8, height: 0.12, depth: 2.4, y: 2.4, yaw: item.yaw, color: colors.concrete });
+      } else if (item.kind === 'unit') {
+        kit.box({ width: 1.6, height: 1.0, depth: 1.1, yaw: item.yaw, color: colors.galvanised });
+      } else {
+        appendAntenna(kit, item.yaw, colors);
+      }
+      this._pushKitAt(walls, kit, item.x, eaves, item.z);
+    }
+  }
+
+  /** Souches de cheminée sur le faîtage d'un immeuble (`ridgeStacksFor`), et parfois une antenne. */
+  _appendRidgeStacks(walls, box, shape, top, wallColor) {
+    const colors = this.theme.furniture.colors;
+    for (const item of ridgeStacksFor(this.bubble.frame, box, shape, randomAt)) {
+      const kit = new Kit(colors);
+      if (item.kind === 'stack') {
+        // Enduite comme la façade : une souche de brique se perd sur un toit de tuile.
+        kit.box({ width: 1.3, height: item.height + 0.6, depth: 0.6, yaw: item.yaw, color: wallColor });
+        kit.box({ width: 1.45, height: 0.12, depth: 0.75, y: item.height + 0.6, yaw: item.yaw, color: colors.stoneDark });
+      } else {
+        appendAntenna(kit, item.yaw, colors, item.height + 0.7);
+      }
+      // Posée sous le faîtage : la souche perce le comble au lieu de flotter dessus.
+      this._pushKitAt(walls, kit, item.x, top - 0.6, item.z);
     }
   }
 

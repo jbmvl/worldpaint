@@ -29,11 +29,13 @@ const HIT = { x: 0, z: 0, distance: 0 };
 const BEST = { x: 0, z: 0, distance: Infinity, axis: null };
 const NEAR = { x: 0, z: 0, distance: Infinity, axis: null };
 const ACROSS = { x: 0, z: 0, distance: Infinity, axis: null };
-/** Sondes en travers du lit (`_profileNode`) : abscisse, cote, cote redressée. */
+/** Sondes le long du lit (`_profileNode`) : abscisse, cote, cote redressée, position. */
 const PROFILE_PROBES = 17;
 const PROBE_T = new Float64Array(PROFILE_PROBES);
 const PROBE_H = new Float64Array(PROFILE_PROBES);
 const PROBE_LEVEL = new Float64Array(PROFILE_PROBES);
+const PROBE_X = new Float64Array(PROFILE_PROBES);
+const PROBE_Z = new Float64Array(PROFILE_PROBES);
 
 /** Projeté du point sur le segment, écrit dans `out` (lu aussitôt écrit). */
 function projection(x, z, a, b, out = HIT) {
@@ -250,15 +252,26 @@ export class WaterRelief {
     return quantile(values,0.25);
   }
 
+  /**
+   * Cote du lit au point (x, z) de l'axe. Chaque nœud voisin y prolonge sa
+   * cote le long de sa pente : sur un torrent, les points d'axe de deux nœuds
+   * voisins sont à des cotes très différentes, et les mêler tels quels faisait
+   * sauter l'eau de plusieurs mètres.
+   */
   profileAt(x,z,component) {
     const gx=(x+this.originX)/PROFILE_STEP, gz=(z+this.originZ)/PROFILE_STEP;
     const ix=Math.floor(gx), iz=Math.floor(gz), tx=gx-ix, tz=gz-iz;
-    const a=this._profileNode(ix,iz,component),b=this._profileNode(ix+1,iz,component);
-    const c=this._profileNode(ix,iz+1,component),d=this._profileNode(ix+1,iz+1,component);
+    const at=(node)=>node ? node.h+node.slope*((x-node.x)*node.dx+(z-node.z)*node.dz) : NaN;
+    const a=at(this._profileNode(ix,iz,component)),b=at(this._profileNode(ix+1,iz,component));
+    const c=at(this._profileNode(ix,iz+1,component)),d=at(this._profileNode(ix+1,iz+1,component));
     return (a+(b-a)*tx)*(1-tz)+(c+(d-c)*tx)*tz;
   }
 
-  /** Cote du lit au nœud `(i, j)` de la grille des profils, calculée une fois par rivière. */
+  /**
+   * Profil du lit au nœud `(i, j)` de la grille, calculé une fois par rivière :
+   * cote `h` au point d'axe `(x, z)` le plus proche, direction de l'axe et
+   * pente du lit. `null` sans axe à portée.
+   */
   _profileNode(i,j,component) {
     const profiles=component.profiles;
     const k=key(i,j);
@@ -267,31 +280,37 @@ export class WaterRelief {
     const x=i*PROFILE_STEP-this.originX, z=j*PROFILE_STEP-this.originZ;
     const near=this.nearestAxis(x,z,component,NEAR);
     // Sans axe à portée, le nœud n'en aura jamais : on le retient, sinon chaque sonde le recherche.
-    if(!near) { profiles.set(k,NaN); return NaN; }
+    if(!near) { profiles.set(k,null); return null; }
     const {a,b}=near.axis;
     const length=Math.hypot(b.x-a.x,b.z-a.z), dx=(b.x-a.x)/length, dz=(b.z-a.z)/length;
     // Le profil sonde le lit : une moyenne autour du lit lirait ses talus.
-    for(let n=0,d=-256;d<=256;d+=32,n++) {
+    // Au-delà du bout d'un axe, les sondes retombent toutes sur son extrémité,
+    // qui lit souvent la rue au-dessus d'un tunnel : elle ne compte qu'une fois.
+    let count=0;
+    for(let d=-256;d<=256;d+=32) {
       const hit=this.nearestAxis(near.x+dx*d,near.z+dz*d,component,ACROSS);
-      if(!hit) { profiles.set(k,NaN); return NaN; }
+      if(!hit) { profiles.set(k,null); return null; }
+      const t=(hit.x-near.x)*dx+(hit.z-near.z)*dz;
+      let seen=false;
+      for(let n=0;n<count && !seen;n++) seen=Math.abs(PROBE_X[n]-hit.x)<1 && Math.abs(PROBE_Z[n]-hit.z)<1;
+      if(seen) continue;
       const elevation=this.elevationAt(hit.x,hit.z);
-      if(!Number.isFinite(elevation)) return NaN;
-      PROBE_T[n]=(hit.x-near.x)*dx+(hit.z-near.z)*dz;
-      PROBE_H[n]=elevation;
+      if(!Number.isFinite(elevation)) return null;
+      PROBE_X[count]=hit.x; PROBE_Z[count]=hit.z;
+      PROBE_T[count]=t;
+      PROBE_H[count]=elevation;
+      count++;
     }
     let sumT=0,sumH=0;
-    for(let n=0;n<PROFILE_PROBES;n++) { sumT+=PROBE_T[n]; sumH+=PROBE_H[n]; }
-    const meanT=sumT/PROFILE_PROBES, meanH=sumH/PROFILE_PROBES;
+    for(let n=0;n<count;n++) { sumT+=PROBE_T[n]; sumH+=PROBE_H[n]; }
+    const meanT=sumT/count, meanH=sumH/count;
     let numerator=0,denominator=0;
-    for(let n=0;n<PROFILE_PROBES;n++) {
-      numerator+=(PROBE_T[n]-meanT)*(PROBE_H[n]-meanH);
-      denominator+=(PROBE_T[n]-meanT)**2;
-    }
+    for(let n=0;n<count;n++) { numerator+=(PROBE_T[n]-meanT)*(PROBE_H[n]-meanH); denominator+=(PROBE_T[n]-meanT)**2; }
     const slope=denominator ? numerator/denominator : 0;
-    for(let n=0;n<PROFILE_PROBES;n++) PROBE_LEVEL[n]=PROBE_H[n]-slope*PROBE_T[n];
-    const h=quantile(PROBE_LEVEL,0.25);
-    profiles.set(k,h);
-    return h;
+    for(let n=0;n<count;n++) PROBE_LEVEL[n]=PROBE_H[n]-slope*PROBE_T[n];
+    const node={h:quantile(PROBE_LEVEL.subarray(0,count),0.25),x:near.x,z:near.z,dx,dz,slope};
+    profiles.set(k,node);
+    return node;
   }
 
   /** Axe le plus proche dans la cellule du point, écrit dans `best` s'il est fourni. */

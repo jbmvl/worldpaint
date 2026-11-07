@@ -8,6 +8,15 @@
  * première image décodée. Une source qui sert du 512 lue comme du 256 donnerait
  * des altitudes fausses et non seulement grossières, le rééchantillonnage d'un
  * canevas moyennant des canaux qui encodent un nombre, pas une couleur.
+ *
+ * La source par défaut est un MNT de sol nu là où un pays publie le sien : un
+ * modèle de surface à 30 m mêle bâti, arbres et cote de l'eau au relief, et
+ * fait onduler les routes de berge de plusieurs mètres. Il ne sert qu'en repli.
+ *
+ * Une source ne sert pas forcément partout le zoom demandé : Mapterhorn
+ * s'arrête au 12 là où il n'a que Copernicus. Un 404 fait donc lire la tuile
+ * parente de la même source, recadrée et suréchantillonnée. Changer de source
+ * pour une tuile recoudrait deux relevés en marche.
  */
 
 import { decodeTerrarium, decodeTerrainRgb, tileKey, fillTileUrl } from './tileMath.js';
@@ -17,13 +26,22 @@ import { tileRequest } from './tileRequest.js';
 export const DEM_TILE_PIXELS = 256;
 
 /**
- * Source par défaut : Terrain RGB de MapTiler. La clé est celle d'un compte de
- * test ; une application consommatrice passe la sienne par `elevation.url`.
+ * Source par défaut : Mapterhorn, Terrarium en WebP de 512, sans clé. Il
+ * assemble les MNT nationaux de sol nu (lidar de 0,5 à 5 m en Europe, aux
+ * États-Unis, au Japon…) et prend Copernicus GLO-30 ailleurs. Attribution :
+ * « © Mapterhorn » et ses sources (mapterhorn.com/attribution).
+ */
+export const MAPTERHORN_URL = 'https://tiles.mapterhorn.com/{z}/{x}/{y}.webp';
+
+/**
+ * Premier repli : Terrain RGB de MapTiler, Copernicus GLO-30 en Europe. La clé
+ * est celle d'un compte de test ; une application passe la sienne par
+ * `elevation.fallback`.
  */
 export const MAPTILER_TERRAIN_URL =
   'https://api.maptiler.com/tiles/terrain-rgb-v2/{z}/{x}/{y}.webp?key=Zx2mAQIInk7YylLgVH0R';
 
-/** Repli par défaut : Terrarium d'AWS Open Data, sans clé ni quota, mais ~30 m et mer à +3–9 m sur les côtes. */
+/** Dernier repli : Terrarium d'AWS Open Data, sans clé ni quota, mais ~30 m et mer à +3–9 m sur les côtes. */
 export const TERRARIUM_URL = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
 
 /**
@@ -31,6 +49,9 @@ export const TERRARIUM_URL = 'https://s3.amazonaws.com/elevation-tiles-prod/terr
  * sur le repli. Un 404 ne concerne qu'une tuile et ne fait pas basculer.
  */
 const REFUSED = new Set([401, 403, 429]);
+
+/** Zooms remontés au plus pour trouver la tuile parente d'une tuile absente (404). */
+export const DEM_OVERZOOM_LEVELS = 4;
 
 /** Délai avant de redemander une tuile en échec : chaque relève la redemandait, quota épuisé ou non. */
 export const DEM_RETRY_MS = 60000;
@@ -66,6 +87,83 @@ function decodeTile(bitmap, encoding, size) {
   return heights;
 }
 
+/** Altitudes d'une réponse image, à sa résolution native. */
+async function decodeResponse(res, encoding) {
+  const bitmap = await createImageBitmap(await res.blob());
+  const size = bitmap.width || DEM_TILE_PIXELS;
+  const heights = decodeTile(bitmap, encoding, size);
+  bitmap.close?.();
+  return { heights, size };
+}
+
+/** Poids de B-spline cubique des quatre pixels autour de `t` ∈ [0, 1) : lisse, sans dépassement. */
+function splineWeights(t, out, at) {
+  const u = 1 - t;
+  out[at] = (u * u * u) / 6;
+  out[at + 1] = (3 * t * t * t - 6 * t * t + 4) / 6;
+  out[at + 2] = (-3 * t * t * t + 3 * t * t + 3 * t + 1) / 6;
+  out[at + 3] = (t * t * t) / 6;
+}
+
+/**
+ * Le quart (ou le seizième…) d'une tuile parente qui couvre la tuile enfant,
+ * agrandi à la taille de la parente. `cut` est l'écart de zoom, `(dx, dy)` la
+ * place de l'enfant dans la parente. L'agrandissement est une B-spline
+ * cubique : bilinéaire, il laissait des facettes de la taille d'un pixel
+ * parent, que les chaussées suivaient.
+ */
+export function cropParent(heights, size, cut, dx, dy) {
+  const span = size / (1 << cut);
+  const last = size - 1;
+  const clamp = (k) => (k < 0 ? 0 : k > last ? last : k);
+  // Pour chaque colonne (et rangée) de l'enfant : le premier des quatre pixels parents et leurs poids.
+  const taps = (offset) => {
+    const first = new Int32Array(size);
+    const weights = new Float64Array(size * 4);
+    for (let i = 0; i < size; i++) {
+      const p = offset * span + ((i + 0.5) * span) / size - 0.5;
+      const k = Math.floor(p);
+      first[i] = k - 1;
+      splineWeights(p - k, weights, i * 4);
+    }
+    return { first, weights };
+  };
+  const cols = taps(dx);
+  const rows = taps(dy);
+  // Passe en lignes sur les seules rangées parentes lues, puis en colonnes.
+  const top = clamp(rows.first[0]);
+  const bottom = clamp(rows.first[size - 1] + 3);
+  const across = new Float32Array((bottom - top + 1) * size);
+  for (let y = top; y <= bottom; y++) {
+    const line = y * size;
+    const into = (y - top) * size;
+    for (let i = 0; i < size; i++) {
+      const f = cols.first[i];
+      const w = i * 4;
+      across[into + i] =
+        cols.weights[w] * heights[line + clamp(f)] +
+        cols.weights[w + 1] * heights[line + clamp(f + 1)] +
+        cols.weights[w + 2] * heights[line + clamp(f + 2)] +
+        cols.weights[w + 3] * heights[line + clamp(f + 3)];
+    }
+  }
+  const out = new Float32Array(size * size);
+  for (let j = 0; j < size; j++) {
+    const f = rows.first[j];
+    const w = j * 4;
+    const r0 = (clamp(f) - top) * size;
+    const r1 = (clamp(f + 1) - top) * size;
+    const r2 = (clamp(f + 2) - top) * size;
+    const r3 = (clamp(f + 3) - top) * size;
+    for (let i = 0; i < size; i++) {
+      out[j * size + i] =
+        rows.weights[w] * across[r0 + i] + rows.weights[w + 1] * across[r1 + i] +
+        rows.weights[w + 2] * across[r2 + i] + rows.weights[w + 3] * across[r3 + i];
+    }
+  }
+  return out;
+}
+
 export class ElevationField {
   /**
    * @param {Object} options
@@ -73,19 +171,24 @@ export class ElevationField {
    *        de la bulle qui les lit : c'est la résolution de la source qui le
    *        décide, pas la finesse de la maille.
    * @param {string} [options.url]     Gabarit d'URL.
-   * @param {string} [options.encoding] 'terrain-rgb' (défaut) ou 'terrarium'.
-   * @param {{url: string, encoding: string}|null} [options.fallback] Source
-   *        prise dès que la principale refuse de servir (401, 403, 429, ou
-   *        requête bloquée). Défaut : Terrarium. `null` : aucun repli.
+   * @param {string} [options.encoding] 'terrarium' (défaut) ou 'terrain-rgb'.
+   * @param {{url: string, encoding: string}|Array|null} [options.fallback]
+   *        Source(s) prise(s) dans l'ordre dès que celle en service refuse de
+   *        servir (401, 403, 429, ou requête bloquée). Défaut : MapTiler, puis
+   *        Terrarium. `null` : aucun repli.
    * @param {number} [options.maxTiles] Taille du cache LRU (défaut 64 tuiles,
-   *        soit ~17 Mo : de quoi couvrir largement le bloc courant, le reste
-   *        sert au recyclage quand l'observateur revient sur ses pas).
+   *        soit 64 Mo en tuiles de 512 : de quoi couvrir largement le bloc
+   *        courant, le reste sert au recyclage quand l'observateur revient sur
+   *        ses pas).
    */
   constructor({
     zoom,
-    url = MAPTILER_TERRAIN_URL,
-    encoding = 'terrain-rgb',
-    fallback = { url: TERRARIUM_URL, encoding: 'terrarium' },
+    url = MAPTERHORN_URL,
+    encoding = 'terrarium',
+    fallback = [
+      { url: MAPTILER_TERRAIN_URL, encoding: 'terrain-rgb' },
+      { url: TERRARIUM_URL, encoding: 'terrarium' },
+    ],
     maxTiles = 64,
     timeoutMs = 15000,
     _sources = null,
@@ -96,7 +199,7 @@ export class ElevationField {
      * d'autres zooms (`atZoom`) : le relief lointain bascule avec la bulle.
      */
     this._sources = _sources || {
-      list: [{ url, encoding }, ...(fallback && fallback.url !== url ? [fallback] : [])],
+      list: [{ url, encoding }, ...[fallback ?? []].flat().filter((source) => source.url !== url)],
       index: 0,
       warned: false,
     };
@@ -112,6 +215,8 @@ export class ElevationField {
     this.pending = new Map();
     /** @type {Map<string, number>} tuiles en échec et l'instant de l'échec */
     this.failed = new Map();
+    /** @type {Map<string, Promise<Object|null|undefined>>} tuiles parentes lues pour des tuiles absentes */
+    this._parents = new Map();
     this.disposed = false;
     this.revision = 0;
   }
@@ -177,6 +282,15 @@ export class ElevationField {
           }
           if (!res.ok) {
             if (REFUSED.has(res.status) && this._fallBack(index, res.status)) continue;
+            const coarse = res.status === 404 ? await this._fromParent(url, encoding, x, y) : null;
+            if (this.disposed || request.signal.aborted) return null;
+            if (index !== this._sources.index) continue;
+            if (coarse) {
+              this.tilePixels = coarse.size;
+              this.failed.delete(key);
+              this._store(key, coarse.heights);
+              return coarse.heights;
+            }
             this._fail(key);
             // Un terrain plat ne se lit pas comme une panne : on le dit une fois.
             if (!this._warned) {
@@ -221,6 +335,40 @@ export class ElevationField {
   }
 
   /**
+   * La tuile (x, y) découpée dans la plus proche parente que la source sert,
+   * ou `null`. Les parentes sont partagées entre leurs enfants : seize tuiles
+   * absentes au 14 ne lisent qu'une tuile du 12.
+   */
+  async _fromParent(url, encoding, x, y) {
+    for (let cut = 1; cut <= DEM_OVERZOOM_LEVELS && cut <= this.zoom; cut++) {
+      const z = this.zoom - cut;
+      const px = x >> cut;
+      const py = y >> cut;
+      const key = `${url}|${tileKey(z, px, py)}`;
+      let parent = this._parents.get(key);
+      if (!parent) {
+        parent = (async () => {
+          // Partagée entre ses enfants : seule la fermeture du champ l'annule.
+          const res = await fetch(fillTileUrl(url, z, px, py), { signal: this._abort.signal, mode: 'cors', credentials: 'omit' });
+          if (res.status === 404) return undefined;
+          return res.ok ? decodeResponse(res, encoding) : null;
+        })().catch(() => null);
+        parent.then((found) => { if (found === null) this._parents.delete(key); });
+        this._parents.set(key, parent);
+        while (this._parents.size > 16) this._parents.delete(this._parents.keys().next().value);
+      }
+      const found = await parent;
+      if (found === undefined) continue;
+      if (!found) return null;
+      return {
+        size: found.size,
+        heights: cropParent(found.heights, found.size, cut, x - (px << cut), y - (py << cut)),
+      };
+    }
+    return null;
+  }
+
+  /**
    * Passe à la source suivante si `index` est encore celle en service.
    * Vrai s'il faut réessayer : bascule faite ici ou déjà faite ailleurs.
    */
@@ -246,6 +394,7 @@ export class ElevationField {
     this._sourceIndex = this._sources.index;
     this.tiles.clear();
     this.failed.clear();
+    this._parents.clear();
     this.tilePixels = DEM_TILE_PIXELS;
     this._last = null;
     this.revision++;

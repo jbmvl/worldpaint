@@ -460,6 +460,11 @@ après modification, afin de ne pas conserver les anciennes altitudes.
 
 ### Tunnels et accès
 
+En ville (`UrbanMask.covers`, jugé au milieu de la ligne), aucun tunnel n'est
+dessiné : `hiddenInTown` les écarte avec les voies piétonnes, sentiers, pistes
+cyclables, escaliers et dessertes secondaires (allées de parking, entrées
+privées, ruelles). Hors ville, ils restent tous.
+
 `transportTunnels` distingue les passages courts dans une emprise bâtie, les
 passages inférieurs courts sous une chaussée ou un rail, et les galeries sous
 le relief. La longueur seule ne transforme pas un tunnel en franchissement.

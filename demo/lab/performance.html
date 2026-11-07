@@ -22,7 +22,7 @@ document.body.appendChild(renderer.domElement);
 const scene=new THREE.Scene();
 const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,.5,20000);
 const start=performance.now();
-const world=createWorld({THREE,scene,detail,sky:{Sky}, elevation:{zoom:place.zoom,url:`${base}/dem/{z}/{x}/{y}.${place.elevation.extension}`,encoding:place.elevation.encoding},vector:{tiles:[`${location.origin}${base}/vector/{z}/{x}/{y}.pbf`],maxZoom:place.vector.maxZoom}});
+const world=createWorld({THREE,scene,detail,sky:{Sky}, elevation:{zoom:place.elevation.zoom??place.zoom,url:`${base}/dem/{z}/{x}/{y}.${place.elevation.extension}`,encoding:place.elevation.encoding},vector:{tiles:[`${location.origin}${base}/vector/{z}/{x}/{y}.pbf`],maxZoom:place.vector.maxZoom}});
 const constructionMs=performance.now()-start;
 const report=installReport(world,renderer,scene,camera,place);
 window.performanceLab={world,renderer,scene,camera,place,report};

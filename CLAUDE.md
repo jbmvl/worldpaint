@@ -15,9 +15,16 @@ Un seul banc mesure les trois, dans les conditions de la démo (bulle
 complète, `mountAt`, recentrage toutes les 400 ms) :
 
 ```
-node scripts/costs-bench.mjs --runs 3 --lng -0.145 --lat 47.131 --out <fichier>
-node scripts/costs-bench.mjs --root <worktree du commit d'avant> …   # l'avant
+node scripts/costs-bench.mjs --court --avant <copie d'avant> --lng -0.145 --lat 47.131   # une minute
+node scripts/costs-bench.mjs --avant <copie d'avant> --lng -0.145 --lat 47.131          # trois passes
 ```
+
+`--avant` mesure les deux versions dans la même commande, passes alternées, et
+rend le tableau avant/après. On mesure au banc **court** (une passe, trajet
+de 400 m, une minute). Une seule passe varie de 20 % sur la génération : un
+écart qu'il montre se dit tel quel, avec cette réserve, et se re-mesure au
+court. Le banc **long** (trois passes, 1,5 km) ne se lance que si l'auteur le
+demande.
 
 | Critère | Ce que le banc rend |
 | --- | --- |
@@ -31,7 +38,9 @@ pour changer ce pas, le même avant et après). Une passe dure une quarantaine d
 secondes ; `--move 0` saute le trajet (génération et RAM seules, une dizaine de
 secondes par passe) ; `--latence`,
 `--debit` simulent le réseau. Les tuiles de `station-montreuil-bellay`
-couvrent le départ de la démo.
+couvrent le départ de la démo. Sans Playwright, le banc pilote Chrome par son
+protocole de débogage (`scripts/cdpBrowser.mjs`) ; la PSS n'est lue que sous
+Linux.
 
 - Un lieu de **campagne** fait partie de chaque mesure (`station-montreuil-bellay`),
   pas seulement une ville : c'est là que la génération doit tendre vers 2 s,

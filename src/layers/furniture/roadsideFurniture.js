@@ -76,6 +76,11 @@ export function isSettlementEdgeRun(previous, minGapM = SIGN_PLACE_NAME_MIN_GAP_
   const gap = previous.rows[previous.rows.length - 1].distance - previous.rows[0].distance;
   return gap >= minGapM;
 }
+/** Arbres de rue : écart à la rive, dégagement minimal d'une façade, décalage du pas sur celui des lampadaires, en mètres. */
+const STREET_TREE_SETBACK_M = 2.2;
+const STREET_TREE_CLEARANCE_M = 2.5;
+const STREET_TREE_PHASE_M = 5;
+
 /**
  * Essences plantables en alignement de route, avec leur part du tirage.
  *
@@ -111,7 +116,7 @@ const DEFAULT_ALIGNMENT_SPECIES = [
  * `treeOval` l'olivier comme le bouleau, `treePalm` le seul mot qui la porte.
  * Sans région, c'est le mélange par défaut.
  */
-function alignmentTreeSpeciesFor(frame, x, z, trees = null) {
+export function alignmentTreeSpeciesFor(frame, x, z, trees = null) {
   const mix = trees?.length
     ? sharesFor(trees).map(([word, share]) => [alignmentShapeForTree(word), share])
     : DEFAULT_ALIGNMENT_SPECIES;
@@ -509,6 +514,25 @@ export function applyRoadsidePlan(layer, {
         openGround: true,
         own: segment,
       });
+    }
+  }
+
+  // Arbres de rue : une grande rue de ville est plantée des deux côtés, face
+  // à face, sur le trottoir. Pas de tirage par chaîne comme à la campagne :
+  // c'est l'arbre qui fait la rue. Il s'efface devant une façade, un
+  // carrefour ou une autre chaussée.
+  if (plan.streetTree) {
+    const species = alignmentTreeSpeciesFor(frame, side.x, side.z, layer.region?.trees);
+    for (const p of spacedAlongPath(path, plan.streetTree, { ...spacing, phase: STREET_TREE_PHASE_M })) {
+      for (const row of [1, -1]) {
+        layer._placeBeside(placements, species, p, row * (halfWidth + STREET_TREE_SETBACK_M), platform, {
+          scale: 0.85 + randomAt(frame, p.x, p.z, row > 0 ? 5 : 6) * 0.3,
+          offRoad: true,
+          openGround: true,
+          clearOfBuildings: STREET_TREE_CLEARANCE_M,
+          own: segment,
+        });
+      }
     }
   }
 

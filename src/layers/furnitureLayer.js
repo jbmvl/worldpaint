@@ -96,6 +96,7 @@ import {
 import { buildRoadsideSteps } from './furniture/roadsideFurniture.js';
 import { buildCrossings, buildJunctionSigns, trafficPhaseAt } from './furniture/junctionFurniture.js';
 import { buildParcelsSteps } from './furniture/parcels.js';
+import { buildTownSquares } from './furniture/townTrees.js';
 import {
   buildVillageLandmarks,
   buildRocksSteps,
@@ -561,6 +562,8 @@ export class FurnitureLayer {
         yield;
         buildPointsOfInterest(this, context, roadSegments, builtUp);
         yield;
+        ({ trees: this.counts.squareTrees, benches: this.counts.benches } = buildTownSquares(this, context));
+        yield;
         yield* buildRocksSteps(this, context, builtUp);
         yield;
         yield* buildBiomeDebrisSteps(this, context, builtUp);
@@ -962,6 +965,7 @@ export class FurnitureLayer {
       own = null,
       atKerb = false,
       level = LEVEL_GROUND,
+      clearOfBuildings = null,
     } = {}
   ) {
     // Perpendiculaire à gauche de la marche, comme partout ailleurs.
@@ -981,6 +985,7 @@ export class FurnitureLayer {
     // une portion — un point pris au milieu du tronçon rendu se déplace avec
     // l'observateur, et l'alignement apparaissait et disparaissait en roulant.
     if (openGround && !this._openGround(x, z)) return null;
+    if (clearOfBuildings != null && this._fabric?.covers?.(x, z, clearOfBuildings)) return null;
     const yaw = roadsideYaw(point.tx, point.tz, offset, facing);
 
     let y = null;

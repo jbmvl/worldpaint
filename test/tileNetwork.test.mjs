@@ -140,7 +140,8 @@ test('un 404 ne fait pas basculer et la tuile n’est pas redemandée tout de su
   const field = fieldOf();
   assert.equal(await field.load(3, 3), null);
   assert.equal(await field.load(3, 3), null);
-  assert.deepEqual(net.calls, ['https://primary/14/3/3.webp']);
+  // Le 404 fait chercher les parentes, absentes elles aussi, une seule fois.
+  assert.deepEqual(net.calls, ['https://primary/14/3/3.webp', 'https://primary/13/1/1.webp', 'https://primary/12/0/0.webp', 'https://primary/11/0/0.webp', 'https://primary/10/0/0.webp']);
   assert.equal(field.url, PRIMARY);
   field.dispose();
 });
@@ -165,4 +166,57 @@ test('la bascule vide le cache : deux MNT ne se mêlent pas', async (t) => {
   assert.equal(field.has(0, 0), false, 'la tuile de l’ancienne source est partie');
   assert.equal(field.has(5, 5), true);
   field.dispose();
+});
+
+test('par défaut, Mapterhorn puis MapTiler puis Terrarium', async () => {
+  const { MAPTERHORN_URL, MAPTILER_TERRAIN_URL, TERRARIUM_URL } = await import('../src/core/elevationField.js');
+  const field = new ElevationField({ zoom: 14 });
+  assert.deepEqual(field._sources.list.map((s) => [s.url, s.encoding]), [
+    [MAPTERHORN_URL, 'terrarium'],
+    [MAPTILER_TERRAIN_URL, 'terrain-rgb'],
+    [TERRARIUM_URL, 'terrarium'],
+  ]);
+  field.dispose();
+});
+
+test('plusieurs replis se prennent dans l’ordre, un refus après l’autre', async (t) => {
+  const net = fakeNetwork(t, (url) => (url.startsWith('https://primary') || url.startsWith('https://backup') ? 403 : 200));
+  const field = fieldOf({ fallback: [{ url: BACKUP, encoding: 'terrarium' }, { url: 'https://last/{z}/{x}/{y}.png', encoding: 'terrarium' }] });
+  assert.ok(await field.load(0, 0));
+  assert.deepEqual(net.calls, ['https://primary/14/0/0.webp', 'https://backup/14/0/0.png', 'https://last/14/0/0.png']);
+  assert.equal(field.url, 'https://last/{z}/{x}/{y}.png');
+  field.dispose();
+});
+
+test('une tuile absente (404) est découpée dans sa parente de la même source', async (t) => {
+  const net = fakeNetwork(t, (url) => (url.includes('/14/') || url.includes('/13/') ? 404 : 200));
+  const field = fieldOf();
+  const heights = await field.load(5, 6);
+  assert.ok(heights, 'la parente du 12 couvre la tuile');
+  assert.equal(field.tilePixels, 4);
+  assert.deepEqual(net.calls, ['https://primary/14/5/6.webp', 'https://primary/13/2/3.webp', 'https://primary/12/1/1.webp']);
+  assert.ok(await field.load(4, 6));
+  assert.equal(net.calls.filter((url) => url.includes('/12/')).length, 1, 'la parente sert ses autres enfants');
+  assert.equal(field.url, PRIMARY, 'un 404 ne fait pas changer de source');
+  field.dispose();
+});
+
+test('le recadrage d’une parente prend le bon quart, centres de pixels alignés, sans facettes', async () => {
+  const { cropParent } = await import('../src/core/elevationField.js');
+  // Parente de 16 pixels, altitude = abscisse + 2 × ordonnée : une pente régulière.
+  const size = 16;
+  const parent = Float32Array.from({ length: size * size }, (_, i) => (i % size) + 2 * Math.floor(i / size));
+  const child = cropParent(parent, size, 1, 1, 0);
+  // Le quart droit du haut : le pixel enfant (i, j) a son centre en x = 8 + (i + 0,5)/2 − 0,5 de la parente.
+  for (const [i, j] of [[4, 4], [8, 6], [10, 12]]) {
+    const x = 8 + (i + 0.5) / 2 - 0.5;
+    const y = (j + 0.5) / 2 - 0.5;
+    assert.ok(Math.abs(child[j * size + i] - (x + 2 * y)) < 1e-4, `pixel ${i},${j}`);
+  }
+  // Une marche d'un pixel parent est adoucie, sans dépasser ses deux paliers.
+  const step = Float32Array.from({ length: size * size }, (_, i) => ((i % size) < 12 ? 0 : 10));
+  const smooth = cropParent(step, size, 1, 1, 0);
+  const row = Array.from(smooth.slice(5 * size, 6 * size));
+  assert.ok(row.every((v) => v >= -1e-6 && v <= 10 + 1e-6));
+  assert.ok(row.filter((v) => v > 0.1 && v < 9.9).length >= 3, 'le passage s’étale sur plusieurs pixels');
 });

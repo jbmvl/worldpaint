@@ -240,3 +240,75 @@ export function roofTriangles(ring, faces, box, eaves, shape, roofs = defaultThe
 
   return out;
 }
+
+/** Emprise minimale d'un toit-terrasse pour qu'il porte quelque chose, en m². */
+export const ROOF_CLUTTER_MIN_AREA_M2 = 40;
+
+/**
+ * Ce qu'un toit-terrasse porte : un édicule d'escalier, des climatiseurs,
+ * parfois une antenne. Positions dans le rectangle orienté, en retrait des
+ * bords ; l'appelant écarte ce qui sort de l'empreinte. Tiré du lieu, au
+ * centre du rectangle.
+ *
+ * @param {Object} frame Repère local.
+ * @param {{cx:number,cz:number,angle:number,long:number,short:number}} box
+ * @param {Function} random `randomAt`.
+ * @returns {Array<{kind:'stair'|'unit'|'antenna', x:number, z:number, yaw:number}>}
+ */
+export function roofClutterFor(frame, box, random) {
+  const area = box.long * box.short;
+  if (area < ROOF_CLUTTER_MIN_AREA_M2 || box.short < 4) return [];
+  const draw = (salt) => random(frame, box.cx, box.cz, salt);
+  const at = boxPoint(box);
+  const out = [];
+  // Un îlot à cour intérieure a un grand rectangle et une emprise en anneau :
+  // on tire en proportion du rectangle, l'appelant garde ce qui tombe sur le toit.
+  const stairs = area >= 100 ? Math.min(4, 1 + Math.floor(area / 500)) : 0;
+  for (let i = 0; i < stairs; i++) {
+    if (draw(601 + i * 6) < 0.8) out.push(at('stair', draw(603 + i * 6) * 1.5 - 0.75, draw(605 + i * 6) * 1.3 - 0.65));
+  }
+  const units = 2 + Math.floor(draw(631) * Math.min(14, area / 50));
+  for (let i = 0; i < units; i++) out.push(at('unit', draw(633 + i * 4) * 1.6 - 0.8, draw(635 + i * 4) * 1.4 - 0.7));
+  const antennas = Math.min(3, Math.floor(area / 300) + (draw(711) < 0.5 ? 1 : 0));
+  for (let i = 0; i < antennas; i++) out.push(at('antenna', draw(713 + i * 4) * 1.4 - 0.7, draw(715 + i * 4) * 1.2 - 0.6));
+  return out;
+}
+
+/**
+ * Souches de cheminée d'un immeuble à toit pentu : une rangée sur le faîtage,
+ * une tous les huit mètres environ, et parfois une antenne sur l'une d'elles.
+ * Sur une croupe, le faîtage est plus court que le bâtiment d'une largeur.
+ *
+ * @returns {Array<{kind:'stack'|'antenna', x:number, z:number, yaw:number, height:number}>}
+ */
+export function ridgeStacksFor(frame, box, shape, random) {
+  if (box.long < 6 || shape === 'flat') return [];
+  const draw = (salt) => random(frame, box.cx, box.cz, salt);
+  const ridge = shape === 'gable' ? box.long * 0.8 : Math.max(0, box.long - box.short);
+  const count = Math.min(5, 1 + Math.floor(ridge / 8));
+  const at = boxPoint(box);
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const t = count === 1 ? 0 : (i / (count - 1) - 0.5) * (ridge / box.long);
+    const item = at('stack', t * 2, (draw(661 + i * 4) - 0.5) * 0.1);
+    item.height = 1.1 + draw(663 + i * 4) * 0.8;
+    out.push(item);
+  }
+  if (draw(691) < 0.4) {
+    const host = out[Math.floor(draw(693) * out.length)];
+    out.push({ ...host, kind: 'antenna', height: host.height });
+  }
+  return out;
+}
+
+/** Un point du rectangle orienté, en fractions de demi-côté (−1…1). */
+function boxPoint(box) {
+  const cos = Math.cos(box.angle);
+  const sin = Math.sin(box.angle);
+  return (kind, along, across) => ({
+    kind,
+    x: box.cx + cos * along * box.long * 0.5 - sin * across * box.short * 0.5,
+    z: box.cz + sin * along * box.long * 0.5 + cos * across * box.short * 0.5,
+    yaw: Math.PI / 2 - box.angle,
+  });
+}

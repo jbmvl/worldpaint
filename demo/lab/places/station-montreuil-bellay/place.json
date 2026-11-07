@@ -5,13 +5,14 @@
   "lat": 47.1287929,
   "zoom": 14,
   "tiles": 9,
-  "elevation": {
-    "encoding": "terrain-rgb",
-    "extension": "webp",
-    "source": "api.maptiler.com"
-  },
   "vector": {
     "maxZoom": 14,
     "source": "tiles.openfreemap.org"
+  },
+  "elevation": {
+    "zoom": 13,
+    "encoding": "terrarium",
+    "extension": "webp",
+    "source": "tiles.mapterhorn.com"
   }
 }

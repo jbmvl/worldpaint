@@ -93,6 +93,7 @@ try {
         `>12 % ${share(audit.plusDe12)}`.padStart(13),
         `>20 % ${share(audit.plusDe20)}`.padStart(13),
         `marches ${audit.marches}`.padStart(12),
+        `vagues p95 ${audit.vagues.p95} m max ${audit.vagues.max} m >0,5 m ${audit.vagues.partAuDela} %`.padStart(42),
         `gauches ${audit.carrefoursGauches}/${audit.carrefours}`.padStart(16),
         `bouches en marche ${audit.bouchesEnMarche}`.padStart(22),
         `terrassement p95 ${audit.terrassement.p95} m max ${audit.terrassement.max} m`.padStart(40),

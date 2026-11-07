@@ -26,6 +26,7 @@ son état.
 | `railwayLayer.js` | la voie ferrée et sa caténaire ; publie sa propre emprise et les voies que parcourent les trains |
 | `cliffLayer.js` | les falaises relevées : la marche du terrain, la bande peinte en roche, et la nappe de paroi — les sommets qu'un champ de hauteurs ne peut pas porter sur une face verticale |
 | `buildingLayer.js`, `buildingInterpretation.js`, `roofGeometry.js`, `buildingCharacterGeometry.js` | le bâti, la reconnaissance des murailles, les toitures, les baies religieuses et les tours de château |
+| `windowFamilies.js` | la famille de baies d'un bâtiment (maison, bourg, immeuble de ville, barre, tour, atelier) et ses cotes tirées par bâtiment ; `buildingLayer` pose la grille (`appendOpenings`) ou le vitrage continu (`appendGlazing`) |
 | `buildingInfill.js` | le semis des maisons là où le pays dit son bâti mal relevé (`sparse`) : rend des anneaux, que `buildingLayer` bâtit comme ceux des tuiles ; cotes contrôlées par `scripts/buildings-audit.mjs` |
 | `streetLayer.js`, `streetMasonry.js` | bordures, caniveaux et joints des rues et des carrefours |
 | `gardenLayer.js` | clôtures et buissons de maison |
@@ -38,7 +39,7 @@ son état.
 | `obstacleLights.js` | les balises rouges nocturnes des antennes et éoliennes : flash commun, halos occultés par le relief, alimentés et avancés par `furnitureLayer` |
 | `cemeteryGhosts.js` | les fantômes nocturnes des cimetières hantés : quads face caméra dessinés dans le shader, flottement sans réécriture de matrice, alimentés et avancés par `furnitureLayer` |
 | `coast.js` | la distance à la mer (nappes `ocean`) — c'est elle qui met des mouettes dans le ciel |
-| `settlement.js` | l'habitat : emprises habitées, lieux nommés, `UrbanMask`, `FabricIndex` |
+| `settlement.js` | l'habitat : emprises habitées, lieux nommés, `UrbanMask`, `FabricIndex` (compte de bâtiments, et « dans ou contre un bâtiment » par les anneaux publiés par `buildingLayer`) |
 
 ## Le mobilier
 
@@ -57,6 +58,7 @@ identifie d'abord sa famille :
 | `furniture/roadsideFurniture.js` | ce qui accompagne une chaussée sur sa **longueur** : éclairage, poteaux et ligne aérienne, bornes, panneaux, balises, entrée d'agglomération, alignements, haies de bas-côté |
 | `furniture/junctionFurniture.js` | ce qu'un **carrefour** porte : feu tricolore, panneau de priorité |
 | `furniture/parcels.js` | ce qui se lit sur une **parcelle** : contour (haie, muret, clôture), semis, rangs de vigne, cour de ferme, repères d'emprise urbaine |
+| `furniture/townTrees.js` | ce qui **pousse** dans l'habitat : arbres clairsemés d'un parc, d'une place piétonne (avec ses bancs) et d'un bourg sur son sol d'habitat (`settled`), sur une maille mondiale, triés par distance |
 | `furniture/parcelFauna.js` | qui **vit** dans une parcelle : troupeau, gibier, carnassier — et le circuit qu'il suit ; et qui vit **hors** parcelle, sur les matières ouvertes (lande, pré salé, estive) qu'aucun contour ne ferme |
 | `furniture/cemetery.js` | l'habillage d'un cimetière : mur, portail, tombes, robinet, et ses fantômes s'il est hanté |
 | `furniture/landmarks.js` | les **repères** : moulin et château d'eau d'un bourg, pierres, éoliennes, pylônes, antennes de sommet, phares, arbres de crête |

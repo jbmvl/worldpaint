@@ -1,0 +1,18 @@
+{
+  "name": "nantes-gare",
+  "label": "Nantes — gare et quartier Malakoff",
+  "lng": -1.5418,
+  "lat": 47.2172,
+  "zoom": 14,
+  "tiles": 9,
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  },
+  "elevation": {
+    "zoom": 13,
+    "encoding": "terrarium",
+    "extension": "webp",
+    "source": "tiles.mapterhorn.com"
+  }
+}

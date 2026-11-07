@@ -6,6 +6,19 @@
  *   node scripts/costs-bench.mjs [--root <dépôt>] [--lieu station-montreuil-bellay]
  *        [--runs 3] [--out reports/costs.json] [--lng … --lat …] [--move 0]
  *        [--latence 100 --debit 20] [--cpu 3] [--near 0] [--detail 375] [--saison automne]
+ *        [--court] [--avant <dépôt>]
+ *
+ * `--court` : une passe, un quart de tour et 400 m de trajet, une vingtaine de
+ * secondes. Il suffit à voir une régression franche ; un écart de quelques
+ * pour cent ne se juge qu'au banc long, trois passes.
+ *
+ * `--avant <dépôt>` mesure les deux versions dans la même commande, passes
+ * alternées (avant, après, avant…) pour que l'état de la machine pèse autant
+ * sur l'une que sur l'autre, puis rend le tableau avant/après. Avec `--court`,
+ * la comparaison tient en une minute.
+ *
+ * Sans Playwright, le banc pilote Chrome par son protocole de débogage
+ * (`cdpBrowser.mjs`).
  *
  * `--root` désigne une autre copie du dépôt (un `git worktree` d'un commit
  * ancien) : la page du banc et le lieu y sont copiés s'ils manquent, et
@@ -16,8 +29,8 @@
  * précis), et PSS cumulée des processus Chromium (pic et après GC), lue dans
  * `/proc` — Linux seulement (0 ailleurs). Les médianes des passes sont rendues.
  */
-import { spawn } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import os from 'node:os';
 
@@ -26,7 +39,10 @@ const flag = (name, fallback) => { const i = args.indexOf(`--${name}`); return i
 const here = resolve(dirname(new URL(import.meta.url).pathname), '..');
 const root = resolve(flag('root', here));
 const lieu = flag('lieu', 'station-montreuil-bellay');
-const runs = Number(flag('runs', 3));
+const short = args.includes('--court');
+const runs = Number(flag('runs', short ? 1 : 3));
+const before = flag('avant', null);
+const median = (values) => { const v = values.filter(Number.isFinite).sort((a, b) => a - b); return v.length ? v[Math.floor((v.length - 1) / 2)] : null; };
 const out = flag('out', null);
 const lng = flag('lng', null), lat = flag('lat', null);
 const withMove = flag('move', '1') !== '0';
@@ -43,8 +59,14 @@ if (root !== here) {
   if (!existsSync(join(root, 'node_modules'))) symlinkSync(join(here, 'node_modules'), join(root, 'node_modules'));
 }
 
+if (before) {
+  await compare(resolve(before));
+  process.exit(0);
+}
+
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
   .catch(() => import('/opt/node-tools/node_modules/playwright/index.js'))
+  .catch(() => import('./cdpBrowser.mjs'))
   .then((m) => m.default ?? m);
 
 /** `/proc` n'existe que sous Linux : ailleurs la PSS n'est pas mesurée (0). */
@@ -84,7 +106,6 @@ function pss(pid) {
 const server = spawn(process.execPath, [join(root, 'demo/server.mjs')], { env: { ...process.env, PORT: String(port) }, stdio: ['ignore', 'pipe', 'inherit'] });
 await new Promise((ok, ko) => { server.stdout.once('data', ok); server.once('exit', (code) => ko(Error(`serveur arrêté : ${code}`))); });
 
-const median = (values) => { const v = values.filter(Number.isFinite).sort((a, b) => a - b); return v.length ? v[Math.floor((v.length - 1) / 2)] : null; };
 const passes = [];
 try {
   for (let run = 0; run < runs; run++) {
@@ -128,7 +149,7 @@ try {
       let move = null;
       if (withMove) {
         peak = 0;
-        move = await page.evaluate(() => window.costsLab.move());
+        move = await page.evaluate((options) => window.costsLab.move(options), short ? { turnFrames: 60, runFrames: 400 } : {});
         move.pssPeakBytes = peak;
         move.heapRetainedBytes = await heapAfterGc();
         move.pssBytes = pss(pid);
@@ -147,10 +168,16 @@ try {
   server.kill();
 }
 
+const summary = summarize(passes, root);
+if (out) { mkdirSync(dirname(resolve(out)), { recursive: true }); writeFileSync(resolve(out), JSON.stringify({ summary, passes }, null, 2) + '\n'); }
+console.log(JSON.stringify(summary, null, 2));
+
+/** Médianes des passes. */
+function summarize(passes, root) {
 const MB = (b) => (b == null ? null : Math.round(b / 2 ** 20));
 const ms = (v) => (v == null ? null : Math.round(v * 10) / 10);
 const pick = (f) => median(passes.map((p) => { try { return f(p); } catch { return null; } }));
-const summary = {
+return {
   root, lieu, runs, date: new Date().toISOString(), cpu: cpuRate, reseau: { latenceMs: latency, debitMbps: mbps, tuiles: passes[0]?.tiles },
   machine: { cpu: os.cpus()[0].model, cores: os.cpus().length, node: process.version, webgl: passes[0]?.webgl },
   ram: {
@@ -185,5 +212,45 @@ const summary = {
   erreurs: [...new Set(passes.flatMap((p) => p.errors))],
   tuilesManquantes: [...new Set(passes.flatMap((p) => p.missing))],
 };
-if (out) { mkdirSync(dirname(resolve(out)), { recursive: true }); writeFileSync(resolve(out), JSON.stringify({ summary, passes }, null, 2) + '\n'); }
-console.log(JSON.stringify(summary, null, 2));
+}
+
+/** Avant et après, passes alternées, chacune dans un processus du banc ; puis le tableau. */
+async function compare(beforeRoot) {
+  const skip = new Set(['--avant', '--root', '--runs', '--out']);
+  const kept = args.filter((a, i) => !skip.has(a) && !skip.has(args[i - 1]));
+  const dir = mkdtempSync(join(os.tmpdir(), 'costs-'));
+  const sides = { avant: { root: beforeRoot, passes: [] }, apres: { root, passes: [] } };
+  for (let run = 0; run < runs; run++) {
+    for (const [name, side] of Object.entries(sides)) {
+      console.error(`${name}, passe ${run + 1}/${runs}`);
+      const file = join(dir, `${name}-${run}.json`);
+      const child = spawnSync(process.execPath, [new URL(import.meta.url).pathname, ...kept, '--root', side.root, '--runs', '1', '--out', file], { stdio: ['ignore', 'ignore', 'inherit'] });
+      if (child.status !== 0) throw new Error(`${name} : le banc a échoué`);
+      side.passes.push(...JSON.parse(readFileSync(file, 'utf8')).passes);
+    }
+  }
+  const a = summarize(sides.avant.passes, beforeRoot);
+  const b = summarize(sides.apres.passes, root);
+  const rows = [
+    ['RAM', 'tas retenu après montage (Mo)', (s) => s.ram.tasRetenuApresMontageMo],
+    ['RAM', 'pic du tas au montage (Mo)', (s) => s.ram.tasPicMontageMo],
+    ['RAM', 'pic du tas au trajet (Mo)', (s) => s.ram.tasPicTrajetMo],
+    ['RAM', 'PSS pic (Mo, Linux seulement)', (s) => s.ram.pssPicMontageMo],
+    ['RAM', 'géométrie (Mo)', (s) => s.ram.geometrieMo],
+    ['génération', 'première image (ms)', (s) => s.generation.totalMs],
+    ['génération', 'mountAt (ms)', (s) => s.generation.mountAtMs],
+    ['génération', 'bulle complète (ms)', (s) => s.generation.bulleCompleteMs],
+    ['fluidité', 'trajet p95 (ms)', (s) => s.fluidite.trajet.imageP95Ms],
+    ['fluidité', 'trajet p99 (ms)', (s) => s.fluidite.trajet.imageP99Ms],
+    ['fluidité', 'trajet max (ms)', (s) => s.fluidite.trajet.imageMaxMs],
+    ['fluidité', 'images > 16 ms', (s) => s.fluidite.trajet.imagesPlusDe16Ms],
+    ['fluidité', 'images > 50 ms', (s) => s.fluidite.trajet.imagesPlusDe50Ms],
+    ['réseau', 'tuiles (Ko)', (s) => (s.reseau.tuiles ? Math.round(s.reseau.tuiles.bytes / 1024) : null)],
+  ];
+  const cell = (f, s) => { try { return f(s); } catch { return null; } };
+  console.log(`${lieu}, ${runs} passe(s) de chaque côté${short ? ', banc court' : ''}\n`);
+  console.log('| critère | mesure | avant | après |\n| --- | --- | ---: | ---: |');
+  for (const [group, label, f] of rows) console.log(`| ${group} | ${label} | ${cell(f, a) ?? '—'} | ${cell(f, b) ?? '—'} |`);
+  for (const [name, s] of [['avant', a], ['après', b]]) if (s.erreurs.length) console.log(`\nerreurs ${name} : ${s.erreurs.join(' | ')}`);
+  if (out) { mkdirSync(dirname(resolve(out)), { recursive: true }); writeFileSync(resolve(out), JSON.stringify({ avant: a, apres: b, passes: sides }, null, 2) + '\n'); }
+}

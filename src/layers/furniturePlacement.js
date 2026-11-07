@@ -847,6 +847,7 @@ export function roadsideFurnitureFor(profile, { builtUp = false } = {}) {
     milestone: null,
     kilometreStone: null,
     alignmentTree: null,
+    streetTree: null,
     sign: null,
     hedge: false,
     guardrail: false,
@@ -866,8 +867,10 @@ export function roadsideFurnitureFor(profile, { builtUp = false } = {}) {
       plan.sign = 620;
       plan.guardrail = true;
       plan.trafficLight = builtUp;
-      if (builtUp) plan.lamp = 38;
-      else {
+      if (builtUp) {
+        plan.lamp = 38;
+        plan.streetTree = 11;
+      } else {
         plan.utilityPole = 62;
         plan.alignmentTree = 16;
       }

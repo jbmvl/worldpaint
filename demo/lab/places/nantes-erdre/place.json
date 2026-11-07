@@ -1,0 +1,18 @@
+{
+  "name": "nantes-erdre",
+  "label": "Nantes — l’Erdre, quai Ceineray et île de Versailles",
+  "lng": -1.553,
+  "lat": 47.2235,
+  "zoom": 14,
+  "tiles": 9,
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  },
+  "elevation": {
+    "zoom": 13,
+    "encoding": "terrarium",
+    "extension": "webp",
+    "source": "tiles.mapterhorn.com"
+  }
+}

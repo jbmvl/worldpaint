@@ -840,7 +840,7 @@ export const SURFACE_LOOK = {
   // --- Les deux matières à part ---------------------------------------------
   // Le revêtement urbain lit `townStyle.pavementTone` ; cet albédo sert de repli.
   pavement: {
-    albedo: srgb('#908b7f'),
+    albedo: srgb('#adaca5'),
 
     wash: 'pavement',
     bushes: 0,
@@ -1065,6 +1065,26 @@ export const DOOR_HEIGHT_M = 2.15;
 /** Part des fenêtres allumées. Un village endormi n'est pas un village éteint. */
 export const WINDOW_LIT_SHARE = 0.34;
 
+/**
+ * Familles de baies (`windowFamilies.js`), en mètres. Une famille remplace
+ * les clés de `windows` qu'elle nomme. `spacingM` est une liste : chaque
+ * bâtiment en tire un entraxe. `kind` absent : une grille de fenêtres ;
+ * `ribbon` une bande vitrée par étage, `curtain` un mur-rideau, `clerestory`
+ * une bande haute sous la toiture et une porte de quai.
+ */
+export const WINDOW_FAMILIES = {
+  house: { widthM: 0.9, heightM: 1.35, spacingM: [2.6, 3.1], blindShare: 0.15 },
+  townhouse: { widthM: 1.0, heightM: 1.6, sillM: 0.95, spacingM: [3.0, 3.4], blindShare: 0.08, mullion: true, shutterShare: 0.5 },
+  cityBlock: { widthM: 1.1, heightM: 2.15, sillM: 0.45, levelM: 3.3, groundLevelM: 4.2, spacingM: [2.6, 2.9], mullion: true },
+  ribbon: { kind: 'ribbon', heightM: 1.4, sillM: 0.95, levelM: 3.0, mullionM: 1.8, marginM: 1.2 },
+  curtain: { kind: 'curtain', levelM: 3.6, sillM: 0.15, heightM: 2.9, mullionM: 3.0, marginM: 0.4 },
+  workshop: { kind: 'clerestory', heightM: 1.0, topM: 0.8, mullionM: 2.4, marginM: 2, doorWidthM: 4, doorHeightM: 4.2 },
+};
+/** Encadrements tirés par bâtiment : blanc cassé, pierre, sombre. */
+export const WINDOW_FRAME_TONES = ['#f2eee4', '#cfc6b4', '#4a4e52'];
+/** Variation des cotes d'une baie d'un bâtiment à l'autre (part, ±). */
+export const WINDOW_SIZE_JITTER = 0.12;
+
 // --- Les chaussées -------------------------------------------------------------
 /**
  * Profils de chaussée, du plus grand au plus petit. Le marquage donne
@@ -1224,12 +1244,12 @@ export const STREET_LOOK = {
    */
   pavementGrain: 0.55,
   pavement: {
-    default: '#908b7f',
-    hedgerow_meadow: '#908b7f',
+    default: '#adaca5',
+    hedgerow_meadow: '#adaca5',
     moor_heath: '#77796f',
     garrigue: '#928b78',
     dry_scrub: '#898371',
-    terraced_slope: '#908b7f',
+    terraced_slope: '#adaca5',
     dry_steppe: '#938b77',
     desert_stone: '#a09680',
     desert_sand: '#a09680',
@@ -1646,6 +1666,15 @@ export const defaultTheme = Object.freeze({
   soils: SOIL_LOOK,
   stones: STONE_LOOK,
   towns: TOWN_PALETTES,
+  // Nuances de façade autour de la couleur du pays (facteurs RVB linéaires) :
+  // telle quelle, ocrée, rosée, grisée, pâlie. Une par bâtiment.
+  facadeTints: [
+    [1, 1, 1],
+    [1.15, 1.04, 0.84],
+    [1.12, 0.92, 0.88],
+    [0.88, 0.93, 1.0],
+    [1.18, 1.15, 1.1],
+  ],
   personalities: BUILDING_PERSONALITIES,
   roofs: { pitch: ROOF_PITCH, maxRiseM: ROOF_MAX_RISE_M },
   windows: {
@@ -1657,6 +1686,9 @@ export const defaultTheme = Object.freeze({
     doorHeightM: DOOR_HEIGHT_M,
     litShare: WINDOW_LIT_SHARE,
   },
+  windowFamilies: WINDOW_FAMILIES,
+  windowFrameTones: WINDOW_FRAME_TONES,
+  windowSizeJitter: WINDOW_SIZE_JITTER,
   shopfront: {
     windowWidthM: SHOPFRONT_WINDOW_WIDTH_M,
     doorWidthM: SHOPFRONT_DOOR_WIDTH_M,

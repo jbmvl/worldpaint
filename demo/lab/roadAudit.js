@@ -1,6 +1,6 @@
 /*
  * roadAudit — ce que le réseau routier d'un lieu rejoué a de mesurable :
- * pentes, marches, terrassement, bouches, chaussées superposées, et une
+ * pentes, marches, vagues, terrassement, bouches, chaussées superposées, et une
  * empreinte du réseau (tracés, largeurs, cotes) pour prouver qu'un changement
  * est neutre. Lu par `placeLab.roads()` et `scripts/roads-audit.mjs`.
  *
@@ -21,6 +21,33 @@ const AREA_GRADE = 0.15;
 const OVERLAP_SHARE = 0.6;
 const OVERLAP_COS = 0.94;
 const CELL_M = 16;
+/**
+ * Une vague : l'écart de la chaussée à sa corde tendue à ±40 m, relevé tous
+ * les 5 m. Une route tendue s'en écarte de quelques décimètres, même sur un
+ * versant ; le MNT qui ondule la fait monter et descendre de plusieurs mètres.
+ */
+const WAVE_HALF_M = 40;
+const WAVE_STEP_M = 5;
+const WAVE_M = 0.5;
+
+/** Écarts à la corde d'un tronçon au sol, en mètres, hors ouvrages. */
+function wavesOf(segment, verticalScale, out) {
+  const path = segment.path;
+  const length = path[path.length - 1].distance - path[0].distance;
+  if (length < 2 * WAVE_HALF_M) return;
+  let row = 1;
+  for (let d = path[0].distance + WAVE_HALF_M; d <= path[path.length - 1].distance - WAVE_HALF_M; d += WAVE_STEP_M) {
+    while (row < path.length - 1 && path[row].distance < d) row++;
+    if (segment.works[row] || segment.works[row - 1]) continue;
+    const chord = (platformAt(segment, d - WAVE_HALF_M) + platformAt(segment, d + WAVE_HALF_M)) / 2;
+    const wave = Math.abs(platformAt(segment, d) - chord) / verticalScale;
+    out.push(wave);
+    if (wave > out.worst) {
+      out.worst = wave;
+      out.worstAt = { x: Math.round(segment.path[row].x), z: Math.round(segment.path[row].z), profil: segment.profile };
+    }
+  }
+}
 
 const quantile = (values, share) => {
   if (!values.length) return null;
@@ -114,6 +141,11 @@ export function auditRoads(composer) {
     }
   }
 
+  const waves = [];
+  waves.worst = 0;
+  waves.worstAt = null;
+  for (const s of paved) wavesOf(s, composer.bubble.verticalScale, waves);
+
   let mouths = 0;
   let mouthSteps = 0;
   let warped = 0;
@@ -200,6 +232,14 @@ export function auditRoads(composer) {
     penteMax: +worst.toFixed(2),
     penteMaxEn: worstAt,
     cotesAbsentes: missing,
+    vagues: {
+      releves: waves.length,
+      median: quantile(waves, 0.5),
+      p95: quantile(waves, 0.95),
+      max: quantile(waves, 1),
+      pireEn: waves.worstAt,
+      partAuDela: waves.length ? +((100 * waves.filter((w) => w > WAVE_M).length) / waves.length).toFixed(1) : null,
+    },
     terrassement: { median: quantile(earthwork, 0.5), p95: quantile(earthwork, 0.95), max: quantile(earthwork, 1) },
     superposeM: Math.round(overlap),
     superposeEn: overlapAt,

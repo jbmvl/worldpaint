@@ -7,17 +7,20 @@
  *   node scripts/capture-place.mjs montreuil-bellay -0.1450 47.1310 "Montreuil-Bellay"
  *
  * Les sources sont celles de la démo : OpenFreeMap pour les tuiles vectorielles
- * (via son TileJSON), MapTiler pour le MNT. Si MapTiler refuse, le MNT vient
- * des tuiles Terrarium d'AWS Open Data. Ce qui n'a pu être lu est dit, et le
- * lieu reste utilisable avec ce qu'on a : un relief nu vaut mieux que rien.
+ * (via son TileJSON), Mapterhorn pour le MNT, puis MapTiler et Terrarium d'AWS
+ * Open Data s'il refuse. Ce qui n'a pu être lu est dit, et le lieu reste
+ * utilisable avec ce qu'on a : un relief nu vaut mieux que rien.
+ *
+ *   node scripts/capture-place.mjs lyon --mnt-seul   // refait le seul MNT d'un lieu enregistré
  *
  * Couvre `--tuiles` tuiles de zoom 14 autour du point (défaut 1, soit 3×3) :
  * au moins ce que la bulle de la démo charge autour du point de départ. Le MNT
  * du relief lointain est enregistré avec, à son zoom, sur toute la nappe.
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { DEM_OVERZOOM_LEVELS } from '../src/core/elevationField.js';
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => {
@@ -26,7 +29,11 @@ const flag = (name, fallback) => {
   const [value] = args.splice(i, 2).slice(1);
   return value;
 };
-const ring = Number(flag('tuiles', 1));
+const demOnly = args.includes('--mnt-seul');
+if (demOnly) args.splice(args.indexOf('--mnt-seul'), 1);
+const saved = demOnly ? JSON.parse(readFileSync(join('demo', 'lab', 'places', args[0], 'place.json'), 'utf8')) : null;
+if (saved) args.splice(1, 0, String(saved.lng), String(saved.lat), saved.label);
+const ring = Number(flag('tuiles', saved ? (Math.sqrt(saved.tiles) - 1) / 2 : 1));
 const [name, lngText, latText, label = name] = args;
 if (!name || !Number.isFinite(Number(lngText)) || !Number.isFinite(Number(latText))) {
   console.error('usage : node scripts/capture-place.mjs <nom> <lng> <lat> [libellé] [--tuiles 1]');
@@ -35,6 +42,8 @@ if (!name || !Number.isFinite(Number(lngText)) || !Number.isFinite(Number(latTex
 const lng = Number(lngText);
 const lat = Number(latText);
 const ZOOM = 14;
+/** Zoom du MNT, celui de la démo (`DEFAULT_ELEVATION_ZOOM`). */
+const DEM_ZOOM = 13;
 
 const tileOf = (lngDeg, latDeg, z) => {
   const n = 2 ** z;
@@ -53,31 +62,36 @@ for (let dy = -ring; dy <= ring; dy++) {
   for (let dx = -ring; dx <= ring; dx++) tiles.push({ x: centre.x + dx, y: centre.y + dy });
 }
 
-async function fetchBytes(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return new Uint8Array(await res.arrayBuffer());
-}
-
-/** Enregistre toutes les tuiles d'une source ; rend le nombre écrit. */
+/**
+ * Enregistre toutes les tuiles d'une source ; rend le nombre de tuiles
+ * couvertes. Pour le MNT, une tuile absente (404) est remplacée par sa plus
+ * proche parente, que le moteur découpe de même (`DEM_OVERZOOM_LEVELS`).
+ */
 async function capture(kind, template, extension, list = tiles, zoom = ZOOM) {
   let written = 0;
+  let coarse = 0;
   for (const { x, y } of list) {
-    const url = fill(template, zoom, x, y);
-    try {
-      const bytes = await fetchBytes(url);
-      const dir = join(root, kind, String(zoom), String(x));
+    for (let cut = 0; cut <= (kind === 'dem' ? DEM_OVERZOOM_LEVELS : 0); cut++) {
+      const [z, tx, ty] = [zoom - cut, x >> cut, y >> cut];
+      const res = await fetch(fill(template, z, tx, ty)).catch((err) => ({ ok: false, status: err.message }));
+      if (res.status === 404 && kind === 'dem') continue;
+      if (!res.ok) {
+        console.warn(`[${kind}] ${z}/${tx}/${ty} : HTTP ${res.status}`);
+        break;
+      }
+      const dir = join(root, kind, String(z), String(tx));
       mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, `${y}.${extension}`), bytes);
+      writeFileSync(join(dir, `${ty}.${extension}`), new Uint8Array(await res.arrayBuffer()));
       written++;
-    } catch (err) {
-      console.warn(`[${kind}] ${zoom}/${x}/${y} : ${err.message}`);
+      if (cut) coarse++;
+      break;
     }
   }
+  if (coarse) console.log(`[${kind}] ${coarse} tuile(s) du ${zoom} lues dans une parente`);
   return written;
 }
 
-const manifest = { name, label, lng, lat, zoom: ZOOM, tiles: tiles.length };
+const manifest = saved ?? { name, label, lng, lat, zoom: ZOOM, tiles: tiles.length };
 
 // Le relief lointain lit un MNT plus grossier (`farRelief.js`), sur toute sa
 // nappe : les tuiles de ce zoom qui couvrent `farBlockSize` tuiles de la bulle.
@@ -96,6 +110,7 @@ const farTiles = [];
 
 // --- MNT ------------------------------------------------------------------
 const DEM_SOURCES = [
+  { url: 'https://tiles.mapterhorn.com/{z}/{x}/{y}.webp', encoding: 'terrarium', extension: 'webp' },
   {
     url: 'https://api.maptiler.com/tiles/terrain-rgb-v2/{z}/{x}/{y}.webp?key=Zx2mAQIInk7YylLgVH0R',
     encoding: 'terrain-rgb',
@@ -107,11 +122,19 @@ const DEM_SOURCES = [
     extension: 'png',
   },
 ];
+if (demOnly) {
+  delete manifest.elevation;
+  rmSync(join(root, 'dem'), { recursive: true, force: true });
+}
 for (const source of DEM_SOURCES) {
-  const written = await capture('dem', source.url, source.extension);
+  const demTiles = [...new Map(tiles.map(({ x, y }) => {
+    const k = 2 ** (ZOOM - DEM_ZOOM);
+    return [`${Math.floor(x / k)}/${Math.floor(y / k)}`, { x: Math.floor(x / k), y: Math.floor(y / k) }];
+  })).values()];
+  const written = await capture('dem', source.url, source.extension, demTiles, DEM_ZOOM);
   if (written === 0) continue;
-  manifest.elevation = { encoding: source.encoding, extension: source.extension, source: new URL(source.url).host };
-  console.log(`MNT : ${written}/${tiles.length} tuiles (${manifest.elevation.source})`);
+  manifest.elevation = { zoom: DEM_ZOOM, encoding: source.encoding, extension: source.extension, source: new URL(source.url).host };
+  console.log(`MNT : ${written}/${demTiles.length} tuiles du ${DEM_ZOOM} (${manifest.elevation.source})`);
   const far = await capture('dem', source.url, source.extension, farTiles, FAR_ZOOM);
   console.log(`MNT lointain : ${far}/${farTiles.length} tuiles de zoom ${FAR_ZOOM}`);
   break;
@@ -119,7 +142,7 @@ for (const source of DEM_SOURCES) {
 if (!manifest.elevation) console.warn('MNT : aucune source joignable — le lieu sera plat.');
 
 // --- Tuiles vectorielles ----------------------------------------------------
-try {
+if (!demOnly) try {
   const res = await fetch('https://tiles.openfreemap.org/planet');
   if (!res.ok) throw new Error(`TileJSON : HTTP ${res.status}`);
   const tilejson = await res.json();

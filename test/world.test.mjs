@@ -4886,6 +4886,9 @@ test('les densités de bord de route restent desserrées', () => {
 
   const street = roadsideFurnitureFor('major', { builtUp: true });
   assert.ok(street.lamp >= 34, `lampadaires espacés (${street.lamp} m)`);
+  assert.ok(street.streetTree > 0, 'une grande rue de ville est plantée');
+  assert.equal(major.streetTree, null, 'pas d’arbres de rue hors agglomération');
+  assert.equal(roadsideFurnitureFor('minor', { builtUp: true }).streetTree, null, 'ni dans une petite rue');
   // Un carrefour d’agglomération porte un feu ; en rase campagne, non.
   assert.equal(street.trafficLight, true);
   assert.equal(major.trafficLight, false);
@@ -6460,6 +6463,36 @@ test('la grille de fenêtres tient dans le mur qui la porte', () => {
   assert.ok(grid.spacing * grid.columns < 20, 'dernière colonne dans le mur');
   // Trois niveaux dans dix mètres : allège à 1,1 m, niveaux de 3,2 m.
   assert.equal(grid.levels, 3);
+  // Travées centrées : la marge est la même aux deux bouts.
+  const last = grid.first + (grid.columns - 1) * grid.spacing;
+  assert.ok(Math.abs(grid.first - (20 - last)) < 1e-9, 'façade symétrique');
+});
+
+test('la famille des baies se lit sur la hauteur, le toit et le sol', async () => {
+  const { windowFamilyFor, windowLookFor } = await import('../src/layers/windowFamilies.js');
+  assert.equal(windowFamilyFor({ house: true, height: 7 }), 'house');
+  assert.equal(windowFamilyFor({ house: false, height: 9, surface: 'settled' }), 'townhouse');
+  assert.equal(windowFamilyFor({ height: 18, surface: 'pavement' }), 'cityBlock');
+  assert.equal(windowFamilyFor({ height: 18, flat: true, length: 60, surface: 'pavement' }), 'ribbon');
+  assert.equal(windowFamilyFor({ height: 40, surface: 'pavement' }), 'curtain');
+  assert.equal(windowFamilyFor({ height: 18, surface: 'bare' }), 'curtain', 'bureaux en zone d’activité');
+  assert.equal(windowFamilyFor({ height: 8, surface: 'bare' }), 'workshop');
+  assert.equal(windowFamilyFor({ house: true, height: 6, surface: 'bare' }), 'house', 'une maison reste une maison');
+
+  // Les cotes varient d’un bâtiment à l’autre, à la même place elles ne bougent pas.
+  const a = windowLookFor(testFrame, 10, 10, 'cityBlock');
+  assert.deepEqual(a, windowLookFor(testFrame, 10, 10, 'cityBlock'));
+  const widths = new Set();
+  for (let i = 0; i < 20; i++) widths.add(windowLookFor(testFrame, i * 37, 5, 'cityBlock').widthM.toFixed(2));
+  assert.ok(widths.size > 5, `largeurs variées (${widths.size})`);
+  assert.equal(windowLookFor(testFrame, 0, 0, 'curtain').kind, 'curtain');
+});
+
+test('un rez-de-chaussée haut décale les étages au-dessus', () => {
+  const plain = windowGrid(20, 16, { ...defaultTheme.windows, levelM: 3.3 });
+  const tall = windowGrid(20, 16, { ...defaultTheme.windows, levelM: 3.3, groundLevelM: 4.2 });
+  assert.ok(tall.levels <= plain.levels);
+  assert.equal(tall.ground, 4.2);
 });
 
 test('les fenêtres allumées ne changent pas d’une reconstruction à l’autre', () => {
@@ -9862,6 +9895,57 @@ test('aucun mur de bourg ne tombe hors de la plage claire du nuancier', () => {
   }
 });
 
+test('les façades d’un bourg prennent plusieurs nuances de la couleur du pays', async () => {
+  const { defaultTheme } = await import('../src/themes/default.js');
+  const tints = defaultTheme.facadeTints;
+  assert.ok(tints.length >= 4, 'au moins quatre nuances');
+  // Sans vieillissement ni nuance, le mur est celui du pays ; avec, les
+  // rapports de couleur d’un mur à l’autre ne sont pas tous les mêmes.
+  const hues = new Set();
+  for (let i = 0; i < 60; i++) {
+    const s = buildingStyleAt(testFrame, 100 + i * 9, 300, { area: 90, height: 7 });
+    hues.add((s.wall[0] / s.wall[2]).toFixed(2));
+  }
+  assert.ok(hues.size >= 4, `plusieurs teintes (${hues.size})`);
+  const flat = buildingStyleAt(testFrame, 100, 300, { area: 90, height: 7 }, undefined, null, null);
+  const tinted = buildingStyleAt(testFrame, 100, 300, { area: 90, height: 7 });
+  assert.ok(tinted.wall.every((c) => c <= 1), 'aucune composante ne déborde');
+  assert.equal(flat.palette, tinted.palette, 'même palette de pays');
+});
+
+test('un toit-terrasse porte édicule, climatiseurs ou antenne, pas un petit toit', async () => {
+  const { roofClutterFor } = await import('../src/layers/roofGeometry.js');
+  const small = { cx: 0, cz: 0, angle: 0, long: 6, short: 5 };
+  assert.deepEqual(roofClutterFor(testFrame, small, randomAt), []);
+  let items = 0;
+  for (let i = 0; i < 30; i++) {
+    const big = { cx: i * 41, cz: 7, angle: 0.4, long: 30, short: 14 };
+    const a = roofClutterFor(testFrame, big, randomAt);
+    assert.deepEqual(a, roofClutterFor(testFrame, big, randomAt), 'tiré du lieu');
+    for (const item of a) {
+      assert.ok(Math.hypot(item.x - big.cx, item.z - big.cz) <= Math.hypot(big.long, big.short) / 2, 'sur le toit');
+    }
+    items += a.length;
+  }
+  assert.ok(items > 30, `les grands toits sont habillés (${items})`);
+});
+
+test('un immeuble à toit pentu porte une rangée de souches sur son faîtage', async () => {
+  const { ridgeStacksFor } = await import('../src/layers/roofGeometry.js');
+  const box = { cx: 50, cz: 20, angle: 0.3, long: 32, short: 12 };
+  const stacks = ridgeStacksFor(testFrame, box, 'hip', randomAt).filter((i) => i.kind === 'stack');
+  assert.ok(stacks.length >= 3, `plusieurs souches (${stacks.length})`);
+  // Sur le faîtage d’une croupe : jamais plus loin du centre que la moitié du faîtage.
+  for (const s of stacks) assert.ok(Math.hypot(s.x - box.cx, s.z - box.cz) <= (box.long - box.short) / 2 + 1);
+  assert.deepEqual(ridgeStacksFor(testFrame, box, 'flat', randomAt), [], 'un toit plat n’a pas de faîtage');
+});
+
+test('une place piétonne se reconnaît à son polygone path/pedestrian', async () => {
+  const { isSquare } = await import('../src/layers/furniture/townTrees.js');
+  assert.equal(isSquare({ class: 'path', subclass: 'pedestrian' }), true);
+  assert.equal(isSquare({ class: 'path', subclass: 'footway' }), false);
+});
+
 test('deux maisons d’un même bourg se ressemblent sans être identiques', () => {
   const a = buildingStyleAt(testFrame, 100, 100, { area: 90, height: 7 });
   const b = buildingStyleAt(testFrame, 118, 92, { area: 110, height: 8 });
@@ -11171,6 +11255,27 @@ test('seules les chaussées qui desservent des maisons peuvent être bordées', 
   for (const profile of ['express', 'track', 'path', 'cycleway']) {
     assert.ok(!STREET_PROFILES.has(profile), `${profile} n’en porte pas`);
   }
+});
+
+test('l’index du bâti dit si un point est dans un bâtiment ou contre sa façade', () => {
+  const square = [{ x: 0, z: 0 }, { x: 10, z: 0 }, { x: 10, z: 10 }, { x: 0, z: 10 }];
+  const fabric = new FabricIndex([{ x: 5, z: 5, ring: square }, { x: 300, z: 300 }]);
+  assert.equal(fabric.covers(5, 5), true, 'dedans');
+  assert.equal(fabric.covers(12, 5), false, 'à deux mètres, sans dégagement');
+  assert.equal(fabric.covers(12, 5, 2.5), true, 'à deux mètres, dégagement de 2,5 m');
+  assert.equal(fabric.covers(15, 5, 2.5), false, 'à cinq mètres');
+  assert.equal(fabric.covers(300, 300, 4), false, 'un centre sans anneau ne couvre rien');
+  assert.equal(fabric.countWithin(5, 5, 1), 1, 'le compte par centres ne change pas');
+});
+
+test('les arbres de l’habitat : parc relevé, quartier d’habitation', async () => {
+  const { isPark, isYard, PARK_TREES, YARD_TREES } = await import('../src/layers/furniture/townTrees.js');
+  assert.equal(isPark({ class: 'grass', subclass: 'park' }), true);
+  assert.equal(isPark({ class: 'grass', subclass: 'garden' }), false, 'un jardin privé n’est pas un parc');
+  assert.equal(isYard({ class: 'residential' }), true);
+  assert.equal(isYard({ class: 'industrial' }), false);
+  assert.equal(YARD_TREES.surface, 'settled', 'un bourg ne plante pas sur le revêtement d’une ville');
+  assert.ok(YARD_TREES.share * PARK_TREES.cellM ** 2 < PARK_TREES.share * YARD_TREES.cellM ** 2, 'le bourg est plus clairsemé que le parc');
 });
 
 test('l’index du bâti compte ce qui est là, et s’arrête au plafond', () => {
@@ -14001,6 +14106,30 @@ test('isPedestrianWay reconnaît le trottoir relevé et laisse le sentier tranqu
   assert.equal(isPedestrianWay({}), false);
 });
 
+test('collectRoadLines : en ville, ni desserte secondaire ni tunnel', () => {
+  const frame = createLocalFrame(2.35, 48.85, 15);
+  const ways = [
+    { class: 'service', service: 'parking_aisle' },
+    { class: 'service', service: 'driveway' },
+    { class: 'service', service: 'alley' },
+    { class: 'service' },
+    { class: 'primary', brunnel: 'tunnel' },
+    { class: 'primary', brunnel: 'bridge' },
+  ];
+  const source = {
+    forEachFeature(sourceLayer, tiles, callback) {
+      for (const properties of ways) {
+        callback({ type: 'LineString', coordinates: [[2.35, 48.85], [2.351, 48.851]] }, properties);
+      }
+    },
+  };
+  const count = (covers) =>
+    collectRoadLines(source, [{ x: 0, y: 0 }], frame, undefined, { urban: { any: true, covers: () => covers } }).length;
+
+  assert.equal(count(true), 2, 'la desserte nue et le pont');
+  assert.equal(count(false), 6, 'hors ville, tout reste');
+});
+
 test('collectRoadLines : en ville, ni sentier ni chemin de terre, sauf dans le parc', () => {
   const frame = createLocalFrame(2.35, 48.85, 15);
   const ways = [
@@ -14023,7 +14152,7 @@ test('collectRoadLines : en ville, ni sentier ni chemin de terre, sauf dans le p
       .map((line) => line.profile)
       .sort();
 
-  assert.deepEqual(profiles(true), ['cycleway', 'minor', 'steps'], 'en ville');
+  assert.deepEqual(profiles(true), ['minor'], 'en ville');
   // `covers` répond non dans le vert urbain : le parc garde ses allées.
   assert.deepEqual(profiles(false), ['cycleway', 'minor', 'path', 'path', 'steps', 'track'], 'au parc');
 });

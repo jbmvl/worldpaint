@@ -475,17 +475,23 @@ function pointInRing(ring, x, z) {
 /** Côté d'une maille de l'index, en mètres. */
 export const FABRIC_CELL_M = 32;
 
+/** Plus grand écart demandé à `FabricIndex.covers`, en mètres : les anneaux sont rangés dans leur boîte élargie d'autant. */
+export const FABRIC_CLEARANCE_MAX_M = 4;
+
 /**
  * Index spatial des empreintes bâties : combien de bâtiments autour d'un
- * point. Une maille plutôt qu'un parcours linéaire (la question est posée
- * plusieurs milliers de fois par reconstruction). Ne retient qu'un centre par
- * bâtiment — la question posée est « est-ce bâti », pas « qu'y a-t-il là ».
+ * point (`countWithin`, par les centres), et si un point tombe dans un
+ * bâtiment ou trop près de sa façade (`covers`, par les anneaux). Une maille
+ * plutôt qu'un parcours linéaire : les deux questions sont posées des
+ * milliers de fois par reconstruction.
  */
 export class FabricIndex {
-  /** @param {Array<{x:number,z:number}>} footprints Centres publiés par `buildingLayer`. */
+  /** @param {Array<{x:number,z:number,ring?:Array<{x:number,z:number}>|null}>} footprints Publiés par `buildingLayer`. */
   constructor(footprints = []) {
     /** @type {Map<number, Array<{x:number,z:number}>>} */
     this.cells = new Map();
+    /** @type {Map<number, Array<{ring:Array<{x:number,z:number}>,minX:number,maxX:number,minZ:number,maxZ:number}>>} */
+    this.rings = new Map();
     this.count = 0;
 
     for (const point of footprints) {
@@ -495,7 +501,44 @@ export class FabricIndex {
       if (bucket) bucket.push(point);
       else this.cells.set(key, [point]);
       this.count++;
+      if (point.ring?.length >= 3) this._addRing(point.ring);
     }
+  }
+
+  _addRing(ring) {
+    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+    for (const p of ring) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.z < minZ) minZ = p.z;
+      if (p.z > maxZ) maxZ = p.z;
+    }
+    const entry = { ring, minX, maxX, minZ, maxZ };
+    const m = FABRIC_CLEARANCE_MAX_M;
+    for (let cx = Math.floor((minX - m) / FABRIC_CELL_M); cx <= Math.floor((maxX + m) / FABRIC_CELL_M); cx++) {
+      for (let cz = Math.floor((minZ - m) / FABRIC_CELL_M); cz <= Math.floor((maxZ + m) / FABRIC_CELL_M); cz++) {
+        const key = cellKey(cx, cz);
+        const bucket = this.rings.get(key);
+        if (bucket) bucket.push(entry);
+        else this.rings.set(key, [entry]);
+      }
+    }
+  }
+
+  /**
+   * Vrai si le point est dans un bâtiment, ou à moins de `clearance` mètres
+   * d'une de ses façades (plafonné à `FABRIC_CLEARANCE_MAX_M`).
+   */
+  covers(x, z, clearance = 0) {
+    const bucket = this.rings.get(cellKey(Math.floor(x / FABRIC_CELL_M), Math.floor(z / FABRIC_CELL_M)));
+    if (!bucket) return false;
+    const c = Math.min(clearance, FABRIC_CLEARANCE_MAX_M);
+    for (const { ring, minX, maxX, minZ, maxZ } of bucket) {
+      if (x < minX - c || x > maxX + c || z < minZ - c || z > maxZ + c) continue;
+      if (pointInRing(ring, x, z)) return true;
+      if (c > 0 && ringDistanceSquared(ring, x, z) < c * c) return true;
+    }
+    return false;
   }
 
   /**
@@ -532,6 +575,21 @@ export class FabricIndex {
     }
     return found;
   }
+}
+
+/** Carré de la distance d'un point au contour d'un anneau. */
+function ringDistanceSquared(ring, x, z) {
+  let best = Infinity;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const ax = ring[j].x, az = ring[j].z;
+    const dx = ring[i].x - ax, dz = ring[i].z - az;
+    const length2 = dx * dx + dz * dz || 1;
+    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / length2));
+    const ex = ax + dx * t - x, ez = az + dz * t - z;
+    const d2 = ex * ex + ez * ez;
+    if (d2 < best) best = d2;
+  }
+  return best;
 }
 
 /** Clé de maille : deux entiers signés dans un seul nombre. */

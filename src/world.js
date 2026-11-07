@@ -81,11 +81,15 @@ const TUNNEL_FLOOR_MATCH_M = 1;
 /**
  * Zoom des tuiles du MNT, distinct de celui de la bulle : c'est le zoom
  * maximal que sert la source qui le décide, pas la finesse de la maille.
- * MapTiler s'arrête au 14 ; demander plus fin ne rendrait que des 404.
+ * Au 13, une tuile Mapterhorn de 512 fait 6,7 m par pixel : la densité d'une
+ * tuile de 256 au 14, donc la même mémoire et les mêmes déchets de décodage,
+ * pour quatre fois moins de tuiles à demander. Le relief de sol nu tient à
+ * cette finesse ; au 14, il pèserait quatre fois plus pour des détails que la
+ * maille ne rend pas.
  *
  * Une autre source se règle par `elevation.zoom` ; la bulle s'y adapte.
  */
-export const DEFAULT_ELEVATION_ZOOM = 14;
+export const DEFAULT_ELEVATION_ZOOM = 13;
 
 /**
  * Monte un paysage dans une scène three.js existante.
@@ -95,7 +99,7 @@ export const DEFAULT_ELEVATION_ZOOM = 14;
  * @param {Object} options.scene  La scène qui recevra le décor.
  * @param {ElevationField|{zoom?: number, url?: string, encoding?: string, fallback?: Object|null, maxTiles?: number}} [options.elevation]
  *        Relief. Un objet de réglages monte un `ElevationField` par défaut
- *        (Terrain RGB de MapTiler, repli Terrarium d'AWS, au `DEFAULT_ELEVATION_ZOOM`).
+ *        (Mapterhorn, repli MapTiler puis Terrarium d'AWS, au `DEFAULT_ELEVATION_ZOOM`).
  *        Une instance déjà construite est utilisée telle quelle et n'est pas
  *        libérée par `dispose()`.
  * @param {{tiles: string[], maxZoom?: number, fetchTile?: Function}|null} [options.vector]

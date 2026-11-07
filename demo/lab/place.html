@@ -58,7 +58,7 @@ const world = createWorld({
   scene,
   elevation: place.elevation
     ? {
-        zoom: place.zoom,
+        zoom: place.elevation.zoom ?? place.zoom,
         url: `${base}/dem/{z}/{x}/{y}.${place.elevation.extension}`,
         encoding: place.elevation.encoding,
       }

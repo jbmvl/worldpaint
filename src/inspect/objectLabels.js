@@ -109,6 +109,7 @@ export const LABEL_FURNITURE = {
   busShelterRural: 'abribus (tôle rurale)',
   fountain: 'fontaine',
   fountainWallace: 'fontaine (grande ville)',
+  bench: 'banc public',
   lavoir: 'lavoir',
   hayBaleRound: 'botte ronde',
   pumpkin: 'citrouille',

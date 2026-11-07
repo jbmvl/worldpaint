@@ -109,7 +109,7 @@ async function mount() {
   const t0 = performance.now();
   world = createWorld({
     THREE, scene, sky: { Sky },
-    elevation: { zoom: place.zoom, url: `${base}/dem/{z}/{x}/{y}.${place.elevation.extension}`, encoding: place.elevation.encoding },
+    elevation: { zoom: place.elevation.zoom ?? place.zoom, url: `${base}/dem/{z}/{x}/{y}.${place.elevation.extension}`, encoding: place.elevation.encoding },
     vector: place.vector ? { tiles: [`${location.origin}${base}/vector/{z}/{x}/{y}.pbf`], maxZoom: place.vector.maxZoom } : null,
     ...(detailRadius ? { detail: { radius: detailRadius } } : {}),
     theme: params.get('saison') === 'automne' ? autumnTheme : null,

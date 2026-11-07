@@ -44,7 +44,11 @@ La couche `park` **n'est pas lue** : au schéma OpenMapTiles elle ne contient
 aucun parc de ville mais des périmètres de protection (Natura 2000, parcs
 nationaux), qui ne disent rien de la matière du sol. Voir `docs/surfaces.md`.
 
-**Relief** : tuiles Terrarium (Mapzen, hébergées par AWS Open Data).
+**Relief** : tuiles Mapterhorn, un MNT de sol nu assemblé des relevés nationaux
+(lidar de 0,5 à 5 m en France et dans la plupart de l'Europe) et de Copernicus
+GLO-30 ailleurs ; replis MapTiler puis Terrarium d'AWS. Un remblai, une digue,
+un muret relevés au sol sont donc dans le relief lu ; un tablier de pont ou un
+toit n'y sont pas.
 
 **Région naturelle** : une table de dossiers embarquée (liste des pays en tête
 de `src/core/regions.js`). Le pays d'un lieu est celui dont une ancre est la
@@ -336,6 +340,26 @@ le point le plus haut de sa façade et chacune de ses baies part du sol qu'elle
 surplombe. Le sol de la ville (`settled`, `pavement`) n'a pas de grain low
 poly : c'est l'altitude sans bosse que le bâti lit.
 
+### Les baies
+
+**Inventées** : la couche `building` ne porte que la hauteur. La famille se
+déduit du bâtiment et de la carte du sol sous lui (`windowFamilies.js`) ;
+une personnalité qui a ses propres baies (église, château) les garde.
+
+| Famille | Quand | Baies |
+| --- | --- | --- |
+| maison | maison (`townStyle.isHouse`) | fenêtres à volets, une travée aveugle sur sept environ |
+| bourg | ni maison ni ville | fenêtres plus hautes, à meneau, volets un bâtiment sur deux |
+| immeuble de ville | sur `pavement`, au moins 9 m | portes-fenêtres à meneau, rez-de-chaussée de 4,2 m |
+| barre | toit plat, au moins 12 m, plus long côté d'au moins 30 m | une bande vitrée par étage, meneaux tous les 1,8 m |
+| tour, bureaux | au moins 28 m, ou au moins 15 m sur `bare` | mur-rideau, un étage de 3,6 m vitré presque en entier |
+| atelier | sur `bare`, au plus 14 m, pas une maison | une bande haute sous la toiture, une porte de quai au milieu du pan d'entrée |
+
+Par bâtiment, tirés de son centre : l'entraxe (une valeur de la liste de la
+famille), la baie à ±12 %, l'encadrement (blanc cassé, pierre ou sombre). Les
+travées sont centrées sur le pan. La nuit, une bande s'allume par travée de
+meneaux.
+
 ### La porte
 
 Sur le pan le plus long, une porte remplace la fenêtre du rez-de-chaussée la
@@ -367,6 +391,8 @@ figure dans le `building` du pays :
 | pierre grecque | light_stone, flat_roof |
 | crépi alpin | rendered, stone_slab_roof |
 
+Le mur prend une des cinq nuances de `facadeTints` (telle quelle, ocrée,
+rosée, grisée, pâlie), toutes tirées de la couleur du pays, une par bâtiment.
 76 % des maisons portent des volets ; le volet est le seul endroit du bâti où
 une vraie couleur est admise. Une « maison » est une empreinte de moins de
 320 m² et moins de 11,5 m de haut.
@@ -378,8 +404,12 @@ un commerce ou une grange (`buildingPersonalityFor` n'y a rien reconnu).
 
 | Objet | Condition | Part |
 | --- | --- | --- |
-| cheminée de toit | toit pentu (pas de toit plat) | 22 % |
+| cheminée de toit | maison hors ville, toit pentu | 22 % |
+| souches de faîtage | toit pentu d'un immeuble, ou de tout bâtiment en ville (`pavement`) | une tous les 8 m de faîtage, 5 au plus, enduites comme la façade ; une antenne sur l'une d'elles, 40 % |
 | balcon | mur d'au moins 5,4 m (l'ordre d'un étage), façade d'au moins 4 m, **emprise habitée** | 24 % |
+| édicule d'escalier | toit-terrasse d'au moins 100 m² | 80 %, un de plus par 500 m², 4 au plus |
+| climatiseurs | toit-terrasse d'au moins 40 m², 4 m de large | 2 à 16, un par 50 m² au plus |
+| antenne | toit-terrasse d'au moins 40 m² | une sur deux, une de plus par 300 m², 3 au plus |
 
 La cheminée ne fume pas. Le balcon —
 plancher et garde-corps sur trois côtés — se pose sur le pan le plus long de
@@ -580,7 +610,8 @@ un tiers par rapport aux minimums réglementaires (un plan large paraît saturé
 | poteau électrique | hors agglomération | 62 m (major), 68 m (minor) |
 | borne hectométrique | major | 100 m |
 | borne kilométrique | express, major | 1000 m |
-| alignement d'arbres | major hors agglomération | 16 m |
+| alignement d'arbres | major hors agglomération | 16 m, en quinconce, une route sur trois sans |
+| arbres de rue | major en agglomération | 11 m, des deux côtés, à 2,2 m de la rive, jamais à moins de 2,5 m d'une façade |
 | panneau | major 620 m, minor 900 m | — |
 | feu tricolore | major et minor, en agglomération | aux carrefours, sauf giratoire |
 | haie | minor, lane et track hors agglomération | continue |
@@ -654,6 +685,9 @@ le blé ne s'échappe pas.
 | troupeau | `grass`, `meadow`, `grassland` | 2,4 bêtes/ha, groupées |
 | tas de bois | `wood`, rangés en lisière | 0,8/ha |
 | gibier | `wood` | 0,3/ha, un massif sur deux en porte |
+| arbres de parc | `grass` sous-classe `park` | une maille de 13 m sur 0,45 (≈ 27/ha), hors allées, eau, bois et bâtiments |
+| arbres de place | polygone `transportation` path/pedestrian | une maille de 15 m sur 0,4, un banc au pied de 35 % d'entre eux |
+| arbres de bourg | `landuse` d'habitation, sur sol `settled` (jamais sur le revêtement d'une ville) | une maille de 18 m sur 0,3 (≈ 9/ha), à 3 m au moins d'une façade |
 
 Le **troupeau** : la pente tranche d'abord (au-delà de 34 %, chèvre ou mouton),
 la matrice du pays déplace ensuite la bascule — 28 % d'ovins en bocage, 72 %
