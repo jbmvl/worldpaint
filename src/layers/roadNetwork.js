@@ -1281,7 +1281,7 @@ export function* collectRoadSegmentsSteps(
   // La couture précède les franchissements : elle ne peut annuler leur déblai.
   const paved = out.filter((segment) => segment.paved);
   const pavedIndex = new RoadIndex(paved);
-  gradeRoadNetwork(paved, paved.map((segment) => bands.get(segment)), { facing: facingRows(paved, pavedIndex) });
+  gradeRoadNetwork(paved, paved.map((segment) => bands.get(segment)), { facing: facingRows(paved, pavedIndex), waveStepM: ROAD_SAMPLE_M });
   // Ce qui se recouvre sans partager de nœud : la voie étroite épouse la large.
   stitchPlatforms(paved, pavedIndex);
   if (anyWorks) {

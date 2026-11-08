@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.log
 .DS_Store
+demo/lab/places/pente-*/
+reports/pentes-*.jsonl

@@ -40,6 +40,7 @@ import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { createWorld, autumnTheme } from '/src/index.js';
 import { muteAnimated, geometrySnapshot, compareSnapshots, readView, pixelChange } from '/demo/lab/nearStability.js';
 import { auditRoads } from '/demo/lab/roadAudit.js';
+import { slopeSpots } from '/demo/lab/slopeSpots.js';
 
 const params = new URLSearchParams(location.search);
 const name = params.get('lieu') || 'montreuil-bellay';
@@ -234,6 +235,7 @@ window.placeLab = {
   },
   walk,
   roads: () => auditRoads(world.composer),
+  slopeSpots: () => slopeSpots(world),
   state,
   world,
   place,

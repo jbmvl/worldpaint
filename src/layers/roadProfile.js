@@ -26,6 +26,29 @@ import {
 } from './furniturePlacement.js';
 
 export const ROAD_MAX_GRADE = 0.12;
+/**
+ * Creux et bosses du profil en long que le terrassier efface : fermeture puis
+ * ouverture morphologiques sur le graphe des chaussées au sol, de rayon
+ * `ROAD_WAVE_RADIUS_M`. Un creux plus étroit que deux rayons est comblé au
+ * niveau de son bord le plus bas, une bosse arasée de même ; une pente
+ * régulière, si raide soit-elle, n'est pas touchée, et le graphe traverse les
+ * carrefours sans s'y arrêter.
+ *
+ * C'est le cas courant des MNT fins (lidar), qui retirent ponts et buses : sous
+ * un petit pont que la donnée ne marque pas, ils donnent le lit du ruisseau, et
+ * le devers d'une route qui coupe le ravin en travers est faible, donc sa bande
+ * de terrassement étroite.
+ */
+export const ROAD_WAVE_RADIUS_M = 80;
+export const ROAD_WAVE_FILL_M = 12;
+export const ROAD_WAVE_CUT_M = 6;
+/**
+ * Un creux ou une bosse n'est effacé que si l'un de ses flancs dépasse cette
+ * pente : une fermeture à fond plat rabote aussi les sommets et les fonds de
+ * vallée arrondis, qui sont vrais ; une chaussée revêtue ne dépasse presque
+ * jamais 25 %, le flanc d'un ravin lu sous un pont, si.
+ */
+export const ROAD_WAVE_STEEP = 0.25;
 export const ROAD_SUPPORT_DROP_M = 2.5;
 export const ROAD_SUPPORT_LENGTH_M = 15;
 
@@ -61,13 +84,15 @@ export const ROAD_SUPPORT_LENGTH_M = 15;
  * @param {Object} [options]
  * @param {Array} [options.facing] Vis-à-vis des voies qui se longent (`roadBundles.facingRows`).
  */
-export function gradeRoadNetwork(segments, bands, { facing = null, iterations = 40, strength = 0.5 } = {}) {
+export function gradeRoadNetwork(segments, bands, { facing = null, iterations = 40, strength = 0.5, waveStepM = 0 } = {}) {
   const ids = new Map();
   const rowsOf = [];
   const low = [];
   const high = [];
   const least = [];
   const most = [];
+  // Point au sol : ni ouvrage ni étage, sur un tronçon qui a sa bande.
+  const ground = [];
   // Voisines le long du tracé, puis en travers : rang et poids, à plat.
   const along = [];
   const across = [];
@@ -88,6 +113,7 @@ export function gradeRoadNetwork(segments, bands, { facing = null, iterations = 
         high.push(ceiling);
         least.push(platform[r]);
         most.push(platform[r]);
+        ground.push(true);
         along.push([]);
         across.push(null);
       } else {
@@ -96,6 +122,7 @@ export function gradeRoadNetwork(segments, bands, { facing = null, iterations = 
         least[id] = Math.min(least[id], platform[r]);
         most[id] = Math.max(most[id], platform[r]);
       }
+      if (!bands[si] || segment.works?.[r] || levels?.[r]) ground[id] = false;
       rows[r] = id;
       if (r && rows[r - 1] !== id) {
         along[id].push(rows[r - 1]);
@@ -125,6 +152,7 @@ export function gradeRoadNetwork(segments, bands, { facing = null, iterations = 
     if (low[id] > high[id]) low[id] = high[id] = (low[id] + high[id]) / 2;
     heights[id] = Math.min(high[id], Math.max(low[id], (least[id] + most[id]) / 2));
   }
+  if (waveStepM > 0) levelWaves(heights, low, high, along, ground, waveStepM);
 
   for (let k = 0; k < iterations; k++) {
     for (let id = 0; id < count; id++) {
@@ -152,6 +180,79 @@ export function gradeRoadNetwork(segments, bands, { facing = null, iterations = 
   segments.forEach((segment, si) => {
     rowsOf[si].forEach((id, r) => { segment.platform[r] = heights[id]; });
   });
+}
+
+/**
+ * Comble les creux et arase les bosses de rayon `hops` lignes (voir
+ * `ROAD_WAVE_RADIUS_M`) : la bande s'ouvre d'autant, bornée, et l'aplanissement
+ * part du profil corrigé. Chaque bout du graphe au sol est prolongé de sa
+ * propre cote, sans quoi la fermeture relèverait le bas d'une rampe qui finit.
+ */
+function levelWaves(heights, low, high, along, ground, stepM) {
+  const hops = Math.round(ROAD_WAVE_RADIUS_M / stepM);
+  if (hops < 1) return;
+  const count = heights.length;
+  const links = [];
+  const base = [];
+  for (let id = 0; id < count; id++) {
+    links.push(ground[id] ? along[id].filter((n) => ground[n]) : []);
+    base.push(heights[id]);
+  }
+  // Prolongement des bouts : une file de `hops` points virtuels à la cote du bout.
+  for (let id = 0; id < count; id++) {
+    if (!ground[id] || links[id].length >= 2) continue;
+    let previous = id;
+    for (let k = 0; k < hops; k++) {
+      const v = links.length;
+      links.push([previous]);
+      links[previous].push(v);
+      base.push(heights[id]);
+      previous = v;
+    }
+  }
+  const spread = (values, pick) => {
+    let current = values;
+    for (let pass = 0; pass < hops; pass++) {
+      const next = current.slice();
+      for (let id = 0; id < next.length; id++) {
+        const around = links[id];
+        for (let n = 0; n < around.length; n++) next[id] = pick(next[id], current[around[n]]);
+      }
+      current = next;
+    }
+    return current;
+  };
+  const values = Float64Array.from(base);
+  const target = spread(spread(spread(spread(values, Math.max), Math.min), Math.min), Math.max);
+  // Chaque creux ou bosse est une composante de points retouchés ; seuls ceux
+  // dont un flanc est trop raide pour une chaussée sont effacés.
+  const touched = (id) => id < count && ground[id] && Math.abs(target[id] - heights[id]) > 0.05;
+  const seen = new Uint8Array(count);
+  for (let start = 0; start < count; start++) {
+    if (seen[start] || !touched(start)) continue;
+    const members = [start];
+    seen[start] = 1;
+    let steep = false;
+    for (let m = 0; m < members.length; m++) {
+      const id = members[m];
+      for (const n of links[id]) {
+        if (n < count && Math.abs(heights[n] - heights[id]) > ROAD_WAVE_STEEP * stepM) steep = true;
+        if (!touched(n) || seen[n]) continue;
+        seen[n] = 1;
+        members.push(n);
+      }
+    }
+    if (!steep) continue;
+    // La fermeture comble à plat, au niveau du bord le plus bas : la bande
+    // s'ouvre de toute la hauteur permise pour que le lissage tende ensuite la
+    // chaussée d'un bord à l'autre, sans marche contre le bord haut.
+    for (const id of members) {
+      const gap = target[id] - heights[id];
+      if (gap > 0) high[id] = Math.max(high[id], heights[id] + ROAD_WAVE_FILL_M);
+      else low[id] = Math.min(low[id], heights[id] - ROAD_WAVE_CUT_M);
+      heights[id] = Math.min(high[id], Math.max(low[id], target[id]));
+    }
+  }
 }
 
 export function smoothRoadProfiles(segments, { maxGrade = ROAD_MAX_GRADE, crossings = [] } = {}) {
