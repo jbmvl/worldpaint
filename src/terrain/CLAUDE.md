@@ -9,7 +9,6 @@
 | `transportEarthworks.js` | remblais doux et tranchées des franchissements, dans le terrain commun |
 | `roadCut.js` | l'entaille du terrain sous une chaussée, et son remblai en terre |
 | `waterRelief.js` | niveaux des lacs, profil des rivières et raccord terrestre des berges |
-| `cliffCut.js` | la marche du terrain sous une falaise relevée |
 | `roofCut.js` | le sol rendu sous une emprise de bâtiment dont le MNT a gardé le toit |
 | `groundClassMap.js` | la carte des matières et des cultures, rasterisée pour toute la scène |
 | `surfaceContours.js` | les limites de la carte redessinées en traits : chaînes, simplification, distance au trait |
@@ -72,20 +71,21 @@ Deux pièges :
 
 Dans cet ordre : le **sol sous un toit** que le MNT a gardé (`roofCut`, sous
 une emprise `building` d'OSM seulement : sans elle, une citadelle aux murs
-verticaux ne se distingue pas d'une tour), la **marche** d'une falaise relevée (`cliffCut`), les
+verticaux ne se distingue pas d'une tour), les
 **niveaux d’eau** (`waterRelief`), les **terrassements des franchissements** (`transportEarthworks`), puis le
 **remblai** et le **déblai** des chaussées (`roadCut`). Le remblai passe avant : le déblai de toute chaussée
-voisine le reprend, il ne recouvre jamais une voie. La falaise façonne le terrain naturel, la route entaille
-ce qu'elle trouve — l'ordre inverse taillerait la chaussée dans une rampe que
-la marche vient de supprimer.
+voisine le reprend, il ne recouvre jamais une voie.
 
-Trois lectures en découlent, et chacune a son lecteur : le **MNT brut**
-(`rawSurfaceElevationAtLocal`), sur lequel seule la couche des falaises mesure
-la marche ; le **terrain naturel** (`naturalElevationAtLocal`), toits retirés,
-falaises et niveaux d’eau compris, déblai exclu, sur lequel se dressent les plates-formes et que lit
-le relief de rive ; la **surface affichée** (`surfaceElevationAtLocal`), tout
-compris, pour le reste du décor. Une plate-forme dressée sur le MNT brut
-flotterait au pied d'une falaise et s'enfoncerait à son arase.
+Une falaise n'en fait pas partie : le MNT la porte déjà, et une marche tirée
+des traits `natural=cliff` dressait des aiguilles là où plusieurs traits se
+suivent. Une falaise, relevée ou non, est la pente que le MNT donne, avec la
+teinte et le grain de roche que cette pente appelle.
+
+Trois lectures en découlent : le **MNT brut** (`rawSurfaceElevationAtLocal`) ;
+le **terrain naturel** (`naturalElevationAtLocal`), toits retirés et niveaux
+d’eau compris, déblai exclu, sur lequel se dressent les plates-formes et que
+lit le relief de rive ; la **surface affichée** (`surfaceElevationAtLocal`),
+tout compris, pour le reste du décor.
 
 Dans l’emprise de l’eau, sa cote prime aussi sur un terrassement voisin.
 

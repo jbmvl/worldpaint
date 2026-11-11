@@ -13,7 +13,7 @@
 /*
  * Banc de la voirie — chaussées, ponts, carrefours et falaises sur un relief
  * synthétique, construits par les vraies couches (`TerrainBubble`,
- * `CliffLayer`, `RoadNetwork`, `BridgeLayer`, `FurnitureLayer`) à partir de
+ * `RoadNetwork`, `BridgeLayer`, `FurnitureLayer`) à partir de
  * tuiles vectorielles écrites ici. Aucun réseau :
  * piloté depuis la console ou par `scripts/roads-shot.mjs`.
  *
@@ -36,7 +36,6 @@ import { RailwayLayer } from '/src/layers/railwayLayer.js';
 import { collectCrossingRails } from '/src/layers/transportCrossings.js';
 import { BridgeLayer } from '/src/layers/bridgeLayer.js';
 import { FurnitureLayer } from '/src/layers/furnitureLayer.js';
-import { CliffLayer } from '/src/layers/cliffLayer.js';
 import { defaultTheme } from '/src/themes/default.js';
 import { createLocalFrame, tileXToLng, tileYToLat } from '/src/core/tileMath.js';
 
@@ -115,7 +114,7 @@ const way = (properties, ...points) => ({
  * « pente » : un carrefour en croix sur le versant à 9 %.
  * « devers » : une route à flanc de versant à 25 %, en mur côté aval, et une
  * branche qui en descend.
- * « falaise » : une route au ras du pied d'une falaise relevée, une autre au
+ * « falaise » : une route au ras du pied de la falaise du plateau, une autre au
  * ras de l'arase, et une rampe qui les relie à travers la paroi.
  * « chemin » : un chemin d'exploitation à flanc du versant à 25 %, et un
  * sentier qui y monte dans la pente — sans terrassement ni talus.
@@ -182,9 +181,6 @@ const FEATURES = [
   way({ class: 'path' }, [-540, 310], [-480, 296], [-424, 300]),
 ];
 
-/** Falaises relevées (`mountain_peak`, classe `cliff`). */
-const CLIFFS = [way({ class: 'cliff' }, [-330, -450], [-70, -450])];
-
 const SCENES = {
   virage: { x: 180, z: 370, yawDeg: 215, pitchDeg: 18, distance: 100 },
   'virage-desserte': { x: 180, z: 650, yawDeg: 215, pitchDeg: 18, distance: 100 },
@@ -209,7 +205,7 @@ const SCENES = {
 const source = {
   zoom: DEFAULT_VIEW.zoom,
   forEachFeature(layer, tiles, callback) {
-    const features = layer === 'transportation' ? FEATURES : layer === 'mountain_peak' ? CLIFFS : [];
+    const features = layer === 'transportation' ? FEATURES : [];
     for (const f of features) callback(f.geometry, f.properties, null);
   },
 };
@@ -239,10 +235,6 @@ const bubble = new TerrainBubble({
 });
 await bubble.setCenter(LNG, LAT);
 const here = { x: 0, z: 0 };
-// Avant les chaussées, comme dans le compositeur : la route entaille le
-// terrain que la falaise a déjà façonné.
-const cliffs = new CliffLayer({ THREE, scene, bubble, theme: defaultTheme });
-cliffs.rebuild(source, [], here);
 // Une tuile par appel, comme le compositeur image après image : on vide la file.
 while (bubble.processRebuildQueue());
 const roads = new RoadNetwork({ THREE, scene, bubble, materials: createRoadMaterials(THREE) });
@@ -266,7 +258,6 @@ function setStone(stone) {
   furniture.setRegion(region);
   furniture.rebuild(source, [], here, roads.roadSegments, roads.index, roads.junctions, null, null, null, [], {
     areas: roads.junctionAreas,
-    cliffs: cliffs.index,
   });
 }
 setStone(null);

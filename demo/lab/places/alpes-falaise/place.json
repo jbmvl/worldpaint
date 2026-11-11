@@ -1,0 +1,18 @@
+{
+  "name": "alpes-falaise",
+  "label": "Alpes du Sud, falaise",
+  "lng": 6.65465,
+  "lat": 44.8531,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "zoom": 13,
+    "encoding": "terrarium",
+    "extension": "webp",
+    "source": "tiles.mapterhorn.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  }
+}

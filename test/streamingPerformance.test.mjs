@@ -25,7 +25,7 @@ function compositeur() {
     _updateLandscape: () => false, _distributeRegion() {}, _wantedTiles: () => [{ x: 1, y: 2 }],
     vectorTiles: { missing: () => 0, load: async () => null, forEachFeature() {} },
     bubble: { processRebuildQueue: () => false, setWaterRelief: () => calls.push('eau'), surfaceGeneration: 0, frame: { ...testFrame, toLocal: () => ({ ...here }) }, materials: { syncGroundClass() {} } },
-    groundClass: layer('sol'), cliffs: layer('falaises'), roads: layer('routes'), bridges: layer('ponts'),
+    groundClass: layer('sol'), roads: layer('routes'), bridges: layer('ponts'),
     railways: layer('rails'), buildings: layer('bâti'), streets: layer('rues'), gardens: layer('jardins'),
     furniture: layer('mobilier'), vegetation: layer('arbres'), crops: layer('cultures'),
     life: layer('vie'), fauna: layer('faune'), tractors: layer('tracteurs'), trains: layer('trains'),
@@ -34,7 +34,7 @@ function compositeur() {
   return { composer, calls, here };
 }
 
-const TOUT = ['falaises','eau','sol','routes','ponts','rails','bâti','rues','jardins','mobilier'];
+const TOUT = ['eau','sol','routes','ponts','rails','bâti','rues','jardins','mobilier'];
 
 test('le décor se refait d’un bloc, une fois par pas de l’observateur', async () => {
   const { composer, calls, here } = compositeur();

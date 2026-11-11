@@ -12,13 +12,11 @@ import { finishGeneration } from '../core/generationSteps.js';
  * tuile à l'autre. Les tuiles neuves rendent la main entre deux maillages
  * après le budget CPU ; les changements de finesse passent par la file.
  *
- * Le relief lu reçoit, dans cet ordre : la marche des falaises
- * (`setCliffCut`, qui comprime en paroi la rampe que le MNT étale), les niveaux
- * de l’eau (`setWaterRelief`), puis les
- * terrassements locaux des franchissements (remblais et tranchées), puis le
- * terrassement des chaussées (`setRoadCut` — une route est taillée dans le
- * versant, et son remblai relevé sous elle là où aucun mur ne la tient). La
- * falaise façonne le terrain naturel, la route entaille ce qu'elle trouve. Les deux sont des fonctions pures de la position au sol,
+ * Le relief lu reçoit, dans cet ordre : les niveaux de l’eau
+ * (`setWaterRelief`), puis les terrassements locaux des franchissements
+ * (remblais et tranchées), puis le terrassement des chaussées (`setRoadCut` —
+ * une route est taillée dans le versant, et son remblai relevé sous elle là où
+ * aucun mur ne la tient). Ce sont des fonctions pures de la position au sol,
  * donc les tuiles voisines s'accordent au bord sans se consulter.
  * Le fond plat du déblai ne peut pas être plus étroit qu'une maille, sans quoi
  * aucun sommet n'y tombe et le triangle enjambe la chaussée (`cutBenchM`).
@@ -27,8 +25,7 @@ import { finishGeneration } from '../core/generationSteps.js';
  * poly — doit s'y éteindre, sans quoi il recreuserait par-dessus une chaussée
  * qu'on vient de tailler pour elle, ou rebosseler une nappe d’eau.
  *
- * Les niveaux de l’eau corrigent le terrain naturel après les falaises et
- * avant les terrassements. La matière reste portée par le terrain commun ;
+ * Les niveaux de l’eau corrigent le terrain naturel avant les terrassements. La matière reste portée par le terrain commun ;
  * les lectures CPU et les sommets partagent la même correction (`waterRelief`).
  *
  * Le MNT porte son propre zoom, réglé sur la résolution de sa source et non
@@ -172,10 +169,6 @@ export class TerrainBubble {
     /** Incrémenté à chaque publication d'index : périme les mailles déjà creusées. */
     this._cutGeneration = 0;
 
-    /** Falaises taillées (`CliffIndex`), ou `null` — voir `setCliffCut`. */
-    this._cliffCut = null;
-    /** Même rôle que `_cutGeneration`, pour la marche des falaises. */
-    this._cliffGeneration = 0;
     this._waterRelief = null;
     this._waterGeneration = 0;
     /** Toits pris pour du relief (`RoofCut`), ou `null` — voir `setRoofCut`. */
@@ -521,8 +514,7 @@ export class TerrainBubble {
   }
 
   /**
-   * Altitude du MNT, sans la marche des falaises ni le déblai. Seule la couche
-   * des falaises doit la lire : c'est sur elle qu'elle mesure la marche.
+   * Altitude du MNT telle que lue, sans toit retiré, niveau d'eau ni déblai.
    */
   rawSurfaceElevationAtLocal(x, z, fallback = 0) {
     if (!this.frame) return fallback;
@@ -531,9 +523,8 @@ export class TerrainBubble {
   }
 
   /**
-   * Terrain naturel : le MNT, falaises et niveaux d’eau compris, **avant** déblai. C'est sur
-   * lui que se dressent les plates-formes : au pied d'une falaise, une route
-   * posée sur la rampe que le MNT étale flotterait au-dessus du sol affiché.
+   * Terrain naturel : le MNT, toits retirés et niveaux d’eau compris, **avant**
+   * déblai. C'est sur lui que se dressent les plates-formes.
    */
   naturalElevationAtLocal(x, z, fallback = 0) {
     const raw = this.rawSurfaceElevationAtLocal(x, z, fallback);
@@ -583,21 +574,16 @@ export class TerrainBubble {
    */
   cutElevation(x, z, raw) {
     // Le toit pris pour du relief d'abord : c'est la donnée qu'on corrige.
-    // Puis la falaise : elle façonne le relief naturel, que la chaussée
-    // entaille ensuite. L'ordre inverse taillerait la route dans la rampe que
-    // la marche vient de supprimer.
     const ground = this._roofCut ? this._roofCut.elevationAt(x, z, raw) : raw;
-    const stepped = this._cliffCut ? this._cliffCut.elevationAt(x, z, ground) : ground;
-    const water = this._waterRelief?.sample(x, z, stepped, WATER_AT);
-    const level = water ? water.elevation : stepped;
+    const water = this._waterRelief?.sample(x, z, ground, WATER_AT);
+    const level = water ? water.elevation : ground;
     if (water?.inWater) return level;
     return this._roadCutAt(x, z, level);
   }
 
   _naturalAt(x, z, raw) {
     const ground = this._roofCut ? this._roofCut.elevationAt(x, z, raw) : raw;
-    const stepped = this._cliffCut ? this._cliffCut.elevationAt(x, z, ground) : ground;
-    return this._waterRelief?.elevationAtPoint(x, z, stepped) ?? stepped;
+    return this._waterRelief?.elevationAtPoint(x, z, ground) ?? ground;
   }
 
   setWaterRelief(index) {
@@ -620,8 +606,8 @@ export class TerrainBubble {
   }
 
   /**
-   * Publie les toits pris pour du relief (`RoofCut`), ou `null`. Comme pour
-   * les falaises, seules les tuiles touchées, avant ou après, sont périmées.
+   * Publie les toits pris pour du relief (`RoofCut`), ou `null`. Seules les
+   * tuiles touchées, avant ou après, sont périmées.
    */
   setRoofCut(index) {
     if (this.disposed) return;
@@ -640,41 +626,6 @@ export class TerrainBubble {
     const a = this.frame.tileToLocal(tile.x, tile.y);
     const b = this.frame.tileToLocal(tile.x + 1, tile.y + 1);
     return this._roofCut.touches(Math.min(a.x, b.x), Math.min(a.z, b.z), Math.max(a.x, b.x), Math.max(a.z, b.z));
-  }
-
-  /**
-   * Publie les falaises taillées (`CliffIndex`), ou `null`.
-   *
-   * Seules les tuiles qu'une falaise touche sont périmées — celles que la
-   * nouvelle atteint, et celles que l'ancienne atteignait. Périmer tout le
-   * bloc à chaque publication reconstruisait le terrain sans fin : la file
-   * n'en rend qu'une par image, et la publication suivante arrivait avant
-   * qu'elle ne soit vidée. Le décor entier ramait, falaise ou pas.
-   */
-  setCliffCut(index) {
-    if (this.disposed) return;
-    const previous = this._cliffCut;
-    if (!previous && !index) return;
-
-    this._cliffCut = index || null;
-    this._cliffGeneration++;
-    for (const tile of this.tiles.values()) {
-      if (!tile.hadCliff && !this._cliffTouches(tile)) continue;
-      if (!this._rebuildQueue.includes(tile.key)) this._rebuildQueue.push(tile.key);
-    }
-  }
-
-  /** Vrai si une falaise publiée peut modifier cette tuile. */
-  _cliffTouches(tile) {
-    if (!this._cliffCut || !this.frame) return false;
-    const a = this.frame.tileToLocal(tile.x, tile.y);
-    const b = this.frame.tileToLocal(tile.x + 1, tile.y + 1);
-    return this._cliffCut.touches(
-      Math.min(a.x, b.x),
-      Math.min(a.z, b.z),
-      Math.max(a.x, b.x),
-      Math.max(a.z, b.z)
-    );
   }
 
   /**
@@ -864,14 +815,6 @@ export class TerrainBubble {
     if (tile.segments !== n) return true;
     // Un nouvel index de chaussées périme le terrassement déjà creusé.
     if (tile.ring <= ROAD_CUT_MAX_RING && tile.cutGeneration !== this._cutGeneration) return true;
-    // Celui des falaises périme tous les anneaux — la marche se voit de loin —
-    // mais seulement les tuiles qu'une falaise touche, ou touchait.
-    if (
-      tile.cliffGeneration !== this._cliffGeneration &&
-      (tile.hadCliff || this._cliffTouches(tile))
-    ) {
-      return true;
-    }
     if (tile.waterGeneration !== this._waterGeneration && (tile.hadWater || this._waterTouches(tile))) return true;
     if (tile.roofGeneration !== this._roofGeneration && (tile.hadRoof || this._roofTouches(tile))) return true;
     const wanted = this._edgeSegmentsFor(tile, n);
@@ -886,8 +829,8 @@ export class TerrainBubble {
   /**
    * Fait avancer la reconstruction d'une tuile périmée dans la limite de
    * `budgetMs` ; une tuile au plus s'achève par appel. La tuile garde sa
-   * géométrie jusqu'au bout, et une reconstruction dont l'entaille, la
-   * falaise ou le MNT ont changé en route est reprise du début.
+   * géométrie jusqu'au bout, et une reconstruction dont l'entaille ou le MNT
+   * ont changé en route est reprise du début.
    * @returns {boolean} vrai s'il reste du travail ou qu'une tuile vient d'aboutir.
    */
   processRebuildQueue(budgetMs = TERRAIN_REBUILD_BUDGET_MS) {
@@ -923,7 +866,7 @@ export class TerrainBubble {
 
   /** Ce dont dépend une maille en cours : s'il change, elle est à reprendre. */
   _buildState() {
-    return `${this._cutGeneration}:${this._cliffGeneration}:${this._waterGeneration}:${this._roofGeneration}:${this.elevation?.revision}`;
+    return `${this._cutGeneration}:${this._waterGeneration}:${this._roofGeneration}:${this.elevation?.revision}`;
   }
 
   _cancelPendingBuild() {
@@ -961,14 +904,12 @@ export class TerrainBubble {
     const scale = this.frame.scale;
     const stepMeters = this._gradientStep * scale;
     // Le déblai ne s'applique qu'aux tuiles proches (au-delà, la requête
-    // d'index ne rendrait rien). La falaise, elle, se voit de loin : elle
-    // taille tous les anneaux.
+    // d'index ne rendrait rien).
     const carving = !!(this._roadCut || this._unpaved) && tile.ring <= ROAD_CUT_MAX_RING;
     // Tranché une fois pour la tuile entière : sans ça, chaque sommet
-    // interrogeait l'index cinq fois pour s'entendre dire qu'il n'y a pas de
-    // falaise ici, soit deux cent mille requêtes inutiles par tuile.
+    // interrogerait chaque index cinq fois pour rien, soit deux cent mille
+    // requêtes inutiles par tuile.
     const roofing = this._roofTouches(tile);
-    const stepping = this._cliffTouches(tile);
     const watering = this._waterTouches(tile);
     // Réserves propres à cette construction : elle s'étale sur plusieurs images.
     const water = { elevation: 0, mask: 0, inWater: false };
@@ -976,7 +917,6 @@ export class TerrainBubble {
     const atVertex = { elevation: 0, mask: 0 };
     const cutWithMask = (x, z, raw) => {
       let level = roofing ? this._roofCut.elevationAt(x, z, raw) : raw;
-      if (stepping) level = this._cliffCut.elevationAt(x, z, level);
       let mask = 0;
       let inWater = false;
       if (watering) {
@@ -1128,8 +1068,6 @@ export class TerrainBubble {
     tile.segments = n;
     tile.edgeSegments = edge;
     tile.cutGeneration = this._cutGeneration;
-    tile.cliffGeneration = this._cliffGeneration;
-    tile.hadCliff = stepping;
     tile.waterGeneration = this._waterGeneration;
     tile.hadWater = watering;
     tile.roofGeneration = this._roofGeneration;

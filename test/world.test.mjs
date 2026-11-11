@@ -29,14 +29,6 @@ import {
 
 import { ElevationField, DEM_TILE_PIXELS } from '../src/core/elevationField.js';
 import {
-  cliffElevationAt,
-  cliffFaceWidth,
-  cliffProfileAt,
-  CLIFF_BLEND_M,
-  CLIFF_MIN_HEIGHT_M,
-} from '../src/terrain/cliffCut.js';
-import { CliffIndex, cliffGaps, splitAtGaps, CLIFF_FADE_M } from '../src/layers/cliffLayer.js';
-import {
   labelForMeshName,
   nearestInstance,
   nearestVertex,
@@ -2181,8 +2173,8 @@ test('la roche du terrain suit la géologie même quand la matrice ne change pas
   const schiste = rock();
   const tint = stoneTintFor('schist', defaultTheme.stones);
   for (let i = 0; i < 3; i++) close(schiste[i] / calcaire[i], tint[i], 1e-6, `canal ${i}`);
-  // La teinte ne se pose qu'une fois : la couleur de pente reste celle du thème.
-  assert.deepEqual(vec(factory._uniforms.uRockColor.value), defaultTheme.terrain.rockColor);
+  // La paroi prend la roche du pays telle quelle : pas de seconde teinte.
+  assert.equal(factory._uniforms.uRockColor, undefined);
 });
 
 test('chaque géologie a une teinte lisible, et le calcaire est la référence', () => {
@@ -3432,218 +3424,6 @@ test('l’emprise routière couvre exactement la même largeur que le déblai', 
   // Indépendante du sens du déblai : contrairement à `cutElevationAt`,
   // l’emprise ne dépend pas de savoir si le terrain domine la plate-forme.
   close(roadCutMaskAt(0, 3), 1, 1e-9, 'emprise pleine même en remblai');
-});
-
-// --- Falaises relevées ------------------------------------------------------
-
-test('la marche de falaise comprime la rampe sans changer la dénivelée', () => {
-  const foot = 20;
-  const crest = 100;
-  const face = 6;
-  // La cote naturelle est la rampe du MNT ; ce qu'on vérifie, c'est ce que la
-  // marche lui substitue près du trait.
-  const at = (across, raw = 60) => cliffElevationAt(raw, foot, crest, across, face);
-
-  close(at(0), foot, 1e-6, 'au trait, le pied');
-  close(at(face), crest, 1e-6, 'au sommet de la paroi, l’arase');
-  // La dénivelée mesurée est conservée : c'est la distance qui est comprimée.
-  close(at(face) - at(0), crest - foot, 1e-6, 'dénivelée intacte');
-
-  // De part et d'autre, le terrain naturel est retrouvé.
-  close(at(-CLIFF_BLEND_M, 33), 33, 1e-6, 'terrain naturel en contrebas');
-  close(at(face + CLIFF_BLEND_M, 88), 88, 1e-6, 'terrain naturel à l’arase');
-  close(at(500, 42), 42, 1e-9, 'loin de la falaise');
-});
-
-test('la paroi est bien plus raide que la rampe qu’elle remplace', () => {
-  const foot = 0;
-  const crest = 80;
-  const face = cliffFaceWidth(crest - foot, { batter: 0.075, minReach: 1.2, maxReach: 9 });
-  // 80 m de dénivelée sur 6 m d'emprise : au-delà de 85°, là où le MNT
-  // étalerait la même chute sur une centaine de mètres.
-  close(face, 6, 1e-9, 'emprise de la paroi');
-  const angle = (Math.atan2(crest - foot, face) * 180) / Math.PI;
-  assert.ok(angle > 85, `paroi à ${angle.toFixed(1)}°`);
-  // Le plafond de recul tient une très grande dénivelée.
-  close(cliffFaceWidth(400, { batter: 0.075, minReach: 1.2, maxReach: 9 }), 9, 1e-9, 'recul plafonné');
-  close(cliffFaceWidth(2, { batter: 0.075, minReach: 1.2, maxReach: 9 }), 1.2, 1e-9, 'jamais en lame');
-});
-
-test('le profil de falaise est monotone et borné', () => {
-  const foot = 10;
-  const crest = 70;
-  const face = 5;
-  let previous = -Infinity;
-  for (let d = -CLIFF_BLEND_M; d <= face + CLIFF_BLEND_M; d += 0.05) {
-    // Rampe naturelle du MNT, linéaire entre les deux cotes.
-    const t = (d + CLIFF_BLEND_M) / (face + 2 * CLIFF_BLEND_M);
-    const raw = foot + (crest - foot) * t;
-    const h = cliffElevationAt(raw, foot, crest, d, face);
-    assert.ok(h >= previous - 1e-6, `monotone à ${d.toFixed(2)} m`);
-    assert.ok(h >= foot - 1e-6 && h <= crest + 1e-6, `borné à ${d.toFixed(2)} m`);
-    previous = h;
-  }
-});
-
-test('un ressaut trop court pour être une falaise laisse le terrain tranquille', () => {
-  // `natural=cliff` est posé dans OSM sur des talus d'un mètre : en deçà du
-  // seuil, la marche écraserait des dizaines de mètres pour rien.
-  const small = CLIFF_MIN_HEIGHT_M - 0.5;
-  close(cliffElevationAt(55, 50, 50 + small, 0, 6), 55, 1e-9, 'sous le seuil, rien');
-  // Juste au-dessus, la marche s'applique.
-  const tall = CLIFF_MIN_HEIGHT_M + 0.5;
-  close(cliffElevationAt(55, 50, 50 + tall, 0, 6), 50, 1e-6, 'au-dessus du seuil, le pied');
-});
-
-test('l’index de falaise oriente sa normale vers le haut et interpole ses cotes', () => {
-  // Un trait droit le long de +x, le haut au nord (-z).
-  const segment = {
-    ax: 0, az: 0, tx: 1, tz: 0,
-    nx: 0, nz: -1, // vers le haut
-    length: 100,
-    footA: 0, footB: 10,
-    crestA: 60, crestB: 80,
-    face: 6,
-    blend: CLIFF_BLEND_M,
-  };
-  const index = new CliffIndex([segment]);
-
-  const high = index.query(50, -3);
-  assert.ok(high, 'point au nord trouvé');
-  assert.ok(high.across > 0, 'côté haut compté positif');
-  close(high.foot, 5, 1e-6, 'pied interpolé à mi-longueur');
-  close(high.crest, 70, 1e-6, 'arase interpolée à mi-longueur');
-
-  const low = index.query(50, 3);
-  assert.ok(low.across < 0, 'côté bas compté négatif');
-
-  // Au-delà de la portée, plus rien : le terrain reste celui du MNT.
-  assert.equal(index.query(50, 400), null, 'hors de portée');
-  close(index.elevationAt(50, 400, 77), 77, 1e-9, 'altitude inchangée hors de portée');
-});
-
-test('une chaussée au sol ouvre une brèche dans la falaise, un pont non', () => {
-  const path = Array.from({ length: 41 }, (_, i) => ({ x: i * 5, z: 0, distance: i * 5 }));
-  const road = { points: [{ x: 100, z: -50 }, { x: 100, z: 50 }], halfWidth: 3 };
-  const pieces = splitAtGaps(path, cliffGaps(path, [road]));
-  assert.equal(pieces.length, 2, 'le trait est coupé en deux');
-  const half = 3 + ROAD_CUT_M + 5 + CLIFF_FADE_M;
-  assert.ok(pieces[0].at(-1).x <= 100 - half + 1e-6, `bout gauche à ${pieces[0].at(-1).x}`);
-  assert.ok(pieces[1][0].x >= 100 + half - 1e-6, `bout droit à ${pieces[1][0].x}`);
-
-  assert.equal(splitAtGaps(path, cliffGaps(path, [{ ...road, works: 1 }])).length, 1, 'un pont laisse la falaise');
-  assert.equal(splitAtGaps(path, cliffGaps(path, [{ ...road, level: -1 }])).length, 1, 'un autre niveau aussi');
-});
-
-test('la marche s’estompe au-delà du bout libre d’un trait, pas entre deux segments', () => {
-  const segment = (ax, openStart, openEnd) => ({
-    ax, az: 0, tx: 1, tz: 0, nx: 0, nz: -1, length: 50,
-    footA: 0, footB: 0, crestA: 20, crestB: 20, face: 6, blend: CLIFF_BLEND_M, openStart, openEnd,
-  });
-  const index = new CliffIndex([segment(0, true, false), segment(50, false, true)]);
-  // Au pied, la marche ramène le terrain à zéro ; le MNT y dit 8.
-  close(index.elevationAt(25, 3, 8), 0, 1e-6, 'dans le trait, la marche entière');
-  close(index.elevationAt(-CLIFF_FADE_M - 1, 3, 8), 8, 1e-6, 'passé l’estompe, le MNT');
-  const half = index.elevationAt(-CLIFF_FADE_M / 2, 3, 8);
-  assert.ok(half > 0 && half < 8, `à mi-estompe, entre les deux : ${half}`);
-});
-
-test('la nappe de paroi et la marche du terrain lisent le même profil', () => {
-  // La nappe porte les sommets qu'un champ de hauteurs ne peut pas avoir sur
-  // une face verticale. Plaquée sur un autre profil que la marche, elle
-  // passerait au travers du sol par endroits et flotterait ailleurs — et
-  // c'est invisible tant qu'on ne regarde pas le raccord de près.
-  const foot = 12;
-  const crest = 52;
-  const face = 3;
-  for (let i = 0; i <= 20; i++) {
-    const t = i / 20;
-    // Ce que la nappe pose, en fonction de la traversée.
-    const sheet = foot + (crest - foot) * cliffProfileAt(t);
-    // Ce que le terrain rend au même endroit, la rampe naturelle passant
-    // entre les deux cotes.
-    const raw = foot + (crest - foot) * t;
-    const ground = cliffElevationAt(raw, foot, crest, face * t, face);
-    close(sheet, ground, 1e-9, `traversée à ${t.toFixed(2)}`);
-  }
-
-  // Aux deux bords, la nappe touche exactement le pied et l'arase.
-  close(cliffProfileAt(0), 0, 1e-12, 'au pied');
-  close(cliffProfileAt(1), 1, 1e-12, 'à l’arase');
-  // Et elle ne sort pas de l'intervalle, quoi qu'on lui demande.
-  close(cliffProfileAt(-3), 0, 1e-12, 'avant le pied');
-  close(cliffProfileAt(9), 1, 1e-12, 'après l’arase');
-});
-
-test('la grille de l’index rend exactement ce que rendrait un parcours exhaustif', () => {
-  // La grille est là pour la vitesse : le maillage l'interroge près de deux
-  // cent mille fois par tuile. Elle ne doit rien changer au résultat.
-  const segments = [];
-  for (let i = 0; i < 200; i++) {
-    const a = i * 6;
-    segments.push({
-      ax: a, az: Math.sin(i / 9) * 40, tx: 1, tz: 0, nx: 0, nz: -1, length: 6,
-      footA: 10, footB: 10, crestA: 48, crestB: 48, face: 4, blend: CLIFF_BLEND_M,
-    });
-  }
-  const index = new CliffIndex(segments);
-
-  const brute = (x, z) => {
-    let best = null;
-    let bestSquared = Infinity;
-    for (const s of segments) {
-      const dx = x - s.ax;
-      const dz = z - s.az;
-      const along = dx * s.tx + dz * s.tz;
-      const across = dx * s.nx + dz * s.nz;
-      const overshoot = along < 0 ? -along : Math.max(0, along - s.length);
-      const squared = across * across + overshoot * overshoot;
-      const reach = s.face + s.blend;
-      if (squared >= bestSquared || squared > reach * reach) continue;
-      bestSquared = squared;
-      best = across;
-    }
-    return best;
-  };
-
-  let compared = 0;
-  for (let x = -40; x < 1240; x += 11) {
-    for (let z = -90; z < 90; z += 7) {
-      const hit = index.query(x, z);
-      const expected = brute(x, z);
-      if (expected === null) {
-        assert.equal(hit, null, `rien attendu en (${x}, ${z})`);
-      } else {
-        assert.ok(hit, `segment attendu en (${x}, ${z})`);
-        close(hit.across, expected, 1e-9, `distance en travers en (${x}, ${z})`);
-      }
-      compared++;
-    }
-  }
-  assert.ok(compared > 2000, `${compared} points comparés`);
-});
-
-test('l’emprise de l’index écarte d’un coup un rectangle sans falaise', () => {
-  const index = new CliffIndex([{
-    ax: 0, az: 0, tx: 1, tz: 0, nx: 0, nz: -1, length: 100,
-    footA: 0, footB: 0, crestA: 50, crestB: 50, face: 4, blend: CLIFF_BLEND_M,
-  }]);
-  assert.equal(index.touches(10, -10, 30, 10), true, 'tuile sur la falaise');
-  assert.equal(index.touches(-500, -500, -400, -400), false, 'tuile au loin');
-  // L'emprise couvre la portée, pas seulement le trait.
-  assert.equal(index.touches(10, -CLIFF_BLEND_M - 2, 30, -CLIFF_BLEND_M), true, 'bord de portée');
-});
-
-test('deux points de part et d’autre du trait sont séparés par toute la dénivelée', () => {
-  const index = new CliffIndex([{
-    ax: 0, az: 0, tx: 1, tz: 0, nx: 0, nz: -1, length: 100,
-    footA: 0, footB: 0, crestA: 50, crestB: 50, face: 4, blend: CLIFF_BLEND_M,
-  }]);
-  // Le MNT, lui, donne la même valeur moyenne des deux côtés : c'est bien la
-  // marche qui crée la chute, pas la donnée.
-  const below = index.elevationAt(50, 0.5, 25);
-  const above = index.elevationAt(50, -4.5, 25);
-  assert.ok(above - below > 45, `chute de ${(above - below).toFixed(1)} m sur 5 m`);
 });
 
 test('le fond plat couvre la diagonale d’une maille de terrain', () => {
@@ -8517,20 +8297,6 @@ test('le remblai d’accès d’une travée ne fait pas pencher sa voisine', () 
   }
 });
 
-test('le terrain naturel porte la marche des falaises, le MNT brut non', () => {
-  // Les plates-formes se dressent sur le terrain naturel : lues sur le MNT
-  // brut, elles flottaient au pied d'une falaise, sur la rampe que la marche
-  // a supprimée du sol affiché.
-  const bubble = Object.create(TerrainBubble.prototype);
-  bubble.frame = { origin: { x: 0, y: 0 }, scale: 1, zoom: 15 };
-  bubble.surfaceElevationAtTile = () => 53.4;
-  bubble._cliffCut = { elevationAt: (x, z, raw) => Math.min(raw, 50) };
-  close(bubble.rawSurfaceElevationAtLocal(0, 0), 53.4, 1e-9, 'le MNT, pour mesurer la marche');
-  close(bubble.naturalElevationAtLocal(0, 0), 50, 1e-9, 'le pied de la falaise, pour la route');
-  bubble._cliffCut = null;
-  close(bubble.naturalElevationAtLocal(0, 0), 53.4, 1e-9, 'sans falaise, le MNT');
-});
-
 /** Tronçon d'essai pour `raiseApproaches` : une ligne tous les cinq mètres. */
 function approachSegment(from, step, rows, { halfWidth = 3, works = null, junction = null, level = 0 } = {}) {
   const path = Array.from({ length: rows }, (_, i) => ({
@@ -13093,7 +12859,7 @@ test('les limites de surfaces : la frange, les matières interpolées et la rive
   // reste interdit, c'est d'inventer une normale depuis une texture sans
   // relevé d'altitude — d'où la garde : la dérivée ne vaut que là où le grain
   // a bougé la géométrie, sinon elle ne rendrait que le facettage de la maille.
-  assert.match(source, /if \(vGrain > 0\.0\)/, 'la facette est gardée par le grain');
+  assert.match(source, /float facet = max\(grainFade, vSteep\);/, 'la facette est gardée par le grain, ou par la paroi');
   assert.equal(
     (source.match(/dFdx\(|dFdy\(/g) || []).length,
     2,
@@ -13241,7 +13007,7 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   // Seule survit la dérivée de la facette, gardée par le grain : elle lit une
   // bosse réellement portée par la géométrie, pas une normale tirée d'une
   // texture — c'est cette seconde-là qui faisait fourmiller le sol.
-  assert.match(source, /if \(vGrain > 0\.0\)/, 'la facette est gardée par le grain');
+  assert.match(source, /float facet = max\(grainFade, vSteep\);/, 'la facette est gardée par le grain, ou par la paroi');
   assert.ok(!/uGrainContrast|grainHeight/.test(source), 'aucun relief tiré d’une texture');
   for (const key of ['grainScaleM', 'grainPixels', 'grainContrast', 'grainRelief']) {
     assert.equal(defaultTheme.terrain[key], undefined, `${key} n'a plus d'objet`);

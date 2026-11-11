@@ -196,9 +196,7 @@ Breaking one of these needs a very good reason, stated in the PR description.
   same question row by row (`roadsideRelief.measureRoom`): it never extends
   over another carriageway or across a junction mouth. An earth embankment is
   not roadside relief: the terrain itself rises to the platform
-  (`roadCut.fillElevationAt`) on the rows `roadProfile.findEarthFills` names. A
-  side bordered by a mapped cliff carries no ground relief — the cliff is the
-  wall.
+  (`roadCut.fillElevationAt`) on the rows `roadProfile.findEarthFills` names.
 
 - **Two ways are near each other for three reasons**, and only one is a bundle:
   they cross (the graph knows), one flies over the other (`layer`), or they run
@@ -250,9 +248,7 @@ Breaking one of these needs a very good reason, stated in the PR description.
   avant la pose du décor ; les arbres sont resemés à leur place quand le décor se refait.
 
   Platforms are laid on the **natural** terrain (`naturalElevationAtLocal`):
-  the DEM with mapped cliffs stepped, road cut excluded. Only `cliffLayer`
-  reads the raw DEM. A ground-level road crossing a mapped cliff opens a breach
-  in it (`cliffGaps`); a bridge or a tunnel does not.
+  the DEM with roofs removed and water levels applied, road cut excluded.
 
 - **Layers don't mutate each other implicitly.** A layer publishes what it
   produces; nothing writes into another layer's data uninvited.

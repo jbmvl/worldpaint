@@ -16,7 +16,7 @@ import { GenerationMetrics } from './inspect/generationMetrics.js';
  * Ordre de génération : « sommes-nous en ville ? » (`settlement.UrbanMask` :
  * ni une couche ni un thème, un prédicat de lieu, lu par la carte du sol qui y
  * peint son trottoir et par les chaussées qui y retranchent voies piétonnes et
- * voies redondantes) → falaises → niveaux d’eau → occupation du sol (tout le monde la lit — l'eau en
+ * voies redondantes) → niveaux d’eau → occupation du sol (tout le monde la lit — l'eau en
  * fait partie, c'est une matière du sol) → profils ferroviaires naturels
  * → chaussées (calculent les franchissements et façonnent le terrain,
  * posent la surface des carrefours, publient l'emprise routière que le reste
@@ -74,7 +74,6 @@ import { GroundClassMap } from './terrain/groundClassMap.js';
 import { FarRelief } from './terrain/farRelief.js';
 import { RoadNetwork, createRoadMaterials, ROAD_RADIUS_M } from './layers/roadNetwork.js';
 import { RailwayLayer } from './layers/railwayLayer.js';
-import { CliffLayer } from './layers/cliffLayer.js';
 import { BridgeLayer } from './layers/bridgeLayer.js';
 import { deckCeilingAt } from './layers/roadWorks.js';
 import { CombinedIndex } from './layers/roadGraph.js';
@@ -240,12 +239,6 @@ export class WorldComposer {
     // d'aucune autre couche — voir `railwayLayer.js`.
     this.railways = new RailwayLayer({ THREE, scene, bubble, theme });
 
-    // Les falaises relevées : elles publient la marche que le terrain suit et
-    // la bande que la carte du sol peint en roche, et posent la nappe de
-    // paroi — les sommets qu'un champ de hauteurs ne peut pas porter sur une
-    // face verticale. Elle est rendue avec le matériau du terrain, donc
-    // creusée par le même grain que le reste du sol.
-    this.cliffs = new CliffLayer({ THREE, scene, bubble, theme });
     // Façade d'emprise combinée (route + voie ferrée) pour les consommateurs
     // de `roads.index` (jardins, végétation, cultures). Un `get`, pas
     // une valeur figée : les deux index sont réécrits à chaque reconstruction.
@@ -342,7 +335,7 @@ export class WorldComposer {
       : null;
     this.metrics = new GenerationMetrics();
     for (const [object,method,label] of [
-      [this.bubble,'processRebuildQueue','terrain'], [this.cliffs,'rebuild','falaises'],
+      [this.bubble,'processRebuildQueue','terrain'],
       [this.roads,'rebuild','routes'], [this.buildings,'rebuild','batiments'],
       [this.furniture,'rebuild','mobilier'], [this.groundClass,'rebuild','carteSol'],
       [this.vegetation,'processQueue','forets'],
@@ -666,22 +659,14 @@ export class WorldComposer {
 
       if (!await checkpoint()) return false;
 
-      // 0 bis. Toits que le MNT a pris pour du relief — avant les falaises et
-      //    l'eau, qui lisent le relief corrigé.
+      // 0 bis. Toits que le MNT a pris pour du relief — avant l'eau, qui lit
+      //    le relief corrigé.
       const roofCut = new RoofCut({
         frame,
         elevationAt: (x, z) => this.bubble._sample(frame.origin.x + x / frame.scale, frame.origin.y + z / frame.scale, NaN),
       });
       if (!await rebuild(roofCut, 'toits', this.vectorTiles, near)) return false;
       this.bubble.setRoofCut?.(roofCut.count ? roofCut : null);
-
-      // 0 ter. Falaises — avant tout le monde. Elles façonnent le relief
-      //    naturel que les chaussées entailleront ensuite (une route taillée
-      //    dans la rampe que la marche supprime se retrouverait en l'air), et
-      //    la carte du sol a besoin de leurs bandes pour y peindre la roche.
-      this.cliffs.rebuild(this.vectorTiles, near, here);
-
-      if (!await checkpoint()) return false;
 
       // Les cotes d’eau précèdent les routes et tout ce qui prend appui au sol.
       const waterStart = performance.now();
@@ -797,9 +782,6 @@ export class WorldComposer {
           areas: this.roads.junctionAreas,
           // Maisons du bâti déjà posé — voir `furniture/domesticFauna.js`.
           houses: this.buildings.houses,
-          // Les falaises relevées : là où elles bordent une route, c'est leur
-          // paroi qui fait le mur, pas un ouvrage de la route.
-          cliffs: this.cliffs.index,
         }
       )) return false;
 
@@ -1146,7 +1128,6 @@ export class WorldComposer {
     this.buildings.dispose();
     this.railways.dispose();
     this.bridges.dispose();
-    this.cliffs.dispose(); // avant la bulle : retire sa marche en partant
     this.roads.dispose(); // avant la bulle : retire son déblai en partant
     this.roadMaterials.dispose();
     this.vectorTiles?.dispose();

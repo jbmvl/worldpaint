@@ -4,7 +4,7 @@
  * Playwright n'est pas installé. `CHROME_PATH` remplace le chemin de l'exécutable.
  */
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -53,10 +53,15 @@ class Page {
     await this.s.send('Page.navigate', { url });
     await loaded;
   }
-  async evaluate(fn) {
-    const r = await this.s.send('Runtime.evaluate', { expression: `(${fn})()`, awaitPromise: true, returnByValue: true });
+  async evaluate(fn, arg) {
+    const call = arg === undefined ? '' : JSON.stringify(arg);
+    const r = await this.s.send('Runtime.evaluate', { expression: `(${fn})(${call})`, awaitPromise: true, returnByValue: true });
     if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text);
     return r.result.value;
+  }
+  async screenshot({ path }) {
+    const { data } = await this.s.send('Page.captureScreenshot', { format: 'png' });
+    writeFileSync(path, Buffer.from(data, 'base64'));
   }
   async waitForFunction(fn, _arg, { timeout = 30000 } = {}) {
     const end = Date.now() + timeout;

@@ -1161,7 +1161,7 @@ export class GroundClassMap {
    * `rebuild` en étapes : une par tuile et par couche source. Carte relue,
    * origine et texture ne changent qu'à la dernière.
    */
-  *rebuildSteps(source, tiles, here, frame, { urban = null, cliffs = null, builtUp = null, elevationAt = null, roadTiles = null, roadRadius = ROAD_RADIUS_M } = {}) {
+  *rebuildSteps(source, tiles, here, frame, { urban = null, builtUp = null, elevationAt = null, roadTiles = null, roadRadius = ROAD_RADIUS_M } = {}) {
     if (this.disposed || !source || !frame) return false;
 
     const { ctx } = this;
@@ -1282,31 +1282,6 @@ export class GroundClassMap {
           ctx.fill(piece.path, 'evenodd');
         }
       }
-    }
-
-    // Les falaises relevées, avant l'eau et après l'occupation du sol : une
-    // paroi verticale est de la roche, même là où la donnée n'en dit rien et
-    // laisserait de l'herbe. Là où OSM relève déjà `bare_rock`, ce trait ne
-    // fait que repeindre la même matière.
-    if (cliffs?.length) {
-      ctx.save();
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.strokeStyle = surfaceFill('rock');
-      for (const band of cliffs) {
-        if (!band?.path || band.path.length < 2) continue;
-        const trace = new Path2D();
-        for (let i = 0; i < band.path.length; i++) {
-          const px = (band.path[i].x - originX) * perMeter;
-          const pz = (band.path[i].z - originZ) * perMeter;
-          if (i === 0) trace.moveTo(px, pz);
-          else trace.lineTo(px, pz);
-        }
-        ctx.lineWidth = Math.max(1, band.width * perMeter);
-        ctx.stroke(trace);
-        painted++;
-      }
-      ctx.restore();
     }
 
     // Les cours d'eau linéaires (`waterway`, pas un polygone) : le lit, et
