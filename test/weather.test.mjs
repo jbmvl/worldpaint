@@ -25,6 +25,7 @@ import {
   PRECIPITATION_TYPES,
   resolveWeather,
   overcastOf,
+  nightCloudVeil,
   weatherLighting,
   weatherSkyParameters,
   castsShadow,
@@ -139,6 +140,12 @@ test('la pluie assombrit au-delà du couvert qui la porte', () => {
   const dry = weatherLighting(light, resolveWeather(cover));
   const wet = weatherLighting(light, resolveWeather({ ...cover, precipitation: 1 }));
   assert.ok(wet.sun < dry.sun, 'sous l’averse il fait plus sombre qu’au seul compte des nuages');
+});
+
+test('la nuit, la pluie tend son plafond quel que soit le couvert réglé', () => {
+  assert.equal(nightCloudVeil(resolveWeather()), 0, 'par temps ordinaire, rien ne voile les étoiles');
+  assert.equal(nightCloudVeil(resolveWeather({ precipitation: 0.7 })), 1, 'il pleut : plus d’étoiles, même sous le couvert ordinaire');
+  assert.equal(nightCloudVeil(resolveWeather({ cloudCover: 1, cloudDensity: 1 })), 1);
 });
 
 test('l’ombre portée s’efface en douceur avant de s’éteindre', () => {

@@ -894,6 +894,9 @@ ponctuels à lumière constante et des avions lents à feux rouge/vert et double
 sphère, sans dépendre de la caméra. Ils avancent en secondes réelles via
 `advance()`, même si la date simulée est figée ; crépuscule, horizon et couverture
 nuageuse les effacent. Le thème `sky.nightTraffic` règle dimensions et couleurs.
+Les nuages de jour restent la nuit, repeints d'un gris tiré de `nightHorizon`
+et éclairés près de la lune ; pluie et couvert y tendent un plafond continu
+(`nightCloudVeil`, dans `weather.js`) qui cache étoiles, lune et passages.
 Le banc `demo/lab/sky.html` les fige avec `time`.
 
 ## Les cadences

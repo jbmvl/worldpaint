@@ -22,6 +22,10 @@
  * La nuit porte une lune, des étoiles fixes et les passages de nightTraffic.js.
  * Ceux-ci sont calculés sur la sphère (sans couture UV) et avancent en temps
  * réel, indépendamment de l'heure simulée. Leur finesse tient compte du pixel.
+ * Les nuages de Preetham y restent, repeints en gris de nuit (leur masque est
+ * relu, pas recalculé), et la pluie ou le couvert tendent un voile continu
+ * (`nightCloudVeil`) : ce qu'ils couvrent ne laisse voir ni étoile, ni lune,
+ * ni passage.
  *
  * Entre le coucher et la fin du crépuscule nautique, une lueur (`twilightGlow`)
  * éclaire ce ciel de nuit et le brouillard, et masque les étoiles : Preetham
@@ -55,6 +59,7 @@ import {
   fogColorFor,
   hazeWhiteness,
   overcastOf,
+  nightCloudVeil,
   windField,
 } from './weather.js';
 import { AerialFog, aerialSkyColor, aerialSunColor, sunTintAmount } from './aerialFog.js';
@@ -159,6 +164,13 @@ const TWILIGHT_ANTISOLAR = 0.6;
 
 /** Hauteur de soleil où la nuit commence à gagner le ciel. */
 const NIGHT_START_Y = 0.06;
+
+/**
+ * Nuage de nuit : la couleur d'horizon nocturne, désaturée de moitié et un
+ * peu relevée — un plafond renvoie la lueur du sol, il ne se noie pas dans le noir.
+ */
+const NIGHT_CLOUD_DESATURATION = 0.5;
+const NIGHT_CLOUD_GAIN = 1.6;
 
 /** Part des étoiles éteinte par la nuit américaine : un ciel éclairci les noie. */
 const DAY_FOR_NIGHT_STAR_FADE = 0.6;
@@ -329,6 +341,8 @@ export class SceneEnvironment {
     // À l'opposé du soleil (pas la vraie position, mais elle se lève quand il se couche).
     this.uniforms.uMoonDirection = { value: new THREE.Vector3(0, 1, 0) };
     this.uniforms.uStarGain = { value: 1 };
+    this.uniforms.uNightCloud = { value: new THREE.Color(0, 0, 0) };
+    this.uniforms.uNightVeil = { value: 0 };
     const traffic = { ...defaultTheme.sky.nightTraffic, ...palette.nightTraffic };
     this.uniforms.uTrafficSize = { value: new THREE.Vector4(...traffic.sizes) };
     for (const [name, color] of Object.entries(traffic.colors)) {
@@ -366,7 +380,19 @@ export class SceneEnvironment {
          uniform vec3 uTwilightZenith;
          uniform vec3 uMoonDirection;
          uniform float uStarGain;
+         uniform vec3 uNightCloud;
+         uniform float uNightVeil;
          ${NIGHT_TRAFFIC_GLSL}`
+      )
+      .replace(
+        'vec3 texColor = ( Lin + L0 ) * 0.04 + vec3( 0.0, 0.0003, 0.00075 );',
+        `vec3 texColor = ( Lin + L0 ) * 0.04 + vec3( 0.0, 0.0003, 0.00075 );
+         float skyCloudMask = 0.0;`
+      )
+      .replace(
+        'cloudMask *= horizonFade;',
+        `cloudMask *= horizonFade;
+         skyCloudMask = cloudMask;`
       )
       .replace(
         'cloudColor *= vSunE * 0.00002;',
@@ -390,7 +416,12 @@ export class SceneEnvironment {
          vec2 twilightSun = normalize(vSunDirection.xz + vec2(1e-5));
          vec2 twilightLook = normalize(direction.xz + vec2(1e-5));
          float twilightSide = mix(${TWILIGHT_ANTISOLAR.toFixed(2)}, 1.0, dot(twilightLook, twilightSun) * 0.5 + 0.5);
-         night += mix(uTwilightHorizon * twilightSide, uTwilightZenith, smoothstep(0.0, 0.6, direction.y));
+         vec3 twilightLight = mix(uTwilightHorizon * twilightSide, uTwilightZenith, smoothstep(0.0, 0.6, direction.y));
+         night += twilightLight;
+
+         // Ce que les nuages cachent : leur masque de jour, ou le voile de pluie et de couvert.
+         float nightCloud = max(skyCloudMask * cloudDensity, uNightVeil * smoothstep(-0.05, 0.1, direction.y));
+         float skyOpen = 1.0 - clamp(nightCloud, 0.0, 1.0);
 
          // Lune : un croissant (deux cercles en espace local, l'un mordant
          // l'autre), pas une vraie phase calculée depuis la date. right/up
@@ -409,7 +440,7 @@ export class SceneEnvironment {
          float moonShape = moonDisc * moonBite;
          // Halo large et faible sur l'astre entier, affaibli deux fois (trop lumineux au premier passage).
          float moonGlow = pow(clamp(dot(direction, moonDir), 0.0, 1.0), 60.0);
-         night += vec3(0.85, 0.9, 1.0) * (moonShape * 0.9 + moonGlow * 0.18);
+         night += vec3(0.85, 0.9, 1.0) * (moonShape * 0.9 + moonGlow * 0.18) * skyOpen;
 
          // Étoiles : un point rond par cellule d'une grille fine, pas la
          // cellule entière allumée par seuil (ça dessinerait des carrés).
@@ -424,16 +455,20 @@ export class SceneEnvironment {
          float starSize = mix(0.1, 0.2, fract(starSeed * 71.3));
          float starPoint = smoothstep(starSize, 0.0, starDist);
          float starPresence = step(0.9935, starSeed);
-         float starVeil = (1.0 - cloudCoverage * cloudDensity * 0.85) * (1.0 - uTwilight);
+         float starVeil = skyOpen * skyOpen * (1.0 - uTwilight);
          float starMask = smoothstep(0.05, 0.35, direction.y);
          night += vec3(starPresence * starPoint * starVeil * starMask * uStarGain); // éclat fixe, pas de scintillement
 
          // Les dérivées restent hors des branches : finesse stable à toute résolution.
          float trafficPixel = max(length(fwidth(direction)), 0.0001);
          if (uNightMix > 0.0 && direction.y > 0.02) {
-           float clearSky = 1.0 - smoothstep(0.15, 0.85, cloudCoverage * cloudDensity);
-           night += nightTraffic(direction, trafficPixel) * clearSky * (1.0 - uTwilight) * starMask * uStarGain;
+           night += nightTraffic(direction, trafficPixel) * skyOpen * (1.0 - uTwilight) * starMask * uStarGain;
          }
+
+         // Le nuage reçoit la lueur du crépuscule et, près d'elle, celle de la lune.
+         float moonLining = pow(clamp(dot(direction, moonDir), 0.0, 1.0), 6.0);
+         vec3 cloudNight = uNightCloud + twilightLight + vec3(0.85, 0.9, 1.0) * moonLining * 0.12 * (1.0 - uNightVeil);
+         night = mix(night, cloudNight, clamp(nightCloud, 0.0, 1.0));
 
          texColor = mix( texColor, night, uNightMix );
 
@@ -597,6 +632,7 @@ export class SceneEnvironment {
     this.uniforms.uNightMix.value = nightMix;
     this.uniforms.uMoonDirection.value.set(-dir.x, -dir.y, -dir.z);
     this.uniforms.uStarGain.value = 1 - DAY_FOR_NIGHT_STAR_FADE * americanNight;
+    this.uniforms.uNightVeil.value = nightCloudVeil(this.weather);
 
     const nightZenith = liftNightColor(
       hexToLinear(this.palette.nightZenith),
@@ -648,6 +684,10 @@ export class SceneEnvironment {
     this.uniforms.uHorizonBand.value = horizonBand;
     this.uniforms.uNightZenith.value.setRGB(nightZenith[0], nightZenith[1], nightZenith[2]);
     this.uniforms.uNightHorizon.value.setRGB(nightHorizon[0], nightHorizon[1], nightHorizon[2]);
+    const horizonGrey = luminance(nightHorizon);
+    this.uniforms.uNightCloud.value.setRGB(
+      ...nightHorizon.map((c) => mix(c, horizonGrey, NIGHT_CLOUD_DESATURATION) * NIGHT_CLOUD_GAIN)
+    );
 
     // Le modèle lit la position du soleil, pas seulement sa direction.
     this._sunPosition.set(dir.x, dir.y, dir.z).multiplyScalar(SUN_DISTANCE);

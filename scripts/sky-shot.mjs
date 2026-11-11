@@ -24,8 +24,12 @@ async function loadPlaywright() {
     return await import('playwright');
   } catch {
     // Installation globale (conteneurs de travail) : pas de dépendance au dépôt.
-    const require = createRequire(join(process.execPath, '..', '..', 'lib', 'node_modules', '/'));
-    return require('playwright');
+    try {
+      const require = createRequire(join(process.execPath, '..', '..', 'lib', 'node_modules', '/'));
+      return require('playwright');
+    } catch {
+      return import('./cdpBrowser.mjs');
+    }
   }
 }
 

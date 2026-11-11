@@ -96,6 +96,17 @@ export function overcastOf(weather) {
 }
 
 /**
+ * Part du ciel de nuit tendue d'un voile continu, de 0 à 1. Le couvert y
+ * mène, et la précipitation aussi : il pleut sous un plafond, pas sous un
+ * ciel troué d'étoiles, quel que soit le couvert réglé à côté.
+ *
+ * @param {Object} weather État résolu.
+ */
+export function nightCloudVeil(weather) {
+  return Math.max(overcastOf(weather), smoothstep(0, 0.3, weather.precipitation));
+}
+
+/**
  * Éclairage corrigé par la météo, à partir de celui que le soleil seul dicte
  * (`lightingFor`). Sous un ciel couvert la directionnelle s'efface et
  * l'hémisphérique monte (la source devient la voûte plutôt que le disque
