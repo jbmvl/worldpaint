@@ -17,11 +17,6 @@
  * ligne (`measureRoom`, qui pose la question de `roadEdges.edgeClearance`), et
  * aucun ouvrage ne s'étend au-delà : un mur, une falaise ou une glissière qui
  * n'y tiennent pas ne s'y posent pas.
- *
- * Une falaise relevée (`cliffLayer`) qui borde la rive y fait le mur : la
- * dénivelée qu'on y lit est la sienne, pas celle d'un déblai ou d'un remblai
- * de la route. Ni mur, ni falaise de déblai de ce côté ; la
- * glissière, elle, reste — le vide est réel.
  */
 
 import {
@@ -76,12 +71,6 @@ export const RELIEF_MIN_ROOM_M = 0.5;
 const ROOM_PROBE_M = 0.25;
 /** Pas de la marche qui cherche une dalle le long de la normale d'une rive. */
 const ROOM_RAY_STEP_M = 0.5;
-/**
- * Où l'on cherche une falaise relevée au-delà de la rive, en mètres : jusqu'à
- * l'arrière d'une falaise de déblai (fond plat et raccord), là où le relief de
- * la route lit ses cotes.
- */
-const CLIFF_PROBES_M = [1, 3, 5, 7];
 
 /**
  * Pose sur chaque ligne la place libre au-delà de ses deux rives
@@ -118,14 +107,7 @@ export function measureRoom(layer, segment, rows) {
       return room;
     };
     row.room = {};
-    row.cliff = {};
     for (const side of [1, -1]) {
-      row.cliff[side] =
-        !!layer._cliffs &&
-        CLIFF_PROBES_M.some((beyond) => {
-          const p = at(side, beyond);
-          return layer._cliffs.faceNear(p.x, p.z);
-        });
       const probe = at(side, ROOM_PROBE_M);
       row.room[side] = edgeClearance(probe.x, probe.z, {
         roadIndex: layer._roadIndex,
@@ -165,11 +147,6 @@ export function roomOn(row, side) {
   return row.room?.[side] ?? RELIEF_ROOM_REACH_M;
 }
 
-/** Place libre pour un ouvrage **au sol** : nulle là où une falaise borde la rive. */
-function groundRoomOn(row, side) {
-  return row.cliff?.[side] ? 0 : roomOn(row, side);
-}
-
 /**
  * Ce que le relief impose : les ouvrages qui tiennent la chaussée sur un
  * versant, plus la glissière qui borde le vide.
@@ -201,7 +178,7 @@ export function buildRoadsideRelief(layer, context, segment, rowsInfo) {
 
   const fill = layer.specs.wallSpecs.fill;
   const holds = (row) =>
-    !row.terrainFill && row.slope >= STEEP_CROSS_SLOPE && groundRoomOn(row, -row.uphill) >= fill.thickness + RELIEF_MIN_ROOM_M;
+    !row.terrainFill && row.slope >= STEEP_CROSS_SLOPE && roomOn(row, -row.uphill) >= fill.thickness + RELIEF_MIN_ROOM_M;
   for (const run of contiguousRuns(rowsInfo, holds, FILL_WALL_MIN_ROWS)) {
     const side = run[Math.floor(run.length / 2)].uphill;
     // Distances ramenées à zéro : un tronçon extrait au kilomètre 3 doit
@@ -307,7 +284,7 @@ export function buildRockCut(layer, context, segment, rowsInfo) {
   // tronçon : le versant peut changer de main au passage d'un col, et la
   // paroi se retrouverait alors à sonder le vide en aval.
   const uphill = (row, wanted) =>
-    !row.terrainFill && row.uphill === wanted && row.rise >= ROCK_CUT_MIN_RISE_M && groundRoomOn(row, wanted) >= cutBench + spec.minReach;
+    !row.terrainFill && row.uphill === wanted && row.rise >= ROCK_CUT_MIN_RISE_M && roomOn(row, wanted) >= cutBench + spec.minReach;
   for (const side of [1, -1]) {
     for (const run of contiguousRuns(rowsInfo, (row) => uphill(row, side), 5)) {
       const rows = run.length;

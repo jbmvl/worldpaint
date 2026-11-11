@@ -414,10 +414,10 @@ export const STONE_TINT_NEUTRAL = Object.freeze([1, 1, 1]);
  * Ce que la géologie fait à la pierre, toujours complet.
  *
  * Même figure que `soilWashFor`, et pour la même raison : la roche est peinte à
- * trois endroits — la teinte de pente et les matières minérales dans le shader
- * de terrain, les ouvrages balayés dans le mobilier — et trois lectures
+ * deux endroits — les matières minérales dans le shader de terrain, que les
+ * parois reprennent, et les ouvrages balayés dans le mobilier — et deux lectures
  * indépendantes d'un tableau à trous divergeraient à la première géologie qui
- * n'en décrirait que deux. Un causse blanc dont les murets resteraient gris se
+ * n'en décrirait qu'une. Un causse blanc dont les murets resteraient gris se
  * lirait comme deux pays superposés.
  *
  * Fonction pure.

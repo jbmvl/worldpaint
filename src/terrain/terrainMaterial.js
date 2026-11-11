@@ -268,8 +268,8 @@ export class TerrainMaterialFactory {
    *   facteur : voir `SOIL_LOOK` sur pourquoi c'est un facteur et pas une
    *   palette ;
    * - la **teinte de la géologie** (`stoneTintFor`) sur la roche du socle —
-   *   la dalle et l'éboulis, que la pente reprend sur les parois. Une seule
-   *   fois : `uRockColor` module la matière déjà teintée et reste neutre. Le mobilier bâti en
+   *   la dalle et l'éboulis, que la pente reprend telle quelle sur les
+   *   parois. Le mobilier bâti en
    *   pierre lit le même facteur, sans quoi un causse blanc porterait des
    *   murets gris.
    *
@@ -432,7 +432,6 @@ export class TerrainMaterialFactory {
       uShoreWet: { value: look.shoreWet },
       /** Dérive des rides, en cycles. Deux vitesses inégales : sinon on lit un glissement. */
       uWaterFlow: { value: new THREE.Vector2(0, 0) },
-      uRockColor: { value: new THREE.Vector3(...look.rockColor) },
       uSlopeRange: { value: new THREE.Vector2(look.slopeStart, look.slopeEnd) },
       uRockStrength: { value: look.rockStrength },
       /**
@@ -514,7 +513,6 @@ export class TerrainMaterialFactory {
            // Part de plaque au fragment, decidee une fois avant de lire le sol.
            float gPatch = 0.0;
            uniform float uPoolScale;
-           uniform vec3 uRockColor;
            uniform vec2 uSlopeRange;
            uniform float uRockStrength;
            uniform float uWetness;
@@ -856,8 +854,8 @@ export class TerrainMaterialFactory {
              // Pas d'accent grave dans ce bloc : litteral de gabarit.
              vec3 base = albedo * modulation;
 
-             // La roche des fortes pentes, en deux temps. D'abord la matière
-             // elle-meme : multiplier une herbe par un gris ne donne pas de la
+             // La roche des fortes pentes prend la matiere rock elle-meme :
+             // multiplier une herbe par un gris ne donne pas de la
              // roche, ca donne une herbe sombre — et c'est ce qu'on lisait sur
              // une paroi, la carte plane n'ayant pu y poser que de l'herbe
              // etiree. La pente, elle, decrit la paroi.
@@ -867,8 +865,6 @@ export class TerrainMaterialFactory {
              // pays : un uniforme a part serait fige au montage, et rendrait
              // la meme falaise du calcaire au granite.
              base = mix(base, uSurfaceAlbedo[${SURFACE_KINDS.indexOf('rock')}], rock);
-             // Puis la teinte, qui module ce que la matiere a donne.
-             base = mix(base, base * uRockColor, rock);
 
              // Pluie : le sol se mouille. Sans objet sur l'eau elle-même.
              if (uWetness > 0.0) base = wetGround(base, uWetness * (1.0 - gWater));
@@ -919,13 +915,16 @@ export class TerrainMaterialFactory {
              // multipliée par le fondu de distance et l'emprise routière côté
              // sommet) fait le partage : nulle, la bosse ne s'est pas produite
              // et les dérivées ne rendraient que le facettage de la maille du
-             // terrain — c'est la normale analytique qui vaut.
+             // terrain — c'est la normale analytique qui vaut. Sauf sur une
+             // paroi : lissée sur ses quelques triangles, elle y dessine des
+             // rideaux d'ombre ; la facette, elle, se lit comme de la roche.
              vec3 worldNormal = vSceneNormal;
-             if (vGrain > 0.0) {
-               float grainFade = lowPolyFade(vScenePos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y);
+             float grainFade = vGrain > 0.0 ? lowPolyFade(vScenePos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y) : 0.0;
+             float facet = max(grainFade, vSteep);
+             if (facet > 0.0) {
                vec3 flatNormal = normalize(cross(dFdx(vScenePos), dFdy(vScenePos)));
                if (dot(flatNormal, vSceneNormal) < 0.0) flatNormal = -flatNormal;
-               worldNormal = normalize(mix(vSceneNormal, flatNormal, grainFade));
+               worldNormal = normalize(mix(vSceneNormal, flatNormal, facet));
              }
              vec3 wavy = waterNormal(normalize(worldNormal), vScenePos.xz);
 

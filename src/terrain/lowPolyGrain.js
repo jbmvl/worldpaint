@@ -23,7 +23,7 @@
  * qui lui fait face plutôt que sur `xz`.
  *
  * Purement visuel : ça ne touche à aucune lecture d'altitude ailleurs dans le
- * moteur (routes, bâti, haies, `cliffCut`, placement, mobilier ponctuel). Un
+ * moteur (routes, bâti, haies, placement, mobilier ponctuel). Un
  * point posé au niveau naturel et qui ne lit pas `LOW_POLY_GRAIN_GLSL`
  * (aujourd'hui : tout `furnitureKit.js`, les arbres de `vegetationLayer.js`)
  * ne suit pas la bosse et peut sembler flotter ou s'enfoncer à son pied.

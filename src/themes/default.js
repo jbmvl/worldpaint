@@ -126,20 +126,9 @@ export const TERRAIN_LOOK = {
   cropStandingWater: {
     rice: 0.55,
   },
-  /** Teinte de roche sur les fortes pentes, posée sur la matière `rock` déjà teintée par la géologie. */
-  rockColor: [0.72, 0.68, 0.62],
   slopeStart: 0.22,
   slopeEnd: 0.62,
   rockStrength: 0.75,
-
-  /**
-   * L'aplomb d'une falaise relevée (`layers/cliffLayer`) : la dénivelée que le
-   * MNT étale en rampe est comprimée sur cette largeur au sol. `batter` la
-   * tire de la hauteur — 0,075 met une paroi de quarante mètres sur trois —
-   * et `maxReach` la plafonne, sans quoi une très grande dénivelée
-   * redeviendrait le versant qu'on cherche justement à supprimer.
-   */
-  cliff: { batter: 0.075, minReach: 1.2, maxReach: 9 },
 
   /** Couleur de reflet de repli pour une scène sans environnement. */
   waterSheenColor: [0.42, 0.52, 0.6],
@@ -577,9 +566,8 @@ export const SOIL_LOOK = {
  *
  * ## Des facteurs, pas des couleurs
  *
- * Même raison que `SOIL_LOOK` : ces trois lectures partent de bases
- * différentes — une teinte de pente, deux albédos de matière, deux tons de
- * nuancier — et une palette par géologie les ferait diverger. Un facteur
+ * Même raison que `SOIL_LOOK` : ces lectures partent de bases différentes —
+ * deux albédos de matière, deux tons de nuancier — et une palette par géologie les ferait diverger. Un facteur
  * multiplicatif, en espace linéaire, les fait toutes bouger du même rapport.
  *
  * Le **calcaire est la référence** et n'a pas d'entrée : c'est sur lui que les

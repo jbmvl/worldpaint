@@ -21,8 +21,7 @@ Une reconstruction du déblai recalcule le déblai, pas les relevés inchangés.
 Les buffers GPU de même taille sont réutilisés. Le cache est libéré avec la
 tuile ; une source d'altitude externe sans `revision` ne l'utilise pas.
 
-Les falaises ne republient pas leur index et leur géométrie si les tracés,
-le repère, l'échelle verticale et le DEM n'ont pas changé. L’herbe conserve les instances
+L’herbe conserve les instances
 des mailles communes à deux fenêtres ; les arbres proches et les fleurs
 conservent aussi leurs emplacements. Seuls les ajouts et les trous comblés
 lors des retraits sont transférés au GPU. Les cultures recopient leurs

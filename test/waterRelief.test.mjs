@@ -97,7 +97,7 @@ test('la cote d’un lac prime sur l’axe du ruisseau qui le traverse',()=>{
 
 test('le terrain naturel et la lecture du décor reçoivent le même niveau',()=>{
   const r=relief([lake([rect(-80,-80,80,80)])],()=>10);
-  const context={_waterRelief:r,_cliffCut:null,_roadCutAt:(x,z,h)=>h};
+  const context={_waterRelief:r,_roadCutAt:(x,z,h)=>h};
   context._naturalAt=TerrainBubble.prototype._naturalAt;
   close(context._naturalAt(0,0,40),10);
   close(TerrainBubble.prototype.cutElevation.call(context,0,0,40),10);
@@ -112,7 +112,7 @@ test('deux rivières proches et indépendantes ne mélangent pas leurs altitudes
 
 test('un terrassement voisin ne recrée pas de bosse dans la nappe',()=>{
   const r=relief([lake([rect(-80,-80,80,80)])],()=>10);
-  const context={_waterRelief:r,_cliffCut:null,_roadCutAt:()=>35};
+  const context={_waterRelief:r,_roadCutAt:()=>35};
   close(TerrainBubble.prototype.cutElevation.call(context,0,0,40),10);
   close(TerrainBubble.prototype.cutElevation.call(context,150,0,40),35);
 });

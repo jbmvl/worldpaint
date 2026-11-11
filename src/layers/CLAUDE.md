@@ -24,7 +24,6 @@ son état.
 | `roadWorks.js`, `bridgeLayer.js` | ponts et tunnels : un état de la chaussée, pas une classe de route |
 | `roadMarkings.js`, `roadBundles.js` | marquage au sol, voies qui se longent |
 | `railwayLayer.js` | la voie ferrée et sa caténaire ; publie sa propre emprise et les voies que parcourent les trains |
-| `cliffLayer.js` | les falaises relevées : la marche du terrain, la bande peinte en roche, et la nappe de paroi — les sommets qu'un champ de hauteurs ne peut pas porter sur une face verticale |
 | `buildingLayer.js`, `buildingInterpretation.js`, `roofGeometry.js`, `buildingCharacterGeometry.js` | le bâti, la reconnaissance des murailles, les toitures, les baies religieuses et les tours de château |
 | `windowFamilies.js` | la famille de baies d'un bâtiment (maison, bourg, immeuble de ville, barre, tour, atelier) et ses cotes tirées par bâtiment ; `buildingLayer` pose la grille (`appendOpenings`) ou le vitrage continu (`appendGlazing`) |
 | `buildingInfill.js` | le semis des maisons là où le pays dit son bâti mal relevé (`sparse`) : rend des anneaux, que `buildingLayer` bâtit comme ceux des tuiles ; cotes contrôlées par `scripts/buildings-audit.mjs` |
