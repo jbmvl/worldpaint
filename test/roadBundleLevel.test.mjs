@@ -62,3 +62,21 @@ test('le résultat ne dépend pas de l’ordre des tronçons', () => {
     segment.platform.forEach((height, r) => assert.ok(Math.abs(height - backward[i].platform[r]) < 1e-5));
   });
 });
+
+test('une voie en contrebas sur un versant ne creuse pas sa voisine', () => {
+  // Bande de versant : assez large pour que le lien en travers les réunisse.
+  const lanes = [lane(0, 0, 200, 12), lane(7, 0, 200, 9.5)];
+  grade(lanes, { maxCut: 3, maxFill: 3 });
+  assert.ok(lanes[0].platform[20] > 11.9, `voie haute : ${lanes[0].platform[20]}`);
+  assert.ok(lanes[1].platform[20] < 9.6, `voie basse : ${lanes[1].platform[20]}`);
+});
+
+test('les deux sens d’une même route se rejoignent malgré le dévers', () => {
+  const lanes = [lane(0, 0, 200, 12), lane(7, 0, 200, 10)];
+  for (const segment of lanes) {
+    segment.profile = 'major';
+    segment.oneway = new Int8Array(segment.path.length).fill(1);
+  }
+  grade(lanes, { maxCut: 3, maxFill: 3 });
+  assert.ok(Math.abs(lanes[0].platform[20] - lanes[1].platform[20]) < 0.05);
+});

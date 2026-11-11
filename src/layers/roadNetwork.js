@@ -420,7 +420,7 @@ export function unpavedRun(segment, run, continued) {
  * section par section.
  *
  * En rase campagne, presque rien — la route colle au sol, et c'est ce qu'on y
- * voit. Sur un versant, en revanche, elle ne le suit plus : le terrassier
+ * voit ; seul le grain du MNT est effacé (`roadProfile.ROAD_TREND_SIGMA_M`). Sur un versant, en revanche, elle ne le suit plus : le terrassier
  * tend sa pente et l'ouvrage rattrape la différence (la falaise du déblai en
  * amont, le mur de soutènement en aval). Sans cette bande, une route de
  * corniche ondulerait au rythme du bruit du MNT, chaque section étant dressée

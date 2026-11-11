@@ -1,7 +1,7 @@
 /* Le terrassier comble les ravins lus sous la chaussée et laisse les vraies pentes. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { gradeRoadNetwork, ROAD_WAVE_FILL_M } from '../src/layers/roadProfile.js';
+import { gradeRoadNetwork, ROAD_WAVE_FILL_M, ROAD_TREND_MAX_M } from '../src/layers/roadProfile.js';
 
 const STEP = 5;
 const line = (f, { from = 0, to = 600, z = 0, works = null } = {}) => {
@@ -32,7 +32,8 @@ test('une pente régulière, même raide, ne bouge pas', () => {
 test('un sommet arrondi aux flancs praticables garde sa cote', () => {
   const s = line((x) => 20 * Math.cos(((x - 300) / 300) * Math.PI));
   grade1([s]);
-  assert.ok(Math.abs(s.platform[60] - 20) <= band.maxCut + 0.01);
+  // Arrondi du raccordement en angle saillant : un mètre, pas la fermeture d'un plateau.
+  assert.ok(Math.abs(s.platform[60] - 20) <= band.maxCut + 1, `sommet ${s.platform[60]}`);
 });
 
 test('le bas d’une rampe qui finit en cul-de-sac reste au sol', () => {
@@ -44,7 +45,7 @@ test('le bas d’une rampe qui finit en cul-de-sac reste au sol', () => {
 test('le comblement est borné', () => {
   const s = line((x) => -gully(x, 300, 30, 40));
   grade1([s]);
-  assert.ok(s.platform[60] >= -30 && s.platform[60] <= -30 + ROAD_WAVE_FILL_M + 0.01);
+  assert.ok(s.platform[60] >= -30 && s.platform[60] <= -30 + ROAD_WAVE_FILL_M + ROAD_TREND_MAX_M + 0.01);
 });
 
 test('le ravin se comble à travers un carrefour', () => {
@@ -96,4 +97,29 @@ test('une route qui descend en pente douce vers un pont bas n’est pas relevée
   const before = s.platform.slice();
   grade1([s]);
   for (const r of [40, 50, 56, 64, 70]) assert.ok(Math.abs(s.platform[r] - before[r]) < 0.6, `ligne ${r}`);
+});
+
+test('une bosse courte du relief est lissée, la pente de fond gardée', () => {
+  // Bosse d'1,5 m sur une vingtaine de mètres, sur une rampe à 10 %.
+  const s = line((x) => 0.1 * x + 1.5 * Math.exp(-(((x - 300) / 10) ** 2)));
+  grade1([s]);
+  const chord = (r) => Math.abs(s.platform[r + 4] - s.platform[r]) / 20;
+  const worst = Math.max(...Array.from({ length: s.platform.length - 4 }, (_, r) => chord(r)));
+  assert.ok(worst < 0.12, `pente sur 20 m : ${worst}`);
+});
+
+test('un lacet échantillonné serré est lissé en mètres, pas en lignes', () => {
+  // Deux jambes presque plates et un gradin de 5 m dans le virage, lignes au mètre.
+  const path = [];
+  for (let d = 0; d <= 300; d += d >= 120 && d < 180 ? 1 : 5) path.push({ x: d, z: 0, distance: d });
+  const ground = (d) => 0.02 * d - 5 / (1 + Math.exp(-(d - 150) / 3));
+  const s = { path, platform: Float32Array.from(path, (p) => ground(p.distance)) };
+  grade1([s]);
+  let worst = 0;
+  for (let i = 0; i < path.length; i++) {
+    for (let j = i + 1; j < path.length && path[j].distance - path[i].distance <= 20; j++) {
+      if (path[j].distance - path[i].distance >= 19.5) worst = Math.max(worst, Math.abs(s.platform[j] - s.platform[i]) / 20);
+    }
+  }
+  assert.ok(worst < 0.12, `pente sur 20 m : ${worst}`);
 });

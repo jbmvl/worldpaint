@@ -137,8 +137,17 @@ superpositions exclues du partage demandent un contrôle dans la démo.
 Les voies qui se longent à moins de 4 m de rive à rive se rejoignent sur un
 plan commun : le profil en long les lie en travers (`roadBundles.facingRows`,
 `roadProfile.gradeRoadNetwork`), chacune dans la limite de son terrassement
-consenti — deux rues en terrasse sur un versant restent deux rues. Le surplomb d'une
+consenti. Hors des deux sens uniques d'une même route, deux voies dont le sol
+diffère de plus d'un mètre ne sont pas liées (`ROAD_FACING_STEP_M`) : deux rues
+en terrasse sur un versant restent deux rues, et une branche qui rejoint une
+route en biais ne la creuse pas. Le surplomb d'une
 rive se lit au bout de sa place libre (`roadsideRelief.boundOverhang`).
+
+Le profil en long suit la tendance du relief, pas son grain : le relief relevé
+sous chaque chaussée est lissé en mètres le long du graphe (écart type de 30 m,
+`ROAD_TREND_SIGMA_M`) et la chaussée s'y pose, à 2,5 m au plus du sol
+(`ROAD_TREND_MAX_M`). Une bosse d'un ou deux mètres du MNT ne fait donc plus
+un pic de 25 % sur 20 m ; une rampe régulière garde sa pente.
 
 ## Le sol
 

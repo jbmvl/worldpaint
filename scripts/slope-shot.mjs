@@ -8,6 +8,8 @@
  *
  *   node scripts/slope-shot.mjs <dossier> <lieu> [--pires 3] [--vues '<réglages JSON>']
  *
+ * `--en 'x,z;x,z'` photographie ces points-là au lieu des pires endroits, sans
+ * vue d'ensemble : pour comparer deux versions au même endroit.
  * `--vues` ajoute des vues libres (réglages de `placeLab.set`). Rend dans le
  * dossier une image par vue et `vues.json`, qui décrit chacune.
  */
@@ -33,6 +35,7 @@ const flag = (name, fallback) => {
 };
 const worst = Number(flag('pires', 3));
 const extra = JSON.parse(flag('vues', '[]'));
+const chosen = flag('en', '').split(';').filter(Boolean).map((p) => p.split(',').map(Number));
 const [outDir, place] = args;
 if (!outDir || !place) {
   console.error("usage : node scripts/slope-shot.mjs <dossier> <lieu> [--pires 3] [--vues '<réglages JSON>']");
@@ -49,7 +52,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
   await page.goto(`http://localhost:${port}/demo/lab/place.html?lieu=${encodeURIComponent(place)}`);
   await page.waitForFunction(() => window.placeLabReady === true, null, { timeout: 300000 });
-  const plan = await page.evaluate(({ worst }) => {
+  const plan = await page.evaluate(({ worst, chosen }) => {
     const spots = placeLab.slopeSpots().sort((a, b) => Math.abs(b.pente) - Math.abs(a.pente));
     // Cap de la chaussée au plus près de l'endroit : le coureur regarde dans l'axe.
     const heading = (x, z) => {
@@ -65,14 +68,14 @@ try {
       return best ? (Math.atan2(best.dx, -best.dz) * 180) / Math.PI : 0;
     };
     // Les pires endroits, à plus de 60 m l'un de l'autre.
-    const picked = [];
-    for (const s of spots) {
+    const picked = chosen.map(([x, z]) => spots.find((s) => Math.hypot(s.x - x, s.z - z) < 15) ?? { x, z, pente: 0, sol: null, contexte: [] });
+    for (const s of chosen.length ? [] : spots) {
       if (picked.length >= worst) break;
       if (picked.some((p) => Math.hypot(p.x - s.x, p.z - s.z) < 60)) continue;
       picked.push(s);
     }
     // Le point tiré est sur une chaussée : on y regarde aussi depuis la selle.
-    const out = [
+    const out = chosen.length ? [] : [
       { titre: 'ensemble', reglage: { x: 0, z: 0, yawDeg: 200, pitchDeg: 38, distance: 700 } },
       { titre: 'départ', reglage: { x: 0, z: 0, yawDeg: heading(0, 0), pitchDeg: 10, distance: 15 } },
     ];
@@ -91,7 +94,7 @@ try {
       out.push({ titre: 'côté', endroit: s, reglage: { x: s.x, z: s.z, yawDeg: flank, pitchDeg: 6, distance: 50 } });
     }
     return { out, total: spots.length, km: +placeLab.roads().km };
-  }, { worst });
+  }, { worst, chosen });
   for (const v of [...plan.out, ...extra.map((r) => ({ titre: 'libre', reglage: r }))]) {
     const info = await page.evaluate((r) => placeLab.set(r), v.reglage);
     const file = `${String(views.length).padStart(2, '0')}.png`;

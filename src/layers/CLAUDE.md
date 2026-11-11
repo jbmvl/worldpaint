@@ -11,7 +11,7 @@ son état.
 | Fichier | Ce qu'il fait |
 | --- | --- |
 | `roadGraph.js` | recoud les chaussées, arrondit leurs brisures, relève les carrefours (un carrefour est un **nœud**, pas une image) |
-| `roadProfile.js` | le profil en long : aplanit le réseau au sol comme un seul graphe (`gradeRoadNetwork` — un nœud partagé n'a qu'une cote, les voies qui se longent un plan commun), lisse les ponts sous les contraintes de leurs accès, publie les portions suspendues et les lignes dont le terrain porte le remblai (`earthFill`) |
+| `roadProfile.js` | le profil en long : aplanit le réseau au sol comme un seul graphe (`gradeRoadNetwork` — un nœud partagé n'a qu'une cote, les voies qui se longent un plan commun, la chaussée posée sur la tendance du relief lissé en mètres), lisse les ponts sous les contraintes de leurs accès, publie les portions suspendues et les lignes dont le terrain porte le remblai (`earthFill`) |
 | `roadGraphMemo.js` | le graphe d'un jeu de tuiles gardé d'une reconstruction à la suivante : seul ce qui dépend de l'observateur se recalcule |
 | `roadNetwork.js` | les rubans de chaussée, leur plate-forme, l'index publié |
 | `roadJunctions.js` | la surface d'un carrefour : les bandes de ses bras, leurs arrondis et joints, réunis ; ses bouches, la découpe des rubans, ses cotes, qui cède le passage |

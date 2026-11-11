@@ -57,6 +57,19 @@ export const ROAD_WAVE_STEEP = 0.25;
  * sur appuis (`ROAD_SUPPORT_DROP_M`).
  */
 export const ROAD_WAVE_SPAN_FILL_M = 40;
+/**
+ * La chaussée suit la tendance du sol, pas son grain : un MNT de 10 à 20 m de
+ * maille et un tracé décalé de quelques mètres sur un versant donnent des
+ * bosses d'un ou deux mètres, que la route recopierait (25 % sur 20 m pour 11 %
+ * sur 100 m). La tendance est le relief relevé lissé le long du graphe
+ * (écart type `ROAD_TREND_SIGMA_M`) ; une rampe régulière y garde sa pente. La
+ * chaussée s'y pose, à `ROAD_TREND_MAX_M` au plus du relief : sur un sol lisse
+ * elle ne change rien.
+ */
+export const ROAD_TREND_SIGMA_M = 30;
+export const ROAD_TREND_MAX_M = 2.5;
+/** Écart de sol au-delà duquel deux voies qui se longent, hors chaussées d'une même route, restent chacune à sa cote. */
+export const ROAD_FACING_STEP_M = 1;
 export const ROAD_SUPPORT_DROP_M = 2.5;
 export const ROAD_SUPPORT_LENGTH_M = 15;
 
@@ -103,6 +116,8 @@ export function gradeRoadNetwork(segments, bands, { facing = null, iterations = 
   const ground = [];
   // Point d'un pont : le comblement le traverse sans lire sa cote.
   const span = [];
+  const px = [];
+  const pz = [];
   // Voisines le long du tracé, puis en travers : rang et poids, à plat.
   const along = [];
   const across = [];
@@ -125,6 +140,8 @@ export function gradeRoadNetwork(segments, bands, { facing = null, iterations = 
         most.push(platform[r]);
         ground.push(true);
         span.push(false);
+        px.push(p.x);
+        pz.push(p.z);
         along.push([]);
         across.push(null);
       } else {
@@ -151,6 +168,15 @@ export function gradeRoadNetwork(segments, bands, { facing = null, iterations = 
         const other = rowsOf[links[i]];
         const row = links[i + 1];
         const t = links[i + 2];
+        const beside = segments[links[i]];
+        // Deux sens uniques de même profil sont les deux chaussées d'une route ;
+        // toute autre voie en contrebas ou en surplomb est une rue en terrasse,
+        // ou une branche qui rejoint l'autre en biais : la lier creuserait l'une.
+        const pair = beside.profile === segments[si].profile && segments[si].oneway?.[r] && beside.oneway?.[row];
+        if (!pair) {
+          const there = beside.platform[row] + (beside.platform[Math.min(other.length - 1, row + 1)] - beside.platform[row]) * t;
+          if (Math.abs(there - segments[si].platform[r]) > ROAD_FACING_STEP_M) continue;
+        }
         list.push(other[row], 1 - t, other[Math.min(other.length - 1, row + 1)], t);
       }
     });
@@ -165,6 +191,7 @@ export function gradeRoadNetwork(segments, bands, { facing = null, iterations = 
     heights[id] = Math.min(high[id], Math.max(low[id], (least[id] + most[id]) / 2));
   }
   if (waveStepM > 0) levelWaves(heights, low, high, along, ground, span, waveStepM);
+  if (waveStepM > 0) openToTrend(heights, low, high, along, ground, span, px, pz);
 
   for (let k = 0; k < iterations; k++) {
     for (let id = 0; id < count; id++) {
@@ -279,6 +306,104 @@ function levelWaves(heights, low, high, along, ground, span, stepM) {
       else low[id] = Math.min(low[id], heights[id] - ROAD_WAVE_CUT_M);
       heights[id] = Math.min(high[id], Math.max(low[id], target[id]));
     }
+  }
+}
+
+/**
+ * Ouvre la bande des lignes au sol jusqu'à la tendance du relief, et y pose
+ * la chaussée. La tendance est une moyenne gaussienne en mètres le long du
+ * graphe, chaque ligne pesant sa longueur : le tracé est échantillonné plus
+ * serré dans les virages, et un lissage compté en lignes y laisserait le
+ * gradin du MNT entre deux jambes d'un lacet. Un pont se traverse sans peser ;
+ * un bout libre est prolongé dans sa pente, sans quoi la moyenne relèverait le
+ * bas d'une rampe qui finit.
+ */
+function openToTrend(heights, low, high, along, ground, span, px, pz) {
+  const count = heights.length;
+  const reach = 2.5 * ROAD_TREND_SIGMA_M;
+  const carries = (id) => ground[id] || span[id];
+  const links = [];
+  const lengths = [];
+  for (let id = 0; id < count; id++) {
+    const own = carries(id) ? along[id].filter(carries) : [];
+    links.push(own);
+    lengths.push(own.map((n) => Math.hypot(px[n] - px[id], pz[n] - pz[id])));
+  }
+  // Poids d'une ligne : la moitié de ses tronçons, nul sur un pont.
+  const weight = (id) => (ground[id] ? lengths[id].reduce((a, b) => a + b, 0) / 2 : 0);
+  // Pente au bout, lue sur la corde de `ROAD_TREND_SIGMA_M` qui y mène.
+  const endSlope = (id) => {
+    let previous = id;
+    let at = links[id][0];
+    let run = lengths[id][0];
+    while (run < ROAD_TREND_SIGMA_M && links[at].length === 2 && ground[at]) {
+      const k = links[at][0] === previous ? 1 : 0;
+      previous = at;
+      run += lengths[at][k];
+      at = links[at][k];
+    }
+    return run > 0 ? (heights[id] - heights[at]) / run : 0;
+  };
+  const trend = Float64Array.from(heights);
+  const own = new Float64Array(count);
+  for (let id = 0; id < count; id++) own[id] = weight(id);
+  // Distances du parcours en cours, marquées par point de départ : pas de remise à zéro.
+  const best = new Float64Array(count);
+  const stamp = new Int32Array(count).fill(-1);
+  const queue = new Int32Array(count);
+  const inv = -0.5 / (ROAD_TREND_SIGMA_M * ROAD_TREND_SIGMA_M);
+  for (let id = 0; id < count; id++) {
+    if (!ground[id]) continue;
+    stamp[id] = id;
+    best[id] = 0;
+    queue[0] = id;
+    let tail = 1;
+    let sum = 0;
+    let total = 0;
+    for (let q = 0; q < tail; q++) {
+      const at = queue[q];
+      const d = best[at];
+      const w = own[at] * Math.exp(d * d * inv);
+      if (w > 0) {
+        sum += w * heights[at];
+        total += w;
+      }
+      // Un bout libre : la moyenne continue au-delà, dans la pente du bout.
+      if (ground[at] && links[at].length === 1 && d < reach) {
+        const slope = endSlope(at);
+        const h = lengths[at][0] || 1;
+        // Le demi-tronçon au-delà du bout lui revient, comme celui d'en deçà.
+        sum += (h / 2) * Math.exp(d * d * inv) * heights[at];
+        total += (h / 2) * Math.exp(d * d * inv);
+        for (let e = h; e <= reach - d; e += h) {
+          const we = h * Math.exp((d + e) * (d + e) * inv);
+          sum += we * (heights[at] + slope * e);
+          total += we;
+        }
+      }
+      const around = links[at];
+      const steps = lengths[at];
+      for (let n = 0; n < around.length; n++) {
+        const next = d + steps[n];
+        if (next > reach) continue;
+        const other = around[n];
+        if (stamp[other] === id && best[other] <= next) continue;
+        // Une ligne déjà en file n'y revient pas : sa distance raccourcie suffit
+        // tant qu'elle n'a pas été lue, et un graphe de routes a peu de boucles.
+        const queued = stamp[other] === id;
+        stamp[other] = id;
+        best[other] = next;
+        if (!queued) queue[tail++] = other;
+      }
+    }
+    if (total > 0) trend[id] = sum / total;
+  }
+  for (let id = 0; id < count; id++) {
+    if (!ground[id]) continue;
+    const wanted = Math.max(-ROAD_TREND_MAX_M, Math.min(ROAD_TREND_MAX_M, trend[id] - heights[id]));
+    if (wanted < 0) low[id] = Math.min(low[id], heights[id] + wanted);
+    else high[id] = Math.max(high[id], heights[id] + wanted);
+    heights[id] = Math.min(high[id], Math.max(low[id], heights[id] + wanted));
   }
 }
 
