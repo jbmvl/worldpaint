@@ -1,0 +1,129 @@
+{
+  "graine": 11,
+  "places": [
+    {
+      "name": "pente-relief-1-1094-4669",
+      "lng": 10.94004,
+      "lat": 46.69001,
+      "sorte": "relief",
+      "km": 18.2
+    },
+    {
+      "name": "pente-relief-2-1403-4623",
+      "lng": 14.03155,
+      "lat": 46.23487,
+      "sorte": "relief",
+      "km": 24.3
+    },
+    {
+      "name": "pente-relief-3-1393-4646",
+      "lng": 13.93409,
+      "lat": 46.46404,
+      "sorte": "relief",
+      "km": 30.2
+    },
+    {
+      "name": "pente-relief-4-589-4504",
+      "lng": 5.88539,
+      "lat": 45.03581,
+      "sorte": "relief",
+      "km": 13.6
+    },
+    {
+      "name": "pente-riviere-1-771-4998",
+      "lng": 7.70967,
+      "lat": 49.97619,
+      "sorte": "riviere",
+      "km": 17.9,
+      "eau": 32
+    },
+    {
+      "name": "pente-riviere-2-122-4473",
+      "lng": 1.21744,
+      "lat": 44.73269,
+      "sorte": "riviere",
+      "km": 16.3,
+      "eau": 24
+    },
+    {
+      "name": "pente-riviere-3-778-4110",
+      "lng": -7.77888,
+      "lat": 41.09535,
+      "sorte": "riviere",
+      "km": 25.6,
+      "eau": 44
+    },
+    {
+      "name": "pente-riviere-4-770-4124",
+      "lng": -7.69746,
+      "lat": 41.23695,
+      "sorte": "riviere",
+      "km": 10.2,
+      "eau": 20
+    },
+    {
+      "name": "pente-lac-1-586-4570",
+      "lng": 5.86036,
+      "lat": 45.69578,
+      "sorte": "lac",
+      "km": 18.1,
+      "eau": 99
+    },
+    {
+      "name": "pente-lac-2-935-4600",
+      "lng": 9.35083,
+      "lat": 46.00061,
+      "sorte": "lac",
+      "km": 12.2,
+      "eau": 76
+    },
+    {
+      "name": "pente-lac-3-625-4575",
+      "lng": 6.25335,
+      "lat": 45.75402,
+      "sorte": "lac",
+      "km": 24.6,
+      "eau": 58
+    },
+    {
+      "name": "pente-lac-4-678-4652",
+      "lng": 6.77768,
+      "lat": 46.51845,
+      "sorte": "lac",
+      "km": 18.5,
+      "eau": 21
+    },
+    {
+      "name": "pente-cote-1-503-5025",
+      "lng": -5.03092,
+      "lat": 50.2459,
+      "sorte": "cote",
+      "km": 7,
+      "eau": 20
+    },
+    {
+      "name": "pente-cote-2-449-4809",
+      "lng": -4.493,
+      "lat": 48.08689,
+      "sorte": "cote",
+      "km": 13.3,
+      "eau": 20
+    },
+    {
+      "name": "pente-cote-3-907-4276",
+      "lng": -9.06737,
+      "lat": 42.7603,
+      "sorte": "cote",
+      "km": 10.4,
+      "eau": 36
+    },
+    {
+      "name": "pente-cote-4-919-4292",
+      "lng": -9.19335,
+      "lat": 42.9181,
+      "sorte": "cote",
+      "km": 12.4,
+      "eau": 29
+    }
+  ]
+}

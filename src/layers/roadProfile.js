@@ -17,6 +17,7 @@ import { finishGeneration } from '../core/generationSteps.js';
  * où un mur, un tablier ou un profil lissé la porte déjà.
  */
 import { pathFrames } from './ribbonGeometry.js';
+import { WORK_BRIDGE } from './roadWorks.js';
 import {
   contiguousRuns,
   crossSlope,
@@ -49,6 +50,13 @@ export const ROAD_WAVE_CUT_M = 6;
  * jamais 25 %, le flanc d'un ravin lu sous un pont, si.
  */
 export const ROAD_WAVE_STEEP = 0.25;
+/**
+ * Comblement permis à un creux qui touche un pont : le pont relevé est plus
+ * court que le ravin que le MNT lit à ses deux bouts, et la chaussée doit
+ * rester au niveau de son tablier ; ce qui s'élève alors au-dessus du sol passe
+ * sur appuis (`ROAD_SUPPORT_DROP_M`).
+ */
+export const ROAD_WAVE_SPAN_FILL_M = 40;
 export const ROAD_SUPPORT_DROP_M = 2.5;
 export const ROAD_SUPPORT_LENGTH_M = 15;
 
@@ -93,6 +101,8 @@ export function gradeRoadNetwork(segments, bands, { facing = null, iterations = 
   const most = [];
   // Point au sol : ni ouvrage ni étage, sur un tronçon qui a sa bande.
   const ground = [];
+  // Point d'un pont : le comblement le traverse sans lire sa cote.
+  const span = [];
   // Voisines le long du tracé, puis en travers : rang et poids, à plat.
   const along = [];
   const across = [];
@@ -114,6 +124,7 @@ export function gradeRoadNetwork(segments, bands, { facing = null, iterations = 
         least.push(platform[r]);
         most.push(platform[r]);
         ground.push(true);
+        span.push(false);
         along.push([]);
         across.push(null);
       } else {
@@ -123,6 +134,7 @@ export function gradeRoadNetwork(segments, bands, { facing = null, iterations = 
         most[id] = Math.max(most[id], platform[r]);
       }
       if (!bands[si] || segment.works?.[r] || levels?.[r]) ground[id] = false;
+      if (bands[si] && segment.works?.[r] === WORK_BRIDGE) span[id] = true;
       rows[r] = id;
       if (r && rows[r - 1] !== id) {
         along[id].push(rows[r - 1]);
@@ -152,7 +164,7 @@ export function gradeRoadNetwork(segments, bands, { facing = null, iterations = 
     if (low[id] > high[id]) low[id] = high[id] = (low[id] + high[id]) / 2;
     heights[id] = Math.min(high[id], Math.max(low[id], (least[id] + most[id]) / 2));
   }
-  if (waveStepM > 0) levelWaves(heights, low, high, along, ground, waveStepM);
+  if (waveStepM > 0) levelWaves(heights, low, high, along, ground, span, waveStepM);
 
   for (let k = 0; k < iterations; k++) {
     for (let id = 0; id < count; id++) {
@@ -187,16 +199,19 @@ export function gradeRoadNetwork(segments, bands, { facing = null, iterations = 
  * `ROAD_WAVE_RADIUS_M`) : la bande s'ouvre d'autant, bornée, et l'aplanissement
  * part du profil corrigé. Chaque bout du graphe au sol est prolongé de sa
  * propre cote, sans quoi la fermeture relèverait le bas d'une rampe qui finit.
+ * Un pont n'est pas un bout : le graphe le traverse, mais sa cote, qui est
+ * celle du sol sous le tablier, ne compte pas.
  */
-function levelWaves(heights, low, high, along, ground, stepM) {
+function levelWaves(heights, low, high, along, ground, span, stepM) {
   const hops = Math.round(ROAD_WAVE_RADIUS_M / stepM);
   if (hops < 1) return;
   const count = heights.length;
+  const carries = (id) => ground[id] || span[id];
   const links = [];
   const base = [];
   for (let id = 0; id < count; id++) {
-    links.push(ground[id] ? along[id].filter((n) => ground[n]) : []);
-    base.push(heights[id]);
+    links.push(carries(id) ? along[id].filter(carries) : []);
+    base.push(ground[id] ? heights[id] : NaN);
   }
   // Prolongement des bouts : une file de `hops` points virtuels à la cote du bout.
   for (let id = 0; id < count; id++) {
@@ -210,13 +225,17 @@ function levelWaves(heights, low, high, along, ground, stepM) {
       previous = v;
     }
   }
+  // NaN : point sans cote, qui prend celle de ses voisins sans leur imposer la sienne.
   const spread = (values, pick) => {
     let current = values;
     for (let pass = 0; pass < hops; pass++) {
       const next = current.slice();
       for (let id = 0; id < next.length; id++) {
         const around = links[id];
-        for (let n = 0; n < around.length; n++) next[id] = pick(next[id], current[around[n]]);
+        for (let n = 0; n < around.length; n++) {
+          const v = current[around[n]];
+          if (v === v) next[id] = next[id] === next[id] ? pick(next[id], v) : v;
+        }
       }
       current = next;
     }
@@ -226,17 +245,19 @@ function levelWaves(heights, low, high, along, ground, stepM) {
   const target = spread(spread(spread(spread(values, Math.max), Math.min), Math.min), Math.max);
   // Chaque creux ou bosse est une composante de points retouchés ; seuls ceux
   // dont un flanc est trop raide pour une chaussée sont effacés.
-  const touched = (id) => id < count && ground[id] && Math.abs(target[id] - heights[id]) > 0.05;
+  const touched = (id) => id < count && ground[id] && target[id] === target[id] && Math.abs(target[id] - heights[id]) > 0.05;
   const seen = new Uint8Array(count);
   for (let start = 0; start < count; start++) {
     if (seen[start] || !touched(start)) continue;
     const members = [start];
     seen[start] = 1;
     let steep = false;
+    const decks = [];
     for (let m = 0; m < members.length; m++) {
       const id = members[m];
       for (const n of links[id]) {
-        if (n < count && Math.abs(heights[n] - heights[id]) > ROAD_WAVE_STEEP * stepM) steep = true;
+        if (n < count && span[n] && !decks.includes(n)) decks.push(n);
+        if (n < count && ground[n] && Math.abs(heights[n] - heights[id]) > ROAD_WAVE_STEEP * stepM) steep = true;
         if (!touched(n) || seen[n]) continue;
         seen[n] = 1;
         members.push(n);
@@ -246,9 +267,15 @@ function levelWaves(heights, low, high, along, ground, stepM) {
     // La fermeture comble à plat, au niveau du bord le plus bas : la bande
     // s'ouvre de toute la hauteur permise pour que le lissage tende ensuite la
     // chaussée d'un bord à l'autre, sans marche contre le bord haut.
-    for (const id of members) {
+    // Le tablier suit : sa cote, celle du lit sous lui, retiendrait la chaussée au fond.
+    for (let m = 0; m < decks.length; m++) {
+      for (const n of links[decks[m]]) if (n < count && span[n] && !decks.includes(n)) decks.push(n);
+    }
+    const fill = decks.length ? ROAD_WAVE_SPAN_FILL_M : ROAD_WAVE_FILL_M;
+    for (const id of [...members, ...decks]) {
+      if (target[id] !== target[id]) continue;
       const gap = target[id] - heights[id];
-      if (gap > 0) high[id] = Math.max(high[id], heights[id] + ROAD_WAVE_FILL_M);
+      if (gap > 0) high[id] = Math.max(high[id], heights[id] + fill);
       else low[id] = Math.min(low[id], heights[id] - ROAD_WAVE_CUT_M);
       heights[id] = Math.min(high[id], Math.max(low[id], target[id]));
     }

@@ -74,3 +74,26 @@ test('sans pas déclaré, l’aplanissement ne change pas', () => {
   gradeRoadNetwork([s], [band]);
   assert.ok(s.platform[60] < -11);
 });
+
+test('un ravin plus large que son pont est comblé des deux côtés, au-delà de la borne', () => {
+  // Pont relevé de 15 m au fond d'un ravin de 30 m de creux et 80 m de large.
+  const works = new Uint8Array(121).fill(0);
+  for (let r = 59; r <= 61; r++) works[r] = 1;
+  const s = line((x) => 0.02 * x - gully(x, 300, 30, 40), { works });
+  grade1([s]);
+  // Contre le pont, le ravin a plus de 25 m de creux : la chaussée reste au bord.
+  for (const r of [57, 58, 62, 63]) {
+    assert.ok(s.platform[r] > 0.02 * 5 * r - 3, `ligne ${r} relevée : ${s.platform[r]}`);
+  }
+  assert.ok(grade(s) < 0.15, `pente ${grade(s)}`);
+});
+
+test('une route qui descend en pente douce vers un pont bas n’est pas relevée', () => {
+  const works = new Uint8Array(121).fill(0);
+  for (let r = 58; r <= 62; r++) works[r] = 1;
+  const valley = (x) => -0.08 * Math.min(Math.abs(x - 300), 200);
+  const s = line(valley, { works });
+  const before = s.platform.slice();
+  grade1([s]);
+  for (const r of [40, 50, 56, 64, 70]) assert.ok(Math.abs(s.platform[r] - before[r]) < 0.6, `ligne ${r}`);
+});

@@ -120,6 +120,13 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   `village-roumain` le montre à l'œil sur `place.html` (tuiles tirées
   d'Overture, bâti OSM seul).
 
+- Pentes de chaussée sur des lieux réels : `node scripts/draw-places.mjs
+  --graine N` tire des lieux (relief, rivière, lac, côte) qui portent routes ou
+  chemins, `node scripts/slope-bench.mjs <liste>` les enregistre (réseau
+  ouvert) et relève les endroits raides par contexte, `node
+  scripts/slope-shot.mjs <dossier> <lieu>` les photographie depuis la selle et
+  de côté. Seules les chaussées revêtues sont mesurées.
+
 - `demo/lab/contours.html` — les limites entre matières : la vraie
   `GroundClassMap` et le vrai matériau de terrain sur un sol plat, avec un
   champ à bord de pente faible, une parcelle à angles vifs, un étang, un bois
