@@ -540,6 +540,22 @@ export class World {
   }
 
   /**
+   * Points d'eau que l'application connaît et que les tuiles ignorent : la
+   * couche `poi` ne garde qu'une petite part des fontaines d'OSM. Chacun est
+   * posé comme une fontaine des tuiles (style selon le lieu, écarté de la
+   * chaussée), sauf si l'une d'elles est déjà à quelques mètres ; il compte
+   * ensuite pour `fountainsNear`. Pris en compte tout de suite si le mobilier
+   * est bâti, sinon à sa construction, et repris à chaque reconstruction. La
+   * liste remplace la précédente ; `[]` les retire.
+   *
+   * @param {Array<{lng:number, lat:number}>} points
+   * @returns {boolean} vrai si la liste a changé.
+   */
+  setExtraFountains(points) {
+    return this.composer.furniture?.setExtraFountains?.(points) ?? false;
+  }
+
+  /**
    * Devanture de commerce la plus proche de `(lng, lat)`, à moins de `radius`
    * mètres : le point du pied de son mur le plus proche, la normale sortante
    * (vers la rue) et la direction du pan. De quoi adosser un objet de

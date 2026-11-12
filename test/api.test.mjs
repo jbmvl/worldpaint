@@ -17,7 +17,14 @@ import * as api from '../src/index.js';
 import { defaultTheme } from '../src/themes/default.js';
 import { World, createWorld, DEFAULT_VIEW } from '../src/world.js';
 import { RoadIndex } from '../src/layers/roadGraph.js';
-import { publishFountains } from '../src/layers/furniture/pointsOfInterest.js';
+import {
+  publishFountains,
+  placeExtraFountains,
+  normalizeExtraFountains,
+  EXTRA_FOUNTAIN_MERGE_M,
+} from '../src/layers/furniture/pointsOfInterest.js';
+import { FurnitureLayer } from '../src/layers/furnitureLayer.js';
+import { testFrame } from './testFrame.mjs';
 
 /** Ce qu'une application a le droit d'attendre à la version 0.1. */
 const CONTRACT = [
@@ -276,6 +283,95 @@ test('publishFountains reprend fontaines et robinet de cimetière, rayon mis à 
   ]);
   const found = publishFountains(placements);
   assert.deepEqual(found.map((f) => [f.kind, f.radiusM]), [['fountain', 2.5], ['fountainWallace', 0.42], ['cemeteryTap', 0.45]]);
+});
+
+/** Couche de mobilier réduite à ce que les points d'eau fournis lisent : repère, sol, pose. */
+function fakeFurniture({ surface = null } = {}) {
+  const placements = new Map(['fountain', 'fountainWallace', 'cemeteryTap'].map((k) => [k, []]));
+  const layer = {
+    bubble: { frame: testFrame },
+    groundClass: surface ? { surfaceAt: () => surface } : null,
+    _place(map, item, { x, z, yaw }) {
+      const placed = { x, y: 0, z, yaw, scale: 1 };
+      map.get(item).push(placed);
+      return placed;
+    },
+  };
+  return { layer, placements };
+}
+
+test('placeExtraFountains pose un point d’eau absent des tuiles, au style du lieu', () => {
+  const { layer, placements } = fakeFurniture({ surface: 'pavement' });
+  const at = testFrame.toLngLat(12, -7);
+  assert.equal(placeExtraFountains(layer, placements, [at], { here: { x: 0, z: 0 } }), 1);
+  const [placed] = placements.get('fountainWallace');
+  assert.ok(Math.abs(placed.x - 12) < 1e-6 && Math.abs(placed.z + 7) < 1e-6, 'à sa place, sans chaussée à écarter');
+  assert.equal(placed.extra, true);
+
+  const rural = fakeFurniture();
+  placeExtraFountains(rural.layer, rural.placements, [at], {});
+  assert.equal(rural.placements.get('cemeteryTap').length, 1, 'hors agglomération : robinet de campagne');
+});
+
+test('placeExtraFountains ne double pas une fontaine des tuiles déjà posée', () => {
+  const { layer, placements } = fakeFurniture();
+  placements.get('fountain').push({ x: 10, y: 0, z: 0, scale: 1 });
+  const close = testFrame.toLngLat(10 + EXTRA_FOUNTAIN_MERGE_M - 1, 0);
+  const far = testFrame.toLngLat(10 + EXTRA_FOUNTAIN_MERGE_M + 5, 0);
+  assert.equal(placeExtraFountains(layer, placements, [close, far], {}), 1);
+  assert.equal(placements.get('cemeteryTap').length, 1, 'seul le lointain est posé');
+  assert.equal(placeExtraFountains(layer, placements, [far], {}), 0, 'ni deux fois le même');
+});
+
+test('placeExtraFountains s’en tient à la portée du mobilier', () => {
+  const { layer, placements } = fakeFurniture();
+  layer.bubble.decorReachMeters = 100;
+  const beyond = testFrame.toLngLat(150, 0);
+  assert.equal(placeExtraFountains(layer, placements, [beyond], { here: { x: 0, z: 0 } }), 0);
+});
+
+test('normalizeExtraFountains écarte l’invalide et les doublons, dans un ordre stable', () => {
+  const list = normalizeExtraFountains([{ lng: 2, lat: 1 }, { lng: 1, lat: 1 }, { lng: 2, lat: 1 }, { lng: NaN, lat: 1 }, null]);
+  assert.deepEqual(list, [{ lng: 1, lat: 1 }, { lng: 2, lat: 1 }]);
+});
+
+test('setExtraFountains pose et retire les points d’eau dans le mobilier déjà bâti', () => {
+  const { layer, placements } = fakeFurniture({ surface: 'pavement' });
+  placements.get('fountain').push({ x: 40, y: 0, z: 0, scale: 1 });
+  const applied = [];
+  Object.assign(layer, {
+    _extraFountains: [],
+    _extraFountainsKey: '',
+    _extraFountainsVersion: 0,
+    _placements: placements,
+    _extraSite: {},
+    _frame: testFrame,
+    fountains: [],
+    _applyInstances: (kind, list) => applied.push([kind, list.length]),
+    _replaceExtraFountains: FurnitureLayer.prototype._replaceExtraFountains,
+  });
+  const set = (points) => FurnitureLayer.prototype.setExtraFountains.call(layer, points);
+  const at = testFrame.toLngLat(5, 5);
+
+  assert.equal(set([at]), true);
+  assert.deepEqual(layer.fountains.map((f) => f.kind).sort(), ['fountain', 'fountainWallace']);
+  assert.equal(set([at]), false, 'même liste : rien à refaire');
+  assert.equal(set([]), true);
+  assert.deepEqual(layer.fountains.map((f) => f.kind), ['fountain'], 'seule la fontaine des tuiles reste');
+  assert.ok(applied.length > 0, 'instances remises à jour');
+
+  layer._frame = null;
+  set([at]);
+  assert.equal(layer.fountains.length, 1, 'mobilier d’un autre repère : attend sa reconstruction');
+});
+
+test('World.setExtraFountains délègue au mobilier', () => {
+  const composer = fakeComposer();
+  const calls = [];
+  composer.furniture = { setExtraFountains: (points) => (calls.push(points), true) };
+  const world = new World({ composer, environment: null, elevation: null, ownsElevation: false });
+  assert.equal(world.setExtraFountains([{ lng: 1, lat: 2 }]), true);
+  assert.deepEqual(calls, [[{ lng: 1, lat: 2 }]]);
 });
 
 test('sans ciel, updateSky ne rend rien et n’allume rien', () => {

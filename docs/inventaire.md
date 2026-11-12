@@ -803,6 +803,13 @@ verte, 2,70 m) sur le sol revêtu (`pavement`) d'une grande ville ; vasque octog
 et colonne dans un bourg (emprise bâtie, sol par défaut) ; robinet sur dalle,
 le même qu'au cimetière (`cemeteryTap`), hors de toute agglomération.
 
+La couche `poi` ne garde qu'une petite part des fontaines d'OSM (sur un
+échantillon de fontaines françaises, une sur vingt-cinq). Une application qui
+en connaît d'autres les fournit par `world.setExtraFountains([{ lng, lat }])`
+(`pointsOfInterest.placeExtraFountains`) : posées de la même façon, sauf si une
+fontaine des tuiles est déjà à moins de `EXTRA_FOUNTAIN_MERGE_M`, et rendues
+par `world.fountainsNear` comme les autres.
+
 L'**abribus** posé dépend lui aussi du lieu (`busShelterKindFor`) : mini
 chalet en climat de montagne (`alpine`, `mediterraneanMontane`,
 `oceanicUpland`), quelle que soit l'agglomération — la montagne l'emporte sur

@@ -59,6 +59,90 @@ export function publishFountains(placements) {
 }
 
 /**
+ * Écart, en mètres, sous lequel un point d'eau fourni par l'application est
+ * celui que les tuiles ont déjà posé : la même fontaine, relevée deux fois.
+ */
+export const EXTRA_FOUNTAIN_MERGE_M = 8;
+
+/**
+ * Points d'eau fournis par l'application, ramenés à une liste stable : valeurs
+ * finies, sans doublon, triées — deux listes égales donnent la même clé.
+ *
+ * @param {Array<{lng:number,lat:number}>|null} points
+ * @returns {Array<{lng:number,lat:number}>}
+ */
+export function normalizeExtraFountains(points) {
+  const unique = new Map();
+  for (const point of points || []) {
+    const lng = Number(point?.lng);
+    const lat = Number(point?.lat);
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+    const key = `${lng.toFixed(7)},${lat.toFixed(7)}`;
+    if (!unique.has(key)) unique.set(key, { lng, lat, key });
+  }
+  return [...unique.values()]
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    .map(({ lng, lat }) => ({ lng, lat }));
+}
+
+/**
+ * Pose les points d'eau que l'application connaît et que les tuiles ignorent :
+ * la couche `poi` d'OpenMapTiles ne garde qu'une petite part des fontaines
+ * d'OSM. Posés comme ceux de `buildPointsOfInterest` — écartés de la
+ * chaussée, style selon le lieu, tournés vers la route —, marqués `extra` pour
+ * pouvoir être retirés seuls. Une fontaine déjà posée à moins de
+ * `EXTRA_FOUNTAIN_MERGE_M` en tient lieu.
+ *
+ * @param {Object} layer `FurnitureLayer`.
+ * @param {Map<string, Array>} placements
+ * @param {Array<{lng:number,lat:number}>} points
+ * @param {{here?:{x:number,z:number}, infraIndex?:Object|null,
+ *          builtUp?:Array|null, roadSegments?:Array}} site Ce que la dernière
+ *        reconstruction a lu du lieu.
+ * @returns {number} le nombre de points d'eau posés.
+ */
+export function placeExtraFountains(layer, placements, points, site = {}) {
+  const frame = layer.bubble?.frame;
+  if (!frame || !points?.length) return 0;
+  const { origin, scale, zoom } = frame;
+  const reach = reachedRadius(FURNITURE_RADIUS_M, layer.bubble);
+  const taken = [];
+  for (const kind of Object.keys(FOUNTAIN_RADIUS_M)) taken.push(...(placements.get(kind) || []));
+  const near = (x, z) => taken.some((p) => Math.hypot(p.x - x, p.z - z) <= EXTRA_FOUNTAIN_MERGE_M);
+
+  let placed = 0;
+  for (const { lng, lat } of points) {
+    const x = (lngToTileX(lng, zoom) - origin.x) * scale;
+    const z = (latToTileY(lat, zoom) - origin.y) * scale;
+    if (site.here && Math.hypot(x - site.here.x, z - site.here.z) > reach) continue;
+    const at = pushPointOutsideCorridor(x, z, site.infraIndex ?? null, CORRIDOR_MARGIN_M + POI_CLEARANCE_M);
+    if (near(x, z) || near(at.x, at.z)) continue;
+    const kind = fountainKindFor({
+      paved: layer.groundClass?.surfaceAt(at.x, at.z) === 'pavement',
+      builtUp: pointInAreas(site.builtUp ?? null, at.x, at.z),
+    });
+    const yaw = facingRoad(layer, at.x, at.z, site.roadSegments || []);
+    const fountain = layer._place(placements, kind, { x: at.x, z: at.z, yaw });
+    if (!fountain) continue;
+    fountain.extra = true;
+    taken.push(fountain);
+    placed++;
+  }
+  return placed;
+}
+
+/** Retire les points d'eau posés par `placeExtraFountains`, sans toucher aux autres. */
+export function removeExtraFountains(placements) {
+  for (const kind of Object.keys(FOUNTAIN_RADIUS_M)) {
+    const list = placements.get(kind);
+    if (!list) continue;
+    let kept = 0;
+    for (const p of list) if (!p.extra) list[kept++] = p;
+    list.length = kept;
+  }
+}
+
+/**
  * Ce que la couche `poi` sait donner : arrêts de bus, fontaines, lavoirs.
  *
  * Ce sont les seuls objets de mobilier que le schéma OpenMapTiles porte

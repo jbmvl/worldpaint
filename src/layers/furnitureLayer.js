@@ -107,7 +107,14 @@ import {
 } from './furniture/landmarks.js';
 import { buildBiomeDebrisSteps } from './furniture/biomeDebris.js';
 import { buildRoosts } from './furniture/roosts.js';
-import { buildPointsOfInterest, collectChurches, publishFountains } from './furniture/pointsOfInterest.js';
+import {
+  buildPointsOfInterest,
+  collectChurches,
+  publishFountains,
+  normalizeExtraFountains,
+  placeExtraFountains,
+  removeExtraFountains,
+} from './furniture/pointsOfInterest.js';
 import { buildDomesticFauna } from './furniture/domesticFauna.js';
 import { buildOpenPastureFauna } from './furniture/parcelFauna.js';
 
@@ -240,6 +247,13 @@ export class FurnitureLayer {
     this.roosts = [];
     /** Fontaines posées, repère de scène — voir `publishFountains`. */
     this.fountains = [];
+    /** Points d'eau fournis par l'application (`setExtraFountains`), en degrés. */
+    this._extraFountains = [];
+    this._extraFountainsKey = '';
+    this._extraFountainsVersion = 0;
+    /** Placements publiés et ce que leur reconstruction a lu du lieu : de quoi y ajouter un point d'eau sans tout refaire. */
+    this._placements = null;
+    this._extraSite = null;
     this.geometries = createFurnitureGeometries(THREE, theme.furniture.colors, undefined, this._placeNameSign, theme.furniture);
     /** Nuancier dont les formes en pierre de `geometries` sont faites (`setRegion`). */
     this._stoneColors = theme.furniture.colors;
@@ -418,6 +432,35 @@ export class FurnitureLayer {
   }
 
   /**
+   * Points d'eau que l'application connaît et que les tuiles ignorent (voir
+   * `furniture/pointsOfInterest.placeExtraFountains`). Posés tout de suite
+   * dans le mobilier déjà bâti, et repris à chaque reconstruction. Une liste
+   * vide les retire.
+   *
+   * @param {Array<{lng:number,lat:number}>} points
+   * @returns {boolean} vrai si la liste a changé.
+   */
+  setExtraFountains(points) {
+    const next = normalizeExtraFountains(points);
+    const key = next.map((p) => `${p.lng},${p.lat}`).join(';');
+    if (key === this._extraFountainsKey) return false;
+    this._extraFountains = next;
+    this._extraFountainsKey = key;
+    this._extraFountainsVersion++;
+    if (!this.disposed && this._placements && this._frame === this.bubble?.frame) this._replaceExtraFountains();
+    return true;
+  }
+
+  /** Repose les points d'eau fournis dans les placements publiés, et eux seuls. */
+  _replaceExtraFountains() {
+    const placements = this._placements;
+    removeExtraFountains(placements);
+    placeExtraFountains(this, placements, this._extraFountains, this._extraSite);
+    for (const kind of ['fountain', 'fountainWallace', 'cemeteryTap']) this._applyInstances(kind, placements.get(kind) || []);
+    this.fountains = publishFountains(placements);
+  }
+
+  /**
    * Reconstruit tout le mobilier depuis les tuiles déjà décodées.
    *
    * @param {Object} source Instance `VectorTileSource`.
@@ -535,11 +578,12 @@ export class FurnitureLayer {
       this.tractors = [];
       this.verges = new VergeStrips();
 
+      let builtUp = builtUpAreas;
       try {
         // Les emprises habitées viennent de `worldComposer` quand il les a déjà
         // lues pour la voirie : c'est la même question posée une seule fois. En
         // leur absence, la couche les relit — elle ne dépend de personne.
-        const builtUp = builtUpAreas || collectBuiltUpAreas(source, tiles, this.bubble.frame);
+        builtUp ||= collectBuiltUpAreas(source, tiles, this.bubble.frame);
         yield* buildRoadsideSteps(this, context, roadSegments, builtUp);
         yield;
         buildCrossings(this, context, junctions, roadIndex, builtUp);
@@ -579,6 +623,12 @@ export class FurnitureLayer {
         console.warn('[furniture] mobilier partiel', e?.stack || e?.message || e);
       }
 
+      // Après tout le reste : une fontaine des tuiles déjà posée tient lieu de
+      // celle que fournit l'application.
+      const extraSite = { here: { x: here.x, z: here.z }, infraIndex: this._infraIndex, builtUp, roadSegments };
+      const extraVersion = this._extraFountainsVersion;
+      placeExtraFountains(this, placements, this._extraFountains, extraSite);
+
       for (const kind of LINEAR_KINDS) {
         yield* this._applyLinearSteps(kind, buffers[kind]);
         yield;
@@ -602,6 +652,10 @@ export class FurnitureLayer {
 
       this._anchor = { x: here.x, z: here.z };
       this._frame = this.bubble.frame;
+      this._placements = placements;
+      this._extraSite = extraSite;
+      // Liste changée pendant la reconstruction : reposée sur ce qui vient d'être publié.
+      if (extraVersion !== this._extraFountainsVersion) this._replaceExtraFountains();
       return this.counts.points + this.counts.boundaries > 0;
     } finally {
       this._roadIndex = null;
@@ -1546,6 +1600,8 @@ export class FurnitureLayer {
     this.fauna = [];
     this.tractors = [];
     this.fountains = [];
+    this._placements = null;
+    this._extraSite = null;
     this.verges = new VergeStrips();
 
     for (const geometry of Object.values(this.geometries)) geometry.dispose();
