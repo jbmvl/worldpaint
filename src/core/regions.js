@@ -54,13 +54,13 @@
  *            (la liste exacte des combinaisons est `BUILDING_KINDS`)
  *
  *   farming  cereal · maize · sunflower · rapeseed · vineyard · orchard ·
- *            olive · almond · lavender · fallow · rice* · greenhouse* ·
+ *            olive · almond · citrus · lavender · fallow · rice* · greenhouse* ·
  *            cotton* · sugarcane* · tea* · coffee* · oil_palm*
  *
  *   trees    oak · beech · chestnut · ash · hornbeam · alder · holm_oak ·
  *            cork_oak · birch · poplar · eucalyptus · scots_pine ·
  *            maritime_pine · aleppo_pine · black_pine · stone_pine · spruce ·
- *            fir · larch · olive · juniper · acacia* · palm*
+ *            fir · larch · olive · carob · juniper · acacia* · palm*
  *
  *   (*) admis, pas encore rendu par le décor.
  *
@@ -864,7 +864,7 @@ export const REGIONS = [
     matrix: 'openfield_cropland',
     stone: 'alluvium',
     building: 'whitewash_curved_tile',
-    farming: ['orchard', 'rice', 'fallow', 'vineyard'],
+    farming: ['citrus', 'rice', 'fallow', 'vineyard'],
     trees: ['stone_pine', 'palm', 'olive'],
   },
   {
@@ -1094,7 +1094,7 @@ export const REGIONS = [
     matrix: 'dry_steppe',
     stone: 'limestone',
     building: 'whitewash_terrace',
-    farming: ['orchard', 'almond', 'vineyard', 'olive'],
+    farming: ['citrus', 'almond', 'vineyard', 'olive'],
     trees: ['stone_pine', 'aleppo_pine', 'palm'],
   },
   {
@@ -2330,7 +2330,7 @@ export const REGIONS = [
     matrix: 'dry_scrub',
     stone: 'limestone',
     building: 'whitewash_terrace',
-    farming: ['orchard', 'greenhouse', 'fallow', 'almond'],
+    farming: ['citrus', 'greenhouse', 'fallow', 'almond'],
     trees: ['stone_pine', 'olive', 'palm'],
     sparse: ['buildings'],
   },
@@ -2877,7 +2877,7 @@ export const REGIONS = [
   {
     id: 'aspromonte',
     name: 'Serre e Aspromonte',
-    anchors: [[16.3, 38.6], [15.95, 38.15]],
+    anchors: [[16.3, 38.6], [15.95, 38.15], [15.7, 38.1]],
     matrix: 'broadleaf_woodland',
     stone: 'granite',
     building: 'rendered_curved_tile',
@@ -2888,11 +2888,11 @@ export const REGIONS = [
   {
     id: 'etna',
     name: 'Etna',
-    anchors: [[15.0, 37.75]],
+    anchors: [[15.0, 37.75], [15.08, 37.56]],
     matrix: 'terraced_slope',
     stone: 'basalt',
     building: 'dark_stone_curved_tile',
-    farming: ['vineyard', 'orchard', 'fallow'],
+    farming: ['vineyard', 'citrus', 'orchard', 'fallow'],
     trees: ['chestnut', 'black_pine', 'birch'],
     sparse: ['buildings'],
   },
@@ -2904,7 +2904,29 @@ export const REGIONS = [
     stone: 'sandstone',
     building: 'light_stone_curved_tile',
     farming: ['fallow', 'olive', 'orchard'],
-    trees: ['beech', 'holm_oak', 'cork_oak'],
+    trees: ['oak', 'beech', 'holm_oak', 'cork_oak'],
+    sparse: ['buildings'],
+  },
+  {
+    id: 'peloritani',
+    name: 'Peloritani',
+    anchors: [[15.45, 38.12], [15.27, 38.0], [15.25, 38.17]],
+    matrix: 'terraced_slope',
+    stone: 'schist',
+    building: 'rendered_curved_tile',
+    farming: ['citrus', 'olive', 'vineyard', 'fallow'],
+    trees: ['holm_oak', 'chestnut', 'cork_oak', 'maritime_pine'],
+    sparse: ['buildings'],
+  },
+  {
+    id: 'eolie',
+    name: 'Isole Eolie e Ustica',
+    anchors: [[14.92, 38.52], [15.2, 38.75], [13.18, 38.7]],
+    matrix: 'dry_scrub',
+    stone: 'basalt',
+    building: 'whitewash_terrace',
+    farming: ['vineyard', 'olive', 'fallow'],
+    trees: ['olive', 'aleppo_pine', 'chestnut'],
     sparse: ['buildings'],
   },
   {
@@ -2914,7 +2936,7 @@ export const REGIONS = [
     matrix: 'dry_scrub',
     stone: 'limestone',
     building: 'light_stone_curved_tile',
-    farming: ['orchard', 'olive', 'fallow', 'vineyard'],
+    farming: ['citrus', 'olive', 'fallow', 'vineyard'],
     trees: ['olive', 'palm', 'stone_pine'],
     sparse: ['buildings'],
   },
@@ -2932,12 +2954,56 @@ export const REGIONS = [
   {
     id: 'sicilia_occidentale',
     name: 'Trapanese',
-    anchors: [[12.7, 37.85], [12.58, 35.5]],
-    matrix: 'openfield_cropland',
+    anchors: [[12.7, 37.85]],
+    matrix: 'dry_steppe',
     stone: 'limestone',
     building: 'light_stone_terrace',
     farming: ['vineyard', 'olive', 'cereal', 'fallow'],
     trees: ['olive', 'stone_pine', 'palm'],
+    sparse: ['buildings'],
+  },
+  {
+    id: 'pantelleria',
+    name: 'Pantelleria',
+    anchors: [[11.95, 36.78]],
+    matrix: 'terraced_slope',
+    stone: 'basalt',
+    building: 'dark_stone_terrace',
+    farming: ['vineyard', 'fallow', 'olive'],
+    trees: ['maritime_pine', 'holm_oak', 'olive'],
+    sparse: ['buildings'],
+  },
+  {
+    id: 'pelagie',
+    name: 'Isole Pelagie',
+    anchors: [[12.58, 35.5]],
+    matrix: 'garrigue',
+    stone: 'limestone',
+    building: 'whitewash_terrace',
+    farming: ['fallow', 'olive', 'cereal'],
+    trees: ['aleppo_pine', 'olive', 'eucalyptus'],
+    sparse: ['buildings'],
+  },
+  {
+    id: 'piana_catania',
+    name: 'Piana di Catania',
+    anchors: [[14.95, 37.4]],
+    matrix: 'dry_steppe',
+    stone: 'alluvium',
+    building: 'rendered_curved_tile',
+    farming: ['citrus', 'cereal', 'fallow'],
+    trees: ['eucalyptus', 'olive', 'poplar'],
+    sparse: ['buildings'],
+  },
+  {
+    id: 'costa_iblea',
+    name: 'Costa iblea e Piana di Gela',
+    anchors: [[14.4, 36.86]],
+    matrix: 'dry_steppe',
+    stone: 'sandstone',
+    building: 'light_stone_terrace',
+    farming: ['greenhouse', 'vineyard', 'cereal', 'olive'],
+    trees: ['olive', 'carob', 'eucalyptus'],
     sparse: ['buildings'],
   },
   {
@@ -2947,8 +3013,8 @@ export const REGIONS = [
     matrix: 'garrigue',
     stone: 'limestone',
     building: 'light_stone_curved_tile',
-    farming: ['olive', 'almond', 'cereal', 'greenhouse'],
-    trees: ['olive', 'holm_oak', 'oak'],
+    farming: ['olive', 'almond', 'cereal', 'fallow'],
+    trees: ['olive', 'carob', 'holm_oak', 'oak'],
     sparse: ['buildings'],
   },
   {

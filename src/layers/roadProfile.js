@@ -570,7 +570,6 @@ export function* findEarthFillsSteps(segments) {
     yield;
     const { path, platform, edges, probeSpan } = segment;
     const fills = (segment.earthFill = new Uint8Array(path.length));
-    if (!segment.paved) continue;
     const onEarth = (r) =>
       !segment.works?.[r] && !segment.supports?.[r] && Math.abs(platform[r] - (segment.terrainPlatform?.[r] ?? platform[r])) < 0.001;
     const rows = Array.from(path, (_, r) => r);

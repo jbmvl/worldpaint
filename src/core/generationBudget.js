@@ -22,11 +22,23 @@ export class GenerationBudget {
     this.onPause = onPause;
     this.start = now();
   }
-  async checkpoint() {
+  /**
+   * Rend `undefined` tant que le budget tient, sans rien attendre : une étape
+   * de génération dure quelques microsecondes, et une attente de promesse par
+   * étape en coûtait autant. Rend la promesse de la pause sinon.
+   */
+  checkpoint() {
     // Une étape vient de tourner : l'application écarte les images qu'elle a retardées de ses mesures.
     if (this.gate) this.gate.lastWorkAt = this.now();
-    if (this.gate?.paused) { await this.gate.wait(); this.start = this.now(); }
-    if (this.now() - this.start < this.milliseconds) return;
+    if (!this.gate?.paused && this.now() - this.start < this.milliseconds) return undefined;
+    return this._yield();
+  }
+  async _yield() {
+    if (this.gate?.paused) {
+      await this.gate.wait();
+      this.start = this.now();
+      if (this.now() - this.start < this.milliseconds) return;
+    }
     const start = this.onPause ? this.now() : 0;
     await this.pause();
     if (this.gate?.paused) await this.gate.wait();

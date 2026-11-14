@@ -278,7 +278,7 @@ test('le terrain porte le remblai partout où ni mur ni tablier ne tient la chau
   // Trois lignes seulement : trop court pour un mur, la terre le garde.
   const bref = avec((x) => (x >= 27 && x <= 33 ? 0.3 : 0.05));
   const desserte = avec(() => 0.3, { profile: 'lane' });
-  const chemin = avec(() => 0.05, { paved: false });
+  const chemin = avec(() => 0.6, { paved: false, profile: 'path' });
   const pont = avec(() => 0.05);
   pont.supports = new Uint8Array(pont.path.length).fill(1);
   findEarthFills([plat, versant, bref, desserte, chemin, pont]);
@@ -287,6 +287,6 @@ test('le terrain porte le remblai partout où ni mur ni tablier ne tient la chau
   versant.path.forEach((p, r) => assert.equal(versant.earthFill[r], p.x >= 15 && p.x <= 45 ? 0 : 1, `versant, x = ${p.x}`));
   assert.ok(bref.earthFill.every((v) => v === 1), 'versant trop court pour un mur');
   assert.ok(desserte.earthFill.every((v) => v === 1), 'profil sans mur : la terre porte aussi le versant');
-  assert.ok(chemin.earthFill.every((v) => v === 0), 'un chemin est sur le sol');
+  assert.ok(chemin.earthFill.every((v) => v === 1), 'un sentier, même à flanc, est porté par la terre');
   assert.ok(pont.earthFill.every((v) => v === 0), 'une portion suspendue garde son tablier');
 });

@@ -32,7 +32,6 @@ import {
   gapSurfaceForMatrix,
   boundaryForMatrix,
   cropForFarming,
-  essenceForTree,
   unknownWords,
   unsupportedWords,
 } from '../src/core/regionInterpretation.js';
@@ -40,8 +39,8 @@ import { SURFACE_KINDS } from '../src/terrain/groundClassMap.js';
 import { CROP_KINDS } from '../src/layers/furniturePlacement.js';
 import { defaultTheme } from '../src/themes/default.js';
 
-/** Les silhouettes que le thème dessine réellement, et pas une liste en dur. */
-const ESSENCES = new Set(defaultTheme.forests.flatMap((forest) => forest.essences));
+/** Les peuplements que le thème décrit réellement, et pas une liste en dur. */
+const STANDS = new Set(defaultTheme.forests.map((forest) => forest.name));
 
 test('chaque dossier de région est complet et n’emploie que le vocabulaire', () => {
   const seen = new Set();
@@ -85,7 +84,12 @@ test('tout mot du vocabulaire se traduit en un concept que le moteur connaît', 
     assert.ok(crops.has(cropForFarming(word)), `culture inconnue pour ${word}`);
   }
   for (const word of Object.keys(TREE_KINDS)) {
-    assert.ok(ESSENCES.has(essenceForTree(word)), `silhouette inconnue pour ${word}`);
+    const entry = defaultTheme.trees.species[word];
+    assert.ok(entry, `${word} : aucune entrée dans theme.trees.species`);
+    assert.ok(entry.stand === undefined || STANDS.has(entry.stand), `${word} : peuplement inconnu ${entry.stand}`);
+    assert.ok(entry.variants.length >= 1, `${word} : aucune silhouette`);
+    for (const index of entry.variants) assert.ok(defaultTheme.trees.variants[index], `${word} : silhouette ${index} absente`);
+    assert.ok(entry.planted?.height > 0 && entry.planted?.aspect > 0, `${word} : arbre planté sans cotes`);
   }
 });
 
@@ -93,7 +97,6 @@ test('un mot inconnu ne traduit rien plutôt que n’importe quoi', () => {
   assert.equal(surfaceForMatrix('oak_forest'), null);
   assert.equal(boundaryForMatrix('oak_forest'), null);
   assert.equal(cropForFarming('beetroot'), null);
-  assert.equal(essenceForTree('baobab'), null);
   assert.deepEqual(unknownWords({ matrix: 'oak_forest' }), [{ field: 'matrix', word: 'oak_forest' }]);
 });
 

@@ -12,6 +12,12 @@
  * passe d'une maille sous la bulle en plongeant (`FAR_SKIRT_DROP_M`). Le
  * raccord est fermé sans être cousu.
  *
+ * La mer est la seule exception à la couleur unique : là où le MNT est à
+ * zéro ou dessous (il n'a pas de bathymétrie), la nappe prend l'eau du sol de
+ * la bulle — même albédo, même reflet du ciel, uniformes partagés — sans les
+ * rides ni l'éclat, illisibles à cette distance. La côte se coupe au milieu
+ * des mailles mixtes (`aSea` interpolé), pas sur la grille.
+ *
  * C'est le relief lu qui dit si la nappe sert : sous `FAR_RELIEF_MIN_M`
  * d'amplitude, elle ne se monte pas, et `farness` reste à zéro — c'est lui
  * que le brouillard suit pour s'écarter (`World.advance`). La mesure ne coûte
@@ -32,6 +38,8 @@ export const FAR_EDGE_DROP_M = 3;
 export const FAR_OPEN = 0;
 export const FAR_EDGE = 1;
 export const FAR_SUNK = 2;
+/** Cote du MNT, en mètres, à laquelle et sous laquelle un sommet est en mer. */
+export const FAR_SEA_LEVEL_M = 0;
 /** Amplitude du relief, en mètres, sous laquelle le lointain ne sert à rien. */
 export const FAR_RELIEF_MIN_M = 200;
 /** Amplitude à partir de laquelle le brouillard s'écarte jusqu'au bord de la nappe. */
@@ -109,6 +117,14 @@ export class FarRelief {
     this.disposed = false;
 
     this.material = new THREE.MeshLambertMaterial({ flatShading: true });
+    /** Uniformes de l'eau du sol de la bulle (`setWater`) ; repli tant qu'ils manquent. */
+    this._water = {
+      uWaterAlbedo: { value: new THREE.Vector3(0.021, 0.045, 0.06) },
+      uWaterSheenColor: { value: new THREE.Vector3(0.42, 0.52, 0.6) },
+      uWaterZenith: { value: new THREE.Vector3(0.42, 0.52, 0.6) },
+      uWaterSheen: { value: 1 },
+    };
+    this.material.onBeforeCompile = (shader) => this._patchSea(shader);
     this.mesh = new THREE.Mesh(new THREE.BufferGeometry(), this.material);
     this.mesh.name = 'relief lointain';
     this.mesh.visible = false;
@@ -143,6 +159,40 @@ export class FarRelief {
   /** @param {{x:number, y:number, z:number}|null} albedo Couleur linéaire du sol du pays. */
   setColor(albedo) {
     if (albedo) this.material.color.setRGB(albedo.x, albedo.y, albedo.z);
+  }
+
+  /** @param {Object|null} uniforms `TerrainMaterials.waterUniforms` : la mer lointaine suit l'eau de la bulle. */
+  setWater(uniforms) {
+    if (uniforms) Object.assign(this._water, uniforms);
+  }
+
+  /** La mer : l'albédo de l'eau, puis le reflet du ciel au poids de Fresnel, sur une normale verticale. */
+  _patchSea(shader) {
+    Object.assign(shader.uniforms, this._water);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float aSea;\nvarying float vSea;\nvarying vec3 vFarPos;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSea = aSea;\nvFarPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying float vSea;
+        varying vec3 vFarPos;
+        uniform vec3 uWaterAlbedo;
+        uniform vec3 uWaterSheenColor;
+        uniform vec3 uWaterZenith;
+        uniform float uWaterSheen;
+        float farSea;`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        farSea = smoothstep(0.45, 0.55, vSea);
+        diffuseColor.rgb = mix(diffuseColor.rgb, uWaterAlbedo, farSea);`)
+      .replace('#include <colorspace_fragment>', `
+        if (farSea > 0.0) {
+          vec3 toEye = normalize(cameraPosition - vFarPos);
+          float rise = clamp(toEye.y, 0.0, 1.0);
+          float fresnel = clamp((0.02 + 0.98 * pow(1.0 - rise, 5.0)) * uWaterSheen, 0.0, 1.0);
+          vec3 sky = mix(uWaterSheenColor, uWaterZenith, sqrt(rise));
+          gl_FragColor.rgb = mix(gl_FragColor.rgb, sky, farSea * fresnel);
+        }
+        #include <colorspace_fragment>`);
   }
 
   /**
@@ -222,11 +272,16 @@ export class FarRelief {
     const step = frame.scale / cells;
     const vertical = this.bubble.verticalScale || 1;
     const positions = new Float32Array(side * side * 3);
+    const sea = new Uint8Array(side * side);
     for (let j = 0, v = 0, p = 0; j < side; j++) {
       for (let i = 0; i < side; i++, v++) {
         const x = origin.x + i * step;
         const z = origin.z + j * step;
         let h = heights[v];
+        if (h <= FAR_SEA_LEVEL_M) {
+          sea[v] = 255;
+          h = FAR_SEA_LEVEL_M;
+        }
         if (role[v] === FAR_SUNK) h -= FAR_SKIRT_DROP_M;
         else if (role[v] === FAR_EDGE) h = this.bubble.surfaceElevationAtLocal(x, z, h) - FAR_EDGE_DROP_M;
         positions[p++] = x;
@@ -243,6 +298,7 @@ export class FarRelief {
     this._surface = { x: origin.x, z: origin.z, step, n, cells: activeCells, positions };
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('aSea', new THREE.BufferAttribute(sea, 1, true));
     geometry.setIndex(new THREE.BufferAttribute(index, 1));
     geometry.computeBoundingSphere();
     mesh.geometry.dispose();

@@ -1,5 +1,5 @@
 import { treePrototype } from '../models/treeKit.js';
-import { vegetationDetail } from './vegetationDetail.js';
+import { vegetationDetail, VEGETATION_DETAIL_M, VEGETATION_DETAIL_LIGHT_M } from './vegetationDetail.js';
 import { finishGeneration } from '../core/generationSteps.js';
 /*
  * vegetationLayer — les arbres, en instances. Poussent là où
@@ -12,12 +12,27 @@ import { finishGeneration } from '../core/generationSteps.js';
  * (`treeKit`), avec rotation, échelle et teinte propres à chaque instance. Ils
  * gardent leurs volumes proches ; les blocs lointains utilisent deux maillages
  * simplifiés des mêmes houppes, sans plan orienté vers la caméra. Les
- * instances sont rangées par bloc de `VEGETATION_BLOCK_M` et par silhouette,
- * pour que l'élimination hors champ — celle de l'image comme celle de la passe
- * d'ombre — écarte les blocs invisibles. Le
- * peuplement (`FOREST_TYPES`, ancré à une maille de terrain) décide des
- * essences, des hauteurs, de la densité ; la couleur dérive par bosquets de
+ * instances sont rangées par bloc (`VEGETATION_BLOCKS_PER_TILE` par côté de
+ * tuile, une grille du sol et non de la scène) et par silhouette, pour que
+ * l'élimination hors champ — celle de l'image comme celle de la passe
+ * d'ombre — écarte les blocs invisibles. La couleur dérive par bosquets de
  * quelques dizaines de mètres (`foliageTint`).
+ *
+ * ## Ce qui pousse dans un bois
+ *
+ * Chaque maille de `FOREST_PATCH_M` tire son essence dominante parmi celles
+ * du pays, selon les parts que donne leur rang (`sharesFor`). Une essence
+ * désigne par clé, dans le thème (`trees.species`), ses silhouettes et le
+ * peuplement qu'elle forme quand elle domine (`FOREST_TYPES` : hauteurs,
+ * densité, sous-bois, teinte). La maille est faite de bosquets, qui sont les
+ * blocs de rendu : chacun a `purity` de chances d'être de l'essence
+ * dominante, sinon d'une autre essence du pays au prorata de sa part
+ * (`groveAt`), dans le peuplement de la maille.
+ *
+ * Une essence par bosquet, et non arbre par arbre : un bloc ne porte ainsi que
+ * les silhouettes d'une essence et celles de la strate basse, ce qui borne
+ * ses maillages, donc ses appels de dessin, quel que soit le nombre
+ * d'essences du pays.
  *
  * ## Un bois, deux semis
  *
@@ -77,7 +92,7 @@ import { finishGeneration } from '../core/generationSteps.js';
  * l'eau, plus dense sur la bordure (`poolEdgeGain`).
  */
 
-import { cellRandomAt, hashUnit, positionSeed } from '../core/groundSeed.js';
+import { cellRandomAt, hashUnit, positionSeed, randomAt } from '../core/groundSeed.js';
 import { inCorridor } from './roadCorridor.js';
 import {
   createFoliageMaterial,
@@ -87,7 +102,8 @@ import {
 import { createSightline, installSightlineClearing, setSightline } from '../materials/sightlineClearing.js';
 import { stableStand } from './stableStand.js';
 import { defaultTheme } from '../themes/default.js';
-import { filterByWords } from '../core/regionInterpretation.js';
+import { sharesFor } from '../core/regionInterpretation.js';
+import { pickShare } from './furniturePlacement.js';
 import { poolShareAt, poolEdgeGain } from '../terrain/groundClassMap.js';
 
 // --- Le semis : des candidats, pas une suite ------------------------------------
@@ -151,13 +167,23 @@ export const VEGETATION_MAX_RING = 1;
 /** Temps de semis accordé par image, en millisecondes. */
 export const VEGETATION_BUILD_BUDGET_MS = 4;
 /**
- * Côté d'un bloc de rendu, en mètres : l'unité de l'élimination hors champ et
- * du niveau de détail, qui se lit au bord le plus proche du bloc. Assez petit
- * pour que la boîte d'ombre (220 m) et le détail plein n'emportent pas des
- * arbres lointains avec le bloc du coureur ; assez grand pour garder peu
- * d'appels de dessin.
+ * Blocs de rendu par côté de tuile (environ 105 m à 47° de latitude) :
+ * l'unité de l'élimination hors champ et du niveau de détail, qui se lit au
+ * bord le plus proche du bloc, et le bosquet d'une essence (`groveAt`). Assez
+ * petit pour que la boîte d'ombre (220 m) et le détail plein n'emportent pas
+ * des arbres lointains avec le bloc du coureur ; assez grand pour garder peu
+ * d'appels de dessin. Divise `VEGETATION_CELLS` : un bloc est fait de mailles
+ * entières.
  */
-export const VEGETATION_BLOCK_M = 125;
+export const VEGETATION_BLOCKS_PER_TILE = 8;
+/**
+ * Blocs par côté de tuile des arbres plantés (`setPlants`) : clairsemés, ils
+ * rempliraient à peine des blocs de bois, et chaque bloc coûte un appel par
+ * silhouette.
+ */
+export const PLANTED_BLOCKS_PER_TILE = 6;
+/** Sel du tirage de l'essence d'un bosquet. */
+const GROVE_SALT = 149;
 /** En deçà de cette part de boisé, la maille ne reçoit aucun arbre. */
 export const WOOD_SCORE_MIN = 0.22;
 /** Exposant de la courbe de densité (au-dessus de 1, creuse la différence entre lisière et sous-bois). */
@@ -215,6 +241,8 @@ export const UNDERSTORY_MAX_PER_TILE = 40000;
 export const UNDERSTORY_FULL_M = 150;
 /** Au-delà de cette distance d'un bloc, son sous-étage ne montre plus rien. */
 export const UNDERSTORY_FAR_M = 250;
+/** Plein puis éteint, au niveau économe (`detail.level: 'light'`). */
+export const UNDERSTORY_LIGHT_M = [90, 150];
 /** Déplacement de l'observateur avant de recompter l'éclaircie, en mètres. */
 export const UNDERSTORY_RECOUNT_M = 8;
 
@@ -222,10 +250,10 @@ export const UNDERSTORY_RECOUNT_M = 8;
 const understoryKey = (key) => `${key}/sous-etage`;
 
 /** Part du sous-étage montrée à `distance`, de 0 à 1. Fonction pure. */
-export function understoryShare(distance) {
-  if (distance <= UNDERSTORY_FULL_M) return 1;
-  if (distance >= UNDERSTORY_FAR_M) return 0;
-  return 1 - (distance - UNDERSTORY_FULL_M) / (UNDERSTORY_FAR_M - UNDERSTORY_FULL_M);
+export function understoryShare(distance, full = UNDERSTORY_FULL_M, far = UNDERSTORY_FAR_M) {
+  if (distance <= full) return 1;
+  if (distance >= far) return 0;
+  return 1 - (distance - full) / (far - full);
 }
 
 /**
@@ -239,7 +267,7 @@ export function understoryWeight(plant) {
 }
 
 /** Replie, plante par plante, le sous-étage au-delà de sa part (même règle que `understoryShare`). */
-function installUnderstoryThinning(material, THREE) {
+function installUnderstoryThinning(material, THREE, [full, far] = [UNDERSTORY_FULL_M, UNDERSTORY_FAR_M]) {
   const observer = { value: new THREE.Vector2() };
   material.userData.understoryObserver = observer;
   const previous = material.onBeforeCompile;
@@ -253,13 +281,14 @@ function installUnderstoryThinning(material, THREE) {
         vec3 understoryAxis = instanceMatrix[0].xyz;
         float understoryWeight = fract(atan(-understoryAxis.z, understoryAxis.x) / 6.28318531);
         float understoryDistance = distance(instanceMatrix[3].xz, uUnderstoryObserver);
-        float understoryShare = clamp(1.0 - (understoryDistance - ${UNDERSTORY_FULL_M.toFixed(1)}) / ${(UNDERSTORY_FAR_M - UNDERSTORY_FULL_M).toFixed(1)}, 0.0, 1.0);
+        float understoryShare = clamp(1.0 - (understoryDistance - ${full.toFixed(1)}) / ${(far - full).toFixed(1)}, 0.0, 1.0);
         if (understoryWeight >= understoryShare) transformed = vec3(0.0);
       }
       #include <project_vertex>`);
   };
   const key = material.customProgramCacheKey.bind(material);
-  material.customProgramCacheKey = () => `${key()}-understory-v1`;
+  const range = full === UNDERSTORY_FULL_M && far === UNDERSTORY_FAR_M ? '' : `-${full}-${far}`;
+  material.customProgramCacheKey = () => `${key()}-understory-v1${range}`;
 }
 /**
  * Tiges de sous-étage à l'hectare, pour un bois plein et un peuplement de
@@ -411,35 +440,76 @@ export function coverBushesFor(cover, surfaces = defaultTheme.surfaces) {
   return { density: look?.bushes ?? 0, essence: look?.bush ?? null };
 }
 
-/** Côté de la maille qui décide du peuplement, en mètres. */
+/** Côté de la maille qui décide de l'essence dominante d'un bois, en mètres. */
 export const FOREST_PATCH_M = 420;
 
 /**
- * Peuplement d'un point du sol, tiré dans une liste déjà réduite au pays.
- * Ancré au lieu : une forêt garde ses essences quand la bulle se déplace.
+ * La forêt d'un pays : la part de chaque essence, déduite du rang
+ * (`sharesFor`), et pour chacune le peuplement qu'elle forme quand elle
+ * domine, ses silhouettes, et les bosquets d'autres essences qu'elle porte
+ * (`companions` : parts des autres ramenées à 1). Un bosquet compagnon garde
+ * le peuplement de la maille — hauteurs, densité, sous-bois — et ne change que
+ * de silhouettes. Une essence que le thème ne décrit pas est ignorée ; un pays
+ * qui n'en nomme aucune prend `theme.trees.defaultSpecies`. Une essence sans
+ * peuplement (`stand`) n'est que plantée et ne compte pas ici. Fonction pure ;
+ * elle alloue, et se calcule une fois par pays.
  *
- * C'est cette forme-là que les semis appellent, maille après maille : le
- * filtrage alloue, et il n'a rien à faire dans une boucle chaude.
+ * Chaque entrée est un bosquet : `{ word, dominant, type, variants }`.
+ *
+ * @param {string[]|null} trees Essences du pays (`region.trees`).
+ * @param {Object} [theme]
+ * @returns {{shares: Array<[Object, number]>, byWord: Map}}
  */
-export function standTypeFrom(frame, pool, x, z) {
-  const draw = cellRandomAt(frame, x, z, FOREST_PATCH_M, 131);
-  return pool[Math.min(pool.length - 1, Math.floor(draw * pool.length))];
+export function forestComposition(trees, theme = defaultTheme) {
+  const species = theme.trees.species ?? {};
+  const known = (list) => (Array.isArray(list) ? list.filter((word) => species[word]?.stand) : []);
+  const words = known(trees).length ? known(trees) : known(theme.trees.defaultSpecies);
+  const parts = sharesFor(words);
+  const stands = new Map(theme.forests.map((type) => [type.name, type]));
+  const byWord = new Map();
+  for (const [word, share] of parts) {
+    const type = stands.get(species[word].stand) ?? theme.forests[0];
+    const companions = parts
+      .filter(([other]) => other !== word)
+      .map(([other, part]) => [{ word: other, dominant: word, type, variants: species[other].variants }, part / (1 - share)]);
+    byWord.set(word, { word, dominant: word, type, variants: species[word].variants, companions });
+  }
+  // Un thème sans essence ne vide pas le bois : lever ici emporterait les couches suivantes.
+  if (byWord.size === 0) byWord.set(null, { word: null, dominant: null, type: theme.forests[0], variants: [0], companions: [] });
+  const shares = byWord.has(null) ? [[byWord.get(null), 1]] : parts.map(([word, share]) => [byWord.get(word), share]);
+  return { shares, byWord };
+}
+
+/** Le bosquet de l'essence qui domine la maille de `FOREST_PATCH_M` d'un point du sol. */
+export function forestAt(frame, composition, x, z) {
+  return pickShare(composition.shares, cellRandomAt(frame, x, z, FOREST_PATCH_M, 131));
 }
 
 /**
- * Peuplement d'un point du sol. Les essences du pays réduisent d'abord la liste
- * à ce qui pousse ici, ce qui empêche un pin d'Alep en Finlande ; sans région,
- * la liste entière est ouverte.
+ * Le bosquet d'un point du sol — son essence, son peuplement, ses
+ * silhouettes. Le bosquet est le bloc de rendu qui contient le point ; son
+ * centre décide de la maille dominante et porte le tirage. Ancré au lieu : un
+ * bois garde ses essences quand la bulle se déplace.
  */
-export function forestTypeAt(frame, x, z, forests = defaultTheme.forests, region = null) {
-  return standTypeFrom(frame, filterByWords(forests, 'species', region?.trees), x, z);
+export function groveAt(frame, composition, x, z) {
+  const n = VEGETATION_BLOCKS_PER_TILE;
+  const cx = ((Math.floor((frame.origin.x + x / frame.scale) * n) + 0.5) / n - frame.origin.x) * frame.scale;
+  const cz = ((Math.floor((frame.origin.y + z / frame.scale) * n) + 0.5) / n - frame.origin.y) * frame.scale;
+  const dominant = forestAt(frame, composition, cx, cz);
+  const purity = dominant.type.purity ?? 1;
+  const draw = randomAt(frame, cx, cz, GROVE_SALT);
+  if (draw < purity || dominant.companions.length === 0) return dominant;
+  return pickShare(dominant.companions, (draw - purity) / (1 - purity));
 }
 
-/** Variantes d'atlas ouvertes à un peuplement, dans l'ordre de ses essences. */
-export function variantsFor(type, essences = defaultTheme.trees.essences) {
-  const out = [];
-  for (const essence of type.essences) out.push(...(essences[essence] || []));
-  return out.length > 0 ? out : [0];
+/** Peuplement d'un point du sol, dans un pays. */
+export function forestTypeAt(frame, x, z, theme = defaultTheme, region = null) {
+  return groveAt(frame, forestComposition(region?.trees, theme), x, z).type;
+}
+
+/** Essence qui domine le bois d'un point du sol, dans un pays (`null` : thème sans essence). */
+export function forestSpeciesAt(frame, x, z, theme = defaultTheme, region = null) {
+  return groveAt(frame, forestComposition(region?.trees, theme), x, z).dominant;
 }
 
 /**
@@ -562,6 +632,7 @@ export class VegetationLayer {
     maxRing = VEGETATION_MAX_RING,
     theme = defaultTheme,
     sightline = createSightline(THREE),
+    level = 'full',
   }) {
     this.THREE = THREE;
     this.theme = theme;
@@ -570,12 +641,17 @@ export class VegetationLayer {
     this.groundClass = groundClass;
     this.roads = roads;
     this.maxRing = maxRing;
+    const light = level === 'light';
+    this._detailM = light ? VEGETATION_DETAIL_LIGHT_M : VEGETATION_DETAIL_M;
+    this._understoryM = light ? UNDERSTORY_LIGHT_M : [UNDERSTORY_FULL_M, UNDERSTORY_FAR_M];
     /**
      * Dossier de région du lieu, ou `null` hors de toute région couverte. Il
      * n'arrive pas par le thème : il change en cours de route, comme l'heure et
      * la météo, et c'est le compositeur qui le pose (`setRegion`).
      */
     this.region = null;
+    /** `forestComposition` du pays, refaite au changement de région. */
+    this._composition = null;
     this.disposed = false;
     this._descriptions = new Map();
 
@@ -604,7 +680,7 @@ export class VegetationLayer {
     });
     this.material = foliage();
     this.understoryMaterial = foliage();
-    installUnderstoryThinning(this.understoryMaterial, THREE);
+    installUnderstoryThinning(this.understoryMaterial, THREE, this._understoryM);
     this.depthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
     this.depthMaterial.onBeforeCompile = this.material.onBeforeCompile;
     this.depthMaterial.customProgramCacheKey = () => 'tree-volume-depth-v3';
@@ -673,7 +749,12 @@ export class VegetationLayer {
     const next = region || null;
     if (next === this.region) return false;
     this.region = next;
+    this._composition = null;
     return true;
+  }
+
+  _forestComposition() {
+    return (this._composition ??= forestComposition(this.region?.trees, this.theme));
   }
 
   /**
@@ -877,7 +958,7 @@ export class VegetationLayer {
     if (known < 1) this._partial.set(tile.key, known);
     else this._partial.delete(tile.key);
 
-    const pool = filterByWords(this.theme.forests, 'species', this.region?.trees);
+    const composition = this._forestComposition();
     // De loin, la strate basse reste faite d'arbustes (voir `understoryStrata`).
     const strata = understoryStrata(this.theme.trees);
     const tree = this._tree;
@@ -891,7 +972,8 @@ export class VegetationLayer {
         const centreZ = cellZ + cellSize * 0.5;
         if (this._beyondReach(cellX, cellZ, cellSize)) continue;
 
-        const type = standTypeFrom(frame, pool, centreX, centreZ);
+        const forest = groveAt(frame, composition, centreX, centreZ);
+        const type = forest.type;
         const stems = woodDensity(groundClass.woodAt(centreX, centreZ)) * standTreesPerCell(type);
         // Fourré de couverture — voir `coverBushesFor`. Il se sème là où il n'y
         // a pas de bois, donc il ne peut pas être conditionné aux tiges. Rien
@@ -915,7 +997,7 @@ export class VegetationLayer {
         // L'ourlet : plus de fourré, moins de houppe (voir `EDGE_LOW_GAIN`).
         const edge = groundClass.woodEdgeAt?.(centreX, centreZ) ?? 0;
         const lowPart = edgeLowPart((stems * lowStratumPart(type) + thicket) / expected, edge);
-        const variants = variantsFor(type, this.theme.trees.essences);
+        const variants = forest.variants;
         // Le tapis générique sert au sous-bois d'un peuplement ; une matière
         // qui nomme son propre buisson (lande, maquis) sème le sien à la
         // place — jamais les deux mélangés au hasard de la maille.
@@ -959,7 +1041,7 @@ export class VegetationLayer {
     yield* this._settleSteps(placements);
     const stand = yield* this._meshSteps(placements, this.material, `vegetation-${tile.key}`, true, false);
 
-    const candidates = yield* this._sowUnderstory(originX, originZ, cellSize, pool, index);
+    const candidates = yield* this._sowUnderstory(originX, originZ, cellSize, composition, index);
     // Au-delà du plafond, seuls les plus faibles tirages restent : un
     // sous-ensemble du même semis, quel que soit l'ordre de parcours.
     const ceiling = UNDERSTORY_MAX_PER_TILE / candidates.length;
@@ -987,27 +1069,29 @@ export class VegetationLayer {
 
   /** Représentations communes des semis et des plantations publiées par le compositeur. */
   setPlants(key, placements) {
-    this._swap(key, this._instances(placements, this.material, `vegetation-${key}`, true));
+    this._swap(key, this._instances(placements, this.material, `vegetation-${key}`, true, false, PLANTED_BLOCKS_PER_TILE));
   }
 
   /**
-   * Un `InstancedMesh` par bloc de `VEGETATION_BLOCK_M` et par silhouette.
+   * Un `InstancedMesh` par bloc (`VEGETATION_BLOCKS_PER_TILE`) et par silhouette.
    * `thinned` range les instances par poids croissant (`understoryWeight`) :
    * le nombre d'instances dessinées d'un bloc suit alors son point le plus
    * proche, et le shader écarte le reste plante par plante.
    */
-  _instances(placements, material, name, castShadow, thinned = false) {
-    return finishGeneration(this._meshSteps(placements, material, name, castShadow, thinned));
+  _instances(placements, material, name, castShadow, thinned = false, blocks = VEGETATION_BLOCKS_PER_TILE) {
+    return finishGeneration(this._meshSteps(placements, material, name, castShadow, thinned, blocks));
   }
 
-  *_meshSteps(placements, material, name, castShadow, thinned) {
+  *_meshSteps(placements, material, name, castShadow, thinned, n = VEGETATION_BLOCKS_PER_TILE) {
     const groups = new Map();
     const roads = this.roads;
+    const { origin, scale } = this.bubble.frame;
     for (const item of placements) {
       if (!this.prototypes[item.variant]) continue;
       // Sous un pont, seul ce qui tient sous le tablier pousse.
       if (roads?.ceilingAt && item.y + item.height > roads.ceilingAt(item.x, item.z, item.height * item.aspect / 2)) continue;
-      const id = `${Math.floor(item.x / VEGETATION_BLOCK_M)}:${Math.floor(item.z / VEGETATION_BLOCK_M)}:${item.variant}`;
+      // Un nombre plutôt qu'une chaîne : rien à allouer par plante.
+      const id = (Math.floor((origin.x + item.x / scale) * n) * 2 ** 20 + Math.floor((origin.y + item.z / scale) * n)) * 64 + item.variant;
       let list = groups.get(id);
       if (!list) groups.set(id, (list = []));
       list.push(item);
@@ -1052,7 +1136,8 @@ export class VegetationLayer {
   /**
    * Pose l'observateur de l'éclaircie, et recompte les instances dessinées par
    * bloc s'il s'est assez éloigné. À appeler une fois par image. Ne sème rien,
-   * et ne retire jamais une plante à moins de `UNDERSTORY_FULL_M`.
+   * et ne retire jamais une plante à moins de `UNDERSTORY_FULL_M` (du premier
+   * seuil de `UNDERSTORY_LIGHT_M` au niveau économe).
    *
    * @param {number} x Position locale de l'observateur.
    * @param {number} z
@@ -1077,7 +1162,8 @@ export class VegetationLayer {
     const sphere = mesh.boundingSphere;
     const distance = Math.max(0, Math.hypot(sphere.center.x - x, sphere.center.z - z) - sphere.radius);
     // Une marge : le poids relu par le shader en simple précision peut différer d'un rien.
-    const share = understoryShare(distance);
+    // Les seuils en scalaires : appelée par bloc et par image, elle ne doit rien allouer.
+    const share = understoryShare(distance, this._understoryM[0], this._understoryM[1]);
     mesh.count = share > 0 ? Math.min(mesh.userData.full, Math.ceil(mesh.userData.full * (share + 0.02))) : 0;
     mesh.visible = mesh.count > 0;
   }
@@ -1085,7 +1171,7 @@ export class VegetationLayer {
   _updateDetail(mesh, x, z) {
     const sphere = mesh.boundingSphere;
     const distance = Math.max(0, Math.hypot(sphere.center.x - x, sphere.center.z - z) - sphere.radius);
-    const detail = vegetationDetail(distance, mesh.userData.treeDetail);
+    const detail = vegetationDetail(distance, mesh.userData.treeDetail, this._detailM);
     mesh.userData.treeDetail = detail;
     mesh.geometry = this.detailPrototypes[detail][mesh.userData.treeVariant];
   }
@@ -1094,7 +1180,7 @@ export class VegetationLayer {
    * Candidats du sous-étage d'une tuile, sur la grille du peuplement mais avec
    * leurs propres tirages (`UNDERSTORY_SALT`).
    */
-  *_sowUnderstory(originX, originZ, cellSize, pool, index) {
+  *_sowUnderstory(originX, originZ, cellSize, composition, index) {
     const { groundClass } = this;
     const { frame } = this.bubble;
     // De près, le tapis du sol s'ouvre : ronce, buisson bas.
@@ -1109,7 +1195,8 @@ export class VegetationLayer {
         const centreZ = cellZ + cellSize * 0.5;
         if (this._beyondReach(cellX, cellZ, cellSize)) continue;
 
-        const type = standTypeFrom(frame, pool, centreX, centreZ);
+        const forest = groveAt(frame, composition, centreX, centreZ);
+        const type = forest.type;
         const stems = woodDensity(groundClass.woodAt(centreX, centreZ)) *
           thicketPerCell(thicketDensityFor(type), cellSize);
         // Même refus au milieu d'une flaque, même bordure plus dense que le
@@ -1131,7 +1218,7 @@ export class VegetationLayer {
         const share = Math.min(1, expected / UNDERSTORY_CANDIDATES);
         const edge = groundClass.woodEdgeAt?.(centreX, centreZ) ?? 0;
         const lowPart = edgeLowPart((stems * lowStratumPart(type) + thick) / expected, edge);
-        const variants = variantsFor(type, this.theme.trees.essences);
+        const variants = forest.variants;
         const cellStrata = thickLook.essence ? essenceStrata(thickLook.essence, this.theme.trees) : strata;
         const seed = positionSeed(frame, cellX, cellZ, UNDERSTORY_SALT);
 

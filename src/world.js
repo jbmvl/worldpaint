@@ -91,6 +91,9 @@ const TUNNEL_FLOOR_MATCH_M = 1;
  */
 export const DEFAULT_ELEVATION_ZOOM = 13;
 
+/** Niveaux de détail d'une image (`detail.level`), du plus complet au plus économe. */
+export const DETAIL_LEVELS = ['full', 'light'];
+
 /**
  * Monte un paysage dans une scène three.js existante.
  *
@@ -120,6 +123,12 @@ export const DEFAULT_ELEVATION_ZOOM = 13;
  *        outre, partout, les objets (voirie, bâti, mobilier, arbres) à ce rayon,
  *        en mètres : contrairement à `reach`, le terrain, la carte du sol et le
  *        relief lointain gardent toute la bulle. La relève se rapproche d'autant.
+ *        `level` règle le coût d'une image : `'full'` (le défaut) ou `'light'`,
+ *        pour un appareil sur batterie. `'light'` simplifie les arbres plus tôt
+ *        (`VEGETATION_DETAIL_LIGHT_M`), éteint le sous-étage plus près
+ *        (`UNDERSTORY_LIGHT_M`) et ne calcule que trois octaves des nuages
+ *        (`CLOUD_OCTAVES_LIGHT`) ; ce qui est semé et posé ne change pas, et un
+ *        sous-étage plus clair est un sous-ensemble du complet.
  * @param {Object|null} [options.theme] Direction artistique — tranches
  *        entières qui remplacent celles de `defaultTheme`, voir `resolveTheme`.
  * @param {Object|null} [options.sky] Ciel, soleil et brouillard. `null` (le
@@ -152,6 +161,9 @@ export function createWorld({
   if (!THREE) throw new Error('createWorld: THREE manquant');
   if (!scene) throw new Error('createWorld: scene manquante');
   // Contrôlé avant toute allocation, pour ne pas laisser un compositeur non libéré.
+  if (detail?.level != null && !DETAIL_LEVELS.includes(detail.level)) {
+    throw new Error(`createWorld: detail.level inconnu (${detail.level}) — ${DETAIL_LEVELS.join(' ou ')}`);
+  }
   if (sky && !sky.Sky) {
     throw new Error('createWorld: sky.Sky manquant (three/examples/jsm/objects/Sky.js)');
   }
@@ -201,6 +213,7 @@ export function createWorld({
       // Teinte du feuillage du thème courant, pas inventée par l'environnement.
       debrisTint: resolved.furniture.colors.leaf,
       leaves: resolved.leaves,
+      level: detail?.level,
     });
   }
 

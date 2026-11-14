@@ -5,8 +5,9 @@
  * terre n'est pas ici : c'est le terrain qui le porte (`roadCut.fillElevationAt`).
  *
  * Le dévers, le surplomb et la courbure déclenchent les protections de rive.
- * Les toutes petites routes ne portent un parapet qu'en présence de vide ;
- * les murs restent réservés aux profils aménagés (`profileTakesGuardrail`).
+ * Les toutes petites routes ne portent un parapet qu'en présence de vide, les
+ * chemins et sentiers une rambarde de bois qu'à pic ; les murs restent
+ * réservés aux profils aménagés (`profileTakesGuardrail`).
  *
  * Les lignes d'ouvrage d'art (pont, tunnel) n'arrivent pas jusqu'ici :
  * `buildRoadside` les a déjà écartées, un tablier n'a pas de mur.
@@ -40,6 +41,8 @@ import {
   STEEP_CROSS_SLOPE,
   FILL_WALL_MIN_ROWS,
   profileTakesGuardrail,
+  isPathProfile,
+  PATH_RAIL_MIN_ROWS,
 } from '../furniturePlacement.js';
 
 /**
@@ -399,6 +402,7 @@ export function buildParapets(layer, context, segment, rowsInfo) {
     slope: row.slope,
     curvature: row.turn === side ? row.curvature : 0,
     drop: side === -row.uphill ? row.drop : row.perch,
+    grade: row.grade,
     climate: layer.climate,
     rural: row.rural,
     mountain: surfaceForMatrix(layer.region?.matrix) === 'alpine',
@@ -409,7 +413,7 @@ export function buildParapets(layer, context, segment, rowsInfo) {
   for (const side of [-1, 1]) for (const family of ['steel', 'wood']) {
     const fits = (row) => styleOf(row, side) === family && roomOn(row, side) >= RELIEF_MIN_ROOM_M;
     // Le pas varie dans les arcs : six lignes ne mesurent pas une longueur.
-    for (const run of contiguousRuns(rowsInfo, fits, 2)) {
+    for (const run of contiguousRuns(rowsInfo, fits, isPathProfile(profile) ? PATH_RAIL_MIN_ROWS : 2)) {
       const origin = run[0].distance;
       const runPath = run.map((row) => ({ x: row.x, z: row.z, distance: row.distance - origin }));
       const deck = new Float32Array(run.map((row) => platform[row.r]));

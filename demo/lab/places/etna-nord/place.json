@@ -1,0 +1,18 @@
+{
+  "name": "etna-nord",
+  "label": "etna-nord",
+  "lng": 15.02,
+  "lat": 37.8,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "zoom": 13,
+    "encoding": "terrarium",
+    "extension": "webp",
+    "source": "tiles.mapterhorn.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  }
+}

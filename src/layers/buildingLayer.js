@@ -39,10 +39,12 @@ import { pointInAreas } from './settlement.js';
 import { clipPolygonOutsideCorridor } from './roadCorridor.js';
 import { Kit } from './furnitureKit.js';
 import { appendChurchWindows, castleTowers, appendRetailSign } from './buildingCharacterGeometry.js';
+import { isAncientName, ruinFormFor, ruinKit } from './ruinGeometry.js';
 import { defaultTheme } from '../themes/default.js';
 import { LabelAtlas, pushLabelQuad, labelFontPxForCellHeight, LABEL_PX_PER_M } from '../materials/labelAtlas.js';
 import { DECOR_STABLE_RADIUS_M, reachedRadius } from '../core/decorReach.js';
-import { createFacetBuffer, facetGeometry } from './facetBuffers.js';
+import { createFacetBuffer, facetGeometry, pushValues } from './facetBuffers.js';
+import { CellMeshes } from './cellMeshes.js';
 
 /** Couche vectorielle portant les empreintes. */
 export const BUILDING_SOURCE_LAYER = 'building';
@@ -90,12 +92,19 @@ const SHOPFRONT_CLASSES = new Set([
  * religion et la grande surface. Monument, tour, moulin, cheminée
  * d'usine et stade restent du mobilier posé à part (`furnitureLayer`).
  */
+// Lu pour chaque point d'intérêt d'une tuile de ville, des dizaines de milliers : ensembles hissés hors de l'appel.
+const RAMPART_TAGS = new Set(['city_wall', 'citywalls', 'castle_wall', 'town_wall', 'rampart', 'wall']);
+const CHURCH_TAGS = new Set(['church', 'cathedral', 'chapel']);
+
 export function buildingPersonalityFor(properties = {}) {
   const klass = properties.class;
   const subclass = properties.subclass;
-  if (['city_wall', 'citywalls', 'castle_wall', 'town_wall', 'rampart', 'wall'].some(tag => [klass, subclass, properties.historic, properties.building, properties.barrier].includes(tag))) return 'rampart';
+  if (RAMPART_TAGS.has(klass) || RAMPART_TAGS.has(subclass) || RAMPART_TAGS.has(properties.historic) ||
+    RAMPART_TAGS.has(properties.building) || RAMPART_TAGS.has(properties.barrier)) return 'rampart';
+  // Une ruine, ou un temple et un théâtre que leur nom dit antiques : voir `ruinGeometry`.
+  if (subclass === 'ruins' || ((klass === 'attraction' || klass === 'theatre') && isAncientName(properties.name))) return 'ruin';
   if ((klass === 'castle' && subclass !== 'ruins') || subclass === 'castle' || properties.historic === 'castle' || properties.building === 'castle') return 'castle';
-  if (['church', 'cathedral', 'chapel'].includes(klass) || ['church', 'cathedral', 'chapel'].includes(properties.building)) return 'church';
+  if (CHURCH_TAGS.has(klass) || CHURCH_TAGS.has(properties.building)) return 'church';
   if (klass === 'place_of_worship' || properties.amenity === 'place_of_worship') return (subclass || properties.religion) === 'muslim' ? 'mosque' : 'church';
   if (klass === 'hospital') return 'hospital';
   if (RETAIL_SUBCLASSES.has(subclass) || RETAIL_SUBCLASSES.has(klass) || RETAIL_SUBCLASSES.has(properties.shop)) return 'retail';
@@ -114,7 +123,7 @@ const AWNING_CLASSES = new Set(['restaurant', 'bar', 'cafe']);
 const FUEL_CLASSES = new Set(['fuel']);
 
 /** Personnalités qu'une caméra peut aller chercher au loin : elles signent le lieu. */
-export const LANDMARK_PERSONALITIES = new Set(['castle', 'church', 'mosque', 'rampart']);
+export const LANDMARK_PERSONALITIES = new Set(['castle', 'church', 'mosque', 'rampart', 'ruin']);
 /** Au-delà de cette hauteur, un bâtiment sans personnalité se voit aussi de loin. */
 export const LANDMARK_MIN_HEIGHT_M = 25;
 
@@ -142,6 +151,7 @@ export function buildingLandmark({ personality, name = null, box, base, top }) {
 export const BUILDING_PERSONALITY_RANK = {
   rampart: 0,
   castle: 0,
+  ruin: 0,
   mosque: 0,
   church: 0,
   hospital: 1,
@@ -231,7 +241,8 @@ export function* assignPersonalitiesSteps(candidates, personalities, outlines = 
         const t = Math.max(0, Math.min(1, ((q.x - a.x) * dx + (q.z - a.z) * dz) / (dx * dx + dz * dz || 1)));
         return Math.hypot(q.x - a.x - t * dx, q.z - a.z - t * dz) < 0.05;
       });
-      const members = candidates.filter(c => c === best || (structural || outlines.includes(best)) && c.footprint && c.footprint.every(contains));
+      const grouped = structural || outlines.includes(best);
+      const members = candidates.filter(c => c === best || grouped && c.footprint && c.footprint.every(contains));
       members.sort((a, b) => b.area - a.area || a.x - b.x || a.z - b.z);
       if (!structural) members.length = Math.min(1, members.length);
       for (const [i, c] of members.entries()) {
@@ -460,16 +471,37 @@ export function pushFacetQuad(buffer, p0, p1, p2, p3, color) {
   }
 }
 
+// Les dix-huit valeurs d'un pan, versées d'un appel par attribut (`pushFrom`).
+const PANEL = new Float64Array(18);
+
+function setPanelPositions(a, b, bottomA, bottomB, topA, topB) {
+  PANEL[0] = a.x; PANEL[1] = bottomA; PANEL[2] = a.y;
+  PANEL[3] = b.x; PANEL[4] = topB; PANEL[5] = b.y;
+  PANEL[6] = b.x; PANEL[7] = bottomB; PANEL[8] = b.y;
+  PANEL[9] = a.x; PANEL[10] = bottomA; PANEL[11] = a.y;
+  PANEL[12] = a.x; PANEL[13] = topA; PANEL[14] = a.y;
+  PANEL[15] = b.x; PANEL[16] = topB; PANEL[17] = b.y;
+  return PANEL;
+}
+
+function setPanelNormals(nx, nz) {
+  for (let i = 0; i < 18; i += 3) { PANEL[i] = nx; PANEL[i + 1] = 0; PANEL[i + 2] = nz; }
+  return PANEL;
+}
+
+/** Teintes des six sommets d'un pan, dans l'ordre de `setPanelPositions` : bas, haut, bas, bas, haut, haut. */
+function setPanelColors(low, high) {
+  for (let k = 0; k < 3; k++) {
+    PANEL[k] = low[k]; PANEL[3 + k] = high[k]; PANEL[6 + k] = low[k];
+    PANEL[9 + k] = low[k]; PANEL[12 + k] = high[k]; PANEL[15 + k] = high[k];
+  }
+  return PANEL;
+}
+
 export function pushPanel(buffer, a, b, bottom, top, nx, nz, low, high) {
-  buffer.positions.push(
-    a.x, bottom, a.y, b.x, top, b.y, b.x, bottom, b.y,
-    a.x, bottom, a.y, a.x, top, a.y, b.x, top, b.y
-  );
-  buffer.normals.push(nx, 0, nz, nx, 0, nz, nx, 0, nz, nx, 0, nz, nx, 0, nz, nx, 0, nz);
-  buffer.colors.push(
-    low[0], low[1], low[2], high[0], high[1], high[2], low[0], low[1], low[2],
-    low[0], low[1], low[2], high[0], high[1], high[2], high[0], high[1], high[2]
-  );
+  pushValues(buffer.positions, setPanelPositions(a, b, bottom, bottom, top, top));
+  pushValues(buffer.normals, setPanelNormals(nx, nz));
+  pushValues(buffer.colors, setPanelColors(low, high));
 }
 
 /**
@@ -478,13 +510,9 @@ export function pushPanel(buffer, a, b, bottom, top, nx, nz, low, high) {
  * mur, la normale ne change donc pas.
  */
 export function pushBand(buffer, a, b, bottomA, bottomB, topA, topB, nx, nz, color) {
-  const r = color[0], g = color[1], k = color[2];
-  buffer.positions.push(
-    a.x, bottomA, a.y, b.x, topB, b.y, b.x, bottomB, b.y,
-    a.x, bottomA, a.y, a.x, topA, a.y, b.x, topB, b.y
-  );
-  buffer.normals.push(nx, 0, nz, nx, 0, nz, nx, 0, nz, nx, 0, nz, nx, 0, nz, nx, 0, nz);
-  buffer.colors.push(r, g, k, r, g, k, r, g, k, r, g, k, r, g, k, r, g, k);
+  pushValues(buffer.positions, setPanelPositions(a, b, bottomA, bottomB, topA, topB));
+  pushValues(buffer.normals, setPanelNormals(nx, nz));
+  pushValues(buffer.colors, setPanelColors(color, color));
 }
 
 /** Pas du relevé du sol au pied d'un mur, en mètres — de l'ordre d'une baie. */
@@ -1564,6 +1592,9 @@ export function terraceChairs(x, y, z) {
   return chairs;
 }
 
+// Positions d'une pièce du catalogue translatée, versées par paquets (`_pushKitAt`).
+const SHIFTED_KIT = new Float64Array(3 * 256);
+
 /**
  * Une table de terrasse et ses chaises, radialement symétriques — aucune
  * orientation à leur donner, qu'on les pose au bord d'un trottoir rectiligne
@@ -1636,8 +1667,6 @@ export class BuildingLayer {
      */
     this.region = null;
     this.disposed = false;
-    this.mesh = null;
-    this.geometry = null;
     this._anchor = null;
     this._frame = null;
     this.count = 0;
@@ -1713,6 +1742,7 @@ export class BuildingLayer {
     this.personalities = [];
 
     this.material = new THREE.MeshLambertMaterial({ vertexColors: true });
+    this.cells = new CellMeshes({ THREE, scene, material: this.material, name: 'buildings', castShadow: true });
 
     // Fenêtres allumées : un matériau à part, non éclairé et additif, dont
     // l'opacité suit l'heure. Un `MeshBasicMaterial` suffit — une fenêtre
@@ -1786,7 +1816,13 @@ export class BuildingLayer {
     this._surfaceAt = surfaceAt;
     this._builtUp = builtUp;
     this._infill = infill;
-    yield* this._buildSteps(source, tiles, here);
+    // Les pièces partagées ne vivent que le temps d'une reconstruction : gardées, elles pèseraient sur le tas retenu.
+    this._kits = new Map();
+    try {
+      yield* this._buildSteps(source, tiles, here);
+    } finally {
+      this._kits = null;
+    }
     this._anchor = { x: here.x, z: here.z };
     this._frame = this.bubble.frame;
     return this.count > 0;
@@ -1987,28 +2023,13 @@ export class BuildingLayer {
     this._applyWindows(lamps);
     this._applyLabels(labels);
     if (walls.positions.length === 0) {
-      this._clearMesh();
+      this.cells.set(null);
       return;
     }
 
     this._wallValues = walls.positions.length;
     this._lampValues = lamps.positions.length;
-    const geometryBuffer = facetGeometry(THREE, walls);
-
-    if (this.mesh) {
-      this.geometry.dispose();
-      this.mesh.geometry = geometryBuffer;
-    } else {
-      const mesh = new THREE.Mesh(geometryBuffer, this.material);
-      mesh.name = 'buildings';
-      mesh.matrixAutoUpdate = false;
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      mesh.updateMatrix();
-      this.scene.add(mesh);
-      this.mesh = mesh;
-    }
-    this.geometry = geometryBuffer;
+    this.cells.set(facetGeometry(THREE, walls));
   }
 
   /**
@@ -2107,6 +2128,18 @@ export class BuildingLayer {
     const minHeight = buildingMinHeight(properties);
     const bottom = base + minHeight - 0.6; // un peu enterré : pas de jour sous les murs
     const top = crest + height;
+
+    // Une ruine ne s'extrude pas : elle se dessine sur son emprise, sans toit ni baies.
+    if (personality === 'ruin' && box) {
+      const form = ruinFormFor({ name: personalityName, box });
+      const kit = ruinKit({ form, footprint, box, look, frame: bubble.frame, relief: crest - base, groundAt });
+      this._pushKitAt(walls, kit, box.cx, base, box.cz);
+      if (!assigned?.secondary && this._landmarkSink) {
+        const landmark = buildingLandmark({ personality, name: personalityName, box, base, top: base + (crest - base) + 8 });
+        if (landmark) this._landmarkSink.push(landmark);
+      }
+      return true;
+    }
 
     // Couleur et forme du toit : celles de la palette du pays, avec une légère
     // variation par maison. Voir `townStyle`.
@@ -2587,11 +2620,26 @@ export class BuildingLayer {
 
   /** Ajoute les triangles d'un `Kit` à `walls`, translatés en un point du monde. */
   _pushKitAt(walls, kit, x, y, z) {
-    for (let i = 0; i < kit.positions.length; i += 3) {
-      walls.positions.push(kit.positions[i] + x, kit.positions[i + 1] + y, kit.positions[i + 2] + z);
+    const source = kit.positions;
+    for (let start = 0; start < source.length; start += SHIFTED_KIT.length) {
+      const count = Math.min(SHIFTED_KIT.length, source.length - start);
+      for (let i = 0; i < count; i += 3) {
+        SHIFTED_KIT[i] = source[start + i] + x;
+        SHIFTED_KIT[i + 1] = source[start + i + 1] + y;
+        SHIFTED_KIT[i + 2] = source[start + i + 2] + z;
+      }
+      pushValues(walls.positions, SHIFTED_KIT, count);
     }
-    for (let i = 0; i < kit.normals.length; i++) walls.normals.push(kit.normals[i]);
-    for (let i = 0; i < kit.colors.length; i++) walls.colors.push(kit.colors[i]);
+    pushValues(walls.normals, kit.normals);
+    pushValues(walls.colors, kit.colors);
+  }
+
+  /** Une table, une pompe : la même pièce pour tout le nuancier, bâtie une fois par reconstruction. */
+  _sharedKit(name, build) {
+    const kits = (this._kits ??= new Map());
+    let kit = kits.get(name);
+    if (!kit) kits.set(name, (kit = build(this.theme.furniture.colors)));
+    return kit;
   }
 
   /**
@@ -2620,7 +2668,8 @@ export class BuildingLayer {
     const count = Math.max(1, Math.round(length / theme.terraceSpacingM));
     const span = (count - 1) * theme.terraceSpacingM;
     const start = length / 2 - span / 2;
-    const kit = buildTerraceKit(kind === 'restaurant', this.theme.furniture.colors);
+    const dressed = kind === 'restaurant';
+    const kit = this._sharedKit(dressed ? 'terraceDressed' : 'terrace', (colors) => buildTerraceKit(dressed, colors));
 
     for (let i = 0; i < count; i++) {
       const along = start + i * theme.terraceSpacingM;
@@ -2657,7 +2706,7 @@ export class BuildingLayer {
     const count = Math.max(1, Math.round(length / theme.pumpSpacingM));
     const span = (count - 1) * theme.pumpSpacingM;
     const start = length / 2 - span / 2;
-    const kit = buildPumpKit(this.theme.furniture.colors);
+    const kit = this._sharedKit('pump', buildPumpKit);
 
     for (let i = 0; i < count; i++) {
       const along = start + i * theme.pumpSpacingM;
@@ -2761,18 +2810,10 @@ export class BuildingLayer {
     this.labelGeometry = null;
   }
 
-  _clearMesh() {
-    if (!this.mesh) return;
-    this.scene.remove(this.mesh);
-    this.geometry?.dispose();
-    this.mesh = null;
-    this.geometry = null;
-  }
-
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
-    this._clearMesh();
+    this.cells.dispose();
     this._clearWindows();
     this._clearLabels();
     this.material.dispose();

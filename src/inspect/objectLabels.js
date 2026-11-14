@@ -19,7 +19,6 @@
  * Tout ici est pur, testable sous Node — voir `test/world.test.mjs`.
  */
 
-import { defaultTheme } from '../themes/default.js';
 import { ringsOf } from '../layers/settlement.js';
 import { ringAreaMeters } from '../layers/furniturePlacement.js';
 
@@ -125,12 +124,7 @@ export const LABEL_FURNITURE = {
   fencePostWood: 'piquet de bois',
   fencePostConcrete: 'piquet de béton',
   bush: 'buisson',
-  treeBroad: 'arbre (feuillu)',
-  treeConifer: 'arbre (résineux)',
-  treeRound: 'arbre (boule)',
-  treeColumnar: 'arbre (fuseau)',
-  treeOval: 'arbre (dôme)',
-  treePalm: 'arbre (palmier)',
+  tree: 'arbre planté',
   laundryLine: 'étendage',
   trafficLight: 'feu tricolore',
   rockSmall: 'caillou',
@@ -298,20 +292,20 @@ export const LABEL_TREE_SPECIES = {
 };
 
 /**
- * Nom lisible d'un peuplement forestier (`vegetationLayer.forestTypeAt`), avec
- * les essences qu'il peut porter dans ce pays : l'arbre isolé n'est pas
- * identifiable, le peuplement l'est.
+ * Nom lisible d'un bois : son peuplement (`vegetationLayer.forestTypeAt`) et
+ * l'essence qui le domine (`forestSpeciesAt`), puis les autres essences du
+ * pays qui l'accompagnent. L'arbre isolé n'est pas identifiable, le bois l'est.
  */
-export function labelForForestType(type, forests = defaultTheme.forests, region = null) {
-  const known = forests.find((t) => t.name === type?.name);
-  if (!known) return 'arbres';
-  const allowed = region?.trees;
-  const kept = Array.isArray(allowed) && allowed.length > 0
-    ? known.species?.filter((word) => allowed.includes(word))
-    : known.species;
-  const names = (kept?.length ? kept : known.species ?? [])
-    .map((word) => LABEL_TREE_SPECIES[word] || word);
-  return names.length ? `arbres — ${known.name} (${names.join(', ')})` : `arbres — ${known.name}`;
+export function labelForForestType(type, species = null, region = null) {
+  if (!type?.name) return 'arbres';
+  const name = (word) => LABEL_TREE_SPECIES[word] || word;
+  if (!species) return `arbres — ${type.name}`;
+  const dominant = name(species);
+  const of = /^[aeiouéèêâîôû]/i.test(dominant) ? `d'${dominant}` : `de ${dominant}`;
+  const others = (Array.isArray(region?.trees) ? region.trees : []).filter((word) => word !== species);
+  return others.length
+    ? `arbres — ${type.name} ${of} (avec ${others.map(name).join(', ')})`
+    : `arbres — ${type.name} ${of}`;
 }
 
 /** Nom lisible d'une culture. */

@@ -24,6 +24,9 @@ export const DRY_STONE_WALL_SAMPLE_M = 1.5;
 /** Longueur minimale d'un contour retenu, en mètres. */
 export const BOUNDARY_MIN_LENGTH_M = 30;
 
+/** Forme du catalogue d'un arbre planté (`plantedTrees.js`). */
+export const PLANTED_TREE = 'tree';
+
 /** Décollement du mobilier au-dessus du sol : il s'ancre, il ne flotte pas. */
 export const FURNITURE_SINK_M = 0.08;
 
@@ -155,12 +158,9 @@ export const POINT_ITEMS = [
   // `faunaLayer` (voir `this.fauna`) au lieu d'être instanciés comme du
   // mobilier immobile.
   'bush',
-  'treeBroad',
-  'treeConifer',
-  'treeRound',
-  'treeColumnar',
-  'treeOval',
-  'treePalm',
+  // Un arbre planté : rien n'est instancié ici, il porte son essence
+  // (`species`) ou son usage (`plantation`) et part dans la végétation.
+  PLANTED_TREE,
   'vineStock',
   'rockSmall',
   'rockBoulder',

@@ -53,12 +53,15 @@ const RIBBON_CORNERS = [
   [1, 1],
 ];
 
-/** Quatre sommets par goutte, même position de base ; `aCorner` dit lequel. */
+/**
+ * Quatre sommets par goutte, à la même position (la base de la goutte) ;
+ * `aCorner` dit lequel. Coins en octets et index sur 16 bits : 18 000 sommets.
+ */
 function rainGeometry(THREE) {
   const random = randomStream(0x9e3779b9);
   const base = new Float32Array(MAX_DROPS * 4 * 3);
-  const corner = new Float32Array(MAX_DROPS * 4 * 2);
-  const index = new Uint32Array(MAX_DROPS * 6);
+  const corner = new Int8Array(MAX_DROPS * 4 * 2);
+  const index = new Uint16Array(MAX_DROPS * 6);
 
   for (let i = 0; i < MAX_DROPS; i++) {
     const x = (random() * 2 - 1) * SPREAD_M;
@@ -77,9 +80,7 @@ function rainGeometry(THREE) {
   }
 
   const geometry = new THREE.BufferGeometry();
-  // `position` doit exister (three s'en sert pour la sphère englobante), laissée nulle.
-  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(base.length), 3));
-  geometry.setAttribute('aBase', new THREE.BufferAttribute(base, 3));
+  geometry.setAttribute('position', new THREE.BufferAttribute(base, 3));
   geometry.setAttribute('aCorner', new THREE.BufferAttribute(corner, 2));
   geometry.setIndex(new THREE.BufferAttribute(index, 1));
   return geometry;
@@ -98,8 +99,7 @@ function snowGeometry(THREE) {
   }
 
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(base.length), 3));
-  geometry.setAttribute('aBase', new THREE.BufferAttribute(base, 3));
+  geometry.setAttribute('position', new THREE.BufferAttribute(base, 3));
   geometry.setAttribute('aPhase', new THREE.BufferAttribute(phase, 1));
   return geometry;
 }
@@ -134,7 +134,6 @@ function rainMaterial(THREE, uniforms) {
     depthWrite: false, // pas d'ordre entre gouttes : écrire la profondeur ferait clignoter
     side: THREE.DoubleSide, // le ruban tourne avec le filet à l'écran : son sens d'enroulement aussi
     vertexShader: `
-      attribute vec3 aBase;
       attribute vec2 aCorner;
       uniform float uTime;
       uniform float uSpeed;
@@ -147,14 +146,16 @@ function rainMaterial(THREE, uniforms) {
       ${FALL_CHUNK}
       void main() {
         // Vitesse propre à chaque goutte, tirée de sa position : sans elle, l'averse avance en bloc.
-        float pace = 1.0 + ${RAIN_SPEED_SPREAD.toFixed(2)} * (fract(sin(dot(aBase.xz, vec2(12.9898, 78.233))) * 43758.5453) - 0.5);
-        float y = fallHeight(aBase, uTime, uSpeed * pace, uHeight);
+        float pace = 1.0 + ${RAIN_SPEED_SPREAD.toFixed(2)} * (fract(sin(dot(position.xz, vec2(12.9898, 78.233))) * 43758.5453) - 0.5);
+        float y = fallHeight(position, uTime, uSpeed * pace, uHeight);
         // La goutte suit son filet : elle dérive sous le vent d'autant qu'elle descend.
-        vec3 head = vec3(aBase.x - uWind.x * y, y, aBase.z - uWind.y * y);
+        vec3 head = vec3(position.x - uWind.x * y, y, position.z - uWind.y * y);
         // Le filet est tiré vers l'amont de la chute : c'est l'inclinaison qui dit qu'il y a du vent.
         vec3 dir = normalize(vec3(uWind.x, -1.0, uWind.y));
-        vec4 clipHead = projectionMatrix * modelViewMatrix * vec4(head, 1.0);
-        vec4 clipTail = projectionMatrix * modelViewMatrix * vec4(head - dir * ${STREAK_M.toFixed(2)} * pace, 1.0);
+        vec4 viewHead = modelViewMatrix * vec4(head, 1.0);
+        vec4 viewTail = viewHead - modelViewMatrix * vec4(dir * ${STREAK_M.toFixed(2)} * pace, 0.0);
+        vec4 clipHead = projectionMatrix * viewHead;
+        vec4 clipTail = projectionMatrix * viewTail;
 
         // Une extrémité derrière l'œil n'a pas de projection : la goutte est sortie du cadre.
         if (clipHead.w < 0.05 || clipTail.w < 0.05) {
@@ -198,7 +199,6 @@ function snowMaterial(THREE, uniforms) {
     transparent: true,
     depthWrite: false,
     vertexShader: `
-      attribute vec3 aBase;
       attribute float aPhase;
       uniform float uTime;
       uniform float uSpeed;
@@ -207,13 +207,13 @@ function snowMaterial(THREE, uniforms) {
       uniform float uPixelRatio;
       ${FALL_CHUNK}
       void main() {
-        float y = fallHeight(aBase, uTime, uSpeed, uHeight);
+        float y = fallHeight(position, uTime, uSpeed, uHeight);
         // Flottement : deux ondes déphasées par flocon, amplitude croissante avec le vent.
         float flutter = 0.35 + length(uWind) * 0.9;
         vec3 p = vec3(
-          aBase.x + sin(uTime * 0.7 + aPhase) * flutter + uWind.x * 2.0,
+          position.x + sin(uTime * 0.7 + aPhase) * flutter + uWind.x * 2.0,
           y,
-          aBase.z + cos(uTime * 0.55 + aPhase * 1.7) * flutter + uWind.y * 2.0
+          position.z + cos(uTime * 0.55 + aPhase * 1.7) * flutter + uWind.y * 2.0
         );
         vec4 mv = modelViewMatrix * vec4(p, 1.0);
         // Taille en perspective, sinon la neige forme un voile uniforme ; en pixels CSS.

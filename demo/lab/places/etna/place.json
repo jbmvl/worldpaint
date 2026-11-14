@@ -1,0 +1,18 @@
+{
+  "name": "etna",
+  "label": "Etna (flanc est)",
+  "lng": 15.05,
+  "lat": 37.7,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "zoom": 13,
+    "encoding": "terrarium",
+    "extension": "webp",
+    "source": "tiles.mapterhorn.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  }
+}

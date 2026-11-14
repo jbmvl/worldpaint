@@ -21,10 +21,13 @@ export function treePrototype(variant, index = 0, look = defaultTheme.trees.volu
   const bush = variant.kind === 'bushy' || variant.heightM;
   const fronds = ['fern', 'marram', 'palm'].includes(variant.kind);
   const trunk = bush ? .18 : conifer ? .23 : column ? .3 : .4;
-  if (variant.trunk > 0) kit.cylinder({radiusBottom: variant.trunk * .45, radiusTop: variant.trunk * .24, height: profile.trunkHeight ?? .7, radial: 6, color: bark});
-  if (reduced && variant.trunk > 0) reduced.cylinder({radiusBottom: variant.trunk * .45, radiusTop: variant.trunk * .24, height: profile.trunkHeight ?? .7, radial: 4, color: bark});
-  if (fronds) {
-    const base = variant.kind === 'palm' ? .7 : .02;
+  // Sans fonds : l'un est au sol, l'autre dans la houppe.
+  if (variant.trunk > 0) kit.cylinder({radiusBottom: variant.trunk * .45, radiusTop: variant.trunk * .24, height: profile.trunkHeight ?? .7, radial: 6, color: bark, cap: false});
+  if (reduced && variant.trunk > 0) reduced.cylinder({radiusBottom: variant.trunk * .45, radiusTop: variant.trunk * .24, height: profile.trunkHeight ?? .7, radial: detail === 1 ? 4 : 3, color: bark, cap: false});
+  if (variant.kind === 'palm') {
+    palmCrown(kit, reduced, profile, leaf, random);
+  } else if (fronds) {
+    const base = .02;
     for (let i = 0; i < (profile.fronds ?? 9); i++) {
       const angle = i * 2.4;
       const length = .3 + random() * .2;
@@ -41,9 +44,18 @@ export function treePrototype(variant, index = 0, look = defaultTheme.trees.volu
       }
     }
   } else if (conifer) {
-    for (let i=0; i<4; i++) {
-      kit.cylinder({radiusBottom: .43-i*.085, radiusTop: .025, height: .4-i*.035, radial: 7, y: .16+i*.15, color: leaf, colorTop: leaf.map(v=>v*1.15)});
-      if (reduced) reduced.cylinder({radiusBottom: .43-i*.085, radiusTop: .025, height: .4-i*.035, radial: detail === 1 ? 5 : 3, y: .16+i*.15, color: leaf, colorTop: leaf.map(v=>v*1.15)});
+    // Des cônes pointus empilés, chacun deux fois plus haut que l'écart entre
+    // deux étages : la moitié basse de chacun déborde de celui du dessus, et
+    // c'est ce ressaut qui fait lire un sapin plutôt qu'un fuseau. Le dernier
+    // dépasse seul, en pointe. `taper` : rayon du dernier rapporté au premier.
+    const tiers = profile.tiers ?? 4;
+    const taper = profile.taper ?? .3;
+    const base = .12, step = .76 / tiers;
+    for (let i=0; i<tiers; i++) {
+      const y = base + i * step;
+      const tier = {radiusBottom: .45 * (1 - (1 - taper) * i / (tiers - 1)), radiusTop: 0, height: i < tiers - 1 ? 2 * step : 1 - y, y, yaw: i * 2.1, color: leaf, colorTop: leaf.map(v=>v*1.15)};
+      kit.cylinder({...tier, radial: 7});
+      if (reduced) reduced.cylinder({...tier, radial: detail === 1 ? 5 : 3});
     }
   } else {
     const lobes = profile.lobes ?? (column ? 3 : 5);
@@ -53,8 +65,10 @@ export function treePrototype(variant, index = 0, look = defaultTheme.trees.volu
       const cx = Math.cos(angle)*radius;
       const cz = Math.sin(angle)*radius;
       const cy = column ? .43+j*.19 : (profile.crownY ?? (bush ? .3 : .62)) + (j ? random()*.1 : .1);
-      const rx = column ? .25-j*.035 : j ? .25 : .32;
-      const ry = (column ? .25 : j ? .25 : .27) * (profile.rise ?? 1);
+      // Des lobes petits devant leur écart laissent passer le jour (bouleau, olivier).
+      const size = profile.lobeSize ?? 1;
+      const rx = (column ? .25-j*.035 : j ? .25 : .32) * size;
+      const ry = (column ? .25 : j ? .25 : .27) * (profile.rise ?? 1) * size;
       const segments=7, rings=4;
       const points=[];
       const lacet = random() * Math.PI * 2;
@@ -104,8 +118,8 @@ export function treePrototype(variant, index = 0, look = defaultTheme.trees.volu
           appendFruit(kit, point, fruit.radius, fruit.color);
         }
       }
-      if(variant.trunk > 0 && !column && j>0) kit.strutYZ({from:{y:trunk,z:0},to:{y:cy,z:cz},width:.025,color:bark});
-      if(reduced && detail === 1 && variant.trunk > 0 && !column && j>0) reduced.strutYZ({from:{y:trunk,z:0},to:{y:cy,z:cz},width:.025,color:bark});
+      // Les charpentières ne se voient que de près : les niveaux lointains n'en ont pas.
+      if(variant.trunk > 0 && !column && j>0) branch(kit, trunk, cy, cz, .025, bark);
     }
   }
   // Même boîte pour la projection et le volume, sans rognage de la houppe.
@@ -120,6 +134,40 @@ export function treePrototype(variant, index = 0, look = defaultTheme.trees.volu
     result.positions[i]/=width/.94; result.positions[i+1]=.005+(result.positions[i+1]-bottom)/(height-bottom)*.975; result.positions[i+2]/=width/.94;
   }
   return result;
+}
+
+/**
+ * Couronne de palmier : des palmes qui montent puis retombent, les jeunes au
+ * centre plus dressées, les vieilles dessous presque pendantes. C'est la
+ * retombée qui fait lire un palmier ; dressées, elles font un plumeau.
+ */
+function palmCrown(kit, reduced, profile, leaf, random) {
+  const base = profile.trunkHeight ?? .75;
+  const count = profile.fronds ?? 14;
+  const width = profile.bladeWidth ?? .06;
+  for (let i = 0; i < count; i++) {
+    const age = i / (count - 1);
+    const angle = i * 2.4;
+    const cos = Math.cos(angle), sin = Math.sin(angle);
+    const length = .36 + random() * .1 + age * .06;
+    const rise = .16 - age * .1;
+    const droop = .04 - age * .26 + random() * .05;
+    const middle = [cos * length * .5, base + rise, sin * length * .5];
+    const tip = [cos * length, base + droop, sin * length];
+    const left = [middle[0] - sin * width, middle[1], middle[2] + cos * width];
+    const right = [middle[0] + sin * width, middle[1], middle[2] - cos * width];
+    const shade = leaf.map(v => v * (1.12 - age * .22));
+    for (const target of reduced ? [kit, reduced] : [kit]) {
+      target.tri([0, base, 0], left, right, shade);
+      target.tri(left, tip, right, shade.map(v => v * 1.1));
+    }
+  }
+}
+
+/** Charpentière du tronc vers un lobe : un prisme triangulaire ouvert, ses bouts sont dans le tronc et dans la houppe. */
+function branch(kit, fromY, toY, toZ, width, color) {
+  const radius = width / Math.sqrt(3);
+  kit.cylinder({radiusBottom: radius, radiusTop: radius, height: Math.hypot(toY - fromY, toZ), radial: 3, cap: false, y: fromY, tilt: Math.atan2(toZ, toY - fromY), color});
 }
 
 function appendFruit(kit, [x, y, z], radius, color) {

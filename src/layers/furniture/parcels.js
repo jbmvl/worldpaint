@@ -34,6 +34,7 @@ import {
   ROW_CROPS,
   WOOD_PILE_EDGE_MIN,
   farmingWordFor,
+  orchardPlantationFor,
   statedCrop,
 } from '../furniturePlacement.js';
 import {
@@ -42,6 +43,7 @@ import {
   FURNITURE_LIMITS,
   FURNITURE_RADIUS_M,
   FURNITURE_SINK_M,
+  PLANTED_TREE,
 } from './catalog.js';
 import { reachedRadius } from '../../core/decorReach.js';
 import { placeHerd, placeForestGame, placeFauna } from './parcelFauna.js';
@@ -65,6 +67,7 @@ const LAVENDER_ROW_FACET_SALT = 829;
 const VINE_UNSTAKED_SHARE = 0.3;
 /** Sel du tirage qui décide si une parcelle de vigne porte des ceps visibles. */
 const VINE_UNSTAKED_SALT = 761;
+const ORCHARD_SPECIES_SALT = 769;
 
 /**
  * Seuils de détection d'une cour de ferme — voir `looksLikeFarmstead`.
@@ -394,6 +397,9 @@ export function* buildRowsSteps(layer, context, ring, centre, crop, here) {
   // longueur — pas rang par rang, ce qui ferait alterner cep et sans-cep dans
   // le même champ.
   const vineUnstaked = crop === 'vineyard' && randomAt(frame, centre.x, centre.z, VINE_UNSTAKED_SALT) < VINE_UNSTAKED_SHARE;
+  const plantation = crop === 'orchard'
+    ? orchardPlantationFor(layer.region?.farming, randomAt(frame, centre.x, centre.z, ORCHARD_SPECIES_SALT))
+    : null;
   // Perpendiculaire : c'est le long d'elle que les rangs s'échelonnent.
   const spacing =
     crop === 'vineyard' ? 2.4 : crop === 'lavender' ? 1.4 : crop === 'greenhouse' ? GREENHOUSE_SPACING_M : 7;
@@ -509,7 +515,7 @@ export function* buildRowsSteps(layer, context, ring, centre, crop, here) {
           }
         } else {
           for (const tree of spacedAlongPath(path, 6, { margin: 1 })) {
-            const planted = layer._place(placements, 'treeBroad', {
+            const planted = layer._place(placements, PLANTED_TREE, {
               x: tree.x,
               z: tree.z,
               yaw: randomAt(frame, tree.x, tree.z, 67) * Math.PI * 2,
@@ -517,7 +523,7 @@ export function* buildRowsSteps(layer, context, ring, centre, crop, here) {
               // c'est exactement ce qui le distingue d'un bois.
               scale: 0.55 + randomAt(frame, tree.x, tree.z, 68) * 0.12,
             });
-            if (planted) planted.plantation = 'treeApple';
+            if (planted) planted.plantation = plantation;
           }
         }
         layer.counts.rows++;

@@ -31,13 +31,14 @@
  * la donnée ou par le moteur. La liste de ces mots, et le nombre de régions qui
  * les emploient, sort du test : c'est la feuille de route du contenu à faire.
  *
- * ## Deux vocabulaires que le thème rapproche lui-même
+ * ## Les vocabulaires que le thème rapproche lui-même
  *
  * `STONE_KINDS` et `BUILDING_KINDS` ne traduisent vers rien **ici**, et c'est
  * normal : ce qu'une pierre ou un mur vaut à l'œil est une couleur, donc une
  * affaire de thème. Un mot de bâti est la clé d'une palette de
  * `theme.towns`, et `STONE_LOOK` porte une teinte par géologie, que
- * `stoneTintFor` résout.
+ * `stoneTintFor` résout. De même, une essence de `TREE_KINDS` est la clé de
+ * son entrée de `theme.trees.species` — silhouettes et peuplement.
  *
  * Toutes les fonctions sont pures.
  */
@@ -136,6 +137,7 @@ export const BUILDING_KINDS = Object.freeze({
   light_stone_thatch: {},
   light_stone_terrace: {},
   dark_stone_flat_tile: {},
+  dark_stone_terrace: {},
   dark_stone_curved_tile: {},
   dark_stone_slate: {},
   dark_stone_stone_slab: {},
@@ -176,9 +178,10 @@ export const FARMING_KINDS = Object.freeze({
   sunflower: { crop: 'sunflower' },
   rapeseed: { crop: 'rapeseed' },
   vineyard: { crop: 'vineyard' },
-  orchard: { crop: 'orchard' },
-  olive: { crop: 'orchard' },
-  almond: { crop: 'orchard' },
+  orchard: { crop: 'orchard', plantation: 'treeApple' },
+  olive: { crop: 'orchard', plantation: 'treeOlive' },
+  almond: { crop: 'orchard', plantation: 'treeAlmond' },
+  citrus: { crop: 'orchard', plantation: 'treeCitrus' },
   lavender: { crop: 'lavender' },
   fallow: { crop: 'plough' },
   rice: { crop: 'rice' },
@@ -191,44 +194,36 @@ export const FARMING_KINDS = Object.freeze({
 });
 
 /**
- * Les essences dominantes.
+ * Les essences dominantes, de la plus répandue à la moins répandue.
  *
- * Quatre silhouettes seulement sont dessinées (`broadleaf`, `column`,
- * `conifer`, `bushy`) : plusieurs espèces retombent sur la même, et c'est
- * assumé. Ce qui les sépare à l'écran est la hauteur et la teinte du
- * peuplement, qui sont du thème. Nommer l'espèce plutôt que la silhouette est
- * ce qui permet d'affiner plus tard sans toucher au fichier de régions.
+ * Chaque mot est la clé de son entrée du thème (`theme.trees.species`), lue
+ * par les bois comme par les arbres plantés (alignements, parcs, crêtes).
  */
 export const TREE_KINDS = Object.freeze({
-  oak: { essence: 'broadleaf', alignment: 'treeBroad' },
-  beech: { essence: 'broadleaf', alignment: 'treeBroad' },
-  chestnut: { essence: 'broadleaf', alignment: 'treeBroad' },
-  ash: { essence: 'broadleaf', alignment: 'treeBroad' },
-  hornbeam: { essence: 'broadleaf', alignment: 'treeBroad' },
-  alder: { essence: 'broadleaf', alignment: 'treeBroad' },
-  holm_oak: { essence: 'broadleaf', alignment: 'treeRound' },
-  cork_oak: { essence: 'broadleaf', alignment: 'treeRound' },
-  birch: { essence: 'column', alignment: 'treeColumnar' },
-  poplar: { essence: 'column', alignment: 'treeColumnar' },
-  eucalyptus: { essence: 'column', alignment: 'treeColumnar' },
-  scots_pine: { essence: 'conifer', alignment: 'treeConifer' },
-  maritime_pine: { essence: 'conifer', alignment: 'treeConifer' },
-  black_pine: { essence: 'conifer', alignment: 'treeConifer' },
-  spruce: { essence: 'conifer', alignment: 'treeConifer' },
-  fir: { essence: 'conifer', alignment: 'treeConifer' },
-  larch: { essence: 'conifer', alignment: 'treeConifer' },
-  // Un pin d'Alep ou un pin parasol est un conifère dans un massif et une
-  // boule en bord de route : la même espèce, dans deux catalogues.
-  aleppo_pine: { essence: 'conifer', alignment: 'treeRound' },
-  stone_pine: { essence: 'conifer', alignment: 'treeRound' },
-  olive: { essence: 'bushy', alignment: 'treeOval' },
-  juniper: { essence: 'bushy', alignment: 'treeOval' },
-  acacia: {
-    essence: 'bushy',
-    alignment: 'treeRound',
-    unsupported: 'aucune silhouette de parasol épineux',
-  },
-  palm: { essence: 'column', alignment: 'treePalm' },
+  oak: {},
+  beech: {},
+  chestnut: {},
+  ash: {},
+  hornbeam: {},
+  alder: {},
+  holm_oak: {},
+  cork_oak: {},
+  birch: {},
+  poplar: {},
+  eucalyptus: {},
+  scots_pine: {},
+  maritime_pine: {},
+  black_pine: {},
+  spruce: {},
+  fir: {},
+  larch: {},
+  aleppo_pine: {},
+  stone_pine: {},
+  olive: {},
+  carob: {},
+  juniper: {},
+  acacia: { unsupported: 'aucune silhouette de parasol épineux' },
+  palm: {},
 });
 
 /** Les cinq vocabulaires, par champ du dossier de région. */
@@ -284,14 +279,9 @@ export function cropForFarming(word) {
   return FARMING_KINDS[word]?.crop ?? null;
 }
 
-/** Silhouette de peuplement qu'une essence emprunte, ou `null`. */
-export function essenceForTree(word) {
-  return TREE_KINDS[word]?.essence ?? null;
-}
-
-/** Silhouette de mobilier qu'une essence emprunte en alignement, ou `null`. */
-export function alignmentShapeForTree(word) {
-  return TREE_KINDS[word]?.alignment ?? null;
+/** Arbre planté en rangs (clé de `theme.trees.plantations`) qu'un mot de verger désigne, ou `null`. */
+export function plantationForFarming(word) {
+  return FARMING_KINDS[word]?.plantation ?? null;
 }
 
 /** Tous les mots d'un dossier de région, avec leur champ. Fonction pure. */
@@ -321,43 +311,13 @@ export function unsupportedWords(region) {
 }
 
 /**
- * Réduit une liste de contenus à ceux qui citent au moins un des mots donnés.
- *
- * C'est la **seule** mécanique de filtrage du projet, et elle est délibérément
- * pauvre : une entrée du thème porte une liste de mots (`species` pour un
- * peuplement), et elle est retenue si un seul d'entre eux figure dans ceux du
- * pays. Une entrée qui n'en porte pas est
- * retenue partout.
- *
- * **Le repli est la liste entière.** Un pays sans contenu dédié rend un décor
- * générique, jamais un décor vide : lever ici aborterait `refresh` et
- * emporterait toutes les couches suivantes (voir `CONTRIBUTING.md`). Le
- * garde-fou est ailleurs, dans les tests, où un mot sans contenu est une erreur
- * franche au lieu d'un paysage silencieusement générique.
- *
- * Fonction pure.
- *
- * @param {Array<{species?: string[]}>} items
- * @param {string} key Nom du champ qui porte les mots dans une entrée.
- * @param {string[]|null} words Les mots du pays.
- */
-export function filterByWords(items, key, words) {
-  if (!Array.isArray(items) || !Array.isArray(words) || words.length === 0) return items;
-  const wanted = new Set(words);
-  const matching = items.filter(
-    (item) => !item?.[key] || item[key].some((word) => wanted.has(word))
-  );
-  return matching.length > 0 ? matching : items;
-}
-
-/**
  * Parts d'une liste ordonnée par dominance, prêtes pour `pickShare`.
  *
  * Le rang **est** l'information : un dossier de région écrit ses cultures et
  * ses essences de la plus répandue à la moins répandue, et rien d'autre. La loi
  * est harmonique — la n-ième pèse `1/n` avant normalisation —, ce qui donne à
  * peu près la moitié à la première, le quart à la deuxième. Une seule règle,
- * la même pour l'assolement et pour les alignements de route, et prévisible
+ * la même pour l'assolement, les bois et les alignements de route, et prévisible
  * quand on écrit une région : déplacer un mot d'un rang se voit.
  *
  * Fonction pure.

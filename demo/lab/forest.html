@@ -6,11 +6,13 @@
 <body><div id="info"><button id="compare" disabled>Comparer les maillages</button><label> Détail <select id="detail"><option value="auto">automatique</option><option value="full">complet</option></select></label><pre id="results">Chargement…</pre></div><script type="module">
 /*
  * Banc de la forêt — le coût d'une forêt pleine, hors réseau. Neuf tuiles de
- * bulle (3 × 3, 834 m de côté) semées par la vraie `VegetationLayer` sur un
+ * bulle (3 × 3, 834 m de côté, autour de Montreuil-Bellay : les mailles du
+ * sol y ont leur taille réelle) semées par la vraie `VegetationLayer` sur un
  * sol plat dont la part de bois vaut `wood` partout : peuplement et sous-étage.
  *
- *   forestLab.set({ wood: 1, view: 'sol' | 'haut', x: 0 })
+ *   forestLab.set({ wood: 1, view: 'sol' | 'haut' | 'lisiere', x: 0, trees: ['spruce', 'fir'] })
  *   ?saison=automne : la tranche d'automne (`themes/autumn.js`)
+ *   ?essences=spruce,fir,larch : les essences d'un pays (`region.trees`), sinon celles du thème
  *   await forestLab.measure(60)   // ms par image (rendu + glFinish), appels, triangles
  *
  * `x` déplace l'observateur (et la caméra) le long de l'axe est-ouest. Les
@@ -21,11 +23,16 @@ import { VegetationLayer } from '/src/layers/vegetationLayer.js';
 import { resolveTheme } from '/src/themes/theme.js';
 import { autumnTheme } from '/src/themes/autumn.js';
 import { SHADOW_RADIUS_M } from '/src/environment/shadowFrame.js';
+import { createLocalFrame } from '/src/core/tileMath.js';
 
 const params = new URLSearchParams(location.search);
 const width = params.has('mobile') ? 360 : 1600;
 const height = params.has('mobile') ? 640 : 900;
-const TILE_M = 834;
+const frame = createLocalFrame(-0.145, 47.131, 15);
+const TILE_M = frame.scale;
+const [tileX, tileY] = [Math.floor(frame.origin.x), Math.floor(frame.origin.y)];
+/** Lisière sud du bois, en mètres locaux. */
+const SOUTH_EDGE_M = (tileY + 2 - frame.origin.y) * TILE_M;
 const theme = resolveTheme(params.get('saison') === 'automne' ? autumnTheme : null);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -50,32 +57,35 @@ sun.shadow.mapSize.set(2048, 2048);
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.6;
 scene.add(sun, sun.target);
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(TILE_M * 3, TILE_M * 3).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x789250 }));
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(TILE_M * 4, TILE_M * 4).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0x789250 }));
+ground.position.set((tileX + 0.5 - frame.origin.x) * TILE_M, 0, (tileY + 0.5 - frame.origin.y) * TILE_M);
 ground.receiveShadow = true;
 scene.add(ground);
 
-const state = { wood: 1, view: params.get('view') || 'sol', x: 0, detail: 'auto' };
+const state = { wood: 1, view: params.get('view') || 'sol', x: 0, detail: 'auto', trees: params.get('essences')?.split(',') ?? null };
 let layer = null;
 
 function build() {
   layer?.dispose();
   const tiles = new Map();
   for (let ty = -1; ty <= 1; ty++) for (let tx = -1; tx <= 1; tx++) {
-    tiles.set(`${tx}:${ty}`, { key: `${tx}:${ty}`, x: tx, y: ty, ring: Math.max(Math.abs(tx), Math.abs(ty)) });
+    tiles.set(`${tx}:${ty}`, { key: `${tx}:${ty}`, x: tileX + tx, y: tileY + ty, ring: Math.max(Math.abs(tx), Math.abs(ty)) });
   }
   layer = new VegetationLayer({
     THREE, scene,
-    bubble: { frame: { zoom: 15, scale: TILE_M, origin: { x: 0.5, y: 0.5 } }, tiles, surfaceElevationAtLocal: () => 0, verticalScale: 1 },
+    bubble: { frame, tiles, surfaceElevationAtLocal: () => 0, verticalScale: 1 },
     groundClass: { woodAt: () => state.wood, coverageOf: () => 1 },
     theme,
   });
   layer.setWind({ amplitude: 0, speed: 0 });
+  layer.setRegion(state.trees ? { trees: state.trees } : null);
   layer.sync();
   while (layer.processQueue(Infinity));
 }
 
 function aim() {
   if (state.view === 'haut') { camera.position.set(state.x, 60, 0); camera.lookAt(state.x, 0, -400); }
+  else if (state.view === 'lisiere') { camera.position.set(state.x, 1.7, SOUTH_EDGE_M + 45); camera.lookAt(state.x, 9, SOUTH_EDGE_M - 60); }
   else { camera.position.set(state.x, 2, 0); camera.lookAt(state.x, 4, -100); }
   layer.update(state.x, 0, { force: true });
   if (state.detail === 'full') layer.group.traverse(mesh => {
@@ -113,7 +123,7 @@ async function measure(frames = 60) {
 
 window.forestLab = {
   set(options = {}) {
-    const rebuild = 'wood' in options && options.wood !== state.wood;
+    const rebuild = ('wood' in options && options.wood !== state.wood) || ('trees' in options && String(options.trees) !== String(state.trees));
     Object.assign(state, options);
     if (rebuild) build();
     render();

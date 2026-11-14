@@ -39,10 +39,15 @@ couches sont ouvertes, et **elles seules** :
 | `poi` | `buildingLayer`, `furnitureLayer` | fonction d'un bâtiment, abribus, fontaines, châteaux |
 | `place` | `settlement` | nom et rang d'une agglomération |
 | `mountain_peak` | `furnitureLayer` | sommets, pour les antennes |
+| `park` | `furnitureLayer` | espaces sauvages protégés, où ne se posent ni éolienne, ni pylône, ni antenne |
 
-La couche `park` **n'est pas lue** : au schéma OpenMapTiles elle ne contient
-aucun parc de ville mais des périmètres de protection (Natura 2000, parcs
-nationaux), qui ne disent rien de la matière du sol. Voir `docs/surfaces.md`.
+La couche `park` ne peint **rien au sol** : au schéma OpenMapTiles elle ne
+contient aucun parc de ville mais des périmètres de protection (Natura 2000,
+parcs nationaux), qui ne disent rien de la matière du sol. Voir
+`docs/surfaces.md`. Sa classe est le titre de protection en texte libre ; seuls
+`national_park`, `nature_reserve`, `wildlife_refuge` et `wilderness_preserve`
+écartent les repères d'horizon — un parc régional (`conservation`) ou un site
+Natura 2000 couvre des campagnes entières, éoliennes comprises.
 
 **Relief** : tuiles Mapterhorn, un MNT de sol nu assemblé des relevés nationaux
 (lidar de 0,5 à 5 m en France et dans la plupart de l'Europe) et de Copernicus
@@ -75,7 +80,9 @@ tuiles de côté — 6,5 km de rayon — lue dans un MNT seize fois plus grossie
 à 54 m de maille. Elle n'a **qu'une couleur** : celle de la matière que le
 pays met là où la carte se tait, telle que le matériau du terrain l'a lavée.
 Ni bois, ni roche, ni route, ni arbre : c'est une silhouette, que la
-perspective aérienne bleuit.
+perspective aérienne bleuit. Seule la **mer** y a sa teinte : là où le MNT est
+à zéro ou dessous, la nappe prend l'eau du sol de la bulle (albédo et reflet
+du ciel, sans rides ni éclat), et la côte se coupe au milieu des mailles.
 
 Elle ne se monte que **là où il y a du relief à voir** : l'amplitude des
 altitudes lues sous la nappe doit dépasser 200 m (`FAR_RELIEF_MIN_M`). Entre
@@ -223,29 +230,65 @@ Ils poussent là où la carte du sol dit « bois », et nulle part ailleurs — 
 donnée que le shader, donc jamais de contradiction. Dans un pays dont la
 matrice est boisée, la carte dit « bois » partout où le vectoriel se tait,
 sauf au-dessus de 2000 m, dans les emprises habitées et à 15 m d'un bâtiment
-(voir `docs/surfaces.md`). Le **peuplement** est tiré
-sur une maille de terrain, parmi les types dont la liste `species` cite une
-essence du pays :
+(voir `docs/surfaces.md`).
 
-| Peuplement | Essences citées | Hauteur | Densité | Sous-bois |
-| --- | --- | --- | --- | --- |
-| futaie | chêne, hêtre, frêne, charme | 12–22 m | 0,95 | 0,12 |
-| pinède | pin maritime, pin sylvestre | 11–19 m | 1,45 | 0,08 |
-| taillis | châtaignier, charme, aulne, chêne, chêne-liège | 3,5–7 m | 1,75 | 0,55 |
-| mixte | chêne, hêtre, pin sylvestre, bouleau | 7–16 m | 1,3 | 0,34 |
-| pinède méditerranéenne | pin d'Alep, pin parasol | 7–14 m | 0,85 | 0,45 |
-| chênaie verte | chêne vert, chêne-liège | 6–11 m | 1,25 | 0,4 |
-| pinède de montagne | pin noir | 11–20 m | 1,05 | 0,2 |
-| taïga | épicéa | 9–18 m | 1,5 | 0,18 |
-| bétulaie | bouleau | 4–11 m | 1,1 | 0,35 |
-| pessière subalpine | mélèze, sapin | 8–16 m | 1,2 | 0,16 |
-| bosquet sec | genévrier, pin d'Alep | 3–8 m | 0,55 | 0,55 |
-| bois rabougri | bouleau | 3–7 m | 0,85 | 0,5 |
-| palmeraie | palmier | 6–12 m | 0,6 | 0,35 |
+Chaque maille de 420 m tire son **essence dominante** parmi celles du pays
+(`region.trees`), selon les parts que donne leur rang : à peu près la moitié
+des mailles pour la première, le quart pour la deuxième. Cette essence désigne
+par clé, dans le thème (`TREE_SPECIES`), ses silhouettes et son
+**peuplement**. La maille est faite de **bosquets** d'une seule essence, qui
+sont aussi les blocs de rendu (huit par côté de tuile, environ 105 m à 47°) :
+un bosquet a la chance `purity` d'être de l'essence dominante, sinon d'une
+autre essence du pays au prorata de son rang, et il garde le peuplement de la
+maille (hauteurs, densité, sous-bois). Une essence par bloc borne les maillages
+d'un bloc, donc ses appels de dessin, quel que soit le nombre d'essences du
+pays. Hors de tout pays, les essences sont celles de `DEFAULT_TREE_SPECIES`
+(chêne, hêtre, pin sylvestre, bouleau).
 
-La pinède et la pinède méditerranéenne ont leurs propres silhouettes : un long
-fût sous une cime haute (pin maritime, pin sylvestre adulte) et une cime en
-parasol (pin parasol, pin d'Alep).
+| Peuplement | Formé par | Hauteur | Densité | Sous-bois | Pureté |
+| --- | --- | --- | --- | --- | --- |
+| futaie | chêne, hêtre, frêne, peuplier, eucalyptus | 12–22 m | 0,95 | 0,12 | 0,7 |
+| pinède | pin maritime, pin sylvestre | 11–19 m | 1,45 | 0,08 | 0,85 |
+| taillis | châtaignier, charme, aulne | 3,5–7 m | 1,75 | 0,55 | 0,65 |
+| pinède méditerranéenne | pin d'Alep, pin parasol | 7–14 m | 0,85 | 0,45 | 0,7 |
+| chênaie verte | chêne vert, chêne-liège | 6–11 m | 1,1 | 0,3 | 0,7 |
+| pinède de montagne | pin noir | 11–20 m | 1,05 | 0,2 | 0,75 |
+| pessière | épicéa | 9–18 m | 1,44 | 0,17 | 0,85 |
+| bétulaie | bouleau | 4–11 m | 1,1 | 0,35 | 0,7 |
+| sapinière | sapin | 8–16 m | 1,2 | 0,16 | 0,7 |
+| mélézin | mélèze | 8–16 m | 0,85 | 0,22 | 0,75 |
+| bosquet sec | olivier, genévrier, acacia | 3–8 m | 0,55 | 0,55 | 0,6 |
+
+Silhouettes propres : chêne (houppe large et basse), hêtre (houppe haute et
+lisse, fût gris), bouleau (fût blanc, houppe légère), chêne vert et chêne-liège
+(boule sombre), eucalyptus (fût pâle, cime grise clairsemée), olivier (bas,
+gris-vert argenté), frêne (houppe claire), charme (houppe ovale serrée, fût
+gris), aulne (houppe étroite et haute, écorce noirâtre), sapin (quatre étages
+francs, cône large), épicéa (cinq étages, plus sombre, pointe fine), mélèze
+(trois étages, clair), pin maritime (long fût brun-rouge, cime haute et
+sombre), pin sylvestre (fût orange, cime bleu-vert en bouquets), pin d'Alep et
+pin parasol (parasol). Le châtaignier prend la silhouette du chêne, le peuplier
+une colonne, le genévrier et l'acacia un arbuste. Un conifère est une pile de
+cônes pointus dont chacun déborde de celui du dessus : c'est le ressaut des
+étages qui le distingue d'un fuseau. `demo/lab/trees.html?essences` les montre
+par leur nom.
+
+### Les arbres plantés
+
+Hors des bois, un arbre posé par le mobilier est un **arbre planté** (la forme
+`tree` du catalogue, un seul plafond pour tous) : il porte son essence, et part
+dans la végétation, en instances, par blocs de six par côté de tuile. Son
+essence se lit dans la même table que la forêt (`TREE_SPECIES`, première
+silhouette, et `planted` : hauteur et largeur d'un arbre poussé seul), tirée
+parmi celles du pays aux mêmes parts que ses bois (`plantedSpeciesShares`).
+
+| Qui plante | Ce qu'il lit |
+| --- | --- |
+| alignement de route, arbres de rue (`roadsideFurniture.js`) | une essence du pays par chaîne |
+| arbres de parc, de place, de bourg (`townTrees.js`) | une essence du pays par maille |
+| arbre de crête (`landmarks.js`) | une essence du pays par arbre |
+| verger (`parcels.js`) | l'arbre que l'assolement du pays nomme parmi ses mots de verger — olivier, amandier, agrume, pommier (`trees.plantations`, via `FARMING_KINDS[mot].plantation`) ; le pommier sans pays |
+| buissons de jardin (`gardenLayer.js`) | les arbustes `bushy` : un usage, pas une région |
 
 La **lisière** conserve la hauteur des arbres adultes et augmente la part de
 strate basse (+55 %). Son sous-étage ne porte que des buissons, sans jeunes arbres.
@@ -441,6 +484,7 @@ la sépare de la rue.
 | `place_of_worship` | murs de pierre, comble de nef, hautes baies en pointe et clocher ; minaret et coupole si `subclass=muslim` |
 | `castle` | murs de pierre, comble, baies étroites et tours coiffées aux angles de l’empreinte |
 | `city_wall`, `citywalls`, `castle_wall`, `town_wall`, `rampart`, `barrier=wall` | mur plein de pierre, sommet plat, sans fenêtres ni comble |
+| `subclass=ruins`, ou `attraction`/`theatre` au nom antique (« Tempio », « Teatro Greco », « Anfiteatro ») | ruine sans toit dessinée sur l’emprise (`ruinGeometry`) : temple (nom, ou rectangle plein allongé ≥ 1,9) à péristyle debout ou ruiné, théâtre adossé à la pente, amphithéâtre, sinon murs arasés |
 | `hospital` | murs clairs, toit plat |
 | `mall`, `department_store`, `supermarket` | grande surface, toit plat, entrée vitrée et enseigne, sans fenêtres résidentielles |
 | `bakery` | devanture en bois verni |
@@ -522,7 +566,16 @@ moitiés jusqu'à ce qu'elles se séparent, puis la pointe de l'îlot ; personne
 n'y cède le passage. Une chaussée à sens unique a la largeur d'un sens
 (`oneway` du profil, dans le thème), sans axe peint.
 Un chemin de terre n'entre pas dans le carrefour d'une route revêtue : il passe
-dessous, la route et son marquage restent entiers. Une piste cyclable, revêtue, en reste une branche.
+dessous, la route et son marquage restent entiers.
+
+Chemins et sentiers sont **aplanis** comme les routes, sur un graphe à part et
+une fois le terrain des routes posé : la section est de niveau en travers, le
+profil en long lissé dans un terrassement court (`pathGradeAllowance`), et le
+terrain les porte, déblai comme remblai, sans falaise ni mur. Leur banquette a
+la largeur de la maille du terrain ; au-delà de leur emprise, ils ne déplacent
+pas le sol de plus de 1,5 m (`PATH_EARTHWORK_MAX_M`), et un sommet de la maille
+n'obéit qu'au chemin le plus proche — sans quoi un lacet creuserait sous celui
+du dessus. Une piste cyclable, revêtue, en reste une branche.
 
 `brunnel` décide de l'ouvrage : un pont reçoit tablier, piles, culées et
 parapets ; un tunnel, sa chaussée continue, sa voûte ouverte aux extrémités et ses têtes.
@@ -643,13 +696,18 @@ La lame et le texte partagent le gabarit `theme.furniture.placeNameSign` :
 
 La **glissière** protège l'extérieur des virages (courbure ≥ 0,012 rad/m),
 même sur terrain plat, et chaque rive qui combine au moins 90 cm de surplomb
-et un versant franc (14 %). Les voies de desserte (`lane`) et pistes (`track`)
-exigent ce surplomb même en virage : elles sont donc moins souvent équipées.
+et un versant franc (14 %). Les voies de desserte (`lane`) exigent ce surplomb
+même en virage : elles sont donc moins souvent équipées.
 En climat alpin ou glacial, le seuil de surplomb est divisé par deux et celui
-de courbure multiplié par 0,6. Les sentiers restent sans parapet.
+de courbure multiplié par 0,6.
 L’acier est le matériau par défaut, y compris sur les routes `minor`.
-Le bois est réservé aux dessertes et pistes (`lane`, `track`) hors agglomération
-ou dans une région d’estive alpine. Sans contexte connu, l’acier est retenu. Les protections
+Le bois est réservé aux dessertes (`lane`) hors agglomération
+ou dans une région d’estive alpine. Sans contexte connu, l’acier est retenu.
+Chemins, sentiers et escaliers (`track`, `path`, `steps`) n'ont qu'une
+**rambarde de bois**, et seulement à pic : versant de plus de 45° en travers,
+2,5 m de vide sous la rive, sur quatre lignes au moins. Au-delà de 100 % de
+pente en long, le tracé longe une paroi plutôt qu'il ne la parcourt, et n'en a
+pas. Les protections
 s'interrompent aux bouches des carrefours et devant une chaussée voisine.
 
 Le **talus enherbé** garnit un bas-côté sur trois environ (34 %), d'un seul
@@ -746,11 +804,11 @@ qui la rend habitée — du linge qui sèche, des poules.
 
 | Objet | Régime | Condition |
 | --- | --- | --- |
-| **éolienne** | inventé | maille de 320 m, 8 % — hors bâti, hors route, sur un point haut |
+| **éolienne** | inventé | maille de 320 m, 8 % — hors bâti, hors route, hors espace sauvage protégé, sur un point haut |
 | **pylône** | inventé | mêmes conditions, 6 % |
-| **antenne de sommet** | relevé | sur un `mountain_peak` de classe `peak`, un sur trois ; recalée sur le maximum du relief naturel à moins de 100 m, contrôlé tout autour jusqu'à 140 m ; ni col, ni route, ni eau, ni bâti |
+| **antenne de sommet** | relevé | sur un `mountain_peak` de classe `peak`, un sur trois ; recalée sur le maximum du relief naturel à moins de 100 m, contrôlé tout autour jusqu'à 140 m ; ni col, ni route, ni eau, ni bâti, ni espace sauvage protégé |
 | **phare** | relevé | sur le trait de côte d'une nappe `ocean`, un point sur quarante (~2,5 km), monté au point le plus haut dans un rayon de 500 m, à moins de 120 m du rivage ; la nuit, un halo à la lanterne et deux faisceaux qui tournent (`lighthouseLight`) |
-| **arbre de crête** | inventé | maille de 140 m, 3,5 %, sur un point haut dégagé — résineux une fois sur trois |
+| **arbre de crête** | inventé | maille de 140 m, 3,5 %, sur un point haut dégagé — une essence du pays |
 | **moulin à vent** | inventé | hameau (moins de 20 bâtiments), 10 % |
 | **moulin à eau** | inventé | hameau, 6 % |
 | **château d'eau** | inventé | bourg (20 à 150 bâtiments), 30 % |
@@ -1104,9 +1162,9 @@ existants ne nous parviennent jamais.
 **Ourlet** — une bande de matière ajoutée le long d'une ligne (ici, les sept
 mètres de bois de part et d'autre d'un cours d'eau). Voir *ripisylve*.
 
-**Peuplement** — la composition d'un massif forestier : quelles essences, à
-quelle hauteur, à quelle densité, avec quel sous-bois. Tiré une fois par massif
-parmi les types dont une essence figure dans celles du pays.
+**Peuplement** — la structure d'un massif forestier : à
+quelle hauteur, à quelle densité, avec quel sous-bois. Désigné par l’essence
+qui domine la maille de 420 m, tirée selon le rang des essences du pays.
 
 **Plate-forme** — l'assise horizontale sur laquelle une route est posée, une
 fois le terrain entaillé ou remblayé. Une route ne suit pas le terrain brut :
@@ -1163,17 +1221,20 @@ règle le port, la largeur, les teintes de feuillage, leurs variations et
 l'écorce. Les arbres isolés du mobilier et les buissons de jardin publient
 leurs placements ; `worldComposer` les transmet au même rendu que le
 peuplement. Rotation, taille et teinte varient selon un tirage ancré au sol.
-Les vergers emploient un pommier bas à couronne étalée, avec des pommes
-facettées intégrées au prototype, sans objet ni instance par fruit. C'est une
-représentation générique du verger : les données de parcelle ne précisent pas
-ici la variété fruitière et aucune saison de fructification n'est simulée.
+Un verger est planté d'une seule espèce, tirée par parcelle parmi les mots de
+verger de l'assolement du pays (`orchardPlantationFor`) : olivier, amandier,
+agrume ou pommier. Le pommier, qui sert aussi sans pays, porte des pommes
+facettées intégrées au prototype, sans objet ni instance par fruit. Les autres
+reprennent une silhouette existante (l'olivier, le feuillu bas, la boule du
+chêne vert pour l'agrume) : aucune saison de fructification n'est simulée.
 
 Les plantes restent en volume à toute distance. Les blocs éloignés emploient
 deux géométries simplifiées des mêmes lobes, au-delà de 150 et 280 m du point
 le plus proche de leur sphère, avec une marge de 20 m entre aller et retour.
 Le volume complet est conservé sous 130 m ; les semis, couleurs et matrices
-ne changent pas avec le niveau de détail. Les instances sont rangées par bloc de 125 m
-(`VEGETATION_BLOCK_M`) et par silhouette ; l'élimination hors champ, celle de
+ne changent pas avec le niveau de détail. Les instances sont rangées par bloc
+(`VEGETATION_BLOCKS_PER_TILE` par côté de tuile, une grille du sol) et par
+silhouette ; l'élimination hors champ, celle de
 l'image comme celle de la passe d'ombre, écarte les blocs invisibles. Un bloc
 plus grand que la boîte d'ombre (220 m) y ferait entrer tous ses arbres. Le
 peuplement projette son ombre, le sous-étage la reçoit seulement.
@@ -1188,10 +1249,13 @@ poids est sous la part du moment restent dessinées. Une plante proche ne
 disparaît donc jamais, et une plante lointaine ne réapparaît qu'à sa place.
 
 Le banc hors réseau `demo/lab/trees.html` permet d'examiner chaque variante et
-les plantations ; `treesLab.set()` accepte `variant`, `angle`, `plantations` et
-`dense`. Le banc `demo/lab/forest.html` sème une forêt pleine par la vraie
-couche, peuplement et sous-étage, et en mesure le coût
-(`forestLab.measure()`, `forestLab.sowing()`).
+l'arbre planté de chaque essence ; `treesLab.set()` accepte `variant`, `angle`,
+`plantations` et `dense`. Le banc `demo/lab/forest.html` sème une forêt pleine
+par la vraie couche, peuplement et sous-étage, sur neuf tuiles autour de
+Montreuil-Bellay, et en mesure le coût (`forestLab.measure()`,
+`forestLab.sowing()`) ; `?essences=spruce,fir,larch` lui donne les essences
+d'un pays, et `view: 'lisiere'` regarde le bois depuis un pré, à hauteur
+d'homme.
 
 ### Vent et feuilles emportées
 

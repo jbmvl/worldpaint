@@ -15,7 +15,7 @@
  */
 
 import { randomAt, randomStream } from '../core/groundSeed.js';
-import { cropForFarming, sharesFor } from '../core/regionInterpretation.js';
+import { cropForFarming, plantationForFarming, sharesFor } from '../core/regionInterpretation.js';
 
 /**
  * Répartit des points à pas constant le long d'une polyligne ré-échantillonnée.
@@ -339,6 +339,25 @@ export function farmingWordFor(properties = {}, variant = 0, farming = null) {
   if (subclass === 'vineyard' || subclass === 'orchard' || subclass === 'plant_nursery') return null;
   if (klass !== 'farmland' || !farming?.length) return null;
   return pickShare(sharesFor(farming), variant);
+}
+
+/** Arbre d'un verger dont le pays ne dit pas l'espèce. */
+export const DEFAULT_ORCHARD_PLANTATION = 'treeApple';
+
+/**
+ * Arbre planté dans un verger : tiré parmi les mots de verger de l'assolement
+ * (olivier, amandier, agrume…), aux parts de leur rang entre eux. Un verger
+ * relevé par la carte n'en dit pas l'espèce ; le pays la donne.
+ *
+ * Fonction pure.
+ *
+ * @param {string[]|null} farming Assolement du pays (`region.farming`).
+ * @param {number} variant Tirage dans [0, 1[ attaché à la parcelle.
+ */
+export function orchardPlantationFor(farming, variant) {
+  const words = (farming ?? []).filter((word) => plantationForFarming(word));
+  if (!words.length) return DEFAULT_ORCHARD_PLANTATION;
+  return plantationForFarming(pickShare(sharesFor(words), variant));
 }
 
 /**
@@ -992,21 +1011,26 @@ export const CURVE_RAIL_CURVATURE = 0.012;
 /**
  * Le parapet d'une rive, et de quelle matière — ou `null` s'il n'en faut pas.
  * L'extérieur d'une courbe se protège même sur terrain plat ; une ligne
- * droite exige un surplomb et un versant franc. Les voies de desserte et
- * pistes gardent l'exigence du surplomb, même en courbe.
+ * droite exige un surplomb et un versant franc. Les voies de desserte gardent
+ * l'exigence du surplomb, même en courbe.
  * En climat alpin ou glacial, les seuils de courbure et de vide sont abaissés.
- * L’acier est la règle ; le bois est réservé aux dessertes et pistes en
- * campagne ou en montagne. Sans contexte explicite, la protection est en acier.
+ * L’acier est la règle ; le bois est réservé aux dessertes en campagne ou en
+ * montagne. Sans contexte explicite, la protection est en acier.
+ * Un chemin, un sentier ou un escalier n'a qu'une rambarde de bois, et
+ * seulement à pic (`PATH_RAIL_SLOPE`, `PATH_RAIL_MIN_DROP_M`).
  *
  * @returns {'steel'|'wood'|null}
  */
-export function guardrailStyleFor({ profile = 'minor', slope = 0, curvature = 0, drop = 0, climate = null, rural = false, mountain = false } = {}) {
+export function guardrailStyleFor({ profile = 'minor', slope = 0, curvature = 0, drop = 0, grade = 0, climate = null, rural = false, mountain = false } = {}) {
+  if (isPathProfile(profile)) {
+    return slope >= PATH_RAIL_SLOPE && drop >= PATH_RAIL_MIN_DROP_M && Math.abs(grade) <= PATH_RAIL_MAX_GRADE ? 'wood' : null;
+  }
   const alpine = climate === 'alpine' || climate === 'glacial';
   const minDrop = alpine ? GUARDRAIL_MIN_DROP_M * 0.5 : GUARDRAIL_MIN_DROP_M;
   const curveThreshold = alpine ? CURVE_RAIL_CURVATURE * 0.6 : CURVE_RAIL_CURVATURE;
   const curve = curvature >= curveThreshold;
   const ravine = drop >= minDrop && slope >= STEEP_CROSS_SLOPE;
-  const smallRoad = profile === 'lane' || profile === 'track';
+  const smallRoad = profile === 'lane';
   if (!(ravine || (curve && (!smallRoad || drop >= minDrop)))) return null;
   if (profile === 'express' || profile === 'major' || profile === 'minor') return 'steel';
   if (smallRoad) return rural || mountain || alpine ? 'wood' : 'steel';
@@ -1015,6 +1039,26 @@ export function guardrailStyleFor({ profile = 'minor', slope = 0, curvature = 0,
 
 /** Surplomb minimal de la rive aval pour qu'un parapet ait une raison d'être. */
 export const GUARDRAIL_MIN_DROP_M = 0.9;
+/**
+ * Un chemin est à pic quand le versant qu'il traverse dépasse 45° en travers
+ * et que sa rive aval surplombe le sol d'autant : un versant raide, même
+ * longé de près, n'appelle pas de rambarde.
+ */
+export const PATH_RAIL_SLOPE = 1;
+export const PATH_RAIL_MIN_DROP_M = 2.5;
+/**
+ * Pente en long au-delà de laquelle un tracé ne se parcourt plus à pied sans
+ * les mains : passage d'escalade, ou relevé qui longe une paroi. Une rambarde
+ * y dessinerait un trait le long du rocher.
+ */
+export const PATH_RAIL_MAX_GRADE = 1;
+/** Lignes contiguës qu'il faut à une rambarde de chemin : plus courte, elle se lit comme un débris. */
+export const PATH_RAIL_MIN_ROWS = 4;
+
+/** Chemin, sentier ou escalier : ce qui se parcourt à pied ou en tracteur, pas en voiture. */
+export function isPathProfile(profile) {
+  return profile === 'track' || profile === 'path' || profile === 'steps';
+}
 
 /**
  * Ce qui garnit le bas-côté d'une portion de route : une haie basse d'un seul

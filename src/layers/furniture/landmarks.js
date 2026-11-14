@@ -16,9 +16,10 @@ import { finishGeneration } from '../../core/generationSteps.js';
 import { lngToTileX, latToTileY } from '../../core/tileMath.js';
 import { resamplePath } from '../ribbonGeometry.js';
 import { WATER_SOURCE_LAYER } from '../../terrain/groundClassMap.js';
-import { pointInAreas } from '../settlement.js';
-import { rockKindFor, ringCentroid } from '../furniturePlacement.js';
-import { FURNITURE_LIMITS, FURNITURE_RADIUS_M } from './catalog.js';
+import { pointInAreas, ringsOf } from '../settlement.js';
+import { rockKindFor, ringCentroid, pickShare } from '../furniturePlacement.js';
+import { FURNITURE_LIMITS, FURNITURE_RADIUS_M, PLANTED_TREE } from './catalog.js';
+import { plantedSpeciesShares } from '../plantedTrees.js';
 import { reachedRadius } from '../../core/decorReach.js';
 import { randomAt, worldCellsAround, worldCellsIn } from '../../core/groundSeed.js';
 
@@ -217,6 +218,37 @@ export function* buildRocksSteps(layer, context, builtUp) {
 // --- Repères d'horizon ---------------------------------------------------
 
 /**
+ * Classes `park` où ni éolienne, ni pylône, ni antenne ne se pose.
+ *
+ * La classe de cette couche est le titre de protection en texte libre
+ * (« wildlife_refuge » pour le Parco dell'Etna, « conservation » pour un parc
+ * naturel régional, « Natura 2000 »…). Seuls les titres d'espace sauvage
+ * l'interdisent : un parc régional ou un site Natura 2000 couvre des
+ * campagnes entières, éoliennes comprises.
+ */
+export const WILD_RESERVE_CLASSES = new Set(['national_park', 'nature_reserve', 'wildlife_refuge', 'wilderness_preserve']);
+
+/** Les espaces sauvages protégés d'un jeu de tuiles, en anneaux métriques. */
+export function collectWildReserves(source, tiles, frame) {
+  const areas = [];
+  if (!source || !frame) return areas;
+  const { origin, scale, zoom } = frame;
+  const accept = (properties) => WILD_RESERVE_CLASSES.has(properties.class);
+  source.forEachFeature('park', tiles, (geometry, properties) => {
+    if (!accept(properties)) return;
+    for (const ring of ringsOf(geometry)) {
+      const local = [];
+      for (const [lng, lat] of ring) {
+        if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+        local.push({ x: (lngToTileX(lng, zoom) - origin.x) * scale, z: (latToTileY(lat, zoom) - origin.y) * scale });
+      }
+      if (local.length >= 3) areas.push(local);
+    }
+  }, accept);
+  return areas;
+}
+
+/**
  * Éoliennes et pylônes, au loin.
  *
  * Ils ne sont pas dans les tuiles — `power=tower` et `generator:source=wind`
@@ -227,10 +259,10 @@ export function* buildRocksSteps(layer, context, builtUp) {
  *
  * Trois garde-fous rendent leur présence acceptable : ils ne se posent que
  * sur des points hauts (une éolienne ne s'installe pas au fond d'un vallon),
- * jamais dans une zone bâtie, et leur tirage dépend uniquement de la position
+ * jamais dans une zone bâtie ni un espace sauvage protégé, et leur tirage dépend uniquement de la position
  * au sol — donc ils ne bougent pas d'une reconstruction à l'autre.
  */
-export function buildLandmarks(layer, context, builtUp) {
+export function buildLandmarks(layer, context, builtUp, reserves = null) {
   const { frame } = layer.bubble;
   const { here, placements } = context;
   const radius = reachedRadius(Math.min(LANDMARK_RADIUS_M, layer.bubble.radiusMeters || LANDMARK_RADIUS_M), layer.bubble);
@@ -251,7 +283,7 @@ export function buildLandmarks(layer, context, builtUp) {
     const px = x + (randomAt(frame, x, z, 92) - 0.5) * step * 0.8;
     const pz = z + (randomAt(frame, x, z, 93) - 0.5) * step * 0.8;
     if (Math.hypot(px - here.x, pz - here.z) > radius) continue;
-    if (pointInAreas(builtUp, px, pz)) continue;
+    if (pointInAreas(builtUp, px, pz) || pointInAreas(reserves, px, pz)) continue;
     // Ni sur une chaussée, ni au fond d'un jardin. Jamais une distance
     // minimale à l'observateur : un repère qu'on voit à deux kilomètres et
     // qui s'efface quand on arrive dessus n'en est plus un.
@@ -281,7 +313,8 @@ export function buildLandmarks(layer, context, builtUp) {
  * pour poser éoliennes et pylônes) et dégagé (`_openGround`). Un vrai calcul
  * suivrait la ligne de partage des eaux dans le MNT, ce qui reste à faire ;
  * ceci pose un arbre là où le relief est visiblement haut, pas
- * nécessairement sur l'arête exacte.
+ * nécessairement sur l'arête exacte. Son essence est une de celles du pays,
+ * aux parts de ses bois.
  */
 export function buildRidgeTrees(layer, context, builtUp) {
   const { frame } = layer.bubble;
@@ -289,6 +322,8 @@ export function buildRidgeTrees(layer, context, builtUp) {
   const radius = reachedRadius(Math.min(LANDMARK_RADIUS_M, layer.bubble.radiusMeters || LANDMARK_RADIUS_M), layer.bubble);
   const step = 140;
   let placed = 0;
+  const mix = plantedSpeciesShares(layer.region?.trees, layer.theme.trees);
+  if (mix.length === 0) return;
 
   for (const { x, z } of worldCellsAround(frame, here, radius, step)) {
     if (placed >= FURNITURE_LIMITS.ridgeTrees) break;
@@ -307,13 +342,13 @@ export function buildRidgeTrees(layer, context, builtUp) {
     if (!layer._openGround(px, pz) || layer._onWater(px, pz)) continue;
     if (!isHighPoint(layer, px, pz)) continue;
 
-    const conifer = randomAt(frame, px, pz, 184) < 0.35;
-    layer._place(placements, conifer ? 'treeConifer' : 'treeBroad', {
+    const tree = layer._place(placements, PLANTED_TREE, {
       x: px,
       z: pz,
       yaw: randomAt(frame, px, pz, 185) * Math.PI * 2,
       scale: 0.9 + randomAt(frame, px, pz, 186) * 0.5,
     });
+    if (tree) tree.species = pickShare(mix, randomAt(frame, px, pz, 184));
     placed++;
   }
 }
@@ -355,7 +390,7 @@ export function peakMastSite(p, { frame, elevationAt, blocked = () => false }) {
 }
 
 /** Antennes : seuls les points `class=peak` ancrent une pose, jamais les cols. */
-export function buildPeakLandmarks(layer, context, builtUp) {
+export function buildPeakLandmarks(layer, context, builtUp, reserves = null) {
   const { frame } = layer.bubble;
   const { source, tiles, here, placements } = context;
   const { origin, scale, zoom } = frame;
@@ -376,7 +411,7 @@ export function buildPeakLandmarks(layer, context, builtUp) {
     const site = peakMastSite({ x, z }, {
       frame,
       elevationAt: (px, pz) => layer.bubble.naturalElevationAtLocal(px, pz, NaN),
-      blocked: (px, pz) => pointInAreas(builtUp, px, pz) || layer._onRoad(px, pz) || layer._onWater(px, pz) ||
+      blocked: (px, pz) => pointInAreas(builtUp, px, pz) || pointInAreas(reserves, px, pz) || layer._onRoad(px, pz) || layer._onWater(px, pz) ||
         layer._fabric?.countWithin(px, pz, LANDMARK_CLEARANCE_M, 1) > 0,
     });
     if (!site || Math.hypot(site.x - here.x, site.z - here.z) > LANDMARK_RADIUS_M) return;

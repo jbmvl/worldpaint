@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Banc du coût d'une image</title>
+<style>html,body{margin:0;background:#000;overflow:hidden}canvas{display:block}</style>
+<script src="/node_modules/suncalc/suncalc.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "/node_modules/three/build/three.module.js",
+  "three/examples/jsm/objects/Sky.js": "/node_modules/three/examples/jsm/objects/Sky.js",
+  "suncalc": "/demo/lab/suncalc-global.js",
+  "pbf": "/node_modules/pbf/index.js",
+  "@mapbox/vector-tile": "/node_modules/@mapbox/vector-tile/index.js",
+  "@mapbox/point-geometry": "/node_modules/@mapbox/point-geometry/index.js"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+/*
+ * Banc du coût d'une image — ce que le GPU dessine depuis une caméra de
+ * poursuite, sur un lieu enregistré, bulle montée et immobile. Piloté par
+ * `scripts/frame-bench.mjs`, à lancer sur un vrai GPU : le rendu logiciel
+ * ne dit rien d'un temps d'image.
+ *
+ *   await frameLab.mount()
+ *   frameLab.measure({ headings: 8 })   // temps d'image (rendu + file GPU vidée), par cap
+ *   frameLab.breakdown(headingDeg)      // appels et triangles par couche, passe d'ombre à part
+ *   frameLab.ablate(headingDeg)         // temps gagné en éteignant chaque couche, puis les ombres
+ *
+ * Réglages d'une application de jeu : bulle de 3 × 3 tuiles au zoom 15, objets
+ * dans 375 m (`?detail=`), ombres douces 2048 (`?ombre=`), densité d'écran 2
+ * (`?dpr=`), caméra à 3 m du sol. `?niveau=light` passe `detail.level`.
+ * `?meteo=<JSON>` : état météo repassé à `updateSky` à chaque image, comme le
+ * fait le jeu (`frameLab.setWeather(w)` le change). `frameLab.cpu()`
+ * chronomètre `advance` et `updateSky` seuls, `frameLab.fragments('rain')`
+ * compte les fragments d'un objet.
+ */
+import * as THREE from 'three';
+import { Sky } from 'three/examples/jsm/objects/Sky.js';
+import { createWorld } from '/src/index.js';
+
+const params = new URLSearchParams(location.search);
+const lieu = params.get('lieu') || 'lyon';
+const base = `/demo/lab/places/${lieu}`;
+const place = await (await fetch(`${base}/place.json`)).json();
+const at = { lng: Number(params.get('lng') ?? place.lng), lat: Number(params.get('lat') ?? place.lat) };
+const detailRadius = Number(params.get('detail') ?? 375) || null;
+const shadowSize = Number(params.get('ombre') ?? 2048);
+const hour = Number(params.get('heure') ?? 13);
+const level = params.get('niveau') || 'full';
+let weather = params.get('meteo') ? JSON.parse(params.get('meteo')) : undefined;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Number(params.get('dpr') ?? 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = shadowSize > 0;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 20000);
+const scene = new THREE.Scene();
+const date = new Date(Date.UTC(2026, 5, 21, hour - 2));
+
+let world = null;
+const busy = (c) => c.vegetation?.pending || c.bubble._rebuildQueue?.length > 0 || c.bubble._pendingBuild;
+const groundAt = (x, z) => world.composer.groundElevationAt(x, z) ?? 0;
+const median = (values) => { const v = [...values].sort((a, b) => a - b); return v[Math.floor(v.length / 2)]; };
+
+async function mount() {
+  world = createWorld({
+    THREE, scene,
+    sky: { Sky, shadowMapSize: shadowSize || 512 },
+    elevation: { zoom: place.elevation.zoom ?? place.zoom, url: `${base}/dem/{z}/{x}/{y}.${place.elevation.extension}`, encoding: place.elevation.encoding },
+    vector: place.vector ? { tiles: [`${location.origin}${base}/vector/{z}/{x}/{y}.pbf`], maxZoom: place.vector.maxZoom } : null,
+    detail: { level, ...(detailRadius ? { radius: detailRadius } : {}) },
+    view: { zoom: 15, blockSize: 3, segmentsByRing: [192, 96, 48] },
+  });
+  await world.mountAt(at.lng, at.lat, { budgetMs: 50 });
+  const c = world.composer;
+  for (let i = 0; busy(c) && i < 4000; i++) world.advance(1 / 60, { x: 0, y: groundAt(0, 0), z: 0 });
+  await renderer.compileAsync(scene, camera);
+  pose(0);
+  for (let i = 0; i < 30; i++) draw();
+}
+
+/** Caméra de poursuite : 3 m au-dessus du sol, regard à l'horizontale vers le cap. */
+function pose(headingDeg, { x = 0, z = 0 } = {}) {
+  const a = (headingDeg * Math.PI) / 180;
+  camera.position.set(x, groundAt(x, z) + 3, z);
+  camera.rotation.set(-0.08, -a, 0, 'YXZ');
+  camera.updateMatrixWorld();
+}
+
+function draw() {
+  const p = camera.position;
+  world.advance(1 / 60, { x: p.x, y: groundAt(p.x, p.z), z: p.z });
+  const here = world.frame.toLngLat(p.x, p.z);
+  const paint = world.updateSky({ camera, date, lng: here.lng, lat: here.lat, weather: weather && { ...weather } });
+  if (paint) renderer.setClearColor(paint.clearColor, 1);
+  renderer.render(scene, camera);
+}
+
+/**
+ * Temps moyen d'une image. Un pixel relu après chaque image attend le GPU :
+ * `finish()` ne bloque pas quand le rendu vit dans un autre processus.
+ */
+const pixel = new Uint8Array(4);
+function time(frames = 60) {
+  const gl = renderer.getContext();
+  const wait = () => gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+  for (let i = 0; i < 6; i++) draw();
+  wait();
+  const t0 = performance.now();
+  for (let i = 0; i < frames; i++) { draw(); wait(); }
+  return (performance.now() - t0) / frames;
+}
+
+function measure({ headings = 8, frames = 60, x = 0, z = 0 } = {}) {
+  const rows = [];
+  for (let i = 0; i < headings; i++) {
+    const heading = (360 / headings) * i;
+    pose(heading, { x, z });
+    const ms = time(frames);
+    rows.push({ heading, ms, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles });
+  }
+  return rows;
+}
+
+/** Nom d'un objet : le sien ou ceux de ses deux plus proches parents nommés. */
+function label(object) {
+  const names = [];
+  for (let node = object; node && names.length < 2; node = node.parent) {
+    if (node.name && node.name !== 'worldpaint' && !node.isScene) names.unshift(node.name.replace(/[-:_]?[\d:.,-]{2,}.*$/, ''));
+  }
+  if (!names.length) return `${object.type}:${object.material?.name || object.material?.type || '?'}`;
+  return names.length === 1 || names[1].startsWith(names[0]) ? names.at(-1) : names.join('/');
+}
+
+function triangles(geometry, object, group) {
+  if (object.isLine || object.isPoints) return 0;
+  const total = geometry.index ? geometry.index.count : geometry.attributes?.position?.count ?? 0;
+  const start = Math.max(geometry.drawRange?.start ?? 0, group?.start ?? 0);
+  const end = Math.min(total, (geometry.drawRange?.start ?? 0) + (geometry.drawRange?.count ?? Infinity), group ? group.start + group.count : Infinity);
+  const instances = object.isInstancedMesh ? object.count : geometry.isInstancedBufferGeometry ? geometry.instanceCount ?? 1 : 1;
+  return Math.max(0, Math.floor((end - start) / 3)) * Math.max(0, instances);
+}
+
+/** Appels et triangles d'une image par couche, après élagage ; la passe d'ombre dessine sans scène. */
+function breakdown(headingDeg = 0, at = {}) {
+  pose(headingDeg, at);
+  draw();
+  const layers = new Map();
+  const original = renderer.renderBufferDirect;
+  renderer.renderBufferDirect = function (cam, sc, geometry, material, object, group) {
+    const key = label(object);
+    let row = layers.get(key);
+    if (!row) layers.set(key, row = { draws: 0, triangles: 0, shadowDraws: 0, shadowTriangles: 0 });
+    const n = triangles(geometry, object, group);
+    if (sc) { row.draws++; row.triangles += n; } else { row.shadowDraws++; row.shadowTriangles += n; }
+    return original.call(this, cam, sc, geometry, material, object, group);
+  };
+  try { draw(); } finally { renderer.renderBufferDirect = original; }
+  return [...layers.entries()].map(([layer, row]) => ({ layer, ...row })).sort((a, b) => (b.triangles + b.shadowTriangles) - (a.triangles + a.shadowTriangles));
+}
+
+/** Ce que chaque couche coûte : temps d'image gagné en l'éteignant, seule. */
+function ablate(headingDeg = 0, { frames = 60, ...at } = {}) {
+  pose(headingDeg, at);
+  const full = time(frames);
+  const groups = new Map();
+  scene.traverse((o) => {
+    if (!o.isMesh && !o.isPoints && !o.isLine) return;
+    const key = label(o).split('/')[0].replace(/-.*$/, '');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(o);
+  });
+  const rows = [];
+  for (const [layer, objects] of groups) {
+    const shown = objects.filter((o) => o.visible);
+    for (const o of shown) o.visible = false;
+    rows.push({ layer, objects: shown.length, savedMs: full - time(frames) });
+    for (const o of shown) o.visible = true;
+  }
+  renderer.shadowMap.autoUpdate = false;
+  rows.push({ layer: '(passe d’ombre)', objects: 0, savedMs: full - time(frames) });
+  renderer.shadowMap.autoUpdate = true;
+  const dpr = renderer.getPixelRatio();
+  renderer.setPixelRatio(dpr / 2);
+  rows.push({ layer: '(densité d’écran ÷ 2)', objects: 0, savedMs: full - time(frames) });
+  renderer.setPixelRatio(dpr);
+  return { fullMs: full, layers: rows.sort((a, b) => b.savedMs - a.savedMs) };
+}
+
+/** Temps CPU par image de `advance` et `updateSky`, sans rendu (médianes, en ms). */
+function cpu(frames = 600) {
+  const p = camera.position;
+  const at = { x: p.x, y: groundAt(p.x, p.z), z: p.z };
+  const here = world.frame.toLngLat(p.x, p.z);
+  const advance = [], sky = [];
+  for (let i = 0; i < frames; i++) {
+    const t0 = performance.now();
+    world.advance(1 / 60, at);
+    const t1 = performance.now();
+    world.updateSky({ camera, date, lng: here.lng, lat: here.lat, weather: weather && { ...weather } });
+    advance.push(t1 - t0); sky.push(performance.now() - t1);
+  }
+  const mean = (v) => v.reduce((a, b) => a + b, 0) / v.length;
+  return { advanceMs: mean(advance), updateSkyMs: mean(sky), advanceP95Ms: [...advance].sort((a, b) => a - b)[Math.floor(frames * 0.95)] };
+}
+
+/**
+ * Fragments qu'un objet fait calculer, par comptage additif sur l'image
+ * (saturé à 255 par pixel) : `depth` garde la profondeur du décor, sinon
+ * tout ce que le ruban couvre est compté. Rend fragments et pixels touchés.
+ */
+function fragments(name, { depth = true } = {}) {
+  const target = scene.getObjectByName(name);
+  if (!target?.visible) return { fragments: 0, pixels: 0 };
+  draw();
+  const gl = renderer.getContext();
+  const saved = target.material;
+  const counter = saved.clone();
+  counter.fragmentShader = 'void main() { gl_FragColor = vec4(1.0 / 255.0, 0.0, 0.0, 1.0); }';
+  counter.blending = THREE.AdditiveBlending;
+  counter.depthTest = depth;
+  target.material = counter;
+  const parent = target.parent;
+  const solo = new THREE.Scene();
+  solo.add(target);
+  target.position.copy(parent.position);
+  target.updateMatrixWorld(true);
+  renderer.autoClear = false;
+  renderer.setClearColor(0x000000, 1);
+  renderer.clear(true, false, false);
+  renderer.render(solo, camera);
+  renderer.autoClear = true;
+  target.position.set(0, 0, 0);
+  parent.add(target);
+  target.material = saved;
+  counter.dispose();
+  const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+  const buffer = new Uint8Array(w * h * 4);
+  gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buffer);
+  let sum = 0, pixels = 0;
+  for (let i = 0; i < buffer.length; i += 4) { sum += buffer[i]; if (buffer[i]) pixels++; }
+  return { fragments: sum, pixels, screen: w * h };
+}
+
+window.frameLab = { mount, cpu, fragments, setWeather(w) { weather = w; draw(); }, measure, breakdown, ablate, pose, draw, time, renderer, scene, camera, get world() { return world; } };
+window.frameLabReady = true;
+</script>
+</body>
+</html>

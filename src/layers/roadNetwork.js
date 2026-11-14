@@ -270,9 +270,20 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
     // une pente qui monte derrière soi), une face simple les rendrait invisibles.
     if (profile.steps) material.side = THREE.DoubleSide;
 
+    // Un revêtement à `opacity` < 1 (la terre) laisse voir le sol. Fondu sans
+    // écrire la profondeur : un chemin ne recouvre que du terrain, opaque et
+    // déjà dessiné, et la chaussée revêtue qu'il croise le domine par son
+    // décalage. Seul défaut accepté : deux rubans qui se chevauchent foncent.
+    const opacity = roads.surfaces[profile.surface || 'asphalt']?.opacity ?? 1;
+    if (opacity < 1) {
+      material.transparent = true;
+      material.opacity = opacity;
+      material.depthWrite = false;
+    }
+
     // Un chemin de terre n'a pas de rive : son bord est rongé par le sol, et
-    // le masque le découpe au seuil plutôt que de le fondre — une chaussée
-    // à moitié transparente demanderait un tri, et lirait comme du verre.
+    // le masque le découpe au seuil plutôt que de le fondre. Le seuil suit
+    // l'opacité, sinon il couperait le chemin entier.
     let edge = null;
     if (profile.ragged > 0) {
       edge = new THREE.CanvasTexture(createRoadEdgeCanvas(profile));
@@ -281,7 +292,7 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
       edge.wrapT = THREE.RepeatWrapping;
       edge.anisotropy = 8;
       material.alphaMap = edge;
-      material.alphaTest = 0.5;
+      material.alphaTest = opacity / 2;
       gnawTips(material);
     }
 
@@ -451,6 +462,52 @@ export function gradeAllowance(slope) {
     cut: ROAD_GRADE_CUT_FLAT_M + (ROAD_GRADE_CUT_STEEP_M - ROAD_GRADE_CUT_FLAT_M) * eased,
     fill: ROAD_GRADE_FILL_FLAT_M + (ROAD_GRADE_FILL_STEEP_M - ROAD_GRADE_FILL_FLAT_M) * eased,
   };
+}
+
+/**
+ * Terrassement consenti à un chemin ou un sentier : même rôle que
+ * `gradeAllowance`, plus court. Il ne tend pas une pente sur cent mètres, il
+ * efface le grain du MNT et dresse une banquette de niveau en travers ; le
+ * terrain porte ce qu'il déplace (`findEarthFills`), sans mur.
+ */
+export const PATH_GRADE_CUT_FLAT_M = 0.3;
+export const PATH_GRADE_CUT_STEEP_M = 1.2;
+export const PATH_GRADE_FILL_FLAT_M = 0.3;
+export const PATH_GRADE_FILL_STEEP_M = 0.8;
+
+export function pathGradeAllowance(slope) {
+  const span = ROAD_GRADE_STEEP_SLOPE - ROAD_GRADE_FLAT_SLOPE;
+  const t = Math.min(1, Math.max(0, ((slope || 0) - ROAD_GRADE_FLAT_SLOPE) / span));
+  const eased = t * t * (3 - 2 * t);
+  return {
+    cut: PATH_GRADE_CUT_FLAT_M + (PATH_GRADE_CUT_STEEP_M - PATH_GRADE_CUT_FLAT_M) * eased,
+    fill: PATH_GRADE_FILL_FLAT_M + (PATH_GRADE_FILL_STEEP_M - PATH_GRADE_FILL_FLAT_M) * eased,
+  };
+}
+
+/**
+ * Aplanit les chemins et sentiers, une fois le terrain final connu : leur
+ * relevé (`platform`) est le sol que les routes ont déjà entaillé. Un graphe à
+ * part — un chemin ne donne pas sa cote à une route — dont les lignes posées
+ * sur une chaussée revêtue, un ouvrage ou un accès de tunnel ne bougent pas.
+ *
+ * @param {Array<Object>} segments Tronçons non revêtus, `platform` relevée.
+ * @param {(x:number, z:number) => boolean} onPaved Le point est dans l'emprise d'une chaussée revêtue.
+ */
+export function gradeUnpavedNetwork(segments, onPaved) {
+  const bands = segments.map((segment) => {
+    const { path, edges, probeSpan } = segment;
+    const maxCut = new Float32Array(path.length);
+    const maxFill = new Float32Array(path.length);
+    for (let r = 0; r < path.length; r++) {
+      if (segment.works?.[r] || segment.tunnelAccess || onPaved(path[r].x, path[r].z)) continue;
+      const allowance = pathGradeAllowance(Math.abs(edges[r * 2] - edges[r * 2 + 1]) / probeSpan);
+      maxCut[r] = allowance.cut;
+      maxFill[r] = allowance.fill;
+    }
+    return { maxCut, maxFill };
+  });
+  gradeRoadNetwork(segments, bands);
 }
 
 /**
@@ -1237,8 +1294,8 @@ export function* collectRoadSegmentsSteps(
       }
       // Terrassement consenti à l'aplanissement du profil en long : le devers
       // dit s'il y a un versant, donc une falaise et un mur, pour rattraper
-      // l'écart au terrain. Un chemin n'est pas terrassé : il reste sur le
-      // sol, section par section.
+      // l'écart au terrain. Un chemin a la sienne, plus courte, posée une fois
+      // le terrain final connu (`gradeUnpavedNetwork`).
       let band = null;
       if (isPaved(roads.profiles[chain.profile])) {
         band = { maxCut: new Float32Array(rows), maxFill: new Float32Array(rows) };
@@ -1430,11 +1487,6 @@ export class RoadNetwork {
     yield;
     const terrainIndex = new RoadIndex(collected.filter(segment => segment.paved), { margin: bubble.cutBenchM + ROAD_CUT_BLEND_M });
     yield;
-    const unpavedIndex = new RoadIndex(
-      collected.filter((segment) => !segment.paved),
-      { margin: bubble.cutBenchM + ROAD_CUT_BLEND_M }
-    );
-    yield;
     const earthworks = new TransportEarthworks([...collected.filter(s => s.paved || s.tunnelAccess), ...railwaySegments], {
       bench: bubble.cutBenchM, scale: bubble.verticalScale,
     });
@@ -1465,6 +1517,14 @@ export class RoadNetwork {
         }
       }
     }
+    yield;
+    gradeUnpavedNetwork(
+      collected.filter((segment) => !segment.paved),
+      (x, z) => {
+        const hit = terrainIndex.query(x, z, ROAD_CUT_M);
+        return !!hit && hit.distance <= hit.segment.halfWidth + ROAD_CUT_M;
+      }
+    );
     yield;
     // Même marge, tabliers compris : `platformPositionAt` doit pouvoir lire
     // l'altitude d'un pont ou d'un tunnel, ce que `index` refuse par construction.
@@ -1514,7 +1574,6 @@ export class RoadNetwork {
             path: ribbon.path,
             halfWidth: segment.halfWidth,
             sampleElevation: segment.paved ? sampleElevation : finalElevation,
-            level: segment.paved || segment.works.some((code) => code !== 0),
             platform: ribbon.platform,
             lift: roadLiftFor(spec),
             textureLength: ROAD_TEXTURE_LENGTH, // pas au sol constant, quelle que soit la largeur
@@ -1563,7 +1622,7 @@ export class RoadNetwork {
     this.markings = markings;
     // L'emprise entaillée, c'est la chaussée entière : les rubans et les dalles
     // de carrefour, qui débordent d'eux.
-    this.bubble.setRoadCut(segments > 0 ? terrainIndex : null, areas, earthworks, segments > 0 ? unpavedIndex : null);
+    this.bubble.setRoadCut(segments > 0 ? index : null, areas, earthworks);
     this.transportCrossings = crossings;
     this.earthworks = earthworks;
     // Tous les profils sont visités, y compris ceux sans géométrie cette fois : leur ancien maillage doit disparaître.

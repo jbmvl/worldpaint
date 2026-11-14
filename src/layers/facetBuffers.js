@@ -48,6 +48,26 @@ export class GrowingArray {
     this.data = grown;
   }
 
+  /**
+   * Ajoute les `count` premières valeurs d'un tableau. Un seul appel pour un
+   * pan entier : chaque appel de `push` non incorporé emballe ses nombres.
+   */
+  pushFrom(values, count = values.length) {
+    this.reserve(count);
+    const { data, scale } = this;
+    let at = this.length;
+    if (scale === 0) {
+      for (let i = 0; i < count; i++) data[at++] = values[i];
+    } else {
+      const min = this._min;
+      for (let i = 0; i < count; i++) {
+        const v = Math.round(values[i] * scale);
+        data[at++] = v < min ? min : v > scale ? scale : v;
+      }
+    }
+    this.length = at;
+  }
+
   push() {
     // `arguments`, pas un paramètre de reste : celui-ci alloue un tableau par appel.
     const values = arguments;
@@ -65,6 +85,12 @@ export class GrowingArray {
     }
     this.length = at;
   }
+}
+
+/** Verse `count` valeurs dans un `GrowingArray`, ou dans un tableau ordinaire. */
+export function pushValues(target, values, count = values.length) {
+  if (target.pushFrom) target.pushFrom(values, count);
+  else for (let i = 0; i < count; i++) target.push(values[i]);
 }
 
 /**
@@ -97,6 +123,12 @@ export function createProfileStore(previous = null) {
   };
 }
 
+/** Teinte encodée d'une réserve : arrondie en flottant simple d'abord, elle ne dépend pas du lot. */
+export function profileTone(value) {
+  const v = Math.round(Math.fround(value) * COLOR_SCALE);
+  return v < 0 ? 0 : v > COLOR_SCALE ? COLOR_SCALE : v;
+}
+
 /** Verse un accumulateur de sections dans la réserve, et le vide. */
 export function drainProfileBuffer(store, buffer) {
   const { positions, colors, indices } = buffer;
@@ -107,11 +139,7 @@ export function drainProfileBuffer(store, buffer) {
   store.colors.reserve(colors.length);
   const tones = store.colors.data;
   let at = store.colors.length;
-  for (let i = 0; i < colors.length; i++) {
-    // Arrondi d'un flottant simple d'abord : la teinte encodée ne dépend pas du lot.
-    const v = Math.round(Math.fround(colors[i]) * COLOR_SCALE);
-    tones[at++] = v < 0 ? 0 : v > COLOR_SCALE ? COLOR_SCALE : v;
-  }
+  for (let i = 0; i < colors.length; i++) tones[at++] = profileTone(colors[i]);
   store.colors.length = at;
   store.indices.reserve(indices.length);
   const index = store.indices.data;

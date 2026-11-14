@@ -330,6 +330,12 @@ export class TerrainMaterialFactory {
 
   get grainUniforms() { return this._uniforms; }
 
+  /** Ce qui fait l'aspect de l'eau au loin : la mer de la nappe lointaine partage ces uniformes. */
+  get waterUniforms() {
+    const u = this._uniforms;
+    return u ? { uWaterAlbedo: u.uWaterAlbedo, uWaterSheenColor: u.uWaterSheenColor, uWaterZenith: u.uWaterZenith, uWaterSheen: u.uWaterSheen } : null;
+  }
+
   /** Albédo de la matière posée là où la carte se tait, tel que `setRegion` l'a lavé. */
   get gapAlbedo() {
     const uniforms = this._uniforms;
@@ -391,6 +397,10 @@ export class TerrainMaterialFactory {
         ),
       },
       uPoolScale: { value: look.poolScaleM },
+      // La houppe d'un bois vue de loin (`wood.canopy`) : sa couleur, et la
+      // rampe de distance (début, fin) sur laquelle elle couvre la litière.
+      uWoodCanopy: { value: new THREE.Vector3(...(this.surfaces.wood?.canopy?.albedo ?? this.surfaces.wood?.albedo ?? FALLBACK_ALBEDO)) },
+      uWoodCanopyRange: { value: new THREE.Vector2(this.surfaces.wood?.canopy?.nearM ?? 1e6, this.surfaces.wood?.canopy?.farM ?? 1e6 + 1) },
       // Matière retenue là où la donnée se tait.
       uUnclassified: { value: Math.max(0, SURFACE_KINDS.indexOf(look.unclassified)) + 1 },
       // (côté du réseau triangulaire, amplitude) du déplacement des limites.
@@ -512,6 +522,10 @@ export class TerrainMaterialFactory {
            uniform vec4 uSurfacePatch[${SURFACE_KINDS.length}];
            // Part de plaque au fragment, decidee une fois avant de lire le sol.
            float gPatch = 0.0;
+           uniform vec3 uWoodCanopy;
+           uniform vec2 uWoodCanopyRange;
+           // Part de houppe sur le sol d'un bois, decidee par la distance.
+           float gCanopy = 0.0;
            uniform float uPoolScale;
            uniform vec2 uSlopeRange;
            uniform float uRockStrength;
@@ -577,21 +591,21 @@ export class TerrainMaterialFactory {
              out float macroAmp, out float macroNear
            ) {
              float id = label >= ${CROP_LABEL_BASE}.0 ? ${FARMLAND_ID}.0 : label;
-             for (int i = 1; i <= ${SURFACE_KINDS.length}; i++) {
-               if (float(i) == id) {
-                 albedo = mix(uSurfaceAlbedo[i - 1], uSurfacePatch[i - 1].rgb, uSurfacePatch[i - 1].a * gPatch);
-                 standing = uSurfaceTerms[i - 1].x;
-                 macroAmp = uSurfaceTerms[i - 1].y;
-                 macroNear = uSurfaceTerms[i - 1].z;
-               }
+             int kind = int(id) - 1;
+             if (kind >= 0 && kind < ${SURFACE_KINDS.length}) {
+               albedo = mix(uSurfaceAlbedo[kind], uSurfacePatch[kind].rgb, uSurfacePatch[kind].a * gPatch);
+               standing = uSurfaceTerms[kind].x;
+               macroAmp = uSurfaceTerms[kind].y;
+               macroNear = uSurfaceTerms[kind].z;
              }
+             // De loin, on ne voit pas le sol d'un bois mais ses houppes.
+             if (id == ${SURFACE_KINDS.indexOf('wood') + 1}.0) albedo = mix(albedo, uWoodCanopy, gCanopy);
              // La culture remplace la couleur de la terre labouree et sa lame
              // d'eau, et elles seules.
-             for (int i = 0; i < ${CROP_KINDS.length}; i++) {
-               if (float(i + 1) == label - ${CROP_LABEL_BASE}.0) {
-                 albedo = uCropLook[i].rgb;
-                 standing = uCropLook[i].a;
-               }
+             int crop = int(label) - ${CROP_LABEL_BASE} - 1;
+             if (crop >= 0 && crop < ${CROP_KINDS.length}) {
+               albedo = uCropLook[crop].rgb;
+               standing = uCropLook[crop].a;
              }
              isWater = id == ${WATER_ID}.0 ? 1.0 : 0.0;
            }
@@ -686,18 +700,31 @@ export class TerrainMaterialFactory {
              float texelM = uSurfaceSize / ${CLASS_PIXELS}.0;
              float reachM = ${CONTOUR_REACH_TEXELS}.0 * texelM;
 
+             // Le carre central d'abord : quatre texels de la meme matiere, sans
+             // trait a portee, n'ont rien a departager.
+             vec4 mid[4];
+             mid[0] = surfaceTexel(corner, vec2(0.0, 0.0));
+             mid[1] = surfaceTexel(corner, vec2(1.0, 0.0));
+             mid[2] = surfaceTexel(corner, vec2(0.0, 1.0));
+             mid[3] = surfaceTexel(corner, vec2(1.0, 1.0));
+             vec4 inner = vec4(surfaceLabel(mid[0]), surfaceLabel(mid[1]), surfaceLabel(mid[2]), surfaceLabel(mid[3]));
+             vec4 across = vec4(acrossLabel(mid[0]), acrossLabel(mid[1]), acrossLabel(mid[2]), acrossLabel(mid[3]));
+             float isWater;
+             if (all(equal(inner, inner.xxxx)) && all(lessThan(across, vec4(0.0)))) {
+               labelLook(inner.x, albedo, isWater, standing, macroAmp, macroNear);
+               water = isWater;
+               return;
+             }
+
              vec4 own[4];
              vec4 reach[4];
-             vec4 across = vec4(-1.0);
              for (int j = 0; j < 4; j++) {
                vec4 a = surfaceTexel(corner, vec2(-1.0, float(j - 1)));
-               vec4 b = surfaceTexel(corner, vec2(0.0, float(j - 1)));
-               vec4 c = surfaceTexel(corner, vec2(1.0, float(j - 1)));
+               vec4 b = j == 1 ? mid[0] : j == 2 ? mid[2] : surfaceTexel(corner, vec2(0.0, float(j - 1)));
+               vec4 c = j == 1 ? mid[1] : j == 2 ? mid[3] : surfaceTexel(corner, vec2(1.0, float(j - 1)));
                vec4 d = surfaceTexel(corner, vec2(2.0, float(j - 1)));
                own[j] = vec4(surfaceLabel(a), surfaceLabel(b), surfaceLabel(c), surfaceLabel(d));
                reach[j] = vec4(a.b, b.b, c.b, d.b) * reachM;
-               if (j == 1) { across.x = acrossLabel(b); across.y = acrossLabel(c); }
-               if (j == 2) { across.z = acrossLabel(b); across.w = acrossLabel(c); }
              }
              vec4 wx = splineWeights(f.x);
              vec4 wz = splineWeights(f.y);
@@ -710,7 +737,7 @@ export class TerrainMaterialFactory {
              float second = -1.0;
              float secondScore = -1e6;
              for (int k = 0; k < 8; k++) {
-               float label = k < 2 ? own[1][k + 1] : k < 4 ? own[2][k - 1] : across[k - 4];
+               float label = k < 4 ? inner[k] : across[k - 4];
                if (label < 0.0 || label == first || label == second) continue;
                float score = wz.x * rowScore(label, own[0], reach[0], wx)
                            + wz.y * rowScore(label, own[1], reach[1], wx)
@@ -727,7 +754,6 @@ export class TerrainMaterialFactory {
                }
              }
 
-             float isWater;
              labelLook(first, albedo, isWater, standing, macroAmp, macroNear);
              water = isWater;
              if (second < 0.0) return;
@@ -778,6 +804,7 @@ export class TerrainMaterialFactory {
              // la variation macro, et elle seule.
              float dist = distance(vScenePos, cameraPosition);
              float far = smoothstep(uDetailRange.x, uDetailRange.y, dist);
+             gCanopy = smoothstep(uWoodCanopyRange.x, uWoodCanopyRange.y, dist);
 
              // Bruit macro : deux cents metres de periode. Il fait deriver la
              // couleur d'un bout a l'autre d'une parcelle — et c'est, le sol
@@ -926,9 +953,10 @@ export class TerrainMaterialFactory {
                if (dot(flatNormal, vSceneNormal) < 0.0) flatNormal = -flatNormal;
                worldNormal = normalize(mix(vSceneNormal, flatNormal, facet));
              }
-             vec3 wavy = waterNormal(normalize(worldNormal), vScenePos.xz);
+             // La ride ne se lit que sur l'eau : son poids est nul au seuil.
+             if (gWater > 0.001) worldNormal = mix(worldNormal, waterNormal(normalize(worldNormal), vScenePos.xz), gWater);
 
-             normal = normalize((viewMatrix * vec4(mix(worldNormal, wavy, gWater), 0.0)).xyz);
+             normal = normalize((viewMatrix * vec4(worldNormal, 0.0)).xyz);
            }`
         )
         .replace('#include <shadowmap_pars_fragment>', '#include <shadowmap_pars_fragment>\n#include <shadowmask_pars_fragment>')
@@ -944,7 +972,7 @@ export class TerrainMaterialFactory {
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v21-packed-uniforms';
+    material.customProgramCacheKey = () => 'terrain-bubble-v23-packed-uniforms';
     return material;
   }
 

@@ -1,7 +1,7 @@
 /* Les antennes suivent les sommets du relief, jamais les cols de la même couche. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPeakLandmarks, peakMastSite } from '../src/layers/furniture/landmarks.js';
+import { buildPeakLandmarks, peakMastSite, collectWildReserves } from '../src/layers/furniture/landmarks.js';
 import { createLocalFrame } from '../src/core/tileMath.js';
 import { randomAt } from '../src/core/groundSeed.js';
 import { testFrame as frame } from './testFrame.mjs';
@@ -54,7 +54,7 @@ function construire(points, elevationAt, options = {}) {
     _place(_placements, item, p) { poses.push({ item, ...p }); },
   };
   const source = { forEachFeature(_name, _tiles, visit) { for (const p of points) visit(p.geometry, p.properties); } };
-  buildPeakLandmarks(layer, { source, tiles: [], here: { x: 0, z: 0 }, placements: new Map() }, []);
+  buildPeakLandmarks(layer, { source, tiles: [], here: { x: 0, z: 0 }, placements: new Map() }, [], options.reserves);
   return poses;
 }
 
@@ -75,4 +75,20 @@ test('les doublons des tuiles ne multiplient pas les antennes et le plafond gard
   assert.equal(poses.length, 6);
   assert.deepEqual(poses, construire([...points].reverse(), elevationAt));
   assert.ok(poses.every((p) => Math.hypot(p.x, p.z) < 900));
+});
+
+test('un espace sauvage protégé refuse l’antenne, un parc régional la garde', () => {
+  const point = sommetTire(0, 0);
+  const elevationAt = (x, z) => 500 - ((x - point.x) ** 2 + z * z) * 0.005;
+  const carre = [[-300, -300], [300, -300], [300, 300], [-300, 300], [-300, -300]]
+    .map(([x, z]) => { const { lng, lat } = frame.toLngLat(point.x + x, z); return [lng, lat]; });
+  const parc = (classe) => ({ source: { forEachFeature(name, _tiles, visit, keep) {
+    if (name !== 'park') return;
+    const properties = { class: classe };
+    if (!keep || keep(properties)) visit({ type: 'Polygon', coordinates: [carre] }, properties);
+  } } });
+  for (const [classe, poses] of [['wildlife_refuge', 0], ['national_park', 0], ['conservation', 1], ['Natura 2000', 1], ['protected_area', 1]]) {
+    const reserves = collectWildReserves(parc(classe).source, [], frame);
+    assert.equal(construire([point], elevationAt, { reserves }).length, poses, classe);
+  }
 });

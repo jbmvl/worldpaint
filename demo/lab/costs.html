@@ -239,7 +239,7 @@ async function move({ turnFrames = 240, runFrames = 1500, speed = 40, height = 3
   };
 }
 
-window.costsLab = { mount, move, inventory, renderer };
+window.costsLab = { mount, move, inventory, renderer, scene, get world() { return world; } };
 window.costsLabReady = true;
 </script>
 </body>

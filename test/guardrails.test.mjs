@@ -28,12 +28,19 @@ test('les routes protègent les courbes sans exiger de ravin, les dessertes et p
     assert.equal(guardrailStyleFor({ profile, slope: .4, drop: .2 }), null);
     assert.ok(guardrailStyleFor({ profile, slope: .3, drop: 2 }));
   }
-  for (const profile of ['lane', 'track']) {
-    assert.equal(guardrailStyleFor({ profile, curvature: .02 }), null);
-    assert.equal(guardrailStyleFor({ profile, curvature: .02, drop: 1 }), 'steel');
-    assert.equal(guardrailStyleFor({ profile, slope: .3, drop: 2 }), 'steel');
+  assert.equal(guardrailStyleFor({ profile: 'lane', curvature: .02 }), null);
+  assert.equal(guardrailStyleFor({ profile: 'lane', curvature: .02, drop: 1 }), 'steel');
+  assert.equal(guardrailStyleFor({ profile: 'lane', slope: .3, drop: 2 }), 'steel');
+});
+
+test('chemins, sentiers et escaliers n’ont qu’une rambarde de bois, et seulement à pic', () => {
+  for (const profile of ['track', 'path', 'steps']) {
+    assert.equal(guardrailStyleFor({ profile, curvature: .1, drop: 3 }), null, `${profile} : un virage ne suffit pas`);
+    assert.equal(guardrailStyleFor({ profile, slope: .6, drop: 4, climate: 'alpine' }), null, `${profile} : un versant raide ne suffit pas`);
+    assert.equal(guardrailStyleFor({ profile, slope: 1.2, drop: 1 }), null, `${profile} : à pic mais sans vide sous la rive`);
+    assert.equal(guardrailStyleFor({ profile, slope: 1.2, drop: 3 }), 'wood', `${profile} : à pic`);
+    assert.equal(guardrailStyleFor({ profile, slope: 1.2, drop: 3, grade: -2.5 }), null, `${profile} : le long d’une paroi`);
   }
-  assert.equal(guardrailStyleFor({ profile: 'path', curvature: .1, slope: 1, drop: 10 }), null);
 });
 
 test('la lisse suit l’extérieur du virage dans les deux sens de parcours', () => {
@@ -81,12 +88,15 @@ test('une bouche interrompt la rambarde sans la reporter sur l’autre rive', ()
 });
 
 test('la construction du relief laisse les petites routes recevoir leur garde-corps', () => {
-  for (const profile of ['lane', 'track']) {
-    const b = banc({ profile });
-    buildRoadsideRelief(b.layer, b.context, b.segment, b.rows.map(p => ({ ...p, slope: .3, drop: 2, perch: -1 })));
-    assert.ok(b.context.buffers.guardrailBeam.positions.length > 0, profile);
-    assert.ok(b.context.placements.length > 0, profile);
-  }
+  const lane = banc({ profile: 'lane' });
+  buildRoadsideRelief(lane.layer, lane.context, lane.segment, lane.rows.map(p => ({ ...p, slope: .3, drop: 2, perch: -1 })));
+  assert.ok(lane.context.buffers.guardrailBeam.positions.length > 0);
+  assert.ok(lane.context.placements.length > 0);
+  const sentier = banc({ profile: 'path' });
+  buildRoadsideRelief(sentier.layer, sentier.context, sentier.segment, sentier.rows.map(p => ({ ...p, slope: 1.2, drop: 3, perch: -1 })));
+  assert.ok(sentier.context.buffers.woodRail.positions.length > 0, 'rambarde de bois');
+  assert.equal(sentier.context.buffers.guardrailBeam.positions.length, 0, 'jamais d’acier');
+  assert.ok(sentier.context.placements.every((p) => p.kind === 'fencePostWood'));
 });
 
 
@@ -114,7 +124,7 @@ test('les routes ordinaires portent de l’acier quel que soit le surplomb ou le
 });
 
 test('le bois exige une petite route et un contexte rural ou montagnard', () => {
-  for (const profile of ['lane', 'track']) {
+  for (const profile of ['lane']) {
     const danger = { profile, slope: .3, drop: 2 };
     assert.equal(guardrailStyleFor(danger), 'steel');
     assert.equal(guardrailStyleFor({ ...danger, rural: true }), 'wood');

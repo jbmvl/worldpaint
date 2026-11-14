@@ -117,7 +117,7 @@ const way = (properties, ...points) => ({
  * « falaise » : une route au ras du pied de la falaise du plateau, une autre au
  * ras de l'arase, et une rampe qui les relie à travers la paroi.
  * « chemin » : un chemin d'exploitation à flanc du versant à 25 %, et un
- * sentier qui y monte dans la pente — sans terrassement ni talus.
+ * sentier qui y monte dans la pente, aplanis sans falaise ni mur.
  */
 const FEATURES = [
   ...[['secondary', 350], ['service', 630]].map(([classe, z]) =>

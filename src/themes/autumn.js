@@ -26,6 +26,10 @@ const AUTUMN_HUES = {
   9: { r: 0.95, g: 0.72, b: 0.35 }, // ronce
   10: { r: 1.2, g: 0.7, b: 0.3 },
   16: { r: 1.1, g: 0.9, b: 0.3 }, // pommier
+  20: { r: 1.55, g: 0.7, b: 0.2 }, // hêtre : cuivre
+  21: { r: 1.45, g: 1.1, b: 0.2 }, // bouleau : or pâle
+  24: { r: 1.6, g: 1.05, b: 0.15 }, // mélèze : le seul résineux qui jaunit
+  26: { r: 1.35, g: 1.0, b: 0.22 }, // charme : jaune
 };
 
 const trees = {
@@ -37,7 +41,12 @@ const trees = {
 const surfaces = {
   ...defaultTheme.surfaces,
   grass: { ...defaultTheme.surfaces.grass, albedo: [0.085, 0.12, 0.02] },
-  wood: { ...defaultTheme.surfaces.wood, albedo: [0.07, 0.058, 0.014] },
+  wood: {
+    ...defaultTheme.surfaces.wood,
+    albedo: [0.07, 0.058, 0.014],
+    // Résineux verts et feuillus roux mêlés : un couvert plus chaud qu'en été.
+    canopy: { ...defaultTheme.surfaces.wood.canopy, albedo: [0.075, 0.11, 0.025] },
+  },
 };
 
 // Fin octobre : blé moissonné, tournesol et maïs secs sur pied (le tournesol

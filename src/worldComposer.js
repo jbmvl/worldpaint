@@ -133,7 +133,7 @@ export class WorldComposer {
    * @param {number} [options.reach] Portée du monde en mètres (`setReach`). Absente, chaque couche garde son rayon.
    * @param {Object} [options.theme] Direction artistique, déjà résolue par
    *        `resolveTheme`. Le compositeur la distribue sans la lire.
-   * @param {{budget?: number, radius?: number}} [options.detail] Voir `createWorld`.
+   * @param {{budget?: number, radius?: number, level?: 'full'|'light'}} [options.detail] Voir `createWorld`.
    * @param {{elevation: Object, blockSize: number}|null} [options.far] Relief lointain :
    *        son `ElevationField` et son côté en tuiles. Absent, rien au-delà de la bulle.
    *        Il n'est à l'image que sans portée.
@@ -220,6 +220,7 @@ export class WorldComposer {
     this.bubble.setDetailRadius(detail.radius);
     this.far = far ? new FarRelief({ THREE, scene, bubble: this.bubble, ...far }) : null;
     this.far?.setColor(this.bubble.materials.gapAlbedo);
+    this.far?.setWater(this.bubble.materials.waterUniforms);
     // Les volcans actifs s'appuient sur la nappe lointaine : sans elle, rien à faire couler.
     this.volcanoes = this.far ? new VolcanoFire({ THREE, scene, theme }) : null;
     this._volcanoKey = null;
@@ -286,6 +287,7 @@ export class WorldComposer {
       groundClass: this.groundClass,
       roads: this._infra,
       theme,
+      level: detail.level,
     });
 
     // Les cultures sèment sur la même carte que celle qui colore le sol : dépendent de `groundClass`.
@@ -641,9 +643,11 @@ export class WorldComposer {
       };
       const budget = new GenerationBudget(budgetOptions);
       const frame = this.bubble.frame;
-      const checkpoint = async () => {
-        await budget.checkpoint();
-        return !this.disposed && !this.bubble.disposed && this.bubble.frame === frame && !this._superseded;
+      const alive = () => !this.disposed && !this.bubble.disposed && this.bubble.frame === frame && !this._superseded;
+      // Un booléen tant que le budget tient, une promesse de booléen quand il cède.
+      const checkpoint = () => {
+        const pause = budget.checkpoint();
+        return pause ? pause.then(alive) : alive();
       };
       const rebuild = async (layer, label, ...args) => {
         if (!layer.rebuildSteps) { layer.rebuild(...args); return true; }
@@ -651,7 +655,8 @@ export class WorldComposer {
         let cpu = 0;
         try {
           while (true) {
-            if (!await checkpoint()) return false;
+            const go = checkpoint();
+            if (go !== true && !await go) return false;
             const measured = this.metrics?.enabled;
             const start = measured ? performance.now() : 0;
             const result = steps.next();
@@ -661,7 +666,6 @@ export class WorldComposer {
               this.metrics.record(`${label}Etape`, ms);
             }
             if (result.done) return true;
-            if (!await checkpoint()) return false;
           }
         } finally {
           steps.return?.();

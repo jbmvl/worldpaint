@@ -167,7 +167,7 @@ Sources : [schéma `landcover`](https://github.com/openmaptiles/openmaptiles/blo
 (c'est celui qu'OpenFreeMap fait tourner ; le sable y est servi jusqu'au z14
 sans autre filtre qu'une taille minimale au-dessous du z13).
 
-### `park` — **pas lue**, et le nom est un piège
+### `park` — **pas lue pour le sol**, et le nom est un piège
 
 La couche `park` ne contient aucun parc de ville. Au schéma OpenMapTiles elle
 porte `boundary=protected_area`, `boundary=national_park`,
@@ -182,8 +182,9 @@ reste**, et son passage **effaçait** la couverture en dessous. Tout ce qui
 protégé : un cordon dunaire, un marais, une lande, une forêt de parc naturel
 régional. C'est la raison pour laquelle on ne voyait de sable nulle part.
 
-Un périmètre juridique ne dit rien de la matière du sol : la couche n'est plus
-parcourue. Le parc de ville, lui, n'est pas perdu — `leisure=park`, `garden`,
+Un périmètre juridique ne dit rien de la matière du sol : la carte du sol ne la
+parcourt pas. Seul le mobilier la lit, pour ne pas poser d'éolienne ni d'antenne
+dans un espace sauvage protégé (voir `docs/inventaire.md`). Le parc de ville, lui, n'est pas perdu — `leisure=park`, `garden`,
 `village_green`, `recreation_ground` et `golf_course` sont rangés par le schéma
 dans `landcover`, classe `grass`.
 
@@ -454,7 +455,7 @@ lieu. Le remblai se raccorde doucement au relief ; la tranchée a une rive plus
 franche. Le fond plat tient compte de la résolution de la maille, comme le
 déblai routier. Une route voisine conserve un appui dans ce terrain : la
 tranchée ne la déchausse pas. Une branche qui rejoint une culée se raccorde au
-tablier ; elle ne compte pas comme passage inférieur. Les chemins lisent le terrain final sans le terrasser. Les
+tablier ; elle ne compte pas comme passage inférieur. Les chemins se posent sur le terrain final, puis le terrassent à leur tour, de peu (`PATH_EARTHWORK_MAX_M`). Les
 mailles sont reconstruites avant le décor et les plantations sont reprises
 après modification, afin de ne pas conserver les anciennes altitudes.
 

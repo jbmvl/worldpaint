@@ -163,6 +163,9 @@ export const TERRAIN_LOOK = {
  * `bark` et `volume` règlent les couleurs, le port et les facettes ; `aspect`
  * donne la largeur rapportée à la hauteur. Les petites plantes ont leur
  * propre `heightM`, les arbres tirent leur hauteur du peuplement.
+ *
+ * L'indice est une clé (`TREE_SPECIES`, les plantations, `autumn.js`) : une
+ * silhouette nouvelle s'ajoute en fin de liste.
  */
 export const TREE_VARIANTS = [
   { aspect: 0.8, kind: 'broadleaf', hue: { r: 0.62, g: 1, b: 0.46 }, trunk: 0.075, crownBase: 0.6, spread: 0.34, volume: { crownY: .59, spread: 1.2, rise: .85, colorVariation: .09 }, bark: [.105, .068, .035] },
@@ -170,8 +173,10 @@ export const TREE_VARIANTS = [
   { aspect: 0.58, kind: 'broadleaf', hue: { r: 0.72, g: 1, b: 0.5 }, trunk: 0.06, crownBase: 0.55, spread: 0.28, volume: { crownY: .68, spread: .8, rise: 1.15, colorVariation: .06 }, bark: [.38, .36, .3] },
   { aspect: 0.3, kind: 'column', hue: { r: 0.56, g: 1, b: 0.42 }, trunk: 0.05, crownBase: 0.9, spread: 0.16, volume: { rise: 1.15, colorVariation: .06 }, bark: [.18, .16, .12] },
   { aspect: 0.24, kind: 'column', hue: { r: 0.68, g: 1, b: 0.52 }, trunk: 0.045, crownBase: 0.88, spread: 0.13, volume: { rise: 1.3, colorVariation: .04 }, bark: [.12, .09, .06] },
-  { aspect: 0.52, kind: 'conifer', hue: { r: 0.44, g: 1, b: 0.5 }, trunk: 0.06, crownBase: 0.86, spread: 0.3 },
-  { aspect: 0.43, kind: 'conifer', hue: { r: 0.38, g: 1, b: 0.44 }, trunk: 0.055, crownBase: 0.9, spread: 0.24 },
+  // Sapin : un cône large et bleuté, quatre étages francs.
+  { aspect: 0.6, kind: 'conifer', hue: { r: 0.36, g: 0.92, b: 0.52 }, trunk: 0.06, crownBase: 0.86, spread: 0.3, volume: { tiers: 4, taper: .3 } },
+  // Épicéa : plus sombre, plus d'étages, une pointe plus fine.
+  { aspect: 0.48, kind: 'conifer', hue: { r: 0.3, g: 0.8, b: 0.42 }, trunk: 0.055, crownBase: 0.9, spread: 0.24, volume: { tiers: 5, taper: .22 } },
   { aspect: 1.15, kind: 'bushy', hue: { r: 0.6, g: 1, b: 0.4 }, trunk: 0.05, crownBase: 0.86, spread: 0.4, volume: { trunkHeight: .25, crownY: .3, spread: 1.15 } },
   { aspect: 1.25, kind: 'bushy', hue: { r: 0.74, g: 1, b: 0.46 }, trunk: 0.04, crownBase: 0.9, spread: 0.44, volume: { trunkHeight: .25, crownY: .3, spread: 1.15 } },
   // Le tapis : ni tronc, ni houppe, et sa taille lui appartient.
@@ -191,225 +196,252 @@ export const TREE_VARIANTS = [
   // L'oyat d'une dune : une touffe de lames, presque sans masse.
   { kind: 'marram', hue: { r: 0.58, g: 1, b: 0.56 }, trunk: 0, crownBase: 1, spread: 0.35,
     heightM: [0.35, 0.7], aspect: 0.8, volume: { bladeWidth: .015, fronds: 13 } },
-  { kind: 'palm', hue: { r: .65, g: 1, b: .45 }, trunk: .06, crownBase: .3, spread: .45,
-    volume: { trunkHeight: .75, fronds: 9, bladeWidth: .06 }, bark: [.24, .17, .095] },
+  { kind: 'palm', hue: { r: .65, g: 1, b: .45 }, trunk: .1, crownBase: .3, spread: .45,
+    volume: { trunkHeight: .75, fronds: 14, bladeWidth: .085 }, bark: [.24, .17, .095] },
   { kind: 'apple', aspect: 1.15, hue: { r: .65, g: 1, b: .42 }, trunk: .09,
     bark: [.16, .105, .055], volume: { trunkHeight: .5, crownY: .46, spread: 1.2, rise: .8 },
     fruit: { perLobe: 4, radius: .02, color: [.65, .025, .008] } },
   // Pin parasol, pin d'Alep : un fût nu, une cime large et plate.
   { aspect: 1.05, kind: 'broadleaf', hue: { r: 0.42, g: 0.9, b: 0.4 }, trunk: 0.07, crownBase: 0.72, spread: 0.42,
     volume: { trunkHeight: .78, crownY: .84, spread: 1.45, rise: .42, colorVariation: .05 }, bark: [.3, .17, .1] },
-  // Pin maritime, pin sylvestre adulte : un long fût, une cime haute et étroite.
-  { aspect: 0.55, kind: 'broadleaf', hue: { r: 0.4, g: 0.88, b: 0.42 }, trunk: 0.055, crownBase: 0.8, spread: 0.26,
-    volume: { trunkHeight: .8, crownY: .85, spread: 1.05, rise: .38, lobes: 5, colorVariation: .06 }, bark: [.32, .2, .12] },
+  // Pin maritime : un long fût brun-rouge, une cime haute, étroite et sombre.
+  { aspect: 0.55, kind: 'broadleaf', hue: { r: 0.4, g: 0.86, b: 0.42 }, trunk: 0.055, crownBase: 0.8, spread: 0.26,
+    volume: { trunkHeight: .8, crownY: .85, spread: 1.05, rise: .38, lobes: 5, colorVariation: .06 }, bark: [.34, .17, .1] },
   // La bruyère d'une lande : un coussin bas et large, fleuri sur le dessus.
   { kind: 'heather', hue: { r: 0.6, g: 0.9, b: 0.5 }, trunk: 0, crownBase: 1, spread: 0.5,
     heightM: [0.25, 0.55], aspect: 2.2, volume: { tipColor: [.3, .07, .26] } },
+  // Hêtre : une houppe haute, lisse et pleine, sur un fût gris.
+  { aspect: 0.62, kind: 'broadleaf', hue: { r: 0.56, g: 1, b: 0.4 }, trunk: 0.07, crownBase: 0.6, spread: 0.3,
+    volume: { crownY: .72, spread: .85, rise: 1.35, lobes: 5, lobeSize: 1.05, colorVariation: .04 }, bark: [.3, .3, .27] },
+  // Bouleau : un fût blanc, une houppe légère et claire où le jour passe.
+  { aspect: 0.48, kind: 'broadleaf', hue: { r: 0.8, g: 1.05, b: 0.48 }, trunk: 0.045, crownBase: 0.7, spread: 0.2,
+    volume: { crownY: .7, spread: 1, rise: 1.25, lobes: 4, lobeSize: .75, colorVariation: .1 }, bark: [.62, .6, .55] },
+  // Chêne vert, chêne-liège : une boule sombre et persistante sur un fût court.
+  { aspect: 1, kind: 'broadleaf', hue: { r: 0.4, g: 0.78, b: 0.4 }, trunk: 0.08, crownBase: 0.5, spread: 0.4,
+    volume: { trunkHeight: .45, crownY: .52, spread: 1.05, rise: .9, lobes: 5, lobeSize: 1.05, colorVariation: .05 }, bark: [.13, .11, .09] },
+  // Eucalyptus : un fût pâle et haut, une cime grise et clairsemée.
+  { aspect: 0.55, kind: 'broadleaf', hue: { r: 0.7, g: 0.92, b: 0.78 }, trunk: 0.055, crownBase: 0.75, spread: 0.26,
+    volume: { trunkHeight: .82, crownY: .76, spread: 1.15, rise: 1.15, lobes: 5, lobeSize: .7, colorVariation: .08 }, bark: [.5, .45, .36] },
+  // Mélèze : un conifère clair, aux étages espacés.
+  { aspect: 0.5, kind: 'conifer', hue: { r: 0.7, g: 1.12, b: 0.5 }, trunk: 0.05, crownBase: 0.85, spread: 0.24, volume: { tiers: 3, taper: .35 } },
+  // Olivier : bas, un tronc épais, une houppe gris-vert argenté en touffes.
+  { aspect: 1.3, kind: 'broadleaf', hue: { r: 0.8, g: 1, b: 1.15 }, trunk: 0.1, crownBase: 0.5, spread: 0.45,
+    volume: { trunkHeight: .4, crownY: .5, spread: 1.55, rise: .75, lobes: 5, lobeSize: .75, colorVariation: .06 }, bark: [.2, .18, .15] },
+  // Charme : une houppe ovale, serrée et sombre, sur un fût gris.
+  { aspect: 0.7, kind: 'broadleaf', hue: { r: 0.5, g: 0.94, b: 0.36 }, trunk: 0.065, crownBase: 0.55, spread: 0.3,
+    volume: { crownY: .6, spread: .9, rise: 1.1, lobes: 5, lobeSize: 1, colorVariation: .05 }, bark: [.33, .32, .29] },
+  // Aulne : une houppe étroite et haute, vert sombre, sur une écorce noirâtre.
+  { aspect: 0.5, kind: 'broadleaf', hue: { r: 0.42, g: 0.84, b: 0.36 }, trunk: 0.055, crownBase: 0.6, spread: 0.24,
+    volume: { crownY: .66, spread: .7, rise: 1.4, lobes: 5, lobeSize: .92, colorVariation: .05 }, bark: [.14, .12, .1] },
+  // Pin sylvestre : un fût orange en haut, une cime bleu-vert en quelques bouquets.
+  { aspect: 0.6, kind: 'broadleaf', hue: { r: 0.36, g: 0.84, b: 0.54 }, trunk: 0.05, crownBase: 0.78, spread: 0.28,
+    volume: { trunkHeight: .78, crownY: .83, spread: 1.15, rise: .5, lobes: 4, lobeSize: .9, colorVariation: .07 }, bark: [.55, .25, .09] },
 ];
 /**
- * Les essences, par indices de variantes. C'est ce que lit `vegetationLayer`
- * pour composer un peuplement : un bois n'est pas un tirage uniforme dans onze
- * silhouettes, c'est deux ou trois essences qui dominent.
+ * Les strates basses et les buissons de biome, par indices de variantes.
  *
- * `undergrowth` n'est l'essence d'aucun peuplement : c'est le tapis du sol,
- * semé par le seul sous-étage (`understoryStrata`). De loin, la strate basse
- * reste faite d'arbustes — une ronce à un kilomètre coûte une instance et ne
- * se voit pas.
+ * `undergrowth` est le tapis du sol, semé par le seul sous-étage
+ * (`understoryStrata`). De loin, la strate basse reste faite d'arbustes
+ * (`bushy`) — une ronce à un kilomètre coûte une instance et ne se voit pas.
+ * Les autres sont nommées par `SURFACE_LOOK[kind].bush` et lues par
+ * `coverBushesFor` (vegetationLayer.js) : une lande et un maquis ne sèment
+ * pas le même buisson.
  */
 export const TREE_ESSENCES = {
-  broadleaf: [0, 1, 2],
-  column: [3, 4],
-  conifer: [5, 6],
   bushy: [7, 8],
   undergrowth: [9, 10, 13],
-  // Essences de biome, nommées par `SURFACE_LOOK[kind].bush` et lues par
-  // `coverBushesFor` (vegetationLayer.js) — une lande et un maquis ne sèment
-  // plus le même buisson.
   gorse: [11],
   // La lande mêle les deux : deux coussins de bruyère pour un ajonc.
   moorland: [19, 19, 11],
   thornyScrub: [12],
   marram: [14],
-  palm: [15],
-  umbrellaPine: [17],
-  tallPine: [18],
 };
+
+/**
+ * Les essences d'arbre, par mot de `TREE_KINDS` : ses silhouettes
+ * (`variants`, indices de `TREE_VARIANTS`), le peuplement qu'elle forme
+ * quand elle domine un bois (`stand`, nom d'une entrée de `FOREST_TYPES`), et
+ * l'arbre qu'elle donne une fois planté — alignement, parc, cour, crête
+ * (`planted` : hauteur en mètres et largeur rapportée à la hauteur, sur sa
+ * première silhouette). Un arbre qui pousse seul s'étale plus qu'en bois.
+ * Une essence sans `stand` ne fait pas de bois : on ne la voit que plantée
+ * (le palmier, arbre d'ornement en Europe).
+ *
+ * C'est une référence exacte, comme `region.stone` dans `STONE_LOOK` : le pays
+ * nomme ses essences, chacune désigne son entrée entière. Deux essences
+ * partagent une silhouette quand rien ne les sépare à distance de course.
+ */
+export const TREE_SPECIES = {
+  oak: { variants: [0, 1], stand: 'futaie', planted: { height: 6, aspect: 1 } },
+  beech: { variants: [20], stand: 'futaie', planted: { height: 6, aspect: .8 } },
+  chestnut: { variants: [0], stand: 'taillis', planted: { height: 6, aspect: 1 } },
+  ash: { variants: [2], stand: 'futaie', planted: { height: 6, aspect: .75 } },
+  hornbeam: { variants: [26], stand: 'taillis', planted: { height: 6, aspect: .85 } },
+  alder: { variants: [27], stand: 'taillis', planted: { height: 6, aspect: .7 } },
+  holm_oak: { variants: [22], stand: 'chênaie verte', planted: { height: 5, aspect: .9 } },
+  cork_oak: { variants: [22], stand: 'chênaie verte', planted: { height: 5, aspect: .9 } },
+  birch: { variants: [21], stand: 'bétulaie', planted: { height: 9, aspect: .5 } },
+  poplar: { variants: [3, 4], stand: 'futaie', planted: { height: 9, aspect: .3 } },
+  eucalyptus: { variants: [23], stand: 'futaie', planted: { height: 9, aspect: .55 } },
+  scots_pine: { variants: [28], stand: 'pinède', planted: { height: 9, aspect: .6 } },
+  maritime_pine: { variants: [18], stand: 'pinède', planted: { height: 9, aspect: .55 } },
+  black_pine: { variants: [18, 5], stand: 'pinède de montagne', planted: { height: 9, aspect: .55 } },
+  spruce: { variants: [6], stand: 'pessière', planted: { height: 9, aspect: .55 } },
+  fir: { variants: [5], stand: 'sapinière', planted: { height: 9, aspect: .6 } },
+  larch: { variants: [24], stand: 'mélézin', planted: { height: 9, aspect: .5 } },
+  aleppo_pine: { variants: [17], stand: 'pinède méditerranéenne', planted: { height: 5, aspect: 1 } },
+  stone_pine: { variants: [17], stand: 'pinède méditerranéenne', planted: { height: 5, aspect: 1 } },
+  olive: { variants: [25], stand: 'bosquet sec', planted: { height: 5, aspect: 1.3 } },
+  carob: { variants: [22], stand: 'bosquet sec', planted: { height: 6, aspect: 1.2 } },
+  juniper: { variants: [7], stand: 'bosquet sec', planted: { height: 5, aspect: 1.15 } },
+  acacia: { variants: [8], stand: 'bosquet sec', planted: { height: 5, aspect: .9 } },
+  palm: { variants: [15], planted: { height: 8, aspect: .7 } },
+};
+
+/**
+ * Les essences d'un lieu hors de tout pays (`region` nulle, ou qui ne nomme
+ * aucune essence que le thème connaît) : le bois mêlé de plaine tempérée sur
+ * lequel le thème a été réglé. Lues comme un `region.trees`, dans l'ordre.
+ */
+export const DEFAULT_TREE_SPECIES = ['oak', 'beech', 'scots_pine', 'birch'];
 
 // --- Les peuplements -----------------------------------------------------------
 /**
- * Les peuplements. Une forêt tirée uniformément dans neuf silhouettes n'est
- * pas une forêt : le contraste entre un versant résineux et un fond de
- * vallon feuillu se lit de loin, pas le détail d'une houppe. Chaque
- * peuplement fixe les essences, la hauteur, un facteur de densité, et la
- * part de sous-bois (comptée en plus des arbres, pas à leur place — un bois
- * sans strate basse se lit comme une colonnade). Tiré d'une maille de
- * `FOREST_PATCH_M`, donc ancré au lieu.
+ * Les peuplements : la structure d'un bois, pas ses silhouettes. Chacun fixe
+ * la hauteur, un facteur de densité, la part de sous-bois (comptée en plus des
+ * arbres, pas à leur place — un bois sans strate basse se lit comme une
+ * colonnade) et la teinte. Une essence le désigne par son nom
+ * (`TREE_SPECIES[mot].stand`) quand elle domine une maille de
+ * `FOREST_PATCH_M`.
  *
- * `species` dit quelles essences le peuplement représente : il est retenu là
- * où le pays en cite au moins une (`region.trees`). Sans ça, la Laponie est
- * identique à la Provence quelle que soit la finesse des silhouettes. Un
- * peuplement sans `species` pousse partout.
+ * `purity` est la part des arbres faits de l'essence dominante ; le reste
+ * revient aux autres essences du pays, au prorata de leur rang. Une pessière
+ * est presque pure, un taillis mêlé.
  */
 export const FOREST_TYPES = [
   {
     // Futaie de feuillus : de grands arbres, largement espacés, sous-bois clair.
-    // Chêne, hêtre, frêne — le bois de plaine tempérée.
     name: 'futaie',
-    species: ['oak', 'beech', 'ash', 'hornbeam'],
-    essences: ['broadleaf', 'broadleaf', 'column'],
     minHeight: 12,
     maxHeight: 22,
     density: 0.95,
     // Une futaie entretenue est dégagée au sol : c'est même ce qui la définit.
     understory: 0.12,
+    purity: 0.7,
     tint: [0.95, 1, 0.86],
   },
   {
     // Pinède : haute, sombre, dense et serrée. Les Landes, la Sologne — une
     // plantation de pin maritime ou sylvestre, pas un bois spontané.
-    name: 'pinede',
-    species: ['maritime_pine', 'scots_pine'],
-    essences: ['tallPine', 'tallPine', 'conifer'],
+    name: 'pinède',
     minHeight: 11,
     maxHeight: 19,
     density: 1.45,
     // Sous les résineux, l'aiguille étouffe presque tout.
     understory: 0.08,
+    purity: 0.85,
     tint: [0.84, 1, 0.92],
   },
   {
     // Taillis et bosquets : bas, très denses, c'est le fourré qu'on longe.
     name: 'taillis',
-    species: ['chestnut', 'hornbeam', 'alder', 'oak', 'cork_oak'],
-    essences: ['bushy', 'bushy', 'broadleaf'],
     minHeight: 3.5,
     maxHeight: 7,
     density: 1.75,
     // Un taillis *est* son sous-bois : la strate basse y pèse autant que la haute.
     understory: 0.55,
+    purity: 0.65,
     tint: [1, 1, 0.8],
   },
   {
-    // Bois mêlé : le cas le plus courant, et le seul où le mélange est juste.
-    name: 'mixte',
-    species: ['oak', 'beech', 'scots_pine', 'birch'],
-    essences: ['broadleaf', 'conifer', 'bushy', 'column'],
-    minHeight: 7,
-    maxHeight: 16,
-    density: 1.3,
-    // Le bois où l'on ne passe pas en ligne droite : ronces et jeunes pousses.
-    understory: 0.34,
-    tint: [0.92, 1, 0.86],
-  },
-  {
-    // Pinède méditerranéenne : pin d'Alep et pin parasol, clairsemés, sur un
-    // sol de garrigue qu'on voit entre les troncs. C'est le contraire d'une
-    // pinède landaise — l'ombre y est trouée, pas continue.
+    // Pinède méditerranéenne : clairsemée, sur un sol de garrigue qu'on voit
+    // entre les troncs. C'est le contraire d'une pinède landaise — l'ombre y
+    // est trouée, pas continue.
     name: 'pinède méditerranéenne',
-    species: ['aleppo_pine', 'stone_pine'],
-    essences: ['umbrellaPine', 'umbrellaPine', 'bushy'],
     minHeight: 7,
     maxHeight: 14,
     density: 0.85,
     // La garrigue pousse sous les pins : ciste, romarin, chêne kermès.
     understory: 0.45,
+    purity: 0.7,
     tint: [1.02, 0.95, 0.72],
   },
   {
     // Chênaie verte : basse, dense, sombre, feuillage persistant. Le bois
     // méditerranéen qui n'est pas une pinède.
     name: 'chênaie verte',
-    species: ['holm_oak', 'cork_oak'],
-    essences: ['broadleaf', 'bushy', 'broadleaf'],
     minHeight: 6,
     maxHeight: 11,
-    density: 1.25,
-    understory: 0.4,
+    density: 1.1,
+    understory: 0.3,
+    purity: 0.7,
     tint: [0.95, 0.98, 0.74],
   },
   {
-    // Pin noir et sapin de montagne méditerranéenne : Olympe, Apennins,
-    // sierras. Haut, droit, sur un sol sec et caillouteux.
+    // Pin noir de montagne méditerranéenne : Olympe, Apennins, sierras. Haut,
+    // droit, sur un sol sec et caillouteux.
     name: 'pinède de montagne',
-    species: ['black_pine'],
-    essences: ['conifer', 'conifer', 'column'],
     minHeight: 11,
     maxHeight: 20,
     density: 1.05,
     understory: 0.2,
+    purity: 0.75,
     tint: [0.88, 0.98, 0.8],
   },
   {
-    // Taïga : épicéas serrés, très hauts, presque rien au sol. C'est la forêt
-    // la plus uniforme d'Europe, et cette uniformité *est* son identité.
-    name: 'taïga',
-    species: ['spruce'],
-    essences: ['conifer', 'conifer', 'conifer', 'column'],
+    // Pessière : épicéas serrés, très hauts, presque rien au sol. Son
+    // uniformité *est* son identité.
+    name: 'pessière',
     minHeight: 9,
     maxHeight: 18,
-    density: 1.5,
-    understory: 0.18,
+    density: 1.44,
+    understory: 0.17,
+    purity: 0.85,
     tint: [0.8, 1, 0.94],
   },
   {
     // Bétulaie : bouleaux clairs et bas, la forêt de la limite — celle du
     // nord, celle de l'altitude, celle du vent.
     name: 'bétulaie',
-    species: ['birch'],
-    essences: ['column', 'bushy', 'broadleaf'],
     minHeight: 4,
     maxHeight: 11,
     density: 1.1,
     understory: 0.35,
+    purity: 0.7,
     tint: [1.02, 1.02, 0.78],
   },
   {
-    // Pessière subalpine : épicéas et mélèzes en pente, de plus en plus espacés
-    // à mesure qu'on monte vers la limite forestière.
-    name: 'pessière subalpine',
-    species: ['larch', 'fir'],
-    essences: ['conifer', 'conifer', 'column'],
+    // Sapinière : sapins en pente, sombres, mêlés au hêtre en moyenne montagne.
+    name: 'sapinière',
     minHeight: 8,
     maxHeight: 16,
     density: 1.2,
     understory: 0.16,
+    purity: 0.7,
     tint: [0.82, 0.96, 0.88],
   },
   {
+    // Mélézin : le bois clair de l'étage subalpin, où l'herbe pousse entre
+    // les troncs.
+    name: 'mélézin',
+    minHeight: 8,
+    maxHeight: 16,
+    density: 0.85,
+    understory: 0.22,
+    purity: 0.75,
+    tint: [1, 1.02, 0.86],
+  },
+  {
     // Bosquet sec : ce qui tient debout en steppe et en désert espagnol — des
-    // pins rabougris et des buissons, très espacés. La densité basse n'est pas
-    // une économie, c'est le paysage.
+    // arbres rabougris et des buissons, très espacés. La densité basse n'est
+    // pas une économie, c'est le paysage.
     name: 'bosquet sec',
-    species: ['juniper', 'aleppo_pine'],
-    essences: ['bushy', 'bushy', 'conifer'],
     minHeight: 3,
     maxHeight: 8,
     density: 0.55,
     understory: 0.55,
+    purity: 0.6,
     tint: [1.06, 0.94, 0.66],
-  },
-  {
-    // Bois rabougri de côte venteuse : les arbres n'y montent pas, ils
-    // s'étalent. L'Écosse, les îles, les caps.
-    name: 'bois rabougri',
-    species: ['birch'],
-    essences: ['bushy', 'broadleaf', 'bushy'],
-    minHeight: 3,
-    maxHeight: 7,
-    density: 0.85,
-    understory: 0.5,
-    tint: [0.95, 1, 0.82],
-  },
-  {
-    // Palmeraie : des stipes clairsemés au-dessus d'un fourré bas.
-    name: 'palmeraie',
-    species: ['palm'],
-    essences: ['palm', 'palm', 'bushy'],
-    minHeight: 6,
-    maxHeight: 12,
-    density: 0.6,
-    understory: 0.35,
-    tint: [1, 1, 0.85],
   },
 ];
 
@@ -675,6 +707,9 @@ export const SURFACE_LOOK = {
     // pas le modelé d'un pré alpin.
     grainCellM: 2,
     grainAmplitudeM: 0.22,
+    // De loin, les houppes ferment le couvert : entre `nearM` et `farM`, le
+    // sol prend la couleur moyenne des feuillages, ombre propre comprise.
+    canopy: { albedo: [0.05, 0.13, 0.03], nearM: 120, farM: 380 },
   },
   farmland: { albedo: [0.22, 0.13, 0.06], wash: 'farmland', grainCellM: 4, grainAmplitudeM: 1.4 },
   // Lotissement : pelouses tondues et allées, plus claires et plus franchement
@@ -882,6 +917,8 @@ export const TOWN_PALETTES = {
   dark_stone_curved_tile: { wall: '#b4ada3', roof: '#c07b4c', shutter: '#3f5a78', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42 },
   dark_stone_slate: { wall: '#b4ada3', roof: '#5b626b', shutter: '#3f5a78', roofShapes: ['gable', 'pyramid', 'hip'], pitch: 0.75 },
   dark_stone_stone_slab: { wall: '#b4ada3', roof: '#77726a', shutter: '#3f5a78', roofShapes: ['gable', 'hip'], pitch: 0.6 },
+  // Pierre de lave et toit plat blanchi des îles volcaniques (dammuso).
+  dark_stone_terrace: { wall: '#b4ada3', roof: '#ebe8df', shutter: '#3d6a78', roofShapes: ['flat', 'flat', 'gable'], pitch: 0.25 },
   granite_flat_tile: { wall: '#bdbcb8', roof: '#b0654a', shutter: '#3f5a78', roofShapes: ['gable', 'hip'] },
   granite_curved_tile: { wall: '#bdbcb8', roof: '#c07b4c', shutter: '#3f5a78', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42 },
   granite_slate: { wall: '#bdbcb8', roof: '#6a6f78', shutter: '#3f5a78', roofShapes: ['gable', 'pyramid'], pitch: 0.75 },
@@ -934,6 +971,7 @@ export const BUILDING_PERSONALITIES = {
     windows: { widthM: 0.65, heightM: 1.5, sillM: 1.8, levelM: 3.5, spacingM: 5 },
     towers: { radiusRatio: 0.22, minRadiusM: 1.4, maxRadiusM: 3, riseM: 3, roofRatio: 2 },
   },
+  ruin: { wall: '#d9c8a0', roof: '#b5a27c', shape: 'flat', windows: false }, // calcaire au soleil ; `roof` = pierre ombrée (degrés, tambours)
   mosque: { shape: 'flat', dome: '#4f8792', minaret: '#efe9db' }, // coupole sur terrasse, flotterait sur un rampant
   hospital: { wall: '#eceff0', roof: '#c2c8ca', shape: 'flat' },
   retail: {
@@ -1132,10 +1170,14 @@ export const ROAD_PROFILES = {
  * amplitude de grain — un bruit par pixel semé dans la texture — retirée avec
  * celui du sol : une surface est une couleur, et une chaussée n'y fait pas
  * exception.
+ *
+ * `opacity` (1 par défaut) laisse le sol transparaître : un chemin de terre
+ * est du terrain tassé, il prend la teinte du pré ou de la lande qu'il
+ * traverse au lieu d'y poser une bande uniforme.
  */
 export const ROAD_SURFACES = {
   asphalt: { base: '#4a4a4e' },
-  dirt: { base: '#807056' },
+  dirt: { base: '#807056', opacity: 0.55 },
   ballast: { base: '#847d70' },
 };
 /** Terre claire de l'accotement. */
@@ -1644,14 +1686,15 @@ export const HEDGE_SHAPES = {
  */
 export const defaultTheme = Object.freeze({
   terrain: TERRAIN_LOOK,
-  trees: { variants: TREE_VARIANTS, essences: TREE_ESSENCES, plantations: {
+  // `plantations` : les arbres qu'un usage choisit (le verger, dont
+  // l'assolement nomme l'espèce) ; les autres arbres plantés prennent l'essence du
+  // pays (`species[mot].planted`).
+  trees: { variants: TREE_VARIANTS, essences: TREE_ESSENCES, species: TREE_SPECIES, defaultSpecies: DEFAULT_TREE_SPECIES, plantations: {
     treeApple: { variants: [16], height: 6, aspect: 1.15 },
-    treeBroad: { variants: [0, 1], height: 6, aspect: 1 },
-    treeRound: { variants: [0, 1], height: 5, aspect: .9 },
-    treeOval: { variants: [1, 2], height: 5, aspect: 1.3 },
-    treeColumnar: { variants: [3, 4], height: 9, aspect: .3 },
-    treeConifer: { variants: [5, 6], height: 9, aspect: .55 },
-    treePalm: { variants: [15], height: 8, aspect: .7 },
+    treeOlive: { variants: [25], height: 7, aspect: 1.3 },
+    treeAlmond: { variants: [0], height: 6, aspect: 1.2 },
+    // L'agrume : la boule sombre et persistante du chêne vert, taillée bas.
+    treeCitrus: { variants: [22], height: 6, aspect: 1.1 },
   }, volume: { bark: [0.105, 0.068, 0.035], leaf: [0.19, 0.25, 0.13] } },
   forests: FOREST_TYPES,
   tunnelLights: { color: srgb("#ffe3a1"), intensity: 55, reachM: 35, spacingM: 18 },

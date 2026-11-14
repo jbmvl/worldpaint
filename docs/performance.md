@@ -45,15 +45,12 @@ mesurés sur les parcours et appareils cibles ; le cache DEM ne les supprime
 pas. Vérifier les images lentes et la mémoire pendant une session longue,
 pas seulement les FPS moyens à l'arrêt.
 
-Le tapis dense utilise neuf brins à trois triangles par maille (27 triangles),
-sans ombres projetées. Sur un plan intégralement herbeux, sa fenêtre et sa
-réserve représentent environ 47 000 mailles, soit 1,27 million de triangles,
-auxquels s'ajoutent les fleurs. La portée visible est limitée à 55 m.
-Arbres et buissons restent en volume, rangés par bloc de 250 m pour
-l'élimination hors champ. Au-delà de 600 puis 1000 m du point le plus proche
-du bloc, deux prototypes simplifiés reprennent les sommets des mêmes lobes ;
-une marge de 60 m empêche les bascules répétées. Positions, couleurs, matrices
-et densités restent identiques. Sous 500 m, le prototype complet est garanti.
+Arbres et buissons restent en volume, rangés par bloc (huit par côté de tuile,
+environ 105 m à 47°, six pour les arbres plantés) pour l'élimination hors
+champ. Au-delà de 150 puis 280 m du point le plus proche
+du bloc (`VEGETATION_DETAIL_M`), deux prototypes simplifiés reprennent les
+sommets des mêmes lobes ; une marge de 20 m empêche les bascules répétées.
+Positions, couleurs, matrices et densités restent identiques.
 Le bouton **Comparer les maillages** du banc de forêt compare volume complet
 et détail automatique à cadrage identique ; `?view=haut` prend de la hauteur. Une forêt pleine (neuf tuiles de bois plein, peuplement et sous-étage) sème
 environ 390 000 plantes, dont 132 478 instances visibles pour la couche après
@@ -127,6 +124,72 @@ CPU, pauses, buffers et compteurs de dessin sans mesurer le temps GPU.
 Voir [le rapport lyonnais](../reports/lyon/rapport.md) pour les paramètres,
 les sous-totaux et les limites de cette mesure.
 
+## Ce qu'une reconstruction alloue
+
+En ville, une reconstruction alloue plusieurs centaines de mégaoctets qui ne
+restent pas en scène ; c'est ce volume qui fait le pic du tas. Deux règles :
+
+- **pas d'appel par sommet vers un accumulateur typé.** Un appel non
+  incorporé de `GrowingArray.push` emballe ses nombres et ses arguments. Un
+  pan, une pièce du catalogue ou un joint se versent d'un seul `pushFrom` par
+  attribut (`pushValues`), ou s'écrivent droit dans `data` ;
+- **le point de cession ne crée rien tant que le budget tient.**
+  `GenerationBudget.checkpoint` rend `undefined` sans attente ; seule la pause
+  rend une promesse. Une reconstruction de Lyon compte environ 80 000 étapes.
+
+Mesure : reconstruction forcée de Lyon (rayon 375 m), alternée dans la même
+page avec la version précédente, allocations échantillonnées par
+`HeapProfiler.startSampling`. Le pic du tas relevé par le banc des trois
+coûts varie de plusieurs dizaines de mégaoctets d'une passe à l'autre selon
+le moment des collectes : le volume alloué est le chiffre qui se compare.
+
+## Le coût d'une image
+
+`node scripts/frame-bench.mjs --lieu lyon` mesure ce que le GPU dessine depuis
+une caméra de poursuite, bulle montée et immobile (`demo/lab/frame.html`), sur
+le GPU de la machine : temps d'image par cap, puis, sur le cap le plus cher,
+appels et triangles par couche (passe d'ombre à part) et temps gagné en
+éteignant chaque couche. Le temps est pris file GPU vidée, par la relecture
+d'un pixel : `finish()` ne bloque pas quand le rendu vit dans un autre
+processus. Un Mac n'est pas un téléphone : on y lit des proportions.
+
+Trois règles en sortent, à ne pas défaire :
+
+- **Le sol se dessine après ce qui le cache, le ciel en dernier.** La matière
+  du sol est la plus chère de l'image, et une rue la couvre presque partout :
+  voirie et bâti passent d'abord (`TERRAIN_RENDER_ORDER`), puis le sol, puis le
+  dôme (`SKY_RENDER_ORDER`), posé au plan lointain. Le test de profondeur
+  écarte alors les pixels cachés avant de les calculer. Une couche opaque
+  ajoutée garde un rang inférieur à celui du sol.
+- **La carte du sol ne se départage qu'au bord d'un trait.** Quatre texels
+  centraux de la même matière, sans trait à portée, donnent la matière sans
+  lire les douze autres ni classer quoi que ce soit (`surfaceAt`). Une ville
+  est un damier de matières : sans ce raccourci, chaque pixel de sol y payait
+  le classement complet, et l'image de Lyon coûtait le double de celle d'une
+  campagne. Les tableaux d'uniformes se lisent par indice, jamais par une
+  boucle qui compare.
+- **Un maillage fusionné se dessine par cases** (`layers/cellMeshes.js`) : le
+  bâti et la voirie de rue, quelques centaines de milliers de triangles
+  chacun, ne partent au GPU que pour les cases dans le champ, et dans le carré
+  de la carte d'ombres.
+
+Relevé de Lyon (Presqu'île, 2560 × 1600, Apple M4 Pro, moyenne de huit caps,
+plancher du banc de 2,5 ms compris) : 6,8 → 3,2 ms par image, 1,30 M → 0,79 M
+de triangles, dont ceux de la carte d'ombres 331 k → 157 k. L'image rendue est
+la même au pixel près, à quelques dizaines de pixels de bord d'arête sur un
+million.
+
+`--meteo sec|pluie-legere|forte-pluie|neige|orage` (ou un état en JSON) rejoue
+la météo que le jeu envoie, repassée à `updateSky` à chaque image ; le banc
+compte alors les fragments de la pluie (`frameLab.fragments('rain')`) et le
+temps CPU d'`advance` et d'`updateSky`. La pluie est un seul appel de
+quelques milliers de rubans, animés dans le sommet sans tampon réécrit : de
+l'ordre de 0,03 fragment par pixel d'écran, autant de temps GPU qu'un dôme de
+ciel. L'ombre, elle, coûte sous une pluie ordinaire ce qu'elle coûte par
+temps sec (le sixième de l'image de Lyon), alors qu'elle n'y garde que le
+tiers de son opacité : elle ne s'éteint qu'au-delà de
+`SHADOW_CUTOFF_OVERCAST`, sous un orage.
+
 ## Les trois coûts
 
 `node scripts/costs-bench.mjs` mesure ensemble la RAM, la génération initiale
@@ -173,6 +236,46 @@ panneaux le long des routes peuvent donc se poser un peu autrement.
   `webglcontextlost` ni erreur. Les maillages fusionnés qu'on ne relit plus
   (bâti, voirie, mobilier linéaire) sont resserrés (`facetBuffers.js`) et
   leur copie côté page est rendue après l'envoi au GPU.
+
+### Le niveau économe (`detail.level`)
+
+`detail: { level: 'light' }` allège l'image pour un appareil sur batterie ;
+`'full'`, le défaut, rend exactement la même géométrie et les mêmes
+programmes que sans l'option. Le niveau économe ne sème ni ne pose rien
+d'autre, il dessine moins des mêmes objets :
+
+- les arbres basculent vers leurs prototypes simplifiés à 60 puis 120 m
+  (`VEGETATION_DETAIL_LIGHT_M`), passe d'ombre comprise ;
+- le sous-étage est complet jusqu'à 90 m et éteint à 150 m
+  (`UNDERSTORY_LIGHT_M`) : la même éclaircie par poids, donc un sous-ensemble
+  du sous-étage complet ;
+- les nuages ne calculent que trois octaves de bruit sur cinq
+  (`CLOUD_OCTAVES_LIGHT`), à chaque pixel de ciel.
+
+Le niveau se choisit à la création du monde : les seuils sont écrits dans les
+shaders du sous-étage et du ciel.
+
+Relevé `node scripts/frame-bench.mjs --lieu <lieu> --niveau full|light
+--detail 375 --dpr 2 --ombre 1024 --taille 393x852 --caps 8 --sans-ablation`
+(Apple M4 Pro, plancher du banc compris, moyenne des huit caps, cinq ou six
+passes alternées) :
+
+| Lieu | niveau | image (ms, médiane des passes) | triangles | appels |
+| --- | --- | ---: | ---: | ---: |
+| station-montreuil-bellay (campagne) | full | 2,23–3,31 (méd. 2,69) | 601 k | 121,5 |
+| | light | 2,15–2,96 (méd. 2,39) | 588 k | 121,5 |
+| saint-gervais (forêt, montagne) | full | 2,96–4,51 (méd. 3,15) | 905 k | 203,0 |
+| | light | 2,90–4,07 (méd. 3,23) | 712 k | 191,5 |
+
+Sur le cap le plus chargé de saint-gervais : peuplement 122 k → 64 k
+triangles, sous-étage 179 k → 58 k, carte d'ombres 253 k → 182 k.
+
+Sur ce GPU l'écart de temps se perd dans le bruit d'une passe à l'autre :
+ce sont les triangles et les appels qu'on lit, le temps reste à relever sur
+un téléphone. Le ciel ne se voit pas dans ces compteurs : son coût suit le
+nombre de pixels de ciel (au banc, en campagne, cinq octaves → trois rendent
+0,1 à 0,2 ms sur 4,2 à densité 4). Ce qui pèse le plus reste la densité
+d'écran, qui appartient à l'application.
 
 ### Les objets dans un rayon fixe (`detail.radius`)
 

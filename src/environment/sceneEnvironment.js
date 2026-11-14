@@ -89,6 +89,14 @@ export const SKY_RADIUS = 8000;
  * apparaître morceau par morceau.
  */
 export const SKY_LAYER = 31;
+/** Rang de dessin du dôme : après le sol, dernier des opaques. */
+const SKY_RENDER_ORDER = 30;
+/**
+ * Octaves du bruit des nuages au niveau économe, sur les cinq de `Sky.js` : les
+ * deux dernières ne portent qu'un huitième puis un seizième de l'amplitude, le
+ * frisé du bord, et le bruit se paie à chaque pixel de ciel.
+ */
+export const CLOUD_OCTAVES_LIGHT = 3;
 
 /**
  * Le ciel de Preetham est forcé à rejoindre la couleur du brouillard au ras
@@ -279,6 +287,8 @@ export class SceneEnvironment {
    * @param {[number,number,number]} [options.debrisTint] Couleur linéaire des
    *        feuilles/graminées emportées par le vent, par défaut la teinte de
    *        feuillage du thème (éclaircie avant usage, voir plus bas).
+   * @param {'full'|'light'} [options.level] Niveau de détail du monde : `'light'`
+   *        ne garde que les `CLOUD_OCTAVES_LIGHT` premières octaves du bruit des nuages.
    */
   constructor({
     THREE,
@@ -293,6 +303,7 @@ export class SceneEnvironment {
     palette = DEFAULT_SKY_PALETTE,
     debrisTint = defaultTheme.furniture.colors.leaf,
     leaves = defaultTheme.leaves,
+    level = 'full',
   }) {
     this.THREE = THREE;
     this.scene = scene;
@@ -323,7 +334,8 @@ export class SceneEnvironment {
     this.sky.name = 'sky-dome';
     this.sky.scale.setScalar(SKY_RADIUS);
     this.sky.frustumCulled = false;
-    this.sky.renderOrder = -1;
+    // Après tout ce qui est opaque : le dôme, posé au plan lointain, ne calcule que le ciel visible.
+    this.sky.renderOrder = SKY_RENDER_ORDER;
     this.sky.layers.enable(SKY_LAYER);
     scene.add(this.sky);
 
@@ -480,6 +492,12 @@ export class SceneEnvironment {
          float horizonWeight = uHorizonBlend * (1.0 - smoothstep(0.0, uHorizonBand, direction.y));
          gl_FragColor.rgb = mix( gl_FragColor.rgb, uHorizonColor, horizonWeight );`
       );
+    if (level === 'light') {
+      skyMaterial.fragmentShader = skyMaterial.fragmentShader.replace(
+        'for ( int i = 0; i < 5; i ++ )',
+        `for ( int i = 0; i < ${CLOUD_OCTAVES_LIGHT}; i ++ )`
+      );
+    }
     skyMaterial.needsUpdate = true;
 
     this.sun = new THREE.DirectionalLight(0xffffff, 1.6);

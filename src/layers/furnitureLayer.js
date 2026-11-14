@@ -92,6 +92,7 @@ import {
   LINEAR_KINDS,
   POINT_ITEMS,
   GROUND_GRAIN_ITEMS,
+  PLANTED_TREE,
 } from './furniture/catalog.js';
 import { buildRoadsideSteps } from './furniture/roadsideFurniture.js';
 import { buildCrossings, buildJunctionSigns, trafficPhaseAt } from './furniture/junctionFurniture.js';
@@ -102,6 +103,7 @@ import {
   buildRocksSteps,
   buildLandmarks,
   buildPeakLandmarks,
+  collectWildReserves,
   buildCoastalLandmarks,
   buildRidgeTrees,
 } from './furniture/landmarks.js';
@@ -608,9 +610,10 @@ export class FurnitureLayer {
         yield;
         buildRoosts(this, context);
         yield;
-        buildLandmarks(this, context, builtUp);
+        const reserves = collectWildReserves(source, tiles, this.bubble.frame);
+        buildLandmarks(this, context, builtUp, reserves);
         yield;
-        buildPeakLandmarks(this, context, builtUp);
+        buildPeakLandmarks(this, context, builtUp, reserves);
         yield;
         buildCoastalLandmarks(this, context, builtUp);
         yield;
@@ -635,9 +638,11 @@ export class FurnitureLayer {
       }
       this.trees = [];
       for (const [item, list] of placements) {
-        if (this.theme.trees.plantations[item]) {
-          for (const p of list) this.trees.push(plantedTree(this.bubble.frame, p.plantation || item, p, this.theme.trees));
-          this._applyInstances(item, []);
+        if (item === PLANTED_TREE) {
+          for (const p of list) {
+            const tree = plantedTree(this.bubble.frame, p, this.theme.trees);
+            if (tree) this.trees.push(tree);
+          }
         } else this._applyInstances(item, list);
         yield;
       }

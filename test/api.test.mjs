@@ -46,6 +46,7 @@ const CONTRACT = [
   'createLocalFrame',
   'collectSceneLabels',
   'forestTypeAt',
+  'forestSpeciesAt',
   'ROAD_LIFT_M',
   'TERRACE_SEAT_HEIGHT_M',
   'TERRACE_TABLE_HEIGHT_M',

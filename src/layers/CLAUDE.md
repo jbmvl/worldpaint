@@ -25,11 +25,13 @@ son état.
 | `roadMarkings.js`, `roadBundles.js` | marquage au sol, voies qui se longent |
 | `railwayLayer.js` | la voie ferrée et sa caténaire ; publie sa propre emprise et les voies que parcourent les trains |
 | `buildingLayer.js`, `buildingInterpretation.js`, `roofGeometry.js`, `buildingCharacterGeometry.js` | le bâti, la reconnaissance des murailles, les toitures, les baies religieuses et les tours de château |
+| `ruinGeometry.js` | les ruines antiques sur leur emprise : temple, théâtre, amphithéâtre ou murs arasés, choisis par le nom puis la forme |
 | `windowFamilies.js` | la famille de baies d'un bâtiment (maison, bourg, immeuble de ville, barre, tour, atelier) et ses cotes tirées par bâtiment ; `buildingLayer` pose la grille (`appendOpenings`) ou le vitrage continu (`appendGlazing`) |
 | `buildingInfill.js` | le semis des maisons là où le pays dit son bâti mal relevé (`sparse`) : rend des anneaux, que `buildingLayer` bâtit comme ceux des tuiles ; cotes contrôlées par `scripts/buildings-audit.mjs` |
 | `streetLayer.js`, `streetMasonry.js` | bordures, caniveaux et joints des rues et des carrefours |
 | `gardenLayer.js` | clôtures et buissons de maison |
 | `facetBuffers.js` | les tampons des maillages fusionnés à facettes (bâti, fenêtres, jardins, voirie de rue) : accumulés en tableaux typés, normale sur un octet et couleur sur seize bits, pans indexés, copie côté page rendue après l'envoi au GPU — donc **illisibles ensuite** ; le mobilier linéaire (haies, vignes, murets) y passe aussi par `packColoredGeometry` |
+| `cellMeshes.js` | un grand maillage fusionné (bâti, voirie de rue) dessiné par cases de 96 m : l'index est rangé par case, chaque case a son maillage aux tampons **partagés**, et three.js élague hors champ, caméra comme carte d'ombres. La case ne décide que de ce qui part au GPU, jamais de l'image |
 | `vegetationLayer.js`, `cropLayer.js` | arbres, cultures |
 | `vergeStrips.js` | la bande entre une chaussée et sa haie de bas-côté : publiée par le mobilier, le champ n'y pousse pas et la carte du sol la repeint en herbe |
 | `furnitureLayer.js` + `furniture/` | tout le mobilier — voir ci-dessous |

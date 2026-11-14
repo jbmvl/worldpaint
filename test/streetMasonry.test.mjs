@@ -2,25 +2,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ajouterJointsVoirie } from '../src/layers/streetMasonry.js';
-import { createProfileBuffer } from '../src/layers/ribbonGeometry.js';
+import { createProfileStore } from '../src/layers/facetBuffers.js';
 
 function poser(debut, fin, cote = 1) {
-  const tampon = createProfileBuffer();
+  const tampon = createProfileStore();
   const profil = [0, 0.32, 0.32, 0.52].map((across) => ({ across: across * cote, up: 0 }));
   if (cote < 0) profil.reverse();
+  const section = [];
   for (const x of [debut, fin]) {
-    for (const p of profil) tampon.positions.push(x, x * 0.04 + Math.abs(p.across) * 0.2, -p.across);
+    for (const p of profil) section.push(x, x * 0.04 + Math.abs(p.across) * 0.2, -p.across);
   }
-  tampon.colors = new Array(tampon.positions.length).fill(1);
-  const avant = tampon.positions.length;
   ajouterJointsVoirie(tampon, {
+    source: section,
     debut: 0,
     points: [{ x: debut, z: 0, distance: debut }, { x: fin, z: 0, distance: fin }],
     profil, demiLargeur: 0,
     style: { gutterWidth: 0.32, gutterSlabLength: 0.6, kerbBlockLength: 1, jointWidth: 0.008 },
     couleur: [0.1, 0.1, 0.1],
   });
-  return { tampon, joints: tampon.positions.slice(avant) };
+  return { tampon, joints: Array.from(tampon.positions.data.subarray(0, tampon.positions.length)) };
 }
 
 test('les joints restent sur le caniveau incliné et dans son emprise, à droite comme à gauche', () => {
@@ -31,10 +31,11 @@ test('les joints restent sur le caniveau incliné et dans son emprise, à droite
       const [x, y, z] = joints.slice(i, i + 3);
       assert.ok(x >= 0.1 && x <= 2.9);
       assert.ok(Math.abs(z) <= 0.52);
-      assert.ok(Math.abs(y - (x * 0.04 + Math.abs(z) * 0.2 + 0.001)) < 1e-9);
+      // La réserve est en flottants simples.
+      assert.ok(Math.abs(y - (x * 0.04 + Math.abs(z) * 0.2 + 0.001)) < 1e-6);
     }
     assert.equal(tampon.colors.length, tampon.positions.length);
-    assert.ok(tampon.indices.every((i) => i < tampon.positions.length / 3));
+    assert.ok(tampon.indices.data.subarray(0, tampon.indices.length).every((i) => i < tampon.positions.length / 3));
   }
 });
 

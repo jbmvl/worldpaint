@@ -1,4 +1,5 @@
 import { storedProfileGeometrySteps } from './profileGeometry.js';
+import { CellMeshes } from './cellMeshes.js';
 /*
  * streetLayer — bordures en béton et caniveaux des rues habitées.
  * Le support porte tout le sol piéton : aucune dalle ni jupe ne le recouvre.
@@ -103,8 +104,6 @@ export class StreetLayer {
     this.scene = scene;
     this.bubble = bubble;
     this.disposed = false;
-    this.mesh = null;
-    this.geometry = null;
     /** Portions de trottoir posées lors de la dernière reconstruction. */
     this.count = 0;
     /** Bandes de hachures posées dans les vides de faisceau. */
@@ -122,6 +121,7 @@ export class StreetLayer {
       polygonOffsetUnits: -4,
     });
     this.material.name = 'streets';
+    this.cells = new CellMeshes({ THREE, scene, material: this.material, name: 'streets' });
 
     // Le marquage a sa matière à lui, et une seule raison de l'avoir : il est
     // peint **sur** la chaussée, donc il doit gagner contre elle en
@@ -275,7 +275,7 @@ export class StreetLayer {
   }
 
   /** Les deux côtés d'un tronçon. @returns {number} portions posées. */
-  _buildSegment(buffer, bands, segment, { here, builtUp, fabric, roadIndex, areas, mouths, urban }) {
+  _buildSegment(buffer, bands, segment, { here, builtUp, fabric, roadIndex, areas, mouths, urban, store }) {
     const { path, platform, edges, probeSpan, halfWidth } = segment;
     const rows = path.length;
     if (rows < 2 || !platform || !edges) return 0;
@@ -366,7 +366,7 @@ export class StreetLayer {
           halfWidth,
           room: narrowest,
           streets,
-        });
+        }, store);
         built++;
       }
     }
@@ -591,7 +591,7 @@ export class StreetLayer {
           halfWidth: 0,
           room,
           streets,
-        });
+        }, store);
         built++;
       }
       drainProfileBuffer(store, buffer);
@@ -602,7 +602,7 @@ export class StreetLayer {
   }
 
   /** Le caniveau relie la chaussée au support, le béton reste affleurant. */
-  _appendKerb(buffer, bands, { points, decks, frames, side, halfWidth, room, streets }) {
+  _appendKerb(buffer, bands, { points, decks, frames, side, halfWidth, room, streets }, store) {
     if (!kerbFits(room, streets)) return;
     const anchor = points[0];
     const tones = streetSurfaceAt(this.bubble.frame, anchor.x, anchor.z, streets);
@@ -644,8 +644,11 @@ export class StreetLayer {
         }
       }
     }
-    ajouterJointsVoirie(buffer, {
-      debut: start, points, profil: profile, demiLargeur: halfWidth, style: streets, couleur: tones.joint,
+    // La section est versée dans la réserve avant ses joints, qui y vont droit.
+    const section = buffer.positions.slice(start);
+    drainProfileBuffer(store, buffer);
+    ajouterJointsVoirie(store, {
+      source: section, debut: 0, points, profil: profile, demiLargeur: halfWidth, style: streets, couleur: tones.joint,
     });
     const band = pavementBand({ halfWidth, side }, streets);
     bands.push({
@@ -663,29 +666,7 @@ export class StreetLayer {
     const { THREE } = this;
     const geometry = yield* storedProfileGeometrySteps(THREE, store);
 
-    if (!geometry) {
-      if (this.mesh) {
-        this.scene.remove(this.mesh);
-        this.mesh.geometry.dispose();
-        this.mesh = null;
-        this.geometry = null;
-      }
-      return;
-    }
-
-    if (this.mesh) {
-      this.geometry.dispose();
-      this.mesh.geometry = geometry;
-    } else {
-      const mesh = new THREE.Mesh(geometry, this.material);
-      mesh.name = 'streets';
-      mesh.matrixAutoUpdate = false;
-      mesh.receiveShadow = true;
-      mesh.updateMatrix();
-      this.scene.add(mesh);
-      this.mesh = mesh;
-    }
-    this.geometry = geometry;
+    this.cells.set(geometry);
   }
 
   /** Le marquage de la voirie, dans son maillage à lui : ce n'est pas la même matière. */
@@ -733,12 +714,7 @@ export class StreetLayer {
     if (this.disposed) return;
     this.disposed = true;
     this.index = null;
-    if (this.mesh) {
-      this.scene.remove(this.mesh);
-      this.mesh.geometry.dispose();
-      this.mesh = null;
-      this.geometry = null;
-    }
+    this.cells.dispose();
     if (this.markingMesh) {
       this.scene.remove(this.markingMesh);
       this.markingMesh.geometry.dispose();

@@ -81,7 +81,11 @@ constituent pas des contours officiels et ne changent aucune donnée régionale.
 - **`farming`** — l'assolement, **du plus répandu au moins répandu**. Le rang
   est l'information : il n'y a aucun poids à écrire, et une liste dans le
   désordre fait une région couverte de vignes.
-- **`trees`** — deux à quatre essences dominantes.
+- **`trees`** — deux à quatre essences dominantes, **de la plus répandue à la
+  moins répandue**. Comme pour `farming`, le rang donne les parts : chaque
+  maille de bois de 420 m est dominée par une essence tirée selon ces parts, et
+  les autres y font des bosquets. Les arbres plantés (alignements, parcs,
+  bourgs, crêtes) tirent leur essence dans la même liste, aux mêmes parts.
 - **`sparse`** — facultatif : ce que la carte relève mal dans ce pays, **mesuré**
   et non supposé. Seul mot admis : `buildings`. Il autorise
   `layers/buildingInfill.js` à semer des maisons dans les rues habitées où OSM
@@ -130,19 +134,22 @@ moteur.
 
 | Tranche | Ce qu'elle accroche | Comment |
 | --- | --- | --- |
-| `FOREST_TYPES` | les essences | un peuplement cite des `species` ; il est retenu si le pays en nomme une |
+| `TREE_SPECIES` | les essences | une entrée par mot : ses silhouettes, le peuplement de `FOREST_TYPES` qu'elle forme quand elle domine, et ses cotes une fois plantée (`planted`) |
 | `TOWN_PALETTES` | le bâti | une palette par clé : le pays nomme la sienne |
 | `SOIL_LOOK` | la matrice | une entrée par matrice : le lavage du sol, la densité et la hauteur des touffes |
 | `STONE_LOOK` | la pierre | une teinte par géologie, appliquée à la roche et aux ouvrages qui en sont faits |
 | `SKY_PALETTE.variants` | la matrice | une variante cite les matrices dont elle colore l'air |
 | `STREET_LOOK.pavement` | la matrice | la teinte du sol revêtu de la ville |
 
-Trois choses à savoir avant d'y toucher :
+Quatre choses à savoir avant d'y toucher :
 
-- **le repli est la liste entière.** Un pays dont aucun peuplement ne cite les
-  essences se peint avec tous les peuplements, jamais avec aucun : lever ici
-  aborterait la construction et emporterait les couches suivantes. C'est le test
-  qui signale l'oubli, pas le décor ;
+- **une essence sans entrée est ignorée**, et un pays dont aucune essence n'a
+  d'entrée prend `DEFAULT_TREE_SPECIES` : lever ici aborterait la construction
+  et emporterait les couches suivantes. C'est le test qui signale l'oubli, pas
+  le décor ;
+- **une essence sans peuplement (`stand`) ne fait pas de bois** : elle n'est
+  que plantée — parcs, cours, places, alignements —, à sa part du rang parmi
+  les arbres plantés. C'est le palmier, arbre d'ornement en Europe ;
 - **`SOIL_LOOK` porte des facteurs, pas des couleurs**, et son plafond de 3,5
   n'est pas décoratif : au-delà, la touffe du premier plan sature au blanc
   pendant que le sol continue de foncer, donc les deux divergent. Une matrice
@@ -161,8 +168,8 @@ parcelle (`BOUNDARY_MIXES`, par style de limite), le bétail (`HERD_SHEEP_ODDS`,
 par matrice) et le gibier (`FOREST_GAME`, par matrice). Elles se discutent quand
 même — la trame agraire se lit de bien plus loin qu'une teinte.
 
-L'assolement, lui, n'a plus de table du tout : il est la liste `farming` du
-dossier, et ses parts se déduisent du rang.
+L'assolement n'a pas de table : il est la liste `farming` du dossier, et ses
+parts se déduisent du rang.
 
 ## Vérifier
 

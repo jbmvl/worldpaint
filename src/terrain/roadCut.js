@@ -112,6 +112,14 @@ export function fillElevationAt(raw, platform, distance, halfWidth, bench = ROAD
 export const EARTH_ROAD_WINDOW_M = 5;
 
 /**
+ * Ce dont un chemin ou un sentier déplace le sol au-delà de son emprise, au
+ * plus, en mètres, déblai comme remblai. Sa banquette a la largeur de la maille (`cutBenchAt`), pas la
+ * sienne : sans borne, elle taillerait dans un versant une terrasse de route,
+ * et le déblai d'un lacet creuserait celui du dessus.
+ */
+export const PATH_EARTHWORK_MAX_M = 1.5;
+
+/**
  * Part d'emprise routière à `distance` de l'axe d'une chaussée : 1 sous la
  * plate-forme et son accotement, 0 au-delà du raccord, même rampe que
  * `cutElevationAt`. Sert à éteindre ce qui se rajoute au sommet **après** le

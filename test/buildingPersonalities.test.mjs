@@ -37,7 +37,7 @@ test('les tags directs d’édifice et de supermarché sont interprétés', () =
   assert.equal(buildingPersonalityFor({historic:'castle'}),'castle');
   assert.equal(buildingPersonalityFor({shop:'supermarket'}),'retail');
   assert.equal(buildingPersonalityFor({class:'supermarket'}),'retail');
-  assert.equal(buildingPersonalityFor({class:'castle',subclass:'ruins'}),null);
+  assert.equal(buildingPersonalityFor({class:'castle',subclass:'ruins'}),'ruin');
   assert.equal(poiItem({class:'castle',subclass:'castle'}),null);
 });
 test('les trois lieux de Montreuil-Bellay choisissent leurs empreintes réelles', () => {

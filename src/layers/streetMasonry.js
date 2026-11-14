@@ -3,7 +3,10 @@
  * Les joints découpent les triangles déjà posés : ils suivent exactement le
  * caniveau incliné, sans recalculer le terrain. Leur phase suit l'abscisse
  * du réseau ; un coin de rue sans abscisse s'ancre à sa position quantifiée.
+ * Des milliers de sommets par bordure : ils s'écrivent droit dans la réserve
+ * typée, sans appel par sommet.
  */
+import { profileTone } from './facetBuffers.js';
 
 // Polygone en cours de découpe, quatre nombres par sommet (t, x, y, z) : un
 // triangle coupé par deux limites garde au plus cinq sommets. Les réserves
@@ -12,8 +15,13 @@ const TRIANGLE = new Float64Array(3 * 4);
 const APRES_BAS = new Float64Array(4 * 4);
 const APRES_HAUT = new Float64Array(5 * 4);
 
-/** Ajoute les joints au tampon, sans changer les sommets de la section. */
-export function ajouterJointsVoirie(tampon, { debut, points, profil, demiLargeur, style, couleur }) {
+/**
+ * Ajoute à la réserve (`createProfileStore`) les joints d'une section dont les
+ * sommets sont lus dans `source` à partir de `debut`, sans les changer.
+ */
+export function ajouterJointsVoirie(reserve, { source, debut, points, profil, demiLargeur, style, couleur }) {
+  const { positions, colors, indices } = reserve;
+  const rouge = profileTone(couleur[0]), vert = profileTone(couleur[1]), bleu = profileTone(couleur[2]);
   const colonnes = profil.length;
   const abscisses = [];
   let distance = Math.round(points[0].x * 10) / 10 + Math.round(points[0].z * 10) / 10;
@@ -24,9 +32,9 @@ export function ajouterJointsVoirie(tampon, { debut, points, profil, demiLargeur
   const lire = (rang, ligne, colonne, t) => {
     const indice = debut + (ligne * colonnes + colonne) * 3;
     TRIANGLE[rang * 4] = t;
-    TRIANGLE[rang * 4 + 1] = tampon.positions[indice];
-    TRIANGLE[rang * 4 + 2] = tampon.positions[indice + 1];
-    TRIANGLE[rang * 4 + 3] = tampon.positions[indice + 2];
+    TRIANGLE[rang * 4 + 1] = source[indice];
+    TRIANGLE[rang * 4 + 2] = source[indice + 1];
+    TRIANGLE[rang * 4 + 3] = source[indice + 2];
   };
   for (let r = 0; r < points.length - 1; r++) {
     const longueur = abscisses[r + 1] - abscisses[r];
@@ -53,14 +61,28 @@ export function ajouterJointsVoirie(tampon, { debut, points, profil, demiLargeur
           const garde = couper(TRIANGLE, 3, bas, true, APRES_BAS);
           const nombre = couper(APRES_BAS, garde, haut, false, APRES_HAUT);
           if (nombre < 3) continue;
-          const origine = tampon.positions.length / 3;
+          positions.reserve(nombre * 3);
+          colors.reserve(nombre * 3);
+          indices.reserve((nombre - 2) * 3);
+          const origine = positions.length / 3;
+          const xyz = positions.data, teintes = colors.data, liens = indices.data;
+          let p = positions.length, t = colors.length, k = indices.length;
           for (let i = 0; i < nombre; i++) {
-            tampon.positions.push(APRES_HAUT[i * 4 + 1], APRES_HAUT[i * 4 + 2] + 0.001, APRES_HAUT[i * 4 + 3]);
-            tampon.colors.push(couleur[0], couleur[1], couleur[2]);
+            xyz[p++] = APRES_HAUT[i * 4 + 1];
+            xyz[p++] = APRES_HAUT[i * 4 + 2] + 0.001;
+            xyz[p++] = APRES_HAUT[i * 4 + 3];
+            teintes[t++] = rouge;
+            teintes[t++] = vert;
+            teintes[t++] = bleu;
           }
           for (let i = 1; i < nombre - 1; i++) {
-            tampon.indices.push(origine, origine + i, origine + i + 1);
+            liens[k++] = origine;
+            liens[k++] = origine + i;
+            liens[k++] = origine + i + 1;
           }
+          positions.length = p;
+          colors.length = t;
+          indices.length = k;
         }
       }
     }

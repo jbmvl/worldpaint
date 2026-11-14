@@ -4,7 +4,7 @@
  */
 
 // --- Monter un paysage ------------------------------------------------------
-export { createWorld, World, DEFAULT_VIEW, DEFAULT_ELEVATION_ZOOM } from './world.js';
+export { createWorld, World, DEFAULT_VIEW, DEFAULT_ELEVATION_ZOOM, DETAIL_LEVELS } from './world.js';
 export { WorldComposer, WORLD_ATTRIBUTION, FAUNA_CROSS_AHEAD_M } from './worldComposer.js';
 
 // --- Le vivant : déclencher un événement -------------------------------------
@@ -59,7 +59,7 @@ export {
   LABEL_SOURCE_OSM,
   LABEL_SOURCE_GENERATED,
 } from './inspect/objectLabels.js';
-export { forestTypeAt } from './layers/vegetationLayer.js';
+export { forestTypeAt, forestSpeciesAt } from './layers/vegetationLayer.js';
 
 // --- Mise au point : isoler une valeur possible du vocabulaire de région ----
 export { showcaseEntries, SHOWCASE_FIELDS } from './inspect/showcase.js';

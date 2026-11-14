@@ -346,7 +346,7 @@ test('une seule forme tombe à la fois', () => {
 
 test('l’intensité tire plus de gouttes du même tampon', () => {
   const { field } = mountPrecipitation();
-  const allocated = field.rain.geometry.attributes.aBase.array.length;
+  const allocated = field.rain.geometry.attributes.position.array.length;
 
   field.setWeather(resolveWeather({ precipitation: 0.25 }));
   const light = field.rain.geometry.drawRange.count;
@@ -355,7 +355,7 @@ test('l’intensité tire plus de gouttes du même tampon', () => {
 
   assert.ok(heavy > light, 'une averse tire plus qu’une bruine');
   assert.equal(
-    field.rain.geometry.attributes.aBase.array.length,
+    field.rain.geometry.attributes.position.array.length,
     allocated,
     'sans jamais réallouer le tampon GPU'
   );

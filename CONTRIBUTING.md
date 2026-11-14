@@ -244,7 +244,8 @@ Breaking one of these needs a very good reason, stated in the PR description.
   Les remblais des accès font partie du terrain et portent ses matières.
   `transportEarthworks` publie le relief final ; le déblai inférieur prime sur
   le remblai. La couture des routes précède ces corrections. Les chemins ne
-  propagent aucune rampe et suivent le terrain final. La maille est reconstruite
+  propagent aucune rampe : ils sont aplanis sur le terrain final, sans donner
+  leur cote aux routes (`gradeUnpavedNetwork`). La maille est reconstruite
   avant la pose du décor ; les arbres sont resemés à leur place quand le décor se refait.
 
   Platforms are laid on the **natural** terrain (`naturalElevationAtLocal`):

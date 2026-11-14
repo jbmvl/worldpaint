@@ -50,12 +50,20 @@ import {
   cutElevationAt,
   fillElevationAt,
   EARTH_ROAD_WINDOW_M,
+  PATH_EARTHWORK_MAX_M,
   cutBenchAt,
   roadCutMaskAt,
   ROAD_CUT_M,
   ROAD_CUT_BLEND_M,
   ROAD_CUT_MAX_RING,
 } from './roadCut.js';
+
+/**
+ * Rang de dessin du sol : après les chaussées (rangs 1 à 12, `roadNetwork`) et
+ * tout ce qui est opaque au rang 0. Sa matière est la plus chère de l'image ;
+ * dessinée en dernier, elle n'est calculée que là où rien ne la cache.
+ */
+const TERRAIN_RENDER_ORDER = 20;
 
 /** Au-delà, l'approximation métrique du repère local dérive : on ré-ancre. */
 const REANCHOR_DISTANCE_M = 20000;
@@ -163,7 +171,6 @@ export class TerrainBubble {
     /** Index des chaussées construites (`RoadIndex`), ou `null` — voir `setRoadCut`. */
     this._roadCut = null;
     /** Index des chemins de terre, grain éteint sans déblai — voir `setRoadCut`. */
-    this._unpaved = null;
     /** Dalles de carrefour (`JunctionAreas`), ou `null` — elles s'entaillent aussi. */
     this._junctions = null;
     /** Incrémenté à chaque publication d'index : périme les mailles déjà creusées. */
@@ -376,7 +383,8 @@ export class TerrainBubble {
       const now = !tile.mesh || (tile.edgeIncomplete && this._neighboursLoaded(tile.x, tile.y));
       if (!now && this._meshOutdated(tile)) this._rebuildQueue.push(tile.key);
       for (const _ of now ? this._buildMeshSteps(tile) : []) {
-        await budget.checkpoint();
+        const pause = budget.checkpoint();
+        if (pause) await pause;
         if (this.disposed || generation !== this._generation) return true;
       }
       await budget.checkpoint();
@@ -546,13 +554,10 @@ export class TerrainBubble {
    * @param {Object|null} index Instance `RoadIndex`, ou `null` pour ne rien creuser.
    * @param {Object|null} [areas] Instance `JunctionAreas`, cotes posées.
    * @param {Object|null} [earthworks] Terrassements des franchissements.
-   * @param {Object|null} [unpavedIndex] `RoadIndex` des chemins de terre : le
-   *        sol n'y est pas entaillé, seul le grain low poly s'y éteint.
    */
-  setRoadCut(index, areas = null, earthworks = null, unpavedIndex = null) {
+  setRoadCut(index, areas = null, earthworks = null) {
     if (this.disposed) return;
     this._roadCut = index || null;
-    this._unpaved = unpavedIndex || null;
     this._earthworks = earthworks;
     this._junctions = (index && areas) || null;
     this._cutGeneration++;
@@ -661,8 +666,6 @@ export class TerrainBubble {
     }
     const bench = this.cutBenchM;
     const reach = bench + ROAD_CUT_BLEND_M;
-    const unpaved = this._unpaved?.query(x, z, reach);
-    if (unpaved) out.mask = Math.max(out.mask, roadCutMaskAt(unpaved.distance, unpaved.segment.halfWidth, bench));
     const index = this._roadCut;
     if (!index) return out;
 
@@ -704,12 +707,23 @@ export class TerrainBubble {
     // autre branche du même lacet, et elle compte comme une autre chaussée.
     // `own` : cote retenue sur l'arête la plus proche, `SKIPPED` sur celles
     // qu'elle remplace, `NaN` ailleurs.
+    // Un sommet ne prend le terrassement que du chemin le plus proche : celui
+    // d'un lacet voisin, plus bas, creuserait sous ses pieds.
+    let path = -1;
+    for (let i = 0; i < count; i++) {
+      if (segments[i].paved === false && decks[i] === decks[i] && (path < 0 || distances[i] < distances[path])) path = i;
+    }
+    const natural = raw;
     const own = this._ownHits?.length >= count ? this._ownHits : (this._ownHits = new Float32Array(Math.max(32, count * 2)));
     for (let i = 0; i < count; i++) {
       own[i] = NaN;
       const segment = segments[i];
       const fills = segment.earthFill;
       if (!fills || decks[i] !== decks[i]) continue;
+      if (segment.paved === false && i !== path) {
+        own[i] = SKIPPED;
+        continue;
+      }
       let nearest = i;
       for (let j = 0; j < count; j++) {
         if (segments[j] === segment && (distances[j] < distances[nearest] || (distances[j] === distances[nearest] && j < nearest))) nearest = j;
@@ -722,7 +736,10 @@ export class TerrainBubble {
         continue;
       }
       let level = decks[i];
-      for (let j = 0; j < count; j++) {
+      // Un chemin monte bien plus raide qu'une route : la cote la plus basse
+      // de la fenêtre le laisserait flotter. Sur une rampe régulière, la maille
+      // interpole exactement la cote prise au point le plus proche.
+      for (let j = 0; j < count && segment.paved !== false; j++) {
         if (segments[j] !== segment || decks[j] !== decks[j]) continue;
         if (Math.abs(segment.path[rows[j]].distance - segment.path[row].distance) <= EARTH_ROAD_WINDOW_M) level = Math.min(level, decks[j]);
       }
@@ -731,16 +748,17 @@ export class TerrainBubble {
 
     // Le remblai d'abord : l'entaille de toute autre chaussée à portée le
     // reprend ensuite, il ne recouvre jamais la voie d'à côté.
-    for (let i = 0, natural = raw; i < count; i++) {
+    for (let i = 0; i < count; i++) {
       if (own[i] !== own[i] || own[i] === SKIPPED) continue;
       const fills = segments[i].earthFill;
       const row = rows[i];
       const share = fills[row] + (fills[Math.min(fills.length - 1, row + 1)] - fills[row]) * ts[i];
       let filled = fillElevationAt(natural, own[i] / scale, distances[i], segments[i].halfWidth, bench);
+      if (segments[i].paved === false && distances[i] > segments[i].halfWidth + ROAD_CUT_M) filled = Math.min(filled, natural + PATH_EARTHWORK_MAX_M / scale);
       // Toutes les autres chaussées à portée, sans l'exception de l'emprise :
       // un sol qu'on relève ne passe par-dessus aucune d'elles.
       for (let j = 0; j < count && filled > natural; j++) {
-        if (segments[j] === segments[i] || decks[j] !== decks[j]) continue;
+        if (segments[j] === segments[i] || decks[j] !== decks[j] || own[j] === SKIPPED) continue;
         filled = Math.max(natural, Math.min(filled, cutElevationAt(filled, decks[j] / scale, distances[j], segments[j].halfWidth, bench)));
       }
       if (slab && filled > natural) filled = Math.max(natural, Math.min(filled, cutElevationAt(filled, slab.deck / scale, slab.distance, 0, bench)));
@@ -757,7 +775,8 @@ export class TerrainBubble {
       const row = rows[i];
       const base = segment.crossingBase;
       const lowered = !!base && decks[i] < base[row] + (base[Math.min(base.length - 1, row + 1)] - base[row]) * ts[i] - 0.001;
-      const cut = cutElevationAt(raw, (own[i] === own[i] ? own[i] : decks[i]) / scale, distance, segment.halfWidth, bench);
+      let cut = cutElevationAt(raw, (own[i] === own[i] ? own[i] : decks[i]) / scale, distance, segment.halfWidth, bench);
+      if (segment.paved === false && distance > segment.halfWidth + ROAD_CUT_M) cut = Math.max(cut, natural - PATH_EARTHWORK_MAX_M / scale);
       elevation = Math.min(elevation, cut);
       if (!lowered) propped = Math.min(propped, cut);
       mask = Math.max(mask, roadCutMaskAt(distance, segment.halfWidth, bench));
@@ -905,7 +924,7 @@ export class TerrainBubble {
     const stepMeters = this._gradientStep * scale;
     // Le déblai ne s'applique qu'aux tuiles proches (au-delà, la requête
     // d'index ne rendrait rien).
-    const carving = !!(this._roadCut || this._unpaved) && tile.ring <= ROAD_CUT_MAX_RING;
+    const carving = !!this._roadCut && tile.ring <= ROAD_CUT_MAX_RING;
     // Tranché une fois pour la tuile entière : sans ça, chaque sommet
     // interrogerait chaque index cinq fois pour rien, soit deux cent mille
     // requêtes inutiles par tuile.
@@ -1051,6 +1070,8 @@ export class TerrainBubble {
       mesh.matrixAutoUpdate = false;
       // Reçoit les ombres mais n'en projette pas (des mailles de 18 m s'auto-ombreraient en rayures).
       mesh.receiveShadow = true;
+      // Après la voirie et le bâti : le sol qu'ils cachent n'est pas calculé.
+      mesh.renderOrder = TERRAIN_RENDER_ORDER;
       mesh.updateMatrix();
       tile.mesh = mesh;
       this.group.add(mesh);
@@ -1099,7 +1120,6 @@ export class TerrainBubble {
     this.disposed = true;
     this._abort.abort();
     this._roadCut = null;
-    this._unpaved = null;
     this._junctions = null;
     this._waterRelief = null;
     this._rebuildQueue.length = 0;

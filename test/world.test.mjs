@@ -30,6 +30,7 @@ import {
 import { ElevationField, DEM_TILE_PIXELS } from '../src/core/elevationField.js';
 import {
   labelForMeshName,
+  labelForForestType,
   nearestInstance,
   nearestVertex,
   collectSceneLabels,
@@ -122,6 +123,7 @@ import {
   STEP_RISE_M,
   slicePath,
 } from '../src/layers/ribbonGeometry.js';
+import { createProfileStore } from '../src/layers/facetBuffers.js';
 import {
   spacedAlongPath,
   isTileEdgeSegment,
@@ -313,9 +315,11 @@ import {
   lowStratumPart,
   standDraw,
   describeTree,
-  standTypeFrom,
   forestTypeAt,
-  variantsFor,
+  forestSpeciesAt,
+  forestComposition,
+  groveAt,
+  VEGETATION_BLOCKS_PER_TILE,
   understoryStrata,
   treeHeight,
   saplingHeight,
@@ -476,7 +480,6 @@ import {
 } from '../src/layers/railwayLayer.js';
 import { skyParameters, lightingFor, sunlightColor, preethamRadiance, acesFilmic, skyAdaptation } from '../src/environment/skyModel.js';
 import {
-  filterByWords,
   sharesFor,
   boundaryForMatrix,
   cropForFarming,
@@ -1194,7 +1197,7 @@ test('le sous-étage suit la part de sous-bois du peuplement, pas seulement sa d
   );
   // Et une pinède dont l’aiguille étouffe tout reste claire au sol, malgré ses
   // houppes serrées.
-  const pinede = FOREST_TYPES.find((t) => t.name === 'pinede');
+  const pinede = FOREST_TYPES.find((t) => t.name === 'pinède');
   assert.ok(pinede.density > futaie.density, 'la pinède est la plus fournie en houppes');
   assert.ok(
     thicketDensityFor(pinede) < thicketDensityFor(taillis) * 0.5,
@@ -1252,9 +1255,9 @@ test('la strate basse porte sa taille, et le tapis du sol ne pousse que de près
   }
   // Aucune de ces silhouettes n’est l’essence d’un peuplement : le tapis ne
   // pousse jamais à hauteur de houppe.
-  for (const type of FOREST_TYPES) {
-    for (const variant of variantsFor(type)) {
-      assert.ok(!TREE_ESSENCES.undergrowth.includes(variant), `${type.name} tire dans le tapis`);
+  for (const [word, entry] of Object.entries(defaultTheme.trees.species)) {
+    for (const variant of entry.variants) {
+      assert.ok(!TREE_ESSENCES.undergrowth.includes(variant), `${word} tire dans le tapis`);
     }
   }
 
@@ -2321,15 +2324,6 @@ test('une région imposée ne suit plus le lieu', async () => {
   assert.equal(setRegion(null), true);
   update();
   assert.equal(composer.landscape.region.id, 'anjou', 'la géographie reprend la main');
-});
-
-test('un pays que le thème ne connaît pas ne vide pas le décor', () => {
-  // Le repli est la liste entière, jamais rien : lever ou rendre vide ici
-  // emporterait toutes les couches suivantes de `refresh`.
-  const pool = filterByWords(defaultTheme.forests, 'species', ['essence-inventée']);
-  assert.equal(pool, defaultTheme.forests, 'la liste entière, telle quelle');
-  assert.equal(filterByWords(defaultTheme.forests, 'species', null), defaultTheme.forests);
-  assert.equal(filterByWords(defaultTheme.forests, 'species', []), defaultTheme.forests);
 });
 
 // --- Occupation du sol ------------------------------------------------------
@@ -9378,52 +9372,117 @@ test('un bois garde ses essences quand la bulle se déplace', () => {
 });
 
 test('un bois ne pousse que là où son essence pousse vraiment', () => {
-  // Le pin d’Alep en Finlande et l’épicéa en garrigue étaient possibles tant
-  // que la liste était tirée en entier partout.
+  const provence = { trees: ['holm_oak', 'aleppo_pine', 'juniper'] };
+  const nordique = { trees: ['spruce', 'birch'] };
   const midi = new Set();
   const nord = new Set();
-  const provence = { trees: ['holm_oak', 'aleppo_pine', 'juniper'] };
-  const taiga = { trees: ['spruce', 'birch'] };
   for (let i = 0; i < 60; i++) {
-    midi.add(forestTypeAt(testFrame, i * FOREST_PATCH_M, 0, FOREST_TYPES, provence).name);
-    nord.add(forestTypeAt(testFrame, i * FOREST_PATCH_M, 0, FOREST_TYPES, taiga).name);
+    const [x, z] = [i * FOREST_PATCH_M, 0];
+    assert.ok(provence.trees.includes(forestSpeciesAt(testFrame, x, z, defaultTheme, provence)));
+    assert.ok(nordique.trees.includes(forestSpeciesAt(testFrame, x, z, defaultTheme, nordique)));
+    midi.add(forestTypeAt(testFrame, x, z, defaultTheme, provence).name);
+    nord.add(forestTypeAt(testFrame, x, z, defaultTheme, nordique).name);
   }
   assert.ok(midi.size >= 2, `plusieurs peuplements (${[...midi].join(', ')})`);
   for (const name of midi) assert.ok(!nord.has(name), `${name} n’est pas des deux`);
-  assert.ok(nord.has('taïga'));
+  assert.ok(nord.has('pessière'));
 
-  // La maille tient toujours : le pays réduit la liste, il ne déplace pas le
-  // tirage.
+  // Les silhouettes d'un bois sont celles des essences du pays, et d'elles seules.
+  const allowed = new Set(provence.trees.flatMap((word) => defaultTheme.trees.species[word].variants));
+  for (const forest of forestComposition(provence.trees).byWord.values()) {
+    for (const grove of [forest, ...forest.companions.map(([entry]) => entry)]) {
+      for (const variant of grove.variants) assert.ok(allowed.has(variant), `silhouette ${variant} étrangère au pays`);
+    }
+  }
+
+  // La maille tient toujours : le pays décide de l'essence, pas du tirage.
   const bocage = { trees: ['oak', 'beech'] };
   assert.equal(
-    forestTypeAt(testFrame, 1234, -5678, FOREST_TYPES, bocage).name,
-    forestTypeAt(testFrame, 1234 + 3, -5678 - 4, FOREST_TYPES, bocage).name
+    forestTypeAt(testFrame, 1234, -5678, defaultTheme, bocage).name,
+    forestTypeAt(testFrame, 1234 + 3, -5678 - 4, defaultTheme, bocage).name
   );
 });
 
-test('un peuplement sans essence déclarée pousse partout', () => {
-  // C’est ce qui fait qu’un thème qui ne nomme aucune espèce se comporte comme
-  // s’il n’y avait pas de pays.
-  const ancien = [{ name: 'sans-espèce', essences: ['broadleaf'], minHeight: 5, maxHeight: 9, density: 1, understory: 0.2, tint: [1, 1, 1] }];
-  for (const trees of [['spruce'], ['olive'], ['oak', 'beech']]) {
-    assert.equal(forestTypeAt(testFrame, 500, 500, ancien, { trees }).name, 'sans-espèce', trees.join('+'));
+test('les bois suivent le rang des essences du pays', () => {
+  // Une taïga sur un cinquième des bois d'un pays de chênes était possible
+  // tant que les peuplements étaient tirés à chances égales.
+  const trees = ['oak', 'birch', 'spruce'];
+  const region = { trees };
+  const counts = { oak: 0, birch: 0, spruce: 0 };
+  const n = 60;
+  for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+    counts[forestSpeciesAt(testFrame, i * FOREST_PATCH_M, j * FOREST_PATCH_M, defaultTheme, region)]++;
   }
-  // Et un pays sans aucun contenu retombe sur la liste entière plutôt que de
-  // rendre un décor vide : lever ici emporterait toutes les couches suivantes.
-  assert.equal(filterByWords(ancien, 'species', ['spruce']).length, 1);
-  const tagged = [{ name: 'a', species: ['olive'] }];
-  assert.deepEqual(filterByWords(tagged, 'species', ['spruce']), tagged, 'repli sur la liste entière');
+  const shares = Object.fromEntries(sharesFor(trees));
+  for (const word of trees) close(counts[word] / (n * n), shares[word], 0.04, `part de ${word}`);
+  assert.ok(counts.oak > counts.birch && counts.birch > counts.spruce, JSON.stringify(counts));
+
+  // Dans un bois de chênes, les bosquets de chêne dominent ; le bouleau
+  // l'accompagne plus que l'épicéa, et le bosquet garde le peuplement du bois.
+  const composition = forestComposition(trees);
+  const block = testFrame.scale / VEGETATION_BLOCKS_PER_TILE;
+  const groves = { oak: 0, birch: 0, spruce: 0 };
+  let inOak = 0;
+  for (let i = 0; i < 160; i++) for (let j = 0; j < 160; j++) {
+    const [x, z] = [i * block, j * block];
+    const grove = groveAt(testFrame, composition, x, z);
+    if (grove.dominant !== 'oak') continue;
+    inOak++;
+    groves[grove.word]++;
+    assert.equal(grove.type.name, 'futaie', 'un bosquet compagnon garde le peuplement de la maille');
+  }
+  close(groves.oak / inOak, composition.byWord.get('oak').type.purity, 0.03, 'pureté du bois');
+  assert.ok(groves.birch > groves.spruce && groves.spruce > 0, JSON.stringify(groves));
+  // Seule, une essence fait un bois pur.
+  const pure = forestComposition(['spruce']);
+  for (let i = 0; i < 50; i++) assert.equal(groveAt(testFrame, pure, i * block, 0).word, 'spruce');
 });
 
-test('chaque peuplement tire dans des silhouettes qui existent', () => {
-  for (const type of FOREST_TYPES) {
-    const variants = variantsFor(type);
-    assert.ok(variants.length >= 2, `${type.name} : plusieurs silhouettes`);
-    for (const index of variants) {
-      assert.ok(TREE_ATLAS_OFFSETS[index], `${type.name} : case ${index} présente`);
-      assert.ok(TREE_VARIANTS[index], `${type.name} : variante ${index} décrite`);
+test('un bloc de végétation ne porte qu’une essence', () => {
+  const composition = forestComposition(['oak', 'birch', 'spruce']);
+  const n = VEGETATION_BLOCKS_PER_TILE;
+  const step = testFrame.scale / n;
+  for (let k = 0; k < 300; k++) {
+    // Coin du bloc, puis quelques points dedans : le même bosquet partout.
+    const x0 = ((Math.floor(testFrame.origin.x * n) + k) / n - testFrame.origin.x) * testFrame.scale;
+    const z0 = ((Math.floor(testFrame.origin.y * n) + (k * 7) % 41) / n - testFrame.origin.y) * testFrame.scale;
+    const grove = groveAt(testFrame, composition, x0 + step / 2, z0 + step / 2);
+    for (const [u, v] of [[0.01, 0.01], [0.99, 0.02], [0.5, 0.97], [0.03, 0.6]]) {
+      assert.equal(groveAt(testFrame, composition, x0 + u * step, z0 + v * step), grove);
     }
+  }
+});
+
+test('l’étiquette d’un bois nomme son essence dominante, puis celles qui l’accompagnent', () => {
+  const futaie = FOREST_TYPES.find((t) => t.name === 'futaie');
+  const pessiere = FOREST_TYPES.find((t) => t.name === 'pessière');
+  const region = { trees: ['oak', 'birch', 'spruce'] };
+  assert.equal(labelForForestType(futaie, 'oak', region), 'arbres — futaie de chêne (avec bouleau, épicéa)');
+  assert.equal(labelForForestType(pessiere, 'spruce', { trees: ['spruce'] }), "arbres — pessière d'épicéa");
+  assert.equal(labelForForestType(null), 'arbres');
+});
+
+test('un pays sans essence prend le bois mêlé du thème', () => {
+  for (const trees of [null, [], ['essence-inventée']]) {
+    assert.deepEqual([...forestComposition(trees).byWord.keys()], defaultTheme.trees.defaultSpecies);
+  }
+  // Une essence inconnue parmi d'autres est ignorée, sans prendre de part.
+  assert.deepEqual([...forestComposition(['olive', 'baobab']).byWord.keys()], ['olive']);
+});
+
+test('chaque essence désigne des silhouettes et un peuplement qui existent', () => {
+  const stands = new Map(FOREST_TYPES.map((type) => [type.name, type]));
+  for (const [word, entry] of Object.entries(defaultTheme.trees.species)) {
+    assert.ok(entry.stand === undefined || stands.has(entry.stand), `${word} : peuplement ${entry.stand}`);
+    for (const index of entry.variants) {
+      assert.ok(TREE_ATLAS_OFFSETS[index], `${word} : case ${index} présente`);
+      assert.ok(TREE_VARIANTS[index], `${word} : variante ${index} décrite`);
+      assert.ok(!TREE_VARIANTS[index].heightM, `${word} : un arbre, pas une plante du tapis`);
+    }
+  }
+  for (const type of FOREST_TYPES) {
     assert.ok(type.maxHeight > type.minHeight, `${type.name} : hauteurs cohérentes`);
+    assert.ok(type.purity > 0 && type.purity <= 1, `${type.name} : pureté`);
   }
   // Un taillis est bas, une futaie est haute : c'est ce contraste qui se lit.
   const taillis = FOREST_TYPES.find((t) => t.name === 'taillis');
@@ -11498,18 +11557,18 @@ test('le caniveau rejoint la chaussée et le béton suit le support sur les deux
   const points = [{ x: 0, z: 0 }, { x: 5, z: 0 }];
   const decks = new Float32Array([19.8, 20]);
   for (const side of [1, -1]) {
-    const buffer = createProfileBuffer();
+    const store = createProfileStore();
     const bands = [];
-    layer._appendKerb(buffer, bands, {
+    layer._appendKerb(createProfileBuffer(), bands, {
       points, decks, frames: pathFrames(points), side, halfWidth: 2.5,
       room: 1, streets: defaultTheme.streets,
-    });
+    }, store);
     assert.equal(bands.length, 1);
     const profile = kerbProfile({ halfWidth: 2.5, side, tones: streetSurfaceAt(testFrame, 0, 0) });
     for (let r = 0; r < 2; r++) {
       for (let c = 0; c < profile.length; c++) {
         const at = (r * profile.length + c) * 3;
-        const [x, y, z] = buffer.positions.slice(at, at + 3);
+        const [x, y, z] = store.positions.data.subarray(at, at + 3);
         const largeur = Math.abs(profile[c].across) - 2.5;
         const t = largeur / defaultTheme.streets.gutterWidth;
         const zPied = -side * (2.5 + defaultTheme.streets.gutterWidth);
@@ -11517,7 +11576,8 @@ test('le caniveau rejoint la chaussée et le béton suit le support sur les deux
         const expected = t <= 1 && profile[c].up === 0
           ? (decks[r] + ROAD_LIFT_M) * (1 - t) + support * t
           : layer.bubble.surfaceElevationAtLocal(x, z) * 2 + 0.003 + profile[c].up;
-        assert.ok(Math.abs(y - expected) < 1e-6);
+        // La réserve est en flottants simples.
+        assert.ok(Math.abs(y - expected) < 1e-5);
       }
     }
     assert.equal(bands[0].halfWidth, 0.26);
@@ -11671,7 +11731,7 @@ test('une rue urbaine courte garde ses deux bordures sans bâtiments proches', (
   road.edges = new Float32Array([0, 4, 0, 4]);
   road.probeSpan = 10;
   const context = { here: { x: 0, z: 0 }, builtUp: [], fabric: null,
-    urban: { covers: () => true }, roadIndex: new RoadIndex([road]) };
+    urban: { covers: () => true }, roadIndex: new RoadIndex([road]), store: createProfileStore() };
   const bands = [];
   assert.equal(layer._buildSegment(createProfileBuffer(), bands, road, context), 2);
   assert.equal(bands.length, 2);
@@ -12835,9 +12895,12 @@ test('les limites de surfaces : la frange, les matières interpolées et la rive
   assert.match(source, /for \(int j = 0; j < 4; j\+\+\) \{/);
   assert.equal(
     (source.match(/surfaceTexel\(corner, vec2\(/g) || []).length,
-    4,
-    'quatre relevés par ligne, sur les quatre lignes du voisinage'
+    8,
+    'le carré central, puis quatre relevés par ligne du voisinage'
   );
+  // Loin de tout trait, le carré central suffit : les douze autres relevés
+  // et le classement des matières ne sont payés qu'au bord d'une limite.
+  assert.match(source, /if \(all\(equal\(inner, inner\.xxxx\)\) && all\(lessThan\(across, vec4\(0\.0\)\)\)\) \{/);
   assert.match(source, /vec4 splineWeights\(float t\)/);
   assert.equal(
     (source.match(/rowScore\(label, own\[\d\], reach\[\d\], wx\)/g) || []).length,
@@ -13022,7 +13085,7 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   // il ne reste aucune dérivée d'écran dans le shader — c'est ce que dit
   // l'assertion ci-dessus, et c'est ce qui a fait disparaître le
   // fourmillement qui suivait l'observateur.
-  assert.match(source, /mix\(worldNormal, wavy, gWater\)/);
+  assert.match(source, /if \(gWater > 0\.001\) worldNormal = mix\(worldNormal, waterNormal\(normalize\(worldNormal\), vScenePos\.xz\), gWater\)/);
 
   // Le bruit de lisière est parti avec le reste : il dentelait au centimètre
   // ce qu'il fallait courber au mètre, et le filtrage le ramenait à sa

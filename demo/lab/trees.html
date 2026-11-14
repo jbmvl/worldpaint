@@ -1,15 +1,17 @@
 <!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><title>Banc des arbres</title>
-<style>body{margin:0;background:#bccfd7}canvas{display:block}#info{position:absolute;top:12px;left:14px;font:14px system-ui;color:#172920;background:#ffffffdc;padding:10px}</style>
+<style>body{margin:0;background:#bccfd7}canvas{display:block}#info{position:absolute;top:12px;left:14px;font:14px system-ui;color:#172920;background:#ffffffdc;padding:10px}.name{position:absolute;transform:translate(-50%,-100%);font:12px system-ui;color:#172920;background:#ffffffc8;padding:1px 4px;white-space:nowrap}</style>
 <script type="importmap">{"imports":{"three":"/node_modules/three/build/three.module.js"}}</script></head>
 <body><div id="info"></div><script type="module">
 /* Banc hors réseau : les silhouettes du catalogue en volume, une à une ou
- * ensemble, et les plantations. Le sous-étage se regarde dans `forest.html`. */
+ * ensemble, les arbres plantés de chaque essence (`?plantations`), et les essences par leur nom (`?essences`,
+ * `treesLab.set({ species: true, row })`, `row` : un rang de six, de près). Le sous-étage se regarde dans `forest.html`. */
 import * as THREE from 'three';
 import { VegetationLayer } from '/src/layers/vegetationLayer.js';
 import { defaultTheme } from '/src/themes/default.js';
 import { plantedTree } from '/src/layers/plantedTrees.js';
 import { createLocalFrame } from '/src/core/tileMath.js';
+import { LABEL_TREE_SPECIES } from '/src/inspect/objectLabels.js';
 const frame = createLocalFrame(-0.145, 47.131, 15);
 const renderer = new THREE.WebGLRenderer({antialias:true, preserveDrawingBuffer:true});
 renderer.setSize(innerWidth,innerHeight);
@@ -24,10 +26,22 @@ sun.shadow.bias=-.0004;sun.shadow.normalBias=.6;sun.shadow.camera.left=-80;sun.s
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(3000,3000).rotateX(-Math.PI/2),new THREE.MeshLambertMaterial({color:0x789250}));ground.receiveShadow=true;scene.add(ground);
 const layer = new VegetationLayer({THREE,scene,bubble:{frame,surfaceElevationAtLocal:()=>0,verticalScale:1}});
 layer.setWind({amplitude:0,speed:0});
-const state = {variant:-1,angle:0,dense:false,plantations:false};
+const state = {variant:-1,angle:0,dense:false,plantations:false,species:false,row:-1};
+const names = [];
 function render(){
  const plants=[];
- if(state.plantations){for(const [i,item] of Object.keys(defaultTheme.trees.plantations).entries()) for(let j=0;j<3;j++) plants.push(plantedTree(frame,item,{x:(i-2.5)*14,z:j*14,y:0,scale:1},defaultTheme.trees));}
+ // Essences par rangs de six ; `row` n'en montre qu'un, de plus près.
+ const words=Object.keys(defaultTheme.trees.species).filter((_,i)=>state.row<0||Math.floor(i/6)===state.row);
+ const spot=i=>state.row<0?[(i%6-2.5)*22,-Math.floor(i/6)*26]:[(i-2.5)*17,0];
+ if(state.species){words.forEach((word,i)=>defaultTheme.trees.species[word].variants.forEach((variant,k,all)=>{
+   const v=defaultTheme.trees.variants[variant];const [x,z]=spot(i);
+   plants.push({variant,x:x+(k-(all.length-1)/2)*7,z,y:0,height:10,aspect:v.aspect||.72,rotation:state.angle,color:[1,1,1]});
+ }));}
+ else if(state.plantations){
+   // Les arbres plantés : chaque essence telle qu'en alignement, puis les plantations d'usage.
+   const planted=[...Object.keys(defaultTheme.trees.species).map(species=>({species})),...Object.keys(defaultTheme.trees.plantations).map(plantation=>({plantation}))];
+   planted.forEach((choice,i)=>{const t=plantedTree(frame,{x:(i%6-2.5)*16,z:-Math.floor(i/6)*18,y:0,scale:1,...choice},defaultTheme.trees);if(t)plants.push(t);});
+ }
  else if(state.dense){for(let i=0;i<2100;i++) plants.push({variant:i%16,x:(i%50-25)*3,z:-Math.floor(i/50)*3,y:0,height:8,aspect:.7,rotation:i*.71,color:[1,1,1]});}
  else for(let i=0;i<defaultTheme.trees.variants.length;i++){
    if(state.variant>=0 && i!==state.variant)continue;
@@ -35,14 +49,22 @@ function render(){
    plants.push({variant:i,x:state.variant>=0?0:(i%8-3.5)*13,z:state.variant>=0?0:-Math.floor(i/8)*25,y:0,height:v.heightM?v.heightM[1]:v.kind==='apple'?3.6:12,aspect:v.aspect||.72,rotation:state.angle,color:[1,1,1]});
  }
  layer.setPlants('banc',plants);
- const single=state.variant>=0&&!state.dense;
+ const single=state.variant>=0&&!state.dense&&!state.species;
  const h=single?plants[0].height:12;
  const d=single?h*2.7:115*Math.max(1,1.5/camera.aspect);
- camera.position.set(Math.sin(state.angle)*d,single?h*.6:35,Math.cos(state.angle)*d);camera.lookAt(0,single?h*.5:3,single?0:-12);
+ if(state.species&&state.row>=0){camera.position.set(0,6,62);camera.lookAt(0,5,0);}
+ else if(state.species){camera.position.set(0,62,78);camera.lookAt(0,0,-40);}
+ else {camera.position.set(Math.sin(state.angle)*d,single?h*.6:35,Math.cos(state.angle)*d);camera.lookAt(0,single?h*.5:3,single?0:-12);}
  renderer.render(scene,camera);
+ for(const n of names.splice(0))n.remove();
+ if(state.species)words.forEach((word,i)=>{
+   const [x,z]=spot(i);const p=new THREE.Vector3(x,11.5,z).project(camera);
+   const n=document.createElement('div');n.className='name';n.textContent=LABEL_TREE_SPECIES[word]||word;
+   n.style.left=`${(p.x+1)/2*innerWidth}px`;n.style.top=`${(1-p.y)/2*innerHeight}px`;document.body.appendChild(n);names.push(n);
+ });
  document.querySelector('#info').textContent=`Arbres — ${single?defaultTheme.trees.variants[state.variant].kind:'catalogue'} · ${layer.group.children.length} maillages`;
  return {state:{...state},meshes:layer.group.children.length,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles};
 }
 window.treesLab={set(options={}){Object.assign(state,options);return render()},layer,renderer};
-const query=new URLSearchParams(location.search);for(const key of ['variant','angle'])if(query.has(key))state[key]=Number(query.get(key));state.dense=query.has('dense');state.plantations=query.has('plantations');render();window.treesLabReady=true;
+const query=new URLSearchParams(location.search);for(const key of ['variant','angle'])if(query.has(key))state[key]=Number(query.get(key));state.dense=query.has('dense');state.plantations=query.has('plantations');state.species=query.has('essences');render();window.treesLabReady=true;
 </script></body></html>

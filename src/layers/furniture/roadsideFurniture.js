@@ -32,9 +32,10 @@ import {
   runsByValue,
 } from '../furniturePlacement.js';
 import { churchWithin } from './pointsOfInterest.js';
-import { FURNITURE_RADIUS_M } from './catalog.js';
+import { FURNITURE_RADIUS_M, PLANTED_TREE } from './catalog.js';
 import { reachedRadius } from '../../core/decorReach.js';
-import { alignmentShapeForTree, sharesFor } from '../../core/regionInterpretation.js';
+import { plantedSpeciesShares } from '../plantedTrees.js';
+import { defaultTheme } from '../../themes/default.js';
 import {
   buildRoadsideRelief,
   measureRoom,
@@ -82,45 +83,23 @@ const STREET_TREE_CLEARANCE_M = 2.5;
 const STREET_TREE_PHASE_M = 5;
 
 /**
- * Essences plantables en alignement de route, avec leur part du tirage.
- *
- * Le conifère reste rare (0,22, la valeur d'avant ce catalogue élargi) : un
- * alignement de sapins en plaine ne se voit à peu près jamais. Les quatre
- * feuillus se partagent le reste à parts à peu près égales, aucun ne devant
- * dominer ni disparaître : la variété tient à ce qu'une route sur cinq environ
- * choisisse chaque silhouette, pas à ce qu'une seule domine les autres.
- */
-const DEFAULT_ALIGNMENT_SPECIES = [
-  ['treeConifer', 0.22],
-  ['treeBroad', 0.195],
-  ['treeRound', 0.195],
-  ['treeColumnar', 0.195],
-  ['treeOval', 0.195],
-];
-
-/**
  * Choisit l'essence d'un alignement, tirée une fois pour toute la chaîne (voir
  * l'appelant) — jamais arbre par arbre, ce qui replanterait une haie de
  * platanes en sapins au hasard de chaque pied.
  *
  * Un alignement de bord de route est un objet **planté**, donc daté et situé :
- * le platane de nationale, le cyprès de mas, le bouleau de chemin nordique. Il
- * se voit de loin, il est répété sur des kilomètres, et c'est ce qui le rend
- * cher à laisser générique — une route de Crète bordée de sapins se remarque
- * plus vite qu'un bois mal composé.
+ * il se voit de loin, il est répété sur des kilomètres, et c'est ce qui le
+ * rend cher à laisser générique — une route de Crète bordée de sapins se
+ * remarque plus vite qu'un bois mal composé. Ses essences sont celles du pays,
+ * dans l'ordre où il les donne et avec les mêmes parts que ses bois
+ * (`plantedSpeciesShares`) ; l'arbre est celui de l'essence dans le thème
+ * (`theme.trees.species`).
  *
- * Les essences sont celles du pays, dans l'ordre où il les donne : la première
- * pèse à peu près la moitié de l'alignement (`sharesFor`). Elles passent par le
- * catalogue du mobilier, qui ne connaît que six silhouettes — `treeColumnar`
- * porte le cyprès et le peuplier, `treeRound` le pin parasol comme le tilleul,
- * `treeOval` l'olivier comme le bouleau, `treePalm` le seul mot qui la porte.
- * Sans région, c'est le mélange par défaut.
+ * @param {Object} trees Tranche `theme.trees`.
  */
-export function alignmentTreeSpeciesFor(frame, x, z, trees = null) {
-  const mix = trees?.length
-    ? sharesFor(trees).map(([word, share]) => [alignmentShapeForTree(word), share])
-    : DEFAULT_ALIGNMENT_SPECIES;
-  return pickShare(mix, randomAt(frame, x, z, 37));
+export function alignmentTreeSpeciesFor(frame, x, z, words = null, trees = defaultTheme.trees) {
+  const shares = plantedSpeciesShares(words, trees);
+  return shares.length ? pickShare(shares, randomAt(frame, x, z, 37)) : null;
 }
 
 /**
@@ -177,6 +156,8 @@ export function* buildRoadsideSteps(layer, context, roadSegments, builtUp) {
         // la route dans les virages. Le signe donne le côté extérieur, où se
         // posent les balises.
         curvature: Math.abs(turn),
+        // Pente en long, sur la ligne qui précède.
+        grade: r ? (platform[r] - platform[r - 1]) / Math.max(1e-3, path[r].distance - path[r - 1].distance) : 0,
         turn: Math.sign(turn),
         // Surplomb de la rive aval : c'est lui qui appelle le mur et la glissière.
         drop: platform[r] - lowSupport,
@@ -499,10 +480,10 @@ export function applyRoadsidePlan(layer, {
     // L'essence est tirée **une fois pour la chaîne** : un alignement mêlant
     // platanes et sapins n'existe pas, c'est le propre d'un alignement d'être
     // planté le même jour.
-    const species = alignmentTreeSpeciesFor(frame, side.x, side.z, layer.region?.trees);
+    const species = alignmentTreeSpeciesFor(frame, side.x, side.z, layer.region?.trees, layer.theme.trees);
     for (const p of spacedAlongPath(path, plan.alignmentTree, spacing)) {
       const row = p.index % 2 === 0 ? 1 : -1;
-      layer._placeBeside(placements, species, p, row * (halfWidth + 3.2), platform, {
+      const tree = layer._placeBeside(placements, PLANTED_TREE, p, row * (halfWidth + 3.2), platform, {
         scale: 1.05 + randomAt(frame, p.x, p.z, 3) * 0.5,
         // Un platane pousse au bord de la route qu'il borde — donc celle-ci
         // ne le gêne pas — mais pas au milieu de celle qui la croise.
@@ -514,6 +495,7 @@ export function applyRoadsidePlan(layer, {
         openGround: true,
         own: segment,
       });
+      if (tree) tree.species = species;
     }
   }
 
@@ -522,16 +504,17 @@ export function applyRoadsidePlan(layer, {
   // c'est l'arbre qui fait la rue. Il s'efface devant une façade, un
   // carrefour ou une autre chaussée.
   if (plan.streetTree) {
-    const species = alignmentTreeSpeciesFor(frame, side.x, side.z, layer.region?.trees);
+    const species = alignmentTreeSpeciesFor(frame, side.x, side.z, layer.region?.trees, layer.theme.trees);
     for (const p of spacedAlongPath(path, plan.streetTree, { ...spacing, phase: STREET_TREE_PHASE_M })) {
       for (const row of [1, -1]) {
-        layer._placeBeside(placements, species, p, row * (halfWidth + STREET_TREE_SETBACK_M), platform, {
+        const tree = layer._placeBeside(placements, PLANTED_TREE, p, row * (halfWidth + STREET_TREE_SETBACK_M), platform, {
           scale: 0.85 + randomAt(frame, p.x, p.z, row > 0 ? 5 : 6) * 0.3,
           offRoad: true,
           openGround: true,
           clearOfBuildings: STREET_TREE_CLEARANCE_M,
           own: segment,
         });
+        if (tree) tree.species = species;
       }
     }
   }

@@ -24,7 +24,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { defaultTheme } from '../src/themes/default.js';
-import { filterByWords, VOCABULARIES } from '../src/core/regionInterpretation.js';
+import { VOCABULARIES } from '../src/core/regionInterpretation.js';
 import { REGIONS } from '../src/core/regions.js';
 import { skyPaletteFor } from '../src/environment/sceneEnvironment.js';
 import { resolveTheme } from '../src/themes/theme.js';
@@ -33,7 +33,7 @@ import { kerbProfile } from '../src/layers/streetLayer.js';
 import { roofRise } from '../src/layers/roofGeometry.js';
 import { waterwayStyleFor, SURFACE_KINDS } from '../src/terrain/groundClassMap.js';
 import { windowGrid, isHiddenOutline, mergeTwinPersonalities, assignPersonalities, dropTwinFootprints } from '../src/layers/buildingLayer.js';
-import { forestTypeAt, variantsFor } from '../src/layers/vegetationLayer.js';
+import { forestTypeAt, forestComposition } from '../src/layers/vegetationLayer.js';
 import { roadStyleFor } from '../src/layers/roadNetwork.js';
 import { furnitureSpecsFor, FURNITURE_BUILDERS } from '../src/layers/furnitureKit.js';
 import { hedgeStyleFor } from '../src/layers/hedgeGeometry.js';
@@ -48,8 +48,12 @@ const OTHER = resolveTheme({
   roofs: { pitch: 0.2, maxRiseM: 1 },
   windows: { widthM: 2, heightM: 3, levelM: 6, sillM: 2, litShare: 1 },
   water: { waterways: { river: 40, stream: 20 } },
-  forests: [{ name: 'palmeraie', essences: ['column'], minHeight: 30, maxHeight: 40, density: 0.1, tint: [1, 1, 1] }],
-  trees: { variants: defaultTheme.trees.variants, essences: { column: [7, 8] } },
+  forests: [{ name: 'palmeraie', minHeight: 30, maxHeight: 40, density: 0.1, tint: [1, 1, 1] }],
+  trees: {
+    ...defaultTheme.trees,
+    species: { palm: { variants: [7, 8], stand: 'palmeraie' } },
+    defaultSpecies: ['palm'],
+  },
   roads: {
     profiles: { motorwayish: { width: 40 }, express: { width: 40, surface: 'dirt' } },
     surfaces: defaultTheme.roads.surfaces,
@@ -153,20 +157,19 @@ test('la trame des fenêtres suit le thème', () => {
 
 test('les peuplements suivent le thème', () => {
   const [a, b] = interleaved(
-    () => forestTypeAt(testFrame, 800, -400, DEFAULT.forests).name,
-    () => forestTypeAt(testFrame, 800, -400, OTHER.forests).name
+    () => forestTypeAt(testFrame, 800, -400, DEFAULT).name,
+    () => forestTypeAt(testFrame, 800, -400, OTHER).name
   );
   assert.notEqual(a, b);
   assert.equal(b, 'palmeraie');
 });
 
-test('les essences d’un peuplement suivent le thème', () => {
-  const type = { essences: ['column'] };
+test('les silhouettes d’une essence suivent le thème', () => {
   const [a, b] = interleaved(
-    () => variantsFor(type, DEFAULT.trees.essences),
-    () => variantsFor(type, OTHER.trees.essences)
+    () => [...new Set(forestComposition(['olive'], DEFAULT).byWord.get('olive').variants)],
+    () => [...new Set(forestComposition(['palm'], OTHER).byWord.get('palm').variants)]
   );
-  assert.deepEqual(a, [3, 4]);
+  assert.deepEqual(a, DEFAULT.trees.species.olive.variants);
   assert.deepEqual(b, [7, 8]);
 });
 
@@ -391,40 +394,44 @@ test('la haie prend ses cotes du thème', () => {
 /*
  * Le garde-fou de couverture.
  *
- * `filterByWords` retombe volontairement sur la liste entière quand un pays n'a
- * aucun contenu : lever à cet endroit-là aborterait `refresh` et emporterait
- * toutes les couches suivantes. Le prix de cette prudence est qu'un pays oublié
- * ne se signale pas — il rend un décor générique, en silence. C'est donc ici
+ * Une essence que le thème ne décrit pas est ignorée sans lever (lever
+ * aborterait `refresh` et emporterait les couches suivantes), et un pays dont
+ * aucune essence n'est décrite prend celles du défaut. Le prix de cette
+ * prudence est qu'un oubli ne se signale pas dans le décor : c'est donc ici
  * qu'il doit se signaler, franchement.
- *
- * La question n'est pas « chaque entrée du thème est-elle atteignable » : le
- * thème a le droit de décrire une Scandinavie qu'aucune région n'atteint
- * encore. C'est l'inverse qui doit tenir — aucune région ne doit se peindre
- * avec la liste entière faute d'avoir trouvé quoi que ce soit à elle.
- *
- * Sauf quand elle n'emploie que des mots que le décor ne sait pas rendre : le
- * repli générique est alors la promesse tenue de `unsupported`, et l'inventaire
- * du test des régions dit déjà ce qui manque.
  */
-test('chaque région trouve dans le thème un peuplement et une palette à elle', () => {
+test('chaque région trouve dans le thème ses essences et sa palette', () => {
   for (const region of REGIONS) {
-    const forests = DEFAULT.forests.filter((type) =>
-      type.species?.some((word) => region.trees.includes(word))
-    );
-    assert.ok(forests.length >= 1, `${region.id} : aucun peuplement`);
+    for (const word of region.trees) {
+      const entry = DEFAULT.trees.species[word];
+      assert.ok(entry, `${region.id} : essence ${word} sans entrée`);
+      if (entry.stand !== undefined) {
+        assert.ok(DEFAULT.forests.some((type) => type.name === entry.stand), `${region.id} : ${word} sans peuplement`);
+      }
+    }
+    // Une essence seulement plantée ne fait pas de bois : il en faut une autre.
+    assert.ok(region.trees.some((word) => DEFAULT.trees.species[word]?.stand), `${region.id} : aucune essence ne fait de bois`);
     assert.ok(DEFAULT.towns[region.building], `${region.id} : aucune palette ${region.building}`);
   }
-  // Et chaque clé du vocabulaire a sa palette, même si aucun pays ne la nomme encore.
+  // Et chaque clé du vocabulaire a son entrée, même si aucun pays ne la nomme encore.
   for (const key of Object.keys(VOCABULARIES.building)) {
     assert.ok(DEFAULT.towns[key], `${key} : clé de bâti sans palette`);
+  }
+  for (const key of Object.keys(VOCABULARIES.trees)) {
+    assert.ok(DEFAULT.trees.species[key], `${key} : essence sans entrée`);
   }
 });
 
 test('un pays que le thème ne connaît pas ne vide pas le décor', () => {
-  // Le repli est la liste entière, jamais rien : un pays inconnu rend un
-  // paysage générique, pas un paysage nu.
-  const pool = filterByWords(DEFAULT.forests, 'species', ['essence-inventée']);
-  assert.equal(pool.length, DEFAULT.forests.length);
+  // Une essence inconnue est ignorée : le pays prend les essences du défaut,
+  // jamais aucune.
+  const inconnu = forestComposition(['essence-inventée'], DEFAULT);
+  assert.deepEqual([...inconnu.byWord.keys()], DEFAULT.trees.defaultSpecies);
+  // Un thème sans aucune essence décrite garde un bois : son premier peuplement.
+  const nu = resolveTheme({ trees: { ...defaultTheme.trees, species: {} } });
+  const bois = forestComposition(['oak'], nu);
+  assert.equal(bois.byWord.get(null).type, nu.forests[0]);
+  assert.ok(bois.byWord.get(null).variants.length >= 1);
 });
 
 test('la mémoire des palettes est indexée par nuancier', () => {

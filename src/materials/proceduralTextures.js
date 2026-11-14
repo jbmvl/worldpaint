@@ -203,8 +203,8 @@ export function createWaterNormalCanvas(size = 256, seed = 33107) {
  * Atlas carré des projections de prototypes, une case par variante du thème.
  * Le sous-bois et les arbres isolés emploient la même géométrie source.
  */
-export const TREE_ATLAS_COLS = 5;
-export const TREE_ATLAS_ROWS = 5;
+export const TREE_ATLAS_COLS = 6;
+export const TREE_ATLAS_ROWS = 6;
 
 /** Décalages UV des cases, dans l'ordre des variantes. */
 export const TREE_ATLAS_OFFSETS = (() => {
@@ -223,7 +223,7 @@ export const TREE_ATLAS_OFFSETS = (() => {
  *
  * La case fait 160 px et non 128 : c'est ce qu'il faut pour qu'une houppe
  * découpée garde ses trous après le filtrage, et l'atlas entier tient dans une
- * texture de 800².
+ * texture de 960².
  */
 export function createTreeAtlasCanvas(cell = 160, seed = 8821, variants = defaultTheme.trees.variants, volume = defaultTheme.trees.volume) {
   const width = cell * TREE_ATLAS_COLS;

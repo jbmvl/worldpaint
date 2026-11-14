@@ -248,7 +248,6 @@ test('au-delà de la portée, le terrain n’est pas creusé', () => {
   Object.assign(bubble, {
     _reachDisc: { x: 0, z: 0, radius2: 200 * 200 },
     _earthworks: { sample: (x, z, raw) => { sampled++; return { elevation: raw - 1, mask: 1 }; } },
-    _unpaved: null,
     _roadCut: null,
   });
   assert.deepEqual(bubble._roadCutWithMask(300, 0, 10), { elevation: 10, mask: 0 });

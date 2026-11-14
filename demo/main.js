@@ -24,6 +24,7 @@ import {
   collectPlaceLabels,
   collectBuildingLabels,
   forestTypeAt,
+  forestSpeciesAt,
   labelForForestType,
   CORRIDOR_MARGIN_M,
   collectRoadDebug,
@@ -597,10 +598,11 @@ function updateLabels() {
     skip: LABEL_SKIP,
     rename: (name, point) => {
       if (!name.startsWith('vegetation-')) return null;
-      const forests = world.composer?.theme?.forests;
+      const theme = world.composer?.theme;
+      const frame = world.composer.bubble.frame;
       return labelForForestType(
-        forestTypeAt(world.composer.bubble.frame, point.x, point.z, forests, region),
-        forests,
+        forestTypeAt(frame, point.x, point.z, theme, region),
+        forestSpeciesAt(frame, point.x, point.z, theme, region),
         region
       );
     },

@@ -145,7 +145,8 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   `node scripts/shop-shot.mjs <dossier> '<réglages JSON>'`.
 - `demo/lab/forest.html` — une forêt pleine de neuf tuiles semée par la vraie
   `VegetationLayer` (peuplement et sous-étage) ; `forestLab.set({ wood, view,
-  x })`, `await forestLab.measure()` (ms par image, appels, triangles) et
+  x, trees })` (`view: 'lisiere'` : le bois vu d'un pré ; `?essences=` : les
+  essences d'un pays), `await forestLab.measure()` (ms par image, appels, triangles) et
   `forestLab.sowing()` (durée de semis par tuile et plus longue étape).
 - `demo/lab/crops.html` — la `CropLayer` réelle sur un champ plat traversé par
   une route sinueuse, avec une lisière entre deux cultures ;

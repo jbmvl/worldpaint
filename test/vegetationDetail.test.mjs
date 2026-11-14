@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { treePrototype } from '../src/models/treeKit.js';
 import { defaultTheme } from '../src/themes/default.js';
-import { VegetationLayer } from '../src/layers/vegetationLayer.js';
+import { VegetationLayer, PLANTED_BLOCKS_PER_TILE } from '../src/layers/vegetationLayer.js';
+import { testFrame } from './testFrame.mjs';
 import { vegetationDetail, VEGETATION_DETAIL_M, VEGETATION_DETAIL_MARGIN_M } from '../src/layers/vegetationDetail.js';
 
 test('le détail lointain réduit les facettes sans déplacer les sommets des lobes', () => {
@@ -46,7 +47,7 @@ test('les seuils gardent le détail proche et évitent les bascules répétées'
 });
 
 test('un aller-retour ne transfère ni matrices ni couleurs et restitue le volume proche', () => {
-  const layer = new VegetationLayer({ THREE, scene: new THREE.Scene(), bubble: { frame: {} } });
+  const layer = new VegetationLayer({ THREE, scene: new THREE.Scene(), bubble: { frame: testFrame } });
   layer.setPlants('t', [{ variant: 0, x: 0, y: 0, z: 0, height: 10, aspect: .7, rotation: 0, color: [1, 1, 1] }]);
   const mesh = layer.meshes.get('t')[0];
   const matrix = mesh.instanceMatrix;
@@ -64,12 +65,17 @@ test('un aller-retour ne transfère ni matrices ni couleurs et restitue le volum
 });
 
 test('un bloc dont une plante reste proche garde son volume complet', () => {
-  const layer = new VegetationLayer({ THREE, scene: new THREE.Scene(), bubble: { frame: {} } });
-  layer.setPlants('t', [0, 120].map(x => ({ variant: 0, x, y: 0, z: 0, height: 10, aspect: .7, rotation: 0, color: [1, 1, 1] })));
+  const layer = new VegetationLayer({ THREE, scene: new THREE.Scene(), bubble: { frame: testFrame } });
+  // Deux plantes aux deux bouts d'un même bloc (les blocs découpent les tuiles du sol).
+  const n = PLANTED_BLOCKS_PER_TILE;
+  const left = (Math.floor(testFrame.origin.x * n) / n - testFrame.origin.x) * testFrame.scale;
+  const z = (Math.floor(testFrame.origin.y * n) / n - testFrame.origin.y) * testFrame.scale + 1;
+  layer.setPlants('t', [left + 1, left + testFrame.scale / n - 1].map(x => ({ variant: 0, x, y: 0, z, height: 10, aspect: .7, rotation: 0, color: [1, 1, 1] })));
+  assert.equal(layer.meshes.get('t').length, 1);
   const mesh = layer.meshes.get('t')[0];
-  layer.update(-100, 0, { force: true });
+  layer.update(left - 100, z, { force: true });
   assert.equal(mesh.userData.treeDetail, 0, 'la plante la plus proche décide');
-  layer.update(-500, 0, { force: true });
+  layer.update(left - 500, z, { force: true });
   assert.equal(mesh.userData.treeDetail, 2);
   layer.dispose();
 });

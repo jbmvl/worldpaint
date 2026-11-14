@@ -12,15 +12,16 @@
  * d'une ville, une zone d'activité ou un parc n'en sont pas, et un arbre n'y
  * est jamais semé deux fois. Les deux semis évitent les allées, l'eau, ce qui
  * est déjà un bois et les bâtiments ; ils sont triés par distance avant
- * d'être posés, pour que le plafond d'une forme coupe au loin.
+ * d'être posés, pour que le plafond des arbres plantés coupe au loin. Leurs
+ * essences sont celles du pays, aux parts de ses bois (`plantedSpeciesShares`).
  */
 import { worldCellsIn, randomAt } from '../../core/groundSeed.js';
 import { pointInAreas, ringsOf } from '../settlement.js';
 import { lngToTileX, latToTileY } from '../../core/tileMath.js';
 import { reachedRadius } from '../../core/decorReach.js';
-import { FURNITURE_RADIUS_M } from './catalog.js';
+import { FURNITURE_RADIUS_M, PLANTED_TREE } from './catalog.js';
 import { pickShare } from '../furniturePlacement.js';
-import { alignmentShapeForTree, sharesFor } from '../../core/regionInterpretation.js';
+import { plantedSpeciesShares } from '../plantedTrees.js';
 
 /** Pas de la maille, part des mailles plantées, dégagement d'une façade, sol exigé. */
 export const PARK_TREES = { cellM: 13, share: 0.45, clearanceM: 2, surface: null, salt: 1301 };
@@ -32,8 +33,6 @@ const SQUARE_BENCH_OFFSET_M = 1.8;
 
 /** Classes `landuse` d'un quartier d'habitation. */
 const YARD_LANDUSE = new Set(['residential', 'suburb', 'neighbourhood', 'quarter']);
-
-const DEFAULT_TOWN_SPECIES = [['treeBroad', 0.35], ['treeRound', 0.35], ['treeOval', 0.2], ['treeConifer', 0.1]];
 
 /** Vrai si l'entité `landcover` décrit un parc. Fonction pure. */
 export function isPark(properties = {}) {
@@ -63,10 +62,8 @@ export function isYard(properties = {}) {
  */
 export function plantTownTrees(layer, placements, rings, here, radius, rule, onPlanted = null) {
   const { frame } = layer.bubble;
-  const trees = layer.region?.trees;
-  const mix = trees?.length
-    ? sharesFor(trees).map(([word, share]) => [alignmentShapeForTree(word), share])
-    : DEFAULT_TOWN_SPECIES;
+  const mix = plantedSpeciesShares(layer.region?.trees, layer.theme.trees);
+  if (mix.length === 0) return 0;
   const seen = new Set();
   const spots = [];
 
@@ -106,13 +103,14 @@ export function plantTownTrees(layer, placements, rings, here, radius, rule, onP
     if (!layer._openGround(x, z)) continue;
     if (layer._fabric?.covers?.(x, z, rule.clearanceM)) continue;
     const species = pickShare(mix, randomAt(frame, cell.x, cell.z, rule.salt + 10));
-    const placed = layer._place(placements, species, {
+    const placed = layer._place(placements, PLANTED_TREE, {
       x,
       z,
       yaw: randomAt(frame, x, z, rule.salt + 14) * Math.PI * 2,
       scale: 0.9 + randomAt(frame, cell.x, cell.z, rule.salt + 12) * 0.6,
     });
     if (placed) {
+      placed.species = species;
       planted++;
       onPlanted?.(placed, cell);
     }

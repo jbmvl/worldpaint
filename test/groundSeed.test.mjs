@@ -17,6 +17,8 @@ import {
 import { coverBandCells, coverBand } from '../src/layers/coverBands.js';
 import { fillCropCell, CROP_BANDS, CROP_TUFT_STRIDE } from '../src/layers/cropLayer.js';
 import { buildBiomeDebris } from '../src/layers/furniture/biomeDebris.js';
+import { forestSpeciesAt, forestTypeAt } from '../src/layers/vegetationLayer.js';
+import { defaultTheme } from '../src/themes/default.js';
 
 // Le départ de la démo, un départ à 3 km à l'est, un autre à 25 km au nord-ouest
 // (au-delà de la distance de recentrage du repère).
@@ -57,6 +59,20 @@ test('un tirage de maille ne dépend pas du repère', () => {
       assert.ok(draws.every((d) => d === draws[0]), `pas ${step} m`);
     }
   }
+});
+
+test('un bois a la même essence et le même peuplement, d’où que l’on parte', () => {
+  const region = { trees: ['oak', 'birch', 'spruce'] };
+  const seen = new Set();
+  for (const p of groundPoints(300, 0.2)) {
+    const woods = FRAMES.map((frame) => {
+      const { x, z } = local(frame, p);
+      return `${forestSpeciesAt(frame, x, z, defaultTheme, region)}/${forestTypeAt(frame, x, z, defaultTheme, region).name}`;
+    });
+    assert.ok(woods.every((w) => w === woods[0]), `${p.lng}, ${p.lat} : ${woods.join(' / ')}`);
+    seen.add(woods[0]);
+  }
+  assert.equal(seen.size, 3, 'les trois essences du pays sont tirées');
 });
 
 test('les mailles mondiales tombent au même endroit du sol dans tous les repères', () => {

@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { treePrototype } from '../src/models/treeKit.js';
-import { VegetationLayer, VEGETATION_BLOCK_M, understoryShare, understoryWeight, UNDERSTORY_FULL_M, UNDERSTORY_FAR_M } from '../src/layers/vegetationLayer.js';
+import { VegetationLayer, PLANTED_BLOCKS_PER_TILE, understoryShare, understoryWeight, UNDERSTORY_FULL_M, UNDERSTORY_FAR_M } from '../src/layers/vegetationLayer.js';
 import { plantedTree } from '../src/layers/plantedTrees.js';
 import { testFrame } from './testFrame.mjs';
 import { defaultTheme } from '../src/themes/default.js';
@@ -37,7 +37,10 @@ test('toutes les silhouettes des essences ont un volume', () => {
 
 test('un maillage par bloc et par silhouette, à la position du semis', () => {
   const layer = couche();
-  const plants = [placement(0, 10), placement(0, 20), placement(0, VEGETATION_BLOCK_M + 10), placement(5, 10)];
+  // Les blocs découpent les tuiles du sol, pas la scène : on se cale sur leur bord.
+  const block = testFrame.scale / PLANTED_BLOCKS_PER_TILE;
+  const left = (Math.floor(testFrame.origin.x * PLANTED_BLOCKS_PER_TILE) / PLANTED_BLOCKS_PER_TILE - testFrame.origin.x) * testFrame.scale;
+  const plants = [placement(0, left + 10), placement(0, left + 20), placement(0, left + block + 10), placement(5, left + 10)];
   layer.setPlants('t', plants);
   const meshes = layer.meshes.get('t');
   assert.deepEqual(meshes.map(m => m.count).sort(), [1, 1, 2]);
@@ -46,8 +49,8 @@ test('un maillage par bloc et par silhouette, à la position du semis', () => {
     assert.ok(mesh.boundingSphere, 'sphère englobante du bloc');
   }
   const first = meshes.find(m => m.count === 2);
-  assert.equal(first.instanceMatrix.array[12], 10);
-  assert.equal(first.instanceMatrix.array[16 + 12], 20);
+  assert.ok(Math.abs(first.instanceMatrix.array[12] - (left + 10)) < 1e-3);
+  assert.ok(Math.abs(first.instanceMatrix.array[16 + 12] - (left + 20)) < 1e-3);
   layer.dispose();
 });
 
@@ -147,15 +150,25 @@ test('l’éclaircie garde un sous-ensemble des mêmes plantes, jamais à moins 
   layer.dispose();
 });
 
-test('toutes les plantations ont une variante valide et un tirage stable', () => {
-  for (const kind of Object.keys(defaultTheme.trees.plantations)) {
-    const p = { x: 31, y: 4, z: 12, scale: 1 };
-    const a = plantedTree(testFrame, kind, p, defaultTheme.trees);
-    assert.deepEqual(a, plantedTree(testFrame, kind, p, defaultTheme.trees));
-    assert.ok(defaultTheme.trees.variants[a.variant]);
+test('plantations et essences plantées ont une variante valide et un tirage stable', () => {
+  const trees = defaultTheme.trees;
+  const choices = [
+    ...Object.keys(trees.plantations).map((plantation) => ({ plantation })),
+    ...Object.keys(trees.species).map((species) => ({ species })),
+  ];
+  for (const choice of choices) {
+    const p = { x: 31, y: 4, z: 12, scale: 1, ...choice };
+    const a = plantedTree(testFrame, p, trees);
+    assert.deepEqual(a, plantedTree(testFrame, p, trees));
+    assert.ok(trees.variants[a.variant] && !trees.variants[a.variant].heightM, JSON.stringify(choice));
     assert.equal(a.y, p.y);
-    assert.notDeepEqual(a, plantedTree(testFrame, kind, { ...p, x: 32 }, defaultTheme.trees));
+    assert.notDeepEqual(a, plantedTree(testFrame, { ...p, x: 32 }, trees));
   }
+  // Une essence plantée garde la première silhouette de son bois : une par essence.
+  for (const [word, entry] of Object.entries(trees.species)) {
+    for (const x of [0, 7, 19, 40]) assert.equal(plantedTree(testFrame, { x, y: 0, z: x, scale: 1, species: word }, trees).variant, entry.variants[0]);
+  }
+  assert.equal(plantedTree(testFrame, { x: 0, y: 0, z: 0, scale: 1, species: 'baobab' }, trees), null);
 });
 
 import { buildRows } from '../src/layers/furniture/parcels.js';
@@ -173,10 +186,10 @@ test('les rangs de verger publient des pommiers sans changer les arbres isolés'
   assert.ok(plants.length > 0);
   for (const p of plants) {
     assert.equal(p.plantation, 'treeApple');
-    const fruitier = plantedTree(testFrame, p.plantation, p, defaultTheme.trees);
+    const fruitier = plantedTree(testFrame, p, defaultTheme.trees);
     assert.equal(defaultTheme.trees.variants[fruitier.variant].kind, 'apple');
-    assert.deepEqual(fruitier, plantedTree(testFrame, p.plantation, p, defaultTheme.trees));
-    const isole = plantedTree(testFrame, p.item, p, defaultTheme.trees);
+    assert.deepEqual(fruitier, plantedTree(testFrame, p, defaultTheme.trees));
+    const isole = plantedTree(testFrame, { ...p, plantation: undefined, species: 'oak' }, defaultTheme.trees);
     assert.equal(defaultTheme.trees.variants[isole.variant].fruit, undefined);
   }
 });
@@ -213,4 +226,47 @@ test('la ligne de mire efface les arbres entre caméra et sujet, jamais leur omb
   layer.setSightline(null, null);
   assert.equal(shader.uniforms.uSightRadius.value.z, 0);
   layer.dispose();
+});
+
+import { alignmentTreeSpeciesFor } from '../src/layers/furniture/roadsideFurniture.js';
+import { sharesFor } from '../src/core/regionInterpretation.js';
+
+test('un alignement plante une essence du pays, aux parts de ses bois', () => {
+  const words = ['holm_oak', 'aleppo_pine', 'olive'];
+  const counts = { holm_oak: 0, aleppo_pine: 0, olive: 0 };
+  const n = 3000;
+  for (let i = 0; i < n; i++) counts[alignmentTreeSpeciesFor(testFrame, i * 37.3, i * 11.9, words)]++;
+  for (const [word, share] of sharesFor(words)) {
+    assert.ok(Math.abs(counts[word] / n - share) < 0.03, `${word} : ${counts[word] / n} pour ${share}`);
+  }
+  // Une essence que le thème ne décrit pas ne se plante pas ; sans essence, celles du thème.
+  for (let i = 0; i < 200; i++) assert.equal(alignmentTreeSpeciesFor(testFrame, i * 5, 0, ['baobab', 'olive']), 'olive');
+  const fallback = new Set(Array.from({ length: 400 }, (_, i) => alignmentTreeSpeciesFor(testFrame, i * 9, 3, null)));
+  assert.deepEqual([...fallback].sort(), [...defaultTheme.trees.defaultSpecies].sort());
+  // L'arbre planté est la première silhouette de l'essence, celle de ses bois.
+  const p = { x: 3, y: 0, z: 4, scale: 1, species: 'olive' };
+  assert.equal(plantedTree(testFrame, p, defaultTheme.trees).variant, defaultTheme.trees.species.olive.variants[0]);
+});
+
+import { orchardPlantationFor, DEFAULT_ORCHARD_PLANTATION } from '../src/layers/furniturePlacement.js';
+import { FARMING_KINDS } from '../src/core/regionInterpretation.js';
+
+test('un verger prend l’arbre que l’assolement du pays nomme', () => {
+  assert.equal(orchardPlantationFor(null, 0.5), DEFAULT_ORCHARD_PLANTATION);
+  assert.equal(orchardPlantationFor(['cereal', 'fallow'], 0.5), DEFAULT_ORCHARD_PLANTATION);
+  assert.equal(orchardPlantationFor(['cereal', 'olive'], 0.99), 'treeOlive');
+  // Les mots de verger se partagent les parcelles entre eux, au rang : l'agrume d'abord.
+  const drawn = new Set();
+  for (let v = 0; v < 1; v += 0.01) drawn.add(orchardPlantationFor(['citrus', 'cereal', 'olive'], v));
+  assert.deepEqual([...drawn].sort(), ['treeCitrus', 'treeOlive']);
+  assert.equal(orchardPlantationFor(['citrus', 'olive'], 0), 'treeCitrus');
+});
+
+test('chaque arbre de verger nommé par l’assolement a sa plantation dans le thème', () => {
+  for (const [word, entry] of Object.entries(FARMING_KINDS)) {
+    if (!entry.plantation) continue;
+    const look = defaultTheme.trees.plantations[entry.plantation];
+    assert.ok(look, `${word} : plantation ${entry.plantation} absente du thème`);
+    assert.ok(look.variants.every((v) => defaultTheme.trees.variants[v]), `${word} : silhouette inconnue`);
+  }
 });
