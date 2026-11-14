@@ -479,6 +479,13 @@ lorsque l’épaisseur intérieure du pan à sa position ne dépasse pas 3,2 m. 
 Une grande surface garde une entrée sur son plus long pan lorsque son parking
 la sépare de la rue.
 
+La nuit, les huit repères les plus proches de l'observateur parmi les églises,
+mosquées, châteaux, murailles et ruines sont mis en lumière par des
+projecteurs encastrés au pied des pans, tous les 3,5 m : un point vif au sol,
+un cône qui s'évase en montant, les toits laissés dans l'ombre
+(`materials/landmarkFloodlight`). Ce n'est pas de la géométrie : le matériau du
+bâti s'émet lui-même sur les seuls sommets du repère, marqués dans leur couleur.
+
 | `poi` | Effet |
 | --- | --- |
 | `place_of_worship` | murs de pierre, comble de nef, hautes baies en pointe et clocher ; minaret et coupole si `subclass=muslim` |

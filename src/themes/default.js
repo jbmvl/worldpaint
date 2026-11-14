@@ -1340,6 +1340,15 @@ export const OBSTACLE_LIGHT = {
 };
 
 /**
+ * Mise en lumière des repères bâtis : teinte des projecteurs, éclat, pas entre
+ * deux projecteurs le long d'un pan, part de la hauteur sur laquelle la lumière
+ * s'éteint, marge autour de l'empreinte, part de nuit où ils s'allument.
+ */
+export const LANDMARK_FLOODLIGHT = {
+  color: srgb('#ffc77e'), intensity: 1.5, spacingM: 3.5, riseShare: 0.45, marginM: 1.5, fromNight: 0.35,
+};
+
+/**
  * Fantômes de cimetière : blanc bleuté du corps, yeux sombres, gabarit en mètres,
  * part de nuit à partir de laquelle ils paraissent, part d'un cycle où chacun est
  * visible, et chance qu'un cimetière soit hanté.
@@ -1766,6 +1775,7 @@ export const defaultTheme = Object.freeze({
   water: { waterways: WATERWAY_CLASSES, riparianBufferM: RIPARIAN_BUFFER_M },
   furniture: { placeNameSign: PLACE_NAME_SIGN, colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES, hedgeTints: null, pumpkins: null, lighthouse: LIGHTHOUSE_LIGHT, radioMast: RADIO_MAST, obstacleLight: OBSTACLE_LIGHT, ghost: CEMETERY_GHOST },
   volcanoes: VOLCANO_FIRE,
+  floodlight: LANDMARK_FLOODLIGHT,
   life: LIFE_COLORS,
   fauna: { colors: FAUNA_COLORS, coats: FAUNA_COATS },
   sky: SKY_PALETTE,

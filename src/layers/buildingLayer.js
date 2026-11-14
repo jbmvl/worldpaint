@@ -38,6 +38,7 @@ import { randomAt } from '../core/groundSeed.js';
 import { pointInAreas } from './settlement.js';
 import { clipPolygonOutsideCorridor } from './roadCorridor.js';
 import { Kit } from './furnitureKit.js';
+import { FLOODLIT_KINDS, createFloodlights, installFloodlight, aimFloodlights, setFloodlightNight, markFloodlit } from '../materials/landmarkFloodlight.js';
 import { appendChurchWindows, castleTowers, appendRetailSign } from './buildingCharacterGeometry.js';
 import { isAncientName, ruinFormFor, ruinKit } from './ruinGeometry.js';
 import { defaultTheme } from '../themes/default.js';
@@ -142,6 +143,8 @@ export function buildingLandmark({ personality, name = null, box, base, top }) {
     z: box.cz,
     top,
     size: box.long,
+    short: box.short,
+    angle: box.angle,
     kind: notable ? personality : 'tall',
     name,
   };
@@ -1714,7 +1717,7 @@ export class BuildingLayer {
     /**
      * Repères bâtis de la dernière reconstruction (château, église, tour…),
      * cf. `buildingLandmark`. Repère de `bubble.frame`.
-     * @type {Array<{x:number, y:number, z:number, top:number, size:number, kind:string, name:string|null}>}
+     * @type {Array<{x:number, y:number, z:number, top:number, size:number, short:number, angle:number, kind:string, name:string|null}>}
      */
     this.landmarks = [];
     this._landmarkSink = null;
@@ -1742,6 +1745,8 @@ export class BuildingLayer {
     this.personalities = [];
 
     this.material = new THREE.MeshLambertMaterial({ vertexColors: true });
+    this.floodlights = createFloodlights(THREE, theme.floodlight ?? defaultTheme.floodlight);
+    installFloodlight(this.material, this.floodlights);
     this.cells = new CellMeshes({ THREE, scene, material: this.material, name: 'buildings', castShadow: true });
 
     // Fenêtres allumées : un matériau à part, non éclairé et additif, dont
@@ -1846,6 +1851,7 @@ export class BuildingLayer {
     this._shopfrontSink = shopfronts;
     const landmarks = [];
     this._landmarkSink = landmarks;
+    const floodlit = [];
     // Vidée avant d'être remplie : la géométrie qui référence ses cases
     // (`labels`, ci-dessus) est de toute façon intégralement refaite dans
     // cette même passe — voir l'en-tête de `LabelAtlas`.
@@ -1991,6 +1997,8 @@ export class BuildingLayer {
         candidate.distance <= Math.min(PANE_RADIUS_M, radius)
           ? { panes: 0, lit: candidate.distance <= Math.min(WINDOW_RADIUS_M, radius) ? lamps : null, budget: Infinity }
           : null;
+      const firstColor = walls.colors.length;
+      const landmarkCount = landmarks.length;
       if (
         this._appendBuilding(
           candidate.ring,
@@ -2004,6 +2012,9 @@ export class BuildingLayer {
       ) {
         built++;
         footprints.push({ x: candidate.x, z: candidate.z, ring: candidate.footprint ?? null });
+      }
+      if (landmarks.length > landmarkCount && FLOODLIT_KINDS.has(landmarks[landmarks.length - 1].kind)) {
+        floodlit.push(firstColor, walls.colors.length);
       }
       if (openings) panes += openings.panes;
     }
@@ -2019,6 +2030,7 @@ export class BuildingLayer {
     this._shopfrontSink = null;
     this.landmarks = landmarks;
     this._landmarkSink = null;
+    aimFloodlights(this.floodlights, landmarks, here);
     this.personalities = personalities;
     this._applyWindows(lamps);
     this._applyLabels(labels);
@@ -2029,6 +2041,7 @@ export class BuildingLayer {
 
     this._wallValues = walls.positions.length;
     this._lampValues = lamps.positions.length;
+    markFloodlit(walls.colors.data, walls.colors.length, floodlit);
     this.cells.set(facetGeometry(THREE, walls));
   }
 
@@ -2785,12 +2798,13 @@ export class BuildingLayer {
   }
 
   /**
-   * Allume les fenêtres.
+   * Allume les fenêtres et la mise en lumière des repères.
    * @param {number} mix 0 en plein jour, 1 en pleine nuit.
    */
   setNight(mix) {
     const value = Math.min(1, Math.max(0, Number(mix) || 0));
     this.windowMaterial.opacity = value;
+    setFloodlightNight(this.floodlights, value);
     if (this.windowMesh) this.windowMesh.visible = value > 0.01;
   }
 
