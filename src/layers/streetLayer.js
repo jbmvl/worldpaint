@@ -13,7 +13,7 @@ import { CellMeshes } from './cellMeshes.js';
 import { finishGeneration } from '../core/generationSteps.js';
 import { appendProfile, createProfileBuffer, pathFrames, toColoredGeometry } from './ribbonGeometry.js';
 import { ajouterJointsVoirie } from './streetMasonry.js';
-import { ROAD_LIFT_M } from './roadNetwork.js';
+import { ROAD_LIFT_M, isPaved } from './roadNetwork.js';
 import { RoadIndex } from './roadGraph.js';
 import { contiguousRuns, crossSlope, STEEP_CROSS_SLOPE } from './furniturePlacement.js';
 import { pointInAreas } from './settlement.js';
@@ -233,7 +233,7 @@ export class StreetLayer {
     // a de l'herbe.
     const paved = (segment) => {
       const profile = roads.profiles[segment.profile];
-      return !!profile && (profile.surface || 'asphalt') === 'asphalt';
+      return !!profile && isPaved(profile, roads);
     };
     // Une chaîne peut faire neuf cents mètres : c'est une ligne sur dix qui
     // décide qu'elle est à portée, pas son premier point.

@@ -102,7 +102,17 @@ const furniture = {
   ],
 };
 
-export const autumnTheme = { trees, surfaces, crops, cropStages, terrain, furniture };
+// Le lavage d'un pays sec multiplie l'herbe du thème : sur l'herbe déjà
+// jaunie de l'automne, les facteurs d'été rendraient un sol saumon. Ceux-ci
+// rendent le même chaume et la même herbe sèche qu'en été.
+const soils = {
+  ...defaultTheme.soils,
+  dry_cropland: { ...defaultTheme.soils.dry_cropland, grass: [2.22, 2.025, 2.72] },
+  dry_pasture: { ...defaultTheme.soils.dry_pasture, grass: [1.86, 1.91, 2.465] },
+  terraced_slope: { ...defaultTheme.soils.terraced_slope, grass: [1.65, 1.744, 2.25] },
+};
+
+export const autumnTheme = { trees, surfaces, crops, cropStages, terrain, furniture, soils };
 
 /**
  * La tranche de la saison d'une date, ou `null` (l'été par défaut). Seul

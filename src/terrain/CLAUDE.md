@@ -13,6 +13,7 @@
 | `groundClassMap.js` | la carte des matières et des cultures, rasterisée pour toute la scène |
 | `surfaceContours.js` | les limites de la carte redessinées en traits : chaînes, simplification, distance au trait |
 | `surfaceClassification.js` | ce qu'une entité de tuile **dit** du sol |
+| `steepGap.js` | le versant que la matrice sèche cède à sa matière de pente : pente du MNT pur, seuil bruité ancré au monde, isoligne peinte par `groundClassMap` |
 
 ## Avant de modifier `groundClassMap.js` (~1000 lignes)
 

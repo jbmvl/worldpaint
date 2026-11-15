@@ -24,6 +24,15 @@
  *            non supposé. `['buildings']` autorise le semis des maisons dans
  *            les rues habitées sans bâti relevé (`layers/buildingInfill.js`).
  *
+ * Facultatifs, pour le bâti qui ne tient pas dans une palette ; absents, la
+ * palette décide :
+ *
+ *   roofs       les formes de toit, **de la plus répandue à la moins répandue**
+ *   roofPitch   `low` ou `steep` : la pente du pays, rapportée à sa couverture
+ *   walls       les murs du pays, le plus répandu d'abord — celui de `building`
+ *   townStoreys [min, max] niveaux du bâti de ville dont la hauteur n'est pas
+ *               relevée
+ *
  * Rien d'autre. Pas d'altitude, pas d'humidité, pas de score : ce qui existe
  * réellement à un endroit est relevé par le vectoriel, et une région qui le
  * redirait le contredirait un jour.
@@ -36,7 +45,8 @@
  * La liste qui fait foi est dans `regionInterpretation.js` ; celle-ci est
  * rappelée pour qu'on puisse remplir le fichier sans l'ouvrir.
  *
- *   matrix   hedgerow_meadow · openfield_cropland · wet_grassland · marsh ·
+ *   matrix   hedgerow_meadow · openfield_cropland · dry_cropland ·
+ *            dry_pasture · wet_grassland · marsh ·
  *            moor_heath · broadleaf_woodland · conifer_forest · boreal_taiga ·
  *            terraced_slope · dry_scrub · garrigue · dry_steppe ·
  *            alpine_pasture · bare_rock · dune_coast · desert_stone ·
@@ -48,7 +58,7 @@
  *   building <mur>_<couverture>, parmi les palettes écrites :
  *            murs        light_stone · dark_stone · granite · red_brick ·
  *                        pale_brick · half_timber · whitewash · rendered ·
- *                        timber · adobe
+ *                        timber · adobe · concrete
  *            couvertures flat_tile · curved_tile · slate · stone_slab ·
  *                        thatch · terrace
  *            (la liste exacte des combinaisons est `BUILDING_KINDS`)
@@ -61,6 +71,10 @@
  *            cork_oak · birch · poplar · eucalyptus · scots_pine ·
  *            maritime_pine · aleppo_pine · black_pine · stone_pine · spruce ·
  *            fir · larch · olive · carob · juniper · acacia* · palm*
+ *
+ *   roofs    flat · gable · hip · pyramid
+ *   roofPitch low · steep
+ *   walls    les murs de `building`
  *
  *   (*) admis, pas encore rendu par le décor.
  *
@@ -479,7 +493,7 @@ export const REGIONS = [
     id: 'causses',
     name: 'Grands Causses',
     anchors: [[3.2, 44.2]],
-    matrix: 'dry_steppe',
+    matrix: 'dry_pasture',
     stone: 'limestone',
     building: 'light_stone_stone_slab',
     farming: ['fallow', 'cereal'],
@@ -871,7 +885,7 @@ export const REGIONS = [
     id: 'la_mancha',
     name: 'La Mancha',
     anchors: [[-3.2, 39.3], [-2.4, 39.0]],
-    matrix: 'dry_steppe',
+    matrix: 'dry_cropland',
     stone: 'limestone',
     building: 'whitewash_curved_tile',
     farming: ['vineyard', 'cereal', 'olive', 'fallow'],
@@ -921,7 +935,7 @@ export const REGIONS = [
     id: 'tierra_campos',
     name: 'Tierra de Campos',
     anchors: [[-5.0, 42.0]],
-    matrix: 'openfield_cropland',
+    matrix: 'dry_cropland',
     stone: 'clay',
     building: 'adobe_curved_tile',
     farming: ['cereal', 'fallow', 'sunflower', 'vineyard'],
@@ -1001,7 +1015,7 @@ export const REGIONS = [
     id: 'campina_guadalquivir',
     name: 'Campiña del Guadalquivir',
     anchors: [[-5.5, 37.5], [-4.6, 37.6]],
-    matrix: 'openfield_cropland',
+    matrix: 'dry_cropland',
     stone: 'clay',
     building: 'whitewash_curved_tile',
     farming: ['olive', 'cereal', 'sunflower', 'orchard'],
@@ -2272,7 +2286,7 @@ export const REGIONS = [
     id: 'baixo_alentejo',
     name: 'Baixo Alentejo',
     anchors: [[-7.9, 38.05]],
-    matrix: 'openfield_cropland',
+    matrix: 'dry_cropland',
     stone: 'clay',
     building: 'whitewash_curved_tile',
     farming: ['cereal', 'olive', 'sunflower', 'fallow'],
@@ -2283,7 +2297,7 @@ export const REGIONS = [
     id: 'campo_mertola',
     name: 'Campo de Mértola',
     anchors: [[-7.65, 37.6]],
-    matrix: 'dry_steppe',
+    matrix: 'dry_cropland',
     stone: 'schist',
     building: 'whitewash_curved_tile',
     farming: ['cereal', 'fallow'],
@@ -2603,7 +2617,7 @@ export const REGIONS = [
     id: 'crete_senesi',
     name: 'Crete senesi e Val d’Orcia',
     anchors: [[11.6, 43.12]],
-    matrix: 'openfield_cropland',
+    matrix: 'dry_cropland',
     stone: 'clay',
     building: 'pale_brick_curved_tile',
     farming: ['cereal', 'fallow', 'sunflower', 'vineyard'],
@@ -2735,7 +2749,7 @@ export const REGIONS = [
     id: 'tavoliere',
     name: 'Tavoliere',
     anchors: [[15.6, 41.45]],
-    matrix: 'openfield_cropland',
+    matrix: 'dry_cropland',
     stone: 'clay',
     building: 'whitewash_curved_tile',
     farming: ['cereal', 'olive', 'vineyard', 'fallow'],
@@ -2757,7 +2771,7 @@ export const REGIONS = [
     id: 'murge',
     name: 'Murge',
     anchors: [[16.5, 40.95], [17.15, 40.75]],
-    matrix: 'garrigue',
+    matrix: 'dry_pasture',
     stone: 'limestone',
     building: 'light_stone_stone_slab',
     farming: ['olive', 'almond', 'cereal', 'vineyard'],
@@ -2823,7 +2837,7 @@ export const REGIONS = [
     id: 'materano',
     name: 'Materano e calanchi lucani',
     anchors: [[16.4, 40.55]],
-    matrix: 'dry_steppe',
+    matrix: 'dry_cropland',
     stone: 'clay',
     building: 'light_stone_curved_tile',
     farming: ['cereal', 'olive', 'fallow'],
@@ -2867,7 +2881,7 @@ export const REGIONS = [
     id: 'marchesato',
     name: 'Marchesato di Crotone',
     anchors: [[17.0, 39.1]],
-    matrix: 'dry_steppe',
+    matrix: 'dry_cropland',
     stone: 'clay',
     building: 'rendered_curved_tile',
     farming: ['cereal', 'olive', 'fallow'],
@@ -2894,6 +2908,10 @@ export const REGIONS = [
     building: 'dark_stone_curved_tile',
     farming: ['vineyard', 'citrus', 'orchard', 'fallow'],
     trees: ['chestnut', 'black_pine', 'birch'],
+    roofs: ['flat', 'gable', 'hip'],
+    roofPitch: 'low',
+    walls: ['dark_stone', 'rendered', 'concrete'],
+    townStoreys: [2, 3],
     sparse: ['buildings'],
   },
   {
@@ -2905,6 +2923,10 @@ export const REGIONS = [
     building: 'light_stone_curved_tile',
     farming: ['fallow', 'olive', 'orchard'],
     trees: ['oak', 'beech', 'holm_oak', 'cork_oak'],
+    roofs: ['gable', 'hip', 'flat'],
+    roofPitch: 'low',
+    walls: ['light_stone', 'rendered', 'concrete'],
+    townStoreys: [2, 3],
     sparse: ['buildings'],
   },
   {
@@ -2916,6 +2938,10 @@ export const REGIONS = [
     building: 'rendered_curved_tile',
     farming: ['citrus', 'olive', 'vineyard', 'fallow'],
     trees: ['holm_oak', 'chestnut', 'cork_oak', 'maritime_pine'],
+    roofs: ['flat', 'gable', 'hip'],
+    roofPitch: 'low',
+    walls: ['rendered', 'concrete', 'light_stone'],
+    townStoreys: [2, 4],
     sparse: ['buildings'],
   },
   {
@@ -2933,33 +2959,60 @@ export const REGIONS = [
     id: 'conca_oro',
     name: 'Conca d’Oro',
     anchors: [[13.35, 38.08]],
-    matrix: 'dry_scrub',
+    matrix: 'dry_cropland',
     stone: 'limestone',
     building: 'light_stone_curved_tile',
     farming: ['citrus', 'olive', 'fallow', 'vineyard'],
     trees: ['olive', 'palm', 'stone_pine'],
+    roofs: ['flat', 'hip', 'gable'],
+    roofPitch: 'low',
+    walls: ['light_stone', 'rendered', 'concrete'],
+    townStoreys: [3, 5],
     sparse: ['buildings'],
   },
   {
     id: 'sicilia_interna',
     name: 'Sicilia interna',
-    anchors: [[14.05, 37.45], [13.4, 37.58]],
-    matrix: 'dry_steppe',
+    // Les collines d'argile du seminativo, de Caltanissetta à l'arrière-pays
+    // d'Agrigente ; le relief calcaire du nord-ouest est aux monts Sicani.
+    anchors: [[14.05, 37.45], [13.65, 37.45]],
+    matrix: 'dry_cropland',
     stone: 'clay',
     building: 'rendered_curved_tile',
     farming: ['cereal', 'fallow', 'olive', 'almond'],
     trees: ['olive', 'eucalyptus', 'holm_oak'],
+    roofs: ['flat', 'gable', 'hip'],
+    roofPitch: 'low',
+    walls: ['rendered', 'concrete', 'light_stone'],
+    townStoreys: [2, 4],
+    sparse: ['buildings'],
+  },
+  {
+    // Monts Sicani, Rocca Busambra, collines de Corleone : pâture d'altitude
+    // sur calcaire, affleurements blancs, chênes et oliviers épars.
+    id: 'monti_sicani',
+    name: 'Monti Sicani',
+    anchors: [[13.15, 37.7], [13.45, 37.67], [13.38, 37.84]],
+    matrix: 'dry_pasture',
+    stone: 'limestone',
+    building: 'light_stone_curved_tile',
+    farming: ['fallow', 'cereal', 'olive', 'almond'],
+    trees: ['holm_oak', 'oak', 'olive'],
     sparse: ['buildings'],
   },
   {
     id: 'sicilia_occidentale',
     name: 'Trapanese',
     anchors: [[12.7, 37.85]],
-    matrix: 'dry_steppe',
+    matrix: 'dry_cropland',
     stone: 'limestone',
     building: 'light_stone_terrace',
     farming: ['vineyard', 'olive', 'cereal', 'fallow'],
     trees: ['olive', 'stone_pine', 'palm'],
+    roofs: ['flat', 'gable'],
+    roofPitch: 'low',
+    walls: ['light_stone', 'rendered', 'concrete'],
+    townStoreys: [2, 3],
     sparse: ['buildings'],
   },
   {
@@ -2988,33 +3041,45 @@ export const REGIONS = [
     id: 'piana_catania',
     name: 'Piana di Catania',
     anchors: [[14.95, 37.4]],
-    matrix: 'dry_steppe',
+    matrix: 'dry_cropland',
     stone: 'alluvium',
     building: 'rendered_curved_tile',
     farming: ['citrus', 'cereal', 'fallow'],
     trees: ['eucalyptus', 'olive', 'poplar'],
+    roofs: ['flat', 'gable', 'hip'],
+    roofPitch: 'low',
+    walls: ['rendered', 'concrete', 'dark_stone'],
+    townStoreys: [2, 4],
     sparse: ['buildings'],
   },
   {
     id: 'costa_iblea',
     name: 'Costa iblea e Piana di Gela',
     anchors: [[14.4, 36.86]],
-    matrix: 'dry_steppe',
+    matrix: 'dry_cropland',
     stone: 'sandstone',
     building: 'light_stone_terrace',
     farming: ['greenhouse', 'vineyard', 'cereal', 'olive'],
     trees: ['olive', 'carob', 'eucalyptus'],
+    roofs: ['flat', 'gable'],
+    roofPitch: 'low',
+    walls: ['light_stone', 'concrete', 'rendered'],
+    townStoreys: [2, 3],
     sparse: ['buildings'],
   },
   {
     id: 'iblei',
     name: 'Monti Iblei',
     anchors: [[14.8, 36.95], [15.0, 37.12]],
-    matrix: 'garrigue',
+    matrix: 'dry_pasture',
     stone: 'limestone',
     building: 'light_stone_curved_tile',
-    farming: ['olive', 'almond', 'cereal', 'fallow'],
-    trees: ['olive', 'carob', 'holm_oak', 'oak'],
+    farming: ['cereal', 'olive', 'almond', 'fallow'],
+    trees: ['carob', 'olive', 'holm_oak', 'oak'],
+    roofs: ['gable', 'flat', 'hip'],
+    roofPitch: 'low',
+    walls: ['light_stone', 'rendered', 'concrete'],
+    townStoreys: [2, 4],
     sparse: ['buildings'],
   },
   {
@@ -3054,7 +3119,7 @@ export const REGIONS = [
     id: 'campidano',
     name: 'Campidano',
     anchors: [[8.95, 39.45], [8.7, 39.8]],
-    matrix: 'openfield_cropland',
+    matrix: 'dry_cropland',
     stone: 'alluvium',
     building: 'adobe_curved_tile',
     farming: ['cereal', 'orchard', 'vineyard', 'rice'],

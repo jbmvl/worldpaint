@@ -328,6 +328,17 @@ Ce sont des manques constatés dans le code, pas des jugements sur le rendu.
    plante de vrais arbres. Elle s'arrête au-dessus de `PLANTED_CEILING_M`
    (2000 m), dans les emprises habitées et à `PLANTED_BUILDING_CLEARANCE_M`
    (15 m) de chaque bâtiment ; ces trous-là prennent le repli du thème.
+   Une matrice sèche peut déclarer une **matière de pente** (`steep`,
+   `gapSteepSurfaceForMatrix`) : là où la pente du MNT dépasse
+   `theme.terrain.gapSteep.grade` (tangente, 0,27–0,36), le trou devient
+   cette matière — le versant que personne ne laboure. La carte la peint
+   avant tout le vectoriel (`steepGap.js`) : un champ ou une vigne relevés
+   sur la pente restent ce que dit la carte, et le shader, la végétation et le
+   mobilier relisent la même matière. La pente vient du MNT pur, en
+   différences centrées de 20 m (ni la maille de terrain, qui suit la caméra,
+   ni le déblai) ; le seuil varie dans le fondu selon un bruit ancré à la
+   grille mondiale, et la limite est une isoligne, pas une grille. La roche
+   des fortes pentes (`slopeStart`) garde le dernier mot au-dessus.
 2. **Un marais n'a qu'une forme.** Les tuiles servies ne transmettent presque
    jamais la sous-classe d'une zone humide. Relevé au z14 sur la Camargue, la
    Brière, le lac de Grand-Lieu, la baie de l'Aiguillon, le delta du Danube, le

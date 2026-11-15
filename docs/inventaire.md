@@ -287,6 +287,7 @@ parmi celles du pays aux mêmes parts que ses bois (`plantedSpeciesShares`).
 | alignement de route, arbres de rue (`roadsideFurniture.js`) | une essence du pays par chaîne |
 | arbres de parc, de place, de bourg (`townTrees.js`) | une essence du pays par maille |
 | arbre de crête (`landmarks.js`) | une essence du pays par arbre |
+| arbre isolé du trou (`gapTrees.js`) | une essence du pays par arbre, à `SOIL_LOOK[matrice].scatteredTreesPerHa` (0,5/ha en grande culture sèche, 0,8 en pâture sèche), sur le trou en pente douce seulement : ni versant cédé à la broussaille, ni parcelle relevée, ni emprise routière, ni à moins de 25 m d'un bâtiment |
 | verger (`parcels.js`) | l'arbre que l'assolement du pays nomme parmi ses mots de verger — olivier, amandier, agrume, pommier (`trees.plantations`, via `FARMING_KINDS[mot].plantation`) ; le pommier sans pays |
 | buissons de jardin (`gardenLayer.js`) | les arbustes `bushy` : un usage, pas une région |
 
@@ -338,6 +339,10 @@ sans `bush` garde le tapis générique.
 Là où la matière porte de l'eau libre (marais, pré salé, vasière), rien ne se
 sème au milieu d'une flaque (`poolShareAt`, `groundClassMap.js`), et le fourré
 se densifie sur les derniers mètres qui la bordent (`poolEdgeGain`).
+
+Sur le versant qu'une matrice sèche cède à sa matière de pente (voir
+`docs/surfaces.md`), le maquis ne sème que `theme.terrain.gapSteep.bushes`
+(0,35) : une herbe sèche piquetée, pas un fourré (`coverBushesAt`).
 
 Le sol entre les objets est la seule matière du terrain : aucun tapis de brins
 n'y est semé.
@@ -479,7 +484,7 @@ lorsque l’épaisseur intérieure du pan à sa position ne dépasse pas 3,2 m. 
 Une grande surface garde une entrée sur son plus long pan lorsque son parking
 la sépare de la rue.
 
-La nuit, les huit repères les plus proches de l'observateur parmi les églises,
+La nuit, les trente et un repères les plus proches de l'observateur parmi les églises,
 mosquées, châteaux, murailles et ruines sont mis en lumière par des
 projecteurs encastrés au pied des pans, tous les 3,5 m : un point vif au sol,
 un cône qui s'évase en montant, les toits laissés dans l'ombre
@@ -491,7 +496,7 @@ bâti s'émet lui-même sur les seuls sommets du repère, marqués dans leur cou
 | `place_of_worship` | murs de pierre, comble de nef, hautes baies en pointe et clocher ; minaret et coupole si `subclass=muslim` |
 | `castle` | murs de pierre, comble, baies étroites et tours coiffées aux angles de l’empreinte |
 | `city_wall`, `citywalls`, `castle_wall`, `town_wall`, `rampart`, `barrier=wall` | mur plein de pierre, sommet plat, sans fenêtres ni comble |
-| `subclass=ruins`, ou `attraction`/`theatre` au nom antique (« Tempio », « Teatro Greco », « Anfiteatro ») | ruine sans toit dessinée sur l’emprise (`ruinGeometry`) : temple (nom, ou rectangle plein allongé ≥ 1,9) à péristyle debout ou ruiné, théâtre adossé à la pente, amphithéâtre, sinon murs arasés |
+| `subclass=ruins`, ou `attraction`/`theatre` au nom antique (« Tempio », « Teatro Greco », « Anfiteatro ») | ruine sans toit dessinée sur l’emprise, jamais rabotée par les chemins qui la traversent (`ruinGeometry`) ; sans emprise, sur un gabarit posé dans le plus petit enclos `park/historic` qui contient le point, et qui lui prête son nom (« Tempio di Apollo ») — sans enclos, sur le plus petit gabarit (14 × 10 m) centré sur le point. Formes : temple (nom, ou rectangle plein allongé ≥ 1,9) à péristyle debout ou ruiné, théâtre adossé à la pente, amphithéâtre, sinon murs arasés |
 | `hospital` | murs clairs, toit plat |
 | `mall`, `department_store`, `supermarket` | grande surface, toit plat, entrée vitrée et enseigne, sans fenêtres résidentielles |
 | `bakery` | devanture en bois verni |
@@ -574,6 +579,14 @@ n'y cède le passage. Une chaussée à sens unique a la largeur d'un sens
 (`oneway` du profil, dans le thème), sans axe peint.
 Un chemin de terre n'entre pas dans le carrefour d'une route revêtue : il passe
 dessous, la route et son marquage restent entiers.
+
+Un chemin de terre a la **couleur du sol tassé** qu'il traverse, relue sommet
+par sommet dans la carte du sol (`roadNetwork`, `treadGround`) : sur un sol
+couvert (herbe, culture, bois, lande, maquis), la terre nue du pays ; sur un
+sol minéral (`trodden: 'self'` dans `SURFACE_LOOK` : éboulis, roche, sable,
+glace, vase, sol nu), la même matière éclaircie — de 1,35 pour un chemin
+d'exploitation, de 1,2 pour un sentier (`tread` du profil). Sur l'éboulis
+basaltique de l'Etna, il est donc gris de cendre, pas brun.
 
 Chemins et sentiers sont **aplanis** comme les routes, sur un graphe à part et
 une fois le terrain des routes posé : la section est de niveau en travers, le
@@ -676,7 +689,8 @@ un tiers par rapport aux minimums réglementaires (un plan large paraît saturé
 | arbres de rue | major en agglomération | 11 m, des deux côtés, à 2,2 m de la rive, jamais à moins de 2,5 m d'une façade |
 | panneau | major 620 m, minor 900 m | — |
 | feu tricolore | major et minor, en agglomération | aux carrefours, sauf giratoire |
-| haie | minor, lane et track hors agglomération | continue |
+| haie | minor, lane et track hors agglomération | continue, une portion sur deux en bocage, une sur dix en openfield et en pays de barrière de bois, jamais en pierre sèche ni sans clôture |
+| haie basse de bas-côté | toute route hors agglomération sauf voie rapide, piste cyclable et sentier | continue, d'un seul côté : 34 % des portions en bocage, 10 % en barrière de bois, 6 % en openfield, 5 % en pierre sèche, 0 sans clôture |
 
 Le **lampadaire** posé dépend du lieu : le modèle courant partout, sauf à
 moins d'un kilomètre d'un lieu de culte relevé (`poi.class=place_of_worship`),
@@ -717,8 +731,22 @@ pente en long, le tracé longe une paroi plutôt qu'il ne la parcourt, et n'en a
 pas. Les protections
 s'interrompent aux bouches des carrefours et devant une chaussée voisine.
 
-Le **talus enherbé** garnit un bas-côté sur trois environ (34 %), d'un seul
-côté, hors agglomération.
+La **haie basse de bas-côté** (le talus enherbé) suit, comme la haie de bocage, le
+style de limite du pays (`BOUNDARY_MIXES[…].roadside`) : la parcelle et la route
+d'un même pays se closent de la même façon.
+
+La **canne de Provence** (Arundo donax, `furniture/caneBrakes.js`) borde les
+routes de campagne de terrain doux (pente moyenne ≤ 0,1 : pas un lacet à flanc
+de versant ; ni sentier, piste cyclable ou voie express), du côté que les haies
+laissent libre, et les berges des cours d'eau linéaires (rivière, ruisseau,
+fossé, drain, intermittents compris). Le massif est un fourré de touffes
+instanciées (`caneClump` : douze tiges de 3 à 4 m, feuilles alternes
+retombantes vert-gris, pointes et plumets secs), deux ou trois rangées au pas
+de 1,5 m (`caneClumpsAlong`), en tronçons de 24 m dont quatre sur dix sont
+gardés (`caneBrakeRuns`). Touffes posées des plus proches aux plus lointaines,
+plafond `caneClumps`. Présence par matrice (`CANE_BRAKE_SHARES`) : grande
+culture et pâture sèches, maquis, garrigue, terrasses, steppe (au bord de
+l'eau seulement), marais à peine ; aucune ailleurs.
 
 ---
 
@@ -743,6 +771,11 @@ Deux règles priment sur le tirage : au-delà d'un certain **dévers** (de 5 % e
 pays de pierre sèche à 28 % en pays de barrière de bois), c'est le mur, parce que la pierre
 sort du premier pli de terrain ; et une parcelle **en culture** ne se clôt pas —
 le blé ne s'échappe pas.
+
+Le contour tiré n'est posé que là où il sépare deux terrains ouverts : on lit
+le sol à 8 m de part et d'autre (`BOUNDARY_SIDE_PROBE_M`), et le tronçon qui
+longe un bois ou une zone bâtie est retiré — la lisière et le village tiennent
+lieu de limite. Le rocher et l'éboulis ne reçoivent rien.
 
 ### Ce qui est semé dans une parcelle
 
@@ -814,7 +847,7 @@ qui la rend habitée — du linge qui sèche, des poules.
 | **éolienne** | inventé | maille de 320 m, 8 % — hors bâti, hors route, hors espace sauvage protégé, sur un point haut |
 | **pylône** | inventé | mêmes conditions, 6 % |
 | **antenne de sommet** | relevé | sur un `mountain_peak` de classe `peak`, un sur trois ; recalée sur le maximum du relief naturel à moins de 100 m, contrôlé tout autour jusqu'à 140 m ; ni col, ni route, ni eau, ni bâti, ni espace sauvage protégé |
-| **phare** | relevé | sur le trait de côte d'une nappe `ocean`, un point sur quarante (~2,5 km), monté au point le plus haut dans un rayon de 500 m, à moins de 120 m du rivage ; la nuit, un halo à la lanterne et deux faisceaux qui tournent (`lighthouseLight`) |
+| **phare** | relevé | sur le trait de côte d'une nappe `ocean`, un point sur quarante (~2,5 km), monté au point le plus haut dans un rayon de 500 m, à moins de 120 m du rivage, hors bourg et hors enclos historique (`park` `class=historic`) ; la nuit, un halo à la lanterne et deux faisceaux qui tournent (`lighthouseLight`) |
 | **arbre de crête** | inventé | maille de 140 m, 3,5 %, sur un point haut dégagé — une essence du pays |
 | **moulin à vent** | inventé | hameau (moins de 20 bâtiments), 10 % |
 | **moulin à eau** | inventé | hameau, 6 % |

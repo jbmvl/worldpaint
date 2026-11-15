@@ -24,6 +24,8 @@
 
 import { srgb } from '../core/color.js';
 import { cellRandomAt, positionSeed, randomAt } from '../core/groundSeed.js';
+import { sharesFor, wallOfBuilding } from '../core/regionInterpretation.js';
+import { pickShare } from './furniturePlacement.js';
 import { defaultTheme } from '../themes/default.js';
 
 /** Côté de la maille qui décide du rebord de voirie et de la famille d'ouvrage, en mètres. */
@@ -62,6 +64,33 @@ function linearTowns(towns) {
 export function townPaletteFor(towns = defaultTheme.towns, region = null) {
   const palettes = linearTowns(towns);
   return palettes[region?.building] ?? palettes[Object.keys(palettes)[0]];
+}
+
+const LINEAR_WALLS = new WeakMap();
+
+/**
+ * Ton de mur, linéaire, d'un mot de `WALL_KINDS` : celui de la première
+ * palette du thème qui le porte, ou `null` si aucune ne le porte.
+ */
+export function wallToneFor(towns = defaultTheme.towns, wall) {
+  let out = LINEAR_WALLS.get(towns);
+  if (!out) {
+    out = {};
+    for (const palette of Object.values(linearTowns(towns))) {
+      const word = wallOfBuilding(palette.name);
+      if (word && !out[word]) out[word] = palette.wall;
+    }
+    LINEAR_WALLS.set(towns, out);
+  }
+  return out[wall] ?? null;
+}
+
+/** Parts d'une liste de mots, mémorisées par liste (un dossier de région est figé). */
+const SHARES_CACHE = new WeakMap();
+function cachedShares(words) {
+  let shares = SHARES_CACHE.get(words);
+  if (!shares) SHARES_CACHE.set(words, (shares = sharesFor(words)));
+  return shares;
 }
 
 /**
@@ -150,10 +179,15 @@ export function buildingStyleAt(
   const palette = townPaletteFor(towns, region);
   const seed = positionSeed(frame, x, z, 151);
 
+  // Les murs du pays, quand son dossier en liste plusieurs : le premier est
+  // celui de la palette, les autres prennent le ton de leur propre matériau.
+  const wallWord = region?.walls?.length > 1 ? pickShare(cachedShares(region.walls), randomAt(frame, x, z, 179)) : null;
+  const base = (wallWord && wallWord !== wallOfBuilding(palette.name) && wallToneFor(towns, wallWord)) || palette.wall;
+
   // Modulation tirée du lieu : ±6 % pour le crépi, ±3 % pour le volet peint (vieillit moins vite).
   const shade = 0.94 + randomAt(frame, x, z, 157) * 0.12;
   const tint = tints?.length ? tints[Math.floor(randomAt(frame, x, z, 159) * tints.length)] : null;
-  const wall = palette.wall.map((c, i) => Math.min(1, c * shade * (tint ? tint[i] : 1)));
+  const wall = base.map((c, i) => Math.min(1, c * shade * (tint ? tint[i] : 1)));
   const roof = palette.roof.map((c) => Math.min(1, c * (0.95 + randomAt(frame, x, z, 163) * 0.1)));
   const shutter = palette.shutter.map((c) => Math.min(1, c * (0.97 + randomAt(frame, x, z, 167) * 0.06)));
 
@@ -162,7 +196,7 @@ export function buildingStyleAt(
     wall,
     roof,
     shutter,
-    shape: roofShapeFor(palette, { area, height, seed }),
+    shape: roofShapeFor(palette, { area, height, seed, variant: randomAt(frame, x, z, 181) }, region?.roofs),
     // Pente propre au pays, ou rien — auquel cas l'appelant garde celle du
     // thème. La silhouette d'un toit se lit de plus loin que sa couleur.
     pitch: palette.pitch,
@@ -170,6 +204,40 @@ export function buildingStyleAt(
     shutters: house && randomAt(frame, x, z, 173) < SHUTTER_SHARE,
     palette: palette.name,
   };
+}
+
+/**
+ * Pente des toits : celle de la palette, ou du thème si elle n'en impose pas,
+ * corrigée par le mot de pays (`region.roofPitch`). Rend la tranche
+ * `theme.roofs` elle-même quand rien ne change : une allocation par bâtiment
+ * serait payée sur toute une ville.
+ *
+ * @param {number|undefined} pitch Pente de la palette (`buildingStyleAt`).
+ * @param {Object|null} region
+ * @param {Object} roofs Tranche `theme.roofs`.
+ */
+export function roofsFor(pitch, region, roofs = defaultTheme.roofs) {
+  const factor = roofs.pitchFactors?.[region?.roofPitch] ?? 1;
+  const value = (pitch ?? roofs.pitch) * factor;
+  return value === roofs.pitch ? roofs : { ...roofs, pitch: value };
+}
+
+/**
+ * Hauteur d'un bâtiment de ville dont la donnée ne dit rien, d'après les
+ * niveaux du pays (`region.townStoreys`, `[min, max]`) : un nombre de niveaux
+ * tiré du lieu, ou `null` quand le pays n'en déclare pas.
+ *
+ * @param {Object} frame Repère local.
+ * @param {number} x
+ * @param {number} z
+ * @param {Object|null} region
+ * @param {number} levelM Hauteur d'un niveau, en mètres.
+ */
+export function townHeightFor(frame, x, z, region, levelM) {
+  const storeys = region?.townStoreys;
+  if (!storeys) return null;
+  const [min, max] = storeys;
+  return (min + Math.floor(randomAt(frame, x, z, 197) * (max - min + 1))) * levelM;
 }
 
 /** Part des maisons qui portent des volets. */
@@ -188,12 +256,18 @@ export const HOUSE_MAX_HEIGHT_M = 11.5;
 /** Au-delà, c'est une exploitation ou un équipement, pas une maison. */
 export const HOUSE_MAX_AREA_M2 = 320;
 
-/** Forme du toit, d'après la palette du pays et la taille du bâtiment (la taille tranche avant le tirage). */
-export function roofShapeFor(palette, { area = 100, height = 7, seed = 0 } = {}) {
+/**
+ * Forme du toit, d'après la palette du pays et la taille du bâtiment (la
+ * taille tranche avant le tirage). Un pays qui classe ses toits (`roofs`, du
+ * plus répandu au moins répandu) tire dans ce classement, à la part du rang
+ * (`variant` dans [0, 1)) ; sinon la palette tranche (`seed`).
+ */
+export function roofShapeFor(palette, { area = 100, height = 7, seed = 0, variant = 0 } = {}, roofs = null) {
   if (height > 16 || area > 900) return 'flat';
 
-  const shapes = palette.roofShapes;
-  const shape = shapes[seed % shapes.length];
+  const shape = roofs?.length
+    ? pickShare(cachedShares(roofs), variant)
+    : palette.roofShapes[seed % palette.roofShapes.length];
   // Pyramide sur une emprise très allongée = tente de cirque : on préfère la faîtière.
   if (shape === 'pyramid' && area > 240) return 'hip';
   return shape;

@@ -83,3 +83,51 @@ test('le théâtre s’adosse au côté qui monte', () => {
   assert.equal(crestSide(v), 1);
   assert.equal(crestSide((x, z) => -v(x, z)), -1);
 });
+
+test('une ruine sans emprise reçoit un gabarit tenu dans son enclos', async () => {
+  const { ruinGabaritIn, RUIN_GABARITS } = await import('../src/layers/ruinGeometry.js');
+  const { pointInRing } = await import('../src/layers/furniturePlacement.js');
+  const wide = rect(90, 70, 0.3, 0, 0);
+  const large = ruinGabaritIn({ x: 20, z: 5, form: 'temple', enclosure: { rings: [wide], box: orientedBox(wide) } });
+  const box = orientedBox(large);
+  assert.ok(Math.abs(box.long * 2 - RUIN_GABARITS.temple.length) < 1e-6);
+  assert.ok(Math.abs(box.short * 2 - RUIN_GABARITS.temple.width) < 1e-6);
+  assert.ok(pointInRing(large, 20, 5));
+  assert.ok(large.every((p) => pointInRing(wide, p.x, p.z)), 'le gabarit glisse vers le centre pour tenir dans l’enclos');
+
+  const tight = rect(30, 16, 0.3, 0, 0);
+  const small = orientedBox(ruinGabaritIn({ x: 0, z: 0, form: 'temple', enclosure: { rings: [tight], box: orientedBox(tight) } }));
+  assert.ok(small.long * 2 <= 30 * 0.9 + 1e-6 && small.short * 2 <= 16 * 0.9 + 1e-6);
+});
+
+test('le gabarit prend le nom de l’enclos, épargne le bâti relevé, et ne dépend pas de l’ordre', async () => {
+  const { ruinGabarits } = await import('../src/layers/buildingLayer.js');
+  const ring = rect(70, 60, 0.1, 0, 0);
+  const enclosure = { name: 'Tempio di Apollo', rings: [ring], area: 4200, box: orientedBox(ring) };
+  const park = { name: 'Parco Archeologico', rings: [rect(400, 400, 0, 0, 0)], area: 160000, box: orientedBox(rect(400, 400, 0, 0, 0)) };
+  const real = rect(10, 10, 0, 120, 0);
+  const footprints = [{ footprint: real, minX: 115, maxX: 125, minZ: -5, maxZ: 5 }];
+  const ruins = [
+    { kind: 'ruin', name: null, x: 3, z: 2 },
+    { kind: 'ruin', name: 'Santuario', x: 120, z: 0 },
+    { kind: 'ruin', name: 'Fornaci', x: -150, z: 100 },
+    { kind: 'ruin', name: 'Ailleurs', x: 900, z: 900 },
+  ];
+  const placed = ruinGabarits(ruins, footprints, [park, enclosure]);
+  assert.deepEqual(placed.map((g) => g.properties.name), ['Fornaci', 'Tempio di Apollo', 'Ailleurs']);
+  assert.deepEqual(ruinGabarits(ruins.slice().reverse(), footprints, [enclosure, park]), placed);
+});
+
+test('une ruine hors de tout enclos reçoit le plus petit gabarit, centré sur son point', async () => {
+  const { ruinGabarits } = await import('../src/layers/buildingLayer.js');
+  const { RUIN_GABARITS, ruinFormFor } = await import('../src/layers/ruinGeometry.js');
+  const ruins = [{ kind: 'ruin', name: 'Tempio di Monte Adranone', x: 50, z: -20 }, { kind: 'ruin', name: null, x: 56, z: -18 }];
+  const placed = ruinGabarits(ruins, [], []);
+  assert.equal(placed.length, 1, 'le second point, dans le premier gabarit, est écarté');
+  const box = orientedBox(placed[0].footprint);
+  assert.ok(Math.abs(box.long * 2 - RUIN_GABARITS.remains.length) < 1e-6);
+  assert.ok(Math.abs(box.short * 2 - RUIN_GABARITS.remains.width) < 1e-6);
+  assert.deepEqual([placed[0].x, placed[0].z], [50, -20]);
+  assert.equal(ruinFormFor({ name: null, box }), 'remains');
+  assert.equal(ruinFormFor({ name: placed[0].properties.name, box }), 'temple', 'le nom dit encore la forme');
+});

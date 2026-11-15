@@ -525,6 +525,35 @@ export class World {
   }
 
   /**
+   * Volcans actifs à l'image (`core/volcanoes.js`) à moins de `radius` mètres
+   * de `(lng, lat)`, du plus proche au plus lointain, au format des repères
+   * (`landmarksNear`, `kind: 'volcano'`) : `(x, y, z)` est le cratère retrouvé
+   * dans le relief, `top` = `y`. Ils se voient de loin : la portée par défaut
+   * est celle de la nappe lointaine, pas de la bulle. `[]` sans nappe
+   * lointaine ou tant qu'elle n'est pas montée dans le repère courant.
+   *
+   * @param {number} lng
+   * @param {number} lat
+   * @param {number} [radius]
+   * @returns {Array<{x:number, y:number, z:number, top:number, size:number,
+   *          kind:'volcano', name:string, id:string, distanceM:number}>}
+   */
+  volcanoesNear(lng, lat, radius = 20000) {
+    const volcanoes = this.composer.volcanoes;
+    const frame = this.composer.bubble?.frame;
+    if (!frame || !volcanoes?.sites?.length || volcanoes.frame !== frame) return [];
+    const here = frame.toLocal(lng, lat);
+    const found = [];
+    for (const site of volcanoes.sites) {
+      const distanceM = Math.hypot(site.x - here.x, site.z - here.z);
+      if (distanceM <= radius) {
+        found.push({ x: site.x, y: site.h, z: site.z, top: site.h, size: 0, kind: 'volcano', name: site.name, id: site.id, distanceM });
+      }
+    }
+    return found.sort((p, q) => p.distanceM - q.distanceM);
+  }
+
+  /**
    * Points d'eau posés à moins de `radius` mètres de `(lng, lat)` — fontaines
    * (`fountain`, `fountainWallace`) et robinets de cimetière (`cemeteryTap`) —,
    * du plus proche au plus lointain : de quoi conduire un personnage de

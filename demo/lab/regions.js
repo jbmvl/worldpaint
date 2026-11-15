@@ -12,6 +12,7 @@ const libelles = Object.fromEntries(['matrix', 'stone', 'building', 'farming', '
   [champ, Object.fromEntries(showcaseEntries(champ).map(e => [e.value, e.label]))]));
 const couleurs = {
   hedgerow_meadow: '#8fae71', openfield_cropland: '#c9bc78', wet_grassland: '#75ada0',
+  dry_cropland: '#d6c27a', dry_pasture: '#b9b47e',
   marsh: '#79a5af', moor_heath: '#a19aaf', broadleaf_woodland: '#609479',
   conifer_forest: '#497f78', boreal_taiga: '#4c747e', terraced_slope: '#c69d70',
   dry_scrub: '#b0af79', garrigue: '#c2b28f', dry_steppe: '#d4bc84',

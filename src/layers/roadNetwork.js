@@ -195,6 +195,51 @@ function gnawTips(material) {
   material.customProgramCacheKey = () => 'road-ragged-tip';
 }
 
+/** Ce que le profil fait du sol s'il est tassé plutôt que revêtu, sinon `null`. */
+function isTrodden(profile, roads) {
+  return roads.surfaces[profile.surface || 'asphalt']?.trodden ? { tread: profile.tread ?? 1 } : null;
+}
+
+/**
+ * Un chemin est le sol tassé : chaque sommet porte la matière lue sous lui
+ * (`groundKind`, rang dans `SURFACE_KINDS` plus un, zéro là où la carte se
+ * tait, fourni par le compositeur), et la couleur sort des albédos du terrain, lavage du pays compris.
+ * Sur un sol minéral, la même matière éclaircie de `tread` ; ailleurs, la
+ * terre nue. Calculée au sommet, elle se fond d'une matière à l'autre.
+ */
+function treadGround(material, tread, ground) {
+  const kinds = ground.trodden.length;
+  const self = ground.trodden.map((on) => (on ? '1.0' : '0.0')).join(', ');
+  const previous = material.onBeforeCompile;
+  const previousKey = material.customProgramCacheKey();
+  material.map = null;
+  material.onBeforeCompile = (shader, renderer) => {
+    previous.call(material, shader, renderer);
+    shader.uniforms.uSurfaceAlbedo = ground.albedo;
+    shader.uniforms.uUnclassified = ground.unclassified;
+    shader.uniforms.uTread = { value: tread };
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', `#include <common>
+attribute float groundKind;
+uniform vec3 uSurfaceAlbedo[${kinds}];
+uniform float uUnclassified;
+uniform float uTread;
+varying vec3 vTrodden;
+const float TRODDEN_SELF[${kinds}] = float[${kinds}](${self});`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+int treadKind = int(groundKind > 0.5 ? groundKind : uUnclassified) - 1;
+vTrodden = TRODDEN_SELF[treadKind] > 0.5
+  ? min(uSurfaceAlbedo[treadKind] * uTread, vec3(1.0))
+  : uSurfaceAlbedo[${ground.bare}];`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vTrodden;')
+      .replace('#include <map_fragment>', '#include <map_fragment>\ndiffuseColor.rgb *= vTrodden;');
+  };
+  material.customProgramCacheKey = () => `${previousKey}-trodden-${tread}`;
+  material.needsUpdate = true;
+}
+
+
 /**
  * Revêtements dont une surface de carrefour peut être faite : ceux des profils
  * revêtus. Un chemin ne fait jamais carrefour (`roadGraph.collectJunctions`),
@@ -270,20 +315,8 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
     // une pente qui monte derrière soi), une face simple les rendrait invisibles.
     if (profile.steps) material.side = THREE.DoubleSide;
 
-    // Un revêtement à `opacity` < 1 (la terre) laisse voir le sol. Fondu sans
-    // écrire la profondeur : un chemin ne recouvre que du terrain, opaque et
-    // déjà dessiné, et la chaussée revêtue qu'il croise le domine par son
-    // décalage. Seul défaut accepté : deux rubans qui se chevauchent foncent.
-    const opacity = roads.surfaces[profile.surface || 'asphalt']?.opacity ?? 1;
-    if (opacity < 1) {
-      material.transparent = true;
-      material.opacity = opacity;
-      material.depthWrite = false;
-    }
-
     // Un chemin de terre n'a pas de rive : son bord est rongé par le sol, et
-    // le masque le découpe au seuil plutôt que de le fondre. Le seuil suit
-    // l'opacité, sinon il couperait le chemin entier.
+    // le masque le découpe au seuil plutôt que de le fondre.
     let edge = null;
     if (profile.ragged > 0) {
       edge = new THREE.CanvasTexture(createRoadEdgeCanvas(profile));
@@ -292,11 +325,11 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
       edge.wrapT = THREE.RepeatWrapping;
       edge.anisotropy = 8;
       material.alphaMap = edge;
-      material.alphaTest = opacity / 2;
+      material.alphaTest = 0.5;
       gnawTips(material);
     }
 
-    entries[key] = { texture, edge, material };
+    entries[key] = { texture, edge, material, trodden: isTrodden(profile, roads) };
   }
 
   // Le marquage : une seule matière pour tout ce qui est peint au sol, sans
@@ -320,6 +353,20 @@ export function createRoadMaterials(THREE, roads = defaultTheme.roads) {
     junctions,
     /** @type {Object} matériau du marquage au sol. */
     markings,
+    /**
+     * Donne aux chemins la couleur du sol qu'ils traversent (`treadGround`).
+     * Sans cet appel, ils gardent la couleur `base` de leur revêtement.
+     * @param {{albedo:Object, unclassified:Object, trodden:boolean[], bare:number}} ground
+     *        `albedo` et `unclassified` : les uniformes du terrain, partagés
+     *        pour suivre le pays sans reconstruction ; `trodden` : par matière
+     *        de `SURFACE_KINDS`, vrai si le chemin y montre la matière même ;
+     *        `bare` : le rang de la terre nue.
+     */
+    setGround(ground) {
+      for (const entry of Object.values(entries)) {
+        if (entry.trodden) treadGround(entry.material, entry.trodden.tread, ground);
+      }
+    },
     /**
      * Mouille la chaussée, par `material.color` (multiplie la texture, le
      * marquage reste net et rien n'est à redessiner).
@@ -376,9 +423,9 @@ export const ROAD_LIFT_M = 0.02;
  */
 export const UNPAVED_LIFT_M = ROAD_LIFT_M - MARKING_LIFT_M;
 
-/** Vrai si le profil de chaussée est revêtu. Fonction pure. */
-export function isPaved(profile) {
-  return (profile?.surface || 'asphalt') === 'asphalt';
+/** Vrai si le profil de chaussée est revêtu : tout ce qui n'est pas un sol tassé. Fonction pure. */
+export function isPaved(profile, roads = defaultTheme.roads) {
+  return !roads.surfaces[profile?.surface || 'asphalt']?.trodden;
 }
 
 /** Décollement d'un profil de chaussée, en mètres. Fonction pure. */
@@ -564,6 +611,9 @@ export const ROAD_CLASSES = {
  */
 export const PEDESTRIAN_SUBCLASSES = new Set(['footway', 'sidewalk', 'crossing']);
 
+/** Classes OpenMapTiles qu'un `surface=unpaved` fait passer en chemin. */
+const UNPAVABLE_CLASSES = new Set(['minor', 'service']);
+
 /** Profils qui ne se dessinent pas en ville, parcs urbains exceptés. */
 export const URBAN_EXCLUDED_PROFILES = new Set(['track', 'path', 'cycleway', 'steps']);
 
@@ -653,6 +703,11 @@ export function roadStyleFor(properties = {}, profiles = defaultTheme.roads.prof
     else if (subclass === 'cycleway' || properties.bicycle === 'designated') key = 'cycleway';
     else if (subclass === 'track') key = 'track';
   }
+  // OpenMapTiles ne garde de `surface` que revêtu ou non : sur une petite
+  // route, c'est lui qui tranche entre desserte et chemin. Une route classée
+  // (tertiaire et plus) ou un ouvrage restent revêtus.
+  if (properties.surface === 'unpaved' && UNPAVABLE_CLASSES.has(properties.class) && !workCodeFor(properties.brunnel)) key = 'track';
+  else if (properties.surface === 'paved' && key === 'track') key = 'lane';
 
   const profile = key ? profiles[key] : null;
   if (!profile) return null;
@@ -1454,10 +1509,12 @@ export class RoadNetwork {
    * @param {{x:number,z:number}} here Position locale de l'observateur.
    * @param {Object} [options]
    * @param {Array} [options.railwaySegments] Profils ferroviaires naturels.
+   * @param {Function} [options.groundKindAt] `(x, z) => rang` de la matière du
+   *        sol (`createRoadMaterials().setGround`), zéro si inconnue.
    */
   rebuild(...args) { return finishGeneration(this.rebuildSteps(...args)); }
 
-  *rebuildSteps(source, tiles, here, { urban = null, railwaySegments = [] } = {}) {
+  *rebuildSteps(source, tiles, here, { urban = null, railwaySegments = [], groundKindAt = null } = {}) {
     if (this.disposed || !this.bubble?.frame || !source) return false;
 
     const { bubble } = this;
@@ -1555,7 +1612,11 @@ export class RoadNetwork {
     for (const segment of collected) {
       yield;
       const spec = profiles[segment.profile];
-      if (!buffers[segment.profile]) buffers[segment.profile] = createRibbonBuffer({ tips: spec.ragged > 0 });
+      if (!buffers[segment.profile]) {
+        buffers[segment.profile] = createRibbonBuffer({ tips: spec.ragged > 0 });
+        if (isTrodden(spec, this.theme.roads)) buffers[segment.profile].ground = [];
+      }
+      const buffer = buffers[segment.profile];
       const continued = (point) =>
         index.query(point.x, point.z, 0, (other) => other !== segment && !isPaved(profiles[other.profile])) !==
         null;
@@ -1570,7 +1631,7 @@ export class RoadNetwork {
         const ribbon = isPaved(spec) ? run : unpavedRun(segment, run, continued);
         const added =
           ribbon &&
-          geometryFor(buffers[segment.profile], {
+          geometryFor(buffer, {
             path: ribbon.path,
             halfWidth: segment.halfWidth,
             sampleElevation: segment.paved ? sampleElevation : finalElevation,
@@ -1580,6 +1641,12 @@ export class RoadNetwork {
             tips: ribbon.tips,
           });
         if (added) segments++;
+        if (buffer.ground) {
+          const { positions, ground } = buffer;
+          for (let i = ground.length * 3; i < positions.length; i += 3) {
+            ground.push(groundKindAt ? groundKindAt(positions[i], positions[i + 2]) : 0);
+          }
+        }
         // Le marquage se pose sur la **même** plage que le ruban : il hérite
         // donc de sa découpe aux carrefours sans règle à lui.
         markings += this._appendMarkings(markingBuffer, segment, run, areas, paint);

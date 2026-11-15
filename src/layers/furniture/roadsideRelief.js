@@ -58,6 +58,19 @@ import {
  * couvrirait donc de roche cinq mètres d'un versant qui n'a rien de rocheux.
  */
 export const ROCK_CUT_MIN_RISE_M = 1.5;
+/**
+ * Longueur sur laquelle une falaise naît et meurt, en mètres : sa hauteur y
+ * monte de rien à pleine paroi. Coupée net, elle finissait en tranche de
+ * gâteau posée sur le talus.
+ */
+export const ROCK_CUT_TAPER_M = 8;
+/**
+ * Trou qu'une falaise enjambe, en mètres, tant que le versant y domine encore
+ * la plate-forme d'au moins `ROCK_CUT_BRIDGE_RISE_M` : un replat passager du
+ * MNT ne coupe pas une paroi en deux blocs.
+ */
+export const ROCK_CUT_BRIDGE_M = 12;
+export const ROCK_CUT_BRIDGE_RISE_M = 0.6;
 /** Graine du fruit de la paroi : une falaise n'est pas une plaque extrudée. */
 const ROCK_CUT_SEED = 9137;
 /** Graine du grain du mur de soutènement (`facetJitter`). */
@@ -286,10 +299,16 @@ export function buildRockCut(layer, context, segment, rowsInfo) {
   // Un tronçon par côté, et non le côté du milieu retenu pour tout le
   // tronçon : le versant peut changer de main au passage d'un col, et la
   // paroi se retrouverait alors à sonder le vide en aval.
-  const uphill = (row, wanted) =>
-    !row.terrainFill && row.uphill === wanted && row.rise >= ROCK_CUT_MIN_RISE_M && roomOn(row, wanted) >= cutBench + spec.minReach;
+  const uphill = (row, wanted, rise = ROCK_CUT_MIN_RISE_M) =>
+    !row.terrainFill && row.uphill === wanted && row.rise >= rise && roomOn(row, wanted) >= cutBench + spec.minReach;
   for (const side of [1, -1]) {
-    for (const run of contiguousRuns(rowsInfo, (row) => uphill(row, side), 5)) {
+    const kept = bridgedRows(
+      rowsInfo,
+      (row) => uphill(row, side),
+      (row) => uphill(row, side, ROCK_CUT_BRIDGE_RISE_M),
+      ROCK_CUT_BRIDGE_M
+    );
+    for (const run of contiguousRuns(rowsInfo, (row, i) => kept[i], 5)) {
       const rows = run.length;
       const origin = run[0].distance;
       const runPath = run.map((row) => ({ x: row.x, z: row.z, distance: row.distance - origin }));
@@ -334,8 +353,12 @@ export function buildRockCut(layer, context, segment, rowsInfo) {
       smoothColumns(face, rows, 1, 2);
       smoothColumns(rear, rows, 1, 2);
 
+      const length = runPath[rows - 1].distance;
       for (let i = 0; i < rows; i++) {
-        const height = Math.min(Math.max(face[i] - deck[i], 0), spec.maxHeight);
+        // La paroi naît et meurt sur `ROCK_CUT_TAPER_M` : aux bouts, elle
+        // n'est plus que le talus qu'elle couvre.
+        const fade = rockCutFade(runPath[i].distance, length);
+        const height = Math.min(Math.max(face[i] - deck[i], 0), spec.maxHeight) * fade;
         // Arase dentelée, vers le haut seulement : vers le bas, la roche
         // passerait sous le talus qu'elle est censée couvrir.
         crest[i] = deck[i] + height + grain.crest[i] * height;
@@ -365,6 +388,20 @@ export function buildRockCut(layer, context, segment, rowsInfo) {
         shelf[i] = ramp + (Math.max(natural, ramp) - ramp) * bank;
       }
 
+      // Le dos prend la couleur du sol qu'il prolonge, plaques comprises : il
+      // tient la place du versant au-dessus du talus, et seule la face se lit
+      // comme de la roche. Sans matériau du sol (bancs, tests), il reste roche.
+      const ground = layer.bubble?.materials;
+      let colorCap = null;
+      if (ground?.groundAlbedoAt && layer.groundClass?.coverAt) {
+        colorCap = new Array(rows);
+        for (let i = 0; i < rows; i++) {
+          const at = along(i, (reach[i] + capReach) / 2);
+          const kind = layer.groundClass.coverAt(at.x, at.z);
+          colorCap[i] = (kind && ground.groundAlbedoAt(kind, at.x, at.z)) || spec.colorTop;
+        }
+      }
+
       appendRockCut(buffers.rockCut, {
         path: runPath,
         base: deck,
@@ -383,9 +420,37 @@ export function buildRockCut(layer, context, segment, rowsInfo) {
         colorFoot: spec.colorFoot,
         colorBreak: spec.colorBreak,
         colorTop: spec.colorTop,
+        colorCap,
       });
     }
   }
+}
+
+/** Part de pleine paroi à `distance` du début d'un tronçon long de `length`. Pure. */
+export function rockCutFade(distance, length) {
+  const edge = Math.min(distance, length - distance);
+  const t = Math.min(1, Math.max(0, edge / ROCK_CUT_TAPER_M));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * Les lignes qu'une falaise couvre : celles qui la justifient (`strong`), et
+ * les trous entre deux d'entre elles plus courts que `bridgeM` où le versant
+ * domine encore (`weak`). Pure.
+ */
+export function bridgedRows(rows, strong, weak, bridgeM) {
+  const kept = rows.map((row, i) => strong(row, i));
+  let last = -1;
+  for (let i = 0; i < rows.length; i++) {
+    if (!kept[i]) continue;
+    if (last >= 0 && i - last > 1 && rows[i].distance - rows[last].distance <= bridgeM) {
+      let ok = true;
+      for (let j = last + 1; j < i && ok; j++) ok = weak(rows[j], j);
+      if (ok) for (let j = last + 1; j < i; j++) kept[j] = true;
+    }
+    last = i;
+  }
+  return kept;
 }
 
 /**

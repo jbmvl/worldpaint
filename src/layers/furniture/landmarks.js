@@ -22,6 +22,7 @@ import { FURNITURE_LIMITS, FURNITURE_RADIUS_M, PLANTED_TREE } from './catalog.js
 import { plantedSpeciesShares } from '../plantedTrees.js';
 import { reachedRadius } from '../../core/decorReach.js';
 import { randomAt, worldCellsAround, worldCellsIn } from '../../core/groundSeed.js';
+import { activeVolcanoNear } from '../../core/volcanoes.js';
 
 /**
  * Seuils de taille d'un bourg, en bâtiments comptés autour de son centroïde
@@ -192,6 +193,9 @@ export function* buildRocksSteps(layer, context, builtUp) {
     // Un bloc erratique au milieu de la chaussée est le plus visible de
     // tous les défauts d'emprise : il est opaque et il est haut.
     if (layer._onRoad(px, pz)) continue;
+    // La pente lue sous un plan d'eau est celle du MNT brut : un fond raide
+    // passerait pour un éboulis.
+    if (layer._onWater(px, pz)) continue;
 
     const sample = layer.groundClass?.sampleAt?.(px, pz);
     // Sans carte de classes, on ne devine pas un éboulis : la pente seule
@@ -228,21 +232,33 @@ export function* buildRocksSteps(layer, context, builtUp) {
  */
 export const WILD_RESERVE_CLASSES = new Set(['national_park', 'nature_reserve', 'wildlife_refuge', 'wilderness_preserve']);
 
-/** Les espaces sauvages protégés d'un jeu de tuiles, en anneaux métriques. */
-export function collectWildReserves(source, tiles, frame) {
-  const areas = [];
+/**
+ * Les enclos historiques (`class=historic` : site archéologique, acropole,
+ * nécropole). Leur point haut est souvent le monument lui-même : un phare
+ * qui y monterait se planterait au milieu des ruines.
+ */
+export const HISTORIC_SITE_CLASS = 'historic';
+
+/**
+ * Les espaces protégés d'un jeu de tuiles, en anneaux métriques, lus en un
+ * seul passage : `reserves` (espaces sauvages) et `historic` (enclos
+ * historiques).
+ */
+export function collectProtectedAreas(source, tiles, frame) {
+  const areas = { reserves: [], historic: [] };
   if (!source || !frame) return areas;
   const { origin, scale, zoom } = frame;
-  const accept = (properties) => WILD_RESERVE_CLASSES.has(properties.class);
+  const accept = (properties) => WILD_RESERVE_CLASSES.has(properties.class) || properties.class === HISTORIC_SITE_CLASS;
   source.forEachFeature('park', tiles, (geometry, properties) => {
     if (!accept(properties)) return;
+    const into = properties.class === HISTORIC_SITE_CLASS ? areas.historic : areas.reserves;
     for (const ring of ringsOf(geometry)) {
       const local = [];
       for (const [lng, lat] of ring) {
         if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
         local.push({ x: (lngToTileX(lng, zoom) - origin.x) * scale, z: (latToTileY(lat, zoom) - origin.y) * scale });
       }
-      if (local.length >= 3) areas.push(local);
+      if (local.length >= 3) into.push(local);
     }
   }, accept);
   return areas;
@@ -366,6 +382,8 @@ export function isHighPoint(layer, x, z) {
 
 /** Recherche bornée autour du sommet nommé, sur une grille mondiale de 10 m. */
 export const PEAK_SEARCH_M = 100;
+// Le cratère se cherche à 700 m du sommet listé (`volcanoFire.CRATER_SEARCH_M`) ; marge pour ses lèvres.
+const ACTIVE_VOLCANO_CLEARANCE_M = 1000;
 
 export function peakMastSite(p, { frame, elevationAt, blocked = () => false }) {
   let site = null;
@@ -389,7 +407,7 @@ export function peakMastSite(p, { frame, elevationAt, blocked = () => false }) {
   return { x: site.x, z: site.z, h: site.h };
 }
 
-/** Antennes : seuls les points `class=peak` ancrent une pose, jamais les cols. */
+/** Antennes : seuls les points `class=peak` ancrent une pose, jamais les cols ni un volcan actif. */
 export function buildPeakLandmarks(layer, context, builtUp, reserves = null) {
   const { frame } = layer.bubble;
   const { source, tiles, here, placements } = context;
@@ -400,6 +418,8 @@ export function buildPeakLandmarks(layer, context, builtUp, reserves = null) {
     if (geometry.type !== 'Point' || properties.class !== 'peak') return;
     const [lng, lat] = geometry.coordinates;
     if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+    // Un cône en éruption ne porte pas d'antenne relais.
+    if (activeVolcanoNear(lng, lat, ACTIVE_VOLCANO_CLEARANCE_M)) return;
 
     const x = (lngToTileX(lng, zoom) - origin.x) * scale;
     const z = (latToTileY(lat, zoom) - origin.y) * scale;
@@ -432,9 +452,10 @@ export function buildPeakLandmarks(layer, context, builtUp, reserves = null) {
  *
  * Le trait de côte dit **où** il y a un phare, pas à quel endroit exact : il
  * monte au point le plus haut des environs resté près du rivage
- * (`lighthouseSite`), là où son feu porte.
+ * (`lighthouseSite`), là où son feu porte — hors d'un bourg et hors d'un
+ * enclos historique.
  */
-export function buildCoastalLandmarks(layer, context, builtUp) {
+export function buildCoastalLandmarks(layer, context, builtUp, historic = null) {
   const { source, tiles, here, placements, sampleElevation } = context;
   const { origin, scale, zoom } = layer.bubble.frame;
   const toLocal = (ring) =>
@@ -473,7 +494,7 @@ export function buildCoastalLandmarks(layer, context, builtUp) {
         const site = lighthouseSite(p, path, {
           frame: layer.bubble.frame,
           elevationAt: sampleElevation,
-          blocked: (x, z) => pointInAreas(builtUp, x, z) || layer._onRoad(x, z) || layer._onWater(x, z),
+          blocked: (x, z) => pointInAreas(builtUp, x, z) || pointInAreas(historic, x, z) || layer._onRoad(x, z) || layer._onWater(x, z),
         });
         if (!site) continue;
         // Deux points de côte voisins montent au même sommet : un seul phare.

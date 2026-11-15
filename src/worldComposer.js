@@ -70,7 +70,7 @@ import { GenerationMetrics } from './inspect/generationMetrics.js';
 import { TerrainBubble } from './terrain/terrainBubble.js';
 import { WaterRelief } from './terrain/waterRelief.js';
 import { RoofCut } from './terrain/roofCut.js';
-import { GroundClassMap } from './terrain/groundClassMap.js';
+import { GroundClassMap, SURFACE_KINDS } from './terrain/groundClassMap.js';
 import { FarRelief } from './terrain/farRelief.js';
 import { VolcanoFire } from './layers/volcanoFire.js';
 import { RoadNetwork, createRoadMaterials, ROAD_RADIUS_M } from './layers/roadNetwork.js';
@@ -228,6 +228,14 @@ export class WorldComposer {
     const bubble = this.bubble;
     this.roadMaterials = createRoadMaterials(THREE, theme.roads);
     this.roadMaterials.setMaxAnisotropy(maxAnisotropy);
+    const ground = bubble.materials.surfaceUniforms;
+    if (ground) {
+      this.roadMaterials.setGround({
+        ...ground,
+        trodden: SURFACE_KINDS.map((kind) => theme.surfaces[kind]?.trodden === 'self'),
+        bare: SURFACE_KINDS.indexOf('bare'),
+      });
+    }
     this.roads = new RoadNetwork({
       THREE,
       scene,
@@ -719,6 +727,7 @@ export class WorldComposer {
         urban,
         builtUp,
         elevationAt: (x, z) => this.bubble.surfaceElevationAtLocal(x, z, NaN),
+        demElevationAt: (x, z) => this.bubble._sample(frame.origin.x + x / frame.scale, frame.origin.y + z / frame.scale, NaN),
         roadTiles: near,
         roadRadius: reachedRadius(ROAD_RADIUS_M, this.bubble),
       })) return false;
@@ -732,6 +741,10 @@ export class WorldComposer {
       //    le terrain corrigé est publié avant toute pose du décor.
       if (!await rebuild(this.roads, 'routes', this.vectorTiles, near, here, {
         urban,
+        groundKindAt: (x, z) => {
+          const surface = this.groundClass.coverAt(x, z);
+          return surface ? SURFACE_KINDS.indexOf(surface) + 1 : 0;
+        },
         railwaySegments: collectCrossingRails(this.vectorTiles, near, this.bubble.frame,
           (x, z) => this.bubble.naturalElevationAtLocal(x, z, 0) * this.bubble.verticalScale),
       })) return false;

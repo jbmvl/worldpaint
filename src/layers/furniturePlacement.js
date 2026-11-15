@@ -140,13 +140,17 @@ export function realBoundaryRuns(ring, bounds, minPoints = 2) {
  *   clore. `stoneSlopeTilled` est la même pour une terre travaillée et pour la
  *   roche affleurante, où la pierre est déjà là : elle sort plus tôt ;
  * - `plough` et `pasture` — parts cumulées (voir `pickShare`), `null` valant
- *   « rien du tout », qui est le cas le plus fréquent en openfield.
+ *   « rien du tout », qui est le cas le plus fréquent en openfield ;
+ * - `roadside` — part des portions de route hors agglomération qui portent une
+ *   haie basse de bas-côté (`verge`) et une haie de bocage (`hedge`) : la haie
+ *   inventée le long d'une route suit le pays comme celle des parcelles.
  */
 export const DEFAULT_BOUNDARY_MIX = {
   stoneSlope: 0.2,
   stoneSlopeTilled: 0.12,
   plough: [['hedge', 0.4], ['lowHedge', 0.22], [null, 0.38]],
   pasture: [['hedge', 0.2], ['woodFence', 0.38], ['barbedWire', 0.42]],
+  roadside: { verge: 0.34, hedge: 0.5 },
 };
 
 /**
@@ -173,6 +177,7 @@ export const BOUNDARY_MIXES = {
     stoneSlopeTilled: 0.2,
     plough: [[null, 0.82], ['hedge', 0.1], ['lowHedge', 0.08]],
     pasture: [['barbedWire', 0.5], ['woodFence', 0.3], [null, 0.15], ['hedge', 0.05]],
+    roadside: { verge: 0.06, hedge: 0.1 },
   },
   // Terrasses, causses, Connemara : la pierre sort du premier pli de terrain,
   // et elle est partout.
@@ -181,6 +186,7 @@ export const BOUNDARY_MIXES = {
     stoneSlopeTilled: 0.04,
     plough: [['dryStoneWall', 0.5], [null, 0.4], ['lowHedge', 0.1]],
     pasture: [['dryStoneWall', 0.6], ['barbedWire', 0.25], [null, 0.15]],
+    roadside: { verge: 0.05, hedge: 0 },
   },
   // Là où le bois est la matière la moins chère, on clôt en bois.
   wood_fence: {
@@ -188,6 +194,7 @@ export const BOUNDARY_MIXES = {
     stoneSlopeTilled: 0.24,
     plough: [[null, 0.75], ['lowHedge', 0.15], ['hedge', 0.1]],
     pasture: [['woodFence', 0.6], ['barbedWire', 0.25], [null, 0.15]],
+    roadside: { verge: 0.1, hedge: 0.1 },
   },
   // Une parcelle qu'on ne clôt pas, parce qu'il n'y a rien à retenir dedans.
   none: {
@@ -195,6 +202,7 @@ export const BOUNDARY_MIXES = {
     stoneSlopeTilled: 0.1,
     plough: [[null, 0.85], ['dryStoneWall', 0.15]],
     pasture: [[null, 0.6], ['barbedWire', 0.25], ['dryStoneWall', 0.15]],
+    roadside: { verge: 0, hedge: 0 },
   },
 };
 
@@ -221,9 +229,8 @@ export function boundaryFurnitureFor(
   const subclass = properties.subclass;
   const mix = (boundary && BOUNDARY_MIXES[boundary]) || DEFAULT_BOUNDARY_MIX;
 
-  // Rocher, éboulis, causse : rien à clore, mais de quoi bâtir.
-  if (klass === 'rock') return steepness > mix.stoneSlopeTilled ? 'dryStoneWall' : null;
-  if (klass === 'wood' || klass === 'wetland' || klass === 'sand' || klass === 'ice') return null;
+  // Rocher, éboulis : la pierre y est, mais rien à clore.
+  if (klass === 'rock' || klass === 'wood' || klass === 'wetland' || klass === 'sand' || klass === 'ice') return null;
 
   const isFarmland = klass === 'farmland';
   const isGrass = klass === 'grass' || subclass === 'meadow' || subclass === 'grassland';
@@ -505,6 +512,104 @@ export function scatterFurnitureFor(properties = {}, { crop = null, look = null,
 export const WOOD_PILE_EDGE_MIN = 0.35;
 
 /**
+ * Canne de Provence (Arundo donax), par matrice de paysage : part des portions
+ * de route de campagne (`road`) et des cours d'eau linéaires (`water`) qui en
+ * portent des tronçons. Naturalisée dans tout le bassin méditerranéen, elle
+ * tient les fossés, les berges et les bas-côtés frais des plaines et des
+ * collines sèches ; en steppe elle ne quitte guère l'eau, et un marais
+ * (la tourbière du nord comprise) lui préfère le roseau. Une matrice absente
+ * n'en porte aucune.
+ */
+export const CANE_BRAKE_SHARES = {
+  dry_cropland: { road: 0.3, water: 0.75 },
+  dry_pasture: { road: 0.2, water: 0.7 },
+  dry_scrub: { road: 0.15, water: 0.6 },
+  garrigue: { road: 0.2, water: 0.6 },
+  terraced_slope: { road: 0.2, water: 0.6 },
+  dry_steppe: { road: 0.05, water: 0.4 },
+  marsh: { road: 0, water: 0.15 },
+};
+
+/** Longueur d'un tronçon de canne tiré à part, en mètres. */
+export const CANE_BRAKE_PIECE_M = 24;
+/** Part des morceaux gardés : une canne pousse en massifs, pas en haie continue. */
+const CANE_BRAKE_KEEP = 0.4;
+
+/** Part de canne d'une matrice, pour `road` ou `water` ; 0 hors table. */
+export function caneBrakeShareFor(matrix, where) {
+  return CANE_BRAKE_SHARES[matrix]?.[where] ?? 0;
+}
+
+/**
+ * Les tronçons de canne d'un tracé : coupé en morceaux de `pieceM`, chacun
+ * gardé selon un tirage ancré au sol à son début, les morceaux voisins gardés
+ * réunis (`CANE_BRAKE_KEEP`), quelle que soit la part de la matrice.
+ *
+ * @param {Array<{x:number,z:number,distance:number}>} path Tracé ré-échantillonné.
+ * @returns {Array<Array<{x:number,z:number,distance:number}>>}
+ */
+export function caneBrakeRuns(frame, path, salt = 0, pieceM = CANE_BRAKE_PIECE_M) {
+  const runs = [];
+  let run = null;
+  let piece = -1;
+  let keep = false;
+  for (const p of path || []) {
+    const index = Math.floor(p.distance / pieceM);
+    if (index !== piece) {
+      piece = index;
+      const kept = randomAt(frame, p.x, p.z, 211 + salt) < CANE_BRAKE_KEEP;
+      if (keep && !kept && run) run.push(p);
+      keep = kept;
+      if (!keep) run = null;
+      else if (!run) runs.push((run = []));
+    }
+    if (keep) run.push(p);
+  }
+  return runs.filter((r) => r.length >= 2);
+}
+
+/** Pas entre deux touffes de canne le long d'un massif, en mètres. */
+export const CANE_CLUMP_STEP_M = 1.5;
+
+/**
+ * Les touffes d'un tronçon de canne décalé de `offset` (signe : le côté) :
+ * deux rangées par pas, une troisième une fois sur trois, du côté opposé à
+ * la rive ; une touffe sur dix manque, chacune déplacée d'un demi-mètre — un
+ * fourré serré, avec du jour. Tirages ancrés au sol.
+ *
+ * @returns {Array<{x:number, z:number, yaw:number, scale:number}>}
+ */
+export function caneClumpsAlong(frame, run, offset, step = CANE_CLUMP_STEP_M) {
+  const clumps = [];
+  const length = run[run.length - 1].distance - run[0].distance;
+  const side = Math.sign(offset) || 1;
+  let r = 1;
+  for (let d = run[0].distance + step / 2; d < run[0].distance + length; d += step) {
+    while (r < run.length - 1 && run[r].distance < d) r++;
+    const a = run[r - 1], b = run[r];
+    const span = b.distance - a.distance || 1;
+    const t = Math.min(1, Math.max(0, (d - a.distance) / span));
+    const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+    const tx = (b.x - a.x) / span, tz = (b.z - a.z) / span;
+    const rows = randomAt(frame, x, z, 222) < 0.35 ? 3 : 2;
+    for (let row = 0; row < rows; row++) {
+      if (randomAt(frame, x, z, 221 + row * 11) < 0.1) continue;
+      const across = offset + side * row * 1.1 + (randomAt(frame, x, z, 223 + row) - 0.5);
+      const along = (randomAt(frame, x, z, 225 + row) - 0.5) * step * 0.5;
+      const px = x + tz * across + tx * along;
+      const pz = z - tx * across + tz * along;
+      clumps.push({
+        x: px,
+        z: pz,
+        yaw: randomAt(frame, px, pz, 227) * Math.PI * 2,
+        scale: 0.8 + randomAt(frame, px, pz, 228) * 0.35,
+      });
+    }
+  }
+  return clumps;
+}
+
+/**
  * Part d'ovins d'une pâture de plaine, par matrice de paysage. La pente disait
  * déjà l'essentiel — le mouton broute où la vache ne monte plus — mais rien du
  * pays : une plaine irlandaise et une plaine castillane ont la même pente et
@@ -521,6 +626,9 @@ export const HERD_SHEEP_ODDS = {
   dry_scrub: 0.55,
   terraced_slope: 0.78,
   dry_steppe: 0.8,
+  // Midi céréalier et pâture à murets : le mouton domine, la vache reste.
+  dry_cropland: 0.6,
+  dry_pasture: 0.7,
   // En désert, la chèvre et le mouton tiennent seuls.
   desert_stone: 0.85,
   desert_sand: 0.85,
@@ -608,6 +716,8 @@ export const FOREST_GAME = {
   dry_scrub: ['boar', 'doe', 'deer'],
   terraced_slope: ['boar', 'deer', 'doe'],
   dry_steppe: ['boar'],
+  dry_cropland: ['boar', 'boar', 'doe'],
+  dry_pasture: ['boar', 'boar', 'doe'],
   desert_stone: [],
   desert_sand: [],
   openfield_cropland: ['deer', 'doe', 'boar', 'boar'],
@@ -639,6 +749,8 @@ export const FOREST_PREDATORS = {
   dry_scrub: ['fox'],
   terraced_slope: ['fox', 'fox', 'wolf'],
   dry_steppe: ['fox'],
+  dry_cropland: ['fox'],
+  dry_pasture: ['fox'],
   desert_stone: ['fox'],
   desert_sand: ['fox'],
   openfield_cropland: ['fox'],
@@ -1063,17 +1175,24 @@ export function isPathProfile(profile) {
 /**
  * Ce qui garnit le bas-côté d'une portion de route : une haie basse d'un seul
  * côté, ou rien (le cas le plus fréquent, et voulu — sinon un décor de
- * circuit). Un tirage ancré au nœud de la chaîne la donne à une portion sur trois environ.
+ * circuit). Un tirage ancré au nœud de la chaîne la donne à une portion sur trois
+ * environ en bocage, presque jamais en openfield ou en pays de pierre sèche.
  *
  * @returns {{verge:string|null, vergeSide:number}}
  */
-export function roadsideVergeFor(profile, { builtUp = false, variant = 0 } = {}) {
+export function roadsideVergeFor(profile, { builtUp = false, variant = 0, boundary = null } = {}) {
   const none = { verge: null, vergeSide: 1 };
   if (builtUp) return none;
   if (profile === 'cycleway' || profile === 'path' || profile === 'express') return none;
 
-  if (variant < 0.34) return { verge: 'lowHedge', vergeSide: variant < 0.17 ? 1 : -1 };
+  const share = roadsideHedgeShares(boundary).verge;
+  if (variant < share) return { verge: 'lowHedge', vergeSide: variant < share / 2 ? 1 : -1 };
   return none;
+}
+
+/** Parts de haie de bord de route du style de limite (`BOUNDARY_MIXES[…].roadside`). */
+export function roadsideHedgeShares(boundary = null) {
+  return ((boundary && BOUNDARY_MIXES[boundary]) || DEFAULT_BOUNDARY_MIX).roadside;
 }
 
 /**

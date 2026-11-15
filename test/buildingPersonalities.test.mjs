@@ -25,6 +25,15 @@ test('les parties d’un édifice partagent son style, avec un seul clocher', ()
   assert.equal(owners.has(neighbor),false);
   assert.deepEqual([...assignPersonalities([neighbor,part,nef],[poi],[outline])],[...owners]);
 });
+test('une ruine modélisée en parties absorbe celles qui mordent sur son emprise', () => {
+  const stylobate=rectangle(0,0,60,25),column=rectangle(-1,1,1,3),entablature=rectangle(-0.5,-0.5,60.5,25.5),neighbor=rectangle(61,0,70,10);
+  const poi={x:30,z:12,kind:'ruin'};
+  const owners=assignPersonalities([column,entablature,stylobate,neighbor],[poi]);
+  assert.equal(owners.get(entablature),poi);
+  assert.equal(owners.get(stylobate).secondary,true);
+  assert.equal(owners.get(column).secondary,true);
+  assert.equal(owners.has(neighbor),false);
+});
 test('un commerce sur un contour masqué ne multiplie pas les devantures', () => {
   const outline=rectangle(0,0,30,20),main=rectangle(0,0,20,20),part=rectangle(20,0,30,10);
   const poi={x:25,z:15,kind:'retail'};

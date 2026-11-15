@@ -163,6 +163,34 @@ const BILLBOARD_GLSL = `
   }
 `;
 
+/**
+ * Panneau de halo : perpendiculaire au rayon de vue et avancé vers la caméra
+ * d'un rayon de halo, réduit d'autant. Le relief autour du cratère ne le
+ * tranche plus, et sa coupe ne dépend plus de l'orientation de la caméra.
+ */
+const HALO_GLSL = `
+  uniform float uFadeNear;
+  uniform float uFadeFar;
+  varying vec2 vUv;
+  varying float vFade;
+  vec4 halo(vec3 centre, float size) {
+    vec3 mv = (modelViewMatrix * vec4(centre, 1.0)).xyz;
+    float dist = length(mv);
+    vec3 ray = mv / dist;
+    size = max(size, dist * ${MIN_ANGULAR_SIZE.toFixed(5)}) * step(0.001, size);
+    float nearPlane = projectionMatrix[3][2] / (projectionMatrix[2][2] - 1.0);
+    float pulled = max(dist - 0.5 * size, min(dist, 2.0 * nearPlane));
+    vec3 right = cross(ray, vec3(0.0, 1.0, 0.0));
+    right = length(right) > 1e-3 ? normalize(right) : vec3(1.0, 0.0, 0.0);
+    vec3 up = cross(right, ray);
+    float scale = pulled / dist;
+    vec3 p = ray * pulled + (right * position.x + up * position.y) * size * scale;
+    vUv = uv;
+    vFade = 1.0 - smoothstep(uFadeNear, uFadeFar, dist);
+    return projectionMatrix * vec4(p, 1.0);
+  }
+`;
+
 const vec3Of = (THREE, c) => new THREE.Vector3(...c);
 
 function fadeUniforms() {
@@ -242,11 +270,11 @@ export function createCraterGlowMaterial(THREE, look) {
       uniform float uTime;
       varying float vPulse;
       varying float vStrength;
-      ${BILLBOARD_GLSL}
+      ${HALO_GLSL}
       void main() {
         vPulse = 0.82 + 0.1 * sin(uTime * 1.9 + aSeed.w * 6.283) + 0.08 * sin(uTime * 5.3 + aSeed.w * 17.0);
         vStrength = aSeed.z;
-        gl_Position = billboard(aOrigin, aSeed.x);
+        gl_Position = halo(aOrigin, aSeed.x);
       }
     `,
     fragmentShader: `
@@ -462,6 +490,13 @@ export class VolcanoFire {
     this.setNight(0);
   }
 
+  /**
+   * Cratères des volcans à l'image, `{ id, name, x, z, h }` en positions de
+   * scène du repère `frame` (celui du dernier `build`) : de quoi y tourner une caméra.
+   */
+  sites = [];
+  frame = null;
+
   /** Nombre de volcans à l'image. */
   get count() {
     return this._count ?? 0;
@@ -483,6 +518,8 @@ export class VolcanoFire {
       if (crater) volcanoes.push({ ...volcano, crater });
     }
     this._count = volcanoes.length;
+    this.frame = frame;
+    this.sites = volcanoes.map((v) => ({ id: v.id, name: v.name, x: v.crater.x, z: v.crater.z, h: v.crater.h }));
     if (!volcanoes.length) return;
 
     for (const material of Object.values(this.materials)) {
@@ -604,6 +641,8 @@ export class VolcanoFire {
     }
     this.meshes = [];
     this._count = 0;
+    this.sites = [];
+    this.frame = null;
   }
 
   /** @param {number} delta Secondes écoulées. */

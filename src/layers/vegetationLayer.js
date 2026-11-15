@@ -440,6 +440,28 @@ export function coverBushesFor(cover, surfaces = defaultTheme.surfaces) {
   return { density: look?.bushes ?? 0, essence: look?.bush ?? null };
 }
 
+/**
+ * `coverBushesFor` au point : la matière que la carte y lit ; dans le trou
+ * (là où la carte se tait), les arbustes du pays (`SOIL_LOOK[…].gapBushes`,
+ * `gapBush`) — un pré sec piqueté de lentisques, pas un pré nu ; et, sur le
+ * versant que le trou a cédé à sa matière de pente (`steepGap.js`), la densité
+ * de `theme.terrain.gapSteep.bushes` — une herbe sèche piquetée, pas un maquis.
+ */
+export function coverBushesAt(groundClass, x, z, theme = defaultTheme) {
+  const cover = groundClass.coverAt?.(x, z) ?? groundClass.surfaceAt?.(x, z) ?? null;
+  const look = coverBushesFor(cover, theme.surfaces);
+  const soil = theme.soils?.[groundClass.region?.matrix];
+  if (cover && soil?.gapBushes > 0 && groundClass.surfaceAt?.(x, z) === null) {
+    look.density = soil.gapBushes;
+    if (soil.gapBush) look.essence = soil.gapBush;
+  }
+  const steepBushes = theme.terrain?.gapSteep?.bushes;
+  if (cover && cover === groundClass.steepGapSurface && Number.isFinite(steepBushes) && groundClass.steepGapAt(x, z)) {
+    look.density = steepBushes;
+  }
+  return { cover, ...look };
+}
+
 /** Côté de la maille qui décide de l'essence dominante d'un bois, en mètres. */
 export const FOREST_PATCH_M = 420;
 
@@ -979,8 +1001,8 @@ export class VegetationLayer {
         // a pas de bois, donc il ne peut pas être conditionné aux tiges. Rien
         // au milieu d'une flaque, plus dense sur sa bordure (`poolEdgeGain`) :
         // l'eau et le fourré suivent désormais la même vérité.
-        const bushCover = groundClass.coverAt?.(centreX, centreZ) ?? groundClass.surfaceAt?.(centreX, centreZ) ?? null;
-        const bushLook = coverBushesFor(bushCover, this.theme.surfaces);
+        const bushLook = coverBushesAt(groundClass, centreX, centreZ, this.theme);
+        const bushCover = bushLook.cover;
         const bushStanding = bushCover ? this.theme.surfaces[bushCover]?.standingWater ?? 0 : 0;
         const bushPool =
           bushStanding > 0
@@ -1201,8 +1223,8 @@ export class VegetationLayer {
           thicketPerCell(thicketDensityFor(type), cellSize);
         // Même refus au milieu d'une flaque, même bordure plus dense que le
         // fourré du peuplement (voir `_build`).
-        const thickCover = groundClass.coverAt?.(centreX, centreZ) ?? groundClass.surfaceAt?.(centreX, centreZ) ?? null;
-        const thickLook = coverBushesFor(thickCover, this.theme.surfaces);
+        const thickLook = coverBushesAt(groundClass, centreX, centreZ, this.theme);
+        const thickCover = thickLook.cover;
         const thickStanding = thickCover ? this.theme.surfaces[thickCover]?.standingWater ?? 0 : 0;
         const thickPool =
           thickStanding > 0

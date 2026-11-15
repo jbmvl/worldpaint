@@ -31,6 +31,8 @@ const TRANSLATIONS = {
   matrix: {
     hedgerow_meadow: 'Bocage',
     openfield_cropland: 'Openfield (grande culture)',
+    dry_cropland: 'Grande culture sèche',
+    dry_pasture: 'Pâture sèche à murets',
     wet_grassland: 'Prairie humide',
     marsh: 'Marais',
     moor_heath: 'Lande',

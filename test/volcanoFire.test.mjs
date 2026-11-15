@@ -74,6 +74,11 @@ test('le feu se monte sur le relief autour du volcan et se retire', () => {
   const vesuvio = frame.toLocal(14.4260, 40.8216);
   fire.build({ frame, here: { x: 0, z: 0 }, radius: 20000, elevationAt: cone(vesuvio.x + 120, vesuvio.z) });
   assert.equal(fire.count, 1);
+  // Le cratère publié pour les caméras : au sommet du relief, dans le repère du montage.
+  assert.equal(fire.frame, frame);
+  assert.deepEqual(fire.sites.map((v) => v.id), ['vesuvio']);
+  assert.ok(Math.hypot(fire.sites[0].x - vesuvio.x - 120, fire.sites[0].z - vesuvio.z) < 25);
+  assert.ok(fire.sites[0].h > 1100);
   const names = fire.meshes.map((m) => m.name).sort();
   assert.deepEqual(names, ['volcano-glow', 'volcano-lava', 'volcano-plume', 'volcano-sparks']);
   fire.advance(1.5);
@@ -83,6 +88,20 @@ test('le feu se monte sur le relief autour du volcan et se retire', () => {
   assert.equal(fire.meshes.length, 0);
   fire.build({ frame, here: { x: 0, z: 0 }, radius: 2000, elevationAt: cone(0, 0) });
   assert.equal(fire.count, 0);
+  assert.deepEqual(fire.sites, []);
   fire.dispose();
   assert.equal(scene.children.length, 0);
+});
+
+test('le monde publie les cratères à portée, au format des repères', async () => {
+  const { World } = await import('../src/world.js');
+  const frame = createLocalFrame(14.25, 40.85, 15);
+  const site = { id: 'vesuvio', name: 'Vésuve', x: 100, z: -50, h: 1200 };
+  const near = (volcanoes, radius) => World.prototype.volcanoesNear.call({ composer: { bubble: { frame }, volcanoes } }, 14.25, 40.85, radius);
+  const [found] = near({ frame, sites: [site] });
+  assert.deepEqual({ ...found, distanceM: Math.round(found.distanceM) },
+    { x: 100, y: 1200, z: -50, top: 1200, size: 0, kind: 'volcano', name: 'Vésuve', id: 'vesuvio', distanceM: 112 });
+  assert.deepEqual(near({ frame, sites: [site] }, 50), []);
+  // Monté dans un autre repère : ses positions ne valent plus.
+  assert.deepEqual(near({ frame: createLocalFrame(14, 40, 15), sites: [site] }), []);
 });

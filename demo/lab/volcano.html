@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="fr">
+<meta charset="utf-8">
+<title>Banc du volcan</title>
+<style>body{margin:0;background:#05070c}canvas{display:block}</style>
+<script type="importmap">
+{"imports":{"three":"/node_modules/three/build/three.module.js"}}
+</script>
+<script type="module">
+/*
+ * Banc du volcan : la vraie `VolcanoFire` de nuit sur un cône synthétique.
+ * Aucun réseau. La caméra tourne autour du cratère ou pivote sur place :
+ * volcanoLab.set({ distance: 3000, height: 400, orbitDeg: 0, lookDeg: 0, pitchDeg: 8, night: 1, time: 0 })
+ * `lookDeg` décale le regard depuis le cratère, caméra immobile.
+ */
+import * as THREE from 'three';
+import { VolcanoFire } from '/src/layers/volcanoFire.js';
+import { createLocalFrame } from '/src/core/tileMath.js';
+import { defaultTheme } from '/src/themes/default.js';
+
+const volcano = { id: 'banc', name: 'Banc', lng: 14.99, lat: 37.75, activity: 1 };
+const relief = (x, z) => Math.max(0, 1200 - Math.hypot(x, z) * 0.3 + 25 * Math.sin(x / 140) * Math.cos(z / 170));
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.append(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x070b14);
+const camera = new THREE.PerspectiveCamera(50, 1, 1, 60000);
+scene.add(new THREE.HemisphereLight(0x324058, 0x0c0a08, 0.6));
+const ground = new THREE.PlaneGeometry(12000, 12000, 240, 240).rotateX(-Math.PI / 2);
+const positions = ground.attributes.position;
+for (let i = 0; i < positions.count; i++) positions.setY(i, relief(positions.getX(i), positions.getZ(i)));
+ground.computeVertexNormals();
+scene.add(new THREE.Mesh(ground, new THREE.MeshLambertMaterial({ color: 0x3a3630, flatShading: true })));
+
+const frame = createLocalFrame(volcano.lng, volcano.lat, 15);
+const fire = new VolcanoFire({ THREE, scene, theme: defaultTheme, volcanoes: [volcano] });
+fire.build({ frame, here: { x: 0, z: 0 }, radius: 20000, elevationAt: relief });
+const crater = fire.sites[0];
+
+const state = { distance: 3000, height: 400, orbitDeg: 0, lookDeg: 0, pitchDeg: 8, night: 1, time: 0 };
+function set(options = {}) {
+  Object.assign(state, options);
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  fire.setNight(state.night);
+  fire._time = 0;
+  fire.advance(state.time || 1e-6);
+  const orbit = state.orbitDeg * Math.PI / 180;
+  const cx = Math.sin(orbit) * state.distance, cz = Math.cos(orbit) * state.distance;
+  camera.position.set(cx, relief(cx, cz) + state.height, cz);
+  const heading = Math.atan2(crater.x - cx, crater.z - cz) + state.lookDeg * Math.PI / 180;
+  const pitch = state.pitchDeg * Math.PI / 180;
+  camera.lookAt(cx + Math.sin(heading) * Math.cos(pitch), camera.position.y + Math.sin(pitch), cz + Math.cos(heading) * Math.cos(pitch));
+  renderer.render(scene, camera);
+  return { crater, camera: camera.position.toArray().map(Math.round) };
+}
+window.volcanoLab = { set };
+set();
+window.volcanoLabReady = true;
+</script>

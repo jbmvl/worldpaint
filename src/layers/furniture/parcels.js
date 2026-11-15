@@ -40,6 +40,7 @@ import {
 import {
   BOUNDARY_SAMPLE_M,
   BOUNDARY_MIN_LENGTH_M,
+  BOUNDARY_SIDE_PROBE_M,
   FURNITURE_LIMITS,
   FURNITURE_RADIUS_M,
   FURNITURE_SINK_M,
@@ -228,7 +229,7 @@ export function* buildParcelsSteps(layer, context, builtUp) {
             })
           : null;
       if (kind) {
-        boundaries += yield* appendParcelBoundarySteps(layer, buffers, placements, kind, ring, bounds, sampleElevation);
+        boundaries += yield* appendParcelBoundarySteps(layer, buffers, placements, kind, ring, bounds, sampleElevation, inBuiltUp);
       }
 
       if (scattered < FURNITURE_LIMITS.scatter) {
@@ -237,6 +238,7 @@ export function* buildParcelsSteps(layer, context, builtUp) {
     }
   };
 
+  const inBuiltUp = builtUpTest(builtUp);
   const features = [];
   const rowParcels = [];
   const parks = [];
@@ -257,6 +259,25 @@ export function* buildParcelsSteps(layer, context, builtUp) {
     if (layer.counts.rows >= FURNITURE_LIMITS.vineRows) break;
     yield* buildRowsSteps(layer, context, local, centre, crop, here);
   }
+}
+
+/**
+ * Test « dans une zone bâtie » rapide : chaque emprise n'est parcourue que si
+ * le point tombe dans son rectangle. Les contours de parcelles le posent à
+ * chaque pas de six mètres.
+ */
+function builtUpTest(areas) {
+  if (!areas?.length) return null;
+  const boxes = areas.map((ring) => {
+    let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
+    for (const p of ring) {
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+    }
+    return { ring, minX, minZ, maxX, maxZ };
+  });
+  return (x, z) =>
+    boxes.some((b) => x >= b.minX && x <= b.maxX && z >= b.minZ && z <= b.maxZ && pointInRing(b.ring, x, z));
 }
 
 /** Distance d'un point à un anneau : zéro dedans, au plus proche sommet dehors. Fonction pure. */
@@ -285,14 +306,23 @@ export function urbanLanduseKind(klass) {
 
 /**
  * Pose un contour de parcelle, en n'en gardant que les tronçons réels.
+ * `inBuiltUp(x, z)` dit où commence le village ; sans lui, seuls les bois coupent.
  * @returns {number} nombre de tronçons posés.
  */
-export function appendParcelBoundary(layer, buffers, placements, kind, ring, bounds, sampleElevation) {
-  return finishGeneration(appendParcelBoundarySteps(layer, buffers, placements, kind, ring, bounds, sampleElevation));
+export function appendParcelBoundary(layer, buffers, placements, kind, ring, bounds, sampleElevation, inBuiltUp = null) {
+  return finishGeneration(appendParcelBoundarySteps(layer, buffers, placements, kind, ring, bounds, sampleElevation, inBuiltUp));
 }
 
-export function* appendParcelBoundarySteps(layer, buffers, placements, kind, ring, bounds, sampleElevation) {
+export function* appendParcelBoundarySteps(layer, buffers, placements, kind, ring, bounds, sampleElevation, inBuiltUp = null) {
   let placed = 0;
+  // Un pré ne se clôt pas contre un bois ni contre le village : la lisière et
+  // le bâti tiennent lieu de limite. Les deux côtés sont lus, faute de savoir
+  // lequel est le dedans.
+  const open = (x, z) => layer._openGround(x, z) && !inBuiltUp?.(x, z);
+  const openSides = (path) =>
+    layer
+      ._clipOpenGround(path, { offset: BOUNDARY_SIDE_PROBE_M, keep: open })
+      .flatMap((run) => layer._clipOpenGround(run, { offset: -BOUNDARY_SIDE_PROBE_M, keep: open }));
 
   for (const run of realBoundaryRuns(ring, bounds)) {
     yield;
@@ -324,7 +354,8 @@ export function* appendParcelBoundarySteps(layer, buffers, placements, kind, rin
     // chaussée stricte, pas sur l'emprise : le refoulement s'occupe déjà de
     // l'accotement, et couper à l'emprise hacherait le bocage à chaque
     // courbe, faute des quinze centimètres de garde que le refoulement laisse.
-    for (const path of clipOutsideCorridor(pushed, layer._infraIndex, 0, { minLength: BOUNDARY_MIN_LENGTH_M })) {
+    const kept = clipOutsideCorridor(pushed, layer._infraIndex, 0, { minLength: BOUNDARY_MIN_LENGTH_M });
+    for (const path of kept.flatMap(openSides)) {
       if (kind === 'hedge' || kind === 'lowHedge') {
         layer._appendHedgerow(buffers[kind], kind, path, sampleElevation);
         placed++;

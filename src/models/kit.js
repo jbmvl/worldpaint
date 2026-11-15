@@ -352,15 +352,24 @@ export class Kit {
    * l'irrégularité du contour qui le font lire. Toutes les instances d'une même
    * pierre partagent cette forme ; c'est la rotation et l'échelle qui les
    * distinguent.
+   *
+   * `flat` (0 à 1) redresse les flancs et aplatit le dessus : 0, un galet en
+   * dôme ; 1, une dalle de calcaire au plateau facetté. `sink` prolonge le
+   * pied sous le sol, en mètres : un bloc posé à plat sur une pente flotte du
+   * côté aval, un bloc enterré sort du sol.
    */
-  rock({ radius = 0.5, height = 0.6, sides = 7, rings = 2, seed = 1, color, colorTop, ...t }) {
+  rock({ radius = 0.5, height = 0.6, sides = 7, rings = 2, seed = 1, flat = 0, sink = 0, color, colorTop, ...t }) {
     const random = seededUnit(seed);
     const top = colorTop || color;
     const p = (x, y, z) => Kit.transform([x, y, z], t);
+    // Exposants du profil : à 1, le quart de cercle ; plus petits, le flanc
+    // monte plus vite et le rayon tient plus haut, ce qui fait la table.
+    const rise = 1 - 0.7 * flat;
+    const hold = 1 - 0.6 * flat;
 
     // Rayons et altitudes bruités, une fois par sommet : le même sommet doit
     // être partagé par les faces voisines, sinon le volume se fend.
-    const grid = [];
+    const local = [];
     for (let r = 0; r <= rings; r++) {
       // Le dernier anneau s'arrête avant le pôle : poussé jusqu'à 1, son rayon
       // serait nul et il se confondrait avec la pointe, ce qui produit un
@@ -369,24 +378,32 @@ export class Kit {
       const row = [];
       for (let i = 0; i < sides; i++) {
         const angle = (i / sides) * Math.PI * 2;
-        const shrink = Math.cos((v * Math.PI) / 2);
+        const shrink = Math.pow(Math.cos((v * Math.PI) / 2), hold);
         const jitter = 0.72 + random() * 0.56;
         const rr = radius * shrink * jitter;
-        row.push(p(Math.cos(angle) * rr, height * Math.sin((v * Math.PI) / 2) * (0.8 + random() * 0.4), Math.sin(angle) * rr));
+        const up = height * Math.pow(Math.sin((v * Math.PI) / 2), rise) * (0.8 + random() * 0.4);
+        // Une dalle ne dépasse pas son plateau ; un dôme garde son galbe d'avant.
+        row.push([Math.cos(angle) * rr, flat > 0 ? Math.min(up, height) : up, Math.sin(angle) * rr]);
       }
-      grid.push(row);
+      local.push(row);
     }
+    // La jupe enterrée : le pied redescendu, un peu rentré pour ne pas
+    // ressortir en bourrelet là où le sol le découvre.
+    if (sink > 0) local.unshift(local[0].map(([x, , z]) => [x * 0.9, -sink, z * 0.9]));
+    const grid = local.map((row) => row.map(([x, y, z]) => p(x, y, z)));
+    const last = grid.length - 1;
     const apex = p(0, height, 0);
 
-    for (let r = 0; r < rings; r++) {
+    // Faces tournées vers l'extérieur : le sens des sommets fait la normale.
+    for (let r = 0; r < last; r++) {
       for (let i = 0; i < sides; i++) {
         const j = (i + 1) % sides;
-        const shade = r === rings - 1 ? top : color;
-        this.quad(grid[r][i], grid[r][j], grid[r + 1][j], grid[r + 1][i], shade);
+        const shade = r === last - 1 ? top : color;
+        this.quad(grid[r][i], grid[r + 1][i], grid[r + 1][j], grid[r][j], shade);
       }
     }
     for (let i = 0; i < sides; i++) {
-      this.tri(grid[rings][i], grid[rings][(i + 1) % sides], apex, top);
+      this.tri(grid[last][i], apex, grid[last][(i + 1) % sides], top);
     }
     return this;
   }

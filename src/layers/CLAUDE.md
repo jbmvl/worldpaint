@@ -25,7 +25,8 @@ son état.
 | `roadMarkings.js`, `roadBundles.js` | marquage au sol, voies qui se longent |
 | `railwayLayer.js` | la voie ferrée et sa caténaire ; publie sa propre emprise et les voies que parcourent les trains |
 | `buildingLayer.js`, `buildingInterpretation.js`, `roofGeometry.js`, `buildingCharacterGeometry.js` | le bâti, la reconnaissance des murailles, les toitures, les baies religieuses et les tours de château |
-| `ruinGeometry.js` | les ruines antiques sur leur emprise : temple, théâtre, amphithéâtre ou murs arasés, choisis par le nom puis la forme |
+| `ruinGeometry.js` | les ruines antiques sur leur emprise, ou sur un gabarit dans leur enclos historique (centré sur le point, sans enclos) quand elles n'en ont pas : temple, théâtre, amphithéâtre ou murs arasés, choisis par le nom puis la forme |
+| `farLandmarkGeometry.js` | la silhouette lointaine d'une église, d'un château, d'une mosquée ou d'une ruine (masse seule, gabarit `personalities.<kind>.far` du thème sans emprise, clocher aux proportions du bâti proche), versée dans un tampon à facettes ; aucune couche ne la pose encore — banc `demo/lab/far-landmarks.html` |
 | `windowFamilies.js` | la famille de baies d'un bâtiment (maison, bourg, immeuble de ville, barre, tour, atelier) et ses cotes tirées par bâtiment ; `buildingLayer` pose la grille (`appendOpenings`) ou le vitrage continu (`appendGlazing`) |
 | `buildingInfill.js` | le semis des maisons là où le pays dit son bâti mal relevé (`sparse`) : rend des anneaux, que `buildingLayer` bâtit comme ceux des tuiles ; cotes contrôlées par `scripts/buildings-audit.mjs` |
 | `streetLayer.js`, `streetMasonry.js` | bordures, caniveaux et joints des rues et des carrefours |
@@ -63,6 +64,8 @@ identifie d'abord sa famille :
 | `furniture/parcelFauna.js` | qui **vit** dans une parcelle : troupeau, gibier, carnassier — et le circuit qu'il suit ; et qui vit **hors** parcelle, sur les matières ouvertes (lande, pré salé, estive) qu'aucun contour ne ferme |
 | `furniture/cemetery.js` | l'habillage d'un cimetière : mur, portail, tombes, robinet, et ses fantômes s'il est hanté |
 | `furniture/landmarks.js` | les **repères** : moulin et château d'eau d'un bourg, pierres, éoliennes, pylônes, antennes de sommet, phares, arbres de crête |
+| `furniture/gapTrees.js` | l'**arbre isolé** du trou : semé sur une maille mondiale, à la densité du sol du pays |
+| `furniture/caneBrakes.js` | la **canne de Provence** : massifs de touffes le long des routes de plaine et des berges, présence par matrice |
 | `furniture/roosts.js` | où **dort** un vol d'étourneaux : à la lisière du bois qui fait face à la route — `lifeLayer` ne fait que le lever |
 | `furniture/biomeDebris.js` | ce qu'une **matière du sol** laisse traîner : blocs de lande et de maquis, souches de bois, joncs de marais, bois flotté — semé par nom de matière, pas par pente |
 | `furniture/pointsOfInterest.js` | ce que la couche `poi` porte nommément : abribus, fontaine, lavoir, monument, tour |

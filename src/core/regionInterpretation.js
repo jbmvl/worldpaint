@@ -69,13 +69,21 @@ export const BOUNDARY_STYLES = Object.freeze([
 export const MATRIX_KINDS = Object.freeze({
   hedgerow_meadow: { surface: 'grass', boundary: 'bocage' },
   openfield_cropland: { surface: 'grass', boundary: 'openfield' },
+  // Grande culture sèche : campiña, Meseta, Tavoliere, Alentejo, seminativo sicilien.
+  // `steep` : ce que devient le trou au-delà de la pente où l'on ne laboure
+  // plus (`theme.terrain.gapSteep`) — herbe sèche piquetée de broussaille.
+  dry_cropland: { surface: 'grass', boundary: 'openfield', steep: 'scrub' },
+  // Pâture sèche enclose de murets : causses, Murge, plateau ibléen.
+  dry_pasture: { surface: 'grass', boundary: 'drystone', steep: 'scrub' },
   wet_grassland: { surface: 'grass', boundary: 'bocage' },
   marsh: { surface: 'wetland', boundary: 'none' },
   moor_heath: { surface: 'heath', boundary: 'drystone' },
   broadleaf_woodland: { surface: 'wood', boundary: 'bocage' },
   conifer_forest: { surface: 'wood', boundary: 'wood_fence' },
   boreal_taiga: { surface: 'wood', boundary: 'wood_fence' },
-  terraced_slope: { surface: 'scrub', boundary: 'drystone' },
+  // Versant en terrasses : herbe entre les murets sous les oliviers et la
+  // vigne ; seul ce qui est trop raide pour être tenu retourne au maquis.
+  terraced_slope: { surface: 'grass', boundary: 'drystone', steep: 'scrub' },
   dry_scrub: { surface: 'scrub', boundary: 'drystone' },
   garrigue: { surface: 'scrub', boundary: 'drystone' },
   dry_steppe: { surface: 'bare', boundary: 'openfield' },
@@ -160,7 +168,58 @@ export const BUILDING_KINDS = Object.freeze({
   rendered_thatch: {},
   timber_stone_slab: {},
   adobe_curved_tile: {},
+  concrete_terrace: {},
 });
+
+/**
+ * Les murs, premier mot d'une clé de bâti. Un dossier qui liste ses murs
+ * (`walls`) mêle aux façades du pays celles d'un autre matériau ; le thème
+ * donne à chaque mot le ton de mur de sa première palette (`wallToneFor`).
+ */
+export const WALL_KINDS = Object.freeze({
+  light_stone: {},
+  dark_stone: {},
+  granite: {},
+  red_brick: {},
+  pale_brick: {},
+  half_timber: {},
+  whitewash: {},
+  rendered: {},
+  timber: {},
+  adobe: {},
+  concrete: {},
+});
+
+/** Les formes de toit, celles que `roofGeometry` sait dresser. */
+export const ROOF_KINDS = Object.freeze({
+  flat: {},
+  gable: {},
+  hip: {},
+  pyramid: {},
+});
+
+/**
+ * La pente des toits du pays, rapportée à celle que la couverture appelle :
+ * une même tuile canal se pose plus bas en Sicile qu'en Provence. Le thème
+ * dit ce que vaut chaque mot (`theme.roofs.pitchFactors`).
+ */
+export const ROOF_PITCH_KINDS = Object.freeze({
+  low: {},
+  steep: {},
+});
+
+/** Rang du niveau le plus haut admis par `townStoreys`. */
+export const TOWN_STOREYS_MAX = 12;
+
+/** Le mur d'une clé de bâti (`rendered` pour `rendered_curved_tile`), ou `null`. */
+export function wallOfBuilding(building) {
+  if (typeof building !== 'string') return null;
+  let best = null;
+  for (const wall of Object.keys(WALL_KINDS)) {
+    if (building.startsWith(`${wall}_`) && (!best || wall.length > best.length)) best = wall;
+  }
+  return best;
+}
 
 /**
  * L'assolement dominant, du plus répandu au moins répandu.
@@ -235,8 +294,20 @@ export const VOCABULARIES = Object.freeze({
   trees: TREE_KINDS,
 });
 
+/**
+ * Les vocabulaires des champs facultatifs du bâti. Absent, le champ laisse ce
+ * que la palette décide ; `townStoreys`, deux nombres, n'est pas un mot.
+ */
+export const OPTIONAL_VOCABULARIES = Object.freeze({
+  roofs: ROOF_KINDS,
+  roofPitch: ROOF_PITCH_KINDS,
+  walls: WALL_KINDS,
+});
+
+const ALL_VOCABULARIES = Object.freeze({ ...VOCABULARIES, ...OPTIONAL_VOCABULARIES });
+
 /** Champs qui portent une liste de mots plutôt qu'un seul. */
-export const LIST_FIELDS = Object.freeze(['farming', 'trees']);
+export const LIST_FIELDS = Object.freeze(['farming', 'trees', 'roofs', 'walls']);
 
 /**
  * Matière de `SURFACE_KINDS` que la matrice pose là où la carte se tait, ou
@@ -269,6 +340,15 @@ export function gapSurfaceForMatrix(matrix) {
   return plantedSurfaceForMatrix(matrix) ? null : surfaceForMatrix(matrix);
 }
 
+/**
+ * Matière du trou sur un versant trop raide pour être cultivé, ou `null` si la
+ * matrice n'en déclare pas (le trou garde alors sa matière à toute pente).
+ * Sans objet pour une matrice plantée, dont le trou n'est pas le sien.
+ */
+export function gapSteepSurfaceForMatrix(matrix) {
+  return gapSurfaceForMatrix(matrix) ? MATRIX_KINDS[matrix]?.steep ?? null : null;
+}
+
 /** Style de limite de parcelle appelé par la matrice, ou `null`. */
 export function boundaryForMatrix(matrix) {
   return MATRIX_KINDS[matrix]?.boundary ?? null;
@@ -287,7 +367,7 @@ export function plantationForFarming(word) {
 /** Tous les mots d'un dossier de région, avec leur champ. Fonction pure. */
 export function wordsOf(region) {
   const out = [];
-  for (const field of Object.keys(VOCABULARIES)) {
+  for (const field of Object.keys(ALL_VOCABULARIES)) {
     const value = region?.[field];
     if (typeof value === 'string') out.push({ field, word: value });
     else if (Array.isArray(value)) for (const word of value) out.push({ field, word });
@@ -297,7 +377,7 @@ export function wordsOf(region) {
 
 /** Mots d'un dossier absents de leur vocabulaire — une erreur de donnée. */
 export function unknownWords(region) {
-  return wordsOf(region).filter(({ field, word }) => !(word in VOCABULARIES[field]));
+  return wordsOf(region).filter(({ field, word }) => !(word in ALL_VOCABULARIES[field]));
 }
 
 /**
@@ -306,7 +386,7 @@ export function unknownWords(region) {
  */
 export function unsupportedWords(region) {
   return wordsOf(region)
-    .map(({ field, word }) => ({ field, word, note: VOCABULARIES[field][word]?.unsupported }))
+    .map(({ field, word }) => ({ field, word, note: ALL_VOCABULARIES[field][word]?.unsupported }))
     .filter((entry) => entry.note);
 }
 

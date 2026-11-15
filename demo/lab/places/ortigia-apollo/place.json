@@ -1,0 +1,18 @@
+{
+  "name": "ortigia-apollo",
+  "label": "ortigia-apollo",
+  "lng": 15.29299,
+  "lat": 37.064,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "zoom": 13,
+    "encoding": "terrarium",
+    "extension": "webp",
+    "source": "tiles.mapterhorn.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  }
+}

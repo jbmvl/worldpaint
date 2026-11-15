@@ -23,6 +23,12 @@ export const BOUNDARY_SAMPLE_M = 6;
 export const DRY_STONE_WALL_SAMPLE_M = 1.5;
 /** Longueur minimale d'un contour retenu, en mètres. */
 export const BOUNDARY_MIN_LENGTH_M = 30;
+/**
+ * Distance, de part et d'autre d'un contour de parcelle, à laquelle on lit ce
+ * qu'il sépare : assez loin pour sortir du flou de la lisière, assez près pour
+ * ne pas enjamber le chemin qui longe le bois.
+ */
+export const BOUNDARY_SIDE_PROBE_M = 8;
 
 /** Forme du catalogue d'un arbre planté (`plantedTrees.js`). */
 export const PLANTED_TREE = 'tree';
@@ -106,6 +112,12 @@ export const FURNITURE_LIMITS = {
   // Arbres de crête : de vrais repères, pas un boisement — une poignée dans
   // toute la bulle, jamais un semis.
   ridgeTrees: 40,
+  // Arbres isolés du trou (`gapTrees.js`) : le semis s'arrête au bord de la
+  // portée atteinte, les plus proches d'abord.
+  gapTrees: 500,
+  // Touffes de canne de Provence (`caneBrakes.js`), posées des plus proches
+  // aux plus lointaines.
+  caneClumps: 1500,
   // Repères urbains posés sur une emprise landuse (cimetière, zone
   // industrielle, stade, foire) : un par polygone, donc rarement nombreux.
   urbanLandmarks: 14,
@@ -167,6 +179,7 @@ export const POINT_ITEMS = [
   'rockOutcrop',
   'stump',
   'reedClump',
+  'caneClump',
   'driftwood',
   'monument',
   'castle',

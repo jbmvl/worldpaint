@@ -29,7 +29,7 @@ import { finishGeneration } from '../core/generationSteps.js';
 import { lngToTileX, latToTileY, tileXToLng, tileYToLat } from '../core/tileMath.js';
 import { planInfillSteps } from './buildingInfill.js';
 import { srgb } from '../core/color.js';
-import { buildingStyleAt } from './townStyle.js';
+import { buildingStyleAt, roofsFor, townHeightFor } from './townStyle.js';
 import { isWallFootprint, facadeThickness, isTransitStop, isTransitShelter } from './buildingInterpretation.js';
 import { orientedBox, roofTriangles, roofRise, ringArea, roofClutterFor, ridgeStacksFor } from './roofGeometry.js';
 import { windowFamilyFor, windowLookFor } from './windowFamilies.js';
@@ -40,7 +40,7 @@ import { clipPolygonOutsideCorridor } from './roadCorridor.js';
 import { Kit } from './furnitureKit.js';
 import { FLOODLIT_KINDS, createFloodlights, installFloodlight, aimFloodlights, setFloodlightNight, markFloodlit } from '../materials/landmarkFloodlight.js';
 import { appendChurchWindows, castleTowers, appendRetailSign } from './buildingCharacterGeometry.js';
-import { isAncientName, ruinFormFor, ruinKit } from './ruinGeometry.js';
+import { isAncientName, loneRuinGabarit, ruinFormByName, ruinFormFor, ruinGabaritIn, ruinKit } from './ruinGeometry.js';
 import { defaultTheme } from '../themes/default.js';
 import { LabelAtlas, pushLabelQuad, labelFontPxForCellHeight, LABEL_PX_PER_M } from '../materials/labelAtlas.js';
 import { DECOR_STABLE_RADIUS_M, reachedRadius } from '../core/decorReach.js';
@@ -51,6 +51,8 @@ import { CellMeshes } from './cellMeshes.js';
 export const BUILDING_SOURCE_LAYER = 'building';
 /** Couche vectorielle des points d'intérêt — voir `buildingPersonalityFor`. */
 export const BUILDING_POI_SOURCE_LAYER = 'poi';
+/** Couche des enclos historiques (`class=historic`) : ils logent les ruines sans emprise. */
+export const HISTORIC_SOURCE_LAYER = 'park';
 
 /** Points d'intérêt classés retenus par reconstruction — protège le temps de reconstruction, pas le rendu (voir `sortPersonalities`). */
 export const BUILDING_POI_MAX_COUNT = 600;
@@ -208,6 +210,9 @@ export function mergeTwinPersonalities(list, radius = PERSONALITY_TWIN_RADIUS_M)
   return kept;
 }
 
+/** Débord, en mètres, au-delà duquel une partie n'appartient plus à la ruine qu'elle longe. */
+export const RUIN_PART_MARGIN_M = 2;
+
 /**
  * Donne à chaque point d'intérêt un seul bâtiment : le plus grand de ceux qui
  * le contiennent. Deux empreintes superposées (contour et partie, fragments)
@@ -238,22 +243,72 @@ export function* assignPersonalitiesSteps(candidates, personalities, outlines = 
     if (best && !taken.has(best)) {
       taken.add(best);
       const structural = ['church', 'mosque', 'castle', 'rampart'].includes(p.kind);
-      const contains = (q) => pointInRing(best.footprint, q.x, q.z) || best.footprint.some((a, i, ring) => {
+      const within = (q, margin) => pointInRing(best.footprint, q.x, q.z) || best.footprint.some((a, i, ring) => {
         const b = ring[(i + 1) % ring.length];
         const dx = b.x - a.x, dz = b.z - a.z;
         const t = Math.max(0, Math.min(1, ((q.x - a.x) * dx + (q.z - a.z) * dz) / (dx * dx + dz * dz || 1)));
-        return Math.hypot(q.x - a.x - t * dx, q.z - a.z - t * dz) < 0.05;
+        return Math.hypot(q.x - a.x - t * dx, q.z - a.z - t * dz) < margin;
       });
+      const contains = (q) => within(q, 0.05);
+      // Une ruine absorbe les parties qui la touchent : son kit dessine l'édifice
+      // entier, et les marches d'un monument modélisé en volumes sont des
+      // jumelles dont une seule est gardée, pas forcément la plus large.
+      const absorbs = p.kind === 'ruin';
       const grouped = structural || outlines.includes(best);
-      const members = candidates.filter(c => c === best || grouped && c.footprint && c.footprint.every(contains));
-      members.sort((a, b) => b.area - a.area || a.x - b.x || a.z - b.z);
-      if (!structural) members.length = Math.min(1, members.length);
+      const touches = (c) => within(c, RUIN_PART_MARGIN_M) || c.footprint.some(contains);
+      const members = candidates.filter(c => c === best || c.footprint && (grouped && c.footprint.every(contains) || absorbs && touches(c)));
+      members.sort((a, b) => (b === best) - (a === best) || b.area - a.area || a.x - b.x || a.z - b.z);
+      if (!structural && !absorbs) members.length = Math.min(1, members.length);
       for (const [i, c] of members.entries()) {
         if (!owners.has(c)) owners.set(c, i === 0 ? p : { ...p, secondary: true });
       }
     }
   }
   return owners;
+}
+
+/**
+ * Les emprises des ruines que le bâti ne porte pas : un gabarit dans le plus
+ * petit enclos historique qui contient le point (`ruinGabaritIn`), au nom de
+ * la ruine, ou de l'enclos quand le sien est muet et que celui de l'enclos dit
+ * la forme ; sans enclos, des murs arasés sur le point (`loneRuinGabarit`).
+ * Un gabarit qui chevauche une emprise déjà là est écarté. Parcourt les ruines dans l'ordre du sol, jamais celui de la distance à l'observateur :
+ * c'est lui qui tranche entre deux gabarits voisins. Pure.
+ *
+ * @returns {Array<{footprint:Array<{x:number,z:number}>, properties:Object, x:number, z:number,
+ *   area:number, minX:number, maxX:number, minZ:number, maxZ:number}>}
+ */
+export function ruinGabarits(personalities, footprints, enclosures) {
+  const ruins = personalities.filter((p) => p.kind === 'ruin').sort((a, b) => a.x - b.x || a.z - b.z);
+  const taken = footprints.filter((c) => c.footprint);
+  const housed = (p) => taken.some((c) => p.x >= c.minX && p.x <= c.maxX && p.z >= c.minZ && p.z <= c.maxZ && pointInRing(c.footprint, p.x, p.z));
+  const placed = [];
+  for (const p of ruins) {
+    if (housed(p)) continue;
+    let enclosure = null;
+    for (const e of enclosures) {
+      if (e.box && (!enclosure || e.area < enclosure.area) && e.rings.some((ring) => pointInRing(ring, p.x, p.z))) enclosure = e;
+    }
+    const name = p.name || (ruinFormByName(enclosure?.name) ? enclosure.name : null);
+    const footprint = enclosure
+      ? ruinGabaritIn({ x: p.x, z: p.z, form: ruinFormByName(name) ?? 'remains', enclosure })
+      : loneRuinGabarit(p);
+    if (!footprint) continue;
+    const xs = footprint.map((q) => q.x), zs = footprint.map((q) => q.z);
+    const bounds = { minX: Math.min(...xs), maxX: Math.max(...xs), minZ: Math.min(...zs), maxZ: Math.max(...zs) };
+    if (taken.some((c) => c.minX < bounds.maxX && c.maxX > bounds.minX && c.minZ < bounds.maxZ && c.maxZ > bounds.minZ)) continue;
+    const gabarit = {
+      footprint,
+      properties: { synthetic: true, name },
+      x: (bounds.minX + bounds.maxX) / 2,
+      z: (bounds.minZ + bounds.maxZ) / 2,
+      area: ringArea(footprint),
+      ...bounds,
+    };
+    taken.push(gabarit);
+    placed.push(gabarit);
+  }
+  return placed;
 }
 
 /** Rapport d'aires au-dessus duquel deux empreintes superposées sont la même bâtisse. */
@@ -335,6 +390,7 @@ export function personalityLookFor(kind, personalities = defaultTheme.personalit
         spire: look.spire ? { wall: srgb(look.spire.wall), roof: srgb(look.spire.roof) } : null,
         dome: look.dome ? srgb(look.dome) : null,
         minaret: look.minaret ? srgb(look.minaret) : null,
+        far: look.far || null,
       };
     }
     LINEAR_PERSONALITIES.set(personalities, table);
@@ -778,6 +834,23 @@ export function buildingHeight(properties = {}) {
     return Math.min(levels * BUILDING_LEVEL_HEIGHT, BUILDING_MAX_HEIGHT);
   }
   return BUILDING_DEFAULT_HEIGHT;
+}
+
+/**
+ * Hauteur que les tuiles OpenMapTiles donnent à un bâtiment sans hauteur ni
+ * niveaux relevés. Elle ne dit rien du bâtiment, seulement que la donnée se tait.
+ */
+export const TILE_DEFAULT_RENDER_HEIGHT = 5;
+
+/**
+ * Vrai quand la donnée ne dit rien de la hauteur : aucun attribut, ou la seule
+ * hauteur de repli des tuiles (`TILE_DEFAULT_RENDER_HEIGHT`). Pure.
+ */
+export function buildingHeightUnknown(properties = {}) {
+  if (properties.height != null || properties['building:height'] != null) return false;
+  if ((properties.render_levels ?? properties.levels ?? properties['building:levels']) != null) return false;
+  const rendered = properties.render_height;
+  return rendered == null || Number(rendered) === TILE_DEFAULT_RENDER_HEIGHT;
 }
 
 /** Hauteur du dessous du bâtiment (passages couverts, `min_height`). */
@@ -1908,6 +1981,23 @@ export class BuildingLayer {
     yield;
     const personalities = sortPersonalities(mergeTwinPersonalities(collected));
 
+    // Les morceaux d'un même enclos, coupé par les tuiles, se retrouvent par leur nom.
+    const enclosureByKey = new Map();
+    yield* visitFeatures(source, HISTORIC_SOURCE_LAYER, tiles, (geometry, properties) => {
+      for (const ring of outerRings(geometry)) {
+        const local = ring.map(([lng, lat]) => ({ x: (lngToTileX(lng, zoom) - origin.x) * scale, z: (latToTileY(lat, zoom) - origin.y) * scale }));
+        if (local.length < 4 || !local.every((p) => Number.isFinite(p.x) && Number.isFinite(p.z))) continue;
+        const key = properties.name || `${Math.round(local[0].x)},${Math.round(local[0].z)}`;
+        if (!enclosureByKey.has(key)) enclosureByKey.set(key, { name: properties.name || null, rings: [] });
+        enclosureByKey.get(key).rings.push(local);
+      }
+    }, (properties) => properties.class === 'historic');
+    const enclosures = [...enclosureByKey.values()].map((e) => ({
+      ...e,
+      area: e.rings.reduce((sum, ring) => sum + ringArea(ring), 0),
+      box: orientedBox(e.rings.flat()),
+    }));
+
     // Le tri est ce qui rend le plafond acceptable : ce qui saute est toujours
     // le plus lointain, jamais ce qui est sous les yeux.
     candidates.sort((a, b) => a.distance - b.distance);
@@ -1942,6 +2032,11 @@ export class BuildingLayer {
     const kept = (yield* dropTwinFootprintsSteps(candidates)).filter((candidate) => !isTransitShelter(candidate, stops));
     candidates.length = 0;
     candidates.push(...kept);
+    for (const gabarit of ruinGabarits(personalities, [...candidates, ...outlines], enclosures)) {
+      const ring = gabarit.footprint.map((p) => [tileXToLng(origin.x + p.x / scale, zoom), tileYToLat(origin.y + p.z / scale, zoom)]);
+      ring.push(ring[0]);
+      candidates.push({ ...gabarit, ring, distance: Math.hypot(gabarit.x - here.x, gabarit.z - here.z) });
+    }
     this.syntheticCount = 0;
     if (this._infill) {
       const synthetic = yield* planInfillSteps({
@@ -2014,7 +2109,7 @@ export class BuildingLayer {
         footprints.push({ x: candidate.x, z: candidate.z, ring: candidate.footprint ?? null });
       }
       if (landmarks.length > landmarkCount && FLOODLIT_KINDS.has(landmarks[landmarks.length - 1].kind)) {
-        floodlit.push(firstColor, walls.colors.length);
+        floodlit.push(firstColor, walls.colors.length, landmarks[landmarks.length - 1]);
       }
       if (openings) panes += openings.panes;
     }
@@ -2030,7 +2125,8 @@ export class BuildingLayer {
     this._shopfrontSink = null;
     this.landmarks = landmarks;
     this._landmarkSink = null;
-    aimFloodlights(this.floodlights, landmarks, here);
+    const floodSlots = aimFloodlights(this.floodlights, landmarks, here);
+    for (let i = 2; i < floodlit.length; i += 3) floodlit[i] = floodSlots.get(floodlit[i]) ?? 0;
     this.personalities = personalities;
     this._applyWindows(lamps);
     this._applyLabels(labels);
@@ -2094,7 +2190,13 @@ export class BuildingLayer {
     // et l'empreinte publiée doivent tous décrire le bâtiment **tel qu'il sera
     // dessiné**, sinon la maison est rabotée mais sa clôture, sa devanture et
     // son toit gardent l'emprise d'avant.
-    if (this._roadIndex) {
+    //
+    // Une ruine n'est pas rabotée : les chemins d'un site archéologique la
+    // parcourent, et leurs couloirs suffisent à effacer un théâtre entier.
+    const assigned = personalities?.[0];
+    const kind = assigned?.kind || buildingPersonalityFor(properties);
+    if (kind === 'ruin' && assigned?.secondary) return false;
+    if (this._roadIndex && kind !== 'ruin') {
       const kept = clipPolygonOutsideCorridor(
         points.map((p) => ({ x: p.x, z: p.y })),
         this._roadIndex
@@ -2131,13 +2233,18 @@ export class BuildingLayer {
     const footprint = ordered.map((p) => ({ x: p.x, z: p.y }));
     const box = orientedBox(footprint);
     const ground = ringArea(footprint);
-    const assigned = personalities?.[0];
-    const kind = assigned?.kind || buildingPersonalityFor(properties);
     const personality = (!kind || kind === 'castle') && isWallFootprint(footprint, box) ? 'rampart' : kind;
     const personalityName = assigned?.name || properties.name || null;
     const personalityClass = assigned?.class || properties.class || properties.shop || null;
     const look = personalityLookFor(personality, this.theme.personalities);
-    const height = Math.max(buildingHeight(properties), look?.minHeightM || 0);
+    // Matière sous le bâtiment : `pavement` en ville, `bare` en zone d'activité.
+    const surface = this._surfaceAt?.(box?.cx ?? footprint[0].x, box?.cz ?? footprint[0].z) ?? null;
+    const inTown = surface === 'pavement';
+    // En ville, une hauteur que la donnée tait prend les niveaux du pays.
+    const regional = inTown && !look && buildingHeightUnknown(properties)
+      ? townHeightFor(bubble.frame, box?.cx ?? footprint[0].x, box?.cz ?? footprint[0].z, this.region, BUILDING_LEVEL_HEIGHT)
+      : null;
+    const height = Math.max(regional ?? buildingHeight(properties), look?.minHeightM || 0);
     const minHeight = buildingMinHeight(properties);
     const bottom = base + minHeight - 0.6; // un peu enterré : pas de jour sous les murs
     const top = crest + height;
@@ -2165,10 +2272,8 @@ export class BuildingLayer {
       this.region,
       this.theme.facadeTints
     );
-    // Pente du pays si sa palette en impose une, celle du thème sinon. L'objet
-    // n'est composé que dans le premier cas : une allocation par bâtiment pour
-    // rien serait payée sur toute une ville.
-    const roofs = style.pitch ? { ...this.theme.roofs, pitch: style.pitch } : this.theme.roofs;
+    // Pente de la palette ou du thème, corrigée par le pays (`roofsFor`).
+    const roofs = roofsFor(style.pitch, this.region, this.theme.roofs);
 
     const wallColor = look?.wall || style.wall;
     const roofColor = look?.roof || style.roof;
@@ -2188,9 +2293,6 @@ export class BuildingLayer {
     // raisonnable — un bâtiment d'un seul niveau n'a pas de murs négatifs.
     const shape = look?.shape || (box && box.fill >= 0.62 ? style.shape : 'flat');
     const rise = shape === 'flat' ? 0 : roofRise(box.short, roofs);
-    // Matière sous le bâtiment : `pavement` en ville, `bare` en zone d'activité.
-    const surface = this._surfaceAt?.(box?.cx ?? footprint[0].x, box?.cz ?? footprint[0].z) ?? null;
-    const inTown = surface === 'pavement';
     // Baies : la famille du bâtiment, sauf si sa personnalité dit les siennes.
     const windowLook = look?.windows
       ? { ...this.theme.windows, ...look.windows }

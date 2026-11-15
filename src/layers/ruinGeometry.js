@@ -7,6 +7,11 @@
  * plein et allongé est un temple, le reste des murs arasés. Un théâtre sans
  * nom ne se devine pas : sa forme se confond avec trop de choses.
  *
+ * Une ruine que le bâti ne dessine pas (un simple point) reçoit un gabarit
+ * dans son enclos historique, qui lui prête aussi son nom. Sans enclos, rien
+ * ne dit sa taille : elle reçoit le plus petit gabarit (`remains`), centré
+ * sur le point ; un nom de temple y dresse encore un petit temple.
+ *
  * Chaque forme rend un `Kit` centré sur le rectangle orienté de l'emprise,
  * pied à l'assise du bâtiment (`buildingLayer` le pose). L'usure d'un temple
  * (colonnes debout, tronquées, entablement) se tire par position au sol, pour
@@ -14,6 +19,7 @@
  */
 import { Kit } from './furnitureKit.js';
 import { randomAt } from '../core/groundSeed.js';
+import { pointInRing } from './furniturePlacement.js';
 
 const TEMPLE_NAME = /\b(tempi[oa]|temples?|templo|tempel|naos)\b/i;
 const AMPHITHEATRE_NAME = /(anfiteatr|amphith[ée][aâ]tre|amphitheat|ar[eè]nes\b)/i;
@@ -36,18 +42,74 @@ export const TEMPLE_MIN_LENGTH_M = 10;
 /** Diamètre minimal d'un théâtre ou d'un amphithéâtre, en mètres. */
 export const THEATRE_MIN_SPAN_M = 20;
 
+/** La forme que dit le nom seul (`temple`, `theatre`, `amphitheatre`), ou `null`. */
+export function ruinFormByName(name) {
+  if (!name) return null;
+  if (TEMPLE_NAME.test(name)) return 'temple';
+  if (AMPHITHEATRE_NAME.test(name)) return 'amphitheatre';
+  if (THEATRE_NAME.test(name)) return 'theatre';
+  return null;
+}
+
 /**
  * Forme d'une ruine : `temple`, `theatre`, `amphitheatre` ou `remains`.
  * @param {{name?:string|null, box:{long:number, short:number, fill:number}}} ruin
  */
 export function ruinFormFor({ name = null, box }) {
   const length = box.long * 2;
-  if (name && TEMPLE_NAME.test(name)) return length >= TEMPLE_MIN_LENGTH_M ? 'temple' : 'remains';
-  if (name && AMPHITHEATRE_NAME.test(name)) return length >= THEATRE_MIN_SPAN_M ? 'amphitheatre' : 'remains';
-  if (name && THEATRE_NAME.test(name)) return length >= THEATRE_MIN_SPAN_M ? 'theatre' : 'remains';
+  const named = ruinFormByName(name);
+  if (named) return length >= (named === 'temple' ? TEMPLE_MIN_LENGTH_M : THEATRE_MIN_SPAN_M) ? named : 'remains';
   const aspect = box.long / Math.max(box.short, 1e-6);
   if (aspect >= TEMPLE_MIN_ASPECT && box.fill >= TEMPLE_MIN_FILL && length >= TEMPLE_MIN_LENGTH_M) return 'temple';
   return 'remains';
+}
+
+/**
+ * Emprise d'une ruine que les tuiles ne dessinent pas, en mètres (longueur ×
+ * largeur) : un temple dorique moyen, un théâtre et un amphithéâtre de ville
+ * de province, un pan de murs.
+ */
+export const RUIN_GABARITS = Object.freeze({
+  temple: { length: 40, width: 18 },
+  theatre: { length: 60, width: 40 },
+  amphitheatre: { length: 70, width: 55 },
+  remains: { length: 14, width: 10 },
+});
+/** Part de l'enclos qu'un gabarit occupe au plus, dans chaque sens. */
+export const RUIN_ENCLOSURE_FILL = 0.9;
+
+/**
+ * Le rectangle d'une ruine sans emprise, posé dans son enclos (`park` de
+ * classe `historic`) : orienté sur le grand axe de l'enclos, réduit pour y
+ * tenir, et glissé du point vers le centre de l'enclos jusqu'à y entrer
+ * sans quitter le point. `null` si l'enclos ne le loge pas.
+ *
+ * @param {{x:number, z:number, form:string,
+ *   enclosure:{rings:Array<Array<{x:number,z:number}>>, box:Object}}} o
+ * @returns {Array<{x:number,z:number}>|null}
+ */
+export function ruinGabaritIn({ x, z, form, enclosure }) {
+  const spec = RUIN_GABARITS[form] ?? RUIN_GABARITS.remains;
+  const { box, rings } = enclosure;
+  const scale = Math.min(1, (box.long * 2 * RUIN_ENCLOSURE_FILL) / spec.length, (box.short * 2 * RUIN_ENCLOSURE_FILL) / spec.width);
+  const hl = (spec.length * scale) / 2, hw = (spec.width * scale) / 2;
+  const ux = Math.cos(box.angle), uz = Math.sin(box.angle);
+  const inside = (p) => rings.some((ring) => pointInRing(ring, p.x, p.z));
+  for (let t = 0; t <= 1; t += 0.125) {
+    const cx = x + (box.cx - x) * t, cz = z + (box.cz - z) * t;
+    const ring = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => ({
+      x: cx + u * hl * ux - v * hw * uz,
+      z: cz + u * hl * uz + v * hw * ux,
+    }));
+    if (pointInRing(ring, x, z) && ring.every(inside)) return ring;
+  }
+  return null;
+}
+
+/** Le gabarit `remains` centré sur une ruine sans enclos, côtés sur les axes du repère. */
+export function loneRuinGabarit({ x, z }) {
+  const { length, width } = RUIN_GABARITS.remains;
+  return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([u, v]) => ({ x: x + (u * length) / 2, z: z + (v * width) / 2 }));
 }
 
 /**
@@ -225,6 +287,18 @@ function tiers(kit, { center, a, b, t0, theta0, theta1, segments, rise, count, l
   for (let s = 0; s < segments; s++) {
     const p = theta0 + ((theta1 - theta0) * s) / segments, q = theta0 + ((theta1 - theta0) * (s + 1)) / segments;
     face(kit, point(1, p, -0.6), point(1, q, -0.6), point(1, q, top), point(1, p, top), look.roof, radial((p + q) / 2));
+  }
+  // Joues d'un anneau ouvert : le profil en escalier fermé jusqu'au sol, sinon les gradins volent vus de côté.
+  if (theta1 - theta0 < Math.PI * 2 - 1e-6) {
+    for (const [theta, sign] of [[theta0, -1], [theta1, 1]]) {
+      const [x, , z] = at(-Math.sin(theta) * a * sign, 0, Math.cos(theta) * b * sign);
+      const [ox, , oz] = at(0, 0, 0);
+      const out = [x - ox, 0, z - oz];
+      for (let k = 0; k < count; k++) {
+        const ti = t0 + ((1 - t0) * k) / count, to = t0 + ((1 - t0) * (k + 1)) / count, y = rise * (k + 1);
+        face(kit, point(ti, theta, -0.6), point(to, theta, -0.6), point(to, theta, y), point(ti, theta, y), look.roof, out);
+      }
+    }
   }
   return top;
 }

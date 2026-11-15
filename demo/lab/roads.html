@@ -37,6 +37,7 @@ import { collectCrossingRails } from '/src/layers/transportCrossings.js';
 import { BridgeLayer } from '/src/layers/bridgeLayer.js';
 import { FurnitureLayer } from '/src/layers/furnitureLayer.js';
 import { defaultTheme } from '/src/themes/default.js';
+import { SURFACE_KINDS } from '/src/terrain/groundClassMap.js';
 import { createLocalFrame, tileXToLng, tileYToLat } from '/src/core/tileMath.js';
 
 // Ceux de `world.js` (`DEFAULT_VIEW`, `DEFAULT_ELEVATION_ZOOM`), recopiés :
@@ -237,7 +238,15 @@ await bubble.setCenter(LNG, LAT);
 const here = { x: 0, z: 0 };
 // Une tuile par appel, comme le compositeur image après image : on vide la file.
 while (bubble.processRebuildQueue());
-const roads = new RoadNetwork({ THREE, scene, bubble, materials: createRoadMaterials(THREE) });
+// Les chemins prennent la couleur du sol comme dans la démo : ici, celle des
+// trous de la carte, faute de carte du sol.
+const roadMaterials = createRoadMaterials(THREE);
+roadMaterials.setGround({
+  ...bubble.materials.surfaceUniforms,
+  trodden: SURFACE_KINDS.map((kind) => defaultTheme.surfaces[kind]?.trodden === 'self'),
+  bare: SURFACE_KINDS.indexOf('bare'),
+});
+const roads = new RoadNetwork({ THREE, scene, bubble, materials: roadMaterials });
 const bridges = new BridgeLayer({ THREE, scene, bubble });
 // Tant que la maille est reprise, la plate-forme se redresse : on reconstruit
 // jusqu'à ce que le réseau ne demande plus rien, comme le fait le compositeur.

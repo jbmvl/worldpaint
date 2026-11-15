@@ -128,6 +128,13 @@ export const TERRAIN_LOOK = {
   },
   slopeStart: 0.22,
   slopeEnd: 0.62,
+  /**
+   * Le trou d'une matrice qui déclare une matière de pente (`MATRIX_KINDS[…].steep`) :
+   * `grade`, début et fin du fondu en pente relative (tangente : 0,27 ≈ 15°,
+   * 0,36 ≈ 20°) — à mesurer sur le MNT, pas sur la normale de `slopeStart` ;
+   * `bushes`, densité de broussaille qui y remplace celle de la matière.
+   */
+  gapSteep: { grade: [0.27, 0.36], bushes: 0.35 },
   rockStrength: 0.75,
 
   /** Couleur de reflet de repli pour une scène sans environnement. */
@@ -506,9 +513,10 @@ export const CROP_LOOK = {
  * Choix : l'amplitude. Elle a été réglée sans jamais voir le rendu — c'est
  * exactement le genre de valeur qu'un graphiste doit reprendre en regardant
  * (voir `docs/regions.md`). Ce qui ne se reprend pas sans y penser, c'est le
- * plafond : au-delà de 3,5 environ, la touffe du premier plan sature et vire
- * au blanc, parce que sa couleur d'instance multiplie une texture déjà
- * éclairée. Un test le vérifie.
+ * plafond de la colonne `farmland` : au-delà de 3,5 environ, la tige de culture
+ * du premier plan sature et vire au blanc, parce que sa couleur d'instance
+ * multiplie une texture déjà éclairée. Un test le vérifie. `grass` et `bare`
+ * ne teintent que le sol peint : rien d'instancié ne les lit.
  *
  * Une matrice absente vaut « pas de correction » : c'est celui du bocage
  * atlantique, sur lequel tout le reste du thème a été réglé.
@@ -532,6 +540,35 @@ export const SOIL_LOOK = {
     bare: [0.8, 0.74, 0.66],
     farmland: [0.95, 0.9, 0.82],
   },
+  /**
+   * Grande culture sèche du Midi. Comme dans Alba (ustwo, 2021), l'herbe
+   * domine et la terre ne fait que la casser : le trou est une herbe
+   * vert-jaune grillée (≈ [0,19 ; 0,24 ; 0,05] d'albédo), découpée de
+   * plaques de chaume paille, et piquetée de buissons et d'arbres isolés.
+   * Un trou tout en chaume se lisait comme un désert.
+   */
+  dry_cropland: {
+    grass: [3.7, 1.8, 3.2],
+    bare: [1.15, 1.0, 0.82],
+    farmland: [1.15, 1.05, 0.85],
+    // Plaques d'une seconde couleur sur l'herbe, en albédo absolu.
+    grassPatch: { albedo: [0.34, 0.26, 0.11], strength: 0.6 },
+    // Arbustes semés dans le trou (densité de `SURFACE_LOOK.bushes`) et leur essence.
+    gapBushes: 0.1,
+    gapBush: 'thornyScrub',
+    // Arbres isolés dans le trou (`furniture/gapTrees.js`), par hectare.
+    scatteredTreesPerHa: 1.5,
+  },
+  /** Pâture sèche : herbe rase vert olive, plaques d'herbe grillée, buissons persistants. */
+  dry_pasture: {
+    grass: [3.1, 1.7, 2.9],
+    bare: [1.4, 1.25, 1.0],
+    farmland: [1.2, 1.08, 0.88],
+    grassPatch: { albedo: [0.28, 0.24, 0.11], strength: 0.45 },
+    gapBushes: 0.18,
+    gapBush: 'thornyScrub',
+    scatteredTreesPerHa: 1.5,
+  },
   /** Taïga : podzol gris, granite, prairie froide. */
   boreal_taiga: {
     grass: [0.9, 0.96, 0.98],
@@ -550,11 +587,18 @@ export const SOIL_LOOK = {
     bare: [1.3, 1.15, 0.95],
     farmland: [1.12, 1.05, 0.92],
   },
-  /** Terrasses sèches : karst pâle, pelouse brûlée. */
+  /**
+   * Terrasses : herbe vert olive entre les murets, plaques sèches, karst pâle,
+   * et les oliviers des planches — plus serrés qu'en grande culture.
+   */
   terraced_slope: {
-    grass: [1.8, 1.25, 2.0],
+    grass: [2.75, 1.55, 2.65],
     bare: [1.45, 1.35, 1.2],
     farmland: [1.15, 1.08, 0.95],
+    grassPatch: { albedo: [0.26, 0.22, 0.1], strength: 0.35 },
+    gapBushes: 0.2,
+    gapBush: 'thornyScrub',
+    scatteredTreesPerHa: 3,
   },
   /** Èbre, Castille, Murcie : la steppe. */
   dry_steppe: {
@@ -689,6 +733,10 @@ export const STONE_LOOK = {
  *   (`uRockGrain`) à toute matière sur une paroi, là où la carte du sol,
  *   plane, ne peut rien dire d'une verticale.
  *
+ * - `trodden: 'self'` : un chemin y montre la même matière, éclaircie (`tread`
+ *   du profil). Absent, il y montre la terre nue (`bare`) : le passage arrache
+ *   ce qui couvre le sol.
+ *
  * Un champ absent vaut le neutre : la table ne décrit que les écarts. Une
  * matière peinte de la bonne couleur mais couverte d'une prairie de quatre-
  * vingts centimètres reste une prairie, d'où la strate basse ici et pas ailleurs.
@@ -805,6 +853,7 @@ export const SURFACE_LOOK = {
   // froid sur le même registre de gris. Rien n'y pousse, l'eau y reste en
   // flaques.
   mud: {
+    trodden: 'self',
     albedo: [0.155, 0.147, 0.097],
     wash: null,
     bushes: 0,
@@ -816,10 +865,11 @@ export const SURFACE_LOOK = {
     grainAmplitudeM: 0.08,
   },
   // Sol nu industriel ou en friche : terreux, plus saturé qu'un simple gris.
-  bare: { albedo: [0.25, 0.21, 0.14], wash: 'bare', grainCellM: 3, grainAmplitudeM: 0.12 },
+  bare: { albedo: [0.25, 0.21, 0.14], wash: 'bare', trodden: 'self', grainCellM: 3, grainAmplitudeM: 0.12 },
   // L'éboulis et la dalle sont deux paysages : une pente de cailloux qui bouge,
   // un plateau de pierre. Les confondre était le défaut du gris unique.
   scree: {
+    trodden: 'self',
     albedo: [0.323, 0.292, 0.254],
     wash: null,
     stone: true,
@@ -830,6 +880,7 @@ export const SURFACE_LOOK = {
     grainAmplitudeM: 0.35,
   },
   rock: {
+    trodden: 'self',
     albedo: [0.371, 0.332, 0.27],
     wash: null,
     stone: true,
@@ -841,6 +892,7 @@ export const SURFACE_LOOK = {
   },
   // Glacier et névé : blanc bleuté, et rien n'y pousse.
   ice: {
+    trodden: 'self',
     albedo: [0.6, 0.66, 0.72],
     wash: null,
     bushes: 0,
@@ -849,6 +901,7 @@ export const SURFACE_LOOK = {
     grainAmplitudeM: 0.12,
   },
   sand: {
+    trodden: 'self',
     albedo: [0.624, 0.539, 0.361],
 
     wash: null,
@@ -943,6 +996,8 @@ export const TOWN_PALETTES = {
   timber_stone_slab: { wall: '#bb9d74', roof: '#77726a', shutter: '#e0d8c6', roofShapes: ['gable', 'hip'], pitch: 0.6 },
   // Pisé de Castille, monté avec la terre du champ voisin.
   adobe_curved_tile: { wall: '#c9a876', roof: '#a9754c', shutter: '#4a6b6a', roofShapes: ['gable', 'hip'], pitch: 0.42 },
+  // Béton enduit ou laissé brut des immeubles du Sud, à toit-terrasse.
+  concrete_terrace: { wall: '#cdc8be', roof: '#a9a39a', shutter: '#6f7f86', roofShapes: ['flat', 'flat', 'gable'], pitch: 0.3 },
 };
 
 // --- Les bâtiments qui ont une fonction ----------------------------------------
@@ -965,14 +1020,16 @@ export const BUILDING_PERSONALITIES = {
     wall: '#d3ccba', roof: '#4f555d', shape: 'gable', minHeightM: 10,
     windows: { widthM: 1.4, heightM: 4, sillM: 2, spacingM: 6, glass: '#536b80' },
     spire: { wall: '#d3ccba', roof: '#4f555d' },
+    far: { lengthM: 30, widthM: 12, eavesM: 12 },
   },
   castle: {
     wall: '#d3ccba', roof: '#4f555d', shape: 'hip', minHeightM: 9,
     windows: { widthM: 0.65, heightM: 1.5, sillM: 1.8, levelM: 3.5, spacingM: 5 },
     towers: { radiusRatio: 0.22, minRadiusM: 1.4, maxRadiusM: 3, riseM: 3, roofRatio: 2 },
+    far: { lengthM: 40, widthM: 26, eavesM: 14 },
   },
-  ruin: { wall: '#d9c8a0', roof: '#b5a27c', shape: 'flat', windows: false }, // calcaire au soleil ; `roof` = pierre ombrée (degrés, tambours)
-  mosque: { shape: 'flat', dome: '#4f8792', minaret: '#efe9db' }, // coupole sur terrasse, flotterait sur un rampant
+  ruin: { wall: '#d9c8a0', roof: '#b5a27c', shape: 'flat', windows: false, far: { lengthM: 24, widthM: 14, eavesM: 5 } }, // calcaire au soleil ; `roof` = pierre ombrée (degrés, tambours)
+  mosque: { shape: 'flat', dome: '#4f8792', minaret: '#efe9db', far: { lengthM: 24, widthM: 24, eavesM: 9 } }, // coupole sur terrasse, flotterait sur un rampant
   hospital: { wall: '#eceff0', roof: '#c2c8ca', shape: 'flat' },
   retail: {
     wall: '#d8d4cb', roof: '#71767b', shape: 'flat', front: '#3f5560',
@@ -1077,6 +1134,11 @@ export const PUMP_CLEARANCE_M = 1.1;
  */
 export const ROOF_PITCH = 0.55;
 export const ROOF_MAX_RISE_M = 4.2;
+/**
+ * Ce que vaut chaque mot de `region.roofPitch`, en facteur de la pente de la
+ * palette : `low` pose la tuile canal du Midi (0,42) vers 0,3, environ 17°.
+ */
+export const ROOF_PITCH_FACTORS = { low: 0.7, steep: 1.25 };
 
 // --- Les fenêtres --------------------------------------------------------------
 /** Dimensions d'une fenêtre, en mètres. */
@@ -1139,6 +1201,10 @@ export const WINDOW_SIZE_JITTER = 0.12;
  * rive : un chemin de terre est large de ce que les pas ont tassé, et cette
  * largeur-là n'est pas un trait droit. Une chaussée revêtue, elle, a un bord
  * franc, et le ronger la ferait lire comme un chemin.
+ *
+ * `tread` dit de combien le passage éclaircit un sol minéral : un chemin y est
+ * la même matière, écrasée en poussière. Sur un sol couvert, il n'éclaircit
+ * rien, il découvre la terre nue (`SURFACE_LOOK`, colonne `trodden`).
  */
 export const ROAD_PROFILES = {
   express: { width: 12, shoulder: 1.2, edgeLines: true, centerDash: true, directionArrows: true, texture: 256 },
@@ -1150,7 +1216,8 @@ export const ROAD_PROFILES = {
     width: 5, shoulder: 0, edgeLines: true, centerDash: false, directionArrows: true, texture: 128,
     oneway: { width: 3.6 },
   },
-  lane: { width: 3.6, shoulder: 0, edgeLines: false, centerDash: false, texture: 64 },
+  // Desserte, chemin revêtu : un bitume usé, pas celui des routes classées.
+  lane: { width: 3.6, shoulder: 0, surface: 'worn', edgeLines: false, centerDash: false, texture: 64 },
   // `symbol` dit ce que la classe porte **peint au sol**, au même titre
   // qu'`edgeLines` : le vélo n'est pas une décoration, c'est la seule chose
   // qui distingue une piste cyclable d'une allée de service de même largeur.
@@ -1158,12 +1225,12 @@ export const ROAD_PROFILES = {
   // Les deux chemins de terre, et les seuls à bord rongé. Le sentier est
   // mangé moins profond que le chemin d'exploitation, mais bien davantage en
   // part de sa largeur : c'est un passage, pas une voie.
-  track: { width: 3, shoulder: 0, surface: 'dirt', ragged: 0.3, texture: 64 },
-  path: { width: 1.4, shoulder: 0, surface: 'dirt', ragged: 0.2, texture: 64 },
+  track: { width: 3, shoulder: 0, surface: 'dirt', ragged: 0.3, tread: 1.35, texture: 64 },
+  path: { width: 1.4, shoulder: 0, surface: 'dirt', ragged: 0.2, tread: 1.2, texture: 64 },
   // Même gabarit que le sentier — c'en est un, en marches. `steps` dit à
   // `roadNetwork` de le balayer en contremarches (`appendSteps`) plutôt qu'en
   // ruban continu.
-  steps: { width: 1.4, shoulder: 0, surface: 'dirt', ragged: 0.2, texture: 64, steps: true },
+  steps: { width: 1.4, shoulder: 0, surface: 'dirt', ragged: 0.2, tread: 1.2, texture: 64, steps: true },
 };
 /**
  * Revêtements : une couleur de base, et rien d'autre. Chacun portait aussi une
@@ -1171,13 +1238,15 @@ export const ROAD_PROFILES = {
  * celui du sol : une surface est une couleur, et une chaussée n'y fait pas
  * exception.
  *
- * `opacity` (1 par défaut) laisse le sol transparaître : un chemin de terre
- * est du terrain tassé, il prend la teinte du pré ou de la lande qu'il
- * traverse au lieu d'y poser une bande uniforme.
+ * `trodden` : la couleur n'est pas `base` mais celle du sol traversé, tassé
+ * (`roadNetwork`, `setGround`) — la terre nue du pays sur un sol couvert, la
+ * matière elle-même éclaircie sur un sol minéral. `base` ne sert que sans
+ * terrain pour la lui donner.
  */
 export const ROAD_SURFACES = {
   asphalt: { base: '#4a4a4e' },
-  dirt: { base: '#807056', opacity: 0.55 },
+  worn: { base: '#75726a' },
+  dirt: { base: '#807056', trodden: true },
   ballast: { base: '#847d70' },
 };
 /** Terre claire de l'accotement. */
@@ -1281,6 +1350,8 @@ export const STREET_LOOK = {
     dry_scrub: '#898371',
     terraced_slope: '#adaca5',
     dry_steppe: '#938b77',
+    dry_cropland: '#8f8a78',
+    dry_pasture: '#928b78',
     desert_stone: '#a09680',
     desert_sand: '#a09680',
     openfield_cropland: '#807d70',
@@ -1557,6 +1628,11 @@ export const FURNITURE_COLORS = {
   leafDeep: srgb('#3e5c36'),
   fern: srgb('#5f7d42'),
   bramble: srgb('#55693a'),
+  // Canne de Provence : feuille d'un vert franc, tige plus claire, pointes et
+  // plumets à peine jaunis.
+  caneLeaf: srgb('#4f7f2c'),
+  caneStem: srgb('#7d9845'),
+  caneTop: srgb('#a3a757'),
   bark: srgb('#6d553c'),
 
   // --- Roche ---------------------------------------------------------------
@@ -1632,7 +1708,7 @@ export const SKY_PALETTE = {
     },
     {
       name: 'midi',
-      matrix: ['garrigue', 'dry_scrub'],
+      matrix: ['garrigue', 'dry_scrub', 'dry_cropland', 'dry_pasture'],
       fog: '#eeeadf',
     },
     {
@@ -1686,6 +1762,7 @@ export const HEDGE_SHAPES = {
     noseM: 0.7,
     salt: 617,
   },
+
 };
 
 /**
@@ -1729,7 +1806,7 @@ export const defaultTheme = Object.freeze({
     [1.18, 1.15, 1.1],
   ],
   personalities: BUILDING_PERSONALITIES,
-  roofs: { pitch: ROOF_PITCH, maxRiseM: ROOF_MAX_RISE_M },
+  roofs: { pitch: ROOF_PITCH, maxRiseM: ROOF_MAX_RISE_M, pitchFactors: ROOF_PITCH_FACTORS },
   windows: {
     widthM: WINDOW_WIDTH_M,
     heightM: WINDOW_HEIGHT_M,

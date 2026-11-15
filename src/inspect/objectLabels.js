@@ -148,6 +148,7 @@ export const LABEL_FURNITURE = {
   // Balayé le long d'une polyligne
   hedge: 'haie',
   lowHedge: 'haie basse',
+  caneClump: 'canne de Provence',
   vineRow: 'rang de vigne',
   lavenderRow: 'rang de lavande',
   dryStoneWall: 'muret de pierre',

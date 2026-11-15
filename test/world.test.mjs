@@ -155,6 +155,7 @@ import {
   pathTurn,
   guardrailStyleFor,
   roadsideVergeFor,
+  roadsideHedgeShares,
   roadsideFurnitureFor,
   streetLampKindFor,
   fountainKindFor,
@@ -216,6 +217,7 @@ import {
   platformSideAt,
   platformSnapAt,
   ROAD_SNAP_RADIUS_M,
+  isPaved,
 } from '../src/layers/roadNetwork.js';
 import {
   mergeRoadLines,
@@ -420,6 +422,10 @@ import {
   buildRockCut,
   measureRoom,
   RELIEF_ROOM_REACH_M,
+  ROCK_CUT_TAPER_M,
+  ROCK_CUT_BRIDGE_M,
+  rockCutFade,
+  bridgedRows,
 } from '../src/layers/furniture/roadsideRelief.js';
 import { facetJitter } from '../src/layers/facetJitter.js';
 import {
@@ -1689,6 +1695,13 @@ test('la classe OpenMapTiles choisit un profil de chaussée', () => {
   assert.equal(roadStyleFor({ class: 'primary', brunnel: 'tunnel' }).works, WORK_TUNNEL, 'tunnel conservé');
   assert.equal(roadStyleFor({ class: 'primary', brunnel: 'bridge' }).works, WORK_BRIDGE, 'pont signalé');
   assert.equal(roadStyleFor({ class: 'primary' }).works, WORK_NONE, 'route ordinaire');
+  // `surface` tranche entre desserte et chemin, plus que la classe.
+  assert.equal(roadStyleFor({ class: 'service', surface: 'unpaved' }).profile, 'track');
+  assert.equal(roadStyleFor({ class: 'minor', surface: 'unpaved' }).profile, 'track');
+  assert.equal(roadStyleFor({ class: 'minor', surface: 'unpaved', brunnel: 'bridge' }).profile, 'minor', 'un pont reste revêtu');
+  assert.equal(roadStyleFor({ class: 'tertiary', surface: 'unpaved' }).profile, 'minor', 'une route classée reste revêtue');
+  assert.equal(roadStyleFor({ class: 'track', surface: 'paved' }).profile, 'lane');
+  assert.equal(roadStyleFor({ class: 'track', surface: 'paved' }).paved, true, 'une desserte usée est revêtue');
   // Rails, transports guidés et lignes de ferry n’ont pas de revêtement.
   assert.equal(roadStyleFor({ class: 'rail' }), null);
   assert.equal(roadStyleFor({ class: 'ferry' }), null);
@@ -2070,7 +2083,7 @@ test('un pays sec éclaircit et jaunit son herbe', () => {
   const bocage = soilWashFor('hedgerow_meadow', defaultTheme.soils).grass;
   assert.deepEqual(bocage, [1, 1, 1], 'la référence n’est pas corrigée');
 
-  for (const matrix of ['garrigue', 'dry_steppe', 'desert_stone']) {
+  for (const matrix of ['garrigue', 'dry_cropland', 'dry_pasture', 'dry_steppe', 'desert_stone']) {
     const { grass } = soilWashFor(matrix, defaultTheme.soils);
     assert.ok(grass[1] > 1, `${matrix} : plus clair`);
     assert.ok(grass[0] / grass[1] > 1.4, `${matrix} : plus jaune`);
@@ -2081,16 +2094,17 @@ test('un pays sec éclaircit et jaunit son herbe', () => {
   assert.ok(taiga.grass[0] < 1 && taiga.bare[0] < 1, 'la taïga est sombre');
 });
 
-test('aucune correction de sol ne sature la touffe du premier plan', () => {
+test('aucune correction de sol ne sature la tige de culture du premier plan', () => {
   // La couleur d'instance multiplie une texture déjà éclairée : au-delà d'un
-  // facteur d'environ 3,5, le brin part au blanc alors que le sol, lui,
-  // continue de foncer — c'est-à-dire exactement la divergence que tout ce
-  // mécanisme existe pour éviter. Voir `SOIL_LOOK`.
+  // facteur d'environ 3,5, la tige part au blanc alors que le sol, lui,
+  // continue de foncer. Seule la colonne `farmland` teinte des instances ;
+  // les autres doivent rester positives. Voir `SOIL_LOOK`.
   for (const [matrix, look] of Object.entries(defaultTheme.soils)) {
     for (const [key, factors] of Object.entries(look)) {
       if (!Array.isArray(factors)) continue;
       for (const value of factors) {
-        assert.ok(value > 0 && value <= 3.5, `${matrix}.${key} = ${value}`);
+        assert.ok(value > 0, `${matrix}.${key} = ${value}`);
+        if (key === 'farmland') assert.ok(value <= 3.5, `${matrix}.${key} = ${value}`);
       }
     }
   }
@@ -2696,6 +2710,14 @@ test('la part d’une matière s’interpole, là où son identifiant ne le peut
     Math.abs(lotissement.grass - SETTLED_GRASS) < 1e-9,
     `part d’herbe d’un lotissement : ${lotissement.grass}`
   );
+
+  // L'eau n'est pas du sol nu : la mer ne se sème pas de rochers.
+  for (let x = 0; x < CLASS_PIXELS; x++) {
+    const i = ((half | 0) * CLASS_PIXELS + x) * 4;
+    data[i] = surfaceId('water') * SURFACE_ID_STEP;
+  }
+  const mer = carte.sampleAt(CLASS_AREA_M / 2, (half + 0.5) * perTexel);
+  assert.equal(mer.bare, 0, `part de sol nu sur l’eau : ${mer.bare}`);
 });
 
 test('une matière sans essence propre replie sur le tapis générique', () => {
@@ -3762,9 +3784,13 @@ test('un versant qui domine la chaussée est bordé de roche, pas d’un mur', (
 
     close(y(r, 0), deck, 1e-4, `le pied est sur la plate-forme, ligne ${r}`);
     // La paroi franche s’arrête au terrain naturel de son propre aplomb : plus
-    // haut, elle dépasserait du versant comme une lame.
+    // haut, elle dépasserait du versant comme une lame. Aux bouts, elle naît
+    // et meurt (`ROCK_CUT_TAPER_M`) : la pleine hauteur ne vaut qu’entre eux.
     const natural = rawElevation(0, z(r, 2));
-    assert.ok(y(r, 2) >= rawElevation(0, -foot) - 1e-3, `arase au moins au pied du versant, ligne ${r}`);
+    const along = positions[(r * cols) * 3];
+    if (along >= ROCK_CUT_TAPER_M && along <= 200 - ROCK_CUT_TAPER_M) {
+      assert.ok(y(r, 2) >= rawElevation(0, -foot) - 1e-3, `arase au moins au pied du versant, ligne ${r}`);
+    }
     assert.ok(
       y(r, 2) <= natural + spec.grain.crest[1] * (natural - deck) + 0.1,
       `arase sans lame au-dessus du versant, ligne ${r}`
@@ -3779,6 +3805,54 @@ test('un versant qui domine la chaussée est bordé de roche, pas d’un mur', (
     // versant d’une table de roche.
     assert.ok(y(r, 3) >= sampleElevation(0, z(r, 3)) - 1e-3, `dos au-dessus du talus, ligne ${r}`);
     assert.ok(y(r, 3) <= rawElevation(0, z(r, 3)) + 1e-3, `dos sous le versant, ligne ${r}`);
+  }
+});
+
+test('la falaise naît et meurt dans le talus au lieu de finir en tranche', () => {
+  assert.equal(rockCutFade(0, 100), 0);
+  assert.equal(rockCutFade(100, 100), 0);
+  assert.equal(rockCutFade(50, 100), 1);
+  assert.ok(rockCutFade(ROCK_CUT_TAPER_M / 2, 100) > 0 && rockCutFade(ROCK_CUT_TAPER_M / 2, 100) < 1);
+
+  const { layer, context, segment, rowsInfo, buffers, deck } = rockCutHarness({ rise: 6, slope: 0.6 });
+  buildRockCut(layer, context, segment, rowsInfo);
+  const positions = buffers.rockCut.positions;
+  const cols = 6;
+  const rows = positions.length / 3 / cols;
+  const crest = (r) => positions[(r * cols + 2) * 3 + 1] - deck;
+  assert.ok(crest(0) < 0.5 && crest(rows - 1) < 0.5, `bouts ${crest(0)} / ${crest(rows - 1)}`);
+  assert.ok(crest(Math.floor(rows / 2)) > 2, 'pleine paroi au milieu');
+});
+
+test('un replat passager ne coupe pas la falaise en deux', () => {
+  const rows = Array.from({ length: 30 }, (_, i) => ({ distance: i * 2, rise: i >= 12 && i < 15 ? 1 : 3 }));
+  const strong = (row) => row.rise >= 1.5;
+  const weak = (row) => row.rise >= 0.6;
+  assert.ok(bridgedRows(rows, strong, weak, ROCK_CUT_BRIDGE_M).every(Boolean), 'trou de 6 m enjambé');
+  // Trop long, ou un versant qui ne domine plus : le trou reste.
+  assert.ok(!bridgedRows(rows, strong, weak, 4).every(Boolean), 'trou plus long que le pont');
+  assert.ok(!bridgedRows(rows, strong, () => false, ROCK_CUT_BRIDGE_M).every(Boolean), 'versant qui ne domine plus');
+  // Rien n’est inventé avant la première ligne ni après la dernière.
+  const edges = rows.map((row, i) => ({ ...row, rise: i < 3 ? 1 : 3 }));
+  assert.deepEqual(bridgedRows(edges, strong, weak, 100).slice(0, 3), [false, false, false]);
+});
+
+test('le dos de la falaise prend la couleur du sol, la face reste roche', () => {
+  const { layer, context, segment, rowsInfo, buffers } = rockCutHarness();
+  const grass = [0.2, 0.25, 0.05];
+  layer.bubble = { ...layer.bubble, materials: { groundAlbedoAt: () => grass } };
+  layer.groundClass = { coverAt: () => 'grass' };
+  buildRockCut(layer, context, segment, rowsInfo);
+  const cols = 7;
+  const { positions, colors } = buffers.rockCut;
+  const rows = positions.length / 3 / cols;
+  const spec = FURNITURE_SPECS.rockCut;
+  const color = (r, c) => colors.slice((r * cols + c) * 3, (r * cols + c) * 3 + 3);
+  for (let r = 0; r < rows; r++) {
+    assert.deepEqual(color(r, 2), spec.colorTop, `arase en roche, ligne ${r}`);
+    for (const c of [3, 4, 5]) assert.deepEqual(color(r, c), grass, `dos couleur du sol, ligne ${r}, colonne ${c}`);
+    // L’arase doublée : même sommet, deux couleurs.
+    for (let k = 0; k < 3; k++) close(positions[(r * cols + 2) * 3 + k], positions[(r * cols + 3) * 3 + k], 1e-6);
   }
 });
 
@@ -9202,6 +9276,20 @@ test('la haie basse de bas-côté reste minoritaire', () => {
   assert.equal(roadsideVergeFor('express', { variant: 0.1 }).verge, null);
 });
 
+test('la haie de bord de route suit le style de limite du pays', () => {
+  const count = (boundary) => {
+    let verged = 0;
+    for (let i = 0; i < 100; i++) if (roadsideVergeFor('minor', { variant: i / 100, boundary }).verge) verged++;
+    return verged;
+  };
+  assert.equal(count(null), count('bocage'), 'sans région, le bocage');
+  assert.ok(count('openfield') < count('bocage') / 3, `openfield ${count('openfield')} %`);
+  assert.equal(count('none'), 0);
+  assert.ok(roadsideHedgeShares('openfield').hedge < roadsideHedgeShares('bocage').hedge / 3);
+  assert.equal(roadsideHedgeShares('drystone').hedge, 0);
+  assert.equal(roadsideHedgeShares('style inconnu'), roadsideHedgeShares('bocage'));
+});
+
 test('un feu tricolore passe par les trois couleurs, et le vert dure', () => {
   const seen = new Map();
   const steps = 280;
@@ -13020,7 +13108,7 @@ test('le bord d’un chemin est rongé par le sol, et il l’est au seuil', () =
   // Une chaussée revêtue n'a pas de bord rongé : c'est ce qui la distingue.
   for (const [key, profile] of Object.entries(defaultTheme.roads.profiles)) {
     const ragged = (profile.ragged ?? 0) > 0;
-    assert.equal(ragged, (profile.surface || 'asphalt') !== 'asphalt', `${key} : rongé si et seulement si en terre`);
+    assert.equal(ragged, !isPaved(profile), `${key} : rongé si et seulement si en terre`);
   }
 });
 

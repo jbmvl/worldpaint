@@ -63,7 +63,8 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   de blocs ; `skyLab.set({ sunDeg, lookDeg, pitchDeg, weather })` dans la
   console, ou `node scripts/sky-shot.mjs <dossier> '<réglages JSON>'` pour une
   image par réglage. `birds: 'corvid' | 'raptor' | 'gull'` y fait voler une
-  espèce de `LifeLayer`, à l'instant `time`.
+  espèce de `LifeLayer`, à l'instant `time` ; `clouds: <secondes>` pousse
+  les nuages d'autant de vent (`weather.wind`, `windDirection`).
   `night: 'bats' | 'fireflies'` et `starlings: <secondes après l'envol>`
   montrent les bêtes de nuit et le vol d'étourneaux (le sol y est tout entier
   un bois) ; `swallows: 'perched' | <secondes après l'envol>` des hirondelles
@@ -139,6 +140,13 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   `await farLab.set({ relief, far, x, z, yawDeg, pitchDeg, height, dx, dz,
   matrix })` et `farLab.info()` (amplitude, part du lointain, rayon du
   brouillard, durée du recalage).
+- `demo/lab/far-landmarks.html` — les silhouettes lointaines des repères bâtis
+  (`farLandmarkGeometry`) sur une colline ; `farLandmarksLab.set({ distance,
+  yawDeg, pitchDeg, fog, angleDeg, spacing })`.
+- `demo/lab/volcano.html` — la vraie `VolcanoFire` de nuit sur un cône
+  synthétique ; `volcanoLab.set({ distance, height, orbitDeg, lookDeg,
+  pitchDeg, night, time })` (`lookDeg` pivote le regard caméra immobile), ou
+  `node scripts/volcano-shot.mjs <dossier> '<réglages JSON>'`.
 - `demo/lab/shop.html` — le bâti seul le long d'une rue plate, avec des
   commerces en pignon, en long pan ou sans rue devant ;
   `shopLab.set({ yawDeg, pitchDeg, distance, night, building })`, ou

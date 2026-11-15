@@ -979,6 +979,10 @@ function unweld(buffer, vertex, index) {
  * @param {number[]} options.colorFoot  Couleur du pied, RVB linéaire.
  * @param {number[]} options.colorBreak Couleur de la cassure, à mi-hauteur.
  * @param {number[]} options.colorTop   Couleur de l'arase.
+ * @param {Array<number[]>} [options.colorCap] Couleur du dos, par ligne : celle
+ *        du sol qu'il prolonge. Donnée, l'arase est doublée — la paroi s'y
+ *        arrête en roche, le dos part de la couleur du versant — et seule la
+ *        face se lit comme de la roche. Absente, le dos est de la roche.
  * @param {number} [options.minHeight]  En deçà, rien n'est engendré.
  * @returns {boolean} vrai si de la géométrie a été produite.
  */
@@ -1002,11 +1006,13 @@ export function appendRockCut(
     colorFoot,
     colorBreak,
     colorTop,
+    colorCap = null,
     minHeight = 0.3,
   }
 ) {
   const rows = path?.length ?? 0;
   if (rows < 2 || !base || !crest || !reach) return false;
+  const capped = Array.isArray(colorCap) && colorCap.length === rows;
 
   let tallest = 0;
   for (let r = 0; r < rows; r++) tallest = Math.max(tallest, crest[r] - base[r]);
@@ -1014,7 +1020,9 @@ export function appendRockCut(
 
   const frames = pathFrames(path);
   const start = buffer.positions.length / 3;
-  const colors = [colorFoot, colorBreak, colorTop, colorTop, colorBreak, colorFoot];
+  const colors = capped
+    ? [colorFoot, colorBreak, colorTop, null, null, null, colorFoot]
+    : [colorFoot, colorBreak, colorTop, colorTop, colorBreak, colorFoot];
   const cols = colors.length;
 
   const at = (array, r, fallback) => (array ? array[r] : fallback);
@@ -1041,11 +1049,18 @@ export function appendRockCut(
     // Cassure basse (0,58 par défaut) : une falaise taillée s'évase du pied
     // vers la crête, elle ne se plie pas au milieu.
     const ups = [foot, foot + height * at(breakUp, r, 0.58), top, sag, rear, foot];
+    // L'arase doublée : même sommet, deux couleurs, sans quoi la roche et le
+    // sol se fondraient en dégradé sur la moitié haute de la face.
+    if (capped) {
+      across.splice(3, 0, run);
+      ups.splice(3, 0, top);
+    }
 
     for (let c = 0; c < cols; c++) {
       const d = offset + side * across[c];
+      const color = colors[c] ?? colorCap[r];
       buffer.positions.push(path[r].x + px * d, ups[c], path[r].z + pz * d);
-      buffer.colors.push(colors[c][0], colors[c][1], colors[c][2]);
+      buffer.colors.push(color[0], color[1], color[2]);
     }
   }
 

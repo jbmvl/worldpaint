@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="fr">
+<meta charset="utf-8">
+<title>Banc des repères lointains</title>
+<style>body{margin:0;background:#cfd8de}canvas{display:block}#legende{position:absolute;top:16px;left:16px;color:#fff;background:#14202dcc;padding:12px;font:14px sans-serif;line-height:1.5;pointer-events:none}</style>
+<script type="importmap">
+{"imports":{"three":"/node_modules/three/build/three.module.js"}}
+</script>
+<div id="legende">Silhouettes lointaines (<code>farLandmarkGeometry</code>) sur une colline<br>De gauche à droite : église, château, mosquée, ruine, temple</div>
+<script type="module">
+/*
+ * Banc des repères lointains : les vraies silhouettes de `appendFarLandmarks`,
+ * dans le vrai tampon à facettes, sur une colline synthétique. Aucun réseau.
+ * farLandmarksLab.set({ distance: 3000, yawDeg: 0, pitchDeg: 3, fog: 4000, angleDeg: 30 })
+ */
+import * as THREE from 'three';
+import { appendFarLandmarks } from '/src/layers/farLandmarkGeometry.js';
+import { createFacetBuffer, facetGeometry } from '/src/layers/facetBuffers.js';
+import { defaultTheme } from '/src/themes/default.js';
+
+const relief = (x, z) => 60 * Math.exp(-(x * x + z * z) / 400000);
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.append(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(30, 1, 1, 20000);
+const ambient = new THREE.HemisphereLight(0xdfe8f0, 0x6b6558, 1.4);
+const sun = new THREE.DirectionalLight(0xfff4e0, 2.2);
+sun.position.set(-300, 700, 500);
+scene.add(ambient, sun);
+const ground = new THREE.PlaneGeometry(6000, 6000, 120, 120).rotateX(-Math.PI / 2);
+const positions = ground.attributes.position;
+for (let i = 0; i < positions.count; i++) positions.setY(i, relief(positions.getX(i), positions.getZ(i)));
+ground.computeVertexNormals();
+scene.add(new THREE.Mesh(ground, new THREE.MeshLambertMaterial({ color: 0x839768, flatShading: true })));
+const material = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+let mesh = null;
+
+const state = { distance: 2500, yawDeg: 0, pitchDeg: 3, fog: 0, angleDeg: 20, spacing: 110 };
+function build() {
+  if (mesh) { scene.remove(mesh); mesh.geometry.dispose(); }
+  const angle = state.angleDeg * Math.PI / 180;
+  const kinds = [['church'], ['castle'], ['mosque'], ['ruin'], ['ruin', 'Tempio della Concordia']];
+  const landmarks = kinds.map(([kind, name], i) => ({ kind, name, x: (i - 2) * state.spacing, z: 0, angle }));
+  const buffer = createFacetBuffer();
+  const count = appendFarLandmarks(buffer, landmarks, { personalities: defaultTheme.personalities, groundAt: relief });
+  mesh = new THREE.Mesh(facetGeometry(THREE, buffer), material);
+  scene.add(mesh);
+  return { count, triangles: buffer.positions.length / 9 };
+}
+function render() {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  scene.background = new THREE.Color(0xcfd8de);
+  scene.fog = state.fog > 0 ? new THREE.FogExp2(0xcfd8de, 1.7 / state.fog) : null;
+  const yaw = state.yawDeg * Math.PI / 180, pitch = state.pitchDeg * Math.PI / 180;
+  const target = new THREE.Vector3(0, relief(0, 0) + 15, 0);
+  camera.position.set(Math.sin(yaw) * Math.cos(pitch) * state.distance, target.y + Math.sin(pitch) * state.distance, Math.cos(yaw) * Math.cos(pitch) * state.distance);
+  camera.lookAt(target);
+  renderer.render(scene, camera);
+}
+window.farLandmarksLab = {
+  state,
+  set(options = {}) {
+    const rebuild = !mesh || 'angleDeg' in options || 'spacing' in options;
+    Object.assign(state, options);
+    const info = rebuild ? build() : null;
+    render();
+    return info;
+  },
+};
+window.farLandmarksLab.set(JSON.parse(new URLSearchParams(location.search).get('settings') || '{}'));
+window.farLandmarksLabReady = true;
+</script>
+</html>

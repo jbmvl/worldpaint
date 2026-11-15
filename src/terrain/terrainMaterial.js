@@ -147,9 +147,7 @@ import { createWaterNormalCanvas } from '../materials/proceduralTextures.js';
 import { defaultTheme } from '../themes/default.js';
 import { LOW_POLY_GRAIN_GLSL, LOW_POLY_GRAIN_DEFAULTS } from './lowPolyGrain.js';
 import { soilWashFor, gapSurfaceForMatrix, stoneTintFor } from '../core/regionInterpretation.js';
-
-/** Période du bruit des plaques (`patch` d'une matière), en mètres. */
-const PATCH_SCALE_M = 38;
+import { PATCH_SCALE_M, PATCH_SCALE_FAR_M, patchShareAt } from './groundClassMap.js';
 
 /** Couleur d'une matière qu'un thème ne décrit pas : un gris de terre neutre. */
 const FALLBACK_ALBEDO = [0.18, 0.17, 0.15];
@@ -311,6 +309,15 @@ export class TerrainMaterialFactory {
       uniform.set(...(look.wash ? scale(base, wash[look.wash]) : base));
     });
 
+    // Les plaques de l'herbe sont celles du pays (`SOIL_LOOK[…].grassPatch`) :
+    // le chaume ou l'herbe grillée qui casse un pré sec. Sans entrée, celles
+    // de la matière.
+    const grass = SURFACE_KINDS.indexOf('grass');
+    if (grass >= 0) {
+      const patch = this.soils?.[matrix]?.grassPatch ?? this.surfaces.grass?.patch;
+      this._uniforms.uSurfacePatch.value[grass].set(...(patch?.albedo ?? [0, 0, 0]), patch?.strength ?? 0);
+    }
+
     CROP_KINDS.forEach((kind, i) => {
       const base = this.look.cropAlbedo[kind] || this.surfaces.farmland.albedo;
       const uniform = this._uniforms.uCropLook.value[i];
@@ -336,10 +343,31 @@ export class TerrainMaterialFactory {
     return u ? { uWaterAlbedo: u.uWaterAlbedo, uWaterSheenColor: u.uWaterSheenColor, uWaterZenith: u.uWaterZenith, uWaterSheen: u.uWaterSheen } : null;
   }
 
+  /** Les albédos par matière et la matière des trous, uniformes partagés tels que `setRegion` les tient. */
+  get surfaceUniforms() {
+    const u = this._uniforms;
+    return u ? { albedo: u.uSurfaceAlbedo, unclassified: u.uUnclassified } : null;
+  }
+
   /** Albédo de la matière posée là où la carte se tait, tel que `setRegion` l'a lavé. */
   get gapAlbedo() {
     const uniforms = this._uniforms;
     return uniforms ? uniforms.uSurfaceAlbedo.value[uniforms.uUnclassified.value - 1] : null;
+  }
+
+  /**
+   * Albédo d'une matière en un point, lavée par le pays et plaques comprises —
+   * ce que le shader peint là, hors variation macro et grain. Pour un ouvrage
+   * qui doit se fondre dans le sol. `null` sans matériau ou matière inconnue.
+   */
+  groundAlbedoAt(kind, x, z) {
+    const uniforms = this._uniforms;
+    const i = SURFACE_KINDS.indexOf(kind);
+    if (!uniforms || i < 0) return null;
+    const base = uniforms.uSurfaceAlbedo.value[i];
+    const patch = uniforms.uSurfacePatch.value[i];
+    const share = patch.w > 0 ? patch.w * patchShareAt(x, z) : 0;
+    return [base.x + (patch.x - base.x) * share, base.y + (patch.y - base.y) * share, base.z + (patch.z - base.z) * share];
   }
 
   _create() {
@@ -816,7 +844,7 @@ export class TerrainMaterialFactory {
              // incommensurables, axes permutes, comme les flaques.
              gPatch = smoothstep(0.46, 0.52, 0.5 + ${POOL_NOISE_STRETCH} * (
                texture2D(uMacroMap, vScenePos.xz / ${PATCH_SCALE_M}.0).r -
-               texture2D(uMacroMap, vScenePos.zx / ${Math.round(PATCH_SCALE_M * 1.7)}.0).r
+               texture2D(uMacroMap, vScenePos.zx / ${PATCH_SCALE_FAR_M}.0).r
              ));
 
              // Tout le sol en un appel : la couleur, et la part d'eau.

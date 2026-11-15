@@ -25,3 +25,14 @@ export const ACTIVE_VOLCANOES = Object.freeze([
   { id: 'pelee', name: 'Montagne Pelée', lng: -61.1650, lat: 14.8090, activity: 0.5 },
   { id: 'soufriere', name: 'Soufrière', lng: -61.6630, lat: 16.0440, activity: 0.5 },
 ].map(Object.freeze));
+
+/** Le volcan actif dont le sommet listé est à moins de `radiusM` mètres de (lng, lat), ou null. */
+export function activeVolcanoNear(lng, lat, radiusM) {
+  const metresPerDegree = 111320;
+  for (const v of ACTIVE_VOLCANOES) {
+    const dx = (lng - v.lng) * metresPerDegree * Math.cos(lat * Math.PI / 180);
+    const dz = (lat - v.lat) * metresPerDegree;
+    if (Math.hypot(dx, dz) < radiusM) return v;
+  }
+  return null;
+}

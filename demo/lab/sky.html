@@ -30,6 +30,10 @@
  * `birds` impose l'espèce (`corvid`, `raptor`, `gull`), `time` fige les vols
  * et les passages nocturnes à la seconde choisie.
  *
+ *   skyLab.set({ clouds: 40, weather: { wind: 1, windDirection: 1.6 } })
+ *
+ * `clouds` pousse les nuages de ce nombre de secondes du vent de `weather`.
+ *
  *   skyLab.set({ night: 'bats', sunDeg: -10, time: 30, pitchDeg: 20 })
  *   skyLab.set({ night: 'fireflies', sunDeg: -12, height: 1.7, time: 3 })
  *   skyLab.set({ starlings: 4, pitchDeg: 15, height: 1.7 })
@@ -102,7 +106,7 @@ function dateForElevation(deg) {
   return new Date(hi);
 }
 
-const state = { sunDeg: 30, lookDeg: 90, pitchDeg: 4, height: 40, weather: null, birds: null, time: 0, night: null, starlings: null, swallows: null, aim: null };
+const state = { sunDeg: 30, lookDeg: 90, pitchDeg: 4, height: 40, weather: null, birds: null, time: 0, clouds: 0, night: null, starlings: null, swallows: null, aim: null };
 const life = new LifeLayer({ THREE, scene, bubble: null });
 for (const mesh of life._balloonMeshes) mesh.visible = false;
 life._balloonsVisible = false;
@@ -150,6 +154,8 @@ function render() {
   env.followCamera(camera);
   env._trafficTime = state.time;
   env.advance(0, camera.position);
+  env.uniforms.uCloudOffset.value.set(0, 0);
+  env.driftClouds(state.clouds);
   env.followShadow({ x: 0, y: 0, z: 0 });
   life.birds.visible = !!state.birds;
   if (state.birds) {

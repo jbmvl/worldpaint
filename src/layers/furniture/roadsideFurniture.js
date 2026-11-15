@@ -24,6 +24,7 @@ import {
   pathTurn,
   roadsideVergeFor,
   roadsideFurnitureFor,
+  roadsideHedgeShares,
   signKindFor,
   streetLampKindFor,
   crossSlope,
@@ -32,9 +33,11 @@ import {
   runsByValue,
 } from '../furniturePlacement.js';
 import { churchWithin } from './pointsOfInterest.js';
+import { boundaryForMatrix } from '../../core/regionInterpretation.js';
 import { FURNITURE_RADIUS_M, PLANTED_TREE } from './catalog.js';
 import { reachedRadius } from '../../core/decorReach.js';
 import { plantedSpeciesShares } from '../plantedTrees.js';
+import { appendRoadsideCane } from './caneBrakes.js';
 import { defaultTheme } from '../../themes/default.js';
 import {
   buildRoadsideRelief,
@@ -251,6 +254,7 @@ export function buildRoadsideContext(layer, context, segment, rowsInfo, builtUp)
       sampleElevation,
       segment,
       here,
+      caneClumps: context.caneClumps,
     });
   }
 }
@@ -284,6 +288,7 @@ export function applyRoadsidePlan(layer, {
   sampleElevation,
   segment,
   here = null,
+  caneClumps = null,
 }) {
   const { frame } = layer.bubble;
   // Le niveau de croisement de cette portion : ce qui la borde s'y heurte aux
@@ -519,10 +524,10 @@ export function applyRoadsidePlan(layer, {
     }
   }
 
-  // Bas-côté : haie basse, haie de bocage. Le motif n'est donné qu'à une
-  // portion sur trois environ : appliqué partout, il transforme la
-  // campagne en circuit.
-  const verge = roadsideVergeFor(profile, { builtUp: inTown, variant: randomAt(frame, side.x, side.z, 83) });
+  // Bas-côté : haie basse, haie de bocage, dans les parts que le pays leur
+  // donne. Appliqué partout, le motif transforme la campagne en circuit.
+  const boundary = boundaryForMatrix(layer.region?.matrix);
+  const verge = roadsideVergeFor(profile, { builtUp: inTown, variant: randomAt(frame, side.x, side.z, 83), boundary });
   if (verge.verge) {
     layer._appendHedgerow(buffers.lowHedge, 'lowHedge', path, sampleElevation, {
       offset: verge.vergeSide * (halfWidth + 2.6),
@@ -532,11 +537,10 @@ export function applyRoadsidePlan(layer, {
     });
   }
 
-  // La haie de bocage le long de la route reste, mais elle n'est plus
-  // systématique : une petite route sur deux seulement en porte une, et
-  // jamais du côté où court déjà la haie basse du bas-côté.
-  if (plan.hedge && randomAt(frame, side.x, side.z, 29) < 0.5) {
-    const hedgeSide = verge.verge
+  // Jamais du côté où court déjà la haie basse du bas-côté.
+  let hedgeSide = 0;
+  if (plan.hedge && randomAt(frame, side.x, side.z, 29) < roadsideHedgeShares(boundary).hedge) {
+    hedgeSide = verge.verge
       ? -verge.vergeSide
       : randomAt(frame, side.x, side.z, 23) < 0.5 ? 1 : -1;
     layer._appendHedgerow(buffers.hedge, 'hedge', path, sampleElevation, {
@@ -546,6 +550,12 @@ export function applyRoadsidePlan(layer, {
       own: segment,
     });
   }
+
+  // La canne prend un côté que ni la haie basse ni la haie n'occupent.
+  const taken = [verge.verge ? verge.vergeSide : 0, hedgeSide];
+  const free = [1, -1].filter((s) => !taken.includes(s));
+  const freeSide = free.length === 2 ? free[randomAt(frame, side.x, side.z, 101) < 0.5 ? 0 : 1] : free[0] ?? 0;
+  if (caneClumps) appendRoadsideCane(layer, caneClumps, { path, halfWidth, side, profile, inTown, freeSide, segment });
 }
 
 /**

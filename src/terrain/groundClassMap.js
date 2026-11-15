@@ -105,7 +105,8 @@ import {
 import { randomAt } from '../core/groundSeed.js';
 import { URBAN_GREEN_LANDUSE } from '../layers/settlement.js';
 import { BUILDING_SOURCE_LAYER } from '../layers/buildingLayer.js';
-import { plantedSurfaceForMatrix, gapSurfaceForMatrix } from '../core/regionInterpretation.js';
+import { plantedSurfaceForMatrix, gapSurfaceForMatrix, gapSteepSurfaceForMatrix } from '../core/regionInterpretation.js';
+import { steepGapPieces, SteepGapField, STEEP_GAP_STEP_M } from './steepGap.js';
 import { defaultTheme } from '../themes/default.js';
 import { macroNoiseField } from '../materials/proceduralTextures.js';
 import {
@@ -785,6 +786,8 @@ export class GroundClassMap {
 
     this._anchor = null;
     this._frame = null;
+    /** Règle du versant raide de la dernière relecture (`steepGap.js`), ou `null`. */
+    this._steepGap = null;
     this.disposed = false;
   }
 
@@ -905,7 +908,9 @@ export class GroundClassMap {
     for (const kind of VEGETAL_SURFACES) grass += this.shareOf(kind, x, z);
     const wood = this.shareOf('wood', x, z);
     const farmland = this.shareOf('farmland', x, z);
-    return { grass, wood, farmland, bare: Math.max(0, 1 - grass - wood - farmland) };
+    // L'eau n'est pas du sol nu : sans elle, la mer compterait pour un éboulis.
+    const water = this.shareOf('water', x, z);
+    return { grass, wood, farmland, water, bare: Math.max(0, 1 - grass - wood - farmland - water) };
   }
 
   /** Part de bois en un point, de 0 à 1. */
@@ -1140,6 +1145,41 @@ export class GroundClassMap {
     ctx.restore();
   }
 
+  /** Les versants raides du trou, dans la fenêtre relue (`steepGap.js`). */
+  *_paintSteepGapSteps(surface, originX, originZ, perMeter) {
+    const { ctx } = this;
+    const { frame, elevationAt, range } = this._steepGap;
+    const { x, y, size } = this._window;
+    const count = Math.ceil(size / perMeter / STEEP_GAP_STEP_M);
+    const px = (v, o) => (v - o) * perMeter;
+    ctx.fillStyle = surfaceFill(surface);
+    const field = new SteepGapField(originX + x / perMeter, originZ + y / perMeter, count, count);
+    this._steepGap.field = field;
+    yield* steepGapPieces(frame, elevationAt, range, field, {
+      fillRect: (cx, cz, w, h) => ctx.fillRect(px(cx, originX), px(cz, originZ), w * perMeter, h * perMeter),
+      fillPolygon: (points) => {
+        ctx.beginPath();
+        for (let k = 0; k < points.length; k += 2) ctx[k ? 'lineTo' : 'moveTo'](px(points[k], originX), px(points[k + 1], originZ));
+        ctx.closePath();
+        ctx.fill();
+      },
+    });
+  }
+
+  /**
+   * Vrai là où le trou a pris la matière de pente de la matrice — que la carte
+   * l'y ait laissée ou que le vectoriel l'ait recouverte : on demande d'abord
+   * `coverAt`. Relu dans le champ peint, pas recalculé.
+   */
+  steepGapAt(x, z) {
+    return (this._steepGap?.field?.marginAt(x, z) ?? -1) > 0;
+  }
+
+  /** Matière de pente du trou à la dernière relecture, ou `null`. */
+  get steepGapSurface() {
+    return this._steepGap?.surface ?? null;
+  }
+
   /**
    * Re-rasterise la carte autour d'un point.
    * @param {Object} source Instance `VectorTileSource`.
@@ -1161,7 +1201,7 @@ export class GroundClassMap {
    * `rebuild` en étapes : une par tuile et par couche source. Carte relue,
    * origine et texture ne changent qu'à la dernière.
    */
-  *rebuildSteps(source, tiles, here, frame, { urban = null, builtUp = null, elevationAt = null, roadTiles = null, roadRadius = ROAD_RADIUS_M } = {}) {
+  *rebuildSteps(source, tiles, here, frame, { urban = null, builtUp = null, elevationAt = null, demElevationAt = null, roadTiles = null, roadRadius = ROAD_RADIUS_M } = {}) {
     if (this.disposed || !source || !frame) return false;
 
     const { ctx } = this;
@@ -1186,6 +1226,15 @@ export class GroundClassMap {
     const planted = plantedSurfaceForMatrix(this.region?.matrix);
     if (planted) {
       yield* this._plantMatrixSteps(planted, source, tiles, frame, originX, originZ, perMeter, { builtUp, elevationAt });
+      painted++;
+    }
+
+    // Le versant que personne ne laboure : sa matière, sous tout le vectoriel.
+    const steep = gapSteepSurfaceForMatrix(this.region?.matrix);
+    const steepRange = this.theme.terrain.gapSteep?.grade;
+    this._steepGap = steep && steepRange && demElevationAt ? { surface: steep, frame, elevationAt: demElevationAt, range: steepRange } : null;
+    if (this._steepGap) {
+      yield* this._paintSteepGapSteps(steep, originX, originZ, perMeter);
       painted++;
     }
 
@@ -1608,6 +1657,24 @@ export function poolShareAt(x, z, standing, poolScaleM = defaultTheme.terrain.po
   // et à l'écran.
   const poolEdge = 1 - standing;
   const t = Math.min(1, Math.max(0, (poolNoise - (poolEdge - POOL_EDGE_SOFTNESS)) / (2 * POOL_EDGE_SOFTNESS)));
+  return t * t * (3 - 2 * t);
+}
+
+/** Période du bruit des plaques (`patch` d'une matière), en mètres. */
+export const PATCH_SCALE_M = 38;
+/** Période de la seconde lecture des plaques, axes permutés : incommensurable avec la première. */
+export const PATCH_SCALE_FAR_M = Math.round(PATCH_SCALE_M * 1.7);
+
+/**
+ * Part de plaque en un point, de 0 à 1 — le pendant CPU de `gPatch` dans le
+ * shader du sol, pour qu'un ouvrage peint de la couleur du sol (le dessus
+ * d'une falaise de déblai) suive aussi ses plaques.
+ */
+export function patchShareAt(x, z, field = DEFAULT_POOL_FIELD) {
+  const a = sampleField(field, x / PATCH_SCALE_M, z / PATCH_SCALE_M);
+  const b = sampleField(field, z / PATCH_SCALE_FAR_M, x / PATCH_SCALE_FAR_M);
+  const noise = 0.5 + POOL_NOISE_STRETCH * (a - b);
+  const t = Math.min(1, Math.max(0, (noise - 0.46) / 0.06));
   return t * t * (3 - 2 * t);
 }
 

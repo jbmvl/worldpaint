@@ -101,6 +101,23 @@ constituent pas des contours officiels et ne changent aucune donnée régionale.
   l'ajouter à un pays, mesurer de même ; le semis se contrôle par
   `node scripts/buildings-audit.mjs`.
 
+Quatre champs facultatifs disent du bâti ce qu'une palette ne dit pas ;
+absents, la palette décide (`layers/townStyle.js`) :
+
+- **`roofs`** — les formes de toit (`flat · gable · hip · pyramid`), **de la
+  plus répandue à la moins répandue**, aux parts du rang comme `farming`. La
+  taille tranche toujours avant : un immeuble et un hangar restent plats.
+- **`roofPitch`** — `low` ou `steep` : la pente du pays rapportée à celle de sa
+  couverture. Le thème dit ce que vaut chaque mot (`theme.roofs.pitchFactors`).
+- **`walls`** — les murs du pays, le plus répandu d'abord, et ce premier est
+  celui de `building`. Chaque façade tire son mur à la part du rang et prend le
+  ton de la première palette du thème qui porte ce mur (`wallToneFor`).
+- **`townStoreys`** — `[min, max]` niveaux d'un bâtiment **en ville** dont la
+  donnée tait la hauteur : sans attribut, ou avec les 5 m que les tuiles
+  OpenMapTiles donnent par défaut (`buildingHeightUnknown`). Le nombre est tiré
+  du lieu. Hors de la ville, et partout ailleurs, la hauteur reste celle de la
+  donnée.
+
 Rien d'autre. Pas d'altitude, pas d'humidité, pas de score : ce qui existe
 réellement à un endroit est relevé par le vectoriel, et une région qui le
 redirait finirait par le contredire.
@@ -136,7 +153,13 @@ moteur.
 | --- | --- | --- |
 | `TREE_SPECIES` | les essences | une entrée par mot : ses silhouettes, le peuplement de `FOREST_TYPES` qu'elle forme quand elle domine, et ses cotes une fois plantée (`planted`) |
 | `TOWN_PALETTES` | le bâti | une palette par clé : le pays nomme la sienne |
-| `SOIL_LOOK` | la matrice | une entrée par matrice : le lavage du sol, la densité et la hauteur des touffes |
+| `SOIL_LOOK` | la matrice | une entrée par matrice : le lavage du sol ; `grassPatch`, les plaques d'une seconde couleur sur l'herbe (albédo absolu, force) ; `gapBushes` et `gapBush`, les arbustes semés dans le trou ; `scatteredTreesPerHa`, les arbres isolés du trou (`furniture/gapTrees.js`). Absent = aucun |
+
+Référence de direction pour les pays secs : *Alba: a Wildlife Adventure*
+(ustwo, [article sur son décor](https://ustwogames.co.uk/news/the-environment-art-of-alba-a-wildlife-adventure/)).
+L'herbe y domine tout ce qui n'est pas falaise ; la terre et le chaume ne font
+que la casser en plaques, et la végétation se superpose (arbres, buissons, sol).
+Un trou peint tout en paille se lit comme un désert, même en août.
 | `STONE_LOOK` | la pierre | une teinte par géologie, appliquée à la roche et aux ouvrages qui en sont faits |
 | `SKY_PALETTE.variants` | la matrice | une variante cite les matrices dont elle colore l'air |
 | `STREET_LOOK.pavement` | la matrice | la teinte du sol revêtu de la ville |
@@ -150,9 +173,10 @@ Quatre choses à savoir avant d'y toucher :
 - **une essence sans peuplement (`stand`) ne fait pas de bois** : elle n'est
   que plantée — parcs, cours, places, alignements —, à sa part du rang parmi
   les arbres plantés. C'est le palmier, arbre d'ornement en Europe ;
-- **`SOIL_LOOK` porte des facteurs, pas des couleurs**, et son plafond de 3,5
-  n'est pas décoratif : au-delà, la touffe du premier plan sature au blanc
-  pendant que le sol continue de foncer, donc les deux divergent. Une matrice
+- **`SOIL_LOOK` porte des facteurs, pas des couleurs**, et le plafond de 3,5
+  de sa colonne `farmland` n'est pas décoratif : au-delà, la tige de culture
+  du premier plan sature au blanc pendant que le sol continue de foncer, donc
+  les deux divergent. `grass` et `bare` ne teintent que le sol peint. Une matrice
   absente vaut « pas de correction » — c'est le cas du bocage atlantique, sur
   lequel le reste du thème a été réglé ;
 - **`STONE_LOOK` porte des facteurs, comme `SOIL_LOOK`**, et pour la même

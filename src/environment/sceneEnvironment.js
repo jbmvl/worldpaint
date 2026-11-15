@@ -191,8 +191,12 @@ const DAY_FOR_NIGHT_HANDOVER_Y = 0.05;
 
 /** Échelle du bruit de nuages (la valeur par défaut de three, 0,0002, couvre tout le ciel d'une seule valeur : aucun nuage n'apparaît). */
 const CLOUD_SCALE = 0.0015;
-/** Vitesse de dérive, appliquée à un temps relatif (une date epoch brute détruirait la précision du bruit en float32). */
-const CLOUD_SPEED = 0.00002;
+/**
+ * Dérive des nuages par seconde écoulée, par temps ordinaire, dans le plan du
+ * bruit ; le vent l'oriente et la module (`windField`). Comptée en temps
+ * écoulé et non en heure simulée : une heure figée ne fige pas le ciel.
+ */
+const CLOUD_DRIFT = 0.00002;
 
 /** Distance à laquelle on pose le soleil : `vSunfade` lit son altitude. */
 const SUN_DISTANCE = 400000;
@@ -368,10 +372,8 @@ export class SceneEnvironment {
     this.uniforms.uPlaneFlash = { value: 0 };
     this._trafficTime = 0;
     this.uniforms.cloudScale.value = CLOUD_SCALE;
-    this.uniforms.cloudSpeed.value = CLOUD_SPEED;
+    this.uniforms.uCloudOffset = { value: new THREE.Vector2(0, 0) };
     this._sunPosition = new THREE.Vector3(0, 1, 0);
-    /** Origine du temps des nuages : voir `CLOUD_SPEED`. */
-    this._timeOrigin = null;
 
     // Greffe du raccord d'horizon, après le tone mapping : les matières du décor
     // composent le brouillard après le leur, la couleur doit arriver pareille des deux côtés.
@@ -394,6 +396,7 @@ export class SceneEnvironment {
          uniform float uStarGain;
          uniform vec3 uNightCloud;
          uniform float uNightVeil;
+         uniform vec2 uCloudOffset;
          ${NIGHT_TRAFFIC_GLSL}`
       )
       .replace(
@@ -401,6 +404,8 @@ export class SceneEnvironment {
         `vec3 texColor = ( Lin + L0 ) * 0.04 + vec3( 0.0, 0.0003, 0.00075 );
          float skyCloudMask = 0.0;`
       )
+      // Décalage cumulé (`driftClouds`) : un vent qui tourne ne fait pas sauter le ciel.
+      .replace('cloudUV += time * cloudSpeed;', 'cloudUV += uCloudOffset;')
       .replace(
         'cloudMask *= horizonFade;',
         `cloudMask *= horizonFade;
@@ -567,7 +572,7 @@ export class SceneEnvironment {
   }
 
   /**
-   * Anime les passages nocturnes, la pluie et les débris en temps réel.
+   * Anime les passages nocturnes, la dérive des nuages, la pluie et les débris en temps réel.
    * Séparé d'`update()` : l'heure du ciel peut être simulée ou figée.
    * @param {number} delta Secondes écoulées.
    * @param {{x:number,y:number,z:number}} at Position de l'observateur.
@@ -575,10 +580,20 @@ export class SceneEnvironment {
   advance(delta, at, sampleGround) {
     if (Number.isFinite(delta) && delta > 0) this._trafficTime += delta;
     updateNightTraffic(this.uniforms, this._trafficTime);
+    this.driftClouds(delta);
     this.precipitation.advance(delta);
     if (at) this.precipitation.follow(at);
     this.debris.advance(delta);
     if (at) this.debris.follow(at, sampleGround);
+  }
+
+  /** Pousse les nuages de `seconds` de vent, dans sa direction et à son allure. */
+  driftClouds(seconds) {
+    if (!(Number.isFinite(seconds) && seconds > 0)) return;
+    const { direction, speed } = this.wind;
+    const step = CLOUD_DRIFT * speed * seconds;
+    this.uniforms.uCloudOffset.value.x += direction[0] * step;
+    this.uniforms.uCloudOffset.value.y += direction[1] * step;
   }
 
   /** Garde le dôme centré sur la caméra : il ne doit jamais être « atteint ». */
@@ -717,12 +732,6 @@ export class SceneEnvironment {
     this.uniforms.mieDirectionalG.value = sky.mieDirectionalG;
     this.uniforms.cloudCoverage.value = this.weather.cloudCover;
     this.uniforms.cloudDensity.value = this.weather.cloudDensity;
-
-    // Temps compté depuis le montage de la scène : une date epoch brute (1,8
-    // milliard) détruirait la précision du bruit des nuages en float32.
-    const seconds = date.getTime() / 1000;
-    if (this._timeOrigin == null) this._timeOrigin = seconds;
-    this.uniforms.time.value = seconds - this._timeOrigin;
 
     // Soleil rasant : l'ombre d'un arbre dépasserait la boîte et se coupe net.
     // Ciel entièrement bouché : plus de disque solaire pour un contour net.

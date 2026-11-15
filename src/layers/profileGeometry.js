@@ -128,6 +128,11 @@ export function* ribbonProfileGeometrySteps(THREE, buffer) {
     yield* copyValues(values, output);
     geometry.setAttribute(name, new THREE.BufferAttribute(output, 2));
   }
+  if (buffer.ground) {
+    const ground = new Uint8Array(buffer.ground.length);
+    yield* copyValues(buffer.ground, ground);
+    geometry.setAttribute('groundKind', new THREE.BufferAttribute(ground, 1));
+  }
   return geometry;
 }
 

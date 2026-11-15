@@ -30,6 +30,8 @@ import { finishGeneration } from '../core/generationSteps.js';
  */
 
 import { plantedTree } from './plantedTrees.js';
+import { buildGapTrees } from './furniture/gapTrees.js';
+import { collectWaterwayCanes, placeCaneClumps } from './furniture/caneBrakes.js';
 import { defaultTheme } from '../themes/default.js';
 import { stoneTintFor } from '../core/regionInterpretation.js';
 import { coloredProfileGeometrySteps } from './profileGeometry.js';
@@ -103,7 +105,7 @@ import {
   buildRocksSteps,
   buildLandmarks,
   buildPeakLandmarks,
-  collectWildReserves,
+  collectProtectedAreas,
   buildCoastalLandmarks,
   buildRidgeTrees,
 } from './furniture/landmarks.js';
@@ -560,6 +562,8 @@ export class FurnitureLayer {
         cutBench: this.bubble.cutBenchM,
         buffers,
         placements,
+        // Touffes de canne candidates, posées ensemble par distance (`caneBrakes.js`).
+        caneClumps: [],
       };
       this.counts = {
         points: 0,
@@ -610,14 +614,19 @@ export class FurnitureLayer {
         yield;
         buildRoosts(this, context);
         yield;
-        const reserves = collectWildReserves(source, tiles, this.bubble.frame);
+        const { reserves, historic } = collectProtectedAreas(source, tiles, this.bubble.frame);
         buildLandmarks(this, context, builtUp, reserves);
         yield;
         buildPeakLandmarks(this, context, builtUp, reserves);
         yield;
-        buildCoastalLandmarks(this, context, builtUp);
+        buildCoastalLandmarks(this, context, builtUp, historic);
         yield;
         buildRidgeTrees(this, context, builtUp);
+        yield;
+        buildGapTrees(this, context, builtUp);
+        yield;
+        collectWaterwayCanes(this, context, builtUp);
+        placeCaneClumps(this, context);
         yield;
       } catch (e) {
         // La pile complète, pas le seul message : cette exception avale tout ce
@@ -775,8 +784,10 @@ export class FurnitureLayer {
    *        là qu'il faut sonder, pas sur l'axe de la route.
    * @param {number} [minLength] Longueur en deçà de laquelle un bout de haie ne
    *        vaut pas d'être posé.
+   * @param {(x:number, z:number) => boolean} [keep] Ce qui fait un point libre,
+   *        sol non boisé par défaut.
    */
-  _clipOpenGround(path, { offset = 0, minLength = BOUNDARY_MIN_LENGTH_M } = {}) {
+  _clipOpenGround(path, { offset = 0, minLength = BOUNDARY_MIN_LENGTH_M, keep = null } = {}) {
     const rows = path?.length ?? 0;
     if (rows < 2) return [];
     if (!this.groundClass?.woodAt) return [path];
@@ -789,7 +800,7 @@ export class FurnitureLayer {
       // `(tz, -tx)`, la même convention que `_placeBeside`.
       const x = path[r].x + perp[r * 4 + 2] * offset;
       const z = path[r].z + perp[r * 4 + 3] * offset;
-      if (this._openGround(x, z)) {
+      if (keep ? keep(x, z) : this._openGround(x, z)) {
         if (!run) runs.push((run = []));
         run.push(path[r]);
       } else {
@@ -889,10 +900,8 @@ export class FurnitureLayer {
       ? this._clipOffRoad(path, { offset, minLength: BOUNDARY_MIN_LENGTH_M, own })
       : [path];
     for (const crossed of crossings) {
-      // `openGround` ne vaut que pour la haie de bord de route, qui n'existe
-      // que parce qu'on invente un bocage : dans un bois, elle n'a rien à
-      // clore. Un contour de parcelle, lui, vient de la donnée — il longe une
-      // lisière aussi souvent qu'un champ, et le couper là l'effacerait.
+      // `openGround` : la haie de bord de route n'a rien à clore dans un bois.
+      // Un contour de parcelle a déjà été coupé aux lisières par `parcels`.
       const runs = openGround ? this._clipOpenGround(crossed, { offset }) : [crossed];
       for (const run of runs) {
         // La bande va jusqu'au dos de la haie : sa demi-épaisseur est celle de sa section.

@@ -1254,24 +1254,36 @@ export const FURNITURE_BUILDERS = {
    * versant de roche parfaitement lisse ne se lit pas comme de la roche.
    */
   rockSmall(C = DEFAULT_COLORS) {
-    return new Kit(C).rock({ radius: 0.42, height: 0.34, sides: 7, rings: 2, seed: 1201, color: C.rock, colorTop: C.rockPale });
+    return new Kit(C).rock({ radius: 0.42, height: 0.3, sides: 7, rings: 2, seed: 1201, flat: 0.4, sink: 0.15, color: C.rock, colorTop: C.rockPale });
   },
 
-  /** Bloc erratique : le rocher qu'on contourne, pas celui qu'on enjambe. */
+  /**
+   * Bloc erratique : le rocher qu'on contourne, pas celui qu'on enjambe.
+   *
+   * Tous les blocs sortent du sol plutôt que d'y être posés (`sink`) : c'est
+   * le pied enterré, et les éclats qui l'entourent, qui l'ancrent. La roche
+   * est claire, dessus le plus clair — un bloc au soleil, pas un trou noir
+   * dans la pelouse.
+   */
   rockBoulder(C = DEFAULT_COLORS) {
     const k = new Kit(C);
-    k.rock({ radius: 1.5, height: 1.5, sides: 8, rings: 3, seed: 1303, color: C.rockDark, colorTop: C.rock });
-    // Une pierre au pied : un bloc isolé au milieu de rien flotte, une petite
-    // à côté l'ancre.
-    k.rock({ radius: 0.5, height: 0.4, sides: 6, rings: 2, seed: 1307, x: 1.5, z: 0.7, color: C.rock, colorTop: C.rockPale });
+    k.rock({ radius: 1.5, height: 1.15, sides: 8, rings: 3, seed: 1303, flat: 0.45, sink: 0.5, color: C.rock, colorTop: C.rockPale });
+    k.rock({ radius: 0.5, height: 0.35, sides: 6, rings: 2, seed: 1307, flat: 0.5, sink: 0.2, x: 1.55, z: 0.7, color: C.rock, colorTop: C.rockPale });
+    k.rock({ radius: 0.32, height: 0.18, sides: 6, rings: 2, seed: 1311, flat: 0.6, sink: 0.12, x: -1.2, z: -1.05, color: C.rock, colorTop: C.rockPale });
     return k;
   },
 
-  /** Affleurement : la dalle qui perce la pelouse d'alpage. */
+  /**
+   * Affleurement calcaire : des dalles basses au plateau facetté qui percent
+   * la pelouse en groupe, et leurs éclats — jamais un bloc unique posé là.
+   */
   rockOutcrop(C = DEFAULT_COLORS) {
     const k = new Kit(C);
-    k.rock({ radius: 3.2, height: 1.9, sides: 9, rings: 3, seed: 1409, color: C.rockDark, colorTop: C.rockMoss });
-    k.rock({ radius: 1.4, height: 2.6, sides: 7, rings: 3, seed: 1423, x: -1.6, z: -0.9, color: C.rockDark, colorTop: C.rock });
+    k.rock({ radius: 3.2, height: 1.25, sides: 9, rings: 3, seed: 1409, flat: 0.8, sink: 0.8, color: C.rock, colorTop: C.rockPale });
+    k.rock({ radius: 1.6, height: 1.8, sides: 7, rings: 3, seed: 1423, flat: 0.6, sink: 0.7, x: -1.9, z: -1.0, color: C.rock, colorTop: C.rockPale });
+    k.rock({ radius: 1.1, height: 0.7, sides: 7, rings: 2, seed: 1427, flat: 0.7, sink: 0.4, x: 2.5, z: 1.5, color: C.rock, colorTop: C.rockPale });
+    k.rock({ radius: 0.45, height: 0.28, sides: 6, rings: 2, seed: 1429, flat: 0.5, sink: 0.15, x: 3.6, z: -1.3, color: C.rock, colorTop: C.rockPale });
+    k.rock({ radius: 0.35, height: 0.22, sides: 6, rings: 2, seed: 1433, flat: 0.5, sink: 0.12, x: -3.3, z: 1.7, color: C.rock, colorTop: C.rockPale });
     return k;
   },
 
@@ -1320,6 +1332,62 @@ export const FURNITURE_BUILDERS = {
         color: C.leafOlive,
         colorTop: C.hay,
       });
+    }
+    return k;
+  },
+
+  /**
+   * Touffe de canne de Provence (Arundo donax) : une dizaine de tiges de
+   * 3 à 4 m, raides, à peine écartées, chacune garnie de longues feuilles
+   * alternes qui partent à l'horizontale et retombent — c'est ce port, et le
+   * jour entre les tiges, qui la distinguent d'une haie. Feuilles vert-gris,
+   * pointes hautes et panicules séchées en fin d'été. Posée en massifs de
+   * plusieurs touffes (`furniture/caneBrakes.js`).
+   */
+  caneClump(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    // Tirage figé : la forme du modèle, pas une graine de lieu.
+    let state = 7;
+    const draw = () => ((state = (state * 16807) % 2147483647) / 2147483647);
+    const stems = 12;
+    for (let i = 0; i < stems; i++) {
+      const angle = i * 2.4 + draw() * 0.6;
+      const radius = 0.06 + 0.7 * Math.sqrt((i + 0.5) / stems);
+      const height = 2.8 + draw() * 1.1;
+      const t = { x: Math.cos(angle) * radius, z: Math.sin(angle) * radius, tilt: 0.05 + draw() * 0.1, yaw: angle + Math.PI / 2 };
+      k.cylinder({ radiusBottom: 0.022, radiusTop: 0.01, height, radial: 4, cap: false, color: C.caneStem, colorTop: C.caneLeaf, ...t });
+      // Plumet sur trois tiges : deux lames larges croisées qui retombent,
+      // pas une pique.
+      if (i % 3 === 1) {
+        const top = Kit.transform([0, height, 0], t);
+        const lean = draw() * Math.PI * 2;
+        for (const turn of [0, Math.PI / 2]) {
+          const dx = Math.cos(lean), dz = Math.sin(lean);
+          const wx = -Math.sin(lean + turn) * 0.1, wz = Math.cos(lean + turn) * 0.1;
+          const mid = [top[0] + dx * 0.15, top[1] + 0.25, top[2] + dz * 0.15];
+          const tip = [top[0] + dx * 0.4, top[1] + 0.2, top[2] + dz * 0.4];
+          k.tri(top, [mid[0] + wx, mid[1], mid[2] + wz], [mid[0] - wx, mid[1], mid[2] - wz], C.caneTop);
+          k.tri([mid[0] - wx, mid[1], mid[2] - wz], [mid[0] + wx, mid[1], mid[2] + wz], tip, C.caneTop);
+        }
+      }
+      // Feuilles alternes sur toute la tige, plus longues à mi-hauteur.
+      const side = draw() * Math.PI * 2;
+      const leaves = 6;
+      for (let j = 0; j < leaves; j++) {
+        const f = 0.22 + (j / (leaves - 1)) * 0.74;
+        const a = Kit.transform([0, height * f, 0], t);
+        const dir = side + (j % 2) * Math.PI + (draw() - 0.5) * 0.9;
+        const dx = Math.cos(dir), dz = Math.sin(dir);
+        const length = (0.55 + draw() * 0.3) * (1.15 - Math.abs(f - 0.55) * 0.8);
+        const w = 0.06;
+        const wx = -dz * w, wz = dx * w;
+        const mid = [a[0] + dx * length * 0.45, a[1] + 0.08 + (1 - f) * 0.1, a[2] + dz * length * 0.45];
+        const tip = [a[0] + dx * length, a[1] - 0.15 - draw() * 0.2, a[2] + dz * length];
+        const leaf = C.caneLeaf;
+        k.tri([a[0] - wx, a[1], a[2] - wz], [a[0] + wx, a[1], a[2] + wz], [mid[0] + wx, mid[1], mid[2] + wz], leaf);
+        k.tri([a[0] - wx, a[1], a[2] - wz], [mid[0] + wx, mid[1], mid[2] + wz], [mid[0] - wx, mid[1], mid[2] - wz], leaf);
+        k.tri([mid[0] - wx, mid[1], mid[2] - wz], [mid[0] + wx, mid[1], mid[2] + wz], tip, j >= leaves - 2 && j % 2 ? C.caneTop : leaf);
+      }
     }
     return k;
   },
@@ -1560,11 +1628,13 @@ const rockCutFor = (C) => ({
    * Le dos de la falaise, qui couvre le talus du raccord : où il se lit (en
    * part de sa largeur) et où il se tient entre ce talus et la ligne du
    * terrain naturel (0 : posé sur le talus, 1 : tendu jusqu'au naturel).
-   * Tendu, la falaise est coiffée d'une table de plusieurs mètres de large ;
-   * posé, elle n'est plus qu'un placage sur le talus.
+   * Tendu, il prolonge le versant au-dessus du talus ; posé, il creuse
+   * derrière l'arase une marche qui se lit comme une table de roche. Il est
+   * donc presque tendu, et peint de la couleur du sol (`colorCap`) : seule la
+   * face reste de la roche, comme au bord d'une vraie tranchée.
    */
   shelfAt: 0.45,
-  bank: 0.5,
+  bank: 0.95,
   /**
    * Le grain low poly de la paroi : l'intervalle de chaque tirage fait ligne
    * par ligne (`facetJitter`). Des valeurs de forme, pas des tolérances :
@@ -1581,7 +1651,7 @@ const rockCutFor = (C) => ({
     breakOut: [0.55, 1.45],
     foot: [0, 0.45],
     capOut: [0, 1],
-    bank: [0.45, 1.55],
+    bank: [0.85, 1.05],
   },
   colorFoot: C.rockDark,
   colorBreak: C.rock,

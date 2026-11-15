@@ -1,7 +1,7 @@
 /* Les antennes suivent les sommets du relief, jamais les cols de la même couche. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPeakLandmarks, peakMastSite, collectWildReserves } from '../src/layers/furniture/landmarks.js';
+import { buildPeakLandmarks, peakMastSite, collectProtectedAreas } from '../src/layers/furniture/landmarks.js';
 import { createLocalFrame } from '../src/core/tileMath.js';
 import { randomAt } from '../src/core/groundSeed.js';
 import { testFrame as frame } from './testFrame.mjs';
@@ -40,16 +40,16 @@ test('le recalage d’un sommet garde sa position géographique dans deux repèr
   assert.ok(Math.abs(sites[0].lat - sites[1].lat) < 1e-9);
 });
 
-function sommetTire(x, z, classe = 'peak') {
-  while (randomAt(frame, x, z, 131) > 0.35) x += 0.5;
-  const { lng, lat } = frame.toLngLat(x, z);
+function sommetTire(x, z, classe = 'peak', repere = frame) {
+  while (randomAt(repere, x, z, 131) > 0.35) x += 0.5;
+  const { lng, lat } = repere.toLngLat(x, z);
   return { geometry: { type: 'Point', coordinates: [lng, lat] }, properties: { class: classe }, x, z };
 }
 
 function construire(points, elevationAt, options = {}) {
   const poses = [];
   const layer = {
-    bubble: { frame, naturalElevationAtLocal: elevationAt },
+    bubble: { frame: options.frame ?? frame, naturalElevationAtLocal: elevationAt },
     _onRoad: options.onRoad ?? (() => false), _onWater: () => false,
     _place(_placements, item, p) { poses.push({ item, ...p }); },
   };
@@ -88,7 +88,31 @@ test('un espace sauvage protégé refuse l’antenne, un parc régional la garde
     if (!keep || keep(properties)) visit({ type: 'Polygon', coordinates: [carre] }, properties);
   } } });
   for (const [classe, poses] of [['wildlife_refuge', 0], ['national_park', 0], ['conservation', 1], ['Natura 2000', 1], ['protected_area', 1]]) {
-    const reserves = collectWildReserves(parc(classe).source, [], frame);
+    const { reserves } = collectProtectedAreas(parc(classe).source, [], frame);
     assert.equal(construire([point], elevationAt, { reserves }).length, poses, classe);
+  }
+});
+
+test('un enclos historique est rangé à part des espaces sauvages', () => {
+  const carre = [[0, 0], [100, 0], [100, 100], [0, 100], [0, 0]]
+    .map(([x, z]) => { const { lng, lat } = frame.toLngLat(x, z); return [lng, lat]; });
+  const source = { forEachFeature(name, _tiles, visit, keep) {
+    if (name !== 'park') return;
+    for (const classe of ['historic', 'national_park', 'conservation']) {
+      const properties = { class: classe };
+      if (!keep || keep(properties)) visit({ type: 'Polygon', coordinates: [carre] }, properties);
+    }
+  } };
+  const { reserves, historic } = collectProtectedAreas(source, [], frame);
+  assert.equal(reserves.length, 1);
+  assert.equal(historic.length, 1);
+});
+
+test('le sommet d’un volcan actif ne porte pas d’antenne, un sommet voisin hors du cône si', () => {
+  const vulcano = createLocalFrame(14.9620, 38.4040, 15);
+  for (const [x, poses] of [[0, 0], [600, 0], [1500, 1]]) {
+    const point = sommetTire(x, 0, 'peak', vulcano);
+    const elevationAt = (px, pz) => 400 - ((px - point.x) ** 2 + pz * pz) * 0.005;
+    assert.equal(construire([point], elevationAt, { frame: vulcano }).length, poses, `à ${x} m`);
   }
 });
