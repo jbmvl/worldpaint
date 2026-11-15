@@ -1268,6 +1268,19 @@ export const WATERWAY_CLASSES = {
 /** Feu du phare : teinte, blanc de la lanterne allumée, opacité du faisceau en pleine nuit, durée d'un tour en secondes. */
 export const LIGHTHOUSE_LIGHT = { color: [1, 0.93, 0.74], lantern: '#ffffff', beamOpacity: 0.16, periodS: 12 };
 
+/**
+ * Feu des volcans actifs (`layers/volcanoFire.js`), couleurs linéaires. La
+ * lave va de la croûte figée au jaune du cœur ; `day` et `night` dosent
+ * l'éclat du feu, plus vif quand le ciel s'éteint.
+ */
+export const VOLCANO_FIRE = {
+  lava: { crust: [0.05, 0.03, 0.025], red: [0.62, 0.07, 0.02], orange: [1, 0.32, 0.04], yellow: [1, 0.78, 0.32] },
+  glow: [1, 0.36, 0.07],
+  smoke: { dark: [0.12, 0.11, 0.11], light: [0.46, 0.45, 0.44], opacity: 0.6 },
+  day: 1,
+  night: 1.8,
+};
+
 /** Antenne triangulée : gabarit en mètres, proportions des équipements le long du fût. */
 export const RADIO_MAST = {
   heightM: 40, footRadiusM: 1.7, headRadiusM: 0.45, stages: 10,
@@ -1709,6 +1722,7 @@ export const defaultTheme = Object.freeze({
   streets: STREET_LOOK,
   water: { waterways: WATERWAY_CLASSES, riparianBufferM: RIPARIAN_BUFFER_M },
   furniture: { placeNameSign: PLACE_NAME_SIGN, colors: FURNITURE_COLORS, hedges: HEDGE_SHAPES, hedgeTints: null, pumpkins: null, lighthouse: LIGHTHOUSE_LIGHT, radioMast: RADIO_MAST, obstacleLight: OBSTACLE_LIGHT, ghost: CEMETERY_GHOST },
+  volcanoes: VOLCANO_FIRE,
   life: LIFE_COLORS,
   fauna: { colors: FAUNA_COLORS, coats: FAUNA_COATS },
   sky: SKY_PALETTE,

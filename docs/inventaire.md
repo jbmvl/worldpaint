@@ -91,6 +91,17 @@ bulle peut dépasser de la nappe de quelques mètres.
 `createWorld({ view: { farBlockSize } })` règle son côté, zéro la retire. Elle
 n'est à l'image que sans portée (`reach`, `setReach`).
 
+### Les volcans actifs
+
+Sur la nappe, et seulement avec elle, `layers/volcanoFire` allume les volcans
+de `core/volcanoes.js` — une liste tenue à la main (Vésuve, Etna, Stromboli,
+Teide, Hekla…), car les tuiles marquent un volcan (`class=volcano`) sans dire
+s'il est actif. Le cratère est le point le plus haut du relief à 700 m du
+sommet relevé. De là : une lueur qui palpite, des gerbes de lave par salves,
+deux à quatre coulées qui suivent la plus forte pente jusqu'au replat, et un
+panache que le vent du volcan couche. `activity` dose le tout. Le feu passe le
+brouillard et ne s'éteint qu'au bord de la nappe ; il n'éclaire rien.
+
 ## Les chaussées parallèles
 
 `roadBundles` retire avant le graphe certaines voies urbaines de desserte

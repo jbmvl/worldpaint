@@ -72,6 +72,7 @@ import { WaterRelief } from './terrain/waterRelief.js';
 import { RoofCut } from './terrain/roofCut.js';
 import { GroundClassMap } from './terrain/groundClassMap.js';
 import { FarRelief } from './terrain/farRelief.js';
+import { VolcanoFire } from './layers/volcanoFire.js';
 import { RoadNetwork, createRoadMaterials, ROAD_RADIUS_M } from './layers/roadNetwork.js';
 import { RailwayLayer } from './layers/railwayLayer.js';
 import { BridgeLayer } from './layers/bridgeLayer.js';
@@ -219,6 +220,9 @@ export class WorldComposer {
     this.bubble.setDetailRadius(detail.radius);
     this.far = far ? new FarRelief({ THREE, scene, bubble: this.bubble, ...far }) : null;
     this.far?.setColor(this.bubble.materials.gapAlbedo);
+    // Les volcans actifs s'appuient sur la nappe lointaine : sans elle, rien à faire couler.
+    this.volcanoes = this.far ? new VolcanoFire({ THREE, scene, theme }) : null;
+    this._volcanoKey = null;
 
     const bubble = this.bubble;
     this.roadMaterials = createRoadMaterials(THREE, theme.roads);
@@ -501,6 +505,31 @@ export class WorldComposer {
     if (!this.far) return;
     if (Number.isFinite(this.bubble.reachMeters)) this.far.hide();
     else this.far.sync();
+  }
+
+  /**
+   * Recale les volcans sur la nappe lointaine quand elle change : ils lisent
+   * son relief là où la bulle n'en a pas, et la bulle ailleurs.
+   */
+  _syncVolcanoes() {
+    const { volcanoes, far, bubble } = this;
+    if (!volcanoes) return;
+    const centre = bubble.centerTile;
+    if (!far.shown || !bubble.frame || !centre) {
+      if (this._volcanoKey !== null) volcanoes.clear();
+      this._volcanoKey = null;
+      return;
+    }
+    const key = `${bubble.frame.originLng}/${bubble.frame.originLat}/${far.version}`;
+    if (key === this._volcanoKey) return;
+    this._volcanoKey = key;
+    const vertical = bubble.verticalScale || 1;
+    volcanoes.build({
+      frame: bubble.frame,
+      here: bubble.frame.tileToLocal(centre.x + 0.5, centre.y + 0.5),
+      radius: far.radiusMeters,
+      elevationAt: (x, z) => far.positionAt(x, z)?.y ?? bubble.surfaceElevationAtLocal(x, z, NaN) * vertical,
+    });
   }
 
   /**
@@ -1014,6 +1043,8 @@ export class WorldComposer {
       this.bubble.processRebuildQueue();
     }
     this._syncFar();
+    this._syncVolcanoes();
+    this.volcanoes?.advance(delta);
     // Les rides de l'eau vivent dans le shader de terrain, avec elle.
     this.bubble.materials.advanceWater(delta);
     this.vegetation.advance(delta);
@@ -1051,6 +1082,7 @@ export class WorldComposer {
     this.life.setNight(mix);
     this.tractors.setNight(mix);
     this.trains.setNight(mix);
+    this.volcanoes?.setNight(mix);
   }
 
   setWaterLight(light) {
@@ -1132,6 +1164,7 @@ export class WorldComposer {
     this.roadMaterials.dispose();
     this.vectorTiles?.dispose();
     this.groundClass.dispose();
+    this.volcanoes?.dispose();
     this.far?.dispose();
     this.bubble.dispose();
     this._scene?.remove(this.root);

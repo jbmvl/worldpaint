@@ -104,6 +104,8 @@ export class FarRelief {
     this.amplitude = 0;
     /** Part du lointain que ce relief justifie (`farnessOf`). */
     this.farness = 0;
+    /** Compte des nappes bâties : ce qui s'appuie sur la nappe se recale quand il change. */
+    this.version = 0;
     this.disposed = false;
 
     this.material = new THREE.MeshLambertMaterial({ flatShading: true });
@@ -245,6 +247,7 @@ export class FarRelief {
     geometry.computeBoundingSphere();
     mesh.geometry.dispose();
     mesh.geometry = geometry;
+    this.version++;
   }
 
   /** Appui sur les triangles affichés, sans relire ni charger le MNT. */
