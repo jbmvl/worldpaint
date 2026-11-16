@@ -208,6 +208,28 @@ export const ROOF_PITCH_KINDS = Object.freeze({
   steep: {},
 });
 
+/**
+ * La forme des bourgs : `detached`, des maisons isolées en retrait de la rue
+ * (la mesure des villages d'Europe centrale) ; `compact`, des façades
+ * mitoyennes à l'alignement, à plusieurs niveaux (le Midi méditerranéen). Le
+ * semis du bâti en tire ses cotes (`infillDimensionsFor`).
+ */
+export const TOWN_FORM_KINDS = Object.freeze({
+  detached: {},
+  compact: {},
+});
+
+/**
+ * Le clocher du pays : `spire`, la flèche ; `campanile`, la tour carrée sous
+ * un toit bas ou une terrasse ; `dome`, une coupole sur la croisée, campanile
+ * en plus. Le thème en dessine chaque mot (`theme.belfries`).
+ */
+export const BELFRY_KINDS = Object.freeze({
+  spire: {},
+  campanile: {},
+  dome: {},
+});
+
 /** Rang du niveau le plus haut admis par `townStoreys`. */
 export const TOWN_STOREYS_MAX = 12;
 
@@ -302,12 +324,17 @@ export const OPTIONAL_VOCABULARIES = Object.freeze({
   roofs: ROOF_KINDS,
   roofPitch: ROOF_PITCH_KINDS,
   walls: WALL_KINDS,
+  townForm: TOWN_FORM_KINDS,
+  belfry: BELFRY_KINDS,
+  // Les essences plantées en ville (rues, places, cours) quand ce ne sont
+  // pas celles des bois du pays : palmier et pin parasol d'un front de mer.
+  planted: TREE_KINDS,
 });
 
 const ALL_VOCABULARIES = Object.freeze({ ...VOCABULARIES, ...OPTIONAL_VOCABULARIES });
 
 /** Champs qui portent une liste de mots plutôt qu'un seul. */
-export const LIST_FIELDS = Object.freeze(['farming', 'trees', 'roofs', 'walls']);
+export const LIST_FIELDS = Object.freeze(['farming', 'trees', 'roofs', 'walls', 'planted']);
 
 /**
  * Matière de `SURFACE_KINDS` que la matrice pose là où la carte se tait, ou

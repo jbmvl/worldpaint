@@ -54,6 +54,17 @@ export function seaDistance(rings, here) {
  * @returns {number} Mètres, `Infinity` sans mer dans les tuiles.
  */
 export function seaDistanceAt(source, tiles, frame, here) {
+  return seaDistance(seaRingsIn(source, tiles, frame), here);
+}
+
+/**
+ * Contours extérieurs des nappes de mer des tuiles, en mètres locaux.
+ *
+ * @param {Object} source Source vectorielle (`forEachFeature`).
+ * @param {Array} tiles
+ * @param {Object} frame Repère de la bulle.
+ */
+export function seaRingsIn(source, tiles, frame) {
   const { origin, scale, zoom } = frame;
   const rings = [];
   source.forEachFeature(WATER_SOURCE_LAYER, tiles, (geometry, properties) => {
@@ -74,5 +85,52 @@ export function seaDistanceAt(source, tiles, frame, here) {
       );
     }
   }, (properties) => properties.class === 'ocean');
-  return seaDistance(rings, here);
+  return rings;
+}
+
+/**
+ * Question « est-on à moins de `reach` mètres de la mer ? », pour beaucoup de
+ * points : les côtés des nappes sont rangés une fois dans une grille de pas
+ * `reach`, et chaque question ne lit que les neuf mailles qui l'entourent. Un
+ * point au large, loin de tout côté, n'y est pas : on ne le demande jamais.
+ *
+ * @param {Array<Array<{x:number,z:number}>>} rings `seaRingsIn`.
+ * @param {number} reach Mètres.
+ * @returns {(x:number, z:number) => boolean}
+ */
+export function nearSea(rings, reach) {
+  if (!rings?.length) return () => false;
+  const cells = new Map();
+  const key = (i, j) => `${i},${j}`;
+  for (const ring of rings) {
+    if (ring.length < 3) continue;
+    for (let k = 0, l = ring.length - 1; k < ring.length; l = k++) {
+      const a = ring[l], b = ring[k];
+      const i0 = Math.floor(Math.min(a.x, b.x) / reach), i1 = Math.floor(Math.max(a.x, b.x) / reach);
+      const j0 = Math.floor(Math.min(a.z, b.z) / reach), j1 = Math.floor(Math.max(a.z, b.z) / reach);
+      // Un côté de tuile en pleine mer traverse la bulle d'un trait : on le
+      // range quand même, il est en mer et ne rapproche rien du rivage.
+      if ((i1 - i0 + 1) * (j1 - j0 + 1) > 4096) continue;
+      for (let i = i0; i <= i1; i++) {
+        for (let j = j0; j <= j1; j++) {
+          const list = cells.get(key(i, j));
+          if (list) list.push(a, b);
+          else cells.set(key(i, j), [a, b]);
+        }
+      }
+    }
+  }
+  return (x, z) => {
+    const ci = Math.floor(x / reach), cj = Math.floor(z / reach);
+    for (let i = ci - 1; i <= ci + 1; i++) {
+      for (let j = cj - 1; j <= cj + 1; j++) {
+        const list = cells.get(key(i, j));
+        if (!list) continue;
+        for (let k = 0; k < list.length; k += 2) if (segmentDistance(x, z, list[k], list[k + 1]) <= reach) return true;
+      }
+    }
+    // Loin de tout côté : loin de la mer, ou au large — ce qu'on ne demande
+    // pas, le mobilier n'étant jamais posé sur l'eau.
+    return false;
+  };
 }

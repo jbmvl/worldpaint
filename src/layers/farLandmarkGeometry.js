@@ -18,7 +18,7 @@
  *   spatial n'a donc pas de graine à garder.
  */
 import { Kit } from '../models/kit.js';
-import { personalityLookFor, towerFoot, towerRise, towerSide } from './buildingLayer.js';
+import { appendCampanileTop, personalityLookFor, towerFoot, towerRise, towerSide } from './buildingLayer.js';
 import { pushValues } from './facetBuffers.js';
 import { ruinFormByName } from './ruinGeometry.js';
 
@@ -51,6 +51,10 @@ function appendChurch(kit, box, height, look, wall) {
   const rise = Math.max(6, height) + towerRise(box);
   const foot = towerFoot(box, side);
   kit.box({ width: side, height: rise, depth: side, color: spire.wall, x: foot.x, z: foot.z, yaw });
+  if (spire.form === 'campanile') {
+    appendCampanileTop(kit, side, rise, yaw, spire, foot.x, foot.z);
+    return;
+  }
   const rim = Array.from({ length: 4 }, (_, i) => {
     const angle = i * Math.PI / 2;
     return Kit.transform([Math.cos(angle) * side * 0.78, rise, Math.sin(angle) * side * 0.78], { yaw: yaw + Math.PI / 4, x: foot.x, z: foot.z });

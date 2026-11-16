@@ -46,6 +46,7 @@ function linearTowns(towns) {
         shutter: srgb(palette.shutter),
         roofShapes: palette.roofShapes,
         pitch: palette.pitch,
+        tints: palette.tints ?? null,
       };
     }
     LINEAR_CACHE.set(towns, out);
@@ -149,7 +150,7 @@ function linearPavement(streets) {
 /**
  * Habillage d'un bâtiment : les tons de la palette du pays, la forme du toit
  * et la nature de maison. Le mur prend une des nuances du thème
- * (`facadeTints`), toutes tirées de la couleur du pays — une rue se lit
+ * (`facadeTints`, ou la gamme de la palette, `tints`), toutes tirées de la couleur du pays — une rue se lit
  * alors comme une suite de façades, sans que le village devienne une
  * collection —, puis quelques pour cent de vieillissement.
  *
@@ -186,7 +187,9 @@ export function buildingStyleAt(
 
   // Modulation tirée du lieu : ±6 % pour le crépi, ±3 % pour le volet peint (vieillit moins vite).
   const shade = 0.94 + randomAt(frame, x, z, 157) * 0.12;
-  const tint = tints?.length ? tints[Math.floor(randomAt(frame, x, z, 159) * tints.length)] : null;
+  // Une palette qui porte sa propre gamme (`tints`) la préfère à celle du thème.
+  const pool = palette.tints?.length ? palette.tints : tints;
+  const tint = pool?.length ? pool[Math.floor(randomAt(frame, x, z, 159) * pool.length)] : null;
   const wall = base.map((c, i) => Math.min(1, c * shade * (tint ? tint[i] : 1)));
   const roof = palette.roof.map((c) => Math.min(1, c * (0.95 + randomAt(frame, x, z, 163) * 0.1)));
   const shutter = palette.shutter.map((c) => Math.min(1, c * (0.97 + randomAt(frame, x, z, 167) * 0.06)));

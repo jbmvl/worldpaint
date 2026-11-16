@@ -29,6 +29,11 @@ Conséquences pratiques quand on écrit :
   un couloir. Sinon la voisine mord dedans sur toute sa longueur ;
 - **on corrige une limite en ajoutant une ancre**, jamais en redessinant quoi
   que ce soit ;
+- **un littoral collé à un massif se borne par `reachKm`.** Sans portée, ses
+  ancres mangeraient le massif jusqu'à mi-chemin des siennes. Avec, la région
+  n'est retenue qu'à `reachKm` d'une de ses ancres, posées serrées sur le
+  rivage (une tous les 6 à 8 km pour une portée de 4,5 km), et au-delà le lieu
+  garde exactement la région qu'il avait sans elle ;
 - **une région trop serrée contre une voisine disparaît.** Le test le dit :
   chaque région doit se retrouver elle-même depuis sa propre ancre ;
 - au-delà de 150 km de toute ancre, il n'y a **pas** de région, et le décor
@@ -116,7 +121,19 @@ absents, la palette décide (`layers/townStyle.js`) :
   donnée tait la hauteur : sans attribut, ou avec les 5 m que les tuiles
   OpenMapTiles donnent par défaut (`buildingHeightUnknown`). Le nombre est tiré
   du lieu. Hors de la ville, et partout ailleurs, la hauteur reste celle de la
-  donnée.
+  donnée — sauf la maison semée d'un bourg `compact`, qui est une maison de
+  ville.
+- **`townForm`** — `detached` (défaut) ou `compact`. Le semis du bâti
+  (`sparse: ['buildings']`) prend ses cotes en conséquence : maisons isolées en
+  retrait, mesurées sur des villages roumains, ou façades mitoyennes à
+  l'alignement du trottoir, un jour de moins de 6 m entre deux voisines comblé
+  (`INFILL_COMPACT`).
+- **`belfry`** — `spire` (défaut), `campanile` ou `dome` : le clocher des
+  églises du pays, que le thème dessine (`theme.belfries`). `dome` ajoute une
+  coupole sur tambour aux églises assez longues.
+- **`planted`** — les essences plantées en ville (rues, parcs, cours, places),
+  dans le vocabulaire de `trees`, quand ce ne sont pas celles des bois. Un pays
+  qui y nomme le palmier en borde son front de mer (`seafrontPalms`).
 
 Rien d'autre. Pas d'altitude, pas d'humidité, pas de score : ce qui existe
 réellement à un endroit est relevé par le vectoriel, et une région qui le

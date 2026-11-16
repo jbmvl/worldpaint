@@ -181,3 +181,35 @@ test('sans rue habitable ni emprise résidentielle, rien n’est semé', () => {
   assert.equal(plan({ ...v, streets: tracks, roadIndex: new RoadIndex(tracks) }, frameA).length, 0);
   assert.equal(plan({ ...v, builtUpClasses: ['industrial'] }, frameA).length, 0);
 });
+
+test('un bourg compact aligne ses façades sur la rue, en rangées mitoyennes', async () => {
+  const { INFILL_COMPACT, infillDimensionsFor } = await import('../src/layers/buildingInfill.js');
+  assert.equal(infillDimensionsFor({ townForm: 'compact' }), INFILL_COMPACT);
+  assert.equal(infillDimensionsFor({}), INFILL_DIMENSIONS);
+  const v = village();
+  const loose = plan(v, frameA).filter((b) => b.kind === 'house');
+  const tight = plan(v, frameA, { dimensions: INFILL_COMPACT }).filter((b) => b.kind === 'house');
+  assert.ok(tight.length > loose.length * 1.5, `plus serré : ${tight.length} contre ${loose.length}`);
+  // Façade côté rue est-ouest (z = 0, demi-chaussée 3) : au ras du trottoir.
+  const onEastWest = tight.filter((b) => Math.abs(b.x) > 20 && Math.min(...b.ring.map((p) => Math.abs(p.z))) < 12);
+  const fronts = onEastWest.map((b) => Math.min(...b.ring.map((p) => Math.abs(p.z))));
+  assert.ok(fronts.length > 10, 'des façades sur la rue');
+  for (const f of fronts) assert.ok(f >= 3.9 && f <= 6.5, `façade à ${f.toFixed(1)} m de l'axe`);
+  // Les maisons d'une même rangée se touchent ou presque : jamais plus de
+  // `abutM` de jour entre deux voisines, sinon le jour est un vrai vide.
+  for (const side of [1, -1]) {
+    const row = onEastWest
+      .filter((b) => Math.sign(b.z) === side)
+      .map((b) => [Math.min(...b.ring.map((p) => p.x)), Math.max(...b.ring.map((p) => p.x))])
+      .sort((a, b) => a[0] - b[0]);
+    for (let i = 1; i < row.length; i++) {
+      const jour = row[i][0] - row[i - 1][1];
+      assert.ok(jour > -0.1, `deux maisons se recouvrent (${jour.toFixed(2)} m)`);
+      assert.ok(jour < 0.1 || jour > INFILL_COMPACT.abutM - 0.5, `jour de ${jour.toFixed(2)} m non comblé`);
+    }
+  }
+  for (let i = 0; i < tight.length; i++) {
+    for (const r of v.real) assert.ok(!overlap(tight[i].ring, r.footprint), 'jamais sur un bâtiment relevé');
+    assert.ok(!tight[i].ring.some((p) => inCorridor(v.roadIndex, p.x, p.z)), 'jamais sur la chaussée');
+  }
+});

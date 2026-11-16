@@ -26,6 +26,44 @@ export function plantedSpeciesShares(words, trees) {
   return sharesFor(own.length ? own : known(trees.defaultSpecies));
 }
 
+/**
+ * Les essences plantées en ville : celles que le pays y plante (`region.planted`
+ * — palmier et pin parasol d'un front de mer), sinon celles de ses bois. Les
+ * alignements de campagne, eux, gardent les essences des bois. Pure.
+ */
+export function townSpeciesWords(region) {
+  return region?.planted?.length ? region.planted : region?.trees ?? null;
+}
+
+/** Distance à la mer en deçà de laquelle un arbre de ville est un palmier, en mètres. */
+export const SEAFRONT_PALM_M = 250;
+
+/**
+ * Front de mer : les arbres de ville (`town`) à moins de `SEAFRONT_PALM_M` de
+ * la mer deviennent des palmiers, dans un pays qui en plante. Ni l'arbre isolé
+ * des champs ni l'alignement de campagne : le palmier est un arbre
+ * d'agrément. Écrit dans les placements ; rend le nombre d'arbres changés.
+ *
+ * @param {Array} list Placements `PLANTED_TREE`.
+ * @param {Object|null} region
+ * @param {() => ((x:number, z:number) => boolean)} nearSeaLazy Le test de
+ *        proximité, construit seulement s'il y a un arbre à juger.
+ */
+export function seafrontPalms(list, region, nearSeaLazy) {
+  if (!townSpeciesWords(region)?.includes('palm')) return 0;
+  let near = null;
+  let changed = 0;
+  for (const p of list) {
+    if (!p.town || p.species === 'palm') continue;
+    near ??= nearSeaLazy();
+    if (near(p.x, p.z)) {
+      p.species = 'palm';
+      changed++;
+    }
+  }
+  return changed;
+}
+
 export function plantedTree(frame, p, trees) {
   const look = p.plantation ? trees.plantations?.[p.plantation] : speciesLook(trees.species?.[p.species]);
   if (!look) return null;

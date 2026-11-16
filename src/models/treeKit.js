@@ -22,8 +22,29 @@ export function treePrototype(variant, index = 0, look = defaultTheme.trees.volu
   const fronds = ['fern', 'marram', 'palm'].includes(variant.kind);
   const trunk = bush ? .18 : conifer ? .23 : column ? .3 : .4;
   // Sans fonds : l'un est au sol, l'autre dans la houppe.
-  if (variant.trunk > 0) kit.cylinder({radiusBottom: variant.trunk * .45, radiusTop: variant.trunk * .24, height: profile.trunkHeight ?? .7, radial: 6, color: bark, cap: false});
-  if (reduced && variant.trunk > 0) reduced.cylinder({radiusBottom: variant.trunk * .45, radiusTop: variant.trunk * .24, height: profile.trunkHeight ?? .7, radial: detail === 1 ? 4 : 3, color: bark, cap: false});
+  if (variant.trunk > 0 && profile.fork) {
+    // Fût court, puis charpentières penchées qui s'écartent vers la houppe :
+    // c'est la fourche, et non un mât, qui fait lire l'olivier.
+    const forkY = profile.trunkHeight ?? .2;
+    const limb = Math.max(.1, (profile.crownY ?? .6) - forkY);
+    const tilt = profile.forkTilt ?? .4;
+    const turn = random() * Math.PI * 2;
+    // Tirés une fois : le niveau lointain garde les mêmes charpentières.
+    const tilts = Array.from({ length: profile.fork }, () => tilt * (.8 + random() * .4));
+    for (const target of reduced ? [kit, reduced] : [kit]) {
+      const radial = target === kit ? 6 : detail === 1 ? 4 : 3;
+      target.cylinder({radiusBottom: variant.trunk * .5, radiusTop: variant.trunk * .38, height: forkY + .02, radial, color: bark, cap: false});
+      for (let k = 0; k < profile.fork; k++) {
+        target.cylinder({
+          radiusBottom: variant.trunk * .3, radiusTop: variant.trunk * .16, height: limb / Math.cos(tilt), radial, cap: false,
+          y: forkY, tilt: tilts[k], yaw: turn + k * Math.PI * 2 / profile.fork, color: bark,
+        });
+      }
+    }
+  } else {
+    if (variant.trunk > 0) kit.cylinder({radiusBottom: variant.trunk * .45, radiusTop: variant.trunk * .24, height: profile.trunkHeight ?? .7, radial: 6, color: bark, cap: false});
+    if (reduced && variant.trunk > 0) reduced.cylinder({radiusBottom: variant.trunk * .45, radiusTop: variant.trunk * .24, height: profile.trunkHeight ?? .7, radial: detail === 1 ? 4 : 3, color: bark, cap: false});
+  }
   if (variant.kind === 'palm') {
     palmCrown(kit, reduced, profile, leaf, random);
   } else if (fronds) {
@@ -119,7 +140,7 @@ export function treePrototype(variant, index = 0, look = defaultTheme.trees.volu
         }
       }
       // Les charpentières ne se voient que de près : les niveaux lointains n'en ont pas.
-      if(variant.trunk > 0 && !column && j>0) branch(kit, trunk, cy, cz, .025, bark);
+      if(variant.trunk > 0 && !column && !profile.fork && j>0) branch(kit, trunk, cy, cz, .025, bark);
     }
   }
   // Même boîte pour la projection et le volume, sans rognage de la houppe.

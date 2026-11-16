@@ -90,6 +90,38 @@ export const INFILL_DIMENSIONS = Object.freeze({
   coverageCeiling: 0.4,
 });
 
+/**
+ * Cotes d'un bourg compact (`region.townForm: 'compact'`) : maisons de ville
+ * étroites et profondes, façade sur rue à l'alignement du trottoir (le recul
+ * minimal, `halfWidth + kerbM`, l'emporte sur la table), mitoyennes. Un jour de
+ * moins de `abutM` entre deux façades d'une même rue est comblé en élargissant
+ * la maison : c'est ce qui fait une rangée plutôt qu'un chapelet. Relevées à
+ * vue sur des centres anciens de Sicile, des Pouilles et d'Andalousie.
+ */
+export const INFILL_COMPACT = Object.freeze({
+  ...INFILL_DIMENSIONS,
+  setback: [0, 0, 0, 0, 0, 0.5, 1.5],
+  /** Trottoir devant la façade, du bord de chaussée (le recul minimal). */
+  kerbM: 1.6,
+  length: [6, 7, 8, 9.5, 11, 13, 16],
+  ratio: [0.8, 0.9, 1, 1.15, 1.3, 1.5, 1.8],
+  gableShare: 0.1,
+  skewDeg: 0.5,
+  spacing: [6, 6.5, 7, 8, 9.5, 11, 13],
+  spacingScale: 1,
+  emptyShare: 0.04,
+  annexShare: 0.15,
+  plotDepth: 12,
+  gap: 0,
+  abutM: 6,
+  maxRelief: 3.5,
+});
+
+/** Cotes du semis pour le dossier d'un pays. Pure. */
+export function infillDimensionsFor(region) {
+  return region?.townForm === 'compact' ? INFILL_COMPACT : INFILL_DIMENSIONS;
+}
+
 /** Côté des mailles qui proposent une façade. */
 export const INFILL_CELL_M = 10;
 
@@ -404,22 +436,42 @@ export function* planInfillSteps({
     const random = randomStream(offer.seed);
     if (random() < D.emptyShare) continue;
     const gable = random() < D.gableShare;
-    const length = quantile(D.length, random());
-    const width = Math.max(5, length / quantile(D.ratio, random()));
+    let length = quantile(D.length, random());
+    let width = Math.max(5, length / quantile(D.ratio, random()));
     const skew = ((random() * 2 - 1) * D.skewDeg * Math.PI) / 180;
-    const minSetback = offer.halfWidth + 1;
+    const minSetback = offer.halfWidth + (D.kerbM ?? 1);
     const setback = Math.max(minSetback, quantile(D.setback, random()));
     const depth = gable ? length : width;
-    const frontage = gable ? width : length;
+    let frontage = gable ? width : length;
     // Normale vers le côté de la maille.
     const nx = -offer.uz * offer.side, nz = offer.ux * offer.side;
-    const cx = offer.px + nx * (setback + depth / 2);
-    const cz = offer.pz + nz * (setback + depth / 2);
-    if (Math.hypot(cx - here.x, cz - here.z) > radius) continue;
+    let px = offer.px, pz = offer.pz, along = offer.along;
 
     const line = fronts.get(`${offer.street},${offer.side}`) ?? [];
     const spacing = Math.max(quantile(D.spacing, random()) * D.spacingScale, frontage + D.gap);
-    if (line.some((a) => Math.abs(a - offer.along) < spacing)) continue;
+    if (D.abutM) {
+      // Rangée : on refuse le recouvrement, et un jour étroit avec la voisine
+      // se comble en élargissant la façade de son côté.
+      if (line.some((a) => Math.abs(a.along - along) < a.half + frontage / 2 + D.gap)) continue;
+      for (const sign of [-1, 1]) {
+        let jour = Infinity;
+        for (const a of line) {
+          const g = sign * (a.along - along) - a.half - frontage / 2;
+          if (g >= 0 && g < jour) jour = g;
+        }
+        if (jour > 0 && jour <= D.abutM) {
+          frontage += jour;
+          along += (sign * jour) / 2;
+          px += (offer.ux * sign * jour) / 2;
+          pz += (offer.uz * sign * jour) / 2;
+        }
+      }
+      if (gable) width = frontage;
+      else length = frontage;
+    } else if (line.some((a) => Math.abs(a.along - along) < spacing)) continue;
+    const cx = px + nx * (setback + depth / 2);
+    const cz = pz + nz * (setback + depth / 2);
+    if (Math.hypot(cx - here.x, cz - here.z) > radius) continue;
 
     const cos = Math.cos(skew), sin = Math.sin(skew);
     const ax = gable ? nx : offer.ux, az = gable ? nz : offer.uz;
@@ -437,7 +489,7 @@ export function* planInfillSteps({
     const box = boxOf(ring);
     if (!clearOfRoads(ring) || !free(ring, box) || !flatEnough(ring)) continue;
     accept(ring, 'house');
-    line.push(offer.along);
+    line.push({ along, half: frontage / 2 });
     fronts.set(`${offer.street},${offer.side}`, line);
 
     if (random() < D.annexShare) {
@@ -445,8 +497,8 @@ export function* planInfillSteps({
       const annexWidth = Math.max(3.5, annexLength / quantile(D.ratio, random()));
       const back = setback + depth + D.gap + 2 + annexWidth / 2 + random() * 8;
       const slide = (random() < 0.5 ? -1 : 1) * Math.max(0, frontage / 2 - annexLength / 2);
-      const ax2 = offer.px + nx * back + offer.ux * slide;
-      const az2 = offer.pz + nz * back + offer.uz * slide;
+      const ax2 = px + nx * back + offer.ux * slide;
+      const az2 = pz + nz * back + offer.uz * slide;
       const annex = corners(ax2, az2, offer.ux, offer.uz, annexLength / 2, annexWidth / 2);
       if (annex.every((p) => inArea(p.x, p.z)) && clearOfRoads(annex) && free(annex, boxOf(annex)) && flatEnough(annex)) accept(annex, 'annex');
     }

@@ -27,7 +27,7 @@ import { finishGeneration } from '../core/generationSteps.js';
  */
 
 import { lngToTileX, latToTileY, tileXToLng, tileYToLat } from '../core/tileMath.js';
-import { planInfillSteps } from './buildingInfill.js';
+import { planInfillSteps, infillDimensionsFor } from './buildingInfill.js';
 import { srgb } from '../core/color.js';
 import { buildingStyleAt, roofsFor, townHeightFor } from './townStyle.js';
 import { isWallFootprint, facadeThickness, isTransitStop, isTransitShelter } from './buildingInterpretation.js';
@@ -371,27 +371,59 @@ export function* dropTwinFootprintsSteps(candidates, cellM = 25) {
  */
 const LINEAR_PERSONALITIES = new WeakMap();
 
+const LINEAR_BELFRIES = new WeakMap();
+
+/**
+ * Comme `personalityLookFor`, l'église prenant le clocher du pays
+ * (`region.belfry`, clé de `theme.belfries`) ; tout le reste est inchangé.
+ */
+export function regionalLookFor(kind, personalities = defaultTheme.personalities, belfry = null, belfries = defaultTheme.belfries) {
+  const base = personalityLookFor(kind, personalities);
+  if (kind !== 'church' || !base || !belfry || !belfries?.[belfry]) return base;
+  // Mémorisé par tranche de clochers et par mot : `base` vient lui-même d'une
+  // table figée de `personalityLookFor`.
+  let table = LINEAR_BELFRIES.get(belfries);
+  if (!table) LINEAR_BELFRIES.set(belfries, (table = new Map()));
+  let look = table.get(belfry);
+  if (!look || look.base !== base) {
+    const over = linearLook(belfries[belfry]);
+    look = {
+      base,
+      value: { ...base, wall: over.wall ?? base.wall, roof: over.roof ?? base.roof, spire: over.spire ?? base.spire, crossingDome: over.crossingDome },
+    };
+    table.set(belfry, look);
+  }
+  return look.value;
+}
+
+function linearLook(look) {
+  return {
+    wall: look.wall ? srgb(look.wall) : null,
+    roof: look.roof ? srgb(look.roof) : null,
+    shape: look.shape || null,
+    minHeightM: look.minHeightM || 0,
+    windows: look.windows ?? null,
+    sign: look.sign || null,
+    towers: look.towers || null,
+    frontWithoutStreet: look.frontWithoutStreet || false,
+    front: look.front ? srgb(look.front) : null,
+    spire: look.spire ? { wall: srgb(look.spire.wall), roof: srgb(look.spire.roof), form: look.spire.form || 'spire' } : null,
+    dome: look.dome ? srgb(look.dome) : null,
+    minaret: look.minaret ? srgb(look.minaret) : null,
+    crossingDome: look.crossingDome
+      ? { color: srgb(look.crossingDome.color), drum: srgb(look.crossingDome.drum), minLengthM: look.crossingDome.minLengthM ?? 0 }
+      : null,
+    far: look.far || null,
+  };
+}
+
 export function personalityLookFor(kind, personalities = defaultTheme.personalities) {
   if (!kind || !personalities) return null;
   let table = LINEAR_PERSONALITIES.get(personalities);
   if (!table) {
     table = {};
     for (const [name, look] of Object.entries(personalities)) {
-      table[name] = {
-        wall: look.wall ? srgb(look.wall) : null,
-        roof: look.roof ? srgb(look.roof) : null,
-        shape: look.shape || null,
-        minHeightM: look.minHeightM || 0,
-        windows: look.windows ?? null,
-        sign: look.sign || null,
-        towers: look.towers || null,
-        frontWithoutStreet: look.frontWithoutStreet || false,
-        front: look.front ? srgb(look.front) : null,
-        spire: look.spire ? { wall: srgb(look.spire.wall), roof: srgb(look.spire.roof) } : null,
-        dome: look.dome ? srgb(look.dome) : null,
-        minaret: look.minaret ? srgb(look.minaret) : null,
-        far: look.far || null,
-      };
+      table[name] = linearLook(look);
     }
     LINEAR_PERSONALITIES.set(personalities, table);
   }
@@ -714,6 +746,21 @@ export const TOWER_RISE_MIN_M = 6;
 export const TOWER_RISE_MAX_M = 20;
 
 /** Côté de la tour, jamais plus large que le bâtiment qui la porte. Pure. */
+/**
+ * Haut d'un campanile, ajouté au fût de `side` × `height` : une corniche qui
+ * déborde, puis un toit en pavillon bas. Le campanile se lit à sa corniche et à
+ * son toit plat, là où la flèche se lit à sa pointe. Pure ; écrit dans `kit`.
+ */
+export function appendCampanileTop(kit, side, height, yaw, tower, x = 0, z = 0) {
+  const cornice = side * 0.12;
+  kit.box({ width: side + cornice * 2, height: side * 0.12, depth: side + cornice * 2, x, y: height, z, color: tower.wall, yaw });
+  const eaves = height + side * 0.12;
+  const half = side / 2 + cornice;
+  const rim = [[-half, -half], [half, -half], [half, half], [-half, half]].map(([a, b]) => Kit.transform([a, eaves, b], { yaw, x, z }));
+  const tip = [x, eaves + side * 0.38, z];
+  for (let i = 0; i < rim.length; i++) kit.tri(rim[(i + 1) % rim.length], rim[i], tip, tower.roof);
+}
+
 export function towerSide(box) {
   const side = Math.min(Math.max(box.short * TOWER_SIDE_SHARE, TOWER_SIDE_MIN_M), TOWER_SIDE_MAX_M);
   return Math.min(side, box.short * 1.8);
@@ -2052,6 +2099,7 @@ export class BuildingLayer {
         groundAt: (x, z) => bubble.surfaceElevationAtLocal(x, z),
         here,
         radius,
+        dimensions: infillDimensionsFor(this.region),
       });
       for (const item of synthetic) {
         const ring = item.ring.map((p) => [tileXToLng(origin.x + p.x / scale, zoom), tileYToLat(origin.y + p.z / scale, zoom)]);
@@ -2236,12 +2284,14 @@ export class BuildingLayer {
     const personality = (!kind || kind === 'castle') && isWallFootprint(footprint, box) ? 'rampart' : kind;
     const personalityName = assigned?.name || properties.name || null;
     const personalityClass = assigned?.class || properties.class || properties.shop || null;
-    const look = personalityLookFor(personality, this.theme.personalities);
+    const look = regionalLookFor(personality, this.theme.personalities, this.region?.belfry, this.theme.belfries);
     // Matière sous le bâtiment : `pavement` en ville, `bare` en zone d'activité.
     const surface = this._surfaceAt?.(box?.cx ?? footprint[0].x, box?.cz ?? footprint[0].z) ?? null;
     const inTown = surface === 'pavement';
-    // En ville, une hauteur que la donnée tait prend les niveaux du pays.
-    const regional = inTown && !look && buildingHeightUnknown(properties)
+    // En ville, une hauteur que la donnée tait prend les niveaux du pays ; dans
+    // un bourg compact, la maison semée aussi : elle y est une maison de ville.
+    const townHouse = properties.infill === 'house' && this.region?.townForm === 'compact';
+    const regional = (inTown || townHouse) && !look && buildingHeightUnknown(properties)
       ? townHeightFor(bubble.frame, box?.cx ?? footprint[0].x, box?.cz ?? footprint[0].z, this.region, BUILDING_LEVEL_HEIGHT)
       : null;
     const height = Math.max(regional ?? buildingHeight(properties), look?.minHeightM || 0);
@@ -2521,6 +2571,7 @@ export class BuildingLayer {
         for (const tower of castleTowers(footprint, box, base, top, look)) this._pushKitAt(walls, tower.kit, tower.x, base, tower.z);
       }
       if (look.spire) this._appendSteeple(walls, look.spire, box, base, top);
+      if (look.crossingDome && box.long * 2 >= look.crossingDome.minLengthM) this._appendCrossingDome(walls, look.crossingDome, box, top);
       if (look.dome || look.minaret) this._appendDomeAndMinaret(walls, look, box, base, eaves);
     }
 
@@ -2563,12 +2614,33 @@ export class BuildingLayer {
       const angle = i * Math.PI / 2;
       return Kit.transform([Math.cos(angle) * side * 0.78, height, Math.sin(angle) * side * 0.78], { yaw: yaw + Math.PI / 4 });
     });
-    const tip = [0, height + side * 1.5, 0];
-    for (let i = 0; i < rim.length; i++) kit.tri(rim[(i + 1) % rim.length], rim[i], tip, spire.roof);
-    kit.quad(rim[0], rim[1], rim[2], rim[3], spire.roof);
+    if (spire.form === 'campanile') {
+      appendCampanileTop(kit, side, height, yaw, spire);
+    } else {
+      const tip = [0, height + side * 1.5, 0];
+      for (let i = 0; i < rim.length; i++) kit.tri(rim[(i + 1) % rim.length], rim[i], tip, spire.roof);
+      kit.quad(rim[0], rim[1], rim[2], rim[3], spire.roof);
+    }
 
     const { x, z } = towerFoot(box, side);
     this._pushKitAt(walls, kit, x, base, z);
+  }
+
+  /**
+   * Coupole de croisée : un tambour sur le faîtage, au milieu de la nef, et la
+   * calotte en deux tronçons comme celle de `_appendDomeAndMinaret`. Le tambour
+   * part un peu sous le faîtage pour ne jamais flotter sur un toit bas.
+   */
+  _appendCrossingDome(walls, dome, box, top) {
+    const radius = Math.max(2, Math.min(box.short * 0.62, 7));
+    const kit = new Kit();
+    const drum = radius * 0.7;
+    kit.cylinder({ radiusBottom: radius, radiusTop: radius, height: drum + 1, radial: 12, y: -1, color: dome.drum });
+    kit.cylinder({ radiusBottom: radius * 1.06, radiusTop: radius * 0.78, height: radius * 0.5, radial: 12, y: drum, color: dome.color });
+    kit.cylinder({ radiusBottom: radius * 0.78, radiusTop: 0, height: radius * 0.72, radial: 12, y: drum + radius * 0.5, color: dome.color });
+    // Lanternon : il fait lire la coupole d'église plutôt que celle d'une mosquée.
+    kit.cylinder({ radiusBottom: radius * 0.16, radiusTop: radius * 0.16, height: radius * 0.4, radial: 6, y: drum + radius * 1.18, color: dome.drum });
+    this._pushKitAt(walls, kit, box.cx, top, box.cz);
   }
 
   /**

@@ -34,3 +34,36 @@ test('la flèche du clocher regarde dehors et ne double pas le dessus de la tour
     assert.equal(pans, 4);
   }
 });
+
+test('le campanile du pays se ferme d’un toit bas qui regarde le ciel, et la coupole coiffe la nef', async () => {
+  const { regionalLookFor, personalityLookFor } = await import('../src/layers/buildingLayer.js');
+  const plain = personalityLookFor('church');
+  assert.equal(regionalLookFor('church', undefined, null), plain, 'sans mot, l’église du thème');
+  assert.equal(regionalLookFor('castle', undefined, 'dome'), personalityLookFor('castle'), 'seule l’église change');
+  const look = regionalLookFor('church', undefined, 'dome');
+  assert.equal(look.spire.form, 'campanile');
+  assert.ok(look.crossingDome, 'une coupole de croisée');
+  assert.equal(look.windows, plain.windows, 'les baies restent celles de l’église');
+
+  const box = { cx: 0, cz: 0, short: 6, long: 14, angle: 0.3 };
+  const base = 0, top = 14;
+  const height = Math.max(6, top - base) + towerRise(box);
+  const walls = { positions: [], normals: [], colors: [] };
+  const layer = { _pushKitAt: BuildingLayer.prototype._pushKitAt };
+  BuildingLayer.prototype._appendSteeple.call(layer, walls, look.spire, box, base, top);
+  let peak = -Infinity;
+  for (let i = 1; i < walls.positions.length; i += 3) peak = Math.max(peak, walls.positions[i]);
+  const side = towerSide(box);
+  assert.ok(peak > height && peak < height + side * 0.6, `un toit bas, pas une flèche (${(peak - height).toFixed(2)} m)`);
+  for (let i = 0; i < walls.positions.length; i += 9) {
+    const ys = [1, 4, 7].map((j) => walls.positions[i + j]);
+    if (ys.some((y) => y > height + side * 0.12 + 1e-6)) assert.ok(walls.normals[i + 1] > 0, 'le toit regarde le ciel');
+  }
+
+  const dome = { positions: [], normals: [], colors: [] };
+  BuildingLayer.prototype._appendCrossingDome.call(layer, dome, look.crossingDome, box, top);
+  let high = -Infinity, low = Infinity;
+  for (let i = 1; i < dome.positions.length; i += 3) { high = Math.max(high, dome.positions[i]); low = Math.min(low, dome.positions[i]); }
+  assert.ok(low < top, 'le tambour part sous le faîtage');
+  assert.ok(high > top + 4, 'la coupole se voit au-dessus du toit');
+});

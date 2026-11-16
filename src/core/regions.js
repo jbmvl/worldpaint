@@ -32,6 +32,17 @@
  *   walls       les murs du pays, le plus répandu d'abord — celui de `building`
  *   townStoreys [min, max] niveaux du bâti de ville dont la hauteur n'est pas
  *               relevée
+ *   townForm    `detached` (défaut : maisons isolées en retrait) ou `compact`
+ *               (façades mitoyennes à l'alignement, maisons de ville)
+ *   belfry      le clocher : `spire` (défaut), `campanile` ou `dome`
+ *   planted     les essences plantées en ville, si ce ne sont pas celles des
+ *               bois (`trees`)
+ *
+ * Facultatif, pour une région en bande (un littoral) :
+ *
+ *   reachKm  la région n'est retenue qu'à cette distance d'une de ses ancres,
+ *            posées serrées le long de la bande (voir `region.js`) ; au-delà,
+ *            le lieu garde la région qu'il aurait sans elle
  *
  * Rien d'autre. Pas d'altitude, pas d'humidité, pas de score : ce qui existe
  * réellement à un endroit est relevé par le vectoriel, et une région qui le
@@ -75,6 +86,9 @@
  *   roofs    flat · gable · hip · pyramid
  *   roofPitch low · steep
  *   walls    les murs de `building`
+ *   townForm detached · compact
+ *   belfry   spire · campanile · dome
+ *   planted  les mots de `trees`
  *
  *   (*) admis, pas encore rendu par le décor.
  *
@@ -2912,6 +2926,8 @@ export const REGIONS = [
     roofPitch: 'low',
     walls: ['dark_stone', 'rendered', 'concrete'],
     townStoreys: [2, 3],
+    townForm: 'compact',
+    belfry: 'dome',
     sparse: ['buildings'],
   },
   {
@@ -2927,6 +2943,8 @@ export const REGIONS = [
     roofPitch: 'low',
     walls: ['light_stone', 'rendered', 'concrete'],
     townStoreys: [2, 3],
+    townForm: 'compact',
+    belfry: 'dome',
     sparse: ['buildings'],
   },
   {
@@ -2942,6 +2960,8 @@ export const REGIONS = [
     roofPitch: 'low',
     walls: ['rendered', 'concrete', 'light_stone'],
     townStoreys: [2, 4],
+    townForm: 'compact',
+    belfry: 'dome',
     sparse: ['buildings'],
   },
   {
@@ -2968,6 +2988,9 @@ export const REGIONS = [
     roofPitch: 'low',
     walls: ['light_stone', 'rendered', 'concrete'],
     townStoreys: [3, 5],
+    townForm: 'compact',
+    belfry: 'dome',
+    planted: ['palm', 'stone_pine', 'olive'],
     sparse: ['buildings'],
   },
   {
@@ -2985,6 +3008,8 @@ export const REGIONS = [
     roofPitch: 'low',
     walls: ['rendered', 'concrete', 'light_stone'],
     townStoreys: [2, 4],
+    townForm: 'compact',
+    belfry: 'dome',
     sparse: ['buildings'],
   },
   {
@@ -2998,6 +3023,8 @@ export const REGIONS = [
     building: 'light_stone_curved_tile',
     farming: ['fallow', 'cereal', 'olive', 'almond'],
     trees: ['holm_oak', 'oak', 'olive'],
+    townForm: 'compact',
+    belfry: 'dome',
     sparse: ['buildings'],
   },
   {
@@ -3013,6 +3040,9 @@ export const REGIONS = [
     roofPitch: 'low',
     walls: ['light_stone', 'rendered', 'concrete'],
     townStoreys: [2, 3],
+    townForm: 'compact',
+    belfry: 'dome',
+    planted: ['palm', 'stone_pine', 'olive'],
     sparse: ['buildings'],
   },
   {
@@ -3050,6 +3080,9 @@ export const REGIONS = [
     roofPitch: 'low',
     walls: ['rendered', 'concrete', 'dark_stone'],
     townStoreys: [2, 4],
+    townForm: 'compact',
+    belfry: 'dome',
+    planted: ['palm', 'olive', 'stone_pine'],
     sparse: ['buildings'],
   },
   {
@@ -3065,6 +3098,9 @@ export const REGIONS = [
     roofPitch: 'low',
     walls: ['light_stone', 'concrete', 'rendered'],
     townStoreys: [2, 3],
+    townForm: 'compact',
+    belfry: 'dome',
+    planted: ['palm', 'carob', 'olive'],
     sparse: ['buildings'],
   },
   {
@@ -3080,6 +3116,60 @@ export const REGIONS = [
     roofPitch: 'low',
     walls: ['light_stone', 'rendered', 'concrete'],
     townStoreys: [2, 4],
+    townForm: 'compact',
+    belfry: 'dome',
+    sparse: ['buildings'],
+  },
+  {
+    // Le liseré tyrrhénien de Termini à Patti : agrumes et oliviers en
+    // terrasses au pied des Madonie et des Nebrodi, bourgs serrés au bord de
+    // l'eau. Ancres posées sur le rivage pour que les massifs gardent leurs bois.
+    id: 'costa_tirrenica',
+    name: 'Costa tirrenica',
+    anchors: [
+      [13.7, 37.985], [13.79, 37.99], [13.87, 38.025], [13.95, 38.035], [14.02, 38.04], [14.09, 38.03],
+      [14.16, 38.02], [14.24, 38.01], [14.3, 38.01], [14.36, 38.015], [14.44, 38.04], [14.51, 38.05],
+      [14.585, 38.06], [14.64, 38.07], [14.7, 38.11], [14.745, 38.155], [14.83, 38.155], [14.9, 38.17],
+      [14.97, 38.15], [15.06, 38.125],
+    ],
+    reachKm: 4.5,
+    matrix: 'terraced_slope',
+    stone: 'sandstone',
+    building: 'rendered_curved_tile',
+    farming: ['citrus', 'olive', 'orchard', 'vineyard'],
+    trees: ['olive', 'holm_oak', 'stone_pine', 'palm'],
+    roofs: ['flat', 'hip', 'gable'],
+    roofPitch: 'low',
+    walls: ['rendered', 'light_stone', 'concrete'],
+    townStoreys: [2, 4],
+    townForm: 'compact',
+    belfry: 'dome',
+    planted: ['palm', 'stone_pine', 'olive'],
+    sparse: ['buildings'],
+  },
+  {
+    // La côte d'Agrigente, de Sciacca à Licata : marnes blanches, vigne,
+    // oliviers et amandiers jusqu'à la plage, bourgs en terrasses.
+    id: 'costa_agrigentina',
+    name: 'Costa agrigentina',
+    anchors: [
+      [12.94, 37.56], [13.01, 37.53], [13.08, 37.505], [13.15, 37.47], [13.22, 37.43], [13.28, 37.39],
+      [13.34, 37.36], [13.4, 37.33], [13.47, 37.29], [13.525, 37.285], [13.58, 37.27], [13.58, 37.3],
+      [13.65, 37.22], [13.72, 37.16], [13.79, 37.14], [13.86, 37.12], [13.94, 37.1],
+    ],
+    reachKm: 4.5,
+    matrix: 'dry_cropland',
+    stone: 'limestone',
+    building: 'light_stone_terrace',
+    farming: ['olive', 'vineyard', 'almond', 'cereal'],
+    trees: ['olive', 'carob', 'stone_pine', 'palm'],
+    roofs: ['flat', 'gable'],
+    roofPitch: 'low',
+    walls: ['light_stone', 'rendered', 'concrete'],
+    townStoreys: [2, 4],
+    townForm: 'compact',
+    belfry: 'dome',
+    planted: ['palm', 'olive', 'stone_pine'],
     sparse: ['buildings'],
   },
   {

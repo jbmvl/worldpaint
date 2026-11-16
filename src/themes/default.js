@@ -231,9 +231,11 @@ export const TREE_VARIANTS = [
     volume: { trunkHeight: .82, crownY: .76, spread: 1.15, rise: 1.15, lobes: 5, lobeSize: .7, colorVariation: .08 }, bark: [.5, .45, .36] },
   // Mélèze : un conifère clair, aux étages espacés.
   { aspect: 0.5, kind: 'conifer', hue: { r: 0.7, g: 1.12, b: 0.5 }, trunk: 0.05, crownBase: 0.85, spread: 0.24, volume: { tiers: 3, taper: .35 } },
-  // Olivier : bas, un tronc épais, une houppe gris-vert argenté en touffes.
-  { aspect: 1.3, kind: 'broadleaf', hue: { r: 0.8, g: 1, b: 1.15 }, trunk: 0.1, crownBase: 0.5, spread: 0.45,
-    volume: { trunkHeight: .4, crownY: .5, spread: 1.55, rise: .75, lobes: 5, lobeSize: .75, colorVariation: .06 }, bark: [.2, .18, .15] },
+  // Olivier : un fût court et trapu qui se divise en trois charpentières
+  // penchées (`fork`), sous une houppe gris-vert argenté en dôme irrégulier,
+  // aussi large que haute ; ses lobes se chevauchent, le jour passe entre eux.
+  { aspect: 1.1, kind: 'broadleaf', hue: { r: 0.8, g: 1, b: 1.15 }, trunk: 0.11, crownBase: 0.42, spread: 0.42,
+    volume: { trunkHeight: .2, fork: 3, forkTilt: .45, crownY: .58, spread: 1, rise: .85, lobes: 7, lobeSize: .92, colorVariation: .07 }, bark: [.2, .18, .15] },
   // Charme : une houppe ovale, serrée et sombre, sur un fût gris.
   { aspect: 0.7, kind: 'broadleaf', hue: { r: 0.5, g: 0.94, b: 0.36 }, trunk: 0.065, crownBase: 0.55, spread: 0.3,
     volume: { crownY: .6, spread: .9, rise: 1.1, lobes: 5, lobeSize: 1, colorVariation: .05 }, bark: [.33, .32, .29] },
@@ -298,7 +300,7 @@ export const TREE_SPECIES = {
   larch: { variants: [24], stand: 'mélézin', planted: { height: 9, aspect: .5 } },
   aleppo_pine: { variants: [17], stand: 'pinède méditerranéenne', planted: { height: 5, aspect: 1 } },
   stone_pine: { variants: [17], stand: 'pinède méditerranéenne', planted: { height: 5, aspect: 1 } },
-  olive: { variants: [25], stand: 'bosquet sec', planted: { height: 5, aspect: 1.3 } },
+  olive: { variants: [25], stand: 'bosquet sec', planted: { height: 5, aspect: 1.1 } },
   carob: { variants: [22], stand: 'bosquet sec', planted: { height: 6, aspect: 1.2 } },
   juniper: { variants: [7], stand: 'bosquet sec', planted: { height: 5, aspect: 1.15 } },
   acacia: { variants: [8], stand: 'bosquet sec', planted: { height: 5, aspect: .9 } },
@@ -945,7 +947,8 @@ export const SURFACE_LOOK = {
  *
  * Une palette, c'est un ton de mur, un ton de toit, un ton de volet et de
  * porte — un seul de chaque. La seule variation d'une maison à l'autre est la
- * modulation de clarté de `buildingStyleAt`. Le volet est le seul endroit du
+ * modulation de clarté de `buildingStyleAt`, et la nuance de façade : celle du
+ * thème, ou la gamme propre à la palette (`tints`) dans un pays de crépi peint. Le volet est le seul endroit du
  * bâti où une vraie couleur est admise : le mur et le toit sont donnés par la
  * carrière et la tuilerie du coin.
  *
@@ -987,7 +990,13 @@ export const TOWN_PALETTES = {
   whitewash_slate: { wall: '#eeeae0', roof: '#5b626b', shutter: '#9fb2b6', roofShapes: ['gable', 'pyramid', 'hip'], pitch: 0.75 },
   // Badigeon andalou : le seul endroit d'Europe où le mur est plus clair que le ciel.
   whitewash_terrace: { wall: '#f4f2ea', roof: '#c07a4e', shutter: '#3f6f8e', roofShapes: ['flat', 'gable'], pitch: 0.25 },
-  rendered_curved_tile: { wall: '#e8cfa8', roof: '#c07b4c', shutter: '#7d8fae', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42 },
+  // Crépi du Midi méditerranéen : une rue y alterne ocre, miel, rose passé et
+  // terre cuite (`tints`, facteurs RVB linéaires sur le mur, à la place de
+  // `facadeTints`), et les persiennes y sont vertes.
+  rendered_curved_tile: {
+    wall: '#e8cfa8', roof: '#c07b4c', shutter: '#5f7a5a', roofShapes: ['gable', 'hip', 'flat'], pitch: 0.42,
+    tints: [[1, 1, 1], [1.12, 1.0, 0.76], [1.1, 1.06, 0.68], [1.13, 0.9, 0.86], [1.1, 0.84, 0.7], [1.15, 1.12, 1.06]],
+  },
   // Tuile plate en queue de castor, posée raide, des bourgs d'Europe centrale.
   rendered_flat_tile: { wall: '#e8cfa8', roof: '#a85d45', shutter: '#7d8fae', roofShapes: ['gable', 'gable', 'hip'], pitch: 0.85 },
   rendered_thatch: { wall: '#e8cfa8', roof: '#b89a5c', shutter: '#7d8fae', roofShapes: ['gable', 'hip'], pitch: 0.85 },
@@ -998,6 +1007,27 @@ export const TOWN_PALETTES = {
   adobe_curved_tile: { wall: '#c9a876', roof: '#a9754c', shutter: '#4a6b6a', roofShapes: ['gable', 'hip'], pitch: 0.42 },
   // Béton enduit ou laissé brut des immeubles du Sud, à toit-terrasse.
   concrete_terrace: { wall: '#cdc8be', roof: '#a9a39a', shutter: '#6f7f86', roofShapes: ['flat', 'flat', 'gable'], pitch: 0.3 },
+};
+
+/**
+ * Le clocher d'un pays (`region.belfry`), surcharge de l'église de
+ * `BUILDING_PERSONALITIES` : mur, toit et tour. `spire` n'y est pas, c'est
+ * l'église par défaut. `form` dit la tour : `spire`, une flèche ; `campanile`,
+ * une tour carrée à corniche sous un toit bas. `crossingDome` pose une coupole
+ * sur tambour à la croisée des églises d'au moins `minLengthM` de long : la
+ * chapelle de quartier n'en a pas. La majolique verte des coupoles siciliennes
+ * et calabraises est la seule couleur franche du bâti religieux.
+ */
+export const BELFRIES = {
+  campanile: {
+    wall: '#e2cfa6', roof: '#b8704a',
+    spire: { wall: '#e2cfa6', roof: '#b8704a', form: 'campanile' },
+  },
+  dome: {
+    wall: '#e2cfa6', roof: '#b8704a',
+    spire: { wall: '#e2cfa6', roof: '#b8704a', form: 'campanile' },
+    crossingDome: { color: '#5f8d84', drum: '#e2cfa6', minLengthM: 20 },
+  },
 };
 
 // --- Les bâtiments qui ont une fonction ----------------------------------------
@@ -1777,7 +1807,8 @@ export const defaultTheme = Object.freeze({
   // pays (`species[mot].planted`).
   trees: { variants: TREE_VARIANTS, essences: TREE_ESSENCES, species: TREE_SPECIES, defaultSpecies: DEFAULT_TREE_SPECIES, plantations: {
     treeApple: { variants: [16], height: 6, aspect: 1.15 },
-    treeOlive: { variants: [25], height: 7, aspect: 1.3 },
+    // Un olivier de culture est taillé bas : quatre à cinq mètres.
+    treeOlive: { variants: [25], height: 5, aspect: 1.15 },
     treeAlmond: { variants: [0], height: 6, aspect: 1.2 },
     // L'agrume : la boule sombre et persistante du chêne vert, taillée bas.
     treeCitrus: { variants: [22], height: 6, aspect: 1.1 },
@@ -1806,6 +1837,7 @@ export const defaultTheme = Object.freeze({
     [1.18, 1.15, 1.1],
   ],
   personalities: BUILDING_PERSONALITIES,
+  belfries: BELFRIES,
   roofs: { pitch: ROOF_PITCH, maxRiseM: ROOF_MAX_RISE_M, pitchFactors: ROOF_PITCH_FACTORS },
   windows: {
     widthM: WINDOW_WIDTH_M,

@@ -29,7 +29,8 @@ import { finishGeneration } from '../core/generationSteps.js';
  * par image — cette couche, elle, ne se refait que tous les 250 m.
  */
 
-import { plantedTree } from './plantedTrees.js';
+import { plantedTree, seafrontPalms, SEAFRONT_PALM_M } from './plantedTrees.js';
+import { nearSea, seaRingsIn } from './coast.js';
 import { buildGapTrees } from './furniture/gapTrees.js';
 import { collectWaterwayCanes, placeCaneClumps } from './furniture/caneBrakes.js';
 import { defaultTheme } from '../themes/default.js';
@@ -646,6 +647,9 @@ export class FurnitureLayer {
         yield;
       }
       this.trees = [];
+      seafrontPalms(placements.get(PLANTED_TREE) ?? [], this.region, () =>
+        nearSea(seaRingsIn(source, tiles, this.bubble.frame), SEAFRONT_PALM_M)
+      );
       for (const [item, list] of placements) {
         if (item === PLANTED_TREE) {
           for (const p of list) {

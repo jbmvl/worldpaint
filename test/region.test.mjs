@@ -193,3 +193,13 @@ test('une matrice boisée se plante dans la carte du sol et ne laisse pas sa mat
   assert.equal(gapSurfaceForMatrix('hedgerow_meadow'), 'grass');
   assert.equal(gapSurfaceForMatrix('inconnu'), null);
 });
+
+test('un littoral à portée bornée ne mange pas le massif qui le borde', () => {
+  assert.equal(regionAt(14.02, 38.03)?.id, 'costa_tirrenica', 'Cefalù');
+  assert.equal(regionAt(14.75, 38.15)?.id, 'costa_tirrenica', 'Capo d’Orlando');
+  assert.equal(regionAt(13.58, 37.31)?.id, 'costa_agrigentina', 'Agrigente');
+  // À dix kilomètres du rivage, le massif garde sa région d'avant.
+  assert.equal(regionAt(14.36, 37.93)?.id, 'nebrodi', 'Mistretta');
+  assert.equal(regionAt(14.02, 37.99)?.id, 'nebrodi', 'Gibilmanna');
+  assert.equal(regionAt(13.22, 37.58)?.id, 'monti_sicani', 'Caltabellotta');
+});

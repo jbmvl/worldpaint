@@ -30,6 +30,14 @@
  * l'échelle d'une scène, ça déplace une frontière de paysage ; ça n'en invente
  * pas une.
  *
+ * ## Les régions-liserés
+ *
+ * Un littoral est une bande de quelques kilomètres collée à un massif : par la
+ * seule ancre la plus proche, il mangerait le massif jusqu'à mi-chemin des
+ * ancres de celui-ci. Une région qui porte `reachKm` n'est donc retenue qu'à
+ * cette distance de l'une de ses ancres, posées serrées sur le rivage ; plus
+ * loin, le point revient exactement à la région qu'il avait sans elle.
+ *
  * ## Pourquoi une portée maximale
  *
  * Sans elle, le point le plus éloigné du monde tomberait quand même sur une
@@ -67,7 +75,9 @@ function anchorIndex() {
   if (anchors) return anchors;
   anchors = [];
   for (const region of REGIONS) {
-    for (const [lng, lat] of region.anchors) anchors.push({ region, lng, lat });
+    const reach = Number.isFinite(region.reachKm) ? region.reachKm / KM_PER_DEGREE : null;
+    const reachSquared = reach === null ? Infinity : reach * reach;
+    for (const [lng, lat] of region.anchors) anchors.push({ region, lng, lat, reachSquared });
   }
   return anchors;
 }
@@ -96,6 +106,9 @@ export function regionAt(lng, lat) {
     const dx = (lng - anchor.lng) * shrink;
     const dz = lat - anchor.lat;
     const squared = dx * dx + dz * dz;
+    // Une région-liseré (`reachKm`) ne compte qu'à sa portée : au-delà, le
+    // point revient à la région qu'il aurait eue sans elle.
+    if (squared > anchor.reachSquared) continue;
     if (squared < bestSquared) {
       bestSquared = squared;
       best = anchor.region;

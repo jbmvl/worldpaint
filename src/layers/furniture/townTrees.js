@@ -13,7 +13,8 @@
  * est jamais semé deux fois. Les deux semis évitent les allées, l'eau, ce qui
  * est déjà un bois et les bâtiments ; ils sont triés par distance avant
  * d'être posés, pour que le plafond des arbres plantés coupe au loin. Leurs
- * essences sont celles du pays, aux parts de ses bois (`plantedSpeciesShares`).
+ * essences sont celles que le pays plante en ville (`townSpeciesWords`), aux
+ * parts de leur rang (`plantedSpeciesShares`).
  */
 import { worldCellsIn, randomAt } from '../../core/groundSeed.js';
 import { pointInAreas, ringsOf } from '../settlement.js';
@@ -21,7 +22,7 @@ import { lngToTileX, latToTileY } from '../../core/tileMath.js';
 import { reachedRadius } from '../../core/decorReach.js';
 import { FURNITURE_RADIUS_M, PLANTED_TREE } from './catalog.js';
 import { pickShare } from '../furniturePlacement.js';
-import { plantedSpeciesShares } from '../plantedTrees.js';
+import { plantedSpeciesShares, townSpeciesWords } from '../plantedTrees.js';
 
 /** Pas de la maille, part des mailles plantées, dégagement d'une façade, sol exigé. */
 export const PARK_TREES = { cellM: 13, share: 0.45, clearanceM: 2, surface: null, salt: 1301 };
@@ -62,7 +63,7 @@ export function isYard(properties = {}) {
  */
 export function plantTownTrees(layer, placements, rings, here, radius, rule, onPlanted = null) {
   const { frame } = layer.bubble;
-  const mix = plantedSpeciesShares(layer.region?.trees, layer.theme.trees);
+  const mix = plantedSpeciesShares(townSpeciesWords(layer.region), layer.theme.trees);
   if (mix.length === 0) return 0;
   const seen = new Set();
   const spots = [];
@@ -111,6 +112,8 @@ export function plantTownTrees(layer, placements, rings, here, radius, rule, onP
     });
     if (placed) {
       placed.species = species;
+      // Arbre de ville : le front de mer le change en palmier (`seafrontPalms`).
+      placed.town = true;
       planted++;
       onPlanted?.(placed, cell);
     }

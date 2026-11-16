@@ -36,7 +36,7 @@ import { churchWithin } from './pointsOfInterest.js';
 import { boundaryForMatrix } from '../../core/regionInterpretation.js';
 import { FURNITURE_RADIUS_M, PLANTED_TREE } from './catalog.js';
 import { reachedRadius } from '../../core/decorReach.js';
-import { plantedSpeciesShares } from '../plantedTrees.js';
+import { plantedSpeciesShares, townSpeciesWords } from '../plantedTrees.js';
 import { appendRoadsideCane } from './caneBrakes.js';
 import { defaultTheme } from '../../themes/default.js';
 import {
@@ -509,7 +509,7 @@ export function applyRoadsidePlan(layer, {
   // c'est l'arbre qui fait la rue. Il s'efface devant une façade, un
   // carrefour ou une autre chaussée.
   if (plan.streetTree) {
-    const species = alignmentTreeSpeciesFor(frame, side.x, side.z, layer.region?.trees, layer.theme.trees);
+    const species = alignmentTreeSpeciesFor(frame, side.x, side.z, townSpeciesWords(layer.region), layer.theme.trees);
     for (const p of spacedAlongPath(path, plan.streetTree, { ...spacing, phase: STREET_TREE_PHASE_M })) {
       for (const row of [1, -1]) {
         const tree = layer._placeBeside(placements, PLANTED_TREE, p, row * (halfWidth + STREET_TREE_SETBACK_M), platform, {
@@ -519,7 +519,10 @@ export function applyRoadsidePlan(layer, {
           clearOfBuildings: STREET_TREE_CLEARANCE_M,
           own: segment,
         });
-        if (tree) tree.species = species;
+        if (tree) {
+          tree.species = species;
+          tree.town = true;
+        }
       }
     }
   }
