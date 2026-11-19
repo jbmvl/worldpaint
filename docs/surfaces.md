@@ -87,6 +87,7 @@ Une parcelle porte donc une part de chaque matière, et *une* culture **ou**
 | `grass` | herbe | — | prairie |
 | `grass` + `heath` | herbe | `heath` | rase, dense, brune, 0,3 arbuste |
 | `grass` + `scrub`, `shrubbery` | herbe | `scrub` | peu d'herbe, 0,9 arbuste |
+| — (matrice `macchia` seule) | herbe | `maquis` | amas d'arbustes de 2 à 4 m, 0,2 ; le couvert est dans le sol |
 | `grass` + `fell`, `tundra` | herbe | `alpine` | rase, verte |
 | `wetland` | herbe | `wetland` | **la plus haute du décor** (×1,4), roselière, 30 % d'eau libre |
 | `wetland` + `saltmarsh` | herbe | `saltmarsh` | rase, gris-vert, 0,12 arbuste, 15 % d'eau libre |
@@ -312,6 +313,51 @@ lame franche, assez haute pour se voir entre les rangs — et elle remplace
 celle de `farmland` au même texel, sur le même principe de substitution que
 l'albédo de la culture : la quatrième composante de son albédo (`uCropLook`), pas un
 canal de plus dans la carte des matières.
+
+### Le couvert vu de loin
+
+Une matière qui porte des houppes ou des buissons déclare son `canopy` dans
+`SURFACE_LOOK` : la couleur de ces feuillages éclairés, telle qu'on la relève
+sur les houppes rendues, et `share`, la part du sol qu'ils ferment (bois 1,
+maquis 0,85, `scrub` 0,35, aucune ailleurs). Sur la rampe où le sous-étage
+s'éteint (`VegetationLayer.understoryRangeM`, 150–250 m, 90–150 m au niveau
+économe ; `wood.canopy.nearM`–`farM` n'en est que la valeur par défaut), le
+shader mêle cette couleur à l'albédo à proportion de la part, sur la carte
+comme hors d'elle, et le relief lointain fait de même pour la matière du trou
+(`gapAlbedo`). Le couvert prend ainsi le relais des plantes qui disparaissent,
+jamais avant qu'elles ne s'affichent.
+
+Le bois fait exception : son couvert ferme le sol partout, jusqu'aux pieds de
+l'observateur, sauf quand celui-ci se tient en forêt (part de bois sous lui
+entre 0,3 et 0,7, fondue sur une seconde par le compositeur) et à moins de
+25–60 m du sol. Alors seulement la litière (`wood.albedo`, entre vert sombre
+et brun) reparaît autour de lui, sur la rampe ci-dessus. À l'automne, cette
+litière roussit (`wood.turned`) à la même part que le couvert : les essences
+qui virent, et elles seules.
+
+Le couvert du bois imite le bois du pays (`forestStand`, posé par
+`setCanopyStand`) : sa part fermée suit la densité moyenne des peuplements, sa
+couleur d'automne la part des essences qui virent (`turnedShare`), et son
+relèvement (ci-dessous) la hauteur moyenne de leur strate haute, rapportée à
+`wood.canopy.heightM` (17 m), jamais au-dessus. C'est une moyenne par pays, pas
+par maille : un bosquet bas dans un pays de grands bois garde un couvert trop
+haut. Le shader porte un vecteur par matière qui
+déclare un couvert, pas un par matière. C'est ce qui fait lire de loin un
+versant couvert comme une masse, et non comme un sol piqueté de points.
+
+La rampe du bois et son `lift` (rampe de distance seule) valent pour toutes ces matières : `lift`
+redresse la normale du couvert vers le zénith, en part — une masse de
+feuillages s'éclaire comme eux, pas comme le versant qui la porte.
+
+Au-delà de `wood.canopy.riseNearM`–`riseFarM` (260–560 m), une matière qui
+déclare `riseM` relève son couvert (`terrain/canopyRise.js`) : le sol monte de
+`riseM`, bosselé en chou-fleur de `lumpM` par touffes de `lumpCellM`, et les
+arbres posés sur cette matière montent avec lui, plantés de `sinkM` sous la
+surface. Les troncs et les trouées se noient, les houppes émergent partout de
+la même hauteur, et les bosses se lisent par leurs facettes. Seul le bois le
+porte : sur un maquis, les buissons de deux mètres y disparaîtraient. La
+hauteur n'existe que dans les shaders — elle dépend de la caméra — et aucune
+altitude lue par le CPU ne la connaît.
 
 ## Ce qui n'est pas lu, et ce que ça donne à l'écran
 

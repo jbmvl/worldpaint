@@ -2,7 +2,9 @@
  * caneBrakes — la canne de Provence (Arundo donax) : des massifs de touffes de
  * 3 à 4 m le long des fossés, des cours d'eau et des routes de plaine du Midi.
  * Présence par matrice (`CANE_BRAKE_SHARES`), zéro ailleurs ; des tronçons
- * (`caneBrakeRuns`), jamais une haie continue.
+ * (`caneBrakeRuns`), jamais une haie continue. Tout se tire par maille du sol,
+ * jamais au début d'une chaîne ou d'un trait : la même route garde ses massifs
+ * d'une reconstruction à l'autre.
  *
  * Un massif est fait de touffes (`caneClump`), pas d'un balayage : c'est le
  * jour entre les tiges qui fait la canne, et un volume plein se lisait comme un
@@ -15,7 +17,7 @@
  * de l'ordre des tuiles.
  */
 
-import { randomAt } from '../../core/groundSeed.js';
+import { cellRandomAt } from '../../core/groundSeed.js';
 import { lngToTileX, latToTileY } from '../../core/tileMath.js';
 import { WATERWAY_SOURCE_LAYER } from '../../terrain/groundClassMap.js';
 import { resamplePath } from '../ribbonGeometry.js';
@@ -31,20 +33,32 @@ export const CANE_ROAD_STEEPNESS_MAX = 0.1;
 const CANE_BANK_M = 1.2;
 /** Écart entre la rive d'une chaussée et l'axe du massif, en mètres. */
 const CANE_VERGE_M = 2.6;
+/** Maille du sol qui décide si un bord de route ou une berge porte la canne, et de quel côté de la route. */
+const CANE_PRESENCE_CELL_M = 240;
 
 /**
- * Massifs le long d'une portion de route hors agglomération, du côté que
- * `freeSide` laisse libre (1, -1, ou 0 si aucun). Rangés dans `clumps`.
+ * Massifs le long d'une portion de route hors agglomération. Le côté et la
+ * présence se tirent par maille du sol (`CANE_PRESENCE_CELL_M`) : rien ne
+ * dépend de la chaîne, que le réseau chargé recoud autrement d'une fois sur
+ * l'autre. Un côté déjà pris (`taken` : haie, haie basse, muret) n'en porte
+ * pas. `startDistance` : l'abscisse stable du point 0 de `path`.
  */
-export function appendRoadsideCane(layer, clumps, { path, halfWidth, side, profile, inTown, freeSide, segment }) {
-  if (inTown || !freeSide || profile === 'express' || profile === 'cycleway' || profile === 'path') return;
+export function appendRoadsideCane(layer, clumps, { path, halfWidth, profile, inTown, taken, startDistance = 0, segment }) {
+  if (inTown || profile === 'express' || profile === 'cycleway' || profile === 'path') return;
+  const share = caneBrakeShareFor(layer.region?.matrix, 'road');
+  if (share <= 0) return;
   const { frame } = layer.bubble;
-  if (randomAt(frame, side.x, side.z, 97) >= caneBrakeShareFor(layer.region?.matrix, 'road')) return;
-  const offset = freeSide * (halfWidth + CANE_VERGE_M);
-  for (const run of caneBrakeRuns(frame, path, 1)) {
-    const mid = run[run.length >> 1];
-    if (layer._steepnessAt(mid.x, mid.z) > CANE_ROAD_STEEPNESS_MAX) continue;
-    for (const clump of caneClumpsAlong(frame, run, offset)) clumps.push({ ...clump, own: segment });
+  const sideAt = (p) => (cellRandomAt(frame, p.x, p.z, CANE_PRESENCE_CELL_M, 101) < 0.5 ? 1 : -1);
+  for (const bank of [1, -1]) {
+    if (taken.includes(bank)) continue;
+    const accept = (p) =>
+      sideAt(p) === bank &&
+      cellRandomAt(frame, p.x, p.z, CANE_PRESENCE_CELL_M, 97) < share &&
+      layer._steepnessAt(p.x, p.z) <= CANE_ROAD_STEEPNESS_MAX;
+    const offset = bank * (halfWidth + CANE_VERGE_M);
+    for (const run of caneBrakeRuns(frame, path, 1, { accept })) {
+      for (const clump of caneClumpsAlong(frame, run, offset, undefined, { startDistance })) clumps.push({ ...clump, own: segment });
+    }
   }
 }
 
@@ -70,13 +84,13 @@ export function collectWaterwayCanes(layer, context, builtUp) {
       if (!Array.isArray(line) || line.length < 2) continue;
       const path = resamplePath(toLocal(line), BOUNDARY_SAMPLE_M);
       if (path.length < 2) continue;
-      // Une berge ou les deux, selon un tirage pris au début du trait.
+      // Une berge ou les deux, chacune tirée par maille du sol.
       for (const bank of [1, -1]) {
-        if (randomAt(frame, path[0].x, path[0].z, bank > 0 ? 213 : 217) >= share) continue;
-        for (const run of caneBrakeRuns(frame, path, bank > 0 ? 3 : 5)) {
-          const mid = run[run.length >> 1];
-          if (Math.hypot(mid.x - here.x, mid.z - here.z) > FURNITURE_RADIUS_M) continue;
-          if (pointInAreas(builtUp, mid.x, mid.z)) continue;
+        const accept = (p) =>
+          cellRandomAt(frame, p.x, p.z, CANE_PRESENCE_CELL_M, bank > 0 ? 213 : 217) < share &&
+          Math.hypot(p.x - here.x, p.z - here.z) <= FURNITURE_RADIUS_M &&
+          !pointInAreas(builtUp, p.x, p.z);
+        for (const run of caneBrakeRuns(frame, path, bank > 0 ? 3 : 5, { accept })) {
           context.caneClumps.push(...caneClumpsAlong(frame, run, bank * (halfWidth + CANE_BANK_M)));
         }
       }

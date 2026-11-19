@@ -79,6 +79,8 @@ export const FURNITURE_LIMITS = {
   points: 1100,
   farmBuildings: 32,
   landmarks: 12,
+  // Machines de tous les parcs éoliens de la bulle (`buildWindFarms`).
+  windTurbines: 16,
   // Un feu tricolore ne se voit qu'aux carrefours d'une agglomération, et une
   // agglomération traversée n'en compte pas vingt-quatre. Le plafond précédent
   // ne plafonnait rien : c'est la règle de détection qui en posait trop.
@@ -90,6 +92,9 @@ export const FURNITURE_LIMITS = {
   // riche, jamais atteint en pratique sur le reste.
   biomeDebris: 60,
   vineRows: 90,
+  // Arbres de verger (`parcels.js`), posés des plus proches aux plus lointains
+  // sur `ORCHARD_RADIUS_M` ; garde-fou, qu'un pays de vergers n'atteint pas.
+  orchardTrees: 40000,
   /**
    * Bêtes posées sur toute la bulle. Plus haut que ce que `faunaLayer` anime
    * (`FAUNA_ANIMATED_MAX`), et c'est voulu : la couche garde les plus proches
@@ -102,6 +107,13 @@ export const FURNITURE_LIMITS = {
   // petite ville de plusieurs centaines de maisons ne doit pas à elle seule
   // remplir le budget `fauna` et évincer le bétail des prés voisins.
   pets: 30,
+  // Chiens et chats des parcs et placettes inventés (`townPlots.js`), même raison.
+  plotPets: 16,
+  // Piazzas, parcs et placettes inventés (`townPlots.js`), les plus proches d'abord.
+  townPlots: 60,
+  // Recoins (`townPlots.js`) : un bac et un banc, comptés à part pour ne pas
+  // évincer les places plus lointaines.
+  townNooks: 60,
   // Antennes de sommet : posées sur les vrais sommets relevés dans les
   // tuiles (`mountain_peak`), donc bornées par leur rareté propre — la bulle
   // n'en contient jamais des dizaines.
@@ -118,6 +130,10 @@ export const FURNITURE_LIMITS = {
   // Touffes de canne de Provence (`caneBrakes.js`), posées des plus proches
   // aux plus lointaines.
   caneClumps: 1500,
+  // Plantes naturalisées (`biomeDebris.js`), semées sur la même grille.
+  naturalized: 60,
+  // Les mêmes au bord des routes (`roadsideWild.js`), les plus proches d'abord.
+  roadsideWild: 200,
   // Repères urbains posés sur une emprise landuse (cimetière, zone
   // industrielle, stade, foire) : un par polygone, donc rarement nombreux.
   urbanLandmarks: 14,
@@ -128,8 +144,14 @@ export const FURNITURE_LIMITS = {
   vehicles: 40,
 };
 
+/**
+ * Formes que seuls quelques pays posent : leur géométrie n'est construite
+ * qu'au premier pied, pour que les autres lieux n'en portent pas le poids.
+ */
+export const ON_DEMAND_ITEMS = new Set(['pricklyPear', 'treeSpurge', 'agave', 'agaveFlowering']);
+
 /** Formes posées à même un champ, qui suivent le grain low poly du sol (`createFurnitureGroundedMaterial`). */
-export const GROUND_GRAIN_ITEMS = new Set(['pumpkin']);
+export const GROUND_GRAIN_ITEMS = new Set(['pumpkin', 'pricklyPear', 'treeSpurge', 'agave', 'agaveFlowering']);
 
 /** Formes ponctuelles du catalogue, dans l'ordre où on les instancie. */
 export const POINT_ITEMS = [
@@ -153,6 +175,7 @@ export const POINT_ITEMS = [
   'fountain',
   'fountainWallace',
   'bench',
+  'flowerPlanter',
   'lavoir',
   'hayBaleRound',
   'hayBaleSquare',
@@ -180,6 +203,10 @@ export const POINT_ITEMS = [
   'stump',
   'reedClump',
   'caneClump',
+  'pricklyPear',
+  'treeSpurge',
+  'agave',
+  'agaveFlowering',
   'driftwood',
   'monument',
   'castle',
@@ -288,4 +315,21 @@ export const BIOME_DEBRIS = {
       { item: 'rockSmall', share: 0.5, scale: [0.55, 1.0] },
     ],
   },
+};
+
+/**
+ * Semis des plantes naturalisées (`naturalized` du dossier de région), par
+ * forme : densité à l'hectare sur la matière de la matrice, pieds par
+ * kilomètre de route (`roadPerKm`, les deux bas-côtés, `roadsideWild.js`), et
+ * fourchette d'échelle, tirée par `naturalizedScale` : beaucoup de jeunes
+ * pieds, quelques vieux très gros.
+ */
+export const NATURALIZED_SOWING = {
+  // Figuier de Barbarie : quelques pieds épars sur la pâture, pas un verger.
+  pricklyPear: { perHa: 0.3, roadPerKm: 5, scale: [0.4, 3.2] },
+  // Euphorbe arborescente : le buisson le plus fréquent des talus.
+  treeSpurge: { perHa: 0.6, roadPerKm: 3, scale: [0.4, 1.9] },
+  // Agave : une rosette de loin en loin, une sur huit en fleur.
+  agave: { perHa: 0.21, roadPerKm: 2.5, scale: [0.4, 1.7] },
+  agaveFlowering: { perHa: 0.03, roadPerKm: 0.35, scale: [0.85, 1.15] },
 };

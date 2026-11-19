@@ -204,6 +204,7 @@ export const SURFACE_KINDS = [
   // Les couvertures végétales.
   'heath',
   'scrub',
+  'maquis',
   'alpine',
   'wetland',
   // Les sols où l'eau affleure, entre le marais et le minéral qu'ils côtoient.
@@ -246,7 +247,7 @@ export const SURFACE_ID_STEP = 8;
  * distinguer un texel peint d'un texel inventé : **le canevas 2D lisse le bord
  * de ses tracés, et rien ne le désactive**. Un pixel de bord porte donc
  * `alpha x A + (1 - alpha) x B` — le mélange de deux identifiants voisins, relu
- * par `surfaceFromId` comme un **troisième**. Entre le bois (4) et l'eau (17),
+ * par `surfaceFromId` comme un **troisième**. Entre le bois (4) et l'eau (18),
  * c'est-à-dire tout le long de chaque cours d'eau, quatre-vingt-dix pour cent
  * de la rampe tombe sur une matière qui n'a jamais été peinte là : du sable,
  * de la roche, du trottoir, une lande. C'est ce qui semait des taches claires
@@ -260,8 +261,8 @@ export const SURFACE_ID_STEP = 8;
  * n'est aligné**. Pour qu'un pixel de bord se fasse passer pour la matière C,
  * il faudrait que son rouge tombe sur celui de C *et* que son bleu tombe en
  * même temps sur la signature de C — or le bleu se mélange linéairement, et la
- * table est faite pour qu'il rate. L'écart minimal mesuré est de 7, très
- * au-dessus de l'arrondi du canevas ; un test le vérifie en balayant toutes les
+ * table est faite pour qu'il rate. L'écart minimal mesuré est de 4, au-dessus
+ * de l'arrondi du canevas ; un test le vérifie en balayant toutes les
  * couvertures possibles de toutes les paires.
  *
  * D'où les valeurs, qui n'ont aucun sens à l'unité : elles ont été cherchées
@@ -273,7 +274,7 @@ export const SURFACE_ID_STEP = 8;
  * Indexée par l'identifiant lui-même, fond compris.
  */
 export const SURFACE_SIGNATURES = [
-  0, 157, 181, 240, 110, 31, 197, 255, 11, 69, 250, 26, 192, 138, 2, 211, 158, 80,
+  0, 60, 206, 20, 111, 226, 247, 125, 210, 42, 244, 132, 224, 3, 41, 253, 33, 196, 61,
 ];
 
 /** Signature d'un identifiant de matière. Fonction pure. */
@@ -299,7 +300,7 @@ export const PAVEMENT_ID = SURFACE_KINDS.indexOf('pavement') + 1;
  * ensuite de quelle taille et de quelle teinte. Ce qui n'est pas là ne porte
  * rien : ni le minéral, ni la vasière, ni la glace, ni la dalle, ni l'eau.
  */
-export const VEGETAL_SURFACES = new Set(['grass', 'heath', 'scrub', 'alpine', 'wetland', 'saltmarsh']);
+export const VEGETAL_SURFACES = new Set(['grass', 'heath', 'scrub', 'maquis', 'alpine', 'wetland', 'saltmarsh']);
 
 /** Identifiant d'une matière, ou 0 si on ne la connaît pas. Fonction pure. */
 export function surfaceId(kind) {

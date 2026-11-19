@@ -1,0 +1,18 @@
+{
+  "name": "sicilia-interna-bourg",
+  "label": "sicilia-interna-bourg",
+  "lng": 14.37218,
+  "lat": 37.38255,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "zoom": 13,
+    "encoding": "terrarium",
+    "extension": "webp",
+    "source": "tiles.mapterhorn.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  }
+}

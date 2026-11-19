@@ -39,7 +39,7 @@ import { pointInAreas } from './settlement.js';
 import { clipPolygonOutsideCorridor } from './roadCorridor.js';
 import { Kit } from './furnitureKit.js';
 import { FLOODLIT_KINDS, createFloodlights, installFloodlight, aimFloodlights, setFloodlightNight, markFloodlit } from '../materials/landmarkFloodlight.js';
-import { appendChurchWindows, castleTowers, appendRetailSign } from './buildingCharacterGeometry.js';
+import { appendChurchWindows, castleTowers, appendBattlements, appendRetailSign } from './buildingCharacterGeometry.js';
 import { isAncientName, loneRuinGabarit, ruinFormByName, ruinFormFor, ruinGabaritIn, ruinKit } from './ruinGeometry.js';
 import { defaultTheme } from '../themes/default.js';
 import { LabelAtlas, pushLabelQuad, labelFontPxForCellHeight, LABEL_PX_PER_M } from '../materials/labelAtlas.js';
@@ -371,29 +371,31 @@ export function* dropTwinFootprintsSteps(candidates, cellM = 25) {
  */
 const LINEAR_PERSONALITIES = new WeakMap();
 
-const LINEAR_BELFRIES = new WeakMap();
+const LINEAR_REGIONAL = new WeakMap();
+
+/** La surcharge du pays pour `kind` : le clocher (`region.belfry`), le château et l'enceinte (`region.fortress`). */
+function regionalOverride(kind, region, theme) {
+  if (!region) return null;
+  if (kind === 'church') return theme.belfries?.[region.belfry] || null;
+  if (kind === 'castle' || kind === 'rampart') return theme.fortresses?.[region.fortress]?.[kind] || null;
+  return null;
+}
 
 /**
- * Comme `personalityLookFor`, l'église prenant le clocher du pays
- * (`region.belfry`, clé de `theme.belfries`) ; tout le reste est inchangé.
+ * Comme `personalityLookFor`, le pays surchargeant l'église, le château et
+ * l'enceinte (`regionalOverride`) ; tout le reste est inchangé.
  */
-export function regionalLookFor(kind, personalities = defaultTheme.personalities, belfry = null, belfries = defaultTheme.belfries) {
-  const base = personalityLookFor(kind, personalities);
-  if (kind !== 'church' || !base || !belfry || !belfries?.[belfry]) return base;
-  // Mémorisé par tranche de clochers et par mot : `base` vient lui-même d'une
-  // table figée de `personalityLookFor`.
-  let table = LINEAR_BELFRIES.get(belfries);
-  if (!table) LINEAR_BELFRIES.set(belfries, (table = new Map()));
-  let look = table.get(belfry);
-  if (!look || look.base !== base) {
-    const over = linearLook(belfries[belfry]);
-    look = {
-      base,
-      value: { ...base, wall: over.wall ?? base.wall, roof: over.roof ?? base.roof, spire: over.spire ?? base.spire, crossingDome: over.crossingDome },
-    };
-    table.set(belfry, look);
+export function regionalLookFor(kind, region = null, theme = defaultTheme) {
+  const base = personalityLookFor(kind, theme.personalities);
+  const over = base && regionalOverride(kind, region, theme);
+  if (!over) return base;
+  // Mémorisé par surcharge : la tranche du thème est figée.
+  let memo = LINEAR_REGIONAL.get(over);
+  if (!memo || memo.personalities !== theme.personalities) {
+    memo = { personalities: theme.personalities, value: linearLook({ ...theme.personalities[kind], ...over }) };
+    LINEAR_REGIONAL.set(over, memo);
   }
-  return look.value;
+  return memo.value;
 }
 
 function linearLook(look) {
@@ -405,9 +407,15 @@ function linearLook(look) {
     windows: look.windows ?? null,
     sign: look.sign || null,
     towers: look.towers || null,
+    crown: look.crown ? { ...look.crown, shade: srgb(look.crown.shade) } : null,
     frontWithoutStreet: look.frontWithoutStreet || false,
     front: look.front ? srgb(look.front) : null,
-    spire: look.spire ? { wall: srgb(look.spire.wall), roof: srgb(look.spire.roof), form: look.spire.form || 'spire' } : null,
+    spire: look.spire
+      ? {
+        wall: srgb(look.spire.wall), roof: srgb(look.spire.roof), form: look.spire.form || 'spire',
+        crown: look.spire.crown ? { ...look.spire.crown, shade: srgb(look.spire.crown.shade) } : null,
+      }
+      : null,
     dome: look.dome ? srgb(look.dome) : null,
     minaret: look.minaret ? srgb(look.minaret) : null,
     crossingDome: look.crossingDome
@@ -744,8 +752,45 @@ export const TOWER_SIDE_MAX_M = 9;
 export const TOWER_RISE_SHARE = 0.9;
 export const TOWER_RISE_MIN_M = 6;
 export const TOWER_RISE_MAX_M = 20;
+/** Fût au moins quatre fois plus haut que large : en deçà, la tour se lit comme un donjon. */
+export const TOWER_SLENDERNESS = 4;
 
-/** Côté de la tour, jamais plus large que le bâtiment qui la porte. Pure. */
+/**
+ * Coupole sur le clocher : à la place du toit bas, le fût porte une corniche,
+ * un tambour rond, une calotte arrondie (`DOME_RINGS` anneaux) et un lanternon.
+ * La coupole repose sur la tour, jamais sur le toit de la nef. Pure ; écrit
+ * dans `kit`.
+ */
+export function appendDomeTop(kit, dome, side, height, yaw) {
+  const radius = side * 0.4;
+  const cornice = side * 0.12;
+  kit.box({ width: side + cornice * 2, height: side * 0.12, depth: side + cornice * 2, y: height, color: dome.drum, yaw });
+  const drum = height + side * 0.12;
+  const drumHeight = radius * 0.6;
+  kit.cylinder({ radiusBottom: radius, radiusTop: radius, height: drumHeight, radial: 16, y: drum, color: dome.drum });
+  kit.cylinder({ radiusBottom: radius * 1.1, radiusTop: radius * 1.1, height: radius * 0.1, radial: 16, y: drum + drumHeight, color: dome.drum });
+  const spring = drum + drumHeight + radius * 0.1;
+  const rise = radius * 0.9;
+  const span = radius * 1.04;
+  for (let i = 0; i < DOME_RINGS; i++) {
+    const a0 = (i / DOME_RINGS) * (Math.PI / 2);
+    const a1 = ((i + 1) / DOME_RINGS) * (Math.PI / 2);
+    kit.cylinder({
+      radiusBottom: Math.cos(a0) * span,
+      radiusTop: i === DOME_RINGS - 1 ? 0 : Math.cos(a1) * span,
+      height: (Math.sin(a1) - Math.sin(a0)) * rise,
+      radial: 16,
+      y: spring + Math.sin(a0) * rise,
+      cap: false,
+      color: dome.color,
+    });
+  }
+  // Lanternon : il fait lire la coupole d'église plutôt que celle d'une mosquée.
+  const lantern = spring + rise - 0.1;
+  kit.cylinder({ radiusBottom: radius * 0.2, radiusTop: radius * 0.2, height: radius * 0.4, radial: 8, y: lantern, color: dome.drum });
+  kit.cylinder({ radiusBottom: radius * 0.27, radiusTop: 0, height: radius * 0.25, radial: 8, y: lantern + radius * 0.4, cap: false, color: dome.color });
+}
+
 /**
  * Haut d'un campanile, ajouté au fût de `side` × `height` : une corniche qui
  * déborde, puis un toit en pavillon bas. Le campanile se lit à sa corniche et à
@@ -761,9 +806,13 @@ export function appendCampanileTop(kit, side, height, yaw, tower, x = 0, z = 0) 
   for (let i = 0; i < rim.length; i++) kit.tri(rim[(i + 1) % rim.length], rim[i], tip, tower.roof);
 }
 
-export function towerSide(box) {
+/**
+ * Côté de la tour, jamais plus large que le bâtiment qui la porte, ni que
+ * `shaft` (hauteur du fût, si connue) ne le permet. Pure.
+ */
+export function towerSide(box, shaft = Infinity) {
   const side = Math.min(Math.max(box.short * TOWER_SIDE_SHARE, TOWER_SIDE_MIN_M), TOWER_SIDE_MAX_M);
-  return Math.min(side, box.short * 1.8);
+  return Math.min(side, box.short * 1.8, Math.max(TOWER_SIDE_MIN_M, shaft / TOWER_SLENDERNESS));
 }
 
 /** Ce que la tour dépasse le faîtage, en mètres. Pure. */
@@ -782,6 +831,9 @@ export function towerFoot(box, side) {
   const reach = Math.max(0, box.long - side * 0.75);
   return { x: box.cx + Math.cos(box.angle) * reach, z: box.cz + Math.sin(box.angle) * reach };
 }
+
+/** Anneaux de la calotte d'une coupole de clocher. */
+const DOME_RINGS = 5;
 
 /** Part des maisons à toit pentu qui reçoivent une cheminée de toit. */
 export const CHIMNEY_SHARE = 0.22;
@@ -2284,7 +2336,7 @@ export class BuildingLayer {
     const personality = (!kind || kind === 'castle') && isWallFootprint(footprint, box) ? 'rampart' : kind;
     const personalityName = assigned?.name || properties.name || null;
     const personalityClass = assigned?.class || properties.class || properties.shop || null;
-    const look = regionalLookFor(personality, this.theme.personalities, this.region?.belfry, this.theme.belfries);
+    const look = regionalLookFor(personality, this.region, this.theme);
     // Matière sous le bâtiment : `pavement` en ville, `bare` en zone d'activité.
     const surface = this._surfaceAt?.(box?.cx ?? footprint[0].x, box?.cz ?? footprint[0].z) ?? null;
     const inTown = surface === 'pavement';
@@ -2570,8 +2622,13 @@ export class BuildingLayer {
       if (look.towers) {
         for (const tower of castleTowers(footprint, box, base, top, look)) this._pushKitAt(walls, tower.kit, tower.x, base, tower.z);
       }
-      if (look.spire) this._appendSteeple(walls, look.spire, box, base, top);
-      if (look.crossingDome && box.long * 2 >= look.crossingDome.minLengthM) this._appendCrossingDome(walls, look.crossingDome, box, top);
+      if (look.crown && shape === 'flat') {
+        const kit = new Kit();
+        appendBattlements(kit, footprint, eaves, look.crown, look.wall);
+        this._pushKitAt(walls, kit, 0, 0, 0);
+      }
+      const dome = look.crossingDome && box.long * 2 >= look.crossingDome.minLengthM ? look.crossingDome : null;
+      if (look.spire) this._appendSteeple(walls, look.spire, box, base, top, dome);
       if (look.dome || look.minaret) this._appendDomeAndMinaret(walls, look, box, base, eaves);
     }
 
@@ -2601,9 +2658,9 @@ export class BuildingLayer {
   }
 
   /** Tour orientée sur le grand axe, dimensionnée sur l’empreinte et décalée vers son extrémité. */
-  _appendSteeple(walls, spire, box, base, top) {
-    const side = towerSide(box);
+  _appendSteeple(walls, spire, box, base, top, dome = null) {
     const height = Math.max(6, top - base) + towerRise(box);
+    const side = towerSide(box, height);
     const yaw = -box.angle;
 
     const kit = new Kit();
@@ -2614,7 +2671,13 @@ export class BuildingLayer {
       const angle = i * Math.PI / 2;
       return Kit.transform([Math.cos(angle) * side * 0.78, height, Math.sin(angle) * side * 0.78], { yaw: yaw + Math.PI / 4 });
     });
-    if (spire.form === 'campanile') {
+    if (spire.form === 'crenellated') {
+      const ux = Math.cos(box.angle) * side / 2, uz = Math.sin(box.angle) * side / 2;
+      const ring = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => ({ x: a * ux - b * uz, z: a * uz + b * ux }));
+      appendBattlements(kit, ring, height, spire.crown, spire.wall);
+    } else if (spire.form === 'campanile' && dome) {
+      appendDomeTop(kit, dome, side, height, yaw);
+    } else if (spire.form === 'campanile') {
       appendCampanileTop(kit, side, height, yaw, spire);
     } else {
       const tip = [0, height + side * 1.5, 0];
@@ -2624,23 +2687,6 @@ export class BuildingLayer {
 
     const { x, z } = towerFoot(box, side);
     this._pushKitAt(walls, kit, x, base, z);
-  }
-
-  /**
-   * Coupole de croisée : un tambour sur le faîtage, au milieu de la nef, et la
-   * calotte en deux tronçons comme celle de `_appendDomeAndMinaret`. Le tambour
-   * part un peu sous le faîtage pour ne jamais flotter sur un toit bas.
-   */
-  _appendCrossingDome(walls, dome, box, top) {
-    const radius = Math.max(2, Math.min(box.short * 0.62, 7));
-    const kit = new Kit();
-    const drum = radius * 0.7;
-    kit.cylinder({ radiusBottom: radius, radiusTop: radius, height: drum + 1, radial: 12, y: -1, color: dome.drum });
-    kit.cylinder({ radiusBottom: radius * 1.06, radiusTop: radius * 0.78, height: radius * 0.5, radial: 12, y: drum, color: dome.color });
-    kit.cylinder({ radiusBottom: radius * 0.78, radiusTop: 0, height: radius * 0.72, radial: 12, y: drum + radius * 0.5, color: dome.color });
-    // Lanternon : il fait lire la coupole d'église plutôt que celle d'une mosquée.
-    kit.cylinder({ radiusBottom: radius * 0.16, radiusTop: radius * 0.16, height: radius * 0.4, radial: 6, y: drum + radius * 1.18, color: dome.drum });
-    this._pushKitAt(walls, kit, box.cx, top, box.cz);
   }
 
   /**

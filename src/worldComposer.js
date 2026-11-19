@@ -84,7 +84,7 @@ import { GardenLayer } from './layers/gardenLayer.js';
 import { StreetLayer } from './layers/streetLayer.js';
 import { FabricIndex, readSettlement, wallLengthsByDistance } from './layers/settlement.js';
 import { seaDistanceAt } from './layers/coast.js';
-import { VegetationLayer } from './layers/vegetationLayer.js';
+import { VegetationLayer, forestComposition, forestStand, turnedShare } from './layers/vegetationLayer.js';
 import { CropLayer } from './layers/cropLayer.js';
 import { createSightline, setSightline } from './materials/sightlineClearing.js';
 import { FurnitureLayer } from './layers/furnitureLayer.js';
@@ -101,6 +101,13 @@ import { planFaunaCrossing } from './layers/faunaCrossing.js';
 import { planCheer } from './layers/spectatorPlacement.js';
 import { defaultTheme } from './themes/default.js';
 import { hash32 } from './core/groundSeed.js';
+
+/** Part de bois sous l'observateur (min, max) qui le fait entrer en forêt. */
+const CANOPY_INSIDE_WOOD = [0.3, 0.7];
+/** Temps de fondu, en secondes, d'un passage de lisière. */
+const CANOPY_INSIDE_EASE_S = 1;
+/** Pas d'une image au-delà duquel l'observateur a bondi, en mètres. */
+const CANOPY_INSIDE_LEAP_M = 30;
 
 /**
  * Crédit des données affichées. Le décor vient d'OpenStreetMap via les tuiles
@@ -297,6 +304,8 @@ export class WorldComposer {
       theme,
       level: detail.level,
     });
+    // La couleur du couvert prend le relais du sous-étage là où il s'éteint.
+    bubble.materials.setCanopyRange(...this.vegetation.understoryRangeM);
 
     // Les cultures sèment sur la même carte que celle qui colore le sol : dépendent de `groundClass`.
     this.crops = new CropLayer({
@@ -844,6 +853,7 @@ export class WorldComposer {
       //    la carte du sol et un changement de région font tout replanter.
       this.vegetation.sync({ replant: classArrived || regionChanged, resettle: true });
       this.vegetation.setPlants('plantations-mobilier', this.furniture.trees);
+      this.vegetation.setPlants('vergers-mobilier', this.furniture.orchardTrees, { thinned: true });
       this.vegetation.setPlants('plantations-jardins', this.gardens.trees);
       this.vegetation.update(here.x, here.z);
 
@@ -900,6 +910,9 @@ export class WorldComposer {
     this.groundClass.setRegion(region);
     this.furniture.setRegion(region);
     this.bubble.materials.setRegion(region);
+    // Le couvert vu de loin imite le bois du pays : sa couleur, sa hauteur, sa densité.
+    const forest = forestComposition(region?.trees, this.theme);
+    this.bubble.materials.setCanopyStand({ turned: turnedShare(forest, this.theme.trees), ...forestStand(forest) });
     this.far?.setColor(this.bubble.materials.gapAlbedo);
     this.crops.setRegion(region);
   }
@@ -1064,6 +1077,7 @@ export class WorldComposer {
     this.volcanoes?.advance(delta);
     // Les rides de l'eau vivent dans le shader de terrain, avec elle.
     this.bubble.materials.advanceWater(delta);
+    this._advanceCanopyInside(delta, at);
     this.vegetation.advance(delta);
     if (!this._building) this.vegetation.update(at.x, at.z);
     this.crops.advance(delta);
@@ -1078,13 +1092,31 @@ export class WorldComposer {
     this.spectators.advance(delta, at, this.bubble.frame);
     this.trains.advance(delta, at);
     this.bridges.lighting?.update(at);
-    // Ce que le mobilier a d'animé : les feux, et les deux lampes qui suivent l'observateur.
     this.furniture.advanceSignals(delta);
-    this.furniture.advanceLamps(at);
     this.furniture.advanceRotor(delta);
     this.furniture.advanceLighthouses(delta);
     this.furniture.advanceObstacleLights(delta);
     this.furniture.advanceGhosts(delta);
+  }
+
+  /**
+   * Part de l'observateur dans un bois, fondue sur une seconde environ pour
+   * que franchir une lisière ne bascule pas tout le sol — sauf d'un bond, où
+   * il n'y a rien à fondre. Le shader y ajoute la hauteur de l'œil au-dessus
+   * de `at.y`, le sol sous lui.
+   */
+  _advanceCanopyInside(delta, at) {
+    let target = 0;
+    if (this.groundClass.ready) {
+      const wood = this.groundClass.woodAt(at.x, at.z);
+      target = Math.min(1, Math.max(0, (wood - CANOPY_INSIDE_WOOD[0]) / (CANOPY_INSIDE_WOOD[1] - CANOPY_INSIDE_WOOD[0])));
+    }
+    const last = this._canopyInsideAt;
+    const leap = !last || Math.hypot(at.x - last.x, at.z - last.z) > CANOPY_INSIDE_LEAP_M;
+    this._canopyInsideAt = { x: at.x, z: at.z };
+    const current = leap ? target : this._canopyInside;
+    this._canopyInside = current + (target - current) * Math.min(1, (delta || 0) / CANOPY_INSIDE_EASE_S);
+    this.bubble.materials.setCanopyInside(this._canopyInside, at.y);
   }
 
   /**

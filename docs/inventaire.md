@@ -216,8 +216,8 @@ Deux sous-classes court-circuitent le tirage : `vineyard` donne une vigne,
 `orchard`/`plant_nursery` un verger. Ces deux-là, et la lavande avec elles,
 sont semées **en rangs** (`ROW_CROPS`), les autres en vrac.
 
-Un champ s'arrête à l'emprise de la route, ou à la haie de bas-côté quand il y
-en a une : la bande entre chaussée et haie reste nue (`vergeStrips`, publiée par
+Un champ s'arrête à l'emprise de la route, ou à la haie ou au muret de bas-côté
+quand il y en a un : la bande entre chaussée et haie reste nue (`vergeStrips`, publiée par
 le mobilier).
 
 ---
@@ -342,7 +342,7 @@ se densifie sur les derniers mètres qui la bordent (`poolEdgeGain`).
 
 Sur le versant qu'une matrice sèche cède à sa matière de pente (voir
 `docs/surfaces.md`), le maquis ne sème que `theme.terrain.gapSteep.bushes`
-(0,35) : une herbe sèche piquetée, pas un fourré (`coverBushesAt`).
+(0,35) : en culture et pâture sèches, un sol de maquis olive piqueté d’arbustes, pas un fourré (`coverBushesAt`).
 
 Le sol entre les objets est la seule matière du terrain : aucun tapis de brins
 n'y est semé.
@@ -689,8 +689,9 @@ un tiers par rapport aux minimums réglementaires (un plan large paraît saturé
 | arbres de rue | major en agglomération | 11 m, des deux côtés, à 2,2 m de la rive, jamais à moins de 2,5 m d'une façade |
 | panneau | major 620 m, minor 900 m | — |
 | feu tricolore | major et minor, en agglomération | aux carrefours, sauf giratoire |
-| haie | minor, lane et track hors agglomération | continue, une portion sur deux en bocage, une sur dix en openfield et en pays de barrière de bois, jamais en pierre sèche ni sans clôture |
-| haie basse de bas-côté | toute route hors agglomération sauf voie rapide, piste cyclable et sentier | continue, d'un seul côté : 34 % des portions en bocage, 10 % en barrière de bois, 6 % en openfield, 5 % en pierre sèche, 0 sans clôture |
+| haie | minor, lane et track hors agglomération | continue, une portion sur deux en bocage, une sur dix en openfield et en pays de barrière de bois, jamais en openfield du Midi, en pierre sèche ni sans clôture |
+| haie basse de bas-côté | toute route hors agglomération sauf voie rapide, piste cyclable et sentier | continue, d'un seul côté : 34 % des portions en bocage, 10 % en barrière de bois, 6 % en openfield, 5 % en pierre sèche, 0 en openfield du Midi et sans clôture |
+| muret de pierre sèche | minor, lane et track hors agglomération | continu, chaque côté tiré à part, à 1,2 m de la rive, là où ne court pas déjà une haie : 55 % des côtés en pierre sèche, 20 % en openfield du Midi, 10 % sans clôture, jamais ailleurs |
 
 Le **lampadaire** posé dépend du lieu : le modèle courant partout, sauf à
 moins d'un kilomètre d'un lieu de culte relevé (`poi.class=place_of_worship`),
@@ -733,20 +734,52 @@ s'interrompent aux bouches des carrefours et devant une chaussée voisine.
 
 La **haie basse de bas-côté** (le talus enherbé) suit, comme la haie de bocage, le
 style de limite du pays (`BOUNDARY_MIXES[…].roadside`) : la parcelle et la route
-d'un même pays se closent de la même façon.
+d'un même pays se closent de la même façon. Le **muret de bord de route** aussi :
+en pays de pierre sèche, il tient la place de la haie de bocage, souvent des deux
+côtés d'un chemin, et s'interrompt aux carrefours et aux bois comme elle.
 
 La **canne de Provence** (Arundo donax, `furniture/caneBrakes.js`) borde les
 routes de campagne de terrain doux (pente moyenne ≤ 0,1 : pas un lacet à flanc
-de versant ; ni sentier, piste cyclable ou voie express), du côté que les haies
-laissent libre, et les berges des cours d'eau linéaires (rivière, ruisseau,
+de versant ; ni sentier, piste cyclable ou voie express), d'un côté tiré par
+maille du sol de 240 m — rien si une haie ou un muret y court déjà —, et les berges des cours d'eau linéaires (rivière, ruisseau,
 fossé, drain, intermittents compris). Le massif est un fourré de touffes
 instanciées (`caneClump` : douze tiges de 3 à 4 m, feuilles alternes
 retombantes vert-gris, pointes et plumets secs), deux ou trois rangées au pas
-de 1,5 m (`caneClumpsAlong`), en tronçons de 24 m dont quatre sur dix sont
-gardés (`caneBrakeRuns`). Touffes posées des plus proches aux plus lointaines,
+de 1,5 m (`caneClumpsAlong`), sur des mailles du sol de 24 m dont quatre sur
+dix sont gardées (`caneBrakeRuns`) ; aux bouts, sur 7 m, les touffes
+rapetissent jusqu'au tiers et s'éclaircissent. Tout se tire au sol, jamais au
+début d'une route ou d'un trait : le massif ne change pas d'une
+reconstruction à l'autre. Touffes posées des plus proches aux plus lointaines,
 plafond `caneClumps`. Présence par matrice (`CANE_BRAKE_SHARES`) : grande
 culture et pâture sèches, maquis, garrigue, terrasses, steppe (au bord de
-l'eau seulement), marais à peine ; aucune ailleurs.
+l'eau seulement), marais à peine ; aucune ailleurs. Cette part se tire par
+maille de 240 m.
+
+Les **plantes naturalisées** poussent éparses dans les pays qui les nomment
+dans `naturalized` : semées sur la grille de `biomeDebris.js`, sur la matière
+de la matrice (trou de la carte compris, `coverAt`) et sur celle qu'elle cède
+en pente, à la densité de `NATURALIZED_SOWING`, plafond `naturalized`. Les
+mêmes bordent les routes (`roadsideWild.js`) : un point par maille mondiale de
+10 m, retenu s'il tombe entre 1,2 et 4,5 m de la rive, à `roadPerKm` pieds par
+kilomètre (moitié en ville). Leur taille penche vers les jeunes pieds, avec
+quelques vieux très gros (`naturalizedScale`), hors haie et muret, à 1,5 m des façades, plafond
+`roadsideWild`, les plus proches d'abord. Elles
+suivent le grain low poly du sol comme la citrouille (`GROUND_GRAIN_ITEMS`), et
+leur géométrie n'est construite qu'au premier pied posé (`ON_DEMAND_ITEMS`).
+
+- le **figuier de Barbarie** (Opuntia, `pricklyPear`, 0,3 par hectare, 0,5 à
+  4 m, 5 par km de route ; toute la Sicile sous la montagne) : un dôme de raquettes ovales bombées nées les
+  unes sur le bord des autres, vert-de-gris, les basses plus jaunes, quelques
+  figues rouge sombre en haut ;
+- l'**euphorbe arborescente** (Euphorbia dendroides, `treeSpurge`, 0,6 par
+  hectare, 3 par km de route ; coteaux en terrasses de Sicile, Ligurie, Côte
+  sorrentine, Madère, promontoires calcaires et Iblei) :
+  un dôme plein vert-jaune, plus large que haut, sur trois tiges grises
+  courtes, bâti de masses à facettes comme les buissons ;
+- l'**agave** (Agave americana, `agave`, 0,21 par hectare et 2,5 par km
+  de route, et `agaveFlowering`, 0,03 et 0,35 : sa hampe de 6,5 m en candélabre
+  à grappes jaunes ; mêmes coteaux, côtes de Sicile, Alpujarra) : une rosette bleu-grise de feuilles larges en gouttière, deux
+  feuilles mortes couchées dessous.
 
 ---
 
@@ -763,6 +796,7 @@ pâturées :
 | --- | --- | --- |
 | bocage | haie 40 %, haie basse 22 %, rien 38 % | haie 20 %, barrière 38 %, barbelé 42 % |
 | openfield | **rien 82 %**, haie 10 % | barbelé 50 %, barrière 30 % |
+| dry_openfield | **rien 82 %**, mur de pierre sèche 18 % | barbelé 50 %, barrière 30 % |
 | drystone | **mur de pierre sèche 50 %**, rien 40 %, haie basse 10 % | mur 60 %, barbelé 25 % |
 | wood_fence | rien 75 %, haie basse 15 % | **barrière de bois 60 %**, barbelé 25 % |
 | none | rien 85 %, mur 15 % | rien 60 %, barbelé 25 %, mur 15 % |
@@ -788,6 +822,26 @@ lieu de limite. Le rocher et l'éboulis ne reçoivent rien.
 | arbres de parc | `grass` sous-classe `park` | une maille de 13 m sur 0,45 (≈ 27/ha), hors allées, eau, bois et bâtiments |
 | arbres de place | polygone `transportation` path/pedestrian | une maille de 15 m sur 0,4, un banc au pied de 35 % d'entre eux |
 | arbres de bourg | `landuse` d'habitation, sur sol `settled` (jamais sur le revêtement d'une ville) | une maille de 18 m sur 0,3 (≈ 9/ha), à 3 m au moins d'une façade |
+
+### Les vides de la ville
+
+Un terrain nu au milieu du bâti — ni bâtiment, ni rue, ni vert relevé — et une
+place piétonne relevée sont garnis par `furniture/townPlots.js`. Un point est
+semé par maille mondiale de 40 m, puis **recentré** dans son vide (poussé du
+côté où ses sondes vont le plus loin) avant qu'on mesure la place libre autour
+de lui : sans quoi seuls les vides où le tirage tombe par chance au milieu
+seraient garnis. Deux disques libres qui se recoupent sont le même vide.
+
+| Place libre | Sol | Ce qui y est posé |
+| --- | --- | --- |
+| 22 m et plus (16 m sur une place piétonne) | revêtu (`pavement`), ou place piétonne | **piazza**, une disposition sur quatre tirée par place : *anneau* (bancs tournés vers le centre à 7 m, bacs entre eux, arbres et lampadaires au pourtour), *mail* (allée de 10 m entre deux rangées d'arbres tous les 8 m, bancs tournés vers elle, lampadaires dans les rangées, un bac à chaque bout), *quinconce* (arbres en rangées décalées de 8 m, 10 au plus, milieu dégagé, un banc au pied d'un sur trois, lampadaires au pourtour), *croix* (deux allées croisées, un lampadaire au bout et un banc près du centre de chacune, un arbre et un bac par quart). Sauf le mail, le centre porte une fontaine (toujours sur une place relevée, 35 % ailleurs, un arbre sinon ; jamais si une fontaine ou un monument y est déjà). Lampadaires allumés la nuit |
+| 22 m et plus | habitat, ou rien de relevé | **parc** : arbres serrés, massifs, bacs, bancs tournés vers le milieu |
+| 10 à 22 m | tous | **placette** (55 % des vides) : un arbre, un ou deux bancs dos au tronc, un bac |
+| 6 à 10 m | tous | **recoin** (50 %) : un bac à fleurs, un banc dos à lui |
+
+Hors place piétonne, le vide doit être en ville : six bâtiments à 90 m, ou des
+rues sur trois côtés. Les places, parcs et placettes sont plafonnés à 60, les
+recoins à 60 à part, les plus proches d'abord.
 
 Le **troupeau** : la pente tranche d'abord (au-delà de 34 %, chèvre ou mouton),
 la matrice du pays déplace ensuite la bascule — 28 % d'ovins en bocage, 72 %
@@ -1267,6 +1321,11 @@ agrume ou pommier. Le pommier, qui sert aussi sans pays, porte des pommes
 facettées intégrées au prototype, sans objet ni instance par fruit. Les autres
 reprennent une silhouette existante (l'olivier, le feuillu bas, la boule du
 chêne vert pour l'agrume) : aucune saison de fructification n'est simulée.
+Les arbres de verger ont leur propre liste (`orchardTrees`), posée des plus
+proches aux plus lointains sur `ORCHARD_RADIUS_M`, et s'éclaircissent comme le
+sous-étage, plante par plante, entre 150 et 250 m de l'observateur. La culture
+d'une parcelle se lit en un point intérieur tiré de sa forme
+(`ringInteriorPoint`), jamais sous l'observateur.
 
 Les plantes restent en volume à toute distance. Les blocs éloignés emploient
 deux géométries simplifiées des mêmes lobes, au-delà de 150 et 280 m du point

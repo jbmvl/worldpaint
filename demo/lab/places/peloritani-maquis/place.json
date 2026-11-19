@@ -1,0 +1,18 @@
+{
+  "name": "peloritani-maquis",
+  "label": "peloritani-maquis",
+  "lng": 15.24896,
+  "lat": 37.97191,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "zoom": 13,
+    "encoding": "terrarium",
+    "extension": "webp",
+    "source": "tiles.mapterhorn.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  }
+}

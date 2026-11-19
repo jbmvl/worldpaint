@@ -5,6 +5,7 @@
 | `terrainBubble.js` | la bulle de terrain : maillage, anneaux, marche des falaises et déblai de la chaussée |
 | `farRelief.js` | le relief lointain : une nappe grossière d'une seule couleur (la mer exceptée) au-delà de la bulle, montée seulement là où le relief a de l'amplitude |
 | `terrainMaterial.js` | le shader du sol — il lit la carte des matières |
+| `canopyRise.js` | le couvert relevé au loin : la hauteur moutonneuse qu'un bois prend au-delà de quelques centaines de mètres, lue par le sol et par les arbres qui s'y plantent |
 | `lowPolyGrain.js` | le grain low poly géométrique du sol (bruit, fondu de distance, bosse le long de la normale) — câblé par matière dans `terrainMaterial.js`, réglages dans `SURFACE_LOOK` |
 | `transportEarthworks.js` | remblais doux et tranchées des franchissements, dans le terrain commun |
 | `roadCut.js` | l'entaille du terrain sous une chaussée, et son remblai en terre |

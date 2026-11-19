@@ -65,6 +65,6 @@ function render(){
  document.querySelector('#info').textContent=`Arbres — ${single?defaultTheme.trees.variants[state.variant].kind:'catalogue'} · ${layer.group.children.length} maillages`;
  return {state:{...state},meshes:layer.group.children.length,drawCalls:renderer.info.render.calls,triangles:renderer.info.render.triangles};
 }
-window.treesLab={set(options={}){Object.assign(state,options);return render()},layer,renderer};
+window.treesLab={set(options={}){Object.assign(state,options);return render()},layer,renderer,scene,camera};
 const query=new URLSearchParams(location.search);for(const key of ['variant','angle'])if(query.has(key))state[key]=Number(query.get(key));state.dense=query.has('dense');state.plantations=query.has('plantations');state.species=query.has('essences');render();window.treesLabReady=true;
 </script></body></html>

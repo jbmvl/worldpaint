@@ -128,12 +128,24 @@ absents, la palette décide (`layers/townStyle.js`) :
   retrait, mesurées sur des villages roumains, ou façades mitoyennes à
   l'alignement du trottoir, un jour de moins de 6 m entre deux voisines comblé
   (`INFILL_COMPACT`).
-- **`belfry`** — `spire` (défaut), `campanile` ou `dome` : le clocher des
-  églises du pays, que le thème dessine (`theme.belfries`). `dome` ajoute une
-  coupole sur tambour aux églises assez longues.
+- **`belfry`** — `spire` (défaut), `campanile`, `dome` ou `crenellated` : le
+  clocher des églises du pays, que le thème dessine (`theme.belfries`). `dome`
+  couronne d'une coupole sur tambour le clocher des églises assez longues ;
+  `crenellated` laisse la tour sans toit, sous les mâchicoulis et les merlons
+  du château `crenellated`.
+- **`fortress`** — `keep` (défaut) ou `crenellated` : le château et l'enceinte
+  du pays (`theme.fortresses`). `crenellated` ôte le toit du château, le
+  couronne de mâchicoulis et de merlons, et carre ses tours ; l'enceinte prend
+  la même pierre et ses merlons.
 - **`planted`** — les essences plantées en ville (rues, parcs, cours, places),
   dans le vocabulaire de `trees`, quand ce ne sont pas celles des bois. Un pays
   qui y nomme le palmier en borde son front de mer (`seafrontPalms`).
+- **`naturalized`** — ce qui pousse en sauvage sur la matrice sans être une
+  essence des bois : `prickly_pear` (figuier de Barbarie), `tree_spurge`
+  (euphorbe arborescente), `agave`. Semé épars sur la matière de la matrice et
+  sur celle qu'elle cède en pente (`biomeDebris.js`, densité
+  `NATURALIZED_SOWING`), et au bord des routes, en ville comme en campagne
+  (`roadsideWild.js`, `roadPerKm`), et seulement dans les pays qui le nomment.
 
 Rien d'autre. Pas d'altitude, pas d'humidité, pas de score : ce qui existe
 réellement à un endroit est relevé par le vectoriel, et une région qui le
@@ -170,15 +182,17 @@ moteur.
 | --- | --- | --- |
 | `TREE_SPECIES` | les essences | une entrée par mot : ses silhouettes, le peuplement de `FOREST_TYPES` qu'elle forme quand elle domine, et ses cotes une fois plantée (`planted`) |
 | `TOWN_PALETTES` | le bâti | une palette par clé : le pays nomme la sienne |
-| `SOIL_LOOK` | la matrice | une entrée par matrice : le lavage du sol ; `grassPatch`, les plaques d'une seconde couleur sur l'herbe (albédo absolu, force) ; `gapBushes` et `gapBush`, les arbustes semés dans le trou ; `scatteredTreesPerHa`, les arbres isolés du trou (`furniture/gapTrees.js`). Absent = aucun |
+| `SOIL_LOOK` | la matrice | une entrée par matrice : le lavage du sol ; `grassPatch`, les plaques d'une seconde couleur sur l'herbe (albédo absolu, force) ; `gapBushes` et `gapBush`, les arbustes semés dans le trou ; `scatteredTreesPerHa`, les arbres isolés du trou (`furniture/gapTrees.js`) ; `coverBush`, le buisson que le pays sème sur une matière relevée (`{ scrub: 'palmGarrigue' }`). Absent = aucun |
 
 Référence de direction pour les pays secs : *Alba: a Wildlife Adventure*
-(ustwo, [article sur son décor](https://ustwogames.co.uk/news/the-environment-art-of-alba-a-wildlife-adventure/)).
-L'herbe y domine tout ce qui n'est pas falaise ; la terre et le chaume ne font
-que la casser en plaques, et la végétation se superpose (arbres, buissons, sol).
-Un trou peint tout en paille se lit comme un désert, même en août.
+(ustwo, [article sur son décor](https://ustwogames.co.uk/news/the-environment-art-of-alba-a-wildlife-adventure/)),
+pour la végétation qui se superpose (arbres, buissons, sol). La couleur du
+trou, elle, suit les vues de Street View prises en Sicile de mai à novembre
+(`scripts/roadside-views.mjs`) : en culture et en pâture sèches, le fond est
+paille, cassé de plaques d'herbe ou de calcaire ; seules les terrasses restent
+herbeuses.
 | `STONE_LOOK` | la pierre | une teinte par géologie, appliquée à la roche et aux ouvrages qui en sont faits |
-| `SKY_PALETTE.variants` | la matrice | une variante cite les matrices dont elle colore l'air |
+| `SKY_PALETTE.variants` | la matrice | une variante cite les matrices dont elle colore l'air ; `sun`, `ambient`, `haze`, `turbidity` (facteurs, 1 par défaut) y règlent la lumière directe et diffuse de jour, la densité du brouillard et celle du ciel ; `water`, l'albédo de toute l'eau (mer, lac, rivière) |
 | `STREET_LOOK.pavement` | la matrice | la teinte du sol revêtu de la ville |
 
 Quatre choses à savoir avant d'y toucher :

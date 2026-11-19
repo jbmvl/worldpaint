@@ -123,9 +123,10 @@ export function plantTownTrees(layer, placements, rings, here, radius, rule, onP
 
 /**
  * Plante les places piétonnes de la fenêtre, et pose un banc au pied d'une
- * part de leurs arbres, dos au tronc.
+ * part de leurs arbres, dos au tronc. Rend aussi leurs anneaux et ce qui y a
+ * été posé, que `townPlots` garnit ensuite sans rien poser par-dessus.
  *
- * @returns {{trees:number, benches:number}}
+ * @returns {{trees:number, benches:number, rings:Array, objects:Array<{x:number,z:number}>}}
  */
 export function buildTownSquares(layer, context) {
   const { source, tiles, here, placements } = context;
@@ -143,13 +144,16 @@ export function buildTownSquares(layer, context) {
   }, isSquare);
 
   let benches = 0;
+  const objects = [];
   const trees = plantTownTrees(layer, placements, squares, here, reachedRadius(FURNITURE_RADIUS_M, layer.bubble), SQUARE_TREES, (tree, cell) => {
+    objects.push(tree);
     if (randomAt(frame, cell.x, cell.z, SQUARE_TREES.salt + 20) >= SQUARE_BENCH_SHARE) return;
     const yaw = randomAt(frame, cell.x, cell.z, SQUARE_TREES.salt + 22) * Math.PI * 2;
     const x = tree.x + Math.sin(yaw) * SQUARE_BENCH_OFFSET_M;
     const z = tree.z + Math.cos(yaw) * SQUARE_BENCH_OFFSET_M;
     if (layer._onRoad(x, z) || layer._fabric?.covers?.(x, z, 1)) return;
-    if (layer._place(placements, 'bench', { x, z, yaw })) benches++;
+    const bench = layer._place(placements, 'bench', { x, z, yaw });
+    if (bench) { objects.push(bench); benches++; }
   });
-  return { trees, benches };
+  return { trees, benches, rings: squares, objects };
 }

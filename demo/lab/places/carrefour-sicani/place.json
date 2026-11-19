@@ -1,0 +1,18 @@
+{
+  "name": "carrefour-sicani",
+  "label": "Carrefour Sicani",
+  "lng": 13.42219,
+  "lat": 37.71656,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "zoom": 13,
+    "encoding": "terrarium",
+    "extension": "webp",
+    "source": "tiles.mapterhorn.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  }
+}

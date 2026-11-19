@@ -32,6 +32,7 @@ import {
   resamplePath,
   createProfileBuffer,
   appendProfile,
+  appendSaggingWire,
   createRibbonBuffer,
   appendRibbon,
   pathFrames,
@@ -179,6 +180,7 @@ export function appendCatenary(kit, wires, chain, track, sampleElevation, colors
   });
 
   let previous = null;
+  let previousMessenger = 0;
   for (const mast of catenaryMasts(chain)) {
     // Normale à gauche du sens normalisé, comme `pathFrames`.
     const nx = mast.tz;
@@ -207,18 +209,14 @@ export function appendCatenary(kit, wires, chain, track, sampleElevation, colors
       kit.box({ width: CATENARY_MAST_OFFSET_M + 0.2, height: 0.1, depth: 0.1, x: ax, y: rail + h - 0.05, z: az, yaw, color: colors.steelDark });
     }
 
-    // Porteur : une parabole depuis le poteau précédent, qui suit la courbe de la voie.
+    // Porteur : tendu de potence en potence, sous la courbe de la voie en plan.
+    const messenger = rail + CATENARY_MESSENGER_M;
     if (previous) {
       const curve = pathBetween(mast.path, mast.distances, previous.s, mast.s, RAILWAY_SAMPLE_M);
-      const heights = new Float32Array(curve.length);
-      for (let r = 0; r < curve.length; r++) {
-        const t = r / (curve.length - 1);
-        heights[r] = sampleElevation(curve[r].x, curve[r].z) + RAILWAY_RAIL_TOP_M
-          + CATENARY_MESSENGER_M - CATENARY_SAG_M * 4 * t * (1 - t);
-      }
-      appendProfile(wires, { path: curve, profile: wireProfile, sampleElevation, baseHeights: heights, closed: true, smoothRadius: 0 });
+      appendSaggingWire(wires, { path: curve, profile: wireProfile, fromY: previousMessenger, toY: messenger, sag: CATENARY_SAG_M });
     }
     previous = mast;
+    previousMessenger = messenger;
   }
 }
 

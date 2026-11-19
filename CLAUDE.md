@@ -62,7 +62,9 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
 - `demo/lab/sky.html` — ciel, soleil et brouillard seuls sur un sol plat semé
   de blocs ; `skyLab.set({ sunDeg, lookDeg, pitchDeg, weather })` dans la
   console, ou `node scripts/sky-shot.mjs <dossier> '<réglages JSON>'` pour une
-  image par réglage. `birds: 'corvid' | 'raptor' | 'gull'` y fait voler une
+  image par réglage. `matrix` y prend l'air d'un pays, `fogRadius` écarte le
+  brouillard comme le relief lointain ; `visibilityM` (rendu) dit où il
+  couvre 95 %. `birds: 'corvid' | 'raptor' | 'gull'` y fait voler une
   espèce de `LifeLayer`, à l'instant `time` ; `clouds: <secondes>` pousse
   les nuages d'autant de vent (`weather.wind`, `windDirection`).
   `night: 'bats' | 'fireflies'` et `starlings: <secondes après l'envol>`
@@ -94,6 +96,10 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   Un lieu
   s'enregistre, réseau ouvert, par `node scripts/capture-place.mjs <lieu> <lng>
   <lat>` ; sans ses tuiles vectorielles, il se rejoue en relief nu.
+  `height`, `date` et `fov` posent l'œil d'une voiture de Street View ;
+  `node scripts/roadside-views.mjs <dossier>` tire des routes par région,
+  les enregistre et les photographie ainsi (à lancer depuis une copie : les
+  lieux s'écrivent dans `demo/lab/places/`).
 - `demo/lab/furniture.html` — des formes du catalogue de mobilier côte à côte,
   à côté d'un gabarit humain de 1,75 m ; `furnitureLab.set({ kinds, yawDeg,
   pitchDeg, distance, target, stone })`, ou `node scripts/furniture-shot.mjs`.
@@ -106,6 +112,13 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
 - `demo/lab/costs.html` — les trois coûts (voir la règle absolue ci-dessus) ;
   `await costsLab.mount()`, `await costsLab.move({ turnFrames, runFrames,
   speed, height })`, ou `node scripts/costs-bench.mjs`.
+
+- `demo/lab/palette.html?lieu=<lieu>&opt=<JSON>` — un lieu enregistré rendu
+  comme la démo (tonemapping, « grand beau »), thème retouché : `exposure`,
+  `saturation`, `air` (l'air du pays, comme une variante de `SKY_PALETTE`),
+  `soil`, `asphalt`, `light` (gains sur soleil et ambiance), `grade` (filtre
+  CSS d'aperçu) ; `palLab.set({ lng, lat, y | height, yawDeg, pitchDeg, hour })`,
+  ou `node scripts/palette-shot.mjs <dossier> '<réglages JSON>' <lieu> '<opt>'`.
 
 - `demo/lab/mount.html` — chronomètre une scène figée (`createWorld({ reach })`
   + `mountAt`) sur un lieu enregistré, de la création à la première image ;
@@ -138,8 +151,13 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
 - `demo/lab/far.html` — le relief lointain et le brouillard qui le suit, par
   `createWorld` sur un relief calculé (vallée de montagne, collines, plaine) ;
   `await farLab.set({ relief, far, x, z, yawDeg, pitchDeg, height, dx, dz,
-  matrix })` et `farLab.info()` (amplitude, part du lointain, rayon du
-  brouillard, durée du recalage).
+  matrix, wood })` et `farLab.info()` (amplitude, part du lointain, rayon du
+  brouillard, durée du recalage). `wood: 'conifer_forest' | 'macchia'` impose
+  ce mot de matrice sur des tuiles vides : tout le relief se couvre, arbres et
+  buissons semés — c'est le banc du couvert vu de loin ; `?lng=&lat=` déplace
+  le relief pour la région (essences). `node scripts/far-shot.mjs <dossier>
+  '<réglages JSON>' [lng=…&lat=…]`, une page par appel : d'une vue à la
+  suivante dans la même page, le brouillard garde l'état de la précédente.
 - `demo/lab/far-landmarks.html` — les silhouettes lointaines des repères bâtis
   (`farLandmarkGeometry`) sur une colline ; `farLandmarksLab.set({ distance,
   yawDeg, pitchDeg, fog, angleDeg, spacing })`.
@@ -151,6 +169,10 @@ humain, et elle tire tuiles et `three` du réseau. Tu passes par les bancs de
   commerces en pignon, en long pan ou sans rue devant ;
   `shopLab.set({ yawDeg, pitchDeg, distance, night, building })`, ou
   `node scripts/shop-shot.mjs <dossier> '<réglages JSON>'`.
+- `demo/lab/trees.html` — les silhouettes du catalogue en volume, une à une
+  (`treesLab.set({ variant, angle })`) ou par essence ; `node
+  scripts/trees-shot.mjs <dossier> '<réglages JSON>'`, où `eye` et `at` posent
+  la caméra (palmes, frondes, touffes vues de près).
 - `demo/lab/forest.html` — une forêt pleine de neuf tuiles semée par la vraie
   `VegetationLayer` (peuplement et sous-étage) ; `forestLab.set({ wood, view,
   x, trees })` (`view: 'lisiere'` : le bois vu d'un pré ; `?essences=` : les

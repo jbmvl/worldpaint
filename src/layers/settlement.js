@@ -445,14 +445,29 @@ export function ringsOf(geometry) {
 }
 
 /**
+ * Index par mailles d'une liste d'emprises, gardé par liste : la même emprise
+ * habitée est éprouvée des milliers de fois par reconstruction, et une liste
+ * publiée ne change plus. Une liste courte (un anneau, des cours) n'est pas
+ * indexée : l'index coûterait plus qu'il ne rend.
+ */
+const AREA_CELLS = new WeakMap();
+const AREA_CELLS_MIN_RINGS = 8;
+
+/**
  * Vrai si le point tombe dans l'une des emprises (lancer de rayon pair-impair).
  *
- * @param {Array<Array<{x:number,z:number}>>} areas
+ * @param {Array<Array<{x:number,z:number}>>} areas Liste qu'on ne modifie plus
+ *        une fois éprouvée : son index est gardé.
  * @param {number} x
  * @param {number} z
  */
 export function pointInAreas(areas, x, z) {
   if (!areas) return false;
+  if (areas.length >= AREA_CELLS_MIN_RINGS) {
+    let cells = AREA_CELLS.get(areas);
+    if (!cells) AREA_CELLS.set(areas, (cells = cellsOfRings(areas)));
+    return inCelledRings(cells, x, z);
+  }
   for (const ring of areas) {
     if (pointInRing(ring, x, z)) return true;
   }

@@ -1,0 +1,18 @@
+{
+  "name": "nebrodi-bois",
+  "label": "nebrodi-bois",
+  "lng": 14.7,
+  "lat": 37.95,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "zoom": 13,
+    "encoding": "terrarium",
+    "extension": "webp",
+    "source": "tiles.mapterhorn.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  }
+}

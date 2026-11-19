@@ -34,9 +34,13 @@
  *               relevée
  *   townForm    `detached` (défaut : maisons isolées en retrait) ou `compact`
  *               (façades mitoyennes à l'alignement, maisons de ville)
- *   belfry      le clocher : `spire` (défaut), `campanile` ou `dome`
+ *   belfry      le clocher : `spire` (défaut), `campanile`, `dome` ou
+ *               `crenellated`
+ *   fortress    le château et l'enceinte : `keep` (défaut) ou `crenellated`
  *   planted     les essences plantées en ville, si ce ne sont pas celles des
  *               bois (`trees`)
+ *   naturalized ce qui pousse en sauvage sur la matrice sans être une essence
+ *               des bois (figuier de Barbarie, euphorbe arborescente, agave)
  *
  * Facultatif, pour une région en bande (un littoral) :
  *
@@ -59,7 +63,8 @@
  *   matrix   hedgerow_meadow · openfield_cropland · dry_cropland ·
  *            dry_pasture · wet_grassland · marsh ·
  *            moor_heath · broadleaf_woodland · conifer_forest · boreal_taiga ·
- *            terraced_slope · dry_scrub · garrigue · dry_steppe ·
+ *            terraced_slope · dry_scrub · macchia · garrigue ·
+ *            palm_garrigue · dry_steppe ·
  *            alpine_pasture · bare_rock · dune_coast · desert_stone ·
  *            desert_sand · savanna* · tropical_forest* · rice_terrace*
  *
@@ -87,8 +92,10 @@
  *   roofPitch low · steep
  *   walls    les murs de `building`
  *   townForm detached · compact
- *   belfry   spire · campanile · dome
+ *   belfry   spire · campanile · dome · crenellated
+ *   fortress keep · crenellated
  *   planted  les mots de `trees`
+ *   naturalized prickly_pear · tree_spurge · agave
  *
  *   (*) admis, pas encore rendu par le décor.
  *
@@ -1070,6 +1077,7 @@ export const REGIONS = [
     name: 'Alpujarra',
     anchors: [[-3.2, 36.95]],
     matrix: 'terraced_slope',
+    naturalized: ['agave'],
     stone: 'schist',
     building: 'whitewash_terrace',
     farming: ['orchard', 'olive', 'almond', 'vineyard'],
@@ -2367,6 +2375,7 @@ export const REGIONS = [
     name: 'Madeira',
     anchors: [[-16.95, 32.75]],
     matrix: 'terraced_slope',
+    naturalized: ['tree_spurge', 'agave'],
     stone: 'basalt',
     building: 'rendered_curved_tile',
     farming: ['orchard', 'vineyard', 'fallow'],
@@ -2580,6 +2589,7 @@ export const REGIONS = [
     name: 'Liguria',
     anchors: [[8.95, 44.42], [8.35, 44.12], [7.9, 43.92], [9.65, 44.15]],
     matrix: 'terraced_slope',
+    naturalized: ['tree_spurge', 'agave'],
     stone: 'schist',
     building: 'rendered_curved_tile',
     farming: ['olive', 'vineyard', 'orchard', 'fallow'],
@@ -2819,6 +2829,7 @@ export const REGIONS = [
     name: 'Penisola sorrentina e Costiera',
     anchors: [[14.55, 40.63]],
     matrix: 'terraced_slope',
+    naturalized: ['tree_spurge', 'agave'],
     stone: 'limestone',
     building: 'whitewash_terrace',
     farming: ['orchard', 'vineyard', 'olive'],
@@ -2918,6 +2929,7 @@ export const REGIONS = [
     name: 'Etna',
     anchors: [[15.0, 37.75], [15.08, 37.56]],
     matrix: 'terraced_slope',
+    naturalized: ['prickly_pear', 'tree_spurge', 'agave'],
     stone: 'basalt',
     building: 'dark_stone_curved_tile',
     farming: ['vineyard', 'citrus', 'orchard', 'fallow'],
@@ -2927,14 +2939,15 @@ export const REGIONS = [
     walls: ['dark_stone', 'rendered', 'concrete'],
     townStoreys: [2, 3],
     townForm: 'compact',
-    belfry: 'dome',
+    belfry: 'crenellated',
+    fortress: 'crenellated',
     sparse: ['buildings'],
   },
   {
     id: 'nebrodi',
     name: 'Nebrodi e Madonie',
     anchors: [[14.6, 37.95], [14.0, 37.85]],
-    matrix: 'broadleaf_woodland',
+    matrix: 'dry_pasture',
     stone: 'sandstone',
     building: 'light_stone_curved_tile',
     farming: ['fallow', 'olive', 'orchard'],
@@ -2944,14 +2957,15 @@ export const REGIONS = [
     walls: ['light_stone', 'rendered', 'concrete'],
     townStoreys: [2, 3],
     townForm: 'compact',
-    belfry: 'dome',
+    belfry: 'crenellated',
+    fortress: 'crenellated',
     sparse: ['buildings'],
   },
   {
     id: 'peloritani',
     name: 'Peloritani',
     anchors: [[15.45, 38.12], [15.27, 38.0], [15.25, 38.17]],
-    matrix: 'terraced_slope',
+    matrix: 'macchia',
     stone: 'schist',
     building: 'rendered_curved_tile',
     farming: ['citrus', 'olive', 'vineyard', 'fallow'],
@@ -2961,7 +2975,8 @@ export const REGIONS = [
     walls: ['rendered', 'concrete', 'light_stone'],
     townStoreys: [2, 4],
     townForm: 'compact',
-    belfry: 'dome',
+    belfry: 'crenellated',
+    fortress: 'crenellated',
     sparse: ['buildings'],
   },
   {
@@ -2980,6 +2995,7 @@ export const REGIONS = [
     name: 'Conca d’Oro',
     anchors: [[13.35, 38.08]],
     matrix: 'dry_cropland',
+    naturalized: ['prickly_pear', 'agave'],
     stone: 'limestone',
     building: 'light_stone_curved_tile',
     farming: ['citrus', 'olive', 'fallow', 'vineyard'],
@@ -2989,7 +3005,8 @@ export const REGIONS = [
     walls: ['light_stone', 'rendered', 'concrete'],
     townStoreys: [3, 5],
     townForm: 'compact',
-    belfry: 'dome',
+    belfry: 'crenellated',
+    fortress: 'crenellated',
     planted: ['palm', 'stone_pine', 'olive'],
     sparse: ['buildings'],
   },
@@ -3000,6 +3017,7 @@ export const REGIONS = [
     // d'Agrigente ; le relief calcaire du nord-ouest est aux monts Sicani.
     anchors: [[14.05, 37.45], [13.65, 37.45]],
     matrix: 'dry_cropland',
+    naturalized: ['prickly_pear'],
     stone: 'clay',
     building: 'rendered_curved_tile',
     farming: ['cereal', 'fallow', 'olive', 'almond'],
@@ -3009,7 +3027,8 @@ export const REGIONS = [
     walls: ['rendered', 'concrete', 'light_stone'],
     townStoreys: [2, 4],
     townForm: 'compact',
-    belfry: 'dome',
+    belfry: 'crenellated',
+    fortress: 'crenellated',
     sparse: ['buildings'],
   },
   {
@@ -3019,12 +3038,43 @@ export const REGIONS = [
     name: 'Monti Sicani',
     anchors: [[13.15, 37.7], [13.45, 37.67], [13.38, 37.84]],
     matrix: 'dry_pasture',
+    naturalized: ['prickly_pear'],
     stone: 'limestone',
     building: 'light_stone_curved_tile',
     farming: ['fallow', 'cereal', 'olive', 'almond'],
     trees: ['holm_oak', 'oak', 'olive'],
     townForm: 'compact',
-    belfry: 'dome',
+    belfry: 'crenellated',
+    fortress: 'crenellated',
+    sparse: ['buildings'],
+  },
+  {
+    id: 'promontori_occidentali',
+    name: 'Promontoires et Égades',
+    // Les têtes calcaires qui tombent sur la mer, de Capo Zafferano à
+    // Erice, et les Égades ; les plaines du golfe de Castellammare restent
+    // au Trapanese.
+    anchors: [
+      [13.54, 38.11], [13.35, 38.165], [13.32, 38.2], [13.29, 38.215],
+      [12.82, 38.07], [12.8, 38.09], [12.78, 38.12], [12.755, 38.15], [12.735, 38.17],
+      [12.7, 38.13], [12.675, 38.1], [12.64, 38.07], [12.59, 38.04],
+      [12.33, 37.93], [12.3, 37.95], [12.34, 38.0], [12.06, 37.97],
+    ],
+    reachKm: 3,
+    matrix: 'palm_garrigue',
+    naturalized: ['tree_spurge', 'prickly_pear', 'agave'],
+    stone: 'limestone',
+    building: 'light_stone_terrace',
+    farming: ['fallow', 'olive', 'vineyard'],
+    trees: ['olive', 'carob', 'aleppo_pine'],
+    roofs: ['flat', 'gable'],
+    roofPitch: 'low',
+    walls: ['light_stone', 'rendered', 'concrete'],
+    townStoreys: [2, 3],
+    townForm: 'compact',
+    belfry: 'crenellated',
+    fortress: 'crenellated',
+    planted: ['palm', 'stone_pine', 'olive'],
     sparse: ['buildings'],
   },
   {
@@ -3032,6 +3082,7 @@ export const REGIONS = [
     name: 'Trapanese',
     anchors: [[12.7, 37.85]],
     matrix: 'dry_cropland',
+    naturalized: ['prickly_pear', 'agave'],
     stone: 'limestone',
     building: 'light_stone_terrace',
     farming: ['vineyard', 'olive', 'cereal', 'fallow'],
@@ -3041,7 +3092,8 @@ export const REGIONS = [
     walls: ['light_stone', 'rendered', 'concrete'],
     townStoreys: [2, 3],
     townForm: 'compact',
-    belfry: 'dome',
+    belfry: 'crenellated',
+    fortress: 'crenellated',
     planted: ['palm', 'stone_pine', 'olive'],
     sparse: ['buildings'],
   },
@@ -3050,6 +3102,7 @@ export const REGIONS = [
     name: 'Pantelleria',
     anchors: [[11.95, 36.78]],
     matrix: 'terraced_slope',
+    naturalized: ['tree_spurge', 'agave'],
     stone: 'basalt',
     building: 'dark_stone_terrace',
     farming: ['vineyard', 'fallow', 'olive'],
@@ -3072,6 +3125,7 @@ export const REGIONS = [
     name: 'Piana di Catania',
     anchors: [[14.95, 37.4]],
     matrix: 'dry_cropland',
+    naturalized: ['prickly_pear', 'agave'],
     stone: 'alluvium',
     building: 'rendered_curved_tile',
     farming: ['citrus', 'cereal', 'fallow'],
@@ -3081,7 +3135,8 @@ export const REGIONS = [
     walls: ['rendered', 'concrete', 'dark_stone'],
     townStoreys: [2, 4],
     townForm: 'compact',
-    belfry: 'dome',
+    belfry: 'crenellated',
+    fortress: 'crenellated',
     planted: ['palm', 'olive', 'stone_pine'],
     sparse: ['buildings'],
   },
@@ -3090,6 +3145,7 @@ export const REGIONS = [
     name: 'Costa iblea e Piana di Gela',
     anchors: [[14.4, 36.86]],
     matrix: 'dry_cropland',
+    naturalized: ['prickly_pear', 'agave'],
     stone: 'sandstone',
     building: 'light_stone_terrace',
     farming: ['greenhouse', 'vineyard', 'cereal', 'olive'],
@@ -3099,7 +3155,8 @@ export const REGIONS = [
     walls: ['light_stone', 'concrete', 'rendered'],
     townStoreys: [2, 3],
     townForm: 'compact',
-    belfry: 'dome',
+    belfry: 'crenellated',
+    fortress: 'crenellated',
     planted: ['palm', 'carob', 'olive'],
     sparse: ['buildings'],
   },
@@ -3108,6 +3165,7 @@ export const REGIONS = [
     name: 'Monti Iblei',
     anchors: [[14.8, 36.95], [15.0, 37.12]],
     matrix: 'dry_pasture',
+    naturalized: ['prickly_pear', 'tree_spurge'],
     stone: 'limestone',
     building: 'light_stone_curved_tile',
     farming: ['cereal', 'olive', 'almond', 'fallow'],
@@ -3117,7 +3175,8 @@ export const REGIONS = [
     walls: ['light_stone', 'rendered', 'concrete'],
     townStoreys: [2, 4],
     townForm: 'compact',
-    belfry: 'dome',
+    belfry: 'crenellated',
+    fortress: 'crenellated',
     sparse: ['buildings'],
   },
   {
@@ -3134,6 +3193,7 @@ export const REGIONS = [
     ],
     reachKm: 4.5,
     matrix: 'terraced_slope',
+    naturalized: ['prickly_pear', 'tree_spurge', 'agave'],
     stone: 'sandstone',
     building: 'rendered_curved_tile',
     farming: ['citrus', 'olive', 'orchard', 'vineyard'],
@@ -3143,7 +3203,8 @@ export const REGIONS = [
     walls: ['rendered', 'light_stone', 'concrete'],
     townStoreys: [2, 4],
     townForm: 'compact',
-    belfry: 'dome',
+    belfry: 'crenellated',
+    fortress: 'crenellated',
     planted: ['palm', 'stone_pine', 'olive'],
     sparse: ['buildings'],
   },
@@ -3159,6 +3220,7 @@ export const REGIONS = [
     ],
     reachKm: 4.5,
     matrix: 'dry_cropland',
+    naturalized: ['prickly_pear', 'agave'],
     stone: 'limestone',
     building: 'light_stone_terrace',
     farming: ['olive', 'vineyard', 'almond', 'cereal'],
@@ -3168,7 +3230,8 @@ export const REGIONS = [
     walls: ['light_stone', 'rendered', 'concrete'],
     townStoreys: [2, 4],
     townForm: 'compact',
-    belfry: 'dome',
+    belfry: 'crenellated',
+    fortress: 'crenellated',
     planted: ['palm', 'olive', 'stone_pine'],
     sparse: ['buildings'],
   },

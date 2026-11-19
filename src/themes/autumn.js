@@ -1,6 +1,6 @@
 /*
  * autumn — la tranche d'automne : feuillus roux, dorés ou cuivrés, herbe et
- * pré jaunis, litière brune sous bois, presque plus de fleurs, haies qui virent
+ * pré jaunis, litière rousse sous les bois qui virent, presque plus de fleurs, haies qui virent
  * par plages, champs moissonnés ou secs. Résineux, pins et persistants gardent
  * leur vert : ce contraste fait lire la saison de loin.
  *
@@ -15,7 +15,11 @@
 
 import { defaultTheme } from './default.js';
 
-/** Teinte d'automne par indice de `TREE_VARIANTS` ; les absents ne changent pas. */
+/**
+ * Teinte d'automne par indice de `TREE_VARIANTS` ; les absents ne changent pas.
+ * Une variante teinte porte `turns` : c'est aussi elle qui roussit le couvert
+ * vu de loin (`surfaces.wood.canopy.turned`).
+ */
 const AUTUMN_HUES = {
   0: { r: 1.35, g: 0.8, b: 0.25 }, // chêne : roux
   1: { r: 1.55, g: 0.7, b: 0.2 }, // hêtre : cuivre
@@ -34,7 +38,7 @@ const AUTUMN_HUES = {
 
 const trees = {
   ...defaultTheme.trees,
-  variants: defaultTheme.trees.variants.map((v, i) => (AUTUMN_HUES[i] ? { ...v, hue: AUTUMN_HUES[i] } : v)),
+  variants: defaultTheme.trees.variants.map((v, i) => (AUTUMN_HUES[i] ? { ...v, hue: AUTUMN_HUES[i], turns: true } : v)),
 };
 
 // Pré jauni et litière de feuilles : c'est le sol qui couvre l'image.
@@ -43,10 +47,15 @@ const surfaces = {
   grass: { ...defaultTheme.surfaces.grass, albedo: [0.085, 0.12, 0.02] },
   wood: {
     ...defaultTheme.surfaces.wood,
-    albedo: [0.07, 0.058, 0.014],
-    // Résineux verts et feuillus roux mêlés : un couvert plus chaud qu'en été.
-    canopy: { ...defaultTheme.surfaces.wood.canopy, albedo: [0.075, 0.11, 0.025] },
+    // Feuilles mortes rousses, sous les seules essences qui virent.
+    turned: [0.11, 0.06, 0.016],
+    // Le couvert d'un bois qui roussit tout entier ; celui d'un pays ne le
+    // prend qu'à proportion de ses essences qui virent (`turnedShare`), et
+    // garde sinon le vert d'été.
+    canopy: { ...defaultTheme.surfaces.wood.canopy, turned: [0.16, 0.125, 0.03] },
   },
+  // Les premières pluies font lever l'herbe entre les buissons du maquis.
+  scrub: { ...defaultTheme.surfaces.scrub, albedo: [0.15, 0.17, 0.065] },
 };
 
 // Fin octobre : blé moissonné, tournesol et maïs secs sur pied (le tournesol
@@ -104,11 +113,12 @@ const furniture = {
 
 // Le lavage d'un pays sec multiplie l'herbe du thème : sur l'herbe déjà
 // jaunie de l'automne, les facteurs d'été rendraient un sol saumon. Ceux-ci
-// rendent le même chaume et la même herbe sèche qu'en été.
+// rendent la même paille qu'en été. La pâture, elle, reverdit aux premières
+// pluies : un vert éteint de champ en début d'hiver.
 const soils = {
   ...defaultTheme.soils,
-  dry_cropland: { ...defaultTheme.soils.dry_cropland, grass: [2.22, 2.025, 2.72] },
-  dry_pasture: { ...defaultTheme.soils.dry_pasture, grass: [1.86, 1.91, 2.465] },
+  dry_cropland: { ...defaultTheme.soils.dry_cropland, grass: [5.882, 3.0, 7.0] },
+  dry_pasture: { ...defaultTheme.soils.dry_pasture, grass: [1.235, 1.25, 2.0] },
   terraced_slope: { ...defaultTheme.soils.terraced_slope, grass: [1.65, 1.744, 2.25] },
 };
 

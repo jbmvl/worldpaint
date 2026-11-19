@@ -76,6 +76,26 @@ export const LAMP_ARC = { shaft: 7.2, radius: 1.35, sweep: 0.92, lantern: 0.3 };
 /** Verre de la lanterne du lampadaire de style : pied, hauteur, rayons bas et haut. */
 const LAMP_CLASSIC_LANTERN = { glassY: 3.72, glassH: 0.5, glassBottom: 0.14, glassTop: 0.23 };
 
+/**
+ * Le verre de chaque lampadaire, seul : posé par la forme du catalogue, et
+ * repris tel quel par la surcouche qui l'allume la nuit
+ * (`createLampGlassGeometries`) — mêmes sommets, donc même profondeur.
+ */
+const LAMP_GLASS = {
+  streetLamp(k, color) {
+    const head = lampArcAt(1);
+    k.box({ width: 0.31, height: 0.05, depth: 0.7, y: head.y - 0.16, z: head.z + LAMP_ARC.lantern, tilt: 0.14, color });
+  },
+  streetLampClassic(k, color) {
+    const { glassY, glassH, glassBottom, glassTop } = LAMP_CLASSIC_LANTERN;
+    k.cylinder({ radiusBottom: glassBottom, radiusTop: glassTop, height: glassH, y: glassY, radial: 6, color });
+  },
+  streetLampLed(k, color) {
+    const head = lampArcAt(1);
+    k.box({ width: 0.26, height: 0.025, depth: 0.5, y: head.y - 0.11, z: head.z + LAMP_ARC.lantern, color });
+  },
+};
+
 /** Hauteur du cœur de cette lanterne, au-dessus du pied du mât. */
 export const LAMP_CLASSIC_HEAD_M = LAMP_CLASSIC_LANTERN.glassY + LAMP_CLASSIC_LANTERN.glassH / 2;
 
@@ -99,6 +119,66 @@ export function lampArcAt(t) {
  * L'ordre suit celui de la scène : ce qui borde la route, puis ce qui occupe
  * les champs, puis ce qui tient l'horizon.
  */
+/**
+ * Rosette d'agave : trois couronnes de feuilles épaisses creusées en
+ * gouttière, dressées au cœur, étalées et retombantes au bord, deux feuilles
+ * mortes couchées dessous.
+ */
+function agaveRosette(k, C) {
+  const leaf = (azimuth, elevation, droop, length, width, color) => {
+    const stations = [0, 0.5, 1];
+    const pts = [];
+    let p = [Math.cos(azimuth) * 0.08, 0.05, Math.sin(azimuth) * 0.08];
+    for (let s = 0; s < stations.length; s++) {
+      const e = elevation - droop * stations[s];
+      const d = [Math.cos(e) * Math.cos(azimuth), Math.sin(e), Math.cos(e) * Math.sin(azimuth)];
+      const side = [-Math.sin(azimuth), 0, Math.cos(azimuth)];
+      const up = [-Math.sin(e) * Math.cos(azimuth), Math.cos(e), -Math.sin(e) * Math.sin(azimuth)];
+      if (s > 0) p = [p[0] + d[0] * length / 2, p[1] + d[1] * length / 2, p[2] + d[2] * length / 2];
+      const w = width * (s === 0 ? 1 : s === 1 ? 0.85 : 0.04) / 2;
+      const at = (a, b) => [p[0] + side[0] * a + up[0] * b, p[1] + side[1] * a + up[1] * b, p[2] + side[2] * a + up[2] * b];
+      pts.push({ l: at(-w, 0), r: at(w, 0), rib: at(0, -w * 0.35), keel: at(0, -w * 0.7) });
+    }
+    // Normales penchées vers le dehors et le haut, comme un feuillage : la
+    // rosette s'éclaire en masse au lieu de virer au noir à contre-jour.
+    const soften = () => {
+      const n = k.normals;
+      for (let i = n.length - 18; i < n.length; i += 3) {
+        const x = n[i] * 0.35 + Math.cos(azimuth) * 0.46, y = n[i + 1] * 0.35 + 0.46, z = n[i + 2] * 0.35 + Math.sin(azimuth) * 0.46;
+        const l = Math.hypot(x, y, z) || 1;
+        n[i] = x / l; n[i + 1] = y / l; n[i + 2] = z / l;
+      }
+    };
+    for (let s = 0; s < 2; s++) {
+      const a = pts[s], b = pts[s + 1];
+      k.quad(a.rib, b.rib, b.l, a.l, color); soften();
+      k.quad(a.r, b.r, b.rib, a.rib, color); soften();
+      k.quad(a.keel, b.keel, b.r, a.r, C.agaveLeafUnder); soften();
+      k.quad(a.l, b.l, b.keel, a.keel, C.agaveLeafUnder); soften();
+    }
+  };
+  const rings = [
+    { count: 5, elevation: 1.25, droop: 0.1, length: 0.8, width: 0.24, turn: 0.3 },
+    { count: 7, elevation: 0.8, droop: 0.35, length: 1.1, width: 0.3, turn: 0 },
+    { count: 8, elevation: 0.35, droop: 0.55, length: 1.15, width: 0.32, turn: 0.35 },
+  ];
+  for (const ring of rings) {
+    for (let i = 0; i < ring.count; i++) {
+      const azimuth = ring.turn + (i / ring.count) * Math.PI * 2 + ((i * 7) % 3) * 0.08;
+      leaf(azimuth, ring.elevation, ring.droop, ring.length * (0.92 + ((i * 5) % 4) * 0.04), ring.width, C.agaveLeaf);
+    }
+  }
+  leaf(0.9, -0.05, 0.1, 1.0, 0.28, C.agaveDry);
+  leaf(3.6, -0.08, 0.05, 0.9, 0.28, C.agaveDry);
+}
+
+/** Cylindre tendu d'un point vers un angle (écart à la verticale, azimut), de cette longueur. */
+function stemTo(k, from, lean, azimuth, length, radius, color) {
+  k.cylinder({ radiusBottom: radius, radiusTop: radius * 0.75, height: length, radial: 5, cap: false, color, x: from[0], y: from[1], z: from[2], tilt: lean, yaw: Math.PI / 2 - azimuth });
+  const h = Math.sin(lean) * length;
+  return [from[0] + Math.cos(azimuth) * h, from[1] + Math.cos(lean) * length, from[2] + Math.sin(azimuth) * h];
+}
+
 export const FURNITURE_BUILDERS = {
   /**
    * Lampadaire routier : mât droit, crosse cintrée, lanterne inclinée.
@@ -137,7 +217,7 @@ export const FURNITURE_BUILDERS = {
     const head = lampArcAt(1);
     const z = head.z + LAMP_ARC.lantern;
     k.box({ width: 0.36, height: 0.14, depth: 0.82, y: head.y - 0.07, z, tilt: 0.14, color: C.steelDark });
-    k.box({ width: 0.31, height: 0.05, depth: 0.7, y: head.y - 0.16, z, tilt: 0.14, color: C.lamp });
+    LAMP_GLASS.streetLamp(k, C.lamp);
     return k;
   },
 
@@ -158,7 +238,7 @@ export const FURNITURE_BUILDERS = {
 
     const { glassY, glassH, glassBottom, glassTop } = LAMP_CLASSIC_LANTERN;
     k.cylinder({ radiusBottom: glassBottom + 0.015, radiusTop: glassBottom + 0.015, height: 0.04, y: glassY - 0.04, radial: 6, color: iron });
-    k.cylinder({ radiusBottom: glassBottom, radiusTop: glassTop, height: glassH, y: glassY, radial: 6, color: C.lampWarm });
+    LAMP_GLASS.streetLampClassic(k, C.lampWarm);
     // Montants aux arêtes du verre : sans eux, la lanterne se lit comme un
     // cône lumineux et non comme une cage vitrée.
     const lean = Math.atan2(glassTop - glassBottom, glassH);
@@ -195,7 +275,7 @@ export const FURNITURE_BUILDERS = {
     const head = lampArcAt(1);
     const z = head.z + LAMP_ARC.lantern;
     k.box({ width: 0.34, height: 0.1, depth: 0.62, y: head.y - 0.03, z, color: C.steelDark });
-    k.box({ width: 0.26, height: 0.025, depth: 0.5, y: head.y - 0.11, z, color: C.lampLed });
+    LAMP_GLASS.streetLampLed(k, C.lampLed);
     return k;
   },
 
@@ -587,6 +667,21 @@ export const FURNITURE_BUILDERS = {
       k.box({ width: 0.06, height: 0.42, depth: 0.4, x, color: C.steelDark });
       k.box({ width: 0.06, height: 0.88, depth: 0.06, x, z: -0.21, color: C.steelDark });
     }
+    return k;
+  },
+
+  /** Gros bac à fleurs de place : caisson de pierre de 1,6 m, massif vert piqué de fleurs. */
+  flowerPlanter(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    k.box({ width: 1.6, height: 0.55, depth: 1.6, color: C.stone });
+    k.box({ width: 1.72, height: 0.06, depth: 1.72, y: 0.55, color: C.stoneDark });
+    k.rock({ radius: 0.68, height: 0.42, sides: 7, rings: 2, seed: 2141, y: 0.5, flat: 0.3, color: C.leafDeep, colorTop: C.leafOlive });
+    const blooms = [C.bloomRed, C.bloomPink, C.bloomYellow, C.white, C.bloomRed, C.bloomPink, C.bloomYellow];
+    blooms.forEach((color, i) => {
+      const a = (i / blooms.length) * Math.PI * 2;
+      const r = i % 2 ? 0.45 : 0.25;
+      k.rock({ radius: 0.14, height: 0.14, sides: 5, rings: 1, seed: 2150 + i, x: Math.sin(a) * r, z: Math.cos(a) * r, y: 0.82 - r * 0.25, color, colorTop: color });
+    });
     return k;
   },
 
@@ -1123,17 +1218,55 @@ export const FURNITURE_BUILDERS = {
     return k;
   },
 
-  /** Stade : cuvette de gradins, quatre mâts d'éclairage. */
+  /**
+   * Stade de football à l'européenne : un terrain rectangulaire (axe long
+   * selon Z) bordé de quatre tribunes droites séparées aux angles, gradins en
+   * marches, toit plat en porte-à-faux, et un pylône d'éclairage dans chaque
+   * angle ouvert. La pelouse est celle du sol (`stadium` peint de l'herbe).
+   */
   stadium(C = DEFAULT_COLORS) {
     const k = new Kit(C);
-    const radius = 42;
-    k.cylinder({ radiusBottom: radius, radiusTop: radius, height: 12, radial: 20, cap: false, color: C.concrete });
-    k.cylinder({ radiusBottom: radius + 1.5, radiusTop: radius + 1.5, height: 1, radial: 20, y: 12, color: C.slate });
+    const halfW = 34;
+    const halfL = 52.5;
+    const gap = 4;
+
+    // Tribune vue comme si elle longeait le terrain du côté −X ; `yaw` la
+    // tourne vers son côté. `u` est la distance au terrain, vers l'extérieur.
+    const stand = (yaw, edge, length, steps, roofed) => {
+      const depth = steps * 4.5;
+      for (let i = 0; i < steps; i++) {
+        const d = depth - i * 4.5;
+        const u = edge + gap + i * 4.5 + d / 2;
+        const p = Kit.transform([-u, 0, 0], { yaw });
+        k.box({ width: d, height: 2.6 * (i + 1), depth: length, x: p[0], z: p[2], yaw, color: i === steps - 1 ? C.concrete : C.slate });
+      }
+      if (!roofed) return;
+      const top = 2.6 * steps + 4;
+      const roof = Kit.transform([-(edge + gap + depth / 2 - 1), 0, 0], { yaw });
+      k.box({ width: depth + 3, height: 0.5, depth: length + 2, x: roof[0], y: top, z: roof[2], yaw, color: C.steelDark });
+      for (const s of [-0.45, 0, 0.45]) {
+        const c = Kit.transform([-(edge + gap + depth - 0.4), 0, s * length], { yaw });
+        k.box({ width: 0.5, height: top, depth: 0.5, x: c[0], z: c[2], yaw, color: C.galvanised });
+      }
+    };
+    stand(0, halfW, halfL * 2 - 10, 3, true);
+    stand(Math.PI, halfW, halfL * 2 - 10, 2, true);
+    stand(-Math.PI / 2, halfL, halfW * 2 - 8, 2, false);
+    stand(Math.PI / 2, halfL, halfW * 2 - 8, 2, false);
+
+    const reach = gap + 10;
     for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-      const x = sx * radius * 0.78;
-      const z = sz * radius * 0.78;
-      k.cylinder({ radiusBottom: 0.5, radiusTop: 0.3, height: 22, radial: 6, x, z, color: C.galvanised });
-      k.box({ width: 2.4, height: 1.2, depth: 0.3, x, y: 22, z, color: C.steelDark });
+      const x = sx * (halfW + reach * 0.75);
+      const z = sz * (halfL + reach * 0.75);
+      k.cylinder({ radiusBottom: 0.6, radiusTop: 0.35, height: 30, radial: 6, x, z, color: C.galvanised });
+      const yaw = Math.atan2(-sx, -sz);
+      k.box({ width: 5, height: 2.4, depth: 0.4, x, y: 30, z, yaw, tilt: 0.35, color: C.steelDark });
+    }
+
+    for (const sz of [1, -1]) {
+      const z = sz * halfL;
+      for (const x of [-3.66, 3.66]) k.box({ width: 0.12, height: 2.44, depth: 0.12, x, z, color: C.white });
+      k.box({ width: 7.44, height: 0.12, depth: 0.12, y: 2.44, z, color: C.white });
     }
     return k;
   },
@@ -1388,6 +1521,155 @@ export const FURNITURE_BUILDERS = {
         k.tri([a[0] - wx, a[1], a[2] - wz], [mid[0] + wx, mid[1], mid[2] + wz], [mid[0] - wx, mid[1], mid[2] - wz], leaf);
         k.tri([mid[0] - wx, mid[1], mid[2] - wz], [mid[0] + wx, mid[1], mid[2] + wz], tip, j >= leaves - 2 && j % 2 ? C.caneTop : leaf);
       }
+    }
+    return k;
+  },
+
+  /**
+   * Figuier de Barbarie (Opuntia) : des raquettes ovales plates, chacune
+   * née sur le bord haut d'une autre, qui s'ouvrent en éventail et font face
+   * de tous côtés — c'est l'empilement de disques, pas un volume, qui le fait
+   * reconnaître. Raquettes vert-de-gris, les basses plus jaunes, quelques
+   * figues rouge sombre sur le bord des plus hautes. Environ 1,3 m sur 2 m à
+   * l'échelle 1, posé plus grand (`NATURALIZED_SOWING`).
+   */
+  pricklyPear(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    // Tirage figé : la forme du modèle, pas une graine de lieu.
+    let state = 11;
+    const draw = () => ((state = (state * 16807) % 2147483647) / 2147483647);
+    const RIM = 8;
+    const unit = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const at = (o, u, du, v, dv) => [o[0] + u[0] * du + v[0] * dv, o[1] + u[1] * du + v[1] * dv, o[2] + u[2] * du + v[2] * dv];
+
+    const pad = (base, up, facing, length, depth) => {
+      const v = unit(up);
+      const f = [Math.cos(facing), 0, Math.sin(facing)];
+      const dot = f[0] * v[0] + f[2] * v[2];
+      const u = unit([f[0] - dot * v[0], -dot * v[1], f[2] - dot * v[2]]);
+      const n = cross(u, v);
+      const width = length * 0.72;
+      const center = at(base, v, length / 2, u, 0);
+      const rim = [];
+      for (let i = 0; i < RIM; i++) {
+        const a = -Math.PI / 2 + (i / RIM) * Math.PI * 2;
+        rim.push(at(center, u, Math.cos(a) * width / 2, v, Math.sin(a) * length / 2));
+      }
+      // La raquette est bombée : deux éventails autour d'un centre décollé.
+      const bulge = length * 0.06;
+      const front = at(center, n, bulge, v, 0);
+      const back = at(center, n, -bulge, v, 0);
+      const color = depth === 0 ? C.pricklyPearPadOld : (depth + rim.length + Math.round(facing * 3)) % 3 ? C.pricklyPearPad : C.pricklyPearPadDeep;
+      // Normales penchées vers le dehors et le haut du dôme, comme un
+      // feuillage : une raquette dos au soleil ne doit pas virer au noir.
+      const out = unit([center[0], center[1] + 0.6, center[2]]);
+      const soft = (sign) => unit([n[0] * sign * 0.35 + out[0] * 0.65, n[1] * sign * 0.35 + out[1] * 0.65, n[2] * sign * 0.35 + out[2] * 0.65]);
+      const front3 = soft(1), back3 = soft(-1);
+      const setLast = (normal) => k.normals.splice(k.normals.length - 9, 9, ...normal, ...normal, ...normal);
+      for (let i = 0; i < RIM; i++) {
+        const a = rim[i], b = rim[(i + 1) % RIM];
+        k.tri(front, a, b, color);
+        setLast(front3);
+        k.tri(back, b, a, color);
+        setLast(back3);
+      }
+      return { center, u, v, n, width, length, facing };
+    };
+
+    const grow = (parent, depth) => {
+      if (depth > 2) return;
+      const children = depth === 0 ? 3 : draw() < 0.3 * depth ? 1 : 2;
+      for (let c = 0; c < children; c++) {
+        // Point d'attache sur le bord haut, un peu rentré dans la raquette.
+        const side = children === 1 ? (draw() - 0.5) * 0.8 : (c === 0 ? -1 : 1) * (0.35 + draw() * 0.4);
+        const a = Math.PI / 2 - side * 1.1;
+        const base = at(parent.center, parent.u, Math.cos(a) * parent.width * 0.42, parent.v, Math.sin(a) * parent.length * 0.42);
+        // Éventail dans le plan de la raquette mère, plus ouvert vers le haut.
+        const spread = side * (0.75 + depth * 0.15);
+        const up = unit([
+          parent.v[0] * Math.cos(spread) + parent.u[0] * Math.sin(spread),
+          parent.v[1] * Math.cos(spread) + parent.u[1] * Math.sin(spread) + 0.05,
+          parent.v[2] * Math.cos(spread) + parent.u[2] * Math.sin(spread),
+        ]);
+        const facing = parent.facing + (draw() - 0.5) * 2.2;
+        const length = parent.length * (0.82 + draw() * 0.18);
+        const child = pad(base, up, facing, length, depth + 1);
+        if (depth === 2 && draw() < 0.3) fruits(child);
+        grow(child, depth + 1);
+      }
+    };
+
+    const fruits = (p) => {
+      const count = 1 + Math.floor(draw() * 3);
+      for (let i = 0; i < count; i++) {
+        const a = Math.PI / 2 + (i - (count - 1) / 2) * 0.45;
+        const o = at(p.center, p.u, Math.cos(a) * p.width * 0.5, p.v, Math.sin(a) * p.length * 0.5);
+        const tip = at(o, p.v, 0.07, p.u, 0);
+        const r = 0.025;
+        const w0 = at(o, p.u, r, p.n, 0), w1 = at(o, p.n, r, p.u, 0), w2 = at(o, p.u, -r, p.n, 0), w3 = at(o, p.n, -r, p.u, 0);
+        k.tri(tip, w0, w1, C.pricklyPearFruit);
+        k.tri(tip, w1, w2, C.pricklyPearFruit);
+        k.tri(tip, w2, w3, C.pricklyPearFruit);
+        k.tri(tip, w3, w0, C.pricklyPearFruit);
+      }
+    };
+
+    // Quatre troncs de raquettes qui partent du sol en s'écartant.
+    const roots = 4;
+    for (let i = 0; i < roots; i++) {
+      const dir = i * 1.6 + draw() * 0.5;
+      const lean = 0.35 + draw() * 0.4;
+      const base = [Math.cos(dir) * 0.12, -0.04, Math.sin(dir) * 0.12];
+      const up = [Math.cos(dir) * Math.sin(lean), Math.cos(lean), Math.sin(dir) * Math.sin(lean)];
+      const root = pad(base, up, dir + Math.PI / 2 + (draw() - 0.5) * 0.6, 0.38 + draw() * 0.06, 0);
+      grow(root, 0);
+    }
+    return k;
+  },
+
+  /**
+   * Euphorbe arborescente (Euphorbia dendroides) : un dôme plein vert-jaune
+   * de 1,4 m sur 2, plus large que haut, sur trois tiges grises courtes qu'on
+   * voit dessous — bâti comme les buissons du catalogue, de quelques masses à
+   * facettes ; c'est sa couleur, pas son détail, qui la distingue du maquis.
+   */
+  treeSpurge(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    for (let i = 0; i < 3; i++) {
+      stemTo(k, [0, 0, 0], 0.55, i * 2.09 + 0.4, 0.42, 0.05, C.spurgeStem);
+    }
+    k.rock({ radius: 1.0, height: 1.05, sides: 8, rings: 3, seed: 1601, y: 0.32, color: C.spurgeLeaf, colorTop: C.spurgeLeafTop });
+    k.rock({ radius: 0.62, height: 0.75, sides: 6, rings: 2, seed: 1613, x: 0.72, z: 0.35, y: 0.25, color: C.spurgeLeaf, colorTop: C.spurgeLeafTop });
+    k.rock({ radius: 0.55, height: 0.65, sides: 6, rings: 2, seed: 1627, x: -0.6, z: -0.48, y: 0.22, color: C.spurgeLeafDeep, colorTop: C.spurgeLeaf });
+    return k;
+  },
+
+  /** Agave (Agave americana) : une rosette bleu-grise d'environ 1 m sur 2,4. */
+  agave(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    agaveRosette(k, C);
+    return k;
+  },
+
+  /**
+   * Agave en fleur : la même rosette et sa hampe de 6,5 m en candélabre,
+   * rameaux relevés qui portent des grappes jaunes — la silhouette qu'on voit
+   * de loin sur un coteau.
+   */
+  agaveFlowering(C = DEFAULT_COLORS) {
+    const k = new Kit(C);
+    agaveRosette(k, C);
+    const height = 6.5;
+    k.cylinder({ radiusBottom: 0.09, radiusTop: 0.03, height, radial: 6, color: C.agaveStalk });
+    const branches = 9;
+    for (let i = 0; i < branches; i++) {
+      const f = i / (branches - 1);
+      const y = 3.2 + f * 3.0;
+      const azimuth = i * 2.4;
+      const length = 0.85 - f * 0.55;
+      const tip = stemTo(k, [0, y, 0], 1.15, azimuth, length, 0.025, C.agaveStalk);
+      k.rock({ radius: 0.24 - f * 0.08, height: 0.2, sides: 5, rings: 2, seed: 1701 + i, color: C.agaveFlower, x: tip[0], y: tip[1] - 0.05, z: tip[2] });
     }
     return k;
   },
@@ -1790,6 +2072,41 @@ export function createFurnitureGeometries(
 }
 
 /**
+ * Verre allumé de chaque lampadaire, par forme : la surcouche de nuit, dessinée
+ * aux matrices des lampadaires. `colors` : la teinte allumée, par forme.
+ */
+export function createLampGlassGeometries(THREE, colors) {
+  const out = {};
+  for (const [name, build] of Object.entries(LAMP_GLASS)) {
+    const k = new Kit();
+    build(k, colors[name]);
+    out[name] = k.toGeometry(THREE, `furniture-${name}-glass`);
+  }
+  return out;
+}
+
+/**
+ * Matériau du verre allumé, comme les fenêtres du bâti : non éclairé, additif,
+ * opacité réglée par la nuit. Décalé vers la caméra pour passer devant le verre
+ * opaque qu'il recouvre exactement.
+ */
+export function createLampGlassMaterial(THREE) {
+  const material = new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -4,
+  });
+  material.name = 'furniture-lamp-glass';
+  return material;
+}
+
+/**
  * Matériau unique du mobilier : couleurs de sommet, éclairage lambertien, un
  * seul programme GPU pour tout le catalogue. `DoubleSide` : les sections
  * balayées ouvertes (talus, câbles) n'ont pas d'intérieur, et le sens de
@@ -2032,12 +2349,9 @@ export function createGlowMaterial(THREE, { color = [1, 0.86, 0.6] } = {}) {
 }
 
 /**
- * Nappe de lumière au sol, sous un lampadaire : un disque horizontal. Une
- * `PointLight` par mât est impraticable (le nombre de lumières entre dans la
- * clé de programme, tout recompilerait à chaque reconstruction) : la scène
- * porte deux vraies lumières mobiles accrochées aux plus proches
- * (`furnitureLayer.advanceLamps`), et toutes les têtes portent en plus cette
- * nappe additive. N'écrit pas la profondeur : deux flaques qui se recouvrent s'additionnent.
+ * Nappe de lumière au sol, sous un lampadaire : un disque horizontal. Aucune
+ * vraie lumière ne l'accompagne : la nappe additive est tout l'éclairage d'un
+ * lampadaire. N'écrit pas la profondeur : deux flaques qui se recouvrent s'additionnent.
  */
 export function createLightPoolGeometry(THREE) {
   const geometry = new THREE.PlaneGeometry(1, 1);
@@ -2045,6 +2359,9 @@ export function createLightPoolGeometry(THREE) {
   geometry.name = 'furniture-light-pool';
   return geometry;
 }
+
+/** Avancée de la nappe vers la caméra, en mètres : l'écart toléré entre le disque plan et le sol réel. */
+const LAMP_POOL_PULL_M = 0.8;
 
 /** Matière de la nappe : additive, radiale, sans écriture de profondeur. */
 export function createLightPoolMaterial(THREE, { color = [1, 0.84, 0.56] } = {}) {
@@ -2067,7 +2384,11 @@ export function createLightPoolMaterial(THREE, { color = [1, 0.84, 0.56] } = {})
         #ifdef USE_INSTANCING
           local = instanceMatrix * local;
         #endif
-        gl_Position = projectionMatrix * modelViewMatrix * local;
+        // Avancée le long du rayon de vue : même place à l'écran, mais la
+        // nappe plane passe devant la chaussée et le sol qui la dépassent.
+        vec4 view = modelViewMatrix * local;
+        view.xyz *= max(0.0, 1.0 - ${LAMP_POOL_PULL_M.toFixed(2)} / length(view.xyz));
+        gl_Position = projectionMatrix * view;
       }
     `,
     fragmentShader: `

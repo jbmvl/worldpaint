@@ -44,7 +44,8 @@ test('la flèche monte où monte celle du bâti proche', () => {
   const far = personalities.church.far;
   const box = { long: far.lengthM / 2, short: far.widthM / 2 };
   const kit = farLandmarkKit({ kind: 'church', x: 0, z: 0 }, { personalities });
-  const expected = Math.max(6, far.eavesM) + towerRise(box) + towerSide(box) * 1.5;
+  const rise = Math.max(6, far.eavesM) + towerRise(box);
+  const expected = rise + towerSide(box, rise) * 1.5;
   assert.ok(Math.abs(extent(kit).maxY - expected) < 1e-9);
 });
 

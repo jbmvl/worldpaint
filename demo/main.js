@@ -30,6 +30,7 @@ import {
   collectRoadDebug,
   ROAD_DEBUG_RADIUS_M,
   DEFAULT_WEATHER,
+  applyToneMapping,
   REGIONS,
   FAUNA_KINDS,
   LABEL_FAUNA,
@@ -44,6 +45,14 @@ const performanceProbe = new PerformanceProbe();
 // --- Réglages ---------------------------------------------------------------
 
 const START = { lng: -0.1450, lat: 47.1310, label: 'Montreuil-Bellay' }; // point de départ
+// `?vue=lng,lat,hauteur,lacet,tangage` : la page rechargée repart du même point
+// et du même regard. La hauteur est comptée au-dessus du sol, inconnu avant montage.
+const SAVED_VIEW = (() => {
+  const parts = (new URLSearchParams(location.search).get('vue') ?? '').split(',').map(Number);
+  if (parts.length !== 5 || !parts.every(Number.isFinite)) return null;
+  const [lng, lat, height, yawDeg, pitchDeg] = parts;
+  return { lng, lat, height, yawDeg, pitchDeg, label: 'la vue enregistrée' };
+})();
 const EYE_HEIGHT_M = 1.75;
 const MOVE_SPEED = 22; // m/s
 const BOOST_FACTOR = 4.5;
@@ -128,8 +137,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 // Le rig de lumière du moteur monte volontairement au-dessus de 1 (voir
 // `environment/skyModel.js`) ; sans tone mapping ça écrête à blanc plat.
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.5; // valeur de l'exemple officiel three pour ce Sky.js
+applyToneMapping(THREE, renderer);
 
 
 const scene = new THREE.Scene();
@@ -319,6 +327,21 @@ function buildWorld() {
   return next;
 }
 
+// Hors de la boucle d'image : Safari refuse plus d'une centaine de
+// `replaceState` par trente secondes.
+const VIEW_SAVE_INTERVAL_MS = 1000;
+let viewSaveAcc = 0;
+function saveViewInUrl() {
+  const { lng, lat } = world.frame.toLngLat(camera.position.x, camera.position.z);
+  const ground = world.bubble.surfaceElevationAtLocal(camera.position.x, camera.position.z, NaN) * world.bubble.verticalScale;
+  const height = Number.isFinite(ground) ? camera.position.y - ground : EYE_HEIGHT_M;
+  const value = [lng.toFixed(6), lat.toFixed(6), height.toFixed(1), rad2deg(yaw).toFixed(1), rad2deg(pitch).toFixed(1)].join(',');
+  const url = new URL(location.href);
+  if (url.searchParams.get('vue') === value) return;
+  url.searchParams.set('vue', value);
+  history.replaceState(null, '', url.href.replace(/%2C/g, ','));
+}
+
 async function boot() {
   setBusy(true);
   setStatus('Chargement des tuiles…');
@@ -328,12 +351,18 @@ async function boot() {
   vectorSource = vector;
   world = buildWorld();
 
-  setStatus(`Centrage sur ${START.label}…`);
-  await mountScene(START.lng, START.lat, { budgetMs: BOOT_BUDGET_MS });
+  const origin = SAVED_VIEW ?? START;
+  setStatus(`Centrage sur ${origin.label}…`);
+  await mountScene(origin.lng, origin.lat, { budgetMs: BOOT_BUDGET_MS });
 
-  const local = world.frame.toLocal(START.lng, START.lat);
+  const local = world.frame.toLocal(origin.lng, origin.lat);
   const ground = sampleGroundHeight(local.x, local.z) ?? 0;
-  camera.position.set(local.x, ground + EYE_HEIGHT_M, local.z);
+  camera.position.set(local.x, ground + (SAVED_VIEW?.height ?? EYE_HEIGHT_M), local.z);
+  if (SAVED_VIEW) {
+    yaw = deg2rad(SAVED_VIEW.yawDeg);
+    pitch = deg2rad(SAVED_VIEW.pitchDeg);
+    applyLook();
+  }
 
   setBusy(false);
   setStatus(vector ? '' : "Tuiles vectorielles indisponibles : relief nu, sans routes ni bâti.", !vector);
@@ -521,6 +550,7 @@ const forward3 = new THREE.Vector3();
 const move = new THREE.Vector3();
 const cameraDirection = new THREE.Vector3(); // direction non aplatie, pour le cap et l'inclinaison du HUD
 const rad2deg = (rad) => (rad * 180) / Math.PI;
+const deg2rad = (deg) => (deg * Math.PI) / 180;
 let recenterAcc = 0;
 let recentering = false;
 let labelAcc = LABEL_INTERVAL_MS; // premier tick immédiat
@@ -1131,6 +1161,15 @@ async function geocode(query) {
   return { lng: parseFloat(hit.lon), lat: parseFloat(hit.lat), label: hit.display_name };
 }
 
+async function travelTo(lng, lat, label) {
+  setStatus(`Déplacement vers ${label}…`);
+  await mountScene(lng, lat);
+  const local = world.frame.toLocal(lng, lat);
+  const ground = sampleGroundHeight(local.x, local.z) ?? 0;
+  camera.position.set(local.x, ground + EYE_HEIGHT_M, local.z);
+  setStatus(`📍 ${label}`);
+}
+
 async function goToSearch() {
   const query = searchInput.value.trim();
   if (!query || !world) return;
@@ -1140,15 +1179,7 @@ async function goToSearch() {
   setStatus('Recherche…');
   try {
     const place = await geocode(query);
-    setStatus(`Déplacement vers ${place.label.split(',')[0]}…`);
-
-    await mountScene(place.lng, place.lat);
-
-    const local = world.frame.toLocal(place.lng, place.lat);
-    const ground = sampleGroundHeight(local.x, local.z) ?? 0;
-    camera.position.set(local.x, ground + EYE_HEIGHT_M, local.z);
-
-    setStatus(`📍 ${place.label.split(',')[0]}`);
+    await travelTo(place.lng, place.lat, place.label.split(',')[0]);
   } catch (err) {
     setStatus(err.message || 'Lieu introuvable', true);
   } finally {
@@ -1160,6 +1191,57 @@ async function goToSearch() {
 goButton.addEventListener('click', goToSearch);
 searchInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') goToSearch();
+});
+
+// --- Carte du monde ------------------------------------------------------------
+// Pour choisir un lieu loin de la bulle : Leaflet et les tuiles raster
+// d'OpenStreetMap, chargés à la première ouverture seulement. Le clic y monte
+// la scène au point visé, comme une recherche.
+
+const worldMapOverlay = document.getElementById('worldMapOverlay');
+let worldMap = null;
+let worldMapMarker = null;
+
+async function openWorldMap() {
+  if (!world?.frame) return;
+  worldMapOverlay.hidden = false;
+  const { lng, lat } = world.frame.toLngLat(camera.position.x, camera.position.z);
+  if (!worldMap) {
+    const L = await import('https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet-src.esm.js');
+    worldMap = L.map('worldMap', { worldCopyJump: true }).setView([lat, lng], 9);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    }).addTo(worldMap);
+    worldMapMarker = L.circleMarker([lat, lng], { radius: 7, color: '#fff', weight: 2, fillColor: '#3a6fd8', fillOpacity: 1 }).addTo(worldMap);
+    worldMap.on('click', async (e) => {
+      if (mounting) return;
+      const { lat: la, lng: ln } = e.latlng.wrap();
+      closeWorldMap();
+      setBusy(true);
+      try {
+        await travelTo(ln, la, `${la.toFixed(4)}, ${ln.toFixed(4)}`);
+      } catch (err) {
+        setStatus(err.message || 'Déplacement interrompu', true);
+      } finally {
+        setBusy(false);
+      }
+    });
+  } else {
+    worldMapMarker.setLatLng([lat, lng]);
+    worldMap.setView([lat, lng], worldMap.getZoom());
+  }
+  worldMap.invalidateSize();
+}
+
+function closeWorldMap() {
+  worldMapOverlay.hidden = true;
+}
+
+document.getElementById('worldMapBtn').addEventListener('click', openWorldMap);
+document.getElementById('worldMapClose').addEventListener('click', closeWorldMap);
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !worldMapOverlay.hidden) closeWorldMap();
 });
 
 // --- Carte plein écran ---------------------------------------------------------
@@ -1895,6 +1977,12 @@ function loop(timestamp) {
     // L'horloge n'avance que si c'est elle qu'on suit : le curseur, lui, ne
     // bouge que quand on le pousse.
     if (realTimeCheckbox.checked) hourVal.textContent = new Date().toTimeString().slice(0, 5);
+  }
+
+  viewSaveAcc += delta * 1000;
+  if (viewSaveAcc > VIEW_SAVE_INTERVAL_MS && world?.frame && !mounting) {
+    viewSaveAcc = 0;
+    saveViewInUrl();
   }
 
   // Cap et inclinaison à côté des coordonnées : une scène à rejouer, c'est

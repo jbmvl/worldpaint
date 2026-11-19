@@ -143,16 +143,35 @@ test('une rangée d’hirondelles appelée se pose sur la portée la plus proche
   life.dispose();
 });
 
-test('une hirondelle se pose sur le câble tel qu’il est dessiné, qui suit le relief', async () => {
+test('une hirondelle se pose sur la flèche du câble, entre les têtes des poteaux', async () => {
   const { perchOnSpan } = await import('../src/layers/swallows.js');
-  // Un câble qui enjambe une bosse : la corde entre appuis passe deux mètres plus bas.
-  const heights = [8, 9, 10, 10, 10, 9, 8];
-  const perch = perchOnSpan(frameAt(0), { ax: 0, ay: 8, az: 0, bx: 60, by: 8, bz: 0, sag: 0, heights });
+  const span = { ax: 0, ay: 8, az: 0, bx: 60, by: 12, bz: 0, sag: 1.5 };
+  const perch = perchOnSpan(frameAt(0), span);
+  assert.ok(perch.birds.length > 0);
   for (const bird of perch.birds) {
-    const f = (bird.x / 60) * 6;
-    const i = Math.min(5, Math.floor(f));
-    assert.ok(Math.abs(bird.y - (heights[i] + (heights[i + 1] - heights[i]) * (f - i))) < 1e-9, `${bird.x} ${bird.y}`);
+    const t = bird.x / 60;
+    assert.ok(Math.abs(bird.y - (8 + 4 * t - 1.5 * 4 * t * (1 - t))) < 1e-9, `${bird.x} ${bird.y}`);
   }
+});
+
+test('le câble aérien s’accroche aux poteaux posés et ne lit pas le relief entre eux', async () => {
+  const { appendOverheadLine } = await import('../src/layers/furniture/roadsideFurniture.js');
+  const { createProfileBuffer } = await import('../src/layers/ribbonGeometry.js');
+  const c = [0.5, 0.5, 0.5];
+  const wire = [{ across: -0.02, up: 0, color: c }, { across: 0, up: 0.02, color: c }, { across: 0.02, up: 0, color: c }, { across: 0, up: -0.02, color: c }];
+  const layer = { wireSpans: [], specs: { profiles: { wire } } };
+  const buffer = createProfileBuffer();
+  // Pieds posés sur un mur (3 m) et sur le sol (0 m).
+  appendOverheadLine(layer, buffer, [{ x: 0, y: 3, z: 0 }, { x: 50, y: 0, z: 0 }], 7);
+  const [span] = layer.wireSpans;
+  assert.equal(span.ay, 10);
+  assert.equal(span.by, 7);
+  let top = -Infinity, bottom = Infinity;
+  for (let i = 1; i < buffer.positions.length; i += 3) {
+    top = Math.max(top, buffer.positions[i]);
+    bottom = Math.min(bottom, buffer.positions[i]);
+  }
+  assert.ok(top < 10.1 && bottom > 7 - span.sag - 0.1, `${bottom} ${top}`);
 });
 
 test('un vol d’étourneaux appelé part d’une lisière, devant de préférence, et rien sans bois', async () => {

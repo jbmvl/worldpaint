@@ -111,17 +111,20 @@ const ACES_OUT = [
 const applyMatrix = (m, v) => m.map((row) => row[0] * v[0] + row[1] * v[1] + row[2] * v[2]);
 
 /**
- * `ACESFilmicToneMapping` de three, linéaire vers linéaire affichable.
+ * La courbe de sortie du renderer (`toneMapping.js`), linéaire vers linéaire affichable.
  * @param {[number,number,number]} rgb
  * @param {number} exposure `renderer.toneMappingExposure`.
+ * @param {number} [saturation] Relevé de saturation après ACES (1 : ACES seul).
  */
-export function acesFilmic(rgb, exposure) {
+export function acesFilmic(rgb, exposure, saturation = 1) {
   const fitted = applyMatrix(ACES_IN, rgb.map((c) => (c * exposure) / 0.6)).map((x) => {
     const a = x * (x + 0.0245786) - 0.000090537;
     const b = x * (0.983729 * x + 0.432951) + 0.238081;
     return a / b;
   });
-  return applyMatrix(ACES_OUT, fitted).map(clamp01);
+  const mapped = applyMatrix(ACES_OUT, fitted).map(clamp01);
+  const luma = mapped[0] * 0.2126 + mapped[1] * 0.7152 + mapped[2] * 0.0722;
+  return mapped.map((c) => clamp01(luma + (c - luma) * saturation));
 }
 
 /** Hauteur de soleil sous laquelle l'éclairage est entièrement nocturne. */

@@ -33,6 +33,7 @@ import { plantedTree, seafrontPalms, SEAFRONT_PALM_M } from './plantedTrees.js';
 import { nearSea, seaRingsIn } from './coast.js';
 import { buildGapTrees } from './furniture/gapTrees.js';
 import { collectWaterwayCanes, placeCaneClumps } from './furniture/caneBrakes.js';
+import { placeRoadsideWild } from './furniture/roadsideWild.js';
 import { defaultTheme } from '../themes/default.js';
 import { stoneTintFor } from '../core/regionInterpretation.js';
 import { coloredProfileGeometrySteps } from './profileGeometry.js';
@@ -69,6 +70,7 @@ import { ObstacleLights } from './obstacleLights.js';
 import { CemeteryGhosts } from './cemeteryGhosts.js';
 import {
   Kit,
+  FURNITURE_BUILDERS,
   createFurnitureGeometries,
   createFurnitureMaterial,
   createFurnitureRotorMaterial,
@@ -79,6 +81,8 @@ import {
   createGlowGeometry,
   createLightPoolGeometry,
   createLightPoolMaterial,
+  createLampGlassGeometries,
+  createLampGlassMaterial,
   furnitureSpecsFor,
   furnitureColorsForStone,
   stoneFurnitureItems,
@@ -95,15 +99,18 @@ import {
   LINEAR_KINDS,
   POINT_ITEMS,
   GROUND_GRAIN_ITEMS,
+  ON_DEMAND_ITEMS,
   PLANTED_TREE,
 } from './furniture/catalog.js';
 import { buildRoadsideSteps } from './furniture/roadsideFurniture.js';
 import { buildCrossings, buildJunctionSigns, trafficPhaseAt } from './furniture/junctionFurniture.js';
 import { buildParcelsSteps } from './furniture/parcels.js';
 import { buildTownSquares } from './furniture/townTrees.js';
+import { buildTownPlots } from './furniture/townPlots.js';
 import {
   buildVillageLandmarks,
   buildRocksSteps,
+  buildWindFarms,
   buildLandmarks,
   buildPeakLandmarks,
   collectProtectedAreas,
@@ -168,17 +175,6 @@ export {
   VILLAGE_TOWN_MAX_BUILDINGS,
 } from './furniture/landmarks.js';
 
-/**
- * Vraies lumières de lampadaire présentes dans la scène. Deux, pas une de
- * plus : le nombre de lumières entre dans la clé de programme de tous les
- * matériaux. Posées sur les deux têtes les plus proches, avec un fondu
- * d'entrée et de sortie.
- */
-export const LAMP_LIGHT_COUNT = 2;
-/** Portée d'une de ces lumières, en mètres. */
-export const LAMP_LIGHT_RANGE_M = 34;
-/** Intensité de plein régime, en candela. */
-export const LAMP_LIGHT_CD = 620;
 /** Diamètre de la nappe de lumière au sol, en mètres. */
 export const LAMP_POOL_M = 17;
 /** Sel du grain du muret de pierre sèche (`facetJitter`). */
@@ -246,6 +242,8 @@ export class FurnitureLayer {
     this.greenhouseMaterial = createFurnitureGreenhouseMaterial(THREE);
     this.groundedMaterial = createFurnitureGroundedMaterial(THREE, this.theme.surfaces.farmland);
     this.trees = [];
+    /** Arbres de verger, éclaircis au loin par la végétation (`setPlants(…, { thinned })`). */
+    this.orchardTrees = [];
     /** Portées des lignes aériennes, repère de scène — voir `appendOverheadLine`. */
     this.wireSpans = [];
     /** Dortoirs d'étourneaux, repère de scène — voir `furniture/roosts.js`. */
@@ -259,7 +257,13 @@ export class FurnitureLayer {
     /** Placements publiés et ce que leur reconstruction a lu du lieu : de quoi y ajouter un point d'eau sans tout refaire. */
     this._placements = null;
     this._extraSite = null;
-    this.geometries = createFurnitureGeometries(THREE, theme.furniture.colors, undefined, this._placeNameSign, theme.furniture);
+    this.geometries = createFurnitureGeometries(
+      THREE,
+      theme.furniture.colors,
+      Object.keys(FURNITURE_BUILDERS).filter((name) => !ON_DEMAND_ITEMS.has(name)),
+      this._placeNameSign,
+      theme.furniture
+    );
     /** Nuancier dont les formes en pierre de `geometries` sont faites (`setRegion`). */
     this._stoneColors = theme.furniture.colors;
 
@@ -311,18 +315,17 @@ export class FurnitureLayer {
     this.poolMaterial = createLightPoolMaterial(THREE);
     this.poolMesh = null;
 
-    // Les deux seules vraies lumières du décor. Leur nombre est **fixe** : il
-    // entre dans la clé de programme de tous les matériaux, donc en ajouter une
-    // par lampadaire recompilerait toute la scène à chaque reconstruction. Elles
-    // se déplacent sur les deux têtes les plus proches (`advanceLamps`).
-    this.lampLights = [];
-    for (let i = 0; i < LAMP_LIGHT_COUNT; i++) {
-      const light = new THREE.PointLight(0xffd9a0, 0, LAMP_LIGHT_RANGE_M, 1.7);
-      light.name = `street-lamp-${i}`;
-      light.position.set(0, -1000, 0);
-      scene.add(light);
-      this.lampLights.push(light);
-    }
+    // Verre allumé des lampadaires : une surcouche par forme, aux matrices des
+    // lampadaires (`_applyInstances`), comme les fenêtres du bâti.
+    const { lamp, lampWarm, lampLed } = theme.furniture.colors;
+    this.lampGlassGeometries = createLampGlassGeometries(THREE, {
+      streetLamp: lamp,
+      streetLampClassic: lampWarm,
+      streetLampLed: lampLed,
+    });
+    this.lampGlassMaterial = createLampGlassMaterial(THREE);
+    /** @type {Map<string, Object>} surcouche de verre allumé, par forme de lampadaire. */
+    this.lampGlassMeshes = new Map();
 
     // Feux tricolores : le boîtier est du mobilier ordinaire, la lentille
     // allumée non — elle change de couleur toutes les quelques secondes, donc
@@ -375,7 +378,6 @@ export class FurnitureLayer {
     this._roadIndex = null;
     /** Dalles de carrefour de la reconstruction en cours (`JunctionAreas`), même durée de vie. */
     this._areas = null;
-    this._night = 0;
     this._matrix = new THREE.Matrix4();
     this._position = new THREE.Vector3();
     this._quaternion = new THREE.Quaternion();
@@ -565,6 +567,11 @@ export class FurnitureLayer {
         placements,
         // Touffes de canne candidates, posées ensemble par distance (`caneBrakes.js`).
         caneClumps: [],
+        // Plantes du pays au bord des routes, posées ensemble par distance (`roadsideWild.js`).
+        roadsideWild: [],
+        roadsideWildSeen: new Set(),
+        // Arbres de verger, posés par distance puis éclaircis par la végétation (`parcels.js`).
+        orchardTrees: [],
       };
       this.counts = {
         points: 0,
@@ -607,7 +614,11 @@ export class FurnitureLayer {
         yield;
         buildPointsOfInterest(this, context, roadSegments, builtUp);
         yield;
-        ({ trees: this.counts.squareTrees, benches: this.counts.benches } = buildTownSquares(this, context));
+        const squares = buildTownSquares(this, context);
+        this.counts.squareTrees = squares.trees;
+        this.counts.benches = squares.benches;
+        yield;
+        this.counts.townPlots = buildTownPlots(this, context, builtUp, squares);
         yield;
         yield* buildRocksSteps(this, context, builtUp);
         yield;
@@ -616,6 +627,7 @@ export class FurnitureLayer {
         buildRoosts(this, context);
         yield;
         const { reserves, historic } = collectProtectedAreas(source, tiles, this.bubble.frame);
+        buildWindFarms(this, context, builtUp, reserves);
         buildLandmarks(this, context, builtUp, reserves);
         yield;
         buildPeakLandmarks(this, context, builtUp, reserves);
@@ -628,6 +640,7 @@ export class FurnitureLayer {
         yield;
         collectWaterwayCanes(this, context, builtUp);
         placeCaneClumps(this, context);
+        this.counts.roadsideWild = placeRoadsideWild(this, context);
         yield;
       } catch (e) {
         // La pile complète, pas le seul message : cette exception avale tout ce
@@ -647,6 +660,11 @@ export class FurnitureLayer {
         yield;
       }
       this.trees = [];
+      this.orchardTrees = [];
+      for (const p of context.orchardTrees) {
+        const tree = plantedTree(this.bubble.frame, p, this.theme.trees);
+        if (tree) this.orchardTrees.push(tree);
+      }
       seafrontPalms(placements.get(PLANTED_TREE) ?? [], this.region, () =>
         nearSea(seaRingsIn(source, tiles, this.bubble.frame), SEAFRONT_PALM_M)
       );
@@ -899,23 +917,28 @@ export class FurnitureLayer {
    * dans les rues transversales. La découpe la coupe à chacune.
    */
   _appendHedgerow(buffer, kind, path, sampleElevation, options = {}) {
-    const { offset = 0, own = null, openGround = false, verge = false } = options;
+    const { offset = 0 } = options;
+    for (const run of this._borderRuns(path, kind, options)) {
+      this._appendHedgerowRun(buffer, kind, run, sampleElevation, { offset });
+    }
+  }
+
+  /**
+   * Tronçons d'un linéaire posé à `offset` d'une chaussée (haie, muret) :
+   * coupé aux rues transversales (`own`), aux bois (`openGround` — un contour
+   * de parcelle l'a déjà été par `parcels`), et inscrit dans `verges`
+   * jusqu'au dos de sa section (`verge`).
+   */
+  _borderRuns(path, profileKey, { offset = 0, own = null, openGround = false, verge = false } = {}) {
     const crossings = own
       ? this._clipOffRoad(path, { offset, minLength: BOUNDARY_MIN_LENGTH_M, own })
       : [path];
-    for (const crossed of crossings) {
-      // `openGround` : la haie de bord de route n'a rien à clore dans un bois.
-      // Un contour de parcelle a déjà été coupé aux lisières par `parcels`.
-      const runs = openGround ? this._clipOpenGround(crossed, { offset }) : [crossed];
-      for (const run of runs) {
-        // La bande va jusqu'au dos de la haie : sa demi-épaisseur est celle de sa section.
-        if (verge) {
-          const halfWidth = Math.max(...this.specs.profiles[kind].map((p) => Math.abs(p.across)));
-          this.verges.add(run, offset, halfWidth);
-        }
-        this._appendHedgerowRun(buffer, kind, run, sampleElevation, { offset });
-      }
+    const runs = openGround ? crossings.flatMap((crossed) => this._clipOpenGround(crossed, { offset })) : crossings;
+    if (verge) {
+      const halfWidth = Math.max(...this.specs.profiles[profileKey].map((p) => Math.abs(p.across)));
+      for (const run of runs) this.verges.add(run, offset, halfWidth);
     }
+    return runs;
   }
 
   /** Une haie d'un seul tenant. */
@@ -972,9 +995,17 @@ export class FurnitureLayer {
   /**
    * Pose un muret de pierre sèche : un balayage facetté comme la haie
    * (`facetJitter`), plus discrètement, sur un tracé ré-échantillonné dont le
-   * pas espace les arêtes.
+   * pas espace les arêtes. Les options sont celles de `_borderRuns`.
    */
-  _appendDryStoneWall(buffer, path, sampleElevation) {
+  _appendDryStoneWall(buffer, path, sampleElevation, options = {}) {
+    const { offset = 0 } = options;
+    for (const run of this._borderRuns(path, 'dryStoneWall', options)) {
+      this._appendDryStoneWallRun(buffer, run, sampleElevation, { offset });
+    }
+  }
+
+  /** Un muret d'un seul tenant. */
+  _appendDryStoneWallRun(buffer, path, sampleElevation, { offset = 0 } = {}) {
     const fine = resamplePath(path, DRY_STONE_WALL_SAMPLE_M);
     const dense = fine.length >= 2 ? fine : [...path];
     // Le ré-échantillonnage s'arrête au dernier pas entier : sans ce bout, le
@@ -986,11 +1017,15 @@ export class FurnitureLayer {
     if (tail > DRY_STONE_WALL_SAMPLE_M * 0.25) dense.push(closing);
     else if (tail > 0) dense[dense.length - 1] = closing;
 
-    const grain = facetJitter(this.bubble.frame, dense, DRY_STONE_WALL_SEED, this.specs.dryStoneWallGrain);
+    // Le grain est tiré sur l'axe porté : sans le côté dans le sel, les deux
+    // murets d'un même chemin auraient les mêmes pierres en vis-à-vis.
+    const salt = DRY_STONE_WALL_SEED + Math.sign(offset) + 1;
+    const grain = facetJitter(this.bubble.frame, dense, salt, this.specs.dryStoneWallGrain);
     appendProfile(buffer, {
       path: dense,
       profile: this.specs.profiles.dryStoneWall,
       sampleElevation,
+      offset,
       lift: -FURNITURE_SINK_M,
       closed: true,
       scaleUp: grain.up,
@@ -1064,9 +1099,9 @@ export class FurnitureLayer {
   }
 
   /** @returns {{x:number,y:number,z:number}|null} l'objet posé, ou `null`. */
-  _place(placements, item, { x, z, y = null, yaw = 0, scale = 1, scaleX = null, scaleZ = null, exactY = false, grounded = false }) {
+  _place(placements, item, { x, z, y = null, yaw = 0, scale = 1, scaleX = null, scaleZ = null, exactY = false, grounded = false, limit = FURNITURE_LIMITS.points }) {
     const list = placements.get(item);
-    if (!list || list.length >= FURNITURE_LIMITS.points) return null;
+    if (!list || list.length >= limit) return null;
 
     if (grounded && y != null) {
       const support = this.bubble.renderedSupportAtLocal?.(x, z)?.y ??
@@ -1144,6 +1179,8 @@ export class FurnitureLayer {
 
     if (list.length === 0) {
       if (mesh) mesh.count = 0;
+      const glass = this.lampGlassMeshes.get(item);
+      if (glass) glass.count = 0;
       return;
     }
 
@@ -1164,6 +1201,7 @@ export class FurnitureLayer {
             : GROUND_GRAIN_ITEMS.has(item)
               ? this.groundedMaterial
               : this.material;
+      this.geometries[item] ??= createFurnitureGeometries(THREE, this.theme.furniture.colors, [item])[item];
       mesh = new THREE.InstancedMesh(this.geometries[item], material, capacity);
       mesh.name = `furniture-${item}`;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -1187,6 +1225,30 @@ export class FurnitureLayer {
     mesh.count = list.length;
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
+    if (this.lampGlassGeometries[item]) this._applyLampGlass(item, mesh);
+  }
+
+  /** Recopie les matrices d'un lampadaire sur la surcouche de son verre allumé. */
+  _applyLampGlass(item, lamps) {
+    const { THREE } = this;
+    let mesh = this.lampGlassMeshes.get(item);
+    if (!mesh || mesh.instanceMatrix.count < lamps.instanceMatrix.count) {
+      if (mesh) {
+        this.group.remove(mesh);
+        mesh.dispose?.();
+      }
+      mesh = new THREE.InstancedMesh(this.lampGlassGeometries[item], this.lampGlassMaterial, lamps.instanceMatrix.count);
+      mesh.name = `furniture-${item}-glass`;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.renderOrder = 8;
+      mesh.visible = this.lampGlassMaterial.opacity > 0.01;
+      this.group.add(mesh);
+      this.lampGlassMeshes.set(item, mesh);
+    }
+    mesh.instanceMatrix.array.set(lamps.instanceMatrix.array.subarray(0, lamps.count * 16));
+    mesh.count = lamps.count;
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.boundingSphere = lamps.boundingSphere?.clone() ?? null;
   }
 
   /**
@@ -1425,55 +1487,6 @@ export class FurnitureLayer {
   }
 
   /**
-   * Pose les deux vraies lumières sur les têtes de lampadaire les plus proches.
-   *
-   * ## Pourquoi seulement deux
-   *
-   * Le nombre de lumières d'une scène entre dans la clé de programme de **tous**
-   * ses matériaux. Une lumière par lampadaire ferait recompiler l'intégralité des
-   * shaders à chaque reconstruction du mobilier, c'est-à-dire tous les 250
-   * mètres — un gel d'une demi-seconde, régulier. Deux lumières fixes qui se
-   * déplacent coûtent deux comparaisons par tête et rien d'autre.
-   *
-   * L'intensité s'éteint en approchant du bord de portée : sans ce fondu, une
-   * lampe s'allumerait d'un bloc en entrant dans la liste.
-   *
-   * @param {{x:number,z:number}} at Position de l'observateur.
-   */
-  advanceLamps(at) {
-    if (this.disposed || this.lampLights.length === 0) return;
-
-    const heads = this._lampHeads;
-    // Les deux plus proches, trouvées par insertion : trier une liste de
-    // plusieurs centaines de têtes à chaque image serait absurde pour en garder
-    // deux.
-    const best = [];
-    for (const head of heads) {
-      const d = Math.hypot(head.x - at.x, head.z - at.z);
-      if (d > LAMP_LIGHT_RANGE_M) continue;
-      if (best.length < this.lampLights.length) {
-        best.push({ head, d });
-        best.sort((a, b) => a.d - b.d);
-      } else if (d < best[best.length - 1].d) {
-        best[best.length - 1] = { head, d };
-        best.sort((a, b) => a.d - b.d);
-      }
-    }
-
-    this.lampLights.forEach((light, index) => {
-      const pick = best[index];
-      if (!pick) {
-        light.intensity = 0;
-        return;
-      }
-      light.position.set(pick.head.x, pick.head.y, pick.head.z);
-      // Fondu sur le dernier tiers de la portée.
-      const fade = Math.min(1, (LAMP_LIGHT_RANGE_M - pick.d) / (LAMP_LIGHT_RANGE_M * 0.35));
-      light.intensity = LAMP_LIGHT_CD * this._night * fade;
-    });
-  }
-
-  /**
    * Oriente les éoliennes face au vent et règle la vitesse à laquelle
    * `advanceRotor` fait tourner leurs pales.
    *
@@ -1533,16 +1546,16 @@ export class FurnitureLayer {
    */
   setNight(mix) {
     const value = Math.min(1, Math.max(0, Number(mix) || 0));
-    this._night = value;
     this.glowMaterial.uniforms.uOpacity.value = value * 0.95;
     this.poolMaterial.uniforms.uOpacity.value = value * 0.5;
+    this.lampGlassMaterial.opacity = value;
+    for (const mesh of this.lampGlassMeshes.values()) mesh.visible = value > 0.01;
     this.signalGlowMaterial.uniforms.uOpacity.value = 0.55 + value * 0.35;
     if (this.glowMesh) this.glowMesh.visible = value > 0.01;
     if (this.poolMesh) this.poolMesh.visible = value > 0.01;
     this.lighthouseLight.setNight(value);
     this.obstacleLights.setNight(value);
     this.ghosts.setNight(value);
-    for (const light of this.lampLights) light.intensity *= value > 0.01 ? 1 : 0;
   }
 
   /**
@@ -1572,6 +1585,11 @@ export class FurnitureLayer {
       mesh.dispose?.();
     }
     this.instanced.clear();
+    for (const mesh of this.lampGlassMeshes.values()) {
+      this.group.remove(mesh);
+      mesh.dispose?.();
+    }
+    this.lampGlassMeshes.clear();
 
     for (const mesh of this.linear.values()) {
       this.group.remove(mesh);
@@ -1604,12 +1622,11 @@ export class FurnitureLayer {
     this.glowMaterial.dispose();
     this.poolGeometry.dispose();
     this.poolMaterial.dispose();
+    for (const geometry of Object.values(this.lampGlassGeometries)) geometry.dispose();
+    this.lampGlassMaterial.dispose();
     this.signalGeometry.dispose();
     this.signalMaterial.dispose();
     this.signalGlowMaterial.dispose();
-
-    for (const light of this.lampLights) this.scene.remove(light);
-    this.lampLights.length = 0;
 
     this._lampHeads = [];
     this.wireSpans = [];

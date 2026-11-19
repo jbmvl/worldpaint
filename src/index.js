@@ -28,6 +28,7 @@ export { SceneEnvironment, DEFAULT_SKY_PALETTE, SKY_RADIUS, SKY_LAYER, SHADOW_LE
 // --- La météo ---------------------------------------------------------------
 // Un état (change en cours de route), pas une direction artistique. `src/` ne
 // fait aucune requête réseau : brancher un service météo est à l'application.
+export { TONE_MAPPING, applyToneMapping } from './environment/toneMapping.js';
 export { DEFAULT_WEATHER, PRECIPITATION_TYPES, resolveWeather } from './environment/weather.js';
 
 // --- Géographie : passer de lng/lat aux mètres de la scène ------------------

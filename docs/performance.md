@@ -60,8 +60,8 @@ complets, 9 037 116 avec le détail automatique, dans les deux cas 467 appels.
 Ces compteurs incluent les ombres et ne prédisent pas les FPS sur téléphone.
 Le semis
 d'une telle tuile coûte 20 à 40 ms, étalés par étapes de quelques
-millisecondes. Les lanternes utilisent deux lumières ponctuelles
-sans ombres. Le coût GPU est à contrôler sur les appareils cibles, il n'est
+millisecondes. Les lampadaires n'ont pas de lumière ponctuelle : halo et
+nappe au sol, additifs. Le coût GPU est à contrôler sur les appareils cibles, il n'est
 pas couvert par le banc CPU du terrain.
 
 Les neuf corrections de racine occupent 36 octets par maille dans les attributs

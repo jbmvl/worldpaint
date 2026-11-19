@@ -174,17 +174,18 @@ test('plantations et essences plantées ont une variante valide et un tirage sta
 import { buildRows } from '../src/layers/furniture/parcels.js';
 
 test('les rangs de verger publient des pommiers sans changer les arbres isolés', () => {
-  const plants = [];
   const layer = {
     bubble: { frame: testFrame },
     counts: { rows: 0 },
     _clipOffRoad: path => [path],
-    _place(placements, item, p) { const plant = { ...p, y: 0, item }; plants.push(plant); return plant; },
   };
   const ring = [{ x: -20, z: -20 }, { x: 20, z: -20 }, { x: 20, z: 20 }, { x: -20, z: 20 }];
-  buildRows(layer, { placements: new Map(), buffers: {}, sampleElevation: () => 0 }, ring, { x: 0, z: 0 }, 'orchard', { x: 0, z: 0 });
-  assert.ok(plants.length > 0);
-  for (const p of plants) {
+  const context = { placements: new Map(), buffers: {}, sampleElevation: () => 0, orchardTrees: [] };
+  buildRows(layer, context, ring, { x: 0, z: 0 }, 'orchard', { x: 0, z: 0 });
+  assert.ok(context.orchardTrees.length > 0);
+  // Le verger a son propre plafond : il ne consomme pas celui des rangs de vigne.
+  assert.equal(layer.counts.rows, 0);
+  for (const p of context.orchardTrees.map(c => ({ ...c, y: 0 }))) {
     assert.equal(p.plantation, 'treeApple');
     const fruitier = plantedTree(testFrame, p, defaultTheme.trees);
     assert.equal(defaultTheme.trees.variants[fruitier.variant].kind, 'apple');
@@ -269,4 +270,18 @@ test('chaque arbre de verger nommé par l’assolement a sa plantation dans le t
     assert.ok(look, `${word} : plantation ${entry.plantation} absente du thème`);
     assert.ok(look.variants.every((v) => defaultTheme.trees.variants[v]), `${word} : silhouette inconnue`);
   }
+});
+
+import { pointInRing, ringInteriorPoint } from '../src/layers/furniturePlacement.js';
+
+test('une parcelle en U se lit en un point à elle, sans l\'observateur', () => {
+  // Un U dont le centre des sommets tombe dans l'échancrure.
+  const ring = [{ x: 0, z: 0 }, { x: 30, z: 0 }, { x: 30, z: 30 }, { x: 20, z: 30 }, { x: 20, z: 5 }, { x: 10, z: 5 }, { x: 10, z: 30 }, { x: 0, z: 30 }];
+  const centre = { x: 15, z: 15 };
+  assert.equal(pointInRing(ring, centre.x, centre.z), false);
+  const p = ringInteriorPoint(ring, centre);
+  assert.ok(pointInRing(ring, p.x, p.z));
+  assert.deepEqual(ringInteriorPoint(ring, centre), p);
+  const square = [{ x: 0, z: 0 }, { x: 10, z: 0 }, { x: 10, z: 10 }, { x: 0, z: 10 }];
+  assert.deepEqual(ringInteriorPoint(square, { x: 5, z: 5 }), { x: 5, z: 5 });
 });

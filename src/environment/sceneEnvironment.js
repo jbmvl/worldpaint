@@ -39,6 +39,7 @@
  * sans jamais aller la chercher — voir `weather.js`.
  */
 
+import { TONE_MAPPING } from './toneMapping.js';
 import {
   skyParameters,
   lightingFor,
@@ -58,6 +59,7 @@ import {
   fogScale,
   fogColorFor,
   hazeWhiteness,
+  hazeClosure,
   overcastOf,
   nightCloudVeil,
   windField,
@@ -120,13 +122,18 @@ const SKY_GAIN = 0.4;
 const HORIZON_BAND = 0.18;
 const MURKY_HORIZON_BAND = 0.3;
 const HAZE_HORIZON_BAND = 0.8;
+const CLOSED_HAZE_BAND = 8;
 
 /**
- * Palette d'ambiance : les trois seules couleurs que ce module attend d'une
+ * Palette d'ambiance : les trois couleurs que ce module attend d'une
  * application (`theme.sky`, alias public pour qui monte un
- * `SceneEnvironment` sans `createWorld`).
+ * `SceneEnvironment` sans `createWorld`), et l'air d'un pays en facteurs
+ * facultatifs (1 par défaut) : `sun` et `ambient` sur la lumière directe et
+ * diffuse, `haze` sur la densité du brouillard par ciel clair, `turbidity` sur celle du ciel ;
+ * `water`, albédo linéaire, remplace celui de l'eau du thème.
  *
- * @typedef {{fog: string, nightZenith: string, nightHorizon: string}} SkyPalette
+ * @typedef {{fog: string, nightZenith: string, nightHorizon: string, water?: number[]|null,
+ *   sun?: number, ambient?: number, haze?: number, turbidity?: number}} SkyPalette
  */
 export const DEFAULT_SKY_PALETTE = defaultTheme.sky;
 
@@ -146,6 +153,11 @@ export function skyPaletteFor(matrix, sky = DEFAULT_SKY_PALETTE) {
     fog: variant.fog ?? sky.fog,
     nightZenith: variant.nightZenith ?? sky.nightZenith,
     nightHorizon: variant.nightHorizon ?? sky.nightHorizon,
+    water: variant.water ?? null,
+    sun: variant.sun ?? 1,
+    ambient: variant.ambient ?? 1,
+    haze: variant.haze ?? 1,
+    turbidity: variant.turbidity ?? 1,
   };
 }
 
@@ -278,8 +290,9 @@ export class SceneEnvironment {
    * @param {number} [options.fogRadius] Distance de disparition, en mètres.
    * @param {number} [options.shadowMapSize] Côté de la carte d'ombres, en texels.
    * @param {number} [options.toneMappingExposure] Doit valoir celle du renderer
-   *        (tone mapping ACES) : le brouillard, composité après le tone mapping,
+   *        (`toneMapping.js`) : le brouillard, composité après le tone mapping,
    *        prend la luminance que le ciel affiche une fois passé par elle.
+   * @param {number} [options.toneMappingSaturation] Idem, pour la saturation.
    * @param {Object} [options.weather] État météo de départ (voir `weather.js`).
    *        Omis, c'est le temps ordinaire — celui qui reproduit exactement le
    *        rendu d'avant l'existence de ce réglage.
@@ -300,7 +313,8 @@ export class SceneEnvironment {
     scene,
     fogRadius = 2200,
     shadowMapSize = 2048,
-    toneMappingExposure = 0.5,
+    toneMappingExposure = TONE_MAPPING.exposure,
+    toneMappingSaturation = TONE_MAPPING.saturation,
     cloudCoverage = undefined,
     cloudDensity = undefined,
     weather = null,
@@ -317,7 +331,10 @@ export class SceneEnvironment {
     this.shadowMapSize = shadowMapSize;
     /** Densité de brouillard par temps ordinaire ; la météo la multiplie plutôt que la remplacer. */
     this.baseFogDensity = 1.7 / fogRadius;
+    /** Unité du brouillard météo, ancrée au rayon de départ : le lointain écarte l'horizon, pas la brume. */
+    this.weatherFogUnit = 1.7 / fogRadius;
     this.exposure = toneMappingExposure;
+    this.saturation = toneMappingSaturation;
     /** @type {Object} état météo résolu et gelé. Voir `weather.js`. */
     this.weather = resolveWeather({
       cloudCover: cloudCoverage,
@@ -678,22 +695,27 @@ export class SceneEnvironment {
       americanNight
     );
     this._nightZenith = nightZenith;
+    // Le ciel et l'horizon recalculé ici lisent la même turbidité : sinon couture.
     const sky = weatherSkyParameters(skyParameters(dir.y), this.weather);
+    sky.turbidity *= this.palette.turbidity ?? 1;
     this._skyGain = SKY_GAIN * skyAdaptation(dir.y);
     const overcast = overcastOf(this.weather);
     const hazeWhite = hazeWhiteness(this.weather);
     const murk = Math.max(overcast, hazeWhite);
-    const horizonBand = Math.max(
+    // Élévation où la couleur d'horizon est lue : un sinus, donc jamais au-delà de 1.
+    const sampleBand = Math.max(
       mix(HORIZON_BAND, MURKY_HORIZON_BAND, overcast),
       mix(HORIZON_BAND, HAZE_HORIZON_BAND, hazeWhite)
     );
+    // Brume fermée : la bande monte au-delà du zénith, le ciel disparaît.
+    const horizonBand = Math.max(sampleBand, mix(HORIZON_BAND, CLOSED_HAZE_BAND, hazeClosure(this.weather)));
     const paletteFog = hexToLinear(this.palette.fog);
     const weatheredFog = fogColorFor(paletteFog, this.weather);
     const dayFogColor = fogColorFor(
-      tintByPalette(this._horizonSkyColor(dir.y, horizonBand, sky, HORIZON_SAMPLE_AZIMUTHS), paletteFog),
+      tintByPalette(this._horizonSkyColor(dir.y, sampleBand, sky, HORIZON_SAMPLE_AZIMUTHS), paletteFog),
       this.weather
     );
-    this._sunwardSky = this._horizonSkyColor(dir.y, horizonBand, sky, [0]);
+    this._sunwardSky = this._horizonSkyColor(dir.y, sampleBand, sky, [0]);
     const twilight = smoothstep(TWILIGHT_END_Y, 0, dir.y);
     const dusk = twilightGlow(weatheredFog, twilight * Math.exp(Math.min(0, dir.y) / TWILIGHT_FALLOFF_Y));
     this._twilightGlow = dusk;
@@ -706,12 +728,13 @@ export class SceneEnvironment {
     const side = (1 + TWILIGHT_ANTISOLAR) / 2;
     const nightFog = acesFilmic(
       [0, 1, 2].map((i) => nightHorizon[i] + dusk.horizon[i] * side),
-      this.exposure
+      this.exposure,
+      this.saturation
     );
     const fogColor = [0, 1, 2].map((i) => mix(dayFogColor[i], nightFog[i], nightMix));
 
     this.fog.color.setRGB(fogColor[0], fogColor[1], fogColor[2]);
-    this.fog.density = this.baseFogDensity * fogScale(this.weather);
+    this.fog.density = this.fogDensity();
     this.uniforms.uHorizonColor.value.setRGB(fogColor[0], fogColor[1], fogColor[2]);
     this.uniforms.uHorizonBlend.value = mix(HORIZON_BLEND, 1, murk);
     this.uniforms.uHorizonBand.value = horizonBand;
@@ -742,12 +765,15 @@ export class SceneEnvironment {
     this._lightDir = moonlit ? { x: -dir.x, y: -dir.y, z: -dir.z } : dir;
     this.sun.castShadow = this._lightDir.y > SHADOW_MIN_SUN_Y && castsShadow(this.weather);
 
-    const light = weatherLighting(lightingFor(dir.y, americanNight), this.weather);
+    const clearLight = lightingFor(dir.y, americanNight);
+    const light = weatherLighting(clearLight, this.weather);
     const [r, g, b] = sunlightColor(light.warmth, light.nightBlend);
     this.sun.color.setRGB(r, g, b);
     const handover = smoothstep(0, DAY_FOR_NIGHT_HANDOVER_Y, Math.abs(dir.y));
-    this.sun.intensity = light.sun * mix(1, handover, americanNight);
-    this.ambient.intensity = light.ambient;
+    // L'air du pays ne règle que le jour : la nuit garde la lumière de la lune.
+    const day = 1 - clearLight.nightBlend;
+    this.sun.intensity = light.sun * mix(1, handover, americanNight) * mix(1, this.palette.sun ?? 1, day);
+    this.ambient.intensity = light.ambient * mix(1, this.palette.ambient ?? 1, day);
 
     // La perspective aérienne lit la couleur de jour, pas déjà mélangée à la
     // nuit : la part de nuit est appliquée ensuite, comme le fait la voûte.
@@ -794,7 +820,7 @@ export class SceneEnvironment {
     const nightZenith = this._nightZenith || hexToLinear(this.palette.nightZenith);
     const sky = aerialSkyColor(dayFog);
     const glow = this._twilightGlow?.zenith || [0, 0, 0];
-    const nightSky = acesFilmic([0, 1, 2].map((i) => nightZenith[i] + glow[i]), this.exposure);
+    const nightSky = acesFilmic([0, 1, 2].map((i) => nightZenith[i] + glow[i]), this.exposure, this.saturation);
     const skyColor = [0, 1, 2].map((i) => mix(sky[i], nightSky[i], nightMix));
     const sunColor = aerialSunColor(this._sunwardSky || dayFog, sunRgb);
     this.waterLight = {
@@ -805,6 +831,7 @@ export class SceneEnvironment {
       sunDirection: sunDir,
       sunColor: sunRgb,
       sunIntensity: sunDir.y > 0 ? this.sun.intensity * (1 - overcastOf(this.weather)) : 0,
+      albedo: this.palette.water ?? null,
     };
     this.aerialFog.update({
       skyColor,
@@ -825,7 +852,7 @@ export class SceneEnvironment {
     const sum = [0, 0, 0];
     for (const azimuth of azimuths) {
       const radiance = preethamRadiance(sunY, band, azimuth, params).map((c) => c * this._skyGain);
-      acesFilmic(radiance, this.exposure).forEach((c, i) => (sum[i] += c));
+      acesFilmic(radiance, this.exposure, this.saturation).forEach((c, i) => (sum[i] += c));
     }
     return sum.map((c) => c / azimuths.length);
   }
@@ -835,12 +862,23 @@ export class SceneEnvironment {
     return this.fog.color;
   }
 
+  /**
+   * L'air du pays (`palette.haze`) ne règle que le ciel clair, qui suit le
+   * rayon courant ; la météo (couvert, pluie, brume) s'y ajoute entière, à
+   * l'unité du rayon de départ, pour qu'un brouillard reste dense quel que
+   * soit le pays ou le relief lointain.
+   */
+  fogDensity() {
+    const weatherExtra = fogScale(this.weather) - 1;
+    return this.baseFogDensity * (this.palette.haze ?? 1) + this.weatherFogUnit * weatherExtra;
+  }
+
   /** Change la distance de disparition : le brouillard suit ce qu'il y a à voir. */
   setFogRadius(radius) {
     if (!(radius > 0) || radius === this.fogRadius) return;
     this.fogRadius = radius;
     this.baseFogDensity = 1.7 / radius;
-    this.fog.density = this.baseFogDensity * fogScale(this.weather);
+    this.fog.density = this.fogDensity();
   }
 
   dispose() {

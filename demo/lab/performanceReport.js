@@ -30,7 +30,7 @@ export function installReport(world, renderer, scene, camera, place) {
     [c.crops,['update','advance'],'cultures'],[c.life,['advance'],'oiseaux et ballon'],
     [c.tractors,['advance','setTractors'],'tracteurs'],[c.trains,['advance','setTracks'],'trains'],
     [c.fauna,['setAnimals'],'faune'],[c.spectators,['advance'],'spectateurs'],
-    [c.furniture,['advanceSignals','advanceLamps','advanceRotor','advanceLighthouses'],'mobilier animé'],
+    [c.furniture,['advanceSignals','advanceRotor','advanceLighthouses'],'mobilier animé'],
     [world,['updateSky'],'ciel soleil brouillard'],[world,['advance'],'image complète'],
   ])for(const method of methods)watch(object,method,`${label} : ${method}`);
   async function settle(at) {

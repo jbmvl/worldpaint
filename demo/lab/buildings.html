@@ -13,6 +13,7 @@
  * Sol plat, bâti seul, aucun réseau extérieur : le château, l’église et le
  * Super U et l’enceinte se regardent avec leurs contours réels.
  * buildingsLab.set({ subject: 0, yawDeg: 45, pitchDeg: -25, distance: 120 })
+ * `region` bâtit comme dans un pays : { fortress: 'crenellated', belfry: 'dome' }.
  */
 import * as THREE from 'three';
 import { createLocalFrame } from '/src/core/tileMath.js';
@@ -32,7 +33,7 @@ sun.position.set(-40,80,30);scene.add(sun);
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(2000,2000).rotateX(-Math.PI/2),new THREE.MeshLambertMaterial({color:0x8a8a80}));
 floor.position.y=-0.02;scene.add(floor);
 const camera = new THREE.PerspectiveCamera(50,innerWidth/innerHeight,0.5,2000);
-const state = {subject:0,yawDeg:45,pitchDeg:-25,distance:120,front:false,targetX:null,targetZ:null};
+const state = {subject:0,region:null,yawDeg:45,pitchDeg:-25,distance:120,front:false,targetX:null,targetZ:null};
 let layer;
 function rebuild() {
   layer?.dispose();
@@ -43,6 +44,7 @@ function rebuild() {
     for(const feature of name==='building'?item.buildings:name==='poi'&&item.poi?[item.poi]:[]) visit(feature.geometry,feature.properties);
   }};
   layer = new BuildingLayer({THREE,scene,bubble});
+  layer.setRegion(state.region);
   // Une rue distante simule le parking de la grande surface.
   const roadIndex = new RoadIndex([{halfWidth:3.5,path:[{x:150,y:0,z:-200},{x:150,y:0,z:200}]}]);
   layer.rebuild(source,[],{x:0,z:0},{roadIndex});
@@ -50,7 +52,8 @@ function rebuild() {
 }
 function render() {
   const yaw=state.yawDeg*Math.PI/180,pitch=state.pitchDeg*Math.PI/180,d=state.distance;
-  const box = new THREE.Box3().setFromObject(layer.mesh);
+  const box = new THREE.Box3();
+  scene.traverse((o)=>{if(o.isMesh&&o.name.startsWith('buildings')&&o.geometry.attributes.position)box.expandByObject(o);});
   const target = box.getCenter(new THREE.Vector3());
   if(state.targetX!==null) target.x=state.targetX;
   if(state.targetZ!==null) target.z=state.targetZ;
@@ -62,7 +65,7 @@ function render() {
   return {name:cases[state.subject].name,built:layer.count,panes:layer.paneCount,shopfronts:layer.shopfronts.length};
 }
 window.buildingsLab = {state,get layer(){return layer;},set(options={}) {
-  const changed=options.subject!==undefined&&options.subject!==state.subject;
+  const changed=(options.subject!==undefined&&options.subject!==state.subject)||options.region!==undefined;
   Object.assign(state,options);if(changed)rebuild();return render();
 }};
 rebuild();render();window.buildingsLabReady=true;

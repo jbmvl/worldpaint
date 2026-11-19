@@ -41,16 +41,9 @@ export const SWALLOW_SPAN_M = 0.33 * SWALLOW_LOOK;
 export const SWALLOW_FLAP_HZ = 9;
 const SALT = 7417;
 
-/**
- * Cote du câble à la fraction `t` de la portée : entre les cotes publiées par
- * `appendOverheadLine` quand il y en a, sinon la corde et sa flèche.
- */
+/** Cote du câble à la fraction `t` de la portée : la corde et sa flèche. */
 function wireY(span, t) {
-  const h = span.heights;
-  if (!h?.length) return span.ay + (span.by - span.ay) * t - span.sag * 4 * t * (1 - t);
-  const f = Math.min(h.length - 1, Math.max(0, t * (h.length - 1)));
-  const i = Math.min(h.length - 2, Math.floor(f));
-  return h[i] + (h[i + 1] - h[i]) * (f - i);
+  return span.ay + (span.by - span.ay) * t - span.sag * 4 * t * (1 - t);
 }
 
 /**

@@ -1,6 +1,6 @@
 /* Un complément de données ajoute des arbres, sans remodeler ceux déjà semés.
- * Le corridor reste prioritaire : une route nouvellement connue retire ce
- * qu'elle recouvre. La mémoire est limitée aux tuiles actives du peuplement.
+ * Le corridor et l'eau restent prioritaires : une route ou une rive
+ * nouvellement connue retire ce qu'elle recouvre. La mémoire est limitée aux tuiles actives du peuplement.
  * Le tri par tirage ne sert qu'à départager les nouveaux venus quand le
  * plafond est atteint ; en deçà, tout le monde entre.
  */

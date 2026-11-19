@@ -28,6 +28,7 @@
  * parcelles ou végétation, absents des tuiles.
  */
 import * as THREE from 'three';
+import { applyToneMapping } from '/src/environment/toneMapping.js';
 import { VegetationLayer } from '/src/layers/vegetationLayer.js';
 import { TerrainBubble } from '/src/terrain/terrainBubble.js';
 import { ElevationField } from '/src/core/elevationField.js';
@@ -214,8 +215,7 @@ const source = {
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.5; // comme la démo
+applyToneMapping(THREE, renderer); // comme la démo
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();

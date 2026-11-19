@@ -7,8 +7,8 @@ import { finishGeneration } from '../../core/generationSteps.js';
  * Deux origines, et elles ne se valent pas. Ce qui est **lu** dans la donnée —
  * un sommet, un trait de côte, un périmètre habité — ancre la recherche. Une
  * antenne rejoint le point haut du relief voisin ; un col n'en porte pas. Ce
- * qui est **semé** sur une grille — éolienne, pylône, pierre, arbre de crête —
- * ne prétend pas l'être : la grille est ancrée au monde et non à l'observateur,
+ * qui est **semé** sur une grille — parc éolien, pylône, pierre, arbre de
+ * crête — ne prétend pas l'être : la grille est ancrée au monde et non à l'observateur,
  * de sorte qu'un repère ne bouge pas d'une reconstruction à l'autre, et ne
  * s'efface pas non plus quand on s'en approche.
  */
@@ -264,19 +264,132 @@ export function collectProtectedAreas(source, tiles, frame) {
   return areas;
 }
 
+/** Maille d'un parc éolien, en mètres : un tirage, au plus un parc. */
+export const WIND_FARM_CELL_M = 1200;
+/** Part des mailles qui portent un parc, avant les refus du terrain. */
+export const WIND_FARM_SHARE = 0.25;
+/** Écart entre deux machines d'un parc, en mètres (environ trois rotors). */
+export const WIND_FARM_SPACING_M = 280;
+/** Pas de la recherche du point haut dans la maille, en mètres. */
+const WIND_FARM_SEARCH_M = 100;
+/** Points hauts essayés, du plus haut au moins haut, avant de renoncer à la maille. */
+const WIND_FARM_ANCHOR_TRIES = 6;
+/** Une machine ne descend pas de la crête : pas plus bas que l'ancre de tant de mètres. */
+const WIND_FARM_DROP_M = 25;
+/** Glissement latéral d'une machine pour rester sur la crête, en mètres. */
+const WIND_FARM_SNAP_M = 60;
+
 /**
- * Éoliennes et pylônes, au loin.
+ * Le sol accepte-t-il un repère d'horizon ici ? Hors bâti et son dégagement,
+ * hors espace sauvage, chaussée et eau.
+ */
+function landmarkGround(layer, builtUp, reserves, x, z) {
+  if (pointInAreas(builtUp, x, z) || pointInAreas(reserves, x, z)) return false;
+  if (layer._onRoad(x, z)) return false;
+  if (layer._fabric?.countWithin(x, z, LANDMARK_CLEARANCE_M, 1) > 0) return false;
+  return !layer._onWater(x, z);
+}
+
+/**
+ * Le site d'un parc dans une maille : le point le plus haut qui soit un point
+ * haut, dégagé et hors bois. Chercher le sommet plutôt que tirer un point
+ * au hasard est ce qui donne leurs éoliennes aux collines : un point tiré sur
+ * un versant n'y est presque jamais un point haut.
+ */
+function windFarmAnchor(layer, cell, builtUp, reserves, elevationAt) {
+  const candidates = [];
+  for (const { x, z } of worldCellsIn(layer.bubble.frame, cell.x, cell.z,
+    cell.x + cell.size, cell.z + cell.size, WIND_FARM_SEARCH_M)) {
+    const px = x + WIND_FARM_SEARCH_M / 2, pz = z + WIND_FARM_SEARCH_M / 2;
+    const h = elevationAt(px, pz);
+    if (Number.isFinite(h)) candidates.push({ x: px, z: pz, h });
+  }
+  candidates.sort((a, b) => b.h - a.h || a.z - b.z || a.x - b.x);
+  for (const c of candidates.slice(0, WIND_FARM_ANCHOR_TRIES)) {
+    if (!layer._openGround(c.x, c.z) || !landmarkGround(layer, builtUp, reserves, c.x, c.z)) continue;
+    if (isHighPoint(layer, c.x, c.z)) return c;
+  }
+  return null;
+}
+
+/**
+ * Les machines d'un parc, alignées sur la direction qui reste la plus haute
+ * autour de l'ancre (la crête, ou n'importe laquelle sur un plateau), chacune
+ * glissée en travers vers le haut. Celles que le terrain refuse manquent ;
+ * le parc n'existe qu'à deux machines au moins.
+ */
+export function windFarmSites(layer, anchor, { count, startAngle, elevationAt, accept }) {
+  const spacing = WIND_FARM_SPACING_M;
+  const half = (count - 1) / 2;
+  let best = null;
+  for (let k = 0; k < 8; k++) {
+    const angle = startAngle + (k * Math.PI) / 8;
+    const dx = Math.cos(angle), dz = Math.sin(angle);
+    let sum = 0;
+    for (let i = 0; i < count; i++) {
+      const t = (i - half) * spacing;
+      sum += elevationAt(anchor.x + dx * t, anchor.z + dz * t);
+    }
+    if (Number.isFinite(sum) && (!best || sum > best.sum)) best = { sum, dx, dz };
+  }
+  if (!best) return [];
+
+  const sites = [];
+  for (let i = 0; i < count; i++) {
+    const t = (i - half) * spacing;
+    const bx = anchor.x + best.dx * t, bz = anchor.z + best.dz * t;
+    let site = null;
+    for (let s = -WIND_FARM_SNAP_M; s <= WIND_FARM_SNAP_M; s += 20) {
+      const x = bx - best.dz * s, z = bz + best.dx * s;
+      const h = elevationAt(x, z);
+      if (Number.isFinite(h) && (!site || h > site.h)) site = { x, z, h };
+    }
+    if (site && site.h >= anchor.h - WIND_FARM_DROP_M && accept(site.x, site.z)) sites.push(site);
+  }
+  return sites.length >= 2 ? sites : [];
+}
+
+/**
+ * Parcs éoliens, au loin.
  *
- * Ils ne sont pas dans les tuiles — `power=tower` et `generator:source=wind`
- * n'y survivent pas —, et ils ne prétendent donc pas être à leur vraie place.
- * Ils ont une autre fonction : donner à l'horizon une échelle verticale. Sans
- * eux, un brouillard sur un relief nu ne dit pas si la crête est à un
- * kilomètre ou à dix.
- *
- * Trois garde-fous rendent leur présence acceptable : ils ne se posent que
- * sur des points hauts (une éolienne ne s'installe pas au fond d'un vallon),
- * jamais dans une zone bâtie ni un espace sauvage protégé, et leur tirage dépend uniquement de la position
- * au sol — donc ils ne bougent pas d'une reconstruction à l'autre.
+ * Ils ne sont pas dans les tuiles — `generator:source=wind` n'y survit pas —,
+ * et ne prétendent donc pas être à leur vraie place. Ils donnent à l'horizon
+ * une échelle verticale : sans eux, un brouillard sur un relief nu ne dit pas
+ * si la crête est à un kilomètre ou à dix. Un parc tient sur une maille
+ * mondiale, au point haut de la maille, en ligne de deux à quatre machines.
+ */
+export function buildWindFarms(layer, context, builtUp, reserves = null) {
+  const { frame } = layer.bubble;
+  const { here, placements } = context;
+  const radius = reachedRadius(Math.min(LANDMARK_RADIUS_M, layer.bubble.radiusMeters || LANDMARK_RADIUS_M), layer.bubble);
+  const elevationAt = (x, z) => layer.bubble.surfaceElevationAtLocal(x, z, NaN);
+  const accept = (x, z) => Math.hypot(x - here.x, z - here.z) <= radius &&
+    layer._openGround(x, z) && landmarkGround(layer, builtUp, reserves, x, z);
+  // Reconstituée à chaque reconstruction ; `setWindDirection` la relit donc
+  // pour orienter les éoliennes fraîchement posées, pas celles d'avant.
+  layer._turbines = [];
+  const limit = FURNITURE_LIMITS.windTurbines;
+
+  for (const cell of worldCellsAround(frame, here, radius + WIND_FARM_CELL_M, WIND_FARM_CELL_M)) {
+    if (randomAt(frame, cell.x, cell.z, 95) > WIND_FARM_SHARE) continue;
+    const anchor = windFarmAnchor(layer, cell, builtUp, reserves, elevationAt);
+    if (!anchor) continue;
+    const count = randomAt(frame, cell.x, cell.z, 96) < 0.5 ? 3 : 4;
+    const startAngle = randomAt(frame, cell.x, cell.z, 97) * Math.PI;
+    const sites = windFarmSites(layer, anchor, { count, startAngle, elevationAt, accept });
+    // Un parc entier ou rien : le plafond n'en coupe pas un en deux, et un
+    // parc trop grand pour ce qui reste n'empêche pas un plus petit plus loin.
+    if (sites.length === 0 || layer._turbines.length + sites.length > limit) continue;
+    for (const s of sites) {
+      const entry = layer._place(placements, 'windTurbine', { x: s.x, z: s.z, yaw: layer._turbineYaw(), limit });
+      if (entry) layer._turbines.push(entry);
+    }
+  }
+}
+
+/**
+ * Pylônes, au loin : même rôle d'échelle que les éoliennes, semés un par
+ * maille sur les points hauts, à l'écart des machines déjà posées.
  */
 export function buildLandmarks(layer, context, builtUp, reserves = null) {
   const { frame } = layer.bubble;
@@ -284,39 +397,29 @@ export function buildLandmarks(layer, context, builtUp, reserves = null) {
   const radius = reachedRadius(Math.min(LANDMARK_RADIUS_M, layer.bubble.radiusMeters || LANDMARK_RADIUS_M), layer.bubble);
   const step = 320;
   let placed = 0;
-  // Reconstituée à chaque reconstruction ; `setWindDirection` la relit donc
-  // pour orienter les éoliennes fraîchement posées, pas celles d'avant.
-  layer._turbines = [];
+  const turbines = layer._turbines ?? [];
 
   // Grille ancrée sur le monde, pas sur l'observateur : les mailles visitées
   // changent, les tirages de chaque maille non.
   for (const { x, z } of worldCellsAround(frame, here, radius, step)) {
     if (placed >= FURNITURE_LIMITS.landmarks) break;
     const draw = randomAt(frame, x, z, 91);
-    if (draw > 0.14) continue;
+    if (draw < 0.08 || draw > 0.14) continue;
 
     // Décalage dans la maille : une grille régulière se lit comme une grille.
     const px = x + (randomAt(frame, x, z, 92) - 0.5) * step * 0.8;
     const pz = z + (randomAt(frame, x, z, 93) - 0.5) * step * 0.8;
     if (Math.hypot(px - here.x, pz - here.z) > radius) continue;
-    if (pointInAreas(builtUp, px, pz) || pointInAreas(reserves, px, pz)) continue;
-    // Ni sur une chaussée, ni au fond d'un jardin. Jamais une distance
-    // minimale à l'observateur : un repère qu'on voit à deux kilomètres et
-    // qui s'efface quand on arrive dessus n'en est plus un.
-    if (layer._onRoad(px, pz)) continue;
-    if (layer._fabric?.countWithin(px, pz, LANDMARK_CLEARANCE_M, 1) > 0) continue;
-    if (layer._onWater(px, pz)) continue;
+    // Jamais une distance minimale à l'observateur : un repère qu'on voit à
+    // deux kilomètres et qui s'efface quand on arrive dessus n'en est plus un.
+    if (!landmarkGround(layer, builtUp, reserves, px, pz)) continue;
+    if (turbines.some((t) => Math.hypot(t.x - px, t.z - pz) < LANDMARK_CLEARANCE_M * 2)) continue;
     if (!isHighPoint(layer, px, pz)) continue;
 
-    const item = draw < 0.08 ? 'windTurbine' : 'pylon';
-    // Une éolienne s'oriente face au vent, pas au hasard de sa position ;
-    // un pylône, lui, n'a pas de face — le tirage précédent lui reste.
-    const yaw = item === 'windTurbine' ? layer._turbineYaw() : randomAt(frame, px, pz, 94) * Math.PI * 2;
-    const entry = layer._place(placements, item, { x: px, z: pz, yaw });
-    if (item === 'windTurbine' && entry) layer._turbines.push(entry);
+    layer._place(placements, 'pylon', { x: px, z: pz, yaw: randomAt(frame, px, pz, 94) * Math.PI * 2 });
     placed++;
   }
-  layer.counts.landmarks = placed;
+  layer.counts.landmarks = placed + turbines.length;
 }
 
 /**

@@ -1,0 +1,18 @@
+{
+  "name": "cefalu-costa",
+  "label": "cefalu-costa",
+  "lng": 14.22226,
+  "lat": 38.01194,
+  "zoom": 14,
+  "tiles": 9,
+  "elevation": {
+    "zoom": 13,
+    "encoding": "terrarium",
+    "extension": "webp",
+    "source": "tiles.mapterhorn.com"
+  },
+  "vector": {
+    "maxZoom": 14,
+    "source": "tiles.openfreemap.org"
+  }
+}

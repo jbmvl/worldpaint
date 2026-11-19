@@ -139,7 +139,9 @@ export const DETAIL_LEVELS = ['full', 'light'];
  * @param {number} [options.sky.fogRadius] Défaut : le demi-côté de la bulle, que
  *        le relief lointain écarte en pays de relief. Fixé, il ne bouge plus.
  * @param {number} [options.sky.shadowMapSize]
- * @param {number} [options.sky.toneMappingExposure] Celle du renderer (ACES). Défaut : 0,5.
+ * @param {number} [options.sky.toneMappingExposure] Celle du renderer. Défaut : `TONE_MAPPING.exposure`
+ *        (`applyToneMapping` règle le renderer sur les mêmes valeurs).
+ * @param {number} [options.sky.toneMappingSaturation] Idem, pour la saturation.
  * @param {Object} [options.sky.weather] Temps qu'il fait au montage (voir
  *        `environment/weather.js`) — un état, repassé à `updateSky`, pas une direction artistique.
  * @param {number} [options.sky.cloudCoverage] Raccourci sur `weather.cloudCover`.
@@ -206,6 +208,7 @@ export function createWorld({
       fogRadius: sky.fogRadius ?? (settings.blockSize / 2) * tileSizeMeters(settings.zoom, latitude),
       shadowMapSize: sky.shadowMapSize,
       toneMappingExposure: sky.toneMappingExposure,
+      toneMappingSaturation: sky.toneMappingSaturation,
       cloudCoverage: sky.cloudCoverage,
       cloudDensity: sky.cloudDensity,
       weather: sky.weather,

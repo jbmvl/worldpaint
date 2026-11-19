@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { assignPersonalities, buildingPersonalityFor, personalityLookFor, outerRings } from '../src/layers/buildingLayer.js';
 import { createLocalFrame } from '../src/core/tileMath.js';
 import { ringArea, orientedBox } from '../src/layers/roofGeometry.js';
-import { castleTowers, appendChurchWindows, appendRetailSign } from '../src/layers/buildingCharacterGeometry.js';
+import { castleTowers, appendBattlements, appendChurchWindows, appendRetailSign } from '../src/layers/buildingCharacterGeometry.js';
 import { poiItem } from '../src/layers/furniture/pointsOfInterest.js';
 
 const rectangle = (x0, z0, x1, z1) => {
@@ -95,4 +95,30 @@ test('l’enseigne de grande surface reste lisible et contenue dans sa façade',
   assert.equal(labels.positions.length,18);
   const xs=walls.positions.filter((_,i)=>i%3===0);
   assert.ok(Math.min(...xs)>0 && Math.max(...xs)<8);
+});
+
+test('le château crénelé du pays perd son toit et couronne ses murs comme ses tours carrées', async () => {
+  const { regionalLookFor } = await import('../src/layers/buildingLayer.js');
+  const { Kit } = await import('../src/models/kit.js');
+  const plain=personalityLookFor('castle');
+  assert.equal(regionalLookFor('castle',{fortress:'keep'}),plain,'sans surcharge, le donjon du thème');
+  const look=regionalLookFor('castle',{fortress:'crenellated'});
+  assert.equal(look.shape,'flat');
+  assert.equal(look.windows,plain.windows,'les baies restent celles du château');
+  assert.equal(regionalLookFor('church',{fortress:'crenellated'}),personalityLookFor('church'),'l’église ne change pas');
+  assert.ok(regionalLookFor('rampart',{fortress:'crenellated'}).crown,'l’enceinte prend ses merlons');
+
+  const ring=rectangle(-20,-10,20,10).footprint;
+  const towers=castleTowers(ring,orientedBox(ring),0,9,look);
+  assert.equal(towers.length,4);
+  for(const t of towers){
+    let high=-Infinity;for(let i=1;i<t.kit.positions.length;i+=3)high=Math.max(high,t.kit.positions[i]);
+    assert.ok(high>9+look.towers.riseM&&high<9+look.towers.riseM+3,'des merlons, pas une poivrière');
+  }
+  const crown=(r)=>{const kit=new Kit();appendBattlements(kit,r,9,look.crown,look.wall);return kit;};
+  const kit=crown(ring);
+  const outer=(k)=>{let m=0;for(let i=0;i<k.positions.length;i+=3)m=Math.max(m,Math.abs(k.positions[i+2]));return m;};
+  assert.ok(Math.abs(outer(kit)-(10+look.crown.overhangM))<1e-9,'le mâchicoulis déborde du nu du mur, vers l’extérieur');
+  assert.equal(outer(crown(ring.slice().reverse())),outer(kit),'quel que soit le sens de parcours');
+  assert.equal(crown(ring.slice().reverse()).positions.length,kit.positions.length);
 });

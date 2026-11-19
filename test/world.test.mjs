@@ -303,6 +303,7 @@ import {
   towerFoot,
   TOWER_SIDE_MIN_M,
   TOWER_SIDE_MAX_M,
+  TOWER_SLENDERNESS,
   TOWER_RISE_MIN_M,
   TOWER_RISE_MAX_M,
   chimneyFootFor,
@@ -1482,6 +1483,10 @@ test('le clocher est dimensionné et posé sur le bâtiment qui le porte', () =>
   assert.ok(towerRise(chapelle) < towerRise(collegiale));
   // Bornée des deux côtés : ni mât ni allumette.
   assert.ok(towerSide(collegiale) <= TOWER_SIDE_MAX_M);
+  // Une nef large sous un fût court ne fait pas un donjon : la hauteur borne le côté.
+  const large = { cx: 0, cz: 0, angle: 0, long: 16, short: 11.7, fill: 0.9 };
+  assert.ok(towerSide(large, 25.4) * TOWER_SLENDERNESS <= 25.4 + 1e-9, 'au moins quatre fois plus haute que large');
+  assert.ok(towerSide(large, 25.4) < towerSide(large));
 
   // Le pied reste dans l'empreinte, décalé vers un bout du grand axe.
   const foot = towerFoot(nef, side);
@@ -4387,6 +4392,8 @@ test('la trame agraire n’est pas la même d’un pays à l’autre', () => {
   const pierre = ['dryStoneWall'];
   assert.equal(partDe(pierre, pature, 'bocage'), 0, 'pas de muret en plaine humide');
   assert.ok(partDe(pierre, pature, 'drystone') > 0.5, 'la terrasse est en pierre');
+  assert.equal(partDe(haies, labour, 'dry_openfield'), 0, 'l’openfield du Midi n’a pas de haie');
+  assert.ok(partDe(pierre, labour, 'dry_openfield') > 0, 'il borne ses labours de murets');
 
   // Et la pierre sort du premier pli de terrain là où le sol en donne, alors
   // qu'il faut une vraie pente ailleurs.
@@ -7107,6 +7114,31 @@ test('une contre-allée qui longe une nationale ne s’y greffe pas', () => {
   assert.equal(junctions.length, 0, 'deux voies qui se longent ne se rencontrent pas');
 });
 
+test('une bretelle qui rejoint la chaussée en biais s’y greffe', () => {
+  // Monti Sicani : la bretelle à sens unique bute à 20° sur la traversante,
+  // dont la tuile a retiré le sommet. Sans greffe, son ruban et ses rives
+  // couraient sur la chaussée.
+  const angle = (20 * Math.PI) / 180;
+  const slip = (profile, halfWidth) => ({
+    profile,
+    halfWidth,
+    oneway: 1,
+    points: [
+      { x: 110, z: 0.4 },
+      { x: 110 + 60 * Math.cos(angle), z: 0.4 + 60 * Math.sin(angle) },
+    ],
+  });
+  const major = { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8) };
+
+  const merged = mergeRoadLines([major, slip('minor', 1.8)]);
+  assert.equal(merged.junctions.length, 1, 'la bretelle fait carrefour');
+  assert.equal(merged.junctions[0].degree, 3);
+  close(merged.junctions[0].z, 0, 1e-6, 'sur l’axe de la traversante');
+
+  const same = mergeRoadLines([major, slip('major', 4.25)]);
+  assert.equal(same.junctions.length, 0, 'de même classe, ce peut être la même route : pas de greffe sous 25°');
+});
+
 test('un bout libre ne se greffe pas sur une chaussée d’un autre niveau', () => {
   const { junctions } = mergeRoadLines([
     { profile: 'major', halfWidth: 4.25, points: straight(0, 200, 8) },
@@ -9287,7 +9319,20 @@ test('la haie de bord de route suit le style de limite du pays', () => {
   assert.equal(count('none'), 0);
   assert.ok(roadsideHedgeShares('openfield').hedge < roadsideHedgeShares('bocage').hedge / 3);
   assert.equal(roadsideHedgeShares('drystone').hedge, 0);
+  assert.equal(count('drystone'), 0, 'pays de pierre : aucune haie basse');
+  for (let i = 0; i < 100; i++) {
+    const kind = boundaryFurnitureFor({ class: 'farmland' }, { variant: i / 100, boundary: 'drystone' });
+    assert.ok(kind !== 'hedge' && kind !== 'lowHedge', `labour en pays de pierre : ${kind}`);
+  }
+  assert.deepEqual(roadsideHedgeShares('dry_openfield'), { verge: 0, hedge: 0, wall: 0.2 });
   assert.equal(roadsideHedgeShares('style inconnu'), roadsideHedgeShares('bocage'));
+});
+
+test('le muret de bord de route n\'existe qu\'en pays de pierre', () => {
+  assert.equal(roadsideHedgeShares('bocage').wall ?? 0, 0);
+  assert.equal(roadsideHedgeShares('openfield').wall ?? 0, 0);
+  assert.ok(roadsideHedgeShares('drystone').wall > roadsideHedgeShares('dry_openfield').wall);
+  assert.ok(roadsideHedgeShares('dry_openfield').wall > roadsideHedgeShares('none').wall);
 });
 
 test('un feu tricolore passe par les trois couleurs, et le vert dure', () => {
@@ -12999,10 +13044,12 @@ test('les limites de surfaces : la frange, les matières interpolées et la rive
   // Tranché, pas fondu : la matière la plus forte l'emporte sur la largeur
   // d'un pixel.
   assert.match(source, /float keep = smoothstep\(-1\.0, 1\.0, edge \/ clamp\(0\.5 \* fwidth\(edge\)/);
+  // La limite de la roche est tranchée de la même façon, sur la pente.
+  assert.match(source, /float rockEdge = max\(fwidth\(vSteep\)/);
   assert.equal(
     (source.match(/fwidth\(/g) || []).length,
-    1,
-    'la largeur du trait, et rien d’autre'
+    2,
+    'la largeur du trait et celle de la roche, et rien d’autre'
   );
   // La dérivée d'écran est revenue, mais pour la raison inverse de celle qui
   // l'avait fait bannir : la position est **réellement** bosselée au sommet
@@ -13010,7 +13057,7 @@ test('les limites de surfaces : la frange, les matières interpolées et la rive
   // reste interdit, c'est d'inventer une normale depuis une texture sans
   // relevé d'altitude — d'où la garde : la dérivée ne vaut que là où le grain
   // a bougé la géométrie, sinon elle ne rendrait que le facettage de la maille.
-  assert.match(source, /float facet = max\(grainFade, vSteep\);/, 'la facette est gardée par le grain, ou par la paroi');
+  assert.match(source, /float facet = max\(max\(grainFade, vSteep\), vShell\);/, 'la facette est gardée par le grain, la paroi ou le couvert relevé');
   assert.equal(
     (source.match(/dFdx\(|dFdy\(/g) || []).length,
     2,
@@ -13158,7 +13205,7 @@ test('le sol ne lit plus qu’un grain : ni motif, ni relevé anti-répétition'
   // Seule survit la dérivée de la facette, gardée par le grain : elle lit une
   // bosse réellement portée par la géométrie, pas une normale tirée d'une
   // texture — c'est cette seconde-là qui faisait fourmiller le sol.
-  assert.match(source, /float facet = max\(grainFade, vSteep\);/, 'la facette est gardée par le grain, ou par la paroi');
+  assert.match(source, /float facet = max\(max\(grainFade, vSteep\), vShell\);/, 'la facette est gardée par le grain, la paroi ou le couvert relevé');
   assert.ok(!/uGrainContrast|grainHeight/.test(source), 'aucun relief tiré d’une texture');
   for (const key of ['grainScaleM', 'grainPixels', 'grainContrast', 'grainRelief']) {
     assert.equal(defaultTheme.terrain[key], undefined, `${key} n'a plus d'objet`);
@@ -13255,6 +13302,17 @@ test('la variation macro du sol dépend de la matière : amplitude et plancher d
       defaultTheme.surfaces[kind]?.macroNear ?? 0
     );
   }
+  // Une ligne de couvert par matière couverte, dans l'ordre des matières.
+  const canopyKinds = SURFACE_KINDS.filter((kind) => defaultTheme.surfaces[kind]?.canopy);
+  assert.equal(shader.uniforms.uCanopy.value.length, canopyKinds.length);
+  canopyKinds.forEach((kind, k) => {
+    const canopy = defaultTheme.surfaces[kind].canopy;
+    assert.match(source, new RegExp(`if \\(id == ${SURFACE_KINDS.indexOf(kind) + 1}\\.0\\) albedo = mix\\(albedo, uCanopy\\[${k}\\]\\.rgb, uCanopy\\[${k}\\]\\.a \\* ${kind === 'wood' ? 'gCanopy' : 'gCanopyFar'}\\);`), kind);
+    if (!canopy.heightM) assert.ok(Math.abs(shader.uniforms.uCanopy.value[k].w - canopy.share) < 1e-9, kind);
+  });
+  // Le couvert vu de loin vaut pour toute matière, sur la carte comme hors d'elle.
+  assert.match(source, /albedo = canopyLook\(id, albedo\);/);
+  assert.match(source, /albedo = canopyLook\(uUnclassified, albedo\);/);
 
   // La lande (marbrage voulu fort) porte une amplitude bien plus haute qu'un
   // lotissement tondu, et c'est ce qui doit se voir : à noise et distance
@@ -13301,6 +13359,49 @@ test('la variation macro du sol dépend de la matière : amplitude et plancher d
   );
   assert.ok(nearHeath > 0, 'la lande garde du marbrage à portée d’observation');
   assert.equal(nearScree, 0, 'l’éboulis, sans plancher, reste éteint à la même distance');
+});
+
+test('le sol d’un bois est son couvert, sauf autour d’un observateur en forêt ; sa litière roussit avec lui', async () => {
+  const { autumnTheme } = await import('../src/themes/autumn.js');
+  const previousCanvas = globalThis.OffscreenCanvas;
+  globalThis.OffscreenCanvas = class {
+    constructor(width, height) {
+      Object.assign(this, { width, height });
+    }
+    getContext() {
+      return paintingCanvasContext();
+    }
+  };
+  let factory;
+  try {
+    factory = new TerrainMaterialFactory({ THREE: terrainThreeStub(), surfaces: autumnTheme.surfaces });
+  } finally {
+    if (previousCanvas) globalThis.OffscreenCanvas = previousCanvas;
+    else delete globalThis.OffscreenCanvas;
+  }
+  const shader = {
+    uniforms: {},
+    vertexShader: ['#include <common>', '#include <begin_vertex>'].join('\n'),
+    fragmentShader: ['#include <common>', '#include <map_fragment>', '#include <normal_fragment_begin>'].join('\n'),
+  };
+  factory.material.onBeforeCompile(shader);
+  const wood = SURFACE_KINDS.indexOf('wood');
+  const albedo = () => {
+    const v = shader.uniforms.uSurfaceAlbedo.value[wood];
+    return [v.x, v.y, v.z];
+  };
+  const close = (a, b) => a.every((v, c) => Math.abs(v - b[c]) < 1e-9);
+
+  factory.setCanopyStand({ turned: 0 });
+  assert.ok(close(albedo(), autumnTheme.surfaces.wood.albedo), 'aucune essence ne vire : la litière garde sa couleur');
+  factory.setCanopyStand({ turned: 1 });
+  assert.ok(close(albedo(), autumnTheme.surfaces.wood.turned), 'toutes virent : la litière est rousse');
+
+  // Le couvert ne cède à la litière qu'autour d'un observateur en forêt, près du sol.
+  factory.setCanopyInside(1, 12);
+  assert.equal(shader.uniforms.uCanopyInside.value.x, 1);
+  assert.equal(shader.uniforms.uCanopyInside.value.y, 12);
+  assert.match(shader.fragmentShader, /gCanopy = mix\(1\.0, gCanopyFar, inside\);/);
 });
 
 test('le grain low poly du sol dépend de la matière au pied du sommet', () => {

@@ -456,14 +456,17 @@ test('deux matières se distinguent par la couleur, à distance RGB minimale', (
   // RGB — sans quoi deux matières se peignent de la même couleur et ne se
   // distinguent plus que par leur silhouette et leur mobilier. Seule
   // exemption : `scree`, `rock` et `pavement` entre elles, dont la parenté est
-  // géologique — c'est la même roche que la matrice du pays reteinte.
+  // géologique — c'est la même roche que la matrice du pays reteinte. Le
+  // maquis, lui, a le vert olive de ses feuillages, entre l'herbe et la lande :
+  // ses amas et son couvert lointain le distinguent.
   const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
   const exempt = new Set(['scree', 'rock', 'pavement']);
+  const kin = new Set(['maquis/grass', 'grass/maquis', 'maquis/heath', 'heath/maquis']);
   for (let i = 0; i < SURFACE_KINDS.length; i++) {
     for (let j = i + 1; j < SURFACE_KINDS.length; j++) {
       const a = SURFACE_KINDS[i];
       const b = SURFACE_KINDS[j];
-      if (exempt.has(a) && exempt.has(b)) continue;
+      if ((exempt.has(a) && exempt.has(b)) || kin.has(`${a}/${b}`)) continue;
       const d = dist(defaultTheme.surfaces[a].albedo, defaultTheme.surfaces[b].albedo);
       assert.ok(d >= 0.06, `${a} / ${b} : distance ${d.toFixed(4)}`);
     }

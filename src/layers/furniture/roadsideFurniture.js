@@ -14,7 +14,7 @@ import { finishGeneration } from '../../core/generationSteps.js';
  * chaussée d'en face (`_onOtherPavement`).
  */
 
-import { appendProfile, pathFrames } from '../ribbonGeometry.js';
+import { appendProfile, appendSaggingWire, pathFrames } from '../ribbonGeometry.js';
 import { LEVEL_GROUND } from '../roadWorks.js';
 import { settlementNameAt, pointInAreas } from '../settlement.js';
 import { lampHeadFor } from '../furnitureKit.js';
@@ -34,10 +34,11 @@ import {
 } from '../furniturePlacement.js';
 import { churchWithin } from './pointsOfInterest.js';
 import { boundaryForMatrix } from '../../core/regionInterpretation.js';
-import { FURNITURE_RADIUS_M, PLANTED_TREE } from './catalog.js';
+import { FURNITURE_RADIUS_M, FURNITURE_SINK_M, PLANTED_TREE } from './catalog.js';
 import { reachedRadius } from '../../core/decorReach.js';
 import { plantedSpeciesShares, townSpeciesWords } from '../plantedTrees.js';
 import { appendRoadsideCane } from './caneBrakes.js';
+import { appendRoadsideWild } from './roadsideWild.js';
 import { defaultTheme } from '../../themes/default.js';
 import {
   buildRoadsideRelief,
@@ -84,6 +85,8 @@ export function isSettlementEdgeRun(previous, minGapM = SIGN_PLACE_NAME_MIN_GAP_
 const STREET_TREE_SETBACK_M = 2.2;
 const STREET_TREE_CLEARANCE_M = 2.5;
 const STREET_TREE_PHASE_M = 5;
+/** Écart du muret de bord de route à la rive, en mètres : plus près que la haie, qui déborde. */
+const ROADSIDE_WALL_SETBACK_M = 1.2;
 
 /**
  * Choisit l'essence d'un alignement, tirée une fois pour toute la chaîne (voir
@@ -255,6 +258,8 @@ export function buildRoadsideContext(layer, context, segment, rowsInfo, builtUp)
       segment,
       here,
       caneClumps: context.caneClumps,
+      roadsideWild: context.roadsideWild,
+      roadsideWildSeen: context.roadsideWildSeen,
     });
   }
 }
@@ -289,6 +294,8 @@ export function applyRoadsidePlan(layer, {
   segment,
   here = null,
   caneClumps = null,
+  roadsideWild = null,
+  roadsideWildSeen = null,
 }) {
   const { frame } = layer.bubble;
   // Le niveau de croisement de cette portion : ce qui la borde s'y heurte aux
@@ -343,12 +350,12 @@ export function applyRoadsidePlan(layer, {
         own: segment,
         level,
       });
-      if (placed) standing.push(p);
+      if (placed) standing.push(placed);
     }
     // La ligne ne relie que les poteaux réellement plantés : un carrefour se
     // franchit d'une portée plus longue, il ne se traverse pas à mi-hauteur
     // sur un poteau qui n'existe pas.
-    appendOverheadLine(layer, buffers.wire, standing, offset, sampleElevation, 8.35);
+    appendOverheadLine(layer, buffers.wire, standing, 8.35 + FURNITURE_SINK_M);
   }
 
   // Bornes hectométriques, sauf tous les dix rangs : là, c'est la borne
@@ -554,66 +561,57 @@ export function applyRoadsidePlan(layer, {
     });
   }
 
-  // La canne prend un côté que ni la haie basse ni la haie n'occupent.
+  // Muret de pierre sèche, côté par côté : un chemin de pays de pierre en est
+  // souvent bordé des deux. Pas là où court déjà une haie.
   const taken = [verge.verge ? verge.vergeSide : 0, hedgeSide];
-  const free = [1, -1].filter((s) => !taken.includes(s));
-  const freeSide = free.length === 2 ? free[randomAt(frame, side.x, side.z, 101) < 0.5 ? 0 : 1] : free[0] ?? 0;
-  if (caneClumps) appendRoadsideCane(layer, caneClumps, { path, halfWidth, side, profile, inTown, freeSide, segment });
+  const wallShare = plan.hedge ? roadsideHedgeShares(boundary).wall ?? 0 : 0;
+  for (const wallSide of [1, -1]) {
+    if (taken.includes(wallSide) || randomAt(frame, side.x, side.z, wallSide > 0 ? 107 : 109) >= wallShare) continue;
+    layer._appendDryStoneWall(buffers.dryStoneWall, path, sampleElevation, {
+      offset: wallSide * (halfWidth + ROADSIDE_WALL_SETBACK_M),
+      openGround: true,
+      verge: true,
+      own: segment,
+    });
+    taken.push(wallSide);
+  }
+
+  // La canne prend un côté que ni la haie basse, ni la haie, ni le muret n'occupent.
+  if (caneClumps) {
+    appendRoadsideCane(layer, caneClumps, { path, halfWidth, profile, inTown, taken, startDistance: spacing.startDistance, segment });
+  }
+  if (roadsideWild) appendRoadsideWild(layer, roadsideWild, roadsideWildSeen, { path, halfWidth, profile, inTown, taken, segment });
 }
 
 /**
  * Câble de ligne aérienne entre poteaux consécutifs, publié aussi dans
  * `layer.wireSpans` (appuis et flèche) pour ce qui s'y pose.
  *
- * La flèche est une parabole — l'approximation classique de la caténaire pour
- * de petites portées, et la seule différence visible avec un segment droit,
- * qui trahirait aussitôt le décor.
- *
- * La courbe est bâtie **déjà décalée** sur la ligne des poteaux, plutôt que
- * décalée au balayage : c'est ce qui garantit que l'altitude du câble est
- * prise sous le poteau et non sous l'axe de la route, laquelle peut être un
- * mètre plus haut sur un versant.
+ * Il s'accroche à la tête des poteaux **tels qu'ils sont posés** (`poles` :
+ * les objets rendus par `_placeBeside`, pied compris) : le pied est sur le
+ * support rendu — remblai, mur, déblai — que l'altitude brute ignore. Entre
+ * deux têtes, le câble pend sans lire le relief.
  */
-export function appendOverheadLine(layer, buffer, poles, offset, sampleElevation, height) {
+export function appendOverheadLine(layer, buffer, poles, height) {
   for (let i = 1; i < poles.length; i++) {
     const a = poles[i - 1];
     const b = poles[i];
-    // Extrémités reportées sur la ligne des poteaux.
-    const ax = a.x + a.tz * offset;
-    const az = a.z - a.tx * offset;
-    const bx = b.x + b.tz * offset;
-    const bz = b.z - b.tx * offset;
-
-    const span = Math.hypot(bx - ax, bz - az);
+    const span = Math.hypot(b.x - a.x, b.z - a.z);
     // Une portée absente (poteaux confondus) ou démesurée signale un trou
     // dans l'espacement, pas une ligne : mieux vaut ne rien tendre.
     if (span < 4 || span > 90) continue;
 
     const sag = Math.min(1.6, span * 0.028);
+    const ay = a.y + height;
+    const by = b.y + height;
     const steps = 6;
-    const curve = [];
-    const heights = new Float32Array(steps + 1);
+    const path = [];
     for (let s = 0; s <= steps; s++) {
       const t = s / steps;
-      const x = ax + (bx - ax) * t;
-      const z = az + (bz - az) * t;
-      curve.push({ x, z, distance: span * t });
-      // Parabole normalisée : nulle aux appuis, maximale à mi-portée.
-      heights[s] = sampleElevation(x, z) + height - sag * 4 * t * (1 - t);
+      path.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, distance: span * t });
     }
-    // Le câble suit le relief sous lui, pas la corde entre ses appuis : ce
-    // qui s'y pose lit ces cotes-là (`heights`, une par pas régulier).
-    layer.wireSpans?.push({ ax, ay: heights[0], az, bx, by: heights[steps], bz, sag, heights });
-
-    appendProfile(buffer, {
-      path: curve,
-      profile: layer.specs.profiles.wire,
-      sampleElevation,
-      baseHeights: heights,
-      closed: true,
-      // Aucun lissage : la flèche *est* la forme voulue, la moyenner
-      // l'aplatirait et rendrait le câble rectiligne.
-      smoothRadius: 0,
-    });
+    // Ce qui s'y pose relit la même parabole (`swallows.js`).
+    layer.wireSpans?.push({ ax: a.x, ay, az: a.z, bx: b.x, by, bz: b.z, sag });
+    appendSaggingWire(buffer, { path, profile: layer.specs.profiles.wire, fromY: ay, toY: by, sag });
   }
 }

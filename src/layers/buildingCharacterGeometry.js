@@ -1,7 +1,8 @@
 /*
- * Les baies religieuses et les tours de château suivent l’empreinte réelle.
- * Le thème porte leurs proportions ; aucune grille de fenêtres d’habitation
- * ni volume de château indépendant ne recouvre le bâtiment.
+ * Les baies religieuses, les tours et le couronnement d’un château suivent
+ * l’empreinte réelle. Le thème porte leurs proportions ; aucune grille de
+ * fenêtres d’habitation ni volume de château indépendant ne recouvre le
+ * bâtiment.
  */
 import { pushLabelQuad, LABEL_PX_PER_M, labelFontPxForCellHeight } from '../materials/labelAtlas.js';
 import { srgb } from '../core/color.js';
@@ -49,11 +50,84 @@ export function castleTowers(footprint, box, base, top, look) {
     if (!pointInRing(footprint, x, z) || towers.some(t => Math.hypot(t.x - x, t.z - z) < radius * 2)) continue;
     const height = top - base + profile.riseM;
     const kit = new Kit();
-    kit.cylinder({ radiusBottom: radius, radiusTop: radius, height, radial: 10, color: look.wall });
-    kit.cylinder({ radiusBottom: radius * 1.15, radiusTop: 0, height: radius * profile.roofRatio, radial: 10, y: height, color: look.roof });
+    if (profile.form === 'square') {
+      kit.box({ width: radius * 2, height, depth: radius * 2, yaw: -box.angle, color: look.wall });
+      if (look.crown) {
+        const ring = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => ({ x: (a * ux - b * uz) * radius, z: (a * uz + b * ux) * radius }));
+        appendBattlements(kit, ring, height, look.crown, look.wall);
+      }
+    } else {
+      kit.cylinder({ radiusBottom: radius, radiusTop: radius, height, radial: 10, color: look.wall });
+      kit.cylinder({ radiusBottom: radius * 1.15, radiusTop: 0, height: radius * profile.roofRatio, radial: 10, y: height, color: look.roof });
+    }
     towers.push({ x, z, kit });
   }
   return towers;
+}
+
+/**
+ * Couronnement d’un mur au sommet `top` de l’anneau `ring` ({x, z}, dans
+ * le repère de `kit`) : sur chaque pan, un parapet qui déborde du nu du mur
+ * sur des consoles — le mâchicoulis —, puis des merlons. Les merlons partent
+ * du milieu du pan : le motif ne dépend que de la géométrie, pas du sens de
+ * parcours.
+ */
+export function appendBattlements(kit, ring, top, crown, wall) {
+  let area = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+    area += a.x * b.z - b.x * a.z;
+  }
+  const side = area > 0 ? 1 : -1;
+  const { thicknessM: thickness, overhangM: overhang, parapetM: parapet, merlonM: merlon, gapM: gap, merlonHeightM: merlonHeight } = crown;
+  const offset = overhang - thickness / 2;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+    const length = Math.hypot(b.x - a.x, b.z - a.z);
+    if (length < merlon) continue;
+    const ux = (b.x - a.x) / length, uz = (b.z - a.z) / length;
+    const nx = uz * side, nz = -ux * side;
+    const at = (along, out) => ({ x: (a.x + b.x) / 2 + ux * along + nx * out, z: (a.z + b.z) / 2 + uz * along + nz * out });
+    const frame = { ux, uz, nx, nz };
+    // Prolongé du débord aux deux bouts : les parapets de deux pans se rejoignent à l’angle.
+    const low = top - (overhang > 0 ? parapet * 0.45 : 0);
+    block(kit, frame, at(0, offset), length + overhang * 2, thickness, low, top + (overhang > 0 ? parapet * 0.55 : parapet), wall, overhang > 0);
+    const crest = top + (overhang > 0 ? parapet * 0.55 : parapet);
+    const step = merlon + gap;
+    const half = Math.floor((length / 2 - merlon / 2) / step);
+    for (let k = -half; k <= half; k++) block(kit, frame, at(k * step, offset), merlon, thickness, crest, crest + merlonHeight, wall, false);
+    if (overhang > 0 && crown.corbelM > 0) {
+      const count = Math.floor(length / crown.corbelSpacingM / 2);
+      for (let k = -count; k <= count; k++) {
+        block(kit, frame, at(k * crown.corbelSpacingM, overhang / 2), 0.35, overhang, low - crown.corbelM, low, crown.shade, true, false);
+      }
+    }
+  }
+}
+
+/**
+ * Pavé le long d’un pan (`ux, uz` le long, `nx, nz` vers l’extérieur), sans
+ * les faces qu’on ne voit jamais : le dessous quand il repose, le dessus et le
+ * dos d’une console collée sous le parapet et contre le mur.
+ */
+function block(kit, { ux, uz, nx, nz }, c, width, depth, y0, y1, color, bottom, closed = true) {
+  const p = (u, n, y) => [c.x + ux * u * width / 2 + nx * n * depth / 2, y, c.z + uz * u * width / 2 + nz * n * depth / 2];
+  const face = (q, outward) => {
+    const [a, b, d] = q;
+    const cross = [
+      (b[1] - a[1]) * (d[2] - a[2]) - (b[2] - a[2]) * (d[1] - a[1]),
+      (b[2] - a[2]) * (d[0] - a[0]) - (b[0] - a[0]) * (d[2] - a[2]),
+      (b[0] - a[0]) * (d[1] - a[1]) - (b[1] - a[1]) * (d[0] - a[0]),
+    ];
+    if (cross[0] * outward[0] + cross[1] * outward[1] + cross[2] * outward[2] < 0) q.reverse();
+    kit.quad(q[0], q[1], q[2], q[3], color);
+  };
+  face([p(-1, 1, y0), p(1, 1, y0), p(1, 1, y1), p(-1, 1, y1)], [nx, 0, nz]);
+  if (closed) face([p(-1, -1, y0), p(1, -1, y0), p(1, -1, y1), p(-1, -1, y1)], [-nx, 0, -nz]);
+  face([p(1, -1, y0), p(1, 1, y0), p(1, 1, y1), p(1, -1, y1)], [ux, 0, uz]);
+  face([p(-1, -1, y0), p(-1, 1, y0), p(-1, 1, y1), p(-1, -1, y1)], [-ux, 0, -uz]);
+  if (closed) face([p(-1, -1, y1), p(1, -1, y1), p(1, 1, y1), p(-1, 1, y1)], [0, 1, 0]);
+  if (bottom) face([p(-1, -1, y0), p(1, -1, y0), p(1, 1, y0), p(-1, 1, y0)], [0, -1, 0]);
 }
 
 export function appendRetailSign(walls, labels, atlas, a, b, nx, nz, floor, name, look) {

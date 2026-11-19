@@ -31,6 +31,7 @@ import {
   ringCentroid,
   scatterInRing,
   pointInRing,
+  ringInteriorPoint,
   ROW_CROPS,
   WOOD_PILE_EDGE_MIN,
   farmingWordFor,
@@ -46,7 +47,8 @@ import {
   FURNITURE_SINK_M,
   PLANTED_TREE,
 } from './catalog.js';
-import { reachedRadius } from '../../core/decorReach.js';
+import { DECOR_STABLE_RADIUS_M, NEAR_M, reachedRadius } from '../../core/decorReach.js';
+import { UNDERSTORY_FAR_M } from '../vegetationLayer.js';
 import { placeHerd, placeForestGame, placeFauna } from './parcelFauna.js';
 import { buildCemetery } from './cemetery.js';
 import { isPark, isYard, plantTownTrees, PARK_TREES, YARD_TREES } from './townTrees.js';
@@ -54,6 +56,12 @@ import { positionSeed, randomAt } from '../../core/groundSeed.js';
 
 /** Portée des rangs de vigne, de lavande et de verger, en mètres (celle du reste du mobilier). */
 export const ROW_CROP_RADIUS_M = FURNITURE_RADIUS_M;
+/**
+ * Portée des arbres de verger : la végétation les éclaircit jusqu'à
+ * `UNDERSTORY_FAR_M` de l'observateur, qui s'écarte d'au plus la marge de la
+ * zone stable du point de relève — au-delà, rien de ce qui est semé ne se voit.
+ */
+export const ORCHARD_RADIUS_M = UNDERSTORY_FAR_M + DECOR_STABLE_RADIUS_M - NEAR_M;
 /** Sel de la taille des citrouilles. */
 const PUMPKIN_SCALE_SALT = 941;
 /** Sel du facettage du feuillage de vigne (`hedgeGeometry.hedgeFacets`) : pas de `style` comme la haie, donc un sel dédié. */
@@ -156,7 +164,10 @@ export function* buildParcelsSteps(layer, context, builtUp) {
           const placed = layer._place(placements, urbanKind, {
             x: centre.x,
             z: centre.z,
-            yaw: randomAt(frame, centre.x, centre.z, 191) * Math.PI * 2,
+            // Un terrain rectangulaire suit son emprise : son axe long (+Z) sur le plus long côté.
+            yaw: urbanKind === 'stadium'
+              ? Math.PI / 2 - principalAngle(local)
+              : randomAt(frame, centre.x, centre.z, 191) * Math.PI * 2,
           });
           // La croix posée plus haut ne marquait le site que d'un seul
           // repère ; ce qui suit l'habille — mur, portail, tombes, robinet.
@@ -180,9 +191,9 @@ export function* buildParcelsSteps(layer, context, builtUp) {
       // qu'un champ en culture ne se clôt pas et qu'on n'y sème pas de bottes
       // de foin — et il aurait été absurde qu'il en décide autrement que ce
       // qui pousse effectivement dessus. Le centre des sommets d'une grande
-      // parcelle concave tombe souvent hors d'elle : la carte se lit alors là
-      // où se tient l'observateur, s'il y est.
-      const probe = !pointInRing(local, centre.x, centre.z) && pointInRing(local, here.x, here.z) ? here : centre;
+      // parcelle concave tombe souvent hors d'elle : la carte se lit alors en
+      // un point intérieur tiré de la seule forme, jamais sous l'observateur.
+      const probe = ringInteriorPoint(local, centre);
       let crop = statedCrop(properties) ?? layer.groundClass?.cropAt?.(probe.x, probe.z) ?? null;
       const look = layer.groundClass?.cropLookAt?.(probe.x, probe.z) ?? null;
 
@@ -256,9 +267,29 @@ export function* buildParcelsSteps(layer, context, builtUp) {
   // coupe au loin, pas au hasard de l'ordre des tuiles.
   rowParcels.sort((a, b) => a.distance - b.distance || a.centre.x - b.centre.x || a.centre.z - b.centre.z);
   for (const { local, centre, crop } of rowParcels) {
-    if (layer.counts.rows >= FURNITURE_LIMITS.vineRows) break;
+    if (crop !== 'orchard' && layer.counts.rows >= FURNITURE_LIMITS.vineRows) continue;
     yield* buildRowsSteps(layer, context, local, centre, crop, here);
   }
+  placeOrchardTrees(layer, context, here);
+}
+
+/**
+ * Pose les arbres de verger rassemblés par `buildRowsSteps`, des plus proches
+ * aux plus lointains : leur plafond coupe au loin, jamais selon l'ordre des
+ * tuiles. Remplace les candidats de `context.orchardTrees` par les arbres posés.
+ */
+function placeOrchardTrees(layer, context, here) {
+  const candidates = context.orchardTrees ?? [];
+  for (const c of candidates) c.distance = Math.hypot(c.x - here.x, c.z - here.z);
+  candidates.sort((a, b) => a.distance - b.distance);
+  const placed = new Map([[PLANTED_TREE, []]]);
+  const limit = FURNITURE_LIMITS.orchardTrees;
+  for (const c of candidates) {
+    if (placed.get(PLANTED_TREE).length >= limit) break;
+    const pose = layer._place(placed, PLANTED_TREE, { x: c.x, z: c.z, yaw: c.yaw, scale: c.scale, limit });
+    if (pose) pose.plantation = c.plantation;
+  }
+  context.orchardTrees = placed.get(PLANTED_TREE);
 }
 
 /**
@@ -418,7 +449,9 @@ export function buildRows(layer, context, ring, centre, crop, here) {
 
 export function* buildRowsSteps(layer, context, ring, centre, crop, here) {
   const { frame } = layer.bubble;
-  if (layer.counts.rows >= FURNITURE_LIMITS.vineRows) return;
+  // Le verger n'entre pas dans le plafond des rangs : ses arbres ont le leur.
+  const capped = crop !== 'orchard';
+  if (capped && layer.counts.rows >= FURNITURE_LIMITS.vineRows) return;
 
   const { buffers, placements, sampleElevation } = context;
   const angle = principalAngle(ring);
@@ -452,7 +485,7 @@ export function* buildRowsSteps(layer, context, ring, centre, crop, here) {
 
   // Les rangs restent sur la grille de la parcelle ; seuls ceux à portée sont
   // posés, du plus proche au plus lointain, pour que le plafond coupe au loin.
-  const reach = reachedRadius(ROW_CROP_RADIUS_M, layer.bubble);
+  const reach = reachedRadius(capped ? ROW_CROP_RADIUS_M : ORCHARD_RADIUS_M, layer.bubble);
   const uHere = (here.x - centre.x) * dirX + (here.z - centre.z) * dirZ;
   const vHere = -(here.x - centre.x) * dirZ + (here.z - centre.z) * dirX;
   const rows = [];
@@ -462,7 +495,7 @@ export function* buildRowsSteps(layer, context, ring, centre, crop, here) {
   rows.sort((a, b) => Math.abs(a - vHere) - Math.abs(b - vHere) || a - b);
 
   for (const v of rows) {
-    if (layer.counts.rows >= FURNITURE_LIMITS.vineRows) break;
+    if (capped && layer.counts.rows >= FURNITURE_LIMITS.vineRows) break;
     yield;
     const halfSpan = Math.sqrt(reach * reach - (v - vHere) * (v - vHere));
     const fromU = minU + Math.max(0, Math.ceil((uHere - halfSpan - minU) / step)) * step;
@@ -546,18 +579,18 @@ export function* buildRowsSteps(layer, context, ring, centre, crop, here) {
           }
         } else {
           for (const tree of spacedAlongPath(path, 6, { margin: 1 })) {
-            const planted = layer._place(placements, PLANTED_TREE, {
+            (context.orchardTrees ??= []).push({
               x: tree.x,
               z: tree.z,
               yaw: randomAt(frame, tree.x, tree.z, 67) * Math.PI * 2,
               // Un verger est planté d'arbres taillés bas et de taille égale :
               // c'est exactement ce qui le distingue d'un bois.
               scale: 0.55 + randomAt(frame, tree.x, tree.z, 68) * 0.12,
+              plantation,
             });
-            if (planted) planted.plantation = plantation;
           }
         }
-        layer.counts.rows++;
+        if (capped) layer.counts.rows++;
       }
     }
   }

@@ -112,6 +112,11 @@ export const COLLINEAR_COS = Math.cos((40 * Math.PI) / 180);
 export const GRAFT_REACH_M = 2.5;
 /** Cosinus de l'angle en deçà duquel un sommet est dans l'axe de la chaussée qu'il touche (et n'y débouche donc pas). */
 export const GRAFT_SKEW_COS = Math.cos((25 * Math.PI) / 180);
+/**
+ * Cosinus de l'angle au-delà duquel un bout libre d'une autre classe rejoint
+ * en biais la chaussée qu'il touche : une bretelle s'y raccorde à 15 ou 20°.
+ */
+export const GRAFT_MERGE_COS = Math.cos((8 * Math.PI) / 180);
 
 /** Décalage de cellule : les coordonnées locales sont signées. */
 const CELL_BIAS = 1 << 14;
@@ -501,6 +506,12 @@ function dropClippedSpurs(state, nodes, weld) {
  * d'angle (`GRAFT_SKEW_COS`) sépare les deux sans ambiguïté : au-delà de
  * vingt-cinq degrés on aborde, en deçà on prolonge.
  *
+ * Sauf la bretelle : un **bout libre** d'une autre classe que la chaussée,
+ * qui la rejoint en biais (au-delà de `GRAFT_MERGE_COS`, huit degrés). La
+ * moitié d'une route recoupée par la tuile est de la même classe, et une
+ * contre-allée reste parallèle ou s'arrête hors de portée ; laissée en l'air,
+ * la bretelle posait son ruban et ses rives sur la chaussée.
+ *
  * Un niveau différent n'est pas une greffe non plus : ce qui survole ne
  * rencontre pas (`NodeIndex`). Un ouvrage d'art non plus, `layer` ou pas : une
  * culée n'a rien à voir avec la chaussée qu'elle enjambe.
@@ -510,7 +521,11 @@ function dropClippedSpurs(state, nodes, weld) {
  * @param {Object} [options]
  * @returns {Object} le graphe, arêtes coupées et bouts amenés à leur place.
  */
-function* graftLooseNodes(state, nodes, { reach = GRAFT_REACH_M, skewCos = GRAFT_SKEW_COS } = {}) {
+function* graftLooseNodes(
+  state,
+  nodes,
+  { reach = GRAFT_REACH_M, skewCos = GRAFT_SKEW_COS, mergeCos = GRAFT_MERGE_COS } = {}
+) {
   const { edges, degree } = state;
   if (!(reach > 0) || edges.length === 0) return state;
 
@@ -578,7 +593,9 @@ function* graftLooseNodes(state, nodes, { reach = GRAFT_REACH_M, skewCos = GRAFT
     // la plupart des sommets n'ont aucune chaussée à portée, et les calculer
     // d'avance reviendrait à en construire deux par sommet du graphe pour rien.
     let headings = null;
-    const abords = (along) => {
+    const abords = (along, host) => {
+      // Une bretelle : bout libre d'une autre classe, qui rejoint en biais.
+      const limit = own.length === 1 && edges[own[0]].rank !== host.rank ? mergeCos : skewCos;
       if (!headings) {
         headings = [];
         for (const index of own) {
@@ -591,7 +608,7 @@ function* graftLooseNodes(state, nodes, { reach = GRAFT_REACH_M, skewCos = GRAFT
       // Dans l'axe : ce bout prolonge la chaussée, il n'y débouche pas. Il faut
       // qu'au moins une des voies qui se rejoignent ici l'aborde vraiment.
       return headings.some(
-        (heading) => Math.abs(heading.x * along.x + heading.z * along.z) <= skewCos
+        (heading) => Math.abs(heading.x * along.x + heading.z * along.z) <= limit
       );
     };
 
@@ -613,7 +630,7 @@ function* graftLooseNodes(state, nodes, { reach = GRAFT_REACH_M, skewCos = GRAFT
       if (hit.distance > span) continue;
       if (best && !(hit.distance < best.distance)) continue;
       const along = direction(ax, az, bx, bz);
-      if (!along || !abords(along)) continue;
+      if (!along || !abords(along, host)) continue;
       best = {
         index,
         distance: hit.distance,

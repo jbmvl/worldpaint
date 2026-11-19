@@ -25,6 +25,12 @@
  *
  * `lookDeg` est l'écart de cap avec le soleil (0 = face à lui).
  *
+ *   skyLab.set({ weather: { haze: 1 }, matrix: 'garrigue', fogRadius: 12000, height: 1.7 })
+ *
+ * `matrix` prend l'air de ce pays (`sky.variants` du thème) ; `fogRadius`
+ * écarte le brouillard comme le fait le relief lointain dans `createWorld`.
+ * `visibilityM` (rendu) : distance où le brouillard couvre 95 %.
+ *
  *   skyLab.set({ birds: 'gull', time: 20, pitchDeg: 25 })  — le vol de `LifeLayer`
  *
  * `birds` impose l'espèce (`corvid`, `raptor`, `gull`), `time` fige les vols
@@ -50,7 +56,8 @@
  */
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
-import { SceneEnvironment } from '/src/environment/sceneEnvironment.js';
+import { SceneEnvironment, skyPaletteFor, DEFAULT_SKY_PALETTE } from '/src/environment/sceneEnvironment.js';
+import { applyToneMapping } from '/src/environment/toneMapping.js';
 import { LifeLayer, GULL_SEA_DISTANCE_M } from '/src/layers/lifeLayer.js';
 import { launchFlock } from '/src/layers/starlings.js';
 import { launchSwallows, perchesNear } from '/src/layers/swallows.js';
@@ -59,8 +66,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffe
 renderer.setPixelRatio(devicePixelRatio);
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.5; // comme la démo
+applyToneMapping(THREE, renderer); // comme la démo
 renderer.shadowMap.enabled = true;
 document.body.appendChild(renderer.domElement);
 
@@ -106,7 +112,7 @@ function dateForElevation(deg) {
   return new Date(hi);
 }
 
-const state = { sunDeg: 30, lookDeg: 90, pitchDeg: 4, height: 40, weather: null, birds: null, time: 0, clouds: 0, night: null, starlings: null, swallows: null, aim: null };
+const state = { sunDeg: 30, lookDeg: 90, pitchDeg: 4, height: 40, weather: null, birds: null, time: 0, clouds: 0, night: null, starlings: null, swallows: null, aim: null, matrix: null, fogRadius: FOG_RADIUS };
 const life = new LifeLayer({ THREE, scene, bubble: null });
 for (const mesh of life._balloonMeshes) mesh.visible = false;
 life._balloonsVisible = false;
@@ -144,7 +150,9 @@ wireLine.position.x = wireShift;
 
 function render() {
   const date = dateForElevation(state.sunDeg);
-  env.update({ date, lat: LAT, lng: LNG, weather: state.weather });
+  const palette = (state.matrix && skyPaletteFor(state.matrix)) || DEFAULT_SKY_PALETTE;
+  env.update({ palette, date, lat: LAT, lng: LNG, weather: state.weather });
+  env.setFogRadius(state.fogRadius);
   const sun = env._sunDir;
   const sunYaw = Math.atan2(sun.x, -sun.z);
   const yaw = sunYaw + (state.lookDeg * Math.PI) / 180;
@@ -212,6 +220,8 @@ function render() {
   renderer.render(scene, camera);
   return {
     sunDeg: state.sunDeg,
+    fogDensity: env.fog.density,
+    visibilityM: Math.round(Math.sqrt(3) / env.fog.density),
     fog: '#' + env.fog.color.getHexString(THREE.SRGBColorSpace),
     nightMix: env.nightMix,
     life: { bats: life.bats.count, fireflies: life.fireflies.count, starlings: life.starlings.count,

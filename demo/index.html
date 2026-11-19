@@ -112,6 +112,10 @@
   }
   #go:hover { background: #4a7ee6; }
   #go:disabled { opacity: 0.5; cursor: default; }
+  #worldMapBtn {
+    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 6px; padding: 0 8px; font-size: 14px; cursor: pointer;
+  }
 
   #status {
     min-height: 14px; font-size: 11px; color: #9aa4b2; margin-top: 5px;
@@ -249,6 +253,23 @@
     display: flex; flex-direction: column;
   }
   #mapOverlay[hidden] { display: none; }
+  /* Carte du monde (Leaflet) : même cadre que la carte plein écran. */
+  #worldMapOverlay {
+    position: fixed; inset: 0; z-index: 31;
+    background: rgba(8, 10, 14, 0.94);
+    display: flex; flex-direction: column;
+  }
+  #worldMapOverlay[hidden] { display: none; }
+  #worldMapHeader {
+    flex: none; display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; padding: 10px 14px; color: #dfe4ea; font-size: 12.5px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+  }
+  #worldMapClose {
+    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.2);
+    color: #fff; border-radius: 6px; width: 30px; height: 30px; cursor: pointer; font-size: 15px;
+  }
+  #worldMap { flex: 1; cursor: crosshair; }
   #mapOverlayHeader {
     flex: none; display: flex; align-items: center; justify-content: space-between;
     gap: 10px;
@@ -310,6 +331,7 @@
     #quickbar button { width: 36px; height: 36px; font-size: 15px; }
   }
 </style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
 </head>
 <body>
 <canvas id="scene"></canvas>
@@ -324,6 +346,7 @@
       <option value="Saint-Gervais-les-Bains, France"></option>
     </datalist>
     <button id="go">Aller</button>
+    <button id="worldMapBtn" title="Carte du monde" aria-label="Carte du monde">🌍</button>
   </div>
   <div id="status"></div>
 </div>
@@ -507,6 +530,14 @@
   <button id="downBtn" title="Descendre (maintenir)" aria-label="Descendre">▼</button>
   <button id="weatherBtn" title="Temps suivant">⛅</button>
   <button id="streetViewBtn" title="Ouvrir Google Street View ici">🧭</button>
+</div>
+
+<div id="worldMapOverlay" class="map-overlay" hidden>
+  <div id="worldMapHeader">
+    <span>Cliquer sur la carte pour s’y rendre</span>
+    <button id="worldMapClose" title="Fermer">✕</button>
+  </div>
+  <div id="worldMap"></div>
 </div>
 
 <div id="mapOverlay" hidden>

@@ -1,5 +1,6 @@
 import { TERRAIN_GRAIN_GLSL } from './terrainGrainShader.js';
 import { installTunnelMouths } from './tunnelMouths.js';
+import { canopyRiseKinds, canopyRiseUniforms, canopyRiseGLSL, canopyRiseKey } from './canopyRise.js';
 /*
  * terrainMaterial — la matière du sol. `groundClassMap` rasterise l'occupation
  * du sol autour de l'observateur ; ce shader y lit la part d'herbe, de bois,
@@ -149,6 +150,11 @@ import { LOW_POLY_GRAIN_GLSL, LOW_POLY_GRAIN_DEFAULTS } from './lowPolyGrain.js'
 import { soilWashFor, gapSurfaceForMatrix, stoneTintFor } from '../core/regionInterpretation.js';
 import { PATCH_SCALE_M, PATCH_SCALE_FAR_M, patchShareAt } from './groundClassMap.js';
 
+/** Hauteur de l'œil au-dessus du sol (début, fin), en mètres, où l'on sort d'une forêt par le haut. */
+const CANOPY_INSIDE_EYE_M = [25, 60];
+
+const WATER_ALBEDO = [0.02, 0.045, 0.06];
+
 /** Couleur d'une matière qu'un thème ne décrit pas : un gris de terre neutre. */
 const FALLBACK_ALBEDO = [0.18, 0.17, 0.15];
 
@@ -240,6 +246,8 @@ export class TerrainMaterialFactory {
     u.uWaterSunDirection.value.set(light.sunDirection.x, light.sunDirection.y, light.sunDirection.z);
     u.uWaterSunColor.value.set(...light.sunColor);
     u.uWaterSunIntensity.value = light.sunIntensity;
+    if (light.albedo) u.uWaterAlbedo.value.set(...light.albedo);
+    else u.uWaterAlbedo.value.set(...(this.surfaces.water?.albedo || WATER_ALBEDO));
   }
 
   /** Recale les uniformes sur la carte de classes après une re-rasterisation. */
@@ -305,7 +313,14 @@ export class TerrainMaterialFactory {
       }
       const base = look.stone
         ? scale(look.albedo || FALLBACK_ALBEDO, stone)
-        : look.albedo || FALLBACK_ALBEDO;
+        : this._ownAlbedo(look);
+      if (look.follows) {
+        const led = this.surfaces[look.follows];
+        const ledBase = led?.albedo || FALLBACK_ALBEDO;
+        const ledWashed = led?.wash ? scale(ledBase, wash[led.wash]) : ledBase;
+        uniform.set(...base.map((v, c) => Math.max(0, v + ledWashed[c] - ledBase[c])));
+        return;
+      }
       uniform.set(...(look.wash ? scale(base, wash[look.wash]) : base));
     });
 
@@ -337,6 +352,14 @@ export class TerrainMaterialFactory {
 
   get grainUniforms() { return this._uniforms; }
 
+  /** Le couvert relevé au loin, pour les arbres qui s'y plantent (`installCanopyRide`). */
+  get canopyRise() {
+    const u = this._uniforms;
+    if (!u) return null;
+    const names = ['uCanopyMap', 'uCanopyMapOrigin', 'uCanopyMapSize', 'uCanopyMapOn', 'uCanopyGap', 'uCanopyRise', 'uCanopyRiseRange'];
+    return { uniforms: Object.fromEntries(names.map((name) => [name, u[name]])), surfaces: this.surfaces };
+  }
+
   /** Ce qui fait l'aspect de l'eau au loin : la mer de la nappe lointaine partage ces uniformes. */
   get waterUniforms() {
     const u = this._uniforms;
@@ -349,10 +372,94 @@ export class TerrainMaterialFactory {
     return u ? { albedo: u.uSurfaceAlbedo, unclassified: u.uUnclassified } : null;
   }
 
-  /** Albédo de la matière posée là où la carte se tait, tel que `setRegion` l'a lavé. */
+  /**
+   * Albédo de la matière posée là où la carte se tait, tel que `setRegion` l'a
+   * lavé, sous son couvert vu de loin : c'est la couleur du relief lointain.
+   */
   get gapAlbedo() {
     const uniforms = this._uniforms;
-    return uniforms ? uniforms.uSurfaceAlbedo.value[uniforms.uUnclassified.value - 1] : null;
+    if (!uniforms) return null;
+    const albedo = uniforms.uSurfaceAlbedo.value[uniforms.uUnclassified.value - 1];
+    const canopy = this.surfaces[SURFACE_KINDS[uniforms.uUnclassified.value - 1]]?.canopy;
+    if (!canopy) return albedo;
+    return albedo.clone().lerp(new this.THREE.Vector3(...this._canopyAlbedo(canopy)), this._canopyShare(canopy));
+  }
+
+  /** Albédo propre d'une matière, roussi (`turned`) de la part posée par `setCanopyStand`. */
+  _ownAlbedo(look) {
+    const base = look.albedo || FALLBACK_ALBEDO;
+    if (!look.turned) return base;
+    const t = this._stand?.turned ?? 0;
+    return base.map((v, c) => v + (look.turned[c] - v) * t);
+  }
+
+  /** Couleur d'un couvert vu de loin, roussie de la part posée par `setCanopyStand`. */
+  _canopyAlbedo(canopy) {
+    const base = canopy.albedo ?? FALLBACK_ALBEDO;
+    if (!canopy.turned) return base;
+    const t = this._stand?.turned ?? 0;
+    return base.map((v, c) => v + (canopy.turned[c] - v) * t);
+  }
+
+  /** Part du sol qu'un couvert ferme vu de loin : celle d'un bois suit la densité de son peuplement. */
+  _canopyShare(canopy) {
+    const share = canopy.share ?? 0;
+    return canopy.heightM ? share * (this._stand?.closure ?? 1) : share;
+  }
+
+  /**
+   * Pose ce que le bois du pays est vraiment, pour que son couvert vu de loin
+   * l'imite : `turned`, la part qui roussit ; `heightM`, la hauteur moyenne de
+   * sa strate haute ; `density`, sa densité. Un couvert qui déclare `heightM`
+   * (la hauteur du peuplement que décrivent ses `riseM`, `lumpM`, `sinkM`)
+   * s'abaisse d'autant pour un peuplement plus bas, et se troue pour un
+   * peuplement clair : un bosquet de trois mètres ne se montre pas de loin
+   * sous une futaie. Jamais plus haut ni plus fermé que le thème.
+   */
+  setCanopyStand({ turned = 0, heightM = null, density = 1 } = {}) {
+    const clamp = (v) => Math.min(1, Math.max(0, v || 0));
+    this._stand = { turned: clamp(turned), heightM, closure: clamp(density) };
+    const u = this._uniforms;
+    if (!u) return;
+    // Une matière qui roussit ne prend ni lavage ni pierre : sa couleur est la sienne.
+    SURFACE_KINDS.forEach((kind, i) => {
+      const look = this.surfaces[kind];
+      if (look?.turned) u.uSurfaceAlbedo.value[i].set(...this._ownAlbedo(look));
+    });
+    SURFACE_KINDS.filter((kind) => this.surfaces[kind]?.canopy).forEach((kind, k) => {
+      const canopy = this.surfaces[kind].canopy;
+      u.uCanopy.value[k].set(...this._canopyAlbedo(canopy), this._canopyShare(canopy));
+    });
+    canopyRiseKinds(this.surfaces).forEach((kind, k) => {
+      const canopy = this.surfaces[kind].canopy;
+      const scale = canopy.heightM && heightM > 0 ? Math.min(1, heightM / canopy.heightM) : 1;
+      u.uCanopyRise.value[k].set(canopy.riseM * scale, (canopy.lumpM ?? 0) * scale, canopy.lumpCellM ?? 1, (canopy.sinkM ?? 0) * scale);
+    });
+  }
+
+  /**
+   * Rampe, en mètres, sur laquelle la couleur du couvert remplace le sol :
+   * celle où le sous-étage s'éteint (`VegetationLayer.understoryRangeM`), pour
+   * que le couvert prenne le relais des plantes qui disparaissent, et pas
+   * avant qu'elles ne soient là.
+   */
+  setCanopyRange(near, far) {
+    this._canopyRange = [near, far];
+    this._uniforms?.uCanopyRange.value.set(near, far);
+  }
+
+  /**
+   * L'observateur en forêt : `share`, sa part de bois, de 0 à 1 ; `groundY`,
+   * la cote du sol sous lui, d'où se compte la hauteur de l'œil. Hors forêt ou
+   * au-dessus des houppes, le sol d'un bois prend la couleur de son couvert
+   * jusqu'à ses pieds ; dedans, la litière reparaît autour de lui, sur la
+   * rampe de `setCanopyRange`.
+   */
+  setCanopyInside(share, groundY = 0) {
+    const u = this._uniforms?.uCanopyInside.value;
+    if (!u) return;
+    u.x = Math.min(1, Math.max(0, share || 0));
+    u.y = Number.isFinite(groundY) ? groundY : 0;
   }
 
   /**
@@ -373,6 +480,10 @@ export class TerrainMaterialFactory {
   _create() {
     const { THREE, look } = this;
     const material = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    // Les matières dont le couvert ferme le sol vu de loin (`canopy`). La
+    // rampe de distance et le redressement sont ceux du bois.
+    const canopyKinds = SURFACE_KINDS.filter((kind) => this.surfaces[kind]?.canopy);
+    const woodCanopy = this.surfaces.wood?.canopy;
 
     const uniforms = {
       uDetailRange: { value: new THREE.Vector2(look.detailNear, look.detailFar) },
@@ -425,10 +536,19 @@ export class TerrainMaterialFactory {
         ),
       },
       uPoolScale: { value: look.poolScaleM },
-      // La houppe d'un bois vue de loin (`wood.canopy`) : sa couleur, et la
-      // rampe de distance (début, fin) sur laquelle elle couvre la litière.
-      uWoodCanopy: { value: new THREE.Vector3(...(this.surfaces.wood?.canopy?.albedo ?? this.surfaces.wood?.albedo ?? FALLBACK_ALBEDO)) },
-      uWoodCanopyRange: { value: new THREE.Vector2(this.surfaces.wood?.canopy?.nearM ?? 1e6, this.surfaces.wood?.canopy?.farM ?? 1e6 + 1) },
+      // Par matière couverte : la couleur du couvert, et dans w la part du
+      // sol qu'il ferme ; puis la rampe de distance (début, fin) où il se pose.
+      uCanopy: {
+        value: (canopyKinds.length ? canopyKinds : ['wood']).map((kind) => {
+          const canopy = this.surfaces[kind]?.canopy;
+          return new THREE.Vector4(...(canopy ? this._canopyAlbedo(canopy) : FALLBACK_ALBEDO), canopy ? this._canopyShare(canopy) : 0);
+        }),
+      },
+      uCanopyRange: { value: new THREE.Vector2(woodCanopy?.nearM ?? 1e6, woodCanopy?.farM ?? 1e6 + 1) },
+      // Part dont la normale du couvert se redresse vers le zénith : une masse
+      // de feuillages s'éclaire comme eux, pas comme le versant qui la porte.
+      uCanopyLift: { value: woodCanopy?.lift ?? 0 },
+      uCanopyInside: { value: new THREE.Vector4(0, 0, ...CANOPY_INSIDE_EYE_M) },
       // Matière retenue là où la donnée se tait.
       uUnclassified: { value: Math.max(0, SURFACE_KINDS.indexOf(look.unclassified)) + 1 },
       // (côté du réseau triangulaire, amplitude) du déplacement des limites.
@@ -453,7 +573,7 @@ export class TerrainMaterialFactory {
       // L'eau ne se mélange pas aux autres matières : là où la carte le dit,
       // elle remplace tout — couleur, grain, relief.
       uWaterAlbedo: {
-        value: new THREE.Vector3(...(this.surfaces.water?.albedo || [0.02, 0.045, 0.06])),
+        value: new THREE.Vector3(...(this.surfaces.water?.albedo || WATER_ALBEDO)),
       },
       uWaterSheenColor: { value: new THREE.Vector3(...look.waterSheenColor) },
       uWaterSheen: { value: look.waterSheen },
@@ -503,6 +623,7 @@ export class TerrainMaterialFactory {
         ),
       },
     };
+    Object.assign(uniforms, canopyRiseUniforms(THREE, this.surfaces, uniforms));
     this._uniforms = uniforms;
 
     material.onBeforeCompile = (shader) => {
@@ -516,13 +637,22 @@ export class TerrainMaterialFactory {
            varying vec3 vSceneNormal;
            varying float vGrain;
            varying float vSteep;
+           varying float vShell;
            attribute float roadMask;
-           ${TERRAIN_GRAIN_GLSL}`
+           ${TERRAIN_GRAIN_GLSL}
+           ${canopyRiseGLSL(this.surfaces, { withGrain: false })}`
         )
         .replace(
           '#include <begin_vertex>',
           `#include <begin_vertex>
            transformed = terrainDisplaced(transformed, objectNormal, roadMask, vSteep, vGrain);
+           {
+             // Le dessus du couvert lointain (canopyRise.js), hors chaussee.
+             vec4 canopy = canopyRiseAt((modelMatrix * vec4(transformed, 1.0)).xyz);
+             float shell = (canopy.x + canopy.y * canopyLumps(transformed.xz, canopy.z)) * (1.0 - roadMask);
+             transformed.y += shell;
+             vShell = clamp(shell, 0.0, 1.0);
+           }
            vScenePos = (modelMatrix * vec4(transformed, 1.0)).xyz;
            vSceneNormal = normalize(mat3(modelMatrix) * objectNormal);`
         );
@@ -535,6 +665,7 @@ export class TerrainMaterialFactory {
            varying vec3 vSceneNormal;
            varying float vGrain;
            varying float vSteep;
+           varying float vShell;
            uniform vec2 uDetailRange;
            uniform sampler2D uMacroMap;
            uniform vec3 uMacro;
@@ -550,10 +681,28 @@ export class TerrainMaterialFactory {
            uniform vec4 uSurfacePatch[${SURFACE_KINDS.length}];
            // Part de plaque au fragment, decidee une fois avant de lire le sol.
            float gPatch = 0.0;
-           uniform vec3 uWoodCanopy;
-           uniform vec2 uWoodCanopyRange;
-           // Part de houppe sur le sol d'un bois, decidee par la distance.
+           uniform vec4 uCanopy[${Math.max(1, canopyKinds.length)}];
+           uniform vec2 uCanopyRange;
+           // (part d'observateur en foret, cote du sol sous lui, hauteurs d'oeil
+           // ou il en ressort) : seul un observateur en foret voit la litiere.
+           uniform vec4 uCanopyInside;
+           // Part de houppe au sol, decidee par la distance (gCanopyFar) ; celle
+           // d'un bois (gCanopy) vaut 1 partout sauf autour d'un observateur en foret.
+           float gCanopyFar = 0.0;
            float gCanopy = 0.0;
+           uniform float uCanopyLift;
+           // Part de sol fermee par un couvert au fragment, et celle de la
+           // derniere etiquette lue.
+           float gCover = 0.0;
+           float gLookCover = 0.0;
+
+           /* Le couvert d'une matiere vu de loin : sa couleur posee sur le sol. */
+           vec3 canopyLook(float id, vec3 albedo) {
+             gLookCover = 0.0;
+             ${canopyKinds.map((kind, k) => `if (id == ${SURFACE_KINDS.indexOf(kind) + 1}.0) gLookCover = uCanopy[${k}].a;`).join(' ')}
+             ${canopyKinds.map((kind, k) => `if (id == ${SURFACE_KINDS.indexOf(kind) + 1}.0) albedo = mix(albedo, uCanopy[${k}].rgb, uCanopy[${k}].a * ${kind === 'wood' ? 'gCanopy' : 'gCanopyFar'});`).join(' ')}
+             return albedo;
+           }
            uniform float uPoolScale;
            uniform vec2 uSlopeRange;
            uniform float uRockStrength;
@@ -627,7 +776,7 @@ export class TerrainMaterialFactory {
                macroNear = uSurfaceTerms[kind].z;
              }
              // De loin, on ne voit pas le sol d'un bois mais ses houppes.
-             if (id == ${SURFACE_KINDS.indexOf('wood') + 1}.0) albedo = mix(albedo, uWoodCanopy, gCanopy);
+             albedo = canopyLook(id, albedo);
              // La culture remplace la couleur de la terre labouree et sa lame
              // d'eau, et elles seules.
              int crop = int(label) - ${CROP_LABEL_BASE} - 1;
@@ -741,6 +890,7 @@ export class TerrainMaterialFactory {
              if (all(equal(inner, inner.xxxx)) && all(lessThan(across, vec4(0.0)))) {
                labelLook(inner.x, albedo, isWater, standing, macroAmp, macroNear);
                water = isWater;
+               gCover = gLookCover;
                return;
              }
 
@@ -784,7 +934,9 @@ export class TerrainMaterialFactory {
 
              labelLook(first, albedo, isWater, standing, macroAmp, macroNear);
              water = isWater;
+             gCover = gLookCover;
              if (second < 0.0) return;
+             float coverA = gLookCover;
 
              vec3 albedoB;
              float isWaterB, standingB, macroAmpB, macroNearB;
@@ -804,6 +956,7 @@ export class TerrainMaterialFactory {
              standing = (standing * landA + standingB * landB) / land;
              macroAmp = (macroAmp * landA + macroAmpB * landB) / land;
              macroNear = (macroNear * landA + macroNearB * landB) / land;
+             gCover = (coverA * landA + gLookCover * landB) / land;
            }`
         )
         .replace(
@@ -832,7 +985,9 @@ export class TerrainMaterialFactory {
              // la variation macro, et elle seule.
              float dist = distance(vScenePos, cameraPosition);
              float far = smoothstep(uDetailRange.x, uDetailRange.y, dist);
-             gCanopy = smoothstep(uWoodCanopyRange.x, uWoodCanopyRange.y, dist);
+             gCanopyFar = smoothstep(uCanopyRange.x, uCanopyRange.y, dist);
+             float inside = uCanopyInside.x * (1.0 - smoothstep(uCanopyInside.z, uCanopyInside.w, cameraPosition.y - uCanopyInside.y));
+             gCanopy = mix(1.0, gCanopyFar, inside);
 
              // Bruit macro : deux cents metres de periode. Il fait deriver la
              // couleur d'un bout a l'autre d'une parcelle — et c'est, le sol
@@ -869,6 +1024,8 @@ export class TerrainMaterialFactory {
                    macroNear = uSurfaceTerms[i - 1].z;
                  }
                }
+               albedo = canopyLook(uUnclassified, albedo);
+               gCover = gLookCover;
              }
 
              // Les flaques d'un sol ou l'eau affleure. Le bruit est la
@@ -914,7 +1071,12 @@ export class TerrainMaterialFactory {
              // roche, ca donne une herbe sombre — et c'est ce qu'on lisait sur
              // une paroi, la carte plane n'ayant pu y poser que de l'herbe
              // etiree. La pente, elle, decrit la paroi.
-             float rock = vSteep * uRockStrength * (1.0 - gWater);
+             // Limite nette, comme entre deux matieres de la carte : un
+             // fondu sur la pente salissait l'herbe du haut de la paroi.
+             // Le seuil coupe la pente interpolee a mi-intervalle ; fwidth
+             // ne fait qu'en lisser le pixel.
+             float rockEdge = max(fwidth(vSteep), 1e-4);
+             float rock = smoothstep(0.5 - rockEdge, 0.5 + rockEdge, vSteep) * uRockStrength * (1.0 - gWater);
              // Pas d'accent grave ici : literal de gabarit. La roche du
              // socle, telle que setRegion l'a deja teintee par la geologie du
              // pays : un uniforme a part serait fige au montage, et rendrait
@@ -975,12 +1137,14 @@ export class TerrainMaterialFactory {
              // rideaux d'ombre ; la facette, elle, se lit comme de la roche.
              vec3 worldNormal = vSceneNormal;
              float grainFade = vGrain > 0.0 ? lowPolyFade(vScenePos, cameraPosition, uGrainFadeM.x, uGrainFadeM.y) : 0.0;
-             float facet = max(grainFade, vSteep);
+             // Le couvert releve se lit par ses facettes, comme la roche.
+             float facet = max(max(grainFade, vSteep), vShell);
              if (facet > 0.0) {
                vec3 flatNormal = normalize(cross(dFdx(vScenePos), dFdy(vScenePos)));
                if (dot(flatNormal, vSceneNormal) < 0.0) flatNormal = -flatNormal;
                worldNormal = normalize(mix(vSceneNormal, flatNormal, facet));
              }
+             worldNormal = normalize(mix(worldNormal, vec3(0.0, 1.0, 0.0), uCanopyLift * gCanopyFar * gCover));
              // La ride ne se lit que sur l'eau : son poids est nul au seuil.
              if (gWater > 0.001) worldNormal = mix(worldNormal, waterNormal(normalize(worldNormal), vScenePos.xz), gWater);
 
@@ -1000,7 +1164,7 @@ export class TerrainMaterialFactory {
     };
 
     // Clé constante pour éviter une recompilation à chaque matériau.
-    material.customProgramCacheKey = () => 'terrain-bubble-v23-packed-uniforms';
+    material.customProgramCacheKey = () => `terrain-bubble-v26-canopy-${canopyKinds.join('-')}-rise-${canopyRiseKey(this.surfaces)}`;
     return material;
   }
 

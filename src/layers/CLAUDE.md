@@ -34,7 +34,8 @@ son état.
 | `facetBuffers.js` | les tampons des maillages fusionnés à facettes (bâti, fenêtres, jardins, voirie de rue) : accumulés en tableaux typés, normale sur un octet et couleur sur seize bits, pans indexés, copie côté page rendue après l'envoi au GPU — donc **illisibles ensuite** ; le mobilier linéaire (haies, vignes, murets) y passe aussi par `packColoredGeometry` |
 | `cellMeshes.js` | un grand maillage fusionné (bâti, voirie de rue) dessiné par cases de 96 m : l'index est rangé par case, chaque case a son maillage aux tampons **partagés**, et three.js élague hors champ, caméra comme carte d'ombres. La case ne décide que de ce qui part au GPU, jamais de l'image |
 | `vegetationLayer.js`, `cropLayer.js` | arbres, cultures |
-| `vergeStrips.js` | la bande entre une chaussée et sa haie de bas-côté : publiée par le mobilier, le champ n'y pousse pas et la carte du sol la repeint en herbe |
+| `standThinning.js` | l'éclaircie qui tient le budget d'arbres d'une tuile sans marche de densité à sa frontière |
+| `vergeStrips.js` | la bande entre une chaussée et sa haie ou son muret de bas-côté : publiée par le mobilier, le champ n'y pousse pas et la carte du sol la repeint en herbe |
 | `furnitureLayer.js` + `furniture/` | tout le mobilier — voir ci-dessous |
 | `faunaLayer.js`, `faunaMotion.js`, `faunaCrossing.js`, `lifeLayer.js` (+ `batFlight.js`, `fireflies.js`, `starlings.js`, `swallows.js`), `tractorLayer.js`, `trainLayer.js` | ce qui bouge |
 | `lighthouseLight.js` | le feu d'un phare : halo et faisceaux tournants, alimentés et avancés par `furnitureLayer` |
@@ -57,17 +58,19 @@ identifie d'abord sa famille :
 | Module | Sa question |
 | --- | --- |
 | `furniture/roadsideRelief.js` | ce que le **relief** impose à une chaussée : falaise de déblai, mur de soutènement, glissière et garde-corps |
-| `furniture/roadsideFurniture.js` | ce qui accompagne une chaussée sur sa **longueur** : éclairage, poteaux et ligne aérienne, bornes, panneaux, balises, entrée d'agglomération, alignements, haies de bas-côté |
+| `furniture/roadsideFurniture.js` | ce qui accompagne une chaussée sur sa **longueur** : éclairage, poteaux et ligne aérienne, bornes, panneaux, balises, entrée d'agglomération, alignements, haies et murets de bas-côté |
 | `furniture/junctionFurniture.js` | ce qu'un **carrefour** porte : feu tricolore, panneau de priorité |
 | `furniture/parcels.js` | ce qui se lit sur une **parcelle** : contour (haie, muret, clôture), semis, rangs de vigne, cour de ferme, repères d'emprise urbaine |
 | `furniture/townTrees.js` | ce qui **pousse** dans l'habitat : arbres clairsemés d'un parc, d'une place piétonne (avec ses bancs) et d'un bourg sur son sol d'habitat (`settled`), sur une maille mondiale, triés par distance |
+| `furniture/townPlots.js` | ce qui garnit un **vide** de la ville et une place piétonne : piazza, parc, placette ou recoin selon la place libre et le sol, après recentrage du point semé dans son vide |
 | `furniture/parcelFauna.js` | qui **vit** dans une parcelle : troupeau, gibier, carnassier — et le circuit qu'il suit ; et qui vit **hors** parcelle, sur les matières ouvertes (lande, pré salé, estive) qu'aucun contour ne ferme |
 | `furniture/cemetery.js` | l'habillage d'un cimetière : mur, portail, tombes, robinet, et ses fantômes s'il est hanté |
 | `furniture/landmarks.js` | les **repères** : moulin et château d'eau d'un bourg, pierres, éoliennes, pylônes, antennes de sommet, phares, arbres de crête |
 | `furniture/gapTrees.js` | l'**arbre isolé** du trou : semé sur une maille mondiale, à la densité du sol du pays |
 | `furniture/caneBrakes.js` | la **canne de Provence** : massifs de touffes le long des routes de plaine et des berges, présence par matrice |
+| `furniture/roadsideWild.js` | les plantes naturalisées du pays au **bord des routes**, en ville comme en campagne : un point par maille mondiale, retenu dans la bande de bas-côté |
 | `furniture/roosts.js` | où **dort** un vol d'étourneaux : à la lisière du bois qui fait face à la route — `lifeLayer` ne fait que le lever |
-| `furniture/biomeDebris.js` | ce qu'une **matière du sol** laisse traîner : blocs de lande et de maquis, souches de bois, joncs de marais, bois flotté — semé par nom de matière, pas par pente |
+| `furniture/biomeDebris.js` | ce qu'une **matière du sol** laisse traîner : blocs de lande et de maquis, souches de bois, joncs de marais, bois flotté — semé par nom de matière, pas par pente ; et, sur la même grille, les plantes naturalisées du pays (figuier de Barbarie, euphorbe, agave) sur les matières de sa matrice |
 | `furniture/pointsOfInterest.js` | ce que la couche `poi` porte nommément : abribus, fontaine, lavoir, monument, tour |
 | `furniture/catalog.js` | les listes et les plafonds : `POINT_ITEMS`, `LINEAR_KINDS`, `FURNITURE_LIMITS`, les portées partagées |
 

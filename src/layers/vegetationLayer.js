@@ -1,6 +1,7 @@
 import { treePrototype } from '../models/treeKit.js';
 import { vegetationDetail, VEGETATION_DETAIL_M, VEGETATION_DETAIL_LIGHT_M } from './vegetationDetail.js';
 import { finishGeneration } from '../core/generationSteps.js';
+import { installCanopyRide } from '../terrain/canopyRise.js';
 /*
  * vegetationLayer — les arbres, en instances. Poussent là où
  * `groundClassMap` dit « bois » — même donnée que le shader du terrain,
@@ -69,9 +70,11 @@ import { finishGeneration } from '../core/generationSteps.js';
  *    La relève est **sans trou** (`_swap`) : le maillage en place ne s'en va
  *    qu'une fois le nouveau construit, sinon la forêt clignote le temps que la
  *    file arrive à cette tuile.
- * 3. **Le plafond conserve les arbres déjà décrits** (`stableStand`). Les
- *    places restantes vont aux candidats de plus faible tirage spatial ; un
- *    complément de données ne change ni la taille ni l'essence d'un survivant.
+ * 3. **Le budget d'une tuile s'éclaircit sans marche** (`standThinning.js`) :
+ *    la part gardée, tirée du semis attendu et non de la portée, se raccorde
+ *    à celle des tuiles voisines. Le plafond conserve ensuite les arbres
+ *    déjà décrits (`stableStand`) ; un complément de données ne change ni la
+ *    taille ni l'essence d'un survivant.
  *
  * La strate basse n'est pas une strate haute en réduction : elle tire dans ses
  * propres silhouettes, et chaque plante y porte sa taille (`understoryStrata`).
@@ -101,6 +104,7 @@ import {
 } from '../materials/foliageMaterial.js';
 import { createSightline, installSightlineClearing, setSightline } from '../materials/sightlineClearing.js';
 import { stableStand } from './stableStand.js';
+import { keptShare, thinningShareAt } from './standThinning.js';
 import { defaultTheme } from '../themes/default.js';
 import { sharesFor } from '../core/regionInterpretation.js';
 import { pickShare } from './furniturePlacement.js';
@@ -267,8 +271,7 @@ export function understoryWeight(plant) {
 }
 
 /** Replie, plante par plante, le sous-étage au-delà de sa part (même règle que `understoryShare`). */
-function installUnderstoryThinning(material, THREE, [full, far] = [UNDERSTORY_FULL_M, UNDERSTORY_FAR_M]) {
-  const observer = { value: new THREE.Vector2() };
+function installUnderstoryThinning(material, THREE, [full, far] = [UNDERSTORY_FULL_M, UNDERSTORY_FAR_M], observer = { value: new THREE.Vector2() }) {
   material.userData.understoryObserver = observer;
   const previous = material.onBeforeCompile;
   material.onBeforeCompile = (shader) => {
@@ -441,7 +444,8 @@ export function coverBushesFor(cover, surfaces = defaultTheme.surfaces) {
 }
 
 /**
- * `coverBushesFor` au point : la matière que la carte y lit ; dans le trou
+ * `coverBushesFor` au point : la matière que la carte y lit, avec le buisson
+ * que le pays lui donne (`SOIL_LOOK[…].coverBush`) ; dans le trou
  * (là où la carte se tait), les arbustes du pays (`SOIL_LOOK[…].gapBushes`,
  * `gapBush`) — un pré sec piqueté de lentisques, pas un pré nu ; et, sur le
  * versant que le trou a cédé à sa matière de pente (`steepGap.js`), la densité
@@ -451,6 +455,10 @@ export function coverBushesAt(groundClass, x, z, theme = defaultTheme) {
   const cover = groundClass.coverAt?.(x, z) ?? groundClass.surfaceAt?.(x, z) ?? null;
   const look = coverBushesFor(cover, theme.surfaces);
   const soil = theme.soils?.[groundClass.region?.matrix];
+  // Le pays peut nommer son propre buisson pour une matière relevée : la
+  // broussaille de l'ouest sicilien est du palmier nain, pas l'épineux commun.
+  const local = cover ? soil?.coverBush?.[cover] : null;
+  if (local) look.essence = local;
   if (cover && soil?.gapBushes > 0 && groundClass.surfaceAt?.(x, z) === null) {
     look.density = soil.gapBushes;
     if (soil.gapBush) look.essence = soil.gapBush;
@@ -500,6 +508,41 @@ export function forestComposition(trees, theme = defaultTheme) {
   if (byWord.size === 0) byWord.set(null, { word: null, dominant: null, type: theme.forests[0], variants: [0], companions: [] });
   const shares = byWord.has(null) ? [[byWord.get(null), 1]] : parts.map(([word, share]) => [byWord.get(word), share]);
   return { shares, byWord };
+}
+
+/**
+ * La part d'un bois qui change de couleur : celle de ses essences pondérée
+ * par la part de leurs silhouettes qui virent (`variant.turns`). Zéro hors
+ * d'une saison qui en déclare. Fonction pure.
+ */
+export function turnedShare(composition, trees = defaultTheme.trees) {
+  let turned = 0;
+  for (const [grove, share] of composition.shares) {
+    const variants = grove.variants ?? [];
+    if (variants.length === 0) continue;
+    const turning = variants.filter((v) => trees.variants?.[v]?.turns).length;
+    turned += share * (turning / variants.length);
+  }
+  return turned;
+}
+
+/**
+ * Le peuplement moyen d'un pays, pondéré par les parts de ses essences : la
+ * hauteur moyenne de sa strate haute, en mètres, et sa densité. C'est ce que
+ * le couvert vu de loin doit imiter (`terrainMaterial.setCanopyStand`).
+ * Fonction pure.
+ */
+export function forestStand(composition) {
+  let height = 0;
+  let density = 0;
+  let total = 0;
+  for (const [grove, share] of composition.shares) {
+    const type = grove.type;
+    height += share * ((type.minHeight + type.maxHeight) / 2);
+    density += share * (type.density ?? 1);
+    total += share;
+  }
+  return total > 0 ? { heightM: height / total, density: density / total } : { heightM: 0, density: 0 };
 }
 
 /** Le bosquet de l'essence qui domine la maille de `FOREST_PATCH_M` d'un point du sol. */
@@ -676,6 +719,8 @@ export class VegetationLayer {
     this._composition = null;
     this.disposed = false;
     this._descriptions = new Map();
+    /** Part gardée par tuile (`_tileShare`), pour elle et ses voisines. */
+    this._shares = new Map();
 
     this.group = new THREE.Group();
     this.group.name = 'vegetation';
@@ -701,11 +746,18 @@ export class VegetationLayer {
       cacheKey: 'tree-volume-v3',
     });
     this.material = foliage();
+    // De loin, l'arbre d'un bois se plante dans le couvert relevé du sol.
+    installCanopyRide(this.material, bubble?.materials?.canopyRise);
     this.understoryMaterial = foliage();
     installUnderstoryThinning(this.understoryMaterial, THREE, this._understoryM);
     this.depthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
     this.depthMaterial.onBeforeCompile = this.material.onBeforeCompile;
     this.depthMaterial.customProgramCacheKey = () => 'tree-volume-depth-v3';
+    // L'ombre d'une plantation éclaircie s'éclaircit avec elle.
+    this.thinnedDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+    this.thinnedDepthMaterial.onBeforeCompile = this.material.onBeforeCompile;
+    this.thinnedDepthMaterial.customProgramCacheKey = () => 'tree-volume-depth-v3';
+    installUnderstoryThinning(this.thinnedDepthMaterial, THREE, this._understoryM, this.understoryMaterial.userData.understoryObserver);
     // Après la matière d'ombre, qui ne doit pas en hériter.
     this.sightline = sightline;
     installSightlineClearing(this.material, this.sightline);
@@ -772,7 +824,16 @@ export class VegetationLayer {
     if (next === this.region) return false;
     this.region = next;
     this._composition = null;
+    this._shares?.clear();
     return true;
+  }
+
+  /**
+   * Distances, en mètres, entre lesquelles le sous-étage passe d'entier à
+   * absent : le couvert vu de loin doit prendre le relais sur cette rampe.
+   */
+  get understoryRangeM() {
+    return this._understoryM;
   }
 
   _forestComposition() {
@@ -866,6 +927,8 @@ export class VegetationLayer {
       }
     }
 
+    // Les parts gardées ne servent qu'aux tuiles proches et à leurs voisines.
+    if (this._shares?.size > 64) this._shares.clear();
     this.queue.length = 0;
     for (const tile of this.bubble.tiles.values()) {
       if (tile.ring > this.maxRing || this._tileBeyondReach(tile)) continue;
@@ -960,6 +1023,58 @@ export class VegetationLayer {
     return Math.min(classed, infra);
   }
 
+  /** Ce qu'une maille du peuplement attend : son bosquet, ses tiges et son fourré. */
+  _standCell(frame, composition, centreX, centreZ) {
+    const { groundClass } = this;
+    const forest = groveAt(frame, composition, centreX, centreZ);
+    const type = forest.type;
+    const stems = woodDensity(groundClass.woodAt(centreX, centreZ)) * standTreesPerCell(type);
+    // Fourré de couverture — voir `coverBushesFor`. Il se sème là où il n'y
+    // a pas de bois, donc il ne peut pas être conditionné aux tiges. Rien
+    // au milieu d'une flaque, plus dense sur sa bordure (`poolEdgeGain`).
+    const bushLook = coverBushesAt(groundClass, centreX, centreZ, this.theme);
+    const bushCover = bushLook.cover;
+    const bushStanding = bushCover ? this.theme.surfaces[bushCover]?.standingWater ?? 0 : 0;
+    const bushPool =
+      bushStanding > 0
+        ? poolShareAt(centreX, centreZ, bushStanding, this.theme.terrain.poolScaleM)
+        : 0;
+    const thicket =
+      bushPool > 0.5
+        ? 0
+        : bushLook.density * TREES_PER_CELL * (1 + poolEdgeGain(bushPool) * BUSH_POOL_EDGE_BOOST);
+    return { forest, type, stems, bushLook, thicket, expected: stems + thicket };
+  }
+
+  /**
+   * Part gardée du peuplement d'une tuile (`standThinning.js`), tirée du semis
+   * qu'elle attend. Gardée tant que la tuile n'en sait pas plus qu'alors.
+   */
+  _tileShare(tx, ty) {
+    const key = `${tx}/${ty}`;
+    const known = this._knowledgeOf({ x: tx, y: ty });
+    this._shares ??= new Map();
+    const cached = this._shares.get(key);
+    if (cached && known <= cached.known + BLIND_EPSILON) return cached.share;
+    const frame = this.bubble.frame;
+    const composition = this._forestComposition();
+    const cellSize = frame.scale / VEGETATION_CELLS;
+    const originX = (tx - frame.origin.x) * frame.scale;
+    const originZ = (ty - frame.origin.y) * frame.scale;
+    let expected = 0;
+    for (let cy = 0; cy < VEGETATION_CELLS; cy++) {
+      for (let cx = 0; cx < VEGETATION_CELLS; cx++) {
+        const cellX = originX + cx * cellSize;
+        const cellZ = originZ + cy * cellSize;
+        const cell = this._standCell(frame, composition, cellX + cellSize * 0.5, cellZ + cellSize * 0.5);
+        expected += Math.min(cell.expected, STAND_CANDIDATES);
+      }
+    }
+    const share = keptShare(expected, MAX_TREES_PER_TILE);
+    this._shares.set(key, { known, share });
+    return share;
+  }
+
   _build(tile) {
     finishGeneration(this._buildSteps(tile));
   }
@@ -994,25 +1109,7 @@ export class VegetationLayer {
         const centreZ = cellZ + cellSize * 0.5;
         if (this._beyondReach(cellX, cellZ, cellSize)) continue;
 
-        const forest = groveAt(frame, composition, centreX, centreZ);
-        const type = forest.type;
-        const stems = woodDensity(groundClass.woodAt(centreX, centreZ)) * standTreesPerCell(type);
-        // Fourré de couverture — voir `coverBushesFor`. Il se sème là où il n'y
-        // a pas de bois, donc il ne peut pas être conditionné aux tiges. Rien
-        // au milieu d'une flaque, plus dense sur sa bordure (`poolEdgeGain`) :
-        // l'eau et le fourré suivent désormais la même vérité.
-        const bushLook = coverBushesAt(groundClass, centreX, centreZ, this.theme);
-        const bushCover = bushLook.cover;
-        const bushStanding = bushCover ? this.theme.surfaces[bushCover]?.standingWater ?? 0 : 0;
-        const bushPool =
-          bushStanding > 0
-            ? poolShareAt(centreX, centreZ, bushStanding, this.theme.terrain.poolScaleM)
-            : 0;
-        const thicket =
-          bushPool > 0.5
-            ? 0
-            : bushLook.density * TREES_PER_CELL * (1 + poolEdgeGain(bushPool) * BUSH_POOL_EDGE_BOOST);
-        const expected = stems + thicket;
+        const { forest, type, stems, bushLook, thicket, expected } = this._standCell(frame, composition, centreX, centreZ);
         if (expected <= 0) continue;
 
         const share = Math.min(1, expected / STAND_CANDIDATES);
@@ -1057,7 +1154,26 @@ export class VegetationLayer {
       yield;
     }
 
-    const placements = stableStand(this._descriptions.get(tile.key), collected, MAX_TREES_PER_TILE, p => !inCorridor(index, p.x, p.z));
+    // L'éclaircie suit la part lue entre les tuiles voisines : pas de marche
+    // de densité à la frontière. Le plafond ne rogne plus que l'aléa du tirage.
+    const shares = new Map();
+    let thinning = false;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const share = this._tileShare(tile.x + dx, tile.y + dy);
+        shares.set(`${tile.x + dx}/${tile.y + dy}`, share);
+        thinning ||= share < 1;
+      }
+      yield;
+    }
+    const shareOf = (tx, ty) => shares.get(`${tx}/${ty}`) ?? 1;
+    const thinned = thinning ? collected.filter((p) => p.thin < thinningShareAt(frame, p.x, p.z, shareOf)) : collected;
+    const placements = stableStand(
+      this._descriptions.get(tile.key),
+      thinned,
+      MAX_TREES_PER_TILE,
+      p => !inCorridor(index, p.x, p.z) && !groundClass.onWater?.(p.x, p.z),
+    );
     this._descriptions.set(tile.key, placements);
     yield;
     yield* this._settleSteps(placements);
@@ -1089,9 +1205,16 @@ export class VegetationLayer {
     }
   }
 
-  /** Représentations communes des semis et des plantations publiées par le compositeur. */
-  setPlants(key, placements) {
-    this._swap(key, this._instances(placements, this.material, `vegetation-${key}`, true, false, PLANTED_BLOCKS_PER_TILE));
+  /**
+   * Représentations communes des semis et des plantations publiées par le
+   * compositeur. `thinned` : éclaircies au loin comme le sous-étage, plante par
+   * plante autour de l'observateur — la portée de leur semis doit couvrir
+   * `UNDERSTORY_FAR_M` plus le pas de relève.
+   */
+  setPlants(key, placements, { thinned = false } = {}) {
+    this._swap(key, thinned
+      ? this._instances(placements, this.understoryMaterial, `vegetation-${key}`, true, true)
+      : this._instances(placements, this.material, `vegetation-${key}`, true, false, PLANTED_BLOCKS_PER_TILE));
   }
 
   /**
@@ -1125,7 +1248,7 @@ export class VegetationLayer {
       mesh.name = name;
       mesh.castShadow = castShadow;
       mesh.receiveShadow = true; // un bois s'ombre lui-même
-      if (castShadow) mesh.customDepthMaterial = this.depthMaterial;
+      if (castShadow) mesh.customDepthMaterial = thinned ? this.thinnedDepthMaterial : this.depthMaterial;
       list.forEach((item, index) => {
         mesh.setMatrixAt(index, this._compose(item.x, item.y, item.z, item.height, item.aspect, item.rotation));
         this._color.setRGB(item.color[0], item.color[1], item.color[2]);
@@ -1291,5 +1414,6 @@ export class VegetationLayer {
     this.material.dispose();
     this.understoryMaterial.dispose();
     this.depthMaterial.dispose();
+    this.thinnedDepthMaterial.dispose();
   }
 }

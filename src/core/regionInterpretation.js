@@ -52,6 +52,7 @@
 export const BOUNDARY_STYLES = Object.freeze([
   'bocage',
   'openfield',
+  'dry_openfield',
   'drystone',
   'wood_fence',
   'none',
@@ -71,10 +72,10 @@ export const MATRIX_KINDS = Object.freeze({
   openfield_cropland: { surface: 'grass', boundary: 'openfield' },
   // Grande culture sèche : campiña, Meseta, Tavoliere, Alentejo, seminativo sicilien.
   // `steep` : ce que devient le trou au-delà de la pente où l'on ne laboure
-  // plus (`theme.terrain.gapSteep`) — herbe sèche piquetée de broussaille.
-  dry_cropland: { surface: 'grass', boundary: 'openfield', steep: 'scrub' },
+  // plus (`theme.terrain.gapSteep`) — broussaille olive, piquetée d'arbustes.
+  dry_cropland: { surface: 'grass', boundary: 'dry_openfield', steep: 'maquis' },
   // Pâture sèche enclose de murets : causses, Murge, plateau ibléen.
-  dry_pasture: { surface: 'grass', boundary: 'drystone', steep: 'scrub' },
+  dry_pasture: { surface: 'grass', boundary: 'drystone', steep: 'maquis' },
   wet_grassland: { surface: 'grass', boundary: 'bocage' },
   marsh: { surface: 'wetland', boundary: 'none' },
   moor_heath: { surface: 'heath', boundary: 'drystone' },
@@ -85,7 +86,11 @@ export const MATRIX_KINDS = Object.freeze({
   // vigne ; seul ce qui est trop raide pour être tenu retourne au maquis.
   terraced_slope: { surface: 'grass', boundary: 'drystone', steep: 'scrub' },
   dry_scrub: { surface: 'scrub', boundary: 'drystone' },
+  // Maquis fermé de versant : Peloritani, Corse, Gallura.
+  macchia: { surface: 'maquis', boundary: 'drystone' },
   garrigue: { surface: 'scrub', boundary: 'drystone' },
+  // Garrigue à palmier nain : promontoires calcaires de l'ouest sicilien, Égades.
+  palm_garrigue: { surface: 'scrub', boundary: 'drystone' },
   dry_steppe: { surface: 'bare', boundary: 'openfield' },
   alpine_pasture: { surface: 'alpine', boundary: 'wood_fence' },
   bare_rock: { surface: 'rock', boundary: 'none' },
@@ -221,13 +226,26 @@ export const TOWN_FORM_KINDS = Object.freeze({
 
 /**
  * Le clocher du pays : `spire`, la flèche ; `campanile`, la tour carrée sous
- * un toit bas ou une terrasse ; `dome`, une coupole sur la croisée, campanile
- * en plus. Le thème en dessine chaque mot (`theme.belfries`).
+ * un toit bas ; `dome`, le campanile coiffé d'une coupole ; `crenellated`, la
+ * tour carrée sans toit, couronnée de mâchicoulis et de merlons comme un
+ * château. Le thème en dessine chaque mot (`theme.belfries`).
  */
 export const BELFRY_KINDS = Object.freeze({
   spire: {},
   campanile: {},
   dome: {},
+  crenellated: {},
+});
+
+/**
+ * Le château du pays : `keep`, le donjon couvert de toits et de poivrières ;
+ * `crenellated`, la forteresse à terrasse, couronnée de mâchicoulis et de
+ * merlons sur des tours carrées, comme l'enceinte. Le thème en dessine chaque
+ * mot (`theme.fortresses`).
+ */
+export const FORTRESS_KINDS = Object.freeze({
+  keep: {},
+  crenellated: {},
 });
 
 /** Rang du niveau le plus haut admis par `townStoreys`. */
@@ -307,6 +325,16 @@ export const TREE_KINDS = Object.freeze({
   palm: {},
 });
 
+/**
+ * Plantes naturalisées semées hors des bois, sur la matière de la matrice :
+ * le mot nomme les formes du mobilier qui la rendent.
+ */
+export const NATURALIZED_KINDS = Object.freeze({
+  prickly_pear: { items: ['pricklyPear'] },
+  tree_spurge: { items: ['treeSpurge'] },
+  agave: { items: ['agave', 'agaveFlowering'] },
+});
+
 /** Les cinq vocabulaires, par champ du dossier de région. */
 export const VOCABULARIES = Object.freeze({
   matrix: MATRIX_KINDS,
@@ -326,15 +354,18 @@ export const OPTIONAL_VOCABULARIES = Object.freeze({
   walls: WALL_KINDS,
   townForm: TOWN_FORM_KINDS,
   belfry: BELFRY_KINDS,
+  fortress: FORTRESS_KINDS,
   // Les essences plantées en ville (rues, places, cours) quand ce ne sont
   // pas celles des bois du pays : palmier et pin parasol d'un front de mer.
   planted: TREE_KINDS,
+  // Ce qui pousse en sauvage sur le pâturage sans être une essence des bois.
+  naturalized: NATURALIZED_KINDS,
 });
 
 const ALL_VOCABULARIES = Object.freeze({ ...VOCABULARIES, ...OPTIONAL_VOCABULARIES });
 
 /** Champs qui portent une liste de mots plutôt qu'un seul. */
-export const LIST_FIELDS = Object.freeze(['farming', 'trees', 'roofs', 'walls', 'planted']);
+export const LIST_FIELDS = Object.freeze(['farming', 'trees', 'roofs', 'walls', 'planted', 'naturalized']);
 
 /**
  * Matière de `SURFACE_KINDS` que la matrice pose là où la carte se tait, ou

@@ -12,6 +12,7 @@
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { SceneEnvironment } from '/src/environment/sceneEnvironment.js';
+import { applyToneMapping } from '/src/environment/toneMapping.js';
 import { TerrainBubble } from '/src/terrain/terrainBubble.js';
 import { GroundClassMap } from '/src/terrain/groundClassMap.js';
 import { WaterRelief } from '/src/terrain/waterRelief.js';
@@ -20,7 +21,7 @@ import { createLocalFrame, tileXToLng, tileYToLat } from '/src/core/tileMath.js'
 
 const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});
 renderer.setSize(innerWidth,innerHeight);document.body.appendChild(renderer.domElement);
-renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=0.5;
+applyToneMapping(THREE,renderer);
 const scene=new THREE.Scene();
 const env=new SceneEnvironment({THREE,Sky,scene,fogRadius:900});
 const camera=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,0.5,5000);

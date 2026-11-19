@@ -14,7 +14,7 @@
  * (pas depuis le tronçon découpé, qui bouge avec l'observateur).
  */
 
-import { randomAt, randomStream } from '../core/groundSeed.js';
+import { cellRandomAt, randomAt, randomStream } from '../core/groundSeed.js';
 import { cropForFarming, plantationForFarming, sharesFor } from '../core/regionInterpretation.js';
 
 /**
@@ -142,8 +142,9 @@ export function realBoundaryRuns(ring, bounds, minPoints = 2) {
  * - `plough` et `pasture` — parts cumulées (voir `pickShare`), `null` valant
  *   « rien du tout », qui est le cas le plus fréquent en openfield ;
  * - `roadside` — part des portions de route hors agglomération qui portent une
- *   haie basse de bas-côté (`verge`) et une haie de bocage (`hedge`) : la haie
- *   inventée le long d'une route suit le pays comme celle des parcelles.
+ *   haie basse de bas-côté (`verge`), une haie de bocage (`hedge`) et un muret
+ *   de pierre sèche par côté (`wall`, nul s'il est absent) : ce qui borde une
+ *   route suit le pays comme ce qui borde une parcelle.
  */
 export const DEFAULT_BOUNDARY_MIX = {
   stoneSlope: 0.2,
@@ -179,14 +180,24 @@ export const BOUNDARY_MIXES = {
     pasture: [['barbedWire', 0.5], ['woodFence', 0.3], [null, 0.15], ['hedge', 0.05]],
     roadside: { verge: 0.06, hedge: 0.1 },
   },
+  // Openfield du Midi : aussi ouvert, mais rien n'y entretient une haie
+  // vive ; la pierre épierrée borde ce qui est borné.
+  dry_openfield: {
+    stoneSlope: 0.24,
+    stoneSlopeTilled: 0.2,
+    plough: [[null, 0.82], ['dryStoneWall', 0.18]],
+    pasture: [['barbedWire', 0.5], ['woodFence', 0.3], [null, 0.15], ['dryStoneWall', 0.05]],
+    roadside: { verge: 0, hedge: 0, wall: 0.2 },
+  },
   // Terrasses, causses, Connemara : la pierre sort du premier pli de terrain,
   // et elle est partout.
   drystone: {
     stoneSlope: 0.05,
     stoneSlopeTilled: 0.04,
-    plough: [['dryStoneWall', 0.5], [null, 0.4], ['lowHedge', 0.1]],
+    // Aucune haie, même basse : sur un causse, elle ferait un bocage.
+    plough: [['dryStoneWall', 0.5], [null, 0.5]],
     pasture: [['dryStoneWall', 0.6], ['barbedWire', 0.25], [null, 0.15]],
-    roadside: { verge: 0.05, hedge: 0 },
+    roadside: { verge: 0, hedge: 0, wall: 0.55 },
   },
   // Là où le bois est la matière la moins chère, on clôt en bois.
   wood_fence: {
@@ -202,7 +213,7 @@ export const BOUNDARY_MIXES = {
     stoneSlopeTilled: 0.1,
     plough: [[null, 0.85], ['dryStoneWall', 0.15]],
     pasture: [[null, 0.6], ['barbedWire', 0.25], ['dryStoneWall', 0.15]],
-    roadside: { verge: 0, hedge: 0 },
+    roadside: { verge: 0, hedge: 0, wall: 0.1 },
   },
 };
 
@@ -524,7 +535,9 @@ export const CANE_BRAKE_SHARES = {
   dry_cropland: { road: 0.3, water: 0.75 },
   dry_pasture: { road: 0.2, water: 0.7 },
   dry_scrub: { road: 0.15, water: 0.6 },
+  macchia: { road: 0.15, water: 0.6 },
   garrigue: { road: 0.2, water: 0.6 },
+  palm_garrigue: { road: 0.1, water: 0.6 },
   terraced_slope: { road: 0.2, water: 0.6 },
   dry_steppe: { road: 0.05, water: 0.4 },
   marsh: { road: 0, water: 0.15 },
@@ -536,34 +549,38 @@ export const CANE_BRAKE_PIECE_M = 24;
 const CANE_BRAKE_KEEP = 0.4;
 
 /** Part de canne d'une matrice, pour `road` ou `water` ; 0 hors table. */
+/** Échelle d'une plante naturalisée dans `[min, max]` : le carré du tirage penche vers les petites. */
+export function naturalizedScale([min, max], draw) {
+  return min + draw * draw * (max - min);
+}
+
 export function caneBrakeShareFor(matrix, where) {
   return CANE_BRAKE_SHARES[matrix]?.[where] ?? 0;
 }
 
 /**
- * Les tronçons de canne d'un tracé : coupé en morceaux de `pieceM`, chacun
- * gardé selon un tirage ancré au sol à son début, les morceaux voisins gardés
- * réunis (`CANE_BRAKE_KEEP`), quelle que soit la part de la matrice.
+ * Les tronçons de canne d'un tracé : chaque point est gardé selon la maille du
+ * sol de `pieceM` qui le porte (`CANE_BRAKE_KEEP`) et selon `accept`, les
+ * points voisins gardés réunis. Le tirage ne dépend que du sol, pas du début
+ * du tracé : une route recoupée autrement autour de l'observateur garde ses
+ * massifs.
  *
  * @param {Array<{x:number,z:number,distance:number}>} path Tracé ré-échantillonné.
+ * @param {{accept?: Function, pieceM?: number}} [options]
  * @returns {Array<Array<{x:number,z:number,distance:number}>>}
  */
-export function caneBrakeRuns(frame, path, salt = 0, pieceM = CANE_BRAKE_PIECE_M) {
+export function caneBrakeRuns(frame, path, salt = 0, { accept = null, pieceM = CANE_BRAKE_PIECE_M } = {}) {
   const runs = [];
   let run = null;
-  let piece = -1;
-  let keep = false;
   for (const p of path || []) {
-    const index = Math.floor(p.distance / pieceM);
-    if (index !== piece) {
-      piece = index;
-      const kept = randomAt(frame, p.x, p.z, 211 + salt) < CANE_BRAKE_KEEP;
-      if (keep && !kept && run) run.push(p);
-      keep = kept;
-      if (!keep) run = null;
-      else if (!run) runs.push((run = []));
+    if (cellRandomAt(frame, p.x, p.z, pieceM, 211 + salt) < CANE_BRAKE_KEEP && (!accept || accept(p))) {
+      if (!run) runs.push((run = []));
+      run.push(p);
+    } else {
+      // Le massif va jusqu'au point qui le borne, pas un pas en deçà.
+      if (run) run.push(p);
+      run = null;
     }
-    if (keep) run.push(p);
   }
   return runs.filter((r) => r.length >= 2);
 }
@@ -571,29 +588,43 @@ export function caneBrakeRuns(frame, path, salt = 0, pieceM = CANE_BRAKE_PIECE_M
 /** Pas entre deux touffes de canne le long d'un massif, en mètres. */
 export const CANE_CLUMP_STEP_M = 1.5;
 
+/** Longueur sur laquelle un massif de canne monte à sa pleine hauteur, en mètres : deux touffes de 3,5 m. */
+export const CANE_END_RAMP_M = 7;
+/** Taille de la touffe au bout même d'un massif, en fraction de la pleine. */
+const CANE_END_FLOOR = 0.3;
+
 /**
  * Les touffes d'un tronçon de canne décalé de `offset` (signe : le côté) :
  * deux rangées par pas, une troisième une fois sur trois, du côté opposé à
  * la rive ; une touffe sur dix manque, chacune déplacée d'un demi-mètre — un
  * fourré serré, avec du jour. Tirages ancrés au sol.
  *
+ * Les pas tombent sur les multiples de `step` comptés depuis `startDistance`
+ * (l'abscisse du tracé à son point 0), pas depuis le début du tronçon. Aux
+ * deux bouts, sur `CANE_END_RAMP_M`, les touffes rapetissent et s'éclaircissent :
+ * un massif naît de rejets bas, il ne commence pas en mur de 3,5 m.
+ *
  * @returns {Array<{x:number, z:number, yaw:number, scale:number}>}
  */
-export function caneClumpsAlong(frame, run, offset, step = CANE_CLUMP_STEP_M) {
+export function caneClumpsAlong(frame, run, offset, step = CANE_CLUMP_STEP_M, { startDistance = 0 } = {}) {
   const clumps = [];
-  const length = run[run.length - 1].distance - run[0].distance;
+  const start = run[0].distance, end = run[run.length - 1].distance;
   const side = Math.sign(offset) || 1;
   let r = 1;
-  for (let d = run[0].distance + step / 2; d < run[0].distance + length; d += step) {
+  const first = (Math.ceil((start + startDistance) / step - 0.5) + 0.5) * step - startDistance;
+  for (let d = first; d < end; d += step) {
     while (r < run.length - 1 && run[r].distance < d) r++;
     const a = run[r - 1], b = run[r];
     const span = b.distance - a.distance || 1;
     const t = Math.min(1, Math.max(0, (d - a.distance) / span));
     const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
     const tx = (b.x - a.x) / span, tz = (b.z - a.z) / span;
-    const rows = randomAt(frame, x, z, 222) < 0.35 ? 3 : 2;
+    const edge = Math.min(1, Math.min(d - start, end - d) / CANE_END_RAMP_M);
+    const grown = edge * edge * (3 - 2 * edge);
+    const rows = randomAt(frame, x, z, 222) < 0.35 * grown ? 3 : 2;
     for (let row = 0; row < rows; row++) {
-      if (randomAt(frame, x, z, 221 + row * 11) < 0.1) continue;
+      // Vers le bout, les manques gagnent, la rangée extérieure d'abord.
+      if (randomAt(frame, x, z, 221 + row * 11) < 0.1 + (1 - grown) * 0.3 * row) continue;
       const across = offset + side * row * 1.1 + (randomAt(frame, x, z, 223 + row) - 0.5);
       const along = (randomAt(frame, x, z, 225 + row) - 0.5) * step * 0.5;
       const px = x + tz * across + tx * along;
@@ -602,7 +633,7 @@ export function caneClumpsAlong(frame, run, offset, step = CANE_CLUMP_STEP_M) {
         x: px,
         z: pz,
         yaw: randomAt(frame, px, pz, 227) * Math.PI * 2,
-        scale: 0.8 + randomAt(frame, px, pz, 228) * 0.35,
+        scale: (0.8 + randomAt(frame, px, pz, 228) * 0.35) * (CANE_END_FLOOR + (1 - CANE_END_FLOOR) * grown),
       });
     }
   }
@@ -623,7 +654,9 @@ export const HERD_SHEEP_ODDS = {
   // Lande atlantique, fjell : le mouton, presque seul.
   moor_heath: 0.72,
   garrigue: 0.68,
+  palm_garrigue: 0.85,
   dry_scrub: 0.55,
+  macchia: 0.7,
   terraced_slope: 0.78,
   dry_steppe: 0.8,
   // Midi céréalier et pâture à murets : le mouton domine, la vache reste.
@@ -713,7 +746,9 @@ export const FOREST_GAME = {
   conifer_forest: ['deer', 'doe', 'boar'],
   moor_heath: ['deer', 'doe'],
   garrigue: ['boar', 'boar', 'doe', 'deer'],
+  palm_garrigue: ['boar'],
   dry_scrub: ['boar', 'doe', 'deer'],
+  macchia: ['boar', 'boar', 'doe'],
   terraced_slope: ['boar', 'deer', 'doe'],
   dry_steppe: ['boar'],
   dry_cropland: ['boar', 'boar', 'doe'],
@@ -746,7 +781,9 @@ export const FOREST_PREDATORS = {
   wet_grassland: ['fox'],
   moor_heath: ['fox'],
   garrigue: ['fox'],
+  palm_garrigue: ['fox'],
   dry_scrub: ['fox'],
+  macchia: ['fox'],
   terraced_slope: ['fox', 'fox', 'wolf'],
   dry_steppe: ['fox'],
   dry_cropland: ['fox'],
@@ -1346,6 +1383,27 @@ export function pointInRing(ring, x, z) {
     }
   }
   return inside;
+}
+
+/**
+ * Un point dans l'anneau, tiré de sa seule forme : le centre s'il y tombe,
+ * sinon le milieu du plus large passage de l'anneau sur l'horizontale du
+ * centre. Le centre lui-même si l'horizontale ne coupe rien. Fonction pure.
+ */
+export function ringInteriorPoint(ring, centre) {
+  if (pointInRing(ring, centre.x, centre.z)) return centre;
+  const crossings = [];
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[j];
+    const b = ring[i];
+    if (a.z > centre.z !== b.z > centre.z) crossings.push(a.x + ((centre.z - a.z) / (b.z - a.z)) * (b.x - a.x));
+  }
+  crossings.sort((p, q) => p - q);
+  let best = null;
+  for (let k = 0; k + 1 < crossings.length; k += 2) {
+    if (!best || crossings[k + 1] - crossings[k] > best[1] - best[0]) best = [crossings[k], crossings[k + 1]];
+  }
+  return best ? { x: (best[0] + best[1]) / 2, z: centre.z } : centre;
 }
 
 /**

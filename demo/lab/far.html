@@ -28,6 +28,7 @@
  *   await farLab.set({ far: 0 })                    // sans le lointain, pour comparer
  *   await farLab.set({ x: 900 })                    // l'observateur change de tuile
  *   await farLab.set({ matrix: 'garrigue' })        // couleur du pays
+ *   await farLab.set({ wood: 'conifer_forest' })    // un mot de matrice imposé : le relief entier boisé
  *   farLab.info()
  *
  * `relief` : 'montagne' (vallée entre deux chaînes, 1 800 m d'amplitude),
@@ -39,12 +40,16 @@
  */
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
-import { createWorld } from '/src/index.js';
+import { createWorld, autumnTheme } from '/src/index.js';
 import { ElevationField } from '/src/core/elevationField.js';
 import { createLocalFrame, tileXToLng, tileYToLat } from '/src/core/tileMath.js';
 
-const LNG = 6.4;
-const LAT = 45.2;
+// `?lng=14.7&lat=37.95` : le même relief ailleurs, pour la région (essences, matrice).
+// `?saison=automne` : le thème d'automne.
+const query = new URLSearchParams(location.search);
+const THEME = query.get('saison') === 'automne' ? autumnTheme : undefined;
+const LNG = Number(query.get('lng') ?? 6.4);
+const LAT = Number(query.get('lat') ?? 45.2);
 const frame = createLocalFrame(LNG, LAT, 15);
 
 /** Amplitude du relief, en mètres, par nom. */
@@ -97,7 +102,7 @@ renderer.setSize(innerWidth, innerHeight);
 document.body.appendChild(renderer.domElement);
 const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.5, 40000);
 
-const state = { relief: 'montagne', far: 31, x: 0, z: 0, yawDeg: 40, pitchDeg: 4, height: 30, hour: 15, matrix: null, dx: 0, dz: 0 };
+const state = { relief: 'montagne', far: 31, x: 0, z: 0, yawDeg: 40, pitchDeg: 4, height: 30, hour: 15, matrix: null, wood: null, dx: 0, dz: 0 };
 let world = null;
 let scene = null;
 let built = null;
@@ -113,21 +118,37 @@ async function build() {
     elevation: new SyntheticElevation({ zoom: 14, maxTiles: 256 }),
     view: { farBlockSize: state.far },
     sky: { Sky },
+    theme: THEME,
+    // Des tuiles vides, sans réseau : le décor est posé, la carte du sol se tait
+    // et prend partout la matière du mot imposé.
+    vector: state.wood ? { tiles: ['vide/{z}/{x}/{y}'], maxZoom: 14, fetchTile: async () => new Response(new ArrayBuffer(0)) } : undefined,
   });
-  built = `${state.relief}/${state.far}`;
+  if (state.wood) world.setRegionWord('matrix', state.wood);
+  built = `${state.relief}/${state.far}/${state.wood}`;
 }
 
 async function set(patch = {}) {
   Object.assign(state, patch);
-  if (built !== `${state.relief}/${state.far}`) await build();
+  if (built !== `${state.relief}/${state.far}/${state.wood}`) await build();
   const c = world.composer;
   const at = frame.toLngLat(state.x, state.z);
   await world.setCenter(at.lng, at.lat);
   while (c.bubble.processRebuildQueue(Infinity));
+  // Le décor n'est posé que par `refresh`, et un bois se sème une tuile par
+  // image : on laisse passer les images.
+  if (state.wood) {
+    await world.refresh(at.lng, at.lat, { force: true });
+    for (let i = 0; i < 600; i++) world.advance(1 / 30, { x: state.x, y: 0, z: state.z });
+  }
   if (c.far) {
     const t0 = performance.now();
     await c.far.sync();
     syncMs = +(performance.now() - t0).toFixed(1);
+    // Le recalage peut finir hors de cet appel : le brouillard le suit ensuite.
+    for (let wait = 0; wait < 200 && (c.far._pending || !c.far._signature); wait++) {
+      c.far.sync();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   }
   if (state.matrix) {
     c.bubble.materials.setRegion({ matrix: state.matrix });

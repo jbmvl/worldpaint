@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { gapSteepSurfaceForMatrix } from '../src/core/regionInterpretation.js';
+import { gapSteepSurfaceForMatrix, gapSurfaceForMatrix } from '../src/core/regionInterpretation.js';
 import { worldCellsIn } from '../src/core/groundSeed.js';
 import { steepGapAt, steepGapMargin, steepGapPieces, SteepGapField } from '../src/terrain/steepGap.js';
 import { gapTreeChance, gapTreeIn, GAP_TREE_CELL_M } from '../src/layers/furniture/gapTrees.js';
@@ -27,8 +27,8 @@ const slopeOf = (f, grade) => (x, z) => toWorld(f, x, z).X * grade;
 const range = defaultTheme.terrain.gapSteep.grade;
 
 test('seule une matrice sèche cède son trou en pente à la broussaille', () => {
-  assert.equal(gapSteepSurfaceForMatrix('dry_cropland'), 'scrub');
-  assert.equal(gapSteepSurfaceForMatrix('dry_pasture'), 'scrub');
+  assert.equal(gapSteepSurfaceForMatrix('dry_cropland'), 'maquis');
+  assert.equal(gapSteepSurfaceForMatrix('dry_pasture'), 'maquis');
   assert.equal(gapSteepSurfaceForMatrix('hedgerow_meadow'), null);
   assert.equal(gapSteepSurfaceForMatrix('broadleaf_woodland'), null, 'une matrice plantée n’a pas de trou à elle');
   assert.equal(gapSteepSurfaceForMatrix('inconnu'), null);
@@ -95,9 +95,9 @@ test('la densité d’arbres isolés se règle à l’hectare, et vaut zéro san
   assert.equal(gapTreeChance(undefined), 0);
   assert.ok(Math.abs(gapTreeChance(0.5) - 0.5 * GAP_TREE_CELL_M ** 2 / 10000) < 1e-9);
   assert.equal(gapTreeChance(100), 1);
-  // Seules les matrices sèches en portent par défaut.
+  // Seules les matrices sèches, le maquis et la garrigue à palmier nain en portent par défaut.
   for (const [matrix, look] of Object.entries(defaultTheme.soils)) {
-    if (look.scatteredTreesPerHa) assert.ok(['dry_cropland', 'dry_pasture', 'terraced_slope'].includes(matrix), matrix);
+    if (look.scatteredTreesPerHa) assert.ok(['dry_cropland', 'dry_pasture', 'terraced_slope', 'macchia', 'palm_garrigue'].includes(matrix), matrix);
   }
 });
 
@@ -145,25 +145,34 @@ test('la canne pousse en tronçons, les mêmes à chaque passage', () => {
 });
 
 test('l’herbe sèche a la même couleur en été et en automne', () => {
-  for (const matrix of ['dry_cropland', 'dry_pasture', 'terraced_slope']) {
+  for (const matrix of ['dry_cropland', 'terraced_slope']) {
     const summer = defaultTheme.surfaces.grass.albedo.map((v, i) => v * defaultTheme.soils[matrix].grass[i]);
     const autumn = autumnTheme.surfaces.grass.albedo.map((v, i) => v * autumnTheme.soils[matrix].grass[i]);
     for (let i = 0; i < 3; i++) assert.ok(Math.abs(summer[i] - autumn[i]) < 0.01, `${matrix}[${i}] : ${summer[i]} / ${autumn[i]}`);
   }
 });
 
-test('un pays sec reste herbeux : l’herbe domine, le chaume la casse en plaques', () => {
-  for (const matrix of ['dry_cropland', 'dry_pasture', 'terraced_slope']) {
+test('la pâture sèche reverdit en automne', () => {
+  const [r, g, b] = autumnTheme.surfaces.grass.albedo.map((v, i) => v * autumnTheme.soils.dry_pasture.grass[i]);
+  assert.ok(g > r && r > b, `herbe ${[r, g, b].map((v) => v.toFixed(3))}`);
+});
+
+test('un pays sec est paille : le rouge au-dessus du vert, des plaques minoritaires', () => {
+  for (const matrix of ['dry_cropland', 'dry_pasture']) {
     const look = defaultTheme.soils[matrix];
-    // Le fond est une herbe grillée : le vert reste au-dessus du rouge.
     const [r, g, b] = defaultTheme.surfaces.grass.albedo.map((v, i) => v * look.grass[i]);
-    assert.ok(g > r && r > b, `${matrix} : herbe ${[r, g, b].map((v) => v.toFixed(3))}`);
-    // La plaque est une paille : plus rouge que verte, bleu bas, et minoritaire.
-    const [pr, pg, pb] = look.grassPatch.albedo;
-    assert.ok(pr > pg && pg > pb, `${matrix} : plaque ${look.grassPatch.albedo}`);
+    assert.ok(r > g && g > b, `${matrix} : fond ${[r, g, b].map((v) => v.toFixed(3))}`);
     assert.ok(look.grassPatch.strength > 0 && look.grassPatch.strength <= 0.6, `${matrix} : force ${look.grassPatch.strength}`);
     assert.ok(look.gapBushes > 0 && look.gapBushes < defaultTheme.surfaces.scrub.bushes, `${matrix} : piqueté, pas un maquis`);
   }
+});
+
+test('les terrasses restent herbeuses : l’herbe domine, le chaume la casse en plaques', () => {
+  const look = defaultTheme.soils.terraced_slope;
+  const [r, g, b] = defaultTheme.surfaces.grass.albedo.map((v, i) => v * look.grass[i]);
+  assert.ok(g > r && r > b, `herbe ${[r, g, b].map((v) => v.toFixed(3))}`);
+  const [pr, pg, pb] = look.grassPatch.albedo;
+  assert.ok(pr > pg && pg > pb, `plaque ${look.grassPatch.albedo}`);
 });
 
 test('le trou d’un pays sec porte les arbustes du pays, la carte relevée garde les siens', () => {
@@ -213,4 +222,59 @@ test('la touffe de canne a la taille d’une canne : 3 à 4 m, plus haute qu’u
   const ys = FURNITURE_BUILDERS.caneClump().positions.filter((_, i) => i % 3 === 1);
   const top = Math.max(...ys);
   assert.ok(top > 3 && top < 4.6, `sommet ${top.toFixed(2)} m`);
+});
+
+test('le maquis fermé : sa matière dans le trou, ses amas, son couvert vu de loin', () => {
+  assert.equal(gapSurfaceForMatrix('macchia'), 'maquis');
+  assert.equal(gapSteepSurfaceForMatrix('macchia'), null);
+  const ground = { region: { matrix: 'macchia' }, surfaceAt: () => null, coverAt: () => 'maquis', steepGapAt: () => false };
+  const look = coverBushesAt(ground, 0, 0, defaultTheme);
+  assert.equal(look.essence, 'macchia');
+  // Le couvert est porté par le sol : pas plus d'amas que sur un versant piqueté.
+  assert.ok(look.density <= defaultTheme.terrain.gapSteep.bushes);
+  // Plus fermé que le maquis sec, moins qu'un bois.
+  const share = (kind) => defaultTheme.surfaces[kind].canopy.share;
+  assert.ok(share('scrub') < share('maquis') && share('maquis') < share('wood'));
+  assert.equal(regionAt(15.249, 37.972)?.matrix, 'macchia', 'les Peloritani');
+});
+
+test('les promontoires de l’ouest sicilien : garrigue à palmier nain, au bord de mer seulement', () => {
+  assert.equal(regionAt(12.8, 38.09)?.matrix, 'palm_garrigue', 'le Zingaro');
+  assert.equal(regionAt(12.33, 37.93)?.matrix, 'palm_garrigue', 'Favignana');
+  assert.equal(regionAt(12.44, 37.8)?.id, 'sicilia_occidentale', 'Marsala reste au Trapanese');
+  const ground = { region: { matrix: 'palm_garrigue' }, surfaceAt: () => null, coverAt: () => 'scrub', steepGapAt: () => false };
+  const look = coverBushesAt(ground, 0, 0, defaultTheme);
+  assert.equal(look.essence, 'palmGarrigue');
+  // Moins d'instances que la broussaille de la garrigue ordinaire.
+  assert.ok(look.density < defaultTheme.surfaces.scrub.bushes);
+  const kinds = defaultTheme.trees.essences.palmGarrigue.map((i) => defaultTheme.trees.variants[i].kind);
+  assert.ok(kinds.includes('palm') && kinds.includes('tussock'));
+  // Sur une broussaille relevée par la carte, même essence, densité de la matière.
+  const mapped = coverBushesAt({ ...ground, surfaceAt: () => 'scrub' }, 0, 0, defaultTheme);
+  assert.equal(mapped.essence, 'palmGarrigue');
+  assert.equal(mapped.density, defaultTheme.surfaces.scrub.bushes);
+});
+
+test('la canne ne dépend pas de l’endroit où commence le tracé : même massifs sur une route recoupée', () => {
+  const line = [{ x: 0, z: 0 }, { x: 900, z: 200 }];
+  const whole = resamplePath(line, 3);
+  // La même route, coupée 137 m plus loin, comme le fait la portée autour d'un autre observateur.
+  const cut = whole.filter((p) => p.distance >= 137).map((p) => ({ ...p, distance: p.distance - 137 }));
+  const clumpsOf = (path, startDistance) => caneBrakeRuns(frameA, path)
+    .flatMap((run) => caneClumpsAlong(frameA, run, 3, undefined, { startDistance }))
+    .filter((c) => c.x > 300)
+    .map((c) => `${c.x.toFixed(3)},${c.z.toFixed(3)},${c.scale.toFixed(4)}`);
+  const a = clumpsOf(whole, 0);
+  assert.ok(a.length > 50, `${a.length} touffes`);
+  assert.deepEqual(clumpsOf(cut, 137), a);
+});
+
+test('un massif de canne monte aux bouts : touffes petites à la pointe, pleines au milieu', () => {
+  const run = resamplePath([{ x: 0, z: 0 }, { x: 60, z: 0 }], 6);
+  const clumps = caneClumpsAlong(frameA, run, 3);
+  const at = (lo, hi) => clumps.filter((c) => c.x >= lo && c.x < hi).map((c) => c.scale);
+  const mean = (v) => v.reduce((s, x) => s + x, 0) / v.length;
+  const tip = at(0, 1.5), middle = at(20, 40);
+  assert.ok(Math.max(...tip) < 0.6, `pointe ${tip.map((v) => v.toFixed(2))}`);
+  assert.ok(mean(middle) > 0.85, `milieu ${mean(middle).toFixed(2)}`);
 });

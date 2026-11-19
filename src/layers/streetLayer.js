@@ -18,6 +18,9 @@ import { RoadIndex } from './roadGraph.js';
 import { contiguousRuns, crossSlope, STEEP_CROSS_SLOPE } from './furniturePlacement.js';
 import { pointInAreas } from './settlement.js';
 import { edgeClearance, outwardSide, polylineLength } from './roadEdges.js';
+
+// Comblement des vides de faisceau (zébra et couture), coupé à l'essai.
+const COMBLEMENT_FAISCEAUX = false;
 import { junctionBoundaryAt } from './roadJunctions.js';
 import { appendGapSurface, appendZebra, collectRoadGaps, gapIsSeam } from './roadBundles.js';
 import {
@@ -204,7 +207,7 @@ export class StreetLayer {
 
     // Les vides de faisceau, partout — un longement de piste cyclable n'attend
     // pas d'être en bourg pour laisser deux mètres d'herbe au milieu du bitume.
-    this.fills = this._buildFills(buffer, roadSegments, here, roadIndex, areas);
+    this.fills = COMBLEMENT_FAISCEAUX ? this._buildFills(buffer, roadSegments, here, roadIndex, areas) : 0;
     drainProfileBuffer(store, buffer);
     yield;
 

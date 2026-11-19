@@ -776,7 +776,7 @@ export class TerrainBubble {
       const base = segment.crossingBase;
       const lowered = !!base && decks[i] < base[row] + (base[Math.min(base.length - 1, row + 1)] - base[row]) * ts[i] - 0.001;
       let cut = cutElevationAt(raw, (own[i] === own[i] ? own[i] : decks[i]) / scale, distance, segment.halfWidth, bench);
-      if (segment.paved === false && distance > segment.halfWidth + ROAD_CUT_M) cut = Math.max(cut, natural - PATH_EARTHWORK_MAX_M / scale);
+      if (segment.paved === false && distance > segment.halfWidth + bench) cut = Math.max(cut, natural - PATH_EARTHWORK_MAX_M / scale);
       elevation = Math.min(elevation, cut);
       if (!lowered) propped = Math.min(propped, cut);
       mask = Math.max(mask, roadCutMaskAt(distance, segment.halfWidth, bench));

@@ -142,15 +142,21 @@ export function castsShadow(weather) {
 /**
  * Facteur multiplicatif sur la densité du brouillard. Trois causes
  * additionnées : ciel bas, pluie (plus fort), et brume (variable à part, le
- * petit matin sans nuage). Le coefficient de la brume est calé pour qu'à
- * `haze = 1` la distance caractéristique du brouillard tombe vers 70-80 m.
+ * petit matin sans nuage). La brume monte d'abord régulièrement, puis se
+ * ferme en haut de course : à `haze = 1`, sur le rayon par défaut (2 200 m),
+ * le brouillard couvre 95 % à ~45 m.
  *
  * @param {Object} weather État résolu.
  * @returns {number} 1 par temps ordinaire, davantage ensuite.
  */
 export function fogScale(weather) {
   const overcast = overcastOf(weather);
-  return 1 + overcast * 0.4 + weather.precipitation * 1.3 + weather.haze * 18;
+  return 1 + overcast * 0.4 + weather.precipitation * 1.3 + weather.haze * 18 + hazeClosure(weather) * 32;
+}
+
+/** Fermeture de la brume : nulle presque toute la course, elle n'éteint le ciel qu'en haut. */
+export function hazeClosure(weather) {
+  return weather.haze ** 6;
 }
 
 /** Blancheur de la brume, proche du blanc avant que sa densité atteigne 1. */

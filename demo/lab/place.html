@@ -32,7 +32,10 @@
  *   await placeLab.set({ word: ['matrix', 'conifer_forest'] })  // un mot imposé (afficheur), `null` pour le retirer
  *
  * `yawDeg` est le cap du regard (0 = vers le nord), `pitchDeg` la plongée,
- * `distance` le recul de la caméra sur le point visé, `hour` l'heure solaire.
+ * `distance` le recul de la caméra sur le point visé, `hour` l'heure solaire,
+ * `date` le jour (`'10-15'`, le 21 juin sinon), `fov` l'angle vertical.
+ * `height` pose l'œil à cette hauteur au-dessus du point, regard au cap :
+ * la vue d'un piéton ou d'une voiture de Street View (`distance` est ignoré).
  * Un lieu sans tuiles vectorielles se rejoue en relief nu.
  */
 import * as THREE from 'three';
@@ -87,20 +90,27 @@ async function settle() {
 }
 await settle();
 
-const state = { x: 0, z: 0, yawDeg: 225, pitchDeg: 28, distance: 80, hour: 15 };
+const state = { x: 0, z: 0, yawDeg: 225, pitchDeg: 28, distance: 80, hour: 15, height: null, date: '06-21', fov: 55 };
 
 function render() {
-  const { x, z, yawDeg, pitchDeg, distance } = state;
+  const { x, z, yawDeg, pitchDeg, distance, height } = state;
   const y = world.composer.groundElevationAt(x, z) ?? 0;
   const yaw = (yawDeg * Math.PI) / 180;
   const pitch = (pitchDeg * Math.PI) / 180;
-  camera.position.set(
-    x - Math.sin(yaw) * Math.cos(pitch) * distance,
-    y + Math.sin(pitch) * distance,
-    z + Math.cos(yaw) * Math.cos(pitch) * distance
-  );
-  camera.lookAt(x, y, z);
-  const date = new Date(Date.UTC(2026, 5, 21, state.hour - Math.round(place.lng / 15), 0));
+  if (Number.isFinite(height)) {
+    camera.position.set(x, y + height, z);
+    camera.lookAt(x + Math.sin(yaw) * Math.cos(pitch), y + height - Math.sin(pitch), z - Math.cos(yaw) * Math.cos(pitch));
+  } else {
+    camera.position.set(
+      x - Math.sin(yaw) * Math.cos(pitch) * distance,
+      y + Math.sin(pitch) * distance,
+      z + Math.cos(yaw) * Math.cos(pitch) * distance
+    );
+    camera.lookAt(x, y, z);
+  }
+  camera.fov = state.fov;
+  const [month, day] = String(state.date).split('-').map(Number);
+  const date = new Date(Date.UTC(2026, month - 1, day, state.hour - Math.round(place.lng / 15), 0));
   const paint = world.updateSky({ camera, date, lng: place.lng, lat: place.lat, shadowAt: { x, y, z } });
   if (paint) renderer.setClearColor(paint.clearColor, 1);
   world.advance(0, { x, y, z });

@@ -47,8 +47,8 @@ function appendChurch(kit, box, height, look, wall) {
   kit.box({ width: box.long * 2, height, depth: box.short * 2, color: wall, yaw });
   kit.gableRoof({ width: box.long * 2, depth: box.short * 2, height: box.short * 0.9, overhang: 0, color: look.roof || wall, gableColor: wall, y: height, yaw });
   const spire = look.spire || { wall, roof: look.roof || wall };
-  const side = towerSide(box);
   const rise = Math.max(6, height) + towerRise(box);
+  const side = towerSide(box, rise);
   const foot = towerFoot(box, side);
   kit.box({ width: side, height: rise, depth: side, color: spire.wall, x: foot.x, z: foot.z, yaw });
   if (spire.form === 'campanile') {

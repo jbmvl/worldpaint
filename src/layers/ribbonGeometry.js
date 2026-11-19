@@ -666,6 +666,22 @@ export function appendSteps(
 }
 
 /**
+ * Un câble tendu entre deux appuis : il pend en parabole sous la corde de
+ * leurs cotes `fromY` → `toY`, sans lire le relief dessous. `path` donne son
+ * tracé en plan, à pas réguliers ; la flèche est maximale à mi-portée.
+ */
+export function appendSaggingWire(buffer, { path, profile, fromY, toY, sag }) {
+  const last = path.length - 1;
+  const heights = new Float32Array(path.length);
+  for (let r = 0; r <= last; r++) {
+    const t = r / last;
+    heights[r] = fromY + (toY - fromY) * t - sag * 4 * t * (1 - t);
+  }
+  // Aucun lissage : la flèche *est* la forme voulue, la moyenner l'aplatirait.
+  return appendProfile(buffer, { path, profile, sampleElevation: () => 0, baseHeights: heights, closed: true, smoothRadius: 0 });
+}
+
+/**
  * Balaie une section quelconque le long d'une polyligne posée sur le terrain.
  * Brique de tout le mobilier linéaire : haie, muret, glissière, mur de
  * soutènement, talus, câble ne diffèrent que par leur section.

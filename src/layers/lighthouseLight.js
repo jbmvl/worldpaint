@@ -14,8 +14,7 @@
  * reconstruction à l'autre.
  *
  * Pas de vraie lumière : le nombre de lumières entre dans la clé de programme
- * de tous les matériaux (voir `furnitureLayer.lampLights`). Le faisceau se
- * voit, il n'éclaire pas le sol.
+ * de tous les matériaux. Le faisceau se voit, il n'éclaire pas le sol.
  */
 
 import { defaultTheme } from '../themes/default.js';

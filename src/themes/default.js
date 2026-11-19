@@ -245,6 +245,19 @@ export const TREE_VARIANTS = [
   // Pin sylvestre : un fût orange en haut, une cime bleu-vert en quelques bouquets.
   { aspect: 0.6, kind: 'broadleaf', hue: { r: 0.36, g: 0.84, b: 0.54 }, trunk: 0.05, crownBase: 0.78, spread: 0.28,
     volume: { trunkHeight: .78, crownY: .83, spread: 1.15, rise: .5, lobes: 4, lobeSize: .9, colorVariation: .07 }, bark: [.55, .25, .09] },
+  // Lentisque, arbousier, chêne vert en cépée : l'amas sombre et luisant d'un
+  // maquis fermé, plus large que haut, lobes jointifs.
+  { kind: 'maquisClump', hue: { r: 0.58, g: 0.82, b: 0.32 }, trunk: 0, crownBase: 1, spread: 0.5,
+    heightM: [2, 4], aspect: 1.5, volume: { lobes: 6, spread: 1.25, lobeSize: 1.05, colorVariation: .1 } },
+  // Genêt : plus clair, les pousses de l'année jaune-vert au sommet.
+  { kind: 'broom', hue: { r: 0.7, g: 0.96, b: 0.34 }, trunk: 0, crownBase: 1, spread: 0.4,
+    heightM: [1, 2.2], aspect: 1.1, volume: { lobes: 4, tipColor: [.26, .3, .05] } },
+  // Palmier nain : des palmes en éventail au ras du sol, sur une souche courte.
+  { kind: 'palm', hue: { r: .62, g: .92, b: .5 }, trunk: .07, crownBase: .3, spread: .5,
+    heightM: [1.2, 2.2], aspect: 1.3, volume: { trunkHeight: .35, fronds: 18, bladeWidth: .12, fan: true }, bark: [.2, .15, .09] },
+  // Ampélodesme : une grosse touffe de lames paille-vert, plus haute que l'oyat.
+  { kind: 'tussock', hue: { r: .85, g: .95, b: .52 }, trunk: 0, crownBase: 1, spread: .4,
+    heightM: [1.4, 2.4], aspect: 2.2, volume: { bladeWidth: .05, fronds: 22 } },
 ];
 /**
  * Les strates basses et les buissons de biome, par indices de variantes.
@@ -263,6 +276,10 @@ export const TREE_ESSENCES = {
   // La lande mêle les deux : deux coussins de bruyère pour un ajonc.
   moorland: [19, 19, 11],
   thornyScrub: [12],
+  // Le maquis fermé : surtout des amas, et du genêt.
+  macchia: [29, 29, 29, 30],
+  // La garrigue calcaire de l'ouest sicilien : palmier nain, ampélodesme, épineux.
+  palmGarrigue: [31, 32, 32, 32, 12],
   marram: [14],
 };
 
@@ -543,30 +560,34 @@ export const SOIL_LOOK = {
     farmland: [0.95, 0.9, 0.82],
   },
   /**
-   * Grande culture sèche du Midi. Comme dans Alba (ustwo, 2021), l'herbe
-   * domine et la terre ne fait que la casser : le trou est une herbe
-   * vert-jaune grillée (≈ [0,19 ; 0,24 ; 0,05] d'albédo), découpée de
-   * plaques de chaume paille, et piquetée de buissons et d'arbres isolés.
-   * Un trou tout en chaume se lisait comme un désert.
+   * Grande culture sèche du Midi : le chaume et l'herbe grillée font un fond
+   * paille (≈ [0,50 ; 0,36 ; 0,14] d'albédo, le rouge au-dessus du vert) de
+   * mai à novembre, d'après les vues de Street View en Sicile ; seuls vignes,
+   * vergers et broussaille y restent verts. Des plaques d'herbe vert-jaune le
+   * cassent, piquetées de buissons et d'arbres isolés.
    */
   dry_cropland: {
-    grass: [3.7, 1.8, 3.2],
+    grass: [9.804, 2.667, 8.235],
     bare: [1.15, 1.0, 0.82],
     farmland: [1.15, 1.05, 0.85],
     // Plaques d'une seconde couleur sur l'herbe, en albédo absolu.
-    grassPatch: { albedo: [0.34, 0.26, 0.11], strength: 0.6 },
-    // Arbustes semés dans le trou (densité de `SURFACE_LOOK.bushes`) et leur essence.
-    gapBushes: 0.1,
+    grassPatch: { albedo: [0.19, 0.24, 0.05], strength: 0.35 },
+    // Arbustes semés dans le trou (densité de `SURFACE_LOOK.bushes`) et leur
+    // essence : la charrue en laisse peu, moins qu'à la pâture.
+    gapBushes: 0.06,
     gapBush: 'thornyScrub',
     // Arbres isolés dans le trou (`furniture/gapTrees.js`), par hectare.
-    scatteredTreesPerHa: 1.5,
+    scatteredTreesPerHa: 1,
   },
-  /** Pâture sèche : herbe rase vert olive, plaques d'herbe grillée, buissons persistants. */
+  /**
+   * Pâture sèche : herbe rase grillée, plus grise que le chaume voisin,
+   * rongée jusqu'au calcaire qui affleure en plaques, buissons persistants.
+   */
   dry_pasture: {
-    grass: [3.1, 1.7, 2.9],
+    grass: [8.627, 2.444, 8.235],
     bare: [1.4, 1.25, 1.0],
     farmland: [1.2, 1.08, 0.88],
-    grassPatch: { albedo: [0.28, 0.24, 0.11], strength: 0.45 },
+    grassPatch: { albedo: [0.27, 0.26, 0.21], strength: 0.45 },
     gapBushes: 0.18,
     gapBush: 'thornyScrub',
     scatteredTreesPerHa: 1.5,
@@ -583,11 +604,35 @@ export const SOIL_LOOK = {
     bare: [1.5, 1.25, 0.95],
     farmland: [1.25, 1.1, 0.85],
   },
+  /**
+   * Garrigue à palmier nain : le calcaire pâle affleure entre les touffes,
+   * l'herbe est celle d'une garrigue, les arbustes ceux du pays.
+   */
+  palm_garrigue: {
+    grass: [2.2, 1.35, 2.6],
+    bare: [1.5, 1.25, 0.95],
+    farmland: [1.25, 1.1, 0.85],
+    gapBushes: 0.2,
+    gapBush: 'palmGarrigue',
+    // La broussaille relevée par la carte est la même garrigue.
+    coverBush: { scrub: 'palmGarrigue' },
+    scatteredTreesPerHa: 0.5,
+  },
   /** Matorral, maquis d'arrière-pays : la même chose de moitié. */
   dry_scrub: {
     grass: [1.6, 1.2, 1.8],
     bare: [1.3, 1.15, 0.95],
     farmland: [1.12, 1.05, 0.92],
+  },
+  /**
+   * Maquis fermé : les clairières restent vertes plus longtemps qu'en
+   * garrigue, et des chênes verts percent le couvert.
+   */
+  macchia: {
+    grass: [1.6, 1.2, 1.8],
+    bare: [1.3, 1.15, 0.95],
+    farmland: [1.12, 1.05, 0.92],
+    scatteredTreesPerHa: 3,
   },
   /**
    * Terrasses : herbe vert olive entre les murets, plaques sèches, karst pâle,
@@ -714,6 +759,9 @@ export const STONE_LOOK = {
  * - `wash` : quel lavage de pays s'applique (`SOIL_LOOK`), ou `null`. Une
  *   lande, un maquis, un éboulis disent déjà leur pays ; les teinter une
  *   seconde fois le dirait deux fois ;
+ * - `follows` : la matière dont elle reprend le lavage par écart, pas par
+ *   facteur — le facteur d'un pays sec, réglé pour jaunir un vert sombre,
+ *   rendrait un vert clair lavande ou rose ;
  * - `bushes` est une densité
  *   d'arbustes semés hors des bois par `vegetationLayer` — c'est ce qui fait
  *   exister un maquis, ni prairie ni forêt mais un fourré bas ;
@@ -746,20 +794,34 @@ export const STONE_LOOK = {
 export const SURFACE_LOOK = {
   // --- Le végétal ordinaire -------------------------------------------------
   grass: { albedo: [0.051, 0.135, 0.017], wash: 'grass', grainCellM: 4, grainAmplitudeM: 1.4 },
-  // Un sol de forêt est une litière mêlée d'herbe : trois parts de prairie
-  // pour une de brun, assombries pour rester lisibles comme sous-bois. Le pays
-  // ne le lave pas — une hêtraie se ressemble d'un bout à l'autre.
+  // Un sol de forêt est une litière mêlée de mousse : entre le vert sombre et
+  // le brun, jamais l'un des deux. Il ne se voit que d'un observateur en forêt
+  // (ailleurs, c'est le couvert). Le pays ne le lave pas — une hêtraie se
+  // ressemble d'un bout à l'autre. `turned` : la litière d'une saison où les
+  // feuilles tombent, prise à proportion des essences qui virent.
   wood: {
-    albedo: [0.04, 0.074, 0.01],
+    albedo: [0.06, 0.072, 0.012],
     wash: null,
     // Racines, souches, monticules de feuilles : un sol de forêt n'est jamais
     // plan. Cellule courte, amplitude modeste — c'est un désordre de détail,
     // pas le modelé d'un pré alpin.
     grainCellM: 2,
     grainAmplitudeM: 0.22,
-    // De loin, les houppes ferment le couvert : entre `nearM` et `farM`, le
-    // sol prend la couleur moyenne des feuillages, ombre propre comprise.
-    canopy: { albedo: [0.05, 0.13, 0.03], nearM: 120, farM: 380 },
+    // Le couvert ferme le sol : partout, sauf autour d'un observateur en forêt
+    // où il ne prend qu'entre `nearM` et `farM` — rampe par défaut, que le
+    // compositeur remplace par celle où le sous-étage s'éteint. Sa couleur est
+    // celle des feuillages éclairés, relevée sur les houppes rendues. `share` : la part du sol que ce couvert ferme vu de
+    // loin. Toute matière qui porte des buissons déclare le sien ; la rampe,
+    // `lift` et celle du relèvement (`riseNearM`, `riseFarM`) sont ceux-ci. Au
+    // loin, le couvert monte de `riseM`, bosselé de `lumpM` par touffes de
+    // `lumpCellM`, et les arbres y sont plantés de `sinkM` — voir
+    // terrain/canopyRise.js. Ces trois cotes valent pour un peuplement de
+    // `heightM` de haut et de densité 1 ; un bois plus bas ou plus clair
+    // s'abaisse et se troue d'autant (`setCanopyStand`).
+    canopy: {
+      albedo: [0.08, 0.2, 0.05], share: 1, nearM: 150, farM: 250, lift: 0.2,
+      riseM: 5, lumpM: 7, lumpCellM: 18, sinkM: 4, riseNearM: 260, riseFarM: 560, heightM: 17,
+    },
   },
   farmland: { albedo: [0.22, 0.13, 0.06], wash: 'farmland', grainCellM: 4, grainAmplitudeM: 1.4 },
   // Lotissement : pelouses tondues et allées, plus claires et plus franchement
@@ -767,7 +829,7 @@ export const SURFACE_LOOK = {
   // Un aplat, pas un terrain qui varie.
   // Pas de grain : le bâti lit une altitude sans bosse, et une bosse de
   // plus d'un mètre enterrerait les ouvertures du rez-de-chaussée.
-  settled: { albedo: [0.12, 0.205, 0.08], wash: 'grass', macro: 0.3, grainCellM: 6, grainAmplitudeM: 0 },
+  settled: { albedo: [0.12, 0.205, 0.08], follows: 'grass', macro: 0.3, grainCellM: 6, grainAmplitudeM: 0 },
 
   // --- Les couvertures végétales --------------------------------------------
   // Bruyère et molinie sèche : vert olive terne, la couleur d'un moor. Rase, dense,
@@ -804,11 +866,34 @@ export const SURFACE_LOOK = {
     bushes: 0.9,
     // Le buisson épineux d'un maquis, distinct de celui d'une lande.
     bush: 'thornyScrub',
+    // Plus de vide que de feuille : le couvert ne ferme qu'un tiers du sol.
+    // Sa couleur est celle du buisson épineux, ombre propre comprise.
+    canopy: { albedo: [0.066, 0.12, 0.027], share: 0.35 },
     macro: 1.8,
     macroNear: 0.35,
     // Touffes un peu plus larges que la lande, buissons épineux compris.
     grainCellM: 1.8,
     grainAmplitudeM: 0.24,
+  },
+  // Maquis fermé (macchia) : un couvert d'arbustes de deux à trois mètres,
+  // sombre et persistant, où l'on ne passe pas. Le sol qu'on aperçoit entre
+  // les amas est une litière brun-rouge ; de loin, c'est le couvert qu'on voit.
+  maquis: {
+    // Vert olive : le couvert bas — ciste, bruyère arborescente — qui ferme le
+    // sol entre les amas, la couleur même de leurs feuillages.
+    albedo: [0.105, 0.12, 0.025],
+    patch: { albedo: [0.078, 0.098, 0.022], strength: 0.5 },
+    wash: null,
+    // Le couvert se lit par le sol et sa masse au loin ; les amas ne sont que
+    // des accents, moins nombreux que sur un versant de terrasses.
+    bushes: 0.2,
+    bush: 'macchia',
+    canopy: { albedo: [0.08, 0.165, 0.03], share: 0.85 },
+    macro: 1.6,
+    macroNear: 0.35,
+    // Touffes jointives : la bosse d'un couvert, pas celle d'un pré.
+    grainCellM: 3,
+    grainAmplitudeM: 0.45,
   },
   // Marais, tourbière, roselière : le vert le plus profond du décor, la seule
   // couverture plus haute qu'une prairie, et de l'eau entre les touffes.
@@ -1009,13 +1094,21 @@ export const TOWN_PALETTES = {
   concrete_terrace: { wall: '#cdc8be', roof: '#a9a39a', shutter: '#6f7f86', roofShapes: ['flat', 'flat', 'gable'], pitch: 0.3 },
 };
 
+/** Couronnement d'un château `crenellated`, repris par le clocher du même nom. */
+const CASTLE_CROWN = {
+  thicknessM: 0.6, overhangM: 0.45, parapetM: 1.1, merlonM: 0.9, gapM: 0.6, merlonHeightM: 0.8,
+  corbelM: 0.9, corbelSpacingM: 1.5, shade: '#8a7656',
+};
+
 /**
  * Le clocher d'un pays (`region.belfry`), surcharge de l'église de
  * `BUILDING_PERSONALITIES` : mur, toit et tour. `spire` n'y est pas, c'est
  * l'église par défaut. `form` dit la tour : `spire`, une flèche ; `campanile`,
- * une tour carrée à corniche sous un toit bas. `crossingDome` pose une coupole
- * sur tambour à la croisée des églises d'au moins `minLengthM` de long : la
- * chapelle de quartier n'en a pas. La majolique verte des coupoles siciliennes
+ * une tour carrée à corniche sous un toit bas ; `crenellated`, une tour carrée
+ * sans toit, couronnée (`crown`) comme le château `crenellated` de
+ * `FORTRESSES`. `crossingDome` pose une coupole
+ * sur tambour au sommet du clocher des églises d'au moins `minLengthM` de
+ * long : la chapelle de quartier n'en a pas. La majolique verte des coupoles siciliennes
  * et calabraises est la seule couleur franche du bâti religieux.
  */
 export const BELFRIES = {
@@ -1027,6 +1120,34 @@ export const BELFRIES = {
     wall: '#e2cfa6', roof: '#b8704a',
     spire: { wall: '#e2cfa6', roof: '#b8704a', form: 'campanile' },
     crossingDome: { color: '#5f8d84', drum: '#e2cfa6', minLengthM: 20 },
+  },
+  crenellated: {
+    wall: '#e2cfa6', roof: '#b8704a',
+    spire: { wall: '#e2cfa6', roof: '#b8704a', form: 'crenellated', crown: CASTLE_CROWN },
+  },
+};
+
+/**
+ * Le château et l'enceinte d'un pays (`region.fortress`), surcharges du
+ * château et du rempart de `BUILDING_PERSONALITIES` ; `keep` n'y est pas, c'est
+ * le château par défaut. `crown` couronne le haut des murs : un parapet de
+ * `thicknessM` qui déborde de `overhangM` sur des consoles (`corbelM` de haut,
+ * tous les `corbelSpacingM`) — le mâchicoulis —, puis des merlons de `merlonM`
+ * séparés de `gapM`. `shade` est la pierre à l'ombre des consoles. Les tours
+ * `square` sont des tours carrées couronnées comme le mur, sans toit.
+ */
+export const FORTRESSES = {
+  // Calcaire doré des forteresses normandes, souabes et chiaramontaines.
+  crenellated: {
+    castle: {
+      wall: '#d2bc90', roof: '#b39d76', shape: 'flat',
+      towers: { form: 'square', radiusRatio: 0.24, minRadiusM: 1.8, maxRadiusM: 3.6, riseM: 4 },
+      crown: CASTLE_CROWN,
+    },
+    rampart: {
+      wall: '#d2bc90', roof: '#b39d76',
+      crown: { thicknessM: 0.5, overhangM: 0, parapetM: 0.4, merlonM: 0.9, gapM: 0.6, merlonHeightM: 0.8, corbelM: 0, shade: '#8a7656' },
+    },
   },
 };
 
@@ -1377,6 +1498,7 @@ export const STREET_LOOK = {
     hedgerow_meadow: '#adaca5',
     moor_heath: '#77796f',
     garrigue: '#928b78',
+    palm_garrigue: '#a39c88',
     dry_scrub: '#898371',
     terraced_slope: '#adaca5',
     dry_steppe: '#938b77',
@@ -1644,6 +1766,10 @@ export const FURNITURE_COLORS = {
   signalAmber: srgb('#d09a2a'),
   black: srgb('#22262b'),
   wallaceGreen: srgb('#2d4a3c'), // fonte peinte des fontaines Wallace
+  // Fleurs des bacs de place : vives, pour se lire sur le vert du massif.
+  bloomRed: srgb('#c8413a'),
+  bloomPink: srgb('#d877a0'),
+  bloomYellow: srgb('#e3b93a'),
 
   // Verres de feu tricolore au repos (couleur assombrie derrière le verre, pas noir).
   redDark: srgb('#3a1f1e'),
@@ -1663,6 +1789,24 @@ export const FURNITURE_COLORS = {
   caneLeaf: srgb('#4f7f2c'),
   caneStem: srgb('#7d9845'),
   caneTop: srgb('#a3a757'),
+  // Figuier de Barbarie : raquettes vert franc, plus jaunes au pied, figues
+  // rouge sombre sur les bords hauts.
+  pricklyPearPad: srgb('#86b35f'),
+  pricklyPearPadDeep: srgb('#80ad62'),
+  pricklyPearPadOld: srgb('#a9b35c'),
+  pricklyPearFruit: srgb('#9c4a3a'),
+  // Euphorbe arborescente : vert-jaune vif, tiges grises.
+  spurgeLeaf: srgb('#a2b52f'),
+  spurgeLeafTop: srgb('#c2c83c'),
+  spurgeLeafDeep: srgb('#879a2a'),
+  spurgeStem: srgb('#7c6f5c'),
+  // Agave : feuilles bleu-vert, revers plus sombre, feuilles mortes paille ;
+  // hampe séchée et fleurs jaunes.
+  agaveLeaf: srgb('#7fb3a6'),
+  agaveLeafUnder: srgb('#5f9488'),
+  agaveDry: srgb('#b8955a'),
+  agaveStalk: srgb('#8d7a4e'),
+  agaveFlower: srgb('#d6ad35'),
   bark: srgb('#6d553c'),
 
   // --- Roche ---------------------------------------------------------------
@@ -1738,8 +1882,16 @@ export const SKY_PALETTE = {
     },
     {
       name: 'midi',
-      matrix: ['garrigue', 'dry_scrub', 'dry_cropland', 'dry_pasture'],
+      matrix: ['garrigue', 'palm_garrigue', 'dry_scrub', 'dry_cropland', 'dry_pasture', 'terraced_slope'],
       fog: '#eeeadf',
+      // Une lumière drue : soleil plus fort, ombre moins comblée, air sec
+      // qui porte loin et ciel plus profond.
+      sun: 1.6,
+      ambient: 0.8,
+      haze: 0.5,
+      turbidity: 0.55,
+      // Mer d'azur : la même pour toute l'eau du pays, faute de distance au rivage.
+      water: [0.004, 0.09, 0.22],
     },
     {
       name: 'poussière',
@@ -1762,7 +1914,7 @@ export const SKY_PALETTE = {
     },
     {
       name: 'altitude',
-      matrix: ['alpine_pasture', 'bare_rock', 'terraced_slope'],
+      matrix: ['alpine_pasture', 'bare_rock'],
       // L'air y est le plus clair d'Europe : le lointain reste lisible bien
       // plus loin qu'ailleurs, et c'est ce qui fait la montagne.
       fog: '#e2ecf4',
@@ -1838,6 +1990,7 @@ export const defaultTheme = Object.freeze({
   ],
   personalities: BUILDING_PERSONALITIES,
   belfries: BELFRIES,
+  fortresses: FORTRESSES,
   roofs: { pitch: ROOF_PITCH, maxRiseM: ROOF_MAX_RISE_M, pitchFactors: ROOF_PITCH_FACTORS },
   windows: {
     widthM: WINDOW_WIDTH_M,
