@@ -21,10 +21,10 @@
 /*
  * Banc de palette : un lieu enregistré, rendu comme la démo (ACES, exposition),
  * avec un thème retouché par `?opt=<JSON>` :
- *   exposure, saturation, weather (« grand beau » par défaut), walls, air: {fog, sun, ambient, haze, turbidity, water} (l'air du pays
+ *   exposure, saturation, screen: {exposure} (renderer d'une application en ACES de three), weather (« grand beau » par défaut), walls, air: {fog, sun, ambient, haze, turbidity, water} (l'air du pays
  *   de la matrice locale), soil: {grass, bare, farmland}, asphalt: '#hex'.
- * `palLab.set({ lng, lat, y, yawDeg, pitchDeg, hour, fov })` : `y` absolu, comme
- * l'« alt » de l'afficheur de la démo.
+ * `palLab.set({ lng, lat, y, yawDeg, pitchDeg, hour, fov, dayForNight })` : `y` absolu,
+ * comme l'« alt » de l'afficheur de la démo ; `dayForNight` passe à `updateSky`.
  */
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
@@ -61,6 +61,12 @@ const tone = { exposure: opt.exposure ?? TONE_MAPPING.exposure, saturation: opt.
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 applyToneMapping(THREE, renderer, tone);
+// `screen: { exposure }` : le renderer d'une application qui garde l'ACES de three (1230 bornes : 1,05),
+// le ciel restant calé sur `TONE_MAPPING` comme quand l'application ne le lui dit pas.
+if (opt.screen) {
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = opt.screen.exposure ?? 1;
+}
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 document.body.appendChild(renderer.domElement);
@@ -78,7 +84,7 @@ const world = createWorld({
   theme: Object.keys(theme).length ? theme : null,
 });
 
-const state = { lng: place.lng, lat: place.lat, y: 24, yawDeg: 91, pitchDeg: -2, hour: 14, fov: 65 };
+const state = { lng: place.lng, lat: place.lat, y: 24, yawDeg: 91, pitchDeg: -2, hour: 14, fov: 65, dayForNight: 0 };
 let center = null;
 async function settle(x, z) {
   for (let pass = 0; pass < 6; pass++) {
@@ -102,7 +108,7 @@ function render() {
   camera.lookAt(x + Math.sin(yaw) * Math.cos(pitch), state.y + Math.sin(pitch), z - Math.cos(yaw) * Math.cos(pitch));
   camera.fov = state.fov;
   const date = new Date(Date.UTC(2026, 6, 15, state.hour - Math.round(state.lng / 15), 0));
-  const paint = world.updateSky({ camera, date, lng: state.lng, lat: state.lat, shadowAt: { x, y: state.y, z } });
+  const paint = world.updateSky({ camera, date, lng: state.lng, lat: state.lat, shadowAt: { x, y: state.y, z }, dayForNight: state.dayForNight });
   if (paint) renderer.setClearColor(paint.clearColor, 1);
   world.advance(0, { x, y: state.y, z });
   if (opt.light) {

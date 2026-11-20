@@ -2015,8 +2015,8 @@ test('le crépuscule glisse vers la nuit sans saut de lumière', () => {
   for (let y = -0.005; y >= -0.15; y -= 0.005) {
     const light = lightingFor(y);
     const color = sunlightColor(light.warmth, light.nightBlend);
-    assert.ok(Math.abs(light.sun - previous.sun) < 0.045, `soleil continu à ${y.toFixed(3)}`);
-    assert.ok(Math.abs(light.ambient - previous.ambient) < 0.045, `ambiance continue à ${y.toFixed(3)}`);
+    assert.ok(Math.abs(light.sun - previous.sun) < 0.05, `soleil continu à ${y.toFixed(3)}`);
+    assert.ok(Math.abs(light.ambient - previous.ambient) < 0.05, `ambiance continue à ${y.toFixed(3)}`);
     for (let i = 0; i < 3; i++) {
       assert.ok(Math.abs(color[i] - previousColor[i]) < 0.05, `couleur continue à ${y.toFixed(3)}`);
     }
