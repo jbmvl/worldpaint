@@ -774,8 +774,8 @@ leur géométrie n'est construite qu'au premier pied posé (`ON_DEMAND_ITEMS`).
 - l'**euphorbe arborescente** (Euphorbia dendroides, `treeSpurge`, 0,6 par
   hectare, 3 par km de route ; coteaux en terrasses de Sicile, Ligurie, Côte
   sorrentine, Madère, promontoires calcaires et Iblei) :
-  un dôme plein vert-jaune, plus large que haut, sur trois tiges grises
-  courtes, bâti de masses à facettes comme les buissons ;
+  un buisson vert-jaune plus large que haut, taché du jaune des cyathes, bâti
+  des mêmes lobes que les buissons de la lande ;
 - l'**agave** (Agave americana, `agave`, 0,21 par hectare et 2,5 par km
   de route, et `agaveFlowering`, 0,03 et 0,35 : sa hampe de 6,5 m en candélabre
   à grappes jaunes ; mêmes coteaux, côtes de Sicile, Alpujarra) : une rosette bleu-grise de feuilles larges en gouttière, deux

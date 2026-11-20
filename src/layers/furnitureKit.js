@@ -28,6 +28,7 @@ import { srgb } from '../core/color.js';
 import { defaultTheme } from '../themes/default.js';
 import { Kit, polygonPoints, ROTOR_SPIN_ATTRIBUTE } from '../models/kit.js';
 import { radioMast } from '../models/radioMast.js';
+import { treePrototype } from '../models/treeKit.js';
 import { installGroundGrain } from '../materials/foliageMaterial.js';
 
 export { Kit, polygonPoints, ROTOR_SPIN_ATTRIBUTE };
@@ -1629,19 +1630,39 @@ export const FURNITURE_BUILDERS = {
   },
 
   /**
-   * Euphorbe arborescente (Euphorbia dendroides) : un dôme plein vert-jaune
-   * de 1,4 m sur 2, plus large que haut, sur trois tiges grises courtes qu'on
-   * voit dessous — bâti comme les buissons du catalogue, de quelques masses à
-   * facettes ; c'est sa couleur, pas son détail, qui la distingue du maquis.
+   * Euphorbe arborescente (Euphorbia dendroides) : un buisson de 1,4 m sur 2,
+   * plus large que haut, bâti des mêmes lobes que les buissons de la lande
+   * (`treePrototype`, comme l'ajonc) — un amas vert-jaune posé au sol, taché
+   * du jaune des cyathes.
+   *
+   * Ses normales sont dressées, comme celles du feuillage
+   * (`uprightNormals`) : c'est l'ombrage par facette du mobilier qui faisait
+   * prendre l'ancien dôme pour un rocher. Le volume se lit alors par ses
+   * couleurs, sombres en bas et claires en haut, comme une lande.
    */
   treeSpurge(C = DEFAULT_COLORS) {
     const k = new Kit(C);
-    for (let i = 0; i < 3; i++) {
-      stemTo(k, [0, 0, 0], 0.55, i * 2.09 + 0.4, 0.42, 0.05, C.spurgeStem);
+    const HEIGHT = 1.4, WIDTH = 2.1;
+    const crown = treePrototype(
+      {
+        kind: 'treeSpurge', hue: { r: 1, g: 1, b: 1 }, trunk: 0, heightM: [HEIGHT, HEIGHT],
+        volume: { lobes: 6, spread: 1.4, crownY: 0.3, rise: 0.9, colorVariation: 0.1, tipColor: C.spurgeFlower },
+      },
+      1601,
+      { leaf: C.spurgeLeaf, bark: C.spurgeLeaf },
+    );
+    // Le prototype tient dans une boîte unité (largeur 0,94) : on le pose à la
+    // taille du buisson, à même le sol comme une lande.
+    const up = [0, 1, 0];
+    for (let i = 0; i < crown.positions.length; i += 9) {
+      const tri = [0, 3, 6].map((o) => [
+        (crown.positions[i + o] * WIDTH) / 0.94,
+        crown.positions[i + o + 1] * HEIGHT,
+        (crown.positions[i + o + 2] * WIDTH) / 0.94,
+      ]);
+      k.tri(tri[0], tri[1], tri[2], crown.colors.slice(i, i + 3));
+      k.normals.splice(k.normals.length - 9, 9, ...up, ...up, ...up);
     }
-    k.rock({ radius: 1.0, height: 1.05, sides: 8, rings: 3, seed: 1601, y: 0.32, color: C.spurgeLeaf, colorTop: C.spurgeLeafTop });
-    k.rock({ radius: 0.62, height: 0.75, sides: 6, rings: 2, seed: 1613, x: 0.72, z: 0.35, y: 0.25, color: C.spurgeLeaf, colorTop: C.spurgeLeafTop });
-    k.rock({ radius: 0.55, height: 0.65, sides: 6, rings: 2, seed: 1627, x: -0.6, z: -0.48, y: 0.22, color: C.spurgeLeafDeep, colorTop: C.spurgeLeaf });
     return k;
   },
 

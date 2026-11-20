@@ -1795,11 +1795,9 @@ export const FURNITURE_COLORS = {
   pricklyPearPadDeep: srgb('#80ad62'),
   pricklyPearPadOld: srgb('#a9b35c'),
   pricklyPearFruit: srgb('#9c4a3a'),
-  // Euphorbe arborescente : vert-jaune vif, tiges grises.
+  // Euphorbe arborescente : vert-jaune vif, taché du jaune des cyathes.
   spurgeLeaf: srgb('#a2b52f'),
-  spurgeLeafTop: srgb('#c2c83c'),
-  spurgeLeafDeep: srgb('#879a2a'),
-  spurgeStem: srgb('#7c6f5c'),
+  spurgeFlower: srgb('#d9cf3f'),
   // Agave : feuilles bleu-vert, revers plus sombre, feuilles mortes paille ;
   // hampe séchée et fleurs jaunes.
   agaveLeaf: srgb('#7fb3a6'),
