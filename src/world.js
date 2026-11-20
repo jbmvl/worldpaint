@@ -688,6 +688,20 @@ export class World {
     return this.composer.setRegionWord(field, value);
   }
 
+  /**
+   * La région sous laquelle le décor est peint, pour l'afficher : son
+   * identifiant, son nom et son biome (le mot `matrix`, vocabulaire fermé de
+   * `core/regionInterpretation.js`). `null` hors de toute région, ou avant le
+   * premier `refresh`.
+   *
+   * @returns {{id:string, name:string, biome:string|null}|null}
+   */
+  get place() {
+    const region = this.composer.landscape?.region;
+    if (!region) return null;
+    return { id: region.id, name: region.name, biome: region.matrix ?? null };
+  }
+
   /** Suspend la construction aux checkpoints, sans abandonner les couches en cours. */
   setGenerationPaused(paused) { this.composer.generation.setPaused(paused); }
 

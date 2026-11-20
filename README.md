@@ -455,7 +455,9 @@ paint anything convinces nobody.
   the scenery **switches off** — nothing is fetched, nothing is placed, you see
   the sky and nothing below it. That is deliberate: scenery drawn from the
   default lists looks like scenery, so nobody notices it is wrong. Forcing a
-  region (`world.setRegion`) turns it back on anywhere.
+  region (`world.setRegion`) turns it back on anywhere. `world.place` gives the
+  region the scenery is painted under — `{ id, name, biome }`, where `biome`
+  is its `matrix` word — or `null` outside any region.
 
 ## What the scenery is made of
 

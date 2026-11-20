@@ -487,6 +487,18 @@ test('l’air prend la couleur du pays, sauf si l’application en a choisi une'
   assert.equal(palettes[4], undefined);
 });
 
+test('le lieu publie la région du décor et son biome', () => {
+  const composer = fakeComposer();
+  const world = new World({ composer, environment: null, elevation: null, ownsElevation: false });
+  assert.equal(world.place, null, 'avant le premier refresh, rien');
+
+  composer.landscape = {
+    region: { id: 'etna', name: 'Etna', matrix: 'dry_scrub' },
+    relief: { elevation: 900, slope: 0.1 },
+  };
+  assert.deepEqual(world.place, { id: 'etna', name: 'Etna', biome: 'dry_scrub' });
+});
+
 test('sans point d’ombre, la boîte se pose sur la caméra', () => {
   const composer = fakeComposer();
   let shadow = null;
