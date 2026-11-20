@@ -521,13 +521,62 @@ export function* drawSurfaceContoursSteps(data, pixels = CLASS_PIXELS) {
  *        (mètres locaux) et texels par mètre.
  * @returns {number} texels rendus à l'herbe.
  */
-export function paintRoadVerges(data, pixels, segments, { left, top, perMeter }) {
+export function paintRoadVerges(data, pixels, segments, at) {
   const farmRed = FARMLAND_ID * SURFACE_ID_STEP;
   const grassId = surfaceId('grass');
   let turned = 0;
+  forTexelsNearSegments(pixels, segments, at, 0, (i) => {
+    if (data[i] !== farmRed) return;
+    data[i] = grassId * SURFACE_ID_STEP;
+    data[i + 1] = 0;
+    data[i + 2] = surfaceSignature(grassId);
+    turned++;
+  });
+  return turned;
+}
+
+/**
+ * Pose le lit des cours d'eau linéaires sur la carte réparée : tout texel dont
+ * le centre tombe à moins de la demi-largeur de l'axe devient de l'eau, sans
+ * culture.
+ *
+ * Le trait du canevas ne tient pas seul un lit de moins de deux texels : ses
+ * texels sont tous des bords, et la réparation, qui ne recopie qu'un voisin
+ * entièrement peint, le rend à ses berges. La portée ne descend pas sous un
+ * demi-texel : en deçà, le lit tracé en diagonale se couperait d'un texel à
+ * l'autre.
+ *
+ * @param {Uint8ClampedArray} data Fenêtre relue, quatre canaux par texel.
+ * @param {number} pixels Côté de la fenêtre.
+ * @param {Float32Array|number[]} segments Cinq nombres par tronçon :
+ *        `ax, az, bx, bz, demi-largeur`, en mètres locaux.
+ * @param {{left:number, top:number, perMeter:number}} at Coin de la fenêtre
+ *        (mètres locaux) et texels par mètre.
+ * @returns {number} texels rendus à l'eau.
+ */
+export function paintWaterwayBeds(data, pixels, segments, at) {
+  const waterId = surfaceId('water');
+  const waterRed = waterId * SURFACE_ID_STEP;
+  let turned = 0;
+  forTexelsNearSegments(pixels, segments, at, 0.5 / at.perMeter, (i) => {
+    if (data[i] === waterRed) return;
+    data[i] = waterRed;
+    data[i + 1] = 0;
+    data[i + 2] = surfaceSignature(waterId);
+    turned++;
+  });
+  return turned;
+}
+
+/**
+ * Appelle `visit(indice)` pour chaque texel dont le centre tombe à moins de
+ * `max(portée du tronçon, minReach)` de son axe. Tronçons : cinq nombres,
+ * `ax, az, bx, bz, portée`, en mètres locaux.
+ */
+function forTexelsNearSegments(pixels, segments, { left, top, perMeter }, minReach, visit) {
   for (let k = 0; k + 4 < segments.length; k += 5) {
     const ax = segments[k], az = segments[k + 1], bx = segments[k + 2], bz = segments[k + 3];
-    const reach = segments[k + 4];
+    const reach = Math.max(segments[k + 4], minReach);
     const dx = bx - ax;
     const dz = bz - az;
     const length2 = dx * dx + dz * dz;
@@ -538,19 +587,13 @@ export function paintRoadVerges(data, pixels, segments, { left, top, perMeter })
     for (let ty = y0; ty <= y1; ty++) {
       const z = top + (ty + 0.5) / perMeter;
       for (let tx = x0; tx <= x1; tx++) {
-        const i = (ty * pixels + tx) * 4;
-        if (data[i] !== farmRed) continue;
         const x = left + (tx + 0.5) / perMeter;
         const t = length2 > 0 ? Math.min(1, Math.max(0, ((x - ax) * dx + (z - az) * dz) / length2)) : 0;
         if (Math.hypot(x - ax - t * dx, z - az - t * dz) > reach) continue;
-        data[i] = grassId * SURFACE_ID_STEP;
-        data[i + 1] = 0;
-        data[i + 2] = surfaceSignature(grassId);
-        turned++;
+        visit((ty * pixels + tx) * 4);
       }
     }
   }
-  return turned;
 }
 
 /**
@@ -771,6 +814,8 @@ export class GroundClassMap {
     this.repaired = 0;
     /** Texels de culture rendus à l'herbe dans l'emprise des chaussées (voir `paintRoadVerges`). */
     this.verged = 0;
+    /** Texels rendus à l'eau par le lit des cours d'eau linéaires (voir `paintWaterwayBeds`). */
+    this.beds = 0;
     /** Numéro de rasterisation, incrémenté à chaque repeinte (sert à qui garde ce qu'il a lu ici, ex. la végétation). */
     this.revision = 0;
 
@@ -1344,6 +1389,13 @@ export class GroundClassMap {
     // `riparianBufferM` — un thème qui ne voulait pas d'ourlet perdait du même
     // coup tous ses ruisseaux — et le fossé, qui n'a pas d'ourlet, sortait
     // avant d'avoir eu son lit : sa largeur de thème ne servait à rien.
+    //
+    // Le trait ne suffit pas au lit d'un cours d'eau plus étroit que deux
+    // texels : aucun texel n'y est entièrement couvert, et la réparation le
+    // rend tout entier à ses berges. Ses tronçons sont donc gardés (`beds`)
+    // pour être reposés au centre des texels sur la carte réparée
+    // (`paintWaterwayBeds`).
+    const beds = [];
     {
       const waterways = this.theme.water.waterways;
       const bufferM = this.theme.water.riparianBufferM ?? 0;
@@ -1372,6 +1424,8 @@ export class GroundClassMap {
             if (!Array.isArray(line) || line.length < 2) continue;
             const path = new Path2D();
             let started = false;
+            let lastX = 0;
+            let lastZ = 0;
             for (const [lng, lat] of line) {
               if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
               const localX = (lngToTileX(lng, zoom) - origin.x) * scale;
@@ -1383,7 +1437,10 @@ export class GroundClassMap {
                 started = true;
               } else {
                 path.lineTo(px, pz);
+                if (style.riparian) beds.push(lastX, lastZ, localX, localZ, style.halfWidth);
               }
+              lastX = localX;
+              lastZ = localZ;
             }
             if (!started) continue;
 
@@ -1464,7 +1521,7 @@ export class GroundClassMap {
       here,
       radius: roadRadius,
     });
-    yield* this.readBackSteps({ roads, left: originX, top: originZ, perMeter });
+    yield* this.readBackSteps({ roads, beds, left: originX, top: originZ, perMeter });
     this.count = painted;
     this.revision++;
     this.origin.set(originX, originZ);
@@ -1477,8 +1534,9 @@ export class GroundClassMap {
   }
 
   /**
-   * Relit le canevas peint et publie la carte : réparée, l'emprise des
-   * chaussées rendue à l'herbe, ses limites redessinées, envoyée à la texture.
+   * Relit le canevas peint et publie la carte : réparée, le lit des cours
+   * d'eau reposé, l'emprise des chaussées rendue à l'herbe, ses limites
+   * redessinées, envoyée à la texture.
    *
    * Relecture unique (un `getImageData` par appel serait ruineux) — et c'est
    * aussi le seul moment où l'on peut défaire le lissage du canevas, qui
@@ -1498,13 +1556,17 @@ export class GroundClassMap {
     this.repaired = image ? yield* repairSurfaceEdgesSteps(image.data, size) : 0;
     let data = image?.data ?? null;
     if (image) {
+      const at = verges && {
+        left: verges.left + x / verges.perMeter,
+        top: verges.top + y / verges.perMeter,
+        perMeter: verges.perMeter,
+      };
+      if (verges?.beds?.length) {
+        this.beds = paintWaterwayBeds(image.data, size, verges.beds, at);
+        yield;
+      }
       if (verges?.roads?.length) {
-        const { perMeter } = verges;
-        this.verged = paintRoadVerges(image.data, size, verges.roads, {
-          left: verges.left + x / perMeter,
-          top: verges.top + y / perMeter,
-          perMeter,
-        });
+        this.verged = paintRoadVerges(image.data, size, verges.roads, at);
         yield;
       }
       yield* drawSurfaceContoursSteps(image.data, size);

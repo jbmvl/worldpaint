@@ -213,12 +213,17 @@ carte le dit (couverture `water`). Deux entrées :
   moindre chaussée assainie, le fossé d'une route étant très souvent un
   `waterway=drain` dans OSM. Leur lit reste, lui : c'est un fait de la carte.
 
-  Attention : un trait plus étroit qu'un texel ne peut pas être rasterisé
-  proprement. Le drain (1,6 m) et le fossé (1,2 m) couvrent moins de la moitié
-  des texels qu'ils traversent, et se rendent donc en **pointillé** plutôt qu'en
-  trait continu. Les faire disparaître (les retirer de `WATERWAY_CLASSES`) ou
-  leur donner une largeur plancher d'un texel sont deux décisions d'auteur,
-  pas des correctifs.
+  Le trait du canevas ne tient pas seul un lit de moins de deux texels
+  (5,3 m) : aucun texel n'y est entièrement couvert, et la réparation, qui ne
+  recopie qu'un voisin peint de part en part, le rend tout entier à ses
+  berges. Le lit d'une rivière, d'un canal et d'un ruisseau est donc reposé
+  sur la carte réparée (`paintWaterwayBeds`) : tout texel dont le centre tombe
+  à moins de la demi-largeur de l'axe devient de l'eau, et jamais moins d'un
+  demi-texel, pour qu'un lit en diagonale ne se coupe pas.
+
+  Le drain et le fossé n'ont que le trait du canevas, et disparaissent donc
+  presque partout. Leur donner un lit d'un texel (2,7 m) le long de chaque
+  route assainie est une décision d'auteur, pas un correctif.
 
 ### L’aspect de l’eau
 
