@@ -1964,7 +1964,7 @@ export const defaultTheme = Object.freeze({
     treeCitrus: { variants: [22], height: 6, aspect: 1.1 },
   }, volume: { bark: [0.105, 0.068, 0.035], leaf: [0.19, 0.25, 0.13] } },
   forests: FOREST_TYPES,
-  tunnelLights: { color: srgb("#ffe3a1"), intensity: 55, reachM: 35, spacingM: 18 },
+  tunnelLights: { color: srgb("#ffe3a1"), haloM: 2.6, spacingM: 18 },
   leaves: { lengthM: 0.12, widthM: 0.065, foldM: 0.012 },
   crops: CROP_LOOK,
   /**

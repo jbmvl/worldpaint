@@ -600,8 +600,8 @@ du dessus. Une piste cyclable, revêtue, en reste une branche.
 `brunnel` décide de l'ouvrage : un pont reçoit tablier, piles, culées et
 parapets ; un tunnel, sa chaussée continue, sa voûte ouverte aux extrémités et ses têtes.
 Le front remplit les écoinçons entre l’arc et la façade. Des lanternes sont
-espacées de 18 m ; seules les deux plus proches éclairent, sans ombres
-supplémentaires (`theme.tunnelLights`).
+espacées de 18 m, chacune avec le halo des lampadaires et aucune vraie lumière
+(`theme.tunnelLights`) : une lumière allumée à l'approche recompilait tout le décor.
 Les entrées publiées par `bridgeLayer` découpent le matériau du relief sous la
 voûte (24 entrées simultanées au maximum). Une limite de tuile ne crée pas de portail.
 

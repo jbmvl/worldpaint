@@ -21,18 +21,24 @@ test('la voûte ne possède aucune face bouchant une entrée', () => {
  }
 });
 
-test('les lanternes éclairent localement avec un budget de deux lumières et se libèrent', async () => {
+test('les lanternes portent un halo sans aucune vraie lumière et se libèrent', async () => {
   const THREE=await import('three');
   const {TunnelLighting}=await import('../src/layers/tunnelLighting.js');
   const {defaultTheme}=await import('../src/themes/default.js');
   const scene=new THREE.Scene();
   const lighting=new TunnelLighting(THREE,scene,defaultTheme.tunnelLights);
   lighting.rebuild([{x:0,y:4,z:0},{x:0,y:4,z:18},{x:0,y:4,z:36}]);
-  lighting.update({x:0,y:0,z:10});
-  assert.equal(lighting.lights.filter(l=>l.visible).length,2);
-  assert.ok(lighting.lights.every(l=>l.intensity>0 && !l.castShadow));
-  lighting.update({x:100,y:0,z:100});
-  assert.ok(lighting.lights.every(l=>!l.visible));
+  // Une lumière allumée à l'approche changerait le nombre de lumières : tout le décor se recompilerait.
+  let lights=0;
+  scene.traverse(o=>{ if(o.isLight) lights++; });
+  assert.equal(lights,0);
+  assert.equal(lighting.glow.count,3);
+  const m=new THREE.Matrix4();lighting.glow.getMatrixAt(1,m);
+  const at=new THREE.Vector3(),q=new THREE.Quaternion(),size=new THREE.Vector3();m.decompose(at,q,size);
+  assert.deepEqual([at.x,at.y,at.z],[0,4,18]);
+  assert.ok(Math.abs(size.x-defaultTheme.tunnelLights.haloM)<1e-5);
+  lighting.rebuild([{x:0,y:4,z:0}]);
+  assert.equal(scene.children.length,2);
   lighting.dispose();
   assert.equal(scene.children.length,0);
 });

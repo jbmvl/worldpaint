@@ -133,7 +133,8 @@ export class BridgeLayer {
     });
     this.material.name = 'bridge-works';
 
-    this.lighting = THREE.PointLight ? new TunnelLighting(THREE, scene, theme.tunnelLights ?? defaultTheme.tunnelLights) : null;
+    // Les tests montent la couche sur un THREE réduit, sans maillage instancié.
+    this.lighting = THREE.InstancedMesh ? new TunnelLighting(THREE, scene, theme.tunnelLights ?? defaultTheme.tunnelLights) : null;
     this.mesh = null;
     this.geometry = null;
   }
@@ -207,7 +208,6 @@ export class BridgeLayer {
     }
     this._apply(buffer);
     this.lighting?.rebuild(this.tunnelFixtures);
-    this.lighting?.update(here);
     return this.counts.spans > 0 || this.counts.portals > 0;
   }
 

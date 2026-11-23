@@ -1091,7 +1091,6 @@ export class WorldComposer {
     this.tractors.advance(delta);
     this.spectators.advance(delta, at, this.bubble.frame);
     this.trains.advance(delta, at);
-    this.bridges.lighting?.update(at);
     this.furniture.advanceSignals(delta);
     this.furniture.advanceRotor(delta);
     this.furniture.advanceLighthouses(delta);

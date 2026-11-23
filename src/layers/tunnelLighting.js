@@ -1,37 +1,47 @@
-/* Lanternes instanciées et deux lumières locales sans ombres. Le budget ne
- * dépend pas du nombre de tunnels chargés : seules les deux plus proches éclairent. */
+import { createGlowGeometry, createGlowMaterial } from './furnitureKit.js';
+
+/* Lanternes instanciées et leurs halos, sans aucune vraie lumière : allumer ou
+ * éteindre une lumière change le nombre de lumières de la scène, et three
+ * recompile alors tous les matériaux éclairés (gel net à l'entrée du tunnel).
+ * Le halo est celui des lampadaires, même programme GPU, toujours allumé. */
 export class TunnelLighting {
   constructor(THREE, scene, look) {
     this.THREE = THREE; this.scene = scene; this.look = look; this.fixtures = [];
-    this.lights = Array.from({length: 2}, () => {
-      const light = new THREE.PointLight(new THREE.Color().setRGB(...look.color), 0, look.reachM, 2);
-      light.visible = false;
-      scene.add(light);
-      return light;
-    });
     this.geometry = new THREE.BoxGeometry(.55, .12, .28);
     this.material = new THREE.MeshBasicMaterial({color: new THREE.Color().setRGB(...look.color)});
+    this.glowGeometry = createGlowGeometry(THREE);
+    this.glowMaterial = createGlowMaterial(THREE, {color: look.color});
+    this.glowMaterial.uniforms.uOpacity.value = 1;
     this.matrix = new THREE.Matrix4();
   }
   rebuild(fixtures) {
+    const {THREE} = this;
     this.fixtures = fixtures;
-    if (this.mesh) { this.scene.remove(this.mesh); this.mesh.dispose(); }
-    this.mesh = new this.THREE.InstancedMesh(this.geometry, this.material, Math.max(1, fixtures.length));
-    this.mesh.count = fixtures.length;
-    fixtures.forEach((p, i) => { this.matrix.makeTranslation(p.x,p.y,p.z); this.mesh.setMatrixAt(i,this.matrix); });
-    this.scene.add(this.mesh);
-  }
-  update(at) {
-    const nearest = this.fixtures.map(p=>({p,d:Math.hypot(p.x-at.x,p.z-at.z,(p.y-(at.y??p.y))*.5)}))
-      .filter(v=>v.d<this.look.reachM).sort((a,b)=>a.d-b.d).slice(0,2);
-    this.lights.forEach((light,i)=>{
-      const entry=nearest[i]; light.visible=!!entry;
-      if(entry) { light.position.set(entry.p.x,entry.p.y-.25,entry.p.z); light.intensity=this.look.intensity; }
+    this._clear();
+    const count = Math.max(1, fixtures.length);
+    this.mesh = new THREE.InstancedMesh(this.geometry, this.material, count);
+    this.glow = new THREE.InstancedMesh(this.glowGeometry, this.glowMaterial, count);
+    this.glow.name = 'tunnel-lamp-glow';
+    // Comme les halos des lampadaires : additif sans profondeur, peint après le reste.
+    this.glow.renderOrder = 8;
+    this.glow.frustumCulled = false;
+    this.mesh.count = this.glow.count = fixtures.length;
+    const halo = new THREE.Matrix4().makeScale(this.look.haloM, this.look.haloM, this.look.haloM);
+    fixtures.forEach((p, i) => {
+      this.matrix.makeTranslation(p.x, p.y, p.z);
+      this.mesh.setMatrixAt(i, this.matrix);
+      // Le shader lit le rayon du halo dans l'échelle de l'instance.
+      this.glow.setMatrixAt(i, this.matrix.clone().multiply(halo));
     });
+    this.scene.add(this.mesh, this.glow);
+  }
+  _clear() {
+    for (const mesh of [this.mesh, this.glow]) if (mesh) { this.scene.remove(mesh); mesh.dispose(); }
+    this.mesh = this.glow = null;
   }
   dispose() {
-    for(const light of this.lights) { this.scene.remove(light); light.dispose?.(); }
-    if(this.mesh) { this.scene.remove(this.mesh); this.mesh.dispose(); }
+    this._clear();
     this.geometry.dispose(); this.material.dispose();
+    this.glowGeometry.dispose(); this.glowMaterial.dispose();
   }
 }
