@@ -1,60 +1,69 @@
-/* Les joints suivent le profil posé et l'abscisse du réseau, même après découpage. */
+/* Les joints sont peints par la matière : repères par sommet, phase du réseau, aucun triangle de plus. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ajouterJointsVoirie } from '../src/layers/streetMasonry.js';
-import { createProfileStore } from '../src/layers/facetBuffers.js';
+import { NO_JOINT, abscissesVoirie, completerReperes, peindreJoints, reperesJoints } from '../src/layers/streetMasonry.js';
+import { createProfileStore, drainProfileBuffer } from '../src/layers/facetBuffers.js';
+import { STREET_LOOK } from '../src/themes/default.js';
 
-function poser(debut, fin, cote = 1) {
-  const tampon = createProfileStore();
-  const profil = [0, 0.32, 0.32, 0.52].map((across) => ({ across: across * cote, up: 0 }));
-  if (cote < 0) profil.reverse();
-  const section = [];
-  for (const x of [debut, fin]) {
-    for (const p of profil) section.push(x, x * 0.04 + Math.abs(p.across) * 0.2, -p.across);
-  }
-  ajouterJointsVoirie(tampon, {
-    source: section,
-    debut: 0,
-    points: [{ x: debut, z: 0, distance: debut }, { x: fin, z: 0, distance: fin }],
-    profil, demiLargeur: 0,
-    style: { gutterWidth: 0.32, gutterSlabLength: 0.6, kerbBlockLength: 1, jointWidth: 0.008 },
-    couleur: [0.1, 0.1, 0.1],
-  });
-  return { tampon, joints: Array.from(tampon.positions.data.subarray(0, tampon.positions.length)) };
-}
+const profil = [
+  { across: 4, up: 0 }, { across: 4.295, up: 0 }, { across: 4.32, up: 0 }, { across: 4.52, up: 0 }, { across: 4.52, up: -0.2 },
+];
 
-test('les joints restent sur le caniveau incliné et dans son emprise, à droite comme à gauche', () => {
-  for (const cote of [1, -1]) {
-    const { tampon, joints } = poser(0.1, 2.9, cote);
-    assert.ok(joints.length > 0);
-    for (let i = 0; i < joints.length; i += 3) {
-      const [x, y, z] = joints.slice(i, i + 3);
-      assert.ok(x >= 0.1 && x <= 2.9);
-      assert.ok(Math.abs(z) <= 0.52);
-      // La réserve est en flottants simples.
-      assert.ok(Math.abs(y - (x * 0.04 + Math.abs(z) * 0.2 + 0.001)) < 1e-6);
-    }
-    assert.equal(tampon.colors.length, tampon.positions.length);
-    assert.ok(tampon.indices.data.subarray(0, tampon.indices.length).every((i) => i < tampon.positions.length / 3));
-  }
+test('les repères suivent l’abscisse du réseau, la distance à la rive et la hauteur de chaque sommet', () => {
+  const points = [{ x: 0, z: 0, distance: 120.5 }, { x: 3, z: 4, distance: 125.5 }];
+  const reperes = [];
+  reperesJoints(reperes, { points, profil, demiLargeur: 4 });
+  assert.equal(reperes.length, points.length * profil.length * 3);
+  // Ligne par ligne, colonne par colonne, comme `appendProfile`.
+  assert.deepEqual(reperes.slice(0, 3), [120.5, 0, 0]);
+  assert.ok(Math.abs(reperes[3 * 3 + 1] - 0.52) < 1e-9);
+  assert.deepEqual(reperes.slice(4 * 3, 4 * 3 + 3).map((v) => +v.toFixed(6)), [120.5, 0.52, -0.2]);
+  assert.equal(reperes[profil.length * 3], 125.5);
+  // Une rive gauche (abscisses négatives) donne les mêmes distances.
+  const gauche = [];
+  reperesJoints(gauche, { points, profil: profil.map((p) => ({ ...p, across: -p.across })), demiLargeur: 4 });
+  assert.deepEqual(gauche, reperes);
 });
 
-test('le découpage d’une rue conserve la phase des joints des dalles et du béton', () => {
-  const entier = poser(0.1, 2.9).joints;
-  const morceau = poser(0.9, 2.2).joints;
-  const limites = (positions) => {
-    const valeurs = new Set();
-    for (let i = 0; i < positions.length; i += 3) {
-      const x = positions[i];
-      if (x > 0.91 && x < 2.19) valeurs.add(x.toFixed(6));
-    }
-    return [...valeurs].sort();
+test('un coin de rue sans abscisse s’ancre à sa position quantifiée : un morceau garde la phase du tout', () => {
+  const tout = abscissesVoirie([{ x: 10.04, z: 2.01 }, { x: 13.04, z: 6.01 }, { x: 16.04, z: 10.01 }]);
+  assert.deepEqual(tout.map((v) => +v.toFixed(6)), [12, 17, 22]);
+  const reseau = abscissesVoirie([{ x: 0, z: 0, distance: 40 }, { x: 1, z: 0 }]);
+  assert.equal(reseau[0], 40);
+});
+
+test('la réserve verse les repères avec les sommets, et le repère neutre là où il n’y en a pas', () => {
+  const store = createProfileStore(null, { marks: { attribute: 'streetJoint', fallback: NO_JOINT } });
+  // Un comblement sans repère, puis une section de bordure.
+  const buffer = { positions: [0, 0, 0, 1, 0, 0, 0, 0, 1], colors: [0, 0, 0, 0, 0, 0, 0, 0, 0], indices: [0, 1, 2], marks: [] };
+  completerReperes(buffer.marks, 3);
+  buffer.positions.push(2, 0, 0, 3, 0, 0);
+  buffer.colors.push(0, 0, 0, 0, 0, 0);
+  buffer.marks.push(7, 0.1, 0, 7, 0.4, 0);
+  drainProfileBuffer(store, buffer);
+  // Un lot sans repère du tout.
+  drainProfileBuffer(store, { positions: [5, 0, 0], colors: [0, 0, 0], indices: [], marks: [] });
+  const marks = Array.from(store.marks.data.subarray(0, store.marks.length)).map((v) => +v.toFixed(6));
+  assert.deepEqual(marks, [...NO_JOINT, ...NO_JOINT, ...NO_JOINT, 7, 0.1, 0, 7, 0.4, 0, ...NO_JOINT]);
+  assert.equal(store.marks.length, store.positions.length);
+  assert.equal(store.markAttribute, 'streetJoint');
+  // Sans repères demandés, la réserve n'en porte pas.
+  assert.equal(createProfileStore().marks, undefined);
+});
+
+test('la matière peint les joints sur les faces au niveau du support, à leur largeur vraie', () => {
+  const material = { };
+  peindreJoints(material, STREET_LOOK);
+  const shader = {
+    uniforms: {},
+    vertexShader: '#include <common>\nvoid main() {\n#include <begin_vertex>\n}',
+    fragmentShader: '#include <common>\nvoid main() {\n#include <color_fragment>\n}',
   };
-  // Les sommets de triangulation peuvent différer ; les limites de chaque joint restent fixes.
-  const attendues = [0.996, 1.004, 1.196, 1.204, 1.796, 1.804, 1.996, 2.004];
-  for (const x of attendues) {
-    assert.ok(limites(entier).includes(x.toFixed(6)));
-    assert.ok(limites(morceau).includes(x.toFixed(6)));
-  }
-  assert.deepEqual(poser(0.9, 2.2).tampon, poser(0.9, 2.2).tampon);
+  material.onBeforeCompile(shader);
+  assert.ok(shader.vertexShader.includes('attribute vec3 streetJoint;'));
+  assert.ok(shader.vertexShader.includes('vStreetJoint = streetJoint;'));
+  assert.ok(shader.fragmentShader.includes('fwidth(vStreetJoint.x)'));
+  assert.ok(shader.fragmentShader.indexOf('#include <color_fragment>') < shader.fragmentShader.indexOf('jointCover'));
+  assert.deepEqual(shader.uniforms.uJointStyle.value, [STREET_LOOK.gutterWidth, STREET_LOOK.gutterSlabLength, STREET_LOOK.kerbBlockLength, STREET_LOOK.jointWidth]);
+  assert.equal(material.customProgramCacheKey(), 'street-joints');
 });

@@ -5,14 +5,15 @@ import { CellMeshes } from './cellMeshes.js';
  * Le support porte tout le sol piéton : aucune dalle ni jupe ne le recouvre.
  * Le béton a une section constante, son dessus suit le support ; le caniveau
  * incliné rejoint la rive exacte de la chaussée, avec les repères du réseau.
- * Les joints suivent les dalles ; une ligne sombre marque le pied du béton.
+ * Les joints suivent les dalles, peints par la matière (`streetMasonry`) ;
+ * une ligne sombre marque le pied du béton.
  * En ville, le masque urbain suffit ; dans les villages, le bâti confirme
  * chaque côté. Les bouches interrompent les bordures, les coins les prolongent.
  * Les traversées lisent les deux rives ; les comblements lisent leur emprise.
  */
 import { finishGeneration } from '../core/generationSteps.js';
 import { appendProfile, createProfileBuffer, pathFrames, toColoredGeometry } from './ribbonGeometry.js';
-import { ajouterJointsVoirie } from './streetMasonry.js';
+import { NO_JOINT, completerReperes, peindreJoints, reperesJoints } from './streetMasonry.js';
 import { ROAD_LIFT_M, isPaved } from './roadNetwork.js';
 import { RoadIndex } from './roadGraph.js';
 import { contiguousRuns, crossSlope, STEEP_CROSS_SLOPE } from './furniturePlacement.js';
@@ -124,6 +125,7 @@ export class StreetLayer {
       polygonOffsetUnits: -4,
     });
     this.material.name = 'streets';
+    peindreJoints(this.material, theme.streets);
     this.cells = new CellMeshes({ THREE, scene, material: this.material, name: 'streets' });
 
     // Le marquage a sa matière à lui, et une seule raison de l'avoir : il est
@@ -173,8 +175,8 @@ export class StreetLayer {
     if (this.disposed || !this.bubble?.frame) return false;
 
     // `buffer` ne porte que le lot en cours : il est versé dans `store` à chaque étape.
-    const buffer = createProfileBuffer();
-    const store = createProfileStore(this._storeSize);
+    const buffer = { ...createProfileBuffer(), marks: [] };
+    const store = createProfileStore(this._storeSize, { marks: { attribute: 'streetJoint', fallback: NO_JOINT } });
     const marks = createProfileBuffer();
     const bands = [];
     // Les bouches atteintes par un trottoir, côté par côté : une traversée se
@@ -616,6 +618,14 @@ export class StreetLayer {
       path: points, profile, baseHeights: decks, lift: 0,
       frames: used, smoothRadius: 0,
     });
+    // Repères des joints, rangés comme les sommets de la section (ligne par ligne).
+    if (buffer.marks) {
+      completerReperes(buffer.marks, start / 3);
+      buffer.marks.length = start;
+      if (buffer.positions.length - start === points.length * profile.length * 3) {
+        reperesJoints(buffer.marks, { points, profil: profile, demiLargeur: halfWidth });
+      }
+    }
     // Les faces verticales de la bordure reposent deux sommets sur le même
     // point du sol : il n'est lu qu'une fois.
     let lastX = NaN, lastZ = NaN, lastGround = 0;
@@ -647,12 +657,7 @@ export class StreetLayer {
         }
       }
     }
-    // La section est versée dans la réserve avant ses joints, qui y vont droit.
-    const section = buffer.positions.slice(start);
     drainProfileBuffer(store, buffer);
-    ajouterJointsVoirie(store, {
-      source: section, debut: 0, points, profil: profile, demiLargeur: halfWidth, style: streets, couleur: tones.joint,
-    });
     const band = pavementBand({ halfWidth, side }, streets);
     bands.push({
       path: points.map((point, i) => ({

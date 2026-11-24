@@ -145,5 +145,6 @@ export function* storedProfileGeometrySteps(THREE, store) {
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geometry.setIndex(new THREE.BufferAttribute(indices, 1));
   geometry.setAttribute('color', new THREE.BufferAttribute(store.colors.data.subarray(0, store.colors.length), 3, true));
+  if (store.marks) geometry.setAttribute(store.markAttribute, new THREE.BufferAttribute(store.marks.data.subarray(0, store.marks.length), 3));
   return releaseAfterUpload(geometry);
 }

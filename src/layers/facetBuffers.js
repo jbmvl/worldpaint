@@ -113,13 +113,18 @@ export function createFacetBuffer(expected = 0) {
  * typé qui grandit ne permet pas, mais un lot reste petit.
  *
  * @param {{positions:{length:number}, indices:{length:number}}|null} [previous] Réserve de la construction précédente.
+ * @param {Object} [options]
+ * @param {{attribute:string, fallback:number[]}} [options.marks] Repère de trois nombres par
+ *        sommet, versé depuis `buffer.marks` et publié sous le nom `attribute` ; `fallback`
+ *        pour les sommets qui n'en portent pas.
  */
-export function createProfileStore(previous = null) {
+export function createProfileStore(previous = null, { marks = null } = {}) {
   const values = previous?.positions.length ?? 0;
   return {
     positions: new GrowingArray(Float32Array, 0, values),
     colors: new GrowingArray(Uint16Array, COLOR_SCALE, values),
     indices: new GrowingArray(Uint32Array, 0, previous?.indices.length ?? 0),
+    ...(marks ? { marks: new GrowingArray(Float32Array, 0, values), markAttribute: marks.attribute, markFallback: marks.fallback } : {}),
   };
 }
 
@@ -129,10 +134,24 @@ export function profileTone(value) {
   return v < 0 ? 0 : v > COLOR_SCALE ? COLOR_SCALE : v;
 }
 
-/** Verse un accumulateur de sections dans la réserve, et le vide. */
+/**
+ * Verse un accumulateur de sections dans la réserve, et le vide. Une réserve
+ * à repères prend ceux de `buffer.marks`, rangés comme ses sommets, et
+ * `markFallback` pour les sommets qui suivent.
+ */
 export function drainProfileBuffer(store, buffer) {
   const { positions, colors, indices } = buffer;
   const base = store.positions.length / 3;
+  if (store.marks) {
+    const marks = buffer.marks || [];
+    const own = Math.min(marks.length, positions.length);
+    store.marks.reserve(positions.length);
+    store.marks.data.set(own === marks.length ? marks : marks.slice(0, own), store.marks.length);
+    store.marks.length += own;
+    const [a, b, c] = store.markFallback;
+    for (let i = own; i < positions.length; i += 3) store.marks.push(a, b, c);
+    if (buffer.marks) buffer.marks.length = 0;
+  }
   store.positions.reserve(positions.length);
   store.positions.data.set(positions, store.positions.length);
   store.positions.length += positions.length;
