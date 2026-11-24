@@ -67,16 +67,25 @@ const now = () => (typeof performance !== 'undefined' ? performance.now() : Date
  * Décode une image de tuile DEM en Float32Array d'altitudes (mètres), à la
  * résolution native de l'image. Passe par un canvas : c'est le seul moyen
  * portable de lire les pixels d'une image côté navigateur.
+ *
+ * `reader` garde le canevas d'un décodage à l'autre : un canevas relu vit en
+ * mémoire centrale, et un neuf par tuile faisait monter la page à chaque relève.
+ * Le décodage est synchrone, un seul canevas suffit à toutes les tuiles.
  */
-function decodeTile(bitmap, encoding, size) {
+function decodeTile(bitmap, encoding, size, reader = {}) {
   const decode = DECODERS[encoding] || decodeTerrarium;
 
-  const canvas =
-    typeof OffscreenCanvas !== 'undefined'
-      ? new OffscreenCanvas(size, size)
-      : Object.assign(document.createElement('canvas'), { width: size, height: size });
-
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!reader.ctx || reader.size !== size) {
+    const canvas =
+      typeof OffscreenCanvas !== 'undefined'
+        ? new OffscreenCanvas(size, size)
+        : Object.assign(document.createElement('canvas'), { width: size, height: size });
+    reader.ctx = canvas.getContext('2d', { willReadFrequently: true });
+    // L'image remplace la précédente, pixels transparents compris.
+    reader.ctx.globalCompositeOperation = 'copy';
+    reader.size = size;
+  }
+  const { ctx } = reader;
   ctx.drawImage(bitmap, 0, 0, size, size);
   const { data } = ctx.getImageData(0, 0, size, size);
 
@@ -88,10 +97,10 @@ function decodeTile(bitmap, encoding, size) {
 }
 
 /** Altitudes d'une réponse image, à sa résolution native. */
-async function decodeResponse(res, encoding) {
+async function decodeResponse(res, encoding, reader) {
   const bitmap = await createImageBitmap(await res.blob());
   const size = bitmap.width || DEM_TILE_PIXELS;
-  const heights = decodeTile(bitmap, encoding, size);
+  const heights = decodeTile(bitmap, encoding, size, reader);
   bitmap.close?.();
   return { heights, size };
 }
@@ -217,6 +226,8 @@ export class ElevationField {
     this.failed = new Map();
     /** @type {Map<string, Promise<Object|null|undefined>>} tuiles parentes lues pour des tuiles absentes */
     this._parents = new Map();
+    /** Canevas de décodage des tuiles, repris d'une tuile à l'autre (`decodeTile`). */
+    this._reader = {};
     this.disposed = false;
     this.revision = 0;
   }
@@ -312,7 +323,7 @@ export class ElevationField {
           }
           this._adoptSource();
           if (bitmap.width) this.tilePixels = bitmap.width;
-          const heights = decodeTile(bitmap, encoding, this.tilePixels);
+          const heights = decodeTile(bitmap, encoding, this.tilePixels, this._reader);
           bitmap.close?.();
           this.failed.delete(key);
           this._store(key, heights);
@@ -351,7 +362,7 @@ export class ElevationField {
           // Partagée entre ses enfants : seule la fermeture du champ l'annule.
           const res = await fetch(fillTileUrl(url, z, px, py), { signal: this._abort.signal, mode: 'cors', credentials: 'omit' });
           if (res.status === 404) return undefined;
-          return res.ok ? decodeResponse(res, encoding) : null;
+          return res.ok ? decodeResponse(res, encoding, this._reader) : null;
         })().catch(() => null);
         parent.then((found) => { if (found === null) this._parents.delete(key); });
         this._parents.set(key, parent);
@@ -501,6 +512,7 @@ export class ElevationField {
     this.disposed = true;
     this._abort.abort();
     this._last = null;
+    this._reader = {};
     this.tiles.clear();
     this.pending.clear();
   }

@@ -278,6 +278,15 @@ export class World {
     return this.composer.bubble;
   }
 
+  /**
+   * Numéro des chaussées publiées : change à chaque reconstruction du réseau.
+   * Qui garde ce qu'il a lu par `roadLaneAt` (une trajectoire calculée sans
+   * chaussée) ne le relit que s'il a changé.
+   */
+  get roadRevision() {
+    return this.composer.roads.revision;
+  }
+
   /** Carte d'occupation du sol, lue par l'étiquetage des cultures. */
   get groundClass() {
     return this.composer.groundClass;

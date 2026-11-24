@@ -1460,6 +1460,8 @@ export class RoadNetwork {
     this.roadSegments = [];
     /** Index spatial des chaussées construites (herbe, recouture des carrefours). @type {RoadIndex|null} */
     this.index = null;
+    /** Numéro de la reconstruction publiée : change dès que les chaussées lues changent. */
+    this.revision = 0;
     /**
      * Même réseau, mais tablier de pont et tunnel compris — voir
      * `platformPositionAt`. `index` les ignore volontairement (l'herbe pousse
@@ -1683,6 +1685,7 @@ export class RoadNetwork {
     this.junctionAreas = areas;
     this.index = index;
     this.elevationIndex = elevationIndex;
+    this.revision++;
     this.deckIndex = deckIndex;
     this.segments = segments;
     this.crossings = junctionsDrawn;

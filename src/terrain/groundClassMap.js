@@ -119,6 +119,7 @@ import {
   classPolygons,
 } from './surfaceClassification.js';
 import { contourSurfaceSteps, CONTOUR_REACH_TEXELS } from './surfaceContours.js';
+import { ScratchArrays } from '../core/scratchArrays.js';
 import { roadStyleFor, roadLines, hiddenInTown, ROAD_RADIUS_M } from '../layers/roadNetwork.js';
 import { CORRIDOR_MARGIN_M } from '../layers/roadCorridor.js';
 
@@ -396,9 +397,9 @@ export function repairSurfaceEdges(data, pixels = CLASS_PIXELS) {
 const REPAIR_ROWS_PER_STEP = 64;
 
 /** `repairSurfaceEdges` en étapes, par bandes de lignes ; la première passe reste entière. */
-export function* repairSurfaceEdgesSteps(data, pixels = CLASS_PIXELS) {
+export function* repairSurfaceEdgesSteps(data, pixels = CLASS_PIXELS, scratch = new ScratchArrays()) {
   const total = pixels * pixels;
-  const painted = new Uint8Array(total);
+  const painted = scratch.take('repairPainted', Uint8Array, total);
   let suspects = 0;
 
   // Un texel est peint si son rouge tombe pile sur un identifiant, que son bleu
@@ -481,9 +482,9 @@ export const FARMLAND_ID = SURFACE_KINDS.indexOf('farmland') + 1;
  * et le vert disent la même chose que le contour, pour le shader comme pour
  * ceux qui relisent la carte au texel.
  */
-export function* drawSurfaceContoursSteps(data, pixels = CLASS_PIXELS) {
+export function* drawSurfaceContoursSteps(data, pixels = CLASS_PIXELS, scratch = new ScratchArrays()) {
   const total = pixels * pixels;
-  const labels = new Uint8Array(total);
+  const labels = scratch.take('contourLabels', Uint8Array, total);
   for (let p = 0; p < total; p++) {
     if (p % (pixels * REPAIR_ROWS_PER_STEP) === 0 && p > 0) yield;
     const id = Math.round(data[p * 4] / SURFACE_ID_STEP);
@@ -491,7 +492,7 @@ export function* drawSurfaceContoursSteps(data, pixels = CLASS_PIXELS) {
     labels[p] = id === FARMLAND_ID && crop > 0 ? CROP_LABEL_BASE + crop : id;
   }
   yield;
-  const { distance, other } = yield* contourSurfaceSteps(labels, pixels);
+  const { distance, other } = yield* contourSurfaceSteps(labels, pixels, scratch);
   for (let p = 0; p < total; p++) {
     if (p % (pixels * REPAIR_ROWS_PER_STEP) === 0) yield;
     const i = p * 4;
@@ -741,11 +742,15 @@ function silentTexel() {
   return data.slice(0, 4);
 }
 
-/** La carte entière : la fenêtre relue à sa place, le fond muet autour. */
-function embedWindow(window, x, y, size) {
-  const data = new Uint8ClampedArray(CLASS_PIXELS * CLASS_PIXELS * 4);
-  const background = new Uint32Array(silentTexel().buffer)[0];
-  new Uint32Array(data.buffer).fill(background);
+/** Le fond muet, en un mot de quatre octets (`embedWindow`). */
+const SILENT_TEXEL = new Uint32Array(silentTexel().buffer)[0];
+
+/**
+ * La carte entière : la fenêtre relue à sa place, le fond muet autour, écrite
+ * dans `data` (la carte publiée, gardée d'une relecture à l'autre).
+ */
+function embedWindow(window, x, y, size, data = new Uint8ClampedArray(CLASS_PIXELS * CLASS_PIXELS * 4)) {
+  new Uint32Array(data.buffer).fill(SILENT_TEXEL);
   for (let row = 0; row < size; row++) {
     data.set(window.subarray(row * size * 4, (row + 1) * size * 4), ((y + row) * CLASS_PIXELS + x) * 4);
   }
@@ -834,6 +839,8 @@ export class GroundClassMap {
     this._frame = null;
     /** Règle du versant raide de la dernière relecture (`steepGap.js`), ou `null`. */
     this._steepGap = null;
+    /** Tableaux de travail de la relecture (réparation, contours, carte publiée). */
+    this._scratch = new ScratchArrays();
     this.disposed = false;
   }
 
@@ -1553,7 +1560,7 @@ export class GroundClassMap {
       console.warn('[groundClassMap] relecture impossible', e?.message || e);
     }
     yield;
-    this.repaired = image ? yield* repairSurfaceEdgesSteps(image.data, size) : 0;
+    this.repaired = image ? yield* repairSurfaceEdgesSteps(image.data, size, this._scratch) : 0;
     let data = image?.data ?? null;
     if (image) {
       const at = verges && {
@@ -1569,8 +1576,12 @@ export class GroundClassMap {
         this.verged = paintRoadVerges(image.data, size, verges.roads, at);
         yield;
       }
-      yield* drawSurfaceContoursSteps(image.data, size);
-      if (size < CLASS_PIXELS) data = embedWindow(image.data, x, y, size);
+      yield* drawSurfaceContoursSteps(image.data, size, this._scratch);
+      // La carte publiée est réécrite en place : les lecteurs (`_data`, texture)
+      // la relisent après cette étape, jamais pendant.
+      if (size < CLASS_PIXELS) {
+        data = embedWindow(image.data, x, y, size, this._scratch.take('published', Uint8ClampedArray, CLASS_PIXELS * CLASS_PIXELS * 4));
+      }
       this.texture.image.data = new Uint8Array(data.buffer);
     }
     this._data = data;
@@ -1630,6 +1641,7 @@ export class GroundClassMap {
     if (this.disposed) return;
     this.disposed = true;
     this._data = null;
+    this._scratch.clear();
     this.texture.dispose();
   }
 }

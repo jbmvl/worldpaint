@@ -29,6 +29,7 @@
  * monde.
  */
 
+import { ScratchArrays } from '../core/scratchArrays.js';
 import { finishGeneration } from '../core/generationSteps.js';
 
 /** Portée de la distance, en texels : au-delà, un texel est « loin de tout trait ». Couvre le voisinage 4 × 4 que lit le shader. */
@@ -64,13 +65,15 @@ export function contourSurface(labels, pixels) {
  * @param {Uint8Array} labels Une étiquette par texel, ligne par ligne —
  *        **réécrite sur place** là où le trait passe de l'autre côté d'un centre.
  * @param {number} pixels Côté de la carte.
+ * @param {ScratchArrays} [scratch] Tableaux de travail repris d'un appel à
+ *        l'autre ; `distance` et `other` en font partie, valables jusqu'au suivant.
  * @returns {{distance: Float32Array, other: Int16Array, chains: number}}
  *          distance au trait le plus proche, en texels (plafonnée à
  *          `CONTOUR_REACH_TEXELS`), et étiquette d'en face (-1 : aucun trait
  *          à portée).
  */
-export function* contourSurfaceSteps(labels, pixels) {
-  const chains = yield* traceChainsSteps(labels, pixels);
+export function* contourSurfaceSteps(labels, pixels, scratch = new ScratchArrays()) {
+  const chains = yield* traceChainsSteps(labels, pixels, scratch);
   const segments = [];
   let work = 0;
   for (const chain of chains) {
@@ -89,17 +92,17 @@ export function* contourSurfaceSteps(labels, pixels) {
   yield;
 
   const total = pixels * pixels;
-  const distance = new Float32Array(total).fill(CONTOUR_REACH_TEXELS);
-  const side = new Int16Array(total).fill(-1);
-  const across = new Int16Array(total).fill(-1);
-  const facing = new Uint8Array(total);
+  const distance = scratch.take('contourDistance', Float32Array, total, CONTOUR_REACH_TEXELS);
+  const side = scratch.take('contourSide', Int16Array, total, -1);
+  const across = scratch.take('contourAcross', Int16Array, total, -1);
+  const facing = scratch.take('contourFacing', Uint8Array, total);
   for (let s = 0; s < segments.length; s += 6) {
     if (s > 0 && (s / 6) % SEGMENTS_PER_STEP === 0) yield;
     measureSegment(segments, s, pixels, distance, side, across, facing);
   }
 
   yield;
-  const other = new Int16Array(total).fill(-1);
+  const other = scratch.take('contourOther', Int16Array, total, -1);
   for (let p = 0; p < total; p++) {
     if (side[p] < 0) continue;
     const own = labels[p];
@@ -138,12 +141,12 @@ export function traceChains(labels, pixels) {
 /** Lignes de coins parcourues entre deux étapes de `traceChainsSteps`. */
 const TRACE_ROWS_PER_STEP = 64;
 
-export function* traceChainsSteps(labels, pixels) {
+export function* traceChainsSteps(labels, pixels, scratch = new ScratchArrays()) {
   const n = pixels;
   const stride = n + 1;
   // 1 : arête à parcourir, 2 : déjà chaînée.
-  const vertical = new Uint8Array(stride * stride);
-  const horizontal = new Uint8Array(stride * stride);
+  const vertical = scratch.take('traceVertical', Uint8Array, stride * stride);
+  const horizontal = scratch.take('traceHorizontal', Uint8Array, stride * stride);
   for (let y = 0; y < n; y++) {
     if (y % TRACE_ROWS_PER_STEP === 0 && y > 0) yield;
     for (let x = 1; x < n; x++) {

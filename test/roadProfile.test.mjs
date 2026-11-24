@@ -161,6 +161,8 @@ test('le déplacement du disque de rendu ne relève pas une rue déjà visible',
     roads.rebuild(source,[],{x,z:0});return roads;
   };
   const a=build(0),b=build(250);
+  // Chaque reconstruction publiée change la révision lue par `world.roadRevision`.
+  assert.equal(a.revision,1);a.rebuild(source,[],{x:0,z:0});assert.equal(a.revision,2);
   for(const x of [100,250,400]) {
     const read=r=>r.elevationIndex.deckAt(r.elevationIndex.query(x,0,0));
     assert.ok(Math.abs(read(a)-read(b))<.0001);
